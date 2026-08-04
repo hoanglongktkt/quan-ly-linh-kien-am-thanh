@@ -419,17 +419,31 @@ export async function patchProduct(req, res) {
   try {
     const products = await deps.loadProducts();
     const patch = req.body || {};
+
+    const pushAfterSave = async (before, merged, linkedRow) => {
+      const changes = detectStockPriceChanges(before, merged);
+      const skuChanged =
+        String(before?.sku || "").trim() !== String(merged?.sku || "").trim();
+      // Sau khi lưu Mongo/disk thành công: BẮT BUỘC đẩy tồn/giá lên Shopee.
+      // Đồng bộ SKU (update_model) khi SKU đổi hoặc client gửi field sku.
+      const shopee = await pushProductStockPriceToShopeeImmediate(linkedRow || merged, {
+        syncStock: true,
+        syncPrice: true,
+        syncSku: skuChanged || Object.prototype.hasOwnProperty.call(patch, "sku"),
+        // Giữ cờ thay đổi để log/debug phía sync
+        stockChanged: changes.stock,
+        priceChanged: changes.price,
+      });
+      return shopee;
+    };
+
     const topIndex = products.findIndex((p) => p.id === req.params.id);
     if (topIndex !== -1) {
       const before = products[topIndex];
       const merged = deps.mergeProductPatch(before, patch);
       products[topIndex] = merged;
       await deps.upsertProductsToStoreAsync([merged]);
-      const changes = detectStockPriceChanges(before, merged);
-      const shopee = await pushProductStockPriceToShopeeImmediate(merged, {
-        syncStock: changes.stock,
-        syncPrice: changes.price,
-      });
+      const shopee = await pushAfterSave(before, merged, merged);
       if (!shopee.ok) {
         return res.status(400).json({
           success: false,
@@ -459,14 +473,8 @@ export async function patchProduct(req, res) {
       const totalStock = nextChildren.reduce((s, c) => s + (Number(c.stock) || 0), 0);
       products[i] = { ...products[i], children: nextChildren, stock: totalStock };
       await deps.upsertProductsToStoreAsync([products[i]]);
-      const changes = detectStockPriceChanges(beforeChild, mergedChild);
-      const shopee = await pushProductStockPriceToShopeeImmediate(
-        deps.inheritShopeeLinkFromParent(mergedChild, products[i]),
-        {
-          syncStock: changes.stock,
-          syncPrice: changes.price,
-        },
-      );
+      const linked = deps.inheritShopeeLinkFromParent(mergedChild, products[i]);
+      const shopee = await pushAfterSave(beforeChild, mergedChild, linked);
       if (!shopee.ok) {
         return res.status(400).json({
           success: false,

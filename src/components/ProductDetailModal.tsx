@@ -275,7 +275,7 @@ export default function ProductDetailModal({
     }
   };
 
-  const handleSave = async (closeAfter = false) => {
+  const handleSave = async () => {
     if (!active) return;
     setSaving(true);
     setToast('Đang lưu sản phẩm và đồng bộ Shopee...');
@@ -305,20 +305,17 @@ export default function ProductDetailModal({
         setTimeout(() => setToast(null), 4500);
         return;
       }
-      if (closeAfter) {
-        onClose();
-        return;
-      }
+      // Giữ modal mở — chỉ báo toast thành công để tiếp tục chỉnh sửa.
       if (result && typeof result === 'object' && result.shopeeSynced) {
         setToast(
           result.shopeeMessage
-            ? `Đồng bộ Shopee thành công! ${result.shopeeMessage}`
-            : 'Đồng bộ Shopee thành công!'
+            ? `Lưu thành công! ${result.shopeeMessage}`
+            : 'Lưu thành công!'
         );
       } else if (result && typeof result === 'object' && result.shopeeMessage) {
-        setToast(`Đã lưu vào kho gốc. ${result.shopeeMessage}`);
+        setToast(`Lưu thành công. ${result.shopeeMessage}`);
       } else {
-        setToast('Đã lưu vào kho gốc.');
+        setToast('Lưu thành công');
       }
       setTimeout(() => setToast(null), 4500);
     } catch (err: any) {
@@ -542,7 +539,7 @@ export default function ProductDetailModal({
             Hủy bỏ
           </button>
           <button
-            onClick={() => void handleSave(true)}
+            onClick={() => void handleSave()}
             disabled={saving || syncing}
             className="w-full sm:w-auto min-h-12 sm:min-h-0 px-5 py-3 sm:py-[7px] text-[15px] sm:text-[13px] font-semibold text-[#0078D4] bg-white border border-[#0078D4] rounded-[6px] sm:rounded-[4px] disabled:opacity-50 flex items-center justify-center gap-2 max-sm:order-2"
           >
@@ -550,7 +547,7 @@ export default function ProductDetailModal({
             {saving ? 'Đang lưu...' : 'Lưu'}
           </button>
           <button
-            onClick={() => void handleSave(false)}
+            onClick={() => void handleSave()}
             disabled={saving || syncing}
             className="w-full sm:w-auto min-h-12 sm:min-h-0 px-5 py-3 sm:py-[7px] text-[15px] sm:text-[13px] font-semibold text-white rounded-[6px] sm:rounded-[4px] disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm sm:shadow-none max-sm:order-1"
             style={{ background: '#0078D4' }}

@@ -1182,13 +1182,11 @@ export default function App() {
       }
 
       let syncResult = data;
-      const shopeeSkippedNoChange =
+      const shopeeSkippedUnmapped =
         typeof data?.shopeeMessage === 'string' &&
-        (data.shopeeMessage.includes('Không có thay đổi') ||
-          data.shopeeMessage.includes('Chưa liên kết Mapping'));
-      // Chỉ ép sync Shopee khi PATCH báo chưa sync và KHÔNG phải trường hợp skip hợp lệ
-      // (vd. chỉ đổi importPrice — không cần đẩy tồn/giá bán lên sàn).
-      if (!data?.shopeeSynced && !shopeeSkippedNoChange) {
+        data.shopeeMessage.includes('Chưa liên kết Mapping');
+      // PATCH đã lưu Mongo; nếu chưa sync Shopee (và vẫn còn mapping) → ép sync lại.
+      if (!data?.shopeeSynced && !shopeeSkippedUnmapped) {
         const syncResponse = await fetch('/api/products/sync-shopee', {
           method: 'POST',
           headers: apiAuthHeaders(),
@@ -1223,10 +1221,11 @@ export default function App() {
       }
       return {
         success: true,
-        shopeeSynced: true,
+        shopeeSynced: !!data?.shopeeSynced || !!syncResult?.shopeeSynced || shopeeSkippedUnmapped,
         shopeeMessage:
           syncResult?.shopeeMessage ||
           syncResult?.message ||
+          data?.shopeeMessage ||
           'Đồng bộ Shopee thành công!',
       };
     } catch (err: any) {

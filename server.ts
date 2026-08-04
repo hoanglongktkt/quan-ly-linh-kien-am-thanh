@@ -3815,6 +3815,55 @@ async function shopeeUpdatePrice(
   return json;
 }
 
+/** v2.product.update_model — cập nhật model_sku (SKU phân loại) lên Shopee. */
+async function shopeeUpdateModelSku(
+  shopId: string,
+  accessToken: string,
+  itemId: string | number,
+  modelId: string | number,
+  modelSku: string
+) {
+  const apiPath = "/api/v2/product/update_model";
+  const timestamp = Math.floor(Date.now() / 1000);
+  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
+
+  const safeItemId = toShopeeId(itemId);
+  const safeModelId = toShopeeId(modelId);
+  if (!safeItemId || !safeModelId) {
+    return {
+      error: "error_param",
+      message: "item_id/model_id không hợp lệ khi gọi update_model",
+      response: { failure_list: [], success_list: [] },
+    };
+  }
+
+  const body = {
+    item_id: safeItemId,
+    model: [
+      {
+        model_id: safeModelId,
+        model_sku: String(modelSku || "").trim(),
+      },
+    ],
+  };
+  console.log(`[Shopee API] POST ${apiPath} REQUEST item_id=${safeItemId}:`, JSON.stringify(body));
+  const { json, httpStatus } = await shopeePostJsonWithRetry(url, body, `POST ${apiPath} item_id=${safeItemId}`, {
+    maxAttempts: SHOPEE_SYNC_QUEUE_MAX_RETRY,
+  });
+  console.log(
+    `[Shopee API] POST ${apiPath} RESPONSE item_id=${safeItemId} HTTP ${httpStatus}:`,
+    JSON.stringify(json)
+  );
+  if (json && typeof json === "object") {
+    const businessError = String(json.error || "").trim();
+    if (businessError && !String(json.message || "").trim()) {
+      json.message = formatShopeeApiError(json, httpStatus >= 400 ? httpStatus : undefined);
+    }
+  }
+  return json;
+}
+
 // ---------------------------------------------------------------------------
 // Shopee Open API v2 — Đăng bán sản phẩm (Guide 217)
 // upload_image → add_item → init_tier_variation → add_model
@@ -14880,6 +14929,7 @@ async function startServer() {
     extractShopeeStockPushErrorMessage,
     buildShopeeUpdatePriceEntry,
     shopeeUpdatePrice,
+    shopeeUpdateModelSku,
     loadProductById,
   });
   initProductsController({

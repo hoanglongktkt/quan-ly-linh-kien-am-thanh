@@ -216,27 +216,74 @@ export default function ProductList({
       return;
     }
     const importPrice = Math.max(0, Math.round(Number(product.importPrice) || 0));
+    const sellingPrice = Math.max(0, Math.round(Number(product.sellingPrice) || 0));
+    const stock = Math.max(0, Math.round(Number(product.stock) || 0));
     const sku = String(product.sku ?? '').trim();
     setSavingImportPriceId(product.id);
     try {
+      // Gửi đủ tồn/giá/SKU để PATCH lưu Mongo rồi bắt buộc đẩy Shopee.
       const response = await fetch(`/api/products/${encodeURIComponent(product.id)}`, {
         method: 'PATCH',
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ importPrice, sku }),
+        body: JSON.stringify({
+          importPrice,
+          sellingPrice,
+          stock,
+          sku,
+          shopeeItemId: product.shopeeItemId,
+          shopeeModelId: product.shopeeModelId,
+          shopeeId: product.shopeeId,
+        }),
       });
       const data = await parseJsonResponse(response);
       if (!response.ok || data?.success === false) {
         throw new Error(
-          data?.error || data?.message || `Cập nhật phân loại thất bại (HTTP ${response.status})`
+          data?.error || data?.message || data?.shopeeMessage || `Cập nhật phân loại thất bại (HTTP ${response.status})`
         );
       }
       const savedPrice = Math.max(0, Math.round(Number(data?.importPrice ?? importPrice) || 0));
+      const savedSelling = Math.max(0, Math.round(Number(data?.sellingPrice ?? sellingPrice) || 0));
+      const savedStock = Math.max(0, Math.round(Number(data?.stock ?? stock) || 0));
       const savedSku = String(data?.sku ?? sku);
-      onUpdateProduct({ ...product, importPrice: savedPrice, sku: savedSku });
-      showActionToast('Lưu phân loại thành công!', true);
+      onUpdateProduct({
+        ...product,
+        importPrice: savedPrice,
+        sellingPrice: savedSelling,
+        stock: savedStock,
+        sku: savedSku,
+      });
+      // Nếu PATCH chưa sync (và vẫn có Mapping) → ép sync lại tồn/giá.
+      const unmapped =
+        typeof data?.shopeeMessage === 'string' &&
+        data.shopeeMessage.includes('Chưa liên kết Mapping');
+      if (!data?.shopeeSynced && !unmapped) {
+        const syncResponse = await fetch('/api/products/sync-shopee', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ productIds: [product.id] }),
+        });
+        const syncData = await parseJsonResponse(syncResponse);
+        if (!syncResponse.ok || syncData?.success === false) {
+          throw new Error(
+            syncData?.error ||
+              syncData?.message ||
+              syncData?.shopeeMessage ||
+              'Lưu kho thành công nhưng đồng bộ Shopee thất bại.'
+          );
+        }
+      }
+      showActionToast(
+        data?.shopeeMessage
+          ? `Lưu thành công! ${data.shopeeMessage}`
+          : 'Lưu thành công!',
+        true
+      );
     } catch (err: any) {
       showActionToast(`Lỗi: ${err?.message || 'Lưu phân loại thất bại.'}`);
     } finally {

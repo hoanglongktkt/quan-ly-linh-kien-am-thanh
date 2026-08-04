@@ -39,6 +39,7 @@ let deps = {
   extractShopeeStockPushErrorMessage: (_err, fallback) => fallback || "",
   buildShopeeUpdatePriceEntry: () => ({}),
   shopeeUpdatePrice: async () => ({}),
+  shopeeUpdateModelSku: async () => ({}),
   loadProductById: async () => null,
 };
 
@@ -300,7 +301,7 @@ export async function executeShopeeStockPriceSyncJob(product, opts) {
       const priceEntry = deps.buildShopeeUpdatePriceEntry(mapped.sellingPrice, modelId);
       try {
         console.log(
-          `[Shopee Sync] UpdatePrice shop_id=${shopId} item_id=${itemId} model_id=${modelId ?? "n/a"} price=${mapped.sellingPrice}`,
+          `[Shopee Sync] UpdatePrice shop_id=${shopId} item_id=${itemId} model_id=${modelId ?? "n/a"} price=${mapped.sellingPrice} sku=${mapped.sku || ""}`,
         );
         const priceResult = await deps.withShopeeAccessTokenRetry(
           shopId,
@@ -345,6 +346,57 @@ export async function executeShopeeStockPriceSyncJob(product, opts) {
       }
     }
 
+    // Cập nhật model_sku trên Shopee khi có model_id + SKU mới
+    if (opts.syncSku && modelId != null && typeof deps.shopeeUpdateModelSku === "function") {
+      await sleep(SHOPEE_SYNC_QUEUE_GAP_MS);
+      const modelSku = String(mapped.sku || "").trim();
+      try {
+        console.log(
+          `[Shopee Sync] UpdateModelSku shop_id=${shopId} item_id=${itemId} model_id=${modelId} sku=${modelSku}`,
+        );
+        const skuResult = await deps.withShopeeAccessTokenRetry(
+          shopId,
+          async (token) => {
+            accessToken = token || accessToken;
+            return deps.shopeeUpdateModelSku(shopId, accessToken, itemId, modelId, modelSku);
+          },
+          isAuthFailResult,
+        );
+        const parsed = deps.parseShopeeApiResult(skuResult, mapped, "update_model");
+        lines.push(parsed.message || `update_model sku=${modelSku}`);
+        if (!parsed.success) {
+          console.error(`[Shopee Sync] UpdateModelSku FAIL:`, parsed.message);
+          await deps.appendShopeeSyncErrorToDb({
+            itemId,
+            modelId: modelId ?? mapped.shopeeModelId,
+            sku: mapped.sku,
+            shopId,
+            action: "update_model",
+            error: parsed.message,
+            productId: mapped.id,
+          });
+          return { ok: false, message: parsed.message };
+        }
+        console.log(`[Shopee Sync] UpdateModelSku OK item_id=${itemId} model_id=${modelId}`);
+      } catch (err) {
+        const msg = deps.extractShopeeStockPushErrorMessage(
+          err,
+          err instanceof Error ? err.message : String(err),
+        );
+        console.error(`[Shopee Sync] UpdateModelSku exception shop=${shopId} item=${itemId}:`, err);
+        await deps.appendShopeeSyncErrorToDb({
+          itemId,
+          modelId: modelId ?? mapped.shopeeModelId,
+          sku: mapped.sku,
+          shopId,
+          action: "update_model",
+          error: msg,
+          productId: mapped.id,
+        });
+        return { ok: false, message: msg };
+      }
+    }
+
     return { ok: true, message: lines.join(" | ") || "Sync Shopee OK" };
   } catch (err) {
     console.error("[Shopee Sync] executeShopeeStockPriceSyncJob exception:", err);
@@ -359,8 +411,8 @@ export async function executeShopeeStockPriceSyncJob(product, opts) {
  * Đa shop: nếu không truyền shop_id → lần lượt đồng bộ lên TẤT CẢ shop đã ủy quyền.
  */
 export async function pushProductStockPriceToShopeeImmediate(product, opts) {
-  if (!opts.syncStock && !opts.syncPrice) {
-    return { ok: true, skipped: true, message: "Không có thay đổi tồn/giá cần đồng bộ Shopee." };
+  if (!opts.syncStock && !opts.syncPrice && !opts.syncSku) {
+    return { ok: true, skipped: true, message: "Không có thay đổi tồn/giá/SKU cần đồng bộ Shopee." };
   }
   try {
     const mapped = await resolveProductWithShopeeMapping(product);
@@ -389,7 +441,7 @@ export async function pushProductStockPriceToShopeeImmediate(product, opts) {
     }
 
     console.log(
-      `[Shopee Sync] Manual sync product=${mapped.id || mapped.sku} shops=[${shopIds.join(", ")}] stock=${!!opts.syncStock} price=${!!opts.syncPrice}`,
+      `[Shopee Sync] Manual sync product=${mapped.id || mapped.sku} item=${deps.getShopeeItemIdForStockPush(mapped) ?? "?"} model=${deps.resolveShopeeModelIdForStockPush(mapped) ?? "?"} sku=${mapped.sku || ""} shops=[${shopIds.join(", ")}] stock=${!!opts.syncStock} price=${!!opts.syncPrice} skuSync=${!!opts.syncSku}`,
     );
 
     const shopResults = [];
@@ -397,6 +449,7 @@ export async function pushProductStockPriceToShopeeImmediate(product, opts) {
       const result = await executeShopeeStockPriceSyncJob(mapped, {
         syncStock: opts.syncStock,
         syncPrice: opts.syncPrice,
+        syncSku: !!opts.syncSku,
         shopId,
       });
       shopResults.push({ shopId, ...result });
