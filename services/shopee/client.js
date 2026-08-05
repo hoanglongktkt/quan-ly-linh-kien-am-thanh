@@ -200,129 +200,63 @@ export function shopeeApiErrorResult(err, context, httpStatus) {
 
 /**
  * Dịch/làm gọn thông báo lỗi Shopee cho user.
- * Map shop ID → tên, bỏ prefix thừa, chống trùng; mã lạ giữ nguyên để debug.
+ * Giữ [shopId] + nội dung; FE/Alert map ID → tên shop qua formatShopeeSyncAlertLines.
  */
-const SHOPEE_SYNC_SHOP_DISPLAY_NAMES = {
+const SHOP_MAP = {
   "831052930": "LK audio",
   "4127421": "LK AT",
 };
 
-function resolveShopeeSyncShopName(shopId) {
-  const id = String(shopId || "").trim();
-  return SHOPEE_SYNC_SHOP_DISPLAY_NAMES[id] || `Shop ${id}`;
-}
-
-function stripShopeeSyncNoisePrefixes(text) {
-  let t = String(text || "").trim();
-  for (let i = 0; i < 12; i++) {
-    const next = t
-      .replace(/^(?:Lỗi đồng bộ Shopee|Lỗi từ Shopee|Shopee báo lỗi)\s*:\s*/i, "")
-      .replace(/^[A-Za-z0-9][A-Za-z0-9._:-]*\s*:\s+/, "")
-      .trim();
-    if (next === t) break;
-    t = next;
-  }
-  return t;
-}
-
-function applyShopeeErrorCodeHumanize(text) {
+function translateShopeeErrorCodes(text) {
   let out = String(text || "");
-  const rules = [
-    {
-      test: /error_update_price_fail/i,
-      stripEn: /Update price failed(?:,?\s*please try later\.?)?/gi,
-      stripCode: /(?:product\.)?error_update_price_fail/gi,
-      vi: "Không thể cập nhật giá do sản phẩm đang tham gia CTKM",
-    },
-    {
-      test: /error_item_not_found/i,
-      stripEn: /Item[_ ]?id is not found\.?/gi,
-      stripCode: /(?:product\.)?error_item_not_found/gi,
-      vi: "Không tìm thấy sản phẩm tại shop",
-    },
-  ];
-  for (const rule of rules) {
-    if (!rule.test.test(out)) continue;
-    out = out.replace(rule.stripEn, "").replace(rule.stripCode, rule.vi);
+  if (/error_update_price_fail/i.test(out)) {
+    out = out
+      .replace(/Update price failed(?:,?\s*please try later\.?)?/gi, "")
+      .replace(
+        /(?:product\.)?error_update_price_fail/gi,
+        "Không thể cập nhật giá do sản phẩm đang tham gia CTKM",
+      );
+  }
+  if (/error_item_not_found/i.test(out)) {
+    out = out
+      .replace(/Item[_ ]?id is not found\.?/gi, "")
+      .replace(/(?:product\.)?error_item_not_found/gi, "Không tìm thấy sản phẩm tại shop");
   }
   return out
-    .replace(/\s*[—\-–:]\s*(?=[—\-–:]|$)/g, "")
-    .replace(/^\s*[—\-–:]\s*/, "")
-    .replace(/\s*[—\-–:]\s*$/, "")
+    .replace(/\s*[—\-–]\s*(?=[—\-–|]|$)/g, "")
     .replace(/[ \t]{2,}/g, " ")
     .trim();
 }
 
-function formatOneShopeeSyncSegment(segment) {
-  const raw = stripShopeeSyncNoisePrefixes(segment);
-  if (!raw) return "";
-
-  const shopMatch = raw.match(/\[(\d{4,})\]/);
-  const shopId = shopMatch?.[1] || "";
-  const shopName = shopId ? resolveShopeeSyncShopName(shopId) : "";
-
-  const humanized = applyShopeeErrorCodeHumanize(raw);
-  const probe = `${raw} ${humanized}`.toLowerCase();
-
-  if (/error_item_not_found|item[_ ]?id is not found|không tìm thấy sản phẩm/.test(probe)) {
-    return shopName
-      ? `Không tìm thấy sản phẩm trên shop ${shopName}`
-      : "Không tìm thấy sản phẩm tại shop";
-  }
-
-  if (
-    /error_update_price_fail|update price failed|không thể cập nhật giá|đang tham gia ctkm/.test(
-      probe,
-    )
-  ) {
-    return shopName
-      ? `Không thể cập nhật giá do đang tham gia CTKM trên shop ${shopName}`
-      : "Không thể cập nhật giá do sản phẩm đang tham gia CTKM";
-  }
-
-  let cleaned = stripShopeeSyncNoisePrefixes(humanized)
-    .replace(/\[\d{4,}\]\s*/g, "")
-    .replace(/[ \t]{2,}/g, " ")
-    .trim();
-  if (!cleaned) return raw;
-  if (shopName && !cleaned.toLowerCase().includes(shopName.toLowerCase())) {
-    return `${cleaned} (shop ${shopName})`;
-  }
-  return cleaned;
-}
-
+/** Trích `[shopId] nội dung` → "{nội dung} trên shop {tên}", lọc trùng. */
 export function formatShopeeSyncAlertLines(raw) {
-  const text = String(raw ?? "").trim();
+  const text = translateShopeeErrorCodes(String(raw ?? ""));
   if (!text) return [];
 
-  let parts = text
-    .split(/\s*\|\s*|\n+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-
-  if (parts.length <= 1) {
-    const bracketParts = text.match(/\[[\d]{4,}\][^[]*/g);
-    if (bracketParts && bracketParts.length > 1) {
-      parts = bracketParts.map((s) => s.trim()).filter(Boolean);
-    }
+  const re = /\[(\d+)\]([^\[\]—]+)/g;
+  const lines = [];
+  let match;
+  while ((match = re.exec(text)) !== null) {
+    const shopId = match[1];
+    const shopName = SHOP_MAP[shopId] || `Shop ${shopId}`;
+    let body = String(match[2] || "")
+      .replace(/^\s*[|:]\s*/, "")
+      .replace(/\s*[|:]\s*$/, "")
+      .replace(/\s+tại\s+shop\s*$/i, "")
+      .replace(/\s+trên\s+shop\s+\S.*$/i, "")
+      .replace(/[ \t]{2,}/g, " ")
+      .trim();
+    if (!body) continue;
+    lines.push(`${body} trên shop ${shopName}`);
   }
-
-  const lines = parts.map(formatOneShopeeSyncSegment).filter(Boolean);
-  const seen = new Set();
-  const unique = [];
-  for (const line of lines) {
-    const key = line.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    unique.push(line);
-  }
-  return unique;
+  return [...new Set(lines)];
 }
 
 export function humanizeShopeeErrorMessage(raw) {
   const lines = formatShopeeSyncAlertLines(raw);
   if (lines.length > 0) return lines.join(" | ");
-  return String(raw ?? "").trim();
+  // Chưa có [shopId] (vd. parse API từng shop) — chỉ dịch mã lỗi, giữ nguyên phần còn lại.
+  return translateShopeeErrorCodes(String(raw ?? "")) || String(raw ?? "").trim();
 }
 
 export function formatShopeeApiError(json, httpStatus) {

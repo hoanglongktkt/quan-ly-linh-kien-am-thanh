@@ -897,19 +897,13 @@ export default function ProductList({
           className="w-full flex items-start gap-3 bg-white text-red-600 border border-red-500 rounded-lg px-4 py-3.5 shadow-md"
         >
           <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 text-red-600" />
-          <div className="flex-1 min-w-0 text-[15px] sm:text-base font-semibold leading-snug">
-            {shopeeSyncError.length === 1 ? (
-              <p className="break-words">{shopeeSyncError[0]}</p>
-            ) : (
-              <ul className="list-disc pl-5 space-y-1">
-                {shopeeSyncError.map((line) => (
-                  <li key={line} className="break-words">
-                    {line}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+          <ul className="flex-1 min-w-0 list-disc pl-5 space-y-1 text-[15px] sm:text-base font-semibold leading-snug">
+            {shopeeSyncError.map((line) => (
+              <li key={line} className="break-words">
+                {line}
+              </li>
+            ))}
+          </ul>
           <button
             type="button"
             onClick={() => setShopeeSyncError(null)}
