@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { formatVndInput, parseVndInput } from '../utils/currencyFormat';
+import React, { useEffect, useState } from 'react';
+import { applySmartShorthand, formatVndInput, parseVndInput } from '../utils/currencyFormat';
 
 interface CurrencyInputProps {
   value: number;
@@ -12,10 +12,11 @@ interface CurrencyInputProps {
   onClick?: (e: React.MouseEvent<HTMLInputElement>) => void;
   title?: string;
   /**
-   * Khi bật: giá trị 0 hiển thị "000"; gõ số (vd "15") tự nối thành "15000".
-   * Dùng cho ô Đơn giá khi tạo đơn nhập hàng.
+   * Gõ tắt thông minh (onBlur / Enter):
+   * giá trị < 1000 → ×1000 (vd 15 → 15000, 9.3 → 9300);
+   * ≥ 1000 giữ nguyên. Cho phép gõ số, `.`, `,` tự do.
    */
-  zerosSuffix?: boolean;
+  smartShorthand?: boolean;
 }
 
 /** Ô nhập tiền tự format dấu chấm hàng nghìn (1.200.000). Value state luôn là số nguyên. */
@@ -29,72 +30,67 @@ export default function CurrencyInput({
   disabled,
   onClick,
   title,
-  zerosSuffix = false,
+  smartShorthand = false,
 }: CurrencyInputProps) {
-  const [suffixMode, setSuffixMode] = useState(zerosSuffix && value === 0);
-  const [prefix, setPrefix] = useState('');
-  const prevValueRef = useRef(value);
+  const [focused, setFocused] = useState(false);
+  const [text, setText] = useState('');
 
   useEffect(() => {
-    if (!zerosSuffix) return;
-    // Dòng mới / reset về 0 → quay lại chế độ "000"
-    if (value === 0 && prevValueRef.current !== 0) {
-      setSuffixMode(true);
-      setPrefix('');
+    if (!focused) {
+      setText(formatVndInput(value));
     }
-    prevValueRef.current = value;
-  }, [value, zerosSuffix]);
+  }, [value, focused]);
 
   const emit = (next: number) => {
     let n = next;
     if (min != null) n = Math.max(min, n);
     if (max != null) n = Math.min(max, n);
     onChange(n);
+    return n;
   };
 
-  const displayValue =
-    zerosSuffix && suffixMode ? (prefix ? `${prefix}000` : '000') : formatVndInput(value);
+  const commitSmart = () => {
+    const next = emit(applySmartShorthand(text));
+    setText(formatVndInput(next));
+    setFocused(false);
+  };
 
   return (
     <input
       type="text"
-      inputMode="numeric"
+      inputMode="decimal"
       disabled={disabled}
-      placeholder={zerosSuffix ? '000' : placeholder}
+      placeholder={placeholder}
       title={title}
-      value={displayValue}
+      value={smartShorthand && focused ? text : formatVndInput(value)}
       onClick={onClick}
-      onFocus={() => {
-        if (zerosSuffix && value === 0) {
-          setSuffixMode(true);
-          setPrefix('');
-        }
+      onFocus={(e) => {
+        if (!smartShorthand) return;
+        setFocused(true);
+        setText(value > 0 ? formatVndInput(value) : '');
+        requestAnimationFrame(() => e.target.select());
       }}
       onChange={(e) => {
-        if (zerosSuffix && suffixMode) return; // digit xử lý ở onKeyDown
+        if (smartShorthand && focused) {
+          const raw = e.target.value;
+          if (raw === '' || /^[0-9.,]*$/.test(raw)) {
+            setText(raw);
+          }
+          return;
+        }
         emit(parseVndInput(e.target.value));
       }}
       onKeyDown={(e) => {
-        if (!zerosSuffix || !suffixMode) return;
-        if (e.key >= '0' && e.key <= '9') {
+        if (!smartShorthand || !focused) return;
+        if (e.key === 'Enter') {
           e.preventDefault();
-          const nextPrefix = prefix + e.key;
-          setPrefix(nextPrefix);
-          emit(Number(nextPrefix + '000') || 0);
-        } else if (e.key === 'Backspace') {
-          e.preventDefault();
-          const nextPrefix = prefix.slice(0, -1);
-          setPrefix(nextPrefix);
-          emit(nextPrefix ? Number(nextPrefix + '000') || 0 : 0);
-        } else if (e.key === 'Delete') {
-          e.preventDefault();
-          setPrefix('');
-          emit(0);
+          (e.target as HTMLInputElement).blur();
         }
       }}
       onBlur={() => {
-        if (zerosSuffix && suffixMode && prefix) {
-          setSuffixMode(false);
+        if (smartShorthand && focused) {
+          commitSmart();
+          return;
         }
         if (min != null && value < min) onChange(min);
       }}

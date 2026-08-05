@@ -664,7 +664,7 @@ export default function ImportManager({
                                   <CurrencyInput
                                     value={line.unitPrice}
                                     onChange={(v) => updateLine(line.productId, { unitPrice: v })}
-                                    zerosSuffix
+                                    smartShorthand
                                     className="w-[130px] h-10 px-2 text-right font-mono font-bold text-sm text-indigo-700 rounded-lg border border-gray-200 outline-none focus:border-indigo-400"
                                   />
                                   <button
