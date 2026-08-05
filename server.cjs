@@ -76137,9 +76137,6 @@ async function loadCancelReturnMissingTrackingFromStore(opts) {
   };
   const returnEmpty = {
     $or: [
-      { return_tracking_no: { $exists: false } },
-      { return_tracking_no: null },
-      { return_tracking_no: "" },
       { "data.return_tracking_no": { $exists: false } },
       { "data.return_tracking_no": null },
       { "data.return_tracking_no": "" }
@@ -76147,12 +76144,15 @@ async function loadCancelReturnMissingTrackingFromStore(opts) {
   };
   const cancelReturnStatus = {
     $or: [
-      { status: { $in: ["cancelled", "return_pending", "return_received", "completed", "processed", "unprocessed"] } },
-      { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN", "COMPLETED", "PROCESSED", "READY_TO_SHIP", "UNPAID"] } },
-      { "data.shopee_order_status": { $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN", "COMPLETED", "PROCESSED", "READY_TO_SHIP", "UNPAID"] } },
-      { return_sn: { $exists: true, $nin: [null, ""] } },
+      { status: { $in: ["cancelled", "return_pending", "return_received"] } },
+      { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"] } },
+      { "data.shopee_order_status": { $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"] } },
       { "data.return_sn": { $exists: true, $nin: [null, ""] } },
-      { "data.shopee_cancel_return_kind": { $in: ["cancelled", "refund_return", "failed_delivery"] } }
+      {
+        "data.shopee_cancel_return_kind": {
+          $in: ["cancelled", "refund_return", "failed_delivery"]
+        }
+      }
     ]
   };
   const filter = {
@@ -116652,7 +116652,7 @@ async function triggerFixStuckOrders2(opts) {
 }
 function applyShopeeGetTrackingResponse(order, trackResult) {
   const sn = String(order?.orderSn || "").trim();
-  console.log(`ShopeeGetTrackingResponse order=[${sn}]:`, JSON.stringify(trackResult));
+  console.log(`GHN_API_RESPONSE for order [${sn}]:`, JSON.stringify(trackResult));
   const resp = trackResult?.response ?? trackResult ?? {};
   const pkg = String(
     resp?.package_number || resp?.package_no || resp?.packageNumber || trackResult?.package_number || ""
@@ -116683,12 +116683,6 @@ function applyShopeeGetTrackingResponse(order, trackResult) {
     }
   }
   repairMisassignedTracking(order);
-  if (!hasUsableShopeeTrackingNumber(order)) {
-    const rawCandidates = candidates.filter(Boolean);
-    console.log(
-      `[Shopee Tracking] EMPTY_TRACKING_CANDIDATES order_sn=${sn} candidates=${JSON.stringify(rawCandidates)} error=${trackResult?.error || "\u2014"} message=${trackResult?.message || "\u2014"} response_keys=${Object.keys(resp).join(",")}`
-    );
-  }
 }
 function promoteOrderStatusWhenTrackingReady(order) {
   if (!order) return false;
@@ -117038,7 +117032,7 @@ async function shopeeGetTrackingNumberWithRetry(shopId, accessToken, orderSn, pa
       last = { error: "exception", message: err?.message || String(err) };
       if (attempt >= maxAttempts) return last;
     }
-    await sleep2(1200);
+    await sleep2(300);
   }
   return last;
 }
@@ -117498,7 +117492,7 @@ async function repairMissingShopeeTrackingInOrders(orders, opts) {
 }
 var healCancelledReturnTrackingInFlight = false;
 async function healCancelledReturnTrackingOrders(opts) {
-  const HEAL_ITEM_DELAY_MS = 1500;
+  const HEAL_ITEM_DELAY_MS = 800;
   const max = Math.min(Math.max(1, Math.floor(Number(opts?.max) || 100)), 500);
   const lookbackDays = Math.min(
     Math.max(1, Math.floor(Number(opts?.lookbackDays) || 60)),
@@ -117540,7 +117534,6 @@ async function healCancelledReturnTrackingOrders(opts) {
     let filled = 0;
     let stillEmpty = 0;
     let errors = 0;
-    let progressLogThrottle = 0;
     const samples = [];
     for (const order of candidates) {
       const sn = String(order?.orderSn || "").trim();
@@ -117605,7 +117598,7 @@ async function healCancelledReturnTrackingOrders(opts) {
           stillEmpty += 1;
           samples.push({ orderSn: sn, ok: false });
           console.log(
-            `[Heal CancelReturn Tracking] VAN_TRONG order_sn=${sn} status=${order.status} raw=${order.shopee_order_status || "\u2014"} return_sn=${order.return_sn || "\u2014"} kind=${order.shopee_cancel_return_kind || "\u2014"} pkg=${order.packageNumber || order.package_number || "\u2014"} tn=${order.trackingNumber || order.tracking_no || "\u2014"}`
+            `[Heal CancelReturn Tracking] V\u1EAAN TR\u1ED0NG order_sn=${sn} status=${order.status} raw=${order.shopee_order_status || "\u2014"} return_sn=${order.return_sn || "\u2014"}`
           );
         }
       } catch (err) {
@@ -117617,12 +117610,6 @@ async function healCancelledReturnTrackingOrders(opts) {
         );
       } finally {
         await sleep2(HEAL_ITEM_DELAY_MS);
-        progressLogThrottle += 1;
-        if (progressLogThrottle % 50 === 0) {
-          console.log(
-            `[Heal CancelReturn Tracking] PROGRESS processed=${progressLogThrottle}/${candidates.length} filled=${filled} stillEmpty=${stillEmpty} errors=${errors}`
-          );
-        }
       }
     }
     try {
