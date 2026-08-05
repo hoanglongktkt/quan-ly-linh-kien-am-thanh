@@ -717,11 +717,22 @@ async function processShopeeWebhookPayloadInner(body) {
           !deps.hasUsableShopeeTrackingNumber(orders[idx]))
       ) {
         try {
+          const row = orders[idx];
+          const cancelReturn =
+            String(row?.status || "").toLowerCase() === "cancelled" ||
+            String(row?.status || "").toLowerCase() === "return_pending" ||
+            String(row?.status || "").toLowerCase() === "return_received" ||
+            ["CANCELLED", "IN_CANCEL", "TO_RETURN"].includes(
+              String(row?.shopee_order_status || "").toUpperCase(),
+            ) ||
+            Boolean(row?.return_sn) ||
+            parsed.eventKind === "return_refund" ||
+            Boolean(parsed.returnSn);
           await deps.enrichShopeeOrderTrackingFromApi(
             shopId,
             accessToken,
             orders[idx],
-            { retries: 1, light: true },
+            { retries: cancelReturn ? 2 : 1, light: !cancelReturn },
           );
           deps.applyShopeePushFieldsToOrder(orders[idx], parsed);
         } catch (trackErr) {

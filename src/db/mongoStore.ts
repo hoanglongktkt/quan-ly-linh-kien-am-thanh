@@ -1716,6 +1716,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     if (order.shopName != null) $set["data.shopName"] = String(order.shopName);
 
     // BẢO TOÀN tracking_no + shipping_carrier thật từ Shopee
+    // Chỉ GHI khi có mã thật — tuyệt đối không $set rỗng/null (tránh mất mã khi hủy/hoàn).
     if (usableTn) {
       $set.tracking_no = usableTn;
       $set["data.tracking_no"] = usableTn;
@@ -1737,6 +1738,11 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       $set.packageNumber = pkgNum;
       $set["data.packageNumber"] = pkgNum;
       $set["data.package_number"] = pkgNum;
+    }
+
+    const returnTn = String(order.return_tracking_no || "").trim();
+    if (returnTn && !/^0FG/i.test(returnTn)) {
+      $set["data.return_tracking_no"] = returnTn;
     }
     // Push fallback có thể chỉ chứa orderSn/status. Không để `items: []` hoặc
     // `totalAmount: 0` ghi đè snapshot chi tiết đã lấy trước đó.
@@ -1764,13 +1770,28 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       $set["data.logistics_status"] = order.logistics_status;
     }
 
+    // Field tracking — không bao giờ ghi đè bằng chuỗi rỗng / null từ sync hủy/hoàn.
+    const TRACKING_PRESERVE_KEYS = new Set([
+      "tracking_no",
+      "trackingNumber",
+      "return_tracking_no",
+      "shopee_tracking_number",
+      "internalTrackingCode",
+      "packageNumber",
+      "package_number",
+    ]);
+
     // Field Shopee còn lại → data.* (bỏ cờ nội bộ — tránh đè true→false)
     for (const [key, value] of Object.entries(order)) {
       if (key === "id" || key === "_id") continue;
       if (INTERNAL_FLAG_KEYS.has(key)) continue;
-      if (value === undefined) continue;
+      if (value === undefined || value === null) continue;
       if (key === "items" && Array.isArray(value) && value.length === 0) continue;
       if (key === "totalAmount" && Number(value) <= 0) continue;
+      if (TRACKING_PRESERVE_KEYS.has(key)) {
+        const s = String(value).trim();
+        if (!s || /^0FG/i.test(s)) continue;
+      }
       $set[`data.${key}`] = value;
     }
 
@@ -2505,6 +2526,7 @@ export async function updateOrderTrackingInStore(
     shopee_order_status?: string;
     is_pending_shopee_check?: boolean;
     shopId?: string;
+    return_tracking_no?: string;
   },
 ): Promise<boolean> {
   if (!isMongoReady()) return false;
@@ -2533,6 +2555,10 @@ export async function updateOrderTrackingInStore(
       $set["data.packageNumber"] = pkg;
       $set["data.package_number"] = pkg;
     }
+  }
+  const rtn = String(extra?.return_tracking_no || "").trim();
+  if (rtn && !/^0FG/i.test(rtn)) {
+    $set["data.return_tracking_no"] = rtn;
   }
   if (extra?.status != null) {
     $set.status = String(extra.status);
@@ -3223,7 +3249,14 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
   const data = d?.data && typeof d.data === "object" ? { ...d.data } : {};
   const sn = String(d?.orderSn || data.orderSn || String(d?._id || "").replace(/^shopee-/i, "")).trim();
   if (!sn && !d?._id) return null;
-  const tn = String(d?.tracking_no || data.tracking_no || data.trackingNumber || "").trim();
+  const tn = String(
+    d?.tracking_no ||
+      data.tracking_no ||
+      data.trackingNumber ||
+      data.return_tracking_no ||
+      "",
+  ).trim();
+  const returnTn = String(data.return_tracking_no || "").trim();
   const pkg = String(
     d?.packageNumber ||
       data.packageNumber ||
@@ -3280,6 +3313,7 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
     shopId: d?.shopId != null ? d.shopId : data.shopId,
     tracking_no: tn || undefined,
     trackingNumber: tn || undefined,
+    return_tracking_no: returnTn || data.return_tracking_no || undefined,
     packageNumber: pkg || undefined,
     package_number: pkg || undefined,
     shipping_carrier: carrier || data.shipping_carrier || undefined,
