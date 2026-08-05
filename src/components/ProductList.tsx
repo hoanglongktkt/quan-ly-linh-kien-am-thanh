@@ -203,6 +203,7 @@ export default function ProductList({
   const [savingImportPriceId, setSavingImportPriceId] = useState<string | null>(null);
   const [actionToast, setActionToast] = useState<string | null>(null);
   const [actionToastOk, setActionToastOk] = useState(false);
+  const [shopeeSyncError, setShopeeSyncError] = useState<string | null>(null);
 
   const showActionToast = (message: string, ok = false) => {
     setActionToastOk(ok);
@@ -289,6 +290,7 @@ export default function ProductList({
       return;
     }
     setSyncingProductId(productId);
+    setShopeeSyncError(null);
     setActionToastOk(false);
     setActionToast('Đang đồng bộ giá và tồn kho lên Shopee...');
     try {
@@ -322,7 +324,8 @@ export default function ProductList({
       });
     } catch (err: any) {
       const msg = humanizeShopeeErrorMessage(err?.message || 'Đồng bộ Shopee thất bại.');
-      showActionToast(`Lỗi đồng bộ Shopee: ${msg}`);
+      setActionToast(null);
+      setShopeeSyncError(`Lỗi đồng bộ Shopee: ${msg}`);
       onAddLog({
         id: `sync-${Date.now()}`,
         timestamp: new Date().toISOString(),
@@ -884,6 +887,26 @@ export default function ProductList({
           <span>{actionToast}</span>
           <button onClick={() => setActionToast(null)} className="ml-1 text-gray-400 hover:text-white cursor-pointer">
             <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+      {shopeeSyncError && (
+        <div
+          role="alert"
+          className="w-full flex items-start gap-3 bg-white text-red-600 border border-red-500 rounded-lg px-4 py-3.5 shadow-md"
+        >
+          <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 text-red-600" />
+          <p className="flex-1 min-w-0 text-[15px] sm:text-base font-semibold leading-snug break-words">
+            {shopeeSyncError}
+          </p>
+          <button
+            type="button"
+            onClick={() => setShopeeSyncError(null)}
+            className="shrink-0 p-1 rounded text-red-500 hover:bg-red-50 hover:text-red-700 cursor-pointer"
+            aria-label="Đóng thông báo lỗi"
+            title="Đóng"
+          >
+            <X className="w-5 h-5" />
           </button>
         </div>
       )}

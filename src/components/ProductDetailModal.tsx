@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Product, SystemFee, getProductChildren } from '../types';
 import { parseJsonResponse, humanizeShopeeErrorMessage } from '../utils/apiClient';
 import { buildShopeeSyncPayload } from '../utils/shopeeSyncPayload';
-import { X, RefreshCw, Check, Package, TrendingUp, TrendingDown, Save } from 'lucide-react';
+import { X, RefreshCw, Check, Package, TrendingUp, TrendingDown, Save, AlertCircle } from 'lucide-react';
 
 const SAPO = { blue: '#0078D4', bg: '#F4F6F8', border: '#E0E0E0' };
 
@@ -224,6 +224,7 @@ export default function ProductDetailModal({
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [shopeeSyncError, setShopeeSyncError] = useState<string | null>(null);
 
   useEffect(() => { setLocalProducts(allProducts); }, [allProducts]);
 
@@ -244,6 +245,7 @@ export default function ProductDetailModal({
     setEditImportPrice(active.importPrice);
     setEditUnit(active.unit || '');
     setToast(null);
+    setShopeeSyncError(null);
   }, [active?.id]);
 
   const itemKey = getShopeeItemKey(active);
@@ -324,6 +326,7 @@ export default function ProductDetailModal({
     const updated = buildUpdatedProduct();
     if (!updated) return;
     setSaving(true);
+    setShopeeSyncError(null);
     setToast('Đang lưu và đồng bộ lên Shopee...');
     try {
       // 1) Lưu form vào MongoDB trước (stock/price/sku) để sync đọc đúng từ kho.
@@ -370,10 +373,10 @@ export default function ProductDetailModal({
         onClose();
       }, 800);
     } catch (err: any) {
-      setToast(
+      setToast(null);
+      setShopeeSyncError(
         `Lỗi đồng bộ Shopee: ${humanizeShopeeErrorMessage(err?.message || 'Đồng bộ thất bại.')}`,
       );
-      setTimeout(() => setToast(null), 4500);
     } finally {
       setSaving(false);
     }
@@ -465,6 +468,27 @@ export default function ProductDetailModal({
 
           {/* Main form */}
           <div className="flex-1 overflow-y-auto p-3 sm:p-4 pb-28 sm:pb-4 space-y-3">
+            {shopeeSyncError && (
+              <div
+                role="alert"
+                className="w-full flex items-start gap-3 bg-white text-red-600 border border-red-500 rounded-[6px] px-4 py-3.5 shadow-md"
+              >
+                <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 text-red-600" />
+                <p className="flex-1 min-w-0 text-[15px] sm:text-base font-semibold leading-snug break-words">
+                  {shopeeSyncError}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShopeeSyncError(null)}
+                  className="shrink-0 p-1 rounded text-red-500 hover:bg-red-50 hover:text-red-700 cursor-pointer"
+                  aria-label="Đóng thông báo lỗi"
+                  title="Đóng"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            )}
+
             {/* Mobile variant picker */}
             <div className="sm:hidden">
               <label className={labelCls}>Phiên bản ({variants.length})</label>
