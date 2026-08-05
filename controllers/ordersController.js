@@ -83,6 +83,7 @@ let deps = {
     filled: 0,
     stillEmpty: 0,
     errors: 0,
+    skipped: false,
     samples: [],
   }),
   forceResyncStuckOrdersWithoutTracking: async () => ({
@@ -1254,62 +1255,37 @@ export async function enrichTracking(req, res) {
 
 /**
  * GET|POST /api/orders/heal-tracking-cancelled
- * Quét đơn Hủy/Hoàn thiếu tracking_no trong Mongo → deep fetch Shopee (light:false) → ghi lại DB.
- * Query/body: max (mặc định 200, tối đa 500), lookbackDays (mặc định 60), sync=1 để chờ kết quả.
+ * ACK 200 ngay — deep heal chạy nền (tránh cPanel/proxy timeout ~120s).
+ * Query/body: max (mặc định 100, tối đa 500), lookbackDays (mặc định 60).
  */
 export async function healTrackingCancelled(req, res) {
   try {
     const src = { ...(req.query || {}), ...(req.body || {}) };
-    const maxRaw = Number(src.max ?? 200);
-    const max = Number.isFinite(maxRaw) ? Math.min(Math.max(1, Math.floor(maxRaw)), 500) : 200;
+    const maxRaw = Number(src.max ?? 100);
+    const max = Number.isFinite(maxRaw) ? Math.min(Math.max(1, Math.floor(maxRaw)), 500) : 100;
     const daysRaw = Number(src.lookbackDays ?? src.days ?? 60);
     const lookbackDays = Number.isFinite(daysRaw)
       ? Math.min(Math.max(1, Math.floor(daysRaw)), 180)
       : 60;
-    const waitSync =
-      src.sync === true ||
-      src.sync === 1 ||
-      src.sync === "1" ||
-      src.sync === "true" ||
-      src.wait === true ||
-      src.wait === "1";
 
-    if (waitSync) {
-      const result = await deps.healCancelledReturnTrackingOrders({
-        max,
-        lookbackDays,
-        retries: 3,
-      });
-      ordersRefreshCache = null;
-      return res.status(200).json({
-        success: true,
-        background: false,
-        message:
-          `Đã heal xong: filled=${result.filled}/${result.attempted}` +
-          ` (candidates=${result.candidates}, stillEmpty=${result.stillEmpty}, errors=${result.errors}).` +
-          ` Tải lại tab ĐƠN HỦY, ĐƠN HOÀN để kiểm tra.`,
-        ...result,
-      });
-    }
-
+    // BẮT BUỘC trả 200 ngay — không await Shopee (sync=1 đã gây timeout 120s+).
     res.status(200).json({
       success: true,
       background: true,
       max,
       lookbackDays,
       message:
-        `Đang heal mã vận đơn đơn hủy/hoàn ngầm (max=${max}, lookback=${lookbackDays} ngày, light=false)...` +
-        ` Xem log server; sau vài phút tải lại tab ĐƠN HỦY, ĐƠN HOÀN.` +
-        ` Muốn chờ kết quả: thêm ?sync=1`,
+        `Đang xử lý ngầm: heal mã vận đơn đơn hủy/hoàn (max=${max}, lookback=${lookbackDays} ngày).` +
+        ` Không chờ HTTP — xem log server; sau vài phút tải lại tab ĐƠN HỦY, ĐƠN HOÀN.`,
     });
 
     setImmediate(() => {
       deps
-        .healCancelledReturnTrackingOrders({ max, lookbackDays, retries: 3 })
+        .healCancelledReturnTrackingOrders({ max, lookbackDays, retries: 2 })
         .then((result) => {
           ordersRefreshCache = null;
           console.log(
-            `[Orders] heal-tracking-cancelled BG filled=${result.filled}` +
+            `[Orders] heal-tracking-cancelled BG DONE filled=${result.filled}` +
               ` attempted=${result.attempted} stillEmpty=${result.stillEmpty} errors=${result.errors}`,
           );
         })
