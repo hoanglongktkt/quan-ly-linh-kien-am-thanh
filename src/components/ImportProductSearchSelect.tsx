@@ -38,7 +38,6 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
     const [highlightIndex, setHighlightIndex] = useState(0);
     const [remoteProducts, setRemoteProducts] = useState<Product[]>([]);
     const [searching, setSearching] = useState(false);
-    const [searchError, setSearchError] = useState<string | null>(null);
     const rootRef = useRef<HTMLDivElement>(null);
     const listRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
@@ -48,20 +47,21 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
 
     useImperativeHandle(ref, () => ({
       focus: () => {
-        setOpen(true);
         setTimeout(() => inputRef.current?.focus(), 0);
       },
     }));
 
     const excludeSet = useMemo(() => new Set(excludeIds), [excludeIds]);
     const filtered = remoteProducts.filter((p) => !excludeSet.has(p.id));
+    const searchTerm = query.trim();
+    const showDropdown = open && searchTerm.length > 0 && filtered.length > 0;
 
     useEffect(() => {
       setHighlightIndex(0);
     }, [query, open, filtered.length]);
 
     useEffect(() => {
-      if (!open) return;
+      if (!showDropdown) return;
       const onDocClick = (e: MouseEvent) => {
         if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
           setOpen(false);
@@ -69,24 +69,31 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
       };
       document.addEventListener('mousedown', onDocClick);
       return () => document.removeEventListener('mousedown', onDocClick);
-    }, [open]);
+    }, [showDropdown]);
 
     useEffect(() => {
-      if (!open || !listRef.current) return;
+      if (!showDropdown || !listRef.current) return;
       const el = listRef.current.children[highlightIndex] as HTMLElement | undefined;
       el?.scrollIntoView({ block: 'nearest' });
-    }, [highlightIndex, open]);
+    }, [highlightIndex, showDropdown]);
 
-    // CHỈ lấy từ API — tuyệt đối không fallback danh sách local App
+    // Chỉ gọi API khi đã có từ khóa — không auto-load toàn bộ khi ô trống
     useEffect(() => {
-      if (!open) return;
       if (debounceRef.current) clearTimeout(debounceRef.current);
+
+      if (!searchTerm) {
+        abortRef.current?.abort();
+        setRemoteProducts([]);
+        setSearching(false);
+        setOpen(false);
+        return;
+      }
 
       debounceRef.current = setTimeout(async () => {
         const token = localStorage.getItem('admin_token');
         if (!token) {
-          setSearchError('Chưa đăng nhập');
           setRemoteProducts([]);
+          setOpen(false);
           return;
         }
 
@@ -96,10 +103,9 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
         const seq = ++reqSeqRef.current;
 
         setSearching(true);
-        setSearchError(null);
         try {
           const qs = new URLSearchParams({
-            q: query.trim(),
+            q: searchTerm,
             limit: '40',
           });
           const res = await fetch(`/api/products/search?${qs}`, {
@@ -108,7 +114,7 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
           });
           const data = await res.json().catch(() => ({}));
           console.log('[ImportSearch] API /api/products/search:', {
-            q: query.trim(),
+            q: searchTerm,
             status: res.status,
             ok: res.ok,
             success: data?.success,
@@ -132,22 +138,22 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
             avatarUrl: p.avatarUrl || p.image || p.imageUrl,
           }));
           setRemoteProducts(list);
+          setOpen(list.filter((p: Product) => !excludeSet.has(p.id)).length > 0);
         } catch (err: any) {
           if (err?.name === 'AbortError') return;
           if (seq !== reqSeqRef.current) return;
           console.error('[ImportSearch] fetch error:', err);
-          setSearchError(err?.message || 'Lỗi tìm kiếm');
           setRemoteProducts([]);
+          setOpen(false);
         } finally {
           if (seq === reqSeqRef.current) setSearching(false);
         }
       }, 400);
 
       return () => {
-        // Chỉ hủy timer — không abort request ở cleanup (tránh React StrictMode hủy nhầm → phải search 2 lần)
         if (debounceRef.current) clearTimeout(debounceRef.current);
       };
-    }, [query, open]);
+    }, [searchTerm, excludeSet]);
 
     const selectProduct = (p: Product) => {
       console.log('[ImportSearch] selected product:', p);
@@ -159,11 +165,7 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
-      if (!open && (e.key === 'ArrowDown' || e.key === 'Enter')) {
-        setOpen(true);
-        return;
-      }
-      if (!open) return;
+      if (!showDropdown) return;
 
       if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -187,11 +189,7 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
             ref={inputRef}
             type="text"
             value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              if (!open) setOpen(true);
-            }}
-            onFocus={() => setOpen(true)}
+            onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
             className="w-full pl-10 pr-10 h-12 text-sm bg-white rounded-xl border border-gray-200 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-400/15 shadow-sm"
@@ -202,66 +200,55 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
           )}
         </div>
 
-        {open && (
+        {showDropdown && (
           <div className="absolute z-50 left-0 right-0 mt-1.5 bg-white rounded-xl border border-gray-200 shadow-xl shadow-gray-200/60 overflow-hidden">
             <div ref={listRef} className="max-h-[380px] overflow-y-auto scrollbar-thin">
-              {searchError && (
-                <div className="px-3 py-2 text-[11px] text-rose-700 bg-rose-50 border-b border-rose-100">
-                  {searchError}
-                </div>
-              )}
-              {filtered.length === 0 ? (
-                <div className="py-8 text-center text-xs text-gray-400">
-                  {searching ? 'Đang tìm trong kho...' : searchError ? 'Không tải được danh sách từ server.' : 'Không tìm thấy sản phẩm phù hợp.'}
-                </div>
-              ) : (
-                filtered.map((p, idx) => {
-                  const img = getProductImage(p);
-                  const isActive = idx === highlightIndex;
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onMouseEnter={() => setHighlightIndex(idx)}
-                      onClick={() => selectProduct(p)}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left border-b border-gray-50 last:border-b-0 transition-colors ${
-                        isActive ? 'bg-indigo-50/80' : 'hover:bg-gray-50'
-                      }`}
-                    >
-                      {img ? (
-                        <img
-                          src={img}
-                          alt=""
-                          className="w-10 h-10 rounded-lg object-cover border border-gray-100 shrink-0"
-                          referrerPolicy="no-referrer"
-                        />
-                      ) : (
-                        <div className="w-10 h-10 rounded-lg bg-gray-100 border border-gray-100 flex items-center justify-center shrink-0">
-                          <Package className="w-5 h-5 text-gray-400" />
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-bold text-gray-900 line-clamp-1">
-                          [{p.sku}] {p.title}
-                        </p>
-                        <p className="text-[10px] text-gray-400 line-clamp-1 mt-0.5">{getVariantLabel(p)}</p>
+              {filtered.map((p, idx) => {
+                const img = getProductImage(p);
+                const isActive = idx === highlightIndex;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onMouseEnter={() => setHighlightIndex(idx)}
+                    onClick={() => selectProduct(p)}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left border-b border-gray-50 last:border-b-0 transition-colors ${
+                      isActive ? 'bg-indigo-50/80' : 'hover:bg-gray-50'
+                    }`}
+                  >
+                    {img ? (
+                      <img
+                        src={img}
+                        alt=""
+                        className="w-10 h-10 rounded-lg object-cover border border-gray-100 shrink-0"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <div className="w-10 h-10 rounded-lg bg-gray-100 border border-gray-100 flex items-center justify-center shrink-0">
+                        <Package className="w-5 h-5 text-gray-400" />
                       </div>
-                      <div className="text-right shrink-0 text-[10px]">
-                        <p className="text-gray-500">
-                          Giá nhập:{' '}
-                          <span className="font-semibold text-gray-800 font-mono">
-                            {(Number(p.importPrice) || 0).toLocaleString('vi-VN')} đ
-                          </span>
-                        </p>
-                        <p className="text-gray-400 mt-0.5">
-                          Tồn:{' '}
-                          <span className="font-bold text-gray-600">{Number(p.stock) || 0}</span>
-                        </p>
-                      </div>
-                    </button>
-                  );
-                })
-              )}
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-gray-900 line-clamp-1">
+                        [{p.sku}] {p.title}
+                      </p>
+                      <p className="text-[10px] text-gray-400 line-clamp-1 mt-0.5">{getVariantLabel(p)}</p>
+                    </div>
+                    <div className="text-right shrink-0 text-[10px]">
+                      <p className="text-gray-500">
+                        Giá nhập:{' '}
+                        <span className="font-semibold text-gray-800 font-mono">
+                          {(Number(p.importPrice) || 0).toLocaleString('vi-VN')} đ
+                        </span>
+                      </p>
+                      <p className="text-gray-400 mt-0.5">
+                        Tồn:{' '}
+                        <span className="font-bold text-gray-600">{Number(p.stock) || 0}</span>
+                      </p>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}

@@ -211,7 +211,6 @@ export default function ImportManager({
         }
         const price = Number(product.importPrice) || 0;
         const next: SelectedImportLine[] = [
-          ...prev,
           {
             productId,
             title: product.title || (product as any).name || '',
@@ -219,16 +218,17 @@ export default function ImportManager({
             image: (product as any).image || product.avatarUrl || product.imageUrl,
             currentStock: Number(product.stock) || 0,
             oldImportPrice: price,
-            quantity: 1,
-            unitPrice: price > 0 ? price : 0,
+            quantity: 0,
+            unitPrice: 0,
           },
+          ...prev,
         ];
         const goods = next.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
         syncPaidToTotal(goods + importCost);
         return next;
       });
 
-      // Bổ sung tồn kho / giá cũ từ product-context
+      // Bổ sung tồn kho / giá cũ từ product-context (không ghi đè SL/đơn giá mặc định)
       const token = localStorage.getItem('admin_token');
       if (!token) return;
       try {
@@ -245,10 +245,6 @@ export default function ImportManager({
                   ...line,
                   currentStock: data.stock != null ? Number(data.stock) || 0 : line.currentStock,
                   oldImportPrice: Number(data.oldPrice ?? data.importPrice ?? line.oldImportPrice) || 0,
-                  unitPrice:
-                    line.unitPrice > 0
-                      ? line.unitPrice
-                      : Number(data.oldPrice ?? data.importPrice ?? 0) || 0,
                   title: data.title || line.title,
                   sku: data.sku || line.sku,
                 }
@@ -268,7 +264,7 @@ export default function ImportManager({
         if (line.productId !== productId) return line;
         return {
           ...line,
-          quantity: patch.quantity != null ? Math.max(1, Math.round(patch.quantity)) : line.quantity,
+          quantity: patch.quantity != null ? Math.max(0, Math.round(patch.quantity)) : line.quantity,
           unitPrice: patch.unitPrice != null ? Math.max(0, Math.round(patch.unitPrice)) : line.unitPrice,
         };
       });
@@ -657,7 +653,7 @@ export default function ImportManager({
                               <td className="px-3 py-2.5 align-middle">
                                 <input
                                   type="number"
-                                  min={1}
+                                  min={0}
                                   value={line.quantity}
                                   onChange={(e) => updateLine(line.productId, { quantity: Number(e.target.value) })}
                                   className="w-full h-10 px-2 text-center font-mono font-bold text-sm rounded-lg border border-gray-200 outline-none focus:border-indigo-400"
@@ -668,6 +664,7 @@ export default function ImportManager({
                                   <CurrencyInput
                                     value={line.unitPrice}
                                     onChange={(v) => updateLine(line.productId, { unitPrice: v })}
+                                    zerosSuffix
                                     className="w-[130px] h-10 px-2 text-right font-mono font-bold text-sm text-indigo-700 rounded-lg border border-gray-200 outline-none focus:border-indigo-400"
                                   />
                                   <button
@@ -864,6 +861,13 @@ export default function ImportManager({
       </div>
 
       <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <button
+          onClick={handleOpenCreate}
+          className="w-full sm:w-auto min-h-11 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2 shadow-sm shrink-0"
+        >
+          <Plus className="w-4.5 h-4.5" /> Thêm Mới
+        </button>
+
         <div className="flex-1 flex flex-col sm:flex-row gap-3">
           <div className="relative flex-1">
             <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3.5" />
@@ -891,13 +895,6 @@ export default function ImportManager({
             </select>
           </div>
         </div>
-
-        <button
-          onClick={handleOpenCreate}
-          className="w-full sm:w-auto min-h-11 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2 shadow-sm shrink-0"
-        >
-          <Plus className="w-4.5 h-4.5" /> Thêm Mới
-        </button>
       </div>
 
       <div className="max-md:hidden md:block bg-white rounded-2xl border border-gray-100 shadow-xs overflow-hidden">
