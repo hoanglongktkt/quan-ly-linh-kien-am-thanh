@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Product, SystemFee, getProductChildren } from '../types';
-import { parseJsonResponse, humanizeShopeeErrorMessage } from '../utils/apiClient';
+import { parseJsonResponse, formatShopeeSyncAlertLines } from '../utils/apiClient';
 import { buildShopeeSyncPayload } from '../utils/shopeeSyncPayload';
 import { X, RefreshCw, Check, Package, TrendingUp, TrendingDown, Save, AlertCircle } from 'lucide-react';
 
@@ -224,7 +224,7 @@ export default function ProductDetailModal({
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  const [shopeeSyncError, setShopeeSyncError] = useState<string | null>(null);
+  const [shopeeSyncError, setShopeeSyncError] = useState<string[] | null>(null);
 
   useEffect(() => { setLocalProducts(allProducts); }, [allProducts]);
 
@@ -374,9 +374,9 @@ export default function ProductDetailModal({
       }, 800);
     } catch (err: any) {
       setToast(null);
-      setShopeeSyncError(
-        `Lỗi đồng bộ Shopee: ${humanizeShopeeErrorMessage(err?.message || 'Đồng bộ thất bại.')}`,
-      );
+      const msg = err?.message || 'Đồng bộ thất bại.';
+      const lines = formatShopeeSyncAlertLines(msg);
+      setShopeeSyncError(lines.length > 0 ? lines : [msg]);
     } finally {
       setSaving(false);
     }
@@ -468,15 +468,25 @@ export default function ProductDetailModal({
 
           {/* Main form */}
           <div className="flex-1 overflow-y-auto p-3 sm:p-4 pb-28 sm:pb-4 space-y-3">
-            {shopeeSyncError && (
+            {shopeeSyncError && shopeeSyncError.length > 0 && (
               <div
                 role="alert"
                 className="w-full flex items-start gap-3 bg-white text-red-600 border border-red-500 rounded-[6px] px-4 py-3.5 shadow-md"
               >
                 <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 text-red-600" />
-                <p className="flex-1 min-w-0 text-[15px] sm:text-base font-semibold leading-snug break-words">
-                  {shopeeSyncError}
-                </p>
+                <div className="flex-1 min-w-0 text-[15px] sm:text-base font-semibold leading-snug">
+                  {shopeeSyncError.length === 1 ? (
+                    <p className="break-words">{shopeeSyncError[0]}</p>
+                  ) : (
+                    <ul className="list-disc pl-5 space-y-1">
+                      {shopeeSyncError.map((line) => (
+                        <li key={line} className="break-words">
+                          {line}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
                 <button
                   type="button"
                   onClick={() => setShopeeSyncError(null)}

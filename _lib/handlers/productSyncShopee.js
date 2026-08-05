@@ -2,10 +2,31 @@ import { buildCpanelTarget } from '../cpanelProxy.js';
 import { resolveCpanelBackend } from '../cpanelBackend.js';
 import { fetchWithDiagnostics } from '../fetchDiagnostics.js';
 
-/** Dịch/làm gọn lỗi Shopee — giữ [shopId]/productId, mã lạ giữ nguyên. */
-function humanizeShopeeErrorMessage(raw) {
-  let text = String(raw ?? '');
-  if (!text) return text;
+const SHOPEE_SYNC_SHOP_DISPLAY_NAMES = {
+  '831052930': 'LK audio',
+  '4127421': 'LK AT',
+};
+
+function resolveShopeeSyncShopName(shopId) {
+  const id = String(shopId || '').trim();
+  return SHOPEE_SYNC_SHOP_DISPLAY_NAMES[id] || `Shop ${id}`;
+}
+
+function stripShopeeSyncNoisePrefixes(text) {
+  let t = String(text || '').trim();
+  for (let i = 0; i < 12; i++) {
+    const next = t
+      .replace(/^(?:Lỗi đồng bộ Shopee|Lỗi từ Shopee|Shopee báo lỗi)\s*:\s*/i, '')
+      .replace(/^[A-Za-z0-9][A-Za-z0-9._:-]*\s*:\s+/, '')
+      .trim();
+    if (next === t) break;
+    t = next;
+  }
+  return t;
+}
+
+function applyShopeeErrorCodeHumanize(text) {
+  let out = String(text || '');
   const rules = [
     {
       test: /error_update_price_fail/i,
@@ -21,16 +42,88 @@ function humanizeShopeeErrorMessage(raw) {
     },
   ];
   for (const rule of rules) {
-    if (!rule.test.test(text)) continue;
-    text = text.replace(rule.stripEn, '').replace(rule.stripCode, rule.vi);
+    if (!rule.test.test(out)) continue;
+    out = out.replace(rule.stripEn, '').replace(rule.stripCode, rule.vi);
   }
-  return text
+  return out
     .replace(/\s*[—\-–:]\s*(?=[—\-–:]|$)/g, '')
     .replace(/^\s*[—\-–:]\s*/, '')
     .replace(/\s*[—\-–:]\s*$/, '')
     .replace(/[ \t]{2,}/g, ' ')
-    .replace(/\s+\|\s+/g, ' | ')
     .trim();
+}
+
+function formatOneShopeeSyncSegment(segment) {
+  const raw = stripShopeeSyncNoisePrefixes(segment);
+  if (!raw) return '';
+
+  const shopMatch = raw.match(/\[(\d{4,})\]/);
+  const shopId = shopMatch?.[1] || '';
+  const shopName = shopId ? resolveShopeeSyncShopName(shopId) : '';
+
+  const humanized = applyShopeeErrorCodeHumanize(raw);
+  const probe = `${raw} ${humanized}`.toLowerCase();
+
+  if (/error_item_not_found|item[_ ]?id is not found|không tìm thấy sản phẩm/.test(probe)) {
+    return shopName
+      ? `Không tìm thấy sản phẩm trên shop ${shopName}`
+      : 'Không tìm thấy sản phẩm tại shop';
+  }
+
+  if (
+    /error_update_price_fail|update price failed|không thể cập nhật giá|đang tham gia ctkm/.test(
+      probe,
+    )
+  ) {
+    return shopName
+      ? `Không thể cập nhật giá do đang tham gia CTKM trên shop ${shopName}`
+      : 'Không thể cập nhật giá do sản phẩm đang tham gia CTKM';
+  }
+
+  let cleaned = stripShopeeSyncNoisePrefixes(humanized)
+    .replace(/\[\d{4,}\]\s*/g, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+  if (!cleaned) return raw;
+  if (shopName && !cleaned.toLowerCase().includes(shopName.toLowerCase())) {
+    return `${cleaned} (shop ${shopName})`;
+  }
+  return cleaned;
+}
+
+function formatShopeeSyncAlertLines(raw) {
+  const text = String(raw ?? '').trim();
+  if (!text) return [];
+
+  let parts = text
+    .split(/\s*\|\s*|\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (parts.length <= 1) {
+    const bracketParts = text.match(/\[[\d]{4,}\][^[]*/g);
+    if (bracketParts && bracketParts.length > 1) {
+      parts = bracketParts.map((s) => s.trim()).filter(Boolean);
+    }
+  }
+
+  const lines = parts.map(formatOneShopeeSyncSegment).filter(Boolean);
+  const seen = new Set();
+  const unique = [];
+  for (const line of lines) {
+    const key = line.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(line);
+  }
+  return unique;
+}
+
+/** Dịch/làm gọn lỗi Shopee — map shop, bỏ prefix, chống trùng. */
+function humanizeShopeeErrorMessage(raw) {
+  const lines = formatShopeeSyncAlertLines(raw);
+  if (lines.length > 0) return lines.join(' | ');
+  return String(raw ?? '').trim();
 }
 
 function pickShopeeErrorMessage(data, upstreamStatus) {

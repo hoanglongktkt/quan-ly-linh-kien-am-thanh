@@ -9,7 +9,7 @@ import ProductDetailModal, {
 import BulkEditModal from './BulkEditModal';
 import ProductLinking from './ProductLinking';
 import InventoryAudit from './InventoryAudit';
-import { parseJsonResponse, humanizeShopeeErrorMessage } from '../utils/apiClient';
+import { parseJsonResponse, formatShopeeSyncAlertLines } from '../utils/apiClient';
 import { buildShopeeSyncPayload } from '../utils/shopeeSyncPayload';
 import { clearInventoryBrowserCache } from '../utils/catalogStorage';
 import CurrencyInput from './CurrencyInput';
@@ -203,7 +203,7 @@ export default function ProductList({
   const [savingImportPriceId, setSavingImportPriceId] = useState<string | null>(null);
   const [actionToast, setActionToast] = useState<string | null>(null);
   const [actionToastOk, setActionToastOk] = useState(false);
-  const [shopeeSyncError, setShopeeSyncError] = useState<string | null>(null);
+  const [shopeeSyncError, setShopeeSyncError] = useState<string[] | null>(null);
 
   const showActionToast = (message: string, ok = false) => {
     setActionToastOk(ok);
@@ -323,16 +323,17 @@ export default function ProductList({
         message: data?.shopeeMessage || `Đồng bộ nhanh sản phẩm ${productId} lên Shopee thành công.`,
       });
     } catch (err: any) {
-      const msg = humanizeShopeeErrorMessage(err?.message || 'Đồng bộ Shopee thất bại.');
+      const msg = err?.message || 'Đồng bộ Shopee thất bại.';
       setActionToast(null);
-      setShopeeSyncError(`Lỗi đồng bộ Shopee: ${msg}`);
+      const lines = formatShopeeSyncAlertLines(msg);
+      setShopeeSyncError(lines.length > 0 ? lines : [msg]);
       onAddLog({
         id: `sync-${Date.now()}`,
         timestamp: new Date().toISOString(),
         channel: 'shopee',
         type: 'stock_sync',
         status: 'failed',
-        message: msg,
+        message: (lines.length > 0 ? lines : [msg]).join(' | '),
       });
     } finally {
       setSyncingProductId(null);
@@ -890,15 +891,25 @@ export default function ProductList({
           </button>
         </div>
       )}
-      {shopeeSyncError && (
+      {shopeeSyncError && shopeeSyncError.length > 0 && (
         <div
           role="alert"
           className="w-full flex items-start gap-3 bg-white text-red-600 border border-red-500 rounded-lg px-4 py-3.5 shadow-md"
         >
           <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 text-red-600" />
-          <p className="flex-1 min-w-0 text-[15px] sm:text-base font-semibold leading-snug break-words">
-            {shopeeSyncError}
-          </p>
+          <div className="flex-1 min-w-0 text-[15px] sm:text-base font-semibold leading-snug">
+            {shopeeSyncError.length === 1 ? (
+              <p className="break-words">{shopeeSyncError[0]}</p>
+            ) : (
+              <ul className="list-disc pl-5 space-y-1">
+                {shopeeSyncError.map((line) => (
+                  <li key={line} className="break-words">
+                    {line}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
           <button
             type="button"
             onClick={() => setShopeeSyncError(null)}
