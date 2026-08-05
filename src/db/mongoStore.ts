@@ -1742,6 +1742,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
 
     const returnTn = String(order.return_tracking_no || "").trim();
     if (returnTn && !/^0FG/i.test(returnTn)) {
+      $set.return_tracking_no = returnTn;
       $set["data.return_tracking_no"] = returnTn;
     }
     // Push fallback có thể chỉ chứa orderSn/status. Không để `items: []` hoặc
@@ -2558,6 +2559,7 @@ export async function updateOrderTrackingInStore(
   }
   const rtn = String(extra?.return_tracking_no || "").trim();
   if (rtn && !/^0FG/i.test(rtn)) {
+    $set.return_tracking_no = rtn;
     $set["data.return_tracking_no"] = rtn;
   }
   if (extra?.status != null) {

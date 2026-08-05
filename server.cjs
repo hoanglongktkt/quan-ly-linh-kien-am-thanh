@@ -74644,6 +74644,7 @@ async function bulkUpsertOrdersToStore(orders) {
     }
     const returnTn = String(order.return_tracking_no || "").trim();
     if (returnTn && !/^0FG/i.test(returnTn)) {
+      $set.return_tracking_no = returnTn;
       $set["data.return_tracking_no"] = returnTn;
     }
     if (Array.isArray(order.items) && order.items.length > 0) {
@@ -75284,6 +75285,7 @@ async function updateOrderTrackingInStore(orderSn, trackingNo, extra) {
   }
   const rtn = String(extra?.return_tracking_no || "").trim();
   if (rtn && !/^0FG/i.test(rtn)) {
+    $set.return_tracking_no = rtn;
     $set["data.return_tracking_no"] = rtn;
   }
   if (extra?.status != null) {
@@ -116128,6 +116130,24 @@ async function persistOrderTrackingToDb(order) {
   }
   if (!tn || isShopeeInternalTrackingCode2(tn)) {
     if (!isCancelReturn) return;
+    const rtn = String(order?.return_tracking_no || "").trim();
+    if (!rtn || isShopeeInternalTrackingCode2(rtn)) return;
+    if (isMongoReady()) {
+      try {
+        await updateOrderTrackingInStore(sn, rtn, {
+          internalTrackingCode: order.internalTrackingCode,
+          packageNumber: order.packageNumber || pkg || void 0,
+          status: order.status != null ? String(order.status) : void 0,
+          isPrepared: order.isPrepared === true,
+          shopee_order_status: order.shopee_order_status != null ? String(order.shopee_order_status) : void 0,
+          is_pending_shopee_check: order.is_pending_shopee_check === true,
+          shopId: order.shopId != null ? String(order.shopId) : void 0,
+          return_tracking_no: rtn
+        });
+      } catch (err) {
+        console.warn(`[Shopee Tracking] Mongo return-only failed ${sn}:`, err?.message || err);
+      }
+    }
     return;
   }
   const carrierHint = order?.shipping_carrier || order?.checkout_shipping_carrier || order?.carrier || "";

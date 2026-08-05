@@ -9497,6 +9497,26 @@ async function persistOrderTrackingToDb(order: any): Promise<void> {
   }
   if (!tn || isShopeeInternalTrackingCode(tn)) {
     if (!isCancelReturn) return;
+    // Đơn hủy/hoàn: không có outbound tracking nhưng có return_tracking_no.
+    const rtn = String(order?.return_tracking_no || "").trim();
+    if (!rtn || isShopeeInternalTrackingCode(rtn)) return;
+    if (isMongoReady()) {
+      try {
+        await updateOrderTrackingInStore(sn, rtn, {
+          internalTrackingCode: order.internalTrackingCode,
+          packageNumber: order.packageNumber || pkg || undefined,
+          status: order.status != null ? String(order.status) : undefined,
+          isPrepared: order.isPrepared === true,
+          shopee_order_status:
+            order.shopee_order_status != null ? String(order.shopee_order_status) : undefined,
+          is_pending_shopee_check: order.is_pending_shopee_check === true,
+          shopId: order.shopId != null ? String(order.shopId) : undefined,
+          return_tracking_no: rtn,
+        });
+      } catch (err: any) {
+        console.warn(`[Shopee Tracking] Mongo return-only failed ${sn}:`, err?.message || err);
+      }
+    }
     return;
   }
   const carrierHint =
