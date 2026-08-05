@@ -75817,7 +75817,7 @@ function hydrateOrderFromMongoDoc(d) {
   const tn = String(
     d?.tracking_no || data.tracking_no || data.trackingNumber || data.return_tracking_no || ""
   ).trim();
-  const returnTn = String(data.return_tracking_no || "").trim();
+  const returnTn = String(d?.return_tracking_no || data.return_tracking_no || "").trim();
   const pkg = String(
     d?.packageNumber || data.packageNumber || data.package_number || d?.package_number || ""
   ).trim();
@@ -76884,7 +76884,9 @@ function donHoanHuyDocToOrder(doc) {
   const tn = String(
     doc?.tracking_no || base.tracking_no || base.trackingNumber || scanFallback || ""
   ).trim() || void 0;
-  const rtn = String(doc?.return_tracking_no || base.return_tracking_no || "").trim() || (local === "RETURN_RECEIVED" ? scanFallback || void 0 : void 0);
+  const rtn = String(
+    doc?.return_tracking_no || base.return_tracking_no || (local === "RETURN_RECEIVED" ? scanFallback : "") || ""
+  ).trim() || void 0;
   return {
     ...base,
     id: base.id || (sn ? `shopee-${sn}` : void 0),
@@ -76897,7 +76899,7 @@ function donHoanHuyDocToOrder(doc) {
     shopee_order_status: doc?.shopee_order_status || base.shopee_order_status,
     tracking_no: tn,
     trackingNumber: tn,
-    return_tracking_no: rtn || void 0,
+    return_tracking_no: rtn,
     items,
     local_status: local,
     localStatus: local,
@@ -76971,6 +76973,9 @@ async function upsertDonHoanHuy(order, opts) {
   let rtn = String(order?.return_tracking_no || "").trim();
   if ((!rtn || isShopeeInternalTrackingCode(rtn)) && type === "return" && usableScan) {
     rtn = usableScan;
+  }
+  if (!rtn && type === "cancelled" && tn && !isShopeeInternalTrackingCode(tn)) {
+    rtn = tn;
   }
   if (rtn && isShopeeInternalTrackingCode(rtn)) rtn = "";
   const DON_HOAN_HUY_MAX_MS = 5e3;
