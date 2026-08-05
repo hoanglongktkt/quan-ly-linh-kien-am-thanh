@@ -1074,41 +1074,6 @@ export default function ProductList({
             </p>
           </div>
         )}
-        {(productsMeta?.total != null && productsMeta.total > 0) && (
-          <div className="px-4 py-2.5 bg-gray-50/80 border-b border-gray-100 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-600">
-            <span>
-              Trang <b>{productsMeta.page}</b>/{productsMeta.totalPages} — hiển thị {products.length}/{productsMeta.total} sản phẩm mẹ
-            </span>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                disabled={productsLoading || productsMeta.page <= 1}
-                onClick={() => onRefreshProducts?.({ page: productsMeta.page - 1, append: false, search: serverSearch })}
-                className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 font-semibold"
-              >
-                Trang trước
-              </button>
-              <button
-                type="button"
-                disabled={productsLoading || !productsMeta.hasMore}
-                onClick={() => onRefreshProducts?.({ page: productsMeta.page + 1, append: false, search: serverSearch })}
-                className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 font-semibold"
-              >
-                Trang sau
-              </button>
-              {productsMeta.hasMore && (
-                <button
-                  type="button"
-                  disabled={productsLoading}
-                  onClick={() => onRefreshProducts?.({ page: productsMeta.page + 1, append: true, search: serverSearch })}
-                  className="px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-100 font-semibold"
-                >
-                  Tải thêm
-                </button>
-              )}
-            </div>
-          </div>
-        )}
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
@@ -1532,6 +1497,41 @@ export default function ProductList({
             </tbody>
           </table>
         </div>
+        {(productsMeta?.total != null && productsMeta.total > 0) && (
+          <div className="px-4 py-3 bg-gray-50/80 border-t border-gray-100 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-600">
+            <span>
+              Trang <b>{productsMeta.page}</b>/{productsMeta.totalPages} — hiển thị {products.length}/{productsMeta.total} sản phẩm mẹ
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={productsLoading || productsMeta.page <= 1}
+                onClick={() => onRefreshProducts?.({ page: productsMeta.page - 1, append: false, search: serverSearch })}
+                className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 font-semibold"
+              >
+                Trang trước
+              </button>
+              <button
+                type="button"
+                disabled={productsLoading || !productsMeta.hasMore}
+                onClick={() => onRefreshProducts?.({ page: productsMeta.page + 1, append: false, search: serverSearch })}
+                className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 font-semibold"
+              >
+                Trang sau
+              </button>
+              {productsMeta.hasMore && (
+                <button
+                  type="button"
+                  disabled={productsLoading}
+                  onClick={() => onRefreshProducts?.({ page: productsMeta.page + 1, append: true, search: serverSearch })}
+                  className="px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-100 font-semibold"
+                >
+                  Tải thêm
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Products Card List - Mobile-First */}
