@@ -43,26 +43,22 @@ body {
   overscroll-behavior-y: auto;
 }
 
+/* Sidebar fixed: ẩn scrollbar, vẫn cuộn được khi menu dài */
 .sidebar-panel,
-#sidebar-panel {
-  scrollbar-width: thin;
-  scrollbar-color: rgb(51 65 85) transparent;
+#sidebar-panel,
+.sidebar-nav-scroll,
+#sidebar-nav {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 .sidebar-panel::-webkit-scrollbar,
-#sidebar-panel::-webkit-scrollbar {
-  width: 4px;
-}
-
-.sidebar-panel::-webkit-scrollbar-thumb,
-#sidebar-panel::-webkit-scrollbar-thumb {
-  background: rgb(51 65 85);
-  border-radius: 999px;
-}
-
-.sidebar-panel::-webkit-scrollbar-track,
-#sidebar-panel::-webkit-scrollbar-track {
-  background: transparent;
+#sidebar-panel::-webkit-scrollbar,
+.sidebar-nav-scroll::-webkit-scrollbar,
+#sidebar-nav::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 /* Chrome / PC — thanh cuộn mỏng */

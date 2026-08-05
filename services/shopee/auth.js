@@ -1204,7 +1204,8 @@ export async function getShopeeAccessTokenForApi(shopKey, opts) {
   const record = getShopeeTokenRecord(tokens, fileKey);
   if (!record?.refresh_token && !record?.access_token) return null;
 
-  const apiShopId = resolveShopeeApiShopId(record, fileKey);
+  // apiShopId = đúng shop đang gọi — không remap sang oauth parent.
+  const apiShopId = fileKey;
 
   try {
     if (opts?.forceRefresh) {
@@ -1246,17 +1247,17 @@ export async function verifyShopeeShopToken(shopId, accessToken) {
   }
 }
 
+/**
+ * shop_id dùng khi gọi Shopee OpenAPI.
+ * ĐA SHOP: LUÔN dùng đúng shop đang yêu cầu — CẤM đổi sang oauth_shop_id parent
+ * (bug cũ: đơn AuDIO bị ghi shopId=LKAT và ngược lại).
+ */
 export function resolveShopeeApiShopId(record, configuredShopId) {
   const configured = normalizeShopIdKey(configuredShopId);
+  if (configured) return configured;
   const recordKey = normalizeShopIdKey(record?.shop_id);
-  if (recordKey === configured) return configured;
-  const linkedShopIds = Array.isArray(record?.shop_id_list)
-    ? record.shop_id_list.map(normalizeShopIdKey).filter(Boolean)
-    : [];
-  if (configured && linkedShopIds.includes(configured)) return configured;
-  const oauth = normalizeShopIdKey(record?.oauth_shop_id);
-  if (oauth) return oauth;
-  return recordKey || configured;
+  if (recordKey) return recordKey;
+  return normalizeShopIdKey(record?.oauth_shop_id) || "";
 }
 
 /**

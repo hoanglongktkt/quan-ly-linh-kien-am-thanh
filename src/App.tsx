@@ -1766,14 +1766,14 @@ export default function App() {
         </div>
       )}
       {/* Sidebar Navigation */}
-      <aside className="sidebar-panel max-md:hidden md:flex md:w-64 md:flex-col shrink-0 sticky top-0 h-screen overflow-y-auto bg-slate-900 text-slate-300 border-r border-slate-800" id="sidebar-panel">
+      <aside className="sidebar-panel max-md:hidden md:fixed md:inset-y-0 md:left-0 md:z-40 md:flex md:w-64 md:flex-col shrink-0 h-screen overflow-hidden bg-slate-900 text-slate-300 border-r border-slate-800" id="sidebar-panel">
         {/* Brand Header */}
         <div className="p-6 border-b border-slate-800 shrink-0">
           <BrandHeader logoSize={48} />
         </div>
 
         {/* Navigation Items */}
-        <nav className="flex-1 p-4 space-y-1 overflow-y-auto" id="sidebar-nav">
+        <nav className="sidebar-nav-scroll flex-1 min-h-0 p-4 space-y-1 overflow-y-auto" id="sidebar-nav">
           <button
             onClick={() => navigateTab('dashboard')}
             className={navButtonClass('dashboard')}
@@ -1959,8 +1959,8 @@ export default function App() {
         </>
       )}
 
-      {/* Main Content Area */}
-      <main className="md:flex-1 min-w-0 w-full">
+      {/* Main Content Area — md:ml-64 tránh bị sidebar fixed đè lên */}
+      <main className="md:flex-1 min-w-0 w-full md:ml-64">
         {/* Header toolbar */}
         <header className={`bg-white border-b border-gray-100 shadow-xs shrink-0 ${focusScanner ? 'max-md:hidden md:flex' : 'flex'}`}>
           <div className="app-main-container w-full px-4 md:px-6 py-3 md:py-4 flex items-center justify-between gap-3">

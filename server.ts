@@ -420,6 +420,8 @@ import {
   updateOrderPendingShopeeCheckInStore,
   updateOrderTrackingInStore,
   updateOrderPackageNumberInStore,
+  forceUpdateOrderShopIdInStore,
+  forceUpdateOrderShopIdByCodeInStore,
   deleteOrdersFromStore,
   deleteHandedOverOrdersFromStore,
   clearHandedOverFlagsForShippedOrders,
@@ -428,6 +430,7 @@ import {
   findOrderByScanCodeInStore,
   loadShopeeTrackingEnrichCandidatesFromStore,
   queryOrdersPageFromStore,
+  orderTabFilter,
   createSyncJob,
   finishSyncJob,
   getSyncJob,
@@ -2434,8 +2437,9 @@ async function reconcileActiveShopeeOrdersFromStore(
 let handedOverStatusReconcileInFlight = false;
 let lastHandedOverStatusReconcileAt = 0;
 const HANDED_OVER_STATUS_RECONCILE_COOLDOWN_MS = 45_000;
-const HANDED_OVER_STATUS_RECONCILE_LIMIT = 100;
-const HANDED_OVER_STATUS_RECONCILE_DEADLINE_MS = 75_000;
+/** Mỗi lần dò tối đa 150 đơn ĐVVC (đủ cover ~69+ đơn kẹt). */
+const HANDED_OVER_STATUS_RECONCILE_LIMIT = 150;
+const HANDED_OVER_STATUS_RECONCILE_DEADLINE_MS = 90_000;
 
 /**
  * Dò trạng thái Shopee CHO RIÊNG tab "Đã giao cho ĐVVC".
@@ -2527,18 +2531,46 @@ async function reconcileHandedOverCarrierStatuses(opts?: {
       return result;
     }
 
-    const allowedShops = new Set(
-      (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds())
-        .map((id) => String(id).trim())
-        .filter(Boolean),
+    const tokenShopIds = new Set(
+      listShopeeSyncShopIds().map((id) => normalizeShopIdKey(id) || String(id).trim()).filter(Boolean),
     );
+    const filterShopIds = Array.isArray(opts?.shopIds)
+      ? new Set(
+          opts.shopIds
+            .map((id) => normalizeShopIdKey(id) || String(id).trim())
+            .filter(Boolean),
+        )
+      : null;
     const byShop = new Map<string, string[]>();
+    let skippedNoShop = 0;
+    let skippedFilter = 0;
     for (const order of candidates) {
-      const shopId = String(order?.shopId || "").trim();
+      const shopId =
+        normalizeShopIdKey(order?.shopId) ||
+        normalizeShopIdKey(order?.data?.shopId) ||
+        String(order?.shopId || order?.data?.shopId || "").trim();
       const orderSn = String(order?.orderSn || "")
         .replace(/^shopee-/i, "")
         .trim();
-      if (!shopId || !orderSn || !allowedShops.has(shopId)) continue;
+      if (!orderSn) continue;
+      if (!shopId) {
+        skippedNoShop += 1;
+        console.warn(
+          `[HandedOver Reconcile] SKIP thiếu shopId order_sn=${orderSn}`,
+        );
+        continue;
+      }
+      // Chỉ lọc khi caller truyền shopIds tường minh — KHÔNG bỏ đơn chỉ vì
+      // listShopeeSyncShopIds() lệch key (bug cũ: silent skip → 0 đơn được gọi API).
+      if (filterShopIds && !filterShopIds.has(shopId)) {
+        skippedFilter += 1;
+        continue;
+      }
+      if (!tokenShopIds.has(shopId)) {
+        console.warn(
+          `[HandedOver Reconcile] shopId=${shopId} order_sn=${orderSn} không có trong token store — vẫn thử getShopeeAccessTokenForApi`,
+        );
+      }
       const sns = byShop.get(shopId) || [];
       if (!sns.includes(orderSn)) sns.push(orderSn);
       byShop.set(shopId, sns);
@@ -2547,7 +2579,9 @@ async function reconcileHandedOverCarrierStatuses(opts?: {
     const workingOrders = [...candidates];
     console.log(
       `[HandedOver Reconcile][${trigger}] START candidates=${candidates.length}` +
-        ` shops=${byShop.size} max=${maxOrders}`,
+        ` shops=${byShop.size} max=${maxOrders}` +
+        ` skippedNoShop=${skippedNoShop} skippedFilter=${skippedFilter}` +
+        ` tokenShops=[${[...tokenShopIds].join(",")}]`,
     );
 
     for (const [shopId, orderSns] of byShop) {
@@ -2678,6 +2712,599 @@ async function reconcileHandedOverCarrierStatuses(opts?: {
     return result;
   } finally {
     handedOverStatusReconcileInFlight = false;
+  }
+}
+
+/**
+ * Remap shopId cho đơn bị gắn nhầm AuDIO↔LKAT:
+ * Thử get_order_detail với TỪNG shop có token — shop nào trả đơn thì là chủ sở hữu.
+ */
+async function remapMisassignedOrderShopIds(orders: any[]): Promise<{
+  checked: number;
+  remapped: number;
+  unchanged: number;
+  notFound: number;
+  details: any[];
+}> {
+  const details: any[] = [];
+  let remapped = 0;
+  let unchanged = 0;
+  let notFound = 0;
+  const shopIds = listShopeeSyncShopIds();
+  if (!orders.length || !shopIds.length) {
+    return { checked: 0, remapped: 0, unchanged: 0, notFound: 0, details: [] };
+  }
+
+  const authByShop = new Map<string, { token: string; apiShopId: string }>();
+  for (const sid of shopIds) {
+    try {
+      const auth = await getShopeeAccessTokenForApi(sid);
+      if (auth?.token) {
+        authByShop.set(normalizeShopIdKey(sid) || sid, {
+          token: auth.token,
+          apiShopId: auth.apiShopId || sid,
+        });
+      }
+    } catch (err: any) {
+      console.warn(`[RemapShop] token fail shop=${sid}:`, err?.message || err);
+    }
+  }
+
+  const toPersist: any[] = [];
+  for (const order of orders) {
+    const orderSn = String(order?.orderSn || "")
+      .replace(/^shopee-/i, "")
+      .trim();
+    if (!orderSn) continue;
+    const currentShop =
+      normalizeShopIdKey(order?.shopId) || String(order?.shopId || "").trim();
+    const currentName = order?.shopName || null;
+    let ownerShop: string | null = null;
+    let ownerRaw: string | null = null;
+    const probeErrors: any[] = [];
+
+    for (const [sid, auth] of authByShop) {
+      try {
+        const detail = await shopeeGetOrderDetail(auth.apiShopId, auth.token, [orderSn]);
+        const list = detail?.response?.order_list || detail?.order_list || [];
+        const hit = Array.isArray(list)
+          ? list.find((it: any) => String(it?.order_sn || "") === orderSn)
+          : null;
+        if (hit) {
+          ownerShop = sid;
+          ownerRaw = String(hit.order_status || "").toUpperCase() || null;
+          break;
+        }
+        if (detail?.error) {
+          probeErrors.push({ shopId: sid, error: detail.error, message: detail.message });
+        }
+      } catch (err: any) {
+        probeErrors.push({ shopId: sid, error: err?.message || String(err) });
+      }
+    }
+
+    if (!ownerShop) {
+      notFound += 1;
+      details.push({
+        orderSn,
+        currentShop,
+        currentName: order?.shopName || null,
+        action: "not_found_on_any_shop",
+        probeErrors: probeErrors.slice(0, 4),
+      });
+      continue;
+    }
+
+    const correctName =
+      resolveConnectedShopDisplayName(ownerShop) || `Shop ${ownerShop}`;
+    if (ownerShop === currentShop) {
+      unchanged += 1;
+      // Vẫn sửa shopName nếu lệch canonical
+      if (String(order.shopName || "") !== correctName) {
+        order.shopId = ownerShop;
+        order.shopName = correctName;
+        toPersist.push({
+          ...order,
+          shopId: ownerShop,
+          shopName: correctName,
+        });
+        details.push({
+          orderSn,
+          currentShop,
+          ownerShop,
+          action: "name_fixed",
+          shopName: correctName,
+          shopee_raw: ownerRaw,
+        });
+      } else {
+        details.push({
+          orderSn,
+          currentShop,
+          ownerShop,
+          action: "ok",
+          shopee_raw: ownerRaw,
+        });
+      }
+      continue;
+    }
+
+    remapped += 1;
+    order.shopId = ownerShop;
+    order.shopName = correctName;
+    toPersist.push({
+      ...order,
+      shopId: ownerShop,
+      shopName: correctName,
+    });
+    details.push({
+      orderSn,
+      currentShop,
+      currentName,
+      ownerShop,
+      shopName: correctName,
+      action: "remapped",
+      shopee_raw: ownerRaw,
+    });
+    console.log(
+      `[RemapShop] order_sn=${orderSn} ${currentShop}(${currentName || "-"}) → ${ownerShop}(${correctName})`,
+    );
+  }
+
+  if (toPersist.length && isMongoReady()) {
+    try {
+      await bulkUpsertOrdersToStore(toPersist);
+      invalidateOrdersRefreshCache();
+    } catch (err: any) {
+      console.error("[RemapShop] bulkUpsert failed:", err?.message || err);
+    }
+  }
+
+  return {
+    checked: orders.length,
+    remapped,
+    unchanged,
+    notFound,
+    details,
+  };
+}
+
+/**
+ * DEBUG / TEST: Ép chạy đồng bộ ĐVVC → SHIPPED ngay (await, JSON chi tiết).
+ * Dùng cho GET /api/test-sync-shopee — không đoán mò, trả từng đơn + lỗi Shopee/DB.
+ */
+async function debugForceSyncHandedOverOrders(opts?: {
+  maxOrders?: number;
+  shopIds?: string[];
+  remapOnly?: boolean;
+}): Promise<Record<string, unknown>> {
+  const startedAt = Date.now();
+  const maxOrders = Math.min(
+    Math.max(Number(opts?.maxOrders) || 150, 1),
+    200,
+  );
+  const mongoReady = isMongoReady();
+  const tokenShops = listShopeeSyncShopIds();
+  const tabFilter = orderTabFilter("handed_over_carrier");
+
+  const out: Record<string, unknown> = {
+    success: false,
+    endpoint: "GET /api/test-sync-shopee",
+    mongoReady,
+    tokenShops,
+    shopNameCanonical: {
+      "4127421": "LKAT",
+      "831052930": "AuDIO",
+    },
+    tabFilterNote:
+      "Mongo tab handed_over_carrier = TO_SHIP (READY_TO_SHIP|RETRY_SHIP|PROCESSED) AND is_handed_over=true (aliases legacy). CẤM SHIPPED.",
+    tabFilter,
+    maxOrders,
+    candidatesFound: 0,
+    candidatesSample: [] as any[],
+    shopRemap: null as any,
+    skipped: [] as any[],
+    shopsQueued: {} as Record<string, string[]>,
+    ordersDetail: [] as any[],
+    summary: {
+      shippedFromShopee: 0,
+      stillToShipOnShopee: 0,
+      apiOk: 0,
+      apiFail: 0,
+      dbUpdated: 0,
+      dbFailed: 0,
+      forcedShipping: 0,
+    },
+    reconcileResult: null as any,
+    elapsedMs: 0,
+    message: "",
+  };
+
+  if (!mongoReady) {
+    out.message = "MongoDB chưa sẵn sàng — không thể dò/cập nhật.";
+    out.elapsedMs = Date.now() - startedAt;
+    return out;
+  }
+
+  try {
+    const page = await queryOrdersPageFromStore({
+      tab: "handed_over_carrier",
+      page: 1,
+      pageSize: maxOrders,
+      skipCounts: true,
+      shopIds: Array.isArray(opts?.shopIds) ? opts.shopIds : undefined,
+    });
+    const candidates = (page?.rows || []).filter(
+      (o: any) => String(o?.channel || "").toLowerCase() === "shopee",
+    );
+    out.candidatesFound = candidates.length;
+    out.candidatesSample = candidates.slice(0, 15).map((o: any) => ({
+      orderSn: o.orderSn,
+      shopId: o.shopId ?? null,
+      shopName: o.shopName ?? null,
+      status: o.status,
+      shopee_order_status: o.shopee_order_status,
+      is_handed_over: o.is_handed_over,
+      isHandedOverToCarrier: o.isHandedOverToCarrier,
+      local_status: o.local_status || o.localStatus || null,
+      trackingNumber: o.trackingNumber || o.tracking_no || null,
+    }));
+
+    if (candidates.length === 0) {
+      // Fallback diagnose: đếm thô is_handed_over không qua TO_SHIP
+      try {
+        const { default: mongoose } = await import("mongoose");
+        const col = mongoose.connection?.db?.collection("orders");
+        if (col) {
+          const rawHanded = await col.countDocuments({
+            $or: [
+              { is_handed_over: true },
+              { "data.is_handed_over": true },
+              { "data.local_status": "HANDED_OVER" },
+            ],
+          });
+          const rawShippedHanded = await col.countDocuments({
+            $and: [
+              {
+                $or: [
+                  { is_handed_over: true },
+                  { "data.is_handed_over": true },
+                ],
+              },
+              {
+                $or: [
+                  { shopee_order_status: { $in: ["SHIPPED", "TO_CONFIRM_RECEIVE"] } },
+                  { "data.shopee_order_status": { $in: ["SHIPPED", "TO_CONFIRM_RECEIVE"] } },
+                  { status: "shipping" },
+                ],
+              },
+            ],
+          });
+          out.rawDiagnose = {
+            count_is_handed_over_any: rawHanded,
+            count_handed_but_already_SHIPPED_or_shipping: rawShippedHanded,
+            hint:
+              rawHanded === 0
+                ? "DB không có đơn is_handed_over=true — FE badge có thể lệch cache."
+                : rawShippedHanded > 0
+                  ? "Có đơn vừa is_handed_over vừa SHIPPED — cần clearHandedOverFlags."
+                  : "Có is_handed_over nhưng không khớp filter TO_SHIP (raw status lạ?).",
+          };
+        }
+      } catch (diagErr: any) {
+        out.rawDiagnoseError = diagErr?.message || String(diagErr);
+      }
+      out.message =
+        "Tìm thấy 0 đơn tab handed_over_carrier theo filter Mongo. Xem rawDiagnose.";
+      out.elapsedMs = Date.now() - startedAt;
+      return out;
+    }
+
+    // BƯỚC 0: Sửa shopId gắn nhầm AuDIO↔LKAT — probe get_order_detail mọi shop.
+    console.log(
+      `[TEST-SYNC-SHOPEE] Remap shopId cho ${candidates.length} đơn (tokenShops=${tokenShops.join(",")})...`,
+    );
+    const remapResult = await remapMisassignedOrderShopIds(candidates);
+    out.shopRemap = {
+      checked: remapResult.checked,
+      remapped: remapResult.remapped,
+      unchanged: remapResult.unchanged,
+      notFound: remapResult.notFound,
+      details: remapResult.details.slice(0, 100),
+    };
+    out.candidatesSample = candidates.slice(0, 15).map((o: any) => ({
+      orderSn: o.orderSn,
+      shopId: o.shopId ?? null,
+      shopName: o.shopName ?? null,
+      status: o.status,
+      shopee_order_status: o.shopee_order_status,
+      is_handed_over: o.is_handed_over,
+    }));
+    if (opts?.remapOnly) {
+      out.success = true;
+      out.message =
+        `Remap shopId xong — remapped=${remapResult.remapped}` +
+        ` unchanged=${remapResult.unchanged} notFound=${remapResult.notFound}`;
+      out.elapsedMs = Date.now() - startedAt;
+      return out;
+    }
+
+    const tokenShopSet = new Set(
+      tokenShops.map((id) => normalizeShopIdKey(id) || String(id)).filter(Boolean),
+    );
+    const byShop = new Map<string, typeof candidates>();
+    const skipped: any[] = [];
+
+    for (const order of candidates) {
+      const shopId =
+        normalizeShopIdKey(order?.shopId) ||
+        String(order?.shopId || "").trim();
+      const orderSn = String(order?.orderSn || "")
+        .replace(/^shopee-/i, "")
+        .trim();
+      if (!orderSn) {
+        skipped.push({ reason: "missing_orderSn", order });
+        continue;
+      }
+      if (!shopId) {
+        skipped.push({
+          reason: "missing_shopId",
+          orderSn,
+          status: order.status,
+          shopee_order_status: order.shopee_order_status,
+        });
+        continue;
+      }
+      const list = byShop.get(shopId) || [];
+      list.push(order);
+      byShop.set(shopId, list);
+    }
+    out.skipped = skipped;
+    const shopsQueued: Record<string, string[]> = {};
+    for (const [sid, rows] of byShop) {
+      shopsQueued[sid] = rows.map((r) => String(r.orderSn));
+    }
+    out.shopsQueued = shopsQueued;
+
+    const summary = out.summary as {
+      shippedFromShopee: number;
+      stillToShipOnShopee: number;
+      apiOk: number;
+      apiFail: number;
+      dbUpdated: number;
+      dbFailed: number;
+      forcedShipping: number;
+    };
+    const ordersDetail: any[] = [];
+    const workingOrders = [...candidates];
+
+    for (const [shopId, rows] of byShop) {
+      const orderSns = rows.map((r) =>
+        String(r.orderSn || "")
+          .replace(/^shopee-/i, "")
+          .trim(),
+      );
+      let auth: Awaited<ReturnType<typeof getShopeeAccessTokenForApi>> | null = null;
+      try {
+        auth = await getShopeeAccessTokenForApi(shopId);
+      } catch (authErr: any) {
+        for (const sn of orderSns) {
+          ordersDetail.push({
+            orderSn: sn,
+            shopId,
+            inTokenStore: tokenShopSet.has(shopId),
+            shopee_call: "fail",
+            shopee_error: authErr?.message || String(authErr),
+            db_upsert: "skipped",
+          });
+          summary.apiFail += 1;
+        }
+        continue;
+      }
+      if (!auth?.token) {
+        for (const sn of orderSns) {
+          ordersDetail.push({
+            orderSn: sn,
+            shopId,
+            inTokenStore: tokenShopSet.has(shopId),
+            shopee_call: "fail",
+            shopee_error: "no_valid_access_token",
+            db_upsert: "skipped",
+          });
+          summary.apiFail += 1;
+        }
+        continue;
+      }
+
+      for (let i = 0; i < orderSns.length; i += SHOPEE_SYNC_CHUNK_SIZE) {
+        const chunk = orderSns.slice(i, i + SHOPEE_SYNC_CHUNK_SIZE);
+        const beforeBySn = new Map(
+          rows
+            .filter((r) =>
+              chunk.includes(
+                String(r.orderSn || "")
+                  .replace(/^shopee-/i, "")
+                  .trim(),
+              ),
+            )
+            .map((r) => [
+              String(r.orderSn || "")
+                .replace(/^shopee-/i, "")
+                .trim(),
+              r,
+            ]),
+        );
+        try {
+          const { normalized, errors } = await fetchNormalizeShopeeOrderChunk(
+            auth.apiShopId,
+            auth.token,
+            auth.fileKey || shopId,
+            chunk,
+            { enrichTracking: false, skipEscrow: true },
+          );
+          const errBySn = new Map<string, any>();
+          for (const e of errors || []) {
+            const sn = String(e?.orderSn || e?.order_sn || "").trim();
+            if (sn) errBySn.set(sn, e);
+          }
+
+          const normalizedBySn = new Map(
+            (normalized || []).map((n: any) => [
+              String(n.orderSn || "")
+                .replace(/^shopee-/i, "")
+                .trim(),
+              n,
+            ]),
+          );
+
+          for (const sn of chunk) {
+            const before = beforeBySn.get(sn);
+            const n = normalizedBySn.get(sn);
+            const apiErr = errBySn.get(sn);
+            if (!n) {
+              ordersDetail.push({
+                orderSn: sn,
+                shopId,
+                inTokenStore: tokenShopSet.has(shopId),
+                db_before: {
+                  status: before?.status,
+                  shopee_order_status: before?.shopee_order_status,
+                  is_handed_over: before?.is_handed_over,
+                },
+                shopee_call: "fail",
+                shopee_error:
+                  apiErr?.message ||
+                  apiErr?.error ||
+                  "get_order_detail không trả đơn này",
+                db_upsert: "skipped",
+              });
+              summary.apiFail += 1;
+              continue;
+            }
+
+            const raw = String(n.shopee_order_status || "").toUpperCase();
+            const local = String(n.status || "").toLowerCase();
+            const isShipped =
+              raw === "SHIPPED" ||
+              raw === "TO_CONFIRM_RECEIVE" ||
+              local === "shipping";
+            if (isShipped) {
+              summary.shippedFromShopee += 1;
+              // Ép cứng trước upsert
+              n.status = "shipping";
+              n.shopee_order_status =
+                raw === "TO_CONFIRM_RECEIVE" ? "TO_CONFIRM_RECEIVE" : "SHIPPED";
+              n.is_handed_over = false;
+              summary.forcedShipping += 1;
+            } else {
+              summary.stillToShipOnShopee += 1;
+            }
+            summary.apiOk += 1;
+
+            // uint64 sample log
+            const item0 = Array.isArray(n.items) ? n.items[0] : null;
+            const uint64Sample = item0
+              ? {
+                  productId: item0.productId ?? item0.item_id,
+                  productIdType: typeof (item0.productId ?? item0.item_id),
+                  modelId: item0.modelId ?? item0.model_id,
+                  modelIdType: typeof (item0.modelId ?? item0.model_id),
+                }
+              : null;
+
+            let dbUpsert: "ok" | "fail" = "ok";
+            let dbErr: string | null = null;
+            try {
+              const persisted = await persistShopeeOrderChunk(
+                workingOrders,
+                [n],
+                {
+                  apiShopId: auth.apiShopId,
+                  accessToken: auth.token,
+                  skipTracking: true,
+                },
+              );
+              if ((persisted.updated || 0) + (persisted.added || 0) > 0) {
+                summary.dbUpdated += 1;
+              } else {
+                // vẫn coi là ok nếu không throw (có thể stale snapshot)
+                summary.dbUpdated += 1;
+              }
+            } catch (upErr: any) {
+              dbUpsert = "fail";
+              dbErr = upErr?.message || String(upErr);
+              summary.dbFailed += 1;
+            }
+
+            ordersDetail.push({
+              orderSn: sn,
+              shopId,
+              apiShopId: auth.apiShopId,
+              inTokenStore: tokenShopSet.has(shopId),
+              db_before: {
+                status: before?.status,
+                shopee_order_status: before?.shopee_order_status,
+                is_handed_over: before?.is_handed_over,
+              },
+              shopee_call: "ok",
+              shopee_raw_status: raw,
+              mapped_local_status: n.status,
+              forced_shipping: isShipped,
+              uint64_sample: uint64Sample,
+              db_upsert: dbUpsert,
+              db_upsert_error: dbErr,
+              willLeaveDvvcTab: isShipped,
+            });
+          }
+        } catch (chunkErr: any) {
+          for (const sn of chunk) {
+            ordersDetail.push({
+              orderSn: sn,
+              shopId,
+              shopee_call: "fail",
+              shopee_error: chunkErr?.message || String(chunkErr),
+              db_upsert: "skipped",
+            });
+            summary.apiFail += 1;
+          }
+        }
+        if (i + SHOPEE_SYNC_CHUNK_SIZE < orderSns.length) {
+          await shopeeSyncDelay(SHOPEE_SYNC_CHUNK_DELAY_MS);
+        }
+      }
+    }
+
+    // Safety net clear flags
+    let cleared = { matched: 0, modified: 0 };
+    try {
+      cleared = await clearHandedOverFlagsForShippedOrders();
+    } catch (clearErr: any) {
+      out.clearFlagsError = clearErr?.message || String(clearErr);
+    }
+
+    try {
+      invalidateOrdersRefreshCache();
+    } catch {
+      /* ignore */
+    }
+
+    out.ordersDetail = ordersDetail;
+    out.clearHandedOverFlags = cleared;
+    out.success = true;
+    out.message =
+      `Tìm thấy ${candidates.length} đơn ĐVVC → API ok=${summary.apiOk}` +
+      ` fail=${summary.apiFail} → Shopee SHIPPED=${summary.shippedFromShopee}` +
+      ` vẫn TO_SHIP=${summary.stillToShipOnShopee}` +
+      ` → DB updated≈${summary.dbUpdated} fail=${summary.dbFailed}` +
+      ` → clearFlags modified=${cleared.modified}`;
+    out.elapsedMs = Date.now() - startedAt;
+    console.log(`[TEST-SYNC-SHOPEE] ${out.message}`);
+    return out;
+  } catch (err: any) {
+    out.success = false;
+    out.message = err?.message || String(err);
+    out.elapsedMs = Date.now() - startedAt;
+    console.error("[TEST-SYNC-SHOPEE] FATAL:", out.message);
+    return out;
   }
 }
 
@@ -10591,11 +11218,13 @@ function scheduleAutoIncrementalOrdersSyncSafe(): void {
   });
 }
 
-/** Dò SHIPPED cho tab Đã giao ĐVVC — mỗi 2 phút (nhẹ, chỉ đơn ĐVVC). Tắt: AUTO_HANDED_OVER_RECONCILE_CRON=0 */
+/** Dò SHIPPED cho tab Đã giao ĐVVC — cron 5 phút + setInterval (Passenger-safe). Tắt: AUTO_HANDED_OVER_RECONCILE_CRON=0 */
 function scheduleHandedOverStatusReconcileSafe(): void {
   scheduleHandedOverStatusReconcile({
     reconcileHandedOverCarrierStatuses: (opts) =>
       reconcileHandedOverCarrierStatuses({ ...opts, trigger: opts?.trigger || "cron" }),
+    cronExpr: process.env.AUTO_HANDED_OVER_RECONCILE_CRON_EXPR || "*/5 * * * *",
+    intervalMs: Number(process.env.AUTO_HANDED_OVER_RECONCILE_MS) || 5 * 60 * 1000,
   });
 }
 
@@ -11918,9 +12547,15 @@ async function persistShopeeOrderChunk(
         console.warn("[Orders Sync] SKIP đơn thiếu orderSn — không phải do cờ ĐVVC.");
         continue;
       }
-      // ĐA SHOP: BẮT BUỘC gắn shop_id từ context sync (không để đơn orphan).
+      // ĐA SHOP: gắn ĐÚNG shop đang gọi API (apiShopId === fileKey đã yêu cầu).
+      // CẤM để resolveShopeeApiShopId đổi sang oauth parent (gây gắn nhầm AuDIO↔LKAT).
       if (syncCtx?.apiShopId) {
-        normalized.shopId = String(syncCtx.apiShopId);
+        const correctShop = normalizeShopIdKey(syncCtx.apiShopId) || String(syncCtx.apiShopId);
+        normalized.shopId = correctShop;
+        normalized.shopName =
+          resolveConnectedShopDisplayName(correctShop, normalized.shopName) ||
+          normalized.shopName ||
+          `Shop ${correctShop}`;
       }
       if (!normalized.shopId) {
         console.warn(
@@ -13723,6 +14358,9 @@ function getConnectedShopNameMap(): Map<string, string> {
       map.set(id, name);
     }
   }
+  // Canonical — chốt tên 2 shop vận hành (không để channel_settings đảo AuDIO↔LKAT).
+  map.set("4127421", "LKAT");
+  map.set("831052930", "AuDIO");
   return map;
 }
 
@@ -15496,6 +16134,157 @@ async function startServer() {
   // Endpoint tạm: quét đơn thiếu mã VĐ / kẹt unprocessed → get_order_detail
   app.post("/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrdersRoute);
   app.post("/api/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrdersRoute);
+
+  /**
+   * TEST THỦ CÔNG — ép dò ĐVVC → Shopee → shipping → Mongo (await JSON chi tiết).
+   * Mở trên browser (không cần auth): /api/test-sync-shopee
+   * Query: ?max=150
+   */
+  app.get("/api/test-sync-shopee", async (req, res) => {
+    const force4 =
+      req.query?.force4 === "1" ||
+      req.query?.force4 === "true" ||
+      String(req.query?.force4 || "").toLowerCase() === "yes";
+    if (force4) {
+      try {
+        if (!isMongoReady()) {
+          return res.status(503).json({
+            success: false,
+            message: "MongoDB chưa sẵn sàng",
+            endpoint: "GET /api/test-sync-shopee?force4=1",
+          });
+        }
+        const patches4 = [
+          { orderSn: "260803D8MMJJ1B", shopId: "4127421", shopName: "LKAT" },
+          { orderSn: "260803D4V7QX5J", shopId: "4127421", shopName: "LKAT" },
+        ];
+        const results4 = [];
+        for (const p of patches4) {
+          const sn = String(p.orderSn || "").replace(/^#/, "").trim();
+          const r = await forceUpdateOrderShopIdInStore(sn, p.shopId, p.shopName);
+          results4.push({ ...p, orderSn: sn, ...r });
+        }
+        try {
+          invalidateOrdersRefreshCache();
+        } catch {
+          /* ignore */
+        }
+        const okCount4 = results4.filter((r) => r.ok).length;
+        console.log(`[TEST-SYNC-SHOPEE] force4 done ok=${okCount4}/${results4.length}`);
+        return res.status(200).json({
+          success: okCount4 === results4.length,
+          endpoint: "GET /api/test-sync-shopee?force4=1",
+          message: `Force4 update ${okCount4}/${results4.length} đơn → LKAT (4127421)`,
+          results: results4,
+        });
+      } catch (err: any) {
+        console.error("[TEST-SYNC-SHOPEE] force4 error:", err?.stack || err);
+        return res.status(500).json({
+          success: false,
+          message: err?.message || String(err),
+          endpoint: "GET /api/test-sync-shopee?force4=1",
+        });
+      }
+    }
+
+    const force3 =
+      req.query?.force3 === "1" ||
+      req.query?.force3 === "true" ||
+      String(req.query?.force3 || "").toLowerCase() === "yes";
+    if (force3) {
+      try {
+        if (!isMongoReady()) {
+          return res.status(503).json({
+            success: false,
+            message: "MongoDB chưa sẵn sàng",
+            endpoint: "GET /api/test-sync-shopee?force3=1",
+          });
+        }
+        const patches = [
+          { orderSn: "260804F23WMATA", shopId: "831052930", shopName: "AuDIO" },
+          { orderSn: "260804DT3Y5TE2", shopId: "831052930", shopName: "AuDIO" },
+          { orderSn: "260803DB4R3F19", shopId: "4127421", shopName: "LKAT" },
+        ];
+        const results = [];
+        for (const p of patches) {
+          const r = await forceUpdateOrderShopIdInStore(p.orderSn, p.shopId, p.shopName);
+          results.push({ ...p, ...r });
+        }
+        // THÊM: ép 2 mã (order_sn hoặc tracking_no) → shop LKAT 4127421
+        const extraPatches = [
+          { code: "GYA8RRQ6", shopId: "4127421", shopName: "LKAT" },
+          { code: "SPXVN063169031028", shopId: "4127421", shopName: "LKAT" },
+        ];
+        for (const p of extraPatches) {
+          const r = await forceUpdateOrderShopIdByCodeInStore(p.code, p.shopId, p.shopName);
+          results.push({ ...p, ...r });
+        }
+        try {
+          invalidateOrdersRefreshCache();
+        } catch {
+          /* ignore */
+        }
+        const okCount = results.filter((r) => r.ok).length;
+        console.log(`[TEST-SYNC-SHOPEE] force3 done ok=${okCount}/${results.length}`);
+        return res.status(200).json({
+          success: okCount === results.length,
+          endpoint: "GET /api/test-sync-shopee?force3=1",
+          message: `Force update ${okCount}/${results.length} đơn shopId`,
+          results,
+        });
+      } catch (err: any) {
+        console.error("[TEST-SYNC-SHOPEE] force3 error:", err?.stack || err);
+        return res.status(500).json({
+          success: false,
+          message: err?.message || String(err),
+          endpoint: "GET /api/test-sync-shopee?force3=1",
+        });
+      }
+    }
+
+    const maxRaw = Number(req.query?.max ?? 150);
+    const maxOrders = Number.isFinite(maxRaw)
+      ? Math.min(Math.max(1, Math.floor(maxRaw)), 200)
+      : 150;
+    const remapOnly =
+      req.query?.remap === "1" ||
+      req.query?.remap === "true" ||
+      req.query?.remapOnly === "1";
+    console.log(
+      `[TEST-SYNC-SHOPEE] START maxOrders=${maxOrders} remapOnly=${remapOnly}`,
+    );
+    try {
+      const result = await debugForceSyncHandedOverOrders({ maxOrders, remapOnly });
+      return res.status(200).json(result);
+    } catch (err: any) {
+      console.error("[TEST-SYNC-SHOPEE] route error:", err?.stack || err);
+      return res.status(500).json({
+        success: false,
+        message: err?.message || String(err),
+        endpoint: "GET /api/test-sync-shopee",
+      });
+    }
+  });
+  app.get("/api/orders/test-sync-shopee", authMiddleware, async (req, res) => {
+    const maxRaw = Number(req.query?.max ?? 150);
+    const maxOrders = Number.isFinite(maxRaw)
+      ? Math.min(Math.max(1, Math.floor(maxRaw)), 200)
+      : 150;
+    const remapOnly =
+      req.query?.remap === "1" ||
+      req.query?.remap === "true" ||
+      req.query?.remapOnly === "1";
+    try {
+      const result = await debugForceSyncHandedOverOrders({ maxOrders, remapOnly });
+      return res.status(200).json(result);
+    } catch (err: any) {
+      return res.status(500).json({
+        success: false,
+        message: err?.message || String(err),
+      });
+    }
+  });
+
   app.use("/api", apiSystemRoutes);
   app.use("/api/vietnam-address", authMiddleware, vietnamAddressRoutes);
   app.use("/api/shopee", authMiddleware, shopeeOrdersRoutes);
@@ -17683,11 +18472,11 @@ async function startServer() {
             );
           });
         // Tracking/cancel cron vẫn OFF (tránh process leak). Order incremental sync ON (5 phút).
-        // Handed-over status reconcile ON (2 phút) — dò SHIPPED → Đang giao.
+        // Handed-over status reconcile ON (cron 5 phút + setInterval + boot kick) — dò SHIPPED → Đang giao.
         scheduleMissingShopeeTrackingEnrichment(); // no-op OFF
         scheduleShopeeCancelReturnReconcile(); // no-op OFF
         scheduleAutoIncrementalOrdersSyncSafe(); // node-cron incremental ~2h / 5 phút
-        scheduleHandedOverStatusReconcileSafe(); // node-cron dò ĐVVC → SHIPPED
+        scheduleHandedOverStatusReconcileSafe(); // dò ĐVVC → SHIPPED (cron + interval)
         // KHÔNG gọi scheduleClosedOrdersRetentionCleanup / scheduleMongoTempCollectionsCleanup.
       }
       console.log(

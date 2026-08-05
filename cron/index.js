@@ -3,6 +3,7 @@
  * Mặc định: mỗi 5 phút kéo đơn update_time trong ~2 giờ gần nhất.
  *
  * Tắt: AUTO_ORDER_SYNC_CRON=0
+ * Dò trạng thái Shopee cho đơn tab "Đã giao cho ĐVVC" — mỗi 5 phút.
  * Tắt dò ĐVVC: AUTO_HANDED_OVER_RECONCILE_CRON=0
  */
 import cron from "node-cron";
@@ -88,13 +89,38 @@ export function scheduleAutoIncrementalOrdersSync(deps = {}) {
 }
 
 /**
- * Dò trạng thái Shopee cho đơn tab "Đã giao cho ĐVVC" — mỗi 2 phút.
+ * Dò trạng thái Shopee cho đơn tab "Đã giao cho ĐVVC" — mỗi 5 phút.
  * Nhẹ hơn full sync: chỉ batch get_order_detail các đơn ĐVVC còn TO_SHIP.
+ * Đồng thời setInterval (Passenger-safe) vì node-cron có thể không tick khi worker idle.
  *
  * @param {object} [deps]
  * @param {(opts?: any) => Promise<any>} [deps.reconcileHandedOverCarrierStatuses]
  * @param {string} [deps.cronExpr]
+ * @param {number} [deps.intervalMs] — mặc định 5 phút
  */
+let handedOverReconcileInterval = null;
+let handedOverReconcileBootTimer = null;
+
+function runHandedOverReconcileTick(deps, trigger) {
+  console.log(`[CRON] Tick HandedOver status reconcile (ĐVVC → SHIPPED) trigger=${trigger}`);
+  try {
+    void Promise.resolve(
+      deps.reconcileHandedOverCarrierStatuses({ trigger }),
+    ).then((r) => {
+      if (r?.skipped) {
+        console.log(`[CRON] HandedOver reconcile skipped: ${r.message || "busy"}`);
+        return;
+      }
+      console.log(
+        `[CRON] HandedOver reconcile done candidates=${r?.candidates || 0}` +
+          ` pulled=${r?.pulled || 0} shipped≈${r?.shipped || 0}`,
+      );
+    });
+  } catch (err) {
+    console.error("[CRON] HandedOver reconcile tick failed:", err?.message || err);
+  }
+}
+
 export function scheduleHandedOverStatusReconcile(deps = {}) {
   if (handedOverReconcileScheduled) {
     console.log("[CRON] HandedOver status reconcile already scheduled (idempotent).");
@@ -122,38 +148,60 @@ export function scheduleHandedOverStatusReconcile(deps = {}) {
   }
 
   const cronExpr = String(
-    deps.cronExpr || process.env.AUTO_HANDED_OVER_RECONCILE_CRON_EXPR || "*/2 * * * *",
+    deps.cronExpr || process.env.AUTO_HANDED_OVER_RECONCILE_CRON_EXPR || "*/5 * * * *",
   ).trim();
+  const intervalMs = Math.max(
+    60_000,
+    Number(deps.intervalMs) ||
+      Number(process.env.AUTO_HANDED_OVER_RECONCILE_MS) ||
+      5 * 60 * 1000,
+  );
 
-  if (!cron.validate(cronExpr)) {
-    console.error(
-      `[CRON] Invalid handed-over reconcile expr="${cronExpr}" — NOT started`,
+  if (cron.validate(cronExpr)) {
+    handedOverReconcileTask = cron.schedule(cronExpr, () => {
+      runHandedOverReconcileTick(deps, "cron");
+    });
+    console.log(
+      `[CRON] HandedOver status reconcile ON — expr="${cronExpr}" (chỉ đơn Đã giao ĐVVC).`,
     );
-    return;
+  } else {
+    console.error(
+      `[CRON] Invalid handed-over reconcile expr="${cronExpr}" — dùng setInterval thay thế`,
+    );
   }
 
-  handedOverReconcileTask = cron.schedule(cronExpr, () => {
-    console.log("[CRON] Tick HandedOver status reconcile (ĐVVC → SHIPPED)");
+  // setInterval: bắt buộc trên cPanel/Passenger (process idle → node-cron có thể không tick).
+  if (handedOverReconcileInterval) {
     try {
-      void Promise.resolve(deps.reconcileHandedOverCarrierStatuses({ trigger: "cron" })).then(
-        (r) => {
-          if (r?.skipped) {
-            console.log(`[CRON] HandedOver reconcile skipped: ${r.message || "busy"}`);
-            return;
-          }
-          console.log(
-            `[CRON] HandedOver reconcile done candidates=${r?.candidates || 0}` +
-              ` pulled=${r?.pulled || 0} shipped≈${r?.shipped || 0}`,
-          );
-        },
-      );
-    } catch (err) {
-      console.error("[CRON] HandedOver reconcile tick failed:", err?.message || err);
+      clearInterval(handedOverReconcileInterval);
+    } catch {
+      /* ignore */
     }
-  });
+  }
+  handedOverReconcileInterval = setInterval(() => {
+    runHandedOverReconcileTick(deps, "interval");
+  }, intervalMs);
+  if (typeof handedOverReconcileInterval.unref === "function") {
+    handedOverReconcileInterval.unref();
+  }
+
+  // Boot kick ~20s sau khi schedule — xử lý ngay 69 đơn kẹt, không đợi chu kỳ đầu.
+  if (handedOverReconcileBootTimer) {
+    try {
+      clearTimeout(handedOverReconcileBootTimer);
+    } catch {
+      /* ignore */
+    }
+  }
+  handedOverReconcileBootTimer = setTimeout(() => {
+    runHandedOverReconcileTick(deps, "boot");
+  }, 20_000);
+  if (typeof handedOverReconcileBootTimer.unref === "function") {
+    handedOverReconcileBootTimer.unref();
+  }
 
   console.log(
-    `[CRON] HandedOver status reconcile ON — expr="${cronExpr}" (chỉ đơn Đã giao ĐVVC).`,
+    `[CRON] HandedOver setInterval ON — every ${Math.round(intervalMs / 1000)}s + boot kick 20s.`,
   );
 }
 
@@ -178,6 +226,22 @@ export function stopHandedOverStatusReconcile() {
       /* ignore */
     }
     handedOverReconcileTask = null;
+  }
+  if (handedOverReconcileInterval) {
+    try {
+      clearInterval(handedOverReconcileInterval);
+    } catch {
+      /* ignore */
+    }
+    handedOverReconcileInterval = null;
+  }
+  if (handedOverReconcileBootTimer) {
+    try {
+      clearTimeout(handedOverReconcileBootTimer);
+    } catch {
+      /* ignore */
+    }
+    handedOverReconcileBootTimer = null;
   }
   handedOverReconcileScheduled = false;
   console.log("[CRON] HandedOver status reconcile stopped.");

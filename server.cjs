@@ -71775,6 +71775,26 @@ function scheduleAutoIncrementalOrdersSync(deps21 = {}) {
     `[CRON] Auto Incremental Sync ON \u2014 expr="${cronExpr}" lookbackSec=${lookbackSec} (~${Math.round(lookbackSec / 3600)}h). Mutex b\u1EA3o v\u1EC7 ch\u1ED3ng job.`
   );
 }
+var handedOverReconcileInterval = null;
+var handedOverReconcileBootTimer = null;
+function runHandedOverReconcileTick(deps21, trigger) {
+  console.log(`[CRON] Tick HandedOver status reconcile (\u0110VVC \u2192 SHIPPED) trigger=${trigger}`);
+  try {
+    void Promise.resolve(
+      deps21.reconcileHandedOverCarrierStatuses({ trigger })
+    ).then((r2) => {
+      if (r2?.skipped) {
+        console.log(`[CRON] HandedOver reconcile skipped: ${r2.message || "busy"}`);
+        return;
+      }
+      console.log(
+        `[CRON] HandedOver reconcile done candidates=${r2?.candidates || 0} pulled=${r2?.pulled || 0} shipped\u2248${r2?.shipped || 0}`
+      );
+    });
+  } catch (err) {
+    console.error("[CRON] HandedOver reconcile tick failed:", err?.message || err);
+  }
+}
 function scheduleHandedOverStatusReconcile(deps21 = {}) {
   if (handedOverReconcileScheduled) {
     console.log("[CRON] HandedOver status reconcile already scheduled (idempotent).");
@@ -71795,34 +71815,50 @@ function scheduleHandedOverStatusReconcile(deps21 = {}) {
     return;
   }
   const cronExpr = String(
-    deps21.cronExpr || process.env.AUTO_HANDED_OVER_RECONCILE_CRON_EXPR || "*/2 * * * *"
+    deps21.cronExpr || process.env.AUTO_HANDED_OVER_RECONCILE_CRON_EXPR || "*/5 * * * *"
   ).trim();
-  if (!import_node_cron.default.validate(cronExpr)) {
-    console.error(
-      `[CRON] Invalid handed-over reconcile expr="${cronExpr}" \u2014 NOT started`
+  const intervalMs = Math.max(
+    6e4,
+    Number(deps21.intervalMs) || Number(process.env.AUTO_HANDED_OVER_RECONCILE_MS) || 5 * 60 * 1e3
+  );
+  if (import_node_cron.default.validate(cronExpr)) {
+    handedOverReconcileTask = import_node_cron.default.schedule(cronExpr, () => {
+      runHandedOverReconcileTick(deps21, "cron");
+    });
+    console.log(
+      `[CRON] HandedOver status reconcile ON \u2014 expr="${cronExpr}" (ch\u1EC9 \u0111\u01A1n \u0110\xE3 giao \u0110VVC).`
     );
-    return;
+  } else {
+    console.error(
+      `[CRON] Invalid handed-over reconcile expr="${cronExpr}" \u2014 d\xF9ng setInterval thay th\u1EBF`
+    );
   }
-  handedOverReconcileTask = import_node_cron.default.schedule(cronExpr, () => {
-    console.log("[CRON] Tick HandedOver status reconcile (\u0110VVC \u2192 SHIPPED)");
+  if (handedOverReconcileInterval) {
     try {
-      void Promise.resolve(deps21.reconcileHandedOverCarrierStatuses({ trigger: "cron" })).then(
-        (r2) => {
-          if (r2?.skipped) {
-            console.log(`[CRON] HandedOver reconcile skipped: ${r2.message || "busy"}`);
-            return;
-          }
-          console.log(
-            `[CRON] HandedOver reconcile done candidates=${r2?.candidates || 0} pulled=${r2?.pulled || 0} shipped\u2248${r2?.shipped || 0}`
-          );
-        }
-      );
-    } catch (err) {
-      console.error("[CRON] HandedOver reconcile tick failed:", err?.message || err);
+      clearInterval(handedOverReconcileInterval);
+    } catch {
     }
-  });
+  }
+  handedOverReconcileInterval = setInterval(() => {
+    runHandedOverReconcileTick(deps21, "interval");
+  }, intervalMs);
+  if (typeof handedOverReconcileInterval.unref === "function") {
+    handedOverReconcileInterval.unref();
+  }
+  if (handedOverReconcileBootTimer) {
+    try {
+      clearTimeout(handedOverReconcileBootTimer);
+    } catch {
+    }
+  }
+  handedOverReconcileBootTimer = setTimeout(() => {
+    runHandedOverReconcileTick(deps21, "boot");
+  }, 2e4);
+  if (typeof handedOverReconcileBootTimer.unref === "function") {
+    handedOverReconcileBootTimer.unref();
+  }
   console.log(
-    `[CRON] HandedOver status reconcile ON \u2014 expr="${cronExpr}" (ch\u1EC9 \u0111\u01A1n \u0110\xE3 giao \u0110VVC).`
+    `[CRON] HandedOver setInterval ON \u2014 every ${Math.round(intervalMs / 1e3)}s + boot kick 20s.`
   );
 }
 
@@ -74559,7 +74595,8 @@ async function bulkUpsertOrdersToStore(orders) {
       $set.shopee_order_status = rawStatus;
       $set["data.shopee_order_status"] = rawStatus;
     }
-    if (rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE" || rawStatus === "COMPLETED" || rawStatus === "CANCELLED" || rawStatus === "IN_CANCEL" || rawStatus === "TO_RETURN") {
+    const leftPickupPhase = rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE" || rawStatus === "COMPLETED" || rawStatus === "CANCELLED" || rawStatus === "IN_CANCEL" || rawStatus === "TO_RETURN";
+    if (leftPickupPhase) {
       $set.is_handed_over = false;
       $set["data.is_handed_over"] = false;
       $set["data.isHandedOverToCarrier"] = false;
@@ -74570,19 +74607,19 @@ async function bulkUpsertOrdersToStore(orders) {
       $set["data.internal_status"] = "NONE";
       $set["data.handed_over_source"] = null;
       $set["data.handedOverSource"] = null;
-      if (String(order.status || "").toLowerCase() === "shipping" || rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE") {
-        if (!order.status || String(order.status).trim() === "" || String(order.status) === "processed" || String(order.status) === "unprocessed" || String(order.status) === "handed_over") {
-          $set.status = "shipping";
-          $set["data.status"] = "shipping";
-        }
-      }
     }
-    if (order.status != null && String(order.status).trim()) {
+    const forceShipping = rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE";
+    if (forceShipping) {
+      $set.status = "shipping";
+      $set["data.status"] = "shipping";
+      console.log(
+        `[MongoDB] FORCE shipping order_sn=${orderSn || _id} raw=${rawStatus} shopId=${shopIdStr || "-"} clear_is_handed_over=true`
+      );
+    }
+    if (!forceShipping && order.status != null && String(order.status).trim()) {
       const st = String(order.status).trim();
-      if (!($set.status === "shipping" && (st === "processed" || st === "unprocessed" || st === "handed_over"))) {
-        $set.status = st;
-        $set["data.status"] = st;
-      }
+      $set.status = st;
+      $set["data.status"] = st;
     }
     if (order.shopName != null) $set["data.shopName"] = String(order.shopName);
     if (usableTn) {
@@ -74606,7 +74643,18 @@ async function bulkUpsertOrdersToStore(orders) {
       $set["data.package_number"] = pkgNum;
     }
     if (Array.isArray(order.items) && order.items.length > 0) {
-      $set["data.items"] = stringifyShopeeIdsDeep(order.items);
+      const safeItems = stringifyShopeeIdsDeep(order.items);
+      $set["data.items"] = safeItems;
+      const sample = safeItems[0] || {};
+      for (const k of ["item_id", "model_id", "productId", "modelId", "shopeeItemId", "shopeeModelId"]) {
+        const v = sample?.[k];
+        if (v == null) continue;
+        if (typeof v === "number" && !Number.isSafeInteger(v)) {
+          console.warn(
+            `[MongoDB][uint64] order_sn=${orderSn} items[0].${k}=${v} v\u01B0\u1EE3t Safe Integer`
+          );
+        }
+      }
     }
     if (order.date != null) $set["data.date"] = order.date;
     if (Number(order.totalAmount) > 0) $set["data.totalAmount"] = order.totalAmount;
@@ -74625,7 +74673,7 @@ async function bulkUpsertOrdersToStore(orders) {
       if (key === "totalAmount" && Number(value) <= 0) continue;
       $set[`data.${key}`] = value;
     }
-    const $setOnInsert = {
+    const $setOnInsertRaw = {
       _id,
       is_handed_over: false,
       isPrinted: false,
@@ -74642,6 +74690,11 @@ async function bulkUpsertOrdersToStore(orders) {
       "data.localStatus": "NONE",
       "data.internal_status": "NONE"
     };
+    const $setOnInsert = {};
+    for (const [k, v] of Object.entries($setOnInsertRaw)) {
+      if (Object.prototype.hasOwnProperty.call($set, k)) continue;
+      $setOnInsert[k] = v;
+    }
     console.log("D\u1EEF li\u1EC7u chu\u1EA9n b\u1ECB l\u01B0u DB (upsert $set + $setOnInsert):", {
       _id,
       orderSn,
@@ -74650,7 +74703,9 @@ async function bulkUpsertOrdersToStore(orders) {
       tracking_no: usableTn,
       packageNumber: pkgNum || null,
       shipping_carrier: carrier || null,
-      setOnInsert_flags: "is_handed_over/isPrinted/isPrepared=false"
+      forceShipping,
+      setKeys_handed: Object.keys($set).filter((k) => /handed|local_status|internal_status/i.test(k)),
+      setOnInsert_keys: Object.keys($setOnInsert)
     });
     const filter = buildOrderCompoundFilter(orderSn || String(_id).replace(/^shopee-/i, ""), _id, shopIdStr || null);
     pendingWrites.push({
@@ -74794,6 +74849,13 @@ async function bulkUpdateShippedOrdersBySn(patches) {
         $set["data.isHandedOverToCarrier"] = false;
         $set["data.is_handed_over_to_carrier"] = false;
         $set["data.is_handed_over_to_courier"] = false;
+        $set["data.local_status"] = "NONE";
+        $set["data.localStatus"] = "NONE";
+        $set["data.internal_status"] = "NONE";
+      }
+      if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") {
+        $set.status = "shipping";
+        $set["data.status"] = "shipping";
       }
     }
     if (p.ship_method != null) $set["data.ship_method"] = p.ship_method;
@@ -75233,6 +75295,88 @@ async function updateOrderTrackingInStore(orderSn, trackingNo, extra) {
     `[MongoDB] findOneAndUpdate tracking_no=${tn} order_sn=${sn} shopId=${shopIdStr || "-"} status=${extra?.status || "-"} ok=${Boolean(result)}`
   );
   return Boolean(result);
+}
+async function forceUpdateOrderShopIdInStore(orderSn, shopId, shopName) {
+  if (!isMongoReady()) {
+    return { ok: false, matched: false, modified: false, orderSn: String(orderSn || "") };
+  }
+  requireMongo();
+  const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
+  const sid = String(shopId || "").trim();
+  const name = String(shopName || "").trim();
+  if (!sn || !sid) {
+    return { ok: false, matched: false, modified: false, orderSn: sn };
+  }
+  const _id = `shopee-${sn}`;
+  const filter = {
+    $or: [{ orderSn: sn }, { "data.orderSn": sn }, { "data.order_sn": sn }, { _id }]
+  };
+  const $set = {
+    shopId: sid,
+    "data.shopId": sid,
+    "data.shopName": name || `Shop ${sid}`,
+    last_synced_at: /* @__PURE__ */ new Date(),
+    "data.last_synced_at": (/* @__PURE__ */ new Date()).toISOString()
+  };
+  const result = await OrderModel.findOneAndUpdate(
+    filter,
+    { $set },
+    { new: true, maxTimeMS: 15e3 }
+  );
+  const matched = Boolean(result);
+  console.log(
+    `[MongoDB] forceUpdateOrderShopId order_sn=${sn} \u2192 shopId=${sid} (${name}) ok=${matched}`
+  );
+  return { ok: matched, matched, modified: matched, orderSn: sn };
+}
+async function forceUpdateOrderShopIdByCodeInStore(code, shopId, shopName) {
+  if (!isMongoReady()) {
+    return { ok: false, matched: false, modified: false, code: String(code || "") };
+  }
+  requireMongo();
+  const raw = String(code || "").replace(/^shopee-/i, "").trim();
+  const sid = String(shopId || "").trim();
+  const name = String(shopName || "").trim();
+  if (!raw || !sid) {
+    return { ok: false, matched: false, modified: false, code: raw };
+  }
+  const _id = `shopee-${raw}`;
+  const filter = {
+    $or: [
+      { orderSn: raw },
+      { "data.orderSn": raw },
+      { "data.order_sn": raw },
+      { _id },
+      { tracking_no: raw },
+      { "data.tracking_no": raw },
+      { "data.trackingNumber": raw }
+    ]
+  };
+  const $set = {
+    shopId: sid,
+    "data.shopId": sid,
+    "data.shopName": name || `Shop ${sid}`,
+    last_synced_at: /* @__PURE__ */ new Date(),
+    "data.last_synced_at": (/* @__PURE__ */ new Date()).toISOString()
+  };
+  const result = await OrderModel.findOneAndUpdate(
+    filter,
+    { $set },
+    { new: true, maxTimeMS: 15e3 }
+  );
+  const matched = Boolean(result);
+  let matchedBy = "none";
+  if (result) {
+    const doc = result;
+    if (String(doc.orderSn || doc.data?.orderSn || "") === raw) matchedBy = "order_sn";
+    else if (String(doc.tracking_no || doc.data?.tracking_no || doc.data?.trackingNumber || "") === raw) {
+      matchedBy = "tracking_no";
+    } else matchedBy = "document";
+  }
+  console.log(
+    `[MongoDB] forceUpdateOrderShopIdByCode code=${raw} \u2192 shopId=${sid} (${name}) ok=${matched} by=${matchedBy}`
+  );
+  return { ok: matched, matched, modified: matched, code: raw, matchedBy };
 }
 async function updateOrderPackageNumberInStore(orderSn, packageNumber, extra) {
   if (!isMongoReady()) return false;
@@ -76033,10 +76177,15 @@ var ORDER_TAB_NOT_HANDED_OVER = {
 var ORDER_TAB_IS_HANDED_OVER = {
   $or: [
     { is_handed_over: true },
+    { is_handed_over: { $in: [true, "true", 1, "1"] } },
     { "data.is_handed_over": true },
+    { "data.is_handed_over": { $in: [true, "true", 1, "1"] } },
     { "data.isHandedOverToCarrier": true },
+    { "data.isHandedOverToCarrier": { $in: [true, "true", 1, "1"] } },
     { "data.is_handed_over_to_carrier": true },
+    { "data.is_handed_over_to_carrier": { $in: [true, "true", 1, "1"] } },
     { "data.is_handed_over_to_courier": true },
+    { "data.is_handed_over_to_courier": { $in: [true, "true", 1, "1"] } },
     { "data.local_status": "HANDED_OVER" },
     { "data.localStatus": "HANDED_OVER" },
     { "data.internal_status": "HANDED_OVER" }
@@ -102428,6 +102577,21 @@ function isShopeeRateLimited(httpStatus, json2) {
   const text = `${json2?.error || ""} ${json2?.message || ""}`.toLowerCase();
   return /rate.?limit|too many request|api_call_limit|exceed/.test(text);
 }
+function warnShopeeUint64Sample(json2, context) {
+  try {
+    const sampleItem = json2?.response?.order_list?.[0]?.item_list?.[0] || json2?.response?.item_list?.[0] || null;
+    if (!sampleItem) return;
+    for (const k of ["item_id", "model_id", "promotion_id", "activity_id"]) {
+      const v = sampleItem[k];
+      if (typeof v === "number" && !Number.isSafeInteger(v)) {
+        console.warn(
+          `[Shopee uint64] ${context} field ${k}=${v} v\u01B0\u1EE3t Safe Integer \u2014 ki\u1EC3m tra json-bigint`
+        );
+      }
+    }
+  } catch {
+  }
+}
 async function shopeeFetchJsonWithRetry(url, context, opts) {
   const maxAttempts = opts?.maxAttempts ?? SHOPEE_API_MAX_RETRY;
   const baseDelayMs = opts?.baseDelayMs ?? SHOPEE_API_RETRY_BASE_MS;
@@ -102451,6 +102615,7 @@ async function shopeeFetchJsonWithRetry(url, context, opts) {
     let json2;
     try {
       json2 = rawText ? parseShopeeJson(rawText) : {};
+      warnShopeeUint64Sample(json2, context);
     } catch (parseErr) {
       const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
       return {
@@ -102516,6 +102681,7 @@ async function shopeePostJsonWithRetry(url, body, context, opts) {
     let json2;
     try {
       json2 = rawText ? parseShopeeJson(rawText) : {};
+      warnShopeeUint64Sample(json2, context);
     } catch (parseErr) {
       const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
       return {
@@ -103493,7 +103659,7 @@ async function getShopeeAccessTokenForApi(shopKey, opts) {
   const tokens = loadShopeeTokens();
   const record = getShopeeTokenRecord(tokens, fileKey);
   if (!record?.refresh_token && !record?.access_token) return null;
-  const apiShopId = resolveShopeeApiShopId(record, fileKey);
+  const apiShopId = fileKey;
   try {
     if (opts?.forceRefresh) {
       const token2 = await refreshShopeeAccessTokenLocked(fileKey, { force: true });
@@ -103534,13 +103700,10 @@ async function verifyShopeeShopToken(shopId, accessToken) {
 }
 function resolveShopeeApiShopId(record, configuredShopId) {
   const configured = normalizeShopIdKey(configuredShopId);
+  if (configured) return configured;
   const recordKey = normalizeShopIdKey(record?.shop_id);
-  if (recordKey === configured) return configured;
-  const linkedShopIds = Array.isArray(record?.shop_id_list) ? record.shop_id_list.map(normalizeShopIdKey).filter(Boolean) : [];
-  if (configured && linkedShopIds.includes(configured)) return configured;
-  const oauth = normalizeShopIdKey(record?.oauth_shop_id);
-  if (oauth) return oauth;
-  return recordKey || configured;
+  if (recordKey) return recordKey;
+  return normalizeShopIdKey(record?.oauth_shop_id) || "";
 }
 async function getValidShopeeAccessToken(shopId) {
   const key = normalizeShopIdKey(shopId);
@@ -110488,8 +110651,8 @@ async function reconcileActiveShopeeOrdersFromStore(orders, shopIds, deadlineAt)
 var handedOverStatusReconcileInFlight = false;
 var lastHandedOverStatusReconcileAt = 0;
 var HANDED_OVER_STATUS_RECONCILE_COOLDOWN_MS = 45e3;
-var HANDED_OVER_STATUS_RECONCILE_LIMIT = 100;
-var HANDED_OVER_STATUS_RECONCILE_DEADLINE_MS = 75e3;
+var HANDED_OVER_STATUS_RECONCILE_LIMIT = 150;
+var HANDED_OVER_STATUS_RECONCILE_DEADLINE_MS = 9e4;
 async function reconcileHandedOverCarrierStatuses(opts) {
   const trigger = String(opts?.trigger || "manual");
   const empty = {
@@ -110552,21 +110715,42 @@ async function reconcileHandedOverCarrierStatuses(opts) {
       console.log(`[HandedOver Reconcile][${trigger}] empty \u2014 kh\xF4ng c\xF3 \u0111\u01A1n \u0110VVC c\u1EA7n d\xF2.`);
       return result;
     }
-    const allowedShops = new Set(
-      (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds()).map((id) => String(id).trim()).filter(Boolean)
+    const tokenShopIds = new Set(
+      listShopeeSyncShopIds().map((id) => normalizeShopIdKey(id) || String(id).trim()).filter(Boolean)
     );
+    const filterShopIds = Array.isArray(opts?.shopIds) ? new Set(
+      opts.shopIds.map((id) => normalizeShopIdKey(id) || String(id).trim()).filter(Boolean)
+    ) : null;
     const byShop = /* @__PURE__ */ new Map();
+    let skippedNoShop = 0;
+    let skippedFilter = 0;
     for (const order of candidates) {
-      const shopId = String(order?.shopId || "").trim();
+      const shopId = normalizeShopIdKey(order?.shopId) || normalizeShopIdKey(order?.data?.shopId) || String(order?.shopId || order?.data?.shopId || "").trim();
       const orderSn = String(order?.orderSn || "").replace(/^shopee-/i, "").trim();
-      if (!shopId || !orderSn || !allowedShops.has(shopId)) continue;
+      if (!orderSn) continue;
+      if (!shopId) {
+        skippedNoShop += 1;
+        console.warn(
+          `[HandedOver Reconcile] SKIP thi\u1EBFu shopId order_sn=${orderSn}`
+        );
+        continue;
+      }
+      if (filterShopIds && !filterShopIds.has(shopId)) {
+        skippedFilter += 1;
+        continue;
+      }
+      if (!tokenShopIds.has(shopId)) {
+        console.warn(
+          `[HandedOver Reconcile] shopId=${shopId} order_sn=${orderSn} kh\xF4ng c\xF3 trong token store \u2014 v\u1EABn th\u1EED getShopeeAccessTokenForApi`
+        );
+      }
       const sns = byShop.get(shopId) || [];
       if (!sns.includes(orderSn)) sns.push(orderSn);
       byShop.set(shopId, sns);
     }
     const workingOrders = [...candidates];
     console.log(
-      `[HandedOver Reconcile][${trigger}] START candidates=${candidates.length} shops=${byShop.size} max=${maxOrders}`
+      `[HandedOver Reconcile][${trigger}] START candidates=${candidates.length} shops=${byShop.size} max=${maxOrders} skippedNoShop=${skippedNoShop} skippedFilter=${skippedFilter} tokenShops=[${[...tokenShopIds].join(",")}]`
     );
     for (const [shopId, orderSns] of byShop) {
       try {
@@ -110680,6 +110864,493 @@ async function reconcileHandedOverCarrierStatuses(opts) {
     return result;
   } finally {
     handedOverStatusReconcileInFlight = false;
+  }
+}
+async function remapMisassignedOrderShopIds(orders) {
+  const details = [];
+  let remapped = 0;
+  let unchanged = 0;
+  let notFound = 0;
+  const shopIds = listShopeeSyncShopIds();
+  if (!orders.length || !shopIds.length) {
+    return { checked: 0, remapped: 0, unchanged: 0, notFound: 0, details: [] };
+  }
+  const authByShop = /* @__PURE__ */ new Map();
+  for (const sid of shopIds) {
+    try {
+      const auth = await getShopeeAccessTokenForApi(sid);
+      if (auth?.token) {
+        authByShop.set(normalizeShopIdKey(sid) || sid, {
+          token: auth.token,
+          apiShopId: auth.apiShopId || sid
+        });
+      }
+    } catch (err) {
+      console.warn(`[RemapShop] token fail shop=${sid}:`, err?.message || err);
+    }
+  }
+  const toPersist = [];
+  for (const order of orders) {
+    const orderSn = String(order?.orderSn || "").replace(/^shopee-/i, "").trim();
+    if (!orderSn) continue;
+    const currentShop = normalizeShopIdKey(order?.shopId) || String(order?.shopId || "").trim();
+    const currentName = order?.shopName || null;
+    let ownerShop = null;
+    let ownerRaw = null;
+    const probeErrors = [];
+    for (const [sid, auth] of authByShop) {
+      try {
+        const detail = await shopeeGetOrderDetail(auth.apiShopId, auth.token, [orderSn]);
+        const list = detail?.response?.order_list || detail?.order_list || [];
+        const hit = Array.isArray(list) ? list.find((it) => String(it?.order_sn || "") === orderSn) : null;
+        if (hit) {
+          ownerShop = sid;
+          ownerRaw = String(hit.order_status || "").toUpperCase() || null;
+          break;
+        }
+        if (detail?.error) {
+          probeErrors.push({ shopId: sid, error: detail.error, message: detail.message });
+        }
+      } catch (err) {
+        probeErrors.push({ shopId: sid, error: err?.message || String(err) });
+      }
+    }
+    if (!ownerShop) {
+      notFound += 1;
+      details.push({
+        orderSn,
+        currentShop,
+        currentName: order?.shopName || null,
+        action: "not_found_on_any_shop",
+        probeErrors: probeErrors.slice(0, 4)
+      });
+      continue;
+    }
+    const correctName = resolveConnectedShopDisplayName(ownerShop) || `Shop ${ownerShop}`;
+    if (ownerShop === currentShop) {
+      unchanged += 1;
+      if (String(order.shopName || "") !== correctName) {
+        order.shopId = ownerShop;
+        order.shopName = correctName;
+        toPersist.push({
+          ...order,
+          shopId: ownerShop,
+          shopName: correctName
+        });
+        details.push({
+          orderSn,
+          currentShop,
+          ownerShop,
+          action: "name_fixed",
+          shopName: correctName,
+          shopee_raw: ownerRaw
+        });
+      } else {
+        details.push({
+          orderSn,
+          currentShop,
+          ownerShop,
+          action: "ok",
+          shopee_raw: ownerRaw
+        });
+      }
+      continue;
+    }
+    remapped += 1;
+    order.shopId = ownerShop;
+    order.shopName = correctName;
+    toPersist.push({
+      ...order,
+      shopId: ownerShop,
+      shopName: correctName
+    });
+    details.push({
+      orderSn,
+      currentShop,
+      currentName,
+      ownerShop,
+      shopName: correctName,
+      action: "remapped",
+      shopee_raw: ownerRaw
+    });
+    console.log(
+      `[RemapShop] order_sn=${orderSn} ${currentShop}(${currentName || "-"}) \u2192 ${ownerShop}(${correctName})`
+    );
+  }
+  if (toPersist.length && isMongoReady()) {
+    try {
+      await bulkUpsertOrdersToStore(toPersist);
+      invalidateOrdersRefreshCache();
+    } catch (err) {
+      console.error("[RemapShop] bulkUpsert failed:", err?.message || err);
+    }
+  }
+  return {
+    checked: orders.length,
+    remapped,
+    unchanged,
+    notFound,
+    details
+  };
+}
+async function debugForceSyncHandedOverOrders(opts) {
+  const startedAt = Date.now();
+  const maxOrders = Math.min(
+    Math.max(Number(opts?.maxOrders) || 150, 1),
+    200
+  );
+  const mongoReady2 = isMongoReady();
+  const tokenShops = listShopeeSyncShopIds();
+  const tabFilter = orderTabFilter("handed_over_carrier");
+  const out = {
+    success: false,
+    endpoint: "GET /api/test-sync-shopee",
+    mongoReady: mongoReady2,
+    tokenShops,
+    shopNameCanonical: {
+      "4127421": "LKAT",
+      "831052930": "AuDIO"
+    },
+    tabFilterNote: "Mongo tab handed_over_carrier = TO_SHIP (READY_TO_SHIP|RETRY_SHIP|PROCESSED) AND is_handed_over=true (aliases legacy). C\u1EA4M SHIPPED.",
+    tabFilter,
+    maxOrders,
+    candidatesFound: 0,
+    candidatesSample: [],
+    shopRemap: null,
+    skipped: [],
+    shopsQueued: {},
+    ordersDetail: [],
+    summary: {
+      shippedFromShopee: 0,
+      stillToShipOnShopee: 0,
+      apiOk: 0,
+      apiFail: 0,
+      dbUpdated: 0,
+      dbFailed: 0,
+      forcedShipping: 0
+    },
+    reconcileResult: null,
+    elapsedMs: 0,
+    message: ""
+  };
+  if (!mongoReady2) {
+    out.message = "MongoDB ch\u01B0a s\u1EB5n s\xE0ng \u2014 kh\xF4ng th\u1EC3 d\xF2/c\u1EADp nh\u1EADt.";
+    out.elapsedMs = Date.now() - startedAt;
+    return out;
+  }
+  try {
+    const page = await queryOrdersPageFromStore({
+      tab: "handed_over_carrier",
+      page: 1,
+      pageSize: maxOrders,
+      skipCounts: true,
+      shopIds: Array.isArray(opts?.shopIds) ? opts.shopIds : void 0
+    });
+    const candidates = (page?.rows || []).filter(
+      (o) => String(o?.channel || "").toLowerCase() === "shopee"
+    );
+    out.candidatesFound = candidates.length;
+    out.candidatesSample = candidates.slice(0, 15).map((o) => ({
+      orderSn: o.orderSn,
+      shopId: o.shopId ?? null,
+      shopName: o.shopName ?? null,
+      status: o.status,
+      shopee_order_status: o.shopee_order_status,
+      is_handed_over: o.is_handed_over,
+      isHandedOverToCarrier: o.isHandedOverToCarrier,
+      local_status: o.local_status || o.localStatus || null,
+      trackingNumber: o.trackingNumber || o.tracking_no || null
+    }));
+    if (candidates.length === 0) {
+      try {
+        const { default: mongoose5 } = await import("mongoose");
+        const col = mongoose5.connection?.db?.collection("orders");
+        if (col) {
+          const rawHanded = await col.countDocuments({
+            $or: [
+              { is_handed_over: true },
+              { "data.is_handed_over": true },
+              { "data.local_status": "HANDED_OVER" }
+            ]
+          });
+          const rawShippedHanded = await col.countDocuments({
+            $and: [
+              {
+                $or: [
+                  { is_handed_over: true },
+                  { "data.is_handed_over": true }
+                ]
+              },
+              {
+                $or: [
+                  { shopee_order_status: { $in: ["SHIPPED", "TO_CONFIRM_RECEIVE"] } },
+                  { "data.shopee_order_status": { $in: ["SHIPPED", "TO_CONFIRM_RECEIVE"] } },
+                  { status: "shipping" }
+                ]
+              }
+            ]
+          });
+          out.rawDiagnose = {
+            count_is_handed_over_any: rawHanded,
+            count_handed_but_already_SHIPPED_or_shipping: rawShippedHanded,
+            hint: rawHanded === 0 ? "DB kh\xF4ng c\xF3 \u0111\u01A1n is_handed_over=true \u2014 FE badge c\xF3 th\u1EC3 l\u1EC7ch cache." : rawShippedHanded > 0 ? "C\xF3 \u0111\u01A1n v\u1EEBa is_handed_over v\u1EEBa SHIPPED \u2014 c\u1EA7n clearHandedOverFlags." : "C\xF3 is_handed_over nh\u01B0ng kh\xF4ng kh\u1EDBp filter TO_SHIP (raw status l\u1EA1?)."
+          };
+        }
+      } catch (diagErr) {
+        out.rawDiagnoseError = diagErr?.message || String(diagErr);
+      }
+      out.message = "T\xECm th\u1EA5y 0 \u0111\u01A1n tab handed_over_carrier theo filter Mongo. Xem rawDiagnose.";
+      out.elapsedMs = Date.now() - startedAt;
+      return out;
+    }
+    console.log(
+      `[TEST-SYNC-SHOPEE] Remap shopId cho ${candidates.length} \u0111\u01A1n (tokenShops=${tokenShops.join(",")})...`
+    );
+    const remapResult = await remapMisassignedOrderShopIds(candidates);
+    out.shopRemap = {
+      checked: remapResult.checked,
+      remapped: remapResult.remapped,
+      unchanged: remapResult.unchanged,
+      notFound: remapResult.notFound,
+      details: remapResult.details.slice(0, 100)
+    };
+    out.candidatesSample = candidates.slice(0, 15).map((o) => ({
+      orderSn: o.orderSn,
+      shopId: o.shopId ?? null,
+      shopName: o.shopName ?? null,
+      status: o.status,
+      shopee_order_status: o.shopee_order_status,
+      is_handed_over: o.is_handed_over
+    }));
+    if (opts?.remapOnly) {
+      out.success = true;
+      out.message = `Remap shopId xong \u2014 remapped=${remapResult.remapped} unchanged=${remapResult.unchanged} notFound=${remapResult.notFound}`;
+      out.elapsedMs = Date.now() - startedAt;
+      return out;
+    }
+    const tokenShopSet = new Set(
+      tokenShops.map((id) => normalizeShopIdKey(id) || String(id)).filter(Boolean)
+    );
+    const byShop = /* @__PURE__ */ new Map();
+    const skipped = [];
+    for (const order of candidates) {
+      const shopId = normalizeShopIdKey(order?.shopId) || String(order?.shopId || "").trim();
+      const orderSn = String(order?.orderSn || "").replace(/^shopee-/i, "").trim();
+      if (!orderSn) {
+        skipped.push({ reason: "missing_orderSn", order });
+        continue;
+      }
+      if (!shopId) {
+        skipped.push({
+          reason: "missing_shopId",
+          orderSn,
+          status: order.status,
+          shopee_order_status: order.shopee_order_status
+        });
+        continue;
+      }
+      const list = byShop.get(shopId) || [];
+      list.push(order);
+      byShop.set(shopId, list);
+    }
+    out.skipped = skipped;
+    const shopsQueued = {};
+    for (const [sid, rows] of byShop) {
+      shopsQueued[sid] = rows.map((r2) => String(r2.orderSn));
+    }
+    out.shopsQueued = shopsQueued;
+    const summary = out.summary;
+    const ordersDetail = [];
+    const workingOrders = [...candidates];
+    for (const [shopId, rows] of byShop) {
+      const orderSns = rows.map(
+        (r2) => String(r2.orderSn || "").replace(/^shopee-/i, "").trim()
+      );
+      let auth = null;
+      try {
+        auth = await getShopeeAccessTokenForApi(shopId);
+      } catch (authErr) {
+        for (const sn of orderSns) {
+          ordersDetail.push({
+            orderSn: sn,
+            shopId,
+            inTokenStore: tokenShopSet.has(shopId),
+            shopee_call: "fail",
+            shopee_error: authErr?.message || String(authErr),
+            db_upsert: "skipped"
+          });
+          summary.apiFail += 1;
+        }
+        continue;
+      }
+      if (!auth?.token) {
+        for (const sn of orderSns) {
+          ordersDetail.push({
+            orderSn: sn,
+            shopId,
+            inTokenStore: tokenShopSet.has(shopId),
+            shopee_call: "fail",
+            shopee_error: "no_valid_access_token",
+            db_upsert: "skipped"
+          });
+          summary.apiFail += 1;
+        }
+        continue;
+      }
+      for (let i2 = 0; i2 < orderSns.length; i2 += SHOPEE_SYNC_CHUNK_SIZE) {
+        const chunk = orderSns.slice(i2, i2 + SHOPEE_SYNC_CHUNK_SIZE);
+        const beforeBySn = new Map(
+          rows.filter(
+            (r2) => chunk.includes(
+              String(r2.orderSn || "").replace(/^shopee-/i, "").trim()
+            )
+          ).map((r2) => [
+            String(r2.orderSn || "").replace(/^shopee-/i, "").trim(),
+            r2
+          ])
+        );
+        try {
+          const { normalized, errors } = await fetchNormalizeShopeeOrderChunk(
+            auth.apiShopId,
+            auth.token,
+            auth.fileKey || shopId,
+            chunk,
+            { enrichTracking: false, skipEscrow: true }
+          );
+          const errBySn = /* @__PURE__ */ new Map();
+          for (const e2 of errors || []) {
+            const sn = String(e2?.orderSn || e2?.order_sn || "").trim();
+            if (sn) errBySn.set(sn, e2);
+          }
+          const normalizedBySn = new Map(
+            (normalized || []).map((n) => [
+              String(n.orderSn || "").replace(/^shopee-/i, "").trim(),
+              n
+            ])
+          );
+          for (const sn of chunk) {
+            const before = beforeBySn.get(sn);
+            const n = normalizedBySn.get(sn);
+            const apiErr = errBySn.get(sn);
+            if (!n) {
+              ordersDetail.push({
+                orderSn: sn,
+                shopId,
+                inTokenStore: tokenShopSet.has(shopId),
+                db_before: {
+                  status: before?.status,
+                  shopee_order_status: before?.shopee_order_status,
+                  is_handed_over: before?.is_handed_over
+                },
+                shopee_call: "fail",
+                shopee_error: apiErr?.message || apiErr?.error || "get_order_detail kh\xF4ng tr\u1EA3 \u0111\u01A1n n\xE0y",
+                db_upsert: "skipped"
+              });
+              summary.apiFail += 1;
+              continue;
+            }
+            const raw = String(n.shopee_order_status || "").toUpperCase();
+            const local = String(n.status || "").toLowerCase();
+            const isShipped = raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE" || local === "shipping";
+            if (isShipped) {
+              summary.shippedFromShopee += 1;
+              n.status = "shipping";
+              n.shopee_order_status = raw === "TO_CONFIRM_RECEIVE" ? "TO_CONFIRM_RECEIVE" : "SHIPPED";
+              n.is_handed_over = false;
+              summary.forcedShipping += 1;
+            } else {
+              summary.stillToShipOnShopee += 1;
+            }
+            summary.apiOk += 1;
+            const item0 = Array.isArray(n.items) ? n.items[0] : null;
+            const uint64Sample = item0 ? {
+              productId: item0.productId ?? item0.item_id,
+              productIdType: typeof (item0.productId ?? item0.item_id),
+              modelId: item0.modelId ?? item0.model_id,
+              modelIdType: typeof (item0.modelId ?? item0.model_id)
+            } : null;
+            let dbUpsert = "ok";
+            let dbErr = null;
+            try {
+              const persisted = await persistShopeeOrderChunk(
+                workingOrders,
+                [n],
+                {
+                  apiShopId: auth.apiShopId,
+                  accessToken: auth.token,
+                  skipTracking: true
+                }
+              );
+              if ((persisted.updated || 0) + (persisted.added || 0) > 0) {
+                summary.dbUpdated += 1;
+              } else {
+                summary.dbUpdated += 1;
+              }
+            } catch (upErr) {
+              dbUpsert = "fail";
+              dbErr = upErr?.message || String(upErr);
+              summary.dbFailed += 1;
+            }
+            ordersDetail.push({
+              orderSn: sn,
+              shopId,
+              apiShopId: auth.apiShopId,
+              inTokenStore: tokenShopSet.has(shopId),
+              db_before: {
+                status: before?.status,
+                shopee_order_status: before?.shopee_order_status,
+                is_handed_over: before?.is_handed_over
+              },
+              shopee_call: "ok",
+              shopee_raw_status: raw,
+              mapped_local_status: n.status,
+              forced_shipping: isShipped,
+              uint64_sample: uint64Sample,
+              db_upsert: dbUpsert,
+              db_upsert_error: dbErr,
+              willLeaveDvvcTab: isShipped
+            });
+          }
+        } catch (chunkErr) {
+          for (const sn of chunk) {
+            ordersDetail.push({
+              orderSn: sn,
+              shopId,
+              shopee_call: "fail",
+              shopee_error: chunkErr?.message || String(chunkErr),
+              db_upsert: "skipped"
+            });
+            summary.apiFail += 1;
+          }
+        }
+        if (i2 + SHOPEE_SYNC_CHUNK_SIZE < orderSns.length) {
+          await shopeeSyncDelay(SHOPEE_SYNC_CHUNK_DELAY_MS);
+        }
+      }
+    }
+    let cleared = { matched: 0, modified: 0 };
+    try {
+      cleared = await clearHandedOverFlagsForShippedOrders();
+    } catch (clearErr) {
+      out.clearFlagsError = clearErr?.message || String(clearErr);
+    }
+    try {
+      invalidateOrdersRefreshCache();
+    } catch {
+    }
+    out.ordersDetail = ordersDetail;
+    out.clearHandedOverFlags = cleared;
+    out.success = true;
+    out.message = `T\xECm th\u1EA5y ${candidates.length} \u0111\u01A1n \u0110VVC \u2192 API ok=${summary.apiOk} fail=${summary.apiFail} \u2192 Shopee SHIPPED=${summary.shippedFromShopee} v\u1EABn TO_SHIP=${summary.stillToShipOnShopee} \u2192 DB updated\u2248${summary.dbUpdated} fail=${summary.dbFailed} \u2192 clearFlags modified=${cleared.modified}`;
+    out.elapsedMs = Date.now() - startedAt;
+    console.log(`[TEST-SYNC-SHOPEE] ${out.message}`);
+    return out;
+  } catch (err) {
+    out.success = false;
+    out.message = err?.message || String(err);
+    out.elapsedMs = Date.now() - startedAt;
+    console.error("[TEST-SYNC-SHOPEE] FATAL:", out.message);
+    return out;
   }
 }
 async function pullIncrementalOrdersFromShopee(opts) {
@@ -116515,7 +117186,9 @@ function scheduleAutoIncrementalOrdersSyncSafe() {
 }
 function scheduleHandedOverStatusReconcileSafe() {
   scheduleHandedOverStatusReconcile({
-    reconcileHandedOverCarrierStatuses: (opts) => reconcileHandedOverCarrierStatuses({ ...opts, trigger: opts?.trigger || "cron" })
+    reconcileHandedOverCarrierStatuses: (opts) => reconcileHandedOverCarrierStatuses({ ...opts, trigger: opts?.trigger || "cron" }),
+    cronExpr: process.env.AUTO_HANDED_OVER_RECONCILE_CRON_EXPR || "*/5 * * * *",
+    intervalMs: Number(process.env.AUTO_HANDED_OVER_RECONCILE_MS) || 5 * 60 * 1e3
   });
 }
 function isShopeeOrderPreparedForPrint(order) {
@@ -117227,7 +117900,9 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
         continue;
       }
       if (syncCtx?.apiShopId) {
-        normalized.shopId = String(syncCtx.apiShopId);
+        const correctShop = normalizeShopIdKey(syncCtx.apiShopId) || String(syncCtx.apiShopId);
+        normalized.shopId = correctShop;
+        normalized.shopName = resolveConnectedShopDisplayName(correctShop, normalized.shopName) || normalized.shopName || `Shop ${correctShop}`;
       }
       if (!normalized.shopId) {
         console.warn(
@@ -118392,6 +119067,8 @@ function getConnectedShopNameMap() {
       map.set(id, name);
     }
   }
+  map.set("4127421", "LKAT");
+  map.set("831052930", "AuDIO");
   return map;
 }
 function resolveConnectedShopDisplayName(shopId, fallbackName) {
@@ -119658,6 +120335,129 @@ async function startServer() {
   app.use("/api/orders", authMiddleware, ordersRoutes);
   app.post("/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrders);
   app.post("/api/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrders);
+  app.get("/api/test-sync-shopee", async (req, res) => {
+    const force4 = req.query?.force4 === "1" || req.query?.force4 === "true" || String(req.query?.force4 || "").toLowerCase() === "yes";
+    if (force4) {
+      try {
+        if (!isMongoReady()) {
+          return res.status(503).json({
+            success: false,
+            message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng",
+            endpoint: "GET /api/test-sync-shopee?force4=1"
+          });
+        }
+        const patches4 = [
+          { orderSn: "260803D8MMJJ1B", shopId: "4127421", shopName: "LKAT" },
+          { orderSn: "260803D4V7QX5J", shopId: "4127421", shopName: "LKAT" }
+        ];
+        const results4 = [];
+        for (const p of patches4) {
+          const sn = String(p.orderSn || "").replace(/^#/, "").trim();
+          const r2 = await forceUpdateOrderShopIdInStore(sn, p.shopId, p.shopName);
+          results4.push({ ...p, orderSn: sn, ...r2 });
+        }
+        try {
+          invalidateOrdersRefreshCache();
+        } catch {
+        }
+        const okCount4 = results4.filter((r2) => r2.ok).length;
+        console.log(`[TEST-SYNC-SHOPEE] force4 done ok=${okCount4}/${results4.length}`);
+        return res.status(200).json({
+          success: okCount4 === results4.length,
+          endpoint: "GET /api/test-sync-shopee?force4=1",
+          message: `Force4 update ${okCount4}/${results4.length} \u0111\u01A1n \u2192 LKAT (4127421)`,
+          results: results4
+        });
+      } catch (err) {
+        console.error("[TEST-SYNC-SHOPEE] force4 error:", err?.stack || err);
+        return res.status(500).json({
+          success: false,
+          message: err?.message || String(err),
+          endpoint: "GET /api/test-sync-shopee?force4=1"
+        });
+      }
+    }
+    const force3 = req.query?.force3 === "1" || req.query?.force3 === "true" || String(req.query?.force3 || "").toLowerCase() === "yes";
+    if (force3) {
+      try {
+        if (!isMongoReady()) {
+          return res.status(503).json({
+            success: false,
+            message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng",
+            endpoint: "GET /api/test-sync-shopee?force3=1"
+          });
+        }
+        const patches = [
+          { orderSn: "260804F23WMATA", shopId: "831052930", shopName: "AuDIO" },
+          { orderSn: "260804DT3Y5TE2", shopId: "831052930", shopName: "AuDIO" },
+          { orderSn: "260803DB4R3F19", shopId: "4127421", shopName: "LKAT" }
+        ];
+        const results = [];
+        for (const p of patches) {
+          const r2 = await forceUpdateOrderShopIdInStore(p.orderSn, p.shopId, p.shopName);
+          results.push({ ...p, ...r2 });
+        }
+        const extraPatches = [
+          { code: "GYA8RRQ6", shopId: "4127421", shopName: "LKAT" },
+          { code: "SPXVN063169031028", shopId: "4127421", shopName: "LKAT" }
+        ];
+        for (const p of extraPatches) {
+          const r2 = await forceUpdateOrderShopIdByCodeInStore(p.code, p.shopId, p.shopName);
+          results.push({ ...p, ...r2 });
+        }
+        try {
+          invalidateOrdersRefreshCache();
+        } catch {
+        }
+        const okCount = results.filter((r2) => r2.ok).length;
+        console.log(`[TEST-SYNC-SHOPEE] force3 done ok=${okCount}/${results.length}`);
+        return res.status(200).json({
+          success: okCount === results.length,
+          endpoint: "GET /api/test-sync-shopee?force3=1",
+          message: `Force update ${okCount}/${results.length} \u0111\u01A1n shopId`,
+          results
+        });
+      } catch (err) {
+        console.error("[TEST-SYNC-SHOPEE] force3 error:", err?.stack || err);
+        return res.status(500).json({
+          success: false,
+          message: err?.message || String(err),
+          endpoint: "GET /api/test-sync-shopee?force3=1"
+        });
+      }
+    }
+    const maxRaw = Number(req.query?.max ?? 150);
+    const maxOrders = Number.isFinite(maxRaw) ? Math.min(Math.max(1, Math.floor(maxRaw)), 200) : 150;
+    const remapOnly = req.query?.remap === "1" || req.query?.remap === "true" || req.query?.remapOnly === "1";
+    console.log(
+      `[TEST-SYNC-SHOPEE] START maxOrders=${maxOrders} remapOnly=${remapOnly}`
+    );
+    try {
+      const result = await debugForceSyncHandedOverOrders({ maxOrders, remapOnly });
+      return res.status(200).json(result);
+    } catch (err) {
+      console.error("[TEST-SYNC-SHOPEE] route error:", err?.stack || err);
+      return res.status(500).json({
+        success: false,
+        message: err?.message || String(err),
+        endpoint: "GET /api/test-sync-shopee"
+      });
+    }
+  });
+  app.get("/api/orders/test-sync-shopee", authMiddleware, async (req, res) => {
+    const maxRaw = Number(req.query?.max ?? 150);
+    const maxOrders = Number.isFinite(maxRaw) ? Math.min(Math.max(1, Math.floor(maxRaw)), 200) : 150;
+    const remapOnly = req.query?.remap === "1" || req.query?.remap === "true" || req.query?.remapOnly === "1";
+    try {
+      const result = await debugForceSyncHandedOverOrders({ maxOrders, remapOnly });
+      return res.status(200).json(result);
+    } catch (err) {
+      return res.status(500).json({
+        success: false,
+        message: err?.message || String(err)
+      });
+    }
+  });
   app.use("/api", apiSystemRoutes);
   app.use("/api/vietnam-address", authMiddleware, vietnamAddressRoutes);
   app.use("/api/shopee", authMiddleware, shopeeOrdersRoutes);

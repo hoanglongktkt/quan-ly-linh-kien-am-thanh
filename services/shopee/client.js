@@ -241,6 +241,27 @@ export function isShopeeRateLimited(httpStatus, json) {
   return /rate.?limit|too many request|api_call_limit|exceed/.test(text);
 }
 
+/** Cảnh báo nếu ID Shopee vẫn còn Number vượt Safe Integer sau parse. */
+function warnShopeeUint64Sample(json, context) {
+  try {
+    const sampleItem =
+      json?.response?.order_list?.[0]?.item_list?.[0] ||
+      json?.response?.item_list?.[0] ||
+      null;
+    if (!sampleItem) return;
+    for (const k of ["item_id", "model_id", "promotion_id", "activity_id"]) {
+      const v = sampleItem[k];
+      if (typeof v === "number" && !Number.isSafeInteger(v)) {
+        console.warn(
+          `[Shopee uint64] ${context} field ${k}=${v} vượt Safe Integer — kiểm tra json-bigint`,
+        );
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 export async function shopeeFetchJsonWithRetry(url, context, opts) {
   const maxAttempts = opts?.maxAttempts ?? SHOPEE_API_MAX_RETRY;
   const baseDelayMs = opts?.baseDelayMs ?? SHOPEE_API_RETRY_BASE_MS;
@@ -266,6 +287,7 @@ export async function shopeeFetchJsonWithRetry(url, context, opts) {
     let json;
     try {
       json = rawText ? parseShopeeJson(rawText) : {};
+      warnShopeeUint64Sample(json, context);
     } catch (parseErr) {
       const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
       return {
@@ -338,6 +360,7 @@ export async function shopeePostJsonWithRetry(url, body, context, opts) {
     let json;
     try {
       json = rawText ? parseShopeeJson(rawText) : {};
+      warnShopeeUint64Sample(json, context);
     } catch (parseErr) {
       const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
       return {

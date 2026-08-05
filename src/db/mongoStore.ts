@@ -1672,14 +1672,14 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     }
 
     // Khi Shopee → SHIPPED/COMPLETED/CANCEL: clear is_handed_over (cờ nội bộ hết tác dụng).
-    if (
+    const leftPickupPhase =
       rawStatus === "SHIPPED" ||
       rawStatus === "TO_CONFIRM_RECEIVE" ||
       rawStatus === "COMPLETED" ||
       rawStatus === "CANCELLED" ||
       rawStatus === "IN_CANCEL" ||
-      rawStatus === "TO_RETURN"
-    ) {
+      rawStatus === "TO_RETURN";
+    if (leftPickupPhase) {
       $set.is_handed_over = false;
       $set["data.is_handed_over"] = false;
       $set["data.isHandedOverToCarrier"] = false;
@@ -1691,27 +1691,26 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       $set["data.internal_status"] = "NONE";
       $set["data.handed_over_source"] = null;
       $set["data.handedOverSource"] = null;
-      if (
-        String(order.status || "").toLowerCase() === "shipping" ||
-        rawStatus === "SHIPPED" ||
-        rawStatus === "TO_CONFIRM_RECEIVE"
-      ) {
-        // Đảm bảo status local khớp tab Đang giao.
-        if (!order.status || String(order.status).trim() === "" || String(order.status) === "processed" || String(order.status) === "unprocessed" || String(order.status) === "handed_over") {
-          $set.status = "shipping";
-          $set["data.status"] = "shipping";
-        }
-      }
+    }
+
+    // BẮT BUỘC: Shopee SHIPPED / TO_CONFIRM_RECEIVE → luôn ép status=shipping (tab Đang giao).
+    // Không phụ thuộc order.status cũ (processed / pending_confirm / handed_over…).
+    const forceShipping =
+      rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE";
+    if (forceShipping) {
+      $set.status = "shipping";
+      $set["data.status"] = "shipping";
+      console.log(
+        `[MongoDB] FORCE shipping order_sn=${orderSn || _id}` +
+          ` raw=${rawStatus} shopId=${shopIdStr || "-"} clear_is_handed_over=true`,
+      );
     }
 
     // status local chỉ là helper UI — không thay shopee_order_status
-    if (order.status != null && String(order.status).trim()) {
+    if (!forceShipping && order.status != null && String(order.status).trim()) {
       const st = String(order.status).trim();
-      // Không ghi đè status=shipping vừa set ở trên bằng processed/handed_over stale.
-      if (!($set.status === "shipping" && (st === "processed" || st === "unprocessed" || st === "handed_over"))) {
-        $set.status = st;
-        $set["data.status"] = st;
-      }
+      $set.status = st;
+      $set["data.status"] = st;
     }
 
     if (order.shopName != null) $set["data.shopName"] = String(order.shopName);
@@ -1742,7 +1741,18 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     // Push fallback có thể chỉ chứa orderSn/status. Không để `items: []` hoặc
     // `totalAmount: 0` ghi đè snapshot chi tiết đã lấy trước đó.
     if (Array.isArray(order.items) && order.items.length > 0) {
-      $set["data.items"] = stringifyShopeeIdsDeep(order.items);
+      const safeItems = stringifyShopeeIdsDeep(order.items);
+      $set["data.items"] = safeItems;
+      const sample = safeItems[0] || {};
+      for (const k of ["item_id", "model_id", "productId", "modelId", "shopeeItemId", "shopeeModelId"]) {
+        const v = (sample as any)?.[k];
+        if (v == null) continue;
+        if (typeof v === "number" && !Number.isSafeInteger(v)) {
+          console.warn(
+            `[MongoDB][uint64] order_sn=${orderSn} items[0].${k}=${v} vượt Safe Integer`,
+          );
+        }
+      }
     }
     if (order.date != null) $set["data.date"] = order.date;
     if (Number(order.totalAmount) > 0) $set["data.totalAmount"] = order.totalAmount;
@@ -1765,7 +1775,10 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     }
 
     // ——— $setOnInsert: cờ nội bộ CHỈ khi INSERT (không đè khi sync lại) ———
-    const $setOnInsert: Record<string, unknown> = {
+    // QUAN TRỌNG: MongoDB CẤM cùng path xuất hiện ở cả $set và $setOnInsert
+    // → lỗi "Updating the path 'is_handed_over' would create a conflict".
+    // Khi SHIPPED đã $set clear flags → phải gỡ các key trùng khỏi $setOnInsert.
+    const $setOnInsertRaw: Record<string, unknown> = {
       _id,
       is_handed_over: false,
       isPrinted: false,
@@ -1782,6 +1795,11 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       "data.localStatus": "NONE",
       "data.internal_status": "NONE",
     };
+    const $setOnInsert: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries($setOnInsertRaw)) {
+      if (Object.prototype.hasOwnProperty.call($set, k)) continue;
+      $setOnInsert[k] = v;
+    }
 
     console.log("Dữ liệu chuẩn bị lưu DB (upsert $set + $setOnInsert):", {
       _id,
@@ -1791,7 +1809,9 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       tracking_no: usableTn,
       packageNumber: pkgNum || null,
       shipping_carrier: carrier || null,
-      setOnInsert_flags: "is_handed_over/isPrinted/isPrepared=false",
+      forceShipping,
+      setKeys_handed: Object.keys($set).filter((k) => /handed|local_status|internal_status/i.test(k)),
+      setOnInsert_keys: Object.keys($setOnInsert),
     });
 
     // Dùng cùng compound filter với markOrderHandedOver — khớp orderSn/_id/data.orderSn
@@ -1981,6 +2001,14 @@ export async function bulkUpdateShippedOrdersBySn(
         $set["data.isHandedOverToCarrier"] = false;
         $set["data.is_handed_over_to_carrier"] = false;
         $set["data.is_handed_over_to_courier"] = false;
+        $set["data.local_status"] = "NONE";
+        $set["data.localStatus"] = "NONE";
+        $set["data.internal_status"] = "NONE";
+      }
+      // BẮT BUỘC: SHIPPED → status shipping (tab Đang giao).
+      if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") {
+        $set.status = "shipping";
+        $set["data.status"] = "shipping";
       }
     }
     if (p.ship_method != null) $set["data.ship_method"] = p.ship_method;
@@ -2536,6 +2564,112 @@ export async function updateOrderTrackingInStore(
     `[MongoDB] findOneAndUpdate tracking_no=${tn} order_sn=${sn} shopId=${shopIdStr || "-"} status=${extra?.status || "-"} ok=${Boolean(result)}`,
   );
   return Boolean(result);
+}
+
+/**
+ * Force ghi đè shopId + shopName theo order_sn (sửa tay đơn gắn nhầm shop).
+ */
+export async function forceUpdateOrderShopIdInStore(
+  orderSn: string,
+  shopId: string,
+  shopName: string,
+): Promise<{ ok: boolean; matched: boolean; modified: boolean; orderSn: string }> {
+  if (!isMongoReady()) {
+    return { ok: false, matched: false, modified: false, orderSn: String(orderSn || "") };
+  }
+  requireMongo();
+  const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
+  const sid = String(shopId || "").trim();
+  const name = String(shopName || "").trim();
+  if (!sn || !sid) {
+    return { ok: false, matched: false, modified: false, orderSn: sn };
+  }
+  const _id = `shopee-${sn}`;
+  const filter = {
+    $or: [{ orderSn: sn }, { "data.orderSn": sn }, { "data.order_sn": sn }, { _id }],
+  };
+  const $set: Record<string, unknown> = {
+    shopId: sid,
+    "data.shopId": sid,
+    "data.shopName": name || `Shop ${sid}`,
+    last_synced_at: new Date(),
+    "data.last_synced_at": new Date().toISOString(),
+  };
+  const result = await OrderModel.findOneAndUpdate(
+    filter,
+    { $set },
+    { new: true, maxTimeMS: 15_000 },
+  );
+  const matched = Boolean(result);
+  console.log(
+    `[MongoDB] forceUpdateOrderShopId order_sn=${sn} → shopId=${sid} (${name}) ok=${matched}`,
+  );
+  return { ok: matched, matched, modified: matched, orderSn: sn };
+}
+
+/**
+ * Force ghi đè shopId + shopName — tìm theo order_sn HOẶC tracking_no.
+ */
+export async function forceUpdateOrderShopIdByCodeInStore(
+  code: string,
+  shopId: string,
+  shopName: string,
+): Promise<{
+  ok: boolean;
+  matched: boolean;
+  modified: boolean;
+  code: string;
+  matchedBy?: string;
+}> {
+  if (!isMongoReady()) {
+    return { ok: false, matched: false, modified: false, code: String(code || "") };
+  }
+  requireMongo();
+  const raw = String(code || "").replace(/^shopee-/i, "").trim();
+  const sid = String(shopId || "").trim();
+  const name = String(shopName || "").trim();
+  if (!raw || !sid) {
+    return { ok: false, matched: false, modified: false, code: raw };
+  }
+  const _id = `shopee-${raw}`;
+  const filter = {
+    $or: [
+      { orderSn: raw },
+      { "data.orderSn": raw },
+      { "data.order_sn": raw },
+      { _id },
+      { tracking_no: raw },
+      { "data.tracking_no": raw },
+      { "data.trackingNumber": raw },
+    ],
+  };
+  const $set: Record<string, unknown> = {
+    shopId: sid,
+    "data.shopId": sid,
+    "data.shopName": name || `Shop ${sid}`,
+    last_synced_at: new Date(),
+    "data.last_synced_at": new Date().toISOString(),
+  };
+  const result = await OrderModel.findOneAndUpdate(
+    filter,
+    { $set },
+    { new: true, maxTimeMS: 15_000 },
+  );
+  const matched = Boolean(result);
+  let matchedBy = "none";
+  if (result) {
+    const doc: any = result;
+    if (String(doc.orderSn || doc.data?.orderSn || "") === raw) matchedBy = "order_sn";
+    else if (
+      String(doc.tracking_no || doc.data?.tracking_no || doc.data?.trackingNumber || "") === raw
+    ) {
+      matchedBy = "tracking_no";
+    } else matchedBy = "document";
+  }
+  console.log(
+    `[MongoDB] forceUpdateOrderShopIdByCode code=${raw} → shopId=${sid} (${name}) ok=${matched} by=${matchedBy}`,
+  );
+  return { ok: matched, matched, modified: matched, code: raw, matchedBy };
 }
 
 /**
@@ -3620,10 +3754,15 @@ const ORDER_TAB_NOT_HANDED_OVER: Record<string, unknown> = {
 const ORDER_TAB_IS_HANDED_OVER: Record<string, unknown> = {
   $or: [
     { is_handed_over: true },
+    { is_handed_over: { $in: [true, "true", 1, "1"] } },
     { "data.is_handed_over": true },
+    { "data.is_handed_over": { $in: [true, "true", 1, "1"] } },
     { "data.isHandedOverToCarrier": true },
+    { "data.isHandedOverToCarrier": { $in: [true, "true", 1, "1"] } },
     { "data.is_handed_over_to_carrier": true },
+    { "data.is_handed_over_to_carrier": { $in: [true, "true", 1, "1"] } },
     { "data.is_handed_over_to_courier": true },
+    { "data.is_handed_over_to_courier": { $in: [true, "true", 1, "1"] } },
     { "data.local_status": "HANDED_OVER" },
     { "data.localStatus": "HANDED_OVER" },
     { "data.internal_status": "HANDED_OVER" },
