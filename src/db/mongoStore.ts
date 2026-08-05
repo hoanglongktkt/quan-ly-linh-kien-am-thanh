@@ -3653,6 +3653,110 @@ export async function loadShopeeTrackingEnrichCandidatesFromStore(opts: {
   return loadOrdersFromStore({ ids: docs.map((d) => String(d._id)) });
 }
 
+/**
+ * Quét đơn Hủy/Hoàn thiếu mã vận đơn (tracking_no + return_tracking_no đều rỗng).
+ * Dùng cho heal 1 lần — KHÔNG lọc cooldown (ép fetch lại data cũ bị ghi null).
+ */
+export async function loadCancelReturnMissingTrackingFromStore(opts?: {
+  lookbackMs?: number;
+  limit?: number;
+}): Promise<any[]> {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const limit = Math.min(Math.max(1, Math.floor(Number(opts?.limit) || 200)), 500);
+  const lookbackMs = Math.max(
+    24 * 60 * 60 * 1000,
+    Number(opts?.lookbackMs) || 60 * 24 * 60 * 60 * 1000,
+  );
+  const cutoffIso = new Date(Date.now() - lookbackMs).toISOString();
+
+  const trackingEmpty = {
+    $and: [
+      {
+        $or: [
+          { tracking_no: null },
+          { tracking_no: "" },
+          { tracking_no: { $exists: false } },
+          { tracking_no: { $regex: /^0FG/i } },
+        ],
+      },
+      {
+        $or: [
+          { "data.tracking_no": null },
+          { "data.tracking_no": "" },
+          { "data.tracking_no": { $exists: false } },
+          { "data.trackingNumber": null },
+          { "data.trackingNumber": "" },
+          { "data.trackingNumber": { $exists: false } },
+        ],
+      },
+    ],
+  };
+  const returnEmpty = {
+    $or: [
+      { "data.return_tracking_no": { $exists: false } },
+      { "data.return_tracking_no": null },
+      { "data.return_tracking_no": "" },
+    ],
+  };
+  const cancelReturnStatus = {
+    $or: [
+      { status: { $in: ["cancelled", "return_pending", "return_received"] } },
+      { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"] } },
+      { "data.shopee_order_status": { $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"] } },
+      { "data.return_sn": { $exists: true, $nin: [null, ""] } },
+      {
+        "data.shopee_cancel_return_kind": {
+          $in: ["cancelled", "refund_return", "failed_delivery"],
+        },
+      },
+    ],
+  };
+
+  const filter: Record<string, unknown> = {
+    $and: [
+      {
+        $or: [
+          { "data.channel": "shopee" },
+          { "data.channel": { $exists: false } },
+          { "data.channel": null },
+          { "data.channel": "" },
+        ],
+      },
+      {
+        $or: [
+          { "data.date": { $gte: cutoffIso } },
+          { last_synced_at: { $gte: new Date(Date.now() - lookbackMs) } },
+        ],
+      },
+      cancelReturnStatus,
+      trackingEmpty,
+      returnEmpty,
+    ],
+  };
+
+  let docs: any[];
+  try {
+    docs = await OrderModel.find(filter)
+      .select({ _id: 1 })
+      .sort({ "data.date": -1, _id: -1 })
+      .limit(limit)
+      .maxTimeMS(12_000)
+      .lean();
+  } catch (err: any) {
+    console.warn(
+      "[MongoDB] loadCancelReturnMissingTrackingFromStore failed:",
+      err?.message || err,
+    );
+    return [];
+  }
+  if (!docs.length) return [];
+  console.log(
+    `[MongoDB] heal-tracking-cancelled candidates=${docs.length} lookbackDays=${Math.round(lookbackMs / 86400000)}`,
+  );
+  return loadOrdersFromStore({ ids: docs.map((d) => String(d._id)) });
+}
+
 export type OrdersPageQuery = {
   page?: number;
   pageSize?: number;

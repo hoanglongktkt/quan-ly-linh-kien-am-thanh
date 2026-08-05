@@ -13,6 +13,7 @@ import {
   cleanupMockOrders,
   hydrateTracking,
   enrichTracking,
+  healTrackingCancelled,
   forceResyncStuck,
   triggerFixStuckOrders,
   reconcileHandedOver,
@@ -59,6 +60,9 @@ router.post("/cleanup-processed-pickup", h(cleanupProcessedPickup));
 router.post("/cleanup-mock", h(cleanupMockOrders));
 router.post("/hydrate-tracking", h(hydrateTracking));
 router.post("/enrich-tracking", h(enrichTracking));
+/** Heal data cũ: đơn hủy/hoàn thiếu mã — GET hoặc POST đều được. */
+router.get("/heal-tracking-cancelled", h(healTrackingCancelled));
+router.post("/heal-tracking-cancelled", h(healTrackingCancelled));
 router.post("/force-resync-stuck", h(forceResyncStuck));
 router.post("/trigger-fix-stuck-orders", h(triggerFixStuckOrders));
 router.post("/reconcile-handed-over", h(reconcileHandedOver));

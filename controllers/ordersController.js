@@ -77,6 +77,14 @@ let deps = {
   resolveOrderFromShopeeByScanCode: async () => null,
   enrichMissingShopeeTracking: async () => null,
   repairMissingShopeeTrackingInOrders: async () => 0,
+  healCancelledReturnTrackingOrders: async () => ({
+    candidates: 0,
+    attempted: 0,
+    filled: 0,
+    stillEmpty: 0,
+    errors: 0,
+    samples: [],
+  }),
   forceResyncStuckOrdersWithoutTracking: async () => ({
     attempted: 0,
     healed: 0,
@@ -1238,6 +1246,85 @@ export async function enrichTracking(req, res) {
         success: false,
         error: err?.message || String(err),
         message: "Không thể bù mã vận đơn từ Shopee.",
+      });
+    }
+    return;
+  }
+}
+
+/**
+ * GET|POST /api/orders/heal-tracking-cancelled
+ * Quét đơn Hủy/Hoàn thiếu tracking_no trong Mongo → deep fetch Shopee (light:false) → ghi lại DB.
+ * Query/body: max (mặc định 200, tối đa 500), lookbackDays (mặc định 60), sync=1 để chờ kết quả.
+ */
+export async function healTrackingCancelled(req, res) {
+  try {
+    const src = { ...(req.query || {}), ...(req.body || {}) };
+    const maxRaw = Number(src.max ?? 200);
+    const max = Number.isFinite(maxRaw) ? Math.min(Math.max(1, Math.floor(maxRaw)), 500) : 200;
+    const daysRaw = Number(src.lookbackDays ?? src.days ?? 60);
+    const lookbackDays = Number.isFinite(daysRaw)
+      ? Math.min(Math.max(1, Math.floor(daysRaw)), 180)
+      : 60;
+    const waitSync =
+      src.sync === true ||
+      src.sync === 1 ||
+      src.sync === "1" ||
+      src.sync === "true" ||
+      src.wait === true ||
+      src.wait === "1";
+
+    if (waitSync) {
+      const result = await deps.healCancelledReturnTrackingOrders({
+        max,
+        lookbackDays,
+        retries: 3,
+      });
+      ordersRefreshCache = null;
+      return res.status(200).json({
+        success: true,
+        background: false,
+        message:
+          `Đã heal xong: filled=${result.filled}/${result.attempted}` +
+          ` (candidates=${result.candidates}, stillEmpty=${result.stillEmpty}, errors=${result.errors}).` +
+          ` Tải lại tab ĐƠN HỦY, ĐƠN HOÀN để kiểm tra.`,
+        ...result,
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      background: true,
+      max,
+      lookbackDays,
+      message:
+        `Đang heal mã vận đơn đơn hủy/hoàn ngầm (max=${max}, lookback=${lookbackDays} ngày, light=false)...` +
+        ` Xem log server; sau vài phút tải lại tab ĐƠN HỦY, ĐƠN HOÀN.` +
+        ` Muốn chờ kết quả: thêm ?sync=1`,
+    });
+
+    setImmediate(() => {
+      deps
+        .healCancelledReturnTrackingOrders({ max, lookbackDays, retries: 3 })
+        .then((result) => {
+          ordersRefreshCache = null;
+          console.log(
+            `[Orders] heal-tracking-cancelled BG filled=${result.filled}` +
+              ` attempted=${result.attempted} stillEmpty=${result.stillEmpty} errors=${result.errors}`,
+          );
+        })
+        .catch((err) => {
+          console.error("[Orders] heal-tracking-cancelled BG failed:", err?.message || err);
+        });
+    });
+    return;
+  } catch (err) {
+    console.error("[Orders] heal-tracking-cancelled failed:", err?.message || err);
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        error: err?.message || String(err),
+        message: "Không thể heal mã vận đơn đơn hủy/hoàn.",
       });
     }
     return;

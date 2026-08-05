@@ -430,6 +430,7 @@ import {
   loadOrdersFromStore,
   findOrderByScanCodeInStore,
   loadShopeeTrackingEnrichCandidatesFromStore,
+  loadCancelReturnMissingTrackingFromStore,
   queryOrdersPageFromStore,
   orderTabFilter,
   createSyncJob,
@@ -11599,6 +11600,186 @@ async function repairMissingShopeeTrackingInOrders(
   return filled;
 }
 
+/**
+ * Heal 1 lần: đơn Hủy/Hoàn trong Mongo thiếu tracking_no → deep fetch Shopee (light:false)
+ * → ghi lại tracking_no + return_tracking_no. Dùng cho data cũ đã bị ghi đè null.
+ */
+async function healCancelledReturnTrackingOrders(opts?: {
+  max?: number;
+  lookbackDays?: number;
+  retries?: number;
+}): Promise<{
+  candidates: number;
+  attempted: number;
+  filled: number;
+  stillEmpty: number;
+  errors: number;
+  samples: Array<{ orderSn: string; trackingNo?: string; returnTrackingNo?: string; ok: boolean }>;
+}> {
+  const max = Math.min(Math.max(1, Math.floor(Number(opts?.max) || 200)), 500);
+  const lookbackDays = Math.min(
+    Math.max(1, Math.floor(Number(opts?.lookbackDays) || 60)),
+    180,
+  );
+  const retries = Math.min(Math.max(1, Math.floor(Number(opts?.retries) || 3)), 5);
+  const empty = {
+    candidates: 0,
+    attempted: 0,
+    filled: 0,
+    stillEmpty: 0,
+    errors: 0,
+    samples: [] as Array<{
+      orderSn: string;
+      trackingNo?: string;
+      returnTrackingNo?: string;
+      ok: boolean;
+    }>,
+  };
+
+  if (!isMongoReady()) {
+    console.warn("[Heal CancelReturn Tracking] SKIPPED — Mongo chưa sẵn sàng.");
+    return empty;
+  }
+
+  const candidates = await loadCancelReturnMissingTrackingFromStore({
+    lookbackMs: lookbackDays * 24 * 60 * 60 * 1000,
+    limit: max,
+  });
+  empty.candidates = candidates.length;
+  if (candidates.length === 0) {
+    console.log("[Heal CancelReturn Tracking] Không có đơn hủy/hoàn thiếu mã trong cửa sổ quét.");
+    return empty;
+  }
+
+  console.log(
+    `[Heal CancelReturn Tracking] Bắt đầu deep heal ${candidates.length} đơn (lookback=${lookbackDays}d, light=false)...`,
+  );
+
+  const authCache = new Map<string, { token: string; apiShopId: string } | null>();
+  let attempted = 0;
+  let filled = 0;
+  let stillEmpty = 0;
+  let errors = 0;
+  const samples: Array<{
+    orderSn: string;
+    trackingNo?: string;
+    returnTrackingNo?: string;
+    ok: boolean;
+  }> = [];
+
+  for (const order of candidates) {
+    const sn = String(order?.orderSn || "").trim();
+    if (!sn) continue;
+    const shopKey = String(order.shopId || "").trim();
+    if (!shopKey) {
+      errors += 1;
+      samples.push({ orderSn: sn, ok: false });
+      continue;
+    }
+
+    // Xóa cooldown cũ để ép fetch lại (data đã bị null từ trước).
+    delete order.tracking_enrich_cooldown_until;
+    delete order.tracking_enrich_cooldown_reason;
+
+    try {
+      if (!authCache.has(shopKey)) {
+        const auth = await getShopeeAccessTokenForApi(shopKey);
+        authCache.set(
+          shopKey,
+          auth?.token ? { token: auth.token, apiShopId: auth.apiShopId } : null,
+        );
+      }
+      const auth = authCache.get(shopKey);
+      if (!auth?.token) {
+        errors += 1;
+        samples.push({ orderSn: sn, ok: false });
+        continue;
+      }
+
+      attempted += 1;
+      // Deep sync — TUYỆT ĐỐI light:false (get_tracking_number + shipping_document + returns API).
+      await enrichShopeeOrderTrackingFromApi(auth.apiShopId, auth.token, order, {
+        light: false,
+        retries,
+      });
+
+      // Nếu vẫn trống outbound nhưng có return — mirror để UI quét được.
+      const outTn = String(order.trackingNumber || order.tracking_no || "").trim();
+      const retTn = String(order.return_tracking_no || "").trim();
+      if (!outTn && retTn) {
+        order.trackingNumber = retTn;
+        order.tracking_no = retTn;
+      }
+      if (!retTn && outTn && (isCancelOrReturnOrderStatus(order) || order.return_sn)) {
+        order.return_tracking_no = outTn;
+      }
+
+      if (hasUsableShopeeTrackingNumber(order)) {
+        await persistOrderTrackingToDb(order);
+        // Đảm bảo return_tracking_no + status hủy/hoàn được ghi qua bulkUpsert (không xóa mã).
+        try {
+          await bulkUpsertOrdersToStore([order]);
+        } catch (upErr: any) {
+          console.warn(
+            `[Heal CancelReturn Tracking] bulkUpsert ${sn}:`,
+            upErr?.message || upErr,
+          );
+        }
+        filled += 1;
+        samples.push({
+          orderSn: sn,
+          trackingNo: String(order.trackingNumber || order.tracking_no || "").trim() || undefined,
+          returnTrackingNo: String(order.return_tracking_no || "").trim() || undefined,
+          ok: true,
+        });
+        console.log(
+          `[Heal CancelReturn Tracking] OK order_sn=${sn}` +
+            ` tn=${order.tracking_no || order.trackingNumber || "—"}` +
+            ` rtn=${order.return_tracking_no || "—"}`,
+        );
+      } else {
+        stillEmpty += 1;
+        samples.push({ orderSn: sn, ok: false });
+        console.log(
+          `[Heal CancelReturn Tracking] VẪN TRỐNG order_sn=${sn}` +
+            ` status=${order.status} raw=${order.shopee_order_status || "—"}` +
+            ` return_sn=${order.return_sn || "—"}`,
+        );
+      }
+    } catch (err: any) {
+      errors += 1;
+      samples.push({ orderSn: sn, ok: false });
+      console.warn(
+        `[Heal CancelReturn Tracking] Lỗi order_sn=${sn}:`,
+        err?.message || err,
+      );
+    } finally {
+      await sleep(SHOPEE_TRACKING_FETCH_DELAY_MS);
+    }
+  }
+
+  try {
+    queueOrdersJsonMirrorFromMongo();
+  } catch {
+    /* ignore */
+  }
+
+  const result = {
+    candidates: candidates.length,
+    attempted,
+    filled,
+    stillEmpty,
+    errors,
+    samples: samples.slice(0, 40),
+  };
+  console.log(
+    `[Heal CancelReturn Tracking] DONE candidates=${result.candidates}` +
+      ` attempted=${result.attempted} filled=${result.filled}` +
+      ` stillEmpty=${result.stillEmpty} errors=${result.errors}`,
+  );
+  return result;
+}
+
 /** Tự động gọi get_tracking_number khi sync — STRICT tuần tự for...of + delay + updateOne độc lập. */
 async function ensureShopeeTrackingForBatch(
   apiShopId: string,
@@ -16063,6 +16244,7 @@ async function startServer() {
     resolveOrderFromShopeeByScanCode,
     enrichMissingShopeeTracking,
     repairMissingShopeeTrackingInOrders,
+    healCancelledReturnTrackingOrders,
     forceResyncStuckOrdersWithoutTracking,
     triggerFixStuckOrders,
     reconcileHandedOverCarrierStatuses,

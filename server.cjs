@@ -76104,6 +76104,94 @@ async function loadShopeeTrackingEnrichCandidatesFromStore(opts) {
   if (!docs.length) return [];
   return loadOrdersFromStore({ ids: docs.map((d) => String(d._id)) });
 }
+async function loadCancelReturnMissingTrackingFromStore(opts) {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const limit = Math.min(Math.max(1, Math.floor(Number(opts?.limit) || 200)), 500);
+  const lookbackMs = Math.max(
+    24 * 60 * 60 * 1e3,
+    Number(opts?.lookbackMs) || 60 * 24 * 60 * 60 * 1e3
+  );
+  const cutoffIso = new Date(Date.now() - lookbackMs).toISOString();
+  const trackingEmpty = {
+    $and: [
+      {
+        $or: [
+          { tracking_no: null },
+          { tracking_no: "" },
+          { tracking_no: { $exists: false } },
+          { tracking_no: { $regex: /^0FG/i } }
+        ]
+      },
+      {
+        $or: [
+          { "data.tracking_no": null },
+          { "data.tracking_no": "" },
+          { "data.tracking_no": { $exists: false } },
+          { "data.trackingNumber": null },
+          { "data.trackingNumber": "" },
+          { "data.trackingNumber": { $exists: false } }
+        ]
+      }
+    ]
+  };
+  const returnEmpty = {
+    $or: [
+      { "data.return_tracking_no": { $exists: false } },
+      { "data.return_tracking_no": null },
+      { "data.return_tracking_no": "" }
+    ]
+  };
+  const cancelReturnStatus = {
+    $or: [
+      { status: { $in: ["cancelled", "return_pending", "return_received"] } },
+      { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"] } },
+      { "data.shopee_order_status": { $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"] } },
+      { "data.return_sn": { $exists: true, $nin: [null, ""] } },
+      {
+        "data.shopee_cancel_return_kind": {
+          $in: ["cancelled", "refund_return", "failed_delivery"]
+        }
+      }
+    ]
+  };
+  const filter = {
+    $and: [
+      {
+        $or: [
+          { "data.channel": "shopee" },
+          { "data.channel": { $exists: false } },
+          { "data.channel": null },
+          { "data.channel": "" }
+        ]
+      },
+      {
+        $or: [
+          { "data.date": { $gte: cutoffIso } },
+          { last_synced_at: { $gte: new Date(Date.now() - lookbackMs) } }
+        ]
+      },
+      cancelReturnStatus,
+      trackingEmpty,
+      returnEmpty
+    ]
+  };
+  let docs;
+  try {
+    docs = await OrderModel.find(filter).select({ _id: 1 }).sort({ "data.date": -1, _id: -1 }).limit(limit).maxTimeMS(12e3).lean();
+  } catch (err) {
+    console.warn(
+      "[MongoDB] loadCancelReturnMissingTrackingFromStore failed:",
+      err?.message || err
+    );
+    return [];
+  }
+  if (!docs.length) return [];
+  console.log(
+    `[MongoDB] heal-tracking-cancelled candidates=${docs.length} lookbackDays=${Math.round(lookbackMs / 864e5)}`
+  );
+  return loadOrdersFromStore({ ids: docs.map((d) => String(d._id)) });
+}
 function buildShopIdMongoFilter(shopId, shopIds) {
   const multi = Array.isArray(shopIds) ? [
     ...new Set(
@@ -105367,6 +105455,14 @@ var deps15 = {
   resolveOrderFromShopeeByScanCode: async () => null,
   enrichMissingShopeeTracking: async () => null,
   repairMissingShopeeTrackingInOrders: async () => 0,
+  healCancelledReturnTrackingOrders: async () => ({
+    candidates: 0,
+    attempted: 0,
+    filled: 0,
+    stillEmpty: 0,
+    errors: 0,
+    samples: []
+  }),
   forceResyncStuckOrdersWithoutTracking: async () => ({
     attempted: 0,
     healed: 0,
@@ -106278,6 +106374,58 @@ async function enrichTracking(req, res) {
         success: false,
         error: err?.message || String(err),
         message: "Kh\xF4ng th\u1EC3 b\xF9 m\xE3 v\u1EADn \u0111\u01A1n t\u1EEB Shopee."
+      });
+    }
+    return;
+  }
+}
+async function healTrackingCancelled(req, res) {
+  try {
+    const src = { ...req.query || {}, ...req.body || {} };
+    const maxRaw = Number(src.max ?? 200);
+    const max = Number.isFinite(maxRaw) ? Math.min(Math.max(1, Math.floor(maxRaw)), 500) : 200;
+    const daysRaw = Number(src.lookbackDays ?? src.days ?? 60);
+    const lookbackDays = Number.isFinite(daysRaw) ? Math.min(Math.max(1, Math.floor(daysRaw)), 180) : 60;
+    const waitSync = src.sync === true || src.sync === 1 || src.sync === "1" || src.sync === "true" || src.wait === true || src.wait === "1";
+    if (waitSync) {
+      const result = await deps15.healCancelledReturnTrackingOrders({
+        max,
+        lookbackDays,
+        retries: 3
+      });
+      ordersRefreshCache = null;
+      return res.status(200).json({
+        success: true,
+        background: false,
+        message: `\u0110\xE3 heal xong: filled=${result.filled}/${result.attempted} (candidates=${result.candidates}, stillEmpty=${result.stillEmpty}, errors=${result.errors}). T\u1EA3i l\u1EA1i tab \u0110\u01A0N H\u1EE6Y, \u0110\u01A0N HO\xC0N \u0111\u1EC3 ki\u1EC3m tra.`,
+        ...result
+      });
+    }
+    res.status(200).json({
+      success: true,
+      background: true,
+      max,
+      lookbackDays,
+      message: `\u0110ang heal m\xE3 v\u1EADn \u0111\u01A1n \u0111\u01A1n h\u1EE7y/ho\xE0n ng\u1EA7m (max=${max}, lookback=${lookbackDays} ng\xE0y, light=false)... Xem log server; sau v\xE0i ph\xFAt t\u1EA3i l\u1EA1i tab \u0110\u01A0N H\u1EE6Y, \u0110\u01A0N HO\xC0N. Mu\u1ED1n ch\u1EDD k\u1EBFt qu\u1EA3: th\xEAm ?sync=1`
+    });
+    setImmediate(() => {
+      deps15.healCancelledReturnTrackingOrders({ max, lookbackDays, retries: 3 }).then((result) => {
+        ordersRefreshCache = null;
+        console.log(
+          `[Orders] heal-tracking-cancelled BG filled=${result.filled} attempted=${result.attempted} stillEmpty=${result.stillEmpty} errors=${result.errors}`
+        );
+      }).catch((err) => {
+        console.error("[Orders] heal-tracking-cancelled BG failed:", err?.message || err);
+      });
+    });
+    return;
+  } catch (err) {
+    console.error("[Orders] heal-tracking-cancelled failed:", err?.message || err);
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        error: err?.message || String(err),
+        message: "Kh\xF4ng th\u1EC3 heal m\xE3 v\u1EADn \u0111\u01A1n \u0111\u01A1n h\u1EE7y/ho\xE0n."
       });
     }
     return;
@@ -108034,6 +108182,8 @@ router13.post("/cleanup-processed-pickup", h2(cleanupProcessedPickup));
 router13.post("/cleanup-mock", h2(cleanupMockOrders));
 router13.post("/hydrate-tracking", h2(hydrateTracking));
 router13.post("/enrich-tracking", h2(enrichTracking));
+router13.get("/heal-tracking-cancelled", h2(healTrackingCancelled));
+router13.post("/heal-tracking-cancelled", h2(healTrackingCancelled));
 router13.post("/force-resync-stuck", h2(forceResyncStuck));
 router13.post("/trigger-fix-stuck-orders", h2(triggerFixStuckOrders));
 router13.post("/reconcile-handed-over", h2(reconcileHandedOver));
@@ -117354,6 +117504,137 @@ async function repairMissingShopeeTrackingInOrders(orders, opts) {
   }
   return filled;
 }
+async function healCancelledReturnTrackingOrders(opts) {
+  const max = Math.min(Math.max(1, Math.floor(Number(opts?.max) || 200)), 500);
+  const lookbackDays = Math.min(
+    Math.max(1, Math.floor(Number(opts?.lookbackDays) || 60)),
+    180
+  );
+  const retries = Math.min(Math.max(1, Math.floor(Number(opts?.retries) || 3)), 5);
+  const empty = {
+    candidates: 0,
+    attempted: 0,
+    filled: 0,
+    stillEmpty: 0,
+    errors: 0,
+    samples: []
+  };
+  if (!isMongoReady()) {
+    console.warn("[Heal CancelReturn Tracking] SKIPPED \u2014 Mongo ch\u01B0a s\u1EB5n s\xE0ng.");
+    return empty;
+  }
+  const candidates = await loadCancelReturnMissingTrackingFromStore({
+    lookbackMs: lookbackDays * 24 * 60 * 60 * 1e3,
+    limit: max
+  });
+  empty.candidates = candidates.length;
+  if (candidates.length === 0) {
+    console.log("[Heal CancelReturn Tracking] Kh\xF4ng c\xF3 \u0111\u01A1n h\u1EE7y/ho\xE0n thi\u1EBFu m\xE3 trong c\u1EEDa s\u1ED5 qu\xE9t.");
+    return empty;
+  }
+  console.log(
+    `[Heal CancelReturn Tracking] B\u1EAFt \u0111\u1EA7u deep heal ${candidates.length} \u0111\u01A1n (lookback=${lookbackDays}d, light=false)...`
+  );
+  const authCache = /* @__PURE__ */ new Map();
+  let attempted = 0;
+  let filled = 0;
+  let stillEmpty = 0;
+  let errors = 0;
+  const samples = [];
+  for (const order of candidates) {
+    const sn = String(order?.orderSn || "").trim();
+    if (!sn) continue;
+    const shopKey = String(order.shopId || "").trim();
+    if (!shopKey) {
+      errors += 1;
+      samples.push({ orderSn: sn, ok: false });
+      continue;
+    }
+    delete order.tracking_enrich_cooldown_until;
+    delete order.tracking_enrich_cooldown_reason;
+    try {
+      if (!authCache.has(shopKey)) {
+        const auth2 = await getShopeeAccessTokenForApi(shopKey);
+        authCache.set(
+          shopKey,
+          auth2?.token ? { token: auth2.token, apiShopId: auth2.apiShopId } : null
+        );
+      }
+      const auth = authCache.get(shopKey);
+      if (!auth?.token) {
+        errors += 1;
+        samples.push({ orderSn: sn, ok: false });
+        continue;
+      }
+      attempted += 1;
+      await enrichShopeeOrderTrackingFromApi(auth.apiShopId, auth.token, order, {
+        light: false,
+        retries
+      });
+      const outTn = String(order.trackingNumber || order.tracking_no || "").trim();
+      const retTn = String(order.return_tracking_no || "").trim();
+      if (!outTn && retTn) {
+        order.trackingNumber = retTn;
+        order.tracking_no = retTn;
+      }
+      if (!retTn && outTn && (isCancelOrReturnOrderStatus(order) || order.return_sn)) {
+        order.return_tracking_no = outTn;
+      }
+      if (hasUsableShopeeTrackingNumber(order)) {
+        await persistOrderTrackingToDb(order);
+        try {
+          await bulkUpsertOrdersToStore([order]);
+        } catch (upErr) {
+          console.warn(
+            `[Heal CancelReturn Tracking] bulkUpsert ${sn}:`,
+            upErr?.message || upErr
+          );
+        }
+        filled += 1;
+        samples.push({
+          orderSn: sn,
+          trackingNo: String(order.trackingNumber || order.tracking_no || "").trim() || void 0,
+          returnTrackingNo: String(order.return_tracking_no || "").trim() || void 0,
+          ok: true
+        });
+        console.log(
+          `[Heal CancelReturn Tracking] OK order_sn=${sn} tn=${order.tracking_no || order.trackingNumber || "\u2014"} rtn=${order.return_tracking_no || "\u2014"}`
+        );
+      } else {
+        stillEmpty += 1;
+        samples.push({ orderSn: sn, ok: false });
+        console.log(
+          `[Heal CancelReturn Tracking] V\u1EAAN TR\u1ED0NG order_sn=${sn} status=${order.status} raw=${order.shopee_order_status || "\u2014"} return_sn=${order.return_sn || "\u2014"}`
+        );
+      }
+    } catch (err) {
+      errors += 1;
+      samples.push({ orderSn: sn, ok: false });
+      console.warn(
+        `[Heal CancelReturn Tracking] L\u1ED7i order_sn=${sn}:`,
+        err?.message || err
+      );
+    } finally {
+      await sleep2(SHOPEE_TRACKING_FETCH_DELAY_MS);
+    }
+  }
+  try {
+    queueOrdersJsonMirrorFromMongo();
+  } catch {
+  }
+  const result = {
+    candidates: candidates.length,
+    attempted,
+    filled,
+    stillEmpty,
+    errors,
+    samples: samples.slice(0, 40)
+  };
+  console.log(
+    `[Heal CancelReturn Tracking] DONE candidates=${result.candidates} attempted=${result.attempted} filled=${result.filled} stillEmpty=${result.stillEmpty} errors=${result.errors}`
+  );
+  return result;
+}
 function normalizeShopeeOrderDetail(shopId, shopName, item) {
   if (!item || !item.order_sn) {
     console.warn("[Shopee Sync] B\u1ECF qua order detail thi\u1EBFu order_sn:", item);
@@ -120327,6 +120608,7 @@ async function startServer() {
     resolveOrderFromShopeeByScanCode,
     enrichMissingShopeeTracking,
     repairMissingShopeeTrackingInOrders,
+    healCancelledReturnTrackingOrders,
     forceResyncStuckOrdersWithoutTracking,
     triggerFixStuckOrders: triggerFixStuckOrders2,
     reconcileHandedOverCarrierStatuses,
