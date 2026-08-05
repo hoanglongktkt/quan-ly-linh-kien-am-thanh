@@ -289,6 +289,7 @@ import {
   shopeeSyncDelay,
   shopeeApiErrorResult,
   formatShopeeApiError,
+  humanizeShopeeErrorMessage,
   isShopeeRateLimited,
   snapshotShopeeRetryTelemetry,
   diffShopeeRetryTelemetry,
@@ -5250,55 +5251,36 @@ function parseShopeeApiResult(
     ? result.response.success_list
     : [];
 
+  const failLine = (message: string): ChannelSyncLine => ({
+    productId: product.id,
+    sku: product.sku,
+    channel: "shopee",
+    action,
+    success: false,
+    message: humanizeShopeeErrorMessage(message),
+  });
+
   // Bắt buộc đọc error/message trong JSON dù HTTP status = 200.
   if (businessError) {
     const detail =
       businessMessage && !/^HTTP\s+\d+$/i.test(businessMessage)
         ? `${businessError} — ${businessMessage}`
         : businessError;
-    return {
-      productId: product.id,
-      sku: product.sku,
-      channel: "shopee",
-      action,
-      success: false,
-      message: detail,
-    };
+    return failLine(detail);
   }
   if (failures.length > 0) {
     const f = failures[0];
-    return {
-      productId: product.id,
-      sku: product.sku,
-      channel: "shopee",
-      action,
-      success: false,
-      message: String(f.failed_reason || f.error || f.message || JSON.stringify(f)),
-    };
+    return failLine(String(f.failed_reason || f.error || f.message || JSON.stringify(f)));
   }
   // update_price/update_stock: nếu không có success_list và cũng không có failure_list rõ ràng
   // nhưng message báo lỗi → vẫn fail.
   if (businessMessage && /fail|error|invalid|reject/i.test(businessMessage)) {
-    return {
-      productId: product.id,
-      sku: product.sku,
-      channel: "shopee",
-      action,
-      success: false,
-      message: businessMessage,
-    };
+    return failLine(businessMessage);
   }
   if (action === "update_price" && successes.length === 0 && failures.length === 0) {
-    return {
-      productId: product.id,
-      sku: product.sku,
-      channel: "shopee",
-      action,
-      success: false,
-      message:
-        businessMessage ||
-        "Shopee không xác nhận cập nhật giá (success_list rỗng).",
-    };
+    return failLine(
+      businessMessage || "Shopee không xác nhận cập nhật giá (success_list rỗng).",
+    );
   }
   return {
     productId: product.id,
@@ -5723,26 +5705,34 @@ function extractSkusFromShopeeRows(rows: any[]): string[] {
 
 /** Trích thông báo lỗi Shopee chi tiết từ response / exception. */
 function extractShopeeStockPushErrorMessage(resultOrErr: unknown, fallback = "Lỗi Shopee update_stock"): string {
-  if (resultOrErr == null) return fallback;
-  if (typeof resultOrErr === "string") return resultOrErr || fallback;
-  const anyVal = resultOrErr as any;
-  if (anyVal instanceof Error) {
-    const fromResp = anyVal as Error & { response?: { data?: any } };
-    const data = fromResp.response?.data;
-    if (data) return formatShopeeApiError(data) || fromResp.message || fallback;
-    return fromResp.message || fallback;
+  let out = fallback;
+  if (resultOrErr == null) {
+    out = fallback;
+  } else if (typeof resultOrErr === "string") {
+    out = resultOrErr || fallback;
+  } else {
+    const anyVal = resultOrErr as any;
+    if (anyVal instanceof Error) {
+      const fromResp = anyVal as Error & { response?: { data?: any } };
+      const data = fromResp.response?.data;
+      out = (data ? formatShopeeApiError(data) : "") || fromResp.message || fallback;
+    } else {
+      const failures: any[] =
+        anyVal?.response?.failure_list ||
+        anyVal?.response?.stock_list?.filter?.((s: any) => s.failed_reason) ||
+        [];
+      if (Array.isArray(failures) && failures.length > 0) {
+        const reasons = failures
+          .map((f: any) => String(f.failed_reason || f.error || f.message || "").trim())
+          .filter(Boolean);
+        if (reasons.length) out = reasons.join("; ");
+        else out = formatShopeeApiError(anyVal) || fallback;
+      } else {
+        out = formatShopeeApiError(anyVal) || fallback;
+      }
+    }
   }
-  const failures: any[] =
-    anyVal?.response?.failure_list ||
-    anyVal?.response?.stock_list?.filter?.((s: any) => s.failed_reason) ||
-    [];
-  if (Array.isArray(failures) && failures.length > 0) {
-    const reasons = failures
-      .map((f: any) => String(f.failed_reason || f.error || f.message || "").trim())
-      .filter(Boolean);
-    if (reasons.length) return reasons.join("; ");
-  }
-  return formatShopeeApiError(anyVal) || fallback;
+  return humanizeShopeeErrorMessage(out);
 }
 
 async function pushStockUpdatesToShopee(

@@ -198,6 +198,44 @@ export function shopeeApiErrorResult(err, context, httpStatus) {
   };
 }
 
+/**
+ * Dịch/làm gọn thông báo lỗi Shopee cho user.
+ * Giữ nguyên prefix kiểu [shopId] / productId — chỉ thay đoạn mã lỗi + tiếng Anh đã khai báo.
+ * Mã lỗi chưa map → giữ nguyên chuỗi gốc để debug.
+ */
+export function humanizeShopeeErrorMessage(raw) {
+  let text = String(raw ?? "");
+  if (!text) return text;
+
+  const rules = [
+    {
+      test: /error_update_price_fail/i,
+      stripEn: /Update price failed(?:,?\s*please try later\.?)?/gi,
+      stripCode: /(?:product\.)?error_update_price_fail/gi,
+      vi: "Không thể cập nhật giá do sản phẩm đang tham gia CTKM",
+    },
+    {
+      test: /error_item_not_found/i,
+      stripEn: /Item[_ ]?id is not found\.?/gi,
+      stripCode: /(?:product\.)?error_item_not_found/gi,
+      vi: "Không tìm thấy sản phẩm tại shop",
+    },
+  ];
+
+  for (const rule of rules) {
+    if (!rule.test.test(text)) continue;
+    text = text.replace(rule.stripEn, "").replace(rule.stripCode, rule.vi);
+  }
+
+  return text
+    .replace(/\s*[—\-–:]\s*(?=[—\-–:]|$)/g, "")
+    .replace(/^\s*[—\-–:]\s*/, "")
+    .replace(/\s*[—\-–:]\s*$/, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\s+\|\s+/g, " | ")
+    .trim();
+}
+
 export function formatShopeeApiError(json, httpStatus) {
   const parts = [json?.message, json?.error, json?.msg]
     .map((v) => String(v ?? "").trim())
@@ -209,30 +247,29 @@ export function formatShopeeApiError(json, httpStatus) {
         ? json.httpStatus
         : undefined;
 
+  let out;
   if (status === 401) {
-    return parts[0] || SHOPEE_REAUTH_REQUIRED_MESSAGE;
-  }
-  if (status === 429) {
-    return (
+    out = parts[0] || SHOPEE_REAUTH_REQUIRED_MESSAGE;
+  } else if (status === 429) {
+    out =
       parts[0] ||
-      "Shopee giới hạn tần suất (HTTP 429 Too Many Requests) — vui lòng thử lại sau 1–2 phút."
-    );
-  }
-  if (status === 504) {
-    return (
+      "Shopee giới hạn tần suất (HTTP 429 Too Many Requests) — vui lòng thử lại sau 1–2 phút.";
+  } else if (status === 504) {
+    out =
       parts[0] ||
-      "Timeout khi gọi Shopee API (HTTP 504) — cửa sổ đồng bộ quá rộng hoặc Shopee phản hồi chậm. Thử lại với Đồng bộ nhanh 3h."
-    );
-  }
-  if (/timeout|timed out|AbortError/i.test(parts.join(" "))) {
-    return (
+      "Timeout khi gọi Shopee API (HTTP 504) — cửa sổ đồng bộ quá rộng hoặc Shopee phản hồi chậm. Thử lại với Đồng bộ nhanh 3h.";
+  } else if (/timeout|timed out|AbortError/i.test(parts.join(" "))) {
+    out =
       parts[0] ||
-      "Timeout khi gọi Shopee API — thử Đồng bộ nhanh 3h hoặc giảm phạm vi thời gian đồng bộ."
-    );
+      "Timeout khi gọi Shopee API — thử Đồng bộ nhanh 3h hoặc giảm phạm vi thời gian đồng bộ.";
+  } else if (parts.length > 0) {
+    out = parts.join(" — ");
+  } else if (status && status >= 400) {
+    out = `Shopee API lỗi HTTP ${status}`;
+  } else {
+    out = "Lỗi Shopee API không xác định";
   }
-  if (parts.length > 0) return parts.join(" — ");
-  if (status && status >= 400) return `Shopee API lỗi HTTP ${status}`;
-  return "Lỗi Shopee API không xác định";
+  return humanizeShopeeErrorMessage(out);
 }
 
 export function isShopeeRateLimited(httpStatus, json) {

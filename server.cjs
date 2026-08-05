@@ -102553,24 +102553,49 @@ function shopeeApiErrorResult(err, context, httpStatus) {
     httpStatus: status
   };
 }
+function humanizeShopeeErrorMessage(raw) {
+  let text = String(raw ?? "");
+  if (!text) return text;
+  const rules = [
+    {
+      test: /error_update_price_fail/i,
+      stripEn: /Update price failed(?:,?\s*please try later\.?)?/gi,
+      stripCode: /(?:product\.)?error_update_price_fail/gi,
+      vi: "Kh\xF4ng th\u1EC3 c\u1EADp nh\u1EADt gi\xE1 do s\u1EA3n ph\u1EA9m \u0111ang tham gia CTKM"
+    },
+    {
+      test: /error_item_not_found/i,
+      stripEn: /Item[_ ]?id is not found\.?/gi,
+      stripCode: /(?:product\.)?error_item_not_found/gi,
+      vi: "Kh\xF4ng t\xECm th\u1EA5y s\u1EA3n ph\u1EA9m t\u1EA1i shop"
+    }
+  ];
+  for (const rule of rules) {
+    if (!rule.test.test(text)) continue;
+    text = text.replace(rule.stripEn, "").replace(rule.stripCode, rule.vi);
+  }
+  return text.replace(/\s*[—\-–:]\s*(?=[—\-–:]|$)/g, "").replace(/^\s*[—\-–:]\s*/, "").replace(/\s*[—\-–:]\s*$/, "").replace(/[ \t]{2,}/g, " ").replace(/\s+\|\s+/g, " | ").trim();
+}
 function formatShopeeApiError(json2, httpStatus) {
   const parts = [json2?.message, json2?.error, json2?.msg].map((v) => String(v ?? "").trim()).filter((v) => v && !/^HTTP\s+\d+$/i.test(v));
   const status = typeof httpStatus === "number" && httpStatus > 0 ? httpStatus : typeof json2?.httpStatus === "number" && json2.httpStatus > 0 ? json2.httpStatus : void 0;
+  let out;
   if (status === 401) {
-    return parts[0] || SHOPEE_REAUTH_REQUIRED_MESSAGE;
+    out = parts[0] || SHOPEE_REAUTH_REQUIRED_MESSAGE;
+  } else if (status === 429) {
+    out = parts[0] || "Shopee gi\u1EDBi h\u1EA1n t\u1EA7n su\u1EA5t (HTTP 429 Too Many Requests) \u2014 vui l\xF2ng th\u1EED l\u1EA1i sau 1\u20132 ph\xFAt.";
+  } else if (status === 504) {
+    out = parts[0] || "Timeout khi g\u1ECDi Shopee API (HTTP 504) \u2014 c\u1EEDa s\u1ED5 \u0111\u1ED3ng b\u1ED9 qu\xE1 r\u1ED9ng ho\u1EB7c Shopee ph\u1EA3n h\u1ED3i ch\u1EADm. Th\u1EED l\u1EA1i v\u1EDBi \u0110\u1ED3ng b\u1ED9 nhanh 3h.";
+  } else if (/timeout|timed out|AbortError/i.test(parts.join(" "))) {
+    out = parts[0] || "Timeout khi g\u1ECDi Shopee API \u2014 th\u1EED \u0110\u1ED3ng b\u1ED9 nhanh 3h ho\u1EB7c gi\u1EA3m ph\u1EA1m vi th\u1EDDi gian \u0111\u1ED3ng b\u1ED9.";
+  } else if (parts.length > 0) {
+    out = parts.join(" \u2014 ");
+  } else if (status && status >= 400) {
+    out = `Shopee API l\u1ED7i HTTP ${status}`;
+  } else {
+    out = "L\u1ED7i Shopee API kh\xF4ng x\xE1c \u0111\u1ECBnh";
   }
-  if (status === 429) {
-    return parts[0] || "Shopee gi\u1EDBi h\u1EA1n t\u1EA7n su\u1EA5t (HTTP 429 Too Many Requests) \u2014 vui l\xF2ng th\u1EED l\u1EA1i sau 1\u20132 ph\xFAt.";
-  }
-  if (status === 504) {
-    return parts[0] || "Timeout khi g\u1ECDi Shopee API (HTTP 504) \u2014 c\u1EEDa s\u1ED5 \u0111\u1ED3ng b\u1ED9 qu\xE1 r\u1ED9ng ho\u1EB7c Shopee ph\u1EA3n h\u1ED3i ch\u1EADm. Th\u1EED l\u1EA1i v\u1EDBi \u0110\u1ED3ng b\u1ED9 nhanh 3h.";
-  }
-  if (/timeout|timed out|AbortError/i.test(parts.join(" "))) {
-    return parts[0] || "Timeout khi g\u1ECDi Shopee API \u2014 th\u1EED \u0110\u1ED3ng b\u1ED9 nhanh 3h ho\u1EB7c gi\u1EA3m ph\u1EA1m vi th\u1EDDi gian \u0111\u1ED3ng b\u1ED9.";
-  }
-  if (parts.length > 0) return parts.join(" \u2014 ");
-  if (status && status >= 400) return `Shopee API l\u1ED7i HTTP ${status}`;
-  return "L\u1ED7i Shopee API kh\xF4ng x\xE1c \u0111\u1ECBnh";
+  return humanizeShopeeErrorMessage(out);
 }
 function isShopeeRateLimited(httpStatus, json2) {
   if (httpStatus === 429) return true;
@@ -112906,47 +112931,29 @@ function parseShopeeApiResult(result, product, action) {
   const businessMessage = String(result?.message ?? result?.msg ?? "").trim();
   const failures = Array.isArray(result?.response?.failure_list) ? result.response.failure_list : [];
   const successes = Array.isArray(result?.response?.success_list) ? result.response.success_list : [];
+  const failLine = (message) => ({
+    productId: product.id,
+    sku: product.sku,
+    channel: "shopee",
+    action,
+    success: false,
+    message: humanizeShopeeErrorMessage(message)
+  });
   if (businessError) {
     const detail = businessMessage && !/^HTTP\s+\d+$/i.test(businessMessage) ? `${businessError} \u2014 ${businessMessage}` : businessError;
-    return {
-      productId: product.id,
-      sku: product.sku,
-      channel: "shopee",
-      action,
-      success: false,
-      message: detail
-    };
+    return failLine(detail);
   }
   if (failures.length > 0) {
     const f3 = failures[0];
-    return {
-      productId: product.id,
-      sku: product.sku,
-      channel: "shopee",
-      action,
-      success: false,
-      message: String(f3.failed_reason || f3.error || f3.message || JSON.stringify(f3))
-    };
+    return failLine(String(f3.failed_reason || f3.error || f3.message || JSON.stringify(f3)));
   }
   if (businessMessage && /fail|error|invalid|reject/i.test(businessMessage)) {
-    return {
-      productId: product.id,
-      sku: product.sku,
-      channel: "shopee",
-      action,
-      success: false,
-      message: businessMessage
-    };
+    return failLine(businessMessage);
   }
   if (action === "update_price" && successes.length === 0 && failures.length === 0) {
-    return {
-      productId: product.id,
-      sku: product.sku,
-      channel: "shopee",
-      action,
-      success: false,
-      message: businessMessage || "Shopee kh\xF4ng x\xE1c nh\u1EADn c\u1EADp nh\u1EADt gi\xE1 (success_list r\u1ED7ng)."
-    };
+    return failLine(
+      businessMessage || "Shopee kh\xF4ng x\xE1c nh\u1EADn c\u1EADp nh\u1EADt gi\xE1 (success_list r\u1ED7ng)."
+    );
   }
   return {
     productId: product.id,
@@ -113304,21 +113311,29 @@ function extractSkusFromShopeeRows(rows) {
   return rows.map((r2) => String(r2.sku || "").trim()).filter(Boolean);
 }
 function extractShopeeStockPushErrorMessage(resultOrErr, fallback = "L\u1ED7i Shopee update_stock") {
-  if (resultOrErr == null) return fallback;
-  if (typeof resultOrErr === "string") return resultOrErr || fallback;
-  const anyVal = resultOrErr;
-  if (anyVal instanceof Error) {
-    const fromResp = anyVal;
-    const data = fromResp.response?.data;
-    if (data) return formatShopeeApiError(data) || fromResp.message || fallback;
-    return fromResp.message || fallback;
+  let out = fallback;
+  if (resultOrErr == null) {
+    out = fallback;
+  } else if (typeof resultOrErr === "string") {
+    out = resultOrErr || fallback;
+  } else {
+    const anyVal = resultOrErr;
+    if (anyVal instanceof Error) {
+      const fromResp = anyVal;
+      const data = fromResp.response?.data;
+      out = (data ? formatShopeeApiError(data) : "") || fromResp.message || fallback;
+    } else {
+      const failures = anyVal?.response?.failure_list || anyVal?.response?.stock_list?.filter?.((s2) => s2.failed_reason) || [];
+      if (Array.isArray(failures) && failures.length > 0) {
+        const reasons = failures.map((f3) => String(f3.failed_reason || f3.error || f3.message || "").trim()).filter(Boolean);
+        if (reasons.length) out = reasons.join("; ");
+        else out = formatShopeeApiError(anyVal) || fallback;
+      } else {
+        out = formatShopeeApiError(anyVal) || fallback;
+      }
+    }
   }
-  const failures = anyVal?.response?.failure_list || anyVal?.response?.stock_list?.filter?.((s2) => s2.failed_reason) || [];
-  if (Array.isArray(failures) && failures.length > 0) {
-    const reasons = failures.map((f3) => String(f3.failed_reason || f3.error || f3.message || "").trim()).filter(Boolean);
-    if (reasons.length) return reasons.join("; ");
-  }
-  return formatShopeeApiError(anyVal) || fallback;
+  return humanizeShopeeErrorMessage(out);
 }
 async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
   const flattened = flattenProductsForStockSync(updatedProducts);

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Product, SystemFee, getProductChildren } from '../types';
-import { parseJsonResponse } from '../utils/apiClient';
+import { parseJsonResponse, humanizeShopeeErrorMessage } from '../utils/apiClient';
 import { buildShopeeSyncPayload } from '../utils/shopeeSyncPayload';
 import { X, RefreshCw, Check, Package, TrendingUp, TrendingDown, Save } from 'lucide-react';
 
@@ -370,7 +370,9 @@ export default function ProductDetailModal({
         onClose();
       }, 800);
     } catch (err: any) {
-      setToast(`Lỗi đồng bộ Shopee: ${err?.message || 'Đồng bộ thất bại.'}`);
+      setToast(
+        `Lỗi đồng bộ Shopee: ${humanizeShopeeErrorMessage(err?.message || 'Đồng bộ thất bại.')}`,
+      );
       setTimeout(() => setToast(null), 4500);
     } finally {
       setSaving(false);

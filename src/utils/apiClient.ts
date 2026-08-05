@@ -211,6 +211,42 @@ export function isShopeeItemNotFoundMessage(text: string): boolean {
   );
 }
 
+/** Dịch/làm gọn lỗi Shopee cho toast — giữ [shopId]/productId; mã lạ giữ nguyên. */
+export function humanizeShopeeErrorMessage(raw: string): string {
+  let text = String(raw ?? '');
+  if (!text) return text;
+  const rules: Array<{
+    test: RegExp;
+    stripEn: RegExp;
+    stripCode: RegExp;
+    vi: string;
+  }> = [
+    {
+      test: /error_update_price_fail/i,
+      stripEn: /Update price failed(?:,?\s*please try later\.?)?/gi,
+      stripCode: /(?:product\.)?error_update_price_fail/gi,
+      vi: 'Không thể cập nhật giá do sản phẩm đang tham gia CTKM',
+    },
+    {
+      test: /error_item_not_found/i,
+      stripEn: /Item[_ ]?id is not found\.?/gi,
+      stripCode: /(?:product\.)?error_item_not_found/gi,
+      vi: 'Không tìm thấy sản phẩm tại shop',
+    },
+  ];
+  for (const rule of rules) {
+    if (!rule.test.test(text)) continue;
+    text = text.replace(rule.stripEn, '').replace(rule.stripCode, rule.vi);
+  }
+  return text
+    .replace(/\s*[—\-–:]\s*(?=[—\-–:]|$)/g, '')
+    .replace(/^\s*[—\-–:]\s*/, '')
+    .replace(/\s*[—\-–:]\s*$/, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+\|\s+/g, ' | ')
+    .trim();
+}
+
 export type ShopeeChannelFetchPageResult = {
   success: boolean;
   message?: string;

@@ -9,7 +9,7 @@ import ProductDetailModal, {
 import BulkEditModal from './BulkEditModal';
 import ProductLinking from './ProductLinking';
 import InventoryAudit from './InventoryAudit';
-import { parseJsonResponse } from '../utils/apiClient';
+import { parseJsonResponse, humanizeShopeeErrorMessage } from '../utils/apiClient';
 import { buildShopeeSyncPayload } from '../utils/shopeeSyncPayload';
 import { clearInventoryBrowserCache } from '../utils/catalogStorage';
 import CurrencyInput from './CurrencyInput';
@@ -321,7 +321,7 @@ export default function ProductList({
         message: data?.shopeeMessage || `Đồng bộ nhanh sản phẩm ${productId} lên Shopee thành công.`,
       });
     } catch (err: any) {
-      const msg = err?.message || 'Đồng bộ Shopee thất bại.';
+      const msg = humanizeShopeeErrorMessage(err?.message || 'Đồng bộ Shopee thất bại.');
       showActionToast(`Lỗi đồng bộ Shopee: ${msg}`);
       onAddLog({
         id: `sync-${Date.now()}`,

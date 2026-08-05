@@ -2,6 +2,37 @@ import { buildCpanelTarget } from '../cpanelProxy.js';
 import { resolveCpanelBackend } from '../cpanelBackend.js';
 import { fetchWithDiagnostics } from '../fetchDiagnostics.js';
 
+/** Dịch/làm gọn lỗi Shopee — giữ [shopId]/productId, mã lạ giữ nguyên. */
+function humanizeShopeeErrorMessage(raw) {
+  let text = String(raw ?? '');
+  if (!text) return text;
+  const rules = [
+    {
+      test: /error_update_price_fail/i,
+      stripEn: /Update price failed(?:,?\s*please try later\.?)?/gi,
+      stripCode: /(?:product\.)?error_update_price_fail/gi,
+      vi: 'Không thể cập nhật giá do sản phẩm đang tham gia CTKM',
+    },
+    {
+      test: /error_item_not_found/i,
+      stripEn: /Item[_ ]?id is not found\.?/gi,
+      stripCode: /(?:product\.)?error_item_not_found/gi,
+      vi: 'Không tìm thấy sản phẩm tại shop',
+    },
+  ];
+  for (const rule of rules) {
+    if (!rule.test.test(text)) continue;
+    text = text.replace(rule.stripEn, '').replace(rule.stripCode, rule.vi);
+  }
+  return text
+    .replace(/\s*[—\-–:]\s*(?=[—\-–:]|$)/g, '')
+    .replace(/^\s*[—\-–:]\s*/, '')
+    .replace(/\s*[—\-–:]\s*$/, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+\|\s+/g, ' | ')
+    .trim();
+}
+
 function pickShopeeErrorMessage(data, upstreamStatus) {
   const candidates = [
     data?.error,
@@ -17,7 +48,7 @@ function pickShopeeErrorMessage(data, upstreamStatus) {
     .map((v) => String(v ?? '').trim())
     .filter((v) => v && !/^HTTP\s+\d+$/i.test(v));
 
-  if (candidates.length > 0) return candidates[0];
+  if (candidates.length > 0) return humanizeShopeeErrorMessage(candidates[0]);
   if (upstreamStatus >= 400) return `Shopee API lỗi HTTP ${upstreamStatus}`;
   return 'Shopee từ chối cập nhật giá/tồn kho (thiếu chi tiết lỗi trong JSON).';
 }
@@ -142,8 +173,10 @@ export async function handleProductSyncShopee(req, res) {
   } catch (err) {
     console.error('[Product Sync Shopee]', err);
     const status = err?.httpStatus >= 400 ? err.httpStatus : 500;
-    const detail = String(err?.message || 'Đồng bộ Shopee thất bại.').replace(/^HTTP\s+\d+$/i, '').trim()
-      || 'Shopee từ chối cập nhật giá/tồn kho.';
+    const detail = humanizeShopeeErrorMessage(
+      String(err?.message || 'Đồng bộ Shopee thất bại.').replace(/^HTTP\s+\d+$/i, '').trim()
+        || 'Shopee từ chối cập nhật giá/tồn kho.',
+    );
     return res.status(status).json({
       success: false,
       message: status === 400 ? `Lỗi từ Shopee: ${detail}` : detail,
