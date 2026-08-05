@@ -9479,7 +9479,8 @@ async function persistOrderTrackingToDb(order: any): Promise<void> {
     order.package_number = pkg;
   }
   const tn = String(order?.trackingNumber || order?.tracking_no || "").trim();
-  // Có package_number nhưng chưa có tracking → vẫn ghi Mongo (phục vụ create_shipping_document).
+  // Đơn hủy/hoàn: không bắt buộc tracking_code — vẫn persist được package_number.
+  const isCancelReturn = isCancelOrReturnOrderStatus(order) || order?.return_sn;
   if ((!tn || isShopeeInternalTrackingCode(tn)) && pkg && isMongoReady()) {
     try {
       await updateOrderPackageNumberInStore(sn, pkg, {
@@ -9494,7 +9495,10 @@ async function persistOrderTrackingToDb(order: any): Promise<void> {
       console.warn(`[Shopee Tracking] Mongo packageNumber-only failed ${sn}:`, err?.message || err);
     }
   }
-  if (!tn || isShopeeInternalTrackingCode(tn)) return;
+  if (!tn || isShopeeInternalTrackingCode(tn)) {
+    if (!isCancelReturn) return;
+    return;
+  }
   const carrierHint =
     order?.shipping_carrier || order?.checkout_shipping_carrier || order?.carrier || "";
   // Đơn hủy/hoàn: vẫn persist mã dù lệch carrier (kho cần quét).
@@ -10949,6 +10953,14 @@ async function enrichShopeeOrderTrackingFromApi(
   if (hasUsableShopeeTrackingNumber(order)) {
     promoteOrderStatusWhenTrackingReady(order);
   }
+  // Đơn hủy/hoàn không có tracking_code: vẫn persist được package_number / return_tracking_no.
+  if (!hasUsableShopeeTrackingNumber(order) && (isCancelOrReturnOrderStatus(order) || order.return_sn)) {
+    try {
+      await persistOrderTrackingToDb(order);
+    } catch {
+      /* không throw — cancelled order thiếu tracking là expected */
+    }
+  }
   return order;
 }
 
@@ -11756,6 +11768,16 @@ async function healCancelledReturnTrackingOrders(opts?: {
               ` status=${order.status} raw=${order.shopee_order_status || "—"}` +
               ` return_sn=${order.return_sn || "—"}`,
           );
+          // Đơn hủy/hoàn không có tracking_code vẫn upsert để cập nhật các field khác.
+          // bulkUpsertOrdersToStore an toàn với tracking_code rỗng — không throw.
+          try {
+            await bulkUpsertOrdersToStore([order]);
+          } catch (upErr: any) {
+            console.warn(
+              `[Heal CancelReturn Tracking] bulkUpsert stillEmpty ${sn}:`,
+              upErr?.message || upErr,
+            );
+          }
         }
       } catch (err: any) {
         errors += 1;
