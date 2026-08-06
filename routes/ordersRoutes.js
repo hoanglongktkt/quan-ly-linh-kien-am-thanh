@@ -6,7 +6,7 @@ import {
   getOrderEvents,
   listOrders,
   cleanupHandedOver,
-  cleanupClosedRetention,
+  batchDeleteOrders,
   cleanupLabelPdfs,
   cleanupProcessedPickup,
   lookupOrder,
@@ -54,7 +54,7 @@ router.post("/pull", pullOrders);
 router.post("/quick-sync", quickSyncOrders);
 router.post("/fast-process", fastProcessOrders);
 router.post("/cleanup-handed-over", h(cleanupHandedOver));
-router.post("/cleanup-closed-retention", h(cleanupClosedRetention));
+router.post("/batch-delete", h(batchDeleteOrders));
 router.post("/cleanup-label-pdfs", h(cleanupLabelPdfs));
 router.post("/cleanup-processed-pickup", h(cleanupProcessedPickup));
 router.post("/cleanup-mock", h(cleanupMockOrders));

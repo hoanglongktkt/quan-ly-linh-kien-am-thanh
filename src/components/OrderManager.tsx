@@ -80,6 +80,7 @@ import {
   X,
   ImageOff,
   RefreshCw,
+  Trash2,
 } from 'lucide-react';
 import { Order, ConnectedShop, SyncLog, Product, SystemFee } from '../types';
 import ManualOrderPage from './ManualOrderPage';
@@ -4456,6 +4457,38 @@ export default function OrderManager({
 
   // Single-order print — fetches the REAL Shopee AWB PDF, or falls back to the
   // mock packing-slip preview for non-Shopee (manual/tiktok) orders.
+  /** Xóa dữ liệu hàng loạt — chỉ hoạt động trong tab Đã nhận đơn hủy/hoàn. */
+  const handleBulkDeleteOrders = async () => {
+    const selected = getSelectedOrders();
+    if (selected.length === 0) {
+      showToast('Vui lòng chọn ít nhất 1 đơn hàng để xóa.');
+      return;
+    }
+    if (!window.confirm(`Xóa ${selected.length} đơn đã chọn khỏi Database? Hành động này không thể hoàn tác.`)) {
+      return;
+    }
+    const orderSns = selected.map(o => o.orderSn || o.id).filter(Boolean) as string[];
+    try {
+      const res = await fetch('/api/orders/batch-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderSns }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        const deletedSns = new Set(orderSns);
+        const updated = orders.filter(o => !deletedSns.has(o.orderSn || '') && !deletedSns.has(o.id || ''));
+        onUpdateOrders(updated, { persist: true });
+        setSelectedOrderIds([]);
+        showToast(`Đã xóa ${data.deleted} đơn (Mongo: ${data.mongoDeleted}, JSON: ${data.jsonRemoved}).`);
+      } else {
+        showToast(data.message || 'Xóa thất bại.');
+      }
+    } catch {
+      showToast('Lỗi kết nối khi xóa đơn.');
+    }
+  };
+
   const releasePrintClickLock = () => {
     if (isPrintingUnlockTimerRef.current) clearTimeout(isPrintingUnlockTimerRef.current);
     isPrintingUnlockTimerRef.current = window.setTimeout(() => {
@@ -5657,8 +5690,7 @@ export default function OrderManager({
         <div className="bg-teal-50/80 border border-teal-100 rounded-2xl px-4 py-3 text-xs text-teal-900 font-semibold leading-relaxed">
           Đối soát kiện hủy/hoàn đã quét nhận về kho (cờ nội bộ{' '}
           <code className="font-mono text-[11px]">RETURN_RECEIVED</code> /{' '}
-          <code className="font-mono text-[11px]">CANCELLED_STORED</code>). Tự xóa khỏi DB sau 14 ngày
-          (đơn hoàn tất/ĐVVC sau 30 ngày) để giải phóng dung lượng.
+          <code className="font-mono text-[11px]">CANCELLED_STORED</code>). Dữ liệu được lưu trữ vĩnh viễn, xóa thủ công khi cần.
         </div>
       )}
 
@@ -5868,6 +5900,22 @@ export default function OrderManager({
               >
                 <Truck className={`w-4 h-4 text-indigo-600 shrink-0 ${isBulkHandingOver ? 'animate-pulse' : ''}`} />
                 <span>{isBulkHandingOver ? 'Đang giao ĐVVC hàng loạt...' : 'Giao cho ĐVVC hàng loạt'}</span>
+              </button>
+
+              <div className="my-1 border-t border-gray-100" />
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setShowBulkActionsDropdown(false);
+                  void handleBulkDeleteOrders();
+                }}
+                className="w-full text-left px-4 py-2 text-xs font-bold text-red-600 hover:bg-red-50 flex items-center gap-2.5"
+              >
+                <Trash2 className="w-4 h-4 text-red-500 shrink-0" />
+                <span>Xóa dữ liệu đã chọn</span>
               </button>
             </div>
           )}
@@ -6121,6 +6169,11 @@ export default function OrderManager({
                         <span className={`inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border ${badge.color}`}>
                           {badge.text}
                         </span>
+                        {activeSubTab === 'received_cancel_returns' && (
+                          <span className="inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border bg-teal-50 text-teal-700 border-teal-200">
+                            Đã nhận hoàn
+                          </span>
+                        )}
                       </td>
 
                       {/* Specific Single Actions */}
@@ -6410,6 +6463,11 @@ export default function OrderManager({
                     <span className={`inline-block px-2 py-0.5 text-[9px] font-black rounded-full border shrink-0 ${badge.color}`}>
                       {badge.text}
                     </span>
+                    {activeSubTab === 'received_cancel_returns' && (
+                      <span className="inline-block px-2 py-0.5 text-[9px] font-black rounded-full border shrink-0 bg-teal-50 text-teal-700 border-teal-200">
+                        Đã nhận hoàn
+                      </span>
+                    )}
 
                     <div className="flex items-center gap-1 flex-wrap justify-end">
                       {order.status === 'pending_confirm' && (

@@ -1997,7 +1997,7 @@ export default function App() {
               {activeTab === 'publish' && 'Đăng bán sản phẩm lên nhiều gian hàng đồng thời, lồng khung hình sỉ hàng loạt và tối ưu tiêu đề chống spam bằng AI.'}
               {activeTab === 'orders' &&
                 (ordersSubTabHint === 'received_cancel_returns'
-                  ? 'Đối soát kiện hủy/hoàn đã nhận về kho (14 ngày gần nhất).'
+                  ? 'Đối soát kiện hủy/hoàn đã nhận về kho — dữ liệu lưu vĩnh viễn.'
                   : 'Quản lý 8 trạng thái đơn Shopee & TikTok, chuẩn bị hàng đóng gói và in vận đơn nhiệt.')}
               {activeTab === 'picking' && 'Quét mã đơn, tích sản phẩm đã nhặt và chuyển sang đóng gói.'}
               {activeTab === 'bulk' && 'Tăng giảm giá %, đặt tồn kho, tối ưu nội dung bằng AI hàng loạt.'}

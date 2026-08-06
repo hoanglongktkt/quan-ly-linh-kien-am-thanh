@@ -763,34 +763,57 @@ export async function cleanupHandedOver(req, res) {
   }
 }
 
-/** POST /api/orders/cleanup-closed-retention */
-export async function cleanupClosedRetention(req, res) {
+/** POST /api/orders/batch-delete — xóa thủ công đơn đã chọn */
+export async function batchDeleteOrders(req, res) {
   try {
-    const dryRun =
-      req.body?.dry_run === true ||
-      req.body?.dryRun === true ||
-      String(req.query?.dry_run || "") === "1";
-    const cancelReturnDays = Number(req.body?.cancel_return_days ?? req.body?.cancelReturnDays);
-    const closedDays = Number(req.body?.closed_days ?? req.body?.closedDays);
-    const result = await purgeClosedOrdersByRetention({
-      dryRun,
-      cancelReturnDays:
-        Number.isFinite(cancelReturnDays) && cancelReturnDays > 0
-          ? cancelReturnDays
-          : undefined,
-      closedDays: Number.isFinite(closedDays) && closedDays > 0 ? closedDays : undefined,
-    });
+    const idsOrSns = req.body?.ids ?? req.body?.orderSns ?? req.body?.order_sns ?? [];
+    const normalized = [...new Set(
+      (Array.isArray(idsOrSns) ? idsOrSns : [])
+        .map((k) => String(k || "").replace(/^shopee-/i, "").trim())
+        .filter(Boolean)
+    )];
+    if (normalized.length === 0) {
+      return res.status(400).json({ success: false, error: "Thiếu danh sách id/orderSn." });
+    }
+    let mongoDeleted = 0;
+    let jsonRemoved = 0;
+    if (isMongoReady()) {
+      try {
+        mongoDeleted = await deleteOrdersFromStore(normalized);
+      } catch (err) {
+        console.warn("[Orders batch-delete] Mongo:", err?.message || err);
+      }
+    }
+    try {
+      const orders = loadOrders();
+      const snSet = new Set(normalized);
+      const before = orders.length;
+      const kept = orders.filter((o) => {
+        const sn = String(o?.orderSn || o?.id || "").replace(/^shopee-/i, "").trim();
+        return !snSet.has(sn);
+      });
+      jsonRemoved = before - kept.length;
+      if (jsonRemoved > 0) saveOrders(kept);
+    } catch (err) {
+      console.warn("[Orders batch-delete] JSON:", err?.message || err);
+    }
+    if (mongoDeleted === 0 && jsonRemoved === 0) {
+      return res.status(404).json({ success: false, error: "Không tìm thấy đơn để xóa." });
+    }
+    console.log(`[Orders batch-delete] ids=${normalized.length} mongo=${mongoDeleted} json=${jsonRemoved}`);
     return res.json({
       success: true,
-      ...result,
-      orderSns: result.sns.slice(0, 100),
+      deleted: mongoDeleted + jsonRemoved,
+      mongoDeleted,
+      jsonRemoved,
+      orderSns: normalized.slice(0, 100),
     });
   } catch (error) {
-    console.error("[Orders Retention] API error:", error);
+    console.error("[Orders batch-delete] error:", error);
     return res.status(500).json({
       success: false,
-      error: error?.message || "cleanup_closed_retention_failed",
-      message: error?.message || "Không thể dọn đơn đã đóng.",
+      error: error?.message || "batch_delete_failed",
+      message: error?.message || "Không thể xóa đơn.",
     });
   }
 }

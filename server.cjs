@@ -72859,9 +72859,8 @@ var DonHoanHuySchema = new import_mongoose.default.Schema(
     },
     scannedAt: {
       type: Date,
-      default: Date.now,
-      expires: 1209600
-      // 14 ngày
+      default: Date.now
+      // TTL removed — xóa thủ công bằng API
     },
     note: {
       type: String,
@@ -75551,193 +75550,6 @@ async function clearHandedOverFlagsForShippedOrders() {
   );
   return { matched, modified };
 }
-async function deleteClosedOrdersByRetention(opts) {
-  if (!isMongoReady()) {
-    return {
-      deleted: 0,
-      sns: [],
-      scanned: 0,
-      dryRun: Boolean(opts?.dryRun),
-      cancelReturnMatched: 0,
-      closedMatched: 0
-    };
-  }
-  requireMongo();
-  const cancelReturnDays = Math.max(1, Math.floor(opts?.cancelReturnDays ?? 14));
-  const closedDays = Math.max(1, Math.floor(opts?.closedDays ?? 30));
-  const dryRun = Boolean(opts?.dryRun);
-  const limit = Math.min(
-    5e3,
-    Math.max(1, Math.floor(opts?.limit ?? 3e3))
-  );
-  const cancelCutoff = Date.now() - cancelReturnDays * 24 * 60 * 60 * 1e3;
-  const closedCutoff = Date.now() - closedDays * 24 * 60 * 60 * 1e3;
-  const parseTs = (raw) => {
-    if (raw == null || raw === "") return 0;
-    if (typeof raw === "number") {
-      return raw < 1e12 ? raw * 1e3 : raw;
-    }
-    if (raw instanceof Date) return raw.getTime();
-    const ms = Date.parse(String(raw));
-    return Number.isFinite(ms) ? ms : 0;
-  };
-  const orderAgeMs = (d) => {
-    const data = d?.data && typeof d.data === "object" ? d.data : {};
-    const candidates = [
-      data.local_status_updated_at,
-      data.localStatusAt,
-      data.handedOverAt,
-      d.local_status_updated_at,
-      data.date,
-      d.date,
-      data.update_time,
-      d.update_time,
-      d.last_synced_at,
-      data.last_synced_at
-    ];
-    let best = 0;
-    for (const c of candidates) {
-      const t2 = parseTs(c);
-      if (t2 > best) best = t2;
-    }
-    return best;
-  };
-  const localOf = (d) => String(d?.data?.local_status || d?.data?.localStatus || d?.local_status || "").trim().toUpperCase();
-  const statusOf = (d) => String(d?.status || d?.data?.status || "").trim().toLowerCase();
-  const rawOf = (d) => String(d?.shopee_order_status || d?.data?.shopee_order_status || "").trim().toUpperCase();
-  const isProtectedLive = (d) => {
-    const local = localOf(d);
-    if (local === "CANCELLED_STORED" || local === "RETURN_RECEIVED" || d?.data?.is_local_return_archived === true || d?.is_local_return_archived === true) {
-      return false;
-    }
-    const raw = rawOf(d);
-    if (["CANCELLED", "IN_CANCEL", "TO_RETURN", "COMPLETED", "SHIPPED", "TO_CONFIRM_RECEIVE"].includes(raw)) {
-      return false;
-    }
-    const st = statusOf(d);
-    if (["cancelled", "return_received", "return_pending", "completed", "shipping", "handed_over"].includes(st)) {
-      return false;
-    }
-    if (local === "HANDED_OVER" || d?.is_handed_over === true || d?.data?.is_handed_over === true) {
-      return false;
-    }
-    if (["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED", "UNPAID", "PENDING"].includes(raw)) return true;
-    if (["unprocessed", "processed", "pending_confirm", "pending_verification"].includes(st)) return true;
-    return false;
-  };
-  const isCancelReturnClosed = (d) => {
-    const local = localOf(d);
-    if (local === "CANCELLED_STORED" || local === "RETURN_RECEIVED") return true;
-    if (d?.data?.is_local_return_archived === true || d?.is_local_return_archived === true) return true;
-    const st = statusOf(d);
-    if (st === "cancelled" || st === "return_received" || st === "return_pending") return true;
-    const raw = rawOf(d);
-    return raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN";
-  };
-  const isTerminalClosed = (d) => {
-    if (isCancelReturnClosed(d)) return false;
-    const local = localOf(d);
-    if (local === "HANDED_OVER") return true;
-    if (d?.is_handed_over === true || d?.data?.is_handed_over === true) return true;
-    const st = statusOf(d);
-    if (st === "completed" || st === "shipping" || st === "handed_over") return true;
-    const raw = rawOf(d);
-    return raw === "COMPLETED" || raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE";
-  };
-  const filter = {
-    $or: [
-      { status: { $in: ["cancelled", "return_received", "return_pending", "completed", "shipping", "handed_over"] } },
-      {
-        shopee_order_status: {
-          $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN", "COMPLETED", "SHIPPED", "TO_CONFIRM_RECEIVE"]
-        }
-      },
-      { "data.local_status": { $in: ["CANCELLED_STORED", "RETURN_RECEIVED", "HANDED_OVER"] } },
-      { "data.localStatus": { $in: ["CANCELLED_STORED", "RETURN_RECEIVED", "HANDED_OVER"] } },
-      { "data.is_local_return_archived": true },
-      { is_handed_over: true },
-      { "data.is_handed_over": true }
-    ]
-  };
-  let docs = [];
-  try {
-    docs = await OrderModel.find(filter).select({
-      _id: 1,
-      orderSn: 1,
-      status: 1,
-      shopee_order_status: 1,
-      is_handed_over: 1,
-      local_status: 1,
-      last_synced_at: 1,
-      "data.orderSn": 1,
-      "data.status": 1,
-      "data.date": 1,
-      "data.update_time": 1,
-      "data.local_status": 1,
-      "data.localStatus": 1,
-      "data.local_status_updated_at": 1,
-      "data.localStatusAt": 1,
-      "data.handedOverAt": 1,
-      "data.is_handed_over": 1,
-      "data.is_local_return_archived": 1,
-      "data.shopee_order_status": 1,
-      "data.last_synced_at": 1
-    }).limit(limit).maxTimeMS(2e4).lean();
-  } catch (err) {
-    console.warn("[MongoDB] deleteClosedOrdersByRetention find failed:", err?.message || err);
-    throw err;
-  }
-  const toDeleteKeys = [];
-  const sns = [];
-  let cancelReturnMatched = 0;
-  let closedMatched = 0;
-  for (const d of docs) {
-    if (isProtectedLive(d)) continue;
-    const age = orderAgeMs(d);
-    if (!age) continue;
-    let matched = false;
-    if (isCancelReturnClosed(d) && age < cancelCutoff) {
-      cancelReturnMatched += 1;
-      matched = true;
-    } else if (isTerminalClosed(d) && age < closedCutoff) {
-      closedMatched += 1;
-      matched = true;
-    }
-    if (!matched) continue;
-    const sn = String(d?.orderSn || d?.data?.orderSn || "").trim();
-    const id = String(d?._id || "").trim();
-    if (sn) {
-      sns.push(sn);
-      toDeleteKeys.push(sn);
-    }
-    if (id) toDeleteKeys.push(id);
-  }
-  if (dryRun || toDeleteKeys.length === 0) {
-    console.log(
-      `[MongoDB] retention dryRun=${dryRun} scanned=${docs.length} cancelReturn=${cancelReturnMatched} closed=${closedMatched} wouldDelete=${sns.length}`
-    );
-    return {
-      deleted: 0,
-      sns: [...new Set(sns)],
-      scanned: docs.length,
-      dryRun,
-      cancelReturnMatched,
-      closedMatched
-    };
-  }
-  const deleted = await deleteOrdersFromStore(toDeleteKeys);
-  console.log(
-    `[MongoDB] retention deleted=${deleted} cancelReturn=${cancelReturnMatched} closed=${closedMatched} scanned=${docs.length}`
-  );
-  return {
-    deleted,
-    sns: [...new Set(sns)],
-    scanned: docs.length,
-    dryRun: false,
-    cancelReturnMatched,
-    closedMatched
-  };
-}
 async function mirrorTopLevelTrackingIntoData() {
   if (!isMongoReady()) return 0;
   requireMongo();
@@ -77755,24 +77567,16 @@ function getJwtSecret() {
 
 // middlewares/auth.js
 function authMiddleware(req, res, next) {
-  fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "d78b06" }, body: JSON.stringify({ sessionId: "d78b06", location: "middlewares/auth.js:authMiddleware_enter", message: "authMiddleware called", data: { path: req.path, hasAuthHeader: !!req.headers.authorization, authValue: req.headers.authorization ? req.headers.authorization.substring(0, 20) : null }, timestamp: Date.now(), runId: "pre-fix", hypothesisId: "A" }) }).catch(() => {
-  });
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "d78b06" }, body: JSON.stringify({ sessionId: "d78b06", location: "middlewares/auth.js:authMiddleware_noToken", message: "No bearer token found", data: { path: req.path, authHeaderPresent: !!authHeader }, timestamp: Date.now(), runId: "pre-fix", hypothesisId: "B" }) }).catch(() => {
-    });
     return res.status(401).json({ error: "Kh\xF4ng c\xF3 token x\xE1c th\u1EF1c." });
   }
   const token = authHeader.slice(7);
   try {
     const decoded = import_jsonwebtoken.default.verify(token, getJwtSecret());
-    fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "d78b06" }, body: JSON.stringify({ sessionId: "d78b06", location: "middlewares/auth.js:authMiddleware_verifyOK", message: "JWT verify OK", data: { path: req.path, username: decoded.username }, timestamp: Date.now(), runId: "pre-fix", hypothesisId: "C" }) }).catch(() => {
-    });
     req.user = decoded;
     return next();
   } catch (err) {
-    fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "d78b06" }, body: JSON.stringify({ sessionId: "d78b06", location: "middlewares/auth.js:authMiddleware_verifyFAIL", message: "JWT verify FAILED", data: { path: req.path, error: err instanceof Error ? err.message : String(err) }, timestamp: Date.now(), runId: "pre-fix", hypothesisId: "A" }) }).catch(() => {
-    });
     return res.status(401).json({ error: "Token kh\xF4ng h\u1EE3p l\u1EC7 ho\u1EB7c \u0111\xE3 h\u1EBFt h\u1EA1n." });
   }
 }
@@ -77795,8 +77599,9 @@ function login(req, res) {
   }
 }
 async function verifyAuth(req, res) {
-  fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "d78b06" }, body: JSON.stringify({ sessionId: "d78b06", location: "controllers/authController.js:verifyAuth", message: "verifyAuth called", data: { reqUser: req.user, hasUsername: !!req.user?.username }, timestamp: Date.now(), runId: "pre-fix", hypothesisId: "E" }) }).catch(() => {
-  });
+  if (!req.user || !req.user.username) {
+    return res.status(401).json({ error: "Token kh\xF4ng h\u1EE3p l\u1EC7 ho\u1EB7c \u0111\xE3 h\u1EBFt h\u1EA1n." });
+  }
   res.json({ valid: true, username: req.user.username });
 }
 
@@ -105075,62 +104880,6 @@ async function purgeHandedOverGarbageOrdersOnce(opts) {
   );
   return { removed, sns: allSns, skipped: false };
 }
-async function purgeClosedOrdersByRetention(opts) {
-  const cancelReturnDays = Math.max(1, Math.floor(opts?.cancelReturnDays ?? 14));
-  const closedDays = Math.max(1, Math.floor(opts?.closedDays ?? 30));
-  const dryRun = Boolean(opts?.dryRun);
-  if (!isMongoReady()) {
-    return {
-      deleted: 0,
-      jsonRemoved: 0,
-      sns: [],
-      scanned: 0,
-      dryRun,
-      cancelReturnMatched: 0,
-      closedMatched: 0,
-      message: "Mongo ch\u01B0a s\u1EB5n s\xE0ng \u2014 b\u1ECF qua retention cleanup."
-    };
-  }
-  const mongoResult = await deleteClosedOrdersByRetention({
-    cancelReturnDays,
-    closedDays,
-    dryRun
-  });
-  let jsonRemoved = 0;
-  if (!dryRun && mongoResult.sns.length > 0) {
-    try {
-      const snSet = new Set(
-        mongoResult.sns.map((s2) => String(s2 || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
-      );
-      const orders = loadOrders();
-      const kept = orders.filter((o) => {
-        const sn = String(o?.orderSn || "").replace(/^shopee-/i, "").trim();
-        const id = String(o?.id || "").replace(/^shopee-/i, "").trim();
-        return !snSet.has(sn) && !snSet.has(id);
-      });
-      jsonRemoved = orders.length - kept.length;
-      if (jsonRemoved > 0) saveOrders(kept);
-    } catch (err) {
-      console.warn("[Orders Retention] JSON mirror cleanup:", err?.message || err);
-    }
-    try {
-      queueOrdersJsonMirrorFromMongo();
-    } catch {
-    }
-  }
-  const message = dryRun ? `Dry-run: s\u1EBD x\xF3a ~${mongoResult.sns.length} \u0111\u01A1n (h\u1EE7y/ho\xE0n ${mongoResult.cancelReturnMatched} @${cancelReturnDays}d, \u0111\xF3ng ${mongoResult.closedMatched} @${closedDays}d).` : mongoResult.deleted > 0 ? `\u0110\xE3 x\xF3a ${mongoResult.deleted} \u0111\u01A1n \u0111\xE3 \u0111\xF3ng (h\u1EE7y/ho\xE0n>${cancelReturnDays}d / ho\xE0n t\u1EA5t-\u0110VVC>${closedDays}d).` : `Kh\xF4ng c\xF3 \u0111\u01A1n \u0111\xE3 \u0111\xF3ng qu\xE1 h\u1EA1n \u0111\u1EC3 x\xF3a (${cancelReturnDays}/${closedDays} ng\xE0y).`;
-  console.log(`[Orders Retention] ${message}`);
-  return {
-    deleted: mongoResult.deleted,
-    jsonRemoved,
-    sns: mongoResult.sns,
-    scanned: mongoResult.scanned,
-    dryRun,
-    cancelReturnMatched: mongoResult.cancelReturnMatched,
-    closedMatched: mongoResult.closedMatched,
-    message
-  };
-}
 function findOrderRecord(orders, idOrSn) {
   const key = String(idOrSn || "").trim();
   if (!key) return null;
@@ -106008,27 +105757,54 @@ async function cleanupHandedOver(req, res) {
     });
   }
 }
-async function cleanupClosedRetention(req, res) {
+async function batchDeleteOrders(req, res) {
   try {
-    const dryRun = req.body?.dry_run === true || req.body?.dryRun === true || String(req.query?.dry_run || "") === "1";
-    const cancelReturnDays = Number(req.body?.cancel_return_days ?? req.body?.cancelReturnDays);
-    const closedDays = Number(req.body?.closed_days ?? req.body?.closedDays);
-    const result = await purgeClosedOrdersByRetention({
-      dryRun,
-      cancelReturnDays: Number.isFinite(cancelReturnDays) && cancelReturnDays > 0 ? cancelReturnDays : void 0,
-      closedDays: Number.isFinite(closedDays) && closedDays > 0 ? closedDays : void 0
-    });
+    const idsOrSns = req.body?.ids ?? req.body?.orderSns ?? req.body?.order_sns ?? [];
+    const normalized = [...new Set(
+      (Array.isArray(idsOrSns) ? idsOrSns : []).map((k) => String(k || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
+    )];
+    if (normalized.length === 0) {
+      return res.status(400).json({ success: false, error: "Thi\u1EBFu danh s\xE1ch id/orderSn." });
+    }
+    let mongoDeleted = 0;
+    let jsonRemoved = 0;
+    if (isMongoReady()) {
+      try {
+        mongoDeleted = await deleteOrdersFromStore(normalized);
+      } catch (err) {
+        console.warn("[Orders batch-delete] Mongo:", err?.message || err);
+      }
+    }
+    try {
+      const orders = loadOrders();
+      const snSet = new Set(normalized);
+      const before = orders.length;
+      const kept = orders.filter((o) => {
+        const sn = String(o?.orderSn || o?.id || "").replace(/^shopee-/i, "").trim();
+        return !snSet.has(sn);
+      });
+      jsonRemoved = before - kept.length;
+      if (jsonRemoved > 0) saveOrders(kept);
+    } catch (err) {
+      console.warn("[Orders batch-delete] JSON:", err?.message || err);
+    }
+    if (mongoDeleted === 0 && jsonRemoved === 0) {
+      return res.status(404).json({ success: false, error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n \u0111\u1EC3 x\xF3a." });
+    }
+    console.log(`[Orders batch-delete] ids=${normalized.length} mongo=${mongoDeleted} json=${jsonRemoved}`);
     return res.json({
       success: true,
-      ...result,
-      orderSns: result.sns.slice(0, 100)
+      deleted: mongoDeleted + jsonRemoved,
+      mongoDeleted,
+      jsonRemoved,
+      orderSns: normalized.slice(0, 100)
     });
   } catch (error) {
-    console.error("[Orders Retention] API error:", error);
+    console.error("[Orders batch-delete] error:", error);
     return res.status(500).json({
       success: false,
-      error: error?.message || "cleanup_closed_retention_failed",
-      message: error?.message || "Kh\xF4ng th\u1EC3 d\u1ECDn \u0111\u01A1n \u0111\xE3 \u0111\xF3ng."
+      error: error?.message || "batch_delete_failed",
+      message: error?.message || "Kh\xF4ng th\u1EC3 x\xF3a \u0111\u01A1n."
     });
   }
 }
@@ -108171,7 +107947,7 @@ router13.post("/pull", pullOrders);
 router13.post("/quick-sync", quickSyncOrders);
 router13.post("/fast-process", fastProcessOrders);
 router13.post("/cleanup-handed-over", h2(cleanupHandedOver));
-router13.post("/cleanup-closed-retention", h2(cleanupClosedRetention));
+router13.post("/batch-delete", h2(batchDeleteOrders));
 router13.post("/cleanup-label-pdfs", h2(cleanupLabelPdfs));
 router13.post("/cleanup-processed-pickup", h2(cleanupProcessedPickup));
 router13.post("/cleanup-mock", h2(cleanupMockOrders));

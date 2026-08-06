@@ -5,6 +5,7 @@ import mongoose from "mongoose";
  * Mọi đọc/ghi (scanController, mongoStore upsert/load/exists, scan-bg, scan-bulk)
  * phải dùng model này — không định nghĩa schema trùng ở nơi khác.
  * TTL 14 ngày (1.209.600 giây) trên scannedAt.
+ * NOTE: TTL ĐÃ BỊ VÔ HIỆU HÓA — xóa thủ công qua API /api/orders/batch-delete.
  */
 const DonHoanHuySchema = new mongoose.Schema(
   {
@@ -22,7 +23,7 @@ const DonHoanHuySchema = new mongoose.Schema(
     scannedAt: {
       type: Date,
       default: Date.now,
-      expires: 1209600, // 14 ngày
+      // TTL removed — xóa thủ công bằng API
     },
     note: {
       type: String,
