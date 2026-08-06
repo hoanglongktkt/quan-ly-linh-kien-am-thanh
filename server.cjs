@@ -47992,6 +47992,58 @@ var require_json_bigint = __commonJS({
   }
 });
 
+// models/DonHoanHuy.js
+var DonHoanHuy_exports = {};
+__export(DonHoanHuy_exports, {
+  default: () => DonHoanHuy_default
+});
+var import_mongoose, DonHoanHuySchema, DonHoanHuy, DonHoanHuy_default;
+var init_DonHoanHuy = __esm({
+  "models/DonHoanHuy.js"() {
+    import_mongoose = __toESM(require("mongoose"), 1);
+    DonHoanHuySchema = new import_mongoose.default.Schema(
+      {
+        orderSn: {
+          type: String,
+          required: true,
+          index: true,
+          trim: true
+        },
+        status: {
+          type: String,
+          default: "scanned",
+          trim: true
+        },
+        scannedAt: {
+          type: Date,
+          default: Date.now
+          // TTL removed — xóa thủ công bằng API
+        },
+        note: {
+          type: String,
+          default: "",
+          trim: true
+        },
+        /** Shopee shop_id — String (uint64-safe), không lưu Number */
+        shopId: {
+          type: String,
+          default: null,
+          trim: true
+        }
+      },
+      {
+        collection: "don_hoan_huy",
+        versionKey: false,
+        strict: false
+        // giữ field legacy (local_status, type, ...) nếu đã có trên Atlas
+      }
+    );
+    DonHoanHuySchema.index({ orderSn: 1 }, { unique: true, name: "don_hoan_huy_orderSn_unique" });
+    DonHoanHuy = import_mongoose.default.models.DonHoanHuy || import_mongoose.default.model("DonHoanHuy", DonHoanHuySchema);
+    DonHoanHuy_default = DonHoanHuy;
+  }
+});
+
 // node_modules/jws/lib/data-stream.js
 var require_data_stream = __commonJS({
   "node_modules/jws/lib/data-stream.js"(exports2, module2) {
@@ -72842,48 +72894,8 @@ async function setCachedShopeeAddressList(shopId, result) {
 // routes/scanRoutes.js
 var import_express2 = __toESM(require_express2(), 1);
 
-// models/DonHoanHuy.js
-var import_mongoose = __toESM(require("mongoose"), 1);
-var DonHoanHuySchema = new import_mongoose.default.Schema(
-  {
-    orderSn: {
-      type: String,
-      required: true,
-      index: true,
-      trim: true
-    },
-    status: {
-      type: String,
-      default: "scanned",
-      trim: true
-    },
-    scannedAt: {
-      type: Date,
-      default: Date.now
-      // TTL removed — xóa thủ công bằng API
-    },
-    note: {
-      type: String,
-      default: "",
-      trim: true
-    },
-    /** Shopee shop_id — String (uint64-safe), không lưu Number */
-    shopId: {
-      type: String,
-      default: null,
-      trim: true
-    }
-  },
-  {
-    collection: "don_hoan_huy",
-    versionKey: false,
-    strict: false
-    // giữ field legacy (local_status, type, ...) nếu đã có trên Atlas
-  }
-);
-DonHoanHuySchema.index({ orderSn: 1 }, { unique: true, name: "don_hoan_huy_orderSn_unique" });
-var DonHoanHuy = import_mongoose.default.models.DonHoanHuy || import_mongoose.default.model("DonHoanHuy", DonHoanHuySchema);
-var DonHoanHuy_default = DonHoanHuy;
+// controllers/scanController.js
+init_DonHoanHuy();
 
 // config/db.js
 var import_dotenv = __toESM(require_main(), 1);
@@ -72968,6 +72980,7 @@ function isMongoTimeoutOrNetworkError(err) {
 var import_mongoose3 = __toESM(require("mongoose"), 1);
 var import_fs3 = __toESM(require("fs"), 1);
 var import_path3 = __toESM(require("path"), 1);
+init_DonHoanHuy();
 
 // src/db/productsDiskStore.ts
 var import_fs = __toESM(require("fs"), 1);
@@ -105767,12 +105780,23 @@ async function batchDeleteOrders(req, res) {
       return res.status(400).json({ success: false, error: "Thi\u1EBFu danh s\xE1ch id/orderSn." });
     }
     let mongoDeleted = 0;
+    let donHoanHuyDeleted = 0;
     let jsonRemoved = 0;
     if (isMongoReady()) {
       try {
         mongoDeleted = await deleteOrdersFromStore(normalized);
       } catch (err) {
-        console.warn("[Orders batch-delete] Mongo:", err?.message || err);
+        console.warn("[Orders batch-delete] orders Mongo:", err?.message || err);
+      }
+      try {
+        const DonHoanHuy2 = (await Promise.resolve().then(() => (init_DonHoanHuy(), DonHoanHuy_exports))).default;
+        const dhhResult = await DonHoanHuy2.deleteMany({ orderSn: { $in: normalized } });
+        donHoanHuyDeleted = Number(dhhResult.deletedCount || 0);
+        if (donHoanHuyDeleted > 0) {
+          console.log(`[Orders batch-delete] don_hoan_huy deleted=${donHoanHuyDeleted}`);
+        }
+      } catch (err) {
+        console.warn("[Orders batch-delete] don_hoan_huy Mongo:", err?.message || err);
       }
     }
     try {
@@ -105788,14 +105812,15 @@ async function batchDeleteOrders(req, res) {
     } catch (err) {
       console.warn("[Orders batch-delete] JSON:", err?.message || err);
     }
-    if (mongoDeleted === 0 && jsonRemoved === 0) {
+    if (mongoDeleted === 0 && jsonRemoved === 0 && donHoanHuyDeleted === 0) {
       return res.status(404).json({ success: false, error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n \u0111\u1EC3 x\xF3a." });
     }
-    console.log(`[Orders batch-delete] ids=${normalized.length} mongo=${mongoDeleted} json=${jsonRemoved}`);
+    console.log(`[Orders batch-delete] ids=${normalized.length} orders=${mongoDeleted} don_hoan_huy=${donHoanHuyDeleted} json=${jsonRemoved}`);
     return res.json({
       success: true,
-      deleted: mongoDeleted + jsonRemoved,
+      deleted: mongoDeleted + donHoanHuyDeleted + jsonRemoved,
       mongoDeleted,
+      donHoanHuyDeleted,
       jsonRemoved,
       orderSns: normalized.slice(0, 100)
     });

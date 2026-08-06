@@ -763,7 +763,7 @@ export async function cleanupHandedOver(req, res) {
   }
 }
 
-/** POST /api/orders/batch-delete — xóa thủ công đơn đã chọn */
+/** POST /api/orders/batch-delete — xóa thủ công đơn đã chọn (cả orders + don_hoan_huy) */
 export async function batchDeleteOrders(req, res) {
   try {
     const idsOrSns = req.body?.ids ?? req.body?.orderSns ?? req.body?.order_sns ?? [];
@@ -776,12 +776,23 @@ export async function batchDeleteOrders(req, res) {
       return res.status(400).json({ success: false, error: "Thiếu danh sách id/orderSn." });
     }
     let mongoDeleted = 0;
+    let donHoanHuyDeleted = 0;
     let jsonRemoved = 0;
     if (isMongoReady()) {
       try {
         mongoDeleted = await deleteOrdersFromStore(normalized);
       } catch (err) {
-        console.warn("[Orders batch-delete] Mongo:", err?.message || err);
+        console.warn("[Orders batch-delete] orders Mongo:", err?.message || err);
+      }
+      try {
+        const DonHoanHuy = (await import("../models/DonHoanHuy.js")).default;
+        const dhhResult = await DonHoanHuy.deleteMany({ orderSn: { $in: normalized } });
+        donHoanHuyDeleted = Number(dhhResult.deletedCount || 0);
+        if (donHoanHuyDeleted > 0) {
+          console.log(`[Orders batch-delete] don_hoan_huy deleted=${donHoanHuyDeleted}`);
+        }
+      } catch (err) {
+        console.warn("[Orders batch-delete] don_hoan_huy Mongo:", err?.message || err);
       }
     }
     try {
@@ -797,14 +808,15 @@ export async function batchDeleteOrders(req, res) {
     } catch (err) {
       console.warn("[Orders batch-delete] JSON:", err?.message || err);
     }
-    if (mongoDeleted === 0 && jsonRemoved === 0) {
+    if (mongoDeleted === 0 && jsonRemoved === 0 && donHoanHuyDeleted === 0) {
       return res.status(404).json({ success: false, error: "Không tìm thấy đơn để xóa." });
     }
-    console.log(`[Orders batch-delete] ids=${normalized.length} mongo=${mongoDeleted} json=${jsonRemoved}`);
+    console.log(`[Orders batch-delete] ids=${normalized.length} orders=${mongoDeleted} don_hoan_huy=${donHoanHuyDeleted} json=${jsonRemoved}`);
     return res.json({
       success: true,
-      deleted: mongoDeleted + jsonRemoved,
+      deleted: mongoDeleted + donHoanHuyDeleted + jsonRemoved,
       mongoDeleted,
+      donHoanHuyDeleted,
       jsonRemoved,
       orderSns: normalized.slice(0, 100),
     });

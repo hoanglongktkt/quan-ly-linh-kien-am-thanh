@@ -4467,11 +4467,19 @@ export default function OrderManager({
     if (!window.confirm(`Xóa ${selected.length} đơn đã chọn khỏi Database? Hành động này không thể hoàn tác.`)) {
       return;
     }
+    const token = localStorage.getItem('admin_token');
+    if (!token) {
+      showToast('Chưa đăng nhập — không thể xóa đơn.');
+      return;
+    }
     const orderSns = selected.map(o => o.orderSn || o.id).filter(Boolean) as string[];
     try {
       const res = await fetch('/api/orders/batch-delete', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({ orderSns }),
       });
       const data = await res.json();
@@ -4480,9 +4488,9 @@ export default function OrderManager({
         const updated = orders.filter(o => !deletedSns.has(o.orderSn || '') && !deletedSns.has(o.id || ''));
         onUpdateOrders(updated, { persist: true });
         setSelectedOrderIds([]);
-        showToast(`Đã xóa ${data.deleted} đơn (Mongo: ${data.mongoDeleted}, JSON: ${data.jsonRemoved}).`);
+        showToast(`Đã xóa ${data.deleted} đơn (Mongo: ${data.mongoDeleted}, don_hoan_huy: ${data.donHoanHuyDeleted ?? 0}, JSON: ${data.jsonRemoved}).`);
       } else {
-        showToast(data.message || 'Xóa thất bại.');
+        showToast(data.error || data.message || 'Xóa thất bại.');
       }
     } catch {
       showToast('Lỗi kết nối khi xóa đơn.');
