@@ -36,6 +36,31 @@ const DonHoanHuySchema = new mongoose.Schema(
       default: null,
       trim: true,
     },
+    tracking_no: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    return_tracking_no: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    scan_code: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    type: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    local_status: {
+      type: String,
+      default: null,
+      trim: true,
+    },
   },
   {
     collection: "don_hoan_huy",
@@ -45,6 +70,12 @@ const DonHoanHuySchema = new mongoose.Schema(
 );
 
 DonHoanHuySchema.index({ orderSn: 1 }, { unique: true, name: "don_hoan_huy_orderSn_unique" });
+DonHoanHuySchema.index({ tracking_no: 1 }, { name: "don_hoan_huy_tracking_no" });
+DonHoanHuySchema.index({ return_tracking_no: 1 }, { name: "don_hoan_huy_return_tracking_no" });
+DonHoanHuySchema.index({ scan_code: 1 }, { name: "don_hoan_huy_scan_code" });
+DonHoanHuySchema.index({ scannedAt: -1 }, { name: "don_hoan_huy_scannedAt" });
+DonHoanHuySchema.index({ type: 1 }, { name: "don_hoan_huy_type" });
+DonHoanHuySchema.index({ local_status: 1 }, { name: "don_hoan_huy_local_status" });
 
 const DonHoanHuy =
   mongoose.models.DonHoanHuy || mongoose.model("DonHoanHuy", DonHoanHuySchema);

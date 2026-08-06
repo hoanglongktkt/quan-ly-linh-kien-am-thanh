@@ -6,11 +6,13 @@
 /** Deps từ server.ts (order helpers / mongoStore chưa tách hết). */
 let deps = {
   findOrderByScanCodeInStore: async () => null,
+  findOrdersByScanCodesInStore: async () => new Map(),
   resolveOrderFromShopeeByScanCode: async () => null,
   isValidOrder: () => false,
   mirrorTrackingFieldsForRead: (o) => o,
   resolveOrderLocalStatus: () => "",
   existsDonHoanHuy: async () => false,
+  existsDonHoanHuyMany: async () => new Set(),
   isShopeeCancelOrReturnLikeOrder: () => false,
   isOrderAlreadyScanProcessed: () => false,
   getScanProcessedReason: () => "",
@@ -21,6 +23,7 @@ let deps = {
   isEligibleForHandOverShared: () => false,
   isMongoReady: () => false,
   upsertDonHoanHuyBatch: async () => ({ ok: 0, failed: 0, errors: ["not_initialized"] }),
+  markOrdersScanFlagsBatch: async () => 0,
   describeMongoWriteError: (err) => String(err?.message || err || ""),
   isMongoConnectionError: () => false,
   persistChangedOrdersPatch: async () => 0,
@@ -63,12 +66,24 @@ export async function scanBulkUpdate(req, res) {
     const forceCancelCodes = toCodeSet(req.body?.donHuyCodes);
     const forceReturnCodes = toCodeSet(req.body?.daNhanHoanCodes);
 
-    // Lookup theo mã quét (Mongo indexed) — miss / thiếu items → Shopee on-demand.
+    // Lookup theo mã quét — 1 query Mongo indexed ($in), miss → Shopee on-demand.
+    let foundByCode = new Map();
+    try {
+      foundByCode = await deps.findOrdersByScanCodesInStore(codes);
+    } catch (batchLookupErr) {
+      console.warn(
+        "[Orders Scan Bulk] batch lookup fail — fallback per-code:",
+        batchLookupErr?.message || batchLookupErr,
+      );
+    }
+
     const lookupPairs = await Promise.all(
       codes.map(async (code) => {
-        let found = null;
+        let found = foundByCode.get(code) || null;
         try {
-          found = await deps.findOrderByScanCodeInStore(code);
+          if (!found) {
+            found = await deps.findOrderByScanCodeInStore(code);
+          }
           if (found && !deps.isValidOrder(found)) found = null;
           if (found) found = deps.mirrorTrackingFieldsForRead(found);
         } catch (lookupErr) {
@@ -148,6 +163,21 @@ export async function scanBulkUpdate(req, res) {
 
     const norm = (c) => String(c || "").trim().toUpperCase();
 
+    // Prefetch exists don_hoan_huy — 1 query $in thay vì N findOne.
+    const snsForExists = [
+      ...new Set(
+        lookupPairs
+          .map((p) => String(p.found?.orderSn || "").replace(/^shopee-/i, "").trim())
+          .filter(Boolean),
+      ),
+    ];
+    let alreadyInDonHoanHuySet = new Set();
+    try {
+      alreadyInDonHoanHuySet = await deps.existsDonHoanHuyMany(snsForExists);
+    } catch {
+      alreadyInDonHoanHuySet = new Set();
+    }
+
     for (const { code, found } of lookupPairs) {
       const codeKey = norm(code);
       if (!found) {
@@ -167,12 +197,8 @@ export async function scanBulkUpdate(req, res) {
       const status = String(order.status || "");
       const rawShopee = String(order.shopee_order_status || "").toUpperCase();
       const existingLocal = deps.resolveOrderLocalStatus(order);
-      let alreadyInDonHoanHuy = false;
-      try {
-        alreadyInDonHoanHuy = await deps.existsDonHoanHuy(String(order.orderSn || ""));
-      } catch {
-        alreadyInDonHoanHuy = false;
-      }
+      const orderSnNorm = String(order.orderSn || "").replace(/^shopee-/i, "").trim();
+      const alreadyInDonHoanHuy = alreadyInDonHoanHuySet.has(orderSnNorm);
       const forceHandOver =
         forceHandOverCodes.has(codeKey) ||
         forceHandOverCodes.has(norm(String(order.orderSn || ""))) ||
@@ -596,6 +622,7 @@ export async function scanBulkUpdate(req, res) {
       }
 
       let flagOk = 0;
+      const flagRows = [];
       for (const o of changedOrders) {
         const sn = String(o?.orderSn || "").replace(/^shopee-/i, "").trim();
         if (!sn) continue;
@@ -603,35 +630,76 @@ export async function scanBulkUpdate(req, res) {
         const local = String(
           o?.local_status || o?.localStatus || o?.internal_status || "",
         ).toUpperCase();
+        if (
+          local === "HANDED_OVER" ||
+          o?.is_handed_over === true ||
+          o?.isHandedOverToCarrier === true
+        ) {
+          flagRows.push({
+            orderSn: sn,
+            localStatus: "HANDED_OVER",
+            shopId,
+            source: "qr_scan",
+            handedOverAt: String(o.handedOverAt || new Date().toISOString()),
+          });
+        } else if (local === "CANCELLED_STORED" || local === "RETURN_RECEIVED") {
+          flagRows.push({
+            orderSn: sn,
+            localStatus: local,
+            shopId,
+            stockRestored: Boolean(o.stock_restored),
+            stockRestoredAt: o.stock_restored_at
+              ? String(o.stock_restored_at)
+              : undefined,
+          });
+        }
+      }
+      if (flagRows.length > 0) {
         try {
-          if (
-            local === "HANDED_OVER" ||
-            o?.is_handed_over === true ||
-            o?.isHandedOverToCarrier === true
-          ) {
-            const ok = await deps.markOrderHandedOverInStore(sn, {
-              source: "qr_scan",
-              handedOverAt: String(o.handedOverAt || new Date().toISOString()),
-              shopId,
-            });
-            if (ok) flagOk += 1;
-          } else if (local === "CANCELLED_STORED" || local === "RETURN_RECEIVED") {
-            const ok = await deps.markOrderLocalStatusInStore(sn, local, {
-              shopId,
-              clearHandedOver: true,
-              status: local === "RETURN_RECEIVED" ? "return_received" : "cancelled",
-              stockRestored: Boolean(o.stock_restored),
-              stockRestoredAt: o.stock_restored_at
-                ? String(o.stock_restored_at)
-                : undefined,
-            });
-            if (ok) flagOk += 1;
+          if (typeof deps.markOrdersScanFlagsBatch === "function") {
+            flagOk = await deps.markOrdersScanFlagsBatch(flagRows);
+          } else {
+            // Fallback legacy: từng đơn (chậm) — chỉ khi batch chưa wire.
+            for (const row of flagRows) {
+              try {
+                if (row.localStatus === "HANDED_OVER") {
+                  const ok = await deps.markOrderHandedOverInStore(row.orderSn, {
+                    source: row.source,
+                    handedOverAt: row.handedOverAt,
+                    shopId: row.shopId,
+                  });
+                  if (ok) flagOk += 1;
+                } else {
+                  const ok = await deps.markOrderLocalStatusInStore(
+                    row.orderSn,
+                    row.localStatus,
+                    {
+                      shopId: row.shopId,
+                      clearHandedOver: true,
+                      status:
+                        row.localStatus === "RETURN_RECEIVED"
+                          ? "return_received"
+                          : "cancelled",
+                      stockRestored: row.stockRestored,
+                      stockRestoredAt: row.stockRestoredAt,
+                    },
+                  );
+                  if (ok) flagOk += 1;
+                }
+              } catch (flagErr) {
+                console.error(
+                  `[Orders Scan Bulk] mark flag fail order_sn=${row.orderSn}:`,
+                  deps.describeMongoWriteError(flagErr),
+                  flagErr,
+                );
+              }
+            }
           }
-        } catch (flagErr) {
+        } catch (flagBatchErr) {
           console.error(
-            `[Orders Scan Bulk] mark flag fail order_sn=${sn}:`,
-            deps.describeMongoWriteError(flagErr),
-            flagErr,
+            "[Orders Scan Bulk] markOrdersScanFlagsBatch FAIL:",
+            deps.describeMongoWriteError(flagBatchErr),
+            flagBatchErr,
           );
         }
       }

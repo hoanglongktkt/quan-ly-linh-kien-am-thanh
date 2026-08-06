@@ -4717,7 +4717,7 @@ export default function OrderManager({
     closeScannerUiOnly();
   };
 
-  /** Kết thúc: tắt camera → ghi DB (timeout 10s) → reset list → bật lại camera. */
+  /** Kết thúc: tắt camera → ghi DB (timeout 45s) → reset list → bật lại camera. */
   const handleFinishContinuousScan = async () => {
     setShowEndConfirm(false);
 
@@ -4772,8 +4772,9 @@ export default function OrderManager({
     setCameraScanResult(`Đang ghi DB ${codes.length} đơn đã phân loại...`);
     await stopCameraHard();
 
+    const SCAN_SAVE_TIMEOUT_MS = 45_000;
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 30_000);
+    const timeoutId = window.setTimeout(() => controller.abort(), SCAN_SAVE_TIMEOUT_MS);
 
     try {
       const token = localStorage.getItem('admin_token');
@@ -4856,7 +4857,7 @@ export default function OrderManager({
           );
         throw new Error(
           aborted
-            ? 'Hết thời gian chờ 30 giây — server chưa phản hồi. Kiểm tra MongoDB / mạng rồi thử lại.'
+            ? `Hết thời gian chờ ${Math.round(SCAN_SAVE_TIMEOUT_MS / 1000)} giây — server chưa phản hồi. Kiểm tra MongoDB / mạng rồi thử lại.`
             : fetchErr instanceof Error
               ? fetchErr.message
               : 'Không kết nối được API lưu đơn.',

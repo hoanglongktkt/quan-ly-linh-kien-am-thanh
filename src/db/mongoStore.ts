@@ -89,6 +89,8 @@ type OrderDoc = {
   shopId?: string | null;
   /** Mã vận đơn (SPXVN / GHN / ...) — top-level để query & force update */
   tracking_no?: string | null;
+  /** Mã vận đơn chiều hoàn */
+  return_tracking_no?: string | null;
   /** Shopee package_number (OFG...) — cốt lõi in vận đơn / logistics */
   packageNumber?: string | null;
   /** Tên ĐVVC từ Shopee */
@@ -199,6 +201,8 @@ const OrderSchema = new Schema<OrderDoc>(
     /** Shopee shop_id — luôn String (uint64-safe) */
     shopId: { type: String, default: null, index: true },
     tracking_no: { type: String, default: null, index: true },
+    /** Mã vận đơn chiều hoàn — quét barcode return */
+    return_tracking_no: { type: String, default: null, index: true },
     /** Shopee package_number (OFG...) — bắt buộc cho create_shipping_document / logistics */
     packageNumber: { type: String, default: null, index: true },
     shipping_carrier: { type: String, default: null, index: true },
@@ -261,6 +265,9 @@ OrderSchema.index({ "data.tracking_no": 1 });
 OrderSchema.index({ "data.trackingNumber": 1 });
 OrderSchema.index({ "data.orderSn": 1 });
 OrderSchema.index({ "data.order_sn": 1 });
+OrderSchema.index({ "data.internalTrackingCode": 1 });
+OrderSchema.index({ return_sn: 1 });
+OrderSchema.index({ "data.return_sn": 1 });
 
 const OrderEventSchema = new Schema<OrderEventDoc>(
   {
@@ -4767,11 +4774,39 @@ export async function existsDonHoanHuy(orderSn: string): Promise<boolean> {
   return Boolean(hit);
 }
 
-/**
- * Upsert đơn hủy/hoàn vào collection don_hoan_huy (SSOT cho tab).
- * TTL 14 ngày tự xóa theo scannedAt. maxTimeMS 5s — fail nhanh.
- */
-export async function upsertDonHoanHuy(
+/** 1 query `$in` — tránh N lần findOne khi quét hàng loạt. */
+export async function existsDonHoanHuyMany(
+  orderSns: string[],
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (!isMongoReady()) return out;
+  requireMongo();
+  const sns = [
+    ...new Set(
+      (Array.isArray(orderSns) ? orderSns : [])
+        .map((s) => String(s || "").replace(/^shopee-/i, "").trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (!sns.length) return out;
+  const docs = await DonHoanHuyModel.find({ orderSn: { $in: sns } })
+    .select({ orderSn: 1 })
+    .maxTimeMS(5000)
+    .lean();
+  for (const d of docs || []) {
+    const sn = String((d as any)?.orderSn || "").trim();
+    if (sn) out.add(sn);
+  }
+  return out;
+}
+
+type DonHoanHuyUpsertPayload = {
+  sn: string;
+  $set: Record<string, unknown>;
+  scannedAt: Date;
+};
+
+function buildDonHoanHuyUpsertPayload(
   order: any,
   opts?: {
     type?: "cancelled" | "return";
@@ -4779,14 +4814,7 @@ export async function upsertDonHoanHuy(
     source?: string;
     scannedAt?: string | Date;
   },
-): Promise<{ ok: boolean; orderSn: string; error?: string }> {
-  try {
-    requireMongo();
-  } catch (readyErr) {
-    console.error("[MongoDB] upsertDonHoanHuy requireMongo:", readyErr);
-    return { ok: false, orderSn: "", error: "Lỗi kết nối MongoDB" };
-  }
-
+): { ok: true; payload: DonHoanHuyUpsertPayload } | { ok: false; orderSn: string; error: string } {
   const sn = String(order?.orderSn || order?.order_sn || "")
     .replace(/^shopee-/i, "")
     .trim();
@@ -4836,50 +4864,76 @@ export async function upsertDonHoanHuy(
   if ((!rtn || isShopeeInternalTrackingCode(rtn)) && type === "return" && usableScan) {
     rtn = usableScan;
   }
-  // Cancelled: nếu không có return_tracking_no riêng, fallback tn (outbound mirror).
   if (!rtn && type === "cancelled" && tn && !isShopeeInternalTrackingCode(tn)) {
     rtn = tn;
   }
   if (rtn && isShopeeInternalTrackingCode(rtn)) rtn = "";
 
+  const $set: Record<string, unknown> = {
+    orderSn: sn,
+    status: type === "return" ? "return_received" : "cancelled",
+    scannedAt,
+    shopId: order?.shopId != null ? String(order.shopId) : null,
+    type,
+    local_status,
+    shopee_order_status: order?.shopee_order_status
+      ? String(order.shopee_order_status)
+      : null,
+    shopName: order?.shopName != null ? String(order.shopName) : null,
+    source: opts?.source || "qr_scan",
+    data: {
+      id: order?.id || `shopee-${sn}`,
+      orderSn: sn,
+      items: Array.isArray(order?.items) ? order.items.slice(0, 20) : [],
+      date: order?.date || null,
+      totalAmount: order?.totalAmount ?? null,
+      channel: order?.channel || "shopee",
+      shipping_carrier: order?.shipping_carrier || null,
+      packageNumber: order?.packageNumber || null,
+      ...(tn ? { tracking_no: tn, trackingNumber: tn } : {}),
+      ...(rtn ? { return_tracking_no: rtn } : {}),
+      ...(scanCode ? { scan_code: scanCode } : {}),
+    },
+  };
+  if (tn) $set.tracking_no = tn;
+  if (rtn) $set.return_tracking_no = rtn;
+  if (scanCode) {
+    $set.scan_code = scanCode;
+    $set.note = `scan:${scanCode}`;
+  }
+
+  return { ok: true, payload: { sn, $set, scannedAt } };
+}
+
+/**
+ * Upsert đơn hủy/hoàn vào collection don_hoan_huy (SSOT cho tab).
+ * TTL 14 ngày tự xóa theo scannedAt. maxTimeMS 5s — fail nhanh.
+ */
+export async function upsertDonHoanHuy(
+  order: any,
+  opts?: {
+    type?: "cancelled" | "return";
+    scanCode?: string;
+    source?: string;
+    scannedAt?: string | Date;
+  },
+): Promise<{ ok: boolean; orderSn: string; error?: string }> {
+  try {
+    requireMongo();
+  } catch (readyErr) {
+    console.error("[MongoDB] upsertDonHoanHuy requireMongo:", readyErr);
+    return { ok: false, orderSn: "", error: "Lỗi kết nối MongoDB" };
+  }
+
+  const built = buildDonHoanHuyUpsertPayload(order, opts);
+  if (!built.ok) {
+    return { ok: false, orderSn: built.orderSn, error: built.error };
+  }
+
+  const { sn, $set, scannedAt } = built.payload;
   const DON_HOAN_HUY_MAX_MS = 5000;
 
   try {
-    // Collection don_hoan_huy — unique theo orderSn, TTL 14d trên scannedAt.
-    // Không $set tracking = null để tránh đè mất mã đã lưu khi re-upsert thiếu TN.
-    const $set: Record<string, unknown> = {
-      orderSn: sn,
-      status: type === "return" ? "return_received" : "cancelled",
-      scannedAt,
-      shopId: order?.shopId != null ? String(order.shopId) : null,
-      type,
-      local_status,
-      shopee_order_status: order?.shopee_order_status
-        ? String(order.shopee_order_status)
-        : null,
-      shopName: order?.shopName != null ? String(order.shopName) : null,
-      source: opts?.source || "qr_scan",
-      data: {
-        id: order?.id || `shopee-${sn}`,
-        orderSn: sn,
-        items: Array.isArray(order?.items) ? order.items.slice(0, 20) : [],
-        date: order?.date || null,
-        totalAmount: order?.totalAmount ?? null,
-        channel: order?.channel || "shopee",
-        shipping_carrier: order?.shipping_carrier || null,
-        packageNumber: order?.packageNumber || null,
-        ...(tn ? { tracking_no: tn, trackingNumber: tn } : {}),
-        ...(rtn ? { return_tracking_no: rtn } : {}),
-        ...(scanCode ? { scan_code: scanCode } : {}),
-      },
-    };
-    if (tn) $set.tracking_no = tn;
-    if (rtn) $set.return_tracking_no = rtn;
-    if (scanCode) {
-      $set.scan_code = scanCode;
-      $set.note = `scan:${scanCode}`;
-    }
-
     const writePromise = DonHoanHuyModel.findOneAndUpdate(
       { orderSn: sn },
       {
@@ -4900,7 +4954,7 @@ export async function upsertDonHoanHuy(
 
     await Promise.race([writePromise, timeoutPromise]);
     console.log(
-      `[MongoDB] upsert don_hoan_huy ok order_sn=${sn} type=${type} local_status=${local_status}`,
+      `[MongoDB] upsert don_hoan_huy ok order_sn=${sn} type=${$set.type} local_status=${$set.local_status}`,
     );
     return { ok: true, orderSn: sn };
   } catch (err) {
@@ -4914,25 +4968,359 @@ export async function upsertDonHoanHuy(
   }
 }
 
+/** 1 lần bulkWrite — cấm await findOneAndUpdate từng đơn trong vòng lặp. */
 export async function upsertDonHoanHuyBatch(
   rows: Array<{ order: any; type?: "cancelled" | "return"; scanCode?: string; source?: string }>,
 ): Promise<{ ok: number; failed: number; errors: string[] }> {
   let ok = 0;
   let failed = 0;
   const errors: string[] = [];
+
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return { ok: 0, failed: 0, errors: [] };
+  }
+
+  try {
+    requireMongo();
+  } catch (readyErr) {
+    console.error("[MongoDB] upsertDonHoanHuyBatch requireMongo:", readyErr);
+    return {
+      ok: 0,
+      failed: rows.length,
+      errors: ["Lỗi kết nối MongoDB"],
+    };
+  }
+
+  const ops: any[] = [];
+  const opSns: string[] = [];
+
   for (const row of rows) {
-    const r = await upsertDonHoanHuy(row.order, {
+    const built = buildDonHoanHuyUpsertPayload(row.order, {
       type: row.type,
       scanCode: row.scanCode,
       source: row.source,
     });
-    if (r.ok) ok += 1;
-    else {
+    if (!built.ok) {
       failed += 1;
-      if (r.error) errors.push(`#${r.orderSn || "?"}: ${r.error}`);
+      if (built.error) errors.push(`#${built.orderSn || "?"}: ${built.error}`);
+      continue;
+    }
+    const { sn, $set, scannedAt } = built.payload;
+    ops.push({
+      updateOne: {
+        filter: { orderSn: sn },
+        update: {
+          $set,
+          $setOnInsert: { createdAt: scannedAt },
+        },
+        upsert: true,
+      },
+    });
+    opSns.push(sn);
+  }
+
+  if (ops.length === 0) {
+    return { ok, failed, errors };
+  }
+
+  try {
+    const result = await DonHoanHuyModel.bulkWrite(ops, {
+      ordered: false,
+    });
+    ok = opSns.length;
+    console.log(
+      `[MongoDB] bulkWrite don_hoan_huy ONE shot — ops=${ops.length}` +
+        ` upserted=${result.upsertedCount || 0} modified=${result.modifiedCount || 0}` +
+        ` matched=${result.matchedCount || 0}`,
+    );
+  } catch (err: any) {
+    // ordered:false — một phần có thể đã ghi; đếm writeErrors.
+    const writeErrors = Array.isArray(err?.writeErrors) ? err.writeErrors : [];
+    const errCount = writeErrors.length || (err ? 1 : 0);
+    const succeeded = Math.max(0, ops.length - errCount);
+    ok += succeeded;
+    failed += errCount;
+    if (writeErrors.length) {
+      for (const we of writeErrors.slice(0, 10)) {
+        const idx = typeof we?.index === "number" ? we.index : -1;
+        const sn = idx >= 0 ? opSns[idx] : "?";
+        errors.push(`#${sn}: ${we?.errmsg || we?.message || "bulkWrite error"}`);
+      }
+    } else {
+      const detail = describeMongoWriteError(err);
+      errors.push(isMongoConnectionError(err) ? "Lỗi kết nối MongoDB" : detail);
+      console.error("[MongoDB] bulkWrite don_hoan_huy FAIL:", err);
+    }
+    if (ok === 0 && failed === 0) {
+      failed = rows.length;
     }
   }
+
   return { ok, failed, errors };
+}
+
+/**
+ * Ghi cờ HANDED_OVER / CANCELLED_STORED / RETURN_RECEIVED hàng loạt — 1 bulkWrite.
+ */
+export async function markOrdersScanFlagsBatch(
+  rows: Array<{
+    orderSn: string;
+    localStatus: "HANDED_OVER" | "CANCELLED_STORED" | "RETURN_RECEIVED";
+    shopId?: string;
+    handedOverAt?: string;
+    source?: string;
+    stockRestored?: boolean;
+    stockRestoredAt?: string;
+  }>,
+): Promise<number> {
+  if (!isMongoReady() || !Array.isArray(rows) || rows.length === 0) return 0;
+  requireMongo();
+
+  const ops: any[] = [];
+  const nowIso = new Date().toISOString();
+
+  for (const row of rows) {
+    const sn = String(row?.orderSn || "").replace(/^shopee-/i, "").trim();
+    if (!sn) continue;
+    const _id = `shopee-${sn}`;
+    const shopIdStr = row?.shopId != null ? String(row.shopId).trim() : "";
+    const status = String(row.localStatus || "").toUpperCase();
+
+    if (status === "HANDED_OVER") {
+      const handedAt = row.handedOverAt || nowIso;
+      const source = row.source || "qr_scan";
+      const $set: Record<string, unknown> = {
+        is_handed_over: true,
+        "data.is_handed_over": true,
+        "data.isHandedOverToCarrier": true,
+        "data.is_handed_over_to_carrier": true,
+        "data.is_handed_over_to_courier": true,
+        "data.local_status": "HANDED_OVER",
+        "data.localStatus": "HANDED_OVER",
+        "data.internal_status": "HANDED_OVER",
+        "data.handedOverAt": handedAt,
+        "data.handed_over_source": source,
+        "data.handedOverSource": source,
+        "data.localStatusAt": handedAt,
+        "data.local_status_updated_at": handedAt,
+      };
+      if (shopIdStr) {
+        $set.shopId = shopIdStr;
+        $set["data.shopId"] = shopIdStr;
+      }
+      ops.push({
+        updateOne: {
+          filter: buildOrderCompoundFilter(sn, _id, shopIdStr),
+          update: {
+            $set,
+            $setOnInsert: {
+              _id,
+              orderSn: sn,
+              "data.id": _id,
+              "data.orderSn": sn,
+              "data.channel": "shopee",
+            },
+          },
+          upsert: true,
+        },
+      });
+      continue;
+    }
+
+    if (status !== "CANCELLED_STORED" && status !== "RETURN_RECEIVED") continue;
+
+    const $set: Record<string, unknown> = {
+      "data.local_status": status,
+      "data.localStatus": status,
+      "data.internal_status": status,
+      "data.localStatusAt": nowIso,
+      "data.local_status_updated_at": nowIso,
+      "data.is_local_return_archived": false,
+      is_handed_over: false,
+      "data.is_handed_over": false,
+      "data.isHandedOverToCarrier": false,
+      "data.is_handed_over_to_carrier": false,
+      "data.is_handed_over_to_courier": false,
+    };
+    if (row.stockRestored) {
+      const restoredAt = String(row.stockRestoredAt || nowIso);
+      $set["data.stock_restored"] = true;
+      $set["data.stock_restored_at"] = restoredAt;
+    }
+    if (status === "RETURN_RECEIVED") {
+      $set.status = "return_received";
+      $set["data.status"] = "return_received";
+    } else {
+      $set.status = "cancelled";
+      $set["data.status"] = "cancelled";
+    }
+    if (shopIdStr) {
+      $set.shopId = shopIdStr;
+      $set["data.shopId"] = shopIdStr;
+    }
+    ops.push({
+      updateOne: {
+        filter: buildOrderCompoundFilter(sn, _id, shopIdStr),
+        update: {
+          $set,
+          $setOnInsert: {
+            _id,
+            orderSn: sn,
+            "data.id": _id,
+            "data.orderSn": sn,
+            "data.channel": "shopee",
+          },
+        },
+        upsert: true,
+      },
+    });
+  }
+
+  if (ops.length === 0) return 0;
+  const result = await OrderModel.bulkWrite(ops, { ordered: false });
+  console.log(
+    `[MongoDB] bulkWrite markOrdersScanFlags — ops=${ops.length}` +
+      ` modified=${result.modifiedCount || 0} upserted=${result.upsertedCount || 0}`,
+  );
+  return ops.length;
+}
+
+/** Lookup N mã quét — 1 query `$in` (index), map code → order. */
+export async function findOrdersByScanCodesInStore(
+  rawCodes: string[],
+): Promise<Map<string, any>> {
+  const result = new Map<string, any>();
+  if (!isMongoReady() || !Array.isArray(rawCodes) || rawCodes.length === 0) {
+    return result;
+  }
+  requireMongo();
+
+  const codeMeta: Array<{ code: string; keys: string[]; uniqueIds: string[] }> = [];
+  const allKeys = new Set<string>();
+  const allIds = new Set<string>();
+
+  for (const raw of rawCodes) {
+    const text = String(raw || "").trim();
+    if (!text) continue;
+    const seedKeys = [text, text.replace(/^#+/, "")];
+    if (/^https?:\/\//i.test(text)) {
+      try {
+        const url = new URL(text);
+        for (const p of [
+          "tracking",
+          "tracking_no",
+          "tracking_number",
+          "tn",
+          "order_sn",
+          "ordersn",
+          "order",
+          "order_id",
+          "package_number",
+          "code",
+          "sn",
+        ]) {
+          const v = url.searchParams.get(p);
+          if (v) seedKeys.push(v);
+        }
+        for (const part of url.pathname.split("/")) {
+          if (part) seedKeys.push(part);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    const keys = buildScanKeyVariantsForMongo(seedKeys);
+    if (!keys.length) continue;
+    const idKeys = keys.flatMap((k) => {
+      const sn = k.replace(/^SHOPEE-/i, "").replace(/^shopee-/i, "");
+      return sn ? [`shopee-${sn}`, sn] : [k];
+    });
+    const uniqueIds = [...new Set(idKeys)];
+    for (const k of keys) allKeys.add(k);
+    for (const id of uniqueIds) allIds.add(id);
+    codeMeta.push({ code: text, keys, uniqueIds });
+  }
+
+  if (!allKeys.size) return result;
+
+  const keysArr = [...allKeys];
+  const idsArr = [...allIds];
+  const filter = {
+    $or: [
+      { tracking_no: { $in: keysArr } },
+      { return_tracking_no: { $in: keysArr } },
+      { orderSn: { $in: keysArr } },
+      { packageNumber: { $in: keysArr } },
+      { _id: { $in: idsArr } },
+      { "data.tracking_no": { $in: keysArr } },
+      { "data.trackingNumber": { $in: keysArr } },
+      { "data.return_tracking_no": { $in: keysArr } },
+      { "data.return_sn": { $in: keysArr } },
+      { return_sn: { $in: keysArr } },
+      { "data.internalTrackingCode": { $in: keysArr } },
+      { "data.packageNumber": { $in: keysArr } },
+      { "data.package_number": { $in: keysArr } },
+      { "data.orderSn": { $in: keysArr } },
+      { "data.order_sn": { $in: keysArr } },
+    ],
+  };
+
+  try {
+    const docs = await OrderModel.find(filter)
+      .limit(Math.min(Math.max(rawCodes.length * 3, 50), 500))
+      .maxTimeMS(8_000)
+      .lean();
+    const hydrated = (docs || [])
+      .map((d) => hydrateOrderFromMongoDoc(d))
+      .filter(Boolean);
+
+    const keySetUpper = (vals: unknown[]) => {
+      const s = new Set<string>();
+      for (const v of vals) {
+        const t = String(v || "").trim();
+        if (!t) continue;
+        s.add(t);
+        s.add(t.toUpperCase());
+        s.add(t.toLowerCase());
+      }
+      return s;
+    };
+
+    for (const meta of codeMeta) {
+      if (result.has(meta.code)) continue;
+      const want = keySetUpper([...meta.keys, ...meta.uniqueIds]);
+      const hit = hydrated.find((o: any) => {
+        const bag = keySetUpper([
+          o?.orderSn,
+          o?.tracking_no,
+          o?.trackingNumber,
+          o?.return_tracking_no,
+          o?.packageNumber,
+          o?.id,
+          o?.return_sn,
+          o?.internalTrackingCode,
+          o?.data?.tracking_no,
+          o?.data?.trackingNumber,
+          o?.data?.return_tracking_no,
+          o?.data?.internalTrackingCode,
+          o?.data?.packageNumber,
+          o?.data?.package_number,
+          o?.data?.orderSn,
+          o?.data?.order_sn,
+          o?.data?.return_sn,
+        ]);
+        for (const w of want) {
+          if (bag.has(w)) return true;
+        }
+        return false;
+      });
+      if (hit) result.set(meta.code, hit);
+    }
+  } catch (err: any) {
+    console.warn("[MongoDB] findOrdersByScanCodesInStore failed:", err?.message || err);
+  }
+
+  return result;
 }
 
 /** Gộp bản ghi don_hoan_huy vào list orders (để tab FE lọc local_status vẫn thấy). */

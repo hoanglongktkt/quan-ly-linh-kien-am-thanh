@@ -2,7 +2,7 @@ import DonHoanHuy from "../models/DonHoanHuy.js";
 import { connectDB, isDBReady, getMongoUri } from "../config/db.js";
 import {
   loadDonHoanHuyAsOrders,
-  upsertDonHoanHuy,
+  upsertDonHoanHuyBatch,
 } from "../src/db/mongoStore.ts";
 
 /** Deps từ server.ts — resolve đơn thật (orderSn + items) trước khi ghi don_hoan_huy. */
@@ -205,6 +205,8 @@ export async function saveScanOrders(req, res) {
     const saved = [];
     const failed = [];
     const orderSns = [];
+    /** Resolve trước (có thể gọi Shopee) — ghi DB 1 lần bulkWrite. */
+    const toUpsert = [];
 
     for (const job of unique) {
       const order = await resolveFullOrderForScan(job.code);
@@ -224,22 +226,36 @@ export async function saveScanOrders(req, res) {
         });
         continue;
       }
-
-      const r = await upsertDonHoanHuy(order, {
+      toUpsert.push({
+        order,
         type: job.kind === "return" ? "return" : "cancelled",
         scanCode: job.code,
         source: "api_scan_save",
       });
-      if (!r.ok) {
-        failed.push({
-          code: job.code,
-          orderSn: order.orderSn,
-          reason: r.error || "Ghi don_hoan_huy thất bại",
-        });
-        continue;
+    }
+
+    if (toUpsert.length > 0) {
+      const batch = await upsertDonHoanHuyBatch(toUpsert);
+      if (batch.ok > 0) {
+        for (const row of toUpsert) {
+          const sn = normalizeOrderSn(row.order?.orderSn);
+          if (sn) {
+            saved.push(sn);
+            orderSns.push(sn);
+          }
+        }
+        for (const e of batch.errors || []) {
+          failed.push({ code: "?", reason: e });
+        }
+      } else {
+        for (const row of toUpsert) {
+          failed.push({
+            code: row.scanCode,
+            orderSn: row.order?.orderSn,
+            reason: batch.errors?.[0] || "Ghi don_hoan_huy thất bại",
+          });
+        }
       }
-      saved.push(r.orderSn);
-      orderSns.push(r.orderSn);
     }
 
     if (saved.length === 0) {
