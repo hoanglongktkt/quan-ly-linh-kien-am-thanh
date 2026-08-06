@@ -76337,6 +76337,41 @@ function orderTabFilter(tab) {
       return {
         $and: [ORDER_TAB_IS_TO_SHIP, ORDER_TAB_IS_HANDED_OVER]
       };
+    case "cancel_returns":
+    case "cancel-returns":
+    case "don-huy-hoan":
+    case "don_huy_hoan":
+      return {
+        $or: [
+          { status: { $in: ["cancelled", "return_pending", "return_received"] } },
+          {
+            shopee_order_status: {
+              $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"]
+            }
+          },
+          {
+            "data.shopee_order_status": {
+              $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"]
+            }
+          },
+          { local_status: { $in: ["CANCELLED_STORED", "RETURN_RECEIVED"] } },
+          {
+            "data.local_status": {
+              $in: ["CANCELLED_STORED", "RETURN_RECEIVED"]
+            }
+          },
+          {
+            "data.shopee_cancel_return_kind": {
+              $in: ["cancelled", "refund_return", "failed_delivery"]
+            }
+          },
+          {
+            shopee_cancel_return_kind: {
+              $in: ["cancelled", "refund_return", "failed_delivery"]
+            }
+          }
+        ]
+      };
     case "stale":
       return {
         "data.channel": "shopee",
@@ -76436,26 +76471,14 @@ async function countOrdersByTabsFromStore(opts) {
       if (parts.length === 1) return parts[0];
       return { $and: parts };
     };
-    const cancelReturnsFilter = withShop({
-      $or: [
-        { status: { $in: ["cancelled", "return_pending", "return_received"] } },
-        {
-          shopee_order_status: {
-            $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"]
-          }
-        },
-        { "data.shopee_order_status": { $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"] } },
-        { local_status: { $in: ["CANCELLED_STORED", "RETURN_RECEIVED"] } },
-        { "data.local_status": { $in: ["CANCELLED_STORED", "RETURN_RECEIVED"] } }
-      ]
-    });
     const countTabs = [
       "pending_confirm",
       "unprocessed",
       "processed",
       "shipping",
       "handed_over_carrier",
-      "return_pending"
+      "return_pending",
+      "cancel_returns"
     ];
     const counts = { ...empty };
     counts.all = await safeCountDocuments(withShop({}));
@@ -76464,7 +76487,6 @@ async function countOrdersByTabsFromStore(opts) {
       counts[t2] = await safeCountDocuments(withShop(orderTabFilter(t2)));
       await new Promise((r2) => setTimeout(r2, 20));
     }
-    counts.cancel_returns = await safeCountDocuments(cancelReturnsFilter);
     try {
       const dhhShop = Array.isArray(opts?.shopIds) && opts.shopIds.length > 1 ? {
         $or: [
@@ -76509,7 +76531,13 @@ async function queryOrdersPageFromStore(opts) {
   try {
     requireMongo();
     const page = Math.max(1, Math.floor(Number(opts?.page) || 1));
-    const pageSize = Math.max(10, Math.min(200, Math.floor(Number(opts?.pageSize) || 50)));
+    const tabKey = String(opts?.tab || "").trim().toLowerCase();
+    const isCancelReturnsTab = tabKey === "cancel_returns" || tabKey === "cancel-returns" || tabKey === "don-huy-hoan" || tabKey === "don_huy_hoan";
+    const pageSizeCap = isCancelReturnsTab ? 500 : 200;
+    const pageSize = Math.max(
+      10,
+      Math.min(pageSizeCap, Math.floor(Number(opts?.pageSize) || 50))
+    );
     const skipCounts = Boolean(opts?.skipCounts);
     const and = [];
     const tabFilter = orderTabFilter(opts?.tab);
@@ -105292,7 +105320,10 @@ async function readOrdersForRefresh(limit, opts = {}) {
       `[GET /api/orders/refresh] tab=${tab} shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} filter=`,
       JSON.stringify(tabFilter)
     );
-    const pageSize = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(Math.floor(Number(limit)), 200) : 100;
+    const pageSize = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(
+      Math.floor(Number(limit)),
+      tab === "cancel_returns" || tab === "cancel-returns" || tab === "don-huy-hoan" || tab === "don_huy_hoan" ? 500 : 200
+    ) : 100;
     const page = await queryOrdersPageFromStore({
       page: 1,
       pageSize,

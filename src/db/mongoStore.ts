@@ -4144,6 +4144,42 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
       return {
         $and: [ORDER_TAB_IS_TO_SHIP, ORDER_TAB_IS_HANDED_OVER],
       };
+    case "cancel_returns":
+    case "cancel-returns":
+    case "don-huy-hoan":
+    case "don_huy_hoan":
+      // SSOT: count badge ≡ list query (GET /api/orders/refresh?tab=cancel_returns).
+      return {
+        $or: [
+          { status: { $in: ["cancelled", "return_pending", "return_received"] } },
+          {
+            shopee_order_status: {
+              $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"],
+            },
+          },
+          {
+            "data.shopee_order_status": {
+              $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"],
+            },
+          },
+          { local_status: { $in: ["CANCELLED_STORED", "RETURN_RECEIVED"] } },
+          {
+            "data.local_status": {
+              $in: ["CANCELLED_STORED", "RETURN_RECEIVED"],
+            },
+          },
+          {
+            "data.shopee_cancel_return_kind": {
+              $in: ["cancelled", "refund_return", "failed_delivery"],
+            },
+          },
+          {
+            shopee_cancel_return_kind: {
+              $in: ["cancelled", "refund_return", "failed_delivery"],
+            },
+          },
+        ],
+      };
     case "stale":
       return {
         "data.channel": "shopee",
@@ -4268,19 +4304,6 @@ export async function countOrdersByTabsFromStore(opts?: {
       if (parts.length === 1) return parts[0];
       return { $and: parts };
     };
-    const cancelReturnsFilter = withShop({
-      $or: [
-        { status: { $in: ["cancelled", "return_pending", "return_received"] } },
-        {
-          shopee_order_status: {
-            $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"],
-          },
-        },
-        { "data.shopee_order_status": { $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"] } },
-        { local_status: { $in: ["CANCELLED_STORED", "RETURN_RECEIVED"] } },
-        { "data.local_status": { $in: ["CANCELLED_STORED", "RETURN_RECEIVED"] } },
-      ],
-    });
     const countTabs = [
       "pending_confirm",
       "unprocessed",
@@ -4288,6 +4311,7 @@ export async function countOrdersByTabsFromStore(opts?: {
       "shipping",
       "handed_over_carrier",
       "return_pending",
+      "cancel_returns",
     ] as const;
     // Tuần tự — CẤM Promise.all 8 countDocuments (nproc/CageFS fork fail).
     const counts: Record<string, number> = { ...empty };
@@ -4297,7 +4321,6 @@ export async function countOrdersByTabsFromStore(opts?: {
       counts[t] = await safeCountDocuments(withShop(orderTabFilter(t)));
       await new Promise((r) => setTimeout(r, 20));
     }
-    counts.cancel_returns = await safeCountDocuments(cancelReturnsFilter);
     try {
       const dhhShop =
         Array.isArray(opts?.shopIds) && opts!.shopIds!.length > 1
@@ -4358,7 +4381,18 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
   try {
     requireMongo();
     const page = Math.max(1, Math.floor(Number(opts?.page) || 1));
-    const pageSize = Math.max(10, Math.min(200, Math.floor(Number(opts?.pageSize) || 50)));
+    const tabKey = String(opts?.tab || "").trim().toLowerCase();
+    const isCancelReturnsTab =
+      tabKey === "cancel_returns" ||
+      tabKey === "cancel-returns" ||
+      tabKey === "don-huy-hoan" ||
+      tabKey === "don_huy_hoan";
+    // Tab hủy/hoàn: cho phép pageSize tới 500 để list ≡ count (tránh chỉ 50 dòng đầu).
+    const pageSizeCap = isCancelReturnsTab ? 500 : 200;
+    const pageSize = Math.max(
+      10,
+      Math.min(pageSizeCap, Math.floor(Number(opts?.pageSize) || 50)),
+    );
     const skipCounts = Boolean(opts?.skipCounts);
     const and: Record<string, unknown>[] = [];
     const tabFilter = orderTabFilter(opts?.tab);

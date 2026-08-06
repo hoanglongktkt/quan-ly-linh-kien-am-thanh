@@ -158,7 +158,15 @@ async function readOrdersForRefresh(limit, opts = {}) {
     );
     const pageSize =
       Number.isFinite(Number(limit)) && Number(limit) > 0
-        ? Math.min(Math.floor(Number(limit)), 200)
+        ? Math.min(
+            Math.floor(Number(limit)),
+            tab === "cancel_returns" ||
+              tab === "cancel-returns" ||
+              tab === "don-huy-hoan" ||
+              tab === "don_huy_hoan"
+              ? 500
+              : 200,
+          )
         : 100;
     const page = await queryOrdersPageFromStore({
       page: 1,

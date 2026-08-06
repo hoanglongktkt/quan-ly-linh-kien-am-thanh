@@ -753,14 +753,15 @@ export default function OrderManager({
   const refetchOrdersPage = useCallback(
     (opts?: { silent?: boolean }) => {
       setHasNewOrders(false);
+      const isCancelReturns = activeSubTab === 'cancel_returns';
       void onFetchOrders?.({
         silent: opts?.silent !== false,
         bustCache: true,
         force: true,
         page: 1,
-        limit: 50,
+        limit: isCancelReturns ? 500 : 50,
         merge: false,
-        tab: activeSubTab === 'cancel_returns' || activeSubTab === 'all' ? '' : activeSubTab,
+        tab: activeSubTab === 'all' ? '' : activeSubTab,
       });
       void fetchOrderCounts();
     },
@@ -953,15 +954,16 @@ export default function OrderManager({
       'received_cancel_returns',
     ]);
     if (tabFetchTabs.has(activeSubTab)) {
-      console.log(`[Orders Tab] activeSubTab=${activeSubTab} → fetch page=1 limit=50`);
+      const isCancelReturns = activeSubTab === 'cancel_returns';
+      console.log(`[Orders Tab] activeSubTab=${activeSubTab} → fetch page=1 limit=${isCancelReturns ? 500 : 50}`);
       void onFetchOrders?.({
         silent: true,
         bustCache: true,
         force: true,
         page: 1,
-        limit: 50,
+        limit: isCancelReturns ? 500 : 50,
         merge: false,
-        tab: activeSubTab === 'cancel_returns' || activeSubTab === 'all' ? '' : activeSubTab,
+        tab: activeSubTab === 'all' ? '' : activeSubTab,
       });
       void fetchOrderCounts();
     }
@@ -3829,13 +3831,14 @@ export default function OrderManager({
   useEffect(() => {
     const intervalId = window.setInterval(() => {
       if (document.visibilityState === 'hidden') return;
+      const isCancelReturns = activeSubTab === 'cancel_returns';
       void onFetchOrders?.({
         silent: true,
         bustCache: true,
         page: 1,
-        limit: 50,
+        limit: isCancelReturns ? 500 : 50,
         merge: false,
-        tab: activeSubTab === 'cancel_returns' || activeSubTab === 'all' ? '' : activeSubTab,
+        tab: activeSubTab === 'all' ? '' : activeSubTab,
       });
       void fetchOrderCounts();
     }, 30_000);
@@ -3947,14 +3950,15 @@ export default function OrderManager({
     setIsPullRefreshing(true);
     setPullDistance(OM_PULL_REFRESH_THRESHOLD_PX);
     try {
+      const isCancelReturns = activeSubTab === 'cancel_returns';
       await onFetchOrders?.({
         silent: true,
         bustCache: true,
         force: true,
         page: 1,
-        limit: 50,
+        limit: isCancelReturns ? 500 : 50,
         merge: false,
-        tab: activeSubTab === 'cancel_returns' || activeSubTab === 'all' ? '' : activeSubTab,
+        tab: activeSubTab === 'all' ? '' : activeSubTab,
       });
       void fetchOrderCounts();
     } finally {
@@ -3997,8 +4001,17 @@ export default function OrderManager({
     [orders]
   );
 
-  const getCancelReturnCount = (tab: CancelReturnTab) =>
-    cancelReturnPool.filter((o) => matchesCancelReturnTab(o, tab)).length;
+  const getCancelReturnCount = (tab: CancelReturnTab) => {
+    // Sub-tab "Tất cả" = badge server (countDocuments) — khớp list khi đã fetch đúng tab.
+    if (
+      tab === 'all' &&
+      serverOrderCounts &&
+      Number.isFinite(Number(serverOrderCounts.cancel_returns))
+    ) {
+      return Number(serverOrderCounts.cancel_returns);
+    }
+    return cancelReturnPool.filter((o) => matchesCancelReturnTab(o, tab)).length;
+  };
 
   const cancelReturnTabItems: { id: CancelReturnTab; label: string }[] = [
     { id: 'all', label: 'Tất cả' },
