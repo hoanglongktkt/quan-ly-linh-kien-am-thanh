@@ -21,5 +21,8 @@ export function login(req, res) {
  * GET /api/auth/verify
  */
 export async function verifyAuth(req, res) {
+  if (!req.user || !req.user.username) {
+    return res.status(401).json({ error: 'Token không hợp lệ hoặc đã hết hạn.' });
+  }
   res.json({ valid: true, username: req.user.username });
 }

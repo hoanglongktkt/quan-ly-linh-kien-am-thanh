@@ -22,7 +22,8 @@ export async function handleAuthVerify(req, res) {
     authMiddleware(req, res, () => {
       Promise.resolve(verifyAuth(req, res)).then(resolve).catch((err) => {
         if (!res.headersSent) {
-          res.status(500).json({ error: err?.message || 'verify_failed' });
+          // Luôn trả 401 — tuyệt đối không để lọt 500 ra ngoài
+          res.status(401).json({ error: 'Token không hợp lệ hoặc đã hết hạn.' });
         }
         resolve(undefined);
       });

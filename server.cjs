@@ -77755,7 +77755,26 @@ function getJwtSecret() {
 
 // middlewares/auth.js
 function authMiddleware(req, res, next) {
-  return next();
+  fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "d78b06" }, body: JSON.stringify({ sessionId: "d78b06", location: "middlewares/auth.js:authMiddleware_enter", message: "authMiddleware called", data: { path: req.path, hasAuthHeader: !!req.headers.authorization, authValue: req.headers.authorization ? req.headers.authorization.substring(0, 20) : null }, timestamp: Date.now(), runId: "pre-fix", hypothesisId: "A" }) }).catch(() => {
+  });
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "d78b06" }, body: JSON.stringify({ sessionId: "d78b06", location: "middlewares/auth.js:authMiddleware_noToken", message: "No bearer token found", data: { path: req.path, authHeaderPresent: !!authHeader }, timestamp: Date.now(), runId: "pre-fix", hypothesisId: "B" }) }).catch(() => {
+    });
+    return res.status(401).json({ error: "Kh\xF4ng c\xF3 token x\xE1c th\u1EF1c." });
+  }
+  const token = authHeader.slice(7);
+  try {
+    const decoded = import_jsonwebtoken.default.verify(token, getJwtSecret());
+    fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "d78b06" }, body: JSON.stringify({ sessionId: "d78b06", location: "middlewares/auth.js:authMiddleware_verifyOK", message: "JWT verify OK", data: { path: req.path, username: decoded.username }, timestamp: Date.now(), runId: "pre-fix", hypothesisId: "C" }) }).catch(() => {
+    });
+    req.user = decoded;
+    return next();
+  } catch (err) {
+    fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "d78b06" }, body: JSON.stringify({ sessionId: "d78b06", location: "middlewares/auth.js:authMiddleware_verifyFAIL", message: "JWT verify FAILED", data: { path: req.path, error: err instanceof Error ? err.message : String(err) }, timestamp: Date.now(), runId: "pre-fix", hypothesisId: "A" }) }).catch(() => {
+    });
+    return res.status(401).json({ error: "Token kh\xF4ng h\u1EE3p l\u1EC7 ho\u1EB7c \u0111\xE3 h\u1EBFt h\u1EA1n." });
+  }
 }
 function signAdminToken(username) {
   return import_jsonwebtoken.default.sign({ username }, getJwtSecret(), { expiresIn: "24h" });
@@ -77776,6 +77795,8 @@ function login(req, res) {
   }
 }
 async function verifyAuth(req, res) {
+  fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "d78b06" }, body: JSON.stringify({ sessionId: "d78b06", location: "controllers/authController.js:verifyAuth", message: "verifyAuth called", data: { reqUser: req.user, hasUsername: !!req.user?.username }, timestamp: Date.now(), runId: "pre-fix", hypothesisId: "E" }) }).catch(() => {
+  });
   res.json({ valid: true, username: req.user.username });
 }
 

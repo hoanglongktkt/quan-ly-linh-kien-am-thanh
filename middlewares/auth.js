@@ -4,10 +4,22 @@ import { getJwtSecret } from "../_lib/jwtSecret.js";
 export { getJwtSecret };
 
 /**
- * Xác thực Bearer JWT — tạm thời CHO QUA MỌI request (local fix data).
+ * Xác thực Bearer JWT.
  */
 export function authMiddleware(req, res, next) {
-  return next(); // Cho qua MỌI request tạm thời
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Không có token xác thực.' });
+  }
+
+  const token = authHeader.slice(7);
+  try {
+    const decoded = jwt.verify(token, getJwtSecret());
+    req.user = decoded;
+    return next();
+  } catch (err) {
+    return res.status(401).json({ error: 'Token không hợp lệ hoặc đã hết hạn.' });
+  }
 }
 
 /** Đăng nhập admin — cùng secret/expiresIn như trước. */
