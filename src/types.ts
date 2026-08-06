@@ -82,6 +82,8 @@ export interface Expense {
 export interface ShopeeFees {
   /** Tổng tiền sản phẩm gốc (item_amount) */
   item_amount?: number;
+  /** Mã giảm giá Shop — dùng khi tính fee base; không trừ Shopee voucher */
+  voucher_from_seller?: number;
   commission_fee?: number;
   service_fee?: number;
   transaction_fee?: number;
@@ -246,6 +248,8 @@ export interface Order {
   handedOverAt?: string;
   handed_over_source?: 'qr_scan' | 'manual_button' | string | null;
   handedOverSource?: 'qr_scan' | 'manual_button' | string | null;
+  /** Mã giảm giá Shop (voucher_from_seller) — KHÔNG gồm Shopee Voucher */
+  seller_voucher?: number;
   items: {
     productId: string;
     productTitle: string;
@@ -255,6 +259,8 @@ export interface Order {
     cancelledQty?: number;
     cancelRequestedQty?: number;
     price: number;
+    /** Giá gốc listing (model_original_price) trước mã giảm giá Shop */
+    originalPrice?: number;
     modelId?: string;
     modelSku?: string;
     modelName?: string;

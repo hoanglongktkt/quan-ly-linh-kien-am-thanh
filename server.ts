@@ -8588,7 +8588,22 @@ function extractShopeeEscrowFinance(source: any): {
     income?.original_cost_of_goods_sold ??
     income?.order_selling_price ??
     income?.order_original_price;
-  const itemAmount = shopeeEscrowPos(itemAmountRaw) || undefined;
+  let itemAmount = shopeeEscrowPos(itemAmountRaw) || undefined;
+  const sellerVoucher = shopeeEscrowPos(
+    details?.voucher_from_seller ??
+      income?.voucher_from_seller ??
+      details?.seller_voucher ??
+      income?.seller_voucher,
+  );
+  // Nếu thiếu item_amount nhưng có order_original_price: Base = gốc − mã Shop (không trừ Shopee Voucher).
+  if (itemAmount == null) {
+    const originalGoods = shopeeEscrowPos(
+      income?.order_original_price ?? income?.original_price ?? details?.order_original_price,
+    );
+    if (originalGoods > 0) {
+      itemAmount = Math.max(0, originalGoods - sellerVoucher) || undefined;
+    }
+  }
 
   const commissionFee = shopeeEscrowPos(details?.commission_fee ?? income?.commission_fee);
   const serviceFee = shopeeEscrowPos(details?.service_fee ?? income?.service_fee);
@@ -8623,6 +8638,7 @@ function extractShopeeEscrowFinance(source: any): {
     if (value > 0) fees[key] = value;
   };
   if (itemAmount != null) setFee("item_amount", itemAmount);
+  if (sellerVoucher > 0) setFee("voucher_from_seller", sellerVoucher);
   setFee("commission_fee", commissionFee);
   setFee("service_fee", serviceFee);
   if (sellerTransactionFee > 0) setFee("seller_transaction_fee", sellerTransactionFee);
@@ -8672,14 +8688,110 @@ function sumOrderCustomCosts(order: any): number {
   return Math.max(0, Number(order?.custom_costs) || 0);
 }
 
+/**
+ * Base Amount tính % phí = Tổng SP (giá gốc × SL) − mã giảm giá Shop.
+ * Không dùng total_amount / totalAmount (đã trừ Shopee Voucher).
+ */
+function extractSellerVoucherAmount(...sources: any[]): number {
+  for (const src of sources) {
+    if (!src || typeof src !== "object") continue;
+    const n = Number(
+      src.voucher_from_seller ??
+        src.seller_voucher ??
+        src.seller_order_voucher ??
+        src.voucher_from_seller_amount,
+    );
+    if (Number.isFinite(n) && n > 0) return Math.round(n);
+  }
+  return 0;
+}
+
+function resolveShopeeFeeBaseAmount(order: any, detail?: any): number {
+  const sellerVoucher = extractSellerVoucherAmount(
+    order,
+    order?.shopee_fees,
+    detail,
+    detail?.estimated_income,
+    detail?.estimatedIncome,
+    detail?.order_income,
+    detail?.income_details,
+  );
+
+  const sumFromRawItems = (itemList: any[]): number => {
+    if (!Array.isArray(itemList) || itemList.length === 0) return 0;
+    return itemList.reduce((sum: number, it: any) => {
+      const purchased = Math.max(0, shopeeItemPurchasedQty(it));
+      const cancelled = shopeeItemCancelledQty(it);
+      const qty = Math.max(0, purchased - cancelled);
+      if (qty <= 0) return sum;
+      const original = Math.max(0, Number(it?.model_original_price) || 0);
+      const discounted = Math.max(
+        0,
+        Number(it?.model_discounted_price || it?.model_original_price || it?.item_price) || 0,
+      );
+      // Đơn giá SP: giá sau KM shop/flash; thiếu thì dùng original.
+      const unit = discounted > 0 ? discounted : original;
+      return sum + unit * qty;
+    }, 0);
+  };
+
+  const sumFromMappedItems = (items: any[]): number => {
+    if (!Array.isArray(items) || items.length === 0) return 0;
+    return items.reduce((sum: number, it: any) => {
+      const qty = Math.max(0, Number(it?.quantity) || 0);
+      const original = Math.max(0, Number(it?.originalPrice) || 0);
+      const discounted = Math.max(0, Number(it?.price) || 0);
+      const unit = discounted > 0 ? discounted : original;
+      return sum + unit * qty;
+    }, 0);
+  };
+
+  const rawList = Array.isArray(detail?.item_list) ? detail.item_list : [];
+  const merchandise =
+    sumFromRawItems(rawList) ||
+    sumFromMappedItems(Array.isArray(order?.items) ? order.items : []);
+  const fromItems = Math.max(0, Math.round(merchandise - sellerVoucher));
+  if (fromItems > 0) return fromItems;
+
+  const income =
+    detail?.estimated_income ||
+    detail?.estimatedIncome ||
+    detail?.order_income ||
+    detail?.income_details ||
+    {};
+  const fromIncome = Math.max(
+    0,
+    Number(
+      income?.item_amount ??
+        income?.cost_of_goods_sold ??
+        income?.original_cost_of_goods_sold ??
+        income?.order_selling_price ??
+        income?.order_original_price,
+    ) || 0,
+  );
+  if (fromIncome > 0) return Math.round(fromIncome);
+
+  const stored = Math.max(
+    0,
+    Number(order?.item_amount || order?.shopee_fees?.item_amount) || 0,
+  );
+  const totalAmount = Math.max(0, Number(order?.totalAmount) || 0);
+  // Từ chối fallback totalAmount (buyer paid sau Shopee Voucher).
+  if (stored > 0 && !(totalAmount > 0 && stored === totalAmount)) return Math.round(stored);
+  return 0;
+}
+
 function computeProvisionalShopeeRevenue(order: any, customCosts = 0): number {
-  const itemAmount =
-    Number(order?.item_amount) > 0
-      ? Number(order.item_amount)
-      : Number(order?.shopee_fees?.item_amount) > 0
-        ? Number(order.shopee_fees.item_amount)
-        : Number(order?.totalAmount) || 0;
-  const shopeeFee = Math.max(0, Number(order?.shopee_fees?.total_surcharge) || 0);
+  const itemAmount = resolveShopeeFeeBaseAmount(order);
+  const estimatedItems = Array.isArray(order?.estimated_fee_items) ? order.estimated_fee_items : [];
+  const dynamicFeeTotal =
+    estimatedItems.length > 0
+      ? estimatedItems.reduce((sum: number, fee: any) => sum + Math.max(0, Number(fee?.amount) || 0), 0)
+      : 0;
+  const shopeeFee =
+    dynamicFeeTotal > 0
+      ? dynamicFeeTotal
+      : Math.max(0, Number(order?.shopee_fees?.total_surcharge) || 0);
   const tax = Math.max(0, Number(order?.shopee_fees?.total_tax) || 0);
   return Math.max(0, Math.round(itemAmount - shopeeFee - tax - Math.max(0, Number(customCosts) || 0)));
 }
@@ -8755,9 +8867,24 @@ function applyShopeeEstimatedFinance(order: any, detail: any): void {
     detail?.order_income ??
     {};
   const extracted = extractShopeeEscrowFinance({ order_income: estimatedIncome });
-  const itemAmount = extracted.itemAmount || Math.max(0, Number(order.totalAmount) || 0);
+  const sellerVoucher = extractSellerVoucherAmount(
+    order,
+    extracted.shopeeFees,
+    detail,
+    estimatedIncome,
+  );
+  if (sellerVoucher > 0) {
+    order.seller_voucher = sellerVoucher;
+  }
+  // Base = SP gốc − mã Shop; tuyệt đối không lấy totalAmount (đã trừ Shopee Voucher).
+  const itemAmount =
+    extracted.itemAmount ||
+    resolveShopeeFeeBaseAmount(order, detail) ||
+    0;
   const fees = { ...extracted.shopeeFees };
   delete fees.escrow_amount;
+  if (itemAmount > 0) fees.item_amount = itemAmount;
+  if (sellerVoucher > 0) fees.voucher_from_seller = sellerVoucher;
 
   const hasApiFees = Number(fees.total_surcharge) > 0 || Number(fees.total_tax) > 0;
   if (!hasApiFees) {
@@ -8822,6 +8949,11 @@ function applyShopeeOrderFinanceFields(
     order.item_amount = Number(opts.itemAmount);
   } else if (opts.shopeeFees?.item_amount != null && Number(opts.shopeeFees.item_amount) > 0) {
     order.item_amount = Number(opts.shopeeFees.item_amount);
+  }
+
+  const sellerVoucher = extractSellerVoucherAmount(order, opts.shopeeFees);
+  if (sellerVoucher > 0) {
+    order.seller_voucher = sellerVoucher;
   }
 
   if (escrowAmount != null && Number.isFinite(Number(escrowAmount))) {
@@ -9165,6 +9297,11 @@ function mapShopeeOrderLineItem(it: any) {
     const activeQty = Math.max(0, purchasedQty - cancelledQty);
     if (activeQty <= 0 && cancelledQty > 0) return null;
 
+    const originalPrice = Math.max(0, Number(it?.model_original_price) || 0);
+    const discountedPrice = Math.max(
+      0,
+      Number(it?.model_discounted_price || it?.model_original_price || it?.item_price) || 0,
+    );
     return {
       productId: itemId,
       productTitle,
@@ -9173,7 +9310,8 @@ function mapShopeeOrderLineItem(it: any) {
       originalQuantity: purchasedQty,
       cancelledQty,
       cancelRequestedQty,
-      price: Number(it?.model_discounted_price || it?.model_original_price || it?.item_price || 0),
+      price: discountedPrice || originalPrice,
+      originalPrice: originalPrice > 0 ? originalPrice : undefined,
       modelId: modelId === "0" ? undefined : modelId,
       modelSku,
       modelName,

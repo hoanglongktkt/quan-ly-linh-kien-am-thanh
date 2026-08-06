@@ -115324,7 +115324,18 @@ function extractShopeeEscrowFinance(source) {
   const income = payload?.order_income || payload?.orderIncome || {};
   const details = payload?.income_details || payload?.incomeDetails || income?.income_details || {};
   const itemAmountRaw = details?.item_amount ?? income?.cost_of_goods_sold ?? income?.original_cost_of_goods_sold ?? income?.order_selling_price ?? income?.order_original_price;
-  const itemAmount = shopeeEscrowPos(itemAmountRaw) || void 0;
+  let itemAmount = shopeeEscrowPos(itemAmountRaw) || void 0;
+  const sellerVoucher = shopeeEscrowPos(
+    details?.voucher_from_seller ?? income?.voucher_from_seller ?? details?.seller_voucher ?? income?.seller_voucher
+  );
+  if (itemAmount == null) {
+    const originalGoods = shopeeEscrowPos(
+      income?.order_original_price ?? income?.original_price ?? details?.order_original_price
+    );
+    if (originalGoods > 0) {
+      itemAmount = Math.max(0, originalGoods - sellerVoucher) || void 0;
+    }
+  }
   const commissionFee = shopeeEscrowPos(details?.commission_fee ?? income?.commission_fee);
   const serviceFee = shopeeEscrowPos(details?.service_fee ?? income?.service_fee);
   const sellerTransactionFee = shopeeEscrowPos(details?.seller_transaction_fee ?? income?.seller_transaction_fee);
@@ -115352,6 +115363,7 @@ function extractShopeeEscrowFinance(source) {
     if (value > 0) fees[key] = value;
   };
   if (itemAmount != null) setFee("item_amount", itemAmount);
+  if (sellerVoucher > 0) setFee("voucher_from_seller", sellerVoucher);
   setFee("commission_fee", commissionFee);
   setFee("service_fee", serviceFee);
   if (sellerTransactionFee > 0) setFee("seller_transaction_fee", sellerTransactionFee);
@@ -115391,9 +115403,77 @@ function sumOrderCustomCosts(order) {
   }
   return Math.max(0, Number(order?.custom_costs) || 0);
 }
+function extractSellerVoucherAmount(...sources) {
+  for (const src of sources) {
+    if (!src || typeof src !== "object") continue;
+    const n = Number(
+      src.voucher_from_seller ?? src.seller_voucher ?? src.seller_order_voucher ?? src.voucher_from_seller_amount
+    );
+    if (Number.isFinite(n) && n > 0) return Math.round(n);
+  }
+  return 0;
+}
+function resolveShopeeFeeBaseAmount(order, detail) {
+  const sellerVoucher = extractSellerVoucherAmount(
+    order,
+    order?.shopee_fees,
+    detail,
+    detail?.estimated_income,
+    detail?.estimatedIncome,
+    detail?.order_income,
+    detail?.income_details
+  );
+  const sumFromRawItems = (itemList) => {
+    if (!Array.isArray(itemList) || itemList.length === 0) return 0;
+    return itemList.reduce((sum, it) => {
+      const purchased = Math.max(0, shopeeItemPurchasedQty(it));
+      const cancelled = shopeeItemCancelledQty(it);
+      const qty = Math.max(0, purchased - cancelled);
+      if (qty <= 0) return sum;
+      const original = Math.max(0, Number(it?.model_original_price) || 0);
+      const discounted = Math.max(
+        0,
+        Number(it?.model_discounted_price || it?.model_original_price || it?.item_price) || 0
+      );
+      const unit = discounted > 0 ? discounted : original;
+      return sum + unit * qty;
+    }, 0);
+  };
+  const sumFromMappedItems = (items) => {
+    if (!Array.isArray(items) || items.length === 0) return 0;
+    return items.reduce((sum, it) => {
+      const qty = Math.max(0, Number(it?.quantity) || 0);
+      const original = Math.max(0, Number(it?.originalPrice) || 0);
+      const discounted = Math.max(0, Number(it?.price) || 0);
+      const unit = discounted > 0 ? discounted : original;
+      return sum + unit * qty;
+    }, 0);
+  };
+  const rawList = Array.isArray(detail?.item_list) ? detail.item_list : [];
+  const merchandise = sumFromRawItems(rawList) || sumFromMappedItems(Array.isArray(order?.items) ? order.items : []);
+  const fromItems = Math.max(0, Math.round(merchandise - sellerVoucher));
+  if (fromItems > 0) return fromItems;
+  const income = detail?.estimated_income || detail?.estimatedIncome || detail?.order_income || detail?.income_details || {};
+  const fromIncome = Math.max(
+    0,
+    Number(
+      income?.item_amount ?? income?.cost_of_goods_sold ?? income?.original_cost_of_goods_sold ?? income?.order_selling_price ?? income?.order_original_price
+    ) || 0
+  );
+  if (fromIncome > 0) return Math.round(fromIncome);
+  const stored = Math.max(
+    0,
+    Number(order?.item_amount || order?.shopee_fees?.item_amount) || 0
+  );
+  const totalAmount = Math.max(0, Number(order?.totalAmount) || 0);
+  if (stored > 0 && !(totalAmount > 0 && stored === totalAmount)) return Math.round(stored);
+  return 0;
+}
 function computeProvisionalShopeeRevenue(order, customCosts = 0) {
-  const itemAmount = Number(order?.item_amount) > 0 ? Number(order.item_amount) : Number(order?.shopee_fees?.item_amount) > 0 ? Number(order.shopee_fees.item_amount) : Number(order?.totalAmount) || 0;
-  const shopeeFee = Math.max(0, Number(order?.shopee_fees?.total_surcharge) || 0);
+  const itemAmount = resolveShopeeFeeBaseAmount(order);
+  const estimatedItems = Array.isArray(order?.estimated_fee_items) ? order.estimated_fee_items : [];
+  const dynamicFeeTotal = estimatedItems.length > 0 ? estimatedItems.reduce((sum, fee) => sum + Math.max(0, Number(fee?.amount) || 0), 0) : 0;
+  const shopeeFee = dynamicFeeTotal > 0 ? dynamicFeeTotal : Math.max(0, Number(order?.shopee_fees?.total_surcharge) || 0);
   const tax = Math.max(0, Number(order?.shopee_fees?.total_tax) || 0);
   return Math.max(0, Math.round(itemAmount - shopeeFee - tax - Math.max(0, Number(customCosts) || 0)));
 }
@@ -115440,9 +115520,20 @@ function calculateSystemFeeEstimate(itemAmount) {
 function applyShopeeEstimatedFinance(order, detail) {
   const estimatedIncome = detail?.estimated_income ?? detail?.estimatedIncome ?? detail?.income_details ?? detail?.order_income ?? {};
   const extracted = extractShopeeEscrowFinance({ order_income: estimatedIncome });
-  const itemAmount = extracted.itemAmount || Math.max(0, Number(order.totalAmount) || 0);
+  const sellerVoucher = extractSellerVoucherAmount(
+    order,
+    extracted.shopeeFees,
+    detail,
+    estimatedIncome
+  );
+  if (sellerVoucher > 0) {
+    order.seller_voucher = sellerVoucher;
+  }
+  const itemAmount = extracted.itemAmount || resolveShopeeFeeBaseAmount(order, detail) || 0;
   const fees = { ...extracted.shopeeFees };
   delete fees.escrow_amount;
+  if (itemAmount > 0) fees.item_amount = itemAmount;
+  if (sellerVoucher > 0) fees.voucher_from_seller = sellerVoucher;
   const hasApiFees = Number(fees.total_surcharge) > 0 || Number(fees.total_tax) > 0;
   if (!hasApiFees) {
     const dynamicEstimate = calculateSystemFeeEstimate(itemAmount);
@@ -115484,6 +115575,10 @@ function applyShopeeOrderFinanceFields(order, opts) {
     order.item_amount = Number(opts.itemAmount);
   } else if (opts.shopeeFees?.item_amount != null && Number(opts.shopeeFees.item_amount) > 0) {
     order.item_amount = Number(opts.shopeeFees.item_amount);
+  }
+  const sellerVoucher = extractSellerVoucherAmount(order, opts.shopeeFees);
+  if (sellerVoucher > 0) {
+    order.seller_voucher = sellerVoucher;
   }
   if (escrowAmount != null && Number.isFinite(Number(escrowAmount))) {
     order.escrowAmount = Number(escrowAmount);
@@ -115751,6 +115846,11 @@ function mapShopeeOrderLineItem(it) {
     const cancelRequestedQty = shopeeItemCancelRequestedQty(it);
     const activeQty = Math.max(0, purchasedQty - cancelledQty);
     if (activeQty <= 0 && cancelledQty > 0) return null;
+    const originalPrice = Math.max(0, Number(it?.model_original_price) || 0);
+    const discountedPrice = Math.max(
+      0,
+      Number(it?.model_discounted_price || it?.model_original_price || it?.item_price) || 0
+    );
     return {
       productId: itemId,
       productTitle,
@@ -115759,7 +115859,8 @@ function mapShopeeOrderLineItem(it) {
       originalQuantity: purchasedQty,
       cancelledQty,
       cancelRequestedQty,
-      price: Number(it?.model_discounted_price || it?.model_original_price || it?.item_price || 0),
+      price: discountedPrice || originalPrice,
+      originalPrice: originalPrice > 0 ? originalPrice : void 0,
       modelId: modelId === "0" ? void 0 : modelId,
       modelSku,
       modelName,

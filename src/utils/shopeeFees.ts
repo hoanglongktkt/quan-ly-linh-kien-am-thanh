@@ -52,12 +52,68 @@ export function isShopeeEscrowSynced(order: Pick<Order, 'channel' | 'escrow_sync
   );
 }
 
-export function getShopeeItemAmount(order: Pick<Order, 'item_amount' | 'shopee_fees' | 'totalAmount'>): number {
+/**
+ * Base Amount tính % phí:
+ * = Tổng tiền sản phẩm (giá gốc × SL) − Mã giảm giá Shop.
+ * TUYỆT ĐỐI không dùng totalAmount (đã trừ Shopee Voucher).
+ */
+export function resolveShopeeFeeBaseAmount(
+  order: Pick<Order, 'item_amount' | 'shopee_fees' | 'totalAmount' | 'items' | 'seller_voucher' | 'channel' | 'escrow_synced' | 'escrowAmount' | 'finance_source'>,
+): number {
+  const sellerVoucher = Math.max(
+    0,
+    Number(order.seller_voucher ?? order.shopee_fees?.voucher_from_seller) || 0,
+  );
+
+  const fromItems = (() => {
+    const items = Array.isArray(order.items) ? order.items : [];
+    if (items.length === 0) return 0;
+    const merchandise = items.reduce((sum, item) => {
+      const qty = Math.max(0, Number(item.quantity) || 0);
+      const original = Number(item.originalPrice);
+      const discounted = Number(item.price);
+      // Tổng SP: giá bán dòng (sau KM shop/flash); thiếu thì originalPrice.
+      const unit =
+        Number.isFinite(discounted) && discounted > 0
+          ? discounted
+          : Number.isFinite(original) && original > 0
+            ? original
+            : 0;
+      return sum + unit * qty;
+    }, 0);
+    return Math.max(0, Math.round(merchandise - sellerVoucher));
+  })();
+
+  // Escrow đã đối soát: ưu tiên item_amount chính thức từ Shopee.
+  if (isShopeeEscrowSynced(order)) {
+    const fromFees = Number(order.shopee_fees?.item_amount);
+    if (Number.isFinite(fromFees) && fromFees > 0) return Math.round(fromFees);
+    const fromOrder = Number(order.item_amount);
+    if (Number.isFinite(fromOrder) && fromOrder > 0) return Math.round(fromOrder);
+    if (fromItems > 0) return fromItems;
+    return 0;
+  }
+
+  // Ước tính: luôn ưu tiên tính lại từ dòng hàng (tránh item_amount cũ = totalAmount sau Shopee Voucher).
+  if (fromItems > 0) return fromItems;
+
   const fromFees = Number(order.shopee_fees?.item_amount);
-  if (Number.isFinite(fromFees) && fromFees > 0) return fromFees;
+  if (Number.isFinite(fromFees) && fromFees > 0) {
+    const total = Number(order.totalAmount) || 0;
+    if (!(total > 0 && Math.round(fromFees) === Math.round(total))) return Math.round(fromFees);
+  }
   const fromOrder = Number(order.item_amount);
-  if (Number.isFinite(fromOrder) && fromOrder > 0) return fromOrder;
-  return Math.max(0, Number(order.totalAmount) || 0);
+  if (Number.isFinite(fromOrder) && fromOrder > 0) {
+    const total = Number(order.totalAmount) || 0;
+    if (!(total > 0 && Math.round(fromOrder) === Math.round(total))) return Math.round(fromOrder);
+  }
+  return 0;
+}
+
+export function getShopeeItemAmount(
+  order: Pick<Order, 'item_amount' | 'shopee_fees' | 'totalAmount' | 'items' | 'seller_voucher' | 'channel' | 'escrow_synced' | 'escrowAmount' | 'finance_source'>,
+): number {
+  return resolveShopeeFeeBaseAmount(order);
 }
 
 export function getShopeeTransactionFee(fees?: ShopeeFees): number {
@@ -128,7 +184,18 @@ export function getShopeeCustomCosts(order: Pick<Order, 'custom_costs' | 'custom
 export function getShopeeNetRevenue(
   order: Pick<
     Order,
-    'channel' | 'revenue' | 'escrowAmount' | 'shopee_fees' | 'custom_costs' | 'custom_cost_items' | 'item_amount' | 'totalAmount' | 'escrow_synced' | 'finance_source'
+    | 'channel'
+    | 'revenue'
+    | 'escrowAmount'
+    | 'shopee_fees'
+    | 'custom_costs'
+    | 'custom_cost_items'
+    | 'item_amount'
+    | 'totalAmount'
+    | 'escrow_synced'
+    | 'finance_source'
+    | 'items'
+    | 'seller_voucher'
   >,
 ): number {
   const customCosts = getShopeeCustomCosts(order);

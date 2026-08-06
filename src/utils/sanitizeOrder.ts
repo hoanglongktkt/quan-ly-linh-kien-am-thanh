@@ -53,6 +53,7 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
         : undefined,
     totalAmount: Number(raw.totalAmount) || 0,
     item_amount: raw.item_amount != null ? Number(raw.item_amount) : undefined,
+    seller_voucher: raw.seller_voucher != null ? Math.max(0, Number(raw.seller_voucher) || 0) : undefined,
     revenue: Number(raw.revenue) || 0,
     custom_costs: raw.custom_costs != null ? Math.max(0, Number(raw.custom_costs) || 0) : undefined,
     custom_cost_items: parseCustomCostItems(raw.custom_cost_items ?? raw.customCostItems),
