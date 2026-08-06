@@ -16,6 +16,7 @@ import {
   isLikelyTrackingCode,
   buildOrderScanIndex,
   normalizeOrderScanKey,
+  buildScanLookupKeys,
 } from '../utils/orderScan';
 import {
   isOrderHandedOverToCarrier,
@@ -416,6 +417,7 @@ type OrderTab =
   | 'processed' 
   | 'handed_over_carrier'
   | 'shipping' 
+  | 'return_requests'
   | 'cancel_returns'
   | 'received_cancel_returns'
   | 'order_products';
@@ -432,6 +434,7 @@ const ORDER_TAB_SET = new Set<string>([
   'processed',
   'handed_over_carrier',
   'shipping',
+  'return_requests',
   'cancel_returns',
   'received_cancel_returns',
   'order_products',
@@ -444,6 +447,8 @@ const ORDER_TAB_ALIASES: Record<string, OrderTab> = {
   'cho-lay-hang': 'unprocessed',
   'da-xu-ly': 'processed',
   'dang-giao': 'shipping',
+  'yeu-cau-tra-hang': 'return_requests',
+  'return_requests': 'return_requests',
   'don-huy-hoan': 'cancel_returns',
   'da-nhan-huy-hoan': 'received_cancel_returns',
 };
@@ -643,7 +648,8 @@ function classifyScanCancelReturnBuckets(order: Order): {
     badge === 'return_received' ||
     order.status === 'return_pending' ||
     order.status === 'return_received' ||
-    raw === 'TO_RETURN';
+    raw === 'TO_RETURN' ||
+    Boolean(order.return_sn);
   const isCancelBucket =
     !isReturnBucket &&
     (cancelReturnKind === 'cancelled' ||
@@ -655,6 +661,39 @@ function classifyScanCancelReturnBuckets(order: Order): {
       isShopeeCancelledLikeStatus(order) ||
       Boolean(isCancelReturnOrder(order) && cancelReturnKind));
   return { isReturnBucket, isCancelBucket };
+}
+
+/** Quét khớp mã vận đơn chiều hoàn (return waybill). */
+function scannedMatchesReturnWaybill(order: Order, rawCode: string): boolean {
+  const rtn = normalizeOrderScanKey(order.return_tracking_no || '');
+  if (!rtn || rtn.length < 6) return false;
+  const keys = buildScanLookupKeys(rawCode);
+  return keys.some((sk) => {
+    if (!sk) return false;
+    if (sk === rtn) return true;
+    if (sk.length >= 10 && rtn.length >= 10) {
+      return rtn.endsWith(sk) || sk.endsWith(rtn);
+    }
+    return false;
+  });
+}
+
+function formatReturnRequestStatus(status?: string): { text: string; color: string } {
+  const s = String(status || '').toUpperCase();
+  if (s === 'REQUESTED' || s === 'PENDING') {
+    return { text: 'Chờ xử lý', color: 'bg-amber-50 text-amber-700 border-amber-200' };
+  }
+  if (s === 'ACCEPTED' || s === 'PROCESSING' || s === 'JUDGING') {
+    return { text: 'Đang xử lý', color: 'bg-sky-50 text-sky-700 border-sky-200' };
+  }
+  if (s === 'REFUND_PAID' || s === 'COMPLETED') {
+    return { text: 'Hoàn tất', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
+  }
+  if (s === 'CANCELLED' || s === 'CLOSED') {
+    return { text: 'Đã hủy', color: 'bg-slate-100 text-slate-600 border-slate-200' };
+  }
+  if (s) return { text: s, color: 'bg-orange-50 text-orange-700 border-orange-200' };
+  return { text: 'Yêu cầu trả hàng', color: 'bg-orange-50 text-orange-700 border-orange-200' };
 }
 
 function VariationNameBadge({ variationName }: { variationName?: string }) {
@@ -732,6 +771,7 @@ export default function OrderManager({
       'processed',
       'shipping',
       'handed_over_carrier',
+      'return_requests',
       'cancel_returns',
       'received_cancel_returns',
     ]
@@ -986,6 +1026,7 @@ export default function OrderManager({
       'pending_confirm',
       'shipping',
       'handed_over_carrier',
+      'return_requests',
       'cancel_returns',
       'received_cancel_returns',
     ]);
@@ -1543,8 +1584,13 @@ export default function OrderManager({
           return;
         }
 
-        if (order.status === 'cancelled' || order.status === 'return_pending') {
-          const isCancelRequest = order.status === 'cancelled';
+        if (
+          order.status === 'cancelled' ||
+          order.status === 'return_pending' ||
+          scannedMatchesReturnWaybill(order, trimmed) ||
+          Boolean(order.return_sn)
+        ) {
+          const isCancelRequest = order.status === 'cancelled' && !order.return_sn;
           const updated = ordersRef.current.map((o) =>
             o.id === order.id ? { ...o, status: 'return_received' as const } : o
           );
@@ -1556,16 +1602,17 @@ export default function OrderManager({
             channel: order.channel,
             type: 'stock_sync',
             status: 'success',
-            message: `[QUÉT QR] Nhận hoàn đơn ${order.orderSn} → Hủy giao đã nhận.`,
+            message: `[QUÉT QR] Nhận hoàn đơn ${order.orderSn} → Yêu cầu trả hàng.`,
           });
+          setActiveSubTab('return_requests');
           scanFeedback(isCancelRequest ? 'warning' : 'success');
           setCameraScanError(false);
           setCameraScanSuccess(true);
-          setCameraScanResult(`✓ Nhận hoàn #${order.orderSn}`);
+          setCameraScanResult(`✓ YCTH #${order.orderSn}`);
           showScanToast(
             isCancelRequest
-              ? `Đơn báo hủy #${order.orderSn} — đã chuyển Hủy giao đã nhận`
-              : `Đã nhận hoàn đơn #${order.orderSn}`,
+              ? `Đơn báo hủy #${order.orderSn} — đã chuyển nhận kiện`
+              : `Đã nhận hoàn / Yêu cầu trả hàng #${order.orderSn}`,
             'success'
           );
           setTimeout(() => setCameraScanSuccess(false), 2000);
@@ -1852,7 +1899,10 @@ export default function OrderManager({
         const badge = resolveOrderBadgeStatus(order);
         const raw = getShopeeOrderRawStatus(order);
         const cancelReturnKind = resolveCancelReturnKind(order);
-        const { isReturnBucket, isCancelBucket } = classifyScanCancelReturnBuckets(order);
+        const matchedReturnWaybill = scannedMatchesReturnWaybill(order, trimmed);
+        const classified = classifyScanCancelReturnBuckets(order);
+        const isReturnBucket = classified.isReturnBucket || matchedReturnWaybill;
+        const isCancelBucket = !isReturnBucket && classified.isCancelBucket;
 
         // Đang giao (SHIPPED) / đã bàn giao thuần — tìm thấy rồi, không báo "không tìm thấy".
         const isShippingOnly =
@@ -1894,7 +1944,9 @@ export default function OrderManager({
           return;
         }
 
-        const waybill = getOrderWaybillCode(order);
+        const waybill =
+          (matchedReturnWaybill && order.return_tracking_no) ||
+          getOrderWaybillCode(order);
         const orderKey = normalizeOrderScanKey(order.orderSn || order.id);
         if (
           isCodeAlreadyVerified(orderKey) ||
@@ -1931,15 +1983,16 @@ export default function OrderManager({
           });
           // Ghi ngay local_status=RETURN_RECEIVED xuống Mongo (tab lọc theo field này).
           void persistCancelReturnScanFlag(order, 'return', trimmed);
+          setActiveSubTab('return_requests');
           setCameraScanResult(
             waybill
-              ? `✓ Nhận hoàn · VĐ ${waybill} · #${order.orderSn}`
-              : `✓ Nhận hoàn #${order.orderSn}`,
+              ? `✓ YCTH · VĐ hoàn ${waybill} · #${order.orderSn}`
+              : `✓ Yêu cầu trả hàng #${order.orderSn}`,
           );
           showScanToast(
             waybill
-              ? `Nhận hoàn #${order.orderSn} — mã VĐ: ${waybill}`
-              : `Đơn hoàn #${order.orderSn} — đã ghi nhận nhận hàng hoàn`,
+              ? `Yêu cầu trả hàng #${order.orderSn} — mã VĐ hoàn: ${waybill}`
+              : `Đơn hoàn #${order.orderSn} — đã ghi nhận vào Yêu cầu trả hàng`,
             'success',
           );
           return;
@@ -4067,6 +4120,15 @@ export default function OrderManager({
     let clientCount = 0;
     if (status === 'cancel_returns') {
       clientCount = cancelReturnPool.length;
+    } else if (status === 'return_requests') {
+      clientCount = orders.filter(
+        (o) =>
+          Boolean(o.return_sn) ||
+          o.shopee_cancel_return_kind === 'refund_return' ||
+          o.status === 'return_pending' ||
+          o.status === 'return_received' ||
+          String(o.shopee_order_status || '').toUpperCase() === 'TO_RETURN',
+      ).length;
     } else if (status === 'received_cancel_returns') {
       clientCount = orders.filter((o) => matchesReceivedCancelReturnTab(o)).length;
     } else {
@@ -4101,6 +4163,14 @@ export default function OrderManager({
     // 1. Tab filter
     if (activeSubTab === 'cancel_returns') {
       if (!matchesCancelReturnTab(order, cancelReturnTab)) return false;
+    } else if (activeSubTab === 'return_requests') {
+      const isRr =
+        Boolean(order.return_sn) ||
+        order.shopee_cancel_return_kind === 'refund_return' ||
+        order.status === 'return_pending' ||
+        order.status === 'return_received' ||
+        String(order.shopee_order_status || '').toUpperCase() === 'TO_RETURN';
+      if (!isRr) return false;
     } else if (activeSubTab === 'received_cancel_returns') {
       if (!matchesReceivedCancelReturnTab(order)) return false;
     } else if (activeSubTab === 'handed_over_carrier') {
@@ -5660,6 +5730,20 @@ export default function OrderManager({
         </button>
 
         <button
+          onClick={() => setActiveSubTab('return_requests')}
+          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+            activeSubTab === 'return_requests'
+              ? 'border-orange-600 text-orange-700 font-extrabold bg-orange-50/40'
+              : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+          }`}
+        >
+          <span>Yêu cầu trả hàng</span>
+          <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-orange-100 text-orange-800 border border-orange-200">
+            {getCount('return_requests')}
+          </span>
+        </button>
+
+        <button
           onClick={() => {
             setActiveSubTab('cancel_returns');
             setCancelReturnTab('all');
@@ -5738,6 +5822,13 @@ export default function OrderManager({
             Đang dò ngầm Backend <strong>{scanBgPendingCount}</strong> mã — tiếp tục chạy kể cả khi tắt màn quét.
             Xong sẽ tự ghi cờ hủy/hoàn và cập nhật tab.
           </span>
+        </div>
+      )}
+
+      {activeSubTab === 'return_requests' && (
+        <div className="bg-orange-50/80 border border-orange-100 rounded-2xl px-4 py-3 text-xs text-orange-950 font-semibold leading-relaxed">
+          Danh sách Yêu cầu trả hàng/Hoàn tiền từ Shopee (Return Request ID + mã vận đơn chiều hoàn).
+          Quét mã vận đơn hoàn sẽ tự khớp và phân loại vào tab này.
         </div>
       )}
 
@@ -6102,12 +6193,26 @@ export default function OrderManager({
                       className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer"
                     />
                   </th>
-                  <th className="p-4 w-44">Mã vận đơn &amp; Sàn</th>
-                  <th className="p-4 w-32">Ngày tạo đơn</th>
-                  <th className="p-4 w-[280px]">Sản phẩm đặt mua</th>
-                  <th className="p-4 text-right w-40">Tổng thanh toán</th>
-                  <th className="p-4 text-center w-32">Trạng thái sàn</th>
-                  <th className="p-4 text-center w-52">Xử lý đơn hàng</th>
+                  {activeSubTab === 'return_requests' ? (
+                    <>
+                      <th className="p-4 w-40">Mã đơn hàng</th>
+                      <th className="p-4 w-44">Mã yêu cầu trả hàng</th>
+                      <th className="p-4 w-[260px]">Sản phẩm</th>
+                      <th className="p-4 text-right w-32">Số tiền hoàn</th>
+                      <th className="p-4 w-44">Lý do</th>
+                      <th className="p-4 text-center w-32">Trạng thái</th>
+                      <th className="p-4 w-48">Mã vận đơn chiều hoàn</th>
+                    </>
+                  ) : (
+                    <>
+                      <th className="p-4 w-44">Mã vận đơn &amp; Sàn</th>
+                      <th className="p-4 w-32">Ngày tạo đơn</th>
+                      <th className="p-4 w-[280px]">Sản phẩm đặt mua</th>
+                      <th className="p-4 text-right w-40">Tổng thanh toán</th>
+                      <th className="p-4 text-center w-32">Trạng thái sàn</th>
+                      <th className="p-4 text-center w-52">Xử lý đơn hàng</th>
+                    </>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -6127,6 +6232,13 @@ export default function OrderManager({
                         }
                       : badgeBase;
                   const isExpanded = expandedOrderId === order.id;
+                  const returnStatusBadge = formatReturnRequestStatus(order.return_status);
+                  const refundAmt =
+                    Number(order.refund_amount) > 0
+                      ? Number(order.refund_amount)
+                      : Number(order.totalAmount) || 0;
+                  const returnReason =
+                    String(order.text_reason || order.return_reason || '').trim() || '—';
                   return (
                     <React.Fragment key={order.id}>
                     <tr 
@@ -6142,6 +6254,74 @@ export default function OrderManager({
                         />
                       </td>
 
+                      {activeSubTab === 'return_requests' ? (
+                        <>
+                          <td className="p-4">
+                            <div className="font-mono font-extrabold text-gray-900 text-sm">#{order.orderSn}</div>
+                            <div className="text-[10px] text-gray-400 mt-0.5">
+                              {resolveOrderShopDisplayName(order, shops)}
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <div className="font-mono font-bold text-orange-700 text-xs break-all">
+                              {order.return_sn || '—'}
+                            </div>
+                          </td>
+                          <td className="p-4 w-[260px]">
+                            <div className="space-y-2">
+                              {(order.items || []).map((item, idx) => (
+                                <div key={idx} className="flex items-center gap-2">
+                                  {item.productImage ? (
+                                    <img
+                                      src={item.productImage}
+                                      alt={item.productTitle}
+                                      className="w-10 h-10 rounded-lg object-cover border border-gray-200 shrink-0 bg-gray-50"
+                                    />
+                                  ) : (
+                                    <div className="w-10 h-10 rounded-lg border border-gray-200 bg-gray-50 flex items-center justify-center shrink-0">
+                                      <ImageIcon className="w-4 h-4 text-gray-300" />
+                                    </div>
+                                  )}
+                                  <div className="min-w-0">
+                                    <p className="text-[11px] text-gray-700 font-semibold leading-snug line-clamp-2" title={item.productTitle}>
+                                      {item.productTitle}
+                                    </p>
+                                    <span className="text-[9px] bg-blue-50 text-blue-600 border border-blue-100 px-1 py-0.2 rounded font-extrabold inline-block mt-0.5">
+                                      x{item.quantity}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="p-4 text-right">
+                            <div className="font-black text-rose-700 text-sm">
+                              {refundAmt.toLocaleString('vi-VN')}đ
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <p className="text-[11px] text-slate-700 font-medium leading-snug line-clamp-3" title={returnReason}>
+                              {returnReason}
+                            </p>
+                          </td>
+                          <td className="p-4 text-center">
+                            <span className={`inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border ${returnStatusBadge.color}`}>
+                              {returnStatusBadge.text}
+                            </span>
+                          </td>
+                          <td className="p-4">
+                            {order.return_tracking_no ? (
+                              <div className="font-mono font-extrabold text-gray-900 text-sm tracking-tight flex items-center gap-1" title={order.return_tracking_no}>
+                                <Barcode className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                <span className="truncate max-w-[180px]">{order.return_tracking_no}</span>
+                              </div>
+                            ) : (
+                              <span className="text-xs text-gray-400 italic font-medium">Chưa có mã VĐ hoàn</span>
+                            )}
+                          </td>
+                        </>
+                      ) : (
+                      <>
                       {/* Waybill & Platform Label */}
                       <td className="p-4 space-y-1">
                         <div className="flex items-center gap-1.5">
@@ -6383,10 +6563,12 @@ export default function OrderManager({
                           </button>
                         </div>
                       </td>
+                      </>
+                      )}
                     </tr>
                     {isExpanded && (
                       <tr className="bg-slate-50/60">
-                        <td colSpan={7} className="p-0">
+                        <td colSpan={activeSubTab === 'return_requests' ? 8 : 7} className="p-0">
                           <OrderDetailAccordionPanel
                             order={order}
                             shops={shops}

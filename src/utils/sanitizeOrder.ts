@@ -128,6 +128,14 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
       : undefined,
     return_sn: raw.return_sn ? String(raw.return_sn) : undefined,
     return_status: raw.return_status ? String(raw.return_status) : undefined,
+    refund_amount:
+      raw.refund_amount != null && Number.isFinite(Number(raw.refund_amount))
+        ? Number(raw.refund_amount)
+        : undefined,
+    return_reason: raw.return_reason || raw.reason
+      ? String(raw.return_reason || raw.reason)
+      : undefined,
+    text_reason: raw.text_reason ? String(raw.text_reason) : undefined,
     return_refund_request_type:
       raw.return_refund_request_type != null
         ? Number(raw.return_refund_request_type)

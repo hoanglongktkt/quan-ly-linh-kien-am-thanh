@@ -71913,6 +71913,56 @@ function scheduleHandedOverStatusReconcile(deps21 = {}) {
     `[CRON] HandedOver setInterval ON \u2014 every ${Math.round(intervalMs / 1e3)}s + boot kick 20s.`
   );
 }
+var returnRequestsScheduled = false;
+var returnRequestsTask = null;
+function scheduleShopeeReturnRequestsSync(deps21 = {}) {
+  if (returnRequestsScheduled) {
+    console.log("[CRON] Return Requests Sync already scheduled (idempotent).");
+    return;
+  }
+  returnRequestsScheduled = true;
+  const disabled = String(process.env.AUTO_RETURN_REQUESTS_CRON || "1").trim() === "0" || String(process.env.AUTO_RETURN_REQUESTS_CRON || "").toLowerCase() === "off" || String(process.env.AUTO_RETURN_REQUESTS_CRON || "").toLowerCase() === "false";
+  if (disabled) {
+    console.log(
+      "[CRON] Return Requests Sync DISABLED (AUTO_RETURN_REQUESTS_CRON=0)."
+    );
+    return;
+  }
+  if (typeof deps21.runSync !== "function") {
+    console.warn("[CRON] Return Requests Sync NOT started \u2014 thi\u1EBFu deps.runSync");
+    return;
+  }
+  const cronExpr = String(
+    deps21.cronExpr || process.env.AUTO_RETURN_REQUESTS_CRON_EXPR || "*/10 * * * *"
+  ).trim();
+  if (!import_node_cron.default.validate(cronExpr)) {
+    console.error(`[CRON] Invalid return-requests cron expr="${cronExpr}"`);
+    return;
+  }
+  returnRequestsTask = import_node_cron.default.schedule(cronExpr, () => {
+    console.log("[CRON] Tick Return Requests Sync (get_return_list \u2192 detail \u2192 reverse TN)");
+    try {
+      void Promise.resolve(deps21.runSync({ mode: "incremental", trigger: "cron" })).then((r2) => {
+        if (r2?.skipped) {
+          console.log(`[CRON] Return Requests skipped: ${r2.message || "busy"}`);
+          return;
+        }
+        console.log(
+          `[CRON] Return Requests done pulled=${r2?.pulled || 0} updated=${r2?.updated || 0}`
+        );
+      });
+    } catch (err) {
+      console.error("[CRON] Return Requests tick failed:", err?.message || err);
+    }
+  });
+  setTimeout(() => {
+    try {
+      void Promise.resolve(deps21.runSync({ mode: "incremental", trigger: "boot" }));
+    } catch {
+    }
+  }, 45e3);
+  console.log(`[CRON] Return Requests Sync ON \u2014 expr="${cronExpr}"`);
+}
 
 // src/webhooks/shopeeWebhookHandler.ts
 var import_express = __toESM(require_express2(), 1);
@@ -75640,7 +75690,7 @@ function hydrateOrderFromMongoDoc(d) {
   const sn = String(d?.orderSn || data.orderSn || String(d?._id || "").replace(/^shopee-/i, "")).trim();
   if (!sn && !d?._id) return null;
   const tn = String(
-    d?.tracking_no || data.tracking_no || data.trackingNumber || data.return_tracking_no || ""
+    d?.tracking_no || data.tracking_no || data.trackingNumber || ""
   ).trim();
   const returnTn = String(d?.return_tracking_no || data.return_tracking_no || "").trim();
   const pkg = String(
@@ -75738,12 +75788,15 @@ async function findOrderByScanCodeInStore(rawCode) {
   const filter = {
     $or: [
       { tracking_no: { $in: keys } },
+      { return_tracking_no: { $in: keys } },
       { orderSn: { $in: keys } },
       { packageNumber: { $in: keys } },
       { _id: { $in: uniqueIds } },
       { "data.tracking_no": { $in: keys } },
       { "data.trackingNumber": { $in: keys } },
       { "data.return_tracking_no": { $in: keys } },
+      { "data.return_sn": { $in: keys } },
+      { return_sn: { $in: keys } },
       { "data.internalTrackingCode": { $in: keys } },
       { "data.packageNumber": { $in: keys } },
       { "data.package_number": { $in: keys } },
@@ -75761,11 +75814,13 @@ async function findOrderByScanCodeInStore(rawCode) {
         const rxSuffix = primary.length >= 10 ? new RegExp(`${escaped}$`, "i") : null;
         const fieldMatchers = [
           { tracking_no: rxExact },
+          { return_tracking_no: rxExact },
           { orderSn: rxExact },
           { packageNumber: rxExact },
           { "data.tracking_no": rxExact },
           { "data.trackingNumber": rxExact },
           { "data.return_tracking_no": rxExact },
+          { "data.return_sn": rxExact },
           { "data.internalTrackingCode": rxExact },
           { "data.packageNumber": rxExact },
           { "data.package_number": rxExact },
@@ -75773,6 +75828,7 @@ async function findOrderByScanCodeInStore(rawCode) {
           { "data.order_sn": rxExact },
           ...rxSuffix ? [
             { tracking_no: rxSuffix },
+            { return_tracking_no: rxSuffix },
             { packageNumber: rxSuffix },
             { "data.tracking_no": rxSuffix },
             { "data.trackingNumber": rxSuffix },
@@ -76337,6 +76393,21 @@ function orderTabFilter(tab) {
       return {
         $and: [ORDER_TAB_IS_TO_SHIP, ORDER_TAB_IS_HANDED_OVER]
       };
+    case "return_requests":
+    case "return-requests":
+    case "yeu-cau-tra-hang":
+    case "yeu_cau_tra_hang":
+      return {
+        $or: [
+          { "data.return_sn": { $exists: true, $nin: [null, ""] } },
+          { return_sn: { $exists: true, $nin: [null, ""] } },
+          { shopee_order_status: "TO_RETURN" },
+          { "data.shopee_order_status": "TO_RETURN" },
+          { status: { $in: ["return_pending", "return_received"] } },
+          { "data.shopee_cancel_return_kind": "refund_return" },
+          { shopee_cancel_return_kind: "refund_return" }
+        ]
+      };
     case "cancel_returns":
     case "cancel-returns":
     case "don-huy-hoan":
@@ -76456,6 +76527,7 @@ async function countOrdersByTabsFromStore(opts) {
     shipping: 0,
     handed_over_carrier: 0,
     return_pending: 0,
+    return_requests: 0,
     cancel_returns: 0,
     received_cancel_returns: 0
   };
@@ -76478,6 +76550,7 @@ async function countOrdersByTabsFromStore(opts) {
       "shipping",
       "handed_over_carrier",
       "return_pending",
+      "return_requests",
       "cancel_returns"
     ];
     const counts = { ...empty };
@@ -76586,6 +76659,10 @@ async function queryOrdersPageFromStore(opts) {
         $or: [
           { orderSn: regex },
           { tracking_no: regex },
+          { return_tracking_no: regex },
+          { "data.return_tracking_no": regex },
+          { "data.return_sn": regex },
+          { return_sn: regex },
           { "data.shopName": regex },
           { "data.shipping_carrier": regex },
           { "data.items.productTitle": regex }
@@ -110524,6 +110601,71 @@ async function resolveOrderFromShopeeByScanCode(rawCode) {
     }
   }
   if (looksLikeTracking || !looksLikeOrderSn) {
+    for (const shopId of shopIds) {
+      if (Date.now() > deadlineAt) break;
+      try {
+        let accessToken = await getValidShopeeAccessToken(shopId);
+        if (!accessToken) continue;
+        const returnRows = await shopeeFetchAllReturnSns(shopId, accessToken, {
+          mode: "incremental"
+        });
+        for (const row of returnRows.slice(0, 60)) {
+          if (Date.now() > deadlineAt) break;
+          const returnSn = String(row.returnSn || "").trim();
+          if (!returnSn) continue;
+          const fresh = await getValidShopeeAccessToken(shopId);
+          if (fresh) accessToken = fresh;
+          const detailResult = await shopeeGetReturnDetail(shopId, accessToken, returnSn);
+          if (detailResult?.error) continue;
+          const detail = detailResult?.response ?? detailResult ?? {};
+          const { tracking: rtn } = await fetchReturnShippingTrackingNumber(
+            shopId,
+            accessToken,
+            returnSn,
+            detailResult
+          );
+          const candidates = [
+            rtn,
+            detail.tracking_number,
+            detail.return_tracking_number
+          ].map((v) => String(v || "").trim()).filter(Boolean);
+          const matchedTn = candidates.find((tn) => {
+            const nk = tn.toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
+            for (const sk of scanKeys) {
+              const skn = sk.toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
+              if (!skn || !nk) continue;
+              if (nk === skn) return true;
+              if (skn.length >= 10 && nk.length >= 10 && (nk.endsWith(skn) || skn.endsWith(nk))) {
+                return true;
+              }
+            }
+            return false;
+          });
+          if (!matchedTn) continue;
+          const orderSn = String(detail.order_sn || row.orderSn || "").trim();
+          if (!orderSn) continue;
+          await applyWebhookReturnFallback(shopId, accessToken, orderSn, orders, returnSn);
+          const hit = orders.find((o) => String(o.orderSn) === orderSn);
+          if (hit) {
+            if (isMongoReady()) {
+              try {
+                await bulkUpsertOrdersToStore([hit]);
+              } catch {
+              }
+            }
+            console.log(
+              `[Orders Lookup] Return waybill hit code=${code} order_sn=${orderSn} return_sn=${returnSn} rtn=${matchedTn}`
+            );
+            return hit;
+          }
+        }
+      } catch (retLookupErr) {
+        console.warn(
+          `[Orders Lookup] return waybill resolve shop=${shopId}:`,
+          retLookupErr?.message || retLookupErr
+        );
+      }
+    }
     const statuses = ["CANCELLED", "IN_CANCEL", "TO_RETURN", "SHIPPED", "PROCESSED"];
     for (const shopId of shopIds) {
       if (Date.now() > deadlineAt) break;
@@ -112216,6 +112358,202 @@ async function pullShopeeCancelReturnOrders(opts) {
     };
   } finally {
     releaseOrdersPullLock("pullCancelReturn_finally");
+  }
+}
+async function syncShopeeReturnRequests(opts) {
+  if (!tryAcquireOrdersPullLock()) {
+    return {
+      success: true,
+      pulled: 0,
+      updated: 0,
+      shops: 0,
+      errors: [],
+      message: ORDERS_PULL_IN_FLIGHT_SOFT_MESSAGE,
+      skipped: true,
+      elapsedMs: 0
+    };
+  }
+  const startedAt = Date.now();
+  const errors = [];
+  let pulled = 0;
+  let updated = 0;
+  const mode = opts?.mode === "full" ? "full" : "incremental";
+  const maxReturns = Math.max(20, Math.min(300, Number(opts?.maxReturns) || (mode === "full" ? 200 : 80)));
+  try {
+    ensureShopeeLinkedShopTokenKeys();
+    const shopIds = (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds()).map((id) => normalizeShopIdKey(id)).filter(Boolean);
+    if (!shopIds.length) {
+      return {
+        success: false,
+        pulled: 0,
+        updated: 0,
+        shops: 0,
+        errors: [{ error: "no_oauth_shop" }],
+        message: "Ch\u01B0a c\xF3 shop Shopee OAuth.",
+        elapsedMs: Date.now() - startedAt
+      };
+    }
+    const orders = isMongoReady() ? await loadOrdersFromStore().catch(() => []) : [];
+    const deadlineAt = startedAt + Math.min(ORDERS_PULL_HARD_DEADLINE_MS, 9e4);
+    for (const shopId of shopIds) {
+      if (Date.now() >= deadlineAt) break;
+      try {
+        let accessToken = await getValidShopeeAccessToken(shopId);
+        if (!accessToken) {
+          errors.push({ shopId, error: "no_valid_access_token" });
+          continue;
+        }
+        const returnRows = await shopeeFetchAllReturnSns(shopId, accessToken, { mode });
+        const limited = returnRows.slice(0, maxReturns);
+        console.log(
+          `[ReturnRequests Sync] shop=${shopId} mode=${mode} rows=${returnRows.length} process=${limited.length}`
+        );
+        const patches = [];
+        for (const row of limited) {
+          if (Date.now() >= deadlineAt) break;
+          const returnSn = String(row.returnSn || "").trim();
+          if (!returnSn) continue;
+          try {
+            const fresh = await getValidShopeeAccessToken(shopId);
+            if (fresh) accessToken = fresh;
+            const detailResult = await shopeeGetReturnDetail(shopId, accessToken, returnSn);
+            if (detailResult?.error) {
+              errors.push({
+                shopId,
+                returnSn,
+                error: detailResult.error,
+                message: detailResult.message
+              });
+              continue;
+            }
+            const detail = detailResult?.response ?? detailResult ?? {};
+            const orderSn = String(detail.order_sn || row.orderSn || "").trim();
+            if (!orderSn) continue;
+            const { tracking: returnShipTn } = await fetchReturnShippingTrackingNumber(
+              shopId,
+              accessToken,
+              returnSn,
+              detailResult
+            );
+            const kind = mapShopeeReturnKind(detail);
+            const returnStatus = String(detail.status || row.status || "").toUpperCase();
+            const refundAmount = Number(detail.refund_amount);
+            const reason = String(detail.reason || "").trim();
+            const textReason = String(detail.text_reason || "").trim();
+            const itemRows = Array.isArray(detail.item) ? detail.item : Array.isArray(detail.items) ? detail.items : [];
+            const items = itemRows.map((it, idx) => ({
+              productId: String(it.item_id || it.productId || `return-item-${idx}`),
+              productTitle: String(it.name || it.item_name || it.model_name || `SP ho\xE0n #${orderSn}`),
+              productImage: Array.isArray(it.images) && it.images[0] ? String(it.images[0]) : void 0,
+              quantity: Math.max(1, Number(it.amount || it.quantity || 1) || 1),
+              price: Number(it.item_price || it.refund_amount || refundAmount || 0) || 0,
+              modelId: it.model_id != null ? String(it.model_id) : void 0,
+              modelSku: it.variation_sku || it.model_sku ? String(it.variation_sku || it.model_sku) : void 0,
+              modelName: it.model_name ? String(it.model_name) : void 0
+            }));
+            const existing = orders.find((o) => String(o.orderSn) === orderSn);
+            const existingRaw = String(existing?.shopee_order_status || "").toUpperCase();
+            const alreadyCancelled = existingRaw === "CANCELLED" || existingRaw === "IN_CANCEL" || existing?.status === "cancelled";
+            const patch = {
+              id: existing?.id || `shopee-${orderSn}`,
+              orderSn,
+              channel: "shopee",
+              shopId: existing?.shopId || shopId,
+              return_sn: String(detail.return_sn || returnSn),
+              return_status: returnStatus,
+              return_refund_request_type: Number(detail.return_refund_request_type ?? 0),
+              shopee_cancel_return_kind: kind,
+              refund_amount: Number.isFinite(refundAmount) ? refundAmount : void 0,
+              return_reason: reason || void 0,
+              text_reason: textReason || void 0,
+              date: existing?.date || new Date((Number(detail.create_time) || Date.now() / 1e3) * 1e3).toISOString(),
+              totalAmount: Number.isFinite(refundAmount) && refundAmount > 0 ? refundAmount : Number(existing?.totalAmount) || 1,
+              revenue: existing?.revenue ?? 0,
+              items: items.length ? items : existing?.items || [
+                {
+                  productId: "return-placeholder",
+                  productTitle: `\u0110\u01A1n ho\xE0n ${orderSn}`,
+                  quantity: 1,
+                  price: Number.isFinite(refundAmount) ? refundAmount : 1
+                }
+              ]
+            };
+            if (returnShipTn) {
+              patch.return_tracking_no = returnShipTn;
+            } else if (existing?.return_tracking_no) {
+              patch.return_tracking_no = existing.return_tracking_no;
+            }
+            if (alreadyCancelled) {
+              patch.status = "cancelled";
+              patch.shopee_order_status = existingRaw === "IN_CANCEL" ? "IN_CANCEL" : "CANCELLED";
+            } else if (existing?.status === "return_received" || existing?.local_status === "RETURN_RECEIVED") {
+              patch.status = "return_received";
+              patch.shopee_order_status = existing?.shopee_order_status || "TO_RETURN";
+            } else {
+              patch.status = "return_pending";
+              patch.shopee_order_status = existing?.shopee_order_status || "TO_RETURN";
+            }
+            if (existing?.trackingNumber || existing?.tracking_no) {
+              patch.trackingNumber = existing.trackingNumber || existing.tracking_no;
+              patch.tracking_no = existing.tracking_no || existing.trackingNumber;
+            }
+            const merged = existing ? mergeShopeeOrderOnSync(existing, { ...existing, ...patch }) : patch;
+            merged.return_sn = patch.return_sn;
+            merged.return_status = patch.return_status;
+            merged.return_refund_request_type = patch.return_refund_request_type;
+            merged.shopee_cancel_return_kind = kind;
+            merged.refund_amount = patch.refund_amount;
+            merged.return_reason = patch.return_reason;
+            merged.text_reason = patch.text_reason;
+            if (patch.return_tracking_no) merged.return_tracking_no = patch.return_tracking_no;
+            if (patch.status) merged.status = patch.status;
+            patches.push(merged);
+            pulled += 1;
+            await shopeeSyncDelay(120);
+          } catch (rowErr) {
+            errors.push({
+              shopId,
+              returnSn,
+              error: "return_detail_failed",
+              message: rowErr?.message || String(rowErr)
+            });
+          }
+        }
+        if (patches.length) {
+          const upsert = await persistShopeeOrderChunk(orders, patches, {
+            apiShopId: shopId,
+            accessToken,
+            skipTracking: true
+          });
+          updated += upsert.updated + upsert.added;
+          for (const p of patches) {
+            const idx = orders.findIndex((o) => String(o.orderSn) === String(p.orderSn));
+            if (idx >= 0) orders[idx] = p;
+            else orders.unshift(p);
+          }
+        }
+      } catch (shopErr) {
+        errors.push({
+          shopId,
+          error: "return_requests_sync_failed",
+          message: shopErr?.message || String(shopErr)
+        });
+      }
+    }
+    const elapsedMs = Date.now() - startedAt;
+    const message = pulled > 0 ? `Return requests: \u0111\u1ED3ng b\u1ED9 ${pulled} YCTH (~${updated} DB) trong ${elapsedMs}ms` : errors.length ? `Return requests 0 \u2014 ${errors[0]?.message || errors[0]?.error}` : "Return requests: kh\xF4ng c\xF3 y\xEAu c\u1EA7u tr\u1EA3 h\xE0ng m\u1EDBi.";
+    console.log(`[ReturnRequests Sync] ${message}`);
+    return {
+      success: pulled > 0 || errors.length === 0,
+      pulled,
+      updated,
+      shops: shopIds.length,
+      errors,
+      message,
+      elapsedMs
+    };
+  } finally {
+    releaseOrdersPullLock("syncReturnRequests_finally");
   }
 }
 async function shopeeGetOrderDetail(shopId, accessToken, orderSnList) {
@@ -116243,6 +116581,12 @@ function mergeShopeeTrackingFields(merged, existing, incoming) {
   else if (existing?.return_sn) merged.return_sn = existing.return_sn;
   if (incoming?.return_status) merged.return_status = incoming.return_status;
   else if (existing?.return_status) merged.return_status = existing.return_status;
+  if (incoming?.refund_amount != null) merged.refund_amount = incoming.refund_amount;
+  else if (existing?.refund_amount != null) merged.refund_amount = existing.refund_amount;
+  if (incoming?.return_reason) merged.return_reason = incoming.return_reason;
+  else if (existing?.return_reason) merged.return_reason = existing.return_reason;
+  if (incoming?.text_reason) merged.text_reason = incoming.text_reason;
+  else if (existing?.text_reason) merged.text_reason = existing.text_reason;
   if (incoming?.shopee_cancel_return_kind) {
     merged.shopee_cancel_return_kind = incoming.shopee_cancel_return_kind;
   } else if (existing?.shopee_cancel_return_kind) {
@@ -117411,6 +117755,14 @@ function scheduleShopeeCancelReturnReconcile() {
 function scheduleAutoIncrementalOrdersSyncSafe() {
   scheduleAutoIncrementalOrdersSync({
     lookbackSec: Number(process.env.AUTO_ORDER_SYNC_LOOKBACK_SEC) || 2 * 60 * 60
+  });
+}
+function scheduleShopeeReturnRequestsSyncSafe() {
+  scheduleShopeeReturnRequestsSync({
+    runSync: (opts) => syncShopeeReturnRequests({
+      mode: opts?.mode === "full" ? "full" : "incremental"
+    }),
+    cronExpr: process.env.AUTO_RETURN_REQUESTS_CRON_EXPR || "*/10 * * * *"
   });
 }
 function scheduleHandedOverStatusReconcileSafe() {
@@ -120231,14 +120583,15 @@ async function applyWebhookReturnFallback(shopId, accessToken, orderSn, orders, 
     shopee_order_status: existing?.shopee_order_status || "TO_RETURN"
   };
   if (bestTn) {
-    patch.trackingNumber = bestTn;
-    patch.tracking_no = bestTn;
     patch.return_tracking_no = returnShipTn || tnSources.return_detail || bestTn;
   }
+  if (Number.isFinite(Number(detail.refund_amount))) {
+    patch.refund_amount = Number(detail.refund_amount);
+  }
+  if (detail.reason) patch.return_reason = String(detail.reason);
+  if (detail.text_reason) patch.text_reason = String(detail.text_reason);
   if (idx >= 0) {
     if (!bestTn) {
-      delete patch.trackingNumber;
-      delete patch.tracking_no;
       delete patch.return_tracking_no;
     }
     preserveExistingTrackingIfIncomingEmpty(patch, existing);
@@ -120247,23 +120600,17 @@ async function applyWebhookReturnFallback(shopId, accessToken, orderSn, orders, 
     merged.return_status = patch.return_status;
     merged.return_refund_request_type = patch.return_refund_request_type;
     merged.shopee_cancel_return_kind = kind;
+    if (patch.refund_amount != null) merged.refund_amount = patch.refund_amount;
+    if (patch.return_reason) merged.return_reason = patch.return_reason;
+    if (patch.text_reason) merged.text_reason = patch.text_reason;
     if (patch.status === "return_received") merged.status = "return_received";
     else if (merged.status !== "return_received" && merged.status !== "cancelled") {
       merged.status = "return_pending";
     }
-    const finalTn = pickBestTrackingNumber(
-      bestTn,
-      merged.trackingNumber,
-      merged.tracking_no,
-      merged.return_tracking_no,
-      existing?.trackingNumber,
-      existing?.tracking_no,
-      existing?.return_tracking_no
-    );
-    if (finalTn) {
-      merged.trackingNumber = finalTn;
-      merged.tracking_no = finalTn;
-      merged.return_tracking_no = merged.return_tracking_no || finalTn;
+    if (patch.return_tracking_no) {
+      merged.return_tracking_no = patch.return_tracking_no;
+    } else {
+      merged.return_tracking_no = merged.return_tracking_no || existing?.return_tracking_no || void 0;
     }
     orders[idx] = merged;
   } else {
@@ -120861,6 +121208,19 @@ async function startServer() {
   app.use("/api/shopee", authMiddleware, shopeeProductsRoutes);
   app.post("/api/orders/pull", authMiddleware, pullOrders);
   app.post("/api/orders/quick-sync", authMiddleware, quickSyncOrders);
+  app.post("/api/orders/sync-return-requests", authMiddleware, async (req, res) => {
+    try {
+      const mode = String(req.body?.mode || req.query?.mode || "incremental").toLowerCase() === "full" ? "full" : "incremental";
+      const result = await syncShopeeReturnRequests({ mode });
+      return res.json({ success: result.success !== false, ...result });
+    } catch (err) {
+      return res.status(500).json({
+        success: false,
+        error: "sync_return_requests_failed",
+        message: err?.message || String(err)
+      });
+    }
+  });
   app.post("/api/orders/sync", authMiddleware, syncOrders);
   app.post("/api/sync-shopee", authMiddleware, syncShopee);
   app.get("/api/order-counts", authMiddleware, getOrderCounts);
@@ -122657,6 +123017,7 @@ async function startServer() {
         scheduleMissingShopeeTrackingEnrichment();
         scheduleShopeeCancelReturnReconcile();
         scheduleAutoIncrementalOrdersSyncSafe();
+        scheduleShopeeReturnRequestsSyncSafe();
         scheduleHandedOverStatusReconcileSafe();
       }
       console.log(

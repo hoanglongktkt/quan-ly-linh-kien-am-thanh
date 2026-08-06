@@ -159,6 +159,7 @@ const ORDERS_SUB_TAB_IDS = new Set<string>([
   'processed',
   'handed_over_carrier',
   'shipping',
+  'return_requests',
   'cancel_returns',
   'received_cancel_returns',
   'order_products',
@@ -172,6 +173,8 @@ const ORDERS_SUB_TAB_ALIASES: Record<string, OrdersSubTabId> = {
   'cho-lay-hang': 'unprocessed',
   'da-xu-ly': 'processed',
   'dang-giao': 'shipping',
+  'yeu-cau-tra-hang': 'return_requests',
+  'return_requests': 'return_requests',
   'don-huy-hoan': 'cancel_returns',
   'da-nhan-huy-hoan': 'received_cancel_returns',
 };

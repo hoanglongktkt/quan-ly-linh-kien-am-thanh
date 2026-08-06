@@ -3251,11 +3251,11 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
   const data = d?.data && typeof d.data === "object" ? { ...d.data } : {};
   const sn = String(d?.orderSn || data.orderSn || String(d?._id || "").replace(/^shopee-/i, "")).trim();
   if (!sn && !d?._id) return null;
+  // Outbound TN — KHÔNG fallback return_tracking_no (mã chiều hoàn giữ riêng).
   const tn = String(
     d?.tracking_no ||
       data.tracking_no ||
       data.trackingNumber ||
-      data.return_tracking_no ||
       "",
   ).trim();
   const returnTn = String(d?.return_tracking_no || data.return_tracking_no || "").trim();
@@ -3412,12 +3412,15 @@ export async function findOrderByScanCodeInStore(rawCode: string): Promise<any |
   const filter = {
     $or: [
       { tracking_no: { $in: keys } },
+      { return_tracking_no: { $in: keys } },
       { orderSn: { $in: keys } },
       { packageNumber: { $in: keys } },
       { _id: { $in: uniqueIds } },
       { "data.tracking_no": { $in: keys } },
       { "data.trackingNumber": { $in: keys } },
       { "data.return_tracking_no": { $in: keys } },
+      { "data.return_sn": { $in: keys } },
+      { return_sn: { $in: keys } },
       { "data.internalTrackingCode": { $in: keys } },
       { "data.packageNumber": { $in: keys } },
       { "data.package_number": { $in: keys } },
@@ -3441,11 +3444,13 @@ export async function findOrderByScanCodeInStore(rawCode: string): Promise<any |
           primary.length >= 10 ? new RegExp(`${escaped}$`, "i") : null;
         const fieldMatchers = [
           { tracking_no: rxExact },
+          { return_tracking_no: rxExact },
           { orderSn: rxExact },
           { packageNumber: rxExact },
           { "data.tracking_no": rxExact },
           { "data.trackingNumber": rxExact },
           { "data.return_tracking_no": rxExact },
+          { "data.return_sn": rxExact },
           { "data.internalTrackingCode": rxExact },
           { "data.packageNumber": rxExact },
           { "data.package_number": rxExact },
@@ -3454,6 +3459,7 @@ export async function findOrderByScanCodeInStore(rawCode: string): Promise<any |
           ...(rxSuffix
             ? [
                 { tracking_no: rxSuffix },
+                { return_tracking_no: rxSuffix },
                 { packageNumber: rxSuffix },
                 { "data.tracking_no": rxSuffix },
                 { "data.trackingNumber": rxSuffix },
@@ -4144,6 +4150,22 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
       return {
         $and: [ORDER_TAB_IS_TO_SHIP, ORDER_TAB_IS_HANDED_OVER],
       };
+    case "return_requests":
+    case "return-requests":
+    case "yeu-cau-tra-hang":
+    case "yeu_cau_tra_hang":
+      // Tab Yêu cầu trả hàng — có return_sn từ Shopee Return APIs.
+      return {
+        $or: [
+          { "data.return_sn": { $exists: true, $nin: [null, ""] } },
+          { return_sn: { $exists: true, $nin: [null, ""] } },
+          { shopee_order_status: "TO_RETURN" },
+          { "data.shopee_order_status": "TO_RETURN" },
+          { status: { $in: ["return_pending", "return_received"] } },
+          { "data.shopee_cancel_return_kind": "refund_return" },
+          { shopee_cancel_return_kind: "refund_return" },
+        ],
+      };
     case "cancel_returns":
     case "cancel-returns":
     case "don-huy-hoan":
@@ -4289,6 +4311,7 @@ export async function countOrdersByTabsFromStore(opts?: {
     shipping: 0,
     handed_over_carrier: 0,
     return_pending: 0,
+    return_requests: 0,
     cancel_returns: 0,
     received_cancel_returns: 0,
   };
@@ -4311,6 +4334,7 @@ export async function countOrdersByTabsFromStore(opts?: {
       "shipping",
       "handed_over_carrier",
       "return_pending",
+      "return_requests",
       "cancel_returns",
     ] as const;
     // Tuần tự — CẤM Promise.all 8 countDocuments (nproc/CageFS fork fail).
@@ -4444,6 +4468,10 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
         $or: [
           { orderSn: regex },
           { tracking_no: regex },
+          { return_tracking_no: regex },
+          { "data.return_tracking_no": regex },
+          { "data.return_sn": regex },
+          { return_sn: regex },
           { "data.shopName": regex },
           { "data.shipping_carrier": regex },
           { "data.items.productTitle": regex },

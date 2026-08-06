@@ -193,12 +193,18 @@ export interface Order {
   fulfillment_type?: 'pickup' | 'dropoff' | string;
   ship_method?: 'pickup' | 'dropoff' | string;
   shipping_method?: string;
-  /** Mã vận đơn chiều hoàn từ v2.returns.get_return_detail */
+  /** Mã vận đơn chiều hoàn từ v2.returns.get_return_detail / get_reverse_tracking_info */
   return_tracking_no?: string;
   /** Mã yêu cầu trả hàng/hoàn tiền Shopee */
   return_sn?: string;
   /** Trạng thái return Shopee: REQUESTED | PROCESSING | ACCEPTED | COMPLETED | ... */
   return_status?: string;
+  /** Số tiền hoàn (refund_amount từ get_return_detail) */
+  refund_amount?: number;
+  /** Lý do trả hàng (reason code Shopee) */
+  return_reason?: string;
+  /** Lý do chi tiết buyer nhập (text_reason) */
+  text_reason?: string;
   /** 0 Normal RR, 1 In-transit RR, 2 Return-on-the-Spot (giao không thành công) */
   return_refund_request_type?: number;
   /** Phân loại tab Hủy/Hoàn khớp Seller Center */

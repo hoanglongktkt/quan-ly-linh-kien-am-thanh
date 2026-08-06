@@ -246,3 +246,89 @@ export function stopHandedOverStatusReconcile() {
   handedOverReconcileScheduled = false;
   console.log("[CRON] HandedOver status reconcile stopped.");
 }
+
+let returnRequestsScheduled = false;
+let returnRequestsTask = null;
+
+/**
+ * Đồng bộ Yêu cầu trả hàng từ Shopee Return APIs — mặc định mỗi 10 phút.
+ * Tắt: AUTO_RETURN_REQUESTS_CRON=0
+ *
+ * @param {object} [deps]
+ * @param {(opts?: any) => Promise<any>} deps.runSync
+ * @param {string} [deps.cronExpr]
+ */
+export function scheduleShopeeReturnRequestsSync(deps = {}) {
+  if (returnRequestsScheduled) {
+    console.log("[CRON] Return Requests Sync already scheduled (idempotent).");
+    return;
+  }
+  returnRequestsScheduled = true;
+
+  const disabled =
+    String(process.env.AUTO_RETURN_REQUESTS_CRON || "1").trim() === "0" ||
+    String(process.env.AUTO_RETURN_REQUESTS_CRON || "").toLowerCase() === "off" ||
+    String(process.env.AUTO_RETURN_REQUESTS_CRON || "").toLowerCase() === "false";
+
+  if (disabled) {
+    console.log(
+      "[CRON] Return Requests Sync DISABLED (AUTO_RETURN_REQUESTS_CRON=0).",
+    );
+    return;
+  }
+
+  if (typeof deps.runSync !== "function") {
+    console.warn("[CRON] Return Requests Sync NOT started — thiếu deps.runSync");
+    return;
+  }
+
+  const cronExpr = String(
+    deps.cronExpr || process.env.AUTO_RETURN_REQUESTS_CRON_EXPR || "*/10 * * * *",
+  ).trim();
+
+  if (!cron.validate(cronExpr)) {
+    console.error(`[CRON] Invalid return-requests cron expr="${cronExpr}"`);
+    return;
+  }
+
+  returnRequestsTask = cron.schedule(cronExpr, () => {
+    console.log("[CRON] Tick Return Requests Sync (get_return_list → detail → reverse TN)");
+    try {
+      void Promise.resolve(deps.runSync({ mode: "incremental", trigger: "cron" })).then((r) => {
+        if (r?.skipped) {
+          console.log(`[CRON] Return Requests skipped: ${r.message || "busy"}`);
+          return;
+        }
+        console.log(
+          `[CRON] Return Requests done pulled=${r?.pulled || 0} updated=${r?.updated || 0}`,
+        );
+      });
+    } catch (err) {
+      console.error("[CRON] Return Requests tick failed:", err?.message || err);
+    }
+  });
+
+  // Boot kick nhẹ — không chờ 10 phút mới có dữ liệu cho tab.
+  setTimeout(() => {
+    try {
+      void Promise.resolve(deps.runSync({ mode: "incremental", trigger: "boot" }));
+    } catch {
+      /* ignore */
+    }
+  }, 45_000);
+
+  console.log(`[CRON] Return Requests Sync ON — expr="${cronExpr}"`);
+}
+
+export function stopShopeeReturnRequestsSync() {
+  if (returnRequestsTask) {
+    try {
+      returnRequestsTask.stop();
+    } catch {
+      /* ignore */
+    }
+    returnRequestsTask = null;
+  }
+  returnRequestsScheduled = false;
+  console.log("[CRON] Return Requests Sync stopped.");
+}
