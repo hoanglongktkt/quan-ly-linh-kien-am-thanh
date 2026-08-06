@@ -77214,6 +77214,77 @@ async function markOrdersScanFlagsBatch(rows) {
   );
   return ops.length;
 }
+function deriveScannerSyncStatus(d) {
+  const data = d?.data && typeof d.data === "object" ? d.data : {};
+  const raw = String(d?.shopee_order_status || data.shopee_order_status || "").trim().toUpperCase();
+  const st = String(d?.status || data.status || "").trim().toLowerCase();
+  const handed = d?.is_handed_over === true || data.is_handed_over === true || data.isHandedOverToCarrier === true || data.is_handed_over_to_carrier === true;
+  if (st === "return_received" || st === "return_pending" || raw === "TO_RETURN" || Boolean(String(d?.return_sn || data.return_sn || "").trim())) {
+    return st === "return_received" ? "return_received" : "return_pending";
+  }
+  if (st === "cancelled" || raw === "CANCELLED" || raw === "IN_CANCEL") {
+    return "cancelled";
+  }
+  if (st === "shipping" || raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") {
+    return "shipping";
+  }
+  if (handed) return "handed_over";
+  if (st === "processed" || raw === "PROCESSED") return "processed";
+  return st || "processed";
+}
+async function listScannerSyncRowsFromStore() {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const filter = {
+    $or: [
+      orderTabFilter("processed"),
+      orderTabFilter("handed_over_carrier"),
+      orderTabFilter("shipping"),
+      orderTabFilter("return_requests"),
+      orderTabFilter("cancelled")
+    ]
+  };
+  const docs = await OrderModel.find(filter).select({
+    _id: 1,
+    orderSn: 1,
+    status: 1,
+    shopee_order_status: 1,
+    tracking_no: 1,
+    return_tracking_no: 1,
+    is_handed_over: 1,
+    "data.orderSn": 1,
+    "data.status": 1,
+    "data.shopee_order_status": 1,
+    "data.tracking_no": 1,
+    "data.trackingNumber": 1,
+    "data.return_tracking_no": 1,
+    "data.is_handed_over": 1,
+    "data.isHandedOverToCarrier": 1,
+    "data.is_handed_over_to_carrier": 1,
+    "data.return_sn": 1,
+    return_sn: 1
+  }).lean().maxTimeMS(15e3);
+  const rows = [];
+  for (const d of docs) {
+    const data = d?.data && typeof d.data === "object" ? d.data : {};
+    const orderId = String(
+      d?.orderSn || data.orderSn || String(d?._id || "").replace(/^shopee-/i, "")
+    ).trim();
+    if (!orderId) continue;
+    const tracking = String(
+      d?.tracking_no || data.tracking_no || data.trackingNumber || ""
+    ).trim();
+    const returnWb = String(d?.return_tracking_no || data.return_tracking_no || "").trim();
+    if (!tracking && !returnWb) continue;
+    rows.push({
+      order_id: orderId,
+      tracking_code: tracking,
+      return_waybill: returnWb,
+      status: deriveScannerSyncStatus(d)
+    });
+  }
+  return rows;
+}
 async function findOrdersByScanCodesInStore(rawCodes) {
   const result = /* @__PURE__ */ new Map();
   if (!isMongoReady() || !Array.isArray(rawCodes) || rawCodes.length === 0) {
@@ -106488,6 +106559,46 @@ async function cleanupProcessedPickup(_req, res) {
     });
   }
 }
+async function scannerSync(req, res) {
+  try {
+    if (!isMongoReady()) {
+      return res.status(503).json({
+        success: false,
+        error: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng",
+        orders: [],
+        total: 0,
+        code_count: 0
+      });
+    }
+    const t0 = Date.now();
+    const orders = await listScannerSyncRowsFromStore();
+    let codeCount = 0;
+    for (const row of orders) {
+      if (row.tracking_code) codeCount += 1;
+      if (row.return_waybill) codeCount += 1;
+    }
+    const ms = Date.now() - t0;
+    console.log(
+      `[GET /api/orders/scanner-sync] rows=${orders.length} codes=${codeCount} ${ms}ms`
+    );
+    return res.json({
+      success: true,
+      orders,
+      total: orders.length,
+      code_count: codeCount,
+      ms
+    });
+  } catch (err) {
+    console.error("[GET /api/orders/scanner-sync] failed:", err?.message || err);
+    return res.status(500).json({
+      success: false,
+      error: err?.message || String(err),
+      orders: [],
+      total: 0,
+      code_count: 0
+    });
+  }
+}
 async function lookupOrder(req, res) {
   const code = String(req.query.code || req.query.q || "").trim();
   if (!code) {
@@ -108522,6 +108633,7 @@ router13.get("/query", h2(queryOrders));
 router13.get("/counts", h2(getOrderCounts));
 router13.get("/counter", h2(getOrderCounts));
 router13.get("/lookup", h2(lookupOrder));
+router13.get("/scanner-sync", h2(scannerSync));
 router13.post("/sync", syncOrders);
 router13.post("/pull", pullOrders);
 router13.post("/quick-sync", quickSyncOrders);

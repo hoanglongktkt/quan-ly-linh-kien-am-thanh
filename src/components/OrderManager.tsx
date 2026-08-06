@@ -9,7 +9,6 @@ import {
 } from '../utils/cameraScanner';
 import {
   findOrderByScanPayload,
-  lookupOrderByScanCode,
   scanFeedback,
   playScanSound,
   vibrateScan,
@@ -17,6 +16,10 @@ import {
   buildOrderScanIndex,
   normalizeOrderScanKey,
   buildScanLookupKeys,
+  buildScannerSyncMap,
+  lookupScannerSyncMap,
+  scannerSyncEntryToOrder,
+  type ScannerSyncEntry,
 } from '../utils/orderScan';
 import {
   isOrderHandedOverToCarrier,
@@ -1097,56 +1100,23 @@ export default function OrderManager({
   const liveScannerRef = React.useRef<LiveQrScannerHandle | null>(null);
   const isTearingDownScannerRef = React.useRef(false);
   const orderScanIndex = useMemo(() => buildOrderScanIndex(orders), [orders]);
-  /** Pool quét thực tế 7 ngày: đã in / chờ lấy (đã xử lý) + đang giao + hủy/hoàn/giao thất bại. */
-  const continuousScanTarget = useMemo(() => {
-    const lookbackMs = 7 * 24 * 60 * 60 * 1000;
-    const cutoff = Date.now() - lookbackMs;
-    const inScanWindow = (o: Order) => {
-      const candidates = [
-        o.date,
-        o.local_status_updated_at,
-        (o as Order & { update_time?: number | string }).update_time,
-        (o as Order & { updated_at?: string }).updated_at,
-      ];
-      for (const t of candidates) {
-        if (t == null || t === '') continue;
-        const ms =
-          typeof t === 'number'
-            ? t < 1e12
-              ? t * 1000
-              : t
-            : Date.parse(String(t));
-        if (Number.isFinite(ms) && ms >= cutoff) return true;
-      }
-      return false;
-    };
-    return orders.filter((o) => {
-      const pickupEligible =
-        matchesProcessedPickupTab(o) &&
-        (Boolean(getOrderWaybillCode(o)) || isOrderPrintedEffective(o));
-      if (pickupEligible) return true;
-      if (matchesShippingTab(o) && inScanWindow(o)) return true;
-      const raw = String(o.shopee_order_status || '').toUpperCase();
-      const kind = o.shopee_cancel_return_kind;
-      const isCancelReturn =
-        o.status === 'cancelled' ||
-        o.status === 'return_pending' ||
-        o.status === 'return_received' ||
-        raw === 'CANCELLED' ||
-        raw === 'IN_CANCEL' ||
-        raw === 'TO_RETURN' ||
-        kind === 'refund_return' ||
-        kind === 'cancelled' ||
-        kind === 'failed_delivery' ||
-        isCancelReturnOrder(o);
-      return isCancelReturn && inScanWindow(o);
-    }).length;
-  }, [orders]);
+  /** Hash map mã VĐ từ /api/orders/scanner-sync — lookup O(1), không phụ thuộc pool orders UI. */
+  const [scannerSyncMap, setScannerSyncMap] = useState<Map<string, ScannerSyncEntry>>(
+    () => new Map(),
+  );
+  const scannerSyncMapRef = React.useRef(scannerSyncMap);
+  const [scannerSyncCodeCount, setScannerSyncCodeCount] = useState(0);
+  /** Tổng mã VĐ đã tải local — UI "Đã dò x/{n}". */
+  const continuousScanTarget = scannerSyncCodeCount;
   const totalVerifiedScans = daXuatKhoList.length + donHuyList.length + daNhanHoanList.length;
 
   useEffect(() => {
     ordersRef.current = orders;
   }, [orders]);
+
+  useEffect(() => {
+    scannerSyncMapRef.current = scannerSyncMap;
+  }, [scannerSyncMap]);
 
   useEffect(() => {
     daXuatKhoListRef.current = daXuatKhoList;
@@ -1513,15 +1483,12 @@ export default function OrderManager({
       setIsScanBusy(true);
 
       try {
-        // Local-first — không block UI chờ lookup API.
-        let order = findOrderByScanPayload(ordersRef.current, trimmed, orderScanIndex);
-        if (!order) {
-          const token = localStorage.getItem('admin_token');
-          // Miss local: thử lookup nhanh nhưng có timeout ngắn; ưu tiên không treo máy quét.
-          order = await Promise.race([
-            lookupOrderByScanCode(trimmed, ordersRef.current, token, orderScanIndex),
-            new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 2500)),
-          ]);
+        // Local HashMap từ scanner-sync — không gọi lookup HTTP.
+        const syncHit = lookupScannerSyncMap(scannerSyncMapRef.current, trimmed);
+        let order: Order | null = null;
+        if (syncHit) {
+          const fromPool = findOrderByScanPayload(ordersRef.current, trimmed, orderScanIndex);
+          order = fromPool || scannerSyncEntryToOrder(syncHit);
         }
 
         if (order) {
@@ -1869,15 +1836,34 @@ export default function OrderManager({
 
       lastQrScanRef.current = { key, at: now };
 
-      // Local-only trước — miss không await API (non-blocking).
-      const localOrder = findOrderByScanPayload(ordersRef.current, trimmed, orderScanIndex);
+      // Local HashMap O(1) từ scanner-sync — KHÔNG gọi HTTP lookup / dò ngầm.
+      const syncHit = lookupScannerSyncMap(scannerSyncMapRef.current, trimmed);
+      let localOrder: Order | null = null;
+      if (syncHit) {
+        const fromPool = findOrderByScanPayload(ordersRef.current, trimmed, orderScanIndex);
+        localOrder = fromPool || scannerSyncEntryToOrder(syncHit);
+        if (syncHit.matchedReturn && localOrder) {
+          localOrder = {
+            ...localOrder,
+            return_tracking_no: syncHit.return_waybill || localOrder.return_tracking_no,
+            return_sn: localOrder.return_sn || 'scanner-sync',
+            status:
+              localOrder.status === 'return_received' ? 'return_received' : 'return_pending',
+          };
+        }
+      }
+
       if (!localOrder) {
-        playScanSound('pending');
-        vibrateScan('pending');
+        playScanSound('error');
+        vibrateScan('error');
         flashViewfinder('error', 400);
-        setCameraScanResult(`Chưa có data, đang dò ngầm: ${trimmed}`);
-        showScanToast('Chưa có data — đã xếp hàng đợi dò ngầm Backend', 'error');
-        enqueueBackgroundLookup(trimmed);
+        setCameraScanResult(`Không tìm thấy mã: ${trimmed}`);
+        showScanToast(
+          isLikelyTrackingCode(trimmed)
+            ? `Không có trong danh sách đã tải: "${trimmed}"`
+            : `Mã không khớp pool quét đã tải (${trimmed})`,
+          'error',
+        );
         return;
       }
 
@@ -2093,7 +2079,7 @@ export default function OrderManager({
         }
       }
     },
-    [isFlushingQueue, orderScanIndex, onUpdateOrders, enqueueBackgroundLookup, persistCancelReturnScanFlag, handOverOrderToCarrier]
+    [isFlushingQueue, orderScanIndex, onUpdateOrders, persistCancelReturnScanFlag, handOverOrderToCarrier]
   );
 
   useEffect(() => {
@@ -2187,63 +2173,45 @@ export default function OrderManager({
     };
   }, [focusScanner, cameraRestartKey]);
 
-  // Prefetch + pull 7 ngày khi mở quét — đủ pool đã in / hủy / hoàn / đang giao, không shallow 50.
+  // Prefetch scanner-sync 1 lần khi mở quét — HashMap local O(1), không shallow 50.
   useEffect(() => {
     if (!focusScanner) return;
     let cancelled = false;
-    // Fetch song song ngay — không chờ pull xong (giảm cửa sổ local-miss khi quét sớm).
-    void onFetchOrders?.({ silent: true, limit: 2000, merge: true });
     (async () => {
       const token = localStorage.getItem('admin_token') || '';
       try {
-        const pullBody: Record<string, unknown> = {
-          mode: 'full',
-          lookback_hours: 168,
+        const res = await fetch('/api/orders/scanner-sync', {
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          cache: 'no-store',
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = (await res.json()) as {
+          orders?: Array<{
+            order_id: string;
+            tracking_code: string;
+            return_waybill: string;
+            status: string;
+          }>;
+          code_count?: number;
         };
-        if (selectedShopId && selectedShopId !== 'all') {
-          pullBody.shop_ids = [String(selectedShopId)];
+        if (cancelled) return;
+        const rows = Array.isArray(data.orders) ? data.orders : [];
+        const map = buildScannerSyncMap(rows);
+        scannerSyncMapRef.current = map;
+        setScannerSyncMap(map);
+        setScannerSyncCodeCount(
+          Number.isFinite(Number(data.code_count)) ? Number(data.code_count) : map.size,
+        );
+      } catch (err) {
+        console.warn('[Scan Prefetch] scanner-sync fail:', err);
+        if (!cancelled) {
+          setScannerSyncMap(new Map());
+          setScannerSyncCodeCount(0);
+          showScanToast('Không tải được danh sách mã quét — thử mở lại màn quét', 'error');
         }
-        try {
-          // ACK ngay — sync chạy nền, không block UI quét
-          await fetch('/api/sync-shopee', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
-            body: JSON.stringify(pullBody),
-          });
-        } catch (pullErr) {
-          console.warn('[Scan Prefetch] sync-shopee skip/fail:', pullErr);
-        }
-      } catch {
-        /* ignore */
       }
-      if (cancelled) return;
-      // Bù mã VĐ từ Shopee trước khi refresh pool quét.
-      try {
-        const enrichController = new AbortController();
-        const enrichTimeoutId = window.setTimeout(() => enrichController.abort(), 180_000);
-        try {
-          await fetch('/api/orders/enrich-tracking', {
-            method: 'POST',
-            signal: enrichController.signal,
-            headers: {
-              'Content-Type': 'application/json',
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
-            body: JSON.stringify({ max: 120 }),
-          });
-        } catch (enrichErr) {
-          console.warn('[Scan Prefetch] enrich-tracking skip/fail:', enrichErr);
-        } finally {
-          window.clearTimeout(enrichTimeoutId);
-        }
-      } catch {
-        /* ignore */
-      }
-      if (cancelled) return;
-      void onFetchOrders?.({ silent: true, limit: 2000, merge: true });
     })();
     return () => {
       cancelled = true;
@@ -5046,7 +5014,7 @@ export default function OrderManager({
             </div>
             <div className="rounded-lg bg-blue-500/20 border border-blue-400/40 px-2.5 py-1">
               <span className="text-blue-300 font-black text-xs tabular-nums">
-                Đã dò {totalVerifiedScans}/{continuousScanTarget || '—'}
+                Đã dò {totalVerifiedScans}/{continuousScanTarget || 0}
               </span>
             </div>
           </div>

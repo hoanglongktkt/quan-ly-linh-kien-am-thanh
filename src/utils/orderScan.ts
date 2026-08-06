@@ -339,3 +339,131 @@ export function scanFeedback(type: ScanSoundType | 'success' | 'error') {
   );
   vibrateScan(type);
 }
+
+/** Payload lean từ GET /api/orders/scanner-sync */
+export type ScannerSyncRow = {
+  order_id: string;
+  tracking_code: string;
+  return_waybill: string;
+  status: string;
+};
+
+export type ScannerSyncEntry = ScannerSyncRow & {
+  /** true nếu key map khớp return_waybill */
+  matchedReturn?: boolean;
+};
+
+/** Hash map mã VĐ → row — lookup O(1) khi quét. */
+export function buildScannerSyncMap(rows: ScannerSyncRow[]): Map<string, ScannerSyncEntry> {
+  const map = new Map<string, ScannerSyncEntry>();
+  for (const row of rows) {
+    const base: ScannerSyncEntry = {
+      order_id: String(row.order_id || '').trim(),
+      tracking_code: String(row.tracking_code || '').trim(),
+      return_waybill: String(row.return_waybill || '').trim(),
+      status: String(row.status || '').trim().toLowerCase(),
+    };
+    if (!base.order_id) continue;
+    const put = (raw: string, matchedReturn = false) => {
+      const key = normalizeOrderScanKey(raw);
+      if (!key || key.length < 4) return;
+      map.set(key, { ...base, matchedReturn });
+    };
+    if (base.tracking_code) put(base.tracking_code, false);
+    if (base.return_waybill) put(base.return_waybill, true);
+  }
+  return map;
+}
+
+export function lookupScannerSyncMap(
+  map: Map<string, ScannerSyncEntry>,
+  raw: string,
+): ScannerSyncEntry | null {
+  if (!map.size) return null;
+  const keys = buildScanLookupKeys(raw);
+  for (const sk of keys) {
+    const hit = map.get(sk);
+    if (hit) return hit;
+  }
+  // Flexible endsWith cho mã ≥10 ký tự
+  for (const sk of keys) {
+    if (sk.length < 10) continue;
+    for (const [mapKey, entry] of map) {
+      if (mapKey.length < 10) continue;
+      if (mapKey.endsWith(sk) || sk.endsWith(mapKey)) return entry;
+    }
+  }
+  return null;
+}
+
+/** Stub Order tối thiểu từ scanner-sync — đủ phân loại + bàn giao. */
+export function scannerSyncEntryToOrder(entry: ScannerSyncEntry): Order {
+  const sn = String(entry.order_id || '').replace(/^shopee-/i, '').trim();
+  const statusRaw = String(entry.status || '').toLowerCase();
+  const tracking = entry.tracking_code || undefined;
+  const returnWb = entry.return_waybill || undefined;
+
+  let status: Order['status'] = 'processed';
+  let shopee_order_status: string | undefined = 'PROCESSED';
+  let is_handed_over = false;
+  let return_sn: string | undefined;
+  let local_status: string | undefined;
+
+  if (statusRaw === 'shipping' || statusRaw === 'handed_over') {
+    if (statusRaw === 'shipping') {
+      status = 'shipping';
+      shopee_order_status = 'SHIPPED';
+    } else {
+      status = 'processed';
+      shopee_order_status = 'PROCESSED';
+      is_handed_over = true;
+      local_status = 'HANDED_OVER';
+    }
+  } else if (statusRaw === 'cancelled') {
+    status = 'cancelled';
+    shopee_order_status = 'CANCELLED';
+  } else if (statusRaw === 'return_received') {
+    status = 'return_received';
+    shopee_order_status = 'TO_RETURN';
+    return_sn = 'scanner-sync';
+  } else if (
+    statusRaw === 'return_pending' ||
+    statusRaw === 'return_requests' ||
+    statusRaw === 'return'
+  ) {
+    status = 'return_pending';
+    shopee_order_status = 'TO_RETURN';
+    return_sn = 'scanner-sync';
+  } else if (statusRaw === 'unprocessed') {
+    status = 'unprocessed';
+    shopee_order_status = 'READY_TO_SHIP';
+  } else {
+    status = 'processed';
+    shopee_order_status = 'PROCESSED';
+  }
+
+  if (entry.matchedReturn && status !== 'cancelled') {
+    status = status === 'return_received' ? 'return_received' : 'return_pending';
+    shopee_order_status = 'TO_RETURN';
+    return_sn = return_sn || 'scanner-sync';
+  }
+
+  return {
+    id: `shopee-${sn}`,
+    orderSn: sn,
+    status,
+    shopee_order_status,
+    trackingNumber: tracking,
+    tracking_no: tracking,
+    return_tracking_no: returnWb,
+    return_sn,
+    is_handed_over,
+    local_status,
+    isPrinted: true,
+    channel: 'shopee',
+    date: new Date().toISOString(),
+    items: [],
+    totalAmount: 0,
+    revenue: 0,
+  } as Order;
+}

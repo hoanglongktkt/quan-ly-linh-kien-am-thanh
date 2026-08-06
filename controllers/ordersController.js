@@ -25,6 +25,7 @@ import {
   isMongoReady,
   loadOrdersFromStore,
   findOrderByScanCodeInStore,
+  listScannerSyncRowsFromStore,
   queryOrdersPageFromStore,
   countOrdersByTabsFromStore,
   loadPriorityTabOrdersFromStore,
@@ -974,6 +975,48 @@ export async function cleanupProcessedPickup(_req, res) {
     return res.status(500).json({
       success: false,
       error: error?.message || "cleanup_failed",
+    });
+  }
+}
+
+/** GET /api/orders/scanner-sync — payload siêu gọn cho máy quét (O(1) local match). */
+export async function scannerSync(req, res) {
+  try {
+    if (!isMongoReady()) {
+      return res.status(503).json({
+        success: false,
+        error: "MongoDB chưa sẵn sàng",
+        orders: [],
+        total: 0,
+        code_count: 0,
+      });
+    }
+    const t0 = Date.now();
+    const orders = await listScannerSyncRowsFromStore();
+    let codeCount = 0;
+    for (const row of orders) {
+      if (row.tracking_code) codeCount += 1;
+      if (row.return_waybill) codeCount += 1;
+    }
+    const ms = Date.now() - t0;
+    console.log(
+      `[GET /api/orders/scanner-sync] rows=${orders.length} codes=${codeCount} ${ms}ms`,
+    );
+    return res.json({
+      success: true,
+      orders,
+      total: orders.length,
+      code_count: codeCount,
+      ms,
+    });
+  } catch (err) {
+    console.error("[GET /api/orders/scanner-sync] failed:", err?.message || err);
+    return res.status(500).json({
+      success: false,
+      error: err?.message || String(err),
+      orders: [],
+      total: 0,
+      code_count: 0,
     });
   }
 }

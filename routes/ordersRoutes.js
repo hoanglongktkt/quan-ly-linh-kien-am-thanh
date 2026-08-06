@@ -10,6 +10,7 @@ import {
   cleanupLabelPdfs,
   cleanupProcessedPickup,
   lookupOrder,
+  scannerSync,
   cleanupMockOrders,
   hydrateTracking,
   enrichTracking,
@@ -48,6 +49,8 @@ router.get("/counts", h(getOrderCounts));
 /** Badge count nhanh — chỉ countDocuments Mongo, không gọi Shopee / không trả list. */
 router.get("/counter", h(getOrderCounts));
 router.get("/lookup", h(lookupOrder));
+/** Sync siêu tốc máy quét — chỉ order_id / tracking_code / return_waybill / status. */
+router.get("/scanner-sync", h(scannerSync));
 /** Sync = ACK + background job; list/refresh = Mongo read-only. */
 router.post("/sync", syncOrders);
 router.post("/pull", pullOrders);
