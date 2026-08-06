@@ -4367,6 +4367,7 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
   total: number;
   page: number;
   pageSize: number;
+  totalPages: number;
   hasMore: boolean;
   counts: Record<string, number>;
 }> {
@@ -4375,23 +4376,17 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
     total: 0,
     page: 1,
     pageSize: 50,
+    totalPages: 1,
     hasMore: false,
     counts: {} as Record<string, number>,
   };
   try {
     requireMongo();
     const page = Math.max(1, Math.floor(Number(opts?.page) || 1));
-    const tabKey = String(opts?.tab || "").trim().toLowerCase();
-    const isCancelReturnsTab =
-      tabKey === "cancel_returns" ||
-      tabKey === "cancel-returns" ||
-      tabKey === "don-huy-hoan" ||
-      tabKey === "don_huy_hoan";
-    // Tab hủy/hoàn: cho phép pageSize tới 500 để list ≡ count (tránh chỉ 50 dòng đầu).
-    const pageSizeCap = isCancelReturnsTab ? 500 : 200;
+    // Mặc định 50/trang; cho phép tới 2000 khi caller gửi pageSize lớn (quét mã).
     const pageSize = Math.max(
-      10,
-      Math.min(pageSizeCap, Math.floor(Number(opts?.pageSize) || 50)),
+      1,
+      Math.min(2000, Math.floor(Number(opts?.pageSize) || 50)),
     );
     const skipCounts = Boolean(opts?.skipCounts);
     const and: Record<string, unknown>[] = [];
@@ -4507,11 +4502,13 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
       }
     }
 
+    const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / pageSize) || 1);
     return {
       rows,
       total,
       page,
       pageSize,
+      totalPages,
       hasMore: page * pageSize < total,
       counts,
     };

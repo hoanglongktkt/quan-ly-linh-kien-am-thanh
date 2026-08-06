@@ -310,13 +310,13 @@ export async function refreshOrders(req, res) {
     if (req.query.t != null || req.query.bust != null) {
       ordersRefreshCache = null;
     }
-    // ERP default: page 1 / limit 50 — không full-scan collection.
-    const rawLimit = Number(req.query.limit);
+    // ERP list: mặc định/cố định 50. Cho phép limit cao hơn khi FE gửi (vd: quét mã merge).
     const pageRaw = Number(req.query.page);
+    const rawLimit = Number(req.query.limit);
     const page =
       Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1;
     const limit =
-      Number.isFinite(rawLimit) && rawLimit > 0
+      Number.isFinite(rawLimit) && rawLimit > 50
         ? Math.min(Math.floor(rawLimit), 2000)
         : 50;
     const tab = String(req.query.tab || req.query.internal_tab || "").trim();
@@ -342,13 +342,16 @@ export async function refreshOrders(req, res) {
       tabLc === "received-cancel-returns" ||
       tabLc === "da_nhan_huy_hoan"
     ) {
-      mergedOrders = await readOrdersForRefresh(limit, {
+      const allReceived = await readOrdersForRefresh(5000, {
         tab,
         shopId,
         shopIds,
         printStatus,
       });
-      total = mergedOrders.length;
+      total = allReceived.length;
+      const start = (page - 1) * limit;
+      mergedOrders = allReceived.slice(start, start + limit);
+      hasMore = page * limit < total;
     } else {
       // Luôn query Mongo phân trang — không gọi Shopee.
       const pageResult = await queryOrdersPageFromStore({
@@ -380,6 +383,8 @@ export async function refreshOrders(req, res) {
     const orders = deps.enrichOrdersWithShopNames(
       deps.enrichOrdersFromCatalog(mergedOrders, []),
     );
+    const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / limit) || 1);
+    const currentPage = Math.min(page, totalPages);
     console.log(
       `[FRONTEND FETCHED] GET /api/orders/refresh?page=${page}&limit=${limit}` +
         ` — trả về ${orders.length}/${total} đơn từ MongoDB (READ-ONLY).`,
@@ -388,9 +393,13 @@ export async function refreshOrders(req, res) {
       success: true,
       data: orders,
       total,
-      page,
+      totalPages,
+      currentPage,
+      page: currentPage,
       page_size: limit,
+      limit,
       has_more: hasMore,
+      hasMore,
     });
   } catch (error) {
     console.error(
@@ -455,13 +464,21 @@ export async function queryOrders(req, res) {
     const rows = deps.enrichOrdersWithShopNames(
       deps.enrichOrdersFromCatalog(page.rows, products),
     );
+    const totalPages = Math.max(
+      1,
+      Math.ceil(Math.max(0, page.total) / (page.pageSize || 50)) || 1,
+    );
     return res.json({
       success: true,
       data: rows,
       total: page.total,
+      totalPages,
+      currentPage: page.page,
       page: page.page,
       page_size: page.pageSize,
+      limit: page.pageSize,
       has_more: page.hasMore,
+      hasMore: page.hasMore,
       counts: page.counts,
     });
   } catch (error) {
@@ -543,15 +560,10 @@ export async function listOrders(req, res) {
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
 
-  // ERP: luôn ưu tiên phân trang Mongo (default page_size=50). Không gọi Shopee.
+  // ERP: luôn phân trang Mongo — limit cố định 50 (page từ query).
   const pageRaw = Number(req.query.page);
-  const limitRaw = Number(req.query.limit);
-  const pageSizeRaw = Number(req.query.page_size ?? req.query.pageSize ?? limitRaw);
-  const usePaged =
-    (Number.isFinite(pageRaw) && pageRaw > 0) ||
-    (Number.isFinite(pageSizeRaw) && pageSizeRaw > 0) ||
-    (Number.isFinite(limitRaw) && limitRaw > 0) ||
-    true; // mặc định luôn paged — tránh full-scan
+  const limit = 50;
+  const usePaged = true;
   if (usePaged) {
     try {
       if (!isMongoReady()) {
@@ -559,6 +571,8 @@ export async function listOrders(req, res) {
           success: false,
           data: [],
           total: 0,
+          totalPages: 1,
+          currentPage: 1,
           error: "mongodb_not_ready",
         });
       }
@@ -570,12 +584,11 @@ export async function listOrders(req, res) {
         shopIds.length === 1
           ? shopIds[0]
           : String(req.query.shop_id ?? req.query.shopId ?? "");
+      const currentPageReq =
+        Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1;
       const page = await queryOrdersPageFromStore({
-        page: Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1,
-        pageSize:
-          Number.isFinite(pageSizeRaw) && pageSizeRaw > 0
-            ? Math.min(Math.floor(pageSizeRaw), 200)
-            : 50,
+        page: currentPageReq,
+        pageSize: limit,
         tab: String(req.query.tab || req.query.internal_tab || ""),
         shopId,
         shopIds: shopIds.length > 1 ? shopIds : undefined,
@@ -596,13 +609,22 @@ export async function listOrders(req, res) {
       const rows = deps.enrichOrdersWithShopNames(
         deps.enrichOrdersFromCatalog(page.rows, products),
       );
+      const totalPages = Math.max(
+        1,
+        Math.ceil(Math.max(0, page.total) / limit) || 1,
+      );
+      const currentPage = Math.min(page.page, totalPages);
       return res.json({
         success: true,
         data: rows,
         total: page.total,
-        page: page.page,
-        page_size: page.pageSize,
+        totalPages,
+        currentPage,
+        page: currentPage,
+        page_size: limit,
+        limit,
         has_more: page.hasMore,
+        hasMore: page.hasMore,
         counts: page.counts,
       });
     } catch (pageErr) {

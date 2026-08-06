@@ -311,6 +311,13 @@ export default function App() {
 
   const [orders, setOrders] = useState<Order[]>([]);
   const [ordersLoading, setOrdersLoading] = useState<boolean>(false);
+  const [ordersMeta, setOrdersMeta] = useState({
+    page: 1,
+    pageSize: 50,
+    total: 0,
+    totalPages: 1,
+    hasMore: false,
+  });
   /** true chỉ sau khi ĐÃ có ít nhất 1 response thành công (success:true) từ
    * /api/orders/refresh — dùng để phân biệt "chưa tải xong lần đầu" (phải hiện
    * loading) với "đã tải xong và THẬT SỰ không có đơn nào" (mới hiện "0 đơn").
@@ -489,7 +496,7 @@ export default function App() {
 
     const silent = Boolean(opts?.silent);
     const bustCache = opts?.bustCache !== false;
-    // ERP: luôn phân trang 50 — caller chỉ tăng limit khi thật sự cần (vd: quét mã).
+    // ERP list: mặc định 50/trang. Caller có thể tăng (vd: quét mã merge).
     const limit =
       typeof opts?.limit === 'number' && opts.limit > 0 ? opts.limit : 50;
     const page = typeof opts?.page === 'number' && opts.page > 0 ? opts.page : 1;
@@ -558,7 +565,19 @@ export default function App() {
         },
       });
       if (response.ok) {
-        const payload: { success?: boolean; data?: Order[]; error?: string } = await response.json();
+        const payload: {
+          success?: boolean;
+          data?: Order[];
+          error?: string;
+          total?: number;
+          totalPages?: number;
+          currentPage?: number;
+          page?: number;
+          page_size?: number;
+          limit?: number;
+          has_more?: boolean;
+          hasMore?: boolean;
+        } = await response.json();
         if (payload.success === false) {
           if (
             (payload.error === 'mongodb_not_ready' || payload.error === 'orders_refresh_failed') &&
@@ -585,6 +604,23 @@ export default function App() {
           return;
         }
         const data = Array.isArray(payload.data) ? payload.data : [];
+        const total = Number(payload.total) || 0;
+        const pageSize = Number(payload.page_size ?? payload.limit) || limit;
+        const totalPages =
+          Number(payload.totalPages) > 0
+            ? Number(payload.totalPages)
+            : Math.max(1, Math.ceil(Math.max(0, total) / pageSize) || 1);
+        const currentPage =
+          Number(payload.currentPage ?? payload.page) > 0
+            ? Number(payload.currentPage ?? payload.page)
+            : page;
+        setOrdersMeta({
+          page: currentPage,
+          pageSize,
+          total,
+          totalPages,
+          hasMore: Boolean(payload.has_more ?? payload.hasMore ?? currentPage < totalPages),
+        });
         console.log('🛑 DATA ĐƯỢC LẤY TỪ URL:', requestUrl, '- SỐ LƯỢNG:', data.length);
         if (requestId <= lastAppliedOrdersSeqRef.current) {
           console.warn('[Fetch Orders] Bỏ qua response cũ (đã áp dụng response mới hơn).');
@@ -592,17 +628,18 @@ export default function App() {
         }
         lastAppliedOrdersSeqRef.current = requestId;
         const sanitized = sanitizeOrders(data);
-        // Trang rỗng khi đang có data: không wipe (Mongo tạm trống / race / sai tab).
+        // Trang rỗng khi đang có data: không wipe trang 1 (Mongo tạm trống / race).
+        // Phân trang page>1: cho phép list rỗng để UI đúng.
         if (sanitized.length === 0) {
           const existing = ordersHydrateRef.current;
-          if (existing.length > 0) {
+          if (existing.length > 0 && page <= 1 && !merge) {
             setHasLoadedOrdersOnce(true);
             console.warn(
               `[Fetch Orders] List rỗng (page=${page} tab=${tab || 'all'}) — giữ danh sách/cache hiện tại.`,
             );
             return;
           }
-          if (page === 1) {
+          if (!merge) {
             setOrders([]);
             ordersHydrateRef.current = [];
           }
@@ -2097,6 +2134,7 @@ export default function App() {
             <ErrorBoundary label="Quản lý đơn hàng">
               <OrderManager 
               orders={orders}
+              ordersMeta={ordersMeta}
               onUpdateOrders={handleUpdateOrders}
               onFetchOrders={fetchOrders}
               ordersLoading={ordersLoading || (!hasLoadedOrdersOnce && orders.length === 0)}

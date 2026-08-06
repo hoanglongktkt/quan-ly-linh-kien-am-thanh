@@ -520,6 +520,13 @@ function syncOrdersTabToUrl(subTab: OrderTab, cancelTab: CancelReturnTab) {
 
 interface OrderManagerProps {
   orders: Order[];
+  ordersMeta?: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+    hasMore: boolean;
+  };
   onUpdateOrders: (orders: Order[], opts?: { persist?: boolean }) => void;
   /** Chỉ đọc lại orders từ DB local — dùng sau xác nhận/in đơn để không ghi đè trạng thái */
   onFetchOrders?: (opts?: {
@@ -548,6 +555,8 @@ interface OrderManagerProps {
   /** Báo App khi user đổi sub-tab (để giữ hint/menu + URL đồng bộ) */
   onOrdersSubTabChange?: (tab: OrderTab) => void;
 }
+
+const ORDERS_PAGE_SIZE = 50;
 
 const CANCEL_RETURN_STATUSES: Order['status'][] = ['cancelled', 'return_pending', 'return_received'];
 const OM_PULL_REFRESH_THRESHOLD_PX = 72;
@@ -665,7 +674,8 @@ function VariationNameBadge({ variationName }: { variationName?: string }) {
 }
 
 export default function OrderManager({ 
-  orders, 
+  orders,
+  ordersMeta,
   onUpdateOrders, 
   onFetchOrders,
   ordersLoading = false,
@@ -680,6 +690,7 @@ export default function OrderManager({
   initialOrdersSubTab = null,
   onOrdersSubTabChange,
 }: OrderManagerProps) {
+  const [currentPage, setCurrentPage] = useState(1);
   const [activeSubTab, setActiveSubTab] = useState<OrderTab>(() => {
     const restored =
       (initialOrdersSubTab
@@ -751,22 +762,47 @@ export default function OrderManager({
   }, [selectedShopId]);
 
   const refetchOrdersPage = useCallback(
-    (opts?: { silent?: boolean }) => {
+    (opts?: { silent?: boolean; page?: number }) => {
       setHasNewOrders(false);
-      const isCancelReturns = activeSubTab === 'cancel_returns';
+      const page = opts?.page && opts.page > 0 ? opts.page : currentPage;
       void onFetchOrders?.({
         silent: opts?.silent !== false,
         bustCache: true,
         force: true,
-        page: 1,
-        limit: isCancelReturns ? 500 : 50,
+        page,
+        limit: ORDERS_PAGE_SIZE,
         merge: false,
         tab: activeSubTab === 'all' ? '' : activeSubTab,
       });
       void fetchOrderCounts();
     },
-    [activeSubTab, fetchOrderCounts, onFetchOrders],
+    [activeSubTab, currentPage, fetchOrderCounts, onFetchOrders],
   );
+
+  const goToOrdersPage = useCallback(
+    (page: number) => {
+      const next = Math.max(1, Math.floor(page) || 1);
+      setCurrentPage(next);
+      void onFetchOrders?.({
+        silent: false,
+        bustCache: true,
+        force: true,
+        page: next,
+        limit: ORDERS_PAGE_SIZE,
+        merge: false,
+        tab: activeSubTab === 'all' ? '' : activeSubTab,
+      });
+    },
+    [activeSubTab, onFetchOrders],
+  );
+
+  // Đồng bộ currentPage với metadata API (sau fetch).
+  useEffect(() => {
+    if (ordersMeta?.page && ordersMeta.page > 0 && ordersMeta.page !== currentPage) {
+      setCurrentPage(ordersMeta.page);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ordersMeta?.page]);
 
   /** Sau sync nền: chỉ poll counter nhẹ — không kéo 150–400 đơn + merge. */
   const startSyncPolling = useCallback(() => {
@@ -938,7 +974,7 @@ export default function OrderManager({
     }
   }, [activeSubTab]);
 
-  // Đổi tab: fetch trang 1 (limit 50, replace) — Backend đã lọc theo tab.
+  // Đổi tab: reset page=1 + fetch (limit 50, replace) — Backend đã lọc theo tab.
   useEffect(() => {
     if (activeSubTab === 'pending_verification') return;
     syncOrdersTabToUrl(activeSubTab, cancelReturnTab);
@@ -954,14 +990,14 @@ export default function OrderManager({
       'received_cancel_returns',
     ]);
     if (tabFetchTabs.has(activeSubTab)) {
-      const isCancelReturns = activeSubTab === 'cancel_returns';
-      console.log(`[Orders Tab] activeSubTab=${activeSubTab} → fetch page=1 limit=${isCancelReturns ? 500 : 50}`);
+      setCurrentPage(1);
+      console.log(`[Orders Tab] activeSubTab=${activeSubTab} → fetch page=1 limit=${ORDERS_PAGE_SIZE}`);
       void onFetchOrders?.({
         silent: true,
         bustCache: true,
         force: true,
         page: 1,
-        limit: isCancelReturns ? 500 : 50,
+        limit: ORDERS_PAGE_SIZE,
         merge: false,
         tab: activeSubTab === 'all' ? '' : activeSubTab,
       });
@@ -3825,18 +3861,16 @@ export default function OrderManager({
   const [showCreateOrderPage, setShowCreateOrderPage] = useState(false);
 
   /**
-   * Auto-refresh — PHẢI kèm tab đang xem. Không gửi tab → GET /refresh trả 50 đơn
-   * hỗn hợp rồi REPLACE → filter client theo tab → list lúc trống lúc có.
+   * Auto-refresh — PHẢI kèm tab đang xem + trang hiện tại.
    */
   useEffect(() => {
     const intervalId = window.setInterval(() => {
       if (document.visibilityState === 'hidden') return;
-      const isCancelReturns = activeSubTab === 'cancel_returns';
       void onFetchOrders?.({
         silent: true,
         bustCache: true,
-        page: 1,
-        limit: isCancelReturns ? 500 : 50,
+        page: currentPage,
+        limit: ORDERS_PAGE_SIZE,
         merge: false,
         tab: activeSubTab === 'all' ? '' : activeSubTab,
       });
@@ -3844,7 +3878,7 @@ export default function OrderManager({
     }, 30_000);
     return () => window.clearInterval(intervalId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSubTab]);
+  }, [activeSubTab, currentPage]);
 
   /**
    * Tab "Đã giao cho ĐVVC": dò API Shopee ngầm (ACK) — khi đơn thật sự SHIPPED
@@ -3950,13 +3984,13 @@ export default function OrderManager({
     setIsPullRefreshing(true);
     setPullDistance(OM_PULL_REFRESH_THRESHOLD_PX);
     try {
-      const isCancelReturns = activeSubTab === 'cancel_returns';
+      setCurrentPage(1);
       await onFetchOrders?.({
         silent: true,
         bustCache: true,
         force: true,
         page: 1,
-        limit: isCancelReturns ? 500 : 50,
+        limit: ORDERS_PAGE_SIZE,
         merge: false,
         tab: activeSubTab === 'all' ? '' : activeSubTab,
       });
@@ -6646,6 +6680,36 @@ export default function OrderManager({
           </div>
         </>
       )}
+
+        {(ordersMeta?.total ?? 0) > 0 && (
+          <div className="px-4 py-3 bg-slate-50/80 border-t border-gray-100 flex flex-wrap items-center justify-end gap-3 text-xs text-gray-600">
+            <span>
+              Trang <b>{ordersMeta?.page ?? currentPage}</b>/{ordersMeta?.totalPages ?? 1}
+              {' — '}
+              {filteredOrders.length}/{ordersMeta?.total ?? 0} đơn (mỗi trang {ORDERS_PAGE_SIZE})
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={ordersLoading || currentPage <= 1}
+                onClick={() => goToOrdersPage(currentPage - 1)}
+                className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 font-semibold cursor-pointer"
+              >
+                Trang trước
+              </button>
+              <button
+                type="button"
+                disabled={
+                  ordersLoading || currentPage >= (ordersMeta?.totalPages ?? 1)
+                }
+                onClick={() => goToOrdersPage(currentPage + 1)}
+                className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 font-semibold cursor-pointer"
+              >
+                Trang sau
+              </button>
+            </div>
+          </div>
+        )}
     </div>
       )}
 

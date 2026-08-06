@@ -76525,18 +76525,16 @@ async function queryOrdersPageFromStore(opts) {
     total: 0,
     page: 1,
     pageSize: 50,
+    totalPages: 1,
     hasMore: false,
     counts: {}
   };
   try {
     requireMongo();
     const page = Math.max(1, Math.floor(Number(opts?.page) || 1));
-    const tabKey = String(opts?.tab || "").trim().toLowerCase();
-    const isCancelReturnsTab = tabKey === "cancel_returns" || tabKey === "cancel-returns" || tabKey === "don-huy-hoan" || tabKey === "don_huy_hoan";
-    const pageSizeCap = isCancelReturnsTab ? 500 : 200;
     const pageSize = Math.max(
-      10,
-      Math.min(pageSizeCap, Math.floor(Number(opts?.pageSize) || 50))
+      1,
+      Math.min(2e3, Math.floor(Number(opts?.pageSize) || 50))
     );
     const skipCounts = Boolean(opts?.skipCounts);
     const and = [];
@@ -76635,11 +76633,13 @@ async function queryOrdersPageFromStore(opts) {
         await new Promise((r2) => setTimeout(r2, 15));
       }
     }
+    const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / pageSize) || 1);
     return {
       rows,
       total,
       page,
       pageSize,
+      totalPages,
       hasMore: page * pageSize < total,
       counts
     };
@@ -105449,10 +105449,10 @@ async function refreshOrders(req, res) {
     if (req.query.t != null || req.query.bust != null) {
       ordersRefreshCache = null;
     }
-    const rawLimit = Number(req.query.limit);
     const pageRaw = Number(req.query.page);
+    const rawLimit = Number(req.query.limit);
     const page = Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1;
-    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 2e3) : 50;
+    const limit = Number.isFinite(rawLimit) && rawLimit > 50 ? Math.min(Math.floor(rawLimit), 2e3) : 50;
     const tab = String(req.query.tab || req.query.internal_tab || "").trim();
     const shopIds = parseShopIdsParam(
       req.query.shop_ids ?? req.query.shopIds,
@@ -105468,13 +105468,16 @@ async function refreshOrders(req, res) {
     let total = 0;
     let hasMore = false;
     if (tabLc === "received_cancel_returns" || tabLc === "received-cancel-returns" || tabLc === "da_nhan_huy_hoan") {
-      mergedOrders = await readOrdersForRefresh(limit, {
+      const allReceived = await readOrdersForRefresh(5e3, {
         tab,
         shopId,
         shopIds,
         printStatus
       });
-      total = mergedOrders.length;
+      total = allReceived.length;
+      const start = (page - 1) * limit;
+      mergedOrders = allReceived.slice(start, start + limit);
+      hasMore = page * limit < total;
     } else {
       const pageResult = await queryOrdersPageFromStore({
         page,
@@ -105505,6 +105508,8 @@ async function refreshOrders(req, res) {
     const orders = deps15.enrichOrdersWithShopNames(
       deps15.enrichOrdersFromCatalog(mergedOrders, [])
     );
+    const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / limit) || 1);
+    const currentPage = Math.min(page, totalPages);
     console.log(
       `[FRONTEND FETCHED] GET /api/orders/refresh?page=${page}&limit=${limit} \u2014 tr\u1EA3 v\u1EC1 ${orders.length}/${total} \u0111\u01A1n t\u1EEB MongoDB (READ-ONLY).`
     );
@@ -105512,9 +105517,13 @@ async function refreshOrders(req, res) {
       success: true,
       data: orders,
       total,
-      page,
+      totalPages,
+      currentPage,
+      page: currentPage,
       page_size: limit,
-      has_more: hasMore
+      limit,
+      has_more: hasMore,
+      hasMore
     });
   } catch (error) {
     console.error(
@@ -105569,13 +105578,21 @@ async function queryOrders(req, res) {
     const rows = deps15.enrichOrdersWithShopNames(
       deps15.enrichOrdersFromCatalog(page.rows, products)
     );
+    const totalPages = Math.max(
+      1,
+      Math.ceil(Math.max(0, page.total) / (page.pageSize || 50)) || 1
+    );
     return res.json({
       success: true,
       data: rows,
       total: page.total,
+      totalPages,
+      currentPage: page.page,
       page: page.page,
       page_size: page.pageSize,
+      limit: page.pageSize,
       has_more: page.hasMore,
+      hasMore: page.hasMore,
       counts: page.counts
     });
   } catch (error) {
@@ -105645,9 +105662,8 @@ async function listOrders(req, res) {
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
   const pageRaw = Number(req.query.page);
-  const limitRaw = Number(req.query.limit);
-  const pageSizeRaw = Number(req.query.page_size ?? req.query.pageSize ?? limitRaw);
-  const usePaged = Number.isFinite(pageRaw) && pageRaw > 0 || Number.isFinite(pageSizeRaw) && pageSizeRaw > 0 || Number.isFinite(limitRaw) && limitRaw > 0 || true;
+  const limit = 50;
+  const usePaged = true;
   if (usePaged) {
     try {
       if (!isMongoReady()) {
@@ -105655,6 +105671,8 @@ async function listOrders(req, res) {
           success: false,
           data: [],
           total: 0,
+          totalPages: 1,
+          currentPage: 1,
           error: "mongodb_not_ready"
         });
       }
@@ -105663,9 +105681,10 @@ async function listOrders(req, res) {
         req.query.shop_id ?? req.query.shopId
       );
       const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "");
+      const currentPageReq = Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1;
       const page = await queryOrdersPageFromStore({
-        page: Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1,
-        pageSize: Number.isFinite(pageSizeRaw) && pageSizeRaw > 0 ? Math.min(Math.floor(pageSizeRaw), 200) : 50,
+        page: currentPageReq,
+        pageSize: limit,
         tab: String(req.query.tab || req.query.internal_tab || ""),
         shopId,
         shopIds: shopIds.length > 1 ? shopIds : void 0,
@@ -105686,13 +105705,22 @@ async function listOrders(req, res) {
       const rows = deps15.enrichOrdersWithShopNames(
         deps15.enrichOrdersFromCatalog(page.rows, products2)
       );
+      const totalPages = Math.max(
+        1,
+        Math.ceil(Math.max(0, page.total) / limit) || 1
+      );
+      const currentPage = Math.min(page.page, totalPages);
       return res.json({
         success: true,
         data: rows,
         total: page.total,
-        page: page.page,
-        page_size: page.pageSize,
+        totalPages,
+        currentPage,
+        page: currentPage,
+        page_size: limit,
+        limit,
         has_more: page.hasMore,
+        hasMore: page.hasMore,
         counts: page.counts
       });
     } catch (pageErr) {
