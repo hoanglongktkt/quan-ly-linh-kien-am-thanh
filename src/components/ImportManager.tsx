@@ -209,7 +209,7 @@ export default function ImportManager({
           setTimeout(() => setToastMessage(null), 2500);
           return prev;
         }
-        const price = Number(product.importPrice) || 0;
+        const price = Math.max(0, Math.round(Number(product.importPrice) || 0));
         const next: SelectedImportLine[] = [
           {
             productId,
@@ -219,7 +219,7 @@ export default function ImportManager({
             currentStock: Number(product.stock) || 0,
             oldImportPrice: price,
             quantity: 0,
-            unitPrice: 0,
+            unitPrice: price,
           },
           ...prev,
         ];
@@ -228,7 +228,7 @@ export default function ImportManager({
         return next;
       });
 
-      // Bổ sung tồn kho / giá cũ từ product-context (không ghi đè SL/đơn giá mặc định)
+      // Bổ sung tồn kho / giá cũ từ product-context; đồng bộ đơn giá nếu user chưa sửa
       const token = localStorage.getItem('admin_token');
       if (!token) return;
       try {
@@ -238,19 +238,28 @@ export default function ImportManager({
         if (!res.ok) return;
         const data = await res.json();
         console.log('[ImportManager] product-context:', data);
-        setSelectedProducts((prev) =>
-          prev.map((line) =>
-            line.productId === productId
-              ? {
-                  ...line,
-                  currentStock: data.stock != null ? Number(data.stock) || 0 : line.currentStock,
-                  oldImportPrice: Number(data.oldPrice ?? data.importPrice ?? line.oldImportPrice) || 0,
-                  title: data.title || line.title,
-                  sku: data.sku || line.sku,
-                }
-              : line,
-          ),
-        );
+        setSelectedProducts((prev) => {
+          const next = prev.map((line) => {
+            if (line.productId !== productId) return line;
+            const newOld = Math.max(
+              0,
+              Math.round(Number(data.oldPrice ?? data.importPrice ?? line.oldImportPrice) || 0),
+            );
+            const userHasEditedPrice =
+              line.unitPrice !== 0 && line.unitPrice !== line.oldImportPrice;
+            return {
+              ...line,
+              currentStock: data.stock != null ? Number(data.stock) || 0 : line.currentStock,
+              oldImportPrice: newOld,
+              unitPrice: userHasEditedPrice ? line.unitPrice : newOld,
+              title: data.title || line.title,
+              sku: data.sku || line.sku,
+            };
+          });
+          const goods = next.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
+          syncPaidToTotal(goods + importCost);
+          return next;
+        });
       } catch (err) {
         console.error('Fetch product import context error:', err);
       }
