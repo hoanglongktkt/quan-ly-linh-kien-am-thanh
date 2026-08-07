@@ -346,6 +346,49 @@ function OrderShopeeFinanceSummary({
   );
 }
 
+/** Resolve customer info from WooCommerce billing/shipping or flat fields. */
+function resolveWooCustomerInfo(order: Order): {
+  name: string;
+  phone: string;
+  email: string;
+  address: string;
+} {
+  const billing = order.billing || {};
+  const shipping = (typeof order.shipping === 'object' && order.shipping && !Array.isArray(order.shipping)
+    ? order.shipping
+    : {}) as {
+    first_name?: string;
+    last_name?: string;
+    phone?: string;
+    address_1?: string;
+    address_2?: string;
+    city?: string;
+    state?: string;
+    postcode?: string;
+    country?: string;
+  };
+  const nameFromParts = [billing.first_name, billing.last_name].filter(Boolean).join(' ').trim()
+    || [shipping.first_name, shipping.last_name].filter(Boolean).join(' ').trim();
+  const name = String(order.customerName || nameFromParts || 'Khách web').trim();
+  const phone = String(order.customerPhone || billing.phone || shipping.phone || '').trim();
+  const email = String(order.customerEmail || billing.email || '').trim();
+  const addrFromParts = [
+    shipping.address_1 || billing.address_1,
+    shipping.address_2 || billing.address_2,
+    shipping.city || billing.city,
+    shipping.state || billing.state,
+    shipping.postcode || billing.postcode,
+    shipping.country || billing.country,
+  ].filter(Boolean).join(', ');
+  const shippingStr = typeof order.shippingAddress === 'string'
+    ? order.shippingAddress
+    : (order.shippingAddress?.fullAddress || order.shippingAddress?.street || '');
+  const address = String(
+    order.customerAddress || shippingStr || order.billingAddress || addrFromParts || ''
+  ).trim();
+  return { name, phone, email, address };
+}
+
 function OrderDetailAccordionPanel({
   order,
   shops,
@@ -355,16 +398,45 @@ function OrderDetailAccordionPanel({
   shops: ConnectedShop[];
   systemFees: SystemFee[];
 }) {
+  const wooCustomer = order.channel === 'woocommerce' ? resolveWooCustomerInfo(order) : null;
   return (
     <div className="px-4 pb-4 pt-3 border-t border-slate-100 bg-slate-50/80 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h4 className="text-xs font-extrabold text-slate-800">Chi tiết đơn #{order.orderSn}</h4>
         <p className="text-[10px] text-slate-500">
-          {order.channel === 'manual' ? 'Đơn ngoài sàn' : order.channel.toUpperCase()}
+          {order.channel === 'manual' ? 'Đơn ngoài sàn' : order.channel === 'woocommerce' ? 'Đơn trên web' : order.channel.toUpperCase()}
           {' · '}
           {resolveOrderShopDisplayName(order, shops)}
         </p>
       </div>
+
+      {wooCustomer && (
+        <div className="bg-white p-4 rounded-2xl border border-indigo-100 space-y-1.5 text-xs">
+          <h4 className="text-[10px] font-bold text-indigo-700 uppercase tracking-wider mb-1">Thông tin khách hàng (Web)</h4>
+          <div className="flex justify-between gap-2">
+            <span className="text-gray-400">Tên:</span>
+            <span className="font-bold text-gray-900 text-right">{wooCustomer.name}</span>
+          </div>
+          {wooCustomer.phone && (
+            <div className="flex justify-between gap-2">
+              <span className="text-gray-400">SĐT:</span>
+              <span className="font-mono font-semibold text-gray-800">{wooCustomer.phone}</span>
+            </div>
+          )}
+          {wooCustomer.email && (
+            <div className="flex justify-between gap-2">
+              <span className="text-gray-400">Email:</span>
+              <span className="font-medium text-gray-700 text-right break-all">{wooCustomer.email}</span>
+            </div>
+          )}
+          {wooCustomer.address && (
+            <div className="flex justify-between gap-2">
+              <span className="text-gray-400 shrink-0">Địa chỉ:</span>
+              <span className="font-medium text-gray-800 text-right leading-snug">{wooCustomer.address}</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {getOrderWaybillCode(order) && (
         <div className="bg-white p-4 rounded-2xl border border-indigo-100">
@@ -428,7 +500,8 @@ type OrderTab =
   | 'return_requests'
   | 'cancel_returns'
   | 'received_cancel_returns'
-  | 'order_products';
+  | 'order_products'
+  | 'web_orders';
 
 export type OrdersSubTabId = OrderTab;
 
@@ -446,6 +519,7 @@ const ORDER_TAB_SET = new Set<string>([
   'cancel_returns',
   'received_cancel_returns',
   'order_products',
+  'web_orders',
 ]);
 
 const ORDER_TAB_ALIASES: Record<string, OrderTab> = {
@@ -459,6 +533,9 @@ const ORDER_TAB_ALIASES: Record<string, OrderTab> = {
   'return_requests': 'return_requests',
   'don-huy-hoan': 'cancel_returns',
   'da-nhan-huy-hoan': 'received_cancel_returns',
+  'don-tren-web': 'web_orders',
+  'web_orders': 'web_orders',
+  'woocommerce': 'web_orders',
 };
 
 function normalizeOrderTab(raw: string | null | undefined): OrderTab | null {
@@ -1023,6 +1100,66 @@ export default function OrderManager({
     }
   };
 
+  /** Cập nhật trạng thái đơn WooCommerce (nội bộ + API Woo) */
+  const handleWooOrderStatusAction = useCallback(
+    async (order: Order, action: 'completed' | 'on-hold') => {
+      const orderKey = String(order.id || order.orderSn || order.wooOrderId || '').trim();
+      if (!orderKey) {
+        showToast('Không xác định được mã đơn WooCommerce', 4000);
+        return;
+      }
+      if (wooActionLoadingId) return;
+      setWooActionLoadingId(orderKey);
+      const internalStatus = action === 'completed' ? 'completed' : 'cancelled';
+      const label = action === 'completed' ? 'Đã xử lý' : 'Ngưng xử lý';
+      try {
+        // Optimistic UI
+        const updated = orders.map((o) =>
+          o.id === order.id || o.orderSn === order.orderSn
+            ? { ...o, status: internalStatus as Order['status'], wooStatus: action }
+            : o,
+        );
+        onUpdateOrders(updated);
+
+        const token = localStorage.getItem('admin_token') || '';
+        const res = await fetch('/api/woocommerce/orders/update-status', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            orderId: order.wooOrderId || order.id || order.orderSn,
+            internalStatus: action === 'completed' ? 'completed' : 'on-hold',
+            shopId: order.shopId,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.success === false) {
+          showToast(`${label} thất bại: ${data.message || data.error || 'Lỗi không xác định'}`, 6000);
+          // Revert optimistic if API failed — keep local status anyway as "processed intent"
+          return;
+        }
+        showToast(`${label} thành công — đơn #${order.orderSn}`, 4000);
+        onAddLog({
+          id: `log-woo-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          channel: 'woocommerce',
+          type: 'stock_sync',
+          status: 'success',
+          message: `${label} đơn web #${order.orderSn} → ${action}`,
+        });
+      } catch (err) {
+        console.error('[Woo Action]', err);
+        showToast(`${label} lỗi kết nối`, 5000);
+      } finally {
+        setWooActionLoadingId(null);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [orders, onUpdateOrders, onAddLog, wooActionLoadingId],
+  );
+
   /** Trigger WooCommerce orders sync */
   const triggerWooSync = async (lookbackDays = 7) => {
     if (isSyncingRef.current || isSyncing) return;
@@ -1113,6 +1250,7 @@ export default function OrderManager({
       'return_requests',
       'cancel_returns',
       'received_cancel_returns',
+      'web_orders',
     ]);
     if (tabFetchTabs.has(activeSubTab)) {
       setCurrentPage(1);
@@ -2305,6 +2443,8 @@ export default function OrderManager({
   const [showShopeeDropdown, setShowShopeeDropdown] = useState(false);
   const [showTikTokDropdown, setShowTikTokDropdown] = useState(false);
   const [showWooDropdown, setShowWooDropdown] = useState(false);
+  /** Loading state for WooCommerce action buttons (Đã xử lý / Ngưng xử lý) */
+  const [wooActionLoadingId, setWooActionLoadingId] = useState<string | null>(null);
   
   // Search / sort
   const [selectedSort] = useState<'newest' | 'oldest' | 'highest_value'>('newest');
@@ -4230,14 +4370,17 @@ export default function OrderManager({
       if (!isPendingConfirmOrder(order)) return false;
     } else if (activeSubTab === 'unprocessed') {
       if (!matchesUnprocessedPickupTab(order) || isPendingConfirmOrder(order)) return false;
+    } else if (activeSubTab === 'web_orders') {
+      // Tab "Đơn trên web" — chỉ WooCommerce, bỏ qua filter status sàn
+      if (order.channel !== 'woocommerce') return false;
     } else if (activeSubTab === 'shipping') {
       if (!matchesShippingTab(order)) return false;
     } else if (activeSubTab !== 'all' && activeSubTab !== 'order_products') {
       if (order.status !== activeSubTab) return false;
     }
 
-    // 2. Platform filter
-    if (selectedPlatform !== 'all') {
+    // 2. Platform filter (tab web_orders đã ép channel=woocommerce ở trên)
+    if (activeSubTab !== 'web_orders' && selectedPlatform !== 'all') {
       if (selectedPlatform === 'lazada') return false;
       if (order.channel !== selectedPlatform) return false;
     }
@@ -4245,7 +4388,7 @@ export default function OrderManager({
     // 3. Shop Filter
     if (!matchesSelectedShop(order)) return false;
 
-    // 4. Search query
+      // 4. Search query
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       const matchSn = String(order.orderSn || '').toLowerCase().includes(q);
@@ -4258,9 +4401,18 @@ export default function OrderManager({
         ? order.internalTrackingCode.toLowerCase().includes(q)
         : false;
       const matchProduct = (order.items || []).some((it) =>
-        String(it.productTitle || '').toLowerCase().includes(q),
+        String(it.productTitle || it.name || '').toLowerCase().includes(q),
       );
-      if (!matchSn && !matchTracking && !matchInternal && !matchProduct) return false;
+      const cust = order.channel === 'woocommerce' ? resolveWooCustomerInfo(order) : null;
+      const matchCustomer = cust
+        ? [cust.name, cust.phone, cust.email, cust.address].some((v) =>
+            String(v || '').toLowerCase().includes(q),
+          )
+        : Boolean(
+            (order.customerName && order.customerName.toLowerCase().includes(q)) ||
+              (order.customerPhone && order.customerPhone.toLowerCase().includes(q)),
+          );
+      if (!matchSn && !matchTracking && !matchInternal && !matchProduct && !matchCustomer) return false;
     }
 
     // 5. Lọc Đã in / Chưa in theo cờ isPrinted (cùng SSOT với badge)
@@ -5857,6 +6009,25 @@ export default function OrderManager({
           </span>
         </button>
 
+        <button
+          onClick={() => {
+            setActiveSubTab('web_orders');
+            setSelectedPlatform('woocommerce');
+            setSelectedShopId('all');
+          }}
+          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+            activeSubTab === 'web_orders'
+              ? 'border-indigo-600 text-indigo-700 font-extrabold bg-indigo-50/40'
+              : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+          }`}
+        >
+          <span className="w-4 h-4 bg-indigo-600 text-white font-extrabold text-[9px] rounded flex items-center justify-center shrink-0">W</span>
+          <span>Đơn trên web</span>
+          <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200">
+            {orders.filter((o) => o.channel === 'woocommerce').length}
+          </span>
+        </button>
+
       </div>
 
       {activeSubTab === 'cancel_returns' && (
@@ -5906,6 +6077,23 @@ export default function OrderManager({
           Đối soát kiện hủy/hoàn đã quét nhận về kho (cờ nội bộ{' '}
           <code className="font-mono text-[11px]">RETURN_RECEIVED</code> /{' '}
           <code className="font-mono text-[11px]">CANCELLED_STORED</code>). Dữ liệu được lưu trữ vĩnh viễn, xóa thủ công khi cần.
+        </div>
+      )}
+
+      {activeSubTab === 'web_orders' && (
+        <div className="bg-indigo-50/80 border border-indigo-100 rounded-2xl px-4 py-3 text-xs text-indigo-950 font-semibold leading-relaxed flex flex-wrap items-center justify-between gap-3">
+          <span>
+            Đơn hàng từ website WooCommerce — hiển thị thông tin khách hàng (tên, SĐT, địa chỉ) và nút xử lý trạng thái.
+          </span>
+          <button
+            type="button"
+            onClick={() => void triggerWooSync(14)}
+            disabled={isSyncing || ordersLoading}
+            className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer disabled:opacity-60 inline-flex items-center gap-1.5"
+          >
+            {isSyncing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+            Đồng bộ WooCommerce
+          </button>
         </div>
       )}
 
@@ -5983,7 +6171,7 @@ export default function OrderManager({
       )}
 
       {/* 5. BULK ACTION BAR — chỉ giữ In đơn hàng loạt + Xác nhận đơn hàng loạt */}
-      {activeSubTab !== 'order_products' && (
+      {activeSubTab !== 'order_products' && activeSubTab !== 'web_orders' && (
       <div className="om-orders-mobile-hide-bulk-bar bg-slate-50 border border-slate-200/80 p-3 max-md:p-2.5 rounded-2xl flex items-center justify-between gap-4 max-md:gap-2">
         <div className="flex items-center gap-3 flex-wrap">
           <button 
@@ -6272,6 +6460,15 @@ export default function OrderManager({
                       <th className="p-4 text-center w-32">Trạng thái</th>
                       <th className="p-4 w-48">Mã vận đơn chiều hoàn</th>
                     </>
+                  ) : activeSubTab === 'web_orders' ? (
+                    <>
+                      <th className="p-4 w-40">Mã đơn hàng</th>
+                      <th className="p-4 w-32">Ngày tạo</th>
+                      <th className="p-4 w-[280px]">Sản phẩm</th>
+                      <th className="p-4 text-right w-36">Tổng tiền</th>
+                      <th className="p-4 text-center w-32">Trạng thái</th>
+                      <th className="p-4 text-center w-56">Khách hàng &amp; Thao tác</th>
+                    </>
                   ) : (
                     <>
                       <th className="p-4 w-44">Mã vận đơn &amp; Sàn</th>
@@ -6400,7 +6597,9 @@ export default function OrderManager({
                                 ? 'bg-orange-50 text-orange-700 border border-orange-200'
                                 : order.channel === 'tiktok'
                                   ? 'bg-zinc-100 text-zinc-800 border border-zinc-200'
-                                  : 'bg-blue-50 text-blue-700 border border-blue-200'
+                                  : order.channel === 'woocommerce'
+                                    ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                                    : 'bg-blue-50 text-blue-700 border border-blue-200'
                             }`}
                             title={resolveOrderShopDisplayName(order, shops)}
                           >
@@ -6412,6 +6611,8 @@ export default function OrderManager({
                             <Barcode className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                             <span className="truncate max-w-[160px]">{getOrderWaybillCode(order)}</span>
                           </div>
+                        ) : order.channel === 'woocommerce' ? (
+                          <span className="text-[10px] text-indigo-600 font-semibold italic">Web order</span>
                         ) : (
                           <span className="text-xs text-gray-400 italic font-medium">Chưa có mã vận đơn</span>
                         )}
@@ -6421,18 +6622,20 @@ export default function OrderManager({
                       {/* Created Time */}
                       <td className="p-4 text-gray-500 font-medium">
                         {new Date(order.date).toLocaleDateString('vi-VN')}
-                        <p className="text-[10px] text-gray-400 font-mono mt-0.5">08:12</p>
+                        <p className="text-[10px] text-gray-400 font-mono mt-0.5">{new Date(order.date).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}</p>
                       </td>
 
                       {/* Order items list — thumbnail + full title + quantity */}
                       <td className="p-4 w-[280px]">
                         <div className="space-y-2">
-                          {(order.items || []).map((item, idx) => (
+                          {(order.items || []).map((item, idx) => {
+                            const itemTitle = item.productTitle || (item as { name?: string }).name || 'Sản phẩm';
+                            return (
                             <div key={idx} className="flex items-center gap-2">
                               {item.productImage ? (
                                 <img
                                   src={item.productImage}
-                                  alt={item.productTitle}
+                                  alt={itemTitle}
                                   className="w-10 h-10 rounded-lg object-cover border border-gray-200 shrink-0 bg-gray-50"
                                 />
                               ) : (
@@ -6441,15 +6644,16 @@ export default function OrderManager({
                                 </div>
                               )}
                               <div className="min-w-0">
-                                <p className="text-[11px] text-gray-700 font-semibold leading-snug line-clamp-2" title={item.productTitle}>
-                                  {item.productTitle}
+                                <p className="text-[11px] text-gray-700 font-semibold leading-snug line-clamp-2" title={itemTitle}>
+                                  {itemTitle}
                                 </p>
                                 <span className="text-[9px] bg-blue-50 text-blue-600 border border-blue-100 px-1 py-0.2 rounded font-extrabold inline-block mt-0.5">
                                   x{item.quantity}
                                 </span>
                               </div>
                             </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </td>
 
@@ -6483,7 +6687,51 @@ export default function OrderManager({
                       {/* Specific Single Actions */}
                       <td className="p-4 text-center">
                         <div className="flex flex-wrap items-center justify-center gap-1.5">
-                          {order.status === 'pending_confirm' && (
+                          {/* WooCommerce dedicated actions — tab "Đơn trên web" hoặc channel woocommerce */}
+                          {(activeSubTab === 'web_orders' || order.channel === 'woocommerce') && (
+                            <>
+                              {(() => {
+                                const cust = resolveWooCustomerInfo(order);
+                                return (
+                                  <div className="w-full text-left mb-1.5 space-y-0.5 px-1">
+                                    <p className="text-[11px] font-extrabold text-slate-800 truncate" title={cust.name}>{cust.name}</p>
+                                    {cust.phone && <p className="text-[10px] font-mono text-slate-600">{cust.phone}</p>}
+                                    {cust.address && <p className="text-[9px] text-slate-500 line-clamp-2 leading-snug" title={cust.address}>{cust.address}</p>}
+                                  </div>
+                                );
+                              })()}
+                              <button
+                                type="button"
+                                disabled={wooActionLoadingId === (order.id || order.orderSn) || order.status === 'completed'}
+                                onClick={() => void handleWooOrderStatusAction(order, 'completed')}
+                                className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] rounded-lg transition-all disabled:opacity-50 inline-flex items-center gap-1"
+                                title="Đánh dấu đã xử lý / completed"
+                              >
+                                {wooActionLoadingId === (order.id || order.orderSn) ? (
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : (
+                                  <CheckCircle2 className="w-3 h-3" />
+                                )}
+                                Đã xử lý
+                              </button>
+                              <button
+                                type="button"
+                                disabled={wooActionLoadingId === (order.id || order.orderSn) || order.status === 'cancelled'}
+                                onClick={() => void handleWooOrderStatusAction(order, 'on-hold')}
+                                className="px-2.5 py-1.5 bg-rose-500 hover:bg-rose-600 text-white font-bold text-[10px] rounded-lg transition-all disabled:opacity-50 inline-flex items-center gap-1"
+                                title="Ngưng xử lý / on-hold"
+                              >
+                                {wooActionLoadingId === (order.id || order.orderSn) ? (
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : (
+                                  <XCircle className="w-3 h-3" />
+                                )}
+                                Ngưng xử lý
+                              </button>
+                            </>
+                          )}
+
+                          {order.status === 'pending_confirm' && order.channel !== 'woocommerce' && (
                             <button
                               onClick={() => {
                                 const updated = orders.map(o => o.id === order.id ? { ...o, status: 'unprocessed' as const } : o);
@@ -6691,7 +6939,9 @@ export default function OrderManager({
                               ? 'bg-orange-50 text-orange-700 border border-orange-200'
                               : order.channel === 'tiktok'
                                 ? 'bg-zinc-100 text-zinc-800 border border-zinc-200'
-                                : 'bg-blue-50 text-blue-700 border border-blue-200'
+                                : order.channel === 'woocommerce'
+                                  ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                                  : 'bg-blue-50 text-blue-700 border border-blue-200'
                           }`}
                           title={resolveOrderShopDisplayName(order, shops)}
                         >
@@ -6776,7 +7026,46 @@ export default function OrderManager({
                     )}
 
                     <div className="flex items-center gap-1 flex-wrap justify-end">
-                      {order.status === 'pending_confirm' && (
+                      {/* WooCommerce mobile card — customer info + action buttons */}
+                      {(activeSubTab === 'web_orders' || order.channel === 'woocommerce') && (
+                        <>
+                          <div className="w-full text-left mb-1.5 px-1 space-y-0.5">
+                            <p className="text-[11px] font-extrabold text-slate-800 truncate">
+                              {(() => { const c = resolveWooCustomerInfo(order); return c.name; })()}
+                            </p>
+                            {(() => { const c = resolveWooCustomerInfo(order); return c.phone ? <p className="text-[10px] font-mono text-slate-600">{c.phone}</p> : null; })()}
+                            {(() => { const c = resolveWooCustomerInfo(order); return c.address ? <p className="text-[9px] text-slate-500 line-clamp-2 leading-snug">{c.address}</p> : null; })()}
+                          </div>
+                          <button
+                            type="button"
+                            disabled={wooActionLoadingId === (order.id || order.orderSn) || order.status === 'completed'}
+                            onClick={() => void handleWooOrderStatusAction(order, 'completed')}
+                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all disabled:opacity-50 inline-flex items-center gap-1"
+                          >
+                            {wooActionLoadingId === (order.id || order.orderSn) ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                            )}
+                            Đã xử lý
+                          </button>
+                          <button
+                            type="button"
+                            disabled={wooActionLoadingId === (order.id || order.orderSn) || order.status === 'cancelled'}
+                            onClick={() => void handleWooOrderStatusAction(order, 'on-hold')}
+                            className="px-3 py-1.5 bg-rose-500 hover:bg-rose-600 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all disabled:opacity-50 inline-flex items-center gap-1"
+                          >
+                            {wooActionLoadingId === (order.id || order.orderSn) ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <XCircle className="w-3.5 h-3.5" />
+                            )}
+                            Ngưng xử lý
+                          </button>
+                        </>
+                      )}
+
+                      {order.status === 'pending_confirm' && order.channel !== 'woocommerce' && (
                         <button
                           onClick={() => {
                             const updated = orders.map(o => o.id === order.id ? { ...o, status: 'unprocessed' as const } : o);

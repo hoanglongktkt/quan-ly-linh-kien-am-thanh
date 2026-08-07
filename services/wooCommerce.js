@@ -82,10 +82,13 @@ function mapWooLineItem(item) {
   return {
     productId: String(item.product_id || ""),
     name: item.name || "",
+    productTitle: item.name || "",
+    modelName: item.name || "",
     quantity: Number(item.quantity || 0),
     price: Number(item.price || item.subtotal / (item.quantity || 1) || 0),
     total: Number(item.total || 0),
     sku: item.sku || "",
+    productImage: item.image?.src || item.image_url || "",
   };
 }
 
@@ -118,6 +121,24 @@ export function mapWooOrderToInternal(wooOrder, shopConfig) {
     ? new Date(wooOrder.date_modified).toISOString()
     : orderDate;
 
+  const shippingAddressStr = [
+    shipping.address_1,
+    shipping.address_2,
+    shipping.city,
+    shipping.state,
+    shipping.postcode,
+    shipping.country,
+  ].filter(Boolean).join(", ");
+  const billingAddressStr = [
+    billing.address_1,
+    billing.address_2,
+    billing.city,
+    billing.state,
+    billing.postcode,
+    billing.country,
+  ].filter(Boolean).join(", ");
+  const customerAddress = shippingAddressStr || billingAddressStr || "";
+
   return {
     id,
     orderSn,
@@ -130,27 +151,38 @@ export function mapWooOrderToInternal(wooOrder, shopConfig) {
     customerName,
     customerPhone: billing.phone || shipping.phone || "",
     customerEmail: billing.email || "",
-    shippingAddress: [
-      shipping.address_1,
-      shipping.address_2,
-      shipping.city,
-      shipping.state,
-      shipping.postcode,
-      shipping.country,
-    ].filter(Boolean).join(", "),
-    billingAddress: [
-      billing.address_1,
-      billing.address_2,
-      billing.city,
-      billing.state,
-      billing.postcode,
-      billing.country,
-    ].filter(Boolean).join(", "),
+    customerAddress,
+    shippingAddress: shippingAddressStr,
+    billingAddress: billingAddressStr,
+    billing: {
+      first_name: billing.first_name || "",
+      last_name: billing.last_name || "",
+      phone: billing.phone || "",
+      email: billing.email || "",
+      address_1: billing.address_1 || "",
+      address_2: billing.address_2 || "",
+      city: billing.city || "",
+      state: billing.state || "",
+      postcode: billing.postcode || "",
+      country: billing.country || "",
+    },
+    shipping: {
+      first_name: shipping.first_name || "",
+      last_name: shipping.last_name || "",
+      phone: shipping.phone || "",
+      address_1: shipping.address_1 || "",
+      address_2: shipping.address_2 || "",
+      city: shipping.city || "",
+      state: shipping.state || "",
+      postcode: shipping.postcode || "",
+      country: shipping.country || "",
+    },
     lineItems,
     items: lineItems,
     itemsCount: lineItems.reduce((s, i) => s + i.quantity, 0),
     totalAmount,
     total: totalAmount,
+    revenue: totalAmount,
     subtotal: Number(wooOrder.subtotal || 0),
     shippingFee: Number(wooOrder.shipping_total || 0),
     discount: Number(wooOrder.discount_total || 0),
@@ -160,6 +192,7 @@ export function mapWooOrderToInternal(wooOrder, shopConfig) {
     wooStatus: wooOrder.status,
     // Avoid shopee-specific fields so bulkUpsert doesn't mis-tag
     shopee_order_status: null,
+    date: orderDate,
     orderDate,
     dateModified,
     currency: wooOrder.currency || "VND",
@@ -417,6 +450,53 @@ export async function updateWooProductStockPrice(shopConfig, wooProductId, updat
   }
 
   return { success: true, message: `Cập nhật WooCommerce ID ${wooProductId} thành công` };
+}
+
+/**
+ * Update WooCommerce order status via REST API.
+ * @param {object} shopConfig - { wooUrl, shopId/consumerKey, apiSecret/apiKey }
+ * @param {string|number} wooOrderId - WooCommerce order ID
+ * @param {string} status - Woo status: completed | on-hold | cancelled | processing | pending
+ * @returns {Promise<{success: boolean, message: string, wooStatus?: string}>}
+ */
+export async function updateWooOrderStatus(shopConfig, wooOrderId, status) {
+  const { wooUrl, consumerKey, consumerSecret } = resolveWooCredentials(shopConfig);
+  const orderId = String(wooOrderId || "").trim();
+  const nextStatus = String(status || "").trim().toLowerCase();
+
+  if (!wooUrl || !consumerKey) {
+    return { success: false, message: "Thiếu wooUrl hoặc Consumer Key" };
+  }
+  if (!consumerSecret) {
+    return { success: false, message: "Thiếu Consumer Secret" };
+  }
+  if (!orderId) {
+    return { success: false, message: "Thiếu WooCommerce order ID" };
+  }
+  if (!nextStatus) {
+    return { success: false, message: "Thiếu trạng thái WooCommerce" };
+  }
+
+  const baseUrl = buildWooUrl(wooUrl, `orders/${orderId}`);
+  const url = `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}consumer_key=${encodeURIComponent(consumerKey)}&consumer_secret=${encodeURIComponent(consumerSecret)}`;
+  const auth = buildWooAuthHeader(consumerKey, consumerSecret);
+
+  const result = await wooFetch(url, {
+    method: "PUT",
+    headers: { Authorization: auth },
+    body: JSON.stringify({ status: nextStatus }),
+  });
+
+  if (!result.ok) {
+    const errMsg = result.data?.message || result.data?.code || `HTTP ${result.status}`;
+    return { success: false, message: `Cập nhật trạng thái WooCommerce thất bại: ${errMsg}` };
+  }
+
+  return {
+    success: true,
+    wooStatus: result.data?.status || nextStatus,
+    message: `Đã cập nhật đơn Woo #${orderId} → ${result.data?.status || nextStatus}`,
+  };
 }
 
 /**

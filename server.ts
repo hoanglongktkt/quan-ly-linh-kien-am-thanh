@@ -339,7 +339,8 @@ import {
 import {
   initWooCommerceOrdersController,
   syncWooCommerceOrders,
-  testWooCommerceConnection as testWooCommerceConnectionHandler,
+  testWooCommerceConnectionHandler,
+  updateWooCommerceOrderStatus,
 } from "./controllers/wooCommerceOrdersController.js";
 import {
   publishProductToWooCommerce,
@@ -17515,8 +17516,55 @@ async function startServer() {
       }
       return n;
     },
+    findOrderByKey: async (key: string) => {
+      const k = String(key || "").trim();
+      if (!k) return null;
+      try {
+        const rows = await loadOrdersForShipScoped(
+          [k, k.startsWith("woo-") ? k : `woo-${k}`],
+          [k.replace(/^woo-/i, ""), k.startsWith("WOO-") ? k : `WOO-${k.replace(/^woo-/i, "")}`],
+        );
+        return rows?.[0] || null;
+      } catch {
+        return null;
+      }
+    },
+    patchOrderInStore: async (key: string, patch: Record<string, unknown>) => {
+      const k = String(key || "").trim();
+      if (!k) return null;
+      try {
+        const orders = loadOrders();
+        let idx = orders.findIndex(
+          (o: any) =>
+            String(o.id || "") === k ||
+            String(o.orderSn || "") === k ||
+            String(o.wooOrderId || "") === k.replace(/^woo-/i, "") ||
+            String(o.id || "") === `woo-${k.replace(/^woo-/i, "")}`,
+        );
+        if (idx < 0) {
+          const hit = await loadOrdersForShipScoped(
+            [k, k.startsWith("woo-") ? k : `woo-${k}`],
+            [k.replace(/^woo-/i, "")],
+          );
+          if (hit?.[0]) {
+            orders.push({ ...hit[0], ...patch });
+            idx = orders.length - 1;
+          }
+        } else {
+          orders[idx] = { ...orders[idx], ...patch };
+        }
+        if (idx >= 0) {
+          await persistChangedOrdersPatch([orders[idx]]);
+          return orders[idx];
+        }
+      } catch (err: any) {
+        console.warn("[WooCommerce] patchOrderInStore:", err?.message || err);
+      }
+      return null;
+    },
   });
   app.post("/api/woocommerce/orders/sync", authMiddleware, syncWooCommerceOrders);
+  app.post("/api/woocommerce/orders/update-status", authMiddleware, updateWooCommerceOrderStatus);
   app.get("/api/woocommerce/test-connection", authMiddleware, testWooCommerceConnectionHandler);
 
   // --- Shopee logistics: "Chuẩn bị hàng" (ship_order) ------------------------

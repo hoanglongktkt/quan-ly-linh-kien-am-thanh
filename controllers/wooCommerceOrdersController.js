@@ -5,6 +5,8 @@
 import {
   fetchWooCommerceOrders,
   resolveWooCredentials,
+  updateWooOrderStatus,
+  mapWooOrderToInternal,
 } from "../services/wooCommerce.js";
 
 let deps = {
@@ -13,10 +15,31 @@ let deps = {
     throw new Error("persistWooOrdersToStore not initialized — set deps in initWooCommerceOrdersController");
   },
   isMongoReady: () => false,
+  findOrderByKey: async () => null,
+  patchOrderInStore: async () => null,
 };
 
 export function initWooCommerceOrdersController(partial) {
   deps = { ...deps, ...partial };
+}
+
+/**
+ * Map internal order status → WooCommerce API status string.
+ */
+function mapInternalStatusToWoo(internalStatus) {
+  const map = {
+    completed: "completed",
+    "on-hold": "on-hold",
+    cancelled: "cancelled",
+    pending_confirm: "pending",
+    pending_pack: "processing",
+    processing: "processing",
+    unprocessed: "processing",
+    processed: "processing",
+    return_pending: "refunded",
+    return_received: "refunded",
+  };
+  return map[internalStatus] || "on-hold";
 }
 
 /**
@@ -178,7 +201,7 @@ export async function syncWooCommerceOrders(req, res) {
  * Test connection to a specific WooCommerce shop.
  * Query: ?shopId=
  */
-export async function testWooCommerceConnection(req, res) {
+export async function testWooCommerceConnectionHandler(req, res) {
   try {
     const { testWooCommerceConnection: testConn } = await import("../services/wooCommerce.js");
     const targetShopId = req.query?.shopId
@@ -215,3 +238,83 @@ export async function testWooCommerceConnection(req, res) {
     });
   }
 }
+
+/**
+ * POST /api/woocommerce/orders/update-status
+ * Update WooCommerce order status in both local store and WooCommerce API.
+ * Body: { orderId (internal id/wooOrderId/wooId), internalStatus (completed | on-hold | cancelled), shopId? }
+ */
+export async function updateWooCommerceOrderStatus(req, res) {
+  try {
+    const { orderId, internalStatus, shopId } = req.body || {};
+
+    if (!orderId) {
+      return res.status(400).json({ success: false, error: "missing_order_id", message: "Thiếu orderId" });
+    }
+    if (!internalStatus) {
+      return res.status(400).json({ success: false, error: "missing_status", message: "Thiếu trạng thái" });
+    }
+
+    // 1. Load channel settings to find the WooCommerce shop config
+    const settings = deps.loadChannelSettings();
+    const shops = (settings?.shops || []).filter(
+      (s) => s.platform === "woocommerce" && s.connected !== false
+    );
+
+    // Find shop by shopId param or from order's stored shopId
+    let targetShop = null;
+    if (shopId) {
+      targetShop = shops.find((s) => String(s.shopId || s.id || "") === String(shopId).trim());
+    }
+    // If no shopId param, try to find from the order in store
+    if (!targetShop && orderId) {
+      const order = await deps.findOrderByKey(orderId);
+      if (order && order.shopId) {
+        targetShop = shops.find((s) => String(s.shopId || s.id || "") === String(order.shopId).trim());
+      }
+      // Fallback: use first connected WooCommerce shop
+      if (!targetShop) targetShop = shops[0];
+    }
+
+    if (!targetShop) {
+      return res.status(404).json({
+        success: false,
+        error: "no_shop",
+        message: "Không tìm thấy shop WooCommerce để cập nhật",
+      });
+    }
+
+    const shopConfig = resolveWooShopConfig(targetShop);
+    const wooOrderId = String(orderId).replace(/^woo-/i, "").replace(/^WOO-/i, "").trim();
+
+    // 2. Update WooCommerce API first (so it's the source of truth)
+    const wooResult = await updateWooOrderStatus(shopConfig, wooOrderId, mapInternalStatusToWoo(internalStatus));
+    if (!wooResult.success) {
+      return res.status(400).json({
+        success: false,
+        error: "woo_api_error",
+        message: `Lỗi cập nhật WooCommerce: ${wooResult.message}`,
+      });
+    }
+
+    // 3. Update local store (MongoDB + orders.json)
+    if (deps.patchOrderInStore) {
+      await deps.patchOrderInStore(orderId, { status: internalStatus, wooStatus: wooResult.wooStatus });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Đã cập nhật đơn WooCommerce #${wooOrderId} → ${internalStatus}`,
+      wooStatus: wooResult.wooStatus,
+      internalStatus,
+    });
+  } catch (err) {
+    console.error("[WooCommerce UpdateStatus] Error:", err?.message || err);
+    return res.status(500).json({
+      success: false,
+      error: "fatal",
+      message: err?.message || "Lỗi không xác định",
+    });
+  }
+}
+

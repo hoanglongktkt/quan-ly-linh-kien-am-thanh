@@ -140,8 +140,14 @@ export interface Order {
   shopName?: string; // Cache shopName to display which shop
   customerName?: string;
   customerPhone?: string;
+  customerEmail?: string;
   customerAddress?: string;
-  shippingAddress?: {
+  /** WooCommerce raw order id (số) */
+  wooOrderId?: string;
+  wooOrderNumber?: string;
+  wooStatus?: string;
+  billingAddress?: string;
+  shippingAddress?: string | {
     province: string;
     provinceCode?: string;
     district: string;
@@ -150,6 +156,29 @@ export interface Order {
     wardCode?: string;
     street: string;
     fullAddress?: string;
+  };
+  billing?: {
+    first_name?: string;
+    last_name?: string;
+    phone?: string;
+    email?: string;
+    address_1?: string;
+    address_2?: string;
+    city?: string;
+    state?: string;
+    postcode?: string;
+    country?: string;
+  };
+  shipping?: {
+    first_name?: string;
+    last_name?: string;
+    phone?: string;
+    address_1?: string;
+    address_2?: string;
+    city?: string;
+    state?: string;
+    postcode?: string;
+    country?: string;
   };
   carrier?: 'self' | 'ghn' | 'spx';
   /** Tên ĐVVC từ Shopee (shipping_carrier / package_list) — VD: SPX Express, Giao Hàng Nhanh */
