@@ -238,6 +238,8 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
   const [logisticChannels, setLogisticChannels] = useState<LogisticChannel[]>([]);
   const [loadingChannels, setLoadingChannels] = useState(false);
   const [channelError, setChannelError] = useState('');
+  /** logistic_id[] bật theo từng shop_id */
+  const [perShopLogistics, setPerShopLogistics] = useState<Record<string, number[]>>({});
 
   // Hàng đặt trước
   const [isPreOrder, setIsPreOrder] = useState(false);
@@ -326,14 +328,27 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
       });
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'Không lấy được kênh vận chuyển');
-      setLogisticChannels(data.channels || []);
+      const channels: LogisticChannel[] = data.channels || [];
+      setLogisticChannels(channels);
+      // Seed perShopLogistics cho tất cả shop Shopee đang chọn (mặc định bật theo API)
+      const defaultIds = channels.filter((c) => c.enabled).map((c) => c.logistic_id);
+      setPerShopLogistics((prev) => {
+        const next = { ...prev };
+        for (const s of availableShops) {
+          if (s.platform !== 'shopee' || !selectedShops.includes(s.id)) continue;
+          const key = s.shopId || s.id;
+          if (!next[key]?.length) next[key] = [...defaultIds];
+          if (!next[s.id]?.length) next[s.id] = [...defaultIds];
+        }
+        return next;
+      });
     } catch (err: any) {
       setChannelError(err.message);
       setLogisticChannels([]);
     } finally {
       setLoadingChannels(false);
     }
-  }, []);
+  }, [availableShops, selectedShops]);
 
   useEffect(() => {
     if (primaryShopeeShopId) {
@@ -430,16 +445,17 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
   );
 
   const buildPayload = useCallback((): MultiChannelListingPayload => {
-    const enabledLogs = logisticChannels.filter((c) => c.enabled).map((c) => c.logistic_id);
-    // perShopVariants: clone variants cho mỗi gian (cùng dữ liệu base, shop có thể chỉnh riêng sau)
+    const fallbackLogs = logisticChannels.filter((c) => c.enabled).map((c) => c.logistic_id);
+    // perShopVariants: clone variants cho mỗi gian
     const perShopVariants: Record<string, ListingVariant[]> = {};
-    const perShopLogistics: Record<string, number[]> = {};
+    const outLogistics: Record<string, number[]> = {};
     for (const shop of availableShops.filter((s) => selectedShops.includes(s.id))) {
       const key = shop.shopId || shop.id;
       perShopVariants[key] = variants.map((v) => ({ ...v }));
       perShopVariants[shop.id] = variants.map((v) => ({ ...v }));
-      perShopLogistics[key] = [...enabledLogs];
-      perShopLogistics[shop.id] = [...enabledLogs];
+      const shopLogs = perShopLogistics[key] || perShopLogistics[shop.id] || fallbackLogs;
+      outLogistics[key] = [...shopLogs];
+      outLogistics[shop.id] = [...shopLogs];
     }
     return {
       selectedShops,
@@ -462,7 +478,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
       images,
       variants,
       perShopVariants,
-      perShopLogistics,
+      perShopLogistics: outLogistics,
       tierName: tierAttrs[0]?.name || 'Phân loại',
       descriptionHtml,
       packageWeight,
@@ -471,7 +487,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
       packageHeight,
       shippingMethod,
       perVariationWeight,
-      enabledLogistics: enabledLogs,
+      enabledLogistics: fallbackLogs,
       isPreOrder,
       daysToShip,
     };
@@ -479,7 +495,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
     selectedShops, title, shopeeCategory, shopeeBrand, shopeeBrandId, buildShopeeAttributesPayload, medicineId,
     lazadaCategory, lazadaBrand, tiktokCategory, tiktokBrand, images, variants, descriptionHtml,
     packageWeight, packageLength, packageWidth, packageHeight, shippingMethod, perVariationWeight,
-    logisticChannels, isPreOrder, daysToShip, availableShops, tierAttrs,
+    logisticChannels, perShopLogistics, isPreOrder, daysToShip, availableShops, tierAttrs,
   ]);
 
   const handleInsertTag = (val: string) => {
@@ -927,12 +943,25 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
     return dims[0] <= maxDims[0] && dims[1] <= maxDims[1] && dims[2] <= maxDims[2];
   };
 
-  const toggleChannel = (logisticId: number) => {
+  const isChannelEnabledForShop = (shopKey: string, logisticId: number): boolean => {
+    const ids = perShopLogistics[shopKey];
+    if (ids) return ids.includes(logisticId);
+    return logisticChannels.find((c) => c.logistic_id === logisticId)?.enabled ?? false;
+  };
+
+  const toggleChannel = (shopKey: string, shopId: string, logisticId: number) => {
+    setPerShopLogistics((prev) => {
+      const current = prev[shopKey] || prev[shopId] ||
+        logisticChannels.filter((c) => c.enabled).map((c) => c.logistic_id);
+      const next = current.includes(logisticId)
+        ? current.filter((id) => id !== logisticId)
+        : [...current, logisticId];
+      return { ...prev, [shopKey]: next, [shopId]: next };
+    });
+    // Đồng bộ logisticChannels (primary) để counter & fallback vẫn đúng
     setLogisticChannels((prev) =>
       prev.map((c) =>
-        c.logistic_id === logisticId
-          ? { ...c, enabled: !c.enabled || false }
-          : c
+        c.logistic_id === logisticId ? { ...c, enabled: !c.enabled } : c
       )
     );
   };
@@ -1612,7 +1641,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
         )}
       </div>
 
-      {/* 6. Đóng gói & Vận chuyển — gom nhóm theo gian hàng */}
+      {/* 6. Đóng gói & Vận chuyển */}
       <div className="bg-white rounded-3xl border border-gray-150 p-6 shadow-xs space-y-6">
 
         {/* Header */}
@@ -1620,38 +1649,59 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
           <Package className="w-4 h-4 text-teal-600" /> Đóng gói &amp; Vận chuyển
         </h3>
 
-        {/* ===== A. Thông tin đóng gói (dùng chung) ===== */}
+        {/* ===== A. Thông tin đóng gói ===== */}
         <div>
           <p className="text-[10px] font-bold text-gray-500 mb-3 flex items-center gap-1">
-            <Package className="w-3.5 h-3.5" /> Khối lượng &amp; Kích thước chung
+            <Package className="w-3.5 h-3.5" /> Thông tin đóng gói
           </p>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             <div>
               <label className="text-[10px] font-bold text-gray-500">Khối lượng (gram)</label>
-              <input type="number" min={0} value={packageWeight} onChange={(e) => setPackageWeight(Number(e.target.value))}
-                className="w-full mt-1 px-3 py-2 border rounded-xl text-xs" />
+              <div className="relative mt-1">
+                <input type="number" min={0} value={packageWeight} onChange={(e) => setPackageWeight(Number(e.target.value))}
+                  className="w-full px-3 py-2 pr-10 border rounded-xl text-xs" />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-400 font-medium pointer-events-none">gram</span>
+              </div>
             </div>
             <div>
-              <label className="text-[10px] font-bold text-gray-500">Dài (cm)</label>
-              <input type="number" min={0} value={packageLength} onChange={(e) => setPackageLength(Number(e.target.value))}
-                className="w-full mt-1 px-3 py-2 border rounded-xl text-xs" />
+              <label className="text-[10px] font-bold text-gray-500">Chiều rộng (cm)</label>
+              <div className="relative mt-1">
+                <input type="number" min={0} value={packageWidth} onChange={(e) => setPackageWidth(Number(e.target.value))}
+                  className="w-full px-3 py-2 pr-8 border rounded-xl text-xs" />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-400 font-medium pointer-events-none">cm</span>
+              </div>
             </div>
             <div>
-              <label className="text-[10px] font-bold text-gray-500">Rộng (cm)</label>
-              <input type="number" min={0} value={packageWidth} onChange={(e) => setPackageWidth(Number(e.target.value))}
-                className="w-full mt-1 px-3 py-2 border rounded-xl text-xs" />
+              <label className="text-[10px] font-bold text-gray-500">Chiều dài (cm)</label>
+              <div className="relative mt-1">
+                <input type="number" min={0} value={packageLength} onChange={(e) => setPackageLength(Number(e.target.value))}
+                  className="w-full px-3 py-2 pr-8 border rounded-xl text-xs" />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-400 font-medium pointer-events-none">cm</span>
+              </div>
             </div>
             <div>
-              <label className="text-[10px] font-bold text-gray-500">Cao (cm)</label>
-              <input type="number" min={0} value={packageHeight} onChange={(e) => setPackageHeight(Number(e.target.value))}
-                className="w-full mt-1 px-3 py-2 border rounded-xl text-xs" />
+              <label className="text-[10px] font-bold text-gray-500">Chiều cao (cm)</label>
+              <div className="relative mt-1">
+                <input type="number" min={0} value={packageHeight} onChange={(e) => setPackageHeight(Number(e.target.value))}
+                  className="w-full px-3 py-2 pr-8 border rounded-xl text-xs" />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-400 font-medium pointer-events-none">cm</span>
+              </div>
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-gray-500">Phương thức giao hàng</label>
+              <select value={shippingMethod} onChange={(e) => setShippingMethod(e.target.value)}
+                className="w-full mt-1 px-3 py-2 border rounded-xl text-xs bg-white">
+                <option>Giao hàng tiêu chuẩn</option>
+                <option>Giao hàng nhanh</option>
+                <option>Giao hàng hỏa tốc</option>
+              </select>
             </div>
           </div>
         </div>
 
-        {/* ===== B. Chọn đơn vị vận chuyển — Grid theo gian hàng ===== */}
+        {/* ===== B. Chọn đơn vị vận chuyển — Table 2 cột: Kênh bán | Đơn vị vận chuyển ===== */}
         <div>
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-3">
             <p className="text-[10px] font-bold text-gray-500 flex items-center gap-1 uppercase tracking-wider">
               <Truck className="w-3.5 h-3.5" /> Chọn đơn vị vận chuyển
             </p>
@@ -1677,164 +1727,85 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
           ) : channelError ? (
             <p className="text-[10px] text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{channelError}</p>
           ) : (
-            <div className="space-y-5">
-              {/* Gom nhóm kênh vận chuyển theo từng gian hàng */}
-              {selectedShopItems
-                .filter((s) => s.platform === 'shopee')
-                .map((shop) => {
-                  const shopChannels = logisticChannels;
-                  const enabledCount = shopChannels.filter((c) => c.enabled).length;
-                  return (
-                    <div key={shop.id} className="border border-gray-100 rounded-2xl overflow-hidden">
-                      {/* Group header */}
-                      <div className="bg-gray-50 border-b border-gray-100 px-4 py-2.5 flex items-center gap-2">
-                        <span className="text-base">{shop.icon || '🛒'}</span>
-                        <span className="text-xs font-extrabold text-gray-700">
-                          {shop.platform === 'shopee' ? 'Shopee' : shop.name}
-                        </span>
-                        <span className="ml-auto text-[10px] text-teal-600 font-bold">
-                          {enabledCount}/{shopChannels.length} kênh
-                        </span>
-                      </div>
+            <div className="overflow-hidden rounded-2xl border border-gray-100">
+              {/* Table Header */}
+              <div className="grid grid-cols-5 bg-gray-50 border-b border-gray-100 px-4 py-2.5 text-[9px] font-extrabold text-gray-400 uppercase tracking-wider">
+                <div className="col-span-2 flex items-center gap-1.5">
+                  <Store className="w-3.5 h-3.5" /> Kênh bán
+                </div>
+                <div className="col-span-3 flex items-center gap-1.5">
+                  <Truck className="w-3.5 h-3.5" /> Đơn vị vận chuyển
+                </div>
+              </div>
 
-                      {/* Grid layout — Checkbox columns */}
-                      <div className="p-4">
-                        {/* Express + Fast */}
-                        {['express', 'fast'].map((type) => {
-                          const channels = shopChannels.filter((c) => c.channel_type === type);
-                          if (!channels.length) return null;
-                          const label = LOGISTIC_GROUP_LABELS[type] || type;
-                          return (
-                            <div key={type} className="mb-4 last:mb-0">
-                              <p className="text-[9px] font-extrabold text-gray-400 uppercase tracking-wider mb-2">{label}</p>
-                              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                                {channels.map((ch) => {
-                                  const sizeOk = isChannelSizeOk(ch);
-                                  const disabledBySize = !sizeOk;
-                                  return (
-                                    <label key={ch.logistic_id}
-                                      className={`flex items-center gap-2 p-2.5 rounded-xl border cursor-pointer transition-all text-xs select-none ${
-                                        disabledBySize
-                                          ? 'border-gray-100 opacity-40 cursor-not-allowed'
-                                          : ch.enabled
-                                          ? 'border-teal-400 bg-teal-50/40'
-                                          : 'border-gray-100 hover:border-teal-300 hover:bg-teal-50/20'
-                                      }`}>
-                                      <input type="checkbox"
-                                        checked={ch.enabled && !disabledBySize}
-                                        disabled={disabledBySize}
-                                        onChange={() => !disabledBySize && toggleChannel(ch.logistic_id)}
-                                        className="w-4 h-4 accent-teal-600 shrink-0" />
-                                      <div className="flex flex-col min-w-0">
-                                        <span className="font-medium text-gray-700 truncate">{ch.logistic_name}</span>
-                                        <div className="flex gap-1 mt-0.5 flex-wrap">
-                                          {ch.cod_enabled && (
-                                            <span className="text-[9px] bg-green-100 text-green-700 px-1 rounded font-bold">COD</span>
-                                          )}
-                                          {disabledBySize && (
-                                            <span className="text-[9px] bg-red-100 text-red-600 px-1 rounded font-bold">Vượt kích</span>
-                                          )}
-                                        </div>
-                                      </div>
-                                    </label>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          );
-                        })}
-
-                        {/* Pickup + Bulky + Other */}
-                        {['pickup', 'bulky'].map((type) => {
-                          const channels = shopChannels.filter((c) => c.channel_type === type);
-                          if (!channels.length) return null;
-                          const label = LOGISTIC_GROUP_LABELS[type] || type;
-                          return (
-                            <div key={type} className="mb-4 last:mb-0">
-                              <p className="text-[9px] font-extrabold text-gray-400 uppercase tracking-wider mb-2">{label}</p>
-                              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                                {channels.map((ch) => {
-                                  const sizeOk = isChannelSizeOk(ch);
-                                  const disabledBySize = !sizeOk;
-                                  return (
-                                    <label key={ch.logistic_id}
-                                      className={`flex items-center gap-2 p-2.5 rounded-xl border cursor-pointer transition-all text-xs select-none ${
-                                        disabledBySize
-                                          ? 'border-gray-100 opacity-40 cursor-not-allowed'
-                                          : ch.enabled
-                                          ? 'border-teal-400 bg-teal-50/40'
-                                          : 'border-gray-100 hover:border-teal-300 hover:bg-teal-50/20'
-                                      }`}>
-                                      <input type="checkbox"
-                                        checked={ch.enabled && !disabledBySize}
-                                        disabled={disabledBySize}
-                                        onChange={() => !disabledBySize && toggleChannel(ch.logistic_id)}
-                                        className="w-4 h-4 accent-teal-600 shrink-0" />
-                                      <div className="flex flex-col min-w-0">
-                                        <span className="font-medium text-gray-700 truncate">{ch.logistic_name}</span>
-                                        {ch.cod_enabled && (
-                                          <span className="text-[9px] bg-green-100 text-green-700 px-1 rounded font-bold mt-0.5">COD</span>
-                                        )}
-                                      </div>
-                                    </label>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          );
-                        })}
-
-                        {/* Other / ungrouped channels */}
-                        {(() => {
-                          const otherChannels = shopChannels.filter(
-                            (c) => !['express', 'fast', 'pickup', 'bulky'].includes(c.channel_type)
-                          );
-                          if (!otherChannels.length) return null;
-                          return (
-                            <div className="mb-0">
-                              <p className="text-[9px] font-extrabold text-gray-400 uppercase tracking-wider mb-2">Khác</p>
-                              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                                {otherChannels.map((ch) => {
-                                  const sizeOk = isChannelSizeOk(ch);
-                                  const disabledBySize = !sizeOk;
-                                  return (
-                                    <label key={ch.logistic_id}
-                                      className={`flex items-center gap-2 p-2.5 rounded-xl border cursor-pointer transition-all text-xs select-none ${
-                                        disabledBySize
-                                          ? 'border-gray-100 opacity-40 cursor-not-allowed'
-                                          : ch.enabled
-                                          ? 'border-teal-400 bg-teal-50/40'
-                                          : 'border-gray-100 hover:border-teal-300 hover:bg-teal-50/20'
-                                      }`}>
-                                      <input type="checkbox"
-                                        checked={ch.enabled && !disabledBySize}
-                                        disabled={disabledBySize}
-                                        onChange={() => !disabledBySize && toggleChannel(ch.logistic_id)}
-                                        className="w-4 h-4 accent-teal-600 shrink-0" />
-                                      <div className="flex flex-col min-w-0">
-                                        <span className="font-medium text-gray-700 truncate">{ch.logistic_name}</span>
-                                        {ch.cod_enabled && (
-                                          <span className="text-[9px] bg-green-100 text-green-700 px-1 rounded font-bold mt-0.5">COD</span>
-                                        )}
-                                      </div>
-                                    </label>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    </div>
-                  );
-                })}
-
-              {/* Khi chưa chọn shop — thông báo */}
-              {selectedShopItems.filter((s) => s.platform === 'shopee').length === 0 && (
-                <div className="flex items-center gap-2 text-xs text-gray-400 p-4 bg-gray-50 rounded-xl">
+              {/* Table Rows — mỗi row là một shop được tick */}
+              {selectedShopItems.filter((s) => s.platform === 'shopee').length === 0 ? (
+                <div className="flex items-center gap-2 text-xs text-gray-400 px-4 py-5 bg-gray-50/30">
                   <Info className="w-4 h-4" />
                   Chưa chọn gian hàng Shopee — kênh vận chuyển sẽ được tải khi chọn Shopee.
                 </div>
+              ) : (
+                selectedShopItems
+                  .filter((s) => s.platform === 'shopee')
+                  .map((shop) => {
+                    const shopChannels = logisticChannels;
+                    const shopKey = shop.shopId || shop.id;
+                    const shopEnabledIds = perShopLogistics[shopKey] || perShopLogistics[shop.id] || [];
+                    const enabledCount = shopChannels.filter((c) =>
+                      shopEnabledIds.includes(c.logistic_id)
+                    ).length;
+                    return (
+                      <div key={shop.id} className="grid grid-cols-5 border-b border-gray-50 last:border-b-0 hover:bg-gray-50/20 transition-colors">
+
+                        {/* Cột trái: Icon + Tên gian hàng */}
+                        <div className="col-span-2 px-4 py-3.5 flex items-center gap-3 border-r border-gray-100">
+                          <span className="text-lg">{shop.icon || '🛒'}</span>
+                          <div className="min-w-0">
+                            <p className="text-xs font-extrabold text-gray-800 truncate">{shop.name}</p>
+                            <p className="text-[9px] text-teal-600 font-bold">
+                              {enabledCount}/{shopChannels.length} kênh bật
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Cột phải: Checkbox Grid 3 cột */}
+                        <div className="col-span-3 px-3 py-3">
+                          <div className="grid grid-cols-3 gap-1.5">
+                            {shopChannels.map((ch) => {
+                              const sizeOk = isChannelSizeOk(ch);
+                              const disabledBySize = !sizeOk;
+                              const shopKey = shop.shopId || shop.id;
+                              const enabled = isChannelEnabledForShop(shopKey, ch.logistic_id) && !disabledBySize;
+                              const groupLabel = LOGISTIC_GROUP_LABELS[ch.channel_type] || '';
+                              const displayName = groupLabel
+                                ? `${groupLabel} – ${ch.logistic_name}`
+                                : ch.logistic_name;
+                              return (
+                                <label key={ch.logistic_id}
+                                  className={`flex items-center gap-1.5 px-2.5 py-2 rounded-xl border text-[10px] cursor-pointer transition-all select-none ${
+                                    disabledBySize
+                                      ? 'border-gray-100 opacity-40 cursor-not-allowed'
+                                      : enabled
+                                      ? 'border-teal-400 bg-teal-50/40'
+                                      : 'border-gray-100 hover:border-teal-300'
+                                  }`}>
+                                  <input type="checkbox"
+                                    checked={enabled}
+                                    disabled={disabledBySize}
+                                    onChange={() => !disabledBySize && toggleChannel(shopKey, shop.id, ch.logistic_id)}
+                                    className="w-3.5 h-3.5 accent-teal-600 shrink-0" />
+                                  <span className={`truncate font-medium ${disabledBySize ? 'text-gray-400' : 'text-gray-700'}`}>
+                                    {displayName}
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                      </div>
+                    );
+                  })
               )}
             </div>
           )}
