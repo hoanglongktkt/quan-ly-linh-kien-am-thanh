@@ -6,7 +6,29 @@ import {
   ShopeeCategoryAttribute,
   isShopeeMedicalCategorySelection,
 } from '../types/marketplaceCategory';
-import { applySmartPricesFromShopee, flatPriceGlobalIndex, PRICE_OFFSET } from '../utils/smartPricing';
+import { linearPrice, PRICE_OFFSET } from '../utils/smartPricing';
+
+/** Gán giá tuyến tính: base + step*168 cho mọi ô (shop × variant × 3 cột) */
+function assignLinearPrices(
+  shopList: { id: string; shopId?: string }[],
+  variants: ListingVariant[],
+  basePrice: number,
+): Record<string, ListingVariant[]> {
+  const out: Record<string, ListingVariant[]> = {};
+  let step = 0;
+  for (const shop of shopList) {
+    const rows = variants.map((v) => {
+      const priceShopee = linearPrice(basePrice, step++);
+      const priceLazada = linearPrice(basePrice, step++);
+      const priceTiktok = linearPrice(basePrice, step++);
+      return { ...v, priceShopee, priceLazada, priceTiktok };
+    });
+    const key = shop.shopId || shop.id;
+    out[key] = rows;
+    out[shop.id] = rows.map((r) => ({ ...r }));
+  }
+  return out;
+}
 import SmartCategorySelector from './SmartCategorySelector';
 import {
   Store,
@@ -168,7 +190,7 @@ function buildVariantsFromProducts(allProducts: Product[], product: Product | un
   const siblings = allProducts.filter((p) => getProductGroupKey(p) === key);
   const list = siblings.length > 0 ? siblings : [product];
   return list.map((p) => {
-    const prices = applySmartPricesFromShopee(p.sellingPrice || 0);
+    const prices = { shopee: p.sellingPrice || 0, lazada: (p.sellingPrice || 0) + PRICE_OFFSET, tiktok: (p.sellingPrice || 0) + PRICE_OFFSET * 2 };
     return {
       id: p.id,
       name: p.modelName || p.tierLabels?.join(' / ') || p.title,
@@ -298,6 +320,8 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, onP
   const [bulkStock, setBulkStock] = useState('');
   const [bulkPrice, setBulkPrice] = useState('');
   const [bulkWeight, setBulkWeight] = useState('');
+  /** Giá gốc dùng cho linear increment (base + step*168) */
+  const [priceBase, setPriceBase] = useState(0);
 
   const [toast, setToast] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -502,32 +526,16 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, onP
   }, [logisticChannels]);
 
   const buildPayload = useCallback((): MultiChannelListingPayload => {
-    // perShopVariants: globalIndex phẳng (shop × variant × 3 cột) × 168đ — mọi ô unique
-    const perShopVariants: Record<string, ListingVariant[]> = {};
     const outLogistics: Record<string, number[]> = {};
     let primaryEnabledLogs: number[] = [];
 
     const shopList = availableShops.filter((s) => selectedShops.includes(s.id));
-    const nVar = Math.max(1, variants.length);
-    // basePrice = giá gốc đã lưu ở priceShopee (bulk apply ghi cùng base cho mọi variant)
-    const basePrice = variants[0]?.priceShopee ?? 0;
+    const base = priceBase || variants[0]?.priceShopee || 0;
+    // step++ tuyến tính qua mọi shop × variant × 3 cột giá
+    const perShopVariants = assignLinearPrices(shopList, variants, base);
 
-    for (let shopIdx = 0; shopIdx < shopList.length; shopIdx++) {
-      const shop = shopList[shopIdx];
+    for (const shop of shopList) {
       const key = shop.shopId || shop.id;
-      const priced = variants.map((v, vIdx) => {
-        const g = flatPriceGlobalIndex(shopIdx, vIdx, nVar);
-        const smart = applySmartPricesFromShopee(basePrice, g);
-        return {
-          ...v,
-          priceShopee: smart.shopee,
-          priceLazada: smart.lazada,
-          priceTiktok: smart.tiktok,
-        };
-      });
-      perShopVariants[key] = priced;
-      perShopVariants[shop.id] = priced.map((x) => ({ ...x }));
-
       const genericKeys = perShopLogistics[key] || perShopLogistics[shop.id] || [];
       const resolved = resolveLogisticIds(genericKeys);
       outLogistics[key] = resolved;
@@ -578,7 +586,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, onP
     selectedShops, title, shopeeCategory, shopeeBrand, shopeeBrandId, buildShopeeAttributesPayload, medicineId,
     lazadaCategory, lazadaBrand, tiktokCategory, tiktokBrand, images, variants, descriptionHtml,
     packageWeight, packageLength, packageWidth, packageHeight, perVariationWeight,
-    perShopLogistics, resolveLogisticIds, isPreOrder, daysToShip, availableShops, tierAttrs,
+    perShopLogistics, resolveLogisticIds, isPreOrder, daysToShip, availableShops, tierAttrs, priceBase,
   ]);
 
   const handleInsertTag = (val: string) => {
@@ -607,14 +615,17 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, onP
     setVariants((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)));
   };
 
-  const handleShopeePriceChange = (id: string, raw: string) => {
-    const shopee = Math.max(0, Number(raw) || 0);
-    const smart = applySmartPricesFromShopee(shopee);
-    updateVariant(id, {
-      priceShopee: smart.shopee,
-      priceLazada: smart.lazada,
-      priceTiktok: smart.tiktok,
-    });
+  const handleShopeePriceChange = (_id: string, raw: string) => {
+    const base = Math.max(0, Number(raw) || 0);
+    setPriceBase(base);
+    setVariants((prev) =>
+      prev.map((v) => ({
+        ...v,
+        priceShopee: base,
+        priceLazada: linearPrice(base, 1),
+        priceTiktok: linearPrice(base, 2),
+      }))
+    );
   };
 
   const addVariantRow = () => {
@@ -749,26 +760,35 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, onP
     const priceVal = Number(bulkPrice) || 0;
     const weightVal = Number(bulkWeight) || 0;
 
-    // Global index xuyên suốt: variant0 → 0/1/2, variant1 → 3/4/5, ...
-    // mỗi ô giá trong toàn bộ form đều unique
+    if (bulkPrice !== '') setPriceBase(priceVal);
+
+    // Chỉ lưu base; UI + payload gán giá bằng step++ tuyến tính
     setVariants((prev) =>
-      prev.map((v, vIdx) => {
-        const startIdx = vIdx * 3; // mỗi variant chiếm 3 global index
-        const smart = applySmartPricesFromShopee(priceVal, startIdx);
-        return {
-          ...v,
-          ...(skuVal ? { sku: skuVal } : {}),
-          ...(bulkStock !== '' ? { stock: stockVal } : {}),
-          ...(bulkPrice !== '' ? { priceShopee: smart.shopee, priceLazada: smart.lazada, priceTiktok: smart.tiktok } : {}),
-          ...(bulkWeight !== '' && perVariationWeight ? { weight: weightVal } : {}),
-        };
-      })
+      prev.map((v) => ({
+        ...v,
+        ...(skuVal ? { sku: skuVal } : {}),
+        ...(bulkStock !== '' ? { stock: stockVal } : {}),
+        ...(bulkPrice !== ''
+          ? {
+              priceShopee: priceVal,
+              priceLazada: linearPrice(priceVal, 1),
+              priceTiktok: linearPrice(priceVal, 2),
+            }
+          : {}),
+        ...(bulkWeight !== '' && perVariationWeight ? { weight: weightVal } : {}),
+      }))
     );
     setBulkSku('');
     setBulkStock('');
     setBulkPrice('');
     setBulkWeight('');
   };
+
+  /** Giá hiển thị theo shop: step++ tuyến tính toàn form */
+  const displayPricesByShop = useMemo(() => {
+    const base = priceBase || variants[0]?.priceShopee || 0;
+    return assignLinearPrices(selectedShopItems, variants, base);
+  }, [selectedShopItems, variants, priceBase]);
 
   const handleGenerateDescription = async () => {
     if (!title.trim()) {
@@ -1602,8 +1622,9 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, onP
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-50">
-                          {variants.map((v) => {
-                            const smart = applySmartPricesFromShopee(v.priceShopee);
+                          {variants.map((v, idx) => {
+                            const shopRow = displayPricesByShop[shop.id]?.[idx];
+                            const disp = shopRow || v;
                             return (
                               <tr key={`${shop.id}-${v.id}`} className="hover:bg-gray-50/40">
                                 <td className="px-2 py-1.5">
@@ -1626,16 +1647,16 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, onP
                                   </td>
                                 )}
                                 <td className="px-2 py-1.5">
-                                  <input type="number" min={0} value={v.priceShopee || ''}
+                                  <input type="number" min={0} value={disp.priceShopee}
                                     onChange={(e) => handleShopeePriceChange(v.id, e.target.value)}
                                     className="w-24 px-2 py-1.5 border border-orange-200 bg-orange-50/30 rounded-lg text-xs text-right font-bold text-orange-700" />
                                 </td>
                                 <td className="px-2 py-1.5">
-                                  <input type="number" min={0} value={v.priceLazada || ''} readOnly
+                                  <input type="number" min={0} value={disp.priceLazada} readOnly
                                     className="w-24 px-2 py-1.5 border border-blue-100 bg-blue-50/30 rounded-lg text-xs text-right text-blue-600" />
                                 </td>
                                 <td className="px-2 py-1.5">
-                                  <input type="number" min={0} value={v.priceTiktok || ''} readOnly
+                                  <input type="number" min={0} value={disp.priceTiktok} readOnly
                                     className="w-24 px-2 py-1.5 border border-slate-100 bg-slate-50 rounded-lg text-xs text-right text-slate-700" />
                                 </td>
                                 <td className="px-2 py-1.5">
@@ -1670,48 +1691,55 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, onP
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
-                        {variants.map((v) => (
-                          <tr key={v.id} className="hover:bg-gray-50/40">
-                            <td className="px-2 py-1.5">
-                              <input value={v.name} onChange={(e) => updateVariant(v.id, { name: e.target.value })}
-                                className="w-full min-w-[100px] px-2 py-1.5 border border-violet-200 rounded-lg text-xs font-bold" />
-                            </td>
-                            <td className="px-2 py-1.5">
-                              <input value={v.sku} onChange={(e) => updateVariant(v.id, { sku: e.target.value })}
-                                className="w-full min-w-[80px] px-2 py-1.5 border rounded-lg text-xs font-mono" />
-                            </td>
-                            <td className="px-2 py-1.5">
-                              <input type="number" min={0} value={v.stock} onChange={(e) => updateVariant(v.id, { stock: Number(e.target.value) })}
-                                className="w-20 px-2 py-1.5 border rounded-lg text-xs text-right" />
-                            </td>
-                            {perVariationWeight && (
+                        {variants.map((v, idx) => {
+                          let step = 0;
+                          const base = priceBase || variants[0]?.priceShopee || 0;
+                          const dispShopee = linearPrice(base, idx * 3 + step++);
+                          const dispLazada = linearPrice(base, idx * 3 + step++);
+                          const dispTiktok = linearPrice(base, idx * 3 + step++);
+                          return (
+                            <tr key={v.id} className="hover:bg-gray-50/40">
                               <td className="px-2 py-1.5">
-                                <input type="number" min={0} value={v.weight}
-                                  onChange={(e) => updateVariant(v.id, { weight: Number(e.target.value) })}
-                                  className="w-16 px-2 py-1.5 border rounded-lg text-xs text-right" />
+                                <input value={v.name} onChange={(e) => updateVariant(v.id, { name: e.target.value })}
+                                  className="w-full min-w-[100px] px-2 py-1.5 border border-violet-200 rounded-lg text-xs font-bold" />
                               </td>
-                            )}
-                            <td className="px-2 py-1.5">
-                              <input type="number" min={0} value={v.priceShopee || ''}
-                                onChange={(e) => handleShopeePriceChange(v.id, e.target.value)}
-                                className="w-24 px-2 py-1.5 border border-orange-200 bg-orange-50/30 rounded-lg text-xs text-right font-bold text-orange-700" />
-                            </td>
-                            <td className="px-2 py-1.5">
-                              <input type="number" min={0} value={v.priceLazada || ''} readOnly
-                                className="w-24 px-2 py-1.5 border border-blue-100 bg-blue-50/30 rounded-lg text-xs text-right text-blue-600" />
-                            </td>
-                            <td className="px-2 py-1.5">
-                              <input type="number" min={0} value={v.priceTiktok || ''} readOnly
-                                className="w-24 px-2 py-1.5 border border-slate-100 bg-slate-50 rounded-lg text-xs text-right text-slate-700" />
-                            </td>
-                            <td className="px-2 py-1.5">
-                              <button type="button" onClick={() => removeVariantRow(v.id)} disabled={variants.length <= 1}
-                                className="p-1 text-red-400 hover:text-red-600 disabled:opacity-30">
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
+                              <td className="px-2 py-1.5">
+                                <input value={v.sku} onChange={(e) => updateVariant(v.id, { sku: e.target.value })}
+                                  className="w-full min-w-[80px] px-2 py-1.5 border rounded-lg text-xs font-mono" />
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <input type="number" min={0} value={v.stock} onChange={(e) => updateVariant(v.id, { stock: Number(e.target.value) })}
+                                  className="w-20 px-2 py-1.5 border rounded-lg text-xs text-right" />
+                              </td>
+                              {perVariationWeight && (
+                                <td className="px-2 py-1.5">
+                                  <input type="number" min={0} value={v.weight}
+                                    onChange={(e) => updateVariant(v.id, { weight: Number(e.target.value) })}
+                                    className="w-16 px-2 py-1.5 border rounded-lg text-xs text-right" />
+                                </td>
+                              )}
+                              <td className="px-2 py-1.5">
+                                <input type="number" min={0} value={dispShopee}
+                                  onChange={(e) => handleShopeePriceChange(v.id, e.target.value)}
+                                  className="w-24 px-2 py-1.5 border border-orange-200 bg-orange-50/30 rounded-lg text-xs text-right font-bold text-orange-700" />
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <input type="number" min={0} value={dispLazada} readOnly
+                                  className="w-24 px-2 py-1.5 border border-blue-100 bg-blue-50/30 rounded-lg text-xs text-right text-blue-600" />
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <input type="number" min={0} value={dispTiktok} readOnly
+                                  className="w-24 px-2 py-1.5 border border-slate-100 bg-slate-50 rounded-lg text-xs text-right text-slate-700" />
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <button type="button" onClick={() => removeVariantRow(v.id)} disabled={variants.length <= 1}
+                                  className="p-1 text-red-400 hover:text-red-600 disabled:opacity-30">
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
