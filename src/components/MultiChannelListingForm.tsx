@@ -84,7 +84,7 @@ export interface MultiChannelListingPayload {
   variants: ListingVariant[];
   /** Biến thể theo từng gian hàng (shopId → variants) */
   perShopVariants?: Record<string, ListingVariant[]>;
-  /** Logistics bật theo từng gian (shopId → logistic_id[]) */
+  /** Logistics bật theo từng gian (shopId → logistic_id[] — đã resolve từ generic keys) */
   perShopLogistics?: Record<string, number[]>;
   /** Tên thuộc tính tier (VD: Màu) */
   tierName?: string;
@@ -169,9 +169,31 @@ function buildVariantsFromProducts(allProducts: Product[], product: Product | un
 const LOGISTIC_GROUP_LABELS: Record<string, string> = {
   express: 'Hỏa Tốc',
   fast: 'Nhanh',
-  pickup: 'Lấy hàng chủ động',
+  pickup: 'Điểm nhận hàng',
   bulky: 'Hàng Cồng Kềnh',
+  sameday: 'Trong Ngày',
+  spx_locker: 'Tủ nhận hàng - SPX',
+  smartbox: 'Tủ nhận hàng - Viettel Smartbox',
 };
+
+/** Map generic channel key → regex để classify từ tên kênh Shopee */
+const SHOP_CHANNEL_KEY_MAP: Record<string, (name: string, ch: LogisticChannel) => boolean> = {
+  bulky: (name) => /cồng ?kềnh|bulky|heavy|large/i.test(name),
+  express: (name) => /hoả? ?tốc|express/i.test(name),
+  fast: (name) => /nhanh|fast|next.?day/i.test(name) && !/hoả? ?tốc/i.test(name),
+  sameday: (name) => /trong ?ngày|same.?day/i.test(name),
+  spx_locker: (name) => /tủ ?nhận ?hàng|tủ spx|spx ?locker/i.test(name),
+  smartbox: (name) => /smartbox|viettel/i.test(name),
+  pickup: (name) => /lấy ?hàng|pick.?up|self.?collect|điểm ?nhận/i.test(name),
+};
+
+function classifyGenericKey(ch: LogisticChannel): string {
+  const name = String(ch.logistic_name || '').toLowerCase();
+  for (const [key, matcher] of Object.entries(SHOP_CHANNEL_KEY_MAP)) {
+    if (matcher(name, ch)) return key;
+  }
+  return 'other';
+}
 
 export default function MultiChannelListingForm({ products, shops, onAddLog }: MultiChannelListingFormProps) {
   const editorRef = useRef<HTMLDivElement>(null);
@@ -238,8 +260,8 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
   const [logisticChannels, setLogisticChannels] = useState<LogisticChannel[]>([]);
   const [loadingChannels, setLoadingChannels] = useState(false);
   const [channelError, setChannelError] = useState('');
-  /** logistic_id[] bật theo từng shop_id */
-  const [perShopLogistics, setPerShopLogistics] = useState<Record<string, number[]>>({});
+  /** generic channel keys bật theo từng shop_id (bulky|express|fast|sameday|spx_locker|smartbox|pickup) */
+  const [perShopLogistics, setPerShopLogistics] = useState<Record<string, string[]>>({});
 
   // Hàng đặt trước
   const [isPreOrder, setIsPreOrder] = useState(false);
@@ -330,15 +352,22 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
       if (!res.ok || !data.success) throw new Error(data.error || 'Không lấy được kênh vận chuyển');
       const channels: LogisticChannel[] = data.channels || [];
       setLogisticChannels(channels);
-      // Seed perShopLogistics cho tất cả shop Shopee đang chọn (mặc định bật theo API)
-      const defaultIds = channels.filter((c) => c.enabled).map((c) => c.logistic_id);
+
+      // Seed generic keys cho tất cả shop Shopee đang chọn
+      const availableKeys = channels
+        .filter((c) => c.enabled)
+        .map((c) => classifyGenericKey(c))
+        .filter((k) => k !== 'other');
+      const uniqueKeys = [...new Set(availableKeys)];
+
       setPerShopLogistics((prev) => {
         const next = { ...prev };
         for (const s of availableShops) {
           if (s.platform !== 'shopee' || !selectedShops.includes(s.id)) continue;
-          const key = s.shopId || s.id;
-          if (!next[key]?.length) next[key] = [...defaultIds];
-          if (!next[s.id]?.length) next[s.id] = [...defaultIds];
+          const k1 = s.shopId || s.id;
+          const k2 = s.id;
+          if (!next[k1]?.length) next[k1] = [...uniqueKeys];
+          if (!next[k2]?.length) next[k2] = [...uniqueKeys];
         }
         return next;
       });
@@ -444,18 +473,33 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
     [availableShops, selectedShops]
   );
 
+  /** Convert generic keys → logistic_id[] bằng cách match tên kênh Shopee */
+  const resolveLogisticIds = useCallback((genericKeys: string[]): number[] => {
+    if (!genericKeys.length) return [];
+    return logisticChannels
+      .filter((ch) => {
+        const key = classifyGenericKey(ch);
+        return genericKeys.includes(key);
+      })
+      .map((ch) => ch.logistic_id);
+  }, [logisticChannels]);
+
   const buildPayload = useCallback((): MultiChannelListingPayload => {
-    const fallbackLogs = logisticChannels.filter((c) => c.enabled).map((c) => c.logistic_id);
     // perShopVariants: clone variants cho mỗi gian
     const perShopVariants: Record<string, ListingVariant[]> = {};
     const outLogistics: Record<string, number[]> = {};
+    let primaryEnabledLogs: number[] = [];
+
     for (const shop of availableShops.filter((s) => selectedShops.includes(s.id))) {
       const key = shop.shopId || shop.id;
       perShopVariants[key] = variants.map((v) => ({ ...v }));
       perShopVariants[shop.id] = variants.map((v) => ({ ...v }));
-      const shopLogs = perShopLogistics[key] || perShopLogistics[shop.id] || fallbackLogs;
-      outLogistics[key] = [...shopLogs];
-      outLogistics[shop.id] = [...shopLogs];
+
+      const genericKeys = perShopLogistics[key] || perShopLogistics[shop.id] || [];
+      const resolved = resolveLogisticIds(genericKeys);
+      outLogistics[key] = resolved;
+      outLogistics[shop.id] = resolved;
+      if (!primaryEnabledLogs.length) primaryEnabledLogs = resolved;
     }
     return {
       selectedShops,
@@ -487,7 +531,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
       packageHeight,
       shippingMethod,
       perVariationWeight,
-      enabledLogistics: fallbackLogs,
+      enabledLogistics: primaryEnabledLogs,
       isPreOrder,
       daysToShip,
     };
@@ -495,7 +539,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
     selectedShops, title, shopeeCategory, shopeeBrand, shopeeBrandId, buildShopeeAttributesPayload, medicineId,
     lazadaCategory, lazadaBrand, tiktokCategory, tiktokBrand, images, variants, descriptionHtml,
     packageWeight, packageLength, packageWidth, packageHeight, shippingMethod, perVariationWeight,
-    logisticChannels, perShopLogistics, isPreOrder, daysToShip, availableShops, tierAttrs,
+    perShopLogistics, resolveLogisticIds, isPreOrder, daysToShip, availableShops, tierAttrs,
   ]);
 
   const handleInsertTag = (val: string) => {
@@ -949,21 +993,19 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
     return logisticChannels.find((c) => c.logistic_id === logisticId)?.enabled ?? false;
   };
 
-  const toggleChannel = (shopKey: string, shopId: string, logisticId: number) => {
+  const isGenericKeyEnabled = (shopKey: string, shopId: string, genericKey: string): boolean => {
+    const keys = perShopLogistics[shopKey] || perShopLogistics[shopId] || [];
+    return keys.includes(genericKey);
+  };
+
+  const toggleGenericChannel = (shopKey: string, shopId: string, genericKey: string) => {
     setPerShopLogistics((prev) => {
-      const current = prev[shopKey] || prev[shopId] ||
-        logisticChannels.filter((c) => c.enabled).map((c) => c.logistic_id);
-      const next = current.includes(logisticId)
-        ? current.filter((id) => id !== logisticId)
-        : [...current, logisticId];
+      const current = prev[shopKey] || prev[shopId] || [];
+      const next = current.includes(genericKey)
+        ? current.filter((k) => k !== genericKey)
+        : [...current, genericKey];
       return { ...prev, [shopKey]: next, [shopId]: next };
     });
-    // Đồng bộ logisticChannels (primary) để counter & fallback vẫn đúng
-    setLogisticChannels((prev) =>
-      prev.map((c) =>
-        c.logistic_id === logisticId ? { ...c, enabled: !c.enabled } : c
-      )
-    );
   };
 
   return (
@@ -1708,11 +1750,6 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
             <div className="flex items-center gap-2">
               {loadingChannels && <Loader2 className="w-3.5 h-3.5 animate-spin text-teal-500" />}
               {channelError && <span className="text-[10px] text-red-500">{channelError}</span>}
-              {!loadingChannels && !channelError && logisticChannels.length > 0 && (
-                <span className="text-[10px] text-teal-600 font-medium">
-                  {logisticChannels.filter((c) => c.enabled).length}/{logisticChannels.length} kênh bật
-                </span>
-              )}
             </div>
           </div>
 
@@ -1738,7 +1775,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
                 </div>
               </div>
 
-              {/* Table Rows — mỗi row là một shop được tick */}
+              {/* Table Rows */}
               {selectedShopItems.filter((s) => s.platform === 'shopee').length === 0 ? (
                 <div className="flex items-center gap-2 text-xs text-gray-400 px-4 py-5 bg-gray-50/30">
                   <Info className="w-4 h-4" />
@@ -1748,54 +1785,44 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
                 selectedShopItems
                   .filter((s) => s.platform === 'shopee')
                   .map((shop) => {
-                    const shopChannels = logisticChannels;
                     const shopKey = shop.shopId || shop.id;
-                    const shopEnabledIds = perShopLogistics[shopKey] || perShopLogistics[shop.id] || [];
-                    const enabledCount = shopChannels.filter((c) =>
-                      shopEnabledIds.includes(c.logistic_id)
-                    ).length;
+                    const shopKeys = perShopLogistics[shopKey] || perShopLogistics[shop.id] || [];
+                    const genericOptions = (['bulky', 'express', 'fast', 'sameday', 'spx_locker', 'smartbox', 'pickup'] as const);
                     return (
                       <div key={shop.id} className="grid grid-cols-5 border-b border-gray-50 last:border-b-0 hover:bg-gray-50/20 transition-colors">
 
                         {/* Cột trái: Icon + Tên gian hàng */}
-                        <div className="col-span-2 px-4 py-3.5 flex items-center gap-3 border-r border-gray-100">
+                        <div className="col-span-2 px-4 py-4 flex items-center gap-3 border-r border-gray-100">
                           <span className="text-lg">{shop.icon || '🛒'}</span>
                           <div className="min-w-0">
                             <p className="text-xs font-extrabold text-gray-800 truncate">{shop.name}</p>
-                            <p className="text-[9px] text-teal-600 font-bold">
-                              {enabledCount}/{shopChannels.length} kênh bật
-                            </p>
+                            <p className="text-[9px] text-teal-600 font-bold">{shopKeys.length} kênh bật</p>
                           </div>
                         </div>
 
-                        {/* Cột phải: Checkbox Grid 3 cột */}
+                        {/* Cột phải: Grid 3 cột — 7 checkbox generic */}
                         <div className="col-span-3 px-3 py-3">
                           <div className="grid grid-cols-3 gap-1.5">
-                            {shopChannels.map((ch) => {
-                              const sizeOk = isChannelSizeOk(ch);
-                              const disabledBySize = !sizeOk;
-                              const shopKey = shop.shopId || shop.id;
-                              const enabled = isChannelEnabledForShop(shopKey, ch.logistic_id) && !disabledBySize;
-                              const groupLabel = LOGISTIC_GROUP_LABELS[ch.channel_type] || '';
-                              const displayName = groupLabel
-                                ? `${groupLabel} – ${ch.logistic_name}`
-                                : ch.logistic_name;
+                            {genericOptions.map((gk) => {
+                              const isAvailable = logisticChannels.some((ch) => classifyGenericKey(ch) === gk);
+                              const enabled = shopKeys.includes(gk);
+                              const label = LOGISTIC_GROUP_LABELS[gk] || gk;
                               return (
-                                <label key={ch.logistic_id}
+                                <label key={gk}
                                   className={`flex items-center gap-1.5 px-2.5 py-2 rounded-xl border text-[10px] cursor-pointer transition-all select-none ${
-                                    disabledBySize
-                                      ? 'border-gray-100 opacity-40 cursor-not-allowed'
+                                    !isAvailable
+                                      ? 'border-gray-100 opacity-35 cursor-not-allowed'
                                       : enabled
                                       ? 'border-teal-400 bg-teal-50/40'
                                       : 'border-gray-100 hover:border-teal-300'
                                   }`}>
                                   <input type="checkbox"
                                     checked={enabled}
-                                    disabled={disabledBySize}
-                                    onChange={() => !disabledBySize && toggleChannel(shopKey, shop.id, ch.logistic_id)}
+                                    disabled={!isAvailable}
+                                    onChange={() => isAvailable && toggleGenericChannel(shopKey, shop.id, gk)}
                                     className="w-3.5 h-3.5 accent-teal-600 shrink-0" />
-                                  <span className={`truncate font-medium ${disabledBySize ? 'text-gray-400' : 'text-gray-700'}`}>
-                                    {displayName}
+                                  <span className={`truncate font-medium ${isAvailable ? 'text-gray-700' : 'text-gray-400'}`}>
+                                    {label}
                                   </span>
                                 </label>
                               );
