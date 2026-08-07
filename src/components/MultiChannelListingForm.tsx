@@ -161,6 +161,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
   const [loadingShopeeAttrs, setLoadingShopeeAttrs] = useState(false);
   const [medicineId, setMedicineId] = useState('');
   const [requiresMedicineId, setRequiresMedicineId] = useState(false);
+  const [categoryResetToken, setCategoryResetToken] = useState(0);
   const [lazadaCategory, setLazadaCategory] = useState<CategorySelection | null>(null);
   const [lazadaBrand, setLazadaBrand] = useState('No Brand');
   const [tiktokCategory, setTiktokCategory] = useState<CategorySelection | null>(null);
@@ -630,6 +631,35 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
 
       // Bắt buộc cảnh báo nếu có bất kỳ shop nào rớt (kể cả HTTP 207 partial)
       if (!data.success || failCount > 0 || res.status === 207 || res.status >= 400) {
+        const invalidCategory =
+          data.invalid_category === true ||
+          data.reset_category === true ||
+          data.code === 'product.error_invalid_category' ||
+          /error_invalid_category|Invalid category ID|danh mục cũ của sản phẩm đã bị Shopee/i.test(
+            `${data.message || ''} ${data.error || ''} ${JSON.stringify(apiErrors)}`
+          );
+
+        if (invalidCategory) {
+          const msg =
+            'Danh mục cũ của sản phẩm đã bị Shopee thay đổi. Vui lòng chọn lại danh mục mới trước khi đăng bán!';
+          setShopeeCategory(null);
+          setShopeeAttrDefs([]);
+          setShopeeAttrValues({});
+          setCategoryResetToken((t) => t + 1);
+          alert(`⚠ ${msg}`);
+          showToast(`⚠ ${msg}`);
+          onAddLog({
+            id: `log-${Date.now()}-cat`,
+            timestamp: new Date().toISOString(),
+            channel: 'shopee',
+            type: 'publish',
+            status: 'failed',
+            message: msg,
+          });
+          if (!okCount) throw new Error(msg);
+          return;
+        }
+
         const detailLines = (apiErrors.length ? apiErrors : listings.filter((l) => l.status !== 'success'))
           .map((e: any) => `• [${e.shop_name || e.shop_id}] ${e.error || e.error_message || 'Thất bại'}`)
           .slice(0, 8);
@@ -770,6 +800,8 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
               label="Ngành hàng Shopee"
               value={shopeeCategory}
               onChange={setShopeeCategory}
+              shopId={primaryShopeeShopId}
+              forceClearToken={categoryResetToken}
             />
             <select
               value={shopeeBrand}

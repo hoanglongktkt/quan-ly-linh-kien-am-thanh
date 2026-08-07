@@ -311,6 +311,14 @@ import {
 } from "./services/shopee/jsonBig.js";
 import { shopeeAxiosGet, shopeeAxiosPost } from "./services/shopee/axiosClient.js";
 import {
+  getOrSyncShopeeCategories,
+  isShopeeInvalidCategoryError,
+  SHOPEE_INVALID_CATEGORY_CODE,
+  SHOPEE_INVALID_CATEGORY_USER_MSG,
+  toShopeeCategoryIdInt,
+  validateShopeeLeafCategoryId,
+} from "./services/shopee/categories.js";
+import {
   initShopeeAuthController,
   oauthComplete,
   oauthCallback,
@@ -5143,8 +5151,77 @@ function assertShopeeApiOk(json: any, httpStatus: number | undefined, context: s
   const bizErr = extractShopeeBusinessError(json, httpStatus);
   if (bizErr) {
     console.log("[SHOPEE UPLOAD ERROR]:", JSON.stringify(json ?? { error: bizErr }, null, 2));
+    const rawCode = String(json?.error || "").trim();
+    if (isShopeeInvalidCategoryError(rawCode) || isShopeeInvalidCategoryError(bizErr)) {
+      const err: any = new Error(`${context}: ${SHOPEE_INVALID_CATEGORY_USER_MSG}`);
+      err.code = SHOPEE_INVALID_CATEGORY_CODE;
+      err.shopee_error = rawCode || SHOPEE_INVALID_CATEGORY_CODE;
+      throw err;
+    }
     throw new Error(`${context}: ${bizErr}`);
   }
+}
+
+async function shopeeFetchCategoryList(shopId: string, accessToken: string): Promise<any[]> {
+  const apiPath = "/api/v2/product/get_category";
+  const timestamp = Math.floor(Date.now() / 1000);
+  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const params = new URLSearchParams({
+    partner_id: SHOPEE_PARTNER_ID,
+    timestamp: String(timestamp),
+    access_token: accessToken,
+    shop_id: shopId,
+    sign,
+    language: "vi",
+  });
+  const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
+  let json: any;
+  let httpStatus: number | undefined;
+  try {
+    const ax = await shopeeAxiosGet(url, `GET ${apiPath}`);
+    json = ax.json;
+    httpStatus = ax.httpStatus;
+  } catch {
+    const fb = await shopeeFetchJsonWithRetry(url, `GET ${apiPath}`);
+    json = fb.json;
+    httpStatus = fb.httpStatus;
+  }
+  assertShopeeApiOk(json, httpStatus, "get_category");
+  return asShopeeArray(json?.response?.category_list);
+}
+
+async function resolveShopeePublishCategoryId(
+  shopId: string,
+  accessToken: string,
+  payload: any,
+): Promise<number> {
+  const raw = payload?.shopeeCategoryId ?? payload?.shopeeCategory?.categoryId;
+  const asInt = toShopeeCategoryIdInt(raw);
+  if (asInt == null) {
+    const err: any = new Error("Thiếu category_id Shopee hợp lệ (phải là số nguyên leaf)");
+    err.code = SHOPEE_INVALID_CATEGORY_CODE;
+    throw err;
+  }
+
+  const catDeps = {
+    shopId,
+    accessToken,
+    fetchCategoryList: shopeeFetchCategoryList,
+  };
+  // Luôn đảm bảo có cache mới (hoặc sync nếu hết hạn)
+  let cache = await getOrSyncShopeeCategories(APP_ROOT, catDeps, { force: false });
+  let validated = validateShopeeLeafCategoryId(asInt, cache);
+  if (!validated.ok) {
+    // Force sync một lần rồi validate lại
+    cache = await getOrSyncShopeeCategories(APP_ROOT, catDeps, { force: true });
+    validated = validateShopeeLeafCategoryId(asInt, cache);
+  }
+  if (!validated.ok) {
+    const err: any = new Error(validated.error || SHOPEE_INVALID_CATEGORY_USER_MSG);
+    err.code = validated.code || SHOPEE_INVALID_CATEGORY_CODE;
+    throw err;
+  }
+  return validated.categoryId!;
 }
 
 function stripHtmlToText(html: string): string {
@@ -5449,10 +5526,7 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<str
     throw new Error(fail.message);
   }
 
-  const categoryId = Number(payload?.shopeeCategoryId || payload?.shopeeCategory?.categoryId);
-  if (!Number.isFinite(categoryId) || categoryId <= 0) {
-    throw new Error("Thiếu category_id Shopee hợp lệ");
-  }
+  const categoryId = await resolveShopeePublishCategoryId(shopId, accessToken, payload);
 
   const images: string[] = Array.isArray(payload?.images) ? payload.images.filter(Boolean) : [];
   if (!images.length) throw new Error("Thiếu hình ảnh sản phẩm");
@@ -5542,7 +5616,7 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<str
   const itemBody: Record<string, unknown> = {
     item_name: itemName,
     description,
-    category_id: categoryId,
+    category_id: categoryId, // integer leaf — đã validate qua get_category
     brand: { brand_id: brandId },
     image: { image_id_list: imageIds },
     original_price: basePrice,
@@ -18983,6 +19057,80 @@ async function startServer() {
     }
   });
 
+  /** Lấy / đồng bộ cây danh mục Shopee (v2.product.get_category). */
+  app.get("/api/shopee/categories", authMiddleware, async (req, res) => {
+    try {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+      const shopId = String(req.query.shop_id || req.query.shopId || "").trim();
+      const force = req.query.force === "1" || req.query.refresh === "1";
+      if (!shopId) {
+        return res.status(400).json({ success: false, error: "Thiếu shop_id" });
+      }
+      const accessToken = await getValidShopeeAccessToken(shopId);
+      if (!accessToken) {
+        const fail = describeShopeeTokenFailure(shopId);
+        return res.status(400).json({ success: false, error: fail.message, code: fail.error });
+      }
+      const cache = await getOrSyncShopeeCategories(
+        APP_ROOT,
+        { shopId, accessToken, fetchCategoryList: shopeeFetchCategoryList },
+        { force },
+      );
+      return res.json({
+        success: true,
+        synced_at: cache.synced_at,
+        from_cache: Boolean(cache.from_cache),
+        category_count: cache.category_count,
+        leaf_count: cache.leaf_count,
+        tree: cache.tree || [],
+        leaf_ids: cache.leaf_ids || [],
+        source: "v2.product.get_category",
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "Không lấy được danh mục Shopee",
+      });
+    }
+  });
+
+  /** Force đồng bộ lại danh mục ngành hàng từ Shopee. */
+  app.post("/api/shopee/categories/sync", authMiddleware, async (req, res) => {
+    try {
+      res.setHeader("Cache-Control", "no-store");
+      const shopId = String(req.body?.shop_id || req.body?.shopId || req.query.shop_id || "").trim();
+      if (!shopId) {
+        return res.status(400).json({ success: false, error: "Thiếu shop_id" });
+      }
+      const accessToken = await getValidShopeeAccessToken(shopId);
+      if (!accessToken) {
+        const fail = describeShopeeTokenFailure(shopId);
+        return res.status(400).json({ success: false, error: fail.message, code: fail.error });
+      }
+      const cache = await getOrSyncShopeeCategories(
+        APP_ROOT,
+        { shopId, accessToken, fetchCategoryList: shopeeFetchCategoryList },
+        { force: true },
+      );
+      return res.json({
+        success: true,
+        message: "Đã đồng bộ lại danh mục ngành hàng Shopee",
+        synced_at: cache.synced_at,
+        from_cache: false,
+        category_count: cache.category_count,
+        leaf_count: cache.leaf_count,
+        tree: cache.tree || [],
+        leaf_ids: cache.leaf_ids || [],
+        source: "v2.product.get_category",
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "Đồng bộ danh mục Shopee thất bại",
+      });
+    }
+  });
+
   /** Lấy thuộc tính bắt buộc theo category (FE form đăng bán) — luôn gọi live get_attribute_tree. */
   app.get("/api/shopee/category-attributes", authMiddleware, async (req, res) => {
     try {
@@ -19045,7 +19193,13 @@ async function startServer() {
       const now = new Date().toISOString();
       const allRows = readProductListingsDb();
       const newRows: any[] = [];
-      const errors: { shop_id: string; shop_name: string; platform: string; error: string }[] = [];
+      const errors: {
+        shop_id: string;
+        shop_name: string;
+        platform: string;
+        error: string;
+        code?: string;
+      }[] = [];
 
       const shopList = Array.isArray(shops) && shops.length
         ? shops
@@ -19111,7 +19265,13 @@ async function startServer() {
             }
           } catch (err: any) {
             status = "failed";
-            error_message = err?.message || "Đăng Shopee thất bại";
+            const isInvalidCat =
+              err?.code === SHOPEE_INVALID_CATEGORY_CODE ||
+              isShopeeInvalidCategoryError(err) ||
+              isShopeeInvalidCategoryError(err?.message);
+            error_message = isInvalidCat
+              ? SHOPEE_INVALID_CATEGORY_USER_MSG
+              : err?.message || "Đăng Shopee thất bại";
             console.log(
               "[SHOPEE UPLOAD ERROR]:",
               JSON.stringify(
@@ -19119,13 +19279,20 @@ async function startServer() {
                   shop_id: shopKey,
                   shop_name: shopName,
                   error: error_message,
+                  code: isInvalidCat ? SHOPEE_INVALID_CATEGORY_CODE : err?.code || null,
                   stack: err?.stack || null,
                 },
                 null,
                 2,
               ),
             );
-            errors.push({ shop_id: shopKey, shop_name: shopName, platform, error: error_message });
+            errors.push({
+              shop_id: shopKey,
+              shop_name: shopName,
+              platform,
+              error: error_message,
+              code: isInvalidCat ? SHOPEE_INVALID_CATEGORY_CODE : err?.code,
+            });
           }
         } else {
           status = "failed";
@@ -19184,13 +19351,20 @@ async function startServer() {
       // Có bất kỳ lỗi nào → KHÔNG trả success:true (tránh silent failure trên FE)
       if (failCount > 0) {
         const httpStatus = okCount > 0 ? 207 : 400;
-        const message =
-          okCount > 0
+        const invalidCategory = errors.some(
+          (e) =>
+            e.code === SHOPEE_INVALID_CATEGORY_CODE ||
+            isShopeeInvalidCategoryError(e.error) ||
+            isShopeeInvalidCategoryError(e.code),
+        );
+        const message = invalidCategory
+          ? SHOPEE_INVALID_CATEGORY_USER_MSG
+          : okCount > 0
             ? `Đăng bán một phần: ${okCount}/${newRows.length} thành công, ${failCount} thất bại`
             : `Đăng bán thất bại toàn bộ (${failCount}/${newRows.length}). ${errors[0]?.error || ""}`;
         console.log(
           "[SHOPEE UPLOAD ERROR]:",
-          JSON.stringify({ batchId, summary, errors }, null, 2),
+          JSON.stringify({ batchId, summary, errors, invalidCategory }, null, 2),
         );
         return res.status(httpStatus).json({
           success: false,
@@ -19201,6 +19375,9 @@ async function startServer() {
           summary,
           error: message,
           message,
+          code: invalidCategory ? SHOPEE_INVALID_CATEGORY_CODE : undefined,
+          invalid_category: invalidCategory,
+          reset_category: invalidCategory,
         });
       }
 

@@ -29,6 +29,8 @@ router.get("/product-listings", authMiddleware, wrap("getProductListings"));
 router.post("/product-listings/clear-all", authMiddleware, wrap("clearProductListings"));
 router.post("/catalog/wipe-all", authMiddleware, wrap("wipeCatalog"));
 router.get("/shopee/category-attributes", authMiddleware, wrap("getCategoryAttributes"));
+router.get("/shopee/categories", authMiddleware, wrap("getShopeeCategories"));
+router.post("/shopee/categories/sync", authMiddleware, wrap("syncShopeeCategories"));
 router.post("/multi-channel/publish", authMiddleware, wrap("publishMultiChannel"));
 router.get("/publish-edit", authMiddleware, wrap("getPublishEdit"));
 router.post("/publish-edit/config", authMiddleware, wrap("postPublishEditConfig"));

@@ -34,6 +34,8 @@ const LONG_RUNNING_PREFIXES = [
   'settings/shop-connection-status',
   'multi-channel/publish',
   'shopee/category-attributes',
+  'shopee/categories',
+  'shopee/categories/sync',
   'orders/pull',
   'orders/fast-process',
   'shopee/orders/fast-process',

@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { CategoryNode, CategorySelection, MarketplacePlatform } from '../types/marketplaceCategory';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { CategoryNode, CategorySelection, FlatCategory, MarketplacePlatform } from '../types/marketplaceCategory';
 import {
   DEFAULT_SUGGESTED_IDS,
   findCategoryById,
@@ -8,7 +8,7 @@ import {
   getCategoryTree,
 } from '../data/marketplaceCategories';
 import { getCategoryHistory, pushCategoryHistory } from '../utils/categoryHistory';
-import { ChevronRight, Search, Sparkles, X, FolderTree, Zap } from 'lucide-react';
+import { ChevronRight, Search, Sparkles, X, FolderTree, Zap, RefreshCw, Loader2 } from 'lucide-react';
 
 interface SmartCategorySelectorProps {
   platform: MarketplacePlatform;
@@ -16,7 +16,10 @@ interface SmartCategorySelectorProps {
   onChange: (selection: CategorySelection | null) => void;
   accent?: 'orange' | 'blue' | 'slate';
   label?: string;
-  /** Mở modal từ bên ngoài (nút Chọn nhanh) */
+  /** Shop Shopee để sync get_category */
+  shopId?: string;
+  /** Ép reset value từ parent (invalid category) */
+  forceClearToken?: number;
   externalOpen?: boolean;
   onExternalOpenHandled?: () => void;
 }
@@ -51,23 +54,68 @@ const PLATFORM_LABEL: Record<MarketplacePlatform, string> = {
   tiktok: 'TikTok Shop',
 };
 
+function flattenLiveTree(platform: MarketplacePlatform, tree: CategoryNode[]): FlatCategory[] {
+  const result: FlatCategory[] = [];
+  const walk = (nodes: CategoryNode[], pathNames: string[] = []) => {
+    for (const node of nodes || []) {
+      const next = [...pathNames, node.name];
+      if (node.children?.length) {
+        walk(node.children, next);
+      } else {
+        const label = next.filter(Boolean).join(' > ');
+        result.push({
+          platform,
+          categoryId: String(node.id),
+          label,
+          level1: next[0] || '',
+          level2: next.length > 2 ? next[1] : next[1] || '',
+          level3: next[next.length - 1] || '',
+          searchText: `${label} ${node.id}`.toLowerCase(),
+        });
+      }
+    }
+  };
+  walk(tree);
+  return result;
+}
+
 export default function SmartCategorySelector({
   platform,
   value,
   onChange,
   accent = 'orange',
   label = 'Ngành hàng',
+  shopId,
+  forceClearToken,
   externalOpen,
   onExternalOpenHandled,
 }: SmartCategorySelectorProps) {
   const theme = ACCENT[accent];
-  const tree = useMemo(() => getCategoryTree(platform), [platform]);
-  const flatList = useMemo(() => flattenCategoryTree(platform), [platform]);
+  const staticTree = useMemo(() => getCategoryTree(platform), [platform]);
+  const [liveTree, setLiveTree] = useState<CategoryNode[] | null>(null);
+  const [syncedAt, setSyncedAt] = useState<string | null>(null);
+  const [loadingTree, setLoadingTree] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+
+  const tree = platform === 'shopee' && liveTree?.length ? liveTree : staticTree;
+  const flatList = useMemo(
+    () => (platform === 'shopee' && liveTree?.length
+      ? flattenLiveTree(platform, liveTree)
+      : flattenCategoryTree(platform)),
+    [platform, liveTree],
+  );
 
   const [modalOpen, setModalOpen] = useState(false);
   const [search, setSearch] = useState('');
-  const [level1Id, setLevel1Id] = useState<string | null>(null);
-  const [level2Id, setLevel2Id] = useState<string | null>(null);
+  /** Path navigation cho cây sâu (Shopee live). */
+  const [path, setPath] = useState<CategoryNode[]>([]);
+
+  useEffect(() => {
+    if (forceClearToken != null && forceClearToken > 0) {
+      onChange(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [forceClearToken]);
 
   useEffect(() => {
     if (externalOpen) {
@@ -76,68 +124,107 @@ export default function SmartCategorySelector({
     }
   }, [externalOpen, onExternalOpenHandled]);
 
-  useEffect(() => {
-    if (!modalOpen || !value) return;
-    const l1 = tree.find((n) => n.name === value.level1);
-    if (l1) {
-      setLevel1Id(l1.id);
-      const l2 = l1.children?.find((n) => n.name === value.level2);
-      if (l2) setLevel2Id(l2.id);
+  const loadShopeeCategories = useCallback(async (force = false) => {
+    if (platform !== 'shopee' || !shopId) return;
+    setLoadingTree(true);
+    setSyncError(null);
+    try {
+      const token = localStorage.getItem('admin_token');
+      const url = force
+        ? '/api/shopee/categories/sync'
+        : `/api/shopee/categories?shop_id=${encodeURIComponent(shopId)}&_t=${Date.now()}`;
+      const res = await fetch(url, {
+        method: force ? 'POST' : 'GET',
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache',
+        },
+        ...(force ? { body: JSON.stringify({ shop_id: shopId }) } : { cache: 'no-store' as RequestCache }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Không tải được danh mục Shopee');
+      }
+      setLiveTree(Array.isArray(data.tree) ? data.tree : []);
+      setSyncedAt(data.synced_at || null);
+      setPath([]);
+    } catch (err: any) {
+      setSyncError(err?.message || 'Lỗi đồng bộ danh mục');
+    } finally {
+      setLoadingTree(false);
     }
-  }, [modalOpen, value, tree]);
+  }, [platform, shopId]);
 
-  const level1Nodes = tree;
-  const level2Nodes: CategoryNode[] = useMemo(() => {
-    const n = tree.find((x) => x.id === level1Id);
-    return n?.children || [];
-  }, [tree, level1Id]);
+  useEffect(() => {
+    if (platform === 'shopee' && shopId) {
+      loadShopeeCategories(false);
+    }
+  }, [platform, shopId, loadShopeeCategories]);
 
-  const level3Nodes: CategoryNode[] = useMemo(() => {
-    const n = level2Nodes.find((x) => x.id === level2Id);
-    return n?.children || [];
-  }, [level2Nodes, level2Id]);
+  const currentChildren: CategoryNode[] = useMemo(() => {
+    if (path.length === 0) return tree;
+    return path[path.length - 1]?.children || [];
+  }, [tree, path]);
 
   const searchResults = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return [];
-    return flatList.filter((c) => c.searchText.includes(q)).slice(0, 20);
+    return flatList.filter((c) => c.searchText.includes(q)).slice(0, 30);
   }, [search, flatList]);
 
   const suggestedItems = useMemo(() => {
     const history = getCategoryHistory(platform);
     const defaultIds = DEFAULT_SUGGESTED_IDS[platform];
     const fromDefaults = defaultIds
-      .map((id) => findCategoryById(platform, id))
+      .map((id) => {
+        const live = flatList.find((c) => c.categoryId === id);
+        return live || findCategoryById(platform, id);
+      })
       .filter(Boolean)
       .map((c) => flatToSelection(c!));
     const merged = [...history];
     for (const d of fromDefaults) {
       if (!merged.some((m) => m.categoryId === d.categoryId)) merged.push(d);
     }
+    // Chỉ giữ leaf còn tồn tại trong cây hiện tại (Shopee)
+    if (platform === 'shopee' && flatList.length) {
+      return merged.filter((m) => flatList.some((f) => f.categoryId === m.categoryId)).slice(0, 8);
+    }
     return merged.slice(0, 8);
-  }, [platform, modalOpen]);
+  }, [platform, flatList, modalOpen]);
 
   const applySelection = (sel: CategorySelection) => {
     pushCategoryHistory(sel);
     onChange(sel);
     setModalOpen(false);
     setSearch('');
+    setPath([]);
   };
 
-  const pickLeaf = (l1: string, l2: string, leaf: CategoryNode) => {
+  const pickNode = (node: CategoryNode, ancestors: CategoryNode[]) => {
+    if (node.children?.length) {
+      setPath([...ancestors, node]);
+      return;
+    }
+    const names = [...ancestors.map((a) => a.name), node.name];
     applySelection({
       platform,
-      categoryId: leaf.id,
-      label: [l1, l2, leaf.name].filter(Boolean).join(' > '),
-      level1: l1,
-      level2: l2,
-      level3: leaf.name,
+      categoryId: String(node.id),
+      label: names.filter(Boolean).join(' > '),
+      level1: names[0] || '',
+      level2: names.length > 2 ? names[1] : names[1] || '',
+      level3: names[names.length - 1] || '',
     });
   };
 
   const openModal = () => {
     setSearch('');
+    setPath([]);
     setModalOpen(true);
+    if (platform === 'shopee' && shopId && !liveTree?.length) {
+      loadShopeeCategories(false);
+    }
   };
 
   return (
@@ -145,13 +232,27 @@ export default function SmartCategorySelector({
       <div className="space-y-1">
         <div className="flex items-center justify-between gap-2">
           <label className="text-[10px] font-bold text-gray-500">{label} *</label>
-          <button
-            type="button"
-            onClick={openModal}
-            className={`text-[10px] font-extrabold px-2 py-0.5 rounded-lg border ${theme.border} ${theme.text} ${theme.bg} flex items-center gap-1 shrink-0`}
-          >
-            <Zap className="w-3 h-3" /> Chọn nhanh
-          </button>
+          <div className="flex items-center gap-1 shrink-0">
+            {platform === 'shopee' && shopId && (
+              <button
+                type="button"
+                title="Đồng bộ lại danh mục ngành hàng"
+                disabled={loadingTree}
+                onClick={() => loadShopeeCategories(true)}
+                className={`text-[10px] font-extrabold px-2 py-0.5 rounded-lg border ${theme.border} ${theme.text} ${theme.bg} flex items-center gap-1 disabled:opacity-60`}
+              >
+                {loadingTree ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                Đồng bộ DM
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={openModal}
+              className={`text-[10px] font-extrabold px-2 py-0.5 rounded-lg border ${theme.border} ${theme.text} ${theme.bg} flex items-center gap-1`}
+            >
+              <Zap className="w-3 h-3" /> Chọn nhanh
+            </button>
+          </div>
         </div>
         <button
           type="button"
@@ -170,6 +271,13 @@ export default function SmartCategorySelector({
             </span>
           )}
         </button>
+        {platform === 'shopee' && syncedAt && (
+          <p className="text-[9px] text-gray-400">
+            Danh mục Shopee cập nhật: {new Date(syncedAt).toLocaleString('vi-VN')}
+            {liveTree?.length ? ` · ${flatList.length} ngành lá` : ''}
+          </p>
+        )}
+        {syncError && <p className="text-[9px] text-red-600 font-medium">{syncError}</p>}
       </div>
 
       {modalOpen && (
@@ -181,11 +289,28 @@ export default function SmartCategorySelector({
                   <FolderTree className="w-4 h-4" />
                   Ngành hàng thông minh — {PLATFORM_LABEL[platform]}
                 </h3>
-                <p className="text-[10px] text-gray-400 mt-0.5">Chọn phân cấp: Ngành lớn → Ngành nhỏ → Ngành chi tiết</p>
+                <p className="text-[10px] text-gray-400 mt-0.5">
+                  {platform === 'shopee'
+                    ? 'Chỉ chọn danh mục lá (leaf) từ cây get_category mới nhất'
+                    : 'Chọn phân cấp: Ngành lớn → Ngành nhỏ → Ngành chi tiết'}
+                </p>
               </div>
-              <button type="button" onClick={() => setModalOpen(false)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400">
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                {platform === 'shopee' && shopId && (
+                  <button
+                    type="button"
+                    disabled={loadingTree}
+                    onClick={() => loadShopeeCategories(true)}
+                    className={`text-[10px] font-bold px-2.5 py-1.5 rounded-lg border ${theme.border} ${theme.text} flex items-center gap-1`}
+                  >
+                    {loadingTree ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                    Đồng bộ lại danh mục ngành hàng
+                  </button>
+                )}
+                <button type="button" onClick={() => setModalOpen(false)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             <div className="p-4 space-y-3 overflow-y-auto flex-1">
@@ -201,12 +326,18 @@ export default function SmartCategorySelector({
                 />
               </div>
 
+              {loadingTree && (
+                <p className="text-xs text-gray-500 flex items-center gap-2">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Đang tải danh mục từ Shopee...
+                </p>
+              )}
+
               {search.trim() ? (
                 <div className="border border-gray-100 rounded-xl overflow-hidden">
                   {searchResults.length === 0 ? (
                     <p className="text-xs text-gray-400 p-4 text-center">Không tìm thấy ngành hàng phù hợp</p>
                   ) : (
-                    <ul className="divide-y divide-gray-50 max-h-48 overflow-y-auto">
+                    <ul className="divide-y divide-gray-50 max-h-64 overflow-y-auto">
                       {searchResults.map((item) => (
                         <li key={item.categoryId}>
                           <button
@@ -223,68 +354,63 @@ export default function SmartCategorySelector({
                   )}
                 </div>
               ) : (
-                <div className="grid grid-cols-3 gap-2 min-h-[200px]">
-                  <div className="border border-gray-100 rounded-xl overflow-hidden">
-                    <div className={`px-3 py-2 text-[10px] font-extrabold uppercase ${theme.bg} ${theme.text}`}>Ngành lớn</div>
-                    <ul className="max-h-44 overflow-y-auto">
-                      {level1Nodes.map((n) => (
-                        <li key={n.id}>
+                <div className="space-y-2">
+                  {path.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1 text-[10px]">
+                      <button
+                        type="button"
+                        onClick={() => setPath([])}
+                        className={`px-2 py-0.5 rounded border ${theme.border} ${theme.text} font-bold`}
+                      >
+                        Gốc
+                      </button>
+                      {path.map((n, idx) => (
+                        <React.Fragment key={n.id}>
+                          <ChevronRight className="w-3 h-3 text-gray-300" />
                           <button
                             type="button"
-                            onClick={() => { setLevel1Id(n.id); setLevel2Id(null); }}
-                            className={`w-full px-3 py-2 text-left text-xs flex items-center justify-between ${
-                              level1Id === n.id ? `${theme.bg} font-bold ${theme.text}` : 'hover:bg-gray-50 text-gray-700'
-                            }`}
+                            onClick={() => setPath(path.slice(0, idx + 1))}
+                            className="px-2 py-0.5 rounded bg-gray-50 text-gray-700 font-medium"
                           >
                             {n.name}
-                            <ChevronRight className="w-3 h-3 opacity-50" />
                           </button>
-                        </li>
+                        </React.Fragment>
                       ))}
-                    </ul>
-                  </div>
-                  <div className="border border-gray-100 rounded-xl overflow-hidden">
-                    <div className={`px-3 py-2 text-[10px] font-extrabold uppercase ${theme.bg} ${theme.text}`}>Ngành nhỏ</div>
-                    <ul className="max-h-44 overflow-y-auto">
-                      {level2Nodes.length === 0 ? (
-                        <li className="px-3 py-6 text-[10px] text-gray-400 text-center">← Chọn ngành lớn</li>
-                      ) : level2Nodes.map((n) => (
-                        <li key={n.id}>
-                          <button
-                            type="button"
-                            onClick={() => setLevel2Id(n.id)}
-                            className={`w-full px-3 py-2 text-left text-xs flex items-center justify-between ${
-                              level2Id === n.id ? `${theme.bg} font-bold ${theme.text}` : 'hover:bg-gray-50 text-gray-700'
-                            }`}
-                          >
-                            {n.name}
-                            <ChevronRight className="w-3 h-3 opacity-50" />
-                          </button>
+                    </div>
+                  )}
+                  <div className="border border-gray-100 rounded-xl overflow-hidden min-h-[200px]">
+                    <div className={`px-3 py-2 text-[10px] font-extrabold uppercase ${theme.bg} ${theme.text}`}>
+                      {path.length === 0 ? 'Ngành lớn' : 'Chọn tiếp / danh mục lá'}
+                    </div>
+                    <ul className="max-h-56 overflow-y-auto">
+                      {currentChildren.length === 0 ? (
+                        <li className="px-3 py-6 text-[10px] text-gray-400 text-center">
+                          {loadingTree ? 'Đang tải...' : 'Không có danh mục'}
                         </li>
-                      ))}
-                    </ul>
-                  </div>
-                  <div className="border border-gray-100 rounded-xl overflow-hidden">
-                    <div className={`px-3 py-2 text-[10px] font-extrabold uppercase ${theme.bg} ${theme.text}`}>Ngành chi tiết</div>
-                    <ul className="max-h-44 overflow-y-auto">
-                      {level3Nodes.length === 0 ? (
-                        <li className="px-3 py-6 text-[10px] text-gray-400 text-center">← Chọn ngành nhỏ</li>
-                      ) : level3Nodes.map((leaf) => {
-                        const l1 = level1Nodes.find((x) => x.id === level1Id)?.name || '';
-                        const l2 = level2Nodes.find((x) => x.id === level2Id)?.name || '';
-                        return (
-                          <li key={leaf.id}>
-                            <button
-                              type="button"
-                              onClick={() => pickLeaf(l1, l2, leaf)}
-                              className="w-full px-3 py-2 text-left text-xs hover:bg-gray-50 text-gray-800 font-medium"
-                            >
-                              {leaf.name}
-                              <span className="block text-[9px] font-mono text-gray-400">ID: {leaf.id}</span>
-                            </button>
-                          </li>
-                        );
-                      })}
+                      ) : (
+                        currentChildren.map((n) => {
+                          const isLeaf = !n.children?.length;
+                          return (
+                            <li key={n.id}>
+                              <button
+                                type="button"
+                                onClick={() => pickNode(n, path)}
+                                className={`w-full px-3 py-2 text-left text-xs flex items-center justify-between hover:bg-gray-50 ${
+                                  isLeaf ? 'font-semibold text-gray-900' : 'text-gray-700'
+                                }`}
+                              >
+                                <span>
+                                  {n.name}
+                                  {isLeaf && (
+                                    <span className="block text-[9px] font-mono text-gray-400">ID: {n.id} · leaf</span>
+                                  )}
+                                </span>
+                                {!isLeaf && <ChevronRight className="w-3 h-3 opacity-50" />}
+                              </button>
+                            </li>
+                          );
+                        })
+                      )}
                     </ul>
                   </div>
                 </div>
@@ -302,7 +428,7 @@ export default function SmartCategorySelector({
                       onClick={() => applySelection(item)}
                       className={`px-2.5 py-1 border rounded-lg text-[10px] font-bold transition-all ${theme.tag}`}
                     >
-                      {item.level3}
+                      {item.level3 || item.label}
                     </button>
                   ))}
                 </div>
