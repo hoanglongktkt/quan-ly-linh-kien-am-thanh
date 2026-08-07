@@ -5339,11 +5339,82 @@ async function shopeeGetChannelList(shopId: string, accessToken: string) {
   assertShopeeApiOk(json, httpStatus, "get_channel_list");
   const list = asShopeeArray(json?.response?.logistics_channel_list);
   return list
-    .filter((c: any) => c && c.enabled !== false && Number(c.logistics_channel_id) > 0)
+    .filter((c: any) => c && Number(c.logistics_channel_id) > 0)
     .map((c: any) => ({
       logistic_id: Number(c.logistics_channel_id),
-      enabled: true,
+      enabled: Boolean(c.enabled !== false),
+      logistic_name: String(c.logistics_channel_name || `Kênh ${c.logistics_channel_id}`),
+      channel_type: classifyLogisticChannelType(c),
+      has_size_limit: Boolean(c.size_limit || c.max_dimension || c.max_length || c.max_width || c.max_height),
+      max_dimension: (() => {
+        const md = c.max_dimension;
+        if (!md) {
+          const ml = Number(c.max_length || 0);
+          const mw = Number(c.max_width || 0);
+          const mh = Number(c.max_height || 0);
+          if (ml > 0 || mw > 0 || mh > 0) return { max_length: ml, max_width: mw, max_height: mh };
+          return undefined;
+        }
+        return {
+          max_length: Number(md.max_length || 0),
+          max_width: Number(md.max_width || 0),
+          max_height: Number(md.max_height || 0),
+        };
+      })(),
+      cod_enabled: Boolean(c.cod_enabled ?? c.support_cod ?? c.is_cod),
+      fee_type: String(c.fee_type || ''),
     }));
+}
+
+function classifyLogisticChannelType(c: any): string {
+  const name = String(c.logistics_channel_name || '').toLowerCase();
+  const mask = Number(c.mask_channel || 0);
+  // Shopee bitmask: 1=express(hoa toc), 2=fast(nhanh), 4=pickup, 8=bulky
+  if (mask === 1 || /hoả? ?tốc|express|same.?day/i.test(name)) return 'express';
+  if (mask === 2 || /nhanh|fast|next.?day/i.test(name)) return 'fast';
+  if (mask === 4 || /lấy ?hàng|pick.?up|self.?collect/i.test(name)) return 'pickup';
+  if (mask === 8 || /cồng ?kềnh|bulky|heavy|large/i.test(name)) return 'bulky';
+  // Heuristic by name
+  if (/hoả? ?tốc|express|same.?day|now/i.test(name)) return 'express';
+  if (/nhanh|fast|next.?day/i.test(name)) return 'fast';
+  if (/lấy ?hàng|pick.?up|self.?collect/i.test(name)) return 'pickup';
+  if (/cồng ?kềnh|bulky|heavy|large/i.test(name)) return 'bulky';
+  return 'other';
+}
+
+/** Lọc kênh vận chuyển hợp lệ theo enabledLogistics + kích thước + weight. */
+function buildLogisticInfoFromPayload(
+  fullChannels: any[],
+  enabledLogistics: number[],
+  payload: any,
+): any[] {
+  const pkgLength = Math.max(1, Number(payload?.packageLength || 10));
+  const pkgWidth = Math.max(1, Number(payload?.packageWidth || 10));
+  const pkgHeight = Math.max(1, Number(payload?.packageHeight || 10));
+  const pkgWeight = Number(payload?.packageWeight || payload?.weight || 500);
+  const dims = [pkgLength, pkgWidth, pkgHeight].sort((a, b) => b - a);
+
+  const result: any[] = [];
+  for (const ch of fullChannels) {
+    // FE đã bật toggle?
+    const feEnabled = enabledLogistics.includes(ch.logistic_id);
+    // Hoặc legacy: lấy all enabled channels nếu FE không gửi enabledLogistics
+    const isEnabled = enabledLogistics.length > 0
+      ? feEnabled
+      : (ch.enabled !== false);
+    if (!isEnabled) continue;
+
+    // Kiểm tra giới hạn kích thước
+    if (ch.has_size_limit && ch.max_dimension) {
+      const md = [ch.max_dimension.max_length, ch.max_dimension.max_width, ch.max_dimension.max_height].sort(
+        (a, b) => b - a,
+      );
+      if (dims[0] > md[0] || dims[1] > md[1] || dims[2] > md[2]) continue;
+    }
+
+    result.push({ logistic_id: ch.logistic_id, enabled: true });
+  }
+  return result;
 }
 
 async function shopeeGetAttributeTree(shopId: string, accessToken: string, categoryId: number) {
@@ -5546,9 +5617,13 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<str
     await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
   }
 
-  const logisticInfo = await shopeeGetChannelList(shopId, accessToken);
+  const fullChannels = await shopeeGetChannelList(shopId, accessToken);
+  const enabledLogistics: number[] = Array.isArray(payload?.enabledLogistics)
+    ? payload.enabledLogistics.map(Number).filter((n: number) => n > 0)
+    : [];
+  const logisticInfo = buildLogisticInfoFromPayload(fullChannels, enabledLogistics, payload);
   if (!logisticInfo.length) {
-    throw new Error("Shop chưa có kênh vận chuyển enabled (get_channel_list)");
+    throw new Error("Shop chưa có kênh vận chuyển enabled (get_channel_list) hoặc kích thước gói hàng không phù hợp với bất kỳ kênh nào");
   }
   await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
 
@@ -5605,12 +5680,17 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<str
 
   const weightKg = packageWeightToKg(payload);
   const brandId = resolveShopeeBrandId(payload);
+  const perVariationWeight = Boolean(payload?.perVariationWeight);
 
   const existingItemId =
     toShopeeId(payload?.shopeeItemId) ||
     toShopeeId(payload?.platform_product_id) ||
     toShopeeId(payload?.item_id) ||
     null;
+
+  // Pre-order
+  const isPreOrder = Boolean(payload?.isPreOrder || payload?.is_pre_order);
+  const daysToShip = Math.max(7, Math.min(15, Math.round(Number(payload?.daysToShip || payload?.days_to_ship || 10))));
 
   // 2) add_item / update_item — map medicine_id khi có (bắt buộc ngành Y tế/Dược)
   const itemBody: Record<string, unknown> = {
@@ -5621,6 +5701,8 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<str
     image: { image_id_list: imageIds },
     original_price: basePrice,
     seller_stock: [{ stock: hasVariants ? 0 : baseStock }],
+    // Khi per-variation weight ON: weight/dimension ở root dùng giá trị trung bình (Shopee vẫn yêu cầu)
+    // Cân nặng thực tế từng model sẽ được gắn trong model_list
     weight: weightKg,
     dimension: {
       package_length: Math.max(1, Math.round(Number(payload?.packageLength || 10))),
@@ -5630,7 +5712,11 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<str
     logistic_info: logisticInfo,
     item_status: "NORMAL",
     condition: "NEW",
+    is_pre_order: isPreOrder,
   };
+  if (isPreOrder) {
+    itemBody.days_to_ship = daysToShip;
+  }
   if (attributeList.length) itemBody.attribute_list = attributeList;
   if (medicineId) {
     // Shopee docs: medicine_id int64 — gửi Number nếu safe, còn không giữ String digits.
@@ -5672,13 +5758,20 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<str
     const optionList = variants.map((v: any) => ({
       option: String(v.name || "Phân loại").trim().slice(0, 30) || "Phân loại",
     }));
-    const modelList = variants.map((v: any, idx: number) => ({
-      tier_index: [idx],
-      original_price: Math.max(0, Math.round(Number(v.priceShopee || 0))),
-      seller_stock: [{ stock: Math.max(0, Math.round(Number(v.stock || 0))) }],
-      model_sku: String(v.sku || "").slice(0, 100),
-    }));
-    for (const m of modelList) {
+    const modelListWithWeight = variants.map((v: any, idx: number) => {
+      const base: any = {
+        tier_index: [idx],
+        original_price: Math.max(0, Math.round(Number(v.priceShopee || 0))),
+        seller_stock: [{ stock: Math.max(0, Math.round(Number(v.stock || 0))) }],
+        model_sku: String(v.sku || "").slice(0, 100),
+      };
+      if (perVariationWeight) {
+        const vWeight = Number(v.weight || 0);
+        base.weight = vWeight > 30 ? vWeight / 1000 : (vWeight > 0 ? vWeight : weightKg);
+      }
+      return base;
+    });
+    for (const m of modelListWithWeight) {
       if (m.original_price <= 0) throw new Error("Mỗi phân loại cần giá Shopee > 0");
     }
 
@@ -5691,7 +5784,7 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<str
         {
           item_id: itemId,
           tier_variation: [{ name: "Phân loại", option_list: optionList }],
-          model: modelList,
+          model: modelListWithWeight,
         },
         "init_tier_variation",
       );
@@ -5715,7 +5808,7 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<str
           "/api/v2/product/add_model",
           shopId,
           accessToken,
-          { item_id: itemId, model_list: modelList },
+          { item_id: itemId, model_list: modelListWithWeight },
           "add_model",
         );
       } catch (fallbackErr: any) {
@@ -19127,6 +19220,34 @@ async function startServer() {
       return res.status(500).json({
         success: false,
         error: error?.message || "Đồng bộ danh mục Shopee thất bại",
+      });
+    }
+  });
+
+  /** Lấy danh sách kênh vận chuyển shop (FE form đăng bán — toggle từng kênh). */
+  app.get("/api/shopee/logistics-channels", authMiddleware, async (req, res) => {
+    try {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+      const shopId = String(req.query.shop_id || req.query.shopId || "").trim();
+      if (!shopId) {
+        return res.status(400).json({ success: false, error: "Thiếu shop_id" });
+      }
+      const accessToken = await getValidShopeeAccessToken(shopId);
+      if (!accessToken) {
+        const fail = describeShopeeTokenFailure(shopId);
+        return res.status(400).json({ success: false, error: fail.message, code: fail.error });
+      }
+      const channels = await shopeeGetChannelList(shopId, accessToken);
+      return res.json({
+        success: true,
+        shop_id: shopId,
+        channels,
+        source: "v2.logistics.get_channel_list",
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "Không lấy được kênh vận chuyển",
       });
     }
   });

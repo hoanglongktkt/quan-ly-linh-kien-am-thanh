@@ -120946,10 +120946,64 @@ async function shopeeGetChannelList(shopId, accessToken) {
   );
   assertShopeeApiOk(json2, httpStatus, "get_channel_list");
   const list = asShopeeArray(json2?.response?.logistics_channel_list);
-  return list.filter((c) => c && c.enabled !== false && Number(c.logistics_channel_id) > 0).map((c) => ({
+  return list.filter((c) => c && Number(c.logistics_channel_id) > 0).map((c) => ({
     logistic_id: Number(c.logistics_channel_id),
-    enabled: true
+    enabled: Boolean(c.enabled !== false),
+    logistic_name: String(c.logistics_channel_name || `K\xEAnh ${c.logistics_channel_id}`),
+    channel_type: classifyLogisticChannelType(c),
+    has_size_limit: Boolean(c.size_limit || c.max_dimension || c.max_length || c.max_width || c.max_height),
+    max_dimension: (() => {
+      const md = c.max_dimension;
+      if (!md) {
+        const ml = Number(c.max_length || 0);
+        const mw = Number(c.max_width || 0);
+        const mh = Number(c.max_height || 0);
+        if (ml > 0 || mw > 0 || mh > 0) return { max_length: ml, max_width: mw, max_height: mh };
+        return void 0;
+      }
+      return {
+        max_length: Number(md.max_length || 0),
+        max_width: Number(md.max_width || 0),
+        max_height: Number(md.max_height || 0)
+      };
+    })(),
+    cod_enabled: Boolean(c.cod_enabled ?? c.support_cod ?? c.is_cod),
+    fee_type: String(c.fee_type || "")
   }));
+}
+function classifyLogisticChannelType(c) {
+  const name = String(c.logistics_channel_name || "").toLowerCase();
+  const mask = Number(c.mask_channel || 0);
+  if (mask === 1 || /hoả? ?tốc|express|same.?day/i.test(name)) return "express";
+  if (mask === 2 || /nhanh|fast|next.?day/i.test(name)) return "fast";
+  if (mask === 4 || /lấy ?hàng|pick.?up|self.?collect/i.test(name)) return "pickup";
+  if (mask === 8 || /cồng ?kềnh|bulky|heavy|large/i.test(name)) return "bulky";
+  if (/hoả? ?tốc|express|same.?day|now/i.test(name)) return "express";
+  if (/nhanh|fast|next.?day/i.test(name)) return "fast";
+  if (/lấy ?hàng|pick.?up|self.?collect/i.test(name)) return "pickup";
+  if (/cồng ?kềnh|bulky|heavy|large/i.test(name)) return "bulky";
+  return "other";
+}
+function buildLogisticInfoFromPayload(fullChannels, enabledLogistics, payload) {
+  const pkgLength = Math.max(1, Number(payload?.packageLength || 10));
+  const pkgWidth = Math.max(1, Number(payload?.packageWidth || 10));
+  const pkgHeight = Math.max(1, Number(payload?.packageHeight || 10));
+  const pkgWeight = Number(payload?.packageWeight || payload?.weight || 500);
+  const dims = [pkgLength, pkgWidth, pkgHeight].sort((a, b) => b - a);
+  const result = [];
+  for (const ch of fullChannels) {
+    const feEnabled = enabledLogistics.includes(ch.logistic_id);
+    const isEnabled = enabledLogistics.length > 0 ? feEnabled : ch.enabled !== false;
+    if (!isEnabled) continue;
+    if (ch.has_size_limit && ch.max_dimension) {
+      const md = [ch.max_dimension.max_length, ch.max_dimension.max_width, ch.max_dimension.max_height].sort(
+        (a, b) => b - a
+      );
+      if (dims[0] > md[0] || dims[1] > md[1] || dims[2] > md[2]) continue;
+    }
+    result.push({ logistic_id: ch.logistic_id, enabled: true });
+  }
+  return result;
 }
 async function shopeeGetAttributeTree(shopId, accessToken, categoryId) {
   const apiPath = "/api/v2/product/get_attribute_tree";
@@ -121107,9 +121161,11 @@ async function publishOneItemToShopee(shopId, payload) {
     imageIds.push(await shopeeUploadImage(shopId, accessToken, buf, filename, mime));
     await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
   }
-  const logisticInfo = await shopeeGetChannelList(shopId, accessToken);
+  const fullChannels = await shopeeGetChannelList(shopId, accessToken);
+  const enabledLogistics = Array.isArray(payload?.enabledLogistics) ? payload.enabledLogistics.map(Number).filter((n) => n > 0) : [];
+  const logisticInfo = buildLogisticInfoFromPayload(fullChannels, enabledLogistics, payload);
   if (!logisticInfo.length) {
-    throw new Error("Shop ch\u01B0a c\xF3 k\xEAnh v\u1EADn chuy\u1EC3n enabled (get_channel_list)");
+    throw new Error("Shop ch\u01B0a c\xF3 k\xEAnh v\u1EADn chuy\u1EC3n enabled (get_channel_list) ho\u1EB7c k\xEDch th\u01B0\u1EDBc g\xF3i h\xE0ng kh\xF4ng ph\xF9 h\u1EE3p v\u1EDBi b\u1EA5t k\u1EF3 k\xEAnh n\xE0o");
   }
   await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
   let mandatoryAttrs = [];
@@ -121152,7 +121208,10 @@ async function publishOneItemToShopee(shopId, payload) {
   ) || itemName;
   const weightKg = packageWeightToKg(payload);
   const brandId = resolveShopeeBrandId(payload);
+  const perVariationWeight = Boolean(payload?.perVariationWeight);
   const existingItemId = toShopeeId(payload?.shopeeItemId) || toShopeeId(payload?.platform_product_id) || toShopeeId(payload?.item_id) || null;
+  const isPreOrder = Boolean(payload?.isPreOrder || payload?.is_pre_order);
+  const daysToShip = Math.max(7, Math.min(15, Math.round(Number(payload?.daysToShip || payload?.days_to_ship || 10))));
   const itemBody = {
     item_name: itemName,
     description,
@@ -121162,6 +121221,8 @@ async function publishOneItemToShopee(shopId, payload) {
     image: { image_id_list: imageIds },
     original_price: basePrice,
     seller_stock: [{ stock: hasVariants ? 0 : baseStock }],
+    // Khi per-variation weight ON: weight/dimension ở root dùng giá trị trung bình (Shopee vẫn yêu cầu)
+    // Cân nặng thực tế từng model sẽ được gắn trong model_list
     weight: weightKg,
     dimension: {
       package_length: Math.max(1, Math.round(Number(payload?.packageLength || 10))),
@@ -121170,8 +121231,12 @@ async function publishOneItemToShopee(shopId, payload) {
     },
     logistic_info: logisticInfo,
     item_status: "NORMAL",
-    condition: "NEW"
+    condition: "NEW",
+    is_pre_order: isPreOrder
   };
+  if (isPreOrder) {
+    itemBody.days_to_ship = daysToShip;
+  }
   if (attributeList.length) itemBody.attribute_list = attributeList;
   if (medicineId) {
     const midNum = Number(medicineId);
@@ -121208,13 +121273,20 @@ async function publishOneItemToShopee(shopId, payload) {
     const optionList = variants.map((v) => ({
       option: String(v.name || "Ph\xE2n lo\u1EA1i").trim().slice(0, 30) || "Ph\xE2n lo\u1EA1i"
     }));
-    const modelList = variants.map((v, idx) => ({
-      tier_index: [idx],
-      original_price: Math.max(0, Math.round(Number(v.priceShopee || 0))),
-      seller_stock: [{ stock: Math.max(0, Math.round(Number(v.stock || 0))) }],
-      model_sku: String(v.sku || "").slice(0, 100)
-    }));
-    for (const m2 of modelList) {
+    const modelListWithWeight = variants.map((v, idx) => {
+      const base = {
+        tier_index: [idx],
+        original_price: Math.max(0, Math.round(Number(v.priceShopee || 0))),
+        seller_stock: [{ stock: Math.max(0, Math.round(Number(v.stock || 0))) }],
+        model_sku: String(v.sku || "").slice(0, 100)
+      };
+      if (perVariationWeight) {
+        const vWeight = Number(v.weight || 0);
+        base.weight = vWeight > 30 ? vWeight / 1e3 : vWeight > 0 ? vWeight : weightKg;
+      }
+      return base;
+    });
+    for (const m2 of modelListWithWeight) {
       if (m2.original_price <= 0) throw new Error("M\u1ED7i ph\xE2n lo\u1EA1i c\u1EA7n gi\xE1 Shopee > 0");
     }
     const tierErrors = [];
@@ -121226,7 +121298,7 @@ async function publishOneItemToShopee(shopId, payload) {
         {
           item_id: itemId,
           tier_variation: [{ name: "Ph\xE2n lo\u1EA1i", option_list: optionList }],
-          model: modelList
+          model: modelListWithWeight
         },
         "init_tier_variation"
       );
@@ -121250,7 +121322,7 @@ async function publishOneItemToShopee(shopId, payload) {
           "/api/v2/product/add_model",
           shopId,
           accessToken,
-          { item_id: itemId, model_list: modelList },
+          { item_id: itemId, model_list: modelListWithWeight },
           "add_model"
         );
       } catch (fallbackErr) {
@@ -130699,6 +130771,32 @@ async function startServer() {
       return res.status(500).json({
         success: false,
         error: error?.message || "\u0110\u1ED3ng b\u1ED9 danh m\u1EE5c Shopee th\u1EA5t b\u1EA1i"
+      });
+    }
+  });
+  app.get("/api/shopee/logistics-channels", authMiddleware, async (req, res) => {
+    try {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+      const shopId = String(req.query.shop_id || req.query.shopId || "").trim();
+      if (!shopId) {
+        return res.status(400).json({ success: false, error: "Thi\u1EBFu shop_id" });
+      }
+      const accessToken = await getValidShopeeAccessToken(shopId);
+      if (!accessToken) {
+        const fail2 = describeShopeeTokenFailure(shopId);
+        return res.status(400).json({ success: false, error: fail2.message, code: fail2.error });
+      }
+      const channels = await shopeeGetChannelList(shopId, accessToken);
+      return res.json({
+        success: true,
+        shop_id: shopId,
+        channels,
+        source: "v2.logistics.get_channel_list"
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "Kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c k\xEAnh v\u1EADn chuy\u1EC3n"
       });
     }
   });
