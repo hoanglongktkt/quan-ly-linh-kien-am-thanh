@@ -247,6 +247,8 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
   const [tierAttrs, setTierAttrs] = useState<TierAttribute[]>([
     { id: 'attr-color', name: 'Màu', values: [], images: {} }
   ]);
+  // State riêng cho input text của từng thuộc tính (tag input)
+  const [tierInputValues, setTierInputValues] = useState<Record<string, string>>({});
 
   // Bulk apply state — "Mẹo thiết lập nhanh"
   const [bulkSku, setBulkSku] = useState('');
@@ -547,9 +549,44 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
     setTierAttrs((prev) => prev.map((a) => (a.id === id ? { ...a, values } : a)));
   };
 
-  const handleTagInput = (id: string, raw: string) => {
-    const vals = raw.split(',').map((v) => v.trim()).filter(Boolean);
-    updateTierAttrValues(id, vals);
+  // Bắt phím Enter hoặc dấu phẩy để thêm tag mới
+  const handleTagInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, attrId: string) => {
+    const raw = (e.target as HTMLInputElement).value.trim();
+    const isEnter = e.key === 'Enter';
+    const isComma = e.key === ',';
+    if (!isEnter && !isComma) return;
+    if (isComma) {
+      e.preventDefault();
+      const parts = raw.split(',').map((v) => v.trim()).filter(Boolean);
+      setTierAttrs((prev) => {
+        const attr = prev.find((a) => a.id === attrId);
+        if (!attr) return prev;
+        const newVals = [...attr.values];
+        let added = false;
+        for (const p of parts) {
+          if (!newVals.includes(p)) { newVals.push(p); added = true; }
+        }
+        return added ? prev.map((a) => (a.id === attrId ? { ...a, values: newVals } : a)) : prev;
+      });
+      setTierInputValues((prev) => ({ ...prev, [attrId]: '' }));
+      return;
+    }
+    if (isEnter) {
+      e.preventDefault();
+      if (!raw) return;
+      setTierAttrs((prev) => {
+        const attr = prev.find((a) => a.id === attrId);
+        if (!attr) return prev;
+        if (attr.values.includes(raw)) return prev;
+        return prev.map((a) => (a.id === attrId ? { ...a, values: [...a.values, raw] } : a));
+      });
+      setTierInputValues((prev) => ({ ...prev, [attrId]: '' }));
+    }
+  };
+
+  // Xóa một tag khỏi danh sách giá trị
+  const removeTierTag = (attrId: string, tagValue: string) => {
+    setTierAttrs((prev) => prev.map((a) => (a.id === attrId ? { ...a, values: a.values.filter((v) => v !== tagValue) } : a)));
   };
 
   const syncVariantsFromTierAttrs = () => {
@@ -1187,90 +1224,115 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
             </span>
           </div>
 
-          {/* Danh sách thuộc tính */}
+          {/* Danh sách thuộc tính — Tag Input UI */}
           <div className="space-y-3">
-            {tierAttrs.map((attr, attrIdx) => (
-              <div key={attr.id} className="flex flex-col gap-2">
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-extrabold text-gray-400 uppercase">Tên thuộc tính</span>
-                    <input
-                      type="text"
-                      value={attr.name}
-                      onChange={(e) => updateTierAttrName(attr.id, e.target.value)}
-                      placeholder="VD: Màu, Size, Dung lượng..."
-                      className="px-3 py-1.5 border border-violet-200 rounded-xl text-xs font-bold bg-violet-50/30 w-40"
-                    />
-                  </div>
-                  <div className="flex flex-1 items-center gap-2">
-                    <span className="text-[10px] font-extrabold text-gray-400 uppercase shrink-0">Giá trị</span>
-                    <input
-                      type="text"
-                      value={attr.values.join(', ')}
-                      onChange={(e) => handleTagInput(attr.id, e.target.value)}
-                      placeholder="VD: trắng, đen, xanh (cách nhau bởi dấu phẩy)"
-                      className="flex-1 px-3 py-1.5 border border-gray-200 rounded-xl text-xs"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={syncVariantsFromTierAttrs}
-                    disabled={!attr.values.length}
-                    className="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold rounded-xl disabled:opacity-40 flex items-center gap-1">
-                    <Zap className="w-3.5 h-3.5" /> Tạo biến thể
-                  </button>
-                </div>
-
-                {/* Ảnh cho thuộc tính — chỉ hiện cho thuộc tính đầu tiên */}
-                {attrIdx === 0 && (
-                  <div className="ml-0 pl-0 border-t border-dashed border-violet-100 pt-3">
-                    <p className="text-[10px] font-extrabold text-gray-400 uppercase mb-2 flex items-center gap-1">
-                      <ImageIcon className="w-3.5 h-3.5" /> Hình ảnh cho thuộc tính
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {attr.values.map((val) => (
-                        <div key={val} className="flex flex-col items-center gap-1">
-                          <div className="w-16 h-16 rounded-xl border-2 border-dashed border-gray-200 flex items-center justify-center overflow-hidden bg-gray-50 relative">
-                            {attr.images[val] ? (
-                              <img src={attr.images[val]} alt={val} className="w-full h-full object-cover" />
-                            ) : (
-                              <ImageIcon className="w-6 h-6 text-gray-300" />
-                            )}
-                            <label className="absolute inset-0 cursor-pointer opacity-0 hover:opacity-100 bg-black/30 flex items-center justify-center transition-opacity">
-                              <Upload className="w-4 h-4 text-white" />
-                              <input type="file" accept="image/*" className="hidden"
-                                onChange={(e) => {
-                                  const file = e.target.files?.[0];
-                                  if (!file) return;
-                                  const reader = new FileReader();
-                                  reader.onload = (ev) => {
-                                    setTierAttrs((prev) => prev.map((a) =>
-                                      a.id === attr.id
-                                        ? { ...a, images: { ...a.images, [val]: ev.target?.result as string } }
-                                        : a
-                                    ));
-                                  };
-                                  reader.readAsDataURL(file);
-                                }} />
-                            </label>
-                          </div>
-                          <span className="text-[9px] font-bold text-gray-500 text-center truncate w-16">{val}</span>
-                        </div>
-                      ))}
-                      {attr.values.length === 0 && (
-                        <p className="text-[10px] text-gray-400 italic">Nhập giá trị thuộc tính bên trên để thêm ảnh</p>
-                      )}
+            {tierAttrs.map((attr, attrIdx) => {
+              const inputVal = tierInputValues[attr.id] ?? '';
+              return (
+                <div key={attr.id} className="border border-gray-100 rounded-2xl p-4 bg-gray-50/50">
+                  {/* Dòng 1: Tên thuộc tính + Nút xóa */}
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-extrabold text-gray-500 uppercase tracking-wider shrink-0">Tên thuộc tính</span>
+                      <input
+                        type="text"
+                        value={attr.name}
+                        onChange={(e) => updateTierAttrName(attr.id, e.target.value)}
+                        placeholder="VD: Màu, Size..."
+                        className="px-3 py-1.5 border border-gray-200 rounded-xl text-xs font-bold bg-white w-36 focus:border-violet-400 focus:outline-none"
+                      />
                     </div>
+                    {tierAttrs.length > 1 && (
+                      <button type="button" onClick={() => {
+                        setTierAttrs((prev) => prev.filter((a) => a.id !== attr.id));
+                      }}
+                        className="ml-auto p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
-                )}
-              </div>
-            ))}
+
+                  {/* Dòng 2: Tag Input + Nút Tạo biến thể */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* Vùng tags */}
+                    <div className="flex flex-wrap items-center gap-1.5 flex-1 min-w-0">
+                      {attr.values.map((tag) => (
+                        <span key={tag} className="inline-flex items-center gap-1 px-2.5 py-1 bg-teal-100 text-teal-800 text-xs font-bold rounded-full border border-teal-200">
+                          {tag}
+                          <button type="button" onClick={() => removeTierTag(attr.id, tag)}
+                            className="hover:text-red-500 transition-colors ml-0.5 leading-none">×</button>
+                        </span>
+                      ))}
+                      {/* Input nhập tag mới */}
+                      <input
+                        type="text"
+                        value={inputVal}
+                        onChange={(e) => setTierInputValues((prev) => ({ ...prev, [attr.id]: e.target.value }))}
+                        onKeyDown={(e) => handleTagInputKeyDown(e, attr.id)}
+                        placeholder={attr.values.length === 0 ? 'Nhấn Enter để thêm giá trị...' : 'Nhập giá trị...'}
+                        className="flex-1 min-w-[140px] px-2 py-1 border border-dashed border-gray-300 rounded-full text-xs bg-white focus:border-violet-400 focus:outline-none placeholder:text-gray-300"
+                      />
+                    </div>
+
+                    {/* Nút tạo biến thể */}
+                    <button type="button" onClick={syncVariantsFromTierAttrs}
+                      disabled={!attr.values.length}
+                      className="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold rounded-xl disabled:opacity-40 flex items-center gap-1 shrink-0">
+                      <Zap className="w-3.5 h-3.5" /> Tạo biến thể
+                    </button>
+                  </div>
+                  <p className="text-[9px] text-gray-400 mt-1.5">Nhấn <kbd className="px-1 py-0.5 bg-gray-100 border border-gray-200 rounded text-[9px] font-mono">Enter</kbd> hoặc <kbd className="px-1 py-0.5 bg-gray-100 border border-gray-200 rounded text-[9px] font-mono">,</kbd> để thêm giá trị</p>
+
+                  {/* Ảnh cho thuộc tính — chỉ hiện cho thuộc tính đầu tiên */}
+                  {attrIdx === 0 && attr.values.length > 0 && (
+                    <div className="mt-4 border-t border-dashed border-gray-200 pt-4">
+                      <p className="text-[10px] font-extrabold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-1">
+                        <ImageIcon className="w-3.5 h-3.5" /> Hình ảnh cho thuộc tính
+                      </p>
+                      <div className="flex flex-wrap gap-3">
+                        {attr.values.map((val) => (
+                          <div key={val} className="flex flex-col items-center gap-1.5">
+                            <div className="w-16 h-16 rounded-xl border-2 border-dashed border-gray-200 flex items-center justify-center overflow-hidden bg-gray-100 relative group">
+                              {attr.images[val] ? (
+                                <img src={attr.images[val]} alt={val} className="w-full h-full object-cover" />
+                              ) : (
+                                <ImageIcon className="w-6 h-6 text-gray-300" />
+                              )}
+                              <label className="absolute inset-0 cursor-pointer opacity-0 group-hover:opacity-100 bg-black/40 flex items-center justify-center transition-opacity rounded-xl">
+                                <Upload className="w-4 h-4 text-white" />
+                                <input type="file" accept="image/*" className="hidden"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (!file) return;
+                                    const reader = new FileReader();
+                                    reader.onload = (ev) => {
+                                      setTierAttrs((prev) => prev.map((a) =>
+                                        a.id === attr.id
+                                          ? { ...a, images: { ...a.images, [val]: ev.target?.result as string } }
+                                          : a
+                                      ));
+                                    };
+                                    reader.readAsDataURL(file);
+                                  }} />
+                              </label>
+                            </div>
+                            <span className="text-[9px] font-bold text-gray-500 text-center truncate w-16">{val}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           <button type="button" onClick={() => {
-            setTierAttrs((prev) => [...prev, { id: `attr-${Date.now()}`, name: '', values: [], images: {} }]);
+            const newId = `attr-${Date.now()}`;
+            setTierAttrs((prev) => [...prev, { id: newId, name: '', values: [], images: {} }]);
+            setTierInputValues((prev) => ({ ...prev, [newId]: '' }));
           }}
-            className="mt-3 px-3 py-1.5 bg-gray-50 text-gray-600 text-xs font-bold rounded-xl border border-gray-200 flex items-center gap-1 hover:bg-gray-100">
+            className="mt-2 px-3 py-1.5 bg-gray-50 text-gray-600 text-xs font-bold rounded-xl border border-gray-200 flex items-center gap-1 hover:bg-gray-100">
             <Plus className="w-3.5 h-3.5" /> Thêm thuộc tính
           </button>
         </div>
