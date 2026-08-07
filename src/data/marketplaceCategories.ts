@@ -41,6 +41,29 @@ const SHOPEE_TREE: CategoryNode[] = [
       },
     ],
   },
+  {
+    id: '100630',
+    name: 'Sức khỏe & Y tế',
+    children: [
+      {
+        id: '100631',
+        name: 'Dược phẩm',
+        children: [
+          { id: '100632', name: 'Thuốc không kê đơn (OTC)' },
+          { id: '100633', name: 'Thực phẩm chức năng' },
+          { id: '100634', name: 'Thiết bị y tế' },
+        ],
+      },
+      {
+        id: '100640',
+        name: 'Chăm sóc sức khỏe',
+        children: [
+          { id: '100641', name: 'Vitamin & Khoáng chất' },
+          { id: '100642', name: 'Bổ sung sức khỏe' },
+        ],
+      },
+    ],
+  },
 ];
 
 const LAZADA_TREE: CategoryNode[] = [

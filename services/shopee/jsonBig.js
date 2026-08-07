@@ -86,6 +86,7 @@ const SHOPEE_ID_KEYS = new Set([
   "package_id",
   "promotion_id",
   "activity_id",
+  "medicine_id",
   "shopeeItemId",
   "shopeeModelId",
   "shopeeId",
@@ -167,4 +168,13 @@ export function normalizeShopeeReturnDetail(payload) {
   }
   if (hasEnvelope) return { ...payload, response: safe };
   return safe;
+}
+
+/**
+ * Chuẩn hoá response product / promotion API:
+ * promotion_id, activity_id, item_id, medicine_id (uint64) → String.
+ */
+export function normalizeShopeeProductIds(payload) {
+  if (payload == null) return payload;
+  return stringifyShopeeIdsDeep(payload);
 }

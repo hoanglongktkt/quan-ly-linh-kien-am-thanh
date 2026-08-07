@@ -4,6 +4,7 @@ import {
   CategorySelection,
   ShopeeAttributeSelection,
   ShopeeCategoryAttribute,
+  isShopeeMedicalCategorySelection,
 } from '../types/marketplaceCategory';
 import { applySmartPricesFromShopee } from '../utils/smartPricing';
 import SmartCategorySelector from './SmartCategorySelector';
@@ -45,6 +46,8 @@ export interface MultiChannelListingPayload {
   shopeeBrand: string;
   shopeeBrandId?: number;
   shopeeAttributes?: ShopeeAttributeSelection[];
+  /** Shopee medicine_id (uint64 string) — bắt buộc ngành Y tế/Dược. */
+  medicine_id?: string;
   lazadaCat: string;
   lazadaCategoryId: string;
   lazadaBrand: string;
@@ -156,6 +159,8 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
   const [shopeeAttrDefs, setShopeeAttrDefs] = useState<ShopeeCategoryAttribute[]>([]);
   const [shopeeAttrValues, setShopeeAttrValues] = useState<Record<string, string>>({});
   const [loadingShopeeAttrs, setLoadingShopeeAttrs] = useState(false);
+  const [medicineId, setMedicineId] = useState('');
+  const [requiresMedicineId, setRequiresMedicineId] = useState(false);
   const [lazadaCategory, setLazadaCategory] = useState<CategorySelection | null>(null);
   const [lazadaBrand, setLazadaBrand] = useState('No Brand');
   const [tiktokCategory, setTiktokCategory] = useState<CategorySelection | null>(null);
@@ -191,6 +196,11 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
   const shopeeMandatoryAttrs = useMemo(
     () => shopeeAttrDefs.filter((a) => a.mandatory),
     [shopeeAttrDefs]
+  );
+
+  const isMedicalCategory = useMemo(
+    () => requiresMedicineId || isShopeeMedicalCategorySelection(shopeeCategory),
+    [requiresMedicineId, shopeeCategory]
   );
 
   const buildShopeeAttributesPayload = useCallback((): ShopeeAttributeSelection[] => {
@@ -238,6 +248,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
       setDescriptionHtml(warehouseProduct.description);
     }
     if (warehouseProduct.weight) setPackageWeight(warehouseProduct.weight);
+    if (warehouseProduct.medicine_id) setMedicineId(String(warehouseProduct.medicine_id));
   }, [warehouseProduct?.id]);
 
   useEffect(() => {
@@ -253,6 +264,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
     if (!categoryId || !primaryShopeeShopId) {
       setShopeeAttrDefs([]);
       setShopeeAttrValues({});
+      setRequiresMedicineId(isShopeeMedicalCategorySelection(shopeeCategory));
       return;
     }
     let cancelled = false;
@@ -260,22 +272,37 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
       setLoadingShopeeAttrs(true);
       try {
         const token = localStorage.getItem('admin_token');
+        // Bust cache — luôn đồng bộ get_attribute_tree mới nhất từ Shopee.
         const qs = new URLSearchParams({
           shop_id: primaryShopeeShopId,
           category_id: String(categoryId),
+          category_label: shopeeCategory?.label || '',
+          level1: shopeeCategory?.level1 || '',
+          level2: shopeeCategory?.level2 || '',
+          level3: shopeeCategory?.level3 || '',
+          _t: String(Date.now()),
         });
         const res = await fetch(`/api/shopee/category-attributes?${qs}`, {
-          headers: { Authorization: token ? `Bearer ${token}` : '' },
+          headers: {
+            Authorization: token ? `Bearer ${token}` : '',
+            'Cache-Control': 'no-cache',
+            Pragma: 'no-cache',
+          },
+          cache: 'no-store',
         });
         const data = await res.json();
         if (cancelled) return;
         if (!res.ok || !data.success) {
           setShopeeAttrDefs([]);
           setShopeeAttrValues({});
+          setRequiresMedicineId(isShopeeMedicalCategorySelection(shopeeCategory));
           return;
         }
         const attrs: ShopeeCategoryAttribute[] = Array.isArray(data.attributes) ? data.attributes : [];
         setShopeeAttrDefs(attrs);
+        setRequiresMedicineId(
+          Boolean(data.requires_medicine_id) || isShopeeMedicalCategorySelection(shopeeCategory)
+        );
         const next: Record<string, string> = {};
         for (const a of attrs) {
           if (!a.mandatory) continue;
@@ -287,6 +314,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
         if (!cancelled) {
           setShopeeAttrDefs([]);
           setShopeeAttrValues({});
+          setRequiresMedicineId(isShopeeMedicalCategorySelection(shopeeCategory));
         }
       } finally {
         if (!cancelled) setLoadingShopeeAttrs(false);
@@ -296,7 +324,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
     return () => {
       cancelled = true;
     };
-  }, [shopeeCategory?.categoryId, primaryShopeeShopId]);
+  }, [shopeeCategory?.categoryId, shopeeCategory?.label, primaryShopeeShopId]);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -311,6 +339,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
     shopeeBrand,
     shopeeBrandId: shopeeBrand === 'NoBrand' ? 0 : shopeeBrandId,
     shopeeAttributes: buildShopeeAttributesPayload(),
+    medicine_id: medicineId.trim() || undefined,
     lazadaCat: lazadaCategory?.label || '',
     lazadaCategoryId: lazadaCategory?.categoryId || '',
     lazadaBrand,
@@ -330,7 +359,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
     shippingMethod,
     warehouseProductId: warehouseProductId || undefined,
   }), [
-    selectedShops, title, shopeeCategory, shopeeBrand, shopeeBrandId, buildShopeeAttributesPayload,
+    selectedShops, title, shopeeCategory, shopeeBrand, shopeeBrandId, buildShopeeAttributesPayload, medicineId,
     lazadaCategory, lazadaBrand, tiktokCategory, tiktokBrand, images, variants, descriptionHtml,
     packageWeight, packageLength, packageWidth, packageHeight, shippingMethod, warehouseProductId,
   ]);
@@ -484,6 +513,10 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
         alert(`Vui lòng điền thuộc tính bắt buộc Shopee: ${missing.map((a) => a.attribute_name).join(', ')}`);
         return;
       }
+    }
+    if (needsShopee && isMedicalCategory && !medicineId.trim()) {
+      alert('Danh mục Y tế/Dược phẩm bắt buộc nhập Mã thuốc (medicine_id)!');
+      return;
     }
     if (needsLazada && !lazadaCategory?.categoryId) {
       alert('Vui lòng chọn ngành hàng Lazada (Category ID)!');
@@ -751,6 +784,24 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
               <option value="Sony">Sony</option>
               <option value="JBL">JBL</option>
             </select>
+            {isMedicalCategory && (
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-orange-800">
+                  Mã thuốc (medicine_id) <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={medicineId}
+                  onChange={(e) => setMedicineId(e.target.value.replace(/[^\d]/g, ''))}
+                  placeholder="Nhập medicine_id từ Shopee (số)"
+                  className="w-full px-2.5 py-1.5 bg-white border border-orange-200 rounded-lg text-xs font-mono"
+                />
+                <p className="text-[9px] text-orange-600/90">
+                  Bắt buộc với danh mục Y tế/Dược phẩm — lưu dạng chuỗi (uint64).
+                </p>
+              </div>
+            )}
           </div>
           <div className="bg-blue-50/30 border border-blue-100 rounded-2xl p-4 space-y-3">
             <h4 className="text-xs font-bold text-blue-700 flex items-center gap-1.5">

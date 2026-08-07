@@ -61,6 +61,8 @@ export type LocalInventoryCache = {
 type ProductDoc = {
   _id: string;
   sku?: string | null;
+  /** Shopee medicine_id (uint64) — lưu String tránh mất precision. */
+  medicine_id?: string | null;
   data: any;
 };
 
@@ -154,7 +156,9 @@ const ProductSchema = new Schema<ProductDoc>(
   {
     _id: { type: String, required: true },
     sku: { type: String, default: null, index: true },
-    // data.* giữ Mixed nhưng Shopee uint64 IDs (shopeeItemId/shopeeModelId/item_id/model_id)
+    // Shopee OpenAPI medicine_id (uint64) — String bắt buộc (không Number).
+    medicine_id: { type: String, default: null, index: true },
+    // data.* giữ Mixed nhưng Shopee uint64 IDs (shopeeItemId/shopeeModelId/item_id/model_id/promotion_id/activity_id)
     // BẮT BUỘC là String — sanitize bằng stringifyShopeeIdsDeep trước khi ghi.
     data: { type: Schema.Types.Mixed, required: true },
   },
@@ -389,9 +393,16 @@ function toProductDocs(products: any[]): ProductDoc[] {
     if (data.shopeeItemId != null) data.shopeeItemId = toShopeeId(data.shopeeItemId) || String(data.shopeeItemId);
     if (data.shopeeModelId != null) data.shopeeModelId = toShopeeId(data.shopeeModelId) || String(data.shopeeModelId);
     if (data.shopeeId != null) data.shopeeId = String(data.shopeeId);
+    if (data.medicine_id != null && data.medicine_id !== "") {
+      data.medicine_id = toShopeeId(data.medicine_id) || String(data.medicine_id);
+    }
     out.push({
       _id: id,
       sku: data.sku != null ? String(data.sku) : null,
+      medicine_id:
+        data.medicine_id != null && data.medicine_id !== ""
+          ? String(data.medicine_id)
+          : null,
       data,
     });
   }
@@ -418,13 +429,22 @@ function toListingDocs(rows: any[]): ListingDoc[] {
   return out;
 }
 
-function docsToProducts(docs: Array<{ _id?: any; data?: any; sku?: string | null }>): any[] {
+function docsToProducts(
+  docs: Array<{ _id?: any; data?: any; sku?: string | null; medicine_id?: string | null }>,
+): any[] {
   const out: any[] = [];
   for (const d of docs) {
     if (!d?.data || typeof d.data !== "object") continue;
     const data = { ...d.data };
     if (!data.id && d._id != null) data.id = String(d._id);
     if ((data.sku == null || data.sku === "") && d.sku != null) data.sku = String(d.sku);
+    if (
+      (data.medicine_id == null || data.medicine_id === "") &&
+      d.medicine_id != null &&
+      d.medicine_id !== ""
+    ) {
+      data.medicine_id = String(d.medicine_id);
+    }
     out.push(data);
   }
   return out;

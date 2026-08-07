@@ -309,6 +309,7 @@ import {
   extractReturnRequestCode,
   normalizeShopeeReturnDetail,
 } from "./services/shopee/jsonBig.js";
+import { shopeeAxiosGet, shopeeAxiosPost } from "./services/shopee/axiosClient.js";
 import {
   initShopeeAuthController,
   oauthComplete,
@@ -5272,6 +5273,7 @@ async function shopeeGetAttributeTree(shopId: string, accessToken: string, categ
   const apiPath = "/api/v2/product/get_attribute_tree";
   const timestamp = Math.floor(Date.now() / 1000);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  // Không cache — luôn gọi Shopee live (cây thuộc tính thay đổi theo OpenAPI mới).
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
     timestamp: String(timestamp),
@@ -5281,10 +5283,19 @@ async function shopeeGetAttributeTree(shopId: string, accessToken: string, categ
     category_id_list: String(categoryId),
     language: "vi",
   });
-  const { json, httpStatus } = await shopeeFetchJsonWithRetry(
-    `${SHOPEE_HOST}${apiPath}?${params.toString()}`,
-    `GET ${apiPath} category=${categoryId}`,
-  );
+  const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
+  // Ưu tiên Axios + json-bigint; fallback fetch retry nếu Axios lỗi mạng.
+  let json: any;
+  let httpStatus: number | undefined;
+  try {
+    const ax = await shopeeAxiosGet(url, `GET ${apiPath} category=${categoryId}`);
+    json = ax.json;
+    httpStatus = ax.httpStatus;
+  } catch {
+    const fb = await shopeeFetchJsonWithRetry(url, `GET ${apiPath} category=${categoryId}`);
+    json = fb.json;
+    httpStatus = fb.httpStatus;
+  }
   assertShopeeApiOk(json, httpStatus, "get_attribute_tree");
   const listEntry = asShopeeArray(json?.response?.list)[0];
   const tree =
@@ -5322,7 +5333,18 @@ async function shopeeProductPost(
     `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}` +
     `&timestamp=${timestamp}&access_token=${encodeURIComponent(accessToken)}&shop_id=${shopId}&sign=${sign}`;
   console.log(`[Shopee Publish] POST ${apiPath} shop=${shopId}:`, JSON.stringify(body).slice(0, 2000));
-  const { json, httpStatus } = await shopeePostJsonWithRetry(url, body, context);
+  // Axios + json-bigint: uint64 (item_id/promotion_id/activity_id) không bị Number làm tròn.
+  let json: any;
+  let httpStatus: number | undefined;
+  try {
+    const ax = await shopeeAxiosPost(url, body, context);
+    json = ax.json;
+    httpStatus = ax.httpStatus;
+  } catch {
+    const fb = await shopeePostJsonWithRetry(url, body, context);
+    json = fb.json;
+    httpStatus = fb.httpStatus;
+  }
   assertShopeeApiOk(json, httpStatus, context);
   const response = json?.response;
   if (response == null && context === "add_item") {
@@ -5330,6 +5352,34 @@ async function shopeeProductPost(
     throw new Error(`${context}: HTTP ${httpStatus || 200} nhưng thiếu response.item_id`);
   }
   return response ?? json;
+}
+
+/** Danh mục Y tế / Dược phẩm — bắt buộc medicine_id theo Shopee OpenAPI. */
+function isShopeeMedicalCategory(payload: any): boolean {
+  const text = [
+    payload?.shopeeCat,
+    payload?.shopeeCategory?.label,
+    payload?.shopeeCategory?.level1,
+    payload?.shopeeCategory?.level2,
+    payload?.shopeeCategory?.level3,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+    .normalize("NFC");
+  return /dược|thuốc|y\s*tế|sức\s*khỏe|pharmacy|medicine|healthcare|health\s*care|pharma|\botc\b|thực phẩm chức năng|bổ sung sức khỏe|chăm sóc sức khỏe/.test(
+    text,
+  );
+}
+
+function resolveShopeeMedicineId(payload: any): string | null {
+  const raw =
+    payload?.medicine_id ??
+    payload?.medicineId ??
+    payload?.warehouseMedicineId ??
+    null;
+  if (raw == null || raw === "") return null;
+  return toShopeeId(raw) || String(raw).trim() || null;
 }
 
 function buildShopeeAttributeListFromPayload(payload: any, mandatoryAttrs: any[]): any[] {
@@ -5392,7 +5442,7 @@ function packageWeightToKg(payload: any): number {
   return raw > 30 ? raw / 1000 : raw;
 }
 
-async function publishOneItemToShopee(shopId: string, payload: any): Promise<number> {
+async function publishOneItemToShopee(shopId: string, payload: any): Promise<string> {
   const accessToken = await getValidShopeeAccessToken(shopId);
   if (!accessToken) {
     const fail = describeShopeeTokenFailure(shopId);
@@ -5406,6 +5456,12 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<num
 
   const images: string[] = Array.isArray(payload?.images) ? payload.images.filter(Boolean) : [];
   if (!images.length) throw new Error("Thiếu hình ảnh sản phẩm");
+
+  const medicalCategory = isShopeeMedicalCategory(payload);
+  const medicineId = resolveShopeeMedicineId(payload);
+  if (medicalCategory && !medicineId) {
+    throw new Error("Danh mục Y tế/Dược phẩm bắt buộc nhập Mã thuốc (medicine_id)");
+  }
 
   // 1) Media Space — bắt buộc image_id Shopee, không dùng URL ngoài
   const imageIds: string[] = [];
@@ -5422,6 +5478,7 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<num
   }
   await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
 
+  // Luôn đồng bộ get_attribute_tree mới nhất — không dùng cache/hardcode.
   let mandatoryAttrs: any[] = [];
   let attributeTreeError: string | null = null;
   try {
@@ -5475,8 +5532,14 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<num
   const weightKg = packageWeightToKg(payload);
   const brandId = resolveShopeeBrandId(payload);
 
-  // 2) add_item — sản phẩm gốc (không nhồi tier variation)
-  const addBody: Record<string, unknown> = {
+  const existingItemId =
+    toShopeeId(payload?.shopeeItemId) ||
+    toShopeeId(payload?.platform_product_id) ||
+    toShopeeId(payload?.item_id) ||
+    null;
+
+  // 2) add_item / update_item — map medicine_id khi có (bắt buộc ngành Y tế/Dược)
+  const itemBody: Record<string, unknown> = {
     item_name: itemName,
     description,
     category_id: categoryId,
@@ -5494,24 +5557,44 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<num
     item_status: "NORMAL",
     condition: "NEW",
   };
-  if (attributeList.length) addBody.attribute_list = attributeList;
+  if (attributeList.length) itemBody.attribute_list = attributeList;
+  if (medicineId) {
+    // Shopee docs: medicine_id int64 — gửi Number nếu safe, còn không giữ String digits.
+    const midNum = Number(medicineId);
+    itemBody.medicine_id = Number.isSafeInteger(midNum) && midNum > 0 ? midNum : medicineId;
+  }
 
-  const addResp = await shopeeProductPost(
-    "/api/v2/product/add_item",
-    shopId,
-    accessToken,
-    addBody,
-    "add_item",
-  );
-  const itemId = toShopeeId(addResp?.item_id);
-  if (!itemId) {
-    console.log("[SHOPEE UPLOAD ERROR]:", JSON.stringify({ step: "add_item", response: addResp }, null, 2));
-    throw new Error("add_item không trả về item_id hợp lệ (Shopee không tạo sản phẩm)");
+  let itemId: string | null = existingItemId;
+  if (existingItemId) {
+    const updateBody = { ...itemBody, item_id: toShopeeIdNumber(existingItemId) ?? Number(existingItemId) };
+    // update_item không nhận original_price / seller_stock giống add_item — giữ field Shopee chấp nhận
+    delete updateBody.original_price;
+    delete updateBody.seller_stock;
+    await shopeeProductPost(
+      "/api/v2/product/update_item",
+      shopId,
+      accessToken,
+      updateBody,
+      "update_item",
+    );
+  } else {
+    const addResp = await shopeeProductPost(
+      "/api/v2/product/add_item",
+      shopId,
+      accessToken,
+      itemBody,
+      "add_item",
+    );
+    itemId = toShopeeId(addResp?.item_id);
+    if (!itemId) {
+      console.log("[SHOPEE UPLOAD ERROR]:", JSON.stringify({ step: "add_item", response: addResp }, null, 2));
+      throw new Error("add_item không trả về item_id hợp lệ (Shopee không tạo sản phẩm)");
+    }
   }
   await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
 
-  // 3) Biến thể: init_tier_variation → add_model
-  if (hasVariants) {
+  // 3) Biến thể: init_tier_variation → add_model (chỉ khi add mới)
+  if (hasVariants && !existingItemId) {
     const optionList = variants.map((v: any) => ({
       option: String(v.name || "Phân loại").trim().slice(0, 30) || "Phân loại",
     }));
@@ -5571,6 +5654,7 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<num
     }
   }
 
+  if (!itemId) throw new Error("Không có item_id Shopee sau add/update");
   return itemId;
 }
 
@@ -18899,9 +18983,11 @@ async function startServer() {
     }
   });
 
-  /** Lấy thuộc tính bắt buộc theo category (FE form đăng bán). */
+  /** Lấy thuộc tính bắt buộc theo category (FE form đăng bán) — luôn gọi live get_attribute_tree. */
   app.get("/api/shopee/category-attributes", authMiddleware, async (req, res) => {
     try {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+      res.setHeader("Pragma", "no-cache");
       const shopId = String(req.query.shop_id || req.query.shopId || "").trim();
       const categoryId = Number(req.query.category_id || req.query.categoryId);
       if (!shopId) {
@@ -18916,11 +19002,23 @@ async function startServer() {
         return res.status(400).json({ success: false, error: fail.message, code: fail.error });
       }
       const attributes = await shopeeGetAttributeTree(shopId, accessToken, categoryId);
+      const medicalHint = isShopeeMedicalCategory({
+        shopeeCat: String(req.query.category_label || req.query.label || ""),
+        shopeeCategory: {
+          label: String(req.query.category_label || req.query.label || ""),
+          level1: String(req.query.level1 || ""),
+          level2: String(req.query.level2 || ""),
+          level3: String(req.query.level3 || ""),
+        },
+      });
       return res.json({
         success: true,
         category_id: categoryId,
         attributes,
         mandatory: attributes.filter((a) => a.mandatory),
+        requires_medicine_id: medicalHint,
+        fetched_at: new Date().toISOString(),
+        source: "v2.product.get_attribute_tree",
       });
     } catch (error: any) {
       return res.status(500).json({
@@ -18974,8 +19072,22 @@ async function startServer() {
           try {
             if (i > 0) await sleep(SHOPEE_PRODUCT_API_DELAY_MS * 2);
             if (!shopKey) throw new Error("Thiếu Shopee shop_id (OAuth)");
+            const existingListing = allRows.find(
+              (r) =>
+                r.product_id === productId &&
+                String(r.shop_id) === shopKey &&
+                r.platform === "shopee" &&
+                r.status === "success" &&
+                r.platform_product_id,
+            );
+            const medicineId =
+              resolveShopeeMedicineId(payload) ||
+              (product?.medicine_id != null ? String(product.medicine_id) : null);
             const itemId = await publishOneItemToShopee(shopKey, {
               ...payload,
+              medicine_id: medicineId || payload?.medicine_id,
+              shopeeItemId: existingListing?.platform_product_id || product?.shopeeItemId,
+              platform_product_id: existingListing?.platform_product_id,
               images: Array.isArray(images) && images.length
                 ? images
                 : [product?.imageUrl || product?.avatarUrl].filter(Boolean),
@@ -18983,6 +19095,20 @@ async function startServer() {
             if (!itemId) throw new Error("publishOneItemToShopee không trả item_id");
             status = "success";
             platformProductId = String(itemId);
+
+            // Lưu medicine_id vào Product (Mongo) nếu có
+            if (medicineId && productId && productId !== "unknown") {
+              try {
+                const products = await loadProducts();
+                const idx = products.findIndex((p: any) => p.id === productId);
+                if (idx >= 0) {
+                  products[idx] = { ...products[idx], medicine_id: String(medicineId) };
+                  await saveProducts(products);
+                }
+              } catch (saveMedErr: any) {
+                console.warn("[Shopee Publish] Lưu medicine_id thất bại:", saveMedErr?.message || saveMedErr);
+              }
+            }
           } catch (err: any) {
             status = "failed";
             error_message = err?.message || "Đăng Shopee thất bại";

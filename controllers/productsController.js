@@ -347,6 +347,10 @@ export async function createProduct(req, res) {
     shopeeModelId: body.shopeeModelId,
     modelName: body.modelName,
     weight: body.weight != null ? Number(body.weight) : undefined,
+    medicine_id:
+      body.medicine_id != null && String(body.medicine_id).trim()
+        ? String(body.medicine_id).trim()
+        : undefined,
     tiktokId: body.tiktokId,
     wooId: body.wooId,
     lastSynced: new Date().toISOString(),

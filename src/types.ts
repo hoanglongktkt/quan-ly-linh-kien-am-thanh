@@ -10,6 +10,8 @@ export interface Product {
   brand?: string;
   supplierId?: string;
   barcode?: string;
+  /** Shopee medicine_id (uint64) — ngành Y tế/Dược phẩm; lưu String. */
+  medicine_id?: string;
   stockMin?: number;
   stockMax?: number;
   channels: ('shopee' | 'tiktok' | 'woocommerce')[];

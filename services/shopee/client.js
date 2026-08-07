@@ -6,7 +6,11 @@
 import path from "path";
 import { createRequire } from "node:module";
 import { sleep } from "../../utils/concurrency.js";
-import { normalizeShopeeReturnDetail, parseShopeeJson } from "./jsonBig.js";
+import {
+  normalizeShopeeProductIds,
+  normalizeShopeeReturnDetail,
+  parseShopeeJson,
+} from "./jsonBig.js";
 
 export const SHOPEE_API_MAX_RETRY = 3;
 export const SHOPEE_API_RETRY_BASE_MS = 1500;
@@ -332,14 +336,22 @@ function warnShopeeUint64Sample(json, context) {
 
 function maybeNormalizeReturnJson(json, context) {
   const ctx = String(context || "");
-  if (!/get_return_detail|get_return_list|get_reverse_tracking|returns\./i.test(ctx)) {
-    return json;
-  }
   try {
-    return normalizeShopeeReturnDetail(json);
+    if (/get_return_detail|get_return_list|get_reverse_tracking|returns\./i.test(ctx)) {
+      return normalizeShopeeReturnDetail(json);
+    }
+    // Mọi API product / promotion: ép uint64 ID (promotion_id, activity_id…) → String.
+    if (
+      /product\.|\/product\/|promotion|activity|add_item|update_item|get_attribute|get_item|get_model|discount|flash_sale|voucher/i.test(
+        ctx,
+      )
+    ) {
+      return normalizeShopeeProductIds(json);
+    }
   } catch {
     return json;
   }
+  return json;
 }
 
 export async function shopeeFetchJsonWithRetry(url, context, opts) {
