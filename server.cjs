@@ -72088,6 +72088,36 @@ function stringifyShopeeIdsDeep(input, depth = 0) {
   }
   return out;
 }
+function toShopeeSn(value) {
+  if (value == null || value === "") return null;
+  if (typeof value === "bigint") return value.toString();
+  const s2 = String(value).trim();
+  return s2 || null;
+}
+function extractReturnRequestCode(detail) {
+  if (!detail || typeof detail !== "object") return null;
+  return toShopeeSn(detail.return_sn) || toShopeeSn(detail.returnSn) || toShopeeSn(detail.return_id) || null;
+}
+function normalizeShopeeReturnDetail(payload) {
+  if (payload == null) return payload;
+  const hasEnvelope = payload && typeof payload === "object" && payload.response != null;
+  const root = hasEnvelope ? payload.response : payload;
+  if (!root || typeof root !== "object") return payload;
+  const safe = stringifyShopeeIdsDeep(root);
+  const returnSn = extractReturnRequestCode(safe);
+  if (returnSn) safe.return_sn = returnSn;
+  const orderSn = toShopeeSn(safe.order_sn ?? safe.orderSn);
+  if (orderSn) safe.order_sn = orderSn;
+  if (Array.isArray(safe.activity)) {
+    safe.activity = safe.activity.map((act) => {
+      if (!act || typeof act !== "object") return act;
+      const aid = toShopeeId(act.activity_id) ?? (act.activity_id != null ? String(act.activity_id) : null);
+      return aid != null ? { ...act, activity_id: aid } : { ...act };
+    });
+  }
+  if (hasEnvelope) return { ...payload, response: safe };
+  return safe;
+}
 
 // src/webhooks/shopeeWebhookHandler.ts
 var MAX_PENDING_JOBS = 200;
@@ -73570,6 +73600,8 @@ var OrderSchema = new import_mongoose3.Schema(
     tracking_no: { type: String, default: null, index: true },
     /** Mã vận đơn chiều hoàn — quét barcode return */
     return_tracking_no: { type: String, default: null, index: true },
+    /** Mã yêu cầu trả hàng / hoàn tiền Shopee (return_sn) — luôn String */
+    return_sn: { type: String, default: null },
     /** Shopee package_number (OFG...) — bắt buộc cho create_shipping_document / logistics */
     packageNumber: { type: String, default: null, index: true },
     shipping_carrier: { type: String, default: null, index: true },
@@ -74745,11 +74777,16 @@ async function bulkUpsertOrdersToStore(orders) {
       $set.return_tracking_no = returnTn;
       $set["data.return_tracking_no"] = returnTn;
     }
+    const returnSnStr = String(order.return_sn || "").trim();
+    if (returnSnStr) {
+      $set.return_sn = returnSnStr;
+      $set["data.return_sn"] = returnSnStr;
+    }
     if (Array.isArray(order.items) && order.items.length > 0) {
       const safeItems = stringifyShopeeIdsDeep(order.items);
       $set["data.items"] = safeItems;
       const sample = safeItems[0] || {};
-      for (const k of ["item_id", "model_id", "productId", "modelId", "shopeeItemId", "shopeeModelId"]) {
+      for (const k of ["item_id", "model_id", "productId", "modelId", "shopeeItemId", "shopeeModelId", "activity_id", "promotion_id"]) {
         const v = sample?.[k];
         if (v == null) continue;
         if (typeof v === "number" && !Number.isSafeInteger(v)) {
@@ -75729,6 +75766,7 @@ function hydrateOrderFromMongoDoc(d) {
     d?.tracking_no || data.tracking_no || data.trackingNumber || ""
   ).trim();
   const returnTn = String(d?.return_tracking_no || data.return_tracking_no || "").trim();
+  const returnSnHydrated = String(d?.return_sn || data.return_sn || "").trim();
   const pkg = String(
     d?.packageNumber || data.packageNumber || data.package_number || d?.package_number || ""
   ).trim();
@@ -75752,6 +75790,7 @@ function hydrateOrderFromMongoDoc(d) {
     tracking_no: tn || void 0,
     trackingNumber: tn || void 0,
     return_tracking_no: returnTn || data.return_tracking_no || void 0,
+    return_sn: returnSnHydrated || data.return_sn || void 0,
     packageNumber: pkg || void 0,
     package_number: pkg || void 0,
     shipping_carrier: carrier || data.shipping_carrier || void 0,
@@ -103153,17 +103192,34 @@ function isShopeeRateLimited(httpStatus, json2) {
 }
 function warnShopeeUint64Sample(json2, context) {
   try {
-    const sampleItem = json2?.response?.order_list?.[0]?.item_list?.[0] || json2?.response?.item_list?.[0] || null;
-    if (!sampleItem) return;
-    for (const k of ["item_id", "model_id", "promotion_id", "activity_id"]) {
-      const v = sampleItem[k];
-      if (typeof v === "number" && !Number.isSafeInteger(v)) {
-        console.warn(
-          `[Shopee uint64] ${context} field ${k}=${v} v\u01B0\u1EE3t Safe Integer \u2014 ki\u1EC3m tra json-bigint`
-        );
+    const body = json2?.response ?? json2 ?? {};
+    const sampleItem = body?.order_list?.[0]?.item_list?.[0] || body?.item_list?.[0] || (Array.isArray(body?.item) ? body.item[0] : null) || (Array.isArray(body?.activity) ? body.activity[0] : null) || null;
+    const keys = ["item_id", "model_id", "promotion_id", "activity_id", "return_id"];
+    const check = (obj, prefix = "") => {
+      if (!obj || typeof obj !== "object") return;
+      for (const k of keys) {
+        const v = obj[k];
+        if (typeof v === "number" && !Number.isSafeInteger(v)) {
+          console.warn(
+            `[Shopee uint64] ${context} field ${prefix}${k}=${v} v\u01B0\u1EE3t Safe Integer \u2014 ki\u1EC3m tra json-bigint`
+          );
+        }
       }
-    }
+    };
+    check(sampleItem);
+    check(body);
   } catch {
+  }
+}
+function maybeNormalizeReturnJson(json2, context) {
+  const ctx = String(context || "");
+  if (!/get_return_detail|get_return_list|get_reverse_tracking|returns\./i.test(ctx)) {
+    return json2;
+  }
+  try {
+    return normalizeShopeeReturnDetail(json2);
+  } catch {
+    return json2;
   }
 }
 async function shopeeFetchJsonWithRetry(url, context, opts) {
@@ -103189,6 +103245,7 @@ async function shopeeFetchJsonWithRetry(url, context, opts) {
     let json2;
     try {
       json2 = rawText ? parseShopeeJson(rawText) : {};
+      json2 = maybeNormalizeReturnJson(json2, context);
       warnShopeeUint64Sample(json2, context);
     } catch (parseErr) {
       const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
@@ -103255,6 +103312,7 @@ async function shopeePostJsonWithRetry(url, body, context, opts) {
     let json2;
     try {
       json2 = rawText ? parseShopeeJson(rawText) : {};
+      json2 = maybeNormalizeReturnJson(json2, context);
       warnShopeeUint64Sample(json2, context);
     } catch (parseErr) {
       const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
@@ -110614,13 +110672,14 @@ async function shopeePaginateReturnListWindow(shopId, accessToken, opts) {
     }
     const rows = extractShopeeReturnListRows(listResult);
     for (const row of rows) {
-      const returnSn = String(row?.return_sn || row?.returnSn || "").trim();
+      const safeRow = normalizeShopeeReturnDetail(row) || row;
+      const returnSn = extractReturnRequestCode(safeRow) || "";
       if (!returnSn || opts.seen.has(returnSn)) continue;
       opts.seen.add(returnSn);
       opts.out.push({
         returnSn,
-        orderSn: row?.order_sn ? String(row.order_sn) : void 0,
-        status: row?.status ? String(row.status) : opts.status
+        orderSn: toShopeeSn(safeRow?.order_sn ?? safeRow?.orderSn) || void 0,
+        status: safeRow?.status ? String(safeRow.status) : opts.status
       });
       if (opts.out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
     }
@@ -110656,13 +110715,14 @@ async function shopeeFetchAllReturnSns(shopId, accessToken, opts) {
     }
     const rows = extractShopeeReturnListRows(listResult);
     for (const row of rows) {
-      const returnSn = String(row?.return_sn || row?.returnSn || "").trim();
+      const safeRow = normalizeShopeeReturnDetail(row) || row;
+      const returnSn = extractReturnRequestCode(safeRow) || "";
       if (!returnSn || seen.has(returnSn)) continue;
       seen.add(returnSn);
       out.push({
         returnSn,
-        orderSn: row?.order_sn ? String(row.order_sn) : void 0,
-        status: row?.status ? String(row.status) : void 0
+        orderSn: toShopeeSn(safeRow?.order_sn ?? safeRow?.orderSn) || void 0,
+        status: safeRow?.status ? String(safeRow.status) : void 0
       });
       if (out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
     }
@@ -112958,12 +113018,13 @@ async function syncShopeeReturnRequests(opts) {
               continue;
             }
             const detail = detailResult?.response ?? detailResult ?? {};
-            const orderSn = String(detail.order_sn || row.orderSn || "").trim();
+            const orderSn = toShopeeSn(detail.order_sn ?? detail.orderSn ?? row.orderSn) || "";
             if (!orderSn) continue;
+            const mappedReturnSn = extractReturnRequestCode(detail) || returnSn;
             const { tracking: returnShipTn } = await fetchReturnShippingTrackingNumber(
               shopId,
               accessToken,
-              returnSn,
+              mappedReturnSn,
               detailResult
             );
             const kind = mapShopeeReturnKind(detail);
@@ -112973,14 +113034,16 @@ async function syncShopeeReturnRequests(opts) {
             const textReason = String(detail.text_reason || "").trim();
             const itemRows = Array.isArray(detail.item) ? detail.item : Array.isArray(detail.items) ? detail.items : [];
             const items = itemRows.map((it, idx) => ({
-              productId: String(it.item_id || it.productId || `return-item-${idx}`),
+              productId: toShopeeId(it.item_id) || String(it.item_id || it.productId || `return-item-${idx}`),
               productTitle: String(it.name || it.item_name || it.model_name || `SP ho\xE0n #${orderSn}`),
               productImage: Array.isArray(it.images) && it.images[0] ? String(it.images[0]) : void 0,
               quantity: Math.max(1, Number(it.amount || it.quantity || 1) || 1),
               price: Number(it.item_price || it.refund_amount || refundAmount || 0) || 0,
-              modelId: it.model_id != null ? String(it.model_id) : void 0,
+              modelId: it.model_id != null ? toShopeeId(it.model_id) || String(it.model_id) : void 0,
               modelSku: it.variation_sku || it.model_sku ? String(it.variation_sku || it.model_sku) : void 0,
-              modelName: it.model_name ? String(it.model_name) : void 0
+              modelName: it.model_name ? String(it.model_name) : void 0,
+              activity_id: it.activity_id != null ? toShopeeId(it.activity_id) || String(it.activity_id) : void 0,
+              promotion_id: it.promotion_id != null ? toShopeeId(it.promotion_id) || String(it.promotion_id) : void 0
             }));
             const existing = orders.find((o) => String(o.orderSn) === orderSn);
             const existingRaw = String(existing?.shopee_order_status || "").toUpperCase();
@@ -112990,7 +113053,7 @@ async function syncShopeeReturnRequests(opts) {
               orderSn,
               channel: "shopee",
               shopId: existing?.shopId || shopId,
-              return_sn: String(detail.return_sn || returnSn),
+              return_sn: mappedReturnSn,
               return_status: returnStatus,
               return_refund_request_type: Number(detail.return_refund_request_type ?? 0),
               shopee_cancel_return_kind: kind,
@@ -121046,8 +121109,9 @@ async function findReturnSnForOrderWebhook(shopId, accessToken, orderSn) {
     }
     const rows = extractShopeeReturnListRows(listResult);
     for (const row of rows) {
-      if (String(row?.order_sn || "") === orderSn) {
-        return String(row.return_sn || "").trim();
+      const safeRow = normalizeShopeeReturnDetail(row) || row;
+      if (toShopeeSn(safeRow?.order_sn ?? safeRow?.orderSn) === orderSn) {
+        return extractReturnRequestCode(safeRow) || "";
       }
     }
     if (!parseShopeeReturnListMore(listResult) || rows.length === 0) break;
@@ -121077,10 +121141,11 @@ async function applyWebhookReturnFallback(shopId, accessToken, orderSn, orders, 
   const detail = detailResult?.response ?? detailResult ?? {};
   const kind = mapShopeeReturnKind(detail);
   const returnStatus = String(detail.status || "").toUpperCase();
+  const mappedReturnSn = extractReturnRequestCode(detail) || returnSn;
   const { tracking: returnShipTn, sources: tnSources } = await fetchReturnShippingTrackingNumber(
     shopId,
     accessToken,
-    returnSn,
+    mappedReturnSn,
     detailResult
   );
   const idx = orders.findIndex((o) => String(o.orderSn) === orderSn);
@@ -121097,7 +121162,7 @@ async function applyWebhookReturnFallback(shopId, accessToken, orderSn, orders, 
   const existingRaw = String(existing?.shopee_order_status || "").toUpperCase();
   const alreadyCancelled = existingRaw === "CANCELLED" || existingRaw === "IN_CANCEL" || existing?.status === "cancelled";
   const patch = alreadyCancelled ? {
-    return_sn: String(detail.return_sn || returnSn),
+    return_sn: mappedReturnSn,
     return_status: returnStatus,
     return_refund_request_type: Number(detail.return_refund_request_type ?? 0),
     shopee_cancel_return_kind: kind,
@@ -121106,7 +121171,7 @@ async function applyWebhookReturnFallback(shopId, accessToken, orderSn, orders, 
     isPrepared: false,
     is_pending_shopee_check: false
   } : {
-    return_sn: String(detail.return_sn || returnSn),
+    return_sn: mappedReturnSn,
     return_status: returnStatus,
     return_refund_request_type: Number(detail.return_refund_request_type ?? 0),
     shopee_cancel_return_kind: kind,
@@ -121165,7 +121230,7 @@ async function applyWebhookReturnFallback(shopId, accessToken, orderSn, orders, 
     });
   }
   console.log(
-    `[Shopee Webhook] Return fallback OK order_sn=${orderSn} return_sn=${returnSn} tn=${bestTn || "(empty)"} kind=${kind}`
+    `[Shopee Webhook] Return fallback OK order_sn=${orderSn} return_sn=${mappedReturnSn} tn=${bestTn || "(empty)"} kind=${kind}`
   );
 }
 async function upsertShopeeWebhookShallow(body, orders) {

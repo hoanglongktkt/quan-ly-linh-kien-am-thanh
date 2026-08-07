@@ -120,3 +120,51 @@ export function stringifyShopeeIdsDeep(input, depth = 0) {
   }
   return out;
 }
+
+/**
+ * SN alphanumeric (return_sn / order_sn) — chỉ String(), KHÔNG qua toShopeeId
+ * (regex digits sẽ cắt mất phần chữ của mã YCTH).
+ */
+export function toShopeeSn(value) {
+  if (value == null || value === "") return null;
+  if (typeof value === "bigint") return value.toString();
+  const s = String(value).trim();
+  return s || null;
+}
+
+/** Mã yêu cầu trả hàng / hoàn tiền = return_sn (Seller Center). */
+export function extractReturnRequestCode(detail) {
+  if (!detail || typeof detail !== "object") return null;
+  return (
+    toShopeeSn(detail.return_sn) ||
+    toShopeeSn(detail.returnSn) ||
+    toShopeeSn(detail.return_id) ||
+    null
+  );
+}
+
+/**
+ * Chuẩn hoá payload get_return_detail / get_return_list row:
+ * uint64 (activity_id, promotion_id, item_id…) → string; return_sn / order_sn → string.
+ */
+export function normalizeShopeeReturnDetail(payload) {
+  if (payload == null) return payload;
+  const hasEnvelope = payload && typeof payload === "object" && payload.response != null;
+  const root = hasEnvelope ? payload.response : payload;
+  if (!root || typeof root !== "object") return payload;
+  const safe = stringifyShopeeIdsDeep(root);
+  const returnSn = extractReturnRequestCode(safe);
+  if (returnSn) safe.return_sn = returnSn;
+  const orderSn = toShopeeSn(safe.order_sn ?? safe.orderSn);
+  if (orderSn) safe.order_sn = orderSn;
+  // activity[] — ép activity_id string (schema uint64 mới của Shopee).
+  if (Array.isArray(safe.activity)) {
+    safe.activity = safe.activity.map((act) => {
+      if (!act || typeof act !== "object") return act;
+      const aid = toShopeeId(act.activity_id) ?? (act.activity_id != null ? String(act.activity_id) : null);
+      return aid != null ? { ...act, activity_id: aid } : { ...act };
+    });
+  }
+  if (hasEnvelope) return { ...payload, response: safe };
+  return safe;
+}

@@ -203,6 +203,8 @@ const OrderSchema = new Schema<OrderDoc>(
     tracking_no: { type: String, default: null, index: true },
     /** Mã vận đơn chiều hoàn — quét barcode return */
     return_tracking_no: { type: String, default: null, index: true },
+    /** Mã yêu cầu trả hàng / hoàn tiền Shopee (return_sn) — luôn String */
+    return_sn: { type: String, default: null },
     /** Shopee package_number (OFG...) — bắt buộc cho create_shipping_document / logistics */
     packageNumber: { type: String, default: null, index: true },
     shipping_carrier: { type: String, default: null, index: true },
@@ -1752,13 +1754,19 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       $set.return_tracking_no = returnTn;
       $set["data.return_tracking_no"] = returnTn;
     }
+    // Mã YCTH (return_sn) + order_sn — luôn String (uint64-safe / alphanumeric).
+    const returnSnStr = String(order.return_sn || "").trim();
+    if (returnSnStr) {
+      $set.return_sn = returnSnStr;
+      $set["data.return_sn"] = returnSnStr;
+    }
     // Push fallback có thể chỉ chứa orderSn/status. Không để `items: []` hoặc
     // `totalAmount: 0` ghi đè snapshot chi tiết đã lấy trước đó.
     if (Array.isArray(order.items) && order.items.length > 0) {
       const safeItems = stringifyShopeeIdsDeep(order.items);
       $set["data.items"] = safeItems;
       const sample = safeItems[0] || {};
-      for (const k of ["item_id", "model_id", "productId", "modelId", "shopeeItemId", "shopeeModelId"]) {
+      for (const k of ["item_id", "model_id", "productId", "modelId", "shopeeItemId", "shopeeModelId", "activity_id", "promotion_id"]) {
         const v = (sample as any)?.[k];
         if (v == null) continue;
         if (typeof v === "number" && !Number.isSafeInteger(v)) {
@@ -3266,6 +3274,7 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
       "",
   ).trim();
   const returnTn = String(d?.return_tracking_no || data.return_tracking_no || "").trim();
+  const returnSnHydrated = String(d?.return_sn || data.return_sn || "").trim();
   const pkg = String(
     d?.packageNumber ||
       data.packageNumber ||
@@ -3323,6 +3332,7 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
     tracking_no: tn || undefined,
     trackingNumber: tn || undefined,
     return_tracking_no: returnTn || data.return_tracking_no || undefined,
+    return_sn: returnSnHydrated || data.return_sn || undefined,
     packageNumber: pkg || undefined,
     package_number: pkg || undefined,
     shipping_carrier: carrier || data.shipping_carrier || undefined,

@@ -6,7 +6,7 @@
 import path from "path";
 import { createRequire } from "node:module";
 import { sleep } from "../../utils/concurrency.js";
-import { parseShopeeJson } from "./jsonBig.js";
+import { normalizeShopeeReturnDetail, parseShopeeJson } from "./jsonBig.js";
 
 export const SHOPEE_API_MAX_RETRY = 3;
 export const SHOPEE_API_RETRY_BASE_MS = 1500;
@@ -304,21 +304,41 @@ export function isShopeeRateLimited(httpStatus, json) {
 /** Cảnh báo nếu ID Shopee vẫn còn Number vượt Safe Integer sau parse. */
 function warnShopeeUint64Sample(json, context) {
   try {
+    const body = json?.response ?? json ?? {};
     const sampleItem =
-      json?.response?.order_list?.[0]?.item_list?.[0] ||
-      json?.response?.item_list?.[0] ||
+      body?.order_list?.[0]?.item_list?.[0] ||
+      body?.item_list?.[0] ||
+      (Array.isArray(body?.item) ? body.item[0] : null) ||
+      (Array.isArray(body?.activity) ? body.activity[0] : null) ||
       null;
-    if (!sampleItem) return;
-    for (const k of ["item_id", "model_id", "promotion_id", "activity_id"]) {
-      const v = sampleItem[k];
-      if (typeof v === "number" && !Number.isSafeInteger(v)) {
-        console.warn(
-          `[Shopee uint64] ${context} field ${k}=${v} vượt Safe Integer — kiểm tra json-bigint`,
-        );
+    const keys = ["item_id", "model_id", "promotion_id", "activity_id", "return_id"];
+    const check = (obj, prefix = "") => {
+      if (!obj || typeof obj !== "object") return;
+      for (const k of keys) {
+        const v = obj[k];
+        if (typeof v === "number" && !Number.isSafeInteger(v)) {
+          console.warn(
+            `[Shopee uint64] ${context} field ${prefix}${k}=${v} vượt Safe Integer — kiểm tra json-bigint`,
+          );
+        }
       }
-    }
+    };
+    check(sampleItem);
+    check(body);
   } catch {
     /* ignore */
+  }
+}
+
+function maybeNormalizeReturnJson(json, context) {
+  const ctx = String(context || "");
+  if (!/get_return_detail|get_return_list|get_reverse_tracking|returns\./i.test(ctx)) {
+    return json;
+  }
+  try {
+    return normalizeShopeeReturnDetail(json);
+  } catch {
+    return json;
   }
 }
 
@@ -347,6 +367,7 @@ export async function shopeeFetchJsonWithRetry(url, context, opts) {
     let json;
     try {
       json = rawText ? parseShopeeJson(rawText) : {};
+      json = maybeNormalizeReturnJson(json, context);
       warnShopeeUint64Sample(json, context);
     } catch (parseErr) {
       const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
@@ -420,6 +441,7 @@ export async function shopeePostJsonWithRetry(url, body, context, opts) {
     let json;
     try {
       json = rawText ? parseShopeeJson(rawText) : {};
+      json = maybeNormalizeReturnJson(json, context);
       warnShopeeUint64Sample(json, context);
     } catch (parseErr) {
       const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);

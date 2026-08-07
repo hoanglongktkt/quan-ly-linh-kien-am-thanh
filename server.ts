@@ -305,6 +305,9 @@ import {
   toShopeeIdNumber,
   isValidShopeeId,
   stringifyShopeeIdsDeep,
+  toShopeeSn,
+  extractReturnRequestCode,
+  normalizeShopeeReturnDetail,
 } from "./services/shopee/jsonBig.js";
 import {
   initShopeeAuthController,
@@ -1530,13 +1533,14 @@ async function shopeePaginateReturnListWindow(
     }
     const rows = extractShopeeReturnListRows(listResult);
     for (const row of rows) {
-      const returnSn = String(row?.return_sn || row?.returnSn || "").trim();
+      const safeRow = normalizeShopeeReturnDetail(row) || row;
+      const returnSn = extractReturnRequestCode(safeRow) || "";
       if (!returnSn || opts.seen.has(returnSn)) continue;
       opts.seen.add(returnSn);
       opts.out.push({
         returnSn,
-        orderSn: row?.order_sn ? String(row.order_sn) : undefined,
-        status: row?.status ? String(row.status) : opts.status,
+        orderSn: toShopeeSn(safeRow?.order_sn ?? safeRow?.orderSn) || undefined,
+        status: safeRow?.status ? String(safeRow.status) : opts.status,
       });
       if (opts.out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
     }
@@ -1585,13 +1589,14 @@ async function shopeeFetchAllReturnSns(
     }
     const rows = extractShopeeReturnListRows(listResult);
     for (const row of rows) {
-      const returnSn = String(row?.return_sn || row?.returnSn || "").trim();
+      const safeRow = normalizeShopeeReturnDetail(row) || row;
+      const returnSn = extractReturnRequestCode(safeRow) || "";
       if (!returnSn || seen.has(returnSn)) continue;
       seen.add(returnSn);
       out.push({
         returnSn,
-        orderSn: row?.order_sn ? String(row.order_sn) : undefined,
-        status: row?.status ? String(row.status) : undefined,
+        orderSn: toShopeeSn(safeRow?.order_sn ?? safeRow?.orderSn) || undefined,
+        status: safeRow?.status ? String(safeRow.status) : undefined,
       });
       if (out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
     }
@@ -4459,13 +4464,16 @@ async function syncShopeeReturnRequests(opts?: {
               continue;
             }
             const detail = detailResult?.response ?? detailResult ?? {};
-            const orderSn = String(detail.order_sn || row.orderSn || "").trim();
+            const orderSn =
+              toShopeeSn(detail.order_sn ?? detail.orderSn ?? row.orderSn) || "";
             if (!orderSn) continue;
+            const mappedReturnSn =
+              extractReturnRequestCode(detail) || returnSn;
 
             const { tracking: returnShipTn } = await fetchReturnShippingTrackingNumber(
               shopId,
               accessToken,
-              returnSn,
+              mappedReturnSn,
               detailResult,
             );
             const kind = mapShopeeReturnKind(detail);
@@ -4479,14 +4487,24 @@ async function syncShopeeReturnRequests(opts?: {
                 ? detail.items
                 : [];
             const items = itemRows.map((it: any, idx: number) => ({
-              productId: String(it.item_id || it.productId || `return-item-${idx}`),
+              productId:
+                toShopeeId(it.item_id) ||
+                String(it.item_id || it.productId || `return-item-${idx}`),
               productTitle: String(it.name || it.item_name || it.model_name || `SP hoàn #${orderSn}`),
               productImage: Array.isArray(it.images) && it.images[0] ? String(it.images[0]) : undefined,
               quantity: Math.max(1, Number(it.amount || it.quantity || 1) || 1),
               price: Number(it.item_price || it.refund_amount || refundAmount || 0) || 0,
-              modelId: it.model_id != null ? String(it.model_id) : undefined,
+              modelId: it.model_id != null ? (toShopeeId(it.model_id) || String(it.model_id)) : undefined,
               modelSku: it.variation_sku || it.model_sku ? String(it.variation_sku || it.model_sku) : undefined,
               modelName: it.model_name ? String(it.model_name) : undefined,
+              activity_id:
+                it.activity_id != null
+                  ? toShopeeId(it.activity_id) || String(it.activity_id)
+                  : undefined,
+              promotion_id:
+                it.promotion_id != null
+                  ? toShopeeId(it.promotion_id) || String(it.promotion_id)
+                  : undefined,
             }));
 
             const existing = orders.find((o: any) => String(o.orderSn) === orderSn);
@@ -4501,7 +4519,7 @@ async function syncShopeeReturnRequests(opts?: {
               orderSn,
               channel: "shopee",
               shopId: existing?.shopId || shopId,
-              return_sn: String(detail.return_sn || returnSn),
+              return_sn: mappedReturnSn,
               return_status: returnStatus,
               return_refund_request_type: Number(detail.return_refund_request_type ?? 0),
               shopee_cancel_return_kind: kind,
@@ -16251,8 +16269,9 @@ async function findReturnSnForOrderWebhook(
     }
     const rows = extractShopeeReturnListRows(listResult);
     for (const row of rows) {
-      if (String(row?.order_sn || "") === orderSn) {
-        return String(row.return_sn || "").trim();
+      const safeRow = normalizeShopeeReturnDetail(row) || row;
+      if (toShopeeSn(safeRow?.order_sn ?? safeRow?.orderSn) === orderSn) {
+        return extractReturnRequestCode(safeRow) || "";
       }
     }
     if (!parseShopeeReturnListMore(listResult) || rows.length === 0) break;
@@ -16292,10 +16311,11 @@ async function applyWebhookReturnFallback(
   const detail = detailResult?.response ?? detailResult ?? {};
   const kind = mapShopeeReturnKind(detail);
   const returnStatus = String(detail.status || "").toUpperCase();
+  const mappedReturnSn = extractReturnRequestCode(detail) || returnSn;
   const { tracking: returnShipTn, sources: tnSources } = await fetchReturnShippingTrackingNumber(
     shopId,
     accessToken,
-    returnSn,
+    mappedReturnSn,
     detailResult,
   );
   const idx = orders.findIndex((o: any) => String(o.orderSn) === orderSn);
@@ -16317,7 +16337,7 @@ async function applyWebhookReturnFallback(
   // KHÔNG ghi đè status → return_pending (bug cũ khiến hủy bị lệch tab / mất cancelled).
   const patch: any = alreadyCancelled
     ? {
-        return_sn: String(detail.return_sn || returnSn),
+        return_sn: mappedReturnSn,
         return_status: returnStatus,
         return_refund_request_type: Number(detail.return_refund_request_type ?? 0),
         shopee_cancel_return_kind: kind,
@@ -16327,7 +16347,7 @@ async function applyWebhookReturnFallback(
         is_pending_shopee_check: false,
       }
     : {
-        return_sn: String(detail.return_sn || returnSn),
+        return_sn: mappedReturnSn,
         return_status: returnStatus,
         return_refund_request_type: Number(detail.return_refund_request_type ?? 0),
         shopee_cancel_return_kind: kind,
@@ -16396,7 +16416,7 @@ async function applyWebhookReturnFallback(
   }
 
   console.log(
-    `[Shopee Webhook] Return fallback OK order_sn=${orderSn} return_sn=${returnSn} tn=${bestTn || "(empty)"} kind=${kind}`,
+    `[Shopee Webhook] Return fallback OK order_sn=${orderSn} return_sn=${mappedReturnSn} tn=${bestTn || "(empty)"} kind=${kind}`,
   );
 }
 
