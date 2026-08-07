@@ -5772,22 +5772,29 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<str
 
   // 3) Biến thể: init_tier_variation → add_model (chỉ khi add mới)
   // Shopee Go struct: item_id = uint64 → BẮT BUỘC Number, không gửi string.
+  // 3) Biến thể: init_tier_variation → add_model (chỉ khi add mới)
   if (hasVariants && !existingItemId) {
     const itemIdNum = toShopeeIdNumber(itemId) ?? Number(itemId);
     if (!Number.isFinite(itemIdNum) || itemIdNum <= 0) {
       throw new Error(`item_id không hợp lệ cho init_tier_variation: ${itemId}`);
     }
-    const tierName = String(payload?.tierName || payload?.variationName || "Phân loại").trim().slice(0, 14) || "Phân loại";
-    const optionList = variants.map((v: any) => ({
-      option: String(v.name || "Phân loại").trim().slice(0, 30) || "Phân loại",
+
+    // Build tier_variation (tối đa 2 tier)
+    const tierVariations = tierAttrs.filter((a) => a.values.length > 0).slice(0, 2).map((a) => ({
+      name: (a.name || 'Phân loại').trim().slice(0, 14) || 'Phân loại',
+      option_list: a.values.map((v) => String(v).trim()).filter(Boolean),
     }));
+
+    const tierName = tierVariations[0]?.name || 'Phân loại';
+
+    // Build models với tier_indices
     const modelListWithWeight = variants.map((v: any, idx: number) => {
       const price = Math.max(
         0,
         Math.round(Number(v.priceShopee ?? v.pricePromo ?? v.original_price ?? 0)),
       );
       const base: any = {
-        tier_index: [idx],
+        tier_index: v.tierIndices || [idx],
         original_price: price,
         seller_stock: [{ stock: Math.max(0, Math.round(Number(v.stock || 0))) }],
         model_sku: String(v.sku || "").slice(0, 100),
@@ -5798,6 +5805,7 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<str
       }
       return base;
     });
+
     for (const m of modelListWithWeight) {
       if (m.original_price <= 0) throw new Error("Mỗi phân loại cần giá Shopee > 0");
     }
@@ -5810,7 +5818,7 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<str
         accessToken,
         {
           item_id: itemIdNum,
-          tier_variation: [{ name: tierName, option_list: optionList }],
+          tier_variation: tierVariations,
           model: modelListWithWeight,
         },
         "init_tier_variation",
@@ -5826,7 +5834,7 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<str
           accessToken,
           {
             item_id: itemIdNum,
-            tier_variation: [{ name: tierName, option_list: optionList }],
+            tier_variation: tierVariations,
           },
           "init_tier_variation",
         );

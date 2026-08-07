@@ -121284,17 +121284,18 @@ async function publishOneItemToShopee(shopId, payload) {
     if (!Number.isFinite(itemIdNum) || itemIdNum <= 0) {
       throw new Error(`item_id kh\xF4ng h\u1EE3p l\u1EC7 cho init_tier_variation: ${itemId}`);
     }
-    const tierName = String(payload?.tierName || payload?.variationName || "Ph\xE2n lo\u1EA1i").trim().slice(0, 14) || "Ph\xE2n lo\u1EA1i";
-    const optionList = variants.map((v) => ({
-      option: String(v.name || "Ph\xE2n lo\u1EA1i").trim().slice(0, 30) || "Ph\xE2n lo\u1EA1i"
+    const tierVariations = tierAttrs.filter((a) => a.values.length > 0).slice(0, 2).map((a) => ({
+      name: (a.name || "Ph\xE2n lo\u1EA1i").trim().slice(0, 14) || "Ph\xE2n lo\u1EA1i",
+      option_list: a.values.map((v) => String(v).trim()).filter(Boolean)
     }));
+    const tierName = tierVariations[0]?.name || "Ph\xE2n lo\u1EA1i";
     const modelListWithWeight = variants.map((v, idx) => {
       const price = Math.max(
         0,
         Math.round(Number(v.priceShopee ?? v.pricePromo ?? v.original_price ?? 0))
       );
       const base = {
-        tier_index: [idx],
+        tier_index: v.tierIndices || [idx],
         original_price: price,
         seller_stock: [{ stock: Math.max(0, Math.round(Number(v.stock || 0))) }],
         model_sku: String(v.sku || "").slice(0, 100)
@@ -121316,7 +121317,7 @@ async function publishOneItemToShopee(shopId, payload) {
         accessToken,
         {
           item_id: itemIdNum,
-          tier_variation: [{ name: tierName, option_list: optionList }],
+          tier_variation: tierVariations,
           model: modelListWithWeight
         },
         "init_tier_variation"
@@ -121332,7 +121333,7 @@ async function publishOneItemToShopee(shopId, payload) {
           accessToken,
           {
             item_id: itemIdNum,
-            tier_variation: [{ name: tierName, option_list: optionList }]
+            tier_variation: tierVariations
           },
           "init_tier_variation"
         );

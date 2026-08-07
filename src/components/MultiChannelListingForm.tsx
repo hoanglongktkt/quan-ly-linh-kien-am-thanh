@@ -39,6 +39,8 @@ export interface ListingVariant {
   priceTiktok: number;
   /** Giá khuyến mại (optional) */
   pricePromo?: number;
+  /** Chỉ số tier cho Shopee multi-tier (VD: [0, 0] = Tier1[0] + Tier2[0]) */
+  tierIndices?: number[];
 }
 
 export interface LogisticChannel {
@@ -86,8 +88,10 @@ export interface MultiChannelListingPayload {
   perShopVariants?: Record<string, ListingVariant[]>;
   /** Logistics bật theo từng gian (shopId → logistic_id[] — đã resolve từ generic keys) */
   perShopLogistics?: Record<string, number[]>;
-  /** Tên thuộc tính tier (VD: Màu) */
+  /** Tên thuộc tính tier (VD: Màu) — legacy 1 tier */
   tierName?: string;
+  /** Danh sách tier attributes (tối đa 2) — dùng cho Shopee multi-tier */
+  tierVariations?: Array<{ name: string; options: string[] }>;
   descriptionHtml: string;
   packageWeight: number;
   packageLength: number;
@@ -540,6 +544,13 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
       perShopVariants,
       perShopLogistics: outLogistics,
       tierName: tierAttrs[0]?.name || 'Phân loại',
+      tierVariations: tierAttrs
+        .filter((a) => a.values.length > 0)
+        .slice(0, 2)
+        .map((a) => ({
+          name: (a.name || 'Phân loại').trim().slice(0, 14) || 'Phân loại',
+          options: a.values.map((v) => String(v).trim()).filter(Boolean),
+        })),
       descriptionHtml,
       packageWeight,
       packageLength,
@@ -665,48 +676,59 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
     setTierAttrs((prev) => prev.map((a) => (a.id === attrId ? { ...a, values: a.values.filter((v) => v !== tagValue) } : a)));
   };
 
-  const syncVariantsFromTierAttrs = () => {
-    const attr = tierAttrs[0];
-    if (!attr || attr.values.length === 0) return;
-    const newVariants: ListingVariant[] = attr.values.map((val, idx) => {
-      const existing = variants[idx];
-      return existing
-        ? { ...existing, name: val }
-        : {
-            id: `var-tier-${Date.now()}-${idx}`,
-            name: val,
-            sku: '',
-            stock: 0,
-            weight: packageWeight,
-            priceShopee: 0,
-            priceLazada: 0,
-            priceTiktok: 0,
-          };
-    });
-    if (newVariants.length > variants.length) {
-      setVariants((prev) => {
-        const base = [...prev];
-        while (base.length < newVariants.length) {
-          base.push({
-            id: `var-tier-${Date.now()}-${base.length}`,
-            name: attr.values[base.length] || `Phân loại ${base.length + 1}`,
-            sku: '',
-            stock: 0,
-            weight: packageWeight,
-            priceShopee: 0,
-            priceLazada: 0,
-            priceTiktok: 0,
-          });
-        }
-        return base.map((v, i) => ({
-          ...v,
-          name: newVariants[i]?.name || v.name,
-        }));
-      });
-    } else {
-      setVariants((prev) => prev.map((v, i) => ({ ...v, name: newVariants[i]?.name || v.name })));
+  // Sinh tổ hợp biến thể (Cartesian product) từ tierAttrs — tối đa 2 tier
+  const buildCartesianNames = useCallback((attrs: TierAttribute[]): string[] => {
+    const t1 = attrs[0]?.values?.filter(Boolean) || [];
+    const t2 = attrs[1]?.values?.filter(Boolean) || [];
+    if (t1.length === 0 && t2.length === 0) return [];
+    if (t1.length === 0) return t2;
+    if (t2.length === 0) return t1;
+    const names: string[] = [];
+    for (const a of t1) {
+      for (const b of t2) {
+        names.push(`${a} - ${b}`);
+      }
     }
-  };
+    return names;
+  }, []);
+
+  // Tự động sinh/cập nhật variants khi tags Tier 1 hoặc Tier 2 thay đổi
+  useEffect(() => {
+    const t1 = tierAttrs[0]?.values?.filter(Boolean) || [];
+    const t2 = tierAttrs[1]?.values?.filter(Boolean) || [];
+    if (t1.length === 0 && t2.length === 0) return;
+
+    const newVariants: ListingVariant[] = [];
+    for (let i = 0; i < t1.length; i++) {
+      for (let j = 0; j < (t2.length === 0 ? 1 : t2.length); j++) {
+        const name = t2.length === 0 ? t1[i] : `${t1[i]} - ${t2[j]}`;
+        const indices = t2.length === 0 ? [i] : [i, j];
+        newVariants.push({ name, tierIndices: indices });
+      }
+    }
+
+    setVariants((prev) => {
+      const byName = new Map(prev.map((v) => [v.name, v]));
+      return newVariants.map((nv) => {
+        const existing = byName.get(nv.name);
+        if (existing) return { ...existing, name: nv.name, tierIndices: nv.tierIndices };
+        return {
+          id: `var-tier-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          name: nv.name,
+          tierIndices: nv.tierIndices,
+          sku: '',
+          stock: 0,
+          weight: packageWeight,
+          priceShopee: 0,
+          priceLazada: 0,
+          priceTiktok: 0,
+        };
+      });
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    tierAttrs.map((a) => a.values.join('\u0001')).join('\u0002'),
+  ]);
 
   // ====== PHẦN 2: Bulk Apply Handlers ======
   const handleBulkApply = () => {
@@ -1403,7 +1425,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
                     )}
                   </div>
 
-                  {/* Dòng 2: Tag Input + Nút Tạo biến thể */}
+                  {/* Dòng 2: Tag Input */}
                   <div className="flex flex-wrap items-center gap-2">
                     {/* Vùng tags */}
                     <div className="flex flex-wrap items-center gap-1.5 flex-1 min-w-0">
@@ -1424,15 +1446,8 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
                         className="flex-1 min-w-[140px] px-2 py-1 border border-dashed border-gray-300 rounded-full text-xs bg-white focus:border-violet-400 focus:outline-none placeholder:text-gray-300"
                       />
                     </div>
-
-                    {/* Nút tạo biến thể */}
-                    <button type="button" onClick={syncVariantsFromTierAttrs}
-                      disabled={!attr.values.length}
-                      className="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold rounded-xl disabled:opacity-40 flex items-center gap-1 shrink-0">
-                      <Zap className="w-3.5 h-3.5" /> Tạo biến thể
-                    </button>
                   </div>
-                  <p className="text-[9px] text-gray-400 mt-1.5">Nhấn <kbd className="px-1 py-0.5 bg-gray-100 border border-gray-200 rounded text-[9px] font-mono">Enter</kbd> hoặc <kbd className="px-1 py-0.5 bg-gray-100 border border-gray-200 rounded text-[9px] font-mono">,</kbd> để thêm giá trị</p>
+                  <p className="text-[9px] text-gray-400 mt-1.5">Nhấn <kbd className="px-1 py-0.5 bg-gray-100 border border-gray-200 rounded text-[9px] font-mono">Enter</kbd> hoặc <kbd className="px-1 py-0.5 bg-gray-100 border border-gray-200 rounded text-[9px] font-mono">,</kbd> để thêm giá trị. Tổ hợp biến thể được sinh tự động.</p>
 
                   {/* Ảnh cho thuộc tính — chỉ hiện cho thuộc tính đầu tiên */}
                   {attrIdx === 0 && attr.values.length > 0 && (
@@ -1478,14 +1493,16 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
             })}
           </div>
 
-          <button type="button" onClick={() => {
-            const newId = `attr-${Date.now()}`;
-            setTierAttrs((prev) => [...prev, { id: newId, name: '', values: [], images: {} }]);
-            setTierInputValues((prev) => ({ ...prev, [newId]: '' }));
-          }}
-            className="mt-2 px-3 py-1.5 bg-gray-50 text-gray-600 text-xs font-bold rounded-xl border border-gray-200 flex items-center gap-1 hover:bg-gray-100">
-            <Plus className="w-3.5 h-3.5" /> Thêm thuộc tính
-          </button>
+          {tierAttrs.length < 2 && (
+            <button type="button" onClick={() => {
+              const newId = `attr-${Date.now()}`;
+              setTierAttrs((prev) => [...prev, { id: newId, name: '', values: [], images: {} }]);
+              setTierInputValues((prev) => ({ ...prev, [newId]: '' }));
+            }}
+              className="mt-2 px-3 py-1.5 bg-gray-50 text-gray-600 text-xs font-bold rounded-xl border border-gray-200 flex items-center gap-1 hover:bg-gray-100">
+              <Plus className="w-3.5 h-3.5" /> Thêm thuộc tính
+            </button>
+          )}
         </div>
 
         {/* ===== B. Giá và tồn kho — Mẹo thiết lập nhanh ===== */}
@@ -1555,7 +1572,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
             {/* ===== Bảng biến thể — gom nhóm theo gian hàng ===== */}
             {variants.length === 0 ? (
               <div className="text-center py-8 text-gray-400 text-xs">
-                Chưa có biến thể — nhập giá trị thuộc tính và bấm "Tạo biến thể"
+                Chưa có biến thể — nhập giá trị thuộc tính (Enter) để hệ thống tự sinh tổ hợp
               </div>
             ) : (
               <div className="space-y-5">
