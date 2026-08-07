@@ -104985,6 +104985,32 @@ function translateShopeeErrorCodes(text) {
   if (/error_item_not_found/i.test(out)) {
     out = out.replace(/Item[_ ]?id is not found\.?/gi, "").replace(/(?:product\.)?error_item_not_found/gi, "Kh\xF4ng t\xECm th\u1EA5y s\u1EA3n ph\u1EA9m t\u1EA1i shop");
   }
+  if (/error_invalid_logistic_channel|invalid logistic|logistic_channel.*invalid/i.test(out)) {
+    out = out.replace(/(?:product\.)?error_invalid_logistic_channel/gi, "").replace(/invalid logistic.*channel/gi, "").replace("K\xEAnh v\u1EADn chuy\u1EC3n kh\xF4ng h\u1EE3p l\u1EC7: k\xEAnh 50051 ho\u1EB7c 50041 \u0111\xE3 b\u1ECB Shopee ng\u1EEBng h\u1ED7 tr\u1EE3 ho\u1EB7c kh\xF4ng t\u1ED3n t\u1EA1i trong danh s\xE1ch k\xEAnh c\u1EE7a shop. Vui l\xF2ng ch\u1ECDn l\u1EA1i k\xEAnh v\u1EADn chuy\u1EC3n trong ph\u1EA7n C\u1EA5u h\xECnh s\u1EA3n ph\u1EA9m.", "").trim();
+    if (/kênh.*50051|50051.*kênh/i.test(out)) {
+      out = out.replace(/50051/g, "").trim();
+      if (!out) out = "K\xEAnh v\u1EADn chuy\u1EC3n 50051 kh\xF4ng h\u1EE3p l\u1EC7 \u2014 Shopee kh\xF4ng c\xF2n h\u1ED7 tr\u1EE3. Vui l\xF2ng ch\u1ECDn k\xEAnh kh\xE1c.";
+    }
+    if (/kênh.*50041|50041.*kênh/i.test(out)) {
+      out = out.replace(/50041/g, "").trim();
+      if (!out) out = "K\xEAnh v\u1EADn chuy\u1EC3n 50041 kh\xF4ng h\u1EE3p l\u1EC7 \u2014 Shopee kh\xF4ng c\xF2n h\u1ED7 tr\u1EE3. Vui l\xF2ng ch\u1ECDn k\xEAnh kh\xE1c.";
+    }
+    if (/invalid.*channel|logistic.*invalid/i.test(out)) {
+      out = "K\xEAnh v\u1EADn chuy\u1EC3n kh\xF4ng h\u1EE3p l\u1EC7 \u2014 vui l\xF2ng ch\u1ECDn l\u1EA1i k\xEAnh trong C\u1EA5u h\xECnh s\u1EA3n ph\u1EA9m.";
+    }
+  }
+  if (/50051|50041/i.test(out) && /logistic|channel|vận chuyển|invalid/i.test(out)) {
+    out = "K\xEAnh v\u1EADn chuy\u1EC3n 50051/50041 \u0111\xE3 b\u1ECB Shopee ng\u1EEBng h\u1ED7 tr\u1EE3. Vui l\xF2ng ch\u1ECDn k\xEAnh v\u1EADn chuy\u1EC3n kh\xE1c trong C\u1EA5u h\xECnh s\u1EA3n ph\u1EA9m.";
+  }
+  if (/error_init_tier_variation|tier_variation.*invalid|cannot unmarshal.*string/i.test(out)) {
+    out = out.replace(/(?:product\.)?error_init_tier_variation/gi, "").replace(/cannot unmarshal.*string/gi, "").replace(/tier_variation.*invalid/gi, "").trim();
+    if (!out || /tier|phân loại/i.test(out)) {
+      out = "L\u1ED7i kh\u1EDFi t\u1EA1o ph\xE2n lo\u1EA1i (tier_variation) \u2014 ki\u1EC3m tra l\u1EA1i d\u1EEF li\u1EC7u bi\u1EBFn th\u1EC3 v\xE0 brand_id.";
+    }
+  }
+  if (/brand.*id.*invalid|invalid.*brand|error.*brand_id/i.test(out)) {
+    out = "Brand_id kh\xF4ng h\u1EE3p l\u1EC7 \u2014 n\u1EBFu s\u1EA3n ph\u1EA9m kh\xF4ng c\xF3 th\u01B0\u01A1ng hi\u1EC7u, truy\u1EC1n brand_id = 0.";
+  }
   return out.replace(/\s*[—\-–]\s*(?=[—\-–|]|$)/g, "").replace(/[ \t]{2,}/g, " ").trim();
 }
 function formatShopeeSyncAlertLines(raw) {
@@ -120984,6 +121010,43 @@ function classifyLogisticChannelType(c) {
   if (/cồng ?kềnh|bulky|heavy|large/i.test(name)) return "bulky";
   return "other";
 }
+function resolveLogisticIdsBackend(genericKeys, fullChannels) {
+  if (!Array.isArray(genericKeys) || !genericKeys.length || !Array.isArray(fullChannels)) {
+    return { resolved: [], excluded: [] };
+  }
+  const SHOP_CHANNEL_KEY_MAP = {
+    bulky: (name) => /cồng ?kềnh|bulky|heavy|large/i.test(name),
+    express: (name) => /hoả? ?tốc|express/i.test(name),
+    fast: (name) => /nhanh|fast|next.?day/i.test(name) && !/hoả? ?tốc/i.test(name),
+    sameday: (name) => /trong ?ngày|same.?day/i.test(name),
+    spx_locker: (name) => /tủ ?nhận ?hàng|tủ spx|spx ?locker/i.test(name),
+    smartbox: (name) => /smartbox|viettel/i.test(name),
+    pickup: (name) => /lấy ?hàng|pick.?up|self.?collect|điểm ?nhận/i.test(name)
+  };
+  const availableChannelIds = new Set(fullChannels.map((c) => c.logistic_id));
+  const resolved = [];
+  const excluded = [];
+  for (const key of genericKeys) {
+    const matcher = SHOP_CHANNEL_KEY_MAP[key];
+    if (!matcher) continue;
+    const matched = fullChannels.filter((ch) => matcher(String(ch.logistic_name || "").toLowerCase()));
+    if (!matched.length) {
+      excluded.push(key);
+      continue;
+    }
+    for (const ch of matched) {
+      if (availableChannelIds.has(ch.logistic_id)) {
+        resolved.push(ch.logistic_id);
+      } else {
+        excluded.push(`${key}(id=${ch.logistic_id})`);
+      }
+    }
+  }
+  return {
+    resolved: [...new Set(resolved)],
+    excluded
+  };
+}
 function buildLogisticInfoFromPayload(fullChannels, enabledLogistics, payload) {
   const pkgLength = Math.max(1, Number(payload?.packageLength || 10));
   const pkgWidth = Math.max(1, Number(payload?.packageWidth || 10));
@@ -121172,7 +121235,14 @@ async function publishOneItemToShopee(shopId, payload) {
     await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
   }
   const fullChannels = await shopeeGetChannelList(shopId, accessToken);
-  const enabledLogistics = Array.isArray(payload?.enabledLogistics) ? payload.enabledLogistics.map(Number).filter((n) => n > 0) : [];
+  let enabledLogistics = Array.isArray(payload?.enabledLogistics) ? payload.enabledLogistics.map(Number).filter((n) => n > 0) : [];
+  if (Array.isArray(payload?.perShopLogistics) && payload.perShopLogistics.length > 0) {
+    const resolved = resolveLogisticIdsBackend(payload.perShopLogistics, fullChannels);
+    enabledLogistics = resolved.resolved;
+    if (resolved.excluded.length > 0) {
+      console.warn("[SHOPEE LOGISTIC FILTER] \u0110\xE3 lo\u1EA1i tr\u1EEB c\xE1c k\xEAnh kh\xF4ng t\u1ED3n t\u1EA1i trong shop:", resolved.excluded);
+    }
+  }
   const logisticInfo = buildLogisticInfoFromPayload(fullChannels, enabledLogistics, payload);
   if (!logisticInfo.length) {
     throw new Error("Shop ch\u01B0a c\xF3 k\xEAnh v\u1EADn chuy\u1EC3n enabled (get_channel_list) ho\u1EB7c k\xEDch th\u01B0\u1EDBc g\xF3i h\xE0ng kh\xF4ng ph\xF9 h\u1EE3p v\u1EDBi b\u1EA5t k\u1EF3 k\xEAnh n\xE0o");
@@ -130903,14 +130973,16 @@ async function startServer() {
             );
             const medicineId = resolveShopeeMedicineId(payload) || (product?.medicine_id != null ? String(product.medicine_id) : null);
             const perShopVars = payload?.perShopVariants?.[shopKey] || payload?.perShopVariants?.[clientShopId] || null;
-            const perShopLogs = payload?.perShopLogistics?.[shopKey] || payload?.perShopLogistics?.[clientShopId] || null;
+            const perShopLogsRaw = payload?.perShopLogistics?.[shopKey] || payload?.perShopLogistics?.[clientShopId] || null;
             const itemId = await publishOneItemToShopee(shopKey, {
               ...payload,
               medicine_id: medicineId || payload?.medicine_id,
               shopeeItemId: existingListing?.platform_product_id || product?.shopeeItemId,
               platform_product_id: existingListing?.platform_product_id,
               variants: Array.isArray(perShopVars) && perShopVars.length ? perShopVars : payload.variants,
-              enabledLogistics: Array.isArray(perShopLogs) ? perShopLogs : payload.enabledLogistics,
+              // Ưu tiên perShopLogistics: gửi mảng để hàm nội bộ resolve theo shop
+              perShopLogistics: perShopLogsRaw,
+              enabledLogistics: Array.isArray(perShopLogsRaw) ? perShopLogsRaw.map(Number).filter((n) => n > 0) : payload.enabledLogistics || [],
               images: Array.isArray(images) && images.length ? images : [product?.imageUrl || product?.avatarUrl].filter(Boolean)
             });
             if (!itemId) throw new Error("publishOneItemToShopee kh\xF4ng tr\u1EA3 item_id");

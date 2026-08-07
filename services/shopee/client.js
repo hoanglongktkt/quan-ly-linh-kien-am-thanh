@@ -226,6 +226,40 @@ function translateShopeeErrorCodes(text) {
       .replace(/Item[_ ]?id is not found\.?/gi, "")
       .replace(/(?:product\.)?error_item_not_found/gi, "Không tìm thấy sản phẩm tại shop");
   }
+  if (/error_invalid_logistic_channel|invalid logistic|logistic_channel.*invalid/i.test(out)) {
+    out = out
+      .replace(/(?:product\.)?error_invalid_logistic_channel/gi, "")
+      .replace(/invalid logistic.*channel/gi, "")
+      .replace("Kênh vận chuyển không hợp lệ: kênh 50051 hoặc 50041 đã bị Shopee ngừng hỗ trợ hoặc không tồn tại trong danh sách kênh của shop. Vui lòng chọn lại kênh vận chuyển trong phần Cấu hình sản phẩm.", "")
+      .trim();
+    if (/kênh.*50051|50051.*kênh/i.test(out)) {
+      out = out.replace(/50051/g, "").trim();
+      if (!out) out = "Kênh vận chuyển 50051 không hợp lệ — Shopee không còn hỗ trợ. Vui lòng chọn kênh khác.";
+    }
+    if (/kênh.*50041|50041.*kênh/i.test(out)) {
+      out = out.replace(/50041/g, "").trim();
+      if (!out) out = "Kênh vận chuyển 50041 không hợp lệ — Shopee không còn hỗ trợ. Vui lòng chọn kênh khác.";
+    }
+    if (/invalid.*channel|logistic.*invalid/i.test(out)) {
+      out = "Kênh vận chuyển không hợp lệ — vui lòng chọn lại kênh trong Cấu hình sản phẩm.";
+    }
+  }
+  if (/50051|50041/i.test(out) && /logistic|channel|vận chuyển|invalid/i.test(out)) {
+    out = "Kênh vận chuyển 50051/50041 đã bị Shopee ngừng hỗ trợ. Vui lòng chọn kênh vận chuyển khác trong Cấu hình sản phẩm.";
+  }
+  if (/error_init_tier_variation|tier_variation.*invalid|cannot unmarshal.*string/i.test(out)) {
+    out = out
+      .replace(/(?:product\.)?error_init_tier_variation/gi, "")
+      .replace(/cannot unmarshal.*string/gi, "")
+      .replace(/tier_variation.*invalid/gi, "")
+      .trim();
+    if (!out || /tier|phân loại/i.test(out)) {
+      out = "Lỗi khởi tạo phân loại (tier_variation) — kiểm tra lại dữ liệu biến thể và brand_id.";
+    }
+  }
+  if (/brand.*id.*invalid|invalid.*brand|error.*brand_id/i.test(out)) {
+    out = "Brand_id không hợp lệ — nếu sản phẩm không có thương hiệu, truyền brand_id = 0.";
+  }
   return out
     .replace(/\s*[—\-–]\s*(?=[—\-–|]|$)/g, "")
     .replace(/[ \t]{2,}/g, " ")

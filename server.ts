@@ -5382,6 +5382,56 @@ function classifyLogisticChannelType(c: any): string {
   return 'other';
 }
 
+/**
+ * Resolve generic channel keys → actual logistic_id[], intersected with shop's real channels.
+ * FE sends perShopLogistics as string keys (e.g. ["express","fast"]);
+ * Backend must cross-check each resolved id against fullChannels before sending to Shopee.
+ */
+function resolveLogisticIdsBackend(
+  genericKeys: string[],
+  fullChannels: { logistic_id: number; logistic_name: string }[],
+): { resolved: number[]; excluded: string[] } {
+  if (!Array.isArray(genericKeys) || !genericKeys.length || !Array.isArray(fullChannels)) {
+    return { resolved: [], excluded: [] };
+  }
+
+  const SHOP_CHANNEL_KEY_MAP: Record<string, (name: string) => boolean> = {
+    bulky: (name) => /cồng ?kềnh|bulky|heavy|large/i.test(name),
+    express: (name) => /hoả? ?tốc|express/i.test(name),
+    fast: (name) => /nhanh|fast|next.?day/i.test(name) && !/hoả? ?tốc/i.test(name),
+    sameday: (name) => /trong ?ngày|same.?day/i.test(name),
+    spx_locker: (name) => /tủ ?nhận ?hàng|tủ spx|spx ?locker/i.test(name),
+    smartbox: (name) => /smartbox|viettel/i.test(name),
+    pickup: (name) => /lấy ?hàng|pick.?up|self.?collect|điểm ?nhận/i.test(name),
+  };
+
+  const availableChannelIds = new Set(fullChannels.map((c) => c.logistic_id));
+  const resolved: number[] = [];
+  const excluded: string[] = [];
+
+  for (const key of genericKeys) {
+    const matcher = SHOP_CHANNEL_KEY_MAP[key];
+    if (!matcher) continue;
+    const matched = fullChannels.filter((ch) => matcher(String(ch.logistic_name || '').toLowerCase()));
+    if (!matched.length) {
+      excluded.push(key);
+      continue;
+    }
+    for (const ch of matched) {
+      if (availableChannelIds.has(ch.logistic_id)) {
+        resolved.push(ch.logistic_id);
+      } else {
+        excluded.push(`${key}(id=${ch.logistic_id})`);
+      }
+    }
+  }
+
+  return {
+    resolved: [...new Set(resolved)],
+    excluded,
+  };
+}
+
 /** Lọc kênh vận chuyển hợp lệ theo enabledLogistics + kích thước + weight. */
 function buildLogisticInfoFromPayload(
   fullChannels: any[],
@@ -5634,9 +5684,20 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<str
   }
 
   const fullChannels = await shopeeGetChannelList(shopId, accessToken);
-  const enabledLogistics: number[] = Array.isArray(payload?.enabledLogistics)
+
+  let enabledLogistics: number[] = Array.isArray(payload?.enabledLogistics)
     ? payload.enabledLogistics.map(Number).filter((n: number) => n > 0)
     : [];
+
+  // --- BƯỚC QUAN TRỌNG: Resolve & intersect với kênh thực tế của shop ---
+  if (Array.isArray(payload?.perShopLogistics) && payload.perShopLogistics.length > 0) {
+    const resolved = resolveLogisticIdsBackend(payload.perShopLogistics, fullChannels);
+    enabledLogistics = resolved.resolved;
+    if (resolved.excluded.length > 0) {
+      console.warn("[SHOPEE LOGISTIC FILTER] Đã loại trừ các kênh không tồn tại trong shop:", resolved.excluded);
+    }
+  }
+
   const logisticInfo = buildLogisticInfoFromPayload(fullChannels, enabledLogistics, payload);
   if (!logisticInfo.length) {
     throw new Error("Shop chưa có kênh vận chuyển enabled (get_channel_list) hoặc kích thước gói hàng không phù hợp với bất kỳ kênh nào");
@@ -19394,21 +19455,27 @@ async function startServer() {
               resolveShopeeMedicineId(payload) ||
               (product?.medicine_id != null ? String(product.medicine_id) : null);
             // Ưu tiên dữ liệu theo từng gian (perShopVariants / perShopLogistics)
+            // perShopLogistics[shopKey]: có thể là number[] (FE đã resolve) HOẶC string[] (generic keys chưa resolve)
             const perShopVars =
               payload?.perShopVariants?.[shopKey] ||
               payload?.perShopVariants?.[clientShopId] ||
               null;
-            const perShopLogs =
+            const perShopLogsRaw =
               payload?.perShopLogistics?.[shopKey] ||
               payload?.perShopLogistics?.[clientShopId] ||
               null;
+            // Truyền perShopLogistics để publishOneItemToShopee tự resolve & intersect
             const itemId = await publishOneItemToShopee(shopKey, {
               ...payload,
               medicine_id: medicineId || payload?.medicine_id,
               shopeeItemId: existingListing?.platform_product_id || product?.shopeeItemId,
               platform_product_id: existingListing?.platform_product_id,
               variants: Array.isArray(perShopVars) && perShopVars.length ? perShopVars : payload.variants,
-              enabledLogistics: Array.isArray(perShopLogs) ? perShopLogs : payload.enabledLogistics,
+              // Ưu tiên perShopLogistics: gửi mảng để hàm nội bộ resolve theo shop
+              perShopLogistics: perShopLogsRaw,
+              enabledLogistics: Array.isArray(perShopLogsRaw)
+                ? (perShopLogsRaw as (number | string)[]).map(Number).filter((n) => n > 0)
+                : (payload.enabledLogistics as number[] || []),
               images: Array.isArray(images) && images.length
                 ? images
                 : [product?.imageUrl || product?.avatarUrl].filter(Boolean),
