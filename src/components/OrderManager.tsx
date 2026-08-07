@@ -106,6 +106,11 @@ import {
   getShopeeTransactionFee,
   isShopeeEscrowSynced,
 } from '../utils/shopeeFees';
+import {
+  playNotificationSound,
+  unlockAudio,
+  isAudioUnlockedState,
+} from '../utils/notificationSound';
 
 function getOrderWaybillCode(order: Order): string {
   // Ưu tiên mã đi (tracking_no) theo order_sn — return_tracking_no / scan_code chỉ fallback.
@@ -751,6 +756,7 @@ export default function OrderManager({
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [serverOrderCounts, setServerOrderCounts] = useState<Record<string, number> | null>(null);
   const [hasNewOrders, setHasNewOrders] = useState(false);
+  const [audioEnabled, setAudioEnabled] = useState(() => isAudioUnlockedState());
   const syncPollTimerRef = useRef<number | null>(null);
   const counterPollTimerRef = useRef<number | null>(null);
   const countsFingerprintRef = useRef<string>('');
@@ -861,6 +867,7 @@ export default function OrderManager({
       const fp = fingerprintCounts(counts);
       if (countsFingerprintRef.current && countsFingerprintRef.current !== fp) {
         countsFingerprintRef.current = fp;
+        playNotificationSound();
         // Có thay đổi sau sync → tự làm mới trang 1 (limit 50, replace).
         refetchOrdersPage({ silent: true });
         showToast('Đã có đơn mới — đã làm mới danh sách', 3500);
@@ -910,6 +917,7 @@ export default function OrderManager({
       const fp = fingerprintCounts(counts);
       if (countsFingerprintRef.current && countsFingerprintRef.current !== fp) {
         setHasNewOrders(true);
+        playNotificationSound();
       }
       if (fp) countsFingerprintRef.current = fp;
     }, 20_000);
@@ -920,6 +928,26 @@ export default function OrderManager({
       }
     };
   }, [fetchOrderCounts]);
+
+  /** Tự unlock audio sau click/touch đầu tiên của user trên trang. */
+  useEffect(() => {
+    if (audioEnabled) return;
+    const unlock = () => {
+      unlockAudio();
+      setAudioEnabled(true);
+      document.removeEventListener('click', unlock);
+      document.removeEventListener('touchstart', unlock);
+      document.removeEventListener('keydown', unlock);
+    };
+    document.addEventListener('click', unlock, { once: true });
+    document.addEventListener('touchstart', unlock, { once: true });
+    document.addEventListener('keydown', unlock, { once: true });
+    return () => {
+      document.removeEventListener('click', unlock);
+      document.removeEventListener('touchstart', unlock);
+      document.removeEventListener('keydown', unlock);
+    };
+  }, [audioEnabled]);
 
   const triggerShopeeSync = async (mode: 'full' | 'quick') => {
     if (isSyncingRef.current || isSyncing) return;
@@ -5599,6 +5627,25 @@ export default function OrderManager({
           </button>
         </div>
       </div>
+
+      {!audioEnabled && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2">
+          <span className="text-xs font-semibold text-amber-800">
+            Âm thanh thông báo đơn mới đang tắt
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              unlockAudio();
+              setAudioEnabled(true);
+              playNotificationSound();
+            }}
+            className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold cursor-pointer"
+          >
+            Bật âm thanh thông báo
+          </button>
+        </div>
+      )}
 
       {hasNewOrders && (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-2.5">
