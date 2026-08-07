@@ -5394,6 +5394,9 @@ function buildLogisticInfoFromPayload(
   const pkgWeight = Number(payload?.packageWeight || payload?.weight || 500);
   const dims = [pkgLength, pkgWidth, pkgHeight].sort((a, b) => b - a);
 
+  // Tủ nhận hàng (locker) — bị disable mặc định vì kích thước gói hàng dễ vượt limit.
+  const LOCKER_KEYWORDS = ['tủ nhận hàng', 'smartbox', 'locker', 'tủ spx', 'spx express locker'];
+
   const result: any[] = [];
   for (const ch of fullChannels) {
     // FE đã bật toggle?
@@ -5404,12 +5407,25 @@ function buildLogisticInfoFromPayload(
       : (ch.enabled !== false);
     if (!isEnabled) continue;
 
+    // Phát hiện kênh locker
+    const chNameLower = String(ch.logistic_name || '').toLowerCase();
+    const isLocker = LOCKER_KEYWORDS.some((kw) => chNameLower.includes(kw));
+
     // Kiểm tra giới hạn kích thước
     if (ch.has_size_limit && ch.max_dimension) {
       const md = [ch.max_dimension.max_length, ch.max_dimension.max_width, ch.max_dimension.max_height].sort(
         (a, b) => b - a,
       );
+      // locker: disable nếu kích thước vượt giới hạn hoặc nếu không có thông tin limit (an toàn)
+      if (isLocker) {
+        result.push({ logistic_id: ch.logistic_id, enabled: false });
+        continue;
+      }
       if (dims[0] > md[0] || dims[1] > md[1] || dims[2] > md[2]) continue;
+    } else if (isLocker) {
+      // Không có max_dimension mà là locker → disable mặc định
+      result.push({ logistic_id: ch.logistic_id, enabled: false });
+      continue;
     }
 
     result.push({ logistic_id: ch.logistic_id, enabled: true });
@@ -5682,11 +5698,12 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<str
   const brandId = resolveShopeeBrandId(payload);
   const perVariationWeight = Boolean(payload?.perVariationWeight);
 
+  // Chỉ update khi có forceUpdateItemId rõ ràng (từ trang edit sản phẩm đã đăng).
+  // Form "Đăng bán mới" KHÔNG gửi forceUpdateItemId → luôn nhánh add_item.
   const existingItemId =
-    toShopeeId(payload?.shopeeItemId) ||
-    toShopeeId(payload?.platform_product_id) ||
-    toShopeeId(payload?.item_id) ||
-    null;
+    payload?.forceUpdateItemId
+      ? (toShopeeId(payload.forceUpdateItemId) || toShopeeId(payload?.item_id) || null)
+      : null;
 
   // Pre-order
   const isPreOrder = Boolean(payload?.isPreOrder || payload?.is_pre_order);

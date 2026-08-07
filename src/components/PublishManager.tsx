@@ -73,7 +73,6 @@ export default function PublishManager({ products, onUpdateProduct, onAddLog, sh
           products={products}
           shops={shops}
           onAddLog={onAddLog}
-          initialProductId={editProductId}
         />
       )}
 

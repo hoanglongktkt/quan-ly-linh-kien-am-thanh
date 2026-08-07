@@ -81,7 +81,6 @@ export interface MultiChannelListingPayload {
   perVariationWeight: boolean;
   /** FE gửi logistic channels được BẬT (FE đã filter theo kích thước) */
   enabledLogistics: number[];
-  warehouseProductId?: string;
   /** Hàng đặt trước */
   isPreOrder: boolean;
   /** Số ngày chuẩn bị hàng (7–15) */
@@ -101,7 +100,6 @@ interface MultiChannelListingFormProps {
   products: Product[];
   shops: ShopItem[];
   onAddLog: (log: SyncLog) => void;
-  initialProductId?: string | null;
 }
 
 const TITLE_TEMPLATES = [
@@ -158,7 +156,7 @@ const LOGISTIC_GROUP_LABELS: Record<string, string> = {
   bulky: 'Hàng Cồng Kềnh',
 };
 
-export default function MultiChannelListingForm({ products, shops, onAddLog, initialProductId }: MultiChannelListingFormProps) {
+export default function MultiChannelListingForm({ products, shops, onAddLog }: MultiChannelListingFormProps) {
   const editorRef = useRef<HTMLDivElement>(null);
 
   const availableShops = useMemo((): ShopItem[] => {
@@ -178,7 +176,6 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
   const [selectedShops, setSelectedShops] = useState<string[]>(
     () => availableShops.map((s) => s.id)
   );
-  const [warehouseProductId, setWarehouseProductId] = useState<string>('');
   const [title, setTitle] = useState('');
   const [shopeeCategory, setShopeeCategory] = useState<CategorySelection | null>(null);
   const [shopeeBrand, setShopeeBrand] = useState('NoBrand');
@@ -195,7 +192,16 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
   const [tiktokBrand, setTiktokBrand] = useState('No Brand');
 
   const [images, setImages] = useState<string[]>([]);
-  const [variants, setVariants] = useState<ListingVariant[]>([]);
+  const [variants, setVariants] = useState<ListingVariant[]>([{
+    id: 'var-default',
+    name: 'Mặc định',
+    sku: '',
+    stock: 0,
+    weight: 0,
+    priceShopee: 0,
+    priceLazada: 0,
+    priceTiktok: 0,
+  }]);
 
   const [descMode, setDescMode] = useState<'manual' | 'ai'>('manual');
   const [descriptionHtml, setDescriptionHtml] = useState('');
@@ -224,7 +230,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
   const [isSaving, setIsSaving] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
 
-  const warehouseProduct = products.find((p) => p.id === warehouseProductId);
+  // warehouseProductId removed — form is now fully manual entry
 
   const primaryShopeeShopId = useMemo(() => {
     const selected = availableShops.find(
@@ -305,29 +311,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
     }
   }, [primaryShopeeShopId, loadLogisticChannels]);
 
-  useEffect(() => {
-    if (!warehouseProductId && products.length > 0) {
-      setWarehouseProductId(products[0].id);
-    }
-  }, [products, warehouseProductId]);
-
-  useEffect(() => {
-    if (initialProductId) setWarehouseProductId(initialProductId);
-  }, [initialProductId]);
-
-  useEffect(() => {
-    if (!warehouseProduct) return;
-    setTitle(warehouseProduct.title);
-    setVariants(buildVariantsFromProducts(products, warehouseProduct));
-    if (warehouseProduct.imageUrl) {
-      setImages([warehouseProduct.imageUrl]);
-    }
-    if (warehouseProduct.description) {
-      setDescriptionHtml(warehouseProduct.description);
-    }
-    if (warehouseProduct.weight) setPackageWeight(warehouseProduct.weight);
-    if (warehouseProduct.medicine_id) setMedicineId(String(warehouseProduct.medicine_id));
-  }, [warehouseProduct?.id]);
+  // Warehouse auto-fill removed — form is now fully manual entry
 
   useEffect(() => {
     if (descMode === 'manual' && editorRef.current) {
@@ -436,14 +420,14 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
     shippingMethod,
     perVariationWeight,
     enabledLogistics: logisticChannels.filter((c) => c.enabled).map((c) => c.logistic_id),
-    warehouseProductId: warehouseProductId || undefined,
+    // warehouseProductId removed
     isPreOrder,
     daysToShip,
   }), [
     selectedShops, title, shopeeCategory, shopeeBrand, shopeeBrandId, buildShopeeAttributesPayload, medicineId,
     lazadaCategory, lazadaBrand, tiktokCategory, tiktokBrand, images, variants, descriptionHtml,
     packageWeight, packageLength, packageWidth, packageHeight, shippingMethod, perVariationWeight,
-    logisticChannels, warehouseProductId, isPreOrder, daysToShip,
+    logisticChannels, isPreOrder, daysToShip,
   ]);
 
   const handleInsertTag = (val: string) => {
@@ -625,23 +609,10 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
         });
         const cfgData = await cfgRes.json();
         if (cfgData.success) {
-          const meta = cfgData.meta?.[warehouseProductId || ''];
-          if (meta?.shopTitles) shopTitlesPayload = meta.shopTitles;
-          if (cfgData.config?.autoApplyFrame && cfgData.config?.framePngUrl && warehouseProduct) {
-            const cover = warehouseProduct.imageUrl || warehouseProduct.avatarUrl;
-            if (cover) {
-              const { composeImageWithFrame } = await import('../utils/imageFrameOverlay');
-              const composed = await composeImageWithFrame(cover, cfgData.config.framePngUrl);
-              await fetch('/api/publish-edit/save-framed-image', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  Authorization: token ? `Bearer ${token}` : '',
-                },
-                body: JSON.stringify({ productId: warehouseProduct.id, imageDataUrl: composed }),
-              });
-              publishImages = [composed, ...publishImages.slice(1)];
-            }
+          if (cfgData.config?.autoApplyFrame && cfgData.config?.framePngUrl && images.length > 0) {
+            const { composeImageWithFrame } = await import('../utils/imageFrameOverlay');
+            const composed = await composeImageWithFrame(images[0], cfgData.config.framePngUrl);
+            publishImages = [composed, ...publishImages.slice(1)];
           }
         }
       } catch {
@@ -857,18 +828,6 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
         </h3>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="text-[10px] font-bold text-gray-500">Lấy từ kho hàng</label>
-            <select
-              value={warehouseProductId}
-              onChange={(e) => setWarehouseProductId(e.target.value)}
-              className="w-full mt-1 px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs font-medium"
-            >
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>{p.title} ({p.sku})</option>
-              ))}
-            </select>
-          </div>
           <div>
             <div className="flex justify-between">
               <label className="text-xs font-extrabold text-gray-700">Tên sản phẩm *</label>

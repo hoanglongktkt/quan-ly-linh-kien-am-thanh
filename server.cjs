@@ -120990,16 +120990,26 @@ function buildLogisticInfoFromPayload(fullChannels, enabledLogistics, payload) {
   const pkgHeight = Math.max(1, Number(payload?.packageHeight || 10));
   const pkgWeight = Number(payload?.packageWeight || payload?.weight || 500);
   const dims = [pkgLength, pkgWidth, pkgHeight].sort((a, b) => b - a);
+  const LOCKER_KEYWORDS = ["t\u1EE7 nh\u1EADn h\xE0ng", "smartbox", "locker", "t\u1EE7 spx", "spx express locker"];
   const result = [];
   for (const ch of fullChannels) {
     const feEnabled = enabledLogistics.includes(ch.logistic_id);
     const isEnabled = enabledLogistics.length > 0 ? feEnabled : ch.enabled !== false;
     if (!isEnabled) continue;
+    const chNameLower = String(ch.logistic_name || "").toLowerCase();
+    const isLocker = LOCKER_KEYWORDS.some((kw) => chNameLower.includes(kw));
     if (ch.has_size_limit && ch.max_dimension) {
       const md = [ch.max_dimension.max_length, ch.max_dimension.max_width, ch.max_dimension.max_height].sort(
         (a, b) => b - a
       );
+      if (isLocker) {
+        result.push({ logistic_id: ch.logistic_id, enabled: false });
+        continue;
+      }
       if (dims[0] > md[0] || dims[1] > md[1] || dims[2] > md[2]) continue;
+    } else if (isLocker) {
+      result.push({ logistic_id: ch.logistic_id, enabled: false });
+      continue;
     }
     result.push({ logistic_id: ch.logistic_id, enabled: true });
   }
@@ -121209,7 +121219,7 @@ async function publishOneItemToShopee(shopId, payload) {
   const weightKg = packageWeightToKg(payload);
   const brandId = resolveShopeeBrandId(payload);
   const perVariationWeight = Boolean(payload?.perVariationWeight);
-  const existingItemId = toShopeeId(payload?.shopeeItemId) || toShopeeId(payload?.platform_product_id) || toShopeeId(payload?.item_id) || null;
+  const existingItemId = payload?.forceUpdateItemId ? toShopeeId(payload.forceUpdateItemId) || toShopeeId(payload?.item_id) || null : null;
   const isPreOrder = Boolean(payload?.isPreOrder || payload?.is_pre_order);
   const daysToShip = Math.max(7, Math.min(15, Math.round(Number(payload?.daysToShip || payload?.days_to_ship || 10))));
   const itemBody = {
