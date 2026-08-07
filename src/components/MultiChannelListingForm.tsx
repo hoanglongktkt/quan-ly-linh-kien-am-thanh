@@ -502,15 +502,28 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, onP
   }, [logisticChannels]);
 
   const buildPayload = useCallback((): MultiChannelListingPayload => {
-    // perShopVariants: clone variants cho mỗi gian
+    // perShopVariants: clone variants cho mỗi gian, cộng dồn 168đ theo shopIdx để chống trùng
     const perShopVariants: Record<string, ListingVariant[]> = {};
     const outLogistics: Record<string, number[]> = {};
     let primaryEnabledLogs: number[] = [];
 
-    for (const shop of availableShops.filter((s) => selectedShops.includes(s.id))) {
+    const shopList = availableShops.filter((s) => selectedShops.includes(s.id));
+    for (let shopIdx = 0; shopIdx < shopList.length; shopIdx++) {
+      const shop = shopList[shopIdx];
       const key = shop.shopId || shop.id;
-      perShopVariants[key] = variants.map((v) => ({ ...v }));
-      perShopVariants[shop.id] = variants.map((v) => ({ ...v }));
+      const offset = shopIdx * 168;
+      perShopVariants[key] = variants.map((v) => ({
+        ...v,
+        priceShopee: v.priceShopee + offset,
+        priceLazada: v.priceLazada + offset,
+        priceTiktok: v.priceTiktok + offset,
+      }));
+      perShopVariants[shop.id] = variants.map((v) => ({
+        ...v,
+        priceShopee: v.priceShopee + offset,
+        priceLazada: v.priceLazada + offset,
+        priceTiktok: v.priceTiktok + offset,
+      }));
 
       const genericKeys = perShopLogistics[key] || perShopLogistics[shop.id] || [];
       const resolved = resolveLogisticIds(genericKeys);
@@ -733,9 +746,10 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, onP
     const priceVal = Number(bulkPrice) || 0;
     const weightVal = Number(bulkWeight) || 0;
 
+    // Lưu giá gốc (shopIdx=0); UI + buildPayload sẽ cộng dồn 168đ theo index gian hàng
     setVariants((prev) =>
       prev.map((v) => {
-        const smart = applySmartPricesFromShopee(priceVal);
+        const smart = applySmartPricesFromShopee(priceVal, 0);
         return {
           ...v,
           ...(skuVal ? { sku: skuVal } : {}),

@@ -1,25 +1,31 @@
-/** Làm tròn lên đến hàng trăm đồng (155,037 → 155,100) */
+/** Chênh lệch giá anti-spam giữa các shop/sàn — 168đ (tránh quét trùng lặp) */
+export const PRICE_OFFSET = 168;
+
+/**
+ * Tính giá Shopee / Lazada / TikTok với chênh lệch cố định 168đ.
+ * shopIdx: thứ tự gian hàng (0,1,2…) → base + shopIdx * 168
+ * Sàn: Shopee = base, Lazada = base+168, TikTok = base+336
+ */
+export function applySmartPricesFromShopee(shopeePrice: number, shopIdx = 0) {
+  const raw = Math.max(0, Math.round(Number(shopeePrice) || 0));
+  const base = raw + Math.max(0, Math.floor(Number(shopIdx) || 0)) * PRICE_OFFSET;
+  return {
+    shopee: base,
+    lazada: base + PRICE_OFFSET,
+    tiktok: base + PRICE_OFFSET * 2,
+  };
+}
+
+/** @deprecated giữ tương thích — dùng PRICE_OFFSET */
 export function roundUpToHundred(price: number): number {
   const n = Math.max(0, Number(price) || 0);
   return Math.ceil(n / 100) * 100;
 }
 
-/** Giá Lazada = Shopee + 0.05%, làm tròn hàng trăm */
 export function calcLazadaFromShopee(shopeePrice: number): number {
-  const base = Math.max(0, Number(shopeePrice) || 0);
-  return roundUpToHundred(base + base * 0.0005);
+  return applySmartPricesFromShopee(shopeePrice).lazada;
 }
 
-/** Giá TikTok = Shopee + 0.1%, làm tròn hàng trăm */
 export function calcTikTokFromShopee(shopeePrice: number): number {
-  const base = Math.max(0, Number(shopeePrice) || 0);
-  return roundUpToHundred(base + base * 0.001);
-}
-
-export function applySmartPricesFromShopee(shopeePrice: number) {
-  return {
-    shopee: roundUpToHundred(shopeePrice),
-    lazada: calcLazadaFromShopee(shopeePrice),
-    tiktok: calcTikTokFromShopee(shopeePrice),
-  };
+  return applySmartPricesFromShopee(shopeePrice).tiktok;
 }
