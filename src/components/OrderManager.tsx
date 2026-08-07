@@ -1023,13 +1023,66 @@ export default function OrderManager({
     }
   };
 
+  /** Trigger WooCommerce orders sync */
+  const triggerWooSync = async (lookbackDays = 7) => {
+    if (isSyncingRef.current || isSyncing) return;
+    isSyncingRef.current = true;
+    setIsSyncing(true);
+    setLastSyncSummary('Đang đồng bộ đơn WooCommerce...');
+    showToast('Đang đồng bộ đơn WooCommerce...', 5000);
+    try {
+      const token = localStorage.getItem('admin_token') || '';
+      const body: Record<string, unknown> = { lookback_days: lookbackDays };
+      if (selectedShopId && selectedShopId !== 'all') {
+        body.shopId = String(selectedShopId);
+      }
+      const res = await fetch('/api/woocommerce/orders/sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.success) {
+        setLastSyncSummary(`WooCommerce: ${data.totalOrdersImported || 0} đơn mới`);
+        showToast(`Đồng bộ WooCommerce hoàn tất — ${data.totalOrdersImported || 0} đơn`, 6000);
+        // Immediately refresh orders page so WooCommerce orders appear without waiting for poll
+        void refetchOrdersPage({ silent: false, page: 1 });
+      } else if (data.error === 'no_woo_shops') {
+        setLastSyncSummary('Chưa có shop WooCommerce được kết nối');
+        showToast('Chưa có shop WooCommerce được kết nối. Vào Cài đặt để thêm.', 6000);
+      } else {
+        setLastSyncSummary(`Lỗi: ${data.message || 'Không xác định'}`);
+        showToast(`Đồng bộ WooCommerce lỗi: ${data.message || data.error}`, 7000);
+      }
+      void fetchOrderCounts();
+    } catch (err) {
+      console.error('[Orders Sync] WooCommerce sync failed:', err);
+      setLastSyncSummary('Đồng bộ WooCommerce thất bại');
+      showToast('Lỗi kết nối khi đồng bộ WooCommerce', 5000);
+    } finally {
+      isSyncingRef.current = false;
+      setIsSyncing(false);
+    }
+  };
+
   const handleRefreshOrders = async () => {
-    await triggerShopeeSync('full');
+    if (selectedPlatform === 'woocommerce') {
+      await triggerWooSync(14);
+    } else {
+      await triggerShopeeSync('full');
+    }
   };
 
   /** Đồng bộ nhanh 3h — sync nền, tránh chờ timeout cPanel. */
   const handleQuickSyncOrders = async () => {
-    await triggerShopeeSync('quick');
+    if (selectedPlatform === 'woocommerce') {
+      await triggerWooSync(3);
+    } else {
+      await triggerShopeeSync('quick');
+    }
   };
 
   useEffect(() => {

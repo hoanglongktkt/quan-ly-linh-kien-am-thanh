@@ -1099,7 +1099,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, onP
         <div className="flex justify-between items-center border-b border-gray-100 pb-3">
           <div>
             <h3 className="text-sm font-extrabold text-gray-800 uppercase tracking-wider flex items-center gap-2">
-              <Store className="w-4 h-4 text-blue-600" /> Chọn gian hàng (Shopee · Lazada · TikTok)
+              <Store className="w-4 h-4 text-blue-600" /> Chọn gian hàng (Shopee · Lazada · TikTok · WooCommerce)
             </h3>
             <p className="text-[11px] text-gray-400 mt-0.5">Tích chọn sàn muốn đăng bán đồng thời</p>
           </div>
@@ -1108,14 +1108,23 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, onP
           {availableShops.map((shop) => {
             const isSelected = selectedShops.includes(shop.id);
             const platformColor =
-              shop.platform === 'shopee' ? 'orange' : shop.platform === 'lazada' ? 'blue' : 'slate';
+              shop.platform === 'shopee' ? 'orange'
+              : shop.platform === 'lazada' ? 'blue'
+              : shop.platform === 'woocommerce' ? 'indigo'
+              : 'slate';
+            const borderColorMap: Record<string, string> = {
+              shopee: '#f97316',
+              lazada: '#2563eb',
+              woocommerce: '#4f46e5',
+              tiktok: '#0f172a',
+            };
             return (
               <label
                 key={shop.id}
                 className={`p-4 rounded-2xl border-2 transition-all flex items-center gap-3 cursor-pointer ${
                   isSelected ? `border-${platformColor}-500 bg-${platformColor}-50/20 shadow-xs` : 'border-gray-100 bg-white hover:border-gray-300'
                 }`}
-                style={isSelected ? { borderColor: shop.platform === 'shopee' ? '#f97316' : shop.platform === 'lazada' ? '#2563eb' : '#0f172a', backgroundColor: 'rgba(248,250,252,0.5)' } : undefined}
+                style={isSelected ? { borderColor: borderColorMap[shop.platform] || '#0f172a', backgroundColor: 'rgba(248,250,252,0.5)' } : undefined}
               >
                 <input
                   type="checkbox"

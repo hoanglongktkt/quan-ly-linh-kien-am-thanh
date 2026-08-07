@@ -73371,6 +73371,362 @@ var require_follow_redirects = __commonJS({
   }
 });
 
+// services/wooCommerce.js
+var wooCommerce_exports = {};
+__export(wooCommerce_exports, {
+  buildWooAuthHeader: () => buildWooAuthHeader,
+  fetchWooCommerceOrders: () => fetchWooCommerceOrders,
+  mapWooOrderToInternal: () => mapWooOrderToInternal,
+  publishProductToWooCommerce: () => publishProductToWooCommerce,
+  resolveWooCredentials: () => resolveWooCredentials,
+  testWooCommerceConnection: () => testWooCommerceConnection,
+  updateWooProductStockPrice: () => updateWooProductStockPrice
+});
+function buildWooAuthHeader(consumerKey, consumerSecret) {
+  return "Basic " + Buffer.from(`${consumerKey}:${consumerSecret}`).toString("base64");
+}
+function buildWooUrl(baseUrl, endpoint, params = {}) {
+  const base = String(baseUrl).replace(/\/$/, "");
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== void 0 && v !== null && v !== "") qs.set(k, String(v));
+  }
+  const qsStr = qs.toString() ? `?${qs.toString()}` : "";
+  return `${base}/wp-json/wc/v3/${endpoint}${qsStr}`;
+}
+async function wooFetch(url2, options = {}, timeoutMs = 15e3) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url2, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        ...options.headers || {}
+      }
+    });
+    clearTimeout(timer);
+    const text = await res.text();
+    let json2;
+    try {
+      json2 = JSON.parse(text);
+    } catch {
+      json2 = { raw: text };
+    }
+    return { ok: res.ok, status: res.status, data: json2 };
+  } catch (e2) {
+    clearTimeout(timer);
+    if (e2?.name === "AbortError") {
+      throw new Error(`WooCommerce API timeout (>${timeoutMs}ms)`);
+    }
+    throw e2;
+  }
+}
+function mapWooOrderStatus(wooStatus) {
+  const s2 = String(wooStatus || "").toLowerCase();
+  const map = {
+    "pending": "pending_confirm",
+    "on-hold": "pending_confirm",
+    "processing": "pending_pack",
+    "completed": "completed",
+    "cancelled": "cancelled",
+    "refunded": "return_pending",
+    "failed": "failed",
+    "any": "pending_confirm"
+  };
+  return map[s2] || "pending_confirm";
+}
+function mapWooLineItem(item) {
+  return {
+    productId: String(item.product_id || ""),
+    name: item.name || "",
+    quantity: Number(item.quantity || 0),
+    price: Number(item.price || item.subtotal / (item.quantity || 1) || 0),
+    total: Number(item.total || 0),
+    sku: item.sku || ""
+  };
+}
+function mapWooOrderToInternal(wooOrder, shopConfig) {
+  const billing = wooOrder.billing || wooOrder.billing_address || {};
+  const shipping = wooOrder.shipping || wooOrder.shipping_address || {};
+  const customerName = [billing.first_name, billing.last_name].filter(Boolean).join(" ").trim() || [shipping.first_name, shipping.last_name].filter(Boolean).join(" ").trim() || "Kh\xE1ch WooCommerce";
+  const lineItems = (wooOrder.line_items || []).map(mapWooLineItem);
+  const totalAmount = Number(wooOrder.total || 0);
+  const paymentMethod = wooOrder.payment_method_title || wooOrder.payment_method || "";
+  const shopKey = String(shopConfig.shopId || "").trim().slice(0, 12);
+  const wooOrderId = String(wooOrder.id || "").trim();
+  const id = `woo-${wooOrderId}`;
+  const orderSn = `WOO-${wooOrder.number || wooOrderId}`;
+  const orderDate = wooOrder.date_created ? new Date(wooOrder.date_created).toISOString() : (/* @__PURE__ */ new Date()).toISOString();
+  const dateModified = wooOrder.date_modified ? new Date(wooOrder.date_modified).toISOString() : orderDate;
+  return {
+    id,
+    orderSn,
+    order_sn: orderSn,
+    channel: "woocommerce",
+    shopId: shopConfig.shopId || shopKey,
+    shopName: shopConfig.shopName || shopConfig.shopId || "WooCommerce",
+    wooOrderId,
+    wooOrderNumber: String(wooOrder.number || wooOrderId),
+    customerName,
+    customerPhone: billing.phone || shipping.phone || "",
+    customerEmail: billing.email || "",
+    shippingAddress: [
+      shipping.address_1,
+      shipping.address_2,
+      shipping.city,
+      shipping.state,
+      shipping.postcode,
+      shipping.country
+    ].filter(Boolean).join(", "),
+    billingAddress: [
+      billing.address_1,
+      billing.address_2,
+      billing.city,
+      billing.state,
+      billing.postcode,
+      billing.country
+    ].filter(Boolean).join(", "),
+    lineItems,
+    items: lineItems,
+    itemsCount: lineItems.reduce((s2, i2) => s2 + i2.quantity, 0),
+    totalAmount,
+    total: totalAmount,
+    subtotal: Number(wooOrder.subtotal || 0),
+    shippingFee: Number(wooOrder.shipping_total || 0),
+    discount: Number(wooOrder.discount_total || 0),
+    paymentMethod,
+    paymentStatus: wooOrder.date_paid ? "paid" : "pending",
+    status: mapWooOrderStatus(wooOrder.status),
+    wooStatus: wooOrder.status,
+    // Avoid shopee-specific fields so bulkUpsert doesn't mis-tag
+    shopee_order_status: null,
+    orderDate,
+    dateModified,
+    currency: wooOrder.currency || "VND",
+    currencySymbol: wooOrder.currency_symbol || "\u20AB",
+    notes: wooOrder.customer_note || "",
+    createdAt: orderDate,
+    updatedAt: dateModified,
+    last_synced_at: (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
+function resolveWooCredentials(shopConfig) {
+  const wooUrl = String(shopConfig?.wooUrl || "").replace(/\/$/, "");
+  const consumerKey = String(shopConfig?.shopId || shopConfig?.consumerKey || "").trim();
+  const consumerSecret = String(
+    shopConfig?.apiSecret || shopConfig?.apiKey || shopConfig?.consumerSecret || ""
+  ).trim();
+  return { wooUrl, consumerKey, consumerSecret };
+}
+async function fetchWooCommerceOrders(shopConfig, opts = {}) {
+  const { wooUrl, consumerKey, consumerSecret } = resolveWooCredentials(shopConfig);
+  const shopName = shopConfig?.shopName || "";
+  if (!wooUrl || !consumerKey) {
+    throw new Error("Thi\u1EBFu wooUrl ho\u1EB7c Consumer Key (shopId) c\u1EE7a WooCommerce");
+  }
+  if (!consumerSecret) {
+    throw new Error("Thi\u1EBFu Consumer Secret (apiKey/apiSecret) c\u1EE7a WooCommerce");
+  }
+  const page = Math.max(1, Number(opts.page || 1));
+  const perPage = Math.min(100, Math.max(1, Number(opts.perPage || 100)));
+  const params = {
+    per_page: perPage,
+    page,
+    orderby: "date",
+    order: "desc"
+  };
+  if (opts.after) params.after = opts.after;
+  if (opts.before) params.before = opts.before;
+  if (opts.status) params.status = opts.status;
+  const url2 = buildWooUrl(wooUrl, "orders", params);
+  const authUrl = `${url2}${url2.includes("?") ? "&" : "?"}consumer_key=${encodeURIComponent(consumerKey)}&consumer_secret=${encodeURIComponent(consumerSecret)}`;
+  const auth = buildWooAuthHeader(consumerKey, consumerSecret);
+  const result = await wooFetch(authUrl, {
+    method: "GET",
+    headers: { Authorization: auth }
+  });
+  if (!result.ok) {
+    const errMsg = result.data?.message || result.data?.code || `HTTP ${result.status}`;
+    throw new Error(`WooCommerce Orders API l\u1ED7i: ${errMsg}`);
+  }
+  const orders = Array.isArray(result.data) ? result.data : [];
+  const totalPages = orders.length < (opts.perPage || 100) ? 1 : Math.max(1, page + 1);
+  const totalOrders = orders.length;
+  return {
+    orders: orders.map((o) => mapWooOrderToInternal(o, { ...shopConfig, shopName, shopId: consumerKey })),
+    totalPages,
+    totalOrders
+  };
+}
+function buildWooImages(images = []) {
+  return images.filter((img) => img && (img.src || img.url)).map((img, idx) => ({
+    src: img.src || img.url,
+    position: idx,
+    ...img.name ? { name: img.name } : {}
+  }));
+}
+function buildWooCategories(categories = []) {
+  return categories.filter((c) => c && (c.id || c.name)).map((c) => ({
+    id: c.id ? Number(c.id) : void 0,
+    name: c.name,
+    ...c.slug ? { slug: c.slug } : {}
+  }));
+}
+async function publishProductToWooCommerce(shopConfig, productData) {
+  const { wooUrl, consumerKey, consumerSecret } = resolveWooCredentials(shopConfig);
+  if (!wooUrl || !consumerKey) {
+    return { success: false, message: "Thi\u1EBFu wooUrl ho\u1EB7c Consumer Key" };
+  }
+  if (!consumerSecret) {
+    return { success: false, message: "Thi\u1EBFu Consumer Secret" };
+  }
+  const {
+    name = "S\u1EA3n ph\u1EA9m kh\xF4ng t\xEAn",
+    sku = "",
+    description = "",
+    shortDescription = "",
+    regular_price = "",
+    sale_price = "",
+    stock_quantity = null,
+    manage_stock = true,
+    stock_status = "instock",
+    categories = [],
+    images = [],
+    weight = "",
+    dimensions = {},
+    status = "publish",
+    attributes = [],
+    tags = [],
+    virtual = false,
+    downloadable = false
+  } = productData;
+  const payload = {
+    name,
+    type: "simple",
+    status,
+    sku,
+    description,
+    short_description: shortDescription,
+    regular_price: String(regular_price),
+    ...sale_price ? { sale_price: String(sale_price) } : {},
+    stock_quantity: stock_quantity != null ? Math.max(0, Math.round(Number(stock_quantity))) : void 0,
+    manage_stock,
+    stock_status: stock_quantity === 0 ? "outofstock" : stock_status || "instock",
+    categories: buildWooCategories(categories),
+    images: buildWooImages(images),
+    ...weight ? { weight: String(weight) } : {},
+    ...dimensions?.length || dimensions?.width || dimensions?.height ? {
+      dimensions: {
+        length: dimensions.length || "",
+        width: dimensions.width || "",
+        height: dimensions.height || ""
+      }
+    } : {},
+    ...attributes.length > 0 ? {
+      attributes: attributes.map((a) => ({
+        id: a.id ? Number(a.id) : void 0,
+        name: a.name,
+        options: Array.isArray(a.options) ? a.options : [a.options].filter(Boolean),
+        visible: a.visible !== false,
+        variation: a.variation || false
+      }))
+    } : {},
+    ...tags.length > 0 ? { tags: tags.map((t2) => typeof t2 === "string" ? { name: t2 } : t2) } : {},
+    virtual,
+    downloadable
+  };
+  const baseUrl = buildWooUrl(wooUrl, "products");
+  const url2 = `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}consumer_key=${encodeURIComponent(consumerKey)}&consumer_secret=${encodeURIComponent(consumerSecret)}`;
+  const auth = buildWooAuthHeader(consumerKey, consumerSecret);
+  const result = await wooFetch(url2, {
+    method: "POST",
+    headers: { Authorization: auth },
+    body: JSON.stringify(payload)
+  });
+  if (!result.ok) {
+    const errMsg = result.data?.message || result.data?.code || `HTTP ${result.status}`;
+    return { success: false, message: `WooCommerce t\u1EEB ch\u1ED1i t\u1EA1o s\u1EA3n ph\u1EA9m: ${errMsg}` };
+  }
+  const created = result.data;
+  return {
+    success: true,
+    wooProductId: String(created.id || ""),
+    wooProductUrl: created.permalink || `${wooUrl}/?p=${created.id}`,
+    message: `\u0110\u0103ng b\xE1n WooCommerce th\xE0nh c\xF4ng (ID: ${created.id})`
+  };
+}
+async function updateWooProductStockPrice(shopConfig, wooProductId, updateData) {
+  const { wooUrl, consumerKey, consumerSecret } = resolveWooCredentials(shopConfig);
+  if (!wooUrl || !consumerKey) {
+    return { success: false, message: "Thi\u1EBFu wooUrl ho\u1EB7c Consumer Key" };
+  }
+  if (!consumerSecret) {
+    return { success: false, message: "Thi\u1EBFu Consumer Secret" };
+  }
+  const payload = {};
+  if (updateData.regular_price != null) {
+    payload.regular_price = String(Math.max(0, Number(updateData.regular_price)));
+  }
+  if (updateData.sale_price != null) {
+    payload.sale_price = String(Math.max(0, Number(updateData.sale_price)));
+  }
+  if (updateData.stock_quantity != null) {
+    payload.stock_quantity = Math.max(0, Math.round(Number(updateData.stock_quantity)));
+    payload.manage_stock = true;
+    payload.stock_status = payload.stock_quantity === 0 ? "outofstock" : "instock";
+  }
+  if (updateData.status != null) {
+    payload.status = updateData.status;
+  }
+  const baseUrl = buildWooUrl(wooUrl, `products/${wooProductId}`);
+  const url2 = `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}consumer_key=${encodeURIComponent(consumerKey)}&consumer_secret=${encodeURIComponent(consumerSecret)}`;
+  const auth = buildWooAuthHeader(consumerKey, consumerSecret);
+  const result = await wooFetch(url2, {
+    method: "PUT",
+    headers: { Authorization: auth },
+    body: JSON.stringify(payload)
+  });
+  if (!result.ok) {
+    const errMsg = result.data?.message || result.data?.code || `HTTP ${result.status}`;
+    return { success: false, message: `WooCommerce c\u1EADp nh\u1EADt th\u1EA5t b\u1EA1i: ${errMsg}` };
+  }
+  return { success: true, message: `C\u1EADp nh\u1EADt WooCommerce ID ${wooProductId} th\xE0nh c\xF4ng` };
+}
+async function testWooCommerceConnection(shopConfig) {
+  const { wooUrl, consumerKey, consumerSecret } = resolveWooCredentials(shopConfig);
+  if (!wooUrl || !consumerKey) {
+    return { success: false, message: "Thi\u1EBFu wooUrl ho\u1EB7c Consumer Key" };
+  }
+  if (!consumerSecret) {
+    return { success: false, message: "Thi\u1EBFu Consumer Secret" };
+  }
+  const baseUrl = buildWooUrl(wooUrl, "system_status");
+  const url2 = `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}consumer_key=${encodeURIComponent(consumerKey)}&consumer_secret=${encodeURIComponent(consumerSecret)}`;
+  const auth = buildWooAuthHeader(consumerKey, consumerSecret);
+  const result = await wooFetch(url2, {
+    method: "GET",
+    headers: { Authorization: auth }
+  });
+  if (!result.ok) {
+    const errMsg = result.data?.message || result.data?.code || `HTTP ${result.status}`;
+    return { success: false, message: `K\u1EBFt n\u1ED1i th\u1EA5t b\u1EA1i: ${errMsg}` };
+  }
+  const data = result.data?.environment || {};
+  return {
+    success: true,
+    storeName: data.site_title || data.name || shopConfig.shopName || "",
+    version: data.version || "",
+    message: `K\u1EBFt n\u1ED1i th\xE0nh c\xF4ng (WooCommerce ${data.version || "?"})`
+  };
+}
+var init_wooCommerce = __esm({
+  "services/wooCommerce.js"() {
+  }
+});
+
 // server.ts
 var import_express24 = __toESM(require_express2(), 1);
 var import_path17 = __toESM(require("path"), 1);
@@ -73634,7 +73990,7 @@ var autoIncrementalScheduled = false;
 var cronTask = null;
 var handedOverReconcileScheduled = false;
 var handedOverReconcileTask = null;
-function scheduleAutoIncrementalOrdersSync(deps21 = {}) {
+function scheduleAutoIncrementalOrdersSync(deps22 = {}) {
   if (autoIncrementalScheduled) {
     console.log("[CRON] Auto Incremental Sync already scheduled (idempotent).");
     return;
@@ -73649,10 +74005,10 @@ function scheduleAutoIncrementalOrdersSync(deps21 = {}) {
   }
   const lookbackSec = Math.max(
     60,
-    Number(deps21.lookbackSec) || Number(process.env.AUTO_ORDER_SYNC_LOOKBACK_SEC) || DEFAULT_INCREMENTAL_LOOKBACK_SEC
+    Number(deps22.lookbackSec) || Number(process.env.AUTO_ORDER_SYNC_LOOKBACK_SEC) || DEFAULT_INCREMENTAL_LOOKBACK_SEC
   );
   const cronExpr = String(
-    deps21.cronExpr || process.env.AUTO_ORDER_SYNC_CRON_EXPR || "*/5 * * * *"
+    deps22.cronExpr || process.env.AUTO_ORDER_SYNC_CRON_EXPR || "*/5 * * * *"
   ).trim();
   if (!import_node_cron.default.validate(cronExpr)) {
     console.error(`[CRON] Invalid cron expr="${cronExpr}" \u2014 sync cron NOT started`);
@@ -73663,8 +74019,8 @@ function scheduleAutoIncrementalOrdersSync(deps21 = {}) {
       `[CRON] Tick Incremental Sync \u2014 lookbackSec=${lookbackSec} (${Math.round(lookbackSec / 3600)}h)`
     );
     try {
-      if (typeof deps21.runSync === "function") {
-        void deps21.runSync({ lookbackSec, trigger: "cron" });
+      if (typeof deps22.runSync === "function") {
+        void deps22.runSync({ lookbackSec, trigger: "cron" });
         return;
       }
       const ack = triggerBackgroundOrderSync({
@@ -73688,11 +74044,11 @@ function scheduleAutoIncrementalOrdersSync(deps21 = {}) {
 }
 var handedOverReconcileInterval = null;
 var handedOverReconcileBootTimer = null;
-function runHandedOverReconcileTick(deps21, trigger) {
+function runHandedOverReconcileTick(deps22, trigger) {
   console.log(`[CRON] Tick HandedOver status reconcile (\u0110VVC \u2192 SHIPPED) trigger=${trigger}`);
   try {
     void Promise.resolve(
-      deps21.reconcileHandedOverCarrierStatuses({ trigger })
+      deps22.reconcileHandedOverCarrierStatuses({ trigger })
     ).then((r2) => {
       if (r2?.skipped) {
         console.log(`[CRON] HandedOver reconcile skipped: ${r2.message || "busy"}`);
@@ -73706,7 +74062,7 @@ function runHandedOverReconcileTick(deps21, trigger) {
     console.error("[CRON] HandedOver reconcile tick failed:", err?.message || err);
   }
 }
-function scheduleHandedOverStatusReconcile(deps21 = {}) {
+function scheduleHandedOverStatusReconcile(deps22 = {}) {
   if (handedOverReconcileScheduled) {
     console.log("[CRON] HandedOver status reconcile already scheduled (idempotent).");
     return;
@@ -73719,22 +74075,22 @@ function scheduleHandedOverStatusReconcile(deps21 = {}) {
     );
     return;
   }
-  if (typeof deps21.reconcileHandedOverCarrierStatuses !== "function") {
+  if (typeof deps22.reconcileHandedOverCarrierStatuses !== "function") {
     console.warn(
       "[CRON] HandedOver status reconcile NOT started \u2014 thi\u1EBFu deps.reconcileHandedOverCarrierStatuses"
     );
     return;
   }
   const cronExpr = String(
-    deps21.cronExpr || process.env.AUTO_HANDED_OVER_RECONCILE_CRON_EXPR || "*/5 * * * *"
+    deps22.cronExpr || process.env.AUTO_HANDED_OVER_RECONCILE_CRON_EXPR || "*/5 * * * *"
   ).trim();
   const intervalMs = Math.max(
     6e4,
-    Number(deps21.intervalMs) || Number(process.env.AUTO_HANDED_OVER_RECONCILE_MS) || 5 * 60 * 1e3
+    Number(deps22.intervalMs) || Number(process.env.AUTO_HANDED_OVER_RECONCILE_MS) || 5 * 60 * 1e3
   );
   if (import_node_cron.default.validate(cronExpr)) {
     handedOverReconcileTask = import_node_cron.default.schedule(cronExpr, () => {
-      runHandedOverReconcileTick(deps21, "cron");
+      runHandedOverReconcileTick(deps22, "cron");
     });
     console.log(
       `[CRON] HandedOver status reconcile ON \u2014 expr="${cronExpr}" (ch\u1EC9 \u0111\u01A1n \u0110\xE3 giao \u0110VVC).`
@@ -73751,7 +74107,7 @@ function scheduleHandedOverStatusReconcile(deps21 = {}) {
     }
   }
   handedOverReconcileInterval = setInterval(() => {
-    runHandedOverReconcileTick(deps21, "interval");
+    runHandedOverReconcileTick(deps22, "interval");
   }, intervalMs);
   if (typeof handedOverReconcileInterval.unref === "function") {
     handedOverReconcileInterval.unref();
@@ -73763,7 +74119,7 @@ function scheduleHandedOverStatusReconcile(deps21 = {}) {
     }
   }
   handedOverReconcileBootTimer = setTimeout(() => {
-    runHandedOverReconcileTick(deps21, "boot");
+    runHandedOverReconcileTick(deps22, "boot");
   }, 2e4);
   if (typeof handedOverReconcileBootTimer.unref === "function") {
     handedOverReconcileBootTimer.unref();
@@ -73774,7 +74130,7 @@ function scheduleHandedOverStatusReconcile(deps21 = {}) {
 }
 var returnRequestsScheduled = false;
 var returnRequestsTask = null;
-function scheduleShopeeReturnRequestsSync(deps21 = {}) {
+function scheduleShopeeReturnRequestsSync(deps22 = {}) {
   if (returnRequestsScheduled) {
     console.log("[CRON] Return Requests Sync already scheduled (idempotent).");
     return;
@@ -73787,12 +74143,12 @@ function scheduleShopeeReturnRequestsSync(deps21 = {}) {
     );
     return;
   }
-  if (typeof deps21.runSync !== "function") {
+  if (typeof deps22.runSync !== "function") {
     console.warn("[CRON] Return Requests Sync NOT started \u2014 thi\u1EBFu deps.runSync");
     return;
   }
   const cronExpr = String(
-    deps21.cronExpr || process.env.AUTO_RETURN_REQUESTS_CRON_EXPR || "*/10 * * * *"
+    deps22.cronExpr || process.env.AUTO_RETURN_REQUESTS_CRON_EXPR || "*/10 * * * *"
   ).trim();
   if (!import_node_cron.default.validate(cronExpr)) {
     console.error(`[CRON] Invalid return-requests cron expr="${cronExpr}"`);
@@ -73801,7 +74157,7 @@ function scheduleShopeeReturnRequestsSync(deps21 = {}) {
   returnRequestsTask = import_node_cron.default.schedule(cronExpr, () => {
     console.log("[CRON] Tick Return Requests Sync (get_return_list \u2192 detail \u2192 reverse TN)");
     try {
-      void Promise.resolve(deps21.runSync({ mode: "incremental", trigger: "cron" })).then((r2) => {
+      void Promise.resolve(deps22.runSync({ mode: "incremental", trigger: "cron" })).then((r2) => {
         if (r2?.skipped) {
           console.log(`[CRON] Return Requests skipped: ${r2.message || "busy"}`);
           return;
@@ -73816,7 +74172,7 @@ function scheduleShopeeReturnRequestsSync(deps21 = {}) {
   });
   setTimeout(() => {
     try {
-      void Promise.resolve(deps21.runSync({ mode: "incremental", trigger: "boot" }));
+      void Promise.resolve(deps22.runSync({ mode: "incremental", trigger: "boot" }));
     } catch {
     }
   }, 45e3);
@@ -116375,14 +116731,14 @@ function isShopeeCategoryCacheFresh(cache, ttlMs = CACHE_TTL_MS) {
   if (!Number.isFinite(t2)) return false;
   return Date.now() - t2 < ttlMs;
 }
-async function syncShopeeCategories(appRoot, deps21) {
-  const list = await deps21.fetchCategoryList(deps21.shopId, deps21.accessToken);
+async function syncShopeeCategories(appRoot, deps22) {
+  const list = await deps22.fetchCategoryList(deps22.shopId, deps22.accessToken);
   const category_list = Array.isArray(list) ? list : [];
   const tree = buildShopeeCategoryTree(category_list);
   const leaf_ids = [...collectShopeeLeafIds(category_list)];
   const payload = {
     synced_at: (/* @__PURE__ */ new Date()).toISOString(),
-    shop_id: String(deps21.shopId || ""),
+    shop_id: String(deps22.shopId || ""),
     category_count: category_list.length,
     leaf_count: leaf_ids.length,
     category_list,
@@ -116392,13 +116748,13 @@ async function syncShopeeCategories(appRoot, deps21) {
   writeShopeeCategoryCache(appRoot, payload);
   return payload;
 }
-async function getOrSyncShopeeCategories(appRoot, deps21, opts = {}) {
+async function getOrSyncShopeeCategories(appRoot, deps22, opts = {}) {
   const force = Boolean(opts.force);
   const cache = readShopeeCategoryCache(appRoot);
   if (!force && cache && isShopeeCategoryCacheFresh(cache) && Array.isArray(cache.tree)) {
     return { ...cache, from_cache: true };
   }
-  const fresh = await syncShopeeCategories(appRoot, deps21);
+  const fresh = await syncShopeeCategories(appRoot, deps22);
   return { ...fresh, from_cache: false };
 }
 function validateShopeeLeafCategoryId(categoryIdRaw, cache) {
@@ -116426,8 +116782,169 @@ function validateShopeeLeafCategoryId(categoryIdRaw, cache) {
   return { ok: true, categoryId };
 }
 
-// controllers/shopeeWebhookController.js
+// controllers/wooCommerceOrdersController.js
+init_wooCommerce();
 var deps20 = {
+  loadChannelSettings: () => ({ shops: [] }),
+  persistWooOrdersToStore: async (orders) => {
+    throw new Error("persistWooOrdersToStore not initialized \u2014 set deps in initWooCommerceOrdersController");
+  },
+  isMongoReady: () => false
+};
+function initWooCommerceOrdersController(partial) {
+  deps20 = { ...deps20, ...partial };
+}
+function resolveWooShopConfig(shop) {
+  return {
+    wooUrl: shop.wooUrl || "",
+    shopId: shop.shopId || "",
+    apiKey: shop.apiKey || "",
+    apiSecret: shop.apiSecret || "",
+    shopName: shop.shopName || "",
+    connected: shop.connected !== false
+  };
+}
+async function syncWooCommerceOrders(req, res) {
+  const t0 = Date.now();
+  try {
+    const targetShopId = req.body?.shopId ? String(req.body.shopId).trim() : null;
+    const lookbackDays = Math.max(1, Math.min(30, Number(req.body?.lookback_days || req.body?.days || 7)));
+    const perPage = Math.min(100, Math.max(10, Number(req.body?.per_page || 50)));
+    const settings = deps20.loadChannelSettings();
+    const shops = (settings?.shops || []).filter(
+      (s2) => s2.platform === "woocommerce" && s2.connected !== false
+    );
+    const filtered = targetShopId ? shops.filter((s2) => String(s2.shopId || s2.id || "") === targetShopId) : shops;
+    if (filtered.length === 0) {
+      return res.status(200).json({
+        success: false,
+        error: "no_woo_shops",
+        message: targetShopId ? `Kh\xF4ng t\xECm th\u1EA5y shop WooCommerce v\u1EDBi shopId="${targetShopId}"` : "Ch\u01B0a c\xF3 shop WooCommerce n\xE0o \u0111\u01B0\u1EE3c k\u1EBFt n\u1ED1i v\xE0 b\u1EADt \u0111\u1ED3ng b\u1ED9."
+      });
+    }
+    const afterDate = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1e3).toISOString();
+    const allResults = [];
+    const allErrors = [];
+    let totalOrdersImported = 0;
+    for (const shop of filtered) {
+      const shopConfig = resolveWooShopConfig(shop);
+      const shopLabel = `${shop.shopName || shopConfig.wooUrl} [${shop.shopId}]`;
+      try {
+        let page = 1;
+        let hasMore = true;
+        let shopImported = 0;
+        let shopPageErrors = 0;
+        while (hasMore) {
+          const result = await fetchWooCommerceOrders(shopConfig, {
+            after: afterDate,
+            perPage,
+            page
+          });
+          const orders = result.orders || [];
+          if (orders.length === 0) {
+            hasMore = false;
+            break;
+          }
+          try {
+            const saved = await deps20.persistWooOrdersToStore(orders);
+            shopImported += saved;
+            totalOrdersImported += saved;
+          } catch (persistErr) {
+            console.error(`[WooCommerce Sync] persist error shop=${shopLabel}:`, persistErr?.message || persistErr);
+            shopPageErrors++;
+            allErrors.push({
+              shopId: shop.shopId,
+              shopName: shop.shopName,
+              error: persistErr?.message || "L\u1ED7i l\u01B0u \u0111\u01A1n v\xE0o database",
+              page
+            });
+          }
+          hasMore = page < result.totalPages && page < 10;
+          page++;
+        }
+        allResults.push({
+          shopId: shop.shopId,
+          shopName: shop.shopName,
+          wooUrl: shopConfig.wooUrl,
+          imported: shopImported,
+          errors: shopPageErrors,
+          success: true
+        });
+        console.log(`[WooCommerce Sync] shop=${shopLabel} imported=${shopImported} errors=${shopPageErrors}`);
+      } catch (err) {
+        const errMsg = err?.message || String(err);
+        console.error(`[WooCommerce Sync] shop=${shopLabel} ERROR: ${errMsg}`);
+        allErrors.push({
+          shopId: shop.shopId,
+          shopName: shop.shopName,
+          error: errMsg
+        });
+        allResults.push({
+          shopId: shop.shopId,
+          shopName: shop.shopName,
+          imported: 0,
+          errors: 1,
+          success: false,
+          error: errMsg
+        });
+      }
+    }
+    const ms = Date.now() - t0;
+    const successShops = allResults.filter((r2) => r2.success).length;
+    const failedShops = allResults.filter((r2) => !r2.success).length;
+    return res.status(failedShops === filtered.length ? 500 : 200).json({
+      success: failedShops === 0,
+      message: failedShops === 0 ? `\u0110\u1ED3ng b\u1ED9 WooCommerce ho\xE0n t\u1EA5t \u2014 ${totalOrdersImported} \u0111\u01A1n t\u1EEB ${successShops} shop` : `${successShops}/${filtered.length} shop \u0111\u1ED3ng b\u1ED9 th\xE0nh c\xF4ng`,
+      totalOrdersImported,
+      shops: allResults,
+      errors: allErrors,
+      durationMs: ms,
+      shopsSynced: successShops,
+      shopsFailed: failedShops
+    });
+  } catch (err) {
+    const ms = Date.now() - t0;
+    console.error("[WooCommerce Sync] Fatal error:", err?.message || err);
+    return res.status(500).json({
+      success: false,
+      error: "woo_sync_fatal",
+      message: err?.message || "L\u1ED7i kh\xF4ng x\xE1c \u0111\u1ECBnh",
+      durationMs: ms
+    });
+  }
+}
+async function testWooCommerceConnection2(req, res) {
+  try {
+    const { testWooCommerceConnection: testConn } = await Promise.resolve().then(() => (init_wooCommerce(), wooCommerce_exports));
+    const targetShopId = req.query?.shopId ? String(req.query.shopId).trim() : null;
+    const settings = deps20.loadChannelSettings();
+    const shops = (settings?.shops || []).filter(
+      (s2) => s2.platform === "woocommerce"
+    );
+    const shop = targetShopId ? shops.find((s2) => String(s2.shopId || s2.id || "") === targetShopId) : shops[0];
+    if (!shop) {
+      return res.status(404).json({
+        success: false,
+        error: "shop_not_found",
+        message: targetShopId ? `Kh\xF4ng t\xECm th\u1EA5y shop WooCommerce v\u1EDBi shopId="${targetShopId}"` : "Kh\xF4ng c\xF3 shop WooCommerce n\xE0o \u0111\u01B0\u1EE3c c\u1EA5u h\xECnh"
+      });
+    }
+    const shopConfig = resolveWooShopConfig(shop);
+    const result = await testConn(shopConfig);
+    return res.status(result.success ? 200 : 400).json(result);
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: err?.message || "L\u1ED7i ki\u1EC3m tra k\u1EBFt n\u1ED1i"
+    });
+  }
+}
+
+// server.ts
+init_wooCommerce();
+
+// controllers/shopeeWebhookController.js
+var deps21 = {
   parseShopeePushEvent: () => ({}),
   SHOPEE_WEBHOOK_ORDER_STATUSES: /* @__PURE__ */ new Set(),
   isLogisticsHandedToCarrier: () => false,
@@ -116455,7 +116972,7 @@ var deps20 = {
   listShopeeOAuthShopIds: () => []
 };
 function initShopeeWebhookController(partial) {
-  deps20 = { ...deps20, ...partial };
+  deps21 = { ...deps21, ...partial };
 }
 var WEBHOOK_PROCESS_TIMEOUT_MS = 4e4;
 async function loadWorkingOrdersForWebhook(orderSn) {
@@ -116469,9 +116986,9 @@ async function loadWorkingOrdersForWebhook(orderSn) {
     seen.add(key);
     orders.push(row);
   };
-  if (deps20.isMongoReady()) {
+  if (deps21.isMongoReady()) {
     try {
-      const mongoRows = await deps20.loadOrdersFromStore({ orderSns: [sn] });
+      const mongoRows = await deps21.loadOrdersFromStore({ orderSns: [sn] });
       for (const row of Array.isArray(mongoRows) ? mongoRows : []) pushUnique(row);
       return orders;
     } catch (err) {
@@ -116482,7 +116999,7 @@ async function loadWorkingOrdersForWebhook(orderSn) {
     }
   }
   try {
-    const jsonRows = deps20.loadOrders() || [];
+    const jsonRows = deps21.loadOrders() || [];
     for (const row of jsonRows) {
       if (String(row?.orderSn || "").trim() === sn) pushUnique(row);
     }
@@ -116496,7 +117013,7 @@ async function upsertOrderToDb(order, label = "") {
     console.log("\u{1F4BE} K\u1EBFt qu\u1EA3 l\u01B0u DB:", "th\u1EA5t b\u1EA1i \u2014 thi\u1EBFu orderSn");
     return false;
   }
-  if (!deps20.isMongoReady()) {
+  if (!deps21.isMongoReady()) {
     console.warn(
       `[Shopee Webhook] Mongo ch\u01B0a s\u1EB5n s\xE0ng \u2014 b\u1ECF qua upsert order_sn=${order.orderSn}`
     );
@@ -116504,7 +117021,7 @@ async function upsertOrderToDb(order, label = "") {
     return false;
   }
   try {
-    await deps20.bulkUpsertOrdersToStore([order]);
+    await deps21.bulkUpsertOrdersToStore([order]);
     console.log(
       `[DB UPDATED] ${label ? `(${label}) ` : ""}order_sn=${order.orderSn} shop_id=${order.shopId || "?"} status=${order.shopee_order_status || order.status || "?"} \u2014 upsert OK`
     );
@@ -116513,7 +117030,7 @@ async function upsertOrderToDb(order, label = "") {
       `th\xE0nh c\xF4ng \u2014 order_sn=${order.orderSn} shop_id=${order.shopId || "?"} label=${label || "webhook"}`
     );
     try {
-      deps20.queueOrdersJsonMirrorFromMongo();
+      deps21.queueOrdersJsonMirrorFromMongo();
     } catch {
     }
     return true;
@@ -116710,7 +117227,7 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
     const fromOrder = resolveShopeeTokenShopId(orders[0]?.shopId) || orders[0]?.shopId;
     pushShop(fromOrder);
     try {
-      for (const id of deps20.listShopeeOAuthShopIds() || []) pushShop(id);
+      for (const id of deps21.listShopeeOAuthShopIds() || []) pushShop(id);
     } catch (listErr) {
       console.warn(
         "[Shopee Webhook] listShopeeOAuthShopIds failed:",
@@ -116746,7 +117263,7 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
     let normalized = [];
     let errors = [];
     try {
-      const chunk = await deps20.fetchNormalizeShopeeOrderChunk(
+      const chunk = await deps21.fetchNormalizeShopeeOrderChunk(
         apiShopId,
         accessToken,
         fileKey,
@@ -116766,7 +117283,7 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
           const refreshed = await refreshShopeeAccessTokenLocked(fileKey, { force: true });
           if (refreshed) {
             accessToken = refreshed;
-            const retry2 = await deps20.fetchNormalizeShopeeOrderChunk(
+            const retry2 = await deps21.fetchNormalizeShopeeOrderChunk(
               apiShopId,
               accessToken,
               fileKey,
@@ -116812,7 +117329,7 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
       `th\xE0nh c\xF4ng \u2014 order_sn=${orderSn} shop=${apiShopId} status=${normalized[0]?.shopee_order_status || normalized[0]?.status || "?"} tn=${normalized[0]?.trackingNumber || "\u2014"}`
     );
     try {
-      await deps20.persistShopeeOrderChunk(orders, normalized, {
+      await deps21.persistShopeeOrderChunk(orders, normalized, {
         apiShopId,
         accessToken,
         skipTracking: true
@@ -116864,7 +117381,7 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
   if (payloadShopId) {
     const fallbackShops = [];
     try {
-      for (const id of deps20.listShopeeOAuthShopIds() || []) {
+      for (const id of deps21.listShopeeOAuthShopIds() || []) {
         const s2 = String(id || "").trim();
         if (s2 && s2 !== payloadShopId && !fallbackShops.includes(s2)) fallbackShops.push(s2);
       }
@@ -116906,13 +117423,13 @@ async function processShopeeWebhookPayloadInner(body) {
     JSON.stringify(body)
   );
   if (String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "1").trim() === "0") {
-    const peek = deps20.parseShopeePushEvent(body);
+    const peek = deps21.parseShopeePushEvent(body);
     console.log(
       `[Shopee Webhook] IGNORED (disabled) order_sn=${peek.orderSn || "?"} code=${peek.code}`
     );
     return;
   }
-  const parsed = deps20.parseShopeePushEvent(body);
+  const parsed = deps21.parseShopeePushEvent(body);
   const extracted = extractOrderSnAndShopId(body, parsed);
   const orderSn = extracted.orderSn;
   let shopId = extracted.shopId;
@@ -116966,7 +117483,7 @@ async function processShopeeWebhookPayloadInner(body) {
         `[Shopee Webhook] Fallback shallow normalize order_sn=${orderSn} (detail ch\u01B0a l\u1EA5y \u0111\u01B0\u1EE3c)`
       );
       try {
-        await deps20.upsertShopeeWebhookShallow(body, orders);
+        await deps21.upsertShopeeWebhookShallow(body, orders);
         console.log("\u{1F4BE} K\u1EBFt qu\u1EA3 l\u01B0u DB:", `shallow fallback \u0111\xE3 g\u1ECDi \u2014 order_sn=${orderSn}`);
       } catch (shallowErr) {
         console.error(
@@ -116983,7 +117500,7 @@ async function processShopeeWebhookPayloadInner(body) {
     let idx = orders.findIndex((o) => String(o.orderSn) === orderSn);
     if (idx < 0 && (parsed.trackingNo || parsed.status || orderSn)) {
       try {
-        await deps20.upsertShopeeWebhookShallow(body, orders);
+        await deps21.upsertShopeeWebhookShallow(body, orders);
       } catch {
       }
       idx = orders.findIndex((o) => String(o.orderSn) === orderSn);
@@ -116993,26 +117510,26 @@ async function processShopeeWebhookPayloadInner(body) {
         orders[idx].trackingNumber || orders[idx].tracking_no || ""
       );
       try {
-        deps20.applyShopeePushFieldsToOrder(orders[idx], parsed);
+        deps21.applyShopeePushFieldsToOrder(orders[idx], parsed);
       } catch (applyErr) {
         console.warn(
           `[Shopee Webhook] applyShopeePushFieldsToOrder:`,
           applyErr?.message || applyErr
         );
       }
-      if (shopId && accessToken && (parsed.eventKind === "tracking_no_update" || parsed.eventKind === "shipping_document" || parsed.eventKind === "package_update" || !deps20.hasUsableShopeeTrackingNumber(orders[idx]))) {
+      if (shopId && accessToken && (parsed.eventKind === "tracking_no_update" || parsed.eventKind === "shipping_document" || parsed.eventKind === "package_update" || !deps21.hasUsableShopeeTrackingNumber(orders[idx]))) {
         try {
           const row = orders[idx];
           const cancelReturn = String(row?.status || "").toLowerCase() === "cancelled" || String(row?.status || "").toLowerCase() === "return_pending" || String(row?.status || "").toLowerCase() === "return_received" || ["CANCELLED", "IN_CANCEL", "TO_RETURN"].includes(
             String(row?.shopee_order_status || "").toUpperCase()
           ) || Boolean(row?.return_sn) || parsed.eventKind === "return_refund" || Boolean(parsed.returnSn);
-          await deps20.enrichShopeeOrderTrackingFromApi(
+          await deps21.enrichShopeeOrderTrackingFromApi(
             shopId,
             accessToken,
             orders[idx],
             { retries: cancelReturn ? 2 : 1, light: !cancelReturn }
           );
-          deps20.applyShopeePushFieldsToOrder(orders[idx], parsed);
+          deps21.applyShopeePushFieldsToOrder(orders[idx], parsed);
         } catch (trackErr) {
           console.warn(
             `[Shopee Webhook] Force get_tracking_number ${orderSn}:`,
@@ -117040,7 +117557,7 @@ async function processShopeeWebhookPayloadInner(body) {
     const needReturnFallback = parsed.eventKind === "return_refund" || Boolean(parsed.returnSn) || parsed.status === "TO_RETURN" || orderAfter != null && String(orderAfter.shopee_order_status || "").toUpperCase() === "TO_RETURN" || orderAfter != null && (orderAfter.status === "return_pending" || orderAfter.status === "return_received");
     if (needReturnFallback && shopId && accessToken) {
       try {
-        await deps20.applyWebhookReturnFallback(
+        await deps21.applyWebhookReturnFallback(
           shopId,
           accessToken,
           orderSn,
@@ -121617,32 +122134,20 @@ async function syncProductToWoo(product, shop) {
     channel: "woocommerce",
     action: "update_product"
   };
-  if (!shop?.wooUrl || !shop?.apiKey) {
-    return [{ ...base, success: false, message: "Ch\u01B0a c\u1EA5u h\xECnh WooCommerce (URL/API Key)" }];
+  const { wooUrl, consumerKey, consumerSecret } = resolveWooCredentials(shop || {});
+  if (!wooUrl || !consumerKey || !consumerSecret) {
+    return [{ ...base, success: false, message: "Ch\u01B0a c\u1EA5u h\xECnh WooCommerce (URL/Consumer Key/Secret)" }];
   }
   if (!product.wooId) {
     return [{ ...base, success: false, message: "Thi\u1EBFu wooId \u2014 SKU ch\u01B0a li\xEAn k\u1EBFt WooCommerce" }];
   }
-  const baseUrl = String(shop.wooUrl).replace(/\/$/, "");
-  const url2 = `${baseUrl}/wp-json/wc/v3/products/${product.wooId}`;
-  const auth = Buffer.from(`${shop.apiKey}:${shop.apiSecret || ""}`).toString("base64");
   try {
-    const res = await fetch(url2, {
-      method: "PUT",
-      headers: {
-        Authorization: `Basic ${auth}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        regular_price: String(Math.round(Number(product.sellingPrice) || 0)),
-        stock_quantity: Math.max(0, Math.round(Number(product.stock) || 0)),
-        manage_stock: true
-      })
+    const result = await updateWooProductStockPrice(shop, product.wooId, {
+      regular_price: Math.round(Number(product.sellingPrice) || 0),
+      stock_quantity: Math.max(0, Math.round(Number(product.stock) || 0))
     });
-    const json2 = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const errMsg = json2?.message || json2?.code || `HTTP ${res.status}`;
-      return [{ ...base, success: false, message: `WooCommerce t\u1EEB ch\u1ED1i: ${errMsg}` }];
+    if (!result.success) {
+      return [{ ...base, success: false, message: result.message || "WooCommerce t\u1EEB ch\u1ED1i c\u1EADp nh\u1EADt" }];
     }
     return [{ ...base, success: true, message: `C\u1EADp nh\u1EADt gi\xE1 & t\u1ED3n kho WooCommerce th\xE0nh c\xF4ng (ID: ${product.wooId})` }];
   } catch (e2) {
@@ -129371,6 +129876,26 @@ async function startServer() {
   app.get("/api/products/shopee-item-preview", authMiddleware, previewItemVariants);
   app.post("/api/shopee/products/sync-item-variants", authMiddleware, syncItemVariants);
   app.post("/api/shopee/products/sync", authMiddleware, syncProducts);
+  initWooCommerceOrdersController({
+    loadChannelSettings,
+    isMongoReady,
+    persistWooOrdersToStore: async (orders) => {
+      if (!Array.isArray(orders) || orders.length === 0) return 0;
+      if (!isMongoReady()) throw new Error("mongodb_not_ready");
+      const n = await bulkUpsertOrdersToStore(orders);
+      try {
+        queueOrdersJsonMirrorFromMongo();
+      } catch {
+      }
+      try {
+        invalidateOrdersRefreshCache();
+      } catch {
+      }
+      return n;
+    }
+  });
+  app.post("/api/woocommerce/orders/sync", authMiddleware, syncWooCommerceOrders);
+  app.get("/api/woocommerce/test-connection", authMiddleware, testWooCommerceConnection2);
   async function prewarmShopeeAddressCacheForShip(toShip, shipMethod) {
     if (shipMethod !== "pickup") return;
     const shopIds = [
@@ -130968,7 +131493,7 @@ async function startServer() {
       for (let i2 = 0; i2 < shopList.length; i2++) {
         const shop = shopList[i2];
         const platform = String(shop.platform || "shopee").toLowerCase();
-        if (!["shopee", "lazada", "tiktok"].includes(platform)) continue;
+        if (!["shopee", "lazada", "tiktok", "woocommerce"].includes(platform)) continue;
         const clientShopId = String(shop.id || "").trim();
         const shopKey = String(shop.shopId || shop.shop_id || shop.id || "").trim();
         const shopName = shop.name || shop.shopName || shopKey;
@@ -131137,9 +131662,87 @@ async function startServer() {
               code: isInvalidCat ? SHOPEE_INVALID_CATEGORY_CODE : err?.code
             });
           }
+        } else if (platform === "woocommerce") {
+          try {
+            const channelSettings = loadChannelSettings();
+            const wooShops = (channelSettings?.shops || []).filter(
+              (s2) => s2.platform === "woocommerce" && s2.connected !== false
+            );
+            const wooShop = wooShops.find(
+              (s2) => String(s2.shopId || "") === shopKey || String(s2.id || "") === clientShopId || String(s2.shopId || "") === clientShopId
+            ) || wooShops[0];
+            if (!wooShop) {
+              throw new Error("Ch\u01B0a c\u1EA5u h\xECnh shop WooCommerce trong C\xE0i \u0111\u1EB7t");
+            }
+            const variantsArr = Array.isArray(payload.variants) ? payload.variants : [];
+            const firstVariant = variantsArr[0] || {};
+            const price = Number(firstVariant?.priceShopee ?? firstVariant?.pricePromo ?? firstVariant?.price ?? payload.price ?? product?.sellingPrice ?? 0) || 0;
+            const stock = Number(firstVariant?.stock ?? product?.stock ?? 0) || 0;
+            const imageList = (Array.isArray(images) && images.length ? images : [product?.imageUrl || product?.avatarUrl].filter(Boolean)).map((src) => ({ src: String(src) }));
+            const publishResult = await publishProductToWooCommerce(wooShop, {
+              name: title || product?.title || payload.shopTitles?.[shopKey] || "S\u1EA3n ph\u1EA9m",
+              sku: product?.sku || firstVariant?.sku || "",
+              description: payload.descriptionHtml || payload.description || title || "",
+              shortDescription: payload.shortDescription || title || "",
+              regular_price: String(Math.round(price)),
+              stock_quantity: Math.max(0, Math.round(stock)),
+              manage_stock: true,
+              images: imageList,
+              weight: payload.packageWeight || product?.weight || "",
+              status: "publish",
+              categories: payload.wooCategories || []
+            });
+            if (!publishResult.success || !publishResult.wooProductId) {
+              throw new Error(publishResult.message || "WooCommerce kh\xF4ng tr\u1EA3 product id");
+            }
+            status = "success";
+            platformProductId = String(publishResult.wooProductId);
+            try {
+              const allProducts = await loadProducts();
+              const idx = allProducts.findIndex(
+                (p) => p.id === productId || product?.sku && p.sku === product.sku
+              );
+              if (idx >= 0) {
+                const channels = Array.isArray(allProducts[idx].channels) ? [.../* @__PURE__ */ new Set([...allProducts[idx].channels, "woocommerce"])] : ["woocommerce"];
+                allProducts[idx] = {
+                  ...allProducts[idx],
+                  wooId: platformProductId,
+                  channels,
+                  lastSynced: now
+                };
+                await saveProducts(allProducts);
+              } else if (productId && productId !== "unknown") {
+                allProducts.push({
+                  id: productId,
+                  title: title || product?.title || "",
+                  sku: product?.sku || `SKU-WOO-${platformProductId}`,
+                  wooId: platformProductId,
+                  channels: ["woocommerce"],
+                  stock: Math.max(0, Math.round(stock)),
+                  sellingPrice: Math.round(price),
+                  imageUrl: imageList[0]?.src,
+                  lastSynced: now
+                });
+                await saveProducts(allProducts);
+              }
+              console.log(`[WooCommerce Publish] L\u01B0u wooId=${platformProductId} v\xE0o product OK`);
+            } catch (saveErr) {
+              console.warn("[WooCommerce Publish] L\u01B0u wooId th\u1EA5t b\u1EA1i:", saveErr?.message || saveErr);
+            }
+          } catch (err) {
+            status = "failed";
+            error_message = err?.message || "\u0110\u0103ng WooCommerce th\u1EA5t b\u1EA1i";
+            console.error("[WOOCOMMERCE UPLOAD ERROR]:", error_message);
+            errors.push({
+              shop_id: shopKey,
+              shop_name: shopName,
+              platform,
+              error: error_message
+            });
+          }
         } else {
           status = "failed";
-          error_message = `Ch\u01B0a h\u1ED7 tr\u1EE3 \u0111\u0103ng th\u1EADt l\xEAn ${platform} (ch\u1EC9 Shopee Open API)`;
+          error_message = `Ch\u01B0a h\u1ED7 tr\u1EE3 \u0111\u0103ng th\u1EADt l\xEAn ${platform} (ch\u1EC9 Shopee Open API + WooCommerce)`;
           errors.push({ shop_id: shopKey, shop_name: shopName, platform, error: error_message });
         }
         const row = {

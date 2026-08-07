@@ -337,6 +337,16 @@ import {
   syncFromShop,
 } from "./controllers/shopeeOrdersController.js";
 import {
+  initWooCommerceOrdersController,
+  syncWooCommerceOrders,
+  testWooCommerceConnection as testWooCommerceConnectionHandler,
+} from "./controllers/wooCommerceOrdersController.js";
+import {
+  publishProductToWooCommerce,
+  updateWooProductStockPrice,
+  resolveWooCredentials,
+} from "./services/wooCommerce.js";
+import {
   initShopeeProductsController,
   syncProducts,
   syncItemVariants,
@@ -6158,34 +6168,21 @@ async function syncProductToWoo(product: any, shop: any): Promise<ChannelSyncLin
     action: "update_product",
   };
 
-  if (!shop?.wooUrl || !shop?.apiKey) {
-    return [{ ...base, success: false, message: "Chưa cấu hình WooCommerce (URL/API Key)" }];
+  const { wooUrl, consumerKey, consumerSecret } = resolveWooCredentials(shop || {});
+  if (!wooUrl || !consumerKey || !consumerSecret) {
+    return [{ ...base, success: false, message: "Chưa cấu hình WooCommerce (URL/Consumer Key/Secret)" }];
   }
   if (!product.wooId) {
     return [{ ...base, success: false, message: "Thiếu wooId — SKU chưa liên kết WooCommerce" }];
   }
 
-  const baseUrl = String(shop.wooUrl).replace(/\/$/, "");
-  const url = `${baseUrl}/wp-json/wc/v3/products/${product.wooId}`;
-  const auth = Buffer.from(`${shop.apiKey}:${shop.apiSecret || ""}`).toString("base64");
-
   try {
-    const res = await fetch(url, {
-      method: "PUT",
-      headers: {
-        Authorization: `Basic ${auth}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        regular_price: String(Math.round(Number(product.sellingPrice) || 0)),
-        stock_quantity: Math.max(0, Math.round(Number(product.stock) || 0)),
-        manage_stock: true,
-      }),
+    const result = await updateWooProductStockPrice(shop, product.wooId, {
+      regular_price: Math.round(Number(product.sellingPrice) || 0),
+      stock_quantity: Math.max(0, Math.round(Number(product.stock) || 0)),
     });
-    const json: any = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const errMsg = json?.message || json?.code || `HTTP ${res.status}`;
-      return [{ ...base, success: false, message: `WooCommerce từ chối: ${errMsg}` }];
+    if (!result.success) {
+      return [{ ...base, success: false, message: result.message || "WooCommerce từ chối cập nhật" }];
     }
     return [{ ...base, success: true, message: `Cập nhật giá & tồn kho WooCommerce thành công (ID: ${product.wooId})` }];
   } catch (e: any) {
@@ -17498,6 +17495,30 @@ async function startServer() {
   app.post("/api/shopee/products/sync-item-variants", authMiddleware, syncItemVariants);
   app.post("/api/shopee/products/sync", authMiddleware, syncProducts);
 
+  // --- WooCommerce orders sync -----------------------------------------------
+  initWooCommerceOrdersController({
+    loadChannelSettings,
+    isMongoReady,
+    persistWooOrdersToStore: async (orders: any[]) => {
+      if (!Array.isArray(orders) || orders.length === 0) return 0;
+      if (!isMongoReady()) throw new Error("mongodb_not_ready");
+      const n = await bulkUpsertOrdersToStore(orders);
+      try {
+        queueOrdersJsonMirrorFromMongo();
+      } catch {
+        /* optional mirror */
+      }
+      try {
+        invalidateOrdersRefreshCache();
+      } catch {
+        /* optional cache */
+      }
+      return n;
+    },
+  });
+  app.post("/api/woocommerce/orders/sync", authMiddleware, syncWooCommerceOrders);
+  app.get("/api/woocommerce/test-connection", authMiddleware, testWooCommerceConnectionHandler);
+
   // --- Shopee logistics: "Chuẩn bị hàng" (ship_order) ------------------------
 
   async function prewarmShopeeAddressCacheForShip(
@@ -19448,7 +19469,7 @@ async function startServer() {
       for (let i = 0; i < shopList.length; i++) {
         const shop = shopList[i];
         const platform = String(shop.platform || "shopee").toLowerCase();
-        if (!["shopee", "lazada", "tiktok"].includes(platform)) continue;
+        if (!["shopee", "lazada", "tiktok", "woocommerce"].includes(platform)) continue;
 
         const clientShopId = String(shop.id || "").trim();
         const shopKey = String(shop.shopId || shop.shop_id || shop.id || "").trim();
@@ -19656,9 +19677,105 @@ async function startServer() {
               code: isInvalidCat ? SHOPEE_INVALID_CATEGORY_CODE : err?.code,
             });
           }
+        } else if (platform === "woocommerce") {
+          try {
+            const channelSettings = loadChannelSettings();
+            const wooShops = (channelSettings?.shops || []).filter(
+              (s: any) => s.platform === "woocommerce" && s.connected !== false,
+            );
+            const wooShop =
+              wooShops.find(
+                (s: any) =>
+                  String(s.shopId || "") === shopKey ||
+                  String(s.id || "") === clientShopId ||
+                  String(s.shopId || "") === clientShopId,
+              ) || wooShops[0];
+
+            if (!wooShop) {
+              throw new Error("Chưa cấu hình shop WooCommerce trong Cài đặt");
+            }
+
+            const variantsArr = Array.isArray(payload.variants) ? payload.variants : [];
+            const firstVariant = variantsArr[0] || {};
+            const price =
+              Number(firstVariant?.priceShopee ?? firstVariant?.pricePromo ?? firstVariant?.price ?? payload.price ?? product?.sellingPrice ?? 0) || 0;
+            const stock =
+              Number(firstVariant?.stock ?? product?.stock ?? 0) || 0;
+            const imageList = (Array.isArray(images) && images.length
+              ? images
+              : [product?.imageUrl || product?.avatarUrl].filter(Boolean)
+            ).map((src: string) => ({ src: String(src) }));
+
+            const publishResult = await publishProductToWooCommerce(wooShop, {
+              name: title || product?.title || payload.shopTitles?.[shopKey] || "Sản phẩm",
+              sku: product?.sku || firstVariant?.sku || "",
+              description: payload.descriptionHtml || payload.description || title || "",
+              shortDescription: payload.shortDescription || title || "",
+              regular_price: String(Math.round(price)),
+              stock_quantity: Math.max(0, Math.round(stock)),
+              manage_stock: true,
+              images: imageList,
+              weight: payload.packageWeight || product?.weight || "",
+              status: "publish",
+              categories: payload.wooCategories || [],
+            });
+
+            if (!publishResult.success || !publishResult.wooProductId) {
+              throw new Error(publishResult.message || "WooCommerce không trả product id");
+            }
+
+            status = "success";
+            platformProductId = String(publishResult.wooProductId);
+
+            // Lưu wooId vào product kho nội bộ
+            try {
+              const allProducts = await loadProducts();
+              const idx = allProducts.findIndex(
+                (p: any) => p.id === productId || (product?.sku && p.sku === product.sku),
+              );
+              if (idx >= 0) {
+                const channels = Array.isArray(allProducts[idx].channels)
+                  ? [...new Set([...allProducts[idx].channels, "woocommerce"])]
+                  : ["woocommerce"];
+                allProducts[idx] = {
+                  ...allProducts[idx],
+                  wooId: platformProductId,
+                  channels,
+                  lastSynced: now,
+                };
+                await saveProducts(allProducts);
+              } else if (productId && productId !== "unknown") {
+                allProducts.push({
+                  id: productId,
+                  title: title || product?.title || "",
+                  sku: product?.sku || `SKU-WOO-${platformProductId}`,
+                  wooId: platformProductId,
+                  channels: ["woocommerce"],
+                  stock: Math.max(0, Math.round(stock)),
+                  sellingPrice: Math.round(price),
+                  imageUrl: imageList[0]?.src,
+                  lastSynced: now,
+                });
+                await saveProducts(allProducts);
+              }
+              console.log(`[WooCommerce Publish] Lưu wooId=${platformProductId} vào product OK`);
+            } catch (saveErr: any) {
+              console.warn("[WooCommerce Publish] Lưu wooId thất bại:", saveErr?.message || saveErr);
+            }
+          } catch (err: any) {
+            status = "failed";
+            error_message = err?.message || "Đăng WooCommerce thất bại";
+            console.error("[WOOCOMMERCE UPLOAD ERROR]:", error_message);
+            errors.push({
+              shop_id: shopKey,
+              shop_name: shopName,
+              platform,
+              error: error_message,
+            });
+          }
         } else {
           status = "failed";
-          error_message = `Chưa hỗ trợ đăng thật lên ${platform} (chỉ Shopee Open API)`;
+          error_message = `Chưa hỗ trợ đăng thật lên ${platform} (chỉ Shopee Open API + WooCommerce)`;
           errors.push({ shop_id: shopKey, shop_name: shopName, platform, error: error_message });
         }
 
