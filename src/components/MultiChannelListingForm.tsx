@@ -119,13 +119,25 @@ interface MultiChannelListingFormProps {
   onAddLog: (log: SyncLog) => void;
 }
 
-const TITLE_TEMPLATES = [
-  { label: '[Chính hãng]', value: '[Chính hãng] ' },
-  { label: '[Ảnh thật]', value: '[Ảnh thật] ' },
-  { label: '[FreeShip]', value: '[FreeShip] ' },
-  { label: '[Siêu Sale]', value: '[Siêu Sale] ' },
-  { label: '[Có bảo hành]', value: '[Có bảo hành] ' },
-];
+const QUICK_TAGS_STORAGE_KEY = 'customProductTags';
+const QUICK_TAGS_DEFAULT = ['[Chính hãng]', '[Ảnh thật]', '[FreeShip]', '[Siêu Sale]', '[Có bảo hành]'];
+
+function loadQuickTags(): string[] {
+  try {
+    const stored = localStorage.getItem(QUICK_TAGS_STORAGE_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch {}
+  return [...QUICK_TAGS_DEFAULT];
+}
+
+function saveQuickTags(tags: string[]) {
+  try {
+    localStorage.setItem(QUICK_TAGS_STORAGE_KEY, JSON.stringify(tags));
+  } catch {}
+}
 
 function formatVnd(n: number) {
   return (Number(n) || 0).toLocaleString('vi-VN') + 'đ';
@@ -216,6 +228,10 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
     () => availableShops.map((s) => s.id)
   );
   const [title, setTitle] = useState('');
+  const [quickTags, setQuickTags] = useState<string[]>(loadQuickTags);
+  const [showTagEditor, setShowTagEditor] = useState(false);
+  const [tagDraft, setTagDraft] = useState<string[]>([]);
+  const [tagEditValue, setTagEditValue] = useState('');
   const [shopeeCategory, setShopeeCategory] = useState<CategorySelection | null>(null);
   const [shopeeBrand, setShopeeBrand] = useState('NoBrand');
   const [shopeeBrandId, setShopeeBrandId] = useState(0);
@@ -1086,14 +1102,78 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
               placeholder="Nhập tên sản phẩm đăng bán..."
               className="w-full mt-1 px-4 py-2.5 rounded-xl border border-gray-200 text-xs font-bold"
             />
-            <div className="flex flex-wrap gap-1 mt-2">
-              {TITLE_TEMPLATES.map((t) => (
-                <button key={t.label} type="button" onClick={() => handleInsertTag(t.value)}
+            <div className="flex flex-wrap gap-1 mt-2 items-center">
+              {quickTags.map((tag) => (
+                <button key={tag} type="button" onClick={() => handleInsertTag(tag + ' ')}
                   className="px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold rounded-lg">
-                  {t.label}
+                  {tag}
                 </button>
               ))}
+              <button type="button" onClick={() => { setTagDraft([...quickTags]); setTagEditValue(''); setShowTagEditor(true); }}
+                className="px-2 py-0.5 bg-gray-100 text-gray-500 border border-gray-200 text-[10px] font-bold rounded-lg flex items-center gap-0.5 hover:bg-gray-200 transition-colors">
+                <PenLine className="w-2.5 h-2.5" /> Chỉnh sửa
+              </button>
             </div>
+            {showTagEditor && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowTagEditor(false)}>
+                <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+                  <h4 className="text-sm font-extrabold text-gray-800">Chỉnh sửa tag ghi nhanh</h4>
+                  <div className="flex flex-wrap gap-1.5 min-h-[40px]">
+                    {tagDraft.map((tag, idx) => (
+                      <span key={tag + idx} className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 text-[11px] font-bold rounded-lg">
+                        {tag}
+                        <button type="button" onClick={() => setTagDraft((prev) => prev.filter((_, i) => i !== idx))}
+                          className="ml-0.5 text-amber-400 hover:text-red-500 font-bold leading-none">&times;</button>
+                      </span>
+                    ))}
+                    {tagDraft.length === 0 && <span className="text-[11px] text-gray-400 italic">Chưa có tag nào</span>}
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={tagEditValue}
+                      onChange={(e) => setTagEditValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const v = tagEditValue.trim();
+                          if (v && !tagDraft.includes(v)) {
+                            setTagDraft((prev) => [...prev, v]);
+                            setTagEditValue('');
+                          }
+                        }
+                      }}
+                      placeholder='Nhập tag mới, VD: [Xả kho]'
+                      className="flex-1 px-3 py-2 rounded-xl border border-gray-200 text-xs font-bold"
+                    />
+                    <button type="button" onClick={() => {
+                      const v = tagEditValue.trim();
+                      if (v && !tagDraft.includes(v)) {
+                        setTagDraft((prev) => [...prev, v]);
+                        setTagEditValue('');
+                      }
+                    }}
+                      className="px-3 py-2 bg-emerald-500 text-white text-xs font-bold rounded-xl hover:bg-emerald-600 transition-colors">
+                      Thêm
+                    </button>
+                  </div>
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button type="button" onClick={() => setShowTagEditor(false)}
+                      className="px-4 py-2 text-xs font-bold text-gray-500 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors">
+                      Hủy
+                    </button>
+                    <button type="button" onClick={() => {
+                      setQuickTags(tagDraft);
+                      saveQuickTags(tagDraft);
+                      setShowTagEditor(false);
+                    }}
+                      className="px-4 py-2 text-xs font-bold text-white bg-amber-500 rounded-xl hover:bg-amber-600 transition-colors flex items-center gap-1">
+                      <Save className="w-3 h-3" /> Lưu
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
