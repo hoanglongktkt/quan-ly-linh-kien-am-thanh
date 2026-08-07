@@ -97,7 +97,6 @@ export interface MultiChannelListingPayload {
   packageLength: number;
   packageWidth: number;
   packageHeight: number;
-  shippingMethod: string;
   /** Toggle: thiết lập cân nặng riêng cho từng phân loại */
   perVariationWeight: boolean;
   /** FE gửi logistic channels được BẬT (FE đã filter theo kích thước) */
@@ -267,11 +266,10 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
   const [aiKeywords, setAiKeywords] = useState('');
   const [isGeneratingDesc, setIsGeneratingDesc] = useState(false);
 
-  const [packageWeight, setPackageWeight] = useState(500);
-  const [packageLength, setPackageLength] = useState(20);
-  const [packageWidth, setPackageWidth] = useState(15);
-  const [packageHeight, setPackageHeight] = useState(10);
-  const [shippingMethod, setShippingMethod] = useState('Giao hàng tiêu chuẩn');
+  const [packageWeight, setPackageWeight] = useState(100);
+  const [packageLength, setPackageLength] = useState(5);
+  const [packageWidth, setPackageWidth] = useState(5);
+  const [packageHeight, setPackageHeight] = useState(1);
 
   // Toggle: thiết lập cân nặng riêng cho từng phân loại
   const [perVariationWeight, setPerVariationWeight] = useState(false);
@@ -554,7 +552,6 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
       packageLength,
       packageWidth,
       packageHeight,
-      shippingMethod,
       perVariationWeight,
       enabledLogistics: primaryEnabledLogs,
       isPreOrder,
@@ -563,7 +560,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
   }, [
     selectedShops, title, shopeeCategory, shopeeBrand, shopeeBrandId, buildShopeeAttributesPayload, medicineId,
     lazadaCategory, lazadaBrand, tiktokCategory, tiktokBrand, images, variants, descriptionHtml,
-    packageWeight, packageLength, packageWidth, packageHeight, shippingMethod, perVariationWeight,
+    packageWeight, packageLength, packageWidth, packageHeight, perVariationWeight,
     perShopLogistics, resolveLogisticIds, isPreOrder, daysToShip, availableShops, tierAttrs,
   ]);
 
@@ -1761,7 +1758,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
           <p className="text-[10px] font-bold text-gray-500 mb-3 flex items-center gap-1">
             <Package className="w-3.5 h-3.5" /> Thông tin đóng gói
           </p>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div>
               <label className="text-[10px] font-bold text-gray-500">Khối lượng (gram)</label>
               <div className="relative mt-1">
@@ -1793,15 +1790,6 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
                   className="w-full px-3 py-2 pr-8 border rounded-xl text-xs" />
                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-400 font-medium pointer-events-none">cm</span>
               </div>
-            </div>
-            <div>
-              <label className="text-[10px] font-bold text-gray-500">Phương thức giao hàng</label>
-              <select value={shippingMethod} onChange={(e) => setShippingMethod(e.target.value)}
-                className="w-full mt-1 px-3 py-2 border rounded-xl text-xs bg-white">
-                <option>Giao hàng tiêu chuẩn</option>
-                <option>Giao hàng nhanh</option>
-                <option>Giao hàng hỏa tốc</option>
-              </select>
             </div>
           </div>
         </div>
