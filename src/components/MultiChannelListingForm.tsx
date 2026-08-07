@@ -37,6 +37,8 @@ export interface ListingVariant {
   priceShopee: number;
   priceLazada: number;
   priceTiktok: number;
+  /** Giá khuyến mại (optional) */
+  pricePromo?: number;
 }
 
 export interface LogisticChannel {
@@ -48,6 +50,15 @@ export interface LogisticChannel {
   max_dimension?: { max_length: number; max_width: number; max_height: number };
   cod_enabled?: boolean;
   fee_type?: string;
+}
+
+/** Thuộc tính phiên bản (VD: Màu, Size) */
+export interface TierAttribute {
+  id: string;
+  name: string;
+  values: string[];
+  /** Ảnh gắn với từng value (chỉ thuộc tính đầu) */
+  images: Record<string, string>;
 }
 
 export interface MultiChannelListingPayload {
@@ -71,6 +82,12 @@ export interface MultiChannelListingPayload {
   tiktokCategory?: CategorySelection | null;
   images: string[];
   variants: ListingVariant[];
+  /** Biến thể theo từng gian hàng (shopId → variants) */
+  perShopVariants?: Record<string, ListingVariant[]>;
+  /** Logistics bật theo từng gian (shopId → logistic_id[]) */
+  perShopLogistics?: Record<string, number[]>;
+  /** Tên thuộc tính tier (VD: Màu) */
+  tierName?: string;
   descriptionHtml: string;
   packageWeight: number;
   packageLength: number;
@@ -217,7 +234,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
   // Toggle: thiết lập cân nặng riêng cho từng phân loại
   const [perVariationWeight, setPerVariationWeight] = useState(false);
 
-  // Kênh vận chuyển
+  // Kênh vận chuyển — theo từng gian hàng
   const [logisticChannels, setLogisticChannels] = useState<LogisticChannel[]>([]);
   const [loadingChannels, setLoadingChannels] = useState(false);
   const [channelError, setChannelError] = useState('');
@@ -225,6 +242,19 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
   // Hàng đặt trước
   const [isPreOrder, setIsPreOrder] = useState(false);
   const [daysToShip, setDaysToShip] = useState(10);
+
+  // ====== PHẦN 2: Tier Attributes (biến thể theo thuộc tính) ======
+  const [tierAttrs, setTierAttrs] = useState<TierAttribute[]>([
+    { id: 'attr-color', name: 'Màu', values: [], images: {} }
+  ]);
+
+  // Bulk apply state — "Mẹo thiết lập nhanh"
+  const [bulkSku, setBulkSku] = useState('');
+  const [bulkStock, setBulkStock] = useState('');
+  const [bulkPrice, setBulkPrice] = useState('');
+  const [bulkPromoPrice, setBulkPromoPrice] = useState('');
+  const [bulkWeight, setBulkWeight] = useState('');
+  const [bulkDays, setBulkDays] = useState('');
 
   const [toast, setToast] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -392,42 +422,62 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
     setTimeout(() => setToast(null), 3500);
   };
 
-  const buildPayload = useCallback((): MultiChannelListingPayload => ({
-    selectedShops,
-    title,
-    shopeeCat: shopeeCategory?.label || '',
-    shopeeCategoryId: shopeeCategory?.categoryId || '',
-    shopeeBrand,
-    shopeeBrandId: shopeeBrand === 'NoBrand' ? 0 : shopeeBrandId,
-    shopeeAttributes: buildShopeeAttributesPayload(),
-    medicine_id: medicineId.trim() || undefined,
-    lazadaCat: lazadaCategory?.label || '',
-    lazadaCategoryId: lazadaCategory?.categoryId || '',
-    lazadaBrand,
-    tiktokCat: tiktokCategory?.label || '',
-    tiktokCategoryId: tiktokCategory?.categoryId || '',
-    tiktokBrand,
-    shopeeCategory,
-    lazadaCategory,
-    tiktokCategory,
-    images,
-    variants,
-    descriptionHtml,
-    packageWeight,
-    packageLength,
-    packageWidth,
-    packageHeight,
-    shippingMethod,
-    perVariationWeight,
-    enabledLogistics: logisticChannels.filter((c) => c.enabled).map((c) => c.logistic_id),
-    // warehouseProductId removed
-    isPreOrder,
-    daysToShip,
-  }), [
+  const selectedShopItems = useMemo(
+    () => availableShops.filter((s) => selectedShops.includes(s.id)),
+    [availableShops, selectedShops]
+  );
+
+  const buildPayload = useCallback((): MultiChannelListingPayload => {
+    const enabledLogs = logisticChannels.filter((c) => c.enabled).map((c) => c.logistic_id);
+    // perShopVariants: clone variants cho mỗi gian (cùng dữ liệu base, shop có thể chỉnh riêng sau)
+    const perShopVariants: Record<string, ListingVariant[]> = {};
+    const perShopLogistics: Record<string, number[]> = {};
+    for (const shop of availableShops.filter((s) => selectedShops.includes(s.id))) {
+      const key = shop.shopId || shop.id;
+      perShopVariants[key] = variants.map((v) => ({ ...v }));
+      perShopVariants[shop.id] = variants.map((v) => ({ ...v }));
+      perShopLogistics[key] = [...enabledLogs];
+      perShopLogistics[shop.id] = [...enabledLogs];
+    }
+    return {
+      selectedShops,
+      title,
+      shopeeCat: shopeeCategory?.label || '',
+      shopeeCategoryId: shopeeCategory?.categoryId || '',
+      shopeeBrand,
+      shopeeBrandId: shopeeBrand === 'NoBrand' ? 0 : shopeeBrandId,
+      shopeeAttributes: buildShopeeAttributesPayload(),
+      medicine_id: medicineId.trim() || undefined,
+      lazadaCat: lazadaCategory?.label || '',
+      lazadaCategoryId: lazadaCategory?.categoryId || '',
+      lazadaBrand,
+      tiktokCat: tiktokCategory?.label || '',
+      tiktokCategoryId: tiktokCategory?.categoryId || '',
+      tiktokBrand,
+      shopeeCategory,
+      lazadaCategory,
+      tiktokCategory,
+      images,
+      variants,
+      perShopVariants,
+      perShopLogistics,
+      tierName: tierAttrs[0]?.name || 'Phân loại',
+      descriptionHtml,
+      packageWeight,
+      packageLength,
+      packageWidth,
+      packageHeight,
+      shippingMethod,
+      perVariationWeight,
+      enabledLogistics: enabledLogs,
+      isPreOrder,
+      daysToShip,
+    };
+  }, [
     selectedShops, title, shopeeCategory, shopeeBrand, shopeeBrandId, buildShopeeAttributesPayload, medicineId,
     lazadaCategory, lazadaBrand, tiktokCategory, tiktokBrand, images, variants, descriptionHtml,
     packageWeight, packageLength, packageWidth, packageHeight, shippingMethod, perVariationWeight,
-    logisticChannels, isPreOrder, daysToShip,
+    logisticChannels, isPreOrder, daysToShip, availableShops, tierAttrs,
   ]);
 
   const handleInsertTag = (val: string) => {
@@ -486,6 +536,94 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
   const removeVariantRow = (id: string) => {
     if (variants.length <= 1) return;
     setVariants((prev) => prev.filter((v) => v.id !== id));
+  };
+
+  // ====== PHẦN 2: Tier Attribute Handlers ======
+  const updateTierAttrName = (id: string, name: string) => {
+    setTierAttrs((prev) => prev.map((a) => (a.id === id ? { ...a, name } : a)));
+  };
+
+  const updateTierAttrValues = (id: string, values: string[]) => {
+    setTierAttrs((prev) => prev.map((a) => (a.id === id ? { ...a, values } : a)));
+  };
+
+  const handleTagInput = (id: string, raw: string) => {
+    const vals = raw.split(',').map((v) => v.trim()).filter(Boolean);
+    updateTierAttrValues(id, vals);
+  };
+
+  const syncVariantsFromTierAttrs = () => {
+    const attr = tierAttrs[0];
+    if (!attr || attr.values.length === 0) return;
+    const newVariants: ListingVariant[] = attr.values.map((val, idx) => {
+      const existing = variants[idx];
+      return existing
+        ? { ...existing, name: val }
+        : {
+            id: `var-tier-${Date.now()}-${idx}`,
+            name: val,
+            sku: '',
+            stock: 0,
+            weight: packageWeight,
+            priceShopee: 0,
+            priceLazada: 0,
+            priceTiktok: 0,
+          };
+    });
+    if (newVariants.length > variants.length) {
+      setVariants((prev) => {
+        const base = [...prev];
+        while (base.length < newVariants.length) {
+          base.push({
+            id: `var-tier-${Date.now()}-${base.length}`,
+            name: attr.values[base.length] || `Phân loại ${base.length + 1}`,
+            sku: '',
+            stock: 0,
+            weight: packageWeight,
+            priceShopee: 0,
+            priceLazada: 0,
+            priceTiktok: 0,
+          });
+        }
+        return base.map((v, i) => ({
+          ...v,
+          name: newVariants[i]?.name || v.name,
+        }));
+      });
+    } else {
+      setVariants((prev) => prev.map((v, i) => ({ ...v, name: newVariants[i]?.name || v.name })));
+    }
+  };
+
+  // ====== PHẦN 2: Bulk Apply Handlers ======
+  const handleBulkApply = () => {
+    const skuVal = bulkSku.trim();
+    const stockVal = Number(bulkStock) || 0;
+    const priceVal = Number(bulkPrice) || 0;
+    const promoVal = Number(bulkPromoPrice) || 0;
+    const weightVal = Number(bulkWeight) || 0;
+    const daysVal = Number(bulkDays) || 0;
+
+    setVariants((prev) =>
+      prev.map((v) => {
+        const smart = applySmartPricesFromShopee(priceVal);
+        return {
+          ...v,
+          ...(skuVal ? { sku: skuVal } : {}),
+          ...(bulkStock !== '' ? { stock: stockVal } : {}),
+          ...(bulkPrice !== '' ? { priceShopee: smart.shopee, priceLazada: smart.lazada, priceTiktok: smart.tiktok } : {}),
+          ...(bulkPromoPrice !== '' ? { pricePromo: promoVal } : {}),
+          ...(bulkWeight !== '' && perVariationWeight ? { weight: weightVal } : {}),
+        };
+      })
+    );
+    if (daysVal > 0) setDaysToShip(Math.max(7, Math.min(15, daysVal)));
+    setBulkSku('');
+    setBulkStock('');
+    setBulkPrice('');
+    setBulkPromoPrice('');
+    setBulkWeight('');
+    setBulkDays('');
   };
 
   const handleGenerateDescription = async () => {
@@ -1023,100 +1161,345 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
         <p className="text-[10px] text-gray-400">Tối đa 9 ảnh. Ảnh đầu tiên là ảnh bìa.</p>
       </div>
 
-      {/* 4. Phiên bản · Giá & Tồn kho */}
-      <div className="bg-white rounded-3xl border border-gray-150 p-6 shadow-xs space-y-4">
-        <div className="flex justify-between items-center border-b border-gray-100 pb-3">
-          <h3 className="text-sm font-extrabold text-gray-800 uppercase tracking-wider flex items-center gap-2">
-            <Table2 className="w-4 h-4 text-violet-600" /> Phiên bản · Giá &amp; Tồn kho
-          </h3>
-          <button type="button" onClick={addVariantRow}
-            className="px-3 py-1.5 bg-violet-50 text-violet-700 text-xs font-bold rounded-xl border border-violet-200 flex items-center gap-1">
-            <Plus className="w-3.5 h-3.5" /> Thêm phân loại
+      {/* 4. Phiên bản · Giá & Tồn kho — gom nhóm theo gian hàng */}
+      <div className="bg-white rounded-3xl border border-gray-150 p-6 shadow-xs space-y-6">
+
+        {/* ===== A. Thiết lập phiên bản sản phẩm (Tier Attributes) ===== */}
+        <div>
+          <div className="flex justify-between items-center border-b border-gray-100 pb-3 mb-4">
+            <h3 className="text-sm font-extrabold text-gray-800 uppercase tracking-wider flex items-center gap-2">
+              <Table2 className="w-4 h-4 text-violet-600" /> Thiết lập phiên bản sản phẩm
+            </h3>
+          </div>
+
+          {/* Toggle thiết lập cân nặng riêng */}
+          <div className="flex items-center gap-3 p-3 bg-violet-50 border border-violet-200 rounded-xl mb-4">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" checked={perVariationWeight}
+                onChange={(e) => setPerVariationWeight(e.target.checked)}
+                className="w-4 h-4 accent-violet-600" />
+              <span className="text-xs font-bold text-violet-800">
+                Thiết lập cân nặng &amp; kích thước riêng cho từng phân loại
+              </span>
+            </label>
+            <span className="text-[10px] text-violet-600 font-medium">
+              {perVariationWeight ? '→ Nhập weight/dim tại bảng bên dưới' : '→ Dùng cân nặng chung bên dưới mục Đóng gói'}
+            </span>
+          </div>
+
+          {/* Danh sách thuộc tính */}
+          <div className="space-y-3">
+            {tierAttrs.map((attr, attrIdx) => (
+              <div key={attr.id} className="flex flex-col gap-2">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-extrabold text-gray-400 uppercase">Tên thuộc tính</span>
+                    <input
+                      type="text"
+                      value={attr.name}
+                      onChange={(e) => updateTierAttrName(attr.id, e.target.value)}
+                      placeholder="VD: Màu, Size, Dung lượng..."
+                      className="px-3 py-1.5 border border-violet-200 rounded-xl text-xs font-bold bg-violet-50/30 w-40"
+                    />
+                  </div>
+                  <div className="flex flex-1 items-center gap-2">
+                    <span className="text-[10px] font-extrabold text-gray-400 uppercase shrink-0">Giá trị</span>
+                    <input
+                      type="text"
+                      value={attr.values.join(', ')}
+                      onChange={(e) => handleTagInput(attr.id, e.target.value)}
+                      placeholder="VD: trắng, đen, xanh (cách nhau bởi dấu phẩy)"
+                      className="flex-1 px-3 py-1.5 border border-gray-200 rounded-xl text-xs"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={syncVariantsFromTierAttrs}
+                    disabled={!attr.values.length}
+                    className="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold rounded-xl disabled:opacity-40 flex items-center gap-1">
+                    <Zap className="w-3.5 h-3.5" /> Tạo biến thể
+                  </button>
+                </div>
+
+                {/* Ảnh cho thuộc tính — chỉ hiện cho thuộc tính đầu tiên */}
+                {attrIdx === 0 && (
+                  <div className="ml-0 pl-0 border-t border-dashed border-violet-100 pt-3">
+                    <p className="text-[10px] font-extrabold text-gray-400 uppercase mb-2 flex items-center gap-1">
+                      <ImageIcon className="w-3.5 h-3.5" /> Hình ảnh cho thuộc tính
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {attr.values.map((val) => (
+                        <div key={val} className="flex flex-col items-center gap-1">
+                          <div className="w-16 h-16 rounded-xl border-2 border-dashed border-gray-200 flex items-center justify-center overflow-hidden bg-gray-50 relative">
+                            {attr.images[val] ? (
+                              <img src={attr.images[val]} alt={val} className="w-full h-full object-cover" />
+                            ) : (
+                              <ImageIcon className="w-6 h-6 text-gray-300" />
+                            )}
+                            <label className="absolute inset-0 cursor-pointer opacity-0 hover:opacity-100 bg-black/30 flex items-center justify-center transition-opacity">
+                              <Upload className="w-4 h-4 text-white" />
+                              <input type="file" accept="image/*" className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (!file) return;
+                                  const reader = new FileReader();
+                                  reader.onload = (ev) => {
+                                    setTierAttrs((prev) => prev.map((a) =>
+                                      a.id === attr.id
+                                        ? { ...a, images: { ...a.images, [val]: ev.target?.result as string } }
+                                        : a
+                                    ));
+                                  };
+                                  reader.readAsDataURL(file);
+                                }} />
+                            </label>
+                          </div>
+                          <span className="text-[9px] font-bold text-gray-500 text-center truncate w-16">{val}</span>
+                        </div>
+                      ))}
+                      {attr.values.length === 0 && (
+                        <p className="text-[10px] text-gray-400 italic">Nhập giá trị thuộc tính bên trên để thêm ảnh</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <button type="button" onClick={() => {
+            setTierAttrs((prev) => [...prev, { id: `attr-${Date.now()}`, name: '', values: [], images: {} }]);
+          }}
+            className="mt-3 px-3 py-1.5 bg-gray-50 text-gray-600 text-xs font-bold rounded-xl border border-gray-200 flex items-center gap-1 hover:bg-gray-100">
+            <Plus className="w-3.5 h-3.5" /> Thêm thuộc tính
           </button>
         </div>
 
-        {/* Toggle thiết lập cân nặng riêng */}
-        <div className="flex items-center gap-3 p-3 bg-violet-50 border border-violet-200 rounded-xl">
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={perVariationWeight}
-              onChange={(e) => setPerVariationWeight(e.target.checked)}
-              className="w-4 h-4 accent-violet-600"
-            />
-            <span className="text-xs font-bold text-violet-800">
-              Thiết lập cân nặng &amp; kích thước riêng cho từng phân loại
-            </span>
-          </label>
-          <span className="text-[10px] text-violet-600 font-medium">
-            {perVariationWeight ? '→ Nhập weight/dim tại bảng bên dưới' : '→ Dùng cân nặng chung bên dưới mục Đóng gói'}
-          </span>
-        </div>
+        {/* ===== B. Giá và tồn kho — Mẹo thiết lập nhanh ===== */}
+        <div>
+          <div className="border-t border-dashed border-gray-100 pt-5">
+            <div className="flex justify-between items-center border-b border-gray-100 pb-3 mb-4">
+              <h3 className="text-sm font-extrabold text-gray-800 uppercase tracking-wider flex items-center gap-2">
+                <Table2 className="w-4 h-4 text-orange-500" /> Giá &amp; Tồn kho theo gian hàng
+              </h3>
+              <button type="button" onClick={addVariantRow}
+                className="px-3 py-1.5 bg-orange-50 text-orange-700 text-xs font-bold rounded-xl border border-orange-200 flex items-center gap-1">
+                <Plus className="w-3.5 h-3.5" /> Thêm phân loại
+              </button>
+            </div>
 
-        <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 font-medium">
-          💡 Nhập giá Shopee (giá gốc) — hệ thống tự điền Lazada (+0.05%) và TikTok (+0.1%), làm tròn lên hàng trăm đồng.
-        </p>
-        <div className="overflow-x-auto rounded-xl border border-gray-200">
-          <table className="w-full text-xs">
-            <thead className="bg-gray-50 text-[10px] font-extrabold text-gray-500 uppercase">
-              <tr>
-                <th className="px-3 py-2 text-left">Phân loại</th>
-                <th className="px-3 py-2 text-left">SKU</th>
-                <th className="px-3 py-2 text-right">Tồn kho</th>
-                <th className="px-3 py-2 text-right">KL (g)</th>
-                <th className="px-3 py-2 text-right text-orange-600">Giá Shopee</th>
-                <th className="px-3 py-2 text-right text-blue-600">Giá Lazada</th>
-                <th className="px-3 py-2 text-right text-slate-800">Giá TikTok</th>
-                <th className="px-3 py-2 w-8" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {variants.map((v) => (
-                <tr key={v.id} className="hover:bg-gray-50/50">
-                  <td className="px-2 py-1.5">
-                    <input value={v.name} onChange={(e) => updateVariant(v.id, { name: e.target.value })}
-                      className="w-full min-w-[100px] px-2 py-1 border rounded-lg text-xs font-medium" />
-                  </td>
-                  <td className="px-2 py-1.5">
-                    <input value={v.sku} onChange={(e) => updateVariant(v.id, { sku: e.target.value })}
-                      className="w-full min-w-[80px] px-2 py-1 border rounded-lg text-xs font-mono" />
-                  </td>
-                  <td className="px-2 py-1.5">
-                    <input type="number" min={0} value={v.stock} onChange={(e) => updateVariant(v.id, { stock: Number(e.target.value) })}
-                      className="w-20 px-2 py-1 border rounded-lg text-xs text-right" />
-                  </td>
-                  <td className="px-2 py-1.5">
-                    <input
-                      type="number"
-                      min={0}
-                      value={v.weight}
-                      disabled={!perVariationWeight}
-                      onChange={(e) => updateVariant(v.id, { weight: Number(e.target.value) })}
-                      className={`w-16 px-2 py-1 border rounded-lg text-xs text-right ${perVariationWeight ? 'bg-white' : 'bg-gray-100 text-gray-400'}`}
-                    />
-                  </td>
-                  <td className="px-2 py-1.5">
-                    <input type="number" min={0} value={v.priceShopee || ''} onChange={(e) => handleShopeePriceChange(v.id, e.target.value)}
-                      className="w-24 px-2 py-1 border border-orange-200 bg-orange-50/50 rounded-lg text-xs text-right font-bold text-orange-700" />
-                  </td>
-                  <td className="px-2 py-1.5">
-                    <input type="number" min={0} value={v.priceLazada || ''} readOnly
-                      className="w-24 px-2 py-1 border border-blue-100 bg-blue-50/40 rounded-lg text-xs text-right text-blue-700" />
-                  </td>
-                  <td className="px-2 py-1.5">
-                    <input type="number" min={0} value={v.priceTiktok || ''} readOnly
-                      className="w-24 px-2 py-1 border border-slate-200 bg-slate-50 rounded-lg text-xs text-right text-slate-800" />
-                  </td>
-                  <td className="px-2 py-1.5">
-                    <button type="button" onClick={() => removeVariantRow(v.id)} disabled={variants.length <= 1}
-                      className="p-1 text-red-400 hover:text-red-600 disabled:opacity-30">
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+            {/* Bulk Apply Bar */}
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-2xl p-4 mb-4">
+              <p className="text-[10px] font-extrabold text-blue-700 uppercase tracking-wider mb-3 flex items-center gap-1">
+                <Zap className="w-3.5 h-3.5" /> Mẹo thiết lập nhanh — Áp dụng chung
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
+                <div>
+                  <label className="text-[9px] font-bold text-gray-500 block mb-1">SKU</label>
+                  <input type="text" value={bulkSku} onChange={(e) => setBulkSku(e.target.value)}
+                    placeholder="Mã SKU"
+                    className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs" />
+                </div>
+                <div>
+                  <label className="text-[9px] font-bold text-gray-500 block mb-1">Tồn kho</label>
+                  <input type="number" min={0} value={bulkStock} onChange={(e) => setBulkStock(e.target.value)}
+                    placeholder="Số lượng"
+                    className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs" />
+                </div>
+                <div>
+                  <label className="text-[9px] font-bold text-gray-500 block mb-1">Giá gốc</label>
+                  <input type="number" min={0} value={bulkPrice} onChange={(e) => setBulkPrice(e.target.value)}
+                    placeholder="Giá Shopee"
+                    className="w-full px-2 py-1.5 border border-orange-200 bg-white rounded-lg text-xs" />
+                </div>
+                <div>
+                  <label className="text-[9px] font-bold text-gray-500 block mb-1">Giá KM</label>
+                  <input type="number" min={0} value={bulkPromoPrice} onChange={(e) => setBulkPromoPrice(e.target.value)}
+                    placeholder="Giá khuyến mại"
+                    className="w-full px-2 py-1.5 border border-red-200 bg-white rounded-lg text-xs" />
+                </div>
+                {perVariationWeight && (
+                  <div>
+                    <label className="text-[9px] font-bold text-gray-500 block mb-1">Cân nặng (g)</label>
+                    <input type="number" min={0} value={bulkWeight} onChange={(e) => setBulkWeight(e.target.value)}
+                      placeholder="gram"
+                      className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs" />
+                  </div>
+                )}
+                <div>
+                  <label className="text-[9px] font-bold text-gray-500 block mb-1">Ngày giao</label>
+                  <input type="number" min={7} max={15} value={bulkDays} onChange={(e) => setBulkDays(e.target.value)}
+                    placeholder="7–15 ngày"
+                    className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs" />
+                </div>
+              </div>
+              <button type="button" onClick={handleBulkApply}
+                className="mt-3 w-full sm:w-auto px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl flex items-center justify-center gap-2">
+                <Zap className="w-3.5 h-3.5" /> Áp dụng cho tất cả biến thể
+              </button>
+            </div>
+
+            {/* ===== Bảng biến thể — gom nhóm theo gian hàng ===== */}
+            {variants.length === 0 ? (
+              <div className="text-center py-8 text-gray-400 text-xs">
+                Chưa có biến thể — nhập giá trị thuộc tính và bấm "Tạo biến thể"
+              </div>
+            ) : (
+              <div className="space-y-5">
+                {selectedShopItems.map((shop) => (
+                  <div key={shop.id} className="border border-gray-100 rounded-2xl overflow-hidden">
+                    {/* Header group */}
+                    <div className="bg-gray-50 border-b border-gray-100 px-4 py-2.5 flex items-center gap-2">
+                      <span className="text-base">{shop.icon || '🏪'}</span>
+                      <span className="text-xs font-extrabold text-gray-700">
+                        Group [{shop.platform.charAt(0).toUpperCase() + shop.platform.slice(1)}] {shop.name}
+                      </span>
+                    </div>
+                    {/* Table */}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead className="bg-gray-50 text-[9px] font-extrabold text-gray-500 uppercase">
+                          <tr>
+                            <th className="px-3 py-2 text-left">Phân loại</th>
+                            <th className="px-3 py-2 text-left">SKU</th>
+                            <th className="px-3 py-2 text-right">Tồn kho</th>
+                            {perVariationWeight && <th className="px-3 py-2 text-right">KL(g)</th>}
+                            <th className="px-3 py-2 text-right text-orange-600">Giá gốc</th>
+                            <th className="px-3 py-2 text-right text-red-600">Giá KM</th>
+                            <th className="px-3 py-2 text-right text-blue-600">Giá Lazada</th>
+                            <th className="px-3 py-2 text-right text-slate-700">Giá TikTok</th>
+                            <th className="px-3 py-2 w-8" />
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-50">
+                          {variants.map((v) => {
+                            const smart = applySmartPricesFromShopee(v.priceShopee);
+                            return (
+                              <tr key={`${shop.id}-${v.id}`} className="hover:bg-gray-50/40">
+                                <td className="px-2 py-1.5">
+                                  <input value={v.name} onChange={(e) => updateVariant(v.id, { name: e.target.value })}
+                                    className="w-full min-w-[100px] px-2 py-1.5 border border-violet-200 rounded-lg text-xs font-bold bg-violet-50/20" />
+                                </td>
+                                <td className="px-2 py-1.5">
+                                  <input value={v.sku} onChange={(e) => updateVariant(v.id, { sku: e.target.value })}
+                                    className="w-full min-w-[80px] px-2 py-1.5 border rounded-lg text-xs font-mono" />
+                                </td>
+                                <td className="px-2 py-1.5">
+                                  <input type="number" min={0} value={v.stock} onChange={(e) => updateVariant(v.id, { stock: Number(e.target.value) })}
+                                    className="w-20 px-2 py-1.5 border rounded-lg text-xs text-right font-mono" />
+                                </td>
+                                {perVariationWeight && (
+                                  <td className="px-2 py-1.5">
+                                    <input type="number" min={0} value={v.weight}
+                                      onChange={(e) => updateVariant(v.id, { weight: Number(e.target.value) })}
+                                      className="w-16 px-2 py-1.5 border rounded-lg text-xs text-right" />
+                                  </td>
+                                )}
+                                <td className="px-2 py-1.5">
+                                  <input type="number" min={0} value={v.priceShopee || ''}
+                                    onChange={(e) => handleShopeePriceChange(v.id, e.target.value)}
+                                    className="w-24 px-2 py-1.5 border border-orange-200 bg-orange-50/30 rounded-lg text-xs text-right font-bold text-orange-700" />
+                                </td>
+                                <td className="px-2 py-1.5">
+                                  <input type="number" min={0} value={v.pricePromo || ''}
+                                    onChange={(e) => updateVariant(v.id, { pricePromo: Number(e.target.value) || 0 })}
+                                    className="w-24 px-2 py-1.5 border border-red-200 bg-red-50/30 rounded-lg text-xs text-right text-red-600" />
+                                </td>
+                                <td className="px-2 py-1.5">
+                                  <input type="number" min={0} value={v.priceLazada || ''} readOnly
+                                    className="w-24 px-2 py-1.5 border border-blue-100 bg-blue-50/30 rounded-lg text-xs text-right text-blue-600" />
+                                </td>
+                                <td className="px-2 py-1.5">
+                                  <input type="number" min={0} value={v.priceTiktok || ''} readOnly
+                                    className="w-24 px-2 py-1.5 border border-slate-100 bg-slate-50 rounded-lg text-xs text-right text-slate-700" />
+                                </td>
+                                <td className="px-2 py-1.5">
+                                  <button type="button" onClick={() => removeVariantRow(v.id)} disabled={variants.length <= 1}
+                                    className="p-1 text-red-400 hover:text-red-600 disabled:opacity-30">
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))}
+
+                {/* Khi chỉ có 1 shop → hiện bảng rút gọn */}
+                {selectedShopItems.length === 0 && (
+                  <div className="overflow-x-auto rounded-xl border border-gray-200">
+                    <table className="w-full text-xs">
+                      <thead className="bg-gray-50 text-[9px] font-extrabold text-gray-500 uppercase">
+                        <tr>
+                          <th className="px-3 py-2 text-left">Phân loại</th>
+                          <th className="px-3 py-2 text-left">SKU</th>
+                          <th className="px-3 py-2 text-right">Tồn kho</th>
+                          {perVariationWeight && <th className="px-3 py-2 text-right">KL(g)</th>}
+                          <th className="px-3 py-2 text-right text-orange-600">Giá gốc</th>
+                          <th className="px-3 py-2 text-right text-red-600">Giá KM</th>
+                          <th className="px-3 py-2 text-right text-blue-600">Giá Lazada</th>
+                          <th className="px-3 py-2 text-right text-slate-700">Giá TikTok</th>
+                          <th className="px-3 py-2 w-8" />
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {variants.map((v) => (
+                          <tr key={v.id} className="hover:bg-gray-50/40">
+                            <td className="px-2 py-1.5">
+                              <input value={v.name} onChange={(e) => updateVariant(v.id, { name: e.target.value })}
+                                className="w-full min-w-[100px] px-2 py-1.5 border border-violet-200 rounded-lg text-xs font-bold" />
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <input value={v.sku} onChange={(e) => updateVariant(v.id, { sku: e.target.value })}
+                                className="w-full min-w-[80px] px-2 py-1.5 border rounded-lg text-xs font-mono" />
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <input type="number" min={0} value={v.stock} onChange={(e) => updateVariant(v.id, { stock: Number(e.target.value) })}
+                                className="w-20 px-2 py-1.5 border rounded-lg text-xs text-right" />
+                            </td>
+                            {perVariationWeight && (
+                              <td className="px-2 py-1.5">
+                                <input type="number" min={0} value={v.weight}
+                                  onChange={(e) => updateVariant(v.id, { weight: Number(e.target.value) })}
+                                  className="w-16 px-2 py-1.5 border rounded-lg text-xs text-right" />
+                              </td>
+                            )}
+                            <td className="px-2 py-1.5">
+                              <input type="number" min={0} value={v.priceShopee || ''}
+                                onChange={(e) => handleShopeePriceChange(v.id, e.target.value)}
+                                className="w-24 px-2 py-1.5 border border-orange-200 bg-orange-50/30 rounded-lg text-xs text-right font-bold text-orange-700" />
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <input type="number" min={0} value={v.pricePromo || ''}
+                                onChange={(e) => updateVariant(v.id, { pricePromo: Number(e.target.value) || 0 })}
+                                className="w-24 px-2 py-1.5 border border-red-200 bg-red-50/30 rounded-lg text-xs text-right text-red-600" />
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <input type="number" min={0} value={v.priceLazada || ''} readOnly
+                                className="w-24 px-2 py-1.5 border border-blue-100 bg-blue-50/30 rounded-lg text-xs text-right text-blue-600" />
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <input type="number" min={0} value={v.priceTiktok || ''} readOnly
+                                className="w-24 px-2 py-1.5 border border-slate-100 bg-slate-50 rounded-lg text-xs text-right text-slate-700" />
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <button type="button" onClick={() => removeVariantRow(v.id)} disabled={variants.length <= 1}
+                                className="p-1 text-red-400 hover:text-red-600 disabled:opacity-30">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1167,7 +1550,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
         )}
       </div>
 
-      {/* 6. Đóng gói & Vận chuyển */}
+      {/* 6. Đóng gói & Vận chuyển — gom nhóm theo gian hàng */}
       <div className="bg-white rounded-3xl border border-gray-150 p-6 shadow-xs space-y-6">
 
         {/* Header */}
@@ -1175,74 +1558,45 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
           <Package className="w-4 h-4 text-teal-600" /> Đóng gói &amp; Vận chuyển
         </h3>
 
-        {/* Cân nặng & Kích thước chung — chỉ hiển thị khi perVariationWeight OFF */}
-        {!perVariationWeight && (
-          <div>
-            <p className="text-[10px] font-bold text-gray-500 mb-3 flex items-center gap-1">
-              <Package className="w-3.5 h-3.5" /> Khối lượng &amp; Kích thước chung
-            </p>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div>
-                <label className="text-[10px] font-bold text-gray-500">Khối lượng (gram)</label>
-                <input type="number" min={0} value={packageWeight} onChange={(e) => setPackageWeight(Number(e.target.value))}
-                  className="w-full mt-1 px-3 py-2 border rounded-xl text-xs" />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-gray-500">Dài (cm)</label>
-                <input type="number" min={0} value={packageLength} onChange={(e) => setPackageLength(Number(e.target.value))}
-                  className="w-full mt-1 px-3 py-2 border rounded-xl text-xs" />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-gray-500">Rộng (cm)</label>
-                <input type="number" min={0} value={packageWidth} onChange={(e) => setPackageWidth(Number(e.target.value))}
-                  className="w-full mt-1 px-3 py-2 border rounded-xl text-xs" />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-gray-500">Cao (cm)</label>
-                <input type="number" min={0} value={packageHeight} onChange={(e) => setPackageHeight(Number(e.target.value))}
-                  className="w-full mt-1 px-3 py-2 border rounded-xl text-xs" />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Kích thước chung — luôn hiển thị (dùng để filter kênh vận chuyển) */}
-        {perVariationWeight && (
-          <div>
-            <p className="text-[10px] font-bold text-gray-500 mb-3 flex items-center gap-1">
-              <Info className="w-3.5 h-3.5 text-violet-500" />
-              Kích thước chung (dùng lọc kênh vận chuyển phù hợp)
-            </p>
-            <div className="grid grid-cols-3 gap-4">
-              <div>
-                <label className="text-[10px] font-bold text-gray-500">Dài (cm)</label>
-                <input type="number" min={0} value={packageLength} onChange={(e) => setPackageLength(Number(e.target.value))}
-                  className="w-full mt-1 px-3 py-2 border rounded-xl text-xs" />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-gray-500">Rộng (cm)</label>
-                <input type="number" min={0} value={packageWidth} onChange={(e) => setPackageWidth(Number(e.target.value))}
-                  className="w-full mt-1 px-3 py-2 border rounded-xl text-xs" />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-gray-500">Cao (cm)</label>
-                <input type="number" min={0} value={packageHeight} onChange={(e) => setPackageHeight(Number(e.target.value))}
-                  className="w-full mt-1 px-3 py-2 border rounded-xl text-xs" />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Đơn vị vận chuyển — Toggle từng kênh */}
+        {/* ===== A. Thông tin đóng gói (dùng chung) ===== */}
         <div>
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-[10px] font-bold text-gray-500 flex items-center gap-1">
-              <Truck className="w-3.5 h-3.5" /> Đơn vị vận chuyển
+          <p className="text-[10px] font-bold text-gray-500 mb-3 flex items-center gap-1">
+            <Package className="w-3.5 h-3.5" /> Khối lượng &amp; Kích thước chung
+          </p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div>
+              <label className="text-[10px] font-bold text-gray-500">Khối lượng (gram)</label>
+              <input type="number" min={0} value={packageWeight} onChange={(e) => setPackageWeight(Number(e.target.value))}
+                className="w-full mt-1 px-3 py-2 border rounded-xl text-xs" />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-gray-500">Dài (cm)</label>
+              <input type="number" min={0} value={packageLength} onChange={(e) => setPackageLength(Number(e.target.value))}
+                className="w-full mt-1 px-3 py-2 border rounded-xl text-xs" />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-gray-500">Rộng (cm)</label>
+              <input type="number" min={0} value={packageWidth} onChange={(e) => setPackageWidth(Number(e.target.value))}
+                className="w-full mt-1 px-3 py-2 border rounded-xl text-xs" />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-gray-500">Cao (cm)</label>
+              <input type="number" min={0} value={packageHeight} onChange={(e) => setPackageHeight(Number(e.target.value))}
+                className="w-full mt-1 px-3 py-2 border rounded-xl text-xs" />
+            </div>
+          </div>
+        </div>
+
+        {/* ===== B. Chọn đơn vị vận chuyển — Grid theo gian hàng ===== */}
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-[10px] font-bold text-gray-500 flex items-center gap-1 uppercase tracking-wider">
+              <Truck className="w-3.5 h-3.5" /> Chọn đơn vị vận chuyển
             </p>
             <div className="flex items-center gap-2">
               {loadingChannels && <Loader2 className="w-3.5 h-3.5 animate-spin text-teal-500" />}
               {channelError && <span className="text-[10px] text-red-500">{channelError}</span>}
-              {primaryShopeeShopId && !channelError && logisticChannels.length > 0 && (
+              {!loadingChannels && !channelError && logisticChannels.length > 0 && (
                 <span className="text-[10px] text-teal-600 font-medium">
                   {logisticChannels.filter((c) => c.enabled).length}/{logisticChannels.length} kênh bật
                 </span>
@@ -1261,127 +1615,194 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
           ) : channelError ? (
             <p className="text-[10px] text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{channelError}</p>
           ) : (
-            <div className="space-y-4">
-              {Object.entries(LOGISTIC_GROUP_LABELS).map(([type, label]) => {
-                const channels = groupedChannels[type] || [];
-                if (!channels.length) return null;
-                return (
-                  <div key={type} className="border border-gray-100 rounded-xl overflow-hidden">
-                    <div className="px-3 py-2 bg-gray-50 border-b border-gray-100">
-                      <span className="text-[10px] font-extrabold text-gray-600 uppercase tracking-wider">{label}</span>
-                    </div>
-                    <div className="divide-y divide-gray-50">
-                      {channels.map((ch) => {
-                        const sizeOk = isChannelSizeOk(ch);
-                        const disabledBySize = !sizeOk;
-                        return (
-                          <div key={ch.logistic_id} className={`flex items-center justify-between px-4 py-2.5 ${disabledBySize ? 'opacity-50' : ''}`}>
-                            <div className="flex items-center gap-2 min-w-0">
-                              <label className="flex items-center gap-2 cursor-pointer select-none min-w-0">
-                                <input
-                                  type="checkbox"
-                                  checked={ch.enabled && !disabledBySize}
-                                  disabled={disabledBySize}
-                                  onChange={() => !disabledBySize && toggleChannel(ch.logistic_id)}
-                                  className="w-4 h-4 accent-teal-600 shrink-0"
-                                />
-                                <span className="text-xs font-medium text-gray-700 truncate">{ch.logistic_name}</span>
-                              </label>
-                              {ch.cod_enabled && (
-                                <span className="shrink-0 text-[9px] bg-green-100 text-green-700 border border-green-200 px-1.5 py-0.5 rounded font-bold">COD</span>
-                              )}
-                              {disabledBySize && (
-                                <span className="shrink-0 text-[9px] bg-red-100 text-red-700 border border-red-200 px-1.5 py-0.5 rounded font-bold">Vượt kích thước</span>
-                              )}
-                              {ch.has_size_limit && ch.max_dimension && (
-                                <span className="shrink-0 text-[9px] text-gray-400 font-mono">
-                                  max {ch.max_dimension.max_length}×{ch.max_dimension.max_width}×{ch.max_dimension.max_height}cm
-                                </span>
-                              )}
+            <div className="space-y-5">
+              {/* Gom nhóm kênh vận chuyển theo từng gian hàng */}
+              {selectedShopItems
+                .filter((s) => s.platform === 'shopee')
+                .map((shop) => {
+                  const shopChannels = logisticChannels;
+                  const enabledCount = shopChannels.filter((c) => c.enabled).length;
+                  return (
+                    <div key={shop.id} className="border border-gray-100 rounded-2xl overflow-hidden">
+                      {/* Group header */}
+                      <div className="bg-gray-50 border-b border-gray-100 px-4 py-2.5 flex items-center gap-2">
+                        <span className="text-base">{shop.icon || '🛒'}</span>
+                        <span className="text-xs font-extrabold text-gray-700">
+                          {shop.platform === 'shopee' ? 'Shopee' : shop.name}
+                        </span>
+                        <span className="ml-auto text-[10px] text-teal-600 font-bold">
+                          {enabledCount}/{shopChannels.length} kênh
+                        </span>
+                      </div>
+
+                      {/* Grid layout — Checkbox columns */}
+                      <div className="p-4">
+                        {/* Express + Fast */}
+                        {['express', 'fast'].map((type) => {
+                          const channels = shopChannels.filter((c) => c.channel_type === type);
+                          if (!channels.length) return null;
+                          const label = LOGISTIC_GROUP_LABELS[type] || type;
+                          return (
+                            <div key={type} className="mb-4 last:mb-0">
+                              <p className="text-[9px] font-extrabold text-gray-400 uppercase tracking-wider mb-2">{label}</p>
+                              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                                {channels.map((ch) => {
+                                  const sizeOk = isChannelSizeOk(ch);
+                                  const disabledBySize = !sizeOk;
+                                  return (
+                                    <label key={ch.logistic_id}
+                                      className={`flex items-center gap-2 p-2.5 rounded-xl border cursor-pointer transition-all text-xs select-none ${
+                                        disabledBySize
+                                          ? 'border-gray-100 opacity-40 cursor-not-allowed'
+                                          : ch.enabled
+                                          ? 'border-teal-400 bg-teal-50/40'
+                                          : 'border-gray-100 hover:border-teal-300 hover:bg-teal-50/20'
+                                      }`}>
+                                      <input type="checkbox"
+                                        checked={ch.enabled && !disabledBySize}
+                                        disabled={disabledBySize}
+                                        onChange={() => !disabledBySize && toggleChannel(ch.logistic_id)}
+                                        className="w-4 h-4 accent-teal-600 shrink-0" />
+                                      <div className="flex flex-col min-w-0">
+                                        <span className="font-medium text-gray-700 truncate">{ch.logistic_name}</span>
+                                        <div className="flex gap-1 mt-0.5 flex-wrap">
+                                          {ch.cod_enabled && (
+                                            <span className="text-[9px] bg-green-100 text-green-700 px-1 rounded font-bold">COD</span>
+                                          )}
+                                          {disabledBySize && (
+                                            <span className="text-[9px] bg-red-100 text-red-600 px-1 rounded font-bold">Vượt kích</span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </label>
+                                  );
+                                })}
+                              </div>
                             </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-              {Object.keys(groupedChannels).filter((k) => !LOGISTIC_GROUP_LABELS[k]).length > 0 && (
-                <div className="border border-gray-100 rounded-xl overflow-hidden">
-                  <div className="px-3 py-2 bg-gray-50 border-b border-gray-100">
-                    <span className="text-[10px] font-extrabold text-gray-600 uppercase tracking-wider">Khác</span>
-                  </div>
-                  <div className="divide-y divide-gray-50">
-                    {Object.entries(groupedChannels)
-                      .filter(([k]) => !LOGISTIC_GROUP_LABELS[k])
-                      .flatMap(([, chs]) => chs)
-                      .map((ch) => {
-                        const sizeOk = isChannelSizeOk(ch);
-                        return (
-                          <div key={ch.logistic_id} className="flex items-center justify-between px-4 py-2.5">
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="checkbox"
-                                checked={ch.enabled && sizeOk}
-                                disabled={!sizeOk}
-                                onChange={() => sizeOk && toggleChannel(ch.logistic_id)}
-                                className="w-4 h-4 accent-teal-600"
-                              />
-                              <span className="text-xs font-medium text-gray-700">{ch.logistic_name}</span>
+                          );
+                        })}
+
+                        {/* Pickup + Bulky + Other */}
+                        {['pickup', 'bulky'].map((type) => {
+                          const channels = shopChannels.filter((c) => c.channel_type === type);
+                          if (!channels.length) return null;
+                          const label = LOGISTIC_GROUP_LABELS[type] || type;
+                          return (
+                            <div key={type} className="mb-4 last:mb-0">
+                              <p className="text-[9px] font-extrabold text-gray-400 uppercase tracking-wider mb-2">{label}</p>
+                              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                                {channels.map((ch) => {
+                                  const sizeOk = isChannelSizeOk(ch);
+                                  const disabledBySize = !sizeOk;
+                                  return (
+                                    <label key={ch.logistic_id}
+                                      className={`flex items-center gap-2 p-2.5 rounded-xl border cursor-pointer transition-all text-xs select-none ${
+                                        disabledBySize
+                                          ? 'border-gray-100 opacity-40 cursor-not-allowed'
+                                          : ch.enabled
+                                          ? 'border-teal-400 bg-teal-50/40'
+                                          : 'border-gray-100 hover:border-teal-300 hover:bg-teal-50/20'
+                                      }`}>
+                                      <input type="checkbox"
+                                        checked={ch.enabled && !disabledBySize}
+                                        disabled={disabledBySize}
+                                        onChange={() => !disabledBySize && toggleChannel(ch.logistic_id)}
+                                        className="w-4 h-4 accent-teal-600 shrink-0" />
+                                      <div className="flex flex-col min-w-0">
+                                        <span className="font-medium text-gray-700 truncate">{ch.logistic_name}</span>
+                                        {ch.cod_enabled && (
+                                          <span className="text-[9px] bg-green-100 text-green-700 px-1 rounded font-bold mt-0.5">COD</span>
+                                        )}
+                                      </div>
+                                    </label>
+                                  );
+                                })}
+                              </div>
                             </div>
-                          </div>
-                        );
-                      })}
-                  </div>
+                          );
+                        })}
+
+                        {/* Other / ungrouped channels */}
+                        {(() => {
+                          const otherChannels = shopChannels.filter(
+                            (c) => !['express', 'fast', 'pickup', 'bulky'].includes(c.channel_type)
+                          );
+                          if (!otherChannels.length) return null;
+                          return (
+                            <div className="mb-0">
+                              <p className="text-[9px] font-extrabold text-gray-400 uppercase tracking-wider mb-2">Khác</p>
+                              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                                {otherChannels.map((ch) => {
+                                  const sizeOk = isChannelSizeOk(ch);
+                                  const disabledBySize = !sizeOk;
+                                  return (
+                                    <label key={ch.logistic_id}
+                                      className={`flex items-center gap-2 p-2.5 rounded-xl border cursor-pointer transition-all text-xs select-none ${
+                                        disabledBySize
+                                          ? 'border-gray-100 opacity-40 cursor-not-allowed'
+                                          : ch.enabled
+                                          ? 'border-teal-400 bg-teal-50/40'
+                                          : 'border-gray-100 hover:border-teal-300 hover:bg-teal-50/20'
+                                      }`}>
+                                      <input type="checkbox"
+                                        checked={ch.enabled && !disabledBySize}
+                                        disabled={disabledBySize}
+                                        onChange={() => !disabledBySize && toggleChannel(ch.logistic_id)}
+                                        className="w-4 h-4 accent-teal-600 shrink-0" />
+                                      <div className="flex flex-col min-w-0">
+                                        <span className="font-medium text-gray-700 truncate">{ch.logistic_name}</span>
+                                        {ch.cod_enabled && (
+                                          <span className="text-[9px] bg-green-100 text-green-700 px-1 rounded font-bold mt-0.5">COD</span>
+                                        )}
+                                      </div>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  );
+                })}
+
+              {/* Khi chưa chọn shop — thông báo */}
+              {selectedShopItems.filter((s) => s.platform === 'shopee').length === 0 && (
+                <div className="flex items-center gap-2 text-xs text-gray-400 p-4 bg-gray-50 rounded-xl">
+                  <Info className="w-4 h-4" />
+                  Chưa chọn gian hàng Shopee — kênh vận chuyển sẽ được tải khi chọn Shopee.
                 </div>
               )}
             </div>
           )}
         </div>
 
-        {/* Hàng đặt trước - Pre-order */}
+        {/* ===== C. Hàng đặt trước (Pre-order) ===== */}
         <div>
           <p className="text-[10px] font-bold text-gray-500 mb-3 flex items-center gap-1">
             <Zap className="w-3.5 h-3.5" /> Hàng Đặt Trước (Pre-order)
           </p>
           <div className="flex items-center gap-6">
             <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="radio"
-                name="preOrder"
-                checked={!isPreOrder}
-                onChange={() => setIsPreOrder(false)}
-                className="w-4 h-4 accent-teal-600"
-              />
+              <input type="radio" name="preOrder" checked={!isPreOrder}
+                onChange={() => setIsPreOrder(false)} className="w-4 h-4 accent-teal-600" />
               <span className="text-xs font-medium text-gray-700">Không</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="radio"
-                name="preOrder"
-                checked={isPreOrder}
-                onChange={() => setIsPreOrder(true)}
-                className="w-4 h-4 accent-teal-600"
-              />
+              <input type="radio" name="preOrder" checked={isPreOrder}
+                onChange={() => setIsPreOrder(true)} className="w-4 h-4 accent-teal-600" />
               <span className="text-xs font-medium text-gray-700">Đồng ý</span>
             </label>
           </div>
-
           {isPreOrder && (
             <div className="mt-3 flex items-center gap-4">
               <div>
-                <label className="text-[10px] font-bold text-gray-600">
-                  Số ngày chuẩn bị hàng
-                </label>
+                <label className="text-[10px] font-bold text-gray-600">Số ngày chuẩn bị hàng</label>
                 <div className="flex items-center gap-2 mt-1">
-                  <input
-                    type="number"
-                    min={7}
-                    max={15}
-                    value={daysToShip}
+                  <input type="number" min={7} max={15} value={daysToShip}
                     onChange={(e) => setDaysToShip(Math.max(7, Math.min(15, Number(e.target.value))))}
-                    className="w-20 px-3 py-2 border border-teal-200 bg-teal-50 rounded-xl text-xs text-center font-bold text-teal-800"
-                  />
+                    className="w-20 px-3 py-2 border border-teal-200 bg-teal-50 rounded-xl text-xs text-center font-bold text-teal-800" />
                   <span className="text-xs text-gray-500">ngày (7 – 15)</span>
                 </div>
                 <p className="text-[9px] text-gray-400 mt-1">
@@ -1391,7 +1812,6 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
             </div>
           )}
         </div>
-
       </div>
 
       {/* Actions */}

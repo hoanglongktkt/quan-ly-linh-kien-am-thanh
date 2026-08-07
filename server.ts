@@ -5771,14 +5771,24 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<str
   await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
 
   // 3) Biến thể: init_tier_variation → add_model (chỉ khi add mới)
+  // Shopee Go struct: item_id = uint64 → BẮT BUỘC Number, không gửi string.
   if (hasVariants && !existingItemId) {
+    const itemIdNum = toShopeeIdNumber(itemId) ?? Number(itemId);
+    if (!Number.isFinite(itemIdNum) || itemIdNum <= 0) {
+      throw new Error(`item_id không hợp lệ cho init_tier_variation: ${itemId}`);
+    }
+    const tierName = String(payload?.tierName || payload?.variationName || "Phân loại").trim().slice(0, 14) || "Phân loại";
     const optionList = variants.map((v: any) => ({
       option: String(v.name || "Phân loại").trim().slice(0, 30) || "Phân loại",
     }));
     const modelListWithWeight = variants.map((v: any, idx: number) => {
+      const price = Math.max(
+        0,
+        Math.round(Number(v.priceShopee ?? v.pricePromo ?? v.original_price ?? 0)),
+      );
       const base: any = {
         tier_index: [idx],
-        original_price: Math.max(0, Math.round(Number(v.priceShopee || 0))),
+        original_price: price,
         seller_stock: [{ stock: Math.max(0, Math.round(Number(v.stock || 0))) }],
         model_sku: String(v.sku || "").slice(0, 100),
       };
@@ -5799,8 +5809,8 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<str
         shopId,
         accessToken,
         {
-          item_id: itemId,
-          tier_variation: [{ name: "Phân loại", option_list: optionList }],
+          item_id: itemIdNum,
+          tier_variation: [{ name: tierName, option_list: optionList }],
           model: modelListWithWeight,
         },
         "init_tier_variation",
@@ -5808,15 +5818,15 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<str
     } catch (initErr: any) {
       const initMsg = initErr?.message || String(initErr);
       tierErrors.push(initMsg);
-      console.log("[SHOPEE UPLOAD ERROR]:", JSON.stringify({ step: "init_tier_variation+model", error: initMsg }, null, 2));
+      console.log("[SHOPEE UPLOAD ERROR]:", JSON.stringify({ step: "init_tier_variation+model", error: initMsg, item_id: itemIdNum }, null, 2));
       try {
         await shopeeProductPost(
           "/api/v2/product/init_tier_variation",
           shopId,
           accessToken,
           {
-            item_id: itemId,
-            tier_variation: [{ name: "Phân loại", option_list: optionList }],
+            item_id: itemIdNum,
+            tier_variation: [{ name: tierName, option_list: optionList }],
           },
           "init_tier_variation",
         );
@@ -5825,12 +5835,12 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<str
           "/api/v2/product/add_model",
           shopId,
           accessToken,
-          { item_id: itemId, model_list: modelListWithWeight },
+          { item_id: itemIdNum, model_list: modelListWithWeight },
           "add_model",
         );
       } catch (fallbackErr: any) {
         const fbMsg = fallbackErr?.message || String(fallbackErr);
-        console.log("[SHOPEE UPLOAD ERROR]:", JSON.stringify({ step: "add_model_fallback", error: fbMsg, prior: tierErrors }, null, 2));
+        console.log("[SHOPEE UPLOAD ERROR]:", JSON.stringify({ step: "add_model_fallback", error: fbMsg, prior: tierErrors, item_id: itemIdNum }, null, 2));
         throw new Error(
           `Đã tạo item_id=${itemId} nhưng khởi tạo biến thể thất bại: ${fbMsg}`,
         );
@@ -19375,11 +19385,22 @@ async function startServer() {
             const medicineId =
               resolveShopeeMedicineId(payload) ||
               (product?.medicine_id != null ? String(product.medicine_id) : null);
+            // Ưu tiên dữ liệu theo từng gian (perShopVariants / perShopLogistics)
+            const perShopVars =
+              payload?.perShopVariants?.[shopKey] ||
+              payload?.perShopVariants?.[clientShopId] ||
+              null;
+            const perShopLogs =
+              payload?.perShopLogistics?.[shopKey] ||
+              payload?.perShopLogistics?.[clientShopId] ||
+              null;
             const itemId = await publishOneItemToShopee(shopKey, {
               ...payload,
               medicine_id: medicineId || payload?.medicine_id,
               shopeeItemId: existingListing?.platform_product_id || product?.shopeeItemId,
               platform_product_id: existingListing?.platform_product_id,
+              variants: Array.isArray(perShopVars) && perShopVars.length ? perShopVars : payload.variants,
+              enabledLogistics: Array.isArray(perShopLogs) ? perShopLogs : payload.enabledLogistics,
               images: Array.isArray(images) && images.length
                 ? images
                 : [product?.imageUrl || product?.avatarUrl].filter(Boolean),

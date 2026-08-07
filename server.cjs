@@ -121280,13 +121280,22 @@ async function publishOneItemToShopee(shopId, payload) {
   }
   await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
   if (hasVariants && !existingItemId) {
+    const itemIdNum = toShopeeIdNumber(itemId) ?? Number(itemId);
+    if (!Number.isFinite(itemIdNum) || itemIdNum <= 0) {
+      throw new Error(`item_id kh\xF4ng h\u1EE3p l\u1EC7 cho init_tier_variation: ${itemId}`);
+    }
+    const tierName = String(payload?.tierName || payload?.variationName || "Ph\xE2n lo\u1EA1i").trim().slice(0, 14) || "Ph\xE2n lo\u1EA1i";
     const optionList = variants.map((v) => ({
       option: String(v.name || "Ph\xE2n lo\u1EA1i").trim().slice(0, 30) || "Ph\xE2n lo\u1EA1i"
     }));
     const modelListWithWeight = variants.map((v, idx) => {
+      const price = Math.max(
+        0,
+        Math.round(Number(v.priceShopee ?? v.pricePromo ?? v.original_price ?? 0))
+      );
       const base = {
         tier_index: [idx],
-        original_price: Math.max(0, Math.round(Number(v.priceShopee || 0))),
+        original_price: price,
         seller_stock: [{ stock: Math.max(0, Math.round(Number(v.stock || 0))) }],
         model_sku: String(v.sku || "").slice(0, 100)
       };
@@ -121306,8 +121315,8 @@ async function publishOneItemToShopee(shopId, payload) {
         shopId,
         accessToken,
         {
-          item_id: itemId,
-          tier_variation: [{ name: "Ph\xE2n lo\u1EA1i", option_list: optionList }],
+          item_id: itemIdNum,
+          tier_variation: [{ name: tierName, option_list: optionList }],
           model: modelListWithWeight
         },
         "init_tier_variation"
@@ -121315,15 +121324,15 @@ async function publishOneItemToShopee(shopId, payload) {
     } catch (initErr) {
       const initMsg = initErr?.message || String(initErr);
       tierErrors.push(initMsg);
-      console.log("[SHOPEE UPLOAD ERROR]:", JSON.stringify({ step: "init_tier_variation+model", error: initMsg }, null, 2));
+      console.log("[SHOPEE UPLOAD ERROR]:", JSON.stringify({ step: "init_tier_variation+model", error: initMsg, item_id: itemIdNum }, null, 2));
       try {
         await shopeeProductPost(
           "/api/v2/product/init_tier_variation",
           shopId,
           accessToken,
           {
-            item_id: itemId,
-            tier_variation: [{ name: "Ph\xE2n lo\u1EA1i", option_list: optionList }]
+            item_id: itemIdNum,
+            tier_variation: [{ name: tierName, option_list: optionList }]
           },
           "init_tier_variation"
         );
@@ -121332,12 +121341,12 @@ async function publishOneItemToShopee(shopId, payload) {
           "/api/v2/product/add_model",
           shopId,
           accessToken,
-          { item_id: itemId, model_list: modelListWithWeight },
+          { item_id: itemIdNum, model_list: modelListWithWeight },
           "add_model"
         );
       } catch (fallbackErr) {
         const fbMsg = fallbackErr?.message || String(fallbackErr);
-        console.log("[SHOPEE UPLOAD ERROR]:", JSON.stringify({ step: "add_model_fallback", error: fbMsg, prior: tierErrors }, null, 2));
+        console.log("[SHOPEE UPLOAD ERROR]:", JSON.stringify({ step: "add_model_fallback", error: fbMsg, prior: tierErrors, item_id: itemIdNum }, null, 2));
         throw new Error(
           `\u0110\xE3 t\u1EA1o item_id=${itemId} nh\u01B0ng kh\u1EDFi t\u1EA1o bi\u1EBFn th\u1EC3 th\u1EA5t b\u1EA1i: ${fbMsg}`
         );
@@ -130892,11 +130901,15 @@ async function startServer() {
               (r2) => r2.product_id === productId && String(r2.shop_id) === shopKey && r2.platform === "shopee" && r2.status === "success" && r2.platform_product_id
             );
             const medicineId = resolveShopeeMedicineId(payload) || (product?.medicine_id != null ? String(product.medicine_id) : null);
+            const perShopVars = payload?.perShopVariants?.[shopKey] || payload?.perShopVariants?.[clientShopId] || null;
+            const perShopLogs = payload?.perShopLogistics?.[shopKey] || payload?.perShopLogistics?.[clientShopId] || null;
             const itemId = await publishOneItemToShopee(shopKey, {
               ...payload,
               medicine_id: medicineId || payload?.medicine_id,
               shopeeItemId: existingListing?.platform_product_id || product?.shopeeItemId,
               platform_product_id: existingListing?.platform_product_id,
+              variants: Array.isArray(perShopVars) && perShopVars.length ? perShopVars : payload.variants,
+              enabledLogistics: Array.isArray(perShopLogs) ? perShopLogs : payload.enabledLogistics,
               images: Array.isArray(images) && images.length ? images : [product?.imageUrl || product?.avatarUrl].filter(Boolean)
             });
             if (!itemId) throw new Error("publishOneItemToShopee kh\xF4ng tr\u1EA3 item_id");
