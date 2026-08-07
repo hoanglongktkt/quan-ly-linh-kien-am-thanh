@@ -298,9 +298,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
   const [bulkSku, setBulkSku] = useState('');
   const [bulkStock, setBulkStock] = useState('');
   const [bulkPrice, setBulkPrice] = useState('');
-  const [bulkPromoPrice, setBulkPromoPrice] = useState('');
   const [bulkWeight, setBulkWeight] = useState('');
-  const [bulkDays, setBulkDays] = useState('');
 
   const [toast, setToast] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -735,9 +733,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
     const skuVal = bulkSku.trim();
     const stockVal = Number(bulkStock) || 0;
     const priceVal = Number(bulkPrice) || 0;
-    const promoVal = Number(bulkPromoPrice) || 0;
     const weightVal = Number(bulkWeight) || 0;
-    const daysVal = Number(bulkDays) || 0;
 
     setVariants((prev) =>
       prev.map((v) => {
@@ -747,18 +743,14 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
           ...(skuVal ? { sku: skuVal } : {}),
           ...(bulkStock !== '' ? { stock: stockVal } : {}),
           ...(bulkPrice !== '' ? { priceShopee: smart.shopee, priceLazada: smart.lazada, priceTiktok: smart.tiktok } : {}),
-          ...(bulkPromoPrice !== '' ? { pricePromo: promoVal } : {}),
           ...(bulkWeight !== '' && perVariationWeight ? { weight: weightVal } : {}),
         };
       })
     );
-    if (daysVal > 0) setDaysToShip(Math.max(7, Math.min(15, daysVal)));
     setBulkSku('');
     setBulkStock('');
     setBulkPrice('');
-    setBulkPromoPrice('');
     setBulkWeight('');
-    setBulkDays('');
   };
 
   const handleGenerateDescription = async () => {
@@ -1523,7 +1515,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
               <p className="text-[10px] font-extrabold text-blue-700 uppercase tracking-wider mb-3 flex items-center gap-1">
                 <Zap className="w-3.5 h-3.5" /> Mẹo thiết lập nhanh — Áp dụng chung
               </p>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
                 <div>
                   <label className="text-[9px] font-bold text-gray-500 block mb-1">SKU</label>
                   <input type="text" value={bulkSku} onChange={(e) => setBulkSku(e.target.value)}
@@ -1542,12 +1534,6 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
                     placeholder="Giá Shopee"
                     className="w-full px-2 py-1.5 border border-orange-200 bg-white rounded-lg text-xs" />
                 </div>
-                <div>
-                  <label className="text-[9px] font-bold text-gray-500 block mb-1">Giá KM</label>
-                  <input type="number" min={0} value={bulkPromoPrice} onChange={(e) => setBulkPromoPrice(e.target.value)}
-                    placeholder="Giá khuyến mại"
-                    className="w-full px-2 py-1.5 border border-red-200 bg-white rounded-lg text-xs" />
-                </div>
                 {perVariationWeight && (
                   <div>
                     <label className="text-[9px] font-bold text-gray-500 block mb-1">Cân nặng (g)</label>
@@ -1556,12 +1542,6 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
                       className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs" />
                   </div>
                 )}
-                <div>
-                  <label className="text-[9px] font-bold text-gray-500 block mb-1">Ngày giao</label>
-                  <input type="number" min={7} max={15} value={bulkDays} onChange={(e) => setBulkDays(e.target.value)}
-                    placeholder="7–15 ngày"
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs" />
-                </div>
               </div>
               <button type="button" onClick={handleBulkApply}
                 className="mt-3 w-full sm:w-auto px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl flex items-center justify-center gap-2">
@@ -1595,7 +1575,6 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
                             <th className="px-3 py-2 text-right">Tồn kho</th>
                             {perVariationWeight && <th className="px-3 py-2 text-right">KL(g)</th>}
                             <th className="px-3 py-2 text-right text-orange-600">Giá gốc</th>
-                            <th className="px-3 py-2 text-right text-red-600">Giá KM</th>
                             <th className="px-3 py-2 text-right text-blue-600">Giá Lazada</th>
                             <th className="px-3 py-2 text-right text-slate-700">Giá TikTok</th>
                             <th className="px-3 py-2 w-8" />
@@ -1631,11 +1610,6 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
                                     className="w-24 px-2 py-1.5 border border-orange-200 bg-orange-50/30 rounded-lg text-xs text-right font-bold text-orange-700" />
                                 </td>
                                 <td className="px-2 py-1.5">
-                                  <input type="number" min={0} value={v.pricePromo || ''}
-                                    onChange={(e) => updateVariant(v.id, { pricePromo: Number(e.target.value) || 0 })}
-                                    className="w-24 px-2 py-1.5 border border-red-200 bg-red-50/30 rounded-lg text-xs text-right text-red-600" />
-                                </td>
-                                <td className="px-2 py-1.5">
                                   <input type="number" min={0} value={v.priceLazada || ''} readOnly
                                     className="w-24 px-2 py-1.5 border border-blue-100 bg-blue-50/30 rounded-lg text-xs text-right text-blue-600" />
                                 </td>
@@ -1669,7 +1643,6 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
                           <th className="px-3 py-2 text-right">Tồn kho</th>
                           {perVariationWeight && <th className="px-3 py-2 text-right">KL(g)</th>}
                           <th className="px-3 py-2 text-right text-orange-600">Giá gốc</th>
-                          <th className="px-3 py-2 text-right text-red-600">Giá KM</th>
                           <th className="px-3 py-2 text-right text-blue-600">Giá Lazada</th>
                           <th className="px-3 py-2 text-right text-slate-700">Giá TikTok</th>
                           <th className="px-3 py-2 w-8" />
@@ -1701,11 +1674,6 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
                               <input type="number" min={0} value={v.priceShopee || ''}
                                 onChange={(e) => handleShopeePriceChange(v.id, e.target.value)}
                                 className="w-24 px-2 py-1.5 border border-orange-200 bg-orange-50/30 rounded-lg text-xs text-right font-bold text-orange-700" />
-                            </td>
-                            <td className="px-2 py-1.5">
-                              <input type="number" min={0} value={v.pricePromo || ''}
-                                onChange={(e) => updateVariant(v.id, { pricePromo: Number(e.target.value) || 0 })}
-                                className="w-24 px-2 py-1.5 border border-red-200 bg-red-50/30 rounded-lg text-xs text-right text-red-600" />
                             </td>
                             <td className="px-2 py-1.5">
                               <input type="number" min={0} value={v.priceLazada || ''} readOnly
