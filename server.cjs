@@ -74175,22 +74175,22 @@ function parseModelNameFromTitle(title) {
   if (maybeModel && maybeBase) return { baseTitle: maybeBase, modelName: maybeModel };
   return { baseTitle: title };
 }
-function matchVariantsByName(variants, modelName) {
+function matchVariantsByName(variants2, modelName) {
   const lower2 = modelName.toLowerCase();
-  return variants.filter(
+  return variants2.filter(
     (p) => p.modelName?.toLowerCase() === lower2 || p.title.toLowerCase().endsWith(` - ${lower2}`)
   );
 }
-function matchVariantsByPrice(variants, orderPrice) {
-  if (!orderPrice || variants.length === 0) return [];
-  return variants.filter(
+function matchVariantsByPrice(variants2, orderPrice) {
+  if (!orderPrice || variants2.length === 0) return [];
+  return variants2.filter(
     (p) => p.shopeeModelId && priceMatches(Number(p.sellingPrice) || 0, orderPrice)
   );
 }
-function matchVariantByImage(variants, orderImage) {
+function matchVariantByImage(variants2, orderImage) {
   const orderKey = normalizeImageKey(orderImage);
   if (!orderKey) return void 0;
-  const matches = variants.filter((v) => {
+  const matches = variants2.filter((v) => {
     const variantKey = normalizeImageKey(v.avatarUrl || v.imageUrl);
     if (!variantKey) return false;
     if (orderKey === variantKey) return true;
@@ -74214,21 +74214,21 @@ function enrichOrderItemFromCatalog(item, catalogProducts = []) {
   } else {
     productTitle = stripModelSuffix(productTitle, modelName);
   }
-  const variants = itemId ? findCatalogVariants(catalogProducts, itemId) : [];
+  const variants2 = itemId ? findCatalogVariants(catalogProducts, itemId) : [];
   let matched;
   if (modelId !== "0") {
-    matched = variants.find((p) => p.shopeeModelId === modelId);
+    matched = variants2.find((p) => p.shopeeModelId === modelId);
   }
   if (!matched && modelName) {
-    const byName = matchVariantsByName(variants, modelName);
+    const byName = matchVariantsByName(variants2, modelName);
     if (byName.length === 1) matched = byName[0];
   }
   if (!matched && orderPrice > 0) {
-    const byPrice = matchVariantsByPrice(variants, orderPrice);
+    const byPrice = matchVariantsByPrice(variants2, orderPrice);
     if (byPrice.length === 1) matched = byPrice[0];
   }
   if (!matched) {
-    matched = matchVariantByImage(variants, item.productImage);
+    matched = matchVariantByImage(variants2, item.productImage);
   }
   if (matched) {
     modelId = normalizeModelId(matched.shopeeModelId);
@@ -78001,14 +78001,14 @@ function buildShopIdMongoFilter(shopId, shopIds) {
   if (multi.length > 1) {
     const strIds = multi;
     const numIds = multi.map((s2) => Number(s2)).filter((n) => Number.isFinite(n) && String(n) === String(Math.trunc(n)));
-    const variants = [
+    const variants2 = [
       { shopId: { $in: strIds } },
       { "data.shopId": { $in: strIds } }
     ];
     if (numIds.length) {
-      variants.push({ shopId: { $in: numIds } }, { "data.shopId": { $in: numIds } });
+      variants2.push({ shopId: { $in: numIds } }, { "data.shopId": { $in: numIds } });
     }
-    return { $or: variants };
+    return { $or: variants2 };
   }
   const single = multi.length === 1 ? multi[0] : shopId && String(shopId).trim() && String(shopId).trim() !== "all" ? String(shopId).trim() : "";
   if (!single) return null;
@@ -106429,7 +106429,7 @@ var deps12 = {
   SHOPEE_ITEM_LIST_PAGE_SIZE: 10,
   fetchShopeeItemVariants: async () => ({ variantProducts: [], error: "not_initialized", modelCount: 0 }),
   loadProducts: async () => [],
-  replaceProductsForShopeeItem: (all3, _itemId, variants) => variants,
+  replaceProductsForShopeeItem: (all3, _itemId, variants2) => variants2,
   getProductChildrenList: (p) => Array.isArray(p?.children) && p.children.length ? p.children : Array.isArray(p?.children_models) ? p.children_models : [],
   extractHttpClientError: (err) => ({
     message: err?.message || String(err),
@@ -106722,13 +106722,13 @@ async function previewItemVariants(req, res) {
     if (error && (!Array.isArray(variantProducts) || variantProducts.length === 0)) {
       return res.status(400).json({ success: false, error, message: error });
     }
-    const variants = flattenShopeeRowsForInitForm(variantProducts);
+    const variants2 = flattenShopeeRowsForInitForm(variantProducts);
     return res.json({
       success: true,
       itemId: String(itemId),
       title: String(item?.item_name || variantProducts?.[0]?.title || ""),
       modelCount,
-      variants
+      variants: variants2
     });
   } catch (err) {
     console.error("[Shopee Item Preview] Exception:", err);
@@ -121271,13 +121271,13 @@ async function publishOneItemToShopee(shopId, payload) {
       `[Shopee Publish] Kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c attribute_tree v\xE0 FE kh\xF4ng g\u1EEDi attributes \u2014 add_item c\xF3 th\u1EC3 b\u1ECB Shopee t\u1EEB ch\u1ED1i. ${attributeTreeError}`
     );
   }
-  const variants = Array.isArray(payload?.variants) ? payload.variants : [];
-  const hasVariants = variants.length > 1 || variants.length === 1 && String(variants[0]?.name || "").trim() && !/^mặc định$/i.test(String(variants[0]?.name || "").trim());
+  const variants2 = Array.isArray(payload?.variants) ? payload.variants : [];
+  const hasVariants = variants2.length > 1 || variants2.length === 1 && String(variants2[0]?.name || "").trim() && !/^mặc định$/i.test(String(variants2[0]?.name || "").trim());
   const basePrice = Math.max(
     0,
-    Math.round(Number(variants[0]?.priceShopee ?? payload?.price ?? 0))
+    Math.round(Number(variants2[0]?.priceShopee ?? payload?.price ?? 0))
   );
-  const baseStock = Math.max(0, Math.round(Number(variants[0]?.stock ?? 0)));
+  const baseStock = Math.max(0, Math.round(Number(variants2[0]?.stock ?? 0)));
   if (basePrice <= 0) throw new Error("Gi\xE1 Shopee ph\u1EA3i > 0");
   const itemName = String(
     payload?.shopTitles && payload.shopTitles[shopId] || payload?.title || "S\u1EA3n ph\u1EA9m"
@@ -121359,7 +121359,7 @@ async function publishOneItemToShopee(shopId, payload) {
       option_list: a.values.map((v) => String(v).trim()).filter(Boolean)
     }));
     const tierName = tierVariations[0]?.name || "Ph\xE2n lo\u1EA1i";
-    const modelListWithWeight = variants.map((v, idx) => {
+    const modelListWithWeight = variants2.map((v, idx) => {
       const price = Math.max(
         0,
         Math.round(Number(v.priceShopee ?? v.pricePromo ?? v.original_price ?? 0))
@@ -121425,7 +121425,21 @@ async function publishOneItemToShopee(shopId, payload) {
     }
   }
   if (!itemId) throw new Error("Kh\xF4ng c\xF3 item_id Shopee sau add/update");
-  return itemId;
+  let modelIds = [];
+  if (hasVariants && !existingItemId) {
+    try {
+      await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
+      const modelListResp = await shopeeGetModelListWithRetry(shopId, accessToken, itemId, 2);
+      if (modelListResp && !modelListResp.error) {
+        const rawModels = modelListResp.response?.model || modelListResp.response?.model_list || [];
+        modelIds = rawModels.map((m2) => m2?.model_id != null ? String(m2.model_id) : null).filter(Boolean);
+      }
+    } catch (modelErr) {
+      console.warn(`[Shopee Publish] get_model_list th\u1EA5t b\u1EA1i item_id=${itemId}:`, modelErr);
+      modelIds = variants2.filter((v) => v?.sku).map((v) => v.sku);
+    }
+  }
+  return { itemId, modelIds };
 }
 function parseShopeeApiResult(result, product, action) {
   const businessError = String(result?.error ?? "").trim();
@@ -130974,7 +130988,7 @@ async function startServer() {
             const medicineId = resolveShopeeMedicineId(payload) || (product?.medicine_id != null ? String(product.medicine_id) : null);
             const perShopVars = payload?.perShopVariants?.[shopKey] || payload?.perShopVariants?.[clientShopId] || null;
             const perShopLogsRaw = payload?.perShopLogistics?.[shopKey] || payload?.perShopLogistics?.[clientShopId] || null;
-            const itemId = await publishOneItemToShopee(shopKey, {
+            const publishResult = await publishOneItemToShopee(shopKey, {
               ...payload,
               medicine_id: medicineId || payload?.medicine_id,
               shopeeItemId: existingListing?.platform_product_id || product?.shopeeItemId,
@@ -130985,9 +130999,106 @@ async function startServer() {
               enabledLogistics: Array.isArray(perShopLogsRaw) ? perShopLogsRaw.map(Number).filter((n) => n > 0) : payload.enabledLogistics || [],
               images: Array.isArray(images) && images.length ? images : [product?.imageUrl || product?.avatarUrl].filter(Boolean)
             });
+            const itemId = publishResult?.itemId;
+            const modelIds = Array.isArray(publishResult?.modelIds) ? publishResult.modelIds : [];
             if (!itemId) throw new Error("publishOneItemToShopee kh\xF4ng tr\u1EA3 item_id");
             status = "success";
             platformProductId = String(itemId);
+            try {
+              const allProducts = await loadProducts();
+              const productData = {
+                title: title || product?.title || payload.shopTitles?.[shopKey] || "",
+                sku: product?.sku || `SKU-${itemId}`,
+                imageUrl: images[0] || product?.imageUrl || product?.avatarUrl,
+                description: payload.descriptionHtml || payload.description || title || "",
+                price: Math.max(0, Math.round(Number(variants[0]?.priceShopee ?? payload.price ?? 0))),
+                stock: Math.max(0, Math.round(Number(variants[0]?.stock ?? 0))),
+                weight: Number(payload.packageWeight || 0),
+                shopeeItemId: String(itemId),
+                shopId: String(shopKey),
+                channels: ["shopee"],
+                children: modelIds.length > 0 ? modelIds.map((mid, idx) => {
+                  const v = (Array.isArray(perShopVars) && perShopVars.length ? perShopVars : payload.variants)[idx];
+                  return {
+                    id: `child-${itemId}-${mid || idx}`,
+                    sku: mid && mid.startsWith("SKU") ? mid : v?.sku || `SKU-${itemId}-${mid || idx}`,
+                    price: Math.max(0, Math.round(Number(v?.priceShopee ?? v?.pricePromo ?? 0))),
+                    stock: Math.max(0, Math.round(Number(v?.stock ?? 0))),
+                    shopeeModelId: mid && !mid.startsWith("SKU") ? mid : void 0,
+                    imageUrl: images[0]
+                  };
+                }) : void 0
+              };
+              const existingIdx2 = allProducts.findIndex(
+                (p) => p.shopeeItemId === String(itemId) || p.id === productId
+              );
+              if (existingIdx2 >= 0) {
+                allProducts[existingIdx2] = { ...allProducts[existingIdx2], ...productData };
+              } else {
+                allProducts.push({
+                  id: productId !== "unknown" ? productId : `p-${itemId}`,
+                  ...productData
+                });
+              }
+              await saveProducts(allProducts);
+              console.log(`[Publish Post-Process] Upsert product item_id=${itemId} \u2192 Kho OK`);
+            } catch (upsertErr) {
+              console.warn(`[Publish Post-Process] Upsert product th\u1EA5t b\u1EA1i item_id=${itemId}:`, upsertErr);
+            }
+            try {
+              const channelRows = [];
+              if (modelIds.length > 0) {
+                const allProducts = await loadProducts();
+                const parentSku = product?.sku || `SKU-${itemId}`;
+                modelIds.forEach((mid, idx) => {
+                  const v = (Array.isArray(perShopVars) && perShopVars.length ? perShopVars : payload.variants)[idx];
+                  channelRows.push({
+                    id: `cl-shopee-${itemId}-${mid || idx}`,
+                    title: title || product?.title || "",
+                    sku: mid && !mid.startsWith("SKU") ? parentSku : v?.sku || parentSku,
+                    channelId: String(itemId),
+                    platform: "shopee",
+                    shopName,
+                    shopId: String(shopKey),
+                    modelId: mid && !mid.startsWith("SKU") ? mid : void 0,
+                    itemId: String(itemId),
+                    status: "success",
+                    linkedProductId: productId !== "unknown" ? productId : void 0,
+                    price: Math.max(0, Math.round(Number(v?.priceShopee ?? v?.pricePromo ?? 0))),
+                    stock: Math.max(0, Math.round(Number(v?.stock ?? 0))),
+                    weight: Number(v?.weight || payload.packageWeight || 0)
+                  });
+                });
+              } else {
+                channelRows.push({
+                  id: `cl-shopee-${itemId}`,
+                  title: title || product?.title || "",
+                  sku: product?.sku || `SKU-${itemId}`,
+                  channelId: String(itemId),
+                  platform: "shopee",
+                  shopName,
+                  shopId: String(shopKey),
+                  status: "success",
+                  linkedProductId: productId !== "unknown" ? productId : void 0,
+                  price: Math.max(0, Math.round(Number(variants[0]?.priceShopee ?? payload.price ?? 0))),
+                  stock: Math.max(0, Math.round(Number(variants[0]?.stock ?? 0))),
+                  weight: Number(payload.packageWeight || 0)
+                });
+              }
+              const existingChannel = await readChannelListingsDb();
+              const merged = [...existingChannel];
+              channelRows.forEach((row2) => {
+                const idx = merged.findIndex(
+                  (r2) => r2.itemId === row2.itemId && (r2.modelId === row2.modelId || !r2.modelId && !row2.modelId)
+                );
+                if (idx >= 0) merged[idx] = { ...merged[idx], ...row2 };
+                else merged.push(row2);
+              });
+              await writeChannelListingsDbAsync(merged);
+              console.log(`[Publish Post-Process] Upsert channel_listings item_id=${itemId} (${channelRows.length} rows) \u2192 OK`);
+            } catch (channelErr) {
+              console.warn(`[Publish Post-Process] Upsert channel_listings th\u1EA5t b\u1EA1i item_id=${itemId}:`, channelErr);
+            }
             if (medicineId && productId && productId !== "unknown") {
               try {
                 const products = await loadProducts();

@@ -5918,7 +5918,29 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<str
   }
 
   if (!itemId) throw new Error("Không có item_id Shopee sau add/update");
-  return itemId;
+
+  // ─── POST-PROCESSING: Lấy real model_ids từ Shopee ───────────────────────
+  let modelIds: string[] = [];
+  if (hasVariants && !existingItemId) {
+    try {
+      await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
+      const modelListResp = await shopeeGetModelListWithRetry(shopId, accessToken, itemId, 2);
+      if (modelListResp && !modelListResp.error) {
+        const rawModels = modelListResp.response?.model || modelListResp.response?.model_list || [];
+        modelIds = rawModels
+          .map((m: any) => m?.model_id != null ? String(m.model_id) : null)
+          .filter(Boolean) as string[];
+      }
+    } catch (modelErr) {
+      console.warn(`[Shopee Publish] get_model_list thất bại item_id=${itemId}:`, modelErr);
+      // Fallback: dùng SKU mapping từ payload gốc
+      modelIds = variants
+        .filter((v: any) => v?.sku)
+        .map((v: any) => v.sku);
+    }
+  }
+
+  return { itemId, modelIds };
 }
 
 type ChannelSyncLine = {
@@ -19465,7 +19487,7 @@ async function startServer() {
               payload?.perShopLogistics?.[clientShopId] ||
               null;
             // Truyền perShopLogistics để publishOneItemToShopee tự resolve & intersect
-            const itemId = await publishOneItemToShopee(shopKey, {
+            const publishResult = await publishOneItemToShopee(shopKey, {
               ...payload,
               medicine_id: medicineId || payload?.medicine_id,
               shopeeItemId: existingListing?.platform_product_id || product?.shopeeItemId,
@@ -19480,9 +19502,115 @@ async function startServer() {
                 ? images
                 : [product?.imageUrl || product?.avatarUrl].filter(Boolean),
             });
+            const itemId = publishResult?.itemId;
+            const modelIds: string[] = Array.isArray(publishResult?.modelIds) ? publishResult.modelIds : [];
             if (!itemId) throw new Error("publishOneItemToShopee không trả item_id");
             status = "success";
             platformProductId = String(itemId);
+
+            // ─── BƯỚC 1: Upsert Kho nội bộ (products) ───────────────────────────
+            try {
+              const allProducts = await loadProducts();
+              const productData = {
+                title: title || product?.title || payload.shopTitles?.[shopKey] || "",
+                sku: product?.sku || `SKU-${itemId}`,
+                imageUrl: images[0] || product?.imageUrl || product?.avatarUrl,
+                description: payload.descriptionHtml || payload.description || title || "",
+                price: Math.max(0, Math.round(Number(variants[0]?.priceShopee ?? payload.price ?? 0))),
+                stock: Math.max(0, Math.round(Number(variants[0]?.stock ?? 0))),
+                weight: Number(payload.packageWeight || 0),
+                shopeeItemId: String(itemId),
+                shopId: String(shopKey),
+                channels: ["shopee"],
+                children: modelIds.length > 0
+                  ? modelIds.map((mid: string, idx: number) => {
+                      const v = (Array.isArray(perShopVars) && perShopVars.length ? perShopVars : payload.variants)[idx];
+                      return {
+                        id: `child-${itemId}-${mid || idx}`,
+                        sku: mid && mid.startsWith("SKU") ? mid : (v?.sku || `SKU-${itemId}-${mid || idx}`),
+                        price: Math.max(0, Math.round(Number(v?.priceShopee ?? v?.pricePromo ?? 0))),
+                        stock: Math.max(0, Math.round(Number(v?.stock ?? 0))),
+                        shopeeModelId: mid && !mid.startsWith("SKU") ? mid : undefined,
+                        imageUrl: images[0],
+                      };
+                    })
+                  : undefined,
+              };
+
+              const existingIdx = allProducts.findIndex((p: any) =>
+                p.shopeeItemId === String(itemId) || p.id === productId
+              );
+              if (existingIdx >= 0) {
+                allProducts[existingIdx] = { ...allProducts[existingIdx], ...productData };
+              } else {
+                allProducts.push({
+                  id: productId !== "unknown" ? productId : `p-${itemId}`,
+                  ...productData,
+                });
+              }
+              await saveProducts(allProducts);
+              console.log(`[Publish Post-Process] Upsert product item_id=${itemId} → Kho OK`);
+            } catch (upsertErr) {
+              console.warn(`[Publish Post-Process] Upsert product thất bại item_id=${itemId}:`, upsertErr);
+            }
+
+            // ─── BƯỚC 2: Upsert Channel Listings (liên kết + listing) ─────────
+            try {
+              const channelRows = [];
+              if (modelIds.length > 0) {
+                const allProducts = await loadProducts();
+                const parentSku = product?.sku || `SKU-${itemId}`;
+                modelIds.forEach((mid: string, idx: number) => {
+                  const v = (Array.isArray(perShopVars) && perShopVars.length ? perShopVars : payload.variants)[idx];
+                  channelRows.push({
+                    id: `cl-shopee-${itemId}-${mid || idx}`,
+                    title: title || product?.title || "",
+                    sku: mid && !mid.startsWith("SKU") ? parentSku : (v?.sku || parentSku),
+                    channelId: String(itemId),
+                    platform: "shopee",
+                    shopName: shopName,
+                    shopId: String(shopKey),
+                    modelId: mid && !mid.startsWith("SKU") ? mid : undefined,
+                    itemId: String(itemId),
+                    status: "success",
+                    linkedProductId: productId !== "unknown" ? productId : undefined,
+                    price: Math.max(0, Math.round(Number(v?.priceShopee ?? v?.pricePromo ?? 0))),
+                    stock: Math.max(0, Math.round(Number(v?.stock ?? 0))),
+                    weight: Number(v?.weight || payload.packageWeight || 0),
+                  });
+                });
+              } else {
+                channelRows.push({
+                  id: `cl-shopee-${itemId}`,
+                  title: title || product?.title || "",
+                  sku: product?.sku || `SKU-${itemId}`,
+                  channelId: String(itemId),
+                  platform: "shopee",
+                  shopName: shopName,
+                  shopId: String(shopKey),
+                  status: "success",
+                  linkedProductId: productId !== "unknown" ? productId : undefined,
+                  price: Math.max(0, Math.round(Number(variants[0]?.priceShopee ?? payload.price ?? 0))),
+                  stock: Math.max(0, Math.round(Number(variants[0]?.stock ?? 0))),
+                  weight: Number(payload.packageWeight || 0),
+                });
+              }
+
+              const existingChannel = await readChannelListingsDb();
+              const merged = [...existingChannel];
+              channelRows.forEach((row) => {
+                const idx = merged.findIndex((r) =>
+                  r.itemId === row.itemId &&
+                  (r.modelId === row.modelId || (!r.modelId && !row.modelId))
+                );
+                if (idx >= 0) merged[idx] = { ...merged[idx], ...row };
+                else merged.push(row);
+              });
+              await writeChannelListingsDbAsync(merged);
+              console.log(`[Publish Post-Process] Upsert channel_listings item_id=${itemId} (${channelRows.length} rows) → OK`);
+            } catch (channelErr) {
+              console.warn(`[Publish Post-Process] Upsert channel_listings thất bại item_id=${itemId}:`, channelErr);
+            }
 
             // Lưu medicine_id vào Product (Mongo) nếu có
             if (medicineId && productId && productId !== "unknown") {

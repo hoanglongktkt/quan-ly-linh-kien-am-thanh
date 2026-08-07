@@ -120,6 +120,7 @@ interface MultiChannelListingFormProps {
   products: Product[];
   shops: ShopItem[];
   onAddLog: (log: SyncLog) => void;
+  onPublishSuccess?: () => void;
 }
 
 const QUICK_TAGS_STORAGE_KEY = 'customProductTags';
@@ -210,7 +211,7 @@ function classifyGenericKey(ch: LogisticChannel): string {
   return 'other';
 }
 
-export default function MultiChannelListingForm({ products, shops, onAddLog }: MultiChannelListingFormProps) {
+export default function MultiChannelListingForm({ products, shops, onAddLog, onPublishSuccess }: MultiChannelListingFormProps) {
   const editorRef = useRef<HTMLDivElement>(null);
 
   const availableShops = useMemo((): ShopItem[] => {
@@ -993,6 +994,10 @@ export default function MultiChannelListingForm({ products, shops, onAddLog }: M
       }
 
       showToast(`Đăng bán thành công — ${okCount}/${selectedShops.length} gian hàng!`);
+      // Chuyển tab + refresh "Danh sách đăng bán" sau khi thành công
+      if (typeof onPublishSuccess === 'function') {
+        onPublishSuccess();
+      }
     } catch (err: any) {
       showToast(`Lỗi đăng bán: ${err.message}`);
       alert(`⚠ Đăng bán thất bại\n\n${err?.message || 'Lỗi không xác định'}`);

@@ -20,6 +20,12 @@ interface PublishManagerProps {
 export default function PublishManager({ products, onUpdateProduct, onAddLog, shops }: PublishManagerProps) {
   const [activeTab, setActiveTab] = useState<'publish_new' | 'listing_list' | 'edit_assets'>('publish_new');
   const [editProductId, setEditProductId] = useState<string | null>(null);
+  const [listingRefreshKey, setListingRefreshKey] = useState(0);
+
+  const handlePublishSuccess = () => {
+    setListingRefreshKey((k) => k + 1);
+    setActiveTab('listing_list');
+  };
 
   return (
     <div className="space-y-6">
@@ -73,11 +79,13 @@ export default function PublishManager({ products, onUpdateProduct, onAddLog, sh
           products={products}
           shops={shops}
           onAddLog={onAddLog}
+          onPublishSuccess={handlePublishSuccess}
         />
       )}
 
       {activeTab === 'listing_list' && (
         <PublishListingTable
+          key={listingRefreshKey}
           products={products}
           onEditListing={(productId) => {
             setEditProductId(productId);
