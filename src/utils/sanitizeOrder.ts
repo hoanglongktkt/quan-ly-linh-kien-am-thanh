@@ -307,6 +307,63 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
         ? String(raw.handed_over_source)
         : undefined,
     notes: raw.notes ? String(raw.notes) : undefined,
+    // ── WooCommerce / Web customer info (BẮT BUỘC khôi phục) ──
+    customerName: (() => {
+      const v = String(
+        raw.customerName || (raw as any).customer_name || '',
+      ).trim();
+      return v || undefined;
+    })(),
+    customerPhone: (() => {
+      const v = String(
+        raw.customerPhone || (raw as any).customer_phone || '',
+      ).trim();
+      return v || undefined;
+    })(),
+    customerEmail: (() => {
+      const v = String(
+        raw.customerEmail || (raw as any).customer_email || '',
+      ).trim();
+      return v || undefined;
+    })(),
+    customerAddress: (() => {
+      const v = String(
+        raw.customerAddress || (raw as any).customer_address || '',
+      ).trim();
+      return v || undefined;
+    })(),
+    wooOrderId: raw.wooOrderId ? String(raw.wooOrderId) : undefined,
+    wooOrderNumber: raw.wooOrderNumber ? String(raw.wooOrderNumber) : undefined,
+    wooStatus: raw.wooStatus ? String(raw.wooStatus) : undefined,
+    billingAddress: (() => {
+      if (typeof raw.billingAddress === 'string' && raw.billingAddress.trim()) {
+        return raw.billingAddress.trim();
+      }
+      return undefined;
+    })(),
+    shippingAddress: (() => {
+      if (typeof raw.shippingAddress === 'string' && raw.shippingAddress.trim()) {
+        return raw.shippingAddress.trim();
+      }
+      if (raw.shippingAddress && typeof raw.shippingAddress === 'object') {
+        return raw.shippingAddress as Order['shippingAddress'];
+      }
+      return undefined;
+    })(),
+    billing: (() => {
+      const b = raw.billing;
+      if (b && typeof b === 'object' && !Array.isArray(b)) {
+        return b as Order['billing'];
+      }
+      return undefined;
+    })(),
+    shipping: (() => {
+      const s = raw.shipping;
+      if (s && typeof s === 'object' && !Array.isArray(s)) {
+        return s as Order['shipping'];
+      }
+      return undefined;
+    })(),
   };
 }
 

@@ -13327,9 +13327,14 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
     }
   }
 
-  delete merged.customerName;
-  delete merged.customerPhone;
-  delete merged.customerAddress;
+  // Shopee ẩn PII — chỉ xóa customer fields khi channel = shopee.
+  // WooCommerce / web orders BẮT BUỘC giữ customerName/Phone/Address để giao hàng ngoài.
+  const mergeChannel = String(merged.channel || merged.source || existing?.channel || incoming?.channel || "").toLowerCase();
+  if (mergeChannel === "shopee" || mergeChannel === "") {
+    delete merged.customerName;
+    delete merged.customerPhone;
+    delete merged.customerAddress;
+  }
   enforceShopeeTerminalLocalStatus(merged);
   return merged;
 }

@@ -124,6 +124,7 @@ export function mapWooOrderToInternal(wooOrder, shopConfig) {
   console.log(`[WooCommerce Map] wooStatus="${wooStatus}" → internalStatus="${internalStatus}"`);
 
   // ── Thông tin khách hàng (BẮT BUỘC) ────────────────────────────────────────
+  // Tên: gộp first_name + last_name (billing ưu tiên, shipping fallback)
   const customerName =
     [billing.first_name, billing.last_name].filter(Boolean).join(" ").trim() ||
     [shipping.first_name, shipping.last_name].filter(Boolean).join(" ").trim() ||

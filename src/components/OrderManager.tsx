@@ -348,14 +348,22 @@ function OrderShopeeFinanceSummary({
 
 /** Resolve customer info from WooCommerce billing/shipping or flat fields.
  *  Hỗ trợ cả camelCase (customerName) và snake_case (customer_name) — key mismatch fix.
+ *  Conditional rendering:
+ *   - woocommerce / manual: hiển thị đầy đủ thông tin
+ *   - shopee / tiktok: ẩn PII → hiển thị "***" hoặc ẩn dòng
  */
 function resolveWooCustomerInfo(order: Order): {
   name: string;
   phone: string;
   email: string;
   address: string;
+  isWooCommerce: boolean;
+  isSecure: boolean;
 } {
   const o = order as any;
+  const isWooCommerce = order.channel === 'woocommerce' || order.channel === 'manual';
+  const isSecure = order.channel === 'shopee' || order.channel === 'tiktok';
+
   // billing/shipping: root → data.billing → {}
   const billing = (order.billing && typeof order.billing === 'object' ? order.billing : null)
     || (o.data?.billing && typeof o.data.billing === 'object' ? o.data.billing : null)
@@ -389,7 +397,7 @@ function resolveWooCustomerInfo(order: Order): {
     || rawCustomerName === 'Khách WooCommerce'
     || rawCustomerName === 'Khách web'
     || rawCustomerName === 'Khách web (Không có thông tin)';
-  const name = (!isPlaceholder ? rawCustomerName : '') || nameFromParts || 'Khách web (Không có thông tin)';
+  const name = (!isPlaceholder ? rawCustomerName : '') || nameFromParts || '';
 
   // SĐT: customerPhone / customer_phone / billing.phone
   const phone = String(
@@ -419,7 +427,13 @@ function resolveWooCustomerInfo(order: Order): {
     || shippingStr || order.billingAddress || addrFromParts || ''
   ).trim();
 
-  return { name, phone, email, address };
+  // Secure: cho Shopee/TikTok → ẩn PII, hiển thị ***
+  const displayName = isSecure ? (name ? '***' : '') : (name || 'Khách web (Không có thông tin)');
+  const displayPhone = isSecure ? '***' : phone;
+  const displayEmail = isSecure ? '' : email;
+  const displayAddress = isSecure ? '***' : address;
+
+  return { name: displayName, phone: displayPhone, email: displayEmail, address: displayAddress, isWooCommerce, isSecure };
 }
 
 function OrderDetailAccordionPanel({
@@ -445,25 +459,34 @@ function OrderDetailAccordionPanel({
 
       {wooCustomer && (
         <div className="bg-white p-4 rounded-2xl border border-indigo-100 space-y-1.5 text-xs">
-          <h4 className="text-[10px] font-bold text-indigo-700 uppercase tracking-wider mb-1">Thông tin khách hàng (Web)</h4>
+          <h4 className="text-[10px] font-bold text-indigo-700 uppercase tracking-wider mb-1">
+            {wooCustomer.isSecure ? 'Thông tin khách hàng (Sàn ẩn PII)' : 'Thông tin khách hàng (Web)'}
+          </h4>
           <div className="flex justify-between gap-2">
             <span className="text-gray-400 shrink-0">Tên:</span>
-            <span className="font-bold text-gray-900 text-right">{wooCustomer.name || 'Khách web (Không có thông tin)'}</span>
+            <span className="font-bold text-gray-900 text-right">{wooCustomer.name || '—'}</span>
           </div>
-          <div className="flex justify-between gap-2">
-            <span className="text-gray-400 shrink-0">SĐT:</span>
-            <span className="font-mono font-semibold text-gray-800 text-right">{wooCustomer.phone || '—'}</span>
-          </div>
+          {!wooCustomer.isSecure && wooCustomer.phone ? (
+            <div className="flex justify-between gap-2">
+              <span className="text-gray-400 shrink-0">SĐT:</span>
+              <span className="font-mono font-semibold text-gray-800 text-right">{wooCustomer.phone}</span>
+            </div>
+          ) : null}
           {wooCustomer.email ? (
             <div className="flex justify-between gap-2">
               <span className="text-gray-400 shrink-0">Email:</span>
               <span className="font-medium text-gray-700 text-right break-all">{wooCustomer.email}</span>
             </div>
           ) : null}
-          <div className="flex justify-between gap-2">
-            <span className="text-gray-400 shrink-0">Địa chỉ:</span>
-            <span className="font-medium text-gray-800 text-right leading-snug">{wooCustomer.address || '—'}</span>
-          </div>
+          {!wooCustomer.isSecure && wooCustomer.address ? (
+            <div className="flex justify-between gap-2">
+              <span className="text-gray-400 shrink-0">Địa chỉ:</span>
+              <span className="font-medium text-gray-800 text-right leading-snug">{wooCustomer.address}</span>
+            </div>
+          ) : null}
+          {wooCustomer.isSecure && (
+            <p className="text-[10px] text-amber-600 italic mt-1">Thông tin khách hàng do sàn ẩn</p>
+          )}
         </div>
       )}
 

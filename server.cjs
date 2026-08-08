@@ -75927,6 +75927,16 @@ var OrderSchema = new import_mongoose3.Schema(
     /** Tương đương Shopee update_time — index giảm dần phục vụ quét đơn mới. */
     last_shopee_update_at: { type: Date, default: null },
     sync_state: { type: String, default: "verified", index: true },
+    /** Nguồn đơn: woocommerce / shopee / tiktok */
+    channel: { type: String, default: null, index: true },
+    source: { type: String, default: null },
+    /** Thông tin khách — WooCommerce (giao hàng ngoài). Shopee ẩn → null. */
+    customerName: { type: String, default: null },
+    customerPhone: { type: String, default: null },
+    customerEmail: { type: String, default: null },
+    customerAddress: { type: String, default: null },
+    billing: { type: import_mongoose3.Schema.Types.Mixed, default: null },
+    shipping: { type: import_mongoose3.Schema.Types.Mixed, default: null },
     // data.items[].productId / modelId / item_id… = String (Shopee uint64)
     data: { type: import_mongoose3.Schema.Types.Mixed, required: true }
   },
@@ -77156,26 +77166,18 @@ async function bulkUpsertOrdersToStore(orders) {
       const cEmail = String(
         order.customerEmail || order.customer_email || ""
       ).trim();
-      if (cName) {
-        $set.customerName = cName;
-        $set["data.customerName"] = cName;
-        $set["data.customer_name"] = cName;
-      }
-      if (cPhone) {
-        $set.customerPhone = cPhone;
-        $set["data.customerPhone"] = cPhone;
-        $set["data.customer_phone"] = cPhone;
-      }
-      if (cAddr) {
-        $set.customerAddress = cAddr;
-        $set["data.customerAddress"] = cAddr;
-        $set["data.customer_address"] = cAddr;
-      }
-      if (cEmail) {
-        $set.customerEmail = cEmail;
-        $set["data.customerEmail"] = cEmail;
-        $set["data.customer_email"] = cEmail;
-      }
+      $set.customerName = cName;
+      $set["data.customerName"] = cName;
+      $set["data.customer_name"] = cName;
+      $set.customerPhone = cPhone;
+      $set["data.customerPhone"] = cPhone;
+      $set["data.customer_phone"] = cPhone;
+      $set.customerAddress = cAddr;
+      $set["data.customerAddress"] = cAddr;
+      $set["data.customer_address"] = cAddr;
+      $set.customerEmail = cEmail;
+      $set["data.customerEmail"] = cEmail;
+      $set["data.customer_email"] = cEmail;
       if (order.billing && typeof order.billing === "object") {
         $set.billing = order.billing;
         $set["data.billing"] = order.billing;
@@ -127348,9 +127350,12 @@ function mergeShopeeOrderOnSync(existing, incoming) {
       merged.status = "return_received";
     }
   }
-  delete merged.customerName;
-  delete merged.customerPhone;
-  delete merged.customerAddress;
+  const mergeChannel = String(merged.channel || merged.source || existing?.channel || incoming?.channel || "").toLowerCase();
+  if (mergeChannel === "shopee" || mergeChannel === "") {
+    delete merged.customerName;
+    delete merged.customerPhone;
+    delete merged.customerAddress;
+  }
   enforceShopeeTerminalLocalStatus(merged);
   return merged;
 }

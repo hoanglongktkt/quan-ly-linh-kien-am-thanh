@@ -114,6 +114,16 @@ type OrderDoc = {
   last_synced_at?: Date | null;
   last_shopee_update_at?: Date | null;
   sync_state?: string | null;
+  /** Nguồn đơn: woocommerce / shopee / tiktok */
+  channel?: string | null;
+  source?: string | null;
+  /** Thông tin khách — WooCommerce (giao hàng ngoài) */
+  customerName?: string | null;
+  customerPhone?: string | null;
+  customerEmail?: string | null;
+  customerAddress?: string | null;
+  billing?: any;
+  shipping?: any;
   data: any;
 };
 
@@ -227,6 +237,16 @@ const OrderSchema = new Schema<OrderDoc>(
     /** Tương đương Shopee update_time — index giảm dần phục vụ quét đơn mới. */
     last_shopee_update_at: { type: Date, default: null },
     sync_state: { type: String, default: "verified", index: true },
+    /** Nguồn đơn: woocommerce / shopee / tiktok */
+    channel: { type: String, default: null, index: true },
+    source: { type: String, default: null },
+    /** Thông tin khách — WooCommerce (giao hàng ngoài). Shopee ẩn → null. */
+    customerName: { type: String, default: null },
+    customerPhone: { type: String, default: null },
+    customerEmail: { type: String, default: null },
+    customerAddress: { type: String, default: null },
+    billing: { type: Schema.Types.Mixed, default: null },
+    shipping: { type: Schema.Types.Mixed, default: null },
     // data.items[].productId / modelId / item_id… = String (Shopee uint64)
     data: { type: Schema.Types.Mixed, required: true },
   },
@@ -1852,28 +1872,22 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
         order.customerEmail || order.customer_email || "",
       ).trim();
 
-      // Luôn $set (kể cả placeholder) — re-sync ghi đè record rỗng cũ
-      if (cName) {
-        $set.customerName = cName;
-        $set["data.customerName"] = cName;
-        // Alias snake_case cho FE/legacy
-        $set["data.customer_name"] = cName;
-      }
-      if (cPhone) {
-        $set.customerPhone = cPhone;
-        $set["data.customerPhone"] = cPhone;
-        $set["data.customer_phone"] = cPhone;
-      }
-      if (cAddr) {
-        $set.customerAddress = cAddr;
-        $set["data.customerAddress"] = cAddr;
-        $set["data.customer_address"] = cAddr;
-      }
-      if (cEmail) {
-        $set.customerEmail = cEmail;
-        $set["data.customerEmail"] = cEmail;
-        $set["data.customer_email"] = cEmail;
-      }
+      // Luôn $set — re-sync ghi đè record rỗng cũ (kể cả placeholder "Khách WooCommerce")
+      $set.customerName = cName;
+      $set["data.customerName"] = cName;
+      $set["data.customer_name"] = cName;
+
+      $set.customerPhone = cPhone;
+      $set["data.customerPhone"] = cPhone;
+      $set["data.customer_phone"] = cPhone;
+
+      $set.customerAddress = cAddr;
+      $set["data.customerAddress"] = cAddr;
+      $set["data.customer_address"] = cAddr;
+
+      $set.customerEmail = cEmail;
+      $set["data.customerEmail"] = cEmail;
+      $set["data.customer_email"] = cEmail;
 
       // billing / shipping objects — full replace (đè rỗng)
       if (order.billing && typeof order.billing === "object") {
