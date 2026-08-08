@@ -1747,44 +1747,6 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
 
     if (order.shopName != null) $set["data.shopName"] = String(order.shopName);
 
-    // ── WooCommerce: bắt buộc ghi customer info TƯỜNG MINH vào ROOT ───────────
-    // Generic loop bên dưới chỉ ghi vào data.* — UI resolveWooCustomerInfo đọc
-    // order.customerName / order.billing (root). Ghi root + data.* tường minh.
-    if (channelStr === "woocommerce") {
-      const cName = String(order.customerName || "").trim();
-      if (cName) {
-        $set.customerName = cName;
-        $set["data.customerName"] = cName;
-        console.log(`[MongoDB] woo customerName set: "${cName}"`);
-      }
-      const cPhone = String(order.customerPhone || "").trim();
-      if (cPhone) {
-        $set.customerPhone = cPhone;
-        $set["data.customerPhone"] = cPhone;
-      }
-      const cAddr = String(order.customerAddress || "").trim();
-      if (cAddr) {
-        $set.customerAddress = cAddr;
-        $set["data.customerAddress"] = cAddr;
-      }
-      const cEmail = String(order.customerEmail || "").trim();
-      if (cEmail) {
-        $set.customerEmail = cEmail;
-        $set["data.customerEmail"] = cEmail;
-      }
-      // Ghi full object (không nested path) — tránh conflict với generic loop data.billing
-      if (order.billing && typeof order.billing === "object") {
-        $set.billing = order.billing;
-        $set["data.billing"] = order.billing;
-      }
-      if (order.shipping && typeof order.shipping === "object") {
-        $set.shipping = order.shipping;
-        $set["data.shipping"] = order.shipping;
-      }
-      $set.source = "woocommerce";
-      $set["data.source"] = "woocommerce";
-    }
-
     // BẢO TOÀN tracking_no + shipping_carrier thật từ Shopee
     // Chỉ GHI khi có mã thật — tuyệt đối không $set rỗng/null (tránh mất mã khi hủy/hoàn).
     if (usableTn) {
@@ -1870,6 +1832,73 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
         if (!s || /^0FG/i.test(s)) continue;
       }
       $set[`data.${key}`] = value;
+    }
+
+    // ── WooCommerce: GHI ĐÈ TƯỜNG MINH customer info (UPSERT overwrite) ───────
+    // Chạy SAU generic loop để đè lên data.* — đảm bảo re-sync vá record rỗng.
+    // FE resolveWooCustomerInfo đọc: order.customerName / order.billing / order.shipping
+    // (hydrateOrderFromMongoDoc: ...data + root override)
+    if (channelStr === "woocommerce") {
+      const cName = String(
+        order.customerName || order.customer_name || "",
+      ).trim();
+      const cPhone = String(
+        order.customerPhone || order.customer_phone || "",
+      ).trim();
+      const cAddr = String(
+        order.customerAddress || order.customer_address || "",
+      ).trim();
+      const cEmail = String(
+        order.customerEmail || order.customer_email || "",
+      ).trim();
+
+      // Luôn $set (kể cả placeholder) — re-sync ghi đè record rỗng cũ
+      if (cName) {
+        $set.customerName = cName;
+        $set["data.customerName"] = cName;
+        // Alias snake_case cho FE/legacy
+        $set["data.customer_name"] = cName;
+      }
+      if (cPhone) {
+        $set.customerPhone = cPhone;
+        $set["data.customerPhone"] = cPhone;
+        $set["data.customer_phone"] = cPhone;
+      }
+      if (cAddr) {
+        $set.customerAddress = cAddr;
+        $set["data.customerAddress"] = cAddr;
+        $set["data.customer_address"] = cAddr;
+      }
+      if (cEmail) {
+        $set.customerEmail = cEmail;
+        $set["data.customerEmail"] = cEmail;
+        $set["data.customer_email"] = cEmail;
+      }
+
+      // billing / shipping objects — full replace (đè rỗng)
+      if (order.billing && typeof order.billing === "object") {
+        $set.billing = order.billing;
+        $set["data.billing"] = order.billing;
+      }
+      if (order.shipping && typeof order.shipping === "object") {
+        $set.shipping = order.shipping;
+        $set["data.shipping"] = order.shipping;
+      }
+      if (order.billingAddress != null) {
+        $set["data.billingAddress"] = order.billingAddress;
+      }
+      if (order.shippingAddress != null) {
+        $set["data.shippingAddress"] = order.shippingAddress;
+      }
+
+      $set.source = "woocommerce";
+      $set["data.source"] = "woocommerce";
+      $set.channel = "woocommerce";
+      $set["data.channel"] = "woocommerce";
+
+      console.log(
+        `[MongoDB] WOO UPSERT customer — orderSn=${orderSn} name="${cName}" phone="${cPhone}" addr="${cAddr.slice(0, 40)}"`,
+      );
     }
 
     // ——— $setOnInsert: cờ nội bộ CHỈ khi INSERT (không đè khi sync lại) ———
@@ -3383,6 +3412,44 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
             ? "NONE"
             : localRaw
           : "";
+  // Customer fields — ưu tiên root (woo fix) → data.* → snake_case alias
+  const customerNameHydrated = String(
+    d?.customerName ||
+      data.customerName ||
+      data.customer_name ||
+      "",
+  ).trim();
+  const customerPhoneHydrated = String(
+    d?.customerPhone ||
+      data.customerPhone ||
+      data.customer_phone ||
+      "",
+  ).trim();
+  const customerAddressHydrated = String(
+    d?.customerAddress ||
+      data.customerAddress ||
+      data.customer_address ||
+      "",
+  ).trim();
+  const customerEmailHydrated = String(
+    d?.customerEmail ||
+      data.customerEmail ||
+      data.customer_email ||
+      "",
+  ).trim();
+  const billingHydrated =
+    (d?.billing && typeof d.billing === "object" ? d.billing : null) ||
+    (data.billing && typeof data.billing === "object" ? data.billing : null) ||
+    undefined;
+  const shippingHydrated =
+    (d?.shipping && typeof d.shipping === "object" && !Array.isArray(d.shipping)
+      ? d.shipping
+      : null) ||
+    (data.shipping && typeof data.shipping === "object" && !Array.isArray(data.shipping)
+      ? data.shipping
+      : null) ||
+    undefined;
+
   return {
     ...data,
     id: data.id || d._id || (sn ? `shopee-${sn}` : undefined),
@@ -3390,6 +3457,16 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
     status: d?.status != null ? d.status : data.status,
     shopee_order_status: rawStatus || data.shopee_order_status || undefined,
     shopId: d?.shopId != null ? d.shopId : data.shopId,
+    // Customer — luôn surface root cho FE (camelCase + snake_case)
+    customerName: customerNameHydrated || data.customerName || undefined,
+    customerPhone: customerPhoneHydrated || data.customerPhone || undefined,
+    customerAddress: customerAddressHydrated || data.customerAddress || undefined,
+    customerEmail: customerEmailHydrated || data.customerEmail || undefined,
+    customer_name: customerNameHydrated || data.customer_name || undefined,
+    customer_phone: customerPhoneHydrated || data.customer_phone || undefined,
+    customer_address: customerAddressHydrated || data.customer_address || undefined,
+    billing: billingHydrated || data.billing || undefined,
+    shipping: shippingHydrated || data.shipping || undefined,
     tracking_no: tn || undefined,
     trackingNumber: tn || undefined,
     return_tracking_no: returnTn || data.return_tracking_no || undefined,

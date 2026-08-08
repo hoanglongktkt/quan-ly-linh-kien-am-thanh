@@ -266,8 +266,20 @@ export function mapWooOrderToInternal(wooOrder, shopConfig) {
   };
 
   // ── DEBUG: Log kết quả mapping ─────────────────────────────────────────────
-  console.log(`[WooCommerce Map] ✅ Mapped: id=${id} orderSn=${orderSn} channel=${channel} status=${internalStatus} customerName="${customerName}" totalAmount=${totalAmount} lineItems=${lineItems.length}`);
-  console.log(`[WooCommerce Map]   customerPhone="${customerPhone}" customerAddress="${customerAddress}" billing.first_name="${billing.first_name}" billing.phone="${billing.phone}" billing.city="${billing.city}"`);
+  console.log("Mapped Order Data:", {
+    id: mappedOrder.id,
+    orderSn: mappedOrder.orderSn,
+    channel: mappedOrder.channel,
+    status: mappedOrder.status,
+    customerName: mappedOrder.customerName,
+    customerPhone: mappedOrder.customerPhone,
+    customerAddress: mappedOrder.customerAddress,
+    customerEmail: mappedOrder.customerEmail,
+    billing: mappedOrder.billing,
+    shipping: mappedOrder.shipping,
+    itemsCount: mappedOrder.itemsCount,
+    totalAmount: mappedOrder.totalAmount,
+  });
 
   return mappedOrder;
 }

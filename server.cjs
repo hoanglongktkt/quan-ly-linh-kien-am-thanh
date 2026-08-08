@@ -73579,8 +73579,20 @@ function mapWooOrderToInternal(wooOrder, shopConfig) {
     notes: wooOrder.customer_note || "",
     last_synced_at: (/* @__PURE__ */ new Date()).toISOString()
   };
-  console.log(`[WooCommerce Map] \u2705 Mapped: id=${id} orderSn=${orderSn} channel=${channel} status=${internalStatus} customerName="${customerName}" totalAmount=${totalAmount} lineItems=${lineItems.length}`);
-  console.log(`[WooCommerce Map]   customerPhone="${customerPhone}" customerAddress="${customerAddress}" billing.first_name="${billing.first_name}" billing.phone="${billing.phone}" billing.city="${billing.city}"`);
+  console.log("Mapped Order Data:", {
+    id: mappedOrder.id,
+    orderSn: mappedOrder.orderSn,
+    channel: mappedOrder.channel,
+    status: mappedOrder.status,
+    customerName: mappedOrder.customerName,
+    customerPhone: mappedOrder.customerPhone,
+    customerAddress: mappedOrder.customerAddress,
+    customerEmail: mappedOrder.customerEmail,
+    billing: mappedOrder.billing,
+    shipping: mappedOrder.shipping,
+    itemsCount: mappedOrder.itemsCount,
+    totalAmount: mappedOrder.totalAmount
+  });
   return mappedOrder;
 }
 function resolveWooCredentials(shopConfig) {
@@ -77057,39 +77069,6 @@ async function bulkUpsertOrdersToStore(orders) {
       $set["data.status"] = st;
     }
     if (order.shopName != null) $set["data.shopName"] = String(order.shopName);
-    if (channelStr === "woocommerce") {
-      const cName = String(order.customerName || "").trim();
-      if (cName) {
-        $set.customerName = cName;
-        $set["data.customerName"] = cName;
-        console.log(`[MongoDB] woo customerName set: "${cName}"`);
-      }
-      const cPhone = String(order.customerPhone || "").trim();
-      if (cPhone) {
-        $set.customerPhone = cPhone;
-        $set["data.customerPhone"] = cPhone;
-      }
-      const cAddr = String(order.customerAddress || "").trim();
-      if (cAddr) {
-        $set.customerAddress = cAddr;
-        $set["data.customerAddress"] = cAddr;
-      }
-      const cEmail = String(order.customerEmail || "").trim();
-      if (cEmail) {
-        $set.customerEmail = cEmail;
-        $set["data.customerEmail"] = cEmail;
-      }
-      if (order.billing && typeof order.billing === "object") {
-        $set.billing = order.billing;
-        $set["data.billing"] = order.billing;
-      }
-      if (order.shipping && typeof order.shipping === "object") {
-        $set.shipping = order.shipping;
-        $set["data.shipping"] = order.shipping;
-      }
-      $set.source = "woocommerce";
-      $set["data.source"] = "woocommerce";
-    }
     if (usableTn) {
       $set.tracking_no = usableTn;
       $set["data.tracking_no"] = usableTn;
@@ -77163,6 +77142,61 @@ async function bulkUpsertOrdersToStore(orders) {
         if (!s2 || /^0FG/i.test(s2)) continue;
       }
       $set[`data.${key}`] = value;
+    }
+    if (channelStr === "woocommerce") {
+      const cName = String(
+        order.customerName || order.customer_name || ""
+      ).trim();
+      const cPhone = String(
+        order.customerPhone || order.customer_phone || ""
+      ).trim();
+      const cAddr = String(
+        order.customerAddress || order.customer_address || ""
+      ).trim();
+      const cEmail = String(
+        order.customerEmail || order.customer_email || ""
+      ).trim();
+      if (cName) {
+        $set.customerName = cName;
+        $set["data.customerName"] = cName;
+        $set["data.customer_name"] = cName;
+      }
+      if (cPhone) {
+        $set.customerPhone = cPhone;
+        $set["data.customerPhone"] = cPhone;
+        $set["data.customer_phone"] = cPhone;
+      }
+      if (cAddr) {
+        $set.customerAddress = cAddr;
+        $set["data.customerAddress"] = cAddr;
+        $set["data.customer_address"] = cAddr;
+      }
+      if (cEmail) {
+        $set.customerEmail = cEmail;
+        $set["data.customerEmail"] = cEmail;
+        $set["data.customer_email"] = cEmail;
+      }
+      if (order.billing && typeof order.billing === "object") {
+        $set.billing = order.billing;
+        $set["data.billing"] = order.billing;
+      }
+      if (order.shipping && typeof order.shipping === "object") {
+        $set.shipping = order.shipping;
+        $set["data.shipping"] = order.shipping;
+      }
+      if (order.billingAddress != null) {
+        $set["data.billingAddress"] = order.billingAddress;
+      }
+      if (order.shippingAddress != null) {
+        $set["data.shippingAddress"] = order.shippingAddress;
+      }
+      $set.source = "woocommerce";
+      $set["data.source"] = "woocommerce";
+      $set.channel = "woocommerce";
+      $set["data.channel"] = "woocommerce";
+      console.log(
+        `[MongoDB] WOO UPSERT customer \u2014 orderSn=${orderSn} name="${cName}" phone="${cPhone}" addr="${cAddr.slice(0, 40)}"`
+      );
     }
     const $setOnInsertRaw = {
       _id,
@@ -78118,6 +78152,20 @@ function hydrateOrderFromMongoDoc(d) {
     data.local_status || data.localStatus || data.internal_status || ""
   ).toUpperCase();
   const localStored = localRaw === "CANCELLED_STORED" || localRaw === "RETURN_RECEIVED" ? localRaw : handed ? "HANDED_OVER" : localRaw === "NONE" || localRaw === "HANDED_OVER" ? leftHandoverPhase ? "NONE" : localRaw : "";
+  const customerNameHydrated = String(
+    d?.customerName || data.customerName || data.customer_name || ""
+  ).trim();
+  const customerPhoneHydrated = String(
+    d?.customerPhone || data.customerPhone || data.customer_phone || ""
+  ).trim();
+  const customerAddressHydrated = String(
+    d?.customerAddress || data.customerAddress || data.customer_address || ""
+  ).trim();
+  const customerEmailHydrated = String(
+    d?.customerEmail || data.customerEmail || data.customer_email || ""
+  ).trim();
+  const billingHydrated = (d?.billing && typeof d.billing === "object" ? d.billing : null) || (data.billing && typeof data.billing === "object" ? data.billing : null) || void 0;
+  const shippingHydrated = (d?.shipping && typeof d.shipping === "object" && !Array.isArray(d.shipping) ? d.shipping : null) || (data.shipping && typeof data.shipping === "object" && !Array.isArray(data.shipping) ? data.shipping : null) || void 0;
   return {
     ...data,
     id: data.id || d._id || (sn ? `shopee-${sn}` : void 0),
@@ -78125,6 +78173,16 @@ function hydrateOrderFromMongoDoc(d) {
     status: d?.status != null ? d.status : data.status,
     shopee_order_status: rawStatus || data.shopee_order_status || void 0,
     shopId: d?.shopId != null ? d.shopId : data.shopId,
+    // Customer — luôn surface root cho FE (camelCase + snake_case)
+    customerName: customerNameHydrated || data.customerName || void 0,
+    customerPhone: customerPhoneHydrated || data.customerPhone || void 0,
+    customerAddress: customerAddressHydrated || data.customerAddress || void 0,
+    customerEmail: customerEmailHydrated || data.customerEmail || void 0,
+    customer_name: customerNameHydrated || data.customer_name || void 0,
+    customer_phone: customerPhoneHydrated || data.customer_phone || void 0,
+    customer_address: customerAddressHydrated || data.customer_address || void 0,
+    billing: billingHydrated || data.billing || void 0,
+    shipping: shippingHydrated || data.shipping || void 0,
     tracking_no: tn || void 0,
     trackingNumber: tn || void 0,
     return_tracking_no: returnTn || data.return_tracking_no || void 0,
@@ -117013,6 +117071,21 @@ async function syncWooCommerceOrders(req, res) {
             break;
           }
           try {
+            for (const mappedOrder of orders) {
+              console.log(`[WooCommerce Sync] Mapped Order Data:`, {
+                id: mappedOrder.id,
+                orderSn: mappedOrder.orderSn,
+                channel: mappedOrder.channel,
+                status: mappedOrder.status,
+                customerName: mappedOrder.customerName,
+                customerPhone: mappedOrder.customerPhone,
+                customerAddress: mappedOrder.customerAddress,
+                billing: mappedOrder.billing,
+                shipping: mappedOrder.shipping,
+                itemsCount: mappedOrder.itemsCount,
+                totalAmount: mappedOrder.totalAmount
+              });
+            }
             const saved = await deps20.persistWooOrdersToStore(orders);
             shopImported += saved;
             totalOrdersImported += saved;

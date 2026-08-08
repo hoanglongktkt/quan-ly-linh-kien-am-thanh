@@ -346,19 +346,28 @@ function OrderShopeeFinanceSummary({
   );
 }
 
-/** Resolve customer info from WooCommerce billing/shipping or flat fields. */
+/** Resolve customer info from WooCommerce billing/shipping or flat fields.
+ *  Hỗ trợ cả camelCase (customerName) và snake_case (customer_name) — key mismatch fix.
+ */
 function resolveWooCustomerInfo(order: Order): {
   name: string;
   phone: string;
   email: string;
   address: string;
 } {
-  // billing/shipping: ưu tiên root-level (woo fix), fallback data.billing (generic loop)
-  const billing = order.billing || (order as any).data?.billing || {};
-  const shipping = (typeof order.shipping === 'object' && order.shipping && !Array.isArray(order.shipping)
+  const o = order as any;
+  // billing/shipping: root → data.billing → {}
+  const billing = (order.billing && typeof order.billing === 'object' ? order.billing : null)
+    || (o.data?.billing && typeof o.data.billing === 'object' ? o.data.billing : null)
+    || {};
+  const shippingRaw = (typeof order.shipping === 'object' && order.shipping && !Array.isArray(order.shipping)
     ? order.shipping
-    : (typeof (order as any).data?.shipping === 'object' ? (order as any).data?.shipping : {})
-  ) as {
+    : null)
+    || (typeof o.data?.shipping === 'object' && o.data?.shipping && !Array.isArray(o.data.shipping)
+      ? o.data.shipping
+      : null)
+    || {};
+  const shipping = shippingRaw as {
     first_name?: string;
     last_name?: string;
     phone?: string;
@@ -370,26 +379,30 @@ function resolveWooCustomerInfo(order: Order): {
     country?: string;
   };
 
-  // Tên: ưu tiên customerName (root từ woo fix) → billing.first_name+last_name → shipping → fallback
+  // Tên: customerName / customer_name → billing → shipping → fallback
   const nameFromParts = [billing.first_name, billing.last_name].filter(Boolean).join(' ').trim()
     || [shipping.first_name, shipping.last_name].filter(Boolean).join(' ').trim();
-  // Bỏ fallback "Khách WooCommerce" (backend gán cứng) — coi là rỗng
-  const rawCustomerName = String(order.customerName || '').trim();
+  const rawCustomerName = String(
+    order.customerName || o.customer_name || o.data?.customerName || o.data?.customer_name || ''
+  ).trim();
   const isPlaceholder = !rawCustomerName
     || rawCustomerName === 'Khách WooCommerce'
     || rawCustomerName === 'Khách web'
     || rawCustomerName === 'Khách web (Không có thông tin)';
   const name = (!isPlaceholder ? rawCustomerName : '') || nameFromParts || 'Khách web (Không có thông tin)';
 
-  // SĐT
+  // SĐT: customerPhone / customer_phone / billing.phone
   const phone = String(
-    order.customerPhone || billing.phone || shipping.phone || ''
+    order.customerPhone || o.customer_phone || o.data?.customerPhone || o.data?.customer_phone
+    || billing.phone || shipping.phone || ''
   ).trim();
 
   // Email
-  const email = String(order.customerEmail || billing.email || '').trim();
+  const email = String(
+    order.customerEmail || o.customer_email || o.data?.customerEmail || billing.email || ''
+  ).trim();
 
-  // Địa chỉ: ưu tiên customerAddress → billing city+addr → shipping city+addr
+  // Địa chỉ: customerAddress / customer_address / shippingAddress / billing parts
   const addrFromParts = [
     shipping.address_1 || billing.address_1,
     shipping.address_2 || billing.address_2,
@@ -402,7 +415,8 @@ function resolveWooCustomerInfo(order: Order): {
     ? order.shippingAddress
     : (order.shippingAddress?.fullAddress || order.shippingAddress?.street || '');
   const address = String(
-    order.customerAddress || shippingStr || order.billingAddress || addrFromParts || ''
+    order.customerAddress || o.customer_address || o.data?.customerAddress || o.data?.customer_address
+    || shippingStr || order.billingAddress || addrFromParts || ''
   ).trim();
 
   return { name, phone, email, address };

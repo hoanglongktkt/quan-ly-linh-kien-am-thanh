@@ -120,7 +120,22 @@ export async function syncWooCommerceOrders(req, res) {
           }
 
           try {
-            // ── BỌC try...catch quanh db.insert() ─────────────────────────────
+            // ── DEBUG: Log trước khi persist để kiểm chứng dữ liệu đã map đủ chưa ──
+            for (const mappedOrder of orders) {
+              console.log(`[WooCommerce Sync] Mapped Order Data:`, {
+                id: mappedOrder.id,
+                orderSn: mappedOrder.orderSn,
+                channel: mappedOrder.channel,
+                status: mappedOrder.status,
+                customerName: mappedOrder.customerName,
+                customerPhone: mappedOrder.customerPhone,
+                customerAddress: mappedOrder.customerAddress,
+                billing: mappedOrder.billing,
+                shipping: mappedOrder.shipping,
+                itemsCount: mappedOrder.itemsCount,
+                totalAmount: mappedOrder.totalAmount,
+              });
+            }
             const saved = await deps.persistWooOrdersToStore(orders);
             shopImported += saved;
             totalOrdersImported += saved;
