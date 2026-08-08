@@ -73580,7 +73580,7 @@ function mapWooOrderToInternal(wooOrder, shopConfig) {
     last_synced_at: (/* @__PURE__ */ new Date()).toISOString()
   };
   console.log(`[WooCommerce Map] \u2705 Mapped: id=${id} orderSn=${orderSn} channel=${channel} status=${internalStatus} customerName="${customerName}" totalAmount=${totalAmount} lineItems=${lineItems.length}`);
-  console.log(`[WooCommerce Map]   customerPhone="${customerPhone}" customerAddress="${customerAddress}"`);
+  console.log(`[WooCommerce Map]   customerPhone="${customerPhone}" customerAddress="${customerAddress}" billing.first_name="${billing.first_name}" billing.phone="${billing.phone}" billing.city="${billing.city}"`);
   return mappedOrder;
 }
 function resolveWooCredentials(shopConfig) {
@@ -77057,6 +77057,39 @@ async function bulkUpsertOrdersToStore(orders) {
       $set["data.status"] = st;
     }
     if (order.shopName != null) $set["data.shopName"] = String(order.shopName);
+    if (channelStr === "woocommerce") {
+      const cName = String(order.customerName || "").trim();
+      if (cName) {
+        $set.customerName = cName;
+        $set["data.customerName"] = cName;
+        console.log(`[MongoDB] woo customerName set: "${cName}"`);
+      }
+      const cPhone = String(order.customerPhone || "").trim();
+      if (cPhone) {
+        $set.customerPhone = cPhone;
+        $set["data.customerPhone"] = cPhone;
+      }
+      const cAddr = String(order.customerAddress || "").trim();
+      if (cAddr) {
+        $set.customerAddress = cAddr;
+        $set["data.customerAddress"] = cAddr;
+      }
+      const cEmail = String(order.customerEmail || "").trim();
+      if (cEmail) {
+        $set.customerEmail = cEmail;
+        $set["data.customerEmail"] = cEmail;
+      }
+      if (order.billing && typeof order.billing === "object") {
+        $set.billing = order.billing;
+        $set["data.billing"] = order.billing;
+      }
+      if (order.shipping && typeof order.shipping === "object") {
+        $set.shipping = order.shipping;
+        $set["data.shipping"] = order.shipping;
+      }
+      $set.source = "woocommerce";
+      $set["data.source"] = "woocommerce";
+    }
     if (usableTn) {
       $set.tracking_no = usableTn;
       $set["data.tracking_no"] = usableTn;

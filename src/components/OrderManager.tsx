@@ -353,10 +353,12 @@ function resolveWooCustomerInfo(order: Order): {
   email: string;
   address: string;
 } {
-  const billing = order.billing || {};
+  // billing/shipping: ưu tiên root-level (woo fix), fallback data.billing (generic loop)
+  const billing = order.billing || (order as any).data?.billing || {};
   const shipping = (typeof order.shipping === 'object' && order.shipping && !Array.isArray(order.shipping)
     ? order.shipping
-    : {}) as {
+    : (typeof (order as any).data?.shipping === 'object' ? (order as any).data?.shipping : {})
+  ) as {
     first_name?: string;
     last_name?: string;
     phone?: string;
@@ -367,11 +369,27 @@ function resolveWooCustomerInfo(order: Order): {
     postcode?: string;
     country?: string;
   };
+
+  // Tên: ưu tiên customerName (root từ woo fix) → billing.first_name+last_name → shipping → fallback
   const nameFromParts = [billing.first_name, billing.last_name].filter(Boolean).join(' ').trim()
     || [shipping.first_name, shipping.last_name].filter(Boolean).join(' ').trim();
-  const name = String(order.customerName || nameFromParts || 'Khách web').trim();
-  const phone = String(order.customerPhone || billing.phone || shipping.phone || '').trim();
+  // Bỏ fallback "Khách WooCommerce" (backend gán cứng) — coi là rỗng
+  const rawCustomerName = String(order.customerName || '').trim();
+  const isPlaceholder = !rawCustomerName
+    || rawCustomerName === 'Khách WooCommerce'
+    || rawCustomerName === 'Khách web'
+    || rawCustomerName === 'Khách web (Không có thông tin)';
+  const name = (!isPlaceholder ? rawCustomerName : '') || nameFromParts || 'Khách web (Không có thông tin)';
+
+  // SĐT
+  const phone = String(
+    order.customerPhone || billing.phone || shipping.phone || ''
+  ).trim();
+
+  // Email
   const email = String(order.customerEmail || billing.email || '').trim();
+
+  // Địa chỉ: ưu tiên customerAddress → billing city+addr → shipping city+addr
   const addrFromParts = [
     shipping.address_1 || billing.address_1,
     shipping.address_2 || billing.address_2,
@@ -386,6 +404,7 @@ function resolveWooCustomerInfo(order: Order): {
   const address = String(
     order.customerAddress || shippingStr || order.billingAddress || addrFromParts || ''
   ).trim();
+
   return { name, phone, email, address };
 }
 
@@ -414,27 +433,23 @@ function OrderDetailAccordionPanel({
         <div className="bg-white p-4 rounded-2xl border border-indigo-100 space-y-1.5 text-xs">
           <h4 className="text-[10px] font-bold text-indigo-700 uppercase tracking-wider mb-1">Thông tin khách hàng (Web)</h4>
           <div className="flex justify-between gap-2">
-            <span className="text-gray-400">Tên:</span>
-            <span className="font-bold text-gray-900 text-right">{wooCustomer.name}</span>
+            <span className="text-gray-400 shrink-0">Tên:</span>
+            <span className="font-bold text-gray-900 text-right">{wooCustomer.name || 'Khách web (Không có thông tin)'}</span>
           </div>
-          {wooCustomer.phone && (
+          <div className="flex justify-between gap-2">
+            <span className="text-gray-400 shrink-0">SĐT:</span>
+            <span className="font-mono font-semibold text-gray-800 text-right">{wooCustomer.phone || '—'}</span>
+          </div>
+          {wooCustomer.email ? (
             <div className="flex justify-between gap-2">
-              <span className="text-gray-400">SĐT:</span>
-              <span className="font-mono font-semibold text-gray-800">{wooCustomer.phone}</span>
-            </div>
-          )}
-          {wooCustomer.email && (
-            <div className="flex justify-between gap-2">
-              <span className="text-gray-400">Email:</span>
+              <span className="text-gray-400 shrink-0">Email:</span>
               <span className="font-medium text-gray-700 text-right break-all">{wooCustomer.email}</span>
             </div>
-          )}
-          {wooCustomer.address && (
-            <div className="flex justify-between gap-2">
-              <span className="text-gray-400 shrink-0">Địa chỉ:</span>
-              <span className="font-medium text-gray-800 text-right leading-snug">{wooCustomer.address}</span>
-            </div>
-          )}
+          ) : null}
+          <div className="flex justify-between gap-2">
+            <span className="text-gray-400 shrink-0">Địa chỉ:</span>
+            <span className="font-medium text-gray-800 text-right leading-snug">{wooCustomer.address || '—'}</span>
+          </div>
         </div>
       )}
 
@@ -6703,8 +6718,8 @@ export default function OrderManager({
                                 return (
                                   <div className="w-full text-left mb-1.5 space-y-0.5 px-1">
                                     <p className="text-[11px] font-extrabold text-slate-800 truncate" title={cust.name}>{cust.name}</p>
-                                    {cust.phone && <p className="text-[10px] font-mono text-slate-600">{cust.phone}</p>}
-                                    {cust.address && <p className="text-[9px] text-slate-500 line-clamp-2 leading-snug" title={cust.address}>{cust.address}</p>}
+                                    <p className="text-[10px] font-mono text-slate-600">{cust.phone || '—'}</p>
+                                    <p className="text-[9px] text-slate-500 line-clamp-2 leading-snug" title={cust.address}>{cust.address || '—'}</p>
                                   </div>
                                 );
                               })()}
@@ -7041,8 +7056,12 @@ export default function OrderManager({
                             <p className="text-[11px] font-extrabold text-slate-800 truncate">
                               {(() => { const c = resolveWooCustomerInfo(order); return c.name; })()}
                             </p>
-                            {(() => { const c = resolveWooCustomerInfo(order); return c.phone ? <p className="text-[10px] font-mono text-slate-600">{c.phone}</p> : null; })()}
-                            {(() => { const c = resolveWooCustomerInfo(order); return c.address ? <p className="text-[9px] text-slate-500 line-clamp-2 leading-snug">{c.address}</p> : null; })()}
+                            <p className="text-[10px] font-mono text-slate-600">
+                              {(() => { const c = resolveWooCustomerInfo(order); return c.phone || '—'; })()}
+                            </p>
+                            <p className="text-[9px] text-slate-500 line-clamp-2 leading-snug">
+                              {(() => { const c = resolveWooCustomerInfo(order); return c.address || '—'; })()}
+                            </p>
                           </div>
                           <button
                             type="button"

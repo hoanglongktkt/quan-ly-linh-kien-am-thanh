@@ -1747,6 +1747,44 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
 
     if (order.shopName != null) $set["data.shopName"] = String(order.shopName);
 
+    // ── WooCommerce: bắt buộc ghi customer info TƯỜNG MINH vào ROOT ───────────
+    // Generic loop bên dưới chỉ ghi vào data.* — UI resolveWooCustomerInfo đọc
+    // order.customerName / order.billing (root). Ghi root + data.* tường minh.
+    if (channelStr === "woocommerce") {
+      const cName = String(order.customerName || "").trim();
+      if (cName) {
+        $set.customerName = cName;
+        $set["data.customerName"] = cName;
+        console.log(`[MongoDB] woo customerName set: "${cName}"`);
+      }
+      const cPhone = String(order.customerPhone || "").trim();
+      if (cPhone) {
+        $set.customerPhone = cPhone;
+        $set["data.customerPhone"] = cPhone;
+      }
+      const cAddr = String(order.customerAddress || "").trim();
+      if (cAddr) {
+        $set.customerAddress = cAddr;
+        $set["data.customerAddress"] = cAddr;
+      }
+      const cEmail = String(order.customerEmail || "").trim();
+      if (cEmail) {
+        $set.customerEmail = cEmail;
+        $set["data.customerEmail"] = cEmail;
+      }
+      // Ghi full object (không nested path) — tránh conflict với generic loop data.billing
+      if (order.billing && typeof order.billing === "object") {
+        $set.billing = order.billing;
+        $set["data.billing"] = order.billing;
+      }
+      if (order.shipping && typeof order.shipping === "object") {
+        $set.shipping = order.shipping;
+        $set["data.shipping"] = order.shipping;
+      }
+      $set.source = "woocommerce";
+      $set["data.source"] = "woocommerce";
+    }
+
     // BẢO TOÀN tracking_no + shipping_carrier thật từ Shopee
     // Chỉ GHI khi có mã thật — tuyệt đối không $set rỗng/null (tránh mất mã khi hủy/hoàn).
     if (usableTn) {

@@ -267,7 +267,7 @@ export function mapWooOrderToInternal(wooOrder, shopConfig) {
 
   // ── DEBUG: Log kết quả mapping ─────────────────────────────────────────────
   console.log(`[WooCommerce Map] ✅ Mapped: id=${id} orderSn=${orderSn} channel=${channel} status=${internalStatus} customerName="${customerName}" totalAmount=${totalAmount} lineItems=${lineItems.length}`);
-  console.log(`[WooCommerce Map]   customerPhone="${customerPhone}" customerAddress="${customerAddress}"`);
+  console.log(`[WooCommerce Map]   customerPhone="${customerPhone}" customerAddress="${customerAddress}" billing.first_name="${billing.first_name}" billing.phone="${billing.phone}" billing.city="${billing.city}"`);
 
   return mappedOrder;
 }
