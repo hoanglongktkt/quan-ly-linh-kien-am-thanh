@@ -844,6 +844,9 @@ export default function OrderManager({
   const pullStartYRef = useRef<number | null>(null);
   const pullActiveRef = useRef(false);
   const pullDistanceRef = useRef(0);
+  /** Loading state for WooCommerce action buttons (Đã xử lý / Ngưng xử lý) — must be before handleWooOrderStatusAction */
+  const [wooActionLoadingId, setWooActionLoadingId] = useState<string | null>(null);
+  const wooActionLoadingIdRef = useRef<string | null>(null);
   const showToast = (msg: string, durationMs = 4500) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), durationMs);
@@ -1108,7 +1111,8 @@ export default function OrderManager({
         showToast('Không xác định được mã đơn WooCommerce', 4000);
         return;
       }
-      if (wooActionLoadingId) return;
+      if (wooActionLoadingIdRef.current) return;
+      wooActionLoadingIdRef.current = orderKey;
       setWooActionLoadingId(orderKey);
       const internalStatus = action === 'completed' ? 'completed' : 'cancelled';
       const label = action === 'completed' ? 'Đã xử lý' : 'Ngưng xử lý';
@@ -1153,11 +1157,12 @@ export default function OrderManager({
         console.error('[Woo Action]', err);
         showToast(`${label} lỗi kết nối`, 5000);
       } finally {
+        wooActionLoadingIdRef.current = null;
         setWooActionLoadingId(null);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [orders, onUpdateOrders, onAddLog, wooActionLoadingId],
+    [orders, onUpdateOrders, onAddLog],
   );
 
   /** Trigger WooCommerce orders sync */
@@ -2443,8 +2448,6 @@ export default function OrderManager({
   const [showShopeeDropdown, setShowShopeeDropdown] = useState(false);
   const [showTikTokDropdown, setShowTikTokDropdown] = useState(false);
   const [showWooDropdown, setShowWooDropdown] = useState(false);
-  /** Loading state for WooCommerce action buttons (Đã xử lý / Ngưng xử lý) */
-  const [wooActionLoadingId, setWooActionLoadingId] = useState<string | null>(null);
   
   // Search / sort
   const [selectedSort] = useState<'newest' | 'oldest' | 'highest_value'>('newest');
