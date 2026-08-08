@@ -76960,13 +76960,16 @@ async function bulkUpsertOrdersToStore(orders) {
       order.shipping_carrier || order.checkout_shipping_carrier || order.carrier || ""
     ).trim();
     const shopIdStr = order.shopId != null ? String(order.shopId).trim() : "";
+    const channelStr = order.channel != null ? String(order.channel).trim() : "shopee";
     const $set = {
       orderSn: orderSn || null,
+      // Root channel — dùng cho orderTabFilter("web_orders") / multi-channel.
+      channel: channelStr,
       is_pending_shopee_check: pendingFlag,
       last_synced_at: /* @__PURE__ */ new Date(),
       sync_state: String(order.sync_state || "verified"),
       "data.id": _id,
-      "data.channel": order.channel != null ? String(order.channel) : "shopee",
+      "data.channel": channelStr,
       "data.orderSn": orderSn || null,
       "data.order_sn": orderSn || null,
       "data.is_pending_shopee_check": pendingFlag,
@@ -78789,6 +78792,14 @@ function orderTabFilter(tab) {
         shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] },
         last_synced_at: { $lt: new Date(Date.now() - 15 * 60 * 1e3) }
       };
+    case "web_orders":
+    case "woocommerce":
+      return {
+        $or: [
+          { channel: "woocommerce" },
+          { "data.channel": "woocommerce" }
+        ]
+      };
     default:
       return {};
   }
@@ -78869,7 +78880,8 @@ async function countOrdersByTabsFromStore(opts) {
     return_pending: 0,
     return_requests: 0,
     cancel_returns: 0,
-    received_cancel_returns: 0
+    received_cancel_returns: 0,
+    web_orders: 0
   };
   try {
     requireMongo();
@@ -78891,7 +78903,8 @@ async function countOrdersByTabsFromStore(opts) {
       "handed_over_carrier",
       "return_pending",
       "return_requests",
-      "cancel_returns"
+      "cancel_returns",
+      "web_orders"
     ];
     const counts = { ...empty };
     counts.all = await safeCountDocuments(withShop({}));

@@ -1666,13 +1666,16 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
 
     // ——— $set: CHỈ field Shopee / vận chuyển — CẤM cờ nội bộ ———
     // KHÔNG ghi status ảo "processed" vào shopee_order_status — chỉ raw Shopee.
+    const channelStr = order.channel != null ? String(order.channel).trim() : "shopee";
     const $set: Record<string, unknown> = {
       orderSn: orderSn || null,
+      // Root channel — dùng cho orderTabFilter("web_orders") / multi-channel.
+      channel: channelStr,
       is_pending_shopee_check: pendingFlag,
       last_synced_at: new Date(),
       sync_state: String(order.sync_state || "verified"),
       "data.id": _id,
-      "data.channel": order.channel != null ? String(order.channel) : "shopee",
+      "data.channel": channelStr,
       "data.orderSn": orderSn || null,
       "data.order_sn": orderSn || null,
       "data.is_pending_shopee_check": pendingFlag,
@@ -4245,6 +4248,16 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
         shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] },
         last_synced_at: { $lt: new Date(Date.now() - 15 * 60 * 1000) },
       };
+    case "web_orders":
+    case "woocommerce":
+      // Tab "Đơn trên web" — lọc đơn WooCommerce theo channel.
+      // Ưu tiên root channel (nếu đã upsert field này), fallback data.channel.
+      return {
+        $or: [
+          { channel: "woocommerce" },
+          { "data.channel": "woocommerce" },
+        ],
+      };
     default:
       return {};
   }
@@ -4351,6 +4364,7 @@ export async function countOrdersByTabsFromStore(opts?: {
     return_requests: 0,
     cancel_returns: 0,
     received_cancel_returns: 0,
+    web_orders: 0,
   };
   try {
     requireMongo();
@@ -4373,6 +4387,7 @@ export async function countOrdersByTabsFromStore(opts?: {
       "return_pending",
       "return_requests",
       "cancel_returns",
+      "web_orders",
     ] as const;
     // Tuần tự — CẤM Promise.all 8 countDocuments (nproc/CageFS fork fail).
     const counts: Record<string, number> = { ...empty };

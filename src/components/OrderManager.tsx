@@ -863,6 +863,7 @@ export default function OrderManager({
       'return_requests',
       'cancel_returns',
       'received_cancel_returns',
+      'web_orders',
     ]
       .map((k) => `${k}:${Number(counts[k]) || 0}`)
       .join('|');
@@ -4309,6 +4310,10 @@ export default function OrderManager({
       const serverN = Number(serverOrderCounts[key]);
       if (Number.isFinite(serverN)) return serverN;
     }
+    // web_orders: đếm trực tiếp từ orders array khi chưa có server counter
+    if (status === 'web_orders') {
+      return orders.filter((o) => o.channel === 'woocommerce').length;
+    }
     let clientCount = 0;
     if (status === 'cancel_returns') {
       clientCount = cancelReturnPool.length;
@@ -6027,7 +6032,7 @@ export default function OrderManager({
           <span className="w-4 h-4 bg-indigo-600 text-white font-extrabold text-[9px] rounded flex items-center justify-center shrink-0">W</span>
           <span>Đơn trên web</span>
           <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200">
-            {orders.filter((o) => o.channel === 'woocommerce').length}
+            {getCount('web_orders')}
           </span>
         </button>
 
