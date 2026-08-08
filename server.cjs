@@ -73453,18 +73453,22 @@ function mapWooLineItem(item) {
   };
 }
 function mapWooOrderToInternal(wooOrder, shopConfig) {
-  const billing = wooOrder.billing || wooOrder.billing_address || {};
-  const shipping = wooOrder.shipping || wooOrder.shipping_address || {};
-  const customerName = [billing.first_name, billing.last_name].filter(Boolean).join(" ").trim() || [shipping.first_name, shipping.last_name].filter(Boolean).join(" ").trim() || "Kh\xE1ch WooCommerce";
-  const lineItems = (wooOrder.line_items || []).map(mapWooLineItem);
-  const totalAmount = Number(wooOrder.total || 0);
-  const paymentMethod = wooOrder.payment_method_title || wooOrder.payment_method || "";
-  const shopKey = String(shopConfig.shopId || "").trim().slice(0, 12);
-  const wooOrderId = String(wooOrder.id || "").trim();
+  console.log(`[WooCommerce Map] Raw order keys: ${Object.keys(wooOrder || {}).join(", ")}`);
+  console.log(`[WooCommerce Map] wooOrder.id=${wooOrder?.id} wooOrder.number=${wooOrder?.number} wooOrder.status=${wooOrder?.status}`);
+  const billing = wooOrder.billing || {};
+  const shipping = wooOrder.shipping || {};
+  const source = "woocommerce";
+  const channel = "woocommerce";
+  const wooOrderIdRaw = wooOrder.id != null ? String(wooOrder.id) : "";
+  const wooOrderId = wooOrderIdRaw.trim() || String(wooOrder.number || "").trim();
   const id = `woo-${wooOrderId}`;
   const orderSn = `WOO-${wooOrder.number || wooOrderId}`;
-  const orderDate = wooOrder.date_created ? new Date(wooOrder.date_created).toISOString() : (/* @__PURE__ */ new Date()).toISOString();
-  const dateModified = wooOrder.date_modified ? new Date(wooOrder.date_modified).toISOString() : orderDate;
+  const internalStatus = mapWooOrderStatus(wooOrder.status);
+  const wooStatus = String(wooOrder.status || "").trim();
+  console.log(`[WooCommerce Map] wooStatus="${wooStatus}" \u2192 internalStatus="${internalStatus}"`);
+  const customerName = [billing.first_name, billing.last_name].filter(Boolean).join(" ").trim() || [shipping.first_name, shipping.last_name].filter(Boolean).join(" ").trim() || "Kh\xE1ch WooCommerce";
+  const customerPhone = String(billing.phone || shipping.phone || "").trim();
+  const customerEmail = String(billing.email || "").trim();
   const shippingAddressStr = [
     shipping.address_1,
     shipping.address_2,
@@ -73482,19 +73486,49 @@ function mapWooOrderToInternal(wooOrder, shopConfig) {
     billing.country
   ].filter(Boolean).join(", ");
   const customerAddress = shippingAddressStr || billingAddressStr || "";
-  return {
+  const rawLineItems = Array.isArray(wooOrder.line_items) ? wooOrder.line_items : [];
+  console.log(`[WooCommerce Map] line_items count=${rawLineItems.length}`);
+  const lineItems = rawLineItems.map((item, idx) => {
+    const mapped = mapWooLineItem(item);
+    console.log(`[WooCommerce Map]   item[${idx}]: productId=${mapped.productId} name="${mapped.name}" qty=${mapped.quantity} total=${mapped.total}`);
+    return mapped;
+  });
+  const totalAmount = Number(wooOrder.total || 0);
+  const subtotal = Number(wooOrder.subtotal || wooOrder.total || 0);
+  const shippingFee = Number(wooOrder.shipping_total || 0);
+  const discount = Number(wooOrder.discount_total || 0);
+  const shopIdValue = String(shopConfig.shopId || shopConfig.consumerKey || "").trim();
+  const shopNameValue = String(shopConfig.shopName || shopConfig.consumerKey || "WooCommerce").trim();
+  const orderDate = wooOrder.date_created ? new Date(wooOrder.date_created).toISOString() : (/* @__PURE__ */ new Date()).toISOString();
+  const dateModified = wooOrder.date_modified ? new Date(wooOrder.date_modified).toISOString() : orderDate;
+  const mappedOrder = {
+    // ── Schema fields (MongoDB _id là required) ────────────────────────────
+    _id: id,
     id,
     orderSn,
     order_sn: orderSn,
-    channel: "woocommerce",
-    shopId: shopConfig.shopId || shopKey,
-    shopName: shopConfig.shopName || shopConfig.shopId || "WooCommerce",
+    source,
+    channel,
+    // ── Shop ─────────────────────────────────────────────────────────────────
+    shopId: shopIdValue || null,
+    shopName: shopNameValue,
+    // ── WooCommerce IDs ───────────────────────────────────────────────────────
     wooOrderId,
     wooOrderNumber: String(wooOrder.number || wooOrderId),
+    // ── Status: internal status + raw WooCommerce status ──────────────────────
+    status: internalStatus,
+    wooStatus,
+    // Schema dùng order_status/woo_order_status làm alias — gán tường minh
+    order_status: wooStatus,
+    woo_order_status: wooStatus,
+    // Tránh Shopee-specific field bị ghi đè nhầm
+    shopee_order_status: null,
+    // ── Khách hàng (BẮT BUỘC — UI dùng trực tiếp) ───────────────────────────
     customerName,
-    customerPhone: billing.phone || shipping.phone || "",
-    customerEmail: billing.email || "",
+    customerPhone,
+    customerEmail,
     customerAddress,
+    // ── Địa chỉ đầy đủ ──────────────────────────────────────────────────────
     shippingAddress: shippingAddressStr,
     billingAddress: billingAddressStr,
     billing: {
@@ -73520,31 +73554,34 @@ function mapWooOrderToInternal(wooOrder, shopConfig) {
       postcode: shipping.postcode || "",
       country: shipping.country || ""
     },
+    // ── Sản phẩm ─────────────────────────────────────────────────────────────
     lineItems,
     items: lineItems,
     itemsCount: lineItems.reduce((s2, i2) => s2 + i2.quantity, 0),
+    // ── Tiền ──────────────────────────────────────────────────────────────────
     totalAmount,
     total: totalAmount,
     revenue: totalAmount,
-    subtotal: Number(wooOrder.subtotal || 0),
-    shippingFee: Number(wooOrder.shipping_total || 0),
-    discount: Number(wooOrder.discount_total || 0),
-    paymentMethod,
+    subtotal,
+    shippingFee,
+    discount,
+    paymentMethod: wooOrder.payment_method_title || wooOrder.payment_method || "",
     paymentStatus: wooOrder.date_paid ? "paid" : "pending",
-    status: mapWooOrderStatus(wooOrder.status),
-    wooStatus: wooOrder.status,
-    // Avoid shopee-specific fields so bulkUpsert doesn't mis-tag
-    shopee_order_status: null,
+    // ── Ngày ──────────────────────────────────────────────────────────────────
     date: orderDate,
     orderDate,
     dateModified,
+    createdAt: orderDate,
+    updatedAt: dateModified,
+    // ── Meta ──────────────────────────────────────────────────────────────────
     currency: wooOrder.currency || "VND",
     currencySymbol: wooOrder.currency_symbol || "\u20AB",
     notes: wooOrder.customer_note || "",
-    createdAt: orderDate,
-    updatedAt: dateModified,
     last_synced_at: (/* @__PURE__ */ new Date()).toISOString()
   };
+  console.log(`[WooCommerce Map] \u2705 Mapped: id=${id} orderSn=${orderSn} channel=${channel} status=${internalStatus} customerName="${customerName}" totalAmount=${totalAmount} lineItems=${lineItems.length}`);
+  console.log(`[WooCommerce Map]   customerPhone="${customerPhone}" customerAddress="${customerAddress}"`);
+  return mappedOrder;
 }
 function resolveWooCredentials(shopConfig) {
   const wooUrl = String(shopConfig?.wooUrl || "").replace(/\/$/, "");

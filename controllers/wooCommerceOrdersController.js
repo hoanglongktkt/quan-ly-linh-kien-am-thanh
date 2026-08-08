@@ -120,6 +120,7 @@ export async function syncWooCommerceOrders(req, res) {
           }
 
           try {
+            // ── BỌC try...catch quanh db.insert() ─────────────────────────────
             const saved = await deps.persistWooOrdersToStore(orders);
             shopImported += saved;
             totalOrdersImported += saved;
