@@ -2568,6 +2568,7 @@ export default function OrderManager({
     failedOrderDetails: Array<{ orderSn?: string; orderId?: string; error?: string; message?: string }>;
   } | null>(null);
   const [isPrintingFromSummary, setIsPrintingFromSummary] = useState(false);
+  const [isFetchingPdf, setIsFetchingPdf] = useState(false);
   const progressCloseTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Khóa click In đơn — chặn double-fire / bubbling / 2 view cùng lúc (≥1440px). */
   const isPrintingRef = React.useRef(false);
@@ -4124,6 +4125,7 @@ export default function OrderManager({
       return;
     }
 
+    setIsFetchingPdf(true);
     setIsPrintingFromSummary(true);
     setIsShipping(true);
     beginPrintProgressSession(
@@ -4160,6 +4162,7 @@ export default function OrderManager({
       showToast(`In vận đơn Shopee thất bại: ${msg}`);
       clearShipProgressOverlay();
     } finally {
+      setIsFetchingPdf(false);
       setIsPrintingFromSummary(false);
       setIsShipping(false);
     }
@@ -7386,7 +7389,11 @@ export default function OrderManager({
                   <div className="flex w-full gap-3 pt-1">
                     <button
                       type="button"
-                      onClick={() => clearShipProgressOverlay()}
+                      onClick={() => {
+                        setActiveSubTab('processed');
+                        setPrintStatusFilter('unprinted');
+                        clearShipProgressOverlay();
+                      }}
                       className="flex-1 py-3 rounded-2xl border border-gray-200 bg-white text-gray-700 text-sm font-bold hover:bg-gray-50 transition-colors"
                     >
                       Đóng
@@ -7396,6 +7403,7 @@ export default function OrderManager({
                       onClick={() => void handlePrintFromShipSummary()}
                       disabled={
                         isPrintingFromSummary ||
+                        isFetchingPdf ||
                         !shipConfirmSummary.successfulOrderIds.length
                       }
                       className="flex-1 py-3 rounded-2xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-2"
