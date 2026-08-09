@@ -1474,8 +1474,33 @@ export default function OrderManager({
     [onFetchOrders],
   );
 
+  /** Optimistic UI: set isPrinted ngay trên local state (0ms) — đơn biến mất khỏi lọc "Chưa in". */
+  const applyPrintedLocalOptimistic = React.useCallback(
+    (orderKeys: string[], isPrinted: boolean) => {
+      const idSet = new Set(
+        orderKeys
+          .map((s) => String(s || '').replace(/^shopee-/i, '').trim().toLowerCase())
+          .filter(Boolean),
+      );
+      if (idSet.size === 0) return [] as Order[];
+      const hit: Order[] = [];
+      const patched = ordersRef.current.map((o) => {
+        const sn = String(o.orderSn || '').replace(/^shopee-/i, '').trim().toLowerCase();
+        const oid = String(o.id || '').replace(/^shopee-/i, '').trim().toLowerCase();
+        if (!idSet.has(sn) && !idSet.has(oid) && !idSet.has(`shopee-${sn}`)) return o;
+        const next = { ...o, isPrinted };
+        hit.push(next);
+        return next;
+      });
+      ordersRef.current = patched;
+      onUpdateOrders(patched, { persist: false });
+      return hit;
+    },
+    [onUpdateOrders],
+  );
+
   /** Cập nhật isPrinted trên DB nội bộ (không gọi Shopee) — hỗ trợ true/false.
-   * Soft-fail: lỗi API tuyệt đối không throw — không được chặn luồng in PDF. */
+   * Optimistic: local state TRƯỚC, API chạy sau (không chặn UI). Soft-fail. */
   const updatePrintStatusForOrders = React.useCallback(
     async (
       targetOrders: Order[],
@@ -1490,6 +1515,8 @@ export default function OrderManager({
         if (!opts?.silent) showToast(`Chưa chọn đơn để đánh dấu ${label}.`);
         return;
       }
+      // Optimistic UI: cập nhật local NGAY, không chờ Backend.
+      applyPrintedLocalOptimistic(ids, isPrinted);
       if (!opts?.silent) setResettingPrintIds(ids);
       try {
         const token = localStorage.getItem('admin_token');
@@ -1513,15 +1540,6 @@ export default function OrderManager({
             `[Print Status] update-print-status failed HTTP ${res.status}:`,
             data?.message || data?.error || res.statusText,
           );
-          const idSet = new Set(ids.map((s) => s.toLowerCase()));
-          const patchedLocal = ordersRef.current.map((o) => {
-            const sn = String(o.orderSn || '').replace(/^shopee-/i, '').trim().toLowerCase();
-            const oid = String(o.id || '').replace(/^shopee-/i, '').trim().toLowerCase();
-            if (!idSet.has(sn) && !idSet.has(oid)) return o;
-            return { ...o, isPrinted };
-          });
-          ordersRef.current = patchedLocal;
-          onUpdateOrders(patchedLocal, { persist: false });
           if (!opts?.silent) {
             showToast(
               data?.message ||
@@ -1530,31 +1548,9 @@ export default function OrderManager({
           }
           return;
         }
-        const idSet = new Set(ids.map((s) => s.toLowerCase()));
-        const patched = ordersRef.current.map((o) => {
-          const sn = String(o.orderSn || '').replace(/^shopee-/i, '').trim().toLowerCase();
-          const oid = String(o.id || '').replace(/^shopee-/i, '').trim().toLowerCase();
-          if (!idSet.has(sn) && !idSet.has(oid)) return o;
-          return { ...o, isPrinted };
-        });
-        ordersRef.current = patched;
-        onUpdateOrders(patched, { persist: false });
         if (!opts?.silent) showToast(`Đã đánh dấu ${label}: ${ids.length} đơn.`);
       } catch (err: any) {
         console.warn('[Print Status] update-print-status exception:', err?.message || err);
-        try {
-          const idSet = new Set(ids.map((s) => s.toLowerCase()));
-          const patched = ordersRef.current.map((o) => {
-            const sn = String(o.orderSn || '').replace(/^shopee-/i, '').trim().toLowerCase();
-            const oid = String(o.id || '').replace(/^shopee-/i, '').trim().toLowerCase();
-            if (!idSet.has(sn) && !idSet.has(oid)) return o;
-            return { ...o, isPrinted };
-          });
-          ordersRef.current = patched;
-          onUpdateOrders(patched, { persist: false });
-        } catch {
-          /* ignore */
-        }
         if (!opts?.silent) {
           showToast(err?.message || `Lỗi đánh dấu ${label} (đã cập nhật tạm trên giao diện).`);
         }
@@ -1562,7 +1558,7 @@ export default function OrderManager({
         if (!opts?.silent) setResettingPrintIds([]);
       }
     },
-    [onUpdateOrders],
+    [onUpdateOrders, applyPrintedLocalOptimistic],
   );
 
   const resetPrintStatusForOrders = React.useCallback(
@@ -3542,6 +3538,13 @@ export default function OrderManager({
         const cached = tryOpenCachedLabelUrls(uniqueIds, reservedWindow);
         if (cached.opened) {
           if (onProgress) onProgress(total, total);
+          // Optimistic: PDF cache mở thành công → đánh dấu Đã in ngay, API sync nền.
+          const optimisticTargets = applyPrintedLocalOptimistic(uniqueIds, true);
+          if (optimisticTargets.length > 0) {
+            void updatePrintStatusForOrders(optimisticTargets, true, { silent: true }).catch((err) => {
+              console.warn('[Print Status] sync after cache print (ignored):', err);
+            });
+          }
           const docs = cached.docs || [];
           if (docs.length > 1) {
             closeReservedPrintWindow(reservedWindow);
@@ -4109,6 +4112,11 @@ export default function OrderManager({
     const cached = tryOpenCachedLabelUrls(ids);
     if (cached.opened) {
       const docs = cached.docs || [];
+      // Optimistic: mở PDF cache thành công → Đã in ngay, sync DB nền.
+      const optimisticTargets = applyPrintedLocalOptimistic(ids, true);
+      if (optimisticTargets.length > 0) {
+        void updatePrintStatusForOrders(optimisticTargets, true, { silent: true }).catch(() => {});
+      }
       if (docs.length > 1) {
         showToast(`Đang gộp ${docs.length} vận đơn (cache) thành 1 file PDF A4...`);
         const merged = await mergeAndDownloadLabelPdfs(
@@ -4694,16 +4702,11 @@ export default function OrderManager({
         } else {
           if (result.message) showToast(result.message);
           markProgressComplete('In vận đơn thành công!');
-          // === TỰ ĐỘNG ĐÁNH DẤU ĐÃ IN (Optimistic UI) ===
-          const shopeeOrderSns = shopeeAll
-            .map(s => String(s).replace(/^shopee-/, '').trim())
-            .filter(Boolean);
-          onUpdateOrders(orders.map(o => {
-            const sn = String(o.orderSn || '').replace(/^shopee-/, '').trim();
-            return shopeeOrderSns.includes(sn)
-              ? { ...o, isPrinted: true }
-              : o;
-          }));
+          // === TỰ ĐỘNG ĐÁNH DẤU ĐÃ IN (Optimistic UI) + sync DB nền ===
+          const optimisticTargets = applyPrintedLocalOptimistic(shopeeAll, true);
+          if (optimisticTargets.length > 0) {
+            void updatePrintStatusForOrders(optimisticTargets, true, { silent: true }).catch(() => {});
+          }
           setSelectedOrderIds([]);
         }
       }
@@ -4919,12 +4922,19 @@ export default function OrderManager({
   const handleSinglePrint = async (order: Order) => {
     if (order.channel !== 'shopee' || !order.shopId) {
       setBulkPrintOrders([order]);
-      onUpdateOrders(orders.map(o => o.id === order.id ? {
-        ...o,
-        ...(isProcessedCondition(o)
-          ? { isPrinted: true, status: 'processed' as const }
-          : {}),
-      } : o));
+      // Optimistic: non-Shopee → đánh dấu Đã in ngay + sync DB nền.
+      const localHit = applyPrintedLocalOptimistic(
+        [String(order.orderSn || order.id || '')],
+        true,
+      );
+      if (localHit.length === 0) {
+        onUpdateOrders(orders.map(o => o.id === order.id ? {
+          ...o,
+          isPrinted: true,
+          ...(isProcessedCondition(o) ? { status: 'processed' as const } : {}),
+        } : o));
+      }
+      void updatePrintStatusForOrders([order], true, { silent: true }).catch(() => {});
       return;
     }
 
@@ -4958,6 +4968,12 @@ export default function OrderManager({
         alert(`In vận đơn thất bại cho đơn ${order.orderSn}: ${result.message}`);
         clearShipProgressOverlay();
       } else {
+        // Optimistic belt-and-suspenders: đảm bảo Đã in ngay sau PDF thành công.
+        applyPrintedLocalOptimistic(
+          [String(order.id || ''), String(order.orderSn || '')],
+          true,
+        );
+        void updatePrintStatusForOrders([order], true, { silent: true }).catch(() => {});
         markProgressComplete('In vận đơn thành công!');
       }
     } catch (err) {
