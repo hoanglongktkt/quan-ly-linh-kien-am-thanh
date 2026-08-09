@@ -117214,22 +117214,22 @@ async function updateWooCommerceOrderStatus(req, res) {
     }
     const shopConfig = resolveWooShopConfig(targetShop);
     const wooOrderId = String(orderId).replace(/^woo-/i, "").replace(/^WOO-/i, "").trim();
-    const wooResult = await updateWooOrderStatus(shopConfig, wooOrderId, mapInternalStatusToWoo(internalStatus));
-    if (!wooResult.success) {
-      return res.status(400).json({
-        success: false,
-        error: "woo_api_error",
-        message: `L\u1ED7i c\u1EADp nh\u1EADt WooCommerce: ${wooResult.message}`
-      });
-    }
     if (deps20.patchOrderInStore) {
-      await deps20.patchOrderInStore(orderId, { status: internalStatus, wooStatus: wooResult.wooStatus });
+      await deps20.patchOrderInStore(orderId, { status: internalStatus });
     }
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       message: `\u0110\xE3 c\u1EADp nh\u1EADt \u0111\u01A1n WooCommerce #${wooOrderId} \u2192 ${internalStatus}`,
-      wooStatus: wooResult.wooStatus,
       internalStatus
+    });
+    updateWooOrderStatus(shopConfig, wooOrderId, mapInternalStatusToWoo(internalStatus)).then((wooResult) => {
+      if (!wooResult.success) {
+        console.error(`[WooCommerce BG Sync] Failed to sync #${wooOrderId}: ${wooResult.message}`);
+      } else {
+        console.log(`[WooCommerce BG Sync] Synced #${wooOrderId} \u2192 ${wooResult.wooStatus}`);
+      }
+    }).catch((err) => {
+      console.error(`[WooCommerce BG Sync] Error syncing #${wooOrderId}:`, err?.message || err);
     });
   } catch (err) {
     console.error("[WooCommerce UpdateStatus] Error:", err?.message || err);

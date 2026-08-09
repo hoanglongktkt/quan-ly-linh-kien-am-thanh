@@ -1156,7 +1156,7 @@ export default function OrderManager({
     }
   };
 
-  /** Cập nhật trạng thái đơn WooCommerce (nội bộ + API Woo) */
+  /** Cập nhật trạng thái đơn WooCommerce — Optimistic UI + Non-blocking */
   const handleWooOrderStatusAction = useCallback(
     async (order: Order, action: 'completed' | 'on-hold') => {
       const orderKey = String(order.id || order.orderSn || order.wooOrderId || '').trim();
@@ -1165,19 +1165,23 @@ export default function OrderManager({
         return;
       }
       if (wooActionLoadingIdRef.current) return;
+
       wooActionLoadingIdRef.current = orderKey;
       setWooActionLoadingId(orderKey);
+
       const internalStatus = action === 'completed' ? 'completed' : 'cancelled';
       const label = action === 'completed' ? 'Đã xử lý' : 'Ngưng xử lý';
-      try {
-        // Optimistic UI
-        const updated = orders.map((o) =>
-          o.id === order.id || o.orderSn === order.orderSn
-            ? { ...o, status: internalStatus as Order['status'], wooStatus: action }
-            : o,
-        );
-        onUpdateOrders(updated);
+      const prevStatus = order.status;
 
+      // ─── OPTIMISTIC UI: cập nhật ngay lập tức ───────────────────────────
+      const updatedOrders = orders.map((o) =>
+        o.id === order.id || o.orderSn === order.orderSn
+          ? { ...o, status: internalStatus as Order['status'], wooStatus: action }
+          : o,
+      );
+      onUpdateOrders(updatedOrders);
+
+      try {
         const token = localStorage.getItem('admin_token') || '';
         const res = await fetch('/api/woocommerce/orders/update-status', {
           method: 'POST',
@@ -1191,12 +1195,16 @@ export default function OrderManager({
             shopId: order.shopId,
           }),
         });
+
         const data = await res.json().catch(() => ({}));
+
         if (!res.ok || data.success === false) {
           showToast(`${label} thất bại: ${data.message || data.error || 'Lỗi không xác định'}`, 6000);
-          // Revert optimistic if API failed — keep local status anyway as "processed intent"
+          // Revert optimistic state on failure
+          onUpdateOrders(orders);
           return;
         }
+
         showToast(`${label} thành công — đơn #${order.orderSn}`, 4000);
         onAddLog({
           id: `log-woo-${Date.now()}`,
@@ -1208,7 +1216,8 @@ export default function OrderManager({
         });
       } catch (err) {
         console.error('[Woo Action]', err);
-        showToast(`${label} lỗi kết nối`, 5000);
+        showToast(`${label} lỗi kết nối — đã khôi phục trạng thái`, 5000);
+        onUpdateOrders(orders);
       } finally {
         wooActionLoadingIdRef.current = null;
         setWooActionLoadingId(null);

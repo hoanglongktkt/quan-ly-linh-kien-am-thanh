@@ -303,27 +303,30 @@ export async function updateWooCommerceOrderStatus(req, res) {
     const shopConfig = resolveWooShopConfig(targetShop);
     const wooOrderId = String(orderId).replace(/^woo-/i, "").replace(/^WOO-/i, "").trim();
 
-    // 2. Update WooCommerce API first (so it's the source of truth)
-    const wooResult = await updateWooOrderStatus(shopConfig, wooOrderId, mapInternalStatusToWoo(internalStatus));
-    if (!wooResult.success) {
-      return res.status(400).json({
-        success: false,
-        error: "woo_api_error",
-        message: `Lỗi cập nhật WooCommerce: ${wooResult.message}`,
-      });
-    }
-
-    // 3. Update local store (MongoDB + orders.json)
+    // 2. Update local store FIRST — return 200 to frontend immediately
     if (deps.patchOrderInStore) {
-      await deps.patchOrderInStore(orderId, { status: internalStatus, wooStatus: wooResult.wooStatus });
+      await deps.patchOrderInStore(orderId, { status: internalStatus });
     }
 
-    return res.status(200).json({
+    // Respond to frontend IMMEDIATELY — do NOT await WooCommerce API
+    res.status(200).json({
       success: true,
       message: `Đã cập nhật đơn WooCommerce #${wooOrderId} → ${internalStatus}`,
-      wooStatus: wooResult.wooStatus,
       internalStatus,
     });
+
+    // 3. Fire-and-forget: sync to WooCommerce API in background
+    updateWooOrderStatus(shopConfig, wooOrderId, mapInternalStatusToWoo(internalStatus))
+      .then((wooResult) => {
+        if (!wooResult.success) {
+          console.error(`[WooCommerce BG Sync] Failed to sync #${wooOrderId}: ${wooResult.message}`);
+        } else {
+          console.log(`[WooCommerce BG Sync] Synced #${wooOrderId} → ${wooResult.wooStatus}`);
+        }
+      })
+      .catch((err) => {
+        console.error(`[WooCommerce BG Sync] Error syncing #${wooOrderId}:`, err?.message || err);
+      });
   } catch (err) {
     console.error("[WooCommerce UpdateStatus] Error:", err?.message || err);
     return res.status(500).json({
