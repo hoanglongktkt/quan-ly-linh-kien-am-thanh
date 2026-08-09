@@ -228,6 +228,8 @@ const OrderSchema = new Schema<OrderDoc>(
     /** Cờ in vận đơn nội bộ — chỉ $setOnInsert khi sync; API in user mới $set true */
     // Index kép hasPdf+isPrinted khai báo riêng — bỏ index đơn lẻ.
     isPrinted: { type: Boolean, default: false },
+    /** Thời điểm user bấm In thành công — vĩnh viễn, sync Shopee KHÔNG ghi đè. */
+    printedAt: { type: Date, default: null },
     /** PDF đã tải sẵn vào kho nội bộ — BG worker; KHÔNG đồng nghĩa đã in giấy */
     hasPdf: { type: Boolean, default: false },
     /** URL PDF vận đơn nội bộ (ERP cache) — BG worker ghi sau xác nhận */
@@ -1613,6 +1615,8 @@ export async function deleteAllChannelListingsFromStore(): Promise<void> {
 const INTERNAL_FLAG_KEYS = new Set([
   "is_handed_over",
   "isPrinted",
+  "printedAt",
+  "printed_at",
   "hasPdf",
   "readyToPrint",
   "isPrepared",
@@ -2335,12 +2339,16 @@ export async function markOrdersPrintedInStore(
   const pdfFilename = String(meta?.pdfFilename || "").trim();
   const ids = sns.map((sn) => `shopee-${sn}`);
 
+  const now = new Date();
   const $set: Record<string, unknown> = {
     isPrinted: printed,
     "data.isPrinted": printed,
   };
   // User in thành công → chắc chắn đã có PDF; reset "Chưa in" vẫn giữ hasPdf nếu còn file.
   if (printed) {
+    $set.printedAt = now;
+    $set["data.printedAt"] = now;
+    $set["data.printed_at"] = now;
     $set.hasPdf = true;
     $set["data.hasPdf"] = true;
     $set["data.readyToPrint"] = true;
@@ -2351,6 +2359,11 @@ export async function markOrdersPrintedInStore(
       $set["data.pdfUrl"] = labelUrl;
     }
     if (pdfFilename) $set["data.pdfFilename"] = pdfFilename;
+  } else {
+    // Reset "Chưa in" → xóa timestamp in
+    $set.printedAt = null;
+    $set["data.printedAt"] = null;
+    $set["data.printed_at"] = null;
   }
   if (shopIdStr) {
     $set.shopId = shopIdStr;

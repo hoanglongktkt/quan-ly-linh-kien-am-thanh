@@ -1519,7 +1519,15 @@ export async function patchOrder(req, res) {
   const stableId =
     String(orders[index].id || "").trim() ||
     (snKey ? `shopee-${snKey}` : key);
+  // Bảo vệ: nếu đơn cũ đã Đã in (isPrinted=true), tuyệt đối KHÔNG cho req.body ghi đè thành false.
+  const existingWasPrinted =
+    orders[index].isPrinted === true ||
+    orders[index].isPrinted === 1 ||
+    String(orders[index].isPrinted || "").trim().toLowerCase() === "true";
   orders[index] = { ...orders[index], ...patch, id: stableId };
+  if (existingWasPrinted) {
+    orders[index].isPrinted = true;
+  }
   if (!orders[index].orderSn && snKey) {
     orders[index].orderSn = snKey;
   }
@@ -1671,7 +1679,14 @@ export async function updatePrintStatus(req, res) {
         .trim()
         .toLowerCase();
       if (!snSet.has(sn) && !snSet.has(id)) continue;
-      orders[i] = { ...o, isPrinted };
+      const nowIso = new Date().toISOString();
+      orders[i] = {
+        ...o,
+        isPrinted,
+        ...(isPrinted
+          ? { printedAt: nowIso, printed_at: nowIso }
+          : { printedAt: null, printed_at: null }),
+      };
       changed.push(orders[i]);
     }
     if (changed.length > 0) {
@@ -1686,6 +1701,9 @@ export async function updatePrintStatus(req, res) {
       mongoUpdated = await markOrdersPrintedInStore(sns, isPrinted, {
         ...(shopIdHint ? { shopId: shopIdHint } : {}),
       });
+      // Luôn gọi markOrdersPrintedInStore với đầy đủ sns, bất kể changed có rỗng không.
+      // Race condition: khi đơn không còn trong memory nhưng vẫn tồn tại trên Mongo,
+      // PATCH fire-and-forget từ FE không thể reset isPrinted=true → false.
       invalidateOrdersRefreshCache();
     }
     return res.json({

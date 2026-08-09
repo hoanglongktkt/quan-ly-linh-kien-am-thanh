@@ -1474,6 +1474,8 @@ export default function OrderManager({
     [onFetchOrders],
   );
 
+  // markPrintedOnLocalPdfOpen declared after applyPrintedLocalOptimistic + updatePrintStatusForOrders (see below).
+
   /** Optimistic UI: set isPrinted ngay trên local state (0ms) — đơn biến mất khỏi lọc "Chưa in". */
   const applyPrintedLocalOptimistic = React.useCallback(
     (orderKeys: string[], isPrinted: boolean) => {
@@ -1569,6 +1571,28 @@ export default function OrderManager({
   const markPrintedStatusForOrders = React.useCallback(
     (targetOrders: Order[]) => updatePrintStatusForOrders(targetOrders, true),
     [updatePrintStatusForOrders],
+  );
+
+  /**
+   * LUỒNG LOCAL PDF: Gọi NGAY tại thời điểm mở PDF local.
+   * Bước 1: setLocal isPrinted=true → đơn biến mất khỏi "Chưa in" trong 0.1s
+   * Bước 2: gọi API Backend (không block) → ghi vĩnh viễn vào MongoDB
+   */
+  const markPrintedOnLocalPdfOpen = React.useCallback(
+    (orders: Order[]) => {
+      if (orders.length === 0) return;
+      const keys = orders
+        .map((o) => String(o.orderSn || o.id || '').replace(/^shopee-/i, '').trim())
+        .filter(Boolean);
+      if (keys.length === 0) return;
+      // Bước 1: optimistic — set isPrinted ngay trên local state (0ms)
+      applyPrintedLocalOptimistic(keys, true);
+      // Bước 2: API Backend — không block UI (void + catch)
+      void updatePrintStatusForOrders(orders, true, { silent: true }).catch((err) => {
+        console.warn('[Print] markPrintedOnLocalPdfOpen API failed:', err);
+      });
+    },
+    [applyPrintedLocalOptimistic, updatePrintStatusForOrders],
   );
 
   const applyHandoverToLocalOrders = React.useCallback(
@@ -3500,15 +3524,51 @@ export default function OrderManager({
       if (reservedWindow && !reservedWindow.closed) {
         try {
           reservedWindow.location.href = url;
+          // ✅ LUỒNG LOCAL PDF (reservedWindow path): đánh dấu Đã in ngay
+          const openedOrders = uniqueIds
+            .map((id) =>
+              ordersRef.current.find(
+                (x) =>
+                  String(x.id || '') === id ||
+                  String(x.orderSn || '') === id ||
+                  `shopee-${x.orderSn}` === id,
+              ),
+            )
+            .filter(Boolean) as Order[];
+          markPrintedOnLocalPdfOpen(openedOrders);
           return { opened: true, url, docs };
         } catch {
           /* fall through */
         }
       }
       window.open(url, '_blank', 'noopener,noreferrer');
+      // ✅ LUỒNG LOCAL PDF: đánh dấu Đã in ngay tại thời điểm mở PDF
+      const openedOrders = uniqueIds
+        .map((id) =>
+          ordersRef.current.find(
+            (x) =>
+              String(x.id || '') === id ||
+              String(x.orderSn || '') === id ||
+              `shopee-${x.orderSn}` === id,
+          ),
+        )
+        .filter(Boolean) as Order[];
+      markPrintedOnLocalPdfOpen(openedOrders);
       return { opened: true, url, docs };
     }
     // Nhiều đơn cache sẵn — caller sẽ download từng file.
+    // ✅ LUỒNG LOCAL PDF (nhiều đơn): đánh dấu Đã in ngay
+    const openedOrders = uniqueIds
+      .map((id) =>
+        ordersRef.current.find(
+          (x) =>
+            String(x.id || '') === id ||
+            String(x.orderSn || '') === id ||
+            `shopee-${x.orderSn}` === id,
+        ),
+      )
+      .filter(Boolean) as Order[];
+    markPrintedOnLocalPdfOpen(openedOrders);
     return { opened: true, url: docs[0]?.url, docs };
   };
 
@@ -4718,7 +4778,7 @@ export default function OrderManager({
           ...(isProcessedCondition(o)
             ? { isPrinted: true, status: 'processed' as const }
             : { isPrepared: o.isPrepared }),
-        } : o));
+        } : o), { persist: false });
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Lỗi không xác định';
@@ -4932,7 +4992,7 @@ export default function OrderManager({
           ...o,
           isPrinted: true,
           ...(isProcessedCondition(o) ? { status: 'processed' as const } : {}),
-        } : o));
+        } : o), { persist: false });
       }
       void updatePrintStatusForOrders([order], true, { silent: true }).catch(() => {});
       return;

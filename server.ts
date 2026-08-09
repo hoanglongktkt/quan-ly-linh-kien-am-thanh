@@ -13021,7 +13021,18 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
   if (incoming.status === "cancelled") {
     merged.isPrepared = false;
   }
-  merged.isPrinted = Boolean(existing.isPrinted);
+  // CỜ NỘI BỘ — tuyệt đối KHÔNG ghi đè từ Shopee sync:
+  // Nếu DB local đã isPrinted=true thì giữ vĩnh viễn (kể cả incoming.isPrinted=false/undefined).
+  // Chỉ cho phép false→true (user vừa in trong cùng phiên), KHÔNG bao giờ true→false từ sync.
+  merged.isPrinted = Boolean(existing.isPrinted) || Boolean(incoming?.isPrinted);
+  // Giữ printedAt nếu đã có (sync Shopee không đụng).
+  if (existing.printedAt || existing.printed_at) {
+    merged.printedAt = existing.printedAt || existing.printed_at;
+    merged.printed_at = existing.printedAt || existing.printed_at;
+  } else if (incoming?.printedAt || incoming?.printed_at) {
+    merged.printedAt = incoming.printedAt || incoming.printed_at;
+    merged.printed_at = incoming.printedAt || incoming.printed_at;
+  }
 
   const incomingItems = Array.isArray(incoming.items) ? incoming.items : [];
   const existingItems = Array.isArray(existing.items) ? existing.items : [];

@@ -75918,6 +75918,8 @@ var OrderSchema = new import_mongoose3.Schema(
     /** Cờ in vận đơn nội bộ — chỉ $setOnInsert khi sync; API in user mới $set true */
     // Index kép hasPdf+isPrinted khai báo riêng — bỏ index đơn lẻ.
     isPrinted: { type: Boolean, default: false },
+    /** Thời điểm user bấm In thành công — vĩnh viễn, sync Shopee KHÔNG ghi đè. */
+    printedAt: { type: Date, default: null },
     /** PDF đã tải sẵn vào kho nội bộ — BG worker; KHÔNG đồng nghĩa đã in giấy */
     hasPdf: { type: Boolean, default: false },
     /** URL PDF vận đơn nội bộ (ERP cache) — BG worker ghi sau xác nhận */
@@ -76972,6 +76974,8 @@ async function bulkUpsertChannelListingsToStore(rows) {
 var INTERNAL_FLAG_KEYS = /* @__PURE__ */ new Set([
   "is_handed_over",
   "isPrinted",
+  "printedAt",
+  "printed_at",
   "hasPdf",
   "readyToPrint",
   "isPrepared",
@@ -77520,11 +77524,15 @@ async function markOrdersPrintedInStore(orderSns, isPrinted, meta) {
   const labelUrl = String(meta?.labelUrl || meta?.pdfUrl || meta?.waybill_url || "").trim();
   const pdfFilename = String(meta?.pdfFilename || "").trim();
   const ids = sns.map((sn) => `shopee-${sn}`);
+  const now = /* @__PURE__ */ new Date();
   const $set = {
     isPrinted: printed,
     "data.isPrinted": printed
   };
   if (printed) {
+    $set.printedAt = now;
+    $set["data.printedAt"] = now;
+    $set["data.printed_at"] = now;
     $set.hasPdf = true;
     $set["data.hasPdf"] = true;
     $set["data.readyToPrint"] = true;
@@ -77535,6 +77543,10 @@ async function markOrdersPrintedInStore(orderSns, isPrinted, meta) {
       $set["data.pdfUrl"] = labelUrl;
     }
     if (pdfFilename) $set["data.pdfFilename"] = pdfFilename;
+  } else {
+    $set.printedAt = null;
+    $set["data.printedAt"] = null;
+    $set["data.printed_at"] = null;
   }
   if (shopIdStr) {
     $set.shopId = shopIdStr;
@@ -109474,7 +109486,11 @@ async function patchOrder(req, res) {
     }
   }
   const stableId = String(orders[index].id || "").trim() || (snKey ? `shopee-${snKey}` : key);
+  const existingWasPrinted = orders[index].isPrinted === true || orders[index].isPrinted === 1 || String(orders[index].isPrinted || "").trim().toLowerCase() === "true";
   orders[index] = { ...orders[index], ...patch, id: stableId };
+  if (existingWasPrinted) {
+    orders[index].isPrinted = true;
+  }
   if (!orders[index].orderSn && snKey) {
     orders[index].orderSn = snKey;
   }
@@ -109595,7 +109611,12 @@ async function updatePrintStatus(req, res) {
       const sn = String(o.orderSn || "").replace(/^shopee-/i, "").trim().toLowerCase();
       const id = String(o.id || "").replace(/^shopee-/i, "").trim().toLowerCase();
       if (!snSet.has(sn) && !snSet.has(id)) continue;
-      orders[i2] = { ...o, isPrinted };
+      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+      orders[i2] = {
+        ...o,
+        isPrinted,
+        ...isPrinted ? { printedAt: nowIso, printed_at: nowIso } : { printedAt: null, printed_at: null }
+      };
       changed.push(orders[i2]);
     }
     if (changed.length > 0) {
@@ -127131,7 +127152,14 @@ function mergeShopeeOrderOnSync(existing, incoming) {
   if (incoming.status === "cancelled") {
     merged.isPrepared = false;
   }
-  merged.isPrinted = Boolean(existing.isPrinted);
+  merged.isPrinted = Boolean(existing.isPrinted) || Boolean(incoming?.isPrinted);
+  if (existing.printedAt || existing.printed_at) {
+    merged.printedAt = existing.printedAt || existing.printed_at;
+    merged.printed_at = existing.printedAt || existing.printed_at;
+  } else if (incoming?.printedAt || incoming?.printed_at) {
+    merged.printedAt = incoming.printedAt || incoming.printed_at;
+    merged.printed_at = incoming.printedAt || incoming.printed_at;
+  }
   const incomingItems = Array.isArray(incoming.items) ? incoming.items : [];
   const existingItems = Array.isArray(existing.items) ? existing.items : [];
   if (incomingItems.length > 0) {
