@@ -2423,7 +2423,7 @@ export async function markOrdersPrintedInStore(
           });
           const up = await OrderModel.bulkWrite(ops as any, {
             ordered: false,
-            maxTimeMS: 8_000,
+            maxTimeMS: 15_000,
           });
           matched += missing.length;
           console.log(
@@ -2434,6 +2434,7 @@ export async function markOrdersPrintedInStore(
       }
     }),
     "mark_printed",
+    20_000, // 20s — in/scan phải chờ đủ, không timeout sớm
   );
   return matched || sns.length;
 }

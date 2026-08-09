@@ -77598,7 +77598,7 @@ async function markOrdersPrintedInStore(orderSns, isPrinted, meta) {
           });
           const up = await OrderModel.bulkWrite(ops, {
             ordered: false,
-            maxTimeMS: 8e3
+            maxTimeMS: 15e3
           });
           matched += missing.length;
           console.log(
@@ -77607,7 +77607,9 @@ async function markOrdersPrintedInStore(orderSns, isPrinted, meta) {
         }
       }
     }),
-    "mark_printed"
+    "mark_printed",
+    2e4
+    // 20s — in/scan phải chờ đủ, không timeout sớm
   );
   return matched || sns.length;
 }

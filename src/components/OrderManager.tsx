@@ -1552,8 +1552,12 @@ export default function OrderManager({
         }
         if (!opts?.silent) showToast(`Đã đánh dấu ${label}: ${ids.length} đơn.`);
       } catch (err: any) {
-        console.warn('[Print Status] update-print-status exception:', err?.message || err);
-        if (!opts?.silent) {
+        const isAbort =
+          err?.name === 'AbortError' ||
+          (err instanceof DOMException && err.name === 'AbortError') ||
+          /aborted|AbortError|signal|this operation was aborted/i.test(String(err?.message || ''));
+        console.warn('[Print Status] update-print-status exception:', err?.message || err, isAbort ? '(ignored — silent fire-and-forget)' : '');
+        if (!opts?.silent && !isAbort) {
           showToast(err?.message || `Lỗi đánh dấu ${label} (đã cập nhật tạm trên giao diện).`);
         }
       } finally {
