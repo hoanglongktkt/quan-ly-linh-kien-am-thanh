@@ -4694,6 +4694,17 @@ export default function OrderManager({
         } else {
           if (result.message) showToast(result.message);
           markProgressComplete('In vận đơn thành công!');
+          // === TỰ ĐỘNG ĐÁNH DẤU ĐÃ IN (Optimistic UI) ===
+          const shopeeOrderSns = shopeeAll
+            .map(s => String(s).replace(/^shopee-/, '').trim())
+            .filter(Boolean);
+          onUpdateOrders(orders.map(o => {
+            const sn = String(o.orderSn || '').replace(/^shopee-/, '').trim();
+            return shopeeOrderSns.includes(sn)
+              ? { ...o, isPrinted: true }
+              : o;
+          }));
+          setSelectedOrderIds([]);
         }
       }
       // Non-Shopee (manual/tiktok) orders don't have a real Shopee AWB — show the mock preview instead.

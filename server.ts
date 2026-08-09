@@ -8034,7 +8034,8 @@ const SHIP_ORDER_PDF_READY_DELAY_MS = 0;
 /** Poll get_shipping_document_result cả lô: tối đa 10 lần × 1s — lần đầu không sleep. */
 const SHIP_ORDER_PDF_RETRY_MAX = 10;
 const SHIP_ORDER_PDF_RETRY_DELAY_MS = 1000;
-/** Shopee create/download_shipping_document: tối đa 50 order_sn / request / shop. */
+/** Timeout cho polling PDF batch (ms) */
+const SHIP_ORDER_PDF_RETRY_TIMEOUT_MS = 120_000;
 const SHOPEE_SHIPPING_DOC_BATCH_MAX = 50;
 /** Trần kích thước PDF batch — tránh OOM cPanel khi buffer quá lớn. */
 const SHOPEE_WAYBILL_PDF_MAX_BYTES = 25 * 1024 * 1024;
@@ -8913,7 +8914,12 @@ async function batchDownloadShopeeWaybillPdf(
       `[Shopee Batch Waybill] Đang chờ ready — tối đa ${maxPoll} lần, poll ngay + sleep ${pollInterval}ms giữa các lần, n=${pendingList.length}`,
     );
 
+    const shopDeadlineAt = Date.now() + SHIP_ORDER_PDF_RETRY_TIMEOUT_MS;
     while (pendingList.length > 0 && attempts < maxPoll) {
+      if (Date.now() > shopDeadlineAt) {
+        console.error(`[Shopee Batch Waybill] Hết deadline — break polling (attempts=${attempts})`);
+        break;
+      }
       attempts++;
       // Lần 1: poll ngay. Các lần sau: sleep rồi poll lại.
       if (attempts > 1) {
@@ -13501,6 +13507,7 @@ async function fetchNormalizeShopeeOrderChunk(
               }
             } catch (refreshErr: any) {
               console.error("Lỗi ở đơn:", orderSn, `token_refresh: ${refreshErr?.message || refreshErr}`);
+              await delay(1000);
             }
           }
           if (isShopeeRateLimited(detailResult?.httpStatus, detailResult)) {
@@ -13565,6 +13572,7 @@ async function fetchNormalizeShopeeOrderChunk(
             `[Shopee Sync] Token refresh sau GetOrderDetail fail shop=${fileKey}:`,
             refreshErr?.message || refreshErr,
           );
+          await delay(1000);
         }
       }
 
@@ -18228,7 +18236,7 @@ async function startServer() {
 
   // --- Shopee logistics: "In đơn hàng" (create + poll + download AWB PDF) ---
 
-  const LABEL_DOWNLOAD_CONCURRENCY = 5;
+  const LABEL_DOWNLOAD_CONCURRENCY = 3;
 
   // PDF vận đơn: RAM + storage/labels + GET /api/public/labels (chuẩn).
   scheduleWaybillsCleanup();

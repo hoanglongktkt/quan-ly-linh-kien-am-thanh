@@ -123657,6 +123657,7 @@ var SHIP_ORDER_OPERATION_TIMEOUT_MS = 8e3;
 var SHIP_ORDER_CHUNK_PAUSE_MS = 200;
 var SHIP_ORDER_PDF_RETRY_MAX = 10;
 var SHIP_ORDER_PDF_RETRY_DELAY_MS = 1e3;
+var SHIP_ORDER_PDF_RETRY_TIMEOUT_MS = 12e4;
 var SHOPEE_WAYBILL_PDF_MAX_BYTES = 25 * 1024 * 1024;
 var shopeeAddressListMemCache = /* @__PURE__ */ new Map();
 var shopeeAddressListInflight = /* @__PURE__ */ new Map();
@@ -124324,7 +124325,12 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList) {
     console.log(
       `[Shopee Batch Waybill] \u0110ang ch\u1EDD ready \u2014 t\u1ED1i \u0111a ${maxPoll} l\u1EA7n, poll ngay + sleep ${pollInterval}ms gi\u1EEFa c\xE1c l\u1EA7n, n=${pendingList.length}`
     );
+    const shopDeadlineAt = Date.now() + SHIP_ORDER_PDF_RETRY_TIMEOUT_MS;
     while (pendingList.length > 0 && attempts < maxPoll) {
+      if (Date.now() > shopDeadlineAt) {
+        console.error(`[Shopee Batch Waybill] H\u1EBFt deadline \u2014 break polling (attempts=${attempts})`);
+        break;
+      }
       attempts++;
       if (attempts > 1) {
         console.log(`[Shopee Batch Waybill] Poll l\u1EA7n ${attempts}/${maxPoll} \u2014 sleep ${pollInterval}ms...`);
@@ -127408,6 +127414,7 @@ async function fetchNormalizeShopeeOrderChunk(apiShopId, accessToken, fileKey, o
               }
             } catch (refreshErr) {
               console.error("L\u1ED7i \u1EDF \u0111\u01A1n:", orderSn, `token_refresh: ${refreshErr?.message || refreshErr}`);
+              await delay2(1e3);
             }
           }
           if (isShopeeRateLimited(detailResult?.httpStatus, detailResult)) {
@@ -127463,6 +127470,7 @@ async function fetchNormalizeShopeeOrderChunk(apiShopId, accessToken, fileKey, o
             `[Shopee Sync] Token refresh sau GetOrderDetail fail shop=${fileKey}:`,
             refreshErr?.message || refreshErr
           );
+          await delay2(1e3);
         }
       }
       if (isShopeeRateLimited(detailResult?.httpStatus, detailResult)) {
@@ -130779,7 +130787,7 @@ async function startServer() {
       endLogisticsWork("ship-bulk");
     }
   };
-  const LABEL_DOWNLOAD_CONCURRENCY = 5;
+  const LABEL_DOWNLOAD_CONCURRENCY = 3;
   scheduleWaybillsCleanup();
   function extensionForContentType(contentType) {
     if (contentType.includes("zip")) return "zip";
