@@ -130162,21 +130162,22 @@ async function startServer() {
     });
   };
   const streamDelegatedPdf = (res, filePath, filename) => {
-    if (!import_fs16.default.existsSync(filePath)) return false;
-    const stat3 = import_fs16.default.statSync(filePath);
-    if (!stat3.isFile() || stat3.size < 64) return false;
+    const valid = getValidLabelDiskFile(filename);
+    if (!valid || import_path17.default.resolve(valid.filePath) !== import_path17.default.resolve(filePath)) return false;
     res.status(200);
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
-    res.setHeader("Content-Length", String(stat3.size));
+    res.setHeader("Content-Length", String(valid.size));
     res.setHeader("Cache-Control", "private, max-age=300");
     res.setHeader("X-Content-Type-Options", "nosniff");
-    import_fs16.default.createReadStream(filePath).pipe(res);
+    import_fs16.default.createReadStream(valid.filePath).pipe(res);
     return true;
   };
-  const delegatedPdfError = (res) => res.status(503).type("html").send(
-    '<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>V\u1EADn \u0111\u01A1n ch\u01B0a s\u1EB5n s\xE0ng</title></head><body style="font-family:Arial,sans-serif;padding:32px"><h2>Shopee \u0111ang qu\xE1 t\u1EA3i, vui l\xF2ng F5 t\u1EA3i l\u1EA1i trang n\xE0y sau</h2></body></html>'
-  );
+  const delegatedPdfError = (res, err, message) => {
+    console.error("L\u1ED7i t\u1EA3i PDF Shopee:", err);
+    if (res.headersSent) return;
+    return res.status(500).type("text/plain; charset=utf-8").send(`L\u1ED7i: ${message}`);
+  };
   const downloadPdfRoute = async (req, res) => {
     const orderSn = String(req.params.orderSn || "").replace(/^shopee-/i, "").trim();
     if (!/^[A-Za-z0-9_-]+$/.test(orderSn)) {
@@ -130184,36 +130185,82 @@ async function startServer() {
     }
     const expectedFilename = buildCachedLabelFilename([orderSn]);
     const expectedPath = import_path17.default.join(LABELS_DIR, expectedFilename);
-    if (streamDelegatedPdf(res, expectedPath, expectedFilename)) return;
     try {
       const rows = await loadOrdersForShipScoped([`shopee-${orderSn}`, orderSn], [orderSn]);
       const order = rows.find(
         (item) => String(item?.orderSn || item?.order_sn || "").replace(/^shopee-/i, "").trim() === orderSn
       );
-      if (!order || order.channel !== "shopee") return delegatedPdfError(res);
-      const shopId = String(order.shopId || resolveOrderShopId(order) || "").trim();
-      const accessToken = shopId ? await getValidShopeeAccessToken(shopId) || "" : "";
-      if (!shopId || !accessToken) return delegatedPdfError(res);
+      if (!order || String(order.channel || "").toLowerCase() !== "shopee") {
+        return delegatedPdfError(
+          res,
+          new Error(`order_not_found_in_database order_sn=${orderSn}`),
+          `Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n Shopee ${orderSn} trong database.`
+        );
+      }
+      const storedShopId = String(
+        order.shopId || order.shop_id || order.accountId || order.account_id || ""
+      ).trim();
+      if (!storedShopId) {
+        return delegatedPdfError(
+          res,
+          new Error(`missing_shop_id order_sn=${orderSn}`),
+          `\u0110\u01A1n ${orderSn} thi\u1EBFu shopId/accountId n\xEAn kh\xF4ng th\u1EC3 ch\u1ECDn \u0111\xFAng Token Shop.`
+        );
+      }
+      const auth = await getShopeeAccessTokenForApi(storedShopId);
+      if (!auth?.token || !auth.apiShopId) {
+        return delegatedPdfError(
+          res,
+          new Error(`no_valid_access_token shop=${storedShopId} order_sn=${orderSn}`),
+          `Kh\xF4ng c\xF3 Token Shop h\u1EE3p l\u1EC7 cho shop ${storedShopId}.`
+        );
+      }
+      const shopId = String(auth.apiShopId).trim();
+      const accessToken = auth.token;
+      console.log(
+        `[Delegated PDF] order_sn=${orderSn} DB shop=${storedShopId} API shop=${shopId}`
+      );
+      if (streamDelegatedPdf(res, expectedPath, expectedFilename)) return;
       try {
         await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, [order]);
       } catch (err) {
         console.warn(`[Delegated PDF] enrich ${orderSn}:`, err?.message || err);
       }
       const row = buildShopeeShippingDocOrderRow(order);
-      if (!row) return delegatedPdfError(res);
-      try {
-        await shopeeCreateShippingDocument(shopId, accessToken, [row]);
-      } catch (err) {
-        console.warn(`[Delegated PDF] create ${orderSn}:`, err?.message || err);
+      if (!row) {
+        return delegatedPdfError(
+          res,
+          new Error(`invalid_shipping_document_order order_sn=${orderSn} shop=${shopId}`),
+          `D\u1EEF li\u1EC7u \u0111\u01A1n ${orderSn} ch\u01B0a \u0111\u1EE7 \u0111\u1EC3 t\u1EA1o v\u1EADn \u0111\u01A1n.`
+        );
       }
+      const createResult = await shopeeCreateShippingDocument(shopId, accessToken, [row]);
+      if (createResult?.error) {
+        return delegatedPdfError(
+          res,
+          createResult,
+          `Shopee t\u1EEB ch\u1ED1i t\u1EA1o PDF: ${createResult.message || createResult.error}`
+        );
+      }
+      let lastPollError = new Error(
+        `shipping_document_not_ready order_sn=${orderSn} shop=${shopId}`
+      );
       for (let attempt = 1; attempt <= 6; attempt += 1) {
         await sleep2(3e3);
         if (streamDelegatedPdf(res, expectedPath, expectedFilename)) return;
         try {
           const poll = await shopeeGetShippingDocumentResult(shopId, accessToken, [row]);
+          if (poll?.error) {
+            lastPollError = poll;
+            console.error("L\u1ED7i t\u1EA3i PDF Shopee:", poll);
+            continue;
+          }
           const items = poll?.response?.result_list || poll?.result_list || [];
           const result = items.find((item) => String(item?.order_sn || "") === orderSn);
-          if (String(result?.status || "").toUpperCase() !== "READY") continue;
+          if (String(result?.status || "").toUpperCase() !== "READY") {
+            lastPollError = result || new Error(`Shopee ch\u01B0a READY l\u1EA7n ${attempt}/6 order_sn=${orderSn} shop=${shopId}`);
+            continue;
+          }
           const downloaded = await shopeeDownloadShippingDocument(
             shopId,
             accessToken,
@@ -130231,17 +130278,23 @@ async function startServer() {
             );
             return;
           }
+          lastPollError = downloaded;
         } catch (err) {
-          console.warn(
-            `[Delegated PDF] poll ${attempt}/6 order=${orderSn}:`,
-            err?.message || err
-          );
+          lastPollError = err;
+          console.error("L\u1ED7i t\u1EA3i PDF Shopee:", err);
         }
       }
-      return delegatedPdfError(res);
+      return delegatedPdfError(
+        res,
+        lastPollError,
+        "Shopee ch\u01B0a s\u1EB5n s\xE0ng ho\u1EB7c sai Token Shop."
+      );
     } catch (err) {
-      console.error(`[Delegated PDF] ${orderSn}:`, err?.stack || err);
-      if (!res.headersSent) return delegatedPdfError(res);
+      return delegatedPdfError(
+        res,
+        err,
+        err?.message || "Shopee ch\u01B0a s\u1EB5n s\xE0ng ho\u1EB7c sai Token Shop."
+      );
     }
   };
   app.post("/api/orders/fast-process", authMiddleware, fastProcessRouteGuard);
