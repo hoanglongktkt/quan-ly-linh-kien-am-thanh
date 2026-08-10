@@ -17504,7 +17504,7 @@ async function startServer() {
       }
 
       for (let attempt = 1; attempt <= 6; attempt += 1) {
-        await sleep(2500);
+        await sleep(3000);
         if (streamDelegatedPdf(res, expectedPath, expectedFilename)) return;
 
         try {

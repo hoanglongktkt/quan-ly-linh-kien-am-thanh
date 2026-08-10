@@ -130207,7 +130207,7 @@ async function startServer() {
         console.warn(`[Delegated PDF] create ${orderSn}:`, err?.message || err);
       }
       for (let attempt = 1; attempt <= 6; attempt += 1) {
-        await sleep2(2500);
+        await sleep2(3e3);
         if (streamDelegatedPdf(res, expectedPath, expectedFilename)) return;
         try {
           const poll = await shopeeGetShippingDocumentResult(shopId, accessToken, [row]);
