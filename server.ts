@@ -17443,8 +17443,111 @@ async function startServer() {
       message: "Đang khởi tạo dịch vụ xác nhận đơn — thử lại sau giây lát.",
     });
   };
+  const streamDelegatedPdf = (res: any, filePath: string, filename: string): boolean => {
+    if (!fs.existsSync(filePath)) return false;
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile() || stat.size < 64) return false;
+    res.status(200);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+    res.setHeader("Content-Length", String(stat.size));
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    fs.createReadStream(filePath).pipe(res);
+    return true;
+  };
+  const delegatedPdfError = (res: any) =>
+    res
+      .status(503)
+      .type("html")
+      .send(
+        '<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>Vận đơn chưa sẵn sàng</title></head><body style="font-family:Arial,sans-serif;padding:32px"><h2>Shopee đang quá tải, vui lòng F5 tải lại trang này sau</h2></body></html>',
+      );
+  const downloadPdfRoute = async (req: any, res: any) => {
+    const orderSn = String(req.params.orderSn || "")
+      .replace(/^shopee-/i, "")
+      .trim();
+    if (!/^[A-Za-z0-9_-]+$/.test(orderSn)) {
+      return res.status(400).type("text/plain").send("Mã đơn không hợp lệ.");
+    }
+
+    const expectedFilename = buildCachedLabelFilename([orderSn]);
+    const expectedPath = path.join(LABELS_DIR, expectedFilename);
+    if (streamDelegatedPdf(res, expectedPath, expectedFilename)) return;
+
+    try {
+      const rows = await loadOrdersForShipScoped([`shopee-${orderSn}`, orderSn], [orderSn]);
+      const order = rows.find(
+        (item: any) =>
+          String(item?.orderSn || item?.order_sn || "")
+            .replace(/^shopee-/i, "")
+            .trim() === orderSn,
+      );
+      if (!order || order.channel !== "shopee") return delegatedPdfError(res);
+
+      const shopId = String(order.shopId || resolveOrderShopId(order) || "").trim();
+      const accessToken = shopId ? (await getValidShopeeAccessToken(shopId)) || "" : "";
+      if (!shopId || !accessToken) return delegatedPdfError(res);
+
+      try {
+        await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, [order]);
+      } catch (err: any) {
+        console.warn(`[Delegated PDF] enrich ${orderSn}:`, err?.message || err);
+      }
+      const row = buildShopeeShippingDocOrderRow(order);
+      if (!row) return delegatedPdfError(res);
+
+      try {
+        await shopeeCreateShippingDocument(shopId, accessToken, [row]);
+      } catch (err: any) {
+        console.warn(`[Delegated PDF] create ${orderSn}:`, err?.message || err);
+      }
+
+      for (let attempt = 1; attempt <= 6; attempt += 1) {
+        await sleep(2500);
+        if (streamDelegatedPdf(res, expectedPath, expectedFilename)) return;
+
+        try {
+          const poll = await shopeeGetShippingDocumentResult(shopId, accessToken, [row]);
+          const items: any[] = poll?.response?.result_list || poll?.result_list || [];
+          const result = items.find((item: any) => String(item?.order_sn || "") === orderSn);
+          if (String(result?.status || "").toUpperCase() !== "READY") continue;
+
+          const downloaded = await shopeeDownloadShippingDocument(
+            shopId,
+            accessToken,
+            [row],
+            expectedFilename,
+          );
+          if (downloaded?.filePath && streamDelegatedPdf(res, downloaded.filePath, expectedFilename)) {
+            void markOrdersHasPdfInStore([orderSn], {
+              shopId,
+              labelUrl: `/api/public/labels/${expectedFilename}`,
+              waybill_url: `/api/public/labels/${expectedFilename}`,
+              pdfFilename: expectedFilename,
+            }).catch((err: any) =>
+              console.warn(`[Delegated PDF] persist ${orderSn}:`, err?.message || err),
+            );
+            return;
+          }
+        } catch (err: any) {
+          console.warn(
+            `[Delegated PDF] poll ${attempt}/6 order=${orderSn}:`,
+            err?.message || err,
+          );
+        }
+      }
+      return delegatedPdfError(res);
+    } catch (err: any) {
+      console.error(`[Delegated PDF] ${orderSn}:`, err?.stack || err);
+      if (!res.headersSent) return delegatedPdfError(res);
+    }
+  };
   app.post("/api/orders/fast-process", authMiddleware, fastProcessRouteGuard);
   app.post("/api/shopee/orders/fast-process", authMiddleware, fastProcessRouteGuard);
+  app.post("/api/orders/confirm", authMiddleware, fastProcessRouteGuard);
+  // orderSn là mã khó đoán; route GET không dùng Bearer để window.open() tải trực tiếp được.
+  app.get("/api/orders/download-pdf/:orderSn", downloadPdfRoute);
 
   app.use("/api/orders", authMiddleware, ordersRoutes);
   // Endpoint tạm: quét đơn thiếu mã VĐ / kẹt unprocessed → get_order_detail
@@ -18191,33 +18294,15 @@ async function startServer() {
         });
       });
 
-      // —— Pha 2: chuẩn bị PDF vận đơn nền (download + lưu labels) — không chặn response ——
-      // TUYỆT ĐỐI không while/poll READY trong request này (tránh timeout cPanel 120s).
-      if (shippedEntries.length > 0) {
-        try {
-          fireCreateShippingDocumentsForOrders(
-            shippedEntries.map((e) => ({
-              order: orders[e.index],
-              shopId: String(orders[e.index]?.shopId || resolveOrderShopId(orders[e.index]) || ""),
-              orderSn: e.orderSn,
-              packageNumber: String(orders[e.index]?.packageNumber || "").trim() || undefined,
-              trackingNumber: trackingForShopeeShippingDoc(orders[e.index]) || undefined,
-            })),
-          );
-        } catch (primeErr: any) {
-          console.warn("[Fast Process] label prepare skip:", primeErr?.message || primeErr);
-        }
-      }
-
       const shipFailed = failed;
       const successCount = results.filter((r) => r?.success).length;
       const elapsed = Date.now() - t0;
       let message = `Thành công: ${successCount} đơn. Thất bại: ${shipFailed.length} đơn`;
-      if (successCount > 0) message += ` — PDF đang chuẩn bị ngầm, bấm In đơn khi sẵn sàng`;
+      if (successCount > 0) message += ` — sẵn sàng chuyển sang tab tải PDF`;
       message += ` (${elapsed}ms).`;
 
       console.log(
-        `[Fast Process] Done ship=${successCount}/${toShip.length} shipFail=${shipFailed.length} ${elapsed}ms (PDF nền)`,
+        `[Fast Process] Done ship=${successCount}/${toShip.length} shipFail=${shipFailed.length} ${elapsed}ms (không chờ PDF)`,
       );
 
       return res.status(200).json({

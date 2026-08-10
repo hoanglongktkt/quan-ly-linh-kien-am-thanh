@@ -130161,8 +130161,93 @@ async function startServer() {
       message: "\u0110ang kh\u1EDFi t\u1EA1o d\u1ECBch v\u1EE5 x\xE1c nh\u1EADn \u0111\u01A1n \u2014 th\u1EED l\u1EA1i sau gi\xE2y l\xE1t."
     });
   };
+  const streamDelegatedPdf = (res, filePath, filename) => {
+    if (!import_fs16.default.existsSync(filePath)) return false;
+    const stat3 = import_fs16.default.statSync(filePath);
+    if (!stat3.isFile() || stat3.size < 64) return false;
+    res.status(200);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+    res.setHeader("Content-Length", String(stat3.size));
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    import_fs16.default.createReadStream(filePath).pipe(res);
+    return true;
+  };
+  const delegatedPdfError = (res) => res.status(503).type("html").send(
+    '<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>V\u1EADn \u0111\u01A1n ch\u01B0a s\u1EB5n s\xE0ng</title></head><body style="font-family:Arial,sans-serif;padding:32px"><h2>Shopee \u0111ang qu\xE1 t\u1EA3i, vui l\xF2ng F5 t\u1EA3i l\u1EA1i trang n\xE0y sau</h2></body></html>'
+  );
+  const downloadPdfRoute = async (req, res) => {
+    const orderSn = String(req.params.orderSn || "").replace(/^shopee-/i, "").trim();
+    if (!/^[A-Za-z0-9_-]+$/.test(orderSn)) {
+      return res.status(400).type("text/plain").send("M\xE3 \u0111\u01A1n kh\xF4ng h\u1EE3p l\u1EC7.");
+    }
+    const expectedFilename = buildCachedLabelFilename([orderSn]);
+    const expectedPath = import_path17.default.join(LABELS_DIR, expectedFilename);
+    if (streamDelegatedPdf(res, expectedPath, expectedFilename)) return;
+    try {
+      const rows = await loadOrdersForShipScoped([`shopee-${orderSn}`, orderSn], [orderSn]);
+      const order = rows.find(
+        (item) => String(item?.orderSn || item?.order_sn || "").replace(/^shopee-/i, "").trim() === orderSn
+      );
+      if (!order || order.channel !== "shopee") return delegatedPdfError(res);
+      const shopId = String(order.shopId || resolveOrderShopId(order) || "").trim();
+      const accessToken = shopId ? await getValidShopeeAccessToken(shopId) || "" : "";
+      if (!shopId || !accessToken) return delegatedPdfError(res);
+      try {
+        await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, [order]);
+      } catch (err) {
+        console.warn(`[Delegated PDF] enrich ${orderSn}:`, err?.message || err);
+      }
+      const row = buildShopeeShippingDocOrderRow(order);
+      if (!row) return delegatedPdfError(res);
+      try {
+        await shopeeCreateShippingDocument(shopId, accessToken, [row]);
+      } catch (err) {
+        console.warn(`[Delegated PDF] create ${orderSn}:`, err?.message || err);
+      }
+      for (let attempt = 1; attempt <= 6; attempt += 1) {
+        await sleep2(2500);
+        if (streamDelegatedPdf(res, expectedPath, expectedFilename)) return;
+        try {
+          const poll = await shopeeGetShippingDocumentResult(shopId, accessToken, [row]);
+          const items = poll?.response?.result_list || poll?.result_list || [];
+          const result = items.find((item) => String(item?.order_sn || "") === orderSn);
+          if (String(result?.status || "").toUpperCase() !== "READY") continue;
+          const downloaded = await shopeeDownloadShippingDocument(
+            shopId,
+            accessToken,
+            [row],
+            expectedFilename
+          );
+          if (downloaded?.filePath && streamDelegatedPdf(res, downloaded.filePath, expectedFilename)) {
+            void markOrdersHasPdfInStore([orderSn], {
+              shopId,
+              labelUrl: `/api/public/labels/${expectedFilename}`,
+              waybill_url: `/api/public/labels/${expectedFilename}`,
+              pdfFilename: expectedFilename
+            }).catch(
+              (err) => console.warn(`[Delegated PDF] persist ${orderSn}:`, err?.message || err)
+            );
+            return;
+          }
+        } catch (err) {
+          console.warn(
+            `[Delegated PDF] poll ${attempt}/6 order=${orderSn}:`,
+            err?.message || err
+          );
+        }
+      }
+      return delegatedPdfError(res);
+    } catch (err) {
+      console.error(`[Delegated PDF] ${orderSn}:`, err?.stack || err);
+      if (!res.headersSent) return delegatedPdfError(res);
+    }
+  };
   app.post("/api/orders/fast-process", authMiddleware, fastProcessRouteGuard);
   app.post("/api/shopee/orders/fast-process", authMiddleware, fastProcessRouteGuard);
+  app.post("/api/orders/confirm", authMiddleware, fastProcessRouteGuard);
+  app.get("/api/orders/download-pdf/:orderSn", downloadPdfRoute);
   app.use("/api/orders", authMiddleware, ordersRoutes);
   app.post("/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrders);
   app.post("/api/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrders);
@@ -130770,29 +130855,14 @@ async function startServer() {
           }
         });
       });
-      if (shippedEntries.length > 0) {
-        try {
-          fireCreateShippingDocumentsForOrders(
-            shippedEntries.map((e2) => ({
-              order: orders[e2.index],
-              shopId: String(orders[e2.index]?.shopId || resolveOrderShopId(orders[e2.index]) || ""),
-              orderSn: e2.orderSn,
-              packageNumber: String(orders[e2.index]?.packageNumber || "").trim() || void 0,
-              trackingNumber: trackingForShopeeShippingDoc(orders[e2.index]) || void 0
-            }))
-          );
-        } catch (primeErr) {
-          console.warn("[Fast Process] label prepare skip:", primeErr?.message || primeErr);
-        }
-      }
       const shipFailed = failed;
       const successCount = results.filter((r2) => r2?.success).length;
       const elapsed = Date.now() - t0;
       let message = `Th\xE0nh c\xF4ng: ${successCount} \u0111\u01A1n. Th\u1EA5t b\u1EA1i: ${shipFailed.length} \u0111\u01A1n`;
-      if (successCount > 0) message += ` \u2014 PDF \u0111ang chu\u1EA9n b\u1ECB ng\u1EA7m, b\u1EA5m In \u0111\u01A1n khi s\u1EB5n s\xE0ng`;
+      if (successCount > 0) message += ` \u2014 s\u1EB5n s\xE0ng chuy\u1EC3n sang tab t\u1EA3i PDF`;
       message += ` (${elapsed}ms).`;
       console.log(
-        `[Fast Process] Done ship=${successCount}/${toShip.length} shipFail=${shipFailed.length} ${elapsed}ms (PDF n\u1EC1n)`
+        `[Fast Process] Done ship=${successCount}/${toShip.length} shipFail=${shipFailed.length} ${elapsed}ms (kh\xF4ng ch\u1EDD PDF)`
       );
       return res.status(200).json({
         success: true,

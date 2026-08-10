@@ -1375,6 +1375,8 @@ export default function OrderManager({
   };
   /** Overlay chống GET cũ ghi đè trạng thái vừa xác nhận/in. */
   const optimisticOrderMutationsRef = React.useRef<Map<string, OptimisticOrderMutation>>(new Map());
+  /** Chặn race-condition: response GET cũ không được làm đơn vừa in xuất hiện lại. */
+  const recentlyPrintedRef = React.useRef<Map<string, number>>(new Map());
   const applyScanRef = React.useRef<(query: string) => void>(() => {});
   const verifyScanRef = React.useRef<(query: string) => void>(() => {});
   const isScanBusyRef = React.useRef(false);
@@ -1409,6 +1411,10 @@ export default function OrderManager({
     for (const [key, mutation] of overlays) {
       if (mutation.expiresAt <= now) overlays.delete(key);
     }
+    const recentlyPrinted = recentlyPrintedRef.current;
+    for (const [key, expiresAt] of recentlyPrinted) {
+      if (expiresAt <= now) recentlyPrinted.delete(key);
+    }
     let changed = false;
     const guarded = orders.map((order) => {
       const sn = String(order.orderSn || '').replace(/^shopee-/i, '').trim().toLowerCase();
@@ -1417,11 +1423,22 @@ export default function OrderManager({
         overlays.get(id) ||
         overlays.get(sn) ||
         (sn ? overlays.get(`shopee-${sn}`) : undefined);
-      if (!mutation) return order;
+      const wasRecentlyPrinted =
+        (id && recentlyPrinted.has(id)) ||
+        (sn && (recentlyPrinted.has(sn) || recentlyPrinted.has(`shopee-${sn}`)));
+      if (!mutation && !wasRecentlyPrinted) return order;
       const next = {
         ...order,
-        ...(mutation.isPrinted != null ? { isPrinted: mutation.isPrinted } : {}),
-        ...(mutation.status ? { status: mutation.status } : {}),
+        ...(mutation?.isPrinted != null
+          ? { isPrinted: mutation.isPrinted }
+          : wasRecentlyPrinted
+            ? { isPrinted: true }
+            : {}),
+        ...(mutation?.status
+          ? { status: mutation.status }
+          : wasRecentlyPrinted
+            ? { status: 'processed' as const }
+            : {}),
       };
       if (next.isPrinted !== order.isPrinted || next.status !== order.status) changed = true;
       return next;
@@ -4008,243 +4025,100 @@ export default function OrderManager({
   };
 
   const handleConfirmAndPrint = async () => {
-    if (!shipConfirmOrders || shipConfirmOrders.length === 0) return;
-    const queuedOrders = [...shipConfirmOrders];
-    const totalQueued = queuedOrders.length;
-
-    const validQueued = queuedOrders.filter(
-      (o) =>
-        (o.orderSn && String(o.orderSn).trim()) || (o.id && String(o.id).trim()),
+    if (!shipConfirmOrders?.length) return;
+    const validQueued = shipConfirmOrders.filter(
+      (order) => String(order.orderSn || order.id || '').trim(),
     );
-    if (validQueued.length === 0) {
-      showToast('Không có mã đơn hàng hợp lệ trong danh sách đã chọn. Vui lòng chọn lại.');
+    if (!validQueued.length) {
+      showToast('Không có mã đơn hàng hợp lệ trong danh sách đã chọn.');
       return;
     }
 
-    // Reserve tab ngay trong user gesture; sau await API vẫn mở PDF không bị popup blocker.
+    // Giữ sẵn tab trong user gesture để trình duyệt không chặn popup sau await.
     const reservedPrintWindow = openReservedPrintPlaceholder();
-
-    const queuedKeys = buildQueuedOrderKeys(validQueued);
-    const optimisticOrders = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys, {
-      shipMethod,
-    });
-    onUpdateOrders(optimisticOrders, { persist: false });
-    ordersRef.current = optimisticOrders;
+    const orderIds = validQueued
+      .map((order) => String(order.id || '').trim())
+      .filter(Boolean);
+    const orderSns = validQueued
+      .map((order) => String(order.orderSn || '').replace(/^shopee-/i, '').trim())
+      .filter(Boolean);
 
     setShipConfirmOrders(null);
-    setShipConfirmSummary(null);
-    setShipJobResults([]);
     setIsShipping(true);
-    setProgressCompleted(0);
-    setProgressTotal(totalQueued);
+    setProgressMessage('Đang xác nhận đơn lên Shopee...');
     setProgressDone(false);
-    setProgressMessage('Đang xác nhận đơn lên Shopee (chia chunk tuần tự)...');
-    showToast('Đang xác nhận đơn...');
-
-    const orderChunks = chunkArray(validQueued, LOGISTICS_FE_CHUNK_SIZE);
-    onAddLog({
-      id: `log-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      channel: 'all',
-      type: 'stock_sync',
-      status: 'success',
-      message: `[LOGISTICS API] fast-process chunk×${orderChunks.length} (${shipMethod === 'pickup' ? 'pickup' : 'dropoff'}) ${validQueued.length} đơn`,
-    });
+    setProgressCompleted(0);
+    setProgressTotal(validQueued.length);
 
     try {
-      const mergedResults: any[] = [];
-      const mergedFailed: any[] = [];
-      const mergedSuccessIds: string[] = [];
-      let doneCount = 0;
+      const response = await fetch('/api/orders/confirm', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          orderIds,
+          orderSns,
+          order_ids: orderIds,
+          order_sns: orderSns,
+          method: shipMethod,
+        }),
+      });
+      const data = await readResponseJson<any>(response);
+      if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
 
-      // CẤM Promise.all — for...of từng chunk, đợi resolve mới gọi chunk kế.
-      for (let ci = 0; ci < orderChunks.length; ci++) {
-        const chunk = orderChunks[ci];
-        const orderIds = [
-          ...new Set(
-            chunk
-              .map((o) => {
-                const sn = String(o.orderSn || '').replace(/^shopee-/i, '').trim();
-                const id = String(o.id || '').trim();
-                // Dynamic ID — ưu tiên id thật, fallback shopee-{orderSn}; cấm mã test hardcode.
-                if (id && !/^shopee-TEST/i.test(id) && !/TEST-SCAN-MVC/i.test(id)) return id;
-                return sn ? `shopee-${sn}` : '';
-              })
-              .filter((id) => Boolean(id && String(id).trim())),
-          ),
-        ];
-        const orderSns = [
-          ...new Set(
-            chunk
-              .map((o) => String(o.orderSn || '').replace(/^shopee-/i, '').trim())
-              .filter((sn) => Boolean(sn) && !/^TEST/i.test(sn) && !/TEST-SCAN-MVC/i.test(sn)),
-          ),
-        ];
-        if (orderIds.length === 0 && orderSns.length === 0) {
-          for (const o of chunk) {
-            mergedFailed.push({
-              orderSn: o.orderSn,
-              orderId: o.id,
-              error: 'missing_order_id',
-              message: 'Thiếu orderId/orderSn động của đơn.',
-            });
-          }
-          doneCount += chunk.length;
-          setProgressCompleted(doneCount);
-          continue;
-        }
-        setProgressMessage(
-          `Đang xác nhận chunk ${ci + 1}/${orderChunks.length} (${chunk.length} đơn)...`,
-        );
-
-        const res = await fetch('/api/orders/fast-process', {
-          method: 'POST',
-          headers: authHeaders(),
-          body: JSON.stringify({
-            orderIds,
-            orderSns,
-            order_ids: orderIds,
-            order_sns: orderSns,
-            method: shipMethod,
-          }),
-        });
-
-        const data = await readResponseJson<any>(res);
-        if (!res.ok) {
-          const msg =
-            data.message || data.error || data.detail || `Chunk ${ci + 1} xác nhận thất bại.`;
-          for (const o of chunk) {
-            mergedFailed.push({
-              orderSn: o.orderSn,
-              orderId: o.id,
-              error: 'chunk_http_error',
-              message: msg,
-            });
-            mergedResults.push({
-              orderId: o.id,
-              orderSn: o.orderSn,
-              success: false,
-              error: 'chunk_http_error',
-              message: msg,
-            });
-          }
-        } else {
-          if (Array.isArray(data.results)) mergedResults.push(...data.results);
-          if (Array.isArray(data.failedOrderDetails)) mergedFailed.push(...data.failedOrderDetails);
-          else if (Array.isArray(data.failedOrders)) mergedFailed.push(...data.failedOrders);
-          else if (Array.isArray(data.failed)) mergedFailed.push(...data.failed);
-          if (Array.isArray(data.successfulOrderIds)) {
-            for (const id of data.successfulOrderIds) {
-              const s = String(id || '').trim();
-              if (s && !mergedSuccessIds.includes(s)) mergedSuccessIds.push(s);
-            }
-          }
-          for (const r of Array.isArray(data.results) ? data.results : []) {
-            if (!r?.success) continue;
-            const id = String(r.orderId || r.orderSn || '').trim();
-            if (id && !mergedSuccessIds.includes(id)) mergedSuccessIds.push(id);
-          }
-        }
-
-        doneCount += chunk.length;
-        setProgressCompleted(doneCount);
-        setShipJobResults([...mergedResults]);
+      const successfulResults = (Array.isArray(data.results) ? data.results : []).filter(
+        (result: any) => result?.success,
+      );
+      const successfulSns: string[] = [
+        ...new Set<string>(
+          successfulResults
+            .map((result: any) => String(result.orderSn || '').replace(/^shopee-/i, '').trim())
+            .filter(Boolean),
+        ),
+      ];
+      if (!successfulSns.length) {
+        closeReservedPrintWindow(reservedPrintWindow);
+        throw new Error(data.message || 'Shopee không xác nhận được đơn nào.');
       }
+
+      const expiresAt = Date.now() + 5 * 60 * 1000;
+      for (const sn of successfulSns) {
+        const key = sn.toLowerCase();
+        recentlyPrintedRef.current.set(key, expiresAt);
+        recentlyPrintedRef.current.set(`shopee-${key}`, expiresAt);
+      }
+
+      const optimisticTargets = applyPrintedLocalOptimistic(successfulSns, true, 'processed');
+      if (optimisticTargets.length) {
+        void updatePrintStatusForOrders(optimisticTargets, true, { silent: true }).catch(() => {});
+      }
+
+      successfulSns.forEach((orderSn, index) => {
+        const pdfUrl = `/api/orders/download-pdf/${encodeURIComponent(orderSn)}`;
+        if (index === 0 && reservedPrintWindow && !reservedPrintWindow.closed) {
+          reservedPrintWindow.location.replace(pdfUrl);
+        } else {
+          window.open(pdfUrl, '_blank', 'noopener,noreferrer');
+        }
+      });
 
       setSelectedOrderIds([]);
-      setActiveSubTab('processed');
-
-      const summary = buildShipConfirmSummary(
-        {
-          total: totalQueued,
-          successCount: mergedSuccessIds.length,
-          failCount: mergedFailed.length,
-          successfulOrderIds: mergedSuccessIds,
-          failedOrderDetails: mergedFailed,
-          results: mergedResults,
-        },
-        totalQueued,
-      );
-      setShipJobResults(mergedResults);
-      setProgressCompleted(summary.successCount);
-      setProgressTotal(Math.max(totalQueued, summary.total, summary.successCount + summary.failCount));
-
-      if (summary.successCount > 0) {
-        const keys = new Set<string>();
-        for (const id of summary.successfulOrderIds) {
-          const s = String(id || '').trim();
-          if (s) {
-            keys.add(s);
-            keys.add(`shopee-${s.replace(/^shopee-/i, '')}`);
-          }
-        }
-        for (const r of mergedResults) {
-          if (!r?.success) continue;
-          const id = String(r.orderId || '').trim();
-          const sn = String(r.orderSn || '').trim();
-          if (id) keys.add(id);
-          if (sn) {
-            keys.add(sn);
-            keys.add(`shopee-${sn}`);
-          }
-        }
-        const patchedBase = applyLocalShippedOrdersUpdate(ordersRef.current, keys, {
-          markPrinted: false,
-          shipMethod,
-        });
-        ordersRef.current = patchedBase;
-        onUpdateOrders(patchedBase, { persist: false });
-      }
-
+      setShipConfirmSummary(null);
+      setShipJobResults([]);
+      clearShipProgressOverlay();
+      showToast(`Đã xác nhận & mở PDF ${successfulSns.length} đơn.`);
       onAddLog({
-        id: `log-${Date.now() + 2}`,
+        id: `log-${Date.now()}`,
         timestamp: new Date().toISOString(),
         channel: 'all',
         type: 'stock_sync',
-        status: summary.successCount > 0 ? 'success' : 'failed',
-        message: `Thành công: ${summary.successCount} đơn. Thất bại: ${summary.failCount} đơn. (${shipMethod === 'pickup' ? 'Lấy hàng' : 'Tự mang ra bưu cục'})`,
+        status: 'success',
+        message: `Delegated polling: xác nhận và mở ${successfulSns.length} tab PDF.`,
       });
-
-      setProgressDone(true);
-      setShipConfirmSummary(summary);
-      setProgressMessage(
-        summary.successCount > 0
-          ? 'Xác nhận thành công — PDF đang tải ngầm, bấm In đơn khi sẵn sàng'
-          : 'Kết quả xác nhận hàng loạt',
-      );
-      if (summary.successCount > 0) {
-        showToast(`Xác nhận thành công ${summary.successCount} đơn.`);
-        const printResult = await waitForConfirmedLabelsAndPrint(
-          summary.successfulOrderIds,
-          reservedPrintWindow,
-        );
-        if (printResult.success) {
-          const optimisticTargets = applyPrintedLocalOptimistic(
-            summary.successfulOrderIds,
-            true,
-            'processed',
-          );
-          if (optimisticTargets.length > 0) {
-            void updatePrintStatusForOrders(optimisticTargets, true, { silent: true }).catch(() => {});
-          }
-          setSelectedOrderIds([]);
-          setShipConfirmSummary(null);
-          setShipJobResults([]);
-          markProgressComplete('Đã xác nhận, mở PDF và đánh dấu Đã in!');
-          showToast(printResult.message || `Đã xác nhận & mở PDF ${summary.successCount} đơn.`);
-        } else {
-          setProgressMessage(printResult.message || 'Đã xác nhận nhưng chưa lấy được PDF.');
-          showToast(printResult.message || 'Đã xác nhận nhưng chưa lấy được PDF.');
-        }
-      } else {
-        closeReservedPrintWindow(reservedPrintWindow);
-      }
     } catch (err) {
       closeReservedPrintWindow(reservedPrintWindow);
-      const msg = err instanceof Error ? err.message : 'Lỗi không xác định';
-      showToast(`Không thể kết nối API: ${msg}`);
-      setProgressDone(true);
-      setProgressMessage(`Xác nhận thất bại: ${msg}`);
+      const message = err instanceof Error ? err.message : 'Lỗi không xác định';
+      clearShipProgressOverlay();
+      showToast(`Xác nhận thất bại: ${message}`);
     } finally {
       setIsShipping(false);
     }
