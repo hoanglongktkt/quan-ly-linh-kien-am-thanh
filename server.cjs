@@ -4494,7 +4494,7 @@ var require_streams = __commonJS({
   "node_modules/iconv-lite/lib/streams.js"(exports2, module2) {
     "use strict";
     var Buffer4 = require("buffer").Buffer;
-    var Transform = require("stream").Transform;
+    var Transform2 = require("stream").Transform;
     module2.exports = function(iconv) {
       iconv.encodeStream = function encodeStream(encoding, options) {
         return new IconvLiteEncoderStream(iconv.getEncoder(encoding, options), options);
@@ -4511,9 +4511,9 @@ var require_streams = __commonJS({
       this.conv = conv;
       options = options || {};
       options.decodeStrings = false;
-      Transform.call(this, options);
+      Transform2.call(this, options);
     }
-    IconvLiteEncoderStream.prototype = Object.create(Transform.prototype, {
+    IconvLiteEncoderStream.prototype = Object.create(Transform2.prototype, {
       constructor: { value: IconvLiteEncoderStream }
     });
     IconvLiteEncoderStream.prototype._transform = function(chunk, encoding, done) {
@@ -4551,9 +4551,9 @@ var require_streams = __commonJS({
       this.conv = conv;
       options = options || {};
       options.encoding = this.encoding = "utf8";
-      Transform.call(this, options);
+      Transform2.call(this, options);
     }
-    IconvLiteDecoderStream.prototype = Object.create(Transform.prototype, {
+    IconvLiteDecoderStream.prototype = Object.create(Transform2.prototype, {
       constructor: { value: IconvLiteDecoderStream }
     });
     IconvLiteDecoderStream.prototype._transform = function(chunk, encoding, done) {
@@ -4719,13 +4719,13 @@ var require_extend_node = __commonJS({
           return length;
         };
         if (iconv.supportsStreams) {
-          var Readable3 = require("stream").Readable;
-          original.ReadableSetEncoding = Readable3.prototype.setEncoding;
-          Readable3.prototype.setEncoding = function setEncoding(enc, options) {
+          var Readable4 = require("stream").Readable;
+          original.ReadableSetEncoding = Readable4.prototype.setEncoding;
+          Readable4.prototype.setEncoding = function setEncoding(enc, options) {
             this._readableState.decoder = iconv.getDecoder(enc, options);
             this._readableState.encoding = enc;
           };
-          Readable3.prototype.collect = iconv._collect;
+          Readable4.prototype.collect = iconv._collect;
         }
       };
       iconv.undoExtendNodeEncodings = function undoExtendNodeEncodings() {
@@ -4742,9 +4742,9 @@ var require_extend_node = __commonJS({
         Buffer4.prototype.toString = original.BufferToString;
         Buffer4.prototype.write = original.BufferWrite;
         if (iconv.supportsStreams) {
-          var Readable3 = require("stream").Readable;
-          Readable3.prototype.setEncoding = original.ReadableSetEncoding;
-          delete Readable3.prototype.collect;
+          var Readable4 = require("stream").Readable;
+          Readable4.prototype.setEncoding = original.ReadableSetEncoding;
+          delete Readable4.prototype.collect;
         }
         original = void 0;
       };
@@ -20051,14 +20051,14 @@ var require_etag = __commonJS({
   "node_modules/etag/index.js"(exports2, module2) {
     "use strict";
     module2.exports = etag;
-    var crypto4 = require("crypto");
+    var crypto5 = require("crypto");
     var Stats = require("fs").Stats;
     var toString3 = Object.prototype.toString;
     function entitytag(entity) {
       if (entity.length === 0) {
         return '"0-2jmj7l5rSw0yVb/vlWAYkK/YBwk"';
       }
-      var hash = crypto4.createHash("sha1").update(entity, "utf8").digest("base64").substring(0, 27);
+      var hash = crypto5.createHash("sha1").update(entity, "utf8").digest("base64").substring(0, 27);
       var len = typeof entity === "string" ? Buffer.byteLength(entity, "utf8") : entity.length;
       return '"' + len.toString(16) + "-" + hash + '"';
     }
@@ -22951,11 +22951,11 @@ var require_request = __commonJS({
 // node_modules/cookie-signature/index.js
 var require_cookie_signature = __commonJS({
   "node_modules/cookie-signature/index.js"(exports2) {
-    var crypto4 = require("crypto");
+    var crypto5 = require("crypto");
     exports2.sign = function(val, secret) {
       if ("string" !== typeof val) throw new TypeError("Cookie value must be provided as a string.");
       if (null == secret) throw new TypeError("Secret key must be provided.");
-      return val + "." + crypto4.createHmac("sha256", secret).update(val).digest("base64").replace(/\=+$/, "");
+      return val + "." + crypto5.createHmac("sha256", secret).update(val).digest("base64").replace(/\=+$/, "");
     };
     exports2.unsign = function(val, secret) {
       if ("string" !== typeof val) throw new TypeError("Signed cookie string must be provided.");
@@ -22964,7 +22964,7 @@ var require_cookie_signature = __commonJS({
       return sha1(mac) == sha1(val) ? str : false;
     };
     function sha1(str) {
-      return crypto4.createHash("sha1").update(str).digest("hex");
+      return crypto5.createHash("sha1").update(str).digest("hex");
     }
   }
 });
@@ -23938,7 +23938,7 @@ var require_main = __commonJS({
     var fs18 = require("fs");
     var path18 = require("path");
     var os = require("os");
-    var crypto4 = require("crypto");
+    var crypto5 = require("crypto");
     var TIPS = [
       "\u25C8 encrypted .env [www.dotenvx.com]",
       "\u25C8 secrets for agents [www.dotenvx.com]",
@@ -24182,7 +24182,7 @@ var require_main = __commonJS({
       const authTag = ciphertext.subarray(-16);
       ciphertext = ciphertext.subarray(12, -16);
       try {
-        const aesgcm = crypto4.createDecipheriv("aes-256-gcm", key, nonce);
+        const aesgcm = crypto5.createDecipheriv("aes-256-gcm", key, nonce);
         aesgcm.setAuthTag(authTag);
         return `${aesgcm.update(ciphertext)}${aesgcm.final()}`;
       } catch (error) {
@@ -48325,14 +48325,14 @@ var require_buffer_equal_constant_time = __commonJS({
 var require_jwa = __commonJS({
   "node_modules/jwa/index.js"(exports2, module2) {
     var Buffer4 = require_safe_buffer().Buffer;
-    var crypto4 = require("crypto");
+    var crypto5 = require("crypto");
     var formatEcdsa = require_ecdsa_sig_formatter();
     var util4 = require("util");
     var MSG_INVALID_ALGORITHM = '"%s" is not a valid algorithm.\n  Supported algorithms are:\n  "HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512" and "none".';
     var MSG_INVALID_SECRET = "secret must be a string or buffer";
     var MSG_INVALID_VERIFIER_KEY = "key must be a string or a buffer";
     var MSG_INVALID_SIGNER_KEY = "key must be a string, a buffer or an object";
-    var supportsKeyObjects = typeof crypto4.createPublicKey === "function";
+    var supportsKeyObjects = typeof crypto5.createPublicKey === "function";
     if (supportsKeyObjects) {
       MSG_INVALID_VERIFIER_KEY += " or a KeyObject";
       MSG_INVALID_SECRET += "or a KeyObject";
@@ -48422,17 +48422,17 @@ var require_jwa = __commonJS({
       return function sign(thing, secret) {
         checkIsSecretKey(secret);
         thing = normalizeInput(thing);
-        var hmac = crypto4.createHmac("sha" + bits, secret);
+        var hmac = crypto5.createHmac("sha" + bits, secret);
         var sig = (hmac.update(thing), hmac.digest("base64"));
         return fromBase64(sig);
       };
     }
     var bufferEqual;
-    var timingSafeEqual = "timingSafeEqual" in crypto4 ? function timingSafeEqual2(a, b) {
+    var timingSafeEqual = "timingSafeEqual" in crypto5 ? function timingSafeEqual2(a, b) {
       if (a.byteLength !== b.byteLength) {
         return false;
       }
-      return crypto4.timingSafeEqual(a, b);
+      return crypto5.timingSafeEqual(a, b);
     } : function timingSafeEqual2(a, b) {
       if (!bufferEqual) {
         bufferEqual = require_buffer_equal_constant_time();
@@ -48449,7 +48449,7 @@ var require_jwa = __commonJS({
       return function sign(thing, privateKey) {
         checkIsPrivateKey(privateKey);
         thing = normalizeInput(thing);
-        var signer = crypto4.createSign("RSA-SHA" + bits);
+        var signer = crypto5.createSign("RSA-SHA" + bits);
         var sig = (signer.update(thing), signer.sign(privateKey, "base64"));
         return fromBase64(sig);
       };
@@ -48459,7 +48459,7 @@ var require_jwa = __commonJS({
         checkIsPublicKey(publicKey);
         thing = normalizeInput(thing);
         signature = toBase64(signature);
-        var verifier = crypto4.createVerify("RSA-SHA" + bits);
+        var verifier = crypto5.createVerify("RSA-SHA" + bits);
         verifier.update(thing);
         return verifier.verify(publicKey, signature, "base64");
       };
@@ -48468,11 +48468,11 @@ var require_jwa = __commonJS({
       return function sign(thing, privateKey) {
         checkIsPrivateKey(privateKey);
         thing = normalizeInput(thing);
-        var signer = crypto4.createSign("RSA-SHA" + bits);
+        var signer = crypto5.createSign("RSA-SHA" + bits);
         var sig = (signer.update(thing), signer.sign({
           key: privateKey,
-          padding: crypto4.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto4.constants.RSA_PSS_SALTLEN_DIGEST
+          padding: crypto5.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto5.constants.RSA_PSS_SALTLEN_DIGEST
         }, "base64"));
         return fromBase64(sig);
       };
@@ -48482,12 +48482,12 @@ var require_jwa = __commonJS({
         checkIsPublicKey(publicKey);
         thing = normalizeInput(thing);
         signature = toBase64(signature);
-        var verifier = crypto4.createVerify("RSA-SHA" + bits);
+        var verifier = crypto5.createVerify("RSA-SHA" + bits);
         verifier.update(thing);
         return verifier.verify({
           key: publicKey,
-          padding: crypto4.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto4.constants.RSA_PSS_SALTLEN_DIGEST
+          padding: crypto5.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto5.constants.RSA_PSS_SALTLEN_DIGEST
         }, signature, "base64");
       };
     }
@@ -61615,22 +61615,22 @@ var require_crypto2 = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.NodeCrypto = void 0;
-    var crypto4 = require("crypto");
+    var crypto5 = require("crypto");
     var NodeCrypto = class {
       async sha256DigestBase64(str) {
-        return crypto4.createHash("sha256").update(str).digest("base64");
+        return crypto5.createHash("sha256").update(str).digest("base64");
       }
       randomBytesBase64(count) {
-        return crypto4.randomBytes(count).toString("base64");
+        return crypto5.randomBytes(count).toString("base64");
       }
       async verify(pubkey, data, signature) {
-        const verifier = crypto4.createVerify("RSA-SHA256");
+        const verifier = crypto5.createVerify("RSA-SHA256");
         verifier.update(data);
         verifier.end();
         return verifier.verify(pubkey, signature, "base64");
       }
       async sign(privateKey, data) {
-        const signer = crypto4.createSign("RSA-SHA256");
+        const signer = crypto5.createSign("RSA-SHA256");
         signer.update(data);
         signer.end();
         return signer.sign(privateKey, "base64");
@@ -61648,7 +61648,7 @@ var require_crypto2 = __commonJS({
        *   string in hexadecimal encoding.
        */
       async sha256DigestHex(str) {
-        return crypto4.createHash("sha256").update(str).digest("hex");
+        return crypto5.createHash("sha256").update(str).digest("hex");
       }
       /**
        * Computes the HMAC hash of a message using the provided crypto key and the
@@ -61660,7 +61660,7 @@ var require_crypto2 = __commonJS({
        */
       async signWithHmacSha256(key, msg) {
         const cryptoKey = typeof key === "string" ? key : toBuffer(key);
-        return toArrayBuffer(crypto4.createHmac("sha256", cryptoKey).update(msg).digest());
+        return toArrayBuffer(crypto5.createHmac("sha256", cryptoKey).update(msg).digest());
       }
     };
     exports2.NodeCrypto = NodeCrypto;
@@ -62351,10 +62351,10 @@ var require_oauth2client = __commonJS({
        * https://github.com/googleapis/google-auth-library-nodejs/blob/main/samples/oauth2-codeVerifier.js
        */
       async generateCodeVerifierAsync() {
-        const crypto4 = (0, crypto_1.createCrypto)();
-        const randomString = crypto4.randomBytesBase64(96);
+        const crypto5 = (0, crypto_1.createCrypto)();
+        const randomString = crypto5.randomBytesBase64(96);
         const codeVerifier = randomString.replace(/\+/g, "~").replace(/=/g, "_").replace(/\//g, "-");
-        const unencodedCodeChallenge = await crypto4.sha256DigestBase64(codeVerifier);
+        const unencodedCodeChallenge = await crypto5.sha256DigestBase64(codeVerifier);
         const codeChallenge = unencodedCodeChallenge.split("=")[0].replace(/\+/g, "-").replace(/\//g, "_");
         return { codeVerifier, codeChallenge };
       }
@@ -62795,7 +62795,7 @@ var require_oauth2client = __commonJS({
        * @return Returns a promise resolving to LoginTicket on verification.
        */
       async verifySignedJwtWithCertsAsync(jwt2, certs, requiredAudience, issuers, maxExpiry) {
-        const crypto4 = (0, crypto_1.createCrypto)();
+        const crypto5 = (0, crypto_1.createCrypto)();
         if (!maxExpiry) {
           maxExpiry = _OAuth2Client.DEFAULT_MAX_TOKEN_LIFETIME_SECS_;
         }
@@ -62808,7 +62808,7 @@ var require_oauth2client = __commonJS({
         let envelope;
         let payload;
         try {
-          envelope = JSON.parse(crypto4.decodeBase64StringUtf8(segments[0]));
+          envelope = JSON.parse(crypto5.decodeBase64StringUtf8(segments[0]));
         } catch (err) {
           if (err instanceof Error) {
             err.message = `Can't parse token envelope: ${segments[0]}': ${err.message}`;
@@ -62819,7 +62819,7 @@ var require_oauth2client = __commonJS({
           throw new Error("Can't parse token envelope: " + segments[0]);
         }
         try {
-          payload = JSON.parse(crypto4.decodeBase64StringUtf8(segments[1]));
+          payload = JSON.parse(crypto5.decodeBase64StringUtf8(segments[1]));
         } catch (err) {
           if (err instanceof Error) {
             err.message = `Can't parse token payload '${segments[0]}`;
@@ -62836,7 +62836,7 @@ var require_oauth2client = __commonJS({
         if (envelope.alg === "ES256") {
           signature = formatEcdsa.joseToDer(signature, "ES256").toString("base64");
         }
-        const verified = await crypto4.verify(cert, signed, signature);
+        const verified = await crypto5.verify(cert, signed, signature);
         if (!verified) {
           throw new Error("Invalid token signature: " + jwt2);
         }
@@ -65406,14 +65406,14 @@ var require_awsrequestsigner = __commonJS({
       }
     };
     exports2.AwsRequestSigner = AwsRequestSigner;
-    async function sign(crypto4, key, msg) {
-      return await crypto4.signWithHmacSha256(key, msg);
+    async function sign(crypto5, key, msg) {
+      return await crypto5.signWithHmacSha256(key, msg);
     }
-    async function getSigningKey(crypto4, key, dateStamp, region, serviceName) {
-      const kDate = await sign(crypto4, `AWS4${key}`, dateStamp);
-      const kRegion = await sign(crypto4, kDate, region);
-      const kService = await sign(crypto4, kRegion, serviceName);
-      const kSigning = await sign(crypto4, kService, "aws4_request");
+    async function getSigningKey(crypto5, key, dateStamp, region, serviceName) {
+      const kDate = await sign(crypto5, `AWS4${key}`, dateStamp);
+      const kRegion = await sign(crypto5, kDate, region);
+      const kService = await sign(crypto5, kRegion, serviceName);
+      const kSigning = await sign(crypto5, kService, "aws4_request");
       return kSigning;
     }
     async function generateAuthenticationHeaderMap(options) {
@@ -66379,7 +66379,7 @@ var require_gdchclient = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GdchClient = exports2.GDCH_SERVICE_ACCOUNT_TYPE = void 0;
-    var crypto4 = require("crypto");
+    var crypto5 = require("crypto");
     var fs18 = require("fs");
     var https3 = require("https");
     var oauth2client_1 = require_oauth2client();
@@ -66570,7 +66570,7 @@ var require_gdchclient = __commonJS({
         const encodedHeader = this.base64UrlEncode(JSON.stringify(header));
         const encodedPayload = this.base64UrlEncode(JSON.stringify(payload));
         const signingInput = `${encodedHeader}.${encodedPayload}`;
-        const signature = crypto4.sign("sha256", Buffer.from(signingInput), {
+        const signature = crypto5.sign("sha256", Buffer.from(signingInput), {
           key: this.privateKey,
           dsaEncoding: "ieee-p1363"
         });
@@ -67431,24 +67431,24 @@ var require_googleauth = __commonJS({
           const signed = await client.sign(data);
           return signed.signedBlob;
         }
-        const crypto4 = (0, crypto_1.createCrypto)();
+        const crypto5 = (0, crypto_1.createCrypto)();
         if (client instanceof jwtclient_1.JWT && client.key) {
-          const sign = await crypto4.sign(client.key, data);
+          const sign = await crypto5.sign(client.key, data);
           return sign;
         }
         const creds = await this.getCredentials();
         if (!creds.client_email) {
           throw new Error("Cannot sign data without `client_email`.");
         }
-        return this.signBlob(crypto4, creds.client_email, data, endpoint);
+        return this.signBlob(crypto5, creds.client_email, data, endpoint);
       }
-      async signBlob(crypto4, emailOrUniqueId, data, endpoint) {
+      async signBlob(crypto5, emailOrUniqueId, data, endpoint) {
         const url2 = new URL(endpoint + `${emailOrUniqueId}:signBlob`);
         const res = await this.request({
           method: "POST",
           url: url2.href,
           data: {
-            payload: crypto4.encodeBase64StringUtf8(data)
+            payload: crypto5.encodeBase64StringUtf8(data)
           },
           retry: true,
           retryConfig: {
@@ -70113,7 +70113,7 @@ var require_websocket = __commonJS({
     var net = require("net");
     var tls = require("tls");
     var { randomBytes, createHash } = require("crypto");
-    var { Duplex, Readable: Readable3 } = require("stream");
+    var { Duplex, Readable: Readable4 } = require("stream");
     var { URL: URL2 } = require("url");
     var PerMessageDeflate2 = require_permessage_deflate();
     var Receiver2 = require_receiver();
@@ -72080,7 +72080,7 @@ var require_form_data = __commonJS({
     var parseUrl2 = require("url").parse;
     var fs18 = require("fs");
     var Stream4 = require("stream").Stream;
-    var crypto4 = require("crypto");
+    var crypto5 = require("crypto");
     var mime = require_mime_types();
     var asynckit = require_asynckit();
     var setToStringTag = require_es_set_tostringtag();
@@ -72289,7 +72289,7 @@ var require_form_data = __commonJS({
       return Buffer.concat([dataBuffer, Buffer.from(this._lastBoundary())]);
     };
     FormData5.prototype._generateBoundary = function() {
-      this._boundary = "--------------------------" + crypto4.randomBytes(12).toString("hex");
+      this._boundary = "--------------------------" + crypto5.randomBytes(12).toString("hex");
     };
     FormData5.prototype.getLengthSync = function() {
       var knownLength = this._overheadLength + this._valueLength;
@@ -73847,7 +73847,10 @@ var init_wooCommerce = __esm({
 var import_express24 = __toESM(require_express2(), 1);
 var import_path17 = __toESM(require("path"), 1);
 var import_fs16 = __toESM(require("fs"), 1);
+var import_crypto3 = __toESM(require("crypto"), 1);
 var import_dotenv2 = __toESM(require_main(), 1);
+var import_node_stream4 = require("node:stream");
+var import_promises3 = require("node:stream/promises");
 var import_pdf_lib = __toESM(require_cjs(), 1);
 
 // cron/index.js
@@ -118101,6 +118104,32 @@ function safeLabelFilename(raw) {
   if (!base || base.includes("..") || !/\.pdf$/i.test(base)) return null;
   return base;
 }
+function buildCachedLabelFilename(orderSns) {
+  const safe = orderSns.map((sn) => String(sn || "").replace(/[^a-zA-Z0-9_-]/g, "")).filter(Boolean);
+  if (safe.length <= 1) return `order_${safe[0] || "unknown"}.pdf`;
+  const digest = import_crypto3.default.createHash("sha1").update([...safe].sort().join("|")).digest("hex").slice(0, 12);
+  return `orders_${safe.length}_${digest}.pdf`;
+}
+function getValidLabelDiskFile(filename) {
+  const safe = safeLabelFilename(filename);
+  if (!safe) return null;
+  const filePath = import_path17.default.join(LABELS_DIR, safe);
+  try {
+    if (!import_fs16.default.existsSync(filePath)) return null;
+    const stat3 = import_fs16.default.statSync(filePath);
+    if (!stat3.isFile() || stat3.size <= 0) return null;
+    const fd = import_fs16.default.openSync(filePath, "r");
+    try {
+      const magic = Buffer.allocUnsafe(4);
+      if (import_fs16.default.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") return null;
+    } finally {
+      import_fs16.default.closeSync(fd);
+    }
+    return { safe, filePath, size: stat3.size };
+  } catch {
+    return null;
+  }
+}
 function isPdfBuffer(buffer, contentType) {
   if (!buffer || buffer.length < 5) return false;
   if (buffer.subarray(0, 4).toString() === "%PDF") return true;
@@ -118236,12 +118265,16 @@ function getLabelMem(filename) {
   }
 }
 function hasLabelMem(filename) {
-  const hit = getLabelMem(filename);
-  return Boolean(hit && hit.buf.length > 0 && isPdfBuffer(hit.buf));
+  if (getValidLabelDiskFile(filename)) return true;
+  const safe = safeLabelFilename(filename);
+  const ram = safe ? labelMemCache.get(safe) : null;
+  return Boolean(ram && ram.expires >= Date.now() && ram.buf.length > 0 && isPdfBuffer(ram.buf));
 }
 function assertLabelFileReady(filename) {
   const safe = safeLabelFilename(filename);
   if (!safe) throw new Error(`T\xEAn file v\u1EADn \u0111\u01A1n kh\xF4ng h\u1EE3p l\u1EC7: ${filename}`);
+  const disk = getValidLabelDiskFile(safe);
+  if (disk) return { safe: disk.safe, size: disk.size };
   const hit = getLabelMem(safe);
   if (!hit || !hit.buf.length) {
     throw new Error(`File v\u1EADn \u0111\u01A1n kh\xF4ng t\u1ED3n t\u1EA1i ho\u1EB7c r\u1ED7ng: ${safe}`);
@@ -118338,6 +118371,24 @@ function serveLabelPdfFromMem(filename, res) {
     if (!safe) {
       res.status(400).type("text/plain").send("T\xEAn file v\u1EADn \u0111\u01A1n kh\xF4ng h\u1EE3p l\u1EC7.");
       return "invalid";
+    }
+    const disk = getValidLabelDiskFile(safe);
+    if (disk) {
+      res.status(200);
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="${safe}"`);
+      res.setHeader("Content-Length", String(disk.size));
+      res.setHeader("Cache-Control", "private, max-age=300");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      const stream4 = import_fs16.default.createReadStream(disk.filePath);
+      stream4.on("error", (err) => {
+        console.error(`[Labels] Stream disk l\u1ED7i ${safe}:`, err);
+        if (!res.headersSent) res.status(500).end();
+        else res.destroy(err);
+      });
+      stream4.pipe(res);
+      console.log(`[Labels] Streamed PDF ${safe} (${disk.size} bytes)`);
+      return "sent";
     }
     const hit = getLabelMem(safe);
     if (!hit || !hit.buf.length) {
@@ -124191,7 +124242,22 @@ async function shopeeGetShippingDocumentResult(shopId, accessToken, orderList) {
   );
   return json2;
 }
-async function shopeeDownloadShippingDocument(shopId, accessToken, orderList) {
+async function shopeeDownloadShippingDocument(shopId, accessToken, orderList, filename) {
+  ensureLabelsDir();
+  const safe = safeLabelFilename(filename);
+  if (!safe) return { error: "invalid_filename", message: "T\xEAn file PDF cache kh\xF4ng h\u1EE3p l\u1EC7." };
+  const destination = import_path17.default.join(LABELS_DIR, safe);
+  const cached = getValidLabelDiskFile(safe);
+  if (cached) {
+    console.log(`[Shopee API] PDF cache HIT ${safe} (${cached.size} bytes) \u2014 b\u1ECF qua download`);
+    return {
+      filename: safe,
+      filePath: cached.filePath,
+      size: cached.size,
+      contentType: "application/pdf",
+      cached: true
+    };
+  }
   const apiPath = "/api/v2/logistics/download_shipping_document";
   const timestamp = Math.floor(Date.now() / 1e3);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
@@ -124214,26 +124280,65 @@ async function shopeeDownloadShippingDocument(shopId, accessToken, orderList) {
       message: json2.message || "Shopee kh\xF4ng tr\u1EA3 v\u1EC1 file v\u1EADn \u0111\u01A1n."
     };
   }
-  let buffer;
+  if (!res.ok || !res.body) {
+    return {
+      error: "download_failed",
+      message: `Shopee download_shipping_document HTTP ${res.status}.`
+    };
+  }
+  const declaredLength = Number(res.headers.get("content-length") || 0);
+  if (declaredLength > SHOPEE_WAYBILL_PDF_MAX_BYTES) {
+    return {
+      error: "pdf_too_large",
+      message: `PDF qu\xE1 l\u1EDBn (${declaredLength} bytes).`
+    };
+  }
+  const tempPath = `${destination}.${process.pid}.${Date.now()}.part`;
+  let receivedBytes = 0;
+  const limiter = new import_node_stream4.Transform({
+    transform(chunk, _encoding, callback) {
+      receivedBytes += chunk.length;
+      if (receivedBytes > SHOPEE_WAYBILL_PDF_MAX_BYTES) {
+        callback(new Error(`PDF v\u01B0\u1EE3t qu\xE1 ${SHOPEE_WAYBILL_PDF_MAX_BYTES} bytes.`));
+        return;
+      }
+      callback(null, chunk);
+    }
+  });
   try {
-    const ab = await res.arrayBuffer();
-    const size = ab.byteLength || 0;
-    console.log(`[Shopee API] ${apiPath} nh\u1EADn binary size=${size} bytes (kh\xF4ng log n\u1ED9i dung)`);
-    if (size < 64) {
-      return { error: "empty_pdf", message: `PDF r\u1ED7ng ho\u1EB7c qu\xE1 nh\u1ECF (${size} bytes).` };
+    await (0, import_promises3.pipeline)(
+      import_node_stream4.Readable.fromWeb(res.body),
+      limiter,
+      import_fs16.default.createWriteStream(tempPath, { flags: "wx" })
+    );
+    if (receivedBytes < 64) throw new Error(`PDF r\u1ED7ng ho\u1EB7c qu\xE1 nh\u1ECF (${receivedBytes} bytes).`);
+    const tempFd = import_fs16.default.openSync(tempPath, "r");
+    try {
+      const magic = Buffer.allocUnsafe(4);
+      if (import_fs16.default.readSync(tempFd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
+        throw new Error("D\u1EEF li\u1EC7u t\u1EA3i v\u1EC1 kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7.");
+      }
+    } finally {
+      import_fs16.default.closeSync(tempFd);
     }
-    if (size > SHOPEE_WAYBILL_PDF_MAX_BYTES) {
-      return {
-        error: "pdf_too_large",
-        message: `PDF batch qu\xE1 l\u1EDBn (${size} bytes) \u2014 v\u01B0\u1EE3t tr\u1EA7n ${SHOPEE_WAYBILL_PDF_MAX_BYTES} \u0111\u1EC3 tr\xE1nh OOM cPanel.`
-      };
-    }
-    buffer = Buffer.from(ab);
+    if (import_fs16.default.existsSync(destination)) import_fs16.default.unlinkSync(destination);
+    import_fs16.default.renameSync(tempPath, destination);
+    console.log(`[Shopee API] ${apiPath} stream OK file=${safe} size=${receivedBytes} bytes`);
   } catch (readErr) {
-    console.error(`[Shopee API] ${apiPath} \u0111\u1ECDc binary th\u1EA5t b\u1EA1i:`, readErr?.message || readErr);
+    try {
+      if (import_fs16.default.existsSync(tempPath)) import_fs16.default.unlinkSync(tempPath);
+    } catch {
+    }
+    console.error(`[Shopee API] ${apiPath} stream th\u1EA5t b\u1EA1i:`, readErr?.message || readErr);
     return { error: "download_read_failed", message: String(readErr?.message || readErr) };
   }
-  return { buffer, contentType: contentType || "application/pdf" };
+  return {
+    filename: safe,
+    filePath: destination,
+    size: receivedBytes,
+    contentType: contentType || "application/pdf",
+    cached: false
+  };
 }
 async function batchDownloadShopeeWaybillPdf(shopId, orderList) {
   const emptySkip = [];
@@ -124418,7 +124523,8 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList) {
     );
     let downloadResult;
     try {
-      downloadResult = await shopeeDownloadShippingDocument(shopId, accessToken, readyList);
+      const filename = buildCachedLabelFilename(readyList.map((o) => o.order_sn));
+      downloadResult = await shopeeDownloadShippingDocument(shopId, accessToken, readyList, filename);
     } catch (dlErr) {
       console.error(`[Shopee Batch Waybill] download exception:`, dlErr?.message || dlErr);
       return {
@@ -124429,7 +124535,7 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList) {
         message: String(dlErr?.message || dlErr)
       };
     }
-    if (!downloadResult?.buffer || !Buffer.isBuffer(downloadResult.buffer)) {
+    if (!downloadResult?.filename || !downloadResult?.filePath || !downloadResult?.size) {
       return {
         success: false,
         readyOrderSns: [],
@@ -124438,10 +124544,8 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList) {
         message: downloadResult?.message || "Shopee kh\xF4ng tr\u1EA3 v\u1EC1 file PDF h\u1EE3p l\u1EC7 t\u1EEB download_shipping_document batch."
       };
     }
-    if (!isPdfBuffer(downloadResult.buffer, downloadResult.contentType)) {
-      console.error(
-        `[Shopee Batch Waybill] Buffer kh\xF4ng ph\u1EA3i PDF \u2014 size=${downloadResult.buffer.length} head=${downloadResult.buffer.subarray(0, 8).toString("hex")}`
-      );
+    if (!getValidLabelDiskFile(downloadResult.filename)) {
+      console.error(`[Shopee Batch Waybill] File PDF stream kh\xF4ng h\u1EE3p l\u1EC7: ${downloadResult.filename}`);
       return {
         success: false,
         readyOrderSns: [],
@@ -124451,11 +124555,13 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList) {
       };
     }
     console.log(
-      `[Shopee Batch Waybill] T\u1EA3i PDF OK \u2014 size=${downloadResult.buffer.length} bytes, ready=${readyList.length}`
+      `[Shopee Batch Waybill] T\u1EA3i PDF OK \u2014 size=${downloadResult.size} bytes, ready=${readyList.length}`
     );
     return {
       success: true,
-      buffer: downloadResult.buffer,
+      filename: downloadResult.filename,
+      filePath: downloadResult.filePath,
+      size: downloadResult.size,
       contentType: downloadResult.contentType || "application/pdf",
       readyOrderSns: readyList.map((o) => o.order_sn),
       skippedOrders: pollFailed
@@ -130825,15 +130931,7 @@ async function startServer() {
     return "pdf";
   }
   function buildMergedLabelFilename(orderSns) {
-    const safe = orderSns.map((sn) => String(sn).replace(/[^a-zA-Z0-9_-]/g, "")).filter(Boolean);
-    const primarySn = safe[0] || "bulk";
-    if (safe.length <= 1) {
-      return `order_${primarySn}_${Date.now()}.pdf`;
-    }
-    const d = /* @__PURE__ */ new Date();
-    const pad = (n) => String(n).padStart(2, "0");
-    const ts = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
-    return `Danh_Sach_Van_Don_${safe.length}_${ts}.pdf`;
+    return buildCachedLabelFilename(orderSns);
   }
   async function mergePdfLabelBuffers(buffers) {
     const valid = buffers.filter((b) => b && Buffer.isBuffer(b) && b.length > 0 && isPdfBuffer(b));
@@ -130872,8 +130970,7 @@ async function startServer() {
       }).filter((x2) => x2.size > 0).sort((a, b) => b.mtime - a.mtime);
       const newest = matches[0]?.name;
       if (!newest) return null;
-      const hit = getLabelMem(newest);
-      return hit && isPdfBuffer(hit.buf) ? newest : null;
+      return getValidLabelDiskFile(newest) ? newest : null;
     } catch {
       return null;
     }
@@ -130901,8 +130998,25 @@ async function startServer() {
     }
   }
   async function generateShopeeShippingDocument(shopId, orderList) {
+    const requestedSns = orderList.map((o) => String(o.order_sn || "").trim()).filter(Boolean);
+    const expectedFilename = buildMergedLabelFilename(requestedSns);
+    const cached = getValidLabelDiskFile(expectedFilename);
+    if (cached) {
+      const url3 = absoluteLabelUrl(`/api/public/labels/${cached.safe}`);
+      console.log(`[Shopee Print] Cache HIT n=${requestedSns.length} file=${cached.safe}`);
+      return {
+        success: true,
+        filename: cached.safe,
+        contentType: "application/pdf",
+        orderSns: requestedSns,
+        skippedOrders: [],
+        size: cached.size,
+        url: url3,
+        cached: true
+      };
+    }
     const batch = await batchDownloadShopeeWaybillPdf(shopId, orderList);
-    if (!batch.success || !batch.buffer || !Buffer.isBuffer(batch.buffer)) {
+    if (!batch.success || !batch.filename || !batch.filePath || !batch.size) {
       return {
         success: false,
         error: batch.error || "document_generation_failed",
@@ -130912,8 +131026,7 @@ async function startServer() {
       };
     }
     const orderSns = batch.readyOrderSns?.length ? batch.readyOrderSns : orderList.map((o) => o.order_sn);
-    const filename = buildMergedLabelFilename(orderSns);
-    saveLabelFile(batch.buffer, filename, batch.contentType || "application/pdf");
+    const filename = batch.filename;
     assertLabelFileReady(filename);
     const url2 = absoluteLabelUrl(`/api/public/labels/${filename}`);
     if (!url2) {
@@ -130925,7 +131038,7 @@ async function startServer() {
       };
     }
     console.log(
-      `[Shopee Print] Batch PDF OK n=${orderSns.length} size=${batch.buffer.length} file=${filename}`
+      `[Shopee Print] Batch PDF OK n=${orderSns.length} size=${batch.size} file=${filename}`
     );
     return {
       success: true,
@@ -130933,7 +131046,7 @@ async function startServer() {
       contentType: batch.contentType || "application/pdf",
       orderSns,
       skippedOrders: batch.skippedOrders || [],
-      buffer: batch.buffer,
+      size: batch.size,
       url: url2
     };
   }

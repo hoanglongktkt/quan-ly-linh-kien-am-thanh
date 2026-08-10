@@ -3,6 +3,8 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import dotenv from "dotenv";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { PDFDocument } from "pdf-lib";
 import { scheduleAutoIncrementalOrdersSync, scheduleHandedOverStatusReconcile, scheduleShopeeReturnRequestsSync } from "./cron/index.js";
 import {
@@ -642,6 +644,36 @@ function safeLabelFilename(raw: string): string | null {
   return base;
 }
 
+function buildCachedLabelFilename(orderSns: string[]): string {
+  const safe = orderSns
+    .map((sn) => String(sn || "").replace(/[^a-zA-Z0-9_-]/g, ""))
+    .filter(Boolean);
+  if (safe.length <= 1) return `order_${safe[0] || "unknown"}.pdf`;
+  const digest = crypto.createHash("sha1").update([...safe].sort().join("|")).digest("hex").slice(0, 12);
+  return `orders_${safe.length}_${digest}.pdf`;
+}
+
+function getValidLabelDiskFile(filename: string): { safe: string; filePath: string; size: number } | null {
+  const safe = safeLabelFilename(filename);
+  if (!safe) return null;
+  const filePath = path.join(LABELS_DIR, safe);
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile() || stat.size <= 0) return null;
+    const fd = fs.openSync(filePath, "r");
+    try {
+      const magic = Buffer.allocUnsafe(4);
+      if (fs.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") return null;
+    } finally {
+      fs.closeSync(fd);
+    }
+    return { safe, filePath, size: stat.size };
+  } catch {
+    return null;
+  }
+}
+
 function isPdfBuffer(buffer: Buffer, contentType?: string): boolean {
   if (!buffer || buffer.length < 5) return false;
   if (buffer.subarray(0, 4).toString() === "%PDF") return true;
@@ -807,14 +839,18 @@ function getLabelMem(filename: string): { buf: Buffer; contentType?: string } | 
 }
 
 function hasLabelMem(filename: string): boolean {
-  const hit = getLabelMem(filename);
-  return Boolean(hit && hit.buf.length > 0 && isPdfBuffer(hit.buf));
+  if (getValidLabelDiskFile(filename)) return true;
+  const safe = safeLabelFilename(filename);
+  const ram = safe ? labelMemCache.get(safe) : null;
+  return Boolean(ram && ram.expires >= Date.now() && ram.buf.length > 0 && isPdfBuffer(ram.buf));
 }
 
 /** Xác minh file sẵn sàng trước khi trả URL cho FE — tuyệt đối không trả URL file rỗng. */
 function assertLabelFileReady(filename: string): { safe: string; size: number } {
   const safe = safeLabelFilename(filename);
   if (!safe) throw new Error(`Tên file vận đơn không hợp lệ: ${filename}`);
+  const disk = getValidLabelDiskFile(safe);
+  if (disk) return { safe: disk.safe, size: disk.size };
   const hit = getLabelMem(safe);
   if (!hit || !hit.buf.length) {
     throw new Error(`File vận đơn không tồn tại hoặc rỗng: ${safe}`);
@@ -935,6 +971,24 @@ function serveLabelPdfFromMem(filename: string, res: any): ServeLabelPdfResult {
     if (!safe) {
       res.status(400).type("text/plain").send("Tên file vận đơn không hợp lệ.");
       return "invalid";
+    }
+    const disk = getValidLabelDiskFile(safe);
+    if (disk) {
+      res.status(200);
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="${safe}"`);
+      res.setHeader("Content-Length", String(disk.size));
+      res.setHeader("Cache-Control", "private, max-age=300");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      const stream = fs.createReadStream(disk.filePath);
+      stream.on("error", (err) => {
+        console.error(`[Labels] Stream disk lỗi ${safe}:`, err);
+        if (!res.headersSent) res.status(500).end();
+        else res.destroy(err);
+      });
+      stream.pipe(res);
+      console.log(`[Labels] Streamed PDF ${safe} (${disk.size} bytes)`);
+      return "sent";
     }
     const hit = getLabelMem(safe);
     if (!hit || !hit.buf.length) {
@@ -8712,7 +8766,28 @@ async function shopeeGetShippingDocumentResult(shopId: string, accessToken: stri
 
 // v2.logistics.download_shipping_document — response body IS the raw PDF (binary).
 // TUYỆT ĐỐI không log nội dung buffer — chỉ log size/content-type.
-async function shopeeDownloadShippingDocument(shopId: string, accessToken: string, orderList: { order_sn: string; package_number?: string }[]) {
+async function shopeeDownloadShippingDocument(
+  shopId: string,
+  accessToken: string,
+  orderList: { order_sn: string; package_number?: string }[],
+  filename: string,
+) {
+  ensureLabelsDir();
+  const safe = safeLabelFilename(filename);
+  if (!safe) return { error: "invalid_filename", message: "Tên file PDF cache không hợp lệ." };
+  const destination = path.join(LABELS_DIR, safe);
+  const cached = getValidLabelDiskFile(safe);
+  if (cached) {
+    console.log(`[Shopee API] PDF cache HIT ${safe} (${cached.size} bytes) — bỏ qua download`);
+    return {
+      filename: safe,
+      filePath: cached.filePath,
+      size: cached.size,
+      contentType: "application/pdf",
+      cached: true,
+    };
+  }
+
   const apiPath = "/api/v2/logistics/download_shipping_document";
   const timestamp = Math.floor(Date.now() / 1000);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
@@ -8739,28 +8814,70 @@ async function shopeeDownloadShippingDocument(shopId: string, accessToken: strin
     };
   }
 
-  // Đọc binary an toàn — không stringify, không console.log buffer.
-  let buffer: Buffer;
+  if (!res.ok || !res.body) {
+    return {
+      error: "download_failed",
+      message: `Shopee download_shipping_document HTTP ${res.status}.`,
+    };
+  }
+
+  const declaredLength = Number(res.headers.get("content-length") || 0);
+  if (declaredLength > SHOPEE_WAYBILL_PDF_MAX_BYTES) {
+    return {
+      error: "pdf_too_large",
+      message: `PDF quá lớn (${declaredLength} bytes).`,
+    };
+  }
+
+  const tempPath = `${destination}.${process.pid}.${Date.now()}.part`;
+  let receivedBytes = 0;
+  const limiter = new Transform({
+    transform(chunk, _encoding, callback) {
+      receivedBytes += chunk.length;
+      if (receivedBytes > SHOPEE_WAYBILL_PDF_MAX_BYTES) {
+        callback(new Error(`PDF vượt quá ${SHOPEE_WAYBILL_PDF_MAX_BYTES} bytes.`));
+        return;
+      }
+      callback(null, chunk);
+    },
+  });
+
   try {
-    const ab = await res.arrayBuffer();
-    const size = ab.byteLength || 0;
-    console.log(`[Shopee API] ${apiPath} nhận binary size=${size} bytes (không log nội dung)`);
-    if (size < 64) {
-      return { error: "empty_pdf", message: `PDF rỗng hoặc quá nhỏ (${size} bytes).` };
+    await pipeline(
+      Readable.fromWeb(res.body as any),
+      limiter,
+      fs.createWriteStream(tempPath, { flags: "wx" }),
+    );
+    if (receivedBytes < 64) throw new Error(`PDF rỗng hoặc quá nhỏ (${receivedBytes} bytes).`);
+    const tempFd = fs.openSync(tempPath, "r");
+    try {
+      const magic = Buffer.allocUnsafe(4);
+      if (fs.readSync(tempFd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
+        throw new Error("Dữ liệu tải về không phải PDF hợp lệ.");
+      }
+    } finally {
+      fs.closeSync(tempFd);
     }
-    if (size > SHOPEE_WAYBILL_PDF_MAX_BYTES) {
-      return {
-        error: "pdf_too_large",
-        message: `PDF batch quá lớn (${size} bytes) — vượt trần ${SHOPEE_WAYBILL_PDF_MAX_BYTES} để tránh OOM cPanel.`,
-      };
-    }
-    buffer = Buffer.from(ab);
+    if (fs.existsSync(destination)) fs.unlinkSync(destination);
+    fs.renameSync(tempPath, destination);
+    console.log(`[Shopee API] ${apiPath} stream OK file=${safe} size=${receivedBytes} bytes`);
   } catch (readErr: any) {
-    console.error(`[Shopee API] ${apiPath} đọc binary thất bại:`, readErr?.message || readErr);
+    try {
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    } catch {
+      /* ignore cleanup */
+    }
+    console.error(`[Shopee API] ${apiPath} stream thất bại:`, readErr?.message || readErr);
     return { error: "download_read_failed", message: String(readErr?.message || readErr) };
   }
 
-  return { buffer, contentType: contentType || "application/pdf" };
+  return {
+    filename: safe,
+    filePath: destination,
+    size: receivedBytes,
+    contentType: contentType || "application/pdf",
+    cached: false,
+  };
 }
 
 type ShopeeWaybillOrderRow = {
@@ -8778,7 +8895,9 @@ async function batchDownloadShopeeWaybillPdf(
   orderList: ShopeeWaybillOrderRow[],
 ): Promise<{
   success: boolean;
-  buffer?: Buffer;
+  filename?: string;
+  filePath?: string;
+  size?: number;
   contentType?: string;
   readyOrderSns: string[];
   skippedOrders: Array<{ orderSn: string; error: string; message: string }>;
@@ -8994,7 +9113,8 @@ async function batchDownloadShopeeWaybillPdf(
 
     let downloadResult: any;
     try {
-      downloadResult = await shopeeDownloadShippingDocument(shopId, accessToken, readyList);
+      const filename = buildCachedLabelFilename(readyList.map((o) => o.order_sn));
+      downloadResult = await shopeeDownloadShippingDocument(shopId, accessToken, readyList, filename);
     } catch (dlErr: any) {
       console.error(`[Shopee Batch Waybill] download exception:`, dlErr?.message || dlErr);
       return {
@@ -9006,7 +9126,7 @@ async function batchDownloadShopeeWaybillPdf(
       };
     }
 
-    if (!downloadResult?.buffer || !Buffer.isBuffer(downloadResult.buffer)) {
+    if (!downloadResult?.filename || !downloadResult?.filePath || !downloadResult?.size) {
       return {
         success: false,
         readyOrderSns: [],
@@ -9018,10 +9138,8 @@ async function batchDownloadShopeeWaybillPdf(
       };
     }
 
-    if (!isPdfBuffer(downloadResult.buffer, downloadResult.contentType)) {
-      console.error(
-        `[Shopee Batch Waybill] Buffer không phải PDF — size=${downloadResult.buffer.length} head=${downloadResult.buffer.subarray(0, 8).toString("hex")}`,
-      );
+    if (!getValidLabelDiskFile(downloadResult.filename)) {
+      console.error(`[Shopee Batch Waybill] File PDF stream không hợp lệ: ${downloadResult.filename}`);
       return {
         success: false,
         readyOrderSns: [],
@@ -9032,12 +9150,14 @@ async function batchDownloadShopeeWaybillPdf(
     }
 
     console.log(
-      `[Shopee Batch Waybill] Tải PDF OK — size=${downloadResult.buffer.length} bytes, ready=${readyList.length}`,
+      `[Shopee Batch Waybill] Tải PDF OK — size=${downloadResult.size} bytes, ready=${readyList.length}`,
     );
 
     return {
       success: true,
-      buffer: downloadResult.buffer as Buffer,
+      filename: downloadResult.filename,
+      filePath: downloadResult.filePath,
+      size: downloadResult.size,
       contentType: downloadResult.contentType || "application/pdf",
       readyOrderSns: readyList.map((o) => o.order_sn),
       skippedOrders: pollFailed,
@@ -18260,15 +18380,7 @@ async function startServer() {
 
   // Batch Print A4: 1 đơn = order_SN.pdf; nhiều đơn = Danh_Sach_Van_Don_N_ThoiGian.pdf
   function buildMergedLabelFilename(orderSns: string[]): string {
-    const safe = orderSns.map((sn) => String(sn).replace(/[^a-zA-Z0-9_-]/g, "")).filter(Boolean);
-    const primarySn = safe[0] || "bulk";
-    if (safe.length <= 1) {
-      return `order_${primarySn}_${Date.now()}.pdf`;
-    }
-    const d = new Date();
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const ts = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
-    return `Danh_Sach_Van_Don_${safe.length}_${ts}.pdf`;
+    return buildCachedLabelFilename(orderSns);
   }
 
   /** Ghép nhiều PDF vận đơn thành 1 file — mỗi nguồn giữ nguyên trang A4. */
@@ -18323,8 +18435,7 @@ async function startServer() {
         .sort((a, b) => b.mtime - a.mtime);
       const newest = matches[0]?.name;
       if (!newest) return null;
-      const hit = getLabelMem(newest);
-      return hit && isPdfBuffer(hit.buf) ? newest : null;
+      return getValidLabelDiskFile(newest) ? newest : null;
     } catch {
       return null;
     }
@@ -18363,8 +18474,26 @@ async function startServer() {
     shopId: string,
     orderList: { order_sn: string; package_number?: string; tracking_number?: string }[],
   ) {
+    const requestedSns = orderList.map((o) => String(o.order_sn || "").trim()).filter(Boolean);
+    const expectedFilename = buildMergedLabelFilename(requestedSns);
+    const cached = getValidLabelDiskFile(expectedFilename);
+    if (cached) {
+      const url = absoluteLabelUrl(`/api/public/labels/${cached.safe}`);
+      console.log(`[Shopee Print] Cache HIT n=${requestedSns.length} file=${cached.safe}`);
+      return {
+        success: true,
+        filename: cached.safe,
+        contentType: "application/pdf",
+        orderSns: requestedSns,
+        skippedOrders: [],
+        size: cached.size,
+        url,
+        cached: true,
+      };
+    }
+
     const batch = await batchDownloadShopeeWaybillPdf(shopId, orderList);
-    if (!batch.success || !batch.buffer || !Buffer.isBuffer(batch.buffer)) {
+    if (!batch.success || !batch.filename || !batch.filePath || !batch.size) {
       return {
         success: false,
         error: batch.error || "document_generation_failed",
@@ -18376,8 +18505,7 @@ async function startServer() {
     const orderSns = batch.readyOrderSns?.length
       ? batch.readyOrderSns
       : orderList.map((o) => o.order_sn);
-    const filename = buildMergedLabelFilename(orderSns);
-    saveLabelFile(batch.buffer, filename, batch.contentType || "application/pdf");
+    const filename = batch.filename;
     assertLabelFileReady(filename);
     const url = absoluteLabelUrl(`/api/public/labels/${filename}`);
     if (!url) {
@@ -18389,7 +18517,7 @@ async function startServer() {
       };
     }
     console.log(
-      `[Shopee Print] Batch PDF OK n=${orderSns.length} size=${batch.buffer.length} file=${filename}`,
+      `[Shopee Print] Batch PDF OK n=${orderSns.length} size=${batch.size} file=${filename}`,
     );
     return {
       success: true,
@@ -18397,7 +18525,7 @@ async function startServer() {
       contentType: batch.contentType || "application/pdf",
       orderSns,
       skippedOrders: batch.skippedOrders || [],
-      buffer: batch.buffer,
+      size: batch.size,
       url,
     };
   }

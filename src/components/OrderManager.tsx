@@ -1368,6 +1368,13 @@ export default function OrderManager({
   const [isVerifyingScan, setIsVerifyingScan] = useState(false);
 
   const ordersRef = React.useRef(orders);
+  type OptimisticOrderMutation = {
+    isPrinted?: boolean;
+    status?: Order['status'];
+    expiresAt: number;
+  };
+  /** Overlay chống GET cũ ghi đè trạng thái vừa xác nhận/in. */
+  const optimisticOrderMutationsRef = React.useRef<Map<string, OptimisticOrderMutation>>(new Map());
   const applyScanRef = React.useRef<(query: string) => void>(() => {});
   const verifyScanRef = React.useRef<(query: string) => void>(() => {});
   const isScanBusyRef = React.useRef(false);
@@ -1397,8 +1404,31 @@ export default function OrderManager({
   const totalVerifiedScans = daXuatKhoList.length + donHuyList.length + daNhanHoanList.length;
 
   useEffect(() => {
-    ordersRef.current = orders;
-  }, [orders]);
+    const now = Date.now();
+    const overlays = optimisticOrderMutationsRef.current;
+    for (const [key, mutation] of overlays) {
+      if (mutation.expiresAt <= now) overlays.delete(key);
+    }
+    let changed = false;
+    const guarded = orders.map((order) => {
+      const sn = String(order.orderSn || '').replace(/^shopee-/i, '').trim().toLowerCase();
+      const id = String(order.id || '').trim().toLowerCase();
+      const mutation =
+        overlays.get(id) ||
+        overlays.get(sn) ||
+        (sn ? overlays.get(`shopee-${sn}`) : undefined);
+      if (!mutation) return order;
+      const next = {
+        ...order,
+        ...(mutation.isPrinted != null ? { isPrinted: mutation.isPrinted } : {}),
+        ...(mutation.status ? { status: mutation.status } : {}),
+      };
+      if (next.isPrinted !== order.isPrinted || next.status !== order.status) changed = true;
+      return next;
+    });
+    ordersRef.current = guarded;
+    if (changed) onUpdateOrders(guarded, { persist: false });
+  }, [orders, onUpdateOrders]);
 
   useEffect(() => {
     scannerSyncMapRef.current = scannerSyncMap;
@@ -1478,19 +1508,25 @@ export default function OrderManager({
 
   /** Optimistic UI: set isPrinted ngay trên local state (0ms) — đơn biến mất khỏi lọc "Chưa in". */
   const applyPrintedLocalOptimistic = React.useCallback(
-    (orderKeys: string[], isPrinted: boolean) => {
+    (orderKeys: string[], isPrinted: boolean, status?: Order['status']) => {
       const idSet = new Set(
         orderKeys
           .map((s) => String(s || '').replace(/^shopee-/i, '').trim().toLowerCase())
           .filter(Boolean),
       );
       if (idSet.size === 0) return [] as Order[];
+      const expiresAt = Date.now() + 5 * 60 * 1000;
+      for (const key of idSet) {
+        const mutation = { isPrinted, ...(status ? { status } : {}), expiresAt };
+        optimisticOrderMutationsRef.current.set(key, mutation);
+        optimisticOrderMutationsRef.current.set(`shopee-${key}`, mutation);
+      }
       const hit: Order[] = [];
       const patched = ordersRef.current.map((o) => {
         const sn = String(o.orderSn || '').replace(/^shopee-/i, '').trim().toLowerCase();
         const oid = String(o.id || '').replace(/^shopee-/i, '').trim().toLowerCase();
         if (!idSet.has(sn) && !idSet.has(oid) && !idSet.has(`shopee-${sn}`)) return o;
-        const next = { ...o, isPrinted };
+        const next = { ...o, isPrinted, ...(status ? { status } : {}) };
         hit.push(next);
         return next;
       });
@@ -3414,7 +3450,6 @@ export default function OrderManager({
         closeReservedPrintWindow(reservedWindow);
       } else {
         // Luôn ưu tiên 1 file: mergedUrl từ BE, hoặc ghép mọi URL thành 1 PDF A4.
-        closeReservedPrintWindow(reservedWindow);
         const uniqueUrls = [
           ...new Set(
             [
@@ -3448,6 +3483,7 @@ export default function OrderManager({
             { reservedWindow },
           );
         } else {
+          closeReservedPrintWindow(reservedWindow);
           showToast(
             uniqueUrls.length > 1
               ? `Đang gộp ${orderCount} vận đơn thành 1 file PDF A4...`
@@ -3947,7 +3983,31 @@ export default function OrderManager({
     return summary;
   };
 
-  const confirmShipOrders = async () => {
+  const waitForConfirmedLabelsAndPrint = async (
+    orderIds: string[],
+    reservedWindow: Window | null,
+  ): Promise<{ success: boolean; message?: string }> => {
+    const uniqueIds = [...new Set(orderIds.map(String).filter(Boolean))];
+    for (let attempt = 1; attempt <= 20; attempt += 1) {
+      setProgressMessage(`Đã xác nhận — đang lấy PDF vận đơn (${attempt}/20)...`);
+      const { ok, status, data } = await fetchPrintDocumentApi(uniqueIds);
+      if (ok) {
+        const opened = await applyPrintDocumentResponse(data, true, reservedWindow, uniqueIds);
+        if (opened.success) return opened;
+      } else if (status !== 409 && data.error !== 'label_not_ready') {
+        closeReservedPrintWindow(reservedWindow);
+        return { success: false, message: data.message || data.error || `HTTP ${status}` };
+      }
+      if (attempt < 20) await new Promise((resolve) => window.setTimeout(resolve, 1000));
+    }
+    closeReservedPrintWindow(reservedWindow);
+    return {
+      success: false,
+      message: 'Đơn đã xác nhận nhưng Shopee chưa tạo xong PDF. Hệ thống vẫn tiếp tục tải ngầm.',
+    };
+  };
+
+  const handleConfirmAndPrint = async () => {
     if (!shipConfirmOrders || shipConfirmOrders.length === 0) return;
     const queuedOrders = [...shipConfirmOrders];
     const totalQueued = queuedOrders.length;
@@ -3961,7 +4021,8 @@ export default function OrderManager({
       return;
     }
 
-    // Không dùng openReservedPrintPlaceholder để tránh treo tab trắng.
+    // Reserve tab ngay trong user gesture; sau await API vẫn mở PDF không bị popup blocker.
+    const reservedPrintWindow = openReservedPrintPlaceholder();
 
     const queuedKeys = buildQueuedOrderKeys(validQueued);
     const optimisticOrders = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys, {
@@ -4153,8 +4214,33 @@ export default function OrderManager({
       );
       if (summary.successCount > 0) {
         showToast(`Xác nhận thành công ${summary.successCount} đơn.`);
+        const printResult = await waitForConfirmedLabelsAndPrint(
+          summary.successfulOrderIds,
+          reservedPrintWindow,
+        );
+        if (printResult.success) {
+          const optimisticTargets = applyPrintedLocalOptimistic(
+            summary.successfulOrderIds,
+            true,
+            'processed',
+          );
+          if (optimisticTargets.length > 0) {
+            void updatePrintStatusForOrders(optimisticTargets, true, { silent: true }).catch(() => {});
+          }
+          setSelectedOrderIds([]);
+          setShipConfirmSummary(null);
+          setShipJobResults([]);
+          markProgressComplete('Đã xác nhận, mở PDF và đánh dấu Đã in!');
+          showToast(printResult.message || `Đã xác nhận & mở PDF ${summary.successCount} đơn.`);
+        } else {
+          setProgressMessage(printResult.message || 'Đã xác nhận nhưng chưa lấy được PDF.');
+          showToast(printResult.message || 'Đã xác nhận nhưng chưa lấy được PDF.');
+        }
+      } else {
+        closeReservedPrintWindow(reservedPrintWindow);
       }
     } catch (err) {
+      closeReservedPrintWindow(reservedPrintWindow);
       const msg = err instanceof Error ? err.message : 'Lỗi không xác định';
       showToast(`Không thể kết nối API: ${msg}`);
       setProgressDone(true);
@@ -6333,7 +6419,7 @@ export default function OrderManager({
       </div>
       )}
 
-      {/* 5. BULK ACTION BAR — chỉ giữ In đơn hàng loạt + Xác nhận đơn hàng loạt */}
+      {/* 5. BULK ACTION BAR */}
       {activeSubTab !== 'order_products' && activeSubTab !== 'web_orders' && (
       <div className="om-orders-mobile-hide-bulk-bar bg-slate-50 border border-slate-200/80 p-3 max-md:p-2.5 rounded-2xl flex items-center justify-between gap-4 max-md:gap-2">
         <div className="flex items-center gap-3 flex-wrap">
@@ -6432,26 +6518,12 @@ export default function OrderManager({
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  void handleBulkPrint(e);
-                }}
-                disabled={isBulkPrinting}
-                className="om-mobile-hide-print w-full text-left px-4 py-2 text-xs font-bold text-gray-700 hover:bg-slate-50 flex items-center gap-2.5 disabled:opacity-50"
-              >
-                <Printer className={`w-4 h-4 text-blue-600 shrink-0 ${isBulkPrinting ? 'animate-spin' : ''}`} />
-                <span>{isBulkPrinting ? 'Đang lấy PDF nội bộ...' : 'In đơn hàng hàng loạt'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
                   handleBulkConfirm();
                 }}
                 className="w-full text-left px-4 py-2 text-xs font-bold text-gray-700 hover:bg-slate-50 flex items-center gap-2.5"
               >
                 <Check className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>Xác nhận đơn hàng loạt</span>
+                <span>Xác nhận &amp; In hàng loạt</span>
               </button>
 
               <button
@@ -6929,15 +7001,6 @@ export default function OrderManager({
                                 </span>
                               )}
 
-                              <button
-                                type="button"
-                                onClick={(e) => handlePrintButtonClick(e, order)}
-                                disabled={printingOrderId === order.id}
-                                className="om-mobile-hide-print p-1.5 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-500 rounded-lg transition-all disabled:opacity-60"
-                                title="In phiếu giao (vận đơn thật Shopee)"
-                              >
-                                <Printer className={`w-3.5 h-3.5 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
-                              </button>
                             </>
                           )}
 
@@ -7614,9 +7677,9 @@ export default function OrderManager({
               <div className="flex items-center gap-2">
                 <Truck className="w-5 h-5 text-blue-400" />
                 <div>
-                  <h3 className="text-sm font-bold">Xác nhận đơn hàng</h3>
+                  <h3 className="text-sm font-bold">Xác nhận &amp; In</h3>
                   <p className="text-[10px] text-slate-400">
-                    Chỉ chuẩn bị hàng trên Shopee (không chờ PDF). PDF tải ngầm — in sau bằng nút In đơn. {shipConfirmOrders.length} đơn {shipConfirmOrders.length === 1 ? `#${shipConfirmOrders[0].orderSn}` : 'đã chọn'}
+                    Hệ thống tự xác nhận, tải PDF vào cache, mở vận đơn và đánh dấu Đã in. {shipConfirmOrders.length} đơn {shipConfirmOrders.length === 1 ? `#${shipConfirmOrders[0].orderSn}` : 'đã chọn'}
                   </p>
                 </div>
               </div>
@@ -7674,12 +7737,12 @@ export default function OrderManager({
                 Hủy
               </button>
               <button
-                onClick={confirmShipOrders}
+                onClick={() => void handleConfirmAndPrint()}
                 disabled={isShipping}
                 className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-all flex items-center gap-1.5 disabled:opacity-60"
               >
                 {isShipping && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                <span>{isShipping ? 'Đang xác nhận...' : 'Xác nhận đơn hàng'}</span>
+                <span>{isShipping ? 'Đang xác nhận & lấy PDF...' : 'Xác nhận & In'}</span>
               </button>
             </div>
           </div>
