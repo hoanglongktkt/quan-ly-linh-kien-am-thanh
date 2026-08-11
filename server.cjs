@@ -130899,18 +130899,21 @@ async function startServer() {
     beginLogisticsWork("batch-print-only");
     async function processPdfConcurrently(items, concurrency, processFn) {
       const results = [];
-      const executing = [];
-      for (const item of items) {
-        const promise = processFn(item).then((result) => {
-          results.push(result);
-        });
-        executing.push(promise);
-        if (executing.length >= concurrency) {
-          await Promise.race(executing);
-          executing.splice(executing.findIndex((p) => p === promise), 1);
+      let index = 0;
+      async function worker() {
+        while (index < items.length) {
+          const currentIndex = index++;
+          const item = items[currentIndex];
+          try {
+            const result = await processFn(item);
+            results[currentIndex] = result;
+          } catch (err) {
+            console.error(`[Worker] Error processing item ${currentIndex}:`, err);
+          }
         }
       }
-      await Promise.all(executing);
+      const workers = Array(Math.min(concurrency, items.length)).fill(null).map(() => worker());
+      await Promise.all(workers);
       return results;
     }
     try {
