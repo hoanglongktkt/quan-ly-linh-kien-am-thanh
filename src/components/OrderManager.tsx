@@ -4082,25 +4082,31 @@ export default function OrderManager({
       setProgressMessage(`Đã xác nhận ${successfulSns.length} đơn - đang lấy PDF...`);
 
       // Bước 2: Lấy PDF
+      console.log('[Confirm&Print] Gọi /api/orders/get-pdf với orderSns:', successfulSns);
       const pdfResponse = await fetch('/api/orders/get-pdf', {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({ orderSns: successfulSns }),
       });
       const pdfData = await readResponseJson<any>(pdfResponse);
+      console.log('[Confirm&Print] Response từ /api/orders/get-pdf:', pdfData);
 
       if (pdfResponse.ok && pdfData.success && Array.isArray(pdfData.results)) {
         const successPdfs = pdfData.results.filter((r: any) => r.success && r.url);
+        console.log('[Confirm&Print] Danh sách PDF thành công:', successPdfs);
         if (successPdfs.length > 0) {
           // Mở từng PDF trong tab mới
           for (const pdfResult of successPdfs) {
+            console.log('[Confirm&Print] Mở PDF:', pdfResult.url);
             window.open(pdfResult.url, '_blank');
           }
           showToast(`Đã xác nhận & mở ${successPdfs.length} PDF vận đơn.`);
         } else {
+          console.warn('[Confirm&Print] Không có PDF nào thành công');
           showToast('Đơn đã xác nhận nhưng chưa có PDF. Vui lòng in lại sau.');
         }
       } else {
+        console.error('[Confirm&Print] Lỗi lấy PDF:', pdfData);
         showToast('Đơn đã xác nhận nhưng không lấy được PDF. Vui lòng in lại sau.');
       }
 
