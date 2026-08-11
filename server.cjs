@@ -130173,26 +130173,43 @@ async function startServer() {
     import_fs16.default.createReadStream(valid.filePath).pipe(res);
     return true;
   };
-  const delegatedPdfError = (res, err, message) => {
-    console.error("L\u1ED7i t\u1EA3i PDF Shopee:", err);
-    if (res.headersSent) return;
-    return res.status(500).type("text/plain; charset=utf-8").send(`L\u1ED7i: ${message}`);
-  };
   const downloadPdfRoute = async (req, res) => {
     const orderSn = String(req.params.orderSn || "").replace(/^shopee-/i, "").trim();
-    if (!/^[A-Za-z0-9_-]+$/.test(orderSn)) {
-      return res.status(400).type("text/plain").send("M\xE3 \u0111\u01A1n kh\xF4ng h\u1EE3p l\u1EC7.");
-    }
     const expectedFilename = buildCachedLabelFilename([orderSn]);
     const expectedPath = import_path17.default.join(LABELS_DIR, expectedFilename);
+    const failDownload = (error, fallbackMessage) => {
+      console.error("DEBUG DOWNLOAD PDF FAIL for order:", orderSn, error);
+      try {
+        if (import_fs16.default.existsSync(expectedPath) && !getValidLabelDiskFile(expectedFilename)) {
+          import_fs16.default.unlinkSync(expectedPath);
+        }
+      } catch (cleanupError) {
+        console.error("DEBUG DOWNLOAD PDF FAIL for order:", orderSn, cleanupError);
+      }
+      if (res.headersSent) return;
+      const rawMessage = String(error?.message || error?.error || fallbackMessage || "Kh\xF4ng x\xE1c \u0111\u1ECBnh");
+      return res.status(500).json({
+        success: false,
+        message: "L\u1ED7i t\u1EEB Backend",
+        error: rawMessage
+      });
+    };
+    if (!/^[A-Za-z0-9_-]+$/.test(orderSn)) {
+      return failDownload(new Error("M\xE3 \u0111\u01A1n kh\xF4ng h\u1EE3p l\u1EC7."), "M\xE3 \u0111\u01A1n kh\xF4ng h\u1EE3p l\u1EC7.");
+    }
     try {
       const rows = await loadOrdersForShipScoped([`shopee-${orderSn}`, orderSn], [orderSn]);
+      if (!Array.isArray(rows)) {
+        return failDownload(
+          new Error(`invalid_orders_response order_sn=${orderSn}`),
+          "Backend kh\xF4ng tr\u1EA3 v\u1EC1 danh s\xE1ch \u0111\u01A1n h\u1EE3p l\u1EC7."
+        );
+      }
       const order = rows.find(
         (item) => String(item?.orderSn || item?.order_sn || "").replace(/^shopee-/i, "").trim() === orderSn
       );
       if (!order || String(order.channel || "").toLowerCase() !== "shopee") {
-        return delegatedPdfError(
-          res,
+        return failDownload(
           new Error(`order_not_found_in_database order_sn=${orderSn}`),
           `Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n Shopee ${orderSn} trong database.`
         );
@@ -130201,22 +130218,20 @@ async function startServer() {
         order.shopId || order.shop_id || order.accountId || order.account_id || ""
       ).trim();
       if (!storedShopId) {
-        return delegatedPdfError(
-          res,
+        return failDownload(
           new Error(`missing_shop_id order_sn=${orderSn}`),
           `\u0110\u01A1n ${orderSn} thi\u1EBFu shopId/accountId n\xEAn kh\xF4ng th\u1EC3 ch\u1ECDn \u0111\xFAng Token Shop.`
         );
       }
       const auth = await getShopeeAccessTokenForApi(storedShopId);
-      if (!auth?.token || !auth.apiShopId) {
-        return delegatedPdfError(
-          res,
+      const accessToken = String(auth?.token || "").trim();
+      const shopId = String(auth?.apiShopId || "").trim();
+      if (!accessToken || !shopId) {
+        return failDownload(
           new Error(`no_valid_access_token shop=${storedShopId} order_sn=${orderSn}`),
           `Kh\xF4ng c\xF3 Token Shop h\u1EE3p l\u1EC7 cho shop ${storedShopId}.`
         );
       }
-      const shopId = String(auth.apiShopId).trim();
-      const accessToken = auth.token;
       console.log(
         `[Delegated PDF] order_sn=${orderSn} DB shop=${storedShopId} API shop=${shopId}`
       );
@@ -130228,16 +130243,20 @@ async function startServer() {
       }
       const row = buildShopeeShippingDocOrderRow(order);
       if (!row) {
-        return delegatedPdfError(
-          res,
+        return failDownload(
           new Error(`invalid_shipping_document_order order_sn=${orderSn} shop=${shopId}`),
           `D\u1EEF li\u1EC7u \u0111\u01A1n ${orderSn} ch\u01B0a \u0111\u1EE7 \u0111\u1EC3 t\u1EA1o v\u1EADn \u0111\u01A1n.`
         );
       }
+      if (!row.order_sn || !row.package_number && !row.tracking_number) {
+        return failDownload(
+          new Error(`missing_shipping_document_data order_sn=${orderSn} shop=${shopId}`),
+          `\u0110\u01A1n ${orderSn} thi\u1EBFu package_number/tracking_number \u0111\u1EC3 t\u1EA1o v\u1EADn \u0111\u01A1n.`
+        );
+      }
       const createResult = await shopeeCreateShippingDocument(shopId, accessToken, [row]);
       if (createResult?.error) {
-        return delegatedPdfError(
-          res,
+        return failDownload(
           createResult,
           `Shopee t\u1EEB ch\u1ED1i t\u1EA1o PDF: ${createResult.message || createResult.error}`
         );
@@ -130252,7 +130271,7 @@ async function startServer() {
           const poll = await shopeeGetShippingDocumentResult(shopId, accessToken, [row]);
           if (poll?.error) {
             lastPollError = poll;
-            console.error("L\u1ED7i t\u1EA3i PDF Shopee:", poll);
+            console.error("DEBUG DOWNLOAD PDF FAIL for order:", orderSn, poll);
             continue;
           }
           const items = poll?.response?.result_list || poll?.result_list || [];
@@ -130281,17 +130300,15 @@ async function startServer() {
           lastPollError = downloaded;
         } catch (err) {
           lastPollError = err;
-          console.error("L\u1ED7i t\u1EA3i PDF Shopee:", err);
+          console.error("DEBUG DOWNLOAD PDF FAIL for order:", orderSn, err);
         }
       }
-      return delegatedPdfError(
-        res,
+      return failDownload(
         lastPollError,
         "Shopee ch\u01B0a s\u1EB5n s\xE0ng ho\u1EB7c sai Token Shop."
       );
     } catch (err) {
-      return delegatedPdfError(
-        res,
+      return failDownload(
         err,
         err?.message || "Shopee ch\u01B0a s\u1EB5n s\xE0ng ho\u1EB7c sai Token Shop."
       );

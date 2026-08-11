@@ -17455,24 +17455,43 @@ async function startServer() {
     fs.createReadStream(valid.filePath).pipe(res);
     return true;
   };
-  const delegatedPdfError = (res: any, err: unknown, message: string) => {
-    console.error("Lỗi tải PDF Shopee:", err);
-    if (res.headersSent) return;
-    return res.status(500).type("text/plain; charset=utf-8").send(`Lỗi: ${message}`);
-  };
   const downloadPdfRoute = async (req: any, res: any) => {
     const orderSn = String(req.params.orderSn || "")
       .replace(/^shopee-/i, "")
       .trim();
-    if (!/^[A-Za-z0-9_-]+$/.test(orderSn)) {
-      return res.status(400).type("text/plain").send("Mã đơn không hợp lệ.");
-    }
-
     const expectedFilename = buildCachedLabelFilename([orderSn]);
     const expectedPath = path.join(LABELS_DIR, expectedFilename);
+    const failDownload = (error: any, fallbackMessage: string) => {
+      console.error("DEBUG DOWNLOAD PDF FAIL for order:", orderSn, error);
+      // Chỉ xóa file đích nếu nó không phải PDF thật; tuyệt đối không để JSON/HTML mang đuôi .pdf.
+      try {
+        if (fs.existsSync(expectedPath) && !getValidLabelDiskFile(expectedFilename)) {
+          fs.unlinkSync(expectedPath);
+        }
+      } catch (cleanupError) {
+        console.error("DEBUG DOWNLOAD PDF FAIL for order:", orderSn, cleanupError);
+      }
+      if (res.headersSent) return;
+      const rawMessage =
+        String(error?.message || error?.error || fallbackMessage || "Không xác định");
+      return res.status(500).json({
+        success: false,
+        message: "Lỗi từ Backend",
+        error: rawMessage,
+      });
+    };
+    if (!/^[A-Za-z0-9_-]+$/.test(orderSn)) {
+      return failDownload(new Error("Mã đơn không hợp lệ."), "Mã đơn không hợp lệ.");
+    }
 
     try {
       const rows = await loadOrdersForShipScoped([`shopee-${orderSn}`, orderSn], [orderSn]);
+      if (!Array.isArray(rows)) {
+        return failDownload(
+          new Error(`invalid_orders_response order_sn=${orderSn}`),
+          "Backend không trả về danh sách đơn hợp lệ.",
+        );
+      }
       const order = rows.find(
         (item: any) =>
           String(item?.orderSn || item?.order_sn || "")
@@ -17480,8 +17499,7 @@ async function startServer() {
             .trim() === orderSn,
       );
       if (!order || String(order.channel || "").toLowerCase() !== "shopee") {
-        return delegatedPdfError(
-          res,
+        return failDownload(
           new Error(`order_not_found_in_database order_sn=${orderSn}`),
           `Không tìm thấy đơn Shopee ${orderSn} trong database.`,
         );
@@ -17493,22 +17511,20 @@ async function startServer() {
         order.shopId || order.shop_id || order.accountId || order.account_id || "",
       ).trim();
       if (!storedShopId) {
-        return delegatedPdfError(
-          res,
+        return failDownload(
           new Error(`missing_shop_id order_sn=${orderSn}`),
           `Đơn ${orderSn} thiếu shopId/accountId nên không thể chọn đúng Token Shop.`,
         );
       }
       const auth = await getShopeeAccessTokenForApi(storedShopId);
-      if (!auth?.token || !auth.apiShopId) {
-        return delegatedPdfError(
-          res,
+      const accessToken = String(auth?.token || "").trim();
+      const shopId = String(auth?.apiShopId || "").trim();
+      if (!accessToken || !shopId) {
+        return failDownload(
           new Error(`no_valid_access_token shop=${storedShopId} order_sn=${orderSn}`),
           `Không có Token Shop hợp lệ cho shop ${storedShopId}.`,
         );
       }
-      const shopId = String(auth.apiShopId).trim();
-      const accessToken = auth.token;
       console.log(
         `[Delegated PDF] order_sn=${orderSn} DB shop=${storedShopId} API shop=${shopId}`,
       );
@@ -17522,17 +17538,21 @@ async function startServer() {
       }
       const row = buildShopeeShippingDocOrderRow(order);
       if (!row) {
-        return delegatedPdfError(
-          res,
+        return failDownload(
           new Error(`invalid_shipping_document_order order_sn=${orderSn} shop=${shopId}`),
           `Dữ liệu đơn ${orderSn} chưa đủ để tạo vận đơn.`,
+        );
+      }
+      if (!row.order_sn || (!row.package_number && !row.tracking_number)) {
+        return failDownload(
+          new Error(`missing_shipping_document_data order_sn=${orderSn} shop=${shopId}`),
+          `Đơn ${orderSn} thiếu package_number/tracking_number để tạo vận đơn.`,
         );
       }
 
       const createResult = await shopeeCreateShippingDocument(shopId, accessToken, [row]);
       if (createResult?.error) {
-        return delegatedPdfError(
-          res,
+        return failDownload(
           createResult,
           `Shopee từ chối tạo PDF: ${createResult.message || createResult.error}`,
         );
@@ -17549,7 +17569,7 @@ async function startServer() {
           const poll = await shopeeGetShippingDocumentResult(shopId, accessToken, [row]);
           if (poll?.error) {
             lastPollError = poll;
-            console.error("Lỗi tải PDF Shopee:", poll);
+            console.error("DEBUG DOWNLOAD PDF FAIL for order:", orderSn, poll);
             continue;
           }
           const items: any[] = poll?.response?.result_list || poll?.result_list || [];
@@ -17581,17 +17601,15 @@ async function startServer() {
           lastPollError = downloaded;
         } catch (err: any) {
           lastPollError = err;
-          console.error("Lỗi tải PDF Shopee:", err);
+          console.error("DEBUG DOWNLOAD PDF FAIL for order:", orderSn, err);
         }
       }
-      return delegatedPdfError(
-        res,
+      return failDownload(
         lastPollError,
         "Shopee chưa sẵn sàng hoặc sai Token Shop.",
       );
     } catch (err: any) {
-      return delegatedPdfError(
-        res,
+      return failDownload(
         err,
         err?.message || "Shopee chưa sẵn sàng hoặc sai Token Shop.",
       );
