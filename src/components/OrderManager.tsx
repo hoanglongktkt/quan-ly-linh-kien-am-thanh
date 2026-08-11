@@ -4873,7 +4873,7 @@ export default function OrderManager({
     setSelectedOrderIds([]);
   };
 
-  /** In lại đơn đã chọn (không xác nhận lại, chỉ lấy PDF) */
+  /** In lại đơn đã chọn (không xác nhận lại, chỉ lấy PDF và gộp thành 1 file) */
   const handleReprintSelected = async () => {
     const selected = getSelectedOrders();
     if (selected.length === 0) {
@@ -4888,29 +4888,45 @@ export default function OrderManager({
       return;
     }
 
-    const orderIds = shopeeOrders.map(o => o.id);
-    beginPrintProgressSession(orderIds.length, `Đang in lại ${orderIds.length} đơn...`);
+    const orderSns = shopeeOrders.map(o => String(o.orderSn || '').replace(/^shopee-/i, '').trim()).filter(Boolean);
+    if (orderSns.length === 0) {
+      showToast('Không tìm thấy mã đơn hợp lệ.');
+      return;
+    }
+
+    beginPrintProgressSession(orderSns.length, `Đang gộp PDF ${orderSns.length} đơn...`);
     
     try {
-      const result = await printShopeeDocuments(orderIds, {
-        onProgress: (completed, total) => {
-          setProgressCompleted(completed);
-          setProgressTotal(total);
-          setProgressMessage(
-            completed >= total ? 'Hoàn tất — đang mở PDF...' : `Đang lấy PDF (${completed}/${total})...`
-          );
-        },
-        onStatus: (message) => setProgressMessage(message),
-      });
+      setProgressMessage('Đang gọi API gộp PDF...');
       
-      if (result.success) {
-        markProgressComplete('In lại thành công!');
+      const response = await fetch('/api/orders/batch-print-only', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ orderSns }),
+      });
+
+      const data = await readResponseJson<any>(response);
+      
+      if (response.ok && data.success && data.url) {
+        setProgressMessage('Đang mở PDF...');
+        window.open(data.url, '_blank');
+        markProgressComplete(`Đã gộp ${data.pdfCount} PDF thành 1 file!`);
         setSelectedOrderIds([]);
+        
+        onAddLog({
+          id: `log-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          channel: 'shopee',
+          type: 'stock_sync',
+          status: 'success',
+          message: `[IN LẠI] ${data.pdfCount} đơn → ${data.filename}`,
+        });
       } else {
-        alert(`In lại thất bại: ${result.message}`);
+        alert(`In lại thất bại: ${data.message || 'Lỗi không xác định'}`);
         clearShipProgressOverlay();
       }
     } catch (err) {
+      console.error('[Reprint] Error:', err);
       alert('Không thể kết nối API. Vui lòng thử lại.');
       clearShipProgressOverlay();
     }

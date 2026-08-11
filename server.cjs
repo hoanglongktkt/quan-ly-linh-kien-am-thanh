@@ -130894,11 +130894,178 @@ async function startServer() {
       endLogisticsWork();
     }
   };
+  const batchPrintOnlyRoute = async (req, res) => {
+    const t0 = Date.now();
+    beginLogisticsWork("batch-print-only");
+    try {
+      const { orderSns } = req.body || {};
+      if (!Array.isArray(orderSns) || orderSns.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Thi\u1EBFu danh s\xE1ch orderSns."
+        });
+      }
+      const cleanSns = orderSns.map(
+        (sn) => String(sn || "").replace(/^shopee-/i, "").trim()
+      ).filter(Boolean);
+      if (cleanSns.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Danh s\xE1ch orderSns kh\xF4ng h\u1EE3p l\u1EC7."
+        });
+      }
+      console.log(`[Batch Print Only] In l\u1EA1i ${cleanSns.length} \u0111\u01A1n: ${cleanSns.join(", ")}`);
+      let orders = [];
+      try {
+        orders = await loadOrdersForShipScoped(
+          cleanSns.map((sn) => `shopee-${sn}`),
+          cleanSns
+        );
+      } catch (loadErr) {
+        console.warn("[Batch Print Only] loadOrdersForShipScoped:", loadErr?.message || loadErr);
+      }
+      if (!Array.isArray(orders) || orders.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n n\xE0o trong database."
+        });
+      }
+      const mergedPdf = await import_pdf_lib.PDFDocument.create();
+      const pdfBuffers = [];
+      for (const orderSn of cleanSns) {
+        try {
+          const order = orders.find(
+            (item) => String(item?.orderSn || item?.order_sn || "").replace(/^shopee-/i, "").trim() === orderSn
+          );
+          if (!order) {
+            console.warn(`[Batch Print Only] Kh\xF4ng t\xECm th\u1EA5y order ${orderSn}`);
+            continue;
+          }
+          const storedShopId = String(
+            order.shopId || order.shop_id || order.accountId || order.account_id || ""
+          ).trim();
+          if (!storedShopId) {
+            console.warn(`[Batch Print Only] \u0110\u01A1n ${orderSn} thi\u1EBFu shopId`);
+            continue;
+          }
+          const auth = await getShopeeAccessTokenForApi(storedShopId);
+          const accessToken = String(auth?.token || "").trim();
+          const shopId = String(auth?.apiShopId || "").trim();
+          if (!accessToken || !shopId) {
+            console.warn(`[Batch Print Only] Kh\xF4ng c\xF3 token cho ${orderSn}`);
+            continue;
+          }
+          try {
+            await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, [order]);
+          } catch (err) {
+            console.warn(`[Batch Print Only] enrich ${orderSn}:`, err?.message || err);
+          }
+          const row = buildShopeeShippingDocOrderRow(order);
+          if (!row || !row.order_sn || !row.package_number && !row.tracking_number) {
+            console.warn(`[Batch Print Only] \u0110\u01A1n ${orderSn} thi\u1EBFu shipping data`);
+            continue;
+          }
+          const createResult = await shopeeCreateShippingDocument(shopId, accessToken, [row]);
+          if (createResult?.error) {
+            console.warn(`[Batch Print Only] Create doc ${orderSn} failed:`, createResult.error);
+            continue;
+          }
+          let pdfReady = false;
+          for (let attempt = 1; attempt <= 20; attempt++) {
+            await sleep2(3e3);
+            try {
+              const poll = await shopeeGetShippingDocumentResult(shopId, accessToken, [row]);
+              if (poll?.error) continue;
+              const items = poll?.response?.result_list || poll?.result_list || [];
+              const result = items.find((item) => String(item?.order_sn || "") === orderSn);
+              if (String(result?.status || "").toUpperCase() === "READY") {
+                pdfReady = true;
+                break;
+              }
+            } catch (err) {
+              console.warn(`[Batch Print Only] Poll ${orderSn} attempt ${attempt}:`, err?.message || err);
+            }
+          }
+          if (!pdfReady) {
+            console.warn(`[Batch Print Only] PDF ${orderSn} ch\u01B0a READY sau 60s`);
+            continue;
+          }
+          const apiPath = "/api/v2/logistics/download_shipping_document";
+          const timestamp = Math.floor(Date.now() / 1e3);
+          const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+          const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
+          const downloadRes = await fetchWithTimeout(url2, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              order_list: [row],
+              shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
+            })
+          }, 6e4);
+          const contentType = String(downloadRes.headers.get("content-type") || "").toLowerCase();
+          if (contentType.includes("application/json") || !downloadRes.ok || !downloadRes.body) {
+            console.warn(`[Batch Print Only] Download ${orderSn} failed`);
+            continue;
+          }
+          const buffer = await downloadRes.arrayBuffer();
+          pdfBuffers.push({ orderSn, buffer });
+          console.log(`[Batch Print Only] Downloaded PDF ${orderSn} (${buffer.byteLength} bytes)`);
+        } catch (err) {
+          console.error(`[Batch Print Only] L\u1ED7i PDF ${orderSn}:`, err?.stack || err);
+        }
+      }
+      if (pdfBuffers.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: `Kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c PDF n\xE0o t\u1EEB ${cleanSns.length} \u0111\u01A1n.`
+        });
+      }
+      console.log(`[Batch Print Only] G\u1ED9p ${pdfBuffers.length} PDF...`);
+      for (const { orderSn, buffer } of pdfBuffers) {
+        try {
+          const sourcePdf = await import_pdf_lib.PDFDocument.load(buffer, { ignoreEncryption: true });
+          const copiedPages = await mergedPdf.copyPages(sourcePdf, sourcePdf.getPageIndices());
+          copiedPages.forEach((page) => mergedPdf.addPage(page));
+          console.log(`[Batch Print Only] \u0110\xE3 g\u1ED9p ${orderSn} (${sourcePdf.getPageCount()} pages)`);
+        } catch (err) {
+          console.error(`[Batch Print Only] L\u1ED7i g\u1ED9p PDF ${orderSn}:`, err?.message || err);
+        }
+      }
+      const mergedBytes = await mergedPdf.save();
+      const publicPdfDir = import_path17.default.join(APP_ROOT11, "public", "pdfs");
+      if (!import_fs16.default.existsSync(publicPdfDir)) {
+        import_fs16.default.mkdirSync(publicPdfDir, { recursive: true });
+      }
+      const batchFilename = `reprint-${Date.now()}.pdf`;
+      const batchPath = import_path17.default.join(publicPdfDir, batchFilename);
+      import_fs16.default.writeFileSync(batchPath, mergedBytes);
+      const backendBaseUrl = resolveLabelsPublicBaseUrl();
+      const batchUrl = `${backendBaseUrl}/pdfs/${batchFilename}`;
+      console.log(`[Batch Print Only] DONE ${pdfBuffers.length}/${cleanSns.length} \u0111\u01A1n \u2192 ${batchUrl} (${Date.now() - t0}ms)`);
+      return res.json({
+        success: true,
+        url: batchUrl,
+        filename: batchFilename,
+        pdfCount: pdfBuffers.length,
+        totalPages: mergedPdf.getPageCount(),
+        message: `\u0110\xE3 g\u1ED9p ${pdfBuffers.length} PDF th\xE0nh 1 file.`
+      });
+    } catch (error) {
+      console.error("[Batch Print Only] L\u1ED7i:", error?.stack || error);
+      return res.status(500).json({
+        success: false,
+        message: "L\u1ED7i server: " + error.message
+      });
+    } finally {
+      endLogisticsWork();
+    }
+  };
   app.post("/api/orders/fast-process", authMiddleware, fastProcessRouteGuard);
   app.post("/api/shopee/orders/fast-process", authMiddleware, fastProcessRouteGuard);
   app.post("/api/orders/confirm", authMiddleware, confirmOnlyRoute);
   app.post("/api/orders/get-pdf", authMiddleware, getPdfRoute);
   app.post("/api/orders/batch-confirm-print", authMiddleware, batchConfirmPrintRoute);
+  app.post("/api/orders/batch-print-only", authMiddleware, batchPrintOnlyRoute);
   app.get("/api/orders/download-pdf/:orderSn", downloadPdfRoute);
   app.use("/api/orders", authMiddleware, ordersRoutes);
   app.post("/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrders);
