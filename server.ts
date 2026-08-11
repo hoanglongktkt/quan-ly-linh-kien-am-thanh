@@ -17615,9 +17615,406 @@ async function startServer() {
       );
     }
   };
+  // API CONFIRM: Chỉ xác nhận đơn (ship_order), KHÔNG in PDF
+  const confirmOnlyRoute = async (req: any, res: any) => {
+    const t0 = Date.now();
+    beginLogisticsWork("confirm-only");
+    try {
+      const { orderIds, orderSns, order_ids, order_sns, method } = req.body || {};
+      const shipMethod: ShipMethod = method === "dropoff" ? "dropoff" : "pickup";
+      const idList = [
+        ...(Array.isArray(orderIds) ? orderIds : []),
+        ...(Array.isArray(order_ids) ? order_ids : []),
+      ].map(String);
+      const snList = [
+        ...(Array.isArray(orderSns) ? orderSns : []),
+        ...(Array.isArray(order_sns) ? order_sns : []),
+      ].map(String);
+      
+      if (idList.length === 0 && snList.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Thiếu danh sách orderIds hoặc orderSns.",
+        });
+      }
+
+      let orders: any[] = [];
+      try {
+        orders = await loadOrdersForShipScoped(idList, snList);
+      } catch (loadErr: any) {
+        console.warn("[Confirm Only] loadOrdersForShipScoped:", loadErr?.message || loadErr);
+      }
+      if (!orders.length) {
+        try {
+          const loaded = await loadOrdersForApi({ readOnly: true });
+          const idSet = new Set([...idList, ...snList, ...snList.map((s) => `shopee-${s}`)]);
+          orders = (loaded.orders || []).filter(
+            (o: any) =>
+              idSet.has(String(o.id || "")) ||
+              idSet.has(String(o.orderSn || "")) ||
+              idSet.has(`shopee-${o.orderSn}`),
+          );
+        } catch {
+          orders = [];
+        }
+      }
+      
+      const toShip = resolveOrdersFromRequest(orders, idList, snList);
+      if (toShip.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Không tìm thấy đơn nào trong database.",
+        });
+      }
+
+      console.log(`[Confirm Only] Xác nhận ${toShip.length} đơn method=${shipMethod}`);
+      await prewarmShopeeAddressCacheForShip(toShip, shipMethod);
+
+      const results: any[] = [];
+      const successSns: string[] = [];
+
+      for (const { index, order } of toShip) {
+        const orderSn = String(order.orderSn || "");
+        const orderId = String(order.id || "");
+        try {
+          const resolvedShopId = resolveOrderShopId(order);
+          if (resolvedShopId && !order.shopId) {
+            orders[index].shopId = resolvedShopId;
+            order.shopId = resolvedShopId;
+          }
+
+          console.log(`[Confirm Only] Xác nhận đơn ${orderSn}...`);
+          let shipResult: Awaited<ReturnType<typeof arrangeShipment>>;
+          try {
+            shipResult = await withOperationTimeout(
+              (signal) => arrangeShipment(order, shipMethod, signal, { skipRecover: true }),
+              SHIP_ORDER_OPERATION_TIMEOUT_MS,
+              `Ship order ${orderSn}`,
+            );
+          } catch (shipErr: any) {
+            shipResult = {
+              success: false,
+              error: /timeout/i.test(String(shipErr?.message || "")) ? "timeout" : "internal_server_error",
+              message: "Lỗi server: " + (shipErr?.message || String(shipErr)),
+            };
+          }
+
+          const treatedAsSuccess = shipResult.success || isAlreadyShippedError(shipResult);
+          
+          if (!treatedAsSuccess) {
+            results.push({ orderId, orderSn, success: false, ...shipResult });
+            continue;
+          }
+
+          const tn = String(
+            order.trackingNumber ||
+              order.tracking_no ||
+              shipResult.trackingNumber ||
+              orders[index].trackingNumber ||
+              "",
+          ).trim();
+          
+          orders[index] = {
+            ...orders[index],
+            ...order,
+            isPrepared: true,
+            status: "processed",
+            is_pending_shopee_check: false,
+            fulfillment_type: shipMethod,
+            ship_method: shipMethod,
+            trackingNumber: tn || orders[index].trackingNumber,
+            tracking_no: tn || orders[index].tracking_no || orders[index].trackingNumber,
+            shopId: orders[index].shopId || order.shopId || shipResult.shopId || resolvedShopId,
+            shopee_order_status: "PROCESSED",
+            shopeeSyncPending: false,
+            shopeeSyncError: undefined,
+          };
+          
+          forceHealPickupOrderIfHasTracking(orders[index]);
+          results.push({ orderId, orderSn, success: true, ...shipResult });
+          successSns.push(orderSn);
+        } catch (orderErr: any) {
+          console.error(`[Confirm Only] Lỗi đơn ${orderSn}:`, orderErr?.stack || orderErr);
+          results.push({
+            orderId,
+            orderSn,
+            success: false,
+            error: "order_process_error",
+            message: String(orderErr?.message || orderErr),
+          });
+        }
+      }
+
+      // Lưu vào DB
+      try {
+        const changed = toShip.map(({ index }) => orders[index]).filter(Boolean);
+        await persistOrdersToDatabase(orders, changed);
+      } catch (err: any) {
+        console.warn("[Confirm Only] persist failed:", err?.message || err);
+      }
+
+      console.log(`[Confirm Only] DONE ${successSns.length}/${toShip.length} success (${Date.now() - t0}ms)`);
+      
+      return res.json({
+        success: true,
+        results,
+        successCount: successSns.length,
+        total: toShip.length,
+        message: `Đã xác nhận ${successSns.length}/${toShip.length} đơn`,
+      });
+    } catch (error: any) {
+      console.error("[Confirm Only] Lỗi:", error?.stack || error);
+      return res.status(500).json({
+        success: false,
+        message: "Lỗi server: " + error.message,
+      });
+    } finally {
+      endLogisticsWork();
+    }
+  };
+
+  // API GET-PDF: Polling tại backend, lưu vào public/pdfs, trả về URL
+  const getPdfRoute = async (req: any, res: any) => {
+    try {
+      const { orderSns } = req.body || {};
+      if (!Array.isArray(orderSns) || orderSns.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Thiếu danh sách orderSns.",
+        });
+      }
+
+      const cleanSns = orderSns.map((sn: any) => 
+        String(sn || "").replace(/^shopee-/i, "").trim()
+      ).filter(Boolean);
+
+      if (cleanSns.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Danh sách orderSns không hợp lệ.",
+        });
+      }
+
+      console.log(`[Get PDF] Bắt đầu xử lý ${cleanSns.length} đơn: ${cleanSns.join(", ")}`);
+
+      const rows = await loadOrdersForShipScoped(
+        cleanSns.map((sn: string) => `shopee-${sn}`),
+        cleanSns
+      );
+
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Không tìm thấy đơn nào trong database.",
+        });
+      }
+
+      const pdfResults: any[] = [];
+
+      for (const orderSn of cleanSns) {
+        try {
+          const order = rows.find(
+            (item: any) =>
+              String(item?.orderSn || item?.order_sn || "")
+                .replace(/^shopee-/i, "")
+                .trim() === orderSn,
+          );
+
+          if (!order || String(order.channel || "").toLowerCase() !== "shopee") {
+            pdfResults.push({
+              orderSn,
+              success: false,
+              error: "order_not_found",
+              message: `Không tìm thấy đơn ${orderSn} trong database.`,
+            });
+            continue;
+          }
+
+          const storedShopId = String(
+            order.shopId || order.shop_id || order.accountId || order.account_id || "",
+          ).trim();
+          
+          if (!storedShopId) {
+            pdfResults.push({
+              orderSn,
+              success: false,
+              error: "missing_shop_id",
+              message: `Đơn ${orderSn} thiếu shopId.`,
+            });
+            continue;
+          }
+
+          const auth = await getShopeeAccessTokenForApi(storedShopId);
+          const accessToken = String(auth?.token || "").trim();
+          const shopId = String(auth?.apiShopId || "").trim();
+          
+          if (!accessToken || !shopId) {
+            pdfResults.push({
+              orderSn,
+              success: false,
+              error: "no_valid_token",
+              message: `Không có token hợp lệ cho shop ${storedShopId}.`,
+            });
+            continue;
+          }
+
+          // Enrich package/tracking
+          try {
+            await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, [order]);
+          } catch (err: any) {
+            console.warn(`[Get PDF] enrich ${orderSn}:`, err?.message || err);
+          }
+
+          const row = buildShopeeShippingDocOrderRow(order);
+          if (!row || !row.order_sn || (!row.package_number && !row.tracking_number)) {
+            pdfResults.push({
+              orderSn,
+              success: false,
+              error: "missing_shipping_data",
+              message: `Đơn ${orderSn} thiếu package_number/tracking_number.`,
+            });
+            continue;
+          }
+
+          // Create shipping document
+          const createResult = await shopeeCreateShippingDocument(shopId, accessToken, [row]);
+          if (createResult?.error) {
+            pdfResults.push({
+              orderSn,
+              success: false,
+              error: createResult.error,
+              message: createResult.message || "Shopee từ chối tạo PDF.",
+            });
+            continue;
+          }
+
+          // Polling (tối đa 20 lần × 3s = 60s)
+          let pdfReady = false;
+          let lastError: any = null;
+          
+          for (let attempt = 1; attempt <= 20; attempt++) {
+            await sleep(3000);
+            
+            try {
+              const poll = await shopeeGetShippingDocumentResult(shopId, accessToken, [row]);
+              if (poll?.error) {
+                lastError = poll;
+                continue;
+              }
+              
+              const items: any[] = poll?.response?.result_list || poll?.result_list || [];
+              const result = items.find((item: any) => String(item?.order_sn || "") === orderSn);
+              
+              if (String(result?.status || "").toUpperCase() === "READY") {
+                pdfReady = true;
+                break;
+              }
+              
+              lastError = result || { error: "not_ready", message: `Chưa READY lần ${attempt}/20` };
+            } catch (err: any) {
+              lastError = err;
+            }
+          }
+
+          if (!pdfReady) {
+            pdfResults.push({
+              orderSn,
+              success: false,
+              error: "polling_timeout",
+              message: "Shopee chưa xuất PDF sau 60s.",
+              lastError,
+            });
+            continue;
+          }
+
+          // Download và lưu vào public/pdfs
+          const publicPdfDir = path.join(APP_ROOT, "public", "pdfs");
+          if (!fs.existsSync(publicPdfDir)) {
+            fs.mkdirSync(publicPdfDir, { recursive: true });
+          }
+
+          const filename = `${orderSn}.pdf`;
+          const publicPdfPath = path.join(publicPdfDir, filename);
+
+          // Download từ Shopee
+          const apiPath = "/api/v2/logistics/download_shipping_document";
+          const timestamp = Math.floor(Date.now() / 1000);
+          const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+          const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
+
+          const downloadRes = await fetchWithTimeout(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ 
+              order_list: [row], 
+              shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE 
+            }),
+          }, 60_000);
+
+          const contentType = String(downloadRes.headers.get("content-type") || "").toLowerCase();
+          
+          if (contentType.includes("application/json") || !downloadRes.ok || !downloadRes.body) {
+            pdfResults.push({
+              orderSn,
+              success: false,
+              error: "download_failed",
+              message: "Shopee không trả về file PDF.",
+            });
+            continue;
+          }
+
+          // Lưu file vào public/pdfs
+          const fileStream = fs.createWriteStream(publicPdfPath);
+          await pipeline(
+            Readable.fromWeb(downloadRes.body as any),
+            fileStream,
+          );
+
+          // Trả về URL trực tiếp
+          const pdfUrl = `${APP_BASE_URL}/pdfs/${filename}`;
+          
+          pdfResults.push({
+            orderSn,
+            success: true,
+            url: pdfUrl,
+            filename,
+            message: "PDF đã sẵn sàng.",
+          });
+
+          console.log(`[Get PDF] OK ${orderSn} -> ${pdfUrl}`);
+        } catch (err: any) {
+          console.error(`[Get PDF] Lỗi ${orderSn}:`, err?.stack || err);
+          pdfResults.push({
+            orderSn,
+            success: false,
+            error: "processing_error",
+            message: err?.message || String(err),
+          });
+        }
+      }
+
+      const successCount = pdfResults.filter((r) => r.success).length;
+      
+      return res.json({
+        success: successCount > 0,
+        results: pdfResults,
+        successCount,
+        total: cleanSns.length,
+        message: `Đã tải ${successCount}/${cleanSns.length} PDF`,
+      });
+    } catch (error: any) {
+      console.error("[Get PDF] Lỗi:", error?.stack || error);
+      return res.status(500).json({
+        success: false,
+        message: "Lỗi server: " + error.message,
+      });
+    }
+  };
+
   app.post("/api/orders/fast-process", authMiddleware, fastProcessRouteGuard);
   app.post("/api/shopee/orders/fast-process", authMiddleware, fastProcessRouteGuard);
-  app.post("/api/orders/confirm", authMiddleware, fastProcessRouteGuard);
+  app.post("/api/orders/confirm", authMiddleware, confirmOnlyRoute);
+  app.post("/api/orders/get-pdf", authMiddleware, getPdfRoute);
   // orderSn là mã khó đoán; route GET không dùng Bearer để window.open() tải trực tiếp được.
   app.get("/api/orders/download-pdf/:orderSn", downloadPdfRoute);
 
@@ -20377,6 +20774,16 @@ async function startServer() {
     if (isCpanelPassengerRuntime && process.env.NODE_ENV !== "production") {
       console.warn("[Boot] Passenger/cPanel detected without NODE_ENV=production; forcing static production runtime.");
     }
+    
+    // Serve static PDFs từ public/pdfs
+    const publicPdfDir = path.join(APP_ROOT, "public", "pdfs");
+    app.use("/pdfs", express.static(publicPdfDir, {
+      setHeaders(res) {
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Cache-Control", "public, max-age=300");
+      },
+    }));
+    
     const distPath = path.join(APP_ROOT, "dist");
     app.use(express.static(distPath, {
       setHeaders(res, filePath) {

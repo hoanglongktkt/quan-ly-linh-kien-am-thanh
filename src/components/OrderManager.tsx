@@ -4034,8 +4034,6 @@ export default function OrderManager({
       return;
     }
 
-    // Mở tab ngay trong user gesture để Chrome/Edge không chặn sau await confirm.
-    const pdfWindow = window.open('about:blank', '_blank');
     const orderIds = validQueued
       .map((order) => String(order.id || '').trim())
       .filter(Boolean);
@@ -4051,7 +4049,8 @@ export default function OrderManager({
     setProgressTotal(validQueued.length);
 
     try {
-      const response = await fetch('/api/orders/confirm', {
+      // Bước 1: Xác nhận đơn
+      const confirmResponse = await fetch('/api/orders/confirm', {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({
@@ -4062,10 +4061,10 @@ export default function OrderManager({
           method: shipMethod,
         }),
       });
-      const data = await readResponseJson<any>(response);
-      if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
+      const confirmData = await readResponseJson<any>(confirmResponse);
+      if (!confirmResponse.ok) throw new Error(confirmData.message || confirmData.error || `HTTP ${confirmResponse.status}`);
 
-      const successfulResults = (Array.isArray(data.results) ? data.results : []).filter(
+      const successfulResults = (Array.isArray(confirmData.results) ? confirmData.results : []).filter(
         (result: any) => result?.success,
       );
       const successfulSns: string[] = [
@@ -4075,11 +4074,37 @@ export default function OrderManager({
             .filter(Boolean),
         ),
       ];
+      
       if (!successfulSns.length) {
-        closeReservedPrintWindow(pdfWindow);
-        throw new Error(data.message || 'Shopee không xác nhận được đơn nào.');
+        throw new Error(confirmData.message || 'Shopee không xác nhận được đơn nào.');
       }
 
+      setProgressMessage(`Đã xác nhận ${successfulSns.length} đơn - đang lấy PDF...`);
+
+      // Bước 2: Lấy PDF
+      const pdfResponse = await fetch('/api/orders/get-pdf', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ orderSns: successfulSns }),
+      });
+      const pdfData = await readResponseJson<any>(pdfResponse);
+
+      if (pdfResponse.ok && pdfData.success && Array.isArray(pdfData.results)) {
+        const successPdfs = pdfData.results.filter((r: any) => r.success && r.url);
+        if (successPdfs.length > 0) {
+          // Mở từng PDF trong tab mới
+          for (const pdfResult of successPdfs) {
+            window.open(pdfResult.url, '_blank');
+          }
+          showToast(`Đã xác nhận & mở ${successPdfs.length} PDF vận đơn.`);
+        } else {
+          showToast('Đơn đã xác nhận nhưng chưa có PDF. Vui lòng in lại sau.');
+        }
+      } else {
+        showToast('Đơn đã xác nhận nhưng không lấy được PDF. Vui lòng in lại sau.');
+      }
+
+      // Cập nhật trạng thái local
       const expiresAt = Date.now() + 5 * 60 * 1000;
       for (const sn of successfulSns) {
         const key = sn.toLowerCase();
@@ -4092,28 +4117,20 @@ export default function OrderManager({
         void updatePrintStatusForOrders(optimisticTargets, true, { silent: true }).catch(() => {});
       }
 
-      const orderSn = successfulSns[0];
-      if (pdfWindow && orderSn) {
-        pdfWindow.location.href = `/api/orders/download-pdf/${encodeURIComponent(orderSn)}`;
-      } else if (!pdfWindow) {
-        showToast('Trình duyệt đã chặn tab PDF. Vui lòng cho phép pop-up rồi in lại đơn.');
-      }
-
       setSelectedOrderIds([]);
       setShipConfirmSummary(null);
       setShipJobResults([]);
       clearShipProgressOverlay();
-      showToast(`Đã xác nhận & mở PDF ${successfulSns.length} đơn.`);
+      
       onAddLog({
         id: `log-${Date.now()}`,
         timestamp: new Date().toISOString(),
         channel: 'all',
         type: 'stock_sync',
         status: 'success',
-        message: `Delegated polling: xác nhận và mở ${successfulSns.length} tab PDF.`,
+        message: `Xác nhận và in ${successfulSns.length} đơn thành công.`,
       });
     } catch (err) {
-      closeReservedPrintWindow(pdfWindow);
       const message = err instanceof Error ? err.message : 'Lỗi không xác định';
       clearShipProgressOverlay();
       showToast(`Xác nhận thất bại: ${message}`);

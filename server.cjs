@@ -130314,9 +130314,335 @@ async function startServer() {
       );
     }
   };
+  const confirmOnlyRoute = async (req, res) => {
+    const t0 = Date.now();
+    beginLogisticsWork("confirm-only");
+    try {
+      const { orderIds, orderSns, order_ids, order_sns, method } = req.body || {};
+      const shipMethod = method === "dropoff" ? "dropoff" : "pickup";
+      const idList = [
+        ...Array.isArray(orderIds) ? orderIds : [],
+        ...Array.isArray(order_ids) ? order_ids : []
+      ].map(String);
+      const snList = [
+        ...Array.isArray(orderSns) ? orderSns : [],
+        ...Array.isArray(order_sns) ? order_sns : []
+      ].map(String);
+      if (idList.length === 0 && snList.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Thi\u1EBFu danh s\xE1ch orderIds ho\u1EB7c orderSns."
+        });
+      }
+      let orders = [];
+      try {
+        orders = await loadOrdersForShipScoped(idList, snList);
+      } catch (loadErr) {
+        console.warn("[Confirm Only] loadOrdersForShipScoped:", loadErr?.message || loadErr);
+      }
+      if (!orders.length) {
+        try {
+          const loaded = await loadOrdersForApi({ readOnly: true });
+          const idSet = /* @__PURE__ */ new Set([...idList, ...snList, ...snList.map((s2) => `shopee-${s2}`)]);
+          orders = (loaded.orders || []).filter(
+            (o) => idSet.has(String(o.id || "")) || idSet.has(String(o.orderSn || "")) || idSet.has(`shopee-${o.orderSn}`)
+          );
+        } catch {
+          orders = [];
+        }
+      }
+      const toShip = resolveOrdersFromRequest(orders, idList, snList);
+      if (toShip.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n n\xE0o trong database."
+        });
+      }
+      console.log(`[Confirm Only] X\xE1c nh\u1EADn ${toShip.length} \u0111\u01A1n method=${shipMethod}`);
+      await prewarmShopeeAddressCacheForShip(toShip, shipMethod);
+      const results = [];
+      const successSns = [];
+      for (const { index, order } of toShip) {
+        const orderSn = String(order.orderSn || "");
+        const orderId = String(order.id || "");
+        try {
+          const resolvedShopId = resolveOrderShopId(order);
+          if (resolvedShopId && !order.shopId) {
+            orders[index].shopId = resolvedShopId;
+            order.shopId = resolvedShopId;
+          }
+          console.log(`[Confirm Only] X\xE1c nh\u1EADn \u0111\u01A1n ${orderSn}...`);
+          let shipResult;
+          try {
+            shipResult = await withOperationTimeout(
+              (signal) => arrangeShipment(order, shipMethod, signal, { skipRecover: true }),
+              SHIP_ORDER_OPERATION_TIMEOUT_MS,
+              `Ship order ${orderSn}`
+            );
+          } catch (shipErr) {
+            shipResult = {
+              success: false,
+              error: /timeout/i.test(String(shipErr?.message || "")) ? "timeout" : "internal_server_error",
+              message: "L\u1ED7i server: " + (shipErr?.message || String(shipErr))
+            };
+          }
+          const treatedAsSuccess = shipResult.success || isAlreadyShippedError(shipResult);
+          if (!treatedAsSuccess) {
+            results.push({ orderId, orderSn, success: false, ...shipResult });
+            continue;
+          }
+          const tn = String(
+            order.trackingNumber || order.tracking_no || shipResult.trackingNumber || orders[index].trackingNumber || ""
+          ).trim();
+          orders[index] = {
+            ...orders[index],
+            ...order,
+            isPrepared: true,
+            status: "processed",
+            is_pending_shopee_check: false,
+            fulfillment_type: shipMethod,
+            ship_method: shipMethod,
+            trackingNumber: tn || orders[index].trackingNumber,
+            tracking_no: tn || orders[index].tracking_no || orders[index].trackingNumber,
+            shopId: orders[index].shopId || order.shopId || shipResult.shopId || resolvedShopId,
+            shopee_order_status: "PROCESSED",
+            shopeeSyncPending: false,
+            shopeeSyncError: void 0
+          };
+          forceHealPickupOrderIfHasTracking(orders[index]);
+          results.push({ orderId, orderSn, success: true, ...shipResult });
+          successSns.push(orderSn);
+        } catch (orderErr) {
+          console.error(`[Confirm Only] L\u1ED7i \u0111\u01A1n ${orderSn}:`, orderErr?.stack || orderErr);
+          results.push({
+            orderId,
+            orderSn,
+            success: false,
+            error: "order_process_error",
+            message: String(orderErr?.message || orderErr)
+          });
+        }
+      }
+      try {
+        const changed = toShip.map(({ index }) => orders[index]).filter(Boolean);
+        await persistOrdersToDatabase(orders, changed);
+      } catch (err) {
+        console.warn("[Confirm Only] persist failed:", err?.message || err);
+      }
+      console.log(`[Confirm Only] DONE ${successSns.length}/${toShip.length} success (${Date.now() - t0}ms)`);
+      return res.json({
+        success: true,
+        results,
+        successCount: successSns.length,
+        total: toShip.length,
+        message: `\u0110\xE3 x\xE1c nh\u1EADn ${successSns.length}/${toShip.length} \u0111\u01A1n`
+      });
+    } catch (error) {
+      console.error("[Confirm Only] L\u1ED7i:", error?.stack || error);
+      return res.status(500).json({
+        success: false,
+        message: "L\u1ED7i server: " + error.message
+      });
+    } finally {
+      endLogisticsWork();
+    }
+  };
+  const getPdfRoute = async (req, res) => {
+    try {
+      const { orderSns } = req.body || {};
+      if (!Array.isArray(orderSns) || orderSns.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Thi\u1EBFu danh s\xE1ch orderSns."
+        });
+      }
+      const cleanSns = orderSns.map(
+        (sn) => String(sn || "").replace(/^shopee-/i, "").trim()
+      ).filter(Boolean);
+      if (cleanSns.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Danh s\xE1ch orderSns kh\xF4ng h\u1EE3p l\u1EC7."
+        });
+      }
+      console.log(`[Get PDF] B\u1EAFt \u0111\u1EA7u x\u1EED l\xFD ${cleanSns.length} \u0111\u01A1n: ${cleanSns.join(", ")}`);
+      const rows = await loadOrdersForShipScoped(
+        cleanSns.map((sn) => `shopee-${sn}`),
+        cleanSns
+      );
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n n\xE0o trong database."
+        });
+      }
+      const pdfResults = [];
+      for (const orderSn of cleanSns) {
+        try {
+          const order = rows.find(
+            (item) => String(item?.orderSn || item?.order_sn || "").replace(/^shopee-/i, "").trim() === orderSn
+          );
+          if (!order || String(order.channel || "").toLowerCase() !== "shopee") {
+            pdfResults.push({
+              orderSn,
+              success: false,
+              error: "order_not_found",
+              message: `Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n ${orderSn} trong database.`
+            });
+            continue;
+          }
+          const storedShopId = String(
+            order.shopId || order.shop_id || order.accountId || order.account_id || ""
+          ).trim();
+          if (!storedShopId) {
+            pdfResults.push({
+              orderSn,
+              success: false,
+              error: "missing_shop_id",
+              message: `\u0110\u01A1n ${orderSn} thi\u1EBFu shopId.`
+            });
+            continue;
+          }
+          const auth = await getShopeeAccessTokenForApi(storedShopId);
+          const accessToken = String(auth?.token || "").trim();
+          const shopId = String(auth?.apiShopId || "").trim();
+          if (!accessToken || !shopId) {
+            pdfResults.push({
+              orderSn,
+              success: false,
+              error: "no_valid_token",
+              message: `Kh\xF4ng c\xF3 token h\u1EE3p l\u1EC7 cho shop ${storedShopId}.`
+            });
+            continue;
+          }
+          try {
+            await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, [order]);
+          } catch (err) {
+            console.warn(`[Get PDF] enrich ${orderSn}:`, err?.message || err);
+          }
+          const row = buildShopeeShippingDocOrderRow(order);
+          if (!row || !row.order_sn || !row.package_number && !row.tracking_number) {
+            pdfResults.push({
+              orderSn,
+              success: false,
+              error: "missing_shipping_data",
+              message: `\u0110\u01A1n ${orderSn} thi\u1EBFu package_number/tracking_number.`
+            });
+            continue;
+          }
+          const createResult = await shopeeCreateShippingDocument(shopId, accessToken, [row]);
+          if (createResult?.error) {
+            pdfResults.push({
+              orderSn,
+              success: false,
+              error: createResult.error,
+              message: createResult.message || "Shopee t\u1EEB ch\u1ED1i t\u1EA1o PDF."
+            });
+            continue;
+          }
+          let pdfReady = false;
+          let lastError = null;
+          for (let attempt = 1; attempt <= 20; attempt++) {
+            await sleep2(3e3);
+            try {
+              const poll = await shopeeGetShippingDocumentResult(shopId, accessToken, [row]);
+              if (poll?.error) {
+                lastError = poll;
+                continue;
+              }
+              const items = poll?.response?.result_list || poll?.result_list || [];
+              const result = items.find((item) => String(item?.order_sn || "") === orderSn);
+              if (String(result?.status || "").toUpperCase() === "READY") {
+                pdfReady = true;
+                break;
+              }
+              lastError = result || { error: "not_ready", message: `Ch\u01B0a READY l\u1EA7n ${attempt}/20` };
+            } catch (err) {
+              lastError = err;
+            }
+          }
+          if (!pdfReady) {
+            pdfResults.push({
+              orderSn,
+              success: false,
+              error: "polling_timeout",
+              message: "Shopee ch\u01B0a xu\u1EA5t PDF sau 60s.",
+              lastError
+            });
+            continue;
+          }
+          const publicPdfDir = import_path17.default.join(APP_ROOT11, "public", "pdfs");
+          if (!import_fs16.default.existsSync(publicPdfDir)) {
+            import_fs16.default.mkdirSync(publicPdfDir, { recursive: true });
+          }
+          const filename = `${orderSn}.pdf`;
+          const publicPdfPath = import_path17.default.join(publicPdfDir, filename);
+          const apiPath = "/api/v2/logistics/download_shipping_document";
+          const timestamp = Math.floor(Date.now() / 1e3);
+          const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+          const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
+          const downloadRes = await fetchWithTimeout(url2, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              order_list: [row],
+              shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
+            })
+          }, 6e4);
+          const contentType = String(downloadRes.headers.get("content-type") || "").toLowerCase();
+          if (contentType.includes("application/json") || !downloadRes.ok || !downloadRes.body) {
+            pdfResults.push({
+              orderSn,
+              success: false,
+              error: "download_failed",
+              message: "Shopee kh\xF4ng tr\u1EA3 v\u1EC1 file PDF."
+            });
+            continue;
+          }
+          const fileStream = import_fs16.default.createWriteStream(publicPdfPath);
+          await (0, import_promises3.pipeline)(
+            import_node_stream4.Readable.fromWeb(downloadRes.body),
+            fileStream
+          );
+          const pdfUrl = `${APP_BASE_URL3}/pdfs/${filename}`;
+          pdfResults.push({
+            orderSn,
+            success: true,
+            url: pdfUrl,
+            filename,
+            message: "PDF \u0111\xE3 s\u1EB5n s\xE0ng."
+          });
+          console.log(`[Get PDF] OK ${orderSn} -> ${pdfUrl}`);
+        } catch (err) {
+          console.error(`[Get PDF] L\u1ED7i ${orderSn}:`, err?.stack || err);
+          pdfResults.push({
+            orderSn,
+            success: false,
+            error: "processing_error",
+            message: err?.message || String(err)
+          });
+        }
+      }
+      const successCount = pdfResults.filter((r2) => r2.success).length;
+      return res.json({
+        success: successCount > 0,
+        results: pdfResults,
+        successCount,
+        total: cleanSns.length,
+        message: `\u0110\xE3 t\u1EA3i ${successCount}/${cleanSns.length} PDF`
+      });
+    } catch (error) {
+      console.error("[Get PDF] L\u1ED7i:", error?.stack || error);
+      return res.status(500).json({
+        success: false,
+        message: "L\u1ED7i server: " + error.message
+      });
+    }
+  };
   app.post("/api/orders/fast-process", authMiddleware, fastProcessRouteGuard);
   app.post("/api/shopee/orders/fast-process", authMiddleware, fastProcessRouteGuard);
-  app.post("/api/orders/confirm", authMiddleware, fastProcessRouteGuard);
+  app.post("/api/orders/confirm", authMiddleware, confirmOnlyRoute);
+  app.post("/api/orders/get-pdf", authMiddleware, getPdfRoute);
   app.get("/api/orders/download-pdf/:orderSn", downloadPdfRoute);
   app.use("/api/orders", authMiddleware, ordersRoutes);
   app.post("/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrders);
@@ -132589,6 +132915,13 @@ async function startServer() {
     if (isCpanelPassengerRuntime && process.env.NODE_ENV !== "production") {
       console.warn("[Boot] Passenger/cPanel detected without NODE_ENV=production; forcing static production runtime.");
     }
+    const publicPdfDir = import_path17.default.join(APP_ROOT11, "public", "pdfs");
+    app.use("/pdfs", import_express24.default.static(publicPdfDir, {
+      setHeaders(res) {
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Cache-Control", "public, max-age=300");
+      }
+    }));
     const distPath = import_path17.default.join(APP_ROOT11, "dist");
     app.use(import_express24.default.static(distPath, {
       setHeaders(res, filePath) {
