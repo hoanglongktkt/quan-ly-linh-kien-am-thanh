@@ -4049,93 +4049,149 @@ export default function OrderManager({
     setProgressTotal(validQueued.length);
 
     try {
-      // Bước 1: Xác nhận đơn
-      const confirmResponse = await fetch('/api/orders/confirm', {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({
-          orderIds,
-          orderSns,
-          order_ids: orderIds,
-          order_sns: orderSns,
-          method: shipMethod,
-        }),
-      });
-      const confirmData = await readResponseJson<any>(confirmResponse);
-      if (!confirmResponse.ok) throw new Error(confirmData.message || confirmData.error || `HTTP ${confirmResponse.status}`);
+      // BATCH PRINT: Nếu nhiều đơn (>= 2) -> gọi API gộp PDF
+      if (orderSns.length >= 2) {
+        console.log('[Confirm&Print] BATCH MODE: Gọi /api/orders/batch-confirm-print với', orderSns.length, 'đơn');
+        setProgressMessage(`Đang xác nhận ${orderSns.length} đơn và gộp PDF...`);
 
-      const successfulResults = (Array.isArray(confirmData.results) ? confirmData.results : []).filter(
-        (result: any) => result?.success,
-      );
-      const successfulSns: string[] = [
-        ...new Set<string>(
-          successfulResults
-            .map((result: any) => String(result.orderSn || '').replace(/^shopee-/i, '').trim())
-            .filter(Boolean),
-        ),
-      ];
-      
-      if (!successfulSns.length) {
-        throw new Error(confirmData.message || 'Shopee không xác nhận được đơn nào.');
-      }
+        const batchResponse = await fetch('/api/orders/batch-confirm-print', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({
+            orderSns,
+            method: shipMethod,
+          }),
+        });
+        const batchData = await readResponseJson<any>(batchResponse);
+        console.log('[Confirm&Print] Batch response:', batchData);
 
-      setProgressMessage(`Đã xác nhận ${successfulSns.length} đơn - đang lấy PDF...`);
-
-      // Bước 2: Lấy PDF
-      console.log('[Confirm&Print] Gọi /api/orders/get-pdf với orderSns:', successfulSns);
-      const pdfResponse = await fetch('/api/orders/get-pdf', {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ orderSns: successfulSns }),
-      });
-      const pdfData = await readResponseJson<any>(pdfResponse);
-      console.log('[Confirm&Print] Response từ /api/orders/get-pdf:', pdfData);
-
-      if (pdfResponse.ok && pdfData.success && Array.isArray(pdfData.results)) {
-        const successPdfs = pdfData.results.filter((r: any) => r.success && r.url);
-        console.log('[Confirm&Print] Danh sách PDF thành công:', successPdfs);
-        if (successPdfs.length > 0) {
-          // Mở từng PDF trong tab mới
-          for (const pdfResult of successPdfs) {
-            console.log('[Confirm&Print] Mở PDF:', pdfResult.url);
-            window.open(pdfResult.url, '_blank');
-          }
-          showToast(`Đã xác nhận & mở ${successPdfs.length} PDF vận đơn.`);
-        } else {
-          console.warn('[Confirm&Print] Không có PDF nào thành công');
-          showToast('Đơn đã xác nhận nhưng chưa có PDF. Vui lòng in lại sau.');
+        if (!batchResponse.ok || !batchData.success) {
+          throw new Error(batchData.message || batchData.error || `HTTP ${batchResponse.status}`);
         }
+
+        if (batchData.url) {
+          console.log('[Confirm&Print] Mở PDF gộp:', batchData.url);
+          window.open(batchData.url, '_blank');
+          showToast(`Đã xác nhận ${batchData.confirmedCount} đơn & mở PDF gộp (${batchData.totalPages} trang).`);
+        } else {
+          showToast(`Đã xác nhận ${batchData.confirmedCount} đơn nhưng không có PDF.`);
+        }
+
+        // Cập nhật trạng thái local
+        const successfulSns = Array.isArray(batchData.confirmedOrders) ? batchData.confirmedOrders : orderSns;
+        const expiresAt = Date.now() + 5 * 60 * 1000;
+        for (const sn of successfulSns) {
+          const key = sn.toLowerCase();
+          recentlyPrintedRef.current.set(key, expiresAt);
+          recentlyPrintedRef.current.set(`shopee-${key}`, expiresAt);
+        }
+
+        const optimisticTargets = applyPrintedLocalOptimistic(successfulSns, true, 'processed');
+        if (optimisticTargets.length) {
+          void updatePrintStatusForOrders(optimisticTargets, true, { silent: true }).catch(() => {});
+        }
+
+        setSelectedOrderIds([]);
+        setShipConfirmSummary(null);
+        setShipJobResults([]);
+        clearShipProgressOverlay();
+        
+        onAddLog({
+          id: `log-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          channel: 'all',
+          type: 'stock_sync',
+          status: 'success',
+          message: `Batch print: Xác nhận và gộp ${successfulSns.length} đơn thành 1 PDF.`,
+        });
       } else {
-        console.error('[Confirm&Print] Lỗi lấy PDF:', pdfData);
-        showToast('Đơn đã xác nhận nhưng không lấy được PDF. Vui lòng in lại sau.');
-      }
+        // ĐƠN LẺ: Xác nhận + lấy PDF riêng biệt
+        console.log('[Confirm&Print] SINGLE MODE: Xử lý 1 đơn');
+        
+        const confirmResponse = await fetch('/api/orders/confirm', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({
+            orderIds,
+            orderSns,
+            order_ids: orderIds,
+            order_sns: orderSns,
+            method: shipMethod,
+          }),
+        });
+        const confirmData = await readResponseJson<any>(confirmResponse);
+        if (!confirmResponse.ok) throw new Error(confirmData.message || confirmData.error || `HTTP ${confirmResponse.status}`);
 
-      // Cập nhật trạng thái local
-      const expiresAt = Date.now() + 5 * 60 * 1000;
-      for (const sn of successfulSns) {
-        const key = sn.toLowerCase();
-        recentlyPrintedRef.current.set(key, expiresAt);
-        recentlyPrintedRef.current.set(`shopee-${key}`, expiresAt);
-      }
+        const successfulResults = (Array.isArray(confirmData.results) ? confirmData.results : []).filter(
+          (result: any) => result?.success,
+        );
+        const successfulSns: string[] = [
+          ...new Set<string>(
+            successfulResults
+              .map((result: any) => String(result.orderSn || '').replace(/^shopee-/i, '').trim())
+              .filter(Boolean),
+          ),
+        ];
+        
+        if (!successfulSns.length) {
+          throw new Error(confirmData.message || 'Shopee không xác nhận được đơn nào.');
+        }
 
-      const optimisticTargets = applyPrintedLocalOptimistic(successfulSns, true, 'processed');
-      if (optimisticTargets.length) {
-        void updatePrintStatusForOrders(optimisticTargets, true, { silent: true }).catch(() => {});
-      }
+        setProgressMessage(`Đã xác nhận ${successfulSns.length} đơn - đang lấy PDF...`);
 
-      setSelectedOrderIds([]);
-      setShipConfirmSummary(null);
-      setShipJobResults([]);
-      clearShipProgressOverlay();
-      
-      onAddLog({
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        channel: 'all',
-        type: 'stock_sync',
-        status: 'success',
-        message: `Xác nhận và in ${successfulSns.length} đơn thành công.`,
-      });
+        console.log('[Confirm&Print] Gọi /api/orders/get-pdf với orderSns:', successfulSns);
+        const pdfResponse = await fetch('/api/orders/get-pdf', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ orderSns: successfulSns }),
+        });
+        const pdfData = await readResponseJson<any>(pdfResponse);
+        console.log('[Confirm&Print] Response từ /api/orders/get-pdf:', pdfData);
+
+        if (pdfResponse.ok && pdfData.success && Array.isArray(pdfData.results)) {
+          const successPdfs = pdfData.results.filter((r: any) => r.success && r.url);
+          console.log('[Confirm&Print] Danh sách PDF thành công:', successPdfs);
+          if (successPdfs.length > 0) {
+            for (const pdfResult of successPdfs) {
+              console.log('[Confirm&Print] Mở PDF:', pdfResult.url);
+              window.open(pdfResult.url, '_blank');
+            }
+            showToast(`Đã xác nhận & mở ${successPdfs.length} PDF vận đơn.`);
+          } else {
+            console.warn('[Confirm&Print] Không có PDF nào thành công');
+            showToast('Đơn đã xác nhận nhưng chưa có PDF. Vui lòng in lại sau.');
+          }
+        } else {
+          console.error('[Confirm&Print] Lỗi lấy PDF:', pdfData);
+          showToast('Đơn đã xác nhận nhưng không lấy được PDF. Vui lòng in lại sau.');
+        }
+
+        const expiresAt = Date.now() + 5 * 60 * 1000;
+        for (const sn of successfulSns) {
+          const key = sn.toLowerCase();
+          recentlyPrintedRef.current.set(key, expiresAt);
+          recentlyPrintedRef.current.set(`shopee-${key}`, expiresAt);
+        }
+
+        const optimisticTargets = applyPrintedLocalOptimistic(successfulSns, true, 'processed');
+        if (optimisticTargets.length) {
+          void updatePrintStatusForOrders(optimisticTargets, true, { silent: true }).catch(() => {});
+        }
+
+        setSelectedOrderIds([]);
+        setShipConfirmSummary(null);
+        setShipJobResults([]);
+        clearShipProgressOverlay();
+        
+        onAddLog({
+          id: `log-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          channel: 'all',
+          type: 'stock_sync',
+          status: 'success',
+          message: `Xác nhận và in ${successfulSns.length} đơn thành công.`,
+        });
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Lỗi không xác định';
       clearShipProgressOverlay();
