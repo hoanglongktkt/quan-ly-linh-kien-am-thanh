@@ -130439,10 +130439,23 @@ async function startServer() {
         console.warn("[Confirm Only] persist failed:", err?.message || err);
       }
       console.log(`[Confirm Only] DONE ${successSns.length}/${toShip.length} success (${Date.now() - t0}ms)`);
+      const successOrders = results.filter((result) => result?.success).map((result) => ({
+        orderId: String(result.orderId || ""),
+        orderSn: String(result.orderSn || "")
+      }));
+      const failedOrders = results.filter((result) => !result?.success).map((result) => ({
+        orderId: String(result.orderId || ""),
+        orderSn: String(result.orderSn || ""),
+        error: String(result.error || "confirm_failed"),
+        message: String(result.message || result.error || "X\xE1c nh\u1EADn th\u1EA5t b\u1EA1i")
+      }));
       return res.json({
         success: true,
         results,
+        successOrders,
+        failedOrders,
         successCount: successSns.length,
+        failCount: failedOrders.length,
         total: toShip.length,
         message: `\u0110\xE3 x\xE1c nh\u1EADn ${successSns.length}/${toShip.length} \u0111\u01A1n`
       });
@@ -130651,6 +130664,7 @@ async function startServer() {
   };
   const BATCH_PRINT_CONCURRENCY = 5;
   const BATCH_PRINT_DEADLINE_MS = 27e3;
+  const BATCH_PRINT_ONLY_DEADLINE_MS = 105e3;
   const BATCH_PDF_MAX_BYTES = 25 * 1024 * 1024;
   async function mapBatchConcurrently(items, concurrency, processFn) {
     const results = new Array(items.length);
@@ -131186,7 +131200,7 @@ async function startServer() {
   };
   const batchPrintOnlyRoute = async (req, res) => {
     const t0 = Date.now();
-    const deadlineAt = t0 + BATCH_PRINT_DEADLINE_MS;
+    const deadlineAt = t0 + BATCH_PRINT_ONLY_DEADLINE_MS;
     beginLogisticsWork("batch-print-only");
     try {
       const { orderSns } = req.body || {};
@@ -131328,26 +131342,45 @@ async function startServer() {
           return null;
         }
       };
-      const batchPdfResult = await fetchBatchPdfDocumentsByShop(
-        orders,
-        cleanSns,
-        deadlineAt,
-        "Batch Print Only"
-      );
-      const printedFromBatch = batchPdfResult.documents.flatMap((item) => item.orderSns);
-      pdfBuffers.push(
-        ...batchPdfResult.documents.map((item) => ({
-          orderSn: item.orderSns.join(","),
-          buffer: item.buffer
-        }))
-      );
-      for (const failure of batchPdfResult.failedOrders) {
-        pdfFailures.set(failure.orderSn, failure);
+      const pendingSns = new Set(cleanSns);
+      const printedFromBatch = [];
+      let fallbackRound = 0;
+      while (pendingSns.size > 0 && Date.now() < deadlineAt) {
+        fallbackRound += 1;
+        const requestedSns = [...pendingSns];
+        const batchPdfResult = await fetchBatchPdfDocumentsByShop(
+          orders,
+          requestedSns,
+          deadlineAt,
+          `Batch Print Only fallback ${fallbackRound}`
+        );
+        for (const document2 of batchPdfResult.documents) {
+          pdfBuffers.push({
+            orderSn: document2.orderSns.join(","),
+            buffer: document2.buffer
+          });
+          for (const orderSn of document2.orderSns) {
+            pendingSns.delete(orderSn);
+            pdfFailures.delete(orderSn);
+            printedFromBatch.push(orderSn);
+          }
+        }
+        for (const failure of batchPdfResult.failedOrders) {
+          if (pendingSns.has(failure.orderSn)) pdfFailures.set(failure.orderSn, failure);
+        }
+        const permanentErrors = /* @__PURE__ */ new Set(["order_not_found", "missing_shop_id", "token_missing"]);
+        const pendingFailures = [...pendingSns].map((orderSn) => pdfFailures.get(orderSn)).filter((failure) => Boolean(failure));
+        if (pendingFailures.length === pendingSns.size && pendingFailures.every((failure) => permanentErrors.has(failure.error))) {
+          break;
+        }
+        if (pendingSns.size > 0 && Date.now() < deadlineAt) {
+          await sleep2(Math.min(2e3, Math.max(0, deadlineAt - Date.now())));
+        }
       }
       if (pdfBuffers.length === 0) {
         return res.status(400).json({
           success: false,
-          message: `Kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c PDF n\xE0o t\u1EEB ${cleanSns.length} \u0111\u01A1n.`,
+          message: `Shopee ch\u01B0a t\u1EA1o xong PDF cho ${cleanSns.length} \u0111\u01A1n sau khi \u0111\xE3 polling ch\u1EDD READY.`,
           failedOrders: [...pdfFailures.values()]
         });
       }

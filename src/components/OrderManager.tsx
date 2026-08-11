@@ -4066,39 +4066,74 @@ export default function OrderManager({
 
       const successfulSns = [
         ...new Set<string>(
-          (Array.isArray(data.results) ? data.results : [])
-            .filter((result: any) => result?.success)
-            .map((result: any) => String(result.orderSn || '').replace(/^shopee-/i, '').trim())
+          (Array.isArray(data.successOrders)
+            ? data.successOrders
+            : (Array.isArray(data.results) ? data.results : []).filter((result: any) => result?.success))
+            .map((result: any) =>
+              String(typeof result === 'string' ? result : result?.orderSn || result?.orderId || '')
+                .replace(/^shopee-/i, '')
+                .trim(),
+            )
             .filter(Boolean),
         ),
       ];
-      if (!successfulSns.length) throw new Error(data.message || 'Không xác nhận được đơn nào.');
+      const failedOrders = (
+        Array.isArray(data.failedOrders)
+          ? data.failedOrders
+          : (Array.isArray(data.results) ? data.results : []).filter((result: any) => !result?.success)
+      ).map((result: any) => ({
+        orderId: String(result?.orderId || ''),
+        orderSn: String(result?.orderSn || '').replace(/^shopee-/i, '').trim(),
+        error: String(result?.error || 'confirm_failed'),
+        message: String(result?.message || result?.error || 'Xác nhận thất bại'),
+      }));
 
-      const optimisticTargets = applyPrintedLocalOptimistic(successfulSns, false, 'processed');
-      if (optimisticTargets.length > 0) {
-        void updatePrintStatusForOrders(optimisticTargets, false, { silent: true }).catch(() => {});
+      if (successfulSns.length > 0) {
+        const optimisticTargets = applyPrintedLocalOptimistic(successfulSns, false, 'processed');
+        if (optimisticTargets.length > 0) {
+          void updatePrintStatusForOrders(optimisticTargets, false, { silent: true }).catch(() => {});
+        }
+
+        setSelectedOrderIds([]);
+        setPrintStatusFilter('unprinted');
+        setActiveSubTab('processed');
+
+        void fetch('/api/orders/silent-prefetch-pdfs', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ orderSns: successfulSns }),
+        }).catch((error) => console.warn('[Silent Prefetch] Không thể khởi chạy:', error));
       }
 
-      setSelectedOrderIds([]);
-      setPrintStatusFilter('unprinted');
-      setActiveSubTab('processed');
+      const summary = {
+        total: Number(data.total) || successfulSns.length + failedOrders.length,
+        successCount: successfulSns.length,
+        failCount: failedOrders.length,
+        successfulOrderIds: successfulSns,
+        failedOrderDetails: failedOrders,
+      };
       setProgressCompleted(successfulSns.length);
-      markProgressComplete(`Đã xác nhận ${successfulSns.length}/${orderSns.length} đơn.`);
-      showToast(`Đã xác nhận ${successfulSns.length} đơn — PDF đang được tải ngầm.`);
-
-      void fetch('/api/orders/silent-prefetch-pdfs', {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ orderSns: successfulSns }),
-      }).catch((error) => console.warn('[Silent Prefetch] Không thể khởi chạy:', error));
+      setProgressTotal(summary.total);
+      setProgressDone(true);
+      setProgressMessage('Kết quả xác nhận hàng loạt');
+      setShipJobResults([
+        ...successfulSns.map((orderSn) => ({ orderSn, success: true })),
+        ...failedOrders.map((failure: any) => ({ ...failure, success: false })),
+      ]);
+      setShipConfirmSummary(summary);
+      showToast(
+        failedOrders.length > 0
+          ? `Thành công ${successfulSns.length} đơn, thất bại ${failedOrders.length} đơn.`
+          : `Đã xác nhận ${successfulSns.length} đơn — PDF đang được tải ngầm.`,
+      );
 
       onAddLog({
         id: `log-${Date.now()}`,
         timestamp: new Date().toISOString(),
         channel: 'shopee',
         type: 'stock_sync',
-        status: 'success',
-        message: `Xác nhận ${successfulSns.length} đơn; đã xếp hàng tải PDF nền.`,
+        status: successfulSns.length > 0 ? 'success' : 'failed',
+        message: `Xác nhận thành công ${successfulSns.length}, thất bại ${failedOrders.length}; đã xếp hàng tải PDF nền.`,
       });
     } catch (err) {
       clearShipProgressOverlay();
@@ -5007,9 +5042,9 @@ export default function OrderManager({
     try {
       setProgressMessage('Đang gọi API gộp PDF...');
       
-      // Backend chủ động kết thúc trước 30s; chừa 8s cho proxy và truyền dữ liệu.
+      // Cho phép backend fallback polling Shopee khi PDF nền chưa READY.
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 38_000);
+      const timeoutId = setTimeout(() => controller.abort(), 118_000);
       
       try {
         const response = await fetch('/api/orders/batch-print-only', {
@@ -5057,7 +5092,7 @@ export default function OrderManager({
         clearTimeout(timeoutId);
         closeReservedPrintWindow(reservedPrintWindow);
         if (fetchErr.name === 'AbortError') {
-          alert('Thao tác quá lâu và đã bị hủy. Vui lòng thử lại với ít đơn hơn hoặc kiểm tra kết nối.');
+          alert('Shopee chưa tạo xong PDF sau thời gian chờ. Vui lòng thử lại sau ít phút.');
         } else {
           throw fetchErr;
         }
@@ -7694,8 +7729,10 @@ export default function OrderManager({
                     <button
                       type="button"
                       onClick={() => {
-                        setActiveSubTab('processed');
-                        setPrintStatusFilter('unprinted');
+                        if (shipConfirmSummary.successfulOrderIds.length > 0) {
+                          setActiveSubTab('processed');
+                          setPrintStatusFilter('unprinted');
+                        }
                         clearShipProgressOverlay();
                       }}
                       className="flex-1 py-3 rounded-2xl border border-gray-200 bg-white text-gray-700 text-sm font-bold hover:bg-gray-50 transition-colors"

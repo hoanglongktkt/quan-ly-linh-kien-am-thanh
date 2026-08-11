@@ -17763,11 +17763,28 @@ async function startServer() {
       }
 
       console.log(`[Confirm Only] DONE ${successSns.length}/${toShip.length} success (${Date.now() - t0}ms)`);
+      const successOrders = results
+        .filter((result: any) => result?.success)
+        .map((result: any) => ({
+          orderId: String(result.orderId || ""),
+          orderSn: String(result.orderSn || ""),
+        }));
+      const failedOrders = results
+        .filter((result: any) => !result?.success)
+        .map((result: any) => ({
+          orderId: String(result.orderId || ""),
+          orderSn: String(result.orderSn || ""),
+          error: String(result.error || "confirm_failed"),
+          message: String(result.message || result.error || "Xác nhận thất bại"),
+        }));
       
       return res.json({
         success: true,
         results,
+        successOrders,
+        failedOrders,
         successCount: successSns.length,
+        failCount: failedOrders.length,
         total: toShip.length,
         message: `Đã xác nhận ${successSns.length}/${toShip.length} đơn`,
       });
@@ -18023,6 +18040,7 @@ async function startServer() {
 
   const BATCH_PRINT_CONCURRENCY = 5;
   const BATCH_PRINT_DEADLINE_MS = 27_000;
+  const BATCH_PRINT_ONLY_DEADLINE_MS = 105_000;
   const BATCH_PDF_MAX_BYTES = 25 * 1024 * 1024;
 
   async function mapBatchConcurrently<T, R>(
@@ -18661,7 +18679,7 @@ async function startServer() {
   // API BATCH-PRINT-ONLY: In lại nhiều đơn đã xác nhận, gộp PDF thành 1 file (KHÔNG xác nhận lại)
   const batchPrintOnlyRoute = async (req: any, res: any) => {
     const t0 = Date.now();
-    const deadlineAt = t0 + BATCH_PRINT_DEADLINE_MS;
+    const deadlineAt = t0 + BATCH_PRINT_ONLY_DEADLINE_MS;
     beginLogisticsWork("batch-print-only");
     
     try {
@@ -18842,28 +18860,53 @@ async function startServer() {
         }
       };
 
-      // Một create/poll/download cho mỗi shop; các shop vẫn chạy song song.
-      const batchPdfResult = await fetchBatchPdfDocumentsByShop(
-        orders,
-        cleanSns,
-        deadlineAt,
-        "Batch Print Only",
-      );
-      const printedFromBatch = batchPdfResult.documents.flatMap((item) => item.orderSns);
-      pdfBuffers.push(
-        ...batchPdfResult.documents.map((item) => ({
-          orderSn: item.orderSns.join(","),
-          buffer: item.buffer,
-        })),
-      );
-      for (const failure of batchPdfResult.failedOrders) {
-        pdfFailures.set(failure.orderSn, failure);
+      // Fast path đọc storage/labels; file chưa có thì polling Shopee và tải bổ sung.
+      // Lặp lại nhiều vòng để trường hợp user bấm In ngay sau Xác nhận vẫn chờ READY.
+      const pendingSns = new Set(cleanSns);
+      const printedFromBatch: string[] = [];
+      let fallbackRound = 0;
+      while (pendingSns.size > 0 && Date.now() < deadlineAt) {
+        fallbackRound += 1;
+        const requestedSns = [...pendingSns];
+        const batchPdfResult = await fetchBatchPdfDocumentsByShop(
+          orders,
+          requestedSns,
+          deadlineAt,
+          `Batch Print Only fallback ${fallbackRound}`,
+        );
+        for (const document of batchPdfResult.documents) {
+          pdfBuffers.push({
+            orderSn: document.orderSns.join(","),
+            buffer: document.buffer,
+          });
+          for (const orderSn of document.orderSns) {
+            pendingSns.delete(orderSn);
+            pdfFailures.delete(orderSn);
+            printedFromBatch.push(orderSn);
+          }
+        }
+        for (const failure of batchPdfResult.failedOrders) {
+          if (pendingSns.has(failure.orderSn)) pdfFailures.set(failure.orderSn, failure);
+        }
+        const permanentErrors = new Set(["order_not_found", "missing_shop_id", "token_missing"]);
+        const pendingFailures = [...pendingSns]
+          .map((orderSn) => pdfFailures.get(orderSn))
+          .filter((failure): failure is BatchPdfFailure => Boolean(failure));
+        if (
+          pendingFailures.length === pendingSns.size &&
+          pendingFailures.every((failure) => permanentErrors.has(failure.error))
+        ) {
+          break;
+        }
+        if (pendingSns.size > 0 && Date.now() < deadlineAt) {
+          await sleep(Math.min(2_000, Math.max(0, deadlineAt - Date.now())));
+        }
       }
 
       if (pdfBuffers.length === 0) {
         return res.status(400).json({
           success: false,
-          message: `Không lấy được PDF nào từ ${cleanSns.length} đơn.`,
+          message: `Shopee chưa tạo xong PDF cho ${cleanSns.length} đơn sau khi đã polling chờ READY.`,
           failedOrders: [...pdfFailures.values()],
         });
       }
