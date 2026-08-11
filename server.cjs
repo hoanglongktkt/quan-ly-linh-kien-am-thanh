@@ -133239,6 +133239,34 @@ async function startServer() {
       writeCpanelCrashLog("Rejection", err);
     }
   }
+  function schedulePdfCleanup() {
+    const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1e3;
+    const MAX_AGE_MS = 3 * 24 * 60 * 60 * 1e3;
+    const runCleanup = () => {
+      try {
+        const pdfDir = import_path17.default.join(APP_ROOT11, "public", "pdfs");
+        if (!import_fs16.default.existsSync(pdfDir)) return;
+        const files = import_fs16.default.readdirSync(pdfDir);
+        let deleted = 0;
+        files.forEach((file) => {
+          const filePath = import_path17.default.join(pdfDir, file);
+          const stats = import_fs16.default.statSync(filePath);
+          const age = Date.now() - stats.mtimeMs;
+          if (age > MAX_AGE_MS) {
+            import_fs16.default.unlinkSync(filePath);
+            deleted++;
+          }
+        });
+        if (deleted > 0) {
+          console.log(`[PDF Cleanup] \u0110\xE3 d\u1ECDn d\u1EB9p ${deleted} file PDF c\u0169`);
+        }
+      } catch (err) {
+        console.error("[PDF Cleanup] Error:", err);
+      }
+    };
+    runCleanup();
+    setInterval(runCleanup, CLEANUP_INTERVAL_MS);
+  }
   function startListening() {
     console.log("[Orders] Background Sync & BulkWrite \u2014 cron + webhook + n\xFAt \u0110\u1ED3ng b\u1ED9 (ACK).");
     const onReady = () => {
@@ -133258,10 +133286,11 @@ async function startServer() {
       void connectDB2();
       console.log("[Boot] Order sync: webhook ON + manual trigger (BG) + cron incremental ON.");
       console.log("[Boot] Recovery pull OFF | Tracking enrich cron OFF | CancelReturn cron OFF.");
-      console.log("[Labels Cleanup] setInterval OFF \u2014 one-shot boot cleanup only.");
+      console.log("[PDF Cleanup] Auto cleanup ON \u2014 m\u1ED7i 24h x\xF3a file > 3 ng\xE0y.");
       console.log(
         `[Shopee Webhook] orders write ${String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "1").trim() === "0" ? "OFF (disabled)" : "ON"}`
       );
+      schedulePdfCleanup();
     };
     if (process.env.PORT) {
       app.listen(PORT, onReady);

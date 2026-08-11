@@ -4873,6 +4873,49 @@ export default function OrderManager({
     setSelectedOrderIds([]);
   };
 
+  /** In lại đơn đã chọn (không xác nhận lại, chỉ lấy PDF) */
+  const handleReprintSelected = async () => {
+    const selected = getSelectedOrders();
+    if (selected.length === 0) {
+      showToast('Vui lòng chọn ít nhất 1 đơn để in!');
+      return;
+    }
+    setShowBulkActionsDropdown(false);
+
+    const shopeeOrders = selected.filter(o => o.channel === 'shopee');
+    if (shopeeOrders.length === 0) {
+      showToast('Chỉ hỗ trợ in lại đơn Shopee.');
+      return;
+    }
+
+    const orderIds = shopeeOrders.map(o => o.id);
+    beginPrintProgressSession(orderIds.length, `Đang in lại ${orderIds.length} đơn...`);
+    
+    try {
+      const result = await printShopeeDocuments(orderIds, {
+        onProgress: (completed, total) => {
+          setProgressCompleted(completed);
+          setProgressTotal(total);
+          setProgressMessage(
+            completed >= total ? 'Hoàn tất — đang mở PDF...' : `Đang lấy PDF (${completed}/${total})...`
+          );
+        },
+        onStatus: (message) => setProgressMessage(message),
+      });
+      
+      if (result.success) {
+        markProgressComplete('In lại thành công!');
+        setSelectedOrderIds([]);
+      } else {
+        alert(`In lại thất bại: ${result.message}`);
+        clearShipProgressOverlay();
+      }
+    } catch (err) {
+      alert('Không thể kết nối API. Vui lòng thử lại.');
+      clearShipProgressOverlay();
+    }
+  };
+
   /** Giao cho ĐVVC hàng loạt — đơn đã chọn (đã có mã vận đơn, chưa bàn giao). */
   const handleBulkHandOverCarrier = async (e?: React.MouseEvent) => {
     e?.preventDefault();
@@ -6450,64 +6493,55 @@ export default function OrderManager({
           </button>
         </div>
 
-        <div className="relative shrink-0">
+        <div className="flex items-center gap-2 flex-wrap shrink-0">
           <button
             type="button"
-            onClick={() => setShowBulkActionsDropdown(!showBulkActionsDropdown)}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-black rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer"
+            onClick={() => handleBulkConfirm()}
+            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-lg shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+            title="Xác nhận & In hàng loạt"
           >
-            <span>Chọn thao tác</span>
-            <ChevronDown className="w-4 h-4 shrink-0" />
+            <Check className="w-3.5 h-3.5 shrink-0" />
+            <span>Xác nhận & In</span>
           </button>
 
-          {showBulkActionsDropdown && (
-            <div className="absolute right-0 bottom-11 sm:bottom-auto sm:top-11 bg-white border border-gray-100 rounded-2xl shadow-xl py-2.5 w-64 z-20 animate-in fade-in duration-100">
-              <p className="px-4 py-1.5 text-[10px] uppercase font-black tracking-wider text-gray-400">Hành động hàng loạt</p>
-              
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  handleBulkConfirm();
-                }}
-                className="w-full text-left px-4 py-2 text-xs font-bold text-gray-700 hover:bg-slate-50 flex items-center gap-2.5"
-              >
-                <Check className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>Xác nhận &amp; In hàng loạt</span>
-              </button>
+          <button
+            type="button"
+            onClick={() => void handleReprintSelected()}
+            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-black rounded-lg shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+            title="In lại đơn đã chọn (không xác nhận lại)"
+          >
+            <Printer className="w-3.5 h-3.5 shrink-0" />
+            <span>In lại đơn đã chọn</span>
+          </button>
 
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  void handleBulkHandOverCarrier(e);
-                }}
-                disabled={isBulkHandingOver}
-                className="w-full text-left px-4 py-2 text-xs font-bold text-gray-700 hover:bg-slate-50 flex items-center gap-2.5 disabled:opacity-50"
-              >
-                <Truck className={`w-4 h-4 text-indigo-600 shrink-0 ${isBulkHandingOver ? 'animate-pulse' : ''}`} />
-                <span>{isBulkHandingOver ? 'Đang giao ĐVVC hàng loạt...' : 'Giao cho ĐVVC hàng loạt'}</span>
-              </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              void handleBulkHandOverCarrier(e);
+            }}
+            disabled={isBulkHandingOver}
+            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black rounded-lg shadow-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            title="Giao cho ĐVVC hàng loạt"
+          >
+            <Truck className={`w-3.5 h-3.5 shrink-0 ${isBulkHandingOver ? 'animate-pulse' : ''}`} />
+            <span>{isBulkHandingOver ? 'Đang giao ĐVVC...' : 'Giao ĐVVC'}</span>
+          </button>
 
-              <div className="my-1 border-t border-gray-100" />
-
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setShowBulkActionsDropdown(false);
-                  void handleBulkDeleteOrders();
-                }}
-                className="w-full text-left px-4 py-2 text-xs font-bold text-red-600 hover:bg-red-50 flex items-center gap-2.5"
-              >
-                <Trash2 className="w-4 h-4 text-red-500 shrink-0" />
-                <span>Xóa dữ liệu đã chọn</span>
-              </button>
-            </div>
-          )}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              void handleBulkDeleteOrders();
+            }}
+            className="px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white text-xs font-black rounded-lg shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+            title="Xóa dữ liệu đã chọn"
+          >
+            <Trash2 className="w-3.5 h-3.5 shrink-0" />
+            <span>Xóa dữ liệu</span>
+          </button>
         </div>
       </div>
       )}
@@ -7271,24 +7305,25 @@ export default function OrderManager({
                           {!isOrderPreparedEffective(order) ? (
                             <button
                               onClick={() => handleSinglePrepare(order)}
-                              className="om-mobile-hide-prepare min-h-11 px-3 py-2 bg-rose-500 hover:bg-rose-600 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all"
+                              className="om-mobile-hide-prepare px-3 py-1.5 bg-rose-500 hover:bg-rose-600 text-white font-extrabold text-xs rounded-lg shadow-xs transition-all flex items-center gap-1"
                             >
-                              Chuẩn bị hàng
+                              <Package className="w-3.5 h-3.5" />
+                              <span>Chuẩn bị hàng</span>
                             </button>
                           ) : (
-                            <span className="om-mobile-hide-prepare text-[11px] text-emerald-600 font-black bg-emerald-50 px-2.5 py-1 rounded-xl border border-emerald-100">
-                              ✓ Đã soạn
-                            </span>
+                            <div className="om-mobile-hide-prepare p-2 rounded-lg border border-emerald-200 bg-emerald-50" title="Đã soạn">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                            </div>
                           )}
 
                           <button
                             type="button"
                             onClick={(e) => handlePrintButtonClick(e, order)}
                             disabled={printingOrderId === order.id}
-                            className="om-order-card-print-btn om-mobile-hide-print min-h-11 min-w-11 p-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 rounded-xl transition-all disabled:opacity-60 flex items-center justify-center"
-                            title="In phiếu giao (vận đơn thật Shopee)"
+                            className="om-order-card-print-btn om-mobile-hide-print p-2 bg-blue-600 hover:bg-blue-700 border border-blue-700 text-white rounded-lg transition-all disabled:opacity-60"
+                            title="In đơn này"
                           >
-                            <Printer className={`w-3.5 h-3.5 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
+                            <Printer className={`w-4 h-4 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
                           </button>
                         </>
                       )}
@@ -7297,48 +7332,58 @@ export default function OrderManager({
                         (matchesProcessedPickupTab(order) && Boolean(getOrderWaybillCode(order)))) &&
                         !isOrderHandedOverToCarrier(order) && (
                         <>
-                          <span className={`om-mobile-hide-print text-[11px] font-black px-2.5 py-1 rounded-xl border ${
-                            isOrderPrintedEffective(order) ? 'text-emerald-600 bg-emerald-50 border-emerald-100' : 'text-rose-600 bg-rose-50 border-rose-100'
-                          }`}>
-                            {isOrderPrintedEffective(order) ? '✓ Đã in' : '✕ Chưa in'}
-                          </span>
+                          <div 
+                            className={`om-mobile-hide-print p-2 rounded-lg border ${
+                              isOrderPrintedEffective(order) 
+                                ? 'bg-emerald-50 border-emerald-200' 
+                                : 'bg-rose-50 border-rose-200'
+                            }`}
+                            title={isOrderPrintedEffective(order) ? 'Đã in' : 'Chưa in'}
+                          >
+                            {isOrderPrintedEffective(order) ? (
+                              <Check className="w-4 h-4 text-emerald-600" />
+                            ) : (
+                              <X className="w-4 h-4 text-rose-600" />
+                            )}
+                          </div>
                           {isOrderPrintedEffective(order) ? (
                             <button
                               type="button"
                               onClick={() => void resetPrintStatusForOrders([order])}
                               disabled={resettingPrintIds.includes(String(order.orderSn || '').replace(/^shopee-/i, '').trim())}
-                              className="om-mobile-hide-print text-[11px] font-black px-2 py-1 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 disabled:opacity-50"
-                              title="Đánh dấu chưa in để in lại"
+                              className="om-mobile-hide-print p-2 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50 transition-all"
+                              title="Đánh dấu chưa in"
                             >
-                              Đánh dấu chưa in
+                              <RefreshCw className="w-4 h-4" />
                             </button>
                           ) : (
                             <button
                               type="button"
                               onClick={() => void markPrintedStatusForOrders([order])}
                               disabled={resettingPrintIds.includes(String(order.orderSn || '').replace(/^shopee-/i, '').trim())}
-                              className="om-mobile-hide-print text-[11px] font-black px-2 py-1 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
-                              title="Đánh dấu đã in (nội bộ)"
+                              className="om-mobile-hide-print p-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 transition-all"
+                              title="Đánh dấu đã in"
                             >
-                              Đánh dấu đã in
+                              <Check className="w-4 h-4" />
                             </button>
                           )}
                           <button
                             type="button"
                             onClick={(e) => handlePrintButtonClick(e, order)}
                             disabled={printingOrderId === order.id}
-                            className="om-order-card-print-btn om-mobile-hide-print min-h-11 min-w-11 p-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 rounded-xl transition-all disabled:opacity-60 flex items-center justify-center"
-                            title="In lại vận đơn (vận đơn thật Shopee)"
+                            className="om-order-card-print-btn om-mobile-hide-print p-2 bg-blue-600 hover:bg-blue-700 border border-blue-700 text-white rounded-lg transition-all disabled:opacity-60"
+                            title="In đơn này"
                           >
-                            <Printer className={`w-3.5 h-3.5 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
+                            <Printer className={`w-4 h-4 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
                           </button>
                           <button
                             type="button"
                             onClick={() => void handOverOrderToCarrier(order)}
                             disabled={handingOverOrderId === order.id}
-                            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all disabled:opacity-60"
+                            className="p-2 bg-indigo-600 hover:bg-indigo-700 border border-indigo-700 text-white rounded-lg transition-all disabled:opacity-60"
+                            title="Giao cho ĐVVC"
                           >
-                            {handingOverOrderId === order.id ? 'Đang xử lý...' : 'Giao cho ĐVVC'}
+                            <Truck className={`w-4 h-4 ${handingOverOrderId === order.id ? 'animate-pulse' : ''}`} />
                           </button>
                         </>
                       )}
