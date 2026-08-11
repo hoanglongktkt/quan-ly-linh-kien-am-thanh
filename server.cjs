@@ -130604,7 +130604,8 @@ async function startServer() {
             import_node_stream4.Readable.fromWeb(downloadRes.body),
             fileStream
           );
-          const pdfUrl = `${APP_BASE_URL3}/pdfs/${filename}`;
+          const backendBaseUrl = resolveLabelsPublicBaseUrl();
+          const pdfUrl = `${backendBaseUrl}/pdfs/${filename}`;
           pdfResults.push({
             orderSn,
             success: true,

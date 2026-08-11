@@ -17970,8 +17970,9 @@ async function startServer() {
             fileStream,
           );
 
-          // Trả về URL trực tiếp
-          const pdfUrl = `${APP_BASE_URL}/pdfs/${filename}`;
+          // Trả về URL trực tiếp - dùng resolveLabelsPublicBaseUrl() để trỏ đúng backend cPanel
+          const backendBaseUrl = resolveLabelsPublicBaseUrl();
+          const pdfUrl = `${backendBaseUrl}/pdfs/${filename}`;
           
           pdfResults.push({
             orderSn,
