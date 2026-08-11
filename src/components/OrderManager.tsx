@@ -883,11 +883,19 @@ export default function OrderManager({
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncSummary, setLastSyncSummary] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [prefetchProgress, setPrefetchProgress] = useState<{
+    completed: number;
+    total: number;
+    isDone: boolean;
+  } | null>(null);
   const [serverOrderCounts, setServerOrderCounts] = useState<Record<string, number> | null>(null);
   const [hasNewOrders, setHasNewOrders] = useState(false);
   const [audioEnabled, setAudioEnabled] = useState(() => isAudioUnlockedState());
   const syncPollTimerRef = useRef<number | null>(null);
   const counterPollTimerRef = useRef<number | null>(null);
+  const prefetchPollTimerRef = useRef<number | null>(null);
+  const prefetchHideTimerRef = useRef<number | null>(null);
+  const activePrefetchBatchRef = useRef<string>('');
   const countsFingerprintRef = useRef<string>('');
   const isSyncingRef = useRef(false);
   /** Pull-to-refresh (mobile): vuốt từ trên xuống để fetch lại đơn. */
@@ -1031,6 +1039,12 @@ export default function OrderManager({
       }
       if (counterPollTimerRef.current != null) {
         window.clearInterval(counterPollTimerRef.current);
+      }
+      if (prefetchPollTimerRef.current != null) {
+        window.clearInterval(prefetchPollTimerRef.current);
+      }
+      if (prefetchHideTimerRef.current != null) {
+        window.clearTimeout(prefetchHideTimerRef.current);
       }
     };
   }, []);
@@ -4033,6 +4047,95 @@ export default function OrderManager({
       )
       .filter(Boolean);
 
+  const startSilentPdfPrefetch = async (orderSns: string[]): Promise<void> => {
+    if (prefetchPollTimerRef.current != null) {
+      window.clearInterval(prefetchPollTimerRef.current);
+      prefetchPollTimerRef.current = null;
+    }
+    if (prefetchHideTimerRef.current != null) {
+      window.clearTimeout(prefetchHideTimerRef.current);
+      prefetchHideTimerRef.current = null;
+    }
+    setPrefetchProgress({ completed: 0, total: orderSns.length, isDone: false });
+
+    try {
+      const response = await fetch('/api/orders/silent-prefetch-pdfs', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ orderSns }),
+      });
+      const data = await readResponseJson<any>(response);
+      const batchId = String(data?.batchId || '').trim();
+      if (!response.ok || !data?.success || !batchId) {
+        throw new Error(data?.message || data?.error || `HTTP ${response.status}`);
+      }
+
+      activePrefetchBatchRef.current = batchId;
+      let polling = false;
+      const pollStatus = async () => {
+        if (polling || activePrefetchBatchRef.current !== batchId) return;
+        polling = true;
+        try {
+          const statusResponse = await fetch(
+            `/api/orders/prefetch-status/${encodeURIComponent(batchId)}`,
+            { headers: authHeaders() },
+          );
+          const status = await readResponseJson<any>(statusResponse);
+          if (!statusResponse.ok) {
+            throw new Error(status?.message || status?.error || `HTTP ${statusResponse.status}`);
+          }
+
+          const nextProgress = {
+            completed: Math.max(0, Number(status.completed) || 0),
+            total: Math.max(0, Number(status.total) || 0),
+            isDone: status.isDone === true,
+          };
+          setPrefetchProgress(nextProgress);
+
+          if (nextProgress.isDone) {
+            if (prefetchPollTimerRef.current != null) {
+              window.clearInterval(prefetchPollTimerRef.current);
+              prefetchPollTimerRef.current = null;
+            }
+            activePrefetchBatchRef.current = '';
+            setCurrentPage(1);
+            await onFetchOrders?.({
+              silent: true,
+              bustCache: true,
+              force: true,
+              page: 1,
+              limit: ORDERS_PAGE_SIZE,
+              merge: false,
+              tab: 'processed',
+            });
+            void fetchOrderCounts();
+            prefetchHideTimerRef.current = window.setTimeout(() => {
+              setPrefetchProgress(null);
+              prefetchHideTimerRef.current = null;
+            }, 3_000);
+          }
+        } catch (error) {
+          console.warn('[Silent Prefetch] Không thể đọc tiến độ:', error);
+        } finally {
+          polling = false;
+        }
+      };
+
+      await pollStatus();
+      if (activePrefetchBatchRef.current === batchId) {
+        prefetchPollTimerRef.current = window.setInterval(() => {
+          void pollStatus();
+        }, 2_000);
+      }
+    } catch (error) {
+      activePrefetchBatchRef.current = '';
+      setPrefetchProgress(null);
+      showToast(
+        `Không thể theo dõi tải PDF: ${error instanceof Error ? error.message : 'Lỗi không xác định'}`,
+      );
+    }
+  };
+
   const handleBatchConfirmOnly = async () => {
     if (!shipConfirmOrders?.length || isShipping) return;
     const validQueued = shipConfirmOrders.filter(
@@ -4098,11 +4201,7 @@ export default function OrderManager({
         setPrintStatusFilter('unprinted');
         setActiveSubTab('processed');
 
-        void fetch('/api/orders/silent-prefetch-pdfs', {
-          method: 'POST',
-          headers: authHeaders(),
-          body: JSON.stringify({ orderSns: successfulSns }),
-        }).catch((error) => console.warn('[Silent Prefetch] Không thể khởi chạy:', error));
+        void startSilentPdfPrefetch(successfulSns);
       }
 
       const summary = {
@@ -5989,6 +6088,62 @@ export default function OrderManager({
           <button type="button" onClick={() => setToastMessage(null)} className="ml-1 text-gray-400 hover:text-white cursor-pointer">
             <X className="w-3.5 h-3.5" />
           </button>
+        </div>
+      )}
+
+      {prefetchProgress && (
+        <div
+          role="status"
+          aria-live="polite"
+          className={`fixed bottom-5 right-5 z-110 w-[min(24rem,calc(100vw-2rem))] rounded-2xl border bg-white p-4 shadow-2xl animate-in fade-in ${
+            prefetchProgress.isDone ? 'border-emerald-200' : 'border-blue-200'
+          }`}
+        >
+          <div className="flex items-center gap-3">
+            <div
+              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
+                prefetchProgress.isDone
+                  ? 'bg-emerald-100 text-emerald-700'
+                  : 'bg-blue-100 text-blue-700'
+              }`}
+            >
+              {prefetchProgress.isDone ? (
+                <CheckCircle2 className="h-5 w-5" />
+              ) : (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-3">
+                <p className={`text-sm font-extrabold ${prefetchProgress.isDone ? 'text-emerald-800' : 'text-slate-800'}`}>
+                  {prefetchProgress.isDone
+                    ? 'Hoàn tất! Đã có thể in'
+                    : `Đang lấy mã vận đơn & PDF: ${prefetchProgress.completed}/${prefetchProgress.total}`}
+                </p>
+                <span className="shrink-0 text-xs font-bold tabular-nums text-slate-500">
+                  {Math.round(
+                    (prefetchProgress.completed / Math.max(1, prefetchProgress.total)) * 100,
+                  )}
+                  %
+                </span>
+              </div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ${
+                    prefetchProgress.isDone
+                      ? 'bg-emerald-500'
+                      : 'bg-gradient-to-r from-blue-500 to-cyan-500'
+                  }`}
+                  style={{
+                    width: `${Math.min(
+                      100,
+                      (prefetchProgress.completed / Math.max(1, prefetchProgress.total)) * 100,
+                    )}%`,
+                  }}
+                />
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

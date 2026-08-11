@@ -18988,9 +18988,17 @@ async function startServer() {
     }
   };
 
-  const silentPdfPrefetchInFlight = new Set<string>();
+  type PrefetchStatus = {
+    total: number;
+    completed: number;
+    isDone: boolean;
+  };
 
-  const runSilentPdfPrefetch = async (orderSns: string[]): Promise<void> => {
+  const silentPdfPrefetchInFlight = new Set<string>();
+  const prefetchStatus = new Map<string, PrefetchStatus>();
+  let prefetchBatchSequence = 0;
+
+  const runSilentPdfPrefetch = async (batchId: string, orderSns: string[]): Promise<void> => {
     const pending = new Set(orderSns);
     beginLogisticsWork("silent-prefetch-pdfs");
     try {
@@ -19013,7 +19021,10 @@ async function startServer() {
           for (const orderSn of document.orderSns) {
             const filename = buildCachedLabelFilename([orderSn]);
             fs.writeFileSync(path.join(publicPdfDir, filename), document.buffer);
-            pending.delete(orderSn);
+            if (pending.delete(orderSn)) {
+              const status = prefetchStatus.get(batchId);
+              if (status) status.completed = Math.min(status.total, status.completed + 1);
+            }
           }
         }
 
@@ -19026,8 +19037,15 @@ async function startServer() {
     } catch (err: any) {
       console.error("[Silent Prefetch] background error:", err?.stack || err);
     } finally {
+      const status = prefetchStatus.get(batchId);
+      if (status) {
+        status.completed = status.total;
+        status.isDone = true;
+      }
       for (const orderSn of orderSns) silentPdfPrefetchInFlight.delete(orderSn);
       endLogisticsWork();
+      const cleanupTimer = setTimeout(() => prefetchStatus.delete(batchId), 10 * 60 * 1_000);
+      cleanupTimer.unref?.();
     }
   };
 
@@ -19048,16 +19066,39 @@ async function startServer() {
       silentPdfPrefetchInFlight.add(orderSn);
       return true;
     });
+    const batchId = `${Date.now()}-${++prefetchBatchSequence}`;
+    prefetchStatus.set(batchId, {
+      total: queued.length,
+      completed: 0,
+      isDone: queued.length === 0,
+    });
     res.status(200).json({
       success: true,
+      batchId,
       accepted: queued.length,
       skippedInFlight: cleanSns.length - queued.length,
     });
     if (queued.length > 0) {
       setImmediate(() => {
-        void runSilentPdfPrefetch(queued);
+        void runSilentPdfPrefetch(batchId, queued);
       });
+    } else {
+      const cleanupTimer = setTimeout(() => prefetchStatus.delete(batchId), 10 * 60 * 1_000);
+      cleanupTimer.unref?.();
     }
+  };
+
+  const prefetchStatusRoute = (req: any, res: any) => {
+    const batchId = String(req.params?.batchId || "").trim();
+    const status = prefetchStatus.get(batchId);
+    if (!status) {
+      return res.status(404).json({ success: false, message: "Không tìm thấy tiến trình tải PDF." });
+    }
+    return res.status(200).json({
+      total: status.total,
+      completed: status.completed,
+      isDone: status.isDone,
+    });
   };
 
   app.post("/api/orders/fast-process", authMiddleware, fastProcessRouteGuard);
@@ -19068,6 +19109,7 @@ async function startServer() {
   app.post("/api/orders/batch-confirm-print", authMiddleware, batchConfirmPrintRoute);
   app.post("/api/orders/batch-print-only", authMiddleware, batchPrintOnlyRoute);
   app.post("/api/orders/silent-prefetch-pdfs", authMiddleware, silentPrefetchPdfsRoute);
+  app.get("/api/orders/prefetch-status/:batchId", authMiddleware, prefetchStatusRoute);
   // orderSn là mã khó đoán; route GET không dùng Bearer để window.open() tải trực tiếp được.
   app.get("/api/orders/download-pdf/:orderSn", downloadPdfRoute);
 

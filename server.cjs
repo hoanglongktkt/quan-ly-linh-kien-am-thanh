@@ -131449,7 +131449,9 @@ async function startServer() {
     }
   };
   const silentPdfPrefetchInFlight = /* @__PURE__ */ new Set();
-  const runSilentPdfPrefetch = async (orderSns) => {
+  const prefetchStatus = /* @__PURE__ */ new Map();
+  let prefetchBatchSequence = 0;
+  const runSilentPdfPrefetch = async (batchId, orderSns) => {
     const pending = new Set(orderSns);
     beginLogisticsWork("silent-prefetch-pdfs");
     try {
@@ -131471,7 +131473,10 @@ async function startServer() {
           for (const orderSn of document2.orderSns) {
             const filename = buildCachedLabelFilename([orderSn]);
             import_fs16.default.writeFileSync(import_path17.default.join(publicPdfDir, filename), document2.buffer);
-            pending.delete(orderSn);
+            if (pending.delete(orderSn)) {
+              const status = prefetchStatus.get(batchId);
+              if (status) status.completed = Math.min(status.total, status.completed + 1);
+            }
           }
         }
         if (pending.size > 0 && attempt < 6) await sleep2(3e3);
@@ -131482,8 +131487,15 @@ async function startServer() {
     } catch (err) {
       console.error("[Silent Prefetch] background error:", err?.stack || err);
     } finally {
+      const status = prefetchStatus.get(batchId);
+      if (status) {
+        status.completed = status.total;
+        status.isDone = true;
+      }
       for (const orderSn of orderSns) silentPdfPrefetchInFlight.delete(orderSn);
       endLogisticsWork();
+      const cleanupTimer = setTimeout(() => prefetchStatus.delete(batchId), 10 * 60 * 1e3);
+      cleanupTimer.unref?.();
     }
   };
   const silentPrefetchPdfsRoute = (req, res) => {
@@ -131500,16 +131512,38 @@ async function startServer() {
       silentPdfPrefetchInFlight.add(orderSn);
       return true;
     });
+    const batchId = `${Date.now()}-${++prefetchBatchSequence}`;
+    prefetchStatus.set(batchId, {
+      total: queued.length,
+      completed: 0,
+      isDone: queued.length === 0
+    });
     res.status(200).json({
       success: true,
+      batchId,
       accepted: queued.length,
       skippedInFlight: cleanSns.length - queued.length
     });
     if (queued.length > 0) {
       setImmediate(() => {
-        void runSilentPdfPrefetch(queued);
+        void runSilentPdfPrefetch(batchId, queued);
       });
+    } else {
+      const cleanupTimer = setTimeout(() => prefetchStatus.delete(batchId), 10 * 60 * 1e3);
+      cleanupTimer.unref?.();
     }
+  };
+  const prefetchStatusRoute = (req, res) => {
+    const batchId = String(req.params?.batchId || "").trim();
+    const status = prefetchStatus.get(batchId);
+    if (!status) {
+      return res.status(404).json({ success: false, message: "Kh\xF4ng t\xECm th\u1EA5y ti\u1EBFn tr\xECnh t\u1EA3i PDF." });
+    }
+    return res.status(200).json({
+      total: status.total,
+      completed: status.completed,
+      isDone: status.isDone
+    });
   };
   app.post("/api/orders/fast-process", authMiddleware, fastProcessRouteGuard);
   app.post("/api/shopee/orders/fast-process", authMiddleware, fastProcessRouteGuard);
@@ -131519,6 +131553,7 @@ async function startServer() {
   app.post("/api/orders/batch-confirm-print", authMiddleware, batchConfirmPrintRoute);
   app.post("/api/orders/batch-print-only", authMiddleware, batchPrintOnlyRoute);
   app.post("/api/orders/silent-prefetch-pdfs", authMiddleware, silentPrefetchPdfsRoute);
+  app.get("/api/orders/prefetch-status/:batchId", authMiddleware, prefetchStatusRoute);
   app.get("/api/orders/download-pdf/:orderSn", downloadPdfRoute);
   app.use("/api/orders", authMiddleware, ordersRoutes);
   app.post("/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrders);
