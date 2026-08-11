@@ -18287,9 +18287,13 @@ async function startServer() {
       // Bước 1: Load orders
       let orders: any[] = [];
       try {
-        orders = await loadOrdersForShipScoped(
-          cleanSns.map((sn: string) => `shopee-${sn}`),
-          cleanSns
+        orders = await runBeforeBatchDeadline(
+          deadlineAt,
+          "load_orders",
+          () => loadOrdersForShipScoped(
+            cleanSns.map((sn: string) => `shopee-${sn}`),
+            cleanSns,
+          ),
         );
       } catch (loadErr: any) {
         console.warn("[Batch Confirm Print] loadOrdersForShipScoped:", loadErr?.message || loadErr);
@@ -18311,7 +18315,15 @@ async function startServer() {
       }
 
       console.log(`[Batch Confirm Print] Xác nhận ${toShip.length} đơn method=${shipMethod}`);
-      await prewarmShopeeAddressCacheForShip(toShip, shipMethod);
+      try {
+        await runBeforeBatchDeadline(
+          deadlineAt,
+          "prewarm_shipping",
+          () => prewarmShopeeAddressCacheForShip(toShip, shipMethod),
+        );
+      } catch (err: any) {
+        console.warn("[Batch Confirm Print] prewarm skipped:", err?.message || err);
+      }
 
       const successSns: string[] = [];
       const failedResults: any[] = [];
@@ -18394,7 +18406,11 @@ async function startServer() {
       // Lưu vào DB
       try {
         const changed = toShip.map(({ index }) => orders[index]).filter(Boolean);
-        await persistOrdersToDatabase(orders, changed);
+        await runBeforeBatchDeadline(
+          deadlineAt,
+          "persist_orders",
+          () => persistOrdersToDatabase(orders, changed),
+        );
       } catch (err: any) {
         console.warn("[Batch Confirm Print] persist failed:", err?.message || err);
       }
@@ -18670,9 +18686,13 @@ async function startServer() {
       // Load orders từ DB
       let orders: any[] = [];
       try {
-        orders = await loadOrdersForShipScoped(
-          cleanSns.map((sn: string) => `shopee-${sn}`),
-          cleanSns
+        orders = await runBeforeBatchDeadline(
+          deadlineAt,
+          "load_orders",
+          () => loadOrdersForShipScoped(
+            cleanSns.map((sn: string) => `shopee-${sn}`),
+            cleanSns,
+          ),
         );
       } catch (loadErr: any) {
         console.warn("[Batch Print Only] loadOrdersForShipScoped:", loadErr?.message || loadErr);

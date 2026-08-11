@@ -4065,14 +4065,22 @@ export default function OrderManager({
         setProgressMessage(`Đang xác nhận ${orderSns.length} đơn và gộp PDF...`);
         reservedBatchWindow = openReservedPrintPlaceholder();
 
-        const batchResponse = await fetch('/api/orders/batch-confirm-print', {
-          method: 'POST',
-          headers: authHeaders(),
-          body: JSON.stringify({
-            orderSns,
-            method: shipMethod,
-          }),
-        });
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), 38_000);
+        let batchResponse: Response;
+        try {
+          batchResponse = await fetch('/api/orders/batch-confirm-print', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({
+              orderSns,
+              method: shipMethod,
+            }),
+            signal: controller.signal,
+          });
+        } finally {
+          window.clearTimeout(timeoutId);
+        }
         const batchData = await readResponseJson<any>(batchResponse);
         console.log('[Confirm&Print] Batch response:', batchData);
 
@@ -4213,7 +4221,11 @@ export default function OrderManager({
       }
     } catch (err) {
       closeReservedPrintWindow(reservedBatchWindow);
-      const message = err instanceof Error ? err.message : 'Lỗi không xác định';
+      const message = err instanceof DOMException && err.name === 'AbortError'
+        ? 'Quá thời gian 38 giây. Vui lòng thử lại hoặc chọn ít đơn hơn.'
+        : err instanceof Error
+          ? err.message
+          : 'Lỗi không xác định';
       clearShipProgressOverlay();
       showToast(`Xác nhận thất bại: ${message}`);
     } finally {

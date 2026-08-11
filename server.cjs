@@ -130874,9 +130874,13 @@ async function startServer() {
       console.log(`[Batch Confirm Print] B\u1EAFt \u0111\u1EA7u x\u1EED l\xFD ${cleanSns.length} \u0111\u01A1n: ${cleanSns.join(", ")}`);
       let orders = [];
       try {
-        orders = await loadOrdersForShipScoped(
-          cleanSns.map((sn) => `shopee-${sn}`),
-          cleanSns
+        orders = await runBeforeBatchDeadline(
+          deadlineAt,
+          "load_orders",
+          () => loadOrdersForShipScoped(
+            cleanSns.map((sn) => `shopee-${sn}`),
+            cleanSns
+          )
         );
       } catch (loadErr) {
         console.warn("[Batch Confirm Print] loadOrdersForShipScoped:", loadErr?.message || loadErr);
@@ -130895,7 +130899,15 @@ async function startServer() {
         });
       }
       console.log(`[Batch Confirm Print] X\xE1c nh\u1EADn ${toShip.length} \u0111\u01A1n method=${shipMethod}`);
-      await prewarmShopeeAddressCacheForShip(toShip, shipMethod);
+      try {
+        await runBeforeBatchDeadline(
+          deadlineAt,
+          "prewarm_shipping",
+          () => prewarmShopeeAddressCacheForShip(toShip, shipMethod)
+        );
+      } catch (err) {
+        console.warn("[Batch Confirm Print] prewarm skipped:", err?.message || err);
+      }
       const successSns = [];
       const failedResults = [];
       await mapBatchConcurrently(toShip, BATCH_PRINT_CONCURRENCY, async ({ index, order }) => {
@@ -130963,7 +130975,11 @@ async function startServer() {
       });
       try {
         const changed = toShip.map(({ index }) => orders[index]).filter(Boolean);
-        await persistOrdersToDatabase(orders, changed);
+        await runBeforeBatchDeadline(
+          deadlineAt,
+          "persist_orders",
+          () => persistOrdersToDatabase(orders, changed)
+        );
       } catch (err) {
         console.warn("[Batch Confirm Print] persist failed:", err?.message || err);
       }
@@ -131185,9 +131201,13 @@ async function startServer() {
       console.log(`[Batch Print Only] In l\u1EA1i ${cleanSns.length} \u0111\u01A1n: ${cleanSns.join(", ")}`);
       let orders = [];
       try {
-        orders = await loadOrdersForShipScoped(
-          cleanSns.map((sn) => `shopee-${sn}`),
-          cleanSns
+        orders = await runBeforeBatchDeadline(
+          deadlineAt,
+          "load_orders",
+          () => loadOrdersForShipScoped(
+            cleanSns.map((sn) => `shopee-${sn}`),
+            cleanSns
+          )
         );
       } catch (loadErr) {
         console.warn("[Batch Print Only] loadOrdersForShipScoped:", loadErr?.message || loadErr);
