@@ -18063,6 +18063,146 @@ async function startServer() {
     return buffer;
   }
 
+  type BatchPdfDocument = { orderSns: string[]; buffer: Buffer };
+  type BatchPdfFailure = { orderSn: string; error: string; message: string };
+
+  async function fetchBatchPdfDocumentsByShop(
+    orders: any[],
+    orderSns: string[],
+    deadlineAt: number,
+    logPrefix: string,
+  ): Promise<{ documents: BatchPdfDocument[]; failedOrders: BatchPdfFailure[] }> {
+    const failedBySn = new Map<string, BatchPdfFailure>();
+    const groups = new Map<string, { shopId: string; accessToken: string; orders: any[] }>();
+
+    for (const orderSn of orderSns) {
+      const order = orders.find(
+        (item: any) =>
+          String(item?.orderSn || item?.order_sn || "").replace(/^shopee-/i, "").trim() === orderSn,
+      );
+      if (!order) {
+        failedBySn.set(orderSn, { orderSn, error: "order_not_found", message: "Không tìm thấy đơn." });
+        continue;
+      }
+      const storedShopId = String(
+        order.shopId || order.shop_id || order.accountId || order.account_id || "",
+      ).trim();
+      if (!storedShopId) {
+        failedBySn.set(orderSn, { orderSn, error: "missing_shop_id", message: "Đơn thiếu shopId." });
+        continue;
+      }
+      try {
+        const auth = await runBeforeBatchDeadline(
+          deadlineAt,
+          `auth:${orderSn}`,
+          () => getShopeeAccessTokenForApi(storedShopId),
+        );
+        const shopId = String(auth?.apiShopId || "").trim();
+        const accessToken = String(auth?.token || "").trim();
+        if (!shopId || !accessToken) {
+          failedBySn.set(orderSn, { orderSn, error: "token_missing", message: "Không có token Shopee." });
+          continue;
+        }
+        const key = shopId;
+        const group = groups.get(key) || { shopId, accessToken, orders: [] };
+        group.orders.push(order);
+        groups.set(key, group);
+      } catch (err: any) {
+        failedBySn.set(orderSn, {
+          orderSn,
+          error: "shop_auth_failed",
+          message: String(err?.message || err),
+        });
+      }
+    }
+
+    const groupResults = await mapBatchConcurrently(
+      [...groups.values()],
+      BATCH_PRINT_CONCURRENCY,
+      async (group): Promise<BatchPdfDocument | null> => {
+        const groupSns = group.orders.map((order: any) =>
+          String(order?.orderSn || order?.order_sn || "").replace(/^shopee-/i, "").trim(),
+        );
+        try {
+          await runBeforeBatchDeadline(
+            deadlineAt,
+            `enrich:${group.shopId}`,
+            () => enrichOrdersPackageAndTrackingForPrint(group.shopId, group.accessToken, group.orders),
+          );
+          const rows: ShopeeWaybillOrderRow[] = [];
+          for (const order of group.orders) {
+            const orderSn = String(order?.orderSn || order?.order_sn || "")
+              .replace(/^shopee-/i, "")
+              .trim();
+            const row = buildShopeeShippingDocOrderRow(order);
+            if (!row?.order_sn || (!row.package_number && !row.tracking_number)) {
+              failedBySn.set(orderSn, {
+                orderSn,
+                error: "missing_shipping_data",
+                message: "Đơn thiếu package_number/tracking_number.",
+              });
+              continue;
+            }
+            rows.push(row);
+          }
+          if (rows.length === 0) return null;
+
+          const batch = await runBeforeBatchDeadline(
+            deadlineAt,
+            `batch_waybill:${group.shopId}`,
+            () => batchDownloadShopeeWaybillPdf(group.shopId, rows),
+          );
+          for (const skipped of batch.skippedOrders || []) {
+            const orderSn = String(skipped.orderSn || "").trim();
+            if (orderSn) failedBySn.set(orderSn, skipped);
+          }
+          const readyOrderSns = (batch.readyOrderSns || []).map(String).filter(Boolean);
+          if (!batch.success || !batch.filePath || readyOrderSns.length === 0) {
+            for (const row of rows) {
+              if (!failedBySn.has(row.order_sn)) {
+                failedBySn.set(row.order_sn, {
+                  orderSn: row.order_sn,
+                  error: batch.error || "pdf_unavailable",
+                  message: batch.message || "Shopee chưa trả PDF hợp lệ.",
+                });
+              }
+            }
+            return null;
+          }
+          const buffer = fs.readFileSync(batch.filePath);
+          if (!buffer.length || buffer.length > BATCH_PDF_MAX_BYTES || !isPdfBuffer(buffer)) {
+            for (const orderSn of readyOrderSns) {
+              failedBySn.set(orderSn, {
+                orderSn,
+                error: "invalid_pdf",
+                message: "Dữ liệu PDF Shopee trả về không hợp lệ.",
+              });
+            }
+            return null;
+          }
+          console.log(`[${logPrefix}] Batch PDF shop=${group.shopId} ready=${readyOrderSns.length}`);
+          return { orderSns: readyOrderSns, buffer };
+        } catch (err: any) {
+          for (const orderSn of groupSns) {
+            if (!failedBySn.has(orderSn)) {
+              failedBySn.set(orderSn, {
+                orderSn,
+                error: /batch_deadline/.test(String(err?.message || "")) ? "deadline" : "batch_pdf_error",
+                message: String(err?.message || err),
+              });
+            }
+          }
+          return null;
+        }
+      },
+    );
+
+    return {
+      documents: groupResults.filter((item): item is BatchPdfDocument => item !== null),
+      failedOrders: [...failedBySn.values()],
+    };
+  }
+
   // API BATCH-CONFIRM-PRINT: Xác nhận nhiều đơn + gộp PDF thành 1 file
   const batchConfirmPrintRoute = async (req: any, res: any) => {
     const t0 = Date.now();
@@ -18350,18 +18490,22 @@ async function startServer() {
         }
       };
 
-      // Xử lý 5 đơn song song
-      const results = await mapBatchConcurrently(successSns, BATCH_PRINT_CONCURRENCY, processSingleOrder);
-      pdfBuffers.push(...results.filter((r): r is { orderSn: string; buffer: Buffer } => r !== null));
-      const downloadedSns = new Set(pdfBuffers.map((item) => item.orderSn));
-      for (const orderSn of successSns) {
-        if (!downloadedSns.has(orderSn)) {
-          pdfFailures.set(orderSn, {
-            orderSn,
-            error: "pdf_unavailable",
-            message: "Shopee chưa trả PDF hợp lệ trước thời hạn xử lý.",
-          });
-        }
+      // Một create/poll/download cho mỗi shop; các shop vẫn chạy song song.
+      const batchPdfResult = await fetchBatchPdfDocumentsByShop(
+        orders,
+        successSns,
+        deadlineAt,
+        "Batch Confirm Print",
+      );
+      const printedFromBatch = batchPdfResult.documents.flatMap((item) => item.orderSns);
+      pdfBuffers.push(
+        ...batchPdfResult.documents.map((item) => ({
+          orderSn: item.orderSns.join(","),
+          buffer: item.buffer,
+        })),
+      );
+      for (const failure of batchPdfResult.failedOrders) {
+        pdfFailures.set(failure.orderSn, failure);
       }
 
       if (pdfBuffers.length === 0) {
@@ -18385,11 +18529,13 @@ async function startServer() {
           console.log(`[Batch Confirm Print] Đã gộp ${orderSn} (${sourcePdf.getPageCount()} pages)`);
         } catch (err: any) {
           console.error(`[Batch Confirm Print] Lỗi gộp PDF ${orderSn}:`, err?.message || err);
-          pdfFailures.set(orderSn, {
-            orderSn,
-            error: "invalid_pdf",
-            message: "Dữ liệu PDF bị hỏng hoặc không thể gộp.",
-          });
+          for (const failedSn of orderSn.split(",").filter(Boolean)) {
+            pdfFailures.set(failedSn, {
+              orderSn: failedSn,
+              error: "invalid_pdf",
+              message: "Dữ liệu PDF bị hỏng hoặc không thể gộp.",
+            });
+          }
         }
       }
 
@@ -18417,12 +18563,8 @@ async function startServer() {
       const batchUrl = `${backendBaseUrl}/pdfs/${batchFilename}`;
 
       const failedOrders = [...failedResults, ...pdfFailures.values()];
-      const invalidPdfSns = new Set(
-        [...pdfFailures.values()].filter((item) => item.error === "invalid_pdf").map((item) => item.orderSn),
-      );
-      const printedOrders = pdfBuffers
-        .map((item) => item.orderSn)
-        .filter((orderSn) => !invalidPdfSns.has(orderSn));
+      const failedPdfSns = new Set([...pdfFailures.values()].map((item) => item.orderSn));
+      const printedOrders = printedFromBatch.filter((orderSn) => !failedPdfSns.has(orderSn));
       const printedCount = printedOrders.length;
       console.log(`[Batch Confirm Print] DONE ${printedCount} đơn → ${batchUrl} (${Date.now() - t0}ms)`);
 
@@ -18631,18 +18773,22 @@ async function startServer() {
         }
       };
 
-      // Xử lý 5 đơn song song để tăng tốc
-      const results = await mapBatchConcurrently(cleanSns, BATCH_PRINT_CONCURRENCY, processSingleOrder);
-      pdfBuffers.push(...results.filter((r): r is { orderSn: string; buffer: Buffer } => r !== null));
-      const downloadedSns = new Set(pdfBuffers.map((item) => item.orderSn));
-      for (const orderSn of cleanSns) {
-        if (!downloadedSns.has(orderSn)) {
-          pdfFailures.set(orderSn, {
-            orderSn,
-            error: "pdf_unavailable",
-            message: "Shopee chưa trả PDF hợp lệ trước thời hạn xử lý.",
-          });
-        }
+      // Một create/poll/download cho mỗi shop; các shop vẫn chạy song song.
+      const batchPdfResult = await fetchBatchPdfDocumentsByShop(
+        orders,
+        cleanSns,
+        deadlineAt,
+        "Batch Print Only",
+      );
+      const printedFromBatch = batchPdfResult.documents.flatMap((item) => item.orderSns);
+      pdfBuffers.push(
+        ...batchPdfResult.documents.map((item) => ({
+          orderSn: item.orderSns.join(","),
+          buffer: item.buffer,
+        })),
+      );
+      for (const failure of batchPdfResult.failedOrders) {
+        pdfFailures.set(failure.orderSn, failure);
       }
 
       if (pdfBuffers.length === 0) {
@@ -18665,11 +18811,13 @@ async function startServer() {
           console.log(`[Batch Print Only] Đã gộp ${orderSn} (${sourcePdf.getPageCount()} pages)`);
         } catch (err: any) {
           console.error(`[Batch Print Only] Lỗi gộp PDF ${orderSn}:`, err?.message || err);
-          pdfFailures.set(orderSn, {
-            orderSn,
-            error: "invalid_pdf",
-            message: "Dữ liệu PDF bị hỏng hoặc không thể gộp.",
-          });
+          for (const failedSn of orderSn.split(",").filter(Boolean)) {
+            pdfFailures.set(failedSn, {
+              orderSn: failedSn,
+              error: "invalid_pdf",
+              message: "Dữ liệu PDF bị hỏng hoặc không thể gộp.",
+            });
+          }
         }
       }
 
@@ -18696,12 +18844,8 @@ async function startServer() {
       const batchUrl = `${backendBaseUrl}/pdfs/${batchFilename}`;
 
       const failedOrders = [...pdfFailures.values()];
-      const invalidPdfSns = new Set(
-        failedOrders.filter((item) => item.error === "invalid_pdf").map((item) => item.orderSn),
-      );
-      const printedOrders = pdfBuffers
-        .map((item) => item.orderSn)
-        .filter((orderSn) => !invalidPdfSns.has(orderSn));
+      const failedPdfSns = new Set(failedOrders.map((item) => item.orderSn));
+      const printedOrders = printedFromBatch.filter((orderSn) => !failedPdfSns.has(orderSn));
       const printedCount = printedOrders.length;
       console.log(`[Batch Print Only] DONE ${printedCount}/${cleanSns.length} đơn → ${batchUrl} (${Date.now() - t0}ms)`);
 

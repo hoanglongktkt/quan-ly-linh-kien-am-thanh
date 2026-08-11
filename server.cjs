@@ -130679,6 +130679,130 @@ async function startServer() {
     }
     return buffer;
   }
+  async function fetchBatchPdfDocumentsByShop(orders, orderSns, deadlineAt, logPrefix) {
+    const failedBySn = /* @__PURE__ */ new Map();
+    const groups = /* @__PURE__ */ new Map();
+    for (const orderSn of orderSns) {
+      const order = orders.find(
+        (item) => String(item?.orderSn || item?.order_sn || "").replace(/^shopee-/i, "").trim() === orderSn
+      );
+      if (!order) {
+        failedBySn.set(orderSn, { orderSn, error: "order_not_found", message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n." });
+        continue;
+      }
+      const storedShopId = String(
+        order.shopId || order.shop_id || order.accountId || order.account_id || ""
+      ).trim();
+      if (!storedShopId) {
+        failedBySn.set(orderSn, { orderSn, error: "missing_shop_id", message: "\u0110\u01A1n thi\u1EBFu shopId." });
+        continue;
+      }
+      try {
+        const auth = await runBeforeBatchDeadline(
+          deadlineAt,
+          `auth:${orderSn}`,
+          () => getShopeeAccessTokenForApi(storedShopId)
+        );
+        const shopId = String(auth?.apiShopId || "").trim();
+        const accessToken = String(auth?.token || "").trim();
+        if (!shopId || !accessToken) {
+          failedBySn.set(orderSn, { orderSn, error: "token_missing", message: "Kh\xF4ng c\xF3 token Shopee." });
+          continue;
+        }
+        const key = shopId;
+        const group = groups.get(key) || { shopId, accessToken, orders: [] };
+        group.orders.push(order);
+        groups.set(key, group);
+      } catch (err) {
+        failedBySn.set(orderSn, {
+          orderSn,
+          error: "shop_auth_failed",
+          message: String(err?.message || err)
+        });
+      }
+    }
+    const groupResults = await mapBatchConcurrently(
+      [...groups.values()],
+      BATCH_PRINT_CONCURRENCY,
+      async (group) => {
+        const groupSns = group.orders.map(
+          (order) => String(order?.orderSn || order?.order_sn || "").replace(/^shopee-/i, "").trim()
+        );
+        try {
+          await runBeforeBatchDeadline(
+            deadlineAt,
+            `enrich:${group.shopId}`,
+            () => enrichOrdersPackageAndTrackingForPrint(group.shopId, group.accessToken, group.orders)
+          );
+          const rows = [];
+          for (const order of group.orders) {
+            const orderSn = String(order?.orderSn || order?.order_sn || "").replace(/^shopee-/i, "").trim();
+            const row = buildShopeeShippingDocOrderRow(order);
+            if (!row?.order_sn || !row.package_number && !row.tracking_number) {
+              failedBySn.set(orderSn, {
+                orderSn,
+                error: "missing_shipping_data",
+                message: "\u0110\u01A1n thi\u1EBFu package_number/tracking_number."
+              });
+              continue;
+            }
+            rows.push(row);
+          }
+          if (rows.length === 0) return null;
+          const batch = await runBeforeBatchDeadline(
+            deadlineAt,
+            `batch_waybill:${group.shopId}`,
+            () => batchDownloadShopeeWaybillPdf(group.shopId, rows)
+          );
+          for (const skipped of batch.skippedOrders || []) {
+            const orderSn = String(skipped.orderSn || "").trim();
+            if (orderSn) failedBySn.set(orderSn, skipped);
+          }
+          const readyOrderSns = (batch.readyOrderSns || []).map(String).filter(Boolean);
+          if (!batch.success || !batch.filePath || readyOrderSns.length === 0) {
+            for (const row of rows) {
+              if (!failedBySn.has(row.order_sn)) {
+                failedBySn.set(row.order_sn, {
+                  orderSn: row.order_sn,
+                  error: batch.error || "pdf_unavailable",
+                  message: batch.message || "Shopee ch\u01B0a tr\u1EA3 PDF h\u1EE3p l\u1EC7."
+                });
+              }
+            }
+            return null;
+          }
+          const buffer = import_fs16.default.readFileSync(batch.filePath);
+          if (!buffer.length || buffer.length > BATCH_PDF_MAX_BYTES || !isPdfBuffer(buffer)) {
+            for (const orderSn of readyOrderSns) {
+              failedBySn.set(orderSn, {
+                orderSn,
+                error: "invalid_pdf",
+                message: "D\u1EEF li\u1EC7u PDF Shopee tr\u1EA3 v\u1EC1 kh\xF4ng h\u1EE3p l\u1EC7."
+              });
+            }
+            return null;
+          }
+          console.log(`[${logPrefix}] Batch PDF shop=${group.shopId} ready=${readyOrderSns.length}`);
+          return { orderSns: readyOrderSns, buffer };
+        } catch (err) {
+          for (const orderSn of groupSns) {
+            if (!failedBySn.has(orderSn)) {
+              failedBySn.set(orderSn, {
+                orderSn,
+                error: /batch_deadline/.test(String(err?.message || "")) ? "deadline" : "batch_pdf_error",
+                message: String(err?.message || err)
+              });
+            }
+          }
+          return null;
+        }
+      }
+    );
+    return {
+      documents: groupResults.filter((item) => item !== null),
+      failedOrders: [...failedBySn.values()]
+    };
+  }
   const batchConfirmPrintRoute = async (req, res) => {
     const t0 = Date.now();
     const deadlineAt = t0 + BATCH_PRINT_DEADLINE_MS;
@@ -130908,17 +131032,21 @@ async function startServer() {
           return null;
         }
       };
-      const results = await mapBatchConcurrently(successSns, BATCH_PRINT_CONCURRENCY, processSingleOrder);
-      pdfBuffers.push(...results.filter((r2) => r2 !== null));
-      const downloadedSns = new Set(pdfBuffers.map((item) => item.orderSn));
-      for (const orderSn of successSns) {
-        if (!downloadedSns.has(orderSn)) {
-          pdfFailures.set(orderSn, {
-            orderSn,
-            error: "pdf_unavailable",
-            message: "Shopee ch\u01B0a tr\u1EA3 PDF h\u1EE3p l\u1EC7 tr\u01B0\u1EDBc th\u1EDDi h\u1EA1n x\u1EED l\xFD."
-          });
-        }
+      const batchPdfResult = await fetchBatchPdfDocumentsByShop(
+        orders,
+        successSns,
+        deadlineAt,
+        "Batch Confirm Print"
+      );
+      const printedFromBatch = batchPdfResult.documents.flatMap((item) => item.orderSns);
+      pdfBuffers.push(
+        ...batchPdfResult.documents.map((item) => ({
+          orderSn: item.orderSns.join(","),
+          buffer: item.buffer
+        }))
+      );
+      for (const failure of batchPdfResult.failedOrders) {
+        pdfFailures.set(failure.orderSn, failure);
       }
       if (pdfBuffers.length === 0) {
         return res.status(400).json({
@@ -130938,11 +131066,13 @@ async function startServer() {
           console.log(`[Batch Confirm Print] \u0110\xE3 g\u1ED9p ${orderSn} (${sourcePdf.getPageCount()} pages)`);
         } catch (err) {
           console.error(`[Batch Confirm Print] L\u1ED7i g\u1ED9p PDF ${orderSn}:`, err?.message || err);
-          pdfFailures.set(orderSn, {
-            orderSn,
-            error: "invalid_pdf",
-            message: "D\u1EEF li\u1EC7u PDF b\u1ECB h\u1ECFng ho\u1EB7c kh\xF4ng th\u1EC3 g\u1ED9p."
-          });
+          for (const failedSn of orderSn.split(",").filter(Boolean)) {
+            pdfFailures.set(failedSn, {
+              orderSn: failedSn,
+              error: "invalid_pdf",
+              message: "D\u1EEF li\u1EC7u PDF b\u1ECB h\u1ECFng ho\u1EB7c kh\xF4ng th\u1EC3 g\u1ED9p."
+            });
+          }
         }
       }
       if (mergedPdf.getPageCount() === 0) {
@@ -130964,10 +131094,8 @@ async function startServer() {
       const backendBaseUrl = resolveLabelsPublicBaseUrl();
       const batchUrl = `${backendBaseUrl}/pdfs/${batchFilename}`;
       const failedOrders = [...failedResults, ...pdfFailures.values()];
-      const invalidPdfSns = new Set(
-        [...pdfFailures.values()].filter((item) => item.error === "invalid_pdf").map((item) => item.orderSn)
-      );
-      const printedOrders = pdfBuffers.map((item) => item.orderSn).filter((orderSn) => !invalidPdfSns.has(orderSn));
+      const failedPdfSns = new Set([...pdfFailures.values()].map((item) => item.orderSn));
+      const printedOrders = printedFromBatch.filter((orderSn) => !failedPdfSns.has(orderSn));
       const printedCount = printedOrders.length;
       console.log(`[Batch Confirm Print] DONE ${printedCount} \u0111\u01A1n \u2192 ${batchUrl} (${Date.now() - t0}ms)`);
       return res.json({
@@ -131132,17 +131260,21 @@ async function startServer() {
           return null;
         }
       };
-      const results = await mapBatchConcurrently(cleanSns, BATCH_PRINT_CONCURRENCY, processSingleOrder);
-      pdfBuffers.push(...results.filter((r2) => r2 !== null));
-      const downloadedSns = new Set(pdfBuffers.map((item) => item.orderSn));
-      for (const orderSn of cleanSns) {
-        if (!downloadedSns.has(orderSn)) {
-          pdfFailures.set(orderSn, {
-            orderSn,
-            error: "pdf_unavailable",
-            message: "Shopee ch\u01B0a tr\u1EA3 PDF h\u1EE3p l\u1EC7 tr\u01B0\u1EDBc th\u1EDDi h\u1EA1n x\u1EED l\xFD."
-          });
-        }
+      const batchPdfResult = await fetchBatchPdfDocumentsByShop(
+        orders,
+        cleanSns,
+        deadlineAt,
+        "Batch Print Only"
+      );
+      const printedFromBatch = batchPdfResult.documents.flatMap((item) => item.orderSns);
+      pdfBuffers.push(
+        ...batchPdfResult.documents.map((item) => ({
+          orderSn: item.orderSns.join(","),
+          buffer: item.buffer
+        }))
+      );
+      for (const failure of batchPdfResult.failedOrders) {
+        pdfFailures.set(failure.orderSn, failure);
       }
       if (pdfBuffers.length === 0) {
         return res.status(400).json({
@@ -131161,11 +131293,13 @@ async function startServer() {
           console.log(`[Batch Print Only] \u0110\xE3 g\u1ED9p ${orderSn} (${sourcePdf.getPageCount()} pages)`);
         } catch (err) {
           console.error(`[Batch Print Only] L\u1ED7i g\u1ED9p PDF ${orderSn}:`, err?.message || err);
-          pdfFailures.set(orderSn, {
-            orderSn,
-            error: "invalid_pdf",
-            message: "D\u1EEF li\u1EC7u PDF b\u1ECB h\u1ECFng ho\u1EB7c kh\xF4ng th\u1EC3 g\u1ED9p."
-          });
+          for (const failedSn of orderSn.split(",").filter(Boolean)) {
+            pdfFailures.set(failedSn, {
+              orderSn: failedSn,
+              error: "invalid_pdf",
+              message: "D\u1EEF li\u1EC7u PDF b\u1ECB h\u1ECFng ho\u1EB7c kh\xF4ng th\u1EC3 g\u1ED9p."
+            });
+          }
         }
       }
       if (mergedPdf.getPageCount() === 0) {
@@ -131186,10 +131320,8 @@ async function startServer() {
       const backendBaseUrl = resolveLabelsPublicBaseUrl();
       const batchUrl = `${backendBaseUrl}/pdfs/${batchFilename}`;
       const failedOrders = [...pdfFailures.values()];
-      const invalidPdfSns = new Set(
-        failedOrders.filter((item) => item.error === "invalid_pdf").map((item) => item.orderSn)
-      );
-      const printedOrders = pdfBuffers.map((item) => item.orderSn).filter((orderSn) => !invalidPdfSns.has(orderSn));
+      const failedPdfSns = new Set(failedOrders.map((item) => item.orderSn));
+      const printedOrders = printedFromBatch.filter((orderSn) => !failedPdfSns.has(orderSn));
       const printedCount = printedOrders.length;
       console.log(`[Batch Print Only] DONE ${printedCount}/${cleanSns.length} \u0111\u01A1n \u2192 ${batchUrl} (${Date.now() - t0}ms)`);
       return res.json({
