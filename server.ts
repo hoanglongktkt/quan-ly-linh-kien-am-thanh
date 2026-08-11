@@ -17624,6 +17624,7 @@ async function startServer() {
     }
   };
   // API CONFIRM: Chỉ xác nhận đơn (ship_order), KHÔNG in PDF
+  const BATCH_CONFIRM_CHUNK_SIZE = 15;
   const confirmOnlyRoute = async (req: any, res: any) => {
     const t0 = Date.now();
     beginLogisticsWork("confirm-only");
@@ -17681,7 +17682,7 @@ async function startServer() {
       const results: any[] = [];
       const successSns: string[] = [];
 
-      for (const { index, order } of toShip) {
+      const confirmOneOrder = async ({ index, order }: { index: number; order: any }) => {
         const orderSn = String(order.orderSn || "");
         const orderId = String(order.id || "");
         try {
@@ -17711,7 +17712,7 @@ async function startServer() {
           
           if (!treatedAsSuccess) {
             results.push({ orderId, orderSn, success: false, ...shipResult });
-            continue;
+            return;
           }
 
           const tn = String(
@@ -17752,6 +17753,16 @@ async function startServer() {
             message: String(orderErr?.message || orderErr),
           });
         }
+      };
+
+      // Xác nhận song song theo chunk 15 đơn; hoàn tất chunk hiện tại rồi mới chạy chunk tiếp theo.
+      for (let offset = 0; offset < toShip.length; offset += BATCH_CONFIRM_CHUNK_SIZE) {
+        const chunk = toShip.slice(offset, offset + BATCH_CONFIRM_CHUNK_SIZE);
+        console.log(
+          `[Confirm Only] Chạy song song chunk ${Math.floor(offset / BATCH_CONFIRM_CHUNK_SIZE) + 1}` +
+            ` (${chunk.length} đơn, ${offset + 1}-${offset + chunk.length}/${toShip.length})`,
+        );
+        await Promise.all(chunk.map(confirmOneOrder));
       }
 
       // Lưu vào DB

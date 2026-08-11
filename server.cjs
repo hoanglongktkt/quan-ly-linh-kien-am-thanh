@@ -130322,6 +130322,7 @@ async function startServer() {
       );
     }
   };
+  const BATCH_CONFIRM_CHUNK_SIZE = 15;
   const confirmOnlyRoute = async (req, res) => {
     const t0 = Date.now();
     beginLogisticsWork("confirm-only");
@@ -130370,7 +130371,7 @@ async function startServer() {
       await prewarmShopeeAddressCacheForShip(toShip, shipMethod);
       const results = [];
       const successSns = [];
-      for (const { index, order } of toShip) {
+      const confirmOneOrder = async ({ index, order }) => {
         const orderSn = String(order.orderSn || "");
         const orderId = String(order.id || "");
         try {
@@ -130397,7 +130398,7 @@ async function startServer() {
           const treatedAsSuccess = shipResult.success || isAlreadyShippedError(shipResult);
           if (!treatedAsSuccess) {
             results.push({ orderId, orderSn, success: false, ...shipResult });
-            continue;
+            return;
           }
           const tn = String(
             order.trackingNumber || order.tracking_no || shipResult.trackingNumber || orders[index].trackingNumber || ""
@@ -130431,6 +130432,13 @@ async function startServer() {
             message: String(orderErr?.message || orderErr)
           });
         }
+      };
+      for (let offset = 0; offset < toShip.length; offset += BATCH_CONFIRM_CHUNK_SIZE) {
+        const chunk = toShip.slice(offset, offset + BATCH_CONFIRM_CHUNK_SIZE);
+        console.log(
+          `[Confirm Only] Ch\u1EA1y song song chunk ${Math.floor(offset / BATCH_CONFIRM_CHUNK_SIZE) + 1} (${chunk.length} \u0111\u01A1n, ${offset + 1}-${offset + chunk.length}/${toShip.length})`
+        );
+        await Promise.all(chunk.map(confirmOneOrder));
       }
       try {
         const changed = toShip.map(({ index }) => orders[index]).filter(Boolean);
