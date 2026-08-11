@@ -4024,6 +4024,15 @@ export default function OrderManager({
     };
   };
 
+  const getBatchFailedOrderIds = (payload: any): string[] =>
+    (Array.isArray(payload?.failedOrders) ? payload.failedOrders : [])
+      .map((item: any) =>
+        typeof item === 'string'
+          ? item
+          : String(item?.orderSn || item?.orderId || '').replace(/^shopee-/i, '').trim(),
+      )
+      .filter(Boolean);
+
   const handleConfirmAndPrint = async () => {
     if (!shipConfirmOrders?.length) return;
     const validQueued = shipConfirmOrders.filter(
@@ -4048,11 +4057,13 @@ export default function OrderManager({
     setProgressCompleted(0);
     setProgressTotal(validQueued.length);
 
+    let reservedBatchWindow: Window | null = null;
     try {
       // BATCH PRINT: Nếu nhiều đơn (>= 2) -> gọi API gộp PDF
       if (orderSns.length >= 2) {
         console.log('[Confirm&Print] BATCH MODE: Gọi /api/orders/batch-confirm-print với', orderSns.length, 'đơn');
         setProgressMessage(`Đang xác nhận ${orderSns.length} đơn và gộp PDF...`);
+        reservedBatchWindow = openReservedPrintPlaceholder();
 
         const batchResponse = await fetch('/api/orders/batch-confirm-print', {
           method: 'POST',
@@ -4071,14 +4082,22 @@ export default function OrderManager({
 
         if (batchData.url) {
           console.log('[Confirm&Print] Mở PDF gộp:', batchData.url);
-          window.open(batchData.url, '_blank');
-          showToast(`Đã xác nhận ${batchData.confirmedCount} đơn & mở PDF gộp (${batchData.totalPages} trang).`);
+          if (!navigateReservedPrintWindow(reservedBatchWindow, batchData.url)) {
+            window.open(batchData.url, '_blank');
+          }
+          const failedOrderIds = getBatchFailedOrderIds(batchData);
+          showToast(
+            failedOrderIds.length > 0
+              ? `Đã in gộp ${batchData.pdfCount} đơn. Các đơn lỗi: ${failedOrderIds.join(', ')}`
+              : `Đã in gộp ${batchData.pdfCount} đơn.`,
+          );
         } else {
+          closeReservedPrintWindow(reservedBatchWindow);
           showToast(`Đã xác nhận ${batchData.confirmedCount} đơn nhưng không có PDF.`);
         }
 
         // Cập nhật trạng thái local
-        const successfulSns = Array.isArray(batchData.confirmedOrders) ? batchData.confirmedOrders : orderSns;
+        const successfulSns = Array.isArray(batchData.printedOrders) ? batchData.printedOrders : orderSns;
         const expiresAt = Date.now() + 5 * 60 * 1000;
         for (const sn of successfulSns) {
           const key = sn.toLowerCase();
@@ -4193,6 +4212,7 @@ export default function OrderManager({
         });
       }
     } catch (err) {
+      closeReservedPrintWindow(reservedBatchWindow);
       const message = err instanceof Error ? err.message : 'Lỗi không xác định';
       clearShipProgressOverlay();
       showToast(`Xác nhận thất bại: ${message}`);
@@ -4895,13 +4915,14 @@ export default function OrderManager({
     }
 
     beginPrintProgressSession(orderSns.length, `Đang gộp PDF ${orderSns.length} đơn...`);
+    const reservedPrintWindow = openReservedPrintPlaceholder();
     
     try {
       setProgressMessage('Đang gọi API gộp PDF...');
       
-      // Thêm timeout 10 phút cho nhiều đơn
+      // Backend chủ động kết thúc trước 30s; chừa 8s cho proxy và truyền dữ liệu.
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10 * 60 * 1000);
+      const timeoutId = setTimeout(() => controller.abort(), 38_000);
       
       try {
         const response = await fetch('/api/orders/batch-print-only', {
@@ -4916,8 +4937,15 @@ export default function OrderManager({
         
         if (response.ok && data.success && data.url) {
           setProgressMessage('Đang mở PDF...');
-          window.open(data.url, '_blank');
-          markProgressComplete(`Đã gộp ${data.pdfCount} PDF thành 1 file!`);
+          if (!navigateReservedPrintWindow(reservedPrintWindow, data.url)) {
+            window.open(data.url, '_blank');
+          }
+          const failedOrderIds = getBatchFailedOrderIds(data);
+          const completionMessage = failedOrderIds.length > 0
+            ? `Đã in gộp ${data.pdfCount} đơn. Các đơn lỗi: ${failedOrderIds.join(', ')}`
+            : `Đã in gộp ${data.pdfCount} đơn.`;
+          markProgressComplete(completionMessage);
+          showToast(completionMessage);
           setSelectedOrderIds([]);
           
           onAddLog({
@@ -4929,11 +4957,13 @@ export default function OrderManager({
             message: `[IN LẠI] ${data.pdfCount} đơn → ${data.filename}`,
           });
         } else {
+          closeReservedPrintWindow(reservedPrintWindow);
           alert(`In lại thất bại: ${data.message || 'Lỗi không xác định'}`);
           clearShipProgressOverlay();
         }
       } catch (fetchErr: any) {
         clearTimeout(timeoutId);
+        closeReservedPrintWindow(reservedPrintWindow);
         if (fetchErr.name === 'AbortError') {
           alert('Thao tác quá lâu và đã bị hủy. Vui lòng thử lại với ít đơn hơn hoặc kiểm tra kết nối.');
         } else {
@@ -4941,6 +4971,7 @@ export default function OrderManager({
         }
       }
     } catch (err) {
+      closeReservedPrintWindow(reservedPrintWindow);
       console.error('[Reprint] Error:', err);
       alert('Không thể kết nối API. Vui lòng thử lại.');
       clearShipProgressOverlay();

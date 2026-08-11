@@ -130640,8 +130640,48 @@ async function startServer() {
       });
     }
   };
+  const BATCH_PRINT_CONCURRENCY = 5;
+  const BATCH_PRINT_DEADLINE_MS = 27e3;
+  const BATCH_PDF_MAX_BYTES = 25 * 1024 * 1024;
+  async function mapBatchConcurrently(items, concurrency, processFn) {
+    const results = new Array(items.length);
+    let nextIndex = 0;
+    async function worker() {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex++;
+        results[currentIndex] = await processFn(items[currentIndex], currentIndex);
+      }
+    }
+    await Promise.all(
+      Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, () => worker())
+    );
+    return results;
+  }
+  async function runBeforeBatchDeadline(deadlineAt, label, operation) {
+    const remainingMs = deadlineAt - Date.now();
+    if (remainingMs <= 0) throw new Error(`batch_deadline:${label}`);
+    let timer;
+    try {
+      return await Promise.race([
+        operation(),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`batch_deadline:${label}`)), remainingMs);
+        })
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+  function validateBatchPdfBytes(bytes) {
+    const buffer = Buffer.from(bytes);
+    if (buffer.length === 0 || buffer.length > BATCH_PDF_MAX_BYTES || !isPdfBuffer(buffer)) {
+      return null;
+    }
+    return buffer;
+  }
   const batchConfirmPrintRoute = async (req, res) => {
     const t0 = Date.now();
+    const deadlineAt = t0 + BATCH_PRINT_DEADLINE_MS;
     beginLogisticsWork("batch-confirm-print");
     try {
       const { orderSns, method } = req.body || {};
@@ -130688,7 +130728,7 @@ async function startServer() {
       await prewarmShopeeAddressCacheForShip(toShip, shipMethod);
       const successSns = [];
       const failedResults = [];
-      for (const { index, order } of toShip) {
+      await mapBatchConcurrently(toShip, BATCH_PRINT_CONCURRENCY, async ({ index, order }) => {
         const orderSn = String(order.orderSn || "");
         const orderId = String(order.id || "");
         try {
@@ -130700,10 +130740,14 @@ async function startServer() {
           console.log(`[Batch Confirm Print] X\xE1c nh\u1EADn \u0111\u01A1n ${orderSn}...`);
           let shipResult;
           try {
-            shipResult = await withOperationTimeout(
-              (signal) => arrangeShipment(order, shipMethod, signal, { skipRecover: true }),
-              SHIP_ORDER_OPERATION_TIMEOUT_MS,
-              `Ship order ${orderSn}`
+            shipResult = await runBeforeBatchDeadline(
+              deadlineAt,
+              `ship:${orderSn}`,
+              () => withOperationTimeout(
+                (signal) => arrangeShipment(order, shipMethod, signal, { skipRecover: true }),
+                SHIP_ORDER_OPERATION_TIMEOUT_MS,
+                `Ship order ${orderSn}`
+              )
             );
           } catch (shipErr) {
             shipResult = {
@@ -130715,7 +130759,7 @@ async function startServer() {
           const treatedAsSuccess = shipResult.success || isAlreadyShippedError(shipResult);
           if (!treatedAsSuccess) {
             failedResults.push({ orderId, orderSn, error: shipResult.error, message: shipResult.message });
-            continue;
+            return;
           }
           const tn = String(
             order.trackingNumber || order.tracking_no || shipResult.trackingNumber || orders[index].trackingNumber || ""
@@ -130746,7 +130790,7 @@ async function startServer() {
             message: String(orderErr?.message || orderErr)
           });
         }
-      }
+      });
       try {
         const changed = toShip.map(({ index }) => orders[index]).filter(Boolean);
         await persistOrdersToDatabase(orders, changed);
@@ -130761,26 +130805,8 @@ async function startServer() {
         });
       }
       console.log(`[Batch Confirm Print] \u0110\xE3 x\xE1c nh\u1EADn ${successSns.length}/${toShip.length} \u0111\u01A1n - b\u1EAFt \u0111\u1EA7u l\u1EA5y PDF...`);
-      async function processPdfConcurrently(items, concurrency, processFn) {
-        const results2 = [];
-        let index = 0;
-        async function worker() {
-          while (index < items.length) {
-            const currentIndex = index++;
-            const item = items[currentIndex];
-            try {
-              const result = await processFn(item);
-              results2[currentIndex] = result;
-            } catch (err) {
-              console.error(`[Worker] Error processing item ${currentIndex}:`, err);
-            }
-          }
-        }
-        const workers = Array(Math.min(concurrency, items.length)).fill(null).map(() => worker());
-        await Promise.all(workers);
-        return results2;
-      }
       const pdfBuffers = [];
+      const pdfFailures = /* @__PURE__ */ new Map();
       const processSingleOrder = async (orderSn) => {
         try {
           const order = orders.find(
@@ -130814,16 +130840,23 @@ async function startServer() {
             console.warn(`[Batch Confirm Print] \u0110\u01A1n ${orderSn} thi\u1EBFu shipping data`);
             return null;
           }
-          const createResult = await shopeeCreateShippingDocument(shopId, accessToken, [row]);
+          const createResult = await runBeforeBatchDeadline(
+            deadlineAt,
+            `create_document:${orderSn}`,
+            () => shopeeCreateShippingDocument(shopId, accessToken, [row])
+          );
           if (createResult?.error) {
             console.warn(`[Batch Confirm Print] Create doc ${orderSn} failed:`, createResult.error);
             return null;
           }
           let pdfReady = false;
-          for (let attempt = 1; attempt <= 20; attempt++) {
-            await sleep2(3e3);
+          for (let attempt = 1; attempt <= 10 && Date.now() < deadlineAt; attempt++) {
             try {
-              const poll = await shopeeGetShippingDocumentResult(shopId, accessToken, [row]);
+              const poll = await runBeforeBatchDeadline(
+                deadlineAt,
+                `poll_document:${orderSn}`,
+                () => shopeeGetShippingDocumentResult(shopId, accessToken, [row])
+              );
               if (poll?.error) continue;
               const items = poll?.response?.result_list || poll?.result_list || [];
               const result = items.find((item) => String(item?.order_sn || "") === orderSn);
@@ -130834,43 +130867,65 @@ async function startServer() {
             } catch (err) {
               console.warn(`[Batch Confirm Print] Poll ${orderSn} attempt ${attempt}:`, err?.message || err);
             }
+            if (attempt < 10 && Date.now() < deadlineAt) {
+              await sleep2(Math.min(1e3, Math.max(0, deadlineAt - Date.now())));
+            }
           }
           if (!pdfReady) {
-            console.warn(`[Batch Confirm Print] PDF ${orderSn} ch\u01B0a READY sau 60s`);
+            console.warn(`[Batch Confirm Print] PDF ${orderSn} ch\u01B0a READY tr\u01B0\u1EDBc deadline`);
             return null;
           }
           const apiPath = "/api/v2/logistics/download_shipping_document";
           const timestamp = Math.floor(Date.now() / 1e3);
           const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
           const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
-          const downloadRes = await fetchWithTimeout(url2, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              order_list: [row],
-              shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
-            })
-          }, 6e4);
+          const downloadRes = await runBeforeBatchDeadline(
+            deadlineAt,
+            `download_document:${orderSn}`,
+            () => fetchWithTimeout(url2, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                order_list: [row],
+                shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
+              })
+            }, Math.min(8e3, Math.max(1e3, deadlineAt - Date.now())))
+          );
           const contentType = String(downloadRes.headers.get("content-type") || "").toLowerCase();
           if (contentType.includes("application/json") || !downloadRes.ok || !downloadRes.body) {
             console.warn(`[Batch Confirm Print] Download ${orderSn} failed`);
             return null;
           }
-          const buffer = await downloadRes.arrayBuffer();
-          console.log(`[Batch Confirm Print] Downloaded PDF ${orderSn} (${buffer.byteLength} bytes)`);
+          const buffer = validateBatchPdfBytes(await downloadRes.arrayBuffer());
+          if (!buffer) {
+            console.warn(`[Batch Confirm Print] Download ${orderSn} kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7`);
+            return null;
+          }
+          console.log(`[Batch Confirm Print] Downloaded PDF ${orderSn} (${buffer.length} bytes)`);
           return { orderSn, buffer };
         } catch (err) {
           console.error(`[Batch Confirm Print] L\u1ED7i PDF ${orderSn}:`, err?.stack || err);
           return null;
         }
       };
-      const results = await processPdfConcurrently(successSns, 5, processSingleOrder);
+      const results = await mapBatchConcurrently(successSns, BATCH_PRINT_CONCURRENCY, processSingleOrder);
       pdfBuffers.push(...results.filter((r2) => r2 !== null));
+      const downloadedSns = new Set(pdfBuffers.map((item) => item.orderSn));
+      for (const orderSn of successSns) {
+        if (!downloadedSns.has(orderSn)) {
+          pdfFailures.set(orderSn, {
+            orderSn,
+            error: "pdf_unavailable",
+            message: "Shopee ch\u01B0a tr\u1EA3 PDF h\u1EE3p l\u1EC7 tr\u01B0\u1EDBc th\u1EDDi h\u1EA1n x\u1EED l\xFD."
+          });
+        }
+      }
       if (pdfBuffers.length === 0) {
         return res.status(400).json({
           success: false,
           message: `\u0110\xE3 x\xE1c nh\u1EADn ${successSns.length} \u0111\u01A1n nh\u01B0ng kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c PDF n\xE0o.`,
-          confirmedOrders: successSns
+          confirmedOrders: successSns,
+          failedOrders: [...failedResults, ...pdfFailures.values()]
         });
       }
       console.log(`[Batch Confirm Print] G\u1ED9p ${pdfBuffers.length} PDF...`);
@@ -130883,7 +130938,20 @@ async function startServer() {
           console.log(`[Batch Confirm Print] \u0110\xE3 g\u1ED9p ${orderSn} (${sourcePdf.getPageCount()} pages)`);
         } catch (err) {
           console.error(`[Batch Confirm Print] L\u1ED7i g\u1ED9p PDF ${orderSn}:`, err?.message || err);
+          pdfFailures.set(orderSn, {
+            orderSn,
+            error: "invalid_pdf",
+            message: "D\u1EEF li\u1EC7u PDF b\u1ECB h\u1ECFng ho\u1EB7c kh\xF4ng th\u1EC3 g\u1ED9p."
+          });
         }
+      }
+      if (mergedPdf.getPageCount() === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Kh\xF4ng c\xF3 PDF h\u1EE3p l\u1EC7 \u0111\u1EC3 g\u1ED9p.",
+          confirmedOrders: successSns,
+          failedOrders: [...failedResults, ...pdfFailures.values()]
+        });
       }
       const mergedBytes = await mergedPdf.save();
       const publicPdfDir = import_path17.default.join(APP_ROOT11, "public", "pdfs");
@@ -130895,16 +130963,24 @@ async function startServer() {
       import_fs16.default.writeFileSync(batchPath, mergedBytes);
       const backendBaseUrl = resolveLabelsPublicBaseUrl();
       const batchUrl = `${backendBaseUrl}/pdfs/${batchFilename}`;
-      console.log(`[Batch Confirm Print] DONE ${successSns.length} \u0111\u01A1n \u2192 ${batchUrl} (${Date.now() - t0}ms)`);
+      const failedOrders = [...failedResults, ...pdfFailures.values()];
+      const invalidPdfSns = new Set(
+        [...pdfFailures.values()].filter((item) => item.error === "invalid_pdf").map((item) => item.orderSn)
+      );
+      const printedOrders = pdfBuffers.map((item) => item.orderSn).filter((orderSn) => !invalidPdfSns.has(orderSn));
+      const printedCount = printedOrders.length;
+      console.log(`[Batch Confirm Print] DONE ${printedCount} \u0111\u01A1n \u2192 ${batchUrl} (${Date.now() - t0}ms)`);
       return res.json({
         success: true,
         url: batchUrl,
         filename: batchFilename,
         confirmedCount: successSns.length,
-        pdfCount: pdfBuffers.length,
+        pdfCount: printedCount,
         totalPages: mergedPdf.getPageCount(),
         confirmedOrders: successSns,
-        message: `\u0110\xE3 x\xE1c nh\u1EADn ${successSns.length} \u0111\u01A1n v\xE0 g\u1ED9p ${pdfBuffers.length} PDF th\xE0nh 1 file.`
+        printedOrders,
+        failedOrders,
+        message: failedOrders.length > 0 ? `\u0110\xE3 in g\u1ED9p ${printedCount} \u0111\u01A1n. C\xE1c \u0111\u01A1n l\u1ED7i: ${failedOrders.map((item) => item.orderSn || item.orderId).filter(Boolean).join(", ")}` : `\u0110\xE3 in g\u1ED9p ${printedCount} \u0111\u01A1n.`
       });
     } catch (error) {
       console.error("[Batch Confirm Print] L\u1ED7i:", error?.stack || error);
@@ -130918,26 +130994,8 @@ async function startServer() {
   };
   const batchPrintOnlyRoute = async (req, res) => {
     const t0 = Date.now();
+    const deadlineAt = t0 + BATCH_PRINT_DEADLINE_MS;
     beginLogisticsWork("batch-print-only");
-    async function processPdfConcurrently(items, concurrency, processFn) {
-      const results = [];
-      let index = 0;
-      async function worker() {
-        while (index < items.length) {
-          const currentIndex = index++;
-          const item = items[currentIndex];
-          try {
-            const result = await processFn(item);
-            results[currentIndex] = result;
-          } catch (err) {
-            console.error(`[Worker] Error processing item ${currentIndex}:`, err);
-          }
-        }
-      }
-      const workers = Array(Math.min(concurrency, items.length)).fill(null).map(() => worker());
-      await Promise.all(workers);
-      return results;
-    }
     try {
       const { orderSns } = req.body || {};
       if (!Array.isArray(orderSns) || orderSns.length === 0) {
@@ -130972,6 +131030,7 @@ async function startServer() {
         });
       }
       const pdfBuffers = [];
+      const pdfFailures = /* @__PURE__ */ new Map();
       const processSingleOrder = async (orderSn) => {
         try {
           const order = orders.find(
@@ -131005,16 +131064,23 @@ async function startServer() {
             console.warn(`[Batch Print Only] \u0110\u01A1n ${orderSn} thi\u1EBFu shipping data`);
             return null;
           }
-          const createResult = await shopeeCreateShippingDocument(shopId, accessToken, [row]);
+          const createResult = await runBeforeBatchDeadline(
+            deadlineAt,
+            `create_document:${orderSn}`,
+            () => shopeeCreateShippingDocument(shopId, accessToken, [row])
+          );
           if (createResult?.error) {
             console.warn(`[Batch Print Only] Create doc ${orderSn} failed:`, createResult.error);
             return null;
           }
           let pdfReady = false;
-          for (let attempt = 1; attempt <= 20; attempt++) {
-            await sleep2(3e3);
+          for (let attempt = 1; attempt <= 10 && Date.now() < deadlineAt; attempt++) {
             try {
-              const poll = await shopeeGetShippingDocumentResult(shopId, accessToken, [row]);
+              const poll = await runBeforeBatchDeadline(
+                deadlineAt,
+                `poll_document:${orderSn}`,
+                () => shopeeGetShippingDocumentResult(shopId, accessToken, [row])
+              );
               if (poll?.error) continue;
               const items = poll?.response?.result_list || poll?.result_list || [];
               const result = items.find((item) => String(item?.order_sn || "") === orderSn);
@@ -131025,42 +131091,64 @@ async function startServer() {
             } catch (err) {
               console.warn(`[Batch Print Only] Poll ${orderSn} attempt ${attempt}:`, err?.message || err);
             }
+            if (attempt < 10 && Date.now() < deadlineAt) {
+              await sleep2(Math.min(1e3, Math.max(0, deadlineAt - Date.now())));
+            }
           }
           if (!pdfReady) {
-            console.warn(`[Batch Print Only] PDF ${orderSn} ch\u01B0a READY sau 60s`);
+            console.warn(`[Batch Print Only] PDF ${orderSn} ch\u01B0a READY tr\u01B0\u1EDBc deadline`);
             return null;
           }
           const apiPath = "/api/v2/logistics/download_shipping_document";
           const timestamp = Math.floor(Date.now() / 1e3);
           const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
           const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
-          const downloadRes = await fetchWithTimeout(url2, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              order_list: [row],
-              shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
-            })
-          }, 6e4);
+          const downloadRes = await runBeforeBatchDeadline(
+            deadlineAt,
+            `download_document:${orderSn}`,
+            () => fetchWithTimeout(url2, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                order_list: [row],
+                shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
+              })
+            }, Math.min(8e3, Math.max(1e3, deadlineAt - Date.now())))
+          );
           const contentType = String(downloadRes.headers.get("content-type") || "").toLowerCase();
           if (contentType.includes("application/json") || !downloadRes.ok || !downloadRes.body) {
             console.warn(`[Batch Print Only] Download ${orderSn} failed`);
             return null;
           }
-          const buffer = await downloadRes.arrayBuffer();
-          console.log(`[Batch Print Only] Downloaded PDF ${orderSn} (${buffer.byteLength} bytes)`);
+          const buffer = validateBatchPdfBytes(await downloadRes.arrayBuffer());
+          if (!buffer) {
+            console.warn(`[Batch Print Only] Download ${orderSn} kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7`);
+            return null;
+          }
+          console.log(`[Batch Print Only] Downloaded PDF ${orderSn} (${buffer.length} bytes)`);
           return { orderSn, buffer };
         } catch (err) {
           console.error(`[Batch Print Only] L\u1ED7i PDF ${orderSn}:`, err?.stack || err);
           return null;
         }
       };
-      const results = await processPdfConcurrently(cleanSns, 5, processSingleOrder);
+      const results = await mapBatchConcurrently(cleanSns, BATCH_PRINT_CONCURRENCY, processSingleOrder);
       pdfBuffers.push(...results.filter((r2) => r2 !== null));
+      const downloadedSns = new Set(pdfBuffers.map((item) => item.orderSn));
+      for (const orderSn of cleanSns) {
+        if (!downloadedSns.has(orderSn)) {
+          pdfFailures.set(orderSn, {
+            orderSn,
+            error: "pdf_unavailable",
+            message: "Shopee ch\u01B0a tr\u1EA3 PDF h\u1EE3p l\u1EC7 tr\u01B0\u1EDBc th\u1EDDi h\u1EA1n x\u1EED l\xFD."
+          });
+        }
+      }
       if (pdfBuffers.length === 0) {
         return res.status(400).json({
           success: false,
-          message: `Kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c PDF n\xE0o t\u1EEB ${cleanSns.length} \u0111\u01A1n.`
+          message: `Kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c PDF n\xE0o t\u1EEB ${cleanSns.length} \u0111\u01A1n.`,
+          failedOrders: [...pdfFailures.values()]
         });
       }
       console.log(`[Batch Print Only] G\u1ED9p ${pdfBuffers.length} PDF...`);
@@ -131073,7 +131161,19 @@ async function startServer() {
           console.log(`[Batch Print Only] \u0110\xE3 g\u1ED9p ${orderSn} (${sourcePdf.getPageCount()} pages)`);
         } catch (err) {
           console.error(`[Batch Print Only] L\u1ED7i g\u1ED9p PDF ${orderSn}:`, err?.message || err);
+          pdfFailures.set(orderSn, {
+            orderSn,
+            error: "invalid_pdf",
+            message: "D\u1EEF li\u1EC7u PDF b\u1ECB h\u1ECFng ho\u1EB7c kh\xF4ng th\u1EC3 g\u1ED9p."
+          });
         }
+      }
+      if (mergedPdf.getPageCount() === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Kh\xF4ng c\xF3 PDF h\u1EE3p l\u1EC7 \u0111\u1EC3 g\u1ED9p.",
+          failedOrders: [...pdfFailures.values()]
+        });
       }
       const mergedBytes = await mergedPdf.save();
       const publicPdfDir = import_path17.default.join(APP_ROOT11, "public", "pdfs");
@@ -131085,14 +131185,22 @@ async function startServer() {
       import_fs16.default.writeFileSync(batchPath, mergedBytes);
       const backendBaseUrl = resolveLabelsPublicBaseUrl();
       const batchUrl = `${backendBaseUrl}/pdfs/${batchFilename}`;
-      console.log(`[Batch Print Only] DONE ${pdfBuffers.length}/${cleanSns.length} \u0111\u01A1n \u2192 ${batchUrl} (${Date.now() - t0}ms)`);
+      const failedOrders = [...pdfFailures.values()];
+      const invalidPdfSns = new Set(
+        failedOrders.filter((item) => item.error === "invalid_pdf").map((item) => item.orderSn)
+      );
+      const printedOrders = pdfBuffers.map((item) => item.orderSn).filter((orderSn) => !invalidPdfSns.has(orderSn));
+      const printedCount = printedOrders.length;
+      console.log(`[Batch Print Only] DONE ${printedCount}/${cleanSns.length} \u0111\u01A1n \u2192 ${batchUrl} (${Date.now() - t0}ms)`);
       return res.json({
         success: true,
         url: batchUrl,
         filename: batchFilename,
-        pdfCount: pdfBuffers.length,
+        pdfCount: printedCount,
         totalPages: mergedPdf.getPageCount(),
-        message: `\u0110\xE3 g\u1ED9p ${pdfBuffers.length} PDF th\xE0nh 1 file.`
+        printedOrders,
+        failedOrders,
+        message: failedOrders.length > 0 ? `\u0110\xE3 in g\u1ED9p ${printedCount} \u0111\u01A1n. C\xE1c \u0111\u01A1n l\u1ED7i: ${failedOrders.map((item) => item.orderSn).join(", ")}` : `\u0110\xE3 in g\u1ED9p ${printedCount} \u0111\u01A1n.`
       });
     } catch (error) {
       console.error("[Batch Print Only] L\u1ED7i:", error?.stack || error);

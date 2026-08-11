@@ -38,6 +38,8 @@ const LONG_RUNNING_PREFIXES = [
   'shopee/categories/sync',
   'orders/pull',
   'orders/fast-process',
+  'orders/batch-confirm-print',
+  'orders/batch-print-only',
   'shopee/orders/fast-process',
   'orders/scan-bulk-update',
   'orders/scan-bg-enqueue',
@@ -138,11 +140,12 @@ export async function proxyRequestToCpanel(req, res, pathPart, opts = {}) {
   }
 
   console.log('[API Proxy]', req.method, target, `(timeout=${timeoutMs}ms)`);
+  const isIdempotentRequest = ['GET', 'HEAD', 'OPTIONS'].includes(String(req.method || '').toUpperCase());
   const result = await fetchBackendWithRetry('[API Proxy]', target, {
     method: req.method,
     headers,
     body,
-  }, timeoutMs, isBulkShipAsync ? 1 : 3);
+  }, timeoutMs, isBulkShipAsync || !isIdempotentRequest ? 1 : 3);
 
   if (result.ok) {
     const upstream = result.upstream;
