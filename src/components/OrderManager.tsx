@@ -4092,14 +4092,13 @@ export default function OrderManager({
         void updatePrintStatusForOrders(optimisticTargets, true, { silent: true }).catch(() => {});
       }
 
-      successfulSns.forEach((orderSn, index) => {
-        const pdfUrl = `/api/orders/download-pdf/${encodeURIComponent(orderSn)}`;
-        if (index === 0 && reservedPrintWindow && !reservedPrintWindow.closed) {
-          reservedPrintWindow.location.replace(pdfUrl);
-        } else {
-          window.open(pdfUrl, '_blank', 'noopener,noreferrer');
-        }
-      });
+      const printResult = await waitForConfirmedLabelsAndPrint(
+        successfulSns,
+        reservedPrintWindow,
+      );
+      if (!printResult.success) {
+        showToast(`Đã xác nhận đơn, nhưng chưa thể mở PDF: ${printResult.message || 'Vui lòng in lại sau.'}`);
+      }
 
       setSelectedOrderIds([]);
       setShipConfirmSummary(null);
