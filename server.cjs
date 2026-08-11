@@ -124340,7 +124340,7 @@ async function shopeeDownloadShippingDocument(shopId, accessToken, orderList, fi
     cached: false
   };
 }
-async function batchDownloadShopeeWaybillPdf(shopId, orderList) {
+async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
   const emptySkip = [];
   try {
     if (!orderList.length) {
@@ -124516,6 +124516,14 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList) {
         skippedOrders: pollFailed,
         error: "document_not_ready",
         message: "Shopee ch\u01B0a t\u1EA1o xong v\u1EADn \u0111\u01A1n h\xE0ng lo\u1EA1t (kh\xF4ng READY). \u0110\xE3 tho\xE1t poll an to\xE0n \u2014 th\u1EED in l\u1EA1i sau."
+      };
+    }
+    if (opts?.skipDownload) {
+      return {
+        success: true,
+        readyOrderSns: readyList.map((o) => o.order_sn),
+        readyOrderRows: readyList,
+        skippedOrders: pollFailed
       };
     }
     console.log(
@@ -130748,18 +130756,18 @@ async function startServer() {
             }
             rows.push(row);
           }
-          if (rows.length === 0) return null;
+          if (rows.length === 0) return [];
           const batch = await runBeforeBatchDeadline(
             deadlineAt,
             `batch_waybill:${group.shopId}`,
-            () => batchDownloadShopeeWaybillPdf(group.shopId, rows)
+            () => batchDownloadShopeeWaybillPdf(group.shopId, rows, { skipDownload: true })
           );
           for (const skipped of batch.skippedOrders || []) {
             const orderSn = String(skipped.orderSn || "").trim();
             if (orderSn) failedBySn.set(orderSn, skipped);
           }
           const readyOrderSns = (batch.readyOrderSns || []).map(String).filter(Boolean);
-          if (!batch.success || !batch.filePath || readyOrderSns.length === 0) {
+          if (!batch.success || readyOrderSns.length === 0) {
             for (const row of rows) {
               if (!failedBySn.has(row.order_sn)) {
                 failedBySn.set(row.order_sn, {
@@ -130769,21 +130777,59 @@ async function startServer() {
                 });
               }
             }
-            return null;
+            return [];
           }
-          const buffer = import_fs16.default.readFileSync(batch.filePath);
-          if (!buffer.length || buffer.length > BATCH_PDF_MAX_BYTES || !isPdfBuffer(buffer)) {
-            for (const orderSn of readyOrderSns) {
+          const readySet = new Set(readyOrderSns);
+          const readyRows = (batch.readyOrderRows?.length ? batch.readyOrderRows : rows).filter((row) => readySet.has(String(row.order_sn || "")));
+          const documents = await mapBatchConcurrently(
+            readyRows,
+            BATCH_PRINT_CONCURRENCY,
+            async (row) => {
+              const orderSn = String(row.order_sn || "").trim();
+              try {
+                const filename = buildCachedLabelFilename([orderSn]);
+                const downloaded = await runBeforeBatchDeadline(
+                  deadlineAt,
+                  `download_document:${orderSn}`,
+                  () => shopeeDownloadShippingDocument(
+                    group.shopId,
+                    group.accessToken,
+                    [row],
+                    filename
+                  )
+                );
+                if (!downloaded?.filePath) throw new Error(downloaded?.message || "download_failed");
+                const buffer = import_fs16.default.readFileSync(downloaded.filePath);
+                if (!buffer.length || buffer.length > BATCH_PDF_MAX_BYTES || !isPdfBuffer(buffer)) {
+                  throw new Error("invalid_pdf");
+                }
+                return { orderSns: [orderSn], buffer };
+              } catch (err) {
+                failedBySn.set(orderSn, {
+                  orderSn,
+                  error: String(err?.message || "").includes("invalid_pdf") ? "invalid_pdf" : "download_failed",
+                  message: String(err?.message || err)
+                });
+                return null;
+              }
+            }
+          );
+          const validDocuments = documents.filter(
+            (item) => item !== null
+          );
+          console.log(
+            `[${logPrefix}] PDF ri\xEAng shop=${group.shopId} ready=${validDocuments.length}/${readyOrderSns.length}`
+          );
+          for (const orderSn of readyOrderSns) {
+            if (!validDocuments.some((item) => item.orderSns.includes(orderSn)) && !failedBySn.has(orderSn)) {
               failedBySn.set(orderSn, {
                 orderSn,
-                error: "invalid_pdf",
-                message: "D\u1EEF li\u1EC7u PDF Shopee tr\u1EA3 v\u1EC1 kh\xF4ng h\u1EE3p l\u1EC7."
+                error: "download_failed",
+                message: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c PDF ri\xEAng c\u1EE7a \u0111\u01A1n."
               });
             }
-            return null;
           }
-          console.log(`[${logPrefix}] Batch PDF shop=${group.shopId} ready=${readyOrderSns.length}`);
-          return { orderSns: readyOrderSns, buffer };
+          return validDocuments;
         } catch (err) {
           for (const orderSn of groupSns) {
             if (!failedBySn.has(orderSn)) {
@@ -130794,12 +130840,12 @@ async function startServer() {
               });
             }
           }
-          return null;
+          return [];
         }
       }
     );
     return {
-      documents: groupResults.filter((item) => item !== null),
+      documents: groupResults.flat(),
       failedOrders: [...failedBySn.values()]
     };
   }

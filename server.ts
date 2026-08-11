@@ -8893,6 +8893,7 @@ type ShopeeWaybillOrderRow = {
 async function batchDownloadShopeeWaybillPdf(
   shopId: string,
   orderList: ShopeeWaybillOrderRow[],
+  opts?: { skipDownload?: boolean },
 ): Promise<{
   success: boolean;
   filename?: string;
@@ -8900,6 +8901,7 @@ async function batchDownloadShopeeWaybillPdf(
   size?: number;
   contentType?: string;
   readyOrderSns: string[];
+  readyOrderRows?: ShopeeWaybillOrderRow[];
   skippedOrders: Array<{ orderSn: string; error: string; message: string }>;
   error?: string;
   message?: string;
@@ -9104,6 +9106,15 @@ async function batchDownloadShopeeWaybillPdf(
         error: "document_not_ready",
         message:
           "Shopee chưa tạo xong vận đơn hàng loạt (không READY). Đã thoát poll an toàn — thử in lại sau.",
+      };
+    }
+
+    if (opts?.skipDownload) {
+      return {
+        success: true,
+        readyOrderSns: readyList.map((o) => o.order_sn),
+        readyOrderRows: readyList,
+        skippedOrders: pollFailed,
       };
     }
 
@@ -18119,7 +18130,7 @@ async function startServer() {
     const groupResults = await mapBatchConcurrently(
       [...groups.values()],
       BATCH_PRINT_CONCURRENCY,
-      async (group): Promise<BatchPdfDocument | null> => {
+      async (group): Promise<BatchPdfDocument[]> => {
         const groupSns = group.orders.map((order: any) =>
           String(order?.orderSn || order?.order_sn || "").replace(/^shopee-/i, "").trim(),
         );
@@ -18145,19 +18156,19 @@ async function startServer() {
             }
             rows.push(row);
           }
-          if (rows.length === 0) return null;
+          if (rows.length === 0) return [];
 
           const batch = await runBeforeBatchDeadline(
             deadlineAt,
             `batch_waybill:${group.shopId}`,
-            () => batchDownloadShopeeWaybillPdf(group.shopId, rows),
+            () => batchDownloadShopeeWaybillPdf(group.shopId, rows, { skipDownload: true }),
           );
           for (const skipped of batch.skippedOrders || []) {
             const orderSn = String(skipped.orderSn || "").trim();
             if (orderSn) failedBySn.set(orderSn, skipped);
           }
           const readyOrderSns = (batch.readyOrderSns || []).map(String).filter(Boolean);
-          if (!batch.success || !batch.filePath || readyOrderSns.length === 0) {
+          if (!batch.success || readyOrderSns.length === 0) {
             for (const row of rows) {
               if (!failedBySn.has(row.order_sn)) {
                 failedBySn.set(row.order_sn, {
@@ -18167,21 +18178,62 @@ async function startServer() {
                 });
               }
             }
-            return null;
+            return [];
           }
-          const buffer = fs.readFileSync(batch.filePath);
-          if (!buffer.length || buffer.length > BATCH_PDF_MAX_BYTES || !isPdfBuffer(buffer)) {
-            for (const orderSn of readyOrderSns) {
+          const readySet = new Set(readyOrderSns);
+          const readyRows = (batch.readyOrderRows?.length ? batch.readyOrderRows : rows)
+            .filter((row) => readySet.has(String(row.order_sn || "")));
+          const documents = await mapBatchConcurrently(
+            readyRows,
+            BATCH_PRINT_CONCURRENCY,
+            async (row): Promise<BatchPdfDocument | null> => {
+              const orderSn = String(row.order_sn || "").trim();
+              try {
+                const filename = buildCachedLabelFilename([orderSn]);
+                const downloaded = await runBeforeBatchDeadline(
+                  deadlineAt,
+                  `download_document:${orderSn}`,
+                  () => shopeeDownloadShippingDocument(
+                    group.shopId,
+                    group.accessToken,
+                    [row],
+                    filename,
+                  ),
+                );
+                if (!downloaded?.filePath) throw new Error(downloaded?.message || "download_failed");
+                const buffer = fs.readFileSync(downloaded.filePath);
+                if (!buffer.length || buffer.length > BATCH_PDF_MAX_BYTES || !isPdfBuffer(buffer)) {
+                  throw new Error("invalid_pdf");
+                }
+                return { orderSns: [orderSn], buffer };
+              } catch (err: any) {
               failedBySn.set(orderSn, {
                 orderSn,
-                error: "invalid_pdf",
-                message: "Dữ liệu PDF Shopee trả về không hợp lệ.",
+                  error: String(err?.message || "").includes("invalid_pdf")
+                    ? "invalid_pdf"
+                    : "download_failed",
+                  message: String(err?.message || err),
+                });
+                return null;
+              }
+            },
+          );
+          const validDocuments = documents.filter(
+            (item): item is BatchPdfDocument => item !== null,
+          );
+          console.log(
+            `[${logPrefix}] PDF riêng shop=${group.shopId} ready=${validDocuments.length}/${readyOrderSns.length}`,
+          );
+          for (const orderSn of readyOrderSns) {
+            if (!validDocuments.some((item) => item.orderSns.includes(orderSn)) && !failedBySn.has(orderSn)) {
+              failedBySn.set(orderSn, {
+                orderSn,
+                error: "download_failed",
+                message: "Không tải được PDF riêng của đơn.",
               });
             }
-            return null;
           }
-          console.log(`[${logPrefix}] Batch PDF shop=${group.shopId} ready=${readyOrderSns.length}`);
-          return { orderSns: readyOrderSns, buffer };
+          return validDocuments;
         } catch (err: any) {
           for (const orderSn of groupSns) {
             if (!failedBySn.has(orderSn)) {
@@ -18192,13 +18244,13 @@ async function startServer() {
               });
             }
           }
-          return null;
+          return [];
         }
       },
     );
 
     return {
-      documents: groupResults.filter((item): item is BatchPdfDocument => item !== null),
+      documents: groupResults.flat(),
       failedOrders: [...failedBySn.values()],
     };
   }
