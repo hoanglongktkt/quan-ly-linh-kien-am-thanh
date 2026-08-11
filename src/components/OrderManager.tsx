@@ -4034,8 +4034,8 @@ export default function OrderManager({
       return;
     }
 
-    // Giữ sẵn tab trong user gesture để trình duyệt không chặn popup sau await.
-    const reservedPrintWindow = openReservedPrintPlaceholder();
+    // Mở tab ngay trong user gesture để Chrome/Edge không chặn sau await confirm.
+    const pdfWindow = window.open('about:blank', '_blank');
     const orderIds = validQueued
       .map((order) => String(order.id || '').trim())
       .filter(Boolean);
@@ -4076,7 +4076,7 @@ export default function OrderManager({
         ),
       ];
       if (!successfulSns.length) {
-        closeReservedPrintWindow(reservedPrintWindow);
+        closeReservedPrintWindow(pdfWindow);
         throw new Error(data.message || 'Shopee không xác nhận được đơn nào.');
       }
 
@@ -4092,12 +4092,11 @@ export default function OrderManager({
         void updatePrintStatusForOrders(optimisticTargets, true, { silent: true }).catch(() => {});
       }
 
-      const printResult = await waitForConfirmedLabelsAndPrint(
-        successfulSns,
-        reservedPrintWindow,
-      );
-      if (!printResult.success) {
-        showToast(`Đã xác nhận đơn, nhưng chưa thể mở PDF: ${printResult.message || 'Vui lòng in lại sau.'}`);
+      const orderSn = successfulSns[0];
+      if (pdfWindow && orderSn) {
+        pdfWindow.location.href = `/api/orders/download-pdf/${encodeURIComponent(orderSn)}`;
+      } else if (!pdfWindow) {
+        showToast('Trình duyệt đã chặn tab PDF. Vui lòng cho phép pop-up rồi in lại đơn.');
       }
 
       setSelectedOrderIds([]);
@@ -4114,7 +4113,7 @@ export default function OrderManager({
         message: `Delegated polling: xác nhận và mở ${successfulSns.length} tab PDF.`,
       });
     } catch (err) {
-      closeReservedPrintWindow(reservedPrintWindow);
+      closeReservedPrintWindow(pdfWindow);
       const message = err instanceof Error ? err.message : 'Lỗi không xác định';
       clearShipProgressOverlay();
       showToast(`Xác nhận thất bại: ${message}`);
