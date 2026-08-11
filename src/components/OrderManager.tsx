@@ -4033,6 +4033,81 @@ export default function OrderManager({
       )
       .filter(Boolean);
 
+  const handleBatchConfirmOnly = async () => {
+    if (!shipConfirmOrders?.length || isShipping) return;
+    const validQueued = shipConfirmOrders.filter(
+      (order) => String(order.orderSn || order.id || '').trim(),
+    );
+    const orderIds = validQueued.map((order) => String(order.id || '').trim()).filter(Boolean);
+    const orderSns = validQueued
+      .map((order) => String(order.orderSn || '').replace(/^shopee-/i, '').trim())
+      .filter(Boolean);
+    if (!orderSns.length) {
+      showToast('Không có mã đơn hàng hợp lệ trong danh sách đã chọn.');
+      return;
+    }
+
+    setShipConfirmOrders(null);
+    setIsShipping(true);
+    setProgressMessage(`Đang xác nhận ${orderSns.length} đơn lên Shopee...`);
+    setProgressDone(false);
+    setProgressCompleted(0);
+    setProgressTotal(orderSns.length);
+    try {
+      const response = await fetch('/api/orders/batch-confirm', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ orderIds, orderSns, method: shipMethod }),
+      });
+      const data = await readResponseJson<any>(response);
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || data.error || `HTTP ${response.status}`);
+      }
+
+      const successfulSns = [
+        ...new Set<string>(
+          (Array.isArray(data.results) ? data.results : [])
+            .filter((result: any) => result?.success)
+            .map((result: any) => String(result.orderSn || '').replace(/^shopee-/i, '').trim())
+            .filter(Boolean),
+        ),
+      ];
+      if (!successfulSns.length) throw new Error(data.message || 'Không xác nhận được đơn nào.');
+
+      const optimisticTargets = applyPrintedLocalOptimistic(successfulSns, false, 'processed');
+      if (optimisticTargets.length > 0) {
+        void updatePrintStatusForOrders(optimisticTargets, false, { silent: true }).catch(() => {});
+      }
+
+      setSelectedOrderIds([]);
+      setPrintStatusFilter('unprinted');
+      setActiveSubTab('processed');
+      setProgressCompleted(successfulSns.length);
+      markProgressComplete(`Đã xác nhận ${successfulSns.length}/${orderSns.length} đơn.`);
+      showToast(`Đã xác nhận ${successfulSns.length} đơn — PDF đang được tải ngầm.`);
+
+      void fetch('/api/orders/silent-prefetch-pdfs', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ orderSns: successfulSns }),
+      }).catch((error) => console.warn('[Silent Prefetch] Không thể khởi chạy:', error));
+
+      onAddLog({
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        channel: 'shopee',
+        type: 'stock_sync',
+        status: 'success',
+        message: `Xác nhận ${successfulSns.length} đơn; đã xếp hàng tải PDF nền.`,
+      });
+    } catch (err) {
+      clearShipProgressOverlay();
+      showToast(`Xác nhận thất bại: ${err instanceof Error ? err.message : 'Lỗi không xác định'}`);
+    } finally {
+      setIsShipping(false);
+    }
+  };
+
   const handleConfirmAndPrint = async () => {
     if (!shipConfirmOrders?.length) return;
     const validQueued = shipConfirmOrders.filter(
@@ -4956,6 +5031,11 @@ export default function OrderManager({
           const completionMessage = failedOrderIds.length > 0
             ? `Đã in gộp ${data.pdfCount} đơn. Các đơn lỗi: ${failedOrderIds.join(', ')}`
             : `Đã in gộp ${data.pdfCount} đơn.`;
+          const printedSns = Array.isArray(data.printedOrders) ? data.printedOrders : orderSns;
+          const optimisticTargets = applyPrintedLocalOptimistic(printedSns, true);
+          if (optimisticTargets.length > 0) {
+            void updatePrintStatusForOrders(optimisticTargets, true, { silent: true }).catch(() => {});
+          }
           markProgressComplete(completionMessage);
           showToast(completionMessage);
           setSelectedOrderIds([]);
@@ -6572,20 +6652,20 @@ export default function OrderManager({
             type="button"
             onClick={() => handleBulkConfirm()}
             className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-lg shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
-            title="Xác nhận & In hàng loạt"
+            title="Xác nhận đơn hàng loạt"
           >
             <Check className="w-3.5 h-3.5 shrink-0" />
-            <span>Xác nhận & In</span>
+            <span>Xác nhận đơn hàng loạt</span>
           </button>
 
           <button
             type="button"
             onClick={() => void handleReprintSelected()}
             className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-black rounded-lg shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
-            title="In lại đơn đã chọn (không xác nhận lại)"
+            title="In đơn đã chọn"
           >
             <Printer className="w-3.5 h-3.5 shrink-0" />
-            <span>In lại đơn đã chọn</span>
+            <span>In đơn đã chọn</span>
           </button>
 
           <button
@@ -7807,12 +7887,12 @@ export default function OrderManager({
                 Hủy
               </button>
               <button
-                onClick={() => void handleConfirmAndPrint()}
+                onClick={() => void handleBatchConfirmOnly()}
                 disabled={isShipping}
                 className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-all flex items-center gap-1.5 disabled:opacity-60"
               >
                 {isShipping && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                <span>{isShipping ? 'Đang xác nhận & lấy PDF...' : 'Xác nhận & In'}</span>
+                <span>{isShipping ? 'Đang xác nhận...' : 'Xác nhận đơn'}</span>
               </button>
             </div>
           </div>

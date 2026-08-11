@@ -8647,11 +8647,8 @@ async function arrangeShipment(
   return arrangeShipmentLocal(order, method);
 }
 
-// Seller uses a regular A4/A5 office printer (thermal-label printing is OFF in
-// Shopee Seller Centre) — NORMAL_AIR_WAYBILL renders the standard-size PDF
-// label instead of the thermal-printer-sized THERMAL_AIR_WAYBILL. Single
-// source of truth so create/poll/download always agree on the same type.
-const SHOPEE_SHIPPING_DOCUMENT_TYPE = "NORMAL_AIR_WAYBILL";
+// Tem nhiệt dùng chung cho create/poll/download để cache và lệnh in luôn đồng nhất.
+const SHOPEE_SHIPPING_DOCUMENT_TYPE = "THERMAL_AIR_WAYBILL";
 
 // v2.logistics.get_tracking_number — for INTEGRATED channels, ship_order does
 // not return the tracking_number synchronously (the 3PL assigns it a few
@@ -17729,6 +17726,7 @@ async function startServer() {
             ...orders[index],
             ...order,
             isPrepared: true,
+            isPrinted: false,
             status: "processed",
             is_pending_shopee_check: false,
             fulfillment_type: shipMethod,
@@ -18084,9 +18082,15 @@ async function startServer() {
     logPrefix: string,
   ): Promise<{ documents: BatchPdfDocument[]; failedOrders: BatchPdfFailure[] }> {
     const failedBySn = new Map<string, BatchPdfFailure>();
+    const cachedDocuments: BatchPdfDocument[] = [];
     const groups = new Map<string, { shopId: string; accessToken: string; orders: any[] }>();
 
     for (const orderSn of orderSns) {
+      const cached = getValidLabelDiskFile(buildCachedLabelFilename([orderSn]));
+      if (cached) {
+        cachedDocuments.push({ orderSns: [orderSn], buffer: fs.readFileSync(cached.filePath) });
+        continue;
+      }
       const order = orders.find(
         (item: any) =>
           String(item?.orderSn || item?.order_sn || "").replace(/^shopee-/i, "").trim() === orderSn,
@@ -18250,7 +18254,7 @@ async function startServer() {
     );
 
     return {
-      documents: groupResults.flat(),
+      documents: [...cachedDocuments, ...groupResults.flat()],
       failedOrders: [...failedBySn.values()],
     };
   }
@@ -18930,12 +18934,86 @@ async function startServer() {
     }
   };
 
+  const silentPdfPrefetchInFlight = new Set<string>();
+
+  const runSilentPdfPrefetch = async (orderSns: string[]): Promise<void> => {
+    const pending = new Set(orderSns);
+    beginLogisticsWork("silent-prefetch-pdfs");
+    try {
+      for (let attempt = 1; attempt <= 6 && pending.size > 0; attempt += 1) {
+        const sns = [...pending];
+        const orders = await loadOrdersForShipScoped(
+          sns.map((sn) => `shopee-${sn}`),
+          sns,
+        );
+        const result = await fetchBatchPdfDocumentsByShop(
+          orders,
+          sns,
+          Date.now() + BATCH_PRINT_DEADLINE_MS,
+          `Silent Prefetch ${attempt}/6`,
+        );
+
+        const publicPdfDir = path.join(APP_ROOT, "public", "pdfs");
+        fs.mkdirSync(publicPdfDir, { recursive: true });
+        for (const document of result.documents) {
+          for (const orderSn of document.orderSns) {
+            const filename = buildCachedLabelFilename([orderSn]);
+            fs.writeFileSync(path.join(publicPdfDir, filename), document.buffer);
+            pending.delete(orderSn);
+          }
+        }
+
+        if (pending.size > 0 && attempt < 6) await sleep(3_000);
+      }
+      console.log(
+        `[Silent Prefetch] DONE cached=${orderSns.length - pending.size}/${orderSns.length}` +
+          (pending.size ? ` pending=${[...pending].join(",")}` : ""),
+      );
+    } catch (err: any) {
+      console.error("[Silent Prefetch] background error:", err?.stack || err);
+    } finally {
+      for (const orderSn of orderSns) silentPdfPrefetchInFlight.delete(orderSn);
+      endLogisticsWork();
+    }
+  };
+
+  const silentPrefetchPdfsRoute = (req: any, res: any) => {
+    const cleanSns = [
+      ...new Set(
+        (Array.isArray(req.body?.orderSns) ? req.body.orderSns : [])
+          .map((sn: any) => String(sn || "").replace(/^shopee-/i, "").trim())
+          .filter(Boolean),
+      ),
+    ] as string[];
+    if (cleanSns.length === 0) {
+      return res.status(400).json({ success: false, message: "Thiếu danh sách orderSns." });
+    }
+
+    const queued = cleanSns.filter((orderSn) => {
+      if (silentPdfPrefetchInFlight.has(orderSn)) return false;
+      silentPdfPrefetchInFlight.add(orderSn);
+      return true;
+    });
+    res.status(200).json({
+      success: true,
+      accepted: queued.length,
+      skippedInFlight: cleanSns.length - queued.length,
+    });
+    if (queued.length > 0) {
+      setImmediate(() => {
+        void runSilentPdfPrefetch(queued);
+      });
+    }
+  };
+
   app.post("/api/orders/fast-process", authMiddleware, fastProcessRouteGuard);
   app.post("/api/shopee/orders/fast-process", authMiddleware, fastProcessRouteGuard);
   app.post("/api/orders/confirm", authMiddleware, confirmOnlyRoute);
+  app.post("/api/orders/batch-confirm", authMiddleware, confirmOnlyRoute);
   app.post("/api/orders/get-pdf", authMiddleware, getPdfRoute);
   app.post("/api/orders/batch-confirm-print", authMiddleware, batchConfirmPrintRoute);
   app.post("/api/orders/batch-print-only", authMiddleware, batchPrintOnlyRoute);
+  app.post("/api/orders/silent-prefetch-pdfs", authMiddleware, silentPrefetchPdfsRoute);
   // orderSn là mã khó đoán; route GET không dùng Bearer để window.open() tải trực tiếp được.
   app.get("/api/orders/download-pdf/:orderSn", downloadPdfRoute);
 

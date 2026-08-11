@@ -124153,7 +124153,7 @@ async function arrangeShipment(order, method, signal, opts) {
   }
   return arrangeShipmentLocal(order, method);
 }
-var SHOPEE_SHIPPING_DOCUMENT_TYPE = "NORMAL_AIR_WAYBILL";
+var SHOPEE_SHIPPING_DOCUMENT_TYPE = "THERMAL_AIR_WAYBILL";
 async function shopeeGetTrackingNumber(shopId, accessToken, orderSn, packageNumber) {
   const apiPath = "/api/v2/logistics/get_tracking_number";
   try {
@@ -130406,6 +130406,7 @@ async function startServer() {
             ...orders[index],
             ...order,
             isPrepared: true,
+            isPrinted: false,
             status: "processed",
             is_pending_shopee_check: false,
             fulfillment_type: shipMethod,
@@ -130689,8 +130690,14 @@ async function startServer() {
   }
   async function fetchBatchPdfDocumentsByShop(orders, orderSns, deadlineAt, logPrefix) {
     const failedBySn = /* @__PURE__ */ new Map();
+    const cachedDocuments = [];
     const groups = /* @__PURE__ */ new Map();
     for (const orderSn of orderSns) {
+      const cached = getValidLabelDiskFile(buildCachedLabelFilename([orderSn]));
+      if (cached) {
+        cachedDocuments.push({ orderSns: [orderSn], buffer: import_fs16.default.readFileSync(cached.filePath) });
+        continue;
+      }
       const order = orders.find(
         (item) => String(item?.orderSn || item?.order_sn || "").replace(/^shopee-/i, "").trim() === orderSn
       );
@@ -130845,7 +130852,7 @@ async function startServer() {
       }
     );
     return {
-      documents: groupResults.flat(),
+      documents: [...cachedDocuments, ...groupResults.flat()],
       failedOrders: [...failedBySn.values()]
     };
   }
@@ -131400,12 +131407,77 @@ async function startServer() {
       endLogisticsWork();
     }
   };
+  const silentPdfPrefetchInFlight = /* @__PURE__ */ new Set();
+  const runSilentPdfPrefetch = async (orderSns) => {
+    const pending = new Set(orderSns);
+    beginLogisticsWork("silent-prefetch-pdfs");
+    try {
+      for (let attempt = 1; attempt <= 6 && pending.size > 0; attempt += 1) {
+        const sns = [...pending];
+        const orders = await loadOrdersForShipScoped(
+          sns.map((sn) => `shopee-${sn}`),
+          sns
+        );
+        const result = await fetchBatchPdfDocumentsByShop(
+          orders,
+          sns,
+          Date.now() + BATCH_PRINT_DEADLINE_MS,
+          `Silent Prefetch ${attempt}/6`
+        );
+        const publicPdfDir = import_path17.default.join(APP_ROOT11, "public", "pdfs");
+        import_fs16.default.mkdirSync(publicPdfDir, { recursive: true });
+        for (const document2 of result.documents) {
+          for (const orderSn of document2.orderSns) {
+            const filename = buildCachedLabelFilename([orderSn]);
+            import_fs16.default.writeFileSync(import_path17.default.join(publicPdfDir, filename), document2.buffer);
+            pending.delete(orderSn);
+          }
+        }
+        if (pending.size > 0 && attempt < 6) await sleep2(3e3);
+      }
+      console.log(
+        `[Silent Prefetch] DONE cached=${orderSns.length - pending.size}/${orderSns.length}` + (pending.size ? ` pending=${[...pending].join(",")}` : "")
+      );
+    } catch (err) {
+      console.error("[Silent Prefetch] background error:", err?.stack || err);
+    } finally {
+      for (const orderSn of orderSns) silentPdfPrefetchInFlight.delete(orderSn);
+      endLogisticsWork();
+    }
+  };
+  const silentPrefetchPdfsRoute = (req, res) => {
+    const cleanSns = [
+      ...new Set(
+        (Array.isArray(req.body?.orderSns) ? req.body.orderSns : []).map((sn) => String(sn || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
+      )
+    ];
+    if (cleanSns.length === 0) {
+      return res.status(400).json({ success: false, message: "Thi\u1EBFu danh s\xE1ch orderSns." });
+    }
+    const queued = cleanSns.filter((orderSn) => {
+      if (silentPdfPrefetchInFlight.has(orderSn)) return false;
+      silentPdfPrefetchInFlight.add(orderSn);
+      return true;
+    });
+    res.status(200).json({
+      success: true,
+      accepted: queued.length,
+      skippedInFlight: cleanSns.length - queued.length
+    });
+    if (queued.length > 0) {
+      setImmediate(() => {
+        void runSilentPdfPrefetch(queued);
+      });
+    }
+  };
   app.post("/api/orders/fast-process", authMiddleware, fastProcessRouteGuard);
   app.post("/api/shopee/orders/fast-process", authMiddleware, fastProcessRouteGuard);
   app.post("/api/orders/confirm", authMiddleware, confirmOnlyRoute);
+  app.post("/api/orders/batch-confirm", authMiddleware, confirmOnlyRoute);
   app.post("/api/orders/get-pdf", authMiddleware, getPdfRoute);
   app.post("/api/orders/batch-confirm-print", authMiddleware, batchConfirmPrintRoute);
   app.post("/api/orders/batch-print-only", authMiddleware, batchPrintOnlyRoute);
+  app.post("/api/orders/silent-prefetch-pdfs", authMiddleware, silentPrefetchPdfsRoute);
   app.get("/api/orders/download-pdf/:orderSn", downloadPdfRoute);
   app.use("/api/orders", authMiddleware, ordersRoutes);
   app.post("/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrders);
