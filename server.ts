@@ -18550,17 +18550,10 @@ async function startServer() {
 
       // Bước 5: Lưu file gộp
       const mergedBytes = await mergedPdf.save();
-      const publicPdfDir = path.join(APP_ROOT, "public", "pdfs");
-      if (!fs.existsSync(publicPdfDir)) {
-        fs.mkdirSync(publicPdfDir, { recursive: true });
-      }
-
       const batchFilename = `batch-${Date.now()}.pdf`;
-      const batchPath = path.join(publicPdfDir, batchFilename);
-      fs.writeFileSync(batchPath, mergedBytes);
-
-      const backendBaseUrl = resolveLabelsPublicBaseUrl();
-      const batchUrl = `${backendBaseUrl}/pdfs/${batchFilename}`;
+      putLabelMem(batchFilename, Buffer.from(mergedBytes), "application/pdf");
+      const batchUrl = absoluteLabelUrl(`/api/public/labels/${batchFilename}`);
+      if (!batchUrl) throw new Error("Không tạo được URL PDF gộp sau khi lưu file.");
 
       const failedOrders = [...failedResults, ...pdfFailures.values()];
       const failedPdfSns = new Set([...pdfFailures.values()].map((item) => item.orderSn));
@@ -18831,17 +18824,10 @@ async function startServer() {
 
       // Lưu file gộp
       const mergedBytes = await mergedPdf.save();
-      const publicPdfDir = path.join(APP_ROOT, "public", "pdfs");
-      if (!fs.existsSync(publicPdfDir)) {
-        fs.mkdirSync(publicPdfDir, { recursive: true });
-      }
-
       const batchFilename = `reprint-${Date.now()}.pdf`;
-      const batchPath = path.join(publicPdfDir, batchFilename);
-      fs.writeFileSync(batchPath, mergedBytes);
-
-      const backendBaseUrl = resolveLabelsPublicBaseUrl();
-      const batchUrl = `${backendBaseUrl}/pdfs/${batchFilename}`;
+      putLabelMem(batchFilename, Buffer.from(mergedBytes), "application/pdf");
+      const batchUrl = absoluteLabelUrl(`/api/public/labels/${batchFilename}`);
+      if (!batchUrl) throw new Error("Không tạo được URL PDF gộp sau khi lưu file.");
 
       const failedOrders = [...pdfFailures.values()];
       const failedPdfSns = new Set(failedOrders.map((item) => item.orderSn));

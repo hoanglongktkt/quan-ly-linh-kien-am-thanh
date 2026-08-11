@@ -131084,15 +131084,10 @@ async function startServer() {
         });
       }
       const mergedBytes = await mergedPdf.save();
-      const publicPdfDir = import_path17.default.join(APP_ROOT11, "public", "pdfs");
-      if (!import_fs16.default.existsSync(publicPdfDir)) {
-        import_fs16.default.mkdirSync(publicPdfDir, { recursive: true });
-      }
       const batchFilename = `batch-${Date.now()}.pdf`;
-      const batchPath = import_path17.default.join(publicPdfDir, batchFilename);
-      import_fs16.default.writeFileSync(batchPath, mergedBytes);
-      const backendBaseUrl = resolveLabelsPublicBaseUrl();
-      const batchUrl = `${backendBaseUrl}/pdfs/${batchFilename}`;
+      putLabelMem(batchFilename, Buffer.from(mergedBytes), "application/pdf");
+      const batchUrl = absoluteLabelUrl(`/api/public/labels/${batchFilename}`);
+      if (!batchUrl) throw new Error("Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c URL PDF g\u1ED9p sau khi l\u01B0u file.");
       const failedOrders = [...failedResults, ...pdfFailures.values()];
       const failedPdfSns = new Set([...pdfFailures.values()].map((item) => item.orderSn));
       const printedOrders = printedFromBatch.filter((orderSn) => !failedPdfSns.has(orderSn));
@@ -131310,15 +131305,10 @@ async function startServer() {
         });
       }
       const mergedBytes = await mergedPdf.save();
-      const publicPdfDir = import_path17.default.join(APP_ROOT11, "public", "pdfs");
-      if (!import_fs16.default.existsSync(publicPdfDir)) {
-        import_fs16.default.mkdirSync(publicPdfDir, { recursive: true });
-      }
       const batchFilename = `reprint-${Date.now()}.pdf`;
-      const batchPath = import_path17.default.join(publicPdfDir, batchFilename);
-      import_fs16.default.writeFileSync(batchPath, mergedBytes);
-      const backendBaseUrl = resolveLabelsPublicBaseUrl();
-      const batchUrl = `${backendBaseUrl}/pdfs/${batchFilename}`;
+      putLabelMem(batchFilename, Buffer.from(mergedBytes), "application/pdf");
+      const batchUrl = absoluteLabelUrl(`/api/public/labels/${batchFilename}`);
+      if (!batchUrl) throw new Error("Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c URL PDF g\u1ED9p sau khi l\u01B0u file.");
       const failedOrders = [...pdfFailures.values()];
       const failedPdfSns = new Set(failedOrders.map((item) => item.orderSn));
       const printedOrders = printedFromBatch.filter((orderSn) => !failedPdfSns.has(orderSn));
