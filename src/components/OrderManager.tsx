@@ -4899,31 +4899,46 @@ export default function OrderManager({
     try {
       setProgressMessage('Đang gọi API gộp PDF...');
       
-      const response = await fetch('/api/orders/batch-print-only', {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ orderSns }),
-      });
-
-      const data = await readResponseJson<any>(response);
+      // Thêm timeout 10 phút cho nhiều đơn
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10 * 60 * 1000);
       
-      if (response.ok && data.success && data.url) {
-        setProgressMessage('Đang mở PDF...');
-        window.open(data.url, '_blank');
-        markProgressComplete(`Đã gộp ${data.pdfCount} PDF thành 1 file!`);
-        setSelectedOrderIds([]);
-        
-        onAddLog({
-          id: `log-${Date.now()}`,
-          timestamp: new Date().toISOString(),
-          channel: 'shopee',
-          type: 'stock_sync',
-          status: 'success',
-          message: `[IN LẠI] ${data.pdfCount} đơn → ${data.filename}`,
+      try {
+        const response = await fetch('/api/orders/batch-print-only', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ orderSns }),
+          signal: controller.signal,
         });
-      } else {
-        alert(`In lại thất bại: ${data.message || 'Lỗi không xác định'}`);
-        clearShipProgressOverlay();
+
+        clearTimeout(timeoutId);
+        const data = await readResponseJson<any>(response);
+        
+        if (response.ok && data.success && data.url) {
+          setProgressMessage('Đang mở PDF...');
+          window.open(data.url, '_blank');
+          markProgressComplete(`Đã gộp ${data.pdfCount} PDF thành 1 file!`);
+          setSelectedOrderIds([]);
+          
+          onAddLog({
+            id: `log-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            channel: 'shopee',
+            type: 'stock_sync',
+            status: 'success',
+            message: `[IN LẠI] ${data.pdfCount} đơn → ${data.filename}`,
+          });
+        } else {
+          alert(`In lại thất bại: ${data.message || 'Lỗi không xác định'}`);
+          clearShipProgressOverlay();
+        }
+      } catch (fetchErr: any) {
+        clearTimeout(timeoutId);
+        if (fetchErr.name === 'AbortError') {
+          alert('Thao tác quá lâu và đã bị hủy. Vui lòng thử lại với ít đơn hơn hoặc kiểm tra kết nối.');
+        } else {
+          throw fetchErr;
+        }
       }
     } catch (err) {
       console.error('[Reprint] Error:', err);
