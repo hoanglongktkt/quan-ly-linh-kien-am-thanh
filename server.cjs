@@ -130761,30 +130761,48 @@ async function startServer() {
         });
       }
       console.log(`[Batch Confirm Print] \u0110\xE3 x\xE1c nh\u1EADn ${successSns.length}/${toShip.length} \u0111\u01A1n - b\u1EAFt \u0111\u1EA7u l\u1EA5y PDF...`);
-      const mergedPdf = await import_pdf_lib.PDFDocument.create();
+      async function processPdfConcurrently(items, concurrency, processFn) {
+        const results2 = [];
+        let index = 0;
+        async function worker() {
+          while (index < items.length) {
+            const currentIndex = index++;
+            const item = items[currentIndex];
+            try {
+              const result = await processFn(item);
+              results2[currentIndex] = result;
+            } catch (err) {
+              console.error(`[Worker] Error processing item ${currentIndex}:`, err);
+            }
+          }
+        }
+        const workers = Array(Math.min(concurrency, items.length)).fill(null).map(() => worker());
+        await Promise.all(workers);
+        return results2;
+      }
       const pdfBuffers = [];
-      for (const orderSn of successSns) {
+      const processSingleOrder = async (orderSn) => {
         try {
           const order = orders.find(
             (item) => String(item?.orderSn || item?.order_sn || "").replace(/^shopee-/i, "").trim() === orderSn
           );
           if (!order) {
             console.warn(`[Batch Confirm Print] Kh\xF4ng t\xECm th\u1EA5y order ${orderSn} trong danh s\xE1ch`);
-            continue;
+            return null;
           }
           const storedShopId = String(
             order.shopId || order.shop_id || order.accountId || order.account_id || ""
           ).trim();
           if (!storedShopId) {
             console.warn(`[Batch Confirm Print] \u0110\u01A1n ${orderSn} thi\u1EBFu shopId`);
-            continue;
+            return null;
           }
           const auth = await getShopeeAccessTokenForApi(storedShopId);
           const accessToken = String(auth?.token || "").trim();
           const shopId = String(auth?.apiShopId || "").trim();
           if (!accessToken || !shopId) {
             console.warn(`[Batch Confirm Print] Kh\xF4ng c\xF3 token cho ${orderSn}`);
-            continue;
+            return null;
           }
           try {
             await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, [order]);
@@ -130794,12 +130812,12 @@ async function startServer() {
           const row = buildShopeeShippingDocOrderRow(order);
           if (!row || !row.order_sn || !row.package_number && !row.tracking_number) {
             console.warn(`[Batch Confirm Print] \u0110\u01A1n ${orderSn} thi\u1EBFu shipping data`);
-            continue;
+            return null;
           }
           const createResult = await shopeeCreateShippingDocument(shopId, accessToken, [row]);
           if (createResult?.error) {
             console.warn(`[Batch Confirm Print] Create doc ${orderSn} failed:`, createResult.error);
-            continue;
+            return null;
           }
           let pdfReady = false;
           for (let attempt = 1; attempt <= 20; attempt++) {
@@ -130819,7 +130837,7 @@ async function startServer() {
           }
           if (!pdfReady) {
             console.warn(`[Batch Confirm Print] PDF ${orderSn} ch\u01B0a READY sau 60s`);
-            continue;
+            return null;
           }
           const apiPath = "/api/v2/logistics/download_shipping_document";
           const timestamp = Math.floor(Date.now() / 1e3);
@@ -130836,15 +130854,18 @@ async function startServer() {
           const contentType = String(downloadRes.headers.get("content-type") || "").toLowerCase();
           if (contentType.includes("application/json") || !downloadRes.ok || !downloadRes.body) {
             console.warn(`[Batch Confirm Print] Download ${orderSn} failed`);
-            continue;
+            return null;
           }
           const buffer = await downloadRes.arrayBuffer();
-          pdfBuffers.push({ orderSn, buffer });
           console.log(`[Batch Confirm Print] Downloaded PDF ${orderSn} (${buffer.byteLength} bytes)`);
+          return { orderSn, buffer };
         } catch (err) {
           console.error(`[Batch Confirm Print] L\u1ED7i PDF ${orderSn}:`, err?.stack || err);
+          return null;
         }
-      }
+      };
+      const results = await processPdfConcurrently(successSns, 5, processSingleOrder);
+      pdfBuffers.push(...results.filter((r2) => r2 !== null));
       if (pdfBuffers.length === 0) {
         return res.status(400).json({
           success: false,
@@ -130853,6 +130874,7 @@ async function startServer() {
         });
       }
       console.log(`[Batch Confirm Print] G\u1ED9p ${pdfBuffers.length} PDF...`);
+      const mergedPdf = await import_pdf_lib.PDFDocument.create();
       for (const { orderSn, buffer } of pdfBuffers) {
         try {
           const sourcePdf = await import_pdf_lib.PDFDocument.load(buffer, { ignoreEncryption: true });

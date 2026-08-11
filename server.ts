@@ -18161,11 +18161,40 @@ async function startServer() {
 
       console.log(`[Batch Confirm Print] Đã xác nhận ${successSns.length}/${toShip.length} đơn - bắt đầu lấy PDF...`);
 
-      // Bước 3: Lấy PDF và gộp
-      const mergedPdf = await PDFDocument.create();
-      const pdfBuffers: { orderSn: string; buffer: ArrayBuffer }[] = [];
+      // Helper: Xử lý song song có giới hạn concurrency
+      async function processPdfConcurrently<T, R>(
+        items: T[],
+        concurrency: number,
+        processFn: (item: T) => Promise<R>
+      ): Promise<R[]> {
+        const results: R[] = [];
+        let index = 0;
+        
+        async function worker() {
+          while (index < items.length) {
+            const currentIndex = index++;
+            const item = items[currentIndex];
+            try {
+              const result = await processFn(item);
+              results[currentIndex] = result;
+            } catch (err) {
+              console.error(`[Worker] Error processing item ${currentIndex}:`, err);
+            }
+          }
+        }
+        
+        const workers = Array(Math.min(concurrency, items.length))
+          .fill(null)
+          .map(() => worker());
+        
+        await Promise.all(workers);
+        return results;
+      }
 
-      for (const orderSn of successSns) {
+      // Bước 3: Lấy PDF song song
+      const pdfBuffers: { orderSn: string; buffer: ArrayBuffer }[] = [];
+      
+      const processSingleOrder = async (orderSn: string): Promise<{ orderSn: string; buffer: ArrayBuffer } | null> => {
         try {
           const order = orders.find(
             (item: any) =>
@@ -18176,7 +18205,7 @@ async function startServer() {
 
           if (!order) {
             console.warn(`[Batch Confirm Print] Không tìm thấy order ${orderSn} trong danh sách`);
-            continue;
+            return null;
           }
 
           const storedShopId = String(
@@ -18185,7 +18214,7 @@ async function startServer() {
           
           if (!storedShopId) {
             console.warn(`[Batch Confirm Print] Đơn ${orderSn} thiếu shopId`);
-            continue;
+            return null;
           }
 
           const auth = await getShopeeAccessTokenForApi(storedShopId);
@@ -18194,7 +18223,7 @@ async function startServer() {
           
           if (!accessToken || !shopId) {
             console.warn(`[Batch Confirm Print] Không có token cho ${orderSn}`);
-            continue;
+            return null;
           }
 
           // Enrich package/tracking
@@ -18207,14 +18236,14 @@ async function startServer() {
           const row = buildShopeeShippingDocOrderRow(order);
           if (!row || !row.order_sn || (!row.package_number && !row.tracking_number)) {
             console.warn(`[Batch Confirm Print] Đơn ${orderSn} thiếu shipping data`);
-            continue;
+            return null;
           }
 
           // Create shipping document
           const createResult = await shopeeCreateShippingDocument(shopId, accessToken, [row]);
           if (createResult?.error) {
             console.warn(`[Batch Confirm Print] Create doc ${orderSn} failed:`, createResult.error);
-            continue;
+            return null;
           }
 
           // Polling (tối đa 20 lần × 3s = 60s)
@@ -18241,7 +18270,7 @@ async function startServer() {
 
           if (!pdfReady) {
             console.warn(`[Batch Confirm Print] PDF ${orderSn} chưa READY sau 60s`);
-            continue;
+            return null;
           }
 
           // Download PDF từ Shopee
@@ -18263,18 +18292,23 @@ async function startServer() {
           
           if (contentType.includes("application/json") || !downloadRes.ok || !downloadRes.body) {
             console.warn(`[Batch Confirm Print] Download ${orderSn} failed`);
-            continue;
+            return null;
           }
 
           // Đọc buffer
           const buffer = await downloadRes.arrayBuffer();
-          pdfBuffers.push({ orderSn, buffer });
-
           console.log(`[Batch Confirm Print] Downloaded PDF ${orderSn} (${buffer.byteLength} bytes)`);
+          
+          return { orderSn, buffer };
         } catch (err: any) {
           console.error(`[Batch Confirm Print] Lỗi PDF ${orderSn}:`, err?.stack || err);
+          return null;
         }
-      }
+      };
+
+      // Xử lý 5 đơn song song
+      const results = await processPdfConcurrently(successSns, 5, processSingleOrder);
+      pdfBuffers.push(...results.filter((r): r is { orderSn: string; buffer: ArrayBuffer } => r !== null));
 
       if (pdfBuffers.length === 0) {
         return res.status(400).json({
@@ -18286,6 +18320,8 @@ async function startServer() {
 
       // Bước 4: Gộp tất cả PDF
       console.log(`[Batch Confirm Print] Gộp ${pdfBuffers.length} PDF...`);
+      const mergedPdf = await PDFDocument.create();
+      
       for (const { orderSn, buffer } of pdfBuffers) {
         try {
           const sourcePdf = await PDFDocument.load(buffer, { ignoreEncryption: true });
