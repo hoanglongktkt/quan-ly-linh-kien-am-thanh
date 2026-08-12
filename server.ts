@@ -19271,6 +19271,7 @@ async function startServer() {
   };
 
   const SILENT_PREFETCH_DEADLINE_MS = 45_000;
+  const SILENT_PREFETCH_CONCURRENCY = 5;
   const silentPdfPrefetchInFlight = new Set<string>();
   const prefetchStatus = new Map<string, PrefetchStatus>();
   let prefetchBatchSequence = 0;
@@ -19297,7 +19298,8 @@ async function startServer() {
     try {
       const publicPdfDir = path.join(APP_ROOT, "public", "pdfs");
       let nextIndex = 0;
-      const workerCount = Math.min(3, orderSns.length);
+      // Promise pool: tối đa 5 đơn chạy song song, không tạo request Shopee ồ ạt.
+      const workerCount = Math.min(SILENT_PREFETCH_CONCURRENCY, orderSns.length);
       const runWorker = async () => {
         while (nextIndex < orderSns.length) {
           const orderSn = orderSns[nextIndex++];

@@ -131783,6 +131783,7 @@ async function startServer() {
     }
   };
   const SILENT_PREFETCH_DEADLINE_MS = 45e3;
+  const SILENT_PREFETCH_CONCURRENCY = 5;
   const silentPdfPrefetchInFlight = /* @__PURE__ */ new Set();
   const prefetchStatus = /* @__PURE__ */ new Map();
   let prefetchBatchSequence = 0;
@@ -131808,7 +131809,7 @@ async function startServer() {
     try {
       const publicPdfDir = import_path17.default.join(APP_ROOT11, "public", "pdfs");
       let nextIndex = 0;
-      const workerCount = Math.min(3, orderSns.length);
+      const workerCount = Math.min(SILENT_PREFETCH_CONCURRENCY, orderSns.length);
       const runWorker = async () => {
         while (nextIndex < orderSns.length) {
           const orderSn = orderSns[nextIndex++];
