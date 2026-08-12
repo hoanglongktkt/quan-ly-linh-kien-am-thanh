@@ -8738,9 +8738,8 @@ async function shopeeCreateShippingDocument(
       const order_sn = String(row?.order_sn || "").trim();
       const package_number = String(row?.package_number || "").trim();
       const rawTn = String(row?.tracking_number || "").trim();
-      // tracking hợp lệ; 0FG / mã nội bộ Shopee → gửi "" (không omit field).
-      const tracking_number =
-        rawTn && !/^0FG/i.test(rawTn) && !isShopeeInternalTrackingCode(rawTn) ? rawTn : "";
+      // Giữ nguyên tracking_number thực tế (kể cả mã OFG/SPX/J&T/GHN); không regex chặn.
+      const tracking_number = rawTn ? rawTn : "";
       // ÉP CỨNG trong TỪNG item — không tin caller, không để thiếu field.
       return {
         order_sn,

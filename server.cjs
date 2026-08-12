@@ -124326,7 +124326,7 @@ async function shopeeCreateShippingDocument(shopId, accessToken, orderList, sign
     const order_sn = String(row?.order_sn || "").trim();
     const package_number = String(row?.package_number || "").trim();
     const rawTn = String(row?.tracking_number || "").trim();
-    const tracking_number = rawTn && !/^0FG/i.test(rawTn) && !isShopeeInternalTrackingCode2(rawTn) ? rawTn : "";
+    const tracking_number = rawTn ? rawTn : "";
     return {
       order_sn,
       package_number,
