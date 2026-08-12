@@ -8863,7 +8863,11 @@ async function shopeeCreateShippingDocument(
 async function shopeeGetShippingDocumentResult(
   shopId: string,
   accessToken: string,
-  orderList: { order_sn: string; package_number: string }[],
+  orderList: {
+    order_sn: string;
+    package_number: string;
+    shipping_document_type?: string;
+  }[],
   signal?: AbortSignal,
 ) {
   if (orderList.some((row) => !String(row?.package_number || "").trim())) {
@@ -8878,7 +8882,7 @@ async function shopeeGetShippingDocumentResult(
   const pollOrderList = orderList.map((row) => ({
     order_sn: String(row?.order_sn || "").trim(),
     package_number: String(row?.package_number || "").trim(),
-    shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE,
+    shipping_document_type: "THERMAL_AIR_WAYBILL" as const,
   }));
 
   const res = await fetchWithTimeout(url, {
@@ -8932,7 +8936,7 @@ async function shopeeDownloadShippingDocument(
   const downloadOrderList = orderList.map((row) => ({
     order_sn: String(row?.order_sn || "").trim(),
     package_number: String(row?.package_number || "").trim(),
-    shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE,
+    shipping_document_type: "THERMAL_AIR_WAYBILL" as const,
   }));
 
   console.log(`[Shopee API] Bắt đầu tải PDF batch n=${downloadOrderList.length} shop=${shopId}`);
@@ -9118,10 +9122,19 @@ async function fetchSingleOrderWaybillFromRows(
     console.log(
       `[Shopee Print] B3 CREATE ${sn} (${label}) packages=${rows.map((r) => r.package_number).join(",")}`,
     );
+    // BẮT BUỘC: mỗi item order_list phải có shipping_document_type (thiếu → batch_api_all_failed).
+    const order_list = rows.map((r) => ({
+      order_sn: String(r.order_sn || "").trim(),
+      package_number: String(r.package_number || "").trim(),
+      shipping_document_type: "THERMAL_AIR_WAYBILL" as const,
+      ...(String(r.tracking_number || "").trim()
+        ? { tracking_number: String(r.tracking_number).trim() }
+        : {}),
+    }));
     const createResult = await shopeeCreateShippingDocument(
       shopId,
       accessToken,
-      rows,
+      order_list,
       opts?.signal,
     );
     const createTopError = String(createResult?.error || "").trim();
@@ -9425,6 +9438,7 @@ async function batchDownloadShopeeWaybillPdf(
       .map((row) => {
         const entry: Partial<ShopeeWaybillOrderRow> = {
           order_sn: String(row.order_sn || "").trim(),
+          shipping_document_type: "THERMAL_AIR_WAYBILL",
         };
         const pkg = String(row.package_number || "").trim();
         const tn = String(row.tracking_number || "").trim();

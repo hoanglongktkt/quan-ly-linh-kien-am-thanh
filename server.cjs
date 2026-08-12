@@ -124439,7 +124439,7 @@ async function shopeeGetShippingDocumentResult(shopId, accessToken, orderList, s
   const pollOrderList = orderList.map((row) => ({
     order_sn: String(row?.order_sn || "").trim(),
     package_number: String(row?.package_number || "").trim(),
-    shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
+    shipping_document_type: "THERMAL_AIR_WAYBILL"
   }));
   const res = await fetchWithTimeout(url2, {
     method: "POST",
@@ -124480,7 +124480,7 @@ async function shopeeDownloadShippingDocument(shopId, accessToken, orderList, fi
   const downloadOrderList = orderList.map((row) => ({
     order_sn: String(row?.order_sn || "").trim(),
     package_number: String(row?.package_number || "").trim(),
-    shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
+    shipping_document_type: "THERMAL_AIR_WAYBILL"
   }));
   console.log(`[Shopee API] B\u1EAFt \u0111\u1EA7u t\u1EA3i PDF batch n=${downloadOrderList.length} shop=${shopId}`);
   const res = await fetchWithTimeout(url2, {
@@ -124608,10 +124608,16 @@ async function fetchSingleOrderWaybillFromRows(shopId, accessToken, orderSn, row
     console.log(
       `[Shopee Print] B3 CREATE ${sn} (${label}) packages=${rows.map((r2) => r2.package_number).join(",")}`
     );
+    const order_list = rows.map((r2) => ({
+      order_sn: String(r2.order_sn || "").trim(),
+      package_number: String(r2.package_number || "").trim(),
+      shipping_document_type: "THERMAL_AIR_WAYBILL",
+      ...String(r2.tracking_number || "").trim() ? { tracking_number: String(r2.tracking_number).trim() } : {}
+    }));
     const createResult = await shopeeCreateShippingDocument(
       shopId,
       accessToken,
-      rows,
+      order_list,
       opts?.signal
     );
     const createTopError = String(createResult?.error || "").trim();
@@ -124850,7 +124856,8 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
     }
     const enriched = orderList.map((row) => {
       const entry = {
-        order_sn: String(row.order_sn || "").trim()
+        order_sn: String(row.order_sn || "").trim(),
+        shipping_document_type: "THERMAL_AIR_WAYBILL"
       };
       const pkg = String(row.package_number || "").trim();
       const tn = String(row.tracking_number || "").trim();
