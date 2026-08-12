@@ -108333,6 +108333,44 @@ async function handOverOrderToCarrierByIndex(orders, index, opts) {
 
 // controllers/ordersController.js
 var APP_ROOT9 = resolveAppRoot3();
+var LABELS_DIR = import_path14.default.join(APP_ROOT9, "storage", "labels");
+function hasOrderPdfOnDisk(order) {
+  const filenames = /* @__PURE__ */ new Set();
+  const addFilename = (raw) => {
+    if (!raw) return;
+    let value = String(raw).trim();
+    try {
+      value = decodeURIComponent(value);
+    } catch {
+    }
+    const fromUrl = value.match(/\/api\/public\/labels\/([^/?#]+)/i)?.[1];
+    const filename = import_path14.default.basename(fromUrl || value);
+    if (/\.pdf$/i.test(filename)) filenames.add(filename);
+  };
+  addFilename(order?.pdfFilename);
+  addFilename(order?.data?.pdfFilename);
+  addFilename(order?.labelUrl);
+  addFilename(order?.pdfUrl);
+  addFilename(order?.waybill_url);
+  addFilename(order?.data?.labelUrl);
+  addFilename(order?.data?.pdfUrl);
+  addFilename(order?.data?.waybill_url);
+  const orderSn = String(order?.orderSn || order?.id || "").replace(/^shopee-/i, "").replace(/[^a-zA-Z0-9_-]/g, "");
+  if (orderSn) {
+    filenames.add(`order_${orderSn}.pdf`);
+    filenames.add(`${orderSn}.pdf`);
+  }
+  for (const filename of filenames) {
+    if (import_fs14.default.existsSync(import_path14.default.join(LABELS_DIR, filename))) return true;
+  }
+  return false;
+}
+function attachPdfAvailability(orders) {
+  return orders.map((order) => ({
+    ...order,
+    hasPdf: hasOrderPdfOnDisk(order)
+  }));
+}
 function parseShopIdsParam(rawShopIds, rawShopId) {
   const out = [];
   const seen = /* @__PURE__ */ new Set();
@@ -108617,8 +108655,10 @@ async function refreshOrders(req, res) {
       }
     }
     mergedOrders = filterOrdersByPrintStatus(mergedOrders, printStatus);
-    const orders = deps15.enrichOrdersWithShopNames(
-      deps15.enrichOrdersFromCatalog(mergedOrders, [])
+    const orders = attachPdfAvailability(
+      deps15.enrichOrdersWithShopNames(
+        deps15.enrichOrdersFromCatalog(mergedOrders, [])
+      )
     );
     const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / limit) || 1);
     const currentPage = Math.min(page, totalPages);
@@ -108814,8 +108854,10 @@ async function listOrders(req, res) {
           catalogErr?.message || catalogErr
         );
       }
-      const rows = deps15.enrichOrdersWithShopNames(
-        deps15.enrichOrdersFromCatalog(page.rows, products2)
+      const rows = attachPdfAvailability(
+        deps15.enrichOrdersWithShopNames(
+          deps15.enrichOrdersFromCatalog(page.rows, products2)
+        )
       );
       const totalPages = Math.max(
         1,
@@ -108908,8 +108950,10 @@ async function listOrders(req, res) {
     rawOrders = rawOrders.slice(0, Math.min(Math.floor(rawLimit), 5e3));
   }
   const products = await deps15.loadProductsForOrders(rawOrders);
-  const orders = deps15.enrichOrdersWithShopNames(
-    deps15.enrichOrdersFromCatalog(rawOrders, products)
+  const orders = attachPdfAvailability(
+    deps15.enrichOrdersWithShopNames(
+      deps15.enrichOrdersFromCatalog(rawOrders, products)
+    )
   );
   console.log(
     `[GET /api/orders] READ-ONLY return length=${orders.length} tab=${tab || "(all)"} mongoReady=${isMongoReady()}`
@@ -118152,7 +118196,7 @@ process.on("unhandledRejection", (err) => {
 var WAYBILLS_DIR = import_path17.default.join(APP_ROOT11, "storage", "waybills");
 var LEGACY_PUBLIC_PRINTS_DIR = import_path17.default.join(APP_ROOT11, "public", "prints");
 var WAYBILL_FILE_RE = /\.(pdf|zip|html)$/i;
-var LABELS_DIR = import_path17.default.join(APP_ROOT11, "storage", "labels");
+var LABELS_DIR2 = import_path17.default.join(APP_ROOT11, "storage", "labels");
 var LABEL_DISK_TTL_MS = 24 * 60 * 60 * 1e3;
 var LABEL_RAM_TTL_MS = 60 * 60 * 1e3;
 var labelMemCache = /* @__PURE__ */ new Map();
@@ -118160,14 +118204,14 @@ var LABEL_MEM_MAX_ENTRIES = 48;
 var LABEL_MEM_MAX_BYTES = 96 * 1024 * 1024;
 function ensureLabelsDir() {
   try {
-    if (!import_fs16.default.existsSync(LABELS_DIR)) import_fs16.default.mkdirSync(LABELS_DIR, { recursive: true });
+    if (!import_fs16.default.existsSync(LABELS_DIR2)) import_fs16.default.mkdirSync(LABELS_DIR2, { recursive: true });
   } catch (err) {
     console.error("[Labels] Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c storage/labels:", err);
   }
 }
 function assertLabelsDirWritable() {
   ensureLabelsDir();
-  const probe = import_path17.default.join(LABELS_DIR, `.write_probe_${process.pid}`);
+  const probe = import_path17.default.join(LABELS_DIR2, `.write_probe_${process.pid}`);
   try {
     import_fs16.default.writeFileSync(probe, "ok");
     import_fs16.default.unlinkSync(probe);
@@ -118190,7 +118234,7 @@ function buildCachedLabelFilename(orderSns) {
 function getValidLabelDiskFile(filename) {
   const safe = safeLabelFilename(filename);
   if (!safe) return null;
-  const filePath = import_path17.default.join(LABELS_DIR, safe);
+  const filePath = import_path17.default.join(LABELS_DIR2, safe);
   try {
     if (!import_fs16.default.existsSync(filePath)) return null;
     const stat3 = import_fs16.default.statSync(filePath);
@@ -118240,14 +118284,14 @@ function removeExistingLabelFilesForOrderSns(orderSns) {
   if (sns.length === 0) return 0;
   let deleted = 0;
   try {
-    for (const name of import_fs16.default.readdirSync(LABELS_DIR)) {
+    for (const name of import_fs16.default.readdirSync(LABELS_DIR2)) {
       if (!/\.pdf$/i.test(name)) continue;
       const hit = sns.some(
         (sn) => name === `${sn}.pdf` || name.startsWith(`${sn}_`) || name.startsWith(`order_${sn}_`)
       );
       if (!hit) continue;
       try {
-        import_fs16.default.unlinkSync(import_path17.default.join(LABELS_DIR, name));
+        import_fs16.default.unlinkSync(import_path17.default.join(LABELS_DIR2, name));
         labelMemCache.delete(name);
         deleted += 1;
       } catch {
@@ -118287,7 +118331,7 @@ function putLabelMem(filename, buffer, contentType) {
       expires: Date.now() + LABEL_RAM_TTL_MS,
       contentType: "application/pdf"
     });
-    const dest = import_path17.default.join(LABELS_DIR, safe);
+    const dest = import_path17.default.join(LABELS_DIR2, safe);
     console.log(`[Labels] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${dest}`);
     setImmediate(() => {
       try {
@@ -118316,7 +118360,7 @@ function getLabelMem(filename) {
       return { buf: ram.buf, contentType: ram.contentType || "application/pdf" };
     }
   }
-  const filePath = import_path17.default.join(LABELS_DIR, safe);
+  const filePath = import_path17.default.join(LABELS_DIR2, safe);
   try {
     if (!import_fs16.default.existsSync(filePath)) return null;
     const st = import_fs16.default.statSync(filePath);
@@ -118359,7 +118403,7 @@ function assertLabelFileReady(filename) {
   if (!isPdfBuffer(hit.buf)) {
     throw new Error(`File v\u1EADn \u0111\u01A1n kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7: ${safe}`);
   }
-  const diskPath = import_path17.default.join(LABELS_DIR, safe);
+  const diskPath = import_path17.default.join(LABELS_DIR2, safe);
   if (import_fs16.default.existsSync(diskPath)) {
     const st = import_fs16.default.statSync(diskPath);
     if (st.size <= 0) {
@@ -118380,9 +118424,9 @@ function cleanupExpiredLabelFiles() {
   try {
     ensureLabelsDir();
     const cutoff = now - LABEL_DISK_TTL_MS;
-    for (const name of import_fs16.default.readdirSync(LABELS_DIR)) {
+    for (const name of import_fs16.default.readdirSync(LABELS_DIR2)) {
       if (!WAYBILL_FILE_RE.test(name)) continue;
-      const full = import_path17.default.join(LABELS_DIR, name);
+      const full = import_path17.default.join(LABELS_DIR2, name);
       try {
         const st = import_fs16.default.statSync(full);
         if (st.size <= 0 || st.mtimeMs < cutoff) {
@@ -118435,7 +118479,7 @@ function scheduleWaybillsCleanup() {
 }
 try {
   assertLabelsDirWritable();
-  console.log(`[Labels] LABELS_DIR=${LABELS_DIR} (writable OK)`);
+  console.log(`[Labels] LABELS_DIR=${LABELS_DIR2} (writable OK)`);
 } catch (err) {
   console.error("[Labels] BOOT: storage/labels kh\xF4ng ghi \u0111\u01B0\u1EE3c \u2014 in \u0111\u01A1n s\u1EBD th\u1EA5t b\u1EA1i:", err);
 }
@@ -118469,7 +118513,7 @@ function serveLabelPdfFromMem(filename, res) {
     }
     const hit = getLabelMem(safe);
     if (!hit || !hit.buf.length) {
-      console.warn(`[Labels] 404 \u2014 kh\xF4ng th\u1EA5y file: ${safe} (dir=${LABELS_DIR})`);
+      console.warn(`[Labels] 404 \u2014 kh\xF4ng th\u1EA5y file: ${safe} (dir=${LABELS_DIR2})`);
       return "not_found";
     }
     if (!isPdfBuffer(hit.buf, hit.contentType)) {
@@ -124342,7 +124386,7 @@ async function shopeeDownloadShippingDocument(shopId, accessToken, orderList, fi
   ensureLabelsDir();
   const safe = safeLabelFilename(filename);
   if (!safe) return { error: "invalid_filename", message: "T\xEAn file PDF cache kh\xF4ng h\u1EE3p l\u1EC7." };
-  const destination = import_path17.default.join(LABELS_DIR, safe);
+  const destination = import_path17.default.join(LABELS_DIR2, safe);
   const cached = getValidLabelDiskFile(safe);
   if (cached) {
     console.log(`[Shopee API] PDF cache HIT ${safe} (${cached.size} bytes) \u2014 b\u1ECF qua download`);
@@ -130418,7 +130462,7 @@ async function startServer() {
   const downloadPdfRoute = async (req, res) => {
     const orderSn = String(req.params.orderSn || "").replace(/^shopee-/i, "").trim();
     const expectedFilename = buildCachedLabelFilename([orderSn]);
-    const expectedPath = import_path17.default.join(LABELS_DIR, expectedFilename);
+    const expectedPath = import_path17.default.join(LABELS_DIR2, expectedFilename);
     const failDownload = (error, fallbackMessage) => {
       console.error("DEBUG DOWNLOAD PDF FAIL for order:", orderSn, error);
       try {
@@ -130957,7 +131001,7 @@ async function startServer() {
     const groups = /* @__PURE__ */ new Map();
     for (const orderSn of orderSns) {
       const cachedFilename = buildCachedLabelFilename([orderSn]);
-      const cachedFilePath = import_path17.default.join(LABELS_DIR, cachedFilename);
+      const cachedFilePath = import_path17.default.join(LABELS_DIR2, cachedFilename);
       if (import_fs16.default.existsSync(cachedFilePath)) {
         const cached = getValidLabelDiskFile(cachedFilename);
         if (cached) {
@@ -132669,8 +132713,8 @@ async function startServer() {
     }
     try {
       ensureLabelsDir();
-      const matches = import_fs16.default.readdirSync(LABELS_DIR).filter((name) => nameMatches(name)).map((name) => {
-        const full = import_path17.default.join(LABELS_DIR, name);
+      const matches = import_fs16.default.readdirSync(LABELS_DIR2).filter((name) => nameMatches(name)).map((name) => {
+        const full = import_path17.default.join(LABELS_DIR2, name);
         return { name, mtime: import_fs16.default.statSync(full).mtimeMs, size: import_fs16.default.statSync(full).size };
       }).filter((x2) => x2.size > 0).sort((a, b) => b.mtime - a.mtime);
       const newest = matches[0]?.name;
@@ -132966,7 +133010,7 @@ async function startServer() {
           for (const downloaded of fallback.documents) {
             for (const orderSn of downloaded.orderSns) {
               const filename = buildCachedLabelFilename([orderSn]);
-              const filePath = import_path17.default.join(LABELS_DIR, filename);
+              const filePath = import_path17.default.join(LABELS_DIR2, filename);
               if (!import_fs16.default.existsSync(filePath)) {
                 ensureLabelsDir();
                 import_fs16.default.writeFileSync(filePath, downloaded.buffer);

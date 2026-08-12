@@ -43,6 +43,53 @@ import {
 } from "../src/db/mongoStore.ts";
 
 const APP_ROOT = resolveAppRoot();
+const LABELS_DIR = path.join(APP_ROOT, "storage", "labels");
+
+/** Trạng thái PDF trả về UI phải phản ánh file thật trên ổ đĩa, không dùng cờ Mongo cũ. */
+function hasOrderPdfOnDisk(order) {
+  const filenames = new Set();
+  const addFilename = (raw) => {
+    if (!raw) return;
+    let value = String(raw).trim();
+    try {
+      value = decodeURIComponent(value);
+    } catch {
+      /* giữ nguyên giá trị nếu URL encode không hợp lệ */
+    }
+    const fromUrl = value.match(/\/api\/public\/labels\/([^/?#]+)/i)?.[1];
+    const filename = path.basename(fromUrl || value);
+    if (/\.pdf$/i.test(filename)) filenames.add(filename);
+  };
+
+  addFilename(order?.pdfFilename);
+  addFilename(order?.data?.pdfFilename);
+  addFilename(order?.labelUrl);
+  addFilename(order?.pdfUrl);
+  addFilename(order?.waybill_url);
+  addFilename(order?.data?.labelUrl);
+  addFilename(order?.data?.pdfUrl);
+  addFilename(order?.data?.waybill_url);
+
+  const orderSn = String(order?.orderSn || order?.id || "")
+    .replace(/^shopee-/i, "")
+    .replace(/[^a-zA-Z0-9_-]/g, "");
+  if (orderSn) {
+    filenames.add(`order_${orderSn}.pdf`);
+    filenames.add(`${orderSn}.pdf`);
+  }
+
+  for (const filename of filenames) {
+    if (fs.existsSync(path.join(LABELS_DIR, filename))) return true;
+  }
+  return false;
+}
+
+function attachPdfAvailability(orders) {
+  return orders.map((order) => ({
+    ...order,
+    hasPdf: hasOrderPdfOnDisk(order),
+  }));
+}
 
 /** Parse shop_ids từ query/body — CSV, array, hoặc shop_id đơn. */
 function parseShopIdsParam(rawShopIds, rawShopId) {
@@ -381,8 +428,10 @@ export async function refreshOrders(req, res) {
       }
     }
     mergedOrders = filterOrdersByPrintStatus(mergedOrders, printStatus);
-    const orders = deps.enrichOrdersWithShopNames(
-      deps.enrichOrdersFromCatalog(mergedOrders, []),
+    const orders = attachPdfAvailability(
+      deps.enrichOrdersWithShopNames(
+        deps.enrichOrdersFromCatalog(mergedOrders, []),
+      ),
     );
     const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / limit) || 1);
     const currentPage = Math.min(page, totalPages);
@@ -607,8 +656,10 @@ export async function listOrders(req, res) {
           catalogErr?.message || catalogErr,
         );
       }
-      const rows = deps.enrichOrdersWithShopNames(
-        deps.enrichOrdersFromCatalog(page.rows, products),
+      const rows = attachPdfAvailability(
+        deps.enrichOrdersWithShopNames(
+          deps.enrichOrdersFromCatalog(page.rows, products),
+        ),
       );
       const totalPages = Math.max(
         1,
@@ -754,8 +805,10 @@ export async function listOrders(req, res) {
   }
 
   const products = await deps.loadProductsForOrders(rawOrders);
-  const orders = deps.enrichOrdersWithShopNames(
-    deps.enrichOrdersFromCatalog(rawOrders, products),
+  const orders = attachPdfAvailability(
+    deps.enrichOrdersWithShopNames(
+      deps.enrichOrdersFromCatalog(rawOrders, products),
+    ),
   );
   console.log(
     `[GET /api/orders] READ-ONLY return length=${orders.length} tab=${tab || "(all)"} mongoReady=${isMongoReady()}`,

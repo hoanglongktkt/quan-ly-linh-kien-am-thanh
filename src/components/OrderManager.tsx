@@ -7299,9 +7299,13 @@ export default function OrderManager({
                           <button
                             type="button"
                             onClick={(e) => handlePrintButtonClick(e, order)}
-                            disabled={printingOrderId === order.id}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] rounded-lg transition-all disabled:opacity-60 border border-blue-700"
-                            title="In đơn này"
+                            disabled={!order.hasPdf || printingOrderId === order.id}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 font-bold text-[10px] rounded-lg transition-all border ${
+                              !order.hasPdf
+                                ? 'bg-gray-300 text-gray-600 border-gray-400 cursor-not-allowed'
+                                : 'bg-blue-600 hover:bg-blue-700 text-white border-blue-700 disabled:opacity-60'
+                            }`}
+                            title={!order.hasPdf ? 'Đang tải file in...' : 'In đơn này'}
                           >
                             <Printer className={`w-3.5 h-3.5 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
                             In nhanh
@@ -7647,9 +7651,13 @@ export default function OrderManager({
                       <button
                         type="button"
                         onClick={(e) => handlePrintButtonClick(e, order)}
-                        disabled={printingOrderId === order.id}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] rounded-lg transition-all disabled:opacity-60 border border-blue-700 shrink-0"
-                        title="In đơn này"
+                        disabled={!order.hasPdf || printingOrderId === order.id}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 font-bold text-[10px] rounded-lg transition-all border shrink-0 ${
+                          !order.hasPdf
+                            ? 'bg-gray-300 text-gray-600 border-gray-400 cursor-not-allowed'
+                            : 'bg-blue-600 hover:bg-blue-700 text-white border-blue-700 disabled:opacity-60'
+                        }`}
+                        title={!order.hasPdf ? 'Đang tải file in...' : 'In đơn này'}
                       >
                         <Printer className={`w-3.5 h-3.5 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
                         In nhanh
