@@ -124261,6 +124261,14 @@ async function shopeeGetShippingDocumentDataInfo(shopId, accessToken, orderSn, p
   return json2;
 }
 async function shopeeCreateShippingDocument(shopId, accessToken, orderList, signal) {
+  const invalidRows = orderList.filter(
+    (row) => !String(row?.order_sn || "").trim() || !String(row?.package_number || "").trim()
+  );
+  if (invalidRows.length > 0) {
+    throw new Error(
+      `missing_package_number: create_shipping_document b\u1ECB ch\u1EB7n tr\u01B0\u1EDBc khi g\u1ECDi Shopee (${invalidRows.map((row) => String(row?.order_sn || "(missing_order_sn)")).join(",")})`
+    );
+  }
   const apiPath = "/api/v2/logistics/create_shipping_document";
   const timestamp = Math.floor(Date.now() / 1e3);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
@@ -124276,9 +124284,40 @@ async function shopeeCreateShippingDocument(shopId, accessToken, orderList, sign
     `[Shopee API] POST ${apiPath} FULL RESPONSE shop=${shopId} n=${orderList.length} HTTP=${res.status}:`,
     JSON.stringify(json2)
   );
+  if (!res.ok) {
+    throw new Error(
+      `create_shipping_document HTTP ${res.status}: ${String(json2?.message || json2?.error || "Shopee request failed")}`
+    );
+  }
+  if (json2?.error) {
+    throw new Error(
+      `${String(json2.error)}: ${String(json2?.message || "Shopee t\u1EEB ch\u1ED1i create_shipping_document")}`
+    );
+  }
+  const resultList = json2?.response?.result_list || json2?.result_list || [];
+  const failedResultList = resultList.filter(
+    (item) => String(item?.fail_error || "").trim()
+  );
+  if (failedResultList.length > 0) {
+    console.error(
+      `[Shopee API] ${apiPath} package failures=${failedResultList.length}:`,
+      JSON.stringify(
+        failedResultList.map((item) => ({
+          order_sn: item?.order_sn,
+          package_number: item?.package_number,
+          fail_error: item?.fail_error,
+          fail_message: item?.fail_message
+        }))
+      )
+    );
+  }
+  json2.failed_result_list = failedResultList;
   return json2;
 }
 async function shopeeGetShippingDocumentResult(shopId, accessToken, orderList, signal) {
+  if (orderList.some((row) => !String(row?.package_number || "").trim())) {
+    throw new Error("missing_package_number: get_shipping_document_result b\u1ECB ch\u1EB7n");
+  }
   const apiPath = "/api/v2/logistics/get_shipping_document_result";
   const timestamp = Math.floor(Date.now() / 1e3);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
@@ -124297,6 +124336,9 @@ async function shopeeGetShippingDocumentResult(shopId, accessToken, orderList, s
   return json2;
 }
 async function shopeeDownloadShippingDocument(shopId, accessToken, orderList, filename, signal) {
+  if (orderList.some((row) => !String(row?.package_number || "").trim())) {
+    throw new Error("missing_package_number: download_shipping_document b\u1ECB ch\u1EB7n");
+  }
   ensureLabelsDir();
   const safe = safeLabelFilename(filename);
   if (!safe) return { error: "invalid_filename", message: "T\xEAn file PDF cache kh\xF4ng h\u1EE3p l\u1EC7." };
@@ -124395,6 +124437,9 @@ async function shopeeDownloadShippingDocument(shopId, accessToken, orderList, fi
     cached: false
   };
 }
+function shippingDocRowKey(row) {
+  return `${String(row?.order_sn || "").trim()}::${String(row?.package_number || "").trim()}`;
+}
 async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
   const emptySkip = [];
   try {
@@ -124441,11 +124486,27 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
         entry.tracking_number = tn;
       }
       return entry;
-    }).filter((r2) => r2.order_sn);
-    const originalBySn = new Map(enriched.map((o) => [o.order_sn, o]));
-    const createdBySn = /* @__PURE__ */ new Map();
-    const createFailedBySn = /* @__PURE__ */ new Map();
-    const lastCreateFailureBySn = /* @__PURE__ */ new Map();
+    }).filter(
+      (r2) => Boolean(String(r2.order_sn || "").trim() && String(r2.package_number || "").trim())
+    );
+    if (enriched.length !== orderList.length) {
+      const missing = orderList.filter((row) => !String(row?.package_number || "").trim()).map((row) => String(row?.order_sn || "(missing_order_sn)"));
+      return {
+        success: false,
+        readyOrderSns: [],
+        skippedOrders: missing.map((orderSn) => ({
+          orderSn,
+          error: "missing_package_number",
+          message: `\u0110\u01A1n ${orderSn} thi\u1EBFu package_number; backend \u0111\xE3 ch\u1EB7n Create/Poll/Download.`
+        })),
+        error: "missing_package_number",
+        message: `Thi\u1EBFu package_number: ${missing.join(", ")}`
+      };
+    }
+    const originalByKey = new Map(enriched.map((o) => [shippingDocRowKey(o), o]));
+    const createdByKey = /* @__PURE__ */ new Map();
+    const createFailedByKey = /* @__PURE__ */ new Map();
+    const lastCreateFailureByKey = /* @__PURE__ */ new Map();
     let createPending = [...enriched];
     const createDeadlineAt = Math.min(
       Date.now() + SHOPEE_CREATE_DOCUMENT_RETRY_TIMEOUT_MS,
@@ -124476,7 +124537,7 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
       } catch (createErr) {
         const message = String(createErr?.message || createErr);
         for (const row of createPending) {
-          lastCreateFailureBySn.set(row.order_sn, {
+          lastCreateFailureByKey.set(shippingDocRowKey(row), {
             error: "create_shipping_document_failed",
             message
           });
@@ -124491,12 +124552,13 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
       if (createTopError) {
         const transient = isPackageShouldPrintFirst(createTopError, createTopMessage);
         for (const row of createPending) {
-          lastCreateFailureBySn.set(row.order_sn, {
+          const key = shippingDocRowKey(row);
+          lastCreateFailureByKey.set(key, {
             error: createTopError,
             message: createTopMessage || createTopError
           });
           if (!transient) {
-            createFailedBySn.set(row.order_sn, {
+            createFailedByKey.set(key, {
               orderSn: row.order_sn,
               error: createTopError,
               message: createTopMessage || createTopError
@@ -124511,43 +124573,52 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
       }
       const createList = createResult?.response?.result_list || createResult?.result_list || [];
       const createItemBySn = new Map(
-        createList.map((item) => [String(item?.order_sn || ""), item]).filter(([orderSn]) => Boolean(orderSn))
+        createList.map((item) => [shippingDocRowKey(item), item]).filter(([key]) => !key.startsWith("::"))
       );
       const retryRows = [];
       for (const row of createPending) {
-        const item = createItemBySn.get(row.order_sn);
+        const key = shippingDocRowKey(row);
+        const sameOrderItems = createList.filter(
+          (item2) => String(item2?.order_sn || "").trim() === row.order_sn
+        );
+        const item = createItemBySn.get(key) || (sameOrderItems.length === 1 ? sameOrderItems[0] : void 0);
         const failError = String(item?.fail_error || "").trim();
         const failMessage = String(item?.fail_message || "").trim();
         if (item && !failError) {
-          createdBySn.set(row.order_sn, item);
-          lastCreateFailureBySn.delete(row.order_sn);
+          createdByKey.set(key, {
+            ...item,
+            order_sn: row.order_sn,
+            package_number: String(item?.package_number || row.package_number)
+          });
+          lastCreateFailureByKey.delete(key);
           continue;
         }
         const transient = !item || isPackageShouldPrintFirst(failError, failMessage);
         const error = failError || "create_not_acknowledged";
         const message = failMessage || "Shopee ch\u01B0a x\xE1c nh\u1EADn create_shipping_document; backend s\u1EBD ti\u1EBFp t\u1EE5c ch\u1EDD v\xE0 g\u1ECDi l\u1EA1i.";
-        lastCreateFailureBySn.set(row.order_sn, { error, message });
+        lastCreateFailureByKey.set(key, { error, message });
         if (transient) {
           retryRows.push(row);
         } else {
-          createFailedBySn.set(row.order_sn, { orderSn: row.order_sn, error, message });
+          createFailedByKey.set(key, { orderSn: row.order_sn, error, message });
         }
       }
       createPending = retryRows;
       console.log(
-        `[Shopee Batch Waybill] B\u01AF\u1EDAC 1 CREATE l\u1EA7n ${createAttempt}/${SHOPEE_CREATE_DOCUMENT_RETRY_MAX}: created=${createdBySn.size} pending=${createPending.length} failed=${createFailedBySn.size}`
+        `[Shopee Batch Waybill] B\u01AF\u1EDAC 1 CREATE l\u1EA7n ${createAttempt}/${SHOPEE_CREATE_DOCUMENT_RETRY_MAX}: created=${createdByKey.size} pending=${createPending.length} failed=${createFailedByKey.size}`
       );
     }
     for (const row of createPending) {
-      const last = lastCreateFailureBySn.get(row.order_sn);
-      createFailedBySn.set(row.order_sn, {
+      const key = shippingDocRowKey(row);
+      const last = lastCreateFailureByKey.get(key);
+      createFailedByKey.set(key, {
         orderSn: row.order_sn,
         error: last?.error || "create_retry_exhausted",
         message: last?.message || "Shopee ch\u01B0a cho ph\xE9p t\u1EA1o file v\u1EADn \u0111\u01A1n sau khi backend \u0111\xE3 ch\u1EDD v\xE0 g\u1ECDi l\u1EA1i h\u1EBFt s\u1ED1 l\u1EA7n."
       });
     }
-    const okItems = [...createdBySn.values()];
-    const skippedOrders = [...createFailedBySn.values()];
+    const okItems = [...createdByKey.values()];
+    const skippedOrders = [...createFailedByKey.values()];
     if (okItems.length === 0) {
       const first = skippedOrders[0];
       console.warn(
@@ -124565,11 +124636,13 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
       `[Shopee Batch Waybill] B\u01AF\u1EDAC 1 CREATE th\xE0nh c\xF4ng ${okItems.length}/${enriched.length} \u0111\u01A1n \u2014 b\u1EAFt \u0111\u1EA7u B\u01AF\u1EDAC 2 POLL`
     );
     let pendingList = okItems.map((it) => {
-      const orig = originalBySn.get(String(it.order_sn));
-      const row = { order_sn: String(it.order_sn) };
+      const orig = originalByKey.get(shippingDocRowKey(it));
       const pkg = String(it.package_number || orig?.package_number || "").trim();
+      const row = {
+        order_sn: String(it.order_sn),
+        package_number: pkg
+      };
       const tn = String(orig?.tracking_number || "").trim();
-      if (pkg) row.package_number = pkg;
       if (tn) row.tracking_number = tn;
       return row;
     });
@@ -124614,10 +124687,13 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
         continue;
       }
       const items = pollResult?.response?.result_list || pollResult?.result_list || [];
-      const bySn = new Map(items.map((it) => [String(it.order_sn || ""), it]));
+      const byKey = new Map(items.map((it) => [shippingDocRowKey(it), it]));
       const stillProcessing = [];
       for (const o of pendingList) {
-        const it = bySn.get(String(o.order_sn));
+        const sameOrderItems = items.filter(
+          (item) => String(item?.order_sn || "").trim() === o.order_sn
+        );
+        const it = byKey.get(shippingDocRowKey(o)) || (sameOrderItems.length === 1 ? sameOrderItems[0] : void 0);
         const st = String(it?.status || "").toUpperCase();
         if (st === "READY") {
           readyList.push(o);
@@ -124660,7 +124736,7 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
     if (opts?.skipDownload) {
       return {
         success: true,
-        readyOrderSns: readyList.map((o) => o.order_sn),
+        readyOrderSns: [...new Set(readyList.map((o) => o.order_sn))],
         readyOrderRows: readyList,
         skippedOrders: pollFailed
       };
@@ -124716,7 +124792,7 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
       filePath: downloadResult.filePath,
       size: downloadResult.size,
       contentType: downloadResult.contentType || "application/pdf",
-      readyOrderSns: readyList.map((o) => o.order_sn),
+      readyOrderSns: [...new Set(readyList.map((o) => o.order_sn))],
       skippedOrders: pollFailed
     };
   } catch (fatal) {
@@ -126217,8 +126293,7 @@ function applyShopeeGetTrackingResponse(order, trackResult) {
     resp?.package_number || resp?.package_no || resp?.packageNumber || trackResult?.package_number || ""
   ).trim();
   if (pkg) {
-    order.packageNumber = pkg;
-    order.package_number = pkg;
+    applyShopeePackageNumbers(order, [pkg]);
   }
   const candidates = [
     resp?.tracking_number,
@@ -126237,8 +126312,7 @@ function applyShopeeGetTrackingResponse(order, trackResult) {
   if (!String(order.packageNumber || "").trim()) {
     const deepPkg = extractShopeePackageNumberFromPayload(trackResult, sn);
     if (deepPkg) {
-      order.packageNumber = deepPkg;
-      order.package_number = deepPkg;
+      applyShopeePackageNumbers(order, [deepPkg]);
     }
   }
   repairMisassignedTracking(order);
@@ -126275,50 +126349,80 @@ function trackingForShopeeShippingDoc(order) {
   if (tn && !isShopeeInternalTrackingCode2(tn)) return tn;
   return void 0;
 }
-function extractShopeePackageNumberFromPayload(payload, orderSn) {
-  if (!payload || typeof payload !== "object") return "";
+function extractShopeePackageNumbersFromPayload(payload, orderSn) {
+  if (!payload || typeof payload !== "object") return [];
   const wantSn = String(orderSn || "").replace(/^shopee-/i, "").trim();
   const tryVal = (v) => {
     const s2 = String(v || "").trim();
     return s2 || "";
   };
+  const found = /* @__PURE__ */ new Set();
+  const add = (value) => {
+    const normalized = tryVal(value);
+    if (normalized) found.add(normalized);
+  };
+  const addPackage = (pkg) => {
+    add(pkg?.package_number || pkg?.package_no || pkg?.packageNumber);
+  };
   const resp = payload?.response ?? payload;
-  const direct = tryVal(
+  add(
     resp?.package_number || resp?.package_no || resp?.packageNumber || payload?.package_number || payload?.packageNumber
   );
-  if (direct) return direct;
   const packages = Array.isArray(resp?.package_list) ? resp.package_list : Array.isArray(payload?.package_list) ? payload.package_list : [];
   for (const pkg of packages) {
-    const n = tryVal(pkg?.package_number || pkg?.package_no || pkg?.packageNumber);
-    if (n) return n;
+    addPackage(pkg);
   }
   const orderList = Array.isArray(resp?.order_list) ? resp.order_list : Array.isArray(payload?.order_list) ? payload.order_list : Array.isArray(resp?.result_list) ? resp.result_list : Array.isArray(resp?.shipping_document_info_list) ? resp.shipping_document_info_list : [];
   for (const o of orderList) {
     const sn = String(o?.order_sn || "").replace(/^shopee-/i, "").trim();
     if (wantSn && sn && sn !== wantSn) continue;
-    const n = tryVal(
-      o?.package_number || o?.package_no || o?.package_list?.[0]?.package_number || o?.shipping_document_info?.package_number
-    );
-    if (n) return n;
+    add(o?.package_number || o?.package_no || o?.shipping_document_info?.package_number);
+    const nestedPackages = Array.isArray(o?.package_list) ? o.package_list : [];
+    nestedPackages.forEach(addPackage);
   }
   const info = resp?.shipping_document_info || payload?.shipping_document_info;
-  return tryVal(info?.package_number || info?.package_no);
+  add(info?.package_number || info?.package_no);
+  return [...found];
 }
-function buildShopeeShippingDocOrderRow(order) {
+function extractShopeePackageNumberFromPayload(payload, orderSn) {
+  return extractShopeePackageNumbersFromPayload(payload, orderSn)[0] || "";
+}
+function applyShopeePackageNumbers(order, packageNumbers) {
+  const unique = [
+    ...new Set(
+      packageNumbers.map((value) => String(value || "").trim()).filter(Boolean)
+    )
+  ];
+  if (unique.length === 0) return [];
+  order.packageNumbers = unique;
+  order.package_numbers = unique;
+  order.packageNumber = unique[0];
+  order.package_number = unique[0];
+  return unique;
+}
+function buildShopeeShippingDocOrderRows(order) {
   const orderSn = String(order?.orderSn || order?.order_sn || "").trim();
-  if (!orderSn) return null;
-  const row = { order_sn: orderSn };
-  const pkg = String(order?.packageNumber || order?.package_number || "").trim();
+  if (!orderSn) return [];
+  const packageNumbers = [
+    ...Array.isArray(order?.packageNumbers) ? order.packageNumbers : [],
+    ...Array.isArray(order?.package_numbers) ? order.package_numbers : [],
+    ...Array.isArray(order?.data?.packageNumbers) ? order.data.packageNumbers : [],
+    ...Array.isArray(order?.data?.package_numbers) ? order.data.package_numbers : [],
+    order?.packageNumber,
+    order?.package_number
+  ].map((value) => String(value || "").trim()).filter(Boolean);
+  const uniquePackages = [...new Set(packageNumbers)];
+  if (uniquePackages.length === 0) return [];
   const tn = trackingForShopeeShippingDoc(order);
-  if (pkg) row.package_number = pkg;
-  if (tn) row.tracking_number = tn;
-  return row;
+  return uniquePackages.map((packageNumber) => ({
+    order_sn: orderSn,
+    package_number: packageNumber,
+    ...tn ? { tracking_number: tn } : {}
+  }));
 }
 async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, orders) {
   if (!orders.length) return;
-  const needDetail = orders.filter(
-    (o) => !String(o?.packageNumber || o?.package_number || "").trim() || !trackingForShopeeShippingDoc(o)
-  );
+  const needDetail = orders;
   if (needDetail.length > 0) {
     const sns = [
       ...new Set(needDetail.map((o) => String(o.orderSn || "").trim()).filter(Boolean))
@@ -126337,11 +126441,7 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
           const order = orders.find((o) => String(o.orderSn) === sn);
           if (!order) continue;
           applyShopeePackageListTracking(order, detail);
-          const pkgNum = extractShopeePackageNumberFromPayload(detail, sn);
-          if (pkgNum) {
-            order.packageNumber = pkgNum;
-            order.package_number = pkgNum;
-          }
+          applyShopeePackageNumbers(order, extractShopeePackageNumbersFromPayload(detail, sn));
           const pkgs = Array.isArray(detail?.package_list) ? detail.package_list : [];
           const pkgTn = pickBestTrackingNumber(
             pkgs[0]?.tracking_number,
@@ -126402,11 +126502,7 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
           JSON.stringify(docInfo)
         );
         applyDeepShopeeTrackingPayload(order, docInfo, "get_shipping_document_data_info");
-        const pkg = extractShopeePackageNumberFromPayload(docInfo, sn);
-        if (pkg) {
-          order.packageNumber = pkg;
-          order.package_number = pkg;
-        }
+        applyShopeePackageNumbers(order, extractShopeePackageNumbersFromPayload(docInfo, sn));
         const list = docInfo?.response?.shipping_document_info_list || docInfo?.response?.order_list || docInfo?.response?.result_list || [];
         const first = Array.isArray(list) ? list[0] : null;
         const tn = pickBestTrackingNumber(
@@ -126432,11 +126528,7 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
         const detail = detailList.find((d) => String(d?.order_sn || "") === sn) || detailList[0];
         if (detail) {
           applyShopeePackageListTracking(order, detail);
-          const pkgNum = extractShopeePackageNumberFromPayload(detail, sn);
-          if (pkgNum) {
-            order.packageNumber = pkgNum;
-            order.package_number = pkgNum;
-          }
+          applyShopeePackageNumbers(order, extractShopeePackageNumbersFromPayload(detail, sn));
         }
       } catch (err) {
         console.warn(`[Shopee Print Enrich] get_order_detail retry ${sn}:`, err?.message || err);
@@ -126446,7 +126538,7 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
       console.warn(`[Shopee Print Enrich] persist ${sn}:`, err?.message || err);
     });
     console.log(
-      `[Shopee Print Enrich] order_sn=${sn} package_number=${order.packageNumber || order.package_number || "(empty)"} tracking=${trackingForShopeeShippingDoc(order) || "(empty)"}`
+      `[Shopee Print Enrich] order_sn=${sn} package_numbers=${buildShopeeShippingDocOrderRows(order).map((row) => row.package_number).join(",") || "(empty)"} tracking=${trackingForShopeeShippingDoc(order) || "(empty)"}`
     );
     if (i2 < orders.length - 1) await sleep2(Math.min(PRINT_API_DELAY_MS, 300));
   }
@@ -126454,11 +126546,7 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
 function applyShopeePackageListTracking(order, shopeeOrder) {
   applyDeepShopeeTrackingPayload(order, shopeeOrder, "get_order_detail");
   const sn = String(order?.orderSn || shopeeOrder?.order_sn || "").trim();
-  const extractedPkg = extractShopeePackageNumberFromPayload(shopeeOrder, sn);
-  if (extractedPkg) {
-    order.packageNumber = extractedPkg;
-    order.package_number = extractedPkg;
-  }
+  applyShopeePackageNumbers(order, extractShopeePackageNumbersFromPayload(shopeeOrder, sn));
   const packages = Array.isArray(shopeeOrder?.package_list) ? shopeeOrder.package_list : [];
   if (!order.packageNumber) {
     const withPkg = packages.find((p) => p?.package_number);
@@ -130395,24 +130483,22 @@ async function startServer() {
       } catch (err) {
         console.warn(`[Delegated PDF] enrich ${orderSn}:`, err?.message || err);
       }
-      const row = buildShopeeShippingDocOrderRow(order);
-      if (!row) {
+      const shippingRows = buildShopeeShippingDocOrderRows(order);
+      if (shippingRows.length === 0) {
         return failDownload(
-          new Error(`invalid_shipping_document_order order_sn=${orderSn} shop=${shopId}`),
-          `D\u1EEF li\u1EC7u \u0111\u01A1n ${orderSn} ch\u01B0a \u0111\u1EE7 \u0111\u1EC3 t\u1EA1o v\u1EADn \u0111\u01A1n.`
+          new Error(`missing_package_number order_sn=${orderSn} shop=${shopId}`),
+          `\u0110\u01A1n ${orderSn} thi\u1EBFu package_number; \u0111\xE3 ch\u1EB7n Create/Poll/Download.`
         );
       }
-      if (!row.order_sn || !row.package_number && !row.tracking_number) {
+      const createResult = await shopeeCreateShippingDocument(shopId, accessToken, shippingRows);
+      const createItems = createResult?.response?.result_list || createResult?.result_list || [];
+      const createFailures = createItems.filter(
+        (item) => String(item?.fail_error || "").trim()
+      );
+      if (createResult?.error || createFailures.length > 0 || createItems.length < shippingRows.length) {
         return failDownload(
-          new Error(`missing_shipping_document_data order_sn=${orderSn} shop=${shopId}`),
-          `\u0110\u01A1n ${orderSn} thi\u1EBFu package_number/tracking_number \u0111\u1EC3 t\u1EA1o v\u1EADn \u0111\u01A1n.`
-        );
-      }
-      const createResult = await shopeeCreateShippingDocument(shopId, accessToken, [row]);
-      if (createResult?.error) {
-        return failDownload(
-          createResult,
-          `Shopee t\u1EEB ch\u1ED1i t\u1EA1o PDF: ${createResult.message || createResult.error}`
+          createFailures[0] || createResult,
+          `Shopee t\u1EEB ch\u1ED1i t\u1EA1o PDF: ${createFailures[0]?.fail_message || createFailures[0]?.fail_error || createResult?.message || createResult?.error || "create_not_acknowledged"}`
         );
       }
       let lastPollError = new Error(
@@ -130422,22 +130508,27 @@ async function startServer() {
         await sleep2(3e3);
         if (streamDelegatedPdf(res, expectedPath, expectedFilename)) return;
         try {
-          const poll = await shopeeGetShippingDocumentResult(shopId, accessToken, [row]);
+          const poll = await shopeeGetShippingDocumentResult(shopId, accessToken, shippingRows);
           if (poll?.error) {
             lastPollError = poll;
             console.error("DEBUG DOWNLOAD PDF FAIL for order:", orderSn, poll);
             continue;
           }
           const items = poll?.response?.result_list || poll?.result_list || [];
-          const result = items.find((item) => String(item?.order_sn || "") === orderSn);
-          if (String(result?.status || "").toUpperCase() !== "READY") {
-            lastPollError = result || new Error(`Shopee ch\u01B0a READY l\u1EA7n ${attempt}/6 order_sn=${orderSn} shop=${shopId}`);
+          const allReady = shippingRows.every((row) => {
+            const result = items.find(
+              (item) => String(item?.order_sn || "") === orderSn && (!item?.package_number || String(item.package_number) === row.package_number)
+            );
+            return String(result?.status || "").toUpperCase() === "READY";
+          });
+          if (!allReady) {
+            lastPollError = items || new Error(`Shopee ch\u01B0a READY l\u1EA7n ${attempt}/6 order_sn=${orderSn} shop=${shopId}`);
             continue;
           }
           const downloaded = await shopeeDownloadShippingDocument(
             shopId,
             accessToken,
-            [row],
+            shippingRows,
             expectedFilename
           );
           if (downloaded?.filePath && streamDelegatedPdf(res, downloaded.filePath, expectedFilename)) {
@@ -130690,23 +130781,27 @@ async function startServer() {
           } catch (err) {
             console.warn(`[Get PDF] enrich ${orderSn}:`, err?.message || err);
           }
-          const row = buildShopeeShippingDocOrderRow(order);
-          if (!row || !row.order_sn || !row.package_number && !row.tracking_number) {
+          const shippingRows = buildShopeeShippingDocOrderRows(order);
+          if (shippingRows.length === 0) {
             pdfResults.push({
               orderSn,
               success: false,
-              error: "missing_shipping_data",
-              message: `\u0110\u01A1n ${orderSn} thi\u1EBFu package_number/tracking_number.`
+              error: "missing_package_number",
+              message: `\u0110\u01A1n ${orderSn} thi\u1EBFu package_number; \u0111\xE3 ch\u1EB7n Create/Poll/Download.`
             });
             continue;
           }
-          const createResult = await shopeeCreateShippingDocument(shopId, accessToken, [row]);
-          if (createResult?.error) {
+          const createResult = await shopeeCreateShippingDocument(shopId, accessToken, shippingRows);
+          const createItems = createResult?.response?.result_list || createResult?.result_list || [];
+          const createFailure = createItems.find(
+            (item) => String(item?.fail_error || "").trim()
+          );
+          if (createResult?.error || createFailure || createItems.length < shippingRows.length) {
             pdfResults.push({
               orderSn,
               success: false,
-              error: createResult.error,
-              message: createResult.message || "Shopee t\u1EEB ch\u1ED1i t\u1EA1o PDF."
+              error: createFailure?.fail_error || createResult?.error || "create_not_acknowledged",
+              message: createFailure?.fail_message || createResult?.message || "Shopee kh\xF4ng x\xE1c nh\u1EADn \u0111\u1EA7y \u0111\u1EE7 c\xE1c package khi t\u1EA1o PDF."
             });
             continue;
           }
@@ -130715,18 +130810,23 @@ async function startServer() {
           for (let attempt = 1; attempt <= 20; attempt++) {
             await sleep2(3e3);
             try {
-              const poll = await shopeeGetShippingDocumentResult(shopId, accessToken, [row]);
+              const poll = await shopeeGetShippingDocumentResult(shopId, accessToken, shippingRows);
               if (poll?.error) {
                 lastError = poll;
                 continue;
               }
               const items = poll?.response?.result_list || poll?.result_list || [];
-              const result = items.find((item) => String(item?.order_sn || "") === orderSn);
-              if (String(result?.status || "").toUpperCase() === "READY") {
+              const allReady = shippingRows.every((row) => {
+                const result = items.find(
+                  (item) => String(item?.order_sn || "") === orderSn && (!item?.package_number || String(item.package_number) === row.package_number)
+                );
+                return String(result?.status || "").toUpperCase() === "READY";
+              });
+              if (allReady) {
                 pdfReady = true;
                 break;
               }
-              lastError = result || { error: "not_ready", message: `Ch\u01B0a READY l\u1EA7n ${attempt}/20` };
+              lastError = items || { error: "not_ready", message: `Ch\u01B0a READY l\u1EA7n ${attempt}/20` };
             } catch (err) {
               lastError = err;
             }
@@ -130755,7 +130855,7 @@ async function startServer() {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              order_list: [row],
+              order_list: shippingRows,
               shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
             })
           }, 6e4);
@@ -130924,16 +131024,16 @@ async function startServer() {
           const rows = [];
           for (const order of group.orders) {
             const orderSn = String(order?.orderSn || order?.order_sn || "").replace(/^shopee-/i, "").trim();
-            const row = buildShopeeShippingDocOrderRow(order);
-            if (!row?.order_sn || !row.package_number && !row.tracking_number) {
+            const orderRows = buildShopeeShippingDocOrderRows(order);
+            if (orderRows.length === 0) {
               failedBySn.set(orderSn, {
                 orderSn,
-                error: "missing_shipping_data",
-                message: "\u0110\u01A1n thi\u1EBFu package_number/tracking_number."
+                error: "missing_package_number",
+                message: "\u0110\u01A1n thi\u1EBFu package_number; \u0111\xE3 ch\u1EB7n Create/Poll/Download."
               });
               continue;
             }
-            rows.push(row);
+            rows.push(...orderRows);
           }
           if (rows.length === 0) return [];
           const batch = await runBeforeBatchDeadline(
@@ -130964,11 +131064,16 @@ async function startServer() {
           }
           const readySet = new Set(readyOrderSns);
           const readyRows = (batch.readyOrderRows?.length ? batch.readyOrderRows : rows).filter((row) => readySet.has(String(row.order_sn || "")));
+          const readyRowsByOrder = /* @__PURE__ */ new Map();
+          for (const row of readyRows) {
+            const list = readyRowsByOrder.get(row.order_sn) || [];
+            list.push(row);
+            readyRowsByOrder.set(row.order_sn, list);
+          }
           const documents = await mapBatchConcurrently(
-            readyRows,
+            [...readyRowsByOrder.entries()],
             BATCH_PRINT_CONCURRENCY,
-            async (row) => {
-              const orderSn = String(row.order_sn || "").trim();
+            async ([orderSn, packageRows]) => {
               try {
                 const filename = buildCachedLabelFilename([orderSn]);
                 const downloaded = await runBeforeBatchDeadline(
@@ -130977,7 +131082,7 @@ async function startServer() {
                   () => shopeeDownloadShippingDocument(
                     group.shopId,
                     group.accessToken,
-                    [row],
+                    packageRows,
                     filename,
                     deadlineController.signal
                   )
@@ -131207,18 +131312,25 @@ async function startServer() {
           } catch (err) {
             console.warn(`[Batch Confirm Print] enrich ${orderSn}:`, err?.message || err);
           }
-          const row = buildShopeeShippingDocOrderRow(order);
-          if (!row || !row.order_sn || !row.package_number && !row.tracking_number) {
-            console.warn(`[Batch Confirm Print] \u0110\u01A1n ${orderSn} thi\u1EBFu shipping data`);
+          const shippingRows = buildShopeeShippingDocOrderRows(order);
+          if (shippingRows.length === 0) {
+            console.warn(`[Batch Confirm Print] \u0110\u01A1n ${orderSn} thi\u1EBFu package_number`);
             return null;
           }
           const createResult = await runBeforeBatchDeadline(
             deadlineAt,
             `create_document:${orderSn}`,
-            () => shopeeCreateShippingDocument(shopId, accessToken, [row])
+            () => shopeeCreateShippingDocument(shopId, accessToken, shippingRows)
           );
-          if (createResult?.error) {
-            console.warn(`[Batch Confirm Print] Create doc ${orderSn} failed:`, createResult.error);
+          const createItems = createResult?.response?.result_list || createResult?.result_list || [];
+          const createFailure = createItems.find(
+            (item) => String(item?.fail_error || "").trim()
+          );
+          if (createResult?.error || createFailure || createItems.length < shippingRows.length) {
+            console.warn(
+              `[Batch Confirm Print] Create doc ${orderSn} failed:`,
+              createFailure?.fail_error || createResult?.error || "create_not_acknowledged"
+            );
             return null;
           }
           let pdfReady = false;
@@ -131227,12 +131339,17 @@ async function startServer() {
               const poll = await runBeforeBatchDeadline(
                 deadlineAt,
                 `poll_document:${orderSn}`,
-                () => shopeeGetShippingDocumentResult(shopId, accessToken, [row])
+                () => shopeeGetShippingDocumentResult(shopId, accessToken, shippingRows)
               );
               if (poll?.error) continue;
               const items = poll?.response?.result_list || poll?.result_list || [];
-              const result = items.find((item) => String(item?.order_sn || "") === orderSn);
-              if (String(result?.status || "").toUpperCase() === "READY") {
+              const allReady = shippingRows.every((row) => {
+                const result = items.find(
+                  (item) => String(item?.order_sn || "") === orderSn && (!item?.package_number || String(item.package_number) === row.package_number)
+                );
+                return String(result?.status || "").toUpperCase() === "READY";
+              });
+              if (allReady) {
                 pdfReady = true;
                 break;
               }
@@ -131258,7 +131375,7 @@ async function startServer() {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                order_list: [row],
+                order_list: shippingRows,
                 shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
               })
             }, Math.min(8e3, Math.max(1e3, deadlineAt - Date.now())))
@@ -131434,18 +131551,25 @@ async function startServer() {
           } catch (err) {
             console.warn(`[Batch Print Only] enrich ${orderSn}:`, err?.message || err);
           }
-          const row = buildShopeeShippingDocOrderRow(order);
-          if (!row || !row.order_sn || !row.package_number && !row.tracking_number) {
-            console.warn(`[Batch Print Only] \u0110\u01A1n ${orderSn} thi\u1EBFu shipping data`);
+          const shippingRows = buildShopeeShippingDocOrderRows(order);
+          if (shippingRows.length === 0) {
+            console.warn(`[Batch Print Only] \u0110\u01A1n ${orderSn} thi\u1EBFu package_number`);
             return null;
           }
           const createResult = await runBeforeBatchDeadline(
             deadlineAt,
             `create_document:${orderSn}`,
-            () => shopeeCreateShippingDocument(shopId, accessToken, [row])
+            () => shopeeCreateShippingDocument(shopId, accessToken, shippingRows)
           );
-          if (createResult?.error) {
-            console.warn(`[Batch Print Only] Create doc ${orderSn} failed:`, createResult.error);
+          const createItems = createResult?.response?.result_list || createResult?.result_list || [];
+          const createFailure = createItems.find(
+            (item) => String(item?.fail_error || "").trim()
+          );
+          if (createResult?.error || createFailure || createItems.length < shippingRows.length) {
+            console.warn(
+              `[Batch Print Only] Create doc ${orderSn} failed:`,
+              createFailure?.fail_error || createResult?.error || "create_not_acknowledged"
+            );
             return null;
           }
           let pdfReady = false;
@@ -131454,12 +131578,17 @@ async function startServer() {
               const poll = await runBeforeBatchDeadline(
                 deadlineAt,
                 `poll_document:${orderSn}`,
-                () => shopeeGetShippingDocumentResult(shopId, accessToken, [row])
+                () => shopeeGetShippingDocumentResult(shopId, accessToken, shippingRows)
               );
               if (poll?.error) continue;
               const items = poll?.response?.result_list || poll?.result_list || [];
-              const result = items.find((item) => String(item?.order_sn || "") === orderSn);
-              if (String(result?.status || "").toUpperCase() === "READY") {
+              const allReady = shippingRows.every((row) => {
+                const result = items.find(
+                  (item) => String(item?.order_sn || "") === orderSn && (!item?.package_number || String(item.package_number) === row.package_number)
+                );
+                return String(result?.status || "").toUpperCase() === "READY";
+              });
+              if (allReady) {
                 pdfReady = true;
                 break;
               }
@@ -131485,7 +131614,7 @@ async function startServer() {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                order_list: [row],
+                order_list: shippingRows,
                 shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
               })
             }, Math.min(8e3, Math.max(1e3, deadlineAt - Date.now())))
@@ -133021,18 +133150,14 @@ async function startServer() {
             } catch (enrErr) {
               console.warn(`[Label Prepare BG] enrich ${sn}:`, enrErr?.message || enrErr);
             }
-            const row = buildShopeeShippingDocOrderRow(order);
-            if (!row?.order_sn) {
-              console.warn(`[Label Prepare BG] skip ${sn}: invalid shipping row`);
+            const shippingRows = buildShopeeShippingDocOrderRows(order);
+            if (shippingRows.length === 0) {
+              console.warn(
+                `[Label Prepare BG] FAILED ${sn}: missing_package_number; Create/Poll/Download blocked`
+              );
               continue;
             }
-            const hasPkg = Boolean(String(row.package_number || "").trim());
-            const hasTn = Boolean(String(row.tracking_number || "").trim());
-            if (!hasPkg && !hasTn) {
-              console.warn(`[Label Prepare BG] skip ${sn}: missing package+tracking`);
-              continue;
-            }
-            const gen = await generateShopeeShippingDocument(shopId, [row]);
+            const gen = await generateShopeeShippingDocument(shopId, shippingRows);
             const pdfFilename = String(gen?.filename || gen?.pdfFilename || "").trim();
             if (!gen?.success || !gen.url || !pdfFilename) {
               console.warn(
