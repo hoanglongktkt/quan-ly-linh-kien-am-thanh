@@ -7238,13 +7238,28 @@ export default function OrderManager({
 
                       {/* Status */}
                       <td className="p-4 text-center">
-                        <span className={`inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border ${badge.color}`}>
-                          {badge.text}
-                        </span>
-                        {activeSubTab === 'received_cancel_returns' && (
-                          <span className="inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border bg-teal-50 text-teal-700 border-teal-200">
-                            Đã nhận hoàn
-                          </span>
+                        {activeSubTab === 'processed' ? (
+                          <button
+                            type="button"
+                            onClick={(e) => handlePrintButtonClick(e, order)}
+                            disabled={printingOrderId === order.id}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] rounded-lg transition-all disabled:opacity-60 border border-blue-700"
+                            title="In đơn này"
+                          >
+                            <Printer className={`w-3.5 h-3.5 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
+                            In nhanh
+                          </button>
+                        ) : (
+                          <>
+                            <span className={`inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border ${badge.color}`}>
+                              {badge.text}
+                            </span>
+                            {activeSubTab === 'received_cancel_returns' && (
+                              <span className="inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border bg-teal-50 text-teal-700 border-teal-200">
+                                Đã nhận hoàn
+                              </span>
+                            )}
+                          </>
                         )}
                       </td>
 
@@ -7571,13 +7586,28 @@ export default function OrderManager({
                       </div>
                     </div>
 
-                    <span className={`inline-block px-2 py-0.5 text-[9px] font-black rounded-full border shrink-0 ${badge.color}`}>
-                      {badge.text}
-                    </span>
-                    {activeSubTab === 'received_cancel_returns' && (
-                      <span className="inline-block px-2 py-0.5 text-[9px] font-black rounded-full border shrink-0 bg-teal-50 text-teal-700 border-teal-200">
-                        Đã nhận hoàn
-                      </span>
+                    {activeSubTab === 'processed' ? (
+                      <button
+                        type="button"
+                        onClick={(e) => handlePrintButtonClick(e, order)}
+                        disabled={printingOrderId === order.id}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] rounded-lg transition-all disabled:opacity-60 border border-blue-700 shrink-0"
+                        title="In đơn này"
+                      >
+                        <Printer className={`w-3.5 h-3.5 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
+                        In nhanh
+                      </button>
+                    ) : (
+                      <>
+                        <span className={`inline-block px-2 py-0.5 text-[9px] font-black rounded-full border shrink-0 ${badge.color}`}>
+                          {badge.text}
+                        </span>
+                        {activeSubTab === 'received_cancel_returns' && (
+                          <span className="inline-block px-2 py-0.5 text-[9px] font-black rounded-full border shrink-0 bg-teal-50 text-teal-700 border-teal-200">
+                            Đã nhận hoàn
+                          </span>
+                        )}
+                      </>
                     )}
 
                     <div className="flex items-center gap-1 flex-wrap justify-end">
