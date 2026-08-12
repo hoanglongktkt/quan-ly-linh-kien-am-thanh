@@ -8719,67 +8719,128 @@ async function shopeeGetShippingDocumentDataInfo(
 }
 
 // v2.logistics.create_shipping_document — kicks off async AWB/label generation for up to 50 orders.
+// Payload chuẩn Shopee v2 (mỗi phần tử order_list):
+//   - order_sn (bắt buộc)
+//   - package_number (không gửi empty/null/undefined — bắt buộc với đơn split; unsplit cũng nên có)
+//   - tracking_number (bắt buộc trừ channel cho phép print trước arrange; không gửi nếu trống/0FG)
+//   - shipping_document_type (optional, gắn per-item theo docs)
 async function shopeeCreateShippingDocument(
   shopId: string,
   accessToken: string,
   orderList: { order_sn: string; package_number: string; tracking_number?: string }[],
   signal?: AbortSignal,
 ) {
+  const sanitizedOrderList = orderList
+    .map((row) => {
+      const order_sn = String(row?.order_sn || "").trim();
+      const package_number = String(row?.package_number || "").trim();
+      const tracking_number = String(row?.tracking_number || "").trim();
+      const item: {
+        order_sn: string;
+        package_number: string;
+        tracking_number?: string;
+        shipping_document_type: string;
+      } = {
+        order_sn,
+        package_number,
+        shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE,
+      };
+      // Chỉ gửi tracking_number khi có giá trị hợp lệ — không gửi undefined/null/0FG.
+      if (
+        tracking_number &&
+        !/^0FG/i.test(tracking_number) &&
+        !isShopeeInternalTrackingCode(tracking_number)
+      ) {
+        item.tracking_number = tracking_number;
+      }
+      return item;
+    })
+    .filter((row) => row.order_sn && row.package_number);
+
   const invalidRows = orderList.filter(
     (row) => !String(row?.order_sn || "").trim() || !String(row?.package_number || "").trim(),
   );
-  if (invalidRows.length > 0) {
+  if (invalidRows.length > 0 || sanitizedOrderList.length === 0) {
     throw new Error(
       `missing_package_number: create_shipping_document bị chặn trước khi gọi Shopee (${invalidRows
         .map((row) => String(row?.order_sn || "(missing_order_sn)"))
-        .join(",")})`,
+        .join(",") || "empty_order_list"})`,
     );
   }
+
   const apiPath = "/api/v2/logistics/create_shipping_document";
   const timestamp = Math.floor(Date.now() / 1000);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
   const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
+  const requestBody = { order_list: sanitizedOrderList };
 
-  const res = await fetchWithTimeout(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ order_list: orderList, shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE }),
-    signal,
-  });
-  const json: any = await res.json().catch(() => ({}));
   console.log(
-    `[Shopee API] POST ${apiPath} FULL RESPONSE shop=${shopId} n=${orderList.length} HTTP=${res.status}:`,
-    JSON.stringify(json),
+    `[Shopee API] POST ${apiPath} PAYLOAD shop=${shopId} n=${sanitizedOrderList.length}:`,
+    JSON.stringify(requestBody, null, 2),
   );
-  if (!res.ok) {
-    throw new Error(
-      `create_shipping_document HTTP ${res.status}: ${String(json?.message || json?.error || "Shopee request failed")}`,
+
+  let json: any = {};
+  try {
+    const res = await fetchWithTimeout(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody),
+      signal,
+    });
+    json = await res.json().catch(() => ({}));
+    const resultList: any[] = json?.response?.result_list || json?.result_list || [];
+    // BẮT BUỘC: in fail_error/fail_message từng đơn khi batch fail (common.batch_api_all_failed).
+    console.error("SHOPEE DETAIL ERROR:", JSON.stringify(resultList, null, 2));
+    console.log(
+      `[Shopee API] POST ${apiPath} FULL RESPONSE shop=${shopId} n=${sanitizedOrderList.length} HTTP=${res.status}:`,
+      JSON.stringify(json),
     );
-  }
-  if (json?.error) {
-    throw new Error(
-      `${String(json.error)}: ${String(json?.message || "Shopee từ chối create_shipping_document")}`,
+    if (!res.ok) {
+      throw new Error(
+        `create_shipping_document HTTP ${res.status}: ${String(json?.message || json?.error || "Shopee request failed")}`,
+      );
+    }
+    if (json?.error) {
+      const failSummary = resultList
+        .filter((item: any) => String(item?.fail_error || "").trim())
+        .map(
+          (item: any) =>
+            `${item?.order_sn || "?"}/${item?.package_number || "?"}: ${item?.fail_error || ""} — ${item?.fail_message || ""}`,
+        )
+        .join(" | ");
+      throw new Error(
+        `${String(json.error)}: ${String(json?.message || "Shopee từ chối create_shipping_document")}${
+          failSummary ? ` | result_list: ${failSummary}` : ""
+        }`,
+      );
+    }
+    const failedResultList = resultList.filter(
+      (item: any) => String(item?.fail_error || "").trim(),
     );
+    if (failedResultList.length > 0) {
+      console.error(
+        `[Shopee API] ${apiPath} package failures=${failedResultList.length}:`,
+        JSON.stringify(
+          failedResultList.map((item: any) => ({
+            order_sn: item?.order_sn,
+            package_number: item?.package_number,
+            fail_error: item?.fail_error,
+            fail_message: item?.fail_message,
+          })),
+          null,
+          2,
+        ),
+      );
+    }
+    json.failed_result_list = failedResultList;
+    return json;
+  } catch (err: any) {
+    const resultList: any[] = json?.response?.result_list || json?.result_list || [];
+    if (resultList.length > 0) {
+      console.error("SHOPEE DETAIL ERROR:", JSON.stringify(resultList, null, 2));
+    }
+    throw err;
   }
-  const resultList: any[] = json?.response?.result_list || json?.result_list || [];
-  const failedResultList = resultList.filter(
-    (item: any) => String(item?.fail_error || "").trim(),
-  );
-  if (failedResultList.length > 0) {
-    console.error(
-      `[Shopee API] ${apiPath} package failures=${failedResultList.length}:`,
-      JSON.stringify(
-        failedResultList.map((item: any) => ({
-          order_sn: item?.order_sn,
-          package_number: item?.package_number,
-          fail_error: item?.fail_error,
-          fail_message: item?.fail_message,
-        })),
-      ),
-    );
-  }
-  json.failed_result_list = failedResultList;
-  return json;
 }
 
 // v2.logistics.get_shipping_document_result — 1 lần / request (FE tự poll mỗi 2s).

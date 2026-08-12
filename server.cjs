@@ -124322,58 +124322,92 @@ async function shopeeGetShippingDocumentDataInfo(shopId, accessToken, orderSn, p
   return json2;
 }
 async function shopeeCreateShippingDocument(shopId, accessToken, orderList, signal) {
+  const sanitizedOrderList = orderList.map((row) => {
+    const order_sn = String(row?.order_sn || "").trim();
+    const package_number = String(row?.package_number || "").trim();
+    const tracking_number = String(row?.tracking_number || "").trim();
+    const item = {
+      order_sn,
+      package_number,
+      shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
+    };
+    if (tracking_number && !/^0FG/i.test(tracking_number) && !isShopeeInternalTrackingCode2(tracking_number)) {
+      item.tracking_number = tracking_number;
+    }
+    return item;
+  }).filter((row) => row.order_sn && row.package_number);
   const invalidRows = orderList.filter(
     (row) => !String(row?.order_sn || "").trim() || !String(row?.package_number || "").trim()
   );
-  if (invalidRows.length > 0) {
+  if (invalidRows.length > 0 || sanitizedOrderList.length === 0) {
     throw new Error(
-      `missing_package_number: create_shipping_document b\u1ECB ch\u1EB7n tr\u01B0\u1EDBc khi g\u1ECDi Shopee (${invalidRows.map((row) => String(row?.order_sn || "(missing_order_sn)")).join(",")})`
+      `missing_package_number: create_shipping_document b\u1ECB ch\u1EB7n tr\u01B0\u1EDBc khi g\u1ECDi Shopee (${invalidRows.map((row) => String(row?.order_sn || "(missing_order_sn)")).join(",") || "empty_order_list"})`
     );
   }
   const apiPath = "/api/v2/logistics/create_shipping_document";
   const timestamp = Math.floor(Date.now() / 1e3);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
   const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
-  const res = await fetchWithTimeout(url2, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ order_list: orderList, shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE }),
-    signal
-  });
-  const json2 = await res.json().catch(() => ({}));
+  const requestBody = { order_list: sanitizedOrderList };
   console.log(
-    `[Shopee API] POST ${apiPath} FULL RESPONSE shop=${shopId} n=${orderList.length} HTTP=${res.status}:`,
-    JSON.stringify(json2)
+    `[Shopee API] POST ${apiPath} PAYLOAD shop=${shopId} n=${sanitizedOrderList.length}:`,
+    JSON.stringify(requestBody, null, 2)
   );
-  if (!res.ok) {
-    throw new Error(
-      `create_shipping_document HTTP ${res.status}: ${String(json2?.message || json2?.error || "Shopee request failed")}`
+  let json2 = {};
+  try {
+    const res = await fetchWithTimeout(url2, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody),
+      signal
+    });
+    json2 = await res.json().catch(() => ({}));
+    const resultList = json2?.response?.result_list || json2?.result_list || [];
+    console.error("SHOPEE DETAIL ERROR:", JSON.stringify(resultList, null, 2));
+    console.log(
+      `[Shopee API] POST ${apiPath} FULL RESPONSE shop=${shopId} n=${sanitizedOrderList.length} HTTP=${res.status}:`,
+      JSON.stringify(json2)
     );
-  }
-  if (json2?.error) {
-    throw new Error(
-      `${String(json2.error)}: ${String(json2?.message || "Shopee t\u1EEB ch\u1ED1i create_shipping_document")}`
+    if (!res.ok) {
+      throw new Error(
+        `create_shipping_document HTTP ${res.status}: ${String(json2?.message || json2?.error || "Shopee request failed")}`
+      );
+    }
+    if (json2?.error) {
+      const failSummary = resultList.filter((item) => String(item?.fail_error || "").trim()).map(
+        (item) => `${item?.order_sn || "?"}/${item?.package_number || "?"}: ${item?.fail_error || ""} \u2014 ${item?.fail_message || ""}`
+      ).join(" | ");
+      throw new Error(
+        `${String(json2.error)}: ${String(json2?.message || "Shopee t\u1EEB ch\u1ED1i create_shipping_document")}${failSummary ? ` | result_list: ${failSummary}` : ""}`
+      );
+    }
+    const failedResultList = resultList.filter(
+      (item) => String(item?.fail_error || "").trim()
     );
+    if (failedResultList.length > 0) {
+      console.error(
+        `[Shopee API] ${apiPath} package failures=${failedResultList.length}:`,
+        JSON.stringify(
+          failedResultList.map((item) => ({
+            order_sn: item?.order_sn,
+            package_number: item?.package_number,
+            fail_error: item?.fail_error,
+            fail_message: item?.fail_message
+          })),
+          null,
+          2
+        )
+      );
+    }
+    json2.failed_result_list = failedResultList;
+    return json2;
+  } catch (err) {
+    const resultList = json2?.response?.result_list || json2?.result_list || [];
+    if (resultList.length > 0) {
+      console.error("SHOPEE DETAIL ERROR:", JSON.stringify(resultList, null, 2));
+    }
+    throw err;
   }
-  const resultList = json2?.response?.result_list || json2?.result_list || [];
-  const failedResultList = resultList.filter(
-    (item) => String(item?.fail_error || "").trim()
-  );
-  if (failedResultList.length > 0) {
-    console.error(
-      `[Shopee API] ${apiPath} package failures=${failedResultList.length}:`,
-      JSON.stringify(
-        failedResultList.map((item) => ({
-          order_sn: item?.order_sn,
-          package_number: item?.package_number,
-          fail_error: item?.fail_error,
-          fail_message: item?.fail_message
-        }))
-      )
-    );
-  }
-  json2.failed_result_list = failedResultList;
-  return json2;
 }
 async function shopeeGetShippingDocumentResult(shopId, accessToken, orderList, signal) {
   if (orderList.some((row) => !String(row?.package_number || "").trim())) {
