@@ -124503,7 +124503,7 @@ function shippingDocRowKey(row) {
 }
 function isPackageShouldPrintFirstError(error, message) {
   const text = `${String(error || "")} ${String(message || "")}`;
-  return /package\s+should\s+print\s+first|should[_\s-]*print[_\s-]*first/i.test(text);
+  return /should[_\s-]*print[_\s-]*first|THERMAL_AIR_WAYBILL/i.test(text);
 }
 var sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 var PackageShouldPrintFirstError = class extends Error {
@@ -124541,7 +124541,7 @@ async function fetchSingleOrderWaybillFromRows(shopId, accessToken, orderSn, row
       message: "Thi\u1EBFu ki\u1EC7n h\xE0ng"
     };
   }
-  const createPollDownload = async (label) => {
+  const runCreate = async (label) => {
     console.log(
       `[Shopee Print] B3 CREATE ${sn} (${label}) packages=${rows.map((r2) => r2.package_number).join(",")}`
     );
@@ -124572,6 +124572,9 @@ async function fetchSingleOrderWaybillFromRows(shopId, accessToken, orderSn, row
       };
     }
     console.log(`[Shopee Print] B3 CREATE OK ${sn}`);
+    return null;
+  };
+  const runPollDownload = async () => {
     const maxPoll = 10;
     let readyRows = [];
     let allReady = false;
@@ -124661,29 +124664,104 @@ async function fetchSingleOrderWaybillFromRows(shopId, accessToken, orderSn, row
       cached: false
     };
   };
+  const createFail = await runCreate("l\u1EA7n 1");
+  if (createFail) return createFail;
   try {
-    return await createPollDownload("l\u1EA7n 1");
-  } catch (err) {
-    const shouldRetryCreate = err instanceof PackageShouldPrintFirstError || isPackageShouldPrintFirstError(err?.code, err?.message);
-    if (shouldRetryCreate) {
-      console.warn(`[Shopee Print] ${sn} "should print first" \u2192 quay B3 CREATE \u0111\xFAng 1 l\u1EA7n`);
-      try {
-        return await createPollDownload("recovery Create 1 l\u1EA7n");
-      } catch (err2) {
-        return {
-          success: false,
-          orderSn: sn,
-          error: "package_should_print_first",
-          message: String(err2?.message || err2)
-        };
-      }
+    return await runPollDownload();
+  } catch (error) {
+    const errText = `${String(error?.code || "")} ${String(error?.message || error || "")}`;
+    const shouldSelfHeal = error instanceof PackageShouldPrintFirstError || isPackageShouldPrintFirstError(error?.code, error?.message) || isPackageShouldPrintFirstError(errText, "");
+    if (!shouldSelfHeal) {
+      return {
+        success: false,
+        orderSn: sn,
+        error: "waybill_failed",
+        message: String(error?.message || error)
+      };
     }
-    return {
-      success: false,
-      orderSn: sn,
-      error: "waybill_failed",
-      message: String(err?.message || err)
-    };
+    console.warn(`Ph\xE1t hi\u1EC7n l\u1ED7i ch\u01B0a Create, ti\u1EBFn h\xE0nh g\u1ECDi Create kh\u1EA9n c\u1EA5p cho ${sn}`);
+    fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "68917e" },
+      body: JSON.stringify({
+        sessionId: "68917e",
+        runId: "pre-fix",
+        hypothesisId: "A",
+        location: "server.ts:fetchSingleOrderWaybillFromRows:selfHeal",
+        message: "self-heal triggered for should-print-first / THERMAL_AIR_WAYBILL",
+        data: {
+          orderSn: sn,
+          errMessage: String(error?.message || error || "").slice(0, 300),
+          packages: rows.map((r2) => r2.package_number)
+        },
+        timestamp: Date.now()
+      })
+    }).catch(() => {
+    });
+    try {
+      const healCreateFail = await runCreate("kh\u1EA9n c\u1EA5p self-heal");
+      if (healCreateFail) return healCreateFail;
+      await sleep2(2e3);
+      fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "68917e" },
+        body: JSON.stringify({
+          sessionId: "68917e",
+          runId: "pre-fix",
+          hypothesisId: "B",
+          location: "server.ts:fetchSingleOrderWaybillFromRows:retryAfterSleep",
+          message: "retry poll/download after create+sleep(2000)",
+          data: { orderSn: sn },
+          timestamp: Date.now()
+        })
+      }).catch(() => {
+      });
+      const retryResult = await runPollDownload();
+      fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "68917e" },
+        body: JSON.stringify({
+          sessionId: "68917e",
+          runId: "pre-fix",
+          hypothesisId: "C",
+          location: "server.ts:fetchSingleOrderWaybillFromRows:retryResult",
+          message: "self-heal retry result",
+          data: {
+            orderSn: sn,
+            success: Boolean(retryResult?.success),
+            error: String(retryResult?.error || ""),
+            size: Number(retryResult?.size || 0)
+          },
+          timestamp: Date.now()
+        })
+      }).catch(() => {
+      });
+      return retryResult;
+    } catch (err2) {
+      fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "68917e" },
+        body: JSON.stringify({
+          sessionId: "68917e",
+          runId: "pre-fix",
+          hypothesisId: "D",
+          location: "server.ts:fetchSingleOrderWaybillFromRows:selfHealFailed",
+          message: "self-heal retry failed",
+          data: {
+            orderSn: sn,
+            errMessage: String(err2?.message || err2 || "").slice(0, 300)
+          },
+          timestamp: Date.now()
+        })
+      }).catch(() => {
+      });
+      return {
+        success: false,
+        orderSn: sn,
+        error: "package_should_print_first",
+        message: String(err2?.message || err2)
+      };
+    }
   }
 }
 async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {

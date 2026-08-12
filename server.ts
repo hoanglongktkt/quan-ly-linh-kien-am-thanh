@@ -8944,8 +8944,8 @@ function shippingDocRowKey(row: { order_sn?: string; package_number?: string }):
 
 function isPackageShouldPrintFirstError(error: unknown, message?: unknown): boolean {
   const text = `${String(error || "")} ${String(message || "")}`;
-  // Chỉ bắt đúng lỗi "should print first" — KHÔNG match THERMAL_AIR_WAYBILL (hay xuất hiện trong response bình thường).
-  return /package\s+should\s+print\s+first|should[_\s-]*print[_\s-]*first/i.test(text);
+  // Self-heal khi Shopee báo chưa create / chưa đồng bộ THERMAL_AIR_WAYBILL.
+  return /should[_\s-]*print[_\s-]*first|THERMAL_AIR_WAYBILL/i.test(text);
 }
 
 /** Sleep chuẩn Promise — dùng trong vòng poll in đơn. */
@@ -8980,7 +8980,7 @@ type SingleWaybillResult = {
 /**
  * Luồng lấy PDF 1 đơn — ĐÚNG 5 bước tuyến tính, CẤM nhảy cóc.
  * B1 cache → B2 (rows đã có package_number) → B3 create → B4 poll READY → B5 download.
- * Poll/Download báo "The package should print first" → Create lại đúng 1 lần rồi poll+download lại.
+ * Poll/Download báo "should print first" / THERMAL_AIR_WAYBILL → Create khẩn cấp + sleep(2000) + retry Poll/Download.
  */
 async function fetchSingleOrderWaybillFromRows(
   shopId: string,
@@ -9021,8 +9021,7 @@ async function fetchSingleOrderWaybillFromRows(
     };
   }
 
-  const createPollDownload = async (label: string): Promise<SingleWaybillResult> => {
-    // ── BƯỚC 3: CREATE (bắt buộc, không skip) ──
+  const runCreate = async (label: string): Promise<SingleWaybillResult | null> => {
     console.log(
       `[Shopee Print] B3 CREATE ${sn} (${label}) packages=${rows.map((r) => r.package_number).join(",")}`,
     );
@@ -9054,7 +9053,10 @@ async function fetchSingleOrderWaybillFromRows(
       };
     }
     console.log(`[Shopee Print] B3 CREATE OK ${sn}`);
+    return null;
+  };
 
+  const runPollDownload = async (): Promise<SingleWaybillResult> => {
     // ── BƯỚC 4: POLL READY — tối đa 10 lần, mỗi lần chưa READY thì await sleep(1500) rồi continue ──
     const maxPoll = 10;
     let readyRows: ShopeeWaybillOrderRow[] = [];
@@ -9070,7 +9072,6 @@ async function fetchSingleOrderWaybillFromRows(
         opts?.signal,
       );
 
-      // Chỉ recreate khi Shopee báo đúng "should print first" — không throw vì PROCESSING/rỗng.
       if (isPackageShouldPrintFirstError(pollResult?.error, pollResult?.message)) {
         throw new PackageShouldPrintFirstError(
           String(pollResult?.message || pollResult?.error || "The package should print first"),
@@ -9097,7 +9098,6 @@ async function fetchSingleOrderWaybillFromRows(
         }
 
         if (st !== "READY") {
-          // PROCESSING / rỗng / FAILED tạm thời → KHÔNG throw, chờ poll tiếp.
           attemptReady = false;
           console.log(
             `[Shopee Print] B4 POLL ${sn} chưa READY status=${st || "(empty)"} lần ${attempt}/${maxPoll}`,
@@ -9113,7 +9113,6 @@ async function fetchSingleOrderWaybillFromRows(
         break;
       }
 
-      // Chưa READY → bắt buộc sleep 1.5s rồi continue (không throw).
       if (attempt < maxPoll) {
         await sleepMs(1500);
         continue;
@@ -9165,31 +9164,123 @@ async function fetchSingleOrderWaybillFromRows(
     };
   };
 
+  // B3 CREATE lần đầu
+  const createFail = await runCreate("lần 1");
+  if (createFail) return createFail;
+
+  // B4+B5: Poll/Download + self-heal Create khẩn cấp (không làm sập đơn khác trong batch)
   try {
-    return await createPollDownload("lần 1");
-  } catch (err: any) {
-    const shouldRetryCreate =
-      err instanceof PackageShouldPrintFirstError ||
-      isPackageShouldPrintFirstError(err?.code, err?.message);
-    if (shouldRetryCreate) {
-      console.warn(`[Shopee Print] ${sn} "should print first" → quay B3 CREATE đúng 1 lần`);
-      try {
-        return await createPollDownload("recovery Create 1 lần");
-      } catch (err2: any) {
-        return {
-          success: false,
-          orderSn: sn,
-          error: "package_should_print_first",
-          message: String(err2?.message || err2),
-        };
-      }
+    return await runPollDownload();
+  } catch (error: any) {
+    const errText = `${String(error?.code || "")} ${String(error?.message || error || "")}`;
+    const shouldSelfHeal =
+      error instanceof PackageShouldPrintFirstError ||
+      isPackageShouldPrintFirstError(error?.code, error?.message) ||
+      isPackageShouldPrintFirstError(errText, "");
+
+    if (!shouldSelfHeal) {
+      // Lỗi khác: không self-heal; trả fail CHO ĐƠN NÀY (không làm sập batch 50 đơn).
+      return {
+        success: false,
+        orderSn: sn,
+        error: "waybill_failed",
+        message: String(error?.message || error),
+      };
     }
-    return {
-      success: false,
-      orderSn: sn,
-      error: "waybill_failed",
-      message: String(err?.message || err),
-    };
+
+    console.warn(`Phát hiện lỗi chưa Create, tiến hành gọi Create khẩn cấp cho ${sn}`);
+    // #region agent log
+    fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "68917e" },
+      body: JSON.stringify({
+        sessionId: "68917e",
+        runId: "pre-fix",
+        hypothesisId: "A",
+        location: "server.ts:fetchSingleOrderWaybillFromRows:selfHeal",
+        message: "self-heal triggered for should-print-first / THERMAL_AIR_WAYBILL",
+        data: {
+          orderSn: sn,
+          errMessage: String(error?.message || error || "").slice(0, 300),
+          packages: rows.map((r) => r.package_number),
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
+
+    try {
+      const healCreateFail = await runCreate("khẩn cấp self-heal");
+      if (healCreateFail) return healCreateFail;
+
+      await sleep(2000);
+
+      // #region agent log
+      fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "68917e" },
+        body: JSON.stringify({
+          sessionId: "68917e",
+          runId: "pre-fix",
+          hypothesisId: "B",
+          location: "server.ts:fetchSingleOrderWaybillFromRows:retryAfterSleep",
+          message: "retry poll/download after create+sleep(2000)",
+          data: { orderSn: sn },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
+
+      const retryResult = await runPollDownload();
+
+      // #region agent log
+      fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "68917e" },
+        body: JSON.stringify({
+          sessionId: "68917e",
+          runId: "pre-fix",
+          hypothesisId: "C",
+          location: "server.ts:fetchSingleOrderWaybillFromRows:retryResult",
+          message: "self-heal retry result",
+          data: {
+            orderSn: sn,
+            success: Boolean(retryResult?.success),
+            error: String(retryResult?.error || ""),
+            size: Number(retryResult?.size || 0),
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
+
+      return retryResult;
+    } catch (err2: any) {
+      // #region agent log
+      fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "68917e" },
+        body: JSON.stringify({
+          sessionId: "68917e",
+          runId: "pre-fix",
+          hypothesisId: "D",
+          location: "server.ts:fetchSingleOrderWaybillFromRows:selfHealFailed",
+          message: "self-heal retry failed",
+          data: {
+            orderSn: sn,
+            errMessage: String(err2?.message || err2 || "").slice(0, 300),
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
+      return {
+        success: false,
+        orderSn: sn,
+        error: "package_should_print_first",
+        message: String(err2?.message || err2),
+      };
+    }
   }
 }
 
