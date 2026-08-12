@@ -1591,7 +1591,10 @@ export default function OrderManager({
       if (!opts?.silent) setResettingPrintIds(ids);
       try {
         const token = localStorage.getItem('admin_token');
-        const res = await fetch('/api/orders/update-print-status', {
+        const endpoint = isPrinted
+          ? '/api/orders/mark-printed'
+          : '/api/orders/update-print-status';
+        const res = await fetch(endpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -1619,6 +1622,7 @@ export default function OrderManager({
           }
           return;
         }
+        refetchOrdersPage({ silent: true });
         if (!opts?.silent) showToast(`Đã đánh dấu ${label}: ${ids.length} đơn.`);
       } catch (err: any) {
         const isAbort =
@@ -1633,7 +1637,7 @@ export default function OrderManager({
         if (!opts?.silent) setResettingPrintIds([]);
       }
     },
-    [onUpdateOrders, applyPrintedLocalOptimistic],
+    [onUpdateOrders, applyPrintedLocalOptimistic, refetchOrdersPage],
   );
 
   const resetPrintStatusForOrders = React.useCallback(
@@ -5207,9 +5211,8 @@ export default function OrderManager({
             : `Đã in gộp ${data.pdfCount} đơn.`;
           const printedSns = Array.isArray(data.printedOrders) ? data.printedOrders : orderSns;
           const optimisticTargets = applyPrintedLocalOptimistic(printedSns, true);
-          if (optimisticTargets.length > 0) {
-            void updatePrintStatusForOrders(optimisticTargets, true, { silent: true }).catch(() => {});
-          }
+          const statusTargets = optimisticTargets.length > 0 ? optimisticTargets : shopeeOrders;
+          await updatePrintStatusForOrders(statusTargets, true, { silent: true });
           markProgressComplete(completionMessage);
           showToast(completionMessage);
           setSelectedOrderIds([]);
@@ -5445,7 +5448,7 @@ export default function OrderManager({
           [String(order.id || ''), String(order.orderSn || '')],
           true,
         );
-        void updatePrintStatusForOrders([order], true, { silent: true }).catch(() => {});
+        await updatePrintStatusForOrders([order], true, { silent: true });
         markProgressComplete('In vận đơn thành công!');
       }
     } catch (err) {

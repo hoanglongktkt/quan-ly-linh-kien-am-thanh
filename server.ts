@@ -19295,43 +19295,57 @@ async function startServer() {
     };
     beginLogisticsWork("silent-prefetch-pdfs");
     try {
-      const sns = [...pending];
-      const orders = await runBeforeBatchDeadline(
-        deadlineAt,
-        "silent_prefetch_load_orders",
-        () => loadOrdersForShipScoped(
-          sns.map((sn) => `shopee-${sn}`),
-          sns,
-        ),
-      );
-      const result = await fetchBatchPdfDocumentsByShop(
-        orders,
-        sns,
-        deadlineAt,
-        "Silent Prefetch",
-      );
-
       const publicPdfDir = path.join(APP_ROOT, "public", "pdfs");
-      fs.mkdirSync(publicPdfDir, { recursive: true });
-      for (const document of result.documents) {
-        for (const orderSn of document.orderSns) {
-          const filename = buildCachedLabelFilename([orderSn]);
-          fs.writeFileSync(path.join(publicPdfDir, filename), document.buffer);
-          settleOrder(orderSn);
-        }
-      }
-
-      const failureBySn = new Map(result.failedOrders.map((item) => [item.orderSn, item]));
-      for (const orderSn of [...pending]) {
-        settleOrder(
-          orderSn,
-          failureBySn.get(orderSn) || {
-            orderSn,
-            error: "pdf_unavailable",
-            message: "Không tải được PDF trước khi hết thời gian cho phép.",
+      let nextIndex = 0;
+      const workerCount = Math.min(3, orderSns.length);
+      const runWorker = async () => {
+        while (nextIndex < orderSns.length) {
+          const orderSn = orderSns[nextIndex++];
+          let failure: BatchPdfFailure | undefined;
+          try {
+            const orders = await runBeforeBatchDeadline(
+              deadlineAt,
+              `silent_prefetch_load_order_${orderSn}`,
+              () => loadOrdersForShipScoped([`shopee-${orderSn}`], [orderSn]),
+            );
+            const result = await fetchBatchPdfDocumentsByShop(
+              orders,
+              [orderSn],
+              deadlineAt,
+              `Silent Prefetch ${orderSn}`,
+            );
+            const document = result.documents.find((item) =>
+              item.orderSns.includes(orderSn),
+            );
+            if (!document) {
+              failure = result.failedOrders.find((item) => item.orderSn === orderSn) || {
+                orderSn,
+                error: "pdf_unavailable",
+                message: "Không tải được PDF trước khi hết thời gian cho phép.",
+              };
+              continue;
+            }
+            fs.mkdirSync(publicPdfDir, { recursive: true });
+            const filename = buildCachedLabelFilename([orderSn]);
+            fs.writeFileSync(path.join(publicPdfDir, filename), document.buffer);
+          } catch (err: any) {
+            console.error(`[Silent Prefetch] order ${orderSn} failed:`, err?.stack || err);
+            failure = {
+              orderSn,
+              error: /batch_deadline|timeout/i.test(String(err?.message || ""))
+                ? "timeout"
+                : "prefetch_error",
+              message: String(err?.message || err || "Tải PDF thất bại."),
+            };
+          } finally {
+            // Mỗi đơn luôn hoàn tất riêng, kể cả lỗi, để progress không bị kẹt.
+            settleOrder(orderSn, failure);
+            const status = prefetchStatus.get(batchId);
+            if (status) status.isDone = status.completed >= status.total;
           }
-        );
-      }
+        }
+      };
+      await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
       console.log(
         `[Silent Prefetch] DONE cached=${orderSns.length - (prefetchStatus.get(batchId)?.failed || 0)}/${orderSns.length}`,
       );

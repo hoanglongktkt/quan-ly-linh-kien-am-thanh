@@ -27,6 +27,7 @@ import {
   createManualOrder,
   resetPrintStatus,
   updatePrintStatus,
+  markPrinted,
 } from "../controllers/ordersController.js";
 import { pullOrders, quickSyncOrders, syncOrders } from "../controllers/shopeeOrdersController.js";
 import { fastProcessOrders } from "../controllers/shopeeShipController.js";
@@ -81,6 +82,7 @@ router.post("/scan-bg-ack", h(ackScanBg));
 router.post("/scan-bulk-update", h(scanBulkUpdate));
 router.post("/reset-print-status", h(resetPrintStatus));
 router.post("/update-print-status", h(updatePrintStatus));
+router.post("/mark-printed", h(markPrinted));
 router.get("/:orderSn/events", h(getOrderEvents));
 router.post("/:id/hand-over-carrier", h(handOverCarrierById));
 router.get("/", h(listOrders));

@@ -109728,6 +109728,10 @@ async function updatePrintStatus(req, res) {
     });
   }
 }
+async function markPrinted(req, res) {
+  req.body = { ...req.body || {}, isPrinted: true, is_printed: true };
+  return updatePrintStatus(req, res);
+}
 async function resetPrintStatus(req, res) {
   req.body = { ...req.body || {}, is_printed: false, isPrinted: false };
   return updatePrintStatus(req, res);
@@ -111307,6 +111311,7 @@ router13.post("/scan-bg-ack", h2(ackScanBg));
 router13.post("/scan-bulk-update", h2(scanBulkUpdate));
 router13.post("/reset-print-status", h2(resetPrintStatus));
 router13.post("/update-print-status", h2(updatePrintStatus));
+router13.post("/mark-printed", h2(markPrinted));
 router13.get("/:orderSn/events", h2(getOrderEvents));
 router13.post("/:id/hand-over-carrier", h2(handOverCarrierById));
 router13.get("/", h2(listOrders));
@@ -131801,41 +131806,54 @@ async function startServer() {
     };
     beginLogisticsWork("silent-prefetch-pdfs");
     try {
-      const sns = [...pending];
-      const orders = await runBeforeBatchDeadline(
-        deadlineAt,
-        "silent_prefetch_load_orders",
-        () => loadOrdersForShipScoped(
-          sns.map((sn) => `shopee-${sn}`),
-          sns
-        )
-      );
-      const result = await fetchBatchPdfDocumentsByShop(
-        orders,
-        sns,
-        deadlineAt,
-        "Silent Prefetch"
-      );
       const publicPdfDir = import_path17.default.join(APP_ROOT11, "public", "pdfs");
-      import_fs16.default.mkdirSync(publicPdfDir, { recursive: true });
-      for (const document2 of result.documents) {
-        for (const orderSn of document2.orderSns) {
-          const filename = buildCachedLabelFilename([orderSn]);
-          import_fs16.default.writeFileSync(import_path17.default.join(publicPdfDir, filename), document2.buffer);
-          settleOrder(orderSn);
-        }
-      }
-      const failureBySn = new Map(result.failedOrders.map((item) => [item.orderSn, item]));
-      for (const orderSn of [...pending]) {
-        settleOrder(
-          orderSn,
-          failureBySn.get(orderSn) || {
-            orderSn,
-            error: "pdf_unavailable",
-            message: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c PDF tr\u01B0\u1EDBc khi h\u1EBFt th\u1EDDi gian cho ph\xE9p."
+      let nextIndex = 0;
+      const workerCount = Math.min(3, orderSns.length);
+      const runWorker = async () => {
+        while (nextIndex < orderSns.length) {
+          const orderSn = orderSns[nextIndex++];
+          let failure;
+          try {
+            const orders = await runBeforeBatchDeadline(
+              deadlineAt,
+              `silent_prefetch_load_order_${orderSn}`,
+              () => loadOrdersForShipScoped([`shopee-${orderSn}`], [orderSn])
+            );
+            const result = await fetchBatchPdfDocumentsByShop(
+              orders,
+              [orderSn],
+              deadlineAt,
+              `Silent Prefetch ${orderSn}`
+            );
+            const document2 = result.documents.find(
+              (item) => item.orderSns.includes(orderSn)
+            );
+            if (!document2) {
+              failure = result.failedOrders.find((item) => item.orderSn === orderSn) || {
+                orderSn,
+                error: "pdf_unavailable",
+                message: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c PDF tr\u01B0\u1EDBc khi h\u1EBFt th\u1EDDi gian cho ph\xE9p."
+              };
+              continue;
+            }
+            import_fs16.default.mkdirSync(publicPdfDir, { recursive: true });
+            const filename = buildCachedLabelFilename([orderSn]);
+            import_fs16.default.writeFileSync(import_path17.default.join(publicPdfDir, filename), document2.buffer);
+          } catch (err) {
+            console.error(`[Silent Prefetch] order ${orderSn} failed:`, err?.stack || err);
+            failure = {
+              orderSn,
+              error: /batch_deadline|timeout/i.test(String(err?.message || "")) ? "timeout" : "prefetch_error",
+              message: String(err?.message || err || "T\u1EA3i PDF th\u1EA5t b\u1EA1i.")
+            };
+          } finally {
+            settleOrder(orderSn, failure);
+            const status = prefetchStatus.get(batchId);
+            if (status) status.isDone = status.completed >= status.total;
           }
-        );
-      }
+        }
+      };
+      await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
       console.log(
         `[Silent Prefetch] DONE cached=${orderSns.length - (prefetchStatus.get(batchId)?.failed || 0)}/${orderSns.length}`
       );

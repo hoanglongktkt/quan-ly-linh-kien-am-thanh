@@ -1777,6 +1777,12 @@ export async function updatePrintStatus(req, res) {
   }
 }
 
+/** POST /api/orders/mark-printed — đánh dấu nhanh danh sách đơn là đã in. */
+export async function markPrinted(req, res) {
+  req.body = { ...(req.body || {}), isPrinted: true, is_printed: true };
+  return updatePrintStatus(req, res);
+}
+
 /**
  * POST /api/orders/reset-print-status
  * Đặt isPrinted=false trên Mongo — cho phép in lại từ đầu (không gọi Shopee).
