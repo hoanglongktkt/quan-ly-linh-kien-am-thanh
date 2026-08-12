@@ -674,6 +674,28 @@ function getValidLabelDiskFile(filename: string): { safe: string; filePath: stri
   }
 }
 
+async function getValidLabelDiskFileAsync(
+  filename: string,
+): Promise<{ safe: string; filePath: string; size: number } | null> {
+  const safe = safeLabelFilename(filename);
+  if (!safe) return null;
+  const filePath = path.join(PDF_DIR, safe);
+  let handle: fs.promises.FileHandle | undefined;
+  try {
+    const stat = await fs.promises.stat(filePath);
+    if (!stat.isFile() || stat.size <= 0) return null;
+    handle = await fs.promises.open(filePath, "r");
+    const magic = Buffer.allocUnsafe(4);
+    const { bytesRead } = await handle.read(magic, 0, 4, 0);
+    if (bytesRead !== 4 || magic.toString() !== "%PDF") return null;
+    return { safe, filePath, size: stat.size };
+  } catch {
+    return null;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
 function isPdfBuffer(buffer: Buffer, contentType?: string): boolean {
   if (!buffer || buffer.length < 5) return false;
   if (buffer.subarray(0, 4).toString() === "%PDF") return true;
@@ -720,6 +742,7 @@ function removeExistingLabelFilesForOrderSns(orderSns: string[]): number {
       const hit = sns.some(
         (sn) =>
           name === `${sn}.pdf` ||
+          name === `order_${sn}.pdf` ||
           name.startsWith(`${sn}_`) ||
           name.startsWith(`order_${sn}_`),
       );
@@ -781,13 +804,15 @@ function putLabelMem(filename: string, buffer: Buffer, contentType?: string): st
     const dest = path.join(PDF_DIR, safe);
     console.log(`[Labels] Đường dẫn lưu file dự kiến: ${dest}`);
     setImmediate(() => {
-      try {
-        ensureLabelsDir();
-        fs.writeFileSync(dest, buffer);
-        console.log(`[Labels] Kết quả: OK — Disk ${safe} (${buffer.length} bytes) → ${dest}`);
-      } catch (err: any) {
-        console.warn(`[Labels] Ghi đĩa nền thất bại ${safe}:`, err?.message || err);
-      }
+      ensureLabelsDir();
+      void fs.promises
+        .writeFile(dest, buffer)
+        .then(() => {
+          console.log(`[Labels] Kết quả: OK — Disk ${safe} (${buffer.length} bytes) → ${dest}`);
+        })
+        .catch((err: any) => {
+          console.warn(`[Labels] Ghi đĩa nền thất bại ${safe}:`, err?.message || err);
+        });
     });
 
     console.log(`[Labels] Kết quả: OK — RAM ${safe} (${buffer.length} bytes)`);
@@ -8928,7 +8953,7 @@ function shippingDocRowKey(row: { order_sn?: string; package_number?: string }):
 async function batchDownloadShopeeWaybillPdf(
   shopId: string,
   orderList: ShopeeWaybillOrderRow[],
-  opts?: { skipDownload?: boolean; deadlineAt?: number; signal?: AbortSignal },
+  opts?: { skipDownload?: boolean; skipCreate?: boolean; deadlineAt?: number; signal?: AbortSignal },
 ): Promise<{
   success: boolean;
   filename?: string;
@@ -9023,6 +9048,13 @@ async function batchDownloadShopeeWaybillPdf(
       { error: string; message: string }
     >();
     let createPending = [...enriched];
+    if (opts?.skipCreate) {
+      for (const row of enriched) createdByKey.set(shippingDocRowKey(row), row);
+      createPending = [];
+      console.log(
+        `[Shopee Batch Waybill] BƯỚC 1 CREATE đã hoàn tất ở vòng trước — chỉ tiếp tục POLL shop=${shopId} n=${enriched.length}`,
+      );
+    }
     const createDeadlineAt = Math.min(
       Date.now() + SHOPEE_CREATE_DOCUMENT_RETRY_TIMEOUT_MS,
       opts?.deadlineAt || Number.POSITIVE_INFINITY,
@@ -11688,7 +11720,10 @@ async function enrichOrdersPackageAndTrackingForPrint(
     }
   }
 
-  for (let i = 0; i < orders.length; i++) {
+  let nextOrderIndex = 0;
+  const enrichWorker = async () => {
+    while (nextOrderIndex < orders.length) {
+    const i = nextOrderIndex++;
     const order = orders[i];
     const sn = String(order?.orderSn || "").trim();
     if (!sn) continue;
@@ -11778,8 +11813,11 @@ async function enrichOrdersPackageAndTrackingForPrint(
     console.log(
       `[Shopee Print Enrich] order_sn=${sn} package_numbers=${buildShopeeShippingDocOrderRows(order).map((row) => row.package_number).join(",") || "(empty)"} tracking=${trackingForShopeeShippingDoc(order) || "(empty)"}`,
     );
-    if (i < orders.length - 1) await sleep(Math.min(PRINT_API_DELAY_MS, 300));
-  }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(3, orders.length) }, () => enrichWorker()),
+  );
 }
 
 function orderHasPrintableTracking(order: any): boolean {
@@ -18325,70 +18363,135 @@ async function startServer() {
   type BatchPdfDocument = { orderSns: string[]; buffer: Buffer };
   type BatchPdfFailure = { orderSn: string; error: string; message: string };
 
+  async function mergeBatchPdfBuffers(
+    pdfBuffers: Array<{ orderSn: string; buffer: Buffer }>,
+    logPrefix: string,
+    onInvalid: (orderSn: string) => void,
+  ): Promise<PDFDocument> {
+    const startedAt = Date.now();
+    const mergedPdf = await PDFDocument.create();
+    for (let index = 0; index < pdfBuffers.length; index++) {
+      const { orderSn, buffer } = pdfBuffers[index];
+      try {
+        const sourcePdf = await PDFDocument.load(buffer, { ignoreEncryption: true });
+        const copiedPages = await mergedPdf.copyPages(sourcePdf, sourcePdf.getPageIndices());
+        copiedPages.forEach((page) => mergedPdf.addPage(page));
+      } catch (err: any) {
+        console.error(`[${logPrefix}] Lỗi gộp PDF ${orderSn}:`, err?.message || err);
+        onInvalid(orderSn);
+      }
+      // Chia CPU work thành các lát nhỏ để không giữ event loop liên tục khi batch lớn.
+      if ((index + 1) % 4 === 0) await yieldEventLoop();
+    }
+    console.log(
+      `[${logPrefix}] timing merge=${Date.now() - startedAt}ms files=${pdfBuffers.length} pages=${mergedPdf.getPageCount()}`,
+    );
+    return mergedPdf;
+  }
+
   async function fetchBatchPdfDocumentsByShop(
     orders: any[],
     orderSns: string[],
     deadlineAt: number,
     logPrefix: string,
+    options?: { skipCreate?: boolean; skipEnrich?: boolean; signal?: AbortSignal },
   ): Promise<{ documents: BatchPdfDocument[]; failedOrders: BatchPdfFailure[] }> {
+    const startedAt = Date.now();
     const failedBySn = new Map<string, BatchPdfFailure>();
     const cachedDocuments: BatchPdfDocument[] = [];
     const groups = new Map<string, { shopId: string; accessToken: string; orders: any[] }>();
+    const orderBySn = new Map(
+      orders.map((item: any) => [
+        String(item?.orderSn || item?.order_sn || "").replace(/^shopee-/i, "").trim(),
+        item,
+      ]),
+    );
+    const authByStoredShop = new Map<string, Promise<any>>();
 
-    for (const orderSn of orderSns) {
+    const uncachedEntries = await mapBatchConcurrently(
+      orderSns,
+      BATCH_PRINT_CONCURRENCY,
+      async (orderSn): Promise<{ order: any; shopId: string; accessToken: string } | null> => {
       const cachedFilename = buildCachedLabelFilename([orderSn]);
-      const cachedFilePath = path.join(PDF_DIR, cachedFilename);
-      if (fs.existsSync(cachedFilePath)) {
-        const cached = getValidLabelDiskFile(cachedFilename);
-        if (cached) {
-          cachedDocuments.push({ orderSns: [orderSn], buffer: fs.readFileSync(cached.filePath) });
-          continue;
+      const memoryCached = labelMemCache.get(cachedFilename);
+      if (
+        memoryCached?.buf?.length &&
+        memoryCached.expires >= Date.now() &&
+        isPdfBuffer(memoryCached.buf)
+      ) {
+        cachedDocuments.push({ orderSns: [orderSn], buffer: memoryCached.buf });
+        return null;
+      }
+      const cached = await getValidLabelDiskFileAsync(cachedFilename);
+      if (cached) {
+        try {
+          cachedDocuments.push({
+            orderSns: [orderSn],
+            buffer: await fs.promises.readFile(cached.filePath),
+          });
+          return null;
+        } catch (err: any) {
+          console.warn(`[${logPrefix}] Cache read miss ${cachedFilename}:`, err?.message || err);
         }
       }
-      const order = orders.find(
-        (item: any) =>
-          String(item?.orderSn || item?.order_sn || "").replace(/^shopee-/i, "").trim() === orderSn,
-      );
+      const order = orderBySn.get(orderSn);
       if (!order) {
         failedBySn.set(orderSn, { orderSn, error: "order_not_found", message: "Không tìm thấy đơn." });
-        continue;
+        return null;
       }
       const storedShopId = String(
         order.shopId || order.shop_id || order.accountId || order.account_id || "",
       ).trim();
       if (!storedShopId) {
         failedBySn.set(orderSn, { orderSn, error: "missing_shop_id", message: "Đơn thiếu shopId." });
-        continue;
+        return null;
       }
       try {
-        const auth = await runBeforeBatchDeadline(
-          deadlineAt,
-          `auth:${orderSn}`,
-          () => getShopeeAccessTokenForApi(storedShopId),
-        );
+        let authPromise = authByStoredShop.get(storedShopId);
+        if (!authPromise) {
+          authPromise = runBeforeBatchDeadline(
+            deadlineAt,
+            `auth:${storedShopId}`,
+            () => getShopeeAccessTokenForApi(storedShopId),
+          );
+          authByStoredShop.set(storedShopId, authPromise);
+        }
+        const auth = await authPromise;
         const shopId = String(auth?.apiShopId || "").trim();
         const accessToken = String(auth?.token || "").trim();
         if (!shopId || !accessToken) {
           failedBySn.set(orderSn, { orderSn, error: "token_missing", message: "Không có token Shopee." });
-          continue;
+          return null;
         }
-        const key = shopId;
-        const group = groups.get(key) || { shopId, accessToken, orders: [] };
-        group.orders.push(order);
-        groups.set(key, group);
+        return { order, shopId, accessToken };
       } catch (err: any) {
         failedBySn.set(orderSn, {
           orderSn,
           error: "shop_auth_failed",
           message: String(err?.message || err),
         });
+        return null;
       }
+      },
+    );
+
+    for (const entry of uncachedEntries) {
+      if (!entry) continue;
+      const group = groups.get(entry.shopId) || {
+        shopId: entry.shopId,
+        accessToken: entry.accessToken,
+        orders: [],
+      };
+      group.orders.push(entry.order);
+      groups.set(entry.shopId, group);
     }
+    const cacheElapsedMs = Date.now() - startedAt;
 
     const groupResults = await mapBatchConcurrently(
       [...groups.values()],
       BATCH_PRINT_CONCURRENCY,
       async (group): Promise<BatchPdfDocument[]> => {
+        const groupStartedAt = Date.now();
         const groupSns = group.orders.map((order: any) =>
           String(order?.orderSn || order?.order_sn || "").replace(/^shopee-/i, "").trim(),
         );
@@ -18397,12 +18500,18 @@ async function startServer() {
           () => deadlineController.abort(new Error("batch_deadline:shopee_pdf")),
           Math.max(1, deadlineAt - Date.now()),
         );
+        const operationSignal = options?.signal
+          ? AbortSignal.any([deadlineController.signal, options.signal])
+          : deadlineController.signal;
         try {
-          await runBeforeBatchDeadline(
-            deadlineAt,
-            `enrich:${group.shopId}`,
-            () => enrichOrdersPackageAndTrackingForPrint(group.shopId, group.accessToken, group.orders),
-          );
+          if (!options?.skipEnrich) {
+            await runBeforeBatchDeadline(
+              deadlineAt,
+              `enrich:${group.shopId}`,
+              () => enrichOrdersPackageAndTrackingForPrint(group.shopId, group.accessToken, group.orders),
+            );
+          }
+          const enrichElapsedMs = Date.now() - groupStartedAt;
           const rows: ShopeeWaybillOrderRow[] = [];
           for (const order of group.orders) {
             const orderSn = String(order?.orderSn || order?.order_sn || "")
@@ -18421,15 +18530,18 @@ async function startServer() {
           }
           if (rows.length === 0) return [];
 
+          const shopeeStartedAt = Date.now();
           const batch = await runBeforeBatchDeadline(
             deadlineAt,
             `batch_waybill:${group.shopId}`,
             () => batchDownloadShopeeWaybillPdf(group.shopId, rows, {
               skipDownload: true,
+              skipCreate: options?.skipCreate,
               deadlineAt,
-              signal: deadlineController.signal,
+              signal: operationSignal,
             }),
           );
+          const pollElapsedMs = Date.now() - shopeeStartedAt;
           for (const skipped of batch.skippedOrders || []) {
             const orderSn = String(skipped.orderSn || "").trim();
             if (orderSn) failedBySn.set(orderSn, skipped);
@@ -18456,6 +18568,7 @@ async function startServer() {
             list.push(row);
             readyRowsByOrder.set(row.order_sn, list);
           }
+          const downloadStartedAt = Date.now();
           const documents = await mapBatchConcurrently(
             [...readyRowsByOrder.entries()],
             BATCH_PRINT_CONCURRENCY,
@@ -18470,18 +18583,18 @@ async function startServer() {
                     group.accessToken,
                     packageRows,
                     filename,
-                    deadlineController.signal,
+                    operationSignal,
                   ),
                 );
                 if (!downloaded?.filePath) throw new Error(downloaded?.message || "download_failed");
-                const buffer = fs.readFileSync(downloaded.filePath);
+                const buffer = await fs.promises.readFile(downloaded.filePath);
                 if (!buffer.length || buffer.length > BATCH_PDF_MAX_BYTES || !isPdfBuffer(buffer)) {
                   throw new Error("invalid_pdf");
                 }
                 return { orderSns: [orderSn], buffer };
               } catch (err: any) {
-              failedBySn.set(orderSn, {
-                orderSn,
+                failedBySn.set(orderSn, {
+                  orderSn,
                   error: String(err?.message || "").includes("invalid_pdf")
                     ? "invalid_pdf"
                     : "download_failed",
@@ -18495,7 +18608,7 @@ async function startServer() {
             (item): item is BatchPdfDocument => item !== null,
           );
           console.log(
-            `[${logPrefix}] PDF riêng shop=${group.shopId} ready=${validDocuments.length}/${readyOrderSns.length}`,
+            `[${logPrefix}] timing shop=${group.shopId} enrich=${enrichElapsedMs}ms create_poll=${pollElapsedMs}ms download=${Date.now() - downloadStartedAt}ms total=${Date.now() - groupStartedAt}ms ready=${validDocuments.length}/${readyOrderSns.length}`,
           );
           for (const orderSn of readyOrderSns) {
             if (!validDocuments.some((item) => item.orderSns.includes(orderSn)) && !failedBySn.has(orderSn)) {
@@ -18524,8 +18637,12 @@ async function startServer() {
       },
     );
 
+    const documents = [...cachedDocuments, ...groupResults.flat()];
+    console.log(
+      `[${logPrefix}] timing cache_auth=${cacheElapsedMs}ms total=${Date.now() - startedAt}ms cache_hit=${cachedDocuments.length} downloaded=${documents.length - cachedDocuments.length} failed=${failedBySn.size}`,
+    );
     return {
-      documents: [...cachedDocuments, ...groupResults.flat()],
+      documents,
       failedOrders: [...failedBySn.values()],
     };
   }
@@ -18878,16 +18995,10 @@ async function startServer() {
 
       // Bước 4: Gộp tất cả PDF
       console.log(`[Batch Confirm Print] Gộp ${pdfBuffers.length} PDF...`);
-      const mergedPdf = await PDFDocument.create();
-      
-      for (const { orderSn, buffer } of pdfBuffers) {
-        try {
-          const sourcePdf = await PDFDocument.load(buffer, { ignoreEncryption: true });
-          const copiedPages = await mergedPdf.copyPages(sourcePdf, sourcePdf.getPageIndices());
-          copiedPages.forEach((page) => mergedPdf.addPage(page));
-          console.log(`[Batch Confirm Print] Đã gộp ${orderSn} (${sourcePdf.getPageCount()} pages)`);
-        } catch (err: any) {
-          console.error(`[Batch Confirm Print] Lỗi gộp PDF ${orderSn}:`, err?.message || err);
+      const mergedPdf = await mergeBatchPdfBuffers(
+        pdfBuffers,
+        "Batch Confirm Print",
+        (orderSn) => {
           for (const failedSn of orderSn.split(",").filter(Boolean)) {
             pdfFailures.set(failedSn, {
               orderSn: failedSn,
@@ -18895,8 +19006,8 @@ async function startServer() {
               message: "Dữ liệu PDF bị hỏng hoặc không thể gộp.",
             });
           }
-        }
-      }
+        },
+      );
 
       if (mergedPdf.getPageCount() === 0) {
         return res.status(400).json({
@@ -18949,6 +19060,10 @@ async function startServer() {
   const batchPrintOnlyRoute = async (req: any, res: any) => {
     const t0 = Date.now();
     const deadlineAt = t0 + BATCH_PRINT_ONLY_DEADLINE_MS;
+    const requestAbortController = new AbortController();
+    const abortOnClientDisconnect = () =>
+      requestAbortController.abort(new Error("client_disconnected"));
+    req.once("aborted", abortOnClientDisconnect);
     beginLogisticsWork("batch-print-only");
     
     try {
@@ -19158,6 +19273,11 @@ async function startServer() {
           requestedSns,
           deadlineAt,
           `Batch Print Only fallback ${fallbackRound}`,
+          {
+            skipCreate: fallbackRound > 1,
+            skipEnrich: fallbackRound > 1,
+            signal: requestAbortController.signal,
+          },
         );
         for (const document of batchPdfResult.documents) {
           pdfBuffers.push({
@@ -19173,7 +19293,16 @@ async function startServer() {
         for (const failure of batchPdfResult.failedOrders) {
           if (pendingSns.has(failure.orderSn)) pdfFailures.set(failure.orderSn, failure);
         }
-        const permanentErrors = new Set(["order_not_found", "missing_shop_id", "token_missing"]);
+        const permanentErrors = new Set([
+          "order_not_found",
+          "missing_shop_id",
+          "token_missing",
+          "missing_package_number",
+          "document_failed",
+          "invalid_pdf",
+          "create_retry_exhausted",
+          "create_shipping_document_failed",
+        ]);
         const pendingFailures = [...pendingSns]
           .map((orderSn) => pdfFailures.get(orderSn))
           .filter((failure): failure is BatchPdfFailure => Boolean(failure));
@@ -19198,16 +19327,10 @@ async function startServer() {
 
       // Gộp tất cả PDF
       console.log(`[Batch Print Only] Gộp ${pdfBuffers.length} PDF...`);
-      const mergedPdf = await PDFDocument.create();
-      
-      for (const { orderSn, buffer } of pdfBuffers) {
-        try {
-          const sourcePdf = await PDFDocument.load(buffer, { ignoreEncryption: true });
-          const copiedPages = await mergedPdf.copyPages(sourcePdf, sourcePdf.getPageIndices());
-          copiedPages.forEach((page) => mergedPdf.addPage(page));
-          console.log(`[Batch Print Only] Đã gộp ${orderSn} (${sourcePdf.getPageCount()} pages)`);
-        } catch (err: any) {
-          console.error(`[Batch Print Only] Lỗi gộp PDF ${orderSn}:`, err?.message || err);
+      const mergedPdf = await mergeBatchPdfBuffers(
+        pdfBuffers,
+        "Batch Print Only",
+        (orderSn) => {
           for (const failedSn of orderSn.split(",").filter(Boolean)) {
             pdfFailures.set(failedSn, {
               orderSn: failedSn,
@@ -19215,8 +19338,8 @@ async function startServer() {
               message: "Dữ liệu PDF bị hỏng hoặc không thể gộp.",
             });
           }
-        }
-      }
+        },
+      );
 
       if (mergedPdf.getPageCount() === 0) {
         return res.status(400).json({
@@ -19258,6 +19381,7 @@ async function startServer() {
         message: "Lỗi server: " + error.message,
       });
     } finally {
+      req.off("aborted", abortOnClientDisconnect);
       endLogisticsWork();
     }
   };
@@ -20401,9 +20525,20 @@ async function startServer() {
   function findExistingLabelFile(orderSn: string): string | null {
     const sn = String(orderSn || "").replace(/[^a-zA-Z0-9_-]/g, "");
     if (!sn) return null;
+    const canonical = buildCachedLabelFilename([sn]);
+    const canonicalMem = labelMemCache.get(canonical);
+    if (
+      canonicalMem?.buf?.length &&
+      canonicalMem.expires >= Date.now() &&
+      isPdfBuffer(canonicalMem.buf)
+    ) {
+      return canonical;
+    }
+    if (getValidLabelDiskFile(canonical)) return canonical;
     const nameMatches = (name: string) =>
       /\.pdf$/i.test(name) &&
       (name === `${sn}.pdf` ||
+        name === canonical ||
         name.startsWith(`${sn}_`) ||
         name.startsWith(`order_${sn}_`));
 
@@ -20427,7 +20562,8 @@ async function startServer() {
         .filter((name) => nameMatches(name))
         .map((name) => {
           const full = path.join(PDF_DIR, name);
-          return { name, mtime: fs.statSync(full).mtimeMs, size: fs.statSync(full).size };
+          const stat = fs.statSync(full);
+          return { name, mtime: stat.mtimeMs, size: stat.size };
         })
         .filter((x) => x.size > 0)
         .sort((a, b) => b.mtime - a.mtime);
@@ -20645,6 +20781,10 @@ async function startServer() {
   async function printChunkHandler(req: any, res: any) {
     beginLogisticsWork("print-chunk-local");
     const t0 = Date.now();
+    const requestAbortController = new AbortController();
+    const abortOnClientDisconnect = () =>
+      requestAbortController.abort(new Error("client_disconnected"));
+    req.once("aborted", abortOnClientDisconnect);
     try {
       const rawIds = req.body?.order_ids ?? req.body?.orderIds ?? [];
       if (!Array.isArray(rawIds) || rawIds.length === 0) {
@@ -20791,18 +20931,14 @@ async function startServer() {
             missingSns,
             fallbackDeadlineAt,
             "Print Local Direct Fallback",
+            { signal: requestAbortController.signal },
           );
           const failureBySn = new Map(fallback.failedOrders.map((item) => [item.orderSn, item]));
 
           for (const downloaded of fallback.documents) {
             for (const orderSn of downloaded.orderSns) {
               const filename = buildCachedLabelFilename([orderSn]);
-              const filePath = path.join(PDF_DIR, filename);
-              if (!fs.existsSync(filePath)) {
-                ensureLabelsDir();
-                fs.writeFileSync(filePath, downloaded.buffer);
-              }
-              const cached = getValidLabelDiskFile(filename);
+              const cached = await getValidLabelDiskFileAsync(filename);
               if (!cached) {
                 failureBySn.set(orderSn, {
                   orderSn,
@@ -20953,6 +21089,7 @@ async function startServer() {
         documents: [],
       });
     } finally {
+      req.off("aborted", abortOnClientDisconnect);
       endLogisticsWork("print-chunk-local");
     }
   }
@@ -20995,13 +21132,13 @@ async function startServer() {
         if (queue.length === 0) return;
 
         console.log(`[Label Prepare BG] START n=${queue.length}`);
-        for (const order of queue) {
+        await mapBatchConcurrently(queue, 3, async (order) => {
           const sn = String(order.orderSn || "").trim();
           try {
             const shopId = String(order.shopId || resolveOrderShopId(order) || "").trim();
             if (!shopId) {
               console.warn(`[Label Prepare BG] skip ${sn}: missing shopId`);
-              continue;
+              return;
             }
             let accessToken = "";
             try {
@@ -21011,7 +21148,7 @@ async function startServer() {
             }
             if (!accessToken) {
               console.warn(`[Label Prepare BG] skip ${sn}: no token shop=${shopId}`);
-              continue;
+              return;
             }
 
             try {
@@ -21025,17 +21162,17 @@ async function startServer() {
               console.warn(
                 `[Label Prepare BG] FAILED ${sn}: missing_package_number; Create/Poll/Download blocked`,
               );
-              continue;
+              return;
             }
 
             const gen = await generateShopeeShippingDocument(shopId, shippingRows);
-            const pdfFilename = String(gen?.filename || gen?.pdfFilename || "").trim();
+            const pdfFilename = String(gen?.filename || "").trim();
             if (!gen?.success || !gen.url || !pdfFilename) {
               console.warn(
                 `[Label Prepare BG] fail ${sn}:`,
                 gen?.message || gen?.error || "no_url",
               );
-              continue;
+              return;
             }
 
             // Lưu meta PDF + hasPdf + waybill_url — tuyệt đối KHÔNG set isPrinted (user chưa bấm In).
@@ -21056,9 +21193,8 @@ async function startServer() {
             console.warn(`[Label Prepare BG] ${sn}:`, err?.message || err);
           } finally {
             labelPrepareInFlight.delete(sn);
-            await sleep(PRINT_API_DELAY_MS || 300);
           }
-        }
+        });
         console.log("[Label Prepare BG] DONE");
       })();
     });

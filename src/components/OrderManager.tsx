@@ -5206,7 +5206,8 @@ export default function OrderManager({
       
       // Cho phép backend fallback polling Shopee khi PDF nền chưa READY.
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 118_000);
+      // Backend dừng ở 210s; FE chừa 5s nhận response thay vì hủy request khi server vẫn xử lý.
+      const timeoutId = setTimeout(() => controller.abort(), 215_000);
       
       try {
         const response = await fetch('/api/orders/batch-print-only', {
