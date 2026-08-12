@@ -4576,7 +4576,7 @@ export default function OrderManager({
     } finally {
       setIsFetchingPdf(false);
       setIsPrintingFromSummary(false);
-      setIsShipping(false);
+      clearShipProgressOverlay();
     }
   };
 
@@ -5130,6 +5130,7 @@ export default function OrderManager({
       clearShipProgressOverlay();
     } finally {
       setIsBulkPrinting(false);
+      clearShipProgressOverlay();
     }
   };
 
@@ -5221,7 +5222,10 @@ export default function OrderManager({
         if (response.ok && data.success && data.url) {
           setProgressMessage('Đang mở PDF...');
           if (!navigateReservedPrintWindow(reservedPrintWindow, data.url)) {
-            window.open(data.url, '_blank');
+            const printWindow = window.open(data.url, '_blank');
+            if (!printWindow) {
+              throw new Error('Trình duyệt đã chặn cửa sổ PDF. Vui lòng cho phép popup và thử lại.');
+            }
           }
           const failedOrderIds = getBatchFailedOrderIds(data);
           const completionMessage = failedOrderIds.length > 0
@@ -5261,6 +5265,8 @@ export default function OrderManager({
       closeReservedPrintWindow(reservedPrintWindow);
       console.error('[Reprint] Error:', err);
       alert('Không thể kết nối API. Vui lòng thử lại.');
+      clearShipProgressOverlay();
+    } finally {
       clearShipProgressOverlay();
     }
   };
@@ -5474,6 +5480,7 @@ export default function OrderManager({
       clearShipProgressOverlay();
     } finally {
       setPrintingOrderId(null);
+      clearShipProgressOverlay();
     }
   };
 
