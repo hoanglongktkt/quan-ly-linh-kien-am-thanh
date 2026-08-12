@@ -3278,11 +3278,18 @@ export default function OrderManager({
         : `Đang lấy ${uniqueIds.length} PDF từ kho nội bộ...`,
     );
     reportProgress(0);
+    // Chặn treo vô hạn nếu mạng/proxy im lặng không trả response — khớp trần chờ Backend (~210s) + đệm.
+    const printChunkController = new AbortController();
+    const printChunkTimeoutId = window.setTimeout(
+      () => printChunkController.abort(),
+      220_000,
+    );
     try {
       const res = await fetch('/api/shopee/print-document/chunk', {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({ order_ids: uniqueIds, orderIds: uniqueIds }),
+        signal: printChunkController.signal,
       });
       const data = await parseJsonResponse<
         PrintDocumentResponse & {
@@ -3360,14 +3367,21 @@ export default function OrderManager({
         },
       };
     } catch (err) {
+      const isAbort =
+        err instanceof DOMException && err.name === 'AbortError' ||
+        (err instanceof Error && err.name === 'AbortError');
       return {
         ok: false,
         status: 500,
         data: {
-          error: 'print_exception',
-          message: err instanceof Error ? err.message : 'Lỗi in vận đơn (kho nội bộ).',
+          error: isAbort ? 'print_timeout' : 'print_exception',
+          message: isAbort
+            ? 'Quá thời gian chờ lấy PDF từ máy chủ. Vui lòng thử lại.'
+            : err instanceof Error ? err.message : 'Lỗi in vận đơn (kho nội bộ).',
         },
       };
+    } finally {
+      window.clearTimeout(printChunkTimeoutId);
     }
   };
   const applyPrintDocumentResponse = async (
@@ -4567,6 +4581,11 @@ export default function OrderManager({
         clearShipProgressOverlay();
       } else {
         if (result.message) showToast(result.message);
+        // === TỰ ĐỘNG ĐÁNH DẤU ĐÃ IN (Optimistic UI) + sync DB + refresh danh sách ===
+        const optimisticTargets = applyPrintedLocalOptimistic(ids, true);
+        if (optimisticTargets.length > 0) {
+          await updatePrintStatusForOrders(optimisticTargets, true, { silent: true }).catch(() => {});
+        }
         markProgressComplete('In vận đơn thành công!');
       }
     } catch (err) {
