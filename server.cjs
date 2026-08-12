@@ -78951,6 +78951,31 @@ function orderTabFilter(tab) {
       return {};
   }
 }
+async function loadAllHandedOverShopeeOrdersFromStore(opts) {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const and = [
+    ORDER_TAB_IS_HANDED_OVER,
+    {
+      $or: [
+        { channel: "shopee" },
+        { "data.channel": "shopee" }
+      ]
+    }
+  ];
+  const shopFilter = buildShopIdMongoFilter(void 0, opts?.shopIds);
+  if (shopFilter) and.push(shopFilter);
+  const docs = await OrderModel.find({ $and: and }).sort({ "data.handedOverAt": 1, "data.date": 1, _id: 1 }).maxTimeMS(3e4).lean();
+  const orders = [];
+  for (const doc of docs) {
+    const order = hydrateOrderFromMongoDoc(doc);
+    if (order) orders.push(order);
+  }
+  console.log(
+    `[MongoDB] Targeted Healing candidates=${orders.length}${opts?.shopIds?.length ? ` shops=${opts.shopIds.join(",")}` : ""}`
+  );
+  return orders;
+}
 async function loadPriorityTabOrdersFromStore(opts) {
   try {
     requireMongo();
@@ -110112,6 +110137,15 @@ var deps16 = {
     errors: [],
     message: "not_initialized"
   }),
+  reconcileHandedOverCarrierStatuses: async () => ({
+    success: false,
+    pulled: 0,
+    updated: 0,
+    shipped: 0,
+    candidates: 0,
+    errors: [],
+    message: "not_initialized"
+  }),
   invalidateOrdersRefreshCache: () => {
   },
   shopeeGetReturnList: async () => ({}),
@@ -110198,18 +110232,53 @@ async function runOrdersPull(opts) {
         skipped: true
       };
     }
+    let targetedHealing = {
+      pulled: 0,
+      updated: 0,
+      shipped: 0,
+      candidates: 0,
+      errors: [],
+      message: "",
+      skipped: false
+    };
+    try {
+      targetedHealing = await deps16.reconcileHandedOverCarrierStatuses({
+        shopIds: shopIds?.length ? shopIds : void 0,
+        force: true,
+        trigger: "update_orders_button"
+      });
+    } catch (targetedErr) {
+      console.error(
+        `[${logTag}] Targeted Healing failed:`,
+        targetedErr?.stack || targetedErr?.message || targetedErr
+      );
+      targetedHealing = {
+        ...targetedHealing,
+        errors: [
+          {
+            error: "targeted_healing_failed",
+            message: targetedErr?.message || String(targetedErr)
+          }
+        ],
+        message: targetedErr?.message || String(targetedErr)
+      };
+    }
     try {
       deps16.invalidateOrdersRefreshCache();
     } catch (cacheErr) {
       console.error("[API_SYNC_ERROR] invalidate cache:", cacheErr?.stack || cacheErr);
     }
-    const pulled = (result?.pulled || 0) + (cancelPull.pulled || 0);
+    const pulled = (result?.pulled || 0) + (cancelPull.pulled || 0) + (targetedHealing.pulled || 0);
     const added = (result?.added || 0) + (cancelPull.added || 0);
-    const updated = (result?.updated || 0) + (cancelPull.updated || 0);
-    const errors = [...result?.errors || [], ...cancelPull.errors || []];
+    const updated = (result?.updated || 0) + (cancelPull.updated || 0) + (targetedHealing.updated || 0);
+    const errors = [
+      ...result?.errors || [],
+      ...cancelPull.errors || [],
+      ...targetedHealing.errors || []
+    ];
     const dbErrors = errors.filter((e2) => String(e2?.error || "") === "db_upsert_failed");
     const success = dbErrors.length === 0 && (Boolean(result?.success) || cancelPull.pulled > 0 || errors.length === 0);
-    const message = dbErrors.length > 0 ? `L\u1ED7i l\u01B0u MongoDB: ${dbErrors[0]?.message || "db_upsert_failed"}` : String(result?.message || `\u0110\xE3 k\xE9o ${pulled} \u0111\u01A1n`) + (cancelPull.pulled > 0 || cancelPull.message && !cancelPull.skipped ? ` | Cancel/return: ${cancelPull.message || `+${cancelPull.pulled}`}` : "");
+    const message = dbErrors.length > 0 ? `L\u1ED7i l\u01B0u MongoDB: ${dbErrors[0]?.message || "db_upsert_failed"}` : String(result?.message || `\u0110\xE3 k\xE9o ${pulled} \u0111\u01A1n`) + (cancelPull.pulled > 0 || cancelPull.message && !cancelPull.skipped ? ` | Cancel/return: ${cancelPull.message || `+${cancelPull.pulled}`}` : "") + (targetedHealing.candidates > 0 ? ` | Targeted Healing: ${targetedHealing.message || `${targetedHealing.pulled} \u0111\u01A1n`}` : "");
     if (jobId) {
       try {
         await deps16.finishSyncJob(
@@ -110222,6 +110291,9 @@ async function runOrdersPull(opts) {
             shops: result?.shops,
             errors: errors.length,
             cancel_return_pulled: cancelPull.pulled || 0,
+            targeted_candidates: targetedHealing.candidates || 0,
+            targeted_pulled: targetedHealing.pulled || 0,
+            targeted_shipped: targetedHealing.shipped || 0,
             quick_sync: allowShortLookback === true,
             retry: retryTelemetryBefore ? diffShopeeRetryTelemetry(retryTelemetryBefore) : void 0
           },
@@ -119616,8 +119688,6 @@ async function reconcileActiveShopeeOrdersFromStore(orders, shopIds, deadlineAt)
 var handedOverStatusReconcileInFlight = false;
 var lastHandedOverStatusReconcileAt = 0;
 var HANDED_OVER_STATUS_RECONCILE_COOLDOWN_MS = 45e3;
-var HANDED_OVER_STATUS_RECONCILE_LIMIT = 150;
-var HANDED_OVER_STATUS_RECONCILE_DEADLINE_MS = 9e4;
 async function reconcileHandedOverCarrierStatuses(opts) {
   const trigger = String(opts?.trigger || "manual");
   const empty = {
@@ -119649,11 +119719,6 @@ async function reconcileHandedOverCarrierStatuses(opts) {
   }
   handedOverStatusReconcileInFlight = true;
   lastHandedOverStatusReconcileAt = Date.now();
-  const deadlineAt = Date.now() + HANDED_OVER_STATUS_RECONCILE_DEADLINE_MS;
-  const maxOrders = Math.min(
-    Math.max(Number(opts?.maxOrders) || HANDED_OVER_STATUS_RECONCILE_LIMIT, 1),
-    150
-  );
   const result = {
     success: true,
     pulled: 0,
@@ -119664,16 +119729,9 @@ async function reconcileHandedOverCarrierStatuses(opts) {
     message: ""
   };
   try {
-    const page = await queryOrdersPageFromStore({
-      tab: "handed_over_carrier",
-      page: 1,
-      pageSize: maxOrders,
-      skipCounts: true,
+    const candidates = await loadAllHandedOverShopeeOrdersFromStore({
       shopIds: Array.isArray(opts?.shopIds) ? opts.shopIds : void 0
     });
-    const candidates = (page?.rows || []).filter(
-      (o) => String(o?.channel || "").toLowerCase() === "shopee"
-    );
     result.candidates = candidates.length;
     if (candidates.length === 0) {
       result.message = "no_handed_over_candidates";
@@ -119715,11 +119773,10 @@ async function reconcileHandedOverCarrierStatuses(opts) {
     }
     const workingOrders = [...candidates];
     console.log(
-      `[HandedOver Reconcile][${trigger}] START candidates=${candidates.length} shops=${byShop.size} max=${maxOrders} skippedNoShop=${skippedNoShop} skippedFilter=${skippedFilter} tokenShops=[${[...tokenShopIds].join(",")}]`
+      `[HandedOver Reconcile][${trigger}] START candidates=${candidates.length} shops=${byShop.size} mode=targeted_all skippedNoShop=${skippedNoShop} skippedFilter=${skippedFilter} tokenShops=[${[...tokenShopIds].join(",")}]`
     );
     for (const [shopId, orderSns] of byShop) {
       try {
-        assertOrdersPullDeadline(deadlineAt, `handed-over reconcile shop=${shopId}`);
         const auth = await getShopeeAccessTokenForApi(shopId);
         if (!auth?.token) {
           result.errors.push({
@@ -119730,10 +119787,6 @@ async function reconcileHandedOverCarrierStatuses(opts) {
           continue;
         }
         for (let i2 = 0; i2 < orderSns.length; i2 += SHOPEE_SYNC_CHUNK_SIZE) {
-          assertOrdersPullDeadline(
-            deadlineAt,
-            `handed-over reconcile chunk shop=${shopId} offset=${i2}`
-          );
           const chunk = orderSns.slice(i2, i2 + SHOPEE_SYNC_CHUNK_SIZE);
           try {
             const { normalized, errors } = await fetchNormalizeShopeeOrderChunk(
@@ -119764,7 +119817,6 @@ async function reconcileHandedOverCarrierStatuses(opts) {
               `shop=${shopId} chunk=${Math.floor(i2 / SHOPEE_SYNC_CHUNK_SIZE) + 1} pulled=${normalized.length} upd=${persisted.updated}`
             );
           } catch (chunkErr) {
-            if (String(chunkErr?.message || "").includes("ORDERS_PULL_DEADLINE")) throw chunkErr;
             result.errors.push({
               shopId,
               error: "handed_over_reconcile_chunk_failed",
@@ -119781,14 +119833,6 @@ async function reconcileHandedOverCarrierStatuses(opts) {
           }
         }
       } catch (shopErr) {
-        if (String(shopErr?.message || "").includes("ORDERS_PULL_DEADLINE")) {
-          result.errors.push({
-            shopId,
-            error: "pull_shop_deadline",
-            message: shopErr.message
-          });
-          continue;
-        }
         result.errors.push({
           shopId,
           error: "handed_over_reconcile_shop_failed",
@@ -130069,6 +130113,7 @@ async function startServer() {
     finishSyncJob,
     pullIncrementalOrdersFromShopee,
     pullShopeeCancelReturnOrders,
+    reconcileHandedOverCarrierStatuses,
     invalidateOrdersRefreshCache,
     shopeeGetReturnList,
     shopeeGetReturnDetail,

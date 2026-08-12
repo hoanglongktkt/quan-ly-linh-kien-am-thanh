@@ -48,6 +48,15 @@ let deps = {
     errors: [],
     message: "not_initialized",
   }),
+  reconcileHandedOverCarrierStatuses: async () => ({
+    success: false,
+    pulled: 0,
+    updated: 0,
+    shipped: 0,
+    candidates: 0,
+    errors: [],
+    message: "not_initialized",
+  }),
   invalidateOrdersRefreshCache: () => {},
   shopeeGetReturnList: async () => ({}),
   shopeeGetReturnDetail: async () => ({}),
@@ -139,15 +148,56 @@ async function runOrdersPull(opts) {
         skipped: true,
       };
     }
+    let targetedHealing = {
+      pulled: 0,
+      updated: 0,
+      shipped: 0,
+      candidates: 0,
+      errors: [],
+      message: "",
+      skipped: false,
+    };
+    try {
+      targetedHealing = await deps.reconcileHandedOverCarrierStatuses({
+        shopIds: shopIds?.length ? shopIds : undefined,
+        force: true,
+        trigger: "update_orders_button",
+      });
+    } catch (targetedErr) {
+      console.error(
+        `[${logTag}] Targeted Healing failed:`,
+        targetedErr?.stack || targetedErr?.message || targetedErr,
+      );
+      targetedHealing = {
+        ...targetedHealing,
+        errors: [
+          {
+            error: "targeted_healing_failed",
+            message: targetedErr?.message || String(targetedErr),
+          },
+        ],
+        message: targetedErr?.message || String(targetedErr),
+      };
+    }
     try {
       deps.invalidateOrdersRefreshCache();
     } catch (cacheErr) {
       console.error("[API_SYNC_ERROR] invalidate cache:", cacheErr?.stack || cacheErr);
     }
-    const pulled = (result?.pulled || 0) + (cancelPull.pulled || 0);
+    const pulled =
+      (result?.pulled || 0) +
+      (cancelPull.pulled || 0) +
+      (targetedHealing.pulled || 0);
     const added = (result?.added || 0) + (cancelPull.added || 0);
-    const updated = (result?.updated || 0) + (cancelPull.updated || 0);
-    const errors = [...(result?.errors || []), ...(cancelPull.errors || [])];
+    const updated =
+      (result?.updated || 0) +
+      (cancelPull.updated || 0) +
+      (targetedHealing.updated || 0);
+    const errors = [
+      ...(result?.errors || []),
+      ...(cancelPull.errors || []),
+      ...(targetedHealing.errors || []),
+    ];
     const dbErrors = errors.filter((e) => String(e?.error || "") === "db_upsert_failed");
     const success =
       dbErrors.length === 0 &&
@@ -158,6 +208,9 @@ async function runOrdersPull(opts) {
         : String(result?.message || `Đã kéo ${pulled} đơn`) +
           (cancelPull.pulled > 0 || (cancelPull.message && !cancelPull.skipped)
             ? ` | Cancel/return: ${cancelPull.message || `+${cancelPull.pulled}`}`
+            : "") +
+          (targetedHealing.candidates > 0
+            ? ` | Targeted Healing: ${targetedHealing.message || `${targetedHealing.pulled} đơn`}`
             : "");
     if (jobId) {
       try {
@@ -171,6 +224,9 @@ async function runOrdersPull(opts) {
             shops: result?.shops,
             errors: errors.length,
             cancel_return_pulled: cancelPull.pulled || 0,
+            targeted_candidates: targetedHealing.candidates || 0,
+            targeted_pulled: targetedHealing.pulled || 0,
+            targeted_shipped: targetedHealing.shipped || 0,
             quick_sync: allowShortLookback === true,
             retry: retryTelemetryBefore
               ? diffShopeeRetryTelemetry(retryTelemetryBefore)

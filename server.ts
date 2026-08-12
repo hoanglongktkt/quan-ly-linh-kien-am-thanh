@@ -451,6 +451,7 @@ import {
   deleteOrdersFromStore,
   deleteHandedOverOrdersFromStore,
   clearHandedOverFlagsForShippedOrders,
+  loadAllHandedOverShopeeOrdersFromStore,
   deleteClosedOrdersByRetention,
   loadOrdersFromStore,
   findOrderByScanCodeInStore,
@@ -2591,18 +2592,16 @@ async function reconcileActiveShopeeOrdersFromStore(
 let handedOverStatusReconcileInFlight = false;
 let lastHandedOverStatusReconcileAt = 0;
 const HANDED_OVER_STATUS_RECONCILE_COOLDOWN_MS = 45_000;
-/** Mỗi lần dò tối đa 150 đơn ĐVVC (đủ cover ~69+ đơn kẹt). */
-const HANDED_OVER_STATUS_RECONCILE_LIMIT = 150;
-const HANDED_OVER_STATUS_RECONCILE_DEADLINE_MS = 90_000;
 
 /**
- * Dò trạng thái Shopee CHO RIÊNG tab "Đã giao cho ĐVVC".
- * - Chỉ lấy đơn Mongo khớp filter handed_over_carrier (TO_SHIP + is_handed_over).
+ * Targeted Healing CHO TOÀN BỘ đơn còn cờ "Đã giao cho ĐVVC".
+ * - Query trực tiếp tất cả is_handed_over từ Mongo, không page/limit/checkpoint.
  * - Batch get_order_detail (≤20 SN/request) + delay giữa các mẻ.
  * - Khi Shopee báo SHIPPED / TO_CONFIRM_RECEIVE → upsert Mongo → tự nhảy tab Đang giao.
  * Không block HTTP: caller phải ACK rồi setImmediate / cron.
  */
 async function reconcileHandedOverCarrierStatuses(opts?: {
+  /** Legacy input, cố ý bỏ qua: Targeted Healing luôn quét tất cả candidates. */
   maxOrders?: number;
   shopIds?: string[];
   force?: boolean;
@@ -2652,11 +2651,6 @@ async function reconcileHandedOverCarrierStatuses(opts?: {
 
   handedOverStatusReconcileInFlight = true;
   lastHandedOverStatusReconcileAt = Date.now();
-  const deadlineAt = Date.now() + HANDED_OVER_STATUS_RECONCILE_DEADLINE_MS;
-  const maxOrders = Math.min(
-    Math.max(Number(opts?.maxOrders) || HANDED_OVER_STATUS_RECONCILE_LIMIT, 1),
-    150,
-  );
   const result = {
     success: true,
     pulled: 0,
@@ -2668,16 +2662,9 @@ async function reconcileHandedOverCarrierStatuses(opts?: {
   };
 
   try {
-    const page = await queryOrdersPageFromStore({
-      tab: "handed_over_carrier",
-      page: 1,
-      pageSize: maxOrders,
-      skipCounts: true,
+    const candidates = await loadAllHandedOverShopeeOrdersFromStore({
       shopIds: Array.isArray(opts?.shopIds) ? opts.shopIds : undefined,
     });
-    const candidates = (page?.rows || []).filter(
-      (o: any) => String(o?.channel || "").toLowerCase() === "shopee",
-    );
     result.candidates = candidates.length;
     if (candidates.length === 0) {
       result.message = "no_handed_over_candidates";
@@ -2733,14 +2720,13 @@ async function reconcileHandedOverCarrierStatuses(opts?: {
     const workingOrders = [...candidates];
     console.log(
       `[HandedOver Reconcile][${trigger}] START candidates=${candidates.length}` +
-        ` shops=${byShop.size} max=${maxOrders}` +
+        ` shops=${byShop.size} mode=targeted_all` +
         ` skippedNoShop=${skippedNoShop} skippedFilter=${skippedFilter}` +
         ` tokenShops=[${[...tokenShopIds].join(",")}]`,
     );
 
     for (const [shopId, orderSns] of byShop) {
       try {
-        assertOrdersPullDeadline(deadlineAt, `handed-over reconcile shop=${shopId}`);
         const auth = await getShopeeAccessTokenForApi(shopId);
         if (!auth?.token) {
           result.errors.push({
@@ -2752,10 +2738,6 @@ async function reconcileHandedOverCarrierStatuses(opts?: {
         }
 
         for (let i = 0; i < orderSns.length; i += SHOPEE_SYNC_CHUNK_SIZE) {
-          assertOrdersPullDeadline(
-            deadlineAt,
-            `handed-over reconcile chunk shop=${shopId} offset=${i}`,
-          );
           const chunk = orderSns.slice(i, i + SHOPEE_SYNC_CHUNK_SIZE);
           try {
             const { normalized, errors } = await fetchNormalizeShopeeOrderChunk(
@@ -2794,7 +2776,6 @@ async function reconcileHandedOverCarrierStatuses(opts?: {
                 ` pulled=${normalized.length} upd=${persisted.updated}`,
             );
           } catch (chunkErr: any) {
-            if (String(chunkErr?.message || "").includes("ORDERS_PULL_DEADLINE")) throw chunkErr;
             result.errors.push({
               shopId,
               error: "handed_over_reconcile_chunk_failed",
@@ -2811,14 +2792,6 @@ async function reconcileHandedOverCarrierStatuses(opts?: {
           }
         }
       } catch (shopErr: any) {
-        if (String(shopErr?.message || "").includes("ORDERS_PULL_DEADLINE")) {
-          result.errors.push({
-            shopId,
-            error: "pull_shop_deadline",
-            message: shopErr.message,
-          });
-          continue;
-        }
         result.errors.push({
           shopId,
           error: "handed_over_reconcile_shop_failed",
@@ -17342,6 +17315,7 @@ async function startServer() {
     finishSyncJob,
     pullIncrementalOrdersFromShopee,
     pullShopeeCancelReturnOrders,
+    reconcileHandedOverCarrierStatuses,
     invalidateOrdersRefreshCache,
     shopeeGetReturnList,
     shopeeGetReturnDetail,

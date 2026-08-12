@@ -4407,6 +4407,43 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
 }
 
 /**
+ * Targeted Healing: lấy toàn bộ đơn Shopee còn cờ bàn giao trực tiếp từ Mongo.
+ * Không phân trang/limit để các đơn cũ không bị bỏ sót bởi cửa sổ update_time.
+ */
+export async function loadAllHandedOverShopeeOrdersFromStore(opts?: {
+  shopIds?: string[];
+}): Promise<any[]> {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const and: Record<string, unknown>[] = [
+    ORDER_TAB_IS_HANDED_OVER,
+    {
+      $or: [
+        { channel: "shopee" },
+        { "data.channel": "shopee" },
+      ],
+    },
+  ];
+  const shopFilter = buildShopIdMongoFilter(undefined, opts?.shopIds);
+  if (shopFilter) and.push(shopFilter);
+
+  const docs = await OrderModel.find({ $and: and })
+    .sort({ "data.handedOverAt": 1, "data.date": 1, _id: 1 })
+    .maxTimeMS(30_000)
+    .lean();
+  const orders: any[] = [];
+  for (const doc of docs as any[]) {
+    const order = hydrateOrderFromMongoDoc(doc);
+    if (order) orders.push(order);
+  }
+  console.log(
+    `[MongoDB] Targeted Healing candidates=${orders.length}` +
+      `${opts?.shopIds?.length ? ` shops=${opts.shopIds.join(",")}` : ""}`,
+  );
+  return orders;
+}
+
+/**
  * Khi refresh shallow (limit), vẫn phải kéo đủ đơn thuộc các tab vận hành
  * (Chưa xử lý / Đã xử lý / Chờ xác nhận / Đã giao ĐVVC) — tránh badge=4 mà list=0
  * vì 50 đơn mới nhất toàn SHIPPED/COMPLETED.
