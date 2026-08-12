@@ -8719,11 +8719,8 @@ async function shopeeGetShippingDocumentDataInfo(
 }
 
 // v2.logistics.create_shipping_document — kicks off async AWB/label generation for up to 50 orders.
-// Payload chuẩn Shopee v2 (mỗi phần tử order_list):
-//   - order_sn (bắt buộc)
-//   - package_number (không gửi empty/null/undefined — bắt buộc với đơn split; unsplit cũng nên có)
-//   - tracking_number (bắt buộc trừ channel cho phép print trước arrange; không gửi nếu trống/0FG)
-//   - shipping_document_type (optional, gắn per-item theo docs)
+// Payload chuẩn Shopee v2 (mỗi phần tử order_list BẮT BUỘC):
+//   - order_sn, package_number, tracking_number, shipping_document_type: "THERMAL_AIR_WAYBILL"
 async function shopeeCreateShippingDocument(
   shopId: string,
   accessToken: string,
@@ -8734,26 +8731,16 @@ async function shopeeCreateShippingDocument(
     .map((row) => {
       const order_sn = String(row?.order_sn || "").trim();
       const package_number = String(row?.package_number || "").trim();
-      const tracking_number = String(row?.tracking_number || "").trim();
-      const item: {
-        order_sn: string;
-        package_number: string;
-        tracking_number?: string;
-        shipping_document_type: string;
-      } = {
+      const rawTn = String(row?.tracking_number || "").trim();
+      // tracking hợp lệ; 0FG / mã nội bộ Shopee → gửi "" (không omit field).
+      const tracking_number =
+        rawTn && !/^0FG/i.test(rawTn) && !isShopeeInternalTrackingCode(rawTn) ? rawTn : "";
+      return {
         order_sn,
         package_number,
+        tracking_number,
         shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE,
       };
-      // Chỉ gửi tracking_number khi có giá trị hợp lệ — không gửi undefined/null/0FG.
-      if (
-        tracking_number &&
-        !/^0FG/i.test(tracking_number) &&
-        !isShopeeInternalTrackingCode(tracking_number)
-      ) {
-        item.tracking_number = tracking_number;
-      }
-      return item;
     })
     .filter((row) => row.order_sn && row.package_number);
 
@@ -8858,15 +8845,22 @@ async function shopeeGetShippingDocumentResult(
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
   const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
 
+  // shipping_document_type BẮT BUỘC trong TỪNG item order_list (không chỉ top-level).
+  const pollOrderList = orderList.map((row) => ({
+    order_sn: String(row?.order_sn || "").trim(),
+    package_number: String(row?.package_number || "").trim(),
+    shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE,
+  }));
+
   const res = await fetchWithTimeout(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ order_list: orderList, shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE }),
+    body: JSON.stringify({ order_list: pollOrderList }),
     signal,
   });
   const json: any = await res.json().catch(() => ({}));
   console.log(
-    `[Shopee API] POST ${apiPath} FULL RESPONSE shop=${shopId} n=${orderList.length} HTTP=${res.status}:`,
+    `[Shopee API] POST ${apiPath} FULL RESPONSE shop=${shopId} n=${pollOrderList.length} HTTP=${res.status}:`,
     JSON.stringify(json),
   );
   return json;
@@ -8905,11 +8899,18 @@ async function shopeeDownloadShippingDocument(
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
   const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
 
-  console.log(`[Shopee API] Bắt đầu tải PDF batch n=${orderList.length} shop=${shopId}`);
+  // shipping_document_type BẮT BUỘC trong TỪNG item order_list.
+  const downloadOrderList = orderList.map((row) => ({
+    order_sn: String(row?.order_sn || "").trim(),
+    package_number: String(row?.package_number || "").trim(),
+    shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE,
+  }));
+
+  console.log(`[Shopee API] Bắt đầu tải PDF batch n=${downloadOrderList.length} shop=${shopId}`);
   const res = await fetchWithTimeout(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ order_list: orderList, shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE }),
+    body: JSON.stringify({ order_list: downloadOrderList }),
     signal,
   }, 60_000);
 
@@ -9005,8 +9006,8 @@ function shippingDocRowKey(row: { order_sn?: string; package_number?: string }):
 
 function isPackageShouldPrintFirstError(error: unknown, message?: unknown): boolean {
   const text = `${String(error || "")} ${String(message || "")}`;
-  // Self-heal khi Shopee báo chưa create / chưa đồng bộ THERMAL_AIR_WAYBILL.
-  return /should[_\s-]*print[_\s-]*first|THERMAL_AIR_WAYBILL/i.test(text);
+  // Chỉ bắt "should print first" — KHÔNG match trần THERMAL_AIR_WAYBILL (tránh self-heal giả / vòng lặp).
+  return /should[_\s-]*print[_\s-]*first/i.test(text);
 }
 
 /** Sleep chuẩn Promise — dùng trong vòng poll in đơn. */
@@ -9246,19 +9247,32 @@ async function fetchSingleOrderWaybillFromRows(
   if (createFail) return createFail;
   await sleep(2000);
 
-  // B4+B5: Poll/Download + self-heal tối đa 2 lần (không làm sập đơn khác trong batch)
-  const maxHeal = 2;
-  for (let healRound = 0; healRound <= maxHeal; healRound++) {
+  // B4+B5: Poll/Download + self-heal Create khẩn cấp TỐI ĐA 1 lần.
+  // Create khẩn cấp fail → throw ngay, TUYỆT ĐỐI không Poll lại (chặn vòng lặp vô tận).
+  let selfHealUsed = false;
+  for (;;) {
     try {
       return await runPollDownload();
     } catch (error: any) {
       const errText = `${String(error?.code || "")} ${String(error?.message || error || "")}`;
       const shouldSelfHeal =
-        error instanceof PackageShouldPrintFirstError ||
-        isPackageShouldPrintFirstError(error?.code, error?.message) ||
-        isPackageShouldPrintFirstError(errText, "");
+        !selfHealUsed &&
+        (error instanceof PackageShouldPrintFirstError ||
+          isPackageShouldPrintFirstError(error?.code, error?.message) ||
+          isPackageShouldPrintFirstError(errText, ""));
 
       if (!shouldSelfHeal) {
+        if (
+          error instanceof PackageShouldPrintFirstError ||
+          isPackageShouldPrintFirstError(error?.code, error?.message)
+        ) {
+          return {
+            success: false,
+            orderSn: sn,
+            error: "package_should_print_first",
+            message: String(error?.message || error),
+          };
+        }
         return {
           success: false,
           orderSn: sn,
@@ -9267,64 +9281,32 @@ async function fetchSingleOrderWaybillFromRows(
         };
       }
 
-      if (healRound >= maxHeal) {
-        return {
-          success: false,
-          orderSn: sn,
-          error: "package_should_print_first",
-          message: String(error?.message || error),
-        };
+      selfHealUsed = true;
+      console.warn(`Phát hiện lỗi chưa Create, tiến hành gọi Create khẩn cấp cho ${sn}`);
+
+      try {
+        const healCreateFail = await runCreate("khẩn cấp self-heal #1");
+        if (healCreateFail) {
+          // Create khẩn cấp bị Shopee từ chối → dừng hẳn, không Poll lại.
+          throw new Error(
+            `${healCreateFail.error || "create_shipping_document_failed"}: ${
+              healCreateFail.message || "Create khẩn cấp thất bại"
+            }`,
+          );
+        }
+      } catch (createErr: any) {
+        // BẮT BUỘC throw — không để rơi xuống Poll (chặn Create fail → Poll → Create...).
+        console.error(
+          `[Shopee Print] Create khẩn cấp FAIL ${sn} — dừng luồng in đơn:`,
+          createErr?.message || createErr,
+        );
+        throw createErr;
       }
 
-      console.warn(`Phát hiện lỗi chưa Create, tiến hành gọi Create khẩn cấp cho ${sn}`);
-      // #region agent log
-      fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "68917e" },
-        body: JSON.stringify({
-          sessionId: "68917e",
-          runId: "post-fix",
-          hypothesisId: "A",
-          location: "server.ts:fetchSingleOrderWaybillFromRows:selfHeal",
-          message: "self-heal triggered for should-print-first / THERMAL_AIR_WAYBILL",
-          data: {
-            orderSn: sn,
-            healRound: healRound + 1,
-            errMessage: String(error?.message || error || "").slice(0, 300),
-            packages: rows.map((r) => r.package_number),
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-
-      const healCreateFail = await runCreate(`khẩn cấp self-heal #${healRound + 1}`);
-      if (healCreateFail) return healCreateFail;
       await sleep(2000);
-      // #region agent log
-      fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "68917e" },
-        body: JSON.stringify({
-          sessionId: "68917e",
-          runId: "post-fix",
-          hypothesisId: "B",
-          location: "server.ts:fetchSingleOrderWaybillFromRows:retryAfterSleep",
-          message: "retry poll/download after create+sleep(2000)",
-          data: { orderSn: sn, healRound: healRound + 1 },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
+      // Create OK → Poll lại đúng 1 lần (vòng for tiếp theo; selfHealUsed=true nên không Create nữa).
     }
   }
-
-  return {
-    success: false,
-    orderSn: sn,
-    error: "package_should_print_first",
-    message: "The package should print first",
-  };
 }
 
 /**
@@ -9430,16 +9412,25 @@ async function batchDownloadShopeeWaybillPdf(
     let lastOk: SingleWaybillResult | null = null;
 
     for (const [sn, rows] of byOrder) {
-      const result = await fetchSingleOrderWaybillFromRows(shopId, accessToken, sn, rows, opts);
-      if (result.success && result.filename && result.filePath) {
-        readyOrderSns.push(sn);
-        readyOrderRows.push(...rows);
-        lastOk = result;
-      } else {
+      try {
+        const result = await fetchSingleOrderWaybillFromRows(shopId, accessToken, sn, rows, opts);
+        if (result.success && result.filename && result.filePath) {
+          readyOrderSns.push(sn);
+          readyOrderRows.push(...rows);
+          lastOk = result;
+        } else {
+          skippedOrders.push({
+            orderSn: sn,
+            error: result.error || "waybill_failed",
+            message: result.message || "Lấy PDF thất bại",
+          });
+        }
+      } catch (orderErr: any) {
+        // Create khẩn cấp / lỗi cứng → dừng đúng 1 đơn, không kéo sập cả batch.
         skippedOrders.push({
           orderSn: sn,
-          error: result.error || "waybill_failed",
-          message: result.message || "Lấy PDF thất bại",
+          error: "waybill_failed",
+          message: String(orderErr?.message || orderErr),
         });
       }
     }

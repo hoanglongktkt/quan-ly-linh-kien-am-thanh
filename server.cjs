@@ -124325,16 +124325,14 @@ async function shopeeCreateShippingDocument(shopId, accessToken, orderList, sign
   const sanitizedOrderList = orderList.map((row) => {
     const order_sn = String(row?.order_sn || "").trim();
     const package_number = String(row?.package_number || "").trim();
-    const tracking_number = String(row?.tracking_number || "").trim();
-    const item = {
+    const rawTn = String(row?.tracking_number || "").trim();
+    const tracking_number = rawTn && !/^0FG/i.test(rawTn) && !isShopeeInternalTrackingCode2(rawTn) ? rawTn : "";
+    return {
       order_sn,
       package_number,
+      tracking_number,
       shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
     };
-    if (tracking_number && !/^0FG/i.test(tracking_number) && !isShopeeInternalTrackingCode2(tracking_number)) {
-      item.tracking_number = tracking_number;
-    }
-    return item;
   }).filter((row) => row.order_sn && row.package_number);
   const invalidRows = orderList.filter(
     (row) => !String(row?.order_sn || "").trim() || !String(row?.package_number || "").trim()
@@ -124417,15 +124415,20 @@ async function shopeeGetShippingDocumentResult(shopId, accessToken, orderList, s
   const timestamp = Math.floor(Date.now() / 1e3);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
   const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
+  const pollOrderList = orderList.map((row) => ({
+    order_sn: String(row?.order_sn || "").trim(),
+    package_number: String(row?.package_number || "").trim(),
+    shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
+  }));
   const res = await fetchWithTimeout(url2, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ order_list: orderList, shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE }),
+    body: JSON.stringify({ order_list: pollOrderList }),
     signal
   });
   const json2 = await res.json().catch(() => ({}));
   console.log(
-    `[Shopee API] POST ${apiPath} FULL RESPONSE shop=${shopId} n=${orderList.length} HTTP=${res.status}:`,
+    `[Shopee API] POST ${apiPath} FULL RESPONSE shop=${shopId} n=${pollOrderList.length} HTTP=${res.status}:`,
     JSON.stringify(json2)
   );
   return json2;
@@ -124453,11 +124456,16 @@ async function shopeeDownloadShippingDocument(shopId, accessToken, orderList, fi
   const timestamp = Math.floor(Date.now() / 1e3);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
   const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
-  console.log(`[Shopee API] B\u1EAFt \u0111\u1EA7u t\u1EA3i PDF batch n=${orderList.length} shop=${shopId}`);
+  const downloadOrderList = orderList.map((row) => ({
+    order_sn: String(row?.order_sn || "").trim(),
+    package_number: String(row?.package_number || "").trim(),
+    shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
+  }));
+  console.log(`[Shopee API] B\u1EAFt \u0111\u1EA7u t\u1EA3i PDF batch n=${downloadOrderList.length} shop=${shopId}`);
   const res = await fetchWithTimeout(url2, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ order_list: orderList, shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE }),
+    body: JSON.stringify({ order_list: downloadOrderList }),
     signal
   }, 6e4);
   const contentType = String(res.headers.get("content-type") || "").toLowerCase();
@@ -124537,7 +124545,7 @@ function shippingDocRowKey(row) {
 }
 function isPackageShouldPrintFirstError(error, message) {
   const text = `${String(error || "")} ${String(message || "")}`;
-  return /should[_\s-]*print[_\s-]*first|THERMAL_AIR_WAYBILL/i.test(text);
+  return /should[_\s-]*print[_\s-]*first/i.test(text);
 }
 var sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 var PackageShouldPrintFirstError = class extends Error {
@@ -124717,14 +124725,22 @@ async function fetchSingleOrderWaybillFromRows(shopId, accessToken, orderSn, row
   const createFail = await runCreate("l\u1EA7n 1");
   if (createFail) return createFail;
   await sleep2(2e3);
-  const maxHeal = 2;
-  for (let healRound = 0; healRound <= maxHeal; healRound++) {
+  let selfHealUsed = false;
+  for (; ; ) {
     try {
       return await runPollDownload();
     } catch (error) {
       const errText = `${String(error?.code || "")} ${String(error?.message || error || "")}`;
-      const shouldSelfHeal = error instanceof PackageShouldPrintFirstError || isPackageShouldPrintFirstError(error?.code, error?.message) || isPackageShouldPrintFirstError(errText, "");
+      const shouldSelfHeal = !selfHealUsed && (error instanceof PackageShouldPrintFirstError || isPackageShouldPrintFirstError(error?.code, error?.message) || isPackageShouldPrintFirstError(errText, ""));
       if (!shouldSelfHeal) {
+        if (error instanceof PackageShouldPrintFirstError || isPackageShouldPrintFirstError(error?.code, error?.message)) {
+          return {
+            success: false,
+            orderSn: sn,
+            error: "package_should_print_first",
+            message: String(error?.message || error)
+          };
+        }
         return {
           success: false,
           orderSn: sn,
@@ -124732,59 +124748,25 @@ async function fetchSingleOrderWaybillFromRows(shopId, accessToken, orderSn, row
           message: String(error?.message || error)
         };
       }
-      if (healRound >= maxHeal) {
-        return {
-          success: false,
-          orderSn: sn,
-          error: "package_should_print_first",
-          message: String(error?.message || error)
-        };
-      }
+      selfHealUsed = true;
       console.warn(`Ph\xE1t hi\u1EC7n l\u1ED7i ch\u01B0a Create, ti\u1EBFn h\xE0nh g\u1ECDi Create kh\u1EA9n c\u1EA5p cho ${sn}`);
-      fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "68917e" },
-        body: JSON.stringify({
-          sessionId: "68917e",
-          runId: "post-fix",
-          hypothesisId: "A",
-          location: "server.ts:fetchSingleOrderWaybillFromRows:selfHeal",
-          message: "self-heal triggered for should-print-first / THERMAL_AIR_WAYBILL",
-          data: {
-            orderSn: sn,
-            healRound: healRound + 1,
-            errMessage: String(error?.message || error || "").slice(0, 300),
-            packages: rows.map((r2) => r2.package_number)
-          },
-          timestamp: Date.now()
-        })
-      }).catch(() => {
-      });
-      const healCreateFail = await runCreate(`kh\u1EA9n c\u1EA5p self-heal #${healRound + 1}`);
-      if (healCreateFail) return healCreateFail;
+      try {
+        const healCreateFail = await runCreate("kh\u1EA9n c\u1EA5p self-heal #1");
+        if (healCreateFail) {
+          throw new Error(
+            `${healCreateFail.error || "create_shipping_document_failed"}: ${healCreateFail.message || "Create kh\u1EA9n c\u1EA5p th\u1EA5t b\u1EA1i"}`
+          );
+        }
+      } catch (createErr) {
+        console.error(
+          `[Shopee Print] Create kh\u1EA9n c\u1EA5p FAIL ${sn} \u2014 d\u1EEBng lu\u1ED3ng in \u0111\u01A1n:`,
+          createErr?.message || createErr
+        );
+        throw createErr;
+      }
       await sleep2(2e3);
-      fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "68917e" },
-        body: JSON.stringify({
-          sessionId: "68917e",
-          runId: "post-fix",
-          hypothesisId: "B",
-          location: "server.ts:fetchSingleOrderWaybillFromRows:retryAfterSleep",
-          message: "retry poll/download after create+sleep(2000)",
-          data: { orderSn: sn, healRound: healRound + 1 },
-          timestamp: Date.now()
-        })
-      }).catch(() => {
-      });
     }
   }
-  return {
-    success: false,
-    orderSn: sn,
-    error: "package_should_print_first",
-    message: "The package should print first"
-  };
 }
 async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
   const emptySkip = [];
@@ -124860,16 +124842,24 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
     const skippedOrders = [];
     let lastOk = null;
     for (const [sn, rows] of byOrder) {
-      const result = await fetchSingleOrderWaybillFromRows(shopId, accessToken, sn, rows, opts);
-      if (result.success && result.filename && result.filePath) {
-        readyOrderSns.push(sn);
-        readyOrderRows.push(...rows);
-        lastOk = result;
-      } else {
+      try {
+        const result = await fetchSingleOrderWaybillFromRows(shopId, accessToken, sn, rows, opts);
+        if (result.success && result.filename && result.filePath) {
+          readyOrderSns.push(sn);
+          readyOrderRows.push(...rows);
+          lastOk = result;
+        } else {
+          skippedOrders.push({
+            orderSn: sn,
+            error: result.error || "waybill_failed",
+            message: result.message || "L\u1EA5y PDF th\u1EA5t b\u1EA1i"
+          });
+        }
+      } catch (orderErr) {
         skippedOrders.push({
           orderSn: sn,
-          error: result.error || "waybill_failed",
-          message: result.message || "L\u1EA5y PDF th\u1EA5t b\u1EA1i"
+          error: "waybill_failed",
+          message: String(orderErr?.message || orderErr)
         });
       }
     }
