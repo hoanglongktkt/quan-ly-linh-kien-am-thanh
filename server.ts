@@ -17624,7 +17624,8 @@ async function startServer() {
     }
   };
   // API CONFIRM: Chỉ xác nhận đơn (ship_order), KHÔNG in PDF
-  const BATCH_CONFIRM_CHUNK_SIZE = 15;
+  // Lưới an toàn riêng cho confirm-only: không poll/chờ tracking/PDF và luôn kết thúc nhanh.
+  const BATCH_CONFIRM_OPERATION_TIMEOUT_MS = 4_000;
   const confirmOnlyRoute = async (req: any, res: any) => {
     const t0 = Date.now();
     beginLogisticsWork("confirm-only");
@@ -17677,7 +17678,6 @@ async function startServer() {
       }
 
       console.log(`[Confirm Only] Xác nhận ${toShip.length} đơn method=${shipMethod}`);
-      await prewarmShopeeAddressCacheForShip(toShip, shipMethod);
 
       const results: any[] = [];
       const successSns: string[] = [];
@@ -17697,7 +17697,7 @@ async function startServer() {
           try {
             shipResult = await withOperationTimeout(
               (signal) => arrangeShipment(order, shipMethod, signal, { skipRecover: true }),
-              SHIP_ORDER_OPERATION_TIMEOUT_MS,
+              BATCH_CONFIRM_OPERATION_TIMEOUT_MS,
               `Ship order ${orderSn}`,
             );
           } catch (shipErr: any) {
@@ -17755,23 +17755,8 @@ async function startServer() {
         }
       };
 
-      // Xác nhận song song theo chunk 15 đơn; hoàn tất chunk hiện tại rồi mới chạy chunk tiếp theo.
-      for (let offset = 0; offset < toShip.length; offset += BATCH_CONFIRM_CHUNK_SIZE) {
-        const chunk = toShip.slice(offset, offset + BATCH_CONFIRM_CHUNK_SIZE);
-        console.log(
-          `[Confirm Only] Chạy song song chunk ${Math.floor(offset / BATCH_CONFIRM_CHUNK_SIZE) + 1}` +
-            ` (${chunk.length} đơn, ${offset + 1}-${offset + chunk.length}/${toShip.length})`,
-        );
-        await Promise.all(chunk.map(confirmOneOrder));
-      }
-
-      // Lưu vào DB
-      try {
-        const changed = toShip.map(({ index }) => orders[index]).filter(Boolean);
-        await persistOrdersToDatabase(orders, changed);
-      } catch (err: any) {
-        console.warn("[Confirm Only] persist failed:", err?.message || err);
-      }
+      // Chỉ Init/Arrange Shipment; không chia chunk tuần tự, không sleep/delay/poll PDF.
+      await Promise.all(toShip.map(confirmOneOrder));
 
       console.log(`[Confirm Only] DONE ${successSns.length}/${toShip.length} success (${Date.now() - t0}ms)`);
       const successOrders = results
@@ -17789,7 +17774,7 @@ async function startServer() {
           message: String(result.message || result.error || "Xác nhận thất bại"),
         }));
       
-      return res.json({
+      res.status(200).json({
         success: true,
         results,
         successOrders,
@@ -17799,6 +17784,15 @@ async function startServer() {
         total: toShip.length,
         message: `Đã xác nhận ${successSns.length}/${toShip.length} đơn`,
       });
+
+      // Frontend đã nhận 200 OK; ghi database chạy nền và không giữ luồng xác nhận.
+      setImmediate(() => {
+        const changed = toShip.map(({ index }) => orders[index]).filter(Boolean);
+        void persistOrdersToDatabase(orders, changed).catch((err: any) => {
+          console.warn("[Confirm Only] background persist failed:", err?.message || err);
+        });
+      });
+      return;
     } catch (error: any) {
       console.error("[Confirm Only] Lỗi:", error?.stack || error);
       return res.status(500).json({

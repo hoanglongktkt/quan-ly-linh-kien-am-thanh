@@ -130322,7 +130322,7 @@ async function startServer() {
       );
     }
   };
-  const BATCH_CONFIRM_CHUNK_SIZE = 15;
+  const BATCH_CONFIRM_OPERATION_TIMEOUT_MS = 4e3;
   const confirmOnlyRoute = async (req, res) => {
     const t0 = Date.now();
     beginLogisticsWork("confirm-only");
@@ -130368,7 +130368,6 @@ async function startServer() {
         });
       }
       console.log(`[Confirm Only] X\xE1c nh\u1EADn ${toShip.length} \u0111\u01A1n method=${shipMethod}`);
-      await prewarmShopeeAddressCacheForShip(toShip, shipMethod);
       const results = [];
       const successSns = [];
       const confirmOneOrder = async ({ index, order }) => {
@@ -130385,7 +130384,7 @@ async function startServer() {
           try {
             shipResult = await withOperationTimeout(
               (signal) => arrangeShipment(order, shipMethod, signal, { skipRecover: true }),
-              SHIP_ORDER_OPERATION_TIMEOUT_MS,
+              BATCH_CONFIRM_OPERATION_TIMEOUT_MS,
               `Ship order ${orderSn}`
             );
           } catch (shipErr) {
@@ -130433,19 +130432,7 @@ async function startServer() {
           });
         }
       };
-      for (let offset = 0; offset < toShip.length; offset += BATCH_CONFIRM_CHUNK_SIZE) {
-        const chunk = toShip.slice(offset, offset + BATCH_CONFIRM_CHUNK_SIZE);
-        console.log(
-          `[Confirm Only] Ch\u1EA1y song song chunk ${Math.floor(offset / BATCH_CONFIRM_CHUNK_SIZE) + 1} (${chunk.length} \u0111\u01A1n, ${offset + 1}-${offset + chunk.length}/${toShip.length})`
-        );
-        await Promise.all(chunk.map(confirmOneOrder));
-      }
-      try {
-        const changed = toShip.map(({ index }) => orders[index]).filter(Boolean);
-        await persistOrdersToDatabase(orders, changed);
-      } catch (err) {
-        console.warn("[Confirm Only] persist failed:", err?.message || err);
-      }
+      await Promise.all(toShip.map(confirmOneOrder));
       console.log(`[Confirm Only] DONE ${successSns.length}/${toShip.length} success (${Date.now() - t0}ms)`);
       const successOrders = results.filter((result) => result?.success).map((result) => ({
         orderId: String(result.orderId || ""),
@@ -130457,7 +130444,7 @@ async function startServer() {
         error: String(result.error || "confirm_failed"),
         message: String(result.message || result.error || "X\xE1c nh\u1EADn th\u1EA5t b\u1EA1i")
       }));
-      return res.json({
+      res.status(200).json({
         success: true,
         results,
         successOrders,
@@ -130467,6 +130454,13 @@ async function startServer() {
         total: toShip.length,
         message: `\u0110\xE3 x\xE1c nh\u1EADn ${successSns.length}/${toShip.length} \u0111\u01A1n`
       });
+      setImmediate(() => {
+        const changed = toShip.map(({ index }) => orders[index]).filter(Boolean);
+        void persistOrdersToDatabase(orders, changed).catch((err) => {
+          console.warn("[Confirm Only] background persist failed:", err?.message || err);
+        });
+      });
+      return;
     } catch (error) {
       console.error("[Confirm Only] L\u1ED7i:", error?.stack || error);
       return res.status(500).json({
