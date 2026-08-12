@@ -9065,12 +9065,20 @@ async function fetchSingleOrderWaybillFromRows(
     for (let attempt = 1; attempt <= maxPoll; attempt++) {
       console.log(`[Shopee Print] B4 POLL ${sn} lần ${attempt}/${maxPoll}`);
 
-      const pollResult = await shopeeGetShippingDocumentResult(
-        shopId,
-        accessToken,
-        rows.map((r) => ({ order_sn: r.order_sn, package_number: r.package_number })),
-        opts?.signal,
-      );
+      let pollResult: any;
+      try {
+        pollResult = await shopeeGetShippingDocumentResult(
+          shopId,
+          accessToken,
+          rows.map((r) => ({ order_sn: r.order_sn, package_number: r.package_number })),
+          opts?.signal,
+        );
+      } catch (pollErr: any) {
+        if (isPackageShouldPrintFirstError(pollErr?.code, pollErr?.message)) {
+          throw new PackageShouldPrintFirstError(String(pollErr?.message || pollErr));
+        }
+        throw pollErr;
+      }
 
       if (isPackageShouldPrintFirstError(pollResult?.error, pollResult?.message)) {
         throw new PackageShouldPrintFirstError(
@@ -9130,13 +9138,21 @@ async function fetchSingleOrderWaybillFromRows(
 
     // ── BƯỚC 5: DOWNLOAD & LƯU order_${orderSn}.pdf ──
     console.log(`[Shopee Print] B5 DOWNLOAD ${sn} → ${filename}`);
-    const downloadResult = await shopeeDownloadShippingDocument(
-      shopId,
-      accessToken,
-      readyRows.map((r) => ({ order_sn: r.order_sn, package_number: r.package_number })),
-      filename,
-      opts?.signal,
-    );
+    let downloadResult: any;
+    try {
+      downloadResult = await shopeeDownloadShippingDocument(
+        shopId,
+        accessToken,
+        readyRows.map((r) => ({ order_sn: r.order_sn, package_number: r.package_number })),
+        filename,
+        opts?.signal,
+      );
+    } catch (dlErr: any) {
+      if (isPackageShouldPrintFirstError(dlErr?.code, dlErr?.message)) {
+        throw new PackageShouldPrintFirstError(String(dlErr?.message || dlErr));
+      }
+      throw dlErr;
+    }
 
     if (isPackageShouldPrintFirstError(downloadResult?.error, downloadResult?.message)) {
       throw new PackageShouldPrintFirstError(
@@ -9164,124 +9180,90 @@ async function fetchSingleOrderWaybillFromRows(
     };
   };
 
-  // B3 CREATE lần đầu
+  // B3 CREATE lần đầu — luôn chờ 2s để Shopee đồng bộ trước khi Poll.
   const createFail = await runCreate("lần 1");
   if (createFail) return createFail;
+  await sleep(2000);
 
-  // B4+B5: Poll/Download + self-heal Create khẩn cấp (không làm sập đơn khác trong batch)
-  try {
-    return await runPollDownload();
-  } catch (error: any) {
-    const errText = `${String(error?.code || "")} ${String(error?.message || error || "")}`;
-    const shouldSelfHeal =
-      error instanceof PackageShouldPrintFirstError ||
-      isPackageShouldPrintFirstError(error?.code, error?.message) ||
-      isPackageShouldPrintFirstError(errText, "");
-
-    if (!shouldSelfHeal) {
-      // Lỗi khác: không self-heal; trả fail CHO ĐƠN NÀY (không làm sập batch 50 đơn).
-      return {
-        success: false,
-        orderSn: sn,
-        error: "waybill_failed",
-        message: String(error?.message || error),
-      };
-    }
-
-    console.warn(`Phát hiện lỗi chưa Create, tiến hành gọi Create khẩn cấp cho ${sn}`);
-    // #region agent log
-    fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "68917e" },
-      body: JSON.stringify({
-        sessionId: "68917e",
-        runId: "pre-fix",
-        hypothesisId: "A",
-        location: "server.ts:fetchSingleOrderWaybillFromRows:selfHeal",
-        message: "self-heal triggered for should-print-first / THERMAL_AIR_WAYBILL",
-        data: {
-          orderSn: sn,
-          errMessage: String(error?.message || error || "").slice(0, 300),
-          packages: rows.map((r) => r.package_number),
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
-
+  // B4+B5: Poll/Download + self-heal tối đa 2 lần (không làm sập đơn khác trong batch)
+  const maxHeal = 2;
+  for (let healRound = 0; healRound <= maxHeal; healRound++) {
     try {
-      const healCreateFail = await runCreate("khẩn cấp self-heal");
-      if (healCreateFail) return healCreateFail;
+      return await runPollDownload();
+    } catch (error: any) {
+      const errText = `${String(error?.code || "")} ${String(error?.message || error || "")}`;
+      const shouldSelfHeal =
+        error instanceof PackageShouldPrintFirstError ||
+        isPackageShouldPrintFirstError(error?.code, error?.message) ||
+        isPackageShouldPrintFirstError(errText, "");
 
-      await sleep(2000);
+      if (!shouldSelfHeal) {
+        return {
+          success: false,
+          orderSn: sn,
+          error: "waybill_failed",
+          message: String(error?.message || error),
+        };
+      }
 
+      if (healRound >= maxHeal) {
+        return {
+          success: false,
+          orderSn: sn,
+          error: "package_should_print_first",
+          message: String(error?.message || error),
+        };
+      }
+
+      console.warn(`Phát hiện lỗi chưa Create, tiến hành gọi Create khẩn cấp cho ${sn}`);
       // #region agent log
       fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "68917e" },
         body: JSON.stringify({
           sessionId: "68917e",
-          runId: "pre-fix",
+          runId: "post-fix",
+          hypothesisId: "A",
+          location: "server.ts:fetchSingleOrderWaybillFromRows:selfHeal",
+          message: "self-heal triggered for should-print-first / THERMAL_AIR_WAYBILL",
+          data: {
+            orderSn: sn,
+            healRound: healRound + 1,
+            errMessage: String(error?.message || error || "").slice(0, 300),
+            packages: rows.map((r) => r.package_number),
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
+
+      const healCreateFail = await runCreate(`khẩn cấp self-heal #${healRound + 1}`);
+      if (healCreateFail) return healCreateFail;
+      await sleep(2000);
+      // #region agent log
+      fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "68917e" },
+        body: JSON.stringify({
+          sessionId: "68917e",
+          runId: "post-fix",
           hypothesisId: "B",
           location: "server.ts:fetchSingleOrderWaybillFromRows:retryAfterSleep",
           message: "retry poll/download after create+sleep(2000)",
-          data: { orderSn: sn },
+          data: { orderSn: sn, healRound: healRound + 1 },
           timestamp: Date.now(),
         }),
       }).catch(() => {});
       // #endregion
-
-      const retryResult = await runPollDownload();
-
-      // #region agent log
-      fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "68917e" },
-        body: JSON.stringify({
-          sessionId: "68917e",
-          runId: "pre-fix",
-          hypothesisId: "C",
-          location: "server.ts:fetchSingleOrderWaybillFromRows:retryResult",
-          message: "self-heal retry result",
-          data: {
-            orderSn: sn,
-            success: Boolean(retryResult?.success),
-            error: String(retryResult?.error || ""),
-            size: Number(retryResult?.size || 0),
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-
-      return retryResult;
-    } catch (err2: any) {
-      // #region agent log
-      fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "68917e" },
-        body: JSON.stringify({
-          sessionId: "68917e",
-          runId: "pre-fix",
-          hypothesisId: "D",
-          location: "server.ts:fetchSingleOrderWaybillFromRows:selfHealFailed",
-          message: "self-heal retry failed",
-          data: {
-            orderSn: sn,
-            errMessage: String(err2?.message || err2 || "").slice(0, 300),
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-      return {
-        success: false,
-        orderSn: sn,
-        error: "package_should_print_first",
-        message: String(err2?.message || err2),
-      };
     }
   }
+
+  return {
+    success: false,
+    orderSn: sn,
+    error: "package_should_print_first",
+    message: "The package should print first",
+  };
 }
 
 /**

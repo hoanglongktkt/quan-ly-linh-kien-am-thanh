@@ -4578,20 +4578,18 @@ export default function OrderManager({
       });
       if (!result.success) {
         showToast(`In vận đơn Shopee thất bại: ${result.message}`);
-        clearShipProgressOverlay();
       } else {
         if (result.message) showToast(result.message);
-        // === TỰ ĐỘNG ĐÁNH DẤU ĐÃ IN (Optimistic UI) + sync DB + refresh danh sách ===
         const optimisticTargets = applyPrintedLocalOptimistic(ids, true);
         if (optimisticTargets.length > 0) {
-          await updatePrintStatusForOrders(optimisticTargets, true, { silent: true }).catch(() => {});
+          void updatePrintStatusForOrders(optimisticTargets, true, { silent: true }).catch(() => {});
         }
+        refetchOrdersPage({ silent: true });
         markProgressComplete('In vận đơn thành công!');
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Lỗi không xác định';
       showToast(`In vận đơn Shopee thất bại: ${msg}`);
-      clearShipProgressOverlay();
     } finally {
       setIsFetchingPdf(false);
       setIsPrintingFromSummary(false);
@@ -5121,16 +5119,15 @@ export default function OrderManager({
         });
         if (!result.success) {
           showToast(`In vận đơn Shopee thất bại: ${result.message}`);
-          clearShipProgressOverlay();
         } else {
           if (result.message) showToast(result.message);
-          markProgressComplete('In vận đơn thành công!');
-          // === TỰ ĐỘNG ĐÁNH DẤU ĐÃ IN (Optimistic UI) + sync DB nền ===
           const optimisticTargets = applyPrintedLocalOptimistic(shopeeAll, true);
           if (optimisticTargets.length > 0) {
             void updatePrintStatusForOrders(optimisticTargets, true, { silent: true }).catch(() => {});
           }
+          refetchOrdersPage({ silent: true });
           setSelectedOrderIds([]);
+          markProgressComplete('In vận đơn thành công!');
         }
       }
       // Non-Shopee (manual/tiktok) orders don't have a real Shopee AWB — show the mock preview instead.
@@ -5146,7 +5143,6 @@ export default function OrderManager({
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Lỗi không xác định';
       showToast(`In vận đơn Shopee thất bại: ${msg}`);
-      clearShipProgressOverlay();
     } finally {
       setIsBulkPrinting(false);
       clearShipProgressOverlay();
@@ -5254,7 +5250,8 @@ export default function OrderManager({
           const printedSns = Array.isArray(data.printedOrders) ? data.printedOrders : orderSns;
           const optimisticTargets = applyPrintedLocalOptimistic(printedSns, true);
           const statusTargets = optimisticTargets.length > 0 ? optimisticTargets : shopeeOrders;
-          await updatePrintStatusForOrders(statusTargets, true, { silent: true });
+          void updatePrintStatusForOrders(statusTargets, true, { silent: true }).catch(() => {});
+          refetchOrdersPage({ silent: true });
           markProgressComplete(completionMessage);
           showToast(completionMessage);
           setSelectedOrderIds([]);
@@ -5270,7 +5267,6 @@ export default function OrderManager({
         } else {
           closeReservedPrintWindow(reservedPrintWindow);
           alert(`In lại thất bại: ${data.message || 'Lỗi không xác định'}`);
-          clearShipProgressOverlay();
         }
       } catch (fetchErr: any) {
         clearTimeout(timeoutId);
@@ -5285,7 +5281,6 @@ export default function OrderManager({
       closeReservedPrintWindow(reservedPrintWindow);
       console.error('[Reprint] Error:', err);
       alert('Không thể kết nối API. Vui lòng thử lại.');
-      clearShipProgressOverlay();
     } finally {
       clearShipProgressOverlay();
     }
@@ -5485,19 +5480,17 @@ export default function OrderManager({
       });
       if (!result.success) {
         alert(`In vận đơn thất bại cho đơn ${order.orderSn}: ${result.message}`);
-        clearShipProgressOverlay();
       } else {
-        // Optimistic belt-and-suspenders: đảm bảo Đã in ngay sau PDF thành công.
         applyPrintedLocalOptimistic(
           [String(order.id || ''), String(order.orderSn || '')],
           true,
         );
-        await updatePrintStatusForOrders([order], true, { silent: true });
+        void updatePrintStatusForOrders([order], true, { silent: true }).catch(() => {});
+        refetchOrdersPage({ silent: true });
         markProgressComplete('In vận đơn thành công!');
       }
     } catch (err) {
       alert('Không thể kết nối API in vận đơn Shopee. Vui lòng thử lại.');
-      clearShipProgressOverlay();
     } finally {
       setPrintingOrderId(null);
       clearShipProgressOverlay();
@@ -8168,6 +8161,14 @@ export default function OrderManager({
                       </>
                     )}
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={() => clearShipProgressOverlay()}
+                    className="w-full mt-1 py-2.5 rounded-2xl border border-gray-200 bg-white text-gray-700 text-sm font-bold hover:bg-gray-50 transition-colors"
+                  >
+                    Đóng
+                  </button>
                 </>
               )}
             </div>
