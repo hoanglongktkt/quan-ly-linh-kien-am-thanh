@@ -8946,6 +8946,20 @@ function shippingDocRowKey(row: { order_sn?: string; package_number?: string }):
   return `${String(row?.order_sn || "").trim()}::${String(row?.package_number || "").trim()}`;
 }
 
+function isPackageShouldPrintFirstError(error: unknown, message?: unknown): boolean {
+  return /package\s+should\s+print\s+first|should[_\s-]*print[_\s-]*first/i.test(
+    `${String(error || "")} ${String(message || "")}`,
+  );
+}
+
+type BatchWaybillOptions = {
+  skipDownload?: boolean;
+  createdPackageKeys?: Set<string>;
+  deadlineAt?: number;
+  signal?: AbortSignal;
+  shouldPrintFirstRecoveryDepth?: number;
+};
+
 /**
  * Batch Waybill — nhẹ, không merge, không bao giờ throw (chống UnhandledRejection → 502).
  * Poll: lần 1 ngay lập tức; các lần sau sleep ~1s — dừng ngay khi READY.
@@ -8953,7 +8967,7 @@ function shippingDocRowKey(row: { order_sn?: string; package_number?: string }):
 async function batchDownloadShopeeWaybillPdf(
   shopId: string,
   orderList: ShopeeWaybillOrderRow[],
-  opts?: { skipDownload?: boolean; skipCreate?: boolean; deadlineAt?: number; signal?: AbortSignal },
+  opts?: BatchWaybillOptions,
 ): Promise<{
   success: boolean;
   filename?: string;
@@ -9038,6 +9052,7 @@ async function batchDownloadShopeeWaybillPdf(
     }
 
     const originalByKey = new Map(enriched.map((o) => [shippingDocRowKey(o), o]));
+    const createdPackageKeys = opts?.createdPackageKeys || new Set<string>();
     const createdByKey = new Map<string, any>();
     const createFailedByKey = new Map<
       string,
@@ -9047,29 +9062,32 @@ async function batchDownloadShopeeWaybillPdf(
       string,
       { error: string; message: string }
     >();
-    let createPending = [...enriched];
-    if (opts?.skipCreate) {
-      for (const row of enriched) createdByKey.set(shippingDocRowKey(row), row);
-      createPending = [];
+    const createPending: ShopeeWaybillOrderRow[] = [];
+    for (const row of enriched) {
+      const key = shippingDocRowKey(row);
+      if (createdPackageKeys.has(key)) {
+        createdByKey.set(key, row);
+      } else {
+        createPending.push(row);
+      }
+    }
+    if (createdByKey.size > 0) {
       console.log(
-        `[Shopee Batch Waybill] BƯỚC 1 CREATE đã hoàn tất ở vòng trước — chỉ tiếp tục POLL shop=${shopId} n=${enriched.length}`,
+        `[Shopee Batch Waybill] BƯỚC 1 giữ ACK thực tế shop=${shopId} ack=${createdByKey.size} cần_create=${createPending.length}`,
       );
     }
+    let pendingCreateRows = createPending;
     const createDeadlineAt = Math.min(
       Date.now() + SHOPEE_CREATE_DOCUMENT_RETRY_TIMEOUT_MS,
       opts?.deadlineAt || Number.POSITIVE_INFINITY,
     );
-    const isPackageShouldPrintFirst = (error: unknown, message: unknown) =>
-      /package\s+should\s+print\s+first|should[_\s-]*print[_\s-]*first/i.test(
-        `${String(error || "")} ${String(message || "")}`,
-      );
 
     console.log(
-      `[Shopee Batch Waybill] BƯỚC 1 CREATE bắt đầu shop=${shopId} n=${createPending.length}`,
+      `[Shopee Batch Waybill] BƯỚC 1 CREATE bắt đầu shop=${shopId} n=${pendingCreateRows.length}`,
     );
     for (
       let createAttempt = 1;
-      createPending.length > 0 &&
+      pendingCreateRows.length > 0 &&
       createAttempt <= SHOPEE_CREATE_DOCUMENT_RETRY_MAX &&
       Date.now() < createDeadlineAt;
       createAttempt++
@@ -9087,12 +9105,12 @@ async function batchDownloadShopeeWaybillPdf(
         createResult = await shopeeCreateShippingDocument(
           shopId,
           accessToken,
-          createPending,
+          pendingCreateRows,
           opts?.signal,
         );
       } catch (createErr: any) {
         const message = String(createErr?.message || createErr);
-        for (const row of createPending) {
+        for (const row of pendingCreateRows) {
           lastCreateFailureByKey.set(shippingDocRowKey(row), {
             error: "create_shipping_document_failed",
             message,
@@ -9107,9 +9125,10 @@ async function batchDownloadShopeeWaybillPdf(
       const createTopError = String(createResult?.error || "").trim();
       const createTopMessage = String(createResult?.message || "").trim();
       if (createTopError) {
-        const transient = isPackageShouldPrintFirst(createTopError, createTopMessage);
-        for (const row of createPending) {
+        const transient = isPackageShouldPrintFirstError(createTopError, createTopMessage);
+        for (const row of pendingCreateRows) {
           const key = shippingDocRowKey(row);
+          createdPackageKeys.delete(key);
           lastCreateFailureByKey.set(key, {
             error: createTopError,
             message: createTopMessage || createTopError,
@@ -9125,7 +9144,7 @@ async function batchDownloadShopeeWaybillPdf(
         console.warn(
           `[Shopee Batch Waybill] BƯỚC 1 CREATE lần ${createAttempt}/${SHOPEE_CREATE_DOCUMENT_RETRY_MAX} lỗi=${createTopError} transient=${transient}`,
         );
-        if (!transient) createPending = [];
+        if (!transient) pendingCreateRows = [];
         continue;
       }
 
@@ -9137,7 +9156,7 @@ async function batchDownloadShopeeWaybillPdf(
           .filter(([key]) => !key.startsWith("::")),
       );
       const retryRows: ShopeeWaybillOrderRow[] = [];
-      for (const row of createPending) {
+      for (const row of pendingCreateRows) {
         const key = shippingDocRowKey(row);
         const sameOrderItems = createList.filter(
           (item: any) => String(item?.order_sn || "").trim() === row.order_sn,
@@ -9153,11 +9172,13 @@ async function batchDownloadShopeeWaybillPdf(
             order_sn: row.order_sn,
             package_number: String(item?.package_number || row.package_number),
           });
+          createdPackageKeys.add(key);
           lastCreateFailureByKey.delete(key);
           continue;
         }
 
-        const transient = !item || isPackageShouldPrintFirst(failError, failMessage);
+        createdPackageKeys.delete(key);
+        const transient = !item || isPackageShouldPrintFirstError(failError, failMessage);
         const error = failError || "create_not_acknowledged";
         const message =
           failMessage ||
@@ -9169,14 +9190,15 @@ async function batchDownloadShopeeWaybillPdf(
           createFailedByKey.set(key, { orderSn: row.order_sn, error, message });
         }
       }
-      createPending = retryRows;
+      pendingCreateRows = retryRows;
       console.log(
-        `[Shopee Batch Waybill] BƯỚC 1 CREATE lần ${createAttempt}/${SHOPEE_CREATE_DOCUMENT_RETRY_MAX}: created=${createdByKey.size} pending=${createPending.length} failed=${createFailedByKey.size}`,
+        `[Shopee Batch Waybill] BƯỚC 1 CREATE lần ${createAttempt}/${SHOPEE_CREATE_DOCUMENT_RETRY_MAX}: created=${createdByKey.size} pending=${pendingCreateRows.length} failed=${createFailedByKey.size}`,
       );
     }
 
-    for (const row of createPending) {
+    for (const row of pendingCreateRows) {
       const key = shippingDocRowKey(row);
+      createdPackageKeys.delete(key);
       const last = lastCreateFailureByKey.get(key);
       createFailedByKey.set(key, {
         orderSn: row.order_sn,
@@ -9234,6 +9256,35 @@ async function batchDownloadShopeeWaybillPdf(
       Date.now() + SHIP_ORDER_PDF_RETRY_TIMEOUT_MS,
       opts?.deadlineAt || Number.POSITIVE_INFINITY,
     );
+    const recoverShouldPrintFirst = async (
+      affectedRows: ShopeeWaybillOrderRow[],
+      source: "poll" | "download",
+    ) => {
+      const affectedKeys = new Set(affectedRows.map(shippingDocRowKey));
+      for (const key of affectedKeys) createdPackageKeys.delete(key);
+      const recoveryDepth = opts?.shouldPrintFirstRecoveryDepth || 0;
+      console.warn(
+        `[Shopee Batch Waybill] ${source} báo should print first — reset ACK và CREATE lại ngay shop=${shopId} packages=${affectedKeys.size} recovery=${recoveryDepth + 1}`,
+      );
+      if (recoveryDepth >= 2) {
+        return {
+          success: false,
+          readyOrderSns: [],
+          skippedOrders: affectedRows.map((row) => ({
+            orderSn: row.order_sn,
+            error: "package_should_print_first",
+            message: "Shopee vẫn yêu cầu Create lại sau số lần phục hồi an toàn.",
+          })),
+          error: "package_should_print_first",
+          message: "Shopee vẫn yêu cầu Create lại sau số lần phục hồi an toàn.",
+        };
+      }
+      return batchDownloadShopeeWaybillPdf(shopId, enriched, {
+        ...opts,
+        createdPackageKeys,
+        shouldPrintFirstRecoveryDepth: recoveryDepth + 1,
+      });
+    };
     while (pendingList.length > 0 && attempts < maxPoll) {
       if (Date.now() > shopDeadlineAt) {
         console.error(`[Shopee Batch Waybill] Hết deadline — break polling (attempts=${attempts})`);
@@ -9258,6 +9309,9 @@ async function batchDownloadShopeeWaybillPdf(
           opts?.signal,
         );
       } catch (pollErr: any) {
+        if (isPackageShouldPrintFirstError(pollErr?.error, pollErr?.message || pollErr)) {
+          return recoverShouldPrintFirst(pendingList, "poll");
+        }
         console.error(
           `[Shopee Batch Waybill] get_shipping_document_result lỗi lần ${attempts}/${maxPoll}:`,
           pollErr?.message || pollErr,
@@ -9265,9 +9319,13 @@ async function batchDownloadShopeeWaybillPdf(
         continue;
       }
 
+      if (isPackageShouldPrintFirstError(pollResult?.error, pollResult?.message)) {
+        return recoverShouldPrintFirst(pendingList, "poll");
+      }
       const items: any[] = pollResult?.response?.result_list || pollResult?.result_list || [];
       const byKey = new Map(items.map((it: any) => [shippingDocRowKey(it), it]));
       const stillProcessing: ShopeeWaybillOrderRow[] = [];
+      const shouldRecreate: ShopeeWaybillOrderRow[] = [];
 
       for (const o of pendingList) {
         const sameOrderItems = items.filter(
@@ -9280,6 +9338,10 @@ async function batchDownloadShopeeWaybillPdf(
         if (st === "READY") {
           readyList.push(o);
         } else if (st === "FAILED" || it?.fail_error) {
+          if (isPackageShouldPrintFirstError(it?.fail_error, it?.fail_message)) {
+            shouldRecreate.push(o);
+            continue;
+          }
           console.error(
             `[Shopee Batch Waybill] BƯỚC 2 POLL Shopee báo FAILED order=${o.order_sn}: ${it?.fail_error || it?.fail_message || "document_failed"}`,
           );
@@ -9291,6 +9353,9 @@ async function batchDownloadShopeeWaybillPdf(
         } else {
           stillProcessing.push(o);
         }
+      }
+      if (shouldRecreate.length > 0) {
+        return recoverShouldPrintFirst(shouldRecreate, "poll");
       }
       pendingList = stillProcessing;
       console.log(
@@ -9344,6 +9409,9 @@ async function batchDownloadShopeeWaybillPdf(
         opts?.signal,
       );
     } catch (dlErr: any) {
+      if (isPackageShouldPrintFirstError(dlErr?.error, dlErr?.message || dlErr)) {
+        return recoverShouldPrintFirst(readyList, "download");
+      }
       console.error(`[Shopee Batch Waybill] download exception:`, dlErr?.message || dlErr);
       return {
         success: false,
@@ -9355,6 +9423,9 @@ async function batchDownloadShopeeWaybillPdf(
     }
 
     if (!downloadResult?.filename || !downloadResult?.filePath || !downloadResult?.size) {
+      if (isPackageShouldPrintFirstError(downloadResult?.error, downloadResult?.message)) {
+        return recoverShouldPrintFirst(readyList, "download");
+      }
       return {
         success: false,
         readyOrderSns: [],
@@ -18394,7 +18465,7 @@ async function startServer() {
     orderSns: string[],
     deadlineAt: number,
     logPrefix: string,
-    options?: { skipCreate?: boolean; skipEnrich?: boolean; signal?: AbortSignal },
+    options?: { createdPackageKeys?: Set<string>; signal?: AbortSignal },
   ): Promise<{ documents: BatchPdfDocument[]; failedOrders: BatchPdfFailure[] }> {
     const startedAt = Date.now();
     const failedBySn = new Map<string, BatchPdfFailure>();
@@ -18504,13 +18575,11 @@ async function startServer() {
           ? AbortSignal.any([deadlineController.signal, options.signal])
           : deadlineController.signal;
         try {
-          if (!options?.skipEnrich) {
-            await runBeforeBatchDeadline(
-              deadlineAt,
-              `enrich:${group.shopId}`,
-              () => enrichOrdersPackageAndTrackingForPrint(group.shopId, group.accessToken, group.orders),
-            );
-          }
+          await runBeforeBatchDeadline(
+            deadlineAt,
+            `enrich:${group.shopId}`,
+            () => enrichOrdersPackageAndTrackingForPrint(group.shopId, group.accessToken, group.orders),
+          );
           const enrichElapsedMs = Date.now() - groupStartedAt;
           const rows: ShopeeWaybillOrderRow[] = [];
           for (const order of group.orders) {
@@ -18536,7 +18605,7 @@ async function startServer() {
             `batch_waybill:${group.shopId}`,
             () => batchDownloadShopeeWaybillPdf(group.shopId, rows, {
               skipDownload: true,
-              skipCreate: options?.skipCreate,
+              createdPackageKeys: options?.createdPackageKeys,
               deadlineAt,
               signal: operationSignal,
             }),
@@ -18575,17 +18644,44 @@ async function startServer() {
             async ([orderSn, packageRows]): Promise<BatchPdfDocument | null> => {
               try {
                 const filename = buildCachedLabelFilename([orderSn]);
-                const downloaded = await runBeforeBatchDeadline(
-                  deadlineAt,
-                  `download_document:${orderSn}`,
-                  () => shopeeDownloadShippingDocument(
-                    group.shopId,
-                    group.accessToken,
-                    packageRows,
-                    filename,
-                    operationSignal,
-                  ),
-                );
+                let downloaded: any;
+                for (let downloadAttempt = 1; downloadAttempt <= 2; downloadAttempt++) {
+                  downloaded = await runBeforeBatchDeadline(
+                    deadlineAt,
+                    `download_document:${orderSn}`,
+                    () => shopeeDownloadShippingDocument(
+                      group.shopId,
+                      group.accessToken,
+                      packageRows,
+                      filename,
+                      operationSignal,
+                    ),
+                  );
+                  if (!isPackageShouldPrintFirstError(downloaded?.error, downloaded?.message)) {
+                    break;
+                  }
+                  for (const row of packageRows) {
+                    options?.createdPackageKeys?.delete(shippingDocRowKey(row));
+                  }
+                  console.warn(
+                    `[${logPrefix}] Download ${orderSn} báo should print first — reset ACK và CREATE lại ngay`,
+                  );
+                  const recreated = await runBeforeBatchDeadline(
+                    deadlineAt,
+                    `recreate_document:${orderSn}`,
+                    () => batchDownloadShopeeWaybillPdf(group.shopId, packageRows, {
+                      skipDownload: true,
+                      createdPackageKeys: options?.createdPackageKeys,
+                      deadlineAt,
+                      signal: operationSignal,
+                    }),
+                  );
+                  if (!recreated.success) {
+                    throw new Error(
+                      `${recreated.error || "recreate_failed"}: ${recreated.message || "Không Create lại được vận đơn."}`,
+                    );
+                  }
+                }
                 if (!downloaded?.filePath) throw new Error(downloaded?.message || "download_failed");
                 const buffer = await fs.promises.readFile(downloaded.filePath);
                 if (!buffer.length || buffer.length > BATCH_PDF_MAX_BYTES || !isPdfBuffer(buffer)) {
@@ -19263,6 +19359,7 @@ async function startServer() {
       // Fast path đọc storage/labels; file chưa có thì polling Shopee và tải bổ sung.
       // Lặp lại nhiều vòng để trường hợp user bấm In ngay sau Xác nhận vẫn chờ READY.
       const pendingSns = new Set(cleanSns);
+      const createdPackageKeys = new Set<string>();
       const printedFromBatch: string[] = [];
       let fallbackRound = 0;
       while (pendingSns.size > 0 && Date.now() < deadlineAt) {
@@ -19274,8 +19371,7 @@ async function startServer() {
           deadlineAt,
           `Batch Print Only fallback ${fallbackRound}`,
           {
-            skipCreate: fallbackRound > 1,
-            skipEnrich: fallbackRound > 1,
+            createdPackageKeys,
             signal: requestAbortController.signal,
           },
         );
@@ -19297,7 +19393,6 @@ async function startServer() {
           "order_not_found",
           "missing_shop_id",
           "token_missing",
-          "missing_package_number",
           "document_failed",
           "invalid_pdf",
           "create_retry_exhausted",
