@@ -8964,45 +8964,65 @@ async function batchDownloadShopeeWaybillPdf(
       };
     }
 
+    const createTopError = String(createResult?.error || "").trim();
+    if (createTopError) {
+      const message = String(
+        createResult?.message || "Shopee từ chối create_shipping_document.",
+      );
+      console.error(
+        `[Shopee Batch Waybill] BƯỚC 1 CREATE thất bại shop=${shopId}: ${createTopError} — ${message}`,
+      );
+      return {
+        success: false,
+        readyOrderSns: [],
+        skippedOrders: enriched.map((row) => ({
+          orderSn: row.order_sn,
+          error: createTopError,
+          message,
+        })),
+        error: createTopError,
+        message,
+      };
+    }
+
     const createList: any[] = createResult?.response?.result_list || createResult?.result_list || [];
     const failedItems = createList.filter((it: any) => it?.fail_error);
-    const failedSnSet = new Set(failedItems.map((it: any) => String(it.order_sn || "")));
     const originalBySn = new Map(enriched.map((o) => [o.order_sn, o]));
-    let okItems: any[] = createList.filter((it: any) => it?.order_sn && !it.fail_error);
-
-    if (createList.length > 0 || !createResult?.error) {
-      const okSnSet = new Set(okItems.map((it: any) => String(it.order_sn)));
-      for (const orig of enriched) {
-        const sn = String(orig.order_sn || "");
-        if (!sn || failedSnSet.has(sn) || okSnSet.has(sn)) continue;
-        okItems.push({ order_sn: sn, package_number: orig.package_number });
-        okSnSet.add(sn);
-      }
-    }
-    if (okItems.length === 0 && !createResult?.error && failedItems.length === 0 && enriched.length > 0) {
-      okItems = enriched.map((o) => ({ order_sn: o.order_sn, package_number: o.package_number }));
-    }
-
+    const okItems: any[] = createList.filter((it: any) => it?.order_sn && !it.fail_error);
+    const acknowledgedSnSet = new Set(createList.map((it: any) => String(it?.order_sn || "")).filter(Boolean));
     const skippedOrders = failedItems.map((it: any) => ({
       orderSn: String(it.order_sn || ""),
       error: String(it.fail_error || "document_generation_failed"),
       message: String(it.fail_message || it.fail_error || "Shopee create fail"),
     }));
+    for (const row of enriched) {
+      if (acknowledgedSnSet.has(row.order_sn)) continue;
+      skippedOrders.push({
+        orderSn: row.order_sn,
+        error: "create_not_acknowledged",
+        message:
+          "Shopee không xác nhận create_shipping_document cho đơn này; đã chặn polling/download để tránh lỗi package should print first.",
+      });
+    }
 
     if (okItems.length === 0) {
       const first = failedItems[0];
-      console.warn(`[Shopee Batch Waybill] create: không còn đơn OK shop=${shopId}`);
+      console.warn(
+        `[Shopee Batch Waybill] BƯỚC 1 CREATE không có đơn được xác nhận thành công shop=${shopId}`,
+      );
       return {
         success: false,
         readyOrderSns: [],
         skippedOrders,
-        error: first?.fail_error || createResult?.error || "document_generation_failed",
+        error: first?.fail_error || "create_not_acknowledged",
         message:
-          createResult?.message ||
           first?.fail_message ||
-          "Shopee từ chối tạo vận đơn hàng loạt cho toàn bộ đơn.",
+          "Shopee không xác nhận create_shipping_document cho bất kỳ đơn nào.",
       };
     }
+    console.log(
+      `[Shopee Batch Waybill] BƯỚC 1 CREATE thành công ${okItems.length}/${enriched.length} đơn — bắt đầu BƯỚC 2 POLL`,
+    );
 
     let pendingList: ShopeeWaybillOrderRow[] = okItems.map((it: any) => {
       const orig = originalBySn.get(String(it.order_sn));
@@ -9021,7 +9041,7 @@ async function batchDownloadShopeeWaybillPdf(
     let attempts = 0;
 
     console.log(
-      `[Shopee Batch Waybill] Đang chờ ready — tối đa ${maxPoll} lần, poll ngay + sleep ${pollInterval}ms giữa các lần, n=${pendingList.length}`,
+      `[Shopee Batch Waybill] BƯỚC 2 POLL chờ READY — tối đa ${maxPoll} lần, poll ngay + sleep ${pollInterval}ms giữa các lần, n=${pendingList.length}`,
     );
 
     const shopDeadlineAt = Math.min(
@@ -9069,6 +9089,9 @@ async function batchDownloadShopeeWaybillPdf(
         if (st === "READY") {
           readyList.push(o);
         } else if (st === "FAILED" || it?.fail_error) {
+          console.error(
+            `[Shopee Batch Waybill] BƯỚC 2 POLL Shopee báo FAILED order=${o.order_sn}: ${it?.fail_error || it?.fail_message || "document_failed"}`,
+          );
           pollFailed.push({
             orderSn: o.order_sn,
             error: String(it?.fail_error || "document_failed"),
@@ -9116,7 +9139,7 @@ async function batchDownloadShopeeWaybillPdf(
     }
 
     console.log(
-      `[Shopee Batch Waybill] Bắt đầu tải PDF — download_shipping_document n=${readyList.length} shop=${shopId}`,
+      `[Shopee Batch Waybill] BƯỚC 3 DOWNLOAD chỉ tải các đơn READY n=${readyList.length} shop=${shopId}`,
     );
 
     let downloadResult: any;

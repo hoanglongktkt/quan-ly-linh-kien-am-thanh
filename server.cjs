@@ -124460,39 +124460,60 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
         message: String(createErr?.message || createErr)
       };
     }
+    const createTopError = String(createResult?.error || "").trim();
+    if (createTopError) {
+      const message = String(
+        createResult?.message || "Shopee t\u1EEB ch\u1ED1i create_shipping_document."
+      );
+      console.error(
+        `[Shopee Batch Waybill] B\u01AF\u1EDAC 1 CREATE th\u1EA5t b\u1EA1i shop=${shopId}: ${createTopError} \u2014 ${message}`
+      );
+      return {
+        success: false,
+        readyOrderSns: [],
+        skippedOrders: enriched.map((row) => ({
+          orderSn: row.order_sn,
+          error: createTopError,
+          message
+        })),
+        error: createTopError,
+        message
+      };
+    }
     const createList = createResult?.response?.result_list || createResult?.result_list || [];
     const failedItems = createList.filter((it) => it?.fail_error);
-    const failedSnSet = new Set(failedItems.map((it) => String(it.order_sn || "")));
     const originalBySn = new Map(enriched.map((o) => [o.order_sn, o]));
-    let okItems = createList.filter((it) => it?.order_sn && !it.fail_error);
-    if (createList.length > 0 || !createResult?.error) {
-      const okSnSet = new Set(okItems.map((it) => String(it.order_sn)));
-      for (const orig of enriched) {
-        const sn = String(orig.order_sn || "");
-        if (!sn || failedSnSet.has(sn) || okSnSet.has(sn)) continue;
-        okItems.push({ order_sn: sn, package_number: orig.package_number });
-        okSnSet.add(sn);
-      }
-    }
-    if (okItems.length === 0 && !createResult?.error && failedItems.length === 0 && enriched.length > 0) {
-      okItems = enriched.map((o) => ({ order_sn: o.order_sn, package_number: o.package_number }));
-    }
+    const okItems = createList.filter((it) => it?.order_sn && !it.fail_error);
+    const acknowledgedSnSet = new Set(createList.map((it) => String(it?.order_sn || "")).filter(Boolean));
     const skippedOrders = failedItems.map((it) => ({
       orderSn: String(it.order_sn || ""),
       error: String(it.fail_error || "document_generation_failed"),
       message: String(it.fail_message || it.fail_error || "Shopee create fail")
     }));
+    for (const row of enriched) {
+      if (acknowledgedSnSet.has(row.order_sn)) continue;
+      skippedOrders.push({
+        orderSn: row.order_sn,
+        error: "create_not_acknowledged",
+        message: "Shopee kh\xF4ng x\xE1c nh\u1EADn create_shipping_document cho \u0111\u01A1n n\xE0y; \u0111\xE3 ch\u1EB7n polling/download \u0111\u1EC3 tr\xE1nh l\u1ED7i package should print first."
+      });
+    }
     if (okItems.length === 0) {
       const first = failedItems[0];
-      console.warn(`[Shopee Batch Waybill] create: kh\xF4ng c\xF2n \u0111\u01A1n OK shop=${shopId}`);
+      console.warn(
+        `[Shopee Batch Waybill] B\u01AF\u1EDAC 1 CREATE kh\xF4ng c\xF3 \u0111\u01A1n \u0111\u01B0\u1EE3c x\xE1c nh\u1EADn th\xE0nh c\xF4ng shop=${shopId}`
+      );
       return {
         success: false,
         readyOrderSns: [],
         skippedOrders,
-        error: first?.fail_error || createResult?.error || "document_generation_failed",
-        message: createResult?.message || first?.fail_message || "Shopee t\u1EEB ch\u1ED1i t\u1EA1o v\u1EADn \u0111\u01A1n h\xE0ng lo\u1EA1t cho to\xE0n b\u1ED9 \u0111\u01A1n."
+        error: first?.fail_error || "create_not_acknowledged",
+        message: first?.fail_message || "Shopee kh\xF4ng x\xE1c nh\u1EADn create_shipping_document cho b\u1EA5t k\u1EF3 \u0111\u01A1n n\xE0o."
       };
     }
+    console.log(
+      `[Shopee Batch Waybill] B\u01AF\u1EDAC 1 CREATE th\xE0nh c\xF4ng ${okItems.length}/${enriched.length} \u0111\u01A1n \u2014 b\u1EAFt \u0111\u1EA7u B\u01AF\u1EDAC 2 POLL`
+    );
     let pendingList = okItems.map((it) => {
       const orig = originalBySn.get(String(it.order_sn));
       const row = { order_sn: String(it.order_sn) };
@@ -124508,7 +124529,7 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
     const pollInterval = Math.max(1e3, SHIP_ORDER_PDF_RETRY_DELAY_MS);
     let attempts = 0;
     console.log(
-      `[Shopee Batch Waybill] \u0110ang ch\u1EDD ready \u2014 t\u1ED1i \u0111a ${maxPoll} l\u1EA7n, poll ngay + sleep ${pollInterval}ms gi\u1EEFa c\xE1c l\u1EA7n, n=${pendingList.length}`
+      `[Shopee Batch Waybill] B\u01AF\u1EDAC 2 POLL ch\u1EDD READY \u2014 t\u1ED1i \u0111a ${maxPoll} l\u1EA7n, poll ngay + sleep ${pollInterval}ms gi\u1EEFa c\xE1c l\u1EA7n, n=${pendingList.length}`
     );
     const shopDeadlineAt = Math.min(
       Date.now() + SHIP_ORDER_PDF_RETRY_TIMEOUT_MS,
@@ -124551,6 +124572,9 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
         if (st === "READY") {
           readyList.push(o);
         } else if (st === "FAILED" || it?.fail_error) {
+          console.error(
+            `[Shopee Batch Waybill] B\u01AF\u1EDAC 2 POLL Shopee b\xE1o FAILED order=${o.order_sn}: ${it?.fail_error || it?.fail_message || "document_failed"}`
+          );
           pollFailed.push({
             orderSn: o.order_sn,
             error: String(it?.fail_error || "document_failed"),
@@ -124592,7 +124616,7 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
       };
     }
     console.log(
-      `[Shopee Batch Waybill] B\u1EAFt \u0111\u1EA7u t\u1EA3i PDF \u2014 download_shipping_document n=${readyList.length} shop=${shopId}`
+      `[Shopee Batch Waybill] B\u01AF\u1EDAC 3 DOWNLOAD ch\u1EC9 t\u1EA3i c\xE1c \u0111\u01A1n READY n=${readyList.length} shop=${shopId}`
     );
     let downloadResult;
     try {
