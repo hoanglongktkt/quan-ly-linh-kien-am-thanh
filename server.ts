@@ -8644,8 +8644,8 @@ async function arrangeShipment(
   return arrangeShipmentLocal(order, method);
 }
 
-// Tem nhiệt dùng chung cho create/poll/download để cache và lệnh in luôn đồng nhất.
-const SHOPEE_SHIPPING_DOCUMENT_TYPE = "THERMAL_AIR_WAYBILL";
+// Tem nhiệt dùng chung cho create/poll/download — TUYỆT ĐỐI không dùng NORMAL_AIR_WAYBILL.
+const SHOPEE_SHIPPING_DOCUMENT_TYPE = "THERMAL_AIR_WAYBILL" as const;
 
 // v2.logistics.get_tracking_number — for INTEGRATED channels, ship_order does
 // not return the tracking_number synchronously (the 3PL assigns it a few
@@ -8740,19 +8740,25 @@ async function shopeeCreateShippingDocument(
       const rawTn = String(row?.tracking_number || "").trim();
       // Giữ nguyên tracking_number thực tế (kể cả mã OFG/SPX/J&T/GHN); không regex chặn.
       const tracking_number = rawTn ? rawTn : "";
-      // ÉP CỨNG trong TỪNG item — không tin caller, không để thiếu field.
+      const incomingType = String(row?.shipping_document_type || "").trim();
+      // ÉP CỨNG THERMAL — bỏ NORMAL_AIR_WAYBILL / mọi type khác từ caller.
+      if (incomingType && incomingType !== SHOPEE_SHIPPING_DOCUMENT_TYPE) {
+        console.warn(
+          `[Shopee API] create_shipping_document override type ${incomingType} → ${SHOPEE_SHIPPING_DOCUMENT_TYPE} order_sn=${order_sn}`,
+        );
+      }
       return {
         order_sn,
         package_number,
         tracking_number,
-        shipping_document_type: "THERMAL_AIR_WAYBILL" as const,
+        shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE,
       };
     })
     .filter((row) => row.order_sn && row.package_number);
 
   // Guard: mỗi row PHẢI đủ 3 field bắt buộc trước khi gọi Shopee.
   const missingType = sanitizedOrderList.filter(
-    (row) => String(row.shipping_document_type || "").trim() !== "THERMAL_AIR_WAYBILL",
+    (row) => String(row.shipping_document_type || "").trim() !== SHOPEE_SHIPPING_DOCUMENT_TYPE,
   );
   if (missingType.length > 0) {
     throw new Error(
@@ -8877,11 +8883,11 @@ async function shopeeGetShippingDocumentResult(
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
   const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
 
-  // shipping_document_type BẮT BUỘC trong TỪNG item order_list (không chỉ top-level).
+  // shipping_document_type BẮT BUỘC THERMAL trong TỪNG item order_list.
   const pollOrderList = orderList.map((row) => ({
     order_sn: String(row?.order_sn || "").trim(),
     package_number: String(row?.package_number || "").trim(),
-    shipping_document_type: "THERMAL_AIR_WAYBILL" as const,
+    shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE,
   }));
 
   const res = await fetchWithTimeout(url, {
@@ -8931,11 +8937,11 @@ async function shopeeDownloadShippingDocument(
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
   const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
 
-  // shipping_document_type BẮT BUỘC trong TỪNG item order_list.
+  // shipping_document_type BẮT BUỘC THERMAL trong TỪNG item order_list.
   const downloadOrderList = orderList.map((row) => ({
     order_sn: String(row?.order_sn || "").trim(),
     package_number: String(row?.package_number || "").trim(),
-    shipping_document_type: "THERMAL_AIR_WAYBILL" as const,
+    shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE,
   }));
 
   console.log(`[Shopee API] Bắt đầu tải PDF batch n=${downloadOrderList.length} shop=${shopId}`);
@@ -9140,7 +9146,7 @@ async function fetchSingleOrderWaybillFromRows(
     const order_list = rows.map((r) => ({
       order_sn: String(r.order_sn || "").trim(),
       package_number: String(r.package_number || "").trim(),
-      shipping_document_type: "THERMAL_AIR_WAYBILL" as const,
+      shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE,
       ...(String(r.tracking_number || "").trim()
         ? { tracking_number: String(r.tracking_number).trim() }
         : {}),
@@ -9193,7 +9199,7 @@ async function fetchSingleOrderWaybillFromRows(
           rows.map((r) => ({
             order_sn: r.order_sn,
             package_number: r.package_number,
-            shipping_document_type: "THERMAL_AIR_WAYBILL",
+            shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE,
           })),
           opts?.signal,
         );
@@ -9270,7 +9276,7 @@ async function fetchSingleOrderWaybillFromRows(
         readyRows.map((r) => ({
           order_sn: r.order_sn,
           package_number: r.package_number,
-          shipping_document_type: "THERMAL_AIR_WAYBILL",
+          shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE,
         })),
         filename,
         opts?.signal,
@@ -9357,7 +9363,7 @@ async function fetchSingleOrderWaybillFromRows(
         return {
           order_sn: sn,
           package_number,
-          shipping_document_type: "THERMAL_AIR_WAYBILL" as const,
+          shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE,
           ...(tracking_number &&
           !/^0FG/i.test(tracking_number) &&
           !isShopeeInternalTrackingCode(tracking_number)
@@ -9479,7 +9485,7 @@ async function batchDownloadShopeeWaybillPdf(
       .map((row) => {
         const entry: Partial<ShopeeWaybillOrderRow> = {
           order_sn: String(row.order_sn || "").trim(),
-          shipping_document_type: "THERMAL_AIR_WAYBILL",
+          shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE,
         };
         const pkg = String(row.package_number || "").trim();
         const tn = String(row.tracking_number || "").trim();
@@ -18431,7 +18437,7 @@ async function startServer() {
               order_list: shippingRows.map((row) => ({
                 order_sn: row.order_sn,
                 package_number: row.package_number,
-                shipping_document_type: "THERMAL_AIR_WAYBILL",
+                shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE,
               })),
             }),
           }, 60_000);
@@ -19064,7 +19070,7 @@ async function startServer() {
                 order_list: shippingRows.map((row) => ({
                   order_sn: row.order_sn,
                   package_number: row.package_number,
-                  shipping_document_type: "THERMAL_AIR_WAYBILL",
+                  shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE,
                 })),
               }),
             }, Math.min(8_000, Math.max(1_000, deadlineAt - Date.now()))),
@@ -19361,7 +19367,7 @@ async function startServer() {
                 order_list: shippingRows.map((row) => ({
                   order_sn: row.order_sn,
                   package_number: row.package_number,
-                  shipping_document_type: "THERMAL_AIR_WAYBILL",
+                  shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE,
                 })),
               }),
             }, Math.min(8_000, Math.max(1_000, deadlineAt - Date.now()))),
