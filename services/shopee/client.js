@@ -90,6 +90,10 @@ try {
 
 export async function fetchWithTimeout(url, init = {}, timeoutMs = SHOPEE_HTTP_TIMEOUT_MS) {
   const controller = new AbortController();
+  const externalSignal = init?.signal;
+  const abortFromExternal = () => controller.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) abortFromExternal();
+  else externalSignal?.addEventListener?.("abort", abortFromExternal, { once: true });
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let hardTimer;
   try {
@@ -123,6 +127,7 @@ export async function fetchWithTimeout(url, init = {}, timeoutMs = SHOPEE_HTTP_T
   } finally {
     clearTimeout(timer);
     if (hardTimer) clearTimeout(hardTimer);
+    externalSignal?.removeEventListener?.("abort", abortFromExternal);
   }
 }
 

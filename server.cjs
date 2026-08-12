@@ -105489,6 +105489,10 @@ try {
 }
 async function fetchWithTimeout(url2, init = {}, timeoutMs = SHOPEE_HTTP_TIMEOUT_MS) {
   const controller = new AbortController();
+  const externalSignal = init?.signal;
+  const abortFromExternal = () => controller.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) abortFromExternal();
+  else externalSignal?.addEventListener?.("abort", abortFromExternal, { once: true });
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let hardTimer;
   try {
@@ -105521,6 +105525,7 @@ async function fetchWithTimeout(url2, init = {}, timeoutMs = SHOPEE_HTTP_TIMEOUT
   } finally {
     clearTimeout(timer);
     if (hardTimer) clearTimeout(hardTimer);
+    externalSignal?.removeEventListener?.("abort", abortFromExternal);
   }
 }
 function shopeeExponentialBackoffMs(attempt, baseMs = SHOPEE_API_RETRY_BASE_MS) {
@@ -124252,7 +124257,7 @@ async function shopeeGetShippingDocumentDataInfo(shopId, accessToken, orderSn, p
   );
   return json2;
 }
-async function shopeeCreateShippingDocument(shopId, accessToken, orderList) {
+async function shopeeCreateShippingDocument(shopId, accessToken, orderList, signal) {
   const apiPath = "/api/v2/logistics/create_shipping_document";
   const timestamp = Math.floor(Date.now() / 1e3);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
@@ -124260,7 +124265,8 @@ async function shopeeCreateShippingDocument(shopId, accessToken, orderList) {
   const res = await fetchWithTimeout(url2, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ order_list: orderList, shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE })
+    body: JSON.stringify({ order_list: orderList, shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE }),
+    signal
   });
   const json2 = await res.json().catch(() => ({}));
   console.log(
@@ -124269,7 +124275,7 @@ async function shopeeCreateShippingDocument(shopId, accessToken, orderList) {
   );
   return json2;
 }
-async function shopeeGetShippingDocumentResult(shopId, accessToken, orderList) {
+async function shopeeGetShippingDocumentResult(shopId, accessToken, orderList, signal) {
   const apiPath = "/api/v2/logistics/get_shipping_document_result";
   const timestamp = Math.floor(Date.now() / 1e3);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
@@ -124277,7 +124283,8 @@ async function shopeeGetShippingDocumentResult(shopId, accessToken, orderList) {
   const res = await fetchWithTimeout(url2, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ order_list: orderList, shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE })
+    body: JSON.stringify({ order_list: orderList, shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE }),
+    signal
   });
   const json2 = await res.json().catch(() => ({}));
   console.log(
@@ -124286,7 +124293,7 @@ async function shopeeGetShippingDocumentResult(shopId, accessToken, orderList) {
   );
   return json2;
 }
-async function shopeeDownloadShippingDocument(shopId, accessToken, orderList, filename) {
+async function shopeeDownloadShippingDocument(shopId, accessToken, orderList, filename, signal) {
   ensureLabelsDir();
   const safe = safeLabelFilename(filename);
   if (!safe) return { error: "invalid_filename", message: "T\xEAn file PDF cache kh\xF4ng h\u1EE3p l\u1EC7." };
@@ -124310,7 +124317,8 @@ async function shopeeDownloadShippingDocument(shopId, accessToken, orderList, fi
   const res = await fetchWithTimeout(url2, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ order_list: orderList, shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE })
+    body: JSON.stringify({ order_list: orderList, shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE }),
+    signal
   }, 6e4);
   const contentType = String(res.headers.get("content-type") || "").toLowerCase();
   console.log(`[Shopee API] POST ${apiPath} n=${orderList.length} HTTP ${res.status} content-type=${contentType || "(empty)"}`);
@@ -124436,7 +124444,12 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
     );
     let createResult;
     try {
-      createResult = await shopeeCreateShippingDocument(shopId, accessToken, enriched);
+      createResult = await shopeeCreateShippingDocument(
+        shopId,
+        accessToken,
+        enriched,
+        opts?.signal
+      );
     } catch (createErr) {
       console.error(`[Shopee Batch Waybill] create exception:`, createErr?.message || createErr);
       return {
@@ -124497,7 +124510,10 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
     console.log(
       `[Shopee Batch Waybill] \u0110ang ch\u1EDD ready \u2014 t\u1ED1i \u0111a ${maxPoll} l\u1EA7n, poll ngay + sleep ${pollInterval}ms gi\u1EEFa c\xE1c l\u1EA7n, n=${pendingList.length}`
     );
-    const shopDeadlineAt = Date.now() + SHIP_ORDER_PDF_RETRY_TIMEOUT_MS;
+    const shopDeadlineAt = Math.min(
+      Date.now() + SHIP_ORDER_PDF_RETRY_TIMEOUT_MS,
+      opts?.deadlineAt || Number.POSITIVE_INFINITY
+    );
     while (pendingList.length > 0 && attempts < maxPoll) {
       if (Date.now() > shopDeadlineAt) {
         console.error(`[Shopee Batch Waybill] H\u1EBFt deadline \u2014 break polling (attempts=${attempts})`);
@@ -124513,7 +124529,12 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
       }
       let pollResult;
       try {
-        pollResult = await shopeeGetShippingDocumentResult(shopId, accessToken, pendingList);
+        pollResult = await shopeeGetShippingDocumentResult(
+          shopId,
+          accessToken,
+          pendingList,
+          opts?.signal
+        );
       } catch (pollErr) {
         console.error(
           `[Shopee Batch Waybill] get_shipping_document_result l\u1ED7i l\u1EA7n ${attempts}/${maxPoll}:`,
@@ -124576,7 +124597,13 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
     let downloadResult;
     try {
       const filename = buildCachedLabelFilename(readyList.map((o) => o.order_sn));
-      downloadResult = await shopeeDownloadShippingDocument(shopId, accessToken, readyList, filename);
+      downloadResult = await shopeeDownloadShippingDocument(
+        shopId,
+        accessToken,
+        readyList,
+        filename,
+        opts?.signal
+      );
     } catch (dlErr) {
       console.error(`[Shopee Batch Waybill] download exception:`, dlErr?.message || dlErr);
       return {
@@ -130711,7 +130738,8 @@ async function startServer() {
   };
   const BATCH_PRINT_CONCURRENCY = 5;
   const BATCH_PRINT_DEADLINE_MS = 27e3;
-  const BATCH_PRINT_ONLY_DEADLINE_MS = 105e3;
+  const BATCH_PRINT_ONLY_DEADLINE_MS = 21e4;
+  const PRINT_CHUNK_FALLBACK_DEADLINE_MS = 21e4;
   const BATCH_PDF_MAX_BYTES = 25 * 1024 * 1024;
   async function mapBatchConcurrently(items, concurrency, processFn) {
     const results = new Array(items.length);
@@ -130754,10 +130782,14 @@ async function startServer() {
     const cachedDocuments = [];
     const groups = /* @__PURE__ */ new Map();
     for (const orderSn of orderSns) {
-      const cached = getValidLabelDiskFile(buildCachedLabelFilename([orderSn]));
-      if (cached) {
-        cachedDocuments.push({ orderSns: [orderSn], buffer: import_fs16.default.readFileSync(cached.filePath) });
-        continue;
+      const cachedFilename = buildCachedLabelFilename([orderSn]);
+      const cachedFilePath = import_path17.default.join(LABELS_DIR, cachedFilename);
+      if (import_fs16.default.existsSync(cachedFilePath)) {
+        const cached = getValidLabelDiskFile(cachedFilename);
+        if (cached) {
+          cachedDocuments.push({ orderSns: [orderSn], buffer: import_fs16.default.readFileSync(cached.filePath) });
+          continue;
+        }
       }
       const order = orders.find(
         (item) => String(item?.orderSn || item?.order_sn || "").replace(/^shopee-/i, "").trim() === orderSn
@@ -130804,6 +130836,11 @@ async function startServer() {
         const groupSns = group.orders.map(
           (order) => String(order?.orderSn || order?.order_sn || "").replace(/^shopee-/i, "").trim()
         );
+        const deadlineController = new AbortController();
+        const deadlineTimer = setTimeout(
+          () => deadlineController.abort(new Error("batch_deadline:shopee_pdf")),
+          Math.max(1, deadlineAt - Date.now())
+        );
         try {
           await runBeforeBatchDeadline(
             deadlineAt,
@@ -130828,7 +130865,11 @@ async function startServer() {
           const batch = await runBeforeBatchDeadline(
             deadlineAt,
             `batch_waybill:${group.shopId}`,
-            () => batchDownloadShopeeWaybillPdf(group.shopId, rows, { skipDownload: true })
+            () => batchDownloadShopeeWaybillPdf(group.shopId, rows, {
+              skipDownload: true,
+              deadlineAt,
+              signal: deadlineController.signal
+            })
           );
           for (const skipped of batch.skippedOrders || []) {
             const orderSn = String(skipped.orderSn || "").trim();
@@ -130863,7 +130904,8 @@ async function startServer() {
                     group.shopId,
                     group.accessToken,
                     [row],
-                    filename
+                    filename,
+                    deadlineController.signal
                   )
                 );
                 if (!downloaded?.filePath) throw new Error(downloaded?.message || "download_failed");
@@ -130909,6 +130951,8 @@ async function startServer() {
             }
           }
           return [];
+        } finally {
+          clearTimeout(deadlineTimer);
         }
       }
     );
@@ -131487,49 +131531,87 @@ async function startServer() {
       endLogisticsWork();
     }
   };
+  const SILENT_PREFETCH_DEADLINE_MS = 45e3;
   const silentPdfPrefetchInFlight = /* @__PURE__ */ new Set();
   const prefetchStatus = /* @__PURE__ */ new Map();
   let prefetchBatchSequence = 0;
   const runSilentPdfPrefetch = async (batchId, orderSns) => {
     const pending = new Set(orderSns);
+    const settled = /* @__PURE__ */ new Set();
+    const deadlineAt = Date.now() + SILENT_PREFETCH_DEADLINE_MS;
+    const settleOrder = (orderSn, failure) => {
+      if (settled.has(orderSn)) return;
+      settled.add(orderSn);
+      pending.delete(orderSn);
+      const status = prefetchStatus.get(batchId);
+      if (!status) return;
+      status.completed = Math.min(status.total, status.completed + 1);
+      if (failure) {
+        status.failed = Math.min(status.total, status.failed + 1);
+        status.errors.push(failure);
+      }
+      status.isDone = status.completed >= status.total;
+    };
     beginLogisticsWork("silent-prefetch-pdfs");
     try {
-      for (let attempt = 1; attempt <= 6 && pending.size > 0; attempt += 1) {
-        const sns = [...pending];
-        const orders = await loadOrdersForShipScoped(
+      const sns = [...pending];
+      const orders = await runBeforeBatchDeadline(
+        deadlineAt,
+        "silent_prefetch_load_orders",
+        () => loadOrdersForShipScoped(
           sns.map((sn) => `shopee-${sn}`),
           sns
-        );
-        const result = await fetchBatchPdfDocumentsByShop(
-          orders,
-          sns,
-          Date.now() + BATCH_PRINT_DEADLINE_MS,
-          `Silent Prefetch ${attempt}/6`
-        );
-        const publicPdfDir = import_path17.default.join(APP_ROOT11, "public", "pdfs");
-        import_fs16.default.mkdirSync(publicPdfDir, { recursive: true });
-        for (const document2 of result.documents) {
-          for (const orderSn of document2.orderSns) {
-            const filename = buildCachedLabelFilename([orderSn]);
-            import_fs16.default.writeFileSync(import_path17.default.join(publicPdfDir, filename), document2.buffer);
-            if (pending.delete(orderSn)) {
-              const status = prefetchStatus.get(batchId);
-              if (status) status.completed = Math.min(status.total, status.completed + 1);
-            }
-          }
+        )
+      );
+      const result = await fetchBatchPdfDocumentsByShop(
+        orders,
+        sns,
+        deadlineAt,
+        "Silent Prefetch"
+      );
+      const publicPdfDir = import_path17.default.join(APP_ROOT11, "public", "pdfs");
+      import_fs16.default.mkdirSync(publicPdfDir, { recursive: true });
+      for (const document2 of result.documents) {
+        for (const orderSn of document2.orderSns) {
+          const filename = buildCachedLabelFilename([orderSn]);
+          import_fs16.default.writeFileSync(import_path17.default.join(publicPdfDir, filename), document2.buffer);
+          settleOrder(orderSn);
         }
-        if (pending.size > 0 && attempt < 6) await sleep2(3e3);
+      }
+      const failureBySn = new Map(result.failedOrders.map((item) => [item.orderSn, item]));
+      for (const orderSn of [...pending]) {
+        settleOrder(
+          orderSn,
+          failureBySn.get(orderSn) || {
+            orderSn,
+            error: "pdf_unavailable",
+            message: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c PDF tr\u01B0\u1EDBc khi h\u1EBFt th\u1EDDi gian cho ph\xE9p."
+          }
+        );
       }
       console.log(
-        `[Silent Prefetch] DONE cached=${orderSns.length - pending.size}/${orderSns.length}` + (pending.size ? ` pending=${[...pending].join(",")}` : "")
+        `[Silent Prefetch] DONE cached=${orderSns.length - (prefetchStatus.get(batchId)?.failed || 0)}/${orderSns.length}`
       );
     } catch (err) {
       console.error("[Silent Prefetch] background error:", err?.stack || err);
+      for (const orderSn of [...pending]) {
+        settleOrder(orderSn, {
+          orderSn,
+          error: /batch_deadline|timeout/i.test(String(err?.message || "")) ? "timeout" : "prefetch_error",
+          message: String(err?.message || err || "T\u1EA3i PDF th\u1EA5t b\u1EA1i.")
+        });
+      }
     } finally {
       const status = prefetchStatus.get(batchId);
       if (status) {
-        status.completed = status.total;
-        status.isDone = true;
+        for (const orderSn of [...pending]) {
+          settleOrder(orderSn, {
+            orderSn,
+            error: "prefetch_incomplete",
+            message: "Ti\u1EBFn tr\xECnh k\u1EBFt th\xFAc nh\u01B0ng \u0111\u01A1n ch\u01B0a c\xF3 PDF."
+          });
+        }
+        status.isDone = status.completed >= status.total;
       }
       for (const orderSn of orderSns) silentPdfPrefetchInFlight.delete(orderSn);
       endLogisticsWork();
@@ -131555,7 +131637,9 @@ async function startServer() {
     prefetchStatus.set(batchId, {
       total: queued.length,
       completed: 0,
-      isDone: queued.length === 0
+      failed: 0,
+      isDone: queued.length === 0,
+      errors: []
     });
     res.status(200).json({
       success: true,
@@ -131581,7 +131665,9 @@ async function startServer() {
     return res.status(200).json({
       total: status.total,
       completed: status.completed,
-      isDone: status.isDone
+      failed: status.failed,
+      isDone: status.isDone,
+      errors: status.errors.slice(0, 20)
     });
   };
   app.post("/api/orders/fast-process", authMiddleware, fastProcessRouteGuard);
@@ -132662,15 +132748,120 @@ async function startServer() {
       }
       if (missingOrders.length > 0) {
         try {
-          firePrepareShippingLabelsForOrders(missingOrders);
-        } catch (bgErr) {
-          console.warn("[Print Local] enqueue prepare:", bgErr?.message || bgErr);
+          const missingSns = missingOrders.map((order) => String(order?.orderSn || order?.order_sn || "").replace(/^shopee-/i, "").trim()).filter(Boolean);
+          const fallbackDeadlineAt = Date.now() + PRINT_CHUNK_FALLBACK_DEADLINE_MS;
+          console.log(
+            `[Print Local] Cache thi\u1EBFu ${missingSns.length} file \u2014 polling Shopee v\xE0 t\u1EA3i tr\u1EF1c ti\u1EBFp tr\u01B0\u1EDBc khi tr\u1EA3 response`
+          );
+          const fallback = await fetchBatchPdfDocumentsByShop(
+            orders,
+            missingSns,
+            fallbackDeadlineAt,
+            "Print Local Direct Fallback"
+          );
+          const failureBySn = new Map(fallback.failedOrders.map((item) => [item.orderSn, item]));
+          for (const downloaded of fallback.documents) {
+            for (const orderSn of downloaded.orderSns) {
+              const filename = buildCachedLabelFilename([orderSn]);
+              const filePath = import_path17.default.join(LABELS_DIR, filename);
+              if (!import_fs16.default.existsSync(filePath)) {
+                ensureLabelsDir();
+                import_fs16.default.writeFileSync(filePath, downloaded.buffer);
+              }
+              const cached = getValidLabelDiskFile(filename);
+              if (!cached) {
+                failureBySn.set(orderSn, {
+                  orderSn,
+                  error: "invalid_pdf",
+                  message: "Shopee \u0111\xE3 tr\u1EA3 d\u1EEF li\u1EC7u nh\u01B0ng file PDF l\u01B0u xu\u1ED1ng \u1ED5 c\u1EE9ng kh\xF4ng h\u1EE3p l\u1EC7."
+                });
+                continue;
+              }
+              const url2 = absoluteLabelUrl(`/api/public/labels/${encodeURIComponent(filename)}`);
+              if (!url2) {
+                failureBySn.set(orderSn, {
+                  orderSn,
+                  error: "label_url_failed",
+                  message: "\u0110\xE3 t\u1EA3i PDF nh\u01B0ng kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c URL file in."
+                });
+                continue;
+              }
+              if (!urls.includes(url2)) urls.push(url2);
+              const documentIndex = documents.findIndex((item) => item.orderSn === orderSn);
+              const resultIndex = results.findIndex((item) => item.orderSn === orderSn);
+              const order = missingOrders.find(
+                (item) => String(item?.orderSn || item?.order_sn || "").replace(/^shopee-/i, "").trim() === orderSn
+              );
+              const orderId = String(order?.id || `shopee-${orderSn}`);
+              const readyDocument = {
+                url: url2,
+                pdfFilename: filename,
+                orderSn,
+                orderId,
+                orderSns: [orderSn]
+              };
+              const readyResult = {
+                orderId,
+                orderSn,
+                success: true,
+                url: url2,
+                pdfFilename: filename
+              };
+              if (documentIndex >= 0) documents[documentIndex] = readyDocument;
+              else documents.push(readyDocument);
+              if (resultIndex >= 0) results[resultIndex] = readyResult;
+              else results.push(readyResult);
+              failureBySn.delete(orderSn);
+            }
+          }
+          for (const orderSn of missingSns) {
+            const failure = failureBySn.get(orderSn);
+            if (!failure) continue;
+            const documentIndex = documents.findIndex((item) => item.orderSn === orderSn);
+            const resultIndex = results.findIndex((item) => item.orderSn === orderSn);
+            if (documentIndex >= 0) {
+              documents[documentIndex] = { ...documents[documentIndex], ...failure };
+            }
+            if (resultIndex >= 0) {
+              results[resultIndex] = { ...results[resultIndex], success: false, ...failure };
+            }
+          }
+        } catch (fallbackErr) {
+          console.error("[Print Local] direct fallback:", fallbackErr?.stack || fallbackErr);
+          const fallbackMessage = String(
+            fallbackErr?.message || "Shopee kh\xF4ng th\u1EC3 t\u1EA1o ho\u1EB7c t\u1EA3i PDF sau khi polling."
+          );
+          for (const order of missingOrders) {
+            const orderSn = String(order?.orderSn || order?.order_sn || "").replace(/^shopee-/i, "").trim();
+            const documentIndex = documents.findIndex((item) => item.orderSn === orderSn);
+            const resultIndex = results.findIndex((item) => item.orderSn === orderSn);
+            if (documentIndex >= 0) {
+              documents[documentIndex] = {
+                ...documents[documentIndex],
+                error: "direct_download_failed",
+                message: fallbackMessage
+              };
+            }
+            if (resultIndex >= 0) {
+              results[resultIndex] = {
+                ...results[resultIndex],
+                success: false,
+                error: "direct_download_failed",
+                message: fallbackMessage
+              };
+            }
+          }
         }
       }
       const successCount = results.filter((r2) => r2.success).length;
       const failCount = results.length - successCount;
       const elapsed = Date.now() - t0;
-      const message = successCount > 0 && failCount === 0 ? `\u0110\xE3 l\u1EA5y ${successCount} PDF t\u1EEB kho n\u1ED9i b\u1ED9 (${elapsed}ms).` : successCount > 0 ? `\u0110\xE3 l\u1EA5y ${successCount}/${results.length} PDF t\u1EEB kho n\u1ED9i b\u1ED9; ${failCount} \u0111\u01A1n \u0111ang t\u1EA3i t\u1EEB s\xE0n \u2014 th\u1EED l\u1EA1i sau v\xE0i gi\xE2y.` : `\u0110ang t\u1EA3i file in t\u1EEB s\xE0n, vui l\xF2ng th\u1EED l\u1EA1i sau v\xE0i gi\xE2y...`;
+      const failureMessage = [
+        ...new Set(
+          results.filter((r2) => !r2.success).map((r2) => String(r2.message || r2.error || "").trim()).filter(Boolean)
+        )
+      ].join("; ");
+      const message = successCount > 0 && failCount === 0 ? `\u0110\xE3 t\u1EA3i v\xE0 chu\u1EA9n b\u1ECB ${successCount} PDF (${elapsed}ms).` : successCount > 0 ? `\u0110\xE3 chu\u1EA9n b\u1ECB ${successCount}/${results.length} PDF. ${failCount} \u0111\u01A1n l\u1ED7i: ${failureMessage}` : failureMessage || "Shopee kh\xF4ng th\u1EC3 t\u1EA1o ho\u1EB7c t\u1EA3i PDF sau khi \u0111\xE3 polling h\u1EBFt s\u1ED1 l\u1EA7n cho ph\xE9p.";
       console.log(
         `[Print Local] Done ok=${successCount} fail=${failCount} missing=${missingOrders.length} ${elapsed}ms`
       );
@@ -132686,7 +132877,7 @@ async function startServer() {
           });
         });
       }
-      return res.status(successCount > 0 ? 200 : 409).json({
+      return res.status(successCount > 0 ? 200 : 422).json({
         success: successCount > 0,
         urls,
         url: urls[0] || null,
@@ -132699,8 +132890,8 @@ async function startServer() {
         total: idList.length,
         message,
         elapsedMs: elapsed,
-        local_only: true,
-        preparing: missingOrders.map((o) => String(o.orderSn || "")).filter(Boolean)
+        local_only: false,
+        preparing: []
       });
     } catch (err) {
       console.error("[Print Local] fatal:", err?.stack || err);

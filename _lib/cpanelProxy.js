@@ -72,7 +72,7 @@ const RETRYABLE_ERROR_CODES = new Set([
 export function resolveProxyTimeoutMs(pathPart) {
   const p = String(pathPart || '').replace(/^\/+/, '');
   if (p === 'orders/batch-print-only') {
-    return 115_000;
+    return 230_000;
   }
   if (p === 'orders/batch-confirm-print') {
     return 35_000;

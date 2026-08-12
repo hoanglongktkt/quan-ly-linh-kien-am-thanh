@@ -8695,7 +8695,12 @@ async function shopeeGetShippingDocumentDataInfo(
 }
 
 // v2.logistics.create_shipping_document — kicks off async AWB/label generation for up to 50 orders.
-async function shopeeCreateShippingDocument(shopId: string, accessToken: string, orderList: { order_sn: string; package_number?: string; tracking_number?: string }[]) {
+async function shopeeCreateShippingDocument(
+  shopId: string,
+  accessToken: string,
+  orderList: { order_sn: string; package_number?: string; tracking_number?: string }[],
+  signal?: AbortSignal,
+) {
   const apiPath = "/api/v2/logistics/create_shipping_document";
   const timestamp = Math.floor(Date.now() / 1000);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
@@ -8705,6 +8710,7 @@ async function shopeeCreateShippingDocument(shopId: string, accessToken: string,
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ order_list: orderList, shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE }),
+    signal,
   });
   const json: any = await res.json().catch(() => ({}));
   console.log(
@@ -8715,7 +8721,12 @@ async function shopeeCreateShippingDocument(shopId: string, accessToken: string,
 }
 
 // v2.logistics.get_shipping_document_result — 1 lần / request (FE tự poll mỗi 2s).
-async function shopeeGetShippingDocumentResult(shopId: string, accessToken: string, orderList: { order_sn: string; package_number?: string }[]) {
+async function shopeeGetShippingDocumentResult(
+  shopId: string,
+  accessToken: string,
+  orderList: { order_sn: string; package_number?: string }[],
+  signal?: AbortSignal,
+) {
   const apiPath = "/api/v2/logistics/get_shipping_document_result";
   const timestamp = Math.floor(Date.now() / 1000);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
@@ -8725,6 +8736,7 @@ async function shopeeGetShippingDocumentResult(shopId: string, accessToken: stri
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ order_list: orderList, shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE }),
+    signal,
   });
   const json: any = await res.json().catch(() => ({}));
   console.log(
@@ -8741,6 +8753,7 @@ async function shopeeDownloadShippingDocument(
   accessToken: string,
   orderList: { order_sn: string; package_number?: string }[],
   filename: string,
+  signal?: AbortSignal,
 ) {
   ensureLabelsDir();
   const safe = safeLabelFilename(filename);
@@ -8768,6 +8781,7 @@ async function shopeeDownloadShippingDocument(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ order_list: orderList, shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE }),
+    signal,
   }, 60_000);
 
   const contentType = String(res.headers.get("content-type") || "").toLowerCase();
@@ -8863,7 +8877,7 @@ type ShopeeWaybillOrderRow = {
 async function batchDownloadShopeeWaybillPdf(
   shopId: string,
   orderList: ShopeeWaybillOrderRow[],
-  opts?: { skipDownload?: boolean },
+  opts?: { skipDownload?: boolean; deadlineAt?: number; signal?: AbortSignal },
 ): Promise<{
   success: boolean;
   filename?: string;
@@ -8933,7 +8947,12 @@ async function batchDownloadShopeeWaybillPdf(
 
     let createResult: any;
     try {
-      createResult = await shopeeCreateShippingDocument(shopId, accessToken, enriched);
+      createResult = await shopeeCreateShippingDocument(
+        shopId,
+        accessToken,
+        enriched,
+        opts?.signal,
+      );
     } catch (createErr: any) {
       console.error(`[Shopee Batch Waybill] create exception:`, createErr?.message || createErr);
       return {
@@ -9005,7 +9024,10 @@ async function batchDownloadShopeeWaybillPdf(
       `[Shopee Batch Waybill] Đang chờ ready — tối đa ${maxPoll} lần, poll ngay + sleep ${pollInterval}ms giữa các lần, n=${pendingList.length}`,
     );
 
-    const shopDeadlineAt = Date.now() + SHIP_ORDER_PDF_RETRY_TIMEOUT_MS;
+    const shopDeadlineAt = Math.min(
+      Date.now() + SHIP_ORDER_PDF_RETRY_TIMEOUT_MS,
+      opts?.deadlineAt || Number.POSITIVE_INFINITY,
+    );
     while (pendingList.length > 0 && attempts < maxPoll) {
       if (Date.now() > shopDeadlineAt) {
         console.error(`[Shopee Batch Waybill] Hết deadline — break polling (attempts=${attempts})`);
@@ -9023,7 +9045,12 @@ async function batchDownloadShopeeWaybillPdf(
 
       let pollResult: any;
       try {
-        pollResult = await shopeeGetShippingDocumentResult(shopId, accessToken, pendingList);
+        pollResult = await shopeeGetShippingDocumentResult(
+          shopId,
+          accessToken,
+          pendingList,
+          opts?.signal,
+        );
       } catch (pollErr: any) {
         console.error(
           `[Shopee Batch Waybill] get_shipping_document_result lỗi lần ${attempts}/${maxPoll}:`,
@@ -9095,7 +9122,13 @@ async function batchDownloadShopeeWaybillPdf(
     let downloadResult: any;
     try {
       const filename = buildCachedLabelFilename(readyList.map((o) => o.order_sn));
-      downloadResult = await shopeeDownloadShippingDocument(shopId, accessToken, readyList, filename);
+      downloadResult = await shopeeDownloadShippingDocument(
+        shopId,
+        accessToken,
+        readyList,
+        filename,
+        opts?.signal,
+      );
     } catch (dlErr: any) {
       console.error(`[Shopee Batch Waybill] download exception:`, dlErr?.message || dlErr);
       return {
@@ -18019,7 +18052,8 @@ async function startServer() {
 
   const BATCH_PRINT_CONCURRENCY = 5;
   const BATCH_PRINT_DEADLINE_MS = 27_000;
-  const BATCH_PRINT_ONLY_DEADLINE_MS = 105_000;
+  const BATCH_PRINT_ONLY_DEADLINE_MS = 210_000;
+  const PRINT_CHUNK_FALLBACK_DEADLINE_MS = 210_000;
   const BATCH_PDF_MAX_BYTES = 25 * 1024 * 1024;
 
   async function mapBatchConcurrently<T, R>(
@@ -18083,10 +18117,14 @@ async function startServer() {
     const groups = new Map<string, { shopId: string; accessToken: string; orders: any[] }>();
 
     for (const orderSn of orderSns) {
-      const cached = getValidLabelDiskFile(buildCachedLabelFilename([orderSn]));
-      if (cached) {
-        cachedDocuments.push({ orderSns: [orderSn], buffer: fs.readFileSync(cached.filePath) });
-        continue;
+      const cachedFilename = buildCachedLabelFilename([orderSn]);
+      const cachedFilePath = path.join(LABELS_DIR, cachedFilename);
+      if (fs.existsSync(cachedFilePath)) {
+        const cached = getValidLabelDiskFile(cachedFilename);
+        if (cached) {
+          cachedDocuments.push({ orderSns: [orderSn], buffer: fs.readFileSync(cached.filePath) });
+          continue;
+        }
       }
       const order = orders.find(
         (item: any) =>
@@ -18135,6 +18173,11 @@ async function startServer() {
         const groupSns = group.orders.map((order: any) =>
           String(order?.orderSn || order?.order_sn || "").replace(/^shopee-/i, "").trim(),
         );
+        const deadlineController = new AbortController();
+        const deadlineTimer = setTimeout(
+          () => deadlineController.abort(new Error("batch_deadline:shopee_pdf")),
+          Math.max(1, deadlineAt - Date.now()),
+        );
         try {
           await runBeforeBatchDeadline(
             deadlineAt,
@@ -18162,7 +18205,11 @@ async function startServer() {
           const batch = await runBeforeBatchDeadline(
             deadlineAt,
             `batch_waybill:${group.shopId}`,
-            () => batchDownloadShopeeWaybillPdf(group.shopId, rows, { skipDownload: true }),
+            () => batchDownloadShopeeWaybillPdf(group.shopId, rows, {
+              skipDownload: true,
+              deadlineAt,
+              signal: deadlineController.signal,
+            }),
           );
           for (const skipped of batch.skippedOrders || []) {
             const orderSn = String(skipped.orderSn || "").trim();
@@ -18199,6 +18246,7 @@ async function startServer() {
                     group.accessToken,
                     [row],
                     filename,
+                    deadlineController.signal,
                   ),
                 );
                 if (!downloaded?.filePath) throw new Error(downloaded?.message || "download_failed");
@@ -18246,6 +18294,8 @@ async function startServer() {
             }
           }
           return [];
+        } finally {
+          clearTimeout(deadlineTimer);
         }
       },
     );
@@ -18959,56 +19009,97 @@ async function startServer() {
   type PrefetchStatus = {
     total: number;
     completed: number;
+    failed: number;
     isDone: boolean;
+    errors: BatchPdfFailure[];
   };
 
+  const SILENT_PREFETCH_DEADLINE_MS = 45_000;
   const silentPdfPrefetchInFlight = new Set<string>();
   const prefetchStatus = new Map<string, PrefetchStatus>();
   let prefetchBatchSequence = 0;
 
   const runSilentPdfPrefetch = async (batchId: string, orderSns: string[]): Promise<void> => {
     const pending = new Set(orderSns);
+    const settled = new Set<string>();
+    const deadlineAt = Date.now() + SILENT_PREFETCH_DEADLINE_MS;
+    const settleOrder = (orderSn: string, failure?: BatchPdfFailure) => {
+      if (settled.has(orderSn)) return;
+      settled.add(orderSn);
+      pending.delete(orderSn);
+      const status = prefetchStatus.get(batchId);
+      if (!status) return;
+      status.completed = Math.min(status.total, status.completed + 1);
+      if (failure) {
+        status.failed = Math.min(status.total, status.failed + 1);
+        status.errors.push(failure);
+      }
+      status.isDone = status.completed >= status.total;
+    };
     beginLogisticsWork("silent-prefetch-pdfs");
     try {
-      for (let attempt = 1; attempt <= 6 && pending.size > 0; attempt += 1) {
-        const sns = [...pending];
-        const orders = await loadOrdersForShipScoped(
+      const sns = [...pending];
+      const orders = await runBeforeBatchDeadline(
+        deadlineAt,
+        "silent_prefetch_load_orders",
+        () => loadOrdersForShipScoped(
           sns.map((sn) => `shopee-${sn}`),
           sns,
-        );
-        const result = await fetchBatchPdfDocumentsByShop(
-          orders,
-          sns,
-          Date.now() + BATCH_PRINT_DEADLINE_MS,
-          `Silent Prefetch ${attempt}/6`,
-        );
+        ),
+      );
+      const result = await fetchBatchPdfDocumentsByShop(
+        orders,
+        sns,
+        deadlineAt,
+        "Silent Prefetch",
+      );
 
-        const publicPdfDir = path.join(APP_ROOT, "public", "pdfs");
-        fs.mkdirSync(publicPdfDir, { recursive: true });
-        for (const document of result.documents) {
-          for (const orderSn of document.orderSns) {
-            const filename = buildCachedLabelFilename([orderSn]);
-            fs.writeFileSync(path.join(publicPdfDir, filename), document.buffer);
-            if (pending.delete(orderSn)) {
-              const status = prefetchStatus.get(batchId);
-              if (status) status.completed = Math.min(status.total, status.completed + 1);
-            }
-          }
+      const publicPdfDir = path.join(APP_ROOT, "public", "pdfs");
+      fs.mkdirSync(publicPdfDir, { recursive: true });
+      for (const document of result.documents) {
+        for (const orderSn of document.orderSns) {
+          const filename = buildCachedLabelFilename([orderSn]);
+          fs.writeFileSync(path.join(publicPdfDir, filename), document.buffer);
+          settleOrder(orderSn);
         }
+      }
 
-        if (pending.size > 0 && attempt < 6) await sleep(3_000);
+      const failureBySn = new Map(result.failedOrders.map((item) => [item.orderSn, item]));
+      for (const orderSn of [...pending]) {
+        settleOrder(
+          orderSn,
+          failureBySn.get(orderSn) || {
+            orderSn,
+            error: "pdf_unavailable",
+            message: "Không tải được PDF trước khi hết thời gian cho phép.",
+          }
+        );
       }
       console.log(
-        `[Silent Prefetch] DONE cached=${orderSns.length - pending.size}/${orderSns.length}` +
-          (pending.size ? ` pending=${[...pending].join(",")}` : ""),
+        `[Silent Prefetch] DONE cached=${orderSns.length - (prefetchStatus.get(batchId)?.failed || 0)}/${orderSns.length}`,
       );
     } catch (err: any) {
       console.error("[Silent Prefetch] background error:", err?.stack || err);
+      for (const orderSn of [...pending]) {
+        settleOrder(orderSn, {
+          orderSn,
+          error: /batch_deadline|timeout/i.test(String(err?.message || ""))
+            ? "timeout"
+            : "prefetch_error",
+          message: String(err?.message || err || "Tải PDF thất bại."),
+        });
+      }
     } finally {
       const status = prefetchStatus.get(batchId);
       if (status) {
-        status.completed = status.total;
-        status.isDone = true;
+        for (const orderSn of [...pending]) {
+          settleOrder(orderSn, {
+            orderSn,
+            error: "prefetch_incomplete",
+            message: "Tiến trình kết thúc nhưng đơn chưa có PDF.",
+          });
+        }
+        status.isDone = status.completed >= status.total;
       }
       for (const orderSn of orderSns) silentPdfPrefetchInFlight.delete(orderSn);
       endLogisticsWork();
@@ -19038,7 +19129,9 @@ async function startServer() {
     prefetchStatus.set(batchId, {
       total: queued.length,
       completed: 0,
+      failed: 0,
       isDone: queued.length === 0,
+      errors: [],
     });
     res.status(200).json({
       success: true,
@@ -19065,7 +19158,9 @@ async function startServer() {
     return res.status(200).json({
       total: status.total,
       completed: status.completed,
+      failed: status.failed,
       isDone: status.isDone,
+      errors: status.errors.slice(0, 20),
     });
   };
 
@@ -20398,21 +20493,136 @@ async function startServer() {
 
       if (missingOrders.length > 0) {
         try {
-          firePrepareShippingLabelsForOrders(missingOrders);
-        } catch (bgErr: any) {
-          console.warn("[Print Local] enqueue prepare:", bgErr?.message || bgErr);
+          const missingSns = missingOrders
+            .map((order) => String(order?.orderSn || order?.order_sn || "").replace(/^shopee-/i, "").trim())
+            .filter(Boolean);
+          const fallbackDeadlineAt = Date.now() + PRINT_CHUNK_FALLBACK_DEADLINE_MS;
+          console.log(
+            `[Print Local] Cache thiếu ${missingSns.length} file — polling Shopee và tải trực tiếp trước khi trả response`,
+          );
+          const fallback = await fetchBatchPdfDocumentsByShop(
+            orders,
+            missingSns,
+            fallbackDeadlineAt,
+            "Print Local Direct Fallback",
+          );
+          const failureBySn = new Map(fallback.failedOrders.map((item) => [item.orderSn, item]));
+
+          for (const downloaded of fallback.documents) {
+            for (const orderSn of downloaded.orderSns) {
+              const filename = buildCachedLabelFilename([orderSn]);
+              const filePath = path.join(LABELS_DIR, filename);
+              if (!fs.existsSync(filePath)) {
+                ensureLabelsDir();
+                fs.writeFileSync(filePath, downloaded.buffer);
+              }
+              const cached = getValidLabelDiskFile(filename);
+              if (!cached) {
+                failureBySn.set(orderSn, {
+                  orderSn,
+                  error: "invalid_pdf",
+                  message: "Shopee đã trả dữ liệu nhưng file PDF lưu xuống ổ cứng không hợp lệ.",
+                });
+                continue;
+              }
+              const url = absoluteLabelUrl(`/api/public/labels/${encodeURIComponent(filename)}`);
+              if (!url) {
+                failureBySn.set(orderSn, {
+                  orderSn,
+                  error: "label_url_failed",
+                  message: "Đã tải PDF nhưng không tạo được URL file in.",
+                });
+                continue;
+              }
+              if (!urls.includes(url)) urls.push(url);
+              const documentIndex = documents.findIndex((item) => item.orderSn === orderSn);
+              const resultIndex = results.findIndex((item) => item.orderSn === orderSn);
+              const order = missingOrders.find(
+                (item) =>
+                  String(item?.orderSn || item?.order_sn || "").replace(/^shopee-/i, "").trim() === orderSn,
+              );
+              const orderId = String(order?.id || `shopee-${orderSn}`);
+              const readyDocument = {
+                url,
+                pdfFilename: filename,
+                orderSn,
+                orderId,
+                orderSns: [orderSn],
+              };
+              const readyResult = {
+                orderId,
+                orderSn,
+                success: true,
+                url,
+                pdfFilename: filename,
+              };
+              if (documentIndex >= 0) documents[documentIndex] = readyDocument;
+              else documents.push(readyDocument);
+              if (resultIndex >= 0) results[resultIndex] = readyResult;
+              else results.push(readyResult);
+              failureBySn.delete(orderSn);
+            }
+          }
+
+          for (const orderSn of missingSns) {
+            const failure = failureBySn.get(orderSn);
+            if (!failure) continue;
+            const documentIndex = documents.findIndex((item) => item.orderSn === orderSn);
+            const resultIndex = results.findIndex((item) => item.orderSn === orderSn);
+            if (documentIndex >= 0) {
+              documents[documentIndex] = { ...documents[documentIndex], ...failure };
+            }
+            if (resultIndex >= 0) {
+              results[resultIndex] = { ...results[resultIndex], success: false, ...failure };
+            }
+          }
+        } catch (fallbackErr: any) {
+          console.error("[Print Local] direct fallback:", fallbackErr?.stack || fallbackErr);
+          const fallbackMessage = String(
+            fallbackErr?.message || "Shopee không thể tạo hoặc tải PDF sau khi polling.",
+          );
+          for (const order of missingOrders) {
+            const orderSn = String(order?.orderSn || order?.order_sn || "")
+              .replace(/^shopee-/i, "")
+              .trim();
+            const documentIndex = documents.findIndex((item) => item.orderSn === orderSn);
+            const resultIndex = results.findIndex((item) => item.orderSn === orderSn);
+            if (documentIndex >= 0) {
+              documents[documentIndex] = {
+                ...documents[documentIndex],
+                error: "direct_download_failed",
+                message: fallbackMessage,
+              };
+            }
+            if (resultIndex >= 0) {
+              results[resultIndex] = {
+                ...results[resultIndex],
+                success: false,
+                error: "direct_download_failed",
+                message: fallbackMessage,
+              };
+            }
+          }
         }
       }
 
       const successCount = results.filter((r) => r.success).length;
       const failCount = results.length - successCount;
       const elapsed = Date.now() - t0;
+      const failureMessage = [
+        ...new Set(
+          results
+            .filter((r) => !r.success)
+            .map((r) => String(r.message || r.error || "").trim())
+            .filter(Boolean),
+        ),
+      ].join("; ");
       const message =
         successCount > 0 && failCount === 0
-          ? `Đã lấy ${successCount} PDF từ kho nội bộ (${elapsed}ms).`
+          ? `Đã tải và chuẩn bị ${successCount} PDF (${elapsed}ms).`
           : successCount > 0
-            ? `Đã lấy ${successCount}/${results.length} PDF từ kho nội bộ; ${failCount} đơn đang tải từ sàn — thử lại sau vài giây.`
-            : `Đang tải file in từ sàn, vui lòng thử lại sau vài giây...`;
+            ? `Đã chuẩn bị ${successCount}/${results.length} PDF. ${failCount} đơn lỗi: ${failureMessage}`
+            : failureMessage || "Shopee không thể tạo hoặc tải PDF sau khi đã polling hết số lần cho phép.";
 
       console.log(
         `[Print Local] Done ok=${successCount} fail=${failCount} missing=${missingOrders.length} ${elapsed}ms`,
@@ -20431,7 +20641,7 @@ async function startServer() {
         });
       }
 
-      return res.status(successCount > 0 ? 200 : 409).json({
+      return res.status(successCount > 0 ? 200 : 422).json({
         success: successCount > 0,
         urls,
         url: urls[0] || null,
@@ -20444,8 +20654,8 @@ async function startServer() {
         total: idList.length,
         message,
         elapsedMs: elapsed,
-        local_only: true,
-        preparing: missingOrders.map((o) => String(o.orderSn || "")).filter(Boolean),
+        local_only: false,
+        preparing: [],
       });
     } catch (err: any) {
       console.error("[Print Local] fatal:", err?.stack || err);

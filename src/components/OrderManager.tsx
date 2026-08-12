@@ -886,7 +886,9 @@ export default function OrderManager({
   const [prefetchProgress, setPrefetchProgress] = useState<{
     completed: number;
     total: number;
+    failed: number;
     isDone: boolean;
+    errorMessage?: string;
   } | null>(null);
   const [serverOrderCounts, setServerOrderCounts] = useState<Record<string, number> | null>(null);
   const [hasNewOrders, setHasNewOrders] = useState(false);
@@ -4056,7 +4058,7 @@ export default function OrderManager({
       window.clearTimeout(prefetchHideTimerRef.current);
       prefetchHideTimerRef.current = null;
     }
-    setPrefetchProgress({ completed: 0, total: orderSns.length, isDone: false });
+    setPrefetchProgress({ completed: 0, total: orderSns.length, failed: 0, isDone: false });
 
     try {
       const response = await fetch('/api/orders/silent-prefetch-pdfs', {
@@ -4072,23 +4074,53 @@ export default function OrderManager({
 
       activePrefetchBatchRef.current = batchId;
       let polling = false;
+      let consecutiveErrors = 0;
+      const pollingStartedAt = Date.now();
+      const stopPollingWithError = (message: string) => {
+        if (prefetchPollTimerRef.current != null) {
+          window.clearInterval(prefetchPollTimerRef.current);
+          prefetchPollTimerRef.current = null;
+        }
+        activePrefetchBatchRef.current = '';
+        setPrefetchProgress((current) => current ? {
+          ...current,
+          completed: current.total,
+          failed: Math.max(1, current.failed),
+          isDone: true,
+          errorMessage: message,
+        } : null);
+        showToast(message);
+        prefetchHideTimerRef.current = window.setTimeout(() => {
+          setPrefetchProgress(null);
+          prefetchHideTimerRef.current = null;
+        }, 5_000);
+      };
       const pollStatus = async () => {
         if (polling || activePrefetchBatchRef.current !== batchId) return;
+        if (Date.now() - pollingStartedAt >= 60_000) {
+          stopPollingWithError('Dừng theo dõi PDF vì tiến trình vượt quá 60 giây.');
+          return;
+        }
         polling = true;
+        const requestController = new AbortController();
+        const requestTimer = window.setTimeout(() => requestController.abort(), 8_000);
         try {
           const statusResponse = await fetch(
             `/api/orders/prefetch-status/${encodeURIComponent(batchId)}`,
-            { headers: authHeaders() },
+            { headers: authHeaders(), signal: requestController.signal },
           );
           const status = await readResponseJson<any>(statusResponse);
           if (!statusResponse.ok) {
             throw new Error(status?.message || status?.error || `HTTP ${statusResponse.status}`);
           }
+          consecutiveErrors = 0;
 
           const nextProgress = {
             completed: Math.max(0, Number(status.completed) || 0),
             total: Math.max(0, Number(status.total) || 0),
+            failed: Math.max(0, Number(status.failed) || 0),
             isDone: status.isDone === true,
+            errorMessage: String(status?.errors?.[0]?.message || '').trim() || undefined,
           };
           setPrefetchProgress(nextProgress);
 
@@ -4116,7 +4148,15 @@ export default function OrderManager({
           }
         } catch (error) {
           console.warn('[Silent Prefetch] Không thể đọc tiến độ:', error);
+          consecutiveErrors += 1;
+          const timedOut = Date.now() - pollingStartedAt >= 60_000;
+          if (consecutiveErrors >= 3 || timedOut) {
+            stopPollingWithError(
+              `Dừng theo dõi PDF: ${error instanceof Error ? error.message : 'server không phản hồi'}`,
+            );
+          }
         } finally {
+          window.clearTimeout(requestTimer);
           polling = false;
         }
       };
@@ -6096,28 +6136,40 @@ export default function OrderManager({
           role="status"
           aria-live="polite"
           className={`fixed bottom-5 right-5 z-110 w-[min(24rem,calc(100vw-2rem))] rounded-2xl border bg-white p-4 shadow-2xl animate-in fade-in ${
-            prefetchProgress.isDone ? 'border-emerald-200' : 'border-blue-200'
+            prefetchProgress.isDone
+              ? prefetchProgress.failed > 0 ? 'border-amber-300' : 'border-emerald-200'
+              : 'border-blue-200'
           }`}
         >
           <div className="flex items-center gap-3">
             <div
               className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
                 prefetchProgress.isDone
-                  ? 'bg-emerald-100 text-emerald-700'
+                  ? prefetchProgress.failed > 0
+                    ? 'bg-amber-100 text-amber-700'
+                    : 'bg-emerald-100 text-emerald-700'
                   : 'bg-blue-100 text-blue-700'
               }`}
             >
               {prefetchProgress.isDone ? (
-                <CheckCircle2 className="h-5 w-5" />
+                prefetchProgress.failed > 0
+                  ? <XCircle className="h-5 w-5" />
+                  : <CheckCircle2 className="h-5 w-5" />
               ) : (
                 <Loader2 className="h-5 w-5 animate-spin" />
               )}
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between gap-3">
-                <p className={`text-sm font-extrabold ${prefetchProgress.isDone ? 'text-emerald-800' : 'text-slate-800'}`}>
+                <p className={`text-sm font-extrabold ${
+                  prefetchProgress.isDone
+                    ? prefetchProgress.failed > 0 ? 'text-amber-800' : 'text-emerald-800'
+                    : 'text-slate-800'
+                }`}>
                   {prefetchProgress.isDone
-                    ? 'Hoàn tất! Đã có thể in'
+                    ? prefetchProgress.failed > 0
+                      ? `Đã xong, lỗi ${prefetchProgress.failed}/${prefetchProgress.total} PDF`
+                      : 'Hoàn tất! Đã có thể in'
                     : `Đang lấy mã vận đơn & PDF: ${prefetchProgress.completed}/${prefetchProgress.total}`}
                 </p>
                 <span className="shrink-0 text-xs font-bold tabular-nums text-slate-500">
@@ -6127,11 +6179,16 @@ export default function OrderManager({
                   %
                 </span>
               </div>
+              {prefetchProgress.isDone && prefetchProgress.failed > 0 && prefetchProgress.errorMessage && (
+                <p className="mt-1 truncate text-xs font-medium text-amber-700" title={prefetchProgress.errorMessage}>
+                  {prefetchProgress.errorMessage}
+                </p>
+              )}
               <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
                 <div
                   className={`h-full rounded-full transition-all duration-500 ${
                     prefetchProgress.isDone
-                      ? 'bg-emerald-500'
+                      ? prefetchProgress.failed > 0 ? 'bg-amber-500' : 'bg-emerald-500'
                       : 'bg-gradient-to-r from-blue-500 to-cyan-500'
                   }`}
                   style={{
