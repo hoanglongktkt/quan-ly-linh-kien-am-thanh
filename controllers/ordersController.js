@@ -4,7 +4,7 @@
  */
 import fs from "fs";
 import path from "path";
-import { resolveAppRoot } from "../utils/appPaths.js";
+import { PDF_DIR, resolveAppRoot } from "../utils/appPaths.js";
 import {
   loadOrders,
   saveOrders,
@@ -43,7 +43,6 @@ import {
 } from "../src/db/mongoStore.ts";
 
 const APP_ROOT = resolveAppRoot();
-const LABELS_DIR = path.join(APP_ROOT, "storage", "labels");
 
 /** Trạng thái PDF trả về UI phải phản ánh file thật trên ổ đĩa, không dùng cờ Mongo cũ. */
 function hasOrderPdfOnDisk(order) {
@@ -79,7 +78,7 @@ function hasOrderPdfOnDisk(order) {
   }
 
   for (const filename of filenames) {
-    if (fs.existsSync(path.join(LABELS_DIR, filename))) return true;
+    if (fs.existsSync(path.join(PDF_DIR, filename))) return true;
   }
   return false;
 }

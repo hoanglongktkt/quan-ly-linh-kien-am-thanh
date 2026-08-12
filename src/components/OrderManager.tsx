@@ -682,6 +682,8 @@ interface OrderManagerProps {
     /** Tab SSOT — cùng filter với /api/orders/counter. */
     tab?: string;
     force?: boolean;
+    retriesLeft?: number;
+    throwOnError?: boolean;
   }) => Promise<void> | void;
   ordersLoading?: boolean;
   shops: ConnectedShop[];
@@ -884,10 +886,11 @@ export default function OrderManager({
   const [lastSyncSummary, setLastSyncSummary] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [prefetchProgress, setPrefetchProgress] = useState<{
-    completed: number;
+    succeeded: number;
     total: number;
     failed: number;
     isDone: boolean;
+    refreshError?: boolean;
     errorMessage?: string;
   } | null>(null);
   const [serverOrderCounts, setServerOrderCounts] = useState<Record<string, number> | null>(null);
@@ -4062,7 +4065,7 @@ export default function OrderManager({
       window.clearTimeout(prefetchHideTimerRef.current);
       prefetchHideTimerRef.current = null;
     }
-    setPrefetchProgress({ completed: 0, total: orderSns.length, failed: 0, isDone: false });
+    setPrefetchProgress({ succeeded: 0, total: orderSns.length, failed: 0, isDone: false });
 
     try {
       const response = await fetch('/api/orders/silent-prefetch-pdfs', {
@@ -4088,8 +4091,7 @@ export default function OrderManager({
         activePrefetchBatchRef.current = '';
         setPrefetchProgress((current) => current ? {
           ...current,
-          completed: current.total,
-          failed: Math.max(1, current.failed),
+          failed: Math.max(1, current.total - current.succeeded),
           isDone: true,
           errorMessage: message,
         } : null);
@@ -4120,7 +4122,7 @@ export default function OrderManager({
           consecutiveErrors = 0;
 
           const nextProgress = {
-            completed: Math.max(0, Number(status.completed) || 0),
+            succeeded: Math.max(0, Number(status.succeeded) || 0),
             total: Math.max(0, Number(status.total) || 0),
             failed: Math.max(0, Number(status.failed) || 0),
             isDone: status.isDone === true,
@@ -4135,15 +4137,31 @@ export default function OrderManager({
             }
             activePrefetchBatchRef.current = '';
             setCurrentPage(1);
-            await onFetchOrders?.({
-              silent: true,
-              bustCache: true,
-              force: true,
-              page: 1,
-              limit: ORDERS_PAGE_SIZE,
-              merge: false,
-              tab: 'processed',
-            });
+            try {
+              if (!onFetchOrders) throw new Error('Không có hàm làm mới danh sách đơn hàng.');
+              await onFetchOrders({
+                silent: true,
+                bustCache: true,
+                force: true,
+                page: 1,
+                limit: ORDERS_PAGE_SIZE,
+                merge: false,
+                tab: 'processed',
+                retriesLeft: 0,
+                throwOnError: true,
+              });
+            } catch (refreshError) {
+              const message = 'Làm mới danh sách thất bại, vui lòng nhấn F5 thủ công';
+              console.error('[Silent Prefetch] Refresh danh sách thất bại:', refreshError);
+              setPrefetchProgress((current) => current ? {
+                ...current,
+                isDone: true,
+                refreshError: true,
+                errorMessage: message,
+              } : null);
+              showToast(message);
+              return;
+            }
             void fetchOrderCounts();
             prefetchHideTimerRef.current = window.setTimeout(() => {
               setPrefetchProgress(null);
@@ -6139,7 +6157,9 @@ export default function OrderManager({
           role="status"
           aria-live="polite"
           className={`fixed bottom-5 right-5 z-110 w-[min(24rem,calc(100vw-2rem))] rounded-2xl border bg-white p-4 shadow-2xl animate-in fade-in ${
-            prefetchProgress.isDone
+            prefetchProgress.refreshError
+              ? 'border-red-300'
+              : prefetchProgress.isDone
               ? prefetchProgress.failed > 0 ? 'border-amber-300' : 'border-emerald-200'
               : 'border-blue-200'
           }`}
@@ -6147,7 +6167,9 @@ export default function OrderManager({
           <div className="flex items-center gap-3">
             <div
               className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
-                prefetchProgress.isDone
+                prefetchProgress.refreshError
+                  ? 'bg-red-100 text-red-700'
+                  : prefetchProgress.isDone
                   ? prefetchProgress.failed > 0
                     ? 'bg-amber-100 text-amber-700'
                     : 'bg-emerald-100 text-emerald-700'
@@ -6165,39 +6187,56 @@ export default function OrderManager({
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between gap-3">
                 <p className={`text-sm font-extrabold ${
-                  prefetchProgress.isDone
+                  prefetchProgress.refreshError
+                    ? 'text-red-800'
+                    : prefetchProgress.isDone
                     ? prefetchProgress.failed > 0 ? 'text-amber-800' : 'text-emerald-800'
                     : 'text-slate-800'
                 }`}>
-                  {prefetchProgress.isDone
+                  {prefetchProgress.refreshError
+                    ? 'PDF đã tải xong nhưng chưa làm mới được danh sách'
+                    : prefetchProgress.isDone
                     ? prefetchProgress.failed > 0
-                      ? `Đã xong, lỗi ${prefetchProgress.failed}/${prefetchProgress.total} PDF`
-                      : 'Hoàn tất! Đã có thể in'
-                    : `Đang lấy mã vận đơn & PDF: ${prefetchProgress.completed}/${prefetchProgress.total}`}
+                      ? `Hoàn tất: ${prefetchProgress.succeeded} thành công, ${prefetchProgress.failed} thất bại`
+                      : `Hoàn tất! ${prefetchProgress.succeeded}/${prefetchProgress.total} PDF đã sẵn sàng`
+                    : `Đang tải PDF: ${prefetchProgress.succeeded} thành công, ${prefetchProgress.failed} thất bại`}
                 </p>
                 <span className="shrink-0 text-xs font-bold tabular-nums text-slate-500">
                   {Math.round(
-                    (prefetchProgress.completed / Math.max(1, prefetchProgress.total)) * 100,
+                    ((prefetchProgress.succeeded + prefetchProgress.failed) / Math.max(1, prefetchProgress.total)) * 100,
                   )}
                   %
                 </span>
               </div>
-              {prefetchProgress.isDone && prefetchProgress.failed > 0 && prefetchProgress.errorMessage && (
-                <p className="mt-1 truncate text-xs font-medium text-amber-700" title={prefetchProgress.errorMessage}>
+              <p className={`mt-1 text-xs font-semibold ${
+                prefetchProgress.refreshError
+                  ? 'text-red-700'
+                  : prefetchProgress.failed > 0 ? 'text-amber-700' : 'text-slate-500'
+              }`}>
+                Thành công: {prefetchProgress.succeeded} · Thất bại: {prefetchProgress.failed}
+              </p>
+              {prefetchProgress.isDone && prefetchProgress.errorMessage && (
+                <p className={`mt-1 truncate text-xs font-medium ${
+                  prefetchProgress.refreshError ? 'text-red-700' : 'text-amber-700'
+                }`} title={prefetchProgress.errorMessage}>
                   {prefetchProgress.errorMessage}
                 </p>
               )}
               <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
                 <div
                   className={`h-full rounded-full transition-all duration-500 ${
-                    prefetchProgress.isDone
-                      ? prefetchProgress.failed > 0 ? 'bg-amber-500' : 'bg-emerald-500'
+                    prefetchProgress.refreshError
+                      ? 'bg-red-500'
+                      : prefetchProgress.failed > 0
+                        ? 'bg-amber-500'
+                        : prefetchProgress.isDone
+                      ? 'bg-emerald-500'
                       : 'bg-gradient-to-r from-blue-500 to-cyan-500'
                   }`}
                   style={{
                     width: `${Math.min(
                       100,
-                      (prefetchProgress.completed / Math.max(1, prefetchProgress.total)) * 100,
+                      ((prefetchProgress.succeeded + prefetchProgress.failed) / Math.max(1, prefetchProgress.total)) * 100,
                     )}%`,
                   }}
                 />

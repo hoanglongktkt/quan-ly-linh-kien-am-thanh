@@ -376,7 +376,7 @@ import {
   processShopeeWebhookPayload,
 } from "./controllers/shopeeWebhookController.js";
 
-import { resolveAppRoot, resolveAppBaseUrl } from "./utils/appPaths.js";
+import { PDF_DIR, resolveAppRoot, resolveAppBaseUrl } from "./utils/appPaths.js";
 /** ESM/CJS interop — luôn lấy Router thật (tránh default double-wrap). */
 function asRouter(mod: any) {
   if (mod && typeof mod.use === "function") return mod;
@@ -611,7 +611,6 @@ const WAYBILL_FILE_RE = /\.(pdf|zip|html)$/i;
  * PDF vận đơn: RAM + đĩa tại storage/labels/ (ổn định, writable).
  * URL chuẩn phục vụ FE: /api/public/labels/:filename — tuyệt đối KHÔNG dùng /prints/.
  */
-const LABELS_DIR = path.join(APP_ROOT, "storage", "labels");
 /** Disk TTL 24h; RAM TTL 60 phút (đủ cho phiên in). PDF không lưu Mongo. */
 const LABEL_DISK_TTL_MS = 24 * 60 * 60 * 1000;
 const LABEL_RAM_TTL_MS = 60 * 60 * 1000;
@@ -621,7 +620,7 @@ const LABEL_MEM_MAX_BYTES = 96 * 1024 * 1024;
 
 function ensureLabelsDir(): void {
   try {
-    if (!fs.existsSync(LABELS_DIR)) fs.mkdirSync(LABELS_DIR, { recursive: true });
+    if (!fs.existsSync(PDF_DIR)) fs.mkdirSync(PDF_DIR, { recursive: true });
   } catch (err) {
     console.error("[Labels] Không tạo được thư mục storage/labels:", err);
   }
@@ -629,7 +628,7 @@ function ensureLabelsDir(): void {
 
 function assertLabelsDirWritable(): void {
   ensureLabelsDir();
-  const probe = path.join(LABELS_DIR, `.write_probe_${process.pid}`);
+  const probe = path.join(PDF_DIR, `.write_probe_${process.pid}`);
   try {
     fs.writeFileSync(probe, "ok");
     fs.unlinkSync(probe);
@@ -657,7 +656,7 @@ function buildCachedLabelFilename(orderSns: string[]): string {
 function getValidLabelDiskFile(filename: string): { safe: string; filePath: string; size: number } | null {
   const safe = safeLabelFilename(filename);
   if (!safe) return null;
-  const filePath = path.join(LABELS_DIR, safe);
+  const filePath = path.join(PDF_DIR, safe);
   try {
     if (!fs.existsSync(filePath)) return null;
     const stat = fs.statSync(filePath);
@@ -716,7 +715,7 @@ function removeExistingLabelFilesForOrderSns(orderSns: string[]): number {
   if (sns.length === 0) return 0;
   let deleted = 0;
   try {
-    for (const name of fs.readdirSync(LABELS_DIR)) {
+    for (const name of fs.readdirSync(PDF_DIR)) {
       if (!/\.pdf$/i.test(name)) continue;
       const hit = sns.some(
         (sn) =>
@@ -726,7 +725,7 @@ function removeExistingLabelFilesForOrderSns(orderSns: string[]): number {
       );
       if (!hit) continue;
       try {
-        fs.unlinkSync(path.join(LABELS_DIR, name));
+        fs.unlinkSync(path.join(PDF_DIR, name));
         labelMemCache.delete(name);
         deleted += 1;
       } catch {
@@ -779,7 +778,7 @@ function putLabelMem(filename: string, buffer: Buffer, contentType?: string): st
       contentType: "application/pdf",
     });
 
-    const dest = path.join(LABELS_DIR, safe);
+    const dest = path.join(PDF_DIR, safe);
     console.log(`[Labels] Đường dẫn lưu file dự kiến: ${dest}`);
     setImmediate(() => {
       try {
@@ -812,7 +811,7 @@ function getLabelMem(filename: string): { buf: Buffer; contentType?: string } | 
     }
   }
 
-  const filePath = path.join(LABELS_DIR, safe);
+  const filePath = path.join(PDF_DIR, safe);
   try {
     if (!fs.existsSync(filePath)) return null;
     const st = fs.statSync(filePath);
@@ -859,7 +858,7 @@ function assertLabelFileReady(filename: string): { safe: string; size: number } 
   if (!isPdfBuffer(hit.buf)) {
     throw new Error(`File vận đơn không phải PDF hợp lệ: ${safe}`);
   }
-  const diskPath = path.join(LABELS_DIR, safe);
+  const diskPath = path.join(PDF_DIR, safe);
   if (fs.existsSync(diskPath)) {
     const st = fs.statSync(diskPath);
     if (st.size <= 0) {
@@ -882,9 +881,9 @@ function cleanupExpiredLabelFiles(): number {
   try {
     ensureLabelsDir();
     const cutoff = now - LABEL_DISK_TTL_MS;
-    for (const name of fs.readdirSync(LABELS_DIR)) {
+    for (const name of fs.readdirSync(PDF_DIR)) {
       if (!WAYBILL_FILE_RE.test(name)) continue;
-      const full = path.join(LABELS_DIR, name);
+      const full = path.join(PDF_DIR, name);
       try {
         const st = fs.statSync(full);
         if (st.size <= 0 || st.mtimeMs < cutoff) {
@@ -955,7 +954,7 @@ function scheduleWaybillsCleanup(): void {
 // Boot: tạo storage/labels + dọn legacy /prints + cleanup mỗi giờ
 try {
   assertLabelsDirWritable();
-  console.log(`[Labels] LABELS_DIR=${LABELS_DIR} (writable OK)`);
+  console.log(`[Labels] PDF_DIR=${PDF_DIR} (writable OK)`);
 } catch (err) {
   console.error("[Labels] BOOT: storage/labels không ghi được — in đơn sẽ thất bại:", err);
 }
@@ -993,7 +992,7 @@ function serveLabelPdfFromMem(filename: string, res: any): ServeLabelPdfResult {
     }
     const hit = getLabelMem(safe);
     if (!hit || !hit.buf.length) {
-      console.warn(`[Labels] 404 — không thấy file: ${safe} (dir=${LABELS_DIR})`);
+      console.warn(`[Labels] 404 — không thấy file: ${safe} (dir=${PDF_DIR})`);
       return "not_found";
     }
     if (!isPdfBuffer(hit.buf, hit.contentType)) {
@@ -8806,7 +8805,7 @@ async function shopeeDownloadShippingDocument(
   ensureLabelsDir();
   const safe = safeLabelFilename(filename);
   if (!safe) return { error: "invalid_filename", message: "Tên file PDF cache không hợp lệ." };
-  const destination = path.join(LABELS_DIR, safe);
+  const destination = path.join(PDF_DIR, safe);
   const cached = getValidLabelDiskFile(safe);
   if (cached) {
     console.log(`[Shopee API] PDF cache HIT ${safe} (${cached.size} bytes) — bỏ qua download`);
@@ -17672,7 +17671,7 @@ async function startServer() {
       .replace(/^shopee-/i, "")
       .trim();
     const expectedFilename = buildCachedLabelFilename([orderSn]);
-    const expectedPath = path.join(LABELS_DIR, expectedFilename);
+    const expectedPath = path.join(PDF_DIR, expectedFilename);
     const failDownload = (error: any, fallbackMessage: string) => {
       console.error("DEBUG DOWNLOAD PDF FAIL for order:", orderSn, error);
       // Chỉ xóa file đích nếu nó không phải PDF thật; tuyệt đối không để JSON/HTML mang đuôi .pdf.
@@ -18338,7 +18337,7 @@ async function startServer() {
 
     for (const orderSn of orderSns) {
       const cachedFilename = buildCachedLabelFilename([orderSn]);
-      const cachedFilePath = path.join(LABELS_DIR, cachedFilename);
+      const cachedFilePath = path.join(PDF_DIR, cachedFilename);
       if (fs.existsSync(cachedFilePath)) {
         const cached = getValidLabelDiskFile(cachedFilename);
         if (cached) {
@@ -19265,7 +19264,7 @@ async function startServer() {
 
   type PrefetchStatus = {
     total: number;
-    completed: number;
+    succeeded: number;
     failed: number;
     isDone: boolean;
     errors: BatchPdfFailure[];
@@ -19286,12 +19285,13 @@ async function startServer() {
       pending.delete(orderSn);
       const status = prefetchStatus.get(batchId);
       if (!status) return;
-      status.completed = Math.min(status.total, status.completed + 1);
       if (failure) {
         status.failed = Math.min(status.total, status.failed + 1);
         status.errors.push(failure);
+      } else {
+        status.succeeded = Math.min(status.total, status.succeeded + 1);
       }
-      status.isDone = status.completed >= status.total;
+      status.isDone = status.succeeded + status.failed >= status.total;
     };
     beginLogisticsWork("silent-prefetch-pdfs");
     try {
@@ -19325,9 +19325,20 @@ async function startServer() {
               };
               continue;
             }
-            fs.mkdirSync(publicPdfDir, { recursive: true });
             const filename = buildCachedLabelFilename([orderSn]);
-            fs.writeFileSync(path.join(publicPdfDir, filename), document.buffer);
+            const storedPdf = getValidLabelDiskFile(filename);
+            if (!storedPdf) {
+              throw new Error(`PDF chưa được ghi thành công vào ${path.join(PDF_DIR, filename)}`);
+            }
+            try {
+              fs.mkdirSync(publicPdfDir, { recursive: true });
+              fs.writeFileSync(path.join(publicPdfDir, filename), document.buffer);
+            } catch (publicCopyErr: any) {
+              console.warn(
+                `[Silent Prefetch] Không thể ghi bản phụ public/pdfs cho ${orderSn}:`,
+                publicCopyErr?.message || publicCopyErr,
+              );
+            }
           } catch (err: any) {
             console.error(`[Silent Prefetch] order ${orderSn} failed:`, err?.stack || err);
             failure = {
@@ -19341,7 +19352,7 @@ async function startServer() {
             // Mỗi đơn luôn hoàn tất riêng, kể cả lỗi, để progress không bị kẹt.
             settleOrder(orderSn, failure);
             const status = prefetchStatus.get(batchId);
-            if (status) status.isDone = status.completed >= status.total;
+            if (status) status.isDone = status.succeeded + status.failed >= status.total;
           }
         }
       };
@@ -19370,7 +19381,7 @@ async function startServer() {
             message: "Tiến trình kết thúc nhưng đơn chưa có PDF.",
           });
         }
-        status.isDone = status.completed >= status.total;
+        status.isDone = status.succeeded + status.failed >= status.total;
       }
       for (const orderSn of orderSns) silentPdfPrefetchInFlight.delete(orderSn);
       endLogisticsWork();
@@ -19399,7 +19410,7 @@ async function startServer() {
     const batchId = `${Date.now()}-${++prefetchBatchSequence}`;
     prefetchStatus.set(batchId, {
       total: queued.length,
-      completed: 0,
+      succeeded: 0,
       failed: 0,
       isDone: queued.length === 0,
       errors: [],
@@ -19426,9 +19437,11 @@ async function startServer() {
     if (!status) {
       return res.status(404).json({ success: false, message: "Không tìm thấy tiến trình tải PDF." });
     }
+    const completed = status.succeeded + status.failed;
     return res.status(200).json({
       total: status.total,
-      completed: status.completed,
+      completed,
+      succeeded: status.succeeded,
       failed: status.failed,
       isDone: status.isDone,
       errors: status.errors.slice(0, 20),
@@ -20408,10 +20421,10 @@ async function startServer() {
     try {
       ensureLabelsDir();
       const matches = fs
-        .readdirSync(LABELS_DIR)
+        .readdirSync(PDF_DIR)
         .filter((name) => nameMatches(name))
         .map((name) => {
-          const full = path.join(LABELS_DIR, name);
+          const full = path.join(PDF_DIR, name);
           return { name, mtime: fs.statSync(full).mtimeMs, size: fs.statSync(full).size };
         })
         .filter((x) => x.size > 0)
@@ -20782,7 +20795,7 @@ async function startServer() {
           for (const downloaded of fallback.documents) {
             for (const orderSn of downloaded.orderSns) {
               const filename = buildCachedLabelFilename([orderSn]);
-              const filePath = path.join(LABELS_DIR, filename);
+              const filePath = path.join(PDF_DIR, filename);
               if (!fs.existsSync(filePath)) {
                 ensureLabelsDir();
                 fs.writeFileSync(filePath, downloaded.buffer);

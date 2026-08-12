@@ -493,9 +493,14 @@ export default function App() {
     tab?: string;
     /** Bỏ qua dedupe in-flight (vd: tab vừa visible lại sau đóng băng). */
     force?: boolean;
+    /** Trả lỗi về caller thay vì giữ im lặng và chỉ retry nền. */
+    throwOnError?: boolean;
   }) => {
     const token = localStorage.getItem('admin_token');
-    if (!token) return;
+    if (!token) {
+      if (opts?.throwOnError) throw new Error('Phiên đăng nhập không hợp lệ.');
+      return;
+    }
 
     const silent = Boolean(opts?.silent);
     const bustCache = opts?.bustCache !== false;
@@ -602,6 +607,9 @@ export default function App() {
             }, 3000);
             return;
           }
+          if (opts?.throwOnError) {
+            throw new Error(payload.error || 'Làm mới danh sách đơn hàng thất bại.');
+          }
           setHasLoadedOrdersOnce(true);
           console.warn('[Fetch Orders] Refresh failed; giữ nguyên danh sách hiện tại.');
           return;
@@ -683,10 +691,14 @@ export default function App() {
           }, 3000);
         } else {
           setHasLoadedOrdersOnce(true);
+          if (opts?.throwOnError) {
+            throw new Error(`Làm mới danh sách đơn hàng thất bại (HTTP ${response.status}).`);
+          }
         }
       }
     } catch (err) {
       console.error('[FRONTEND FETCHED] /api/orders/refresh THẤT BẠI:', err);
+      if (opts?.throwOnError) throw err;
       if (retriesLeft > 0) {
         window.setTimeout(() => {
           void fetchOrders({

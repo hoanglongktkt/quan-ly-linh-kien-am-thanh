@@ -80673,6 +80673,7 @@ function resolveAppRoot3() {
   }
   return import_path4.default.resolve(candidates[0] || process.cwd());
 }
+var PDF_DIR = import_path4.default.join(resolveAppRoot3(), "storage", "labels");
 var PRODUCTION_APP_URL = "https://quanly.linhkienamthanh.net";
 function resolveAppBaseUrl() {
   const fromEnv = String(process.env.APP_URL || process.env.API_BASE_URL || "").trim();
@@ -108333,7 +108334,6 @@ async function handOverOrderToCarrierByIndex(orders, index, opts) {
 
 // controllers/ordersController.js
 var APP_ROOT9 = resolveAppRoot3();
-var LABELS_DIR = import_path14.default.join(APP_ROOT9, "storage", "labels");
 function hasOrderPdfOnDisk(order) {
   const filenames = /* @__PURE__ */ new Set();
   const addFilename = (raw) => {
@@ -108361,7 +108361,7 @@ function hasOrderPdfOnDisk(order) {
     filenames.add(`${orderSn}.pdf`);
   }
   for (const filename of filenames) {
-    if (import_fs14.default.existsSync(import_path14.default.join(LABELS_DIR, filename))) return true;
+    if (import_fs14.default.existsSync(import_path14.default.join(PDF_DIR, filename))) return true;
   }
   return false;
 }
@@ -118201,7 +118201,6 @@ process.on("unhandledRejection", (err) => {
 var WAYBILLS_DIR = import_path17.default.join(APP_ROOT11, "storage", "waybills");
 var LEGACY_PUBLIC_PRINTS_DIR = import_path17.default.join(APP_ROOT11, "public", "prints");
 var WAYBILL_FILE_RE = /\.(pdf|zip|html)$/i;
-var LABELS_DIR2 = import_path17.default.join(APP_ROOT11, "storage", "labels");
 var LABEL_DISK_TTL_MS = 24 * 60 * 60 * 1e3;
 var LABEL_RAM_TTL_MS = 60 * 60 * 1e3;
 var labelMemCache = /* @__PURE__ */ new Map();
@@ -118209,14 +118208,14 @@ var LABEL_MEM_MAX_ENTRIES = 48;
 var LABEL_MEM_MAX_BYTES = 96 * 1024 * 1024;
 function ensureLabelsDir() {
   try {
-    if (!import_fs16.default.existsSync(LABELS_DIR2)) import_fs16.default.mkdirSync(LABELS_DIR2, { recursive: true });
+    if (!import_fs16.default.existsSync(PDF_DIR)) import_fs16.default.mkdirSync(PDF_DIR, { recursive: true });
   } catch (err) {
     console.error("[Labels] Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c storage/labels:", err);
   }
 }
 function assertLabelsDirWritable() {
   ensureLabelsDir();
-  const probe = import_path17.default.join(LABELS_DIR2, `.write_probe_${process.pid}`);
+  const probe = import_path17.default.join(PDF_DIR, `.write_probe_${process.pid}`);
   try {
     import_fs16.default.writeFileSync(probe, "ok");
     import_fs16.default.unlinkSync(probe);
@@ -118239,7 +118238,7 @@ function buildCachedLabelFilename(orderSns) {
 function getValidLabelDiskFile(filename) {
   const safe = safeLabelFilename(filename);
   if (!safe) return null;
-  const filePath = import_path17.default.join(LABELS_DIR2, safe);
+  const filePath = import_path17.default.join(PDF_DIR, safe);
   try {
     if (!import_fs16.default.existsSync(filePath)) return null;
     const stat3 = import_fs16.default.statSync(filePath);
@@ -118289,14 +118288,14 @@ function removeExistingLabelFilesForOrderSns(orderSns) {
   if (sns.length === 0) return 0;
   let deleted = 0;
   try {
-    for (const name of import_fs16.default.readdirSync(LABELS_DIR2)) {
+    for (const name of import_fs16.default.readdirSync(PDF_DIR)) {
       if (!/\.pdf$/i.test(name)) continue;
       const hit = sns.some(
         (sn) => name === `${sn}.pdf` || name.startsWith(`${sn}_`) || name.startsWith(`order_${sn}_`)
       );
       if (!hit) continue;
       try {
-        import_fs16.default.unlinkSync(import_path17.default.join(LABELS_DIR2, name));
+        import_fs16.default.unlinkSync(import_path17.default.join(PDF_DIR, name));
         labelMemCache.delete(name);
         deleted += 1;
       } catch {
@@ -118336,7 +118335,7 @@ function putLabelMem(filename, buffer, contentType) {
       expires: Date.now() + LABEL_RAM_TTL_MS,
       contentType: "application/pdf"
     });
-    const dest = import_path17.default.join(LABELS_DIR2, safe);
+    const dest = import_path17.default.join(PDF_DIR, safe);
     console.log(`[Labels] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${dest}`);
     setImmediate(() => {
       try {
@@ -118365,7 +118364,7 @@ function getLabelMem(filename) {
       return { buf: ram.buf, contentType: ram.contentType || "application/pdf" };
     }
   }
-  const filePath = import_path17.default.join(LABELS_DIR2, safe);
+  const filePath = import_path17.default.join(PDF_DIR, safe);
   try {
     if (!import_fs16.default.existsSync(filePath)) return null;
     const st = import_fs16.default.statSync(filePath);
@@ -118408,7 +118407,7 @@ function assertLabelFileReady(filename) {
   if (!isPdfBuffer(hit.buf)) {
     throw new Error(`File v\u1EADn \u0111\u01A1n kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7: ${safe}`);
   }
-  const diskPath = import_path17.default.join(LABELS_DIR2, safe);
+  const diskPath = import_path17.default.join(PDF_DIR, safe);
   if (import_fs16.default.existsSync(diskPath)) {
     const st = import_fs16.default.statSync(diskPath);
     if (st.size <= 0) {
@@ -118429,9 +118428,9 @@ function cleanupExpiredLabelFiles() {
   try {
     ensureLabelsDir();
     const cutoff = now - LABEL_DISK_TTL_MS;
-    for (const name of import_fs16.default.readdirSync(LABELS_DIR2)) {
+    for (const name of import_fs16.default.readdirSync(PDF_DIR)) {
       if (!WAYBILL_FILE_RE.test(name)) continue;
-      const full = import_path17.default.join(LABELS_DIR2, name);
+      const full = import_path17.default.join(PDF_DIR, name);
       try {
         const st = import_fs16.default.statSync(full);
         if (st.size <= 0 || st.mtimeMs < cutoff) {
@@ -118484,7 +118483,7 @@ function scheduleWaybillsCleanup() {
 }
 try {
   assertLabelsDirWritable();
-  console.log(`[Labels] LABELS_DIR=${LABELS_DIR2} (writable OK)`);
+  console.log(`[Labels] PDF_DIR=${PDF_DIR} (writable OK)`);
 } catch (err) {
   console.error("[Labels] BOOT: storage/labels kh\xF4ng ghi \u0111\u01B0\u1EE3c \u2014 in \u0111\u01A1n s\u1EBD th\u1EA5t b\u1EA1i:", err);
 }
@@ -118518,7 +118517,7 @@ function serveLabelPdfFromMem(filename, res) {
     }
     const hit = getLabelMem(safe);
     if (!hit || !hit.buf.length) {
-      console.warn(`[Labels] 404 \u2014 kh\xF4ng th\u1EA5y file: ${safe} (dir=${LABELS_DIR2})`);
+      console.warn(`[Labels] 404 \u2014 kh\xF4ng th\u1EA5y file: ${safe} (dir=${PDF_DIR})`);
       return "not_found";
     }
     if (!isPdfBuffer(hit.buf, hit.contentType)) {
@@ -124391,7 +124390,7 @@ async function shopeeDownloadShippingDocument(shopId, accessToken, orderList, fi
   ensureLabelsDir();
   const safe = safeLabelFilename(filename);
   if (!safe) return { error: "invalid_filename", message: "T\xEAn file PDF cache kh\xF4ng h\u1EE3p l\u1EC7." };
-  const destination = import_path17.default.join(LABELS_DIR2, safe);
+  const destination = import_path17.default.join(PDF_DIR, safe);
   const cached = getValidLabelDiskFile(safe);
   if (cached) {
     console.log(`[Shopee API] PDF cache HIT ${safe} (${cached.size} bytes) \u2014 b\u1ECF qua download`);
@@ -130467,7 +130466,7 @@ async function startServer() {
   const downloadPdfRoute = async (req, res) => {
     const orderSn = String(req.params.orderSn || "").replace(/^shopee-/i, "").trim();
     const expectedFilename = buildCachedLabelFilename([orderSn]);
-    const expectedPath = import_path17.default.join(LABELS_DIR2, expectedFilename);
+    const expectedPath = import_path17.default.join(PDF_DIR, expectedFilename);
     const failDownload = (error, fallbackMessage) => {
       console.error("DEBUG DOWNLOAD PDF FAIL for order:", orderSn, error);
       try {
@@ -131006,7 +131005,7 @@ async function startServer() {
     const groups = /* @__PURE__ */ new Map();
     for (const orderSn of orderSns) {
       const cachedFilename = buildCachedLabelFilename([orderSn]);
-      const cachedFilePath = import_path17.default.join(LABELS_DIR2, cachedFilename);
+      const cachedFilePath = import_path17.default.join(PDF_DIR, cachedFilename);
       if (import_fs16.default.existsSync(cachedFilePath)) {
         const cached = getValidLabelDiskFile(cachedFilename);
         if (cached) {
@@ -131797,12 +131796,13 @@ async function startServer() {
       pending.delete(orderSn);
       const status = prefetchStatus.get(batchId);
       if (!status) return;
-      status.completed = Math.min(status.total, status.completed + 1);
       if (failure) {
         status.failed = Math.min(status.total, status.failed + 1);
         status.errors.push(failure);
+      } else {
+        status.succeeded = Math.min(status.total, status.succeeded + 1);
       }
-      status.isDone = status.completed >= status.total;
+      status.isDone = status.succeeded + status.failed >= status.total;
     };
     beginLogisticsWork("silent-prefetch-pdfs");
     try {
@@ -131836,9 +131836,20 @@ async function startServer() {
               };
               continue;
             }
-            import_fs16.default.mkdirSync(publicPdfDir, { recursive: true });
             const filename = buildCachedLabelFilename([orderSn]);
-            import_fs16.default.writeFileSync(import_path17.default.join(publicPdfDir, filename), document2.buffer);
+            const storedPdf = getValidLabelDiskFile(filename);
+            if (!storedPdf) {
+              throw new Error(`PDF ch\u01B0a \u0111\u01B0\u1EE3c ghi th\xE0nh c\xF4ng v\xE0o ${import_path17.default.join(PDF_DIR, filename)}`);
+            }
+            try {
+              import_fs16.default.mkdirSync(publicPdfDir, { recursive: true });
+              import_fs16.default.writeFileSync(import_path17.default.join(publicPdfDir, filename), document2.buffer);
+            } catch (publicCopyErr) {
+              console.warn(
+                `[Silent Prefetch] Kh\xF4ng th\u1EC3 ghi b\u1EA3n ph\u1EE5 public/pdfs cho ${orderSn}:`,
+                publicCopyErr?.message || publicCopyErr
+              );
+            }
           } catch (err) {
             console.error(`[Silent Prefetch] order ${orderSn} failed:`, err?.stack || err);
             failure = {
@@ -131849,7 +131860,7 @@ async function startServer() {
           } finally {
             settleOrder(orderSn, failure);
             const status = prefetchStatus.get(batchId);
-            if (status) status.isDone = status.completed >= status.total;
+            if (status) status.isDone = status.succeeded + status.failed >= status.total;
           }
         }
       };
@@ -131876,7 +131887,7 @@ async function startServer() {
             message: "Ti\u1EBFn tr\xECnh k\u1EBFt th\xFAc nh\u01B0ng \u0111\u01A1n ch\u01B0a c\xF3 PDF."
           });
         }
-        status.isDone = status.completed >= status.total;
+        status.isDone = status.succeeded + status.failed >= status.total;
       }
       for (const orderSn of orderSns) silentPdfPrefetchInFlight.delete(orderSn);
       endLogisticsWork();
@@ -131901,7 +131912,7 @@ async function startServer() {
     const batchId = `${Date.now()}-${++prefetchBatchSequence}`;
     prefetchStatus.set(batchId, {
       total: queued.length,
-      completed: 0,
+      succeeded: 0,
       failed: 0,
       isDone: queued.length === 0,
       errors: []
@@ -131927,9 +131938,11 @@ async function startServer() {
     if (!status) {
       return res.status(404).json({ success: false, message: "Kh\xF4ng t\xECm th\u1EA5y ti\u1EBFn tr\xECnh t\u1EA3i PDF." });
     }
+    const completed = status.succeeded + status.failed;
     return res.status(200).json({
       total: status.total,
-      completed: status.completed,
+      completed,
+      succeeded: status.succeeded,
       failed: status.failed,
       isDone: status.isDone,
       errors: status.errors.slice(0, 20)
@@ -132731,8 +132744,8 @@ async function startServer() {
     }
     try {
       ensureLabelsDir();
-      const matches = import_fs16.default.readdirSync(LABELS_DIR2).filter((name) => nameMatches(name)).map((name) => {
-        const full = import_path17.default.join(LABELS_DIR2, name);
+      const matches = import_fs16.default.readdirSync(PDF_DIR).filter((name) => nameMatches(name)).map((name) => {
+        const full = import_path17.default.join(PDF_DIR, name);
         return { name, mtime: import_fs16.default.statSync(full).mtimeMs, size: import_fs16.default.statSync(full).size };
       }).filter((x2) => x2.size > 0).sort((a, b) => b.mtime - a.mtime);
       const newest = matches[0]?.name;
@@ -133028,7 +133041,7 @@ async function startServer() {
           for (const downloaded of fallback.documents) {
             for (const orderSn of downloaded.orderSns) {
               const filename = buildCachedLabelFilename([orderSn]);
-              const filePath = import_path17.default.join(LABELS_DIR2, filename);
+              const filePath = import_path17.default.join(PDF_DIR, filename);
               if (!import_fs16.default.existsSync(filePath)) {
                 ensureLabelsDir();
                 import_fs16.default.writeFileSync(filePath, downloaded.buffer);

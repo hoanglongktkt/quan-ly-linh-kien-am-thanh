@@ -25,6 +25,9 @@ export function resolveAppRoot() {
   return path.resolve(candidates[0] || process.cwd());
 }
 
+/** Thư mục PDF vận đơn chuẩn, dùng chung cho mọi luồng ghi và kiểm tra file. */
+export const PDF_DIR = path.join(resolveAppRoot(), "storage", "labels");
+
 const PRODUCTION_APP_URL = "https://quanly.linhkienamthanh.net";
 
 export function resolveAppBaseUrl() {
