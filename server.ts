@@ -8063,6 +8063,10 @@ const SHIP_ORDER_PDF_RETRY_MAX = 10;
 const SHIP_ORDER_PDF_RETRY_DELAY_MS = 1000;
 /** Timeout cho polling PDF batch (ms) */
 const SHIP_ORDER_PDF_RETRY_TIMEOUT_MS = 120_000;
+/** Sau khi xác nhận đơn, Shopee có thể cần vài giây mới cho phép create_shipping_document. */
+const SHOPEE_CREATE_DOCUMENT_RETRY_MAX = 20;
+const SHOPEE_CREATE_DOCUMENT_RETRY_DELAY_MS = 1500;
+const SHOPEE_CREATE_DOCUMENT_RETRY_TIMEOUT_MS = 45_000;
 const SHOPEE_SHIPPING_DOC_BATCH_MAX = 50;
 /** Trần kích thước PDF batch — tránh OOM cPanel khi buffer quá lớn. */
 const SHOPEE_WAYBILL_PDF_MAX_BYTES = 25 * 1024 * 1024;
@@ -8941,83 +8945,152 @@ async function batchDownloadShopeeWaybillPdf(
       })
       .filter((r) => r.order_sn);
 
-    console.log(
-      `[Shopee Batch Waybill] Bắt đầu tạo doc shop=${shopId} n=${enriched.length}`,
-    );
-
-    let createResult: any;
-    try {
-      createResult = await shopeeCreateShippingDocument(
-        shopId,
-        accessToken,
-        enriched,
-        opts?.signal,
-      );
-    } catch (createErr: any) {
-      console.error(`[Shopee Batch Waybill] create exception:`, createErr?.message || createErr);
-      return {
-        success: false,
-        readyOrderSns: [],
-        skippedOrders: emptySkip,
-        error: "create_shipping_document_failed",
-        message: String(createErr?.message || createErr),
-      };
-    }
-
-    const createTopError = String(createResult?.error || "").trim();
-    if (createTopError) {
-      const message = String(
-        createResult?.message || "Shopee từ chối create_shipping_document.",
-      );
-      console.error(
-        `[Shopee Batch Waybill] BƯỚC 1 CREATE thất bại shop=${shopId}: ${createTopError} — ${message}`,
-      );
-      return {
-        success: false,
-        readyOrderSns: [],
-        skippedOrders: enriched.map((row) => ({
-          orderSn: row.order_sn,
-          error: createTopError,
-          message,
-        })),
-        error: createTopError,
-        message,
-      };
-    }
-
-    const createList: any[] = createResult?.response?.result_list || createResult?.result_list || [];
-    const failedItems = createList.filter((it: any) => it?.fail_error);
     const originalBySn = new Map(enriched.map((o) => [o.order_sn, o]));
-    const okItems: any[] = createList.filter((it: any) => it?.order_sn && !it.fail_error);
-    const acknowledgedSnSet = new Set(createList.map((it: any) => String(it?.order_sn || "")).filter(Boolean));
-    const skippedOrders = failedItems.map((it: any) => ({
-      orderSn: String(it.order_sn || ""),
-      error: String(it.fail_error || "document_generation_failed"),
-      message: String(it.fail_message || it.fail_error || "Shopee create fail"),
-    }));
-    for (const row of enriched) {
-      if (acknowledgedSnSet.has(row.order_sn)) continue;
-      skippedOrders.push({
+    const createdBySn = new Map<string, any>();
+    const createFailedBySn = new Map<
+      string,
+      { orderSn: string; error: string; message: string }
+    >();
+    const lastCreateFailureBySn = new Map<
+      string,
+      { error: string; message: string }
+    >();
+    let createPending = [...enriched];
+    const createDeadlineAt = Math.min(
+      Date.now() + SHOPEE_CREATE_DOCUMENT_RETRY_TIMEOUT_MS,
+      opts?.deadlineAt || Number.POSITIVE_INFINITY,
+    );
+    const isPackageShouldPrintFirst = (error: unknown, message: unknown) =>
+      /package\s+should\s+print\s+first|should[_\s-]*print[_\s-]*first/i.test(
+        `${String(error || "")} ${String(message || "")}`,
+      );
+
+    console.log(
+      `[Shopee Batch Waybill] BƯỚC 1 CREATE bắt đầu shop=${shopId} n=${createPending.length}`,
+    );
+    for (
+      let createAttempt = 1;
+      createPending.length > 0 &&
+      createAttempt <= SHOPEE_CREATE_DOCUMENT_RETRY_MAX &&
+      Date.now() < createDeadlineAt;
+      createAttempt++
+    ) {
+      if (createAttempt > 1) {
+        const waitMs = Math.min(
+          SHOPEE_CREATE_DOCUMENT_RETRY_DELAY_MS,
+          Math.max(0, createDeadlineAt - Date.now()),
+        );
+        if (waitMs > 0) await sleep(waitMs);
+      }
+
+      let createResult: any;
+      try {
+        createResult = await shopeeCreateShippingDocument(
+          shopId,
+          accessToken,
+          createPending,
+          opts?.signal,
+        );
+      } catch (createErr: any) {
+        const message = String(createErr?.message || createErr);
+        for (const row of createPending) {
+          lastCreateFailureBySn.set(row.order_sn, {
+            error: "create_shipping_document_failed",
+            message,
+          });
+        }
+        console.warn(
+          `[Shopee Batch Waybill] BƯỚC 1 CREATE exception lần ${createAttempt}/${SHOPEE_CREATE_DOCUMENT_RETRY_MAX}: ${message}`,
+        );
+        continue;
+      }
+
+      const createTopError = String(createResult?.error || "").trim();
+      const createTopMessage = String(createResult?.message || "").trim();
+      if (createTopError) {
+        const transient = isPackageShouldPrintFirst(createTopError, createTopMessage);
+        for (const row of createPending) {
+          lastCreateFailureBySn.set(row.order_sn, {
+            error: createTopError,
+            message: createTopMessage || createTopError,
+          });
+          if (!transient) {
+            createFailedBySn.set(row.order_sn, {
+              orderSn: row.order_sn,
+              error: createTopError,
+              message: createTopMessage || createTopError,
+            });
+          }
+        }
+        console.warn(
+          `[Shopee Batch Waybill] BƯỚC 1 CREATE lần ${createAttempt}/${SHOPEE_CREATE_DOCUMENT_RETRY_MAX} lỗi=${createTopError} transient=${transient}`,
+        );
+        if (!transient) createPending = [];
+        continue;
+      }
+
+      const createList: any[] =
+        createResult?.response?.result_list || createResult?.result_list || [];
+      const createItemBySn = new Map(
+        createList
+          .map((item: any) => [String(item?.order_sn || ""), item] as const)
+          .filter(([orderSn]) => Boolean(orderSn)),
+      );
+      const retryRows: ShopeeWaybillOrderRow[] = [];
+      for (const row of createPending) {
+        const item: any = createItemBySn.get(row.order_sn);
+        const failError = String(item?.fail_error || "").trim();
+        const failMessage = String(item?.fail_message || "").trim();
+        if (item && !failError) {
+          createdBySn.set(row.order_sn, item);
+          lastCreateFailureBySn.delete(row.order_sn);
+          continue;
+        }
+
+        const transient = !item || isPackageShouldPrintFirst(failError, failMessage);
+        const error = failError || "create_not_acknowledged";
+        const message =
+          failMessage ||
+          "Shopee chưa xác nhận create_shipping_document; backend sẽ tiếp tục chờ và gọi lại.";
+        lastCreateFailureBySn.set(row.order_sn, { error, message });
+        if (transient) {
+          retryRows.push(row);
+        } else {
+          createFailedBySn.set(row.order_sn, { orderSn: row.order_sn, error, message });
+        }
+      }
+      createPending = retryRows;
+      console.log(
+        `[Shopee Batch Waybill] BƯỚC 1 CREATE lần ${createAttempt}/${SHOPEE_CREATE_DOCUMENT_RETRY_MAX}: created=${createdBySn.size} pending=${createPending.length} failed=${createFailedBySn.size}`,
+      );
+    }
+
+    for (const row of createPending) {
+      const last = lastCreateFailureBySn.get(row.order_sn);
+      createFailedBySn.set(row.order_sn, {
         orderSn: row.order_sn,
-        error: "create_not_acknowledged",
+        error: last?.error || "create_retry_exhausted",
         message:
-          "Shopee không xác nhận create_shipping_document cho đơn này; đã chặn polling/download để tránh lỗi package should print first.",
+          last?.message ||
+          "Shopee chưa cho phép tạo file vận đơn sau khi backend đã chờ và gọi lại hết số lần.",
       });
     }
 
+    const okItems = [...createdBySn.values()];
+    const skippedOrders = [...createFailedBySn.values()];
     if (okItems.length === 0) {
-      const first = failedItems[0];
+      const first = skippedOrders[0];
       console.warn(
-        `[Shopee Batch Waybill] BƯỚC 1 CREATE không có đơn được xác nhận thành công shop=${shopId}`,
+        `[Shopee Batch Waybill] BƯỚC 1 CREATE hết thời gian nhưng không có đơn thành công shop=${shopId}`,
       );
       return {
         success: false,
         readyOrderSns: [],
         skippedOrders,
-        error: first?.fail_error || "create_not_acknowledged",
+        error: first?.error || "create_retry_exhausted",
         message:
-          first?.fail_message ||
-          "Shopee không xác nhận create_shipping_document cho bất kỳ đơn nào.",
+          first?.message ||
+          "Shopee chưa cho phép tạo file vận đơn sau khi backend đã gọi lại hết số lần.",
       };
     }
     console.log(

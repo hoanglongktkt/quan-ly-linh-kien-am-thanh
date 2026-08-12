@@ -123781,6 +123781,9 @@ var SHIP_ORDER_CHUNK_PAUSE_MS = 200;
 var SHIP_ORDER_PDF_RETRY_MAX = 10;
 var SHIP_ORDER_PDF_RETRY_DELAY_MS = 1e3;
 var SHIP_ORDER_PDF_RETRY_TIMEOUT_MS = 12e4;
+var SHOPEE_CREATE_DOCUMENT_RETRY_MAX = 20;
+var SHOPEE_CREATE_DOCUMENT_RETRY_DELAY_MS = 1500;
+var SHOPEE_CREATE_DOCUMENT_RETRY_TIMEOUT_MS = 45e3;
 var SHOPEE_WAYBILL_PDF_MAX_BYTES = 25 * 1024 * 1024;
 var shopeeAddressListMemCache = /* @__PURE__ */ new Map();
 var shopeeAddressListInflight = /* @__PURE__ */ new Map();
@@ -124439,76 +124442,123 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
       }
       return entry;
     }).filter((r2) => r2.order_sn);
-    console.log(
-      `[Shopee Batch Waybill] B\u1EAFt \u0111\u1EA7u t\u1EA1o doc shop=${shopId} n=${enriched.length}`
-    );
-    let createResult;
-    try {
-      createResult = await shopeeCreateShippingDocument(
-        shopId,
-        accessToken,
-        enriched,
-        opts?.signal
-      );
-    } catch (createErr) {
-      console.error(`[Shopee Batch Waybill] create exception:`, createErr?.message || createErr);
-      return {
-        success: false,
-        readyOrderSns: [],
-        skippedOrders: emptySkip,
-        error: "create_shipping_document_failed",
-        message: String(createErr?.message || createErr)
-      };
-    }
-    const createTopError = String(createResult?.error || "").trim();
-    if (createTopError) {
-      const message = String(
-        createResult?.message || "Shopee t\u1EEB ch\u1ED1i create_shipping_document."
-      );
-      console.error(
-        `[Shopee Batch Waybill] B\u01AF\u1EDAC 1 CREATE th\u1EA5t b\u1EA1i shop=${shopId}: ${createTopError} \u2014 ${message}`
-      );
-      return {
-        success: false,
-        readyOrderSns: [],
-        skippedOrders: enriched.map((row) => ({
-          orderSn: row.order_sn,
-          error: createTopError,
-          message
-        })),
-        error: createTopError,
-        message
-      };
-    }
-    const createList = createResult?.response?.result_list || createResult?.result_list || [];
-    const failedItems = createList.filter((it) => it?.fail_error);
     const originalBySn = new Map(enriched.map((o) => [o.order_sn, o]));
-    const okItems = createList.filter((it) => it?.order_sn && !it.fail_error);
-    const acknowledgedSnSet = new Set(createList.map((it) => String(it?.order_sn || "")).filter(Boolean));
-    const skippedOrders = failedItems.map((it) => ({
-      orderSn: String(it.order_sn || ""),
-      error: String(it.fail_error || "document_generation_failed"),
-      message: String(it.fail_message || it.fail_error || "Shopee create fail")
-    }));
-    for (const row of enriched) {
-      if (acknowledgedSnSet.has(row.order_sn)) continue;
-      skippedOrders.push({
+    const createdBySn = /* @__PURE__ */ new Map();
+    const createFailedBySn = /* @__PURE__ */ new Map();
+    const lastCreateFailureBySn = /* @__PURE__ */ new Map();
+    let createPending = [...enriched];
+    const createDeadlineAt = Math.min(
+      Date.now() + SHOPEE_CREATE_DOCUMENT_RETRY_TIMEOUT_MS,
+      opts?.deadlineAt || Number.POSITIVE_INFINITY
+    );
+    const isPackageShouldPrintFirst = (error, message) => /package\s+should\s+print\s+first|should[_\s-]*print[_\s-]*first/i.test(
+      `${String(error || "")} ${String(message || "")}`
+    );
+    console.log(
+      `[Shopee Batch Waybill] B\u01AF\u1EDAC 1 CREATE b\u1EAFt \u0111\u1EA7u shop=${shopId} n=${createPending.length}`
+    );
+    for (let createAttempt = 1; createPending.length > 0 && createAttempt <= SHOPEE_CREATE_DOCUMENT_RETRY_MAX && Date.now() < createDeadlineAt; createAttempt++) {
+      if (createAttempt > 1) {
+        const waitMs = Math.min(
+          SHOPEE_CREATE_DOCUMENT_RETRY_DELAY_MS,
+          Math.max(0, createDeadlineAt - Date.now())
+        );
+        if (waitMs > 0) await sleep2(waitMs);
+      }
+      let createResult;
+      try {
+        createResult = await shopeeCreateShippingDocument(
+          shopId,
+          accessToken,
+          createPending,
+          opts?.signal
+        );
+      } catch (createErr) {
+        const message = String(createErr?.message || createErr);
+        for (const row of createPending) {
+          lastCreateFailureBySn.set(row.order_sn, {
+            error: "create_shipping_document_failed",
+            message
+          });
+        }
+        console.warn(
+          `[Shopee Batch Waybill] B\u01AF\u1EDAC 1 CREATE exception l\u1EA7n ${createAttempt}/${SHOPEE_CREATE_DOCUMENT_RETRY_MAX}: ${message}`
+        );
+        continue;
+      }
+      const createTopError = String(createResult?.error || "").trim();
+      const createTopMessage = String(createResult?.message || "").trim();
+      if (createTopError) {
+        const transient = isPackageShouldPrintFirst(createTopError, createTopMessage);
+        for (const row of createPending) {
+          lastCreateFailureBySn.set(row.order_sn, {
+            error: createTopError,
+            message: createTopMessage || createTopError
+          });
+          if (!transient) {
+            createFailedBySn.set(row.order_sn, {
+              orderSn: row.order_sn,
+              error: createTopError,
+              message: createTopMessage || createTopError
+            });
+          }
+        }
+        console.warn(
+          `[Shopee Batch Waybill] B\u01AF\u1EDAC 1 CREATE l\u1EA7n ${createAttempt}/${SHOPEE_CREATE_DOCUMENT_RETRY_MAX} l\u1ED7i=${createTopError} transient=${transient}`
+        );
+        if (!transient) createPending = [];
+        continue;
+      }
+      const createList = createResult?.response?.result_list || createResult?.result_list || [];
+      const createItemBySn = new Map(
+        createList.map((item) => [String(item?.order_sn || ""), item]).filter(([orderSn]) => Boolean(orderSn))
+      );
+      const retryRows = [];
+      for (const row of createPending) {
+        const item = createItemBySn.get(row.order_sn);
+        const failError = String(item?.fail_error || "").trim();
+        const failMessage = String(item?.fail_message || "").trim();
+        if (item && !failError) {
+          createdBySn.set(row.order_sn, item);
+          lastCreateFailureBySn.delete(row.order_sn);
+          continue;
+        }
+        const transient = !item || isPackageShouldPrintFirst(failError, failMessage);
+        const error = failError || "create_not_acknowledged";
+        const message = failMessage || "Shopee ch\u01B0a x\xE1c nh\u1EADn create_shipping_document; backend s\u1EBD ti\u1EBFp t\u1EE5c ch\u1EDD v\xE0 g\u1ECDi l\u1EA1i.";
+        lastCreateFailureBySn.set(row.order_sn, { error, message });
+        if (transient) {
+          retryRows.push(row);
+        } else {
+          createFailedBySn.set(row.order_sn, { orderSn: row.order_sn, error, message });
+        }
+      }
+      createPending = retryRows;
+      console.log(
+        `[Shopee Batch Waybill] B\u01AF\u1EDAC 1 CREATE l\u1EA7n ${createAttempt}/${SHOPEE_CREATE_DOCUMENT_RETRY_MAX}: created=${createdBySn.size} pending=${createPending.length} failed=${createFailedBySn.size}`
+      );
+    }
+    for (const row of createPending) {
+      const last = lastCreateFailureBySn.get(row.order_sn);
+      createFailedBySn.set(row.order_sn, {
         orderSn: row.order_sn,
-        error: "create_not_acknowledged",
-        message: "Shopee kh\xF4ng x\xE1c nh\u1EADn create_shipping_document cho \u0111\u01A1n n\xE0y; \u0111\xE3 ch\u1EB7n polling/download \u0111\u1EC3 tr\xE1nh l\u1ED7i package should print first."
+        error: last?.error || "create_retry_exhausted",
+        message: last?.message || "Shopee ch\u01B0a cho ph\xE9p t\u1EA1o file v\u1EADn \u0111\u01A1n sau khi backend \u0111\xE3 ch\u1EDD v\xE0 g\u1ECDi l\u1EA1i h\u1EBFt s\u1ED1 l\u1EA7n."
       });
     }
+    const okItems = [...createdBySn.values()];
+    const skippedOrders = [...createFailedBySn.values()];
     if (okItems.length === 0) {
-      const first = failedItems[0];
+      const first = skippedOrders[0];
       console.warn(
-        `[Shopee Batch Waybill] B\u01AF\u1EDAC 1 CREATE kh\xF4ng c\xF3 \u0111\u01A1n \u0111\u01B0\u1EE3c x\xE1c nh\u1EADn th\xE0nh c\xF4ng shop=${shopId}`
+        `[Shopee Batch Waybill] B\u01AF\u1EDAC 1 CREATE h\u1EBFt th\u1EDDi gian nh\u01B0ng kh\xF4ng c\xF3 \u0111\u01A1n th\xE0nh c\xF4ng shop=${shopId}`
       );
       return {
         success: false,
         readyOrderSns: [],
         skippedOrders,
-        error: first?.fail_error || "create_not_acknowledged",
-        message: first?.fail_message || "Shopee kh\xF4ng x\xE1c nh\u1EADn create_shipping_document cho b\u1EA5t k\u1EF3 \u0111\u01A1n n\xE0o."
+        error: first?.error || "create_retry_exhausted",
+        message: first?.message || "Shopee ch\u01B0a cho ph\xE9p t\u1EA1o file v\u1EADn \u0111\u01A1n sau khi backend \u0111\xE3 g\u1ECDi l\u1EA1i h\u1EBFt s\u1ED1 l\u1EA7n."
       };
     }
     console.log(
