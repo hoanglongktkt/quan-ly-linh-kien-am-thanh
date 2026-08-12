@@ -8944,12 +8944,13 @@ function shippingDocRowKey(row: { order_sn?: string; package_number?: string }):
 
 function isPackageShouldPrintFirstError(error: unknown, message?: unknown): boolean {
   const text = `${String(error || "")} ${String(message || "")}`;
-  // Shopee: "The package should print first" / kèm THERMAL_AIR_WAYBILL khi chưa Create.
-  return (
-    /package\s+should\s+print\s+first|should[_\s-]*print[_\s-]*first/i.test(text) ||
-    /THERMAL_AIR_WAYBILL/i.test(text)
-  );
+  // Chỉ bắt đúng lỗi "should print first" — KHÔNG match THERMAL_AIR_WAYBILL (hay xuất hiện trong response bình thường).
+  return /package\s+should\s+print\s+first|should[_\s-]*print[_\s-]*first/i.test(text);
 }
+
+/** Sleep chuẩn Promise — dùng trong vòng poll in đơn. */
+const sleepMs = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
 type BatchWaybillOptions = {
   deadlineAt?: number;
@@ -9054,22 +9055,12 @@ async function fetchSingleOrderWaybillFromRows(
     }
     console.log(`[Shopee Print] B3 CREATE OK ${sn}`);
 
-    // ── BƯỚC 4: POLL READY (delay 1.5s, tối đa 10 lần) ──
-    const maxPoll = SHIP_ORDER_PDF_RETRY_MAX;
-    const pollDelayMs = SHIP_ORDER_PDF_RETRY_DELAY_MS;
+    // ── BƯỚC 4: POLL READY — tối đa 10 lần, mỗi lần chưa READY thì await sleep(1500) rồi continue ──
+    const maxPoll = 10;
     let readyRows: ShopeeWaybillOrderRow[] = [];
     let allReady = false;
 
     for (let attempt = 1; attempt <= maxPoll; attempt++) {
-      if (opts?.deadlineAt && Date.now() > opts.deadlineAt) {
-        return {
-          success: false,
-          orderSn: sn,
-          error: "deadline",
-          message: "Hết thời gian chờ READY.",
-        };
-      }
-      if (attempt > 1) await sleep(pollDelayMs);
       console.log(`[Shopee Print] B4 POLL ${sn} lần ${attempt}/${maxPoll}`);
 
       const pollResult = await shopeeGetShippingDocumentResult(
@@ -9079,6 +9070,7 @@ async function fetchSingleOrderWaybillFromRows(
         opts?.signal,
       );
 
+      // Chỉ recreate khi Shopee báo đúng "should print first" — không throw vì PROCESSING/rỗng.
       if (isPackageShouldPrintFirstError(pollResult?.error, pollResult?.message)) {
         throw new PackageShouldPrintFirstError(
           String(pollResult?.message || pollResult?.error || "The package should print first"),
@@ -9087,9 +9079,7 @@ async function fetchSingleOrderWaybillFromRows(
 
       const items: any[] = pollResult?.response?.result_list || pollResult?.result_list || [];
       const byKey = new Map(items.map((it: any) => [shippingDocRowKey(it), it]));
-      let pending = 0;
-      let hardFailed = 0;
-      const ready: ShopeeWaybillOrderRow[] = [];
+      let attemptReady = true;
 
       for (const row of rows) {
         const sameOrderItems = items.filter(
@@ -9099,32 +9089,34 @@ async function fetchSingleOrderWaybillFromRows(
           byKey.get(shippingDocRowKey(row)) ||
           (sameOrderItems.length === 1 ? sameOrderItems[0] : undefined);
         const st = String(it?.status || "").toUpperCase();
-        if (st === "READY") {
-          ready.push(row);
-        } else if (st === "FAILED" || it?.fail_error) {
-          if (isPackageShouldPrintFirstError(it?.fail_error, it?.fail_message)) {
-            throw new PackageShouldPrintFirstError(
-              String(it?.fail_message || it?.fail_error || "The package should print first"),
-            );
-          }
-          hardFailed++;
-        } else {
-          pending++;
+
+        if (isPackageShouldPrintFirstError(it?.fail_error, it?.fail_message)) {
+          throw new PackageShouldPrintFirstError(
+            String(it?.fail_message || it?.fail_error || "The package should print first"),
+          );
+        }
+
+        if (st !== "READY") {
+          // PROCESSING / rỗng / FAILED tạm thời → KHÔNG throw, chờ poll tiếp.
+          attemptReady = false;
+          console.log(
+            `[Shopee Print] B4 POLL ${sn} chưa READY status=${st || "(empty)"} lần ${attempt}/${maxPoll}`,
+          );
+          break;
         }
       }
 
-      if (ready.length === rows.length) {
-        readyRows = ready;
+      if (attemptReady) {
+        readyRows = rows;
         allReady = true;
+        console.log(`[Shopee Print] B4 POLL ${sn} READY ở lần ${attempt}`);
         break;
       }
-      if (hardFailed > 0 && pending === 0 && ready.length === 0) {
-        return {
-          success: false,
-          orderSn: sn,
-          error: "document_failed",
-          message: "Shopee báo FAILED khi tạo vận đơn",
-        };
+
+      // Chưa READY → bắt buộc sleep 1.5s rồi continue (không throw).
+      if (attempt < maxPoll) {
+        await sleepMs(1500);
+        continue;
       }
     }
 
@@ -9133,7 +9125,7 @@ async function fetchSingleOrderWaybillFromRows(
         success: false,
         orderSn: sn,
         error: "document_not_ready",
-        message: "Shopee chưa READY sau 10 lần poll.",
+        message: "Shopee chưa tạo xong PDF sau khi đã polling chờ READY",
       };
     }
 

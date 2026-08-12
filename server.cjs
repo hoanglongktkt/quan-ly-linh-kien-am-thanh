@@ -123845,8 +123845,6 @@ function dedupeShopeeParentVariantRows(products) {
 var SHOPEE_LOGISTICS_TIMEOUT_MS = 5e3;
 var SHIP_ORDER_OPERATION_TIMEOUT_MS = 8e3;
 var SHIP_ORDER_CHUNK_PAUSE_MS = 200;
-var SHIP_ORDER_PDF_RETRY_MAX = 10;
-var SHIP_ORDER_PDF_RETRY_DELAY_MS = 1500;
 var SHOPEE_WAYBILL_PDF_MAX_BYTES = 25 * 1024 * 1024;
 var shopeeAddressListMemCache = /* @__PURE__ */ new Map();
 var shopeeAddressListInflight = /* @__PURE__ */ new Map();
@@ -124505,8 +124503,9 @@ function shippingDocRowKey(row) {
 }
 function isPackageShouldPrintFirstError(error, message) {
   const text = `${String(error || "")} ${String(message || "")}`;
-  return /package\s+should\s+print\s+first|should[_\s-]*print[_\s-]*first/i.test(text) || /THERMAL_AIR_WAYBILL/i.test(text);
+  return /package\s+should\s+print\s+first|should[_\s-]*print[_\s-]*first/i.test(text);
 }
+var sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 var PackageShouldPrintFirstError = class extends Error {
   constructor(message) {
     super(message || "The package should print first");
@@ -124573,20 +124572,10 @@ async function fetchSingleOrderWaybillFromRows(shopId, accessToken, orderSn, row
       };
     }
     console.log(`[Shopee Print] B3 CREATE OK ${sn}`);
-    const maxPoll = SHIP_ORDER_PDF_RETRY_MAX;
-    const pollDelayMs = SHIP_ORDER_PDF_RETRY_DELAY_MS;
+    const maxPoll = 10;
     let readyRows = [];
     let allReady = false;
     for (let attempt = 1; attempt <= maxPoll; attempt++) {
-      if (opts?.deadlineAt && Date.now() > opts.deadlineAt) {
-        return {
-          success: false,
-          orderSn: sn,
-          error: "deadline",
-          message: "H\u1EBFt th\u1EDDi gian ch\u1EDD READY."
-        };
-      }
-      if (attempt > 1) await sleep2(pollDelayMs);
       console.log(`[Shopee Print] B4 POLL ${sn} l\u1EA7n ${attempt}/${maxPoll}`);
       const pollResult = await shopeeGetShippingDocumentResult(
         shopId,
@@ -124601,40 +124590,35 @@ async function fetchSingleOrderWaybillFromRows(shopId, accessToken, orderSn, row
       }
       const items = pollResult?.response?.result_list || pollResult?.result_list || [];
       const byKey = new Map(items.map((it) => [shippingDocRowKey(it), it]));
-      let pending = 0;
-      let hardFailed = 0;
-      const ready = [];
+      let attemptReady = true;
       for (const row of rows) {
         const sameOrderItems = items.filter(
           (item) => String(item?.order_sn || "").trim() === row.order_sn
         );
         const it = byKey.get(shippingDocRowKey(row)) || (sameOrderItems.length === 1 ? sameOrderItems[0] : void 0);
         const st = String(it?.status || "").toUpperCase();
-        if (st === "READY") {
-          ready.push(row);
-        } else if (st === "FAILED" || it?.fail_error) {
-          if (isPackageShouldPrintFirstError(it?.fail_error, it?.fail_message)) {
-            throw new PackageShouldPrintFirstError(
-              String(it?.fail_message || it?.fail_error || "The package should print first")
-            );
-          }
-          hardFailed++;
-        } else {
-          pending++;
+        if (isPackageShouldPrintFirstError(it?.fail_error, it?.fail_message)) {
+          throw new PackageShouldPrintFirstError(
+            String(it?.fail_message || it?.fail_error || "The package should print first")
+          );
+        }
+        if (st !== "READY") {
+          attemptReady = false;
+          console.log(
+            `[Shopee Print] B4 POLL ${sn} ch\u01B0a READY status=${st || "(empty)"} l\u1EA7n ${attempt}/${maxPoll}`
+          );
+          break;
         }
       }
-      if (ready.length === rows.length) {
-        readyRows = ready;
+      if (attemptReady) {
+        readyRows = rows;
         allReady = true;
+        console.log(`[Shopee Print] B4 POLL ${sn} READY \u1EDF l\u1EA7n ${attempt}`);
         break;
       }
-      if (hardFailed > 0 && pending === 0 && ready.length === 0) {
-        return {
-          success: false,
-          orderSn: sn,
-          error: "document_failed",
-          message: "Shopee b\xE1o FAILED khi t\u1EA1o v\u1EADn \u0111\u01A1n"
-        };
+      if (attempt < maxPoll) {
+        await sleepMs(1500);
+        continue;
       }
     }
     if (!allReady) {
@@ -124642,7 +124626,7 @@ async function fetchSingleOrderWaybillFromRows(shopId, accessToken, orderSn, row
         success: false,
         orderSn: sn,
         error: "document_not_ready",
-        message: "Shopee ch\u01B0a READY sau 10 l\u1EA7n poll."
+        message: "Shopee ch\u01B0a t\u1EA1o xong PDF sau khi \u0111\xE3 polling ch\u1EDD READY"
       };
     }
     console.log(`[Shopee Print] B5 DOWNLOAD ${sn} \u2192 ${filename}`);
