@@ -124331,9 +124331,17 @@ async function shopeeCreateShippingDocument(shopId, accessToken, orderList, sign
       order_sn,
       package_number,
       tracking_number,
-      shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
+      shipping_document_type: "THERMAL_AIR_WAYBILL"
     };
   }).filter((row) => row.order_sn && row.package_number);
+  const missingType = sanitizedOrderList.filter(
+    (row) => String(row.shipping_document_type || "").trim() !== "THERMAL_AIR_WAYBILL"
+  );
+  if (missingType.length > 0) {
+    throw new Error(
+      `missing_shipping_document_type: ${missingType.map((r2) => r2.order_sn).join(",")}`
+    );
+  }
   const invalidRows = orderList.filter(
     (row) => !String(row?.order_sn || "").trim() || !String(row?.package_number || "").trim()
   );
@@ -124348,7 +124356,7 @@ async function shopeeCreateShippingDocument(shopId, accessToken, orderList, sign
   const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
   const requestBody = { order_list: sanitizedOrderList };
   console.log(
-    `[Shopee API] POST ${apiPath} PAYLOAD shop=${shopId} n=${sanitizedOrderList.length}:`,
+    `[Shopee API] POST ${apiPath} REQUEST PAYLOAD (c\xF3 shipping_document_type) shop=${shopId} n=${sanitizedOrderList.length}:`,
     JSON.stringify(requestBody, null, 2)
   );
   let json2 = {};
@@ -124361,7 +124369,19 @@ async function shopeeCreateShippingDocument(shopId, accessToken, orderList, sign
     });
     json2 = await res.json().catch(() => ({}));
     const resultList = json2?.response?.result_list || json2?.result_list || [];
-    console.error("SHOPEE DETAIL ERROR:", JSON.stringify(resultList, null, 2));
+    const failedResultList = resultList.filter(
+      (item) => String(item?.fail_error || "").trim()
+    );
+    if (failedResultList.length > 0 || json2?.error || !res.ok) {
+      console.error(
+        "SHOPEE DETAIL ERROR (response result_list \u2014 KH\xD4NG ph\u1EA3i request payload):",
+        JSON.stringify(failedResultList.length > 0 ? failedResultList : resultList, null, 2)
+      );
+      console.error(
+        "SHOPEE CREATE REQUEST WAS:",
+        JSON.stringify(requestBody, null, 2)
+      );
+    }
     console.log(
       `[Shopee API] POST ${apiPath} FULL RESPONSE shop=${shopId} n=${sanitizedOrderList.length} HTTP=${res.status}:`,
       JSON.stringify(json2)
@@ -124372,16 +124392,13 @@ async function shopeeCreateShippingDocument(shopId, accessToken, orderList, sign
       );
     }
     if (json2?.error) {
-      const failSummary = resultList.filter((item) => String(item?.fail_error || "").trim()).map(
+      const failSummary = failedResultList.map(
         (item) => `${item?.order_sn || "?"}/${item?.package_number || "?"}: ${item?.fail_error || ""} \u2014 ${item?.fail_message || ""}`
       ).join(" | ");
       throw new Error(
         `${String(json2.error)}: ${String(json2?.message || "Shopee t\u1EEB ch\u1ED1i create_shipping_document")}${failSummary ? ` | result_list: ${failSummary}` : ""}`
       );
     }
-    const failedResultList = resultList.filter(
-      (item) => String(item?.fail_error || "").trim()
-    );
     if (failedResultList.length > 0) {
       console.error(
         `[Shopee API] ${apiPath} package failures=${failedResultList.length}:`,
@@ -124402,7 +124419,11 @@ async function shopeeCreateShippingDocument(shopId, accessToken, orderList, sign
   } catch (err) {
     const resultList = json2?.response?.result_list || json2?.result_list || [];
     if (resultList.length > 0) {
-      console.error("SHOPEE DETAIL ERROR:", JSON.stringify(resultList, null, 2));
+      console.error(
+        "SHOPEE DETAIL ERROR (response result_list \u2014 KH\xD4NG ph\u1EA3i request payload):",
+        JSON.stringify(resultList, null, 2)
+      );
+      console.error("SHOPEE CREATE REQUEST WAS:", JSON.stringify(requestBody, null, 2));
     }
     throw err;
   }
@@ -124627,7 +124648,11 @@ async function fetchSingleOrderWaybillFromRows(shopId, accessToken, orderSn, row
         pollResult = await shopeeGetShippingDocumentResult(
           shopId,
           accessToken,
-          rows.map((r2) => ({ order_sn: r2.order_sn, package_number: r2.package_number })),
+          rows.map((r2) => ({
+            order_sn: r2.order_sn,
+            package_number: r2.package_number,
+            shipping_document_type: "THERMAL_AIR_WAYBILL"
+          })),
           opts?.signal
         );
       } catch (pollErr) {
@@ -124688,7 +124713,11 @@ async function fetchSingleOrderWaybillFromRows(shopId, accessToken, orderSn, row
       downloadResult = await shopeeDownloadShippingDocument(
         shopId,
         accessToken,
-        readyRows.map((r2) => ({ order_sn: r2.order_sn, package_number: r2.package_number })),
+        readyRows.map((r2) => ({
+          order_sn: r2.order_sn,
+          package_number: r2.package_number,
+          shipping_document_type: "THERMAL_AIR_WAYBILL"
+        })),
         filename,
         opts?.signal
       );
@@ -124726,45 +124755,61 @@ async function fetchSingleOrderWaybillFromRows(shopId, accessToken, orderSn, row
   if (createFail) return createFail;
   await sleep2(2e3);
   let selfHealUsed = false;
-  for (; ; ) {
-    try {
-      return await runPollDownload();
-    } catch (error) {
-      const errText = `${String(error?.code || "")} ${String(error?.message || error || "")}`;
-      const shouldSelfHeal = !selfHealUsed && (error instanceof PackageShouldPrintFirstError || isPackageShouldPrintFirstError(error?.code, error?.message) || isPackageShouldPrintFirstError(errText, ""));
-      if (!shouldSelfHeal) {
-        if (error instanceof PackageShouldPrintFirstError || isPackageShouldPrintFirstError(error?.code, error?.message)) {
-          return {
-            success: false,
-            orderSn: sn,
-            error: "package_should_print_first",
-            message: String(error?.message || error)
-          };
-        }
+  try {
+    return await runPollDownload();
+  } catch (error) {
+    const errText = `${String(error?.code || "")} ${String(error?.message || error || "")}`;
+    const shouldSelfHeal = !selfHealUsed && (error instanceof PackageShouldPrintFirstError || isPackageShouldPrintFirstError(error?.code, error?.message) || isPackageShouldPrintFirstError(errText, ""));
+    if (!shouldSelfHeal) {
+      if (error instanceof PackageShouldPrintFirstError || isPackageShouldPrintFirstError(error?.code, error?.message)) {
         return {
           success: false,
           orderSn: sn,
-          error: "waybill_failed",
+          error: "package_should_print_first",
           message: String(error?.message || error)
         };
       }
-      selfHealUsed = true;
-      console.warn(`Ph\xE1t hi\u1EC7n l\u1ED7i ch\u01B0a Create, ti\u1EBFn h\xE0nh g\u1ECDi Create kh\u1EA9n c\u1EA5p cho ${sn}`);
-      try {
-        const healCreateFail = await runCreate("kh\u1EA9n c\u1EA5p self-heal #1");
-        if (healCreateFail) {
-          throw new Error(
-            `${healCreateFail.error || "create_shipping_document_failed"}: ${healCreateFail.message || "Create kh\u1EA9n c\u1EA5p th\u1EA5t b\u1EA1i"}`
-          );
-        }
-      } catch (createErr) {
-        console.error(
-          `[Shopee Print] Create kh\u1EA9n c\u1EA5p FAIL ${sn} \u2014 d\u1EEBng lu\u1ED3ng in \u0111\u01A1n:`,
-          createErr?.message || createErr
+      return {
+        success: false,
+        orderSn: sn,
+        error: "waybill_failed",
+        message: String(error?.message || error)
+      };
+    }
+    selfHealUsed = true;
+    console.warn(`Ph\xE1t hi\u1EC7n l\u1ED7i ch\u01B0a Create, ti\u1EBFn h\xE0nh g\u1ECDi Create kh\u1EA9n c\u1EA5p cho ${sn}`);
+    try {
+      const healCreateFail = await runCreate("kh\u1EA9n c\u1EA5p self-heal #1");
+      if (healCreateFail) {
+        throw new Error(
+          `${healCreateFail.error || "create_shipping_document_failed"}: ${healCreateFail.message || "Create kh\u1EA9n c\u1EA5p th\u1EA5t b\u1EA1i"}`
         );
-        throw createErr;
       }
-      await sleep2(2e3);
+    } catch (createErr) {
+      console.error(
+        `[Shopee Print] Create kh\u1EA9n c\u1EA5p FAIL ${sn} \u2014 d\u1EEBng lu\u1ED3ng in \u0111\u01A1n:`,
+        createErr?.message || createErr
+      );
+      throw createErr;
+    }
+    await sleep2(2e3);
+    try {
+      return await runPollDownload();
+    } catch (retryErr) {
+      if (retryErr instanceof PackageShouldPrintFirstError || isPackageShouldPrintFirstError(retryErr?.code, retryErr?.message)) {
+        return {
+          success: false,
+          orderSn: sn,
+          error: "package_should_print_first",
+          message: String(retryErr?.message || retryErr)
+        };
+      }
+      return {
+        success: false,
+        orderSn: sn,
+        error: "waybill_failed",
+        message: String(retryErr?.message || retryErr)
+      };
     }
   }
 }
@@ -126505,6 +126550,7 @@ function buildShopeeShippingDocOrderRows(order) {
   return uniquePackages.map((packageNumber) => ({
     order_sn: orderSn,
     package_number: packageNumber,
+    shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE,
     ...tn ? { tracking_number: tn } : {}
   }));
 }
@@ -130915,8 +130961,11 @@ async function startServer() {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              order_list: shippingRows,
-              shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
+              order_list: shippingRows.map((row) => ({
+                order_sn: row.order_sn,
+                package_number: row.package_number,
+                shipping_document_type: "THERMAL_AIR_WAYBILL"
+              }))
             })
           }, 6e4);
           const contentType = String(downloadRes.headers.get("content-type") || "").toLowerCase();
@@ -131409,8 +131458,11 @@ async function startServer() {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                order_list: shippingRows,
-                shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
+                order_list: shippingRows.map((row) => ({
+                  order_sn: row.order_sn,
+                  package_number: row.package_number,
+                  shipping_document_type: "THERMAL_AIR_WAYBILL"
+                }))
               })
             }, Math.min(8e3, Math.max(1e3, deadlineAt - Date.now())))
           );
@@ -131646,8 +131698,11 @@ async function startServer() {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                order_list: shippingRows,
-                shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
+                order_list: shippingRows.map((row) => ({
+                  order_sn: row.order_sn,
+                  package_number: row.package_number,
+                  shipping_document_type: "THERMAL_AIR_WAYBILL"
+                }))
               })
             }, Math.min(8e3, Math.max(1e3, deadlineAt - Date.now())))
           );
