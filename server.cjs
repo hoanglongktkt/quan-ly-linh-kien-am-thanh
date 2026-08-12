@@ -124576,6 +124576,17 @@ var PackageShouldPrintFirstError = class extends Error {
     this.name = "PackageShouldPrintFirstError";
   }
 };
+function fatalShopeePrintResult(orderSn) {
+  return {
+    success: false,
+    orderSn: String(orderSn || "").replace(/^shopee-/i, "").trim(),
+    error: "fatal_error",
+    message: "Shopee t\u1EEB ch\u1ED1i t\u1EA1o file. Vui l\xF2ng ki\u1EC3m tra l\u1EA1i tr\u1EA1ng th\xE1i \u0111\u01A1n tr\xEAn Shopee."
+  };
+}
+function isShopeeOrderNotFoundError(error, message) {
+  return /not\s*found/i.test(`${String(error || "")} ${String(message || "")}`);
+}
 async function fetchSingleOrderWaybillFromRows(shopId, accessToken, orderSn, rows, opts) {
   const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
   const filename = `order_${sn}.pdf`;
@@ -124758,7 +124769,13 @@ async function fetchSingleOrderWaybillFromRows(shopId, accessToken, orderSn, row
     };
   };
   const createFail = await runCreate("l\u1EA7n 1");
-  if (createFail) return createFail;
+  if (createFail) {
+    const errCode = String(createFail.error || "");
+    if (errCode === "package_should_print_first" || errCode === "fatal_error" || /timeout/i.test(errCode) || isPackageShouldPrintFirstError(createFail.error, createFail.message)) {
+      return fatalShopeePrintResult(sn);
+    }
+    return createFail;
+  }
   await sleep2(2e3);
   let selfHealUsed = false;
   try {
@@ -124767,55 +124784,65 @@ async function fetchSingleOrderWaybillFromRows(shopId, accessToken, orderSn, row
     const errText = `${String(error?.code || "")} ${String(error?.message || error || "")}`;
     const shouldSelfHeal = !selfHealUsed && (error instanceof PackageShouldPrintFirstError || isPackageShouldPrintFirstError(error?.code, error?.message) || isPackageShouldPrintFirstError(errText, ""));
     if (!shouldSelfHeal) {
-      if (error instanceof PackageShouldPrintFirstError || isPackageShouldPrintFirstError(error?.code, error?.message)) {
-        return {
-          success: false,
-          orderSn: sn,
-          error: "package_should_print_first",
-          message: String(error?.message || error)
-        };
-      }
-      return {
-        success: false,
-        orderSn: sn,
-        error: "waybill_failed",
-        message: String(error?.message || error)
-      };
+      console.error(
+        `[Shopee Print] HARD STOP ${sn} (kh\xF4ng self-heal):`,
+        error?.message || error
+      );
+      return fatalShopeePrintResult(sn);
     }
     selfHealUsed = true;
     console.warn(`Ph\xE1t hi\u1EC7n l\u1ED7i ch\u01B0a Create, ti\u1EBFn h\xE0nh g\u1ECDi Create kh\u1EA9n c\u1EA5p cho ${sn}`);
+    const healOrderList = rows.filter((r2) => String(r2.order_sn || "").replace(/^shopee-/i, "").trim() === sn).map((r2) => {
+      const package_number = String(r2.package_number || "").trim();
+      const tracking_number = String(r2.tracking_number || "").trim();
+      return {
+        order_sn: sn,
+        package_number,
+        shipping_document_type: "THERMAL_AIR_WAYBILL",
+        ...tracking_number && !/^0FG/i.test(tracking_number) && !isShopeeInternalTrackingCode2(tracking_number) ? { tracking_number } : {}
+      };
+    }).filter((r2) => r2.order_sn && r2.package_number);
+    if (healOrderList.length === 0) {
+      console.error(`[Shopee Print] Create kh\u1EA9n c\u1EA5p FAIL ${sn}: empty isolated payload`);
+      return fatalShopeePrintResult(sn);
+    }
     try {
-      const healCreateFail = await runCreate("kh\u1EA9n c\u1EA5p self-heal #1");
-      if (healCreateFail) {
-        throw new Error(
-          `${healCreateFail.error || "create_shipping_document_failed"}: ${healCreateFail.message || "Create kh\u1EA9n c\u1EA5p th\u1EA5t b\u1EA1i"}`
+      console.log(
+        `[Shopee Print] B3 CREATE ${sn} (kh\u1EA9n c\u1EA5p self-heal #1) ISOLATED n=${healOrderList.length}:`,
+        JSON.stringify({ order_list: healOrderList })
+      );
+      const healCreateResult = await shopeeCreateShippingDocument(
+        shopId,
+        accessToken,
+        healOrderList,
+        opts?.signal
+      );
+      const healTopError = String(healCreateResult?.error || "").trim();
+      const healList = healCreateResult?.response?.result_list || healCreateResult?.result_list || [];
+      const healFailed = healList.filter((item) => String(item?.fail_error || "").trim());
+      if (healTopError || healList.length > 0 && healFailed.length === healList.length) {
+        console.error(
+          `[Shopee Print] Create kh\u1EA9n c\u1EA5p FAIL ${sn} \u2014 d\u1EEBng lu\u1ED3ng in \u0111\u01A1n:`,
+          healTopError || healFailed[0]?.fail_error || "create_shipping_document_failed"
         );
+        return fatalShopeePrintResult(sn);
       }
     } catch (createErr) {
       console.error(
         `[Shopee Print] Create kh\u1EA9n c\u1EA5p FAIL ${sn} \u2014 d\u1EEBng lu\u1ED3ng in \u0111\u01A1n:`,
         createErr?.message || createErr
       );
-      throw createErr;
+      return fatalShopeePrintResult(sn);
     }
     await sleep2(2e3);
     try {
       return await runPollDownload();
     } catch (retryErr) {
-      if (retryErr instanceof PackageShouldPrintFirstError || isPackageShouldPrintFirstError(retryErr?.code, retryErr?.message)) {
-        return {
-          success: false,
-          orderSn: sn,
-          error: "package_should_print_first",
-          message: String(retryErr?.message || retryErr)
-        };
-      }
-      return {
-        success: false,
-        orderSn: sn,
-        error: "waybill_failed",
-        message: String(retryErr?.message || retryErr)
-      };
+      console.error(
+        `[Shopee Print] HARD STOP ${sn} sau Create kh\u1EA9n c\u1EA5p:`,
+        retryErr?.message || retryErr
+      );
+      return fatalShopeePrintResult(sn);
     }
   }
 }
@@ -124910,9 +124937,13 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
       } catch (orderErr) {
         skippedOrders.push({
           orderSn: sn,
-          error: "waybill_failed",
-          message: String(orderErr?.message || orderErr)
+          error: "fatal_error",
+          message: "Shopee t\u1EEB ch\u1ED1i t\u1EA1o file. Vui l\xF2ng ki\u1EC3m tra l\u1EA1i tr\u1EA1ng th\xE1i \u0111\u01A1n tr\xEAn Shopee."
         });
+        console.error(
+          `[Shopee Batch Waybill] HARD STOP ${sn}:`,
+          orderErr?.message || orderErr
+        );
       }
     }
     if (!lastOk || readyOrderSns.length === 0) {
@@ -126576,6 +126607,16 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
           `[Shopee Print Enrich] get_order_detail shop=${shopId} n=${chunk.length} response=`,
           JSON.stringify(detailResult)
         );
+        if (isShopeeOrderNotFoundError(detailResult?.error, detailResult?.message)) {
+          console.warn(
+            `[Shopee Print Enrich] get_order_detail NOT FOUND shop=${shopId} sns=${chunk.join(",")}`
+          );
+          for (const sn of chunk) {
+            const order = orders.find((o) => String(o.orderSn) === sn);
+            if (order) order.__shopeeOrderNotFound = true;
+          }
+          continue;
+        }
         const detailList = detailResult?.response?.order_list || detailResult?.order_list || [];
         for (const detail of detailList) {
           const sn = String(detail?.order_sn || "").trim();
@@ -126596,10 +126637,21 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
           }
         }
       } catch (err) {
-        console.warn(
-          `[Shopee Print Enrich] get_order_detail fail shop=${shopId}:`,
-          err?.message || err
-        );
+        if (isShopeeOrderNotFoundError(err?.code || err?.error, err?.message || err)) {
+          for (const sn of chunk) {
+            const order = orders.find((o) => String(o.orderSn) === sn);
+            if (order) order.__shopeeOrderNotFound = true;
+          }
+          console.warn(
+            `[Shopee Print Enrich] get_order_detail NOT FOUND (throw) shop=${shopId}:`,
+            err?.message || err
+          );
+        } else {
+          console.warn(
+            `[Shopee Print Enrich] get_order_detail fail shop=${shopId}:`,
+            err?.message || err
+          );
+        }
       }
       if (i2 + SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS < sns.length) await sleep2(PRINT_API_DELAY_MS);
     }
@@ -126611,6 +126663,7 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
       const order = orders[i2];
       const sn = String(order?.orderSn || "").trim();
       if (!sn) continue;
+      if (order.__shopeeOrderNotFound) continue;
       const needPkg = !String(order.packageNumber || order.package_number || "").trim();
       const needTn = !trackingForShopeeShippingDoc(order);
       if (!needPkg && !needTn) {
@@ -126668,6 +126721,11 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
       if (!String(order.packageNumber || order.package_number || "").trim()) {
         try {
           const detailResult = await shopeeGetOrderDetail(shopId, accessToken, [sn]);
+          if (isShopeeOrderNotFoundError(detailResult?.error, detailResult?.message)) {
+            order.__shopeeOrderNotFound = true;
+            console.warn(`[Shopee Print Enrich] get_order_detail retry NOT FOUND ${sn}`);
+            continue;
+          }
           const detailList = detailResult?.response?.order_list || detailResult?.order_list || [];
           const detail = detailList.find((d) => String(d?.order_sn || "") === sn) || detailList[0];
           if (detail) {
@@ -126675,6 +126733,11 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
             applyShopeePackageNumbers(order, extractShopeePackageNumbersFromPayload(detail, sn));
           }
         } catch (err) {
+          if (isShopeeOrderNotFoundError(err?.code || err?.error, err?.message || err)) {
+            order.__shopeeOrderNotFound = true;
+            console.warn(`[Shopee Print Enrich] get_order_detail retry NOT FOUND ${sn}:`, err?.message || err);
+            continue;
+          }
           console.warn(`[Shopee Print Enrich] get_order_detail retry ${sn}:`, err?.message || err);
         }
       }
@@ -130894,6 +130957,15 @@ async function startServer() {
           } catch (err) {
             console.warn(`[Get PDF] enrich ${orderSn}:`, err?.message || err);
           }
+          if (order.__shopeeOrderNotFound) {
+            pdfResults.push({
+              orderSn,
+              success: false,
+              error: "order_not_found",
+              message: `\u0110\u01A1n ${orderSn} kh\xF4ng t\u1ED3n t\u1EA1i tr\xEAn Shopee (not found).`
+            });
+            continue;
+          }
           const shippingRows = buildShopeeShippingDocOrderRows(order);
           if (shippingRows.length === 0) {
             pdfResults.push({
@@ -131171,6 +131243,14 @@ async function startServer() {
             `enrich:${orderSn}`,
             () => enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, [order])
           );
+          if (order.__shopeeOrderNotFound) {
+            failedBySn.set(orderSn, {
+              orderSn,
+              error: "order_not_found",
+              message: "\u0110\u01A1n kh\xF4ng t\u1ED3n t\u1EA1i tr\xEAn Shopee (get_order_detail not found)."
+            });
+            return null;
+          }
           const rows = buildShopeeShippingDocOrderRows(order);
           if (rows.length === 0) {
             failedBySn.set(orderSn, {
@@ -131189,10 +131269,12 @@ async function startServer() {
             })
           );
           if (!result.success || !result.filePath) {
+            const rawErr = String(result.error || "pdf_unavailable");
+            const hardError = rawErr === "fatal_error" || rawErr === "order_not_found" || rawErr === "package_should_print_first" || /timeout/i.test(rawErr) ? rawErr === "order_not_found" ? "order_not_found" : "fatal_error" : rawErr;
             failedBySn.set(orderSn, {
               orderSn,
-              error: result.error || "pdf_unavailable",
-              message: result.message || "Shopee ch\u01B0a tr\u1EA3 PDF h\u1EE3p l\u1EC7."
+              error: hardError,
+              message: hardError === "fatal_error" ? "Shopee t\u1EEB ch\u1ED1i t\u1EA1o file. Vui l\xF2ng ki\u1EC3m tra l\u1EA1i tr\u1EA1ng th\xE1i \u0111\u01A1n tr\xEAn Shopee." : result.message || "Shopee ch\u01B0a tr\u1EA3 PDF h\u1EE3p l\u1EC7."
             });
             return null;
           }
@@ -131208,11 +131290,13 @@ async function startServer() {
           putLabelMem(`order_${orderSn}.pdf`, buffer, "application/pdf");
           return { orderSns: [orderSn], buffer };
         } catch (err) {
+          const msg = String(err?.message || err);
           failedBySn.set(orderSn, {
             orderSn,
-            error: /batch_deadline/.test(String(err?.message || "")) ? "deadline" : "batch_pdf_error",
-            message: String(err?.message || err)
+            error: "fatal_error",
+            message: "Shopee t\u1EEB ch\u1ED1i t\u1EA1o file. Vui l\xF2ng ki\u1EC3m tra l\u1EA1i tr\u1EA1ng th\xE1i \u0111\u01A1n tr\xEAn Shopee."
           });
+          console.error(`[${logPrefix}] HARD STOP ${orderSn}:`, msg);
           return null;
         } finally {
           clearTimeout(deadlineTimer);
@@ -132837,12 +132921,14 @@ async function startServer() {
     }
     const batch = await batchDownloadShopeeWaybillPdf(shopId, orderList);
     if (!batch.success || !batch.filename || !batch.filePath || !batch.size) {
+      const rawErr = String(batch.error || "document_generation_failed");
+      const hardError = rawErr === "order_not_found" ? "order_not_found" : rawErr === "fatal_error" || rawErr === "package_should_print_first" || /timeout/i.test(rawErr) ? "fatal_error" : rawErr;
       return {
         success: false,
-        error: batch.error || "document_generation_failed",
-        message: batch.message || "Shopee batch print th\u1EA5t b\u1EA1i",
+        error: hardError,
+        message: hardError === "fatal_error" ? "Shopee t\u1EEB ch\u1ED1i t\u1EA1o file. Vui l\xF2ng ki\u1EC3m tra l\u1EA1i tr\u1EA1ng th\xE1i \u0111\u01A1n tr\xEAn Shopee." : batch.message || "Shopee batch print th\u1EA5t b\u1EA1i",
         skippedOrders: batch.skippedOrders || [],
-        permanent: false
+        permanent: true
       };
     }
     const orderSns = batch.readyOrderSns?.length ? batch.readyOrderSns : orderList.map((o) => o.order_sn);
@@ -133173,12 +133259,15 @@ async function startServer() {
       const successCount = results.filter((r2) => r2.success).length;
       const failCount = results.length - successCount;
       const elapsed = Date.now() - t0;
+      const firstFail = results.find((r2) => !r2.success);
+      const topError = successCount > 0 ? void 0 : String(firstFail?.error || "").trim() === "label_not_ready" || String(firstFail?.error || "").trim() === "package_should_print_first" || /timeout/i.test(String(firstFail?.error || "")) ? "fatal_error" : String(firstFail?.error || "fatal_error").trim() || "fatal_error";
+      const topMessage = topError === "fatal_error" ? "Shopee t\u1EEB ch\u1ED1i t\u1EA1o file. Vui l\xF2ng ki\u1EC3m tra l\u1EA1i tr\u1EA1ng th\xE1i \u0111\u01A1n tr\xEAn Shopee." : void 0;
       const failureMessage = [
         ...new Set(
           results.filter((r2) => !r2.success).map((r2) => String(r2.message || r2.error || "").trim()).filter(Boolean)
         )
       ].join("; ");
-      const message = successCount > 0 && failCount === 0 ? `\u0110\xE3 t\u1EA3i v\xE0 chu\u1EA9n b\u1ECB ${successCount} PDF (${elapsed}ms).` : successCount > 0 ? `\u0110\xE3 chu\u1EA9n b\u1ECB ${successCount}/${results.length} PDF. ${failCount} \u0111\u01A1n l\u1ED7i: ${failureMessage}` : failureMessage || "Shopee kh\xF4ng th\u1EC3 t\u1EA1o ho\u1EB7c t\u1EA3i PDF sau khi \u0111\xE3 polling h\u1EBFt s\u1ED1 l\u1EA7n cho ph\xE9p.";
+      const message = successCount > 0 && failCount === 0 ? `\u0110\xE3 t\u1EA3i v\xE0 chu\u1EA9n b\u1ECB ${successCount} PDF (${elapsed}ms).` : successCount > 0 ? `\u0110\xE3 chu\u1EA9n b\u1ECB ${successCount}/${results.length} PDF. ${failCount} \u0111\u01A1n l\u1ED7i: ${failureMessage}` : topMessage || failureMessage || "Shopee kh\xF4ng th\u1EC3 t\u1EA1o ho\u1EB7c t\u1EA3i PDF sau khi \u0111\xE3 polling h\u1EBFt s\u1ED1 l\u1EA7n cho ph\xE9p.";
       console.log(
         `[Print Local] Done ok=${successCount} fail=${failCount} missing=${missingOrders.length} ${elapsed}ms`
       );
@@ -133196,6 +133285,7 @@ async function startServer() {
       }
       return res.status(successCount > 0 ? 200 : 422).json({
         success: successCount > 0,
+        ...successCount === 0 ? { error: topError, permanent: true } : {},
         urls,
         url: urls[0] || null,
         mergedUrl: urls[0] || null,
@@ -133214,8 +133304,8 @@ async function startServer() {
       console.error("[Print Local] fatal:", err?.stack || err);
       return res.status(500).json({
         success: false,
-        error: "internal_error",
-        message: String(err?.message || err),
+        error: "fatal_error",
+        message: "Shopee t\u1EEB ch\u1ED1i t\u1EA1o file. Vui l\xF2ng ki\u1EC3m tra l\u1EA1i tr\u1EA1ng th\xE1i \u0111\u01A1n tr\xEAn Shopee.",
         urls: [],
         documents: []
       });
@@ -133264,6 +133354,10 @@ async function startServer() {
               await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, [order]);
             } catch (enrErr) {
               console.warn(`[Label Prepare BG] enrich ${sn}:`, enrErr?.message || enrErr);
+            }
+            if (order.__shopeeOrderNotFound) {
+              console.warn(`[Label Prepare BG] FAILED ${sn}: order_not_found \u2014 skip create`);
+              return;
             }
             const shippingRows = buildShopeeShippingDocOrderRows(order);
             if (shippingRows.length === 0) {
