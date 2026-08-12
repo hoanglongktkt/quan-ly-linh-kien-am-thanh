@@ -8644,8 +8644,8 @@ async function arrangeShipment(
   return arrangeShipmentLocal(order, method);
 }
 
-// Tem nhiệt dùng chung cho create/poll/download — TUYỆT ĐỐI không dùng NORMAL_AIR_WAYBILL.
-const SHOPEE_SHIPPING_DOCUMENT_TYPE = "THERMAL_AIR_WAYBILL" as const;
+// In thường dùng chung cho create/poll/download — TUYỆT ĐỐI không dùng THERMAL_AIR_WAYBILL.
+const SHOPEE_SHIPPING_DOCUMENT_TYPE = "NORMAL_AIR_WAYBILL" as const;
 
 // v2.logistics.get_tracking_number — for INTEGRATED channels, ship_order does
 // not return the tracking_number synchronously (the 3PL assigns it a few
@@ -8720,7 +8720,7 @@ async function shopeeGetShippingDocumentDataInfo(
 
 // v2.logistics.create_shipping_document — kicks off async AWB/label generation for up to 50 orders.
 // Payload chuẩn Shopee v2 (mỗi phần tử order_list BẮT BUỘC đủ 3 trường):
-//   { order_sn, package_number, shipping_document_type: "THERMAL_AIR_WAYBILL" }
+//   { order_sn, package_number, shipping_document_type: "NORMAL_AIR_WAYBILL" }
 // (+ tracking_number khi có mã carrier thật)
 async function shopeeCreateShippingDocument(
   shopId: string,
@@ -8741,7 +8741,7 @@ async function shopeeCreateShippingDocument(
       // Giữ nguyên tracking_number thực tế (kể cả mã OFG/SPX/J&T/GHN); không regex chặn.
       const tracking_number = rawTn ? rawTn : "";
       const incomingType = String(row?.shipping_document_type || "").trim();
-      // ÉP CỨNG THERMAL — bỏ NORMAL_AIR_WAYBILL / mọi type khác từ caller.
+      // ÉP CỨNG NORMAL_AIR_WAYBILL — bỏ THERMAL_AIR_WAYBILL / mọi type khác từ caller.
       if (incomingType && incomingType !== SHOPEE_SHIPPING_DOCUMENT_TYPE) {
         console.warn(
           `[Shopee API] create_shipping_document override type ${incomingType} → ${SHOPEE_SHIPPING_DOCUMENT_TYPE} order_sn=${order_sn}`,
@@ -8883,7 +8883,7 @@ async function shopeeGetShippingDocumentResult(
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
   const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
 
-  // shipping_document_type BẮT BUỘC THERMAL trong TỪNG item order_list.
+  // shipping_document_type BẮT BUỘC NORMAL_AIR_WAYBILL trong TỪNG item order_list.
   const pollOrderList = orderList.map((row) => ({
     order_sn: String(row?.order_sn || "").trim(),
     package_number: String(row?.package_number || "").trim(),
@@ -8937,7 +8937,7 @@ async function shopeeDownloadShippingDocument(
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
   const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
 
-  // shipping_document_type BẮT BUỘC THERMAL trong TỪNG item order_list.
+  // shipping_document_type BẮT BUỘC NORMAL_AIR_WAYBILL trong TỪNG item order_list.
   const downloadOrderList = orderList.map((row) => ({
     order_sn: String(row?.order_sn || "").trim(),
     package_number: String(row?.package_number || "").trim(),
@@ -9036,7 +9036,7 @@ type ShopeeWaybillOrderRow = {
   order_sn: string;
   package_number: string;
   tracking_number?: string;
-  /** Bắt buộc khi gọi create/poll/download — luôn THERMAL_AIR_WAYBILL. */
+  /** Bắt buộc khi gọi create/poll/download — luôn NORMAL_AIR_WAYBILL. */
   shipping_document_type?: string;
 };
 
@@ -9046,7 +9046,7 @@ function shippingDocRowKey(row: { order_sn?: string; package_number?: string }):
 
 function isPackageShouldPrintFirstError(error: unknown, message?: unknown): boolean {
   const text = `${String(error || "")} ${String(message || "")}`;
-  // Chỉ bắt "should print first" — KHÔNG match trần THERMAL_AIR_WAYBILL (tránh self-heal giả / vòng lặp).
+  // Chỉ bắt "should print first" — KHÔNG match trần NORMAL_AIR_WAYBILL (tránh self-heal giả / vòng lặp).
   return /should[_\s-]*print[_\s-]*first/i.test(text);
 }
 
@@ -9094,8 +9094,9 @@ function isShopeeOrderNotFoundError(error: unknown, message?: unknown): boolean 
 }
 
 /**
- * Luồng lấy PDF 1 đơn — ĐÚNG 5 bước tuyến tính, CẤM nhảy cóc.
- * B1 cache → B2 (rows đã có package_number) → B3 create → B4 poll READY → B5 download.
+ * Luồng lấy PDF 1 đơn — ĐÚNG 5 bước tuyến tính, CẤM nhảy cóc / bỏ Create.
+ * B1 cache → B2 (rows đã có package_number) → B3 create(NORMAL_AIR_WAYBILL)
+ * → chờ Shopee tiếp nhận → B4 poll READY → B5 download(NORMAL_AIR_WAYBILL).
  * Poll/Download báo "should print first" → Create khẩn cấp (payload ĐỘC LẬP 1 đơn) + sleep(2000) + retry Poll/Download đúng 1 lần.
  * Create khẩn cấp fail / catch → fatal_error (cấm package_should_print_first / timeout).
  */
@@ -9140,9 +9141,9 @@ async function fetchSingleOrderWaybillFromRows(
 
   const runCreate = async (label: string): Promise<SingleWaybillResult | null> => {
     console.log(
-      `[Shopee Print] B3 CREATE ${sn} (${label}) packages=${rows.map((r) => r.package_number).join(",")}`,
+      `[Shopee Print] B3 CREATE ${sn} (${label}) type=${SHOPEE_SHIPPING_DOCUMENT_TYPE} packages=${rows.map((r) => r.package_number).join(",")}`,
     );
-    // BẮT BUỘC: mỗi item order_list phải có shipping_document_type (thiếu → batch_api_all_failed).
+    // BẮT BUỘC: mỗi item order_list phải có shipping_document_type = NORMAL_AIR_WAYBILL.
     const order_list = rows.map((r) => ({
       order_sn: String(r.order_sn || "").trim(),
       package_number: String(r.package_number || "").trim(),
@@ -9314,7 +9315,7 @@ async function fetchSingleOrderWaybillFromRows(
     };
   };
 
-  // B3 CREATE lần đầu — luôn chờ 2s để Shopee đồng bộ trước khi Poll.
+  // B3 CREATE lần đầu (NORMAL_AIR_WAYBILL) — BẮT BUỘC trước Poll/Download; chờ 2s để Shopee tiếp nhận.
   const createFail = await runCreate("lần 1");
   if (createFail) {
     const errCode = String(createFail.error || "");
@@ -9328,6 +9329,9 @@ async function fetchSingleOrderWaybillFromRows(
     }
     return createFail;
   }
+  console.log(
+    `[Shopee Print] B3→B4 ${sn} đã create ${SHOPEE_SHIPPING_DOCUMENT_TYPE}, chờ Shopee tiếp nhận 2s rồi poll`,
+  );
   await sleep(2000);
 
   // B4+B5: Poll/Download + self-heal Create khẩn cấp ĐÚNG 1 lần (không for(;;) vô hạn).

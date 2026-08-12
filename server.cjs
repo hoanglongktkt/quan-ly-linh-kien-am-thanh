@@ -124266,7 +124266,7 @@ async function arrangeShipment(order, method, signal, opts) {
   }
   return arrangeShipmentLocal(order, method);
 }
-var SHOPEE_SHIPPING_DOCUMENT_TYPE = "THERMAL_AIR_WAYBILL";
+var SHOPEE_SHIPPING_DOCUMENT_TYPE = "NORMAL_AIR_WAYBILL";
 async function shopeeGetTrackingNumber(shopId, accessToken, orderSn, packageNumber) {
   const apiPath = "/api/v2/logistics/get_tracking_number";
   try {
@@ -124623,7 +124623,7 @@ async function fetchSingleOrderWaybillFromRows(shopId, accessToken, orderSn, row
   }
   const runCreate = async (label) => {
     console.log(
-      `[Shopee Print] B3 CREATE ${sn} (${label}) packages=${rows.map((r2) => r2.package_number).join(",")}`
+      `[Shopee Print] B3 CREATE ${sn} (${label}) type=${SHOPEE_SHIPPING_DOCUMENT_TYPE} packages=${rows.map((r2) => r2.package_number).join(",")}`
     );
     const order_list = rows.map((r2) => ({
       order_sn: String(r2.order_sn || "").trim(),
@@ -124782,6 +124782,9 @@ async function fetchSingleOrderWaybillFromRows(shopId, accessToken, orderSn, row
     }
     return createFail;
   }
+  console.log(
+    `[Shopee Print] B3\u2192B4 ${sn} \u0111\xE3 create ${SHOPEE_SHIPPING_DOCUMENT_TYPE}, ch\u1EDD Shopee ti\u1EBFp nh\u1EADn 2s r\u1ED3i poll`
+  );
   await sleep2(2e3);
   let selfHealUsed = false;
   try {
