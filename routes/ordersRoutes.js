@@ -30,7 +30,7 @@ import {
   markPrinted,
 } from "../controllers/ordersController.js";
 import { pullOrders, quickSyncOrders, syncOrders } from "../controllers/shopeeOrdersController.js";
-import { fastProcessOrders } from "../controllers/shopeeShipController.js";
+import { fastProcessOrders, shipOrderBulk } from "../controllers/shopeeShipController.js";
 import { saveScanOrders, listDonHoanHuy } from "../controllers/scanController.js";
 import {
   enqueueScanBg,
@@ -57,6 +57,9 @@ router.post("/sync", syncOrders);
 router.post("/pull", pullOrders);
 router.post("/quick-sync", quickSyncOrders);
 router.post("/fast-process", fastProcessOrders);
+router.post("/batch-confirm", shipOrderBulk);
+router.post("/confirm", shipOrderBulk);
+router.post("/batch-confirm-print", fastProcessOrders);
 router.post("/cleanup-handed-over", h(cleanupHandedOver));
 router.post("/batch-delete", h(batchDeleteOrders));
 router.post("/cleanup-label-pdfs", h(cleanupLabelPdfs));

@@ -16248,6 +16248,7 @@ async function startServer() {
   // Orders + system + Vietnam + Shopee (routers) — sau init scan/bulk deps
   // Binder: mount TRƯỚC ordersRoutes để không bao giờ dính placeholder "fast-process chưa khởi tạo".
   let boundFastProcessHandler: ((req: any, res: any) => any) | null = null;
+  let boundShipBulkHandler: ((req: any, res: any) => any) | null = null;
   const fastProcessRouteGuard = (req: any, res: any) => {
     if (typeof boundFastProcessHandler === "function") {
       return boundFastProcessHandler(req, res);
@@ -16257,8 +16258,20 @@ async function startServer() {
       message: "Đang khởi tạo dịch vụ xác nhận đơn — thử lại sau giây lát.",
     });
   };
+  const shipBulkRouteGuard = (req: any, res: any) => {
+    if (typeof boundShipBulkHandler === "function") {
+      return boundShipBulkHandler(req, res);
+    }
+    return res.status(503).json({
+      success: false,
+      message: "Đang khởi tạo dịch vụ xác nhận đơn — thử lại sau giây lát.",
+    });
+  };
   app.post("/api/orders/fast-process", authMiddleware, fastProcessRouteGuard);
   app.post("/api/shopee/orders/fast-process", authMiddleware, fastProcessRouteGuard);
+  app.post("/api/orders/batch-confirm", authMiddleware, shipBulkRouteGuard);
+  app.post("/api/orders/confirm", authMiddleware, shipBulkRouteGuard);
+  app.post("/api/orders/batch-confirm-print", authMiddleware, fastProcessRouteGuard);
 
   app.use("/api/orders", authMiddleware, ordersRoutes);
   // Endpoint tạm: quét đơn thiếu mã VĐ / kẹt unprocessed → get_order_detail
@@ -16948,21 +16961,25 @@ async function startServer() {
         `[Fast Process] Done ship=${successCount}/${toShip.length} shipFail=${shipFailed.length} ${elapsed}ms (PDF nền)`,
       );
 
+      const successOrders = results.filter((r) => r?.success);
       return res.status(200).json({
         success: true,
         processed: [],
         failed: shipFailed,
         total: toShip.length,
         successCount,
+        confirmedCount: successCount,
         failCount: shipFailed.length,
         failedCount: shipFailed.length,
         failedOrders: shipFailed,
         failedOrderDetails: shipFailed,
         printSkipped: [],
-        successfulOrderIds: results
-          .filter((r) => r?.success)
+        successfulOrderIds: successOrders
           .map((r) => String(r.orderId || r.orderSn || ""))
           .filter(Boolean),
+        successOrders,
+        printedOrders: [],
+        pdfCount: 0,
         results,
         url: null,
         mergedUrl: null,
@@ -17076,10 +17093,13 @@ async function startServer() {
     }
     message += ".";
 
+    const successOrders = results.filter((r) => r?.success);
     return res.json({
+      success: true,
       ...summary,
       failedCount: summary.failCount,
       failedOrders: summary.failedOrderDetails,
+      successOrders,
       results,
       orders: orders.filter(isValidOrder),
       printDocument: null,
@@ -17805,6 +17825,7 @@ async function startServer() {
     pruneOldShipOrderJobs,
   });
   boundFastProcessHandler = handleFastProcess;
+  boundShipBulkHandler = handleShipBulk;
   app.use("/api/shopee", authMiddleware, shopeeShipRoutes);
 
   initShopeePrintController({
@@ -17818,6 +17839,303 @@ async function startServer() {
   app.post("/api/shopee/print-document/create", authMiddleware, printBatchCreateHandler);
   app.post("/api/shopee/print-document/status", authMiddleware, printBatchStatusHandler);
   app.use("/api/shopee", authMiddleware, shopeePrintRoutes);
+
+  // Alias FE: xác nhận đơn (không PDF) — tránh 404 POST /api/orders/batch-confirm
+  app.post("/api/orders/batch-confirm", authMiddleware, handleShipBulk);
+  app.post("/api/orders/confirm", authMiddleware, handleShipBulk);
+  app.post("/api/orders/batch-confirm-print", authMiddleware, handleFastProcess);
+
+  const parseOrderSnsFromBody = (body: any): string[] => {
+    const raw = [
+      ...(Array.isArray(body?.orderSns) ? body.orderSns : []),
+      ...(Array.isArray(body?.order_sns) ? body.order_sns : []),
+      ...(Array.isArray(body?.orderIds) ? body.orderIds : []),
+      ...(Array.isArray(body?.order_ids) ? body.order_ids : []),
+    ];
+    return [
+      ...new Set(
+        raw
+          .map((s: any) => String(s || "").replace(/^shopee-/i, "").trim())
+          .filter(Boolean),
+      ),
+    ];
+  };
+
+  type LabelPrefetchJob = {
+    total: number;
+    orderSns: string[];
+    createdAt: number;
+  };
+  const labelPrefetchJobs = new Map<string, LabelPrefetchJob>();
+
+  const countReadyLabelSns = async (orderSns: string[]): Promise<number> => {
+    let orders: any[] = [];
+    try {
+      orders = await loadOrdersForShipScoped(orderSns, orderSns);
+    } catch {
+      orders = [];
+    }
+    const bySn = new Map<string, any>();
+    for (const o of orders) {
+      const sn = String(o?.orderSn || "").replace(/^shopee-/i, "").trim();
+      if (sn) bySn.set(sn, o);
+    }
+    let ready = 0;
+    for (const sn of orderSns) {
+      const order = bySn.get(sn) || { orderSn: sn, id: `shopee-${sn}` };
+      if (resolveLocalLabelForOrder(order) || findExistingLabelFile(sn)) ready += 1;
+    }
+    return ready;
+  };
+
+  app.post("/api/orders/get-pdf", authMiddleware, async (req, res) => {
+    try {
+      const orderSns = parseOrderSnsFromBody(req.body || {});
+      if (!orderSns.length) {
+        return res.status(400).json({ success: false, message: "Thiếu orderSns.", results: [] });
+      }
+      let orders: any[] = [];
+      try {
+        orders = await loadOrdersForShipScoped(orderSns, orderSns);
+      } catch (loadErr: any) {
+        console.warn("[get-pdf] load:", loadErr?.message || loadErr);
+      }
+      const bySn = new Map<string, any>();
+      for (const o of orders) {
+        const sn = String(o?.orderSn || "").replace(/^shopee-/i, "").trim();
+        if (sn) bySn.set(sn, o);
+      }
+      const missing: any[] = [];
+      const results = orderSns.map((sn) => {
+        const order = bySn.get(sn) || { orderSn: sn, id: `shopee-${sn}` };
+        const local = resolveLocalLabelForOrder(order);
+        if (local?.url) {
+          return { success: true, orderSn: sn, orderId: local.orderId, url: local.url, pdfFilename: local.pdfFilename };
+        }
+        missing.push(order);
+        return { success: false, orderSn: sn, error: "label_not_ready", message: "PDF chưa sẵn sàng." };
+      });
+      if (missing.length) {
+        try {
+          firePrepareShippingLabelsForOrders(missing);
+        } catch (bgErr: any) {
+          console.warn("[get-pdf] prepare:", bgErr?.message || bgErr);
+        }
+      }
+      const ok = results.filter((r) => r.success);
+      return res.status(ok.length ? 200 : 409).json({
+        success: ok.length > 0,
+        results,
+        urls: ok.map((r) => r.url).filter(Boolean),
+        message: ok.length
+          ? `Đã lấy ${ok.length}/${results.length} PDF.`
+          : "PDF chưa sẵn sàng — đang tải ngầm, thử lại sau.",
+      });
+    } catch (err: any) {
+      console.error("[get-pdf]", err?.stack || err);
+      return res.status(500).json({ success: false, message: err?.message || String(err), results: [] });
+    }
+  });
+
+  app.post("/api/orders/batch-print-only", authMiddleware, async (req, res) => {
+    beginLogisticsWork("batch-print-only");
+    try {
+      const orderSns = parseOrderSnsFromBody(req.body || {});
+      if (!orderSns.length) {
+        return res.status(400).json({ success: false, message: "Thiếu orderSns." });
+      }
+      let orders: any[] = [];
+      try {
+        orders = await loadOrdersForShipScoped(orderSns, orderSns);
+      } catch (loadErr: any) {
+        console.warn("[batch-print-only] load:", loadErr?.message || loadErr);
+      }
+      const bySn = new Map<string, any>();
+      for (const o of orders) {
+        const sn = String(o?.orderSn || "").replace(/^shopee-/i, "").trim();
+        if (sn) bySn.set(sn, o);
+      }
+
+      const buffers: Buffer[] = [];
+      const printedOrders: string[] = [];
+      const failedOrders: Array<{ orderSn: string; error: string; message: string }> = [];
+      const missingByShop = new Map<string, any[]>();
+
+      for (const sn of orderSns) {
+        const order = bySn.get(sn) || { orderSn: sn, id: `shopee-${sn}` };
+        const local = resolveLocalLabelForOrder(order);
+        const mem = local?.pdfFilename ? getLabelMem(local.pdfFilename) : null;
+        if (mem?.buf && isPdfBuffer(mem.buf)) {
+          buffers.push(mem.buf);
+          printedOrders.push(sn);
+          continue;
+        }
+        const shopId = String(order?.shopId || resolveOrderShopId(order) || "").trim();
+        if (!shopId) {
+          failedOrders.push({ orderSn: sn, error: "missing_shop", message: "Thiếu shopId." });
+          continue;
+        }
+        const list = missingByShop.get(shopId) || [];
+        list.push(order);
+        missingByShop.set(shopId, list);
+      }
+
+      for (const [shopId, shopOrders] of missingByShop) {
+        try {
+          const rows = shopOrders
+            .map((o) => buildShopeeShippingDocOrderRow(o))
+            .filter(Boolean) as any[];
+          if (!rows.length) {
+            for (const o of shopOrders) {
+              failedOrders.push({
+                orderSn: String(o.orderSn || ""),
+                error: "invalid_shipping_row",
+                message: "Thiếu package/tracking để lấy PDF.",
+              });
+            }
+            continue;
+          }
+          const gen = await generateShopeeShippingDocument(shopId, rows);
+          if (gen.success && gen.buffer && isPdfBuffer(gen.buffer)) {
+            buffers.push(gen.buffer);
+            const ready = Array.isArray(gen.orderSns) && gen.orderSns.length ? gen.orderSns : rows.map((r) => r.order_sn);
+            printedOrders.push(...ready.map((s: string) => String(s).replace(/^shopee-/i, "").trim()).filter(Boolean));
+            if (Array.isArray(gen.skippedOrders)) {
+              for (const skipped of gen.skippedOrders) {
+                const sn = String(skipped?.orderSn || skipped?.order_sn || skipped || "").trim();
+                if (sn) {
+                  failedOrders.push({
+                    orderSn: sn,
+                    error: String(skipped?.error || "skipped"),
+                    message: String(skipped?.message || "Shopee bỏ qua đơn này."),
+                  });
+                }
+              }
+            }
+          } else {
+            for (const o of shopOrders) {
+              failedOrders.push({
+                orderSn: String(o.orderSn || ""),
+                error: String(gen.error || "print_failed"),
+                message: String(gen.message || "Không lấy được PDF từ Shopee."),
+              });
+            }
+          }
+        } catch (shopErr: any) {
+          for (const o of shopOrders) {
+            failedOrders.push({
+              orderSn: String(o.orderSn || ""),
+              error: "print_exception",
+              message: String(shopErr?.message || shopErr),
+            });
+          }
+        }
+      }
+
+      const uniquePrinted = [...new Set(printedOrders.filter(Boolean))];
+      if (!buffers.length) {
+        try {
+          firePrepareShippingLabelsForOrders(orderSns.map((sn) => bySn.get(sn) || { orderSn: sn }));
+        } catch {
+          /* ignore */
+        }
+        return res.status(409).json({
+          success: false,
+          message: "PDF chưa sẵn sàng — đang tải từ sàn, thử lại sau.",
+          pdfCount: 0,
+          printedOrders: [],
+          failedOrders,
+        });
+      }
+
+      const merged = await mergePdfLabelBuffers(buffers);
+      const filename = buildMergedLabelFilename(uniquePrinted);
+      saveLabelFile(merged, filename, "application/pdf");
+      const url = absoluteLabelUrl(`/api/public/labels/${filename}`);
+      if (uniquePrinted.length) {
+        setImmediate(() => {
+          void markOrdersPrintedInStore(uniquePrinted, true, {
+            labelUrl: url,
+            waybill_url: url,
+            pdfFilename: filename,
+          }).catch(() => {});
+        });
+      }
+      return res.json({
+        success: true,
+        url,
+        mergedUrl: url,
+        filename,
+        pdfCount: uniquePrinted.length,
+        printedOrders: uniquePrinted,
+        failedOrders,
+        message: `Đã gộp ${uniquePrinted.length} PDF.`,
+      });
+    } catch (err: any) {
+      console.error("[batch-print-only]", err?.stack || err);
+      return res.status(500).json({ success: false, message: err?.message || String(err) });
+    } finally {
+      endLogisticsWork("batch-print-only");
+    }
+  });
+
+  app.post("/api/orders/silent-prefetch-pdfs", authMiddleware, async (req, res) => {
+    try {
+      const orderSns = parseOrderSnsFromBody(req.body || {});
+      if (!orderSns.length) {
+        return res.status(400).json({ success: false, message: "Thiếu orderSns." });
+      }
+      const batchId = `pf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      labelPrefetchJobs.set(batchId, { total: orderSns.length, orderSns, createdAt: Date.now() });
+      let orders: any[] = [];
+      try {
+        orders = await loadOrdersForShipScoped(orderSns, orderSns);
+      } catch {
+        orders = orderSns.map((sn) => ({ orderSn: sn }));
+      }
+      try {
+        firePrepareShippingLabelsForOrders(orders.length ? orders : orderSns.map((sn) => ({ orderSn: sn })));
+      } catch (bgErr: any) {
+        console.warn("[silent-prefetch] prepare:", bgErr?.message || bgErr);
+      }
+      const succeeded = await countReadyLabelSns(orderSns);
+      return res.json({
+        success: true,
+        batchId,
+        total: orderSns.length,
+        succeeded,
+      });
+    } catch (err: any) {
+      console.error("[silent-prefetch]", err?.stack || err);
+      return res.status(500).json({ success: false, message: err?.message || String(err) });
+    }
+  });
+
+  app.get("/api/orders/prefetch-status/:batchId", authMiddleware, async (req, res) => {
+    try {
+      const batchId = String(req.params.batchId || "").trim();
+      const job = labelPrefetchJobs.get(batchId);
+      if (!job) {
+        return res.status(404).json({ success: false, message: "Không tìm thấy batch PDF." });
+      }
+      const succeeded = await countReadyLabelSns(job.orderSns);
+      const elapsed = Date.now() - job.createdAt;
+      const isDone = succeeded >= job.total || elapsed >= 55_000;
+      const failed = isDone ? Math.max(0, job.total - succeeded) : 0;
+      return res.json({
+        success: true,
+        batchId,
+        succeeded,
+        total: job.total,
+        failed,
+        isDone,
+      });
+    } catch (err: any) {
+      console.error("[prefetch-status]", err?.stack || err);
+      return res.status(500).json({ success: false, message: err?.message || String(err) });
+    }
+  });
+
 
   async function checkShopConnectionStatus(shop: any): Promise<{
     online: boolean;
