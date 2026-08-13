@@ -1386,6 +1386,7 @@ async function shopeeGetReturnDetail(shopId: string, accessToken: string, return
       url,
       `get_return_detail shop_id=${shopId} return_sn=${returnSn}`,
     );
+    console.error("=== RAW SHOPEE RETURN DETAIL ===", JSON.stringify(json, null, 2));
     if (json.error) {
       const errMsg = formatShopeeApiError(json, httpStatus);
       console.warn(`[Shopee Returns] get_return_detail ${returnSn}: ${errMsg}`);
