@@ -1472,17 +1472,6 @@ function extractShopeeReturnLogisticsStatus(detail: any, reversePayload?: any): 
   return blobs.join(" | ");
 }
 
-function applyReturnWaybillFields(target: any, tracking: string, logisticsStatus?: string) {
-  const tn = String(tracking || "").trim();
-  if (tn && !/^0FG/i.test(tn)) {
-    target.return_tracking_no = tn;
-    target.returnTrackingNumber = tn;
-    target.returnTrackingFromApi = true;
-  }
-  const log = String(logisticsStatus || "").trim();
-  if (log) target.return_logistics_status = log;
-}
-
 function outboundTrackingOf(order: any): string {
   return String(order?.trackingNumber || order?.tracking_no || "").trim();
 }
@@ -1491,17 +1480,77 @@ function returnTrackingOf(order: any): string {
   return String(order?.returnTrackingNumber || order?.return_tracking_no || "").trim();
 }
 
-/** True khi mã hoàn đang bị gán nhầm bằng mã chiều đi. */
+/**
+ * Đơn trả hàng hoàn tiền: 2 mã VĐ PHẢI khác nhau.
+ * Đơn hủy / giao không thành công (ROTS): 2 mã được phép giống nhau.
+ */
+function shouldReturnTrackingDifferFromOutbound(orderOrDetail: any): boolean {
+  const type = Number(
+    orderOrDetail?.return_refund_request_type ?? orderOrDetail?.return_refund_type ?? -1,
+  );
+  if (type === 2) return false;
+  const kind = String(orderOrDetail?.shopee_cancel_return_kind || "").trim();
+  if (kind === "cancelled" || kind === "failed_delivery") return false;
+  if (kind === "refund_return") return true;
+  if (type === 0 || type === 1) return true;
+  const raw = String(orderOrDetail?.shopee_order_status || "").toUpperCase();
+  if (raw === "CANCELLED" || raw === "IN_CANCEL") return false;
+  const status = String(orderOrDetail?.status || "").toLowerCase();
+  if (status === "cancelled") return false;
+  if (
+    raw === "TO_RETURN" ||
+    status === "return_pending" ||
+    status === "return_received" ||
+    Boolean(orderOrDetail?.return_sn)
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function isReturnTrackingCopiedFromOutbound(order: any): boolean {
   const out = outboundTrackingOf(order);
   const ret = returnTrackingOf(order);
-  return Boolean(out && ret && out === ret);
+  if (!out || !ret || out !== ret) return false;
+  return shouldReturnTrackingDifferFromOutbound(order);
+}
+
+function pickReturnWaybillDistinct(
+  outboundTn: string,
+  mustDiffer: boolean,
+  ...candidates: unknown[]
+): string {
+  const out = String(outboundTn || "").trim();
+  for (const c of candidates) {
+    const s = String(c || "").trim();
+    if (!s || s.length < 4 || /^0FG/i.test(s)) continue;
+    if (mustDiffer && out && s === out) continue;
+    return s;
+  }
+  return "";
+}
+
+function applyReturnWaybillFields(
+  target: any,
+  tracking: string,
+  logisticsStatus?: string,
+  opts?: { outboundTn?: string; mustDiffer?: boolean },
+) {
+  const tn = String(tracking || "").trim();
+  const out = String(opts?.outboundTn || outboundTrackingOf(target) || "").trim();
+  const mustDiffer = opts?.mustDiffer === true || shouldReturnTrackingDifferFromOutbound(target);
+  if (tn && !/^0FG/i.test(tn) && !(mustDiffer && out && tn === out)) {
+    target.return_tracking_no = tn;
+    target.returnTrackingNumber = tn;
+    target.returnTrackingFromApi = true;
+  }
+  const log = String(logisticsStatus || "").trim();
+  if (log) target.return_logistics_status = log;
 }
 
 /**
- * Shopee Open API v2.returns.get_return_detail:
- * response.tracking_number = mã vận đơn chiều hoàn do ĐVVC hoàn cấp.
- * CHỈ lấy field top-level — không deep-walk (tránh nhặt tracking chiều đi).
+ * Shopee v2.returns.get_return_detail.tracking_number — có thể vẫn là mã chiều đi.
+ * Với refund_return phải đối chiếu outbound rồi lấy reverse tracking.
  */
 function extractReturnDetailTrackingNumber(payload: any): string {
   const root = payload?.response ?? payload ?? {};
@@ -1510,32 +1559,53 @@ function extractReturnDetailTrackingNumber(payload: any): string {
   return tn;
 }
 
-/** Lấy mã vận đơn chiều hoàn: get_return_detail.tracking_number (bắt buộc), reverse fallback. */
+/**
+ * Mã VĐ chiều hoàn:
+ * - refund_return: get_reverse_tracking_info.tracking_number (khác mã đi)
+ * - cancelled / ROTS: được phép trùng mã đi
+ */
 async function fetchReturnShippingTrackingNumber(
   shopId: string,
   accessToken: string,
   returnSn: string,
   detailPayload?: any,
+  opts?: { outboundTn?: string; kind?: string },
 ): Promise<{ tracking: string; sources: Record<string, string>; logisticsStatus: string }> {
   const sources: Record<string, string> = {};
+  const detailBody = detailPayload?.response ?? detailPayload ?? {};
+  const kind =
+    opts?.kind ||
+    (detailBody.shopee_cancel_return_kind
+      ? String(detailBody.shopee_cancel_return_kind)
+      : mapShopeeReturnKind(detailBody));
+  const mustDiffer =
+    kind === "refund_return" ||
+    shouldReturnTrackingDifferFromOutbound({ ...detailBody, shopee_cancel_return_kind: kind });
+  const outboundTn = String(opts?.outboundTn || "").trim();
   const fromDetail = extractReturnDetailTrackingNumber(detailPayload);
   if (fromDetail) sources.return_detail = fromDetail;
 
   let fromReverse = "";
   let reversePayload: any = null;
-  if (!fromDetail) {
+  const needReverse = mustDiffer || !fromDetail || Boolean(outboundTn && fromDetail === outboundTn);
+  if (needReverse) {
     try {
       const reverse = await shopeeGetReverseTrackingInfo(shopId, accessToken, returnSn);
       reversePayload = reverse;
       if (!reverse?.error) {
         const body = reverse?.response ?? reverse ?? {};
-        fromReverse = pickBestTrackingNumber(
+        fromReverse = pickReturnWaybillDistinct(
+          outboundTn,
+          mustDiffer,
           body.tracking_number,
           body.rts_tracking_number,
         );
         if (fromReverse) sources.reverse_tracking_info = fromReverse;
         console.log(
-          `[Shopee Returns] reverse_tracking return_sn=${returnSn} tracking_number=${body.tracking_number || "(empty)"} rts=${body.rts_tracking_number || "(empty)"} extracted=${fromReverse || "(empty)"}`,
+          `[Shopee Returns] reverse_tracking return_sn=${returnSn}` +
+            ` tracking_number=${body.tracking_number || "(empty)"}` +
+            ` rts=${body.rts_tracking_number || "(empty)"}` +
+            ` extracted=${fromReverse || "(empty)"} kind=${kind} outbound=${outboundTn || "(empty)"}`,
         );
       } else {
         const errText = `${reverse.error || ""} ${reverse.message || ""}`;
@@ -1555,12 +1625,12 @@ async function fetchReturnShippingTrackingNumber(
     }
   }
 
-  // Ưu tiên get_return_detail.tracking_number — không lấy trackingNumber outbound.
-  const tracking = pickBestTrackingNumber(fromDetail, fromReverse);
+  const tracking = pickReturnWaybillDistinct(outboundTn, mustDiffer, fromReverse, fromDetail);
   const logisticsStatus = extractShopeeReturnLogisticsStatus(detailPayload, reversePayload);
   console.log(
     `[Shopee Returns] returnTrackingNumber=${tracking || "(empty)"} return_sn=${returnSn}` +
-      ` source=${fromDetail ? "get_return_detail.tracking_number" : fromReverse ? "get_reverse_tracking_info" : "none"}`,
+      ` kind=${kind} mustDiffer=${mustDiffer} outbound=${outboundTn || "(empty)"}` +
+      ` source=${fromReverse && tracking === fromReverse ? "get_reverse_tracking_info" : tracking === fromDetail ? "get_return_detail.tracking_number" : "none"}`,
   );
   return { tracking, sources, logisticsStatus };
 }
@@ -2361,11 +2431,13 @@ async function resolveOrderFromShopeeByScanCode(rawCode: string): Promise<any | 
           const detailResult = await shopeeGetReturnDetail(shopId, accessToken, returnSn);
           if (detailResult?.error) continue;
           const detail = detailResult?.response ?? detailResult ?? {};
+          const kind = mapShopeeReturnKind(detail);
           const { tracking: rtn } = await fetchReturnShippingTrackingNumber(
             shopId,
             accessToken,
             returnSn,
             detailResult,
+            { kind },
           );
           const candidates = [
             rtn,
@@ -4657,18 +4729,27 @@ async function syncShopeeReturnRequests(opts?: {
             if (!orderSn) continue;
             const mappedReturnSn =
               extractReturnRequestCode(detail) || returnSn;
+            const existing = orders.find((o: any) => String(o.orderSn) === orderSn);
 
-            const detailTn = extractReturnDetailTrackingNumber(detailResult);
-            const { tracking: reverseTn, logisticsStatus: returnLogistics } =
+            const kind = mapShopeeReturnKind(detail);
+            const outboundTn = outboundTrackingOf(existing);
+            const mustDiffer =
+              kind === "refund_return" ||
+              shouldReturnTrackingDifferFromOutbound({
+                ...detail,
+                shopee_cancel_return_kind: kind,
+                status: existing?.status,
+                shopee_order_status: existing?.shopee_order_status,
+                return_sn: mappedReturnSn,
+              });
+            const { tracking: returnShipTn, logisticsStatus: returnLogistics } =
               await fetchReturnShippingTrackingNumber(
               shopId,
               accessToken,
               mappedReturnSn,
               detailResult,
+              { outboundTn, kind },
             );
-            // BẮT BUỘC: tracking_number từ get_return_detail — không lấy trackingNumber outbound.
-            const returnShipTn = pickBestTrackingNumber(detailTn, reverseTn);
-            const kind = mapShopeeReturnKind(detail);
             const returnStatus = String(detail.status || row.status || "").toUpperCase();
             const refundAmount = Number(detail.refund_amount);
             const reason = String(detail.reason || "").trim();
@@ -4699,7 +4780,6 @@ async function syncShopeeReturnRequests(opts?: {
                   : undefined,
             }));
 
-            const existing = orders.find((o: any) => String(o.orderSn) === orderSn);
             const existingRaw = String(existing?.shopee_order_status || "").toUpperCase();
             const alreadyCancelled =
               existingRaw === "CANCELLED" ||
@@ -4735,32 +4815,38 @@ async function syncShopeeReturnRequests(opts?: {
             };
 
             if (returnShipTn) {
-              applyReturnWaybillFields(patch, returnShipTn, returnLogistics);
+              applyReturnWaybillFields(patch, returnShipTn, returnLogistics, {
+                outboundTn,
+                mustDiffer,
+              });
               console.log(
-                `[Shopee Returns] returnTrackingNumber=${returnShipTn} order_sn=${orderSn} return_sn=${mappedReturnSn}` +
-                  ` source=${detailTn ? "get_return_detail.tracking_number" : "get_reverse_tracking_info"}`,
+                `[Shopee Returns] returnTrackingNumber=${returnShipTn} order_sn=${orderSn} return_sn=${mappedReturnSn} kind=${kind} outbound=${outboundTn || "(empty)"}`,
               );
             } else if (
               existing &&
               returnTrackingOf(existing) &&
-              !isReturnTrackingCopiedFromOutbound(existing)
+              !isReturnTrackingCopiedFromOutbound({
+                ...existing,
+                shopee_cancel_return_kind: kind,
+                return_refund_request_type: detail.return_refund_request_type,
+              })
             ) {
               applyReturnWaybillFields(
                 patch,
                 returnTrackingOf(existing),
                 returnLogistics || existing.return_logistics_status,
+                { outboundTn, mustDiffer },
               );
             } else {
               if (returnLogistics) patch.return_logistics_status = returnLogistics;
-              if (existing && isReturnTrackingCopiedFromOutbound(existing)) {
+              if (mustDiffer && outboundTn && returnTrackingOf(existing) === outboundTn) {
                 patch.clearCopiedReturnTracking = true;
                 patch.returnTrackingNumber = "";
                 patch.return_tracking_no = "";
               }
               console.log(
                 `[Shopee Returns] returnTrackingNumber=(empty) order_sn=${orderSn} return_sn=${mappedReturnSn}` +
-                  ` — không copy trackingNumber chiều đi` +
-                  `${existing && isReturnTrackingCopiedFromOutbound(existing) ? " (xóa bản copy)" : ""}`,
+                  ` kind=${kind} outbound=${outboundTn || "(empty)"} — không copy trackingNumber chiều đi`,
               );
             }
 
@@ -11262,15 +11348,23 @@ function preserveExistingTrackingIfIncomingEmpty(target: any, existing: any | un
     target.returnTrackingNumber || target.return_tracking_no || "",
   ).trim();
   const existingOutTn = String(existing.trackingNumber || existing.tracking_no || "").trim();
-  const existingReturnIsCopy = Boolean(
-    existingReturnTn && existingOutTn && existingReturnTn === existingOutTn,
-  );
+  const existingReturnIsCopy = isReturnTrackingCopiedFromOutbound({
+    ...existing,
+    ...target,
+    trackingNumber: existingOutTn || target.trackingNumber,
+    tracking_no: existingOutTn || target.tracking_no,
+    returnTrackingNumber: existingReturnTn,
+    return_tracking_no: existingReturnTn,
+  });
   if (existingReturnTn && !incomingReturnTn && !existingReturnIsCopy) {
     target.return_tracking_no = existingReturnTn;
     target.returnTrackingNumber = existingReturnTn;
   } else if (incomingReturnTn) {
-    target.return_tracking_no = incomingReturnTn;
-    target.returnTrackingNumber = incomingReturnTn;
+    const mustDiffer = shouldReturnTrackingDifferFromOutbound({ ...existing, ...target });
+    if (!(mustDiffer && existingOutTn && incomingReturnTn === existingOutTn)) {
+      target.return_tracking_no = incomingReturnTn;
+      target.returnTrackingNumber = incomingReturnTn;
+    }
   }
   // Cờ đối soát kho — không lấy từ Shopee.
   target.internalReturnReceiptStatus =
@@ -11337,12 +11431,21 @@ function mergeShopeeTrackingFields(merged: any, existing: any, incoming: any) {
   } else if (existing?.shopee_cancel_return_kind) {
     merged.shopee_cancel_return_kind = existing.shopee_cancel_return_kind;
   }
-  // return_tracking_no giữ riêng — tuyệt đối không lấy trackingNumber outbound.
+  // return_tracking_no giữ riêng.
+  // refund_return: không lưu nếu trùng mã đi. cancelled/ROTS: được phép trùng.
+  const mustDifferReturn = shouldReturnTrackingDifferFromOutbound(merged);
+  const outTnForReturn = String(
+    existing?.trackingNumber || existing?.tracking_no || existingTnBefore || "",
+  ).trim();
   if (incoming?.returnTrackingNumber || incoming?.return_tracking_no) {
     const rtn = String(incoming.returnTrackingNumber || incoming.return_tracking_no).trim();
-    if (rtn) {
+    if (rtn && !(mustDifferReturn && outTnForReturn && rtn === outTnForReturn)) {
       merged.return_tracking_no = rtn;
       merged.returnTrackingNumber = rtn;
+    } else if (mustDifferReturn && outTnForReturn && rtn === outTnForReturn) {
+      merged.return_tracking_no = "";
+      merged.returnTrackingNumber = "";
+      merged.clearCopiedReturnTracking = true;
     }
   } else if (incoming?.clearCopiedReturnTracking) {
     merged.return_tracking_no = "";
@@ -11350,12 +11453,11 @@ function mergeShopeeTrackingFields(merged: any, existing: any, incoming: any) {
     merged.clearCopiedReturnTracking = true;
   } else if (existing?.returnTrackingNumber || existing?.return_tracking_no) {
     const rtn = String(existing.returnTrackingNumber || existing.return_tracking_no).trim();
-    const outTn = String(existing?.trackingNumber || existing?.tracking_no || existingTnBefore || "").trim();
-    if (rtn && rtn !== outTn) {
+    if (rtn && (!mustDifferReturn || rtn !== outTnForReturn)) {
       merged.return_tracking_no = rtn;
       merged.returnTrackingNumber = rtn;
     }
-  } else if (existingReturnBefore && existingReturnBefore !== existingTnBefore) {
+  } else if (existingReturnBefore && (!mustDifferReturn || existingReturnBefore !== existingTnBefore)) {
     merged.return_tracking_no = existingReturnBefore;
     merged.returnTrackingNumber = existingReturnBefore;
   }
@@ -11374,13 +11476,20 @@ function mergeShopeeTrackingFields(merged: any, existing: any, incoming: any) {
     merged.tracking_no = existingTn;
     const keptReturn =
       String(merged.return_tracking_no || existing?.return_tracking_no || existingReturnBefore || "").trim();
-    if (incoming?.returnTrackingFromApi && keptReturn) {
+    if (
+      incoming?.returnTrackingFromApi &&
+      keptReturn &&
+      (!mustDifferReturn || keptReturn !== existingTn)
+    ) {
       merged.return_tracking_no = keptReturn;
       merged.returnTrackingNumber = keptReturn;
     } else if (keptReturn && keptReturn !== existingTn) {
       merged.return_tracking_no = keptReturn;
       merged.returnTrackingNumber = keptReturn;
-    } else if (incoming?.clearCopiedReturnTracking) {
+    } else if (keptReturn && keptReturn === existingTn && !mustDifferReturn) {
+      merged.return_tracking_no = keptReturn;
+      merged.returnTrackingNumber = keptReturn;
+    } else if (incoming?.clearCopiedReturnTracking || (mustDifferReturn && keptReturn === existingTn)) {
       merged.return_tracking_no = "";
       merged.returnTrackingNumber = "";
       merged.clearCopiedReturnTracking = true;
@@ -12690,40 +12799,28 @@ async function enrichShopeeOrderTrackingFromApi(
         try {
           const detail = await shopeeGetReturnDetail(shopId, accessToken, returnSn);
           const body = detail?.response ?? detail;
-          const tn = extractReturnDetailTrackingNumber(detail);
           if (body?.status) order.return_status = String(body.status);
-          const returnLogistics = extractShopeeReturnLogisticsStatus(detail, undefined);
-          if (returnLogistics) order.return_logistics_status = returnLogistics;
-          if (tn) {
-            order.return_tracking_no = tn;
-            order.returnTrackingNumber = tn;
+          const kind = mapShopeeReturnKind(body);
+          if (!order.shopee_cancel_return_kind) order.shopee_cancel_return_kind = kind;
+          const fetched = await fetchReturnShippingTrackingNumber(
+            shopId,
+            accessToken,
+            returnSn,
+            detail,
+            { outboundTn: outboundTrackingOf(order), kind },
+          );
+          if (fetched.logisticsStatus) order.return_logistics_status = fetched.logisticsStatus;
+          if (fetched.tracking) {
+            order.return_tracking_no = fetched.tracking;
+            order.returnTrackingNumber = fetched.tracking;
             order.returnTrackingFromApi = true;
             console.log(
-              `[Shopee Returns] returnTrackingNumber=${tn} order_sn=${order.orderSn} return_sn=${returnSn} source=get_return_detail.tracking_number`,
+              `[Shopee Returns] returnTrackingNumber=${fetched.tracking} order_sn=${order.orderSn} return_sn=${returnSn} kind=${kind}`,
             );
-          }
-          if (!tn) {
-            const reverse = await shopeeGetReverseTrackingInfo(shopId, accessToken, returnSn);
-            const errText = `${reverse?.error || ""} ${reverse?.message || ""}`;
-            if (/error_reverse_logistics|does not have reverse logistics/i.test(errText)) {
-              setTrackingEnrichCooldown(order, "reverse_logistics_pending");
-            } else {
-              const rtn = extractReturnDetailTrackingNumber(reverse) ||
-                pickBestTrackingNumber(
-                  reverse?.response?.tracking_number,
-                  reverse?.response?.rts_tracking_number,
-                );
-              if (rtn) {
-                order.return_tracking_no = rtn;
-                order.returnTrackingNumber = rtn;
-                order.returnTrackingFromApi = true;
-                console.log(
-                  `[Shopee Returns] returnTrackingNumber=${rtn} order_sn=${order.orderSn} return_sn=${returnSn} source=get_reverse_tracking_info`,
-                );
-              }
-              const reverseLogistics = extractShopeeReturnLogisticsStatus(detail, reverse);
-              if (reverseLogistics) order.return_logistics_status = reverseLogistics;
-            }
+          } else if (shouldReturnTrackingDifferFromOutbound(order) && isReturnTrackingCopiedFromOutbound(order)) {
+            order.return_tracking_no = "";
+            order.returnTrackingNumber = "";
+            order.clearCopiedReturnTracking = true;
           }
         } catch (retErr: any) {
           console.warn(
@@ -12973,6 +13070,10 @@ async function enrichMissingShopeeTracking(): Promise<{
                     accessToken,
                     returnSn,
                     detail,
+                    {
+                      outboundTn: outboundTrackingOf(order),
+                      kind: String(order.shopee_cancel_return_kind || mapShopeeReturnKind(detail?.response ?? detail) || ""),
+                    },
                   );
                   if (returnTracking.tracking) {
                     order.return_tracking_no = returnTracking.tracking;
@@ -17719,28 +17820,32 @@ async function applyWebhookReturnFallback(
   const kind = mapShopeeReturnKind(detail);
   const returnStatus = String(detail.status || "").toUpperCase();
   const mappedReturnSn = extractReturnRequestCode(detail) || returnSn;
-  const detailTn = extractReturnDetailTrackingNumber(detailResult);
+  const idx = orders.findIndex((o: any) => String(o.orderSn) === orderSn);
+  const existing = idx >= 0 ? orders[idx] : undefined;
+  const outboundTn = outboundTrackingOf(existing);
+  const mustDiffer =
+    kind === "refund_return" ||
+    shouldReturnTrackingDifferFromOutbound({
+      ...detail,
+      shopee_cancel_return_kind: kind,
+      status: existing?.status,
+      shopee_order_status: existing?.shopee_order_status,
+      return_sn: mappedReturnSn,
+    });
   const {
     tracking: returnShipTn,
-    sources: tnSources,
     logisticsStatus: returnLogistics,
   } = await fetchReturnShippingTrackingNumber(
     shopId,
     accessToken,
     mappedReturnSn,
     detailResult,
+    { outboundTn, kind },
   );
-  const idx = orders.findIndex((o: any) => String(o.orderSn) === orderSn);
-  const existing = idx >= 0 ? orders[idx] : undefined;
-  const bestTn = pickBestTrackingNumber(
-    detailTn,
-    returnShipTn,
-    tnSources.return_detail,
-    tnSources.reverse_tracking_info,
-  );
+  const bestTn = pickReturnWaybillDistinct(outboundTn, mustDiffer, returnShipTn);
   console.log(
     `[Shopee Returns] returnTrackingNumber=${bestTn || "(empty)"} order_sn=${orderSn} return_sn=${mappedReturnSn}` +
-      ` source=${detailTn ? "get_return_detail.tracking_number" : tnSources.reverse_tracking_info ? "get_reverse_tracking_info" : "none"}`,
+      ` kind=${kind} outbound=${outboundTn || "(empty)"}`,
   );
 
   const existingRaw = String(existing?.shopee_order_status || "").toUpperCase();
@@ -17771,9 +17876,14 @@ async function applyWebhookReturnFallback(
         shopee_order_status: "TO_RETURN",
       };
   if (bestTn) {
-    applyReturnWaybillFields(patch, returnShipTn || tnSources.return_detail || bestTn, returnLogistics);
+    applyReturnWaybillFields(patch, bestTn, returnLogistics, { outboundTn, mustDiffer });
   } else if (returnLogistics) {
     patch.return_logistics_status = returnLogistics;
+    if (mustDiffer && outboundTn && returnTrackingOf(existing) === outboundTn) {
+      patch.clearCopiedReturnTracking = true;
+      patch.returnTrackingNumber = "";
+      patch.return_tracking_no = "";
+    }
   }
 
   if (Number.isFinite(Number(detail.refund_amount))) {

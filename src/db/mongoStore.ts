@@ -1817,17 +1817,22 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       order.returnTrackingNumber || order.return_tracking_no || "",
     ).trim();
     const $unset: Record<string, unknown> = {};
-    const fromReturnApi = order.returnTrackingFromApi === true;
-    if (order.clearCopiedReturnTracking === true) {
+    const kind = String(order.shopee_cancel_return_kind || "").trim();
+    const mustDifferReturn =
+      kind === "refund_return" ||
+      ((order.status === "return_pending" ||
+        order.status === "return_received" ||
+        rawStatus === "TO_RETURN") &&
+        kind !== "cancelled" &&
+        kind !== "failed_delivery");
+    const isCopiedRefundReturn =
+      mustDifferReturn && Boolean(returnTn && usableTn && returnTn === usableTn);
+    if (order.clearCopiedReturnTracking === true || isCopiedRefundReturn) {
       $unset.return_tracking_no = "";
       $unset.returnTrackingNumber = "";
       $unset["data.return_tracking_no"] = "";
       $unset["data.returnTrackingNumber"] = "";
-    } else if (
-      returnTn &&
-      !/^0FG/i.test(returnTn) &&
-      (fromReturnApi || !usableTn || returnTn !== usableTn)
-    ) {
+    } else if (returnTn && !/^0FG/i.test(returnTn)) {
       $set.return_tracking_no = returnTn;
       $set.returnTrackingNumber = returnTn;
       $set["data.return_tracking_no"] = returnTn;
@@ -1890,7 +1895,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
         if (
           (key === "return_tracking_no" || key === "returnTrackingNumber") &&
           (order.clearCopiedReturnTracking === true ||
-            (Boolean(usableTn) && s === usableTn && order.returnTrackingFromApi !== true))
+            (Boolean(usableTn) && s === usableTn && mustDifferReturn))
         ) {
           continue;
         }
@@ -3543,13 +3548,27 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
       data.trackingNumber ||
       "",
   ).trim();
-  const returnTn = String(
+  const returnTnRaw = String(
     d?.returnTrackingNumber ||
       d?.return_tracking_no ||
       data.returnTrackingNumber ||
       data.return_tracking_no ||
       "",
   ).trim();
+  const kindHydrated = String(
+    d?.shopee_cancel_return_kind || data.shopee_cancel_return_kind || "",
+  ).trim();
+  const mustDifferHydrated =
+    kindHydrated === "refund_return" ||
+    ((data.status === "return_pending" ||
+      data.status === "return_received" ||
+      d?.status === "return_pending" ||
+      d?.status === "return_received" ||
+      String(d?.shopee_order_status || data.shopee_order_status || "").toUpperCase() === "TO_RETURN") &&
+      kindHydrated !== "cancelled" &&
+      kindHydrated !== "failed_delivery");
+  const returnTn =
+    mustDifferHydrated && tn && returnTnRaw && returnTnRaw === tn ? "" : returnTnRaw;
   const returnSnHydrated = String(d?.return_sn || data.return_sn || "").trim();
   const internalReturnReceipt =
     String(

@@ -114,15 +114,17 @@ import {
 } from '../utils/notificationSound';
 
 function getOrderWaybillCode(order: Order): string {
-  // Ưu tiên mã đi (tracking_no) theo order_sn — return_tracking_no / scan_code chỉ fallback.
-  const fromHelper = getCarrierWaybillDisplay(order);
+  // Chỉ mã chiều đi — không fallback sang return_tracking_no (tránh 2 ô hiện cùng 1 mã).
+  const fromHelper = getCarrierWaybillDisplay({
+    ...order,
+    return_tracking_no: undefined,
+  });
   if (fromHelper) return fromHelper;
   const note = String((order as any).note || '').trim();
   const fromNote = note.startsWith('scan:') ? note.slice(5).trim() : '';
   const fallback = String(
     order.trackingNumber ||
       order.tracking_no ||
-      order.return_tracking_no ||
       (order as any).scan_code ||
       fromNote ||
       '',
@@ -819,7 +821,13 @@ function scannedMatchesReturnWaybill(order: Order, rawCode: string): boolean {
 }
 
 function getOrderReturnTrackingNumber(order: Order): string {
-  return String(order.returnTrackingNumber || order.return_tracking_no || '').trim();
+  const rtn = String(order.returnTrackingNumber || order.return_tracking_no || '').trim();
+  if (!rtn) return '';
+  const out = String(order.trackingNumber || order.tracking_no || '').trim();
+  const kind = String(order.shopee_cancel_return_kind || '');
+  const isCancelSameOk = kind === 'cancelled' || kind === 'failed_delivery' || order.status === 'cancelled';
+  if (!isCancelSameOk && out && rtn === out) return '';
+  return rtn;
 }
 
 function getInternalReturnReceiptStatus(order: Order): 'CHUA_NHAN' | 'DA_NHAN' {
