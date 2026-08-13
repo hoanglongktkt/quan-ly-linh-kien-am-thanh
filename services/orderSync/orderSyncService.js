@@ -106,6 +106,7 @@ export async function runBackgroundOrderSync(opts = {}) {
       allowShortLookback: opts.allowShortLookback !== false,
       reconcileActive: opts.reconcileActive === true,
       enrichTracking: opts.enrichTracking === true,
+      oneShopPerTick: opts.oneShopPerTick === true,
     });
 
     const pulled = result?.pulled || 0;

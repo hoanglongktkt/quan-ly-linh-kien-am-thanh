@@ -71702,7 +71702,8 @@ async function runBackgroundOrderSync(opts = {}) {
       shopIds: opts.shopIds?.length ? opts.shopIds : void 0,
       allowShortLookback: opts.allowShortLookback !== false,
       reconcileActive: opts.reconcileActive === true,
-      enrichTracking: opts.enrichTracking === true
+      enrichTracking: opts.enrichTracking === true,
+      oneShopPerTick: opts.oneShopPerTick === true
     });
     const pulled = result?.pulled || 0;
     const added = result?.added || 0;
@@ -71843,6 +71844,7 @@ function scheduleAutoIncrementalOrdersSync(deps21 = {}) {
         lookbackSec,
         trigger: "cron",
         allowShortLookback: true,
+        oneShopPerTick: true,
         // Job ĐVVC riêng (scheduleHandedOverStatusReconcile) lo đối soát —
         // không nuốt budget 90s của get_order_list đa shop.
         reconcileActive: false,
@@ -103859,18 +103861,7 @@ function listShopeeOAuthShopIds() {
   return listShopeeSyncShopIds();
 }
 function listShopeeSyncShopIds() {
-  const ids = /* @__PURE__ */ new Set();
-  for (const [rawKey, record] of Object.entries(loadShopeeTokens())) {
-    const key = normalizeShopIdKey(rawKey);
-    if (key) ids.add(key);
-    const recordShopId = normalizeShopIdKey(record?.shop_id);
-    if (recordShopId) ids.add(recordShopId);
-    for (const rawLinkedShopId of Array.isArray(record?.shop_id_list) ? record.shop_id_list : []) {
-      const linkedShopId = normalizeShopIdKey(rawLinkedShopId);
-      if (linkedShopId) ids.add(linkedShopId);
-    }
-  }
-  return [...ids].sort();
+  return listAuthorizedShopeeShopIds();
 }
 function ensureShopeeLinkedShopTokenKeys() {
   const tokens = normalizeTokenStore(loadShopeeTokens());
@@ -110499,10 +110490,35 @@ var ORDERS_PULL_LOCK_TIMEOUT_MS = 15 * 60 * 1e3;
 var ordersPullInFlight = false;
 var ordersPullStartedAt = 0;
 var lastShopeePullShopRotate = 0;
+var SHOPEE_PULL_ROTATE_PATH = import_path15.default.join(APP_ROOT11, "storage", "shopee_pull_rotate.json");
+function loadShopeePullShopRotate() {
+  try {
+    if (import_fs15.default.existsSync(SHOPEE_PULL_ROTATE_PATH)) {
+      const raw = JSON.parse(import_fs15.default.readFileSync(SHOPEE_PULL_ROTATE_PATH, "utf8"));
+      const n = Number(raw?.index);
+      if (Number.isFinite(n) && n >= 0) lastShopeePullShopRotate = Math.floor(n);
+    }
+  } catch {
+  }
+  return lastShopeePullShopRotate;
+}
+function persistShopeePullShopRotate(nextIndex, shopCount) {
+  const n = Math.max(1, Math.floor(Number(shopCount) || 1));
+  lastShopeePullShopRotate = (Math.floor(Number(nextIndex) || 0) % n + n) % n;
+  try {
+    import_fs15.default.mkdirSync(import_path15.default.dirname(SHOPEE_PULL_ROTATE_PATH), { recursive: true });
+    import_fs15.default.writeFileSync(
+      SHOPEE_PULL_ROTATE_PATH,
+      JSON.stringify({ index: lastShopeePullShopRotate, updatedAt: Date.now() })
+    );
+  } catch (err) {
+    console.warn("[Orders Pull] persist rotate failed:", err?.message || err);
+  }
+}
 function rotateShopeeShopIdsForFairPull(ids) {
   if (!Array.isArray(ids) || ids.length <= 1) return ids;
+  loadShopeePullShopRotate();
   const start = lastShopeePullShopRotate % ids.length;
-  lastShopeePullShopRotate = (lastShopeePullShopRotate + 1) % ids.length;
   return [...ids.slice(start), ...ids.slice(0, start)];
 }
 function buildShopeeOrderListTimeChunks(timeFromSec, timeToSec, maxWindowSec = SHOPEE_ORDER_LIST_MAX_WINDOW_SEC) {
@@ -111559,11 +111575,15 @@ async function reconcileActiveShopeeOrdersFromStore(orders, shopIds, deadlineAt)
           );
           if (errors.length) result.errors.push(...errors);
           if (normalized.length === 0) continue;
-          const persisted = await persistShopeeOrderChunk(orders, normalized, {
-            apiShopId: auth.apiShopId,
-            accessToken: auth.token,
-            skipTracking: true
-          });
+          const persisted = await persistShopeeOrderChunk(
+            await loadOrdersWorkingSetBySns(chunk),
+            normalized,
+            {
+              apiShopId: auth.apiShopId,
+              accessToken: auth.token,
+              skipTracking: true
+            }
+          );
           result.pulled += normalized.length;
           result.added += persisted.added;
           result.updated += persisted.updated;
@@ -112312,6 +112332,29 @@ async function debugForceSyncHandedOverOrders(opts) {
     return out;
   }
 }
+async function loadOrdersWorkingSetBySns(orderSns) {
+  const sns = [
+    ...new Set((orderSns || []).map((s2) => String(s2 || "").trim()).filter(Boolean))
+  ];
+  if (!sns.length || !isMongoReady()) return [];
+  try {
+    return await loadOrdersFromStore({ orderSns: sns });
+  } catch (loadErr) {
+    if (isMongoConnectionError(loadErr)) {
+      const ok = await recoverMongoConnection("orders_pull_load_sns");
+      if (ok) {
+        try {
+          return await loadOrdersFromStore({ orderSns: sns });
+        } catch (retryErr) {
+          console.warn("[Orders Pull] load by SN retry failed:", retryErr?.message || retryErr);
+          return [];
+        }
+      }
+    }
+    console.warn("[Orders Pull] load by SN failed:", loadErr?.message || loadErr);
+    return [];
+  }
+}
 async function pullIncrementalOrdersFromShopee(opts) {
   if (!tryAcquireOrdersPullLock()) {
     syncDiag("Pull SKIPPED \u2014 already in flight", "mutex busy");
@@ -112370,10 +112413,20 @@ async function pullIncrementalOrdersFromShopee(opts) {
         );
       }
     }
+    const rotateStartIndex = loadShopeePullShopRotate();
+    let allShopCountForRotate = shopIds.length;
     if (shopIds.length > 1) {
       shopIds = rotateShopeeShopIdsForFairPull(shopIds);
+      allShopCountForRotate = shopIds.length;
       console.log(
-        `[SYNC-DEBUG] shop rotate start=${shopIds[0]} ids=[${shopIds.join(",")}] nextIdx=${lastShopeePullShopRotate}`
+        `[SYNC-DEBUG] shop rotate start=${shopIds[0]} ids=[${shopIds.join(",")}] idx=${lastShopeePullShopRotate}`
+      );
+    }
+    const oneShopPerTick = opts?.oneShopPerTick === true && shopIds.length > 1;
+    if (oneShopPerTick) {
+      shopIds = [shopIds[0]];
+      console.log(
+        `[Orders Pull] oneShopPerTick shop=${shopIds[0]} (rotate idx=${rotateStartIndex}/${allShopCountForRotate})`
       );
     }
     singleShopPull = shopIds.length === 1;
@@ -112408,58 +112461,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
       };
     }
     let orders = [];
-    if (isMongoReady()) {
-      try {
-        orders = await loadOrdersFromStore();
-      } catch (loadErr) {
-        if (isMongoConnectionError(loadErr)) {
-          console.warn(
-            "[Orders Pull] loadOrdersFromStore timeout/network \u2014 th\u1EED reconnect:",
-            loadErr?.message || loadErr
-          );
-          const ok = await recoverMongoConnection("orders_pull_load");
-          if (ok) {
-            try {
-              orders = await loadOrdersFromStore();
-            } catch (retryErr) {
-              errors.push({
-                error: "mongo_load_failed",
-                message: describeMongoWriteError(retryErr)
-              });
-              return {
-                success: false,
-                pulled: 0,
-                added: 0,
-                updated: 0,
-                shops: shopIds.length,
-                errors,
-                message: describeMongoWriteError(retryErr),
-                elapsedMs: Date.now() - startedAt,
-                lookbackSec,
-                shopee_response: []
-              };
-            }
-          } else {
-            const friendly = describeMongoWriteError(loadErr);
-            errors.push({ error: "mongo_reconnect_failed", message: friendly });
-            return {
-              success: false,
-              pulled: 0,
-              added: 0,
-              updated: 0,
-              shops: shopIds.length,
-              errors,
-              message: friendly,
-              elapsedMs: Date.now() - startedAt,
-              lookbackSec,
-              shopee_response: []
-            };
-          }
-        } else {
-          throw loadErr;
-        }
-      }
-    }
+    let nextRotateOffset = shopIds.length;
     const MIN_SHOP_BUDGET_MS = shortLookback ? 15e3 : 2e4;
     const basePerShopBudgetMs = Math.max(
       longLookback ? 45e3 : 28e3,
@@ -112498,31 +112500,12 @@ async function pullIncrementalOrdersFromShopee(opts) {
           shortLookback,
           triggerHint: opts?.allowShortLookback
         });
-        if (remainingMs < 15e3) {
+        if (remainingMs <= 0) {
           console.error(
-            `[Orders Pull] shopId=${shopId} SKIP \u2014 remaining=${remainingMs}ms < 15s. Th\u1EED shop k\u1EBF (kh\xF4ng break c\u1EA3 danh s\xE1ch).`
+            `[Orders Pull] shopId=${shopId} STOP \u2014 h\u1EBFt deadline, tick sau b\u1EAFt \u0111\u1EA7u t\u1EEB shop n\xE0y (kh\xF4ng skip c\xE1c shop c\xF2n l\u1EA1i).`
           );
-          console.log("[SYNC-DEBUG] shop skip continue-next", {
-            shopId,
-            remainingMs,
-            idx: shopIdx + 1,
-            remainingShops: shopIds.slice(shopIdx).join(",")
-          });
-          errors.push({
-            shopId,
-            error: "pull_deadline",
-            message: `H\u1EBFt th\u1EDDi gian pull \u2014 skip shop ${shopId} (c\xF2n ${remainingMs}ms)`
-          });
-          perShopResults.push({
-            shopId,
-            status: "SKIP",
-            sn: 0,
-            pulled: 0,
-            added: 0,
-            updated: 0,
-            error: "pull_deadline"
-          });
-          continue;
+          nextRotateOffset = shopIdx;
+          break;
         }
         try {
           let accessToken = await getValidShopeeAccessToken(shopId);
@@ -112586,23 +112569,10 @@ async function pullIncrementalOrdersFromShopee(opts) {
           await yieldToLogisticsIfBusy(12e3);
           if (Date.now() >= deadlineAt) {
             console.error(
-              `[Orders Pull] shopId=${shopId} SKIP \u2014 deadlineAt \u0111\xE3 qua (elapsed=${Date.now() - startedAt}ms)`
+              `[Orders Pull] shopId=${shopId} STOP \u2014 deadlineAt \u0111\xE3 qua, tick sau b\u1EAFt \u0111\u1EA7u t\u1EEB shop n\xE0y.`
             );
-            errors.push({
-              shopId,
-              error: "pull_deadline",
-              message: `H\u1EBFt th\u1EDDi gian pull tr\u01B0\u1EDBc shop ${shopId}`
-            });
-            perShopResults.push({
-              shopId,
-              status: "SKIP",
-              sn: 0,
-              pulled: 0,
-              added: 0,
-              updated: 0,
-              error: "pull_deadline"
-            });
-            continue;
+            nextRotateOffset = shopIdx;
+            break;
           }
           const shopDeadlineAt = Math.min(deadlineAt, Date.now() + Math.max(shopBudgetMs, MIN_SHOP_BUDGET_MS));
           console.log(
@@ -112691,6 +112661,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
             });
             continue;
           }
+          orders = await loadOrdersWorkingSetBySns(orderSnList);
           for (let i2 = 0; i2 < orderSnList.length; i2 += SHOPEE_SYNC_CHUNK_SIZE) {
             try {
               assertOrdersPullDeadline(shopDeadlineAt, `detail chunk shop=${shopId} offset=${i2}`);
@@ -112811,9 +112782,9 @@ async function pullIncrementalOrdersFromShopee(opts) {
           });
         } catch (shopErr) {
           if (String(shopErr?.message || "").includes("ORDERS_PULL_DEADLINE")) {
-            syncDiag("SHOP DEADLINE \u2014 continue next shop", shopErr.message);
+            syncDiag("SHOP DEADLINE \u2014 stop, tick sau b\u1EAFt \u0111\u1EA7u t\u1EEB shop n\xE0y", shopErr.message);
             console.error(
-              `[Orders Pull] shopId=${shopId} SKIP \u2014 shop deadline: ${shopErr.message}`
+              `[Orders Pull] shopId=${shopId} STOP \u2014 shop deadline: ${shopErr.message}`
             );
             errors.push({
               shopId,
@@ -112829,7 +112800,8 @@ async function pullIncrementalOrdersFromShopee(opts) {
               updated: shopUpdated,
               error: "pull_shop_deadline"
             });
-            continue;
+            nextRotateOffset = shopIdx;
+            break;
           }
           console.error(
             `[Orders Pull] shopId=${shopId} ERROR:`,
@@ -112919,6 +112891,13 @@ async function pullIncrementalOrdersFromShopee(opts) {
     console.log(
       `[Orders Pull] S\u1ED1 l\u01B0\u1EE3ng l\u1EA5y \u0111\u01B0\u1EE3c t\u1EEB S\xE0n \u2014 pulled=${pulled} +${added}/~${updated} success=${success} elapsedMs=${elapsedMs} perShop=${JSON.stringify(perShopResults)}`
     );
+    {
+      const advance = nextRotateOffset >= shopIds.length ? 1 : Math.max(0, nextRotateOffset);
+      persistShopeePullShopRotate(rotateStartIndex + advance, allShopCountForRotate);
+      console.log(
+        `[Orders Pull] rotate persist nextIdx=${lastShopeePullShopRotate} advance=${advance} shops=${allShopCountForRotate}`
+      );
+    }
     return {
       success,
       pulled,

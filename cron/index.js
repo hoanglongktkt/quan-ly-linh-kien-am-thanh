@@ -70,6 +70,7 @@ export function scheduleAutoIncrementalOrdersSync(deps = {}) {
         lookbackSec,
         trigger: "cron",
         allowShortLookback: true,
+        oneShopPerTick: true,
         // Job ĐVVC riêng (scheduleHandedOverStatusReconcile) lo đối soát —
         // không nuốt budget 90s của get_order_list đa shop.
         reconcileActive: false,
