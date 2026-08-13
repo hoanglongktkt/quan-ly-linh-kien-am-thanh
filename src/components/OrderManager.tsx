@@ -85,6 +85,7 @@ import {
   ImageOff,
   RefreshCw,
   Trash2,
+  ScanLine,
 } from 'lucide-react';
 import { Order, ConnectedShop, SyncLog, Product, SystemFee } from '../types';
 import ManualOrderPage from './ManualOrderPage';
@@ -1385,6 +1386,7 @@ export default function OrderManager({
   const [isFlushingQueue, setIsFlushingQueue] = useState(false);
   const [flushingDbCount, setFlushingDbCount] = useState(0);
   const [isVerifyingScan, setIsVerifyingScan] = useState(false);
+  const [isScanning, setIsScanning] = useState(true);
 
   const ordersRef = React.useRef(orders);
   type OptimisticOrderMutation = {
@@ -1484,6 +1486,9 @@ export default function OrderManager({
   useEffect(() => {
     const wasFocused = prevFocusScannerRef.current;
     prevFocusScannerRef.current = focusScanner;
+    if (!wasFocused && focusScanner) {
+      setIsScanning(true);
+    }
     if (wasFocused && !focusScanner) {
       void onFetchOrders?.({ silent: true, limit: 2000, merge: true, bustCache: true });
     }
@@ -2477,7 +2482,7 @@ export default function OrderManager({
   useEffect(() => {
     let isMounted = true;
 
-    if (focusScanner) {
+    if (focusScanner && isScanning) {
       // Tránh restart camera khi đang graceful teardown / đang ghi DB.
       if (isTearingDownScannerRef.current) {
         return () => {
@@ -2557,7 +2562,7 @@ export default function OrderManager({
     return () => {
       isMounted = false;
     };
-  }, [focusScanner, cameraRestartKey]);
+  }, [focusScanner, cameraRestartKey, isScanning]);
 
   // Prefetch scanner-sync 1 lần khi mở quét — HashMap local O(1), không shallow 50.
   useEffect(() => {
@@ -5530,7 +5535,7 @@ export default function OrderManager({
     closeScannerUiOnly();
   };
 
-  /** Kết thúc: tắt camera → ghi DB (timeout 45s) → reset list → bật lại camera. */
+  /** Kết thúc: tắt camera → ghi DB (timeout 45s) → ẩn camera sau khi lưu thành công. */
   const handleFinishContinuousScan = async () => {
     setShowEndConfirm(false);
 
@@ -5566,6 +5571,7 @@ export default function OrderManager({
       setIsFlushingQueue(false);
       setFlushingDbCount(0);
       isTearingDownScannerRef.current = false;
+      setIsScanning(true);
       window.setTimeout(() => {
         setCameraRestartKey((k) => k + 1);
       }, 80);
@@ -5800,12 +5806,17 @@ export default function OrderManager({
         processedCount > 0
           ? `✓ Đã lưu DB: Xuất kho ${safeXuat} · Hủy ${safeHuy} · Nhận hoàn ${safeHoan}${
               failedScans.length ? ` · Bỏ qua ${failedScans.length}` : ''
-            }. Sẵn sàng quét tiếp`
+            }. Camera đã tắt — bấm Tiếp tục quét để mở lại`
           : 'Lưu thất bại, vui lòng thử lại',
       );
 
-      // 2) Reset list xong → bật lại camera.
-      resumeCameraAfterSave();
+      setIsFlushingQueue(false);
+      setFlushingDbCount(0);
+      if (processedCount > 0) {
+        setIsScanning(false);
+      } else {
+        resumeCameraAfterSave();
+      }
     } catch (err: unknown) {
       // Giữ 3 list đã verify — cho phép bấm lại GHI DB.
       const msg = err instanceof Error ? err.message : String(err);
@@ -5816,6 +5827,16 @@ export default function OrderManager({
     } finally {
       window.clearTimeout(timeoutId);
     }
+  };
+
+  const handleResumeScanning = () => {
+    setCameraError('');
+    setCameraScanSuccess(false);
+    setCameraScanError(false);
+    setCameraScanResult('Quét realtime QR + mã vạch — dò trạng thái ngay mỗi mã');
+    isTearingDownScannerRef.current = false;
+    setIsScanning(true);
+    setCameraRestartKey((k) => k + 1);
   };
 
   const scanStatModalMeta: Record<
@@ -5894,8 +5915,9 @@ export default function OrderManager({
           </p>
         </div>
 
-        {/* Camera */}
+        {/* Camera hoặc nút tiếp tục quét */}
         <div className="flex-1 min-h-0 px-3 flex flex-col gap-2 pb-2">
+          {isScanning ? (
           <div
             className={`flex-1 min-h-[220px] relative rounded-2xl overflow-hidden bg-black transition-colors duration-300 ${
               cameraScanSuccess
@@ -5954,6 +5976,18 @@ export default function OrderManager({
               </div>
             )}
           </div>
+          ) : (
+          <div className="flex-1 min-h-[220px] relative rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800 flex items-center justify-center p-6">
+            <button
+              type="button"
+              onClick={handleResumeScanning}
+              className="w-full max-w-sm min-h-20 rounded-2xl bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-black text-xl uppercase tracking-wide shadow-lg shadow-emerald-900/40 flex items-center justify-center gap-3"
+            >
+              <ScanLine className="w-8 h-8 shrink-0" />
+              Tiếp tục quét
+            </button>
+          </div>
+          )}
 
           <div
             className={`shrink-0 text-sm font-bold px-3 py-2.5 rounded-xl text-center transition-all ${
@@ -5961,7 +5995,7 @@ export default function OrderManager({
                 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                 : cameraScanError
                   ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                  : cameraScanResult.includes('sẵn sàng') || cameraScanResult.includes('realtime')
+                  : cameraScanResult.includes('sẵn sàng') || cameraScanResult.includes('realtime') || cameraScanResult.includes('Camera đã tắt')
                     ? 'text-zinc-500'
                     : 'bg-zinc-800 text-yellow-400 border border-zinc-700'
             }`}
@@ -5992,7 +6026,7 @@ export default function OrderManager({
             {totalVerifiedScans > 0 ? ` · Ghi DB ${totalVerifiedScans} mã` : ' · Thoát'}
           </button>
           <p className="text-center text-[10px] text-zinc-500 font-semibold">
-            Kết thúc = lưu chính thức vào database · giữ nguyên màn quét sau khi lưu
+            Kết thúc = lưu chính thức vào database · thoát màn hình quét sau khi lưu
           </p>
         </div>
 
@@ -6004,7 +6038,7 @@ export default function OrderManager({
               </p>
               <p className="text-zinc-400 text-xs leading-relaxed">
                 {totalVerifiedScans > 0
-                  ? `Sẽ ghi DB: xuất kho ${daXuatKhoList.length} · hủy ${donHuyList.length} · nhận hoàn ${daNhanHoanList.length}. Sau đó xóa list và ở lại màn quét.`
+                  ? `Sẽ ghi DB: xuất kho ${daXuatKhoList.length} · hủy ${donHuyList.length} · nhận hoàn ${daNhanHoanList.length}. Sau đó thoát màn hình quét (ẩn camera).`
                   : 'Chưa có mã đã dò — sẽ đóng camera và quay về tab Đơn hàng.'}
               </p>
               <div className="flex gap-2">

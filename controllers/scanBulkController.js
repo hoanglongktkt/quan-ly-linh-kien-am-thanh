@@ -30,6 +30,7 @@ let deps = {
   markOrderHandedOverInStore: async () => false,
   markOrderLocalStatusInStore: async () => false,
   restoreLocalStockOnCancelReturnScan: async () => ({ restored: false }),
+  restoreLocalStockOnCancelReturnScanBatch: async () => ({ restored: 0 }),
   loadProductsForOrders: async () => [],
   enrichOrdersFromCatalog: (orders) => orders,
   invalidateOrdersRefreshCache: () => {},
@@ -77,65 +78,66 @@ export async function scanBulkUpdate(req, res) {
       );
     }
 
-    const lookupPairs = await Promise.all(
-      codes.map(async (code) => {
-        let found = foundByCode.get(code) || null;
+    // Lookup tuần tự — CẤM Promise.all (22 mã = 22 connection → pool timeout).
+    // Batch $in đã lấy hầu hết; chỉ miss mới query lẻ / gọi Shopee, từng mã một.
+    const lookupPairs = [];
+    for (const code of codes) {
+      let found = foundByCode.get(code) || null;
+      try {
+        if (!found) {
+          found = await deps.findOrderByScanCodeInStore(code);
+        }
+        if (found && !deps.isValidOrder(found)) found = null;
+        if (found) found = deps.mirrorTrackingFieldsForRead(found);
+      } catch (lookupErr) {
+        console.warn(
+          `[Orders Scan Bulk] lookup miss code=${code}:`,
+          lookupErr?.message || lookupErr,
+        );
+      }
+      const sn = String(found?.orderSn || "").replace(/^shopee-/i, "").trim();
+      const looksLikeTn = /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i.test(sn);
+      const missingItems = !Array.isArray(found?.items) || found.items.length === 0;
+      if (!found || looksLikeTn || missingItems) {
         try {
-          if (!found) {
-            found = await deps.findOrderByScanCodeInStore(code);
+          const fromShopee = await deps.resolveOrderFromShopeeByScanCode(code);
+          if (fromShopee && deps.isValidOrder(fromShopee)) {
+            const mirrored = deps.mirrorTrackingFieldsForRead(fromShopee);
+            if (!found) {
+              found = mirrored;
+            } else {
+              found = {
+                ...found,
+                ...mirrored,
+                items:
+                  Array.isArray(mirrored?.items) && mirrored.items.length
+                    ? mirrored.items
+                    : found.items,
+                orderSn: String(mirrored?.orderSn || found.orderSn || "")
+                  .replace(/^shopee-/i, "")
+                  .trim(),
+              };
+            }
           }
-          if (found && !deps.isValidOrder(found)) found = null;
-          if (found) found = deps.mirrorTrackingFieldsForRead(found);
-        } catch (lookupErr) {
+        } catch (shopeeErr) {
           console.warn(
-            `[Orders Scan Bulk] lookup miss code=${code}:`,
-            lookupErr?.message || lookupErr,
+            `[Orders Scan Bulk] Shopee resolve code=${code}:`,
+            shopeeErr?.message || shopeeErr,
           );
         }
-        const sn = String(found?.orderSn || "").replace(/^shopee-/i, "").trim();
-        const looksLikeTn = /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i.test(sn);
-        const missingItems = !Array.isArray(found?.items) || found.items.length === 0;
-        if (!found || looksLikeTn || missingItems) {
-          try {
-            const fromShopee = await deps.resolveOrderFromShopeeByScanCode(code);
-            if (fromShopee && deps.isValidOrder(fromShopee)) {
-              const mirrored = deps.mirrorTrackingFieldsForRead(fromShopee);
-              if (!found) {
-                found = mirrored;
-              } else {
-                found = {
-                  ...found,
-                  ...mirrored,
-                  items:
-                    Array.isArray(mirrored?.items) && mirrored.items.length
-                      ? mirrored.items
-                      : found.items,
-                  orderSn: String(mirrored?.orderSn || found.orderSn || "")
-                    .replace(/^shopee-/i, "")
-                    .trim(),
-                };
-              }
-            }
-          } catch (shopeeErr) {
-            console.warn(
-              `[Orders Scan Bulk] Shopee resolve code=${code}:`,
-              shopeeErr?.message || shopeeErr,
-            );
-          }
+      }
+      // Chặn đơn giả: orderSn = mã VĐ hoặc thiếu items khi ghi hủy/hoàn.
+      if (found) {
+        const finalSn = String(found.orderSn || "").replace(/^shopee-/i, "").trim();
+        if (
+          !finalSn ||
+          /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i.test(finalSn)
+        ) {
+          found = null;
         }
-        // Chặn đơn giả: orderSn = mã VĐ hoặc thiếu items khi ghi hủy/hoàn.
-        if (found) {
-          const finalSn = String(found.orderSn || "").replace(/^shopee-/i, "").trim();
-          if (
-            !finalSn ||
-            /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i.test(finalSn)
-          ) {
-            found = null;
-          }
-        }
-        return { code, found };
-      }),
-    );
+      }
+      lookupPairs.push({ code, found });
+    }
 
     const orders = [];
     const orderIndexById = new Map();
@@ -160,6 +162,8 @@ export async function scanBulkUpdate(req, res) {
     const summary = { daXuatKho: 0, donHuy: 0, daNhanHoan: 0 };
     /** Số đơn hủy/hoàn đã có sẵn trong don_hoan_huy (idempotent). */
     let donHoanHuyAlready = 0;
+    /** Gom restock — 1 lần load catalog + 1 bulkWrite, không save từng đơn. */
+    const restockJobs = [];
 
     const norm = (c) => String(c || "").trim().toUpperCase();
 
@@ -365,21 +369,7 @@ export async function scanBulkUpdate(req, res) {
         const updated = { ...order };
         deps.clearHandedOverLocalForCancelReturn(updated);
         deps.setOrderLocalStatus(updated, "RETURN_RECEIVED");
-        try {
-          const restock = await deps.restoreLocalStockOnCancelReturnScan(updated, {
-            wasHandedOver,
-          });
-          if (restock?.restored) {
-            console.log(
-              `[Orders Scan Bulk] Restock +${restock.qty || 0} order_sn=${updated.orderSn}`,
-            );
-          }
-        } catch (restockErr) {
-          console.warn(
-            `[Orders Scan Bulk] Restock fail order_sn=${updated.orderSn}:`,
-            restockErr?.message || restockErr,
-          );
-        }
+        restockJobs.push({ order: updated, wasHandedOver });
         orders[index] = updated;
         changedOrders.push(updated);
         updatedById.set(updated.id, updated);
@@ -437,21 +427,7 @@ export async function scanBulkUpdate(req, res) {
         if (updated.status !== "cancelled") updated.status = "cancelled";
         deps.clearHandedOverLocalForCancelReturn(updated);
         deps.setOrderLocalStatus(updated, "CANCELLED_STORED");
-        try {
-          const restock = await deps.restoreLocalStockOnCancelReturnScan(updated, {
-            wasHandedOver,
-          });
-          if (restock?.restored) {
-            console.log(
-              `[Orders Scan Bulk] Restock +${restock.qty || 0} order_sn=${updated.orderSn}`,
-            );
-          }
-        } catch (restockErr) {
-          console.warn(
-            `[Orders Scan Bulk] Restock fail order_sn=${updated.orderSn}:`,
-            restockErr?.message || restockErr,
-          );
-        }
+        restockJobs.push({ order: updated, wasHandedOver });
         orders[index] = updated;
         changedOrders.push(updated);
         updatedById.set(updated.id, updated);
@@ -520,6 +496,36 @@ export async function scanBulkUpdate(req, res) {
         orderSn: order.orderSn,
         reason: `Trạng thái "${status}" không thuộc quy tắc quét ĐVVC`,
       });
+    }
+
+    // Restock hàng loạt — 1 connection. CẤM save/create từng phần tử.
+    if (restockJobs.length > 0) {
+      try {
+        if (typeof deps.restoreLocalStockOnCancelReturnScanBatch === "function") {
+          const batchRestock = await deps.restoreLocalStockOnCancelReturnScanBatch(restockJobs);
+          console.log(
+            `[Orders Scan Bulk] Restock bulk ONE shot — jobs=${restockJobs.length} restored=${batchRestock?.restored || 0}`,
+          );
+        } else {
+          for (const job of restockJobs) {
+            try {
+              await deps.restoreLocalStockOnCancelReturnScan(job.order, {
+                wasHandedOver: job.wasHandedOver,
+              });
+            } catch (restockErr) {
+              console.warn(
+                `[Orders Scan Bulk] Restock fail order_sn=${job.order?.orderSn}:`,
+                restockErr?.message || restockErr,
+              );
+            }
+          }
+        }
+      } catch (restockBatchErr) {
+        console.warn(
+          "[Orders Scan Bulk] Restock batch fail:",
+          restockBatchErr?.message || restockBatchErr,
+        );
+      }
     }
 
     // Persist: hủy/hoàn → collection don_hoan_huy (SSOT tab);

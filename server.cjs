@@ -103041,6 +103041,7 @@ var deps7 = {
   markOrderHandedOverInStore: async () => false,
   markOrderLocalStatusInStore: async () => false,
   restoreLocalStockOnCancelReturnScan: async () => ({ restored: false }),
+  restoreLocalStockOnCancelReturnScanBatch: async () => ({ restored: 0 }),
   loadProductsForOrders: async () => [],
   enrichOrdersFromCatalog: (orders) => orders,
   invalidateOrdersRefreshCache: () => {
@@ -103076,56 +103077,55 @@ async function scanBulkUpdate(req, res) {
         batchLookupErr?.message || batchLookupErr
       );
     }
-    const lookupPairs = await Promise.all(
-      codes.map(async (code) => {
-        let found = foundByCode.get(code) || null;
+    const lookupPairs = [];
+    for (const code of codes) {
+      let found = foundByCode.get(code) || null;
+      try {
+        if (!found) {
+          found = await deps7.findOrderByScanCodeInStore(code);
+        }
+        if (found && !deps7.isValidOrder(found)) found = null;
+        if (found) found = deps7.mirrorTrackingFieldsForRead(found);
+      } catch (lookupErr) {
+        console.warn(
+          `[Orders Scan Bulk] lookup miss code=${code}:`,
+          lookupErr?.message || lookupErr
+        );
+      }
+      const sn = String(found?.orderSn || "").replace(/^shopee-/i, "").trim();
+      const looksLikeTn = /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i.test(sn);
+      const missingItems = !Array.isArray(found?.items) || found.items.length === 0;
+      if (!found || looksLikeTn || missingItems) {
         try {
-          if (!found) {
-            found = await deps7.findOrderByScanCodeInStore(code);
+          const fromShopee = await deps7.resolveOrderFromShopeeByScanCode(code);
+          if (fromShopee && deps7.isValidOrder(fromShopee)) {
+            const mirrored = deps7.mirrorTrackingFieldsForRead(fromShopee);
+            if (!found) {
+              found = mirrored;
+            } else {
+              found = {
+                ...found,
+                ...mirrored,
+                items: Array.isArray(mirrored?.items) && mirrored.items.length ? mirrored.items : found.items,
+                orderSn: String(mirrored?.orderSn || found.orderSn || "").replace(/^shopee-/i, "").trim()
+              };
+            }
           }
-          if (found && !deps7.isValidOrder(found)) found = null;
-          if (found) found = deps7.mirrorTrackingFieldsForRead(found);
-        } catch (lookupErr) {
+        } catch (shopeeErr) {
           console.warn(
-            `[Orders Scan Bulk] lookup miss code=${code}:`,
-            lookupErr?.message || lookupErr
+            `[Orders Scan Bulk] Shopee resolve code=${code}:`,
+            shopeeErr?.message || shopeeErr
           );
         }
-        const sn = String(found?.orderSn || "").replace(/^shopee-/i, "").trim();
-        const looksLikeTn = /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i.test(sn);
-        const missingItems = !Array.isArray(found?.items) || found.items.length === 0;
-        if (!found || looksLikeTn || missingItems) {
-          try {
-            const fromShopee = await deps7.resolveOrderFromShopeeByScanCode(code);
-            if (fromShopee && deps7.isValidOrder(fromShopee)) {
-              const mirrored = deps7.mirrorTrackingFieldsForRead(fromShopee);
-              if (!found) {
-                found = mirrored;
-              } else {
-                found = {
-                  ...found,
-                  ...mirrored,
-                  items: Array.isArray(mirrored?.items) && mirrored.items.length ? mirrored.items : found.items,
-                  orderSn: String(mirrored?.orderSn || found.orderSn || "").replace(/^shopee-/i, "").trim()
-                };
-              }
-            }
-          } catch (shopeeErr) {
-            console.warn(
-              `[Orders Scan Bulk] Shopee resolve code=${code}:`,
-              shopeeErr?.message || shopeeErr
-            );
-          }
+      }
+      if (found) {
+        const finalSn = String(found.orderSn || "").replace(/^shopee-/i, "").trim();
+        if (!finalSn || /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i.test(finalSn)) {
+          found = null;
         }
-        if (found) {
-          const finalSn = String(found.orderSn || "").replace(/^shopee-/i, "").trim();
-          if (!finalSn || /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i.test(finalSn)) {
-            found = null;
-          }
-        }
-        return { code, found };
-      })
-    );
+      }
+      lookupPairs.push({ code, found });
+    }
     const orders = [];
     const orderIndexById = /* @__PURE__ */ new Map();
     const putScoped = (order) => {
@@ -103146,6 +103146,7 @@ async function scanBulkUpdate(req, res) {
     const updatedById = /* @__PURE__ */ new Map();
     const summary = { daXuatKho: 0, donHuy: 0, daNhanHoan: 0 };
     let donHoanHuyAlready = 0;
+    const restockJobs = [];
     const norm = (c) => String(c || "").trim().toUpperCase();
     const snsForExists = [
       ...new Set(
@@ -103297,21 +103298,7 @@ async function scanBulkUpdate(req, res) {
         const updated = { ...order };
         deps7.clearHandedOverLocalForCancelReturn(updated);
         deps7.setOrderLocalStatus(updated, "RETURN_RECEIVED");
-        try {
-          const restock = await deps7.restoreLocalStockOnCancelReturnScan(updated, {
-            wasHandedOver
-          });
-          if (restock?.restored) {
-            console.log(
-              `[Orders Scan Bulk] Restock +${restock.qty || 0} order_sn=${updated.orderSn}`
-            );
-          }
-        } catch (restockErr) {
-          console.warn(
-            `[Orders Scan Bulk] Restock fail order_sn=${updated.orderSn}:`,
-            restockErr?.message || restockErr
-          );
-        }
+        restockJobs.push({ order: updated, wasHandedOver });
         orders[index] = updated;
         changedOrders.push(updated);
         updatedById.set(updated.id, updated);
@@ -103361,21 +103348,7 @@ async function scanBulkUpdate(req, res) {
         if (updated.status !== "cancelled") updated.status = "cancelled";
         deps7.clearHandedOverLocalForCancelReturn(updated);
         deps7.setOrderLocalStatus(updated, "CANCELLED_STORED");
-        try {
-          const restock = await deps7.restoreLocalStockOnCancelReturnScan(updated, {
-            wasHandedOver
-          });
-          if (restock?.restored) {
-            console.log(
-              `[Orders Scan Bulk] Restock +${restock.qty || 0} order_sn=${updated.orderSn}`
-            );
-          }
-        } catch (restockErr) {
-          console.warn(
-            `[Orders Scan Bulk] Restock fail order_sn=${updated.orderSn}:`,
-            restockErr?.message || restockErr
-          );
-        }
+        restockJobs.push({ order: updated, wasHandedOver });
         orders[index] = updated;
         changedOrders.push(updated);
         updatedById.set(updated.id, updated);
@@ -103441,6 +103414,34 @@ async function scanBulkUpdate(req, res) {
         orderSn: order.orderSn,
         reason: `Tr\u1EA1ng th\xE1i "${status}" kh\xF4ng thu\u1ED9c quy t\u1EAFc qu\xE9t \u0110VVC`
       });
+    }
+    if (restockJobs.length > 0) {
+      try {
+        if (typeof deps7.restoreLocalStockOnCancelReturnScanBatch === "function") {
+          const batchRestock = await deps7.restoreLocalStockOnCancelReturnScanBatch(restockJobs);
+          console.log(
+            `[Orders Scan Bulk] Restock bulk ONE shot \u2014 jobs=${restockJobs.length} restored=${batchRestock?.restored || 0}`
+          );
+        } else {
+          for (const job of restockJobs) {
+            try {
+              await deps7.restoreLocalStockOnCancelReturnScan(job.order, {
+                wasHandedOver: job.wasHandedOver
+              });
+            } catch (restockErr) {
+              console.warn(
+                `[Orders Scan Bulk] Restock fail order_sn=${job.order?.orderSn}:`,
+                restockErr?.message || restockErr
+              );
+            }
+          }
+        }
+      } catch (restockBatchErr) {
+        console.warn(
+          "[Orders Scan Bulk] Restock batch fail:",
+          restockBatchErr?.message || restockBatchErr
+        );
+      }
     }
     const scanCodeByOrderSn = /* @__PURE__ */ new Map();
     for (const r2 of results) {
@@ -125742,10 +125743,11 @@ async function restoreLocalStockForPartialCancel(shopId, existing, incoming) {
     }
   }
 }
-async function restoreLocalStockOnCancelReturnScan(order, opts) {
-  if (!order?.orderSn) return { restored: false, skipped: "no_order" };
+function applyCancelReturnRestockInMemory(order, products, listings, opts) {
+  const empty = { restored: false, changedProducts: [] };
+  if (!order?.orderSn) return { ...empty, skipped: "no_order" };
   if (order.stock_restored === true || order.stock_restored_at) {
-    return { restored: false, skipped: "already_restored" };
+    return { ...empty, skipped: "already_restored" };
   }
   const hasTn = Boolean(
     String(
@@ -125754,18 +125756,10 @@ async function restoreLocalStockOnCancelReturnScan(order, opts) {
   );
   const wasHandedOver = opts?.wasHandedOver === true || order.is_handed_over === true || order.isHandedOverToCarrier === true || String(order.local_status || order.localStatus || "").toUpperCase() === "HANDED_OVER";
   if (!hasTn && !wasHandedOver) {
-    return { restored: false, skipped: "not_shipped" };
+    return { ...empty, skipped: "not_shipped" };
   }
   const items = Array.isArray(order.items) ? order.items : [];
-  if (!items.length) return { restored: false, skipped: "no_items" };
-  let listings = [];
-  let products = [];
-  try {
-    listings = await readChannelListingsDb();
-    products = await loadProductsFromStore();
-  } catch {
-    return { restored: false, skipped: "catalog_unavailable" };
-  }
+  if (!items.length) return { ...empty, skipped: "no_items" };
   const shopId = order.shopId ? String(order.shopId) : void 0;
   const restoreByProduct = /* @__PURE__ */ new Map();
   for (const item of items) {
@@ -125781,31 +125775,83 @@ async function restoreLocalStockOnCancelReturnScan(order, opts) {
     if (!linkedId) continue;
     restoreByProduct.set(linkedId, (restoreByProduct.get(linkedId) || 0) + restoreQty);
   }
-  if (restoreByProduct.size === 0) return { restored: false, skipped: "no_linked_products" };
-  let changed = false;
+  if (restoreByProduct.size === 0) return { ...empty, skipped: "no_linked_products" };
+  const changedProducts = [];
   let totalQty = 0;
   for (const [linkedId, restoreQty] of restoreByProduct) {
     const idx = products.findIndex((p) => String(p?.id) === linkedId);
     if (idx < 0) continue;
-    products[idx] = applyBulkProductUpdate(products[idx], { stock: { mode: "increase", value: restoreQty } });
-    changed = true;
+    products[idx] = applyBulkProductUpdate(products[idx], {
+      stock: { mode: "increase", value: restoreQty }
+    });
+    changedProducts.push(products[idx]);
     totalQty += restoreQty;
     console.log(
       `[Scan Restock] +${restoreQty} t\u1ED3n cho ${linkedId} (order ${order.orderSn})`
     );
   }
-  if (!changed) return { restored: false, skipped: "product_not_found" };
+  if (!changedProducts.length) return { ...empty, skipped: "product_not_found" };
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  order.stock_restored = true;
+  order.stock_restored_at = now;
+  return { restored: true, qty: totalQty, changedProducts };
+}
+async function restoreLocalStockOnCancelReturnScan(order, opts) {
+  let listings = [];
+  let products = [];
   try {
-    await saveProductsToStoreAsync(products);
+    listings = await readChannelListingsDb();
+    products = await loadProductsFromStore();
+  } catch {
+    return { restored: false, skipped: "catalog_unavailable" };
+  }
+  const result = applyCancelReturnRestockInMemory(order, products, listings, opts);
+  if (!result.restored) return { restored: false, skipped: result.skipped };
+  try {
+    await upsertProductsToStoreAsync(result.changedProducts);
     invalidateMasterSkuIndexCache("scan_cancel_return_restock");
   } catch (err) {
     console.warn("[Scan Restock] L\u01B0u t\u1ED3n kho th\u1EA5t b\u1EA1i:", err);
     return { restored: false, skipped: "save_failed" };
   }
-  const now = (/* @__PURE__ */ new Date()).toISOString();
-  order.stock_restored = true;
-  order.stock_restored_at = now;
-  return { restored: true, qty: totalQty };
+  return { restored: true, qty: result.qty };
+}
+async function restoreLocalStockOnCancelReturnScanBatch(rows) {
+  const list = (Array.isArray(rows) ? rows : []).filter((r2) => r2?.order);
+  if (!list.length) return { restored: 0 };
+  let listings = [];
+  let products = [];
+  try {
+    listings = await readChannelListingsDb();
+    products = await loadProductsFromStore();
+  } catch {
+    return { restored: 0 };
+  }
+  const changedById = /* @__PURE__ */ new Map();
+  let restored = 0;
+  for (const row of list) {
+    const result = applyCancelReturnRestockInMemory(row.order, products, listings, {
+      wasHandedOver: row.wasHandedOver
+    });
+    if (!result.restored) continue;
+    restored += 1;
+    for (const p of result.changedProducts) {
+      const id = String(p?.id || "");
+      if (id) changedById.set(id, p);
+    }
+  }
+  if (changedById.size > 0) {
+    try {
+      await upsertProductsToStoreAsync([...changedById.values()]);
+      invalidateMasterSkuIndexCache("scan_cancel_return_restock");
+      console.log(
+        `[Scan Restock] bulkWrite ONE shot \u2014 orders=${restored} products=${changedById.size}`
+      );
+    } catch (err) {
+      console.warn("[Scan Restock] batch l\u01B0u t\u1ED3n kho th\u1EA5t b\u1EA1i:", err);
+    }
+  }
+  return { restored };
 }
 function mapShopeeOrderLineItem(it) {
   if (!it || typeof it !== "object") return null;
@@ -130821,6 +130867,7 @@ async function startServer() {
     markOrderHandedOverInStore,
     markOrderLocalStatusInStore,
     restoreLocalStockOnCancelReturnScan,
+    restoreLocalStockOnCancelReturnScanBatch,
     loadProductsForOrders,
     enrichOrdersFromCatalog,
     invalidateOrdersRefreshCache

@@ -10567,16 +10567,18 @@ async function restoreLocalStockForPartialCancel(
 }
 
 /**
- * Cộng lại tồn local khi quét nhận hủy/hoàn lần đầu (đơn đã ship / có mã VĐ / từng HANDED_OVER).
- * Idempotent qua stock_restored / stock_restored_at — không cộng 2 lần; không đẩy update_stock Shopee.
+ * Cộng tồn in-memory — không đụng Mongo. Dùng chung cho 1 đơn và batch.
  */
-async function restoreLocalStockOnCancelReturnScan(
+function applyCancelReturnRestockInMemory(
   order: any,
+  products: any[],
+  listings: any[],
   opts?: { wasHandedOver?: boolean },
-): Promise<{ restored: boolean; skipped?: string; qty?: number }> {
-  if (!order?.orderSn) return { restored: false, skipped: "no_order" };
+): { restored: boolean; skipped?: string; qty?: number; changedProducts: any[] } {
+  const empty = { restored: false as const, changedProducts: [] as any[] };
+  if (!order?.orderSn) return { ...empty, skipped: "no_order" };
   if (order.stock_restored === true || order.stock_restored_at) {
-    return { restored: false, skipped: "already_restored" };
+    return { ...empty, skipped: "already_restored" };
   }
 
   const hasTn = Boolean(
@@ -10594,27 +10596,16 @@ async function restoreLocalStockOnCancelReturnScan(
     order.isHandedOverToCarrier === true ||
     String(order.local_status || order.localStatus || "").toUpperCase() === "HANDED_OVER";
 
-  // Hủy trước khi ship (chưa có TN, chưa bàn giao) → không cộng tồn.
   if (!hasTn && !wasHandedOver) {
-    return { restored: false, skipped: "not_shipped" };
+    return { ...empty, skipped: "not_shipped" };
   }
 
   const items = Array.isArray(order.items) ? order.items : [];
-  if (!items.length) return { restored: false, skipped: "no_items" };
-
-  let listings: any[] = [];
-  let products: any[] = [];
-  try {
-    listings = await readChannelListingsDb();
-    products = await loadProductsFromStore();
-  } catch {
-    return { restored: false, skipped: "catalog_unavailable" };
-  }
+  if (!items.length) return { ...empty, skipped: "no_items" };
 
   const shopId = order.shopId ? String(order.shopId) : undefined;
   const restoreByProduct = new Map<string, number>();
   for (const item of items) {
-    // Kiện về kho: cộng theo SL đã xuất trên dòng (không trừ cancelledQty — đơn full cancel thường cancelled=purchased).
     const restoreQty = Math.max(
       0,
       Number(item?.originalQuantity) || Number(item?.quantity) || 0,
@@ -10631,35 +10622,109 @@ async function restoreLocalStockOnCancelReturnScan(
     restoreByProduct.set(linkedId, (restoreByProduct.get(linkedId) || 0) + restoreQty);
   }
 
-  if (restoreByProduct.size === 0) return { restored: false, skipped: "no_linked_products" };
+  if (restoreByProduct.size === 0) return { ...empty, skipped: "no_linked_products" };
 
-  let changed = false;
+  const changedProducts: any[] = [];
   let totalQty = 0;
   for (const [linkedId, restoreQty] of restoreByProduct) {
     const idx = products.findIndex((p) => String(p?.id) === linkedId);
     if (idx < 0) continue;
-    products[idx] = applyBulkProductUpdate(products[idx], { stock: { mode: "increase", value: restoreQty } });
-    changed = true;
+    products[idx] = applyBulkProductUpdate(products[idx], {
+      stock: { mode: "increase", value: restoreQty },
+    });
+    changedProducts.push(products[idx]);
     totalQty += restoreQty;
     console.log(
       `[Scan Restock] +${restoreQty} tồn cho ${linkedId} (order ${order.orderSn})`,
     );
   }
 
-  if (!changed) return { restored: false, skipped: "product_not_found" };
+  if (!changedProducts.length) return { ...empty, skipped: "product_not_found" };
+
+  const now = new Date().toISOString();
+  order.stock_restored = true;
+  order.stock_restored_at = now;
+  return { restored: true, qty: totalQty, changedProducts };
+}
+
+/**
+ * Cộng lại tồn local khi quét nhận hủy/hoàn lần đầu (đơn đã ship / có mã VĐ / từng HANDED_OVER).
+ * Idempotent qua stock_restored / stock_restored_at — không cộng 2 lần; không đẩy update_stock Shopee.
+ * Ghi Mongo bằng 1 bulkWrite (chỉ SKU đổi) — cấm deleteMany+insertMany cả catalog.
+ */
+async function restoreLocalStockOnCancelReturnScan(
+  order: any,
+  opts?: { wasHandedOver?: boolean },
+): Promise<{ restored: boolean; skipped?: string; qty?: number }> {
+  let listings: any[] = [];
+  let products: any[] = [];
+  try {
+    listings = await readChannelListingsDb();
+    products = await loadProductsFromStore();
+  } catch {
+    return { restored: false, skipped: "catalog_unavailable" };
+  }
+
+  const result = applyCancelReturnRestockInMemory(order, products, listings, opts);
+  if (!result.restored) return { restored: false, skipped: result.skipped };
 
   try {
-    await saveProductsToStoreAsync(products);
+    await upsertProductsToStoreAsync(result.changedProducts);
     invalidateMasterSkuIndexCache("scan_cancel_return_restock");
   } catch (err) {
     console.warn("[Scan Restock] Lưu tồn kho thất bại:", err);
     return { restored: false, skipped: "save_failed" };
   }
 
-  const now = new Date().toISOString();
-  order.stock_restored = true;
-  order.stock_restored_at = now;
-  return { restored: true, qty: totalQty };
+  return { restored: true, qty: result.qty };
+}
+
+/**
+ * Restock cả mảng đơn hủy/hoàn — 1 lần load catalog + 1 bulkWrite.
+ * CẤM gọi save/create từng đơn (pool timeout khi 22 mã).
+ */
+async function restoreLocalStockOnCancelReturnScanBatch(
+  rows: Array<{ order: any; wasHandedOver?: boolean }>,
+): Promise<{ restored: number }> {
+  const list = (Array.isArray(rows) ? rows : []).filter((r) => r?.order);
+  if (!list.length) return { restored: 0 };
+
+  let listings: any[] = [];
+  let products: any[] = [];
+  try {
+    listings = await readChannelListingsDb();
+    products = await loadProductsFromStore();
+  } catch {
+    return { restored: 0 };
+  }
+
+  const changedById = new Map<string, any>();
+  let restored = 0;
+  for (const row of list) {
+    const result = applyCancelReturnRestockInMemory(row.order, products, listings, {
+      wasHandedOver: row.wasHandedOver,
+    });
+    if (!result.restored) continue;
+    restored += 1;
+    for (const p of result.changedProducts) {
+      const id = String(p?.id || "");
+      if (id) changedById.set(id, p);
+    }
+  }
+
+  if (changedById.size > 0) {
+    try {
+      await upsertProductsToStoreAsync([...changedById.values()]);
+      invalidateMasterSkuIndexCache("scan_cancel_return_restock");
+      console.log(
+        `[Scan Restock] bulkWrite ONE shot — orders=${restored} products=${changedById.size}`,
+      );
+    } catch (err) {
+      console.warn("[Scan Restock] batch lưu tồn kho thất bại:", err);
+    }
+  }
+
+  return { restored };
 }
 
 function mapShopeeOrderLineItem(it: any) {
@@ -18092,6 +18157,7 @@ async function startServer() {
     markOrderHandedOverInStore,
     markOrderLocalStatusInStore,
     restoreLocalStockOnCancelReturnScan,
+    restoreLocalStockOnCancelReturnScanBatch,
     loadProductsForOrders,
     enrichOrdersFromCatalog,
     invalidateOrdersRefreshCache,
