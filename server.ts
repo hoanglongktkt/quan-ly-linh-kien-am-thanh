@@ -482,6 +482,11 @@ import {
   getLowStockProductsFromStore,
   type LocalInventoryCache,
 } from "./src/db/mongoStore.ts";
+import { pushReturnAlert } from "./services/returnAlertQueue.js";
+import {
+  getReturnAlerts,
+  ackReturnAlertsApi,
+} from "./controllers/returnAlertController.js";
 
 /** Hard Crash Catcher — ghi file để xem trên cPanel khi Passenger kill process. */
 function writeCpanelCrashLog(kind: string, err: unknown): void {
@@ -1471,6 +1476,32 @@ function applyReturnTrackingAliases(order: any, tracking: string): void {
   order.returnTrackingNumber = tn;
 }
 
+/** Đánh dấu YCTH mới → queue toast realtime + cờ Mongo. */
+function markNewReturnRequestAlert(order: any, existing: any): boolean {
+  try {
+    if (!order) return false;
+    const hadReturn = Boolean(String(existing?.return_sn || "").trim());
+    const hasReturn = Boolean(String(order.return_sn || "").trim());
+    if (!hasReturn || hadReturn) return false;
+    order.return_alert_pending = true;
+    order.return_alert_at = new Date().toISOString();
+    pushReturnAlert({
+      orderSn: String(order.orderSn || ""),
+      returnSn: String(order.return_sn || ""),
+      returnTrackingNumber:
+        order.return_tracking_no || order.returnTrackingNumber || "",
+      shopId: String(order.shopId || existing?.shopId || ""),
+    });
+    console.log(
+      `[ReturnAlert] NEW return request order_sn=${order.orderSn} return_sn=${order.return_sn} rtn=${order.return_tracking_no || "(empty)"}`,
+    );
+    return true;
+  } catch (err: any) {
+    console.warn("[ReturnAlert] mark failed:", err?.message || err);
+    return false;
+  }
+}
+
 /** Gọi reverse logistics — chỉ ghi mã hoàn khi khác outbound. */
 async function fillReturnTrackingFromShopee(
   shopId: string,
@@ -1543,6 +1574,8 @@ async function fetchReturnShippingTrackingNumber(
       fromReverse = distinctReturnTracking(
         pickBestTrackingNumber(
           body.tracking_number,
+          body.return_shipping_number,
+          body.return_shipping_no,
           body.rts_tracking_number,
           Array.isArray(body?.tracking_info) ? body.tracking_info[0]?.tracking_number : undefined,
         ),
@@ -1608,11 +1641,14 @@ function extractTrackingFromReturnPayload(payload: any): string {
   const root = payload?.response ?? payload ?? {};
   const direct = pickBestTrackingNumber(
     root.tracking_number,
+    root.return_shipping_number,
+    root.return_shipping_no,
     root.return_tracking_no,
     root.return_tracking_number,
     root.rts_tracking_number,
     root?.tracking_info?.tracking_number,
     root?.reverse_logistics_info?.tracking_number,
+    root?.reverse_logistics_info?.return_shipping_number,
     root?.reverse_tracking_number,
     root?.shipping_carrier_tracking_number,
   );
@@ -1632,9 +1668,12 @@ function extractTrackingFromReturnPayload(payload: any): string {
       if (key === "package_query_number") continue;
       if (
         (key === "tracking_number" ||
+          key === "return_shipping_number" ||
+          key === "return_shipping_no" ||
           key === "return_tracking_no" ||
           key === "return_tracking_number" ||
           key === "rts_tracking_number" ||
+          key.includes("return_shipping") ||
           key.endsWith("_tracking_number")) &&
         v != null &&
         String(v).trim()
@@ -2426,6 +2465,8 @@ async function resolveOrderFromShopeeByScanCode(rawCode: string): Promise<any | 
           const candidates = [
             rtn,
             detail.tracking_number,
+            detail.return_shipping_number,
+            detail.return_shipping_no,
             detail.return_tracking_number,
           ]
             .map((v) => String(v || "").trim())
@@ -4711,6 +4752,7 @@ async function syncShopeeReturnRequests(opts?: {
             const orderSn =
               toShopeeSn(detail.order_sn ?? detail.orderSn ?? row.orderSn) || "";
             if (!orderSn) continue;
+            const existing = orders.find((o: any) => String(o.orderSn) === orderSn);
             const mappedReturnSn =
               extractReturnRequestCode(detail) || returnSn;
 
@@ -4752,7 +4794,6 @@ async function syncShopeeReturnRequests(opts?: {
                   : undefined,
             }));
 
-            const existing = orders.find((o: any) => String(o.orderSn) === orderSn);
             const existingRaw = String(existing?.shopee_order_status || "").toUpperCase();
             const alreadyCancelled =
               existingRaw === "CANCELLED" ||
@@ -4829,6 +4870,7 @@ async function syncShopeeReturnRequests(opts?: {
             merged.text_reason = patch.text_reason;
             if (patch.return_tracking_no) applyReturnTrackingAliases(merged, patch.return_tracking_no);
             if (patch.status) merged.status = patch.status;
+            markNewReturnRequestAlert(merged, existing);
 
             patches.push(merged);
             pulled += 1;
@@ -17607,6 +17649,7 @@ async function applyWebhookReturnFallback(
       merged.trackingNumber || merged.tracking_no || existing?.trackingNumber || existing?.tracking_no,
     );
     if (mergedReturn) applyReturnTrackingAliases(merged, mergedReturn);
+    markNewReturnRequestAlert(merged, existing);
     orders[idx] = merged;
   } else {
     orders.unshift({
@@ -17627,6 +17670,7 @@ async function applyWebhookReturnFallback(
       ],
       ...patch,
     });
+    markNewReturnRequestAlert(orders[0], undefined);
   }
 
   console.log(
@@ -20099,6 +20143,8 @@ async function startServer() {
       });
     }
   });
+  app.get("/api/orders/return-alerts", authMiddleware, getReturnAlerts);
+  app.post("/api/orders/return-alerts-ack", authMiddleware, ackReturnAlertsApi);
   app.post("/api/orders/sync", authMiddleware, syncOrders);
   app.post("/api/sync-shopee", authMiddleware, syncShopee);
   app.get("/api/order-counts", authMiddleware, getOrderCounts);

@@ -95,6 +95,10 @@ type OrderDoc = {
   /** Mã vận đơn chiều hoàn */
   return_tracking_no?: string | null;
   returnTrackingNumber?: string | null;
+  return_sn?: string | null;
+  /** Cờ YCTH mới — FE poll toast, ACK sẽ tắt */
+  return_alert_pending?: boolean;
+  return_alert_at?: Date | null;
   /** Shopee package_number (OFG...) — cốt lõi in vận đơn / logistics */
   packageNumber?: string | null;
   /** Tên ĐVVC từ Shopee */
@@ -225,6 +229,9 @@ const OrderSchema = new Schema<OrderDoc>(
     returnTrackingNumber: { type: String, default: null, index: true },
     /** Mã yêu cầu trả hàng / hoàn tiền Shopee (return_sn) — luôn String */
     return_sn: { type: String, default: null },
+    /** YCTH mới chưa toast trên UI */
+    return_alert_pending: { type: Boolean, default: false, index: true },
+    return_alert_at: { type: Date, default: null },
     /** Shopee package_number (OFG...) — bắt buộc cho create_shipping_document / logistics */
     packageNumber: { type: String, default: null, index: true },
     shipping_carrier: { type: String, default: null, index: true },
@@ -1824,6 +1831,17 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       $set.return_sn = returnSnStr;
       $set["data.return_sn"] = returnSnStr;
     }
+    if (order.return_alert_pending === true) {
+      $set.return_alert_pending = true;
+      $set["data.return_alert_pending"] = true;
+      const alertAt = order.return_alert_at
+        ? new Date(String(order.return_alert_at))
+        : new Date();
+      $set.return_alert_at = Number.isNaN(alertAt.getTime()) ? new Date() : alertAt;
+      $set["data.return_alert_at"] = (
+        Number.isNaN(alertAt.getTime()) ? new Date() : alertAt
+      ).toISOString();
+    }
     // Push fallback có thể chỉ chứa orderSn/status. Không để `items: []` hoặc
     // `totalAmount: 0` ghi đè snapshot chi tiết đã lấy trước đó.
     if (Array.isArray(order.items) && order.items.length > 0) {
@@ -2619,6 +2637,108 @@ export async function markOrderLocalStatusInStore(
     `[MongoDB] findOneAndUpdate markOrderLocalStatus=${status} order_sn=${sn} shopId=${shopIdStr || "-"} ok=${Boolean(result)}`,
   );
   return Boolean(result);
+}
+
+/** YCTH mới chưa ACK — phục vụ poll toast khi RAM queue trống (restart). */
+export async function listPendingReturnAlertsFromStore(): Promise<
+  Array<{
+    id: string;
+    orderSn: string;
+    returnSn: string;
+    returnTrackingNumber: string;
+    shopId: string;
+    createdAt: string;
+  }>
+> {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  try {
+    const docs = await OrderModel.find({
+      $or: [{ return_alert_pending: true }, { "data.return_alert_pending": true }],
+    })
+      .select({
+        orderSn: 1,
+        shopId: 1,
+        return_sn: 1,
+        return_tracking_no: 1,
+        returnTrackingNumber: 1,
+        return_alert_at: 1,
+        "data.return_sn": 1,
+        "data.return_tracking_no": 1,
+        "data.returnTrackingNumber": 1,
+        "data.return_alert_at": 1,
+      })
+      .sort({ return_alert_at: -1 })
+      .limit(30)
+      .lean();
+    return (docs || [])
+      .map((d: any) => {
+        const sn = String(d?.orderSn || d?.data?.orderSn || "").trim();
+        if (!sn) return null;
+        const rtn = String(
+          d?.return_tracking_no ||
+            d?.returnTrackingNumber ||
+            d?.data?.return_tracking_no ||
+            d?.data?.returnTrackingNumber ||
+            "",
+        ).trim();
+        const at = d?.return_alert_at || d?.data?.return_alert_at;
+        return {
+          id: `rr-${sn}`,
+          orderSn: sn,
+          returnSn: String(d?.return_sn || d?.data?.return_sn || "").trim(),
+          returnTrackingNumber: rtn,
+          shopId: String(d?.shopId || d?.data?.shopId || "").trim(),
+          createdAt: at ? new Date(at).toISOString() : new Date().toISOString(),
+        };
+      })
+      .filter(Boolean) as Array<{
+      id: string;
+      orderSn: string;
+      returnSn: string;
+      returnTrackingNumber: string;
+      shopId: string;
+      createdAt: string;
+    }>;
+  } catch (err: any) {
+    console.warn("[ReturnAlert] listPendingReturnAlertsFromStore:", err?.message || err);
+    return [];
+  }
+}
+
+/** ACK toast YCTH — tắt cờ return_alert_pending. */
+export async function ackReturnAlertsInStore(orderSns: string[]): Promise<number> {
+  if (!isMongoReady()) return 0;
+  requireMongo();
+  const sns = [
+    ...new Set(
+      (Array.isArray(orderSns) ? orderSns : [])
+        .map((v) => String(v || "").replace(/^shopee-/i, "").replace(/^rr-/, "").replace(/-\d{10,}$/, "").trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (!sns.length) return 0;
+  try {
+    const result = await OrderModel.updateMany(
+      {
+        $or: [
+          { orderSn: { $in: sns } },
+          { "data.orderSn": { $in: sns } },
+          { _id: { $in: sns.map((s) => `shopee-${s}`) } },
+        ],
+      },
+      {
+        $set: {
+          return_alert_pending: false,
+          "data.return_alert_pending": false,
+        },
+      },
+    );
+    return Number(result?.modifiedCount || 0);
+  } catch (err: any) {
+    console.warn("[ReturnAlert] ackReturnAlertsInStore:", err?.message || err);
+    return 0;
+  }
 }
 
 /** Cưỡng bức update flag is_pending_shopee_check theo order_sn (JSON sync caller + Mongo). */
@@ -4388,11 +4508,15 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
     case "return-requests":
     case "yeu-cau-tra-hang":
     case "yeu_cau_tra_hang":
-      // Tab Yêu cầu trả hàng — có return_sn từ Shopee Return APIs.
+      // Tab Yêu cầu trả hàng — return_sn / mã VĐ chiều hoàn / TO_RETURN.
       return {
         $or: [
           { "data.return_sn": { $exists: true, $nin: [null, ""] } },
           { return_sn: { $exists: true, $nin: [null, ""] } },
+          { returnTrackingNumber: { $exists: true, $nin: [null, ""] } },
+          { return_tracking_no: { $exists: true, $nin: [null, ""] } },
+          { "data.returnTrackingNumber": { $exists: true, $nin: [null, ""] } },
+          { "data.return_tracking_no": { $exists: true, $nin: [null, ""] } },
           { shopee_order_status: "TO_RETURN" },
           { "data.shopee_order_status": "TO_RETURN" },
           { status: { $in: ["return_pending", "return_received"] } },

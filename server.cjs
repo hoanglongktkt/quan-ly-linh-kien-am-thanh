@@ -75916,6 +75916,9 @@ var OrderSchema = new import_mongoose3.Schema(
     returnTrackingNumber: { type: String, default: null, index: true },
     /** Mã yêu cầu trả hàng / hoàn tiền Shopee (return_sn) — luôn String */
     return_sn: { type: String, default: null },
+    /** YCTH mới chưa toast trên UI */
+    return_alert_pending: { type: Boolean, default: false, index: true },
+    return_alert_at: { type: Date, default: null },
     /** Shopee package_number (OFG...) — bắt buộc cho create_shipping_document / logistics */
     packageNumber: { type: String, default: null, index: true },
     shipping_carrier: { type: String, default: null, index: true },
@@ -77127,6 +77130,13 @@ async function bulkUpsertOrdersToStore(orders) {
       $set.return_sn = returnSnStr;
       $set["data.return_sn"] = returnSnStr;
     }
+    if (order.return_alert_pending === true) {
+      $set.return_alert_pending = true;
+      $set["data.return_alert_pending"] = true;
+      const alertAt = order.return_alert_at ? new Date(String(order.return_alert_at)) : /* @__PURE__ */ new Date();
+      $set.return_alert_at = Number.isNaN(alertAt.getTime()) ? /* @__PURE__ */ new Date() : alertAt;
+      $set["data.return_alert_at"] = (Number.isNaN(alertAt.getTime()) ? /* @__PURE__ */ new Date() : alertAt).toISOString();
+    }
     if (Array.isArray(order.items) && order.items.length > 0) {
       const safeItems = stringifyShopeeIdsDeep(order.items);
       $set["data.items"] = safeItems;
@@ -77754,6 +77764,76 @@ async function markOrderLocalStatusInStore(orderSn, localStatus, meta) {
     `[MongoDB] findOneAndUpdate markOrderLocalStatus=${status} order_sn=${sn} shopId=${shopIdStr || "-"} ok=${Boolean(result)}`
   );
   return Boolean(result);
+}
+async function listPendingReturnAlertsFromStore() {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  try {
+    const docs = await OrderModel.find({
+      $or: [{ return_alert_pending: true }, { "data.return_alert_pending": true }]
+    }).select({
+      orderSn: 1,
+      shopId: 1,
+      return_sn: 1,
+      return_tracking_no: 1,
+      returnTrackingNumber: 1,
+      return_alert_at: 1,
+      "data.return_sn": 1,
+      "data.return_tracking_no": 1,
+      "data.returnTrackingNumber": 1,
+      "data.return_alert_at": 1
+    }).sort({ return_alert_at: -1 }).limit(30).lean();
+    return (docs || []).map((d) => {
+      const sn = String(d?.orderSn || d?.data?.orderSn || "").trim();
+      if (!sn) return null;
+      const rtn = String(
+        d?.return_tracking_no || d?.returnTrackingNumber || d?.data?.return_tracking_no || d?.data?.returnTrackingNumber || ""
+      ).trim();
+      const at = d?.return_alert_at || d?.data?.return_alert_at;
+      return {
+        id: `rr-${sn}`,
+        orderSn: sn,
+        returnSn: String(d?.return_sn || d?.data?.return_sn || "").trim(),
+        returnTrackingNumber: rtn,
+        shopId: String(d?.shopId || d?.data?.shopId || "").trim(),
+        createdAt: at ? new Date(at).toISOString() : (/* @__PURE__ */ new Date()).toISOString()
+      };
+    }).filter(Boolean);
+  } catch (err) {
+    console.warn("[ReturnAlert] listPendingReturnAlertsFromStore:", err?.message || err);
+    return [];
+  }
+}
+async function ackReturnAlertsInStore(orderSns) {
+  if (!isMongoReady()) return 0;
+  requireMongo();
+  const sns = [
+    ...new Set(
+      (Array.isArray(orderSns) ? orderSns : []).map((v) => String(v || "").replace(/^shopee-/i, "").replace(/^rr-/, "").replace(/-\d{10,}$/, "").trim()).filter(Boolean)
+    )
+  ];
+  if (!sns.length) return 0;
+  try {
+    const result = await OrderModel.updateMany(
+      {
+        $or: [
+          { orderSn: { $in: sns } },
+          { "data.orderSn": { $in: sns } },
+          { _id: { $in: sns.map((s2) => `shopee-${s2}`) } }
+        ]
+      },
+      {
+        $set: {
+          return_alert_pending: false,
+          "data.return_alert_pending": false
+        }
+      }
+    );
+    return Number(result?.modifiedCount || 0);
+  } catch (err) {
+    console.warn("[ReturnAlert] ackReturnAlertsInStore:", err?.message || err);
+    return 0;
+  }
 }
 async function updateOrderPendingShopeeCheckInStore(orderSn, isPending, patch, shopId) {
   if (!isMongoReady()) return false;
@@ -78920,6 +79000,10 @@ function orderTabFilter(tab) {
         $or: [
           { "data.return_sn": { $exists: true, $nin: [null, ""] } },
           { return_sn: { $exists: true, $nin: [null, ""] } },
+          { returnTrackingNumber: { $exists: true, $nin: [null, ""] } },
+          { return_tracking_no: { $exists: true, $nin: [null, ""] } },
+          { "data.returnTrackingNumber": { $exists: true, $nin: [null, ""] } },
+          { "data.return_tracking_no": { $exists: true, $nin: [null, ""] } },
           { shopee_order_status: "TO_RETURN" },
           { "data.shopee_order_status": "TO_RETURN" },
           { status: { $in: ["return_pending", "return_received"] } },
@@ -111021,6 +111105,140 @@ async function ackScanBg(req, res) {
   }
 }
 
+// services/returnAlertQueue.js
+var MAX_ALERTS = 80;
+var alerts = [];
+function makeId(orderSn) {
+  return `rr-${String(orderSn || "").trim()}-${Date.now()}`;
+}
+function pushReturnAlert(item) {
+  try {
+    const orderSn = String(item?.orderSn || "").trim();
+    if (!orderSn) return false;
+    const returnSn = String(item?.returnSn || "").trim();
+    const returnTrackingNumber = String(
+      item?.returnTrackingNumber || item?.return_tracking_no || ""
+    ).trim();
+    const shopId = String(item?.shopId || "").trim();
+    const existing = alerts.find((a) => a.orderSn === orderSn && !a.notified);
+    if (existing) {
+      if (returnSn) existing.returnSn = returnSn;
+      if (returnTrackingNumber) existing.returnTrackingNumber = returnTrackingNumber;
+      return false;
+    }
+    alerts.unshift({
+      id: makeId(orderSn),
+      orderSn,
+      returnSn,
+      returnTrackingNumber,
+      shopId,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+      notified: false
+    });
+    if (alerts.length > MAX_ALERTS) alerts.length = MAX_ALERTS;
+    return true;
+  } catch (err) {
+    console.warn("[ReturnAlert] push failed:", err?.message || err);
+    return false;
+  }
+}
+function getReturnAlertsSnapshot() {
+  try {
+    const unnotified = alerts.filter((a) => !a.notified);
+    return {
+      unnotified,
+      count: unnotified.length,
+      recent: alerts.slice(0, 20)
+    };
+  } catch (err) {
+    console.warn("[ReturnAlert] snapshot failed:", err?.message || err);
+    return { unnotified: [], count: 0, recent: [] };
+  }
+}
+function ackReturnAlerts(ids) {
+  try {
+    const keys = new Set(
+      (Array.isArray(ids) ? ids : []).map((v) => String(v || "").trim()).filter(Boolean)
+    );
+    if (!keys.size) {
+      let n2 = 0;
+      for (const a of alerts) {
+        if (!a.notified) {
+          a.notified = true;
+          n2 += 1;
+        }
+      }
+      return n2;
+    }
+    let n = 0;
+    for (const a of alerts) {
+      if (a.notified) continue;
+      if (keys.has(a.id) || keys.has(a.orderSn)) {
+        a.notified = true;
+        n += 1;
+      }
+    }
+    return n;
+  } catch (err) {
+    console.warn("[ReturnAlert] ack failed:", err?.message || err);
+    return 0;
+  }
+}
+
+// controllers/returnAlertController.js
+async function getReturnAlerts(_req, res) {
+  try {
+    const snap = getReturnAlertsSnapshot();
+    let unnotified = snap.unnotified || [];
+    if (unnotified.length === 0 && isMongoReady()) {
+      try {
+        const fromDb = await listPendingReturnAlertsFromStore();
+        if (Array.isArray(fromDb) && fromDb.length) unnotified = fromDb;
+      } catch (dbErr) {
+        console.warn("[ReturnAlert] mongo list failed:", dbErr?.message || dbErr);
+      }
+    }
+    return res.json({
+      success: true,
+      count: unnotified.length,
+      unnotified,
+      message: unnotified.length > 0 ? "C\xF3 y\xEAu c\u1EA7u tr\u1EA3 h\xE0ng ho\xE0n ti\u1EC1n m\u1EDBi!" : void 0
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "return_alerts_failed",
+      unnotified: [],
+      count: 0
+    });
+  }
+}
+async function ackReturnAlertsApi(req, res) {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : Array.isArray(req.body?.orderSns) ? req.body.orderSns : [];
+    const acked = ackReturnAlerts(ids);
+    const sns = [
+      ...new Set(
+        ids.map((v) => String(v || "").replace(/^rr-/, "").replace(/-\d+$/, "").trim()).concat(ids.map((v) => String(v || "").trim())).filter(Boolean)
+      )
+    ];
+    let mongoAcked = 0;
+    if (isMongoReady() && sns.length) {
+      try {
+        mongoAcked = await ackReturnAlertsInStore(sns);
+      } catch (dbErr) {
+        console.warn("[ReturnAlert] mongo ack failed:", dbErr?.message || dbErr);
+      }
+    }
+    return res.json({ success: true, acked, mongoAcked });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "return_alerts_ack_failed"
+    });
+  }
+}
+
 // routes/ordersRoutes.js
 var router13 = (0, import_express14.Router)();
 var h2 = asyncHandler;
@@ -111055,6 +111273,8 @@ router13.post("/don-hoan-huy", h2(saveScanOrders));
 router13.post("/scan-bg-enqueue", h2(enqueueScanBg));
 router13.get("/scan-bg-status", h2(getScanBgStatus));
 router13.post("/scan-bg-ack", h2(ackScanBg));
+router13.get("/return-alerts", h2(getReturnAlerts));
+router13.post("/return-alerts-ack", h2(ackReturnAlertsApi));
 router13.post("/scan-bulk-update", h2(scanBulkUpdate));
 router13.post("/reset-print-status", h2(resetPrintStatus));
 router13.post("/update-print-status", h2(updatePrintStatus));
@@ -118616,6 +118836,29 @@ function applyReturnTrackingAliases(order, tracking) {
   order.return_tracking_no = tn;
   order.returnTrackingNumber = tn;
 }
+function markNewReturnRequestAlert(order, existing) {
+  try {
+    if (!order) return false;
+    const hadReturn = Boolean(String(existing?.return_sn || "").trim());
+    const hasReturn = Boolean(String(order.return_sn || "").trim());
+    if (!hasReturn || hadReturn) return false;
+    order.return_alert_pending = true;
+    order.return_alert_at = (/* @__PURE__ */ new Date()).toISOString();
+    pushReturnAlert({
+      orderSn: String(order.orderSn || ""),
+      returnSn: String(order.return_sn || ""),
+      returnTrackingNumber: order.return_tracking_no || order.returnTrackingNumber || "",
+      shopId: String(order.shopId || existing?.shopId || "")
+    });
+    console.log(
+      `[ReturnAlert] NEW return request order_sn=${order.orderSn} return_sn=${order.return_sn} rtn=${order.return_tracking_no || "(empty)"}`
+    );
+    return true;
+  } catch (err) {
+    console.warn("[ReturnAlert] mark failed:", err?.message || err);
+    return false;
+  }
+}
 async function fillReturnTrackingFromShopee(shopId, accessToken, order) {
   if (!orderNeedsRealReturnTracking(order)) {
     return Boolean(normalizeCarrierTrackingCode(order?.return_tracking_no || order?.returnTrackingNumber));
@@ -118674,6 +118917,8 @@ async function fetchReturnShippingTrackingNumber(shopId, accessToken, returnSn, 
       fromReverse = distinctReturnTracking(
         pickBestTrackingNumber(
           body.tracking_number,
+          body.return_shipping_number,
+          body.return_shipping_no,
           body.rts_tracking_number,
           Array.isArray(body?.tracking_info) ? body.tracking_info[0]?.tracking_number : void 0
         ),
@@ -118726,11 +118971,14 @@ function extractTrackingFromReturnPayload(payload) {
   const root = payload?.response ?? payload ?? {};
   const direct = pickBestTrackingNumber(
     root.tracking_number,
+    root.return_shipping_number,
+    root.return_shipping_no,
     root.return_tracking_no,
     root.return_tracking_number,
     root.rts_tracking_number,
     root?.tracking_info?.tracking_number,
     root?.reverse_logistics_info?.tracking_number,
+    root?.reverse_logistics_info?.return_shipping_number,
     root?.reverse_tracking_number,
     root?.shipping_carrier_tracking_number
   );
@@ -118746,7 +118994,7 @@ function extractTrackingFromReturnPayload(payload) {
     for (const [k, v] of Object.entries(node)) {
       const key = String(k).toLowerCase();
       if (key === "package_query_number") continue;
-      if ((key === "tracking_number" || key === "return_tracking_no" || key === "return_tracking_number" || key === "rts_tracking_number" || key.endsWith("_tracking_number")) && v != null && String(v).trim()) {
+      if ((key === "tracking_number" || key === "return_shipping_number" || key === "return_shipping_no" || key === "return_tracking_no" || key === "return_tracking_number" || key === "rts_tracking_number" || key.includes("return_shipping") || key.endsWith("_tracking_number")) && v != null && String(v).trim()) {
         found.push(String(v).trim());
       } else if (v && typeof v === "object") {
         walk(v, depth + 1);
@@ -120958,6 +121206,7 @@ async function syncShopeeReturnRequests(opts) {
             const detail = detailResult?.response ?? detailResult ?? {};
             const orderSn = toShopeeSn(detail.order_sn ?? detail.orderSn ?? row.orderSn) || "";
             if (!orderSn) continue;
+            const existing = orders.find((o) => String(o.orderSn) === orderSn);
             const mappedReturnSn = extractReturnRequestCode(detail) || returnSn;
             const { tracking: returnShipTn } = await fetchReturnShippingTrackingNumber(
               shopId,
@@ -120984,7 +121233,6 @@ async function syncShopeeReturnRequests(opts) {
               activity_id: it.activity_id != null ? toShopeeId(it.activity_id) || String(it.activity_id) : void 0,
               promotion_id: it.promotion_id != null ? toShopeeId(it.promotion_id) || String(it.promotion_id) : void 0
             }));
-            const existing = orders.find((o) => String(o.orderSn) === orderSn);
             const existingRaw = String(existing?.shopee_order_status || "").toUpperCase();
             const alreadyCancelled = existingRaw === "CANCELLED" || existingRaw === "IN_CANCEL" || existing?.status === "cancelled";
             const patch = {
@@ -121044,6 +121292,7 @@ async function syncShopeeReturnRequests(opts) {
             merged.text_reason = patch.text_reason;
             if (patch.return_tracking_no) applyReturnTrackingAliases(merged, patch.return_tracking_no);
             if (patch.status) merged.status = patch.status;
+            markNewReturnRequestAlert(merged, existing);
             patches.push(merged);
             pulled += 1;
             await shopeeSyncDelay(120);
@@ -129858,6 +130107,7 @@ async function applyWebhookReturnFallback(shopId, accessToken, orderSn, orders, 
       merged.trackingNumber || merged.tracking_no || existing?.trackingNumber || existing?.tracking_no
     );
     if (mergedReturn) applyReturnTrackingAliases(merged, mergedReturn);
+    markNewReturnRequestAlert(merged, existing);
     orders[idx] = merged;
   } else {
     orders.unshift({
@@ -129878,6 +130128,7 @@ async function applyWebhookReturnFallback(shopId, accessToken, orderSn, orders, 
       ],
       ...patch
     });
+    markNewReturnRequestAlert(orders[0], void 0);
   }
   console.log(
     `[Shopee Webhook] Return fallback OK order_sn=${orderSn} return_sn=${mappedReturnSn} tn=${returnTn || "(empty)"} kind=${kind}`
@@ -131931,6 +132182,8 @@ async function startServer() {
       });
     }
   });
+  app.get("/api/orders/return-alerts", authMiddleware, getReturnAlerts);
+  app.post("/api/orders/return-alerts-ack", authMiddleware, ackReturnAlertsApi);
   app.post("/api/orders/sync", authMiddleware, syncOrders);
   app.post("/api/sync-shopee", authMiddleware, syncShopee);
   app.get("/api/order-counts", authMiddleware, getOrderCounts);

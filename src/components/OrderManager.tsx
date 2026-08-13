@@ -112,6 +112,15 @@ import {
   isAudioUnlockedState,
 } from '../utils/notificationSound';
 
+function isReturnRequestOrder(order: Order): boolean {
+  if (String(order.return_sn || '').trim()) return true;
+  if (String(order.returnTrackingNumber || order.return_tracking_no || '').trim()) return true;
+  if (order.shopee_cancel_return_kind === 'refund_return') return true;
+  if (order.status === 'return_pending' || order.status === 'return_received') return true;
+  if (String(order.shopee_order_status || '').toUpperCase() === 'TO_RETURN') return true;
+  return false;
+}
+
 function getOrderWaybillCode(order: Order): string {
   // Ưu tiên mã đi (tracking_no) theo order_sn — return_tracking_no / scan_code chỉ fallback.
   const fromHelper = getCarrierWaybillDisplay(order);
@@ -121,6 +130,7 @@ function getOrderWaybillCode(order: Order): string {
   const fallback = String(
     order.trackingNumber ||
       order.tracking_no ||
+      order.returnTrackingNumber ||
       order.return_tracking_no ||
       (order as any).scan_code ||
       fromNote ||
@@ -804,7 +814,7 @@ function classifyScanCancelReturnBuckets(order: Order): {
 
 /** Quét khớp mã vận đơn chiều hoàn (return waybill). */
 function scannedMatchesReturnWaybill(order: Order, rawCode: string): boolean {
-  const rtn = normalizeOrderScanKey(order.return_tracking_no || '');
+  const rtn = normalizeOrderScanKey(order.return_tracking_no || order.returnTrackingNumber || '');
   if (!rtn || rtn.length < 6) return false;
   const keys = buildScanLookupKeys(rawCode);
   return keys.some((sk) => {
@@ -4811,14 +4821,7 @@ export default function OrderManager({
     if (status === 'cancel_returns') {
       clientCount = cancelReturnPool.length;
     } else if (status === 'return_requests') {
-      clientCount = orders.filter(
-        (o) =>
-          Boolean(o.return_sn) ||
-          o.shopee_cancel_return_kind === 'refund_return' ||
-          o.status === 'return_pending' ||
-          o.status === 'return_received' ||
-          String(o.shopee_order_status || '').toUpperCase() === 'TO_RETURN',
-      ).length;
+      clientCount = orders.filter((o) => isReturnRequestOrder(o)).length;
     } else if (status === 'received_cancel_returns') {
       clientCount = orders.filter((o) => matchesReceivedCancelReturnTab(o)).length;
     } else {
@@ -4854,13 +4857,7 @@ export default function OrderManager({
     if (activeSubTab === 'cancel_returns') {
       if (!matchesCancelReturnTab(order, cancelReturnTab)) return false;
     } else if (activeSubTab === 'return_requests') {
-      const isRr =
-        Boolean(order.return_sn) ||
-        order.shopee_cancel_return_kind === 'refund_return' ||
-        order.status === 'return_pending' ||
-        order.status === 'return_received' ||
-        String(order.shopee_order_status || '').toUpperCase() === 'TO_RETURN';
-      if (!isRr) return false;
+      if (!isReturnRequestOrder(order)) return false;
     } else if (activeSubTab === 'received_cancel_returns') {
       if (!matchesReceivedCancelReturnTab(order)) return false;
     } else if (activeSubTab === 'handed_over_carrier') {
@@ -4896,6 +4893,8 @@ export default function OrderManager({
       const matchTracking = Boolean(
         (order.trackingNumber && order.trackingNumber.toLowerCase().includes(q)) ||
           (order.tracking_no && String(order.tracking_no).toLowerCase().includes(q)) ||
+          (order.returnTrackingNumber && String(order.returnTrackingNumber).toLowerCase().includes(q)) ||
+          (order.return_tracking_no && String(order.return_tracking_no).toLowerCase().includes(q)) ||
           (getOrderWaybillCode(order) && getOrderWaybillCode(order).toLowerCase().includes(q)),
       );
       const matchInternal = order.internalTrackingCode
@@ -7259,10 +7258,10 @@ export default function OrderManager({
                             </span>
                           </td>
                           <td className="p-4">
-                            {order.return_tracking_no ? (
-                              <div className="font-mono font-extrabold text-gray-900 text-sm tracking-tight flex items-center gap-1" title={order.return_tracking_no}>
+                            {order.return_tracking_no || order.returnTrackingNumber ? (
+                              <div className="font-mono font-extrabold text-gray-900 text-sm tracking-tight flex items-center gap-1" title={order.return_tracking_no || order.returnTrackingNumber}>
                                 <Barcode className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                                <span className="truncate max-w-[180px]">{order.return_tracking_no}</span>
+                                <span className="truncate max-w-[180px]">{order.return_tracking_no || order.returnTrackingNumber}</span>
                               </div>
                             ) : (
                               <span className="text-xs text-gray-400 italic font-medium">Chưa có mã VĐ hoàn</span>

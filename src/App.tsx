@@ -46,6 +46,7 @@ import {
   PackageCheck,
   CheckCircle2,
   Loader2,
+  Undo2,
 } from 'lucide-react';
 import type { OrdersSubTabId } from './components/OrderManager';
 import {
@@ -53,6 +54,8 @@ import {
   ackScanBgNotifications,
   formatScanBgToast,
 } from './utils/scanBgQueue';
+import { fetchReturnAlerts, ackReturnAlerts } from './utils/returnAlerts';
+import { playNotificationSound } from './utils/notificationSound';
 
 /** Gộp shallow fetch vào cache: cập nhật đơn cũ, prepend đơn mới.
  * - Không downgrade cờ bàn giao ĐVVC (true → false) khi fresh còn stale.
@@ -334,6 +337,9 @@ export default function App() {
   const [scanBgPendingCount, setScanBgPendingCount] = useState(0);
   const scanBgPollBusyRef = useRef(false);
   const scanBgToastTimerRef = useRef<number | null>(null);
+  const [returnAlertToast, setReturnAlertToast] = useState<string | null>(null);
+  const returnAlertPollBusyRef = useRef(false);
+  const returnAlertToastTimerRef = useRef<number | null>(null);
   /** Làm mới ngầm khi quay lại tab trình duyệt — không trigger Shopee sync. */
   const [backgroundRefreshing, setBackgroundRefreshing] = useState(false);
   const lastFocusRefreshAtRef = useRef(0);
@@ -940,6 +946,52 @@ export default function App() {
       window.clearInterval(timer);
     };
   }, [isAuthenticated, activeTab, resolveOrdersFetchTab]);
+
+  // Poll YCTH mới từ background sync / webhook → toast góc màn hình.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let cancelled = false;
+    const poll = async () => {
+      if (returnAlertPollBusyRef.current) return;
+      returnAlertPollBusyRef.current = true;
+      try {
+        const status = await fetchReturnAlerts();
+        if (cancelled || !status) return;
+        const unnotified = status.unnotified || [];
+        if (unnotified.length === 0) return;
+        if (returnAlertToastTimerRef.current) window.clearTimeout(returnAlertToastTimerRef.current);
+        setReturnAlertToast('Có yêu cầu trả hàng hoàn tiền mới!');
+        try {
+          playNotificationSound();
+        } catch {
+          /* ignore */
+        }
+        returnAlertToastTimerRef.current = window.setTimeout(() => setReturnAlertToast(null), 8000);
+        await ackReturnAlerts(
+          unnotified.map((j) => j.id || j.orderSn).filter(Boolean) as string[],
+        );
+        void fetchOrders({
+          silent: true,
+          bustCache: true,
+          page: 1,
+          limit: 50,
+          merge: true,
+          tab: 'return_requests',
+        });
+      } finally {
+        returnAlertPollBusyRef.current = false;
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => {
+      void poll();
+    }, 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
   useEffect(() => {
     if (!isAuthenticated || activeTab !== 'orders' || orders.length > 0 || ordersLoading) return;
     const tab = resolveOrdersFetchTab();
@@ -1815,6 +1867,16 @@ export default function App() {
         >
           <CheckCircle2 className="w-4 h-4 shrink-0" />
           <span className="flex-1">{scanBgToast.text}</span>
+        </div>
+      )}
+      {returnAlertToast && (
+        <div
+          className="fixed top-16 left-3 right-3 md:left-auto md:right-3 md:max-w-md z-[120] text-sm font-extrabold px-4 py-3 rounded-xl shadow-lg flex items-center gap-2 bg-orange-600 text-white border border-orange-400"
+          role="alert"
+          aria-live="assertive"
+        >
+          <Undo2 className="w-5 h-5 shrink-0" />
+          <span className="flex-1">{returnAlertToast}</span>
         </div>
       )}
       {/* Sidebar Navigation */}

@@ -37,6 +37,10 @@ import {
   getScanBgStatus,
   ackScanBg,
 } from "../controllers/scanBgController.js";
+import {
+  getReturnAlerts,
+  ackReturnAlertsApi,
+} from "../controllers/returnAlertController.js";
 import { scanBulkUpdate } from "../controllers/scanBulkController.js";
 import { asyncHandler } from "../middlewares/errorHandler.js";
 
@@ -79,6 +83,8 @@ router.post("/don-hoan-huy", h(saveScanOrders));
 router.post("/scan-bg-enqueue", h(enqueueScanBg));
 router.get("/scan-bg-status", h(getScanBgStatus));
 router.post("/scan-bg-ack", h(ackScanBg));
+router.get("/return-alerts", h(getReturnAlerts));
+router.post("/return-alerts-ack", h(ackReturnAlertsApi));
 router.post("/scan-bulk-update", h(scanBulkUpdate));
 router.post("/reset-print-status", h(resetPrintStatus));
 router.post("/update-print-status", h(updatePrintStatus));
