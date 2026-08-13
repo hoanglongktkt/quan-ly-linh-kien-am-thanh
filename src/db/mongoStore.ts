@@ -215,18 +215,18 @@ const OrderSchema = new Schema<OrderDoc>(
     /** Shopee shop_id — luôn String (uint64-safe) */
     shopId: { type: String, default: null, index: true },
     tracking_no: { type: String, default: null, index: true },
-    /** Alias canonical — mã VĐ chiều đi (SPX cũ trên kiện hoàn) */
-    trackingNumber: { type: String, default: null, index: true },
+    /** Alias canonical — mã VĐ chiều đi (SPX cũ trên kiện hoàn). Index khai báo riêng bên dưới. */
+    trackingNumber: { type: String, default: null },
     /** Mã vận đơn chiều hoàn — quét barcode return */
     return_tracking_no: { type: String, default: null, index: true },
-    /** Alias canonical — mã VĐ chiều hoàn do Shopee cấp */
-    returnTrackingNumber: { type: String, default: null, index: true },
+    /** Alias canonical — mã VĐ chiều hoàn do Shopee cấp. Index khai báo riêng bên dưới. */
+    returnTrackingNumber: { type: String, default: null },
     /** Đối soát kho nội bộ: CHUA_NHAN | DA_NHAN — CHỈ đổi khi quét barcode, Shopee KHÔNG ghi đè */
     internalReturnReceiptStatus: { type: String, default: "CHUA_NHAN", index: true },
-    /** Mã yêu cầu trả hàng / hoàn tiền Shopee (return_sn) — luôn String */
+    /** Mã yêu cầu trả hàng / hoàn tiền Shopee (return_sn) — luôn String. Index khai báo riêng bên dưới. */
     return_sn: { type: String, default: null },
-    /** Shopee package_number (OFG...) — bắt buộc cho create_shipping_document / logistics */
-    packageNumber: { type: String, default: null, index: true },
+    /** Shopee package_number (OFG...) — bắt buộc cho create_shipping_document / logistics. Index khai báo riêng bên dưới. */
+    packageNumber: { type: String, default: null },
     shipping_carrier: { type: String, default: null, index: true },
     is_pending_shopee_check: { type: Boolean, default: false, index: true },
     /** Cờ nội bộ — chỉ $setOnInsert khi sync; QR/bàn giao mới $set true */
@@ -278,8 +278,11 @@ OrderSchema.index({ hasPdf: 1, isPrinted: 1 });
 OrderSchema.index({ last_shopee_update_at: -1 });
 // Giữ compound index cho các truy vấn theo shop trong luồng reconciliation.
 OrderSchema.index({ orderSn: 1, shopId: 1 });
-// Lookup / quét theo package_number (OFG...).
+// Lookup / quét barcode — 4 index bắt buộc (KHÔNG trùng index: true trên field).
 OrderSchema.index({ packageNumber: 1 });
+OrderSchema.index({ return_sn: 1 });
+OrderSchema.index({ returnTrackingNumber: 1 });
+OrderSchema.index({ trackingNumber: 1 });
 OrderSchema.index({ "data.packageNumber": 1 });
 OrderSchema.index({ "data.package_number": 1 });
 // Quét kiện hoàn theo return_tracking_no / returnTrackingNumber (barcode chiều về).
@@ -299,11 +302,9 @@ OrderSchema.index({ "data.date": -1, _id: -1 });
 // Quét ĐVVC / lookup — tracking trong data (barcode VĐ).
 OrderSchema.index({ "data.tracking_no": 1 });
 OrderSchema.index({ "data.trackingNumber": 1 });
-OrderSchema.index({ trackingNumber: 1 });
 OrderSchema.index({ "data.orderSn": 1 });
 OrderSchema.index({ "data.order_sn": 1 });
 OrderSchema.index({ "data.internalTrackingCode": 1 });
-OrderSchema.index({ return_sn: 1 });
 OrderSchema.index({ "data.return_sn": 1 });
 
 const OrderEventSchema = new Schema<OrderEventDoc>(
@@ -3527,77 +3528,94 @@ function buildScanKeyVariantsForMongo(rawKeys: string[]): string[] {
   return [...out];
 }
 
-/** Quét kiện hoàn: khớp return_sn HOẶC returnTrackingNumber HOẶC trackingNumber cũ HOẶC packageNumber. */
-function buildReturnAwareScanOrFilter(
+/** Thứ tự quét barcode — mỗi bước 1 findOne/find trên field đã index, KHÔNG $or. */
+const SCAN_INDEX_PRIORITY_FIELDS = [
+  "packageNumber",
+  "return_sn",
+  "returnTrackingNumber",
+  "trackingNumber",
+] as const;
+
+const SCAN_INDEX_FALLBACK_FIELDS = [
+  "tracking_no",
+  "return_tracking_no",
+  "orderSn",
+  "data.packageNumber",
+  "data.package_number",
+  "data.return_sn",
+  "data.returnTrackingNumber",
+  "data.return_tracking_no",
+  "data.trackingNumber",
+  "data.tracking_no",
+  "data.internalTrackingCode",
+  "data.orderSn",
+  "data.order_sn",
+] as const;
+
+async function findOneOrderByIndexedScanFields(
   keys: string[],
   uniqueIds: string[],
-): { $or: Record<string, unknown>[] } {
-  return {
-    $or: [
-      { return_sn: { $in: keys } },
-      { returnTrackingNumber: { $in: keys } },
-      { trackingNumber: { $in: keys } },
-      { packageNumber: { $in: keys } },
-      { tracking_no: { $in: keys } },
-      { return_tracking_no: { $in: keys } },
-      { orderSn: { $in: keys } },
-      { _id: { $in: uniqueIds } },
-      { "data.return_sn": { $in: keys } },
-      { "data.returnTrackingNumber": { $in: keys } },
-      { "data.trackingNumber": { $in: keys } },
-      { "data.packageNumber": { $in: keys } },
-      { "data.tracking_no": { $in: keys } },
-      { "data.return_tracking_no": { $in: keys } },
-      { "data.package_number": { $in: keys } },
-      { "data.internalTrackingCode": { $in: keys } },
-      { "data.orderSn": { $in: keys } },
-      { "data.order_sn": { $in: keys } },
-    ],
-  };
+): Promise<any | null> {
+  if (!keys.length) return null;
+  const tryField = (field: string) =>
+    OrderModel.findOne({ [field]: { $in: keys } }).maxTimeMS(2_000).lean();
+
+  for (const field of SCAN_INDEX_PRIORITY_FIELDS) {
+    const doc = await tryField(field);
+    if (doc) return doc;
+  }
+  for (const field of SCAN_INDEX_FALLBACK_FIELDS) {
+    const doc = await tryField(field);
+    if (doc) return doc;
+  }
+  if (uniqueIds.length) {
+    const doc = await OrderModel.findOne({ _id: { $in: uniqueIds } })
+      .maxTimeMS(2_000)
+      .lean();
+    if (doc) return doc;
+  }
+  return null;
 }
 
-function buildReturnAwareScanRegexOrFilter(
-  rxExact: RegExp,
-  rxSuffix: RegExp | null,
-): { $or: Record<string, unknown>[] } {
-  const fieldMatchers: Record<string, unknown>[] = [
-    { return_sn: rxExact },
-    { returnTrackingNumber: rxExact },
-    { trackingNumber: rxExact },
-    { packageNumber: rxExact },
-    { tracking_no: rxExact },
-    { return_tracking_no: rxExact },
-    { orderSn: rxExact },
-    { "data.return_sn": rxExact },
-    { "data.returnTrackingNumber": rxExact },
-    { "data.trackingNumber": rxExact },
-    { "data.packageNumber": rxExact },
-    { "data.tracking_no": rxExact },
-    { "data.return_tracking_no": rxExact },
-    { "data.package_number": rxExact },
-    { "data.internalTrackingCode": rxExact },
-    { "data.orderSn": rxExact },
-    { "data.order_sn": rxExact },
-  ];
-  if (rxSuffix) {
-    fieldMatchers.push(
-      { return_sn: rxSuffix },
-      { returnTrackingNumber: rxSuffix },
-      { trackingNumber: rxSuffix },
-      { packageNumber: rxSuffix },
-      { tracking_no: rxSuffix },
-      { return_tracking_no: rxSuffix },
-      { orderSn: rxSuffix },
-      { "data.return_sn": rxSuffix },
-      { "data.returnTrackingNumber": rxSuffix },
-      { "data.trackingNumber": rxSuffix },
-      { "data.packageNumber": rxSuffix },
-      { "data.tracking_no": rxSuffix },
-      { "data.return_tracking_no": rxSuffix },
-      { "data.internalTrackingCode": rxSuffix },
+async function findOrdersByIndexedScanFields(
+  keys: string[],
+  uniqueIds: string[],
+  limit: number,
+): Promise<any[]> {
+  if (!keys.length) return [];
+  const seen = new Set<string>();
+  const docs: any[] = [];
+  const pushDocs = (found: any[] | null | undefined) => {
+    for (const d of found || []) {
+      const id = String(d?._id || "");
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      docs.push(d);
+    }
+  };
+  const tryField = (field: string) =>
+    OrderModel.find({ [field]: { $in: keys } })
+      .limit(limit)
+      .maxTimeMS(2_000)
+      .lean();
+
+  for (const field of SCAN_INDEX_PRIORITY_FIELDS) {
+    if (docs.length >= limit) break;
+    pushDocs(await tryField(field));
+  }
+  for (const field of SCAN_INDEX_FALLBACK_FIELDS) {
+    if (docs.length >= limit) break;
+    pushDocs(await tryField(field));
+  }
+  if (docs.length < limit && uniqueIds.length) {
+    pushDocs(
+      await OrderModel.find({ _id: { $in: uniqueIds } })
+        .limit(limit)
+        .maxTimeMS(2_000)
+        .lean(),
     );
   }
-  return { $or: fieldMatchers };
+  return docs;
 }
 
 /** Đọc cờ isPrinted — ưu tiên top-level, fallback data.isPrinted (khớp badge/lọc UI). */
@@ -3865,26 +3883,8 @@ export async function findOrderByScanCodeInStore(rawCode: string): Promise<any |
   });
   const uniqueIds = [...new Set(idKeys)];
 
-  const filter = buildReturnAwareScanOrFilter(keys, uniqueIds);
-
   try {
-    let doc = await OrderModel.findOne(filter).maxTimeMS(4_000).lean();
-    if (!doc) {
-      // Case-insensitive / suffix fallback — QR casing lệch DB hoặc cắt prefix.
-      const primary =
-        keys.find((k) => k.length >= 8 && /[A-Za-z0-9]{8,}/.test(k)) ||
-        keys.find((k) => k.length >= 8) ||
-        keys[0];
-      if (primary && primary.length >= 4) {
-        const escaped = primary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const rxExact = new RegExp(`^${escaped}$`, "i");
-        const rxSuffix =
-          primary.length >= 10 ? new RegExp(`${escaped}$`, "i") : null;
-        doc = await OrderModel.findOne(buildReturnAwareScanRegexOrFilter(rxExact, rxSuffix))
-          .maxTimeMS(3_000)
-          .lean();
-      }
-    }
+    const doc = await findOneOrderByIndexedScanFields(keys, uniqueIds);
     return hydrateOrderFromMongoDoc(doc);
   } catch (err: any) {
     console.warn("[MongoDB] findOrderByScanCodeInStore failed:", err?.message || err);
@@ -5843,13 +5843,12 @@ export async function findOrdersByScanCodesInStore(
 
   const keysArr = [...allKeys];
   const idsArr = [...allIds];
-  const filter = buildReturnAwareScanOrFilter(keysArr, idsArr);
-
   try {
-    const docs = await OrderModel.find(filter)
-      .limit(Math.min(Math.max(rawCodes.length * 3, 50), 500))
-      .maxTimeMS(8_000)
-      .lean();
+    const docs = await findOrdersByIndexedScanFields(
+      keysArr,
+      idsArr,
+      Math.min(Math.max(rawCodes.length * 3, 50), 500),
+    );
     const hydrated = (docs || [])
       .map((d) => hydrateOrderFromMongoDoc(d))
       .filter(Boolean);
