@@ -1645,6 +1645,8 @@ const INTERNAL_FLAG_KEYS = new Set([
   "pdfUrl",
   "pdfFilename",
   "waybill_url",
+  "returnTrackingFromApi",
+  "clearCopiedReturnTracking",
 ]);
 
 /**
@@ -1814,7 +1816,18 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     const returnTn = String(
       order.returnTrackingNumber || order.return_tracking_no || "",
     ).trim();
-    if (returnTn && !/^0FG/i.test(returnTn)) {
+    const $unset: Record<string, unknown> = {};
+    const fromReturnApi = order.returnTrackingFromApi === true;
+    if (order.clearCopiedReturnTracking === true) {
+      $unset.return_tracking_no = "";
+      $unset.returnTrackingNumber = "";
+      $unset["data.return_tracking_no"] = "";
+      $unset["data.returnTrackingNumber"] = "";
+    } else if (
+      returnTn &&
+      !/^0FG/i.test(returnTn) &&
+      (fromReturnApi || !usableTn || returnTn !== usableTn)
+    ) {
       $set.return_tracking_no = returnTn;
       $set.returnTrackingNumber = returnTn;
       $set["data.return_tracking_no"] = returnTn;
@@ -1874,6 +1887,13 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       if (TRACKING_PRESERVE_KEYS.has(key)) {
         const s = String(value).trim();
         if (!s || /^0FG/i.test(s)) continue;
+        if (
+          (key === "return_tracking_no" || key === "returnTrackingNumber") &&
+          (order.clearCopiedReturnTracking === true ||
+            (Boolean(usableTn) && s === usableTn && order.returnTrackingFromApi !== true))
+        ) {
+          continue;
+        }
       }
       $set[`data.${key}`] = value;
     }
@@ -1995,6 +2015,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
           update: {
             $set,
             $setOnInsert,
+            ...(Object.keys($unset).length ? { $unset } : {}),
           },
           upsert: true,
         },
@@ -2750,9 +2771,11 @@ export async function updateOrderTrackingInStore(
     }
   }
   const rtn = String(extra?.return_tracking_no || "").trim();
-  if (rtn && !/^0FG/i.test(rtn)) {
+  if (rtn && !/^0FG/i.test(rtn) && rtn !== tn) {
     $set.return_tracking_no = rtn;
+    $set.returnTrackingNumber = rtn;
     $set["data.return_tracking_no"] = rtn;
+    $set["data.returnTrackingNumber"] = rtn;
   }
   if (extra?.status != null) {
     $set.status = String(extra.status);
