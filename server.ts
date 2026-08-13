@@ -1367,7 +1367,8 @@ async function shopeeGetReturnList(
   }
 }
 
-// v2.returns.get_return_detail — lấy tracking_number / return_tracking cho đơn hoàn.
+// v2.returns.get_return_detail — order_sn, return_sn, status.
+// response.tracking_number = mã shipment chiều đi (docs: "item shipment"), không phải mã hoàn.
 async function shopeeGetReturnDetail(shopId: string, accessToken: string, returnSn: string) {
   const apiPath = "/api/v2/returns/get_return_detail";
   const timestamp = Math.floor(Date.now() / 1000);
@@ -1550,8 +1551,9 @@ function applyReturnWaybillFields(
 }
 
 /**
- * Shopee v2.returns.get_return_detail.tracking_number — có thể vẫn là mã chiều đi.
- * Với refund_return phải đối chiếu outbound rồi lấy reverse tracking.
+ * v2.returns.get_return_detail.response.tracking_number
+ * Tài liệu Shopee: "The tracking number assigned by the shipping carrier for item shipment."
+ * Đây là mã vận đơn chiều ĐI (shipment gốc) — KHÔNG dùng làm mã hoàn nếu trùng trackingNumber.
  */
 function extractReturnDetailTrackingNumber(payload: any): string {
   const root = payload?.response ?? payload ?? {};
@@ -1561,9 +1563,29 @@ function extractReturnDetailTrackingNumber(payload: any): string {
 }
 
 /**
- * Mã VĐ chiều hoàn:
- * - refund_return: get_reverse_tracking_info.tracking_number (khác mã đi)
- * - cancelled / ROTS: được phép trùng mã đi
+ * v2.returns.get_reverse_tracking_info — API chính thức mã vận đơn chiều hoàn:
+ * - response.tracking_number: Tracking number for reverse logistics (buyer → điểm kiểm)
+ * - response.rts_tracking_number: Return to Seller (kho Shopee → seller, warehouse_validation)
+ */
+function extractOfficialReverseWaybill(payload: any): {
+  reverseTn: string;
+  rtsTn: string;
+} {
+  const body = payload?.response ?? payload ?? {};
+  const reverseTn = String(body.tracking_number || "").trim();
+  const rtsTn = String(body.rts_tracking_number || "").trim();
+  return {
+    reverseTn: reverseTn && reverseTn.length >= 4 && !/^0FG/i.test(reverseTn) ? reverseTn : "",
+    rtsTn: rtsTn && rtsTn.length >= 4 && !/^0FG/i.test(rtsTn) ? rtsTn : "",
+  };
+}
+
+/**
+ * Mã VĐ chiều hoàn theo tài liệu Shopee Open API v2:
+ * 1) get_reverse_tracking_info.tracking_number (reverse logistics)
+ * 2) get_reverse_tracking_info.rts_tracking_number (RTS kho → seller)
+ * 3) get_return_detail.tracking_number CHỈ khi đã có mã đi trong DB và 2 mã KHÁC nhau
+ *    (theo docs field này là mã shipment chiều đi).
  */
 async function fetchReturnShippingTrackingNumber(
   shopId: string,
@@ -1584,54 +1606,70 @@ async function fetchReturnShippingTrackingNumber(
     shouldReturnTrackingDifferFromOutbound({ ...detailBody, shopee_cancel_return_kind: kind });
   const outboundTn = String(opts?.outboundTn || "").trim();
   const fromDetail = extractReturnDetailTrackingNumber(detailPayload);
-  if (fromDetail) sources.return_detail = fromDetail;
+  if (fromDetail) sources.return_detail_shipment_tn = fromDetail;
 
-  let fromReverse = "";
   let reversePayload: any = null;
-  const needReverse = mustDiffer || !fromDetail || Boolean(outboundTn && fromDetail === outboundTn);
-  if (needReverse) {
-    try {
-      const reverse = await shopeeGetReverseTrackingInfo(shopId, accessToken, returnSn);
-      reversePayload = reverse;
-      if (!reverse?.error) {
-        const body = reverse?.response ?? reverse ?? {};
-        fromReverse = pickReturnWaybillDistinct(
-          outboundTn,
-          mustDiffer,
-          body.tracking_number,
-          body.rts_tracking_number,
-        );
-        if (fromReverse) sources.reverse_tracking_info = fromReverse;
+  let reverseTn = "";
+  let rtsTn = "";
+  try {
+    const reverse = await shopeeGetReverseTrackingInfo(shopId, accessToken, returnSn);
+    reversePayload = reverse;
+    if (!reverse?.error) {
+      const extracted = extractOfficialReverseWaybill(reverse);
+      reverseTn = extracted.reverseTn;
+      rtsTn = extracted.rtsTn;
+      if (reverseTn) sources.reverse_tracking_number = reverseTn;
+      if (rtsTn) sources.rts_tracking_number = rtsTn;
+      console.log(
+        `[Shopee Returns] reverse_tracking return_sn=${returnSn}` +
+          ` tracking_number=${reverseTn || "(empty)"}` +
+          ` rts=${rtsTn || "(empty)"} kind=${kind} outbound=${outboundTn || "(empty)"}`,
+      );
+    } else {
+      const errText = `${reverse.error || ""} ${reverse.message || ""}`;
+      if (/error_reverse_logistics|does not have reverse logistics/i.test(errText)) {
         console.log(
-          `[Shopee Returns] reverse_tracking return_sn=${returnSn}` +
-            ` tracking_number=${body.tracking_number || "(empty)"}` +
-            ` rts=${body.rts_tracking_number || "(empty)"}` +
-            ` extracted=${fromReverse || "(empty)"} kind=${kind} outbound=${outboundTn || "(empty)"}`,
+          `[Shopee Returns] get_reverse_tracking_info pending return_sn=${returnSn}: ${errText.trim()}`,
         );
       } else {
-        const errText = `${reverse.error || ""} ${reverse.message || ""}`;
-        if (/error_reverse_logistics|does not have reverse logistics/i.test(errText)) {
-          console.log(
-            `[Shopee Returns] get_reverse_tracking_info pending return_sn=${returnSn}: ${errText.trim()}`,
-          );
-        } else {
-          console.warn(
-            `[Shopee Returns] get_reverse_tracking_info lỗi return_sn=${returnSn}:`,
-            reverse.message || reverse.error,
-          );
-        }
+        console.warn(
+          `[Shopee Returns] get_reverse_tracking_info lỗi return_sn=${returnSn}:`,
+          reverse.message || reverse.error,
+        );
       }
-    } catch (err: any) {
-      console.warn(`[Shopee Returns] reverse_tracking exception ${returnSn}:`, err?.message || err);
     }
+  } catch (err: any) {
+    console.warn(`[Shopee Returns] reverse_tracking exception ${returnSn}:`, err?.message || err);
   }
 
-  const tracking = pickReturnWaybillDistinct(outboundTn, mustDiffer, fromReverse, fromDetail);
+  // get_return_detail.tracking_number = mã shipment chiều đi theo docs.
+  // Chỉ nhận khi refund_return đã biết mã đi và 2 mã khác nhau; ROTS được phép trùng.
+  const detailFallback =
+    !mustDiffer
+      ? fromDetail
+      : outboundTn && fromDetail && fromDetail !== outboundTn
+        ? fromDetail
+        : "";
+
+  const tracking = pickReturnWaybillDistinct(
+    outboundTn,
+    mustDiffer,
+    reverseTn,
+    rtsTn,
+    detailFallback,
+  );
   const logisticsStatus = extractShopeeReturnLogisticsStatus(detailPayload, reversePayload);
+  const source =
+    tracking && tracking === reverseTn
+      ? "get_reverse_tracking_info.tracking_number"
+      : tracking && tracking === rtsTn
+        ? "get_reverse_tracking_info.rts_tracking_number"
+        : tracking && tracking === detailFallback
+          ? "get_return_detail.tracking_number"
+          : "none";
   console.log(
     `[Shopee Returns] returnTrackingNumber=${tracking || "(empty)"} return_sn=${returnSn}` +
-      ` kind=${kind} mustDiffer=${mustDiffer} outbound=${outboundTn || "(empty)"}` +
-      ` source=${fromReverse && tracking === fromReverse ? "get_reverse_tracking_info" : tracking === fromDetail ? "get_return_detail.tracking_number" : "none"}`,
+      ` kind=${kind} mustDiffer=${mustDiffer} outbound=${outboundTn || "(empty)"} source=${source}`,
   );
   return { tracking, sources, logisticsStatus };
 }
@@ -1659,8 +1697,7 @@ function pickBestTrackingNumber(...candidates: unknown[]): string {
 }
 
 function extractTrackingFromReturnPayload(payload: any): string {
-  // Shopee v2.returns.get_return_detail: CHỈ tracking_number top-level (mã chiều hoàn).
-  // Không deep-walk / không lấy tracking chiều đi từ order.
+  // Dùng cho outbound fallback (escrow / deep scan) — tracking_number = mã shipment chiều đi.
   const fromDetail = extractReturnDetailTrackingNumber(payload);
   if (fromDetail) return fromDetail;
   const root = payload?.response ?? payload ?? {};
@@ -4635,7 +4672,8 @@ async function pullShopeeCancelReturnOrders(opts?: {
 /**
  * Sync chuyên biệt Yêu cầu trả hàng (Shopee Return APIs):
  * get_return_list → get_return_detail → get_reverse_tracking_info
- * Lưu: order_sn, return_sn, return_tracking_no, refund_amount, reason, status, items.
+ * Mã hoàn: reverse.tracking_number / rts_tracking_number.
+ * KHÔNG gán get_return_detail.tracking_number (mã chiều đi) vào returnTrackingNumber.
  */
 async function syncShopeeReturnRequests(opts?: {
   mode?: "incremental" | "full";
@@ -4730,7 +4768,19 @@ async function syncShopeeReturnRequests(opts?: {
             if (!orderSn) continue;
             const mappedReturnSn =
               extractReturnRequestCode(detail) || returnSn;
-            const existing = orders.find((o: any) => String(o.orderSn) === orderSn);
+            let existing = orders.find((o: any) => String(o.orderSn) === orderSn);
+            if (!existing && isMongoReady()) {
+              try {
+                const rows = await loadOrdersFromStore({ orderSns: [orderSn] });
+                existing = rows?.[0];
+                if (existing) orders.push(existing);
+              } catch (lookupErr: any) {
+                console.warn(
+                  `[ReturnRequests Sync] lookup order_sn=${orderSn}:`,
+                  lookupErr?.message || lookupErr,
+                );
+              }
+            }
 
             const kind = mapShopeeReturnKind(detail);
             const outboundTn = outboundTrackingOf(existing);
