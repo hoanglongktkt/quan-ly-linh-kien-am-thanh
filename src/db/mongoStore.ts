@@ -4431,7 +4431,31 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
     case "completed":
       return { $or: [{ status: "completed" }, { shopee_order_status: "COMPLETED" }] };
     case "cancelled":
-      return { $or: [{ status: "cancelled" }, { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL"] } }] };
+      return {
+        $and: [
+          {
+            $or: [
+              { status: "cancelled" },
+              { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL"] } },
+              { "data.shopee_order_status": { $in: ["CANCELLED", "IN_CANCEL"] } },
+            ],
+          },
+          {
+            $nor: [
+              { return_sn: { $exists: true, $nin: [null, ""] } },
+              { "data.return_sn": { $exists: true, $nin: [null, ""] } },
+              { status: { $in: ["return_pending", "return_received"] } },
+              { "data.status": { $in: ["return_pending", "return_received"] } },
+              { shopee_cancel_return_kind: { $in: ["refund_return", "failed_delivery"] } },
+              {
+                "data.shopee_cancel_return_kind": {
+                  $in: ["refund_return", "failed_delivery"],
+                },
+              },
+            ],
+          },
+        ],
+      };
     case "return_pending":
     case "return-pending":
       return { status: "return_pending" };

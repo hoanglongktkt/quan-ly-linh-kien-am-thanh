@@ -226,7 +226,8 @@ export async function saveScanOrders(req, res) {
         order.status === "return_pending" ||
         order.status === "return_received" ||
         String(order.shopee_order_status || "").toUpperCase() === "TO_RETURN" ||
-        String(order.shopee_cancel_return_kind || "") === "refund_return";
+        String(order.shopee_cancel_return_kind || "") === "refund_return" ||
+        String(order.shopee_cancel_return_kind || "") === "failed_delivery";
       if (!orderHasItems(order)) {
         failed.push({
           code: job.code,

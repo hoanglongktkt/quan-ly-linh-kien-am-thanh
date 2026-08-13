@@ -225,13 +225,13 @@ export async function scanBulkUpdate(req, res) {
         status === "return_received" ||
         rawShopee === "TO_RETURN" ||
         Boolean(order.return_sn) ||
-        String(order.shopee_cancel_return_kind || "") === "refund_return";
+        String(order.shopee_cancel_return_kind || "") === "refund_return" ||
+        String(order.shopee_cancel_return_kind || "") === "failed_delivery";
       const isCancelLike =
         !isReturnLike &&
         (status === "cancelled" ||
           rawShopee === "CANCELLED" ||
-          rawShopee === "IN_CANCEL" ||
-          deps.isShopeeCancelOrReturnLikeOrder(order));
+          rawShopee === "IN_CANCEL");
 
       // Idempotent CHỈ khi đã có bản ghi thật trong don_hoan_huy.
       // KHÔNG dùng existingLocal (status cancelled/return_received trên sàn) — gây bỏ qua ghi DB.
