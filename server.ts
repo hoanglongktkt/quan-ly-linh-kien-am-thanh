@@ -1702,6 +1702,7 @@ async function shopeeGetOrderList(
   if (opts?.cursor !== undefined && opts.cursor !== "") params.set("cursor", opts.cursor);
 
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
+  console.error(`[DEBUG SYNC] Bắt đầu lấy đơn cho Shop ${shopId} từ ${timeFrom} đến ${timeTo}`);
   console.log(
     `[Shopee API] GetOrderList REQUEST shop=${shopId}` +
       ` field=${timeRangeField}` +
@@ -1716,6 +1717,14 @@ async function shopeeGetOrderList(
       url,
       `get_order_list shop_id=${shopId}`,
     );
+    try {
+      console.error(
+        `[DEBUG SYNC] Kết quả trả về của Shop ${shopId}:`,
+        JSON.stringify({ httpStatus, ...(json || {}) }, null, 2),
+      );
+    } catch {
+      console.error(`[DEBUG SYNC] Kết quả trả về của Shop ${shopId}:`, json);
+    }
     const rowCount = Array.isArray(json?.response?.order_list)
       ? json.response.order_list.length
       : Array.isArray(json?.order_list)
@@ -1758,6 +1767,26 @@ async function shopeeGetOrderList(
     }
     return { ...json, httpStatus };
   } catch (err: any) {
+    try {
+      console.error(
+        `[DEBUG SYNC] Kết quả trả về của Shop ${shopId}:`,
+        JSON.stringify(
+          {
+            message: err?.message || String(err),
+            name: err?.name,
+            stack: err?.stack,
+            httpStatus: err?.httpStatus,
+            error: err?.error,
+            code: err?.code,
+            body: err?.body,
+          },
+          null,
+          2,
+        ),
+      );
+    } catch {
+      console.error(`[DEBUG SYNC] Kết quả trả về của Shop ${shopId}:`, err);
+    }
     logShopeeSyncApiError(err, `get_order_list shop_id=${shopId}`);
     console.error(
       "[Shopee API] GetOrderList EXCEPTION:",
@@ -3982,6 +4011,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
             updated: shopUpdated,
             error: shopErr?.message || "pull_shop_failed",
           });
+          continue;
         }
       } catch (outerShopErr: any) {
         // Tuyệt đối không để 1 shop làm sập cả phiên pull.
@@ -4004,6 +4034,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
           updated: shopUpdated,
           error: outerShopErr?.message || "pull_shop_outer_failed",
         });
+        continue;
       }
     }
 

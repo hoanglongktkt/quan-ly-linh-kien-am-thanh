@@ -110966,6 +110966,7 @@ async function shopeeGetOrderList(shopId, accessToken, opts) {
   if (statusFilter) params.set("order_status", statusFilter);
   if (opts?.cursor !== void 0 && opts.cursor !== "") params.set("cursor", opts.cursor);
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
+  console.error(`[DEBUG SYNC] B\u1EAFt \u0111\u1EA7u l\u1EA5y \u0111\u01A1n cho Shop ${shopId} t\u1EEB ${timeFrom} \u0111\u1EBFn ${timeTo}`);
   console.log(
     `[Shopee API] GetOrderList REQUEST shop=${shopId} field=${timeRangeField} time_from=${timeFrom} (${String(timeFrom).length} digits) time_to=${timeTo} (${String(timeTo).length} digits) window_days=${((timeTo - timeFrom) / 86400).toFixed(2)} cursor=${opts?.cursor || ""} status=${statusFilter || "ALL(no filter)"}`
   );
@@ -110974,6 +110975,14 @@ async function shopeeGetOrderList(shopId, accessToken, opts) {
       url,
       `get_order_list shop_id=${shopId}`
     );
+    try {
+      console.error(
+        `[DEBUG SYNC] K\u1EBFt qu\u1EA3 tr\u1EA3 v\u1EC1 c\u1EE7a Shop ${shopId}:`,
+        JSON.stringify({ httpStatus, ...json2 || {} }, null, 2)
+      );
+    } catch {
+      console.error(`[DEBUG SYNC] K\u1EBFt qu\u1EA3 tr\u1EA3 v\u1EC1 c\u1EE7a Shop ${shopId}:`, json2);
+    }
     const rowCount = Array.isArray(json2?.response?.order_list) ? json2.response.order_list.length : Array.isArray(json2?.order_list) ? json2.order_list.length : 0;
     console.log(
       `[Shopee API] GetOrderList RESPONSE shop=${shopId} HTTP=${httpStatus} error=${json2?.error || "none"} rows=${rowCount} more=${json2?.response?.more ?? json2?.more}`,
@@ -111009,6 +111018,26 @@ async function shopeeGetOrderList(shopId, accessToken, opts) {
     }
     return { ...json2, httpStatus };
   } catch (err) {
+    try {
+      console.error(
+        `[DEBUG SYNC] K\u1EBFt qu\u1EA3 tr\u1EA3 v\u1EC1 c\u1EE7a Shop ${shopId}:`,
+        JSON.stringify(
+          {
+            message: err?.message || String(err),
+            name: err?.name,
+            stack: err?.stack,
+            httpStatus: err?.httpStatus,
+            error: err?.error,
+            code: err?.code,
+            body: err?.body
+          },
+          null,
+          2
+        )
+      );
+    } catch {
+      console.error(`[DEBUG SYNC] K\u1EBFt qu\u1EA3 tr\u1EA3 v\u1EC1 c\u1EE7a Shop ${shopId}:`, err);
+    }
     logShopeeSyncApiError(err, `get_order_list shop_id=${shopId}`);
     console.error(
       "[Shopee API] GetOrderList EXCEPTION:",
@@ -112818,6 +112847,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
             updated: shopUpdated,
             error: shopErr?.message || "pull_shop_failed"
           });
+          continue;
         }
       } catch (outerShopErr) {
         console.error(
@@ -112839,6 +112869,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
           updated: shopUpdated,
           error: outerShopErr?.message || "pull_shop_outer_failed"
         });
+        continue;
       }
     }
     console.log(
