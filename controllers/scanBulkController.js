@@ -29,9 +29,7 @@ let deps = {
   persistChangedOrdersPatch: async () => 0,
   markOrderHandedOverInStore: async () => false,
   markOrderLocalStatusInStore: async () => false,
-  markInternalReturnReceiptInStore: async () => false,
   restoreLocalStockOnCancelReturnScan: async () => ({ restored: false }),
-  restoreLocalStockOnCancelReturnScanBatch: async () => ({ restored: 0 }),
   loadProductsForOrders: async () => [],
   enrichOrdersFromCatalog: (orders) => orders,
   invalidateOrdersRefreshCache: () => {},
@@ -51,7 +49,7 @@ export async function scanBulkUpdate(req, res) {
         : Array.isArray(req.body?.scanCodes)
           ? req.body.scanCodes
           : [];
-    const codes = [...new Set(rawCodes.map((c) => String(c || "").trim()).filter(Boolean))];
+    const codes = [...new Set(rawCodes.map((c) => String(c || "").trim().toUpperCase()).filter(Boolean))];
     if (!codes.length) {
       return res.status(400).json({
         success: false,
@@ -68,7 +66,7 @@ export async function scanBulkUpdate(req, res) {
     const forceCancelCodes = toCodeSet(req.body?.donHuyCodes);
     const forceReturnCodes = toCodeSet(req.body?.daNhanHoanCodes);
 
-    // Lookup theo mã quét — 1 query Mongo indexed ($in), miss → Shopee on-demand.
+    // Lookup Mongo exact $eq — KHÔNG gọi Shopee.
     let foundByCode = new Map();
     try {
       foundByCode = await deps.findOrdersByScanCodesInStore(codes);
@@ -79,65 +77,32 @@ export async function scanBulkUpdate(req, res) {
       );
     }
 
-    // Lookup tuần tự — CẤM Promise.all (22 mã = 22 connection → pool timeout).
-    // Batch $in đã lấy hầu hết; chỉ miss mới query lẻ / gọi Shopee, từng mã một.
-    const lookupPairs = [];
-    for (const code of codes) {
-      let found = foundByCode.get(code) || null;
-      try {
-        if (!found) {
-          found = await deps.findOrderByScanCodeInStore(code);
-        }
-        if (found && !deps.isValidOrder(found)) found = null;
-        if (found) found = deps.mirrorTrackingFieldsForRead(found);
-      } catch (lookupErr) {
-        console.warn(
-          `[Orders Scan Bulk] lookup miss code=${code}:`,
-          lookupErr?.message || lookupErr,
-        );
-      }
-      const sn = String(found?.orderSn || "").replace(/^shopee-/i, "").trim();
-      const looksLikeTn = /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i.test(sn);
-      const missingItems = !Array.isArray(found?.items) || found.items.length === 0;
-      if (!found || looksLikeTn || missingItems) {
+    const lookupPairs = await Promise.all(
+      codes.map(async (code) => {
+        const scannedCode = String(code || "").trim().toUpperCase();
+        let found = foundByCode.get(code) || foundByCode.get(scannedCode) || null;
         try {
-          const fromShopee = await deps.resolveOrderFromShopeeByScanCode(code);
-          if (fromShopee && deps.isValidOrder(fromShopee)) {
-            const mirrored = deps.mirrorTrackingFieldsForRead(fromShopee);
-            if (!found) {
-              found = mirrored;
-            } else {
-              found = {
-                ...found,
-                ...mirrored,
-                items:
-                  Array.isArray(mirrored?.items) && mirrored.items.length
-                    ? mirrored.items
-                    : found.items,
-                orderSn: String(mirrored?.orderSn || found.orderSn || "")
-                  .replace(/^shopee-/i, "")
-                  .trim(),
-              };
-            }
+          if (!found) {
+            found = await deps.findOrderByScanCodeInStore(scannedCode);
           }
-        } catch (shopeeErr) {
+          if (found && !deps.isValidOrder(found)) found = null;
+          if (found) found = deps.mirrorTrackingFieldsForRead(found);
+        } catch (lookupErr) {
           console.warn(
-            `[Orders Scan Bulk] Shopee resolve code=${code}:`,
-            shopeeErr?.message || shopeeErr,
+            `[Orders Scan Bulk] lookup miss code=${scannedCode}:`,
+            lookupErr?.message || lookupErr,
           );
         }
-      }
-      // Chặn đơn giả: orderSn = mã VĐ hoặc thiếu items khi ghi hủy/hoàn.
-      if (found) {
-        const finalSn = String(found.orderSn || "").replace(/^shopee-/i, "").trim();
-        if (
-          !finalSn ||
-          /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i.test(finalSn)
-        ) {
-          found = null;
-        }
-      }
-      lookupPairs.push({ code, found });
+        return { code: scannedCode, found };
+      }),
+    );
+
+    if (lookupPairs.every((p) => !p.found)) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy mã trên hệ thống",
+        notFound: true,
+      });
     }
 
     const orders = [];
@@ -163,8 +128,6 @@ export async function scanBulkUpdate(req, res) {
     const summary = { daXuatKho: 0, donHuy: 0, daNhanHoan: 0 };
     /** Số đơn hủy/hoàn đã có sẵn trong don_hoan_huy (idempotent). */
     let donHoanHuyAlready = 0;
-    /** Gom restock — 1 lần load catalog + 1 bulkWrite, không save từng đơn. */
-    const restockJobs = [];
 
     const norm = (c) => String(c || "").trim().toUpperCase();
 
@@ -186,15 +149,33 @@ export async function scanBulkUpdate(req, res) {
     for (const { code, found } of lookupPairs) {
       const codeKey = norm(code);
       if (!found) {
-        results.push({ code, action: "not_found", message: `Không tìm thấy đơn với mã "${code}"` });
-        failed_scans.push({ code, reason: "Không tìm thấy đơn trong hệ thống" });
+        results.push({
+          code,
+          action: "not_found",
+          message: "Không tìm thấy mã trên hệ thống",
+          notFound: true,
+        });
+        failed_scans.push({
+          code,
+          reason: "Không tìm thấy mã trên hệ thống",
+          notFound: true,
+        });
         continue;
       }
 
       const index = putScoped(found);
       if (index < 0) {
-        results.push({ code, action: "not_found", message: `Không tìm thấy đơn với mã "${code}"` });
-        failed_scans.push({ code, reason: "Không tìm thấy đơn trong hệ thống" });
+        results.push({
+          code,
+          action: "not_found",
+          message: "Không tìm thấy mã trên hệ thống",
+          notFound: true,
+        });
+        failed_scans.push({
+          code,
+          reason: "Không tìm thấy mã trên hệ thống",
+          notFound: true,
+        });
         continue;
       }
 
@@ -212,26 +193,22 @@ export async function scanBulkUpdate(req, res) {
         forceCancelCodes.has(codeKey) ||
         forceCancelCodes.has(norm(String(order.orderSn || ""))) ||
         forceCancelCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) ||
-        forceCancelCodes.has(norm(String(order.returnTrackingNumber || order.return_tracking_no || "")));
+        forceCancelCodes.has(norm(String(order.return_tracking_no || order.returnTrackingNumber || "")));
       const forceReturn =
         forceReturnCodes.has(codeKey) ||
         forceReturnCodes.has(norm(String(order.orderSn || ""))) ||
         forceReturnCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) ||
-        forceReturnCodes.has(norm(String(order.returnTrackingNumber || order.return_tracking_no || ""))) ||
-        forceReturnCodes.has(norm(String(order.return_sn || ""))) ||
-        forceReturnCodes.has(norm(String(order.packageNumber || "")));
+        forceReturnCodes.has(norm(String(order.return_tracking_no || order.returnTrackingNumber || "")));
       const isReturnLike =
         status === "return_pending" ||
         status === "return_received" ||
-        rawShopee === "TO_RETURN" ||
-        Boolean(order.return_sn) ||
-        String(order.shopee_cancel_return_kind || "") === "refund_return" ||
-        String(order.shopee_cancel_return_kind || "") === "failed_delivery";
+        rawShopee === "TO_RETURN";
       const isCancelLike =
         !isReturnLike &&
         (status === "cancelled" ||
           rawShopee === "CANCELLED" ||
-          rawShopee === "IN_CANCEL");
+          rawShopee === "IN_CANCEL" ||
+          deps.isShopeeCancelOrReturnLikeOrder(order));
 
       // Idempotent CHỈ khi đã có bản ghi thật trong don_hoan_huy.
       // KHÔNG dùng existingLocal (status cancelled/return_received trên sàn) — gây bỏ qua ghi DB.
@@ -251,18 +228,13 @@ export async function scanBulkUpdate(req, res) {
       if (forceReturn && alreadyInDonHoanHuy) {
         summary.daNhanHoan += 1;
         donHoanHuyAlready += 1;
-        const updated = { ...order, internalReturnReceiptStatus: "DA_NHAN" };
-        orders[index] = updated;
-        changedOrders.push(updated);
-        updatedById.set(updated.id, updated);
         results.push({
           code,
           action: "return_received",
           orderId: order.id,
           orderSn: order.orderSn,
-          message: `Đã nhận hàng hoàn — đơn gốc #${order.orderSn}`,
+          message: `Đơn #${order.orderSn} đã có trong don_hoan_huy`,
           local_status: "RETURN_RECEIVED",
-          internalReturnReceiptStatus: "DA_NHAN",
         });
         continue;
       }
@@ -379,8 +351,21 @@ export async function scanBulkUpdate(req, res) {
         const updated = { ...order };
         deps.clearHandedOverLocalForCancelReturn(updated);
         deps.setOrderLocalStatus(updated, "RETURN_RECEIVED");
-        updated.internalReturnReceiptStatus = "DA_NHAN";
-        restockJobs.push({ order: updated, wasHandedOver });
+        try {
+          const restock = await deps.restoreLocalStockOnCancelReturnScan(updated, {
+            wasHandedOver,
+          });
+          if (restock?.restored) {
+            console.log(
+              `[Orders Scan Bulk] Restock +${restock.qty || 0} order_sn=${updated.orderSn}`,
+            );
+          }
+        } catch (restockErr) {
+          console.warn(
+            `[Orders Scan Bulk] Restock fail order_sn=${updated.orderSn}:`,
+            restockErr?.message || restockErr,
+          );
+        }
         orders[index] = updated;
         changedOrders.push(updated);
         updatedById.set(updated.id, updated);
@@ -390,9 +375,8 @@ export async function scanBulkUpdate(req, res) {
           action: "return_received",
           orderId: updated.id,
           orderSn: updated.orderSn,
-          message: `Đã nhận hàng hoàn — đơn gốc #${updated.orderSn}`,
+          message: `Đã nhận hàng hoàn — đơn #${updated.orderSn}`,
           local_status: "RETURN_RECEIVED",
-          internalReturnReceiptStatus: "DA_NHAN",
           stock_restored: Boolean(updated.stock_restored),
         });
         continue;
@@ -439,7 +423,21 @@ export async function scanBulkUpdate(req, res) {
         if (updated.status !== "cancelled") updated.status = "cancelled";
         deps.clearHandedOverLocalForCancelReturn(updated);
         deps.setOrderLocalStatus(updated, "CANCELLED_STORED");
-        restockJobs.push({ order: updated, wasHandedOver });
+        try {
+          const restock = await deps.restoreLocalStockOnCancelReturnScan(updated, {
+            wasHandedOver,
+          });
+          if (restock?.restored) {
+            console.log(
+              `[Orders Scan Bulk] Restock +${restock.qty || 0} order_sn=${updated.orderSn}`,
+            );
+          }
+        } catch (restockErr) {
+          console.warn(
+            `[Orders Scan Bulk] Restock fail order_sn=${updated.orderSn}:`,
+            restockErr?.message || restockErr,
+          );
+        }
         orders[index] = updated;
         changedOrders.push(updated);
         updatedById.set(updated.id, updated);
@@ -508,36 +506,6 @@ export async function scanBulkUpdate(req, res) {
         orderSn: order.orderSn,
         reason: `Trạng thái "${status}" không thuộc quy tắc quét ĐVVC`,
       });
-    }
-
-    // Restock hàng loạt — 1 connection. CẤM save/create từng phần tử.
-    if (restockJobs.length > 0) {
-      try {
-        if (typeof deps.restoreLocalStockOnCancelReturnScanBatch === "function") {
-          const batchRestock = await deps.restoreLocalStockOnCancelReturnScanBatch(restockJobs);
-          console.log(
-            `[Orders Scan Bulk] Restock bulk ONE shot — jobs=${restockJobs.length} restored=${batchRestock?.restored || 0}`,
-          );
-        } else {
-          for (const job of restockJobs) {
-            try {
-              await deps.restoreLocalStockOnCancelReturnScan(job.order, {
-                wasHandedOver: job.wasHandedOver,
-              });
-            } catch (restockErr) {
-              console.warn(
-                `[Orders Scan Bulk] Restock fail order_sn=${job.order?.orderSn}:`,
-                restockErr?.message || restockErr,
-              );
-            }
-          }
-        }
-      } catch (restockBatchErr) {
-        console.warn(
-          "[Orders Scan Bulk] Restock batch fail:",
-          restockBatchErr?.message || restockBatchErr,
-        );
-      }
     }
 
     // Persist: hủy/hoàn → collection don_hoan_huy (SSOT tab);

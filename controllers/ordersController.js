@@ -17,7 +17,6 @@ import {
   purgeHandedOverGarbageOrdersOnce,
   purgeClosedOrdersByRetention,
   findOrderRecord,
-  findOrderByScanLookup,
   handOverOrderToCarrierByIndex,
   handOverOrderToCarrierFast,
 } from "../services/orders.js";
@@ -40,7 +39,6 @@ import {
   markOrderHandedOverInStore,
   markOrderLocalStatusInStore,
   markOrdersPrintedInStore,
-  markInternalReturnReceiptInStore,
 } from "../src/db/mongoStore.ts";
 
 const APP_ROOT = resolveAppRoot();
@@ -1050,8 +1048,6 @@ export async function scannerSync(req, res) {
     for (const row of orders) {
       if (row.tracking_code) codeCount += 1;
       if (row.return_waybill) codeCount += 1;
-      if (row.return_sn) codeCount += 1;
-      if (row.package_number) codeCount += 1;
     }
     const ms = Date.now() - t0;
     console.log(
@@ -1076,11 +1072,15 @@ export async function scannerSync(req, res) {
   }
 }
 
-/** GET /api/orders/lookup */
+/** GET /api/orders/lookup — chỉ Mongo exact match, KHÔNG gọi Shopee. */
 export async function lookupOrder(req, res) {
-  const code = String(req.query.code || req.query.q || "").trim();
+  const code = String(req.query.code || req.query.q || "").trim().toUpperCase();
   if (!code) {
-    return res.status(400).json({ error: "Thiếu mã quét (code)." });
+    return res.status(400).json({
+      success: false,
+      message: "Không tìm thấy mã trên hệ thống",
+      notFound: true,
+    });
   }
   let foundRaw = null;
   try {
@@ -1092,66 +1092,16 @@ export async function lookupOrder(req, res) {
   }
 
   if (!foundRaw) {
-    try {
-      const { orders } = await loadOrdersForApi({ readOnly: true });
-      const hit = await findOrderByScanLookup(
-        (Array.isArray(orders) ? orders : []).filter(deps.isValidOrder),
-        code,
-      );
-      if (hit && deps.isValidOrder(hit)) {
-        foundRaw = mirrorTrackingFieldsForRead(hit);
-      }
-    } catch (err) {
-      console.warn("[Orders Lookup] fallback failed:", err?.message || err);
-    }
-  }
-
-  if (!foundRaw) {
-    try {
-      const fromShopee = await deps.resolveOrderFromShopeeByScanCode(code);
-      if (fromShopee) {
-        foundRaw = mirrorTrackingFieldsForRead(fromShopee);
-        ordersRefreshCache = null;
-      }
-    } catch (err) {
-      console.warn("[Orders Lookup] Shopee on-demand failed:", err?.message || err);
-    }
-  }
-
-  if (!foundRaw) {
     return res.status(404).json({
-      error: "Không tìm thấy đơn hàng khớp mã quét.",
+      success: false,
+      message: "Không tìm thấy mã trên hệ thống",
+      notFound: true,
       scannedCode: code,
     });
   }
   const products = await deps.loadProductsForOrders([foundRaw]);
   const found = deps.enrichOrdersFromCatalog([foundRaw], products)[0];
-  const isReturnOrder =
-    Boolean(found?.return_sn) ||
-    found?.status === "return_pending" ||
-    found?.status === "return_received" ||
-    String(found?.shopee_order_status || "").toUpperCase() === "TO_RETURN" ||
-    String(found?.shopee_cancel_return_kind || "") === "refund_return";
-  if (isReturnOrder && found?.orderSn) {
-    try {
-      await markInternalReturnReceiptInStore(String(found.orderSn), {
-        shopId: found.shopId != null ? String(found.shopId) : undefined,
-      });
-      found.internalReturnReceiptStatus = "DA_NHAN";
-    } catch (markErr) {
-      console.warn(
-        `[Orders Lookup] DA_NHAN fail order_sn=${found.orderSn}:`,
-        markErr?.message || markErr,
-      );
-    }
-  }
-  return res.json({
-    ...found,
-    scannedCode: code,
-    message: isReturnOrder
-      ? `Đã nhận hàng hoàn — đơn gốc #${found.orderSn}`
-      : `Tìm thấy đơn gốc #${found.orderSn}`,
-  });
+  return res.json(found);
 }
 
 /** POST /api/orders/cleanup-mock */

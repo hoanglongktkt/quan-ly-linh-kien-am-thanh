@@ -32,6 +32,7 @@ export function getCarrierWaybillDisplay(
   const candidates = [
     order.trackingNumber,
     order.tracking_no,
+    order.return_tracking_no,
     order.scan_code,
     fromNote,
   ];

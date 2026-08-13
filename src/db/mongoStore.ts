@@ -91,8 +91,10 @@ type OrderDoc = {
   shopId?: string | null;
   /** Mã vận đơn (SPXVN / GHN / ...) — top-level để query & force update */
   tracking_no?: string | null;
+  trackingNumber?: string | null;
   /** Mã vận đơn chiều hoàn */
   return_tracking_no?: string | null;
+  returnTrackingNumber?: string | null;
   /** Shopee package_number (OFG...) — cốt lõi in vận đơn / logistics */
   packageNumber?: string | null;
   /** Tên ĐVVC từ Shopee */
@@ -215,18 +217,16 @@ const OrderSchema = new Schema<OrderDoc>(
     /** Shopee shop_id — luôn String (uint64-safe) */
     shopId: { type: String, default: null, index: true },
     tracking_no: { type: String, default: null, index: true },
-    /** Alias canonical — mã VĐ chiều đi (SPX cũ trên kiện hoàn). Index khai báo riêng bên dưới. */
-    trackingNumber: { type: String, default: null },
+    /** Alias camelCase — lookup scan exact $eq (cùng giá trị tracking_no) */
+    trackingNumber: { type: String, default: null, index: true },
     /** Mã vận đơn chiều hoàn — quét barcode return */
     return_tracking_no: { type: String, default: null, index: true },
-    /** Alias canonical — mã VĐ chiều hoàn do Shopee cấp. Index khai báo riêng bên dưới. */
-    returnTrackingNumber: { type: String, default: null },
-    /** Đối soát kho nội bộ: CHUA_NHAN | DA_NHAN — CHỈ đổi khi quét barcode, Shopee KHÔNG ghi đè */
-    internalReturnReceiptStatus: { type: String, default: "CHUA_NHAN", index: true },
-    /** Mã yêu cầu trả hàng / hoàn tiền Shopee (return_sn) — luôn String. Index khai báo riêng bên dưới. */
+    /** Alias camelCase — lookup scan exact $eq (cùng giá trị return_tracking_no) */
+    returnTrackingNumber: { type: String, default: null, index: true },
+    /** Mã yêu cầu trả hàng / hoàn tiền Shopee (return_sn) — luôn String */
     return_sn: { type: String, default: null },
-    /** Shopee package_number (OFG...) — bắt buộc cho create_shipping_document / logistics. Index khai báo riêng bên dưới. */
-    packageNumber: { type: String, default: null },
+    /** Shopee package_number (OFG...) — bắt buộc cho create_shipping_document / logistics */
+    packageNumber: { type: String, default: null, index: true },
     shipping_carrier: { type: String, default: null, index: true },
     is_pending_shopee_check: { type: Boolean, default: false, index: true },
     /** Cờ nội bộ — chỉ $setOnInsert khi sync; QR/bàn giao mới $set true */
@@ -278,17 +278,13 @@ OrderSchema.index({ hasPdf: 1, isPrinted: 1 });
 OrderSchema.index({ last_shopee_update_at: -1 });
 // Giữ compound index cho các truy vấn theo shop trong luồng reconciliation.
 OrderSchema.index({ orderSn: 1, shopId: 1 });
-// Lookup / quét barcode — 4 index bắt buộc (KHÔNG trùng index: true trên field).
+// Lookup / quét theo package_number (OFG...).
 OrderSchema.index({ packageNumber: 1 });
-OrderSchema.index({ return_sn: 1 });
-OrderSchema.index({ returnTrackingNumber: 1 });
-OrderSchema.index({ trackingNumber: 1 });
 OrderSchema.index({ "data.packageNumber": 1 });
 OrderSchema.index({ "data.package_number": 1 });
-// Quét kiện hoàn theo return_tracking_no / returnTrackingNumber (barcode chiều về).
+// Quét kiện hoàn theo return_tracking_no (barcode chiều về).
 OrderSchema.index({ "data.return_tracking_no": 1 });
 OrderSchema.index({ "data.returnTrackingNumber": 1 });
-OrderSchema.index({ "data.internalReturnReceiptStatus": 1 });
 // Hỗ trợ Dashboard aggregation lọc theo ngày / doanh thu mà không quét toàn bộ collection.
 OrderSchema.index({ "data.date": 1 });
 OrderSchema.index({ status: 1, "data.date": 1 });
@@ -305,6 +301,7 @@ OrderSchema.index({ "data.trackingNumber": 1 });
 OrderSchema.index({ "data.orderSn": 1 });
 OrderSchema.index({ "data.order_sn": 1 });
 OrderSchema.index({ "data.internalTrackingCode": 1 });
+OrderSchema.index({ return_sn: 1 });
 OrderSchema.index({ "data.return_sn": 1 });
 
 const OrderEventSchema = new Schema<OrderEventDoc>(
@@ -1636,7 +1633,6 @@ const INTERNAL_FLAG_KEYS = new Set([
   "local_status",
   "localStatus",
   "internal_status",
-  "internalReturnReceiptStatus",
   "handedOverAt",
   "handed_over_source",
   "handedOverSource",
@@ -1649,8 +1645,6 @@ const INTERNAL_FLAG_KEYS = new Set([
   "pdfUrl",
   "pdfFilename",
   "waybill_url",
-  "returnTrackingFromApi",
-  "clearCopiedReturnTracking",
 ]);
 
 /**
@@ -1763,17 +1757,9 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     }
 
     // BẮT BUỘC: Shopee SHIPPED / TO_CONFIRM_RECEIVE → luôn ép status=shipping (tab Đang giao).
-    // KHÔNG ép khi đơn đã là Yêu cầu trả hàng — giữ trạng thái hoàn, không dùng "Đang giao" chiều đi.
-    const returnSnEarly = String(order.return_sn || "").trim();
-    const isReturnRequestOrder =
-      Boolean(returnSnEarly) ||
-      rawStatus === "TO_RETURN" ||
-      order.status === "return_pending" ||
-      order.status === "return_received" ||
-      String(order.shopee_cancel_return_kind || "") === "refund_return";
+    // Không phụ thuộc order.status cũ (processed / pending_confirm / handed_over…).
     const forceShipping =
-      (rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE") &&
-      !isReturnRequestOrder;
+      rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE";
     if (forceShipping) {
       $set.status = "shipping";
       $set["data.status"] = "shipping";
@@ -1818,38 +1804,22 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       $set["data.package_number"] = pkgNum;
     }
 
+    const outboundTn = String(order.tracking_no || order.trackingNumber || "")
+      .trim()
+      .toUpperCase();
     const returnTn = String(
-      order.returnTrackingNumber || order.return_tracking_no || "",
-    ).trim();
-    const $unset: Record<string, unknown> = {};
-    const kind = String(order.shopee_cancel_return_kind || "").trim();
-    const mustDifferReturn =
-      kind === "refund_return" ||
-      ((order.status === "return_pending" ||
-        order.status === "return_received" ||
-        rawStatus === "TO_RETURN") &&
-        kind !== "cancelled" &&
-        kind !== "failed_delivery");
-    const isCopiedRefundReturn =
-      mustDifferReturn && Boolean(returnTn && usableTn && returnTn === usableTn);
-    if (order.clearCopiedReturnTracking === true || isCopiedRefundReturn) {
-      $unset.return_tracking_no = "";
-      $unset.returnTrackingNumber = "";
-      $unset["data.return_tracking_no"] = "";
-      $unset["data.returnTrackingNumber"] = "";
-    } else if (returnTn && !/^0FG/i.test(returnTn)) {
+      order.return_tracking_no || order.returnTrackingNumber || "",
+    )
+      .trim()
+      .toUpperCase();
+    if (returnTn && !/^0FG/i.test(returnTn) && returnTn !== outboundTn) {
       $set.return_tracking_no = returnTn;
       $set.returnTrackingNumber = returnTn;
       $set["data.return_tracking_no"] = returnTn;
       $set["data.returnTrackingNumber"] = returnTn;
     }
-    // Mã YCTH (return_sn) — BẮT BUỘC lưu khi đồng bộ đơn hoàn (uint64-safe / alphanumeric).
-    const returnSnStr = String(
-      order.return_sn ||
-        order.returnSn ||
-        (order.data && typeof order.data === "object" ? order.data.return_sn : "") ||
-        "",
-    ).trim();
+    // Mã YCTH (return_sn) + order_sn — luôn String (uint64-safe / alphanumeric).
+    const returnSnStr = String(order.return_sn || "").trim();
     if (returnSnStr) {
       $set.return_sn = returnSnStr;
       $set["data.return_sn"] = returnSnStr;
@@ -1902,13 +1872,6 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       if (TRACKING_PRESERVE_KEYS.has(key)) {
         const s = String(value).trim();
         if (!s || /^0FG/i.test(s)) continue;
-        if (
-          (key === "return_tracking_no" || key === "returnTrackingNumber") &&
-          (order.clearCopiedReturnTracking === true ||
-            (Boolean(usableTn) && s === usableTn && mustDifferReturn))
-        ) {
-          continue;
-        }
       }
       $set[`data.${key}`] = value;
     }
@@ -1994,8 +1957,6 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       "data.local_status": "NONE",
       "data.localStatus": "NONE",
       "data.internal_status": "NONE",
-      internalReturnReceiptStatus: "CHUA_NHAN",
-      "data.internalReturnReceiptStatus": "CHUA_NHAN",
     };
     const $setOnInsert: Record<string, unknown> = {};
     for (const [k, v] of Object.entries($setOnInsertRaw)) {
@@ -2030,7 +1991,6 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
           update: {
             $set,
             $setOnInsert,
-            ...(Object.keys($unset).length ? { $unset } : {}),
           },
           upsert: true,
         },
@@ -2632,8 +2592,6 @@ export async function markOrderLocalStatusInStore(
   if (status === "RETURN_RECEIVED") {
     $set.status = "return_received";
     $set["data.status"] = "return_received";
-    $set.internalReturnReceiptStatus = "DA_NHAN";
-    $set["data.internalReturnReceiptStatus"] = "DA_NHAN";
   } else if (meta?.status) {
     $set.status = String(meta.status);
     $set["data.status"] = String(meta.status);
@@ -2659,41 +2617,6 @@ export async function markOrderLocalStatusInStore(
   );
   console.log(
     `[MongoDB] findOneAndUpdate markOrderLocalStatus=${status} order_sn=${sn} shopId=${shopIdStr || "-"} ok=${Boolean(result)}`,
-  );
-  return Boolean(result);
-}
-
-/**
- * Đối soát kho: quét barcode hàng hoàn thành công → DA_NHAN.
- * Shopee sync TUYỆT ĐỐI không được gọi hàm này / không ghi đè field này.
- */
-export async function markInternalReturnReceiptInStore(
-  orderSn: string,
-  meta?: { shopId?: string },
-): Promise<boolean> {
-  if (!isMongoReady()) return false;
-  requireMongo();
-  const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
-  if (!sn) return false;
-  const _id = `shopee-${sn}`;
-  const shopIdStr = meta?.shopId != null ? String(meta.shopId).trim() : "";
-  const now = new Date().toISOString();
-  const $set: Record<string, unknown> = {
-    internalReturnReceiptStatus: "DA_NHAN",
-    "data.internalReturnReceiptStatus": "DA_NHAN",
-    "data.internalReturnReceiptAt": now,
-  };
-  if (shopIdStr) {
-    $set.shopId = shopIdStr;
-    $set["data.shopId"] = shopIdStr;
-  }
-  const result = await OrderModel.findOneAndUpdate(
-    buildOrderCompoundFilter(sn, _id, shopIdStr),
-    { $set },
-    { new: true },
-  );
-  console.log(
-    `[MongoDB] markInternalReturnReceipt DA_NHAN order_sn=${sn} shopId=${shopIdStr || "-"} ok=${Boolean(result)}`,
   );
   return Boolean(result);
 }
@@ -2756,20 +2679,27 @@ export async function updateOrderTrackingInStore(
     is_pending_shopee_check?: boolean;
     shopId?: string;
     return_tracking_no?: string;
+    returnTrackingNumber?: string;
   },
 ): Promise<boolean> {
   if (!isMongoReady()) return false;
   requireMongo();
   const sn = String(orderSn || "").trim();
   const tn = String(trackingNo || "").trim();
-  if (!sn || !tn) return false;
+  const rtnRaw = String(extra?.return_tracking_no || extra?.returnTrackingNumber || "")
+    .trim()
+    .toUpperCase();
+  const rtn = rtnRaw && rtnRaw.length >= 4 && !/^0FG/i.test(rtnRaw) ? rtnRaw : "";
+  if (!sn || (!tn && !rtn)) return false;
   const _id = `shopee-${sn}`;
   const shopIdStr = extra?.shopId != null ? String(extra.shopId).trim() : "";
-  const $set: Record<string, unknown> = {
-    tracking_no: tn,
-    "data.tracking_no": tn,
-    "data.trackingNumber": tn,
-  };
+  const $set: Record<string, unknown> = {};
+  if (tn && !/^0FG/i.test(tn)) {
+    $set.tracking_no = tn;
+    $set.trackingNumber = tn;
+    $set["data.tracking_no"] = tn;
+    $set["data.trackingNumber"] = tn;
+  }
   if (shopIdStr) {
     $set.shopId = shopIdStr;
     $set["data.shopId"] = shopIdStr;
@@ -2785,8 +2715,7 @@ export async function updateOrderTrackingInStore(
       $set["data.package_number"] = pkg;
     }
   }
-  const rtn = String(extra?.return_tracking_no || "").trim();
-  if (rtn && !/^0FG/i.test(rtn) && rtn !== tn) {
+  if (rtn && rtn !== String(tn || "").trim().toUpperCase()) {
     $set.return_tracking_no = rtn;
     $set.returnTrackingNumber = rtn;
     $set["data.return_tracking_no"] = rtn;
@@ -2806,6 +2735,7 @@ export async function updateOrderTrackingInStore(
     $set.is_pending_shopee_check = extra.is_pending_shopee_check;
     $set["data.is_pending_shopee_check"] = extra.is_pending_shopee_check;
   }
+  if (Object.keys($set).length === 0) return false;
   const $setOnInsert: Record<string, unknown> = {
     _id,
     orderSn: sn,
@@ -3502,121 +3432,41 @@ export async function mirrorTopLevelTrackingIntoData(): Promise<number> {
   return ops.length;
 }
 
-/** Biến thể mã quét để match Mongo (raw / UPPER / lower / bỏ ký tự tách). */
-function buildScanKeyVariantsForMongo(rawKeys: string[]): string[] {
-  const out = new Set<string>();
-  for (const raw of rawKeys) {
-    const text = String(raw || "").trim();
-    if (!text) continue;
-    const upper = text.toUpperCase();
-    const lower = text.toLowerCase();
-    const strippedUpper = upper.replace(/[\s\-_#./\\|:;,]+/g, "");
-    const strippedLower = lower.replace(/[\s\-_#./\\|:;,]+/g, "");
-    for (const v of [
-      text,
-      upper,
-      lower,
-      strippedUpper,
-      strippedLower,
-      text.replace(/^shopee-/i, ""),
-      strippedUpper.replace(/^SHOPEE/, ""),
-      strippedLower.replace(/^shopee/, ""),
-    ]) {
-      if (v && v.length >= 4) out.add(v);
-    }
-  }
-  return [...out];
+/** Chuẩn hóa mã súng quét: trim + UPPER — exact $eq, không regex. */
+export function normalizeScannedCode(raw: unknown): string {
+  return String(raw || "")
+    .trim()
+    .toUpperCase();
 }
 
-/** Thứ tự quét barcode — mỗi bước 1 findOne/find trên field đã index, KHÔNG $or. */
-const SCAN_INDEX_PRIORITY_FIELDS = [
-  "packageNumber",
-  "return_sn",
-  "returnTrackingNumber",
-  "trackingNumber",
-] as const;
-
-const SCAN_INDEX_FALLBACK_FIELDS = [
-  "tracking_no",
-  "return_tracking_no",
-  "orderSn",
-  "data.packageNumber",
-  "data.package_number",
-  "data.return_sn",
-  "data.returnTrackingNumber",
-  "data.return_tracking_no",
-  "data.trackingNumber",
-  "data.tracking_no",
-  "data.internalTrackingCode",
-  "data.orderSn",
-  "data.order_sn",
-] as const;
-
-async function findOneOrderByIndexedScanFields(
-  keys: string[],
-  uniqueIds: string[],
-): Promise<any | null> {
-  if (!keys.length) return null;
-  const tryField = (field: string) =>
-    OrderModel.findOne({ [field]: { $in: keys } }).maxTimeMS(2_000).lean();
-
-  for (const field of SCAN_INDEX_PRIORITY_FIELDS) {
-    const doc = await tryField(field);
-    if (doc) return doc;
+/** $or exact $eq trên trackingNumber / returnTrackingNumber / packageNumber / orderSn (+ alias snake_case đã lưu). */
+function buildExactScanOrFilter(rawCode: string): Record<string, unknown> | null {
+  const scannedCode = normalizeScannedCode(rawCode);
+  if (!scannedCode) return null;
+  const orderSn = scannedCode.replace(/^SHOPEE-/, "");
+  const $or: Record<string, string>[] = [
+    { trackingNumber: scannedCode },
+    { tracking_no: scannedCode },
+    { "data.trackingNumber": scannedCode },
+    { "data.tracking_no": scannedCode },
+    { returnTrackingNumber: scannedCode },
+    { return_tracking_no: scannedCode },
+    { "data.returnTrackingNumber": scannedCode },
+    { "data.return_tracking_no": scannedCode },
+    { packageNumber: scannedCode },
+    { "data.packageNumber": scannedCode },
+    { "data.package_number": scannedCode },
+    { orderSn: scannedCode },
+    { "data.orderSn": scannedCode },
+    { "data.order_sn": scannedCode },
+  ];
+  if (orderSn && orderSn !== scannedCode) {
+    $or.push({ orderSn }, { "data.orderSn": orderSn }, { "data.order_sn": orderSn });
   }
-  for (const field of SCAN_INDEX_FALLBACK_FIELDS) {
-    const doc = await tryField(field);
-    if (doc) return doc;
-  }
-  if (uniqueIds.length) {
-    const doc = await OrderModel.findOne({ _id: { $in: uniqueIds } })
-      .maxTimeMS(2_000)
-      .lean();
-    if (doc) return doc;
-  }
-  return null;
+  return { $or };
 }
 
-async function findOrdersByIndexedScanFields(
-  keys: string[],
-  uniqueIds: string[],
-  limit: number,
-): Promise<any[]> {
-  if (!keys.length) return [];
-  const seen = new Set<string>();
-  const docs: any[] = [];
-  const pushDocs = (found: any[] | null | undefined) => {
-    for (const d of found || []) {
-      const id = String(d?._id || "");
-      if (!id || seen.has(id)) continue;
-      seen.add(id);
-      docs.push(d);
-    }
-  };
-  const tryField = (field: string) =>
-    OrderModel.find({ [field]: { $in: keys } })
-      .limit(limit)
-      .maxTimeMS(2_000)
-      .lean();
-
-  for (const field of SCAN_INDEX_PRIORITY_FIELDS) {
-    if (docs.length >= limit) break;
-    pushDocs(await tryField(field));
-  }
-  for (const field of SCAN_INDEX_FALLBACK_FIELDS) {
-    if (docs.length >= limit) break;
-    pushDocs(await tryField(field));
-  }
-  if (docs.length < limit && uniqueIds.length) {
-    pushDocs(
-      await OrderModel.find({ _id: { $in: uniqueIds } })
-        .limit(limit)
-        .maxTimeMS(2_000)
-        .lean(),
-    );
-  }
-  return docs;
-}
+const SCAN_LOOKUP_MAX_MS = 400;
 
 /** Đọc cờ isPrinted — ưu tiên top-level, fallback data.isPrinted (khớp badge/lọc UI). */
 function readPrintedFlag(top: unknown, nested: unknown): boolean {
@@ -3650,33 +3500,16 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
       "",
   ).trim();
   const returnTnRaw = String(
-    d?.returnTrackingNumber ||
-      d?.return_tracking_no ||
-      data.returnTrackingNumber ||
+    d?.return_tracking_no ||
+      d?.returnTrackingNumber ||
       data.return_tracking_no ||
+      data.returnTrackingNumber ||
       "",
-  ).trim();
-  const kindHydrated = String(
-    d?.shopee_cancel_return_kind || data.shopee_cancel_return_kind || "",
-  ).trim();
-  const mustDifferHydrated =
-    kindHydrated === "refund_return" ||
-    ((data.status === "return_pending" ||
-      data.status === "return_received" ||
-      d?.status === "return_pending" ||
-      d?.status === "return_received" ||
-      String(d?.shopee_order_status || data.shopee_order_status || "").toUpperCase() === "TO_RETURN") &&
-      kindHydrated !== "cancelled" &&
-      kindHydrated !== "failed_delivery");
-  const returnTn =
-    mustDifferHydrated && tn && returnTnRaw && returnTnRaw === tn ? "" : returnTnRaw;
+  )
+    .trim()
+    .toUpperCase();
+  const returnTn = returnTnRaw && returnTnRaw !== tn.toUpperCase() ? returnTnRaw : "";
   const returnSnHydrated = String(d?.return_sn || data.return_sn || "").trim();
-  const internalReturnReceipt =
-    String(
-      d?.internalReturnReceiptStatus || data.internalReturnReceiptStatus || "",
-    ).toUpperCase() === "DA_NHAN"
-      ? "DA_NHAN"
-      : "CHUA_NHAN";
   const pkg = String(
     d?.packageNumber ||
       data.packageNumber ||
@@ -3781,11 +3614,8 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
     shipping: shippingHydrated || data.shipping || undefined,
     tracking_no: tn || undefined,
     trackingNumber: tn || undefined,
-    return_tracking_no: returnTn || data.return_tracking_no || undefined,
-    returnTrackingNumber: returnTn || data.returnTrackingNumber || undefined,
-    internalReturnReceiptStatus: internalReturnReceipt,
-    return_logistics_status:
-      data.return_logistics_status || d?.return_logistics_status || undefined,
+    return_tracking_no: returnTn || undefined,
+    returnTrackingNumber: returnTn || undefined,
     return_sn: returnSnHydrated || data.return_sn || undefined,
     packageNumber: pkg || undefined,
     package_number: pkg || undefined,
@@ -3835,56 +3665,18 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
 }
 
 /**
- * Lookup 1 đơn theo mã quét (tracking / orderSn / package / internal) — dùng index Mongo,
- * KHÔNG full-scan collection. Phục vụ /api/orders/lookup trên mobile.
+ * Lookup 1 đơn theo mã quét — exact $eq trên index, KHÔNG regex, KHÔNG Shopee.
  */
 export async function findOrderByScanCodeInStore(rawCode: string): Promise<any | null> {
   if (!isMongoReady()) return null;
   requireMongo();
-  const text = String(rawCode || "").trim();
-  if (!text) return null;
-
-  const seedKeys = [text, text.replace(/^#+/, "")];
-  if (/^https?:\/\//i.test(text)) {
-    try {
-      const url = new URL(text);
-      for (const p of [
-        "tracking",
-        "tracking_no",
-        "tracking_number",
-        "tn",
-        "order_sn",
-        "ordersn",
-        "order",
-        "order_id",
-        "package_number",
-        "code",
-        "sn",
-        "return_sn",
-        "return_tracking_number",
-        "returnTrackingNumber",
-      ]) {
-        const v = url.searchParams.get(p);
-        if (v) seedKeys.push(v);
-      }
-      for (const part of url.pathname.split("/")) {
-        if (part) seedKeys.push(part);
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-  const keys = buildScanKeyVariantsForMongo(seedKeys);
-  if (keys.length === 0) return null;
-
-  const idKeys = keys.flatMap((k) => {
-    const sn = k.replace(/^SHOPEE-/i, "").replace(/^shopee-/i, "");
-    return sn ? [`shopee-${sn}`, sn] : [k];
-  });
-  const uniqueIds = [...new Set(idKeys)];
+  const scannedCode = normalizeScannedCode(rawCode);
+  if (!scannedCode) return null;
+  const filter = buildExactScanOrFilter(scannedCode);
+  if (!filter) return null;
 
   try {
-    const doc = await findOneOrderByIndexedScanFields(keys, uniqueIds);
+    const doc = await OrderModel.findOne(filter).maxTimeMS(SCAN_LOOKUP_MAX_MS).lean();
     return hydrateOrderFromMongoDoc(doc);
   } catch (err: any) {
     console.warn("[MongoDB] findOrderByScanCodeInStore failed:", err?.message || err);
@@ -4001,15 +3793,47 @@ export async function loadShopeeTrackingEnrichCandidatesFromStore(opts: {
       {
         $or: [
           { "data.return_sn": { $exists: true, $nin: [null, ""] } },
+          { return_sn: { $exists: true, $nin: [null, ""] } },
           { shopee_order_status: { $in: ["TO_RETURN", "IN_CANCEL", "CANCELLED"] } },
           { status: { $in: ["return_pending", "return_received", "cancelled"] } },
         ],
       },
       {
         $or: [
+          { return_tracking_no: { $exists: false } },
+          { return_tracking_no: null },
+          { return_tracking_no: "" },
           { "data.return_tracking_no": { $exists: false } },
           { "data.return_tracking_no": null },
           { "data.return_tracking_no": "" },
+          {
+            $expr: {
+              $let: {
+                vars: {
+                  rtn: {
+                    $toUpper: {
+                      $ifNull: [
+                        "$return_tracking_no",
+                        { $ifNull: ["$data.return_tracking_no", ""] },
+                      ],
+                    },
+                  },
+                  out: {
+                    $toUpper: {
+                      $ifNull: ["$tracking_no", { $ifNull: ["$data.tracking_no", ""] }],
+                    },
+                  },
+                },
+                in: {
+                  $and: [
+                    { $gt: [{ $strLenCP: "$$rtn" }, 0] },
+                    { $gt: [{ $strLenCP: "$$out" }, 0] },
+                    { $eq: ["$$rtn", "$$out"] },
+                  ],
+                },
+              },
+            },
+          },
         ],
       },
     ],
@@ -4414,48 +4238,12 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
     case "shipping":
     case "shipped":
     case "dang-giao":
-      // SHIPPED — loại đơn Yêu cầu trả hàng (không dùng "Đang giao" chiều đi).
-      return {
-        $and: [
-          ORDER_TAB_IS_SHIPPED,
-          {
-            $nor: [
-              { return_sn: { $exists: true, $nin: [null, ""] } },
-              { "data.return_sn": { $exists: true, $nin: [null, ""] } },
-              { status: { $in: ["return_pending", "return_received"] } },
-              { "data.shopee_cancel_return_kind": "refund_return" },
-            ],
-          },
-        ],
-      };
+      // BẮT BUỘC: chỉ SHIPPED — bất kể is_handed_over.
+      return ORDER_TAB_IS_SHIPPED;
     case "completed":
       return { $or: [{ status: "completed" }, { shopee_order_status: "COMPLETED" }] };
     case "cancelled":
-      return {
-        $and: [
-          {
-            $or: [
-              { status: "cancelled" },
-              { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL"] } },
-              { "data.shopee_order_status": { $in: ["CANCELLED", "IN_CANCEL"] } },
-            ],
-          },
-          {
-            $nor: [
-              { return_sn: { $exists: true, $nin: [null, ""] } },
-              { "data.return_sn": { $exists: true, $nin: [null, ""] } },
-              { status: { $in: ["return_pending", "return_received"] } },
-              { "data.status": { $in: ["return_pending", "return_received"] } },
-              { shopee_cancel_return_kind: { $in: ["refund_return", "failed_delivery"] } },
-              {
-                "data.shopee_cancel_return_kind": {
-                  $in: ["refund_return", "failed_delivery"],
-                },
-              },
-            ],
-          },
-        ],
-      };
+      return { $or: [{ status: "cancelled" }, { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL"] } }] };
     case "return_pending":
     case "return-pending":
       return { status: "return_pending" };
@@ -5638,8 +5426,6 @@ export async function markOrdersScanFlagsBatch(
     if (status === "RETURN_RECEIVED") {
       $set.status = "return_received";
       $set["data.status"] = "return_received";
-      $set.internalReturnReceiptStatus = "DA_NHAN";
-      $set["data.internalReturnReceiptStatus"] = "DA_NHAN";
     } else {
       $set.status = "cancelled";
       $set["data.status"] = "cancelled";
@@ -5680,8 +5466,6 @@ export type ScannerSyncRow = {
   tracking_code: string;
   return_waybill: string;
   status: string;
-  return_sn?: string;
-  package_number?: string;
 };
 
 /** Derive status gọn cho máy quét (payload 4 field). */
@@ -5746,7 +5530,6 @@ export async function listScannerSyncRowsFromStore(): Promise<ScannerSyncRow[]> 
       trackingNumber: 1,
       return_tracking_no: 1,
       returnTrackingNumber: 1,
-      packageNumber: 1,
       is_handed_over: 1,
       "data.orderSn": 1,
       "data.status": 1,
@@ -5755,16 +5538,15 @@ export async function listScannerSyncRowsFromStore(): Promise<ScannerSyncRow[]> 
       "data.trackingNumber": 1,
       "data.return_tracking_no": 1,
       "data.returnTrackingNumber": 1,
-      "data.packageNumber": 1,
-      "data.package_number": 1,
       "data.is_handed_over": 1,
       "data.isHandedOverToCarrier": 1,
       "data.is_handed_over_to_carrier": 1,
       "data.return_sn": 1,
       return_sn: 1,
     })
+    .limit(8000)
     .lean()
-    .maxTimeMS(15_000);
+    .maxTimeMS(5_000);
 
   const rows: ScannerSyncRow[] = [];
   for (const d of docs as any[]) {
@@ -5774,37 +5556,27 @@ export async function listScannerSyncRowsFromStore(): Promise<ScannerSyncRow[]> 
     ).trim();
     if (!orderId) continue;
     const tracking = String(
-      d?.tracking_no ||
-        d?.trackingNumber ||
-        data.tracking_no ||
-        data.trackingNumber ||
-        "",
+      d?.tracking_no || d?.trackingNumber || data.tracking_no || data.trackingNumber || "",
     ).trim();
     const returnWb = String(
-      d?.returnTrackingNumber ||
-        d?.return_tracking_no ||
-        data.returnTrackingNumber ||
+      d?.return_tracking_no ||
+        d?.returnTrackingNumber ||
         data.return_tracking_no ||
+        data.returnTrackingNumber ||
         "",
     ).trim();
-    const returnSn = String(d?.return_sn || data.return_sn || "").trim();
-    const pkg = String(
-      d?.packageNumber || data.packageNumber || data.package_number || "",
-    ).trim();
-    if (!tracking && !returnWb && !returnSn && !pkg) continue;
+    if (!tracking && !returnWb) continue;
     rows.push({
       order_id: orderId,
       tracking_code: tracking,
       return_waybill: returnWb,
       status: deriveScannerSyncStatus(d),
-      return_sn: returnSn || undefined,
-      package_number: pkg || undefined,
     });
   }
   return rows;
 }
 
-/** Lookup N mã quét — 1 query `$in` (index), map code → order. */
+/** Lookup N mã quét — exact $eq tuần tự (index), không regex. */
 export async function findOrdersByScanCodesInStore(
   rawCodes: string[],
 ): Promise<Map<string, any>> {
@@ -5812,119 +5584,16 @@ export async function findOrdersByScanCodesInStore(
   if (!isMongoReady() || !Array.isArray(rawCodes) || rawCodes.length === 0) {
     return result;
   }
-  requireMongo();
-
-  const codeMeta: Array<{ code: string; keys: string[]; uniqueIds: string[] }> = [];
-  const allKeys = new Set<string>();
-  const allIds = new Set<string>();
-
+  const cache = new Map<string, any>();
   for (const raw of rawCodes) {
-    const text = String(raw || "").trim();
-    if (!text) continue;
-    const seedKeys = [text, text.replace(/^#+/, "")];
-    if (/^https?:\/\//i.test(text)) {
-      try {
-        const url = new URL(text);
-        for (const p of [
-          "tracking",
-          "tracking_no",
-          "tracking_number",
-          "tn",
-          "order_sn",
-          "ordersn",
-          "order",
-          "order_id",
-          "package_number",
-          "code",
-          "sn",
-          "return_sn",
-          "return_tracking_number",
-          "returnTrackingNumber",
-        ]) {
-          const v = url.searchParams.get(p);
-          if (v) seedKeys.push(v);
-        }
-        for (const part of url.pathname.split("/")) {
-          if (part) seedKeys.push(part);
-        }
-      } catch {
-        /* ignore */
-      }
+    const scannedCode = normalizeScannedCode(raw);
+    if (!scannedCode) continue;
+    if (!cache.has(scannedCode)) {
+      cache.set(scannedCode, await findOrderByScanCodeInStore(scannedCode));
     }
-    const keys = buildScanKeyVariantsForMongo(seedKeys);
-    if (!keys.length) continue;
-    const idKeys = keys.flatMap((k) => {
-      const sn = k.replace(/^SHOPEE-/i, "").replace(/^shopee-/i, "");
-      return sn ? [`shopee-${sn}`, sn] : [k];
-    });
-    const uniqueIds = [...new Set(idKeys)];
-    for (const k of keys) allKeys.add(k);
-    for (const id of uniqueIds) allIds.add(id);
-    codeMeta.push({ code: text, keys, uniqueIds });
+    const found = cache.get(scannedCode);
+    if (found) result.set(raw, found);
   }
-
-  if (!allKeys.size) return result;
-
-  const keysArr = [...allKeys];
-  const idsArr = [...allIds];
-  try {
-    const docs = await findOrdersByIndexedScanFields(
-      keysArr,
-      idsArr,
-      Math.min(Math.max(rawCodes.length * 3, 50), 500),
-    );
-    const hydrated = (docs || [])
-      .map((d) => hydrateOrderFromMongoDoc(d))
-      .filter(Boolean);
-
-    const keySetUpper = (vals: unknown[]) => {
-      const s = new Set<string>();
-      for (const v of vals) {
-        const t = String(v || "").trim();
-        if (!t) continue;
-        s.add(t);
-        s.add(t.toUpperCase());
-        s.add(t.toLowerCase());
-      }
-      return s;
-    };
-
-    for (const meta of codeMeta) {
-      if (result.has(meta.code)) continue;
-      const want = keySetUpper([...meta.keys, ...meta.uniqueIds]);
-      const hit = hydrated.find((o: any) => {
-        const bag = keySetUpper([
-          o?.orderSn,
-          o?.tracking_no,
-          o?.trackingNumber,
-          o?.return_tracking_no,
-          o?.returnTrackingNumber,
-          o?.packageNumber,
-          o?.id,
-          o?.return_sn,
-          o?.internalTrackingCode,
-          o?.data?.tracking_no,
-          o?.data?.trackingNumber,
-          o?.data?.return_tracking_no,
-          o?.data?.returnTrackingNumber,
-          o?.data?.internalTrackingCode,
-          o?.data?.packageNumber,
-          o?.data?.package_number,
-          o?.data?.orderSn,
-          o?.data?.order_sn,
-          o?.data?.return_sn,
-        ]);
-        for (const w of want) {
-          if (bag.has(w)) return true;
-        }
-        return false;
-      });
-      if (hit) result.set(meta.code, hit);
-    }
-  } catch (err: any) {
-    console.warn("[MongoDB] findOrdersByScanCodesInStore failed:", err?.message || err);
-  }
-
   return result;
 }
 

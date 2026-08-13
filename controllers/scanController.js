@@ -3,8 +3,6 @@ import { connectDB, isDBReady, getMongoUri } from "../config/db.js";
 import {
   loadDonHoanHuyAsOrders,
   upsertDonHoanHuyBatch,
-  markInternalReturnReceiptInStore,
-  markOrdersScanFlagsBatch,
 } from "../src/db/mongoStore.ts";
 
 /** Deps từ server.ts — resolve đơn thật (orderSn + items) trước khi ghi don_hoan_huy. */
@@ -64,11 +62,10 @@ function orderHasItems(order) {
 }
 
 /**
- * Local → Shopee on-demand. Bắt buộc có orderSn thật (không phải mã VĐ).
- * Ưu tiên đơn có items; nếu local thiếu items thì vẫn gọi Shopee để bổ sung.
+ * Local Mongo exact match only. Không gọi Shopee trên luồng quét.
  */
 async function resolveFullOrderForScan(rawCode) {
-  const code = String(rawCode || "").trim();
+  const code = String(rawCode || "").trim().toUpperCase();
   if (!code) return null;
 
   let found = null;
@@ -78,35 +75,6 @@ async function resolveFullOrderForScan(rawCode) {
     if (found) found = deps.mirrorTrackingFieldsForRead(found);
   } catch (err) {
     console.warn(`[Scan Save] local lookup fail code=${code}:`, err?.message || err);
-  }
-
-  const needsShopee =
-    !found ||
-    !normalizeOrderSn(found.orderSn) ||
-    isCarrierTrackingCode(found.orderSn) ||
-    !orderHasItems(found);
-
-  if (needsShopee) {
-    try {
-      const fromShopee = await deps.resolveOrderFromShopeeByScanCode(code);
-      if (fromShopee && deps.isValidOrder(fromShopee)) {
-        const mirrored = deps.mirrorTrackingFieldsForRead(fromShopee);
-        // Giữ items từ Shopee nếu local thiếu.
-        if (!found) {
-          found = mirrored;
-        } else {
-          found = {
-            ...found,
-            ...mirrored,
-            items:
-              orderHasItems(mirrored) ? mirrored.items : found.items,
-            orderSn: normalizeOrderSn(mirrored.orderSn) || normalizeOrderSn(found.orderSn),
-          };
-        }
-      }
-    } catch (err) {
-      console.warn(`[Scan Save] Shopee resolve fail code=${code}:`, err?.message || err);
-    }
   }
 
   if (!found) return null;
@@ -144,7 +112,7 @@ export async function saveScanOrders(req, res) {
     const jobs = [];
 
     const pushJob = (raw, kind) => {
-      const code = String(raw || "").trim();
+      const code = String(raw || "").trim().toUpperCase();
       if (!code) return;
       jobs.push({ code, kind: kind === "return" ? "return" : "cancel" });
     };
@@ -220,14 +188,6 @@ export async function saveScanOrders(req, res) {
         });
         continue;
       }
-      const isReturnOrder =
-        job.kind === "return" ||
-        Boolean(order.return_sn) ||
-        order.status === "return_pending" ||
-        order.status === "return_received" ||
-        String(order.shopee_order_status || "").toUpperCase() === "TO_RETURN" ||
-        String(order.shopee_cancel_return_kind || "") === "refund_return" ||
-        String(order.shopee_cancel_return_kind || "") === "failed_delivery";
       if (!orderHasItems(order)) {
         failed.push({
           code: job.code,
@@ -238,7 +198,7 @@ export async function saveScanOrders(req, res) {
       }
       toUpsert.push({
         order,
-        type: isReturnOrder ? "return" : "cancelled",
+        type: job.kind === "return" ? "return" : "cancelled",
         scanCode: job.code,
         source: "api_scan_save",
       });
@@ -252,25 +212,6 @@ export async function saveScanOrders(req, res) {
           if (sn) {
             saved.push(sn);
             orderSns.push(sn);
-            if (row.type === "return") {
-              try {
-                await markInternalReturnReceiptInStore(sn, {
-                  shopId: row.order?.shopId != null ? String(row.order.shopId) : undefined,
-                });
-                await markOrdersScanFlagsBatch([
-                  {
-                    orderSn: sn,
-                    localStatus: "RETURN_RECEIVED",
-                    shopId: row.order?.shopId != null ? String(row.order.shopId) : undefined,
-                  },
-                ]);
-              } catch (flagErr) {
-                console.warn(
-                  `[Scan Save] DA_NHAN fail order_sn=${sn}:`,
-                  flagErr?.message || flagErr,
-                );
-              }
-            }
           }
         }
         for (const e of batch.errors || []) {
@@ -290,9 +231,8 @@ export async function saveScanOrders(req, res) {
     if (saved.length === 0) {
       return res.status(404).json({
         success: false,
-        message:
-          failed[0]?.reason ||
-          "Không resolve được đơn Shopee nào — không tạo đơn giả từ mã quét.",
+        message: "Không tìm thấy mã trên hệ thống",
+        notFound: true,
         saved: 0,
         failed: failed.length,
         errors: failed.slice(0, 20),
@@ -302,12 +242,9 @@ export async function saveScanOrders(req, res) {
 
     return res.json({
       success: true,
-      message: toUpsert.some((r) => r.type === "return")
-        ? `Đã nhận hàng hoàn — đơn gốc #${saved[0]}` +
-          (saved.length > 1 ? ` (+${saved.length - 1} đơn)` : "")
-        : `Đã lưu ${saved.length} đơn vào don_hoan_huy` +
-          (failed.length ? ` (${failed.length} mã lỗi)` : "") +
-          ".",
+      message: `Đã lưu ${saved.length} đơn vào don_hoan_huy` +
+        (failed.length ? ` (${failed.length} mã lỗi)` : "") +
+        ".",
       saved: saved.length,
       failed: failed.length,
       errors: failed.slice(0, 20),

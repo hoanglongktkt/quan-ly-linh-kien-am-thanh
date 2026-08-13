@@ -606,8 +606,18 @@ export function listShopeeOAuthShopIds() {
 }
 
 export function listShopeeSyncShopIds() {
-  // Chỉ shop có token thật — KHÔNG kéo shop_id_list clone (gây get_order_list invalid_access_token).
-  return listAuthorizedShopeeShopIds();
+  const ids = new Set();
+  for (const [rawKey, record] of Object.entries(loadShopeeTokens())) {
+    const key = normalizeShopIdKey(rawKey);
+    if (key) ids.add(key);
+    const recordShopId = normalizeShopIdKey(record?.shop_id);
+    if (recordShopId) ids.add(recordShopId);
+    for (const rawLinkedShopId of Array.isArray(record?.shop_id_list) ? record.shop_id_list : []) {
+      const linkedShopId = normalizeShopIdKey(rawLinkedShopId);
+      if (linkedShopId) ids.add(linkedShopId);
+    }
+  }
+  return [...ids].sort();
 }
 
 export function ensureShopeeLinkedShopTokenKeys() {

@@ -115,14 +115,6 @@ export function isProcessedCondition(
 export function isShopeeShippingStatus(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
-  if (
-    Boolean(order.return_sn) ||
-    order.status === 'return_pending' ||
-    order.status === 'return_received' ||
-    String(order.shopee_cancel_return_kind || '') === 'refund_return'
-  ) {
-    return false;
-  }
   const raw = getShopeeOrderRawStatus(order);
   // BẮT BUỘC: SHIPPED từ Shopee → tab Đang giao (bỏ qua is_handed_over).
   if (raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE') return true;

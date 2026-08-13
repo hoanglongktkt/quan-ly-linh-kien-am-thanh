@@ -124,17 +124,10 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
       return v || undefined;
     })(),
     return_tracking_no: raw.return_tracking_no || raw.returnTrackingNumber
-      ? String(raw.return_tracking_no || raw.returnTrackingNumber)
+      ? String(raw.return_tracking_no || raw.returnTrackingNumber).trim().toUpperCase()
       : undefined,
-    returnTrackingNumber: raw.returnTrackingNumber || raw.return_tracking_no
-      ? String(raw.returnTrackingNumber || raw.return_tracking_no)
-      : undefined,
-    internalReturnReceiptStatus:
-      String(raw.internalReturnReceiptStatus || '').toUpperCase() === 'DA_NHAN'
-        ? 'DA_NHAN'
-        : 'CHUA_NHAN',
-    return_logistics_status: raw.return_logistics_status
-      ? String(raw.return_logistics_status)
+    returnTrackingNumber: raw.return_tracking_no || raw.returnTrackingNumber
+      ? String(raw.return_tracking_no || raw.returnTrackingNumber).trim().toUpperCase()
       : undefined,
     return_sn: raw.return_sn ? String(raw.return_sn) : undefined,
     return_status: raw.return_status ? String(raw.return_status) : undefined,

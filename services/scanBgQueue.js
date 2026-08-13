@@ -192,7 +192,7 @@ async function processOneScanBgJob(job) {
   try {
     let found = null;
     try {
-      found = await deps.findOrderByScanCodeInStore(job.code);
+      found = await deps.findOrderByScanCodeInStore(String(job.code || "").trim().toUpperCase());
       if (found && !deps.isValidOrder(found)) found = null;
       if (found) found = deps.mirrorTrackingFieldsForRead(found);
     } catch {
@@ -202,37 +202,15 @@ async function processOneScanBgJob(job) {
     const looksLikeTn = /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i.test(
       snLocal,
     );
-    const missingItems = !Array.isArray(found?.items) || found.items.length === 0;
-    if (!found || looksLikeTn || missingItems) {
-      try {
-        const fromShopee = await deps.resolveOrderFromShopeeByScanCode(job.code);
-        if (fromShopee) {
-          const mirrored = deps.mirrorTrackingFieldsForRead(fromShopee);
-          if (!found) {
-            found = mirrored;
-          } else {
-            found = {
-              ...found,
-              ...mirrored,
-              items:
-                Array.isArray(mirrored?.items) && mirrored.items.length
-                  ? mirrored.items
-                  : found.items,
-              orderSn: String(mirrored?.orderSn || found.orderSn || "")
-                .replace(/^shopee-/i, "")
-                .trim(),
-            };
-          }
-        }
-      } catch (err) {
-        console.warn(`[Scan BG] Shopee resolve code=${job.code}:`, err?.message || err);
-      }
+    if (!found || looksLikeTn) {
+      found = null;
     }
 
     if (!found) {
       job.status = "done";
       job.action = "not_found";
-      job.message = `Không tìm thấy đơn khớp mã "${job.code}"`;
+      job.message = "Không tìm thấy mã trên hệ thống";
+      job.notFound = true;
       job.finishedAt = new Date().toISOString();
       scanBgJobKeys.delete(job.codeKey);
       return;

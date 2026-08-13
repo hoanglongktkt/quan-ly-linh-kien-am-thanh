@@ -70,10 +70,8 @@ export function scheduleAutoIncrementalOrdersSync(deps = {}) {
         lookbackSec,
         trigger: "cron",
         allowShortLookback: true,
-        oneShopPerTick: true,
-        // Job ĐVVC riêng (scheduleHandedOverStatusReconcile) lo đối soát —
-        // không nuốt budget 90s của get_order_list đa shop.
-        reconcileActive: false,
+        // Đối soát PROCESSED/Đã giao ĐVVC còn kẹt — bắt SHIPPED khi bưu tá đã lấy hàng.
+        reconcileActive: true,
         jobType: "shopee_orders_cron_sync",
       });
       console.log(

@@ -1443,27 +1443,110 @@ function extractShopeeReturnListRows(result: any): any[] {
   return rows;
 }
 
+function normalizeCarrierTrackingCode(raw: unknown): string {
+  const s = String(raw || "").trim().toUpperCase();
+  if (!s || s.length < 4 || /^0FG/i.test(s)) return "";
+  return s;
+}
+
+/** Mã hoàn phải khác mã chiều đi — không copy outbound vào return_tracking_no. */
+function distinctReturnTracking(candidate: unknown, outboundTn: unknown): string {
+  const ret = normalizeCarrierTrackingCode(candidate);
+  const out = normalizeCarrierTrackingCode(outboundTn);
+  if (!ret) return "";
+  if (out && ret === out) return "";
+  return ret;
+}
+
+function outboundTrackingOf(order: any): string {
+  return normalizeCarrierTrackingCode(
+    order?.trackingNumber || order?.tracking_no || order?.shopee_tracking_number,
+  );
+}
+
+function applyReturnTrackingAliases(order: any, tracking: string): void {
+  const tn = normalizeCarrierTrackingCode(tracking);
+  if (!order || !tn) return;
+  order.return_tracking_no = tn;
+  order.returnTrackingNumber = tn;
+}
+
+/** Gọi reverse logistics — chỉ ghi mã hoàn khi khác outbound. */
+async function fillReturnTrackingFromShopee(
+  shopId: string,
+  accessToken: string,
+  order: any,
+): Promise<boolean> {
+  if (!orderNeedsRealReturnTracking(order)) {
+    return Boolean(normalizeCarrierTrackingCode(order?.return_tracking_no || order?.returnTrackingNumber));
+  }
+  let returnSn = String(order.return_sn || "").trim();
+  if (!returnSn && order.orderSn) {
+    try {
+      returnSn = await findReturnSnForOrderWebhook(shopId, accessToken, String(order.orderSn));
+      if (returnSn) order.return_sn = returnSn;
+    } catch (findErr: any) {
+      console.warn(
+        `[Shopee Tracking] find return_sn ${order.orderSn}:`,
+        findErr?.message || findErr,
+      );
+    }
+  }
+  if (!returnSn) return false;
+  try {
+    const detail = await shopeeGetReturnDetail(shopId, accessToken, returnSn);
+    if (detail?.error) {
+      const errText = `${detail.error || ""} ${detail.message || ""}`;
+      if (/error_reverse_logistics|does not have reverse logistics/i.test(errText)) {
+        setTrackingEnrichCooldown(order, "reverse_logistics_pending");
+      }
+      return false;
+    }
+    const body = detail?.response ?? detail;
+    if (body?.status) order.return_status = String(body.status);
+    const { tracking } = await fetchReturnShippingTrackingNumber(
+      shopId,
+      accessToken,
+      returnSn,
+      detail,
+      outboundTrackingOf(order),
+    );
+    if (tracking) {
+      applyReturnTrackingAliases(order, tracking);
+      return true;
+    }
+    setTrackingEnrichCooldown(order, "return_tracking_pending");
+    return false;
+  } catch (err: any) {
+    console.warn(`[Shopee Tracking] fill return TN ${order.orderSn}:`, err?.message || err);
+    setTrackingEnrichCooldown(order, "returns_fallback_error");
+    return false;
+  }
+}
+
 /** Lấy mã vận đơn chiều hoàn: reverse_tracking_info.tracking_number ưu tiên (SPXVN...). */
 async function fetchReturnShippingTrackingNumber(
   shopId: string,
   accessToken: string,
   returnSn: string,
   detailPayload?: any,
+  outboundTn?: string,
 ): Promise<{ tracking: string; sources: Record<string, string> }> {
   const sources: Record<string, string> = {};
-  const fromDetail = extractTrackingFromReturnPayload(detailPayload);
-  if (fromDetail) sources.return_detail = fromDetail;
+  const outbound = normalizeCarrierTrackingCode(outboundTn);
 
   let fromReverse = "";
   try {
     const reverse = await shopeeGetReverseTrackingInfo(shopId, accessToken, returnSn);
     if (!reverse?.error) {
       const body = reverse?.response ?? reverse ?? {};
-      fromReverse = pickBestTrackingNumber(
-        body.tracking_number,
-        body.rts_tracking_number,
-        body?.tracking_info?.[0]?.tracking_number,
-        extractTrackingFromReturnPayload(reverse),
+      fromReverse = distinctReturnTracking(
+        pickBestTrackingNumber(
+          body.tracking_number,
+          body.rts_tracking_number,
+          Array.isArray(body?.tracking_info) ? body.tracking_info[0]?.tracking_number : undefined,
+        ),
+        outbound,
       );
       if (fromReverse) sources.reverse_tracking_info = fromReverse;
       console.log(
@@ -1487,8 +1570,16 @@ async function fetchReturnShippingTrackingNumber(
     console.warn(`[Shopee Returns] reverse_tracking exception ${returnSn}:`, err?.message || err);
   }
 
-  const tracking = pickBestTrackingNumber(fromReverse, fromDetail, sources.return_detail);
-  return { tracking, sources };
+  let fromDetail = "";
+  if (!fromReverse) {
+    fromDetail = distinctReturnTracking(
+      extractTrackingFromReturnPayload(detailPayload),
+      outbound,
+    );
+    if (fromDetail) sources.return_detail = fromDetail;
+  }
+
+  return { tracking: fromReverse || fromDetail || "", sources };
 }
 
 function parseShopeeReturnListMore(result: any): boolean {
@@ -1538,6 +1629,7 @@ function extractTrackingFromReturnPayload(payload: any): string {
     }
     for (const [k, v] of Object.entries(node)) {
       const key = String(k).toLowerCase();
+      if (key === "package_query_number") continue;
       if (
         (key === "tracking_number" ||
           key === "return_tracking_no" ||
@@ -2329,6 +2421,7 @@ async function resolveOrderFromShopeeByScanCode(rawCode: string): Promise<any | 
             accessToken,
             returnSn,
             detailResult,
+            detail.tracking_number,
           );
           const candidates = [
             rtn,
@@ -4626,6 +4719,7 @@ async function syncShopeeReturnRequests(opts?: {
               accessToken,
               mappedReturnSn,
               detailResult,
+              existing?.trackingNumber || existing?.tracking_no,
             );
             const kind = mapShopeeReturnKind(detail);
             const returnStatus = String(detail.status || row.status || "").toUpperCase();
@@ -4694,9 +4788,13 @@ async function syncShopeeReturnRequests(opts?: {
             };
 
             if (returnShipTn) {
-              patch.return_tracking_no = returnShipTn;
-            } else if (existing?.return_tracking_no) {
-              patch.return_tracking_no = existing.return_tracking_no;
+              applyReturnTrackingAliases(patch, returnShipTn);
+            } else {
+              const keepRet = distinctReturnTracking(
+                existing?.return_tracking_no || existing?.returnTrackingNumber,
+                existing?.trackingNumber || existing?.tracking_no,
+              );
+              if (keepRet) applyReturnTrackingAliases(patch, keepRet);
             }
 
             if (alreadyCancelled) {
@@ -4729,7 +4827,7 @@ async function syncShopeeReturnRequests(opts?: {
             merged.refund_amount = patch.refund_amount;
             merged.return_reason = patch.return_reason;
             merged.text_reason = patch.text_reason;
-            if (patch.return_tracking_no) merged.return_tracking_no = patch.return_tracking_no;
+            if (patch.return_tracking_no) applyReturnTrackingAliases(merged, patch.return_tracking_no);
             if (patch.status) merged.status = patch.status;
 
             patches.push(merged);
@@ -11022,11 +11120,14 @@ async function persistOrderTrackingToDb(order: any): Promise<void> {
   if (!tn || isShopeeInternalTrackingCode(tn)) {
     if (!isCancelReturn) return;
     // Đơn hủy/hoàn: không có outbound tracking nhưng có return_tracking_no.
-    const rtn = String(order?.return_tracking_no || "").trim();
-    if (!rtn || isShopeeInternalTrackingCode(rtn)) return;
+    const rtn = distinctReturnTracking(
+      order?.return_tracking_no || order?.returnTrackingNumber,
+      "",
+    );
+    if (!rtn) return;
     if (isMongoReady()) {
       try {
-        await updateOrderTrackingInStore(sn, rtn, {
+        await updateOrderTrackingInStore(sn, "", {
           internalTrackingCode: order.internalTrackingCode,
           packageNumber: order.packageNumber || pkg || undefined,
           status: order.status != null ? String(order.status) : undefined,
@@ -11074,8 +11175,10 @@ async function persistOrderTrackingToDb(order: any): Promise<void> {
         is_pending_shopee_check: order.is_pending_shopee_check === true,
         shopId: order.shopId != null ? String(order.shopId) : undefined,
         return_tracking_no:
-          String(order.return_tracking_no || "").trim() ||
-          (isCancelOrReturnOrderStatus(order) || order.return_sn ? tn : undefined),
+          distinctReturnTracking(
+            order.return_tracking_no || order.returnTrackingNumber,
+            tn,
+          ) || undefined,
       });
     } catch (err: any) {
       console.warn(`[Shopee Tracking] Mongo findOneAndUpdate failed ${order.orderSn}:`, err?.message || err);
@@ -11099,6 +11202,19 @@ function isCancelOrReturnOrderStatus(order: any): boolean {
   return raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN";
 }
 
+/** Thiếu mã hoàn thật (trống hoặc đang bị copy nhầm mã chiều đi). */
+function orderNeedsRealReturnTracking(order: any): boolean {
+  if (!order) return false;
+  const hasReturnCtx = Boolean(order.return_sn) || isCancelOrReturnOrderStatus(order);
+  if (!hasReturnCtx) return false;
+  const ret = normalizeCarrierTrackingCode(
+    order.return_tracking_no || order.returnTrackingNumber,
+  );
+  if (!ret) return true;
+  const out = outboundTrackingOf(order);
+  return Boolean(out && ret === out);
+}
+
 /** Giữ mã vận đơn cũ khi sàn trả về rỗng (đặc biệt đơn hủy/hoàn). */
 function preserveExistingTrackingIfIncomingEmpty(target: any, existing: any | undefined): void {
   if (!target || !existing) return;
@@ -11108,22 +11224,18 @@ function preserveExistingTrackingIfIncomingEmpty(target: any, existing: any | un
     target.trackingNumber = existingTn;
     target.tracking_no = existingTn;
   }
-  const existingReturnTn = String(existing.return_tracking_no || "").trim();
-  const incomingReturnTn = String(target.return_tracking_no || "").trim();
-  if (existingReturnTn && !incomingReturnTn) {
-    target.return_tracking_no = existingReturnTn;
-  }
-  // Hủy/hoàn: nếu thiếu outbound nhưng còn return TN (hoặc ngược lại) → mirror để UI quét được.
-  if (isCancelOrReturnOrderStatus(target) || isCancelOrReturnOrderStatus(existing) || existing.return_sn) {
-    const out = String(target.trackingNumber || target.tracking_no || "").trim();
-    const ret = String(target.return_tracking_no || "").trim();
-    if (!out && ret) {
-      target.trackingNumber = ret;
-      target.tracking_no = ret;
-    }
-    if (!ret && out) {
-      target.return_tracking_no = out;
-    }
+  const existingReturnTn = distinctReturnTracking(
+    existing.return_tracking_no || existing.returnTrackingNumber,
+    existing.trackingNumber || existing.tracking_no || target.trackingNumber || target.tracking_no,
+  );
+  const incomingReturnTn = distinctReturnTracking(
+    target.return_tracking_no || target.returnTrackingNumber,
+    target.trackingNumber || target.tracking_no || existing.trackingNumber || existing.tracking_no,
+  );
+  if (incomingReturnTn) {
+    applyReturnTrackingAliases(target, incomingReturnTn);
+  } else if (existingReturnTn) {
+    applyReturnTrackingAliases(target, existingReturnTn);
   }
   const existingInternal = String(existing.internalTrackingCode || "").trim();
   const incomingInternal = String(target.internalTrackingCode || "").trim();
@@ -11184,17 +11296,23 @@ function mergeShopeeTrackingFields(merged: any, existing: any, incoming: any) {
   } else if (existing?.shopee_cancel_return_kind) {
     merged.shopee_cancel_return_kind = existing.shopee_cancel_return_kind;
   }
-  // return_tracking_no giữ riêng — không ghi đè tracking_no outbound.
-  if (incoming?.return_tracking_no) merged.return_tracking_no = incoming.return_tracking_no;
-  else if (existing?.return_tracking_no) merged.return_tracking_no = existing.return_tracking_no;
-  else if (existingReturnBefore) merged.return_tracking_no = existingReturnBefore;
+  // return_tracking_no giữ riêng — không ghi đè tracking_no outbound, không copy mã đi.
+  const nextReturnTn =
+    distinctReturnTracking(
+      incoming?.return_tracking_no || incoming?.returnTrackingNumber,
+      incoming?.trackingNumber || incoming?.tracking_no || existingTn,
+    ) ||
+    distinctReturnTracking(
+      existing?.return_tracking_no || existing?.returnTrackingNumber || existingReturnBefore,
+      existingTn,
+    );
+  if (nextReturnTn) applyReturnTrackingAliases(merged, nextReturnTn);
 
   // BẮT BUỘC: đơn hủy/hoàn + sàn trả tracking rỗng → giữ mã cũ trong DB (quét barcode hoàn hàng).
   if (cancelReturn && existingTn && !incomingTn) {
     merged.trackingNumber = existingTn;
     merged.tracking_no = existingTn;
-    merged.return_tracking_no =
-      merged.return_tracking_no || existing?.return_tracking_no || existingReturnBefore || existingTn;
+    if (nextReturnTn) applyReturnTrackingAliases(merged, nextReturnTn);
     const existingInternal = String(existing?.internalTrackingCode || "").trim();
     if (existingInternal) merged.internalTrackingCode = existingInternal;
     if (!merged.packageNumber && !merged.package_number) {
@@ -12285,6 +12403,7 @@ function orderMayHaveShopeeTrackingNumber(order: any): boolean {
 
 function needsShopeeTrackingEnrichment(order: any): boolean {
   if (order.channel !== "shopee") return false;
+  if (orderNeedsRealReturnTracking(order)) return true;
   if (hasUsableShopeeTrackingNumber(order)) return false;
   return orderMayHaveShopeeTrackingNumber(order);
 }
@@ -12406,115 +12525,85 @@ async function enrichShopeeOrderTrackingFromApi(
   const applyTn = (code: string | undefined, source: string) => {
     const tn = String(code || "").trim();
     if (!tn) return false;
+    const isReturnSource =
+      source === "get_return_detail" || source === "get_reverse_tracking_info";
+    if (isReturnSource) {
+      const distinct = distinctReturnTracking(
+        tn,
+        order.trackingNumber || order.tracking_no || existingTn,
+      );
+      if (distinct) applyReturnTrackingAliases(order, distinct);
+      console.log(`[Shopee Tracking] Fallback OK order_sn=${order.orderSn} source=${source} tn=${tn}`);
+      return Boolean(distinct);
+    }
     order.trackingNumber = tn;
     order.tracking_no = tn;
-    if (isCancelOrReturnOrderStatus(order) || order.return_sn) {
-      order.return_tracking_no = order.return_tracking_no || tn;
-    }
     console.log(`[Shopee Tracking] Fallback OK order_sn=${order.orderSn} source=${source} tn=${tn}`);
     return true;
   };
 
   try {
-    // Nguồn 1: đã có từ order detail / package_list
-    if (hasUsableShopeeTrackingNumber(order)) {
+    // Nguồn 1: đã có outbound và đã có mã hoàn thật → không gọi API thêm.
+    if (hasUsableShopeeTrackingNumber(order) && !orderNeedsRealReturnTracking(order)) {
       await persistOrderTrackingToDb(order);
       return order;
     }
 
     // Nguồn 2: logistics.get_tracking_number (caller PHẢI await tuần tự từng đơn)
     const pkgNum = String(order.packageNumber || "").trim() || undefined;
-    let result = await shopeeGetTrackingNumberWithRetry(
-      shopId,
-      accessToken,
-      order.orderSn,
-      pkgNum,
-      retries,
-    );
-    console.log(
-      "=== KẾT QUẢ API TRACKING ===",
-      "Đơn:",
-      order.orderSn,
-      "Response:",
-      JSON.stringify(result),
-    );
-    applyShopeeGetTrackingResponse(order, result);
-
-    // Retry không kèm package_number — bỏ qua khi light (print) để tránh +1–2 API/đơn.
-    if (!light && !hasUsableShopeeTrackingNumber(order) && pkgNum) {
-      result = await shopeeGetTrackingNumberWithRetry(
+    if (!hasUsableShopeeTrackingNumber(order)) {
+      let result = await shopeeGetTrackingNumberWithRetry(
         shopId,
         accessToken,
         order.orderSn,
-        undefined,
-        Math.max(2, retries),
+        pkgNum,
+        retries,
+      );
+      console.log(
+        "=== KẾT QUẢ API TRACKING ===",
+        "Đơn:",
+        order.orderSn,
+        "Response:",
+        JSON.stringify(result),
       );
       applyShopeeGetTrackingResponse(order, result);
-    }
 
-    if (!hasUsableShopeeTrackingNumber(order)) {
-      // light/print: bỏ get_shipping_document_data_info — chỉ cần get_tracking_number.
-      if (!light) {
-        try {
-          const docInfo = await shopeeGetShippingDocumentDataInfo(
-            shopId,
-            accessToken,
-            order.orderSn,
-            order.packageNumber,
-          );
-          applyDeepShopeeTrackingPayload(order, docInfo, "get_shipping_document_data_info");
-        } catch (docErr: any) {
-          console.warn(
-            `[Shopee Tracking] shipping_document_data_info ${order.orderSn}:`,
-            docErr?.message || docErr,
-          );
-        }
+      // Retry không kèm package_number — bỏ qua khi light (print) để tránh +1–2 API/đơn.
+      if (!light && !hasUsableShopeeTrackingNumber(order) && pkgNum) {
+        result = await shopeeGetTrackingNumberWithRetry(
+          shopId,
+          accessToken,
+          order.orderSn,
+          undefined,
+          Math.max(2, retries),
+        );
+        applyShopeeGetTrackingResponse(order, result);
       }
-    }
 
-    // Nguồn 3: returns API — bỏ qua khi light (bulk sync) để giảm process
-    if (
-      !light &&
-      !hasUsableShopeeTrackingNumber(order) &&
-      (order.return_sn || isCancelOrReturnOrderStatus(order))
-    ) {
-      let returnSn = String(order.return_sn || "").trim();
-      if (!returnSn && order.orderSn) {
-        try {
-          returnSn = await findReturnSnForOrderWebhook(shopId, accessToken, String(order.orderSn));
-          if (returnSn) order.return_sn = returnSn;
-        } catch (findErr: any) {
-          console.warn(
-            `[Shopee Tracking] find return_sn ${order.orderSn}:`,
-            findErr?.message || findErr,
-          );
-        }
-      }
-      if (returnSn) {
-        try {
-          const detail = await shopeeGetReturnDetail(shopId, accessToken, returnSn);
-          const body = detail?.response ?? detail;
-          const tn = extractTrackingFromReturnPayload(detail);
-          if (tn) applyTn(tn, "get_return_detail");
-          if (body?.status) order.return_status = String(body.status);
-          if (!hasUsableShopeeTrackingNumber(order)) {
-            const reverse = await shopeeGetReverseTrackingInfo(shopId, accessToken, returnSn);
-            const errText = `${reverse?.error || ""} ${reverse?.message || ""}`;
-            if (/error_reverse_logistics|does not have reverse logistics/i.test(errText)) {
-              setTrackingEnrichCooldown(order, "reverse_logistics_pending");
-            } else {
-              const rtn = extractTrackingFromReturnPayload(reverse);
-              if (rtn) applyTn(rtn, "get_reverse_tracking_info");
-            }
+      if (!hasUsableShopeeTrackingNumber(order)) {
+        // light/print: bỏ get_shipping_document_data_info — chỉ cần get_tracking_number.
+        if (!light) {
+          try {
+            const docInfo = await shopeeGetShippingDocumentDataInfo(
+              shopId,
+              accessToken,
+              order.orderSn,
+              order.packageNumber,
+            );
+            applyDeepShopeeTrackingPayload(order, docInfo, "get_shipping_document_data_info");
+          } catch (docErr: any) {
+            console.warn(
+              `[Shopee Tracking] shipping_document_data_info ${order.orderSn}:`,
+              docErr?.message || docErr,
+            );
           }
-        } catch (retErr: any) {
-          console.warn(
-            `[Shopee Tracking] returns fallback ${order.orderSn}:`,
-            retErr?.message || retErr,
-          );
-          setTrackingEnrichCooldown(order, "returns_fallback_error");
         }
       }
+    }
+
+    // Nguồn 3: mã chiều hoàn — gọi reverse kể cả khi đã có outbound.
+    if (!light && orderNeedsRealReturnTracking(order)) {
+      await fillReturnTrackingFromShopee(shopId, accessToken, order);
     }
 
     // Nguồn 4: escrow — bỏ qua khi light (rất nặng khi bulk sync)
@@ -12604,8 +12693,7 @@ function needsBackgroundShopeeTrackingEnrichment(order: any, cutoffMs: number): 
 
   const isReturn = Boolean(order.return_sn) || isCancelOrReturnOrderStatus(order);
   const missingOutbound = !hasUsableOutboundShopeeTracking(order);
-  const missingReturn = !String(order.return_tracking_no || "").trim();
-  if (isReturn) return missingOutbound || missingReturn;
+  if (isReturn) return missingOutbound || orderNeedsRealReturnTracking(order);
   return missingOutbound && orderMayHaveShopeeTrackingNumber(order);
 }
 
@@ -12740,38 +12828,16 @@ async function enrichMissingShopeeTracking(): Promise<{
                 order.tracking_no = outboundBefore;
               }
 
-              const returnSn = String(order.return_sn || "").trim();
-              if (returnSn && !String(order.return_tracking_no || "").trim()) {
-                const detail = await shopeeGetReturnDetail(shopId, accessToken, returnSn);
-                if (!detail?.error) {
-                  const returnTracking = await fetchReturnShippingTrackingNumber(
-                    shopId,
-                    accessToken,
-                    returnSn,
-                    detail,
-                  );
-                  if (returnTracking.tracking) {
-                    order.return_tracking_no = returnTracking.tracking;
-                  } else {
-                    // Chưa có mã chiều về / reverse logistics — cooldown để khỏi spam API.
-                    setTrackingEnrichCooldown(order, "return_tracking_pending");
-                  }
-                } else if (
-                  /error_reverse_logistics|does not have reverse logistics/i.test(
-                    `${detail.error || ""} ${detail.message || ""}`,
-                  )
-                ) {
-                  setTrackingEnrichCooldown(order, "reverse_logistics_pending");
-                }
-              }
-
               const outboundAfter = hasUsableOutboundShopeeTracking(order);
-              const returnAfter = String(order.return_tracking_no || "").trim();
+              const returnAfter = distinctReturnTracking(
+                order.return_tracking_no || order.returnTrackingNumber,
+                order.trackingNumber || order.tracking_no,
+              );
               if (outboundAfter && !outboundBefore) {
                 filled += 1;
                 shopFilled += 1;
               }
-              if (returnAfter && !returnBefore) {
+              if (returnAfter && normalizeCarrierTrackingCode(returnBefore) !== returnAfter) {
                 returnFilled += 1;
                 shopReturnFilled += 1;
               }
@@ -13342,18 +13408,7 @@ async function healCancelledReturnTrackingOrders(opts?: {
           retries,
         });
 
-        // Nếu vẫn trống outbound nhưng có return — mirror để UI quét được.
-        const outTn = String(order.trackingNumber || order.tracking_no || "").trim();
-        const retTn = String(order.return_tracking_no || "").trim();
-        if (!outTn && retTn) {
-          order.trackingNumber = retTn;
-          order.tracking_no = retTn;
-        }
-        if (!retTn && outTn && (isCancelOrReturnOrderStatus(order) || order.return_sn)) {
-          order.return_tracking_no = outTn;
-        }
-
-        if (hasUsableShopeeTrackingNumber(order)) {
+        if (hasUsableShopeeTrackingNumber(order) || distinctReturnTracking(order.return_tracking_no, order.trackingNumber || order.tracking_no)) {
           await persistOrderTrackingToDb(order);
           try {
             await bulkUpsertOrdersToStore([order]);
@@ -14596,6 +14651,7 @@ async function persistShopeeOrderChunk(
         status: row.status,
         shopee_order_status: row.shopee_order_status,
         tracking_no: row.trackingNumber || row.tracking_no || null,
+        return_tracking_no: row.return_tracking_no || row.returnTrackingNumber || null,
         packageNumber: row.packageNumber || row.package_number || null,
         action: existingIndex >= 0 ? "update" : "insert",
         note: "ROLLBACK: raw Shopee $set only",
@@ -17479,23 +17535,17 @@ async function applyWebhookReturnFallback(
   const kind = mapShopeeReturnKind(detail);
   const returnStatus = String(detail.status || "").toUpperCase();
   const mappedReturnSn = extractReturnRequestCode(detail) || returnSn;
-  const { tracking: returnShipTn, sources: tnSources } = await fetchReturnShippingTrackingNumber(
+  const idx = orders.findIndex((o: any) => String(o.orderSn) === orderSn);
+  const existing = idx >= 0 ? orders[idx] : undefined;
+  const outboundExisting = existing?.trackingNumber || existing?.tracking_no;
+  const { tracking: returnShipTn } = await fetchReturnShippingTrackingNumber(
     shopId,
     accessToken,
     mappedReturnSn,
     detailResult,
+    outboundExisting,
   );
-  const idx = orders.findIndex((o: any) => String(o.orderSn) === orderSn);
-  const existing = idx >= 0 ? orders[idx] : undefined;
-  const bestTn = pickBestTrackingNumber(
-    returnShipTn,
-    tnSources.reverse_tracking_info,
-    tnSources.return_detail,
-    detail.tracking_number,
-    existing?.return_tracking_no,
-    existing?.trackingNumber,
-    existing?.tracking_no,
-  );
+  const returnTn = distinctReturnTracking(returnShipTn, outboundExisting);
 
   const existingRaw = String(existing?.shopee_order_status || "").toUpperCase();
   const alreadyCancelled = existingRaw === "CANCELLED" || existingRaw === "IN_CANCEL"
@@ -17524,9 +17574,8 @@ async function applyWebhookReturnFallback(
             : "return_pending",
         shopee_order_status: existing?.shopee_order_status || "TO_RETURN",
       };
-  if (bestTn) {
-    // Chỉ lưu mã chiều hoàn — KHÔNG ghi đè tracking_no outbound.
-    patch.return_tracking_no = returnShipTn || tnSources.return_detail || bestTn;
+  if (returnTn) {
+    applyReturnTrackingAliases(patch, returnTn);
   }
 
   if (Number.isFinite(Number(detail.refund_amount))) {
@@ -17536,8 +17585,9 @@ async function applyWebhookReturnFallback(
   if (detail.text_reason) patch.text_reason = String(detail.text_reason);
 
   if (idx >= 0) {
-    if (!bestTn) {
+    if (!returnTn) {
       delete patch.return_tracking_no;
+      delete patch.returnTrackingNumber;
     }
     preserveExistingTrackingIfIncomingEmpty(patch, existing);
     const merged = mergeShopeeOrderOnSync(existing, { ...existing, ...patch });
@@ -17552,14 +17602,11 @@ async function applyWebhookReturnFallback(
     else if (merged.status !== "return_received" && merged.status !== "cancelled") {
       merged.status = "return_pending";
     }
-    if (patch.return_tracking_no) {
-      merged.return_tracking_no = patch.return_tracking_no;
-    } else {
-      merged.return_tracking_no =
-        merged.return_tracking_no ||
-        existing?.return_tracking_no ||
-        undefined;
-    }
+    const mergedReturn = distinctReturnTracking(
+      patch.return_tracking_no || merged.return_tracking_no || existing?.return_tracking_no,
+      merged.trackingNumber || merged.tracking_no || existing?.trackingNumber || existing?.tracking_no,
+    );
+    if (mergedReturn) applyReturnTrackingAliases(merged, mergedReturn);
     orders[idx] = merged;
   } else {
     orders.unshift({
@@ -17583,7 +17630,7 @@ async function applyWebhookReturnFallback(
   }
 
   console.log(
-    `[Shopee Webhook] Return fallback OK order_sn=${orderSn} return_sn=${mappedReturnSn} tn=${bestTn || "(empty)"} kind=${kind}`,
+    `[Shopee Webhook] Return fallback OK order_sn=${orderSn} return_sn=${mappedReturnSn} tn=${returnTn || "(empty)"} kind=${kind}`,
   );
 }
 
@@ -17967,7 +18014,7 @@ async function startServer() {
     matchesReceivedCancelReturnTabOrder,
     cleanupExpiredLabelFiles,
     wipeLegacyPublicPrints,
-    resolveOrderFromShopeeByScanCode,
+    resolveOrderFromShopeeByScanCode: async () => null,
     enrichMissingShopeeTracking,
     repairMissingShopeeTrackingInOrders,
     healCancelledReturnTrackingOrders,
@@ -18032,10 +18079,10 @@ async function startServer() {
     extractHttpClientError,
   });
 
-  // --- Scan save / list don_hoan_huy — resolve Shopee đầy đủ trước khi ghi ---
+  // --- Scan save / list don_hoan_huy — chỉ Mongo local, không gọi Shopee ---
   initScanController({
     findOrderByScanCodeInStore,
-    resolveOrderFromShopeeByScanCode,
+    resolveOrderFromShopeeByScanCode: async () => null,
     isValidOrder,
     mirrorTrackingFieldsForRead,
   });
@@ -18045,7 +18092,7 @@ async function startServer() {
     findOrderByScanCodeInStore,
     isValidOrder,
     mirrorTrackingFieldsForRead,
-    resolveOrderFromShopeeByScanCode,
+    resolveOrderFromShopeeByScanCode: async () => null,
     resolveOrderLocalStatusShared,
     existsDonHoanHuy,
     isShopeeCancelOrReturnLikeOrder,
@@ -18060,7 +18107,7 @@ async function startServer() {
   initScanBulkController({
     findOrderByScanCodeInStore,
     findOrdersByScanCodesInStore,
-    resolveOrderFromShopeeByScanCode,
+    resolveOrderFromShopeeByScanCode: async () => null,
     isValidOrder,
     mirrorTrackingFieldsForRead,
     resolveOrderLocalStatus,

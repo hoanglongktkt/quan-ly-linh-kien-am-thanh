@@ -19,7 +19,6 @@ import {
   buildScannerSyncMap,
   lookupScannerSyncMap,
   scannerSyncEntryToOrder,
-  lookupOrderByScanCode,
   type ScannerSyncEntry,
 } from '../utils/orderScan';
 import {
@@ -86,7 +85,6 @@ import {
   ImageOff,
   RefreshCw,
   Trash2,
-  ScanLine,
 } from 'lucide-react';
 import { Order, ConnectedShop, SyncLog, Product, SystemFee } from '../types';
 import ManualOrderPage from './ManualOrderPage';
@@ -115,17 +113,15 @@ import {
 } from '../utils/notificationSound';
 
 function getOrderWaybillCode(order: Order): string {
-  // Chỉ mã chiều đi — không fallback sang return_tracking_no (tránh 2 ô hiện cùng 1 mã).
-  const fromHelper = getCarrierWaybillDisplay({
-    ...order,
-    return_tracking_no: undefined,
-  });
+  // Ưu tiên mã đi (tracking_no) theo order_sn — return_tracking_no / scan_code chỉ fallback.
+  const fromHelper = getCarrierWaybillDisplay(order);
   if (fromHelper) return fromHelper;
   const note = String((order as any).note || '').trim();
   const fromNote = note.startsWith('scan:') ? note.slice(5).trim() : '';
   const fallback = String(
     order.trackingNumber ||
       order.tracking_no ||
+      order.return_tracking_no ||
       (order as any).scan_code ||
       fromNote ||
       '',
@@ -806,94 +802,37 @@ function classifyScanCancelReturnBuckets(order: Order): {
   return { isReturnBucket, isCancelBucket };
 }
 
-/** Quét khớp mã trên kiện hoàn: return_sn / returnTrackingNumber / trackingNumber cũ / packageNumber. */
+/** Quét khớp mã vận đơn chiều hoàn (return waybill). */
 function scannedMatchesReturnWaybill(order: Order, rawCode: string): boolean {
+  const rtn = normalizeOrderScanKey(order.return_tracking_no || '');
+  if (!rtn || rtn.length < 6) return false;
   const keys = buildScanLookupKeys(rawCode);
-  if (!keys.length) return false;
-  const isReturn =
-    Boolean(order.return_sn) ||
-    order.status === 'return_pending' ||
-    order.status === 'return_received' ||
-    String(order.shopee_order_status || '').toUpperCase() === 'TO_RETURN' ||
-    String(order.shopee_cancel_return_kind || '') === 'refund_return';
-  const candidates = [
-    order.returnTrackingNumber,
-    order.return_tracking_no,
-    order.return_sn,
-    ...(isReturn ? [order.trackingNumber, order.tracking_no, order.packageNumber] : []),
-  ];
-  return candidates.some((raw) => {
-    const field = normalizeOrderScanKey(String(raw || ''));
-    if (!field || field.length < 4) return false;
-    return keys.some((sk) => {
-      if (!sk) return false;
-      if (sk === field) return true;
-      if (sk.length >= 10 && field.length >= 10) {
-        return field.endsWith(sk) || sk.endsWith(field);
-      }
-      return false;
-    });
+  return keys.some((sk) => {
+    if (!sk) return false;
+    if (sk === rtn) return true;
+    if (sk.length >= 10 && rtn.length >= 10) {
+      return rtn.endsWith(sk) || sk.endsWith(rtn);
+    }
+    return false;
   });
 }
 
-function getOrderReturnTrackingNumber(order: Order): string {
-  const rtn = String(order.returnTrackingNumber || order.return_tracking_no || '').trim();
-  if (!rtn) return '';
-  const out = String(order.trackingNumber || order.tracking_no || '').trim();
-  const kind = String(order.shopee_cancel_return_kind || '');
-  const isCancelSameOk = kind === 'cancelled' || kind === 'failed_delivery' || order.status === 'cancelled';
-  if (!isCancelSameOk && out && rtn === out) return '';
-  return rtn;
-}
-
-function getInternalReturnReceiptStatus(order: Order): 'CHUA_NHAN' | 'DA_NHAN' {
-  return String(order.internalReturnReceiptStatus || '').toUpperCase() === 'DA_NHAN'
-    ? 'DA_NHAN'
-    : 'CHUA_NHAN';
-}
-
-function isShopeeReturnReceivedStatus(order: Order): boolean {
-  const s = String(order.return_status || '').toUpperCase();
-  const log = String(order.return_logistics_status || '').toUpperCase();
-  if (s === 'CANCELLED') return false;
-  if (s === 'COMPLETED' || s === 'REFUND_PAID' || s === 'CLOSED') return true;
-  return /DELIVERED|DELIVERY_DONE|RECEIVED|SELLER_RECEIVE|LOGISTICS_DELIVERY_DONE/.test(log);
-}
-
-function formatReturnRequestStatus(order: Order): { text: string; color: string } {
-  const s = String(order.return_status || '').toUpperCase();
-  if (s === 'CANCELLED') {
+function formatReturnRequestStatus(status?: string): { text: string; color: string } {
+  const s = String(status || '').toUpperCase();
+  if (s === 'REQUESTED' || s === 'PENDING') {
+    return { text: 'Chờ xử lý', color: 'bg-amber-50 text-amber-700 border-amber-200' };
+  }
+  if (s === 'ACCEPTED' || s === 'PROCESSING' || s === 'JUDGING') {
+    return { text: 'Đang xử lý', color: 'bg-sky-50 text-sky-700 border-sky-200' };
+  }
+  if (s === 'REFUND_PAID' || s === 'COMPLETED') {
+    return { text: 'Hoàn tất', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
+  }
+  if (s === 'CANCELLED' || s === 'CLOSED') {
     return { text: 'Đã hủy', color: 'bg-slate-100 text-slate-600 border-slate-200' };
   }
-  if (isShopeeReturnReceivedStatus(order)) {
-    return {
-      text: 'Shopee báo Đã nhận hàng',
-      color: 'bg-blue-50 text-blue-700 border-blue-200',
-    };
-  }
-  return {
-    text: 'Đang hoàn về',
-    color: 'bg-orange-50 text-orange-700 border-orange-200',
-  };
-}
-
-function InternalReturnReceiptBadge({ order }: { order: Order }) {
-  const received = getInternalReturnReceiptStatus(order) === 'DA_NHAN';
-  if (received) {
-    return (
-      <span className="inline-block px-2.5 py-1 text-[10px] font-black rounded-full border bg-emerald-50 text-emerald-700 border-emerald-300">
-        ĐÃ QUÉT NHẬN HÀNG
-      </span>
-    );
-  }
-  return (
-    <span
-      className="inline-block px-2.5 py-1 text-[10px] font-black rounded-full border bg-red-50 text-red-700 border-red-300"
-      title="Shopee có thể báo đã giao nhưng kho chưa quét nhận — kiểm tra khiếu nại"
-    >
-      CHƯA NHẬN HÀNG THỰC TẾ
-    </span>
-  );
+  if (s) return { text: s, color: 'bg-orange-50 text-orange-700 border-orange-200' };
+  return { text: 'Yêu cầu trả hàng', color: 'bg-orange-50 text-orange-700 border-orange-200' };
 }
 
 function VariationNameBadge({ variationName }: { variationName?: string }) {
@@ -1446,7 +1385,6 @@ export default function OrderManager({
   const [isFlushingQueue, setIsFlushingQueue] = useState(false);
   const [flushingDbCount, setFlushingDbCount] = useState(0);
   const [isVerifyingScan, setIsVerifyingScan] = useState(false);
-  const [isScanning, setIsScanning] = useState(true);
 
   const ordersRef = React.useRef(orders);
   type OptimisticOrderMutation = {
@@ -1546,9 +1484,6 @@ export default function OrderManager({
   useEffect(() => {
     const wasFocused = prevFocusScannerRef.current;
     prevFocusScannerRef.current = focusScanner;
-    if (!wasFocused && focusScanner) {
-      setIsScanning(true);
-    }
     if (wasFocused && !focusScanner) {
       void onFetchOrders?.({ silent: true, limit: 2000, merge: true, bustCache: true });
     }
@@ -1936,22 +1871,10 @@ export default function OrderManager({
       try {
         // Local HashMap từ scanner-sync — không gọi lookup HTTP.
         const syncHit = lookupScannerSyncMap(scannerSyncMapRef.current, trimmed);
-        let order: Order | null = findOrderByScanPayload(
-          ordersRef.current,
-          trimmed,
-          orderScanIndex,
-        );
-        if (!order && syncHit) {
-          order = scannerSyncEntryToOrder(syncHit);
-        }
-        if (!order) {
-          const token = localStorage.getItem('admin_token');
-          order = await lookupOrderByScanCode(
-            trimmed,
-            ordersRef.current,
-            token,
-            orderScanIndex,
-          );
+        let order: Order | null = null;
+        if (syncHit) {
+          const fromPool = findOrderByScanPayload(ordersRef.current, trimmed, orderScanIndex);
+          order = fromPool || scannerSyncEntryToOrder(syncHit);
         }
 
         if (order) {
@@ -2022,34 +1945,27 @@ export default function OrderManager({
         ) {
           const isCancelRequest = order.status === 'cancelled' && !order.return_sn;
           const updated = ordersRef.current.map((o) =>
-            o.id === order.id
-              ? {
-                  ...o,
-                  status: 'return_received' as const,
-                  internalReturnReceiptStatus: 'DA_NHAN' as const,
-                }
-              : o
+            o.id === order.id ? { ...o, status: 'return_received' as const } : o
           );
           ordersRef.current = updated;
           onUpdateOrders(updated);
-          void persistCancelReturnScanFlag(order, 'return', trimmed);
           onAddLog({
             id: `log-${Date.now()}`,
             timestamp: new Date().toISOString(),
             channel: order.channel,
             type: 'stock_sync',
             status: 'success',
-            message: `[QUÉT QR] Nhận hoàn đơn ${order.orderSn} → Đã quét nhận hàng hoàn thành công.`,
+            message: `[QUÉT QR] Nhận hoàn đơn ${order.orderSn} → Yêu cầu trả hàng.`,
           });
           setActiveSubTab('return_requests');
           scanFeedback(isCancelRequest ? 'warning' : 'success');
           setCameraScanError(false);
           setCameraScanSuccess(true);
-          setCameraScanResult(`Đã nhận hàng hoàn — đơn gốc #${order.orderSn}`);
+          setCameraScanResult(`✓ YCTH #${order.orderSn}`);
           showScanToast(
             isCancelRequest
               ? `Đơn báo hủy #${order.orderSn} — đã chuyển nhận kiện`
-              : `Đã nhận hàng hoàn — đơn gốc #${order.orderSn}`,
+              : `Đã nhận hoàn / Yêu cầu trả hàng #${order.orderSn}`,
             'success'
           );
           setTimeout(() => setCameraScanSuccess(false), 2000);
@@ -2151,9 +2067,6 @@ export default function OrderManager({
             order.trackingNumber,
             order.tracking_no,
             order.return_tracking_no,
-            order.returnTrackingNumber,
-            order.return_sn,
-            order.packageNumber,
             order.id,
           ]
             .map((c) => String(c || '').trim())
@@ -2311,33 +2224,19 @@ export default function OrderManager({
 
       // Local HashMap O(1) từ scanner-sync — KHÔNG gọi HTTP lookup / dò ngầm.
       const syncHit = lookupScannerSyncMap(scannerSyncMapRef.current, trimmed);
-      let localOrder: Order | null = findOrderByScanPayload(
-        ordersRef.current,
-        trimmed,
-        orderScanIndex,
-      );
-      if (!localOrder && syncHit) {
-        localOrder = scannerSyncEntryToOrder(syncHit);
+      let localOrder: Order | null = null;
+      if (syncHit) {
+        const fromPool = findOrderByScanPayload(ordersRef.current, trimmed, orderScanIndex);
+        localOrder = fromPool || scannerSyncEntryToOrder(syncHit);
         if (syncHit.matchedReturn && localOrder) {
           localOrder = {
             ...localOrder,
             return_tracking_no: syncHit.return_waybill || localOrder.return_tracking_no,
-            returnTrackingNumber:
-              syncHit.return_waybill || localOrder.returnTrackingNumber || localOrder.return_tracking_no,
-            return_sn: syncHit.return_sn || localOrder.return_sn || 'scanner-sync',
+            return_sn: localOrder.return_sn || 'scanner-sync',
             status:
               localOrder.status === 'return_received' ? 'return_received' : 'return_pending',
           };
         }
-      }
-      if (!localOrder) {
-        const token = localStorage.getItem('admin_token');
-        localOrder = await lookupOrderByScanCode(
-          trimmed,
-          ordersRef.current,
-          token,
-          orderScanIndex,
-        );
       }
 
       if (!localOrder) {
@@ -2418,7 +2317,7 @@ export default function OrderManager({
         }
 
         const waybill =
-          (matchedReturnWaybill && getOrderReturnTrackingNumber(order)) ||
+          (matchedReturnWaybill && order.return_tracking_no) ||
           getOrderWaybillCode(order);
         const orderKey = normalizeOrderScanKey(order.orderSn || order.id);
         if (
@@ -2426,7 +2325,7 @@ export default function OrderManager({
           isCodeAlreadyVerified(normalizeOrderScanKey(waybill)) ||
           isCodeAlreadyVerified(normalizeOrderScanKey(order.trackingNumber || '')) ||
           isCodeAlreadyVerified(normalizeOrderScanKey(order.tracking_no || '')) ||
-          isCodeAlreadyVerified(normalizeOrderScanKey(getOrderReturnTrackingNumber(order)))
+          isCodeAlreadyVerified(normalizeOrderScanKey(order.return_tracking_no || ''))
         ) {
           playScanSound('warning');
           vibrateScan('warning');
@@ -2456,16 +2355,18 @@ export default function OrderManager({
           });
           // Ghi ngay local_status=RETURN_RECEIVED xuống Mongo (tab lọc theo field này).
           void persistCancelReturnScanFlag(order, 'return', trimmed);
-          const marked = ordersRef.current.map((o) =>
-            o.id === order.id
-              ? { ...o, ...order, internalReturnReceiptStatus: 'DA_NHAN' as const, status: 'return_received' as const }
-              : o,
-          );
-          ordersRef.current = marked;
-          onUpdateOrders(marked, { persist: false });
           setActiveSubTab('return_requests');
-          setCameraScanResult(`Đã nhận hàng hoàn — đơn gốc #${order.orderSn}`);
-          showScanToast(`Đã nhận hàng hoàn — đơn gốc #${order.orderSn}`, 'success');
+          setCameraScanResult(
+            waybill
+              ? `✓ YCTH · VĐ hoàn ${waybill} · #${order.orderSn}`
+              : `✓ Yêu cầu trả hàng #${order.orderSn}`,
+          );
+          showScanToast(
+            waybill
+              ? `Yêu cầu trả hàng #${order.orderSn} — mã VĐ hoàn: ${waybill}`
+              : `Đơn hoàn #${order.orderSn} — đã ghi nhận vào Yêu cầu trả hàng`,
+            'success',
+          );
           return;
         }
 
@@ -2576,7 +2477,7 @@ export default function OrderManager({
   useEffect(() => {
     let isMounted = true;
 
-    if (focusScanner && isScanning) {
+    if (focusScanner) {
       // Tránh restart camera khi đang graceful teardown / đang ghi DB.
       if (isTearingDownScannerRef.current) {
         return () => {
@@ -2656,7 +2557,7 @@ export default function OrderManager({
     return () => {
       isMounted = false;
     };
-  }, [focusScanner, cameraRestartKey, isScanning]);
+  }, [focusScanner, cameraRestartKey]);
 
   // Prefetch scanner-sync 1 lần khi mở quét — HashMap local O(1), không shallow 50.
   useEffect(() => {
@@ -5629,7 +5530,7 @@ export default function OrderManager({
     closeScannerUiOnly();
   };
 
-  /** Kết thúc: tắt camera → ghi DB (timeout 45s) → ẩn camera sau khi lưu thành công. */
+  /** Kết thúc: tắt camera → ghi DB (timeout 45s) → reset list → bật lại camera. */
   const handleFinishContinuousScan = async () => {
     setShowEndConfirm(false);
 
@@ -5665,7 +5566,6 @@ export default function OrderManager({
       setIsFlushingQueue(false);
       setFlushingDbCount(0);
       isTearingDownScannerRef.current = false;
-      setIsScanning(true);
       window.setTimeout(() => {
         setCameraRestartKey((k) => k + 1);
       }, 80);
@@ -5900,17 +5800,12 @@ export default function OrderManager({
         processedCount > 0
           ? `✓ Đã lưu DB: Xuất kho ${safeXuat} · Hủy ${safeHuy} · Nhận hoàn ${safeHoan}${
               failedScans.length ? ` · Bỏ qua ${failedScans.length}` : ''
-            }. Camera đã tắt — bấm Tiếp tục quét để mở lại`
+            }. Sẵn sàng quét tiếp`
           : 'Lưu thất bại, vui lòng thử lại',
       );
 
-      setIsFlushingQueue(false);
-      setFlushingDbCount(0);
-      if (processedCount > 0) {
-        setIsScanning(false);
-      } else {
-        resumeCameraAfterSave();
-      }
+      // 2) Reset list xong → bật lại camera.
+      resumeCameraAfterSave();
     } catch (err: unknown) {
       // Giữ 3 list đã verify — cho phép bấm lại GHI DB.
       const msg = err instanceof Error ? err.message : String(err);
@@ -5921,16 +5816,6 @@ export default function OrderManager({
     } finally {
       window.clearTimeout(timeoutId);
     }
-  };
-
-  const handleResumeScanning = () => {
-    setCameraError('');
-    setCameraScanSuccess(false);
-    setCameraScanError(false);
-    setCameraScanResult('Quét realtime QR + mã vạch — dò trạng thái ngay mỗi mã');
-    isTearingDownScannerRef.current = false;
-    setIsScanning(true);
-    setCameraRestartKey((k) => k + 1);
   };
 
   const scanStatModalMeta: Record<
@@ -6009,9 +5894,8 @@ export default function OrderManager({
           </p>
         </div>
 
-        {/* Camera hoặc nút tiếp tục quét */}
+        {/* Camera */}
         <div className="flex-1 min-h-0 px-3 flex flex-col gap-2 pb-2">
-          {isScanning ? (
           <div
             className={`flex-1 min-h-[220px] relative rounded-2xl overflow-hidden bg-black transition-colors duration-300 ${
               cameraScanSuccess
@@ -6070,18 +5954,6 @@ export default function OrderManager({
               </div>
             )}
           </div>
-          ) : (
-          <div className="flex-1 min-h-[220px] relative rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800 flex items-center justify-center p-6">
-            <button
-              type="button"
-              onClick={handleResumeScanning}
-              className="w-full max-w-sm min-h-20 rounded-2xl bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-black text-xl uppercase tracking-wide shadow-lg shadow-emerald-900/40 flex items-center justify-center gap-3"
-            >
-              <ScanLine className="w-8 h-8 shrink-0" />
-              Tiếp tục quét
-            </button>
-          </div>
-          )}
 
           <div
             className={`shrink-0 text-sm font-bold px-3 py-2.5 rounded-xl text-center transition-all ${
@@ -6089,7 +5961,7 @@ export default function OrderManager({
                 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                 : cameraScanError
                   ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                  : cameraScanResult.includes('sẵn sàng') || cameraScanResult.includes('realtime') || cameraScanResult.includes('Camera đã tắt')
+                  : cameraScanResult.includes('sẵn sàng') || cameraScanResult.includes('realtime')
                     ? 'text-zinc-500'
                     : 'bg-zinc-800 text-yellow-400 border border-zinc-700'
             }`}
@@ -6120,7 +5992,7 @@ export default function OrderManager({
             {totalVerifiedScans > 0 ? ` · Ghi DB ${totalVerifiedScans} mã` : ' · Thoát'}
           </button>
           <p className="text-center text-[10px] text-zinc-500 font-semibold">
-            Kết thúc = lưu chính thức vào database · thoát màn hình quét sau khi lưu
+            Kết thúc = lưu chính thức vào database · giữ nguyên màn quét sau khi lưu
           </p>
         </div>
 
@@ -6132,7 +6004,7 @@ export default function OrderManager({
               </p>
               <p className="text-zinc-400 text-xs leading-relaxed">
                 {totalVerifiedScans > 0
-                  ? `Sẽ ghi DB: xuất kho ${daXuatKhoList.length} · hủy ${donHuyList.length} · nhận hoàn ${daNhanHoanList.length}. Sau đó thoát màn hình quét (ẩn camera).`
+                  ? `Sẽ ghi DB: xuất kho ${daXuatKhoList.length} · hủy ${donHuyList.length} · nhận hoàn ${daNhanHoanList.length}. Sau đó xóa list và ở lại màn quét.`
                   : 'Chưa có mã đã dò — sẽ đóng camera và quay về tab Đơn hàng.'}
               </p>
               <div className="flex gap-2">
@@ -6901,8 +6773,8 @@ export default function OrderManager({
 
       {activeSubTab === 'return_requests' && (
         <div className="bg-orange-50/80 border border-orange-100 rounded-2xl px-4 py-3 text-xs text-orange-950 font-semibold leading-relaxed">
-          Danh sách Yêu cầu trả hàng từ Shopee. Trạng thái Shopee (Đang hoàn về / Đã nhận) tách biệt với đối soát kho
-          (CHƯA NHẬN HÀNG THỰC TẾ / ĐÃ QUÉT NHẬN HÀNG). Quét mã VĐ hoàn hoặc VĐ gốc để ghi nhận hàng về kho.
+          Danh sách Yêu cầu trả hàng/Hoàn tiền từ Shopee (Return Request ID + mã vận đơn chiều hoàn).
+          Quét mã vận đơn hoàn sẽ tự khớp và phân loại vào tab này.
         </div>
       )}
 
@@ -7268,9 +7140,8 @@ export default function OrderManager({
                       <th className="p-4 w-[260px]">Sản phẩm</th>
                       <th className="p-4 text-right w-32">Số tiền hoàn</th>
                       <th className="p-4 w-44">Lý do</th>
-                      <th className="p-4 text-center w-40">Trạng thái Shopee</th>
-                      <th className="p-4 w-52">Mã vận đơn</th>
-                      <th className="p-4 text-center w-44">Đối soát kho</th>
+                      <th className="p-4 text-center w-32">Trạng thái</th>
+                      <th className="p-4 w-48">Mã vận đơn chiều hoàn</th>
                     </>
                   ) : activeSubTab === 'web_orders' ? (
                     <>
@@ -7310,7 +7181,7 @@ export default function OrderManager({
                         }
                       : badgeBase;
                   const isExpanded = expandedOrderId === order.id;
-                  const returnStatusBadge = formatReturnRequestStatus(order);
+                  const returnStatusBadge = formatReturnRequestStatus(order.return_status);
                   const refundAmt =
                     Number(order.refund_amount) > 0
                       ? Number(order.refund_amount)
@@ -7382,42 +7253,20 @@ export default function OrderManager({
                               {returnReason}
                             </p>
                           </td>
-                          <td className="p-4 text-center space-y-1.5">
+                          <td className="p-4 text-center">
                             <span className={`inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border ${returnStatusBadge.color}`}>
                               {returnStatusBadge.text}
                             </span>
                           </td>
-                          <td className="p-4 space-y-1.5">
-                            {(() => {
-                              const outboundTn = String(order.trackingNumber || order.tracking_no || '').trim();
-                              const returnTn = getOrderReturnTrackingNumber(order);
-                              return (
-                                <>
-                                  {outboundTn && outboundTn !== returnTn ? (
-                                    <div className="text-[10px] text-gray-500">
-                                      <span className="uppercase font-bold tracking-wide text-[9px] text-gray-400">VĐ gốc</span>
-                                      <div className="font-mono font-semibold text-gray-700 truncate max-w-[200px]" title={outboundTn}>
-                                        {outboundTn}
-                                      </div>
-                                    </div>
-                                  ) : null}
-                                  {returnTn ? (
-                                    <div className="rounded-lg border-2 border-orange-400 bg-orange-50 px-2 py-1">
-                                      <span className="uppercase font-black tracking-wide text-[9px] text-orange-700">Mã chiều hoàn</span>
-                                      <div className="font-mono font-extrabold text-orange-900 text-sm tracking-tight flex items-center gap-1" title={returnTn}>
-                                        <Barcode className="w-3.5 h-3.5 text-orange-600 shrink-0" />
-                                        <span className="truncate max-w-[180px]">{returnTn}</span>
-                                      </div>
-                                    </div>
-                                  ) : (
-                                    <span className="text-xs text-gray-400 italic font-medium">Chưa có mã VĐ hoàn</span>
-                                  )}
-                                </>
-                              );
-                            })()}
-                          </td>
-                          <td className="p-4 text-center">
-                            <InternalReturnReceiptBadge order={order} />
+                          <td className="p-4">
+                            {order.return_tracking_no ? (
+                              <div className="font-mono font-extrabold text-gray-900 text-sm tracking-tight flex items-center gap-1" title={order.return_tracking_no}>
+                                <Barcode className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                <span className="truncate max-w-[180px]">{order.return_tracking_no}</span>
+                              </div>
+                            ) : (
+                              <span className="text-xs text-gray-400 italic font-medium">Chưa có mã VĐ hoàn</span>
+                            )}
                           </td>
                         </>
                       ) : (
@@ -7672,10 +7521,7 @@ export default function OrderManager({
                             </>
                           )}
 
-                          {order.status === 'shipping' &&
-                            activeSubTab !== 'return_requests' &&
-                            !order.return_sn &&
-                            String(order.shopee_order_status || '').toUpperCase() !== 'TO_RETURN' && (
+                          {order.status === 'shipping' && (
                             <div className="flex gap-1">
                               <button
                                 onClick={() => {
@@ -7698,7 +7544,7 @@ export default function OrderManager({
                             </div>
                           )}
 
-                          {order.status === 'return_pending' && activeSubTab !== 'return_requests' && (
+                          {order.status === 'return_pending' && (
                             <button
                               onClick={() => {
                                 const updated = orders.map(o => o.id === order.id ? { ...o, status: 'return_received' as const } : o);
@@ -7732,7 +7578,7 @@ export default function OrderManager({
                     </tr>
                     {isExpanded && (
                       <tr className="bg-slate-50/60">
-                        <td colSpan={activeSubTab === 'return_requests' ? 9 : 7} className="p-0">
+                        <td colSpan={activeSubTab === 'return_requests' ? 8 : 7} className="p-0">
                           <OrderDetailAccordionPanel
                             order={order}
                             shops={shops}
@@ -7795,15 +7641,7 @@ export default function OrderManager({
                           {resolveOrderShopDisplayName(order, shops)}
                         </span>
                       </div>
-                      {getOrderReturnTrackingNumber(order) && activeSubTab === 'return_requests' ? (
-                        <div className="rounded-lg border-2 border-orange-400 bg-orange-50 px-2 py-1 mt-0.5">
-                          <span className="uppercase font-black tracking-wide text-[9px] text-orange-700">Mã chiều hoàn</span>
-                          <p className="font-mono font-extrabold text-orange-900 text-sm truncate flex items-center gap-1" title={getOrderReturnTrackingNumber(order)}>
-                            <Barcode className="w-3.5 h-3.5 text-orange-600 shrink-0" />
-                            <span className="truncate">{getOrderReturnTrackingNumber(order)}</span>
-                          </p>
-                        </div>
-                      ) : getOrderWaybillCode(order) ? (
+                      {getOrderWaybillCode(order) ? (
                         <p className="font-mono font-extrabold text-gray-900 text-sm truncate mt-0.5 flex items-center gap-1" title={getOrderWaybillCode(order)}>
                           <Barcode className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                           <span className="truncate">{getOrderWaybillCode(order)}</span>
@@ -7811,11 +7649,6 @@ export default function OrderManager({
                       ) : (
                         <p className="text-xs text-gray-400 italic font-medium mt-0.5">Chưa có mã vận đơn</p>
                       )}
-                      {activeSubTab === 'return_requests' && getOrderWaybillCode(order) ? (
-                        <p className="text-[10px] text-gray-500 font-mono mt-0.5 truncate" title={getOrderWaybillCode(order)}>
-                          VĐ gốc: {getOrderWaybillCode(order)}
-                        </p>
-                      ) : null}
                       <p className="text-[10px] text-gray-400 font-mono mt-0.5">#{order.orderSn}</p>
                       <p className="text-[11px] text-gray-500 font-medium mt-0.5">
                         {new Date(order.date).toLocaleDateString('vi-VN')}
@@ -7891,18 +7724,6 @@ export default function OrderManager({
                         <Printer className={`w-3.5 h-3.5 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
                         In nhanh
                       </button>
-                    ) : activeSubTab === 'return_requests' ? (
-                      <div className="flex flex-col items-end gap-1.5">
-                        {(() => {
-                          const rr = formatReturnRequestStatus(order);
-                          return (
-                            <span className={`inline-block px-2 py-0.5 text-[9px] font-black rounded-full border shrink-0 ${rr.color}`}>
-                              {rr.text}
-                            </span>
-                          );
-                        })()}
-                        <InternalReturnReceiptBadge order={order} />
-                      </div>
                     ) : (
                       <>
                         <span className={`inline-block px-2 py-0.5 text-[9px] font-black rounded-full border shrink-0 ${badge.color}`}>
@@ -8068,10 +7889,7 @@ export default function OrderManager({
                         </>
                       )}
 
-                      {order.status === 'shipping' &&
-                        activeSubTab !== 'return_requests' &&
-                        !order.return_sn &&
-                        String(order.shopee_order_status || '').toUpperCase() !== 'TO_RETURN' && (
+                      {order.status === 'shipping' && (
                         <div className="flex gap-1">
                           <button
                             onClick={() => {
@@ -8094,7 +7912,7 @@ export default function OrderManager({
                         </div>
                       )}
 
-                      {order.status === 'return_pending' && activeSubTab !== 'return_requests' && (
+                      {order.status === 'return_pending' && (
                         <button
                           onClick={() => {
                             const updated = orders.map(o => o.id === order.id ? { ...o, status: 'return_received' as const } : o);
