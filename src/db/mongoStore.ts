@@ -215,6 +215,8 @@ const OrderSchema = new Schema<OrderDoc>(
     /** Shopee shop_id — luôn String (uint64-safe) */
     shopId: { type: String, default: null, index: true },
     tracking_no: { type: String, default: null, index: true },
+    /** Alias canonical — mã VĐ chiều đi (SPX cũ trên kiện hoàn) */
+    trackingNumber: { type: String, default: null, index: true },
     /** Mã vận đơn chiều hoàn — quét barcode return */
     return_tracking_no: { type: String, default: null, index: true },
     /** Alias canonical — mã VĐ chiều hoàn do Shopee cấp */
@@ -297,6 +299,7 @@ OrderSchema.index({ "data.date": -1, _id: -1 });
 // Quét ĐVVC / lookup — tracking trong data (barcode VĐ).
 OrderSchema.index({ "data.tracking_no": 1 });
 OrderSchema.index({ "data.trackingNumber": 1 });
+OrderSchema.index({ trackingNumber: 1 });
 OrderSchema.index({ "data.orderSn": 1 });
 OrderSchema.index({ "data.order_sn": 1 });
 OrderSchema.index({ "data.internalTrackingCode": 1 });
@@ -1792,6 +1795,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     // Chỉ GHI khi có mã thật — tuyệt đối không $set rỗng/null (tránh mất mã khi hủy/hoàn).
     if (usableTn) {
       $set.tracking_no = usableTn;
+      $set.trackingNumber = usableTn;
       $set["data.tracking_no"] = usableTn;
       $set["data.trackingNumber"] = usableTn;
     }
@@ -1838,8 +1842,13 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       $set["data.return_tracking_no"] = returnTn;
       $set["data.returnTrackingNumber"] = returnTn;
     }
-    // Mã YCTH (return_sn) + order_sn — luôn String (uint64-safe / alphanumeric).
-    const returnSnStr = String(order.return_sn || "").trim();
+    // Mã YCTH (return_sn) — BẮT BUỘC lưu khi đồng bộ đơn hoàn (uint64-safe / alphanumeric).
+    const returnSnStr = String(
+      order.return_sn ||
+        order.returnSn ||
+        (order.data && typeof order.data === "object" ? order.data.return_sn : "") ||
+        "",
+    ).trim();
     if (returnSnStr) {
       $set.return_sn = returnSnStr;
       $set["data.return_sn"] = returnSnStr;
@@ -3518,6 +3527,79 @@ function buildScanKeyVariantsForMongo(rawKeys: string[]): string[] {
   return [...out];
 }
 
+/** Quét kiện hoàn: khớp return_sn HOẶC returnTrackingNumber HOẶC trackingNumber cũ HOẶC packageNumber. */
+function buildReturnAwareScanOrFilter(
+  keys: string[],
+  uniqueIds: string[],
+): { $or: Record<string, unknown>[] } {
+  return {
+    $or: [
+      { return_sn: { $in: keys } },
+      { returnTrackingNumber: { $in: keys } },
+      { trackingNumber: { $in: keys } },
+      { packageNumber: { $in: keys } },
+      { tracking_no: { $in: keys } },
+      { return_tracking_no: { $in: keys } },
+      { orderSn: { $in: keys } },
+      { _id: { $in: uniqueIds } },
+      { "data.return_sn": { $in: keys } },
+      { "data.returnTrackingNumber": { $in: keys } },
+      { "data.trackingNumber": { $in: keys } },
+      { "data.packageNumber": { $in: keys } },
+      { "data.tracking_no": { $in: keys } },
+      { "data.return_tracking_no": { $in: keys } },
+      { "data.package_number": { $in: keys } },
+      { "data.internalTrackingCode": { $in: keys } },
+      { "data.orderSn": { $in: keys } },
+      { "data.order_sn": { $in: keys } },
+    ],
+  };
+}
+
+function buildReturnAwareScanRegexOrFilter(
+  rxExact: RegExp,
+  rxSuffix: RegExp | null,
+): { $or: Record<string, unknown>[] } {
+  const fieldMatchers: Record<string, unknown>[] = [
+    { return_sn: rxExact },
+    { returnTrackingNumber: rxExact },
+    { trackingNumber: rxExact },
+    { packageNumber: rxExact },
+    { tracking_no: rxExact },
+    { return_tracking_no: rxExact },
+    { orderSn: rxExact },
+    { "data.return_sn": rxExact },
+    { "data.returnTrackingNumber": rxExact },
+    { "data.trackingNumber": rxExact },
+    { "data.packageNumber": rxExact },
+    { "data.tracking_no": rxExact },
+    { "data.return_tracking_no": rxExact },
+    { "data.package_number": rxExact },
+    { "data.internalTrackingCode": rxExact },
+    { "data.orderSn": rxExact },
+    { "data.order_sn": rxExact },
+  ];
+  if (rxSuffix) {
+    fieldMatchers.push(
+      { return_sn: rxSuffix },
+      { returnTrackingNumber: rxSuffix },
+      { trackingNumber: rxSuffix },
+      { packageNumber: rxSuffix },
+      { tracking_no: rxSuffix },
+      { return_tracking_no: rxSuffix },
+      { orderSn: rxSuffix },
+      { "data.return_sn": rxSuffix },
+      { "data.returnTrackingNumber": rxSuffix },
+      { "data.trackingNumber": rxSuffix },
+      { "data.packageNumber": rxSuffix },
+      { "data.tracking_no": rxSuffix },
+      { "data.return_tracking_no": rxSuffix },
+      { "data.internalTrackingCode": rxSuffix },
+    );
+  }
+  return { $or: fieldMatchers };
+}
+
 /** Đọc cờ isPrinted — ưu tiên top-level, fallback data.isPrinted (khớp badge/lọc UI). */
 function readPrintedFlag(top: unknown, nested: unknown): boolean {
   const pick = (v: unknown): boolean | null => {
@@ -3544,6 +3626,7 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
   // Outbound TN — KHÔNG fallback return_tracking_no (mã chiều hoàn giữ riêng).
   const tn = String(
     d?.tracking_no ||
+      d?.trackingNumber ||
       data.tracking_no ||
       data.trackingNumber ||
       "",
@@ -3759,6 +3842,9 @@ export async function findOrderByScanCodeInStore(rawCode: string): Promise<any |
         "package_number",
         "code",
         "sn",
+        "return_sn",
+        "return_tracking_number",
+        "returnTrackingNumber",
       ]) {
         const v = url.searchParams.get(p);
         if (v) seedKeys.push(v);
@@ -3779,27 +3865,7 @@ export async function findOrderByScanCodeInStore(rawCode: string): Promise<any |
   });
   const uniqueIds = [...new Set(idKeys)];
 
-  const filter = {
-    $or: [
-      { tracking_no: { $in: keys } },
-      { return_tracking_no: { $in: keys } },
-      { returnTrackingNumber: { $in: keys } },
-      { orderSn: { $in: keys } },
-      { packageNumber: { $in: keys } },
-      { _id: { $in: uniqueIds } },
-      { "data.tracking_no": { $in: keys } },
-      { "data.trackingNumber": { $in: keys } },
-      { "data.return_tracking_no": { $in: keys } },
-      { "data.returnTrackingNumber": { $in: keys } },
-      { "data.return_sn": { $in: keys } },
-      { return_sn: { $in: keys } },
-      { "data.internalTrackingCode": { $in: keys } },
-      { "data.packageNumber": { $in: keys } },
-      { "data.package_number": { $in: keys } },
-      { "data.orderSn": { $in: keys } },
-      { "data.order_sn": { $in: keys } },
-    ],
-  };
+  const filter = buildReturnAwareScanOrFilter(keys, uniqueIds);
 
   try {
     let doc = await OrderModel.findOne(filter).maxTimeMS(4_000).lean();
@@ -3814,39 +3880,7 @@ export async function findOrderByScanCodeInStore(rawCode: string): Promise<any |
         const rxExact = new RegExp(`^${escaped}$`, "i");
         const rxSuffix =
           primary.length >= 10 ? new RegExp(`${escaped}$`, "i") : null;
-        const fieldMatchers = [
-          { tracking_no: rxExact },
-          { return_tracking_no: rxExact },
-          { returnTrackingNumber: rxExact },
-          { orderSn: rxExact },
-          { packageNumber: rxExact },
-          { "data.tracking_no": rxExact },
-          { "data.trackingNumber": rxExact },
-          { "data.return_tracking_no": rxExact },
-          { "data.returnTrackingNumber": rxExact },
-          { "data.return_sn": rxExact },
-          { "data.internalTrackingCode": rxExact },
-          { "data.packageNumber": rxExact },
-          { "data.package_number": rxExact },
-          { "data.orderSn": rxExact },
-          { "data.order_sn": rxExact },
-          ...(rxSuffix
-            ? [
-                { tracking_no: rxSuffix },
-                { return_tracking_no: rxSuffix },
-                { returnTrackingNumber: rxSuffix },
-                { packageNumber: rxSuffix },
-                { "data.tracking_no": rxSuffix },
-                { "data.trackingNumber": rxSuffix },
-                { "data.return_tracking_no": rxSuffix },
-                { "data.returnTrackingNumber": rxSuffix },
-                { "data.internalTrackingCode": rxSuffix },
-                { "data.packageNumber": rxSuffix },
-                { orderSn: rxSuffix },
-              ]
-            : []),
-        ];
-        doc = await OrderModel.findOne({ $or: fieldMatchers })
+        doc = await OrderModel.findOne(buildReturnAwareScanRegexOrFilter(rxExact, rxSuffix))
           .maxTimeMS(3_000)
           .lean();
       }
@@ -5622,6 +5656,8 @@ export type ScannerSyncRow = {
   tracking_code: string;
   return_waybill: string;
   status: string;
+  return_sn?: string;
+  package_number?: string;
 };
 
 /** Derive status gọn cho máy quét (payload 4 field). */
@@ -5683,7 +5719,10 @@ export async function listScannerSyncRowsFromStore(): Promise<ScannerSyncRow[]> 
       status: 1,
       shopee_order_status: 1,
       tracking_no: 1,
+      trackingNumber: 1,
       return_tracking_no: 1,
+      returnTrackingNumber: 1,
+      packageNumber: 1,
       is_handed_over: 1,
       "data.orderSn": 1,
       "data.status": 1,
@@ -5691,6 +5730,9 @@ export async function listScannerSyncRowsFromStore(): Promise<ScannerSyncRow[]> 
       "data.tracking_no": 1,
       "data.trackingNumber": 1,
       "data.return_tracking_no": 1,
+      "data.returnTrackingNumber": 1,
+      "data.packageNumber": 1,
+      "data.package_number": 1,
       "data.is_handed_over": 1,
       "data.isHandedOverToCarrier": 1,
       "data.is_handed_over_to_carrier": 1,
@@ -5708,15 +5750,31 @@ export async function listScannerSyncRowsFromStore(): Promise<ScannerSyncRow[]> 
     ).trim();
     if (!orderId) continue;
     const tracking = String(
-      d?.tracking_no || data.tracking_no || data.trackingNumber || "",
+      d?.tracking_no ||
+        d?.trackingNumber ||
+        data.tracking_no ||
+        data.trackingNumber ||
+        "",
     ).trim();
-    const returnWb = String(d?.return_tracking_no || data.return_tracking_no || "").trim();
-    if (!tracking && !returnWb) continue;
+    const returnWb = String(
+      d?.returnTrackingNumber ||
+        d?.return_tracking_no ||
+        data.returnTrackingNumber ||
+        data.return_tracking_no ||
+        "",
+    ).trim();
+    const returnSn = String(d?.return_sn || data.return_sn || "").trim();
+    const pkg = String(
+      d?.packageNumber || data.packageNumber || data.package_number || "",
+    ).trim();
+    if (!tracking && !returnWb && !returnSn && !pkg) continue;
     rows.push({
       order_id: orderId,
       tracking_code: tracking,
       return_waybill: returnWb,
       status: deriveScannerSyncStatus(d),
+      return_sn: returnSn || undefined,
+      package_number: pkg || undefined,
     });
   }
   return rows;
@@ -5755,6 +5813,9 @@ export async function findOrdersByScanCodesInStore(
           "package_number",
           "code",
           "sn",
+          "return_sn",
+          "return_tracking_number",
+          "returnTrackingNumber",
         ]) {
           const v = url.searchParams.get(p);
           if (v) seedKeys.push(v);
@@ -5782,27 +5843,7 @@ export async function findOrdersByScanCodesInStore(
 
   const keysArr = [...allKeys];
   const idsArr = [...allIds];
-  const filter = {
-    $or: [
-      { tracking_no: { $in: keysArr } },
-      { return_tracking_no: { $in: keysArr } },
-      { returnTrackingNumber: { $in: keysArr } },
-      { orderSn: { $in: keysArr } },
-      { packageNumber: { $in: keysArr } },
-      { _id: { $in: idsArr } },
-      { "data.tracking_no": { $in: keysArr } },
-      { "data.trackingNumber": { $in: keysArr } },
-      { "data.return_tracking_no": { $in: keysArr } },
-      { "data.returnTrackingNumber": { $in: keysArr } },
-      { "data.return_sn": { $in: keysArr } },
-      { return_sn: { $in: keysArr } },
-      { "data.internalTrackingCode": { $in: keysArr } },
-      { "data.packageNumber": { $in: keysArr } },
-      { "data.package_number": { $in: keysArr } },
-      { "data.orderSn": { $in: keysArr } },
-      { "data.order_sn": { $in: keysArr } },
-    ],
-  };
+  const filter = buildReturnAwareScanOrFilter(keysArr, idsArr);
 
   try {
     const docs = await OrderModel.find(filter)

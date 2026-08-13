@@ -220,6 +220,13 @@ export async function saveScanOrders(req, res) {
         });
         continue;
       }
+      const isReturnOrder =
+        job.kind === "return" ||
+        Boolean(order.return_sn) ||
+        order.status === "return_pending" ||
+        order.status === "return_received" ||
+        String(order.shopee_order_status || "").toUpperCase() === "TO_RETURN" ||
+        String(order.shopee_cancel_return_kind || "") === "refund_return";
       if (!orderHasItems(order)) {
         failed.push({
           code: job.code,
@@ -230,7 +237,7 @@ export async function saveScanOrders(req, res) {
       }
       toUpsert.push({
         order,
-        type: job.kind === "return" ? "return" : "cancelled",
+        type: isReturnOrder ? "return" : "cancelled",
         scanCode: job.code,
         source: "api_scan_save",
       });
@@ -295,7 +302,8 @@ export async function saveScanOrders(req, res) {
     return res.json({
       success: true,
       message: toUpsert.some((r) => r.type === "return")
-        ? "Đã quét nhận hàng hoàn thành công"
+        ? `Đã nhận hàng hoàn — đơn gốc #${saved[0]}` +
+          (saved.length > 1 ? ` (+${saved.length - 1} đơn)` : "")
         : `Đã lưu ${saved.length} đơn vào don_hoan_huy` +
           (failed.length ? ` (${failed.length} mã lỗi)` : "") +
           ".",

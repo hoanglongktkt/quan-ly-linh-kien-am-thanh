@@ -19,6 +19,7 @@ import {
   buildScannerSyncMap,
   lookupScannerSyncMap,
   scannerSyncEntryToOrder,
+  lookupOrderByScanCode,
   type ScannerSyncEntry,
 } from '../utils/orderScan';
 import {
@@ -805,18 +806,33 @@ function classifyScanCancelReturnBuckets(order: Order): {
   return { isReturnBucket, isCancelBucket };
 }
 
-/** Quét khớp mã vận đơn chiều hoàn (return waybill). */
+/** Quét khớp mã trên kiện hoàn: return_sn / returnTrackingNumber / trackingNumber cũ / packageNumber. */
 function scannedMatchesReturnWaybill(order: Order, rawCode: string): boolean {
-  const rtn = normalizeOrderScanKey(order.returnTrackingNumber || order.return_tracking_no || '');
-  if (!rtn || rtn.length < 6) return false;
   const keys = buildScanLookupKeys(rawCode);
-  return keys.some((sk) => {
-    if (!sk) return false;
-    if (sk === rtn) return true;
-    if (sk.length >= 10 && rtn.length >= 10) {
-      return rtn.endsWith(sk) || sk.endsWith(rtn);
-    }
-    return false;
+  if (!keys.length) return false;
+  const isReturn =
+    Boolean(order.return_sn) ||
+    order.status === 'return_pending' ||
+    order.status === 'return_received' ||
+    String(order.shopee_order_status || '').toUpperCase() === 'TO_RETURN' ||
+    String(order.shopee_cancel_return_kind || '') === 'refund_return';
+  const candidates = [
+    order.returnTrackingNumber,
+    order.return_tracking_no,
+    order.return_sn,
+    ...(isReturn ? [order.trackingNumber, order.tracking_no, order.packageNumber] : []),
+  ];
+  return candidates.some((raw) => {
+    const field = normalizeOrderScanKey(String(raw || ''));
+    if (!field || field.length < 4) return false;
+    return keys.some((sk) => {
+      if (!sk) return false;
+      if (sk === field) return true;
+      if (sk.length >= 10 && field.length >= 10) {
+        return field.endsWith(sk) || sk.endsWith(field);
+      }
+      return false;
+    });
   });
 }
 
@@ -1920,10 +1936,22 @@ export default function OrderManager({
       try {
         // Local HashMap từ scanner-sync — không gọi lookup HTTP.
         const syncHit = lookupScannerSyncMap(scannerSyncMapRef.current, trimmed);
-        let order: Order | null = null;
-        if (syncHit) {
-          const fromPool = findOrderByScanPayload(ordersRef.current, trimmed, orderScanIndex);
-          order = fromPool || scannerSyncEntryToOrder(syncHit);
+        let order: Order | null = findOrderByScanPayload(
+          ordersRef.current,
+          trimmed,
+          orderScanIndex,
+        );
+        if (!order && syncHit) {
+          order = scannerSyncEntryToOrder(syncHit);
+        }
+        if (!order) {
+          const token = localStorage.getItem('admin_token');
+          order = await lookupOrderByScanCode(
+            trimmed,
+            ordersRef.current,
+            token,
+            orderScanIndex,
+          );
         }
 
         if (order) {
@@ -2017,11 +2045,11 @@ export default function OrderManager({
           scanFeedback(isCancelRequest ? 'warning' : 'success');
           setCameraScanError(false);
           setCameraScanSuccess(true);
-          setCameraScanResult('Đã quét nhận hàng hoàn thành công');
+          setCameraScanResult(`Đã nhận hàng hoàn — đơn gốc #${order.orderSn}`);
           showScanToast(
             isCancelRequest
               ? `Đơn báo hủy #${order.orderSn} — đã chuyển nhận kiện`
-              : 'Đã quét nhận hàng hoàn thành công',
+              : `Đã nhận hàng hoàn — đơn gốc #${order.orderSn}`,
             'success'
           );
           setTimeout(() => setCameraScanSuccess(false), 2000);
@@ -2124,6 +2152,8 @@ export default function OrderManager({
             order.tracking_no,
             order.return_tracking_no,
             order.returnTrackingNumber,
+            order.return_sn,
+            order.packageNumber,
             order.id,
           ]
             .map((c) => String(c || '').trim())
@@ -2281,21 +2311,33 @@ export default function OrderManager({
 
       // Local HashMap O(1) từ scanner-sync — KHÔNG gọi HTTP lookup / dò ngầm.
       const syncHit = lookupScannerSyncMap(scannerSyncMapRef.current, trimmed);
-      let localOrder: Order | null = null;
-      if (syncHit) {
-        const fromPool = findOrderByScanPayload(ordersRef.current, trimmed, orderScanIndex);
-        localOrder = fromPool || scannerSyncEntryToOrder(syncHit);
+      let localOrder: Order | null = findOrderByScanPayload(
+        ordersRef.current,
+        trimmed,
+        orderScanIndex,
+      );
+      if (!localOrder && syncHit) {
+        localOrder = scannerSyncEntryToOrder(syncHit);
         if (syncHit.matchedReturn && localOrder) {
           localOrder = {
             ...localOrder,
             return_tracking_no: syncHit.return_waybill || localOrder.return_tracking_no,
             returnTrackingNumber:
               syncHit.return_waybill || localOrder.returnTrackingNumber || localOrder.return_tracking_no,
-            return_sn: localOrder.return_sn || 'scanner-sync',
+            return_sn: syncHit.return_sn || localOrder.return_sn || 'scanner-sync',
             status:
               localOrder.status === 'return_received' ? 'return_received' : 'return_pending',
           };
         }
+      }
+      if (!localOrder) {
+        const token = localStorage.getItem('admin_token');
+        localOrder = await lookupOrderByScanCode(
+          trimmed,
+          ordersRef.current,
+          token,
+          orderScanIndex,
+        );
       }
 
       if (!localOrder) {
@@ -2422,8 +2464,8 @@ export default function OrderManager({
           ordersRef.current = marked;
           onUpdateOrders(marked, { persist: false });
           setActiveSubTab('return_requests');
-          setCameraScanResult('Đã quét nhận hàng hoàn thành công');
-          showScanToast('Đã quét nhận hàng hoàn thành công', 'success');
+          setCameraScanResult(`Đã nhận hàng hoàn — đơn gốc #${order.orderSn}`);
+          showScanToast(`Đã nhận hàng hoàn — đơn gốc #${order.orderSn}`, 'success');
           return;
         }
 

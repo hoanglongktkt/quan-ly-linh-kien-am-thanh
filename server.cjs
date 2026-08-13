@@ -75911,6 +75911,8 @@ var OrderSchema = new import_mongoose3.Schema(
     /** Shopee shop_id — luôn String (uint64-safe) */
     shopId: { type: String, default: null, index: true },
     tracking_no: { type: String, default: null, index: true },
+    /** Alias canonical — mã VĐ chiều đi (SPX cũ trên kiện hoàn) */
+    trackingNumber: { type: String, default: null, index: true },
     /** Mã vận đơn chiều hoàn — quét barcode return */
     return_tracking_no: { type: String, default: null, index: true },
     /** Alias canonical — mã VĐ chiều hoàn do Shopee cấp */
@@ -75979,6 +75981,7 @@ OrderSchema.index({ shopId: 1, status: 1, "data.date": -1, _id: -1 });
 OrderSchema.index({ "data.date": -1, _id: -1 });
 OrderSchema.index({ "data.tracking_no": 1 });
 OrderSchema.index({ "data.trackingNumber": 1 });
+OrderSchema.index({ trackingNumber: 1 });
 OrderSchema.index({ "data.orderSn": 1 });
 OrderSchema.index({ "data.order_sn": 1 });
 OrderSchema.index({ "data.internalTrackingCode": 1 });
@@ -77102,6 +77105,7 @@ async function bulkUpsertOrdersToStore(orders) {
     if (order.shopName != null) $set["data.shopName"] = String(order.shopName);
     if (usableTn) {
       $set.tracking_no = usableTn;
+      $set.trackingNumber = usableTn;
       $set["data.tracking_no"] = usableTn;
       $set["data.trackingNumber"] = usableTn;
     }
@@ -77138,7 +77142,9 @@ async function bulkUpsertOrdersToStore(orders) {
       $set["data.return_tracking_no"] = returnTn;
       $set["data.returnTrackingNumber"] = returnTn;
     }
-    const returnSnStr = String(order.return_sn || "").trim();
+    const returnSnStr = String(
+      order.return_sn || order.returnSn || (order.data && typeof order.data === "object" ? order.data.return_sn : "") || ""
+    ).trim();
     if (returnSnStr) {
       $set.return_sn = returnSnStr;
       $set["data.return_sn"] = returnSnStr;
@@ -78252,6 +78258,70 @@ function buildScanKeyVariantsForMongo(rawKeys) {
   }
   return [...out];
 }
+function buildReturnAwareScanOrFilter(keys, uniqueIds) {
+  return {
+    $or: [
+      { return_sn: { $in: keys } },
+      { returnTrackingNumber: { $in: keys } },
+      { trackingNumber: { $in: keys } },
+      { packageNumber: { $in: keys } },
+      { tracking_no: { $in: keys } },
+      { return_tracking_no: { $in: keys } },
+      { orderSn: { $in: keys } },
+      { _id: { $in: uniqueIds } },
+      { "data.return_sn": { $in: keys } },
+      { "data.returnTrackingNumber": { $in: keys } },
+      { "data.trackingNumber": { $in: keys } },
+      { "data.packageNumber": { $in: keys } },
+      { "data.tracking_no": { $in: keys } },
+      { "data.return_tracking_no": { $in: keys } },
+      { "data.package_number": { $in: keys } },
+      { "data.internalTrackingCode": { $in: keys } },
+      { "data.orderSn": { $in: keys } },
+      { "data.order_sn": { $in: keys } }
+    ]
+  };
+}
+function buildReturnAwareScanRegexOrFilter(rxExact, rxSuffix) {
+  const fieldMatchers = [
+    { return_sn: rxExact },
+    { returnTrackingNumber: rxExact },
+    { trackingNumber: rxExact },
+    { packageNumber: rxExact },
+    { tracking_no: rxExact },
+    { return_tracking_no: rxExact },
+    { orderSn: rxExact },
+    { "data.return_sn": rxExact },
+    { "data.returnTrackingNumber": rxExact },
+    { "data.trackingNumber": rxExact },
+    { "data.packageNumber": rxExact },
+    { "data.tracking_no": rxExact },
+    { "data.return_tracking_no": rxExact },
+    { "data.package_number": rxExact },
+    { "data.internalTrackingCode": rxExact },
+    { "data.orderSn": rxExact },
+    { "data.order_sn": rxExact }
+  ];
+  if (rxSuffix) {
+    fieldMatchers.push(
+      { return_sn: rxSuffix },
+      { returnTrackingNumber: rxSuffix },
+      { trackingNumber: rxSuffix },
+      { packageNumber: rxSuffix },
+      { tracking_no: rxSuffix },
+      { return_tracking_no: rxSuffix },
+      { orderSn: rxSuffix },
+      { "data.return_sn": rxSuffix },
+      { "data.returnTrackingNumber": rxSuffix },
+      { "data.trackingNumber": rxSuffix },
+      { "data.packageNumber": rxSuffix },
+      { "data.tracking_no": rxSuffix },
+      { "data.return_tracking_no": rxSuffix },
+      { "data.internalTrackingCode": rxSuffix }
+    );
+  }
+  return { $or: fieldMatchers };
+}
 function readPrintedFlag(top, nested) {
   const pick = (v) => {
     if (v === true || v === 1) return true;
@@ -78274,7 +78344,7 @@ function hydrateOrderFromMongoDoc(d) {
   const sn = String(d?.orderSn || data.orderSn || String(d?._id || "").replace(/^shopee-/i, "")).trim();
   if (!sn && !d?._id) return null;
   const tn = String(
-    d?.tracking_no || data.tracking_no || data.trackingNumber || ""
+    d?.tracking_no || d?.trackingNumber || data.tracking_no || data.trackingNumber || ""
   ).trim();
   const returnTnRaw = String(
     d?.returnTrackingNumber || d?.return_tracking_no || data.returnTrackingNumber || data.return_tracking_no || ""
@@ -78390,7 +78460,10 @@ async function findOrderByScanCodeInStore(rawCode) {
         "order_id",
         "package_number",
         "code",
-        "sn"
+        "sn",
+        "return_sn",
+        "return_tracking_number",
+        "returnTrackingNumber"
       ]) {
         const v = url2.searchParams.get(p);
         if (v) seedKeys.push(v);
@@ -78408,27 +78481,7 @@ async function findOrderByScanCodeInStore(rawCode) {
     return sn ? [`shopee-${sn}`, sn] : [k];
   });
   const uniqueIds = [...new Set(idKeys)];
-  const filter2 = {
-    $or: [
-      { tracking_no: { $in: keys } },
-      { return_tracking_no: { $in: keys } },
-      { returnTrackingNumber: { $in: keys } },
-      { orderSn: { $in: keys } },
-      { packageNumber: { $in: keys } },
-      { _id: { $in: uniqueIds } },
-      { "data.tracking_no": { $in: keys } },
-      { "data.trackingNumber": { $in: keys } },
-      { "data.return_tracking_no": { $in: keys } },
-      { "data.returnTrackingNumber": { $in: keys } },
-      { "data.return_sn": { $in: keys } },
-      { return_sn: { $in: keys } },
-      { "data.internalTrackingCode": { $in: keys } },
-      { "data.packageNumber": { $in: keys } },
-      { "data.package_number": { $in: keys } },
-      { "data.orderSn": { $in: keys } },
-      { "data.order_sn": { $in: keys } }
-    ]
-  };
+  const filter2 = buildReturnAwareScanOrFilter(keys, uniqueIds);
   try {
     let doc = await OrderModel.findOne(filter2).maxTimeMS(4e3).lean();
     if (!doc) {
@@ -78437,37 +78490,7 @@ async function findOrderByScanCodeInStore(rawCode) {
         const escaped = primary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const rxExact = new RegExp(`^${escaped}$`, "i");
         const rxSuffix = primary.length >= 10 ? new RegExp(`${escaped}$`, "i") : null;
-        const fieldMatchers = [
-          { tracking_no: rxExact },
-          { return_tracking_no: rxExact },
-          { returnTrackingNumber: rxExact },
-          { orderSn: rxExact },
-          { packageNumber: rxExact },
-          { "data.tracking_no": rxExact },
-          { "data.trackingNumber": rxExact },
-          { "data.return_tracking_no": rxExact },
-          { "data.returnTrackingNumber": rxExact },
-          { "data.return_sn": rxExact },
-          { "data.internalTrackingCode": rxExact },
-          { "data.packageNumber": rxExact },
-          { "data.package_number": rxExact },
-          { "data.orderSn": rxExact },
-          { "data.order_sn": rxExact },
-          ...rxSuffix ? [
-            { tracking_no: rxSuffix },
-            { return_tracking_no: rxSuffix },
-            { returnTrackingNumber: rxSuffix },
-            { packageNumber: rxSuffix },
-            { "data.tracking_no": rxSuffix },
-            { "data.trackingNumber": rxSuffix },
-            { "data.return_tracking_no": rxSuffix },
-            { "data.returnTrackingNumber": rxSuffix },
-            { "data.internalTrackingCode": rxSuffix },
-            { "data.packageNumber": rxSuffix },
-            { orderSn: rxSuffix }
-          ] : []
-        ];
-        doc = await OrderModel.findOne({ $or: fieldMatchers }).maxTimeMS(3e3).lean();
+        doc = await OrderModel.findOne(buildReturnAwareScanRegexOrFilter(rxExact, rxSuffix)).maxTimeMS(3e3).lean();
       }
     }
     return hydrateOrderFromMongoDoc(doc);
@@ -79892,7 +79915,10 @@ async function listScannerSyncRowsFromStore() {
     status: 1,
     shopee_order_status: 1,
     tracking_no: 1,
+    trackingNumber: 1,
     return_tracking_no: 1,
+    returnTrackingNumber: 1,
+    packageNumber: 1,
     is_handed_over: 1,
     "data.orderSn": 1,
     "data.status": 1,
@@ -79900,6 +79926,9 @@ async function listScannerSyncRowsFromStore() {
     "data.tracking_no": 1,
     "data.trackingNumber": 1,
     "data.return_tracking_no": 1,
+    "data.returnTrackingNumber": 1,
+    "data.packageNumber": 1,
+    "data.package_number": 1,
     "data.is_handed_over": 1,
     "data.isHandedOverToCarrier": 1,
     "data.is_handed_over_to_carrier": 1,
@@ -79914,15 +79943,23 @@ async function listScannerSyncRowsFromStore() {
     ).trim();
     if (!orderId) continue;
     const tracking = String(
-      d?.tracking_no || data.tracking_no || data.trackingNumber || ""
+      d?.tracking_no || d?.trackingNumber || data.tracking_no || data.trackingNumber || ""
     ).trim();
-    const returnWb = String(d?.return_tracking_no || data.return_tracking_no || "").trim();
-    if (!tracking && !returnWb) continue;
+    const returnWb = String(
+      d?.returnTrackingNumber || d?.return_tracking_no || data.returnTrackingNumber || data.return_tracking_no || ""
+    ).trim();
+    const returnSn = String(d?.return_sn || data.return_sn || "").trim();
+    const pkg = String(
+      d?.packageNumber || data.packageNumber || data.package_number || ""
+    ).trim();
+    if (!tracking && !returnWb && !returnSn && !pkg) continue;
     rows.push({
       order_id: orderId,
       tracking_code: tracking,
       return_waybill: returnWb,
-      status: deriveScannerSyncStatus(d)
+      status: deriveScannerSyncStatus(d),
+      return_sn: returnSn || void 0,
+      package_number: pkg || void 0
     });
   }
   return rows;
@@ -79954,7 +79991,10 @@ async function findOrdersByScanCodesInStore(rawCodes) {
           "order_id",
           "package_number",
           "code",
-          "sn"
+          "sn",
+          "return_sn",
+          "return_tracking_number",
+          "returnTrackingNumber"
         ]) {
           const v = url2.searchParams.get(p);
           if (v) seedKeys.push(v);
@@ -79979,27 +80019,7 @@ async function findOrdersByScanCodesInStore(rawCodes) {
   if (!allKeys.size) return result;
   const keysArr = [...allKeys];
   const idsArr = [...allIds];
-  const filter2 = {
-    $or: [
-      { tracking_no: { $in: keysArr } },
-      { return_tracking_no: { $in: keysArr } },
-      { returnTrackingNumber: { $in: keysArr } },
-      { orderSn: { $in: keysArr } },
-      { packageNumber: { $in: keysArr } },
-      { _id: { $in: idsArr } },
-      { "data.tracking_no": { $in: keysArr } },
-      { "data.trackingNumber": { $in: keysArr } },
-      { "data.return_tracking_no": { $in: keysArr } },
-      { "data.returnTrackingNumber": { $in: keysArr } },
-      { "data.return_sn": { $in: keysArr } },
-      { return_sn: { $in: keysArr } },
-      { "data.internalTrackingCode": { $in: keysArr } },
-      { "data.packageNumber": { $in: keysArr } },
-      { "data.package_number": { $in: keysArr } },
-      { "data.orderSn": { $in: keysArr } },
-      { "data.order_sn": { $in: keysArr } }
-    ]
-  };
+  const filter2 = buildReturnAwareScanOrFilter(keysArr, idsArr);
   try {
     const docs = await OrderModel.find(filter2).limit(Math.min(Math.max(rawCodes.length * 3, 50), 500)).maxTimeMS(8e3).lean();
     const hydrated = (docs || []).map((d) => hydrateOrderFromMongoDoc(d)).filter(Boolean);
@@ -80549,6 +80569,7 @@ async function saveScanOrders(req, res) {
         });
         continue;
       }
+      const isReturnOrder = job.kind === "return" || Boolean(order.return_sn) || order.status === "return_pending" || order.status === "return_received" || String(order.shopee_order_status || "").toUpperCase() === "TO_RETURN" || String(order.shopee_cancel_return_kind || "") === "refund_return";
       if (!orderHasItems(order)) {
         failed.push({
           code: job.code,
@@ -80559,7 +80580,7 @@ async function saveScanOrders(req, res) {
       }
       toUpsert.push({
         order,
-        type: job.kind === "return" ? "return" : "cancelled",
+        type: isReturnOrder ? "return" : "cancelled",
         scanCode: job.code,
         source: "api_scan_save"
       });
@@ -80618,7 +80639,7 @@ async function saveScanOrders(req, res) {
     }
     return res.json({
       success: true,
-      message: toUpsert.some((r2) => r2.type === "return") ? "\u0110\xE3 qu\xE9t nh\u1EADn h\xE0ng ho\xE0n th\xE0nh c\xF4ng" : `\u0110\xE3 l\u01B0u ${saved.length} \u0111\u01A1n v\xE0o don_hoan_huy` + (failed.length ? ` (${failed.length} m\xE3 l\u1ED7i)` : "") + ".",
+      message: toUpsert.some((r2) => r2.type === "return") ? `\u0110\xE3 nh\u1EADn h\xE0ng ho\xE0n \u2014 \u0111\u01A1n g\u1ED1c #${saved[0]}` + (saved.length > 1 ? ` (+${saved.length - 1} \u0111\u01A1n)` : "") : `\u0110\xE3 l\u01B0u ${saved.length} \u0111\u01A1n v\xE0o don_hoan_huy` + (failed.length ? ` (${failed.length} m\xE3 l\u1ED7i)` : "") + ".",
       saved: saved.length,
       failed: failed.length,
       errors: failed.slice(0, 20),
@@ -103302,7 +103323,7 @@ async function scanBulkUpdate(req, res) {
       const alreadyInDonHoanHuy = alreadyInDonHoanHuySet.has(orderSnNorm);
       const forceHandOver = forceHandOverCodes.has(codeKey) || forceHandOverCodes.has(norm(String(order.orderSn || ""))) || forceHandOverCodes.has(norm(String(order.trackingNumber || order.tracking_no || "")));
       const forceCancel = forceCancelCodes.has(codeKey) || forceCancelCodes.has(norm(String(order.orderSn || ""))) || forceCancelCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) || forceCancelCodes.has(norm(String(order.returnTrackingNumber || order.return_tracking_no || "")));
-      const forceReturn = forceReturnCodes.has(codeKey) || forceReturnCodes.has(norm(String(order.orderSn || ""))) || forceReturnCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) || forceReturnCodes.has(norm(String(order.returnTrackingNumber || order.return_tracking_no || "")));
+      const forceReturn = forceReturnCodes.has(codeKey) || forceReturnCodes.has(norm(String(order.orderSn || ""))) || forceReturnCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) || forceReturnCodes.has(norm(String(order.returnTrackingNumber || order.return_tracking_no || ""))) || forceReturnCodes.has(norm(String(order.return_sn || ""))) || forceReturnCodes.has(norm(String(order.packageNumber || "")));
       const isReturnLike = status === "return_pending" || status === "return_received" || rawShopee === "TO_RETURN" || Boolean(order.return_sn) || String(order.shopee_cancel_return_kind || "") === "refund_return";
       const isCancelLike = !isReturnLike && (status === "cancelled" || rawShopee === "CANCELLED" || rawShopee === "IN_CANCEL" || deps7.isShopeeCancelOrReturnLikeOrder(order));
       if (forceCancel && alreadyInDonHoanHuy) {
@@ -103330,7 +103351,7 @@ async function scanBulkUpdate(req, res) {
           action: "return_received",
           orderId: order.id,
           orderSn: order.orderSn,
-          message: "\u0110\xE3 qu\xE9t nh\u1EADn h\xE0ng ho\xE0n th\xE0nh c\xF4ng",
+          message: `\u0110\xE3 nh\u1EADn h\xE0ng ho\xE0n \u2014 \u0111\u01A1n g\u1ED1c #${order.orderSn}`,
           local_status: "RETURN_RECEIVED",
           internalReturnReceiptStatus: "DA_NHAN"
         });
@@ -103436,7 +103457,7 @@ async function scanBulkUpdate(req, res) {
           action: "return_received",
           orderId: updated.id,
           orderSn: updated.orderSn,
-          message: "\u0110\xE3 qu\xE9t nh\u1EADn h\xE0ng ho\xE0n th\xE0nh c\xF4ng",
+          message: `\u0110\xE3 nh\u1EADn h\xE0ng ho\xE0n \u2014 \u0111\u01A1n g\u1ED1c #${updated.orderSn}`,
           local_status: "RETURN_RECEIVED",
           internalReturnReceiptStatus: "DA_NHAN",
           stock_restored: Boolean(updated.stock_restored)
@@ -107953,6 +107974,7 @@ function rebuildOrderLookupIndex(orders) {
     put(byTracking, order.tracking_no);
     put(byReturnTracking, order.return_tracking_no);
     put(byReturnTracking, order.returnTrackingNumber);
+    put(byReturnTracking, order.return_sn);
     put(byInternal, order.internalTrackingCode);
     put(byPackage, order.packageNumber);
   });
@@ -108361,10 +108383,13 @@ async function findOrderByScanLookup(orders, raw) {
     for (const order of orders) {
       const trackingKey = order.trackingNumber ? normalizeScanLookupKey(order.trackingNumber) : "";
       const returnTrackingKey = order.returnTrackingNumber || order.return_tracking_no ? normalizeScanLookupKey(order.returnTrackingNumber || order.return_tracking_no) : "";
+      const returnSnKey = order.return_sn ? normalizeScanLookupKey(order.return_sn) : "";
       const internalKey = order.internalTrackingCode ? normalizeScanLookupKey(order.internalTrackingCode) : "";
       if (trackingKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, trackingKey)))
         return order;
       if (returnTrackingKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, returnTrackingKey)))
+        return order;
+      if (returnSnKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, returnSnKey)))
         return order;
       if (internalKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, internalKey)))
         return order;
@@ -108382,11 +108407,12 @@ async function findOrderByScanLookup(orders, raw) {
     const orderSnKey = normalizeScanLookupKey(order.orderSn);
     const trackingKey = order.trackingNumber ? normalizeScanLookupKey(order.trackingNumber) : "";
     const returnTrackingKey = order.returnTrackingNumber || order.return_tracking_no ? normalizeScanLookupKey(order.returnTrackingNumber || order.return_tracking_no) : "";
+    const returnSnKey = order.return_sn ? normalizeScanLookupKey(order.return_sn) : "";
     const internalKey = order.internalTrackingCode ? normalizeScanLookupKey(order.internalTrackingCode) : "";
     const packageKey = order.packageNumber ? normalizeScanLookupKey(order.packageNumber) : "";
     const idKey = normalizeScanLookupKey(String(order.id || "").replace(/^shopee-/i, ""));
     const matched = scanKeys.some(
-      (sk) => flexibleScanCodeMatch(sk, orderSnKey) || flexibleScanCodeMatch(sk, trackingKey) || flexibleScanCodeMatch(sk, returnTrackingKey) || flexibleScanCodeMatch(sk, internalKey) || flexibleScanCodeMatch(sk, packageKey) || flexibleScanCodeMatch(sk, idKey)
+      (sk) => flexibleScanCodeMatch(sk, orderSnKey) || flexibleScanCodeMatch(sk, trackingKey) || flexibleScanCodeMatch(sk, returnTrackingKey) || flexibleScanCodeMatch(sk, returnSnKey) || flexibleScanCodeMatch(sk, internalKey) || flexibleScanCodeMatch(sk, packageKey) || flexibleScanCodeMatch(sk, idKey)
     );
     if (matched) return order;
   }
@@ -109351,6 +109377,8 @@ async function scannerSync(req, res) {
     for (const row of orders) {
       if (row.tracking_code) codeCount += 1;
       if (row.return_waybill) codeCount += 1;
+      if (row.return_sn) codeCount += 1;
+      if (row.package_number) codeCount += 1;
     }
     const ms = Date.now() - t0;
     console.log(
@@ -109420,7 +109448,25 @@ async function lookupOrder(req, res) {
   }
   const products = await deps15.loadProductsForOrders([foundRaw]);
   const found = deps15.enrichOrdersFromCatalog([foundRaw], products)[0];
-  return res.json(found);
+  const isReturnOrder = Boolean(found?.return_sn) || found?.status === "return_pending" || found?.status === "return_received" || String(found?.shopee_order_status || "").toUpperCase() === "TO_RETURN" || String(found?.shopee_cancel_return_kind || "") === "refund_return";
+  if (isReturnOrder && found?.orderSn) {
+    try {
+      await markInternalReturnReceiptInStore(String(found.orderSn), {
+        shopId: found.shopId != null ? String(found.shopId) : void 0
+      });
+      found.internalReturnReceiptStatus = "DA_NHAN";
+    } catch (markErr) {
+      console.warn(
+        `[Orders Lookup] DA_NHAN fail order_sn=${found.orderSn}:`,
+        markErr?.message || markErr
+      );
+    }
+  }
+  return res.json({
+    ...found,
+    scannedCode: code,
+    message: isReturnOrder ? `\u0110\xE3 nh\u1EADn h\xE0ng ho\xE0n \u2014 \u0111\u01A1n g\u1ED1c #${found.orderSn}` : `T\xECm th\u1EA5y \u0111\u01A1n g\u1ED1c #${found.orderSn}`
+  });
 }
 async function cleanupMockOrders(_req, res) {
   const orders = loadOrders();
@@ -119687,6 +119733,8 @@ async function resolveOrderFromShopeeByScanCode(rawCode) {
       order.trackingNumber,
       order.tracking_no,
       order.return_tracking_no,
+      order.returnTrackingNumber,
+      order.return_sn,
       order.packageNumber,
       order.internalTrackingCode
     ];
@@ -119760,7 +119808,7 @@ async function resolveOrderFromShopeeByScanCode(rawCode) {
       }
     }
   }
-  if (looksLikeTracking || !looksLikeOrderSn) {
+  {
     for (const shopId of shopIds) {
       if (Date.now() > deadlineAt) break;
       try {
@@ -119769,43 +119817,49 @@ async function resolveOrderFromShopeeByScanCode(rawCode) {
         const returnRows = await shopeeFetchAllReturnSns(shopId, accessToken, {
           mode: "incremental"
         });
-        for (const row of returnRows.slice(0, 60)) {
+        const scanMatchField = (value) => {
+          const nk = String(value || "").trim().toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
+          if (!nk) return false;
+          for (const sk of scanKeys) {
+            const skn = sk.toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
+            if (!skn) continue;
+            if (nk === skn) return true;
+            if (skn.length >= 10 && nk.length >= 10 && (nk.endsWith(skn) || skn.endsWith(nk))) {
+              return true;
+            }
+          }
+          return false;
+        };
+        for (const row of returnRows.slice(0, 80)) {
           if (Date.now() > deadlineAt) break;
           const returnSn = String(row.returnSn || "").trim();
           if (!returnSn) continue;
+          const returnSnHit = scanMatchField(returnSn);
           const fresh = await getValidShopeeAccessToken(shopId);
           if (fresh) accessToken = fresh;
-          const detailResult = await shopeeGetReturnDetail(shopId, accessToken, returnSn);
-          if (detailResult?.error) continue;
-          const detail = detailResult?.response ?? detailResult ?? {};
-          const kind = mapShopeeReturnKind(detail);
-          const { tracking: rtn } = await fetchReturnShippingTrackingNumber(
-            shopId,
-            accessToken,
-            returnSn,
-            detailResult,
-            { kind }
-          );
-          const candidates = [
-            rtn,
-            detail.tracking_number,
-            detail.return_tracking_number
-          ].map((v) => String(v || "").trim()).filter(Boolean);
-          const matchedTn = candidates.find((tn) => {
-            const nk = tn.toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
-            for (const sk of scanKeys) {
-              const skn = sk.toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
-              if (!skn || !nk) continue;
-              if (nk === skn) return true;
-              if (skn.length >= 10 && nk.length >= 10 && (nk.endsWith(skn) || skn.endsWith(nk))) {
-                return true;
+          let orderSn = String(row.orderSn || "").trim();
+          let matchedLabel = returnSnHit ? returnSn : "";
+          if (!returnSnHit || !orderSn) {
+            const detailResult = await shopeeGetReturnDetail(shopId, accessToken, returnSn);
+            if (detailResult?.error) {
+              if (!returnSnHit || !orderSn) continue;
+            } else {
+              const detail = detailResult?.response ?? detailResult ?? {};
+              orderSn = String(detail.order_sn || row.orderSn || "").trim();
+              if (!matchedLabel) {
+                const kind = mapShopeeReturnKind(detail);
+                const { tracking: rtn } = await fetchReturnShippingTrackingNumber(
+                  shopId,
+                  accessToken,
+                  returnSn,
+                  detailResult,
+                  { kind }
+                );
+                matchedLabel = [rtn, detail.tracking_number, detail.return_tracking_number, detail.order_sn].map((v) => String(v || "").trim()).find((tn) => scanMatchField(tn)) || "";
               }
             }
-            return false;
-          });
-          if (!matchedTn) continue;
-          const orderSn = String(detail.order_sn || row.orderSn || "").trim();
-          if (!orderSn) continue;
+          }
+          if (!orderSn || !returnSnHit && !matchedLabel) continue;
           await applyWebhookReturnFallback(shopId, accessToken, orderSn, orders, returnSn);
           const hit = orders.find((o) => String(o.orderSn) === orderSn);
           if (hit) {
@@ -119816,7 +119870,7 @@ async function resolveOrderFromShopeeByScanCode(rawCode) {
               }
             }
             console.log(
-              `[Orders Lookup] Return waybill hit code=${code} order_sn=${orderSn} return_sn=${returnSn} rtn=${matchedTn}`
+              `[Orders Lookup] Return hit code=${code} order_sn=${orderSn} return_sn=${returnSn} matched=${matchedLabel || returnSn}`
             );
             return hit;
           }
@@ -119828,6 +119882,8 @@ async function resolveOrderFromShopeeByScanCode(rawCode) {
         );
       }
     }
+  }
+  if (looksLikeTracking || !looksLikeOrderSn) {
     const statuses = ["CANCELLED", "IN_CANCEL", "TO_RETURN", "SHIPPED", "PROCESSED"];
     for (const shopId of shopIds) {
       if (Date.now() > deadlineAt) break;

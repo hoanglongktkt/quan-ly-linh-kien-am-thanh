@@ -2360,6 +2360,8 @@ async function resolveOrderFromShopeeByScanCode(rawCode: string): Promise<any | 
       order.trackingNumber,
       order.tracking_no,
       order.return_tracking_no,
+      order.returnTrackingNumber,
+      order.return_sn,
       order.packageNumber,
       order.internalTrackingCode,
     ];
@@ -2449,9 +2451,8 @@ async function resolveOrderFromShopeeByScanCode(rawCode: string): Promise<any | 
     }
   }
 
-  // B) Mã vận đơn — kéo CANCELLED / IN_CANCEL / TO_RETURN / SHIPPED 14 ngày rồi khớp tracking.
-  if (looksLikeTracking || !looksLikeOrderSn) {
-    // B0) Ưu tiên khớp mã vận đơn chiều hoàn qua get_return_list + reverse tracking.
+  // B0) Luôn khớp return_sn / mã VĐ chiều hoàn / tracking cũ trên kiện hoàn.
+  {
     for (const shopId of shopIds) {
       if (Date.now() > deadlineAt) break;
       try {
@@ -2460,45 +2461,56 @@ async function resolveOrderFromShopeeByScanCode(rawCode: string): Promise<any | 
         const returnRows = await shopeeFetchAllReturnSns(shopId, accessToken, {
           mode: "incremental",
         });
-        for (const row of returnRows.slice(0, 60)) {
+        const scanMatchField = (value: unknown) => {
+          const nk = String(value || "")
+            .trim()
+            .toUpperCase()
+            .replace(/[\s\-_#./\\|:;,]+/g, "");
+          if (!nk) return false;
+          for (const sk of scanKeys) {
+            const skn = sk.toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
+            if (!skn) continue;
+            if (nk === skn) return true;
+            if (skn.length >= 10 && nk.length >= 10 && (nk.endsWith(skn) || skn.endsWith(nk))) {
+              return true;
+            }
+          }
+          return false;
+        };
+        for (const row of returnRows.slice(0, 80)) {
           if (Date.now() > deadlineAt) break;
           const returnSn = String(row.returnSn || "").trim();
           if (!returnSn) continue;
+          const returnSnHit = scanMatchField(returnSn);
           const fresh = await getValidShopeeAccessToken(shopId);
           if (fresh) accessToken = fresh;
-          const detailResult = await shopeeGetReturnDetail(shopId, accessToken, returnSn);
-          if (detailResult?.error) continue;
-          const detail = detailResult?.response ?? detailResult ?? {};
-          const kind = mapShopeeReturnKind(detail);
-          const { tracking: rtn } = await fetchReturnShippingTrackingNumber(
-            shopId,
-            accessToken,
-            returnSn,
-            detailResult,
-            { kind },
-          );
-          const candidates = [
-            rtn,
-            detail.tracking_number,
-            detail.return_tracking_number,
-          ]
-            .map((v) => String(v || "").trim())
-            .filter(Boolean);
-          const matchedTn = candidates.find((tn) => {
-            const nk = tn.toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
-            for (const sk of scanKeys) {
-              const skn = sk.toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
-              if (!skn || !nk) continue;
-              if (nk === skn) return true;
-              if (skn.length >= 10 && nk.length >= 10 && (nk.endsWith(skn) || skn.endsWith(nk))) {
-                return true;
+
+          let orderSn = String(row.orderSn || "").trim();
+          let matchedLabel = returnSnHit ? returnSn : "";
+          if (!returnSnHit || !orderSn) {
+            const detailResult = await shopeeGetReturnDetail(shopId, accessToken, returnSn);
+            if (detailResult?.error) {
+              if (!returnSnHit || !orderSn) continue;
+            } else {
+              const detail = detailResult?.response ?? detailResult ?? {};
+              orderSn = String(detail.order_sn || row.orderSn || "").trim();
+              if (!matchedLabel) {
+                const kind = mapShopeeReturnKind(detail);
+                const { tracking: rtn } = await fetchReturnShippingTrackingNumber(
+                  shopId,
+                  accessToken,
+                  returnSn,
+                  detailResult,
+                  { kind },
+                );
+                matchedLabel =
+                  [rtn, detail.tracking_number, detail.return_tracking_number, detail.order_sn]
+                    .map((v) => String(v || "").trim())
+                    .find((tn) => scanMatchField(tn)) || "";
               }
             }
-            return false;
-          });
-          if (!matchedTn) continue;
-          const orderSn = String(detail.order_sn || row.orderSn || "").trim();
-          if (!orderSn) continue;
+          }
+          if (!orderSn || (!returnSnHit && !matchedLabel)) continue;
           await applyWebhookReturnFallback(shopId, accessToken, orderSn, orders, returnSn);
           const hit = orders.find((o: any) => String(o.orderSn) === orderSn);
           if (hit) {
@@ -2510,7 +2522,7 @@ async function resolveOrderFromShopeeByScanCode(rawCode: string): Promise<any | 
               }
             }
             console.log(
-              `[Orders Lookup] Return waybill hit code=${code} order_sn=${orderSn} return_sn=${returnSn} rtn=${matchedTn}`,
+              `[Orders Lookup] Return hit code=${code} order_sn=${orderSn} return_sn=${returnSn} matched=${matchedLabel || returnSn}`,
             );
             return hit;
           }
@@ -2522,7 +2534,10 @@ async function resolveOrderFromShopeeByScanCode(rawCode: string): Promise<any | 
         );
       }
     }
+  }
 
+  // B) Mã vận đơn — kéo CANCELLED / IN_CANCEL / TO_RETURN / SHIPPED 14 ngày rồi khớp tracking.
+  if (looksLikeTracking || !looksLikeOrderSn) {
     const statuses = ["CANCELLED", "IN_CANCEL", "TO_RETURN", "SHIPPED", "PROCESSED"];
     for (const shopId of shopIds) {
       if (Date.now() > deadlineAt) break;

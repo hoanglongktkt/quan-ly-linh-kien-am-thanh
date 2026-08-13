@@ -217,7 +217,9 @@ export async function scanBulkUpdate(req, res) {
         forceReturnCodes.has(codeKey) ||
         forceReturnCodes.has(norm(String(order.orderSn || ""))) ||
         forceReturnCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) ||
-        forceReturnCodes.has(norm(String(order.returnTrackingNumber || order.return_tracking_no || "")));
+        forceReturnCodes.has(norm(String(order.returnTrackingNumber || order.return_tracking_no || ""))) ||
+        forceReturnCodes.has(norm(String(order.return_sn || ""))) ||
+        forceReturnCodes.has(norm(String(order.packageNumber || "")));
       const isReturnLike =
         status === "return_pending" ||
         status === "return_received" ||
@@ -258,7 +260,7 @@ export async function scanBulkUpdate(req, res) {
           action: "return_received",
           orderId: order.id,
           orderSn: order.orderSn,
-          message: "Đã quét nhận hàng hoàn thành công",
+          message: `Đã nhận hàng hoàn — đơn gốc #${order.orderSn}`,
           local_status: "RETURN_RECEIVED",
           internalReturnReceiptStatus: "DA_NHAN",
         });
@@ -388,7 +390,7 @@ export async function scanBulkUpdate(req, res) {
           action: "return_received",
           orderId: updated.id,
           orderSn: updated.orderSn,
-          message: "Đã quét nhận hàng hoàn thành công",
+          message: `Đã nhận hàng hoàn — đơn gốc #${updated.orderSn}`,
           local_status: "RETURN_RECEIVED",
           internalReturnReceiptStatus: "DA_NHAN",
           stock_restored: Boolean(updated.stock_restored),

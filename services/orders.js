@@ -83,6 +83,7 @@ export function rebuildOrderLookupIndex(orders) {
     put(byTracking, order.tracking_no);
     put(byReturnTracking, order.return_tracking_no);
     put(byReturnTracking, order.returnTrackingNumber);
+    put(byReturnTracking, order.return_sn);
     put(byInternal, order.internalTrackingCode);
     put(byPackage, order.packageNumber);
   });
@@ -684,6 +685,7 @@ export async function findOrderByScanLookup(orders, raw) {
       const returnTrackingKey = order.returnTrackingNumber || order.return_tracking_no
         ? normalizeScanLookupKey(order.returnTrackingNumber || order.return_tracking_no)
         : "";
+      const returnSnKey = order.return_sn ? normalizeScanLookupKey(order.return_sn) : "";
       const internalKey = order.internalTrackingCode
         ? normalizeScanLookupKey(order.internalTrackingCode)
         : "";
@@ -693,6 +695,8 @@ export async function findOrderByScanLookup(orders, raw) {
         returnTrackingKey &&
         scanKeys.some((sk) => flexibleScanCodeMatch(sk, returnTrackingKey))
       )
+        return order;
+      if (returnSnKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, returnSnKey)))
         return order;
       if (internalKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, internalKey)))
         return order;
@@ -718,6 +722,7 @@ export async function findOrderByScanLookup(orders, raw) {
     const returnTrackingKey = order.returnTrackingNumber || order.return_tracking_no
       ? normalizeScanLookupKey(order.returnTrackingNumber || order.return_tracking_no)
       : "";
+    const returnSnKey = order.return_sn ? normalizeScanLookupKey(order.return_sn) : "";
     const internalKey = order.internalTrackingCode
       ? normalizeScanLookupKey(order.internalTrackingCode)
       : "";
@@ -731,6 +736,7 @@ export async function findOrderByScanLookup(orders, raw) {
         flexibleScanCodeMatch(sk, orderSnKey) ||
         flexibleScanCodeMatch(sk, trackingKey) ||
         flexibleScanCodeMatch(sk, returnTrackingKey) ||
+        flexibleScanCodeMatch(sk, returnSnKey) ||
         flexibleScanCodeMatch(sk, internalKey) ||
         flexibleScanCodeMatch(sk, packageKey) ||
         flexibleScanCodeMatch(sk, idKey),

@@ -40,6 +40,7 @@ import {
   markOrderHandedOverInStore,
   markOrderLocalStatusInStore,
   markOrdersPrintedInStore,
+  markInternalReturnReceiptInStore,
 } from "../src/db/mongoStore.ts";
 
 const APP_ROOT = resolveAppRoot();
@@ -1049,6 +1050,8 @@ export async function scannerSync(req, res) {
     for (const row of orders) {
       if (row.tracking_code) codeCount += 1;
       if (row.return_waybill) codeCount += 1;
+      if (row.return_sn) codeCount += 1;
+      if (row.package_number) codeCount += 1;
     }
     const ms = Date.now() - t0;
     console.log(
@@ -1123,7 +1126,32 @@ export async function lookupOrder(req, res) {
   }
   const products = await deps.loadProductsForOrders([foundRaw]);
   const found = deps.enrichOrdersFromCatalog([foundRaw], products)[0];
-  return res.json(found);
+  const isReturnOrder =
+    Boolean(found?.return_sn) ||
+    found?.status === "return_pending" ||
+    found?.status === "return_received" ||
+    String(found?.shopee_order_status || "").toUpperCase() === "TO_RETURN" ||
+    String(found?.shopee_cancel_return_kind || "") === "refund_return";
+  if (isReturnOrder && found?.orderSn) {
+    try {
+      await markInternalReturnReceiptInStore(String(found.orderSn), {
+        shopId: found.shopId != null ? String(found.shopId) : undefined,
+      });
+      found.internalReturnReceiptStatus = "DA_NHAN";
+    } catch (markErr) {
+      console.warn(
+        `[Orders Lookup] DA_NHAN fail order_sn=${found.orderSn}:`,
+        markErr?.message || markErr,
+      );
+    }
+  }
+  return res.json({
+    ...found,
+    scannedCode: code,
+    message: isReturnOrder
+      ? `Đã nhận hàng hoàn — đơn gốc #${found.orderSn}`
+      : `Tìm thấy đơn gốc #${found.orderSn}`,
+  });
 }
 
 /** POST /api/orders/cleanup-mock */

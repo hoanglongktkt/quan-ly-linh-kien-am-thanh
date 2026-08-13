@@ -54,6 +54,8 @@ export function buildScanLookupKeys(raw: string): string[] {
         'package_number',
         'code',
         'sn',
+        'return_sn',
+        'return_tracking_number',
       ].forEach((p) => {
         const v = url.searchParams.get(p);
         if (v) add(v);
@@ -76,6 +78,10 @@ export function buildScanLookupKeys(raw: string): string[] {
         'orderSn',
         'package_number',
         'packageNumber',
+        'return_sn',
+        'returnSn',
+        'return_tracking_number',
+        'returnTrackingNumber',
       ].forEach((k) => {
         if (parsed?.[k]) add(parsed[k]);
       });
@@ -85,7 +91,7 @@ export function buildScanLookupKeys(raw: string): string[] {
   }
 
   for (const m of text.matchAll(
-    /(?:tracking[_-]?(?:no|number)?|order[_-]?sn|package[_-]?number?)\s*[:=]\s*([A-Za-z0-9\-]+)/gi
+    /(?:tracking[_-]?(?:no|number)?|order[_-]?sn|package[_-]?number?|return[_-]?sn|return[_-]?tracking[_-]?(?:no|number)?)\s*[:=]\s*([A-Za-z0-9\-]+)/gi
   )) {
     add(m[1]);
   }
@@ -98,7 +104,7 @@ export function isLikelyInternalTrackingCode(raw: string): boolean {
   return isShopeeInternalTrackingCode(raw);
 }
 
-/** Flexible OR match: orderSn OR trackingNumber OR internalTrackingCode OR packageNumber. */
+/** Flexible OR match: orderSn OR trackingNumber OR return_sn OR returnTrackingNumber OR packageNumber. */
 export function matchScannedCodeToOrder(order: Order, raw: string): boolean {
   const scanKeys = buildScanLookupKeys(raw);
   if (scanKeys.length === 0) return false;
@@ -108,6 +114,7 @@ export function matchScannedCodeToOrder(order: Order, raw: string): boolean {
   const returnTrackingKey = order.returnTrackingNumber || order.return_tracking_no
     ? normalizeOrderScanKey(String(order.returnTrackingNumber || order.return_tracking_no))
     : '';
+  const returnSnKey = order.return_sn ? normalizeOrderScanKey(order.return_sn) : '';
   const trackingNoKey = order.tracking_no ? normalizeOrderScanKey(order.tracking_no) : '';
   const internalKey = order.internalTrackingCode ? normalizeOrderScanKey(order.internalTrackingCode) : '';
   const packageKey = order.packageNumber ? normalizeOrderScanKey(order.packageNumber) : '';
@@ -118,6 +125,7 @@ export function matchScannedCodeToOrder(order: Order, raw: string): boolean {
       flexibleCodeMatch(sk, orderSnKey) ||
       flexibleCodeMatch(sk, trackingKey) ||
       flexibleCodeMatch(sk, returnTrackingKey) ||
+      flexibleCodeMatch(sk, returnSnKey) ||
       flexibleCodeMatch(sk, trackingNoKey) ||
       flexibleCodeMatch(sk, internalKey) ||
       flexibleCodeMatch(sk, packageKey) ||
@@ -150,6 +158,7 @@ export function buildOrderScanIndex(orders: Order[]): OrderScanIndex {
     put(byTracking, order.tracking_no);
     put(byTracking, order.return_tracking_no);
     put(byTracking, order.returnTrackingNumber);
+    put(byTracking, order.return_sn);
     put(byInternal, order.internalTrackingCode);
     put(byPackage, order.packageNumber);
     put(byId, order.id);
@@ -187,7 +196,14 @@ export function findOrderByScanPayload(
 
   if (trackingLike) {
     for (const order of orders) {
-      const candidates = [order.trackingNumber, order.tracking_no, order.return_tracking_no, order.returnTrackingNumber];
+      const candidates = [
+        order.trackingNumber,
+        order.tracking_no,
+        order.return_tracking_no,
+        order.returnTrackingNumber,
+        order.return_sn,
+        order.packageNumber,
+      ];
       for (const c of candidates) {
         const trackingKey = c ? normalizeOrderScanKey(c) : '';
         if (!trackingKey) continue;
@@ -347,6 +363,8 @@ export type ScannerSyncRow = {
   tracking_code: string;
   return_waybill: string;
   status: string;
+  return_sn?: string;
+  package_number?: string;
 };
 
 export type ScannerSyncEntry = ScannerSyncRow & {
@@ -363,6 +381,8 @@ export function buildScannerSyncMap(rows: ScannerSyncRow[]): Map<string, Scanner
       tracking_code: String(row.tracking_code || '').trim(),
       return_waybill: String(row.return_waybill || '').trim(),
       status: String(row.status || '').trim().toLowerCase(),
+      return_sn: String(row.return_sn || '').trim(),
+      package_number: String(row.package_number || '').trim(),
     };
     if (!base.order_id) continue;
     const put = (raw: string, matchedReturn = false) => {
@@ -370,8 +390,10 @@ export function buildScannerSyncMap(rows: ScannerSyncRow[]): Map<string, Scanner
       if (!key || key.length < 4) return;
       map.set(key, { ...base, matchedReturn });
     };
-    if (base.tracking_code) put(base.tracking_code, false);
+    if (base.tracking_code) put(base.tracking_code, Boolean(base.return_sn) || Boolean(base.return_waybill));
     if (base.return_waybill) put(base.return_waybill, true);
+    if (base.return_sn) put(base.return_sn, true);
+    if (base.package_number) put(base.package_number, Boolean(base.return_sn) || Boolean(base.return_waybill));
   }
   return map;
 }
@@ -457,7 +479,9 @@ export function scannerSyncEntryToOrder(entry: ScannerSyncEntry): Order {
     trackingNumber: tracking,
     tracking_no: tracking,
     return_tracking_no: returnWb,
-    return_sn,
+    returnTrackingNumber: returnWb,
+    return_sn: entry.return_sn || return_sn,
+    packageNumber: entry.package_number || undefined,
     is_handed_over,
     local_status,
     isPrinted: true,
