@@ -2967,6 +2967,76 @@ export async function deleteHandedOverOrdersFromStore(): Promise<{
 }
 
 /**
+ * Zombie order: Shopee get_order_detail trả "not found" → đánh CANCELLED local,
+ * clear cờ Đã giao ĐVVC để sync/reconcile không quét lại mãi.
+ */
+export async function markOrdersCancelledAsShopeeNotFoundInStore(
+  orderSns: string[],
+  opts?: { shopId?: string; reason?: string },
+): Promise<{ matched: number; modified: number; sns: string[] }> {
+  if (!isMongoReady()) return { matched: 0, modified: 0, sns: [] };
+  requireMongo();
+  const sns = [
+    ...new Set(
+      (orderSns || [])
+        .map((sn) => String(sn || "").replace(/^shopee-/i, "").trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (sns.length === 0) return { matched: 0, modified: 0, sns: [] };
+
+  const shopIdStr = opts?.shopId != null ? String(opts.shopId).trim() : "";
+  const reason = String(opts?.reason || "shopee_get_order_detail_not_found").slice(0, 200);
+  const now = new Date().toISOString();
+  const $set: Record<string, unknown> = {
+    status: "cancelled",
+    "data.status": "cancelled",
+    shopee_order_status: "CANCELLED",
+    "data.shopee_order_status": "CANCELLED",
+    is_handed_over: false,
+    "data.is_handed_over": false,
+    "data.isHandedOverToCarrier": false,
+    "data.is_handed_over_to_carrier": false,
+    "data.is_handed_over_to_courier": false,
+    "data.local_status": "NONE",
+    "data.localStatus": "NONE",
+    "data.internal_status": "NONE",
+    "data.shopee_not_found": true,
+    "data.shopee_not_found_at": now,
+    "data.shopee_not_found_reason": reason,
+    "data.updated_at": now,
+  };
+  if (shopIdStr) {
+    $set.shopId = shopIdStr;
+    $set["data.shopId"] = shopIdStr;
+  }
+
+  const ops = sns.map((sn) => {
+    const _id = `shopee-${sn}`;
+    return {
+      updateOne: {
+        filter: buildOrderCompoundFilter(sn, _id, shopIdStr || null),
+        update: { $set },
+        upsert: false,
+      },
+    };
+  });
+
+  const result = await OrderModel.bulkWrite(ops as any, {
+    ordered: false,
+    maxTimeMS: 30_000,
+  });
+  const matched = Number((result as any).matchedCount ?? (result as any).nMatched ?? 0);
+  const modified = Number((result as any).modifiedCount ?? (result as any).nModified ?? 0);
+  console.log(
+    `[MongoDB] markOrdersCancelledAsShopeeNotFoundInStore shop=${shopIdStr || "-"}` +
+      ` sns=${sns.length} matched=${matched} modified=${modified}` +
+      ` reason=${reason}`,
+  );
+  return { matched, modified, sns };
+}
+
+/**
  * Migration one-shot: đơn đã SHIPPED (hoặc hoàn tất/hủy) mà còn is_handed_over=true
  * → clear cờ nội bộ (tránh kẹt tab "Đã giao ĐVVC").
  */
