@@ -20438,6 +20438,78 @@ async function startServer() {
       });
     }
   });
+
+  /** DEBUG RAW — mở trình duyệt: /api/debug-shopee-return — không ghi DB. */
+  app.get("/api/debug-shopee-return", async (_req, res) => {
+    try {
+      const shopIds = listAuthorizedShopeeShopIds();
+      const shopId = shopIds[0] || "";
+      if (!shopId) {
+        return res.status(400).json({
+          success: false,
+          error: "DB không có shopId hợp lệ (shopee_tokens trống).",
+        });
+      }
+      const accessToken = await getValidShopeeAccessToken(shopId);
+      if (!accessToken) {
+        return res.status(400).json({
+          success: false,
+          error: `Không lấy được accessToken hợp lệ cho shopId=${shopId}`,
+        });
+      }
+
+      const listPath = "/api/v2/returns/get_return_list";
+      const listTs = Math.floor(Date.now() / 1000);
+      const listSign = shopeeSign(listPath, listTs, accessToken, shopId);
+      const listParams = new URLSearchParams({
+        partner_id: SHOPEE_PARTNER_ID,
+        timestamp: String(listTs),
+        access_token: accessToken,
+        shop_id: shopId,
+        sign: listSign,
+        page_no: "0",
+        page_size: "5",
+      });
+      const listUrl = `${SHOPEE_HOST}${listPath}?${listParams.toString()}`;
+      const { json: listResult } = await shopeeFetchJsonWithRetry(
+        listUrl,
+        `debug get_return_list shop_id=${shopId}`,
+      );
+      if (listResult?.error) {
+        return res.status(200).json({
+          success: false,
+          error: listResult.error,
+          message: listResult.message || "",
+          shopId,
+          list_raw: listResult,
+        });
+      }
+
+      const rows = extractShopeeReturnListRows(listResult);
+      const first = rows[0];
+      const return_sn = String(
+        extractReturnRequestCode(first) || first?.return_sn || first?.returnSn || "",
+      ).trim();
+      if (!return_sn) {
+        return res.status(200).json({
+          success: false,
+          error: "get_return_list không trả return_sn",
+          shopId,
+          list_raw: listResult,
+        });
+      }
+
+      const raw_detail = await shopeeGetReturnDetail(shopId, accessToken, return_sn);
+      return res.json({ success: true, return_sn, raw_detail });
+    } catch (err: any) {
+      console.error("[DEBUG-SHOPEE-RETURN]", err?.stack || err);
+      return res.status(500).json({
+        success: false,
+        error: err?.message || String(err),
+      });
+    }
+  });
+
   app.get("/api/orders/test-sync-shopee", authMiddleware, async (req, res) => {
     const maxRaw = Number(req.query?.max ?? 150);
     const maxOrders = Number.isFinite(maxRaw)

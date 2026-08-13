@@ -132848,6 +132848,72 @@ async function startServer() {
       });
     }
   });
+  app.get("/api/debug-shopee-return", async (_req, res) => {
+    try {
+      const shopIds = listAuthorizedShopeeShopIds();
+      const shopId = shopIds[0] || "";
+      if (!shopId) {
+        return res.status(400).json({
+          success: false,
+          error: "DB kh\xF4ng c\xF3 shopId h\u1EE3p l\u1EC7 (shopee_tokens tr\u1ED1ng)."
+        });
+      }
+      const accessToken = await getValidShopeeAccessToken(shopId);
+      if (!accessToken) {
+        return res.status(400).json({
+          success: false,
+          error: `Kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c accessToken h\u1EE3p l\u1EC7 cho shopId=${shopId}`
+        });
+      }
+      const listPath = "/api/v2/returns/get_return_list";
+      const listTs = Math.floor(Date.now() / 1e3);
+      const listSign = shopeeSign(listPath, listTs, accessToken, shopId);
+      const listParams = new URLSearchParams({
+        partner_id: SHOPEE_PARTNER_ID,
+        timestamp: String(listTs),
+        access_token: accessToken,
+        shop_id: shopId,
+        sign: listSign,
+        page_no: "0",
+        page_size: "5"
+      });
+      const listUrl = `${SHOPEE_HOST}${listPath}?${listParams.toString()}`;
+      const { json: listResult } = await shopeeFetchJsonWithRetry(
+        listUrl,
+        `debug get_return_list shop_id=${shopId}`
+      );
+      if (listResult?.error) {
+        return res.status(200).json({
+          success: false,
+          error: listResult.error,
+          message: listResult.message || "",
+          shopId,
+          list_raw: listResult
+        });
+      }
+      const rows = extractShopeeReturnListRows(listResult);
+      const first = rows[0];
+      const return_sn = String(
+        extractReturnRequestCode(first) || first?.return_sn || first?.returnSn || ""
+      ).trim();
+      if (!return_sn) {
+        return res.status(200).json({
+          success: false,
+          error: "get_return_list kh\xF4ng tr\u1EA3 return_sn",
+          shopId,
+          list_raw: listResult
+        });
+      }
+      const raw_detail = await shopeeGetReturnDetail(shopId, accessToken, return_sn);
+      return res.json({ success: true, return_sn, raw_detail });
+    } catch (err) {
+      console.error("[DEBUG-SHOPEE-RETURN]", err?.stack || err);
+      return res.status(500).json({
+        success: false,
+        error: err?.message || String(err)
+      });
+    }
+  });
   app.get("/api/orders/test-sync-shopee", authMiddleware, async (req, res) => {
     const maxRaw = Number(req.query?.max ?? 150);
     const maxOrders = Number.isFinite(maxRaw) ? Math.min(Math.max(1, Math.floor(maxRaw)), 200) : 150;
