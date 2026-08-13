@@ -105,8 +105,8 @@ export function matchScannedCodeToOrder(order: Order, raw: string): boolean {
 
   const orderSnKey = normalizeOrderScanKey(order.orderSn);
   const trackingKey = order.trackingNumber ? normalizeOrderScanKey(order.trackingNumber) : '';
-  const returnTrackingKey = order.return_tracking_no
-    ? normalizeOrderScanKey(order.return_tracking_no)
+  const returnTrackingKey = order.returnTrackingNumber || order.return_tracking_no
+    ? normalizeOrderScanKey(String(order.returnTrackingNumber || order.return_tracking_no))
     : '';
   const trackingNoKey = order.tracking_no ? normalizeOrderScanKey(order.tracking_no) : '';
   const internalKey = order.internalTrackingCode ? normalizeOrderScanKey(order.internalTrackingCode) : '';
@@ -149,6 +149,7 @@ export function buildOrderScanIndex(orders: Order[]): OrderScanIndex {
     put(byTracking, order.trackingNumber);
     put(byTracking, order.tracking_no);
     put(byTracking, order.return_tracking_no);
+    put(byTracking, order.returnTrackingNumber);
     put(byInternal, order.internalTrackingCode);
     put(byPackage, order.packageNumber);
     put(byId, order.id);
@@ -186,7 +187,7 @@ export function findOrderByScanPayload(
 
   if (trackingLike) {
     for (const order of orders) {
-      const candidates = [order.trackingNumber, order.tracking_no, order.return_tracking_no];
+      const candidates = [order.trackingNumber, order.tracking_no, order.return_tracking_no, order.returnTrackingNumber];
       for (const c of candidates) {
         const trackingKey = c ? normalizeOrderScanKey(c) : '';
         if (!trackingKey) continue;

@@ -226,6 +226,12 @@ export interface Order {
   shipping_method?: string;
   /** Mã vận đơn chiều hoàn từ v2.returns.get_return_detail / get_reverse_tracking_info */
   return_tracking_no?: string;
+  /** Alias canonical — mã VĐ chiều hoàn do Shopee cấp */
+  returnTrackingNumber?: string;
+  /** Đối soát kho nội bộ: chỉ đổi khi quét barcode thành công */
+  internalReturnReceiptStatus?: 'CHUA_NHAN' | 'DA_NHAN';
+  /** Trạng thái logistics chiều hoàn Shopee (get_reverse_tracking_info) */
+  return_logistics_status?: string;
   /** Mã yêu cầu trả hàng/hoàn tiền Shopee */
   return_sn?: string;
   /** Trạng thái return Shopee: REQUESTED | PROCESSING | ACCEPTED | COMPLETED | ... */

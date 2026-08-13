@@ -29,6 +29,7 @@ let deps = {
   persistChangedOrdersPatch: async () => 0,
   markOrderHandedOverInStore: async () => false,
   markOrderLocalStatusInStore: async () => false,
+  markInternalReturnReceiptInStore: async () => false,
   restoreLocalStockOnCancelReturnScan: async () => ({ restored: false }),
   restoreLocalStockOnCancelReturnScanBatch: async () => ({ restored: 0 }),
   loadProductsForOrders: async () => [],
@@ -211,16 +212,18 @@ export async function scanBulkUpdate(req, res) {
         forceCancelCodes.has(codeKey) ||
         forceCancelCodes.has(norm(String(order.orderSn || ""))) ||
         forceCancelCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) ||
-        forceCancelCodes.has(norm(String(order.return_tracking_no || "")));
+        forceCancelCodes.has(norm(String(order.returnTrackingNumber || order.return_tracking_no || "")));
       const forceReturn =
         forceReturnCodes.has(codeKey) ||
         forceReturnCodes.has(norm(String(order.orderSn || ""))) ||
         forceReturnCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) ||
-        forceReturnCodes.has(norm(String(order.return_tracking_no || "")));
+        forceReturnCodes.has(norm(String(order.returnTrackingNumber || order.return_tracking_no || "")));
       const isReturnLike =
         status === "return_pending" ||
         status === "return_received" ||
-        rawShopee === "TO_RETURN";
+        rawShopee === "TO_RETURN" ||
+        Boolean(order.return_sn) ||
+        String(order.shopee_cancel_return_kind || "") === "refund_return";
       const isCancelLike =
         !isReturnLike &&
         (status === "cancelled" ||
@@ -246,13 +249,18 @@ export async function scanBulkUpdate(req, res) {
       if (forceReturn && alreadyInDonHoanHuy) {
         summary.daNhanHoan += 1;
         donHoanHuyAlready += 1;
+        const updated = { ...order, internalReturnReceiptStatus: "DA_NHAN" };
+        orders[index] = updated;
+        changedOrders.push(updated);
+        updatedById.set(updated.id, updated);
         results.push({
           code,
           action: "return_received",
           orderId: order.id,
           orderSn: order.orderSn,
-          message: `Đơn #${order.orderSn} đã có trong don_hoan_huy`,
+          message: "Đã quét nhận hàng hoàn thành công",
           local_status: "RETURN_RECEIVED",
+          internalReturnReceiptStatus: "DA_NHAN",
         });
         continue;
       }
@@ -369,6 +377,7 @@ export async function scanBulkUpdate(req, res) {
         const updated = { ...order };
         deps.clearHandedOverLocalForCancelReturn(updated);
         deps.setOrderLocalStatus(updated, "RETURN_RECEIVED");
+        updated.internalReturnReceiptStatus = "DA_NHAN";
         restockJobs.push({ order: updated, wasHandedOver });
         orders[index] = updated;
         changedOrders.push(updated);
@@ -379,8 +388,9 @@ export async function scanBulkUpdate(req, res) {
           action: "return_received",
           orderId: updated.id,
           orderSn: updated.orderSn,
-          message: `Đã nhận hàng hoàn — đơn #${updated.orderSn}`,
+          message: "Đã quét nhận hàng hoàn thành công",
           local_status: "RETURN_RECEIVED",
+          internalReturnReceiptStatus: "DA_NHAN",
           stock_restored: Boolean(updated.stock_restored),
         });
         continue;

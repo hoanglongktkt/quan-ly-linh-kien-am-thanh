@@ -217,6 +217,10 @@ const OrderSchema = new Schema<OrderDoc>(
     tracking_no: { type: String, default: null, index: true },
     /** Mã vận đơn chiều hoàn — quét barcode return */
     return_tracking_no: { type: String, default: null, index: true },
+    /** Alias canonical — mã VĐ chiều hoàn do Shopee cấp */
+    returnTrackingNumber: { type: String, default: null, index: true },
+    /** Đối soát kho nội bộ: CHUA_NHAN | DA_NHAN — CHỈ đổi khi quét barcode, Shopee KHÔNG ghi đè */
+    internalReturnReceiptStatus: { type: String, default: "CHUA_NHAN", index: true },
     /** Mã yêu cầu trả hàng / hoàn tiền Shopee (return_sn) — luôn String */
     return_sn: { type: String, default: null },
     /** Shopee package_number (OFG...) — bắt buộc cho create_shipping_document / logistics */
@@ -276,8 +280,10 @@ OrderSchema.index({ orderSn: 1, shopId: 1 });
 OrderSchema.index({ packageNumber: 1 });
 OrderSchema.index({ "data.packageNumber": 1 });
 OrderSchema.index({ "data.package_number": 1 });
-// Quét kiện hoàn theo return_tracking_no (barcode chiều về).
+// Quét kiện hoàn theo return_tracking_no / returnTrackingNumber (barcode chiều về).
 OrderSchema.index({ "data.return_tracking_no": 1 });
+OrderSchema.index({ "data.returnTrackingNumber": 1 });
+OrderSchema.index({ "data.internalReturnReceiptStatus": 1 });
 // Hỗ trợ Dashboard aggregation lọc theo ngày / doanh thu mà không quét toàn bộ collection.
 OrderSchema.index({ "data.date": 1 });
 OrderSchema.index({ status: 1, "data.date": 1 });
@@ -1626,6 +1632,7 @@ const INTERNAL_FLAG_KEYS = new Set([
   "local_status",
   "localStatus",
   "internal_status",
+  "internalReturnReceiptStatus",
   "handedOverAt",
   "handed_over_source",
   "handedOverSource",
@@ -1750,9 +1757,17 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     }
 
     // BẮT BUỘC: Shopee SHIPPED / TO_CONFIRM_RECEIVE → luôn ép status=shipping (tab Đang giao).
-    // Không phụ thuộc order.status cũ (processed / pending_confirm / handed_over…).
+    // KHÔNG ép khi đơn đã là Yêu cầu trả hàng — giữ trạng thái hoàn, không dùng "Đang giao" chiều đi.
+    const returnSnEarly = String(order.return_sn || "").trim();
+    const isReturnRequestOrder =
+      Boolean(returnSnEarly) ||
+      rawStatus === "TO_RETURN" ||
+      order.status === "return_pending" ||
+      order.status === "return_received" ||
+      String(order.shopee_cancel_return_kind || "") === "refund_return";
     const forceShipping =
-      rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE";
+      (rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE") &&
+      !isReturnRequestOrder;
     if (forceShipping) {
       $set.status = "shipping";
       $set["data.status"] = "shipping";
@@ -1796,10 +1811,14 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       $set["data.package_number"] = pkgNum;
     }
 
-    const returnTn = String(order.return_tracking_no || "").trim();
+    const returnTn = String(
+      order.returnTrackingNumber || order.return_tracking_no || "",
+    ).trim();
     if (returnTn && !/^0FG/i.test(returnTn)) {
       $set.return_tracking_no = returnTn;
+      $set.returnTrackingNumber = returnTn;
       $set["data.return_tracking_no"] = returnTn;
+      $set["data.returnTrackingNumber"] = returnTn;
     }
     // Mã YCTH (return_sn) + order_sn — luôn String (uint64-safe / alphanumeric).
     const returnSnStr = String(order.return_sn || "").trim();
@@ -1838,6 +1857,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       "tracking_no",
       "trackingNumber",
       "return_tracking_no",
+      "returnTrackingNumber",
       "shopee_tracking_number",
       "internalTrackingCode",
       "packageNumber",
@@ -1939,6 +1959,8 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       "data.local_status": "NONE",
       "data.localStatus": "NONE",
       "data.internal_status": "NONE",
+      internalReturnReceiptStatus: "CHUA_NHAN",
+      "data.internalReturnReceiptStatus": "CHUA_NHAN",
     };
     const $setOnInsert: Record<string, unknown> = {};
     for (const [k, v] of Object.entries($setOnInsertRaw)) {
@@ -2574,6 +2596,8 @@ export async function markOrderLocalStatusInStore(
   if (status === "RETURN_RECEIVED") {
     $set.status = "return_received";
     $set["data.status"] = "return_received";
+    $set.internalReturnReceiptStatus = "DA_NHAN";
+    $set["data.internalReturnReceiptStatus"] = "DA_NHAN";
   } else if (meta?.status) {
     $set.status = String(meta.status);
     $set["data.status"] = String(meta.status);
@@ -2599,6 +2623,41 @@ export async function markOrderLocalStatusInStore(
   );
   console.log(
     `[MongoDB] findOneAndUpdate markOrderLocalStatus=${status} order_sn=${sn} shopId=${shopIdStr || "-"} ok=${Boolean(result)}`,
+  );
+  return Boolean(result);
+}
+
+/**
+ * Đối soát kho: quét barcode hàng hoàn thành công → DA_NHAN.
+ * Shopee sync TUYỆT ĐỐI không được gọi hàm này / không ghi đè field này.
+ */
+export async function markInternalReturnReceiptInStore(
+  orderSn: string,
+  meta?: { shopId?: string },
+): Promise<boolean> {
+  if (!isMongoReady()) return false;
+  requireMongo();
+  const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
+  if (!sn) return false;
+  const _id = `shopee-${sn}`;
+  const shopIdStr = meta?.shopId != null ? String(meta.shopId).trim() : "";
+  const now = new Date().toISOString();
+  const $set: Record<string, unknown> = {
+    internalReturnReceiptStatus: "DA_NHAN",
+    "data.internalReturnReceiptStatus": "DA_NHAN",
+    "data.internalReturnReceiptAt": now,
+  };
+  if (shopIdStr) {
+    $set.shopId = shopIdStr;
+    $set["data.shopId"] = shopIdStr;
+  }
+  const result = await OrderModel.findOneAndUpdate(
+    buildOrderCompoundFilter(sn, _id, shopIdStr),
+    { $set },
+    { new: true },
+  );
+  console.log(
+    `[MongoDB] markInternalReturnReceipt DA_NHAN order_sn=${sn} shopId=${shopIdStr || "-"} ok=${Boolean(result)}`,
   );
   return Boolean(result);
 }
@@ -3461,8 +3520,20 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
       data.trackingNumber ||
       "",
   ).trim();
-  const returnTn = String(d?.return_tracking_no || data.return_tracking_no || "").trim();
+  const returnTn = String(
+    d?.returnTrackingNumber ||
+      d?.return_tracking_no ||
+      data.returnTrackingNumber ||
+      data.return_tracking_no ||
+      "",
+  ).trim();
   const returnSnHydrated = String(d?.return_sn || data.return_sn || "").trim();
+  const internalReturnReceipt =
+    String(
+      d?.internalReturnReceiptStatus || data.internalReturnReceiptStatus || "",
+    ).toUpperCase() === "DA_NHAN"
+      ? "DA_NHAN"
+      : "CHUA_NHAN";
   const pkg = String(
     d?.packageNumber ||
       data.packageNumber ||
@@ -3568,6 +3639,10 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
     tracking_no: tn || undefined,
     trackingNumber: tn || undefined,
     return_tracking_no: returnTn || data.return_tracking_no || undefined,
+    returnTrackingNumber: returnTn || data.returnTrackingNumber || undefined,
+    internalReturnReceiptStatus: internalReturnReceipt,
+    return_logistics_status:
+      data.return_logistics_status || d?.return_logistics_status || undefined,
     return_sn: returnSnHydrated || data.return_sn || undefined,
     packageNumber: pkg || undefined,
     package_number: pkg || undefined,
@@ -3666,12 +3741,14 @@ export async function findOrderByScanCodeInStore(rawCode: string): Promise<any |
     $or: [
       { tracking_no: { $in: keys } },
       { return_tracking_no: { $in: keys } },
+      { returnTrackingNumber: { $in: keys } },
       { orderSn: { $in: keys } },
       { packageNumber: { $in: keys } },
       { _id: { $in: uniqueIds } },
       { "data.tracking_no": { $in: keys } },
       { "data.trackingNumber": { $in: keys } },
       { "data.return_tracking_no": { $in: keys } },
+      { "data.returnTrackingNumber": { $in: keys } },
       { "data.return_sn": { $in: keys } },
       { return_sn: { $in: keys } },
       { "data.internalTrackingCode": { $in: keys } },
@@ -3698,11 +3775,13 @@ export async function findOrderByScanCodeInStore(rawCode: string): Promise<any |
         const fieldMatchers = [
           { tracking_no: rxExact },
           { return_tracking_no: rxExact },
+          { returnTrackingNumber: rxExact },
           { orderSn: rxExact },
           { packageNumber: rxExact },
           { "data.tracking_no": rxExact },
           { "data.trackingNumber": rxExact },
           { "data.return_tracking_no": rxExact },
+          { "data.returnTrackingNumber": rxExact },
           { "data.return_sn": rxExact },
           { "data.internalTrackingCode": rxExact },
           { "data.packageNumber": rxExact },
@@ -3713,10 +3792,12 @@ export async function findOrderByScanCodeInStore(rawCode: string): Promise<any |
             ? [
                 { tracking_no: rxSuffix },
                 { return_tracking_no: rxSuffix },
+                { returnTrackingNumber: rxSuffix },
                 { packageNumber: rxSuffix },
                 { "data.tracking_no": rxSuffix },
                 { "data.trackingNumber": rxSuffix },
                 { "data.return_tracking_no": rxSuffix },
+                { "data.returnTrackingNumber": rxSuffix },
                 { "data.internalTrackingCode": rxSuffix },
                 { "data.packageNumber": rxSuffix },
                 { orderSn: rxSuffix },
@@ -4257,8 +4338,20 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
     case "shipping":
     case "shipped":
     case "dang-giao":
-      // BẮT BUỘC: chỉ SHIPPED — bất kể is_handed_over.
-      return ORDER_TAB_IS_SHIPPED;
+      // SHIPPED — loại đơn Yêu cầu trả hàng (không dùng "Đang giao" chiều đi).
+      return {
+        $and: [
+          ORDER_TAB_IS_SHIPPED,
+          {
+            $nor: [
+              { return_sn: { $exists: true, $nin: [null, ""] } },
+              { "data.return_sn": { $exists: true, $nin: [null, ""] } },
+              { status: { $in: ["return_pending", "return_received"] } },
+              { "data.shopee_cancel_return_kind": "refund_return" },
+            ],
+          },
+        ],
+      };
     case "completed":
       return { $or: [{ status: "completed" }, { shopee_order_status: "COMPLETED" }] };
     case "cancelled":
@@ -5445,6 +5538,8 @@ export async function markOrdersScanFlagsBatch(
     if (status === "RETURN_RECEIVED") {
       $set.status = "return_received";
       $set["data.status"] = "return_received";
+      $set.internalReturnReceiptStatus = "DA_NHAN";
+      $set["data.internalReturnReceiptStatus"] = "DA_NHAN";
     } else {
       $set.status = "cancelled";
       $set["data.status"] = "cancelled";
@@ -5649,12 +5744,14 @@ export async function findOrdersByScanCodesInStore(
     $or: [
       { tracking_no: { $in: keysArr } },
       { return_tracking_no: { $in: keysArr } },
+      { returnTrackingNumber: { $in: keysArr } },
       { orderSn: { $in: keysArr } },
       { packageNumber: { $in: keysArr } },
       { _id: { $in: idsArr } },
       { "data.tracking_no": { $in: keysArr } },
       { "data.trackingNumber": { $in: keysArr } },
       { "data.return_tracking_no": { $in: keysArr } },
+      { "data.returnTrackingNumber": { $in: keysArr } },
       { "data.return_sn": { $in: keysArr } },
       { return_sn: { $in: keysArr } },
       { "data.internalTrackingCode": { $in: keysArr } },
@@ -5695,6 +5792,7 @@ export async function findOrdersByScanCodesInStore(
           o?.tracking_no,
           o?.trackingNumber,
           o?.return_tracking_no,
+          o?.returnTrackingNumber,
           o?.packageNumber,
           o?.id,
           o?.return_sn,
@@ -5702,6 +5800,7 @@ export async function findOrdersByScanCodesInStore(
           o?.data?.tracking_no,
           o?.data?.trackingNumber,
           o?.data?.return_tracking_no,
+          o?.data?.returnTrackingNumber,
           o?.data?.internalTrackingCode,
           o?.data?.packageNumber,
           o?.data?.package_number,

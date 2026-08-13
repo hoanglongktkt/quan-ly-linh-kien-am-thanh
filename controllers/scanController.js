@@ -3,6 +3,8 @@ import { connectDB, isDBReady, getMongoUri } from "../config/db.js";
 import {
   loadDonHoanHuyAsOrders,
   upsertDonHoanHuyBatch,
+  markInternalReturnReceiptInStore,
+  markOrdersScanFlagsBatch,
 } from "../src/db/mongoStore.ts";
 
 /** Deps từ server.ts — resolve đơn thật (orderSn + items) trước khi ghi don_hoan_huy. */
@@ -242,6 +244,25 @@ export async function saveScanOrders(req, res) {
           if (sn) {
             saved.push(sn);
             orderSns.push(sn);
+            if (row.type === "return") {
+              try {
+                await markInternalReturnReceiptInStore(sn, {
+                  shopId: row.order?.shopId != null ? String(row.order.shopId) : undefined,
+                });
+                await markOrdersScanFlagsBatch([
+                  {
+                    orderSn: sn,
+                    localStatus: "RETURN_RECEIVED",
+                    shopId: row.order?.shopId != null ? String(row.order.shopId) : undefined,
+                  },
+                ]);
+              } catch (flagErr) {
+                console.warn(
+                  `[Scan Save] DA_NHAN fail order_sn=${sn}:`,
+                  flagErr?.message || flagErr,
+                );
+              }
+            }
           }
         }
         for (const e of batch.errors || []) {
@@ -273,9 +294,11 @@ export async function saveScanOrders(req, res) {
 
     return res.json({
       success: true,
-      message: `Đã lưu ${saved.length} đơn vào don_hoan_huy` +
-        (failed.length ? ` (${failed.length} mã lỗi)` : "") +
-        ".",
+      message: toUpsert.some((r) => r.type === "return")
+        ? "Đã quét nhận hàng hoàn thành công"
+        : `Đã lưu ${saved.length} đơn vào don_hoan_huy` +
+          (failed.length ? ` (${failed.length} mã lỗi)` : "") +
+          ".",
       saved: saved.length,
       failed: failed.length,
       errors: failed.slice(0, 20),

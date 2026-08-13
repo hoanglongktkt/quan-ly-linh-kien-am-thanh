@@ -75099,6 +75099,9 @@ function isProcessedCondition(order) {
   return false;
 }
 function isShopeeShippingStatus(order) {
+  if (Boolean(order.return_sn) || order.status === "return_pending" || order.status === "return_received" || String(order.shopee_cancel_return_kind || "") === "refund_return") {
+    return false;
+  }
   const raw = getShopeeOrderRawStatus(order);
   if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") return true;
   if (order.status === "shipping") return true;
@@ -75910,6 +75913,10 @@ var OrderSchema = new import_mongoose3.Schema(
     tracking_no: { type: String, default: null, index: true },
     /** Mã vận đơn chiều hoàn — quét barcode return */
     return_tracking_no: { type: String, default: null, index: true },
+    /** Alias canonical — mã VĐ chiều hoàn do Shopee cấp */
+    returnTrackingNumber: { type: String, default: null, index: true },
+    /** Đối soát kho nội bộ: CHUA_NHAN | DA_NHAN — CHỈ đổi khi quét barcode, Shopee KHÔNG ghi đè */
+    internalReturnReceiptStatus: { type: String, default: "CHUA_NHAN", index: true },
     /** Mã yêu cầu trả hàng / hoàn tiền Shopee (return_sn) — luôn String */
     return_sn: { type: String, default: null },
     /** Shopee package_number (OFG...) — bắt buộc cho create_shipping_document / logistics */
@@ -75962,6 +75969,8 @@ OrderSchema.index({ packageNumber: 1 });
 OrderSchema.index({ "data.packageNumber": 1 });
 OrderSchema.index({ "data.package_number": 1 });
 OrderSchema.index({ "data.return_tracking_no": 1 });
+OrderSchema.index({ "data.returnTrackingNumber": 1 });
+OrderSchema.index({ "data.internalReturnReceiptStatus": 1 });
 OrderSchema.index({ "data.date": 1 });
 OrderSchema.index({ status: 1, "data.date": 1 });
 OrderSchema.index({ shopId: 1, shopee_order_status: 1, last_synced_at: 1 });
@@ -76988,6 +76997,7 @@ var INTERNAL_FLAG_KEYS = /* @__PURE__ */ new Set([
   "local_status",
   "localStatus",
   "internal_status",
+  "internalReturnReceiptStatus",
   "handedOverAt",
   "handed_over_source",
   "handedOverSource",
@@ -77072,7 +77082,9 @@ async function bulkUpsertOrdersToStore(orders) {
       $set["data.handed_over_source"] = null;
       $set["data.handedOverSource"] = null;
     }
-    const forceShipping = rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE";
+    const returnSnEarly = String(order.return_sn || "").trim();
+    const isReturnRequestOrder = Boolean(returnSnEarly) || rawStatus === "TO_RETURN" || order.status === "return_pending" || order.status === "return_received" || String(order.shopee_cancel_return_kind || "") === "refund_return";
+    const forceShipping = (rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE") && !isReturnRequestOrder;
     if (forceShipping) {
       $set.status = "shipping";
       $set["data.status"] = "shipping";
@@ -77106,10 +77118,14 @@ async function bulkUpsertOrdersToStore(orders) {
       $set["data.packageNumber"] = pkgNum;
       $set["data.package_number"] = pkgNum;
     }
-    const returnTn = String(order.return_tracking_no || "").trim();
+    const returnTn = String(
+      order.returnTrackingNumber || order.return_tracking_no || ""
+    ).trim();
     if (returnTn && !/^0FG/i.test(returnTn)) {
       $set.return_tracking_no = returnTn;
+      $set.returnTrackingNumber = returnTn;
       $set["data.return_tracking_no"] = returnTn;
+      $set["data.returnTrackingNumber"] = returnTn;
     }
     const returnSnStr = String(order.return_sn || "").trim();
     if (returnSnStr) {
@@ -77143,6 +77159,7 @@ async function bulkUpsertOrdersToStore(orders) {
       "tracking_no",
       "trackingNumber",
       "return_tracking_no",
+      "returnTrackingNumber",
       "shopee_tracking_number",
       "internalTrackingCode",
       "packageNumber",
@@ -77222,7 +77239,9 @@ async function bulkUpsertOrdersToStore(orders) {
       "data.is_handed_over_to_courier": false,
       "data.local_status": "NONE",
       "data.localStatus": "NONE",
-      "data.internal_status": "NONE"
+      "data.internal_status": "NONE",
+      internalReturnReceiptStatus: "CHUA_NHAN",
+      "data.internalReturnReceiptStatus": "CHUA_NHAN"
     };
     const $setOnInsert = {};
     for (const [k, v] of Object.entries($setOnInsertRaw)) {
@@ -77716,6 +77735,8 @@ async function markOrderLocalStatusInStore(orderSn, localStatus, meta) {
   if (status === "RETURN_RECEIVED") {
     $set.status = "return_received";
     $set["data.status"] = "return_received";
+    $set.internalReturnReceiptStatus = "DA_NHAN";
+    $set["data.internalReturnReceiptStatus"] = "DA_NHAN";
   } else if (meta?.status) {
     $set.status = String(meta.status);
     $set["data.status"] = String(meta.status);
@@ -77740,6 +77761,33 @@ async function markOrderLocalStatusInStore(orderSn, localStatus, meta) {
   );
   console.log(
     `[MongoDB] findOneAndUpdate markOrderLocalStatus=${status} order_sn=${sn} shopId=${shopIdStr || "-"} ok=${Boolean(result)}`
+  );
+  return Boolean(result);
+}
+async function markInternalReturnReceiptInStore(orderSn, meta) {
+  if (!isMongoReady()) return false;
+  requireMongo();
+  const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
+  if (!sn) return false;
+  const _id = `shopee-${sn}`;
+  const shopIdStr = meta?.shopId != null ? String(meta.shopId).trim() : "";
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const $set = {
+    internalReturnReceiptStatus: "DA_NHAN",
+    "data.internalReturnReceiptStatus": "DA_NHAN",
+    "data.internalReturnReceiptAt": now
+  };
+  if (shopIdStr) {
+    $set.shopId = shopIdStr;
+    $set["data.shopId"] = shopIdStr;
+  }
+  const result = await OrderModel.findOneAndUpdate(
+    buildOrderCompoundFilter(sn, _id, shopIdStr),
+    { $set },
+    { new: true }
+  );
+  console.log(
+    `[MongoDB] markInternalReturnReceipt DA_NHAN order_sn=${sn} shopId=${shopIdStr || "-"} ok=${Boolean(result)}`
   );
   return Boolean(result);
 }
@@ -78211,8 +78259,13 @@ function hydrateOrderFromMongoDoc(d) {
   const tn = String(
     d?.tracking_no || data.tracking_no || data.trackingNumber || ""
   ).trim();
-  const returnTn = String(d?.return_tracking_no || data.return_tracking_no || "").trim();
+  const returnTn = String(
+    d?.returnTrackingNumber || d?.return_tracking_no || data.returnTrackingNumber || data.return_tracking_no || ""
+  ).trim();
   const returnSnHydrated = String(d?.return_sn || data.return_sn || "").trim();
+  const internalReturnReceipt = String(
+    d?.internalReturnReceiptStatus || data.internalReturnReceiptStatus || ""
+  ).toUpperCase() === "DA_NHAN" ? "DA_NHAN" : "CHUA_NHAN";
   const pkg = String(
     d?.packageNumber || data.packageNumber || data.package_number || d?.package_number || ""
   ).trim();
@@ -78260,6 +78313,9 @@ function hydrateOrderFromMongoDoc(d) {
     tracking_no: tn || void 0,
     trackingNumber: tn || void 0,
     return_tracking_no: returnTn || data.return_tracking_no || void 0,
+    returnTrackingNumber: returnTn || data.returnTrackingNumber || void 0,
+    internalReturnReceiptStatus: internalReturnReceipt,
+    return_logistics_status: data.return_logistics_status || d?.return_logistics_status || void 0,
     return_sn: returnSnHydrated || data.return_sn || void 0,
     packageNumber: pkg || void 0,
     package_number: pkg || void 0,
@@ -78334,12 +78390,14 @@ async function findOrderByScanCodeInStore(rawCode) {
     $or: [
       { tracking_no: { $in: keys } },
       { return_tracking_no: { $in: keys } },
+      { returnTrackingNumber: { $in: keys } },
       { orderSn: { $in: keys } },
       { packageNumber: { $in: keys } },
       { _id: { $in: uniqueIds } },
       { "data.tracking_no": { $in: keys } },
       { "data.trackingNumber": { $in: keys } },
       { "data.return_tracking_no": { $in: keys } },
+      { "data.returnTrackingNumber": { $in: keys } },
       { "data.return_sn": { $in: keys } },
       { return_sn: { $in: keys } },
       { "data.internalTrackingCode": { $in: keys } },
@@ -78360,11 +78418,13 @@ async function findOrderByScanCodeInStore(rawCode) {
         const fieldMatchers = [
           { tracking_no: rxExact },
           { return_tracking_no: rxExact },
+          { returnTrackingNumber: rxExact },
           { orderSn: rxExact },
           { packageNumber: rxExact },
           { "data.tracking_no": rxExact },
           { "data.trackingNumber": rxExact },
           { "data.return_tracking_no": rxExact },
+          { "data.returnTrackingNumber": rxExact },
           { "data.return_sn": rxExact },
           { "data.internalTrackingCode": rxExact },
           { "data.packageNumber": rxExact },
@@ -78374,10 +78434,12 @@ async function findOrderByScanCodeInStore(rawCode) {
           ...rxSuffix ? [
             { tracking_no: rxSuffix },
             { return_tracking_no: rxSuffix },
+            { returnTrackingNumber: rxSuffix },
             { packageNumber: rxSuffix },
             { "data.tracking_no": rxSuffix },
             { "data.trackingNumber": rxSuffix },
             { "data.return_tracking_no": rxSuffix },
+            { "data.returnTrackingNumber": rxSuffix },
             { "data.internalTrackingCode": rxSuffix },
             { "data.packageNumber": rxSuffix },
             { orderSn: rxSuffix }
@@ -78797,7 +78859,19 @@ function orderTabFilter(tab) {
     case "shipping":
     case "shipped":
     case "dang-giao":
-      return ORDER_TAB_IS_SHIPPED;
+      return {
+        $and: [
+          ORDER_TAB_IS_SHIPPED,
+          {
+            $nor: [
+              { return_sn: { $exists: true, $nin: [null, ""] } },
+              { "data.return_sn": { $exists: true, $nin: [null, ""] } },
+              { status: { $in: ["return_pending", "return_received"] } },
+              { "data.shopee_cancel_return_kind": "refund_return" }
+            ]
+          }
+        ]
+      };
     case "completed":
       return { $or: [{ status: "completed" }, { shopee_order_status: "COMPLETED" }] };
     case "cancelled":
@@ -79726,6 +79800,8 @@ async function markOrdersScanFlagsBatch(rows) {
     if (status === "RETURN_RECEIVED") {
       $set.status = "return_received";
       $set["data.status"] = "return_received";
+      $set.internalReturnReceiptStatus = "DA_NHAN";
+      $set["data.internalReturnReceiptStatus"] = "DA_NHAN";
     } else {
       $set.status = "cancelled";
       $set["data.status"] = "cancelled";
@@ -79885,12 +79961,14 @@ async function findOrdersByScanCodesInStore(rawCodes) {
     $or: [
       { tracking_no: { $in: keysArr } },
       { return_tracking_no: { $in: keysArr } },
+      { returnTrackingNumber: { $in: keysArr } },
       { orderSn: { $in: keysArr } },
       { packageNumber: { $in: keysArr } },
       { _id: { $in: idsArr } },
       { "data.tracking_no": { $in: keysArr } },
       { "data.trackingNumber": { $in: keysArr } },
       { "data.return_tracking_no": { $in: keysArr } },
+      { "data.returnTrackingNumber": { $in: keysArr } },
       { "data.return_sn": { $in: keysArr } },
       { return_sn: { $in: keysArr } },
       { "data.internalTrackingCode": { $in: keysArr } },
@@ -79923,6 +80001,7 @@ async function findOrdersByScanCodesInStore(rawCodes) {
           o?.tracking_no,
           o?.trackingNumber,
           o?.return_tracking_no,
+          o?.returnTrackingNumber,
           o?.packageNumber,
           o?.id,
           o?.return_sn,
@@ -79930,6 +80009,7 @@ async function findOrdersByScanCodesInStore(rawCodes) {
           o?.data?.tracking_no,
           o?.data?.trackingNumber,
           o?.data?.return_tracking_no,
+          o?.data?.returnTrackingNumber,
           o?.data?.internalTrackingCode,
           o?.data?.packageNumber,
           o?.data?.package_number,
@@ -80470,6 +80550,25 @@ async function saveScanOrders(req, res) {
           if (sn) {
             saved.push(sn);
             orderSns.push(sn);
+            if (row.type === "return") {
+              try {
+                await markInternalReturnReceiptInStore(sn, {
+                  shopId: row.order?.shopId != null ? String(row.order.shopId) : void 0
+                });
+                await markOrdersScanFlagsBatch([
+                  {
+                    orderSn: sn,
+                    localStatus: "RETURN_RECEIVED",
+                    shopId: row.order?.shopId != null ? String(row.order.shopId) : void 0
+                  }
+                ]);
+              } catch (flagErr) {
+                console.warn(
+                  `[Scan Save] DA_NHAN fail order_sn=${sn}:`,
+                  flagErr?.message || flagErr
+                );
+              }
+            }
           }
         }
         for (const e2 of batch.errors || []) {
@@ -80497,7 +80596,7 @@ async function saveScanOrders(req, res) {
     }
     return res.json({
       success: true,
-      message: `\u0110\xE3 l\u01B0u ${saved.length} \u0111\u01A1n v\xE0o don_hoan_huy` + (failed.length ? ` (${failed.length} m\xE3 l\u1ED7i)` : "") + ".",
+      message: toUpsert.some((r2) => r2.type === "return") ? "\u0110\xE3 qu\xE9t nh\u1EADn h\xE0ng ho\xE0n th\xE0nh c\xF4ng" : `\u0110\xE3 l\u01B0u ${saved.length} \u0111\u01A1n v\xE0o don_hoan_huy` + (failed.length ? ` (${failed.length} m\xE3 l\u1ED7i)` : "") + ".",
       saved: saved.length,
       failed: failed.length,
       errors: failed.slice(0, 20),
@@ -103040,6 +103139,7 @@ var deps7 = {
   persistChangedOrdersPatch: async () => 0,
   markOrderHandedOverInStore: async () => false,
   markOrderLocalStatusInStore: async () => false,
+  markInternalReturnReceiptInStore: async () => false,
   restoreLocalStockOnCancelReturnScan: async () => ({ restored: false }),
   restoreLocalStockOnCancelReturnScanBatch: async () => ({ restored: 0 }),
   loadProductsForOrders: async () => [],
@@ -103179,9 +103279,9 @@ async function scanBulkUpdate(req, res) {
       const orderSnNorm = String(order.orderSn || "").replace(/^shopee-/i, "").trim();
       const alreadyInDonHoanHuy = alreadyInDonHoanHuySet.has(orderSnNorm);
       const forceHandOver = forceHandOverCodes.has(codeKey) || forceHandOverCodes.has(norm(String(order.orderSn || ""))) || forceHandOverCodes.has(norm(String(order.trackingNumber || order.tracking_no || "")));
-      const forceCancel = forceCancelCodes.has(codeKey) || forceCancelCodes.has(norm(String(order.orderSn || ""))) || forceCancelCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) || forceCancelCodes.has(norm(String(order.return_tracking_no || "")));
-      const forceReturn = forceReturnCodes.has(codeKey) || forceReturnCodes.has(norm(String(order.orderSn || ""))) || forceReturnCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) || forceReturnCodes.has(norm(String(order.return_tracking_no || "")));
-      const isReturnLike = status === "return_pending" || status === "return_received" || rawShopee === "TO_RETURN";
+      const forceCancel = forceCancelCodes.has(codeKey) || forceCancelCodes.has(norm(String(order.orderSn || ""))) || forceCancelCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) || forceCancelCodes.has(norm(String(order.returnTrackingNumber || order.return_tracking_no || "")));
+      const forceReturn = forceReturnCodes.has(codeKey) || forceReturnCodes.has(norm(String(order.orderSn || ""))) || forceReturnCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) || forceReturnCodes.has(norm(String(order.returnTrackingNumber || order.return_tracking_no || "")));
+      const isReturnLike = status === "return_pending" || status === "return_received" || rawShopee === "TO_RETURN" || Boolean(order.return_sn) || String(order.shopee_cancel_return_kind || "") === "refund_return";
       const isCancelLike = !isReturnLike && (status === "cancelled" || rawShopee === "CANCELLED" || rawShopee === "IN_CANCEL" || deps7.isShopeeCancelOrReturnLikeOrder(order));
       if (forceCancel && alreadyInDonHoanHuy) {
         summary.donHuy += 1;
@@ -103199,13 +103299,18 @@ async function scanBulkUpdate(req, res) {
       if (forceReturn && alreadyInDonHoanHuy) {
         summary.daNhanHoan += 1;
         donHoanHuyAlready += 1;
+        const updated = { ...order, internalReturnReceiptStatus: "DA_NHAN" };
+        orders[index] = updated;
+        changedOrders.push(updated);
+        updatedById.set(updated.id, updated);
         results.push({
           code,
           action: "return_received",
           orderId: order.id,
           orderSn: order.orderSn,
-          message: `\u0110\u01A1n #${order.orderSn} \u0111\xE3 c\xF3 trong don_hoan_huy`,
-          local_status: "RETURN_RECEIVED"
+          message: "\u0110\xE3 qu\xE9t nh\u1EADn h\xE0ng ho\xE0n th\xE0nh c\xF4ng",
+          local_status: "RETURN_RECEIVED",
+          internalReturnReceiptStatus: "DA_NHAN"
         });
         continue;
       }
@@ -103298,6 +103403,7 @@ async function scanBulkUpdate(req, res) {
         const updated = { ...order };
         deps7.clearHandedOverLocalForCancelReturn(updated);
         deps7.setOrderLocalStatus(updated, "RETURN_RECEIVED");
+        updated.internalReturnReceiptStatus = "DA_NHAN";
         restockJobs.push({ order: updated, wasHandedOver });
         orders[index] = updated;
         changedOrders.push(updated);
@@ -103308,8 +103414,9 @@ async function scanBulkUpdate(req, res) {
           action: "return_received",
           orderId: updated.id,
           orderSn: updated.orderSn,
-          message: `\u0110\xE3 nh\u1EADn h\xE0ng ho\xE0n \u2014 \u0111\u01A1n #${updated.orderSn}`,
+          message: "\u0110\xE3 qu\xE9t nh\u1EADn h\xE0ng ho\xE0n th\xE0nh c\xF4ng",
           local_status: "RETURN_RECEIVED",
+          internalReturnReceiptStatus: "DA_NHAN",
           stock_restored: Boolean(updated.stock_restored)
         });
         continue;
@@ -107823,6 +107930,7 @@ function rebuildOrderLookupIndex(orders) {
     put(byTracking, order.trackingNumber);
     put(byTracking, order.tracking_no);
     put(byReturnTracking, order.return_tracking_no);
+    put(byReturnTracking, order.returnTrackingNumber);
     put(byInternal, order.internalTrackingCode);
     put(byPackage, order.packageNumber);
   });
@@ -108230,7 +108338,7 @@ async function findOrderByScanLookup(orders, raw) {
   if (trackingLike) {
     for (const order of orders) {
       const trackingKey = order.trackingNumber ? normalizeScanLookupKey(order.trackingNumber) : "";
-      const returnTrackingKey = order.return_tracking_no ? normalizeScanLookupKey(order.return_tracking_no) : "";
+      const returnTrackingKey = order.returnTrackingNumber || order.return_tracking_no ? normalizeScanLookupKey(order.returnTrackingNumber || order.return_tracking_no) : "";
       const internalKey = order.internalTrackingCode ? normalizeScanLookupKey(order.internalTrackingCode) : "";
       if (trackingKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, trackingKey)))
         return order;
@@ -108251,7 +108359,7 @@ async function findOrderByScanLookup(orders, raw) {
   for (const order of orders) {
     const orderSnKey = normalizeScanLookupKey(order.orderSn);
     const trackingKey = order.trackingNumber ? normalizeScanLookupKey(order.trackingNumber) : "";
-    const returnTrackingKey = order.return_tracking_no ? normalizeScanLookupKey(order.return_tracking_no) : "";
+    const returnTrackingKey = order.returnTrackingNumber || order.return_tracking_no ? normalizeScanLookupKey(order.returnTrackingNumber || order.return_tracking_no) : "";
     const internalKey = order.internalTrackingCode ? normalizeScanLookupKey(order.internalTrackingCode) : "";
     const packageKey = order.packageNumber ? normalizeScanLookupKey(order.packageNumber) : "";
     const idKey = normalizeScanLookupKey(String(order.id || "").replace(/^shopee-/i, ""));
@@ -118902,13 +119010,48 @@ function extractShopeeReturnListRows(result) {
   }
   return rows;
 }
+function extractShopeeReturnLogisticsStatus(detail, reversePayload) {
+  const blobs = [];
+  const push = (v) => {
+    const s2 = String(v || "").trim();
+    if (s2) blobs.push(s2);
+  };
+  const detailBody = detail?.response ?? detail ?? {};
+  push(detailBody.reverse_logistic_status);
+  push(detailBody.reverse_logistics_status);
+  push(detailBody.logistics_status);
+  push(detailBody.return_status);
+  const reverseBody = reversePayload?.response ?? reversePayload ?? {};
+  push(reverseBody.logistics_status);
+  push(reverseBody.reverse_logistic_status);
+  push(reverseBody.reverse_logistics_status);
+  const infos = Array.isArray(reverseBody.tracking_info) && reverseBody.tracking_info || Array.isArray(detailBody.tracking_info) && detailBody.tracking_info || [];
+  if (infos.length) {
+    const last = infos[infos.length - 1];
+    push(last?.logistics_status);
+    push(last?.description);
+    push(last?.status);
+  }
+  return blobs.join(" | ");
+}
+function applyReturnWaybillFields(target, tracking, logisticsStatus) {
+  const tn = String(tracking || "").trim();
+  if (tn && !/^0FG/i.test(tn)) {
+    target.return_tracking_no = tn;
+    target.returnTrackingNumber = tn;
+  }
+  const log = String(logisticsStatus || "").trim();
+  if (log) target.return_logistics_status = log;
+}
 async function fetchReturnShippingTrackingNumber(shopId, accessToken, returnSn, detailPayload) {
   const sources = {};
   const fromDetail = extractTrackingFromReturnPayload(detailPayload);
   if (fromDetail) sources.return_detail = fromDetail;
   let fromReverse = "";
+  let reversePayload = null;
   try {
     const reverse = await shopeeGetReverseTrackingInfo(shopId, accessToken, returnSn);
+    reversePayload = reverse;
     if (!reverse?.error) {
       const body = reverse?.response ?? reverse ?? {};
       fromReverse = pickBestTrackingNumber(
@@ -118938,7 +119081,8 @@ async function fetchReturnShippingTrackingNumber(shopId, accessToken, returnSn, 
     console.warn(`[Shopee Returns] reverse_tracking exception ${returnSn}:`, err?.message || err);
   }
   const tracking = pickBestTrackingNumber(fromReverse, fromDetail, sources.return_detail);
-  return { tracking, sources };
+  const logisticsStatus = extractShopeeReturnLogisticsStatus(detailPayload, reversePayload);
+  return { tracking, sources, logisticsStatus };
 }
 function parseShopeeReturnListMore(result) {
   const body = result?.response ?? result ?? {};
@@ -121426,7 +121570,7 @@ async function syncShopeeReturnRequests(opts) {
             const orderSn = toShopeeSn(detail.order_sn ?? detail.orderSn ?? row.orderSn) || "";
             if (!orderSn) continue;
             const mappedReturnSn = extractReturnRequestCode(detail) || returnSn;
-            const { tracking: returnShipTn } = await fetchReturnShippingTrackingNumber(
+            const { tracking: returnShipTn, logisticsStatus: returnLogistics } = await fetchReturnShippingTrackingNumber(
               shopId,
               accessToken,
               mappedReturnSn,
@@ -121478,19 +121622,25 @@ async function syncShopeeReturnRequests(opts) {
               ]
             };
             if (returnShipTn) {
-              patch.return_tracking_no = returnShipTn;
-            } else if (existing?.return_tracking_no) {
-              patch.return_tracking_no = existing.return_tracking_no;
+              applyReturnWaybillFields(patch, returnShipTn, returnLogistics);
+            } else if (existing?.returnTrackingNumber || existing?.return_tracking_no) {
+              applyReturnWaybillFields(
+                patch,
+                existing.returnTrackingNumber || existing.return_tracking_no,
+                returnLogistics || existing.return_logistics_status
+              );
+            } else if (returnLogistics) {
+              patch.return_logistics_status = returnLogistics;
             }
             if (alreadyCancelled) {
               patch.status = "cancelled";
               patch.shopee_order_status = existingRaw === "IN_CANCEL" ? "IN_CANCEL" : "CANCELLED";
             } else if (existing?.status === "return_received" || existing?.local_status === "RETURN_RECEIVED") {
               patch.status = "return_received";
-              patch.shopee_order_status = existing?.shopee_order_status || "TO_RETURN";
+              patch.shopee_order_status = "TO_RETURN";
             } else {
               patch.status = "return_pending";
-              patch.shopee_order_status = existing?.shopee_order_status || "TO_RETURN";
+              patch.shopee_order_status = "TO_RETURN";
             }
             if (existing?.trackingNumber || existing?.tracking_no) {
               patch.trackingNumber = existing.trackingNumber || existing.tracking_no;
@@ -121505,7 +121655,12 @@ async function syncShopeeReturnRequests(opts) {
             merged.return_reason = patch.return_reason;
             merged.text_reason = patch.text_reason;
             if (patch.return_tracking_no) merged.return_tracking_no = patch.return_tracking_no;
+            if (patch.returnTrackingNumber) merged.returnTrackingNumber = patch.returnTrackingNumber;
+            if (patch.return_logistics_status) {
+              merged.return_logistics_status = patch.return_logistics_status;
+            }
             if (patch.status) merged.status = patch.status;
+            merged.internalReturnReceiptStatus = existing?.internalReturnReceiptStatus === "DA_NHAN" ? "DA_NHAN" : "CHUA_NHAN";
             patches.push(merged);
             pulled += 1;
             await shopeeSyncDelay(120);
@@ -126207,20 +126362,30 @@ function preserveExistingTrackingIfIncomingEmpty(target, existing) {
     target.trackingNumber = existingTn;
     target.tracking_no = existingTn;
   }
-  const existingReturnTn = String(existing.return_tracking_no || "").trim();
-  const incomingReturnTn = String(target.return_tracking_no || "").trim();
+  const existingReturnTn = String(
+    existing.returnTrackingNumber || existing.return_tracking_no || ""
+  ).trim();
+  const incomingReturnTn = String(
+    target.returnTrackingNumber || target.return_tracking_no || ""
+  ).trim();
   if (existingReturnTn && !incomingReturnTn) {
     target.return_tracking_no = existingReturnTn;
+    target.returnTrackingNumber = existingReturnTn;
+  } else if (incomingReturnTn) {
+    target.return_tracking_no = incomingReturnTn;
+    target.returnTrackingNumber = incomingReturnTn;
   }
+  target.internalReturnReceiptStatus = existing.internalReturnReceiptStatus === "DA_NHAN" ? "DA_NHAN" : "CHUA_NHAN";
   if (isCancelOrReturnOrderStatus(target) || isCancelOrReturnOrderStatus(existing) || existing.return_sn) {
     const out = String(target.trackingNumber || target.tracking_no || "").trim();
-    const ret = String(target.return_tracking_no || "").trim();
+    const ret = String(target.returnTrackingNumber || target.return_tracking_no || "").trim();
     if (!out && ret) {
       target.trackingNumber = ret;
       target.tracking_no = ret;
     }
     if (!ret && out) {
       target.return_tracking_no = out;
+      target.returnTrackingNumber = out;
     }
   }
   const existingInternal = String(existing.internalTrackingCode || "").trim();
@@ -126238,7 +126403,9 @@ function preserveExistingTrackingIfIncomingEmpty(target, existing) {
 }
 function mergeShopeeTrackingFields(merged, existing, incoming) {
   const existingTnBefore = String(existing?.trackingNumber || existing?.tracking_no || "").trim();
-  const existingReturnBefore = String(existing?.return_tracking_no || "").trim();
+  const existingReturnBefore = String(
+    existing?.returnTrackingNumber || existing?.return_tracking_no || ""
+  ).trim();
   repairMisassignedTracking(merged);
   repairMisassignedTracking(existing);
   repairMisassignedTracking(incoming);
@@ -126277,9 +126444,24 @@ function mergeShopeeTrackingFields(merged, existing, incoming) {
   } else if (existing?.shopee_cancel_return_kind) {
     merged.shopee_cancel_return_kind = existing.shopee_cancel_return_kind;
   }
-  if (incoming?.return_tracking_no) merged.return_tracking_no = incoming.return_tracking_no;
-  else if (existing?.return_tracking_no) merged.return_tracking_no = existing.return_tracking_no;
-  else if (existingReturnBefore) merged.return_tracking_no = existingReturnBefore;
+  if (incoming?.returnTrackingNumber || incoming?.return_tracking_no) {
+    const rtn = String(incoming.returnTrackingNumber || incoming.return_tracking_no).trim();
+    merged.return_tracking_no = rtn;
+    merged.returnTrackingNumber = rtn;
+  } else if (existing?.returnTrackingNumber || existing?.return_tracking_no) {
+    const rtn = String(existing.returnTrackingNumber || existing.return_tracking_no).trim();
+    merged.return_tracking_no = rtn;
+    merged.returnTrackingNumber = rtn;
+  } else if (existingReturnBefore) {
+    merged.return_tracking_no = existingReturnBefore;
+    merged.returnTrackingNumber = existingReturnBefore;
+  }
+  if (incoming?.return_logistics_status) {
+    merged.return_logistics_status = incoming.return_logistics_status;
+  } else if (existing?.return_logistics_status) {
+    merged.return_logistics_status = existing.return_logistics_status;
+  }
+  merged.internalReturnReceiptStatus = existing?.internalReturnReceiptStatus === "DA_NHAN" ? "DA_NHAN" : "CHUA_NHAN";
   if (cancelReturn && existingTn && !incomingTn) {
     merged.trackingNumber = existingTn;
     merged.tracking_no = existingTn;
@@ -126382,6 +126564,13 @@ function enforceShopeeTerminalLocalStatus(order) {
     return true;
   }
   if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") {
+    const isReturnRequest = Boolean(order.return_sn) || order.status === "return_pending" || order.status === "return_received" || String(order.shopee_cancel_return_kind || "") === "refund_return";
+    if (isReturnRequest) {
+      if (order.status !== "return_received") order.status = "return_pending";
+      order.isPrepared = true;
+      order.is_pending_shopee_check = false;
+      return true;
+    }
     order.status = "shipping";
     order.shopee_order_status = raw;
     order.isPrepared = true;
@@ -127198,6 +127387,12 @@ async function enrichShopeeOrderTrackingFromApi(shopId, accessToken, order, opts
           const tn = extractTrackingFromReturnPayload(detail);
           if (tn) applyTn(tn, "get_return_detail");
           if (body?.status) order.return_status = String(body.status);
+          const returnLogistics = extractShopeeReturnLogisticsStatus(detail, void 0);
+          if (returnLogistics) order.return_logistics_status = returnLogistics;
+          if (tn) {
+            order.return_tracking_no = tn;
+            order.returnTrackingNumber = tn;
+          }
           if (!hasUsableShopeeTrackingNumber(order)) {
             const reverse = await shopeeGetReverseTrackingInfo(shopId, accessToken, returnSn);
             const errText = `${reverse?.error || ""} ${reverse?.message || ""}`;
@@ -127206,6 +127401,12 @@ async function enrichShopeeOrderTrackingFromApi(shopId, accessToken, order, opts
             } else {
               const rtn = extractTrackingFromReturnPayload(reverse);
               if (rtn) applyTn(rtn, "get_reverse_tracking_info");
+              if (rtn) {
+                order.return_tracking_no = rtn;
+                order.returnTrackingNumber = rtn;
+              }
+              const reverseLogistics = extractShopeeReturnLogisticsStatus(detail, reverse);
+              if (reverseLogistics) order.return_logistics_status = reverseLogistics;
             }
           }
         } catch (retErr) {
@@ -127389,6 +127590,7 @@ async function enrichMissingShopeeTracking() {
                   );
                   if (returnTracking.tracking) {
                     order.return_tracking_no = returnTracking.tracking;
+                    order.returnTrackingNumber = returnTracking.tracking;
                   } else {
                     setTrackingEnrichCooldown(order, "return_tracking_pending");
                   }
@@ -130349,7 +130551,11 @@ async function applyWebhookReturnFallback(shopId, accessToken, orderSn, orders, 
   const kind = mapShopeeReturnKind(detail);
   const returnStatus = String(detail.status || "").toUpperCase();
   const mappedReturnSn = extractReturnRequestCode(detail) || returnSn;
-  const { tracking: returnShipTn, sources: tnSources } = await fetchReturnShippingTrackingNumber(
+  const {
+    tracking: returnShipTn,
+    sources: tnSources,
+    logisticsStatus: returnLogistics
+  } = await fetchReturnShippingTrackingNumber(
     shopId,
     accessToken,
     mappedReturnSn,
@@ -130362,6 +130568,7 @@ async function applyWebhookReturnFallback(shopId, accessToken, orderSn, orders, 
     tnSources.reverse_tracking_info,
     tnSources.return_detail,
     detail.tracking_number,
+    existing?.returnTrackingNumber,
     existing?.return_tracking_no,
     existing?.trackingNumber,
     existing?.tracking_no
@@ -130383,10 +130590,12 @@ async function applyWebhookReturnFallback(shopId, accessToken, orderSn, orders, 
     return_refund_request_type: Number(detail.return_refund_request_type ?? 0),
     shopee_cancel_return_kind: kind,
     status: existing?.status === "return_received" || existing?.local_status === "RETURN_RECEIVED" ? "return_received" : "return_pending",
-    shopee_order_status: existing?.shopee_order_status || "TO_RETURN"
+    shopee_order_status: "TO_RETURN"
   };
   if (bestTn) {
-    patch.return_tracking_no = returnShipTn || tnSources.return_detail || bestTn;
+    applyReturnWaybillFields(patch, returnShipTn || tnSources.return_detail || bestTn, returnLogistics);
+  } else if (returnLogistics) {
+    patch.return_logistics_status = returnLogistics;
   }
   if (Number.isFinite(Number(detail.refund_amount))) {
     patch.refund_amount = Number(detail.refund_amount);
@@ -130412,9 +130621,18 @@ async function applyWebhookReturnFallback(shopId, accessToken, orderSn, orders, 
     }
     if (patch.return_tracking_no) {
       merged.return_tracking_no = patch.return_tracking_no;
+      merged.returnTrackingNumber = patch.return_tracking_no;
     } else {
-      merged.return_tracking_no = merged.return_tracking_no || existing?.return_tracking_no || void 0;
+      const kept = merged.returnTrackingNumber || merged.return_tracking_no || existing?.returnTrackingNumber || existing?.return_tracking_no || void 0;
+      if (kept) {
+        merged.return_tracking_no = kept;
+        merged.returnTrackingNumber = kept;
+      }
     }
+    if (patch.return_logistics_status) {
+      merged.return_logistics_status = patch.return_logistics_status;
+    }
+    merged.internalReturnReceiptStatus = existing?.internalReturnReceiptStatus === "DA_NHAN" ? "DA_NHAN" : "CHUA_NHAN";
     orders[idx] = merged;
   } else {
     orders.unshift({
@@ -130866,6 +131084,7 @@ async function startServer() {
     persistChangedOrdersPatch,
     markOrderHandedOverInStore,
     markOrderLocalStatusInStore,
+    markInternalReturnReceiptInStore,
     restoreLocalStockOnCancelReturnScan,
     restoreLocalStockOnCancelReturnScanBatch,
     loadProductsForOrders,

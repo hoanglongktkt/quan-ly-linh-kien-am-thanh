@@ -82,6 +82,7 @@ export function rebuildOrderLookupIndex(orders) {
     put(byTracking, order.trackingNumber);
     put(byTracking, order.tracking_no);
     put(byReturnTracking, order.return_tracking_no);
+    put(byReturnTracking, order.returnTrackingNumber);
     put(byInternal, order.internalTrackingCode);
     put(byPackage, order.packageNumber);
   });
@@ -680,8 +681,8 @@ export async function findOrderByScanLookup(orders, raw) {
       const trackingKey = order.trackingNumber
         ? normalizeScanLookupKey(order.trackingNumber)
         : "";
-      const returnTrackingKey = order.return_tracking_no
-        ? normalizeScanLookupKey(order.return_tracking_no)
+      const returnTrackingKey = order.returnTrackingNumber || order.return_tracking_no
+        ? normalizeScanLookupKey(order.returnTrackingNumber || order.return_tracking_no)
         : "";
       const internalKey = order.internalTrackingCode
         ? normalizeScanLookupKey(order.internalTrackingCode)
@@ -714,8 +715,8 @@ export async function findOrderByScanLookup(orders, raw) {
     const trackingKey = order.trackingNumber
       ? normalizeScanLookupKey(order.trackingNumber)
       : "";
-    const returnTrackingKey = order.return_tracking_no
-      ? normalizeScanLookupKey(order.return_tracking_no)
+    const returnTrackingKey = order.returnTrackingNumber || order.return_tracking_no
+      ? normalizeScanLookupKey(order.returnTrackingNumber || order.return_tracking_no)
       : "";
     const internalKey = order.internalTrackingCode
       ? normalizeScanLookupKey(order.internalTrackingCode)

@@ -805,7 +805,7 @@ function classifyScanCancelReturnBuckets(order: Order): {
 
 /** Quét khớp mã vận đơn chiều hoàn (return waybill). */
 function scannedMatchesReturnWaybill(order: Order, rawCode: string): boolean {
-  const rtn = normalizeOrderScanKey(order.return_tracking_no || '');
+  const rtn = normalizeOrderScanKey(order.returnTrackingNumber || order.return_tracking_no || '');
   if (!rtn || rtn.length < 6) return false;
   const keys = buildScanLookupKeys(rawCode);
   return keys.some((sk) => {
@@ -818,22 +818,58 @@ function scannedMatchesReturnWaybill(order: Order, rawCode: string): boolean {
   });
 }
 
-function formatReturnRequestStatus(status?: string): { text: string; color: string } {
-  const s = String(status || '').toUpperCase();
-  if (s === 'REQUESTED' || s === 'PENDING') {
-    return { text: 'Chờ xử lý', color: 'bg-amber-50 text-amber-700 border-amber-200' };
-  }
-  if (s === 'ACCEPTED' || s === 'PROCESSING' || s === 'JUDGING') {
-    return { text: 'Đang xử lý', color: 'bg-sky-50 text-sky-700 border-sky-200' };
-  }
-  if (s === 'REFUND_PAID' || s === 'COMPLETED') {
-    return { text: 'Hoàn tất', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
-  }
-  if (s === 'CANCELLED' || s === 'CLOSED') {
+function getOrderReturnTrackingNumber(order: Order): string {
+  return String(order.returnTrackingNumber || order.return_tracking_no || '').trim();
+}
+
+function getInternalReturnReceiptStatus(order: Order): 'CHUA_NHAN' | 'DA_NHAN' {
+  return String(order.internalReturnReceiptStatus || '').toUpperCase() === 'DA_NHAN'
+    ? 'DA_NHAN'
+    : 'CHUA_NHAN';
+}
+
+function isShopeeReturnReceivedStatus(order: Order): boolean {
+  const s = String(order.return_status || '').toUpperCase();
+  const log = String(order.return_logistics_status || '').toUpperCase();
+  if (s === 'CANCELLED') return false;
+  if (s === 'COMPLETED' || s === 'REFUND_PAID' || s === 'CLOSED') return true;
+  return /DELIVERED|DELIVERY_DONE|RECEIVED|SELLER_RECEIVE|LOGISTICS_DELIVERY_DONE/.test(log);
+}
+
+function formatReturnRequestStatus(order: Order): { text: string; color: string } {
+  const s = String(order.return_status || '').toUpperCase();
+  if (s === 'CANCELLED') {
     return { text: 'Đã hủy', color: 'bg-slate-100 text-slate-600 border-slate-200' };
   }
-  if (s) return { text: s, color: 'bg-orange-50 text-orange-700 border-orange-200' };
-  return { text: 'Yêu cầu trả hàng', color: 'bg-orange-50 text-orange-700 border-orange-200' };
+  if (isShopeeReturnReceivedStatus(order)) {
+    return {
+      text: 'Shopee báo Đã nhận hàng',
+      color: 'bg-blue-50 text-blue-700 border-blue-200',
+    };
+  }
+  return {
+    text: 'Đang hoàn về',
+    color: 'bg-orange-50 text-orange-700 border-orange-200',
+  };
+}
+
+function InternalReturnReceiptBadge({ order }: { order: Order }) {
+  const received = getInternalReturnReceiptStatus(order) === 'DA_NHAN';
+  if (received) {
+    return (
+      <span className="inline-block px-2.5 py-1 text-[10px] font-black rounded-full border bg-emerald-50 text-emerald-700 border-emerald-300">
+        ĐÃ QUÉT NHẬN HÀNG
+      </span>
+    );
+  }
+  return (
+    <span
+      className="inline-block px-2.5 py-1 text-[10px] font-black rounded-full border bg-red-50 text-red-700 border-red-300"
+      title="Shopee có thể báo đã giao nhưng kho chưa quét nhận — kiểm tra khiếu nại"
+    >
+      CHƯA NHẬN HÀNG THỰC TẾ
+    </span>
+  );
 }
 
 function VariationNameBadge({ variationName }: { variationName?: string }) {
@@ -1950,27 +1986,34 @@ export default function OrderManager({
         ) {
           const isCancelRequest = order.status === 'cancelled' && !order.return_sn;
           const updated = ordersRef.current.map((o) =>
-            o.id === order.id ? { ...o, status: 'return_received' as const } : o
+            o.id === order.id
+              ? {
+                  ...o,
+                  status: 'return_received' as const,
+                  internalReturnReceiptStatus: 'DA_NHAN' as const,
+                }
+              : o
           );
           ordersRef.current = updated;
           onUpdateOrders(updated);
+          void persistCancelReturnScanFlag(order, 'return', trimmed);
           onAddLog({
             id: `log-${Date.now()}`,
             timestamp: new Date().toISOString(),
             channel: order.channel,
             type: 'stock_sync',
             status: 'success',
-            message: `[QUÉT QR] Nhận hoàn đơn ${order.orderSn} → Yêu cầu trả hàng.`,
+            message: `[QUÉT QR] Nhận hoàn đơn ${order.orderSn} → Đã quét nhận hàng hoàn thành công.`,
           });
           setActiveSubTab('return_requests');
           scanFeedback(isCancelRequest ? 'warning' : 'success');
           setCameraScanError(false);
           setCameraScanSuccess(true);
-          setCameraScanResult(`✓ YCTH #${order.orderSn}`);
+          setCameraScanResult('Đã quét nhận hàng hoàn thành công');
           showScanToast(
             isCancelRequest
               ? `Đơn báo hủy #${order.orderSn} — đã chuyển nhận kiện`
-              : `Đã nhận hoàn / Yêu cầu trả hàng #${order.orderSn}`,
+              : 'Đã quét nhận hàng hoàn thành công',
             'success'
           );
           setTimeout(() => setCameraScanSuccess(false), 2000);
@@ -2072,6 +2115,7 @@ export default function OrderManager({
             order.trackingNumber,
             order.tracking_no,
             order.return_tracking_no,
+            order.returnTrackingNumber,
             order.id,
           ]
             .map((c) => String(c || '').trim())
@@ -2237,6 +2281,8 @@ export default function OrderManager({
           localOrder = {
             ...localOrder,
             return_tracking_no: syncHit.return_waybill || localOrder.return_tracking_no,
+            returnTrackingNumber:
+              syncHit.return_waybill || localOrder.returnTrackingNumber || localOrder.return_tracking_no,
             return_sn: localOrder.return_sn || 'scanner-sync',
             status:
               localOrder.status === 'return_received' ? 'return_received' : 'return_pending',
@@ -2322,7 +2368,7 @@ export default function OrderManager({
         }
 
         const waybill =
-          (matchedReturnWaybill && order.return_tracking_no) ||
+          (matchedReturnWaybill && getOrderReturnTrackingNumber(order)) ||
           getOrderWaybillCode(order);
         const orderKey = normalizeOrderScanKey(order.orderSn || order.id);
         if (
@@ -2330,7 +2376,7 @@ export default function OrderManager({
           isCodeAlreadyVerified(normalizeOrderScanKey(waybill)) ||
           isCodeAlreadyVerified(normalizeOrderScanKey(order.trackingNumber || '')) ||
           isCodeAlreadyVerified(normalizeOrderScanKey(order.tracking_no || '')) ||
-          isCodeAlreadyVerified(normalizeOrderScanKey(order.return_tracking_no || ''))
+          isCodeAlreadyVerified(normalizeOrderScanKey(getOrderReturnTrackingNumber(order)))
         ) {
           playScanSound('warning');
           vibrateScan('warning');
@@ -2360,18 +2406,16 @@ export default function OrderManager({
           });
           // Ghi ngay local_status=RETURN_RECEIVED xuống Mongo (tab lọc theo field này).
           void persistCancelReturnScanFlag(order, 'return', trimmed);
+          const marked = ordersRef.current.map((o) =>
+            o.id === order.id
+              ? { ...o, ...order, internalReturnReceiptStatus: 'DA_NHAN' as const, status: 'return_received' as const }
+              : o,
+          );
+          ordersRef.current = marked;
+          onUpdateOrders(marked, { persist: false });
           setActiveSubTab('return_requests');
-          setCameraScanResult(
-            waybill
-              ? `✓ YCTH · VĐ hoàn ${waybill} · #${order.orderSn}`
-              : `✓ Yêu cầu trả hàng #${order.orderSn}`,
-          );
-          showScanToast(
-            waybill
-              ? `Yêu cầu trả hàng #${order.orderSn} — mã VĐ hoàn: ${waybill}`
-              : `Đơn hoàn #${order.orderSn} — đã ghi nhận vào Yêu cầu trả hàng`,
-            'success',
-          );
+          setCameraScanResult('Đã quét nhận hàng hoàn thành công');
+          showScanToast('Đã quét nhận hàng hoàn thành công', 'success');
           return;
         }
 
@@ -6807,8 +6851,8 @@ export default function OrderManager({
 
       {activeSubTab === 'return_requests' && (
         <div className="bg-orange-50/80 border border-orange-100 rounded-2xl px-4 py-3 text-xs text-orange-950 font-semibold leading-relaxed">
-          Danh sách Yêu cầu trả hàng/Hoàn tiền từ Shopee (Return Request ID + mã vận đơn chiều hoàn).
-          Quét mã vận đơn hoàn sẽ tự khớp và phân loại vào tab này.
+          Danh sách Yêu cầu trả hàng từ Shopee. Trạng thái Shopee (Đang hoàn về / Đã nhận) tách biệt với đối soát kho
+          (CHƯA NHẬN HÀNG THỰC TẾ / ĐÃ QUÉT NHẬN HÀNG). Quét mã VĐ hoàn hoặc VĐ gốc để ghi nhận hàng về kho.
         </div>
       )}
 
@@ -7174,8 +7218,9 @@ export default function OrderManager({
                       <th className="p-4 w-[260px]">Sản phẩm</th>
                       <th className="p-4 text-right w-32">Số tiền hoàn</th>
                       <th className="p-4 w-44">Lý do</th>
-                      <th className="p-4 text-center w-32">Trạng thái</th>
-                      <th className="p-4 w-48">Mã vận đơn chiều hoàn</th>
+                      <th className="p-4 text-center w-40">Trạng thái Shopee</th>
+                      <th className="p-4 w-52">Mã vận đơn</th>
+                      <th className="p-4 text-center w-44">Đối soát kho</th>
                     </>
                   ) : activeSubTab === 'web_orders' ? (
                     <>
@@ -7215,7 +7260,7 @@ export default function OrderManager({
                         }
                       : badgeBase;
                   const isExpanded = expandedOrderId === order.id;
-                  const returnStatusBadge = formatReturnRequestStatus(order.return_status);
+                  const returnStatusBadge = formatReturnRequestStatus(order);
                   const refundAmt =
                     Number(order.refund_amount) > 0
                       ? Number(order.refund_amount)
@@ -7287,20 +7332,42 @@ export default function OrderManager({
                               {returnReason}
                             </p>
                           </td>
-                          <td className="p-4 text-center">
+                          <td className="p-4 text-center space-y-1.5">
                             <span className={`inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border ${returnStatusBadge.color}`}>
                               {returnStatusBadge.text}
                             </span>
                           </td>
-                          <td className="p-4">
-                            {order.return_tracking_no ? (
-                              <div className="font-mono font-extrabold text-gray-900 text-sm tracking-tight flex items-center gap-1" title={order.return_tracking_no}>
-                                <Barcode className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                                <span className="truncate max-w-[180px]">{order.return_tracking_no}</span>
-                              </div>
-                            ) : (
-                              <span className="text-xs text-gray-400 italic font-medium">Chưa có mã VĐ hoàn</span>
-                            )}
+                          <td className="p-4 space-y-1.5">
+                            {(() => {
+                              const outboundTn = String(order.trackingNumber || order.tracking_no || '').trim();
+                              const returnTn = getOrderReturnTrackingNumber(order);
+                              return (
+                                <>
+                                  {outboundTn && outboundTn !== returnTn ? (
+                                    <div className="text-[10px] text-gray-500">
+                                      <span className="uppercase font-bold tracking-wide text-[9px] text-gray-400">VĐ gốc</span>
+                                      <div className="font-mono font-semibold text-gray-700 truncate max-w-[200px]" title={outboundTn}>
+                                        {outboundTn}
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                  {returnTn ? (
+                                    <div className="rounded-lg border-2 border-orange-400 bg-orange-50 px-2 py-1">
+                                      <span className="uppercase font-black tracking-wide text-[9px] text-orange-700">Mã chiều hoàn</span>
+                                      <div className="font-mono font-extrabold text-orange-900 text-sm tracking-tight flex items-center gap-1" title={returnTn}>
+                                        <Barcode className="w-3.5 h-3.5 text-orange-600 shrink-0" />
+                                        <span className="truncate max-w-[180px]">{returnTn}</span>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <span className="text-xs text-gray-400 italic font-medium">Chưa có mã VĐ hoàn</span>
+                                  )}
+                                </>
+                              );
+                            })()}
+                          </td>
+                          <td className="p-4 text-center">
+                            <InternalReturnReceiptBadge order={order} />
                           </td>
                         </>
                       ) : (
@@ -7555,7 +7622,10 @@ export default function OrderManager({
                             </>
                           )}
 
-                          {order.status === 'shipping' && (
+                          {order.status === 'shipping' &&
+                            activeSubTab !== 'return_requests' &&
+                            !order.return_sn &&
+                            String(order.shopee_order_status || '').toUpperCase() !== 'TO_RETURN' && (
                             <div className="flex gap-1">
                               <button
                                 onClick={() => {
@@ -7578,7 +7648,7 @@ export default function OrderManager({
                             </div>
                           )}
 
-                          {order.status === 'return_pending' && (
+                          {order.status === 'return_pending' && activeSubTab !== 'return_requests' && (
                             <button
                               onClick={() => {
                                 const updated = orders.map(o => o.id === order.id ? { ...o, status: 'return_received' as const } : o);
@@ -7612,7 +7682,7 @@ export default function OrderManager({
                     </tr>
                     {isExpanded && (
                       <tr className="bg-slate-50/60">
-                        <td colSpan={activeSubTab === 'return_requests' ? 8 : 7} className="p-0">
+                        <td colSpan={activeSubTab === 'return_requests' ? 9 : 7} className="p-0">
                           <OrderDetailAccordionPanel
                             order={order}
                             shops={shops}
@@ -7675,7 +7745,15 @@ export default function OrderManager({
                           {resolveOrderShopDisplayName(order, shops)}
                         </span>
                       </div>
-                      {getOrderWaybillCode(order) ? (
+                      {getOrderReturnTrackingNumber(order) && activeSubTab === 'return_requests' ? (
+                        <div className="rounded-lg border-2 border-orange-400 bg-orange-50 px-2 py-1 mt-0.5">
+                          <span className="uppercase font-black tracking-wide text-[9px] text-orange-700">Mã chiều hoàn</span>
+                          <p className="font-mono font-extrabold text-orange-900 text-sm truncate flex items-center gap-1" title={getOrderReturnTrackingNumber(order)}>
+                            <Barcode className="w-3.5 h-3.5 text-orange-600 shrink-0" />
+                            <span className="truncate">{getOrderReturnTrackingNumber(order)}</span>
+                          </p>
+                        </div>
+                      ) : getOrderWaybillCode(order) ? (
                         <p className="font-mono font-extrabold text-gray-900 text-sm truncate mt-0.5 flex items-center gap-1" title={getOrderWaybillCode(order)}>
                           <Barcode className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                           <span className="truncate">{getOrderWaybillCode(order)}</span>
@@ -7683,6 +7761,11 @@ export default function OrderManager({
                       ) : (
                         <p className="text-xs text-gray-400 italic font-medium mt-0.5">Chưa có mã vận đơn</p>
                       )}
+                      {activeSubTab === 'return_requests' && getOrderWaybillCode(order) ? (
+                        <p className="text-[10px] text-gray-500 font-mono mt-0.5 truncate" title={getOrderWaybillCode(order)}>
+                          VĐ gốc: {getOrderWaybillCode(order)}
+                        </p>
+                      ) : null}
                       <p className="text-[10px] text-gray-400 font-mono mt-0.5">#{order.orderSn}</p>
                       <p className="text-[11px] text-gray-500 font-medium mt-0.5">
                         {new Date(order.date).toLocaleDateString('vi-VN')}
@@ -7758,6 +7841,18 @@ export default function OrderManager({
                         <Printer className={`w-3.5 h-3.5 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
                         In nhanh
                       </button>
+                    ) : activeSubTab === 'return_requests' ? (
+                      <div className="flex flex-col items-end gap-1.5">
+                        {(() => {
+                          const rr = formatReturnRequestStatus(order);
+                          return (
+                            <span className={`inline-block px-2 py-0.5 text-[9px] font-black rounded-full border shrink-0 ${rr.color}`}>
+                              {rr.text}
+                            </span>
+                          );
+                        })()}
+                        <InternalReturnReceiptBadge order={order} />
+                      </div>
                     ) : (
                       <>
                         <span className={`inline-block px-2 py-0.5 text-[9px] font-black rounded-full border shrink-0 ${badge.color}`}>
@@ -7923,7 +8018,10 @@ export default function OrderManager({
                         </>
                       )}
 
-                      {order.status === 'shipping' && (
+                      {order.status === 'shipping' &&
+                        activeSubTab !== 'return_requests' &&
+                        !order.return_sn &&
+                        String(order.shopee_order_status || '').toUpperCase() !== 'TO_RETURN' && (
                         <div className="flex gap-1">
                           <button
                             onClick={() => {
@@ -7946,7 +8044,7 @@ export default function OrderManager({
                         </div>
                       )}
 
-                      {order.status === 'return_pending' && (
+                      {order.status === 'return_pending' && activeSubTab !== 'return_requests' && (
                         <button
                           onClick={() => {
                             const updated = orders.map(o => o.id === order.id ? { ...o, status: 'return_received' as const } : o);

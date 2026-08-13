@@ -441,6 +441,7 @@ import {
   bulkUpdateShippedOrdersBySn,
   markOrderHandedOverInStore,
   markOrderLocalStatusInStore,
+  markInternalReturnReceiptInStore,
   markOrdersPrintedInStore,
   markOrdersHasPdfInStore,
   updateOrderPendingShopeeCheckInStore,
@@ -1443,20 +1444,60 @@ function extractShopeeReturnListRows(result: any): any[] {
   return rows;
 }
 
+function extractShopeeReturnLogisticsStatus(detail: any, reversePayload?: any): string {
+  const blobs: string[] = [];
+  const push = (v: unknown) => {
+    const s = String(v || "").trim();
+    if (s) blobs.push(s);
+  };
+  const detailBody = detail?.response ?? detail ?? {};
+  push(detailBody.reverse_logistic_status);
+  push(detailBody.reverse_logistics_status);
+  push(detailBody.logistics_status);
+  push(detailBody.return_status);
+  const reverseBody = reversePayload?.response ?? reversePayload ?? {};
+  push(reverseBody.logistics_status);
+  push(reverseBody.reverse_logistic_status);
+  push(reverseBody.reverse_logistics_status);
+  const infos =
+    (Array.isArray(reverseBody.tracking_info) && reverseBody.tracking_info) ||
+    (Array.isArray(detailBody.tracking_info) && detailBody.tracking_info) ||
+    [];
+  if (infos.length) {
+    const last = infos[infos.length - 1];
+    push(last?.logistics_status);
+    push(last?.description);
+    push(last?.status);
+  }
+  return blobs.join(" | ");
+}
+
+function applyReturnWaybillFields(target: any, tracking: string, logisticsStatus?: string) {
+  const tn = String(tracking || "").trim();
+  if (tn && !/^0FG/i.test(tn)) {
+    target.return_tracking_no = tn;
+    target.returnTrackingNumber = tn;
+  }
+  const log = String(logisticsStatus || "").trim();
+  if (log) target.return_logistics_status = log;
+}
+
 /** Lấy mã vận đơn chiều hoàn: reverse_tracking_info.tracking_number ưu tiên (SPXVN...). */
 async function fetchReturnShippingTrackingNumber(
   shopId: string,
   accessToken: string,
   returnSn: string,
   detailPayload?: any,
-): Promise<{ tracking: string; sources: Record<string, string> }> {
+): Promise<{ tracking: string; sources: Record<string, string>; logisticsStatus: string }> {
   const sources: Record<string, string> = {};
   const fromDetail = extractTrackingFromReturnPayload(detailPayload);
   if (fromDetail) sources.return_detail = fromDetail;
 
   let fromReverse = "";
+  let reversePayload: any = null;
   try {
     const reverse = await shopeeGetReverseTrackingInfo(shopId, accessToken, returnSn);
+    reversePayload = reverse;
     if (!reverse?.error) {
       const body = reverse?.response ?? reverse ?? {};
       fromReverse = pickBestTrackingNumber(
@@ -1488,7 +1529,8 @@ async function fetchReturnShippingTrackingNumber(
   }
 
   const tracking = pickBestTrackingNumber(fromReverse, fromDetail, sources.return_detail);
-  return { tracking, sources };
+  const logisticsStatus = extractShopeeReturnLogisticsStatus(detailPayload, reversePayload);
+  return { tracking, sources, logisticsStatus };
 }
 
 function parseShopeeReturnListMore(result: any): boolean {
@@ -4621,7 +4663,8 @@ async function syncShopeeReturnRequests(opts?: {
             const mappedReturnSn =
               extractReturnRequestCode(detail) || returnSn;
 
-            const { tracking: returnShipTn } = await fetchReturnShippingTrackingNumber(
+            const { tracking: returnShipTn, logisticsStatus: returnLogistics } =
+              await fetchReturnShippingTrackingNumber(
               shopId,
               accessToken,
               mappedReturnSn,
@@ -4694,9 +4737,15 @@ async function syncShopeeReturnRequests(opts?: {
             };
 
             if (returnShipTn) {
-              patch.return_tracking_no = returnShipTn;
-            } else if (existing?.return_tracking_no) {
-              patch.return_tracking_no = existing.return_tracking_no;
+              applyReturnWaybillFields(patch, returnShipTn, returnLogistics);
+            } else if (existing?.returnTrackingNumber || existing?.return_tracking_no) {
+              applyReturnWaybillFields(
+                patch,
+                existing.returnTrackingNumber || existing.return_tracking_no,
+                returnLogistics || existing.return_logistics_status,
+              );
+            } else if (returnLogistics) {
+              patch.return_logistics_status = returnLogistics;
             }
 
             if (alreadyCancelled) {
@@ -4707,10 +4756,10 @@ async function syncShopeeReturnRequests(opts?: {
               existing?.local_status === "RETURN_RECEIVED"
             ) {
               patch.status = "return_received";
-              patch.shopee_order_status = existing?.shopee_order_status || "TO_RETURN";
+              patch.shopee_order_status = "TO_RETURN";
             } else {
               patch.status = "return_pending";
-              patch.shopee_order_status = existing?.shopee_order_status || "TO_RETURN";
+              patch.shopee_order_status = "TO_RETURN";
             }
 
             // Giữ outbound tracking riêng — không ghi đè bằng mã chiều hoàn.
@@ -4730,7 +4779,14 @@ async function syncShopeeReturnRequests(opts?: {
             merged.return_reason = patch.return_reason;
             merged.text_reason = patch.text_reason;
             if (patch.return_tracking_no) merged.return_tracking_no = patch.return_tracking_no;
+            if (patch.returnTrackingNumber) merged.returnTrackingNumber = patch.returnTrackingNumber;
+            if (patch.return_logistics_status) {
+              merged.return_logistics_status = patch.return_logistics_status;
+            }
             if (patch.status) merged.status = patch.status;
+            // Cờ đối soát kho — TUYỆT ĐỐI không ghi đè từ Shopee.
+            merged.internalReturnReceiptStatus =
+              existing?.internalReturnReceiptStatus === "DA_NHAN" ? "DA_NHAN" : "CHUA_NHAN";
 
             patches.push(merged);
             pulled += 1;
@@ -11173,21 +11229,33 @@ function preserveExistingTrackingIfIncomingEmpty(target: any, existing: any | un
     target.trackingNumber = existingTn;
     target.tracking_no = existingTn;
   }
-  const existingReturnTn = String(existing.return_tracking_no || "").trim();
-  const incomingReturnTn = String(target.return_tracking_no || "").trim();
+  const existingReturnTn = String(
+    existing.returnTrackingNumber || existing.return_tracking_no || "",
+  ).trim();
+  const incomingReturnTn = String(
+    target.returnTrackingNumber || target.return_tracking_no || "",
+  ).trim();
   if (existingReturnTn && !incomingReturnTn) {
     target.return_tracking_no = existingReturnTn;
+    target.returnTrackingNumber = existingReturnTn;
+  } else if (incomingReturnTn) {
+    target.return_tracking_no = incomingReturnTn;
+    target.returnTrackingNumber = incomingReturnTn;
   }
+  // Cờ đối soát kho — không lấy từ Shopee.
+  target.internalReturnReceiptStatus =
+    existing.internalReturnReceiptStatus === "DA_NHAN" ? "DA_NHAN" : "CHUA_NHAN";
   // Hủy/hoàn: nếu thiếu outbound nhưng còn return TN (hoặc ngược lại) → mirror để UI quét được.
   if (isCancelOrReturnOrderStatus(target) || isCancelOrReturnOrderStatus(existing) || existing.return_sn) {
     const out = String(target.trackingNumber || target.tracking_no || "").trim();
-    const ret = String(target.return_tracking_no || "").trim();
+    const ret = String(target.returnTrackingNumber || target.return_tracking_no || "").trim();
     if (!out && ret) {
       target.trackingNumber = ret;
       target.tracking_no = ret;
     }
     if (!ret && out) {
       target.return_tracking_no = out;
+      target.returnTrackingNumber = out;
     }
   }
   const existingInternal = String(existing.internalTrackingCode || "").trim();
@@ -11207,7 +11275,9 @@ function preserveExistingTrackingIfIncomingEmpty(target: any, existing: any | un
 function mergeShopeeTrackingFields(merged: any, existing: any, incoming: any) {
   // Snapshot mã cũ TRƯỚC repair — tránh CLEAR làm mất TN khi đơn chuyển hủy/hoàn.
   const existingTnBefore = String(existing?.trackingNumber || existing?.tracking_no || "").trim();
-  const existingReturnBefore = String(existing?.return_tracking_no || "").trim();
+  const existingReturnBefore = String(
+    existing?.returnTrackingNumber || existing?.return_tracking_no || "",
+  ).trim();
   repairMisassignedTracking(merged);
   repairMisassignedTracking(existing);
   repairMisassignedTracking(incoming);
@@ -11250,9 +11320,26 @@ function mergeShopeeTrackingFields(merged: any, existing: any, incoming: any) {
     merged.shopee_cancel_return_kind = existing.shopee_cancel_return_kind;
   }
   // return_tracking_no giữ riêng — không ghi đè tracking_no outbound.
-  if (incoming?.return_tracking_no) merged.return_tracking_no = incoming.return_tracking_no;
-  else if (existing?.return_tracking_no) merged.return_tracking_no = existing.return_tracking_no;
-  else if (existingReturnBefore) merged.return_tracking_no = existingReturnBefore;
+  if (incoming?.returnTrackingNumber || incoming?.return_tracking_no) {
+    const rtn = String(incoming.returnTrackingNumber || incoming.return_tracking_no).trim();
+    merged.return_tracking_no = rtn;
+    merged.returnTrackingNumber = rtn;
+  } else if (existing?.returnTrackingNumber || existing?.return_tracking_no) {
+    const rtn = String(existing.returnTrackingNumber || existing.return_tracking_no).trim();
+    merged.return_tracking_no = rtn;
+    merged.returnTrackingNumber = rtn;
+  } else if (existingReturnBefore) {
+    merged.return_tracking_no = existingReturnBefore;
+    merged.returnTrackingNumber = existingReturnBefore;
+  }
+  if (incoming?.return_logistics_status) {
+    merged.return_logistics_status = incoming.return_logistics_status;
+  } else if (existing?.return_logistics_status) {
+    merged.return_logistics_status = existing.return_logistics_status;
+  }
+  // Đối soát kho nội bộ — Shopee sync KHÔNG ghi đè.
+  merged.internalReturnReceiptStatus =
+    existing?.internalReturnReceiptStatus === "DA_NHAN" ? "DA_NHAN" : "CHUA_NHAN";
 
   // BẮT BUỘC: đơn hủy/hoàn + sàn trả tracking rỗng → giữ mã cũ trong DB (quét barcode hoàn hàng).
   if (cancelReturn && existingTn && !incomingTn) {
@@ -11416,6 +11503,17 @@ function enforceShopeeTerminalLocalStatus(order: any): boolean {
     return true;
   }
   if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") {
+    const isReturnRequest =
+      Boolean(order.return_sn) ||
+      order.status === "return_pending" ||
+      order.status === "return_received" ||
+      String(order.shopee_cancel_return_kind || "") === "refund_return";
+    if (isReturnRequest) {
+      if (order.status !== "return_received") order.status = "return_pending";
+      order.isPrepared = true;
+      order.is_pending_shopee_check = false;
+      return true;
+    }
     order.status = "shipping";
     order.shopee_order_status = raw;
     order.isPrepared = true;
@@ -12562,6 +12660,12 @@ async function enrichShopeeOrderTrackingFromApi(
           const tn = extractTrackingFromReturnPayload(detail);
           if (tn) applyTn(tn, "get_return_detail");
           if (body?.status) order.return_status = String(body.status);
+          const returnLogistics = extractShopeeReturnLogisticsStatus(detail, undefined);
+          if (returnLogistics) order.return_logistics_status = returnLogistics;
+          if (tn) {
+            order.return_tracking_no = tn;
+            order.returnTrackingNumber = tn;
+          }
           if (!hasUsableShopeeTrackingNumber(order)) {
             const reverse = await shopeeGetReverseTrackingInfo(shopId, accessToken, returnSn);
             const errText = `${reverse?.error || ""} ${reverse?.message || ""}`;
@@ -12570,6 +12674,12 @@ async function enrichShopeeOrderTrackingFromApi(
             } else {
               const rtn = extractTrackingFromReturnPayload(reverse);
               if (rtn) applyTn(rtn, "get_reverse_tracking_info");
+              if (rtn) {
+                order.return_tracking_no = rtn;
+                order.returnTrackingNumber = rtn;
+              }
+              const reverseLogistics = extractShopeeReturnLogisticsStatus(detail, reverse);
+              if (reverseLogistics) order.return_logistics_status = reverseLogistics;
             }
           }
         } catch (retErr: any) {
@@ -12817,6 +12927,7 @@ async function enrichMissingShopeeTracking(): Promise<{
                   );
                   if (returnTracking.tracking) {
                     order.return_tracking_no = returnTracking.tracking;
+                    order.returnTrackingNumber = returnTracking.tracking;
                   } else {
                     // Chưa có mã chiều về / reverse logistics — cooldown để khỏi spam API.
                     setTrackingEnrichCooldown(order, "return_tracking_pending");
@@ -17553,7 +17664,11 @@ async function applyWebhookReturnFallback(
   const kind = mapShopeeReturnKind(detail);
   const returnStatus = String(detail.status || "").toUpperCase();
   const mappedReturnSn = extractReturnRequestCode(detail) || returnSn;
-  const { tracking: returnShipTn, sources: tnSources } = await fetchReturnShippingTrackingNumber(
+  const {
+    tracking: returnShipTn,
+    sources: tnSources,
+    logisticsStatus: returnLogistics,
+  } = await fetchReturnShippingTrackingNumber(
     shopId,
     accessToken,
     mappedReturnSn,
@@ -17566,6 +17681,7 @@ async function applyWebhookReturnFallback(
     tnSources.reverse_tracking_info,
     tnSources.return_detail,
     detail.tracking_number,
+    existing?.returnTrackingNumber,
     existing?.return_tracking_no,
     existing?.trackingNumber,
     existing?.tracking_no,
@@ -17596,11 +17712,12 @@ async function applyWebhookReturnFallback(
           existing?.status === "return_received" || existing?.local_status === "RETURN_RECEIVED"
             ? "return_received"
             : "return_pending",
-        shopee_order_status: existing?.shopee_order_status || "TO_RETURN",
+        shopee_order_status: "TO_RETURN",
       };
   if (bestTn) {
-    // Chỉ lưu mã chiều hoàn — KHÔNG ghi đè tracking_no outbound.
-    patch.return_tracking_no = returnShipTn || tnSources.return_detail || bestTn;
+    applyReturnWaybillFields(patch, returnShipTn || tnSources.return_detail || bestTn, returnLogistics);
+  } else if (returnLogistics) {
+    patch.return_logistics_status = returnLogistics;
   }
 
   if (Number.isFinite(Number(detail.refund_amount))) {
@@ -17628,12 +17745,24 @@ async function applyWebhookReturnFallback(
     }
     if (patch.return_tracking_no) {
       merged.return_tracking_no = patch.return_tracking_no;
+      merged.returnTrackingNumber = patch.return_tracking_no;
     } else {
-      merged.return_tracking_no =
+      const kept =
+        merged.returnTrackingNumber ||
         merged.return_tracking_no ||
+        existing?.returnTrackingNumber ||
         existing?.return_tracking_no ||
         undefined;
+      if (kept) {
+        merged.return_tracking_no = kept;
+        merged.returnTrackingNumber = kept;
+      }
     }
+    if (patch.return_logistics_status) {
+      merged.return_logistics_status = patch.return_logistics_status;
+    }
+    merged.internalReturnReceiptStatus =
+      existing?.internalReturnReceiptStatus === "DA_NHAN" ? "DA_NHAN" : "CHUA_NHAN";
     orders[idx] = merged;
   } else {
     orders.unshift({
@@ -18156,6 +18285,7 @@ async function startServer() {
     persistChangedOrdersPatch,
     markOrderHandedOverInStore,
     markOrderLocalStatusInStore,
+    markInternalReturnReceiptInStore,
     restoreLocalStockOnCancelReturnScan,
     restoreLocalStockOnCancelReturnScanBatch,
     loadProductsForOrders,
