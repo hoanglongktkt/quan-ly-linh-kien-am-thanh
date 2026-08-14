@@ -77946,6 +77946,59 @@ async function updateOrderTrackingInStore(orderSn, trackingNo, extra) {
   );
   return Boolean(result);
 }
+async function bulkSetTrackingNumbersInStore(items) {
+  if (!isMongoReady()) return { matched: 0, modified: 0 };
+  requireMongo();
+  const ops = [];
+  for (const item of items) {
+    const sn = String(item?.orderSn || "").replace(/^shopee-/i, "").trim();
+    const tn = String(item?.trackingNo || "").trim();
+    if (!sn || !tn || /^0FG/i.test(tn)) continue;
+    const _id = `shopee-${sn}`;
+    const shopIdStr = item?.shopId != null ? String(item.shopId).trim() : "";
+    const $set = {
+      tracking_no: tn,
+      trackingNumber: tn,
+      "data.tracking_no": tn,
+      "data.trackingNumber": tn
+    };
+    const pkg = String(item?.packageNumber || "").trim();
+    if (pkg) {
+      $set.packageNumber = pkg;
+      $set["data.packageNumber"] = pkg;
+      $set["data.package_number"] = pkg;
+    }
+    if (shopIdStr) {
+      $set.shopId = shopIdStr;
+      $set["data.shopId"] = shopIdStr;
+    }
+    ops.push({
+      updateOne: {
+        filter: {
+          $or: [{ orderSn: sn }, { "data.orderSn": sn }, { _id }]
+        },
+        update: { $set },
+        upsert: false
+      }
+    });
+  }
+  if (ops.length === 0) return { matched: 0, modified: 0 };
+  let matched = 0;
+  let modified = 0;
+  await enqueueWrite(async () => {
+    const result = await withWriteTimeout(
+      OrderModel.bulkWrite(ops, { ordered: false }),
+      "bulkSetTrackingNumbersInStore",
+      2e4
+    );
+    matched = Number(result.matchedCount ?? result.nMatched ?? 0);
+    modified = Number(result.modifiedCount ?? result.nModified ?? 0);
+    console.log(
+      `[GHN Backfill] bulkWrite $set tracking_no ops=${ops.length} matched=${matched} modified=${modified}`
+    );
+  });
+  return { matched, modified };
+}
 async function forceUpdateOrderShopIdInStore(orderSn, shopId, shopName) {
   if (!isMongoReady()) {
     return { ok: false, matched: false, modified: false, orderSn: String(orderSn || "") };
@@ -78582,6 +78635,86 @@ async function loadShopeeTrackingEnrichCandidatesFromStore(opts) {
   } catch (err) {
     console.warn(
       "[MongoDB] loadShopeeTrackingEnrichCandidatesFromStore failed:",
+      err?.message || err
+    );
+    return [];
+  }
+  if (!docs.length) return [];
+  return loadOrdersFromStore({ ids: docs.map((d) => String(d._id)) });
+}
+async function loadGhnBackfillCandidatesFromStore(opts) {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const limit = Math.min(Math.max(1, Math.floor(Number(opts?.limit) || 40)), 200);
+  const lookbackMs = Math.max(
+    6e4,
+    Number(opts?.lookbackMs) || 14 * 24 * 60 * 60 * 1e3
+  );
+  const cutoffIso = new Date(Date.now() - lookbackMs).toISOString();
+  const cutoffDate = new Date(Date.now() - lookbackMs);
+  const pickupStatuses = ["READY_TO_SHIP", "PROCESSED", "RETRY_SHIP"];
+  const localStatuses = ["unprocessed", "processed"];
+  const trackingEmpty = {
+    $and: [
+      {
+        $or: [
+          { tracking_no: null },
+          { tracking_no: "" },
+          { tracking_no: { $exists: false } },
+          { tracking_no: { $regex: /^0FG/i } }
+        ]
+      },
+      {
+        $or: [
+          { "data.tracking_no": null },
+          { "data.tracking_no": "" },
+          { "data.tracking_no": { $exists: false } },
+          { "data.tracking_no": { $regex: /^0FG/i } }
+        ]
+      },
+      {
+        $or: [
+          { "data.trackingNumber": null },
+          { "data.trackingNumber": "" },
+          { "data.trackingNumber": { $exists: false } },
+          { "data.trackingNumber": { $regex: /^0FG/i } }
+        ]
+      }
+    ]
+  };
+  const filter2 = {
+    $and: [
+      {
+        $or: [
+          { "data.channel": "shopee" },
+          { "data.channel": { $exists: false } },
+          { "data.channel": null },
+          { "data.channel": "" }
+        ]
+      },
+      {
+        $or: [
+          { "data.date": { $gte: cutoffIso } },
+          { last_synced_at: { $gte: cutoffDate } }
+        ]
+      },
+      {
+        $or: [
+          { shopee_order_status: { $in: pickupStatuses } },
+          { "data.shopee_order_status": { $in: pickupStatuses } },
+          { status: { $in: localStatuses } },
+          { "data.status": { $in: localStatuses } }
+        ]
+      },
+      trackingEmpty
+    ]
+  };
+  let docs;
+  try {
+    docs = await OrderModel.find(filter2).select({ _id: 1 }).sort({ "data.date": -1, _id: -1 }).limit(limit).maxTimeMS(8e3).lean();
+  } catch (err) {
+    console.warn(
+      "[GHN Backfill] loadGhnBackfillCandidatesFromStore failed:",
       err?.message || err
     );
     return [];
@@ -127029,7 +127162,196 @@ var SHOPEE_TRACKING_ENRICH_BATCH_LIMIT = 40;
 var SHOPEE_TRACKING_ENRICH_BATCH_SIZE = 10;
 var shopeeTrackingEnrichInFlight = false;
 var shopeeTrackingEnrichTimer;
+var shopeeTrackingEnrichBootTimer;
 var shopeeCancelReturnCronTimer;
+var ghnBackfillInFlight = false;
+function extractRawGhnTrackingNumber(payload) {
+  const resp = payload?.response ?? payload ?? {};
+  const candidates = [
+    resp?.tracking_number,
+    resp?.tracking_no,
+    resp?.last_mile_tracking_number,
+    resp?.third_party_tracking_number,
+    resp?.courier_tracking_number,
+    resp?.plp_number,
+    payload?.tracking_number,
+    payload?.tracking_no
+  ];
+  for (const c of candidates) {
+    const s2 = String(c ?? "").trim();
+    if (!s2 || s2.length < 6 || s2.length > 40) continue;
+    if (/^0FG/i.test(s2)) continue;
+    return s2;
+  }
+  return "";
+}
+function formatShopeeLogisticsBackfillError(result) {
+  const error = String(result?.error || "").trim();
+  const message = String(result?.message || result?.msg || "").trim();
+  const blob = `${error} ${message}`.toLowerCase();
+  if (blob.includes("shipping document") || blob.includes("create_shipping_document") || blob.includes("document_not") || blob.includes("need to create")) {
+    return `ch\u01B0a create shipping document (${error || "error"}: ${message || "-"})`;
+  }
+  if (blob.includes("arrange") || blob.includes("ship_order") || blob.includes("not ready") || blob.includes("package_number") || blob.includes("logistics.invalid")) {
+    return `ch\u01B0a x\xE1c nh\u1EADn \u0111\u01A1n / Arrange Shipment (${error || "error"}: ${message || "-"})`;
+  }
+  if (!error && !message) return "empty_tracking (Shopee ch\u01B0a c\u1EA5p m\xE3)";
+  return `${error || "error"}: ${message || "-"}`;
+}
+async function backfillMissingGhnTrackingNumbers() {
+  if (ghnBackfillInFlight) {
+    console.log("[GHN Backfill] SKIPPED \u2014 job \u0111ang ch\u1EA1y (mutex busy).");
+    return { skipped: true, message: "busy", candidates: 0, filled: 0, errors: 0 };
+  }
+  if (!isMongoReady()) {
+    console.warn("[GHN Backfill] SKIPPED \u2014 Mongo ch\u01B0a s\u1EB5n s\xE0ng.");
+    return { skipped: true, message: "mongo_not_ready", candidates: 0, filled: 0, errors: 0 };
+  }
+  ghnBackfillInFlight = true;
+  let candidatesCount = 0;
+  let filled = 0;
+  let errors = 0;
+  const pendingWrites = [];
+  try {
+    const orders = await loadGhnBackfillCandidatesFromStore({
+      lookbackMs: SHOPEE_TRACKING_ENRICH_LOOKBACK_MS,
+      limit: SHOPEE_TRACKING_ENRICH_BATCH_LIMIT
+    });
+    const candidates = orders.filter((order) => {
+      if (!order?.orderSn) return false;
+      if (hasUsableOutboundShopeeTracking(order)) return false;
+      const raw = String(order?.shopee_order_status || "").toUpperCase();
+      const st = String(order?.status || "").toLowerCase();
+      return raw === "READY_TO_SHIP" || raw === "PROCESSED" || raw === "RETRY_SHIP" || st === "unprocessed" || st === "processed";
+    });
+    candidatesCount = candidates.length;
+    if (candidates.length === 0) {
+      console.log("[GHN Backfill] Kh\xF4ng c\xF3 \u0111\u01A1n READY_TO_SHIP/PROCESSED thi\u1EBFu m\xE3.");
+      return { candidates: 0, filled: 0, errors: 0 };
+    }
+    console.log(`[GHN Backfill] START candidates=${candidates.length}`);
+    const byShop = /* @__PURE__ */ new Map();
+    for (const order of candidates) {
+      const shopId = resolveOrderShopId(order);
+      if (!shopId) {
+        errors += 1;
+        console.warn(`[GHN Backfill] Skip order_sn=${order.orderSn} \u2014 thi\u1EBFu shop_id.`);
+        continue;
+      }
+      const group = byShop.get(shopId) || [];
+      group.push(order);
+      byShop.set(shopId, group);
+    }
+    for (const [shopId, shopOrders] of byShop) {
+      let accessToken = null;
+      try {
+        accessToken = await getValidShopeeAccessToken(shopId);
+      } catch (tokenErr) {
+        errors += shopOrders.length;
+        console.warn(
+          `[GHN Backfill] Shop ${shopId} access_token exception:`,
+          tokenErr?.message || tokenErr
+        );
+        continue;
+      }
+      if (!accessToken) {
+        errors += shopOrders.length;
+        console.warn(`[GHN Backfill] Shop ${shopId}: kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c access_token.`);
+        continue;
+      }
+      for (const order of shopOrders) {
+        const orderSn = String(order.orderSn || "").trim();
+        console.log("[GHN Backfill] Syncing order: " + orderSn);
+        try {
+          const pkgNum = String(order.packageNumber || order.package_number || "").trim() || void 0;
+          let result = null;
+          try {
+            result = await shopeeGetTrackingNumber(shopId, accessToken, orderSn, pkgNum);
+          } catch (apiErr) {
+            console.warn(
+              `[GHN Backfill] get_tracking_number exception order_sn=${orderSn}:`,
+              apiErr?.message || apiErr
+            );
+            errors += 1;
+            await sleep2(SHOPEE_TRACKING_FETCH_DELAY_MS);
+            continue;
+          }
+          let tn = extractRawGhnTrackingNumber(result);
+          if (!tn) {
+            try {
+              applyShopeeGetTrackingResponse(order, result);
+              tn = extractRawGhnTrackingNumber({
+                response: {
+                  tracking_number: order.trackingNumber || order.tracking_no
+                }
+              });
+              if (hasUsableOutboundShopeeTracking(order)) {
+                tn = String(order.trackingNumber || order.tracking_no || "").trim();
+              }
+            } catch (parseErr) {
+              console.warn(
+                `[GHN Backfill] parse response order_sn=${orderSn}:`,
+                parseErr?.message || parseErr
+              );
+            }
+          }
+          if (tn && !/^0FG/i.test(tn)) {
+            order.trackingNumber = tn;
+            order.tracking_no = tn;
+            const pkg = String(order.packageNumber || order.package_number || pkgNum || "").trim();
+            pendingWrites.push({
+              orderSn,
+              trackingNo: tn,
+              packageNumber: pkg || void 0,
+              shopId
+            });
+            filled += 1;
+            console.log(`[GHN Backfill] OK order_sn=${orderSn} tracking_no=${tn}`);
+          } else {
+            const reason = formatShopeeLogisticsBackfillError(result);
+            console.log(
+              `[GHN Backfill] CH\u01AFA C\xD3 M\xC3 order_sn=${orderSn} raw=${order.shopee_order_status || "-"} reason=${reason}`
+            );
+          }
+        } catch (orderErr) {
+          errors += 1;
+          console.warn(
+            `[GHN Backfill] order_sn=${orderSn} failed (kh\xF4ng s\u1EADp job):`,
+            orderErr?.message || orderErr
+          );
+        }
+        await sleep2(SHOPEE_TRACKING_FETCH_DELAY_MS);
+      }
+    }
+    if (pendingWrites.length > 0) {
+      try {
+        await bulkSetTrackingNumbersInStore(pendingWrites);
+        const pdfReady = candidates.filter((o) => {
+          const sn = String(o?.orderSn || "").trim();
+          return pendingWrites.some((w) => w.orderSn === sn) && String(o?.packageNumber || o?.package_number || "").trim();
+        });
+        if (pdfReady.length > 0) {
+          try {
+            enqueueLabelPdfDownload(pdfReady);
+          } catch {
+          }
+        }
+      } catch (writeErr) {
+        errors += pendingWrites.length;
+        console.warn("[GHN Backfill] bulkWrite failed:", writeErr?.message || writeErr);
+      }
+    }
+    console.log(
+      `[GHN Backfill] DONE candidates=${candidatesCount} filled=${filled} errors=${errors}`
+    );
+    return { candidates: candidatesCount, filled, errors };
+  } catch (err) {
+    console.error("[GHN Backfill] FAILED:", err?.stack || err?.message || err);
+    return { candidates: candidatesCount, filled, errors: errors + 1 };
+  } finally {
+    ghnBackfillInFlight = false;
+  }
+}
 function getShopeeTrackingCandidateTime(order) {
   const raw = order?.last_shopee_update_at || order?.lastSynced || order?.last_synced_at || order?.updatedAt || order?.date;
   const value = raw instanceof Date ? raw.getTime() : new Date(String(raw || "")).getTime();
@@ -127053,6 +127375,16 @@ function needsBackgroundShopeeTrackingEnrichment(order, cutoffMs) {
   return missingOutbound && orderMayHaveShopeeTrackingNumber(order);
 }
 async function enrichMissingShopeeTracking() {
+  try {
+    const ghn = await backfillMissingGhnTrackingNumbers();
+    if (!ghn?.skipped) {
+      console.log(
+        `[Shopee Tracking Enrich] GHN backfill candidates=${ghn?.candidates || 0} filled=${ghn?.filled || 0}`
+      );
+    }
+  } catch (ghnErr) {
+    console.warn("[Shopee Tracking Enrich] GHN backfill:", ghnErr?.message || ghnErr);
+  }
   if (shopeeTrackingEnrichInFlight) {
     console.log("[Shopee Tracking Enrich] SKIPPED \u2014 job \u0111ang ch\u1EA1y (mutex busy).");
     return { skipped: true, candidates: 0, filled: 0, returnFilled: 0, errors: 0 };
@@ -127230,7 +127562,44 @@ function scheduleMissingShopeeTrackingEnrichment() {
     clearInterval(shopeeTrackingEnrichTimer);
     shopeeTrackingEnrichTimer = void 0;
   }
-  console.log("[Shopee Tracking Enrich] Scheduler OFF \u2014 ch\u1EC9 webhook + n\xFAt L\xE0m m\u1EDBi.");
+  if (shopeeTrackingEnrichBootTimer) {
+    clearTimeout(shopeeTrackingEnrichBootTimer);
+    shopeeTrackingEnrichBootTimer = void 0;
+  }
+  const disabled = String(process.env.AUTO_TRACKING_ENRICH_CRON || "1").trim() === "0" || String(process.env.AUTO_TRACKING_ENRICH_CRON || "").toLowerCase() === "off" || String(process.env.AUTO_TRACKING_ENRICH_CRON || "").toLowerCase() === "false";
+  if (disabled) {
+    console.log("[GHN Backfill] Scheduler OFF (AUTO_TRACKING_ENRICH_CRON=0).");
+    return;
+  }
+  const intervalMs = Math.max(
+    6e4,
+    Number(process.env.AUTO_TRACKING_ENRICH_MS) || SHOPEE_TRACKING_ENRICH_INTERVAL_MS
+  );
+  const run = (trigger) => {
+    console.log(`[GHN Backfill] Tick trigger=${trigger}`);
+    void backfillMissingGhnTrackingNumbers().then((r2) => {
+      if (r2?.skipped) {
+        console.log(`[GHN Backfill] skipped: ${r2.message || "busy"}`);
+        return;
+      }
+      console.log(
+        `[GHN Backfill] tick done candidates=${r2?.candidates || 0} filled=${r2?.filled || 0} errors=${r2?.errors || 0}`
+      );
+    }).catch((err) => {
+      console.warn("[GHN Backfill] tick failed:", err?.message || err);
+    });
+  };
+  shopeeTrackingEnrichTimer = setInterval(() => run("interval"), intervalMs);
+  if (typeof shopeeTrackingEnrichTimer.unref === "function") {
+    shopeeTrackingEnrichTimer.unref();
+  }
+  shopeeTrackingEnrichBootTimer = setTimeout(() => run("boot"), 25e3);
+  if (typeof shopeeTrackingEnrichBootTimer.unref === "function") {
+    shopeeTrackingEnrichBootTimer.unref();
+  }
+  console.log(
+    `[GHN Backfill] Scheduler ON \u2014 every ${Math.round(intervalMs / 1e3)}s + boot kick 25s.`
+  );
 }
 function scheduleShopeeCancelReturnReconcile() {
   if (shopeeCancelReturnCronTimer) {
@@ -128176,14 +128545,14 @@ function scheduleDeferredTrackingEnrich(apiShopId, accessToken, orders) {
 }
 function kickMissingShopeeTrackingEnrichment(reason) {
   setImmediate(() => {
-    void enrichMissingShopeeTracking().then((r2) => {
+    void backfillMissingGhnTrackingNumbers().then((r2) => {
       if (r2?.skipped) return;
       console.log(
-        `[Shopee Tracking] Deferred job (${reason}) candidates=${r2?.candidates || 0} filled=${r2?.filled || 0}`
+        `[GHN Backfill] Deferred (${reason}) candidates=${r2?.candidates || 0} filled=${r2?.filled || 0}`
       );
     }).catch((err) => {
       console.warn(
-        `[Shopee Tracking] Deferred job (${reason}) failed:`,
+        `[GHN Backfill] Deferred (${reason}) failed:`,
         err?.message || err
       );
     });
@@ -134600,7 +134969,7 @@ async function startServer() {
       console.log(`[MongoDB] listen OK \u2014 connecting DB in background (ready=${isMongoReady()})`);
       void connectDB2();
       console.log("[Boot] Order sync: webhook ON + manual trigger (BG) + cron incremental ON.");
-      console.log("[Boot] Recovery pull OFF | Tracking enrich cron OFF | CancelReturn cron OFF.");
+      console.log("[Boot] Recovery pull OFF | GHN tracking backfill ON | CancelReturn cron OFF.");
       console.log("[PDF Cleanup] Auto cleanup ON \u2014 m\u1ED7i 24h x\xF3a file > 3 ng\xE0y.");
       console.log(
         `[Shopee Webhook] orders write ${String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "1").trim() === "0" ? "OFF (disabled)" : "ON"}`

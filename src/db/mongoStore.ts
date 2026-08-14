@@ -2879,6 +2879,72 @@ export async function updateOrderTrackingInStore(
 }
 
 /**
+ * Job bù mã GHN — bulkWrite $set tracking_no thẳng DB.
+ * Không lọc Regex kén chọn (chữ cái / lệch hãng). Chỉ bỏ mã nội bộ 0FG.
+ * Không đụng last_shopee_update_at (tránh watermark nuốt mất mã vừa lấy).
+ */
+export async function bulkSetTrackingNumbersInStore(
+  items: Array<{
+    orderSn: string;
+    trackingNo: string;
+    packageNumber?: string;
+    shopId?: string;
+  }>,
+): Promise<{ matched: number; modified: number }> {
+  if (!isMongoReady()) return { matched: 0, modified: 0 };
+  requireMongo();
+  const ops: any[] = [];
+  for (const item of items) {
+    const sn = String(item?.orderSn || "").replace(/^shopee-/i, "").trim();
+    const tn = String(item?.trackingNo || "").trim();
+    if (!sn || !tn || /^0FG/i.test(tn)) continue;
+    const _id = `shopee-${sn}`;
+    const shopIdStr = item?.shopId != null ? String(item.shopId).trim() : "";
+    const $set: Record<string, unknown> = {
+      tracking_no: tn,
+      trackingNumber: tn,
+      "data.tracking_no": tn,
+      "data.trackingNumber": tn,
+    };
+    const pkg = String(item?.packageNumber || "").trim();
+    if (pkg) {
+      $set.packageNumber = pkg;
+      $set["data.packageNumber"] = pkg;
+      $set["data.package_number"] = pkg;
+    }
+    if (shopIdStr) {
+      $set.shopId = shopIdStr;
+      $set["data.shopId"] = shopIdStr;
+    }
+    ops.push({
+      updateOne: {
+        filter: {
+          $or: [{ orderSn: sn }, { "data.orderSn": sn }, { _id }],
+        },
+        update: { $set },
+        upsert: false,
+      },
+    });
+  }
+  if (ops.length === 0) return { matched: 0, modified: 0 };
+  let matched = 0;
+  let modified = 0;
+  await enqueueWrite(async () => {
+    const result = await withWriteTimeout(
+      OrderModel.bulkWrite(ops, { ordered: false }),
+      "bulkSetTrackingNumbersInStore",
+      20_000,
+    );
+    matched = Number((result as any).matchedCount ?? (result as any).nMatched ?? 0);
+    modified = Number((result as any).modifiedCount ?? (result as any).nModified ?? 0);
+    console.log(
+      `[GHN Backfill] bulkWrite $set tracking_no ops=${ops.length} matched=${matched} modified=${modified}`,
+    );
+  });
+  return { matched, modified };
+}
+
+/**
  * Force ghi đè shopId + shopName theo order_sn (sửa tay đơn gắn nhầm shop).
  */
 export async function forceUpdateOrderShopIdInStore(
@@ -4011,6 +4077,99 @@ export async function loadShopeeTrackingEnrichCandidatesFromStore(opts: {
   } catch (err: any) {
     console.warn(
       "[MongoDB] loadShopeeTrackingEnrichCandidatesFromStore failed:",
+      err?.message || err,
+    );
+    return [];
+  }
+  if (!docs.length) return [];
+  return loadOrdersFromStore({ ids: docs.map((d) => String(d._id)) });
+}
+
+/**
+ * Job bù mã GHN — READY_TO_SHIP / PROCESSED / RETRY_SHIP có tracking_no rỗng/null.
+ * AND cả root + data (tránh $or lỏng lấy nhầm đơn đã có mã).
+ */
+export async function loadGhnBackfillCandidatesFromStore(opts?: {
+  lookbackMs?: number;
+  limit?: number;
+}): Promise<any[]> {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const limit = Math.min(Math.max(1, Math.floor(Number(opts?.limit) || 40)), 200);
+  const lookbackMs = Math.max(
+    60_000,
+    Number(opts?.lookbackMs) || 14 * 24 * 60 * 60 * 1000,
+  );
+  const cutoffIso = new Date(Date.now() - lookbackMs).toISOString();
+  const cutoffDate = new Date(Date.now() - lookbackMs);
+  const pickupStatuses = ["READY_TO_SHIP", "PROCESSED", "RETRY_SHIP"];
+  const localStatuses = ["unprocessed", "processed"];
+  const trackingEmpty = {
+    $and: [
+      {
+        $or: [
+          { tracking_no: null },
+          { tracking_no: "" },
+          { tracking_no: { $exists: false } },
+          { tracking_no: { $regex: /^0FG/i } },
+        ],
+      },
+      {
+        $or: [
+          { "data.tracking_no": null },
+          { "data.tracking_no": "" },
+          { "data.tracking_no": { $exists: false } },
+          { "data.tracking_no": { $regex: /^0FG/i } },
+        ],
+      },
+      {
+        $or: [
+          { "data.trackingNumber": null },
+          { "data.trackingNumber": "" },
+          { "data.trackingNumber": { $exists: false } },
+          { "data.trackingNumber": { $regex: /^0FG/i } },
+        ],
+      },
+    ],
+  };
+  const filter: Record<string, unknown> = {
+    $and: [
+      {
+        $or: [
+          { "data.channel": "shopee" },
+          { "data.channel": { $exists: false } },
+          { "data.channel": null },
+          { "data.channel": "" },
+        ],
+      },
+      {
+        $or: [
+          { "data.date": { $gte: cutoffIso } },
+          { last_synced_at: { $gte: cutoffDate } },
+        ],
+      },
+      {
+        $or: [
+          { shopee_order_status: { $in: pickupStatuses } },
+          { "data.shopee_order_status": { $in: pickupStatuses } },
+          { status: { $in: localStatuses } },
+          { "data.status": { $in: localStatuses } },
+        ],
+      },
+      trackingEmpty,
+    ],
+  };
+  let docs: any[];
+  try {
+    docs = await OrderModel.find(filter)
+      .select({ _id: 1 })
+      .sort({ "data.date": -1, _id: -1 })
+      .limit(limit)
+      .maxTimeMS(8_000)
+      .lean();
+  } catch (err: any) {
+    console.warn(
+      "[GHN Backfill] loadGhnBackfillCandidatesFromStore failed:",
       err?.message || err,
     );
     return [];

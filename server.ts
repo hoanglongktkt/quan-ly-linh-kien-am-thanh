@@ -458,6 +458,8 @@ import {
   findOrderByScanCodeInStore,
   findOrdersByScanCodesInStore,
   loadShopeeTrackingEnrichCandidatesFromStore,
+  loadGhnBackfillCandidatesFromStore,
+  bulkSetTrackingNumbersInStore,
   loadCancelReturnMissingTrackingFromStore,
   queryOrdersPageFromStore,
   orderTabFilter,
@@ -12590,7 +12592,242 @@ const SHOPEE_TRACKING_ENRICH_BATCH_LIMIT = 40;
 const SHOPEE_TRACKING_ENRICH_BATCH_SIZE = 10;
 let shopeeTrackingEnrichInFlight = false;
 let shopeeTrackingEnrichTimer: ReturnType<typeof setInterval> | undefined;
+let shopeeTrackingEnrichBootTimer: ReturnType<typeof setTimeout> | undefined;
 let shopeeCancelReturnCronTimer: ReturnType<typeof setInterval> | undefined;
+let ghnBackfillInFlight = false;
+
+/** Lấy mã GHN/SPX thô từ get_tracking_number — không Regex bắt chữ cái, không check hãng. */
+function extractRawGhnTrackingNumber(payload: any): string {
+  const resp = payload?.response ?? payload ?? {};
+  const candidates = [
+    resp?.tracking_number,
+    resp?.tracking_no,
+    resp?.last_mile_tracking_number,
+    resp?.third_party_tracking_number,
+    resp?.courier_tracking_number,
+    resp?.plp_number,
+    payload?.tracking_number,
+    payload?.tracking_no,
+  ];
+  for (const c of candidates) {
+    const s = String(c ?? "").trim();
+    if (!s || s.length < 6 || s.length > 40) continue;
+    if (/^0FG/i.test(s)) continue;
+    return s;
+  }
+  return "";
+}
+
+function formatShopeeLogisticsBackfillError(result: any): string {
+  const error = String(result?.error || "").trim();
+  const message = String(result?.message || result?.msg || "").trim();
+  const blob = `${error} ${message}`.toLowerCase();
+  if (
+    blob.includes("shipping document") ||
+    blob.includes("create_shipping_document") ||
+    blob.includes("document_not") ||
+    blob.includes("need to create")
+  ) {
+    return `chưa create shipping document (${error || "error"}: ${message || "-"})`;
+  }
+  if (
+    blob.includes("arrange") ||
+    blob.includes("ship_order") ||
+    blob.includes("not ready") ||
+    blob.includes("package_number") ||
+    blob.includes("logistics.invalid")
+  ) {
+    return `chưa xác nhận đơn / Arrange Shipment (${error || "error"}: ${message || "-"})`;
+  }
+  if (!error && !message) return "empty_tracking (Shopee chưa cấp mã)";
+  return `${error || "error"}: ${message || "-"}`;
+}
+
+/**
+ * Job bù mã GHN: quét READY_TO_SHIP / PROCESSED (tracking_no rỗng) → get_tracking_number
+ * → bulkWrite $set thẳng DB. Không Regex kén chọn, không isTrackingCompatibleWithCarrier.
+ */
+async function backfillMissingGhnTrackingNumbers(): Promise<{
+  skipped?: boolean;
+  message?: string;
+  candidates: number;
+  filled: number;
+  errors: number;
+}> {
+  if (ghnBackfillInFlight) {
+    console.log("[GHN Backfill] SKIPPED — job đang chạy (mutex busy).");
+    return { skipped: true, message: "busy", candidates: 0, filled: 0, errors: 0 };
+  }
+  if (!isMongoReady()) {
+    console.warn("[GHN Backfill] SKIPPED — Mongo chưa sẵn sàng.");
+    return { skipped: true, message: "mongo_not_ready", candidates: 0, filled: 0, errors: 0 };
+  }
+
+  ghnBackfillInFlight = true;
+  let candidatesCount = 0;
+  let filled = 0;
+  let errors = 0;
+  const pendingWrites: Array<{
+    orderSn: string;
+    trackingNo: string;
+    packageNumber?: string;
+    shopId?: string;
+  }> = [];
+
+  try {
+    const orders = await loadGhnBackfillCandidatesFromStore({
+      lookbackMs: SHOPEE_TRACKING_ENRICH_LOOKBACK_MS,
+      limit: SHOPEE_TRACKING_ENRICH_BATCH_LIMIT,
+    });
+    const candidates = orders.filter((order: any) => {
+      if (!order?.orderSn) return false;
+      if (hasUsableOutboundShopeeTracking(order)) return false;
+      const raw = String(order?.shopee_order_status || "").toUpperCase();
+      const st = String(order?.status || "").toLowerCase();
+      return (
+        raw === "READY_TO_SHIP" ||
+        raw === "PROCESSED" ||
+        raw === "RETRY_SHIP" ||
+        st === "unprocessed" ||
+        st === "processed"
+      );
+    });
+    candidatesCount = candidates.length;
+    if (candidates.length === 0) {
+      console.log("[GHN Backfill] Không có đơn READY_TO_SHIP/PROCESSED thiếu mã.");
+      return { candidates: 0, filled: 0, errors: 0 };
+    }
+
+    console.log(`[GHN Backfill] START candidates=${candidates.length}`);
+    const byShop = new Map<string, any[]>();
+    for (const order of candidates) {
+      const shopId = resolveOrderShopId(order);
+      if (!shopId) {
+        errors += 1;
+        console.warn(`[GHN Backfill] Skip order_sn=${order.orderSn} — thiếu shop_id.`);
+        continue;
+      }
+      const group = byShop.get(shopId) || [];
+      group.push(order);
+      byShop.set(shopId, group);
+    }
+
+    for (const [shopId, shopOrders] of byShop) {
+      let accessToken: string | null = null;
+      try {
+        accessToken = await getValidShopeeAccessToken(shopId);
+      } catch (tokenErr: any) {
+        errors += shopOrders.length;
+        console.warn(
+          `[GHN Backfill] Shop ${shopId} access_token exception:`,
+          tokenErr?.message || tokenErr,
+        );
+        continue;
+      }
+      if (!accessToken) {
+        errors += shopOrders.length;
+        console.warn(`[GHN Backfill] Shop ${shopId}: không lấy được access_token.`);
+        continue;
+      }
+
+      for (const order of shopOrders) {
+        const orderSn = String(order.orderSn || "").trim();
+        console.log("[GHN Backfill] Syncing order: " + orderSn);
+        try {
+          const pkgNum = String(order.packageNumber || order.package_number || "").trim() || undefined;
+          let result: any = null;
+          try {
+            result = await shopeeGetTrackingNumber(shopId, accessToken, orderSn, pkgNum);
+          } catch (apiErr: any) {
+            console.warn(
+              `[GHN Backfill] get_tracking_number exception order_sn=${orderSn}:`,
+              apiErr?.message || apiErr,
+            );
+            errors += 1;
+            await sleep(SHOPEE_TRACKING_FETCH_DELAY_MS);
+            continue;
+          }
+
+          let tn = extractRawGhnTrackingNumber(result);
+          if (!tn) {
+            try {
+              applyShopeeGetTrackingResponse(order, result);
+              tn = extractRawGhnTrackingNumber({
+                response: {
+                  tracking_number: order.trackingNumber || order.tracking_no,
+                },
+              });
+              if (hasUsableOutboundShopeeTracking(order)) {
+                tn = String(order.trackingNumber || order.tracking_no || "").trim();
+              }
+            } catch (parseErr: any) {
+              console.warn(
+                `[GHN Backfill] parse response order_sn=${orderSn}:`,
+                parseErr?.message || parseErr,
+              );
+            }
+          }
+
+          if (tn && !/^0FG/i.test(tn)) {
+            order.trackingNumber = tn;
+            order.tracking_no = tn;
+            const pkg = String(order.packageNumber || order.package_number || pkgNum || "").trim();
+            pendingWrites.push({
+              orderSn,
+              trackingNo: tn,
+              packageNumber: pkg || undefined,
+              shopId,
+            });
+            filled += 1;
+            console.log(`[GHN Backfill] OK order_sn=${orderSn} tracking_no=${tn}`);
+          } else {
+            const reason = formatShopeeLogisticsBackfillError(result);
+            console.log(
+              `[GHN Backfill] CHƯA CÓ MÃ order_sn=${orderSn} raw=${order.shopee_order_status || "-"} reason=${reason}`,
+            );
+          }
+        } catch (orderErr: any) {
+          errors += 1;
+          console.warn(
+            `[GHN Backfill] order_sn=${orderSn} failed (không sập job):`,
+            orderErr?.message || orderErr,
+          );
+        }
+        await sleep(SHOPEE_TRACKING_FETCH_DELAY_MS);
+      }
+    }
+
+    if (pendingWrites.length > 0) {
+      try {
+        await bulkSetTrackingNumbersInStore(pendingWrites);
+        const pdfReady = candidates.filter((o: any) => {
+          const sn = String(o?.orderSn || "").trim();
+          return pendingWrites.some((w) => w.orderSn === sn) && String(o?.packageNumber || o?.package_number || "").trim();
+        });
+        if (pdfReady.length > 0) {
+          try {
+            enqueueLabelPdfDownload(pdfReady);
+          } catch {
+            /* PDF queue không chặn bù mã */
+          }
+        }
+      } catch (writeErr: any) {
+        errors += pendingWrites.length;
+        console.warn("[GHN Backfill] bulkWrite failed:", writeErr?.message || writeErr);
+      }
+    }
+
+    console.log(
+      `[GHN Backfill] DONE candidates=${candidatesCount} filled=${filled} errors=${errors}`,
+    );
+    return { candidates: candidatesCount, filled, errors };
+  } catch (err: any) {
+    console.error("[GHN Backfill] FAILED:", err?.stack || err?.message || err);
+    return { candidates: candidatesCount, filled, errors: errors + 1 };
+  } finally {
+    ghnBackfillInFlight = false;
+  }
+}
 
 function getShopeeTrackingCandidateTime(order: any): number {
   const raw =
@@ -12635,6 +12872,18 @@ async function enrichMissingShopeeTracking(): Promise<{
   returnFilled: number;
   errors: number;
 }> {
+  // Bù mã GHN (RTS/PROCESSED) trước — job riêng, bulkWrite $set, không Regex kén chọn.
+  try {
+    const ghn = await backfillMissingGhnTrackingNumbers();
+    if (!ghn?.skipped) {
+      console.log(
+        `[Shopee Tracking Enrich] GHN backfill candidates=${ghn?.candidates || 0} filled=${ghn?.filled || 0}`,
+      );
+    }
+  } catch (ghnErr: any) {
+    console.warn("[Shopee Tracking Enrich] GHN backfill:", ghnErr?.message || ghnErr);
+  }
+
   if (shopeeTrackingEnrichInFlight) {
     console.log("[Shopee Tracking Enrich] SKIPPED — job đang chạy (mutex busy).");
     return { skipped: true, candidates: 0, filled: 0, returnFilled: 0, errors: 0 };
@@ -12844,13 +13093,58 @@ async function enrichMissingShopeeTracking(): Promise<{
   }
 }
 
-/** TẮT hẳn — không setInterval tracking enrich (process leak cPanel). */
+/** Job bù mã GHN — setInterval (Passenger-safe) + boot kick. Tắt: AUTO_TRACKING_ENRICH_CRON=0 */
 function scheduleMissingShopeeTrackingEnrichment(): void {
   if (shopeeTrackingEnrichTimer) {
     clearInterval(shopeeTrackingEnrichTimer);
     shopeeTrackingEnrichTimer = undefined;
   }
-  console.log("[Shopee Tracking Enrich] Scheduler OFF — chỉ webhook + nút Làm mới.");
+  if (shopeeTrackingEnrichBootTimer) {
+    clearTimeout(shopeeTrackingEnrichBootTimer);
+    shopeeTrackingEnrichBootTimer = undefined;
+  }
+
+  const disabled =
+    String(process.env.AUTO_TRACKING_ENRICH_CRON || "1").trim() === "0" ||
+    String(process.env.AUTO_TRACKING_ENRICH_CRON || "").toLowerCase() === "off" ||
+    String(process.env.AUTO_TRACKING_ENRICH_CRON || "").toLowerCase() === "false";
+  if (disabled) {
+    console.log("[GHN Backfill] Scheduler OFF (AUTO_TRACKING_ENRICH_CRON=0).");
+    return;
+  }
+
+  const intervalMs = Math.max(
+    60_000,
+    Number(process.env.AUTO_TRACKING_ENRICH_MS) || SHOPEE_TRACKING_ENRICH_INTERVAL_MS,
+  );
+  const run = (trigger: string) => {
+    console.log(`[GHN Backfill] Tick trigger=${trigger}`);
+    void backfillMissingGhnTrackingNumbers()
+      .then((r) => {
+        if (r?.skipped) {
+          console.log(`[GHN Backfill] skipped: ${r.message || "busy"}`);
+          return;
+        }
+        console.log(
+          `[GHN Backfill] tick done candidates=${r?.candidates || 0} filled=${r?.filled || 0} errors=${r?.errors || 0}`,
+        );
+      })
+      .catch((err: any) => {
+        console.warn("[GHN Backfill] tick failed:", err?.message || err);
+      });
+  };
+
+  shopeeTrackingEnrichTimer = setInterval(() => run("interval"), intervalMs);
+  if (typeof shopeeTrackingEnrichTimer.unref === "function") {
+    shopeeTrackingEnrichTimer.unref();
+  }
+  shopeeTrackingEnrichBootTimer = setTimeout(() => run("boot"), 25_000);
+  if (typeof shopeeTrackingEnrichBootTimer.unref === "function") {
+    shopeeTrackingEnrichBootTimer.unref();
+  }
+  console.log(
+    `[GHN Backfill] Scheduler ON — every ${Math.round(intervalMs / 1000)}s + boot kick 25s.`,
+  );
 }
 
 /** TẮT hẳn — không setInterval cancel/return reconcile. */
@@ -14478,16 +14772,16 @@ function scheduleDeferredTrackingEnrich(
 
 function kickMissingShopeeTrackingEnrichment(reason: string): void {
   setImmediate(() => {
-    void enrichMissingShopeeTracking()
+    void backfillMissingGhnTrackingNumbers()
       .then((r) => {
         if (r?.skipped) return;
         console.log(
-          `[Shopee Tracking] Deferred job (${reason}) candidates=${r?.candidates || 0} filled=${r?.filled || 0}`,
+          `[GHN Backfill] Deferred (${reason}) candidates=${r?.candidates || 0} filled=${r?.filled || 0}`,
         );
       })
       .catch((err: any) => {
         console.warn(
-          `[Shopee Tracking] Deferred job (${reason}) failed:`,
+          `[GHN Backfill] Deferred (${reason}) failed:`,
           err?.message || err,
         );
       });
@@ -22870,9 +23164,9 @@ async function startServer() {
               err instanceof Error ? err.message : err,
             );
           });
-        // Tracking/cancel cron vẫn OFF (tránh process leak). Order incremental sync ON (5 phút).
+        // GHN tracking backfill ON (setInterval 10 phút + boot kick). Cancel cron OFF.
         // Handed-over status reconcile ON (cron 5 phút + setInterval + boot kick) — dò SHIPPED → Đang giao.
-        scheduleMissingShopeeTrackingEnrichment(); // no-op OFF
+        scheduleMissingShopeeTrackingEnrichment(); // GHN bù mã RTS/PROCESSED
         scheduleShopeeCancelReturnReconcile(); // no-op OFF
         scheduleAutoIncrementalOrdersSyncSafe(); // node-cron incremental ~2h / 5 phút
         scheduleShopeeReturnRequestsSyncSafe(); // Return APIs → tab Yêu cầu trả hàng
@@ -22957,7 +23251,7 @@ async function startServer() {
 
       // Sync đơn: webhook + nút Đồng bộ (ACK) + cron incremental 5 phút.
       console.log("[Boot] Order sync: webhook ON + manual trigger (BG) + cron incremental ON.");
-      console.log("[Boot] Recovery pull OFF | Tracking enrich cron OFF | CancelReturn cron OFF.");
+      console.log("[Boot] Recovery pull OFF | GHN tracking backfill ON | CancelReturn cron OFF.");
       console.log("[PDF Cleanup] Auto cleanup ON — mỗi 24h xóa file > 3 ngày.");
       console.log(
         `[Shopee Webhook] orders write ${

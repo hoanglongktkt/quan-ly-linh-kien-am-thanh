@@ -291,12 +291,9 @@ function shippingCarrierFamily(carrier) {
   return "";
 }
 
-/** Validation: tiền tố mã (SPX/GYA) không được đá với shipping_carrier. */
-function isTrackingCompatibleWithCarrier(trackingNo, carrier) {
-  const tf = trackingPrefixFamily(trackingNo);
-  const cf = shippingCarrierFamily(carrier);
-  if (!tf || !cf) return true;
-  return tf === cf;
+/** ĐÃ TẮT: không chặn mã GHN (dãy số) vì lệch prefix/hãng. */
+function isTrackingCompatibleWithCarrier(_trackingNo, _carrier) {
+  return true;
 }
 
 function carrierOf(doc) {
