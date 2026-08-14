@@ -481,14 +481,21 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
     );
 
     try {
+      // Chốt shop_id theo payload webhook (chủ đơn), KHÔNG lấy shop fallback
+      // (bug: đơn AuDIO bị persist dưới shop LKAT / Âm Thanh).
+      const stampShopId = payloadShopId || apiShopId;
+      for (const row of normalized) {
+        if (!row) continue;
+        row.shopId = stampShopId;
+      }
       await deps.persistShopeeOrderChunk(orders, normalized, {
-        apiShopId,
+        apiShopId: stampShopId,
         accessToken,
         skipTracking: true,
       });
       console.log(
         `[Shopee Webhook] get_order_detail + UPSERT OK order_sn=${orderSn}` +
-          ` shop_id=${apiShopId}` +
+          ` shop_id=${stampShopId}` +
           ` status=${normalized[0]?.shopee_order_status || ""}` +
           ` tn=${normalized[0]?.trackingNumber || "—"}`,
       );
@@ -498,7 +505,7 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
       );
       return {
         fetched: true,
-        shopId: apiShopId,
+        shopId: stampShopId,
         row: orders.find((o) => String(o.orderSn) === orderSn) || normalized[0],
         accessToken,
       };

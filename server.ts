@@ -13885,12 +13885,14 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
   if (!merged.logistics_channel_id && existing.logistics_channel_id) {
     merged.logistics_channel_id = existing.logistics_channel_id;
   }
-  if (!incoming.shopId && existing.shopId) {
+  if (incoming.shopId) {
+    merged.shopId = normalizeShopIdKey(incoming.shopId) || String(incoming.shopId);
+  } else if (existing.shopId) {
     merged.shopId = existing.shopId;
   }
   merged.shopName =
     resolveConnectedShopDisplayName(merged.shopId, incoming.shopName) ||
-    resolveConnectedShopDisplayName(existing.shopId, existing.shopName) ||
+    resolveConnectedShopDisplayName(merged.shopId, existing.shopName) ||
     merged.shopName;
   mergeShopeeTrackingFields(merged, existing, incoming);
   // Giữ fulfillment_type (pickup/dropoff) — không mất khi sync lại.
@@ -14619,22 +14621,30 @@ async function persistShopeeOrderChunk(
         console.warn("[Orders Sync] SKIP đơn thiếu orderSn — không phải do cờ ĐVVC.");
         continue;
       }
-      // ĐA SHOP: gắn ĐÚNG shop đang gọi API (apiShopId === fileKey đã yêu cầu).
-      // CẤM để resolveShopeeApiShopId đổi sang oauth parent (gây gắn nhầm AuDIO↔LKAT).
-      if (syncCtx?.apiShopId) {
-        const correctShop = normalizeShopIdKey(syncCtx.apiShopId) || String(syncCtx.apiShopId);
-        normalized.shopId = correctShop;
-        normalized.shopName =
-          resolveConnectedShopDisplayName(correctShop, normalized.shopName) ||
-          normalized.shopName ||
-          `Shop ${correctShop}`;
-      }
-      if (!normalized.shopId) {
+      // ĐA SHOP: đơn thuộc shop nào thì CHỐT shopId/shopName shop đó.
+      // Nguồn chân lý = shop đang gọi get_order_list/get_order_detail (syncCtx.apiShopId),
+      // KHÔNG kế thừa shopId cũ trong DB (bug gắn nhầm AuDIO↔LKAT).
+      const ownerShop =
+        (syncCtx?.apiShopId
+          ? normalizeShopIdKey(syncCtx.apiShopId) || String(syncCtx.apiShopId)
+          : "") ||
+        normalizeShopIdKey(normalized.shopId) ||
+        String(normalized.shopId || "").trim();
+      if (!ownerShop) {
         console.warn(
           `[Orders Sync] SKIP order_sn=${normalized.orderSn} — thiếu shop_id (multi-shop bắt buộc)`,
         );
         continue;
       }
+      const prevShop = normalizeShopIdKey(normalized.shopId) || String(normalized.shopId || "");
+      if (prevShop && prevShop !== ownerShop) {
+        console.warn(
+          `[Orders Sync] CORRECT shopId order_sn=${normalized.orderSn} ${prevShop} → ${ownerShop}`,
+        );
+      }
+      normalized.shopId = ownerShop;
+      normalized.shopName =
+        resolveConnectedShopDisplayName(ownerShop, normalized.shopName) || `Shop ${ownerShop}`;
       // KHÔNG skip theo is_handed_over / internal_status — mọi đơn Shopee đều được upsert.
       const existing = orders.find(
         (o: any) => String(o.orderSn || "") === String(normalized.orderSn || ""),
@@ -14675,6 +14685,14 @@ async function persistShopeeOrderChunk(
       );
       let row: any;
       if (existingIndex >= 0) {
+        const existingShop =
+          normalizeShopIdKey(orders[existingIndex]?.shopId) ||
+          String(orders[existingIndex]?.shopId || "");
+        if (existingShop && existingShop !== ownerShop) {
+          console.warn(
+            `[Orders Sync] CORRECT shopId (DB) order_sn=${normalized.orderSn} ${existingShop} → ${ownerShop}`,
+          );
+        }
         orders[existingIndex] = mergeShopeeOrderOnSync(orders[existingIndex], normalized);
         row = orders[existingIndex];
         updated++;
@@ -14684,12 +14702,17 @@ async function persistShopeeOrderChunk(
         row = orders[0];
         added++;
       }
+      row.shopId = ownerShop;
+      row.shopName =
+        resolveConnectedShopDisplayName(ownerShop, row.shopName) || `Shop ${ownerShop}`;
       forceHealPickupOrderIfHasTracking(row);
       promoteOrderStatusWhenTrackingReady(row);
       enforceShopeeTerminalLocalStatus(row);
 
       console.log("Dữ liệu chuẩn bị lưu DB:", {
         orderSn: row.orderSn,
+        shopId: row.shopId,
+        shopName: row.shopName,
         status: row.status,
         shopee_order_status: row.shopee_order_status,
         tracking_no: row.trackingNumber || row.tracking_no || null,

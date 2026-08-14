@@ -1995,11 +1995,13 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       setOnInsert_keys: Object.keys($setOnInsert),
     });
 
-    // Dùng cùng compound filter với markOrderHandedOver — khớp orderSn/_id/data.orderSn
-    // + shopId string|number|null. Filter cũ `{ orderSn, $or:[shopIdStr...] }` dễ trượt
-    // khi document lưu shopId dạng Number → bulkWrite upsert fail (E11000) và status
-    // CANCELLED không bao giờ ghi đè bản pending_confirm cũ.
-    const filter = buildOrderCompoundFilter(orderSn || String(_id).replace(/^shopee-/i, ""), _id, shopIdStr || null);
+    // Khớp theo orderSn toàn cục — KHÔNG lọc shopId.
+    // Filter cũ `buildOrderCompoundFilter(..., shopId)` bỏ qua document gắn nhầm
+    // AuDIO↔LKAT → upsert tạo bản mới → E11000 unique orderSn → shopId sai kẹt mãi.
+    const snKey = orderSn || String(_id).replace(/^shopee-/i, "");
+    const filter = {
+      $or: [{ orderSn: snKey }, { _id }, { "data.orderSn": snKey }],
+    };
 
     // order_events đã bỏ — không ghi log rác vào Atlas Free.
     pendingWrites.push({

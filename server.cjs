@@ -77263,7 +77263,10 @@ async function bulkUpsertOrdersToStore(orders) {
       setKeys_handed: Object.keys($set).filter((k) => /handed|local_status|internal_status/i.test(k)),
       setOnInsert_keys: Object.keys($setOnInsert)
     });
-    const filter2 = buildOrderCompoundFilter(orderSn || String(_id).replace(/^shopee-/i, ""), _id, shopIdStr || null);
+    const snKey = orderSn || String(_id).replace(/^shopee-/i, "");
+    const filter2 = {
+      $or: [{ orderSn: snKey }, { _id }, { "data.orderSn": snKey }]
+    };
     pendingWrites.push({
       op: {
         updateOne: {
@@ -117749,13 +117752,18 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
       `th\xE0nh c\xF4ng \u2014 order_sn=${orderSn} shop=${apiShopId} status=${normalized[0]?.shopee_order_status || normalized[0]?.status || "?"} tn=${normalized[0]?.trackingNumber || "\u2014"}`
     );
     try {
+      const stampShopId = payloadShopId || apiShopId;
+      for (const row of normalized) {
+        if (!row) continue;
+        row.shopId = stampShopId;
+      }
       await deps21.persistShopeeOrderChunk(orders, normalized, {
-        apiShopId,
+        apiShopId: stampShopId,
         accessToken,
         skipTracking: true
       });
       console.log(
-        `[Shopee Webhook] get_order_detail + UPSERT OK order_sn=${orderSn} shop_id=${apiShopId} status=${normalized[0]?.shopee_order_status || ""} tn=${normalized[0]?.trackingNumber || "\u2014"}`
+        `[Shopee Webhook] get_order_detail + UPSERT OK order_sn=${orderSn} shop_id=${stampShopId} status=${normalized[0]?.shopee_order_status || ""} tn=${normalized[0]?.trackingNumber || "\u2014"}`
       );
       console.log(
         "\u{1F4BE} K\u1EBFt qu\u1EA3 l\u01B0u DB:",
@@ -117763,7 +117771,7 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
       );
       return {
         fetched: true,
-        shopId: apiShopId,
+        shopId: stampShopId,
         row: orders.find((o) => String(o.orderSn) === orderSn) || normalized[0],
         accessToken
       };
@@ -127668,10 +127676,12 @@ function mergeShopeeOrderOnSync(existing, incoming) {
   if (!merged.logistics_channel_id && existing.logistics_channel_id) {
     merged.logistics_channel_id = existing.logistics_channel_id;
   }
-  if (!incoming.shopId && existing.shopId) {
+  if (incoming.shopId) {
+    merged.shopId = normalizeShopIdKey(incoming.shopId) || String(incoming.shopId);
+  } else if (existing.shopId) {
     merged.shopId = existing.shopId;
   }
-  merged.shopName = resolveConnectedShopDisplayName(merged.shopId, incoming.shopName) || resolveConnectedShopDisplayName(existing.shopId, existing.shopName) || merged.shopName;
+  merged.shopName = resolveConnectedShopDisplayName(merged.shopId, incoming.shopName) || resolveConnectedShopDisplayName(merged.shopId, existing.shopName) || merged.shopName;
   mergeShopeeTrackingFields(merged, existing, incoming);
   if (!merged.fulfillment_type && existing?.fulfillment_type) {
     merged.fulfillment_type = existing.fulfillment_type;
@@ -128155,17 +128165,21 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
         console.warn("[Orders Sync] SKIP \u0111\u01A1n thi\u1EBFu orderSn \u2014 kh\xF4ng ph\u1EA3i do c\u1EDD \u0110VVC.");
         continue;
       }
-      if (syncCtx?.apiShopId) {
-        const correctShop = normalizeShopIdKey(syncCtx.apiShopId) || String(syncCtx.apiShopId);
-        normalized.shopId = correctShop;
-        normalized.shopName = resolveConnectedShopDisplayName(correctShop, normalized.shopName) || normalized.shopName || `Shop ${correctShop}`;
-      }
-      if (!normalized.shopId) {
+      const ownerShop = (syncCtx?.apiShopId ? normalizeShopIdKey(syncCtx.apiShopId) || String(syncCtx.apiShopId) : "") || normalizeShopIdKey(normalized.shopId) || String(normalized.shopId || "").trim();
+      if (!ownerShop) {
         console.warn(
           `[Orders Sync] SKIP order_sn=${normalized.orderSn} \u2014 thi\u1EBFu shop_id (multi-shop b\u1EAFt bu\u1ED9c)`
         );
         continue;
       }
+      const prevShop = normalizeShopIdKey(normalized.shopId) || String(normalized.shopId || "");
+      if (prevShop && prevShop !== ownerShop) {
+        console.warn(
+          `[Orders Sync] CORRECT shopId order_sn=${normalized.orderSn} ${prevShop} \u2192 ${ownerShop}`
+        );
+      }
+      normalized.shopId = ownerShop;
+      normalized.shopName = resolveConnectedShopDisplayName(ownerShop, normalized.shopName) || `Shop ${ownerShop}`;
       const existing = orders.find(
         (o) => String(o.orderSn || "") === String(normalized.orderSn || "")
       );
@@ -128197,6 +128211,12 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
       );
       let row;
       if (existingIndex >= 0) {
+        const existingShop = normalizeShopIdKey(orders[existingIndex]?.shopId) || String(orders[existingIndex]?.shopId || "");
+        if (existingShop && existingShop !== ownerShop) {
+          console.warn(
+            `[Orders Sync] CORRECT shopId (DB) order_sn=${normalized.orderSn} ${existingShop} \u2192 ${ownerShop}`
+          );
+        }
         orders[existingIndex] = mergeShopeeOrderOnSync(orders[existingIndex], normalized);
         row = orders[existingIndex];
         updated++;
@@ -128205,11 +128225,15 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
         row = orders[0];
         added++;
       }
+      row.shopId = ownerShop;
+      row.shopName = resolveConnectedShopDisplayName(ownerShop, row.shopName) || `Shop ${ownerShop}`;
       forceHealPickupOrderIfHasTracking(row);
       promoteOrderStatusWhenTrackingReady(row);
       enforceShopeeTerminalLocalStatus(row);
       console.log("D\u1EEF li\u1EC7u chu\u1EA9n b\u1ECB l\u01B0u DB:", {
         orderSn: row.orderSn,
+        shopId: row.shopId,
+        shopName: row.shopName,
         status: row.status,
         shopee_order_status: row.shopee_order_status,
         tracking_no: row.trackingNumber || row.tracking_no || null,
