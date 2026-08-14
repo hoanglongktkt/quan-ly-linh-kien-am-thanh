@@ -1434,7 +1434,7 @@ export default function OrderManager({
     }
   }, [activeSubTab]);
 
-  // Đổi tab: reset page=1 + fetch (limit 50, replace) — Backend đã lọc theo tab.
+  // Đổi tab / vào trang: fetch page=1. AbortController CHỈ abort trong cleanup.
   useEffect(() => {
     if (activeSubTab === 'pending_verification') return;
     syncOrdersTabToUrl(activeSubTab, cancelReturnTab);
@@ -1453,6 +1453,7 @@ export default function OrderManager({
     ]);
     if (!tabFetchTabs.has(activeSubTab) || !onFetchOrders) return;
 
+    let cancelled = false;
     const controller = new AbortController();
     setCurrentPage(1);
     console.log(`[Orders Tab] activeSubTab=${activeSubTab} → fetch page=1 limit=${ORDERS_PAGE_SIZE}`);
@@ -1470,11 +1471,7 @@ export default function OrderManager({
           signal: controller.signal,
         });
       } catch (err) {
-        const aborted =
-          controller.signal.aborted ||
-          (err instanceof DOMException && err.name === 'AbortError') ||
-          (typeof err === 'object' && err !== null && (err as { name?: string }).name === 'AbortError');
-        if (aborted) return;
+        if (cancelled || controller.signal.aborted) return;
         console.warn('[Orders Tab] fetchOrders failed:', err);
       }
     };
@@ -1482,6 +1479,7 @@ export default function OrderManager({
     void fetchOrderCounts();
 
     return () => {
+      cancelled = true;
       controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

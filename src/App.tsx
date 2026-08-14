@@ -563,12 +563,15 @@ export default function App() {
     // danh sách đơn hàng trống vĩnh viễn cho tới khi người dùng bấm "Làm mới".
     const retriesLeft = opts?.retriesLeft ?? 4;
     const requestId = ++fetchOrdersSeqRef.current;
-    if (!silent) {
-      fetchOrdersNonSilentInFlightRef.current += 1;
-      setOrdersLoading(true);
-    }
     let requestTimeoutId: number | undefined;
+    let didIncNonSilent = false;
+    let aborted = false;
     try {
+      if (!silent) {
+        fetchOrdersNonSilentInFlightRef.current += 1;
+        didIncNonSilent = true;
+        setOrdersLoading(true);
+      }
       // Refresh chỉ đọc MongoDB nội bộ, không gọi Shopee API.
       const params = new URLSearchParams();
       params.set('page', String(page));
@@ -741,7 +744,7 @@ export default function App() {
         }
       }
     } catch (err) {
-      const aborted =
+      aborted =
         (err instanceof DOMException && err.name === 'AbortError') ||
         (typeof err === 'object' && err !== null && (err as { name?: string }).name === 'AbortError');
       if (aborted) {
@@ -767,12 +770,15 @@ export default function App() {
     } finally {
       if (requestTimeoutId !== undefined) window.clearTimeout(requestTimeoutId);
       callerSignal?.removeEventListener('abort', onCallerAbort);
-      if (!silent) {
+      if (didIncNonSilent) {
         fetchOrdersNonSilentInFlightRef.current = Math.max(
           0,
           fetchOrdersNonSilentInFlightRef.current - 1,
         );
-        if (fetchOrdersNonSilentInFlightRef.current === 0) setOrdersLoading(false);
+        if (fetchOrdersNonSilentInFlightRef.current === 0) {
+          setOrdersLoading(false);
+          if (aborted) setHasLoadedOrdersOnce(true);
+        }
       }
       if (fetchOrdersInFlightRef.current?.promise === inFlight) {
         fetchOrdersInFlightRef.current = null;
@@ -947,14 +953,6 @@ export default function App() {
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [isAuthenticated, activeTab, resolveOrdersFetchTab]);
-
-  // Rời tab Đơn hàng → hủy refresh đang pending (CHỈ abort trong cleanup).
-  useEffect(() => {
-    if (activeTab !== 'orders') return;
-    return () => {
-      fetchOrdersAbortRef.current?.abort();
-    };
-  }, [activeTab]);
 
   // Poll hàng đợi dò ngầm Backend — toast toàn app kể cả khi tắt màn quét / đổi tab.
   useEffect(() => {
