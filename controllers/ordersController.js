@@ -19,6 +19,7 @@ import {
   findOrderRecord,
   handOverOrderToCarrierByIndex,
   handOverOrderToCarrierFast,
+  mapHandoverWriteError,
 } from "../services/orders.js";
 import {
   isMongoReady,
@@ -1993,16 +1994,21 @@ export async function handOverCarrierById(req, res) {
     if (!result.ok) {
       return res
         .status(result.status || 400)
-        .json({ success: false, error: result.error, message: result.error });
+        .json({
+          success: false,
+          error: result.error,
+          message: result.message || result.error,
+        });
     }
     invalidateOrdersRefreshCache();
     return res.json({ success: true, order: result.order, changed: result.changed !== false });
   } catch (error) {
     console.error("[Orders Handover] single error:", error);
-    return res.status(500).json({
+    const mapped = mapHandoverWriteError(error);
+    return res.status(mapped.status || 500).json({
       success: false,
-      error: error?.message || "hand_over_failed",
-      message: error?.message || "Không thể ghi nhận bàn giao ĐVVC.",
+      error: mapped.error,
+      message: mapped.message,
     });
   }
 }
@@ -2043,16 +2049,21 @@ export async function handOverCarrierByCode(req, res) {
     if (!result.ok) {
       return res
         .status(result.status || 400)
-        .json({ success: false, error: result.error, message: result.error });
+        .json({
+          success: false,
+          error: result.error,
+          message: result.message || result.error,
+        });
     }
     invalidateOrdersRefreshCache();
     return res.json({ success: true, order: result.order, changed: result.changed !== false });
   } catch (error) {
     console.error("[Orders Handover] by-code error:", error);
-    return res.status(500).json({
+    const mapped = mapHandoverWriteError(error);
+    return res.status(mapped.status || 500).json({
       success: false,
-      error: error?.message || "hand_over_failed",
-      message: error?.message || "Không thể ghi nhận bàn giao ĐVVC.",
+      error: mapped.error,
+      message: mapped.message,
     });
   }
 }
@@ -2098,7 +2109,11 @@ export async function handOverCarrierBulk(req, res) {
         source: "manual_button",
       });
       if (!result.ok) {
-        failed.push({ key, error: result.error });
+        failed.push({
+          key,
+          error: result.error,
+          message: result.message || result.error,
+        });
         continue;
       }
       const sn = String(result.order?.orderSn || key)
@@ -2126,7 +2141,7 @@ export async function handOverCarrierBulk(req, res) {
         failed,
         orders: [],
         error: failed[0]?.error || "Không bàn giao được đơn nào.",
-        message: failed[0]?.error || "Không bàn giao được đơn nào.",
+        message: failed[0]?.message || failed[0]?.error || "Không bàn giao được đơn nào.",
       });
     }
 
@@ -2140,10 +2155,11 @@ export async function handOverCarrierBulk(req, res) {
     });
   } catch (error) {
     console.error("[Orders Handover Bulk] error:", error);
-    return res.status(500).json({
+    const mapped = mapHandoverWriteError(error);
+    return res.status(mapped.status || 500).json({
       success: false,
-      error: error?.message || "hand_over_bulk_failed",
-      message: error?.message || "Không thể bàn giao ĐVVC hàng loạt.",
+      error: mapped.error || "hand_over_bulk_failed",
+      message: mapped.message || "Không thể bàn giao ĐVVC hàng loạt.",
     });
   }
 }

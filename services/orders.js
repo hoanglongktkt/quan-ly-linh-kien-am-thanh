@@ -740,105 +740,156 @@ export async function findOrderByScanLookup(orders, raw) {
   return null;
 }
 
+/** Map lỗi Mongo → JSON an toàn cho FE (không lộ E11000 raw). */
+export function mapHandoverWriteError(err) {
+  const msg = String(err?.message || err || "");
+  const code = err?.code;
+  if (code === 11000 || /E11000|duplicate key/i.test(msg)) {
+    return {
+      status: 409,
+      error: "duplicate_orderSn",
+      message: "Không ghi được bàn giao ĐVVC (trùng mã đơn trên Mongo). Vui lòng thử lại.",
+    };
+  }
+  if (/mongodb_not_ready|readyState/i.test(msg)) {
+    return {
+      status: 503,
+      error: "mongodb_not_ready",
+      message: "MongoDB chưa sẵn sàng — không ghi được bàn giao ĐVVC.",
+    };
+  }
+  if (/timeout|timed out|ETIMEDOUT/i.test(msg)) {
+    return {
+      status: 504,
+      error: "mongodb_timeout",
+      message: "Hết thời gian ghi MongoDB. Vui lòng thử lại.",
+    };
+  }
+  return {
+    status: 500,
+    error: "hand_over_failed",
+    message: "Không ghi được cờ bàn giao ĐVVC. Vui lòng thử lại.",
+  };
+}
+
 /**
  * Fast path bàn giao ĐVVC — CHỈ Mongo $set is_handed_over.
  * Không load toàn bộ orders, không saveOrders JSON full, không gọi Shopee/catalog.
  */
 export async function handOverOrderToCarrierFast(opts = {}) {
-  const code = String(opts.code || opts.trackingHint || "").trim();
-  let sn = String(opts.orderSn || "")
-    .replace(/^shopee-/i, "")
-    .trim();
-  if (!sn && opts.orderId) {
-    sn = String(opts.orderId || "")
+  try {
+    const code = String(opts.code || opts.trackingHint || "").trim();
+    let sn = String(opts.orderSn || "")
       .replace(/^shopee-/i, "")
       .trim();
-  }
-
-  let shopId =
-    opts.shopId != null && String(opts.shopId).trim()
-      ? String(opts.shopId).trim()
-      : undefined;
-  let found = null;
-
-  if (!sn && code) {
-    if (!isMongoReady()) {
-      return { ok: false, status: 503, error: "mongodb_not_ready" };
+    if (!sn && opts.orderId) {
+      sn = String(opts.orderId || "")
+        .replace(/^shopee-/i, "")
+        .trim();
     }
-    found = await findOrderByScanCodeInStore(code);
-    if (!found) {
+
+    let shopId =
+      opts.shopId != null && String(opts.shopId).trim()
+        ? String(opts.shopId).trim()
+        : undefined;
+    let found = null;
+
+    if (!sn && code) {
+      if (!isMongoReady()) {
+        return {
+          ok: false,
+          status: 503,
+          error: "mongodb_not_ready",
+          message: "MongoDB chưa sẵn sàng — không ghi được bàn giao ĐVVC.",
+        };
+      }
+      found = await findOrderByScanCodeInStore(code);
+      if (!found) {
+        return {
+          ok: false,
+          status: 404,
+          error: "order_not_found",
+          message: `Không tìm thấy đơn hàng với mã "${code}".`,
+        };
+      }
+      sn = String(found.orderSn || found.order_sn || "")
+        .replace(/^shopee-/i, "")
+        .trim();
+      if (!shopId && found.shopId != null) shopId = String(found.shopId);
+    }
+
+    if (!sn) {
       return {
         ok: false,
-        status: 404,
-        error: `Không tìm thấy đơn hàng với mã "${code}".`,
+        status: 400,
+        error: "missing_order_key",
+        message: "Thiếu orderSn / orderId / mã quét.",
       };
     }
-    sn = String(found.orderSn || found.order_sn || "")
-      .replace(/^shopee-/i, "")
-      .trim();
-    if (!shopId && found.shopId != null) shopId = String(found.shopId);
-  }
 
-  if (!sn) {
-    return {
-      ok: false,
-      status: 400,
-      error: "Thiếu orderSn / orderId / mã quét.",
+    if (found && deps.hasLeftHandedOverCarrierTab(found)) {
+      return {
+        ok: false,
+        status: 400,
+        error: "order_left_carrier_tab",
+        message: `Đơn ${sn} đã Đang giao/hoàn tất/hủy — không ghi Đã giao ĐVVC.`,
+      };
+    }
+
+    if (found && deps.resolveOrderHandoverFlag(found)) {
+      return { ok: true, order: found, changed: false };
+    }
+
+    const source =
+      opts.source === "qr_scan"
+        ? deps.HANDED_OVER_SOURCE.QR_SCAN
+        : deps.HANDED_OVER_SOURCE.MANUAL_BUTTON;
+    const now = new Date().toISOString();
+
+    if (!isMongoReady()) {
+      return {
+        ok: false,
+        status: 503,
+        error: "mongodb_not_ready",
+        message: "MongoDB chưa sẵn sàng — không ghi được bàn giao ĐVVC.",
+      };
+    }
+
+    const ok = await markOrderHandedOverInStore(sn, {
+      source,
+      handedOverAt: now,
+      shopId,
+    });
+    if (!ok) {
+      return {
+        ok: false,
+        status: 500,
+        error: "hand_over_failed",
+        message: `Không ghi được cờ bàn giao ĐVVC cho đơn ${sn}.`,
+      };
+    }
+
+    queueOrdersJsonMirrorFromMongo();
+
+    const base = found && typeof found === "object" ? { ...found } : {
+      id: `shopee-${sn}`,
+      orderSn: sn,
+      shopId,
     };
+    if (code && !deps.isShopeeInternalTrackingCode(code)) {
+      if (!base.trackingNumber) base.trackingNumber = code;
+      if (!base.tracking_no) base.tracking_no = code;
+    }
+    const updated = deps.applyHandedOverWrite(base, now, source);
+    console.log(
+      `[Orders Handover Fast] đơn ${sn} → is_handed_over=true source=${source} (${ok ? "mongo_ok" : "mongo_fail"})`,
+    );
+    return { ok: true, order: updated, changed: true };
+  } catch (err) {
+    const mapped = mapHandoverWriteError(err);
+    console.error("[Orders Handover Fast] failed:", mapped.error, err?.message || err);
+    return { ok: false, ...mapped };
   }
-
-  if (found && deps.hasLeftHandedOverCarrierTab(found)) {
-    return {
-      ok: false,
-      status: 400,
-      error: `Đơn ${sn} đã Đang giao/hoàn tất/hủy — không ghi Đã giao ĐVVC.`,
-    };
-  }
-
-  if (found && deps.resolveOrderHandoverFlag(found)) {
-    return { ok: true, order: found, changed: false };
-  }
-
-  const source =
-    opts.source === "qr_scan"
-      ? deps.HANDED_OVER_SOURCE.QR_SCAN
-      : deps.HANDED_OVER_SOURCE.MANUAL_BUTTON;
-  const now = new Date().toISOString();
-
-  if (!isMongoReady()) {
-    return { ok: false, status: 503, error: "mongodb_not_ready" };
-  }
-
-  const ok = await markOrderHandedOverInStore(sn, {
-    source,
-    handedOverAt: now,
-    shopId,
-  });
-  if (!ok) {
-    return {
-      ok: false,
-      status: 500,
-      error: `Không ghi được cờ bàn giao ĐVVC cho đơn ${sn}.`,
-    };
-  }
-
-  // Mirror JSON legacy ngầm — không block response.
-  queueOrdersJsonMirrorFromMongo();
-
-  const base = found && typeof found === "object" ? { ...found } : {
-    id: `shopee-${sn}`,
-    orderSn: sn,
-    shopId,
-  };
-  if (code && !deps.isShopeeInternalTrackingCode(code)) {
-    if (!base.trackingNumber) base.trackingNumber = code;
-    if (!base.tracking_no) base.tracking_no = code;
-  }
-  const updated = deps.applyHandedOverWrite(base, now, source);
-  console.log(
-    `[Orders Handover Fast] đơn ${sn} → is_handed_over=true source=${source} (${ok ? "mongo_ok" : "mongo_fail"})`,
-  );
-  return { ok: true, order: updated, changed: true };
 }
 
 export async function handOverOrderToCarrierByIndex(orders, index, opts) {

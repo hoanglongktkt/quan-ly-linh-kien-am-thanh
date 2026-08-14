@@ -2283,11 +2283,15 @@ function buildOrderCompoundFilter(
   };
 }
 
+function isDuplicateKeyError(err: unknown): boolean {
+  const e = err as { code?: number | string; message?: string };
+  return e?.code === 11000 || /E11000|duplicate key/i.test(String(e?.message || err || ""));
+}
+
 /**
  * API bàn giao / quét QR — CHỈ `$set: { is_handed_over: true }`.
- * Không gọi Shopee, không đụng field khác.
- * `findOneAndUpdate` + upsert:true đảm bảo atomic — race condition webhook/quét QR
- * đồng thời không thể lưu đè mất dữ liệu.
+ * Filter CHỈ theo orderSn / _id — KHÔNG lọc shopId (tránh E11000 khi doc gắn nhầm shop).
+ * shopId (nếu có) chỉ `$set` backfill, không dùng để find.
  */
 export async function markOrderHandedOverInStore(
   orderSn: string,
@@ -2309,7 +2313,6 @@ export async function markOrderHandedOverInStore(
   const $set: Record<string, unknown> = {
     is_handed_over: true,
     "data.is_handed_over": true,
-    // Alias legacy — đồng bộ đọc cũ
     "data.isHandedOverToCarrier": true,
     "data.is_handed_over_to_carrier": true,
     "data.is_handed_over_to_courier": true,
@@ -2326,23 +2329,56 @@ export async function markOrderHandedOverInStore(
     $set.shopId = shopIdStr;
     $set["data.shopId"] = shopIdStr;
   }
+  // Không đưa `_id` vào $setOnInsert — xung đột khi upsert $or / doc đã tồn tại.
   const $setOnInsert: Record<string, unknown> = {
-    _id,
     orderSn: sn,
     "data.id": _id,
     "data.orderSn": sn,
     "data.channel": "shopee",
   };
+  const identityFilter = {
+    $or: [{ orderSn: sn }, { _id }, { "data.orderSn": sn }],
+  };
 
-  const result = await OrderModel.findOneAndUpdate(
-    buildOrderCompoundFilter(sn, _id, shopIdStr),
-    { $set, $setOnInsert },
-    { new: true, upsert: true },
-  );
-  console.log(
-    `[MongoDB] findOneAndUpdate markOrderHandedOver is_handed_over=true order_sn=${sn} shopId=${shopIdStr || "-"} ok=${Boolean(result)}`,
-  );
-  return Boolean(result);
+  const writeExisting = async () =>
+    OrderModel.findOneAndUpdate(identityFilter, { $set }, { new: true });
+
+  try {
+    const updated = await writeExisting();
+    if (updated) {
+      console.log(
+        `[MongoDB] markOrderHandedOver UPDATE is_handed_over=true order_sn=${sn} shopId=${shopIdStr || "-"} ok=true`,
+      );
+      return true;
+    }
+    const inserted = await OrderModel.findOneAndUpdate(
+      { _id },
+      { $set, $setOnInsert },
+      { new: true, upsert: true },
+    );
+    console.log(
+      `[MongoDB] markOrderHandedOver UPSERT is_handed_over=true order_sn=${sn} shopId=${shopIdStr || "-"} ok=${Boolean(inserted)}`,
+    );
+    return Boolean(inserted);
+  } catch (err) {
+    if (isDuplicateKeyError(err)) {
+      try {
+        const retry = await writeExisting();
+        console.log(
+          `[MongoDB] markOrderHandedOver E11000-retry order_sn=${sn} ok=${Boolean(retry)}`,
+        );
+        return Boolean(retry);
+      } catch (retryErr) {
+        console.error(
+          "[MongoDB] markOrderHandedOver E11000 retry failed:",
+          (retryErr as Error)?.message || retryErr,
+        );
+        throw retryErr;
+      }
+    }
+    console.error("[MongoDB] markOrderHandedOver failed:", (err as Error)?.message || err);
+    throw err;
+  }
 }
 
 /**

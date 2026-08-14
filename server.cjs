@@ -77549,6 +77549,10 @@ function buildOrderCompoundFilter(sn, _id, shopId) {
     $and: [identity, { $or: shopVariants }]
   };
 }
+function isDuplicateKeyError(err) {
+  const e2 = err;
+  return e2?.code === 11e3 || /E11000|duplicate key/i.test(String(e2?.message || err || ""));
+}
 async function markOrderHandedOverInStore(orderSn, meta) {
   if (!isMongoReady()) return false;
   requireMongo();
@@ -77561,7 +77565,6 @@ async function markOrderHandedOverInStore(orderSn, meta) {
   const $set = {
     is_handed_over: true,
     "data.is_handed_over": true,
-    // Alias legacy — đồng bộ đọc cũ
     "data.isHandedOverToCarrier": true,
     "data.is_handed_over_to_carrier": true,
     "data.is_handed_over_to_courier": true,
@@ -77579,21 +77582,51 @@ async function markOrderHandedOverInStore(orderSn, meta) {
     $set["data.shopId"] = shopIdStr;
   }
   const $setOnInsert = {
-    _id,
     orderSn: sn,
     "data.id": _id,
     "data.orderSn": sn,
     "data.channel": "shopee"
   };
-  const result = await OrderModel.findOneAndUpdate(
-    buildOrderCompoundFilter(sn, _id, shopIdStr),
-    { $set, $setOnInsert },
-    { new: true, upsert: true }
-  );
-  console.log(
-    `[MongoDB] findOneAndUpdate markOrderHandedOver is_handed_over=true order_sn=${sn} shopId=${shopIdStr || "-"} ok=${Boolean(result)}`
-  );
-  return Boolean(result);
+  const identityFilter = {
+    $or: [{ orderSn: sn }, { _id }, { "data.orderSn": sn }]
+  };
+  const writeExisting = async () => OrderModel.findOneAndUpdate(identityFilter, { $set }, { new: true });
+  try {
+    const updated = await writeExisting();
+    if (updated) {
+      console.log(
+        `[MongoDB] markOrderHandedOver UPDATE is_handed_over=true order_sn=${sn} shopId=${shopIdStr || "-"} ok=true`
+      );
+      return true;
+    }
+    const inserted = await OrderModel.findOneAndUpdate(
+      { _id },
+      { $set, $setOnInsert },
+      { new: true, upsert: true }
+    );
+    console.log(
+      `[MongoDB] markOrderHandedOver UPSERT is_handed_over=true order_sn=${sn} shopId=${shopIdStr || "-"} ok=${Boolean(inserted)}`
+    );
+    return Boolean(inserted);
+  } catch (err) {
+    if (isDuplicateKeyError(err)) {
+      try {
+        const retry2 = await writeExisting();
+        console.log(
+          `[MongoDB] markOrderHandedOver E11000-retry order_sn=${sn} ok=${Boolean(retry2)}`
+        );
+        return Boolean(retry2);
+      } catch (retryErr) {
+        console.error(
+          "[MongoDB] markOrderHandedOver E11000 retry failed:",
+          retryErr?.message || retryErr
+        );
+        throw retryErr;
+      }
+    }
+    console.error("[MongoDB] markOrderHandedOver failed:", err?.message || err);
+    throw err;
+  }
 }
 async function markOrdersPrintedInStore(orderSns, isPrinted, meta) {
   if (!isMongoReady()) return 0;
@@ -108248,78 +108281,128 @@ function resolveOrdersFromRequest(orders, orderIds, orderSns) {
   for (const sn of orderSns || []) tryAdd(String(sn));
   return hits;
 }
-async function handOverOrderToCarrierFast(opts = {}) {
-  const code = String(opts.code || opts.trackingHint || "").trim();
-  let sn = String(opts.orderSn || "").replace(/^shopee-/i, "").trim();
-  if (!sn && opts.orderId) {
-    sn = String(opts.orderId || "").replace(/^shopee-/i, "").trim();
+function mapHandoverWriteError(err) {
+  const msg = String(err?.message || err || "");
+  const code = err?.code;
+  if (code === 11e3 || /E11000|duplicate key/i.test(msg)) {
+    return {
+      status: 409,
+      error: "duplicate_orderSn",
+      message: "Kh\xF4ng ghi \u0111\u01B0\u1EE3c b\xE0n giao \u0110VVC (tr\xF9ng m\xE3 \u0111\u01A1n tr\xEAn Mongo). Vui l\xF2ng th\u1EED l\u1EA1i."
+    };
   }
-  let shopId = opts.shopId != null && String(opts.shopId).trim() ? String(opts.shopId).trim() : void 0;
-  let found = null;
-  if (!sn && code) {
-    if (!isMongoReady()) {
-      return { ok: false, status: 503, error: "mongodb_not_ready" };
+  if (/mongodb_not_ready|readyState/i.test(msg)) {
+    return {
+      status: 503,
+      error: "mongodb_not_ready",
+      message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng \u2014 kh\xF4ng ghi \u0111\u01B0\u1EE3c b\xE0n giao \u0110VVC."
+    };
+  }
+  if (/timeout|timed out|ETIMEDOUT/i.test(msg)) {
+    return {
+      status: 504,
+      error: "mongodb_timeout",
+      message: "H\u1EBFt th\u1EDDi gian ghi MongoDB. Vui l\xF2ng th\u1EED l\u1EA1i."
+    };
+  }
+  return {
+    status: 500,
+    error: "hand_over_failed",
+    message: "Kh\xF4ng ghi \u0111\u01B0\u1EE3c c\u1EDD b\xE0n giao \u0110VVC. Vui l\xF2ng th\u1EED l\u1EA1i."
+  };
+}
+async function handOverOrderToCarrierFast(opts = {}) {
+  try {
+    const code = String(opts.code || opts.trackingHint || "").trim();
+    let sn = String(opts.orderSn || "").replace(/^shopee-/i, "").trim();
+    if (!sn && opts.orderId) {
+      sn = String(opts.orderId || "").replace(/^shopee-/i, "").trim();
     }
-    found = await findOrderByScanCodeInStore(code);
-    if (!found) {
+    let shopId = opts.shopId != null && String(opts.shopId).trim() ? String(opts.shopId).trim() : void 0;
+    let found = null;
+    if (!sn && code) {
+      if (!isMongoReady()) {
+        return {
+          ok: false,
+          status: 503,
+          error: "mongodb_not_ready",
+          message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng \u2014 kh\xF4ng ghi \u0111\u01B0\u1EE3c b\xE0n giao \u0110VVC."
+        };
+      }
+      found = await findOrderByScanCodeInStore(code);
+      if (!found) {
+        return {
+          ok: false,
+          status: 404,
+          error: "order_not_found",
+          message: `Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng v\u1EDBi m\xE3 "${code}".`
+        };
+      }
+      sn = String(found.orderSn || found.order_sn || "").replace(/^shopee-/i, "").trim();
+      if (!shopId && found.shopId != null) shopId = String(found.shopId);
+    }
+    if (!sn) {
       return {
         ok: false,
-        status: 404,
-        error: `Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng v\u1EDBi m\xE3 "${code}".`
+        status: 400,
+        error: "missing_order_key",
+        message: "Thi\u1EBFu orderSn / orderId / m\xE3 qu\xE9t."
       };
     }
-    sn = String(found.orderSn || found.order_sn || "").replace(/^shopee-/i, "").trim();
-    if (!shopId && found.shopId != null) shopId = String(found.shopId);
-  }
-  if (!sn) {
-    return {
-      ok: false,
-      status: 400,
-      error: "Thi\u1EBFu orderSn / orderId / m\xE3 qu\xE9t."
+    if (found && deps14.hasLeftHandedOverCarrierTab(found)) {
+      return {
+        ok: false,
+        status: 400,
+        error: "order_left_carrier_tab",
+        message: `\u0110\u01A1n ${sn} \u0111\xE3 \u0110ang giao/ho\xE0n t\u1EA5t/h\u1EE7y \u2014 kh\xF4ng ghi \u0110\xE3 giao \u0110VVC.`
+      };
+    }
+    if (found && deps14.resolveOrderHandoverFlag(found)) {
+      return { ok: true, order: found, changed: false };
+    }
+    const source = opts.source === "qr_scan" ? deps14.HANDED_OVER_SOURCE.QR_SCAN : deps14.HANDED_OVER_SOURCE.MANUAL_BUTTON;
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    if (!isMongoReady()) {
+      return {
+        ok: false,
+        status: 503,
+        error: "mongodb_not_ready",
+        message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng \u2014 kh\xF4ng ghi \u0111\u01B0\u1EE3c b\xE0n giao \u0110VVC."
+      };
+    }
+    const ok = await markOrderHandedOverInStore(sn, {
+      source,
+      handedOverAt: now,
+      shopId
+    });
+    if (!ok) {
+      return {
+        ok: false,
+        status: 500,
+        error: "hand_over_failed",
+        message: `Kh\xF4ng ghi \u0111\u01B0\u1EE3c c\u1EDD b\xE0n giao \u0110VVC cho \u0111\u01A1n ${sn}.`
+      };
+    }
+    queueOrdersJsonMirrorFromMongo();
+    const base = found && typeof found === "object" ? { ...found } : {
+      id: `shopee-${sn}`,
+      orderSn: sn,
+      shopId
     };
+    if (code && !deps14.isShopeeInternalTrackingCode(code)) {
+      if (!base.trackingNumber) base.trackingNumber = code;
+      if (!base.tracking_no) base.tracking_no = code;
+    }
+    const updated = deps14.applyHandedOverWrite(base, now, source);
+    console.log(
+      `[Orders Handover Fast] \u0111\u01A1n ${sn} \u2192 is_handed_over=true source=${source} (${ok ? "mongo_ok" : "mongo_fail"})`
+    );
+    return { ok: true, order: updated, changed: true };
+  } catch (err) {
+    const mapped = mapHandoverWriteError(err);
+    console.error("[Orders Handover Fast] failed:", mapped.error, err?.message || err);
+    return { ok: false, ...mapped };
   }
-  if (found && deps14.hasLeftHandedOverCarrierTab(found)) {
-    return {
-      ok: false,
-      status: 400,
-      error: `\u0110\u01A1n ${sn} \u0111\xE3 \u0110ang giao/ho\xE0n t\u1EA5t/h\u1EE7y \u2014 kh\xF4ng ghi \u0110\xE3 giao \u0110VVC.`
-    };
-  }
-  if (found && deps14.resolveOrderHandoverFlag(found)) {
-    return { ok: true, order: found, changed: false };
-  }
-  const source = opts.source === "qr_scan" ? deps14.HANDED_OVER_SOURCE.QR_SCAN : deps14.HANDED_OVER_SOURCE.MANUAL_BUTTON;
-  const now = (/* @__PURE__ */ new Date()).toISOString();
-  if (!isMongoReady()) {
-    return { ok: false, status: 503, error: "mongodb_not_ready" };
-  }
-  const ok = await markOrderHandedOverInStore(sn, {
-    source,
-    handedOverAt: now,
-    shopId
-  });
-  if (!ok) {
-    return {
-      ok: false,
-      status: 500,
-      error: `Kh\xF4ng ghi \u0111\u01B0\u1EE3c c\u1EDD b\xE0n giao \u0110VVC cho \u0111\u01A1n ${sn}.`
-    };
-  }
-  queueOrdersJsonMirrorFromMongo();
-  const base = found && typeof found === "object" ? { ...found } : {
-    id: `shopee-${sn}`,
-    orderSn: sn,
-    shopId
-  };
-  if (code && !deps14.isShopeeInternalTrackingCode(code)) {
-    if (!base.trackingNumber) base.trackingNumber = code;
-    if (!base.tracking_no) base.tracking_no = code;
-  }
-  const updated = deps14.applyHandedOverWrite(base, now, source);
-  console.log(
-    `[Orders Handover Fast] \u0111\u01A1n ${sn} \u2192 is_handed_over=true source=${source} (${ok ? "mongo_ok" : "mongo_fail"})`
-  );
-  return { ok: true, order: updated, changed: true };
 }
 async function handOverOrderToCarrierByIndex(orders, index, opts) {
   if (index < 0) {
@@ -109936,16 +110019,21 @@ async function handOverCarrierById(req, res) {
       source: String(req.body?.source || "").trim() === "qr_scan" ? "qr_scan" : "manual_button"
     });
     if (!result.ok) {
-      return res.status(result.status || 400).json({ success: false, error: result.error, message: result.error });
+      return res.status(result.status || 400).json({
+        success: false,
+        error: result.error,
+        message: result.message || result.error
+      });
     }
     invalidateOrdersRefreshCache();
     return res.json({ success: true, order: result.order, changed: result.changed !== false });
   } catch (error) {
     console.error("[Orders Handover] single error:", error);
-    return res.status(500).json({
+    const mapped = mapHandoverWriteError(error);
+    return res.status(mapped.status || 500).json({
       success: false,
-      error: error?.message || "hand_over_failed",
-      message: error?.message || "Kh\xF4ng th\u1EC3 ghi nh\u1EADn b\xE0n giao \u0110VVC."
+      error: mapped.error,
+      message: mapped.message
     });
   }
 }
@@ -109977,16 +110065,21 @@ async function handOverCarrierByCode(req, res) {
       source: String(req.body?.source || "").trim() === "qr_scan" || code ? "qr_scan" : "manual_button"
     });
     if (!result.ok) {
-      return res.status(result.status || 400).json({ success: false, error: result.error, message: result.error });
+      return res.status(result.status || 400).json({
+        success: false,
+        error: result.error,
+        message: result.message || result.error
+      });
     }
     invalidateOrdersRefreshCache();
     return res.json({ success: true, order: result.order, changed: result.changed !== false });
   } catch (error) {
     console.error("[Orders Handover] by-code error:", error);
-    return res.status(500).json({
+    const mapped = mapHandoverWriteError(error);
+    return res.status(mapped.status || 500).json({
       success: false,
-      error: error?.message || "hand_over_failed",
-      message: error?.message || "Kh\xF4ng th\u1EC3 ghi nh\u1EADn b\xE0n giao \u0110VVC."
+      error: mapped.error,
+      message: mapped.message
     });
   }
 }
@@ -110022,7 +110115,11 @@ async function handOverCarrierBulk(req, res) {
         source: "manual_button"
       });
       if (!result.ok) {
-        failed.push({ key, error: result.error });
+        failed.push({
+          key,
+          error: result.error,
+          message: result.message || result.error
+        });
         continue;
       }
       const sn = String(result.order?.orderSn || key).replace(/^shopee-/i, "").trim().toLowerCase();
@@ -110045,7 +110142,7 @@ async function handOverCarrierBulk(req, res) {
         failed,
         orders: [],
         error: failed[0]?.error || "Kh\xF4ng b\xE0n giao \u0111\u01B0\u1EE3c \u0111\u01A1n n\xE0o.",
-        message: failed[0]?.error || "Kh\xF4ng b\xE0n giao \u0111\u01B0\u1EE3c \u0111\u01A1n n\xE0o."
+        message: failed[0]?.message || failed[0]?.error || "Kh\xF4ng b\xE0n giao \u0111\u01B0\u1EE3c \u0111\u01A1n n\xE0o."
       });
     }
     invalidateOrdersRefreshCache();
@@ -110058,10 +110155,11 @@ async function handOverCarrierBulk(req, res) {
     });
   } catch (error) {
     console.error("[Orders Handover Bulk] error:", error);
-    return res.status(500).json({
+    const mapped = mapHandoverWriteError(error);
+    return res.status(mapped.status || 500).json({
       success: false,
-      error: error?.message || "hand_over_bulk_failed",
-      message: error?.message || "Kh\xF4ng th\u1EC3 b\xE0n giao \u0110VVC h\xE0ng lo\u1EA1t."
+      error: mapped.error || "hand_over_bulk_failed",
+      message: mapped.message || "Kh\xF4ng th\u1EC3 b\xE0n giao \u0110VVC h\xE0ng lo\u1EA1t."
     });
   }
 }

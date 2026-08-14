@@ -35,6 +35,7 @@ import {
   isOrderPreparedEffective,
   resolveOrderBadgeStatus,
   applyHandedOverWrite,
+  applyClearHandedOver,
   buildHandedOverWritePatch,
   isEligibleForHandOverToCarrier,
   getHandOverIneligibleReason,
@@ -1871,6 +1872,48 @@ export default function OrderManager({
     [onUpdateOrders]
   );
 
+  const sameOrderKey = React.useCallback((a: Order, b: Order) => {
+    const aSn = String(a.orderSn || '').replace(/^shopee-/i, '').trim().toLowerCase();
+    const aId = String(a.id || '').trim().toLowerCase();
+    const bSn = String(b.orderSn || '').replace(/^shopee-/i, '').trim().toLowerCase();
+    const bId = String(b.id || '').trim().toLowerCase();
+    return Boolean(
+      (aId && bId && aId === bId) ||
+        (aSn && bSn && aSn === bSn) ||
+        (aId && bSn && aId === `shopee-${bSn}`) ||
+        (bId && aSn && bId === `shopee-${aSn}`),
+    );
+  }, []);
+
+  /** Rollback optimistic ĐVVC → trả đơn về tab Đã xử lý. */
+  const rollbackHandoverOnLocalOrders = React.useCallback(
+    (originals: Order | Order[]) => {
+      const list = Array.isArray(originals) ? originals : [originals];
+      if (!list.length) return;
+      let restored = 0;
+      const merged = ordersRef.current.map((o) => {
+        const hit = list.find((orig) => sameOrderKey(o, orig));
+        if (!hit) return o;
+        restored += 1;
+        return applyClearHandedOver({ ...hit }) as Order;
+      });
+      ordersRef.current = merged;
+      onUpdateOrders(merged, { persist: false });
+      if (restored > 0) {
+        setServerOrderCounts((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            processed: Number(prev.processed || 0) + restored,
+            handed_over_carrier: Math.max(0, Number(prev.handed_over_carrier || 0) - restored),
+          };
+        });
+      }
+      setActiveSubTab('processed');
+    },
+    [onUpdateOrders, sameOrderKey],
+  );
+
   const handOverOrderToCarrier = React.useCallback(
     async (order: Order, opts?: { switchTab?: boolean; fromScan?: boolean; silent?: boolean }) => {
       const token = localStorage.getItem('admin_token');
@@ -1948,13 +1991,18 @@ export default function OrderManager({
             });
             if (altRes.ok) res = altRes;
           }
-          const data = await res.json().catch(() => ({}));
+          const data = (await res.json().catch(() => ({}))) as {
+            success?: boolean;
+            message?: string;
+            error?: string;
+          };
           if (!res.ok || data?.success === false) {
-            throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
+            throw new Error(String(data?.message || data?.error || `HTTP ${res.status}`));
           }
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
           console.warn(`[Handover BG] đơn ${order.orderSn} fail:`, msg);
+          rollbackHandoverOnLocalOrders(order);
           showScanToast(`Lưu ĐVVC nền thất bại #${order.orderSn}: ${msg}`, 'error');
         } finally {
           setHandingOverOrderId((cur) => (cur === order.id ? null : cur));
@@ -1963,7 +2011,7 @@ export default function OrderManager({
 
       return true;
     },
-    [applyHandoverToLocalOrders, onAddLog, openHandedOverCarrierTab]
+    [applyHandoverToLocalOrders, onAddLog, openHandedOverCarrierTab, rollbackHandoverOnLocalOrders]
   );
 
   const handleOrderScan = React.useCallback(
@@ -5537,12 +5585,17 @@ export default function OrderManager({
           },
           body: JSON.stringify({ orderIds, orderSns }),
         });
-        const data = await res.json().catch(() => ({}));
+        const data = (await res.json().catch(() => ({}))) as {
+          success?: boolean;
+          message?: string;
+          error?: string;
+        };
         if (!res.ok || data?.success === false) {
-          throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
+          throw new Error(String(data?.message || data?.error || `HTTP ${res.status}`));
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
+        rollbackHandoverOnLocalOrders(eligible);
         showToast(`Lưu bàn giao ĐVVC nền thất bại: ${msg}`);
       } finally {
         isHandingOverRef.current = false;
