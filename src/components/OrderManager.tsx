@@ -113,6 +113,12 @@ import {
   unlockAudio,
   isAudioUnlockedState,
 } from '../utils/notificationSound';
+import { useMediaQuery } from '../hooks/useMediaQuery';
+import {
+  OrderCardRow,
+  OrderTableRow,
+  type OrderListRowActions,
+} from './OrderListRows';
 
 function isReturnRequestOrder(order: Order): boolean {
   if (String(order.return_sn || '').trim()) return true;
@@ -728,7 +734,10 @@ interface OrderManagerProps {
   onOrdersSubTabChange?: (tab: OrderTab) => void;
 }
 
-const ORDERS_PAGE_SIZE = 2000;
+const ORDERS_PAGE_SIZE = 50;
+const SCAN_BG_STATUS_POLL_MS = 15_000;
+const COUNTER_POLL_MS = 20_000;
+const ORDERS_AUTO_REFRESH_MS = 30_000;
 
 const CANCEL_RETURN_STATUSES: Order['status'][] = ['cancelled', 'return_pending', 'return_received'];
 const OM_PULL_REFRESH_THRESHOLD_PX = 72;
@@ -931,6 +940,9 @@ export default function OrderManager({
   const [cancelReturnTab, setCancelReturnTab] = useState<CancelReturnTab>(() => readStoredCancelTab());
   const [selectedShopId, setSelectedShopId] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const isMobileViewport = useMediaQuery('(max-width: 768px)');
+  const isWideDesktop = useMediaQuery('(min-width: 1440px)');
+  const useOrderCardList = isMobileViewport || isWideDesktop;
 
   // Sync = background job; FE chỉ ACK + lock nút + toast (không đổi text nút).
   const [isSyncing, setIsSyncing] = useState(false);
@@ -949,6 +961,7 @@ export default function OrderManager({
   const [audioEnabled, setAudioEnabled] = useState(() => isAudioUnlockedState());
   const syncPollTimerRef = useRef<number | null>(null);
   const counterPollTimerRef = useRef<number | null>(null);
+  const counterAbortRef = useRef<AbortController | null>(null);
   const prefetchPollTimerRef = useRef<number | null>(null);
   const prefetchHideTimerRef = useRef<number | null>(null);
   const activePrefetchBatchRef = useRef<string>('');
@@ -987,6 +1000,9 @@ export default function OrderManager({
   const fetchOrderCounts = useCallback(async (): Promise<Record<string, number> | null> => {
     const token = localStorage.getItem('admin_token') || '';
     if (!token) return null;
+    counterAbortRef.current?.abort();
+    const controller = new AbortController();
+    counterAbortRef.current = controller;
     try {
       const params = new URLSearchParams();
       params.set('t', String(Date.now()));
@@ -996,6 +1012,7 @@ export default function OrderManager({
       }
       const res = await fetch(`/api/orders/counter?${params.toString()}`, {
         cache: 'no-store',
+        signal: controller.signal,
         headers: {
           Authorization: `Bearer ${token}`,
           'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -1009,7 +1026,12 @@ export default function OrderManager({
         return counts;
       }
     } catch (err) {
-      console.warn('[OrderCounts] fetch failed:', err);
+      const aborted =
+        (err instanceof DOMException && err.name === 'AbortError') ||
+        (typeof err === 'object' && err !== null && (err as { name?: string }).name === 'AbortError');
+      if (!aborted) console.warn('[OrderCounts] fetch failed:', err);
+    } finally {
+      if (counterAbortRef.current === controller) counterAbortRef.current = null;
     }
     return null;
   }, [selectedShopId]);
@@ -1020,7 +1042,6 @@ export default function OrderManager({
       const page = opts?.page && opts.page > 0 ? opts.page : currentPage;
       void onFetchOrders?.({
         silent: opts?.silent !== false,
-        bustCache: true,
         force: true,
         page,
         limit: ORDERS_PAGE_SIZE,
@@ -1061,7 +1082,6 @@ export default function OrderManager({
       setCurrentPage(next);
       void onFetchOrders?.({
         silent: false,
-        bustCache: true,
         force: true,
         page: next,
         limit: ORDERS_PAGE_SIZE,
@@ -1084,7 +1104,7 @@ export default function OrderManager({
   /** Sau sync nền: chỉ poll counter nhẹ — không kéo 150–400 đơn + merge. */
   const startSyncPolling = useCallback(() => {
     if (syncPollTimerRef.current != null) {
-      window.clearInterval(syncPollTimerRef.current);
+      window.clearTimeout(syncPollTimerRef.current);
       syncPollTimerRef.current = null;
     }
     let ticks = 0;
@@ -1100,30 +1120,32 @@ export default function OrderManager({
         countsFingerprintRef.current = fp;
       }
     };
-    syncPollTimerRef.current = window.setInterval(() => {
+    const loop = async () => {
       ticks += 1;
-      void pollOnce();
+      await pollOnce();
       if (ticks >= maxTicks) {
-        if (syncPollTimerRef.current != null) {
-          window.clearInterval(syncPollTimerRef.current);
-          syncPollTimerRef.current = null;
-        }
+        syncPollTimerRef.current = null;
         setLastSyncSummary('Đồng bộ ngầm hoàn tất');
+        return;
       }
-    }, 15_000);
-    window.setTimeout(() => {
-      void pollOnce();
+      syncPollTimerRef.current = window.setTimeout(() => {
+        void loop();
+      }, 15_000);
+    };
+    syncPollTimerRef.current = window.setTimeout(() => {
+      void loop();
     }, 2000);
   }, [fetchOrderCounts, scheduleNewOrderListRefresh]);
 
   useEffect(() => {
     return () => {
       if (syncPollTimerRef.current != null) {
-        window.clearInterval(syncPollTimerRef.current);
+        window.clearTimeout(syncPollTimerRef.current);
       }
       if (counterPollTimerRef.current != null) {
-        window.clearInterval(counterPollTimerRef.current);
+        window.clearTimeout(counterPollTimerRef.current);
       }
+      counterAbortRef.current?.abort();
       if (prefetchPollTimerRef.current != null) {
         window.clearInterval(prefetchPollTimerRef.current);
       }
@@ -1137,29 +1159,37 @@ export default function OrderManager({
     };
   }, []);
 
-  /** Polling counter 20s — badge + toast + tự refetch list khi có đơn mới. */
+  /** Polling counter — badge + toast + tự refetch list khi có đơn mới. */
   useEffect(() => {
-    void (async () => {
-      const counts = await fetchOrderCounts();
-      if (counts) countsFingerprintRef.current = fingerprintCounts(counts);
-    })();
-    if (counterPollTimerRef.current != null) {
-      window.clearInterval(counterPollTimerRef.current);
-    }
-    counterPollTimerRef.current = window.setInterval(async () => {
-      const counts = await fetchOrderCounts();
-      if (!counts) return;
-      const fp = fingerprintCounts(counts);
-      if (countsFingerprintRef.current && countsFingerprintRef.current !== fp) {
-        scheduleNewOrderListRefresh();
+    let cancelled = false;
+    const schedule = (delay: number) => {
+      if (cancelled) return;
+      counterPollTimerRef.current = window.setTimeout(() => {
+        void poll();
+      }, delay);
+    };
+    const poll = async () => {
+      if (cancelled) return;
+      if (document.visibilityState !== 'hidden') {
+        const counts = await fetchOrderCounts();
+        if (!cancelled && counts) {
+          const fp = fingerprintCounts(counts);
+          if (countsFingerprintRef.current && countsFingerprintRef.current !== fp) {
+            scheduleNewOrderListRefresh();
+          }
+          if (fp) countsFingerprintRef.current = fp;
+        }
       }
-      if (fp) countsFingerprintRef.current = fp;
-    }, 20_000);
+      schedule(COUNTER_POLL_MS);
+    };
+    void poll();
     return () => {
+      cancelled = true;
       if (counterPollTimerRef.current != null) {
-        window.clearInterval(counterPollTimerRef.current);
+        window.clearTimeout(counterPollTimerRef.current);
         counterPollTimerRef.current = null;
       }
+      counterAbortRef.current?.abort();
     };
   }, [fetchOrderCounts, scheduleNewOrderListRefresh]);
 
@@ -1423,9 +1453,9 @@ export default function OrderManager({
     if (tabFetchTabs.has(activeSubTab)) {
       setCurrentPage(1);
       console.log(`[Orders Tab] activeSubTab=${activeSubTab} → fetch page=1 limit=${ORDERS_PAGE_SIZE}`);
+      counterAbortRef.current?.abort();
       void onFetchOrders?.({
-        silent: true,
-        bustCache: true,
+        silent: false,
         force: true,
         page: 1,
         limit: ORDERS_PAGE_SIZE,
@@ -1448,8 +1478,7 @@ export default function OrderManager({
     const handle = window.setTimeout(() => {
       setCurrentPage(1);
       void onFetchOrders?.({
-        silent: true,
-        bustCache: true,
+        silent: false,
         force: true,
         page: 1,
         limit: ORDERS_PAGE_SIZE,
@@ -1512,7 +1541,6 @@ export default function OrderManager({
   /** Hàng đợi dò ngầm đã chuyển lên Backend — FE chỉ enqueue + poll badge. */
   const [scanBgPendingKeys, setScanBgPendingKeys] = useState<Set<string>>(() => new Set());
   const [scanBgPendingCount, setScanBgPendingCount] = useState(0);
-  const scanBgPollBusyRef = React.useRef(false);
   const prevFocusScannerRef = React.useRef(focusScanner);
   const isHandingOverRef = React.useRef(false);
   const daXuatKhoListRef = React.useRef(daXuatKhoList);
@@ -1593,7 +1621,13 @@ export default function OrderManager({
     const wasFocused = prevFocusScannerRef.current;
     prevFocusScannerRef.current = focusScanner;
     if (wasFocused && !focusScanner) {
-      void onFetchOrders?.({ silent: true, limit: 2000, merge: true, bustCache: true });
+      void onFetchOrders?.({
+        silent: true,
+        page: 1,
+        limit: ORDERS_PAGE_SIZE,
+        merge: false,
+        tab: activeSubTab === 'all' ? '' : activeSubTab,
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusScanner]);
@@ -1639,9 +1673,10 @@ export default function OrderManager({
       setPrintStatusFilter(next);
       void onFetchOrders?.({
         silent: true,
-        bustCache: true,
-        limit: 2000,
-        merge: true,
+        page: 1,
+        limit: ORDERS_PAGE_SIZE,
+        merge: false,
+        tab: activeSubTab === 'all' ? '' : activeSubTab,
       });
     },
     [onFetchOrders],
@@ -2386,11 +2421,26 @@ export default function OrderManager({
   /** Poll trạng thái worker Backend — badge + toast + refresh tab hủy/hoàn. */
   useEffect(() => {
     let cancelled = false;
+    let timer: number | null = null;
+    let abortCtrl: AbortController | null = null;
+    let inFlight = false;
+    const schedule = () => {
+      if (cancelled) return;
+      timer = window.setTimeout(() => {
+        void poll();
+      }, SCAN_BG_STATUS_POLL_MS);
+    };
     const poll = async () => {
-      if (scanBgPollBusyRef.current) return;
-      scanBgPollBusyRef.current = true;
+      if (cancelled || inFlight) return;
+      if (document.visibilityState === 'hidden') {
+        schedule();
+        return;
+      }
+      inFlight = true;
+      abortCtrl = new AbortController();
+      const signal = abortCtrl.signal;
       try {
-        const status = await fetchScanBgStatus();
+        const status = await fetchScanBgStatus(signal);
         if (cancelled || !status) return;
         const keys = buildScanBgPendingKeySet(status);
         setScanBgPendingKeys(keys);
@@ -2402,7 +2452,6 @@ export default function OrderManager({
           if (toast) {
             if (focusScanner) showScanToast(toast, 'success');
             else {
-              // Ngoài màn quét: dùng scanToast nếu còn mount, không thì bỏ qua (App toast lo).
               showScanToast(toast, 'success');
             }
           }
@@ -2410,20 +2459,25 @@ export default function OrderManager({
           const saved =
             (status.summary?.cancelled || 0) + (status.summary?.returnReceived || 0);
           if (saved > 0) {
-            void onFetchOrders?.({ silent: true, limit: 2000, merge: true, bustCache: true });
+            void onFetchOrders?.({
+              silent: true,
+              page: 1,
+              limit: ORDERS_PAGE_SIZE,
+              merge: false,
+              tab: activeSubTab === 'all' ? '' : activeSubTab,
+            });
           }
         }
       } finally {
-        scanBgPollBusyRef.current = false;
+        inFlight = false;
+        schedule();
       }
     };
     void poll();
-    const timer = window.setInterval(() => {
-      void poll();
-    }, 2500);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timer != null) window.clearTimeout(timer);
+      abortCtrl?.abort();
     };
   }, [focusScanner, onFetchOrders]);
 
@@ -2866,9 +2920,9 @@ export default function OrderManager({
   // Detail Modal & Bulk Print Modal
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
 
-  const toggleOrderDetails = (orderId: string) => {
+  const toggleOrderDetails = useCallback((orderId: string) => {
     setExpandedOrderId((prev) => (prev === orderId ? null : orderId));
-  };
+  }, []);
   const [bulkPrintOrders, setBulkPrintOrders] = useState<Order[] | null>(null);
 
   // Real Shopee/TikTok logistics API call state (ship_order / shipping document)
@@ -4395,7 +4449,6 @@ export default function OrderManager({
               if (!onFetchOrders) throw new Error('Không có hàm làm mới danh sách đơn hàng.');
               await onFetchOrders({
                 silent: true,
-                bustCache: true,
                 force: true,
                 page: 1,
                 limit: ORDERS_PAGE_SIZE,
@@ -4843,19 +4896,33 @@ export default function OrderManager({
    * Auto-refresh — PHẢI kèm tab đang xem + trang hiện tại.
    */
   useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      if (document.visibilityState === 'hidden') return;
-      void onFetchOrders?.({
-        silent: true,
-        bustCache: true,
-        page: currentPage,
-        limit: ORDERS_PAGE_SIZE,
-        merge: false,
-        tab: activeSubTab === 'all' ? '' : activeSubTab,
-      });
-      void fetchOrderCounts();
-    }, 30_000);
-    return () => window.clearInterval(intervalId);
+    let cancelled = false;
+    let timer: number | null = null;
+    const loop = async () => {
+      if (cancelled) return;
+      if (document.visibilityState !== 'hidden') {
+        await onFetchOrders?.({
+          silent: true,
+          page: currentPage,
+          limit: ORDERS_PAGE_SIZE,
+          merge: false,
+          tab: activeSubTab === 'all' ? '' : activeSubTab,
+        });
+        if (cancelled) return;
+        await fetchOrderCounts();
+      }
+      if (cancelled) return;
+      timer = window.setTimeout(() => {
+        void loop();
+      }, ORDERS_AUTO_REFRESH_MS);
+    };
+    timer = window.setTimeout(() => {
+      void loop();
+    }, ORDERS_AUTO_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      if (timer != null) window.clearTimeout(timer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSubTab, currentPage]);
 
@@ -4965,8 +5032,7 @@ export default function OrderManager({
     try {
       setCurrentPage(1);
       await onFetchOrders?.({
-        silent: true,
-        bustCache: true,
+        silent: false,
         force: true,
         page: 1,
         limit: ORDERS_PAGE_SIZE,
@@ -5074,52 +5140,26 @@ export default function OrderManager({
     return clientCount;
   };
 
-  // Filter logic (client-side only — không gọi API)
-  const singleItemSortKey = (order: Order) => {
-    const item = (order.items || [])[0];
-    if (!item) return '';
-    return String(item.productTitle || item.modelSku || item.modelName || '').trim();
-  };
-
-  /** Tab + sàn + shop + search (+ chưa in) — CHƯA lọc ĐVVC. Count và list dùng chung pool này. */
+  /** Shop + search + print + ĐVVC. Tab đã lọc ở Backend (`?tab=`) — không filter lại activeSubTab. */
   const matchesOrdersListBaseFilters = (order: Order): boolean => {
-    const isGlobalSearch = Boolean(searchQuery.trim());
-    // 1. Tab filter — BỎ khi đang search (q= toàn collection).
-    if (!isGlobalSearch) {
-    if (activeSubTab === 'cancel_returns') {
-      if (!matchesCancelReturnTab(order, cancelReturnTab)) return false;
-    } else if (activeSubTab === 'return_requests') {
-      if (!isReturnRequestOrder(order)) return false;
-    } else if (activeSubTab === 'received_cancel_returns') {
-      if (!matchesReceivedCancelReturnTab(order)) return false;
-    } else if (activeSubTab === 'handed_over_carrier') {
-      if (!matchesHandedOverCarrierTab(order)) return false;
-    } else if (activeSubTab === 'processed') {
-      if (!matchesProcessedPickupTab(order) || isPendingConfirmOrder(order)) return false;
-    } else if (activeSubTab === 'pending_confirm' || activeSubTab === 'pending_verification') {
-      if (!isPendingConfirmOrder(order)) return false;
-    } else if (activeSubTab === 'unprocessed') {
-      if (!matchesUnprocessedPickupTab(order) || isPendingConfirmOrder(order)) return false;
-    } else if (activeSubTab === 'web_orders') {
-      // Tab "Đơn trên web" — chỉ WooCommerce, bỏ qua filter status sàn
-      if (order.channel !== 'woocommerce') return false;
-    } else if (activeSubTab === 'shipping') {
-      if (!matchesShippingTab(order)) return false;
-    } else if (activeSubTab !== 'all' && activeSubTab !== 'order_products') {
-      if (order.status !== activeSubTab) return false;
-    }
+    // Nested sub-tab cancel_returns không có query Backend riêng.
+    if (
+      !searchQuery.trim() &&
+      activeSubTab === 'cancel_returns' &&
+      cancelReturnTab !== 'all' &&
+      !matchesCancelReturnTab(order, cancelReturnTab)
+    ) {
+      return false;
     }
 
-    // 2. Platform filter (tab web_orders đã ép channel=woocommerce ở trên)
+    // Platform filter (tab web_orders đã ép channel=woocommerce ở Backend)
     if (activeSubTab !== 'web_orders' && selectedPlatform !== 'all') {
       if (selectedPlatform === 'lazada') return false;
       if (order.channel !== selectedPlatform) return false;
     }
 
-    // 3. Shop Filter
     if (!matchesSelectedShop(order)) return false;
 
-      // 4. Search query
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       const matchSn = String(order.orderSn || '').toLowerCase().includes(q);
@@ -5148,7 +5188,6 @@ export default function OrderManager({
       if (!matchSn && !matchTracking && !matchInternal && !matchProduct && !matchCustomer) return false;
     }
 
-    // 5. Lọc Đã in / Chưa in theo cờ isPrinted (cùng SSOT với badge)
     if (printStatusFilter === 'printed' && !isOrderPrintedEffective(order)) return false;
     if (printStatusFilter === 'unprinted' && isOrderPrintedEffective(order)) return false;
 
@@ -5195,53 +5234,65 @@ export default function OrderManager({
     return counts;
   }, [activeSubTab, ordersPoolBeforeCarrier]);
 
-  const filteredOrdersBase = ordersPoolBeforeCarrier
-    .filter((order) => {
-      if (searchQuery.trim()) return true;
-      // ĐVVC filter — Chờ xác nhận + Chờ lấy hàng + Đơn hủy/hoàn
-      if (
-        activeSubTab === 'pending_confirm' ||
-        activeSubTab === 'pending_verification' ||
-        activeSubTab === 'unprocessed' ||
-        activeSubTab === 'processed' ||
-        activeSubTab === 'cancel_returns' ||
-        activeSubTab === 'received_cancel_returns'
-      ) {
-        return orderMatchesShippingCarrierFilter(order, selectedShippingCarrier);
-      }
-      return true;
-    })
-    .sort((a, b) => {
-      const dateMs = (o: Order) => new Date(o.date || 0).getTime() || 0;
-      if (selectedSort === 'newest') return dateMs(b) - dateMs(a);
-      if (selectedSort === 'oldest') return dateMs(a) - dateMs(b);
-      if (selectedSort === 'highest_value') {
-        return (Number(b.totalAmount) || 0) - (Number(a.totalAmount) || 0);
+  const singleItemSortKey = (order: Order) => {
+    const item = (order.items || [])[0];
+    if (!item) return '';
+    return String(item.productTitle || item.modelSku || item.modelName || '').trim();
+  };
+
+  const filteredOrdersBase = useMemo(() => {
+    return ordersPoolBeforeCarrier
+      .filter((order) => {
+        if (searchQuery.trim()) return true;
+        if (
+          activeSubTab === 'pending_confirm' ||
+          activeSubTab === 'pending_verification' ||
+          activeSubTab === 'unprocessed' ||
+          activeSubTab === 'processed' ||
+          activeSubTab === 'cancel_returns' ||
+          activeSubTab === 'received_cancel_returns'
+        ) {
+          return orderMatchesShippingCarrierFilter(order, selectedShippingCarrier);
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const dateMs = (o: Order) => new Date(o.date || 0).getTime() || 0;
+        if (selectedSort === 'newest') return dateMs(b) - dateMs(a);
+        if (selectedSort === 'oldest') return dateMs(a) - dateMs(b);
+        if (selectedSort === 'highest_value') {
+          return (Number(b.totalAmount) || 0) - (Number(a.totalAmount) || 0);
+        }
+        return 0;
+      });
+  }, [
+    ordersPoolBeforeCarrier,
+    searchQuery,
+    activeSubTab,
+    selectedShippingCarrier,
+    selectedSort,
+  ]);
+
+  const filteredOrders = useMemo(() => {
+    if (!(smartPickSort && activeSubTab === 'unprocessed')) return filteredOrdersBase;
+    return [...filteredOrdersBase].sort((a, b) => {
+      const aSingle = (a.items || []).length === 1;
+      const bSingle = (b.items || []).length === 1;
+      if (aSingle && !bSingle) return -1;
+      if (!aSingle && bSingle) return 1;
+      if (aSingle && bSingle) {
+        const nameCmp = singleItemSortKey(a).localeCompare(singleItemSortKey(b), 'vi', {
+          sensitivity: 'base',
+          numeric: true,
+        });
+        if (nameCmp !== 0) return nameCmp;
+        const aq = Number(a.items[0]?.quantity) || 0;
+        const bq = Number(b.items[0]?.quantity) || 0;
+        return aq - bq;
       }
       return 0;
     });
-
-  // Smart pick sort: không ẩn đơn — chỉ sắp xếp lại trên client khi bật toggle (tab unprocessed).
-  const filteredOrders =
-    smartPickSort && activeSubTab === 'unprocessed'
-      ? [...filteredOrdersBase].sort((a, b) => {
-          const aSingle = (a.items || []).length === 1;
-          const bSingle = (b.items || []).length === 1;
-          if (aSingle && !bSingle) return -1;
-          if (!aSingle && bSingle) return 1;
-          if (aSingle && bSingle) {
-            const nameCmp = singleItemSortKey(a).localeCompare(singleItemSortKey(b), 'vi', {
-              sensitivity: 'base',
-              numeric: true,
-            });
-            if (nameCmp !== 0) return nameCmp;
-            const aq = Number(a.items[0]?.quantity) || 0;
-            const bq = Number(b.items[0]?.quantity) || 0;
-            return aq - bq;
-          }
-          return 0;
-        })
-      : filteredOrdersBase;
+  }, [filteredOrdersBase, smartPickSort, activeSubTab]);
 
 
   // Resolve checkbox selections to full Order rows — CHỈ lấy đơn đang hiển thị
@@ -5278,13 +5329,11 @@ export default function OrderManager({
     }
   };
 
-  const handleToggleSelectOne = (id: string) => {
-    if (selectedOrderIds.includes(id)) {
-      setSelectedOrderIds(prev => prev.filter(item => item !== id));
-    } else {
-      setSelectedOrderIds(prev => [...prev, id]);
-    }
-  };
+  const handleToggleSelectOne = useCallback((id: string) => {
+    setSelectedOrderIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
+    );
+  }, []);
 
   // Bulk Actions — chặn mọi redirect/navigation mặc định của nút/link
   const handleBulkPrint = async (e?: React.MouseEvent) => {
@@ -5606,10 +5655,10 @@ export default function OrderManager({
 
   // Single-order "Chuẩn bị hàng" — opens the pickup/dropoff confirmation modal;
   // the real ship_order call fires only after the seller confirms a method.
-  const handleSinglePrepare = (order: Order) => {
+  const handleSinglePrepare = useCallback((order: Order) => {
     setShipMethod('pickup');
     setShipConfirmOrders([order]);
-  };
+  }, []);
 
   // Single-order print — fetches the REAL Shopee AWB PDF, or falls back to the
   // mock packing-slip preview for non-Shopee (manual/tiktok) orders.
@@ -5759,7 +5808,13 @@ export default function OrderManager({
     setShowEndConfirm(false);
     setIsFlushingQueue(false);
     // Refresh badge Menu ngay khi thoát Quét (worker dò ngầm có thể vừa ghi DB).
-    void onFetchOrders?.({ silent: true, limit: 2000, merge: true, bustCache: true });
+    void onFetchOrders?.({
+      silent: true,
+      page: 1,
+      limit: ORDERS_PAGE_SIZE,
+      merge: false,
+      tab: activeSubTab === 'all' ? '' : activeSubTab,
+    });
     if (onCloseScanner) onCloseScanner();
     else if (onEndScanSession) onEndScanSession();
   };
@@ -6076,6 +6131,96 @@ export default function OrderManager({
       items: daNhanHoanList,
     },
   };
+
+  const handlePatchOrderStatus = useCallback(
+    (order: Order, status: Order['status'], logMessage?: string) => {
+      const updated = ordersRef.current.map((o) => (o.id === order.id ? { ...o, status } : o));
+      ordersRef.current = updated;
+      onUpdateOrders(updated);
+      if (logMessage) {
+        onAddLog({
+          id: `log-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          channel: order.channel,
+          type: 'stock_sync',
+          status: 'success',
+          message: logMessage,
+        });
+      }
+    },
+    [onAddLog, onUpdateOrders],
+  );
+
+  const selectedOrderIdSet = useMemo(() => new Set(selectedOrderIds), [selectedOrderIds]);
+  const resettingPrintSet = useMemo(
+    () => new Set(resettingPrintIds.map((id) => String(id || '').replace(/^shopee-/i, '').trim())),
+    [resettingPrintIds],
+  );
+
+  const handlePrintButtonClickRef = useRef(handlePrintButtonClick);
+  handlePrintButtonClickRef.current = handlePrintButtonClick;
+  const handOverOrderToCarrierRef = useRef(handOverOrderToCarrier);
+  handOverOrderToCarrierRef.current = handOverOrderToCarrier;
+
+  const orderRowActions = useMemo<OrderListRowActions>(
+    () => ({
+      onToggleSelect: handleToggleSelectOne,
+      onToggleDetails: toggleOrderDetails,
+      onPrint: (e, order) => handlePrintButtonClickRef.current(e, order),
+      onPrepare: handleSinglePrepare,
+      onHandOver: (order) => {
+        void handOverOrderToCarrierRef.current(order);
+      },
+      onMarkPrinted: markPrintedStatusForOrders,
+      onResetPrint: resetPrintStatusForOrders,
+      onWooAction: handleWooOrderStatusAction,
+      onConfirmReturn: confirmWarehouseReturnReceived,
+      onPatchStatus: handlePatchOrderStatus,
+    }),
+    [
+      confirmWarehouseReturnReceived,
+      handlePatchOrderStatus,
+      handleSinglePrepare,
+      handleToggleSelectOne,
+      handleWooOrderStatusAction,
+      markPrintedStatusForOrders,
+      resetPrintStatusForOrders,
+      toggleOrderDetails,
+    ],
+  );
+
+  const renderOrderDetails = useCallback(
+    (order: Order) => (
+      <OrderDetailAccordionPanel order={order} shops={shops} systemFees={systemFees} />
+    ),
+    [shops, systemFees],
+  );
+
+  const resolveRowBadge = useCallback(
+    (order: Order): { text: string; color: string } => {
+      const badgeBase = getStatusBadge(resolveOrderBadgeStatus(order)) || {
+        text: String(order.status),
+        color: '',
+      };
+      if (activeSubTab === 'return_requests') {
+        return { text: 'Đang hoàn về', color: 'bg-indigo-50 text-indigo-600 border-indigo-200/60' };
+      }
+      if (orderMatchesScanBgPending(order, scanBgPendingKeys)) {
+        return {
+          text: 'Đang dò ngầm...',
+          color: 'bg-sky-50 text-sky-700 border-sky-200/60 font-semibold animate-pulse',
+        };
+      }
+      if (matchesHandedOverCarrierTab(order)) {
+        return {
+          text: 'Đã quét QR - Chờ ĐVVC nhận',
+          color: 'bg-violet-50 text-violet-700 border-violet-200/60 font-semibold',
+        };
+      }
+      return badgeBase;
+    },
+    [activeSubTab, scanBgPendingKeys],
+  );
 
   if (focusScanner) {
     const modalMeta = scanStatModal ? scanStatModalMeta[scanStatModal] : null;
@@ -7268,7 +7413,8 @@ export default function OrderManager({
             </div>
           ) : (
             <>
-              <div className="overflow-x-auto app-wide-hide-table om-orders-table-view max-md:hidden md:block">
+              {!useOrderCardList && (
+              <div className="overflow-x-auto om-orders-table-view">
                 <table className="w-full text-left border-collapse text-sm">
                   <thead>
                     <tr className="bg-slate-50 border-b border-gray-100 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
@@ -7309,8 +7455,10 @@ export default function OrderManager({
                   </tbody>
                 </table>
               </div>
+              )}
 
-              <div className="om-order-card-list app-wide-card-grid divide-y divide-gray-100 max-md:divide-y">
+              {useOrderCardList && (
+              <div className="om-order-card-list om-order-card-list-mounted app-wide-card-grid divide-y divide-gray-100 max-md:divide-y">
                 {aggregatedOrderProducts.map((item) => (
                   <div key={item.groupKey} className="flex items-center gap-3 p-4 max-md:border-0">
                     {item.productImage ? (
@@ -7337,15 +7485,13 @@ export default function OrderManager({
                   </div>
                 ))}
               </div>
+              )}
             </>
           )}
         </div>
       ) : (
       <div className="bg-white rounded-3xl border border-gray-100 shadow-xs overflow-hidden">
-        {ordersLoading && filteredOrders.length === 0 ? (
-          // Đang tải lần đầu (VD: Ctrl+F5, Mongo vừa khởi động) — KHÔNG hiện "trống"
-          // (dễ khiến người dùng tưởng lỗi và bấm "Làm mới" nhiều lần trong khi request
-          // đầu vẫn đang chạy/tự retry ngầm).
+        {ordersLoading ? (
           <div className="py-20 text-center text-gray-400 text-xs flex flex-col items-center gap-3">
             <RefreshCw className="w-10 h-10 text-slate-300 animate-spin" />
             <span className="font-semibold text-slate-600">Đang tải danh sách đơn hàng...</span>
@@ -7360,12 +7506,13 @@ export default function OrderManager({
           </div>
         ) : (
           <>
-            <div className="overflow-x-auto app-wide-hide-table om-orders-table-view max-md:hidden md:block">
+            {!useOrderCardList && (
+            <div className="overflow-x-auto om-orders-table-view">
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-slate-50 border-b border-gray-100 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
                   <th className="p-4 w-12 text-center">
-                    <input 
+                    <input
                       type="checkbox"
                       checked={selectedOrderIds.length === filteredOrders.length}
                       onChange={handleToggleSelectAll}
@@ -7404,811 +7551,60 @@ export default function OrderManager({
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {filteredOrders.map(order => {
-                  const isChecked = selectedOrderIds.includes(order.id);
-                  const badgeBase = getStatusBadge(resolveOrderBadgeStatus(order)) || { text: order.status, color: '' };
-                  const isBgLooking = orderMatchesScanBgPending(order, scanBgPendingKeys);
-                  const badge = activeSubTab === 'return_requests'
-                    ? {
-                        text: 'Đang hoàn về',
-                        color: 'bg-indigo-50 text-indigo-600 border-indigo-200/60',
-                      }
-                    : isBgLooking
-                    ? {
-                        text: 'Đang dò ngầm...',
-                        color: 'bg-sky-50 text-sky-700 border-sky-200/60 font-semibold animate-pulse',
-                      }
-                    : matchesHandedOverCarrierTab(order)
-                      ? {
-                          text: 'Đã quét QR - Chờ ĐVVC nhận',
-                          color: 'bg-violet-50 text-violet-700 border-violet-200/60 font-semibold',
-                        }
-                      : badgeBase;
-                  const isExpanded = expandedOrderId === order.id;
-                  const refundAmt =
-                    Number(order.refund_amount) > 0
-                      ? Number(order.refund_amount)
-                      : Number(order.totalAmount) || 0;
-                  const returnReason =
-                    String(order.text_reason || order.return_reason || '').trim() || '—';
-                  return (
-                    <React.Fragment key={order.id}>
-                    <tr 
-                      className={`hover:bg-slate-50/40 transition-all ${isChecked ? 'bg-blue-50/20' : ''}`}
-                    >
-                      {/* Checkbox column */}
-                      <td className="p-4 text-center">
-                        <input 
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => handleToggleSelectOne(order.id)}
-                          className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer"
-                        />
-                      </td>
-
-                      {activeSubTab === 'return_requests' ? (
-                        <>
-                          <td className="p-4">
-                            <div className="font-mono font-extrabold text-gray-900 text-sm">#{order.orderSn}</div>
-                            <div className="text-[10px] text-gray-400 mt-0.5">
-                              {resolveOrderShopDisplayName(order, shops)}
-                            </div>
-                          </td>
-                          <td className="p-4">
-                            <div className="font-mono font-bold text-orange-700 text-xs break-all">
-                              {order.return_sn || '—'}
-                            </div>
-                          </td>
-                          <td className="p-4 w-[260px]">
-                            <div className="space-y-2">
-                              {(order.items || []).map((item, idx) => (
-                                <div key={idx} className="flex items-center gap-2">
-                                  {item.productImage ? (
-                                    <img
-                                      src={item.productImage}
-                                      alt={item.productTitle}
-                                      className="w-10 h-10 rounded-lg object-cover border border-gray-200 shrink-0 bg-gray-50"
-                                    />
-                                  ) : (
-                                    <div className="w-10 h-10 rounded-lg border border-gray-200 bg-gray-50 flex items-center justify-center shrink-0">
-                                      <ImageIcon className="w-4 h-4 text-gray-300" />
-                                    </div>
-                                  )}
-                                  <div className="min-w-0">
-                                    <p className="text-[11px] text-gray-700 font-semibold leading-snug line-clamp-2" title={item.productTitle}>
-                                      {item.productTitle}
-                                    </p>
-                                    <span className="text-[9px] bg-blue-50 text-blue-600 border border-blue-100 px-1 py-0.2 rounded font-extrabold inline-block mt-0.5">
-                                      x{item.quantity}
-                                    </span>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </td>
-                          <td className="p-4 text-right">
-                            <div className="font-black text-rose-700 text-sm">
-                              {refundAmt.toLocaleString('vi-VN')}đ
-                            </div>
-                          </td>
-                          <td className="p-4">
-                            <p className="text-[11px] text-slate-700 font-medium leading-snug line-clamp-3" title={returnReason}>
-                              {returnReason}
-                            </p>
-                          </td>
-                          <td className="p-4 text-center">
-                            <ReturnWarehouseStatusBlock
-                              order={order}
-                              confirming={
-                                confirmingReturnId === String(order.id || '') ||
-                                confirmingReturnId === String(order.orderSn || '')
-                              }
-                              onConfirm={confirmWarehouseReturnReceived}
-                            />
-                          </td>
-                          <td className="p-4">
-                            {order.return_tracking_no || order.returnTrackingNumber ? (
-                              <div className="font-mono font-extrabold text-gray-900 text-sm tracking-tight flex items-center gap-1" title={order.return_tracking_no || order.returnTrackingNumber}>
-                                <Barcode className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                                <span className="truncate max-w-[180px]">{order.return_tracking_no || order.returnTrackingNumber}</span>
-                              </div>
-                            ) : (
-                              <span className="text-xs text-gray-400 italic font-medium">Chưa có mã VĐ hoàn</span>
-                            )}
-                          </td>
-                        </>
-                      ) : (
-                      <>
-                      {/* Waybill & Platform Label */}
-                      <td className="p-4 space-y-1">
-                        <div className="flex items-center gap-1.5">
-                          <span
-                            className={`px-2 py-0.5 text-[10px] font-bold rounded truncate max-w-[11rem] inline-block ${
-                              order.channel === 'shopee'
-                                ? 'bg-orange-50 text-orange-700 border border-orange-200'
-                                : order.channel === 'tiktok'
-                                  ? 'bg-zinc-100 text-zinc-800 border border-zinc-200'
-                                  : order.channel === 'woocommerce'
-                                    ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                                    : 'bg-blue-50 text-blue-700 border border-blue-200'
-                            }`}
-                            title={resolveOrderShopDisplayName(order, shops)}
-                          >
-                            {resolveOrderShopDisplayName(order, shops)}
-                          </span>
-                        </div>
-                        {getOrderWaybillCode(order) ? (
-                          <div className="font-mono font-extrabold text-gray-900 text-sm tracking-tight flex items-center gap-1" title={getOrderWaybillCode(order)}>
-                            <Barcode className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                            <span className="truncate max-w-[160px]">{getOrderWaybillCode(order)}</span>
-                          </div>
-                        ) : order.channel === 'woocommerce' ? (
-                          <span className="text-[10px] text-indigo-600 font-semibold italic">Web order</span>
-                        ) : (
-                          <AwaitingShopeeTrackingBadge />
-                        )}
-                        <div className="text-[10px] text-gray-400 font-mono">#{order.orderSn}</div>
-                      </td>
-
-                      {/* Created Time */}
-                      <td className="p-4 text-gray-500 font-medium">
-                        {new Date(order.date).toLocaleDateString('vi-VN')}
-                        <p className="text-[10px] text-gray-400 font-mono mt-0.5">{new Date(order.date).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}</p>
-                      </td>
-
-                      {/* Order items list — thumbnail + full title + quantity */}
-                      <td className="p-4 w-[280px]">
-                        <div className="space-y-2">
-                          {(order.items || []).map((item, idx) => {
-                            const itemTitle = item.productTitle || (item as { name?: string }).name || 'Sản phẩm';
-                            return (
-                            <div key={idx} className="flex items-center gap-2">
-                              {item.productImage ? (
-                                <img
-                                  src={item.productImage}
-                                  alt={itemTitle}
-                                  className="w-10 h-10 rounded-lg object-cover border border-gray-200 shrink-0 bg-gray-50"
-                                />
-                              ) : (
-                                <div className="w-10 h-10 rounded-lg border border-gray-200 bg-gray-50 flex items-center justify-center shrink-0">
-                                  <ImageIcon className="w-4 h-4 text-gray-300" />
-                                </div>
-                              )}
-                              <div className="min-w-0">
-                                <p className="text-[11px] text-gray-700 font-semibold leading-snug line-clamp-2" title={itemTitle}>
-                                  {itemTitle}
-                                </p>
-                                <span className="text-[9px] bg-blue-50 text-blue-600 border border-blue-100 px-1 py-0.2 rounded font-extrabold inline-block mt-0.5">
-                                  x{item.quantity}
-                                </span>
-                              </div>
-                            </div>
-                            );
-                          })}
-                        </div>
-                      </td>
-
-                      {/* Total bill & Net Profit */}
-                      <td className="p-4 text-right space-y-0.5">
-                        <div className="font-black text-gray-950 text-sm">{order.totalAmount.toLocaleString('vi-VN')}đ</div>
-                        <div className={`text-[10px] font-bold p-0.5 px-1.5 rounded-md inline-block ${
-                          formatOrderNetRevenueDisplay(order, systemFees).pending
-                            ? 'text-amber-700 bg-amber-50/80'
-                            : 'text-emerald-600 bg-emerald-50/50'
-                        }`}>
-                          Lãi: {formatOrderNetRevenueDisplay(order, systemFees).text}
-                          {formatOrderNetRevenueDisplay(order, systemFees).pending && (
-                            <span className="text-[9px] font-normal text-amber-700/80 ml-0.5">*</span>
-                          )}
-                        </div>
-                      </td>
-
-                      {/* Status */}
-                      <td className="p-4 text-center">
-                        {activeSubTab === 'processed' ? (
-                          <button
-                            type="button"
-                            onClick={(e) => handlePrintButtonClick(e, order)}
-                            disabled={!order.hasPdf || printingOrderId === order.id}
-                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 font-bold text-[10px] rounded-lg transition-all border ${
-                              !order.hasPdf
-                                ? 'bg-gray-300 text-gray-600 border-gray-400 cursor-not-allowed'
-                                : 'bg-blue-600 hover:bg-blue-700 text-white border-blue-700 disabled:opacity-60'
-                            }`}
-                            title={!order.hasPdf ? 'Đang tải file in...' : 'In đơn này'}
-                          >
-                            <Printer className={`w-3.5 h-3.5 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
-                            In nhanh
-                          </button>
-                        ) : (
-                          <>
-                            <span className={`inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border ${badge.color}`}>
-                              {badge.text}
-                            </span>
-                            {activeSubTab === 'received_cancel_returns' && (
-                              <span className="inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border bg-teal-50 text-teal-700 border-teal-200">
-                                Đã nhận hoàn
-                              </span>
-                            )}
-                          </>
-                        )}
-                      </td>
-
-                      {/* Specific Single Actions */}
-                      <td className="p-4 text-center">
-                        <div className="flex flex-wrap items-center justify-center gap-1.5">
-                          {/* WooCommerce dedicated actions — tab "Đơn trên web" hoặc channel woocommerce */}
-                          {(activeSubTab === 'web_orders' || order.channel === 'woocommerce') && (
-                            <>
-                              {(() => {
-                                const cust = resolveWooCustomerInfo(order);
-                                return (
-                                  <div className="w-full text-left mb-1.5 space-y-0.5 px-1">
-                                    <p className="text-[11px] font-extrabold text-slate-800 truncate" title={cust.name}>{cust.name}</p>
-                                    <p className="text-[10px] font-mono text-slate-600">{cust.phone || '—'}</p>
-                                    <p className="text-[9px] text-slate-500 line-clamp-2 leading-snug" title={cust.address}>{cust.address || '—'}</p>
-                                  </div>
-                                );
-                              })()}
-                              <button
-                                type="button"
-                                disabled={wooActionLoadingId === (order.id || order.orderSn) || order.status === 'completed'}
-                                onClick={() => void handleWooOrderStatusAction(order, 'completed')}
-                                className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] rounded-lg transition-all disabled:opacity-50 inline-flex items-center gap-1"
-                                title="Đánh dấu đã xử lý / completed"
-                              >
-                                {wooActionLoadingId === (order.id || order.orderSn) ? (
-                                  <Loader2 className="w-3 h-3 animate-spin" />
-                                ) : (
-                                  <CheckCircle2 className="w-3 h-3" />
-                                )}
-                                Đã xử lý
-                              </button>
-                              <button
-                                type="button"
-                                disabled={wooActionLoadingId === (order.id || order.orderSn) || order.status === 'cancelled'}
-                                onClick={() => void handleWooOrderStatusAction(order, 'on-hold')}
-                                className="px-2.5 py-1.5 bg-rose-500 hover:bg-rose-600 text-white font-bold text-[10px] rounded-lg transition-all disabled:opacity-50 inline-flex items-center gap-1"
-                                title="Ngưng xử lý / on-hold"
-                              >
-                                {wooActionLoadingId === (order.id || order.orderSn) ? (
-                                  <Loader2 className="w-3 h-3 animate-spin" />
-                                ) : (
-                                  <XCircle className="w-3 h-3" />
-                                )}
-                                Ngưng xử lý
-                              </button>
-                            </>
-                          )}
-
-                          {order.status === 'pending_confirm' && order.channel !== 'woocommerce' && (
-                            <button
-                              onClick={() => {
-                                const updated = orders.map(o => o.id === order.id ? { ...o, status: 'unprocessed' as const } : o);
-                                onUpdateOrders(updated);
-                                onAddLog({
-                                  id: `log-${Date.now()}`,
-                                  timestamp: new Date().toISOString(),
-                                  channel: order.channel,
-                                  type: 'stock_sync',
-                                  status: 'success',
-                                  message: `Xác nhận thành công đơn hàng #${order.orderSn}`
-                                });
-                              }}
-                              className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] rounded-lg transition-all"
-                            >
-                              Xác nhận đơn
-                            </button>
-                          )}
-
-                          {isShopeeReadyToShipStatus(order) && !isProcessedCondition(order) && (
-                            <>
-                              {!isOrderPreparedEffective(order) ? (
-                                <button
-                                  onClick={() => handleSinglePrepare(order)}
-                                  className="om-mobile-hide-prepare px-2.5 py-1.5 bg-rose-500 hover:bg-rose-600 text-white font-bold text-[10px] rounded-lg transition-all"
-                                >
-                                  Chuẩn bị hàng
-                                </button>
-                              ) : (
-                                <span className="om-mobile-hide-prepare text-[10px] text-emerald-600 font-bold bg-emerald-50 px-1.5 py-1 rounded">
-                                  ✓ Đã chuẩn bị
-                                </span>
-                              )}
-
-                            </>
-                          )}
-
-                          {(isEligibleForHandOverToCarrier(order) ||
-                            (matchesProcessedPickupTab(order) && Boolean(getOrderWaybillCode(order)))) &&
-                            !isOrderHandedOverToCarrier(order) && (
-                            <>
-                              <span className={`om-mobile-hide-print text-[10px] font-bold px-1.5 py-1 rounded ${
-                                isOrderPrintedEffective(order) ? 'text-emerald-600 bg-emerald-50' : 'text-rose-600 bg-rose-50'
-                              }`}>
-                                {isOrderPrintedEffective(order) ? '✓ Đã in' : '✕ Chưa in'}
-                              </span>
-                              {isOrderPrintedEffective(order) ? (
-                                <button
-                                  type="button"
-                                  onClick={() => void resetPrintStatusForOrders([order])}
-                                  disabled={resettingPrintIds.includes(String(order.orderSn || '').replace(/^shopee-/i, '').trim())}
-                                  className="om-mobile-hide-print text-[10px] font-bold px-1.5 py-1 rounded border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 disabled:opacity-50"
-                                  title="Đánh dấu chưa in để in lại"
-                                >
-                                  Đánh dấu chưa in
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => void markPrintedStatusForOrders([order])}
-                                  disabled={resettingPrintIds.includes(String(order.orderSn || '').replace(/^shopee-/i, '').trim())}
-                                  className="om-mobile-hide-print text-[10px] font-bold px-1.5 py-1 rounded border border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
-                                  title="Đánh dấu đã in (nội bộ)"
-                                >
-                                  Đánh dấu đã in
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                onClick={(e) => handlePrintButtonClick(e, order)}
-                                disabled={printingOrderId === order.id}
-                                className="om-mobile-hide-print p-1.5 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-500 rounded-lg transition-all disabled:opacity-60"
-                                title="In lại vận đơn (vận đơn thật Shopee)"
-                              >
-                                <Printer className={`w-3.5 h-3.5 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void handOverOrderToCarrier(order)}
-                                disabled={handingOverOrderId === order.id}
-                                className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] rounded-lg transition-all disabled:opacity-60"
-                              >
-                                {handingOverOrderId === order.id ? 'Đang xử lý...' : 'Giao cho ĐVVC'}
-                              </button>
-                            </>
-                          )}
-
-                          {activeSubTab !== 'return_requests' && order.status === 'shipping' && (
-                            <div className="flex gap-1">
-                              <button
-                                onClick={() => {
-                                  const updated = orders.map(o => o.id === order.id ? { ...o, status: 'completed' as const } : o);
-                                  onUpdateOrders(updated);
-                                }}
-                                className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[10px] rounded"
-                              >
-                                Thắng
-                              </button>
-                              <button
-                                onClick={() => {
-                                  const updated = orders.map(o => o.id === order.id ? { ...o, status: 'return_pending' as const } : o);
-                                  onUpdateOrders(updated);
-                                }}
-                                className="px-2 py-1 bg-rose-500 hover:bg-rose-600 text-white font-semibold text-[10px] rounded animate-pulse"
-                              >
-                                Bị Hoàn
-                              </button>
-                            </div>
-                          )}
-
-                          {activeSubTab !== 'return_requests' && order.status === 'return_pending' && (
-                            <button
-                              onClick={() => {
-                                const updated = orders.map(o => o.id === order.id ? { ...o, status: 'return_received' as const } : o);
-                                onUpdateOrders(updated);
-                                onAddLog({
-                                  id: `log-${Date.now()}`,
-                                  timestamp: new Date().toISOString(),
-                                  channel: order.channel,
-                                  type: 'stock_sync',
-                                  status: 'success',
-                                  message: `Bấm nút nhận hàng hoàn trả cho đơn ${order.orderSn}.`
-                                });
-                              }}
-                              className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white font-bold text-[10px] rounded"
-                            >
-                              Nhận Hoàn
-                            </button>
-                          )}
-
-                          <button
-                            onClick={() => toggleOrderDetails(order.id)}
-                            className={`p-1.5 rounded-lg transition-all ${isExpanded ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-100 text-gray-500'}`}
-                            title={isExpanded ? 'Ẩn chi tiết đơn' : 'Xem chi tiết đơn'}
-                          >
-                            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                          </button>
-                        </div>
-                      </td>
-                      </>
-                      )}
-                    </tr>
-                    {isExpanded && (
-                      <tr className="bg-slate-50/60">
-                        <td colSpan={activeSubTab === 'return_requests' ? 8 : 7} className="p-0">
-                          <OrderDetailAccordionPanel
-                            order={order}
-                            shops={shops}
-                            systemFees={systemFees}
-                          />
-                        </td>
-                      </tr>
-                    )}
-                    </React.Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="om-order-card-list flex flex-col divide-y divide-gray-100 w-full">
-            {filteredOrders.map(order => {
-              const isChecked = selectedOrderIds.includes(order.id);
-              const badgeBase = getStatusBadge(resolveOrderBadgeStatus(order)) || { text: order.status, color: '' };
-              const isBgLooking = orderMatchesScanBgPending(order, scanBgPendingKeys);
-              const badge = isBgLooking
-                ? {
-                    text: 'Đang dò ngầm...',
-                    color: 'bg-sky-50 text-sky-700 border-sky-200/60 font-semibold animate-pulse',
-                  }
-                : matchesHandedOverCarrierTab(order)
-                  ? {
-                      text: 'Đã quét QR - Chờ ĐVVC nhận',
-                      color: 'bg-violet-50 text-violet-700 border-violet-200/60 font-semibold',
-                    }
-                  : badgeBase;
-              const isExpanded = expandedOrderId === order.id;
-              return (
-                <div
-                  key={order.id}
-                  className={`w-full transition-colors ${isChecked ? 'bg-blue-50/20' : 'bg-white'}`}
-                >
-                <div className="om-order-card-row flex flex-col lg:flex-row lg:items-center gap-3 lg:gap-4 p-4 w-full">
-                  <div className="flex items-center gap-2 shrink-0 lg:min-w-[11rem]">
-                    <input
-                      type="checkbox"
-                      checked={isChecked}
-                      onChange={() => handleToggleSelectOne(order.id)}
-                      className="om-mobile-hide-checkbox w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer shrink-0"
-                    />
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span
-                          className={`px-2 py-0.5 text-[10px] font-bold rounded truncate max-w-44 inline-block shrink-0 ${
-                            order.channel === 'shopee'
-                              ? 'bg-orange-50 text-orange-700 border border-orange-200'
-                              : order.channel === 'tiktok'
-                                ? 'bg-zinc-100 text-zinc-800 border border-zinc-200'
-                                : order.channel === 'woocommerce'
-                                  ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                                  : 'bg-blue-50 text-blue-700 border border-blue-200'
-                          }`}
-                          title={resolveOrderShopDisplayName(order, shops)}
-                        >
-                          {resolveOrderShopDisplayName(order, shops)}
-                        </span>
-                      </div>
-                      {getOrderWaybillCode(order) ? (
-                        <p className="font-mono font-extrabold text-gray-900 text-sm truncate mt-0.5 flex items-center gap-1" title={getOrderWaybillCode(order)}>
-                          <Barcode className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                          <span className="truncate">{getOrderWaybillCode(order)}</span>
-                        </p>
-                      ) : order.channel === 'woocommerce' ? (
-                        <p className="text-[10px] text-indigo-600 font-semibold italic mt-0.5">Web order</p>
-                      ) : (
-                        <p className="mt-0.5">
-                          <AwaitingShopeeTrackingBadge />
-                        </p>
-                      )}
-                      <p className="text-[10px] text-gray-400 font-mono mt-0.5">#{order.orderSn}</p>
-                      <p className="text-[11px] text-gray-500 font-medium mt-0.5">
-                        {new Date(order.date).toLocaleDateString('vi-VN')}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => toggleOrderDetails(order.id)}
-                        className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 hover:text-blue-700 transition-colors"
-                        title={isExpanded ? 'Ẩn chi tiết đơn' : 'Xem chi tiết đơn'}
-                      >
-                        <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                        {isExpanded ? 'Ẩn chi tiết' : 'Xem chi tiết đơn'}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="flex-1 min-w-0 bg-slate-50/80 px-2.5 py-2 rounded-xl border border-slate-100">
-                    <div className="text-[9px] font-bold text-gray-400 uppercase tracking-wide mb-1">Sản phẩm đặt mua</div>
-                    <div className="space-y-2">
-                      {(order.items || []).map((item, idx) => (
-                        <div key={idx} className="flex items-center gap-2">
-                          {item.productImage ? (
-                            <img
-                              src={item.productImage}
-                              alt={item.productTitle}
-                              className="w-10 h-10 rounded-lg object-cover border border-gray-200 shrink-0 bg-gray-50"
-                            />
-                          ) : (
-                            <div className="w-10 h-10 rounded-lg border border-gray-200 bg-gray-50 flex items-center justify-center shrink-0">
-                              <ImageIcon className="w-4 h-4 text-gray-300" />
-                            </div>
-                          )}
-                          <div className="flex-1 min-w-0 flex justify-between items-start gap-2">
-                            <span className="truncate text-[11px] font-medium leading-tight text-gray-700">{item.productTitle}</span>
-                            <span className="text-blue-600 text-xs shrink-0 font-black">x{item.quantity}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-3 lg:gap-4 shrink-0 lg:ml-auto">
-                    <div className="flex flex-col gap-2">
-                      <div className="text-xs">
-                        <span className="text-gray-400 text-[9px] block uppercase font-bold tracking-wider">Tổng thanh toán</span>
-                        <span className="font-black text-slate-900 text-sm whitespace-nowrap">{order.totalAmount.toLocaleString('vi-VN')} đ</span>
-                      </div>
-                      <div className="text-xs">
-                        <span className="text-gray-400 text-[9px] block uppercase font-bold tracking-wider">Tổng nhận được</span>
-                        <span className={`font-black text-sm whitespace-nowrap ${
-                          formatOrderNetRevenueDisplay(order, systemFees).pending ? 'text-amber-700' : 'text-emerald-700'
-                        }`}>
-                          {formatOrderNetRevenueDisplay(order, systemFees).text}
-                          {formatOrderNetRevenueDisplay(order, systemFees).pending && (
-                            <span className="block text-[9px] font-medium text-amber-600/90 mt-0.5">Chưa gồm phí Shopee</span>
-                          )}
-                        </span>
-                      </div>
-                    </div>
-
-                    {activeSubTab === 'processed' ? (
-                      <button
-                        type="button"
-                        onClick={(e) => handlePrintButtonClick(e, order)}
-                        disabled={!order.hasPdf || printingOrderId === order.id}
-                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 font-bold text-[10px] rounded-lg transition-all border shrink-0 ${
-                          !order.hasPdf
-                            ? 'bg-gray-300 text-gray-600 border-gray-400 cursor-not-allowed'
-                            : 'bg-blue-600 hover:bg-blue-700 text-white border-blue-700 disabled:opacity-60'
-                        }`}
-                        title={!order.hasPdf ? 'Đang tải file in...' : 'In đơn này'}
-                      >
-                        <Printer className={`w-3.5 h-3.5 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
-                        In nhanh
-                      </button>
-                    ) : activeSubTab === 'return_requests' ? (
-                      <ReturnWarehouseStatusBlock
-                        order={order}
-                        compact
-                        confirming={
-                          confirmingReturnId === String(order.id || '') ||
-                          confirmingReturnId === String(order.orderSn || '')
-                        }
-                        onConfirm={confirmWarehouseReturnReceived}
-                      />
-                    ) : (
-                      <>
-                        <span className={`inline-block px-2 py-0.5 text-[9px] font-black rounded-full border shrink-0 ${badge.color}`}>
-                          {badge.text}
-                        </span>
-                        {activeSubTab === 'received_cancel_returns' && (
-                          <span className="inline-block px-2 py-0.5 text-[9px] font-black rounded-full border shrink-0 bg-teal-50 text-teal-700 border-teal-200">
-                            Đã nhận hoàn
-                          </span>
-                        )}
-                      </>
-                    )}
-
-                    <div className="flex items-center gap-1 flex-wrap justify-end">
-                      {/* WooCommerce mobile card — customer info + action buttons */}
-                      {(activeSubTab === 'web_orders' || order.channel === 'woocommerce') && (
-                        <>
-                          <div className="w-full text-left mb-1.5 px-1 space-y-0.5">
-                            <p className="text-[11px] font-extrabold text-slate-800 truncate">
-                              {(() => { const c = resolveWooCustomerInfo(order); return c.name; })()}
-                            </p>
-                            <p className="text-[10px] font-mono text-slate-600">
-                              {(() => { const c = resolveWooCustomerInfo(order); return c.phone || '—'; })()}
-                            </p>
-                            <p className="text-[9px] text-slate-500 line-clamp-2 leading-snug">
-                              {(() => { const c = resolveWooCustomerInfo(order); return c.address || '—'; })()}
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            disabled={wooActionLoadingId === (order.id || order.orderSn) || order.status === 'completed'}
-                            onClick={() => void handleWooOrderStatusAction(order, 'completed')}
-                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all disabled:opacity-50 inline-flex items-center gap-1"
-                          >
-                            {wooActionLoadingId === (order.id || order.orderSn) ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <CheckCircle2 className="w-3.5 h-3.5" />
-                            )}
-                            Đã xử lý
-                          </button>
-                          <button
-                            type="button"
-                            disabled={wooActionLoadingId === (order.id || order.orderSn) || order.status === 'cancelled'}
-                            onClick={() => void handleWooOrderStatusAction(order, 'on-hold')}
-                            className="px-3 py-1.5 bg-rose-500 hover:bg-rose-600 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all disabled:opacity-50 inline-flex items-center gap-1"
-                          >
-                            {wooActionLoadingId === (order.id || order.orderSn) ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <XCircle className="w-3.5 h-3.5" />
-                            )}
-                            Ngưng xử lý
-                          </button>
-                        </>
-                      )}
-
-                      {order.status === 'pending_confirm' && order.channel !== 'woocommerce' && (
-                        <button
-                          onClick={() => {
-                            const updated = orders.map(o => o.id === order.id ? { ...o, status: 'unprocessed' as const } : o);
-                            onUpdateOrders(updated);
-                            onAddLog({
-                              id: `log-${Date.now()}`,
-                              timestamp: new Date().toISOString(),
-                              channel: order.channel,
-                              type: 'stock_sync',
-                              status: 'success',
-                              message: `Xác nhận thành công đơn hàng #${order.orderSn}`
-                            });
-                          }}
-                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all"
-                        >
-                          Xác nhận đơn
-                        </button>
-                      )}
-
-                      {isShopeeReadyToShipStatus(order) && !isProcessedCondition(order) && (
-                        <>
-                          {!isOrderPreparedEffective(order) ? (
-                            <button
-                              onClick={() => handleSinglePrepare(order)}
-                              className="om-mobile-hide-prepare px-3 py-1.5 bg-rose-500 hover:bg-rose-600 text-white font-extrabold text-xs rounded-lg shadow-xs transition-all flex items-center gap-1"
-                            >
-                              <Package className="w-3.5 h-3.5" />
-                              <span>Chuẩn bị hàng</span>
-                            </button>
-                          ) : (
-                            <div className="om-mobile-hide-prepare p-2 rounded-lg border border-emerald-200 bg-emerald-50" title="Đã soạn">
-                              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                            </div>
-                          )}
-
-                          <button
-                            type="button"
-                            onClick={(e) => handlePrintButtonClick(e, order)}
-                            disabled={printingOrderId === order.id}
-                            className="om-order-card-print-btn om-mobile-hide-print p-2 bg-blue-600 hover:bg-blue-700 border border-blue-700 text-white rounded-lg transition-all disabled:opacity-60"
-                            title="In đơn này"
-                          >
-                            <Printer className={`w-4 h-4 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
-                          </button>
-                        </>
-                      )}
-
-                      {(isEligibleForHandOverToCarrier(order) ||
-                        (matchesProcessedPickupTab(order) && Boolean(getOrderWaybillCode(order)))) &&
-                        !isOrderHandedOverToCarrier(order) && (
-                        <>
-                          <div 
-                            className={`om-mobile-hide-print p-2 rounded-lg border ${
-                              isOrderPrintedEffective(order) 
-                                ? 'bg-emerald-50 border-emerald-200' 
-                                : 'bg-rose-50 border-rose-200'
-                            }`}
-                            title={isOrderPrintedEffective(order) ? 'Đã in' : 'Chưa in'}
-                          >
-                            {isOrderPrintedEffective(order) ? (
-                              <Check className="w-4 h-4 text-emerald-600" />
-                            ) : (
-                              <X className="w-4 h-4 text-rose-600" />
-                            )}
-                          </div>
-                          {isOrderPrintedEffective(order) ? (
-                            <button
-                              type="button"
-                              onClick={() => void resetPrintStatusForOrders([order])}
-                              disabled={resettingPrintIds.includes(String(order.orderSn || '').replace(/^shopee-/i, '').trim())}
-                              className="om-mobile-hide-print p-2 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50 transition-all"
-                              title="Đánh dấu chưa in"
-                            >
-                              <RefreshCw className="w-4 h-4" />
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => void markPrintedStatusForOrders([order])}
-                              disabled={resettingPrintIds.includes(String(order.orderSn || '').replace(/^shopee-/i, '').trim())}
-                              className="om-mobile-hide-print p-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 transition-all"
-                              title="Đánh dấu đã in"
-                            >
-                              <Check className="w-4 h-4" />
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={(e) => handlePrintButtonClick(e, order)}
-                            disabled={printingOrderId === order.id}
-                            className="om-order-card-print-btn om-mobile-hide-print p-2 bg-blue-600 hover:bg-blue-700 border border-blue-700 text-white rounded-lg transition-all disabled:opacity-60"
-                            title="In đơn này"
-                          >
-                            <Printer className={`w-4 h-4 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void handOverOrderToCarrier(order)}
-                            disabled={handingOverOrderId === order.id}
-                            className="p-2 bg-indigo-600 hover:bg-indigo-700 border border-indigo-700 text-white rounded-lg transition-all disabled:opacity-60"
-                            title="Giao cho ĐVVC"
-                          >
-                            <Truck className={`w-4 h-4 ${handingOverOrderId === order.id ? 'animate-pulse' : ''}`} />
-                          </button>
-                        </>
-                      )}
-
-                      {activeSubTab !== 'return_requests' && order.status === 'shipping' && (
-                        <div className="flex gap-1">
-                          <button
-                            onClick={() => {
-                              const updated = orders.map(o => o.id === order.id ? { ...o, status: 'completed' as const } : o);
-                              onUpdateOrders(updated);
-                            }}
-                            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[11px] rounded-lg shadow-xs"
-                          >
-                            Thắng
-                          </button>
-                          <button
-                            onClick={() => {
-                              const updated = orders.map(o => o.id === order.id ? { ...o, status: 'return_pending' as const } : o);
-                              onUpdateOrders(updated);
-                            }}
-                            className="px-2.5 py-1 bg-rose-500 hover:bg-rose-600 text-white font-extrabold text-[11px] rounded-lg shadow-xs"
-                          >
-                            Bị Hoàn
-                          </button>
-                        </div>
-                      )}
-
-                      {activeSubTab !== 'return_requests' && order.status === 'return_pending' && (
-                        <button
-                          onClick={() => {
-                            const updated = orders.map(o => o.id === order.id ? { ...o, status: 'return_received' as const } : o);
-                            onUpdateOrders(updated);
-                            onAddLog({
-                              id: `log-${Date.now()}`,
-                              timestamp: new Date().toISOString(),
-                              channel: order.channel,
-                              type: 'stock_sync',
-                              status: 'success',
-                              message: `Bấm nút nhận hàng hoàn trả cho đơn ${order.orderSn}.`
-                            });
-                          }}
-                          className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white font-extrabold text-xs rounded-xl shadow-xs"
-                        >
-                          Nhận Hoàn
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-                {isExpanded && (
-                  <OrderDetailAccordionPanel
+                {filteredOrders.map((order) => (
+                  <OrderTableRow
+                    key={order.id}
                     order={order}
+                    isChecked={selectedOrderIdSet.has(order.id)}
+                    isExpanded={expandedOrderId === order.id}
+                    badge={resolveRowBadge(order)}
+                    activeSubTab={activeSubTab}
                     shops={shops}
                     systemFees={systemFees}
+                    printingOrderId={printingOrderId}
+                    handingOverOrderId={handingOverOrderId}
+                    wooActionLoadingId={wooActionLoadingId}
+                    confirmingReturn={
+                      confirmingReturnId === String(order.id || '') ||
+                      confirmingReturnId === String(order.orderSn || '')
+                    }
+                    resettingPrint={resettingPrintSet.has(String(order.orderSn || '').replace(/^shopee-/i, '').trim())}
+                    actions={orderRowActions}
+                    renderDetails={renderOrderDetails}
                   />
-                )}
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
+                ))}
+              </tbody>
+            </table>
+            </div>
+            )}
+            {useOrderCardList && (
+            <div className="om-order-card-list om-order-card-list-mounted flex flex-col divide-y divide-gray-100 w-full">
+              {filteredOrders.map((order) => (
+                <OrderCardRow
+                  key={order.id}
+                  order={order}
+                  isChecked={selectedOrderIdSet.has(order.id)}
+                  isExpanded={expandedOrderId === order.id}
+                  badge={resolveRowBadge(order)}
+                  activeSubTab={activeSubTab}
+                  shops={shops}
+                  systemFees={systemFees}
+                  printingOrderId={printingOrderId}
+                  handingOverOrderId={handingOverOrderId}
+                  wooActionLoadingId={wooActionLoadingId}
+                  confirmingReturn={
+                    confirmingReturnId === String(order.id || '') ||
+                    confirmingReturnId === String(order.orderSn || '')
+                  }
+                  resettingPrint={resettingPrintSet.has(String(order.orderSn || '').replace(/^shopee-/i, '').trim())}
+                  actions={orderRowActions}
+                  renderDetails={renderOrderDetails}
+                />
+              ))}
+            </div>
+            )}
+          </>
+        )}
 
         {(ordersMeta?.total ?? 0) > 0 && (
           <div className="px-4 py-3 bg-slate-50/80 border-t border-gray-100 flex flex-wrap items-center justify-end gap-3 text-xs text-gray-600">

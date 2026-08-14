@@ -85,16 +85,18 @@ export async function enqueueScanBgCodes(codes: string[]): Promise<{
   }
 }
 
-export async function fetchScanBgStatus(): Promise<ScanBgStatusResponse | null> {
+export async function fetchScanBgStatus(signal?: AbortSignal): Promise<ScanBgStatusResponse | null> {
   try {
     const res = await fetch('/api/orders/scan-bg-status', {
       headers: authHeaders(),
       cache: 'no-store',
+      signal,
     });
     if (!res.ok) return null;
     const data = (await res.json()) as ScanBgStatusResponse;
     return data?.success === false ? null : data;
-  } catch {
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') return null;
     return null;
   }
 }

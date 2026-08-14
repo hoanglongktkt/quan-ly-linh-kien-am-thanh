@@ -57,6 +57,10 @@ import {
 import { fetchReturnAlerts, ackReturnAlerts } from './utils/returnAlerts';
 import { playNotificationSound } from './utils/notificationSound';
 
+/** Polling nhẹ — recursive setTimeout, không chồng request. */
+const SCAN_BG_STATUS_POLL_MS = 15_000;
+const RETURN_ALERTS_POLL_MS = 15_000;
+
 /** Gộp shallow fetch vào cache: cập nhật đơn cũ, prepend đơn mới.
  * - Không downgrade cờ bàn giao ĐVVC (true → false) khi fresh còn stale.
  * - Không downgrade SHIPPED/shipping → PROCESSED (tránh tab Đang giao bị kéo lùi). */
@@ -319,7 +323,7 @@ export default function App() {
   const [ordersLoading, setOrdersLoading] = useState<boolean>(false);
   const [ordersMeta, setOrdersMeta] = useState({
     page: 1,
-    pageSize: 2000,
+    pageSize: 50,
     total: 0,
     totalPages: 1,
     hasMore: false,
@@ -335,10 +339,8 @@ export default function App() {
   /** Toast kết quả dò ngầm Backend (sống sót khi rời tab Đơn hàng). */
   const [scanBgToast, setScanBgToast] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [scanBgPendingCount, setScanBgPendingCount] = useState(0);
-  const scanBgPollBusyRef = useRef(false);
   const scanBgToastTimerRef = useRef<number | null>(null);
   const [returnAlertToast, setReturnAlertToast] = useState<string | null>(null);
-  const returnAlertPollBusyRef = useRef(false);
   const returnAlertToastTimerRef = useRef<number | null>(null);
   /** Làm mới ngầm khi quay lại tab trình duyệt — không trigger Shopee sync. */
   const [backgroundRefreshing, setBackgroundRefreshing] = useState(false);
@@ -357,6 +359,7 @@ export default function App() {
   /** Chỉ cho phép một lần đọc cùng mode (full / shallow) đang chạy để polling/focus/click không
    * tạo nhiều truy vấn MongoDB nặng đồng thời. */
   const fetchOrdersInFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
+  const fetchOrdersAbortRef = useRef<AbortController | null>(null);
   /** Snapshot cache hydrate — tránh merge shallow đè mất cache khi setState chưa flush. */
   const ordersHydrateRef = useRef<Order[]>([]);
   /** Từ khóa search Kho SP chính — giữ qua phân trang / focus refresh. */
@@ -511,10 +514,10 @@ export default function App() {
     }
 
     const silent = Boolean(opts?.silent);
-    const bustCache = opts?.bustCache !== false;
+    const bustCache = Boolean(opts?.bustCache);
     // ERP list: mặc định 50/trang. Caller có thể tăng (vd: quét mã merge).
     const limit =
-      typeof opts?.limit === 'number' && opts.limit > 0 ? opts.limit : 2000;
+      typeof opts?.limit === 'number' && opts.limit > 0 ? opts.limit : 50;
     const page = typeof opts?.page === 'number' && opts.page > 0 ? opts.page : 1;
     // Mặc định REPLACE — bỏ shallow merge nặng (Backend trả list đã lọc theo tab).
     const merge = opts?.merge === true;
@@ -526,6 +529,10 @@ export default function App() {
     if (!opts?.force && fetchOrdersInFlightRef.current?.key === flightKey) {
       return fetchOrdersInFlightRef.current.promise;
     }
+
+    fetchOrdersAbortRef.current?.abort();
+    const controller = new AbortController();
+    fetchOrdersAbortRef.current = controller;
 
     let finishInFlight: (() => void) | undefined;
     const inFlight = new Promise<void>((resolve) => {
@@ -543,11 +550,12 @@ export default function App() {
     try {
       // Refresh chỉ đọc MongoDB nội bộ, không gọi Shopee API.
       const params = new URLSearchParams();
-      params.set('t', String(Date.now()));
-      params.set('_r', String(Math.random()).slice(2, 10));
       params.set('page', String(page));
       params.set('limit', String(limit));
-      if (bustCache) params.set('bust', '1');
+      if (bustCache) {
+        params.set('t', String(Date.now()));
+        params.set('bust', '1');
+      }
       if (printStatus && printStatus !== 'all') params.set('print_status', printStatus);
       if (q) {
         params.set('q', q);
@@ -571,7 +579,6 @@ export default function App() {
           '⚠️ Đang mở PRODUCTION/REMOTE — refresh đang lấy dữ liệu MongoDB trên server thật.',
         );
       }
-      const controller = new AbortController();
       requestTimeoutId = window.setTimeout(() => controller.abort(), 15_000);
       const response = await fetch(path, {
         method: 'GET',
@@ -608,6 +615,7 @@ export default function App() {
               `[Fetch Orders] Refresh lỗi tạm thời (${payload.error}) — thử lại sau 3s (còn ${retriesLeft} lần).`,
             );
             window.setTimeout(() => {
+              if (requestId !== fetchOrdersSeqRef.current) return;
               void fetchOrders({
                 silent,
                 bustCache,
@@ -653,11 +661,12 @@ export default function App() {
         }
         lastAppliedOrdersSeqRef.current = requestId;
         const sanitized = sanitizeOrders(data);
-        // Trang rỗng khi đang có data: không wipe trang 1 (Mongo tạm trống / race).
-        // Phân trang page>1: cho phép list rỗng để UI đúng.
+        // Tab/search scoped: list rỗng là kết quả thật (tab không có đơn) — phải replace.
+        // Chỉ giữ cache khi refresh không kẹp tab (tránh Mongo tạm trống).
         if (sanitized.length === 0) {
           const existing = ordersHydrateRef.current;
-          if (existing.length > 0 && page <= 1 && !merge) {
+          const tabScoped = Boolean(tab) || Boolean(q) || Boolean(opts?.force);
+          if (existing.length > 0 && page <= 1 && !merge && !tabScoped) {
             setHasLoadedOrdersOnce(true);
             console.warn(
               `[Fetch Orders] List rỗng (page=${page} tab=${tab || 'all'}) — giữ danh sách/cache hiện tại.`,
@@ -691,7 +700,7 @@ export default function App() {
         );
       } else {
         console.log('🛑 DATA ĐƯỢC LẤY TỪ URL:', requestUrl, '- SỐ LƯỢNG: (HTTP', response.status, ')');
-        if (retriesLeft > 0) {
+        if (retriesLeft > 0 && requestId === fetchOrdersSeqRef.current) {
           window.setTimeout(() => {
             void fetchOrders({
               silent,
@@ -711,9 +720,15 @@ export default function App() {
         }
       }
     } catch (err) {
+      const aborted =
+        (err instanceof DOMException && err.name === 'AbortError') ||
+        (typeof err === 'object' && err !== null && (err as { name?: string }).name === 'AbortError');
+      if (aborted) {
+        return;
+      }
       console.error('[FRONTEND FETCHED] /api/orders/refresh THẤT BẠI:', err);
       if (opts?.throwOnError) throw err;
-      if (retriesLeft > 0) {
+      if (retriesLeft > 0 && requestId === fetchOrdersSeqRef.current) {
         window.setTimeout(() => {
           void fetchOrders({
             silent,
@@ -730,9 +745,12 @@ export default function App() {
       }
     } finally {
       if (requestTimeoutId !== undefined) window.clearTimeout(requestTimeoutId);
-      if (!silent) setOrdersLoading(false);
+      if (requestId === fetchOrdersSeqRef.current && !silent) setOrdersLoading(false);
       if (fetchOrdersInFlightRef.current?.promise === inFlight) {
         fetchOrdersInFlightRef.current = null;
+      }
+      if (fetchOrdersAbortRef.current === controller) {
+        fetchOrdersAbortRef.current = null;
       }
       finishInFlight?.();
     }
@@ -868,10 +886,9 @@ export default function App() {
         const tab = resolveOrdersFetchTab();
         await fetchOrders({
           silent: true,
-          bustCache: true,
           force: true,
           page: 1,
-          limit: 2000,
+          limit: 50,
           merge: false,
           ...(tab ? { tab } : {}),
         });
@@ -903,21 +920,41 @@ export default function App() {
     };
   }, [isAuthenticated, activeTab, resolveOrdersFetchTab]);
 
+  // Rời tab Đơn hàng → hủy ngay refresh đang pending, nhường connection pool.
+  useEffect(() => {
+    if (activeTab === 'orders') return;
+    fetchOrdersAbortRef.current?.abort();
+  }, [activeTab]);
+
   // Poll hàng đợi dò ngầm Backend — toast toàn app kể cả khi tắt màn quét / đổi tab.
   useEffect(() => {
     if (!isAuthenticated) return;
     let cancelled = false;
+    let timer: number | null = null;
+    let abortCtrl: AbortController | null = null;
+    let inFlight = false;
+    const schedule = () => {
+      if (cancelled) return;
+      timer = window.setTimeout(() => {
+        void poll();
+      }, SCAN_BG_STATUS_POLL_MS);
+    };
     const poll = async () => {
-      if (scanBgPollBusyRef.current) return;
-      scanBgPollBusyRef.current = true;
+      if (cancelled || inFlight) return;
+      if (document.visibilityState === 'hidden' || activeTab === 'orders') {
+        // Tab Đơn hàng: OrderManager poll riêng — tránh 2 request song song.
+        schedule();
+        return;
+      }
+      inFlight = true;
+      abortCtrl = new AbortController();
+      const signal = abortCtrl.signal;
       try {
-        const status = await fetchScanBgStatus();
+        const status = await fetchScanBgStatus(signal);
         if (cancelled || !status) return;
         setScanBgPendingCount(status.pendingCount || 0);
         const unnotified = status.unnotified || [];
         if (unnotified.length === 0) return;
-        // OrderManager lo toast+ack khi đang ở tab Đơn hàng — tránh double toast.
-        if (activeTab === 'orders') return;
         const toast = formatScanBgToast(status.summary);
         if (toast) {
           if (scanBgToastTimerRef.current) window.clearTimeout(scanBgToastTimerRef.current);
@@ -934,24 +971,22 @@ export default function App() {
           const tab = resolveOrdersFetchTab();
           void fetchOrders({
             silent: true,
-            bustCache: true,
             page: 1,
-            limit: 2000,
+            limit: 50,
             merge: false,
             ...(tab ? { tab } : {}),
           });
         }
       } finally {
-        scanBgPollBusyRef.current = false;
+        inFlight = false;
+        schedule();
       }
     };
     void poll();
-    const timer = window.setInterval(() => {
-      void poll();
-    }, 3000);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timer != null) window.clearTimeout(timer);
+      abortCtrl?.abort();
     };
   }, [isAuthenticated, activeTab, resolveOrdersFetchTab]);
 
@@ -959,11 +994,26 @@ export default function App() {
   useEffect(() => {
     if (!isAuthenticated) return;
     let cancelled = false;
+    let timer: number | null = null;
+    let abortCtrl: AbortController | null = null;
+    let inFlight = false;
+    const schedule = () => {
+      if (cancelled) return;
+      timer = window.setTimeout(() => {
+        void poll();
+      }, RETURN_ALERTS_POLL_MS);
+    };
     const poll = async () => {
-      if (returnAlertPollBusyRef.current) return;
-      returnAlertPollBusyRef.current = true;
+      if (cancelled || inFlight) return;
+      if (document.visibilityState === 'hidden') {
+        schedule();
+        return;
+      }
+      inFlight = true;
+      abortCtrl = new AbortController();
+      const signal = abortCtrl.signal;
       try {
-        const status = await fetchReturnAlerts();
+        const status = await fetchReturnAlerts(signal);
         if (cancelled || !status) return;
         const unnotified = status.unnotified || [];
         if (unnotified.length === 0) return;
@@ -980,23 +1030,21 @@ export default function App() {
         );
         void fetchOrders({
           silent: true,
-          bustCache: true,
           page: 1,
-          limit: 2000,
+          limit: 50,
           merge: true,
           tab: 'return_requests',
         });
       } finally {
-        returnAlertPollBusyRef.current = false;
+        inFlight = false;
+        schedule();
       }
     };
     void poll();
-    const timer = window.setInterval(() => {
-      void poll();
-    }, 4000);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timer != null) window.clearTimeout(timer);
+      abortCtrl?.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated]);
@@ -1006,7 +1054,7 @@ export default function App() {
     void fetchOrders({
       silent: true,
       page: 1,
-      limit: 2000,
+      limit: 50,
       merge: false,
       ...(tab ? { tab } : {}),
     });
@@ -1630,7 +1678,7 @@ export default function App() {
         setOrders(cached);
         setHasLoadedOrdersOnce(true);
       }
-      void fetchOrders({ silent: true, limit: 2000, page: 1, merge: false });
+      void fetchOrders({ silent: true, limit: 50, page: 1, merge: false });
 
       // F5: ưu tiên localStorage; chỉ gọi server khi chưa có cache.
       void fetchProducts({ page: 1, append: false, pageSize: 50, forceRefresh: false });

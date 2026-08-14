@@ -24,9 +24,12 @@ function authHeaders(): HeadersInit {
   };
 }
 
-export async function fetchReturnAlerts(): Promise<ReturnAlertsResponse | null> {
+export async function fetchReturnAlerts(signal?: AbortSignal): Promise<ReturnAlertsResponse | null> {
   try {
-    const res = await fetch('/api/orders/return-alerts', { headers: authHeaders() });
+    const res = await fetch('/api/orders/return-alerts', {
+      headers: authHeaders(),
+      signal,
+    });
     const data = (await res.json().catch(() => ({}))) as ReturnAlertsResponse;
     if (!res.ok || data?.success === false) return null;
     return {
@@ -35,7 +38,8 @@ export async function fetchReturnAlerts(): Promise<ReturnAlertsResponse | null> 
       unnotified: Array.isArray(data.unnotified) ? data.unnotified : [],
       message: data.message ? String(data.message) : undefined,
     };
-  } catch {
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') return null;
     return null;
   }
 }
