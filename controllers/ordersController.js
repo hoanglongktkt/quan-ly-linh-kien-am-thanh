@@ -721,12 +721,12 @@ export async function listOrders(req, res) {
     tab === "ready_to_ship" ||
     tab === "cho-lay-hang"
   ) {
-    // SSOT: matchesUnprocessedPickupTab (READY_TO_SHIP|RETRY_SHIP, !PROCESSED, !tracking) —
-    // cùng bộ điều kiện với Dashboard pendingPack / OrderManager tab Chưa xử lý.
+    // SSOT: matchesUnprocessedPickupTab (READY_TO_SHIP|RETRY_SHIP, !PROCESSED) —
+    // gồm cả đơn GHN chưa có tracking_no. Cùng bộ với Dashboard pendingPack / tab Chưa xử lý.
     rawOrders = rawOrders.filter((o) => deps.matchesUnprocessedPickupTabShared(o));
     console.log(
       `[GET /api/orders] query.tab=${tab} filter=matchesUnprocessedPickupTab → ${rawOrders.length} đơn` +
-        ` | query={ shopee_order_status: READY_TO_SHIP|RETRY_SHIP, !PROCESSED, !tracking_outbound }`,
+        ` | query={ shopee_order_status: READY_TO_SHIP|RETRY_SHIP, !PROCESSED }`,
     );
   } else if (tab === "shipping" || tab === "shipped" || tab === "dang-giao") {
     rawOrders = rawOrders.filter((o) => deps.matchesShippingTabShared(o));

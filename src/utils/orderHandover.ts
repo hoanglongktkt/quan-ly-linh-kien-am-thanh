@@ -243,7 +243,7 @@ export function matchesProcessedPickupTab(order: Order): boolean {
 
 /**
  * TAB "ĐƠN CHƯA XỬ LÝ" (trước: Chờ lấy hàng — Chưa xử lý):
- * - Raw READY_TO_SHIP | RETRY_SHIP (không PROCESSED) + chưa có mã VĐ outbound
+ * - Raw READY_TO_SHIP | RETRY_SHIP (không PROCESSED) — kể cả khi chưa có mã VĐ
  * - HOẶC local status=unprocessed khi thiếu raw
  * - AND chưa bàn giao ĐVVC / chưa isPrepared(dropoff)
  */

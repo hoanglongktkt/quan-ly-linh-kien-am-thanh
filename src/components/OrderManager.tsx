@@ -143,6 +143,16 @@ function getOrderWaybillCode(order: Order): string {
   return '';
 }
 
+function AwaitingShopeeTrackingBadge({ className = '' }: { className?: string }) {
+  return (
+    <span
+      className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-50 text-orange-700 border border-orange-200 ${className}`}
+    >
+      Đang chờ Shopee cấp mã
+    </span>
+  );
+}
+
 /** Chia mảng thành các chunk cố định — FE gọi API theo chunk (nhiều đơn). */
 function chunkArray<T>(arr: T[], size: number): T[][] {
   const n = Math.max(1, Math.floor(size) || 1);
@@ -501,7 +511,7 @@ function OrderDetailAccordionPanel({
         </div>
       )}
 
-      {getOrderWaybillCode(order) && (
+      {getOrderWaybillCode(order) ? (
         <div className="bg-white p-4 rounded-2xl border border-indigo-100">
           <div className="flex items-center gap-2 text-xs">
             <Barcode className="w-4 h-4 text-indigo-500 shrink-0" />
@@ -510,6 +520,10 @@ function OrderDetailAccordionPanel({
               <strong className="text-gray-900 font-mono text-sm">{getOrderWaybillCode(order)}</strong>
             </div>
           </div>
+        </div>
+      ) : order.channel === 'woocommerce' ? null : (
+        <div className="bg-white p-4 rounded-2xl border border-orange-100">
+          <AwaitingShopeeTrackingBadge />
         </div>
       )}
 
@@ -7416,7 +7430,7 @@ export default function OrderManager({
                         ) : order.channel === 'woocommerce' ? (
                           <span className="text-[10px] text-indigo-600 font-semibold italic">Web order</span>
                         ) : (
-                          <span className="text-xs text-gray-400 italic font-medium">Chưa có mã vận đơn</span>
+                          <AwaitingShopeeTrackingBadge />
                         )}
                         <div className="text-[10px] text-gray-400 font-mono">#{order.orderSn}</div>
                       </td>
@@ -7765,8 +7779,12 @@ export default function OrderManager({
                           <Barcode className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                           <span className="truncate">{getOrderWaybillCode(order)}</span>
                         </p>
+                      ) : order.channel === 'woocommerce' ? (
+                        <p className="text-[10px] text-indigo-600 font-semibold italic mt-0.5">Web order</p>
                       ) : (
-                        <p className="text-xs text-gray-400 italic font-medium mt-0.5">Chưa có mã vận đơn</p>
+                        <p className="mt-0.5">
+                          <AwaitingShopeeTrackingBadge />
+                        </p>
                       )}
                       <p className="text-[10px] text-gray-400 font-mono mt-0.5">#{order.orderSn}</p>
                       <p className="text-[11px] text-gray-500 font-medium mt-0.5">

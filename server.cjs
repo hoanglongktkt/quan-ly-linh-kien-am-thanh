@@ -78715,30 +78715,18 @@ var ORDER_TAB_LEFT_PICKUP_RAW = [
   "IN_CANCEL",
   "TO_RETURN"
 ];
+var ORDER_TAB_USABLE_TRACKING = {
+  $exists: true,
+  $nin: [null, "", "0"],
+  $not: /^0FG/i
+};
 var ORDER_TAB_TRACKING_PRESENT = {
   $or: [
-    { tracking_no: { $exists: true, $nin: [null, "", "0"] } },
-    { "data.tracking_no": { $exists: true, $nin: [null, "", "0"] } },
-    { "data.trackingNumber": { $exists: true, $nin: [null, "", "0"] } },
-    { "data.shopee_tracking_number": { $exists: true, $nin: [null, "", "0"] } }
-  ]
-};
-var ORDER_TAB_TRACKING_EMPTY = {
-  $and: [
-    { $or: [{ tracking_no: { $exists: false } }, { tracking_no: { $in: [null, "", "0"] } }] },
-    { $or: [{ "data.tracking_no": { $exists: false } }, { "data.tracking_no": { $in: [null, "", "0"] } }] },
-    {
-      $or: [
-        { "data.trackingNumber": { $exists: false } },
-        { "data.trackingNumber": { $in: [null, "", "0"] } }
-      ]
-    },
-    {
-      $or: [
-        { "data.shopee_tracking_number": { $exists: false } },
-        { "data.shopee_tracking_number": { $in: [null, "", "0"] } }
-      ]
-    }
+    { tracking_no: ORDER_TAB_USABLE_TRACKING },
+    { trackingNumber: ORDER_TAB_USABLE_TRACKING },
+    { "data.tracking_no": ORDER_TAB_USABLE_TRACKING },
+    { "data.trackingNumber": ORDER_TAB_USABLE_TRACKING },
+    { "data.shopee_tracking_number": ORDER_TAB_USABLE_TRACKING }
   ]
 };
 var ORDER_TAB_DROPOFF_PREPARED = {
@@ -78929,7 +78917,7 @@ function orderTabFilter(tab) {
               { "data.shopee_order_status": { $nin: ["PROCESSED", ...ORDER_TAB_LEFT_PICKUP_RAW] } }
             ]
           },
-          ORDER_TAB_TRACKING_EMPTY,
+          { $nor: [ORDER_TAB_TRACKING_PRESENT] },
           { $nor: [ORDER_TAB_DROPOFF_PREPARED] },
           {
             $or: [
@@ -108767,7 +108755,7 @@ async function listOrders(req, res) {
   } else if (tab === "unprocessed" || tab === "chua-xu-ly" || tab === "ready_to_ship" || tab === "cho-lay-hang") {
     rawOrders = rawOrders.filter((o) => deps15.matchesUnprocessedPickupTabShared(o));
     console.log(
-      `[GET /api/orders] query.tab=${tab} filter=matchesUnprocessedPickupTab \u2192 ${rawOrders.length} \u0111\u01A1n | query={ shopee_order_status: READY_TO_SHIP|RETRY_SHIP, !PROCESSED, !tracking_outbound }`
+      `[GET /api/orders] query.tab=${tab} filter=matchesUnprocessedPickupTab \u2192 ${rawOrders.length} \u0111\u01A1n | query={ shopee_order_status: READY_TO_SHIP|RETRY_SHIP, !PROCESSED }`
     );
   } else if (tab === "shipping" || tab === "shipped" || tab === "dang-giao") {
     rawOrders = rawOrders.filter((o) => deps15.matchesShippingTabShared(o));

@@ -4194,31 +4194,19 @@ const ORDER_TAB_LEFT_PICKUP_RAW = [
   "TO_RETURN",
 ] as const;
 
+const ORDER_TAB_USABLE_TRACKING = {
+  $exists: true,
+  $nin: [null, "", "0"],
+  $not: /^0FG/i,
+} as const;
+
 const ORDER_TAB_TRACKING_PRESENT: Record<string, unknown> = {
   $or: [
-    { tracking_no: { $exists: true, $nin: [null, "", "0"] } },
-    { "data.tracking_no": { $exists: true, $nin: [null, "", "0"] } },
-    { "data.trackingNumber": { $exists: true, $nin: [null, "", "0"] } },
-    { "data.shopee_tracking_number": { $exists: true, $nin: [null, "", "0"] } },
-  ],
-};
-
-const ORDER_TAB_TRACKING_EMPTY: Record<string, unknown> = {
-  $and: [
-    { $or: [{ tracking_no: { $exists: false } }, { tracking_no: { $in: [null, "", "0"] } }] },
-    { $or: [{ "data.tracking_no": { $exists: false } }, { "data.tracking_no": { $in: [null, "", "0"] } }] },
-    {
-      $or: [
-        { "data.trackingNumber": { $exists: false } },
-        { "data.trackingNumber": { $in: [null, "", "0"] } },
-      ],
-    },
-    {
-      $or: [
-        { "data.shopee_tracking_number": { $exists: false } },
-        { "data.shopee_tracking_number": { $in: [null, "", "0"] } },
-      ],
-    },
+    { tracking_no: ORDER_TAB_USABLE_TRACKING },
+    { trackingNumber: ORDER_TAB_USABLE_TRACKING },
+    { "data.tracking_no": ORDER_TAB_USABLE_TRACKING },
+    { "data.trackingNumber": ORDER_TAB_USABLE_TRACKING },
+    { "data.shopee_tracking_number": ORDER_TAB_USABLE_TRACKING },
   ],
 };
 
@@ -4440,7 +4428,7 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
               { "data.shopee_order_status": { $nin: ["PROCESSED", ...ORDER_TAB_LEFT_PICKUP_RAW] } },
             ],
           },
-          ORDER_TAB_TRACKING_EMPTY,
+          { $nor: [ORDER_TAB_TRACKING_PRESENT] },
           { $nor: [ORDER_TAB_DROPOFF_PREPARED] },
           {
             $or: [
