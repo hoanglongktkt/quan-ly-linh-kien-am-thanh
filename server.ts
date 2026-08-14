@@ -1113,7 +1113,7 @@ const SHOPEE_RETURN_LIST_WINDOW_SEC = 15 * 24 * 60 * 60;
 const SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS = 10000;
 /** get_return_list: page_size tối đa Shopee = 100; paginate đầy đủ. */
 const SHOPEE_RETURN_LIST_PAGE_SIZE = 100;
-const SHOPEE_RETURN_LIST_MAX_PAGES = 200;
+const SHOPEE_RETURN_LIST_MAX_PAGES = 50;
 /** Shopee v2 get_order_detail chấp nhận tối đa 50 order_sn cho mỗi request. */
 const SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS = 50;
 /**
@@ -1134,11 +1134,11 @@ const PRINT_API_DELAY_MS = 200;
 /** Nghỉ giữa các chunk đơn hàng (đồng bộ nền) = delay mẻ detail. */
 const SHOPEE_SYNC_CHUNK_DELAY_MS = ORDER_DETAIL_BATCH_DELAY_MS;
 const SHOPEE_SYNC_BATCH_DELAY_MS = SHOPEE_SYNC_CHUNK_DELAY_MS;
-const SHOPEE_ORDER_LIST_PAGE_DELAY_MS = 1000;
+const SHOPEE_ORDER_LIST_PAGE_DELAY_MS = 500;
 /** get_order_list page_size — tối đa Shopee = 100. */
 const SHOPEE_ORDER_LIST_PAGE_SIZE = 100;
-/** Cầu chì chống infinite loop (100 trang × 100 SN = 10_000 đơn/chunk) — KHÔNG cắt sớm 4/8 trang. */
-const SHOPEE_ORDER_LIST_LOOP_SAFETY_CAP = 100;
+/** Cầu chì cứng: tối đa 50 lần get_order_list / shop (CloudLinux nproc). */
+const SHOPEE_ORDER_LIST_LOOP_SAFETY_CAP = 50;
 /**
  * Incremental pull: lấy đơn có update_time trong N giây gần nhất.
  * Mặc định 14 ngày (an toàn, dưới trần 15 ngày của Shopee).
@@ -1183,7 +1183,8 @@ function buildShopeeOrderListTimeChunks(
   const windowSec = Math.max(60, Math.floor(maxWindowSec));
   const chunks: Array<{ timeFrom: number; timeTo: number }> = [];
   let cursorTo = to;
-  while (cursorTo > from) {
+  const maxChunks = 8;
+  while (cursorTo > from && chunks.length < maxChunks) {
     const cursorFrom = Math.max(from, cursorTo - windowSec);
     chunks.push({ timeFrom: cursorFrom, timeTo: cursorTo });
     if (cursorFrom <= from) break;
@@ -2039,9 +2040,9 @@ async function collectShopeeOrderSnsIncremental(
   const orderSnSet = new Set<string>();
   const shopeeResponses: any[] = [];
   const deadlineAt = opts?.deadlineAt ?? Date.now() + ORDERS_PULL_PER_SHOP_MS;
-  const pageSafetyCap = Math.max(
-    1,
-    Math.floor(opts?.pageHardCap ?? SHOPEE_ORDER_LIST_LOOP_SAFETY_CAP),
+  const pageSafetyCap = Math.min(
+    SHOPEE_ORDER_LIST_LOOP_SAFETY_CAP,
+    Math.max(1, Math.floor(opts?.pageHardCap ?? SHOPEE_ORDER_LIST_LOOP_SAFETY_CAP)),
   );
   let truncated = false;
 
@@ -2053,8 +2054,9 @@ async function collectShopeeOrderSnsIncremental(
   );
 
   let page = 0;
-  for (let chunkIdx = 0; chunkIdx < timeChunks.length; chunkIdx++) {
-    if (Date.now() > deadlineAt) {
+  let shopListCalls = 0;
+  chunkLoop: for (let chunkIdx = 0; chunkIdx < timeChunks.length; chunkIdx++) {
+    if (Date.now() > deadlineAt || shopListCalls >= pageSafetyCap) {
       truncated = true;
       break;
     }
@@ -2064,7 +2066,6 @@ async function collectShopeeOrderSnsIncremental(
     const chunkTimeTo = toShopeeUnixSeconds(chunk.timeTo);
     const seenCursors = new Set<string>();
     let cursor: string | undefined;
-    let chunkPage = 0;
 
     syncDiag(
       "Order list time chunk",
@@ -2073,14 +2074,19 @@ async function collectShopeeOrderSnsIncremental(
         ` (~${((chunkTimeTo - chunkTimeFrom) / 86400).toFixed(2)}d)`,
     );
 
-    while (true) {
+    // Fail-safe: for-loop cứng ≤ 50 lần/shop — CẤM while(true).
+    for (let pageIdx = 0; pageIdx < pageSafetyCap; pageIdx++) {
+      if (Date.now() > deadlineAt || shopListCalls >= pageSafetyCap) {
+        truncated = true;
+        break chunkLoop;
+      }
       try {
         assertOrdersPullDeadline(
           deadlineAt,
           `get_order_list chunk=${chunkIdx + 1} page=${page + 1} shop=${shopId}`,
         );
+        shopListCalls += 1;
         page += 1;
-        chunkPage += 1;
 
         let listResult = await shopeeGetOrderList(shopId, accessToken, {
           timeRangeField: "update_time",
@@ -2125,7 +2131,7 @@ async function collectShopeeOrderSnsIncremental(
               raw: listResult,
             });
             truncated = true;
-            break;
+            break chunkLoop;
           }
         }
 
@@ -2147,7 +2153,7 @@ async function collectShopeeOrderSnsIncremental(
             listResult.message || "",
           );
           truncated = true;
-          break;
+          break chunkLoop;
         }
 
         const rows = extractShopeeOrderListRows(listResult) as any[];
@@ -2174,7 +2180,7 @@ async function collectShopeeOrderSnsIncremental(
           listResult,
           currentCursor: cursor,
           seenCursors,
-          pageIndex: chunkPage,
+          pageIndex: shopListCalls,
           hardCap: pageSafetyCap,
           logLabel: `shop=${shopId} chunk=${chunkIdx + 1}`,
         });
@@ -2183,9 +2189,14 @@ async function collectShopeeOrderSnsIncremental(
           if (String(adv.reason || "").includes("safetyCap")) truncated = true;
           break;
         }
+        const nextCursor = String(adv.nextCursor || "").trim();
+        if (!nextCursor || nextCursor === String(cursor || "").trim()) {
+          truncated = true;
+          break;
+        }
 
-        seenCursors.add(adv.nextCursor);
-        cursor = adv.nextCursor;
+        seenCursors.add(nextCursor);
+        cursor = nextCursor;
         await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
       } catch (pageErr: any) {
         if (String(pageErr?.message || "").includes("ORDERS_PULL_DEADLINE")) {
@@ -2205,7 +2216,7 @@ async function collectShopeeOrderSnsIncremental(
           detail: pageErr?.message || String(pageErr),
         });
         truncated = true;
-        break;
+        break chunkLoop;
       }
     }
 
@@ -2253,29 +2264,30 @@ async function collectShopeeOrderSnsByStatus(
   const timeTo = now;
   const orderSnSet = new Set<string>();
   const deadlineAt = opts?.deadlineAt ?? Date.now() + ORDERS_PULL_PER_SHOP_MS;
-  const pageSafetyCap = Math.max(
-    1,
-    Math.floor(opts?.pageHardCap ?? SHOPEE_ORDER_LIST_LOOP_SAFETY_CAP),
+  const pageSafetyCap = Math.min(
+    SHOPEE_ORDER_LIST_LOOP_SAFETY_CAP,
+    Math.max(1, Math.floor(opts?.pageHardCap ?? SHOPEE_ORDER_LIST_LOOP_SAFETY_CAP)),
   );
   const status = String(orderStatus || "").trim().toUpperCase();
   if (!status) return [];
 
   const timeChunks = buildShopeeOrderListTimeChunks(timeFrom, timeTo);
   let page = 0;
+  let shopListCalls = 0;
 
-  for (let chunkIdx = 0; chunkIdx < timeChunks.length; chunkIdx++) {
-    if (Date.now() > deadlineAt) break;
+  chunkLoop: for (let chunkIdx = 0; chunkIdx < timeChunks.length; chunkIdx++) {
+    if (Date.now() > deadlineAt || shopListCalls >= pageSafetyCap) break;
     const chunk = timeChunks[chunkIdx];
     const chunkTimeFrom = toShopeeUnixSeconds(chunk.timeFrom);
     const chunkTimeTo = toShopeeUnixSeconds(chunk.timeTo);
     const seenCursors = new Set<string>();
     let cursor: string | undefined;
-    let chunkPage = 0;
 
-    while (true) {
-      if (Date.now() > deadlineAt) break;
+    // Fail-safe: for-loop cứng ≤ 50 lần/shop — CẤM while(true).
+    for (let pageIdx = 0; pageIdx < pageSafetyCap; pageIdx++) {
+      if (Date.now() > deadlineAt || shopListCalls >= pageSafetyCap) break chunkLoop;
+      shopListCalls += 1;
       page += 1;
-      chunkPage += 1;
       try {
         let listResult = await shopeeGetOrderList(shopId, accessToken, {
           timeRangeField,
@@ -2309,12 +2321,12 @@ async function collectShopeeOrderSnsByStatus(
               `[Orders Pull] Token refresh thất bại (status=${status}) shop=${shopId}:`,
               refreshErr?.message || refreshErr,
             );
-            break;
+            break chunkLoop;
           }
         }
         if (listResult?.error) {
           logShopeeSyncApiError(listResult, `get_order_list status=${status} shop=${shopId}`);
-          break;
+          break chunkLoop;
         }
         const rows = extractShopeeOrderListRows(listResult) as any[];
         for (const row of rows) {
@@ -2325,17 +2337,19 @@ async function collectShopeeOrderSnsByStatus(
           listResult,
           currentCursor: cursor,
           seenCursors,
-          pageIndex: chunkPage,
+          pageIndex: shopListCalls,
           hardCap: pageSafetyCap,
           logLabel: `scan-lookup status=${status} shop=${shopId} chunk=${chunkIdx + 1}`,
         });
         if (adv.action === "break") break;
-        seenCursors.add(adv.nextCursor);
-        cursor = adv.nextCursor;
-        await shopeeSyncDelay(Math.min(SHOPEE_ORDER_LIST_PAGE_DELAY_MS, 250));
+        const nextCursor = String(adv.nextCursor || "").trim();
+        if (!nextCursor || nextCursor === String(cursor || "").trim()) break;
+        seenCursors.add(nextCursor);
+        cursor = nextCursor;
+        await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
       } catch (pageErr: any) {
         logShopeeSyncApiError(pageErr, `get_order_list status=${status} shop=${shopId}`);
-        break;
+        break chunkLoop;
       }
     }
   }
@@ -13184,7 +13198,6 @@ function scheduleReadyToShipBackfillSafe(): void {
     runSync: (opts: any) =>
       pullReadyToShipBackfillFromShopee({
         lookbackSec: Number(opts?.lookbackSec) || READY_TO_SHIP_BACKFILL_LOOKBACK_SEC,
-        extraOrderSns: FORCE_RESCUE_SHOPEE_ORDER_SNS,
         trigger: opts?.trigger || "cron",
       }),
     lookbackSec: READY_TO_SHIP_BACKFILL_LOOKBACK_SEC,
@@ -14483,9 +14496,9 @@ async function backfillMissingShippingCarriersFromShopee(
 /**
  * Lấy chi tiết + chuẩn hóa theo BATCH (không tuần tự từng đơn).
  * - Mỗi mẻ ≤20 order_sn → 1 lần get_order_detail (Shopee hỗ trợ tối đa 50).
- * - Normalize song song bằng Promise.all; lỗi 1 đơn không làm sập cả mẻ.
+ * - Normalize tuần tự for...of; lỗi 1 đơn không làm sập cả mẻ.
  * - Nghỉ ORDER_DETAIL_BATCH_DELAY_MS giữa các mẻ để tránh rate-limit.
- * - Nếu cả mẻ API fail → fallback Promise.all gọi lẻ từng đơn trong mẻ đó.
+ * - Nếu cả mẻ API fail → fallback for...of gọi lẻ từng đơn (CẤM Promise.all).
  */
 async function fetchNormalizeShopeeOrderChunk(
   apiShopId: string,
@@ -14558,44 +14571,42 @@ async function fetchNormalizeShopeeOrderChunk(
     }
   };
 
-  /** Fallback: Promise.all gọi get_order_detail lẻ trong 1 mẻ (giữ isolation từng đơn). */
+  /** Fallback tuần tự: CẤM Promise.all — 1 request/lần + sleep 500ms (CageFS nproc). */
   const fetchBatchIndividually = async (batch: string[], token: string) => {
     let tok = token;
-    const settled = await Promise.all(
-      batch.map(async (orderSn) => {
-        try {
-          let detailResult = await shopeeGetOrderDetail(shopApiId, tok, [orderSn]);
-          if (
-            detailResult?.httpStatus === 401 ||
-            detailResult?.httpStatus === 403 ||
-            isShopeeInvalidTokenError(detailResult?.error, detailResult?.message)
-          ) {
-            try {
-              const refreshed = await refreshShopeeAccessTokenLocked(shopFileKey, { force: true });
-              if (refreshed) {
-                tok = refreshed;
-                accessToken = refreshed;
-                detailResult = await shopeeGetOrderDetail(shopApiId, tok, [orderSn]);
-              }
-            } catch (refreshErr: any) {
-              console.error(
-                `[Sync Shop ${shopFileKey}] Lỗi: token_refresh order=${orderSn}:`,
-                refreshErr?.message || refreshErr,
-              );
-              await delay(1000);
+    for (const orderSn of batch) {
+      try {
+        let detailResult = await shopeeGetOrderDetail(shopApiId, tok, [orderSn]);
+        if (
+          detailResult?.httpStatus === 401 ||
+          detailResult?.httpStatus === 403 ||
+          isShopeeInvalidTokenError(detailResult?.error, detailResult?.message)
+        ) {
+          try {
+            const refreshed = await refreshShopeeAccessTokenLocked(shopFileKey, { force: true });
+            if (refreshed) {
+              tok = refreshed;
+              accessToken = refreshed;
+              detailResult = await shopeeGetOrderDetail(shopApiId, tok, [orderSn]);
             }
+          } catch (refreshErr: any) {
+            console.error(
+              `[Sync Shop ${shopFileKey}] Lỗi: token_refresh order=${orderSn}:`,
+              refreshErr?.message || refreshErr,
+            );
+            await delay(1000);
           }
-          if (isShopeeRateLimited(detailResult?.httpStatus, detailResult)) {
-            await delay(ORDER_DETAIL_BATCH_DELAY_MS);
-            detailResult = await shopeeGetOrderDetail(shopApiId, tok, [orderSn]);
-          }
-          if (detailResult?.error) {
-            const message =
-              detailResult.message || formatShopeeApiError(detailResult, detailResult.httpStatus);
-            console.error(`[Sync Shop ${shopFileKey}] Lỗi ở đơn ${orderSn}:`, message);
-            pushFail(orderSn, String(detailResult.error), message, detailResult.httpStatus);
-            return null;
-          }
+        }
+        if (isShopeeRateLimited(detailResult?.httpStatus, detailResult)) {
+          await delay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+          detailResult = await shopeeGetOrderDetail(shopApiId, tok, [orderSn]);
+        }
+        if (detailResult?.error) {
+          const message =
+            detailResult.message || formatShopeeApiError(detailResult, detailResult.httpStatus);
+          console.error(`[Sync Shop ${shopFileKey}] Lỗi ở đơn ${orderSn}:`, message);
+          pushFail(orderSn, String(detailResult.error), message, detailResult.httpStatus);
+        } else {
           const detailList = detailResult?.response?.order_list ?? detailResult?.order_list ?? [];
           const detail = Array.isArray(detailList)
             ? detailList.find((d: any) => String(d?.order_sn || "").trim() === orderSn) || detailList[0]
@@ -14609,23 +14620,21 @@ async function fetchNormalizeShopeeOrderChunk(
               "order_not_found",
               `get_order_detail không trả order_sn=${orderSn}`,
             );
-            return null;
-          }
-          return normalizeOne(orderSn, detail);
-        } catch (err: any) {
-          const msg = err?.message || String(err);
-          console.error(`[Sync Shop ${shopFileKey}] Lỗi ở đơn ${orderSn}:`, msg);
-          if (isShopeeOrderNotFoundError(err?.code || err?.error, msg)) {
-            pushFail(orderSn, "order_not_found", msg);
           } else {
-            pushFail(orderSn, "order_detail_exception", msg);
+            const norm = normalizeOne(orderSn, detail);
+            if (norm) normalized.push(norm);
           }
-          return null;
         }
-      }),
-    );
-    for (const norm of settled) {
-      if (norm) normalized.push(norm);
+      } catch (err: any) {
+        const msg = err?.message || String(err);
+        console.error(`[Sync Shop ${shopFileKey}] Lỗi ở đơn ${orderSn}:`, msg);
+        if (isShopeeOrderNotFoundError(err?.code || err?.error, msg)) {
+          pushFail(orderSn, "order_not_found", msg);
+        } else {
+          pushFail(orderSn, "order_detail_exception", msg);
+        }
+      }
+      await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
     }
   };
 
@@ -14708,20 +14717,16 @@ async function fetchNormalizeShopeeOrderChunk(
             if (sn) detailBySn.set(sn, detail);
           }
           const missingSns: string[] = [];
-          const settled = await Promise.all(
-            batch.map(async (orderSn) => {
-              const detail = detailBySn.get(orderSn);
-              if (!detail) {
-                missingSns.push(orderSn);
-                return null;
-              }
-              return normalizeOne(orderSn, detail);
-            }),
-          );
-          for (const norm of settled) {
+          for (const orderSn of batch) {
+            const detail = detailBySn.get(orderSn);
+            if (!detail) {
+              missingSns.push(orderSn);
+              continue;
+            }
+            const norm = normalizeOne(orderSn, detail);
             if (norm) normalized.push(norm);
           }
-          // Thiếu trong batch response → probe lẻ; nếu vẫn not found → CANCELLED.
+          // Thiếu trong batch response → probe lẻ tuần tự; nếu vẫn not found → CANCELLED.
           if (missingSns.length > 0) {
             console.warn(
               `[Sync Shop ${shopFileKey}] ${missingSns.length} đơn thiếu trong batch → probe lẻ: ${missingSns.slice(0, 5).join(",")}`,
@@ -14734,7 +14739,7 @@ async function fetchNormalizeShopeeOrderChunk(
       console.error(
         `[Sync Shop ${shopFileKey}] Lỗi: Exception get_order_detail batch:`,
         err?.message || err,
-        "— fallback Promise.all từng đơn",
+        "— fallback tuần tự từng đơn",
       );
       await fetchBatchIndividually(batch, accessToken);
     }
@@ -15057,16 +15062,24 @@ async function persistShopeeOrderChunk(
   return { added, updated };
 }
 
+let forceRescueShopeeOrderSnsOnce = false;
+
 /**
  * Ép get_order_detail + bulkUpsert theo danh sách order_sn — không cần tracking/package_number.
- * Dùng cứu đơn bị rớt (chưa Arrange Shipment).
+ * Dùng cứu đơn bị rớt (chưa Arrange Shipment). CHỈ 1 LẦN / process — không lọt cron/lookback.
  */
 async function forceUpsertShopeeOrderSns(orderSns: string[]): Promise<{
   saved: string[];
   failed: string[];
+  skipped?: boolean;
 }> {
   const saved: string[] = [];
   const failed: string[] = [];
+  if (forceRescueShopeeOrderSnsOnce) {
+    console.log("[Force Rescue] SKIPPED — đã chạy 1 lần (mutex once).");
+    return { saved, failed, skipped: true };
+  }
+  forceRescueShopeeOrderSnsOnce = true;
   const sns = [...new Set(orderSns.map((s) => String(s || "").trim()).filter(Boolean))];
   if (sns.length === 0) return { saved, failed };
 
@@ -15098,7 +15111,10 @@ async function forceUpsertShopeeOrderSns(orderSns: string[]): Promise<{
           [sn],
           { enrichTracking: false, skipEscrow: true },
         );
-        if (!Array.isArray(normalized) || normalized.length === 0) continue;
+        if (!Array.isArray(normalized) || normalized.length === 0) {
+          await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+          continue;
+        }
         await persistShopeeOrderChunk([], normalized, {
           apiShopId: shopId,
           accessToken,
@@ -15117,11 +15133,13 @@ async function forceUpsertShopeeOrderSns(orderSns: string[]): Promise<{
           err?.message || err,
         );
       }
+      await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
     }
     if (!ok) {
       failed.push(sn);
       console.error(`[Force Rescue] KHÔNG lưu được order_sn=${sn} (mọi shop fail / not found)`);
     }
+    await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
   }
   return { saved, failed };
 }
@@ -15134,7 +15152,6 @@ let rtsBackfillInFlight = false;
  */
 async function pullReadyToShipBackfillFromShopee(opts?: {
   lookbackSec?: number;
-  extraOrderSns?: string[];
   trigger?: string;
 }): Promise<{
   success: boolean;
@@ -15195,10 +15212,10 @@ async function pullReadyToShipBackfillFromShopee(opts?: {
       if (!accessToken) continue;
 
       const snSet = new Set<string>();
-      for (const extra of opts?.extraOrderSns || []) {
-        const sn = String(extra || "").trim();
-        if (sn) snSet.add(sn);
-      }
+      const statusBudget = Math.max(
+        1,
+        Math.floor(SHOPEE_ORDER_LIST_LOOP_SAFETY_CAP / 2),
+      );
       for (const status of ["READY_TO_SHIP", "RETRY_SHIP"] as const) {
         try {
           const sns = await collectShopeeOrderSnsByStatus(shopId, accessToken, status, {
@@ -15206,6 +15223,7 @@ async function pullReadyToShipBackfillFromShopee(opts?: {
             deadlineAt: shopDeadlineAt,
             timeRangeField: "create_time",
             allowShortLookback: true,
+            pageHardCap: statusBudget,
           });
           for (const sn of sns) snSet.add(sn);
         } catch (listErr: any) {
@@ -15214,6 +15232,7 @@ async function pullReadyToShipBackfillFromShopee(opts?: {
             listErr?.message || listErr,
           );
         }
+        await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
       }
 
       const orderSnList = [...snSet];
@@ -15253,6 +15272,7 @@ async function pullReadyToShipBackfillFromShopee(opts?: {
           await shopeeSyncDelay(SHOPEE_SYNC_CHUNK_DELAY_MS);
         }
       }
+      await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
     }
 
     if (pulled > 0 || added > 0) {
@@ -23442,7 +23462,7 @@ async function startServer() {
         scheduleReadyToShipBackfillSafe(); // READY_TO_SHIP lookback 7 ngày
         scheduleShopeeReturnRequestsSyncSafe(); // Return APIs → tab Yêu cầu trả hàng
         scheduleHandedOverStatusReconcileSafe(); // dò ĐVVC → SHIPPED (cron + interval)
-        // Cứu 2 SN GHN chưa Arrange — 1 lần sau boot (không chặn listen).
+        // Cứu 2 SN GHN — 1 lần, delay 90s để không chồng RTS/GHN boot (CageFS nproc).
         setTimeout(() => {
           void forceUpsertShopeeOrderSns(FORCE_RESCUE_SHOPEE_ORDER_SNS)
             .then((r) => {
@@ -23453,7 +23473,7 @@ async function startServer() {
             .catch((err) => {
               console.warn("[Boot Rescue] failed:", err instanceof Error ? err.message : err);
             });
-        }, 18_000);
+        }, 90_000);
         // KHÔNG gọi scheduleClosedOrdersRetentionCleanup / scheduleMongoTempCollectionsCleanup.
       }
       console.log(

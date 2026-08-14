@@ -91,7 +91,7 @@ export function advanceShopeeOrderListCursor(opts: {
     };
   }
 
-  // Cầu chì cuối: chỉ chặn vòng lặp runaway (cursor luôn unique). Không dùng 4/8 trang.
+  // Cầu chì cứng ≤ 50 trang/shop — chặn cursor unique chạy vô hạn.
   const safetyCap = Math.max(1, Math.floor(Number(opts.hardCap) || 0));
   if (safetyCap > 0 && opts.pageIndex >= safetyCap) {
     return {
