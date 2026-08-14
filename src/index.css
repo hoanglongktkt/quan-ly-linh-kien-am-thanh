@@ -197,28 +197,25 @@ body {
   }
 }
 
-/* Card list: mobile + PC 32" — một cột full width */
+/* Card list: JS mount (useMediaQuery) — không ẩn bảng/card bằng display:none */
 .om-order-card-list {
-  display: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.om-order-card-list-mounted {
+  display: flex !important;
 }
 
 @media (max-width: 768px) {
   .om-order-card-list {
-    display: flex;
     flex-direction: column;
   }
 }
 
 @media (min-width: 1440px) {
   .om-order-card-list {
-    display: flex !important;
-    flex-direction: column;
     width: 100%;
-  }
-
-  /* Tránh 2 nút In (bảng + card) cùng hiện — chỉ giữ nút trên bảng desktop. */
-  .om-order-card-list .om-order-card-print-btn {
-    display: none !important;
   }
 }
 

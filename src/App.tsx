@@ -360,6 +360,8 @@ export default function App() {
    * tạo nhiều truy vấn MongoDB nặng đồng thời. */
   const fetchOrdersInFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
   const fetchOrdersAbortRef = useRef<AbortController | null>(null);
+  /** Số fetch non-silent đang chạy — finally LUÔN giảm, tránh kẹt spinner khi bị abort. */
+  const fetchOrdersNonSilentInFlightRef = useRef(0);
   /** Snapshot cache hydrate — tránh merge shallow đè mất cache khi setState chưa flush. */
   const ordersHydrateRef = useRef<Order[]>([]);
   /** Từ khóa search Kho SP chính — giữ qua phân trang / focus refresh. */
@@ -397,6 +399,8 @@ export default function App() {
 
   // Active navigation tab — khôi phục từ URL (?tab=) hoặc sessionStorage khi F5
   const [activeTab, setActiveTab] = useState(() => resolveTabFromPath());
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [focusScanner, setFocusScanner] = useState<boolean>(false);
   const [ordersSubTabHint, setOrdersSubTabHint] = useState<OrdersSubTabId | null>(() =>
@@ -506,12 +510,17 @@ export default function App() {
     force?: boolean;
     /** Trả lỗi về caller thay vì giữ im lặng và chỉ retry nền. */
     throwOnError?: boolean;
+    /** Hủy từ useEffect cleanup — không abort ngay lúc render. */
+    signal?: AbortSignal;
   }) => {
     const token = localStorage.getItem('admin_token');
     if (!token) {
       if (opts?.throwOnError) throw new Error('Phiên đăng nhập không hợp lệ.');
       return;
     }
+
+    const callerSignal = opts?.signal;
+    if (callerSignal?.aborted) return;
 
     const silent = Boolean(opts?.silent);
     const bustCache = Boolean(opts?.bustCache);
@@ -526,6 +535,11 @@ export default function App() {
     const q = String(opts?.q || '').trim();
     const flightKey = `page:${page}|limit:${limit}|print:${printStatus || 'all'}|tab:${tab || 'all'}|q:${q || ''}`;
 
+    // Silent không được hủy request đang hiện spinner (P0 race: bootstrap abort tab fetch).
+    if (silent && fetchOrdersNonSilentInFlightRef.current > 0) {
+      return fetchOrdersInFlightRef.current?.promise;
+    }
+
     if (!opts?.force && fetchOrdersInFlightRef.current?.key === flightKey) {
       return fetchOrdersInFlightRef.current.promise;
     }
@@ -533,6 +547,10 @@ export default function App() {
     fetchOrdersAbortRef.current?.abort();
     const controller = new AbortController();
     fetchOrdersAbortRef.current = controller;
+    const onCallerAbort = () => controller.abort();
+    if (callerSignal) {
+      callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+    }
 
     let finishInFlight: (() => void) | undefined;
     const inFlight = new Promise<void>((resolve) => {
@@ -545,7 +563,10 @@ export default function App() {
     // danh sách đơn hàng trống vĩnh viễn cho tới khi người dùng bấm "Làm mới".
     const retriesLeft = opts?.retriesLeft ?? 4;
     const requestId = ++fetchOrdersSeqRef.current;
-    if (!silent) setOrdersLoading(true);
+    if (!silent) {
+      fetchOrdersNonSilentInFlightRef.current += 1;
+      setOrdersLoading(true);
+    }
     let requestTimeoutId: number | undefined;
     try {
       // Refresh chỉ đọc MongoDB nội bộ, không gọi Shopee API.
@@ -745,7 +766,14 @@ export default function App() {
       }
     } finally {
       if (requestTimeoutId !== undefined) window.clearTimeout(requestTimeoutId);
-      if (requestId === fetchOrdersSeqRef.current && !silent) setOrdersLoading(false);
+      callerSignal?.removeEventListener('abort', onCallerAbort);
+      if (!silent) {
+        fetchOrdersNonSilentInFlightRef.current = Math.max(
+          0,
+          fetchOrdersNonSilentInFlightRef.current - 1,
+        );
+        if (fetchOrdersNonSilentInFlightRef.current === 0) setOrdersLoading(false);
+      }
       if (fetchOrdersInFlightRef.current?.promise === inFlight) {
         fetchOrdersInFlightRef.current = null;
       }
@@ -920,10 +948,12 @@ export default function App() {
     };
   }, [isAuthenticated, activeTab, resolveOrdersFetchTab]);
 
-  // Rời tab Đơn hàng → hủy ngay refresh đang pending, nhường connection pool.
+  // Rời tab Đơn hàng → hủy refresh đang pending (CHỈ abort trong cleanup).
   useEffect(() => {
-    if (activeTab === 'orders') return;
-    fetchOrdersAbortRef.current?.abort();
+    if (activeTab !== 'orders') return;
+    return () => {
+      fetchOrdersAbortRef.current?.abort();
+    };
   }, [activeTab]);
 
   // Poll hàng đợi dò ngầm Backend — toast toàn app kể cả khi tắt màn quét / đổi tab.
@@ -1048,18 +1078,6 @@ export default function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated]);
-  useEffect(() => {
-    if (!isAuthenticated || activeTab !== 'orders' || orders.length > 0 || ordersLoading) return;
-    const tab = resolveOrdersFetchTab();
-    void fetchOrders({
-      silent: true,
-      page: 1,
-      limit: 50,
-      merge: false,
-      ...(tab ? { tab } : {}),
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ cần chạy lại khi đổi tab / list trống
-  }, [isAuthenticated, activeTab, orders.length, ordersLoading, resolveOrdersFetchTab]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1678,7 +1696,10 @@ export default function App() {
         setOrders(cached);
         setHasLoadedOrdersOnce(true);
       }
-      void fetchOrders({ silent: true, limit: 50, page: 1, merge: false });
+      // Tab Đơn hàng: OrderManager useEffect (silent:false) là SSOT — không abort/đua request.
+      if (activeTabRef.current !== 'orders') {
+        void fetchOrders({ silent: true, limit: 50, page: 1, merge: false });
+      }
 
       // F5: ưu tiên localStorage; chỉ gọi server khi chưa có cache.
       void fetchProducts({ page: 1, append: false, pageSize: 50, forceRefresh: false });

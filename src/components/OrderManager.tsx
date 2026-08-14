@@ -718,6 +718,7 @@ interface OrderManagerProps {
     force?: boolean;
     retriesLeft?: number;
     throwOnError?: boolean;
+    signal?: AbortSignal;
   }) => Promise<void> | void;
   ordersLoading?: boolean;
   shops: ConnectedShop[];
@@ -1450,21 +1451,39 @@ export default function OrderManager({
       'received_cancel_returns',
       'web_orders',
     ]);
-    if (tabFetchTabs.has(activeSubTab)) {
-      setCurrentPage(1);
-      console.log(`[Orders Tab] activeSubTab=${activeSubTab} → fetch page=1 limit=${ORDERS_PAGE_SIZE}`);
-      counterAbortRef.current?.abort();
-      void onFetchOrders?.({
-        silent: false,
-        force: true,
-        page: 1,
-        limit: ORDERS_PAGE_SIZE,
-        merge: false,
-        tab: searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab,
-        q: searchQuery.trim() || undefined,
-      });
-      void fetchOrderCounts();
-    }
+    if (!tabFetchTabs.has(activeSubTab) || !onFetchOrders) return;
+
+    const controller = new AbortController();
+    setCurrentPage(1);
+    console.log(`[Orders Tab] activeSubTab=${activeSubTab} → fetch page=1 limit=${ORDERS_PAGE_SIZE}`);
+
+    const run = async () => {
+      try {
+        await onFetchOrders({
+          silent: false,
+          force: true,
+          page: 1,
+          limit: ORDERS_PAGE_SIZE,
+          merge: false,
+          tab: searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab,
+          q: searchQuery.trim() || undefined,
+          signal: controller.signal,
+        });
+      } catch (err) {
+        const aborted =
+          controller.signal.aborted ||
+          (err instanceof DOMException && err.name === 'AbortError') ||
+          (typeof err === 'object' && err !== null && (err as { name?: string }).name === 'AbortError');
+        if (aborted) return;
+        console.warn('[Orders Tab] fetchOrders failed:', err);
+      }
+    };
+    void run();
+    void fetchOrderCounts();
+
+    return () => {
+      controller.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSubTab, cancelReturnTab]);
 
