@@ -121011,6 +121011,9 @@ async function pullIncrementalOrdersFromShopee(opts) {
     console.log(
       `[Orders Pull] S\u1ED1 l\u01B0\u1EE3ng l\u1EA5y \u0111\u01B0\u1EE3c t\u1EEB S\xE0n \u2014 pulled=${pulled} +${added}/~${updated} success=${success} elapsedMs=${elapsedMs} perShop=${JSON.stringify(perShopResults)}`
     );
+    if (pulled > 0 || added > 0) {
+      kickMissingShopeeTrackingEnrichment("after_pull");
+    }
     return {
       success,
       pulled,
@@ -125750,11 +125753,19 @@ function applyShopeeTrackingCode(order, rawCode) {
   order.tracking_no = code;
 }
 var TRACKING_ENRICH_COOLDOWN_MS = 8 * 60 * 60 * 1e3;
+var TRACKING_ENRICH_PICKUP_COOLDOWN_MS = 10 * 60 * 1e3;
+function isPickupAwaitingTrackingStatus(order) {
+  const raw = String(order?.shopee_order_status || "").toUpperCase();
+  const st = String(order?.status || "").toLowerCase();
+  if (raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN" || st === "cancelled" || st === "return_pending" || st === "return_received") {
+    return false;
+  }
+  return raw === "UNPAID" || raw === "PENDING" || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "PROCESSED" || st === "pending_confirm" || st === "unprocessed" || st === "processed";
+}
 function setTrackingEnrichCooldown(order, reason) {
   if (!order || typeof order !== "object") return;
-  order.tracking_enrich_cooldown_until = new Date(
-    Date.now() + TRACKING_ENRICH_COOLDOWN_MS
-  ).toISOString();
+  const ms = isPickupAwaitingTrackingStatus(order) ? TRACKING_ENRICH_PICKUP_COOLDOWN_MS : TRACKING_ENRICH_COOLDOWN_MS;
+  order.tracking_enrich_cooldown_until = new Date(Date.now() + ms).toISOString();
   order.tracking_enrich_cooldown_reason = reason;
 }
 function isTrackingEnrichOnCooldown(order) {
@@ -126880,7 +126891,7 @@ async function shopeeGetTrackingNumberWithRetry(shopId, accessToken, orderSn, pa
         return last;
       }
       const errBlob = `${last?.error || ""} ${last?.message || ""}`.toLowerCase();
-      const retriable = !last?.error || errBlob.includes("rate") || errBlob.includes("too many") || errBlob.includes("timeout") || errBlob.includes("busy") || errBlob.includes("try again") || errBlob.includes("not ready") || errBlob.includes("empty");
+      const retriable = errBlob.includes("rate") || errBlob.includes("too many") || errBlob.includes("timeout") || errBlob.includes("busy") || errBlob.includes("try again");
       if (attempt >= maxAttempts) {
         console.log(
           `[Shopee Tracking] attempt ${attempt}/${maxAttempts} order_sn=${orderSn} ch\u01B0a c\xF3 m\xE3 \u2014 error="${last?.error || ""}" message="${last?.message || ""}"`
@@ -127002,7 +127013,7 @@ async function enrichShopeeOrderTrackingFromApi(shopId, accessToken, order, opts
     } else {
       setTrackingEnrichCooldown(order, "missing_tracking_after_fallback");
       console.log(
-        `[Shopee Tracking] THI\u1EBEU M\xC3 sau m\u1ECDi fallback \u2014 order_sn=${order.orderSn} return_sn=${order.return_sn || ""} status=${order.status} raw=${order.shopee_order_status || ""} existingTn=${existingTn || "(empty)"} cooldown=8h`
+        `[Shopee Tracking] THI\u1EBEU M\xC3 sau m\u1ECDi fallback \u2014 order_sn=${order.orderSn} return_sn=${order.return_sn || ""} status=${order.status} raw=${order.shopee_order_status || ""} existingTn=${existingTn || "(empty)"} cooldown=${isPickupAwaitingTrackingStatus(order) ? "10m" : "8h"}`
       );
     }
   } catch (err) {
@@ -127084,7 +127095,7 @@ async function enrichMissingShopeeTracking() {
         if (s2 === "cancelled" || s2 === "return_pending" || s2 === "return_received" || raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN" || Boolean(o?.return_sn)) {
           return 3;
         }
-        if (s2 === "shipping" || s2 === "processed" || raw === "SHIPPED" || raw === "PROCESSED" || raw === "TO_CONFIRM_RECEIVE") {
+        if (s2 === "shipping" || s2 === "processed" || s2 === "unprocessed" || raw === "SHIPPED" || raw === "PROCESSED" || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "TO_CONFIRM_RECEIVE") {
           return 2;
         }
         return 1;
@@ -127129,9 +127140,10 @@ async function enrichMissingShopeeTracking() {
             const returnBefore = String(order.return_tracking_no || "").trim();
             const cooldownBefore = String(order.tracking_enrich_cooldown_until || "");
             try {
+              const isReturnLike = isCancelOrReturnOrderStatus(order) || Boolean(order.return_sn);
               await enrichShopeeOrderTrackingFromApi(shopId, accessToken, order, {
-                light: false,
-                retries: 2
+                light: !isReturnLike,
+                retries: 1
               });
               if (outboundBefore && !String(order.trackingNumber || order.tracking_no || "").trim()) {
                 order.trackingNumber = outboundBefore;
@@ -127145,6 +127157,15 @@ async function enrichMissingShopeeTracking() {
               if (outboundAfter && !outboundBefore) {
                 filled += 1;
                 shopFilled += 1;
+                const hasPkg = Boolean(
+                  String(order.packageNumber || order.package_number || "").trim()
+                );
+                if (hasPkg) {
+                  try {
+                    enqueueLabelPdfDownload([order]);
+                  } catch {
+                  }
+                }
               }
               if (returnAfter && normalizeCarrierTrackingCode(returnBefore) !== returnAfter) {
                 returnFilled += 1;
@@ -128140,6 +128161,46 @@ async function fetchNormalizeShopeeOrderChunk(apiShopId, accessToken, fileKey, o
   }
   return { normalized, errors, failed_orders };
 }
+function scheduleDeferredTrackingEnrich(apiShopId, accessToken, orders) {
+  const list = Array.isArray(orders) ? orders.filter((o) => o?.orderSn) : [];
+  if (!list.length || !apiShopId || !accessToken) return;
+  setImmediate(() => {
+    void (async () => {
+      for (const row of list) {
+        try {
+          await fetchAndForceSaveTrackingNumber(apiShopId, accessToken, row, { retries: 1 });
+          promoteOrderStatusWhenTrackingReady(row);
+          enforceShopeeTerminalLocalStatus(row);
+        } catch (error) {
+          console.error(
+            `[Shopee Tracking] Deferred 1 \u0111\u01A1n (kh\xF4ng d\u1EEBng) order_sn=${row?.orderSn}:`,
+            error?.message || error
+          );
+        }
+        await sleep2(SHOPEE_TRACKING_FETCH_DELAY_MS);
+      }
+      try {
+        queueOrdersJsonMirrorFromMongo();
+      } catch {
+      }
+    })();
+  });
+}
+function kickMissingShopeeTrackingEnrichment(reason) {
+  setImmediate(() => {
+    void enrichMissingShopeeTracking().then((r2) => {
+      if (r2?.skipped) return;
+      console.log(
+        `[Shopee Tracking] Deferred job (${reason}) candidates=${r2?.candidates || 0} filled=${r2?.filled || 0}`
+      );
+    }).catch((err) => {
+      console.warn(
+        `[Shopee Tracking] Deferred job (${reason}) failed:`,
+        err?.message || err
+      );
+    });
+  });
+}
 async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
   let added = 0;
   let updated = 0;
@@ -128283,14 +128344,14 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
     for (const row of touched) {
       const sn = String(row?.orderSn || "").trim();
       if (!sn) continue;
-      const raw = String(row?.shopee_order_status || "").toUpperCase();
-      const printable = raw === "PROCESSED" || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || Boolean(row?.packageNumber || row?.package_number) || Boolean(row?.trackingNumber || row?.tracking_no);
+      const hasTn = hasUsableShopeeTrackingNumber(row);
+      const hasPkg = Boolean(String(row?.packageNumber || row?.package_number || "").trim());
       const hasPdfAlready = row?.hasPdf === true || Boolean(
         String(
           row?.waybill_url || row?.labelUrl || row?.pdfUrl || row?.pdfFilename || ""
         ).trim()
       );
-      if (printable && !hasPdfAlready) {
+      if (hasTn && hasPkg && !hasPdfAlready) {
         newlyAddedForPdf.push(row);
       }
     }
@@ -128301,67 +128362,17 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
       enqueueLabelPdfDownload(newlyAddedForPdf);
     }
   }
-  if (syncCtx && touched.length > 0) {
-    const PRIORITY_RAW = /* @__PURE__ */ new Set([
-      "PROCESSED",
-      "SHIPPED",
-      "TO_CONFIRM_RECEIVE",
-      "CANCELLED",
-      "IN_CANCEL",
-      "TO_RETURN"
-    ]);
-    const PRIORITY_LOCAL = /* @__PURE__ */ new Set([
-      "processed",
-      "shipping",
-      "cancelled",
-      "return_pending",
-      "return_received"
-    ]);
-    const isPriorityTn = (o) => {
-      const raw = String(o?.shopee_order_status || "").toUpperCase();
-      const st = String(o?.status || "").toLowerCase();
-      return PRIORITY_RAW.has(raw) || PRIORITY_LOCAL.has(st) || Boolean(o?.return_sn);
-    };
-    let needTn = touched.filter((o) => needsShopeeTrackingEnrichment(o));
-    if (syncCtx.skipTracking === true) {
-      needTn = needTn.filter(isPriorityTn).slice(0, 12);
-      if (needTn.length === 0) {
-        syncDiag("Tracking enrich SKIPPED", "fast-path \u2014 kh\xF4ng c\xF3 \u0111\u01A1n \u01B0u ti\xEAn thi\u1EBFu m\xE3");
-      } else {
-        syncDiag(
-          "Tracking enrich (priority)",
-          `${needTn.length} \u0111\u01A1n \u01B0u ti\xEAn (skipTracking nh\u01B0ng v\u1EABn l\u1EA5y m\xE3)`
-        );
-      }
-    } else {
-      syncDiag(
-        "Tracking enrich (sequential)",
-        `${needTn.length} \u0111\u01A1n \u2192 get_tracking_number (delay=${SHOPEE_TRACKING_FETCH_DELAY_MS}ms)`
-      );
-    }
+  if (syncCtx && touched.length > 0 && syncCtx.skipTracking !== true) {
+    const needTn = touched.filter((o) => needsShopeeTrackingEnrichment(o));
     if (needTn.length > 0) {
-      for (const row of needTn) {
-        try {
-          await fetchAndForceSaveTrackingNumber(
-            syncCtx.apiShopId,
-            syncCtx.accessToken,
-            row,
-            { retries: 2 }
-          );
-          promoteOrderStatusWhenTrackingReady(row);
-          enforceShopeeTerminalLocalStatus(row);
-        } catch (error) {
-          console.error(
-            `[Shopee Tracking] L\u1ED7i 1 \u0111\u01A1n (kh\xF4ng d\u1EEBng v\xF2ng l\u1EB7p) order_sn=${row?.orderSn}:`,
-            error
-          );
-          continue;
-        } finally {
-          await sleep2(SHOPEE_TRACKING_FETCH_DELAY_MS);
-        }
-      }
-      queueOrdersJsonMirrorFromMongo();
+      syncDiag(
+        "Tracking enrich DEFERRED",
+        `${needTn.length} \u0111\u01A1n \u2192 get_tracking_number (kh\xF4ng ch\u1EB7n persist)`
+      );
+      scheduleDeferredTrackingEnrich(syncCtx.apiShopId, syncCtx.accessToken, needTn);
     }
+  } else if (syncCtx?.skipTracking === true && touched.length > 0) {
+    syncDiag("Tracking enrich SKIPPED", "fast-path \u2014 b\xF9 m\xE3 sau pull, kh\xF4ng ch\u1EB7n chunk");
   }
   return { added, updated };
 }
