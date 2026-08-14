@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { Order, Product, SyncLog } from '../types';
 import StructuredAddressForm from './StructuredAddressForm';
+import QuickAddProductModal from './QuickAddProductModal';
 import {
   emptyStructuredAddress,
   formatFullAddress,
@@ -46,13 +47,16 @@ function ProductSearchCombobox({
   products,
   value,
   onChange,
+  onProductCreated,
 }: {
   products: Product[];
   value: string;
   onChange: (id: string, prod?: Product) => void;
+  onProductCreated?: (product: Product) => void;
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
 
   const selected = products.find((p) => p.id === value);
@@ -63,7 +67,7 @@ function ProductSearchCombobox({
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const available = products.filter((p) => p.stock > 0);
+    const available = products.filter((p) => p.stock > 0 || p.id === value);
     if (!q) return available.slice(0, 40);
     return available
       .filter(
@@ -73,7 +77,7 @@ function ProductSearchCombobox({
           (p.barcode || '').toLowerCase().includes(q)
       )
       .slice(0, 30);
-  }, [products, query]);
+  }, [products, query, value]);
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
@@ -83,53 +87,92 @@ function ProductSearchCombobox({
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
 
+  const pickProduct = (p: Product) => {
+    onChange(p.id, p);
+    setQuery(p.title);
+    setOpen(false);
+  };
+
   return (
-    <div ref={wrapRef} className="relative">
-      <label className="text-[11px] font-semibold text-gray-500">Tìm sản phẩm (Tên / SKU)</label>
-      <div className="relative mt-1">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setOpen(true);
-            if (!e.target.value.trim()) onChange('');
-          }}
-          onFocus={() => setOpen(true)}
-          placeholder="Gõ tên hoặc SKU để tìm..."
-          className="w-full pl-9 pr-3 py-2.5 bg-white rounded-xl border border-gray-200 focus:border-emerald-500 focus:outline-none text-sm text-gray-800"
-        />
+    <>
+      <div ref={wrapRef} className="relative">
+        <label className="text-[11px] font-semibold text-gray-500">Tìm sản phẩm (Tên / SKU)</label>
+        <div className="flex items-stretch gap-2 mt-1">
+          <div className="relative flex-1 min-w-0">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setOpen(true);
+                if (!e.target.value.trim()) onChange('');
+              }}
+              onFocus={() => setOpen(true)}
+              placeholder="Gõ tên hoặc SKU để tìm..."
+              className="w-full pl-9 pr-3 py-2.5 bg-white rounded-xl border border-gray-200 focus:border-emerald-500 focus:outline-none text-sm text-gray-800"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              setShowQuickAdd(true);
+            }}
+            className="shrink-0 px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs rounded-xl border border-emerald-200 inline-flex items-center gap-1"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Thêm mới
+          </button>
+        </div>
+        {open && (
+          <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-lg text-sm overflow-hidden">
+            <ul className="max-h-56 overflow-y-auto">
+              {filtered.length === 0 ? (
+                <li className="px-3 py-3 text-gray-400 text-xs">Không tìm thấy sản phẩm khả dụng</li>
+              ) : (
+                filtered.map((p) => (
+                  <li key={p.id}>
+                    <button
+                      type="button"
+                      onClick={() => pickProduct(p)}
+                      className={`w-full text-left px-3 py-2.5 hover:bg-emerald-50 border-b border-gray-50 last:border-0 ${
+                        value === p.id ? 'bg-emerald-50/80' : ''
+                      }`}
+                    >
+                      <p className="font-semibold text-gray-800 truncate">{p.title}</p>
+                      <p className="text-[11px] text-gray-500 font-mono">
+                        SKU: {p.sku} · Tồn: {p.stock} · {(p.sellingPrice || 0).toLocaleString('vi-VN')}đ
+                      </p>
+                    </button>
+                  </li>
+                ))
+              )}
+            </ul>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                setShowQuickAdd(true);
+              }}
+              className="w-full flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-t border-emerald-100"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Thêm sản phẩm mới
+            </button>
+          </div>
+        )}
       </div>
-      {open && (
-        <ul className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-lg text-sm">
-          {filtered.length === 0 ? (
-            <li className="px-3 py-3 text-gray-400 text-xs">Không tìm thấy sản phẩm khả dụng</li>
-          ) : (
-            filtered.map((p) => (
-              <li key={p.id}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onChange(p.id, p);
-                    setQuery(p.title);
-                    setOpen(false);
-                  }}
-                  className={`w-full text-left px-3 py-2.5 hover:bg-emerald-50 border-b border-gray-50 last:border-0 ${
-                    value === p.id ? 'bg-emerald-50/80' : ''
-                  }`}
-                >
-                  <p className="font-semibold text-gray-800 truncate">{p.title}</p>
-                  <p className="text-[11px] text-gray-500 font-mono">
-                    SKU: {p.sku} · Tồn: {p.stock} · {(p.sellingPrice || 0).toLocaleString('vi-VN')}đ
-                  </p>
-                </button>
-              </li>
-            ))
-          )}
-        </ul>
-      )}
-    </div>
+      <QuickAddProductModal
+        open={showQuickAdd}
+        onClose={() => setShowQuickAdd(false)}
+        initialName={query}
+        onCreated={(p) => {
+          onProductCreated?.(p);
+          pickProduct(p);
+        }}
+      />
+    </>
   );
 }
 
@@ -145,6 +188,7 @@ export default function ManualOrderPage({
   const [shippingAddress, setShippingAddress] = useState<StructuredAddressValue>(emptyStructuredAddress());
   const [submitting, setSubmitting] = useState(false);
   const [orderItems, setOrderItems] = useState<ManualOrderItem[]>([]);
+  const [extraProducts, setExtraProducts] = useState<Product[]>([]);
 
   const [productMode, setProductMode] = useState<'warehouse' | 'custom'>('warehouse');
   const [selectedProdId, setSelectedProdId] = useState('');
@@ -169,6 +213,11 @@ export default function ManualOrderPage({
   const customerShipping = shippingFeePayer === 'customer' ? shippingFee : 0;
   const grandTotal = Math.max(0, itemsSubtotal + customerShipping - orderDiscount);
 
+  const catalogProducts = useMemo(() => {
+    const ids = new Set(products.map((p) => p.id));
+    return [...extraProducts.filter((p) => !ids.has(p.id)), ...products];
+  }, [products, extraProducts]);
+
   useEffect(() => {
     if (orderItems.length > 0 && totalWeightGrams > 0) {
       setPackageWeight(totalWeightGrams);
@@ -180,14 +229,15 @@ export default function ManualOrderPage({
       alert('Vui lòng chọn một sản phẩm từ kho!');
       return;
     }
-    const prod = products.find((p) => p.id === selectedProdId);
+    const prod = catalogProducts.find((p) => p.id === selectedProdId);
     if (!prod) return;
 
     if (selectedQty <= 0) {
       alert('Số lượng sản phẩm phải lớn hơn 0!');
       return;
     }
-    if (selectedQty > prod.stock) {
+    const isQuickCreated = extraProducts.some((p) => p.id === selectedProdId);
+    if (!isQuickCreated && selectedQty > prod.stock) {
       alert(`⚠️ Tồn kho khả dụng chỉ còn ${prod.stock}.`);
       return;
     }
@@ -195,7 +245,7 @@ export default function ManualOrderPage({
     const weight = selectedWeight || prod.weight || 100;
     const existing = orderItems.find((it) => it.productId === selectedProdId && !it.isCustom);
     if (existing) {
-      if (existing.quantity + selectedQty > prod.stock) {
+      if (!isQuickCreated && existing.quantity + selectedQty > prod.stock) {
         alert(`⚠️ Tổng số lượng vượt quá tồn kho (${prod.stock})!`);
         return;
       }
@@ -314,7 +364,7 @@ export default function ManualOrderPage({
         orderItems
           .filter((it) => !it.isCustom)
           .forEach((item) => {
-            const prod = products.find((p) => p.id === item.productId);
+            const prod = catalogProducts.find((p) => p.id === item.productId);
             if (prod) {
               onUpdateProduct({
                 ...prod,
@@ -491,8 +541,11 @@ export default function ManualOrderPage({
             {productMode === 'warehouse' ? (
               <>
                 <ProductSearchCombobox
-                  products={products}
+                  products={catalogProducts}
                   value={selectedProdId}
+                  onProductCreated={(p) =>
+                    setExtraProducts((prev) => (prev.some((x) => x.id === p.id) ? prev : [p, ...prev]))
+                  }
                   onChange={(id, prod) => {
                     setSelectedProdId(id);
                     if (prod) {

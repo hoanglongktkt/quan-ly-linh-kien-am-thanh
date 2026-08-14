@@ -327,16 +327,48 @@ export async function handleProductSyncShopee(req, res) {
 /** POST /api/products */
 export async function createProduct(req, res) {
   const body = req.body || {};
-  if (!body.title || !body.sku) {
-    return res.status(400).json({ error: "title_and_sku_required" });
+  const title = String(body.title || body.name || "").trim();
+  const sku = String(body.sku || "").trim();
+  if (!title || !sku) {
+    return res.status(400).json({
+      success: false,
+      error: "title_and_sku_required",
+      message: "Vui lòng nhập tên sản phẩm và mã SKU.",
+    });
   }
+
+  try {
+    const hits = await deps.searchProductsFromStore(sku, 20);
+    const skuLower = sku.toLowerCase();
+    const skuMatch = (row) => String(row?.sku || "").trim().toLowerCase() === skuLower;
+    const duplicated = (Array.isArray(hits) ? hits : []).some((p) => {
+      if (skuMatch(p)) return true;
+      const children = Array.isArray(p?.children) && p.children.length
+        ? p.children
+        : Array.isArray(p?.children_models)
+          ? p.children_models
+          : [];
+      return children.some(skuMatch);
+    });
+    if (duplicated) {
+      return res.status(409).json({
+        success: false,
+        error: "sku_duplicate",
+        message: "Mã SKU đã tồn tại.",
+      });
+    }
+  } catch (dupErr) {
+    console.warn("[Products API] SKU duplicate check skipped:", dupErr?.message || dupErr);
+  }
+
   const product = {
     id: body.id || `prod-${Date.now()}`,
-    title: String(body.title),
-    sku: String(body.sku),
+    title,
+    sku,
     stock: Math.max(0, Math.round(Number(body.stock) || 0)),
     importPrice: Math.max(0, Math.round(Number(body.importPrice) || 0)),
     sellingPrice: Math.max(0, Math.round(Number(body.sellingPrice) || 0)),
+    unit: String(body.unit || "").trim() || "cái",
     channels: Array.isArray(body.channels) ? body.channels : ["shopee"],
     category: body.category || "Chưa phân loại",
     description: body.description || "",
@@ -360,7 +392,9 @@ export async function createProduct(req, res) {
   const cache = await deps.loadLocalInventoryCache();
   // b+c) Trả product + inventory từ Local Cache để UI hiển thị ngay, không reload trang tổng.
   return res.status(201).json({
+    success: true,
     ...product,
+    product,
     localInventory: cache.products,
     cacheUpdatedAt: cache.updatedAt,
   });

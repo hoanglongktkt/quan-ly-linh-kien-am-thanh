@@ -94,6 +94,7 @@ interface ImportManagerProps {
   onEditProductShortcut: (productId: string) => void;
   initialProductId?: string | null;
   onInitialProductConsumed?: () => void;
+  onProductCreated?: (product: Product) => void;
 }
 
 export default function ImportManager({
@@ -106,6 +107,7 @@ export default function ImportManager({
   onEditProductShortcut,
   initialProductId,
   onInitialProductConsumed,
+  onProductCreated,
 }: ImportManagerProps) {
   const [localSuppliers, setLocalSuppliers] = useState<Supplier[]>(suppliersProp);
   const [viewMode, setViewMode] = useState<'list' | 'create'>('list');
@@ -602,6 +604,7 @@ export default function ImportManager({
                 ref={productSearchRef}
                 excludeIds={selectedProducts.map((l) => l.productId)}
                 onSelect={(p) => void addProductToTable(p)}
+                onProductCreated={onProductCreated}
               />
             </section>
 

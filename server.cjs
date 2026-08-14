@@ -105028,16 +105028,42 @@ async function handleProductSyncShopee(req, res) {
 }
 async function createProduct(req, res) {
   const body = req.body || {};
-  if (!body.title || !body.sku) {
-    return res.status(400).json({ error: "title_and_sku_required" });
+  const title = String(body.title || body.name || "").trim();
+  const sku = String(body.sku || "").trim();
+  if (!title || !sku) {
+    return res.status(400).json({
+      success: false,
+      error: "title_and_sku_required",
+      message: "Vui l\xF2ng nh\u1EADp t\xEAn s\u1EA3n ph\u1EA9m v\xE0 m\xE3 SKU."
+    });
+  }
+  try {
+    const hits = await deps10.searchProductsFromStore(sku, 20);
+    const skuLower = sku.toLowerCase();
+    const skuMatch = (row) => String(row?.sku || "").trim().toLowerCase() === skuLower;
+    const duplicated = (Array.isArray(hits) ? hits : []).some((p) => {
+      if (skuMatch(p)) return true;
+      const children = Array.isArray(p?.children) && p.children.length ? p.children : Array.isArray(p?.children_models) ? p.children_models : [];
+      return children.some(skuMatch);
+    });
+    if (duplicated) {
+      return res.status(409).json({
+        success: false,
+        error: "sku_duplicate",
+        message: "M\xE3 SKU \u0111\xE3 t\u1ED3n t\u1EA1i."
+      });
+    }
+  } catch (dupErr) {
+    console.warn("[Products API] SKU duplicate check skipped:", dupErr?.message || dupErr);
   }
   const product = {
     id: body.id || `prod-${Date.now()}`,
-    title: String(body.title),
-    sku: String(body.sku),
+    title,
+    sku,
     stock: Math.max(0, Math.round(Number(body.stock) || 0)),
     importPrice: Math.max(0, Math.round(Number(body.importPrice) || 0)),
     sellingPrice: Math.max(0, Math.round(Number(body.sellingPrice) || 0)),
+    unit: String(body.unit || "").trim() || "c\xE1i",
     channels: Array.isArray(body.channels) ? body.channels : ["shopee"],
     category: body.category || "Ch\u01B0a ph\xE2n lo\u1EA1i",
     description: body.description || "",
@@ -105056,7 +105082,9 @@ async function createProduct(req, res) {
   await deps10.upsertProductsToStoreAsync([product]);
   const cache = await deps10.loadLocalInventoryCache();
   return res.status(201).json({
+    success: true,
     ...product,
+    product,
     localInventory: cache.products,
     cacheUpdatedAt: cache.updatedAt
   });

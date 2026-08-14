@@ -7,11 +7,13 @@ import {
   ImageOff,
   Info,
   Loader2,
+  Plus,
   Scale,
   Search,
   Trash2,
   X,
 } from 'lucide-react';
+import QuickAddProductModal from './QuickAddProductModal';
 
 function getProductTitle(product: Product): string {
   const raw =
@@ -107,6 +109,7 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
   const [currentPage, setCurrentPage] = useState(1);
   const [balancing, setBalancing] = useState(false);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
 
   const searchRef = useRef<HTMLInputElement>(null);
   const mobileSearchRef = useRef<HTMLInputElement>(null);
@@ -240,6 +243,11 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
       setShowSuggestions(false);
       setSearch('');
     }
+  };
+
+  const handleQuickCreated = (prod: Product) => {
+    addProduct(prod);
+    void onRefreshProducts?.();
   };
 
   const handleBalance = async () => {
@@ -463,12 +471,35 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
               onKeyDown={handleSearchKeyDown}
               className="w-full pl-9 pr-4 py-3 text-sm border-0 outline-none focus:ring-0"
             />
-            {showSuggestions && suggestions.length > 0 && search.trim() && (
+            {showSuggestions && search.trim() && (
               <div className="absolute left-0 right-0 top-full z-30 bg-white border border-gray-200 border-t-0 shadow-lg max-h-80 overflow-y-auto">
-                {suggestions.map((prod, idx) => renderSuggestionItem(prod, idx))}
+                {suggestions.length > 0 ? (
+                  suggestions.map((prod, idx) => renderSuggestionItem(prod, idx))
+                ) : (
+                  <div className="px-4 py-4 text-center">
+                    <p className="text-xs text-gray-400 mb-2">Không tìm thấy sản phẩm phù hợp.</p>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => setShowQuickAdd(true)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-100"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Thêm sản phẩm mới
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
+          <button
+            type="button"
+            onClick={() => setShowQuickAdd(true)}
+            className="px-4 py-3 text-sm text-emerald-700 font-bold border-l border-gray-200 hover:bg-emerald-50 whitespace-nowrap flex items-center gap-1.5"
+          >
+            <Plus className="w-4 h-4" />
+            Thêm sản phẩm mới
+          </button>
           <button
             type="button"
             className="px-4 py-3 text-sm text-gray-600 border-l border-gray-200 hover:bg-gray-50 whitespace-nowrap"
@@ -583,14 +614,37 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
               placeholder="Tìm tên, SKU, Barcode..."
               className="ia-mobile-search-input w-full min-h-[48px] pl-10 pr-4 text-sm bg-white border border-gray-200 outline-none focus:border-blue-500"
             />
-            {showSuggestions && suggestions.length > 0 && search.trim() && (
+            {showSuggestions && search.trim() && (
               <ul className="ia-mobile-dropdown absolute left-0 right-0 top-full mt-1 max-h-[45vh] overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-xl z-30">
-                {suggestions.map((prod, idx) => (
-                  <li key={prod.id}>{renderSuggestionItem(prod, idx)}</li>
-                ))}
+                {suggestions.length > 0 ? (
+                  suggestions.map((prod, idx) => (
+                    <li key={prod.id}>{renderSuggestionItem(prod, idx)}</li>
+                  ))
+                ) : (
+                  <li className="px-4 py-4 text-center">
+                    <p className="text-xs text-gray-400 mb-2">Không tìm thấy sản phẩm phù hợp.</p>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => setShowQuickAdd(true)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-100"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Thêm sản phẩm mới
+                    </button>
+                  </li>
+                )}
               </ul>
             )}
           </div>
+          <button
+            type="button"
+            onClick={() => setShowQuickAdd(true)}
+            className="mt-2 w-full min-h-[40px] bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-sm rounded-lg border border-emerald-200 inline-flex items-center justify-center gap-1.5"
+          >
+            <Plus className="w-4 h-4" />
+            Thêm sản phẩm mới
+          </button>
         </div>
 
         <div className="ia-mobile-body px-2 pb-2 bg-gray-100">
@@ -647,6 +701,13 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
           </button>
         </div>
       </div>
+
+      <QuickAddProductModal
+        open={showQuickAdd}
+        onClose={() => setShowQuickAdd(false)}
+        initialName={search}
+        onCreated={handleQuickCreated}
+      />
     </>
   );
 }

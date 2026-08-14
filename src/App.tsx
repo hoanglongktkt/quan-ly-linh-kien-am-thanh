@@ -1267,7 +1267,8 @@ export default function App() {
               stock: saved.stock,
               importPrice: saved.importPrice,
               sellingPrice: saved.sellingPrice,
-              channels: saved.channels,
+              unit: saved.unit,
+              channels: saved.channels || [],
               category: saved.category,
               description: saved.description,
               imageUrl: saved.imageUrl,
@@ -2349,6 +2350,9 @@ export default function App() {
               onEditProductShortcut={handleEditProductShortcut}
               initialProductId={importPrefillProductId}
               onInitialProductConsumed={() => setImportPrefillProductId(null)}
+              onProductCreated={(p) =>
+                setProducts((prev) => (prev.some((x) => x.id === p.id) ? prev : [p, ...prev]))
+              }
             />
           )}
 
