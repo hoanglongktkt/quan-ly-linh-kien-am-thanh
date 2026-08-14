@@ -19,6 +19,7 @@ import {
   triggerFixStuckOrders,
   reconcileHandedOver,
   patchOrder,
+  confirmReturnReceived,
   deleteOrder,
   handOverCarrierById,
   handOverCarrierByCode,
@@ -86,11 +87,13 @@ router.post("/scan-bg-ack", h(ackScanBg));
 router.get("/return-alerts", h(getReturnAlerts));
 router.post("/return-alerts-ack", h(ackReturnAlertsApi));
 router.post("/scan-bulk-update", h(scanBulkUpdate));
+router.post("/confirm-return-received", h(confirmReturnReceived));
 router.post("/reset-print-status", h(resetPrintStatus));
 router.post("/update-print-status", h(updatePrintStatus));
 router.post("/mark-printed", h(markPrinted));
 router.get("/:orderSn/events", h(getOrderEvents));
 router.post("/:id/hand-over-carrier", h(handOverCarrierById));
+router.post("/:id/confirm-return-received", h(confirmReturnReceived));
 router.get("/", h(listOrders));
 router.patch("/:id", h(patchOrder));
 router.delete("/:id", h(deleteOrder));

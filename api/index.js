@@ -21,6 +21,7 @@ import { handleScanBulkUpdate } from '../_lib/handlers/scanBulkUpdate.js';
 import { handleScanSave, handleScanDonHoanHuy } from '../_lib/handlers/scanSave.js';
 import { handleScanBgEnqueue, handleScanBgStatus, handleScanBgAck } from '../_lib/handlers/scanBgQueue.js';
 import { handleHandOverCarrier } from '../_lib/handlers/handOverCarrier.js';
+import { handleConfirmReturnReceived } from '../_lib/handlers/confirmReturnReceived.js';
 import { handleCleanupHandedOver } from '../_lib/handlers/cleanupHandedOver.js';
 import { handleCleanupProcessedPickup } from '../_lib/handlers/cleanupProcessedPickup.js';
 import { handleHydrateTracking } from '../_lib/handlers/hydrateTracking.js';
@@ -68,6 +69,7 @@ const LOCAL_ROUTES = {
   'products/search': handleProductsSearch,
   // cPanel cũ trả 404 cho route bulk quét — xử lý local trên Vercel.
   'orders/scan-bulk-update': handleScanBulkUpdate,
+  'orders/confirm-return-received': handleConfirmReturnReceived,
   'scan/save': handleScanSave,
   'scan/don-hoan-huy': handleScanDonHoanHuy,
   'orders/scan-bg-enqueue': handleScanBgEnqueue,
@@ -112,6 +114,11 @@ export default async function handler(req, res) {
   }
   if (route === 'orders/hand-over-carrier/bulk') {
     return handleHandOverCarrier(req, res, 'bulk');
+  }
+
+  const confirmReturnMatch = route.match(/^orders\/([^/]+)\/confirm-return-received$/);
+  if (confirmReturnMatch) {
+    return handleConfirmReturnReceived(req, res, decodeURIComponent(confirmReturnMatch[1]));
   }
 
   const local = LOCAL_ROUTES[route];

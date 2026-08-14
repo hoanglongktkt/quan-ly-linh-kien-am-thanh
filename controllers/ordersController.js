@@ -39,6 +39,7 @@ import {
   markOrderHandedOverInStore,
   markOrderLocalStatusInStore,
   markOrdersPrintedInStore,
+  upsertDonHoanHuy,
 } from "../src/db/mongoStore.ts";
 
 const APP_ROOT = resolveAppRoot();
@@ -1526,6 +1527,7 @@ export async function patchOrder(req, res) {
     patch.local_status = localPatch;
     patch.localStatus = localPatch;
     patch.internal_status = localPatch;
+    patch.scanFlag = localPatch;
     patch.localStatusAt = patch.localStatusAt || nowIso;
     patch.local_status_updated_at = patch.local_status_updated_at || nowIso;
     if (localPatch === "CANCELLED_STORED" || localPatch === "RETURN_RECEIVED") {
@@ -1534,6 +1536,7 @@ export async function patchOrder(req, res) {
       patch.local_status = localPatch;
       patch.localStatus = localPatch;
       patch.internal_status = localPatch;
+      patch.scanFlag = localPatch;
       patch.localStatusAt = nowIso;
       patch.local_status_updated_at = nowIso;
       patch.is_local_return_archived = false;
@@ -1641,6 +1644,156 @@ export async function patchOrder(req, res) {
     }
   }
   return res.json(orders[index]);
+}
+
+/**
+ * POST /api/orders/confirm-return-received
+ * POST /api/orders/:id/confirm-return-received
+ * Nút thủ công [Xác nhận đã nhận hoàn] — ghi cờ kho RETURN_RECEIVED (không tin API Shopee).
+ */
+export async function confirmReturnReceived(req, res) {
+  const body = req.body || {};
+  const key = String(
+    req.params.id ||
+      body.orderId ||
+      body.id ||
+      body.orderSn ||
+      body.order_sn ||
+      "",
+  ).trim();
+  if (!key) {
+    return res.status(400).json({
+      success: false,
+      error: "missing_order_id",
+      message: "Thiếu orderId hoặc orderSn.",
+    });
+  }
+  const snKey = key.replace(/^shopee-/i, "").trim();
+  if (/^TEST[-_]/i.test(snKey) || /TEST-SCAN-MVC/i.test(snKey)) {
+    return res.status(400).json({
+      success: false,
+      error: "invalid_order_id",
+      message: `Mã đơn không hợp lệ: ${key}.`,
+    });
+  }
+
+  const orders = loadOrders();
+  let index = orders.findIndex(
+    (o) =>
+      o.id === key ||
+      o.orderSn === key ||
+      o.id === `shopee-${key}` ||
+      String(o.orderSn || "") === snKey,
+  );
+
+  if (index === -1 && isMongoReady()) {
+    try {
+      const scoped = await loadOrdersForShipScoped([key, `shopee-${snKey}`], [snKey]);
+      const hit = scoped[0];
+      if (hit) {
+        const existingIdx = orders.findIndex(
+          (o) =>
+            String(o.id || "") === String(hit.id || "") ||
+            String(o.orderSn || "").replace(/^shopee-/i, "") === snKey,
+        );
+        if (existingIdx >= 0) {
+          index = existingIdx;
+          orders[index] = { ...orders[index], ...hit };
+        } else {
+          orders.push(hit);
+          index = orders.length - 1;
+        }
+      }
+    } catch (err) {
+      console.warn("[Orders confirm-return] Mongo lookup:", err?.message || err);
+    }
+  }
+
+  if (index === -1) {
+    return res.status(404).json({
+      success: false,
+      error: "order_not_found",
+      message: `Không tìm thấy đơn hàng: ${key}`,
+    });
+  }
+
+  const existingLocal = String(
+    orders[index].local_status ||
+      orders[index].localStatus ||
+      orders[index].internal_status ||
+      orders[index].scanFlag ||
+      "",
+  ).toUpperCase();
+  const nowIso = new Date().toISOString();
+  const already = existingLocal === "RETURN_RECEIVED";
+  if (!already) {
+    Object.assign(orders[index], deps.buildClearHandedOverPatch(nowIso) || {});
+    orders[index].local_status = "RETURN_RECEIVED";
+    orders[index].localStatus = "RETURN_RECEIVED";
+    orders[index].internal_status = "RETURN_RECEIVED";
+    orders[index].scanFlag = "RETURN_RECEIVED";
+    orders[index].localStatusAt = nowIso;
+    orders[index].local_status_updated_at = nowIso;
+    orders[index].is_local_return_archived = false;
+    orders[index].status = "return_received";
+  }
+
+  const stableId =
+    String(orders[index].id || "").trim() ||
+    (snKey ? `shopee-${snKey}` : key);
+  orders[index].id = stableId;
+  if (!orders[index].orderSn && snKey) {
+    orders[index].orderSn = snKey;
+  }
+
+  try {
+    await persistOrdersToDatabase(orders, [orders[index]]);
+  } catch (persistErr) {
+    console.warn("[Orders confirm-return] persistOrdersToDatabase:", persistErr?.message || persistErr);
+    try {
+      await persistChangedOrdersPatch([orders[index]]);
+    } catch (err2) {
+      console.error("[Orders confirm-return] persistChangedOrdersPatch failed:", err2?.message || err2);
+      return res.status(500).json({
+        success: false,
+        error: "persist_failed",
+        message: "Không lưu được cờ nhận hàng hoàn lên MongoDB.",
+      });
+    }
+  }
+
+  if (isMongoReady()) {
+    try {
+      await markOrderLocalStatusInStore(
+        String(orders[index].orderSn || snKey || ""),
+        "RETURN_RECEIVED",
+        {
+          shopId: orders[index].shopId != null ? String(orders[index].shopId) : undefined,
+          clearHandedOver: true,
+          status: "return_received",
+        },
+      );
+    } catch (err) {
+      console.error("[Orders confirm-return] markOrderLocalStatus failed:", err?.message || err);
+    }
+    try {
+      await upsertDonHoanHuy(orders[index], {
+        type: "return",
+        source: "manual_button",
+        scannedAt: nowIso,
+      });
+    } catch (err) {
+      console.warn("[Orders confirm-return] upsertDonHoanHuy:", err?.message || err);
+    }
+  }
+
+  invalidateOrdersRefreshCache();
+  return res.json({
+    success: true,
+    already,
+    local_status: "RETURN_RECEIVED",
+    order: orders[index],
+  });
 }
 
 /**

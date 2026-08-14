@@ -242,7 +242,7 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     })(),
     local_status: (() => {
       const v = String(
-        raw.local_status ?? raw.localStatus ?? raw.internal_status ?? '',
+        raw.local_status ?? raw.localStatus ?? raw.internal_status ?? raw.scanFlag ?? '',
       ).toUpperCase();
       if (v === 'HANDED_OVER' || v === 'CANCELLED_STORED' || v === 'RETURN_RECEIVED' || v === 'NONE') {
         return v as Order['local_status'];
@@ -255,12 +255,11 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
       ) {
         return 'HANDED_OVER';
       }
-      if (raw.status === 'return_received') return 'RETURN_RECEIVED';
       return undefined;
     })(),
     localStatus: (() => {
       const v = String(
-        raw.localStatus ?? raw.local_status ?? raw.internal_status ?? '',
+        raw.localStatus ?? raw.local_status ?? raw.internal_status ?? raw.scanFlag ?? '',
       ).toUpperCase();
       if (v === 'HANDED_OVER' || v === 'CANCELLED_STORED' || v === 'RETURN_RECEIVED' || v === 'NONE') {
         return v as Order['localStatus'];
@@ -272,7 +271,6 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
       ) {
         return 'HANDED_OVER';
       }
-      if (raw.status === 'return_received') return 'RETURN_RECEIVED';
       return undefined;
     })(),
     internal_status: (() => {
@@ -297,6 +295,14 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     local_status_updated_at: raw.local_status_updated_at || raw.localStatusAt
       ? String(raw.local_status_updated_at || raw.localStatusAt)
       : undefined,
+    scanFlag: (() => {
+      const v = String(
+        raw.scanFlag ?? raw.local_status ?? raw.localStatus ?? raw.internal_status ?? '',
+      ).toUpperCase();
+      return v === 'RETURN_RECEIVED' || v === 'CANCELLED_STORED' || v === 'HANDED_OVER'
+        ? v
+        : undefined;
+    })(),
     is_local_return_archived: Boolean(raw.is_local_return_archived),
     handedOverAt: raw.handedOverAt ? String(raw.handedOverAt) : undefined,
     handed_over_source: raw.handed_over_source

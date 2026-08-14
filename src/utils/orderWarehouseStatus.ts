@@ -54,6 +54,7 @@ function getInternalStatusRaw(
     order.internal_status ??
       order.local_status ??
       order.localStatus ??
+      order.scanFlag ??
       '',
   ).toUpperCase();
 }

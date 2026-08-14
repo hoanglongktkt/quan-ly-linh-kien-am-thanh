@@ -74946,7 +74946,7 @@ function isToShipLikeRaw(raw) {
 }
 function getInternalStatusRaw(order) {
   return String(
-    order.internal_status ?? order.local_status ?? order.localStatus ?? ""
+    order.internal_status ?? order.local_status ?? order.localStatus ?? order.scanFlag ?? ""
   ).toUpperCase();
 }
 function hasLeftHandedOverCarrierTab(order) {
@@ -76997,6 +76997,7 @@ var INTERNAL_FLAG_KEYS = /* @__PURE__ */ new Set([
   "local_status",
   "localStatus",
   "internal_status",
+  "scanFlag",
   "handedOverAt",
   "handed_over_source",
   "handedOverSource",
@@ -77723,6 +77724,7 @@ async function markOrderLocalStatusInStore(orderSn, localStatus, meta) {
     "data.local_status": status,
     "data.localStatus": status,
     "data.internal_status": status,
+    "data.scanFlag": status,
     "data.localStatusAt": now,
     "data.local_status_updated_at": now,
     "data.is_local_return_archived": false
@@ -109383,6 +109385,7 @@ async function patchOrder(req, res) {
     patch.local_status = localPatch;
     patch.localStatus = localPatch;
     patch.internal_status = localPatch;
+    patch.scanFlag = localPatch;
     patch.localStatusAt = patch.localStatusAt || nowIso;
     patch.local_status_updated_at = patch.local_status_updated_at || nowIso;
     if (localPatch === "CANCELLED_STORED" || localPatch === "RETURN_RECEIVED") {
@@ -109391,6 +109394,7 @@ async function patchOrder(req, res) {
       patch.local_status = localPatch;
       patch.localStatus = localPatch;
       patch.internal_status = localPatch;
+      patch.scanFlag = localPatch;
       patch.localStatusAt = nowIso;
       patch.local_status_updated_at = nowIso;
       patch.is_local_return_archived = false;
@@ -109486,6 +109490,125 @@ async function patchOrder(req, res) {
     }
   }
   return res.json(orders[index]);
+}
+async function confirmReturnReceived(req, res) {
+  const body = req.body || {};
+  const key = String(
+    req.params.id || body.orderId || body.id || body.orderSn || body.order_sn || ""
+  ).trim();
+  if (!key) {
+    return res.status(400).json({
+      success: false,
+      error: "missing_order_id",
+      message: "Thi\u1EBFu orderId ho\u1EB7c orderSn."
+    });
+  }
+  const snKey = key.replace(/^shopee-/i, "").trim();
+  if (/^TEST[-_]/i.test(snKey) || /TEST-SCAN-MVC/i.test(snKey)) {
+    return res.status(400).json({
+      success: false,
+      error: "invalid_order_id",
+      message: `M\xE3 \u0111\u01A1n kh\xF4ng h\u1EE3p l\u1EC7: ${key}.`
+    });
+  }
+  const orders = loadOrders();
+  let index = orders.findIndex(
+    (o) => o.id === key || o.orderSn === key || o.id === `shopee-${key}` || String(o.orderSn || "") === snKey
+  );
+  if (index === -1 && isMongoReady()) {
+    try {
+      const scoped = await loadOrdersForShipScoped([key, `shopee-${snKey}`], [snKey]);
+      const hit = scoped[0];
+      if (hit) {
+        const existingIdx = orders.findIndex(
+          (o) => String(o.id || "") === String(hit.id || "") || String(o.orderSn || "").replace(/^shopee-/i, "") === snKey
+        );
+        if (existingIdx >= 0) {
+          index = existingIdx;
+          orders[index] = { ...orders[index], ...hit };
+        } else {
+          orders.push(hit);
+          index = orders.length - 1;
+        }
+      }
+    } catch (err) {
+      console.warn("[Orders confirm-return] Mongo lookup:", err?.message || err);
+    }
+  }
+  if (index === -1) {
+    return res.status(404).json({
+      success: false,
+      error: "order_not_found",
+      message: `Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng: ${key}`
+    });
+  }
+  const existingLocal = String(
+    orders[index].local_status || orders[index].localStatus || orders[index].internal_status || orders[index].scanFlag || ""
+  ).toUpperCase();
+  const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+  const already = existingLocal === "RETURN_RECEIVED";
+  if (!already) {
+    Object.assign(orders[index], deps15.buildClearHandedOverPatch(nowIso) || {});
+    orders[index].local_status = "RETURN_RECEIVED";
+    orders[index].localStatus = "RETURN_RECEIVED";
+    orders[index].internal_status = "RETURN_RECEIVED";
+    orders[index].scanFlag = "RETURN_RECEIVED";
+    orders[index].localStatusAt = nowIso;
+    orders[index].local_status_updated_at = nowIso;
+    orders[index].is_local_return_archived = false;
+    orders[index].status = "return_received";
+  }
+  const stableId = String(orders[index].id || "").trim() || (snKey ? `shopee-${snKey}` : key);
+  orders[index].id = stableId;
+  if (!orders[index].orderSn && snKey) {
+    orders[index].orderSn = snKey;
+  }
+  try {
+    await persistOrdersToDatabase(orders, [orders[index]]);
+  } catch (persistErr) {
+    console.warn("[Orders confirm-return] persistOrdersToDatabase:", persistErr?.message || persistErr);
+    try {
+      await persistChangedOrdersPatch([orders[index]]);
+    } catch (err2) {
+      console.error("[Orders confirm-return] persistChangedOrdersPatch failed:", err2?.message || err2);
+      return res.status(500).json({
+        success: false,
+        error: "persist_failed",
+        message: "Kh\xF4ng l\u01B0u \u0111\u01B0\u1EE3c c\u1EDD nh\u1EADn h\xE0ng ho\xE0n l\xEAn MongoDB."
+      });
+    }
+  }
+  if (isMongoReady()) {
+    try {
+      await markOrderLocalStatusInStore(
+        String(orders[index].orderSn || snKey || ""),
+        "RETURN_RECEIVED",
+        {
+          shopId: orders[index].shopId != null ? String(orders[index].shopId) : void 0,
+          clearHandedOver: true,
+          status: "return_received"
+        }
+      );
+    } catch (err) {
+      console.error("[Orders confirm-return] markOrderLocalStatus failed:", err?.message || err);
+    }
+    try {
+      await upsertDonHoanHuy(orders[index], {
+        type: "return",
+        source: "manual_button",
+        scannedAt: nowIso
+      });
+    } catch (err) {
+      console.warn("[Orders confirm-return] upsertDonHoanHuy:", err?.message || err);
+    }
+  }
+  invalidateOrdersRefreshCache();
+  return res.json({
+    success: true,
+    already,
+    local_status: "RETURN_RECEIVED",
+    order: orders[index]
+  });
 }
 async function updatePrintStatus(req, res) {
   try {
@@ -111280,11 +111403,13 @@ router13.post("/scan-bg-ack", h2(ackScanBg));
 router13.get("/return-alerts", h2(getReturnAlerts));
 router13.post("/return-alerts-ack", h2(ackReturnAlertsApi));
 router13.post("/scan-bulk-update", h2(scanBulkUpdate));
+router13.post("/confirm-return-received", h2(confirmReturnReceived));
 router13.post("/reset-print-status", h2(resetPrintStatus));
 router13.post("/update-print-status", h2(updatePrintStatus));
 router13.post("/mark-printed", h2(markPrinted));
 router13.get("/:orderSn/events", h2(getOrderEvents));
 router13.post("/:id/hand-over-carrier", h2(handOverCarrierById));
+router13.post("/:id/confirm-return-received", h2(confirmReturnReceived));
 router13.get("/", h2(listOrders));
 router13.patch("/:id", h2(patchOrder));
 router13.delete("/:id", h2(deleteOrder));

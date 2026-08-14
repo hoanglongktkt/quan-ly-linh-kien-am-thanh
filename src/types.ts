@@ -276,6 +276,8 @@ export interface Order {
   localStatus?: 'NONE' | 'HANDED_OVER' | 'CANCELLED_STORED' | 'RETURN_RECEIVED' | null;
   /** Alias = local_status */
   internal_status?: 'NONE' | 'HANDED_OVER' | 'CANCELLED_STORED' | 'RETURN_RECEIVED' | null;
+  /** Cờ quét kho (alias local_status) */
+  scanFlag?: string;
   /** Thời điểm cập nhật local_status (ISO) — dùng retention 14 ngày */
   local_status_updated_at?: string;
   localStatusAt?: string;

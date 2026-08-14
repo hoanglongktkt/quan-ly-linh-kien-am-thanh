@@ -89,6 +89,23 @@ export function isOrderAlreadyScanProcessed(
   return false;
 }
 
+/**
+ * Đối soát kho thực tế — CHỈ tin cờ nội bộ, KHÔNG tin status API Shopee.
+ * Mặc định chưa nhận cho đến khi local_status / scanFlag = RETURN_RECEIVED.
+ */
+export function isWarehouseReturnReceived(
+  order: Partial<Order> & Record<string, unknown>,
+): boolean {
+  const flag = String(
+    order.scanFlag ||
+      order.local_status ||
+      order.localStatus ||
+      order.internal_status ||
+      '',
+  ).toUpperCase();
+  return flag === ORDER_LOCAL_STATUS.RETURN_RECEIVED;
+}
+
 export function getScanProcessedReason(
   order: Partial<Order> & Record<string, unknown>,
 ): string {

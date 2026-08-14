@@ -47,6 +47,7 @@ import {
   isOrderAlreadyScanProcessed,
   getScanProcessedReason,
   matchesReceivedCancelReturnTab,
+  isWarehouseReturnReceived,
 } from '../utils/orderLocalStatus';
 import {
   enqueueScanBgCodes,
@@ -827,22 +828,44 @@ function scannedMatchesReturnWaybill(order: Order, rawCode: string): boolean {
   });
 }
 
-function formatReturnRequestStatus(status?: string): { text: string; color: string } {
-  const s = String(status || '').toUpperCase();
-  if (s === 'REQUESTED' || s === 'PENDING') {
-    return { text: 'Chờ xử lý', color: 'bg-amber-50 text-amber-700 border-amber-200' };
-  }
-  if (s === 'ACCEPTED' || s === 'PROCESSING' || s === 'JUDGING') {
-    return { text: 'Đang xử lý', color: 'bg-sky-50 text-sky-700 border-sky-200' };
-  }
-  if (s === 'REFUND_PAID' || s === 'COMPLETED') {
-    return { text: 'Hoàn tất', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
-  }
-  if (s === 'CANCELLED' || s === 'CLOSED') {
-    return { text: 'Đã hủy', color: 'bg-slate-100 text-slate-600 border-slate-200' };
-  }
-  if (s) return { text: s, color: 'bg-orange-50 text-orange-700 border-orange-200' };
-  return { text: 'Yêu cầu trả hàng', color: 'bg-orange-50 text-orange-700 border-orange-200' };
+function ReturnWarehouseStatusBlock({
+  order,
+  confirming,
+  onConfirm,
+  compact,
+}: {
+  order: Order;
+  confirming: boolean;
+  onConfirm: (order: Order) => void;
+  compact?: boolean;
+}) {
+  const received = isWarehouseReturnReceived(order);
+  return (
+    <div className={`flex flex-col ${compact ? 'items-end' : 'items-center'} gap-1.5`}>
+      <span className="inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border bg-indigo-50 text-indigo-600 border-indigo-200/60">
+        Đang hoàn về
+      </span>
+      {received ? (
+        <span className="inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border bg-emerald-50 text-emerald-700 border-emerald-200">
+          Đã nhận hàng hoàn
+        </span>
+      ) : (
+        <>
+          <span className="inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border bg-orange-50 text-orange-800 border-orange-300">
+            Chưa nhận được hàng hoàn
+          </span>
+          <button
+            type="button"
+            disabled={confirming}
+            onClick={() => onConfirm(order)}
+            className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] rounded-lg transition-all disabled:opacity-60"
+          >
+            {confirming ? 'Đang xác nhận...' : 'Xác nhận đã nhận hoàn'}
+          </button>
+        </>
+      )}
+    </div>
+  );
 }
 
 function VariationNameBadge({ variationName }: { variationName?: string }) {
@@ -1390,6 +1413,7 @@ export default function OrderManager({
   const [scanStatModal, setScanStatModal] = useState<ScanStatModalKey | null>(null);
   const [scanToast, setScanToast] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [handingOverOrderId, setHandingOverOrderId] = useState<string | null>(null);
+  const [confirmingReturnId, setConfirmingReturnId] = useState<string | null>(null);
   const [isBulkHandingOver, setIsBulkHandingOver] = useState(false);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [isFlushingQueue, setIsFlushingQueue] = useState(false);
@@ -2106,7 +2130,23 @@ export default function OrderManager({
           );
           return;
         }
-        // Refresh danh sách để tab hủy/hoàn có orderSn + items — parent tự poll/reload.
+        if (kind === 'return') {
+          const nowIso = new Date().toISOString();
+          const patched = ordersRef.current.map((o) =>
+            o.id === order.id || o.orderSn === order.orderSn
+              ? {
+                  ...o,
+                  local_status: 'RETURN_RECEIVED' as const,
+                  localStatus: 'RETURN_RECEIVED' as const,
+                  internal_status: 'RETURN_RECEIVED' as const,
+                  scanFlag: 'RETURN_RECEIVED',
+                  local_status_updated_at: nowIso,
+                }
+              : o,
+          );
+          ordersRef.current = patched;
+          onUpdateOrders(patched, { persist: false });
+        }
       } catch (err) {
         console.warn('[Scan] persist cancel/return flag error:', err);
         showScanToast(
@@ -2115,7 +2155,77 @@ export default function OrderManager({
         );
       }
     },
-    [],
+    [onUpdateOrders],
+  );
+
+  const confirmWarehouseReturnReceived = React.useCallback(
+    async (order: Order) => {
+      if (isWarehouseReturnReceived(order)) return;
+      const token = localStorage.getItem('admin_token');
+      const key = String(order.id || order.orderSn || '').trim();
+      if (!token || !key) {
+        showToast('Chưa đăng nhập — không thể xác nhận nhận hàng hoàn.');
+        return;
+      }
+      setConfirmingReturnId(key);
+      try {
+        const res = await fetch(
+          `/api/orders/${encodeURIComponent(key)}/confirm-return-received`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              orderId: order.id,
+              orderSn: order.orderSn,
+              local_status: 'RETURN_RECEIVED',
+            }),
+          },
+        );
+        const data = (await res.json().catch(() => ({}))) as {
+          success?: boolean;
+          message?: string;
+          order?: Order;
+        };
+        if (!res.ok || data?.success === false) {
+          throw new Error(String(data?.message || `HTTP ${res.status}`));
+        }
+        const nowIso = new Date().toISOString();
+        const patched = ordersRef.current.map((o) =>
+          o.id === order.id || o.orderSn === order.orderSn
+            ? {
+                ...o,
+                ...(data.order || {}),
+                local_status: 'RETURN_RECEIVED' as const,
+                localStatus: 'RETURN_RECEIVED' as const,
+                internal_status: 'RETURN_RECEIVED' as const,
+                scanFlag: 'RETURN_RECEIVED',
+                local_status_updated_at: nowIso,
+              }
+            : o,
+        );
+        ordersRef.current = patched;
+        onUpdateOrders(patched, { persist: false });
+        showToast(`Đã xác nhận nhận hàng hoàn #${order.orderSn}`);
+        onAddLog({
+          id: `log-${Date.now()}`,
+          timestamp: nowIso,
+          channel: order.channel,
+          type: 'stock_sync',
+          status: 'success',
+          message: `Xác nhận thủ công đã nhận hàng hoàn #${order.orderSn} (RETURN_RECEIVED).`,
+        });
+      } catch (err) {
+        showToast(
+          err instanceof Error ? err.message : 'Không xác nhận được hàng hoàn.',
+        );
+      } finally {
+        setConfirmingReturnId(null);
+      }
+    },
+    [onAddLog, onUpdateOrders],
   );
 
   /** Đẩy mã miss lên Backend queue — worker dò Shopee + ghi cờ độc lập FE. */
@@ -6772,8 +6882,9 @@ export default function OrderManager({
 
       {activeSubTab === 'return_requests' && (
         <div className="bg-orange-50/80 border border-orange-100 rounded-2xl px-4 py-3 text-xs text-orange-950 font-semibold leading-relaxed">
-          Danh sách Yêu cầu trả hàng/Hoàn tiền từ Shopee (Return Request ID + mã vận đơn chiều hoàn).
-          Quét mã vận đơn hoàn sẽ tự khớp và phân loại vào tab này.
+          Danh sách Yêu cầu trả hàng — đối soát kho thực tế (không tin trạng thái API Shopee).
+          Mặc định <b>Chưa nhận được hàng hoàn</b> cho đến khi quét mã hoặc bấm xác nhận thủ công
+          (<code className="font-mono text-[11px]">RETURN_RECEIVED</code>).
         </div>
       )}
 
@@ -7168,7 +7279,12 @@ export default function OrderManager({
                   const isChecked = selectedOrderIds.includes(order.id);
                   const badgeBase = getStatusBadge(resolveOrderBadgeStatus(order)) || { text: order.status, color: '' };
                   const isBgLooking = orderMatchesScanBgPending(order, scanBgPendingKeys);
-                  const badge = isBgLooking
+                  const badge = activeSubTab === 'return_requests'
+                    ? {
+                        text: 'Đang hoàn về',
+                        color: 'bg-indigo-50 text-indigo-600 border-indigo-200/60',
+                      }
+                    : isBgLooking
                     ? {
                         text: 'Đang dò ngầm...',
                         color: 'bg-sky-50 text-sky-700 border-sky-200/60 font-semibold animate-pulse',
@@ -7180,7 +7296,6 @@ export default function OrderManager({
                         }
                       : badgeBase;
                   const isExpanded = expandedOrderId === order.id;
-                  const returnStatusBadge = formatReturnRequestStatus(order.return_status);
                   const refundAmt =
                     Number(order.refund_amount) > 0
                       ? Number(order.refund_amount)
@@ -7253,9 +7368,14 @@ export default function OrderManager({
                             </p>
                           </td>
                           <td className="p-4 text-center">
-                            <span className={`inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border ${returnStatusBadge.color}`}>
-                              {returnStatusBadge.text}
-                            </span>
+                            <ReturnWarehouseStatusBlock
+                              order={order}
+                              confirming={
+                                confirmingReturnId === String(order.id || '') ||
+                                confirmingReturnId === String(order.orderSn || '')
+                              }
+                              onConfirm={confirmWarehouseReturnReceived}
+                            />
                           </td>
                           <td className="p-4">
                             {order.return_tracking_no || order.returnTrackingNumber ? (
@@ -7520,7 +7640,7 @@ export default function OrderManager({
                             </>
                           )}
 
-                          {order.status === 'shipping' && (
+                          {activeSubTab !== 'return_requests' && order.status === 'shipping' && (
                             <div className="flex gap-1">
                               <button
                                 onClick={() => {
@@ -7543,7 +7663,7 @@ export default function OrderManager({
                             </div>
                           )}
 
-                          {order.status === 'return_pending' && (
+                          {activeSubTab !== 'return_requests' && order.status === 'return_pending' && (
                             <button
                               onClick={() => {
                                 const updated = orders.map(o => o.id === order.id ? { ...o, status: 'return_received' as const } : o);
@@ -7723,6 +7843,16 @@ export default function OrderManager({
                         <Printer className={`w-3.5 h-3.5 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
                         In nhanh
                       </button>
+                    ) : activeSubTab === 'return_requests' ? (
+                      <ReturnWarehouseStatusBlock
+                        order={order}
+                        compact
+                        confirming={
+                          confirmingReturnId === String(order.id || '') ||
+                          confirmingReturnId === String(order.orderSn || '')
+                        }
+                        onConfirm={confirmWarehouseReturnReceived}
+                      />
                     ) : (
                       <>
                         <span className={`inline-block px-2 py-0.5 text-[9px] font-black rounded-full border shrink-0 ${badge.color}`}>
@@ -7888,7 +8018,7 @@ export default function OrderManager({
                         </>
                       )}
 
-                      {order.status === 'shipping' && (
+                      {activeSubTab !== 'return_requests' && order.status === 'shipping' && (
                         <div className="flex gap-1">
                           <button
                             onClick={() => {
@@ -7911,7 +8041,7 @@ export default function OrderManager({
                         </div>
                       )}
 
-                      {order.status === 'return_pending' && (
+                      {activeSubTab !== 'return_requests' && order.status === 'return_pending' && (
                         <button
                           onClick={() => {
                             const updated = orders.map(o => o.id === order.id ? { ...o, status: 'return_received' as const } : o);
