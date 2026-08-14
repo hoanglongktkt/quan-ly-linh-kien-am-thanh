@@ -319,7 +319,7 @@ export default function App() {
   const [ordersLoading, setOrdersLoading] = useState<boolean>(false);
   const [ordersMeta, setOrdersMeta] = useState({
     page: 1,
-    pageSize: 50,
+    pageSize: 2000,
     total: 0,
     totalPages: 1,
     hasMore: false,
@@ -512,7 +512,7 @@ export default function App() {
     const bustCache = opts?.bustCache !== false;
     // ERP list: mặc định 50/trang. Caller có thể tăng (vd: quét mã merge).
     const limit =
-      typeof opts?.limit === 'number' && opts.limit > 0 ? opts.limit : 50;
+      typeof opts?.limit === 'number' && opts.limit > 0 ? opts.limit : 2000;
     const page = typeof opts?.page === 'number' && opts.page > 0 ? opts.page : 1;
     // Mặc định REPLACE — bỏ shallow merge nặng (Backend trả list đã lọc theo tab).
     const merge = opts?.merge === true;
@@ -863,7 +863,7 @@ export default function App() {
           bustCache: true,
           force: true,
           page: 1,
-          limit: 50,
+          limit: 2000,
           merge: false,
           ...(tab ? { tab } : {}),
         });
@@ -928,7 +928,7 @@ export default function App() {
             silent: true,
             bustCache: true,
             page: 1,
-            limit: 50,
+            limit: 2000,
             merge: false,
             ...(tab ? { tab } : {}),
           });
@@ -974,7 +974,7 @@ export default function App() {
           silent: true,
           bustCache: true,
           page: 1,
-          limit: 50,
+          limit: 2000,
           merge: true,
           tab: 'return_requests',
         });
@@ -998,7 +998,7 @@ export default function App() {
     void fetchOrders({
       silent: true,
       page: 1,
-      limit: 50,
+      limit: 2000,
       merge: false,
       ...(tab ? { tab } : {}),
     });
@@ -1622,7 +1622,7 @@ export default function App() {
         setOrders(cached);
         setHasLoadedOrdersOnce(true);
       }
-      void fetchOrders({ silent: true, limit: 50, page: 1, merge: false });
+      void fetchOrders({ silent: true, limit: 2000, page: 1, merge: false });
 
       // F5: ưu tiên localStorage; chỉ gọi server khi chưa có cache.
       void fetchProducts({ page: 1, append: false, pageSize: 50, forceRefresh: false });

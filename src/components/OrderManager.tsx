@@ -710,7 +710,7 @@ interface OrderManagerProps {
   onOrdersSubTabChange?: (tab: OrderTab) => void;
 }
 
-const ORDERS_PAGE_SIZE = 50;
+const ORDERS_PAGE_SIZE = 2000;
 
 const CANCEL_RETURN_STATUSES: Order['status'][] = ['cancelled', 'return_pending', 'return_received'];
 const OM_PULL_REFRESH_THRESHOLD_PX = 72;

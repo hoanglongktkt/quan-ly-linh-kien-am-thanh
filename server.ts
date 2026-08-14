@@ -1107,11 +1107,11 @@ function toShopeeUnixSeconds(raw: number | string | undefined | null, fallbackSe
 const SHOPEE_CANCEL_RETURN_MAX_WINDOWS = 2;
 /** Cửa sổ tối đa Shopee cho get_return_list. */
 const SHOPEE_RETURN_LIST_WINDOW_SEC = 15 * 24 * 60 * 60;
-/** Ngân sách riêng cho đơn hủy/hoàn + returns — đủ để khớp ~163+ đơn Seller Center. */
-const SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS = 800;
+/** Ngân sách riêng cho đơn hủy/hoàn + returns — vét đến more=false. */
+const SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS = 10000;
 /** get_return_list: page_size tối đa Shopee = 100; paginate đầy đủ. */
 const SHOPEE_RETURN_LIST_PAGE_SIZE = 100;
-const SHOPEE_RETURN_LIST_MAX_PAGES = 50;
+const SHOPEE_RETURN_LIST_MAX_PAGES = 200;
 /** Shopee v2 get_order_detail chấp nhận tối đa 50 order_sn cho mỗi request. */
 const SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS = 50;
 /**
@@ -1133,10 +1133,10 @@ const PRINT_API_DELAY_MS = 200;
 const SHOPEE_SYNC_CHUNK_DELAY_MS = ORDER_DETAIL_BATCH_DELAY_MS;
 const SHOPEE_SYNC_BATCH_DELAY_MS = SHOPEE_SYNC_CHUNK_DELAY_MS;
 const SHOPEE_ORDER_LIST_PAGE_DELAY_MS = 1000;
-/** get_order_list page_size — Shopee max 100; giữ 50 để nhẹ cPanel. */
-const SHOPEE_ORDER_LIST_PAGE_SIZE = 50;
-/** Hard-cap số trang get_order_list mỗi lần pull (tránh treo). */
-const SHOPEE_ORDER_LIST_LOOP_HARD_CAP = 8;
+/** get_order_list page_size — tối đa Shopee = 100. */
+const SHOPEE_ORDER_LIST_PAGE_SIZE = 100;
+/** Cầu chì chống infinite loop (100 trang × 100 SN = 10_000 đơn/chunk) — KHÔNG cắt sớm 4/8 trang. */
+const SHOPEE_ORDER_LIST_LOOP_SAFETY_CAP = 100;
 /**
  * Incremental pull: lấy đơn có update_time trong N giây gần nhất.
  * Mặc định 14 ngày (an toàn, dưới trần 15 ngày của Shopee).
@@ -1149,9 +1149,10 @@ const SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC = 3 * 24 * 60 * 60;
 const SHOPEE_ORDER_LIST_MAX_WINDOW_SEC = 15 * 24 * 60 * 60;
 /** Đồng bộ toàn thời gian: tối đa 90 ngày (= 6 × 15 ngày chunks). */
 const SHOPEE_ORDER_LIST_MAX_TOTAL_LOOKBACK_SEC = 90 * 24 * 60 * 60;
-/** Giới hạn order_sn mỗi shop mỗi lần pull — đủ 7 ngày shop bận, tránh cắt lệch Shopee. */
-const SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 200;
-/** Deadline tường cho cả phiên pull — quá hạn thì BREAK (không treo process). */
+/** Deadline mỗi shop (list + detail) — đủ vét more=false, không để shop 2 bị SKIP. */
+const ORDERS_PULL_PER_SHOP_MS = 180_000;
+const ORDERS_PULL_PER_SHOP_LONG_MS = 300_000;
+/** Deadline tường toàn phiên — fallback khi chưa biết số shop. */
 const ORDERS_PULL_HARD_DEADLINE_MS = 180_000;
 /** Mutex in-process: chặn boot pull + manual pull chạy chồng lên nhau. */
 const ORDERS_PULL_LOCK_TIMEOUT_MS = 15 * 60 * 1000;
@@ -2007,12 +2008,14 @@ async function collectShopeeOrderSnsIncremental(
   opts?: {
     lookbackSec?: number;
     deadlineAt?: number;
+    /** Bỏ qua — không còn cắt SN. Giữ signature tương thích. */
     maxOrderSns?: number;
+    /** Cầu chì runaway; mặc định SAFETY_CAP. */
     pageHardCap?: number;
     /** Quick Sync: cho phép lookback < 3 ngày. */
     allowShortLookback?: boolean;
   },
-): Promise<{ orderSns: string[]; shopeeResponses: any[] }> {
+): Promise<{ orderSns: string[]; shopeeResponses: any[]; truncated: boolean }> {
   const timeTo = Math.floor(Date.now() / 1000);
   const rawLookback =
     Number(opts?.lookbackSec) > 0
@@ -2029,27 +2032,26 @@ async function collectShopeeOrderSnsIncremental(
   const allowShort = opts?.allowShortLookback === true;
   const orderSnSet = new Set<string>();
   const shopeeResponses: any[] = [];
-  const deadlineAt = opts?.deadlineAt ?? Date.now() + ORDERS_PULL_HARD_DEADLINE_MS;
-  const maxOrderSns = Math.max(
+  const deadlineAt = opts?.deadlineAt ?? Date.now() + ORDERS_PULL_PER_SHOP_MS;
+  const pageSafetyCap = Math.max(
     1,
-    Math.floor(opts?.maxOrderSns ?? SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP),
+    Math.floor(opts?.pageHardCap ?? SHOPEE_ORDER_LIST_LOOP_SAFETY_CAP),
   );
-  const pageHardCap = Math.max(
-    1,
-    Math.floor(opts?.pageHardCap ?? SHOPEE_ORDER_LIST_LOOP_HARD_CAP),
-  );
+  let truncated = false;
 
   const timeChunks = buildShopeeOrderListTimeChunks(timeFrom, timeTo);
   syncDiag(
     "Fetching order list...",
     `shop=${shopId} field=update_time lookback=${lookback}s (~${(lookback / 86400).toFixed(1)}d)` +
-      ` from=${timeFrom} to=${timeTo} chunks=${timeChunks.length} maxSn=${maxOrderSns} hardCap=${pageHardCap}`,
+      ` from=${timeFrom} to=${timeTo} chunks=${timeChunks.length} safetyCap=${pageSafetyCap}`,
   );
 
   let page = 0;
   for (let chunkIdx = 0; chunkIdx < timeChunks.length; chunkIdx++) {
-    if (orderSnSet.size >= maxOrderSns) break;
-    if (Date.now() > deadlineAt) break;
+    if (Date.now() > deadlineAt) {
+      truncated = true;
+      break;
+    }
 
     const chunk = timeChunks[chunkIdx];
     const chunkTimeFrom = toShopeeUnixSeconds(chunk.timeFrom);
@@ -2065,7 +2067,7 @@ async function collectShopeeOrderSnsIncremental(
         ` (~${((chunkTimeTo - chunkTimeFrom) / 86400).toFixed(2)}d)`,
     );
 
-    while (chunkPage < pageHardCap && orderSnSet.size < maxOrderSns) {
+    while (true) {
       try {
         assertOrdersPullDeadline(
           deadlineAt,
@@ -2116,6 +2118,7 @@ async function collectShopeeOrderSnsIncremental(
               detail: refreshErr?.message || String(refreshErr),
               raw: listResult,
             });
+            truncated = true;
             break;
           }
         }
@@ -2137,6 +2140,7 @@ async function collectShopeeOrderSnsIncremental(
             listResult.error,
             listResult.message || "",
           );
+          truncated = true;
           break;
         }
 
@@ -2145,7 +2149,6 @@ async function collectShopeeOrderSnsIncremental(
           try {
             const sn = String(row?.order_sn || row?.ordersn || "").trim();
             if (sn) orderSnSet.add(sn);
-            if (orderSnSet.size >= maxOrderSns) break;
           } catch (rowErr: any) {
             console.error(
               `[Orders Pull] Bỏ qua 1 đơn lỗi shop=${shopId}:`,
@@ -2166,17 +2169,23 @@ async function collectShopeeOrderSnsIncremental(
           currentCursor: cursor,
           seenCursors,
           pageIndex: chunkPage,
-          hardCap: pageHardCap,
+          hardCap: pageSafetyCap,
           logLabel: `shop=${shopId} chunk=${chunkIdx + 1}`,
         });
         syncDiag("Pagination decision", `${adv.action} — ${adv.reason}`);
-        if (adv.action === "break") break;
+        if (adv.action === "break") {
+          if (String(adv.reason || "").includes("safetyCap")) truncated = true;
+          break;
+        }
 
         seenCursors.add(adv.nextCursor);
         cursor = adv.nextCursor;
         await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
       } catch (pageErr: any) {
-        if (String(pageErr?.message || "").includes("ORDERS_PULL_DEADLINE")) throw pageErr;
+        if (String(pageErr?.message || "").includes("ORDERS_PULL_DEADLINE")) {
+          truncated = true;
+          throw pageErr;
+        }
         logShopeeSyncApiError(pageErr, `get_order_list page shop_id=${shopId}`);
         console.error(
           `[Orders Pull] GetOrderList page exception shop=${shopId}:`,
@@ -2189,20 +2198,21 @@ async function collectShopeeOrderSnsIncremental(
           error: "page_exception",
           detail: pageErr?.message || String(pageErr),
         });
+        truncated = true;
         break;
       }
     }
 
-    if (chunkIdx + 1 < timeChunks.length && orderSnSet.size < maxOrderSns) {
+    if (chunkIdx + 1 < timeChunks.length) {
       await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
     }
   }
 
   syncDiag(
     "Order list pagination done",
-    `shop=${shopId} pages=${page} chunks=${timeChunks.length} uniqueSn=${orderSnSet.size}`,
+    `shop=${shopId} pages=${page} chunks=${timeChunks.length} uniqueSn=${orderSnSet.size} truncated=${truncated}`,
   );
-  return { orderSns: [...orderSnSet], shopeeResponses };
+  return { orderSns: [...orderSnSet], shopeeResponses, truncated };
 }
 
 /** Thu thập order_sn theo 1 order_status (vd CANCELLED) — phục vụ lookup quét mã miss. */
@@ -2228,9 +2238,11 @@ async function collectShopeeOrderSnsByStatus(
   const timeFrom = now - lookback;
   const timeTo = now;
   const orderSnSet = new Set<string>();
-  const deadlineAt = opts?.deadlineAt ?? Date.now() + 45_000;
-  const maxOrderSns = Math.max(1, Math.floor(opts?.maxOrderSns ?? 80));
-  const pageHardCap = Math.max(1, Math.floor(opts?.pageHardCap ?? 4));
+  const deadlineAt = opts?.deadlineAt ?? Date.now() + ORDERS_PULL_PER_SHOP_MS;
+  const pageSafetyCap = Math.max(
+    1,
+    Math.floor(opts?.pageHardCap ?? SHOPEE_ORDER_LIST_LOOP_SAFETY_CAP),
+  );
   const status = String(orderStatus || "").trim().toUpperCase();
   if (!status) return [];
 
@@ -2238,7 +2250,7 @@ async function collectShopeeOrderSnsByStatus(
   let page = 0;
 
   for (let chunkIdx = 0; chunkIdx < timeChunks.length; chunkIdx++) {
-    if (orderSnSet.size >= maxOrderSns || Date.now() > deadlineAt) break;
+    if (Date.now() > deadlineAt) break;
     const chunk = timeChunks[chunkIdx];
     const chunkTimeFrom = toShopeeUnixSeconds(chunk.timeFrom);
     const chunkTimeTo = toShopeeUnixSeconds(chunk.timeTo);
@@ -2246,7 +2258,7 @@ async function collectShopeeOrderSnsByStatus(
     let cursor: string | undefined;
     let chunkPage = 0;
 
-    while (chunkPage < pageHardCap && orderSnSet.size < maxOrderSns) {
+    while (true) {
       if (Date.now() > deadlineAt) break;
       page += 1;
       chunkPage += 1;
@@ -2292,14 +2304,13 @@ async function collectShopeeOrderSnsByStatus(
         for (const row of rows) {
           const sn = String(row?.order_sn || row?.ordersn || "").trim();
           if (sn) orderSnSet.add(sn);
-          if (orderSnSet.size >= maxOrderSns) break;
         }
         const adv = advanceShopeeOrderListCursor({
           listResult,
           currentCursor: cursor,
           seenCursors,
           pageIndex: chunkPage,
-          hardCap: pageHardCap,
+          hardCap: pageSafetyCap,
           logLabel: `scan-lookup status=${status} shop=${shopId} chunk=${chunkIdx + 1}`,
         });
         if (adv.action === "break") break;
@@ -2522,8 +2533,6 @@ async function resolveOrderFromShopeeByScanCode(rawCode: string): Promise<any | 
           const sns = await collectShopeeOrderSnsByStatus(shopId, accessToken, st, {
             lookbackSec: 14 * 24 * 60 * 60,
             deadlineAt,
-            maxOrderSns: 80,
-            pageHardCap: 4,
           });
           for (const sn of sns) snSet.add(sn);
         }
@@ -3713,11 +3722,9 @@ async function pullIncrementalOrdersFromShopee(opts?: {
   let truncatedShops = 0;
   let shopIds: string[] = [];
   let lookbackSec = SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
-  let maxOrderSnsPerShop = SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP;
   let pullDeadlineMs = ORDERS_PULL_HARD_DEADLINE_MS;
-  let pageHardCap = SHOPEE_ORDER_LIST_LOOP_HARD_CAP;
+  let perShopBudgetMs = ORDERS_PULL_PER_SHOP_MS;
   let longLookback = false;
-  let singleShopPull = false;
   let deadlineAt = startedAt + pullDeadlineMs;
 
   try {
@@ -3740,7 +3747,6 @@ async function pullIncrementalOrdersFromShopee(opts?: {
         );
       }
     }
-    singleShopPull = shopIds.length === 1;
     const rawLookback = Number(opts?.lookbackSec) || SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
     const shortLookback = opts?.allowShortLookback === true;
     // Quick Sync: [60s, 15d] 1 cửa sổ. Full sync: [3d, 90d] chia chunk ≤15 ngày/request.
@@ -3751,36 +3757,13 @@ async function pullIncrementalOrdersFromShopee(opts?: {
           Math.min(SHOPEE_ORDER_LIST_MAX_TOTAL_LOOKBACK_SEC, rawLookback),
         );
     longLookback = lookbackSec >= 168 * 3600;
-    // Quick Sync: deadline ngắn (90s) — dưới timeout cPanel 120s.
-    // 7 ngày / Làm mới: nới cap để không lệch số đơn với Seller Center.
-    // 1 shop: ưu tiên kéo đủ; nhiều shop: vẫn cao hơn mặc định cũ (80/5/90s).
-    if (shortLookback) {
-      pullDeadlineMs = 90_000;
-      maxOrderSnsPerShop = 100;
-      pageHardCap = 4;
-    } else {
-      pullDeadlineMs = singleShopPull
-        ? longLookback
-          ? 240_000
-          : 180_000
-        : longLookback
-          ? 240_000
-          : ORDERS_PULL_HARD_DEADLINE_MS;
-      maxOrderSnsPerShop = singleShopPull
-        ? longLookback
-          ? 400
-          : 250
-        : longLookback
-          ? 300
-          : SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP;
-      pageHardCap = singleShopPull
-        ? longLookback
-          ? 15
-          : 12
-        : longLookback
-          ? 12
-          : SHOPEE_ORDER_LIST_LOOP_HARD_CAP;
-    }
+    // Mỗi shop có ngân sách riêng — shop 2 không bị SKIP vì shop 1 đã dùng hết 90s chung.
+    perShopBudgetMs = shortLookback
+      ? ORDERS_PULL_PER_SHOP_MS
+      : longLookback
+        ? ORDERS_PULL_PER_SHOP_LONG_MS
+        : ORDERS_PULL_PER_SHOP_MS;
+    pullDeadlineMs = perShopBudgetMs * Math.max(1, shopIds.length);
     deadlineAt = startedAt + pullDeadlineMs;
 
     if (shopIds.length === 0) {
@@ -3851,12 +3834,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
         }
       }
     }
-    // Ngân sách tối thiểu mỗi shop còn lại — tránh shop đầu chiếm hết Quick Sync 90s.
-    const MIN_SHOP_BUDGET_MS = shortLookback ? 15_000 : 20_000;
-    const basePerShopBudgetMs = Math.max(
-      longLookback ? 45_000 : 28_000,
-      Math.floor(pullDeadlineMs / Math.max(1, shopIds.length)),
-    );
+    // Mỗi shop nhận đủ perShopBudgetMs — không chia fair-share làm shop 2 bị cắt.
     const perShopResults: Array<{
       shopId: string;
       status: string;
@@ -3869,8 +3847,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
     syncDiag(
       "Pull START",
       `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${lookbackSec}s` +
-        ` short=${shortLookback} deadline=${pullDeadlineMs}ms basePerShop=${basePerShopBudgetMs}ms` +
-        ` minShop=${MIN_SHOP_BUDGET_MS}ms maxSn=${maxOrderSnsPerShop} hardCap=${pageHardCap}` +
+        ` short=${shortLookback} deadline=${pullDeadlineMs}ms perShop=${perShopBudgetMs}ms` +
         ` enrichTracking=${enrichTracking} longLookback=${longLookback}`,
     );
     console.log(
@@ -3881,14 +3858,8 @@ async function pullIncrementalOrdersFromShopee(opts?: {
     // (unshift/findIndex song song → race → crash/HTTP 500 HTML).
     for (let shopIdx = 0; shopIdx < shopIds.length; shopIdx++) {
       const shopId = shopIds[shopIdx];
-      const shopsRemaining = shopIds.length - shopIdx;
       const remainingMs = Math.max(0, deadlineAt - Date.now());
-      // Chia đều phần thời gian còn lại cho các shop chưa chạy (không để shop 1 nuốt hết).
-      const fairShareMs = Math.floor(remainingMs / Math.max(1, shopsRemaining));
-      const shopBudgetMs = Math.max(
-        Math.min(basePerShopBudgetMs, fairShareMs || 0),
-        Math.min(MIN_SHOP_BUDGET_MS, remainingMs),
-      );
+      const shopBudgetMs = perShopBudgetMs;
       let shopPulled = 0;
       let shopAdded = 0;
       let shopUpdated = 0;
@@ -3898,34 +3869,10 @@ async function pullIncrementalOrdersFromShopee(opts?: {
 
       try {
         await yieldToLogisticsIfBusy(12_000);
-        if (remainingMs < MIN_SHOP_BUDGET_MS && shopsRemaining > 1 && remainingMs < 8_000) {
-          // Hết hẳn thời gian — đánh dấu SKIP các shop còn lại rồi dừng.
-          console.error(
-            `[Orders Pull] shopId=${shopId} SKIP — hết deadline toàn cục (remaining=${remainingMs}ms). ` +
-              `Các shop sau cũng bị bỏ: [${shopIds.slice(shopIdx).join(",")}]`,
-          );
-          for (const skippedId of shopIds.slice(shopIdx)) {
-            errors.push({
-              shopId: skippedId,
-              error: "pull_deadline",
-              message: `Hết thời gian pull — skip shop ${skippedId}`,
-            });
-            perShopResults.push({
-              shopId: skippedId,
-              status: "SKIP",
-              sn: 0,
-              pulled: 0,
-              added: 0,
-              updated: 0,
-              error: "pull_deadline",
-            });
-          }
-          break;
-        }
+        // Cấp đủ thời gian từng shop; chỉ SKIP khi đã vượt deadline toàn phiên (n shop × perShop).
         if (Date.now() >= deadlineAt) {
-          // Còn đúng 1 shop hoặc vẫn còn chút budget — thử chạy với phần còn lại tối thiểu.
           console.error(
-            `[Orders Pull] shopId=${shopId} SKIP — deadlineAt đã qua (elapsed=${Date.now() - startedAt}ms)`,
+            `[Orders Pull] shopId=${shopId} SKIP — deadlineAt đã qua (elapsed=${Date.now() - startedAt}ms remaining=${remainingMs}ms)`,
           );
           errors.push({
             shopId,
@@ -3944,7 +3891,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
           continue;
         }
 
-        const shopDeadlineAt = Math.min(deadlineAt, Date.now() + Math.max(shopBudgetMs, MIN_SHOP_BUDGET_MS));
+        const shopDeadlineAt = Math.min(deadlineAt, Date.now() + shopBudgetMs);
         const shopIdStr = String(normalizeShopIdKey(shopId) || shopId || "").trim();
         console.log(
           `[Sync Shop ${shopIdStr}] START idx=${shopIdx + 1}/${shopIds.length}` +
@@ -4034,12 +3981,11 @@ async function pullIncrementalOrdersFromShopee(opts?: {
           const listCollect = await collectShopeeOrderSnsIncremental(shopIdStr, accessToken, {
             lookbackSec,
             deadlineAt: shopDeadlineAt,
-            maxOrderSns: maxOrderSnsPerShop,
-            pageHardCap,
             allowShortLookback: shortLookback,
           });
           let orderSnList = Array.isArray(listCollect?.orderSns) ? listCollect.orderSns : [];
           shopSn = orderSnList.length;
+          if (listCollect?.truncated) truncatedShops += 1;
           if (Array.isArray(listCollect?.shopeeResponses) && listCollect.shopeeResponses.length) {
             shopeeResponsePages.push(...listCollect.shopeeResponses);
             // Nếu get_order_list lỗi và không có SN nào → đẩy lỗi rõ ràng lên FE (không nuốt thành "0 đơn").
@@ -4063,9 +4009,9 @@ async function pullIncrementalOrdersFromShopee(opts?: {
             }
           }
 
-          // KHÔNG lọc theo order_status — kéo ALL từ get_order_list (update_time ~14 ngày).
-          // MỌI pull (trừ Quick Sync): bổ sung order_sn từ get_return_list (TO_RETURN / tracking hoàn).
-          if (!shortLookback && Date.now() < shopDeadlineAt) {
+          // KHÔNG lọc theo order_status — kéo ALL từ get_order_list.
+          // MỌI pull (kể cả cron/Quick): bổ sung order_sn từ get_return_list (TO_RETURN).
+          if (Date.now() < shopDeadlineAt) {
             try {
               const returnRows = await shopeeFetchAllReturnSns(shopIdStr, accessToken, {
                 mode: "incremental",
@@ -4075,7 +4021,6 @@ async function pullIncrementalOrdersFromShopee(opts?: {
               for (const row of returnRows || []) {
                 const sn = String(row?.orderSn || "").trim();
                 if (!sn || snSet.has(sn)) continue;
-                if (snSet.size >= maxOrderSnsPerShop) break;
                 snSet.add(sn);
                 addedFromReturns += 1;
               }
@@ -4095,12 +4040,10 @@ async function pullIncrementalOrdersFromShopee(opts?: {
             }
           }
 
-          if (orderSnList.length >= maxOrderSnsPerShop) {
-            truncatedShops += 1;
-            // Soft warning — KHÔNG đẩy vào errors (tránh FE báo "Đồng bộ thất bại" dù đã kéo được đơn).
+          if (listCollect?.truncated) {
             syncDiag(
-              "SN cap hit",
-              `shop=${shopId} sn=${orderSnList.length} cap=${maxOrderSnsPerShop} — có thể còn đơn trên Shopee`,
+              "Pagination truncated",
+              `shop=${shopId} sn=${orderSnList.length} — deadline hoặc safetyCap, chưa more=false`,
             );
           }
 
@@ -4404,15 +4347,14 @@ async function pullIncrementalOrdersFromShopee(opts?: {
         truncatedShops > 0
           ? [
               {
-                error: "pull_sn_cap",
-                message: `${truncatedShops} shop chạm trần ${maxOrderSnsPerShop} order_sn — lọc 1 shop rồi Làm mới lại nếu còn lệch.`,
+                error: "pull_truncated",
+                message: `${truncatedShops} shop chưa vét hết (deadline/safetyCap) — chạy lại Đồng bộ nếu còn lệch Seller Center.`,
               },
             ]
           : [],
       message,
       elapsedMs,
       truncatedShops,
-      maxOrderSnsPerShop,
       lookbackSec,
       shopee_response: shopeeResponsePages,
       total_success: pulled,
@@ -4489,7 +4431,7 @@ async function pullShopeeCancelReturnOrders(opts?: {
   let updated = 0;
   let shopIds: string[] = [];
   let lookbackSec = 48 * 3600;
-  let deadlineAt = startedAt + Math.min(ORDERS_PULL_HARD_DEADLINE_MS, 120_000);
+  let deadlineAt = startedAt + ORDERS_PULL_PER_SHOP_MS;
   const statuses = ["CANCELLED", "IN_CANCEL", "TO_RETURN"];
 
   try {
@@ -4501,7 +4443,7 @@ async function pullShopeeCancelReturnOrders(opts?: {
     shopIds = (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds())
       .map((id) => normalizeShopIdKey(id))
       .filter(Boolean);
-    deadlineAt = startedAt + Math.min(ORDERS_PULL_HARD_DEADLINE_MS, 120_000);
+    deadlineAt = startedAt + ORDERS_PULL_PER_SHOP_MS * Math.max(1, shopIds.length);
 
     if (shopIds.length === 0) {
       return {
@@ -4529,7 +4471,7 @@ async function pullShopeeCancelReturnOrders(opts?: {
           }
         })()
       : [];
-    const perShopBudgetMs = Math.max(25_000, Math.floor((deadlineAt - startedAt) / Math.max(1, shopIds.length)));
+    const perShopBudgetMs = ORDERS_PULL_PER_SHOP_MS;
 
     for (const shopId of shopIds) {
       if (Date.now() >= deadlineAt) break;
@@ -4543,13 +4485,11 @@ async function pullShopeeCancelReturnOrders(opts?: {
 
         const snSet = new Set<string>();
         for (const st of statuses) {
-          if (Date.now() >= shopDeadlineAt || snSet.size >= 200) break;
+          if (Date.now() >= shopDeadlineAt) break;
           try {
             const sns = await collectShopeeOrderSnsByStatus(shopId, accessToken, st, {
               lookbackSec,
               deadlineAt: shopDeadlineAt,
-              maxOrderSns: 100,
-              pageHardCap: 4,
             });
             for (const sn of sns) snSet.add(sn);
           } catch (stErr: any) {
@@ -4568,7 +4508,6 @@ async function pullShopeeCancelReturnOrders(opts?: {
             for (const row of returnRows) {
               const sn = String(row?.orderSn || "").trim();
               if (sn) snSet.add(sn);
-              if (snSet.size >= 200) break;
             }
           } catch (returnErr: any) {
             console.warn(

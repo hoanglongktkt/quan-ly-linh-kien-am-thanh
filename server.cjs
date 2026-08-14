@@ -74873,13 +74873,6 @@ function advanceShopeeOrderListCursor(opts) {
   const rows = extractShopeeOrderListRows(opts.listResult);
   const { more, nextCursor } = parseShopeeOrderListPagination(opts.listResult);
   const prev = String(opts.currentCursor ?? "").trim();
-  if (opts.pageIndex >= opts.hardCap) {
-    return {
-      action: "break",
-      nextCursor: null,
-      reason: `${label}: hardCap=${opts.hardCap} reached`
-    };
-  }
   if (!more) {
     return { action: "break", nextCursor: null, reason: `${label}: more=false` };
   }
@@ -74909,6 +74902,14 @@ function advanceShopeeOrderListCursor(opts) {
       action: "break",
       nextCursor: null,
       reason: `${label}: cursor cycle detected ("${nextCursor.slice(0, 32)}")`
+    };
+  }
+  const safetyCap = Math.max(1, Math.floor(Number(opts.hardCap) || 0));
+  if (safetyCap > 0 && opts.pageIndex >= safetyCap) {
+    return {
+      action: "break",
+      nextCursor: null,
+      reason: `${label}: safetyCap=${safetyCap} reached`
     };
   }
   return {
@@ -79096,8 +79097,8 @@ async function loadPriorityTabOrdersFromStore(opts) {
   try {
     requireMongo();
     const perTab = Math.max(
-      10,
-      Math.min(50, Math.floor(Number(opts?.perTabLimit) || 40))
+      2e3,
+      Math.min(5e3, Math.floor(Number(opts?.perTabLimit) || 2e3))
     );
     const tabs = [
       "unprocessed",
@@ -79248,7 +79249,7 @@ async function queryOrdersPageFromStore(opts) {
     const page = Math.max(1, Math.floor(Number(opts?.page) || 1));
     const pageSize = Math.max(
       1,
-      Math.min(2e3, Math.floor(Number(opts?.pageSize) || 50))
+      Math.min(5e3, Math.floor(Number(opts?.pageSize) || 50))
     );
     const skipCounts = Boolean(opts?.skipCounts);
     const and = [];
@@ -79842,11 +79843,14 @@ async function listScannerSyncRowsFromStore() {
   requireMongo();
   const filter2 = {
     $or: [
+      orderTabFilter("unprocessed"),
       orderTabFilter("processed"),
+      orderTabFilter("pending_confirm"),
       orderTabFilter("handed_over_carrier"),
       orderTabFilter("shipping"),
       orderTabFilter("return_requests"),
-      orderTabFilter("cancelled")
+      orderTabFilter("cancelled"),
+      orderTabFilter("cancel_returns")
     ]
   };
   const docs = await OrderModel.find(filter2).select({
@@ -79871,7 +79875,7 @@ async function listScannerSyncRowsFromStore() {
     "data.is_handed_over_to_carrier": 1,
     "data.return_sn": 1,
     return_sn: 1
-  }).limit(8e3).lean().maxTimeMS(5e3);
+  }).limit(2e4).lean().maxTimeMS(15e3);
   const rows = [];
   for (const d of docs) {
     const data = d?.data && typeof d.data === "object" ? d.data : {};
@@ -79885,7 +79889,6 @@ async function listScannerSyncRowsFromStore() {
     const returnWb = String(
       d?.return_tracking_no || d?.returnTrackingNumber || data.return_tracking_no || data.returnTrackingNumber || ""
     ).trim();
-    if (!tracking && !returnWb) continue;
     rows.push({
       order_id: orderId,
       tracking_code: tracking,
@@ -108311,7 +108314,7 @@ async function readOrdersForRefresh(limit, opts = {}) {
   const shopIds = Array.isArray(opts.shopIds) ? opts.shopIds : [];
   if (tab) {
     if (tab === "received_cancel_returns" || tab === "received-cancel-returns" || tab === "da_nhan_huy_hoan") {
-      const pageSize2 = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(Math.floor(Number(limit)), 2e3) : 500;
+      const pageSize2 = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(Math.floor(Number(limit)), 5e3) : 2e3;
       const dhh = await loadDonHoanHuyAsOrders(pageSize2);
       console.log(
         `[GET /api/orders/refresh] tab=${tab} source=don_hoan_huy \u2192 ${dhh.length} \u0111\u01A1n`
@@ -108323,10 +108326,7 @@ async function readOrdersForRefresh(limit, opts = {}) {
       `[GET /api/orders/refresh] tab=${tab} shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} filter=`,
       JSON.stringify(tabFilter)
     );
-    const pageSize = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(
-      Math.floor(Number(limit)),
-      tab === "cancel_returns" || tab === "cancel-returns" || tab === "don-huy-hoan" || tab === "don_huy_hoan" ? 500 : 200
-    ) : 100;
+    const pageSize = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(Math.floor(Number(limit)), 5e3) : 2e3;
     const page = await queryOrdersPageFromStore({
       page: 1,
       pageSize,
@@ -108348,7 +108348,7 @@ async function readOrdersForRefresh(limit, opts = {}) {
     if (limit && limit > 0) {
       try {
         const priority = await loadPriorityTabOrdersFromStore({
-          perTabLimit: Math.min(40, Math.max(20, limit))
+          perTabLimit: Math.min(5e3, Math.max(2e3, limit))
         });
         const byId = /* @__PURE__ */ new Map();
         for (const o of priority) {
@@ -108375,7 +108375,7 @@ async function readOrdersForRefresh(limit, opts = {}) {
     let priority = [];
     try {
       priority = await loadPriorityTabOrdersFromStore({
-        perTabLimit: Math.min(50, Math.max(25, limit)),
+        perTabLimit: Math.min(5e3, Math.max(2e3, limit)),
         shopId: shopId || void 0,
         shopIds: shopIds.length > 1 ? shopIds : void 0
       });
@@ -108455,7 +108455,7 @@ async function refreshOrders(req, res) {
     const pageRaw = Number(req.query.page);
     const rawLimit = Number(req.query.limit);
     const page = Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1;
-    const limit = Number.isFinite(rawLimit) && rawLimit > 50 ? Math.min(Math.floor(rawLimit), 2e3) : 50;
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 5e3) : 2e3;
     const tab = String(req.query.tab || req.query.internal_tab || "").trim();
     const shopIds = parseShopIdsParam(
       req.query.shop_ids ?? req.query.shopIds,
@@ -108667,7 +108667,8 @@ async function listOrders(req, res) {
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
   const pageRaw = Number(req.query.page);
-  const limit = 50;
+  const rawLimit = Number(req.query.limit ?? req.query.page_size ?? req.query.pageSize);
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 5e3) : 2e3;
   const usePaged = true;
   if (usePaged) {
     try {
@@ -108798,9 +108799,9 @@ async function listOrders(req, res) {
       return o.status === "pending_confirm" || o.status === "pending_verification" || ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"].includes(raw);
     });
   }
-  const rawLimit = Number(req.query.limit);
-  if (Number.isFinite(rawLimit) && rawLimit > 0) {
-    rawOrders = rawOrders.slice(0, Math.min(Math.floor(rawLimit), 5e3));
+  const fallbackLimit = Number(req.query.limit);
+  if (Number.isFinite(fallbackLimit) && fallbackLimit > 0) {
+    rawOrders = rawOrders.slice(0, Math.min(Math.floor(fallbackLimit), 5e3));
   }
   const products = await deps15.loadProductsForOrders(rawOrders);
   const orders = attachPdfAvailability(
@@ -118581,9 +118582,9 @@ function toShopeeUnixSeconds(raw, fallbackSec) {
 }
 var SHOPEE_CANCEL_RETURN_MAX_WINDOWS = 2;
 var SHOPEE_RETURN_LIST_WINDOW_SEC = 15 * 24 * 60 * 60;
-var SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS = 800;
+var SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS = 1e4;
 var SHOPEE_RETURN_LIST_PAGE_SIZE = 100;
-var SHOPEE_RETURN_LIST_MAX_PAGES = 50;
+var SHOPEE_RETURN_LIST_MAX_PAGES = 200;
 var SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS = 50;
 var ORDER_DETAIL_FETCH_BATCH_SIZE = 20;
 var ORDER_DETAIL_BATCH_DELAY_MS = 300;
@@ -118593,13 +118594,14 @@ var SHOPEE_TRACKING_FETCH_DELAY_MS = 300;
 var PRINT_API_DELAY_MS = 200;
 var SHOPEE_SYNC_CHUNK_DELAY_MS = ORDER_DETAIL_BATCH_DELAY_MS;
 var SHOPEE_ORDER_LIST_PAGE_DELAY_MS = 1e3;
-var SHOPEE_ORDER_LIST_PAGE_SIZE = 50;
-var SHOPEE_ORDER_LIST_LOOP_HARD_CAP = 8;
+var SHOPEE_ORDER_LIST_PAGE_SIZE = 100;
+var SHOPEE_ORDER_LIST_LOOP_SAFETY_CAP = 100;
 var SHOPEE_ORDER_LIST_INCREMENTAL_SEC = 14 * 24 * 60 * 60;
 var SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC = 3 * 24 * 60 * 60;
 var SHOPEE_ORDER_LIST_MAX_WINDOW_SEC = 15 * 24 * 60 * 60;
 var SHOPEE_ORDER_LIST_MAX_TOTAL_LOOKBACK_SEC = 90 * 24 * 60 * 60;
-var SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 200;
+var ORDERS_PULL_PER_SHOP_MS = 18e4;
+var ORDERS_PULL_PER_SHOP_LONG_MS = 3e5;
 var ORDERS_PULL_HARD_DEADLINE_MS = 18e4;
 var ORDERS_PULL_LOCK_TIMEOUT_MS = 15 * 60 * 1e3;
 var ordersPullInFlight = false;
@@ -119239,24 +119241,23 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
   const allowShort = opts?.allowShortLookback === true;
   const orderSnSet = /* @__PURE__ */ new Set();
   const shopeeResponses = [];
-  const deadlineAt = opts?.deadlineAt ?? Date.now() + ORDERS_PULL_HARD_DEADLINE_MS;
-  const maxOrderSns = Math.max(
+  const deadlineAt = opts?.deadlineAt ?? Date.now() + ORDERS_PULL_PER_SHOP_MS;
+  const pageSafetyCap = Math.max(
     1,
-    Math.floor(opts?.maxOrderSns ?? SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP)
+    Math.floor(opts?.pageHardCap ?? SHOPEE_ORDER_LIST_LOOP_SAFETY_CAP)
   );
-  const pageHardCap = Math.max(
-    1,
-    Math.floor(opts?.pageHardCap ?? SHOPEE_ORDER_LIST_LOOP_HARD_CAP)
-  );
+  let truncated = false;
   const timeChunks = buildShopeeOrderListTimeChunks(timeFrom, timeTo);
   syncDiag(
     "Fetching order list...",
-    `shop=${shopId} field=update_time lookback=${lookback}s (~${(lookback / 86400).toFixed(1)}d) from=${timeFrom} to=${timeTo} chunks=${timeChunks.length} maxSn=${maxOrderSns} hardCap=${pageHardCap}`
+    `shop=${shopId} field=update_time lookback=${lookback}s (~${(lookback / 86400).toFixed(1)}d) from=${timeFrom} to=${timeTo} chunks=${timeChunks.length} safetyCap=${pageSafetyCap}`
   );
   let page = 0;
   for (let chunkIdx = 0; chunkIdx < timeChunks.length; chunkIdx++) {
-    if (orderSnSet.size >= maxOrderSns) break;
-    if (Date.now() > deadlineAt) break;
+    if (Date.now() > deadlineAt) {
+      truncated = true;
+      break;
+    }
     const chunk = timeChunks[chunkIdx];
     const chunkTimeFrom = toShopeeUnixSeconds(chunk.timeFrom);
     const chunkTimeTo = toShopeeUnixSeconds(chunk.timeTo);
@@ -119267,7 +119268,7 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
       "Order list time chunk",
       `shop=${shopId} chunk=${chunkIdx + 1}/${timeChunks.length} from=${chunkTimeFrom} to=${chunkTimeTo} (~${((chunkTimeTo - chunkTimeFrom) / 86400).toFixed(2)}d)`
     );
-    while (chunkPage < pageHardCap && orderSnSet.size < maxOrderSns) {
+    while (true) {
       try {
         assertOrdersPullDeadline(
           deadlineAt,
@@ -119311,6 +119312,7 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
               detail: refreshErr?.message || String(refreshErr),
               raw: listResult
             });
+            truncated = true;
             break;
           }
         }
@@ -119330,6 +119332,7 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
             listResult.error,
             listResult.message || ""
           );
+          truncated = true;
           break;
         }
         const rows = extractShopeeOrderListRows(listResult);
@@ -119337,7 +119340,6 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
           try {
             const sn = String(row?.order_sn || row?.ordersn || "").trim();
             if (sn) orderSnSet.add(sn);
-            if (orderSnSet.size >= maxOrderSns) break;
           } catch (rowErr) {
             console.error(
               `[Orders Pull] B\u1ECF qua 1 \u0111\u01A1n l\u1ED7i shop=${shopId}:`,
@@ -119356,16 +119358,22 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
           currentCursor: cursor,
           seenCursors,
           pageIndex: chunkPage,
-          hardCap: pageHardCap,
+          hardCap: pageSafetyCap,
           logLabel: `shop=${shopId} chunk=${chunkIdx + 1}`
         });
         syncDiag("Pagination decision", `${adv.action} \u2014 ${adv.reason}`);
-        if (adv.action === "break") break;
+        if (adv.action === "break") {
+          if (String(adv.reason || "").includes("safetyCap")) truncated = true;
+          break;
+        }
         seenCursors.add(adv.nextCursor);
         cursor = adv.nextCursor;
         await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
       } catch (pageErr) {
-        if (String(pageErr?.message || "").includes("ORDERS_PULL_DEADLINE")) throw pageErr;
+        if (String(pageErr?.message || "").includes("ORDERS_PULL_DEADLINE")) {
+          truncated = true;
+          throw pageErr;
+        }
         logShopeeSyncApiError(pageErr, `get_order_list page shop_id=${shopId}`);
         console.error(
           `[Orders Pull] GetOrderList page exception shop=${shopId}:`,
@@ -119378,18 +119386,19 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
           error: "page_exception",
           detail: pageErr?.message || String(pageErr)
         });
+        truncated = true;
         break;
       }
     }
-    if (chunkIdx + 1 < timeChunks.length && orderSnSet.size < maxOrderSns) {
+    if (chunkIdx + 1 < timeChunks.length) {
       await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
     }
   }
   syncDiag(
     "Order list pagination done",
-    `shop=${shopId} pages=${page} chunks=${timeChunks.length} uniqueSn=${orderSnSet.size}`
+    `shop=${shopId} pages=${page} chunks=${timeChunks.length} uniqueSn=${orderSnSet.size} truncated=${truncated}`
   );
-  return { orderSns: [...orderSnSet], shopeeResponses };
+  return { orderSns: [...orderSnSet], shopeeResponses, truncated };
 }
 async function collectShopeeOrderSnsByStatus(shopId, accessToken, orderStatus, opts) {
   const now = Math.floor(Date.now() / 1e3);
@@ -119403,22 +119412,24 @@ async function collectShopeeOrderSnsByStatus(shopId, accessToken, orderStatus, o
   const timeFrom = now - lookback;
   const timeTo = now;
   const orderSnSet = /* @__PURE__ */ new Set();
-  const deadlineAt = opts?.deadlineAt ?? Date.now() + 45e3;
-  const maxOrderSns = Math.max(1, Math.floor(opts?.maxOrderSns ?? 80));
-  const pageHardCap = Math.max(1, Math.floor(opts?.pageHardCap ?? 4));
+  const deadlineAt = opts?.deadlineAt ?? Date.now() + ORDERS_PULL_PER_SHOP_MS;
+  const pageSafetyCap = Math.max(
+    1,
+    Math.floor(opts?.pageHardCap ?? SHOPEE_ORDER_LIST_LOOP_SAFETY_CAP)
+  );
   const status = String(orderStatus || "").trim().toUpperCase();
   if (!status) return [];
   const timeChunks = buildShopeeOrderListTimeChunks(timeFrom, timeTo);
   let page = 0;
   for (let chunkIdx = 0; chunkIdx < timeChunks.length; chunkIdx++) {
-    if (orderSnSet.size >= maxOrderSns || Date.now() > deadlineAt) break;
+    if (Date.now() > deadlineAt) break;
     const chunk = timeChunks[chunkIdx];
     const chunkTimeFrom = toShopeeUnixSeconds(chunk.timeFrom);
     const chunkTimeTo = toShopeeUnixSeconds(chunk.timeTo);
     const seenCursors = /* @__PURE__ */ new Set();
     let cursor;
     let chunkPage = 0;
-    while (chunkPage < pageHardCap && orderSnSet.size < maxOrderSns) {
+    while (true) {
       if (Date.now() > deadlineAt) break;
       page += 1;
       chunkPage += 1;
@@ -119460,14 +119471,13 @@ async function collectShopeeOrderSnsByStatus(shopId, accessToken, orderStatus, o
         for (const row of rows) {
           const sn = String(row?.order_sn || row?.ordersn || "").trim();
           if (sn) orderSnSet.add(sn);
-          if (orderSnSet.size >= maxOrderSns) break;
         }
         const adv = advanceShopeeOrderListCursor({
           listResult,
           currentCursor: cursor,
           seenCursors,
           pageIndex: chunkPage,
-          hardCap: pageHardCap,
+          hardCap: pageSafetyCap,
           logLabel: `scan-lookup status=${status} shop=${shopId} chunk=${chunkIdx + 1}`
         });
         if (adv.action === "break") break;
@@ -120355,11 +120365,9 @@ async function pullIncrementalOrdersFromShopee(opts) {
   let truncatedShops = 0;
   let shopIds = [];
   let lookbackSec = SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
-  let maxOrderSnsPerShop = SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP;
   let pullDeadlineMs = ORDERS_PULL_HARD_DEADLINE_MS;
-  let pageHardCap = SHOPEE_ORDER_LIST_LOOP_HARD_CAP;
+  let perShopBudgetMs = ORDERS_PULL_PER_SHOP_MS;
   let longLookback = false;
-  let singleShopPull = false;
   let deadlineAt = startedAt + pullDeadlineMs;
   try {
     ensureShopeeLinkedShopTokenKeys();
@@ -120380,7 +120388,6 @@ async function pullIncrementalOrdersFromShopee(opts) {
         );
       }
     }
-    singleShopPull = shopIds.length === 1;
     const rawLookback = Number(opts?.lookbackSec) || SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
     const shortLookback = opts?.allowShortLookback === true;
     lookbackSec = shortLookback ? Math.max(60, Math.min(SHOPEE_ORDER_LIST_MAX_WINDOW_SEC, rawLookback)) : Math.max(
@@ -120388,15 +120395,8 @@ async function pullIncrementalOrdersFromShopee(opts) {
       Math.min(SHOPEE_ORDER_LIST_MAX_TOTAL_LOOKBACK_SEC, rawLookback)
     );
     longLookback = lookbackSec >= 168 * 3600;
-    if (shortLookback) {
-      pullDeadlineMs = 9e4;
-      maxOrderSnsPerShop = 100;
-      pageHardCap = 4;
-    } else {
-      pullDeadlineMs = singleShopPull ? longLookback ? 24e4 : 18e4 : longLookback ? 24e4 : ORDERS_PULL_HARD_DEADLINE_MS;
-      maxOrderSnsPerShop = singleShopPull ? longLookback ? 400 : 250 : longLookback ? 300 : SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP;
-      pageHardCap = singleShopPull ? longLookback ? 15 : 12 : longLookback ? 12 : SHOPEE_ORDER_LIST_LOOP_HARD_CAP;
-    }
+    perShopBudgetMs = shortLookback ? ORDERS_PULL_PER_SHOP_MS : longLookback ? ORDERS_PULL_PER_SHOP_LONG_MS : ORDERS_PULL_PER_SHOP_MS;
+    pullDeadlineMs = perShopBudgetMs * Math.max(1, shopIds.length);
     deadlineAt = startedAt + pullDeadlineMs;
     if (shopIds.length === 0) {
       return {
@@ -120464,28 +120464,18 @@ async function pullIncrementalOrdersFromShopee(opts) {
         }
       }
     }
-    const MIN_SHOP_BUDGET_MS = shortLookback ? 15e3 : 2e4;
-    const basePerShopBudgetMs = Math.max(
-      longLookback ? 45e3 : 28e3,
-      Math.floor(pullDeadlineMs / Math.max(1, shopIds.length))
-    );
     const perShopResults = [];
     syncDiag(
       "Pull START",
-      `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${lookbackSec}s short=${shortLookback} deadline=${pullDeadlineMs}ms basePerShop=${basePerShopBudgetMs}ms minShop=${MIN_SHOP_BUDGET_MS}ms maxSn=${maxOrderSnsPerShop} hardCap=${pageHardCap} enrichTracking=${enrichTracking3} longLookback=${longLookback}`
+      `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${lookbackSec}s short=${shortLookback} deadline=${pullDeadlineMs}ms perShop=${perShopBudgetMs}ms enrichTracking=${enrichTracking3} longLookback=${longLookback}`
     );
     console.log(
       `[Orders Pull] B\u1EAFt \u0111\u1EA7u ch\u1EA1y ti\u1EBFn tr\xECnh ng\u1EA7m \u2014 shops=${shopIds.length} ids=[${shopIds.join(",")}] lookbackSec=${lookbackSec}`
     );
     for (let shopIdx = 0; shopIdx < shopIds.length; shopIdx++) {
       const shopId = shopIds[shopIdx];
-      const shopsRemaining = shopIds.length - shopIdx;
       const remainingMs = Math.max(0, deadlineAt - Date.now());
-      const fairShareMs = Math.floor(remainingMs / Math.max(1, shopsRemaining));
-      const shopBudgetMs = Math.max(
-        Math.min(basePerShopBudgetMs, fairShareMs || 0),
-        Math.min(MIN_SHOP_BUDGET_MS, remainingMs)
-      );
+      const shopBudgetMs = perShopBudgetMs;
       let shopPulled = 0;
       let shopAdded = 0;
       let shopUpdated = 0;
@@ -120494,31 +120484,9 @@ async function pullIncrementalOrdersFromShopee(opts) {
       let shopErrorMsg = "";
       try {
         await yieldToLogisticsIfBusy(12e3);
-        if (remainingMs < MIN_SHOP_BUDGET_MS && shopsRemaining > 1 && remainingMs < 8e3) {
-          console.error(
-            `[Orders Pull] shopId=${shopId} SKIP \u2014 h\u1EBFt deadline to\xE0n c\u1EE5c (remaining=${remainingMs}ms). C\xE1c shop sau c\u0169ng b\u1ECB b\u1ECF: [${shopIds.slice(shopIdx).join(",")}]`
-          );
-          for (const skippedId of shopIds.slice(shopIdx)) {
-            errors.push({
-              shopId: skippedId,
-              error: "pull_deadline",
-              message: `H\u1EBFt th\u1EDDi gian pull \u2014 skip shop ${skippedId}`
-            });
-            perShopResults.push({
-              shopId: skippedId,
-              status: "SKIP",
-              sn: 0,
-              pulled: 0,
-              added: 0,
-              updated: 0,
-              error: "pull_deadline"
-            });
-          }
-          break;
-        }
         if (Date.now() >= deadlineAt) {
           console.error(
-            `[Orders Pull] shopId=${shopId} SKIP \u2014 deadlineAt \u0111\xE3 qua (elapsed=${Date.now() - startedAt}ms)`
+            `[Orders Pull] shopId=${shopId} SKIP \u2014 deadlineAt \u0111\xE3 qua (elapsed=${Date.now() - startedAt}ms remaining=${remainingMs}ms)`
           );
           errors.push({
             shopId,
@@ -120536,7 +120504,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
           });
           continue;
         }
-        const shopDeadlineAt = Math.min(deadlineAt, Date.now() + Math.max(shopBudgetMs, MIN_SHOP_BUDGET_MS));
+        const shopDeadlineAt = Math.min(deadlineAt, Date.now() + shopBudgetMs);
         const shopIdStr = String(normalizeShopIdKey(shopId) || shopId || "").trim();
         console.log(
           `[Sync Shop ${shopIdStr}] START idx=${shopIdx + 1}/${shopIds.length} typeofShopId=${typeof shopId} budgetMs=${shopDeadlineAt - Date.now()} remainingGlobal=${deadlineAt - Date.now()}ms`
@@ -120616,12 +120584,11 @@ async function pullIncrementalOrdersFromShopee(opts) {
           const listCollect = await collectShopeeOrderSnsIncremental(shopIdStr, accessToken, {
             lookbackSec,
             deadlineAt: shopDeadlineAt,
-            maxOrderSns: maxOrderSnsPerShop,
-            pageHardCap,
             allowShortLookback: shortLookback
           });
           let orderSnList = Array.isArray(listCollect?.orderSns) ? listCollect.orderSns : [];
           shopSn = orderSnList.length;
+          if (listCollect?.truncated) truncatedShops += 1;
           if (Array.isArray(listCollect?.shopeeResponses) && listCollect.shopeeResponses.length) {
             shopeeResponsePages.push(...listCollect.shopeeResponses);
             if (orderSnList.length === 0) {
@@ -120640,7 +120607,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
               }
             }
           }
-          if (!shortLookback && Date.now() < shopDeadlineAt) {
+          if (Date.now() < shopDeadlineAt) {
             try {
               const returnRows = await shopeeFetchAllReturnSns(shopIdStr, accessToken, {
                 mode: "incremental"
@@ -120650,7 +120617,6 @@ async function pullIncrementalOrdersFromShopee(opts) {
               for (const row of returnRows || []) {
                 const sn = String(row?.orderSn || "").trim();
                 if (!sn || snSet.has(sn)) continue;
-                if (snSet.size >= maxOrderSnsPerShop) break;
                 snSet.add(sn);
                 addedFromReturns += 1;
               }
@@ -120669,11 +120635,10 @@ async function pullIncrementalOrdersFromShopee(opts) {
               );
             }
           }
-          if (orderSnList.length >= maxOrderSnsPerShop) {
-            truncatedShops += 1;
+          if (listCollect?.truncated) {
             syncDiag(
-              "SN cap hit",
-              `shop=${shopId} sn=${orderSnList.length} cap=${maxOrderSnsPerShop} \u2014 c\xF3 th\u1EC3 c\xF2n \u0111\u01A1n tr\xEAn Shopee`
+              "Pagination truncated",
+              `shop=${shopId} sn=${orderSnList.length} \u2014 deadline ho\u1EB7c safetyCap, ch\u01B0a more=false`
             );
           }
           syncDiag("Order list received (shop total)", `${orderSnList.length} orders shop=${shopId}`);
@@ -120934,14 +120899,13 @@ async function pullIncrementalOrdersFromShopee(opts) {
       perShop: perShopResults,
       warnings: truncatedShops > 0 ? [
         {
-          error: "pull_sn_cap",
-          message: `${truncatedShops} shop ch\u1EA1m tr\u1EA7n ${maxOrderSnsPerShop} order_sn \u2014 l\u1ECDc 1 shop r\u1ED3i L\xE0m m\u1EDBi l\u1EA1i n\u1EBFu c\xF2n l\u1EC7ch.`
+          error: "pull_truncated",
+          message: `${truncatedShops} shop ch\u01B0a v\xE9t h\u1EBFt (deadline/safetyCap) \u2014 ch\u1EA1y l\u1EA1i \u0110\u1ED3ng b\u1ED9 n\u1EBFu c\xF2n l\u1EC7ch Seller Center.`
         }
       ] : [],
       message,
       elapsedMs,
       truncatedShops,
-      maxOrderSnsPerShop,
       lookbackSec,
       shopee_response: shopeeResponsePages,
       total_success: pulled,
@@ -120999,7 +120963,7 @@ async function pullShopeeCancelReturnOrders(opts) {
   let updated = 0;
   let shopIds = [];
   let lookbackSec = 48 * 3600;
-  let deadlineAt = startedAt + Math.min(ORDERS_PULL_HARD_DEADLINE_MS, 12e4);
+  let deadlineAt = startedAt + ORDERS_PULL_PER_SHOP_MS;
   const statuses = ["CANCELLED", "IN_CANCEL", "TO_RETURN"];
   try {
     lookbackSec = Math.max(
@@ -121008,7 +120972,7 @@ async function pullShopeeCancelReturnOrders(opts) {
     );
     ensureShopeeLinkedShopTokenKeys();
     shopIds = (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds()).map((id) => normalizeShopIdKey(id)).filter(Boolean);
-    deadlineAt = startedAt + Math.min(ORDERS_PULL_HARD_DEADLINE_MS, 12e4);
+    deadlineAt = startedAt + ORDERS_PULL_PER_SHOP_MS * Math.max(1, shopIds.length);
     if (shopIds.length === 0) {
       return {
         success: false,
@@ -121032,7 +120996,7 @@ async function pullShopeeCancelReturnOrders(opts) {
         return [];
       }
     })() : [];
-    const perShopBudgetMs = Math.max(25e3, Math.floor((deadlineAt - startedAt) / Math.max(1, shopIds.length)));
+    const perShopBudgetMs = ORDERS_PULL_PER_SHOP_MS;
     for (const shopId of shopIds) {
       if (Date.now() >= deadlineAt) break;
       const shopDeadlineAt = Math.min(deadlineAt, Date.now() + perShopBudgetMs);
@@ -121044,13 +121008,11 @@ async function pullShopeeCancelReturnOrders(opts) {
         }
         const snSet = /* @__PURE__ */ new Set();
         for (const st of statuses) {
-          if (Date.now() >= shopDeadlineAt || snSet.size >= 200) break;
+          if (Date.now() >= shopDeadlineAt) break;
           try {
             const sns = await collectShopeeOrderSnsByStatus(shopId, accessToken, st, {
               lookbackSec,
-              deadlineAt: shopDeadlineAt,
-              maxOrderSns: 100,
-              pageHardCap: 4
+              deadlineAt: shopDeadlineAt
             });
             for (const sn of sns) snSet.add(sn);
           } catch (stErr) {
@@ -121068,7 +121030,6 @@ async function pullShopeeCancelReturnOrders(opts) {
             for (const row of returnRows) {
               const sn = String(row?.orderSn || "").trim();
               if (sn) snSet.add(sn);
-              if (snSet.size >= 200) break;
             }
           } catch (returnErr) {
             console.warn(

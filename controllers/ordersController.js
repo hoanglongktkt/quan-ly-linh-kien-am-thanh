@@ -188,8 +188,8 @@ async function readOrdersForRefresh(limit, opts = {}) {
     ) {
       const pageSize =
         Number.isFinite(Number(limit)) && Number(limit) > 0
-          ? Math.min(Math.floor(Number(limit)), 2000)
-          : 500;
+          ? Math.min(Math.floor(Number(limit)), 5000)
+          : 2000;
       const dhh = await loadDonHoanHuyAsOrders(pageSize);
       console.log(
         `[GET /api/orders/refresh] tab=${tab} source=don_hoan_huy → ${dhh.length} đơn`,
@@ -204,16 +204,8 @@ async function readOrdersForRefresh(limit, opts = {}) {
     );
     const pageSize =
       Number.isFinite(Number(limit)) && Number(limit) > 0
-        ? Math.min(
-            Math.floor(Number(limit)),
-            tab === "cancel_returns" ||
-              tab === "cancel-returns" ||
-              tab === "don-huy-hoan" ||
-              tab === "don_huy_hoan"
-              ? 500
-              : 200,
-          )
-        : 100;
+        ? Math.min(Math.floor(Number(limit)), 5000)
+        : 2000;
     const page = await queryOrdersPageFromStore({
       page: 1,
       pageSize,
@@ -237,7 +229,7 @@ async function readOrdersForRefresh(limit, opts = {}) {
       // Shallow: vẫn merge đơn tab ưu tiên để badge/list không lệch.
       try {
         const priority = await loadPriorityTabOrdersFromStore({
-          perTabLimit: Math.min(40, Math.max(20, limit)),
+          perTabLimit: Math.min(5000, Math.max(2000, limit)),
         });
         const byId = new Map();
         for (const o of priority) {
@@ -264,7 +256,7 @@ async function readOrdersForRefresh(limit, opts = {}) {
     let priority = [];
     try {
       priority = await loadPriorityTabOrdersFromStore({
-        perTabLimit: Math.min(50, Math.max(25, limit)),
+        perTabLimit: Math.min(5000, Math.max(2000, limit)),
         shopId: shopId || undefined,
         shopIds: shopIds.length > 1 ? shopIds : undefined,
       });
@@ -362,9 +354,9 @@ export async function refreshOrders(req, res) {
     const page =
       Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1;
     const limit =
-      Number.isFinite(rawLimit) && rawLimit > 50
-        ? Math.min(Math.floor(rawLimit), 2000)
-        : 50;
+      Number.isFinite(rawLimit) && rawLimit > 0
+        ? Math.min(Math.floor(rawLimit), 5000)
+        : 2000;
     const tab = String(req.query.tab || req.query.internal_tab || "").trim();
     const shopIds = parseShopIdsParam(
       req.query.shop_ids ?? req.query.shopIds,
@@ -608,9 +600,13 @@ export async function listOrders(req, res) {
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
 
-  // ERP: luôn phân trang Mongo — limit cố định 50 (page từ query).
+  // ERP: phân trang Mongo — mặc định 2000/trang (không cắt 50).
   const pageRaw = Number(req.query.page);
-  const limit = 50;
+  const rawLimit = Number(req.query.limit ?? req.query.page_size ?? req.query.pageSize);
+  const limit =
+    Number.isFinite(rawLimit) && rawLimit > 0
+      ? Math.min(Math.floor(rawLimit), 5000)
+      : 2000;
   const usePaged = true;
   if (usePaged) {
     try {
@@ -797,9 +793,9 @@ export async function listOrders(req, res) {
     });
   }
 
-  const rawLimit = Number(req.query.limit);
-  if (Number.isFinite(rawLimit) && rawLimit > 0) {
-    rawOrders = rawOrders.slice(0, Math.min(Math.floor(rawLimit), 5000));
+  const fallbackLimit = Number(req.query.limit);
+  if (Number.isFinite(fallbackLimit) && fallbackLimit > 0) {
+    rawOrders = rawOrders.slice(0, Math.min(Math.floor(fallbackLimit), 5000));
   }
 
   const products = await deps.loadProductsForOrders(rawOrders);

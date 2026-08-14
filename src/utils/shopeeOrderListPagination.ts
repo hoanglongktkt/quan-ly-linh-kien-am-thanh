@@ -39,7 +39,8 @@ export function extractShopeeOrderListRows(result: unknown): unknown[] {
 
 /**
  * Quyết định có tiếp tục phân trang hay BREAK.
- * CẤM tiếp tục khi: more=false, list rỗng, next_cursor rỗng/không đổi, hoặc cursor đã thấy (vòng lặp).
+ * Dừng đúng chuẩn Shopee: more=false, list rỗng, next_cursor rỗng/không đổi, hoặc cursor đã thấy (chống infinite loop).
+ * hardCap chỉ là cầu chì an toàn (hàng trăm trang) — KHÔNG dùng để cắt sớm 4/8 trang.
  */
 export function advanceShopeeOrderListCursor(opts: {
   listResult: unknown;
@@ -53,14 +54,6 @@ export function advanceShopeeOrderListCursor(opts: {
   const rows = extractShopeeOrderListRows(opts.listResult);
   const { more, nextCursor } = parseShopeeOrderListPagination(opts.listResult);
   const prev = String(opts.currentCursor ?? "").trim();
-
-  if (opts.pageIndex >= opts.hardCap) {
-    return {
-      action: "break",
-      nextCursor: null,
-      reason: `${label}: hardCap=${opts.hardCap} reached`,
-    };
-  }
 
   if (!more) {
     return { action: "break", nextCursor: null, reason: `${label}: more=false` };
@@ -95,6 +88,16 @@ export function advanceShopeeOrderListCursor(opts: {
       action: "break",
       nextCursor: null,
       reason: `${label}: cursor cycle detected ("${nextCursor.slice(0, 32)}")`,
+    };
+  }
+
+  // Cầu chì cuối: chỉ chặn vòng lặp runaway (cursor luôn unique). Không dùng 4/8 trang.
+  const safetyCap = Math.max(1, Math.floor(Number(opts.hardCap) || 0));
+  if (safetyCap > 0 && opts.pageIndex >= safetyCap) {
+    return {
+      action: "break",
+      nextCursor: null,
+      reason: `${label}: safetyCap=${safetyCap} reached`,
     };
   }
 

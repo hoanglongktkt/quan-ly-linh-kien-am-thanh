@@ -372,6 +372,7 @@ export function buildScannerSyncMap(rows: ScannerSyncRow[]): Map<string, Scanner
     };
     if (base.tracking_code) put(base.tracking_code, false);
     if (base.return_waybill) put(base.return_waybill, true);
+    if (base.order_id) put(base.order_id, false);
   }
   return map;
 }

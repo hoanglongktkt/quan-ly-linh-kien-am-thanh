@@ -4636,8 +4636,8 @@ export async function loadPriorityTabOrdersFromStore(opts?: {
   try {
     requireMongo();
     const perTab = Math.max(
-      10,
-      Math.min(50, Math.floor(Number(opts?.perTabLimit) || 40)),
+      2000,
+      Math.min(5000, Math.floor(Number(opts?.perTabLimit) || 2000)),
     );
     const tabs = [
       "unprocessed",
@@ -4816,10 +4816,10 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
   try {
     requireMongo();
     const page = Math.max(1, Math.floor(Number(opts?.page) || 1));
-    // Mặc định 50/trang; cho phép tới 2000 khi caller gửi pageSize lớn (quét mã).
+    // Mặc định 50/trang; cho phép tới 5000 khi caller gửi pageSize lớn (quét mã / đối soát).
     const pageSize = Math.max(
       1,
-      Math.min(2000, Math.floor(Number(opts?.pageSize) || 50)),
+      Math.min(5000, Math.floor(Number(opts?.pageSize) || 50)),
     );
     const skipCounts = Boolean(opts?.skipCounts);
     const and: Record<string, unknown>[] = [];
@@ -5638,11 +5638,14 @@ export async function listScannerSyncRowsFromStore(): Promise<ScannerSyncRow[]> 
 
   const filter = {
     $or: [
+      orderTabFilter("unprocessed"),
       orderTabFilter("processed"),
+      orderTabFilter("pending_confirm"),
       orderTabFilter("handed_over_carrier"),
       orderTabFilter("shipping"),
       orderTabFilter("return_requests"),
       orderTabFilter("cancelled"),
+      orderTabFilter("cancel_returns"),
     ],
   };
 
@@ -5670,9 +5673,9 @@ export async function listScannerSyncRowsFromStore(): Promise<ScannerSyncRow[]> 
       "data.return_sn": 1,
       return_sn: 1,
     })
-    .limit(8000)
+    .limit(20000)
     .lean()
-    .maxTimeMS(5_000);
+    .maxTimeMS(15_000);
 
   const rows: ScannerSyncRow[] = [];
   for (const d of docs as any[]) {
@@ -5691,7 +5694,6 @@ export async function listScannerSyncRowsFromStore(): Promise<ScannerSyncRow[]> 
         data.returnTrackingNumber ||
         "",
     ).trim();
-    if (!tracking && !returnWb) continue;
     rows.push({
       order_id: orderId,
       tracking_code: tracking,
