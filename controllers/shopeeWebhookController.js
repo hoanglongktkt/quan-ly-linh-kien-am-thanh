@@ -38,6 +38,7 @@ let deps = {
   enrichShopeeOrderTrackingFromApi: async () => {},
   isMongoReady: () => false,
   bulkUpsertOrdersToStore: async () => {},
+  invalidateOrdersRefreshCache: () => {},
   applyWebhookReturnFallback: async () => {},
   listShopeeOAuthShopIds: () => [],
 };
@@ -102,6 +103,11 @@ async function upsertOrderToDb(order, label = "") {
   }
   try {
     await deps.bulkUpsertOrdersToStore([order]);
+    try {
+      deps.invalidateOrdersRefreshCache?.();
+    } catch {
+      /* ignore */
+    }
     console.log(
       `[DB UPDATED] ${label ? `(${label}) ` : ""}order_sn=${order.orderSn}` +
         ` shop_id=${order.shopId || "?"} status=${order.shopee_order_status || order.status || "?"} — upsert OK`,

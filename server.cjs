@@ -117702,6 +117702,8 @@ var deps21 = {
   isMongoReady: () => false,
   bulkUpsertOrdersToStore: async () => {
   },
+  invalidateOrdersRefreshCache: () => {
+  },
   applyWebhookReturnFallback: async () => {
   },
   listShopeeOAuthShopIds: () => []
@@ -117757,6 +117759,10 @@ async function upsertOrderToDb(order, label = "") {
   }
   try {
     await deps21.bulkUpsertOrdersToStore([order]);
+    try {
+      deps21.invalidateOrdersRefreshCache?.();
+    } catch {
+    }
     console.log(
       `[DB UPDATED] ${label ? `(${label}) ` : ""}order_sn=${order.orderSn} shop_id=${order.shopId || "?"} status=${order.shopee_order_status || order.status || "?"} \u2014 upsert OK`
     );
@@ -128784,6 +128790,10 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
     if (!isMongoReady()) throw new Error("mongodb_not_ready");
     console.log(`[Orders Sync] Tr\u1EA1ng th\xE1i ch\u1EA1y BulkWrite \u2014 ops=${touched.length}`);
     const mongoN = await bulkUpsertOrdersToStore(touched);
+    try {
+      invalidateOrdersRefreshCache();
+    } catch {
+    }
     queueOrdersJsonMirrorFromMongo();
     console.log(
       `[DB UPDATED] Mongo bulkWrite OK \u2014 batch=${touched.length} written=${mongoN} (+${added}/~${updated}) order_sn=${touched.map((o) => o.orderSn).join(",")}`
@@ -130862,6 +130872,10 @@ async function upsertShopeeWebhookShallow(body, orders) {
   if (isMongoReady() && merged?.orderSn) {
     try {
       await bulkUpsertOrdersToStore([merged]);
+      try {
+        invalidateOrdersRefreshCache();
+      } catch {
+      }
       queueOrdersJsonMirrorFromMongo();
       console.log(
         `[DB UPDATED] (webhook-shallow) order_sn=${merged.orderSn} shop_id=${merged.shopId || "?"} \u2014 upsert OK`
@@ -130882,6 +130896,10 @@ async function upsertShopeeWebhookShallow(body, orders) {
         else if (orders[0]?.orderSn === merged.orderSn) orders[0] = merged;
         if (isMongoReady() && hasUsableShopeeTrackingNumber(merged)) {
           await bulkUpsertOrdersToStore([merged]);
+          try {
+            invalidateOrdersRefreshCache();
+          } catch {
+          }
         }
       }
     } catch (trackErr) {
@@ -130949,6 +130967,7 @@ async function startServer() {
     enrichShopeeOrderTrackingFromApi,
     isMongoReady,
     bulkUpsertOrdersToStore,
+    invalidateOrdersRefreshCache,
     applyWebhookReturnFallback,
     listShopeeOAuthShopIds
   });

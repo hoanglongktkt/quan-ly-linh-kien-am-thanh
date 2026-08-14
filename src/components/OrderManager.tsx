@@ -987,12 +987,19 @@ export default function OrderManager({
     const token = localStorage.getItem('admin_token') || '';
     if (!token) return null;
     try {
-      const qs =
-        selectedShopId && selectedShopId !== 'all'
-          ? `?shop_id=${encodeURIComponent(String(selectedShopId))}`
-          : '';
-      const res = await fetch(`/api/orders/counter${qs}`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const params = new URLSearchParams();
+      params.set('t', String(Date.now()));
+      params.set('_r', String(Math.random()).slice(2, 10));
+      if (selectedShopId && selectedShopId !== 'all') {
+        params.set('shop_id', String(selectedShopId));
+      }
+      const res = await fetch(`/api/orders/counter?${params.toString()}`, {
+        cache: 'no-store',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          Pragma: 'no-cache',
+        },
       });
       const json = await res.json().catch(() => ({} as Record<string, unknown>));
       if (res.ok && json?.success && json?.counts && typeof json.counts === 'object') {
@@ -1024,6 +1031,28 @@ export default function OrderManager({
     },
     [activeSubTab, currentPage, fetchOrderCounts, onFetchOrders, searchQuery],
   );
+
+  const refetchOrdersPageRef = useRef(refetchOrdersPage);
+  refetchOrdersPageRef.current = refetchOrdersPage;
+  const newOrderRefreshTimersRef = useRef<number[]>([]);
+
+  /** Toast đơn mới → đợi Mongo commit → refetch list (lần 2 phòng replica lag). */
+  const scheduleNewOrderListRefresh = useCallback(() => {
+    for (const id of newOrderRefreshTimersRef.current) {
+      window.clearTimeout(id);
+    }
+    newOrderRefreshTimersRef.current = [];
+    setHasNewOrders(true);
+    setCurrentPage(1);
+    playNotificationSound();
+    showToast('Đã có đơn mới — đang làm mới danh sách', 3500);
+    const run = () => {
+      refetchOrdersPageRef.current({ silent: true, page: 1 });
+    };
+    const t1 = window.setTimeout(run, 800);
+    const t2 = window.setTimeout(run, 1800);
+    newOrderRefreshTimersRef.current = [t1, t2];
+  }, []);
 
   const goToOrdersPage = useCallback(
     (page: number) => {
@@ -1065,10 +1094,7 @@ export default function OrderManager({
       const fp = fingerprintCounts(counts);
       if (countsFingerprintRef.current && countsFingerprintRef.current !== fp) {
         countsFingerprintRef.current = fp;
-        playNotificationSound();
-        // Có thay đổi sau sync → tự làm mới trang 1 (limit 50, replace).
-        refetchOrdersPage({ silent: true });
-        showToast('Đã có đơn mới — đã làm mới danh sách', 3500);
+        scheduleNewOrderListRefresh();
       } else if (!countsFingerprintRef.current) {
         countsFingerprintRef.current = fp;
       }
@@ -1087,7 +1113,7 @@ export default function OrderManager({
     window.setTimeout(() => {
       void pollOnce();
     }, 2000);
-  }, [fetchOrderCounts, refetchOrdersPage]);
+  }, [fetchOrderCounts, scheduleNewOrderListRefresh]);
 
   useEffect(() => {
     return () => {
@@ -1103,10 +1129,14 @@ export default function OrderManager({
       if (prefetchHideTimerRef.current != null) {
         window.clearTimeout(prefetchHideTimerRef.current);
       }
+      for (const id of newOrderRefreshTimersRef.current) {
+        window.clearTimeout(id);
+      }
+      newOrderRefreshTimersRef.current = [];
     };
   }, []);
 
-  /** Polling counter định kỳ 20s — badge nhảy nhanh; list chỉ refetch khi user bấm hoặc sync phát hiện đổi. */
+  /** Polling counter 20s — badge + toast + tự refetch list khi có đơn mới. */
   useEffect(() => {
     void (async () => {
       const counts = await fetchOrderCounts();
@@ -1120,8 +1150,7 @@ export default function OrderManager({
       if (!counts) return;
       const fp = fingerprintCounts(counts);
       if (countsFingerprintRef.current && countsFingerprintRef.current !== fp) {
-        setHasNewOrders(true);
-        playNotificationSound();
+        scheduleNewOrderListRefresh();
       }
       if (fp) countsFingerprintRef.current = fp;
     }, 20_000);
@@ -1131,7 +1160,7 @@ export default function OrderManager({
         counterPollTimerRef.current = null;
       }
     };
-  }, [fetchOrderCounts]);
+  }, [fetchOrderCounts, scheduleNewOrderListRefresh]);
 
   /** Tự unlock audio sau click/touch đầu tiên của user trên trang. */
   useEffect(() => {

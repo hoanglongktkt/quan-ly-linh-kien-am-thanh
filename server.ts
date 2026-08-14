@@ -15007,6 +15007,11 @@ async function persistShopeeOrderChunk(
     if (!isMongoReady()) throw new Error("mongodb_not_ready");
     console.log(`[Orders Sync] Trạng thái chạy BulkWrite — ops=${touched.length}`);
     const mongoN = await bulkUpsertOrdersToStore(touched);
+    try {
+      invalidateOrdersRefreshCache();
+    } catch {
+      /* ignore */
+    }
     queueOrdersJsonMirrorFromMongo();
     console.log(
       `[DB UPDATED] Mongo bulkWrite OK — batch=${touched.length} written=${mongoN} (+${added}/~${updated}) order_sn=${touched.map((o) => o.orderSn).join(",")}`,
@@ -18178,6 +18183,11 @@ async function upsertShopeeWebhookShallow(body: any, orders: any[]): Promise<str
   if (isMongoReady() && merged?.orderSn) {
     try {
       await bulkUpsertOrdersToStore([merged]);
+      try {
+        invalidateOrdersRefreshCache();
+      } catch {
+        /* ignore */
+      }
       queueOrdersJsonMirrorFromMongo();
       console.log(
         `[DB UPDATED] (webhook-shallow) order_sn=${merged.orderSn} shop_id=${merged.shopId || "?"} — upsert OK`,
@@ -18198,6 +18208,11 @@ async function upsertShopeeWebhookShallow(body: any, orders: any[]): Promise<str
         else if (orders[0]?.orderSn === merged.orderSn) orders[0] = merged;
         if (isMongoReady() && hasUsableShopeeTrackingNumber(merged)) {
           await bulkUpsertOrdersToStore([merged]);
+          try {
+            invalidateOrdersRefreshCache();
+          } catch {
+            /* ignore */
+          }
         }
       }
     } catch (trackErr) {
@@ -18280,6 +18295,7 @@ async function startServer() {
     enrichShopeeOrderTrackingFromApi,
     isMongoReady,
     bulkUpsertOrdersToStore,
+    invalidateOrdersRefreshCache,
     applyWebhookReturnFallback,
     listShopeeOAuthShopIds,
   });
