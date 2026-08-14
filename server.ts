@@ -1158,6 +1158,8 @@ const ORDERS_PULL_PER_SHOP_LONG_MS = 300_000;
 const ORDERS_PULL_HARD_DEADLINE_MS = 180_000;
 /** Vét đơn READY_TO_SHIP bị miss webhook — tối thiểu 7 ngày. */
 const READY_TO_SHIP_BACKFILL_LOOKBACK_SEC = 7 * 24 * 60 * 60;
+/** Incremental Cron: get_order_list order_status=SHIPPED — lookback 1–3 ngày (mặc định 3). */
+const SHOPEE_SHIPPED_LOOKBACK_SEC = 3 * 24 * 60 * 60;
 /** 2 order_sn GHN chưa Arrange — ép get_order_detail + upsert 1 lần khi boot. */
 const FORCE_RESCUE_SHOPEE_ORDER_SNS = ["26081391A7VTJ7", "26081391Q3V4JV"];
 /** Mutex in-process: chặn boot pull + manual pull chạy chồng lên nhau. */
@@ -2817,10 +2819,10 @@ let lastHandedOverStatusReconcileAt = 0;
 const HANDED_OVER_STATUS_RECONCILE_COOLDOWN_MS = 45_000;
 
 /**
- * Targeted Healing CHO TOÀN BỘ đơn còn cờ "Đã giao cho ĐVVC".
- * - Query trực tiếp tất cả is_handed_over từ Mongo, không page/limit/checkpoint.
+ * Targeted Healing: đơn Đã giao ĐVVC (is_handed_over) + đơn READY_TO_SHIP/PROCESSED chưa quét mã.
+ * - Query Mongo TO_SHIP (không page/limit/checkpoint) — cửa sổ update_time incremental không đủ.
  * - Batch get_order_detail (≤20 SN/request) + delay giữa các mẻ.
- * - Khi Shopee báo SHIPPED / TO_CONFIRM_RECEIVE → upsert Mongo → tự nhảy tab Đang giao.
+ * - Khi Shopee báo SHIPPED / TO_CONFIRM_RECEIVE → bulkUpsert Mongo → tự nhảy tab Đang giao.
  * Không block HTTP: caller phải ACK rồi setImmediate / cron.
  */
 async function reconcileHandedOverCarrierStatuses(opts?: {
@@ -2890,8 +2892,8 @@ async function reconcileHandedOverCarrierStatuses(opts?: {
     });
     result.candidates = candidates.length;
     if (candidates.length === 0) {
-      result.message = "no_handed_over_candidates";
-      console.log(`[HandedOver Reconcile][${trigger}] empty — không có đơn ĐVVC cần dò.`);
+      result.message = "no_to_ship_candidates";
+      console.log(`[HandedOver Reconcile][${trigger}] empty — không có đơn TO_SHIP/ĐVVC cần dò.`);
       return result;
     }
 
@@ -2943,7 +2945,7 @@ async function reconcileHandedOverCarrierStatuses(opts?: {
     const workingOrders = [...candidates];
     console.log(
       `[HandedOver Reconcile][${trigger}] START candidates=${candidates.length}` +
-        ` shops=${byShop.size} mode=targeted_all` +
+        ` shops=${byShop.size} mode=targeted_to_ship` +
         ` skippedNoShop=${skippedNoShop} skippedFilter=${skippedFilter}` +
         ` tokenShops=[${[...tokenShopIds].join(",")}]`,
     );
@@ -3074,7 +3076,7 @@ async function reconcileHandedOverCarrierStatuses(opts?: {
     }
 
     result.message =
-      `dò ${result.candidates} đơn ĐVVC → pulled=${result.pulled}` +
+      `dò ${result.candidates} đơn TO_SHIP/ĐVVC → pulled=${result.pulled}` +
       ` shipped≈${result.shipped} errors=${result.errors.length}`;
     console.log(`[HandedOver Reconcile][${trigger}] DONE ${result.message}`);
     return result;
@@ -4043,6 +4045,80 @@ async function pullIncrementalOrdersFromShopee(opts?: {
           }
 
           // KHÔNG lọc theo order_status — kéo ALL từ get_order_list.
+          // Lookback SHIPPED 1–3 ngày: bắt đơn Shopee đã SHIPPED nhưng Mongo còn READY_TO_SHIP/PROCESSED.
+          if (Date.now() < shopDeadlineAt) {
+            try {
+              const shippedLookbackSec = Math.max(
+                24 * 60 * 60,
+                Math.min(
+                  3 * 24 * 60 * 60,
+                  Number(process.env.AUTO_SHIPPED_LOOKBACK_SEC) || SHOPEE_SHIPPED_LOOKBACK_SEC,
+                ),
+              );
+              const shippedSns = await collectShopeeOrderSnsByStatus(
+                shopIdStr,
+                accessToken,
+                "SHIPPED",
+                {
+                  lookbackSec: shippedLookbackSec,
+                  deadlineAt: shopDeadlineAt,
+                  timeRangeField: "update_time",
+                  allowShortLookback: true,
+                },
+              );
+              if (shippedSns.length) {
+                const snSet = new Set(orderSnList);
+                let addedShipped = 0;
+                const localBySn = new Map<string, any>();
+                try {
+                  const localDocs = await loadOrdersFromStore({ orderSns: shippedSns });
+                  for (const o of localDocs || []) {
+                    const sn = String(o?.orderSn || "")
+                      .replace(/^shopee-/i, "")
+                      .trim();
+                    if (sn) localBySn.set(sn, o);
+                  }
+                } catch (localErr: any) {
+                  console.warn(
+                    `[Sync Shop ${shopIdStr}] SHIPPED lookback local lookup skip:`,
+                    localErr?.message || localErr,
+                  );
+                }
+                for (const sn of shippedSns) {
+                  if (!sn || snSet.has(sn)) continue;
+                  const local = localBySn.get(sn);
+                  const raw = String(local?.shopee_order_status || "").toUpperCase();
+                  if (
+                    local &&
+                    (raw === "SHIPPED" ||
+                      raw === "TO_CONFIRM_RECEIVE" ||
+                      raw === "COMPLETED")
+                  ) {
+                    continue;
+                  }
+                  snSet.add(sn);
+                  addedShipped += 1;
+                }
+                if (addedShipped > 0) {
+                  orderSnList = [...snSet];
+                  shopSn = orderSnList.length;
+                  syncDiag(
+                    "SHIPPED lookback merged",
+                    `shop=${shopIdStr} +${addedShipped} sn get_order_list SHIPPED lookback=${shippedLookbackSec}s total=${orderSnList.length}`,
+                  );
+                  console.log(
+                    `[Orders Pull] shopId=${shopIdStr} SHIPPED lookback +${addedShipped} sn (list=${shippedSns.length} window=${shippedLookbackSec}s)`,
+                  );
+                }
+              }
+            } catch (shippedErr: any) {
+              console.warn(
+                `[Sync Shop ${shopIdStr}] SHIPPED lookback skip:`,
+                shippedErr?.message || shippedErr,
+              );
+            }
+          }
+
           // MỌI pull (kể cả cron/Quick): bổ sung order_sn từ get_return_list (TO_RETURN).
           if (Date.now() < shopDeadlineAt) {
             try {
@@ -13216,7 +13292,7 @@ function scheduleShopeeReturnRequestsSyncSafe(): void {
   });
 }
 
-/** Dò SHIPPED cho tab Đã giao ĐVVC — cron 5 phút + setInterval (Passenger-safe). Tắt: AUTO_HANDED_OVER_RECONCILE_CRON=0 */
+/** Dò SHIPPED cho ĐVVC + READY_TO_SHIP/PROCESSED — cron 5 phút + setInterval. Tắt: AUTO_HANDED_OVER_RECONCILE_CRON=0 */
 function scheduleHandedOverStatusReconcileSafe(): void {
   scheduleHandedOverStatusReconcile({
     reconcileHandedOverCarrierStatuses: (opts) =>

@@ -4769,21 +4769,45 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
 }
 
 /**
- * Targeted Healing: lấy toàn bộ đơn Shopee còn cờ bàn giao trực tiếp từ Mongo.
- * Không phân trang/limit để các đơn cũ không bị bỏ sót bởi cửa sổ update_time.
+ * Targeted Healing: đơn Shopee còn TO_SHIP cần dò get_order_detail.
+ * - Đã quét mã (is_handed_over=true) — luồng cũ
+ * - HOẶC READY_TO_SHIP / RETRY_SHIP / PROCESSED (chưa quét mã, tab Đã xử lý)
+ * Loại đơn đã rời pickup (SHIPPED+) — không tốn API; clearHandedOverFlags xử lý cờ thừa.
  */
 export async function loadAllHandedOverShopeeOrdersFromStore(opts?: {
   shopIds?: string[];
 }): Promise<any[]> {
   if (!isMongoReady()) return [];
   requireMongo();
+  const toShipStatuses = [...ORDER_TAB_TO_SHIP_RAW];
+  const leftPickup = [...ORDER_TAB_LEFT_PICKUP_RAW];
   const and: Record<string, unknown>[] = [
-    ORDER_TAB_IS_HANDED_OVER,
     {
       $or: [
         { channel: "shopee" },
         { "data.channel": "shopee" },
       ],
+    },
+    {
+      $or: [
+        ORDER_TAB_IS_HANDED_OVER,
+        { shopee_order_status: { $in: toShipStatuses } },
+        { "data.shopee_order_status": { $in: toShipStatuses } },
+        { status: { $in: ["processed", "unprocessed"] } },
+      ],
+    },
+    { shopee_order_status: { $nin: leftPickup } },
+    {
+      $or: [
+        { "data.shopee_order_status": { $exists: false } },
+        { "data.shopee_order_status": { $in: [null, ""] } },
+        { "data.shopee_order_status": { $nin: leftPickup } },
+      ],
+    },
+    {
+      status: {
+        $nin: ["shipping", "completed", "cancelled", "return_pending", "return_received"],
+      },
     },
   ];
   const shopFilter = buildShopIdMongoFilter(undefined, opts?.shopIds);
@@ -4800,6 +4824,7 @@ export async function loadAllHandedOverShopeeOrdersFromStore(opts?: {
   }
   console.log(
     `[MongoDB] Targeted Healing candidates=${orders.length}` +
+      ` (handed_over + READY_TO_SHIP/PROCESSED)` +
       `${opts?.shopIds?.length ? ` shops=${opts.shopIds.join(",")}` : ""}`,
   );
   return orders;

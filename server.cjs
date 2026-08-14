@@ -74212,7 +74212,7 @@ function scheduleHandedOverStatusReconcile(deps22 = {}) {
       runHandedOverReconcileTick(deps22, "cron");
     });
     console.log(
-      `[CRON] HandedOver status reconcile ON \u2014 expr="${cronExpr}" (ch\u1EC9 \u0111\u01A1n \u0110\xE3 giao \u0110VVC).`
+      `[CRON] HandedOver status reconcile ON \u2014 expr="${cronExpr}" (\u0110VVC + READY_TO_SHIP/PROCESSED).`
     );
   } else {
     console.error(
@@ -79282,13 +79282,35 @@ function orderTabFilter(tab) {
 async function loadAllHandedOverShopeeOrdersFromStore(opts) {
   if (!isMongoReady()) return [];
   requireMongo();
+  const toShipStatuses = [...ORDER_TAB_TO_SHIP_RAW];
+  const leftPickup = [...ORDER_TAB_LEFT_PICKUP_RAW];
   const and = [
-    ORDER_TAB_IS_HANDED_OVER,
     {
       $or: [
         { channel: "shopee" },
         { "data.channel": "shopee" }
       ]
+    },
+    {
+      $or: [
+        ORDER_TAB_IS_HANDED_OVER,
+        { shopee_order_status: { $in: toShipStatuses } },
+        { "data.shopee_order_status": { $in: toShipStatuses } },
+        { status: { $in: ["processed", "unprocessed"] } }
+      ]
+    },
+    { shopee_order_status: { $nin: leftPickup } },
+    {
+      $or: [
+        { "data.shopee_order_status": { $exists: false } },
+        { "data.shopee_order_status": { $in: [null, ""] } },
+        { "data.shopee_order_status": { $nin: leftPickup } }
+      ]
+    },
+    {
+      status: {
+        $nin: ["shipping", "completed", "cancelled", "return_pending", "return_received"]
+      }
     }
   ];
   const shopFilter = buildShopIdMongoFilter(void 0, opts?.shopIds);
@@ -79300,7 +79322,7 @@ async function loadAllHandedOverShopeeOrdersFromStore(opts) {
     if (order) orders.push(order);
   }
   console.log(
-    `[MongoDB] Targeted Healing candidates=${orders.length}${opts?.shopIds?.length ? ` shops=${opts.shopIds.join(",")}` : ""}`
+    `[MongoDB] Targeted Healing candidates=${orders.length} (handed_over + READY_TO_SHIP/PROCESSED)${opts?.shopIds?.length ? ` shops=${opts.shopIds.join(",")}` : ""}`
   );
   return orders;
 }
@@ -119019,6 +119041,7 @@ var ORDERS_PULL_PER_SHOP_MS = 18e4;
 var ORDERS_PULL_PER_SHOP_LONG_MS = 3e5;
 var ORDERS_PULL_HARD_DEADLINE_MS = 18e4;
 var READY_TO_SHIP_BACKFILL_LOOKBACK_SEC = 7 * 24 * 60 * 60;
+var SHOPEE_SHIPPED_LOOKBACK_SEC = 3 * 24 * 60 * 60;
 var FORCE_RESCUE_SHOPEE_ORDER_SNS = ["26081391A7VTJ7", "26081391Q3V4JV"];
 var ORDERS_PULL_LOCK_TIMEOUT_MS = 15 * 60 * 1e3;
 var ordersPullInFlight = false;
@@ -120116,8 +120139,8 @@ async function reconcileHandedOverCarrierStatuses(opts) {
     });
     result.candidates = candidates.length;
     if (candidates.length === 0) {
-      result.message = "no_handed_over_candidates";
-      console.log(`[HandedOver Reconcile][${trigger}] empty \u2014 kh\xF4ng c\xF3 \u0111\u01A1n \u0110VVC c\u1EA7n d\xF2.`);
+      result.message = "no_to_ship_candidates";
+      console.log(`[HandedOver Reconcile][${trigger}] empty \u2014 kh\xF4ng c\xF3 \u0111\u01A1n TO_SHIP/\u0110VVC c\u1EA7n d\xF2.`);
       return result;
     }
     const tokenShopIds = new Set(
@@ -120155,7 +120178,7 @@ async function reconcileHandedOverCarrierStatuses(opts) {
     }
     const workingOrders = [...candidates];
     console.log(
-      `[HandedOver Reconcile][${trigger}] START candidates=${candidates.length} shops=${byShop.size} mode=targeted_all skippedNoShop=${skippedNoShop} skippedFilter=${skippedFilter} tokenShops=[${[...tokenShopIds].join(",")}]`
+      `[HandedOver Reconcile][${trigger}] START candidates=${candidates.length} shops=${byShop.size} mode=targeted_to_ship skippedNoShop=${skippedNoShop} skippedFilter=${skippedFilter} tokenShops=[${[...tokenShopIds].join(",")}]`
     );
     for (const [shopIdRaw, orderSns] of byShop) {
       const shopId = String(normalizeShopIdKey(shopIdRaw) || shopIdRaw || "").trim();
@@ -120266,7 +120289,7 @@ async function reconcileHandedOverCarrierStatuses(opts) {
       invalidateOrdersRefreshCache();
     } catch {
     }
-    result.message = `d\xF2 ${result.candidates} \u0111\u01A1n \u0110VVC \u2192 pulled=${result.pulled} shipped\u2248${result.shipped} errors=${result.errors.length}`;
+    result.message = `d\xF2 ${result.candidates} \u0111\u01A1n TO_SHIP/\u0110VVC \u2192 pulled=${result.pulled} shipped\u2248${result.shipped} errors=${result.errors.length}`;
     console.log(`[HandedOver Reconcile][${trigger}] DONE ${result.message}`);
     return result;
   } catch (err) {
@@ -121039,6 +121062,71 @@ async function pullIncrementalOrdersFromShopee(opts) {
                 });
                 shopErrorMsg = String(rawErr);
               }
+            }
+          }
+          if (Date.now() < shopDeadlineAt) {
+            try {
+              const shippedLookbackSec = Math.max(
+                24 * 60 * 60,
+                Math.min(
+                  3 * 24 * 60 * 60,
+                  Number(process.env.AUTO_SHIPPED_LOOKBACK_SEC) || SHOPEE_SHIPPED_LOOKBACK_SEC
+                )
+              );
+              const shippedSns = await collectShopeeOrderSnsByStatus(
+                shopIdStr,
+                accessToken,
+                "SHIPPED",
+                {
+                  lookbackSec: shippedLookbackSec,
+                  deadlineAt: shopDeadlineAt,
+                  timeRangeField: "update_time",
+                  allowShortLookback: true
+                }
+              );
+              if (shippedSns.length) {
+                const snSet = new Set(orderSnList);
+                let addedShipped = 0;
+                const localBySn = /* @__PURE__ */ new Map();
+                try {
+                  const localDocs = await loadOrdersFromStore({ orderSns: shippedSns });
+                  for (const o of localDocs || []) {
+                    const sn = String(o?.orderSn || "").replace(/^shopee-/i, "").trim();
+                    if (sn) localBySn.set(sn, o);
+                  }
+                } catch (localErr) {
+                  console.warn(
+                    `[Sync Shop ${shopIdStr}] SHIPPED lookback local lookup skip:`,
+                    localErr?.message || localErr
+                  );
+                }
+                for (const sn of shippedSns) {
+                  if (!sn || snSet.has(sn)) continue;
+                  const local = localBySn.get(sn);
+                  const raw = String(local?.shopee_order_status || "").toUpperCase();
+                  if (local && (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE" || raw === "COMPLETED")) {
+                    continue;
+                  }
+                  snSet.add(sn);
+                  addedShipped += 1;
+                }
+                if (addedShipped > 0) {
+                  orderSnList = [...snSet];
+                  shopSn = orderSnList.length;
+                  syncDiag(
+                    "SHIPPED lookback merged",
+                    `shop=${shopIdStr} +${addedShipped} sn get_order_list SHIPPED lookback=${shippedLookbackSec}s total=${orderSnList.length}`
+                  );
+                  console.log(
+                    `[Orders Pull] shopId=${shopIdStr} SHIPPED lookback +${addedShipped} sn (list=${shippedSns.length} window=${shippedLookbackSec}s)`
+                  );
+                }
+              }
+            } catch (shippedErr) {
+              console.warn(
+                `[Sync Shop ${shopIdStr}] SHIPPED lookback skip:`,
+                shippedErr?.message || shippedErr
+              );
             }
           }
           if (Date.now() < shopDeadlineAt) {

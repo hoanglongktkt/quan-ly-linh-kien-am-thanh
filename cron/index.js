@@ -3,7 +3,7 @@
  * Mặc định: mỗi 5 phút kéo đơn update_time trong ~2 giờ gần nhất.
  *
  * Tắt: AUTO_ORDER_SYNC_CRON=0
- * Dò trạng thái Shopee cho đơn tab "Đã giao cho ĐVVC" — mỗi 5 phút.
+ * Dò SHIPPED cho đơn ĐVVC + READY_TO_SHIP/PROCESSED chưa quét mã — mỗi 5 phút.
  * Tắt dò ĐVVC: AUTO_HANDED_OVER_RECONCILE_CRON=0
  */
 import cron from "node-cron";
@@ -89,8 +89,8 @@ export function scheduleAutoIncrementalOrdersSync(deps = {}) {
 }
 
 /**
- * Dò trạng thái Shopee cho đơn tab "Đã giao cho ĐVVC" — mỗi 5 phút.
- * Nhẹ hơn full sync: chỉ batch get_order_detail các đơn ĐVVC còn TO_SHIP.
+ * Dò trạng thái Shopee cho đơn ĐVVC + READY_TO_SHIP/PROCESSED (chưa quét mã) — mỗi 5 phút.
+ * Nhẹ hơn full sync: batch get_order_detail các đơn còn TO_SHIP.
  * Đồng thời setInterval (Passenger-safe) vì node-cron có thể không tick khi worker idle.
  *
  * @param {object} [deps]
@@ -162,7 +162,7 @@ export function scheduleHandedOverStatusReconcile(deps = {}) {
       runHandedOverReconcileTick(deps, "cron");
     });
     console.log(
-      `[CRON] HandedOver status reconcile ON — expr="${cronExpr}" (chỉ đơn Đã giao ĐVVC).`,
+      `[CRON] HandedOver status reconcile ON — expr="${cronExpr}" (ĐVVC + READY_TO_SHIP/PROCESSED).`,
     );
   } else {
     console.error(
