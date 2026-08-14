@@ -6,7 +6,7 @@ import dotenv from "dotenv";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { PDFDocument } from "pdf-lib";
-import { scheduleAutoIncrementalOrdersSync, scheduleHandedOverStatusReconcile, scheduleShopeeReturnRequestsSync, scheduleReadyToShipBackfill } from "./cron/index.js";
+import { scheduleAutoIncrementalOrdersSync, scheduleHandedOverStatusReconcile, scheduleShopeeReturnRequestsSync, scheduleReadyToShipBackfill, scheduleLabelPdfCleanup } from "./cron/index.js";
 import {
   initOrderSyncService,
   registerLabelPdfDownloader,
@@ -619,8 +619,8 @@ const WAYBILL_FILE_RE = /\.(pdf|zip|html)$/i;
  * PDF vận đơn: RAM + đĩa tại storage/labels/ (ổn định, writable).
  * URL chuẩn phục vụ FE: /api/public/labels/:filename — tuyệt đối KHÔNG dùng /prints/.
  */
-/** Disk TTL 24h; RAM TTL 60 phút (đủ cho phiên in). PDF không lưu Mongo. */
-const LABEL_DISK_TTL_MS = 24 * 60 * 60 * 1000;
+/** Disk TTL 7 ngày; RAM TTL 60 phút (đủ cho phiên in). PDF không lưu Mongo. */
+const LABEL_DISK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const LABEL_RAM_TTL_MS = 60 * 60 * 1000;
 const labelMemCache = new Map<string, { buf: Buffer; expires: number; contentType?: string }>();
 const LABEL_MEM_MAX_ENTRIES = 48;
@@ -901,7 +901,7 @@ function assertLabelFileReady(filename: string): { safe: string; size: number } 
   return { safe, size: hit.buf.length };
 }
 
-/** Dọn PDF trong storage/labels/ > 24h + RAM hết hạn. (PDF không lưu MongoDB.) */
+/** Dọn PDF trong storage/labels/ > 7 ngày + RAM hết hạn. (PDF không lưu MongoDB.) */
 function cleanupExpiredLabelFiles(): number {
   let deleted = 0;
   const now = Date.now();
@@ -973,18 +973,7 @@ function wipeLegacyPublicPrints(): number {
   return deleted;
 }
 
-function scheduleWaybillsCleanup(): void {
-  setImmediate(() => {
-    try {
-      cleanupExpiredLabelFiles();
-      wipeLegacyPublicPrints();
-    } catch (err) {
-      console.warn("[Labels Cleanup] lỗi:", err);
-    }
-  });
-}
-
-// Boot: tạo storage/labels + dọn legacy /prints + cleanup mỗi giờ
+// Boot: tạo storage/labels + dọn legacy /prints. Dọn PDF_DIR định kỳ do scheduleLabelPdfCleanup (cron 7 ngày).
 try {
   assertLabelsDirWritable();
   console.log(`[Labels] PDF_DIR=${PDF_DIR} (writable OK)`);
@@ -992,9 +981,6 @@ try {
   console.error("[Labels] BOOT: storage/labels không ghi được — in đơn sẽ thất bại:", err);
 }
 wipeLegacyPublicPrints();
-cleanupExpiredLabelFiles();
-/** TẮT setInterval cleanup — chỉ dọn 1 lần lúc boot (tránh process leak cPanel). */
-console.log("[Labels Cleanup] setInterval OFF — chỉ cleanup one-shot lúc boot.");
 
 type ServeLabelPdfResult = "sent" | "not_found" | "invalid";
 
@@ -21476,7 +21462,6 @@ async function startServer() {
   const LABEL_DOWNLOAD_CONCURRENCY = 3;
 
   // PDF vận đơn: RAM + storage/labels + GET /api/public/labels (chuẩn).
-  scheduleWaybillsCleanup();
 
   function extensionForContentType(contentType: string): string {
     if (contentType.includes("zip")) return "zip";
@@ -23579,46 +23564,6 @@ async function startServer() {
   }
 
   /**
-   * Cleanup PDF cũ > 3 ngày trong public/pdfs
-   */
-  function schedulePdfCleanup(): void {
-    const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000; // 1 ngày
-    const MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000; // 3 ngày
-    
-    const runCleanup = () => {
-      try {
-        const pdfDir = path.join(APP_ROOT, "public", "pdfs");
-        if (!fs.existsSync(pdfDir)) return;
-        
-        const files = fs.readdirSync(pdfDir);
-        let deleted = 0;
-        
-        files.forEach((file) => {
-          const filePath = path.join(pdfDir, file);
-          const stats = fs.statSync(filePath);
-          const age = Date.now() - stats.mtimeMs;
-          
-          if (age > MAX_AGE_MS) {
-            fs.unlinkSync(filePath);
-            deleted++;
-          }
-        });
-        
-        if (deleted > 0) {
-          console.log(`[PDF Cleanup] Đã dọn dẹp ${deleted} file PDF cũ`);
-        }
-      } catch (err) {
-        console.error("[PDF Cleanup] Error:", err);
-      }
-    };
-    
-    // Chạy ngay khi boot
-    runCleanup();
-    // Chạy lại mỗi 24h
-    setInterval(runCleanup, CLEANUP_INTERVAL_MS);
-  }
-
-  /**
    * cPanel / Phusion Passenger: BẮT BUỘC listen NGAY — không await DB trước listen.
    */
   function startListening(): void {
@@ -23647,15 +23592,14 @@ async function startServer() {
       // Sync đơn: webhook + nút Đồng bộ (ACK) + cron incremental 5 phút.
       console.log("[Boot] Order sync: webhook ON + manual trigger (BG) + cron incremental ON.");
       console.log("[Boot] Recovery pull OFF | GHN tracking backfill ON | CancelReturn cron OFF.");
-      console.log("[PDF Cleanup] Auto cleanup ON — mỗi 24h xóa file > 3 ngày.");
+      console.log("[Labels Cleanup] Auto cleanup ON — 02:00 + setInterval 24h, xóa PDF > 7 ngày trong storage/labels.");
       console.log(
         `[Shopee Webhook] orders write ${
           String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "1").trim() === "0" ? "OFF (disabled)" : "ON"
         }`,
       );
-      
-      // Bật PDF cleanup job
-      schedulePdfCleanup();
+
+      scheduleLabelPdfCleanup();
     };
 
     if (process.env.PORT) {

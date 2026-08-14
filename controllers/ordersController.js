@@ -975,10 +975,10 @@ export async function cleanupLabelPdfs(_req, res) {
     return res.json({
       success: true,
       deleted,
-      ttlHours: 24,
+      ttlHours: 168,
       storage: "disk",
       mongo: false,
-      message: `Đã dọn PDF vận đơn >24h trên đĩa (không lưu Mongo). Xóa ${deleted} mục.`,
+      message: `Đã dọn PDF vận đơn >7 ngày trên đĩa (không lưu Mongo). Xóa ${deleted} mục.`,
     });
   } catch (error) {
     return res.status(500).json({
