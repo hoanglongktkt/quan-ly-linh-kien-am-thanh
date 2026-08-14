@@ -74297,6 +74297,64 @@ function scheduleShopeeReturnRequestsSync(deps22 = {}) {
   }, 45e3);
   console.log(`[CRON] Return Requests Sync ON \u2014 expr="${cronExpr}"`);
 }
+var rtsBackfillScheduled = false;
+var rtsBackfillTask = null;
+function scheduleReadyToShipBackfill(deps22 = {}) {
+  if (rtsBackfillScheduled) {
+    console.log("[CRON] READY_TO_SHIP backfill already scheduled (idempotent).");
+    return;
+  }
+  rtsBackfillScheduled = true;
+  const disabled = String(process.env.AUTO_RTS_BACKFILL_CRON || "1").trim() === "0" || String(process.env.AUTO_RTS_BACKFILL_CRON || "").toLowerCase() === "off" || String(process.env.AUTO_RTS_BACKFILL_CRON || "").toLowerCase() === "false";
+  if (disabled) {
+    console.log("[CRON] READY_TO_SHIP backfill DISABLED (AUTO_RTS_BACKFILL_CRON=0).");
+    return;
+  }
+  if (typeof deps22.runSync !== "function") {
+    console.warn("[CRON] READY_TO_SHIP backfill NOT started \u2014 thi\u1EBFu deps.runSync");
+    return;
+  }
+  const lookbackSec = Math.max(
+    7 * 24 * 60 * 60,
+    Number(deps22.lookbackSec) || 7 * 24 * 60 * 60
+  );
+  const cronExpr = String(
+    deps22.cronExpr || process.env.AUTO_RTS_BACKFILL_CRON_EXPR || "*/10 * * * *"
+  ).trim();
+  if (!import_node_cron.default.validate(cronExpr)) {
+    console.error(`[CRON] Invalid RTS backfill cron expr="${cronExpr}"`);
+    return;
+  }
+  rtsBackfillTask = import_node_cron.default.schedule(cronExpr, () => {
+    console.log(
+      `[CRON] Tick READY_TO_SHIP backfill \u2014 lookbackSec=${lookbackSec} (~${Math.round(lookbackSec / 86400)}d)`
+    );
+    try {
+      void Promise.resolve(
+        deps22.runSync({ lookbackSec, trigger: "cron" })
+      ).then((r2) => {
+        if (r2?.skipped) {
+          console.log(`[CRON] RTS backfill skipped: ${r2.message || "busy"}`);
+          return;
+        }
+        console.log(
+          `[CRON] RTS backfill done pulled=${r2?.pulled || 0} +${r2?.added || 0}/~${r2?.updated || 0}`
+        );
+      });
+    } catch (err) {
+      console.error("[CRON] RTS backfill tick failed:", err?.message || err);
+    }
+  });
+  setTimeout(() => {
+    try {
+      void Promise.resolve(deps22.runSync({ lookbackSec, trigger: "boot" }));
+    } catch {
+    }
+  }, 28e3);
+  console.log(
+    `[CRON] READY_TO_SHIP backfill ON \u2014 expr="${cronExpr}" lookbackSec=${lookbackSec}`
+  );
+}
 
 // src/webhooks/shopeeWebhookHandler.ts
 var import_express = __toESM(require_express2(), 1);
@@ -79373,11 +79431,14 @@ async function queryOrdersPageFromStore(opts) {
     );
     const skipCounts = Boolean(opts?.skipCounts);
     const and = [];
-    const tabFilter = orderTabFilter(opts?.tab);
+    const search = String(opts?.query || "").trim();
+    const tabFilter = search ? {} : orderTabFilter(opts?.tab);
     if (Object.keys(tabFilter).length) and.push(tabFilter);
     const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
     if (shopFilter) and.push(shopFilter);
-    if (opts?.carrier && opts.carrier !== "all") and.push({ shipping_carrier: String(opts.carrier) });
+    if (!search && opts?.carrier && opts.carrier !== "all") {
+      and.push({ shipping_carrier: String(opts.carrier) });
+    }
     const printStatus = String(opts?.printStatus || "").trim().toLowerCase();
     if (printStatus === "printed" || printStatus === "da-in" || printStatus === "true") {
       and.push({
@@ -79414,19 +79475,24 @@ async function queryOrdersPageFromStore(opts) {
         ]
       });
     }
-    const search = String(opts?.query || "").trim();
     if (search) {
       const regex = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
       and.push({
         $or: [
           { orderSn: regex },
+          { "data.orderSn": regex },
+          { "data.order_sn": regex },
           { tracking_no: regex },
+          { trackingNumber: regex },
+          { "data.tracking_no": regex },
+          { "data.trackingNumber": regex },
           { return_tracking_no: regex },
           { "data.return_tracking_no": regex },
           { "data.return_sn": regex },
           { return_sn: regex },
           { "data.shopName": regex },
           { "data.shipping_carrier": regex },
+          { shipping_carrier: regex },
           { "data.items.productTitle": regex }
         ]
       });
@@ -108577,20 +108643,21 @@ async function refreshOrders(req, res) {
     const page = Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1;
     const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 5e3) : 2e3;
     const tab = String(req.query.tab || req.query.internal_tab || "").trim();
+    const searchQ = String(req.query.q ?? req.query.query ?? "").trim();
     const shopIds = parseShopIdsParam(
       req.query.shop_ids ?? req.query.shopIds,
       req.query.shop_id ?? req.query.shopId
     );
     const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "").trim();
     console.log(
-      `[GET /api/orders/refresh] params page=${page} limit=${limit} tab=${tab || "(none)"} shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} print_status=${req.query.print_status || req.query.printStatus || "(all)"}`
+      `[GET /api/orders/refresh] params page=${page} limit=${limit} tab=${tab || "(none)"} q=${searchQ || "(none)"} shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} print_status=${req.query.print_status || req.query.printStatus || "(all)"}`
     );
     const tabLc = tab.toLowerCase();
     const printStatus = String(req.query.print_status || req.query.printStatus || "").trim();
     let mergedOrders = [];
     let total = 0;
     let hasMore = false;
-    if (tabLc === "received_cancel_returns" || tabLc === "received-cancel-returns" || tabLc === "da_nhan_huy_hoan") {
+    if (!searchQ && (tabLc === "received_cancel_returns" || tabLc === "received-cancel-returns" || tabLc === "da_nhan_huy_hoan")) {
       const allReceived = await readOrdersForRefresh(5e3, {
         tab,
         shopId,
@@ -108605,9 +108672,10 @@ async function refreshOrders(req, res) {
       const pageResult = await queryOrdersPageFromStore({
         page,
         pageSize: limit,
-        tab,
+        tab: searchQ ? "" : tab,
         shopId,
         shopIds: shopIds.length ? shopIds : void 0,
+        query: searchQ,
         printStatus,
         skipCounts: true
       });
@@ -118846,6 +118914,8 @@ var SHOPEE_ORDER_LIST_MAX_TOTAL_LOOKBACK_SEC = 90 * 24 * 60 * 60;
 var ORDERS_PULL_PER_SHOP_MS = 18e4;
 var ORDERS_PULL_PER_SHOP_LONG_MS = 3e5;
 var ORDERS_PULL_HARD_DEADLINE_MS = 18e4;
+var READY_TO_SHIP_BACKFILL_LOOKBACK_SEC = 7 * 24 * 60 * 60;
+var FORCE_RESCUE_SHOPEE_ORDER_SNS = ["26081391A7VTJ7", "26081391Q3V4JV"];
 var ORDERS_PULL_LOCK_TIMEOUT_MS = 15 * 60 * 1e3;
 var ordersPullInFlight = false;
 var ordersPullStartedAt = 0;
@@ -119645,13 +119715,16 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
 }
 async function collectShopeeOrderSnsByStatus(shopId, accessToken, orderStatus, opts) {
   const now = Math.floor(Date.now() / 1e3);
-  const lookback = Math.max(
+  const rawLookback = Number(opts?.lookbackSec) || SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
+  const lookback = opts?.allowShortLookback ? Math.max(60, Math.min(SHOPEE_ORDER_LIST_MAX_TOTAL_LOOKBACK_SEC, rawLookback)) : Math.max(
     SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC,
     Math.min(
       SHOPEE_ORDER_LIST_MAX_TOTAL_LOOKBACK_SEC,
-      opts?.lookbackSec ?? SHOPEE_ORDER_LIST_INCREMENTAL_SEC
+      rawLookback
     )
   );
+  const timeRangeField = opts?.timeRangeField === "create_time" ? "create_time" : "update_time";
+  const allowShort = opts?.allowShortLookback === true;
   const timeFrom = now - lookback;
   const timeTo = now;
   const orderSnSet = /* @__PURE__ */ new Set();
@@ -119678,11 +119751,12 @@ async function collectShopeeOrderSnsByStatus(shopId, accessToken, orderStatus, o
       chunkPage += 1;
       try {
         let listResult = await shopeeGetOrderList(shopId, accessToken, {
-          timeRangeField: "update_time",
+          timeRangeField,
           timeFrom: chunkTimeFrom,
           timeTo: chunkTimeTo,
           cursor,
-          orderStatus: status
+          orderStatus: status,
+          allowShortLookback: allowShort
         });
         if (listResult?.httpStatus === 401 || listResult?.httpStatus === 403 || isShopeeInvalidTokenError(listResult?.error, listResult?.message)) {
           try {
@@ -119690,11 +119764,12 @@ async function collectShopeeOrderSnsByStatus(shopId, accessToken, orderStatus, o
             if (refreshed) {
               accessToken = refreshed;
               listResult = await shopeeGetOrderList(shopId, accessToken, {
-                timeRangeField: "update_time",
+                timeRangeField,
                 timeFrom: chunkTimeFrom,
                 timeTo: chunkTimeTo,
                 cursor,
-                orderStatus: status
+                orderStatus: status,
+                allowShortLookback: allowShort
               });
             }
           } catch (refreshErr) {
@@ -120942,7 +121017,8 @@ async function pullIncrementalOrdersFromShopee(opts) {
                   const upsert = await persistShopeeOrderChunk(orders, normalized, {
                     apiShopId: shopIdStr,
                     accessToken,
-                    skipTracking: !enrichTracking3
+                    // Persist TRƯỚC — logistics/tracking chạy sau, fail không drop đơn.
+                    skipTracking: true
                   });
                   added += upsert.added;
                   updated += upsert.updated;
@@ -127613,6 +127689,17 @@ function scheduleAutoIncrementalOrdersSyncSafe() {
     lookbackSec: Number(process.env.AUTO_ORDER_SYNC_LOOKBACK_SEC) || 2 * 60 * 60
   });
 }
+function scheduleReadyToShipBackfillSafe() {
+  scheduleReadyToShipBackfill({
+    runSync: (opts) => pullReadyToShipBackfillFromShopee({
+      lookbackSec: Number(opts?.lookbackSec) || READY_TO_SHIP_BACKFILL_LOOKBACK_SEC,
+      extraOrderSns: FORCE_RESCUE_SHOPEE_ORDER_SNS,
+      trigger: opts?.trigger || "cron"
+    }),
+    lookbackSec: READY_TO_SHIP_BACKFILL_LOOKBACK_SEC,
+    cronExpr: process.env.AUTO_RTS_BACKFILL_CRON_EXPR || "*/10 * * * *"
+  });
+}
 function scheduleShopeeReturnRequestsSyncSafe() {
   scheduleShopeeReturnRequestsSync({
     runSync: (opts) => syncShopeeReturnRequests({
@@ -128719,19 +128806,216 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
       enqueueLabelPdfDownload(newlyAddedForPdf);
     }
   }
-  if (syncCtx && touched.length > 0 && syncCtx.skipTracking !== true) {
-    const needTn = touched.filter((o) => needsShopeeTrackingEnrichment(o));
-    if (needTn.length > 0) {
-      syncDiag(
-        "Tracking enrich DEFERRED",
-        `${needTn.length} \u0111\u01A1n \u2192 get_tracking_number (kh\xF4ng ch\u1EB7n persist)`
-      );
-      scheduleDeferredTrackingEnrich(syncCtx.apiShopId, syncCtx.accessToken, needTn);
+  try {
+    if (syncCtx && touched.length > 0 && syncCtx.skipTracking !== true) {
+      const needTn = touched.filter((o) => needsShopeeTrackingEnrichment(o));
+      if (needTn.length > 0) {
+        syncDiag(
+          "Tracking enrich DEFERRED",
+          `${needTn.length} \u0111\u01A1n \u2192 get_tracking_number (kh\xF4ng ch\u1EB7n persist)`
+        );
+        scheduleDeferredTrackingEnrich(syncCtx.apiShopId, syncCtx.accessToken, needTn);
+      }
+    } else if (syncCtx?.skipTracking === true && touched.length > 0) {
+      syncDiag("Tracking enrich SKIPPED", "fast-path \u2014 b\xF9 m\xE3 sau pull, kh\xF4ng ch\u1EB7n chunk");
     }
-  } else if (syncCtx?.skipTracking === true && touched.length > 0) {
-    syncDiag("Tracking enrich SKIPPED", "fast-path \u2014 b\xF9 m\xE3 sau pull, kh\xF4ng ch\u1EB7n chunk");
+  } catch (trackGateErr) {
+    console.warn(
+      "[Orders Sync] logistics AFTER persist failed (\u0111\u01A1n \u0111\xE3 l\u01B0u, kh\xF4ng drop):",
+      trackGateErr?.message || trackGateErr
+    );
   }
   return { added, updated };
+}
+async function forceUpsertShopeeOrderSns(orderSns) {
+  const saved = [];
+  const failed = [];
+  const sns = [...new Set(orderSns.map((s2) => String(s2 || "").trim()).filter(Boolean))];
+  if (sns.length === 0) return { saved, failed };
+  ensureShopeeLinkedShopTokenKeys();
+  const shopIds = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const raw of listShopeeSyncShopIds()) {
+    try {
+      const resolved = resolveShopeeTokenShopId(raw) || normalizeShopIdKey(raw);
+      if (resolved && !seen.has(resolved)) {
+        seen.add(resolved);
+        shopIds.push(resolved);
+      }
+    } catch {
+    }
+  }
+  for (const sn of sns) {
+    let ok = false;
+    for (const shopId of shopIds) {
+      try {
+        const accessToken = await getValidShopeeAccessToken(shopId);
+        if (!accessToken) continue;
+        const { normalized } = await fetchNormalizeShopeeOrderChunk(
+          shopId,
+          accessToken,
+          shopId,
+          [sn],
+          { enrichTracking: false, skipEscrow: true }
+        );
+        if (!Array.isArray(normalized) || normalized.length === 0) continue;
+        await persistShopeeOrderChunk([], normalized, {
+          apiShopId: shopId,
+          accessToken,
+          skipTracking: true
+        });
+        saved.push(sn);
+        ok = true;
+        console.log(
+          `[Force Rescue] UPSERT OK order_sn=${sn} shop=${shopId} raw=${normalized[0]?.shopee_order_status || "-"} tn=${normalized[0]?.tracking_no || "\u2014"}`
+        );
+        break;
+      } catch (err) {
+        console.warn(
+          `[Force Rescue] shop=${shopId} order_sn=${sn}:`,
+          err?.message || err
+        );
+      }
+    }
+    if (!ok) {
+      failed.push(sn);
+      console.error(`[Force Rescue] KH\xD4NG l\u01B0u \u0111\u01B0\u1EE3c order_sn=${sn} (m\u1ECDi shop fail / not found)`);
+    }
+  }
+  return { saved, failed };
+}
+var rtsBackfillInFlight = false;
+async function pullReadyToShipBackfillFromShopee(opts) {
+  const trigger = String(opts?.trigger || "cron");
+  if (rtsBackfillInFlight || isOrdersPullLocked()) {
+    return {
+      success: true,
+      pulled: 0,
+      added: 0,
+      updated: 0,
+      skipped: true,
+      message: "RTS backfill skip \u2014 pull \u0111ang ch\u1EA1y"
+    };
+  }
+  rtsBackfillInFlight = true;
+  const startedAt = Date.now();
+  let pulled = 0;
+  let added = 0;
+  let updated = 0;
+  const lookbackSec = Math.max(
+    READY_TO_SHIP_BACKFILL_LOOKBACK_SEC,
+    Number(opts?.lookbackSec) || READY_TO_SHIP_BACKFILL_LOOKBACK_SEC
+  );
+  try {
+    ensureShopeeLinkedShopTokenKeys();
+    const shopIds = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const raw of listShopeeSyncShopIds()) {
+      try {
+        const resolved = resolveShopeeTokenShopId(raw) || normalizeShopIdKey(raw);
+        if (resolved && !seen.has(resolved)) {
+          seen.add(resolved);
+          shopIds.push(resolved);
+        }
+      } catch {
+      }
+    }
+    console.log(
+      `[RTS Backfill] START trigger=${trigger} shops=${shopIds.length} lookbackSec=${lookbackSec}`
+    );
+    for (const shopId of shopIds) {
+      const shopDeadlineAt = Date.now() + ORDERS_PULL_PER_SHOP_MS;
+      let accessToken = null;
+      try {
+        accessToken = await getValidShopeeAccessToken(shopId);
+      } catch (tokenErr) {
+        console.warn(`[RTS Backfill] token shop=${shopId}:`, tokenErr?.message || tokenErr);
+        continue;
+      }
+      if (!accessToken) continue;
+      const snSet = /* @__PURE__ */ new Set();
+      for (const extra of opts?.extraOrderSns || []) {
+        const sn = String(extra || "").trim();
+        if (sn) snSet.add(sn);
+      }
+      for (const status of ["READY_TO_SHIP", "RETRY_SHIP"]) {
+        try {
+          const sns = await collectShopeeOrderSnsByStatus(shopId, accessToken, status, {
+            lookbackSec,
+            deadlineAt: shopDeadlineAt,
+            timeRangeField: "create_time",
+            allowShortLookback: true
+          });
+          for (const sn of sns) snSet.add(sn);
+        } catch (listErr) {
+          console.warn(
+            `[RTS Backfill] get_order_list ${status} shop=${shopId}:`,
+            listErr?.message || listErr
+          );
+        }
+      }
+      const orderSnList = [...snSet];
+      console.log(`[RTS Backfill] shop=${shopId} sn=${orderSnList.length}`);
+      if (!orderSnList.length) continue;
+      const working = [];
+      for (let i2 = 0; i2 < orderSnList.length; i2 += SHOPEE_SYNC_CHUNK_SIZE) {
+        if (Date.now() >= shopDeadlineAt) break;
+        const chunkSns = orderSnList.slice(i2, i2 + SHOPEE_SYNC_CHUNK_SIZE);
+        try {
+          const fresh = await getValidShopeeAccessToken(shopId);
+          if (fresh) accessToken = fresh;
+          const { normalized } = await fetchNormalizeShopeeOrderChunk(
+            shopId,
+            accessToken,
+            shopId,
+            chunkSns,
+            { enrichTracking: false, skipEscrow: true }
+          );
+          if (!Array.isArray(normalized) || normalized.length === 0) continue;
+          const upsert = await persistShopeeOrderChunk(working, normalized, {
+            apiShopId: shopId,
+            accessToken,
+            skipTracking: true
+          });
+          added += upsert.added;
+          updated += upsert.updated;
+          pulled += normalized.length;
+        } catch (chunkErr) {
+          console.error(
+            `[RTS Backfill] persist chunk shop=${shopId} sns=${chunkSns.join(",")}:`,
+            chunkErr?.message || chunkErr
+          );
+        }
+        if (i2 + SHOPEE_SYNC_CHUNK_SIZE < orderSnList.length) {
+          await shopeeSyncDelay(SHOPEE_SYNC_CHUNK_DELAY_MS);
+        }
+      }
+    }
+    if (pulled > 0 || added > 0) {
+      try {
+        kickMissingShopeeTrackingEnrichment("after_rts_backfill");
+      } catch (tnErr) {
+        console.warn(
+          "[RTS Backfill] tracking after persist failed (\u0111\u01A1n \u0111\xE3 l\u01B0u):",
+          tnErr?.message || tnErr
+        );
+      }
+    }
+    const message = `RTS backfill xong pulled=${pulled} +${added}/~${updated} elapsed=${Date.now() - startedAt}ms`;
+    console.log(`[RTS Backfill] ${message}`);
+    return { success: true, pulled, added, updated, message };
+  } catch (err) {
+    console.error("[RTS Backfill] FATAL:", err?.message || err);
+    return {
+      success: false,
+      pulled,
+      added,
+      updated,
+      message: err?.message || String(err)
+    };
+  } finally {
+    rtsBackfillInFlight = false;
+  }
 }
 function withLocalDbTimeout(promise, timeoutMs, label) {
   let timer;
@@ -130553,26 +130837,6 @@ async function upsertShopeeWebhookShallow(body, orders) {
     await restoreLocalStockForPartialCancel(normalized.shopId || existing?.shopId, existing, normalized);
   }
   let merged = existingIndex >= 0 ? mergeShopeeOrderOnSync(existing, normalized) : normalized;
-  if (merged.channel === "shopee" && merged.shopId && needsShopeeTrackingEnrichment(merged)) {
-    try {
-      const accessToken = await getValidShopeeAccessToken(String(merged.shopId));
-      if (accessToken) {
-        merged = await enrichShopeeOrderTrackingFromApi(String(merged.shopId), accessToken, merged);
-      }
-    } catch (trackErr) {
-      console.warn(`[Shopee Webhook] enrich tracking ${merged.orderSn}:`, trackErr);
-    }
-  }
-  if (merged.channel === "shopee" && merged.shopId && merged.orderSn && merged.status !== "cancelled") {
-    try {
-      const accessToken = await getValidShopeeAccessToken(String(merged.shopId));
-      if (accessToken) {
-        await enrichShopeeOrdersEscrowFinance(String(merged.shopId), accessToken, [merged]);
-      }
-    } catch (financeErr) {
-      console.warn(`[Shopee Webhook] enrich escrow ${merged.orderSn}:`, financeErr);
-    }
-  }
   if (existingIndex >= 0) {
     orders[existingIndex] = merged;
   } else {
@@ -130590,6 +130854,34 @@ async function upsertShopeeWebhookShallow(body, orders) {
         `[Shopee Webhook] shallow Mongo upsert FAILED order_sn=${merged.orderSn}:`,
         mongoErr?.message || mongoErr
       );
+    }
+  }
+  if (merged.channel === "shopee" && merged.shopId && needsShopeeTrackingEnrichment(merged)) {
+    try {
+      const accessToken = await getValidShopeeAccessToken(String(merged.shopId));
+      if (accessToken) {
+        merged = await enrichShopeeOrderTrackingFromApi(String(merged.shopId), accessToken, merged);
+        if (existingIndex >= 0) orders[existingIndex] = merged;
+        else if (orders[0]?.orderSn === merged.orderSn) orders[0] = merged;
+        if (isMongoReady() && hasUsableShopeeTrackingNumber(merged)) {
+          await bulkUpsertOrdersToStore([merged]);
+        }
+      }
+    } catch (trackErr) {
+      console.warn(
+        `[Shopee Webhook] enrich tracking AFTER persist ${merged.orderSn} (\u0111\u01A1n \u0111\xE3 l\u01B0u):`,
+        trackErr
+      );
+    }
+  }
+  if (merged.channel === "shopee" && merged.shopId && merged.orderSn && merged.status !== "cancelled") {
+    try {
+      const accessToken = await getValidShopeeAccessToken(String(merged.shopId));
+      if (accessToken) {
+        await enrichShopeeOrdersEscrowFinance(String(merged.shopId), accessToken, [merged]);
+      }
+    } catch (financeErr) {
+      console.warn(`[Shopee Webhook] enrich escrow ${merged.orderSn}:`, financeErr);
     }
   }
   return String(merged.orderSn);
@@ -134911,8 +135203,18 @@ async function startServer() {
         scheduleMissingShopeeTrackingEnrichment();
         scheduleShopeeCancelReturnReconcile();
         scheduleAutoIncrementalOrdersSyncSafe();
+        scheduleReadyToShipBackfillSafe();
         scheduleShopeeReturnRequestsSyncSafe();
         scheduleHandedOverStatusReconcileSafe();
+        setTimeout(() => {
+          void forceUpsertShopeeOrderSns(FORCE_RESCUE_SHOPEE_ORDER_SNS).then((r2) => {
+            console.log(
+              `[Boot Rescue] saved=[${r2.saved.join(",") || "-"}] failed=[${r2.failed.join(",") || "-"}]`
+            );
+          }).catch((err) => {
+            console.warn("[Boot Rescue] failed:", err instanceof Error ? err.message : err);
+          });
+        }, 18e3);
       }
       console.log(
         `[MongoDB] connectDB xong \u2014 ready=${isMongoReady()} uri=${getMongoUriMasked()} | background order sync=ON (cron)`

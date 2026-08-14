@@ -497,6 +497,8 @@ export default function App() {
     print_status?: 'printed' | 'unprinted' | 'all' | '';
     /** Cùng filter với /api/orders/counter — tránh badge ≠ list. */
     tab?: string;
+    /** Search toàn collection — không kẹp tab. */
+    q?: string;
     /** Bỏ qua dedupe in-flight (vd: tab vừa visible lại sau đóng băng). */
     force?: boolean;
     /** Trả lỗi về caller thay vì giữ im lặng và chỉ retry nền. */
@@ -518,7 +520,8 @@ export default function App() {
     const merge = opts?.merge === true;
     const printStatus = String(opts?.print_status || '').trim().toLowerCase();
     const tab = String(opts?.tab || '').trim().toLowerCase();
-    const flightKey = `page:${page}|limit:${limit}|print:${printStatus || 'all'}|tab:${tab || 'all'}`;
+    const q = String(opts?.q || '').trim();
+    const flightKey = `page:${page}|limit:${limit}|print:${printStatus || 'all'}|tab:${tab || 'all'}|q:${q || ''}`;
 
     if (!opts?.force && fetchOrdersInFlightRef.current?.key === flightKey) {
       return fetchOrdersInFlightRef.current.promise;
@@ -546,7 +549,11 @@ export default function App() {
       params.set('limit', String(limit));
       if (bustCache) params.set('bust', '1');
       if (printStatus && printStatus !== 'all') params.set('print_status', printStatus);
-      if (tab) params.set('tab', tab);
+      if (q) {
+        params.set('q', q);
+      } else if (tab) {
+        params.set('tab', tab);
+      }
       const qs = params.toString();
       const path = `/api/orders/refresh?${qs}`;
       console.log(
@@ -608,6 +615,7 @@ export default function App() {
                 merge,
                 page,
                 tab,
+                q,
                 retriesLeft: retriesLeft - 1,
               });
             }, 3000);

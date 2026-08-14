@@ -706,6 +706,8 @@ interface OrderManagerProps {
     print_status?: 'printed' | 'unprinted' | 'all' | '';
     /** Tab SSOT — cùng filter với /api/orders/counter. */
     tab?: string;
+    /** Search toàn collection MongoDB — không kẹp tab. */
+    q?: string;
     force?: boolean;
     retriesLeft?: number;
     throwOnError?: boolean;
@@ -927,6 +929,7 @@ export default function OrderManager({
   });
   const [cancelReturnTab, setCancelReturnTab] = useState<CancelReturnTab>(() => readStoredCancelTab());
   const [selectedShopId, setSelectedShopId] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Sync = background job; FE chỉ ACK + lock nút + toast (không đổi text nút).
   const [isSyncing, setIsSyncing] = useState(false);
@@ -1014,11 +1017,12 @@ export default function OrderManager({
         page,
         limit: ORDERS_PAGE_SIZE,
         merge: false,
-        tab: activeSubTab === 'all' ? '' : activeSubTab,
+        tab: searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab,
+        q: searchQuery.trim() || undefined,
       });
       void fetchOrderCounts();
     },
-    [activeSubTab, currentPage, fetchOrderCounts, onFetchOrders],
+    [activeSubTab, currentPage, fetchOrderCounts, onFetchOrders, searchQuery],
   );
 
   const goToOrdersPage = useCallback(
@@ -1032,10 +1036,11 @@ export default function OrderManager({
         page: next,
         limit: ORDERS_PAGE_SIZE,
         merge: false,
-        tab: activeSubTab === 'all' ? '' : activeSubTab,
+        tab: searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab,
+        q: searchQuery.trim() || undefined,
       });
     },
-    [activeSubTab, onFetchOrders],
+    [activeSubTab, onFetchOrders, searchQuery],
   );
 
   // Đồng bộ currentPage với metadata API (sau fetch).
@@ -1395,12 +1400,37 @@ export default function OrderManager({
         page: 1,
         limit: ORDERS_PAGE_SIZE,
         merge: false,
-        tab: activeSubTab === 'all' ? '' : activeSubTab,
+        tab: searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab,
+        q: searchQuery.trim() || undefined,
       });
       void fetchOrderCounts();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSubTab, cancelReturnTab]);
+
+  const searchBootRef = React.useRef(true);
+  useEffect(() => {
+    if (searchBootRef.current) {
+      searchBootRef.current = false;
+      return;
+    }
+    const q = searchQuery.trim();
+    const handle = window.setTimeout(() => {
+      setCurrentPage(1);
+      void onFetchOrders?.({
+        silent: true,
+        bustCache: true,
+        force: true,
+        page: 1,
+        limit: ORDERS_PAGE_SIZE,
+        merge: false,
+        tab: q ? '' : activeSubTab === 'all' ? '' : activeSubTab,
+        q: q || undefined,
+      });
+    }, q ? 400 : 80);
+    return () => window.clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery]);
   
   // Camera Barcode Scanning States and Ref
   const [cameraScanResult, setCameraScanResult] = useState<string>('Đang chờ quét QR / mã vạch...');
@@ -1543,7 +1573,6 @@ export default function OrderManager({
     setTimeout(() => setScanToast(null), 2800);
   };
 
-  const [searchQuery, setSearchQuery] = useState('');
   /** `all` | `printed` | `unprinted` — lọc theo isPrinted từ DB. */
   const [printStatusFilter, setPrintStatusFilter] = useState<'all' | 'printed' | 'unprinted'>('all');
   const [resettingPrintIds, setResettingPrintIds] = useState<string[]>([]);
@@ -4977,7 +5006,9 @@ export default function OrderManager({
 
   /** Tab + sàn + shop + search (+ chưa in) — CHƯA lọc ĐVVC. Count và list dùng chung pool này. */
   const matchesOrdersListBaseFilters = (order: Order): boolean => {
-    // 1. Tab filter
+    const isGlobalSearch = Boolean(searchQuery.trim());
+    // 1. Tab filter — BỎ khi đang search (q= toàn collection).
+    if (!isGlobalSearch) {
     if (activeSubTab === 'cancel_returns') {
       if (!matchesCancelReturnTab(order, cancelReturnTab)) return false;
     } else if (activeSubTab === 'return_requests') {
@@ -4999,6 +5030,7 @@ export default function OrderManager({
       if (!matchesShippingTab(order)) return false;
     } else if (activeSubTab !== 'all' && activeSubTab !== 'order_products') {
       if (order.status !== activeSubTab) return false;
+    }
     }
 
     // 2. Platform filter (tab web_orders đã ép channel=woocommerce ở trên)
@@ -5088,6 +5120,7 @@ export default function OrderManager({
 
   const filteredOrdersBase = ordersPoolBeforeCarrier
     .filter((order) => {
+      if (searchQuery.trim()) return true;
       // ĐVVC filter — Chờ xác nhận + Chờ lấy hàng + Đơn hủy/hoàn
       if (
         activeSubTab === 'pending_confirm' ||

@@ -4972,11 +4972,15 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
     );
     const skipCounts = Boolean(opts?.skipCounts);
     const and: Record<string, unknown>[] = [];
-    const tabFilter = orderTabFilter(opts?.tab);
+    const search = String(opts?.query || "").trim();
+    // q= → quét TOÀN BỘ collection, không kẹp tab hiện tại.
+    const tabFilter = search ? {} : orderTabFilter(opts?.tab);
     if (Object.keys(tabFilter).length) and.push(tabFilter);
     const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
     if (shopFilter) and.push(shopFilter);
-    if (opts?.carrier && opts.carrier !== "all") and.push({ shipping_carrier: String(opts.carrier) });
+    if (!search && opts?.carrier && opts.carrier !== "all") {
+      and.push({ shipping_carrier: String(opts.carrier) });
+    }
     const printStatus = String(opts?.printStatus || "").trim().toLowerCase();
     // SSOT khớp docToOrder: ưu tiên isPrinted top-level; chỉ fallback data.isPrinted khi top-level thiếu.
     if (printStatus === "printed" || printStatus === "da-in" || printStatus === "true") {
@@ -5019,19 +5023,24 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
         ],
       });
     }
-    const search = String(opts?.query || "").trim();
     if (search) {
       const regex = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
       and.push({
         $or: [
           { orderSn: regex },
+          { "data.orderSn": regex },
+          { "data.order_sn": regex },
           { tracking_no: regex },
+          { trackingNumber: regex },
+          { "data.tracking_no": regex },
+          { "data.trackingNumber": regex },
           { return_tracking_no: regex },
           { "data.return_tracking_no": regex },
           { "data.return_sn": regex },
           { return_sn: regex },
           { "data.shopName": regex },
           { "data.shipping_carrier": regex },
+          { shipping_carrier: regex },
           { "data.items.productTitle": regex },
         ],
       });

@@ -359,6 +359,7 @@ export async function refreshOrders(req, res) {
         ? Math.min(Math.floor(rawLimit), 5000)
         : 2000;
     const tab = String(req.query.tab || req.query.internal_tab || "").trim();
+    const searchQ = String(req.query.q ?? req.query.query ?? "").trim();
     const shopIds = parseShopIdsParam(
       req.query.shop_ids ?? req.query.shopIds,
       req.query.shop_id ?? req.query.shopId,
@@ -366,6 +367,7 @@ export async function refreshOrders(req, res) {
     const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "").trim();
     console.log(
       `[GET /api/orders/refresh] params page=${page} limit=${limit} tab=${tab || "(none)"}` +
+        ` q=${searchQ || "(none)"}` +
         ` shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"}` +
         ` print_status=${req.query.print_status || req.query.printStatus || "(all)"}`,
     );
@@ -376,10 +378,12 @@ export async function refreshOrders(req, res) {
     let hasMore = false;
 
     // Tab đã nhận hủy/hoàn: nguồn don_hoan_huy (không phải Order collection).
+    // Search q= luôn query collection orders (không kẹp tab).
     if (
-      tabLc === "received_cancel_returns" ||
-      tabLc === "received-cancel-returns" ||
-      tabLc === "da_nhan_huy_hoan"
+      !searchQ &&
+      (tabLc === "received_cancel_returns" ||
+        tabLc === "received-cancel-returns" ||
+        tabLc === "da_nhan_huy_hoan")
     ) {
       const allReceived = await readOrdersForRefresh(5000, {
         tab,
@@ -396,9 +400,10 @@ export async function refreshOrders(req, res) {
       const pageResult = await queryOrdersPageFromStore({
         page,
         pageSize: limit,
-        tab,
+        tab: searchQ ? "" : tab,
         shopId,
         shopIds: shopIds.length ? shopIds : undefined,
+        query: searchQ,
         printStatus,
         skipCounts: true,
       });
