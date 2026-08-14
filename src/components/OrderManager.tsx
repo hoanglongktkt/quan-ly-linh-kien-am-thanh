@@ -5008,20 +5008,16 @@ export default function OrderManager({
     return clientCount;
   };
 
-  /** Shop + search + print + ĐVVC. Tab đã lọc ở Backend (`?tab=`) — không filter lại activeSubTab. */
+  /**
+   * Chỉ lọc cục bộ: Shop + Sàn + Search + Print.
+   * Backend đã lọc theo `?tab=` — CẤM filter lại activeSubTab (processed/unprocessed/...).
+   * Lần tối ưu trước để `if (activeSubTab === ...)` trong hàm này → return false hết list.
+   */
   const matchesOrdersListBaseFilters = (order: Order): boolean => {
-    // Nested sub-tab cancel_returns không có query Backend riêng.
-    if (
-      !searchQuery.trim() &&
-      activeSubTab === 'cancel_returns' &&
-      cancelReturnTab !== 'all' &&
-      !matchesCancelReturnTab(order, cancelReturnTab)
-    ) {
-      return false;
-    }
+    // if (activeSubTab === 'processed' / 'unprocessed' / 'handed_over_carrier' / ...) return false;
+    // → ĐÃ XÓA: không được lọc lại tab ở Frontend.
 
-    // Platform filter (tab web_orders đã ép channel=woocommerce ở Backend)
-    if (activeSubTab !== 'web_orders' && selectedPlatform !== 'all') {
+    if (selectedPlatform !== 'all') {
       if (selectedPlatform === 'lazada') return false;
       if (order.channel !== selectedPlatform) return false;
     }
@@ -5067,8 +5063,6 @@ export default function OrderManager({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mirrors live filter inputs below
     [
       orders,
-      activeSubTab,
-      cancelReturnTab,
       selectedPlatform,
       selectedShopId,
       searchQuery,
@@ -5112,17 +5106,7 @@ export default function OrderManager({
     return ordersPoolBeforeCarrier
       .filter((order) => {
         if (searchQuery.trim()) return true;
-        if (
-          activeSubTab === 'pending_confirm' ||
-          activeSubTab === 'pending_verification' ||
-          activeSubTab === 'unprocessed' ||
-          activeSubTab === 'processed' ||
-          activeSubTab === 'cancel_returns' ||
-          activeSubTab === 'received_cancel_returns'
-        ) {
-          return orderMatchesShippingCarrierFilter(order, selectedShippingCarrier);
-        }
-        return true;
+        return orderMatchesShippingCarrierFilter(order, selectedShippingCarrier);
       })
       .sort((a, b) => {
         const dateMs = (o: Order) => new Date(o.date || 0).getTime() || 0;
@@ -5136,7 +5120,6 @@ export default function OrderManager({
   }, [
     ordersPoolBeforeCarrier,
     searchQuery,
-    activeSubTab,
     selectedShippingCarrier,
     selectedSort,
   ]);

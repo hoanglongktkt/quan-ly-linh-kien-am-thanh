@@ -679,31 +679,12 @@ export default function App() {
           hasMore: Boolean(payload.has_more ?? payload.hasMore ?? currentPage < totalPages),
         });
         console.log('🛑 DATA ĐƯỢC LẤY TỪ URL:', requestUrl, '- SỐ LƯỢNG:', data.length);
-        if (requestId <= lastAppliedOrdersSeqRef.current) {
-          console.warn('[Fetch Orders] Bỏ qua response cũ (đã áp dụng response mới hơn).');
-          return;
-        }
+        // Chỉ bỏ request ĐÃ ABORT / không còn là in-flight hiện tại — không bỏ response 200 mới nhất.
+        if (controller.signal.aborted || callerSignal?.aborted) return;
+        if (fetchOrdersAbortRef.current !== controller) return;
         lastAppliedOrdersSeqRef.current = requestId;
         const sanitized = sanitizeOrders(data);
-        // Tab/search scoped: list rỗng là kết quả thật (tab không có đơn) — phải replace.
-        // Chỉ giữ cache khi refresh không kẹp tab (tránh Mongo tạm trống).
-        if (sanitized.length === 0) {
-          const existing = ordersHydrateRef.current;
-          const tabScoped = Boolean(tab) || Boolean(q) || Boolean(opts?.force);
-          if (existing.length > 0 && page <= 1 && !merge && !tabScoped) {
-            setHasLoadedOrdersOnce(true);
-            console.warn(
-              `[Fetch Orders] List rỗng (page=${page} tab=${tab || 'all'}) — giữ danh sách/cache hiện tại.`,
-            );
-            return;
-          }
-          if (!merge) {
-            setOrders([]);
-            ordersHydrateRef.current = [];
-          }
-          setHasLoadedOrdersOnce(true);
-          return;
-        }
+        // Thành công 200: đưa thẳng vào state. Không guard bỏ response (tránh UI rỗng dù Network có data).
         if (merge) {
           setOrders((prev) => {
             const base = prev.length > 0 ? prev : ordersHydrateRef.current;
@@ -715,7 +696,7 @@ export default function App() {
         } else {
           setOrders(sanitized);
           ordersHydrateRef.current = sanitized;
-          void saveOrdersCache(sanitized);
+          if (sanitized.length > 0) void saveOrdersCache(sanitized);
         }
         setHasLoadedOrdersOnce(true);
         console.log(
