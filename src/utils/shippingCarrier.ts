@@ -113,12 +113,9 @@ function isInstantCarrierText(text: string): boolean {
 
 function isSpxCarrierText(text: string): boolean {
   if (!text || isInstantCarrierText(text)) return false;
-  // spx / shopee express / standard (Shopee VN)
-  if (text.includes('spx')) return true;
-  if (text.includes('shopee')) return true; // Shopee Express / Shopee Xpress / ...
-  if (text.includes('standard')) return true;
-  // Mã vận đơn SPXVN...
-  if (text.includes('spxvn')) return true;
+  if (text.includes('spxvn') || text.includes('spx')) return true;
+  if (text.includes('shopee express') || text.includes('shopee xpress')) return true;
+  if (text.includes('standard express')) return true;
   return false;
 }
 
@@ -138,27 +135,16 @@ export function isInstantShippingOrder(order: Order | Record<string, unknown>): 
 
 /**
  * Phân loại ĐVVC — DÙNG CHUNG cho filter danh sách + badge count.
- * Thứ tự: Instant → SPX Express → GHN → ĐVVC Khác.
+ * Thứ tự: Instant → GHN → SPX Express → ĐVVC Khác.
+ * Không có tín hiệu rõ → `other` (CẤM default SPX).
  */
 export function getShippingCarrierGroup(
   order: Order | Record<string, unknown>,
 ): Exclude<ShippingCarrierFilter, 'all'> {
   const text = getOrderCarrierText(order);
   if (isInstantCarrierText(text)) return 'instant';
-  if (isSpxCarrierText(text)) return 'spx';
   if (isGhnCarrierText(text)) return 'ghn';
-
-  // DB cũ thường chỉ có packageNumber OFG... — chưa có shipping_carrier.
-  // Đơn Shopee không có tín hiệu GHN/Instant → mặc định SPX Express (phổ biến VN).
-  const channel = String((order as Order).channel || '').toLowerCase();
-  const meaningful = text
-    .replace(/ofg[a-z0-9]*/g, ' ')
-    .replace(/0fg[a-z0-9]*/g, ' ')
-    .replace(/\|/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!meaningful && channel === 'shopee') return 'spx';
-
+  if (isSpxCarrierText(text)) return 'spx';
   return 'other';
 }
 
@@ -181,8 +167,8 @@ export function inferShippingCarrierLabel(
   if (existing) return existing;
 
   const group = getShippingCarrierGroup(order);
-  if (group === 'spx') return 'SPX Express';
   if (group === 'ghn') return 'Giao Hàng Nhanh';
+  if (group === 'spx') return 'SPX Express';
   if (group === 'instant') {
     const text = getOrderCarrierText(order);
     if (text.includes('grab')) return 'GrabExpress';

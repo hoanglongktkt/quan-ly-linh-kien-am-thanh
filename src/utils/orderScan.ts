@@ -9,11 +9,15 @@ export function normalizeOrderScanKey(raw: string): string {
     .replace(/[\s\-_#./\\|:;,]+/g, '');
 }
 
-/** Heuristic: QR on waybill usually encodes carrier tracking (SPXVN..., etc.). */
+/** Heuristic: QR waybill — prefix hãng, alphanumeric, hoặc toàn số 6–40 (GHN). */
 export function isLikelyTrackingCode(raw: string): boolean {
   const key = normalizeOrderScanKey(raw);
-  if (!key || key.length < 8) return false;
-  return /^(SPX(VN)?|GHN|GHTK|JNT|JT|NINJA|VTP|VNPOST)[A-Z0-9]+$/.test(key);
+  if (!key || key.length < 6 || key.length > 40) return false;
+  if (isShopeeInternalTrackingCode(key)) return false;
+  // Shopee order_sn kiểu 240814N2XXXX — không phải mã vận đơn.
+  if (/^\d{6}[A-Z][A-Z0-9]{5,}$/i.test(key)) return false;
+  if (/^\d{6,40}$/.test(key)) return true;
+  return /^[A-Z0-9][A-Z0-9\-]{5,39}$/.test(key);
 }
 
 function flexibleCodeMatch(scanKey: string, fieldKey: string): boolean {

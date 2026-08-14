@@ -22,35 +22,6 @@ function inferCarrierFromTn(tn) {
   return '';
 }
 
-function trackingPrefixFamily(code) {
-  const k = String(code || '').trim().toUpperCase();
-  if (!k || /^0FG/i.test(k)) return '';
-  if (/^SPX/.test(k)) return 'spx';
-  if (/^GYA/.test(k) || /^GHN/.test(k)) return 'ghn';
-  return '';
-}
-
-function shippingCarrierFamily(carrier) {
-  const raw = String(carrier || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/đ/g, 'd')
-    .replace(/Đ/g, 'D')
-    .toLowerCase()
-    .trim();
-  if (!raw) return '';
-  if (/giao hang nhanh|giaohangnhanh|\bghn\b/.test(raw)) return 'ghn';
-  if (/spx|shopee\s*x?press|shopee express|standard express/.test(raw)) return 'spx';
-  return '';
-}
-
-function isTrackingCompatibleWithCarrier(trackingNo, carrier) {
-  const tf = trackingPrefixFamily(trackingNo);
-  const cf = shippingCarrierFamily(carrier);
-  if (!tf || !cf) return true;
-  return tf === cf;
-}
-
 async function fetchJson(backendUrl, req, pathPart, init = {}, timeoutMs = 120000) {
   const target = buildCpanelTarget(backendUrl, pathPart, init.query || {});
   const headers = {
@@ -166,13 +137,6 @@ export async function handleHydrateTracking(req, res) {
       }
       const id = o.id || `shopee-${sn}`;
       const existingCarrier = String(o.shipping_carrier || o.checkout_shipping_carrier || '').trim();
-      if (!isTrackingCompatibleWithCarrier(mongoTn, existingCarrier)) {
-        failed += 1;
-        if (samples.length < 12) {
-          samples.push({ sn, tn: mongoTn, error: `reject mismatch carrier=${existingCarrier}` });
-        }
-        continue;
-      }
       const carrier = inferCarrierFromTn(mongoTn);
       const patch = {
         tracking_no: mongoTn,

@@ -2343,12 +2343,15 @@ async function resolveOrderFromShopeeByScanCode(rawCode: string): Promise<any | 
   );
   const primaryKey =
     [...scanKeys].find((k) => k.length >= 8) || [...scanKeys][0] || "";
+  const looksLikeShopeeOrderSn = /^\d{6}[A-Z][A-Z0-9]{5,}$/i.test(primaryKey);
   const looksLikeTracking =
-    /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST)/i.test(primaryKey) ||
-    (/^[A-Z0-9]{10,}$/i.test(primaryKey) && /[A-Z]/i.test(primaryKey) && /\d/.test(primaryKey));
+    !looksLikeShopeeOrderSn &&
+    (/^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST)/i.test(primaryKey) ||
+      /^\d{6,40}$/.test(primaryKey) ||
+      /^[A-Z0-9][A-Z0-9\-]{5,39}$/i.test(primaryKey));
   const looksLikeOrderSn =
     !looksLikeTracking &&
-    (/^\d{6}[A-Z0-9]{6,}$/i.test(primaryKey) || /^[A-Z0-9]{10,20}$/i.test(primaryKey));
+    (looksLikeShopeeOrderSn || /^[A-Z0-9]{10,20}$/i.test(primaryKey));
 
   const orderMatchesScan = (order: any): boolean => {
     if (!order) return false;
@@ -10799,46 +10802,18 @@ function isShopeeInternalTrackingCode(code: unknown): boolean {
 function isCarrierTrackingCode(code: unknown): boolean {
   const k = String(code || "").trim().toUpperCase();
   if (!k || isShopeeInternalTrackingCode(k)) return false;
-  // SPX/GHN/... hoặc mã số dài từ 3PL — không bỏ sót chỉ vì không khớp prefix cũ.
-  if (/^(SPX(VN)?|GHN|GHTK|JNT|JT|NINJA|VTP|VNPOST|LEX|NJV|GRB|BEST|NINJAVAN)/.test(k)) return true;
-  // GHN / J&T thường trả mã alphanumeric không prefix (VD: GYAGLRYW)
-  if (/^[A-Z0-9][A-Z0-9\-]{5,19}$/.test(k)) return true;
+  if (k.length < 6 || k.length > 40) return false;
+  // Mọi hãng: toàn số 6–40 (GHN/return_sn) hoặc alphanumeric — không bắt chữ cái / prefix.
+  if (/^\d{6,40}$/.test(k)) return true;
+  if (/^[A-Z0-9][A-Z0-9\-_./]{5,39}$/.test(k)) return true;
   return false;
 }
 
-/** Family từ tiền tố mã vận đơn (SPX... / GYA... / GHN...). */
-function trackingPrefixFamily(code: unknown): "spx" | "ghn" | "" {
-  const k = String(code || "").trim().toUpperCase();
-  if (!k || isShopeeInternalTrackingCode(k)) return "";
-  if (/^SPX/.test(k)) return "spx";
-  if (/^GYA/.test(k) || /^GHN/.test(k)) return "ghn";
-  return "";
-}
-
-/** Family từ tên ĐVVC (shipping_carrier / checkout_shipping_carrier). */
-function shippingCarrierFamily(carrier: unknown): "spx" | "ghn" | "" {
-  const raw = String(carrier || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/đ/g, "d")
-    .replace(/Đ/g, "D")
-    .toLowerCase()
-    .trim();
-  if (!raw) return "";
-  if (/giao hang nhanh|giaohangnhanh|\bghn\b/.test(raw)) return "ghn";
-  if (/spx|shopee\s*x?press|shopee express|standard express/.test(raw)) return "spx";
-  return "";
-}
-
 /**
- * Validation: tiền tố mã vận đơn không được đá với tên ĐVVC.
- * VD: SPXVN... ≠ Giao Hàng Nhanh; GYA... ≠ SPX Express.
+ * ĐÃ TẮT: không chặn/xóa mã vì lệch hãng. Mã Shopee trả về thì giữ nguyên.
  */
-function isTrackingCompatibleWithCarrier(trackingNo: unknown, carrier: unknown): boolean {
-  const tf = trackingPrefixFamily(trackingNo);
-  const cf = shippingCarrierFamily(carrier);
-  if (!tf || !cf) return true;
-  return tf === cf;
+function isTrackingCompatibleWithCarrier(_trackingNo?: unknown, _carrier?: unknown): boolean {
+  return true;
 }
 
 function applyShopeeTrackingCode(order: any, rawCode: unknown) {
@@ -10848,18 +10823,7 @@ function applyShopeeTrackingCode(order: any, rawCode: unknown) {
     order.internalTrackingCode = code;
     return;
   }
-  const carrierHint =
-    order?.shipping_carrier ||
-    order?.checkout_shipping_carrier ||
-    order?.carrier ||
-    "";
-  if (!isTrackingCompatibleWithCarrier(code, carrierHint)) {
-    console.warn(
-      `[Shopee Tracking] REJECT mismatch order_sn=${order?.orderSn} tn=${code} carrier=${carrierHint}`,
-    );
-    return;
-  }
-  // Mọi mã vận đơn thực (kể cả format lạ GHN) — mirror tracking_no cho DB/UI.
+  // Mọi mã Shopee trả về (GHN số / GYA / SPX / …) — lưu nguyên, không reject lệch hãng.
   order.trackingNumber = code;
   order.tracking_no = code;
 }
@@ -10883,29 +10847,13 @@ function isTrackingEnrichOnCooldown(order: any): boolean {
 
 function repairMisassignedTracking(order: any): any {
   if (!order || typeof order !== "object") return order;
-  // Đồng bộ mirror field
+  // Chỉ đồng bộ mirror — CẤM xóa tracking_no vì lệch hãng.
   if (order.tracking_no && !order.trackingNumber) order.trackingNumber = order.tracking_no;
   if (order.trackingNumber && !order.tracking_no) order.tracking_no = order.trackingNumber;
   if (order.trackingNumber && isShopeeInternalTrackingCode(order.trackingNumber)) {
     if (!order.internalTrackingCode) order.internalTrackingCode = order.trackingNumber;
     order.trackingNumber = undefined;
     order.tracking_no = undefined;
-  }
-  // Đơn hủy/hoàn: KHÔNG xóa mã vận đơn dù lệch carrier — kho cần quét barcode phân loại.
-  if (isCancelOrReturnOrderStatus(order) || order.return_sn) {
-    return order;
-  }
-  // Chữa cháy: SPX mã gắn đơn GHN (hoặc ngược lại) → xóa mã sai, giữ carrier.
-  const tn = String(order.trackingNumber || order.tracking_no || "").trim();
-  const carrierHint =
-    order.shipping_carrier || order.checkout_shipping_carrier || order.carrier || "";
-  if (tn && !isTrackingCompatibleWithCarrier(tn, carrierHint)) {
-    console.log(
-      `[Shopee Tracking] CLEAR mismatched tracking order_sn=${order.orderSn} tn=${tn} carrier=${carrierHint}`,
-    );
-    order.trackingNumber = undefined;
-    order.tracking_no = undefined;
-    setTrackingEnrichCooldown(order, "mismatched_tracking_cleared");
   }
   return order;
 }
@@ -10933,7 +10881,7 @@ function deepExtractShopeeTrackingCodes(
       if (!/tracking/i.test(key) || /time|date|url|info|hint|status|type/i.test(key)) return;
     }
     const s = String(value || "").trim();
-    if (!s || s.length < 5 || s.length > 40) return;
+    if (!s || s.length < 6 || s.length > 40) return;
     if (!/^[A-Za-z0-9][A-Za-z0-9\-_./]*$/.test(s)) return;
     if (isShopeeInternalTrackingCode(s)) {
       if (!internal) {
@@ -10942,17 +10890,10 @@ function deepExtractShopeeTrackingCodes(
       }
       return;
     }
-    // Bỏ qua mã order_sn kiểu dài toàn số nếu key không rõ ràng
-    if (/^\d{15,}$/.test(s) && !/tracking/i.test(key)) return;
-    if (!carrier || isCarrierTrackingCode(s)) {
-      if (!carrier || (isCarrierTrackingCode(s) && !isCarrierTrackingCode(carrier))) {
-        carrier = s;
-        sources.push(`${path}=${s}`);
-      } else if (!carrier) {
-        carrier = s;
-        sources.push(`${path}=${s}`);
-      }
-    } else if (!carrier && s.length >= 6) {
+    if (!carrier) {
+      carrier = s;
+      sources.push(`${path}=${s}`);
+    } else if (isCarrierTrackingCode(s) && !isCarrierTrackingCode(carrier)) {
       carrier = s;
       sources.push(`${path}=${s}`);
     }
@@ -11048,15 +10989,6 @@ function applyDeepShopeeTrackingPayload(order: any, payload: unknown, label = "p
   const extracted = deepExtractShopeeTrackingCodes(payload, { orderSn });
   if (extracted.internal) order.internalTrackingCode = extracted.internal;
   if (extracted.carrier) {
-    const carrierHint =
-      order?.shipping_carrier || order?.checkout_shipping_carrier || order?.carrier || "";
-    if (!isTrackingCompatibleWithCarrier(extracted.carrier, carrierHint)) {
-      console.warn(
-        `[Shopee Tracking] Deep extract REJECT mismatch order_sn=${orderSn} from=${label} tn=${extracted.carrier} carrier=${carrierHint}`,
-      );
-      repairMisassignedTracking(order);
-      return false;
-    }
     applyShopeeTrackingCode(order, extracted.carrier);
     console.log(
       `[Shopee Tracking] Deep extract OK order_sn=${orderSn} from=${label} carrier=${extracted.carrier} sources=${extracted.sources.slice(0, 6).join(" | ")}`,
@@ -11123,22 +11055,6 @@ async function persistOrderTrackingToDb(order: any): Promise<void> {
         console.warn(`[Shopee Tracking] Mongo return-only failed ${sn}:`, err?.message || err);
       }
     }
-    return;
-  }
-  const carrierHint =
-    order?.shipping_carrier || order?.checkout_shipping_carrier || order?.carrier || "";
-  // Đơn hủy/hoàn: vẫn persist mã dù lệch carrier (kho cần quét).
-  if (
-    !isCancelOrReturnOrderStatus(order) &&
-    !order?.return_sn &&
-    !isTrackingCompatibleWithCarrier(tn, carrierHint)
-  ) {
-    console.warn(
-      `[Shopee Tracking] SKIP persist mismatch order_sn=${order.orderSn} tn=${tn} carrier=${carrierHint}`,
-    );
-    order.trackingNumber = undefined;
-    order.tracking_no = undefined;
-    // Vẫn giữ package_number đã ghi ở trên.
     return;
   }
   order.trackingNumber = tn;
@@ -12792,19 +12708,8 @@ async function enrichMissingShopeeTracking(): Promise<{
                 light: false,
                 retries: 2,
               });
-              // Chỉ khôi phục outbound cũ nếu enrich chưa CLEAR do lệch carrier
-              // (tránh gắn lại SPX lên đơn GHN → vòng CLEAR mỗi 10 phút).
-              if (
-                outboundBefore &&
-                order.tracking_enrich_cooldown_reason !== "mismatched_tracking_cleared" &&
-                isTrackingCompatibleWithCarrier(
-                  outboundBefore,
-                  order.shipping_carrier ||
-                    order.checkout_shipping_carrier ||
-                    order.carrier ||
-                    "",
-                )
-              ) {
+              // Giữ outbound cũ nếu enrich không trả mã mới — không CLEAR vì lệch hãng.
+              if (outboundBefore && !String(order.trackingNumber || order.tracking_no || "").trim()) {
                 order.trackingNumber = outboundBefore;
                 order.tracking_no = outboundBefore;
               }

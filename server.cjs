@@ -74813,10 +74813,9 @@ function isInstantCarrierText(text) {
 }
 function isSpxCarrierText(text) {
   if (!text || isInstantCarrierText(text)) return false;
-  if (text.includes("spx")) return true;
-  if (text.includes("shopee")) return true;
-  if (text.includes("standard")) return true;
-  if (text.includes("spxvn")) return true;
+  if (text.includes("spxvn") || text.includes("spx")) return true;
+  if (text.includes("shopee express") || text.includes("shopee xpress")) return true;
+  if (text.includes("standard express")) return true;
   return false;
 }
 function isGhnCarrierText(text) {
@@ -74829,11 +74828,8 @@ function isGhnCarrierText(text) {
 function getShippingCarrierGroup(order) {
   const text = getOrderCarrierText(order);
   if (isInstantCarrierText(text)) return "instant";
-  if (isSpxCarrierText(text)) return "spx";
   if (isGhnCarrierText(text)) return "ghn";
-  const channel = String(order.channel || "").toLowerCase();
-  const meaningful = text.replace(/ofg[a-z0-9]*/g, " ").replace(/0fg[a-z0-9]*/g, " ").replace(/\|/g, " ").replace(/\s+/g, " ").trim();
-  if (!meaningful && channel === "shopee") return "spx";
+  if (isSpxCarrierText(text)) return "spx";
   return "other";
 }
 function inferShippingCarrierLabel(order) {
@@ -74842,8 +74838,8 @@ function inferShippingCarrierLabel(order) {
   ).trim();
   if (existing) return existing;
   const group = getShippingCarrierGroup(order);
-  if (group === "spx") return "SPX Express";
   if (group === "ghn") return "Giao H\xE0ng Nhanh";
+  if (group === "spx") return "SPX Express";
   if (group === "instant") {
     const text = getOrderCarrierText(order);
     if (text.includes("grab")) return "GrabExpress";
@@ -75050,8 +75046,9 @@ function isShopeeInternalTrackingCode(code) {
 function isCarrierTrackingCode(code) {
   const k = String(code || "").trim().toUpperCase();
   if (!k || isShopeeInternalTrackingCode(k)) return false;
-  if (/^(SPX(VN)?|GHN|GHTK|JNT|JT|NINJA|VTP|VNPOST|LEX|NJV|GRB|BEST|NINJAVAN)/.test(k)) return true;
-  if (/^[A-Z0-9][A-Z0-9\-]{5,19}$/.test(k)) return true;
+  if (k.length < 6 || k.length > 40) return false;
+  if (/^\d{6,40}$/.test(k)) return true;
+  if (/^[A-Z0-9][A-Z0-9\-_./]{5,39}$/.test(k)) return true;
   return false;
 }
 
@@ -125737,42 +125734,16 @@ function isShopeeInternalTrackingCode2(code) {
 function isCarrierTrackingCode3(code) {
   const k = String(code || "").trim().toUpperCase();
   if (!k || isShopeeInternalTrackingCode2(k)) return false;
-  if (/^(SPX(VN)?|GHN|GHTK|JNT|JT|NINJA|VTP|VNPOST|LEX|NJV|GRB|BEST|NINJAVAN)/.test(k)) return true;
-  if (/^[A-Z0-9][A-Z0-9\-]{5,19}$/.test(k)) return true;
+  if (k.length < 6 || k.length > 40) return false;
+  if (/^\d{6,40}$/.test(k)) return true;
+  if (/^[A-Z0-9][A-Z0-9\-_./]{5,39}$/.test(k)) return true;
   return false;
-}
-function trackingPrefixFamily(code) {
-  const k = String(code || "").trim().toUpperCase();
-  if (!k || isShopeeInternalTrackingCode2(k)) return "";
-  if (/^SPX/.test(k)) return "spx";
-  if (/^GYA/.test(k) || /^GHN/.test(k)) return "ghn";
-  return "";
-}
-function shippingCarrierFamily(carrier) {
-  const raw = String(carrier || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase().trim();
-  if (!raw) return "";
-  if (/giao hang nhanh|giaohangnhanh|\bghn\b/.test(raw)) return "ghn";
-  if (/spx|shopee\s*x?press|shopee express|standard express/.test(raw)) return "spx";
-  return "";
-}
-function isTrackingCompatibleWithCarrier(trackingNo, carrier) {
-  const tf = trackingPrefixFamily(trackingNo);
-  const cf = shippingCarrierFamily(carrier);
-  if (!tf || !cf) return true;
-  return tf === cf;
 }
 function applyShopeeTrackingCode(order, rawCode) {
   const code = String(rawCode || "").trim();
   if (!code) return;
   if (isShopeeInternalTrackingCode2(code)) {
     order.internalTrackingCode = code;
-    return;
-  }
-  const carrierHint = order?.shipping_carrier || order?.checkout_shipping_carrier || order?.carrier || "";
-  if (!isTrackingCompatibleWithCarrier(code, carrierHint)) {
-    console.warn(
-      `[Shopee Tracking] REJECT mismatch order_sn=${order?.orderSn} tn=${code} carrier=${carrierHint}`
-    );
     return;
   }
   order.trackingNumber = code;
@@ -125801,19 +125772,6 @@ function repairMisassignedTracking(order) {
     order.trackingNumber = void 0;
     order.tracking_no = void 0;
   }
-  if (isCancelOrReturnOrderStatus(order) || order.return_sn) {
-    return order;
-  }
-  const tn = String(order.trackingNumber || order.tracking_no || "").trim();
-  const carrierHint = order.shipping_carrier || order.checkout_shipping_carrier || order.carrier || "";
-  if (tn && !isTrackingCompatibleWithCarrier(tn, carrierHint)) {
-    console.log(
-      `[Shopee Tracking] CLEAR mismatched tracking order_sn=${order.orderSn} tn=${tn} carrier=${carrierHint}`
-    );
-    order.trackingNumber = void 0;
-    order.tracking_no = void 0;
-    setTrackingEnrichCooldown(order, "mismatched_tracking_cleared");
-  }
   return order;
 }
 function deepExtractShopeeTrackingCodes(payload, opts) {
@@ -125826,7 +125784,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
       if (!/tracking/i.test(key) || /time|date|url|info|hint|status|type/i.test(key)) return;
     }
     const s2 = String(value || "").trim();
-    if (!s2 || s2.length < 5 || s2.length > 40) return;
+    if (!s2 || s2.length < 6 || s2.length > 40) return;
     if (!/^[A-Za-z0-9][A-Za-z0-9\-_./]*$/.test(s2)) return;
     if (isShopeeInternalTrackingCode2(s2)) {
       if (!internal) {
@@ -125835,16 +125793,10 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
       }
       return;
     }
-    if (/^\d{15,}$/.test(s2) && !/tracking/i.test(key)) return;
-    if (!carrier || isCarrierTrackingCode3(s2)) {
-      if (!carrier || isCarrierTrackingCode3(s2) && !isCarrierTrackingCode3(carrier)) {
-        carrier = s2;
-        sources.push(`${path18}=${s2}`);
-      } else if (!carrier) {
-        carrier = s2;
-        sources.push(`${path18}=${s2}`);
-      }
-    } else if (!carrier && s2.length >= 6) {
+    if (!carrier) {
+      carrier = s2;
+      sources.push(`${path18}=${s2}`);
+    } else if (isCarrierTrackingCode3(s2) && !isCarrierTrackingCode3(carrier)) {
       carrier = s2;
       sources.push(`${path18}=${s2}`);
     }
@@ -125928,14 +125880,6 @@ function applyDeepShopeeTrackingPayload(order, payload, label = "payload") {
   const extracted = deepExtractShopeeTrackingCodes(payload, { orderSn });
   if (extracted.internal) order.internalTrackingCode = extracted.internal;
   if (extracted.carrier) {
-    const carrierHint = order?.shipping_carrier || order?.checkout_shipping_carrier || order?.carrier || "";
-    if (!isTrackingCompatibleWithCarrier(extracted.carrier, carrierHint)) {
-      console.warn(
-        `[Shopee Tracking] Deep extract REJECT mismatch order_sn=${orderSn} from=${label} tn=${extracted.carrier} carrier=${carrierHint}`
-      );
-      repairMisassignedTracking(order);
-      return false;
-    }
     applyShopeeTrackingCode(order, extracted.carrier);
     console.log(
       `[Shopee Tracking] Deep extract OK order_sn=${orderSn} from=${label} carrier=${extracted.carrier} sources=${extracted.sources.slice(0, 6).join(" | ")}`
@@ -125997,15 +125941,6 @@ async function persistOrderTrackingToDb(order) {
         console.warn(`[Shopee Tracking] Mongo return-only failed ${sn}:`, err?.message || err);
       }
     }
-    return;
-  }
-  const carrierHint = order?.shipping_carrier || order?.checkout_shipping_carrier || order?.carrier || "";
-  if (!isCancelOrReturnOrderStatus(order) && !order?.return_sn && !isTrackingCompatibleWithCarrier(tn, carrierHint)) {
-    console.warn(
-      `[Shopee Tracking] SKIP persist mismatch order_sn=${order.orderSn} tn=${tn} carrier=${carrierHint}`
-    );
-    order.trackingNumber = void 0;
-    order.tracking_no = void 0;
     return;
   }
   order.trackingNumber = tn;
@@ -127198,10 +127133,7 @@ async function enrichMissingShopeeTracking() {
                 light: false,
                 retries: 2
               });
-              if (outboundBefore && order.tracking_enrich_cooldown_reason !== "mismatched_tracking_cleared" && isTrackingCompatibleWithCarrier(
-                outboundBefore,
-                order.shipping_carrier || order.checkout_shipping_carrier || order.carrier || ""
-              )) {
+              if (outboundBefore && !String(order.trackingNumber || order.tracking_no || "").trim()) {
                 order.trackingNumber = outboundBefore;
                 order.tracking_no = outboundBefore;
               }

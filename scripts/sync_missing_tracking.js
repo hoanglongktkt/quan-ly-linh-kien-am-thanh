@@ -590,11 +590,6 @@ async function main() {
         if (!tn) {
           skippedEmpty++;
           console.log(`${prefix}... Thất bại: API trả về rỗng`);
-        } else if (!isTrackingCompatibleWithCarrier(tn, carrierOf(doc))) {
-          failed++;
-          console.log(
-            `${prefix}... REJECT: mã ${tn} đá carrier=${carrierOf(doc) || "(empty)"} — không ghi DB`,
-          );
         } else if (dryRun) {
           updated++;
           console.log(`${prefix}... [DRY-RUN] Có mã: ${tn} (chưa ghi DB)`);

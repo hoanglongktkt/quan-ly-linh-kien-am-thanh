@@ -5,13 +5,13 @@ export function isShopeeInternalTrackingCode(code: unknown): boolean {
   return /^0FG/i.test(String(code || '').trim());
 }
 
-/** Carrier tracking on shipping label (SPXVN..., GHN GYAGLRYW..., ...). */
+/** Carrier tracking — mọi hãng: prefix, alphanumeric, hoặc toàn số 6–40 (GHN/return_sn). */
 export function isCarrierTrackingCode(code: unknown): boolean {
   const k = String(code || '').trim().toUpperCase();
   if (!k || isShopeeInternalTrackingCode(k)) return false;
-  if (/^(SPX(VN)?|GHN|GHTK|JNT|JT|NINJA|VTP|VNPOST|LEX|NJV|GRB|BEST|NINJAVAN)/.test(k)) return true;
-  // GHN / J&T thường trả mã alphanumeric 6–20 ký tự không có prefix cố định (VD: GYAGLRYW)
-  if (/^[A-Z0-9][A-Z0-9\-]{5,19}$/.test(k)) return true;
+  if (k.length < 6 || k.length > 40) return false;
+  if (/^\d{6,40}$/.test(k)) return true;
+  if (/^[A-Z0-9][A-Z0-9\-_./]{5,39}$/.test(k)) return true;
   return false;
 }
 
