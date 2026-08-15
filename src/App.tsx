@@ -690,8 +690,11 @@ export default function App() {
             : page;
         console.log('🛑 DATA ĐƯỢC LẤY TỪ URL:', requestUrl, '- SỐ LƯỢNG:', data.length);
         // Chỉ apply request MỚI NHẤT còn sống — response 200 cũ (tab khác) không được đè meta/list.
+        if (controller.signal.aborted || callerSignal?.aborted) {
+          aborted = true;
+          return;
+        }
         if (requestId !== fetchOrdersSeqRef.current) return;
-        if (controller.signal.aborted || callerSignal?.aborted) return;
         lastAppliedOrdersSeqRef.current = requestId;
         lastAppliedOrdersTabRef.current = tab;
         setOrdersMeta({
@@ -753,8 +756,11 @@ export default function App() {
     } catch (err) {
       aborted =
         (err instanceof DOMException && err.name === 'AbortError') ||
+        (err instanceof Error && err.name === 'AbortError') ||
         (typeof err === 'object' && err !== null && (err as { name?: string }).name === 'AbortError');
-      if (aborted) {
+      if (aborted || (err as { name?: string })?.name === 'AbortError') {
+        aborted = true;
+        // AbortError: KHÔNG setOrders([]), KHÔNG tắt loading, KHÔNG toast.
         // Timeout abort (vẫn là request mới nhất) → retry; tab-switch abort thì seq đã tăng.
         if (retriesLeft > 0 && requestId === fetchOrdersSeqRef.current && !callerSignal?.aborted) {
           window.setTimeout(() => {
@@ -801,9 +807,18 @@ export default function App() {
           0,
           fetchOrdersNonSilentInFlightRef.current - 1,
         );
+        const wasAborted =
+          aborted || controller.signal.aborted || Boolean(callerSignal?.aborted);
+        const isLatest = requestId === fetchOrdersSeqRef.current;
         if (fetchOrdersNonSilentInFlightRef.current === 0) {
-          setOrdersLoading(false);
-          if (aborted) setHasLoadedOrdersOnce(true);
+          if (wasAborted) {
+            // AbortError: giữ loading + giữ list hiện tại cho request sau cùng.
+            if (isLatest && !callerSignal?.aborted && retriesLeft <= 0) {
+              setOrdersLoading(false);
+            }
+          } else {
+            setOrdersLoading(false);
+          }
         }
       }
       if (fetchOrdersInFlightRef.current?.promise === inFlight) {
@@ -2325,7 +2340,7 @@ export default function App() {
               focusScanner={focusScanner}
               initialOrdersSubTab={ordersSubTabHint}
               onOrdersSubTabChange={(tab) => {
-                setOrdersSubTabHint(tab);
+                setOrdersSubTabHint((prev) => (prev === tab ? prev : tab));
                 writeSessionTab('omni_orders_subtab', tab);
               }}
               onCloseScanner={() => {

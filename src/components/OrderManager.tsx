@@ -931,6 +931,8 @@ export default function OrderManager({
   const [cancelReturnTab, setCancelReturnTab] = useState<CancelReturnTab>(() => readStoredCancelTab());
   const listKind =
     activeSubTab === 'cancel_returns' ? cancelReturnKindParam(cancelReturnTab) : undefined;
+  /** Primitive key — chỉ đổi khi sub-tab Hủy/Hoàn thật sự đổi, tránh object/array deps. */
+  const listFetchKind = activeSubTab === 'cancel_returns' ? cancelReturnTab : '';
   const [selectedShopId, setSelectedShopId] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const isMobileViewport = useMediaQuery('(max-width: 768px)');
@@ -1054,7 +1056,18 @@ export default function OrderManager({
 
   const refetchOrdersPageRef = useRef(refetchOrdersPage);
   refetchOrdersPageRef.current = refetchOrdersPage;
+  const onFetchOrdersRef = useRef(onFetchOrders);
+  onFetchOrdersRef.current = onFetchOrders;
   const newOrderRefreshTimersRef = useRef<number[]>([]);
+
+  /** Set tab + sub-tab + page cùng 1 tick — tránh fetch 2 lần khi vào nhóm Hủy/Hoàn. */
+  const selectOrdersSubTab = useCallback((tab: OrderTab, cancelReturn?: CancelReturnTab) => {
+    setActiveSubTab(tab);
+    if (tab === 'cancel_returns') {
+      setCancelReturnTab(cancelReturn ?? 'all');
+    }
+    setCurrentPage((p) => (p === 1 ? p : 1));
+  }, []);
 
   /** Toast đơn mới → đợi Mongo commit → refetch list (lần 2 phòng replica lag). */
   const scheduleNewOrderListRefresh = useCallback(() => {
@@ -1417,9 +1430,12 @@ export default function OrderManager({
   };
 
   useEffect(() => {
-    if (initialOrdersSubTab) {
-      setActiveSubTab(initialOrdersSubTab === 'pending_verification' ? 'pending_confirm' : initialOrdersSubTab);
-    }
+    if (!initialOrdersSubTab) return;
+    const next =
+      initialOrdersSubTab === 'pending_verification'
+        ? 'pending_confirm'
+        : normalizeOrderTab(initialOrdersSubTab) || initialOrdersSubTab;
+    setActiveSubTab((prev) => (prev === next ? prev : next));
   }, [initialOrdersSubTab]);
 
   // Tab "Đang kiểm tra bởi Shopee" đã xóa — chuyển sang Chờ xác nhận.
@@ -1437,7 +1453,7 @@ export default function OrderManager({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSubTab, cancelReturnTab]);
 
-  // Đổi tab chính: fetch page=1. AbortController CHỈ abort request tab cũ trong cleanup.
+  // Chỉ fetch khi activeSubTab / kind Hủy-Hoàn thật sự đổi. setTimeout(0) gộp StrictMode + 2 setState lệch nhịp.
   useEffect(() => {
     if (activeSubTab === 'pending_verification') return;
     const tabFetchTabs = new Set([
@@ -1452,45 +1468,55 @@ export default function OrderManager({
       'received_cancel_returns',
       'web_orders',
     ]);
-    if (!tabFetchTabs.has(activeSubTab) || !onFetchOrders) return;
+    if (!tabFetchTabs.has(activeSubTab) || !onFetchOrdersRef.current) return;
 
     let cancelled = false;
     const controller = new AbortController();
-    setCurrentPage(1);
-    console.log(`[Orders Tab] activeSubTab=${activeSubTab} → fetch page=1 limit=${ORDERS_PAGE_SIZE}`);
-
-    const run = async () => {
-      try {
-        await onFetchOrders({
-          silent: false,
-          force: true,
-          page: 1,
-          limit: ORDERS_PAGE_SIZE,
-          merge: false,
-          tab: searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab,
-          q: searchQuery.trim() || undefined,
-          kind:
-            activeSubTab === 'cancel_returns'
-              ? cancelReturnKindParam(cancelReturnTab)
-              : undefined,
-          signal: controller.signal,
-        });
-      } catch (err) {
-        if (cancelled || controller.signal.aborted) return;
-        console.warn('[Orders Tab] fetchOrders failed:', err);
-      }
-    };
-    void run();
-    void fetchOrderCounts();
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+      setCurrentPage((p) => (p === 1 ? p : 1));
+      console.log(`[Orders Tab] activeSubTab=${activeSubTab} kind=${listFetchKind || '(none)'} → fetch page=1`);
+      const run = async () => {
+        try {
+          await onFetchOrdersRef.current?.({
+            silent: false,
+            page: 1,
+            limit: ORDERS_PAGE_SIZE,
+            merge: false,
+            tab: searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab,
+            q: searchQuery.trim() || undefined,
+            kind:
+              activeSubTab === 'cancel_returns'
+                ? cancelReturnKindParam(cancelReturnTab)
+                : undefined,
+            signal: controller.signal,
+          });
+        } catch (error: unknown) {
+          const name =
+            error instanceof Error
+              ? error.name
+              : typeof error === 'object' && error !== null
+                ? (error as { name?: string }).name
+                : undefined;
+          if (name === 'AbortError') return;
+          if (cancelled || controller.signal.aborted) return;
+          console.warn('[Orders Tab] fetchOrders failed:', error);
+        }
+      };
+      void run();
+      void fetchOrderCounts();
+    }, 0);
 
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
       controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSubTab, cancelReturnTab]);
+  }, [activeSubTab, listFetchKind]);
 
   const searchBootRef = React.useRef(true);
+  const searchAbortRef = React.useRef<AbortController | null>(null);
   useEffect(() => {
     if (searchBootRef.current) {
       searchBootRef.current = false;
@@ -1499,21 +1525,37 @@ export default function OrderManager({
     const q = searchQuery.trim();
     const handle = window.setTimeout(() => {
       setCurrentPage(1);
-      void onFetchOrders?.({
-        silent: false,
-        force: true,
-        page: 1,
-        limit: ORDERS_PAGE_SIZE,
-        merge: false,
-        tab: q ? '' : activeSubTab === 'all' ? '' : activeSubTab,
-        q: q || undefined,
-        kind:
-          !q && activeSubTab === 'cancel_returns'
-            ? cancelReturnKindParam(cancelReturnTab)
-            : undefined,
+      searchAbortRef.current?.abort();
+      const controller = new AbortController();
+      searchAbortRef.current = controller;
+      void Promise.resolve(
+        onFetchOrdersRef.current?.({
+          silent: false,
+          page: 1,
+          limit: ORDERS_PAGE_SIZE,
+          merge: false,
+          tab: q ? '' : activeSubTab === 'all' ? '' : activeSubTab,
+          q: q || undefined,
+          kind:
+            !q && activeSubTab === 'cancel_returns'
+              ? cancelReturnKindParam(cancelReturnTab)
+              : undefined,
+          signal: controller.signal,
+        }),
+      ).catch((error: unknown) => {
+        const name =
+          error instanceof Error
+            ? error.name
+            : typeof error === 'object' && error !== null
+              ? (error as { name?: string }).name
+              : undefined;
+        if (name === 'AbortError') return;
       });
     }, q ? 400 : 80);
-    return () => window.clearTimeout(handle);
+    return () => {
+      window.clearTimeout(handle);
+      searchAbortRef.current?.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery]);
   
@@ -1699,13 +1741,17 @@ export default function OrderManager({
   const applyPrintStatusFilter = React.useCallback(
     (next: 'all' | 'printed' | 'unprinted') => {
       setPrintStatusFilter(next);
-      void onFetchOrders?.({
-        silent: true,
-        page: 1,
-        limit: ORDERS_PAGE_SIZE,
-        merge: false,
-        tab: activeSubTab === 'all' ? '' : activeSubTab,
-        kind: listKind,
+      void Promise.resolve(
+        onFetchOrders?.({
+          silent: true,
+          page: 1,
+          limit: ORDERS_PAGE_SIZE,
+          merge: false,
+          tab: activeSubTab === 'all' ? '' : activeSubTab,
+          kind: listKind,
+        }),
+      ).catch((error: unknown) => {
+        if (error instanceof Error && error.name === 'AbortError') return;
       });
     },
     [activeSubTab, listKind, onFetchOrders],
@@ -2526,7 +2572,7 @@ export default function OrderManager({
           const saved =
             (status.summary?.cancelled || 0) + (status.summary?.returnReceived || 0);
           if (saved > 0) {
-            void onFetchOrders?.({
+            void onFetchOrdersRef.current?.({
               silent: true,
               page: 1,
               limit: ORDERS_PAGE_SIZE,
@@ -2547,7 +2593,7 @@ export default function OrderManager({
       if (timer != null) window.clearTimeout(timer);
       abortCtrl?.abort();
     };
-  }, [focusScanner, onFetchOrders]);
+  }, [focusScanner]);
 
   const verifySingleOrder = React.useCallback(
     async (rawQuery: string) => {
@@ -4946,14 +4992,24 @@ export default function OrderManager({
     const loop = async () => {
       if (cancelled) return;
       if (document.visibilityState !== 'hidden') {
-        await onFetchOrders?.({
-          silent: true,
-          page: currentPage,
-          limit: ORDERS_PAGE_SIZE,
-          merge: false,
-          tab: activeSubTab === 'all' ? '' : activeSubTab,
-          kind: listKind,
-        });
+        try {
+          await onFetchOrders?.({
+            silent: true,
+            page: currentPage,
+            limit: ORDERS_PAGE_SIZE,
+            merge: false,
+            tab: activeSubTab === 'all' ? '' : activeSubTab,
+            kind: listKind,
+          });
+        } catch (error: unknown) {
+          const name =
+            error instanceof Error
+              ? error.name
+              : typeof error === 'object' && error !== null
+                ? (error as { name?: string }).name
+                : undefined;
+          if (name === 'AbortError') return;
+        }
         if (cancelled) return;
         await fetchOrderCounts();
       }
@@ -6939,7 +6995,7 @@ export default function OrderManager({
       {/* 2. SUB-TABS: Horizontal scrollable subtabs with counts — orders[] từ App.fetchOrders → GET /api/orders (cùng origin). Không import mock JSON. */}
       <div className="om-orders-sub-tabs border-b border-gray-200 flex flex-wrap gap-1 bg-white p-1 rounded-xl">
         <button
-          onClick={() => setActiveSubTab('all')}
+          onClick={() => selectOrdersSubTab('all')}
           className={`om-orders-mobile-hide-subtab px-4 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer ${
             activeSubTab === 'all' 
               ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20' 
@@ -6950,7 +7006,7 @@ export default function OrderManager({
         </button>
 
         <button
-          onClick={() => setActiveSubTab('pending_confirm')}
+          onClick={() => selectOrdersSubTab('pending_confirm')}
           className={`om-orders-mobile-hide-subtab px-4 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'pending_confirm' || activeSubTab === 'pending_verification'
               ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20' 
@@ -6964,7 +7020,7 @@ export default function OrderManager({
         </button>
 
         <button
-          onClick={() => setActiveSubTab('unprocessed')}
+          onClick={() => selectOrdersSubTab('unprocessed')}
           className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'unprocessed' 
               ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20' 
@@ -6978,7 +7034,7 @@ export default function OrderManager({
         </button>
 
         <button
-          onClick={() => setActiveSubTab('processed')}
+          onClick={() => selectOrdersSubTab('processed')}
           className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'processed' 
               ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20' 
@@ -7006,7 +7062,7 @@ export default function OrderManager({
         </button>
 
         <button
-          onClick={() => setActiveSubTab('shipping')}
+          onClick={() => selectOrdersSubTab('shipping')}
           className={`om-orders-mobile-hide-subtab px-4 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'shipping' 
               ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20' 
@@ -7020,7 +7076,7 @@ export default function OrderManager({
         </button>
 
         <button
-          onClick={() => setActiveSubTab('return_requests')}
+          onClick={() => selectOrdersSubTab('return_requests')}
           className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'return_requests'
               ? 'border-orange-600 text-orange-700 font-extrabold bg-orange-50/40'
@@ -7034,10 +7090,7 @@ export default function OrderManager({
         </button>
 
         <button
-          onClick={() => {
-            setActiveSubTab('cancel_returns');
-            setCancelReturnTab('all');
-          }}
+          onClick={() => selectOrdersSubTab('cancel_returns', 'all')}
           className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'cancel_returns' 
               ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20' 
@@ -7051,7 +7104,7 @@ export default function OrderManager({
         </button>
 
         <button
-          onClick={() => setActiveSubTab('received_cancel_returns')}
+          onClick={() => selectOrdersSubTab('received_cancel_returns')}
           className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'received_cancel_returns'
               ? 'border-teal-600 text-teal-700 font-extrabold bg-teal-50/40'
@@ -7065,7 +7118,7 @@ export default function OrderManager({
         </button>
 
         <button
-          onClick={() => setActiveSubTab('order_products')}
+          onClick={() => selectOrdersSubTab('order_products')}
           className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'order_products'
               ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20'
@@ -7080,7 +7133,7 @@ export default function OrderManager({
 
         <button
           onClick={() => {
-            setActiveSubTab('web_orders');
+            selectOrdersSubTab('web_orders');
             setSelectedPlatform('woocommerce');
             setSelectedShopId('all');
           }}
@@ -7109,7 +7162,10 @@ export default function OrderManager({
                 <button
                   key={tab.id}
                   type="button"
-                  onClick={() => setCancelReturnTab(tab.id)}
+                  onClick={() => {
+                    setCancelReturnTab(tab.id);
+                    setCurrentPage((p) => (p === 1 ? p : 1));
+                  }}
                   className={`px-4 py-3 text-sm font-semibold whitespace-nowrap border-b-2 transition-colors ${
                     active
                       ? 'border-orange-500 text-orange-600'
