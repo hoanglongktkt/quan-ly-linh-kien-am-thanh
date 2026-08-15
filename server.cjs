@@ -79219,6 +79219,54 @@ async function loadReturnTrackingPendingFromStore(opts) {
     limit: HARD_LIMIT
   });
 }
+var DEFAULT_ORDER_DATE_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1e3;
+var MAX_ORDER_DATE_SPAN_MS = 3 * 365 * 24 * 60 * 60 * 1e3;
+function parseDateBound(raw, endOfDay) {
+  const s2 = String(raw ?? "").trim();
+  if (!s2) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s2)) {
+    const d2 = /* @__PURE__ */ new Date(`${s2}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}`);
+    return Number.isNaN(d2.getTime()) ? null : d2;
+  }
+  const d = new Date(s2);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+function parseOrderListDateRange(opts) {
+  let start = parseDateBound(opts?.startDate, false);
+  let end = parseDateBound(opts?.endDate, true);
+  if (!start && !end && !opts?.forceDefault) return null;
+  if (!end) {
+    end = /* @__PURE__ */ new Date();
+    end.setHours(23, 59, 59, 999);
+  }
+  if (!start) {
+    start = new Date(end.getTime() - DEFAULT_ORDER_DATE_LOOKBACK_MS);
+    start.setHours(0, 0, 0, 0);
+  }
+  if (start.getTime() > end.getTime()) {
+    const tmp = start;
+    start = end;
+    end = tmp;
+  }
+  if (end.getTime() - start.getTime() > MAX_ORDER_DATE_SPAN_MS) {
+    start = new Date(end.getTime() - MAX_ORDER_DATE_SPAN_MS);
+    start.setHours(0, 0, 0, 0);
+  }
+  return { start, end };
+}
+function buildOrderCreatedAtMongoFilter(range) {
+  const startIso = range.start.toISOString();
+  const endIso = range.end.toISOString();
+  const startUnix = Math.floor(range.start.getTime() / 1e3);
+  const endUnix = Math.ceil(range.end.getTime() / 1e3);
+  return {
+    $or: [
+      { "data.date": { $gte: startIso, $lte: endIso } },
+      { create_time: { $gte: range.start, $lte: range.end } },
+      { "data.create_time": { $gte: startUnix, $lte: endUnix } }
+    ]
+  };
+}
 function buildShopIdMongoFilter(shopId, shopIds) {
   const multi = Array.isArray(shopIds) ? [
     ...new Set(
@@ -79673,9 +79721,16 @@ async function countCancelReturnCountersFromStore(opts) {
     const shopAnd = [];
     const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
     if (shopFilter) shopAnd.push(shopFilter);
+    const dateRange = parseOrderListDateRange({
+      startDate: opts?.startDate,
+      endDate: opts?.endDate,
+      forceDefault: true
+    });
+    const dateFilter = dateRange ? buildOrderCreatedAtMongoFilter(dateRange) : null;
     const withShop = (tabFilter) => {
       const parts = [...shopAnd];
       if (tabFilter && Object.keys(tabFilter).length) parts.push(tabFilter);
+      if (dateFilter) parts.push(dateFilter);
       if (parts.length === 0) return {};
       if (parts.length === 1) return parts[0];
       return { $and: parts };
@@ -79978,7 +80033,9 @@ async function countOrdersByTabsFromStore(opts) {
     }
     const cr = await countCancelReturnCountersFromStore({
       shopId: opts?.shopId,
-      shopIds: opts?.shopIds
+      shopIds: opts?.shopIds,
+      startDate: opts?.startDate,
+      endDate: opts?.endDate
     });
     counts.cancel_returns = cr.total;
     counts.cancel_returns_returned = cr.returned;
@@ -80089,6 +80146,13 @@ async function queryOrdersPageFromStore(opts) {
           { "data.items.productTitle": regex }
         ]
       });
+    } else {
+      const dateRange = parseOrderListDateRange({
+        startDate: opts?.startDate,
+        endDate: opts?.endDate,
+        forceDefault: isCancelReturnsTab
+      });
+      if (dateRange) and.push(buildOrderCreatedAtMongoFilter(dateRange));
     }
     const filter2 = and.length === 0 ? {} : and.length === 1 ? and[0] : { $and: and };
     let docs = [];
@@ -80148,7 +80212,9 @@ async function queryOrdersPageFromStore(opts) {
     if (isCancelReturnsTab) {
       counters = await countCancelReturnCountersFromStore({
         shopId: opts?.shopId,
-        shopIds: opts?.shopIds
+        shopIds: opts?.shopIds,
+        startDate: opts?.startDate,
+        endDate: opts?.endDate
       });
       counts.cancel_returns = counters.total;
       counts.cancel_returns_returned = counters.returned;
@@ -109104,6 +109170,14 @@ function parseShopIdsParam(rawShopIds, rawShopId) {
   if (out.length === 0) push(rawShopId);
   return out;
 }
+function readOrderDateQuery(req) {
+  const startDate = String(req?.query?.startDate ?? req?.query?.start_date ?? "").trim();
+  const endDate = String(req?.query?.endDate ?? req?.query?.end_date ?? "").trim();
+  return {
+    ...startDate ? { startDate } : {},
+    ...endDate ? { endDate } : {}
+  };
+}
 var deps15 = {
   withLocalDbTimeout: async (p) => p,
   loadProductsForOrders: async () => [],
@@ -109356,7 +109430,8 @@ async function refreshOrders(req, res) {
         shopIds: shopIds.length ? shopIds : void 0,
         query: searchQ,
         printStatus,
-        skipCounts: true
+        skipCounts: true,
+        ...readOrderDateQuery(req)
       });
       mergedOrders = pageResult.rows.filter(
         (order) => Boolean(order?.orderSn || order?.id)
@@ -109385,7 +109460,8 @@ async function refreshOrders(req, res) {
       try {
         counters = await countCancelReturnCountersFromStore({
           shopId: shopId || void 0,
-          shopIds: shopIds.length ? shopIds : void 0
+          shopIds: shopIds.length ? shopIds : void 0,
+          ...readOrderDateQuery(req)
         });
       } catch {
       }
@@ -109443,7 +109519,8 @@ async function queryOrders(req, res) {
       query: String(req.query.q ?? req.query.query ?? ""),
       printStatus: String(req.query.print_status ?? req.query.printStatus ?? ""),
       // Badge dùng /api/order-counts riêng — tránh 6 countDocuments/request trên cPanel.
-      skipCounts: true
+      skipCounts: true,
+      ...readOrderDateQuery(req)
     });
     console.log(
       `[GET /api/orders/query] tab=${req.query.tab || "(all)"} shop=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} carrier=${req.query.carrier || "(all)"} print=${req.query.print_status || req.query.printStatus || "(all)"} filter=`,
@@ -109522,7 +109599,8 @@ async function getOrderCounts(req, res) {
     const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "").trim();
     const counts = await countOrdersByTabsFromStore({
       shopId: shopId || void 0,
-      shopIds: shopIds.length > 1 ? shopIds : void 0
+      shopIds: shopIds.length > 1 ? shopIds : void 0,
+      ...readOrderDateQuery(req)
     });
     const counters = {
       total: Number(counts.cancel_returns) || 0,
@@ -109586,7 +109664,8 @@ async function listOrders(req, res) {
         carrier: String(req.query.carrier || ""),
         query: String(req.query.q ?? req.query.query ?? ""),
         printStatus: String(req.query.print_status ?? req.query.printStatus ?? ""),
-        skipCounts: true
+        skipCounts: true,
+        ...readOrderDateQuery(req)
       });
       let products2 = [];
       try {

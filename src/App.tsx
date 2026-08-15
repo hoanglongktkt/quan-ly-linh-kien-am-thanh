@@ -551,6 +551,8 @@ export default function App() {
     q?: string;
     /** Sub-tab Hủy/Hoàn: refund_return | cancelled | failed_delivery */
     kind?: string;
+    startDate?: string;
+    endDate?: string;
     /** Bỏ qua dedupe in-flight (vd: tab vừa visible lại sau đóng băng). */
     force?: boolean;
     /** Trả lỗi về caller thay vì giữ im lặng và chỉ retry nền. */
@@ -581,9 +583,11 @@ export default function App() {
     const tab = String(opts?.tab || '').trim().toLowerCase();
     const q = String(opts?.q || '').trim();
     const kind = String(opts?.kind || '').trim().toLowerCase();
+    const startDate = String(opts?.startDate || '').trim();
+    const endDate = String(opts?.endDate || '').trim();
     const shopIds = normalizeShopIdsParam(opts?.shopIds, opts?.shopId);
     const shopKey = shopIds.join(',') || 'all';
-    const flightKey = `page:${page}|limit:${limit}|print:${printStatus || 'all'}|tab:${tab || 'all'}|q:${q || ''}|kind:${kind || 'all'}|shops:${shopKey}`;
+    const flightKey = `page:${page}|limit:${limit}|print:${printStatus || 'all'}|tab:${tab || 'all'}|q:${q || ''}|kind:${kind || 'all'}|shops:${shopKey}|from:${startDate || ''}|to:${endDate || ''}`;
 
     // Silent không được hủy request đang hiện spinner (P0 race: bootstrap abort tab fetch).
     if (silent && fetchOrdersNonSilentInFlightRef.current > 0) {
@@ -650,6 +654,8 @@ export default function App() {
         params.set('tab', tab);
         if (kind) params.set('kind', kind);
       }
+      if (startDate) params.set('startDate', startDate);
+      if (endDate) params.set('endDate', endDate);
       const qs = params.toString();
       const path = `/api/orders/refresh?${qs}`;
       console.log(
@@ -714,6 +720,8 @@ export default function App() {
                 tab,
                 q,
                 kind,
+                startDate: startDate || undefined,
+                endDate: endDate || undefined,
                 shopIds: shopIds.length ? shopIds : undefined,
                 retriesLeft: retriesLeft - 1,
               });
@@ -793,6 +801,8 @@ export default function App() {
               tab,
               q,
               kind,
+              startDate: startDate || undefined,
+              endDate: endDate || undefined,
               shopIds: shopIds.length ? shopIds : undefined,
               retriesLeft: retriesLeft - 1,
             });
@@ -825,6 +835,8 @@ export default function App() {
               tab,
               q,
               kind,
+              startDate: startDate || undefined,
+              endDate: endDate || undefined,
               shopIds: shopIds.length ? shopIds : undefined,
               retriesLeft: retriesLeft - 1,
             });
@@ -845,6 +857,8 @@ export default function App() {
             tab,
             q,
             kind,
+            startDate: startDate || undefined,
+            endDate: endDate || undefined,
             shopIds: shopIds.length ? shopIds : undefined,
             retriesLeft: retriesLeft - 1,
           });

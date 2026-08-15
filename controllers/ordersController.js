@@ -113,6 +113,15 @@ function parseShopIdsParam(rawShopIds, rawShopId) {
   return out;
 }
 
+function readOrderDateQuery(req) {
+  const startDate = String(req?.query?.startDate ?? req?.query?.start_date ?? "").trim();
+  const endDate = String(req?.query?.endDate ?? req?.query?.end_date ?? "").trim();
+  return {
+    ...(startDate ? { startDate } : {}),
+    ...(endDate ? { endDate } : {}),
+  };
+}
+
 let deps = {
   withLocalDbTimeout: async (p) => p,
   loadProductsForOrders: async () => [],
@@ -416,6 +425,7 @@ export async function refreshOrders(req, res) {
         query: searchQ,
         printStatus,
         skipCounts: true,
+        ...readOrderDateQuery(req),
       });
       mergedOrders = pageResult.rows.filter((order) =>
         Boolean(order?.orderSn || order?.id),
@@ -453,6 +463,7 @@ export async function refreshOrders(req, res) {
         counters = await countCancelReturnCountersFromStore({
           shopId: shopId || undefined,
           shopIds: shopIds.length ? shopIds : undefined,
+          ...readOrderDateQuery(req),
         });
       } catch {
         /* keep zeros */
@@ -518,6 +529,7 @@ export async function queryOrders(req, res) {
       printStatus: String(req.query.print_status ?? req.query.printStatus ?? ""),
       // Badge dùng /api/order-counts riêng — tránh 6 countDocuments/request trên cPanel.
       skipCounts: true,
+      ...readOrderDateQuery(req),
     });
     console.log(
       `[GET /api/orders/query] tab=${req.query.tab || "(all)"}` +
@@ -611,6 +623,7 @@ export async function getOrderCounts(req, res) {
     const counts = await countOrdersByTabsFromStore({
       shopId: shopId || undefined,
       shopIds: shopIds.length > 1 ? shopIds : undefined,
+      ...readOrderDateQuery(req),
     });
     const counters = {
       total: Number(counts.cancel_returns) || 0,
@@ -687,6 +700,7 @@ export async function listOrders(req, res) {
         query: String(req.query.q ?? req.query.query ?? ""),
         printStatus: String(req.query.print_status ?? req.query.printStatus ?? ""),
         skipCounts: true,
+        ...readOrderDateQuery(req),
       });
       let products = [];
       try {

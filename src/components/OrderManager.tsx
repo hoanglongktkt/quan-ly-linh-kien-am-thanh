@@ -80,7 +80,6 @@ import {
   CheckSquare,
   Square,
   Package,
-  Calendar,
   Layers,
   Sparkle,
   Plus,
@@ -105,6 +104,11 @@ import {
 import { resolveOrderShopDisplayName } from '../utils/resolveOrderShopName';
 import { orderCreatedAtMs } from '../utils/sanitizeOrder';
 import {
+  defaultCustomDateInputs,
+  resolveOrderDateRange,
+  type OrderDatePreset,
+} from '../utils/orderDateFilter';
+import {
   computeShopeeSurchargeTotal,
   getShopeeItemAmount,
   getShopeeNetRevenue,
@@ -123,6 +127,7 @@ import {
   OrderTableRow,
   type OrderListRowActions,
 } from './OrderListRows';
+import OrderDateFilter from './OrderDateFilter';
 import {
   classifyShopeeCancelReturnKind,
   isShopeeRtsFailedDelivery,
@@ -746,6 +751,8 @@ interface OrderManagerProps {
     q?: string;
     /** Sub-tab Hủy/Hoàn: refund_return | cancelled | failed_delivery */
     kind?: string;
+    startDate?: string;
+    endDate?: string;
     force?: boolean;
     retriesLeft?: number;
     throwOnError?: boolean;
@@ -980,12 +987,25 @@ export default function OrderManager({
   shopScopeRef.current = { shopIds: resolvedShopIds, shopIdsKey, selectedPlatform };
   const onFetchOrdersPropRef = useRef(onFetchOrders);
   onFetchOrdersPropRef.current = onFetchOrders;
+  const [datePreset, setDatePreset] = useState<OrderDatePreset>('30d');
+  const [customStartDate, setCustomStartDate] = useState(() => defaultCustomDateInputs().start);
+  const [customEndDate, setCustomEndDate] = useState(() => defaultCustomDateInputs().end);
+  const orderDateRange = useMemo(
+    () => resolveOrderDateRange(datePreset, customStartDate, customEndDate),
+    [datePreset, customStartDate, customEndDate],
+  );
+  const dateRangeKey = `${orderDateRange.startDate}|${orderDateRange.endDate}`;
+  const dateRangeRef = useRef(orderDateRange);
+  dateRangeRef.current = orderDateRange;
   const fetchOrdersWithShop = useCallback(
     (opts?: Parameters<NonNullable<OrderManagerProps['onFetchOrders']>>[0]) => {
       const shopIds = shopScopeRef.current.shopIds;
+      const range = dateRangeRef.current;
       return onFetchOrdersPropRef.current?.({
         ...opts,
         ...(shopIds.length > 0 ? { shopIds } : {}),
+        startDate: opts?.startDate || range.startDate,
+        endDate: opts?.endDate || range.endDate,
       });
     },
     [],
@@ -1053,6 +1073,9 @@ export default function OrderManager({
       } else if (shopIds.length > 1) {
         params.set('shop_ids', shopIds.join(','));
       }
+      const range = dateRangeRef.current;
+      if (range.startDate) params.set('startDate', range.startDate);
+      if (range.endDate) params.set('endDate', range.endDate);
       const res = await fetch(`/api/orders/counter?${params.toString()}`, {
         cache: 'no-store',
         signal: controller.signal,
@@ -1617,6 +1640,33 @@ export default function OrderManager({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery]);
+
+  const dateFilterBootRef = React.useRef(true);
+  useEffect(() => {
+    if (dateFilterBootRef.current) {
+      dateFilterBootRef.current = false;
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      setCurrentPage(1);
+      void fetchOrdersWithShop({
+        silent: false,
+        force: true,
+        page: 1,
+        limit: ORDERS_PAGE_SIZE,
+        merge: false,
+        tab: searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab,
+        q: searchQuery.trim() || undefined,
+        kind:
+          activeSubTab === 'cancel_returns'
+            ? cancelReturnKindParam(cancelReturnTab)
+            : undefined,
+      });
+      void fetchOrderCounts();
+    }, datePreset === 'custom' ? 250 : 0);
+    return () => window.clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateRangeKey]);
   
   // Camera Barcode Scanning States and Ref
   const [cameraScanResult, setCameraScanResult] = useState<string>('Đang chờ quét QR / mã vạch...');
@@ -7296,14 +7346,31 @@ export default function OrderManager({
       {/* 4. FILTER BOX — search + ĐVVC (ẩn trên màn sản phẩm trong đơn) */}
       {activeSubTab !== 'order_products' && (
       <div className="om-orders-filters-panel bg-white p-5 max-md:p-4 rounded-3xl border border-gray-100 shadow-xs">
-        <div className="relative w-full">
-          <Search className="absolute left-3.5 top-3.5 text-gray-400 w-4 h-4" />
-          <input 
-            type="text" 
-            placeholder="Tìm kiếm theo mã đơn hàng, tên khách hàng, sản phẩm hoặc mã bưu cục..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 bg-gray-50/50 rounded-xl border border-gray-100 focus:border-blue-500 focus:bg-white text-xs outline-none transition-all font-medium"
+        <div className="flex flex-col lg:flex-row lg:items-center gap-3">
+          <div className="relative w-full flex-1">
+            <Search className="absolute left-3.5 top-3.5 text-gray-400 w-4 h-4" />
+            <input 
+              type="text" 
+              placeholder="Tìm kiếm theo mã đơn hàng, tên khách hàng, sản phẩm hoặc mã bưu cục..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-4 py-2.5 bg-gray-50/50 rounded-xl border border-gray-100 focus:border-blue-500 focus:bg-white text-xs outline-none transition-all font-medium"
+            />
+          </div>
+          <OrderDateFilter
+            preset={datePreset}
+            customStart={customStartDate}
+            customEnd={customEndDate}
+            onPresetChange={(next) => {
+              setDatePreset(next);
+              if (next === 'custom') {
+                const fallback = defaultCustomDateInputs();
+                setCustomStartDate((prev) => prev || fallback.start);
+                setCustomEndDate((prev) => prev || fallback.end);
+              }
+            }}
+            onCustomStartChange={setCustomStartDate}
+            onCustomEndChange={setCustomEndDate}
           />
         </div>
         {activeSubTab === 'unprocessed' && (

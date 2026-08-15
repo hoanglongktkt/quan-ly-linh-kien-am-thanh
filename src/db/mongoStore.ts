@@ -4500,7 +4500,71 @@ export type OrdersPageQuery = {
   skipCounts?: boolean;
   /** Sub-tab Hủy/Hoàn: refund_return | cancelled | failed_delivery */
   kind?: string;
+  /** Lọc theo thời gian tạo đơn (ISO / YYYY-MM-DD). */
+  startDate?: string;
+  endDate?: string;
 };
+
+const DEFAULT_ORDER_DATE_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+const MAX_ORDER_DATE_SPAN_MS = 3 * 365 * 24 * 60 * 60 * 1000;
+
+function parseDateBound(raw: unknown, endOfDay: boolean): Date | null {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const d = new Date(`${s}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}`);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** Parse startDate/endDate. forceDefault=true → fallback 30 ngày gần nhất. */
+export function parseOrderListDateRange(opts?: {
+  startDate?: string | Date | null;
+  endDate?: string | Date | null;
+  forceDefault?: boolean;
+}): { start: Date; end: Date } | null {
+  let start = parseDateBound(opts?.startDate, false);
+  let end = parseDateBound(opts?.endDate, true);
+  if (!start && !end && !opts?.forceDefault) return null;
+  if (!end) {
+    end = new Date();
+    end.setHours(23, 59, 59, 999);
+  }
+  if (!start) {
+    start = new Date(end.getTime() - DEFAULT_ORDER_DATE_LOOKBACK_MS);
+    start.setHours(0, 0, 0, 0);
+  }
+  if (start.getTime() > end.getTime()) {
+    const tmp = start;
+    start = end;
+    end = tmp;
+  }
+  if (end.getTime() - start.getTime() > MAX_ORDER_DATE_SPAN_MS) {
+    start = new Date(end.getTime() - MAX_ORDER_DATE_SPAN_MS);
+    start.setHours(0, 0, 0, 0);
+  }
+  return { start, end };
+}
+
+/** Mongo filter theo create_time / data.date (ISO string hoặc unix). */
+export function buildOrderCreatedAtMongoFilter(range: {
+  start: Date;
+  end: Date;
+}): Record<string, unknown> {
+  const startIso = range.start.toISOString();
+  const endIso = range.end.toISOString();
+  const startUnix = Math.floor(range.start.getTime() / 1000);
+  const endUnix = Math.ceil(range.end.getTime() / 1000);
+  return {
+    $or: [
+      { "data.date": { $gte: startIso, $lte: endIso } },
+      { create_time: { $gte: range.start, $lte: range.end } },
+      { "data.create_time": { $gte: startUnix, $lte: endUnix } },
+    ],
+  };
+}
 
 /** Build Mongo filter cho 1 hoặc nhiều shopId (string + number variants). */
 export function buildShopIdMongoFilter(
@@ -5023,6 +5087,8 @@ export function parseCancelReturnKindParam(raw?: string | null): string {
 export async function countCancelReturnCountersFromStore(opts?: {
   shopId?: string;
   shopIds?: string[];
+  startDate?: string;
+  endDate?: string;
 }): Promise<CancelReturnCounters> {
   const empty = { ...EMPTY_CANCEL_RETURN_COUNTERS };
   try {
@@ -5030,9 +5096,16 @@ export async function countCancelReturnCountersFromStore(opts?: {
     const shopAnd: Record<string, unknown>[] = [];
     const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
     if (shopFilter) shopAnd.push(shopFilter);
+    const dateRange = parseOrderListDateRange({
+      startDate: opts?.startDate,
+      endDate: opts?.endDate,
+      forceDefault: true,
+    });
+    const dateFilter = dateRange ? buildOrderCreatedAtMongoFilter(dateRange) : null;
     const withShop = (tabFilter: Record<string, unknown>) => {
       const parts = [...shopAnd];
       if (tabFilter && Object.keys(tabFilter).length) parts.push(tabFilter);
+      if (dateFilter) parts.push(dateFilter);
       if (parts.length === 0) return {};
       if (parts.length === 1) return parts[0];
       return { $and: parts };
@@ -5322,6 +5395,8 @@ async function safeCountDocuments(
 export async function countOrdersByTabsFromStore(opts?: {
   shopId?: string;
   shopIds?: string[];
+  startDate?: string;
+  endDate?: string;
 }): Promise<Record<string, number>> {
   const empty: Record<string, number> = {
     all: 0,
@@ -5399,6 +5474,8 @@ export async function countOrdersByTabsFromStore(opts?: {
     const cr = await countCancelReturnCountersFromStore({
       shopId: opts?.shopId,
       shopIds: opts?.shopIds,
+      startDate: opts?.startDate,
+      endDate: opts?.endDate,
     });
     counts.cancel_returns = cr.total;
     counts.cancel_returns_returned = cr.returned;
@@ -5537,6 +5614,15 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
           { "data.items.productTitle": regex },
         ],
       });
+    } else {
+      // Search q= bỏ lọc ngày để tìm được đơn cũ theo mã.
+      // Tab Hủy/Hoàn: fallback 30 ngày nếu FE không gửi startDate/endDate.
+      const dateRange = parseOrderListDateRange({
+        startDate: opts?.startDate,
+        endDate: opts?.endDate,
+        forceDefault: isCancelReturnsTab,
+      });
+      if (dateRange) and.push(buildOrderCreatedAtMongoFilter(dateRange));
     }
     const filter = and.length === 0 ? {} : and.length === 1 ? and[0] : { $and: and };
 
@@ -5609,6 +5695,8 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
       counters = await countCancelReturnCountersFromStore({
         shopId: opts?.shopId,
         shopIds: opts?.shopIds,
+        startDate: opts?.startDate,
+        endDate: opts?.endDate,
       });
       counts.cancel_returns = counters.total;
       counts.cancel_returns_returned = counters.returned;
