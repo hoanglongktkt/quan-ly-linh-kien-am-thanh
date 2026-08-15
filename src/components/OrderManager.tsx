@@ -5042,17 +5042,21 @@ export default function OrderManager({
     [orders]
   );
 
-  const getCancelReturnCount = (tab: CancelReturnTab) => {
-    // Sub-tab "Tất cả" = badge server (countDocuments) — khớp list khi đã fetch đúng tab.
-    if (
-      tab === 'all' &&
-      serverOrderCounts &&
-      Number.isFinite(Number(serverOrderCounts.cancel_returns))
-    ) {
-      return Number(serverOrderCounts.cancel_returns);
+  /** Counter 3 nhóm Hủy/Hoàn/RTS — "Tất cả" = tổng 3 nhóm, không dùng badge Mongo toàn collection. */
+  const cancelReturnKindCounts = useMemo(() => {
+    const counts = { refund_return: 0, cancelled: 0, failed_delivery: 0, all: 0 };
+    const n = cancelReturnPool.length;
+    for (let i = 0; i < n; i += 1) {
+      const o = cancelReturnPool[i];
+      if (matchesCancelReturnTab(o, 'refund_return')) counts.refund_return += 1;
+      else if (matchesCancelReturnTab(o, 'failed_delivery')) counts.failed_delivery += 1;
+      else if (matchesCancelReturnTab(o, 'cancelled')) counts.cancelled += 1;
     }
-    return cancelReturnPool.filter((o) => matchesCancelReturnTab(o, tab)).length;
-  };
+    counts.all = counts.refund_return + counts.cancelled + counts.failed_delivery;
+    return counts;
+  }, [cancelReturnPool]);
+
+  const getCancelReturnCount = (tab: CancelReturnTab) => cancelReturnKindCounts[tab];
 
   const cancelReturnTabItems: { id: CancelReturnTab; label: string }[] = [
     { id: 'all', label: 'Tất cả' },
