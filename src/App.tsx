@@ -301,6 +301,50 @@ function mergeShopLists(primary: ConnectedShop[] = [], secondary: ConnectedShop[
   return [...map.values()];
 }
 
+function normalizeShopIdsParam(shopIds?: string[], shopId?: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (v: unknown) => {
+    const s = String(v || '').trim();
+    if (!s || s === 'all' || seen.has(s)) return;
+    seen.add(s);
+    out.push(s);
+  };
+  if (Array.isArray(shopIds)) {
+    for (const v of shopIds) push(v);
+  }
+  push(shopId);
+  return out.sort();
+}
+
+function sortOrdersNewestFirst(list: Order[]): Order[] {
+  return list.slice().sort((a, b) => {
+    const tb = new Date(b.date || 0).getTime() || 0;
+    const ta = new Date(a.date || 0).getTime() || 0;
+    return tb - ta;
+  });
+}
+
+/** Gộp nhiều batch đơn (Promise.all đa shop) → 1 mảng, sort mới nhất trước. */
+function mergeOrderBatchesNewestFirst(batches: Order[][]): Order[] {
+  const byId = new Map<string, Order>();
+  for (const batch of batches) {
+    for (const o of batch) {
+      const id = String(o?.id || o?.orderSn || '').trim();
+      if (!id) continue;
+      const prev = byId.get(id);
+      if (!prev) {
+        byId.set(id, o);
+        continue;
+      }
+      const prevT = new Date(prev.date || 0).getTime() || 0;
+      const nextT = new Date(o.date || 0).getTime() || 0;
+      if (nextT >= prevT) byId.set(id, o);
+    }
+  }
+  return sortOrdersNewestFirst([...byId.values()]);
+}
+
 export default function App() {
   // Authentication States
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
@@ -497,7 +541,7 @@ export default function App() {
   }, []);
 
   // Fetch orders: Mongo-only pagination (default limit=50, replace — không shallow merge).
-  const fetchOrders = async (opts?: {
+  const fetchOrders = useCallback(async (opts?: {
     silent?: boolean;
     bustCache?: boolean;
     retriesLeft?: number;
@@ -517,6 +561,8 @@ export default function App() {
     throwOnError?: boolean;
     /** Hủy từ useEffect cleanup — không abort ngay lúc render. */
     signal?: AbortSignal;
+    shopId?: string;
+    shopIds?: string[];
   }) => {
     const token = localStorage.getItem('admin_token');
     if (!token) {
@@ -539,7 +585,9 @@ export default function App() {
     const tab = String(opts?.tab || '').trim().toLowerCase();
     const q = String(opts?.q || '').trim();
     const kind = String(opts?.kind || '').trim().toLowerCase();
-    const flightKey = `page:${page}|limit:${limit}|print:${printStatus || 'all'}|tab:${tab || 'all'}|q:${q || ''}|kind:${kind || 'all'}`;
+    const shopIds = normalizeShopIdsParam(opts?.shopIds, opts?.shopId);
+    const shopKey = shopIds.join(',') || 'all';
+    const flightKey = `page:${page}|limit:${limit}|print:${printStatus || 'all'}|tab:${tab || 'all'}|q:${q || ''}|kind:${kind || 'all'}|shops:${shopKey}`;
 
     // Silent không được hủy request đang hiện spinner (P0 race: bootstrap abort tab fetch).
     if (silent && fetchOrdersNonSilentInFlightRef.current > 0) {
@@ -595,6 +643,11 @@ export default function App() {
         params.set('bust', '1');
       }
       if (printStatus && printStatus !== 'all') params.set('print_status', printStatus);
+      if (shopIds.length === 1) {
+        params.set('shop_id', shopIds[0]);
+      } else if (shopIds.length > 1) {
+        params.set('shop_ids', shopIds.join(','));
+      }
       if (q) {
         params.set('q', q);
       } else if (tab) {
@@ -665,6 +718,7 @@ export default function App() {
                 tab,
                 q,
                 kind,
+                shopIds: shopIds.length ? shopIds : undefined,
                 retriesLeft: retriesLeft - 1,
               });
             }, 3000);
@@ -710,12 +764,12 @@ export default function App() {
             rts: Number(payload.counters?.rts) || 0,
           },
         });
-        const sanitized = sanitizeOrders(data);
-        // Thành công 200: đưa thẳng vào state. Không guard bỏ response (tránh UI rỗng dù Network có data).
+        const sanitized = mergeOrderBatchesNewestFirst([sanitizeOrders(data)]);
+        // Thành công 200: setOrders ĐÚNG 1 LẦN — không loop shop rồi đè state.
         if (merge) {
           setOrders((prev) => {
             const base = prev.length > 0 ? prev : ordersHydrateRef.current;
-            const merged = mergeShallowOrders(base, sanitized);
+            const merged = mergeOrderBatchesNewestFirst([mergeShallowOrders(base, sanitized)]);
             ordersHydrateRef.current = merged;
             void saveOrdersCache(merged);
             return merged;
@@ -743,6 +797,7 @@ export default function App() {
               tab,
               q,
               kind,
+              shopIds: shopIds.length ? shopIds : undefined,
               retriesLeft: retriesLeft - 1,
             });
           }, 3000);
@@ -774,6 +829,7 @@ export default function App() {
               tab,
               q,
               kind,
+              shopIds: shopIds.length ? shopIds : undefined,
               retriesLeft: retriesLeft - 1,
             });
           }, 400);
@@ -793,6 +849,7 @@ export default function App() {
             tab,
             q,
             kind,
+            shopIds: shopIds.length ? shopIds : undefined,
             retriesLeft: retriesLeft - 1,
           });
         }, 3000);
@@ -829,7 +886,7 @@ export default function App() {
       }
       finishInFlight?.();
     }
-  };
+  }, []);
 
   useEffect(() => {
     // Chỉ dọn key legacy — không xóa persistence inventory mới.

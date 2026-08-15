@@ -749,6 +749,8 @@ interface OrderManagerProps {
     retriesLeft?: number;
     throwOnError?: boolean;
     signal?: AbortSignal;
+    shopId?: string;
+    shopIds?: string[];
   }) => Promise<void> | void;
   ordersLoading?: boolean;
   shops: ConnectedShop[];
@@ -773,6 +775,33 @@ const ORDERS_AUTO_REFRESH_MS = 30_000;
 function cancelReturnKindParam(tab: CancelReturnTab): string | undefined {
   if (tab === 'all') return undefined;
   return tab;
+}
+
+function shopsIdentityKey(shops: ConnectedShop[]): string {
+  return shops
+    .map((s) => `${s.platform}:${s.shopId || s.id}:${s.connected === false ? 0 : 1}`)
+    .sort()
+    .join('|');
+}
+
+function resolveShopIdsForFetch(
+  shops: ConnectedShop[],
+  selectedShopId: string,
+  selectedPlatform: string,
+): string[] {
+  if (selectedShopId && selectedShopId !== 'all') return [String(selectedShopId)];
+  if (
+    selectedPlatform === 'all' ||
+    selectedPlatform === 'manual' ||
+    selectedPlatform === 'lazada'
+  ) {
+    return [];
+  }
+  const ids = shops
+    .filter((s) => s.platform === selectedPlatform && s.connected !== false)
+    .map((s) => String(s.shopId || '').trim() || String(s.id || '').trim())
+    .filter(Boolean);
+  return [...new Set(ids)].sort();
 }
 
 const CANCEL_RETURN_STATUSES: Order['status'][] = ['cancelled', 'return_pending', 'return_received'];
@@ -934,6 +963,32 @@ export default function OrderManager({
   /** Primitive key — chỉ đổi khi sub-tab Hủy/Hoàn thật sự đổi, tránh object/array deps. */
   const listFetchKind = activeSubTab === 'cancel_returns' ? cancelReturnTab : '';
   const [selectedShopId, setSelectedShopId] = useState<string>('all');
+  const [selectedPlatform, setSelectedPlatform] = useState<'all' | 'shopee' | 'tiktok' | 'lazada' | 'woocommerce' | 'manual'>('all');
+  const [showShopeeDropdown, setShowShopeeDropdown] = useState(false);
+  const [showTikTokDropdown, setShowTikTokDropdown] = useState(false);
+  const [showWooDropdown, setShowWooDropdown] = useState(false);
+  const shopsKey = shopsIdentityKey(shops);
+  const resolvedShopIds = useMemo(
+    () => resolveShopIdsForFetch(shops, selectedShopId, selectedPlatform),
+    // shopsKey = primitive fingerprint — CẤM đưa `shops` array vào deps (loop re-render).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedShopId, selectedPlatform, shopsKey],
+  );
+  const shopIdsKey = resolvedShopIds.join(',');
+  const shopScopeRef = useRef({ shopIds: resolvedShopIds, shopIdsKey, selectedPlatform });
+  shopScopeRef.current = { shopIds: resolvedShopIds, shopIdsKey, selectedPlatform };
+  const onFetchOrdersPropRef = useRef(onFetchOrders);
+  onFetchOrdersPropRef.current = onFetchOrders;
+  const fetchOrdersWithShop = useCallback(
+    (opts?: Parameters<NonNullable<OrderManagerProps['onFetchOrders']>>[0]) => {
+      const shopIds = shopScopeRef.current.shopIds;
+      return onFetchOrdersPropRef.current?.({
+        ...opts,
+        ...(shopIds.length > 0 ? { shopIds } : {}),
+      });
+    },
+    [],
+  );
   const [searchQuery, setSearchQuery] = useState('');
   const isMobileViewport = useMediaQuery('(max-width: 768px)');
   const isWideDesktop = useMediaQuery('(min-width: 1440px)');
@@ -991,8 +1046,11 @@ export default function OrderManager({
       const params = new URLSearchParams();
       params.set('t', String(Date.now()));
       params.set('_r', String(Math.random()).slice(2, 10));
-      if (selectedShopId && selectedShopId !== 'all') {
-        params.set('shop_id', String(selectedShopId));
+      const shopIds = shopScopeRef.current.shopIds;
+      if (shopIds.length === 1) {
+        params.set('shop_id', shopIds[0]);
+      } else if (shopIds.length > 1) {
+        params.set('shop_ids', shopIds.join(','));
       }
       const res = await fetch(`/api/orders/counter?${params.toString()}`, {
         cache: 'no-store',
@@ -1030,13 +1088,13 @@ export default function OrderManager({
       if (counterAbortRef.current === controller) counterAbortRef.current = null;
     }
     return null;
-  }, [selectedShopId]);
+  }, [shopIdsKey]);
 
   const refetchOrdersPage = useCallback(
     (opts?: { silent?: boolean; page?: number }) => {
       setHasNewOrders(false);
       const page = opts?.page && opts.page > 0 ? opts.page : currentPage;
-      void onFetchOrders?.({
+      void fetchOrdersWithShop({
         silent: opts?.silent !== false,
         force: true,
         page,
@@ -1051,13 +1109,13 @@ export default function OrderManager({
       });
       void fetchOrderCounts();
     },
-    [activeSubTab, cancelReturnTab, currentPage, fetchOrderCounts, onFetchOrders, searchQuery],
+    [activeSubTab, cancelReturnTab, currentPage, fetchOrderCounts, fetchOrdersWithShop, searchQuery],
   );
 
   const refetchOrdersPageRef = useRef(refetchOrdersPage);
   refetchOrdersPageRef.current = refetchOrdersPage;
-  const onFetchOrdersRef = useRef(onFetchOrders);
-  onFetchOrdersRef.current = onFetchOrders;
+  const onFetchOrdersRef = useRef(fetchOrdersWithShop);
+  onFetchOrdersRef.current = fetchOrdersWithShop;
   const newOrderRefreshTimersRef = useRef<number[]>([]);
 
   /** Set tab + sub-tab + page cùng 1 tick — tránh fetch 2 lần khi vào nhóm Hủy/Hoàn. */
@@ -1091,7 +1149,7 @@ export default function OrderManager({
     (page: number) => {
       const next = Math.max(1, Math.floor(page) || 1);
       setCurrentPage(next);
-      void onFetchOrders?.({
+      void fetchOrdersWithShop({
         silent: false,
         force: true,
         page: next,
@@ -1105,7 +1163,7 @@ export default function OrderManager({
             : undefined,
       });
     },
-    [activeSubTab, cancelReturnTab, onFetchOrders, searchQuery],
+    [activeSubTab, cancelReturnTab, fetchOrdersWithShop, searchQuery],
   );
 
   // Đồng bộ currentPage với metadata API (sau fetch).
@@ -1232,9 +1290,8 @@ export default function OrderManager({
         mode,
         ...(mode === 'full' ? { lookback_hours: 14 * 24 } : {}),
       };
-      if (selectedShopId && selectedShopId !== 'all') {
-        body.shop_ids = [String(selectedShopId)];
-      }
+      const shopIds = shopScopeRef.current.shopIds;
+      if (shopIds.length > 0) body.shop_ids = shopIds;
       console.log(`[Orders Sync] → POST /api/sync-shopee mode=${mode}`);
       showToast('Đang đồng bộ ngầm...', 8000);
       setLastSyncSummary('Đang đồng bộ ngầm...');
@@ -1377,9 +1434,9 @@ export default function OrderManager({
     try {
       const token = localStorage.getItem('admin_token') || '';
       const body: Record<string, unknown> = { lookback_days: lookbackDays };
-      if (selectedShopId && selectedShopId !== 'all') {
-        body.shopId = String(selectedShopId);
-      }
+      const shopIds = shopScopeRef.current.shopIds;
+      if (shopIds.length === 1) body.shopId = shopIds[0];
+      else if (shopIds.length > 1) body.shopIds = shopIds;
       const res = await fetch('/api/woocommerce/orders/sync', {
         method: 'POST',
         headers: {
@@ -1475,7 +1532,7 @@ export default function OrderManager({
     const timer = window.setTimeout(() => {
       if (cancelled) return;
       setCurrentPage((p) => (p === 1 ? p : 1));
-      console.log(`[Orders Tab] activeSubTab=${activeSubTab} kind=${listFetchKind || '(none)'} → fetch page=1`);
+      console.log(`[Orders Tab] activeSubTab=${activeSubTab} kind=${listFetchKind || '(none)'} shops=${shopIdsKey || '(all)'} → fetch page=1`);
       const run = async () => {
         try {
           await onFetchOrdersRef.current?.({
@@ -1512,8 +1569,9 @@ export default function OrderManager({
       window.clearTimeout(timer);
       controller.abort();
     };
+    // Primitive deps only — shopIdsKey = ids.join(',') tránh loop do array reference.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSubTab, listFetchKind]);
+  }, [activeSubTab, listFetchKind, shopIdsKey]);
 
   const searchBootRef = React.useRef(true);
   const searchAbortRef = React.useRef<AbortController | null>(null);
@@ -1690,7 +1748,7 @@ export default function OrderManager({
     const wasFocused = prevFocusScannerRef.current;
     prevFocusScannerRef.current = focusScanner;
     if (wasFocused && !focusScanner) {
-      void onFetchOrders?.({
+      void onFetchOrdersRef.current?.({
         silent: true,
         page: 1,
         limit: ORDERS_PAGE_SIZE,
@@ -1742,7 +1800,7 @@ export default function OrderManager({
     (next: 'all' | 'printed' | 'unprinted') => {
       setPrintStatusFilter(next);
       void Promise.resolve(
-        onFetchOrders?.({
+        fetchOrdersWithShop({
           silent: true,
           page: 1,
           limit: ORDERS_PAGE_SIZE,
@@ -1754,7 +1812,7 @@ export default function OrderManager({
         if (error instanceof Error && error.name === 'AbortError') return;
       });
     },
-    [activeSubTab, listKind, onFetchOrders],
+    [activeSubTab, listKind, fetchOrdersWithShop],
   );
 
   // markPrintedOnLocalPdfOpen declared after applyPrintedLocalOptimistic + updatePrintStatusForOrders (see below).
@@ -3120,14 +3178,8 @@ export default function OrderManager({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusScanner, selectedShopId]);
+  }, [focusScanner, shopIdsKey]);
 
-  // Platform filtering & dropdown states
-  const [selectedPlatform, setSelectedPlatform] = useState<'all' | 'shopee' | 'tiktok' | 'lazada' | 'woocommerce' | 'manual'>('all');
-  const [showShopeeDropdown, setShowShopeeDropdown] = useState(false);
-  const [showTikTokDropdown, setShowTikTokDropdown] = useState(false);
-  const [showWooDropdown, setShowWooDropdown] = useState(false);
-  
   // Search / sort
   const [selectedSort] = useState<'newest' | 'oldest' | 'highest_value'>('newest');
   /** Client-side: ưu tiên + gom nhóm đơn 1 SP (tab Chờ lấy hàng chưa xử lý). */
@@ -4392,8 +4444,8 @@ export default function OrderManager({
     const patched = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys, opts);
     ordersRef.current = patched;
     onUpdateOrders(patched, { persist: false });
-    if (onFetchOrders) {
-      await onFetchOrders();
+    if (onFetchOrdersPropRef.current) {
+      await fetchOrdersWithShop();
     }
   };
 
@@ -4989,17 +5041,19 @@ export default function OrderManager({
   useEffect(() => {
     let cancelled = false;
     let timer: number | null = null;
+    const controller = new AbortController();
     const loop = async () => {
       if (cancelled) return;
       if (document.visibilityState !== 'hidden') {
         try {
-          await onFetchOrders?.({
+          await onFetchOrdersRef.current?.({
             silent: true,
             page: currentPage,
             limit: ORDERS_PAGE_SIZE,
             merge: false,
             tab: activeSubTab === 'all' ? '' : activeSubTab,
             kind: listKind,
+            signal: controller.signal,
           });
         } catch (error: unknown) {
           const name =
@@ -5024,9 +5078,11 @@ export default function OrderManager({
     return () => {
       cancelled = true;
       if (timer != null) window.clearTimeout(timer);
+      controller.abort();
     };
+    // Primitive deps — không đưa onFetchOrders / shops array vào đây.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSubTab, currentPage]);
+  }, [activeSubTab, currentPage, listFetchKind]);
 
   /**
    * Tab "Đã giao cho ĐVVC": dò API Shopee ngầm (ACK) — khi đơn thật sự SHIPPED
@@ -5051,8 +5107,8 @@ export default function OrderManager({
         },
         body: JSON.stringify({
           maxOrders: 80,
-          ...(selectedShopId && selectedShopId !== 'all'
-            ? { shopIds: [String(selectedShopId)] }
+          ...(shopScopeRef.current.shopIds.length
+            ? { shopIds: shopScopeRef.current.shopIds }
             : {}),
         }),
       })
@@ -5070,7 +5126,7 @@ export default function OrderManager({
       window.clearTimeout(firstTimer);
       window.clearInterval(intervalId);
     };
-  }, [activeSubTab, selectedShopId]);
+  }, [activeSubTab, shopIdsKey]);
 
   const isAtScrollTop = useCallback(() => {
     if (typeof window === 'undefined') return true;
@@ -5133,7 +5189,7 @@ export default function OrderManager({
     setPullDistance(OM_PULL_REFRESH_THRESHOLD_PX);
     try {
       setCurrentPage(1);
-      await onFetchOrders?.({
+      await fetchOrdersWithShop({
         silent: false,
         force: true,
         page: 1,
@@ -5147,7 +5203,7 @@ export default function OrderManager({
       setIsPullRefreshing(false);
       setPullDistance(0);
     }
-  }, [activeSubTab, fetchOrderCounts, isPullRefreshing, listKind, onFetchOrders]);
+  }, [activeSubTab, fetchOrderCounts, fetchOrdersWithShop, isPullRefreshing, listKind]);
 
   // Status Vietnamese styling and labeling helper matching mockup closely
   const getStatusBadge = (status: Order['status']) => {
@@ -5917,7 +5973,7 @@ export default function OrderManager({
     setShowEndConfirm(false);
     setIsFlushingQueue(false);
     // Refresh badge Menu ngay khi thoát Quét (worker dò ngầm có thể vừa ghi DB).
-    void onFetchOrders?.({
+    void fetchOrdersWithShop({
       silent: true,
       page: 1,
       limit: ORDERS_PAGE_SIZE,
@@ -6744,6 +6800,11 @@ export default function OrderManager({
               onClick={() => {
                 setShowShopeeDropdown(!showShopeeDropdown);
                 setShowTikTokDropdown(false);
+                setShowWooDropdown(false);
+                if (selectedPlatform !== 'shopee') {
+                  setSelectedPlatform('shopee');
+                  setSelectedShopId('all');
+                }
               }}
               className={`px-4 py-2 bg-white hover:bg-orange-50/40 border rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 shadow-xs cursor-pointer ${
                 selectedPlatform === 'shopee' ? 'border-orange-500 ring-2 ring-orange-500/20 text-orange-600' : 'border-gray-200 text-gray-700'
@@ -6793,6 +6854,10 @@ export default function OrderManager({
                 setShowWooDropdown(!showWooDropdown);
                 setShowShopeeDropdown(false);
                 setShowTikTokDropdown(false);
+                if (selectedPlatform !== 'woocommerce') {
+                  setSelectedPlatform('woocommerce');
+                  setSelectedShopId('all');
+                }
               }}
               className={`px-4 py-2 bg-white hover:bg-indigo-50/40 border rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 shadow-xs cursor-pointer ${
                 selectedPlatform === 'woocommerce' ? 'border-indigo-600 ring-2 ring-indigo-600/20 text-indigo-700' : 'border-gray-200 text-gray-700'
@@ -6855,6 +6920,11 @@ export default function OrderManager({
               onClick={() => {
                 setShowTikTokDropdown(!showTikTokDropdown);
                 setShowShopeeDropdown(false);
+                setShowWooDropdown(false);
+                if (selectedPlatform !== 'tiktok') {
+                  setSelectedPlatform('tiktok');
+                  setSelectedShopId('all');
+                }
               }}
               className={`px-4 py-2 bg-white hover:bg-zinc-50 border rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 shadow-xs cursor-pointer ${
                 selectedPlatform === 'tiktok' ? 'border-zinc-900 ring-2 ring-zinc-900/10 text-zinc-950' : 'border-gray-200 text-gray-700'
