@@ -130,8 +130,10 @@ import {
 import OrderDateFilter from './OrderDateFilter';
 import {
   classifyShopeeCancelReturnKind,
+  isShopeeCancelledStatus,
   isShopeeRtsFailedDelivery,
   isShopeeReturnRefundOrder,
+  shouldShowAwaitingShopeeTracking,
 } from '../utils/shopeeCancelReturnClassify';
 
 function isReturnRequestOrder(order: Order): boolean {
@@ -169,6 +171,16 @@ function AwaitingShopeeTrackingBadge({ className = '' }: { className?: string })
       className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-50 text-orange-700 border border-orange-200 ${className}`}
     >
       Đang chờ Shopee cấp mã
+    </span>
+  );
+}
+
+function CancelledNoTrackingBadge({ className = '' }: { className?: string }) {
+  return (
+    <span
+      className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-100 text-gray-600 border border-gray-200 ${className}`}
+    >
+      Hủy trước khi giao
     </span>
   );
 }
@@ -552,8 +564,12 @@ function OrderDetailAccordionPanel({
           })()}
         </div>
       ) : order.channel === 'woocommerce' ? null : (
-        <div className="bg-white p-4 rounded-2xl border border-orange-100">
-          <AwaitingShopeeTrackingBadge />
+        <div className={`bg-white p-4 rounded-2xl border ${isShopeeCancelledStatus(order) ? 'border-gray-200' : 'border-orange-100'}`}>
+          {!shouldShowAwaitingShopeeTracking(order) || isShopeeCancelledStatus(order) ? (
+            <CancelledNoTrackingBadge />
+          ) : (
+            <AwaitingShopeeTrackingBadge />
+          )}
           {(() => {
             const rtn = String(order.return_tracking_no || order.returnTrackingNumber || '').trim();
             const outbound = String(order.trackingNumber || order.tracking_no || '').trim();

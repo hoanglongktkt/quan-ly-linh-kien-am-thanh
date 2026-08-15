@@ -155,3 +155,32 @@ export function resolveShopeeSubStatus(
   if (kind === 'refund_return') return 'RETURN';
   return undefined;
 }
+
+/** Đơn hủy thuần (chưa giao, không return_sn, không RTS) — ẩn cụm "Đang hoàn về". */
+export function isPureUnshippedCancel(order: ShopeeCancelReturnInput): boolean {
+  if (isShopeeRtsFailedDelivery(order)) return false;
+  if (shouldShowWarehouseReturnActions(order)) return false;
+  return classifyShopeeCancelReturnKind(order) === 'cancelled' || isShopeeCancelledStatus(order);
+}
+
+/**
+ * Chỉ RTS / YCTH / TO_RETURN mới hiện nút kho "Xác nhận đã nhận hoàn".
+ * Đơn Hủy thuần (chưa từng giao) → false.
+ */
+export function shouldShowWarehouseReturnActions(order: ShopeeCancelReturnInput): boolean {
+  if (isShopeeRtsFailedDelivery(order)) return true;
+  const raw = String(order.shopee_order_status || '').toUpperCase();
+  if (raw === 'TO_RETURN') return true;
+  const st = String(order.status || '').toLowerCase();
+  if (st === 'return_pending' || st === 'return_received') return true;
+  if (hasShopeeReturnSn(order) && !isUnshippedShopeeCancel(order)) return true;
+  return false;
+}
+
+/** Đơn đã hủy mà không có mã VĐ — không được hiện "Đang chờ Shopee cấp mã". */
+export function shouldShowAwaitingShopeeTracking(order: ShopeeCancelReturnInput & { channel?: string }): boolean {
+  if (String(order.channel || '') === 'woocommerce') return false;
+  if (isShopeeCancelledStatus(order)) return false;
+  if (classifyShopeeCancelReturnKind(order) === 'cancelled') return false;
+  return true;
+}

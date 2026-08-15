@@ -77260,6 +77260,11 @@ var INTERNAL_FLAG_KEYS = /* @__PURE__ */ new Set([
   "localStatusAt",
   "local_status_updated_at",
   "is_local_return_archived",
+  "is_return_received",
+  "local_return_status",
+  "return_received_at",
+  "warehouse_return_received",
+  "isWarehouseReturnReceived",
   "stock_restored",
   "stock_restored_at",
   "labelUrl",
@@ -77268,6 +77273,45 @@ var INTERNAL_FLAG_KEYS = /* @__PURE__ */ new Set([
   "waybill_url",
   "_clear_return_sn"
 ]);
+var WAREHOUSE_PROTECTED_SET_KEYS = [
+  "local_status",
+  "data.local_status",
+  "localStatus",
+  "data.localStatus",
+  "internal_status",
+  "data.internal_status",
+  "scanFlag",
+  "data.scanFlag",
+  "localStatusAt",
+  "data.localStatusAt",
+  "local_status_updated_at",
+  "data.local_status_updated_at",
+  "is_return_received",
+  "data.is_return_received",
+  "local_return_status",
+  "data.local_return_status",
+  "return_received_at",
+  "data.return_received_at",
+  "warehouse_return_received",
+  "data.warehouse_return_received",
+  "isWarehouseReturnReceived",
+  "data.isWarehouseReturnReceived",
+  "is_local_return_archived",
+  "data.is_local_return_archived"
+];
+function stripWarehouseProtectedKeysFromSet($set) {
+  for (const key of WAREHOUSE_PROTECTED_SET_KEYS) {
+    delete $set[key];
+  }
+}
+function readExistingWarehouseLock(doc) {
+  const data = doc?.data && typeof doc.data === "object" ? doc.data : {};
+  const local = String(
+    data.local_status || data.localStatus || data.internal_status || data.scanFlag || data.local_return_status || ""
+  ).toUpperCase();
+  const flag = data.is_return_received === true || data.warehouse_return_received === true || data.isWarehouseReturnReceived === true || local === "RETURN_RECEIVED" || local === "CANCELLED_STORED";
+  return { locked: flag, local };
+}
 async function bulkUpsertOrdersToStore(orders) {
   requireMongo();
   const list = Array.isArray(orders) ? orders.filter((o) => o != null && typeof o === "object") : [];
@@ -77333,9 +77377,6 @@ async function bulkUpsertOrdersToStore(orders) {
       $set["data.isHandedOverToCarrier"] = false;
       $set["data.is_handed_over_to_carrier"] = false;
       $set["data.is_handed_over_to_courier"] = false;
-      $set["data.local_status"] = "NONE";
-      $set["data.localStatus"] = "NONE";
-      $set["data.internal_status"] = "NONE";
       $set["data.handed_over_source"] = null;
       $set["data.handedOverSource"] = null;
     }
@@ -77473,6 +77514,7 @@ async function bulkUpsertOrdersToStore(orders) {
       }
       $set[`data.${key}`] = value;
     }
+    stripWarehouseProtectedKeysFromSet($set);
     if (channelStr === "woocommerce") {
       const cName = String(
         order.customerName || order.customer_name || ""
@@ -77584,7 +77626,22 @@ async function bulkUpsertOrdersToStore(orders) {
         const orderSns = pendingWrites.map((item) => item.orderSn).filter(Boolean);
         const existing = await OrderModel.find({
           $or: [{ _id: { $in: ids } }, { orderSn: { $in: orderSns } }, { "data.orderSn": { $in: orderSns } }]
-        }).select({ _id: 1, orderSn: 1, "data.orderSn": 1, last_shopee_update_at: 1 }).lean();
+        }).select({
+          _id: 1,
+          orderSn: 1,
+          "data.orderSn": 1,
+          last_shopee_update_at: 1,
+          status: 1,
+          "data.status": 1,
+          "data.local_status": 1,
+          "data.localStatus": 1,
+          "data.internal_status": 1,
+          "data.scanFlag": 1,
+          "data.is_return_received": 1,
+          "data.local_return_status": 1,
+          "data.warehouse_return_received": 1,
+          "data.isWarehouseReturnReceived": 1
+        }).lean();
         const existingByKey = /* @__PURE__ */ new Map();
         for (const row of existing) {
           for (const key of [row._id, row.orderSn, row.data?.orderSn]) {
@@ -77619,6 +77676,46 @@ async function bulkUpsertOrdersToStore(orders) {
           }
           return true;
         });
+        for (const item of accepted) {
+          const current = existingByKey.get(item.id) || existingByKey.get(item.orderSn);
+          const $set = item.op?.updateOne?.update?.$set;
+          const $setOnInsert = item.op?.updateOne?.update?.$setOnInsert;
+          if (!$set) continue;
+          stripWarehouseProtectedKeysFromSet($set);
+          if (!current) continue;
+          const lock = readExistingWarehouseLock(current);
+          if (lock.locked) {
+            $set["data.local_status"] = lock.local;
+            $set["data.localStatus"] = lock.local;
+            $set["data.internal_status"] = lock.local;
+            $set["data.scanFlag"] = lock.local;
+            if (lock.local === "RETURN_RECEIVED") {
+              $set.status = "return_received";
+              $set["data.status"] = "return_received";
+              $set["data.is_return_received"] = true;
+              $set["data.local_return_status"] = "RETURN_RECEIVED";
+            }
+            if ($setOnInsert) {
+              for (const key of WAREHOUSE_PROTECTED_SET_KEYS) delete $setOnInsert[key];
+            }
+          } else {
+            const existingLocal = String(current?.data?.local_status || "").toUpperCase();
+            const incomingRaw = String(
+              $set.shopee_order_status || $set["data.shopee_order_status"] || ""
+            ).toUpperCase();
+            const leftPickup = incomingRaw === "SHIPPED" || incomingRaw === "TO_CONFIRM_RECEIVE" || incomingRaw === "COMPLETED" || incomingRaw === "CANCELLED" || incomingRaw === "IN_CANCEL" || incomingRaw === "TO_RETURN";
+            if (leftPickup && existingLocal === "HANDED_OVER") {
+              $set["data.local_status"] = "NONE";
+              $set["data.localStatus"] = "NONE";
+              $set["data.internal_status"] = "NONE";
+              if ($setOnInsert) {
+                delete $setOnInsert["data.local_status"];
+                delete $setOnInsert["data.localStatus"];
+                delete $setOnInsert["data.internal_status"];
+              }
+            }
+          }
+        }
         const ops = accepted.map((item) => item.op);
         if (ops.length === 0) return;
         const result = await OrderModel.bulkWrite(ops, { ordered: false });
@@ -78532,9 +78629,6 @@ async function markOrdersCancelledAsShopeeNotFoundInStore(orderSns, opts) {
     "data.isHandedOverToCarrier": false,
     "data.is_handed_over_to_carrier": false,
     "data.is_handed_over_to_courier": false,
-    "data.local_status": "NONE",
-    "data.localStatus": "NONE",
-    "data.internal_status": "NONE",
     "data.shopee_not_found": true,
     "data.shopee_not_found_at": now,
     "data.shopee_not_found_reason": reason,
@@ -78564,6 +78658,84 @@ async function markOrdersCancelledAsShopeeNotFoundInStore(orderSns, opts) {
     `[MongoDB] markOrdersCancelledAsShopeeNotFoundInStore shop=${shopIdStr || "-"} sns=${sns.length} matched=${matched} modified=${modified} reason=${reason}`
   );
   return { matched, modified, sns };
+}
+async function findCancelledEmptyItemsFromStore(opts) {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const limit = Math.max(1, Math.min(80, Number(opts?.limit) || 40));
+  const lookbackDays = Math.max(1, Math.min(30, Number(opts?.lookbackDays) || 30));
+  const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1e3);
+  const sinceIso = since.toISOString();
+  const docs = await OrderModel.find({
+    $and: [
+      {
+        $or: [
+          { channel: "shopee" },
+          { "data.channel": "shopee" },
+          { channel: { $exists: false } }
+        ]
+      },
+      {
+        $or: [
+          { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL"] } },
+          { "data.shopee_order_status": { $in: ["CANCELLED", "IN_CANCEL"] } },
+          { status: "cancelled" },
+          { "data.status": "cancelled" }
+        ]
+      },
+      {
+        $or: [
+          { "data.items": { $exists: false } },
+          { "data.items": { $size: 0 } },
+          { "data.items": null }
+        ]
+      },
+      {
+        $or: [
+          { "data.date": { $gte: sinceIso } },
+          { last_shopee_update_at: { $gte: since } },
+          { last_synced_at: { $gte: since } }
+        ]
+      }
+    ]
+  }).select({ orderSn: 1, shopId: 1, "data.orderSn": 1, "data.shopId": 1 }).sort({ last_shopee_update_at: -1, _id: -1 }).limit(limit).maxTimeMS(8e3).lean();
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const doc of docs || []) {
+    const sn = String(doc?.orderSn || doc?.data?.orderSn || "").replace(/^shopee-/i, "").trim();
+    if (!sn || seen.has(sn)) continue;
+    seen.add(sn);
+    out.push({
+      orderSn: sn,
+      shopId: String(doc?.shopId || doc?.data?.shopId || "").trim()
+    });
+  }
+  return out;
+}
+async function patchOrderItemsOnlyInStore(orderSn, items, opts) {
+  if (!isMongoReady()) return false;
+  requireMongo();
+  const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
+  const list = Array.isArray(items) ? items : [];
+  if (!sn || list.length === 0) return false;
+  const _id = `shopee-${sn}`;
+  const shopIdStr = opts?.shopId != null ? String(opts.shopId).trim() : "";
+  const safeItems = stringifyShopeeIdsDeep(list);
+  const $set = {
+    "data.items": safeItems,
+    last_synced_at: /* @__PURE__ */ new Date(),
+    "data.last_synced_at": (/* @__PURE__ */ new Date()).toISOString()
+  };
+  if (shopIdStr) {
+    $set.shopId = shopIdStr;
+    $set["data.shopId"] = shopIdStr;
+  }
+  const result = await OrderModel.updateOne(
+    buildOrderCompoundFilter(sn, _id, shopIdStr || null),
+    { $set },
+    { maxTimeMS: 8e3 }
+  );
+  return Number(result.modifiedCount ?? result.nModified ?? 0) > 0 || Number(result.matchedCount ?? result.n ?? 0) > 0;
 }
 async function clearHandedOverFlagsForShippedOrders() {
   if (!isMongoReady()) return { matched: 0, modified: 0 };
@@ -78598,9 +78770,6 @@ async function clearHandedOverFlagsForShippedOrders() {
     "data.isHandedOverToCarrier": false,
     "data.is_handed_over_to_carrier": false,
     "data.is_handed_over_to_courier": false,
-    "data.local_status": "NONE",
-    "data.localStatus": "NONE",
-    "data.internal_status": "NONE",
     "data.handed_over_source": null,
     "data.handedOverSource": null
   };
@@ -127242,7 +127411,7 @@ async function restoreLocalStockOnCancelReturnScan(order, opts) {
   order.stock_restored_at = now;
   return { restored: true, qty: totalQty };
 }
-function mapShopeeOrderLineItem(it) {
+function mapShopeeOrderLineItem(it, opts) {
   if (!it || typeof it !== "object") return null;
   try {
     const itemId = String(it?.item_id || "");
@@ -127257,20 +127426,24 @@ function mapShopeeOrderLineItem(it) {
     const cancelledQty = shopeeItemCancelledQty(it);
     const cancelRequestedQty = shopeeItemCancelRequestedQty(it);
     const activeQty = Math.max(0, purchasedQty - cancelledQty);
-    if (activeQty <= 0 && cancelledQty > 0) return null;
+    const rawStatus = String(opts?.orderStatus || "").toUpperCase();
+    const isFullOrderCancel = rawStatus === "CANCELLED" || rawStatus === "IN_CANCEL";
+    if (activeQty <= 0 && cancelledQty > 0 && !isFullOrderCancel) return null;
     const originalPrice = Math.max(0, Number(it?.model_original_price) || 0);
     const discountedPrice = Math.max(
       0,
       Number(it?.model_discounted_price || it?.model_original_price || it?.item_price) || 0
     );
+    const keepQty = isFullOrderCancel ? purchasedQty : activeQty > 0 ? activeQty : purchasedQty;
     return {
       productId: itemId,
       productTitle,
       productImage,
-      quantity: activeQty > 0 ? activeQty : purchasedQty,
+      quantity: keepQty,
       originalQuantity: purchasedQty,
-      cancelledQty,
+      cancelledQty: isFullOrderCancel ? Math.max(cancelledQty, purchasedQty) : cancelledQty,
       cancelRequestedQty,
+      cancelled: isFullOrderCancel || activeQty <= 0 && cancelledQty > 0,
       price: discountedPrice || originalPrice,
       originalPrice: originalPrice > 0 ? originalPrice : void 0,
       modelId: modelId === "0" ? void 0 : modelId,
@@ -129309,7 +129482,7 @@ function normalizeShopeeOrderDetail(shopId, shopName, item) {
     const rawStatus = String(item?.order_status || "READY_TO_SHIP").toUpperCase();
     const pkg = Array.isArray(item?.package_list) ? item.package_list[0] : void 0;
     const itemList = Array.isArray(item?.item_list) ? item.item_list : [];
-    const mappedItems = itemList.map((it) => mapShopeeOrderLineItem(it)).filter(Boolean);
+    const mappedItems = itemList.map((it) => mapShopeeOrderLineItem(it, { orderStatus: rawStatus })).filter(Boolean);
     const pkgTracking = pickBestTrackingNumber(pkg?.tracking_number, pkg?.tracking_no, item?.tracking_no);
     const logisticsStatus = String(pkg?.logistics_status || "").toUpperCase();
     const mappedStatus = mapShopeeStatusToLocal(rawStatus, {
@@ -129735,6 +129908,90 @@ function mergeShopeeOrderOnSync(existing, incoming) {
   return merged;
 }
 var SHIPPING_CARRIER_BACKFILL_COOLDOWN_MS = 60 * 1e3;
+var cancelledEmptyItemsBackfillInFlight = false;
+async function backfillCancelledEmptyItems(opts) {
+  const empty = { attempted: 0, filled: 0, errors: 0 };
+  if (cancelledEmptyItemsBackfillInFlight) {
+    return { ...empty, skipped: true };
+  }
+  if (!isMongoReady()) return { ...empty, skipped: true };
+  cancelledEmptyItemsBackfillInFlight = true;
+  const startedAt = Date.now();
+  const deadlineAt = startedAt + 75e3;
+  const limit = Math.max(1, Math.min(40, Number(opts?.limit) || 20));
+  let attempted = 0;
+  let filled = 0;
+  let errors = 0;
+  try {
+    const candidates = await findCancelledEmptyItemsFromStore({
+      limit,
+      lookbackDays: opts?.lookbackDays || 30
+    });
+    if (!candidates.length) {
+      console.log(
+        `[CancelledItems Backfill] trigger=${opts?.trigger || "manual"} candidates=0`
+      );
+      return empty;
+    }
+    console.log(
+      `[CancelledItems Backfill] trigger=${opts?.trigger || "manual"} candidates=${candidates.length} limit=${limit}`
+    );
+    for (const row of candidates) {
+      if (Date.now() >= deadlineAt) break;
+      if (attempted >= limit) break;
+      const orderSn = String(row.orderSn || "").trim();
+      const shopId = String(row.shopId || "").trim();
+      if (!orderSn || !shopId) continue;
+      attempted += 1;
+      try {
+        const accessToken = await getValidShopeeAccessToken(shopId);
+        if (!accessToken) {
+          errors += 1;
+          continue;
+        }
+        const detailResult = await shopeeGetOrderDetail(shopId, accessToken, [orderSn]);
+        if (detailResult?.error) {
+          errors += 1;
+          continue;
+        }
+        const detailList = detailResult?.response?.order_list ?? detailResult?.order_list ?? [];
+        const detail = Array.isArray(detailList) ? detailList.find((d) => String(d?.order_sn || "").trim() === orderSn) || detailList[0] : null;
+        if (!detail) {
+          errors += 1;
+          continue;
+        }
+        const rawStatus = String(detail?.order_status || "CANCELLED").toUpperCase();
+        const itemList = Array.isArray(detail?.item_list) ? detail.item_list : [];
+        const items = itemList.map((it) => mapShopeeOrderLineItem(it, { orderStatus: rawStatus })).filter(Boolean);
+        if (!items.length) {
+          continue;
+        }
+        const ok = await patchOrderItemsOnlyInStore(orderSn, items, { shopId });
+        if (ok) filled += 1;
+      } catch (rowErr) {
+        errors += 1;
+        console.warn(
+          `[CancelledItems Backfill] skip order_sn=${orderSn}:`,
+          rowErr?.message || rowErr
+        );
+      }
+      await new Promise((r2) => setTimeout(r2, 500));
+    }
+    console.log(
+      `[CancelledItems Backfill] trigger=${opts?.trigger || "manual"} attempted=${attempted} filled=${filled} errors=${errors} ${Date.now() - startedAt}ms`
+    );
+    try {
+      invalidateOrdersRefreshCache();
+    } catch {
+    }
+    return { attempted, filled, errors };
+  } catch (err) {
+    console.warn("[CancelledItems Backfill] failed:", err?.message || err);
+    return { attempted, filled, errors };
+  } finally {
+    cancelledEmptyItemsBackfillInFlight = false;
+  }
+}
 async function fetchNormalizeShopeeOrderChunk(apiShopId, accessToken, fileKey, orderSns, opts) {
   const normalized = [];
   const errors = [];
@@ -131881,7 +132138,7 @@ function normalizeShopeeOrder(payload) {
   const hasExplicitStatus = Boolean(data.status || data.order_status);
   const rawStatus = hasExplicitStatus ? String(data.status || data.order_status).toUpperCase() : webhookTracking ? "PROCESSED" : "";
   const itemList = Array.isArray(data.item_list) ? data.item_list : [];
-  const mappedItems = itemList.length ? itemList.map((it) => mapShopeeOrderLineItem(it)).filter(Boolean) : [];
+  const mappedItems = itemList.length ? itemList.map((it) => mapShopeeOrderLineItem(it, { orderStatus: rawStatus })).filter(Boolean) : [];
   const mappedStatus = rawStatus ? mapShopeeStatusToLocal(rawStatus, { hasTracking: Boolean(webhookTracking) }) : webhookTracking ? "processed" : "unprocessed";
   const order = {
     id: `shopee-${orderSn}`,
@@ -136600,6 +136857,18 @@ async function startServer() {
         scheduleReadyToShipBackfillSafe();
         scheduleShopeeReturnRequestsSyncSafe();
         scheduleHandedOverStatusReconcileSafe();
+        setTimeout(() => {
+          void backfillCancelledEmptyItems({
+            limit: 20,
+            lookbackDays: 30,
+            trigger: "boot"
+          }).catch((err) => {
+            console.warn(
+              "[Boot] backfillCancelledEmptyItems failed:",
+              err instanceof Error ? err.message : err
+            );
+          });
+        }, 12e4);
         setTimeout(() => {
           void forceUpsertShopeeOrderSns(FORCE_RESCUE_SHOPEE_ORDER_SNS).then((r2) => {
             console.log(

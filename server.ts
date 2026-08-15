@@ -458,6 +458,8 @@ import {
   deleteHandedOverOrdersFromStore,
   clearHandedOverFlagsForShippedOrders,
   markOrdersCancelledAsShopeeNotFoundInStore,
+  findCancelledEmptyItemsFromStore,
+  patchOrderItemsOnlyInStore,
   loadAllHandedOverShopeeOrdersFromStore,
   deleteClosedOrdersByRetention,
   loadOrdersFromStore,
@@ -11049,7 +11051,7 @@ async function restoreLocalStockOnCancelReturnScan(
   return { restored: true, qty: totalQty };
 }
 
-function mapShopeeOrderLineItem(it: any) {
+function mapShopeeOrderLineItem(it: any, opts?: { orderStatus?: string }) {
   if (!it || typeof it !== "object") return null;
   try {
     const itemId = String(it?.item_id || "");
@@ -11068,21 +11070,31 @@ function mapShopeeOrderLineItem(it: any) {
     const cancelledQty = shopeeItemCancelledQty(it);
     const cancelRequestedQty = shopeeItemCancelRequestedQty(it);
     const activeQty = Math.max(0, purchasedQty - cancelledQty);
-    if (activeQty <= 0 && cancelledQty > 0) return null;
+    const rawStatus = String(opts?.orderStatus || "").toUpperCase();
+    const isFullOrderCancel = rawStatus === "CANCELLED" || rawStatus === "IN_CANCEL";
+    // Partial-cancel trên đơn còn sống: drop dòng đã hủy hết.
+    // Đơn CANCELLED/IN_CANCEL: GIỮ line item (tránh "đơn ảo" trống sản phẩm).
+    if (activeQty <= 0 && cancelledQty > 0 && !isFullOrderCancel) return null;
 
     const originalPrice = Math.max(0, Number(it?.model_original_price) || 0);
     const discountedPrice = Math.max(
       0,
       Number(it?.model_discounted_price || it?.model_original_price || it?.item_price) || 0,
     );
+    const keepQty = isFullOrderCancel
+      ? purchasedQty
+      : activeQty > 0
+        ? activeQty
+        : purchasedQty;
     return {
       productId: itemId,
       productTitle,
       productImage,
-      quantity: activeQty > 0 ? activeQty : purchasedQty,
+      quantity: keepQty,
       originalQuantity: purchasedQty,
-      cancelledQty,
+      cancelledQty: isFullOrderCancel ? Math.max(cancelledQty, purchasedQty) : cancelledQty,
       cancelRequestedQty,
+      cancelled: isFullOrderCancel || (activeQty <= 0 && cancelledQty > 0),
       price: discountedPrice || originalPrice,
       originalPrice: originalPrice > 0 ? originalPrice : undefined,
       modelId: modelId === "0" ? undefined : modelId,
@@ -14096,7 +14108,9 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
     const rawStatus = String(item?.order_status || "READY_TO_SHIP").toUpperCase();
     const pkg = Array.isArray(item?.package_list) ? item.package_list[0] : undefined;
     const itemList = Array.isArray(item?.item_list) ? item.item_list : [];
-    const mappedItems = itemList.map((it: any) => mapShopeeOrderLineItem(it)).filter(Boolean);
+    const mappedItems = itemList
+      .map((it: any) => mapShopeeOrderLineItem(it, { orderStatus: rawStatus }))
+      .filter(Boolean);
     const pkgTracking = pickBestTrackingNumber(pkg?.tracking_number, pkg?.tracking_no, item?.tracking_no);
     const logisticsStatus = String(pkg?.logistics_status || "").toUpperCase();
     const mappedStatus = mapShopeeStatusToLocal(rawStatus, {
@@ -14767,6 +14781,105 @@ async function backfillMissingShippingCarriersFromShopee(
     console.log(`[Carrier Backfill] đã điền shipping_carrier cho ${filled} đơn.`);
   }
   return filled;
+}
+
+let cancelledEmptyItemsBackfillInFlight = false;
+
+/**
+ * Backfill CANCELLED items=[] (30 ngày) — get_order_detail, CHỈ $set data.items.
+ * Limit + delay + deadline cứng — không vòng lặp vô tận.
+ */
+async function backfillCancelledEmptyItems(opts?: {
+  limit?: number;
+  lookbackDays?: number;
+  trigger?: string;
+}): Promise<{ attempted: number; filled: number; errors: number; skipped?: boolean }> {
+  const empty = { attempted: 0, filled: 0, errors: 0 };
+  if (cancelledEmptyItemsBackfillInFlight) {
+    return { ...empty, skipped: true };
+  }
+  if (!isMongoReady()) return { ...empty, skipped: true };
+  cancelledEmptyItemsBackfillInFlight = true;
+  const startedAt = Date.now();
+  const deadlineAt = startedAt + 75_000;
+  const limit = Math.max(1, Math.min(40, Number(opts?.limit) || 20));
+  let attempted = 0;
+  let filled = 0;
+  let errors = 0;
+  try {
+    const candidates = await findCancelledEmptyItemsFromStore({
+      limit,
+      lookbackDays: opts?.lookbackDays || 30,
+    });
+    if (!candidates.length) {
+      console.log(
+        `[CancelledItems Backfill] trigger=${opts?.trigger || "manual"} candidates=0`,
+      );
+      return empty;
+    }
+    console.log(
+      `[CancelledItems Backfill] trigger=${opts?.trigger || "manual"} candidates=${candidates.length} limit=${limit}`,
+    );
+    for (const row of candidates) {
+      if (Date.now() >= deadlineAt) break;
+      if (attempted >= limit) break;
+      const orderSn = String(row.orderSn || "").trim();
+      const shopId = String(row.shopId || "").trim();
+      if (!orderSn || !shopId) continue;
+      attempted += 1;
+      try {
+        const accessToken = await getValidShopeeAccessToken(shopId);
+        if (!accessToken) {
+          errors += 1;
+          continue;
+        }
+        const detailResult = await shopeeGetOrderDetail(shopId, accessToken, [orderSn]);
+        if (detailResult?.error) {
+          errors += 1;
+          continue;
+        }
+        const detailList = detailResult?.response?.order_list ?? detailResult?.order_list ?? [];
+        const detail = Array.isArray(detailList)
+          ? detailList.find((d: any) => String(d?.order_sn || "").trim() === orderSn) || detailList[0]
+          : null;
+        if (!detail) {
+          errors += 1;
+          continue;
+        }
+        const rawStatus = String(detail?.order_status || "CANCELLED").toUpperCase();
+        const itemList = Array.isArray(detail?.item_list) ? detail.item_list : [];
+        const items = itemList
+          .map((it: any) => mapShopeeOrderLineItem(it, { orderStatus: rawStatus }))
+          .filter(Boolean);
+        if (!items.length) {
+          continue;
+        }
+        const ok = await patchOrderItemsOnlyInStore(orderSn, items, { shopId });
+        if (ok) filled += 1;
+      } catch (rowErr: any) {
+        errors += 1;
+        console.warn(
+          `[CancelledItems Backfill] skip order_sn=${orderSn}:`,
+          rowErr?.message || rowErr,
+        );
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    console.log(
+      `[CancelledItems Backfill] trigger=${opts?.trigger || "manual"} attempted=${attempted} filled=${filled} errors=${errors} ${Date.now() - startedAt}ms`,
+    );
+    try {
+      invalidateOrdersRefreshCache();
+    } catch {
+      /* ignore */
+    }
+    return { attempted, filled, errors };
+  } catch (err: any) {
+    console.warn("[CancelledItems Backfill] failed:", err?.message || err);
+    return { attempted, filled, errors };
+  } finally {
+    cancelledEmptyItemsBackfillInFlight = false;
+  }
 }
 
 /**
@@ -17983,7 +18096,7 @@ function normalizeShopeeOrder(payload: any): any | null {
       : "";
   const itemList = Array.isArray(data.item_list) ? data.item_list : [];
   const mappedItems = itemList.length
-    ? itemList.map((it: any) => mapShopeeOrderLineItem(it)).filter(Boolean)
+    ? itemList.map((it: any) => mapShopeeOrderLineItem(it, { orderStatus: rawStatus })).filter(Boolean)
     : [];
   const mappedStatus = rawStatus
     ? mapShopeeStatusToLocal(rawStatus, { hasTracking: Boolean(webhookTracking) })
@@ -23760,6 +23873,18 @@ async function startServer() {
         scheduleReadyToShipBackfillSafe(); // READY_TO_SHIP lookback 7 ngày
         scheduleShopeeReturnRequestsSyncSafe(); // Return APIs → tab Yêu cầu trả hàng
         scheduleHandedOverStatusReconcileSafe(); // dò ĐVVC → SHIPPED (cron + interval)
+        setTimeout(() => {
+          void backfillCancelledEmptyItems({
+            limit: 20,
+            lookbackDays: 30,
+            trigger: "boot",
+          }).catch((err) => {
+            console.warn(
+              "[Boot] backfillCancelledEmptyItems failed:",
+              err instanceof Error ? err.message : err,
+            );
+          });
+        }, 120_000);
         // Cứu 2 SN GHN — 1 lần, delay 90s để không chồng RTS/GHN boot (CageFS nproc).
         setTimeout(() => {
           void forceUpsertShopeeOrderSns(FORCE_RESCUE_SHOPEE_ORDER_SNS)

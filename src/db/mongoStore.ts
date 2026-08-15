@@ -1664,6 +1664,11 @@ const INTERNAL_FLAG_KEYS = new Set([
   "localStatusAt",
   "local_status_updated_at",
   "is_local_return_archived",
+  "is_return_received",
+  "local_return_status",
+  "return_received_at",
+  "warehouse_return_received",
+  "isWarehouseReturnReceived",
   "stock_restored",
   "stock_restored_at",
   "labelUrl",
@@ -1672,6 +1677,62 @@ const INTERNAL_FLAG_KEYS = new Set([
   "waybill_url",
   "_clear_return_sn",
 ]);
+
+/** Path Mongo bị cấm $set khi sync Shopee — cờ kho nhân viên đã xác nhận. */
+const WAREHOUSE_PROTECTED_SET_KEYS = [
+  "local_status",
+  "data.local_status",
+  "localStatus",
+  "data.localStatus",
+  "internal_status",
+  "data.internal_status",
+  "scanFlag",
+  "data.scanFlag",
+  "localStatusAt",
+  "data.localStatusAt",
+  "local_status_updated_at",
+  "data.local_status_updated_at",
+  "is_return_received",
+  "data.is_return_received",
+  "local_return_status",
+  "data.local_return_status",
+  "return_received_at",
+  "data.return_received_at",
+  "warehouse_return_received",
+  "data.warehouse_return_received",
+  "isWarehouseReturnReceived",
+  "data.isWarehouseReturnReceived",
+  "is_local_return_archived",
+  "data.is_local_return_archived",
+] as const;
+
+function stripWarehouseProtectedKeysFromSet($set: Record<string, unknown>): void {
+  for (const key of WAREHOUSE_PROTECTED_SET_KEYS) {
+    delete $set[key];
+  }
+}
+
+function readExistingWarehouseLock(doc: any): {
+  locked: boolean;
+  local: string;
+} {
+  const data = doc?.data && typeof doc.data === "object" ? doc.data : {};
+  const local = String(
+    data.local_status ||
+      data.localStatus ||
+      data.internal_status ||
+      data.scanFlag ||
+      data.local_return_status ||
+      "",
+  ).toUpperCase();
+  const flag =
+    data.is_return_received === true ||
+    data.warehouse_return_received === true ||
+    data.isWarehouseReturnReceived === true ||
+    local === "RETURN_RECEIVED" ||
+    local === "CANCELLED_STORED";
+  return { locked: flag, local };
+}
 
 /**
  * Upsert đơn Shopee → Mongo:
@@ -1769,15 +1830,12 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       rawStatus === "IN_CANCEL" ||
       rawStatus === "TO_RETURN";
     if (leftPickupPhase) {
+      // Chỉ gỡ cờ ĐVVC. CẤM reset local_status kho (RETURN_RECEIVED / CANCELLED_STORED).
       $set.is_handed_over = false;
       $set["data.is_handed_over"] = false;
       $set["data.isHandedOverToCarrier"] = false;
       $set["data.is_handed_over_to_carrier"] = false;
       $set["data.is_handed_over_to_courier"] = false;
-      // Gỡ local_status HANDED_OVER còn sót — tránh kẹt tab / filter lệch.
-      $set["data.local_status"] = "NONE";
-      $set["data.localStatus"] = "NONE";
-      $set["data.internal_status"] = "NONE";
       $set["data.handed_over_source"] = null;
       $set["data.handedOverSource"] = null;
     }
@@ -1956,6 +2014,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       }
       $set[`data.${key}`] = value;
     }
+    stripWarehouseProtectedKeysFromSet($set);
 
     // ── WooCommerce: GHI ĐÈ TƯỜNG MINH customer info (UPSERT overwrite) ───────
     // Chạy SAU generic loop để đè lên data.* — đảm bảo re-sync vá record rỗng.
@@ -2097,7 +2156,22 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
         const existing = await OrderModel.find({
           $or: [{ _id: { $in: ids } }, { orderSn: { $in: orderSns } }, { "data.orderSn": { $in: orderSns } }],
         })
-          .select({ _id: 1, orderSn: 1, "data.orderSn": 1, last_shopee_update_at: 1 })
+          .select({
+            _id: 1,
+            orderSn: 1,
+            "data.orderSn": 1,
+            last_shopee_update_at: 1,
+            status: 1,
+            "data.status": 1,
+            "data.local_status": 1,
+            "data.localStatus": 1,
+            "data.internal_status": 1,
+            "data.scanFlag": 1,
+            "data.is_return_received": 1,
+            "data.local_return_status": 1,
+            "data.warehouse_return_received": 1,
+            "data.isWarehouseReturnReceived": 1,
+          })
           .lean();
         const existingByKey = new Map<string, any>();
         for (const row of existing) {
@@ -2134,6 +2208,54 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
           }
           return true;
         });
+        for (const item of accepted) {
+          const current = existingByKey.get(item.id) || existingByKey.get(item.orderSn);
+          const $set = item.op?.updateOne?.update?.$set as Record<string, unknown> | undefined;
+          const $setOnInsert = item.op?.updateOne?.update?.$setOnInsert as
+            | Record<string, unknown>
+            | undefined;
+          if (!$set) continue;
+          stripWarehouseProtectedKeysFromSet($set);
+          if (!current) continue;
+          const lock = readExistingWarehouseLock(current);
+          if (lock.locked) {
+            $set["data.local_status"] = lock.local;
+            $set["data.localStatus"] = lock.local;
+            $set["data.internal_status"] = lock.local;
+            $set["data.scanFlag"] = lock.local;
+            if (lock.local === "RETURN_RECEIVED") {
+              $set.status = "return_received";
+              $set["data.status"] = "return_received";
+              $set["data.is_return_received"] = true;
+              $set["data.local_return_status"] = "RETURN_RECEIVED";
+            }
+            if ($setOnInsert) {
+              for (const key of WAREHOUSE_PROTECTED_SET_KEYS) delete $setOnInsert[key];
+            }
+          } else {
+            const existingLocal = String(current?.data?.local_status || "").toUpperCase();
+            const incomingRaw = String(
+              $set.shopee_order_status || $set["data.shopee_order_status"] || "",
+            ).toUpperCase();
+            const leftPickup =
+              incomingRaw === "SHIPPED" ||
+              incomingRaw === "TO_CONFIRM_RECEIVE" ||
+              incomingRaw === "COMPLETED" ||
+              incomingRaw === "CANCELLED" ||
+              incomingRaw === "IN_CANCEL" ||
+              incomingRaw === "TO_RETURN";
+            if (leftPickup && existingLocal === "HANDED_OVER") {
+              $set["data.local_status"] = "NONE";
+              $set["data.localStatus"] = "NONE";
+              $set["data.internal_status"] = "NONE";
+              if ($setOnInsert) {
+                delete $setOnInsert["data.local_status"];
+                delete $setOnInsert["data.localStatus"];
+                delete $setOnInsert["data.internal_status"];
+              }
+            }
+          }
+        }
         const ops = accepted.map((item) => item.op);
         if (ops.length === 0) return;
         const result = await OrderModel.bulkWrite(ops as any, { ordered: false });
@@ -3314,9 +3436,6 @@ export async function markOrdersCancelledAsShopeeNotFoundInStore(
     "data.isHandedOverToCarrier": false,
     "data.is_handed_over_to_carrier": false,
     "data.is_handed_over_to_courier": false,
-    "data.local_status": "NONE",
-    "data.localStatus": "NONE",
-    "data.internal_status": "NONE",
     "data.shopee_not_found": true,
     "data.shopee_not_found_at": now,
     "data.shopee_not_found_reason": reason,
@@ -3350,6 +3469,106 @@ export async function markOrdersCancelledAsShopeeNotFoundInStore(
       ` reason=${reason}`,
   );
   return { matched, modified, sns };
+}
+
+/**
+ * Đơn CANCELLED/IN_CANCEL 30 ngày gần đây mà data.items rỗng — ứng viên backfill get_order_detail.
+ * Giới hạn cứng limit + maxTimeMS (chống vòng lặp).
+ */
+export async function findCancelledEmptyItemsFromStore(opts?: {
+  limit?: number;
+  lookbackDays?: number;
+}): Promise<Array<{ orderSn: string; shopId: string }>> {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const limit = Math.max(1, Math.min(80, Number(opts?.limit) || 40));
+  const lookbackDays = Math.max(1, Math.min(30, Number(opts?.lookbackDays) || 30));
+  const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000);
+  const sinceIso = since.toISOString();
+  const docs = await OrderModel.find({
+    $and: [
+      {
+        $or: [
+          { channel: "shopee" },
+          { "data.channel": "shopee" },
+          { channel: { $exists: false } },
+        ],
+      },
+      {
+        $or: [
+          { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL"] } },
+          { "data.shopee_order_status": { $in: ["CANCELLED", "IN_CANCEL"] } },
+          { status: "cancelled" },
+          { "data.status": "cancelled" },
+        ],
+      },
+      {
+        $or: [
+          { "data.items": { $exists: false } },
+          { "data.items": { $size: 0 } },
+          { "data.items": null },
+        ],
+      },
+      {
+        $or: [
+          { "data.date": { $gte: sinceIso } },
+          { last_shopee_update_at: { $gte: since } },
+          { last_synced_at: { $gte: since } },
+        ],
+      },
+    ],
+  })
+    .select({ orderSn: 1, shopId: 1, "data.orderSn": 1, "data.shopId": 1 })
+    .sort({ last_shopee_update_at: -1, _id: -1 })
+    .limit(limit)
+    .maxTimeMS(8000)
+    .lean();
+  const out: Array<{ orderSn: string; shopId: string }> = [];
+  const seen = new Set<string>();
+  for (const doc of docs || []) {
+    const sn = String(doc?.orderSn || doc?.data?.orderSn || "")
+      .replace(/^shopee-/i, "")
+      .trim();
+    if (!sn || seen.has(sn)) continue;
+    seen.add(sn);
+    out.push({
+      orderSn: sn,
+      shopId: String(doc?.shopId || doc?.data?.shopId || "").trim(),
+    });
+  }
+  return out;
+}
+
+/** Chỉ ghi data.items — CẤM đụng cờ kho. */
+export async function patchOrderItemsOnlyInStore(
+  orderSn: string,
+  items: any[],
+  opts?: { shopId?: string },
+): Promise<boolean> {
+  if (!isMongoReady()) return false;
+  requireMongo();
+  const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
+  const list = Array.isArray(items) ? items : [];
+  if (!sn || list.length === 0) return false;
+  const _id = `shopee-${sn}`;
+  const shopIdStr = opts?.shopId != null ? String(opts.shopId).trim() : "";
+  const safeItems = stringifyShopeeIdsDeep(list);
+  const $set: Record<string, unknown> = {
+    "data.items": safeItems,
+    last_synced_at: new Date(),
+    "data.last_synced_at": new Date().toISOString(),
+  };
+  if (shopIdStr) {
+    $set.shopId = shopIdStr;
+    $set["data.shopId"] = shopIdStr;
+  }
+  const result = await OrderModel.updateOne(
+    buildOrderCompoundFilter(sn, _id, shopIdStr || null),
+    { $set },
+    { maxTimeMS: 8_000 },
+  );
+  return Number((result as any).modifiedCount ?? (result as any).nModified ?? 0) > 0
+    || Number((result as any).matchedCount ?? (result as any).n ?? 0) > 0;
 }
 
 /**
@@ -3392,9 +3611,6 @@ export async function clearHandedOverFlagsForShippedOrders(): Promise<{
     "data.isHandedOverToCarrier": false,
     "data.is_handed_over_to_carrier": false,
     "data.is_handed_over_to_courier": false,
-    "data.local_status": "NONE",
-    "data.localStatus": "NONE",
-    "data.internal_status": "NONE",
     "data.handed_over_source": null,
     "data.handedOverSource": null,
   };

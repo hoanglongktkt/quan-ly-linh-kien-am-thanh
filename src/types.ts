@@ -309,6 +309,7 @@ export interface Order {
     originalQuantity?: number;
     cancelledQty?: number;
     cancelRequestedQty?: number;
+    cancelled?: boolean;
     price: number;
     /** Giá gốc listing (model_original_price) trước mã giảm giá Shop */
     originalPrice?: number;

@@ -31,6 +31,10 @@ import {
   isShopeeEscrowSynced,
 } from '../utils/shopeeFees';
 import { ReturnWarehouseStatusBlock } from './ReturnWarehouseStatusBlock';
+import {
+  isShopeeCancelledStatus,
+  shouldShowAwaitingShopeeTracking,
+} from '../utils/shopeeCancelReturnClassify';
 
 export type OrderListRowBadge = { text: string; color: string };
 
@@ -92,6 +96,26 @@ function AwaitingShopeeTrackingBadge({ className = '' }: { className?: string })
       Đang chờ Shopee cấp mã
     </span>
   );
+}
+
+function CancelledNoTrackingBadge({ className = '' }: { className?: string }) {
+  return (
+    <span
+      className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-100 text-gray-600 border border-gray-200 ${className}`}
+    >
+      Hủy trước khi giao
+    </span>
+  );
+}
+
+function renderMissingTrackingBadge(order: Order) {
+  if (order.channel === 'woocommerce') {
+    return <span className="text-[10px] text-indigo-600 font-semibold italic">Web order</span>;
+  }
+  if (!shouldShowAwaitingShopeeTracking(order) || isShopeeCancelledStatus(order)) {
+    return <CancelledNoTrackingBadge />;
+  }
+  return <AwaitingShopeeTrackingBadge />;
 }
 
 function calculateDynamicFeeItems(itemAmount: number, systemFees: SystemFee[]) {
@@ -316,10 +340,8 @@ export const OrderTableRow = React.memo(function OrderTableRow({
                   <Barcode className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                   <span className="truncate max-w-[160px]">{waybill}</span>
                 </div>
-              ) : order.channel === 'woocommerce' ? (
-                <span className="text-[10px] text-indigo-600 font-semibold italic">Web order</span>
               ) : (
-                <AwaitingShopeeTrackingBadge />
+                renderMissingTrackingBadge(order)
               )}
               <div className="text-[10px] text-gray-400 font-mono">#{order.orderSn}</div>
               <ReturnTrackingLine order={order} />
@@ -613,12 +635,8 @@ export const OrderCardRow = React.memo(function OrderCardRow({
                 <Barcode className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                 <span className="truncate">{waybill}</span>
               </p>
-            ) : order.channel === 'woocommerce' ? (
-              <p className="text-[10px] text-indigo-600 font-semibold italic mt-0.5">Web order</p>
             ) : (
-              <p className="mt-0.5">
-                <AwaitingShopeeTrackingBadge />
-              </p>
+              <p className="mt-0.5">{renderMissingTrackingBadge(order)}</p>
             )}
             <p className="text-[10px] text-gray-400 font-mono mt-0.5">#{order.orderSn}</p>
             <ReturnTrackingLine order={order} />
