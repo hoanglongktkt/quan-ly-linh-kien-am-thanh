@@ -34,6 +34,7 @@ export type ShopeeCancelReturnInput = {
   buyer_cancel_reason?: string;
   cancel_by?: string;
   sub_status?: string;
+  is_rts?: boolean;
   shopee_cancel_return_kind?: string;
   local_status?: string;
   localStatus?: string;
@@ -81,7 +82,9 @@ export function isShopeeReturnRefundOrder(order: ShopeeCancelReturnInput): boole
 }
 
 export function isShopeeRtsFailedDelivery(order: ShopeeCancelReturnInput): boolean {
+  if (order.is_rts === true) return true;
   if (String(order.sub_status || '').toUpperCase() === 'RTS') return true;
+  if (String(order.shopee_cancel_return_kind || '') === 'failed_delivery') return true;
   if (isShopeeRtsLogistics(order.logistics_status)) return true;
   if (isShopeeRtsCancelReason(order.cancel_reason, order.buyer_cancel_reason)) return true;
   return false;

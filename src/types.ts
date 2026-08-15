@@ -244,6 +244,8 @@ export interface Order {
   shopee_cancel_return_kind?: 'refund_return' | 'cancelled' | 'failed_delivery';
   /** RTS = giao không thành công; CANCELLED = đơn hủy; RETURN = trả hàng hoàn tiền */
   sub_status?: 'RTS' | 'CANCELLED' | 'RETURN' | string;
+  /** Cờ RTS từ backend (giao hàng không thành công) */
+  is_rts?: boolean;
   /** get_order_detail.cancel_reason */
   cancel_reason?: string;
   buyer_cancel_reason?: string;

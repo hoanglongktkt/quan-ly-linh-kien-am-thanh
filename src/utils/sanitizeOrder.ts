@@ -153,6 +153,10 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
       if (s === 'RTS' || s === 'CANCELLED' || s === 'RETURN') return s;
       return undefined;
     })(),
+    is_rts:
+      Boolean(raw.is_rts) ||
+      String(raw.sub_status || '').toUpperCase() === 'RTS' ||
+      String(raw.shopee_cancel_return_kind || '') === 'failed_delivery',
     cancel_reason: raw.cancel_reason ? String(raw.cancel_reason) : undefined,
     buyer_cancel_reason: raw.buyer_cancel_reason ? String(raw.buyer_cancel_reason) : undefined,
     cancel_by: raw.cancel_by ? String(raw.cancel_by) : undefined,

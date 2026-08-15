@@ -773,10 +773,28 @@ function resolveCancelReturnKind(order: Order): CancelReturnTab | null {
 }
 
 function matchesCancelReturnTab(order: Order, tab: CancelReturnTab): boolean {
-  const kind = resolveCancelReturnKind(order);
-  if (!kind) return false;
   if (tab === 'all') return true;
-  return kind === tab;
+  const kind = classifyShopeeCancelReturnKind(order);
+  const isReturn = kind === 'refund_return' || isShopeeReturnRefundOrder(order);
+  const isRts =
+    !isReturn &&
+    (Boolean(order.is_rts) ||
+      String(order.sub_status || '').toUpperCase() === 'RTS' ||
+      kind === 'failed_delivery' ||
+      isShopeeRtsFailedDelivery(order));
+  const raw = String(order.shopee_order_status || '').toUpperCase();
+  const isCancelled =
+    !isReturn &&
+    !isRts &&
+    (kind === 'cancelled' ||
+      raw === 'CANCELLED' ||
+      raw === 'IN_CANCEL' ||
+      order.status === 'cancelled');
+
+  if (tab === 'refund_return') return isReturn;
+  if (tab === 'failed_delivery') return isRts;
+  if (tab === 'cancelled') return isCancelled;
+  return false;
 }
 
 /** Phân loại hủy/hoàn dùng chung verify realtime + background lookup. */
@@ -821,46 +839,6 @@ function scannedMatchesReturnWaybill(order: Order, rawCode: string): boolean {
     }
     return false;
   });
-}
-
-function ReturnWarehouseStatusBlock({
-  order,
-  confirming,
-  onConfirm,
-  compact,
-}: {
-  order: Order;
-  confirming: boolean;
-  onConfirm: (order: Order) => void;
-  compact?: boolean;
-}) {
-  const received = isWarehouseReturnReceived(order);
-  return (
-    <div className={`flex flex-col ${compact ? 'items-end' : 'items-center'} gap-1.5`}>
-      <span className="inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border bg-indigo-50 text-indigo-600 border-indigo-200/60">
-        Đang hoàn về
-      </span>
-      {received ? (
-        <span className="inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border bg-emerald-50 text-emerald-700 border-emerald-200">
-          Đã nhận hàng hoàn
-        </span>
-      ) : (
-        <>
-          <span className="inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border bg-orange-50 text-orange-800 border-orange-300">
-            Chưa nhận được hàng hoàn
-          </span>
-          <button
-            type="button"
-            disabled={confirming}
-            onClick={() => onConfirm(order)}
-            className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] rounded-lg transition-all disabled:opacity-60"
-          >
-            {confirming ? 'Đang xác nhận...' : 'Xác nhận đã nhận hoàn'}
-          </button>
-        </>
-      )}
-    </div>
-  );
 }
 
 function VariationNameBadge({ variationName }: { variationName?: string }) {
@@ -5168,8 +5146,10 @@ export default function OrderManager({
       if (!matchSn && !matchTracking && !matchInternal && !matchProduct && !matchCustomer) return false;
     }
 
-    if (printStatusFilter === 'printed' && !isOrderPrintedEffective(order)) return false;
-    if (printStatusFilter === 'unprinted' && isOrderPrintedEffective(order)) return false;
+    if (activeSubTab !== 'cancel_returns') {
+      if (printStatusFilter === 'printed' && !isOrderPrintedEffective(order)) return false;
+      if (printStatusFilter === 'unprinted' && isOrderPrintedEffective(order)) return false;
+    }
 
     return true;
   };
@@ -5183,6 +5163,7 @@ export default function OrderManager({
       selectedShopId,
       searchQuery,
       printStatusFilter,
+      activeSubTab,
     ],
   );
 
@@ -5204,13 +5185,17 @@ export default function OrderManager({
       'received_cancel_returns',
     ]);
     if (!carrierFilterTabs.has(activeSubTab)) return counts;
-    for (const order of ordersPoolBeforeCarrier) {
+    const pool =
+      activeSubTab === 'cancel_returns' && cancelReturnTab !== 'all'
+        ? ordersPoolBeforeCarrier.filter((o) => matchesCancelReturnTab(o, cancelReturnTab))
+        : ordersPoolBeforeCarrier;
+    for (const order of pool) {
       const group = getShippingCarrierGroup(order);
       counts.all += 1;
       counts[group] += 1;
     }
     return counts;
-  }, [activeSubTab, ordersPoolBeforeCarrier]);
+  }, [activeSubTab, cancelReturnTab, ordersPoolBeforeCarrier]);
 
   const singleItemSortKey = (order: Order) => {
     const item = (order.items || [])[0];
@@ -5221,6 +5206,9 @@ export default function OrderManager({
   const filteredOrdersBase = useMemo(() => {
     return ordersPoolBeforeCarrier
       .filter((order) => {
+        if (activeSubTab === 'cancel_returns' && !matchesCancelReturnTab(order, cancelReturnTab)) {
+          return false;
+        }
         if (searchQuery.trim()) return true;
         return orderMatchesShippingCarrierFilter(order, selectedShippingCarrier);
       })
@@ -5238,6 +5226,8 @@ export default function OrderManager({
     searchQuery,
     selectedShippingCarrier,
     selectedSort,
+    activeSubTab,
+    cancelReturnTab,
   ]);
 
   const filteredOrders = useMemo(() => {
@@ -7153,8 +7143,10 @@ export default function OrderManager({
       </div>
       )}
 
-      {/* 5. BULK ACTION BAR */}
-      {activeSubTab !== 'order_products' && activeSubTab !== 'web_orders' && (
+      {/* 5. BULK ACTION BAR — ẩn hoàn toàn ở tab Đơn Hủy, Đơn Hoàn */}
+      {activeSubTab !== 'order_products' &&
+        activeSubTab !== 'web_orders' &&
+        activeSubTab !== 'cancel_returns' && (
       <div className="om-orders-mobile-hide-bulk-bar bg-slate-50 border border-slate-200/80 p-3 max-md:p-2.5 rounded-2xl flex items-center justify-between gap-4 max-md:gap-2">
         <div className="flex items-center gap-3 flex-wrap">
           <button 

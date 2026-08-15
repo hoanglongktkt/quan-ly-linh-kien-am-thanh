@@ -1221,6 +1221,7 @@ function applyShopeeCancelReturnClassification(order: any, detail?: any): void {
   if (kind) order.shopee_cancel_return_kind = kind;
   const sub = resolveShopeeSubStatus(kind);
   if (sub) order.sub_status = sub;
+  order.is_rts = kind === "failed_delivery" || sub === "RTS";
 }
 
 /** Log lỗi Shopee đúng format yêu cầu (FE/ops đọc được error + message). */

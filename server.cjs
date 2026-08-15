@@ -75118,7 +75118,9 @@ function isShopeeReturnRefundOrder(order) {
   return false;
 }
 function isShopeeRtsFailedDelivery(order) {
+  if (order.is_rts === true) return true;
   if (String(order.sub_status || "").toUpperCase() === "RTS") return true;
+  if (String(order.shopee_cancel_return_kind || "") === "failed_delivery") return true;
   if (isShopeeRtsLogistics(order.logistics_status)) return true;
   if (isShopeeRtsCancelReason(order.cancel_reason, order.buyer_cancel_reason)) return true;
   return false;
@@ -119341,6 +119343,7 @@ function applyShopeeCancelReturnClassification(order, detail) {
   if (kind) order.shopee_cancel_return_kind = kind;
   const sub = resolveShopeeSubStatus(kind);
   if (sub) order.sub_status = sub;
+  order.is_rts = kind === "failed_delivery" || sub === "RTS";
 }
 function logShopeeSyncApiError(error, context) {
   try {

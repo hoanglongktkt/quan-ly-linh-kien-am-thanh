@@ -23,7 +23,6 @@ import {
   isShopeeReadyToShipStatus,
   matchesProcessedPickupTab,
 } from '../utils/orderHandover';
-import { isWarehouseReturnReceived } from '../utils/orderLocalStatus';
 import { getCarrierWaybillDisplay } from '../utils/orderTracking';
 import { resolveOrderShopDisplayName } from '../utils/resolveOrderShopName';
 import {
@@ -31,6 +30,7 @@ import {
   getShopeeNetRevenue,
   isShopeeEscrowSynced,
 } from '../utils/shopeeFees';
+import { ReturnWarehouseStatusBlock } from './ReturnWarehouseStatusBlock';
 
 export type OrderListRowBadge = { text: string; color: string };
 
@@ -128,44 +128,8 @@ function shopChannelClass(channel: Order['channel']): string {
   return 'bg-blue-50 text-blue-700 border border-blue-200';
 }
 
-function ReturnWarehouseStatusBlock({
-  order,
-  confirming,
-  onConfirm,
-  compact,
-}: {
-  order: Order;
-  confirming: boolean;
-  onConfirm: (order: Order) => void;
-  compact?: boolean;
-}) {
-  const received = isWarehouseReturnReceived(order);
-  return (
-    <div className={`flex flex-col ${compact ? 'items-end' : 'items-center'} gap-1.5`}>
-      <span className="inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border bg-indigo-50 text-indigo-600 border-indigo-200/60">
-        Đang hoàn về
-      </span>
-      {received ? (
-        <span className="inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border bg-emerald-50 text-emerald-700 border-emerald-200">
-          Đã nhận hàng hoàn
-        </span>
-      ) : (
-        <>
-          <span className="inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border bg-orange-50 text-orange-800 border-orange-300">
-            Chưa nhận được hàng hoàn
-          </span>
-          <button
-            type="button"
-            disabled={confirming}
-            onClick={() => onConfirm(order)}
-            className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] rounded-lg transition-all disabled:opacity-60"
-          >
-            {confirming ? 'Đang xác nhận...' : 'Xác nhận đã nhận hoàn'}
-          </button>
-        </>
-      )}
-    </div>
-  );
+function isCancelReturnGroupTab(tab: string): boolean {
+  return tab === 'cancel_returns';
 }
 
 function resolveWooCustomerInfo(order: Order): { name: string; phone: string; address: string } {
@@ -376,6 +340,12 @@ export const OrderTableRow = React.memo(function OrderTableRow({
                   <Printer className={`w-3.5 h-3.5 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
                   In nhanh
                 </button>
+              ) : isCancelReturnGroupTab(activeSubTab) ? (
+                <ReturnWarehouseStatusBlock
+                  order={order}
+                  confirming={confirmingReturn}
+                  onConfirm={actions.onConfirmReturn}
+                />
               ) : (
                 <>
                   <span className={`inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border ${badge.color}`}>
@@ -433,7 +403,7 @@ export const OrderTableRow = React.memo(function OrderTableRow({
                   </>
                 )}
 
-                {order.status === 'pending_confirm' && order.channel !== 'woocommerce' && (
+                {order.status === 'pending_confirm' && order.channel !== 'woocommerce' && !isCancelReturnGroupTab(activeSubTab) && (
                   <button
                     type="button"
                     onClick={() =>
@@ -445,7 +415,7 @@ export const OrderTableRow = React.memo(function OrderTableRow({
                   </button>
                 )}
 
-                {isShopeeReadyToShipStatus(order) && !isProcessedCondition(order) && (
+                {isShopeeReadyToShipStatus(order) && !isProcessedCondition(order) && !isCancelReturnGroupTab(activeSubTab) && (
                   <>
                     {!isOrderPreparedEffective(order) ? (
                       <button
@@ -463,7 +433,7 @@ export const OrderTableRow = React.memo(function OrderTableRow({
                   </>
                 )}
 
-                {showHandover && (
+                {showHandover && !isCancelReturnGroupTab(activeSubTab) && (
                   <>
                     <span
                       className={`om-mobile-hide-print text-[10px] font-bold px-1.5 py-1 rounded ${
@@ -513,7 +483,7 @@ export const OrderTableRow = React.memo(function OrderTableRow({
                   </>
                 )}
 
-                {activeSubTab !== 'return_requests' && order.status === 'shipping' && (
+                {activeSubTab !== 'return_requests' && !isCancelReturnGroupTab(activeSubTab) && order.status === 'shipping' && (
                   <div className="flex gap-1">
                     <button
                       type="button"
@@ -532,7 +502,7 @@ export const OrderTableRow = React.memo(function OrderTableRow({
                   </div>
                 )}
 
-                {activeSubTab !== 'return_requests' && order.status === 'return_pending' && (
+                {activeSubTab !== 'return_requests' && !isCancelReturnGroupTab(activeSubTab) && order.status === 'return_pending' && (
                   <button
                     type="button"
                     onClick={() =>
@@ -652,24 +622,34 @@ export const OrderCardRow = React.memo(function OrderCardRow({
         </div>
 
         <div className="flex flex-wrap items-center gap-3 lg:gap-4 shrink-0 lg:ml-auto">
-          <div className="flex flex-col gap-2">
-            <div className="text-xs">
-              <span className="text-gray-400 text-[9px] block uppercase font-bold tracking-wider">Tổng thanh toán</span>
-              <span className="font-black text-slate-900 text-sm whitespace-nowrap">
-                {order.totalAmount.toLocaleString('vi-VN')} đ
-              </span>
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex flex-col gap-2">
+              <div className="text-xs">
+                <span className="text-gray-400 text-[9px] block uppercase font-bold tracking-wider">Tổng thanh toán</span>
+                <span className="font-black text-slate-900 text-sm whitespace-nowrap">
+                  {order.totalAmount.toLocaleString('vi-VN')} đ
+                </span>
+              </div>
+              <div className="text-xs">
+                <span className="text-gray-400 text-[9px] block uppercase font-bold tracking-wider">Tổng nhận được</span>
+                <span
+                  className={`font-black text-sm whitespace-nowrap ${revenue.pending ? 'text-amber-700' : 'text-emerald-700'}`}
+                >
+                  {revenue.text}
+                  {revenue.pending && (
+                    <span className="block text-[9px] font-medium text-amber-600/90 mt-0.5">Chưa gồm phí Shopee</span>
+                  )}
+                </span>
+              </div>
             </div>
-            <div className="text-xs">
-              <span className="text-gray-400 text-[9px] block uppercase font-bold tracking-wider">Tổng nhận được</span>
-              <span
-                className={`font-black text-sm whitespace-nowrap ${revenue.pending ? 'text-amber-700' : 'text-emerald-700'}`}
-              >
-                {revenue.text}
-                {revenue.pending && (
-                  <span className="block text-[9px] font-medium text-amber-600/90 mt-0.5">Chưa gồm phí Shopee</span>
-                )}
-              </span>
-            </div>
+            {(activeSubTab === 'return_requests' || isCancelReturnGroupTab(activeSubTab)) && (
+              <ReturnWarehouseStatusBlock
+                order={order}
+                compact
+                confirming={confirmingReturn}
+                onConfirm={actions.onConfirmReturn}
+              />
+            )}
           </div>
 
           {activeSubTab === 'processed' ? (
@@ -687,14 +667,7 @@ export const OrderCardRow = React.memo(function OrderCardRow({
               <Printer className={`w-3.5 h-3.5 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
               In nhanh
             </button>
-          ) : activeSubTab === 'return_requests' ? (
-            <ReturnWarehouseStatusBlock
-              order={order}
-              compact
-              confirming={confirmingReturn}
-              onConfirm={actions.onConfirmReturn}
-            />
-          ) : (
+          ) : activeSubTab === 'return_requests' || isCancelReturnGroupTab(activeSubTab) ? null : (
             <>
               <span className={`inline-block px-2 py-0.5 text-[9px] font-black rounded-full border shrink-0 ${badge.color}`}>
                 {badge.text}
@@ -707,6 +680,7 @@ export const OrderCardRow = React.memo(function OrderCardRow({
             </>
           )}
 
+          {!isCancelReturnGroupTab(activeSubTab) && (
           <div className="flex items-center gap-1 flex-wrap justify-end">
             {cust && (
               <>
@@ -757,7 +731,7 @@ export const OrderCardRow = React.memo(function OrderCardRow({
               </button>
             ) : null}
 
-            {isShopeeReadyToShipStatus(order) && !isProcessedCondition(order) && (
+            {isShopeeReadyToShipStatus(order) && !isProcessedCondition(order) && !isCancelReturnGroupTab(activeSubTab) && (
               <>
                 {!isOrderPreparedEffective(order) ? (
                   <button
@@ -785,7 +759,7 @@ export const OrderCardRow = React.memo(function OrderCardRow({
               </>
             )}
 
-            {showHandover && (
+            {showHandover && !isCancelReturnGroupTab(activeSubTab) && (
               <>
                 <div
                   className={`om-mobile-hide-print p-2 rounded-lg border ${
@@ -837,7 +811,7 @@ export const OrderCardRow = React.memo(function OrderCardRow({
               </>
             )}
 
-            {activeSubTab !== 'return_requests' && order.status === 'shipping' && (
+            {activeSubTab !== 'return_requests' && !isCancelReturnGroupTab(activeSubTab) && order.status === 'shipping' && (
               <div className="flex gap-1">
                 <button
                   type="button"
@@ -856,7 +830,7 @@ export const OrderCardRow = React.memo(function OrderCardRow({
               </div>
             )}
 
-            {activeSubTab !== 'return_requests' && order.status === 'return_pending' && (
+            {activeSubTab !== 'return_requests' && !isCancelReturnGroupTab(activeSubTab) && order.status === 'return_pending' && (
               <button
                 type="button"
                 onClick={() =>
@@ -872,6 +846,7 @@ export const OrderCardRow = React.memo(function OrderCardRow({
               </button>
             )}
           </div>
+          )}
         </div>
       </div>
       {isExpanded ? renderDetails(order) : null}
