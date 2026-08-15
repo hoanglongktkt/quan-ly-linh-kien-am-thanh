@@ -179,6 +179,20 @@ let deps = {
 
 let ordersRefreshInFlight = null;
 let ordersRefreshCache = null;
+const ordersRefreshCoalesce = new Map();
+const ordersCounterCoalesce = new Map();
+
+function coalesceInFlight(map, key, factory) {
+  const existing = map.get(key);
+  if (existing) return existing;
+  const run = Promise.resolve()
+    .then(factory)
+    .finally(() => {
+      if (map.get(key) === run) map.delete(key);
+    });
+  map.set(key, run);
+  return run;
+}
 
 export function initOrdersController(partial) {
   deps = { ...deps, ...partial };
@@ -381,113 +395,132 @@ export async function refreshOrders(req, res) {
       req.query.shop_id ?? req.query.shopId,
     );
     const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "").trim();
+    const printStatus = String(req.query.print_status || req.query.printStatus || "").trim();
+    const coalesceKey = [
+      page,
+      limit,
+      tab,
+      kind || "",
+      searchQ,
+      shopIds.join(",") || shopId,
+      printStatus,
+      req.query.startDate || req.query.start_date || "",
+      req.query.endDate || req.query.end_date || "",
+    ].join("|");
     console.log(
       `[GET /api/orders/refresh] params page=${page} limit=${limit} tab=${tab || "(none)"}` +
         ` kind=${kind || "(all)"}` +
         ` q=${searchQ || "(none)"}` +
         ` shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"}` +
-        ` print_status=${req.query.print_status || req.query.printStatus || "(all)"}`,
+        ` print_status=${printStatus || "(all)"}`,
     );
     const tabLc = tab.toLowerCase();
-    const printStatus = String(req.query.print_status || req.query.printStatus || "").trim();
-    let mergedOrders = [];
-    let total = 0;
-    let hasMore = false;
-    let counters = { total: 0, returned: 0, cancelled: 0, rts: 0 };
+    const payload = await coalesceInFlight(ordersRefreshCoalesce, coalesceKey, async () => {
+      let mergedOrders = [];
+      let total = 0;
+      let hasMore = false;
+      let counters = { total: 0, returned: 0, cancelled: 0, rts: 0 };
 
-    // Tab đã nhận hủy/hoàn: nguồn don_hoan_huy (không phải Order collection).
-    // Search q= luôn query collection orders (không kẹp tab).
-    if (
-      !searchQ &&
-      (tabLc === "received_cancel_returns" ||
-        tabLc === "received-cancel-returns" ||
-        tabLc === "da_nhan_huy_hoan")
-    ) {
-      const allReceived = await readOrdersForRefresh(5000, {
-        tab,
-        shopId,
-        shopIds,
-        printStatus,
-      });
-      total = allReceived.length;
-      const start = (page - 1) * limit;
-      mergedOrders = allReceived.slice(start, start + limit);
-      hasMore = page * limit < total;
-    } else {
-      // Luôn query Mongo phân trang — không gọi Shopee.
-      const pageResult = await queryOrdersPageFromStore({
-        page,
-        pageSize: limit,
-        tab: searchQ ? "" : tab,
-        kind: searchQ ? "" : kind,
-        shopId,
-        shopIds: shopIds.length ? shopIds : undefined,
-        query: searchQ,
-        printStatus,
-        skipCounts: true,
-        ...readOrderDateQuery(req),
-      });
-      mergedOrders = pageResult.rows.filter((order) =>
-        Boolean(order?.orderSn || order?.id),
-      );
-      total = pageResult.total || mergedOrders.length;
-      hasMore = Boolean(pageResult.hasMore);
-      if (pageResult.counters) counters = pageResult.counters;
-      if (!tab) {
-        try {
-          mergedOrders = await mergeDonHoanHuyIntoOrders(mergedOrders);
-        } catch (mergeErr) {
-          console.warn(
-            "[GET /api/orders/refresh] mergeDonHoanHuy skipped:",
-            mergeErr?.message || mergeErr,
-          );
+      if (
+        !searchQ &&
+        (tabLc === "received_cancel_returns" ||
+          tabLc === "received-cancel-returns" ||
+          tabLc === "da_nhan_huy_hoan")
+      ) {
+        const allReceived = await deps.withLocalDbTimeout(
+          readOrdersForRefresh(5000, {
+            tab,
+            shopId,
+            shopIds,
+            printStatus,
+          }),
+          10000,
+          "orders_refresh_received",
+        );
+        total = allReceived.length;
+        const start = (page - 1) * limit;
+        mergedOrders = allReceived.slice(start, start + limit);
+        hasMore = page * limit < total;
+      } else {
+        const pageResult = await deps.withLocalDbTimeout(
+          queryOrdersPageFromStore({
+            page,
+            pageSize: limit,
+            tab: searchQ ? "" : tab,
+            kind: searchQ ? "" : kind,
+            shopId,
+            shopIds: shopIds.length ? shopIds : undefined,
+            query: searchQ,
+            printStatus,
+            skipCounts: true,
+            ...readOrderDateQuery(req),
+          }),
+          10000,
+          "orders_refresh",
+        );
+        mergedOrders = pageResult.rows.filter((order) =>
+          Boolean(order?.orderSn || order?.id),
+        );
+        total = pageResult.total || mergedOrders.length;
+        hasMore = Boolean(pageResult.hasMore);
+        if (pageResult.counters) counters = pageResult.counters;
+        if (!tab) {
+          try {
+            mergedOrders = await mergeDonHoanHuyIntoOrders(mergedOrders);
+          } catch (mergeErr) {
+            console.warn(
+              "[GET /api/orders/refresh] mergeDonHoanHuy skipped:",
+              mergeErr?.message || mergeErr,
+            );
+          }
         }
       }
-    }
-    mergedOrders = filterOrdersByPrintStatus(mergedOrders, printStatus);
-    const orders = attachPdfAvailability(
-      deps.enrichOrdersWithShopNames(
-        deps.enrichOrdersFromCatalog(mergedOrders, []),
-      ),
-    );
-    if (
-      !searchQ &&
-      (tabLc === "cancel_returns" ||
-        tabLc === "cancel-returns" ||
-        tabLc === "cancelled_returned" ||
-        tabLc === "huy-hoan" ||
-        tabLc === "don-huy-hoan") &&
-      !(counters.total > 0)
-    ) {
-      try {
-        counters = await countCancelReturnCountersFromStore({
-          shopId: shopId || undefined,
-          shopIds: shopIds.length ? shopIds : undefined,
-          ...readOrderDateQuery(req),
-        });
-      } catch {
-        /* keep zeros */
+      mergedOrders = filterOrdersByPrintStatus(mergedOrders, printStatus);
+      const orders = attachPdfAvailability(
+        deps.enrichOrdersWithShopNames(
+          deps.enrichOrdersFromCatalog(mergedOrders, []),
+        ),
+      );
+      if (
+        !searchQ &&
+        (tabLc === "cancel_returns" ||
+          tabLc === "cancel-returns" ||
+          tabLc === "cancelled_returned" ||
+          tabLc === "huy-hoan" ||
+          tabLc === "don-huy-hoan") &&
+        !(counters.total > 0)
+      ) {
+        try {
+          counters = await countCancelReturnCountersFromStore({
+            shopId: shopId || undefined,
+            shopIds: shopIds.length ? shopIds : undefined,
+            ...readOrderDateQuery(req),
+          });
+        } catch {
+          /* keep zeros */
+        }
       }
-    }
-    const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / limit) || 1);
-    const currentPage = Math.min(page, totalPages);
-    console.log(
-      `[FRONTEND FETCHED] GET /api/orders/refresh?page=${page}&limit=${limit}` +
-        ` — trả về ${orders.length}/${total} đơn từ MongoDB (READ-ONLY).`,
-    );
-    return res.status(200).json({
-      success: true,
-      data: orders,
-      total,
-      totalPages,
-      currentPage,
-      page: currentPage,
-      page_size: limit,
-      limit,
-      has_more: hasMore,
-      hasMore,
-      counters,
+      const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / limit) || 1);
+      const currentPage = Math.min(page, totalPages);
+      console.log(
+        `[FRONTEND FETCHED] GET /api/orders/refresh?page=${page}&limit=${limit}` +
+          ` — trả về ${orders.length}/${total} đơn từ MongoDB (READ-ONLY).`,
+      );
+      return {
+        success: true,
+        data: orders,
+        total,
+        totalPages,
+        currentPage,
+        page: currentPage,
+        page_size: limit,
+        limit,
+        has_more: hasMore,
+        hasMore,
+        counters,
+      };
     });
+    return res.status(200).json(payload);
   } catch (error) {
     console.error(
       "[GET /api/orders/refresh] Mongo query failed:",
@@ -620,11 +653,19 @@ export async function getOrderCounts(req, res) {
       req.query.shop_id ?? req.query.shopId,
     );
     const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "").trim();
-    const counts = await countOrdersByTabsFromStore({
-      shopId: shopId || undefined,
-      shopIds: shopIds.length > 1 ? shopIds : undefined,
-      ...readOrderDateQuery(req),
-    });
+    const dateQ = readOrderDateQuery(req);
+    const coalesceKey = `${shopIds.join(",") || shopId}|${dateQ.startDate || ""}|${dateQ.endDate || ""}`;
+    const counts = await coalesceInFlight(ordersCounterCoalesce, coalesceKey, () =>
+      deps.withLocalDbTimeout(
+        countOrdersByTabsFromStore({
+          shopId: shopId || undefined,
+          shopIds: shopIds.length > 1 ? shopIds : undefined,
+          ...dateQ,
+        }),
+        12000,
+        "orders_counter",
+      ),
+    );
     const counters = {
       total: Number(counts.cancel_returns) || 0,
       returned: Number(counts.cancel_returns_returned ?? counts.refund_return) || 0,

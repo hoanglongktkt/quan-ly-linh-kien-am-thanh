@@ -4797,18 +4797,9 @@ export function buildShopIdMongoFilter(
       ]
     : [];
   if (multi.length > 1) {
-    const strIds = multi;
-    const numIds = multi
-      .map((s) => Number(s))
-      .filter((n) => Number.isFinite(n) && String(n) === String(Math.trunc(n)));
-    const variants: Record<string, unknown>[] = [
-      { shopId: { $in: strIds } },
-      { "data.shopId": { $in: strIds } },
-    ];
-    if (numIds.length) {
-      variants.push({ shopId: { $in: numIds } }, { "data.shopId": { $in: numIds } });
-    }
-    return { $or: variants };
+    // shopId luôn String + index { shopId: 1 }. CẤM $or 4 nhánh ($in str/num × shopId/data.shopId)
+    // — planner COLLSCAN → treo refresh/counter khi chọn nhiều gian hàng.
+    return { shopId: { $in: multi } };
   }
   const single =
     multi.length === 1
@@ -5651,10 +5642,10 @@ export async function countOrdersByTabsFromStore(opts?: {
     ] as const;
     // Tuần tự — CẤM Promise.all 8 countDocuments (nproc/CageFS fork fail).
     const counts: Record<string, number> = { ...empty };
-    counts.all = await safeCountDocuments(withShop({}));
+    counts.all = await safeCountDocuments(withShop({}), 4000);
     await new Promise((r) => setTimeout(r, 20));
     for (const t of countTabs) {
-      counts[t] = await safeCountDocuments(withShop(orderTabFilter(t)));
+      counts[t] = await safeCountDocuments(withShop(orderTabFilter(t)), 5000);
       await new Promise((r) => setTimeout(r, 20));
     }
     try {

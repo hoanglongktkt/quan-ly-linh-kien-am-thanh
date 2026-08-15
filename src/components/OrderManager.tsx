@@ -1048,6 +1048,7 @@ export default function OrderManager({
   const counterAbortRef = useRef<AbortController | null>(null);
   const counterInFlightKeyRef = useRef('');
   const counterInFlightPromiseRef = useRef<Promise<Record<string, number> | null> | null>(null);
+  const lastCounterCallAtRef = useRef(0);
   const countsFingerprintRef = useRef<string>('');
   const isSyncingRef = useRef(false);
   /** Pull-to-refresh (mobile): vuốt từ trên xuống để fetch lại đơn. */
@@ -1086,9 +1087,14 @@ export default function OrderManager({
     const shopIds = shopScopeRef.current.shopIds;
     const range = dateRangeRef.current;
     const flightKey = `${shopIds.join(',')}|${range.startDate}|${range.endDate}`;
+    const now = Date.now();
     if (counterInFlightPromiseRef.current && counterInFlightKeyRef.current === flightKey) {
       return counterInFlightPromiseRef.current;
     }
+    if (counterInFlightKeyRef.current === flightKey && now - lastCounterCallAtRef.current < 800) {
+      return counterInFlightPromiseRef.current;
+    }
+    lastCounterCallAtRef.current = now;
     if (counterInFlightKeyRef.current !== flightKey) {
       counterAbortRef.current?.abort();
     }
@@ -1097,13 +1103,14 @@ export default function OrderManager({
     counterInFlightKeyRef.current = flightKey;
     const run = (async (): Promise<Record<string, number> | null> => {
       try {
-        const fetchCounterForShop = async (shopId?: string): Promise<{
+        const fetchCounterForShops = async (ids: string[]): Promise<{
           counts: Record<string, number>;
           counters?: { total?: number; returned?: number; cancelled?: number; rts?: number };
         } | null> => {
           const params = new URLSearchParams();
           params.set('t', String(Date.now()));
-          if (shopId) params.set('shop_id', shopId);
+          if (ids.length === 1) params.set('shop_id', ids[0]);
+          else if (ids.length > 1) params.set('shop_ids', ids.join(','));
           if (range.startDate) params.set('startDate', range.startDate);
           if (range.endDate) params.set('endDate', range.endDate);
           const res = await fetch(`/api/orders/counter?${params.toString()}`, {
@@ -1126,8 +1133,7 @@ export default function OrderManager({
               | undefined,
           };
         };
-        const shopTargets = shopIds.length > 0 ? shopIds : [undefined];
-        const responses = await Promise.all(shopTargets.map((id) => fetchCounterForShop(id)));
+        const responses = await Promise.all([fetchCounterForShops(shopIds)]);
         const ok = responses.filter(Boolean) as Array<{
           counts: Record<string, number>;
           counters?: { total?: number; returned?: number; cancelled?: number; rts?: number };
@@ -1619,7 +1625,7 @@ export default function OrderManager({
 
     let cancelled = false;
     const controller = new AbortController();
-    const delay = datePreset === 'custom' ? 250 : 0;
+    const delay = datePreset === 'custom' ? 280 : 200;
     const timer = window.setTimeout(() => {
       if (cancelled) return;
       setCurrentPage((p) => (p === 1 ? p : 1));

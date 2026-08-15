@@ -79443,16 +79443,7 @@ function buildShopIdMongoFilter(shopId, shopIds) {
     )
   ] : [];
   if (multi.length > 1) {
-    const strIds = multi;
-    const numIds = multi.map((s2) => Number(s2)).filter((n) => Number.isFinite(n) && String(n) === String(Math.trunc(n)));
-    const variants2 = [
-      { shopId: { $in: strIds } },
-      { "data.shopId": { $in: strIds } }
-    ];
-    if (numIds.length) {
-      variants2.push({ shopId: { $in: numIds } }, { "data.shopId": { $in: numIds } });
-    }
-    return { $or: variants2 };
+    return { shopId: { $in: multi } };
   }
   const single = multi.length === 1 ? multi[0] : shopId && String(shopId).trim() && String(shopId).trim() !== "all" ? String(shopId).trim() : "";
   if (!single) return null;
@@ -80171,10 +80162,10 @@ async function countOrdersByTabsFromStore(opts) {
       "web_orders"
     ];
     const counts = { ...empty };
-    counts.all = await safeCountDocuments(withShop({}));
+    counts.all = await safeCountDocuments(withShop({}), 4e3);
     await new Promise((r2) => setTimeout(r2, 20));
     for (const t2 of countTabs) {
-      counts[t2] = await safeCountDocuments(withShop(orderTabFilter(t2)));
+      counts[t2] = await safeCountDocuments(withShop(orderTabFilter(t2)), 5e3);
       await new Promise((r2) => setTimeout(r2, 20));
     }
     try {
@@ -109405,6 +109396,17 @@ var deps15 = {
 };
 var ordersRefreshInFlight = null;
 var ordersRefreshCache = null;
+var ordersRefreshCoalesce = /* @__PURE__ */ new Map();
+var ordersCounterCoalesce = /* @__PURE__ */ new Map();
+function coalesceInFlight(map, key, factory2) {
+  const existing = map.get(key);
+  if (existing) return existing;
+  const run = Promise.resolve().then(factory2).finally(() => {
+    if (map.get(key) === run) map.delete(key);
+  });
+  map.set(key, run);
+  return run;
+}
 function initOrdersController(partial) {
   deps15 = { ...deps15, ...partial };
 }
@@ -109569,90 +109571,112 @@ async function refreshOrders(req, res) {
       req.query.shop_id ?? req.query.shopId
     );
     const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "").trim();
+    const printStatus = String(req.query.print_status || req.query.printStatus || "").trim();
+    const coalesceKey = [
+      page,
+      limit,
+      tab,
+      kind || "",
+      searchQ,
+      shopIds.join(",") || shopId,
+      printStatus,
+      req.query.startDate || req.query.start_date || "",
+      req.query.endDate || req.query.end_date || ""
+    ].join("|");
     console.log(
-      `[GET /api/orders/refresh] params page=${page} limit=${limit} tab=${tab || "(none)"} kind=${kind || "(all)"} q=${searchQ || "(none)"} shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} print_status=${req.query.print_status || req.query.printStatus || "(all)"}`
+      `[GET /api/orders/refresh] params page=${page} limit=${limit} tab=${tab || "(none)"} kind=${kind || "(all)"} q=${searchQ || "(none)"} shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} print_status=${printStatus || "(all)"}`
     );
     const tabLc = tab.toLowerCase();
-    const printStatus = String(req.query.print_status || req.query.printStatus || "").trim();
-    let mergedOrders = [];
-    let total = 0;
-    let hasMore = false;
-    let counters = { total: 0, returned: 0, cancelled: 0, rts: 0 };
-    if (!searchQ && (tabLc === "received_cancel_returns" || tabLc === "received-cancel-returns" || tabLc === "da_nhan_huy_hoan")) {
-      const allReceived = await readOrdersForRefresh(5e3, {
-        tab,
-        shopId,
-        shopIds,
-        printStatus
-      });
-      total = allReceived.length;
-      const start = (page - 1) * limit;
-      mergedOrders = allReceived.slice(start, start + limit);
-      hasMore = page * limit < total;
-    } else {
-      const pageResult = await queryOrdersPageFromStore({
-        page,
-        pageSize: limit,
-        tab: searchQ ? "" : tab,
-        kind: searchQ ? "" : kind,
-        shopId,
-        shopIds: shopIds.length ? shopIds : void 0,
-        query: searchQ,
-        printStatus,
-        skipCounts: true,
-        ...readOrderDateQuery(req)
-      });
-      mergedOrders = pageResult.rows.filter(
-        (order) => Boolean(order?.orderSn || order?.id)
-      );
-      total = pageResult.total || mergedOrders.length;
-      hasMore = Boolean(pageResult.hasMore);
-      if (pageResult.counters) counters = pageResult.counters;
-      if (!tab) {
-        try {
-          mergedOrders = await mergeDonHoanHuyIntoOrders(mergedOrders);
-        } catch (mergeErr) {
-          console.warn(
-            "[GET /api/orders/refresh] mergeDonHoanHuy skipped:",
-            mergeErr?.message || mergeErr
-          );
+    const payload = await coalesceInFlight(ordersRefreshCoalesce, coalesceKey, async () => {
+      let mergedOrders = [];
+      let total = 0;
+      let hasMore = false;
+      let counters = { total: 0, returned: 0, cancelled: 0, rts: 0 };
+      if (!searchQ && (tabLc === "received_cancel_returns" || tabLc === "received-cancel-returns" || tabLc === "da_nhan_huy_hoan")) {
+        const allReceived = await deps15.withLocalDbTimeout(
+          readOrdersForRefresh(5e3, {
+            tab,
+            shopId,
+            shopIds,
+            printStatus
+          }),
+          1e4,
+          "orders_refresh_received"
+        );
+        total = allReceived.length;
+        const start = (page - 1) * limit;
+        mergedOrders = allReceived.slice(start, start + limit);
+        hasMore = page * limit < total;
+      } else {
+        const pageResult = await deps15.withLocalDbTimeout(
+          queryOrdersPageFromStore({
+            page,
+            pageSize: limit,
+            tab: searchQ ? "" : tab,
+            kind: searchQ ? "" : kind,
+            shopId,
+            shopIds: shopIds.length ? shopIds : void 0,
+            query: searchQ,
+            printStatus,
+            skipCounts: true,
+            ...readOrderDateQuery(req)
+          }),
+          1e4,
+          "orders_refresh"
+        );
+        mergedOrders = pageResult.rows.filter(
+          (order) => Boolean(order?.orderSn || order?.id)
+        );
+        total = pageResult.total || mergedOrders.length;
+        hasMore = Boolean(pageResult.hasMore);
+        if (pageResult.counters) counters = pageResult.counters;
+        if (!tab) {
+          try {
+            mergedOrders = await mergeDonHoanHuyIntoOrders(mergedOrders);
+          } catch (mergeErr) {
+            console.warn(
+              "[GET /api/orders/refresh] mergeDonHoanHuy skipped:",
+              mergeErr?.message || mergeErr
+            );
+          }
         }
       }
-    }
-    mergedOrders = filterOrdersByPrintStatus(mergedOrders, printStatus);
-    const orders = attachPdfAvailability(
-      deps15.enrichOrdersWithShopNames(
-        deps15.enrichOrdersFromCatalog(mergedOrders, [])
-      )
-    );
-    if (!searchQ && (tabLc === "cancel_returns" || tabLc === "cancel-returns" || tabLc === "cancelled_returned" || tabLc === "huy-hoan" || tabLc === "don-huy-hoan") && !(counters.total > 0)) {
-      try {
-        counters = await countCancelReturnCountersFromStore({
-          shopId: shopId || void 0,
-          shopIds: shopIds.length ? shopIds : void 0,
-          ...readOrderDateQuery(req)
-        });
-      } catch {
+      mergedOrders = filterOrdersByPrintStatus(mergedOrders, printStatus);
+      const orders = attachPdfAvailability(
+        deps15.enrichOrdersWithShopNames(
+          deps15.enrichOrdersFromCatalog(mergedOrders, [])
+        )
+      );
+      if (!searchQ && (tabLc === "cancel_returns" || tabLc === "cancel-returns" || tabLc === "cancelled_returned" || tabLc === "huy-hoan" || tabLc === "don-huy-hoan") && !(counters.total > 0)) {
+        try {
+          counters = await countCancelReturnCountersFromStore({
+            shopId: shopId || void 0,
+            shopIds: shopIds.length ? shopIds : void 0,
+            ...readOrderDateQuery(req)
+          });
+        } catch {
+        }
       }
-    }
-    const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / limit) || 1);
-    const currentPage = Math.min(page, totalPages);
-    console.log(
-      `[FRONTEND FETCHED] GET /api/orders/refresh?page=${page}&limit=${limit} \u2014 tr\u1EA3 v\u1EC1 ${orders.length}/${total} \u0111\u01A1n t\u1EEB MongoDB (READ-ONLY).`
-    );
-    return res.status(200).json({
-      success: true,
-      data: orders,
-      total,
-      totalPages,
-      currentPage,
-      page: currentPage,
-      page_size: limit,
-      limit,
-      has_more: hasMore,
-      hasMore,
-      counters
+      const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / limit) || 1);
+      const currentPage = Math.min(page, totalPages);
+      console.log(
+        `[FRONTEND FETCHED] GET /api/orders/refresh?page=${page}&limit=${limit} \u2014 tr\u1EA3 v\u1EC1 ${orders.length}/${total} \u0111\u01A1n t\u1EEB MongoDB (READ-ONLY).`
+      );
+      return {
+        success: true,
+        data: orders,
+        total,
+        totalPages,
+        currentPage,
+        page: currentPage,
+        page_size: limit,
+        limit,
+        has_more: hasMore,
+        hasMore,
+        counters
+      };
     });
+    return res.status(200).json(payload);
   } catch (error) {
     console.error(
       "[GET /api/orders/refresh] Mongo query failed:",
@@ -109766,11 +109790,21 @@ async function getOrderCounts(req, res) {
       req.query.shop_id ?? req.query.shopId
     );
     const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "").trim();
-    const counts = await countOrdersByTabsFromStore({
-      shopId: shopId || void 0,
-      shopIds: shopIds.length > 1 ? shopIds : void 0,
-      ...readOrderDateQuery(req)
-    });
+    const dateQ = readOrderDateQuery(req);
+    const coalesceKey = `${shopIds.join(",") || shopId}|${dateQ.startDate || ""}|${dateQ.endDate || ""}`;
+    const counts = await coalesceInFlight(
+      ordersCounterCoalesce,
+      coalesceKey,
+      () => deps15.withLocalDbTimeout(
+        countOrdersByTabsFromStore({
+          shopId: shopId || void 0,
+          shopIds: shopIds.length > 1 ? shopIds : void 0,
+          ...dateQ
+        }),
+        12e3,
+        "orders_counter"
+      )
+    );
     const counters = {
       total: Number(counts.cancel_returns) || 0,
       returned: Number(counts.cancel_returns_returned ?? counts.refund_return) || 0,
@@ -120389,7 +120423,12 @@ function mapShopeeReturnKind(_detail) {
 }
 async function shopeePaginateReturnListWindow(shopId, accessToken, opts) {
   let pageNo = 1;
-  while (pageNo <= SHOPEE_RETURN_LIST_MAX_PAGES) {
+  const maxPages = Math.max(
+    1,
+    Math.min(SHOPEE_RETURN_LIST_MAX_PAGES, Number(opts.maxPages) || SHOPEE_RETURN_LIST_MAX_PAGES)
+  );
+  while (pageNo <= maxPages) {
+    if (opts.deadlineAt && Date.now() >= opts.deadlineAt) break;
     if (opts.out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) return;
     const listOpts = {
       pageNo,
@@ -120439,12 +120478,20 @@ async function shopeeFetchAllReturnSns(shopId, accessToken, opts) {
   const historyFromSec = toShopeeUnixSeconds(shopeeHistoryTimeFromMs());
   const out = [];
   const seen = /* @__PURE__ */ new Set();
+  const maxPages = Math.max(
+    1,
+    Math.min(
+      SHOPEE_RETURN_LIST_MAX_PAGES,
+      Number(opts?.maxPages) || SHOPEE_RETURN_LIST_MAX_PAGES
+    )
+  );
   const maxWindows = SHOPEE_CANCEL_RETURN_MAX_WINDOWS;
   const windowSec = SHOPEE_RETURN_LIST_WINDOW_SEC;
   console.log(
     `[Shopee Returns] shop=${shopId} mode=${mode}: get_return_list time_from=${historyFromSec} (30d)`
   );
   for (let windowIdx = 0; windowIdx < maxWindows; windowIdx++) {
+    if (opts?.deadlineAt && Date.now() >= opts.deadlineAt) break;
     if (out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
     const timeTo = now - windowIdx * windowSec;
     const timeFrom = Math.max(historyFromSec, timeTo - windowSec + 1);
@@ -120455,7 +120502,9 @@ async function shopeeFetchAllReturnSns(shopId, accessToken, opts) {
       timeField: "update",
       seen,
       out,
-      label: `shop=${shopId} update w${windowIdx + 1}`
+      label: `shop=${shopId} update w${windowIdx + 1}`,
+      maxPages,
+      deadlineAt: opts?.deadlineAt
     });
     await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
   }
@@ -120463,7 +120512,8 @@ async function shopeeFetchAllReturnSns(shopId, accessToken, opts) {
     console.log(`[Shopee Returns] shop=${shopId}: fallback no-time + discard >30d`);
     let pageNo = 1;
     let oldStreak = 0;
-    while (pageNo <= SHOPEE_RETURN_LIST_MAX_PAGES) {
+    while (pageNo <= maxPages) {
+      if (opts?.deadlineAt && Date.now() >= opts.deadlineAt) break;
       if (out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
       const listResult = await shopeeGetReturnList(shopId, accessToken, {
         pageNo,
@@ -122839,8 +122889,11 @@ async function pullShopeeCancelReturnOrders(opts) {
     releaseOrdersPullLock("pullCancelReturn_finally");
   }
 }
+var RETURN_REQUESTS_SYNC_HARD_MS = 15e4;
+var RETURN_REQUESTS_PER_SHOP_MS = 4e4;
+var returnRequestsSyncInFlight = false;
 async function syncShopeeReturnRequests(opts) {
-  if (!tryAcquireOrdersPullLock()) {
+  if (returnRequestsSyncInFlight) {
     return {
       success: true,
       pulled: 0,
@@ -122852,6 +122905,7 @@ async function syncShopeeReturnRequests(opts) {
       elapsedMs: 0
     };
   }
+  returnRequestsSyncInFlight = true;
   const startedAt = Date.now();
   const errors = [];
   let pulled = 0;
@@ -122876,23 +122930,43 @@ async function syncShopeeReturnRequests(opts) {
       };
     }
     const orders = [];
-    const deadlineAt = startedAt + Math.min(ORDERS_PULL_HARD_DEADLINE_MS, 9e4);
-    for (const shopId of shopIds) {
-      if (Date.now() >= deadlineAt) break;
+    const hardStopAt = startedAt + RETURN_REQUESTS_SYNC_HARD_MS;
+    const perShopMaxReturns = Math.max(
+      8,
+      Math.min(mode === "full" ? 40 : 25, Math.ceil(maxReturns / Math.max(1, shopIds.length)))
+    );
+    for (let shopIndex = 0; shopIndex < shopIds.length; shopIndex++) {
+      const shopId = shopIds[shopIndex];
+      const remainingShops = shopIds.length - shopIndex;
+      const remainMs = Math.max(12e3, hardStopAt - Date.now());
+      const shopDeadlineAt = Date.now() + Math.min(
+        RETURN_REQUESTS_PER_SHOP_MS,
+        Math.max(12e3, Math.floor(remainMs / remainingShops))
+      );
       try {
         let accessToken = await getValidShopeeAccessToken(shopId);
         if (!accessToken) {
           errors.push({ shopId, error: "no_valid_access_token" });
+          await shopeeSyncDelay(300);
           continue;
         }
-        const returnRows = await shopeeFetchAllReturnSns(shopId, accessToken, { mode });
-        const limited = returnRows.slice(0, maxReturns);
+        const returnRows = await shopeeFetchAllReturnSns(shopId, accessToken, {
+          mode,
+          maxPages: mode === "full" ? 15 : 8,
+          deadlineAt: shopDeadlineAt
+        });
+        const limited = returnRows.slice(0, perShopMaxReturns);
         console.log(
-          `[ReturnRequests Sync] shop=${shopId} mode=${mode} rows=${returnRows.length} process=${limited.length}`
+          `[ReturnRequests Sync] shop=${shopId} (${shopIndex + 1}/${shopIds.length}) mode=${mode} rows=${returnRows.length} process=${limited.length}`
         );
         const patches = [];
         for (const row of limited) {
-          if (Date.now() >= deadlineAt) break;
+          if (Date.now() >= shopDeadlineAt) {
+            console.warn(
+              `[ReturnRequests Sync] shop=${shopId} h\u1EBFt ng\xE2n s\xE1ch \u2014 gi\u1EEF ${patches.length} patch, chuy\u1EC3n shop ti\u1EBFp theo`
+            );
+            break;
+          }
           const returnSn = String(row.returnSn || "").trim();
           if (!returnSn) continue;
           try {
@@ -122908,7 +122982,7 @@ async function syncShopeeReturnRequests(opts) {
             const fresh = await getValidShopeeAccessToken(shopId);
             if (fresh) accessToken = fresh;
             const detailResult = await shopeeGetReturnDetail(shopId, accessToken, returnSn);
-            await new Promise((res) => setTimeout(res, 500));
+            await shopeeSyncDelay(300);
             if (detailResult?.error) {
               errors.push({
                 shopId,
@@ -123026,7 +123100,7 @@ async function syncShopeeReturnRequests(opts) {
             markNewReturnRequestAlert(merged, existing);
             patches.push(merged);
             pulled += 1;
-            await new Promise((res) => setTimeout(res, 500));
+            await shopeeSyncDelay(300);
           } catch (rowErr) {
             errors.push({
               shopId,
@@ -123034,6 +123108,7 @@ async function syncShopeeReturnRequests(opts) {
               error: "return_detail_failed",
               message: rowErr?.message || String(rowErr)
             });
+            await shopeeSyncDelay(300);
           }
         }
         if (patches.length) {
@@ -123056,6 +123131,7 @@ async function syncShopeeReturnRequests(opts) {
           message: shopErr?.message || String(shopErr)
         });
       }
+      await shopeeSyncDelay(400);
     }
     const elapsedMs = Date.now() - startedAt;
     const message = pulled > 0 ? `Return requests: \u0111\u1ED3ng b\u1ED9 ${pulled} YCTH (~${updated} DB) trong ${elapsedMs}ms` : errors.length ? `Return requests 0 \u2014 ${errors[0]?.message || errors[0]?.error}` : "Return requests: kh\xF4ng c\xF3 y\xEAu c\u1EA7u tr\u1EA3 h\xE0ng m\u1EDBi.";
@@ -123070,7 +123146,7 @@ async function syncShopeeReturnRequests(opts) {
       elapsedMs
     };
   } finally {
-    releaseOrdersPullLock("syncReturnRequests_finally");
+    returnRequestsSyncInFlight = false;
   }
 }
 var RETURN_TRACKING_RETRY_HARD_LIMIT = 30;

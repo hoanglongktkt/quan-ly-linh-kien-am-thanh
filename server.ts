@@ -1765,10 +1765,17 @@ async function shopeePaginateReturnListWindow(
     seen: Set<string>;
     out: ReturnListRow[];
     label: string;
+    maxPages?: number;
+    deadlineAt?: number;
   },
 ): Promise<void> {
   let pageNo = 1;
-  while (pageNo <= SHOPEE_RETURN_LIST_MAX_PAGES) {
+  const maxPages = Math.max(
+    1,
+    Math.min(SHOPEE_RETURN_LIST_MAX_PAGES, Number(opts.maxPages) || SHOPEE_RETURN_LIST_MAX_PAGES),
+  );
+  while (pageNo <= maxPages) {
+    if (opts.deadlineAt && Date.now() >= opts.deadlineAt) break;
     if (opts.out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) return;
     const listOpts: Parameters<typeof shopeeGetReturnList>[2] = {
       pageNo,
@@ -1822,13 +1829,20 @@ async function shopeePaginateReturnListWindow(
 async function shopeeFetchAllReturnSns(
   shopId: string,
   accessToken: string,
-  opts?: { mode?: "incremental" | "full" },
+  opts?: { mode?: "incremental" | "full"; maxPages?: number; deadlineAt?: number },
 ): Promise<ReturnListRow[]> {
   const mode = opts?.mode === "full" ? "full" : "incremental";
   const now = Math.floor(Date.now() / 1000);
   const historyFromSec = toShopeeUnixSeconds(shopeeHistoryTimeFromMs());
   const out: ReturnListRow[] = [];
   const seen = new Set<string>();
+  const maxPages = Math.max(
+    1,
+    Math.min(
+      SHOPEE_RETURN_LIST_MAX_PAGES,
+      Number(opts?.maxPages) || SHOPEE_RETURN_LIST_MAX_PAGES,
+    ),
+  );
 
   // 2 cửa sổ update_time × 15 ngày = đúng 30 ngày (Shopee từ chối > 15 ngày / request).
   const maxWindows = SHOPEE_CANCEL_RETURN_MAX_WINDOWS;
@@ -1837,6 +1851,7 @@ async function shopeeFetchAllReturnSns(
     `[Shopee Returns] shop=${shopId} mode=${mode}: get_return_list time_from=${historyFromSec} (30d)`,
   );
   for (let windowIdx = 0; windowIdx < maxWindows; windowIdx++) {
+    if (opts?.deadlineAt && Date.now() >= opts.deadlineAt) break;
     if (out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
     const timeTo = now - windowIdx * windowSec;
     const timeFrom = Math.max(historyFromSec, timeTo - windowSec + 1);
@@ -1848,6 +1863,8 @@ async function shopeeFetchAllReturnSns(
       seen,
       out,
       label: `shop=${shopId} update w${windowIdx + 1}`,
+      maxPages,
+      deadlineAt: opts?.deadlineAt,
     });
     await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
   }
@@ -1858,7 +1875,8 @@ async function shopeeFetchAllReturnSns(
     console.log(`[Shopee Returns] shop=${shopId}: fallback no-time + discard >30d`);
     let pageNo = 1;
     let oldStreak = 0;
-    while (pageNo <= SHOPEE_RETURN_LIST_MAX_PAGES) {
+    while (pageNo <= maxPages) {
+      if (opts?.deadlineAt && Date.now() >= opts.deadlineAt) break;
       if (out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
       const listResult = await shopeeGetReturnList(shopId, accessToken, {
         pageNo,
@@ -4782,6 +4800,10 @@ async function pullShopeeCancelReturnOrders(opts?: {
  * get_return_list → get_return_detail → get_reverse_tracking_info
  * Lưu: order_sn, return_sn, return_tracking_no, refund_amount, reason, status, items.
  */
+const RETURN_REQUESTS_SYNC_HARD_MS = 150_000;
+const RETURN_REQUESTS_PER_SHOP_MS = 40_000;
+let returnRequestsSyncInFlight = false;
+
 async function syncShopeeReturnRequests(opts?: {
   mode?: "incremental" | "full";
   shopIds?: string[];
@@ -4796,7 +4818,7 @@ async function syncShopeeReturnRequests(opts?: {
   elapsedMs: number;
   skipped?: boolean;
 }> {
-  if (!tryAcquireOrdersPullLock()) {
+  if (returnRequestsSyncInFlight) {
     return {
       success: true,
       pulled: 0,
@@ -4808,6 +4830,7 @@ async function syncShopeeReturnRequests(opts?: {
       elapsedMs: 0,
     };
   }
+  returnRequestsSyncInFlight = true;
   const startedAt = Date.now();
   const errors: any[] = [];
   let pulled = 0;
@@ -4837,25 +4860,46 @@ async function syncShopeeReturnRequests(opts?: {
 
     // CẤM dump toàn bộ collection — chỉ nạp đơn theo order_sn khi cần.
     const orders: any[] = [];
-    const deadlineAt = startedAt + Math.min(ORDERS_PULL_HARD_DEADLINE_MS, 90_000);
+    const hardStopAt = startedAt + RETURN_REQUESTS_SYNC_HARD_MS;
+    const perShopMaxReturns = Math.max(
+      8,
+      Math.min(mode === "full" ? 40 : 25, Math.ceil(maxReturns / Math.max(1, shopIds.length))),
+    );
 
-    for (const shopId of shopIds) {
-      if (Date.now() >= deadlineAt) break;
+    // BẮT BUỘC duyệt HẾT shop — CẤM break/return sớm sau shop đầu.
+    for (let shopIndex = 0; shopIndex < shopIds.length; shopIndex++) {
+      const shopId = shopIds[shopIndex];
+      const remainingShops = shopIds.length - shopIndex;
+      const remainMs = Math.max(12_000, hardStopAt - Date.now());
+      const shopDeadlineAt = Date.now() + Math.min(
+        RETURN_REQUESTS_PER_SHOP_MS,
+        Math.max(12_000, Math.floor(remainMs / remainingShops)),
+      );
       try {
         let accessToken = await getValidShopeeAccessToken(shopId);
         if (!accessToken) {
           errors.push({ shopId, error: "no_valid_access_token" });
+          await shopeeSyncDelay(300);
           continue;
         }
-        const returnRows = await shopeeFetchAllReturnSns(shopId, accessToken, { mode });
-        const limited = returnRows.slice(0, maxReturns);
+        const returnRows = await shopeeFetchAllReturnSns(shopId, accessToken, {
+          mode,
+          maxPages: mode === "full" ? 15 : 8,
+          deadlineAt: shopDeadlineAt,
+        });
+        const limited = returnRows.slice(0, perShopMaxReturns);
         console.log(
-          `[ReturnRequests Sync] shop=${shopId} mode=${mode} rows=${returnRows.length} process=${limited.length}`,
+          `[ReturnRequests Sync] shop=${shopId} (${shopIndex + 1}/${shopIds.length}) mode=${mode} rows=${returnRows.length} process=${limited.length}`,
         );
 
         const patches: any[] = [];
         for (const row of limited) {
-          if (Date.now() >= deadlineAt) break;
+          if (Date.now() >= shopDeadlineAt) {
+            console.warn(
+              `[ReturnRequests Sync] shop=${shopId} hết ngân sách — giữ ${patches.length} patch, chuyển shop tiếp theo`,
+            );
+            break;
+          }
           const returnSn = String(row.returnSn || "").trim();
           if (!returnSn) continue;
           try {
@@ -4871,7 +4915,7 @@ async function syncShopeeReturnRequests(opts?: {
             const fresh = await getValidShopeeAccessToken(shopId);
             if (fresh) accessToken = fresh;
             const detailResult = await shopeeGetReturnDetail(shopId, accessToken, returnSn);
-            await new Promise((res) => setTimeout(res, 500));
+            await shopeeSyncDelay(300);
             if (detailResult?.error) {
               errors.push({
                 shopId,
@@ -5024,7 +5068,7 @@ async function syncShopeeReturnRequests(opts?: {
 
             patches.push(merged);
             pulled += 1;
-            await new Promise((res) => setTimeout(res, 500));
+            await shopeeSyncDelay(300);
           } catch (rowErr: any) {
             errors.push({
               shopId,
@@ -5032,6 +5076,7 @@ async function syncShopeeReturnRequests(opts?: {
               error: "return_detail_failed",
               message: rowErr?.message || String(rowErr),
             });
+            await shopeeSyncDelay(300);
           }
         }
 
@@ -5055,6 +5100,7 @@ async function syncShopeeReturnRequests(opts?: {
           message: shopErr?.message || String(shopErr),
         });
       }
+      await shopeeSyncDelay(400);
     }
 
     const elapsedMs = Date.now() - startedAt;
@@ -5075,7 +5121,7 @@ async function syncShopeeReturnRequests(opts?: {
       elapsedMs,
     };
   } finally {
-    releaseOrdersPullLock("syncReturnRequests_finally");
+    returnRequestsSyncInFlight = false;
   }
 }
 

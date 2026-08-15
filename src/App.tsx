@@ -692,7 +692,7 @@ export default function App() {
           retriesLeft: retriesLeft - 1,
         });
       };
-      const fetchRefreshForShop = async (shopId?: string): Promise<OrdersRefreshPayload> => {
+      const fetchRefreshForShops = async (ids: string[]): Promise<OrdersRefreshPayload> => {
         const params = new URLSearchParams();
         params.set('page', String(page));
         params.set('limit', String(limit));
@@ -701,7 +701,8 @@ export default function App() {
           params.set('bust', '1');
         }
         if (printStatus && printStatus !== 'all') params.set('print_status', printStatus);
-        if (shopId) params.set('shop_id', shopId);
+        if (ids.length === 1) params.set('shop_id', ids[0]);
+        else if (ids.length > 1) params.set('shop_ids', ids.join(','));
         if (q) {
           params.set('q', q);
         } else if (tab) {
@@ -712,7 +713,7 @@ export default function App() {
         if (endDate) params.set('endDate', endDate);
         const path = `/api/orders/refresh?${params.toString()}`;
         console.log(
-          `[FRONTEND FETCHED] GET ${path} (silent=${silent} merge=${merge} tab=${tab || '(none)'} shop=${shopId || '(all)'})`,
+          `[FRONTEND FETCHED] GET ${path} (silent=${silent} merge=${merge} tab=${tab || '(none)'} shops=${ids.join(',') || '(all)'})`,
         );
         const response = await fetch(path, {
           method: 'GET',
@@ -734,10 +735,9 @@ export default function App() {
           '⚠️ Đang mở PRODUCTION/REMOTE — refresh đang lấy dữ liệu MongoDB trên server thật.',
         );
       }
-      requestTimeoutId = window.setTimeout(() => controller.abort(), 15_000);
-      // Đa gian hàng: Promise.all từng shop — CẤM setOrders trong vòng lặp.
-      const shopTargets = shopIds.length > 0 ? shopIds : [undefined];
-      const payloads = await Promise.all(shopTargets.map((id) => fetchRefreshForShop(id)));
+      requestTimeoutId = window.setTimeout(() => controller.abort(), 22_000);
+      // Một request shop_ids=$in (Promise.all 1 phần tử) — tránh N query song song treo pending.
+      const payloads = await Promise.all([fetchRefreshForShops(shopIds)]);
       if (controller.signal.aborted || callerSignal?.aborted) {
         aborted = true;
         return;
@@ -863,7 +863,7 @@ export default function App() {
               shopIds: shopIds.length ? shopIds : undefined,
               retriesLeft: retriesLeft - 1,
             });
-          }, 400);
+          }, 1500);
         }
         return;
       }
