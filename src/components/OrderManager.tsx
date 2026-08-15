@@ -662,8 +662,8 @@ const ORDER_TAB_ALIASES: Record<string, OrderTab> = {
   'cho-lay-hang': 'unprocessed',
   'da-xu-ly': 'processed',
   'dang-giao': 'shipping',
-  'yeu-cau-tra-hang': 'return_requests',
-  'return_requests': 'return_requests',
+  'yeu-cau-tra-hang': 'all',
+  'return_requests': 'all',
   'don-huy-hoan': 'cancel_returns',
   'da-nhan-huy-hoan': 'received_cancel_returns',
   'don-tren-web': 'web_orders',
@@ -677,6 +677,7 @@ function normalizeOrderTab(raw: string | null | undefined): OrderTab | null {
   if (!key) return null;
   if (ORDER_TAB_ALIASES[key]) return ORDER_TAB_ALIASES[key];
   if (key === 'pending_verification') return 'pending_confirm';
+  if (key === 'return_requests' || key === 'yeu-cau-tra-hang') return 'all';
   if (ORDER_TAB_SET.has(key)) return key as OrderTab;
   return null;
 }
@@ -979,7 +980,9 @@ export default function OrderManager({
         : null) ||
       readStoredOrdersTab() ||
       'unprocessed';
-    return restored === 'pending_verification' ? 'pending_confirm' : restored;
+    if (restored === 'pending_verification') return 'pending_confirm';
+    if (restored === 'return_requests') return 'all';
+    return restored;
   });
   const [cancelReturnTab, setCancelReturnTab] = useState<CancelReturnTab>(() => readStoredCancelTab());
   const listKind =
@@ -1206,8 +1209,9 @@ export default function OrderManager({
 
   /** Set tab + sub-tab + page cùng 1 tick — tránh fetch 2 lần khi vào nhóm Hủy/Hoàn. */
   const selectOrdersSubTab = useCallback((tab: OrderTab, cancelReturn?: CancelReturnTab) => {
-    setActiveSubTab(tab);
-    if (tab === 'cancel_returns') {
+    const nextTab = tab === 'return_requests' ? 'all' : tab;
+    setActiveSubTab(nextTab);
+    if (nextTab === 'cancel_returns') {
       setCancelReturnTab(cancelReturn ?? 'all');
     }
     setCurrentPage((p) => (p === 1 ? p : 1));
@@ -7231,20 +7235,6 @@ export default function OrderManager({
         </button>
 
         <button
-          onClick={() => selectOrdersSubTab('return_requests')}
-          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
-            activeSubTab === 'return_requests'
-              ? 'border-orange-600 text-orange-700 font-extrabold bg-orange-50/40'
-              : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
-          }`}
-        >
-          <span>Yêu cầu trả hàng</span>
-          <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-orange-100 text-orange-800 border border-orange-200">
-            {getCount('return_requests')}
-          </span>
-        </button>
-
-        <button
           onClick={() => selectOrdersSubTab('cancel_returns', 'all')}
           className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'cancel_returns' 
@@ -7342,14 +7332,6 @@ export default function OrderManager({
             Đang dò ngầm Backend <strong>{scanBgPendingCount}</strong> mã — tiếp tục chạy kể cả khi tắt màn quét.
             Xong sẽ tự ghi cờ hủy/hoàn và cập nhật tab.
           </span>
-        </div>
-      )}
-
-      {activeSubTab === 'return_requests' && (
-        <div className="bg-orange-50/80 border border-orange-100 rounded-2xl px-4 py-3 text-xs text-orange-950 font-semibold leading-relaxed">
-          Danh sách Yêu cầu trả hàng — đối soát kho thực tế (không tin trạng thái API Shopee).
-          Mặc định <b>Chưa nhận được hàng hoàn</b> cho đến khi quét mã hoặc bấm xác nhận thủ công
-          (<code className="font-mono text-[11px]">RETURN_RECEIVED</code>).
         </div>
       )}
 
@@ -7729,17 +7711,7 @@ export default function OrderManager({
                       className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer"
                     />
                   </th>
-                  {activeSubTab === 'return_requests' ? (
-                    <>
-                      <th className="p-4 w-40">Mã đơn hàng</th>
-                      <th className="p-4 w-44">Mã yêu cầu trả hàng</th>
-                      <th className="p-4 w-[260px]">Sản phẩm</th>
-                      <th className="p-4 text-right w-32">Số tiền hoàn</th>
-                      <th className="p-4 w-44">Lý do</th>
-                      <th className="p-4 text-center w-32">Trạng thái</th>
-                      <th className="p-4 w-48">Mã vận đơn chiều hoàn</th>
-                    </>
-                  ) : activeSubTab === 'web_orders' ? (
+                  {activeSubTab === 'web_orders' ? (
                     <>
                       <th className="p-4 w-40">Mã đơn hàng</th>
                       <th className="p-4 w-32">Ngày tạo</th>

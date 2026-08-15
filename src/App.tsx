@@ -180,8 +180,8 @@ const ORDERS_SUB_TAB_ALIASES: Record<string, OrdersSubTabId> = {
   'cho-lay-hang': 'unprocessed',
   'da-xu-ly': 'processed',
   'dang-giao': 'shipping',
-  'yeu-cau-tra-hang': 'return_requests',
-  'return_requests': 'return_requests',
+  'yeu-cau-tra-hang': 'all',
+  'return_requests': 'all',
   'don-huy-hoan': 'cancel_returns',
   'da-nhan-huy-hoan': 'received_cancel_returns',
 };
@@ -192,6 +192,7 @@ function normalizeOrdersSubTab(raw: string | null | undefined): OrdersSubTabId |
   if (!key) return null;
   if (ORDERS_SUB_TAB_ALIASES[key]) return ORDERS_SUB_TAB_ALIASES[key];
   if (key === 'pending_verification') return 'pending_confirm';
+  if (key === 'return_requests' || key === 'yeu-cau-tra-hang') return 'all';
   if (ORDERS_SUB_TAB_IDS.has(key)) return key as OrdersSubTabId;
   return null;
 }
