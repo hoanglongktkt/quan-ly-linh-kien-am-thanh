@@ -19,7 +19,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import BrandLogo, { BrandHeader } from './components/BrandLogo';
 import { APP_TITLE } from './config/brand';
 import { purgeLegacyCatalogCache } from './utils/catalogStorage';
-import { sanitizeOrders } from './utils/sanitizeOrder';
+import { sanitizeOrders, sortOrdersByCreatedAtDesc, orderCreatedAtMs } from './utils/sanitizeOrder';
 import { safeGetJson, safeRemoveItem, safeSetItem } from './utils/safeStorage';
 import { parseJsonResponse } from './utils/apiClient';
 import { clearLegacyOrdersLocalStorage, loadOrdersCache, saveOrdersCache } from './utils/orderCache';
@@ -318,11 +318,7 @@ function normalizeShopIdsParam(shopIds?: string[], shopId?: string): string[] {
 }
 
 function sortOrdersNewestFirst(list: Order[]): Order[] {
-  return list.slice().sort((a, b) => {
-    const tb = new Date(b.date || 0).getTime() || 0;
-    const ta = new Date(a.date || 0).getTime() || 0;
-    return tb - ta;
-  });
+  return sortOrdersByCreatedAtDesc(list);
 }
 
 /** Gộp nhiều batch đơn (Promise.all đa shop) → 1 mảng, sort mới nhất trước. */
@@ -337,8 +333,8 @@ function mergeOrderBatchesNewestFirst(batches: Order[][]): Order[] {
         byId.set(id, o);
         continue;
       }
-      const prevT = new Date(prev.date || 0).getTime() || 0;
-      const nextT = new Date(o.date || 0).getTime() || 0;
+      const prevT = orderCreatedAtMs(prev);
+      const nextT = orderCreatedAtMs(o);
       if (nextT >= prevT) byId.set(id, o);
     }
   }

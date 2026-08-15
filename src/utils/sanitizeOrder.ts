@@ -4,6 +4,66 @@ import { inferShippingCarrierLabel } from './shippingCarrier';
 import { isTruthyFlag } from './orderWarehouseStatus';
 import { isUnshippedShopeeCancel, classifyShopeeCancelReturnKind } from './shopeeCancelReturnClassify';
 
+/** Parse create_time (unix s/ms) / ISO / Date — không crash khi null. */
+export function parseOrderTimeMs(raw: unknown): number {
+  if (raw == null || raw === '') return 0;
+  if (raw instanceof Date) {
+    const t = raw.getTime();
+    return Number.isFinite(t) ? t : 0;
+  }
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    if (raw <= 0) return 0;
+    return raw < 1e12 ? Math.floor(raw * 1000) : Math.floor(raw);
+  }
+  const s = String(raw).trim();
+  if (!s) return 0;
+  if (/^\d+(\.\d+)?$/.test(s)) {
+    const n = Number(s);
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    return n < 1e12 ? Math.floor(n * 1000) : Math.floor(n);
+  }
+  const parsed = Date.parse(s);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/** Thời gian tạo đơn — ưu tiên create_time Shopee, fallback date/createdAt. */
+export function orderCreatedAtMs(order: unknown): number {
+  if (!order || typeof order !== 'object') return 0;
+  const row = order as Record<string, unknown>;
+  const nested =
+    row.data && typeof row.data === 'object' && !Array.isArray(row.data)
+      ? (row.data as Record<string, unknown>)
+      : {};
+  const candidates = [
+    row.create_time,
+    row.createTime,
+    nested.create_time,
+    nested.createTime,
+    row.created_at,
+    row.createdAt,
+    nested.created_at,
+    nested.createdAt,
+    row.date,
+    nested.date,
+    row.update_time,
+    nested.update_time,
+  ];
+  for (let i = 0; i < candidates.length; i += 1) {
+    const t = parseOrderTimeMs(candidates[i]);
+    if (t > 0) return t;
+  }
+  return 0;
+}
+
+/** Trộn đa shop: sort mới nhất → cũ nhất TRƯỚC setOrders. */
+export function sortOrdersByCreatedAtDesc(list: Order[]): Order[] {
+  return list.slice().sort((a, b) => {
+    const diff = orderCreatedAtMs(b) - orderCreatedAtMs(a);
+    if (diff !== 0) return diff;
+    return String(b.orderSn || b.id || '').localeCompare(String(a.orderSn || a.id || ''));
+  });
+}
+
 /** Chuẩn hóa đơn từ API — tránh crash khi thiếu date/orderSn/items. */
 export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Order {
   const orderSn = String(raw.orderSn || raw.id || '').replace(/^shopee-/i, '').trim();
@@ -85,7 +145,11 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     canPartialCancel: raw.canPartialCancel != null ? Boolean(raw.canPartialCancel) : undefined,
     shopee_order_status: raw.shopee_order_status ? String(raw.shopee_order_status) : undefined,
     status,
-    date: String(raw.date || new Date().toISOString()),
+    date: (() => {
+      const ms = orderCreatedAtMs(raw);
+      if (ms > 0) return new Date(ms).toISOString();
+      return String(raw.date || '').trim();
+    })(),
     items: Array.isArray(raw.items) ? raw.items : [],
     // Mã hoàn trả không phải vận đơn giao đi. Dùng nó ở đây sẽ làm đơn hoàn bị
     // phân loại nhầm là đã xử lý/đang giao.

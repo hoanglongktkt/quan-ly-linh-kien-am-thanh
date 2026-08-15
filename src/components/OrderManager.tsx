@@ -103,6 +103,7 @@ import {
   type ShippingCarrierFilter,
 } from '../utils/shippingCarrier';
 import { resolveOrderShopDisplayName } from '../utils/resolveOrderShopName';
+import { orderCreatedAtMs } from '../utils/sanitizeOrder';
 import {
   computeShopeeSurchargeTotal,
   getShopeeItemAmount,
@@ -5407,9 +5408,8 @@ export default function OrderManager({
         return orderMatchesShippingCarrierFilter(order, selectedShippingCarrier);
       })
       .sort((a, b) => {
-        const dateMs = (o: Order) => new Date(o.date || 0).getTime() || 0;
-        if (selectedSort === 'newest') return dateMs(b) - dateMs(a);
-        if (selectedSort === 'oldest') return dateMs(a) - dateMs(b);
+        if (selectedSort === 'newest') return orderCreatedAtMs(b) - orderCreatedAtMs(a);
+        if (selectedSort === 'oldest') return orderCreatedAtMs(a) - orderCreatedAtMs(b);
         if (selectedSort === 'highest_value') {
           return (Number(b.totalAmount) || 0) - (Number(a.totalAmount) || 0);
         }
