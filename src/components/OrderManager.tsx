@@ -530,10 +530,30 @@ function OrderDetailAccordionPanel({
               <strong className="text-gray-900 font-mono text-sm">{getOrderWaybillCode(order)}</strong>
             </div>
           </div>
+          {(() => {
+            const rtn = String(order.return_tracking_no || order.returnTrackingNumber || '').trim();
+            const outbound = String(order.trackingNumber || order.tracking_no || '').trim();
+            if (!rtn || (outbound && rtn.toUpperCase() === outbound.toUpperCase())) return null;
+            return (
+              <div className="text-blue-600 font-bold font-mono text-xs mt-2 select-text cursor-text break-all">
+                Mã chiều hoàn: {rtn}
+              </div>
+            );
+          })()}
         </div>
       ) : order.channel === 'woocommerce' ? null : (
         <div className="bg-white p-4 rounded-2xl border border-orange-100">
           <AwaitingShopeeTrackingBadge />
+          {(() => {
+            const rtn = String(order.return_tracking_no || order.returnTrackingNumber || '').trim();
+            const outbound = String(order.trackingNumber || order.tracking_no || '').trim();
+            if (!rtn || (outbound && rtn.toUpperCase() === outbound.toUpperCase())) return null;
+            return (
+              <div className="text-blue-600 font-bold font-mono text-xs mt-2 select-text cursor-text break-all">
+                Mã chiều hoàn: {rtn}
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -1363,11 +1383,17 @@ export default function OrderManager({
     }
   }, [activeSubTab]);
 
-  // Đổi tab / vào trang: fetch page=1. AbortController CHỈ abort trong cleanup.
+  // Sync URL khi đổi tab / nhóm Hủy-Hoàn — không fetch (tránh abort list khi bấm sub-tab).
   useEffect(() => {
     if (activeSubTab === 'pending_verification') return;
     syncOrdersTabToUrl(activeSubTab, cancelReturnTab);
     onOrdersSubTabChange?.(activeSubTab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSubTab, cancelReturnTab]);
+
+  // Đổi tab chính: fetch page=1. AbortController CHỈ abort request tab cũ trong cleanup.
+  useEffect(() => {
+    if (activeSubTab === 'pending_verification') return;
     const tabFetchTabs = new Set([
       'all',
       'unprocessed',
@@ -1412,7 +1438,7 @@ export default function OrderManager({
       controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSubTab, cancelReturnTab]);
+  }, [activeSubTab]);
 
   const searchBootRef = React.useRef(true);
   useEffect(() => {
@@ -5109,18 +5135,11 @@ export default function OrderManager({
   /**
    * Chỉ lọc cục bộ: Shop + Sàn + Search + Print.
    * Backend đã lọc theo `?tab=` — CẤM filter lại activeSubTab (processed/unprocessed/...).
-   * Lần tối ưu trước để `if (activeSubTab === ...)` trong hàm này → return false hết list.
+   * Tab Đơn Hủy/Hoàn: list API là nguồn sự thật — không return false chặn render.
    */
   const matchesOrdersListBaseFilters = (order: Order): boolean => {
-    // if (activeSubTab === 'processed' / 'unprocessed' / 'handed_over_carrier' / ...) return false;
-    // → ĐÃ XÓA: không được lọc lại tab ở Frontend.
-
-    if (selectedPlatform !== 'all') {
-      if (selectedPlatform === 'lazada') return false;
-      if (order.channel !== selectedPlatform) return false;
-    }
-
-    if (!matchesSelectedShop(order)) return false;
+    const isBackendCancelReturnTab =
+      activeSubTab === 'cancel_returns' || activeSubTab === 'received_cancel_returns';
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -5150,10 +5169,18 @@ export default function OrderManager({
       if (!matchSn && !matchTracking && !matchInternal && !matchProduct && !matchCustomer) return false;
     }
 
-    if (activeSubTab !== 'cancel_returns') {
-      if (printStatusFilter === 'printed' && !isOrderPrintedEffective(order)) return false;
-      if (printStatusFilter === 'unprinted' && isOrderPrintedEffective(order)) return false;
+    // Backend đã trả list chuẩn của tab Hủy/Hoàn — render 100%, không chặn shop/sàn/print.
+    if (isBackendCancelReturnTab) return true;
+
+    if (selectedPlatform !== 'all') {
+      if (selectedPlatform === 'lazada') return false;
+      if (order.channel !== selectedPlatform) return false;
     }
+
+    if (!matchesSelectedShop(order)) return false;
+
+    if (printStatusFilter === 'printed' && !isOrderPrintedEffective(order)) return false;
+    if (printStatusFilter === 'unprinted' && isOrderPrintedEffective(order)) return false;
 
     return true;
   };
@@ -5210,7 +5237,12 @@ export default function OrderManager({
   const filteredOrdersBase = useMemo(() => {
     return ordersPoolBeforeCarrier
       .filter((order) => {
-        if (activeSubTab === 'cancel_returns' && !matchesCancelReturnTab(order, cancelReturnTab)) {
+        // Sub-tab Hủy/Hoàn chỉ lọc khi user chọn nhóm cụ thể — "Tất cả" = 100% list API.
+        if (
+          activeSubTab === 'cancel_returns' &&
+          cancelReturnTab !== 'all' &&
+          !matchesCancelReturnTab(order, cancelReturnTab)
+        ) {
           return false;
         }
         if (searchQuery.trim()) return true;

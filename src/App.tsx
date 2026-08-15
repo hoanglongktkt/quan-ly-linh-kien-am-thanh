@@ -356,6 +356,8 @@ export default function App() {
    * (kể cả khi request mới đó chưa xong hoặc cũng thất bại) — đây chính là nguyên nhân
    * phải bấm "Làm mới" 2-3 lần mới thấy dữ liệu sau khi Ctrl+F5. */
   const lastAppliedOrdersSeqRef = useRef(0);
+  /** Tab đã apply gần nhất — chặn silent fetch không ?tab= đè list Đơn Hủy/Hoàn. */
+  const lastAppliedOrdersTabRef = useRef('');
   /** Chỉ cho phép một lần đọc cùng mode (full / shallow) đang chạy để polling/focus/click không
    * tạo nhiều truy vấn MongoDB nặng đồng thời. */
   const fetchOrdersInFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
@@ -539,6 +541,14 @@ export default function App() {
     if (silent && fetchOrdersNonSilentInFlightRef.current > 0) {
       return fetchOrdersInFlightRef.current?.promise;
     }
+    // Silent khác tab/key không được abort fetch tab đang chạy (Đơn Hủy/Hoàn bị trống).
+    if (silent && fetchOrdersInFlightRef.current && fetchOrdersInFlightRef.current.key !== flightKey) {
+      return fetchOrdersInFlightRef.current.promise;
+    }
+    // Silent không ?tab= không được REPLACE list đã lọc theo tab.
+    if (silent && !tab && !q && lastAppliedOrdersTabRef.current) {
+      return fetchOrdersInFlightRef.current?.promise;
+    }
 
     if (!opts?.force && fetchOrdersInFlightRef.current?.key === flightKey) {
       return fetchOrdersInFlightRef.current.promise;
@@ -679,10 +689,11 @@ export default function App() {
           hasMore: Boolean(payload.has_more ?? payload.hasMore ?? currentPage < totalPages),
         });
         console.log('🛑 DATA ĐƯỢC LẤY TỪ URL:', requestUrl, '- SỐ LƯỢNG:', data.length);
-        // Chỉ bỏ request ĐÃ ABORT / không còn là in-flight hiện tại — không bỏ response 200 mới nhất.
+        // Chỉ apply request MỚI NHẤT còn sống — response 200 cũ (tab khác) không được đè.
+        if (requestId !== fetchOrdersSeqRef.current) return;
         if (controller.signal.aborted || callerSignal?.aborted) return;
-        if (fetchOrdersAbortRef.current !== controller) return;
         lastAppliedOrdersSeqRef.current = requestId;
+        lastAppliedOrdersTabRef.current = tab;
         const sanitized = sanitizeOrders(data);
         // Thành công 200: đưa thẳng vào state. Không guard bỏ response (tránh UI rỗng dù Network có data).
         if (merge) {
@@ -714,6 +725,7 @@ export default function App() {
               merge,
               page,
               tab,
+              q,
               retriesLeft: retriesLeft - 1,
             });
           }, 3000);
@@ -729,6 +741,22 @@ export default function App() {
         (err instanceof DOMException && err.name === 'AbortError') ||
         (typeof err === 'object' && err !== null && (err as { name?: string }).name === 'AbortError');
       if (aborted) {
+        // Timeout abort (vẫn là request mới nhất) → retry; tab-switch abort thì seq đã tăng.
+        if (retriesLeft > 0 && requestId === fetchOrdersSeqRef.current && !callerSignal?.aborted) {
+          window.setTimeout(() => {
+            if (requestId !== fetchOrdersSeqRef.current) return;
+            void fetchOrders({
+              silent,
+              bustCache,
+              limit,
+              merge,
+              page,
+              tab,
+              q,
+              retriesLeft: retriesLeft - 1,
+            });
+          }, 400);
+        }
         return;
       }
       console.error('[FRONTEND FETCHED] /api/orders/refresh THẤT BẠI:', err);
@@ -742,6 +770,7 @@ export default function App() {
             merge,
             page,
             tab,
+            q,
             retriesLeft: retriesLeft - 1,
           });
         }, 3000);
@@ -877,7 +906,7 @@ export default function App() {
   const resolveOrdersFetchTab = useCallback((): string => {
     if (activeTab !== 'orders') return '';
     const hint = String(ordersSubTabHint || '').trim().toLowerCase();
-    if (!hint || hint === 'all' || hint === 'cancel_returns' || hint === 'order_products') {
+    if (!hint || hint === 'all' || hint === 'order_products') {
       return '';
     }
     return hint;

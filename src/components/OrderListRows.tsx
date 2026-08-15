@@ -128,6 +128,24 @@ function shopChannelClass(channel: Order['channel']): string {
   return 'bg-blue-50 text-blue-700 border border-blue-200';
 }
 
+function getDistinctReturnTrackingNo(order: Order): string {
+  const rtn = String(order.return_tracking_no || order.returnTrackingNumber || '').trim();
+  if (!rtn) return '';
+  const outbound = String(order.trackingNumber || order.tracking_no || '').trim();
+  if (outbound && rtn.toUpperCase() === outbound.toUpperCase()) return '';
+  return rtn;
+}
+
+function ReturnTrackingLine({ order }: { order: Order }) {
+  const rtn = getDistinctReturnTrackingNo(order);
+  if (!rtn) return null;
+  return (
+    <div className="text-blue-600 font-bold font-mono text-xs mt-0.5 select-text cursor-text break-all">
+      Mã chiều hoàn: {rtn}
+    </div>
+  );
+}
+
 function isCancelReturnGroupTab(tab: string): boolean {
   return tab === 'cancel_returns';
 }
@@ -239,6 +257,7 @@ export const OrderTableRow = React.memo(function OrderTableRow({
           <>
             <td className="p-4">
               <div className="font-mono font-extrabold text-gray-900 text-sm">#{order.orderSn}</div>
+              <ReturnTrackingLine order={order} />
               <div className="text-[10px] text-gray-400 mt-0.5">{shopName}</div>
             </td>
             <td className="p-4">
@@ -303,6 +322,7 @@ export const OrderTableRow = React.memo(function OrderTableRow({
                 <AwaitingShopeeTrackingBadge />
               )}
               <div className="text-[10px] text-gray-400 font-mono">#{order.orderSn}</div>
+              <ReturnTrackingLine order={order} />
             </td>
             <td className="p-4 text-gray-500 font-medium">
               {new Date(order.date).toLocaleDateString('vi-VN')}
@@ -601,6 +621,7 @@ export const OrderCardRow = React.memo(function OrderCardRow({
               </p>
             )}
             <p className="text-[10px] text-gray-400 font-mono mt-0.5">#{order.orderSn}</p>
+            <ReturnTrackingLine order={order} />
             <p className="text-[11px] text-gray-500 font-medium mt-0.5">
               {new Date(order.date).toLocaleDateString('vi-VN')}
             </p>
