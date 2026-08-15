@@ -341,6 +341,38 @@ function mergeOrderBatchesNewestFirst(batches: Order[][]): Order[] {
   return sortOrdersNewestFirst([...byId.values()]);
 }
 
+type OrdersRefreshPayload = {
+  success?: boolean;
+  data?: Order[];
+  error?: string;
+  total?: number;
+  totalPages?: number;
+  currentPage?: number;
+  page?: number;
+  page_size?: number;
+  limit?: number;
+  has_more?: boolean;
+  hasMore?: boolean;
+  counters?: { total?: number; returned?: number; cancelled?: number; rts?: number };
+};
+
+type OrderCounters = { total: number; returned: number; cancelled: number; rts: number };
+
+function emptyOrderCounters(): OrderCounters {
+  return { total: 0, returned: 0, cancelled: 0, rts: 0 };
+}
+
+function sumOrderCounters(list: Array<OrderCounters | undefined | null>): OrderCounters {
+  const out = emptyOrderCounters();
+  for (const c of list) {
+    out.total += Number(c?.total) || 0;
+    out.returned += Number(c?.returned) || 0;
+    out.cancelled += Number(c?.cancelled) || 0;
+    out.rts += Number(c?.rts) || 0;
+  }
+  return out;
+}
+
 export default function App() {
   // Authentication States
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
@@ -635,36 +667,64 @@ export default function App() {
         setOrdersLoading(true);
       }
       // Refresh chỉ đọc MongoDB nội bộ, không gọi Shopee API.
-      const params = new URLSearchParams();
-      params.set('page', String(page));
-      params.set('limit', String(limit));
-      if (bustCache) {
-        params.set('t', String(Date.now()));
-        params.set('bust', '1');
-      }
-      if (printStatus && printStatus !== 'all') params.set('print_status', printStatus);
-      if (shopIds.length === 1) {
-        params.set('shop_id', shopIds[0]);
-      } else if (shopIds.length > 1) {
-        params.set('shop_ids', shopIds.join(','));
-      }
-      if (q) {
-        params.set('q', q);
-      } else if (tab) {
-        params.set('tab', tab);
-        if (kind) params.set('kind', kind);
-      }
-      if (startDate) params.set('startDate', startDate);
-      if (endDate) params.set('endDate', endDate);
-      const qs = params.toString();
-      const path = `/api/orders/refresh?${qs}`;
-      console.log(
-        `[FRONTEND FETCHED] GET ${path} (silent=${silent} merge=${merge} tab=${tab || '(none)'})`,
-      );
-      const requestUrl =
-        path.startsWith('http://') || path.startsWith('https://')
-          ? path
-          : `${window.location.origin}${path}`;
+      const authHeaders = {
+        Authorization: `Bearer ${token}`,
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        Pragma: 'no-cache',
+        Expires: '0',
+        'If-Modified-Since': '0',
+      };
+      const retrySameFetch = () => {
+        if (requestId !== fetchOrdersSeqRef.current) return;
+        void fetchOrders({
+          silent,
+          bustCache,
+          limit,
+          merge,
+          page,
+          tab,
+          q,
+          kind,
+          startDate: startDate || undefined,
+          endDate: endDate || undefined,
+          shopIds: shopIds.length ? shopIds : undefined,
+          retriesLeft: retriesLeft - 1,
+        });
+      };
+      const fetchRefreshForShop = async (shopId?: string): Promise<OrdersRefreshPayload> => {
+        const params = new URLSearchParams();
+        params.set('page', String(page));
+        params.set('limit', String(limit));
+        if (bustCache) {
+          params.set('t', String(Date.now()));
+          params.set('bust', '1');
+        }
+        if (printStatus && printStatus !== 'all') params.set('print_status', printStatus);
+        if (shopId) params.set('shop_id', shopId);
+        if (q) {
+          params.set('q', q);
+        } else if (tab) {
+          params.set('tab', tab);
+          if (kind) params.set('kind', kind);
+        }
+        if (startDate) params.set('startDate', startDate);
+        if (endDate) params.set('endDate', endDate);
+        const path = `/api/orders/refresh?${params.toString()}`;
+        console.log(
+          `[FRONTEND FETCHED] GET ${path} (silent=${silent} merge=${merge} tab=${tab || '(none)'} shop=${shopId || '(all)'})`,
+        );
+        const response = await fetch(path, {
+          method: 'GET',
+          cache: 'no-store',
+          signal: controller.signal,
+          headers: authHeaders,
+        });
+        if (!response.ok) {
+          return { success: false, data: [], error: `http_${response.status}`, total: 0 };
+        }
+        const payload = (await response.json()) as OrdersRefreshPayload;
+        return payload && typeof payload === 'object' ? payload : { success: false, data: [] };
+      };
       if (
         typeof window !== 'undefined' &&
         /quanly\.linhkienamthanh\.net|linhkienamthanh\.net|vercel\.app/i.test(window.location.hostname)
@@ -674,146 +734,108 @@ export default function App() {
         );
       }
       requestTimeoutId = window.setTimeout(() => controller.abort(), 15_000);
-      const response = await fetch(path, {
-        method: 'GET',
-        cache: 'no-store',
-        signal: controller.signal,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          Pragma: 'no-cache',
-          Expires: '0',
-          'If-Modified-Since': '0',
-        },
-      });
-      if (response.ok) {
-        const payload: {
-          success?: boolean;
-          data?: Order[];
-          error?: string;
-          total?: number;
-          totalPages?: number;
-          currentPage?: number;
-          page?: number;
-          page_size?: number;
-          limit?: number;
-          has_more?: boolean;
-          hasMore?: boolean;
-          counters?: { total?: number; returned?: number; cancelled?: number; rts?: number };
-        } = await response.json();
-        if (payload.success === false) {
-          if (
-            (payload.error === 'mongodb_not_ready' || payload.error === 'orders_refresh_failed') &&
-            retriesLeft > 0
-          ) {
-            console.warn(
-              `[Fetch Orders] Refresh lỗi tạm thời (${payload.error}) — thử lại sau 3s (còn ${retriesLeft} lần).`,
-            );
-            window.setTimeout(() => {
-              if (requestId !== fetchOrdersSeqRef.current) return;
-              void fetchOrders({
-                silent,
-                bustCache,
-                limit,
-                merge,
-                page,
-                tab,
-                q,
-                kind,
-                startDate: startDate || undefined,
-                endDate: endDate || undefined,
-                shopIds: shopIds.length ? shopIds : undefined,
-                retriesLeft: retriesLeft - 1,
-              });
-            }, 3000);
-            return;
-          }
-          if (opts?.throwOnError) {
-            throw new Error(payload.error || 'Làm mới danh sách đơn hàng thất bại.');
-          }
-          setHasLoadedOrdersOnce(true);
-          console.warn('[Fetch Orders] Refresh failed; giữ nguyên danh sách hiện tại.');
+      // Đa gian hàng: Promise.all từng shop — CẤM setOrders trong vòng lặp.
+      const shopTargets = shopIds.length > 0 ? shopIds : [undefined];
+      const payloads = await Promise.all(shopTargets.map((id) => fetchRefreshForShop(id)));
+      if (controller.signal.aborted || callerSignal?.aborted) {
+        aborted = true;
+        return;
+      }
+      const retryPayload = payloads.find(
+        (p) =>
+          p?.success === false &&
+          (p.error === 'mongodb_not_ready' || p.error === 'orders_refresh_failed'),
+      );
+      const okPayloads = payloads.filter((p) => p && p.success !== false);
+      if (okPayloads.length === 0 && retryPayload && retriesLeft > 0) {
+        console.warn(
+          `[Fetch Orders] Refresh lỗi tạm thời (${retryPayload.error}) — thử lại sau 3s (còn ${retriesLeft} lần).`,
+        );
+        window.setTimeout(retrySameFetch, 3000);
+        return;
+      }
+      if (okPayloads.length === 0) {
+        const httpFail = payloads.find((p) => String(p?.error || '').startsWith('http_'));
+        if (httpFail && retriesLeft > 0 && requestId === fetchOrdersSeqRef.current) {
+          window.setTimeout(retrySameFetch, 3000);
           return;
         }
-        const data = Array.isArray(payload.data) ? payload.data : [];
-        const total = Number(payload.total) || 0;
-        const pageSize = Number(payload.page_size ?? payload.limit) || limit;
-        const totalPages =
-          Number(payload.totalPages) > 0
-            ? Number(payload.totalPages)
-            : Math.max(1, Math.ceil(Math.max(0, total) / pageSize) || 1);
-        const currentPage =
-          Number(payload.currentPage ?? payload.page) > 0
-            ? Number(payload.currentPage ?? payload.page)
-            : page;
-        console.log('🛑 DATA ĐƯỢC LẤY TỪ URL:', requestUrl, '- SỐ LƯỢNG:', data.length);
-        // Chỉ apply request MỚI NHẤT còn sống — response 200 cũ (tab khác) không được đè meta/list.
-        if (controller.signal.aborted || callerSignal?.aborted) {
-          aborted = true;
-          return;
-        }
-        if (requestId !== fetchOrdersSeqRef.current) return;
-        lastAppliedOrdersSeqRef.current = requestId;
-        lastAppliedOrdersTabRef.current = tab;
-        setOrdersMeta({
-          page: currentPage,
-          pageSize,
-          total,
-          totalPages,
-          hasMore: Boolean(payload.has_more ?? payload.hasMore ?? currentPage < totalPages),
-          counters: {
-            total: Number(payload.counters?.total) || (kind ? 0 : total) || 0,
-            returned: Number(payload.counters?.returned) || 0,
-            cancelled: Number(payload.counters?.cancelled) || 0,
-            rts: Number(payload.counters?.rts) || 0,
-          },
-        });
-        const sanitized = mergeOrderBatchesNewestFirst([sanitizeOrders(data)]);
-        // Thành công 200: setOrders ĐÚNG 1 LẦN — không loop shop rồi đè state.
-        if (merge) {
-          setOrders((prev) => {
-            const base = prev.length > 0 ? prev : ordersHydrateRef.current;
-            const merged = mergeOrderBatchesNewestFirst([mergeShallowOrders(base, sanitized)]);
-            ordersHydrateRef.current = merged;
-            void saveOrdersCache(merged);
-            return merged;
-          });
-        } else {
-          setOrders(sanitized);
-          ordersHydrateRef.current = sanitized;
-          if (sanitized.length > 0) void saveOrdersCache(sanitized);
+        if (opts?.throwOnError) {
+          throw new Error(
+            retryPayload?.error || httpFail?.error || 'Làm mới danh sách đơn hàng thất bại.',
+          );
         }
         setHasLoadedOrdersOnce(true);
-        console.log(
-          `[FRONTEND FETCHED] /api/orders/refresh OK — số đơn: ${sanitized.length}` +
-            `${merge ? ' (merge)' : ' (replace page ' + page + ')'}`,
-        );
-      } else {
-        console.log('🛑 DATA ĐƯỢC LẤY TỪ URL:', requestUrl, '- SỐ LƯỢNG: (HTTP', response.status, ')');
-        if (retriesLeft > 0 && requestId === fetchOrdersSeqRef.current) {
-          window.setTimeout(() => {
-            void fetchOrders({
-              silent,
-              bustCache,
-              limit,
-              merge,
-              page,
-              tab,
-              q,
-              kind,
-              startDate: startDate || undefined,
-              endDate: endDate || undefined,
-              shopIds: shopIds.length ? shopIds : undefined,
-              retriesLeft: retriesLeft - 1,
-            });
-          }, 3000);
-        } else {
-          setHasLoadedOrdersOnce(true);
-          if (opts?.throwOnError) {
-            throw new Error(`Làm mới danh sách đơn hàng thất bại (HTTP ${response.status}).`);
-          }
-        }
+        console.warn('[Fetch Orders] Refresh failed; giữ nguyên danh sách hiện tại.');
+        return;
       }
+      let mergedData: Order[] = [];
+      okPayloads.forEach((res) => {
+        const data = Array.isArray(res.data) ? res.data : [];
+        mergedData = [...mergedData, ...data];
+      });
+      const sanitized = mergeOrderBatchesNewestFirst([sanitizeOrders(mergedData)]);
+      const total = okPayloads.reduce((sum, p) => sum + (Number(p.total) || 0), 0);
+      const pageSize = Number(okPayloads[0]?.page_size ?? okPayloads[0]?.limit) || limit;
+      const totalPages = Math.max(
+        1,
+        ...okPayloads.map((p) => Number(p.totalPages) || 0),
+        Math.ceil(Math.max(0, total) / pageSize) || 1,
+      );
+      const currentPage =
+        Number(okPayloads[0]?.currentPage ?? okPayloads[0]?.page) > 0
+          ? Number(okPayloads[0]?.currentPage ?? okPayloads[0]?.page)
+          : page;
+      const counters = sumOrderCounters(
+        okPayloads.map((p) => ({
+          total: Number(p.counters?.total) || 0,
+          returned: Number(p.counters?.returned) || 0,
+          cancelled: Number(p.counters?.cancelled) || 0,
+          rts: Number(p.counters?.rts) || 0,
+        })),
+      );
+      console.log(
+        '🛑 DATA ĐƯỢC LẤY TỪ URL: Promise.all shops=',
+        shopIds.join(',') || '(all)',
+        '- SỐ LƯỢNG:',
+        sanitized.length,
+      );
+      if (requestId !== fetchOrdersSeqRef.current) return;
+      lastAppliedOrdersSeqRef.current = requestId;
+      lastAppliedOrdersTabRef.current = tab;
+      setOrdersMeta({
+        page: currentPage,
+        pageSize,
+        total,
+        totalPages,
+        hasMore:
+          okPayloads.some((p) => Boolean(p.has_more ?? p.hasMore)) || currentPage < totalPages,
+        counters: {
+          total: counters.total || (kind ? 0 : total) || 0,
+          returned: counters.returned,
+          cancelled: counters.cancelled,
+          rts: counters.rts,
+        },
+      });
+      // Thành công: setOrders ĐÚNG 1 LẦN sau khi gộp + sort — không đè từng shop.
+      if (merge) {
+        setOrders((prev) => {
+          const base = prev.length > 0 ? prev : ordersHydrateRef.current;
+          const merged = mergeOrderBatchesNewestFirst([mergeShallowOrders(base, sanitized)]);
+          ordersHydrateRef.current = merged;
+          void saveOrdersCache(merged);
+          return merged;
+        });
+      } else {
+        setOrders(sanitized);
+        ordersHydrateRef.current = sanitized;
+        if (sanitized.length > 0) void saveOrdersCache(sanitized);
+      }
+      setHasLoadedOrdersOnce(true);
+      console.log(
+        `[FRONTEND FETCHED] /api/orders/refresh OK — số đơn: ${sanitized.length}` +
+          `${merge ? ' (merge)' : ' (replace page ' + page + ')'} shops=${shopIds.join(',') || '(all)'}`,
+      );
     } catch (err) {
       aborted =
         (err instanceof DOMException && err.name === 'AbortError') ||

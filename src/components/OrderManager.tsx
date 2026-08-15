@@ -1013,6 +1013,8 @@ export default function OrderManager({
   const dateRangeKey = `${orderDateRange.startDate}|${orderDateRange.endDate}`;
   const dateRangeRef = useRef(orderDateRange);
   dateRangeRef.current = orderDateRange;
+  /** Primitive SSOT cho useEffect fetch — không đưa object shops/filters/dateRange vào deps. */
+  const ordersFetchKey = [shopIdsKey, dateRangeKey, activeSubTab, listFetchKind].join('::');
   const fetchOrdersWithShop = useCallback(
     (opts?: Parameters<NonNullable<OrderManagerProps['onFetchOrders']>>[0]) => {
       const shopIds = shopScopeRef.current.shopIds;
@@ -1041,6 +1043,8 @@ export default function OrderManager({
   const syncPollTimerRef = useRef<number | null>(null);
   const counterPollTimerRef = useRef<number | null>(null);
   const counterAbortRef = useRef<AbortController | null>(null);
+  const counterInFlightKeyRef = useRef('');
+  const counterInFlightPromiseRef = useRef<Promise<Record<string, number> | null> | null>(null);
   const countsFingerprintRef = useRef<string>('');
   const isSyncingRef = useRef(false);
   /** Pull-to-refresh (mobile): vuốt từ trên xuống để fetch lại đơn. */
@@ -1076,59 +1080,101 @@ export default function OrderManager({
   const fetchOrderCounts = useCallback(async (): Promise<Record<string, number> | null> => {
     const token = localStorage.getItem('admin_token') || '';
     if (!token) return null;
-    counterAbortRef.current?.abort();
+    const shopIds = shopScopeRef.current.shopIds;
+    const range = dateRangeRef.current;
+    const flightKey = `${shopIds.join(',')}|${range.startDate}|${range.endDate}`;
+    if (counterInFlightPromiseRef.current && counterInFlightKeyRef.current === flightKey) {
+      return counterInFlightPromiseRef.current;
+    }
+    if (counterInFlightKeyRef.current !== flightKey) {
+      counterAbortRef.current?.abort();
+    }
     const controller = new AbortController();
     counterAbortRef.current = controller;
-    try {
-      const params = new URLSearchParams();
-      params.set('t', String(Date.now()));
-      params.set('_r', String(Math.random()).slice(2, 10));
-      const shopIds = shopScopeRef.current.shopIds;
-      if (shopIds.length === 1) {
-        params.set('shop_id', shopIds[0]);
-      } else if (shopIds.length > 1) {
-        params.set('shop_ids', shopIds.join(','));
-      }
-      const range = dateRangeRef.current;
-      if (range.startDate) params.set('startDate', range.startDate);
-      if (range.endDate) params.set('endDate', range.endDate);
-      const res = await fetch(`/api/orders/counter?${params.toString()}`, {
-        cache: 'no-store',
-        signal: controller.signal,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          Pragma: 'no-cache',
-        },
-      });
-      const json = await res.json().catch(() => ({} as Record<string, unknown>));
-      if (res.ok && json?.success && json?.counts && typeof json.counts === 'object') {
-        const counts = json.counts as Record<string, number>;
-        const counters = json.counters as
-          | { total?: number; returned?: number; cancelled?: number; rts?: number }
-          | undefined;
-        if (counters && typeof counters === 'object') {
-          counts.cancel_returns = Number(counters.total) || counts.cancel_returns || 0;
-          counts.cancel_returns_returned = Number(counters.returned) || 0;
-          counts.cancel_returns_cancelled = Number(counters.cancelled) || 0;
-          counts.cancel_returns_rts = Number(counters.rts) || 0;
-          counts.refund_return = Number(counters.returned) || 0;
-          counts.cancelled = Number(counters.cancelled) || 0;
-          counts.failed_delivery = Number(counters.rts) || 0;
+    counterInFlightKeyRef.current = flightKey;
+    const run = (async (): Promise<Record<string, number> | null> => {
+      try {
+        const fetchCounterForShop = async (shopId?: string): Promise<{
+          counts: Record<string, number>;
+          counters?: { total?: number; returned?: number; cancelled?: number; rts?: number };
+        } | null> => {
+          const params = new URLSearchParams();
+          params.set('t', String(Date.now()));
+          if (shopId) params.set('shop_id', shopId);
+          if (range.startDate) params.set('startDate', range.startDate);
+          if (range.endDate) params.set('endDate', range.endDate);
+          const res = await fetch(`/api/orders/counter?${params.toString()}`, {
+            cache: 'no-store',
+            signal: controller.signal,
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              Pragma: 'no-cache',
+            },
+          });
+          const json = await res.json().catch(() => ({} as Record<string, unknown>));
+          if (!res.ok || !json?.success || !json?.counts || typeof json.counts !== 'object') {
+            return null;
+          }
+          return {
+            counts: json.counts as Record<string, number>,
+            counters: json.counters as
+              | { total?: number; returned?: number; cancelled?: number; rts?: number }
+              | undefined,
+          };
+        };
+        const shopTargets = shopIds.length > 0 ? shopIds : [undefined];
+        const responses = await Promise.all(shopTargets.map((id) => fetchCounterForShop(id)));
+        const ok = responses.filter(Boolean) as Array<{
+          counts: Record<string, number>;
+          counters?: { total?: number; returned?: number; cancelled?: number; rts?: number };
+        }>;
+        if (ok.length === 0) return null;
+        const mergedCounts: Record<string, number> = {};
+        ok.forEach((res) => {
+          Object.entries(res.counts).forEach(([k, v]) => {
+            mergedCounts[k] = (Number(mergedCounts[k]) || 0) + (Number(v) || 0);
+          });
+        });
+        const mergedCounters = {
+          total: 0,
+          returned: 0,
+          cancelled: 0,
+          rts: 0,
+        };
+        ok.forEach((res) => {
+          mergedCounters.total += Number(res.counters?.total) || 0;
+          mergedCounters.returned += Number(res.counters?.returned) || 0;
+          mergedCounters.cancelled += Number(res.counters?.cancelled) || 0;
+          mergedCounters.rts += Number(res.counters?.rts) || 0;
+        });
+        if (mergedCounters.total || mergedCounters.returned || mergedCounters.cancelled || mergedCounters.rts) {
+          mergedCounts.cancel_returns = mergedCounters.total || mergedCounts.cancel_returns || 0;
+          mergedCounts.cancel_returns_returned = mergedCounters.returned;
+          mergedCounts.cancel_returns_cancelled = mergedCounters.cancelled;
+          mergedCounts.cancel_returns_rts = mergedCounters.rts;
+          mergedCounts.refund_return = mergedCounters.returned;
+          mergedCounts.cancelled = mergedCounters.cancelled;
+          mergedCounts.failed_delivery = mergedCounters.rts;
         }
-        setServerOrderCounts(counts);
-        return counts;
+        setServerOrderCounts(mergedCounts);
+        return mergedCounts;
+      } catch (err) {
+        const aborted =
+          (err instanceof DOMException && err.name === 'AbortError') ||
+          (typeof err === 'object' && err !== null && (err as { name?: string }).name === 'AbortError');
+        if (!aborted) console.warn('[OrderCounts] fetch failed:', err);
+      } finally {
+        if (counterAbortRef.current === controller) counterAbortRef.current = null;
+        if (counterInFlightKeyRef.current === flightKey) {
+          counterInFlightPromiseRef.current = null;
+        }
       }
-    } catch (err) {
-      const aborted =
-        (err instanceof DOMException && err.name === 'AbortError') ||
-        (typeof err === 'object' && err !== null && (err as { name?: string }).name === 'AbortError');
-      if (!aborted) console.warn('[OrderCounts] fetch failed:', err);
-    } finally {
-      if (counterAbortRef.current === controller) counterAbortRef.current = null;
-    }
-    return null;
-  }, [shopIdsKey]);
+      return null;
+    })();
+    counterInFlightPromiseRef.current = run;
+    return run;
+  }, []);
 
   const refetchOrdersPage = useCallback(
     (opts?: { silent?: boolean; page?: number }) => {
@@ -1550,7 +1596,7 @@ export default function OrderManager({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSubTab, cancelReturnTab]);
 
-  // Chỉ fetch khi activeSubTab / kind Hủy-Hoàn thật sự đổi. setTimeout(0) gộp StrictMode + 2 setState lệch nhịp.
+  // Chỉ fetch khi tab / kind / shop IDs / dateRange thật sự đổi (chuỗi primitive).
   useEffect(() => {
     if (activeSubTab === 'pending_verification') return;
     const tabFetchTabs = new Set([
@@ -1569,6 +1615,7 @@ export default function OrderManager({
 
     let cancelled = false;
     const controller = new AbortController();
+    const delay = datePreset === 'custom' ? 250 : 0;
     const timer = window.setTimeout(() => {
       if (cancelled) return;
       setCurrentPage((p) => (p === 1 ? p : 1));
@@ -1602,16 +1649,16 @@ export default function OrderManager({
       };
       void run();
       void fetchOrderCounts();
-    }, 0);
+    }, delay);
 
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
       controller.abort();
     };
-    // Primitive deps only — shopIdsKey = ids.join(',') tránh loop do array reference.
+    // Primitive key only — shopIds.join + dateRange + filters. CẤM object selectedShops.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSubTab, listFetchKind, shopIdsKey]);
+  }, [ordersFetchKey]);
 
   const searchBootRef = React.useRef(true);
   const searchAbortRef = React.useRef<AbortController | null>(null);
@@ -1657,34 +1704,6 @@ export default function OrderManager({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery]);
 
-  const dateFilterBootRef = React.useRef(true);
-  useEffect(() => {
-    if (dateFilterBootRef.current) {
-      dateFilterBootRef.current = false;
-      return;
-    }
-    const handle = window.setTimeout(() => {
-      setCurrentPage(1);
-      void fetchOrdersWithShop({
-        silent: false,
-        force: true,
-        page: 1,
-        limit: ORDERS_PAGE_SIZE,
-        merge: false,
-        tab: searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab,
-        q: searchQuery.trim() || undefined,
-        kind:
-          activeSubTab === 'cancel_returns'
-            ? cancelReturnKindParam(cancelReturnTab)
-            : undefined,
-      });
-      void fetchOrderCounts();
-    }, datePreset === 'custom' ? 250 : 0);
-    return () => window.clearTimeout(handle);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateRangeKey]);
-  
-  // Camera Barcode Scanning States and Ref
   const [cameraScanResult, setCameraScanResult] = useState<string>('Đang chờ quét QR / mã vạch...');
   const [cameraScanSuccess, setCameraScanSuccess] = useState<boolean>(false);
   const [cameraScanError, setCameraScanError] = useState<boolean>(false);
