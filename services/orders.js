@@ -120,6 +120,12 @@ export function mirrorTrackingFieldsForRead(order) {
   if (!order || typeof order !== "object") return order;
   if (order.tracking_no && !order.trackingNumber) order.trackingNumber = order.tracking_no;
   if (order.trackingNumber && !order.tracking_no) order.tracking_no = order.trackingNumber;
+  if (order.return_tracking_no && !order.returnTrackingNumber) {
+    order.returnTrackingNumber = order.return_tracking_no;
+  }
+  if (order.returnTrackingNumber && !order.return_tracking_no) {
+    order.return_tracking_no = order.returnTrackingNumber;
+  }
   return order;
 }
 

@@ -3665,31 +3665,50 @@ export function normalizeScannedCode(raw: unknown): string {
     .toUpperCase();
 }
 
+function stripScannedSeparators(code: string): string {
+  return String(code || "").replace(/[\s\-_#./\\|:;,]+/g, "");
+}
+
+function pushScanFieldVariants(
+  $or: Record<string, string>[],
+  field: string,
+  variants: string[],
+): void {
+  for (const v of variants) {
+    if (v) $or.push({ [field]: v });
+  }
+}
+
 /** $or exact $eq trên trackingNumber / returnTrackingNumber / packageNumber / orderSn (+ alias snake_case đã lưu). */
 function buildExactScanOrFilter(rawCode: string): Record<string, unknown> | null {
   const scannedCode = normalizeScannedCode(rawCode);
   if (!scannedCode) return null;
-  const orderSn = scannedCode.replace(/^SHOPEE-/, "");
-  const $or: Record<string, string>[] = [
-    { trackingNumber: scannedCode },
-    { tracking_no: scannedCode },
-    { "data.trackingNumber": scannedCode },
-    { "data.tracking_no": scannedCode },
-    { returnTrackingNumber: scannedCode },
-    { return_tracking_no: scannedCode },
-    { "data.returnTrackingNumber": scannedCode },
-    { "data.return_tracking_no": scannedCode },
-    { packageNumber: scannedCode },
-    { "data.packageNumber": scannedCode },
-    { "data.package_number": scannedCode },
-    { orderSn: scannedCode },
-    { "data.orderSn": scannedCode },
-    { "data.order_sn": scannedCode },
-  ];
-  if (orderSn && orderSn !== scannedCode) {
-    $or.push({ orderSn }, { "data.orderSn": orderSn }, { "data.order_sn": orderSn });
+  const stripped = stripScannedSeparators(scannedCode);
+  const variants = [...new Set([scannedCode, stripped].filter(Boolean))];
+  const $or: Record<string, string>[] = [];
+  for (const code of variants) {
+    pushScanFieldVariants($or, "trackingNumber", [code]);
+    pushScanFieldVariants($or, "tracking_no", [code]);
+    pushScanFieldVariants($or, "data.trackingNumber", [code]);
+    pushScanFieldVariants($or, "data.tracking_no", [code]);
+    pushScanFieldVariants($or, "returnTrackingNumber", [code]);
+    pushScanFieldVariants($or, "return_tracking_no", [code]);
+    pushScanFieldVariants($or, "data.returnTrackingNumber", [code]);
+    pushScanFieldVariants($or, "data.return_tracking_no", [code]);
+    pushScanFieldVariants($or, "packageNumber", [code]);
+    pushScanFieldVariants($or, "data.packageNumber", [code]);
+    pushScanFieldVariants($or, "data.package_number", [code]);
+    pushScanFieldVariants($or, "orderSn", [code]);
+    pushScanFieldVariants($or, "data.orderSn", [code]);
+    pushScanFieldVariants($or, "data.order_sn", [code]);
+    pushScanFieldVariants($or, "return_sn", [code]);
+    pushScanFieldVariants($or, "data.return_sn", [code]);
+    const orderSn = code.replace(/^SHOPEE-/, "");
+    if (orderSn && orderSn !== code) {
+      $or.push({ orderSn }, { "data.orderSn": orderSn }, { "data.order_sn": orderSn });
+    }
   }
-  return { $or };
+  return $or.length ? { $or } : null;
 }
 
 const SCAN_LOOKUP_MAX_MS = 400;
@@ -4314,6 +4333,116 @@ export async function loadCancelReturnMissingTrackingFromStore(opts?: {
   if (!docs.length) return [];
   console.log(
     `[MongoDB] heal-tracking-cancelled candidates=${docs.length} lookbackDays=${Math.round(lookbackMs / 86400000)}`,
+  );
+  return loadOrdersFromStore({ ids: docs.map((d) => String(d._id)) });
+}
+
+/**
+ * P1: đơn đã có return_sn nhưng mã hoàn trống hoặc đang copy nhầm mã chiều đi.
+ * Không lọc cooldown — cron retry định kỳ (Shopee cấp reverse TN trễ).
+ */
+export async function loadReturnTrackingPendingFromStore(opts?: {
+  lookbackMs?: number;
+  limit?: number;
+}): Promise<any[]> {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const limit = Math.min(Math.max(1, Math.floor(Number(opts?.limit) || 40)), 120);
+  const lookbackMs = Math.max(
+    24 * 60 * 60 * 1000,
+    Number(opts?.lookbackMs) || 60 * 24 * 60 * 60 * 1000,
+  );
+  const cutoffIso = new Date(Date.now() - lookbackMs).toISOString();
+  const cutoffDate = new Date(Date.now() - lookbackMs);
+
+  const hasReturnSn = {
+    $or: [
+      { return_sn: { $exists: true, $nin: [null, ""] } },
+      { "data.return_sn": { $exists: true, $nin: [null, ""] } },
+    ],
+  };
+  const returnTnMissingOrCopied = {
+    $or: [
+      { return_tracking_no: { $exists: false } },
+      { return_tracking_no: null },
+      { return_tracking_no: "" },
+      { "data.return_tracking_no": { $exists: false } },
+      { "data.return_tracking_no": null },
+      { "data.return_tracking_no": "" },
+      {
+        $expr: {
+          $let: {
+            vars: {
+              rtn: {
+                $toUpper: {
+                  $ifNull: [
+                    "$return_tracking_no",
+                    { $ifNull: ["$data.return_tracking_no", ""] },
+                  ],
+                },
+              },
+              out: {
+                $toUpper: {
+                  $ifNull: [
+                    "$tracking_no",
+                    { $ifNull: ["$data.tracking_no", ""] },
+                  ],
+                },
+              },
+            },
+            in: {
+              $and: [
+                { $gt: [{ $strLenCP: "$$rtn" }, 0] },
+                { $gt: [{ $strLenCP: "$$out" }, 0] },
+                { $eq: ["$$rtn", "$$out"] },
+              ],
+            },
+          },
+        },
+      },
+    ],
+  };
+
+  const filter: Record<string, unknown> = {
+    $and: [
+      {
+        $or: [
+          { "data.channel": "shopee" },
+          { channel: "shopee" },
+          { "data.channel": { $exists: false } },
+          { "data.channel": null },
+          { "data.channel": "" },
+        ],
+      },
+      {
+        $or: [
+          { "data.date": { $gte: cutoffIso } },
+          { last_synced_at: { $gte: cutoffDate } },
+        ],
+      },
+      hasReturnSn,
+      returnTnMissingOrCopied,
+    ],
+  };
+
+  let docs: any[];
+  try {
+    docs = await OrderModel.find(filter)
+      .select({ _id: 1 })
+      .sort({ "data.date": -1, last_synced_at: -1, _id: -1 })
+      .limit(limit)
+      .maxTimeMS(10_000)
+      .lean();
+  } catch (err: any) {
+    console.warn(
+      "[MongoDB] loadReturnTrackingPendingFromStore failed:",
+      err?.message || err,
+    );
+    return [];
+  }
+  if (!docs.length) return [];
+  console.log(
+    `[MongoDB] return-tracking-pending candidates=${docs.length} lookbackDays=${Math.round(lookbackMs / 86400000)}`,
   );
   return loadOrdersFromStore({ ids: docs.map((d) => String(d._id)) });
 }

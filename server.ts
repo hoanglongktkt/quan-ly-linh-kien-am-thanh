@@ -461,6 +461,7 @@ import {
   loadGhnBackfillCandidatesFromStore,
   bulkSetTrackingNumbersInStore,
   loadCancelReturnMissingTrackingFromStore,
+  loadReturnTrackingPendingFromStore,
   queryOrdersPageFromStore,
   orderTabFilter,
   createSyncJob,
@@ -4966,6 +4967,79 @@ async function syncShopeeReturnRequests(opts?: {
   } finally {
     releaseOrdersPullLock("syncReturnRequests_finally");
   }
+}
+
+/**
+ * P1: retry đơn đã có return_sn nhưng return_tracking_no trống / copy mã đi.
+ * Gọi get_reverse_tracking_info + get_return_detail, upsert 4 alias.
+ */
+async function retryPendingReturnTracking(opts?: {
+  limit?: number;
+  trigger?: string;
+}): Promise<{ attempted: number; filled: number; errors: number }> {
+  const startedAt = Date.now();
+  const empty = { attempted: 0, filled: 0, errors: 0 };
+  if (!isMongoReady()) return empty;
+  let candidates: any[] = [];
+  try {
+    candidates = await loadReturnTrackingPendingFromStore({
+      lookbackMs: 60 * 24 * 60 * 60 * 1000,
+      limit: Math.max(10, Math.min(80, Number(opts?.limit) || 40)),
+    });
+  } catch (err: any) {
+    console.warn("[ReturnTracking Retry] load candidates failed:", err?.message || err);
+    return empty;
+  }
+  if (!candidates.length) {
+    console.log(`[ReturnTracking Retry] trigger=${opts?.trigger || "cron"} — 0 pending`);
+    return empty;
+  }
+
+  let filled = 0;
+  let errors = 0;
+  const touched: any[] = [];
+  for (const order of candidates) {
+    const shopId = normalizeShopIdKey(order?.shopId) || String(order?.shopId || "").trim();
+    const returnSn = String(order?.return_sn || "").trim();
+    if (!shopId || !returnSn) continue;
+    try {
+      const accessToken = await getValidShopeeAccessToken(shopId);
+      if (!accessToken) continue;
+      const ok = await fillReturnTrackingFromShopee(shopId, accessToken, order);
+      const rtn = distinctReturnTracking(
+        order.return_tracking_no || order.returnTrackingNumber,
+        order.trackingNumber || order.tracking_no,
+      );
+      if (ok && rtn) {
+        applyReturnTrackingAliases(order, rtn);
+        touched.push(order);
+        filled += 1;
+        console.log(
+          `[ReturnTracking Retry] filled order_sn=${order.orderSn} return_sn=${returnSn} rtn=${rtn}`,
+        );
+      }
+      await shopeeSyncDelay(120);
+    } catch (rowErr: any) {
+      errors += 1;
+      console.warn(
+        `[ReturnTracking Retry] ${order?.orderSn || returnSn}:`,
+        rowErr?.message || rowErr,
+      );
+    }
+  }
+
+  if (touched.length && isMongoReady()) {
+    try {
+      await bulkUpsertOrdersToStore(touched);
+    } catch (persistErr: any) {
+      console.warn("[ReturnTracking Retry] upsert failed:", persistErr?.message || persistErr);
+    }
+  }
+
+  console.log(
+    `[ReturnTracking Retry] trigger=${opts?.trigger || "cron"} attempted=${candidates.length} filled=${filled} errors=${errors} ${Date.now() - startedAt}ms`,
+  );
+  return { attempted: candidates.length, filled, errors };
 }
 
 // v2.order.get_order_detail
@@ -13270,10 +13344,27 @@ function scheduleReadyToShipBackfillSafe(): void {
 /** Cron đồng bộ Yêu cầu trả hàng (Shopee Return APIs) — mặc định 10 phút. */
 function scheduleShopeeReturnRequestsSyncSafe(): void {
   scheduleShopeeReturnRequestsSync({
-    runSync: (opts) =>
-      syncShopeeReturnRequests({
+    runSync: async (opts) => {
+      const result = await syncShopeeReturnRequests({
         mode: opts?.mode === "full" ? "full" : "incremental",
-      }),
+      });
+      let retry = { attempted: 0, filled: 0, errors: 0 };
+      try {
+        retry = await retryPendingReturnTracking({
+          limit: 40,
+          trigger: opts?.trigger || "cron",
+        });
+      } catch (retryErr: any) {
+        console.warn("[ReturnTracking Retry] tick failed:", retryErr?.message || retryErr);
+      }
+      return {
+        ...result,
+        updated: (result?.updated || 0) + (retry.filled || 0),
+        retryAttempted: retry.attempted,
+        retryFilled: retry.filled,
+        message: `${result?.message || "Return requests"} | retry TN attempted=${retry.attempted} filled=${retry.filled}`,
+      };
+    },
     cronExpr: process.env.AUTO_RETURN_REQUESTS_CRON_EXPR || "*/10 * * * *",
   });
 }
@@ -18624,7 +18715,7 @@ async function startServer() {
     matchesReceivedCancelReturnTabOrder,
     cleanupExpiredLabelFiles,
     wipeLegacyPublicPrints,
-    resolveOrderFromShopeeByScanCode: async () => null,
+    resolveOrderFromShopeeByScanCode,
     enrichMissingShopeeTracking,
     repairMissingShopeeTrackingInOrders,
     healCancelledReturnTrackingOrders,

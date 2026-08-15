@@ -231,27 +231,69 @@ export async function lookupOrderByScanCode(
     if (local) return local;
   }
 
-  if (!token) return null;
-
   try {
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    // On-demand Shopee (đơn hủy thiếu trong DB) có thể >8s — cho tới ~60s.
+    // On-demand Shopee (đơn hủy/hoàn thiếu trong DB) có thể >8s — cho tới ~60s.
     const timer =
       controller && typeof window !== 'undefined'
         ? window.setTimeout(() => controller.abort(), 60_000)
         : undefined;
     const res = await fetch(`/api/orders/lookup?code=${encodeURIComponent(trimmed)}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
       signal: controller?.signal,
       cache: 'no-store',
     });
     if (timer !== undefined) window.clearTimeout(timer);
     if (!res.ok) return null;
     const order = (await res.json()) as Order;
-    return order?.id ? order : null;
+    return order?.id || order?.orderSn ? order : null;
   } catch {
     return null;
   }
+}
+
+/** Ghi đơn vừa lookup vào HashMap súng — lần quét sau O(1), không gọi lại HTTP. */
+export function putOrderIntoScannerSyncMap(
+  map: Map<string, ScannerSyncEntry>,
+  order: Order,
+  scannedCode?: string,
+): Map<string, ScannerSyncEntry> {
+  const next = new Map(map);
+  const tracking = String(order.tracking_no || order.trackingNumber || '').trim();
+  const returnWb = String(order.return_tracking_no || order.returnTrackingNumber || '').trim();
+  const orderId = String(order.orderSn || '').replace(/^shopee-/i, '').trim();
+  const scannedNorm = scannedCode ? normalizeOrderScanKey(scannedCode) : '';
+  const returnNorm = returnWb ? normalizeOrderScanKey(returnWb) : '';
+  const outNorm = tracking ? normalizeOrderScanKey(tracking) : '';
+  const flexEq = (a: string, b: string) =>
+    Boolean(
+      a &&
+        b &&
+        (a === b ||
+          (a.length >= 10 && b.length >= 10 && (a.endsWith(b) || b.endsWith(a)))),
+    );
+  const matchesOutbound = flexEq(scannedNorm, outNorm);
+  const matchesReturn = flexEq(scannedNorm, returnNorm);
+  const scannedIsReturn = Boolean(
+    matchesReturn || (!matchesOutbound && scannedNorm && order.return_sn),
+  );
+  const entry: ScannerSyncEntry = {
+    order_id: orderId,
+    tracking_code: tracking,
+    return_waybill: returnWb || (scannedIsReturn ? String(scannedCode || '').trim() : ''),
+    status: String(order.status || '').trim().toLowerCase(),
+    matchedReturn: scannedIsReturn,
+  };
+  const put = (raw: string, matchedReturn = false) => {
+    const key = normalizeOrderScanKey(raw);
+    if (!key || key.length < 4) return;
+    next.set(key, { ...entry, matchedReturn });
+  };
+  if (entry.tracking_code) put(entry.tracking_code, false);
+  if (entry.return_waybill) put(entry.return_waybill, true);
+  if (entry.order_id) put(entry.order_id, scannedIsReturn);
+  if (scannedCode) put(scannedCode, scannedIsReturn);
+  return next;
 }
 
 /** Âm thanh public tạm (mp3 ngắn) — success / warning(hủy) / error / pending(dò ngầm). */

@@ -1075,7 +1075,7 @@ export async function scannerSync(req, res) {
   }
 }
 
-/** GET /api/orders/lookup — chỉ Mongo exact match, KHÔNG gọi Shopee. */
+/** GET /api/orders/lookup — Mongo exact trước, miss thì Shopee live (return waybill). */
 export async function lookupOrder(req, res) {
   const code = String(req.query.code || req.query.q || "").trim().toUpperCase();
   if (!code) {
@@ -1092,6 +1092,16 @@ export async function lookupOrder(req, res) {
     if (foundRaw) foundRaw = mirrorTrackingFieldsForRead(foundRaw);
   } catch (err) {
     console.warn("[Orders Lookup] mongo failed:", err?.message || err);
+  }
+
+  if (!foundRaw) {
+    try {
+      foundRaw = await deps.resolveOrderFromShopeeByScanCode(code);
+      if (foundRaw && !deps.isValidOrder(foundRaw)) foundRaw = null;
+      if (foundRaw) foundRaw = mirrorTrackingFieldsForRead(foundRaw);
+    } catch (liveErr) {
+      console.warn("[Orders Lookup] Shopee live failed:", liveErr?.message || liveErr);
+    }
   }
 
   if (!foundRaw) {

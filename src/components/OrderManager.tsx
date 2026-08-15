@@ -19,6 +19,8 @@ import {
   buildScannerSyncMap,
   lookupScannerSyncMap,
   scannerSyncEntryToOrder,
+  lookupOrderByScanCode,
+  putOrderIntoScannerSyncMap,
   type ScannerSyncEntry,
 } from '../utils/orderScan';
 import {
@@ -2058,7 +2060,7 @@ export default function OrderManager({
       setIsScanBusy(true);
 
       try {
-        // Local HashMap từ scanner-sync — không gọi lookup HTTP.
+        // Local HashMap từ scanner-sync — miss thì fallback HTTP lookup (Mongo + Shopee live).
         const syncHit = lookupScannerSyncMap(scannerSyncMapRef.current, trimmed);
         let order: Order | null = null;
         if (syncHit) {
@@ -2066,8 +2068,28 @@ export default function OrderManager({
           order = fromPool || scannerSyncEntryToOrder(syncHit);
         }
 
+        if (!order) {
+          setCameraScanResult(`Đang tra cứu mã: ${trimmed}...`);
+          const token = localStorage.getItem('admin_token') || '';
+          order = await lookupOrderByScanCode(
+            trimmed,
+            ordersRef.current,
+            token,
+            orderScanIndex,
+          );
+          if (order) {
+            const nextMap = putOrderIntoScannerSyncMap(
+              scannerSyncMapRef.current,
+              order,
+              trimmed,
+            );
+            scannerSyncMapRef.current = nextMap;
+            setScannerSyncMap(nextMap);
+          }
+        }
+
         if (order) {
-          const idx = ordersRef.current.findIndex((o) => o.id === order!.id);
+          const idx = ordersRef.current.findIndex((o) => o.id === order!.id || o.orderSn === order!.orderSn);
           if (idx >= 0) {
             const merged = ordersRef.current.map((o, i) => (i === idx ? { ...o, ...order! } : o));
             ordersRef.current = merged;
@@ -2516,7 +2538,7 @@ export default function OrderManager({
 
       lastQrScanRef.current = { key, at: now };
 
-      // Local HashMap O(1) từ scanner-sync — KHÔNG gọi HTTP lookup / dò ngầm.
+      // Local HashMap O(1) từ scanner-sync — miss thì BẮT BUỘC fallback HTTP lookup.
       const syncHit = lookupScannerSyncMap(scannerSyncMapRef.current, trimmed);
       let localOrder: Order | null = null;
       if (syncHit) {
@@ -2526,10 +2548,56 @@ export default function OrderManager({
           localOrder = {
             ...localOrder,
             return_tracking_no: syncHit.return_waybill || localOrder.return_tracking_no,
+            returnTrackingNumber:
+              syncHit.return_waybill || localOrder.returnTrackingNumber,
             return_sn: localOrder.return_sn || 'scanner-sync',
             status:
               localOrder.status === 'return_received' ? 'return_received' : 'return_pending',
           };
+        }
+      }
+
+      if (!localOrder) {
+        isScanBusyRef.current = true;
+        setIsVerifyingScan(true);
+        setCameraScanResult(`Đang tra cứu mã hoàn: ${trimmed}...`);
+        const token = localStorage.getItem('admin_token') || '';
+        try {
+          const remote = await lookupOrderByScanCode(
+            trimmed,
+            ordersRef.current,
+            token,
+            orderScanIndex,
+          );
+          if (remote) {
+            const scannedIsReturn =
+              scannedMatchesReturnWaybill(remote, trimmed) ||
+              (Boolean(remote.return_sn) &&
+                normalizeOrderScanKey(trimmed) !==
+                  normalizeOrderScanKey(
+                    remote.tracking_no || remote.trackingNumber || '',
+                  ));
+            localOrder = scannedIsReturn
+              ? {
+                  ...remote,
+                  return_tracking_no:
+                    remote.return_tracking_no || remote.returnTrackingNumber || trimmed,
+                  returnTrackingNumber:
+                    remote.returnTrackingNumber || remote.return_tracking_no || trimmed,
+                  status:
+                    remote.status === 'return_received' ? 'return_received' : 'return_pending',
+                }
+              : remote;
+            const nextMap = putOrderIntoScannerSyncMap(
+              scannerSyncMapRef.current,
+              localOrder,
+              trimmed,
+            );
+            scannerSyncMapRef.current = nextMap;
+            setScannerSyncMap(nextMap);
+          }
+        } catch (lookupErr) {
+          console.warn('[Scan Lookup] HTTP fallback fail:', lookupErr);
         }
       }
 
@@ -2544,19 +2612,32 @@ export default function OrderManager({
             : `Mã không khớp pool quét đã tải (${trimmed})`,
           'error',
         );
+        isScanBusyRef.current = false;
+        setIsVerifyingScan(false);
+        const nextQueued = pendingScanQueueRef.current.shift();
+        if (nextQueued && !isTearingDownScannerRef.current) {
+          queueMicrotask(() => {
+            void verifySingleOrder(nextQueued);
+          });
+        }
         return;
       }
 
       isScanBusyRef.current = true;
-      // Không bật overlay "Đang kiểm tra" — phân loại local phải xong trong vài ms.
       setCameraScanResult(`Đang phân loại: ${trimmed}...`);
 
       try {
         const order = localOrder;
 
-        const idx = ordersRef.current.findIndex((o) => o.id === order.id);
+        const idx = ordersRef.current.findIndex(
+          (o) => o.id === order.id || o.orderSn === order.orderSn,
+        );
         if (idx >= 0) {
           const merged = ordersRef.current.map((o, i) => (i === idx ? { ...o, ...order } : o));
+          ordersRef.current = merged;
+          onUpdateOrders(merged, { persist: false });
+        } else {
+          const merged = [order, ...ordersRef.current];
           ordersRef.current = merged;
           onUpdateOrders(merged, { persist: false });
         }

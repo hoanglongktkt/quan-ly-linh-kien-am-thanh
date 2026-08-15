@@ -303,7 +303,7 @@ export function scheduleShopeeReturnRequestsSync(deps = {}) {
           return;
         }
         console.log(
-          `[CRON] Return Requests done pulled=${r?.pulled || 0} updated=${r?.updated || 0}`,
+          `[CRON] Return Requests done pulled=${r?.pulled || 0} updated=${r?.updated || 0} retryFilled=${r?.retryFilled || 0}`,
         );
       });
     } catch (err) {
