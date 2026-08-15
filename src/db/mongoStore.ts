@@ -4802,6 +4802,11 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
     case "cancel-returns":
     case "don-huy-hoan":
     case "don_huy_hoan":
+    case "cancelled_returned":
+    case "cancelled-returned":
+    case "cancelled_returns":
+    case "huy-hoan":
+    case "huy_hoan":
       // SSOT: count badge ≡ list query (GET /api/orders/refresh?tab=cancel_returns).
       return {
         $or: [
@@ -5123,8 +5128,14 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
     const skipCounts = Boolean(opts?.skipCounts);
     const and: Record<string, unknown>[] = [];
     const search = String(opts?.query || "").trim();
+    const requestedTab = String(opts?.tab || "").trim().toLowerCase();
     // q= → quét TOÀN BỘ collection, không kẹp tab hiện tại.
-    const tabFilter = search ? {} : orderTabFilter(opts?.tab);
+    let tabFilter = search ? {} : orderTabFilter(requestedTab);
+    if (!search && requestedTab && requestedTab !== "all" && Object.keys(tabFilter).length === 0) {
+      console.warn(
+        `[MongoDB] queryOrdersPageFromStore unknown tab=${requestedTab} — không count toàn DB`,
+      );
+    }
     if (Object.keys(tabFilter).length) and.push(tabFilter);
     const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
     if (shopFilter) and.push(shopFilter);
@@ -5215,7 +5226,21 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
       return { ...empty, page, pageSize };
     }
 
-    const total = await safeCountDocuments(filter, 8000);
+    // total BẮT BUỘC cùng filter với find() — CẤM count toàn collection khi đã có tab.
+    const filterIsEmpty = Object.keys(filter).length === 0;
+    const tabWasRequested = Boolean(requestedTab && requestedTab !== "all");
+    let total = 0;
+    if (filterIsEmpty && tabWasRequested && !search) {
+      total = docs.length;
+      console.warn(
+        `[MongoDB] queryOrdersPageFromStore tab=${requestedTab} empty filter — total=${total}, không count toàn DB`,
+      );
+    } else {
+      total = await safeCountDocuments(filter, 8000);
+    }
+    console.log(
+      `[MongoDB] queryOrdersPageFromStore tab=${requestedTab || "(none)"} rows=${docs.length} total=${total}`,
+    );
     const ids = docs.map((doc: any) => String(doc._id));
     let rows: any[] = [];
     try {

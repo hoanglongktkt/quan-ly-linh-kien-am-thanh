@@ -792,29 +792,42 @@ function resolveCancelReturnKind(order: Order): CancelReturnTab | null {
   return classifyShopeeCancelReturnKind(order);
 }
 
+/** Phân loại độc quyền 1 đơn → 1 sub-tab (Return | RTS | Hủy). */
+function resolveCancelReturnBucket(order: Order): Exclude<CancelReturnTab, 'all'> | null {
+  const kind = classifyShopeeCancelReturnKind(order);
+  const raw = String(order.shopee_order_status || '').toUpperCase();
+  if (
+    kind === 'refund_return' ||
+    isShopeeReturnRefundOrder(order) ||
+    Boolean(order.return_sn) ||
+    order.status === 'return_pending' ||
+    order.status === 'return_received' ||
+    raw === 'TO_RETURN'
+  ) {
+    return 'refund_return';
+  }
+  if (
+    kind === 'failed_delivery' ||
+    Boolean(order.is_rts) ||
+    String(order.sub_status || '').toUpperCase() === 'RTS' ||
+    isShopeeRtsFailedDelivery(order)
+  ) {
+    return 'failed_delivery';
+  }
+  if (
+    kind === 'cancelled' ||
+    raw === 'CANCELLED' ||
+    raw === 'IN_CANCEL' ||
+    order.status === 'cancelled'
+  ) {
+    return 'cancelled';
+  }
+  return null;
+}
+
 function matchesCancelReturnTab(order: Order, tab: CancelReturnTab): boolean {
   if (tab === 'all') return true;
-  const kind = classifyShopeeCancelReturnKind(order);
-  const isReturn = kind === 'refund_return' || isShopeeReturnRefundOrder(order);
-  const isRts =
-    !isReturn &&
-    (Boolean(order.is_rts) ||
-      String(order.sub_status || '').toUpperCase() === 'RTS' ||
-      kind === 'failed_delivery' ||
-      isShopeeRtsFailedDelivery(order));
-  const raw = String(order.shopee_order_status || '').toUpperCase();
-  const isCancelled =
-    !isReturn &&
-    !isRts &&
-    (kind === 'cancelled' ||
-      raw === 'CANCELLED' ||
-      raw === 'IN_CANCEL' ||
-      order.status === 'cancelled');
-
-  if (tab === 'refund_return') return isReturn;
-  if (tab === 'failed_delivery') return isRts;
-  if (tab === 'cancelled') return isCancelled;
-  return false;
+  return resolveCancelReturnBucket(order) === tab;
 }
 
 /** Phân loại hủy/hoàn dùng chung verify realtime + background lookup. */
@@ -5064,8 +5077,11 @@ export default function OrderManager({
   );
 
   const cancelReturnPool = useMemo(
-    () => orders.filter(isCancelReturnOrder),
-    [orders]
+    () =>
+      activeSubTab === 'cancel_returns'
+        ? orders
+        : orders.filter(isCancelReturnOrder),
+    [activeSubTab, orders],
   );
 
   /** Counter 3 nhóm Hủy/Hoàn/RTS — "Tất cả" = tổng 3 nhóm, không dùng badge Mongo toàn collection. */
@@ -5073,12 +5089,10 @@ export default function OrderManager({
     const counts = { refund_return: 0, cancelled: 0, failed_delivery: 0, all: 0 };
     const n = cancelReturnPool.length;
     for (let i = 0; i < n; i += 1) {
-      const o = cancelReturnPool[i];
-      if (matchesCancelReturnTab(o, 'refund_return')) counts.refund_return += 1;
-      else if (matchesCancelReturnTab(o, 'failed_delivery')) counts.failed_delivery += 1;
-      else if (matchesCancelReturnTab(o, 'cancelled')) counts.cancelled += 1;
+      const bucket = resolveCancelReturnBucket(cancelReturnPool[i]);
+      if (bucket) counts[bucket] += 1;
     }
-    counts.all = counts.refund_return + counts.cancelled + counts.failed_delivery;
+    counts.all = n;
     return counts;
   }, [cancelReturnPool]);
 
@@ -5237,13 +5251,8 @@ export default function OrderManager({
   const filteredOrdersBase = useMemo(() => {
     return ordersPoolBeforeCarrier
       .filter((order) => {
-        // Sub-tab Hủy/Hoàn chỉ lọc khi user chọn nhóm cụ thể — "Tất cả" = 100% list API.
-        if (
-          activeSubTab === 'cancel_returns' &&
-          cancelReturnTab !== 'all' &&
-          !matchesCancelReturnTab(order, cancelReturnTab)
-        ) {
-          return false;
+        if (activeSubTab === 'cancel_returns') {
+          if (!matchesCancelReturnTab(order, cancelReturnTab)) return false;
         }
         if (searchQuery.trim()) return true;
         return orderMatchesShippingCarrierFilter(order, selectedShippingCarrier);
@@ -5286,6 +5295,19 @@ export default function OrderManager({
       return 0;
     });
   }, [filteredOrdersBase, smartPickSort, activeSubTab]);
+
+  const listPagingTotal = useMemo(() => {
+    const backend = Number(ordersMeta?.total) || 0;
+    if (activeSubTab !== 'cancel_returns') return backend;
+    const local = Math.max(cancelReturnKindCounts.all, orders.length);
+    if (backend > 0 && backend <= Math.max(local * 3, ORDERS_PAGE_SIZE)) return backend;
+    return local;
+  }, [activeSubTab, cancelReturnKindCounts.all, orders.length, ordersMeta?.total]);
+
+  const listPagingPages = useMemo(() => {
+    if (activeSubTab !== 'cancel_returns') return ordersMeta?.totalPages ?? 1;
+    return Math.max(1, Math.ceil(listPagingTotal / ORDERS_PAGE_SIZE) || 1);
+  }, [activeSubTab, listPagingTotal, ordersMeta?.totalPages]);
 
 
   // Resolve checkbox selections to full Order rows — CHỈ lấy đơn đang hiển thị
@@ -7527,12 +7549,12 @@ export default function OrderManager({
           </>
         )}
 
-        {(ordersMeta?.total ?? 0) > 0 && (
+        {(listPagingTotal > 0 || filteredOrders.length > 0) && (
           <div className="px-4 py-3 bg-slate-50/80 border-t border-gray-100 flex flex-wrap items-center justify-end gap-3 text-xs text-gray-600">
             <span>
-              Trang <b>{ordersMeta?.page ?? currentPage}</b>/{ordersMeta?.totalPages ?? 1}
+              Trang <b>{ordersMeta?.page ?? currentPage}</b>/{listPagingPages}
               {' — '}
-              {filteredOrders.length}/{ordersMeta?.total ?? 0} đơn (mỗi trang {ORDERS_PAGE_SIZE})
+              {filteredOrders.length}/{listPagingTotal} đơn (mỗi trang {ORDERS_PAGE_SIZE})
             </span>
             <div className="flex items-center gap-2">
               <button
@@ -7546,7 +7568,7 @@ export default function OrderManager({
               <button
                 type="button"
                 disabled={
-                  ordersLoading || currentPage >= (ordersMeta?.totalPages ?? 1)
+                  ordersLoading || currentPage >= listPagingPages
                 }
                 onClick={() => goToOrdersPage(currentPage + 1)}
                 className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 font-semibold cursor-pointer"

@@ -681,6 +681,12 @@ export default function App() {
           Number(payload.currentPage ?? payload.page) > 0
             ? Number(payload.currentPage ?? payload.page)
             : page;
+        console.log('🛑 DATA ĐƯỢC LẤY TỪ URL:', requestUrl, '- SỐ LƯỢNG:', data.length);
+        // Chỉ apply request MỚI NHẤT còn sống — response 200 cũ (tab khác) không được đè meta/list.
+        if (requestId !== fetchOrdersSeqRef.current) return;
+        if (controller.signal.aborted || callerSignal?.aborted) return;
+        lastAppliedOrdersSeqRef.current = requestId;
+        lastAppliedOrdersTabRef.current = tab;
         setOrdersMeta({
           page: currentPage,
           pageSize,
@@ -688,12 +694,6 @@ export default function App() {
           totalPages,
           hasMore: Boolean(payload.has_more ?? payload.hasMore ?? currentPage < totalPages),
         });
-        console.log('🛑 DATA ĐƯỢC LẤY TỪ URL:', requestUrl, '- SỐ LƯỢNG:', data.length);
-        // Chỉ apply request MỚI NHẤT còn sống — response 200 cũ (tab khác) không được đè.
-        if (requestId !== fetchOrdersSeqRef.current) return;
-        if (controller.signal.aborted || callerSignal?.aborted) return;
-        lastAppliedOrdersSeqRef.current = requestId;
-        lastAppliedOrdersTabRef.current = tab;
         const sanitized = sanitizeOrders(data);
         // Thành công 200: đưa thẳng vào state. Không guard bỏ response (tránh UI rỗng dù Network có data).
         if (merge) {
