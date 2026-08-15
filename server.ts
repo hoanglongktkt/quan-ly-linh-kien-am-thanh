@@ -22,7 +22,9 @@ import {
 } from "./src/utils/shopeeOrderListPagination.ts";
 import {
   classifyShopeeCancelReturnKind,
+  isUnshippedShopeeCancel,
   resolveShopeeSubStatus,
+  shouldApplyShopeeReturnOverlay,
 } from "./src/utils/shopeeCancelReturnClassify.ts";
 import {
   ORDER_LOCAL_STATUS,
@@ -1222,6 +1224,13 @@ function applyShopeeCancelReturnClassification(order: any, detail?: any): void {
   const sub = resolveShopeeSubStatus(kind);
   if (sub) order.sub_status = sub;
   order.is_rts = kind === "failed_delivery" || sub === "RTS";
+  order.is_return = kind === "refund_return";
+  // Hủy chưa giao: refund tiền ≠ trả hàng — gỡ leftover return_sn từ get_return_list.
+  if (kind === "cancelled" && isUnshippedShopeeCancel(order)) {
+    order.is_return = false;
+    order.return_sn = "";
+    order._clear_return_sn = true;
+  }
 }
 
 /** Log lỗi Shopee đúng format yêu cầu (FE/ops đọc được error + message). */
@@ -4833,6 +4842,15 @@ async function syncShopeeReturnRequests(opts?: {
           const returnSn = String(row.returnSn || "").trim();
           if (!returnSn) continue;
           try {
+            const rowOrderSn = toShopeeSn(row.orderSn) || "";
+            if (rowOrderSn) {
+              const existingEarly = orders.find((o: any) => String(o.orderSn) === rowOrderSn);
+              if (existingEarly && !shouldApplyShopeeReturnOverlay(existingEarly)) {
+                applyShopeeCancelReturnClassification(existingEarly);
+                patches.push(existingEarly);
+                continue;
+              }
+            }
             const fresh = await getValidShopeeAccessToken(shopId);
             if (fresh) accessToken = fresh;
             const detailResult = await shopeeGetReturnDetail(shopId, accessToken, returnSn);
@@ -4859,6 +4877,12 @@ async function syncShopeeReturnRequests(opts?: {
               } catch {
                 existing = undefined;
               }
+            }
+            // Hủy chưa giao (get_order_list CANCELLED) — refund tiền ≠ overlay return_sn.
+            if (existing && !shouldApplyShopeeReturnOverlay(existing)) {
+              applyShopeeCancelReturnClassification(existing);
+              patches.push(existing);
+              continue;
             }
             const mappedReturnSn =
               extractReturnRequestCode(detail) || returnSn;
@@ -4972,6 +4996,7 @@ async function syncShopeeReturnRequests(opts?: {
             merged.return_status = patch.return_status;
             merged.return_refund_request_type = patch.return_refund_request_type;
             merged.shopee_cancel_return_kind = "refund_return";
+            merged.is_return = true;
             merged.sub_status = "RETURN";
             merged.refund_amount = patch.refund_amount;
             merged.return_reason = patch.return_reason;
@@ -18085,14 +18110,12 @@ function parseShopeePushEvent(body: any): {
     eventKind = "package_update";
   } else if (
     returnSn ||
+    status === "TO_RETURN" ||
     codeStr.includes("return") ||
-    codeStr.includes("refund") ||
-    action.includes("return") ||
-    action.includes("refund") ||
-    status === "TO_RETURN"
+    action.includes("return")
   ) {
-    // Chỉ gắn return_refund khi có return_sn / TO_RETURN / keyword return|refund.
-    // CANCELLED/IN_CANCEL thuần là order status update — không phải return flow.
+    // Chỉ gắn return_refund khi có return_sn / TO_RETURN / keyword return.
+    // CẤM dò chữ "refund" — hủy đã thanh toán bị refund tiền ≠ trả hàng.
     eventKind = "return_refund";
   } else if (trackingNo && orderSn) {
     // Có tracking_no trong payload → ưu tiên Code 4 semantics (GHN/SPX).
@@ -18276,6 +18299,11 @@ async function applyWebhookReturnFallback(
   hintReturnSn?: string,
 ): Promise<void> {
   let returnSn = String(hintReturnSn || "").trim();
+  const existingBefore = orders.find((o: any) => String(o.orderSn) === orderSn);
+  if (existingBefore && !shouldApplyShopeeReturnOverlay(existingBefore)) {
+    applyShopeeCancelReturnClassification(existingBefore);
+    return;
+  }
   if (!returnSn) {
     returnSn = await findReturnSnForOrderWebhook(shopId, accessToken, orderSn);
   }
@@ -18360,6 +18388,7 @@ async function applyWebhookReturnFallback(
     merged.return_status = patch.return_status;
     merged.return_refund_request_type = patch.return_refund_request_type;
     merged.shopee_cancel_return_kind = kind;
+    merged.is_return = true;
     if (patch.refund_amount != null) merged.refund_amount = patch.refund_amount;
     if (patch.return_reason) merged.return_reason = patch.return_reason;
     if (patch.text_reason) merged.text_reason = patch.text_reason;

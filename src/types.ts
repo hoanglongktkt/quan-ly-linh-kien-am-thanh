@@ -246,6 +246,8 @@ export interface Order {
   sub_status?: 'RTS' | 'CANCELLED' | 'RETURN' | string;
   /** Cờ RTS từ backend (giao hàng không thành công) */
   is_rts?: boolean;
+  /** Cờ đơn từ get_return_list (có return_sn) — không gắn cho đơn hủy thường */
+  is_return?: boolean;
   /** get_order_detail.cancel_reason */
   cancel_reason?: string;
   buyer_cancel_reason?: string;

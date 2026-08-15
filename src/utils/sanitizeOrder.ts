@@ -2,6 +2,7 @@ import type { AppliedSystemFee, Order } from '../types';
 import { parseShopeeFees, parseCustomCostItems } from './shopeeFees';
 import { inferShippingCarrierLabel } from './shippingCarrier';
 import { isTruthyFlag } from './orderWarehouseStatus';
+import { isUnshippedShopeeCancel } from './shopeeCancelReturnClassify';
 
 /** Chuẩn hóa đơn từ API — tránh crash khi thiếu date/orderSn/items. */
 export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Order {
@@ -129,7 +130,10 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     returnTrackingNumber: raw.return_tracking_no || raw.returnTrackingNumber
       ? String(raw.return_tracking_no || raw.returnTrackingNumber).trim().toUpperCase()
       : undefined,
-    return_sn: raw.return_sn ? String(raw.return_sn) : undefined,
+    return_sn:
+      raw.return_sn && !isUnshippedShopeeCancel(raw)
+        ? String(raw.return_sn)
+        : undefined,
     return_status: raw.return_status ? String(raw.return_status) : undefined,
     refund_amount:
       raw.refund_amount != null && Number.isFinite(Number(raw.refund_amount))
@@ -157,6 +161,7 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
       Boolean(raw.is_rts) ||
       String(raw.sub_status || '').toUpperCase() === 'RTS' ||
       String(raw.shopee_cancel_return_kind || '') === 'failed_delivery',
+    is_return: raw.is_return === true && !isUnshippedShopeeCancel(raw),
     cancel_reason: raw.cancel_reason ? String(raw.cancel_reason) : undefined,
     buyer_cancel_reason: raw.buyer_cancel_reason ? String(raw.buyer_cancel_reason) : undefined,
     cancel_by: raw.cancel_by ? String(raw.cancel_by) : undefined,

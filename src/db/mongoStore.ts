@@ -48,6 +48,7 @@ import {
   isCarrierTrackingCode,
   isShopeeInternalTrackingCode,
 } from "../utils/orderTracking.ts";
+import { isUnshippedShopeeCancel } from "../utils/shopeeCancelReturnClassify.ts";
 
 export { isProductsDiskMode, getProductsDiskPath, setProductsDiskAppRoot, inheritShopeeLinkFromParent };
 export { getChannelListingsDiskPath };
@@ -96,6 +97,7 @@ type OrderDoc = {
   return_tracking_no?: string | null;
   returnTrackingNumber?: string | null;
   return_sn?: string | null;
+  is_return?: boolean | null;
   /** Cờ YCTH mới — FE poll toast, ACK sẽ tắt */
   return_alert_pending?: boolean;
   return_alert_at?: Date | null;
@@ -229,6 +231,8 @@ const OrderSchema = new Schema<OrderDoc>(
     returnTrackingNumber: { type: String, default: null, index: true },
     /** Mã yêu cầu trả hàng / hoàn tiền Shopee (return_sn) — luôn String */
     return_sn: { type: String, default: null },
+    /** Cờ đơn từ get_return_list — không gắn cho đơn hủy thường */
+    is_return: { type: Boolean, default: false },
     /** YCTH mới chưa toast trên UI */
     return_alert_pending: { type: Boolean, default: false, index: true },
     return_alert_at: { type: Date, default: null },
@@ -1653,6 +1657,7 @@ const INTERNAL_FLAG_KEYS = new Set([
   "pdfUrl",
   "pdfFilename",
   "waybill_url",
+  "_clear_return_sn",
 ]);
 
 /**
@@ -1828,9 +1833,27 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     }
     // Mã YCTH (return_sn) + order_sn — luôn String (uint64-safe / alphanumeric).
     const returnSnStr = String(order.return_sn || "").trim();
-    if (returnSnStr) {
+    const $unset: Record<string, 1> = {};
+    const clearReturnSn =
+      order._clear_return_sn === true ||
+      (order.is_return === false &&
+        !returnSnStr &&
+        isUnshippedShopeeCancel(order));
+    if (clearReturnSn) {
+      $unset.return_sn = 1;
+      $unset["data.return_sn"] = 1;
+      $set.is_return = false;
+      $set["data.is_return"] = false;
+    } else if (returnSnStr) {
       $set.return_sn = returnSnStr;
       $set["data.return_sn"] = returnSnStr;
+    }
+    if (order.is_return === true) {
+      $set.is_return = true;
+      $set["data.is_return"] = true;
+    } else if (order.is_return === false) {
+      $set.is_return = false;
+      $set["data.is_return"] = false;
     }
     if (order.return_alert_pending === true) {
       $set.return_alert_pending = true;
@@ -1885,6 +1908,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     for (const [key, value] of Object.entries(order)) {
       if (key === "id" || key === "_id") continue;
       if (INTERNAL_FLAG_KEYS.has(key)) continue;
+      if (key === "return_sn" && (clearReturnSn || !String(value || "").trim())) continue;
       if (value === undefined || value === null) continue;
       if (key === "items" && Array.isArray(value) && value.length === 0) continue;
       if (key === "totalAmount" && Number(value) <= 0) continue;
@@ -2012,6 +2036,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
           update: {
             $set,
             $setOnInsert,
+            ...(Object.keys($unset).length ? { $unset } : {}),
           },
           upsert: true,
         },
@@ -3840,7 +3865,7 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
       : null) ||
     undefined;
 
-  return {
+  const hydrated: any = {
     ...data,
     id: data.id || d._id || (sn ? `shopee-${sn}` : undefined),
     orderSn: sn || data.orderSn,
@@ -3862,6 +3887,7 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
     return_tracking_no: returnTn || undefined,
     returnTrackingNumber: returnTn || undefined,
     return_sn: returnSnHydrated || data.return_sn || undefined,
+    is_return: d?.is_return === true || data.is_return === true,
     packageNumber: pkg || undefined,
     package_number: pkg || undefined,
     shipping_carrier: carrier || data.shipping_carrier || undefined,
@@ -3907,6 +3933,11 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
         }
       : {}),
   };
+  if (isUnshippedShopeeCancel(hydrated)) {
+    delete hydrated.return_sn;
+    hydrated.is_return = false;
+  }
+  return hydrated;
 }
 
 /**

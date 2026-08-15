@@ -132,6 +132,10 @@ function isReturnRequestOrder(order: Order): boolean {
   return isShopeeReturnRefundOrder(order);
 }
 
+function hasReturnRequestFlag(order: Order): boolean {
+  return Boolean(String(order.return_sn || '').trim()) || order.is_return === true;
+}
+
 function getOrderWaybillCode(order: Order): string {
   // Ưu tiên mã đi (tracking_no) theo order_sn — return_tracking_no / scan_code chỉ fallback.
   const fromHelper = getCarrierWaybillDisplay(order);
@@ -794,34 +798,33 @@ function resolveCancelReturnKind(order: Order): CancelReturnTab | null {
 
 /** Phân loại độc quyền 1 đơn → 1 sub-tab (Return | RTS | Hủy). */
 function resolveCancelReturnBucket(order: Order): Exclude<CancelReturnTab, 'all'> | null {
-  const kind = classifyShopeeCancelReturnKind(order);
   const raw = String(order.shopee_order_status || '').toUpperCase();
-  if (
-    kind === 'refund_return' ||
-    isShopeeReturnRefundOrder(order) ||
-    Boolean(order.return_sn) ||
-    order.status === 'return_pending' ||
-    order.status === 'return_received' ||
-    raw === 'TO_RETURN'
-  ) {
-    return 'refund_return';
-  }
-  if (
-    kind === 'failed_delivery' ||
+  const statusU = String(order.status || '').toUpperCase();
+  const isRts =
     Boolean(order.is_rts) ||
     String(order.sub_status || '').toUpperCase() === 'RTS' ||
-    isShopeeRtsFailedDelivery(order)
-  ) {
+    isShopeeRtsFailedDelivery(order);
+
+  // Tab Trả hàng Hoàn tiền: BẮT BUỘC return_sn hoặc is_return — không dò chữ refund.
+  if (hasReturnRequestFlag(order) && isShopeeReturnRefundOrder(order)) {
+    return 'refund_return';
+  }
+  if (isRts) {
     return 'failed_delivery';
   }
+  // Tab Đơn Hủy: CANCELLED + không return_sn + không RTS.
   if (
-    kind === 'cancelled' ||
-    raw === 'CANCELLED' ||
-    raw === 'IN_CANCEL' ||
-    order.status === 'cancelled'
+    (raw === 'CANCELLED' || raw === 'IN_CANCEL' || statusU === 'CANCELLED') &&
+    !hasReturnRequestFlag(order) &&
+    !isShopeeReturnRefundOrder(order) &&
+    !isRts
   ) {
     return 'cancelled';
   }
+  const kind = classifyShopeeCancelReturnKind(order);
+  if (kind === 'cancelled') return 'cancelled';
+  if (kind === 'refund_return') return 'refund_return';
+  if (kind === 'failed_delivery') return 'failed_delivery';
   return null;
 }
 
