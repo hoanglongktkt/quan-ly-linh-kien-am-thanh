@@ -148,6 +148,14 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
       if (k === 'refund_return' || k === 'cancelled' || k === 'failed_delivery') return k;
       return undefined;
     })(),
+    sub_status: (() => {
+      const s = String(raw.sub_status || '').trim().toUpperCase();
+      if (s === 'RTS' || s === 'CANCELLED' || s === 'RETURN') return s;
+      return undefined;
+    })(),
+    cancel_reason: raw.cancel_reason ? String(raw.cancel_reason) : undefined,
+    buyer_cancel_reason: raw.buyer_cancel_reason ? String(raw.buyer_cancel_reason) : undefined,
+    cancel_by: raw.cancel_by ? String(raw.cancel_by) : undefined,
     internalTrackingCode: raw.internalTrackingCode ? String(raw.internalTrackingCode) : undefined,
     packageNumber: raw.packageNumber || raw.package_number
       ? String(raw.packageNumber || raw.package_number)

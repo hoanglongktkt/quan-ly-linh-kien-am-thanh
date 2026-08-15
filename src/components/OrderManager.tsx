@@ -122,14 +122,14 @@ import {
   OrderTableRow,
   type OrderListRowActions,
 } from './OrderListRows';
+import {
+  classifyShopeeCancelReturnKind,
+  isShopeeRtsFailedDelivery,
+  isShopeeReturnRefundOrder,
+} from '../utils/shopeeCancelReturnClassify';
 
 function isReturnRequestOrder(order: Order): boolean {
-  if (String(order.return_sn || '').trim()) return true;
-  if (String(order.returnTrackingNumber || order.return_tracking_no || '').trim()) return true;
-  if (order.shopee_cancel_return_kind === 'refund_return') return true;
-  if (order.status === 'return_pending' || order.status === 'return_received') return true;
-  if (String(order.shopee_order_status || '').toUpperCase() === 'TO_RETURN') return true;
-  return false;
+  return isShopeeReturnRefundOrder(order);
 }
 
 function getOrderWaybillCode(order: Order): string {
@@ -749,7 +749,6 @@ const OM_PULL_REFRESH_THRESHOLD_PX = 72;
 function isCancelReturnOrder(order: Order): boolean {
   const local = String(order.local_status || order.localStatus || '').toUpperCase();
   const raw = String(order.shopee_order_status || '').toUpperCase();
-  const logistics = String((order as any).logistics_status || '').toUpperCase();
   return (
     CANCEL_RETURN_STATUSES.includes(order.status) ||
     local === 'CANCELLED_STORED' ||
@@ -761,50 +760,16 @@ function isCancelReturnOrder(order: Order): boolean {
     order.shopee_cancel_return_kind === 'refund_return' ||
     order.shopee_cancel_return_kind === 'failed_delivery' ||
     order.shopee_cancel_return_kind === 'cancelled' ||
-    /DELIVERY_FAILED|FAILED_DELIVERY|LOGISTICS_DELIVERY_FAILED|UNDELIVERABLE|PICKUP_FAILED/.test(
-      logistics,
-    )
+    String(order.sub_status || '').toUpperCase() === 'RTS' ||
+    isShopeeRtsFailedDelivery(order) ||
+    isShopeeReturnRefundOrder(order)
   );
 }
 
 /** Phân loại khớp Seller Center: Trả hàng/Hoàn tiền | Đơn hủy | Giao không thành công. */
 function resolveCancelReturnKind(order: Order): CancelReturnTab | null {
   if (!isCancelReturnOrder(order)) return null;
-  const kind = order.shopee_cancel_return_kind;
-  if (kind === 'refund_return' || kind === 'cancelled' || kind === 'failed_delivery') {
-    return kind;
-  }
-
-  const logistics = String((order as any).logistics_status || '').toUpperCase();
-  const returnStatus = String(order.return_status || '').toUpperCase();
-  // 1) Giao không thành công — ưu tiên logistics / return type
-  if (
-    /DELIVERY_FAILED|FAILED_DELIVERY|LOGISTICS_DELIVERY_FAILED|UNDELIVERABLE|PICKUP_FAILED|LOST/.test(
-      logistics,
-    ) ||
-    /FAILED_DELIVERY|UNDELIVERABLE|NOT_RECEIVE/.test(returnStatus)
-  ) {
-    return 'failed_delivery';
-  }
-  const type = Number(order.return_refund_request_type);
-  if (type === 2) return 'failed_delivery';
-
-  // 2) Đơn Hủy — CANCELLED / IN_CANCEL
-  const raw = String(order.shopee_order_status || '').toUpperCase();
-  if (raw === 'CANCELLED' || raw === 'IN_CANCEL' || order.status === 'cancelled') {
-    return 'cancelled';
-  }
-  const local = String(order.local_status || order.localStatus || '').toUpperCase();
-  if (local === 'CANCELLED_STORED') return 'cancelled';
-
-  // 3) Trả hàng / Hoàn tiền — TO_RETURN / return_sn / khiếu nại
-  if (raw === 'TO_RETURN') return 'refund_return';
-  if (order.return_sn || order.status === 'return_pending' || order.status === 'return_received') {
-    return 'refund_return';
-  }
-  if (local === 'RETURN_RECEIVED') return 'refund_return';
-
-  return 'cancelled';
+  return classifyShopeeCancelReturnKind(order);
 }
 
 function matchesCancelReturnTab(order: Order, tab: CancelReturnTab): boolean {
@@ -5082,7 +5047,7 @@ export default function OrderManager({
       case 'cancelled': 
         return { text: 'Đơn Hủy', color: 'bg-rose-50 text-rose-500 border-rose-100' };
       case 'return_pending': 
-        return { text: 'Giao hàng không thành công', color: 'bg-purple-50 text-purple-600 border-purple-200/60 font-bold' };
+        return { text: 'Trả hàng Hoàn tiền', color: 'bg-orange-50 text-orange-700 border-orange-200' };
       case 'return_received': 
         return { text: 'Trả hàng Hoàn tiền', color: 'bg-orange-50 text-orange-700 border-orange-200' };
     }
@@ -6206,6 +6171,16 @@ export default function OrderManager({
       };
       if (activeSubTab === 'return_requests') {
         return { text: 'Đang hoàn về', color: 'bg-indigo-50 text-indigo-600 border-indigo-200/60' };
+      }
+      const cancelKind = classifyShopeeCancelReturnKind(order);
+      if (cancelKind === 'failed_delivery' || String(order.sub_status || '').toUpperCase() === 'RTS') {
+        return { text: 'Giao hàng không thành công', color: 'bg-purple-50 text-purple-600 border-purple-200/60 font-bold' };
+      }
+      if (cancelKind === 'refund_return') {
+        return { text: 'Trả hàng Hoàn tiền', color: 'bg-orange-50 text-orange-700 border-orange-200' };
+      }
+      if (cancelKind === 'cancelled') {
+        return { text: 'Đơn Hủy', color: 'bg-rose-50 text-rose-500 border-rose-100' };
       }
       if (orderMatchesScanBgPending(order, scanBgPendingKeys)) {
         return {

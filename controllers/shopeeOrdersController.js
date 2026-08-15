@@ -132,7 +132,7 @@ async function runOrdersPull(opts) {
     if (!skipCancelReturn) {
       try {
         cancelPull = await deps.pullShopeeCancelReturnOrders({
-          lookbackSec: Math.max(lookbackSec, 48 * 3600),
+          lookbackSec: 30 * 24 * 60 * 60,
           shopIds: shopIds?.length ? shopIds : undefined,
         });
       } catch (cancelErr) {

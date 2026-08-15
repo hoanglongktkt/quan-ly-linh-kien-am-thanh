@@ -4832,6 +4832,8 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
               $in: ["cancelled", "refund_return", "failed_delivery"],
             },
           },
+          { "data.sub_status": "RTS" },
+          { sub_status: "RTS" },
         ],
       };
     case "stale":

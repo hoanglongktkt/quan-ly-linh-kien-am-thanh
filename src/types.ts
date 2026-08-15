@@ -238,10 +238,16 @@ export interface Order {
   return_reason?: string;
   /** Lý do chi tiết buyer nhập (text_reason) */
   text_reason?: string;
-  /** 0 Normal RR, 1 In-transit RR, 2 Return-on-the-Spot (giao không thành công) */
+  /** 0 Normal RR, 1 In-transit RR, 2 Return-on-the-Spot (vẫn là Return/Refund) */
   return_refund_request_type?: number;
   /** Phân loại tab Hủy/Hoàn khớp Seller Center */
   shopee_cancel_return_kind?: 'refund_return' | 'cancelled' | 'failed_delivery';
+  /** RTS = giao không thành công; CANCELLED = đơn hủy; RETURN = trả hàng hoàn tiền */
+  sub_status?: 'RTS' | 'CANCELLED' | 'RETURN' | string;
+  /** get_order_detail.cancel_reason */
+  cancel_reason?: string;
+  buyer_cancel_reason?: string;
+  cancel_by?: string;
   internalTrackingCode?: string; // Shopee sorting / first-mile (0FG...) — mã nội bộ sàn
   packageNumber?: string; // Shopee package_number, required by logistics APIs for split orders
   /** Flag nội bộ: đơn bị Shopee giữ (pending verification) — đưa vào tab kiểm tra */
