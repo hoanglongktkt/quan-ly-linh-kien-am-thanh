@@ -78565,7 +78565,7 @@ function buildExactScanOrFilter(rawCode) {
   }
   return $or.length ? { $or } : null;
 }
-var SCAN_LOOKUP_MAX_MS = 400;
+var SCAN_LOOKUP_MAX_MS = 2500;
 function readPrintedFlag(top, nested) {
   const pick = (v) => {
     if (v === true || v === 1) return true;
@@ -109532,24 +109532,33 @@ async function lookupOrder(req, res) {
       notFound: true
     });
   }
-  let foundRaw = null;
   try {
-    foundRaw = await findOrderByScanCodeInStore(code);
-    if (foundRaw && !deps15.isValidOrder(foundRaw)) foundRaw = null;
-    if (foundRaw) foundRaw = mirrorTrackingFieldsForRead(foundRaw);
-  } catch (err) {
-    console.warn("[Orders Lookup] mongo failed:", err?.message || err);
-  }
-  if (!foundRaw) {
+    let foundRaw = null;
     try {
-      foundRaw = await deps15.resolveOrderFromShopeeByScanCode(code);
+      foundRaw = await findOrderByScanCodeInStore(code);
       if (foundRaw && !deps15.isValidOrder(foundRaw)) foundRaw = null;
       if (foundRaw) foundRaw = mirrorTrackingFieldsForRead(foundRaw);
-    } catch (liveErr) {
-      console.warn("[Orders Lookup] Shopee live failed:", liveErr?.message || liveErr);
+    } catch (err) {
+      console.warn("[Orders Lookup] mongo failed:", err?.message || err);
     }
-  }
-  if (!foundRaw) {
+    if (!foundRaw) {
+      return res.status(404).json({
+        success: false,
+        message: "Kh\xF4ng t\xECm th\u1EA5y m\xE3 tr\xEAn h\u1EC7 th\u1ED1ng",
+        notFound: true,
+        scannedCode: code
+      });
+    }
+    try {
+      const products = await deps15.loadProductsForOrders([foundRaw]);
+      const found = deps15.enrichOrdersFromCatalog([foundRaw], products)[0] || foundRaw;
+      return res.json(found);
+    } catch (enrichErr) {
+      console.warn("[Orders Lookup] enrich failed, return raw:", enrichErr?.message || enrichErr);
+      return res.json(foundRaw);
+    }
+  } catch (err) {
+    console.error("[Orders Lookup] failed:", err?.message || err);
     return res.status(404).json({
       success: false,
       message: "Kh\xF4ng t\xECm th\u1EA5y m\xE3 tr\xEAn h\u1EC7 th\u1ED1ng",
@@ -109557,9 +109566,6 @@ async function lookupOrder(req, res) {
       scannedCode: code
     });
   }
-  const products = await deps15.loadProductsForOrders([foundRaw]);
-  const found = deps15.enrichOrdersFromCatalog([foundRaw], products)[0];
-  return res.json(found);
 }
 async function cleanupMockOrders(_req, res) {
   const orders = loadOrders();

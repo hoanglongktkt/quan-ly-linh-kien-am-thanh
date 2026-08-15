@@ -2244,15 +2244,10 @@ export default function OrderManager({
       } finally {
         isScanBusyRef.current = false;
         setIsScanBusy(false);
-        const gunInput = scanGunInputRef.current;
-        if (gunInput) {
-          window.requestAnimationFrame(() => {
-            try {
-              gunInput.focus({ preventScroll: true });
-            } catch {
-              gunInput.focus();
-            }
-          });
+        try {
+          scanGunInputRef.current?.blur();
+        } catch {
+          /* ignore */
         }
       }
     },
@@ -2857,15 +2852,14 @@ export default function OrderManager({
         isScanBusyRef.current = false;
         setIsVerifyingScan(false);
         setIsScanBusy(false);
-        const gunInput = scanGunInputRef.current;
-        if (gunInput) {
-          window.requestAnimationFrame(() => {
-            try {
-              gunInput.focus({ preventScroll: true });
-            } catch {
-              gunInput.focus();
-            }
-          });
+        try {
+          scanGunInputRef.current?.blur();
+          const active = document.activeElement as HTMLElement | null;
+          if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+            active.blur();
+          }
+        } catch {
+          /* ignore */
         }
         const nextQueued = pendingScanQueueRef.current.shift();
         if (nextQueued && !isTearingDownScannerRef.current) {
@@ -2883,6 +2877,47 @@ export default function OrderManager({
       void verifySingleOrder(q);
     };
   }, [verifySingleOrder]);
+
+  // Súng USB: bắt phím ở document — không focus input (tránh bàn phím ảo mobile).
+  useEffect(() => {
+    if (!focusScanner) return;
+    try {
+      scanGunInputRef.current?.blur();
+    } catch {
+      /* ignore */
+    }
+    let buf = '';
+    let flushTimer: number | undefined;
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        target !== scanGunInputRef.current &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+      ) {
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const code = buf.trim();
+        buf = '';
+        if (code) verifyScanRef.current(code);
+        return;
+      }
+      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        buf += e.key;
+        if (flushTimer) window.clearTimeout(flushTimer);
+        flushTimer = window.setTimeout(() => {
+          buf = '';
+        }, 120);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      if (flushTimer) window.clearTimeout(flushTimer);
+    };
+  }, [focusScanner]);
 
   useEffect(() => {
     let isMounted = true;
@@ -6201,29 +6236,12 @@ export default function OrderManager({
         <input
           ref={scanGunInputRef}
           type="text"
-          autoFocus
+          readOnly
+          inputMode="none"
+          tabIndex={-1}
           autoComplete="off"
-          aria-label="Ô quét mã vận đơn"
+          aria-hidden="true"
           className="absolute left-0 top-0 w-px h-px opacity-0"
-          onBlur={(e) => {
-            if (!focusScanner || isFlushingQueue) return;
-            const next = e.relatedTarget as HTMLElement | null;
-            if (next && (next.tagName === 'BUTTON' || next.closest('button'))) return;
-            window.requestAnimationFrame(() => {
-              try {
-                scanGunInputRef.current?.focus({ preventScroll: true });
-              } catch {
-                scanGunInputRef.current?.focus();
-              }
-            });
-          }}
-          onKeyDown={(e) => {
-            if (e.key !== 'Enter') return;
-            e.preventDefault();
-            const value = e.currentTarget.value.trim();
-            e.currentTarget.value = '';
-            if (value) verifyScanRef.current(value);
-          }}
         />
         {/* Counters dashboard — clickable */}
         <div className="shrink-0 px-3 pt-3 pb-2 space-y-2">

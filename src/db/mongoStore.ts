@@ -3711,7 +3711,7 @@ function buildExactScanOrFilter(rawCode: string): Record<string, unknown> | null
   return $or.length ? { $or } : null;
 }
 
-const SCAN_LOOKUP_MAX_MS = 400;
+const SCAN_LOOKUP_MAX_MS = 2_500;
 
 /** Đọc cờ isPrinted — ưu tiên top-level, fallback data.isPrinted (khớp badge/lọc UI). */
 function readPrintedFlag(top: unknown, nested: unknown): boolean {

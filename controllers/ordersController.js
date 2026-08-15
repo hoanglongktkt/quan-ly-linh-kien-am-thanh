@@ -1075,7 +1075,7 @@ export async function scannerSync(req, res) {
   }
 }
 
-/** GET /api/orders/lookup — Mongo exact trước, miss thì Shopee live (return waybill). */
+/** GET /api/orders/lookup — chỉ Mongo exact. CẤM Shopee live (get_return_list / reverse). */
 export async function lookupOrder(req, res) {
   const code = String(req.query.code || req.query.q || "").trim().toUpperCase();
   if (!code) {
@@ -1085,26 +1085,35 @@ export async function lookupOrder(req, res) {
       notFound: true,
     });
   }
-  let foundRaw = null;
   try {
-    foundRaw = await findOrderByScanCodeInStore(code);
-    if (foundRaw && !deps.isValidOrder(foundRaw)) foundRaw = null;
-    if (foundRaw) foundRaw = mirrorTrackingFieldsForRead(foundRaw);
-  } catch (err) {
-    console.warn("[Orders Lookup] mongo failed:", err?.message || err);
-  }
-
-  if (!foundRaw) {
+    let foundRaw = null;
     try {
-      foundRaw = await deps.resolveOrderFromShopeeByScanCode(code);
+      foundRaw = await findOrderByScanCodeInStore(code);
       if (foundRaw && !deps.isValidOrder(foundRaw)) foundRaw = null;
       if (foundRaw) foundRaw = mirrorTrackingFieldsForRead(foundRaw);
-    } catch (liveErr) {
-      console.warn("[Orders Lookup] Shopee live failed:", liveErr?.message || liveErr);
+    } catch (err) {
+      console.warn("[Orders Lookup] mongo failed:", err?.message || err);
     }
-  }
 
-  if (!foundRaw) {
+    if (!foundRaw) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy mã trên hệ thống",
+        notFound: true,
+        scannedCode: code,
+      });
+    }
+
+    try {
+      const products = await deps.loadProductsForOrders([foundRaw]);
+      const found = deps.enrichOrdersFromCatalog([foundRaw], products)[0] || foundRaw;
+      return res.json(found);
+    } catch (enrichErr) {
+      console.warn("[Orders Lookup] enrich failed, return raw:", enrichErr?.message || enrichErr);
+      return res.json(foundRaw);
+    }
+  } catch (err) {
+    console.error("[Orders Lookup] failed:", err?.message || err);
     return res.status(404).json({
       success: false,
       message: "Không tìm thấy mã trên hệ thống",
@@ -1112,9 +1121,6 @@ export async function lookupOrder(req, res) {
       scannedCode: code,
     });
   }
-  const products = await deps.loadProductsForOrders([foundRaw]);
-  const found = deps.enrichOrdersFromCatalog([foundRaw], products)[0];
-  return res.json(found);
 }
 
 /** POST /api/orders/cleanup-mock */
