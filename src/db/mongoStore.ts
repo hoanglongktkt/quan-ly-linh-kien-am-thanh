@@ -4198,7 +4198,8 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
     if (sub) hydrated.sub_status = sub;
     hydrated.is_rts = cancelKind === "failed_delivery";
     hydrated.is_return = cancelKind === "refund_return";
-    if (cancelKind !== "refund_return") {
+    // Chỉ gỡ leftover return_sn của hủy chưa giao — RTS/YCTH giữ return_sn để kéo mã hoàn.
+    if (cancelKind === "cancelled" && isUnshippedShopeeCancel(hydrated)) {
       delete hydrated.return_sn;
     }
   }
@@ -4694,6 +4695,95 @@ export async function loadReturnTrackingPendingFromStore(opts?: {
   if (!docs.length) return [];
   console.log(
     `[MongoDB] return-tracking-pending candidates=${docs.length} lookbackDays=${Math.round(lookbackMs / 86400000)} cap=${limit}`,
+  );
+  return loadOrdersFromStore({
+    ids: docs.map((d) => String(d._id)).slice(0, HARD_LIMIT),
+    limit: HARD_LIMIT,
+  });
+}
+
+/**
+ * Backfill 30 ngày: Hàng Hoàn / RTS thiếu return_tracking_no.
+ * Hard limit + không $expr (tránh COLLSCAN CPU).
+ */
+export async function loadMissingReturnTrackingBackfillFromStore(opts?: {
+  lookbackMs?: number;
+  limit?: number;
+  shopId?: string;
+}): Promise<any[]> {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const HARD_LIMIT = 80;
+  const limit = Math.min(HARD_LIMIT, Math.max(1, Math.floor(Number(opts?.limit) || HARD_LIMIT)));
+  const lookbackMs = Math.min(
+    30 * 24 * 60 * 60 * 1000,
+    Math.max(24 * 60 * 60 * 1000, Number(opts?.lookbackMs) || 30 * 24 * 60 * 60 * 1000),
+  );
+  const cutoffIso = new Date(Date.now() - lookbackMs).toISOString();
+  const cutoffDate = new Date(Date.now() - lookbackMs);
+  const shopKey = String(opts?.shopId || "").trim();
+
+  const filter: Record<string, unknown> = {
+    $and: [
+      {
+        $or: [
+          { return_sn: { $type: "string", $nin: [""] } },
+          { "data.return_sn": { $type: "string", $nin: [""] } },
+          { is_rts: true },
+          { "data.is_rts": true },
+          { shopee_cancel_return_kind: "failed_delivery" },
+          { "data.shopee_cancel_return_kind": "failed_delivery" },
+          { shopee_cancel_return_kind: "refund_return" },
+          { "data.shopee_cancel_return_kind": "refund_return" },
+          { status: { $in: ["return_pending", "return_received", "cancelled"] } },
+          { shopee_order_status: { $in: ["TO_RETURN", "CANCELLED", "IN_CANCEL"] } },
+          { "data.shopee_order_status": { $in: ["TO_RETURN", "CANCELLED", "IN_CANCEL"] } },
+        ],
+      },
+      {
+        $or: [
+          { return_tracking_no: { $exists: false } },
+          { return_tracking_no: null },
+          { return_tracking_no: "" },
+        ],
+      },
+      {
+        $or: [
+          { "data.date": { $gte: cutoffIso } },
+          { last_synced_at: { $gte: cutoffDate } },
+        ],
+      },
+      ...(shopKey
+        ? [
+            {
+              $or: [
+                { shopId: shopKey },
+                { "data.shopId": shopKey },
+              ],
+            },
+          ]
+        : []),
+    ],
+  };
+
+  let docs: any[];
+  try {
+    docs = await OrderModel.find(filter)
+      .select({ _id: 1 })
+      .sort({ last_synced_at: -1, _id: -1 })
+      .limit(limit)
+      .maxTimeMS(8_000)
+      .lean();
+  } catch (err: any) {
+    console.warn(
+      "[MongoDB] loadMissingReturnTrackingBackfillFromStore failed:",
+      err?.message || err,
+    );
+    return [];
+  }
+  if (!docs.length) return [];
+  console.log(
+    `[MongoDB] return-tracking-backfill shop=${shopKey || "*"} candidates=${docs.length} cap=${limit}`,
   );
   return loadOrdersFromStore({
     ids: docs.map((d) => String(d._id)).slice(0, HARD_LIMIT),
@@ -5229,6 +5319,36 @@ export const EMPTY_CANCEL_RETURN_COUNTERS: CancelReturnCounters = {
   rts: 0,
 };
 
+function hasOutboundTrackingMongoInner(): Record<string, unknown> {
+  const notEmpty = (field: string) => ({
+    [field]: { $exists: true, $type: "string", $nin: [""], $not: /^0FG/i },
+  });
+  return {
+    $or: [
+      notEmpty("tracking_no"),
+      notEmpty("trackingNumber"),
+      notEmpty("data.tracking_no"),
+      notEmpty("data.trackingNumber"),
+    ],
+  };
+}
+
+/** CANCELLED + mã đi hợp lệ = RTS (đã xuất kho), không nằm tab Đơn Hủy. */
+function cancelReturnShippedCancelledInner(): Record<string, unknown> {
+  return {
+    $and: [
+      {
+        $or: [
+          { status: "cancelled" },
+          { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL"] } },
+          { "data.shopee_order_status": { $in: ["CANCELLED", "IN_CANCEL"] } },
+        ],
+      },
+      hasOutboundTrackingMongoInner(),
+    ],
+  };
+}
+
 function cancelReturnRtsInner(): Record<string, unknown> {
   return {
     $or: [
@@ -5238,6 +5358,7 @@ function cancelReturnRtsInner(): Record<string, unknown> {
       { "data.sub_status": "RTS" },
       { is_rts: true },
       { "data.is_rts": true },
+      cancelReturnShippedCancelledInner(),
     ],
   };
 }
@@ -5394,7 +5515,7 @@ export async function reclassifyCancelReturnsInStore(opts?: {
         const kind = classifyShopeeCancelReturnKind(order);
         if (!kind) continue;
         const sub = resolveShopeeSubStatus(kind);
-        const clearReturn = kind !== "refund_return";
+        const clearReturn = kind === "cancelled" && isUnshippedShopeeCancel(order);
         const prevKind = String(
           doc?.shopee_cancel_return_kind || doc?.data?.shopee_cancel_return_kind || "",
         ).trim();

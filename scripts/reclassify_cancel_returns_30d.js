@@ -166,6 +166,12 @@ function hasReturnSn(order) {
 function isRts(order) {
   if (order.is_rts === true) return true;
   if (String(order.sub_status || "").toUpperCase() === "RTS") return true;
+  const tn = String(order.tracking_no || order.trackingNumber || "").trim();
+  const cancelled =
+    String(order.shopee_order_status || order.order_status || "").toUpperCase() === "CANCELLED" ||
+    String(order.shopee_order_status || "").toUpperCase() === "IN_CANCEL" ||
+    String(order.status || "").toUpperCase() === "CANCELLED";
+  if (cancelled && tn && tn.length >= 6 && !/^0FG/i.test(tn)) return true;
   const log = String(order.logistics_status || "").toUpperCase();
   if (
     log.includes("LOGISTICS_DELIVERY_FAILED") ||

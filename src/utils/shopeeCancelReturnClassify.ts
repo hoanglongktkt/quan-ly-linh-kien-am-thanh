@@ -56,9 +56,18 @@ export function isShopeeCancelledStatus(order: ShopeeCancelReturnInput): boolean
   return raw === 'CANCELLED' || raw === 'IN_CANCEL' || st === 'CANCELLED';
 }
 
+/** Mã vận đơn chiều đi hợp lệ — không rỗng, không mã nội bộ 0FG. */
+export function hasValidOutboundTracking(order: ShopeeCancelReturnInput): boolean {
+  const tn = String(order.tracking_no || order.trackingNumber || '').trim();
+  if (!tn || tn.length < 6) return false;
+  if (/^0FG/i.test(tn)) return false;
+  return true;
+}
+
 /** Đơn hủy chưa giao — leftover return_sn / mã hoàn ≠ Trả hàng Hoàn tiền. */
 export function isUnshippedShopeeCancel(order: ShopeeCancelReturnInput): boolean {
   if (!isShopeeCancelledStatus(order)) return false;
+  if (hasValidOutboundTracking(order)) return false;
   const raw = String(order.shopee_order_status || '').toUpperCase();
   if (raw === 'TO_RETURN' || raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE' || raw === 'COMPLETED') {
     return false;
@@ -102,6 +111,8 @@ export function isShopeeRtsFailedDelivery(order: ShopeeCancelReturnInput): boole
   if (String(order.shopee_cancel_return_kind || '') === 'failed_delivery') return true;
   if (isShopeeRtsLogistics(order.logistics_status)) return true;
   if (isShopeeRtsCancelReason(order.cancel_reason, order.buyer_cancel_reason)) return true;
+  // CANCELLED + mã đi hợp lệ = RTS (đã xuất kho / giao thất bại), không phải Đơn Hủy.
+  if (isShopeeCancelledStatus(order) && hasValidOutboundTracking(order)) return true;
   return false;
 }
 

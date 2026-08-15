@@ -235,14 +235,20 @@ function returnOf(doc) {
 }
 
 function missingReturnFilter() {
+  const cutoffIso = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const cutoffDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   return {
     $and: [
       {
         $or: [
           { return_sn: { $exists: true, $nin: [null, ""] } },
           { "data.return_sn": { $exists: true, $nin: [null, ""] } },
-          { shopee_order_status: "TO_RETURN" },
-          { status: { $in: ["return_pending", "return_received"] } },
+          { shopee_order_status: { $in: ["TO_RETURN", "CANCELLED", "IN_CANCEL"] } },
+          { "data.shopee_order_status": { $in: ["TO_RETURN", "CANCELLED", "IN_CANCEL"] } },
+          { status: { $in: ["return_pending", "return_received", "cancelled"] } },
+          { is_rts: true },
+          { "data.is_rts": true },
+          { shopee_cancel_return_kind: { $in: ["failed_delivery", "refund_return"] } },
         ],
       },
       {
@@ -253,38 +259,51 @@ function missingReturnFilter() {
           { "data.return_tracking_no": { $exists: false } },
           { "data.return_tracking_no": null },
           { "data.return_tracking_no": "" },
-          {
-            $expr: {
-              $let: {
-                vars: {
-                  rtn: {
-                    $toUpper: {
-                      $ifNull: [
-                        "$return_tracking_no",
-                        { $ifNull: ["$data.return_tracking_no", ""] },
-                      ],
-                    },
-                  },
-                  out: {
-                    $toUpper: {
-                      $ifNull: ["$tracking_no", { $ifNull: ["$data.tracking_no", ""] }],
-                    },
-                  },
-                },
-                in: {
-                  $and: [
-                    { $gt: [{ $strLenCP: "$$rtn" }, 0] },
-                    { $gt: [{ $strLenCP: "$$out" }, 0] },
-                    { $eq: ["$$rtn", "$$out"] },
-                  ],
-                },
-              },
-            },
-          },
+        ],
+      },
+      {
+        $or: [
+          { "data.date": { $gte: cutoffIso } },
+          { last_synced_at: { $gte: cutoffDate } },
         ],
       },
     ],
   };
+}
+
+async function fetchReturnSnMap(shopId, accessToken) {
+  const map = new Map();
+  const now = Math.floor(Date.now() / 1000);
+  const windowSec = 15 * 24 * 60 * 60;
+  for (let w = 0; w < 2; w++) {
+    const timeTo = now - w * windowSec;
+    const timeFrom = timeTo - windowSec + 1;
+    let pageNo = 1;
+    while (pageNo <= 15) {
+      const json = await shopeeGet("/api/v2/returns/get_return_list", shopId, accessToken, {
+        page_no: String(pageNo),
+        page_size: "50",
+        update_time_from: String(timeFrom),
+        update_time_to: String(timeTo),
+      });
+      const body = json?.response ?? json ?? {};
+      const rows = Array.isArray(body.return)
+        ? body.return
+        : Array.isArray(body.return_list)
+          ? body.return_list
+          : [];
+      for (const row of rows) {
+        const sn = String(row?.order_sn || row?.orderSn || "").trim();
+        const rsn = String(row?.return_sn || row?.returnSn || "").trim();
+        if (sn && rsn) map.set(sn, rsn);
+      }
+      if (!body.more || rows.length === 0) break;
+      pageNo += 1;
+      await delay(DELAY_MS);
+    }
+    await delay(DELAY_MS);
+  }
+  return map;
 }
 
 async function persistReturnTn(col, doc, rtn) {
@@ -360,6 +379,29 @@ async function main() {
   const tokenCache = new Map();
   if (dryRun) console.log("[Mode] DRY-RUN — gọi API, không UPDATE DB");
 
+  const shopIds = shopFilter
+    ? [normalizeShopIdKey(shopFilter)].filter(Boolean)
+    : listOAuthShopIds(tokens);
+  console.log(`[Shops] ${shopIds.length} ids=[${shopIds.join(",")}] lookback=30d cap=${limit}/shop`);
+
+  const returnSnByShop = new Map();
+  for (const shopId of shopIds) {
+    const auth = await getAccessToken(shopId, tokenCache, tokens);
+    if (!auth?.accessToken) {
+      console.warn(`[Token] shop=${shopId} — skip map return_sn, vẫn xử lý shop khác`);
+      await delay(DELAY_MS);
+      continue;
+    }
+    try {
+      const map = await fetchReturnSnMap(auth.apiShopId, auth.accessToken);
+      returnSnByShop.set(shopId, map);
+      console.log(`[ReturnList] shop=${shopId} rows=${map.size}`);
+    } catch (err) {
+      console.warn(`[ReturnList] shop=${shopId}:`, err?.message || err);
+    }
+    await delay(DELAY_MS);
+  }
+
   const filter = missingReturnFilter();
   if (shopFilter) {
     filter.$and.push({
@@ -367,22 +409,28 @@ async function main() {
     });
   }
 
-  const docs = await col.find(filter).limit(limit).toArray();
-  console.log(`[Query] candidates=${docs.length} limit=${limit}`);
+  const docs = await col.find(filter).limit(Math.min(400, limit * Math.max(1, shopIds.length))).toArray();
+  console.log(`[Query] candidates=${docs.length} limit=${limit}/shop`);
 
   let filled = 0;
   let pending = 0;
   let skipped = 0;
   let errors = 0;
   let verified = 0;
+  const attemptedByShop = new Map();
 
   for (const doc of docs) {
     const sn = orderSnOf(doc);
     const shopId = shopIdOf(doc);
-    const returnSn = returnSnOf(doc);
+    let returnSn = returnSnOf(doc);
     const outbound = outboundOf(doc);
     const existingRet = returnOf(doc);
     if (!sn || !shopId) {
+      skipped += 1;
+      continue;
+    }
+    const shopCount = attemptedByShop.get(shopId) || 0;
+    if (shopCount >= limit) {
       skipped += 1;
       continue;
     }
@@ -391,8 +439,11 @@ async function main() {
       continue;
     }
     if (!returnSn) {
+      returnSn = returnSnByShop.get(shopId)?.get(sn) || "";
+    }
+    if (!returnSn) {
       skipped += 1;
-      console.log(`[Skip] ${sn} — thiếu return_sn`);
+      console.log(`[Skip] ${sn} shop=${shopId} — thiếu return_sn`);
       continue;
     }
 
@@ -400,9 +451,11 @@ async function main() {
     if (!auth?.accessToken) {
       errors += 1;
       console.warn(`[Token] ${sn} shop=${shopId} — không có access_token`);
+      await delay(DELAY_MS);
       continue;
     }
 
+    attemptedByShop.set(shopId, shopCount + 1);
     try {
       const reverse = await shopeeGet(
         "/api/v2/returns/get_reverse_tracking_info",
