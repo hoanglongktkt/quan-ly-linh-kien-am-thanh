@@ -217,6 +217,17 @@ export function findOrderByScanPayload(
   return null;
 }
 
+export class ScanLookupError extends Error {
+  kind: 'timeout' | 'network' | 'http';
+  constructor(message: string, kind: 'timeout' | 'network' | 'http') {
+    super(message);
+    this.name = 'ScanLookupError';
+    this.kind = kind;
+  }
+}
+
+const SCAN_LOOKUP_TIMEOUT_MS = 5_000;
+
 export async function lookupOrderByScanCode(
   raw: string,
   localOrders: Order[],
@@ -231,24 +242,33 @@ export async function lookupOrderByScanCode(
     if (local) return local;
   }
 
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer =
+    controller && typeof window !== 'undefined'
+      ? window.setTimeout(() => controller.abort(), SCAN_LOOKUP_TIMEOUT_MS)
+      : undefined;
   try {
-    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    // On-demand Shopee (đơn hủy/hoàn thiếu trong DB) có thể >8s — cho tới ~60s.
-    const timer =
-      controller && typeof window !== 'undefined'
-        ? window.setTimeout(() => controller.abort(), 60_000)
-        : undefined;
     const res = await fetch(`/api/orders/lookup?code=${encodeURIComponent(trimmed)}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       signal: controller?.signal,
       cache: 'no-store',
     });
-    if (timer !== undefined) window.clearTimeout(timer);
-    if (!res.ok) return null;
+    if (res.status === 404) return null;
+    if (!res.ok) {
+      throw new ScanLookupError(`HTTP ${res.status}`, 'http');
+    }
     const order = (await res.json()) as Order;
     return order?.id || order?.orderSn ? order : null;
-  } catch {
-    return null;
+  } catch (err: unknown) {
+    if (err instanceof ScanLookupError) throw err;
+    const name = err instanceof Error ? err.name : '';
+    const msg = err instanceof Error ? err.message : String(err || '');
+    if (name === 'AbortError' || /aborted|timeout/i.test(msg)) {
+      throw new ScanLookupError('timeout', 'timeout');
+    }
+    throw new ScanLookupError(msg || 'network', 'network');
+  } finally {
+    if (timer !== undefined) window.clearTimeout(timer);
   }
 }
 

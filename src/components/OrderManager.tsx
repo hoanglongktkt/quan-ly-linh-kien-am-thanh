@@ -21,6 +21,7 @@ import {
   scannerSyncEntryToOrder,
   lookupOrderByScanCode,
   putOrderIntoScannerSyncMap,
+  ScanLookupError,
   type ScannerSyncEntry,
 } from '../utils/orderScan';
 import {
@@ -1538,6 +1539,7 @@ export default function OrderManager({
   const applyScanRef = React.useRef<(query: string) => void>(() => {});
   const verifyScanRef = React.useRef<(query: string) => void>(() => {});
   const isScanBusyRef = React.useRef(false);
+  const scanGunInputRef = React.useRef<HTMLInputElement | null>(null);
   /** Hàng đợi mã quét khi đang verify — không bỏ mã khi quét liên tục. */
   const pendingScanQueueRef = React.useRef<string[]>([]);
   /** Hàng đợi dò ngầm đã chuyển lên Backend — FE chỉ enqueue + poll badge. */
@@ -2071,20 +2073,34 @@ export default function OrderManager({
         if (!order) {
           setCameraScanResult(`Đang tra cứu mã: ${trimmed}...`);
           const token = localStorage.getItem('admin_token') || '';
-          order = await lookupOrderByScanCode(
-            trimmed,
-            ordersRef.current,
-            token,
-            orderScanIndex,
-          );
-          if (order) {
-            const nextMap = putOrderIntoScannerSyncMap(
-              scannerSyncMapRef.current,
-              order,
+          try {
+            order = await lookupOrderByScanCode(
               trimmed,
+              ordersRef.current,
+              token,
+              orderScanIndex,
             );
-            scannerSyncMapRef.current = nextMap;
-            setScannerSyncMap(nextMap);
+            if (order) {
+              const nextMap = putOrderIntoScannerSyncMap(
+                scannerSyncMapRef.current,
+                order,
+                trimmed,
+              );
+              scannerSyncMapRef.current = nextMap;
+              setScannerSyncMap(nextMap);
+            }
+          } catch (lookupErr) {
+            console.warn(
+              '[Scan Lookup] HTTP fallback fail:',
+              lookupErr instanceof ScanLookupError ? lookupErr.kind : lookupErr,
+            );
+            scanFeedback('error');
+            setCameraScanSuccess(false);
+            setCameraScanError(true);
+            setCameraScanResult('Lỗi kết nối máy chủ khi tìm mã hoàn');
+            showScanToast('Lỗi kết nối máy chủ khi tìm mã hoàn', 'error');
+            setTimeout(() => setCameraScanError(false), 2000);
+            return;
           }
         }
 
@@ -2159,7 +2175,7 @@ export default function OrderManager({
             o.id === order.id ? { ...o, status: 'return_received' as const } : o
           );
           ordersRef.current = updated;
-          onUpdateOrders(updated);
+          onUpdateOrders(updated, { persist: false });
           onAddLog({
             id: `log-${Date.now()}`,
             timestamp: new Date().toISOString(),
@@ -2168,7 +2184,6 @@ export default function OrderManager({
             status: 'success',
             message: `[QUÉT QR] Nhận hoàn đơn ${order.orderSn} → Yêu cầu trả hàng.`,
           });
-          setActiveSubTab('return_requests');
           scanFeedback(isCancelRequest ? 'warning' : 'success');
           setCameraScanError(false);
           setCameraScanSuccess(true);
@@ -2229,6 +2244,16 @@ export default function OrderManager({
       } finally {
         isScanBusyRef.current = false;
         setIsScanBusy(false);
+        const gunInput = scanGunInputRef.current;
+        if (gunInput) {
+          window.requestAnimationFrame(() => {
+            try {
+              gunInput.focus({ preventScroll: true });
+            } catch {
+              gunInput.focus();
+            }
+          });
+        }
       }
     },
     [onUpdateOrders, onAddLog, orderScanIndex, handOverOrderToCarrier]
@@ -2557,76 +2582,76 @@ export default function OrderManager({
         }
       }
 
-      if (!localOrder) {
-        isScanBusyRef.current = true;
-        setIsVerifyingScan(true);
-        setCameraScanResult(`Đang tra cứu mã hoàn: ${trimmed}...`);
-        const token = localStorage.getItem('admin_token') || '';
-        try {
-          const remote = await lookupOrderByScanCode(
-            trimmed,
-            ordersRef.current,
-            token,
-            orderScanIndex,
-          );
-          if (remote) {
-            const scannedIsReturn =
-              scannedMatchesReturnWaybill(remote, trimmed) ||
-              (Boolean(remote.return_sn) &&
-                normalizeOrderScanKey(trimmed) !==
-                  normalizeOrderScanKey(
-                    remote.tracking_no || remote.trackingNumber || '',
-                  ));
-            localOrder = scannedIsReturn
-              ? {
-                  ...remote,
-                  return_tracking_no:
-                    remote.return_tracking_no || remote.returnTrackingNumber || trimmed,
-                  returnTrackingNumber:
-                    remote.returnTrackingNumber || remote.return_tracking_no || trimmed,
-                  status:
-                    remote.status === 'return_received' ? 'return_received' : 'return_pending',
-                }
-              : remote;
-            const nextMap = putOrderIntoScannerSyncMap(
-              scannerSyncMapRef.current,
-              localOrder,
-              trimmed,
-            );
-            scannerSyncMapRef.current = nextMap;
-            setScannerSyncMap(nextMap);
-          }
-        } catch (lookupErr) {
-          console.warn('[Scan Lookup] HTTP fallback fail:', lookupErr);
-        }
-      }
-
-      if (!localOrder) {
-        playScanSound('error');
-        vibrateScan('error');
-        flashViewfinder('error', 400);
-        setCameraScanResult(`Không tìm thấy mã: ${trimmed}`);
-        showScanToast(
-          isLikelyTrackingCode(trimmed)
-            ? `Không có trong danh sách đã tải: "${trimmed}"`
-            : `Mã không khớp pool quét đã tải (${trimmed})`,
-          'error',
-        );
-        isScanBusyRef.current = false;
-        setIsVerifyingScan(false);
-        const nextQueued = pendingScanQueueRef.current.shift();
-        if (nextQueued && !isTearingDownScannerRef.current) {
-          queueMicrotask(() => {
-            void verifySingleOrder(nextQueued);
-          });
-        }
-        return;
-      }
-
       isScanBusyRef.current = true;
-      setCameraScanResult(`Đang phân loại: ${trimmed}...`);
+      setIsVerifyingScan(true);
 
       try {
+        if (!localOrder) {
+          setCameraScanResult(`Đang tra cứu mã hoàn: ${trimmed}...`);
+          const token = localStorage.getItem('admin_token') || '';
+          try {
+            const remote = await lookupOrderByScanCode(
+              trimmed,
+              ordersRef.current,
+              token,
+              orderScanIndex,
+            );
+            if (remote) {
+              const scannedIsReturn =
+                scannedMatchesReturnWaybill(remote, trimmed) ||
+                (Boolean(remote.return_sn) &&
+                  normalizeOrderScanKey(trimmed) !==
+                    normalizeOrderScanKey(
+                      remote.tracking_no || remote.trackingNumber || '',
+                    ));
+              localOrder = scannedIsReturn
+                ? {
+                    ...remote,
+                    return_tracking_no:
+                      remote.return_tracking_no || remote.returnTrackingNumber || trimmed,
+                    returnTrackingNumber:
+                      remote.returnTrackingNumber || remote.return_tracking_no || trimmed,
+                    status:
+                      remote.status === 'return_received' ? 'return_received' : 'return_pending',
+                  }
+                : remote;
+              const nextMap = putOrderIntoScannerSyncMap(
+                scannerSyncMapRef.current,
+                localOrder,
+                trimmed,
+              );
+              scannerSyncMapRef.current = nextMap;
+              setScannerSyncMap(nextMap);
+            }
+          } catch (lookupErr) {
+            console.warn(
+              '[Scan Lookup] HTTP fallback fail:',
+              lookupErr instanceof ScanLookupError ? lookupErr.kind : lookupErr,
+            );
+            playScanSound('error');
+            vibrateScan('error');
+            flashViewfinder('error', 400);
+            setCameraScanResult('Lỗi kết nối máy chủ khi tìm mã hoàn');
+            showScanToast('Lỗi kết nối máy chủ khi tìm mã hoàn', 'error');
+            return;
+          }
+        }
+
+        if (!localOrder) {
+          playScanSound('error');
+          vibrateScan('error');
+          flashViewfinder('error', 400);
+          setCameraScanResult(`Không tìm thấy mã: ${trimmed}`);
+          showScanToast(
+            isLikelyTrackingCode(trimmed)
+              ? `Không có trong danh sách đã tải: "${trimmed}"`
+              : `Mã không khớp pool quét đã tải (${trimmed})`,
+            'error',
+          );
+          return;
+        }
+
+        setCameraScanResult(`Đang phân loại: ${trimmed}...`);
         const order = localOrder;
 
         const idx = ordersRef.current.findIndex(
@@ -2730,7 +2755,6 @@ export default function OrderManager({
           });
           // Ghi ngay local_status=RETURN_RECEIVED xuống Mongo (tab lọc theo field này).
           void persistCancelReturnScanFlag(order, 'return', trimmed);
-          setActiveSubTab('return_requests');
           setCameraScanResult(
             waybill
               ? `✓ YCTH · VĐ hoàn ${waybill} · #${order.orderSn}`
@@ -2832,6 +2856,17 @@ export default function OrderManager({
       } finally {
         isScanBusyRef.current = false;
         setIsVerifyingScan(false);
+        setIsScanBusy(false);
+        const gunInput = scanGunInputRef.current;
+        if (gunInput) {
+          window.requestAnimationFrame(() => {
+            try {
+              gunInput.focus({ preventScroll: true });
+            } catch {
+              gunInput.focus();
+            }
+          });
+        }
         const nextQueued = pendingScanQueueRef.current.shift();
         if (nextQueued && !isTearingDownScannerRef.current) {
           queueMicrotask(() => {
@@ -6163,6 +6198,33 @@ export default function OrderManager({
           cameraScanError ? 'bg-rose-950' : ''
         }`}
       >
+        <input
+          ref={scanGunInputRef}
+          type="text"
+          autoFocus
+          autoComplete="off"
+          aria-label="Ô quét mã vận đơn"
+          className="absolute left-0 top-0 w-px h-px opacity-0"
+          onBlur={(e) => {
+            if (!focusScanner || isFlushingQueue) return;
+            const next = e.relatedTarget as HTMLElement | null;
+            if (next && (next.tagName === 'BUTTON' || next.closest('button'))) return;
+            window.requestAnimationFrame(() => {
+              try {
+                scanGunInputRef.current?.focus({ preventScroll: true });
+              } catch {
+                scanGunInputRef.current?.focus();
+              }
+            });
+          }}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            const value = e.currentTarget.value.trim();
+            e.currentTarget.value = '';
+            if (value) verifyScanRef.current(value);
+          }}
+        />
         {/* Counters dashboard — clickable */}
         <div className="shrink-0 px-3 pt-3 pb-2 space-y-2">
           <div className="flex items-center justify-between px-1">
