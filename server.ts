@@ -470,6 +470,7 @@ import {
   loadReturnTrackingPendingFromStore,
   queryOrdersPageFromStore,
   orderTabFilter,
+  reclassifyCancelReturnsInStore,
   createSyncJob,
   finishSyncJob,
   getSyncJob,
@@ -4738,6 +4739,20 @@ async function pullShopeeCancelReturnOrders(opts?: {
     }
 
     const elapsedMs = Date.now() - startedAt;
+    try {
+      const rec = await reclassifyCancelReturnsInStore({
+        lookbackMs: SHOPEE_HISTORY_LOOKBACK_MS,
+        limit: 2000,
+      });
+      console.log(
+        `[CancelReturn Pull] reclassify scanned=${rec.scanned} updated=${rec.updated}`,
+      );
+    } catch (recErr: any) {
+      console.warn(
+        "[CancelReturn Pull] reclassify skip:",
+        recErr?.message || recErr,
+      );
+    }
     const message =
       pulled > 0
         ? `Cancel/return: kéo/cập nhật ${pulled} đơn (+${added}/~${updated}) trong ${elapsedMs}ms`
@@ -15234,6 +15249,7 @@ async function persistShopeeOrderChunk(
       forceHealPickupOrderIfHasTracking(row);
       promoteOrderStatusWhenTrackingReady(row);
       enforceShopeeTerminalLocalStatus(row);
+      applyShopeeCancelReturnClassification(row);
 
       console.log("Dữ liệu chuẩn bị lưu DB:", {
         orderSn: row.orderSn,

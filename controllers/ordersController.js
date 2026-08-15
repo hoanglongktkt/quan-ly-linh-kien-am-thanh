@@ -28,6 +28,9 @@ import {
   listScannerSyncRowsFromStore,
   queryOrdersPageFromStore,
   countOrdersByTabsFromStore,
+  countCancelReturnCountersFromStore,
+  reclassifyCancelReturnsInStore,
+  parseCancelReturnKindParam,
   loadPriorityTabOrdersFromStore,
   orderTabFilter,
   loadOrderEvents,
@@ -360,6 +363,9 @@ export async function refreshOrders(req, res) {
         ? Math.min(Math.floor(rawLimit), 5000)
         : 2000;
     const tab = String(req.query.tab || req.query.internal_tab || "").trim();
+    const kind = parseCancelReturnKindParam(
+      req.query.kind || req.query.cancel_kind || req.query.sub_tab,
+    );
     const searchQ = String(req.query.q ?? req.query.query ?? "").trim();
     const shopIds = parseShopIdsParam(
       req.query.shop_ids ?? req.query.shopIds,
@@ -368,6 +374,7 @@ export async function refreshOrders(req, res) {
     const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "").trim();
     console.log(
       `[GET /api/orders/refresh] params page=${page} limit=${limit} tab=${tab || "(none)"}` +
+        ` kind=${kind || "(all)"}` +
         ` q=${searchQ || "(none)"}` +
         ` shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"}` +
         ` print_status=${req.query.print_status || req.query.printStatus || "(all)"}`,
@@ -377,6 +384,7 @@ export async function refreshOrders(req, res) {
     let mergedOrders = [];
     let total = 0;
     let hasMore = false;
+    let counters = { total: 0, returned: 0, cancelled: 0, rts: 0 };
 
     // Tab đã nhận hủy/hoàn: nguồn don_hoan_huy (không phải Order collection).
     // Search q= luôn query collection orders (không kẹp tab).
@@ -402,6 +410,7 @@ export async function refreshOrders(req, res) {
         page,
         pageSize: limit,
         tab: searchQ ? "" : tab,
+        kind: searchQ ? "" : kind,
         shopId,
         shopIds: shopIds.length ? shopIds : undefined,
         query: searchQ,
@@ -413,6 +422,7 @@ export async function refreshOrders(req, res) {
       );
       total = pageResult.total || mergedOrders.length;
       hasMore = Boolean(pageResult.hasMore);
+      if (pageResult.counters) counters = pageResult.counters;
       if (!tab) {
         try {
           mergedOrders = await mergeDonHoanHuyIntoOrders(mergedOrders);
@@ -430,6 +440,24 @@ export async function refreshOrders(req, res) {
         deps.enrichOrdersFromCatalog(mergedOrders, []),
       ),
     );
+    if (
+      !searchQ &&
+      (tabLc === "cancel_returns" ||
+        tabLc === "cancel-returns" ||
+        tabLc === "cancelled_returned" ||
+        tabLc === "huy-hoan" ||
+        tabLc === "don-huy-hoan") &&
+      !(counters.total > 0)
+    ) {
+      try {
+        counters = await countCancelReturnCountersFromStore({
+          shopId: shopId || undefined,
+          shopIds: shopIds.length ? shopIds : undefined,
+        });
+      } catch {
+        /* keep zeros */
+      }
+    }
     const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / limit) || 1);
     const currentPage = Math.min(page, totalPages);
     console.log(
@@ -447,6 +475,7 @@ export async function refreshOrders(req, res) {
       limit,
       has_more: hasMore,
       hasMore,
+      counters,
     });
   } catch (error) {
     console.error(
@@ -481,6 +510,7 @@ export async function queryOrders(req, res) {
       page: Number(req.query.page),
       pageSize: Number(req.query.page_size ?? req.query.pageSize),
       tab: String(req.query.tab || ""),
+      kind: parseCancelReturnKindParam(req.query.kind || req.query.cancel_kind),
       shopId,
       shopIds: shopIds.length > 1 ? shopIds : undefined,
       carrier: String(req.query.carrier || ""),
@@ -527,6 +557,7 @@ export async function queryOrders(req, res) {
       has_more: page.hasMore,
       hasMore: page.hasMore,
       counts: page.counts,
+      counters: page.counters,
     });
   } catch (error) {
     console.error("[Orders Query] failed:", error?.stack || error?.message || error);
@@ -581,12 +612,20 @@ export async function getOrderCounts(req, res) {
       shopId: shopId || undefined,
       shopIds: shopIds.length > 1 ? shopIds : undefined,
     });
+    const counters = {
+      total: Number(counts.cancel_returns) || 0,
+      returned: Number(counts.cancel_returns_returned ?? counts.refund_return) || 0,
+      cancelled: Number(counts.cancel_returns_cancelled ?? counts.cancelled) || 0,
+      rts: Number(counts.cancel_returns_rts ?? counts.failed_delivery) || 0,
+    };
     console.log(
       `[GET /api/orders/counter] shopId=${shopId || "(all)"}` +
         ` shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} counts=`,
       counts,
+      "counters=",
+      counters,
     );
-    return res.status(200).json({ success: true, counts });
+    return res.status(200).json({ success: true, counts, counters });
   } catch (error) {
     console.error(
       "[GET /api/orders/counter] failed:",
@@ -641,6 +680,7 @@ export async function listOrders(req, res) {
         page: currentPageReq,
         pageSize: limit,
         tab: String(req.query.tab || req.query.internal_tab || ""),
+        kind: parseCancelReturnKindParam(req.query.kind || req.query.cancel_kind),
         shopId,
         shopIds: shopIds.length > 1 ? shopIds : undefined,
         carrier: String(req.query.carrier || ""),
@@ -679,6 +719,7 @@ export async function listOrders(req, res) {
         has_more: page.hasMore,
         hasMore: page.hasMore,
         counts: page.counts,
+        counters: page.counters,
       });
     } catch (pageErr) {
       console.error("[GET /api/orders] paged query failed:", pageErr?.message || pageErr);
@@ -1407,6 +1448,51 @@ export async function enrichTracking(req, res) {
       });
     }
     return;
+  }
+}
+
+/**
+ * POST /api/orders/reclassify-cancel-returns
+ * Phân loại lại Hủy/RTS/Return 30 ngày trong Mongo (batch + sleep). ACK 200 rồi chạy nền.
+ */
+export async function reclassifyCancelReturns(req, res) {
+  try {
+    const src = { ...(req.query || {}), ...(req.body || {}) };
+    const daysRaw = Number(src.lookbackDays ?? src.days ?? 30);
+    const lookbackDays = Number.isFinite(daysRaw)
+      ? Math.min(Math.max(1, Math.floor(daysRaw)), 30)
+      : 30;
+    const maxRaw = Number(src.max ?? src.limit ?? 2000);
+    const limit = Number.isFinite(maxRaw)
+      ? Math.min(Math.max(50, Math.floor(maxRaw)), 4000)
+      : 2000;
+    res.status(200).json({
+      success: true,
+      background: true,
+      lookbackDays,
+      limit,
+      message: `Đang phân loại lại Hủy/Hoàn ${lookbackDays} ngày (max=${limit}).`,
+    });
+    setImmediate(() => {
+      void reclassifyCancelReturnsInStore({
+        lookbackMs: lookbackDays * 24 * 60 * 60 * 1000,
+        limit,
+      }).then((r) => {
+        console.log(
+          `[Orders] reclassify-cancel-returns DONE scanned=${r.scanned} updated=${r.updated}`,
+        );
+      }).catch((err) => {
+        console.error("[Orders] reclassify-cancel-returns failed:", err?.message || err);
+      });
+    });
+  } catch (err) {
+    console.error("[Orders] reclassify-cancel-returns failed:", err?.message || err);
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        error: err?.message || String(err),
+      });
+    }
   }
 }
 

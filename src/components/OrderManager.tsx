@@ -727,6 +727,7 @@ interface OrderManagerProps {
     total: number;
     totalPages: number;
     hasMore: boolean;
+    counters?: { total: number; returned: number; cancelled: number; rts: number };
   };
   onUpdateOrders: (orders: Order[], opts?: { persist?: boolean }) => void;
   /** Chỉ đọc lại orders từ DB local — dùng sau xác nhận/in đơn để không ghi đè trạng thái */
@@ -742,6 +743,8 @@ interface OrderManagerProps {
     tab?: string;
     /** Search toàn collection MongoDB — không kẹp tab. */
     q?: string;
+    /** Sub-tab Hủy/Hoàn: refund_return | cancelled | failed_delivery */
+    kind?: string;
     force?: boolean;
     retriesLeft?: number;
     throwOnError?: boolean;
@@ -766,6 +769,11 @@ const ORDERS_PAGE_SIZE = 50;
 const SCAN_BG_STATUS_POLL_MS = 15_000;
 const COUNTER_POLL_MS = 20_000;
 const ORDERS_AUTO_REFRESH_MS = 30_000;
+
+function cancelReturnKindParam(tab: CancelReturnTab): string | undefined {
+  if (tab === 'all') return undefined;
+  return tab;
+}
 
 const CANCEL_RETURN_STATUSES: Order['status'][] = ['cancelled', 'return_pending', 'return_received'];
 const OM_PULL_REFRESH_THRESHOLD_PX = 72;
@@ -921,6 +929,8 @@ export default function OrderManager({
     return restored === 'pending_verification' ? 'pending_confirm' : restored;
   });
   const [cancelReturnTab, setCancelReturnTab] = useState<CancelReturnTab>(() => readStoredCancelTab());
+  const listKind =
+    activeSubTab === 'cancel_returns' ? cancelReturnKindParam(cancelReturnTab) : undefined;
   const [selectedShopId, setSelectedShopId] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const isMobileViewport = useMediaQuery('(max-width: 768px)');
@@ -994,6 +1004,18 @@ export default function OrderManager({
       const json = await res.json().catch(() => ({} as Record<string, unknown>));
       if (res.ok && json?.success && json?.counts && typeof json.counts === 'object') {
         const counts = json.counts as Record<string, number>;
+        const counters = json.counters as
+          | { total?: number; returned?: number; cancelled?: number; rts?: number }
+          | undefined;
+        if (counters && typeof counters === 'object') {
+          counts.cancel_returns = Number(counters.total) || counts.cancel_returns || 0;
+          counts.cancel_returns_returned = Number(counters.returned) || 0;
+          counts.cancel_returns_cancelled = Number(counters.cancelled) || 0;
+          counts.cancel_returns_rts = Number(counters.rts) || 0;
+          counts.refund_return = Number(counters.returned) || 0;
+          counts.cancelled = Number(counters.cancelled) || 0;
+          counts.failed_delivery = Number(counters.rts) || 0;
+        }
         setServerOrderCounts(counts);
         return counts;
       }
@@ -1020,10 +1042,14 @@ export default function OrderManager({
         merge: false,
         tab: searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab,
         q: searchQuery.trim() || undefined,
+        kind:
+          activeSubTab === 'cancel_returns'
+            ? cancelReturnKindParam(cancelReturnTab)
+            : undefined,
       });
       void fetchOrderCounts();
     },
-    [activeSubTab, currentPage, fetchOrderCounts, onFetchOrders, searchQuery],
+    [activeSubTab, cancelReturnTab, currentPage, fetchOrderCounts, onFetchOrders, searchQuery],
   );
 
   const refetchOrdersPageRef = useRef(refetchOrdersPage);
@@ -1060,9 +1086,13 @@ export default function OrderManager({
         merge: false,
         tab: searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab,
         q: searchQuery.trim() || undefined,
+        kind:
+          activeSubTab === 'cancel_returns'
+            ? cancelReturnKindParam(cancelReturnTab)
+            : undefined,
       });
     },
-    [activeSubTab, onFetchOrders, searchQuery],
+    [activeSubTab, cancelReturnTab, onFetchOrders, searchQuery],
   );
 
   // Đồng bộ currentPage với metadata API (sau fetch).
@@ -1439,6 +1469,10 @@ export default function OrderManager({
           merge: false,
           tab: searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab,
           q: searchQuery.trim() || undefined,
+          kind:
+            activeSubTab === 'cancel_returns'
+              ? cancelReturnKindParam(cancelReturnTab)
+              : undefined,
           signal: controller.signal,
         });
       } catch (err) {
@@ -1454,7 +1488,7 @@ export default function OrderManager({
       controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSubTab]);
+  }, [activeSubTab, cancelReturnTab]);
 
   const searchBootRef = React.useRef(true);
   useEffect(() => {
@@ -1473,6 +1507,10 @@ export default function OrderManager({
         merge: false,
         tab: q ? '' : activeSubTab === 'all' ? '' : activeSubTab,
         q: q || undefined,
+        kind:
+          !q && activeSubTab === 'cancel_returns'
+            ? cancelReturnKindParam(cancelReturnTab)
+            : undefined,
       });
     }, q ? 400 : 80);
     return () => window.clearTimeout(handle);
@@ -1616,6 +1654,7 @@ export default function OrderManager({
         limit: ORDERS_PAGE_SIZE,
         merge: false,
         tab: activeSubTab === 'all' ? '' : activeSubTab,
+        kind: listKind,
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1666,9 +1705,10 @@ export default function OrderManager({
         limit: ORDERS_PAGE_SIZE,
         merge: false,
         tab: activeSubTab === 'all' ? '' : activeSubTab,
+        kind: listKind,
       });
     },
-    [onFetchOrders],
+    [activeSubTab, listKind, onFetchOrders],
   );
 
   // markPrintedOnLocalPdfOpen declared after applyPrintedLocalOptimistic + updatePrintStatusForOrders (see below).
@@ -2492,6 +2532,7 @@ export default function OrderManager({
               limit: ORDERS_PAGE_SIZE,
               merge: false,
               tab: activeSubTab === 'all' ? '' : activeSubTab,
+              kind: listKind,
             });
           }
         }
@@ -4911,6 +4952,7 @@ export default function OrderManager({
           limit: ORDERS_PAGE_SIZE,
           merge: false,
           tab: activeSubTab === 'all' ? '' : activeSubTab,
+          kind: listKind,
         });
         if (cancelled) return;
         await fetchOrderCounts();
@@ -5042,13 +5084,14 @@ export default function OrderManager({
         limit: ORDERS_PAGE_SIZE,
         merge: false,
         tab: activeSubTab === 'all' ? '' : activeSubTab,
+        kind: listKind,
       });
       void fetchOrderCounts();
     } finally {
       setIsPullRefreshing(false);
       setPullDistance(0);
     }
-  }, [activeSubTab, fetchOrderCounts, isPullRefreshing, onFetchOrders]);
+  }, [activeSubTab, fetchOrderCounts, isPullRefreshing, listKind, onFetchOrders]);
 
   // Status Vietnamese styling and labeling helper matching mockup closely
   const getStatusBadge = (status: Order['status']) => {
@@ -5079,27 +5122,21 @@ export default function OrderManager({
     [orders, products]
   );
 
-  const cancelReturnPool = useMemo(
-    () =>
-      activeSubTab === 'cancel_returns'
-        ? orders
-        : orders.filter(isCancelReturnOrder),
-    [activeSubTab, orders],
-  );
-
-  /** Counter 3 nhóm Hủy/Hoàn/RTS — "Tất cả" = tổng 3 nhóm, không dùng badge Mongo toàn collection. */
+  /** Counter 3 nhóm Hủy/Hoàn/RTS — CHỈ đọc global count từ BE, CẤM array.length trang 50. */
   const cancelReturnKindCounts = useMemo(() => {
-    const counts = { refund_return: 0, cancelled: 0, failed_delivery: 0, all: 0 };
-    const n = cancelReturnPool.length;
-    for (let i = 0; i < n; i += 1) {
-      const bucket = resolveCancelReturnBucket(cancelReturnPool[i]);
-      if (bucket) counts[bucket] += 1;
-    }
-    counts.all = n;
-    return counts;
-  }, [cancelReturnPool]);
+    const c = ordersMeta?.counters;
+    const sc = serverOrderCounts || {};
+    const src = Number(c?.total) > 0 ? c : null;
+    const total = Number(src?.total ?? sc.cancel_returns) || 0;
+    const returned =
+      Number(src?.returned ?? sc.cancel_returns_returned ?? sc.refund_return) || 0;
+    const cancelled =
+      Number(src?.cancelled ?? sc.cancel_returns_cancelled) || 0;
+    const rts = Number(src?.rts ?? sc.cancel_returns_rts ?? sc.failed_delivery) || 0;
+    return { refund_return: returned, cancelled, failed_delivery: rts, all: total };
+  }, [ordersMeta?.counters, serverOrderCounts]);
 
-  const getCancelReturnCount = (tab: CancelReturnTab) => cancelReturnKindCounts[tab];
+  const getCancelReturnCount = (tab: CancelReturnTab) => Number(cancelReturnKindCounts[tab]) || 0;
 
   const cancelReturnTabItems: { id: CancelReturnTab; label: string }[] = [
     { id: 'all', label: 'Tất cả' },
@@ -5124,7 +5161,7 @@ export default function OrderManager({
     }
     let clientCount = 0;
     if (status === 'cancel_returns') {
-      clientCount = cancelReturnPool.length;
+      clientCount = Number(cancelReturnKindCounts.all) || 0;
     } else if (status === 'return_requests') {
       clientCount = orders.filter((o) => isReturnRequestOrder(o)).length;
     } else if (status === 'received_cancel_returns') {
@@ -5254,9 +5291,6 @@ export default function OrderManager({
   const filteredOrdersBase = useMemo(() => {
     return ordersPoolBeforeCarrier
       .filter((order) => {
-        if (activeSubTab === 'cancel_returns') {
-          if (!matchesCancelReturnTab(order, cancelReturnTab)) return false;
-        }
         if (searchQuery.trim()) return true;
         return orderMatchesShippingCarrierFilter(order, selectedShippingCarrier);
       })
@@ -5302,10 +5336,11 @@ export default function OrderManager({
   const listPagingTotal = useMemo(() => {
     const backend = Number(ordersMeta?.total) || 0;
     if (activeSubTab !== 'cancel_returns') return backend;
-    const local = Math.max(cancelReturnKindCounts.all, orders.length);
-    if (backend > 0 && backend <= Math.max(local * 3, ORDERS_PAGE_SIZE)) return backend;
-    return local;
-  }, [activeSubTab, cancelReturnKindCounts.all, orders.length, ordersMeta?.total]);
+    if (cancelReturnTab === 'all') {
+      return Number(cancelReturnKindCounts.all) || backend;
+    }
+    return backend || Number(cancelReturnKindCounts[cancelReturnTab]) || 0;
+  }, [activeSubTab, cancelReturnTab, cancelReturnKindCounts, ordersMeta?.total]);
 
   const listPagingPages = useMemo(() => {
     if (activeSubTab !== 'cancel_returns') return ordersMeta?.totalPages ?? 1;
@@ -5832,6 +5867,7 @@ export default function OrderManager({
       limit: ORDERS_PAGE_SIZE,
       merge: false,
       tab: activeSubTab === 'all' ? '' : activeSubTab,
+      kind: listKind,
     });
     if (onCloseScanner) onCloseScanner();
     else if (onEndScanSession) onEndScanSession();

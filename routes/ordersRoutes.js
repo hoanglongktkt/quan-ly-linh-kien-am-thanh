@@ -15,6 +15,7 @@ import {
   hydrateTracking,
   enrichTracking,
   healTrackingCancelled,
+  reclassifyCancelReturns,
   forceResyncStuck,
   triggerFixStuckOrders,
   reconcileHandedOver,
@@ -72,6 +73,8 @@ router.post("/enrich-tracking", h(enrichTracking));
 /** Heal data cũ: đơn hủy/hoàn thiếu mã — GET hoặc POST đều được. */
 router.get("/heal-tracking-cancelled", h(healTrackingCancelled));
 router.post("/heal-tracking-cancelled", h(healTrackingCancelled));
+router.post("/reclassify-cancel-returns", h(reclassifyCancelReturns));
+router.get("/reclassify-cancel-returns", h(reclassifyCancelReturns));
 router.post("/force-resync-stuck", h(forceResyncStuck));
 router.post("/trigger-fix-stuck-orders", h(triggerFixStuckOrders));
 router.post("/reconcile-handed-over", h(reconcileHandedOver));

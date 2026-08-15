@@ -50,6 +50,7 @@ const LONG_RUNNING_PREFIXES = [
   'orders/enrich-tracking',
   'orders/hydrate-tracking',
   'orders/heal-tracking-cancelled',
+  'orders/reclassify-cancel-returns',
   'orders/force-resync-stuck',
   'orders/trigger-fix-stuck-orders',
   'orders/reconcile-handed-over',

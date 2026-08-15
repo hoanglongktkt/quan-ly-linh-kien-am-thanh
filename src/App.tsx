@@ -327,6 +327,7 @@ export default function App() {
     total: 0,
     totalPages: 1,
     hasMore: false,
+    counters: { total: 0, returned: 0, cancelled: 0, rts: 0 },
   });
   /** true chỉ sau khi ĐÃ có ít nhất 1 response thành công (success:true) từ
    * /api/orders/refresh — dùng để phân biệt "chưa tải xong lần đầu" (phải hiện
@@ -508,6 +509,8 @@ export default function App() {
     tab?: string;
     /** Search toàn collection — không kẹp tab. */
     q?: string;
+    /** Sub-tab Hủy/Hoàn: refund_return | cancelled | failed_delivery */
+    kind?: string;
     /** Bỏ qua dedupe in-flight (vd: tab vừa visible lại sau đóng băng). */
     force?: boolean;
     /** Trả lỗi về caller thay vì giữ im lặng và chỉ retry nền. */
@@ -535,7 +538,8 @@ export default function App() {
     const printStatus = String(opts?.print_status || '').trim().toLowerCase();
     const tab = String(opts?.tab || '').trim().toLowerCase();
     const q = String(opts?.q || '').trim();
-    const flightKey = `page:${page}|limit:${limit}|print:${printStatus || 'all'}|tab:${tab || 'all'}|q:${q || ''}`;
+    const kind = String(opts?.kind || '').trim().toLowerCase();
+    const flightKey = `page:${page}|limit:${limit}|print:${printStatus || 'all'}|tab:${tab || 'all'}|q:${q || ''}|kind:${kind || 'all'}`;
 
     // Silent không được hủy request đang hiện spinner (P0 race: bootstrap abort tab fetch).
     if (silent && fetchOrdersNonSilentInFlightRef.current > 0) {
@@ -595,6 +599,7 @@ export default function App() {
         params.set('q', q);
       } else if (tab) {
         params.set('tab', tab);
+        if (kind) params.set('kind', kind);
       }
       const qs = params.toString();
       const path = `/api/orders/refresh?${qs}`;
@@ -639,6 +644,7 @@ export default function App() {
           limit?: number;
           has_more?: boolean;
           hasMore?: boolean;
+          counters?: { total?: number; returned?: number; cancelled?: number; rts?: number };
         } = await response.json();
         if (payload.success === false) {
           if (
@@ -658,6 +664,7 @@ export default function App() {
                 page,
                 tab,
                 q,
+                kind,
                 retriesLeft: retriesLeft - 1,
               });
             }, 3000);
@@ -693,6 +700,12 @@ export default function App() {
           total,
           totalPages,
           hasMore: Boolean(payload.has_more ?? payload.hasMore ?? currentPage < totalPages),
+          counters: {
+            total: Number(payload.counters?.total) || (kind ? 0 : total) || 0,
+            returned: Number(payload.counters?.returned) || 0,
+            cancelled: Number(payload.counters?.cancelled) || 0,
+            rts: Number(payload.counters?.rts) || 0,
+          },
         });
         const sanitized = sanitizeOrders(data);
         // Thành công 200: đưa thẳng vào state. Không guard bỏ response (tránh UI rỗng dù Network có data).
@@ -726,6 +739,7 @@ export default function App() {
               page,
               tab,
               q,
+              kind,
               retriesLeft: retriesLeft - 1,
             });
           }, 3000);
@@ -753,6 +767,7 @@ export default function App() {
               page,
               tab,
               q,
+              kind,
               retriesLeft: retriesLeft - 1,
             });
           }, 400);
@@ -771,6 +786,7 @@ export default function App() {
             page,
             tab,
             q,
+            kind,
             retriesLeft: retriesLeft - 1,
           });
         }, 3000);

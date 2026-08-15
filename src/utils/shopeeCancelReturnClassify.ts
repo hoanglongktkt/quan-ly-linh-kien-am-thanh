@@ -56,7 +56,7 @@ export function isShopeeCancelledStatus(order: ShopeeCancelReturnInput): boolean
   return raw === 'CANCELLED' || raw === 'IN_CANCEL' || st === 'CANCELLED';
 }
 
-/** Đơn hủy chưa giao — refund tiền không biến thành Return/Refund. */
+/** Đơn hủy chưa giao — leftover return_sn / mã hoàn ≠ Trả hàng Hoàn tiền. */
 export function isUnshippedShopeeCancel(order: ShopeeCancelReturnInput): boolean {
   if (!isShopeeCancelledStatus(order)) return false;
   const raw = String(order.shopee_order_status || '').toUpperCase();
@@ -64,8 +64,9 @@ export function isUnshippedShopeeCancel(order: ShopeeCancelReturnInput): boolean
     return false;
   }
   const st = String(order.status || '').toLowerCase();
-  if (st === 'shipping' || st === 'completed') return false;
-  if (String(order.return_tracking_no || order.returnTrackingNumber || '').trim()) return false;
+  if (st === 'shipping' || st === 'completed' || st === 'return_pending' || st === 'return_received') {
+    return false;
+  }
   const logistics = String(order.logistics_status || '').toUpperCase();
   if (
     logistics &&
@@ -105,43 +106,43 @@ export function isShopeeRtsFailedDelivery(order: ShopeeCancelReturnInput): boole
 }
 
 /**
- * Return/Refund: CHỈ đơn từ get_return_list (return_sn hoặc is_return).
- * Không dò chữ refund / return_status / return_pending.
- * Hủy chưa giao + leftover return_sn (refund-only) ≠ trả hàng.
+ * Return/Refund: CHỈ đơn từ get_return_list — BẮT BUỘC return_sn.
+ * CANCELLED (kể cả leftover return_sn / refund tiền khi hủy) ≠ Trả hàng Hoàn tiền.
  */
 export function isShopeeReturnRefundOrder(order: ShopeeCancelReturnInput): boolean {
   if (isShopeeRtsFailedDelivery(order)) return false;
+  if (isShopeeCancelledStatus(order)) return false;
   if (isUnshippedShopeeCancel(order)) return false;
-  if (order.is_return === true) return true;
-  if (hasShopeeReturnSn(order)) return true;
-  return false;
+  if (!hasShopeeReturnSn(order)) return false;
+  return true;
 }
 
-/** get_return_list được phép gắn return_sn — không overlay lên đơn hủy chưa giao. */
+/** get_return_list không overlay lên đơn Hủy/RTS (refund tiền khi hủy ≠ trả hàng). */
 export function shouldApplyShopeeReturnOverlay(
   existing?: ShopeeCancelReturnInput | null,
 ): boolean {
   if (!existing) return true;
   if (isShopeeRtsFailedDelivery(existing)) return false;
   if (isUnshippedShopeeCancel(existing)) return false;
+  if (isShopeeCancelledStatus(existing)) return false;
   return true;
 }
 
 /**
- * Ưu tiên: Return/Refund (return_sn) → RTS → Đơn Hủy.
- * Không tin kind=refund_return cũ nếu không có return_sn / is_return.
+ * Thép: RTS → Return (có return_sn) → Đơn Hủy.
+ * Không tin kind=refund_return cũ nếu thiếu return_sn.
  */
 export function classifyShopeeCancelReturnKind(
   order: ShopeeCancelReturnInput,
 ): ShopeeCancelReturnKind | null {
-  if (isShopeeReturnRefundOrder(order)) return 'refund_return';
   if (isShopeeRtsFailedDelivery(order)) return 'failed_delivery';
-
+  if (isShopeeReturnRefundOrder(order)) return 'refund_return';
   if (isShopeeCancelledStatus(order)) return 'cancelled';
   const local = String(order.local_status || order.localStatus || '').toUpperCase();
   if (local === 'CANCELLED_STORED') return 'cancelled';
 
   const stored = String(order.shopee_cancel_return_kind || '').trim();
+  if (stored === 'refund_return' && !hasShopeeReturnSn(order)) return 'cancelled';
   if (stored === 'cancelled' || stored === 'failed_delivery') return stored;
   return null;
 }

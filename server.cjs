@@ -75106,8 +75106,9 @@ function isUnshippedShopeeCancel(order) {
     return false;
   }
   const st = String(order.status || "").toLowerCase();
-  if (st === "shipping" || st === "completed") return false;
-  if (String(order.return_tracking_no || order.returnTrackingNumber || "").trim()) return false;
+  if (st === "shipping" || st === "completed" || st === "return_pending" || st === "return_received") {
+    return false;
+  }
   const logistics = String(order.logistics_status || "").toUpperCase();
   if (logistics && /SHIPPED|PICKUP_DONE|IN_TRANSIT|DELIVERY_DONE|LOGISTICS_DELIVERY/.test(logistics) && !/FAILED|LOST|RETURN|REVERSE/.test(logistics)) {
     return false;
@@ -75135,24 +75136,26 @@ function isShopeeRtsFailedDelivery(order) {
 }
 function isShopeeReturnRefundOrder(order) {
   if (isShopeeRtsFailedDelivery(order)) return false;
+  if (isShopeeCancelledStatus(order)) return false;
   if (isUnshippedShopeeCancel(order)) return false;
-  if (order.is_return === true) return true;
-  if (hasShopeeReturnSn(order)) return true;
-  return false;
+  if (!hasShopeeReturnSn(order)) return false;
+  return true;
 }
 function shouldApplyShopeeReturnOverlay(existing) {
   if (!existing) return true;
   if (isShopeeRtsFailedDelivery(existing)) return false;
   if (isUnshippedShopeeCancel(existing)) return false;
+  if (isShopeeCancelledStatus(existing)) return false;
   return true;
 }
 function classifyShopeeCancelReturnKind(order) {
-  if (isShopeeReturnRefundOrder(order)) return "refund_return";
   if (isShopeeRtsFailedDelivery(order)) return "failed_delivery";
+  if (isShopeeReturnRefundOrder(order)) return "refund_return";
   if (isShopeeCancelledStatus(order)) return "cancelled";
   const local = String(order.local_status || order.localStatus || "").toUpperCase();
   if (local === "CANCELLED_STORED") return "cancelled";
   const stored = String(order.shopee_cancel_return_kind || "").trim();
+  if (stored === "refund_return" && !hasShopeeReturnSn(order)) return "cancelled";
   if (stored === "cancelled" || stored === "failed_delivery") return stored;
   return null;
 }
@@ -76164,6 +76167,10 @@ var OrderSchema = new import_mongoose3.Schema(
     return_sn: { type: String, default: null },
     /** Cờ đơn từ get_return_list — không gắn cho đơn hủy thường */
     is_return: { type: Boolean, default: false },
+    /** refund_return | cancelled | failed_delivery — SSOT đếm sub-tab */
+    shopee_cancel_return_kind: { type: String, default: null, index: true },
+    is_rts: { type: Boolean, default: false, index: true },
+    sub_status: { type: String, default: null, index: true },
     /** YCTH mới chưa toast trên UI */
     return_alert_pending: { type: Boolean, default: false, index: true },
     return_alert_at: { type: Date, default: null },
@@ -76231,6 +76238,8 @@ OrderSchema.index({ "data.order_sn": 1 });
 OrderSchema.index({ "data.internalTrackingCode": 1 });
 OrderSchema.index({ return_sn: 1 });
 OrderSchema.index({ "data.return_sn": 1 });
+OrderSchema.index({ shopee_cancel_return_kind: 1, "data.date": -1 });
+OrderSchema.index({ "data.shopee_cancel_return_kind": 1, "data.date": -1 });
 var OrderEventSchema = new import_mongoose3.Schema(
   {
     _id: { type: String, required: true },
@@ -77393,6 +77402,23 @@ async function bulkUpsertOrdersToStore(orders) {
     } else if (order.is_return === false) {
       $set.is_return = false;
       $set["data.is_return"] = false;
+    }
+    const cancelKind = String(order.shopee_cancel_return_kind || "").trim();
+    if (cancelKind === "refund_return" || cancelKind === "cancelled" || cancelKind === "failed_delivery") {
+      $set.shopee_cancel_return_kind = cancelKind;
+      $set["data.shopee_cancel_return_kind"] = cancelKind;
+    }
+    const subStatus = String(order.sub_status || "").trim().toUpperCase();
+    if (subStatus === "RTS" || subStatus === "CANCELLED" || subStatus === "RETURN") {
+      $set.sub_status = subStatus;
+      $set["data.sub_status"] = subStatus;
+    }
+    if (order.is_rts === true || cancelKind === "failed_delivery" || subStatus === "RTS") {
+      $set.is_rts = true;
+      $set["data.is_rts"] = true;
+    } else if (order.is_rts === false || cancelKind === "cancelled" || cancelKind === "refund_return") {
+      $set.is_rts = false;
+      $set["data.is_rts"] = false;
     }
     if (order.return_alert_pending === true) {
       $set.return_alert_pending = true;
@@ -78772,6 +78798,17 @@ function hydrateOrderFromMongoDoc(d) {
     delete hydrated.return_sn;
     hydrated.is_return = false;
   }
+  const cancelKind = classifyShopeeCancelReturnKind(hydrated);
+  if (cancelKind) {
+    hydrated.shopee_cancel_return_kind = cancelKind;
+    const sub = resolveShopeeSubStatus(cancelKind);
+    if (sub) hydrated.sub_status = sub;
+    hydrated.is_rts = cancelKind === "failed_delivery";
+    hydrated.is_return = cancelKind === "refund_return";
+    if (cancelKind !== "refund_return") {
+      delete hydrated.return_sn;
+    }
+  }
   return hydrated;
 }
 async function findOrderByScanCodeInStore(rawCode) {
@@ -79567,6 +79604,200 @@ function orderTabFilter(tab) {
       return {};
   }
 }
+var EMPTY_CANCEL_RETURN_COUNTERS = {
+  total: 0,
+  returned: 0,
+  cancelled: 0,
+  rts: 0
+};
+function cancelReturnRtsInner() {
+  return {
+    $or: [
+      { shopee_cancel_return_kind: "failed_delivery" },
+      { "data.shopee_cancel_return_kind": "failed_delivery" },
+      { sub_status: "RTS" },
+      { "data.sub_status": "RTS" },
+      { is_rts: true },
+      { "data.is_rts": true }
+    ]
+  };
+}
+function cancelReturnReturnedInner() {
+  return {
+    $and: [
+      {
+        $or: [
+          { shopee_cancel_return_kind: "refund_return" },
+          { "data.shopee_cancel_return_kind": "refund_return" }
+        ]
+      },
+      {
+        $or: [
+          { return_sn: { $type: "string", $nin: [""] } },
+          { "data.return_sn": { $type: "string", $nin: [""] } },
+          { is_return: true },
+          { "data.is_return": true }
+        ]
+      }
+    ]
+  };
+}
+function orderCancelReturnKindFilter(kind) {
+  const base = orderTabFilter("cancel_returns");
+  const k = String(kind || "").trim().toLowerCase();
+  if (!k || k === "all") return base;
+  const rts = cancelReturnRtsInner();
+  const returned = cancelReturnReturnedInner();
+  if (k === "refund_return" || k === "returned" || k === "return") {
+    return { $and: [base, returned, { $nor: [rts] }] };
+  }
+  if (k === "failed_delivery" || k === "rts") {
+    return { $and: [base, rts] };
+  }
+  if (k === "cancelled" || k === "cancel") {
+    return { $and: [base, { $nor: [returned, rts] }] };
+  }
+  return base;
+}
+function parseCancelReturnKindParam(raw) {
+  const k = String(raw || "").trim().toLowerCase();
+  if (k === "refund_return" || k === "returned" || k === "return") return "refund_return";
+  if (k === "failed_delivery" || k === "rts") return "failed_delivery";
+  if (k === "cancelled" || k === "cancel") return "cancelled";
+  return "";
+}
+async function countCancelReturnCountersFromStore(opts) {
+  const empty = { ...EMPTY_CANCEL_RETURN_COUNTERS };
+  try {
+    requireMongo();
+    const shopAnd = [];
+    const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
+    if (shopFilter) shopAnd.push(shopFilter);
+    const withShop = (tabFilter) => {
+      const parts = [...shopAnd];
+      if (tabFilter && Object.keys(tabFilter).length) parts.push(tabFilter);
+      if (parts.length === 0) return {};
+      if (parts.length === 1) return parts[0];
+      return { $and: parts };
+    };
+    const total = await safeCountDocuments(withShop(orderTabFilter("cancel_returns")), 8e3);
+    await new Promise((r2) => setTimeout(r2, 20));
+    const returned = await safeCountDocuments(
+      withShop(orderCancelReturnKindFilter("refund_return")),
+      8e3
+    );
+    await new Promise((r2) => setTimeout(r2, 20));
+    const cancelled = await safeCountDocuments(
+      withShop(orderCancelReturnKindFilter("cancelled")),
+      8e3
+    );
+    await new Promise((r2) => setTimeout(r2, 20));
+    const rts = await safeCountDocuments(
+      withShop(orderCancelReturnKindFilter("failed_delivery")),
+      8e3
+    );
+    return { total, returned, cancelled, rts };
+  } catch (err) {
+    console.warn(
+      "[MongoDB] countCancelReturnCountersFromStore failed:",
+      err?.message || err
+    );
+    return empty;
+  }
+}
+async function reclassifyCancelReturnsInStore(opts) {
+  const empty = { scanned: 0, updated: 0, pages: 0 };
+  try {
+    requireMongo();
+    const lookbackMs = Math.max(
+      24 * 60 * 60 * 1e3,
+      Math.min(30 * 24 * 60 * 60 * 1e3, Number(opts?.lookbackMs) || 30 * 24 * 60 * 60 * 1e3)
+    );
+    const hardLimit = Math.max(1, Math.min(4e3, Math.floor(Number(opts?.limit) || 2e3)));
+    const pageSize = 50;
+    const maxPages = Math.ceil(hardLimit / pageSize);
+    const since = new Date(Date.now() - lookbackMs);
+    const sinceIso = since.toISOString();
+    const filter2 = {
+      $and: [
+        orderTabFilter("cancel_returns"),
+        {
+          $or: [
+            { "data.date": { $gte: sinceIso } },
+            { last_synced_at: { $gte: since } },
+            { last_shopee_update_at: { $gte: since } }
+          ]
+        }
+      ]
+    };
+    let scanned = 0;
+    let updated = 0;
+    for (let page = 0; page < maxPages; page += 1) {
+      if (scanned >= hardLimit) break;
+      const docs = await OrderModel.find(filter2).sort({ "data.date": -1, _id: -1 }).skip(page * pageSize).limit(pageSize).maxTimeMS(8e3).lean();
+      if (!docs.length) break;
+      const ops = [];
+      for (const doc of docs) {
+        if (scanned >= hardLimit) break;
+        scanned += 1;
+        const order = hydrateOrderFromMongoDoc(doc);
+        if (!order) continue;
+        const kind = classifyShopeeCancelReturnKind(order);
+        if (!kind) continue;
+        const sub = resolveShopeeSubStatus(kind);
+        const clearReturn = kind !== "refund_return";
+        const prevKind = String(
+          doc?.shopee_cancel_return_kind || doc?.data?.shopee_cancel_return_kind || ""
+        ).trim();
+        const prevReturn = String(doc?.return_sn || doc?.data?.return_sn || "").trim();
+        const needWrite = prevKind !== kind || clearReturn && Boolean(prevReturn) || Boolean(doc?.is_return) !== (kind === "refund_return");
+        if (!needWrite) continue;
+        const $set = {
+          shopee_cancel_return_kind: kind,
+          "data.shopee_cancel_return_kind": kind,
+          is_return: kind === "refund_return",
+          "data.is_return": kind === "refund_return",
+          is_rts: kind === "failed_delivery",
+          "data.is_rts": kind === "failed_delivery"
+        };
+        if (sub) {
+          $set.sub_status = sub;
+          $set["data.sub_status"] = sub;
+        }
+        const $unset = {};
+        if (clearReturn) {
+          $unset.return_sn = 1;
+          $unset["data.return_sn"] = 1;
+        }
+        ops.push({
+          updateOne: {
+            filter: { _id: doc._id },
+            update: {
+              $set,
+              ...Object.keys($unset).length ? { $unset } : {}
+            }
+          }
+        });
+        updated += 1;
+      }
+      if (ops.length) {
+        await OrderModel.bulkWrite(ops, { ordered: false });
+      }
+      if (docs.length < pageSize) break;
+      await new Promise((r2) => setTimeout(r2, 80));
+    }
+    console.log(
+      `[MongoDB] reclassifyCancelReturns scanned=${scanned} updated=${updated} pages<=${maxPages}`
+    );
+    return { scanned, updated, pages: maxPages };
+  } catch (err) {
+    console.error(
+      "[MongoDB] reclassifyCancelReturnsInStore FATAL:",
+      err?.message || err
+    );
+    return empty;
+  }
+}
 async function loadAllHandedOverShopeeOrdersFromStore(opts) {
   if (!isMongoReady()) return [];
   requireMongo();
@@ -79713,7 +79944,6 @@ async function countOrdersByTabsFromStore(opts) {
       "handed_over_carrier",
       "return_pending",
       "return_requests",
-      "cancel_returns",
       "web_orders"
     ];
     const counts = { ...empty };
@@ -79746,6 +79976,17 @@ async function countOrdersByTabsFromStore(opts) {
     } catch {
       counts.received_cancel_returns = 0;
     }
+    const cr = await countCancelReturnCountersFromStore({
+      shopId: opts?.shopId,
+      shopIds: opts?.shopIds
+    });
+    counts.cancel_returns = cr.total;
+    counts.cancel_returns_returned = cr.returned;
+    counts.cancel_returns_cancelled = cr.cancelled;
+    counts.cancel_returns_rts = cr.rts;
+    counts.refund_return = cr.returned;
+    counts.cancelled = cr.cancelled;
+    counts.failed_delivery = cr.rts;
     return counts;
   } catch (err) {
     console.error(
@@ -79763,7 +80004,8 @@ async function queryOrdersPageFromStore(opts) {
     pageSize: 50,
     totalPages: 1,
     hasMore: false,
-    counts: {}
+    counts: {},
+    counters: { ...EMPTY_CANCEL_RETURN_COUNTERS }
   };
   try {
     requireMongo();
@@ -79776,7 +80018,9 @@ async function queryOrdersPageFromStore(opts) {
     const and = [];
     const search = String(opts?.query || "").trim();
     const requestedTab = String(opts?.tab || "").trim().toLowerCase();
-    let tabFilter = search ? {} : orderTabFilter(requestedTab);
+    const kind = parseCancelReturnKindParam(opts?.kind);
+    const isCancelReturnsTab = requestedTab === "cancel_returns" || requestedTab === "cancel-returns" || requestedTab === "cancelled_returned" || requestedTab === "huy-hoan" || requestedTab === "don-huy-hoan";
+    let tabFilter = search ? {} : isCancelReturnsTab && kind ? orderCancelReturnKindFilter(kind) : orderTabFilter(requestedTab);
     if (!search && requestedTab && requestedTab !== "all" && Object.keys(tabFilter).length === 0) {
       console.warn(
         `[MongoDB] queryOrdersPageFromStore unknown tab=${requestedTab} \u2014 kh\xF4ng count to\xE0n DB`
@@ -79900,6 +80144,17 @@ async function queryOrdersPageFromStore(opts) {
         await new Promise((r2) => setTimeout(r2, 15));
       }
     }
+    let counters = { ...EMPTY_CANCEL_RETURN_COUNTERS };
+    if (isCancelReturnsTab) {
+      counters = await countCancelReturnCountersFromStore({
+        shopId: opts?.shopId,
+        shopIds: opts?.shopIds
+      });
+      counts.cancel_returns = counters.total;
+      counts.cancel_returns_returned = counters.returned;
+      counts.cancel_returns_cancelled = counters.cancelled;
+      counts.cancel_returns_rts = counters.rts;
+    }
     const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / pageSize) || 1);
     return {
       rows,
@@ -79908,7 +80163,8 @@ async function queryOrdersPageFromStore(opts) {
       pageSize,
       totalPages,
       hasMore: page * pageSize < total,
-      counts
+      counts,
+      counters
     };
   } catch (err) {
     console.error(
@@ -109061,6 +109317,9 @@ async function refreshOrders(req, res) {
     const page = Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1;
     const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 5e3) : 2e3;
     const tab = String(req.query.tab || req.query.internal_tab || "").trim();
+    const kind = parseCancelReturnKindParam(
+      req.query.kind || req.query.cancel_kind || req.query.sub_tab
+    );
     const searchQ = String(req.query.q ?? req.query.query ?? "").trim();
     const shopIds = parseShopIdsParam(
       req.query.shop_ids ?? req.query.shopIds,
@@ -109068,13 +109327,14 @@ async function refreshOrders(req, res) {
     );
     const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "").trim();
     console.log(
-      `[GET /api/orders/refresh] params page=${page} limit=${limit} tab=${tab || "(none)"} q=${searchQ || "(none)"} shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} print_status=${req.query.print_status || req.query.printStatus || "(all)"}`
+      `[GET /api/orders/refresh] params page=${page} limit=${limit} tab=${tab || "(none)"} kind=${kind || "(all)"} q=${searchQ || "(none)"} shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} print_status=${req.query.print_status || req.query.printStatus || "(all)"}`
     );
     const tabLc = tab.toLowerCase();
     const printStatus = String(req.query.print_status || req.query.printStatus || "").trim();
     let mergedOrders = [];
     let total = 0;
     let hasMore = false;
+    let counters = { total: 0, returned: 0, cancelled: 0, rts: 0 };
     if (!searchQ && (tabLc === "received_cancel_returns" || tabLc === "received-cancel-returns" || tabLc === "da_nhan_huy_hoan")) {
       const allReceived = await readOrdersForRefresh(5e3, {
         tab,
@@ -109091,6 +109351,7 @@ async function refreshOrders(req, res) {
         page,
         pageSize: limit,
         tab: searchQ ? "" : tab,
+        kind: searchQ ? "" : kind,
         shopId,
         shopIds: shopIds.length ? shopIds : void 0,
         query: searchQ,
@@ -109102,6 +109363,7 @@ async function refreshOrders(req, res) {
       );
       total = pageResult.total || mergedOrders.length;
       hasMore = Boolean(pageResult.hasMore);
+      if (pageResult.counters) counters = pageResult.counters;
       if (!tab) {
         try {
           mergedOrders = await mergeDonHoanHuyIntoOrders(mergedOrders);
@@ -109119,6 +109381,15 @@ async function refreshOrders(req, res) {
         deps15.enrichOrdersFromCatalog(mergedOrders, [])
       )
     );
+    if (!searchQ && (tabLc === "cancel_returns" || tabLc === "cancel-returns" || tabLc === "cancelled_returned" || tabLc === "huy-hoan" || tabLc === "don-huy-hoan") && !(counters.total > 0)) {
+      try {
+        counters = await countCancelReturnCountersFromStore({
+          shopId: shopId || void 0,
+          shopIds: shopIds.length ? shopIds : void 0
+        });
+      } catch {
+      }
+    }
     const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / limit) || 1);
     const currentPage = Math.min(page, totalPages);
     console.log(
@@ -109134,7 +109405,8 @@ async function refreshOrders(req, res) {
       page_size: limit,
       limit,
       has_more: hasMore,
-      hasMore
+      hasMore,
+      counters
     });
   } catch (error) {
     console.error(
@@ -109164,6 +109436,7 @@ async function queryOrders(req, res) {
       page: Number(req.query.page),
       pageSize: Number(req.query.page_size ?? req.query.pageSize),
       tab: String(req.query.tab || ""),
+      kind: parseCancelReturnKindParam(req.query.kind || req.query.cancel_kind),
       shopId,
       shopIds: shopIds.length > 1 ? shopIds : void 0,
       carrier: String(req.query.carrier || ""),
@@ -109204,7 +109477,8 @@ async function queryOrders(req, res) {
       limit: page.pageSize,
       has_more: page.hasMore,
       hasMore: page.hasMore,
-      counts: page.counts
+      counts: page.counts,
+      counters: page.counters
     });
   } catch (error) {
     console.error("[Orders Query] failed:", error?.stack || error?.message || error);
@@ -109250,11 +109524,19 @@ async function getOrderCounts(req, res) {
       shopId: shopId || void 0,
       shopIds: shopIds.length > 1 ? shopIds : void 0
     });
+    const counters = {
+      total: Number(counts.cancel_returns) || 0,
+      returned: Number(counts.cancel_returns_returned ?? counts.refund_return) || 0,
+      cancelled: Number(counts.cancel_returns_cancelled ?? counts.cancelled) || 0,
+      rts: Number(counts.cancel_returns_rts ?? counts.failed_delivery) || 0
+    };
     console.log(
       `[GET /api/orders/counter] shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} counts=`,
-      counts
+      counts,
+      "counters=",
+      counters
     );
-    return res.status(200).json({ success: true, counts });
+    return res.status(200).json({ success: true, counts, counters });
   } catch (error) {
     console.error(
       "[GET /api/orders/counter] failed:",
@@ -109298,6 +109580,7 @@ async function listOrders(req, res) {
         page: currentPageReq,
         pageSize: limit,
         tab: String(req.query.tab || req.query.internal_tab || ""),
+        kind: parseCancelReturnKindParam(req.query.kind || req.query.cancel_kind),
         shopId,
         shopIds: shopIds.length > 1 ? shopIds : void 0,
         carrier: String(req.query.carrier || ""),
@@ -109335,7 +109618,8 @@ async function listOrders(req, res) {
         limit,
         has_more: page.hasMore,
         hasMore: page.hasMore,
-        counts: page.counts
+        counts: page.counts,
+        counters: page.counters
       });
     } catch (pageErr) {
       console.error("[GET /api/orders] paged query failed:", pageErr?.message || pageErr);
@@ -109899,6 +110183,42 @@ async function enrichTracking(req, res) {
       });
     }
     return;
+  }
+}
+async function reclassifyCancelReturns(req, res) {
+  try {
+    const src = { ...req.query || {}, ...req.body || {} };
+    const daysRaw = Number(src.lookbackDays ?? src.days ?? 30);
+    const lookbackDays = Number.isFinite(daysRaw) ? Math.min(Math.max(1, Math.floor(daysRaw)), 30) : 30;
+    const maxRaw = Number(src.max ?? src.limit ?? 2e3);
+    const limit = Number.isFinite(maxRaw) ? Math.min(Math.max(50, Math.floor(maxRaw)), 4e3) : 2e3;
+    res.status(200).json({
+      success: true,
+      background: true,
+      lookbackDays,
+      limit,
+      message: `\u0110ang ph\xE2n lo\u1EA1i l\u1EA1i H\u1EE7y/Ho\xE0n ${lookbackDays} ng\xE0y (max=${limit}).`
+    });
+    setImmediate(() => {
+      void reclassifyCancelReturnsInStore({
+        lookbackMs: lookbackDays * 24 * 60 * 60 * 1e3,
+        limit
+      }).then((r2) => {
+        console.log(
+          `[Orders] reclassify-cancel-returns DONE scanned=${r2.scanned} updated=${r2.updated}`
+        );
+      }).catch((err) => {
+        console.error("[Orders] reclassify-cancel-returns failed:", err?.message || err);
+      });
+    });
+  } catch (err) {
+    console.error("[Orders] reclassify-cancel-returns failed:", err?.message || err);
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        error: err?.message || String(err)
+      });
+    }
   }
 }
 async function healTrackingCancelled(req, res) {
@@ -112022,6 +112342,8 @@ router13.post("/hydrate-tracking", h2(hydrateTracking));
 router13.post("/enrich-tracking", h2(enrichTracking));
 router13.get("/heal-tracking-cancelled", h2(healTrackingCancelled));
 router13.post("/heal-tracking-cancelled", h2(healTrackingCancelled));
+router13.post("/reclassify-cancel-returns", h2(reclassifyCancelReturns));
+router13.get("/reclassify-cancel-returns", h2(reclassifyCancelReturns));
 router13.post("/force-resync-stuck", h2(forceResyncStuck));
 router13.post("/trigger-fix-stuck-orders", h2(triggerFixStuckOrders));
 router13.post("/reconcile-handed-over", h2(reconcileHandedOver));
@@ -122239,6 +122561,20 @@ async function pullShopeeCancelReturnOrders(opts) {
       }
     }
     const elapsedMs = Date.now() - startedAt;
+    try {
+      const rec = await reclassifyCancelReturnsInStore({
+        lookbackMs: SHOPEE_HISTORY_LOOKBACK_MS,
+        limit: 2e3
+      });
+      console.log(
+        `[CancelReturn Pull] reclassify scanned=${rec.scanned} updated=${rec.updated}`
+      );
+    } catch (recErr) {
+      console.warn(
+        "[CancelReturn Pull] reclassify skip:",
+        recErr?.message || recErr
+      );
+    }
     const message = pulled > 0 ? `Cancel/return: k\xE9o/c\u1EADp nh\u1EADt ${pulled} \u0111\u01A1n (+${added}/~${updated}) trong ${elapsedMs}ms` : errors.length ? `Cancel/return 0 \u0111\u01A1n \u2014 ${errors[0]?.message || errors[0]?.error}` : "Cancel/return: 0 order_sn trong c\u1EEDa s\u1ED5.";
     syncDiag("CancelReturn Pull DONE", message);
     return {
@@ -129697,6 +130033,7 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
       forceHealPickupOrderIfHasTracking(row);
       promoteOrderStatusWhenTrackingReady(row);
       enforceShopeeTerminalLocalStatus(row);
+      applyShopeeCancelReturnClassification(row);
       console.log("D\u1EEF li\u1EC7u chu\u1EA9n b\u1ECB l\u01B0u DB:", {
         orderSn: row.orderSn,
         shopId: row.shopId,

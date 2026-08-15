@@ -48,7 +48,11 @@ import {
   isCarrierTrackingCode,
   isShopeeInternalTrackingCode,
 } from "../utils/orderTracking.ts";
-import { isUnshippedShopeeCancel } from "../utils/shopeeCancelReturnClassify.ts";
+import {
+  classifyShopeeCancelReturnKind,
+  isUnshippedShopeeCancel,
+  resolveShopeeSubStatus,
+} from "../utils/shopeeCancelReturnClassify.ts";
 
 export { isProductsDiskMode, getProductsDiskPath, setProductsDiskAppRoot, inheritShopeeLinkFromParent };
 export { getChannelListingsDiskPath };
@@ -96,8 +100,11 @@ type OrderDoc = {
   /** Mã vận đơn chiều hoàn */
   return_tracking_no?: string | null;
   returnTrackingNumber?: string | null;
-  return_sn?: string | null;
-  is_return?: boolean | null;
+    return_sn?: string | null;
+    is_return?: boolean | null;
+    shopee_cancel_return_kind?: string | null;
+    is_rts?: boolean | null;
+    sub_status?: string | null;
   /** Cờ YCTH mới — FE poll toast, ACK sẽ tắt */
   return_alert_pending?: boolean;
   return_alert_at?: Date | null;
@@ -233,6 +240,10 @@ const OrderSchema = new Schema<OrderDoc>(
     return_sn: { type: String, default: null },
     /** Cờ đơn từ get_return_list — không gắn cho đơn hủy thường */
     is_return: { type: Boolean, default: false },
+    /** refund_return | cancelled | failed_delivery — SSOT đếm sub-tab */
+    shopee_cancel_return_kind: { type: String, default: null, index: true },
+    is_rts: { type: Boolean, default: false, index: true },
+    sub_status: { type: String, default: null, index: true },
     /** YCTH mới chưa toast trên UI */
     return_alert_pending: { type: Boolean, default: false, index: true },
     return_alert_at: { type: Date, default: null },
@@ -314,6 +325,8 @@ OrderSchema.index({ "data.order_sn": 1 });
 OrderSchema.index({ "data.internalTrackingCode": 1 });
 OrderSchema.index({ return_sn: 1 });
 OrderSchema.index({ "data.return_sn": 1 });
+OrderSchema.index({ shopee_cancel_return_kind: 1, "data.date": -1 });
+OrderSchema.index({ "data.shopee_cancel_return_kind": 1, "data.date": -1 });
 
 const OrderEventSchema = new Schema<OrderEventDoc>(
   {
@@ -1854,6 +1867,31 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     } else if (order.is_return === false) {
       $set.is_return = false;
       $set["data.is_return"] = false;
+    }
+    const cancelKind = String(order.shopee_cancel_return_kind || "").trim();
+    if (
+      cancelKind === "refund_return" ||
+      cancelKind === "cancelled" ||
+      cancelKind === "failed_delivery"
+    ) {
+      $set.shopee_cancel_return_kind = cancelKind;
+      $set["data.shopee_cancel_return_kind"] = cancelKind;
+    }
+    const subStatus = String(order.sub_status || "").trim().toUpperCase();
+    if (subStatus === "RTS" || subStatus === "CANCELLED" || subStatus === "RETURN") {
+      $set.sub_status = subStatus;
+      $set["data.sub_status"] = subStatus;
+    }
+    if (order.is_rts === true || cancelKind === "failed_delivery" || subStatus === "RTS") {
+      $set.is_rts = true;
+      $set["data.is_rts"] = true;
+    } else if (
+      order.is_rts === false ||
+      cancelKind === "cancelled" ||
+      cancelKind === "refund_return"
+    ) {
+      $set.is_rts = false;
+      $set["data.is_rts"] = false;
     }
     if (order.return_alert_pending === true) {
       $set.return_alert_pending = true;
@@ -3937,6 +3975,17 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
     delete hydrated.return_sn;
     hydrated.is_return = false;
   }
+  const cancelKind = classifyShopeeCancelReturnKind(hydrated);
+  if (cancelKind) {
+    hydrated.shopee_cancel_return_kind = cancelKind;
+    const sub = resolveShopeeSubStatus(cancelKind);
+    if (sub) hydrated.sub_status = sub;
+    hydrated.is_rts = cancelKind === "failed_delivery";
+    hydrated.is_return = cancelKind === "refund_return";
+    if (cancelKind !== "refund_return") {
+      delete hydrated.return_sn;
+    }
+  }
   return hydrated;
 }
 
@@ -4449,6 +4498,8 @@ export type OrdersPageQuery = {
   printStatus?: string;
   /** Bỏ countDocuments phụ (badge) — bắt buộc khi load priority tabs trên cPanel. */
   skipCounts?: boolean;
+  /** Sub-tab Hủy/Hoàn: refund_return | cancelled | failed_delivery */
+  kind?: string;
 };
 
 /** Build Mongo filter cho 1 hoặc nhiều shopId (string + number variants). */
@@ -4893,6 +4944,233 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
   }
 }
 
+export type CancelReturnCounters = {
+  total: number;
+  returned: number;
+  cancelled: number;
+  rts: number;
+};
+
+export const EMPTY_CANCEL_RETURN_COUNTERS: CancelReturnCounters = {
+  total: 0,
+  returned: 0,
+  cancelled: 0,
+  rts: 0,
+};
+
+function cancelReturnRtsInner(): Record<string, unknown> {
+  return {
+    $or: [
+      { shopee_cancel_return_kind: "failed_delivery" },
+      { "data.shopee_cancel_return_kind": "failed_delivery" },
+      { sub_status: "RTS" },
+      { "data.sub_status": "RTS" },
+      { is_rts: true },
+      { "data.is_rts": true },
+    ],
+  };
+}
+
+function cancelReturnReturnedInner(): Record<string, unknown> {
+  return {
+    $and: [
+      {
+        $or: [
+          { shopee_cancel_return_kind: "refund_return" },
+          { "data.shopee_cancel_return_kind": "refund_return" },
+        ],
+      },
+      {
+        $or: [
+          { return_sn: { $type: "string", $nin: [""] } },
+          { "data.return_sn": { $type: "string", $nin: [""] } },
+          { is_return: true },
+          { "data.is_return": true },
+        ],
+      },
+    ],
+  };
+}
+
+/** Filter sub-tab Hủy/Hoàn: returned | cancelled | rts. Rỗng = cả nhóm. */
+export function orderCancelReturnKindFilter(kind?: string | null): Record<string, unknown> {
+  const base = orderTabFilter("cancel_returns");
+  const k = String(kind || "").trim().toLowerCase();
+  if (!k || k === "all") return base;
+  const rts = cancelReturnRtsInner();
+  const returned = cancelReturnReturnedInner();
+  if (k === "refund_return" || k === "returned" || k === "return") {
+    return { $and: [base, returned, { $nor: [rts] }] };
+  }
+  if (k === "failed_delivery" || k === "rts") {
+    return { $and: [base, rts] };
+  }
+  if (k === "cancelled" || k === "cancel") {
+    return { $and: [base, { $nor: [returned, rts] }] };
+  }
+  return base;
+}
+
+export function parseCancelReturnKindParam(raw?: string | null): string {
+  const k = String(raw || "").trim().toLowerCase();
+  if (k === "refund_return" || k === "returned" || k === "return") return "refund_return";
+  if (k === "failed_delivery" || k === "rts") return "failed_delivery";
+  if (k === "cancelled" || k === "cancel") return "cancelled";
+  return "";
+}
+
+/** Đếm global 4 nhóm Hủy/Hoàn từ Mongo — không dùng độ dài trang. */
+export async function countCancelReturnCountersFromStore(opts?: {
+  shopId?: string;
+  shopIds?: string[];
+}): Promise<CancelReturnCounters> {
+  const empty = { ...EMPTY_CANCEL_RETURN_COUNTERS };
+  try {
+    requireMongo();
+    const shopAnd: Record<string, unknown>[] = [];
+    const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
+    if (shopFilter) shopAnd.push(shopFilter);
+    const withShop = (tabFilter: Record<string, unknown>) => {
+      const parts = [...shopAnd];
+      if (tabFilter && Object.keys(tabFilter).length) parts.push(tabFilter);
+      if (parts.length === 0) return {};
+      if (parts.length === 1) return parts[0];
+      return { $and: parts };
+    };
+    const total = await safeCountDocuments(withShop(orderTabFilter("cancel_returns")), 8000);
+    await new Promise((r) => setTimeout(r, 20));
+    const returned = await safeCountDocuments(
+      withShop(orderCancelReturnKindFilter("refund_return")),
+      8000,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    const cancelled = await safeCountDocuments(
+      withShop(orderCancelReturnKindFilter("cancelled")),
+      8000,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    const rts = await safeCountDocuments(
+      withShop(orderCancelReturnKindFilter("failed_delivery")),
+      8000,
+    );
+    return { total, returned, cancelled, rts };
+  } catch (err: any) {
+    console.warn(
+      "[MongoDB] countCancelReturnCountersFromStore failed:",
+      err?.message || err,
+    );
+    return empty;
+  }
+}
+
+/**
+ * Tái phân loại Hủy / RTS / Return 30 ngày — batch + sleep, không while(true).
+ */
+export async function reclassifyCancelReturnsInStore(opts?: {
+  lookbackMs?: number;
+  limit?: number;
+}): Promise<{ scanned: number; updated: number; pages: number }> {
+  const empty = { scanned: 0, updated: 0, pages: 0 };
+  try {
+    requireMongo();
+    const lookbackMs = Math.max(
+      24 * 60 * 60 * 1000,
+      Math.min(30 * 24 * 60 * 60 * 1000, Number(opts?.lookbackMs) || 30 * 24 * 60 * 60 * 1000),
+    );
+    const hardLimit = Math.max(1, Math.min(4000, Math.floor(Number(opts?.limit) || 2000)));
+    const pageSize = 50;
+    const maxPages = Math.ceil(hardLimit / pageSize);
+    const since = new Date(Date.now() - lookbackMs);
+    const sinceIso = since.toISOString();
+    const filter = {
+      $and: [
+        orderTabFilter("cancel_returns"),
+        {
+          $or: [
+            { "data.date": { $gte: sinceIso } },
+            { last_synced_at: { $gte: since } },
+            { last_shopee_update_at: { $gte: since } },
+          ],
+        },
+      ],
+    };
+    let scanned = 0;
+    let updated = 0;
+    for (let page = 0; page < maxPages; page += 1) {
+      if (scanned >= hardLimit) break;
+      const docs = await OrderModel.find(filter)
+        .sort({ "data.date": -1, _id: -1 })
+        .skip(page * pageSize)
+        .limit(pageSize)
+        .maxTimeMS(8000)
+        .lean();
+      if (!docs.length) break;
+      const ops: any[] = [];
+      for (const doc of docs as any[]) {
+        if (scanned >= hardLimit) break;
+        scanned += 1;
+        const order = hydrateOrderFromMongoDoc(doc);
+        if (!order) continue;
+        const kind = classifyShopeeCancelReturnKind(order);
+        if (!kind) continue;
+        const sub = resolveShopeeSubStatus(kind);
+        const clearReturn = kind !== "refund_return";
+        const prevKind = String(
+          doc?.shopee_cancel_return_kind || doc?.data?.shopee_cancel_return_kind || "",
+        ).trim();
+        const prevReturn = String(doc?.return_sn || doc?.data?.return_sn || "").trim();
+        const needWrite =
+          prevKind !== kind ||
+          (clearReturn && Boolean(prevReturn)) ||
+          Boolean(doc?.is_return) !== (kind === "refund_return");
+        if (!needWrite) continue;
+        const $set: Record<string, unknown> = {
+          shopee_cancel_return_kind: kind,
+          "data.shopee_cancel_return_kind": kind,
+          is_return: kind === "refund_return",
+          "data.is_return": kind === "refund_return",
+          is_rts: kind === "failed_delivery",
+          "data.is_rts": kind === "failed_delivery",
+        };
+        if (sub) {
+          $set.sub_status = sub;
+          $set["data.sub_status"] = sub;
+        }
+        const $unset: Record<string, 1> = {};
+        if (clearReturn) {
+          $unset.return_sn = 1;
+          $unset["data.return_sn"] = 1;
+        }
+        ops.push({
+          updateOne: {
+            filter: { _id: doc._id },
+            update: {
+              $set,
+              ...(Object.keys($unset).length ? { $unset } : {}),
+            },
+          },
+        });
+        updated += 1;
+      }
+      if (ops.length) {
+        await OrderModel.bulkWrite(ops, { ordered: false });
+      }
+      if (docs.length < pageSize) break;
+      await new Promise((r) => setTimeout(r, 80));
+    }
+    console.log(
+      `[MongoDB] reclassifyCancelReturns scanned=${scanned} updated=${updated} pages<=${maxPages}`,
+    );
+    return { scanned, updated, pages: maxPages };
+  } catch (err: any) {
+    console.error(
+      "[MongoDB] reclassifyCancelReturnsInStore FATAL:",
+      err?.message || err,
+    );
+    return empty;
+  }
+}
+
 /**
  * Targeted Healing: đơn Shopee còn TO_SHIP cần dò get_order_detail.
  * - Đã quét mã (is_handed_over=true) — luồng cũ
@@ -5078,7 +5356,6 @@ export async function countOrdersByTabsFromStore(opts?: {
       "handed_over_carrier",
       "return_pending",
       "return_requests",
-      "cancel_returns",
       "web_orders",
     ] as const;
     // Tuần tự — CẤM Promise.all 8 countDocuments (nproc/CageFS fork fail).
@@ -5119,6 +5396,17 @@ export async function countOrdersByTabsFromStore(opts?: {
     } catch {
       counts.received_cancel_returns = 0;
     }
+    const cr = await countCancelReturnCountersFromStore({
+      shopId: opts?.shopId,
+      shopIds: opts?.shopIds,
+    });
+    counts.cancel_returns = cr.total;
+    counts.cancel_returns_returned = cr.returned;
+    counts.cancel_returns_cancelled = cr.cancelled;
+    counts.cancel_returns_rts = cr.rts;
+    counts.refund_return = cr.returned;
+    counts.cancelled = cr.cancelled;
+    counts.failed_delivery = cr.rts;
     return counts;
   } catch (err: any) {
     console.error(
@@ -5138,6 +5426,7 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
   totalPages: number;
   hasMore: boolean;
   counts: Record<string, number>;
+  counters: CancelReturnCounters;
 }> {
   const empty = {
     rows: [] as any[],
@@ -5147,6 +5436,7 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
     totalPages: 1,
     hasMore: false,
     counts: {} as Record<string, number>,
+    counters: { ...EMPTY_CANCEL_RETURN_COUNTERS },
   };
   try {
     requireMongo();
@@ -5160,8 +5450,19 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
     const and: Record<string, unknown>[] = [];
     const search = String(opts?.query || "").trim();
     const requestedTab = String(opts?.tab || "").trim().toLowerCase();
+    const kind = parseCancelReturnKindParam(opts?.kind);
+    const isCancelReturnsTab =
+      requestedTab === "cancel_returns" ||
+      requestedTab === "cancel-returns" ||
+      requestedTab === "cancelled_returned" ||
+      requestedTab === "huy-hoan" ||
+      requestedTab === "don-huy-hoan";
     // q= → quét TOÀN BỘ collection, không kẹp tab hiện tại.
-    let tabFilter = search ? {} : orderTabFilter(requestedTab);
+    let tabFilter = search
+      ? {}
+      : isCancelReturnsTab && kind
+        ? orderCancelReturnKindFilter(kind)
+        : orderTabFilter(requestedTab);
     if (!search && requestedTab && requestedTab !== "all" && Object.keys(tabFilter).length === 0) {
       console.warn(
         `[MongoDB] queryOrdersPageFromStore unknown tab=${requestedTab} — không count toàn DB`,
@@ -5303,6 +5604,18 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
       }
     }
 
+    let counters = { ...EMPTY_CANCEL_RETURN_COUNTERS };
+    if (isCancelReturnsTab) {
+      counters = await countCancelReturnCountersFromStore({
+        shopId: opts?.shopId,
+        shopIds: opts?.shopIds,
+      });
+      counts.cancel_returns = counters.total;
+      counts.cancel_returns_returned = counters.returned;
+      counts.cancel_returns_cancelled = counters.cancelled;
+      counts.cancel_returns_rts = counters.rts;
+    }
+
     const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / pageSize) || 1);
     return {
       rows,
@@ -5312,6 +5625,7 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
       totalPages,
       hasMore: page * pageSize < total,
       counts,
+      counters,
     };
   } catch (err: any) {
     console.error(

@@ -2,7 +2,7 @@ import type { AppliedSystemFee, Order } from '../types';
 import { parseShopeeFees, parseCustomCostItems } from './shopeeFees';
 import { inferShippingCarrierLabel } from './shippingCarrier';
 import { isTruthyFlag } from './orderWarehouseStatus';
-import { isUnshippedShopeeCancel } from './shopeeCancelReturnClassify';
+import { isUnshippedShopeeCancel, classifyShopeeCancelReturnKind } from './shopeeCancelReturnClassify';
 
 /** Chuẩn hóa đơn từ API — tránh crash khi thiếu date/orderSn/items. */
 export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Order {
@@ -148,6 +148,8 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
         ? Number(raw.return_refund_request_type)
         : undefined,
     shopee_cancel_return_kind: (() => {
+      const classified = classifyShopeeCancelReturnKind(raw as any);
+      if (classified) return classified;
       const k = String(raw.shopee_cancel_return_kind || '').trim();
       if (k === 'refund_return' || k === 'cancelled' || k === 'failed_delivery') return k;
       return undefined;
