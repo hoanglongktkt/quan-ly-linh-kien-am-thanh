@@ -74295,13 +74295,19 @@ function scheduleShopeeReturnRequestsSync(deps22 = {}) {
     return;
   }
   const cronExpr = String(
-    deps22.cronExpr || process.env.AUTO_RETURN_REQUESTS_CRON_EXPR || "*/10 * * * *"
+    deps22.cronExpr || process.env.AUTO_RETURN_REQUESTS_CRON_EXPR || "*/30 * * * *"
   ).trim();
   if (!import_node_cron.default.validate(cronExpr)) {
     console.error(`[CRON] Invalid return-requests cron expr="${cronExpr}"`);
     return;
   }
+  let returnRequestsInFlight = false;
   returnRequestsTask = import_node_cron.default.schedule(cronExpr, () => {
+    if (returnRequestsInFlight) {
+      console.log("[CRON] Return Requests skipped \u2014 previous tick still running");
+      return;
+    }
+    returnRequestsInFlight = true;
     console.log("[CRON] Tick Return Requests Sync (get_return_list \u2192 detail \u2192 reverse TN)");
     try {
       void Promise.resolve(deps22.runSync({ mode: "incremental", trigger: "cron" })).then((r2) => {
@@ -74312,15 +74318,26 @@ function scheduleShopeeReturnRequestsSync(deps22 = {}) {
         console.log(
           `[CRON] Return Requests done pulled=${r2?.pulled || 0} updated=${r2?.updated || 0} retryFilled=${r2?.retryFilled || 0}`
         );
+      }).catch((err) => {
+        console.error("[CRON] Return Requests tick failed:", err?.message || err);
+      }).finally(() => {
+        returnRequestsInFlight = false;
       });
     } catch (err) {
+      returnRequestsInFlight = false;
       console.error("[CRON] Return Requests tick failed:", err?.message || err);
     }
   });
   setTimeout(() => {
+    if (returnRequestsInFlight) return;
+    returnRequestsInFlight = true;
     try {
-      void Promise.resolve(deps22.runSync({ mode: "incremental", trigger: "boot" }));
+      void Promise.resolve(deps22.runSync({ mode: "incremental", trigger: "boot" })).catch(() => {
+      }).finally(() => {
+        returnRequestsInFlight = false;
+      });
     } catch {
+      returnRequestsInFlight = false;
     }
   }, 45e3);
   console.log(`[CRON] Return Requests Sync ON \u2014 expr="${cronExpr}"`);
@@ -79016,69 +79033,27 @@ async function loadCancelReturnMissingTrackingFromStore(opts) {
 async function loadReturnTrackingPendingFromStore(opts) {
   if (!isMongoReady()) return [];
   requireMongo();
-  const limit = Math.min(Math.max(1, Math.floor(Number(opts?.limit) || 40)), 120);
-  const lookbackMs = Math.max(
-    24 * 60 * 60 * 1e3,
-    Number(opts?.lookbackMs) || 60 * 24 * 60 * 60 * 1e3
+  const HARD_LIMIT = 30;
+  const limit = Math.min(HARD_LIMIT, Math.max(1, Math.floor(Number(opts?.limit) || HARD_LIMIT)));
+  const lookbackMs = Math.min(
+    14 * 24 * 60 * 60 * 1e3,
+    Math.max(24 * 60 * 60 * 1e3, Number(opts?.lookbackMs) || 14 * 24 * 60 * 60 * 1e3)
   );
   const cutoffIso = new Date(Date.now() - lookbackMs).toISOString();
   const cutoffDate = new Date(Date.now() - lookbackMs);
-  const hasReturnSn = {
-    $or: [
-      { return_sn: { $exists: true, $nin: [null, ""] } },
-      { "data.return_sn": { $exists: true, $nin: [null, ""] } }
-    ]
-  };
-  const returnTnMissingOrCopied = {
-    $or: [
-      { return_tracking_no: { $exists: false } },
-      { return_tracking_no: null },
-      { return_tracking_no: "" },
-      { "data.return_tracking_no": { $exists: false } },
-      { "data.return_tracking_no": null },
-      { "data.return_tracking_no": "" },
-      {
-        $expr: {
-          $let: {
-            vars: {
-              rtn: {
-                $toUpper: {
-                  $ifNull: [
-                    "$return_tracking_no",
-                    { $ifNull: ["$data.return_tracking_no", ""] }
-                  ]
-                }
-              },
-              out: {
-                $toUpper: {
-                  $ifNull: [
-                    "$tracking_no",
-                    { $ifNull: ["$data.tracking_no", ""] }
-                  ]
-                }
-              }
-            },
-            in: {
-              $and: [
-                { $gt: [{ $strLenCP: "$$rtn" }, 0] },
-                { $gt: [{ $strLenCP: "$$out" }, 0] },
-                { $eq: ["$$rtn", "$$out"] }
-              ]
-            }
-          }
-        }
-      }
-    ]
-  };
   const filter2 = {
     $and: [
       {
         $or: [
-          { "data.channel": "shopee" },
-          { channel: "shopee" },
-          { "data.channel": { $exists: false } },
-          { "data.channel": null },
-          { "data.channel": "" }
+          { return_sn: { $type: "string", $nin: [""] } },
+          { "data.return_sn": { $type: "string", $nin: [""] } }
+        ]
+      },
+      {
+        $or: [
+          { return_tracking_no: { $exists: false } },
+          { return_tracking_no: null },
+          { return_tracking_no: "" }
         ]
       },
       {
@@ -79086,14 +79061,12 @@ async function loadReturnTrackingPendingFromStore(opts) {
           { "data.date": { $gte: cutoffIso } },
           { last_synced_at: { $gte: cutoffDate } }
         ]
-      },
-      hasReturnSn,
-      returnTnMissingOrCopied
+      }
     ]
   };
   let docs;
   try {
-    docs = await OrderModel.find(filter2).select({ _id: 1 }).sort({ "data.date": -1, last_synced_at: -1, _id: -1 }).limit(limit).maxTimeMS(1e4).lean();
+    docs = await OrderModel.find(filter2).select({ _id: 1 }).sort({ last_synced_at: -1, _id: -1 }).limit(limit).maxTimeMS(5e3).lean();
   } catch (err) {
     console.warn(
       "[MongoDB] loadReturnTrackingPendingFromStore failed:",
@@ -79103,9 +79076,12 @@ async function loadReturnTrackingPendingFromStore(opts) {
   }
   if (!docs.length) return [];
   console.log(
-    `[MongoDB] return-tracking-pending candidates=${docs.length} lookbackDays=${Math.round(lookbackMs / 864e5)}`
+    `[MongoDB] return-tracking-pending candidates=${docs.length} lookbackDays=${Math.round(lookbackMs / 864e5)} cap=${limit}`
   );
-  return loadOrdersFromStore({ ids: docs.map((d) => String(d._id)) });
+  return loadOrdersFromStore({
+    ids: docs.map((d) => String(d._id)).slice(0, HARD_LIMIT),
+    limit: HARD_LIMIT
+  });
 }
 function buildShopIdMongoFilter(shopId, shopIds) {
   const multi = Array.isArray(shopIds) ? [
@@ -122098,7 +122074,7 @@ async function syncShopeeReturnRequests(opts) {
   let pulled = 0;
   let updated = 0;
   const mode = opts?.mode === "full" ? "full" : "incremental";
-  const maxReturns = Math.max(20, Math.min(300, Number(opts?.maxReturns) || (mode === "full" ? 200 : 80)));
+  const maxReturns = Math.max(10, Math.min(30, Number(opts?.maxReturns) || 30));
   try {
     ensureShopeeLinkedShopTokenKeys();
     const shopIds = (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds()).map((id) => normalizeShopIdKey(id)).filter(Boolean);
@@ -122113,7 +122089,7 @@ async function syncShopeeReturnRequests(opts) {
         elapsedMs: Date.now() - startedAt
       };
     }
-    const orders = isMongoReady() ? await loadOrdersFromStore().catch(() => []) : [];
+    const orders = [];
     const deadlineAt = startedAt + Math.min(ORDERS_PULL_HARD_DEADLINE_MS, 9e4);
     for (const shopId of shopIds) {
       if (Date.now() >= deadlineAt) break;
@@ -122137,6 +122113,7 @@ async function syncShopeeReturnRequests(opts) {
             const fresh = await getValidShopeeAccessToken(shopId);
             if (fresh) accessToken = fresh;
             const detailResult = await shopeeGetReturnDetail(shopId, accessToken, returnSn);
+            await new Promise((res) => setTimeout(res, 500));
             if (detailResult?.error) {
               errors.push({
                 shopId,
@@ -122149,7 +122126,16 @@ async function syncShopeeReturnRequests(opts) {
             const detail = detailResult?.response ?? detailResult ?? {};
             const orderSn = toShopeeSn(detail.order_sn ?? detail.orderSn ?? row.orderSn) || "";
             if (!orderSn) continue;
-            const existing = orders.find((o) => String(o.orderSn) === orderSn);
+            let existing = orders.find((o) => String(o.orderSn) === orderSn);
+            if (!existing && isMongoReady()) {
+              try {
+                const loaded = await loadOrdersFromStore({ orderSns: [orderSn], limit: 1 });
+                existing = loaded[0];
+                if (existing) orders.push(existing);
+              } catch {
+                existing = void 0;
+              }
+            }
             const mappedReturnSn = extractReturnRequestCode(detail) || returnSn;
             const { tracking: returnShipTn } = await fetchReturnShippingTrackingNumber(
               shopId,
@@ -122238,7 +122224,7 @@ async function syncShopeeReturnRequests(opts) {
             markNewReturnRequestAlert(merged, existing);
             patches.push(merged);
             pulled += 1;
-            await shopeeSyncDelay(120);
+            await new Promise((res) => setTimeout(res, 500));
           } catch (rowErr) {
             errors.push({
               shopId,
@@ -122285,67 +122271,90 @@ async function syncShopeeReturnRequests(opts) {
     releaseOrdersPullLock("syncReturnRequests_finally");
   }
 }
+var RETURN_TRACKING_RETRY_HARD_LIMIT = 30;
+var returnTrackingRetryInFlight = false;
 async function retryPendingReturnTracking(opts) {
-  const startedAt = Date.now();
   const empty = { attempted: 0, filled: 0, errors: 0 };
-  if (!isMongoReady()) return empty;
-  let candidates = [];
+  if (returnTrackingRetryInFlight) {
+    console.log("[ReturnTracking Retry] SKIPPED \u2014 job \u0111ang ch\u1EA1y (mutex).");
+    return { ...empty, skipped: true };
+  }
+  returnTrackingRetryInFlight = true;
+  const startedAt = Date.now();
   try {
-    candidates = await loadReturnTrackingPendingFromStore({
-      lookbackMs: 60 * 24 * 60 * 60 * 1e3,
-      limit: Math.max(10, Math.min(80, Number(opts?.limit) || 40))
-    });
-  } catch (err) {
-    console.warn("[ReturnTracking Retry] load candidates failed:", err?.message || err);
-    return empty;
-  }
-  if (!candidates.length) {
-    console.log(`[ReturnTracking Retry] trigger=${opts?.trigger || "cron"} \u2014 0 pending`);
-    return empty;
-  }
-  let filled = 0;
-  let errors = 0;
-  const touched = [];
-  for (const order of candidates) {
-    const shopId = normalizeShopIdKey(order?.shopId) || String(order?.shopId || "").trim();
-    const returnSn = String(order?.return_sn || "").trim();
-    if (!shopId || !returnSn) continue;
+    if (!isMongoReady()) return empty;
+    const hardLimit = Math.min(
+      RETURN_TRACKING_RETRY_HARD_LIMIT,
+      Math.max(1, Math.floor(Number(opts?.limit) || RETURN_TRACKING_RETRY_HARD_LIMIT))
+    );
+    let candidates = [];
     try {
-      const accessToken = await getValidShopeeAccessToken(shopId);
-      if (!accessToken) continue;
-      const ok = await fillReturnTrackingFromShopee(shopId, accessToken, order);
-      const rtn = distinctReturnTracking(
-        order.return_tracking_no || order.returnTrackingNumber,
-        order.trackingNumber || order.tracking_no
-      );
-      if (ok && rtn) {
-        applyReturnTrackingAliases(order, rtn);
-        touched.push(order);
-        filled += 1;
-        console.log(
-          `[ReturnTracking Retry] filled order_sn=${order.orderSn} return_sn=${returnSn} rtn=${rtn}`
+      candidates = await loadReturnTrackingPendingFromStore({
+        lookbackMs: 14 * 24 * 60 * 60 * 1e3,
+        limit: hardLimit
+      });
+    } catch (err) {
+      console.warn("[ReturnTracking Retry] load candidates failed:", err?.message || err);
+      return empty;
+    }
+    candidates = (candidates || []).filter((order) => {
+      const returnSn = String(order?.return_sn || "").trim();
+      return Boolean(returnSn) && orderNeedsRealReturnTracking(order);
+    }).slice(0, hardLimit);
+    if (!candidates.length) {
+      console.log(`[ReturnTracking Retry] trigger=${opts?.trigger || "cron"} \u2014 0 pending`);
+      return empty;
+    }
+    let filled = 0;
+    let errors = 0;
+    const touched = [];
+    for (const order of candidates) {
+      const shopId = normalizeShopIdKey(order?.shopId) || String(order?.shopId || "").trim();
+      const returnSn = String(order?.return_sn || "").trim();
+      if (!shopId || !returnSn) continue;
+      try {
+        const accessToken = await getValidShopeeAccessToken(shopId);
+        if (!accessToken) {
+          await new Promise((res) => setTimeout(res, 500));
+          continue;
+        }
+        const ok = await fillReturnTrackingFromShopee(shopId, accessToken, order);
+        await new Promise((res) => setTimeout(res, 500));
+        const rtn = distinctReturnTracking(
+          order.return_tracking_no || order.returnTrackingNumber,
+          order.trackingNumber || order.tracking_no
         );
+        if (ok && rtn) {
+          applyReturnTrackingAliases(order, rtn);
+          touched.push(order);
+          filled += 1;
+          console.log(
+            `[ReturnTracking Retry] filled order_sn=${order.orderSn} return_sn=${returnSn} rtn=${rtn}`
+          );
+        }
+      } catch (rowErr) {
+        errors += 1;
+        console.warn(
+          `[ReturnTracking Retry] ${order?.orderSn || returnSn}:`,
+          rowErr?.message || rowErr
+        );
+        await new Promise((res) => setTimeout(res, 500));
       }
-      await shopeeSyncDelay(120);
-    } catch (rowErr) {
-      errors += 1;
-      console.warn(
-        `[ReturnTracking Retry] ${order?.orderSn || returnSn}:`,
-        rowErr?.message || rowErr
-      );
     }
-  }
-  if (touched.length && isMongoReady()) {
-    try {
-      await bulkUpsertOrdersToStore(touched);
-    } catch (persistErr) {
-      console.warn("[ReturnTracking Retry] upsert failed:", persistErr?.message || persistErr);
+    if (touched.length && isMongoReady()) {
+      try {
+        await bulkUpsertOrdersToStore(touched);
+      } catch (persistErr) {
+        console.warn("[ReturnTracking Retry] upsert failed:", persistErr?.message || persistErr);
+      }
     }
+    console.log(
+      `[ReturnTracking Retry] trigger=${opts?.trigger || "cron"} attempted=${candidates.length} filled=${filled} errors=${errors} ${Date.now() - startedAt}ms`
+    );
+    return { attempted: candidates.length, filled, errors };
+  } finally {
+    returnTrackingRetryInFlight = false;
   }
-  console.log(
-    `[ReturnTracking Retry] trigger=${opts?.trigger || "cron"} attempted=${candidates.length} filled=${filled} errors=${errors} ${Date.now() - startedAt}ms`
-  );
-  return { attempted: candidates.length, filled, errors };
 }
 async function shopeeGetOrderDetail(shopId, accessToken, orderSnList) {
   if (orderSnList.length === 0 || orderSnList.length > SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS) {
@@ -128422,7 +128431,7 @@ function scheduleShopeeReturnRequestsSyncSafe() {
       let retry2 = { attempted: 0, filled: 0, errors: 0 };
       try {
         retry2 = await retryPendingReturnTracking({
-          limit: 40,
+          limit: 30,
           trigger: opts?.trigger || "cron"
         });
       } catch (retryErr) {
@@ -128436,7 +128445,7 @@ function scheduleShopeeReturnRequestsSyncSafe() {
         message: `${result?.message || "Return requests"} | retry TN attempted=${retry2.attempted} filled=${retry2.filled}`
       };
     },
-    cronExpr: process.env.AUTO_RETURN_REQUESTS_CRON_EXPR || "*/10 * * * *"
+    cronExpr: process.env.AUTO_RETURN_REQUESTS_CRON_EXPR || "*/30 * * * *"
   });
 }
 function scheduleHandedOverStatusReconcileSafe() {

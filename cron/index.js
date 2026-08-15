@@ -254,7 +254,7 @@ let returnRequestsScheduled = false;
 let returnRequestsTask = null;
 
 /**
- * Đồng bộ Yêu cầu trả hàng từ Shopee Return APIs — mặc định mỗi 10 phút.
+ * Đồng bộ Yêu cầu trả hàng từ Shopee Return APIs — mặc định mỗi 30 phút.
  * Tắt: AUTO_RETURN_REQUESTS_CRON=0
  *
  * @param {object} [deps]
@@ -286,7 +286,7 @@ export function scheduleShopeeReturnRequestsSync(deps = {}) {
   }
 
   const cronExpr = String(
-    deps.cronExpr || process.env.AUTO_RETURN_REQUESTS_CRON_EXPR || "*/10 * * * *",
+    deps.cronExpr || process.env.AUTO_RETURN_REQUESTS_CRON_EXPR || "*/30 * * * *",
   ).trim();
 
   if (!cron.validate(cronExpr)) {
@@ -294,29 +294,49 @@ export function scheduleShopeeReturnRequestsSync(deps = {}) {
     return;
   }
 
+  let returnRequestsInFlight = false;
   returnRequestsTask = cron.schedule(cronExpr, () => {
+    if (returnRequestsInFlight) {
+      console.log("[CRON] Return Requests skipped — previous tick still running");
+      return;
+    }
+    returnRequestsInFlight = true;
     console.log("[CRON] Tick Return Requests Sync (get_return_list → detail → reverse TN)");
     try {
-      void Promise.resolve(deps.runSync({ mode: "incremental", trigger: "cron" })).then((r) => {
-        if (r?.skipped) {
-          console.log(`[CRON] Return Requests skipped: ${r.message || "busy"}`);
-          return;
-        }
-        console.log(
-          `[CRON] Return Requests done pulled=${r?.pulled || 0} updated=${r?.updated || 0} retryFilled=${r?.retryFilled || 0}`,
-        );
-      });
+      void Promise.resolve(deps.runSync({ mode: "incremental", trigger: "cron" }))
+        .then((r) => {
+          if (r?.skipped) {
+            console.log(`[CRON] Return Requests skipped: ${r.message || "busy"}`);
+            return;
+          }
+          console.log(
+            `[CRON] Return Requests done pulled=${r?.pulled || 0} updated=${r?.updated || 0} retryFilled=${r?.retryFilled || 0}`,
+          );
+        })
+        .catch((err) => {
+          console.error("[CRON] Return Requests tick failed:", err?.message || err);
+        })
+        .finally(() => {
+          returnRequestsInFlight = false;
+        });
     } catch (err) {
+      returnRequestsInFlight = false;
       console.error("[CRON] Return Requests tick failed:", err?.message || err);
     }
   });
 
-  // Boot kick nhẹ — không chờ 10 phút mới có dữ liệu cho tab.
+  // Boot kick nhẹ — không chờ 30 phút mới có dữ liệu cho tab.
   setTimeout(() => {
+    if (returnRequestsInFlight) return;
+    returnRequestsInFlight = true;
     try {
-      void Promise.resolve(deps.runSync({ mode: "incremental", trigger: "boot" }));
+      void Promise.resolve(deps.runSync({ mode: "incremental", trigger: "boot" }))
+        .catch(() => {})
+        .finally(() => {
+          returnRequestsInFlight = false;
+        });
     } catch {
-      /* ignore */
+      returnRequestsInFlight = false;
     }
   }, 45_000);
 

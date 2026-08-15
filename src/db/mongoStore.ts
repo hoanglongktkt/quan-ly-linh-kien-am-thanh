@@ -4338,8 +4338,8 @@ export async function loadCancelReturnMissingTrackingFromStore(opts?: {
 }
 
 /**
- * P1: đơn đã có return_sn nhưng mã hoàn trống hoặc đang copy nhầm mã chiều đi.
- * Không lọc cooldown — cron retry định kỳ (Shopee cấp reverse TN trễ).
+ * P1: đơn đã có return_sn nhưng mã hoàn trống.
+ * Query nhẹ, CẤM $expr/$toUpper (COLLSCAN CPU 100%). Hard .limit(30).
  */
 export async function loadReturnTrackingPendingFromStore(opts?: {
   lookbackMs?: number;
@@ -4347,71 +4347,28 @@ export async function loadReturnTrackingPendingFromStore(opts?: {
 }): Promise<any[]> {
   if (!isMongoReady()) return [];
   requireMongo();
-  const limit = Math.min(Math.max(1, Math.floor(Number(opts?.limit) || 40)), 120);
-  const lookbackMs = Math.max(
-    24 * 60 * 60 * 1000,
-    Number(opts?.lookbackMs) || 60 * 24 * 60 * 60 * 1000,
+  const HARD_LIMIT = 30;
+  const limit = Math.min(HARD_LIMIT, Math.max(1, Math.floor(Number(opts?.limit) || HARD_LIMIT)));
+  const lookbackMs = Math.min(
+    14 * 24 * 60 * 60 * 1000,
+    Math.max(24 * 60 * 60 * 1000, Number(opts?.lookbackMs) || 14 * 24 * 60 * 60 * 1000),
   );
   const cutoffIso = new Date(Date.now() - lookbackMs).toISOString();
   const cutoffDate = new Date(Date.now() - lookbackMs);
-
-  const hasReturnSn = {
-    $or: [
-      { return_sn: { $exists: true, $nin: [null, ""] } },
-      { "data.return_sn": { $exists: true, $nin: [null, ""] } },
-    ],
-  };
-  const returnTnMissingOrCopied = {
-    $or: [
-      { return_tracking_no: { $exists: false } },
-      { return_tracking_no: null },
-      { return_tracking_no: "" },
-      { "data.return_tracking_no": { $exists: false } },
-      { "data.return_tracking_no": null },
-      { "data.return_tracking_no": "" },
-      {
-        $expr: {
-          $let: {
-            vars: {
-              rtn: {
-                $toUpper: {
-                  $ifNull: [
-                    "$return_tracking_no",
-                    { $ifNull: ["$data.return_tracking_no", ""] },
-                  ],
-                },
-              },
-              out: {
-                $toUpper: {
-                  $ifNull: [
-                    "$tracking_no",
-                    { $ifNull: ["$data.tracking_no", ""] },
-                  ],
-                },
-              },
-            },
-            in: {
-              $and: [
-                { $gt: [{ $strLenCP: "$$rtn" }, 0] },
-                { $gt: [{ $strLenCP: "$$out" }, 0] },
-                { $eq: ["$$rtn", "$$out"] },
-              ],
-            },
-          },
-        },
-      },
-    ],
-  };
 
   const filter: Record<string, unknown> = {
     $and: [
       {
         $or: [
-          { "data.channel": "shopee" },
-          { channel: "shopee" },
-          { "data.channel": { $exists: false } },
-          { "data.channel": null },
-          { "data.channel": "" },
+          { return_sn: { $type: "string", $nin: [""] } },
+          { "data.return_sn": { $type: "string", $nin: [""] } },
+        ],
+      },
+      {
+        $or: [
+          { return_tracking_no: { $exists: false } },
+          { return_tracking_no: null },
+          { return_tracking_no: "" },
         ],
       },
       {
@@ -4420,8 +4377,6 @@ export async function loadReturnTrackingPendingFromStore(opts?: {
           { last_synced_at: { $gte: cutoffDate } },
         ],
       },
-      hasReturnSn,
-      returnTnMissingOrCopied,
     ],
   };
 
@@ -4429,9 +4384,9 @@ export async function loadReturnTrackingPendingFromStore(opts?: {
   try {
     docs = await OrderModel.find(filter)
       .select({ _id: 1 })
-      .sort({ "data.date": -1, last_synced_at: -1, _id: -1 })
+      .sort({ last_synced_at: -1, _id: -1 })
       .limit(limit)
-      .maxTimeMS(10_000)
+      .maxTimeMS(5_000)
       .lean();
   } catch (err: any) {
     console.warn(
@@ -4442,9 +4397,12 @@ export async function loadReturnTrackingPendingFromStore(opts?: {
   }
   if (!docs.length) return [];
   console.log(
-    `[MongoDB] return-tracking-pending candidates=${docs.length} lookbackDays=${Math.round(lookbackMs / 86400000)}`,
+    `[MongoDB] return-tracking-pending candidates=${docs.length} lookbackDays=${Math.round(lookbackMs / 86400000)} cap=${limit}`,
   );
-  return loadOrdersFromStore({ ids: docs.map((d) => String(d._id)) });
+  return loadOrdersFromStore({
+    ids: docs.map((d) => String(d._id)).slice(0, HARD_LIMIT),
+    limit: HARD_LIMIT,
+  });
 }
 
 export type OrdersPageQuery = {
