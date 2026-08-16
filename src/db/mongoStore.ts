@@ -1987,6 +1987,14 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     if (order.logistics_status != null) {
       $set["data.logistics_status"] = order.logistics_status;
     }
+    if (Number(order.return_create_time) > 0) {
+      $set.return_create_time = Number(order.return_create_time);
+      $set["data.return_create_time"] = Number(order.return_create_time);
+    }
+    if (Number(order.return_update_time) > 0) {
+      $set.return_update_time = Number(order.return_update_time);
+      $set["data.return_update_time"] = Number(order.return_update_time);
+    }
 
     // Field tracking — không bao giờ ghi đè bằng chuỗi rỗng / null từ sync hủy/hoàn.
     const TRACKING_PRESERVE_KEYS = new Set([
@@ -4833,6 +4841,7 @@ export type OrdersPageQuery = {
 };
 
 const DEFAULT_ORDER_DATE_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+const RETURN_TAB_DATE_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000;
 const MAX_ORDER_DATE_SPAN_MS = 3 * 365 * 24 * 60 * 60 * 1000;
 
 function parseDateBound(raw: unknown, endOfDay: boolean): Date | null {
@@ -4851,6 +4860,7 @@ export function parseOrderListDateRange(opts?: {
   startDate?: string | Date | null;
   endDate?: string | Date | null;
   forceDefault?: boolean;
+  lookbackMs?: number;
 }): { start: Date; end: Date } | null {
   let start = parseDateBound(opts?.startDate, false);
   let end = parseDateBound(opts?.endDate, true);
@@ -4860,7 +4870,11 @@ export function parseOrderListDateRange(opts?: {
     end.setHours(23, 59, 59, 999);
   }
   if (!start) {
-    start = new Date(end.getTime() - DEFAULT_ORDER_DATE_LOOKBACK_MS);
+    const lookback = Math.max(
+      DEFAULT_ORDER_DATE_LOOKBACK_MS,
+      Number(opts?.lookbackMs) || DEFAULT_ORDER_DATE_LOOKBACK_MS,
+    );
+    start = new Date(end.getTime() - lookback);
     start.setHours(0, 0, 0, 0);
   }
   if (start.getTime() > end.getTime()) {
@@ -4889,6 +4903,28 @@ export function buildOrderCreatedAtMongoFilter(range: {
       { "data.date": { $gte: startIso, $lte: endIso } },
       { create_time: { $gte: range.start, $lte: range.end } },
       { "data.create_time": { $gte: startUnix, $lte: endUnix } },
+    ],
+  };
+}
+
+/** Tab Hủy/Hoàn: ngày tạo đơn HOẶC ngày phát sinh yêu cầu trả hàng. */
+export function buildCancelReturnActivityDateFilter(range: {
+  start: Date;
+  end: Date;
+}): Record<string, unknown> {
+  const created = buildOrderCreatedAtMongoFilter(range);
+  const startUnix = Math.floor(range.start.getTime() / 1000);
+  const endUnix = Math.ceil(range.end.getTime() / 1000);
+  return {
+    $or: [
+      ...(Array.isArray((created as any).$or) ? (created as any).$or : [created]),
+      { last_synced_at: { $gte: range.start, $lte: range.end } },
+      { last_shopee_update_at: { $gte: range.start, $lte: range.end } },
+      { return_alert_at: { $gte: range.start, $lte: range.end } },
+      { "data.return_create_time": { $gte: startUnix, $lte: endUnix } },
+      { "data.return_update_time": { $gte: startUnix, $lte: endUnix } },
+      { return_create_time: { $gte: startUnix, $lte: endUnix } },
+      { return_update_time: { $gte: startUnix, $lte: endUnix } },
     ],
   };
 }
@@ -5260,6 +5296,8 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
           { status: { $in: ["return_pending", "return_received"] } },
           { "data.shopee_cancel_return_kind": "refund_return" },
           { shopee_cancel_return_kind: "refund_return" },
+          { is_return: true },
+          { "data.is_return": true },
         ],
       };
     case "cancel_returns":
@@ -5303,6 +5341,10 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
           },
           { "data.sub_status": "RTS" },
           { sub_status: "RTS" },
+          { return_sn: { $type: "string", $nin: [""] } },
+          { "data.return_sn": { $type: "string", $nin: [""] } },
+          { is_return: true },
+          { "data.is_return": true },
         ],
       };
     case "stale":
@@ -5388,7 +5430,7 @@ export function orderCancelReturnKindFilter(kind?: string | null): Record<string
   const rts = cancelReturnRtsInner();
   const returned = cancelReturnReturnedInner();
   if (k === "refund_return" || k === "returned" || k === "return") {
-    return { $and: [base, returned, { $nor: [rts] }] };
+    return { $and: [base, returned] };
   }
   if (k === "failed_delivery" || k === "rts") {
     return { $and: [base, rts] };
@@ -5426,8 +5468,9 @@ export async function countCancelReturnCountersFromStore(opts?: {
       startDate: opts?.startDate,
       endDate: opts?.endDate,
       forceDefault: true,
+      lookbackMs: RETURN_TAB_DATE_LOOKBACK_MS,
     });
-    const dateFilter = dateRange ? buildOrderCreatedAtMongoFilter(dateRange) : null;
+    const dateFilter = dateRange ? buildCancelReturnActivityDateFilter(dateRange) : null;
     const withShop = (tabFilter: Record<string, unknown>) => {
       const parts = [...shopAnd];
       if (tabFilter && Object.keys(tabFilter).length) parts.push(tabFilter);
@@ -5862,6 +5905,11 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
       requestedTab === "cancelled_returned" ||
       requestedTab === "huy-hoan" ||
       requestedTab === "don-huy-hoan";
+    const isReturnRequestsTab =
+      requestedTab === "return_requests" ||
+      requestedTab === "return-requests" ||
+      requestedTab === "yeu-cau-tra-hang" ||
+      requestedTab === "yeu_cau_tra_hang";
     // q= → quét TOÀN BỘ collection, không kẹp tab hiện tại.
     let tabFilter = search
       ? {}
@@ -5948,9 +5996,19 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
       const dateRange = parseOrderListDateRange({
         startDate: opts?.startDate,
         endDate: opts?.endDate,
-        forceDefault: isCancelReturnsTab,
+        forceDefault: isCancelReturnsTab || isReturnRequestsTab,
+        lookbackMs:
+          isCancelReturnsTab || isReturnRequestsTab
+            ? RETURN_TAB_DATE_LOOKBACK_MS
+            : DEFAULT_ORDER_DATE_LOOKBACK_MS,
       });
-      if (dateRange) and.push(buildOrderCreatedAtMongoFilter(dateRange));
+      if (dateRange) {
+        and.push(
+          isCancelReturnsTab || isReturnRequestsTab
+            ? buildCancelReturnActivityDateFilter(dateRange)
+            : buildOrderCreatedAtMongoFilter(dateRange),
+        );
+      }
     }
     const filter = and.length === 0 ? {} : and.length === 1 ? and[0] : { $and: and };
 

@@ -75141,7 +75141,6 @@ function hasCarrierRtsEvidence(order) {
   return false;
 }
 function isShopeeReturnRefundOrder(order) {
-  if (hasCarrierRtsEvidence(order)) return false;
   if (isUnshippedShopeeCancel(order)) return false;
   if (!hasShopeeReturnSn(order)) return false;
   return true;
@@ -75152,8 +75151,8 @@ function shouldApplyShopeeReturnOverlay(existing) {
   return true;
 }
 function classifyShopeeCancelReturnKind(order) {
-  if (hasCarrierRtsEvidence(order)) return "failed_delivery";
   if (isShopeeReturnRefundOrder(order)) return "refund_return";
+  if (hasCarrierRtsEvidence(order)) return "failed_delivery";
   if (isShopeeCancelledStatus(order)) return "cancelled";
   const local = String(order.local_status || order.localStatus || "").toUpperCase();
   if (local === "CANCELLED_STORED") return "cancelled";
@@ -77495,6 +77494,14 @@ async function bulkUpsertOrdersToStore(orders) {
     if (order.logistics_status != null) {
       $set["data.logistics_status"] = order.logistics_status;
     }
+    if (Number(order.return_create_time) > 0) {
+      $set.return_create_time = Number(order.return_create_time);
+      $set["data.return_create_time"] = Number(order.return_create_time);
+    }
+    if (Number(order.return_update_time) > 0) {
+      $set.return_update_time = Number(order.return_update_time);
+      $set["data.return_update_time"] = Number(order.return_update_time);
+    }
     const TRACKING_PRESERVE_KEYS = /* @__PURE__ */ new Set([
       "tracking_no",
       "trackingNumber",
@@ -79480,6 +79487,7 @@ async function loadMissingReturnTrackingBackfillFromStore(opts) {
   });
 }
 var DEFAULT_ORDER_DATE_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1e3;
+var RETURN_TAB_DATE_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1e3;
 var MAX_ORDER_DATE_SPAN_MS = 3 * 365 * 24 * 60 * 60 * 1e3;
 function parseDateBound(raw, endOfDay) {
   const s2 = String(raw ?? "").trim();
@@ -79500,7 +79508,11 @@ function parseOrderListDateRange(opts) {
     end.setHours(23, 59, 59, 999);
   }
   if (!start) {
-    start = new Date(end.getTime() - DEFAULT_ORDER_DATE_LOOKBACK_MS);
+    const lookback = Math.max(
+      DEFAULT_ORDER_DATE_LOOKBACK_MS,
+      Number(opts?.lookbackMs) || DEFAULT_ORDER_DATE_LOOKBACK_MS
+    );
+    start = new Date(end.getTime() - lookback);
     start.setHours(0, 0, 0, 0);
   }
   if (start.getTime() > end.getTime()) {
@@ -79524,6 +79536,23 @@ function buildOrderCreatedAtMongoFilter(range) {
       { "data.date": { $gte: startIso, $lte: endIso } },
       { create_time: { $gte: range.start, $lte: range.end } },
       { "data.create_time": { $gte: startUnix, $lte: endUnix } }
+    ]
+  };
+}
+function buildCancelReturnActivityDateFilter(range) {
+  const created = buildOrderCreatedAtMongoFilter(range);
+  const startUnix = Math.floor(range.start.getTime() / 1e3);
+  const endUnix = Math.ceil(range.end.getTime() / 1e3);
+  return {
+    $or: [
+      ...Array.isArray(created.$or) ? created.$or : [created],
+      { last_synced_at: { $gte: range.start, $lte: range.end } },
+      { last_shopee_update_at: { $gte: range.start, $lte: range.end } },
+      { return_alert_at: { $gte: range.start, $lte: range.end } },
+      { "data.return_create_time": { $gte: startUnix, $lte: endUnix } },
+      { "data.return_update_time": { $gte: startUnix, $lte: endUnix } },
+      { return_create_time: { $gte: startUnix, $lte: endUnix } },
+      { return_update_time: { $gte: startUnix, $lte: endUnix } }
     ]
   };
 }
@@ -79840,7 +79869,9 @@ function orderTabFilter(tab) {
           { "data.shopee_order_status": "TO_RETURN" },
           { status: { $in: ["return_pending", "return_received"] } },
           { "data.shopee_cancel_return_kind": "refund_return" },
-          { shopee_cancel_return_kind: "refund_return" }
+          { shopee_cancel_return_kind: "refund_return" },
+          { is_return: true },
+          { "data.is_return": true }
         ]
       };
     case "cancel_returns":
@@ -79882,7 +79913,11 @@ function orderTabFilter(tab) {
             }
           },
           { "data.sub_status": "RTS" },
-          { sub_status: "RTS" }
+          { sub_status: "RTS" },
+          { return_sn: { $type: "string", $nin: [""] } },
+          { "data.return_sn": { $type: "string", $nin: [""] } },
+          { is_return: true },
+          { "data.is_return": true }
         ]
       };
     case "stale":
@@ -79952,7 +79987,7 @@ function orderCancelReturnKindFilter(kind) {
   const rts = cancelReturnRtsInner();
   const returned = cancelReturnReturnedInner();
   if (k === "refund_return" || k === "returned" || k === "return") {
-    return { $and: [base, returned, { $nor: [rts] }] };
+    return { $and: [base, returned] };
   }
   if (k === "failed_delivery" || k === "rts") {
     return { $and: [base, rts] };
@@ -79981,9 +80016,10 @@ async function countCancelReturnCountersFromStore(opts) {
     const dateRange = parseOrderListDateRange({
       startDate: opts?.startDate,
       endDate: opts?.endDate,
-      forceDefault: true
+      forceDefault: true,
+      lookbackMs: RETURN_TAB_DATE_LOOKBACK_MS
     });
-    const dateFilter = dateRange ? buildOrderCreatedAtMongoFilter(dateRange) : null;
+    const dateFilter = dateRange ? buildCancelReturnActivityDateFilter(dateRange) : null;
     const withShop = (tabFilter) => {
       const parts = [...shopAnd];
       if (tabFilter && Object.keys(tabFilter).length) parts.push(tabFilter);
@@ -80335,6 +80371,7 @@ async function queryOrdersPageFromStore(opts) {
     const requestedTab = String(opts?.tab || "").trim().toLowerCase();
     const kind = parseCancelReturnKindParam(opts?.kind);
     const isCancelReturnsTab = requestedTab === "cancel_returns" || requestedTab === "cancel-returns" || requestedTab === "cancelled_returned" || requestedTab === "huy-hoan" || requestedTab === "don-huy-hoan";
+    const isReturnRequestsTab = requestedTab === "return_requests" || requestedTab === "return-requests" || requestedTab === "yeu-cau-tra-hang" || requestedTab === "yeu_cau_tra_hang";
     let tabFilter = search ? {} : isCancelReturnsTab && kind ? orderCancelReturnKindFilter(kind) : orderTabFilter(requestedTab);
     if (!search && requestedTab && requestedTab !== "all" && Object.keys(tabFilter).length === 0) {
       console.warn(
@@ -80408,9 +80445,14 @@ async function queryOrdersPageFromStore(opts) {
       const dateRange = parseOrderListDateRange({
         startDate: opts?.startDate,
         endDate: opts?.endDate,
-        forceDefault: isCancelReturnsTab
+        forceDefault: isCancelReturnsTab || isReturnRequestsTab,
+        lookbackMs: isCancelReturnsTab || isReturnRequestsTab ? RETURN_TAB_DATE_LOOKBACK_MS : DEFAULT_ORDER_DATE_LOOKBACK_MS
       });
-      if (dateRange) and.push(buildOrderCreatedAtMongoFilter(dateRange));
+      if (dateRange) {
+        and.push(
+          isCancelReturnsTab || isReturnRequestsTab ? buildCancelReturnActivityDateFilter(dateRange) : buildOrderCreatedAtMongoFilter(dateRange)
+        );
+      }
     }
     const filter2 = and.length === 0 ? {} : and.length === 1 ? and[0] : { $and: and };
     let docs = [];
@@ -111637,7 +111679,7 @@ async function runOrdersPull(opts) {
     if (!skipCancelReturn) {
       try {
         cancelPull = await deps16.pullShopeeCancelReturnOrders({
-          lookbackSec: 30 * 24 * 60 * 60,
+          lookbackSec: 90 * 24 * 60 * 60,
           shopIds: shopIds?.length ? shopIds : void 0
         });
       } catch (cancelErr) {
@@ -111652,6 +111694,20 @@ async function runOrdersPull(opts) {
         message: "skipped_quick_sync",
         skipped: true
       };
+    }
+    let returnSync = { pulled: 0, updated: 0, shops: 0, errors: [], message: "", skipped: false };
+    if (typeof deps16.syncShopeeReturnRequests === "function") {
+      try {
+        returnSync = await deps16.syncShopeeReturnRequests({
+          mode: "full",
+          maxReturns: 200
+        });
+        console.log(
+          `[${logTag}] syncShopeeReturnRequests shops=${returnSync.shops || 0} pulled=${returnSync.pulled || 0} updated=${returnSync.updated || 0}`
+        );
+      } catch (returnErr) {
+        console.error("[API_SYNC_ERROR] return requests sync:", returnErr?.stack || returnErr);
+      }
     }
     let targetedHealing = {
       pulled: 0,
@@ -111689,17 +111745,18 @@ async function runOrdersPull(opts) {
     } catch (cacheErr) {
       console.error("[API_SYNC_ERROR] invalidate cache:", cacheErr?.stack || cacheErr);
     }
-    const pulled = (result?.pulled || 0) + (cancelPull.pulled || 0) + (targetedHealing.pulled || 0);
+    const pulled = (result?.pulled || 0) + (cancelPull.pulled || 0) + (returnSync.pulled || 0) + (targetedHealing.pulled || 0);
     const added = (result?.added || 0) + (cancelPull.added || 0);
-    const updated = (result?.updated || 0) + (cancelPull.updated || 0) + (targetedHealing.updated || 0);
+    const updated = (result?.updated || 0) + (cancelPull.updated || 0) + (returnSync.updated || 0) + (targetedHealing.updated || 0);
     const errors = [
       ...result?.errors || [],
       ...cancelPull.errors || [],
+      ...returnSync.errors || [],
       ...targetedHealing.errors || []
     ];
     const dbErrors = errors.filter((e2) => String(e2?.error || "") === "db_upsert_failed");
     const success = dbErrors.length === 0 && (Boolean(result?.success) || cancelPull.pulled > 0 || errors.length === 0);
-    const message = dbErrors.length > 0 ? `L\u1ED7i l\u01B0u MongoDB: ${dbErrors[0]?.message || "db_upsert_failed"}` : String(result?.message || `\u0110\xE3 k\xE9o ${pulled} \u0111\u01A1n`) + (cancelPull.pulled > 0 || cancelPull.message && !cancelPull.skipped ? ` | Cancel/return: ${cancelPull.message || `+${cancelPull.pulled}`}` : "") + (targetedHealing.candidates > 0 ? ` | Targeted Healing: ${targetedHealing.message || `${targetedHealing.pulled} \u0111\u01A1n`}` : "");
+    const message = dbErrors.length > 0 ? `L\u1ED7i l\u01B0u MongoDB: ${dbErrors[0]?.message || "db_upsert_failed"}` : String(result?.message || `\u0110\xE3 k\xE9o ${pulled} \u0111\u01A1n`) + (cancelPull.pulled > 0 || cancelPull.message && !cancelPull.skipped ? ` | Cancel/return: ${cancelPull.message || `+${cancelPull.pulled}`}` : "") + (returnSync.pulled > 0 || returnSync.updated > 0 ? ` | Returns: +${returnSync.pulled || 0}/~${returnSync.updated || 0}` : "") + (targetedHealing.candidates > 0 ? ` | Targeted Healing: ${targetedHealing.message || `${targetedHealing.pulled} \u0111\u01A1n`}` : "");
     if (jobId) {
       try {
         await deps16.finishSyncJob(
@@ -112032,7 +112089,7 @@ async function syncShopee(req, res) {
             allowShortLookback: isQuick,
             // Quick cũng đối soát nhẹ: bắt SHIPPED cho đơn Đã xử lý / Đã giao ĐVVC.
             reconcileActive: true,
-            skipCancelReturn: isQuick
+            skipCancelReturn: false
           });
           console.log(
             `[Sync-Shopee BG] done pulled=${result?.pulled || 0} +${result?.added || 0}/~${result?.updated || 0} msg=${result?.message || ""}`
@@ -112087,7 +112144,7 @@ async function quickSyncOrders(req, res) {
       logTag: "Orders Quick Sync BG",
       allowShortLookback: true,
       reconcileActive: true,
-      skipCancelReturn: true
+      skipCancelReturn: false
     });
     return;
   } catch (err) {
@@ -120111,8 +120168,9 @@ function toShopeeUnixSeconds(raw, fallbackSec) {
   if (n >= 1e12) return Math.floor(n / 1e3);
   return Math.floor(n);
 }
-var SHOPEE_CANCEL_RETURN_MAX_WINDOWS = 2;
+var SHOPEE_CANCEL_RETURN_MAX_WINDOWS = 6;
 var SHOPEE_RETURN_LIST_WINDOW_SEC = 15 * 24 * 60 * 60;
+var SHOPEE_RETURN_LIST_LOOKBACK_SEC = 90 * 24 * 60 * 60;
 var SHOPEE_HISTORY_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1e3;
 var SHOPEE_HISTORY_LOOKBACK_SEC = 30 * 24 * 60 * 60;
 var SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS = 1e4;
@@ -120607,6 +120665,25 @@ function parseShopeeReturnListMore(result) {
   const body = result?.response ?? result ?? {};
   return body.more === true || body.more === 1 || body.more === "true" || body.has_more === true || body.has_more === 1;
 }
+function shopeeReturnRowTimeSec(row) {
+  const n = Number(row?.update_time ?? row?.create_time ?? 0);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return n >= 1e12 ? Math.floor(n / 1e3) : Math.floor(n);
+}
+function pushShopeeReturnListRow(row, seen, out, keepFromSec) {
+  const safeRow = normalizeShopeeReturnDetail(row) || row;
+  const ts = shopeeReturnRowTimeSec(safeRow);
+  if (ts > 0 && ts < keepFromSec) return false;
+  const returnSn = extractReturnRequestCode(safeRow) || "";
+  if (!returnSn || seen.has(returnSn)) return false;
+  seen.add(returnSn);
+  out.push({
+    returnSn,
+    orderSn: toShopeeSn(safeRow?.order_sn ?? safeRow?.orderSn) || void 0,
+    status: safeRow?.status ? String(safeRow.status) : void 0
+  });
+  return true;
+}
 function pickBestTrackingNumber(...candidates) {
   for (const c of candidates) {
     const s2 = String(c || "").trim();
@@ -120717,7 +120794,7 @@ async function shopeePaginateReturnListWindow(shopId, accessToken, opts) {
 async function shopeeFetchAllReturnSns(shopId, accessToken, opts) {
   const mode = opts?.mode === "full" ? "full" : "incremental";
   const now = Math.floor(Date.now() / 1e3);
-  const historyFromSec = toShopeeUnixSeconds(shopeeHistoryTimeFromMs());
+  const historyFromSec = now - SHOPEE_RETURN_LIST_LOOKBACK_SEC;
   const out = [];
   const seen = /* @__PURE__ */ new Set();
   const maxPages = Math.max(
@@ -120727,81 +120804,66 @@ async function shopeeFetchAllReturnSns(shopId, accessToken, opts) {
       Number(opts?.maxPages) || SHOPEE_RETURN_LIST_MAX_PAGES
     )
   );
-  const maxWindows = SHOPEE_CANCEL_RETURN_MAX_WINDOWS;
-  const windowSec = SHOPEE_RETURN_LIST_WINDOW_SEC;
   console.log(
-    `[Shopee Returns] shop=${shopId} mode=${mode}: get_return_list time_from=${historyFromSec} (30d)`
+    `[Shopee Returns] shop=${shopId} mode=${mode}: get_return_list no-time + windows 90d from=${historyFromSec}`
   );
-  for (let windowIdx = 0; windowIdx < maxWindows; windowIdx++) {
+  let pageNo = 1;
+  while (pageNo <= maxPages) {
     if (opts?.deadlineAt && Date.now() >= opts.deadlineAt) break;
     if (out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
-    const timeTo = now - windowIdx * windowSec;
-    const timeFrom = Math.max(historyFromSec, timeTo - windowSec + 1);
-    if (timeFrom >= timeTo) break;
-    await shopeePaginateReturnListWindow(shopId, accessToken, {
-      timeFrom,
-      timeTo,
-      timeField: "update",
-      seen,
-      out,
-      label: `shop=${shopId} update w${windowIdx + 1}`,
-      maxPages,
-      deadlineAt: opts?.deadlineAt
+    const listResult = await shopeeGetReturnList(shopId, accessToken, {
+      pageNo,
+      pageSize: SHOPEE_RETURN_LIST_PAGE_SIZE
     });
+    if (listResult.error) {
+      console.warn(
+        `[Shopee Returns] no-time page=${pageNo} L\u1ED6I:`,
+        listResult.error,
+        listResult.message || ""
+      );
+      break;
+    }
+    const rows = extractShopeeReturnListRows(listResult);
+    let pageKept = 0;
+    for (const row of rows) {
+      if (pushShopeeReturnListRow(row, seen, out, historyFromSec)) pageKept += 1;
+      if (out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
+    }
+    const more = parseShopeeReturnListMore(listResult);
+    console.log(
+      `[Shopee Returns] no-time page=${pageNo}: rows=${rows.length} kept=${pageKept} t\u1ED5ng=${out.length} more=${more}`
+    );
+    if (!more || rows.length === 0) break;
+    pageNo++;
     await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
   }
-  if (out.length === 0) {
-    console.log(`[Shopee Returns] shop=${shopId}: fallback no-time + discard >30d`);
-    let pageNo = 1;
-    let oldStreak = 0;
-    while (pageNo <= maxPages) {
+  if (out.length > 0) {
+    console.log(`[Shopee Returns] shop=${shopId} mode=${mode}: T\u1ED4NG ${out.length} return_sn (unique, 90d)`);
+    return out;
+  }
+  const maxWindows = SHOPEE_CANCEL_RETURN_MAX_WINDOWS;
+  const windowSec = SHOPEE_RETURN_LIST_WINDOW_SEC;
+  for (const timeField of ["update", "create"]) {
+    for (let windowIdx = 0; windowIdx < maxWindows; windowIdx++) {
       if (opts?.deadlineAt && Date.now() >= opts.deadlineAt) break;
       if (out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
-      const listResult = await shopeeGetReturnList(shopId, accessToken, {
-        pageNo,
-        pageSize: SHOPEE_RETURN_LIST_PAGE_SIZE
+      const timeTo = now - windowIdx * windowSec;
+      const timeFrom = Math.max(historyFromSec, timeTo - windowSec + 1);
+      if (timeFrom >= timeTo) break;
+      await shopeePaginateReturnListWindow(shopId, accessToken, {
+        timeFrom,
+        timeTo,
+        timeField,
+        seen,
+        out,
+        label: `shop=${shopId} ${timeField} w${windowIdx + 1}`,
+        maxPages,
+        deadlineAt: opts?.deadlineAt
       });
-      if (listResult.error) {
-        console.error(
-          `[Shopee Returns] no-time page=${pageNo} L\u1ED6I:`,
-          listResult.error,
-          listResult.message || ""
-        );
-        break;
-      }
-      const rows = extractShopeeReturnListRows(listResult);
-      let pageKept = 0;
-      for (const row of rows) {
-        const safeRow = normalizeShopeeReturnDetail(row) || row;
-        const ts = Number(safeRow?.update_time || safeRow?.create_time || 0);
-        if (ts > 0 && ts < historyFromSec) {
-          oldStreak += 1;
-          continue;
-        }
-        oldStreak = 0;
-        const returnSn = extractReturnRequestCode(safeRow) || "";
-        if (!returnSn || seen.has(returnSn)) continue;
-        seen.add(returnSn);
-        out.push({
-          returnSn,
-          orderSn: toShopeeSn(safeRow?.order_sn ?? safeRow?.orderSn) || void 0,
-          status: safeRow?.status ? String(safeRow.status) : void 0
-        });
-        pageKept += 1;
-        if (out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
-      }
-      const more = parseShopeeReturnListMore(listResult);
-      console.log(
-        `[Shopee Returns] no-time page=${pageNo}: kept=${pageKept} t\u1ED5ng=${out.length} more=${more}`
-      );
-      if (!more || rows.length === 0) break;
-      if (oldStreak >= SHOPEE_RETURN_LIST_PAGE_SIZE) break;
-      if (mode === "incremental" && pageNo >= 4) break;
-      pageNo++;
       await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
     }
   }
-  console.log(`[Shopee Returns] shop=${shopId} mode=${mode}: T\u1ED4NG ${out.length} return_sn (unique)`);
+  console.log(`[Shopee Returns] shop=${shopId} mode=${mode}: T\u1ED4NG ${out.length} return_sn (unique, 90d)`);
   return out;
 }
 async function shopeeGetOrderList(shopId, accessToken, opts) {
@@ -122617,7 +122679,8 @@ async function pullIncrementalOrdersFromShopee(opts) {
           if (Date.now() < shopDeadlineAt) {
             try {
               const returnRows = await shopeeFetchAllReturnSns(shopIdStr, accessToken, {
-                mode: "incremental"
+                mode: "full",
+                maxPages: SHOPEE_RETURN_LIST_MAX_PAGES
               });
               const snSet = new Set(orderSnList);
               let addedFromReturns = 0;
@@ -123130,7 +123193,7 @@ async function pullShopeeCancelReturnOrders(opts) {
     releaseOrdersPullLock("pullCancelReturn_finally");
   }
 }
-var RETURN_REQUESTS_PER_SHOP_MS = 55e3;
+var RETURN_REQUESTS_PER_SHOP_MS = 9e4;
 var returnRequestsSyncInFlight = false;
 async function syncShopeeReturnRequests(opts) {
   if (returnRequestsSyncInFlight) {
@@ -123153,7 +123216,7 @@ async function syncShopeeReturnRequests(opts) {
   const mode = opts?.mode === "full" ? "full" : "incremental";
   const maxReturns = Math.max(
     10,
-    Math.min(mode === "full" ? 200 : 80, Number(opts?.maxReturns) || (mode === "full" ? 200 : 80))
+    Math.min(400, Number(opts?.maxReturns) || (mode === "full" ? 200 : 120))
   );
   try {
     ensureShopeeLinkedShopTokenKeys();
@@ -123171,8 +123234,8 @@ async function syncShopeeReturnRequests(opts) {
     }
     const orders = [];
     const perShopMaxReturns = Math.max(
-      8,
-      Math.min(mode === "full" ? 40 : 25, maxReturns)
+      20,
+      Math.min(mode === "full" ? 120 : 80, maxReturns)
     );
     for (let shopIndex = 0; shopIndex < shopIds.length; shopIndex++) {
       const shopId = shopIds[shopIndex];
@@ -123189,8 +123252,8 @@ async function syncShopeeReturnRequests(opts) {
           continue;
         }
         const returnRows = await shopeeFetchAllReturnSns(shopId, accessToken, {
-          mode,
-          maxPages: mode === "full" ? 15 : 8,
+          mode: "full",
+          maxPages: SHOPEE_RETURN_LIST_MAX_PAGES,
           deadlineAt: shopDeadlineAt
         });
         const limited = returnRows.slice(0, perShopMaxReturns);
@@ -123352,6 +123415,8 @@ async function syncShopeeReturnRequests(opts) {
               return_status: returnStatus,
               return_refund_request_type: Number(detail.return_refund_request_type ?? 0),
               shopee_cancel_return_kind: kind,
+              return_create_time: Number(detail.create_time) || void 0,
+              return_update_time: Number(detail.update_time) || void 0,
               refund_amount: Number.isFinite(refundAmount) ? refundAmount : void 0,
               return_reason: reason || void 0,
               text_reason: textReason || void 0,
@@ -123397,6 +123462,8 @@ async function syncShopeeReturnRequests(opts) {
             merged.shopee_cancel_return_kind = "refund_return";
             merged.is_return = true;
             merged.sub_status = "RETURN";
+            if (patch.return_create_time) merged.return_create_time = patch.return_create_time;
+            if (patch.return_update_time) merged.return_update_time = patch.return_update_time;
             merged.refund_amount = patch.refund_amount;
             merged.return_reason = patch.return_reason;
             merged.text_reason = patch.text_reason;
@@ -133520,6 +133587,7 @@ async function startServer() {
     finishSyncJob,
     pullIncrementalOrdersFromShopee,
     pullShopeeCancelReturnOrders,
+    syncShopeeReturnRequests,
     reconcileHandedOverCarrierStatuses,
     invalidateOrdersRefreshCache,
     shopeeGetReturnList,

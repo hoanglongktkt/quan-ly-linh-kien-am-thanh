@@ -1410,6 +1410,14 @@ export default function OrderManager({
       }
       setLastSyncSummary('Đang đồng bộ ngầm...');
       showToast('Đang đồng bộ ngầm...', 5000);
+      void fetch('/api/orders/sync-return-requests', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ mode: 'full' }),
+      }).catch(() => {});
       void fetch('/api/orders/enrich-tracking', {
         method: 'POST',
         headers: {

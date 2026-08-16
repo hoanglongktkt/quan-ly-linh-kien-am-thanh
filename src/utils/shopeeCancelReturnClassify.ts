@@ -123,7 +123,6 @@ export function isShopeeRtsFailedDelivery(order: ShopeeCancelReturnInput): boole
  * CANCELLED + return_sn (đơn hoàn đã chốt) vẫn là Trả hàng Hoàn tiền.
  */
 export function isShopeeReturnRefundOrder(order: ShopeeCancelReturnInput): boolean {
-  if (hasCarrierRtsEvidence(order)) return false;
   if (isUnshippedShopeeCancel(order)) return false;
   if (!hasShopeeReturnSn(order)) return false;
   return true;
@@ -139,13 +138,14 @@ export function shouldApplyShopeeReturnOverlay(
 }
 
 /**
- * Thép: RTS (ĐVVC) → Return (có return_sn) → Đơn Hủy (CANCELLED, bất chấp mã VĐ).
+ * Thép: Return (có return_sn từ get_return_list) → RTS (ĐVVC) → Đơn Hủy.
+ * Seller Center: đơn trong Trả hàng Hoàn tiền không bị đẩy sang RTS.
  */
 export function classifyShopeeCancelReturnKind(
   order: ShopeeCancelReturnInput,
 ): ShopeeCancelReturnKind | null {
-  if (hasCarrierRtsEvidence(order)) return 'failed_delivery';
   if (isShopeeReturnRefundOrder(order)) return 'refund_return';
+  if (hasCarrierRtsEvidence(order)) return 'failed_delivery';
   if (isShopeeCancelledStatus(order)) return 'cancelled';
   const local = String(order.local_status || order.localStatus || '').toUpperCase();
   if (local === 'CANCELLED_STORED') return 'cancelled';

@@ -1102,11 +1102,13 @@ function toShopeeUnixSeconds(raw: number | string | undefined | null, fallbackSe
   return Math.floor(n);
 }
 
-/** Full sync hủy/hoàn: tối đa 2 × 15 ngày (= 30 ngày) — giảm so với 120 ngày cũ. */
-const SHOPEE_CANCEL_RETURN_MAX_WINDOWS = 2;
+/** Full sync hủy/hoàn: 6 × 15 ngày = 90 ngày (Shopee max 15 ngày / request). */
+const SHOPEE_CANCEL_RETURN_MAX_WINDOWS = 6;
 /** Cửa sổ tối đa Shopee cho get_return_list. */
 const SHOPEE_RETURN_LIST_WINDOW_SEC = 15 * 24 * 60 * 60;
-/** Cứng: chỉ lùi đúng 30 ngày từ Date.now() — chặn kéo về năm 2000. */
+/** Lookback riêng get_return_list — 90 ngày (không dùng 30 ngày của get_order_list). */
+const SHOPEE_RETURN_LIST_LOOKBACK_SEC = 90 * 24 * 60 * 60;
+/** Cứng: đơn thường lùi 30 ngày từ Date.now() — chặn kéo về năm 2000. */
 const SHOPEE_HISTORY_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
 const SHOPEE_HISTORY_LOOKBACK_SEC = 30 * 24 * 60 * 60;
 /** Ngân sách riêng cho đơn hủy/hoàn + returns — vét đến more=false. */
@@ -1735,6 +1737,8 @@ async function fetchReturnShippingTrackingNumber(
   return { tracking: fromReverse || fromDetail || "", sources };
 }
 
+type ReturnListRow = { returnSn: string; orderSn?: string; status?: string };
+
 function parseShopeeReturnListMore(result: any): boolean {
   const body = result?.response ?? result ?? {};
   return (
@@ -1744,6 +1748,32 @@ function parseShopeeReturnListMore(result: any): boolean {
     body.has_more === true ||
     body.has_more === 1
   );
+}
+
+function shopeeReturnRowTimeSec(row: any): number {
+  const n = Number(row?.update_time ?? row?.create_time ?? 0);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return n >= 1e12 ? Math.floor(n / 1000) : Math.floor(n);
+}
+
+function pushShopeeReturnListRow(
+  row: any,
+  seen: Set<string>,
+  out: ReturnListRow[],
+  keepFromSec: number,
+): boolean {
+  const safeRow = normalizeShopeeReturnDetail(row) || row;
+  const ts = shopeeReturnRowTimeSec(safeRow);
+  if (ts > 0 && ts < keepFromSec) return false;
+  const returnSn = extractReturnRequestCode(safeRow) || "";
+  if (!returnSn || seen.has(returnSn)) return false;
+  seen.add(returnSn);
+  out.push({
+    returnSn,
+    orderSn: toShopeeSn(safeRow?.order_sn ?? safeRow?.orderSn) || undefined,
+    status: safeRow?.status ? String(safeRow.status) : undefined,
+  });
+  return true;
 }
 
 /** Ưu tiên: returnDetail.tracking_number → orderDetail → DB cũ. Không bao giờ trả empty nếu đã có mã. */
@@ -1822,8 +1852,6 @@ function mapShopeeReturnKind(_detail: any): "refund_return" | "failed_delivery" 
   return "refund_return";
 }
 
-type ReturnListRow = { returnSn: string; orderSn?: string; status?: string };
-
 async function shopeePaginateReturnListWindow(
   shopId: string,
   accessToken: string,
@@ -1892,9 +1920,9 @@ async function shopeePaginateReturnListWindow(
 }
 
 /**
- * Quét get_return_list — Shopee bắt buộc khoảng update_time ≤ 15 ngày.
- * Probe thực tế: gọi KHÔNG time-filter (chỉ page_no/page_size) mới lấy đủ danh sách;
- * filter 90 ngày → error_param và 0 rows (nguyên nhân lệch 163→60).
+ * Quét get_return_list 90 ngày.
+ * PRIMARY: không time-filter + paginate đến more=false (Shopee hay error_param khi lọc ngày).
+ * PHỤ: cửa sổ update_time + create_time × 15 ngày (6 cửa sổ = 90 ngày).
  */
 async function shopeeFetchAllReturnSns(
   shopId: string,
@@ -1903,7 +1931,7 @@ async function shopeeFetchAllReturnSns(
 ): Promise<ReturnListRow[]> {
   const mode = opts?.mode === "full" ? "full" : "incremental";
   const now = Math.floor(Date.now() / 1000);
-  const historyFromSec = toShopeeUnixSeconds(shopeeHistoryTimeFromMs());
+  const historyFromSec = now - SHOPEE_RETURN_LIST_LOOKBACK_SEC;
   const out: ReturnListRow[] = [];
   const seen = new Set<string>();
   const maxPages = Math.max(
@@ -1914,86 +1942,70 @@ async function shopeeFetchAllReturnSns(
     ),
   );
 
-  // 2 cửa sổ update_time × 15 ngày = đúng 30 ngày (Shopee từ chối > 15 ngày / request).
-  const maxWindows = SHOPEE_CANCEL_RETURN_MAX_WINDOWS;
-  const windowSec = SHOPEE_RETURN_LIST_WINDOW_SEC;
   console.log(
-    `[Shopee Returns] shop=${shopId} mode=${mode}: get_return_list time_from=${historyFromSec} (30d)`,
+    `[Shopee Returns] shop=${shopId} mode=${mode}: get_return_list no-time + windows 90d from=${historyFromSec}`,
   );
-  for (let windowIdx = 0; windowIdx < maxWindows; windowIdx++) {
+
+  let pageNo = 1;
+  while (pageNo <= maxPages) {
     if (opts?.deadlineAt && Date.now() >= opts.deadlineAt) break;
     if (out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
-    const timeTo = now - windowIdx * windowSec;
-    const timeFrom = Math.max(historyFromSec, timeTo - windowSec + 1);
-    if (timeFrom >= timeTo) break;
-    await shopeePaginateReturnListWindow(shopId, accessToken, {
-      timeFrom,
-      timeTo,
-      timeField: "update",
-      seen,
-      out,
-      label: `shop=${shopId} update w${windowIdx + 1}`,
-      maxPages,
-      deadlineAt: opts?.deadlineAt,
+    const listResult = await shopeeGetReturnList(shopId, accessToken, {
+      pageNo,
+      pageSize: SHOPEE_RETURN_LIST_PAGE_SIZE,
     });
+    if (listResult.error) {
+      console.warn(
+        `[Shopee Returns] no-time page=${pageNo} LỖI:`,
+        listResult.error,
+        listResult.message || "",
+      );
+      break;
+    }
+    const rows = extractShopeeReturnListRows(listResult);
+    let pageKept = 0;
+    for (const row of rows) {
+      if (pushShopeeReturnListRow(row, seen, out, historyFromSec)) pageKept += 1;
+      if (out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
+    }
+    const more = parseShopeeReturnListMore(listResult);
+    console.log(
+      `[Shopee Returns] no-time page=${pageNo}: rows=${rows.length} kept=${pageKept} tổng=${out.length} more=${more}`,
+    );
+    if (!more || rows.length === 0) break;
+    pageNo++;
     await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
   }
 
-  // Fallback: Shopee đôi khi error_param khi có time filter → paginate không filter
-  // nhưng LOẠI row cũ hơn 30 ngày + hard break page.
-  if (out.length === 0) {
-    console.log(`[Shopee Returns] shop=${shopId}: fallback no-time + discard >30d`);
-    let pageNo = 1;
-    let oldStreak = 0;
-    while (pageNo <= maxPages) {
+  if (out.length > 0) {
+    console.log(`[Shopee Returns] shop=${shopId} mode=${mode}: TỔNG ${out.length} return_sn (unique, 90d)`);
+    return out;
+  }
+
+  const maxWindows = SHOPEE_CANCEL_RETURN_MAX_WINDOWS;
+  const windowSec = SHOPEE_RETURN_LIST_WINDOW_SEC;
+  for (const timeField of ["update", "create"] as const) {
+    for (let windowIdx = 0; windowIdx < maxWindows; windowIdx++) {
       if (opts?.deadlineAt && Date.now() >= opts.deadlineAt) break;
       if (out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
-      const listResult = await shopeeGetReturnList(shopId, accessToken, {
-        pageNo,
-        pageSize: SHOPEE_RETURN_LIST_PAGE_SIZE,
+      const timeTo = now - windowIdx * windowSec;
+      const timeFrom = Math.max(historyFromSec, timeTo - windowSec + 1);
+      if (timeFrom >= timeTo) break;
+      await shopeePaginateReturnListWindow(shopId, accessToken, {
+        timeFrom,
+        timeTo,
+        timeField,
+        seen,
+        out,
+        label: `shop=${shopId} ${timeField} w${windowIdx + 1}`,
+        maxPages,
+        deadlineAt: opts?.deadlineAt,
       });
-      if (listResult.error) {
-        console.error(
-          `[Shopee Returns] no-time page=${pageNo} LỖI:`,
-          listResult.error,
-          listResult.message || "",
-        );
-        break;
-      }
-      const rows = extractShopeeReturnListRows(listResult);
-      let pageKept = 0;
-      for (const row of rows) {
-        const safeRow = normalizeShopeeReturnDetail(row) || row;
-        const ts = Number(safeRow?.update_time || safeRow?.create_time || 0);
-        if (ts > 0 && ts < historyFromSec) {
-          oldStreak += 1;
-          continue;
-        }
-        oldStreak = 0;
-        const returnSn = extractReturnRequestCode(safeRow) || "";
-        if (!returnSn || seen.has(returnSn)) continue;
-        seen.add(returnSn);
-        out.push({
-          returnSn,
-          orderSn: toShopeeSn(safeRow?.order_sn ?? safeRow?.orderSn) || undefined,
-          status: safeRow?.status ? String(safeRow.status) : undefined,
-        });
-        pageKept += 1;
-        if (out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
-      }
-      const more = parseShopeeReturnListMore(listResult);
-      console.log(
-        `[Shopee Returns] no-time page=${pageNo}: kept=${pageKept} tổng=${out.length} more=${more}`,
-      );
-      if (!more || rows.length === 0) break;
-      if (oldStreak >= SHOPEE_RETURN_LIST_PAGE_SIZE) break;
-      if (mode === "incremental" && pageNo >= 4) break;
-      pageNo++;
       await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
     }
   }
 
-  console.log(`[Shopee Returns] shop=${shopId} mode=${mode}: TỔNG ${out.length} return_sn (unique)`);
+  console.log(`[Shopee Returns] shop=${shopId} mode=${mode}: TỔNG ${out.length} return_sn (unique, 90d)`);
   return out;
 }
 
@@ -4265,7 +4277,8 @@ async function pullIncrementalOrdersFromShopee(opts?: {
           if (Date.now() < shopDeadlineAt) {
             try {
               const returnRows = await shopeeFetchAllReturnSns(shopIdStr, accessToken, {
-                mode: "incremental",
+                mode: "full",
+                maxPages: SHOPEE_RETURN_LIST_MAX_PAGES,
               });
               const snSet = new Set(orderSnList);
               let addedFromReturns = 0;
@@ -4870,7 +4883,7 @@ async function pullShopeeCancelReturnOrders(opts?: {
  * get_return_list → get_return_detail → get_reverse_tracking_info
  * Lưu: order_sn, return_sn, return_tracking_no, refund_amount, reason, status, items.
  */
-const RETURN_REQUESTS_PER_SHOP_MS = 55_000;
+const RETURN_REQUESTS_PER_SHOP_MS = 90_000;
 let returnRequestsSyncInFlight = false;
 
 async function syncShopeeReturnRequests(opts?: {
@@ -4907,7 +4920,7 @@ async function syncShopeeReturnRequests(opts?: {
   const mode = opts?.mode === "full" ? "full" : "incremental";
   const maxReturns = Math.max(
     10,
-    Math.min(mode === "full" ? 200 : 80, Number(opts?.maxReturns) || (mode === "full" ? 200 : 80)),
+    Math.min(400, Number(opts?.maxReturns) || (mode === "full" ? 200 : 120)),
   );
 
   try {
@@ -4930,8 +4943,8 @@ async function syncShopeeReturnRequests(opts?: {
     // CẤM dump toàn bộ collection — chỉ nạp đơn theo order_sn khi cần.
     const orders: any[] = [];
     const perShopMaxReturns = Math.max(
-      8,
-      Math.min(mode === "full" ? 40 : 25, maxReturns),
+      20,
+      Math.min(mode === "full" ? 120 : 80, maxReturns),
     );
 
     // BẮT BUỘC duyệt HẾT shop — mỗi shop ngân sách riêng, CẤM break/return sớm.
@@ -4950,8 +4963,8 @@ async function syncShopeeReturnRequests(opts?: {
           continue;
         }
         const returnRows = await shopeeFetchAllReturnSns(shopId, accessToken, {
-          mode,
-          maxPages: mode === "full" ? 15 : 8,
+          mode: "full",
+          maxPages: SHOPEE_RETURN_LIST_MAX_PAGES,
           deadlineAt: shopDeadlineAt,
         });
         const limited = returnRows.slice(0, perShopMaxReturns);
@@ -5138,6 +5151,8 @@ async function syncShopeeReturnRequests(opts?: {
               return_status: returnStatus,
               return_refund_request_type: Number(detail.return_refund_request_type ?? 0),
               shopee_cancel_return_kind: kind,
+              return_create_time: Number(detail.create_time) || undefined,
+              return_update_time: Number(detail.update_time) || undefined,
               refund_amount: Number.isFinite(refundAmount) ? refundAmount : undefined,
               return_reason: reason || undefined,
               text_reason: textReason || undefined,
@@ -5196,6 +5211,8 @@ async function syncShopeeReturnRequests(opts?: {
             merged.shopee_cancel_return_kind = "refund_return";
             merged.is_return = true;
             merged.sub_status = "RETURN";
+            if (patch.return_create_time) merged.return_create_time = patch.return_create_time;
+            if (patch.return_update_time) merged.return_update_time = patch.return_update_time;
             merged.refund_amount = patch.refund_amount;
             merged.return_reason = patch.return_reason;
             merged.text_reason = patch.text_reason;
@@ -19507,6 +19524,7 @@ async function startServer() {
     finishSyncJob,
     pullIncrementalOrdersFromShopee,
     pullShopeeCancelReturnOrders,
+    syncShopeeReturnRequests,
     reconcileHandedOverCarrierStatuses,
     invalidateOrdersRefreshCache,
     shopeeGetReturnList,

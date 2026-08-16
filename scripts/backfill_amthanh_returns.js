@@ -24,7 +24,7 @@ const PARTNER_KEY = String(process.env.SHOPEE_PARTNER_KEY || "").trim();
 const HOST = "https://partner.shopeemobile.com";
 const TOKENS_PATH = path.join(ROOT, "data", "shopee_tokens.json");
 const DEFAULT_SHOP = "4127421";
-const LOOKBACK_SEC = 30 * 24 * 60 * 60;
+const LOOKBACK_SEC = 90 * 24 * 60 * 60;
 const WINDOW_SEC = 15 * 24 * 60 * 60;
 const PAGE_SIZE = 100;
 const MAX_PAGES = 50;
@@ -263,49 +263,47 @@ async function main() {
 
   const returnMap = new Map();
   if (accessToken && PARTNER_ID && PARTNER_KEY) {
-    const now = unixNow();
-    const from = now - LOOKBACK_SEC;
-    for (let w = 0; w < 2; w += 1) {
-      const timeTo = now - w * WINDOW_SEC;
-      const timeFrom = Math.max(from, timeTo - WINDOW_SEC + 1);
-      if (timeFrom >= timeTo) break;
-      await paginateReturnList(shopId, accessToken, timeFrom, timeTo, returnMap);
+    console.log(`[return] shop=${shopId} no-time paginate 90d (không cắt oldStreak)`);
+    const historyFrom = unixNow() - LOOKBACK_SEC;
+    for (let page = 1; page <= MAX_PAGES; page += 1) {
+      const json = await shopeeGet("/api/v2/returns/get_return_list", shopId, accessToken, {
+        page_no: String(page),
+        page_size: String(PAGE_SIZE),
+      });
+      if (json?.error) {
+        console.warn(`[return] no-time page=${page} err=${json.error} ${json.message || ""}`);
+        break;
+      }
+      const rows = json?.response?.return || json?.response?.return_list || json?.return || [];
+      let kept = 0;
+      for (const row of rows) {
+        const ts = Number(row?.update_time || row?.create_time || 0);
+        const tsSec = ts >= 1e12 ? Math.floor(ts / 1000) : ts;
+        if (tsSec > 0 && tsSec < historyFrom) continue;
+        const sn = toSn(row?.order_sn || row?.orderSn);
+        const rsn = String(row?.return_sn || row?.returnSn || "").trim();
+        if (sn && rsn) {
+          returnMap.set(sn, { returnSn: rsn, status: String(row?.status || ""), raw: row });
+          kept += 1;
+        }
+      }
+      const more = Boolean(json?.response?.more ?? json?.more);
+      const sample = rows.slice(0, 5).map((r) => r?.order_sn || r?.orderSn).filter(Boolean);
+      console.log(`[return] no-time page=${page} rows=${rows.length} kept=${kept} map=${returnMap.size} more=${more} sample=${sample.join(",")}`);
+      if (!more || rows.length === 0) break;
       await delay(DELAY_MS);
     }
     if (returnMap.size === 0) {
-      console.log(`[return] shop=${shopId} fallback no-time + discard >30d`);
-      const historyFrom = unixNow() - LOOKBACK_SEC;
-      let oldStreak = 0;
-      for (let page = 1; page <= MAX_PAGES; page += 1) {
-        const json = await shopeeGet("/api/v2/returns/get_return_list", shopId, accessToken, {
-          page_no: String(page),
-          page_size: String(PAGE_SIZE),
-        });
-        if (json?.error) {
-          console.warn(`[return] no-time page=${page} err=${json.error} ${json.message || ""}`);
-          break;
+      const now = unixNow();
+      const from = now - LOOKBACK_SEC;
+      for (const field of ["update", "create"]) {
+        for (let w = 0; w < 6; w += 1) {
+          const timeTo = now - w * WINDOW_SEC;
+          const timeFrom = Math.max(from, timeTo - WINDOW_SEC + 1);
+          if (timeFrom >= timeTo) break;
+          await paginateReturnList(shopId, accessToken, timeFrom, timeTo, returnMap);
+          await delay(DELAY_MS);
         }
-        const rows = json?.response?.return || json?.response?.return_list || json?.return || [];
-        let kept = 0;
-        for (const row of rows) {
-          const ts = Number(row?.update_time || row?.create_time || 0);
-          if (ts > 0 && ts < historyFrom) {
-            oldStreak += 1;
-            continue;
-          }
-          oldStreak = 0;
-          const sn = toSn(row?.order_sn || row?.orderSn);
-          const rsn = String(row?.return_sn || row?.returnSn || "").trim();
-          if (sn && rsn) {
-            returnMap.set(sn, { returnSn: rsn, status: String(row?.status || ""), raw: row });
-            kept += 1;
-          }
-        }
-        const more = Boolean(json?.response?.more ?? json?.more);
-        console.log(`[return] no-time page=${page} kept=${kept} map=${returnMap.size} more=${more}`);
-        if (!more || rows.length === 0) break;
-        if (oldStreak >= PAGE_SIZE) break;
-        await delay(DELAY_MS);
       }
     }
   }
@@ -325,7 +323,7 @@ async function main() {
           buyer_cancel_reason: data.buyer_cancel_reason,
         })
       : false;
-    const kind = rts ? "failed_delivery" : "refund_return";
+    const kind = returnSn ? "refund_return" : rts ? "failed_delivery" : "cancelled";
     ops.push({
       updateOne: {
         filter: { $or: [{ orderSn: sn }, { _id: `shopee-${sn}` }, { "data.orderSn": sn }] },

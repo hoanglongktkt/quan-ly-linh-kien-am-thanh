@@ -132,7 +132,7 @@ async function runOrdersPull(opts) {
     if (!skipCancelReturn) {
       try {
         cancelPull = await deps.pullShopeeCancelReturnOrders({
-          lookbackSec: 30 * 24 * 60 * 60,
+          lookbackSec: 90 * 24 * 60 * 60,
           shopIds: shopIds?.length ? shopIds : undefined,
         });
       } catch (cancelErr) {
@@ -147,6 +147,21 @@ async function runOrdersPull(opts) {
         message: "skipped_quick_sync",
         skipped: true,
       };
+    }
+    let returnSync = { pulled: 0, updated: 0, shops: 0, errors: [], message: "", skipped: false };
+    if (typeof deps.syncShopeeReturnRequests === "function") {
+      try {
+        returnSync = await deps.syncShopeeReturnRequests({
+          mode: "full",
+          maxReturns: 200,
+        });
+        console.log(
+          `[${logTag}] syncShopeeReturnRequests shops=${returnSync.shops || 0}` +
+            ` pulled=${returnSync.pulled || 0} updated=${returnSync.updated || 0}`,
+        );
+      } catch (returnErr) {
+        console.error("[API_SYNC_ERROR] return requests sync:", returnErr?.stack || returnErr);
+      }
     }
     let targetedHealing = {
       pulled: 0,
@@ -187,15 +202,18 @@ async function runOrdersPull(opts) {
     const pulled =
       (result?.pulled || 0) +
       (cancelPull.pulled || 0) +
+      (returnSync.pulled || 0) +
       (targetedHealing.pulled || 0);
     const added = (result?.added || 0) + (cancelPull.added || 0);
     const updated =
       (result?.updated || 0) +
       (cancelPull.updated || 0) +
+      (returnSync.updated || 0) +
       (targetedHealing.updated || 0);
     const errors = [
       ...(result?.errors || []),
       ...(cancelPull.errors || []),
+      ...(returnSync.errors || []),
       ...(targetedHealing.errors || []),
     ];
     const dbErrors = errors.filter((e) => String(e?.error || "") === "db_upsert_failed");
@@ -208,6 +226,9 @@ async function runOrdersPull(opts) {
         : String(result?.message || `Đã kéo ${pulled} đơn`) +
           (cancelPull.pulled > 0 || (cancelPull.message && !cancelPull.skipped)
             ? ` | Cancel/return: ${cancelPull.message || `+${cancelPull.pulled}`}`
+            : "") +
+          (returnSync.pulled > 0 || returnSync.updated > 0
+            ? ` | Returns: +${returnSync.pulled || 0}/~${returnSync.updated || 0}`
             : "") +
           (targetedHealing.candidates > 0
             ? ` | Targeted Healing: ${targetedHealing.message || `${targetedHealing.pulled} đơn`}`
@@ -621,7 +642,7 @@ export async function syncShopee(req, res) {
             allowShortLookback: isQuick,
             // Quick cũng đối soát nhẹ: bắt SHIPPED cho đơn Đã xử lý / Đã giao ĐVVC.
             reconcileActive: true,
-            skipCancelReturn: isQuick,
+            skipCancelReturn: false,
           });
           console.log(
             `[Sync-Shopee BG] done pulled=${result?.pulled || 0}` +
@@ -683,7 +704,7 @@ export async function quickSyncOrders(req, res) {
       logTag: "Orders Quick Sync BG",
       allowShortLookback: true,
       reconcileActive: true,
-      skipCancelReturn: true,
+      skipCancelReturn: false,
     });
     return;
   } catch (err) {
