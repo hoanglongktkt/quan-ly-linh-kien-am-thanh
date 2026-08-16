@@ -78387,6 +78387,45 @@ async function updateOrderTrackingInStore(orderSn, trackingNo, extra) {
   );
   return Boolean(result);
 }
+async function updateReturnTrackingOnlyInStore(orderSn, returnTrackingNo, extra) {
+  if (!isMongoReady()) return false;
+  requireMongo();
+  const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
+  const rtn = String(returnTrackingNo || "").trim().toUpperCase();
+  if (!sn || !rtn || rtn.length < 4 || /^0FG/i.test(rtn)) return false;
+  const _id = `shopee-${sn}`;
+  const shopIdStr = extra?.shopId != null ? String(extra.shopId).trim() : "";
+  const $set = {
+    return_tracking_no: rtn,
+    returnTrackingNumber: rtn,
+    "data.return_tracking_no": rtn,
+    "data.returnTrackingNumber": rtn
+  };
+  const returnSn = String(extra?.return_sn || "").trim();
+  if (returnSn) {
+    $set.return_sn = returnSn;
+    $set["data.return_sn"] = returnSn;
+  }
+  const returnStatus = String(extra?.return_status || "").trim();
+  if (returnStatus) {
+    $set.return_status = returnStatus;
+    $set["data.return_status"] = returnStatus;
+  }
+  stripWarehouseProtectedKeysFromSet($set);
+  delete $set.is_return_received;
+  delete $set["data.is_return_received"];
+  delete $set.local_return_status;
+  delete $set["data.local_return_status"];
+  const result = await OrderModel.findOneAndUpdate(
+    buildOrderCompoundFilter(sn, _id, shopIdStr),
+    { $set },
+    { new: true, upsert: false }
+  );
+  console.log(
+    `[MongoDB] return_tracking_only order_sn=${sn} shopId=${shopIdStr || "-"} rtn=${rtn} ok=${Boolean(result)}`
+  );
+  return Boolean(result);
+}
 async function bulkSetTrackingNumbersInStore(items) {
   if (!isMongoReady()) return { matched: 0, modified: 0 };
   requireMongo();
@@ -79353,26 +79392,9 @@ async function loadCancelReturnMissingTrackingFromStore(opts) {
   );
   return loadOrdersFromStore({ ids: docs.map((d) => String(d._id)) });
 }
-async function loadReturnTrackingPendingFromStore(opts) {
-  if (!isMongoReady()) return [];
-  requireMongo();
-  const HARD_LIMIT = 30;
-  const limit = Math.min(HARD_LIMIT, Math.max(1, Math.floor(Number(opts?.limit) || HARD_LIMIT)));
-  const lookbackMs = Math.min(
-    14 * 24 * 60 * 60 * 1e3,
-    Math.max(24 * 60 * 60 * 1e3, Number(opts?.lookbackMs) || 14 * 24 * 60 * 60 * 1e3)
-  );
-  const cutoffIso = new Date(Date.now() - lookbackMs).toISOString();
-  const cutoffDate = new Date(Date.now() - lookbackMs);
-  const shopKey = String(opts?.shopId || "").trim();
-  const filter2 = {
+function emptyReturnTrackingClause() {
+  return {
     $and: [
-      {
-        $or: [
-          { return_sn: { $type: "string", $nin: [""] } },
-          { "data.return_sn": { $type: "string", $nin: [""] } }
-        ]
-      },
       {
         $or: [
           { return_tracking_no: { $exists: false } },
@@ -79382,10 +79404,55 @@ async function loadReturnTrackingPendingFromStore(opts) {
       },
       {
         $or: [
-          { "data.date": { $gte: cutoffIso } },
-          { last_synced_at: { $gte: cutoffDate } }
+          { "data.return_tracking_no": { $exists: false } },
+          { "data.return_tracking_no": null },
+          { "data.return_tracking_no": "" }
         ]
-      },
+      }
+    ]
+  };
+}
+function hasReturnSnClause() {
+  return {
+    $or: [
+      { return_sn: { $exists: true, $nin: [null, ""] } },
+      { "data.return_sn": { $exists: true, $nin: [null, ""] } }
+    ]
+  };
+}
+function returnTrackingLookbackClause(lookbackMs) {
+  const cutoffIso = new Date(Date.now() - lookbackMs).toISOString();
+  const cutoffDate = new Date(Date.now() - lookbackMs);
+  const cutoffUnix = Math.floor((Date.now() - lookbackMs) / 1e3);
+  return {
+    $or: [
+      { "data.date": { $gte: cutoffIso } },
+      { "data.date": { $gte: cutoffDate } },
+      { last_synced_at: { $gte: cutoffDate } },
+      { createdAt: { $gte: cutoffDate } },
+      { updatedAt: { $gte: cutoffDate } },
+      { return_create_time: { $gte: cutoffUnix } },
+      { return_update_time: { $gte: cutoffUnix } },
+      { "data.return_create_time": { $gte: cutoffUnix } },
+      { "data.return_update_time": { $gte: cutoffUnix } }
+    ]
+  };
+}
+async function loadReturnTrackingPendingFromStore(opts) {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const HARD_LIMIT = 30;
+  const limit = Math.min(HARD_LIMIT, Math.max(1, Math.floor(Number(opts?.limit) || HARD_LIMIT)));
+  const lookbackMs = Math.min(
+    30 * 24 * 60 * 60 * 1e3,
+    Math.max(24 * 60 * 60 * 1e3, Number(opts?.lookbackMs) || 30 * 24 * 60 * 60 * 1e3)
+  );
+  const shopKey = String(opts?.shopId || "").trim();
+  const filter2 = {
+    $and: [
+      hasReturnSnClause(),
+      emptyReturnTrackingClause(),
+      returnTrackingLookbackClause(lookbackMs),
       ...shopKey ? [
         {
           $or: [
@@ -79424,39 +79491,12 @@ async function loadMissingReturnTrackingBackfillFromStore(opts) {
     30 * 24 * 60 * 60 * 1e3,
     Math.max(24 * 60 * 60 * 1e3, Number(opts?.lookbackMs) || 30 * 24 * 60 * 60 * 1e3)
   );
-  const cutoffIso = new Date(Date.now() - lookbackMs).toISOString();
-  const cutoffDate = new Date(Date.now() - lookbackMs);
   const shopKey = String(opts?.shopId || "").trim();
   const filter2 = {
     $and: [
-      {
-        $or: [
-          { return_sn: { $type: "string", $nin: [""] } },
-          { "data.return_sn": { $type: "string", $nin: [""] } },
-          { is_rts: true },
-          { "data.is_rts": true },
-          { shopee_cancel_return_kind: "failed_delivery" },
-          { "data.shopee_cancel_return_kind": "failed_delivery" },
-          { shopee_cancel_return_kind: "refund_return" },
-          { "data.shopee_cancel_return_kind": "refund_return" },
-          { status: { $in: ["return_pending", "return_received", "cancelled"] } },
-          { shopee_order_status: { $in: ["TO_RETURN", "CANCELLED", "IN_CANCEL"] } },
-          { "data.shopee_order_status": { $in: ["TO_RETURN", "CANCELLED", "IN_CANCEL"] } }
-        ]
-      },
-      {
-        $or: [
-          { return_tracking_no: { $exists: false } },
-          { return_tracking_no: null },
-          { return_tracking_no: "" }
-        ]
-      },
-      {
-        $or: [
-          { "data.date": { $gte: cutoffIso } },
-          { last_synced_at: { $gte: cutoffDate } }
-        ]
-      },
+      hasReturnSnClause(),
+      emptyReturnTrackingClause(),
+      returnTrackingLookbackClause(lookbackMs),
       ...shopKey ? [
         {
           $or: [
@@ -120516,6 +120556,17 @@ function applyReturnTrackingAliases(order, tracking) {
   order.return_tracking_no = tn;
   order.returnTrackingNumber = tn;
 }
+async function persistReturnTrackingOnly(order, tracking, shopId) {
+  const sn = String(order?.orderSn || "").replace(/^shopee-/i, "").trim();
+  const rtn = normalizeCarrierTrackingCode(tracking);
+  if (!sn || !rtn) return false;
+  applyReturnTrackingAliases(order, rtn);
+  return updateReturnTrackingOnlyInStore(sn, rtn, {
+    shopId: String(normalizeShopIdKey(shopId) || shopId || "").trim() || void 0,
+    return_sn: String(order?.return_sn || "").trim() || void 0,
+    return_status: String(order?.return_status || "").trim() || void 0
+  });
+}
 function markNewReturnRequestAlert(order, existing) {
   try {
     if (!order) return false;
@@ -120540,13 +120591,14 @@ function markNewReturnRequestAlert(order, existing) {
   }
 }
 async function fillReturnTrackingFromShopee(shopId, accessToken, order) {
+  const apiShopId = String(normalizeShopIdKey(shopId) || shopId || "").trim();
   if (!orderNeedsRealReturnTracking(order)) {
     return Boolean(normalizeCarrierTrackingCode(order?.return_tracking_no || order?.returnTrackingNumber));
   }
   let returnSn = String(order.return_sn || "").trim();
   if (!returnSn && order.orderSn) {
     try {
-      returnSn = await findReturnSnForOrderWebhook(shopId, accessToken, String(order.orderSn));
+      returnSn = await findReturnSnForOrderWebhook(apiShopId, accessToken, String(order.orderSn));
       if (returnSn) order.return_sn = returnSn;
     } catch (findErr) {
       console.warn(
@@ -120557,23 +120609,23 @@ async function fillReturnTrackingFromShopee(shopId, accessToken, order) {
   }
   if (!returnSn) {
     console.warn(
-      `[Shopee Tracking] fill return TN skip no_return_sn order_sn=${order.orderSn || "-"} shop_id=${shopId}`
+      `[Shopee Tracking] fill return TN skip no_return_sn order_sn=${order.orderSn || "-"} shop_id=${apiShopId}`
     );
     return false;
   }
   try {
-    const detail = await shopeeGetReturnDetail(shopId, accessToken, returnSn);
+    const detail = await shopeeGetReturnDetail(apiShopId, accessToken, returnSn);
     if (detail?.error) {
       const errText = `${detail.error || ""} ${detail.message || ""}`;
       console.warn(
-        `[Shopee Tracking] get_return_detail shop_id=${shopId} return_sn=${returnSn} error=${detail.error || "unknown"} message=${detail.message || ""}`
+        `[Shopee Tracking] get_return_detail shop_id=${apiShopId} return_sn=${returnSn} error=${detail.error || "unknown"} message=${detail.message || ""}`
       );
       if (isShopeeReturnsAuthError(detail)) {
         return false;
       }
       await shopeeSyncDelay(300);
       const { tracking: tracking2 } = await fetchReturnShippingTrackingNumber(
-        shopId,
+        apiShopId,
         accessToken,
         returnSn,
         void 0,
@@ -120593,7 +120645,7 @@ async function fillReturnTrackingFromShopee(shopId, accessToken, order) {
     const body = detail?.response ?? detail;
     if (body?.status) order.return_status = String(body.status);
     const { tracking } = await fetchReturnShippingTrackingNumber(
-      shopId,
+      apiShopId,
       accessToken,
       returnSn,
       detail,
@@ -123530,7 +123582,15 @@ async function syncShopeeReturnRequests(opts) {
 var RETURN_TRACKING_RETRY_HARD_LIMIT = 30;
 var RETURN_TRACKING_RETRY_PER_SHOP = 15;
 var RETURN_TRACKING_RETRY_DELAY_MS = 500;
+var AMTHANH_SHOP_ID = "831052930";
 var returnTrackingRetryInFlight = false;
+function listReturnTrackingShopIds() {
+  ensureShopeeLinkedShopTokenKeys();
+  const ids = listShopeeSyncShopIds().map((id) => normalizeShopIdKey(id)).filter(Boolean);
+  if (!ids.includes(AMTHANH_SHOP_ID)) ids.push(AMTHANH_SHOP_ID);
+  ids.sort((a, b) => a === AMTHANH_SHOP_ID ? -1 : b === AMTHANH_SHOP_ID ? 1 : 0);
+  return ids;
+}
 async function retryPendingReturnTracking(opts) {
   const empty = { attempted: 0, filled: 0, errors: 0 };
   if (returnTrackingRetryInFlight) {
@@ -123545,8 +123605,7 @@ async function retryPendingReturnTracking(opts) {
       RETURN_TRACKING_RETRY_HARD_LIMIT,
       Math.max(1, Math.floor(Number(opts?.limit) || RETURN_TRACKING_RETRY_HARD_LIMIT))
     );
-    ensureShopeeLinkedShopTokenKeys();
-    const shopIds = listShopeeSyncShopIds().map((id) => normalizeShopIdKey(id)).filter(Boolean);
+    const shopIds = listReturnTrackingShopIds();
     if (!shopIds.length) {
       console.warn("[ReturnTracking Retry] skip no_shopId \u2014 ch\u01B0a c\xF3 shop Shopee OAuth.");
       return empty;
@@ -123554,7 +123613,6 @@ async function retryPendingReturnTracking(opts) {
     let attempted = 0;
     let filled = 0;
     let errors = 0;
-    const touched = [];
     for (let shopIndex = 0; shopIndex < shopIds.length; shopIndex++) {
       if (attempted >= hardLimit) break;
       const shopId = shopIds[shopIndex];
@@ -123568,7 +123626,7 @@ async function retryPendingReturnTracking(opts) {
       try {
         candidates = await loadReturnTrackingPendingFromStore({
           shopId,
-          lookbackMs: 14 * 24 * 60 * 60 * 1e3,
+          lookbackMs: 30 * 24 * 60 * 60 * 1e3,
           limit: shopCap
         });
       } catch (err) {
@@ -123625,13 +123683,14 @@ async function retryPendingReturnTracking(opts) {
             order.trackingNumber || order.tracking_no
           );
           if (ok && rtn) {
-            applyReturnTrackingAliases(order, rtn);
-            touched.push(order);
-            shopFilled += 1;
-            filled += 1;
-            console.log(
-              `[ReturnTracking Retry] filled shop=${orderShopId} order_sn=${order.orderSn} return_sn=${returnSn} rtn=${rtn}`
-            );
+            const saved = await persistReturnTrackingOnly(order, rtn, orderShopId);
+            if (saved) {
+              shopFilled += 1;
+              filled += 1;
+              console.log(
+                `[ReturnTracking Retry] filled shop=${orderShopId} order_sn=${order.orderSn} return_sn=${returnSn} rtn=${rtn}`
+              );
+            }
           }
         } catch (rowErr) {
           errors += 1;
@@ -123646,13 +123705,6 @@ async function retryPendingReturnTracking(opts) {
       );
       await shopeeSyncDelay(RETURN_TRACKING_RETRY_DELAY_MS);
     }
-    if (touched.length && isMongoReady()) {
-      try {
-        await bulkUpsertOrdersToStore(touched);
-      } catch (persistErr) {
-        console.warn("[ReturnTracking Retry] upsert failed:", persistErr?.message || persistErr);
-      }
-    }
     console.log(
       `[ReturnTracking Retry] trigger=${opts?.trigger || "cron"} shops=${shopIds.length} attempted=${attempted} filled=${filled} errors=${errors} ${Date.now() - startedAt}ms`
     );
@@ -123663,7 +123715,7 @@ async function retryPendingReturnTracking(opts) {
 }
 var RETURN_TRACKING_BACKFILL_PER_SHOP_MS = 55e3;
 var RETURN_TRACKING_BACKFILL_LIMIT_PER_SHOP = 80;
-var RETURN_TRACKING_BACKFILL_DELAY_MS = 400;
+var RETURN_TRACKING_BACKFILL_DELAY_MS = 500;
 var returnTrackingBackfill30dInFlight = false;
 var returnTrackingBackfill30dOnce = false;
 async function backfillMissingReturnTracking30d(opts) {
@@ -123671,7 +123723,7 @@ async function backfillMissingReturnTracking30d(opts) {
   if (returnTrackingBackfill30dInFlight) {
     return { ...empty, skipped: true, message: "Backfill m\xE3 ho\xE0n \u0111ang ch\u1EA1y." };
   }
-  if (returnTrackingBackfill30dOnce && opts?.trigger === "boot") {
+  if (returnTrackingBackfill30dOnce && opts?.trigger === "boot" && !opts?.force) {
     return { ...empty, skipped: true, message: "Backfill m\xE3 ho\xE0n boot \u0111\xE3 ch\u1EA1y 1 l\u1EA7n." };
   }
   returnTrackingBackfill30dInFlight = true;
@@ -123685,27 +123737,16 @@ async function backfillMissingReturnTracking30d(opts) {
   let filled = 0;
   let errors = 0;
   try {
-    ensureShopeeLinkedShopTokenKeys();
-    const shopIds = listShopeeSyncShopIds().map((id) => normalizeShopIdKey(id)).filter(Boolean);
+    const wantedShop = String(normalizeShopIdKey(opts?.shopId) || opts?.shopId || "").trim();
+    const shopIds = listReturnTrackingShopIds().filter(
+      (id) => wantedShop ? id === wantedShop : true
+    );
     if (!shopIds.length) {
       return { ...empty, message: "Ch\u01B0a c\xF3 shop Shopee OAuth." };
     }
     console.log(
       `[ReturnTracking Backfill] START trigger=${opts?.trigger || "manual"} shops=${shopIds.length} ids=[${shopIds.join(",")}] cap=${limitPerShop}/shop`
     );
-    if (isMongoReady()) {
-      try {
-        const rec = await reclassifyCancelReturnsInStore({
-          lookbackMs: 30 * 24 * 60 * 60 * 1e3,
-          limit: 2e3
-        });
-        console.log(
-          `[ReturnTracking Backfill] reclassify scanned=${rec.scanned} updated=${rec.updated}`
-        );
-      } catch (reErr) {
-        console.warn("[ReturnTracking Backfill] reclassify:", reErr?.message || reErr);
-      }
-    }
     for (let shopIndex = 0; shopIndex < shopIds.length; shopIndex++) {
       const shopId = shopIds[shopIndex];
       console.log(`[Return Sync] \u0110ang x\u1EED l\xFD shop_id=${shopId}, index=${shopIndex}`);
@@ -123733,7 +123774,6 @@ async function backfillMissingReturnTracking30d(opts) {
           const rsn = String(row.returnSn || "").trim();
           if (sn && rsn) returnSnByOrder.set(sn, rsn);
         }
-        const touched = [];
         const seenSn = /* @__PURE__ */ new Set();
         const limitedRows = returnRows.slice(0, limitPerShop);
         for (const row of limitedRows) {
@@ -123775,14 +123815,14 @@ async function backfillMissingReturnTracking30d(opts) {
               existing.trackingNumber || existing.tracking_no
             );
             if (ok && rtn) {
-              applyReturnTrackingAliases(existing, rtn);
-              applyShopeeCancelReturnClassification(existing);
-              touched.push(existing);
-              shopFilled += 1;
-              filled += 1;
-              console.log(
-                `[ReturnTracking Backfill] OK shop=${shopId} order_sn=${orderSn} rtn=${rtn}`
-              );
+              const saved = await persistReturnTrackingOnly(existing, rtn, shopId);
+              if (saved) {
+                shopFilled += 1;
+                filled += 1;
+                console.log(
+                  `[ReturnTracking Backfill] OK shop=${shopId} order_sn=${orderSn} rtn=${rtn}`
+                );
+              }
             }
           } catch (rowErr) {
             errors += 1;
@@ -123827,14 +123867,14 @@ async function backfillMissingReturnTracking30d(opts) {
                 order.trackingNumber || order.tracking_no
               );
               if (ok && rtn) {
-                applyReturnTrackingAliases(order, rtn);
-                applyShopeeCancelReturnClassification(order);
-                touched.push(order);
-                shopFilled += 1;
-                filled += 1;
-                console.log(
-                  `[ReturnTracking Backfill] OK mongo shop=${shopId} order_sn=${orderSn} rtn=${rtn}`
-                );
+                const saved = await persistReturnTrackingOnly(order, rtn, shopId);
+                if (saved) {
+                  shopFilled += 1;
+                  filled += 1;
+                  console.log(
+                    `[ReturnTracking Backfill] OK mongo shop=${shopId} order_sn=${orderSn} rtn=${rtn}`
+                  );
+                }
               }
             } catch (rowErr) {
               errors += 1;
@@ -123843,17 +123883,6 @@ async function backfillMissingReturnTracking30d(opts) {
               );
               await shopeeSyncDelay(RETURN_TRACKING_BACKFILL_DELAY_MS);
             }
-          }
-        }
-        if (touched.length && isMongoReady()) {
-          try {
-            await bulkUpsertOrdersToStore(touched);
-          } catch (persistErr) {
-            errors += 1;
-            console.warn(
-              `[ReturnTracking Backfill] upsert shop=${shopId}:`,
-              persistErr?.message || persistErr
-            );
           }
         }
         console.log(
@@ -135299,9 +135328,13 @@ async function startServer() {
   app.post("/api/orders/backfill-return-tracking", authMiddleware, async (req, res) => {
     try {
       const limitPerShop = Math.min(80, Math.max(1, Number(req.body?.limitPerShop) || 80));
+      const shopId = String(req.body?.shopId || req.query?.shopId || "").trim();
+      const force = req.body?.force === true || req.query?.force === "1";
       const result = await backfillMissingReturnTracking30d({
         trigger: "api",
-        limitPerShop
+        limitPerShop,
+        shopId: shopId || void 0,
+        force
       });
       return res.json({ success: true, ...result });
     } catch (err) {

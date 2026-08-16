@@ -6,6 +6,7 @@
  * → GET /api/v2/returns/get_reverse_tracking_info → ghi 4 field UPPER.
  *
  *   node scripts/backfill_return_tracking.js
+ *   node scripts/backfill_return_tracking.js --shop=831052930
  *   node scripts/backfill_return_tracking.js --limit=50
  *   node scripts/backfill_return_tracking.js --shop=4127421
  *   node scripts/backfill_return_tracking.js --dry-run
@@ -27,7 +28,8 @@ const PARTNER_ID = String(process.env.SHOPEE_PARTNER_ID || "").trim();
 const PARTNER_KEY = String(process.env.SHOPEE_PARTNER_KEY || "").trim();
 const HOST = "https://partner.shopeemobile.com";
 const TOKENS_PATH = path.join(ROOT, "data", "shopee_tokens.json");
-const DELAY_MS = 400;
+const DELAY_MS = 500;
+const AMTHANH_SHOP_ID = "831052930";
 
 function arg(name) {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -237,34 +239,44 @@ function returnOf(doc) {
 function missingReturnFilter() {
   const cutoffIso = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
   const cutoffDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const cutoffUnix = Math.floor((Date.now() - 30 * 24 * 60 * 60 * 1000) / 1000);
   return {
     $and: [
       {
         $or: [
           { return_sn: { $exists: true, $nin: [null, ""] } },
           { "data.return_sn": { $exists: true, $nin: [null, ""] } },
-          { shopee_order_status: { $in: ["TO_RETURN", "CANCELLED", "IN_CANCEL"] } },
-          { "data.shopee_order_status": { $in: ["TO_RETURN", "CANCELLED", "IN_CANCEL"] } },
-          { status: { $in: ["return_pending", "return_received", "cancelled"] } },
-          { is_rts: true },
-          { "data.is_rts": true },
-          { shopee_cancel_return_kind: { $in: ["failed_delivery", "refund_return"] } },
         ],
       },
       {
-        $or: [
-          { return_tracking_no: { $exists: false } },
-          { return_tracking_no: null },
-          { return_tracking_no: "" },
-          { "data.return_tracking_no": { $exists: false } },
-          { "data.return_tracking_no": null },
-          { "data.return_tracking_no": "" },
+        $and: [
+          {
+            $or: [
+              { return_tracking_no: { $exists: false } },
+              { return_tracking_no: null },
+              { return_tracking_no: "" },
+            ],
+          },
+          {
+            $or: [
+              { "data.return_tracking_no": { $exists: false } },
+              { "data.return_tracking_no": null },
+              { "data.return_tracking_no": "" },
+            ],
+          },
         ],
       },
       {
         $or: [
           { "data.date": { $gte: cutoffIso } },
+          { "data.date": { $gte: cutoffDate } },
           { last_synced_at: { $gte: cutoffDate } },
+          { createdAt: { $gte: cutoffDate } },
+          { updatedAt: { $gte: cutoffDate } },
+          { return_create_time: { $gte: cutoffUnix } },
+          { return_update_time: { $gte: cutoffUnix } },
+          { "data.return_create_time": { $gte: cutoffUnix } },
+          { "data.return_update_time": { $gte: cutoffUnix } },
         ],
       },
     ],
@@ -381,7 +393,7 @@ async function main() {
 
   const shopIds = shopFilter
     ? [normalizeShopIdKey(shopFilter)].filter(Boolean)
-    : listOAuthShopIds(tokens);
+    : [...new Set([AMTHANH_SHOP_ID, ...listOAuthShopIds(tokens)])].filter(Boolean);
   console.log(`[Shops] ${shopIds.length} ids=[${shopIds.join(",")}] lookback=30d cap=${limit}/shop`);
 
   const returnSnByShop = new Map();
@@ -404,8 +416,11 @@ async function main() {
 
   const filter = missingReturnFilter();
   if (shopFilter) {
+    const shopNum = Number(shopFilter);
+    const shopVariants = [shopFilter];
+    if (Number.isFinite(shopNum) && String(shopNum) === shopFilter) shopVariants.push(shopNum);
     filter.$and.push({
-      $or: [{ shopId: shopFilter }, { "data.shopId": shopFilter }],
+      $or: [{ shopId: { $in: shopVariants } }, { "data.shopId": { $in: shopVariants } }],
     });
   }
 

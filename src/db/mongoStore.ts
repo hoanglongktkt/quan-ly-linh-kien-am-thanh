@@ -3117,6 +3117,58 @@ export async function updateOrderTrackingInStore(
 }
 
 /**
+ * Chỉ $set mã chiều hoàn (+ return_sn/return_status logistics).
+ * CẤM đụng is_return_received / local_return_status / cờ kho.
+ */
+export async function updateReturnTrackingOnlyInStore(
+  orderSn: string,
+  returnTrackingNo: string,
+  extra?: {
+    shopId?: string;
+    return_sn?: string;
+    return_status?: string;
+  },
+): Promise<boolean> {
+  if (!isMongoReady()) return false;
+  requireMongo();
+  const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
+  const rtn = String(returnTrackingNo || "").trim().toUpperCase();
+  if (!sn || !rtn || rtn.length < 4 || /^0FG/i.test(rtn)) return false;
+  const _id = `shopee-${sn}`;
+  const shopIdStr = extra?.shopId != null ? String(extra.shopId).trim() : "";
+  const $set: Record<string, unknown> = {
+    return_tracking_no: rtn,
+    returnTrackingNumber: rtn,
+    "data.return_tracking_no": rtn,
+    "data.returnTrackingNumber": rtn,
+  };
+  const returnSn = String(extra?.return_sn || "").trim();
+  if (returnSn) {
+    $set.return_sn = returnSn;
+    $set["data.return_sn"] = returnSn;
+  }
+  const returnStatus = String(extra?.return_status || "").trim();
+  if (returnStatus) {
+    $set.return_status = returnStatus;
+    $set["data.return_status"] = returnStatus;
+  }
+  stripWarehouseProtectedKeysFromSet($set);
+  delete $set.is_return_received;
+  delete $set["data.is_return_received"];
+  delete $set.local_return_status;
+  delete $set["data.local_return_status"];
+  const result = await OrderModel.findOneAndUpdate(
+    buildOrderCompoundFilter(sn, _id, shopIdStr),
+    { $set },
+    { new: true, upsert: false },
+  );
+  console.log(
+    `[MongoDB] return_tracking_only order_sn=${sn} shopId=${shopIdStr || "-"} rtn=${rtn} ok=${Boolean(result)}`,
+  );
+  return Boolean(result);
+}
+
+/**
  * Job bù mã GHN — bulkWrite $set tracking_no thẳng DB.
  * Không lọc Regex kén chọn (chữ cái / lệch hãng). Chỉ bỏ mã nội bộ 0FG.
  * Không đụng last_shopee_update_at (tránh watermark nuốt mất mã vừa lấy).
@@ -4651,6 +4703,55 @@ export async function loadCancelReturnMissingTrackingFromStore(opts?: {
   return loadOrdersFromStore({ ids: docs.map((d) => String(d._id)) });
 }
 
+function emptyReturnTrackingClause(): Record<string, unknown> {
+  return {
+    $and: [
+      {
+        $or: [
+          { return_tracking_no: { $exists: false } },
+          { return_tracking_no: null },
+          { return_tracking_no: "" },
+        ],
+      },
+      {
+        $or: [
+          { "data.return_tracking_no": { $exists: false } },
+          { "data.return_tracking_no": null },
+          { "data.return_tracking_no": "" },
+        ],
+      },
+    ],
+  };
+}
+
+function hasReturnSnClause(): Record<string, unknown> {
+  return {
+    $or: [
+      { return_sn: { $exists: true, $nin: [null, ""] } },
+      { "data.return_sn": { $exists: true, $nin: [null, ""] } },
+    ],
+  };
+}
+
+function returnTrackingLookbackClause(lookbackMs: number): Record<string, unknown> {
+  const cutoffIso = new Date(Date.now() - lookbackMs).toISOString();
+  const cutoffDate = new Date(Date.now() - lookbackMs);
+  const cutoffUnix = Math.floor((Date.now() - lookbackMs) / 1000);
+  return {
+    $or: [
+      { "data.date": { $gte: cutoffIso } },
+      { "data.date": { $gte: cutoffDate } },
+      { last_synced_at: { $gte: cutoffDate } },
+      { createdAt: { $gte: cutoffDate } },
+      { updatedAt: { $gte: cutoffDate } },
+      { return_create_time: { $gte: cutoffUnix } },
+      { return_update_time: { $gte: cutoffUnix } },
+      { "data.return_create_time": { $gte: cutoffUnix } },
+      { "data.return_update_time": { $gte: cutoffUnix } },
+    ],
+  };
+}
+
 /**
  * P1: đơn đã có return_sn nhưng mã hoàn trống.
  * Query nhẹ, CẤM $expr/$toUpper (COLLSCAN CPU 100%). Hard .limit(30).
@@ -4665,34 +4766,16 @@ export async function loadReturnTrackingPendingFromStore(opts?: {
   const HARD_LIMIT = 30;
   const limit = Math.min(HARD_LIMIT, Math.max(1, Math.floor(Number(opts?.limit) || HARD_LIMIT)));
   const lookbackMs = Math.min(
-    14 * 24 * 60 * 60 * 1000,
-    Math.max(24 * 60 * 60 * 1000, Number(opts?.lookbackMs) || 14 * 24 * 60 * 60 * 1000),
+    30 * 24 * 60 * 60 * 1000,
+    Math.max(24 * 60 * 60 * 1000, Number(opts?.lookbackMs) || 30 * 24 * 60 * 60 * 1000),
   );
-  const cutoffIso = new Date(Date.now() - lookbackMs).toISOString();
-  const cutoffDate = new Date(Date.now() - lookbackMs);
   const shopKey = String(opts?.shopId || "").trim();
 
   const filter: Record<string, unknown> = {
     $and: [
-      {
-        $or: [
-          { return_sn: { $type: "string", $nin: [""] } },
-          { "data.return_sn": { $type: "string", $nin: [""] } },
-        ],
-      },
-      {
-        $or: [
-          { return_tracking_no: { $exists: false } },
-          { return_tracking_no: null },
-          { return_tracking_no: "" },
-        ],
-      },
-      {
-        $or: [
-          { "data.date": { $gte: cutoffIso } },
-          { last_synced_at: { $gte: cutoffDate } },
-        ],
-      },
+      hasReturnSnClause(),
+      emptyReturnTrackingClause(),
+      returnTrackingLookbackClause(lookbackMs),
       ...(shopKey
         ? [
             {
@@ -4748,40 +4831,13 @@ export async function loadMissingReturnTrackingBackfillFromStore(opts?: {
     30 * 24 * 60 * 60 * 1000,
     Math.max(24 * 60 * 60 * 1000, Number(opts?.lookbackMs) || 30 * 24 * 60 * 60 * 1000),
   );
-  const cutoffIso = new Date(Date.now() - lookbackMs).toISOString();
-  const cutoffDate = new Date(Date.now() - lookbackMs);
   const shopKey = String(opts?.shopId || "").trim();
 
   const filter: Record<string, unknown> = {
     $and: [
-      {
-        $or: [
-          { return_sn: { $type: "string", $nin: [""] } },
-          { "data.return_sn": { $type: "string", $nin: [""] } },
-          { is_rts: true },
-          { "data.is_rts": true },
-          { shopee_cancel_return_kind: "failed_delivery" },
-          { "data.shopee_cancel_return_kind": "failed_delivery" },
-          { shopee_cancel_return_kind: "refund_return" },
-          { "data.shopee_cancel_return_kind": "refund_return" },
-          { status: { $in: ["return_pending", "return_received", "cancelled"] } },
-          { shopee_order_status: { $in: ["TO_RETURN", "CANCELLED", "IN_CANCEL"] } },
-          { "data.shopee_order_status": { $in: ["TO_RETURN", "CANCELLED", "IN_CANCEL"] } },
-        ],
-      },
-      {
-        $or: [
-          { return_tracking_no: { $exists: false } },
-          { return_tracking_no: null },
-          { return_tracking_no: "" },
-        ],
-      },
-      {
-        $or: [
-          { "data.date": { $gte: cutoffIso } },
-          { last_synced_at: { $gte: cutoffDate } },
-        ],
-      },
+      hasReturnSnClause(),
+      emptyReturnTrackingClause(),
+      returnTrackingLookbackClause(lookbackMs),
       ...(shopKey
         ? [
             {
