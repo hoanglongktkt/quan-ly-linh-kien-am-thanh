@@ -118,12 +118,54 @@ export function isShopeeRtsFailedDelivery(order: ShopeeCancelReturnInput): boole
   return hasCarrierRtsEvidence(order);
 }
 
+/** YCTH Shopee đã hủy — không còn là đơn Trả hàng Hoàn tiền. */
+export function isCancelledReturnRequest(order: ShopeeCancelReturnInput | null | undefined): boolean {
+  return String(order?.return_status || '').trim().toUpperCase() === 'CANCELLED';
+}
+
+/** Đơn đã giao (chiều đi xong) — leftover YCTH hủy không được dính tab Hoàn. */
+export function isDeliveredShopeeOrder(order: ShopeeCancelReturnInput | null | undefined): boolean {
+  if (!order) return false;
+  const logistics = String(order.logistics_status || '').toUpperCase();
+  const raw = String(order.shopee_order_status || '').toUpperCase();
+  const st = String(order.status || '').toUpperCase();
+  if (logistics === 'LOGISTICS_DELIVERY_DONE') return true;
+  if (raw === 'TO_CONFIRM_RECEIVE' || raw === 'COMPLETED') return true;
+  if (st === 'COMPLETED' || st === 'DELIVERED') return true;
+  return false;
+}
+
+/**
+ * Gỡ leftover YCTH đã hủy trên đơn đã giao (in-memory).
+ * Caller persist `_clear_return_sn` / `_clear_cancelled_return` xuống Mongo.
+ */
+export function stripCancelledReturnOnDelivered(order: any): boolean {
+  if (!order) return false;
+  if (!isCancelledReturnRequest(order)) return false;
+  if (!isDeliveredShopeeOrder(order)) return false;
+  order.return_sn = '';
+  order.return_tracking_no = '';
+  order.returnTrackingNumber = '';
+  order.return_status = '';
+  order.is_return = false;
+  if (String(order.shopee_cancel_return_kind || '').trim() === 'refund_return') {
+    order.shopee_cancel_return_kind = '';
+  }
+  if (String(order.sub_status || '').toUpperCase() === 'RETURN') {
+    order.sub_status = '';
+  }
+  order._clear_return_sn = true;
+  order._clear_cancelled_return = true;
+  return true;
+}
+
 /**
  * Return/Refund: CHỈ đơn từ get_return_list — BẮT BUỘC return_sn.
- * CANCELLED + return_sn (đơn hoàn đã chốt) vẫn là Trả hàng Hoàn tiền.
+ * YCTH CANCELLED không còn là Trả hàng Hoàn tiền.
  */
 export function isShopeeReturnRefundOrder(order: ShopeeCancelReturnInput): boolean {
   if (isUnshippedShopeeCancel(order)) return false;
+  if (String(order.return_status || '').toUpperCase() === 'CANCELLED') return false;
   if (!hasShopeeReturnSn(order)) return false;
   return true;
 }

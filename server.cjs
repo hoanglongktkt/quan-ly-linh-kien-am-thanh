@@ -75140,8 +75140,41 @@ function hasCarrierRtsEvidence(order) {
   if (isShopeeRtsCancelReason(order.cancel_reason, order.buyer_cancel_reason)) return true;
   return false;
 }
+function isCancelledReturnRequest(order) {
+  return String(order?.return_status || "").trim().toUpperCase() === "CANCELLED";
+}
+function isDeliveredShopeeOrder(order) {
+  if (!order) return false;
+  const logistics = String(order.logistics_status || "").toUpperCase();
+  const raw = String(order.shopee_order_status || "").toUpperCase();
+  const st = String(order.status || "").toUpperCase();
+  if (logistics === "LOGISTICS_DELIVERY_DONE") return true;
+  if (raw === "TO_CONFIRM_RECEIVE" || raw === "COMPLETED") return true;
+  if (st === "COMPLETED" || st === "DELIVERED") return true;
+  return false;
+}
+function stripCancelledReturnOnDelivered(order) {
+  if (!order) return false;
+  if (!isCancelledReturnRequest(order)) return false;
+  if (!isDeliveredShopeeOrder(order)) return false;
+  order.return_sn = "";
+  order.return_tracking_no = "";
+  order.returnTrackingNumber = "";
+  order.return_status = "";
+  order.is_return = false;
+  if (String(order.shopee_cancel_return_kind || "").trim() === "refund_return") {
+    order.shopee_cancel_return_kind = "";
+  }
+  if (String(order.sub_status || "").toUpperCase() === "RETURN") {
+    order.sub_status = "";
+  }
+  order._clear_return_sn = true;
+  order._clear_cancelled_return = true;
+  return true;
+}
 function isShopeeReturnRefundOrder(order) {
   if (isUnshippedShopeeCancel(order)) return false;
+  if (String(order.return_status || "").toUpperCase() === "CANCELLED") return false;
   if (!hasShopeeReturnSn(order)) return false;
   return true;
 }
@@ -77274,7 +77307,8 @@ var INTERNAL_FLAG_KEYS = /* @__PURE__ */ new Set([
   "pdfUrl",
   "pdfFilename",
   "waybill_url",
-  "_clear_return_sn"
+  "_clear_return_sn",
+  "_clear_cancelled_return"
 ]);
 var WAREHOUSE_PROTECTED_SET_KEYS = [
   "local_status",
@@ -77422,7 +77456,8 @@ async function bulkUpsertOrdersToStore(orders) {
     const returnTn = String(
       order.return_tracking_no || order.returnTrackingNumber || ""
     ).trim().toUpperCase();
-    if (returnTn && !/^0FG/i.test(returnTn) && returnTn !== outboundTn) {
+    const returnStatusUp = String(order.return_status || "").trim().toUpperCase();
+    if (returnTn && !/^0FG/i.test(returnTn) && returnTn !== outboundTn && returnStatusUp !== "CANCELLED" && order._clear_cancelled_return !== true) {
       $set.return_tracking_no = returnTn;
       $set.returnTrackingNumber = returnTn;
       $set["data.return_tracking_no"] = returnTn;
@@ -77430,12 +77465,27 @@ async function bulkUpsertOrdersToStore(orders) {
     }
     const returnSnStr = String(order.return_sn || "").trim();
     const $unset = {};
-    const clearReturnSn = order._clear_return_sn === true || order.is_return === false && !returnSnStr && isUnshippedShopeeCancel(order);
+    const clearCancelledReturn = order._clear_cancelled_return === true;
+    const clearReturnSn = order._clear_return_sn === true || clearCancelledReturn || order.is_return === false && !returnSnStr && isUnshippedShopeeCancel(order);
     if (clearReturnSn) {
       $unset.return_sn = 1;
       $unset["data.return_sn"] = 1;
       $set.is_return = false;
       $set["data.is_return"] = false;
+      if (clearCancelledReturn) {
+        $unset.return_tracking_no = 1;
+        $unset.returnTrackingNumber = 1;
+        $unset["data.return_tracking_no"] = 1;
+        $unset["data.returnTrackingNumber"] = 1;
+        $unset.return_status = 1;
+        $unset["data.return_status"] = 1;
+        $unset.shopee_cancel_return_kind = 1;
+        $unset["data.shopee_cancel_return_kind"] = 1;
+        if (String(order.sub_status || "").toUpperCase() !== "RTS") {
+          $unset.sub_status = 1;
+          $unset["data.sub_status"] = 1;
+        }
+      }
     } else if (returnSnStr) {
       $set.return_sn = returnSnStr;
       $set["data.return_sn"] = returnSnStr;
@@ -77448,12 +77498,12 @@ async function bulkUpsertOrdersToStore(orders) {
       $set["data.is_return"] = false;
     }
     const cancelKind = String(order.shopee_cancel_return_kind || "").trim();
-    if (cancelKind === "refund_return" || cancelKind === "cancelled" || cancelKind === "failed_delivery") {
+    if (!clearCancelledReturn && (cancelKind === "refund_return" || cancelKind === "cancelled" || cancelKind === "failed_delivery")) {
       $set.shopee_cancel_return_kind = cancelKind;
       $set["data.shopee_cancel_return_kind"] = cancelKind;
     }
     const subStatus = String(order.sub_status || "").trim().toUpperCase();
-    if (subStatus === "RTS" || subStatus === "CANCELLED" || subStatus === "RETURN") {
+    if (!clearCancelledReturn && (subStatus === "RTS" || subStatus === "CANCELLED" || subStatus === "RETURN")) {
       $set.sub_status = subStatus;
       $set["data.sub_status"] = subStatus;
     }
@@ -78393,6 +78443,7 @@ async function updateReturnTrackingOnlyInStore(orderSn, returnTrackingNo, extra)
   const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
   const rtn = String(returnTrackingNo || "").trim().toUpperCase();
   if (!sn || !rtn || rtn.length < 4 || /^0FG/i.test(rtn)) return false;
+  if (String(extra?.return_status || "").trim().toUpperCase() === "CANCELLED") return false;
   const _id = `shopee-${sn}`;
   const shopIdStr = extra?.shopId != null ? String(extra.shopId).trim() : "";
   const $set = {
@@ -78423,6 +78474,41 @@ async function updateReturnTrackingOnlyInStore(orderSn, returnTrackingNo, extra)
   );
   console.log(
     `[MongoDB] return_tracking_only order_sn=${sn} shopId=${shopIdStr || "-"} rtn=${rtn} ok=${Boolean(result)}`
+  );
+  return Boolean(result);
+}
+async function clearCancelledDeliveredReturnInStore(orderSn, shopId) {
+  if (!isMongoReady()) return false;
+  requireMongo();
+  const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
+  if (!sn) return false;
+  const _id = `shopee-${sn}`;
+  const shopIdStr = shopId != null ? String(shopId).trim() : "";
+  const $unset = {
+    return_sn: 1,
+    "data.return_sn": 1,
+    return_tracking_no: 1,
+    returnTrackingNumber: 1,
+    "data.return_tracking_no": 1,
+    "data.returnTrackingNumber": 1,
+    return_status: 1,
+    "data.return_status": 1,
+    shopee_cancel_return_kind: 1,
+    "data.shopee_cancel_return_kind": 1,
+    sub_status: 1,
+    "data.sub_status": 1
+  };
+  const $set = {
+    is_return: false,
+    "data.is_return": false
+  };
+  const result = await OrderModel.findOneAndUpdate(
+    buildOrderCompoundFilter(sn, _id, shopIdStr),
+    { $set, $unset },
+    { new: true, upsert: false }
+  );
+  console.log(
+    `[MongoDB] clear_cancelled_return order_sn=${sn} shopId=${shopIdStr || "-"} ok=${Boolean(result)}`
   );
   return Boolean(result);
 }
@@ -120280,6 +120366,10 @@ function applyShopeeCancelReturnClassification(order, detail) {
     if (detail.buyer_cancel_reason) order.buyer_cancel_reason = String(detail.buyer_cancel_reason);
     if (detail.cancel_by) order.cancel_by = String(detail.cancel_by);
   }
+  if (stripCancelledReturnOnDelivered(order)) {
+    order.is_rts = false;
+    return;
+  }
   const kind = classifyShopeeCancelReturnKind(order);
   if (kind) order.shopee_cancel_return_kind = kind;
   const sub = resolveShopeeSubStatus(kind);
@@ -120556,10 +120646,14 @@ function applyReturnTrackingAliases(order, tracking) {
   order.return_tracking_no = tn;
   order.returnTrackingNumber = tn;
 }
+function isCancelledReturnStatus(raw) {
+  return String(raw || "").trim().toUpperCase() === "CANCELLED";
+}
 async function persistReturnTrackingOnly(order, tracking, shopId) {
   const sn = String(order?.orderSn || "").replace(/^shopee-/i, "").trim();
   const rtn = normalizeCarrierTrackingCode(tracking);
   if (!sn || !rtn) return false;
+  if (isCancelledReturnStatus(order?.return_status)) return false;
   applyReturnTrackingAliases(order, rtn);
   return updateReturnTrackingOnlyInStore(sn, rtn, {
     shopId: String(normalizeShopIdKey(shopId) || shopId || "").trim() || void 0,
@@ -120592,6 +120686,12 @@ function markNewReturnRequestAlert(order, existing) {
 }
 async function fillReturnTrackingFromShopee(shopId, accessToken, order) {
   const apiShopId = String(normalizeShopIdKey(shopId) || shopId || "").trim();
+  if (isCancelledReturnStatus(order?.return_status)) {
+    if (stripCancelledReturnOnDelivered(order)) {
+      await clearCancelledDeliveredReturnInStore(String(order?.orderSn || ""), apiShopId);
+    }
+    return false;
+  }
   if (!orderNeedsRealReturnTracking(order)) {
     return Boolean(normalizeCarrierTrackingCode(order?.return_tracking_no || order?.returnTrackingNumber));
   }
@@ -120644,6 +120744,20 @@ async function fillReturnTrackingFromShopee(shopId, accessToken, order) {
     }
     const body = detail?.response ?? detail;
     if (body?.status) order.return_status = String(body.status);
+    if (isCancelledReturnStatus(order.return_status) || isCancelledReturnStatus(body?.status)) {
+      order.return_status = "CANCELLED";
+      if (stripCancelledReturnOnDelivered(order)) {
+        await clearCancelledDeliveredReturnInStore(String(order.orderSn || ""), apiShopId);
+        console.log(
+          `[Shopee Tracking] skip cancelled YCTH on delivered order_sn=${order.orderSn || "-"} return_sn=${returnSn}`
+        );
+        return false;
+      }
+      console.log(
+        `[Shopee Tracking] skip return_tracking_no \u2014 return_status=CANCELLED order_sn=${order.orderSn || "-"}`
+      );
+      return false;
+    }
     const { tracking } = await fetchReturnShippingTrackingNumber(
       apiShopId,
       accessToken,
@@ -120665,6 +120779,12 @@ async function fillReturnTrackingFromShopee(shopId, accessToken, order) {
 }
 async function fetchReturnShippingTrackingNumber(shopId, accessToken, returnSn, detailPayload, outboundTn) {
   const sources = {};
+  const detailStatus = String(
+    detailPayload?.response?.status ?? detailPayload?.status ?? ""
+  ).trim().toUpperCase();
+  if (detailStatus === "CANCELLED") {
+    return { tracking: "", sources: { skipped: "cancelled_return" } };
+  }
   const outbound = normalizeCarrierTrackingCode(outboundTn);
   let fromReverse = "";
   try {
@@ -123409,6 +123529,16 @@ async function syncShopeeReturnRequests(opts) {
                 );
                 existing = void 0;
               }
+            }
+            const returnStatusEarly = String(detail.status || row.status || "").toUpperCase();
+            if (returnStatusEarly === "CANCELLED") {
+              if (existing) {
+                existing.return_status = "CANCELLED";
+                if (stripCancelledReturnOnDelivered(existing)) {
+                  patches.push(existing);
+                }
+              }
+              continue;
             }
             if (existing && !shouldApplyShopeeReturnOverlay(existing)) {
               applyShopeeCancelReturnClassification(existing);
@@ -128460,6 +128590,7 @@ function isCancelOrReturnOrderStatus(order) {
 }
 function orderNeedsRealReturnTracking(order) {
   if (!order) return false;
+  if (String(order.return_status || "").toUpperCase() === "CANCELLED") return false;
   const hasReturnCtx = Boolean(order.return_sn) || isCancelOrReturnOrderStatus(order);
   if (!hasReturnCtx) return false;
   const ret = normalizeCarrierTrackingCode(
@@ -133170,6 +133301,15 @@ async function applyWebhookReturnFallback(shopId, accessToken, orderSn, orders, 
   const mappedReturnSn = extractReturnRequestCode(detail) || returnSn;
   const idx = orders.findIndex((o) => String(o.orderSn) === orderSn);
   const existing = idx >= 0 ? orders[idx] : void 0;
+  if (returnStatus === "CANCELLED") {
+    if (existing) {
+      existing.return_status = "CANCELLED";
+      if (stripCancelledReturnOnDelivered(existing)) {
+        await clearCancelledDeliveredReturnInStore(orderSn, shopId);
+      }
+    }
+    return;
+  }
   const outboundExisting = existing?.trackingNumber || existing?.tracking_no;
   const { tracking: returnShipTn } = await fetchReturnShippingTrackingNumber(
     shopId,

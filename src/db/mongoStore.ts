@@ -1676,6 +1676,7 @@ const INTERNAL_FLAG_KEYS = new Set([
   "pdfFilename",
   "waybill_url",
   "_clear_return_sn",
+  "_clear_cancelled_return",
 ]);
 
 /** Path Mongo bị cấm $set khi sync Shopee — cờ kho nhân viên đã xác nhận. */
@@ -1896,7 +1897,14 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     )
       .trim()
       .toUpperCase();
-    if (returnTn && !/^0FG/i.test(returnTn) && returnTn !== outboundTn) {
+    const returnStatusUp = String(order.return_status || "").trim().toUpperCase();
+    if (
+      returnTn &&
+      !/^0FG/i.test(returnTn) &&
+      returnTn !== outboundTn &&
+      returnStatusUp !== "CANCELLED" &&
+      order._clear_cancelled_return !== true
+    ) {
       $set.return_tracking_no = returnTn;
       $set.returnTrackingNumber = returnTn;
       $set["data.return_tracking_no"] = returnTn;
@@ -1905,8 +1913,10 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     // Mã YCTH (return_sn) + order_sn — luôn String (uint64-safe / alphanumeric).
     const returnSnStr = String(order.return_sn || "").trim();
     const $unset: Record<string, 1> = {};
+    const clearCancelledReturn = order._clear_cancelled_return === true;
     const clearReturnSn =
       order._clear_return_sn === true ||
+      clearCancelledReturn ||
       (order.is_return === false &&
         !returnSnStr &&
         isUnshippedShopeeCancel(order));
@@ -1915,6 +1925,20 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       $unset["data.return_sn"] = 1;
       $set.is_return = false;
       $set["data.is_return"] = false;
+      if (clearCancelledReturn) {
+        $unset.return_tracking_no = 1;
+        $unset.returnTrackingNumber = 1;
+        $unset["data.return_tracking_no"] = 1;
+        $unset["data.returnTrackingNumber"] = 1;
+        $unset.return_status = 1;
+        $unset["data.return_status"] = 1;
+        $unset.shopee_cancel_return_kind = 1;
+        $unset["data.shopee_cancel_return_kind"] = 1;
+        if (String(order.sub_status || "").toUpperCase() !== "RTS") {
+          $unset.sub_status = 1;
+          $unset["data.sub_status"] = 1;
+        }
+      }
     } else if (returnSnStr) {
       $set.return_sn = returnSnStr;
       $set["data.return_sn"] = returnSnStr;
@@ -1928,15 +1952,19 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     }
     const cancelKind = String(order.shopee_cancel_return_kind || "").trim();
     if (
-      cancelKind === "refund_return" ||
-      cancelKind === "cancelled" ||
-      cancelKind === "failed_delivery"
+      !clearCancelledReturn &&
+      (cancelKind === "refund_return" ||
+        cancelKind === "cancelled" ||
+        cancelKind === "failed_delivery")
     ) {
       $set.shopee_cancel_return_kind = cancelKind;
       $set["data.shopee_cancel_return_kind"] = cancelKind;
     }
     const subStatus = String(order.sub_status || "").trim().toUpperCase();
-    if (subStatus === "RTS" || subStatus === "CANCELLED" || subStatus === "RETURN") {
+    if (
+      !clearCancelledReturn &&
+      (subStatus === "RTS" || subStatus === "CANCELLED" || subStatus === "RETURN")
+    ) {
       $set.sub_status = subStatus;
       $set["data.sub_status"] = subStatus;
     }
@@ -3134,6 +3162,7 @@ export async function updateReturnTrackingOnlyInStore(
   const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
   const rtn = String(returnTrackingNo || "").trim().toUpperCase();
   if (!sn || !rtn || rtn.length < 4 || /^0FG/i.test(rtn)) return false;
+  if (String(extra?.return_status || "").trim().toUpperCase() === "CANCELLED") return false;
   const _id = `shopee-${sn}`;
   const shopIdStr = extra?.shopId != null ? String(extra.shopId).trim() : "";
   const $set: Record<string, unknown> = {
@@ -3164,6 +3193,48 @@ export async function updateReturnTrackingOnlyInStore(
   );
   console.log(
     `[MongoDB] return_tracking_only order_sn=${sn} shopId=${shopIdStr || "-"} rtn=${rtn} ok=${Boolean(result)}`,
+  );
+  return Boolean(result);
+}
+
+/**
+ * YCTH CANCELLED trên đơn đã giao — $unset leftover return_sn / mã hoàn / cờ hoàn.
+ */
+export async function clearCancelledDeliveredReturnInStore(
+  orderSn: string,
+  shopId?: string,
+): Promise<boolean> {
+  if (!isMongoReady()) return false;
+  requireMongo();
+  const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
+  if (!sn) return false;
+  const _id = `shopee-${sn}`;
+  const shopIdStr = shopId != null ? String(shopId).trim() : "";
+  const $unset: Record<string, 1> = {
+    return_sn: 1,
+    "data.return_sn": 1,
+    return_tracking_no: 1,
+    returnTrackingNumber: 1,
+    "data.return_tracking_no": 1,
+    "data.returnTrackingNumber": 1,
+    return_status: 1,
+    "data.return_status": 1,
+    shopee_cancel_return_kind: 1,
+    "data.shopee_cancel_return_kind": 1,
+    sub_status: 1,
+    "data.sub_status": 1,
+  };
+  const $set: Record<string, unknown> = {
+    is_return: false,
+    "data.is_return": false,
+  };
+  const result = await OrderModel.findOneAndUpdate(
+    buildOrderCompoundFilter(sn, _id, shopIdStr),
+    { $set, $unset },
+    { new: true, upsert: false },
+  );
+  console.log(
+    `[MongoDB] clear_cancelled_return order_sn=${sn} shopId=${shopIdStr || "-"} ok=${Boolean(result)}`,
   );
   return Boolean(result);
 }

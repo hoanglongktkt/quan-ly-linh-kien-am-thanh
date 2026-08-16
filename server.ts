@@ -25,6 +25,7 @@ import {
   isUnshippedShopeeCancel,
   resolveShopeeSubStatus,
   shouldApplyShopeeReturnOverlay,
+  stripCancelledReturnOnDelivered,
 } from "./src/utils/shopeeCancelReturnClassify.ts";
 import {
   ORDER_LOCAL_STATUS,
@@ -452,6 +453,7 @@ import {
   updateOrderPendingShopeeCheckInStore,
   updateOrderTrackingInStore,
   updateReturnTrackingOnlyInStore,
+  clearCancelledDeliveredReturnInStore,
   updateOrderPackageNumberInStore,
   forceUpdateOrderShopIdInStore,
   forceUpdateOrderShopIdByCodeInStore,
@@ -1226,6 +1228,10 @@ function applyShopeeCancelReturnClassification(order: any, detail?: any): void {
     if (detail.buyer_cancel_reason) order.buyer_cancel_reason = String(detail.buyer_cancel_reason);
     if (detail.cancel_by) order.cancel_by = String(detail.cancel_by);
   }
+  if (stripCancelledReturnOnDelivered(order)) {
+    order.is_rts = false;
+    return;
+  }
   const kind = classifyShopeeCancelReturnKind(order);
   if (kind) order.shopee_cancel_return_kind = kind;
   const sub = resolveShopeeSubStatus(kind);
@@ -1573,11 +1579,16 @@ function applyReturnTrackingAliases(order: any, tracking: string): void {
   order.returnTrackingNumber = tn;
 }
 
+function isCancelledReturnStatus(raw: unknown): boolean {
+  return String(raw || "").trim().toUpperCase() === "CANCELLED";
+}
+
 /** Persist mã hoàn — chỉ 4 field tracking, không đè cờ kho. */
 async function persistReturnTrackingOnly(order: any, tracking: string, shopId: string): Promise<boolean> {
   const sn = String(order?.orderSn || "").replace(/^shopee-/i, "").trim();
   const rtn = normalizeCarrierTrackingCode(tracking);
   if (!sn || !rtn) return false;
+  if (isCancelledReturnStatus(order?.return_status)) return false;
   applyReturnTrackingAliases(order, rtn);
   return updateReturnTrackingOnlyInStore(sn, rtn, {
     shopId: String(normalizeShopIdKey(shopId) || shopId || "").trim() || undefined,
@@ -1619,6 +1630,12 @@ async function fillReturnTrackingFromShopee(
   order: any,
 ): Promise<boolean> {
   const apiShopId = String(normalizeShopIdKey(shopId) || shopId || "").trim();
+  if (isCancelledReturnStatus(order?.return_status)) {
+    if (stripCancelledReturnOnDelivered(order)) {
+      await clearCancelledDeliveredReturnInStore(String(order?.orderSn || ""), apiShopId);
+    }
+    return false;
+  }
   if (!orderNeedsRealReturnTracking(order)) {
     return Boolean(normalizeCarrierTrackingCode(order?.return_tracking_no || order?.returnTrackingNumber));
   }
@@ -1671,6 +1688,20 @@ async function fillReturnTrackingFromShopee(
     }
     const body = detail?.response ?? detail;
     if (body?.status) order.return_status = String(body.status);
+    if (isCancelledReturnStatus(order.return_status) || isCancelledReturnStatus(body?.status)) {
+      order.return_status = "CANCELLED";
+      if (stripCancelledReturnOnDelivered(order)) {
+        await clearCancelledDeliveredReturnInStore(String(order.orderSn || ""), apiShopId);
+        console.log(
+          `[Shopee Tracking] skip cancelled YCTH on delivered order_sn=${order.orderSn || "-"} return_sn=${returnSn}`,
+        );
+        return false;
+      }
+      console.log(
+        `[Shopee Tracking] skip return_tracking_no — return_status=CANCELLED order_sn=${order.orderSn || "-"}`,
+      );
+      return false;
+    }
     const { tracking } = await fetchReturnShippingTrackingNumber(
       apiShopId,
       accessToken,
@@ -1700,6 +1731,12 @@ async function fetchReturnShippingTrackingNumber(
   outboundTn?: string,
 ): Promise<{ tracking: string; sources: Record<string, string> }> {
   const sources: Record<string, string> = {};
+  const detailStatus = String(
+    detailPayload?.response?.status ?? detailPayload?.status ?? "",
+  ).trim().toUpperCase();
+  if (detailStatus === "CANCELLED") {
+    return { tracking: "", sources: { skipped: "cancelled_return" } };
+  }
   const outbound = normalizeCarrierTrackingCode(outboundTn);
 
   let fromReverse = "";
@@ -5087,6 +5124,16 @@ async function syncShopeeReturnRequests(opts?: {
                 );
                 existing = undefined;
               }
+            }
+            const returnStatusEarly = String(detail.status || row.status || "").toUpperCase();
+            if (returnStatusEarly === "CANCELLED") {
+              if (existing) {
+                existing.return_status = "CANCELLED";
+                if (stripCancelledReturnOnDelivered(existing)) {
+                  patches.push(existing);
+                }
+              }
+              continue;
             }
             // Hủy chưa giao (get_order_list CANCELLED) — refund tiền ≠ overlay return_sn.
             // RTS/CANCELLED+mã đi: vẫn kéo mã hoàn, không đổi tab thành YCTH.
@@ -11938,6 +11985,7 @@ function isCancelOrReturnOrderStatus(order: any): boolean {
 /** Thiếu mã hoàn thật (trống hoặc đang bị copy nhầm mã chiều đi). */
 function orderNeedsRealReturnTracking(order: any): boolean {
   if (!order) return false;
+  if (String(order.return_status || "").toUpperCase() === "CANCELLED") return false;
   const hasReturnCtx = Boolean(order.return_sn) || isCancelOrReturnOrderStatus(order);
   if (!hasReturnCtx) return false;
   const ret = normalizeCarrierTrackingCode(
@@ -18991,6 +19039,15 @@ async function applyWebhookReturnFallback(
   const mappedReturnSn = extractReturnRequestCode(detail) || returnSn;
   const idx = orders.findIndex((o: any) => String(o.orderSn) === orderSn);
   const existing = idx >= 0 ? orders[idx] : undefined;
+  if (returnStatus === "CANCELLED") {
+    if (existing) {
+      existing.return_status = "CANCELLED";
+      if (stripCancelledReturnOnDelivered(existing)) {
+        await clearCancelledDeliveredReturnInStore(orderSn, shopId);
+      }
+    }
+    return;
+  }
   const outboundExisting = existing?.trackingNumber || existing?.tracking_no;
   const { tracking: returnShipTn } = await fetchReturnShippingTrackingNumber(
     shopId,
