@@ -28,7 +28,47 @@ import {
   Trash2,
   Package,
   CircleDollarSign,
+  Loader2,
+  RefreshCw,
 } from 'lucide-react';
+
+const DEFAULT_PLATFORM_FEE_PERCENT = 0.12;
+
+function resolvePlatformFeePercent(rate?: number): number {
+  const raw = Number(rate);
+  if (!Number.isFinite(raw) || raw < 0) return DEFAULT_PLATFORM_FEE_PERCENT;
+  if (raw === 0) return 0;
+  return raw > 1 ? raw / 100 : raw;
+}
+
+function calcEstProfit(sellingPrice: number, importPrice: number, feePercent: number): number {
+  const sell = Number(sellingPrice);
+  const cost = Number(importPrice);
+  const fee = Number(feePercent);
+  if (!Number.isFinite(sell) || !Number.isFinite(cost) || !Number.isFinite(fee)) return 0;
+  const safeSell = Math.max(0, sell);
+  const safeCost = Math.max(0, cost);
+  const safeFee = Math.max(0, fee);
+  return Math.round(safeSell - safeSell * safeFee - safeCost);
+}
+
+const ImportEstProfitCell = React.memo(function ImportEstProfitCell({
+  sellingPrice,
+  unitPrice,
+  feePercent,
+}: {
+  sellingPrice: number;
+  unitPrice: number;
+  feePercent: number;
+}) {
+  const profit = calcEstProfit(sellingPrice, unitPrice, feePercent);
+  const isProfit = profit >= 0;
+  return (
+    <span className={`font-mono font-bold whitespace-nowrap ${isProfit ? 'text-emerald-600' : 'text-rose-600'}`}>
+      {profit.toLocaleString('vi-VN')} đ
+    </span>
+  );
+});
 
 function PriceChangeBadge({
   oldPrice,
@@ -82,6 +122,9 @@ interface SelectedImportLine {
   oldImportPrice: number;
   quantity: number;
   unitPrice: number;
+  sellingPrice: number;
+  shopeeItemId?: string;
+  shopeeModelId?: string;
 }
 
 interface ImportManagerProps {
@@ -95,6 +138,8 @@ interface ImportManagerProps {
   initialProductId?: string | null;
   onInitialProductConsumed?: () => void;
   onProductCreated?: (product: Product) => void;
+  shopeeDefaultFeeRate?: number;
+  onProductPriceUpdated?: (productId: string, sellingPrice: number) => void;
 }
 
 export default function ImportManager({
@@ -108,6 +153,8 @@ export default function ImportManager({
   initialProductId,
   onInitialProductConsumed,
   onProductCreated,
+  shopeeDefaultFeeRate,
+  onProductPriceUpdated,
 }: ImportManagerProps) {
   const [localSuppliers, setLocalSuppliers] = useState<Supplier[]>(suppliersProp);
   const [viewMode, setViewMode] = useState<'list' | 'create'>('list');
@@ -148,7 +195,17 @@ export default function ImportManager({
   const [importCost, setImportCost] = useState<number>(0);
   const [paidAmount, setPaidAmount] = useState<number>(0);
   const [submitting, setSubmitting] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ text: string; ok: boolean } | null>(null);
+  const [updatingPriceId, setUpdatingPriceId] = useState<string | null>(null);
+  const platformFeePercent = useMemo(
+    () => resolvePlatformFeePercent(shopeeDefaultFeeRate),
+    [shopeeDefaultFeeRate],
+  );
+
+  const showToast = useCallback((text: string, ok = true) => {
+    setToast({ text, ok });
+    setTimeout(() => setToast(null), 3500);
+  }, []);
   const [historyModal, setHistoryModal] = useState<{
     productId: string;
     productTitle: string;
@@ -207,11 +264,11 @@ export default function ImportManager({
 
       setSelectedProducts((prev) => {
         if (prev.some((l) => l.productId === productId)) {
-          setToastMessage('Sản phẩm đã có trong bảng — tăng số lượng nếu cần.');
-          setTimeout(() => setToastMessage(null), 2500);
+          showToast('Sản phẩm đã có trong bảng — tăng số lượng nếu cần.');
           return prev;
         }
         const price = Math.max(0, Math.round(Number(product.importPrice) || 0));
+        const sellingPrice = Math.max(0, Math.round(Number(product.sellingPrice) || 0));
         const next: SelectedImportLine[] = [
           {
             productId,
@@ -222,6 +279,9 @@ export default function ImportManager({
             oldImportPrice: price,
             quantity: 0,
             unitPrice: price,
+            sellingPrice,
+            shopeeItemId: product.shopeeItemId || product.shopeeId || undefined,
+            shopeeModelId: product.shopeeModelId || undefined,
           },
           ...prev,
         ];
@@ -249,11 +309,17 @@ export default function ImportManager({
             );
             const userHasEditedPrice =
               line.unitPrice !== 0 && line.unitPrice !== line.oldImportPrice;
+            const ctxSell = Math.max(0, Math.round(Number(data.sellingPrice) || 0));
+            const ctxItemId = String(data.shopeeItemId || '').trim();
+            const ctxModelId = String(data.shopeeModelId || '').trim();
             return {
               ...line,
               currentStock: data.stock != null ? Number(data.stock) || 0 : line.currentStock,
               oldImportPrice: newOld,
               unitPrice: userHasEditedPrice ? line.unitPrice : newOld,
+              sellingPrice: line.sellingPrice > 0 ? line.sellingPrice : ctxSell,
+              shopeeItemId: line.shopeeItemId || ctxItemId || undefined,
+              shopeeModelId: line.shopeeModelId || ctxModelId || undefined,
               title: data.title || line.title,
               sku: data.sku || line.sku,
             };
@@ -266,21 +332,35 @@ export default function ImportManager({
         console.error('Fetch product import context error:', err);
       }
     },
-    [importCost],
+    [importCost, showToast],
   );
 
-  const updateLine = (productId: string, patch: Partial<Pick<SelectedImportLine, 'quantity' | 'unitPrice'>>) => {
+  const updateLine = (
+    productId: string,
+    patch: Partial<Pick<SelectedImportLine, 'quantity' | 'unitPrice' | 'sellingPrice'>>,
+  ) => {
     setSelectedProducts((prev) => {
       const next = prev.map((line) => {
         if (line.productId !== productId) return line;
+        const nextQty =
+          patch.quantity != null ? Math.max(0, Math.round(Number(patch.quantity) || 0)) : line.quantity;
+        const nextUnit =
+          patch.unitPrice != null ? Math.max(0, Math.round(Number(patch.unitPrice) || 0)) : line.unitPrice;
+        const nextSell =
+          patch.sellingPrice != null
+            ? Math.max(0, Math.round(Number(patch.sellingPrice) || 0))
+            : line.sellingPrice;
         return {
           ...line,
-          quantity: patch.quantity != null ? Math.max(0, Math.round(patch.quantity)) : line.quantity,
-          unitPrice: patch.unitPrice != null ? Math.max(0, Math.round(patch.unitPrice)) : line.unitPrice,
+          quantity: nextQty,
+          unitPrice: nextUnit,
+          sellingPrice: nextSell,
         };
       });
-      const goods = next.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
-      syncPaidToTotal(goods + importCost);
+      if (patch.quantity != null || patch.unitPrice != null) {
+        const goods = next.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
+        syncPaidToTotal(goods + importCost);
+      }
       return next;
     });
   };
@@ -292,6 +372,62 @@ export default function ImportManager({
       syncPaidToTotal(goods + importCost);
       return next;
     });
+  };
+
+  const handleUpdateShopeePrice = async (line: SelectedImportLine) => {
+    const productId = String(line.productId || '').trim();
+    const sellingPrice = Math.max(0, Math.round(Number(line.sellingPrice) || 0));
+    if (!productId) {
+      showToast('Thiếu mã sản phẩm.', false);
+      return;
+    }
+    if (!sellingPrice) {
+      showToast('Giá bán không hợp lệ.', false);
+      return;
+    }
+    const token = localStorage.getItem('admin_token');
+    if (!token) {
+      showToast('Chưa đăng nhập.', false);
+      return;
+    }
+    setUpdatingPriceId(productId);
+    try {
+      const res = await fetch('/api/products/update-price', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          productId,
+          sellingPrice,
+          item_id: line.shopeeItemId || undefined,
+          model_id: line.shopeeModelId || undefined,
+        }),
+      });
+      let data: { success?: boolean; message?: string; error?: string; sellingPrice?: number } = {};
+      try {
+        data = await res.json();
+      } catch {
+        data = {};
+      }
+      if (!res.ok || data?.success === false) {
+        throw new Error(
+          String(data?.message || data?.error || `Cập nhật giá Shopee thất bại (HTTP ${res.status})`),
+        );
+      }
+      const saved = Math.max(0, Math.round(Number(data?.sellingPrice ?? sellingPrice) || 0));
+      setSelectedProducts((prev) =>
+        prev.map((row) => (row.productId === productId ? { ...row, sellingPrice: saved } : row)),
+      );
+      onProductPriceUpdated?.(productId, saved);
+      showToast(data?.message || 'Đã cập nhật giá lên Shopee.');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Cập nhật giá Shopee thất bại.';
+      showToast(message, false);
+    } finally {
+      setUpdatingPriceId(null);
+    }
   };
 
   const bootstrapCreateForm = async (prefillProductId?: string) => {
@@ -534,11 +670,23 @@ export default function ImportManager({
   if (viewMode === 'create') {
     return (
       <div className="space-y-0 -mx-4 sm:-mx-6 lg:-mx-8">
-        {toastMessage && (
-          <div className="fixed top-5 right-5 z-70 bg-emerald-600 text-white font-semibold text-sm px-5 py-3 rounded-xl shadow-lg flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 shrink-0" />
-            <span>{toastMessage}</span>
-            <button type="button" onClick={() => setToastMessage(null)} className="ml-1 text-emerald-200 hover:text-white">
+        {toast && (
+          <div
+            className={`fixed top-5 right-5 z-70 text-white font-semibold text-sm px-5 py-3 rounded-xl shadow-lg flex items-center gap-2 ${
+              toast.ok ? 'bg-emerald-600' : 'bg-rose-600'
+            }`}
+          >
+            {toast.ok ? (
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+            )}
+            <span>{toast.text}</span>
+            <button
+              type="button"
+              onClick={() => setToast(null)}
+              className={`ml-1 hover:text-white ${toast.ok ? 'text-emerald-200' : 'text-rose-200'}`}
+            >
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
@@ -588,8 +736,7 @@ export default function ImportManager({
                     onSuppliersUpdated?.(updated);
                   }}
                   onQuickAddSuccess={() => {
-                    setToastMessage('Đã thêm nhà cung cấp mới!');
-                    setTimeout(() => setToastMessage(null), 3000);
+                    showToast('Đã thêm nhà cung cấp mới!');
                   }}
                 />
               </div>
@@ -615,7 +762,7 @@ export default function ImportManager({
               </label>
               <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse min-w-[780px]">
+                  <table className="w-full text-left border-collapse min-w-[1100px]">
                     <thead>
                       <tr className="bg-slate-50 border-b border-gray-200 text-[11px] font-bold text-gray-500 uppercase tracking-wider">
                         <th className="px-3 py-3 w-12 text-center">STT</th>
@@ -624,6 +771,13 @@ export default function ImportManager({
                         <th className="px-3 py-3 w-20 text-center">Tồn</th>
                         <th className="px-3 py-3 w-28 text-center">SL nhập</th>
                         <th className="px-3 py-3 w-52 text-right">Đơn giá</th>
+                        <th className="px-3 py-3 w-48 text-right">Giá bán</th>
+                        <th className="px-3 py-3 w-36 text-right">
+                          Lợi nhuận (est.)
+                          <span className="block normal-case font-medium text-[10px] text-gray-400 tracking-normal">
+                            sau phí sàn {(platformFeePercent * 100).toLocaleString('vi-VN')}%
+                          </span>
+                        </th>
                         <th className="px-3 py-3 w-36 text-right">Thành tiền</th>
                         <th className="px-3 py-3 w-12 text-center" />
                       </tr>
@@ -631,7 +785,7 @@ export default function ImportManager({
                     <tbody className="divide-y divide-gray-100 text-sm">
                       {selectedProducts.length === 0 ? (
                         <tr>
-                          <td colSpan={8} className="px-4 py-14 text-center text-gray-400 text-sm">
+                          <td colSpan={10} className="px-4 py-14 text-center text-gray-400 text-sm">
                             <Package className="w-8 h-8 mx-auto mb-2 text-gray-300" />
                             Chưa có sản phẩm — dùng ô tìm kiếm phía trên (F3) để thêm vào bảng.
                           </td>
@@ -735,6 +889,47 @@ export default function ImportManager({
                                     <PriceChangeBadge oldPrice={line.oldImportPrice} newPrice={line.unitPrice} />
                                   </div>
                                 )}
+                              </td>
+                              <td className="px-3 py-2.5 align-middle">
+                                <div className="flex items-center gap-1.5 justify-end">
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step={1}
+                                    value={Number.isFinite(line.sellingPrice) ? line.sellingPrice : 0}
+                                    onChange={(e) =>
+                                      updateLine(line.productId, {
+                                        sellingPrice: Number(e.target.value),
+                                      })
+                                    }
+                                    className="w-[120px] h-10 px-2 text-right font-mono font-bold text-sm text-slate-800 rounded-lg border border-gray-200 outline-none focus:border-orange-400"
+                                  />
+                                  <button
+                                    type="button"
+                                    title="Cập nhật giá lên Shopee"
+                                    disabled={updatingPriceId === line.productId}
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      void handleUpdateShopeePrice(line);
+                                    }}
+                                    className="h-10 px-2 inline-flex items-center justify-center gap-1 rounded-lg border border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 shrink-0 disabled:opacity-60 text-[11px] font-bold"
+                                  >
+                                    {updatingPriceId === line.productId ? (
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    ) : (
+                                      <RefreshCw className="w-3.5 h-3.5" />
+                                    )}
+                                    Cập nhật
+                                  </button>
+                                </div>
+                              </td>
+                              <td className="px-3 py-2.5 text-right align-middle">
+                                <ImportEstProfitCell
+                                  sellingPrice={line.sellingPrice}
+                                  unitPrice={line.unitPrice}
+                                  feePercent={platformFeePercent}
+                                />
                               </td>
                               <td className="px-3 py-2.5 text-right font-mono font-bold text-slate-800 align-middle whitespace-nowrap">
                                 {lineTotal.toLocaleString('vi-VN')} đ

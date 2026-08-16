@@ -7,6 +7,7 @@ import {
   findProductRowById,
   pushProductStockPriceToShopeeImmediate,
   enqueueShopeeStockPriceSync,
+  resolveProductWithShopeeMapping,
 } from "../services/stockSyncQueue.js";
 
 const PRODUCTS_PAGE_SIZE_DEFAULT = 50;
@@ -152,6 +153,9 @@ export async function searchProducts(req, res) {
     stock: p.stock ?? p.current_stock ?? 0,
     last_import_price: p.last_import_price ?? p.importPrice ?? 0,
     importPrice: p.importPrice ?? p.last_import_price ?? 0,
+    sellingPrice: Math.max(0, Math.round(Number(p.sellingPrice ?? p.price) || 0)),
+    shopeeItemId: p.shopeeItemId || p.shopeeId || undefined,
+    shopeeModelId: p.shopeeModelId || undefined,
   });
 
   try {
@@ -316,6 +320,146 @@ export async function handleProductSyncShopee(req, res) {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[Products API] sync-shopee failed:", err);
+    return res.status(500).json({
+      success: false,
+      message: message || "Internal Server Error",
+      error: message || "Internal Server Error",
+    });
+  }
+}
+
+function readPositiveShopeeId(raw) {
+  const s = String(raw ?? "").trim();
+  if (!s || !/^\d+$/.test(s)) return "";
+  return s;
+}
+
+/** POST /api/products/update-price — chỉ đẩy giá bán lên Shopee (v2.product.update_price), không đụng tồn/nhập hàng. */
+export async function updateProductPrice(req, res) {
+  try {
+    const body = req.body || {};
+    const productId = String(body.productId || body.id || body.product_id || "").trim();
+    const sellingPrice = Math.max(
+      0,
+      Math.round(Number(body.sellingPrice ?? body.price ?? body.original_price) || 0),
+    );
+
+    if (!productId) {
+      return res.status(400).json({
+        success: false,
+        message: "Thiếu productId.",
+        error: "missing_product_id",
+      });
+    }
+    if (!Number.isFinite(sellingPrice) || sellingPrice <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Giá bán không hợp lệ.",
+        error: "invalid_selling_price",
+      });
+    }
+
+    const products = await deps.loadProducts();
+    const found = findProductRowById(products, productId);
+    if (!found) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy sản phẩm trong kho.",
+        error: "product_not_found",
+      });
+    }
+
+    const overlayItemId = readPositiveShopeeId(
+      body.item_id ?? body.shopeeItemId ?? body.itemId,
+    );
+    const overlayModelId = readPositiveShopeeId(
+      body.model_id ?? body.shopeeModelId ?? body.modelId,
+    );
+
+    const patched = { ...found, sellingPrice };
+    if (overlayItemId) {
+      patched.shopeeItemId = overlayItemId;
+      if (!patched.shopeeId) patched.shopeeId = overlayItemId;
+    }
+    if (overlayModelId) patched.shopeeModelId = overlayModelId;
+
+    const mapped = await resolveProductWithShopeeMapping(patched);
+    if (!mapped) {
+      return res.status(400).json({
+        success: false,
+        shopeeSynced: false,
+        message: "Sản phẩm chưa liên kết Shopee (thiếu item_id). Không gọi API sàn.",
+        error: "missing_item_id",
+      });
+    }
+
+    const shopee = await pushProductStockPriceToShopeeImmediate(mapped, {
+      syncStock: false,
+      syncPrice: true,
+      shopId: body.shopId,
+    });
+
+    if (shopee.skipped) {
+      return res.status(400).json({
+        success: false,
+        shopeeSynced: false,
+        message: shopee.message || "Chưa liên kết Shopee (thiếu item_id). Không gọi API sàn.",
+        error: "missing_item_id",
+      });
+    }
+    if (!shopee.ok) {
+      return res.status(400).json({
+        success: false,
+        shopeeSynced: false,
+        message: shopee.message || "Shopee từ chối cập nhật giá.",
+        error: "shopee_update_price_failed",
+      });
+    }
+
+    const topIndex = products.findIndex((p) => String(p?.id || "").trim() === productId);
+    let savedRow = null;
+    if (topIndex !== -1) {
+      const merged = deps.mergeProductPatch(products[topIndex], { sellingPrice });
+      products[topIndex] = merged;
+      savedRow = merged;
+      await deps.upsertProductsToStoreAsync([merged]);
+    } else {
+      let persisted = false;
+      for (let i = 0; i < products.length; i++) {
+        const children = deps.getProductChildrenList(products[i]);
+        const childIdx = children.findIndex((c) => String(c?.id || "").trim() === productId);
+        if (childIdx === -1) continue;
+        const mergedChild = deps.mergeProductPatch(children[childIdx], { sellingPrice });
+        const nextChildren = [...children];
+        nextChildren[childIdx] = mergedChild;
+        const nextParent = { ...products[i], children: nextChildren };
+        products[i] = nextParent;
+        savedRow = mergedChild;
+        await deps.upsertProductsToStoreAsync([nextParent]);
+        persisted = true;
+        break;
+      }
+      if (!persisted) {
+        return res.status(200).json({
+          success: true,
+          shopeeSynced: true,
+          sellingPrice,
+          productId,
+          message: shopee.message || "Đã cập nhật giá lên Shopee (chưa ghi được kho nội bộ).",
+        });
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      shopeeSynced: true,
+      sellingPrice: Math.max(0, Math.round(Number(savedRow?.sellingPrice ?? sellingPrice) || 0)),
+      productId,
+      message: shopee.message || "Đã cập nhật giá lên Shopee.",
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[Products API] POST /api/products/update-price failed:", err);
     return res.status(500).json({
       success: false,
       message: message || "Internal Server Error",

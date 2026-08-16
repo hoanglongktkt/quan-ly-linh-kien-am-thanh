@@ -82438,12 +82438,16 @@ async function getImportProductContext(req, res) {
   })[0] : null;
   const stock = Math.max(0, Math.round(Number(product.stock) || 0));
   const oldPrice = Math.max(0, Math.round(Number(product.importPrice) || 0));
-  console.log("[Imports] product-context:", { productId, sku, stock, oldPrice, title: product.title });
+  const sellingPrice = Math.max(0, Math.round(Number(product.sellingPrice) || 0));
+  console.log("[Imports] product-context:", { productId, sku, stock, oldPrice, sellingPrice, title: product.title });
   return res.json({
     productId,
     stock,
     importPrice: oldPrice,
     oldPrice,
+    sellingPrice,
+    shopeeItemId: product.shopeeItemId || product.shopeeId || null,
+    shopeeModelId: product.shopeeModelId || null,
     sku,
     title: product.title || "",
     lastSupplierName: latest?.supplierName || null,
@@ -105904,7 +105908,10 @@ async function searchProducts(req, res) {
     current_stock: p.current_stock ?? p.stock ?? 0,
     stock: p.stock ?? p.current_stock ?? 0,
     last_import_price: p.last_import_price ?? p.importPrice ?? 0,
-    importPrice: p.importPrice ?? p.last_import_price ?? 0
+    importPrice: p.importPrice ?? p.last_import_price ?? 0,
+    sellingPrice: Math.max(0, Math.round(Number(p.sellingPrice ?? p.price) || 0)),
+    shopeeItemId: p.shopeeItemId || p.shopeeId || void 0,
+    shopeeModelId: p.shopeeModelId || void 0
   });
   try {
     let raw = [];
@@ -106046,6 +106053,134 @@ async function handleProductSyncShopee(req, res) {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[Products API] sync-shopee failed:", err);
+    return res.status(500).json({
+      success: false,
+      message: message || "Internal Server Error",
+      error: message || "Internal Server Error"
+    });
+  }
+}
+function readPositiveShopeeId(raw) {
+  const s2 = String(raw ?? "").trim();
+  if (!s2 || !/^\d+$/.test(s2)) return "";
+  return s2;
+}
+async function updateProductPrice(req, res) {
+  try {
+    const body = req.body || {};
+    const productId = String(body.productId || body.id || body.product_id || "").trim();
+    const sellingPrice = Math.max(
+      0,
+      Math.round(Number(body.sellingPrice ?? body.price ?? body.original_price) || 0)
+    );
+    if (!productId) {
+      return res.status(400).json({
+        success: false,
+        message: "Thi\u1EBFu productId.",
+        error: "missing_product_id"
+      });
+    }
+    if (!Number.isFinite(sellingPrice) || sellingPrice <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Gi\xE1 b\xE1n kh\xF4ng h\u1EE3p l\u1EC7.",
+        error: "invalid_selling_price"
+      });
+    }
+    const products = await deps10.loadProducts();
+    const found = findProductRowById(products, productId);
+    if (!found) {
+      return res.status(404).json({
+        success: false,
+        message: "Kh\xF4ng t\xECm th\u1EA5y s\u1EA3n ph\u1EA9m trong kho.",
+        error: "product_not_found"
+      });
+    }
+    const overlayItemId = readPositiveShopeeId(
+      body.item_id ?? body.shopeeItemId ?? body.itemId
+    );
+    const overlayModelId = readPositiveShopeeId(
+      body.model_id ?? body.shopeeModelId ?? body.modelId
+    );
+    const patched = { ...found, sellingPrice };
+    if (overlayItemId) {
+      patched.shopeeItemId = overlayItemId;
+      if (!patched.shopeeId) patched.shopeeId = overlayItemId;
+    }
+    if (overlayModelId) patched.shopeeModelId = overlayModelId;
+    const mapped = await resolveProductWithShopeeMapping(patched);
+    if (!mapped) {
+      return res.status(400).json({
+        success: false,
+        shopeeSynced: false,
+        message: "S\u1EA3n ph\u1EA9m ch\u01B0a li\xEAn k\u1EBFt Shopee (thi\u1EBFu item_id). Kh\xF4ng g\u1ECDi API s\xE0n.",
+        error: "missing_item_id"
+      });
+    }
+    const shopee = await pushProductStockPriceToShopeeImmediate(mapped, {
+      syncStock: false,
+      syncPrice: true,
+      shopId: body.shopId
+    });
+    if (shopee.skipped) {
+      return res.status(400).json({
+        success: false,
+        shopeeSynced: false,
+        message: shopee.message || "Ch\u01B0a li\xEAn k\u1EBFt Shopee (thi\u1EBFu item_id). Kh\xF4ng g\u1ECDi API s\xE0n.",
+        error: "missing_item_id"
+      });
+    }
+    if (!shopee.ok) {
+      return res.status(400).json({
+        success: false,
+        shopeeSynced: false,
+        message: shopee.message || "Shopee t\u1EEB ch\u1ED1i c\u1EADp nh\u1EADt gi\xE1.",
+        error: "shopee_update_price_failed"
+      });
+    }
+    const topIndex = products.findIndex((p) => String(p?.id || "").trim() === productId);
+    let savedRow = null;
+    if (topIndex !== -1) {
+      const merged = deps10.mergeProductPatch(products[topIndex], { sellingPrice });
+      products[topIndex] = merged;
+      savedRow = merged;
+      await deps10.upsertProductsToStoreAsync([merged]);
+    } else {
+      let persisted = false;
+      for (let i2 = 0; i2 < products.length; i2++) {
+        const children = deps10.getProductChildrenList(products[i2]);
+        const childIdx = children.findIndex((c) => String(c?.id || "").trim() === productId);
+        if (childIdx === -1) continue;
+        const mergedChild = deps10.mergeProductPatch(children[childIdx], { sellingPrice });
+        const nextChildren = [...children];
+        nextChildren[childIdx] = mergedChild;
+        const nextParent = { ...products[i2], children: nextChildren };
+        products[i2] = nextParent;
+        savedRow = mergedChild;
+        await deps10.upsertProductsToStoreAsync([nextParent]);
+        persisted = true;
+        break;
+      }
+      if (!persisted) {
+        return res.status(200).json({
+          success: true,
+          shopeeSynced: true,
+          sellingPrice,
+          productId,
+          message: shopee.message || "\u0110\xE3 c\u1EADp nh\u1EADt gi\xE1 l\xEAn Shopee (ch\u01B0a ghi \u0111\u01B0\u1EE3c kho n\u1ED9i b\u1ED9)."
+        });
+      }
+    }
+    return res.status(200).json({
+      success: true,
+      shopeeSynced: true,
+      sellingPrice: Math.max(0, Math.round(Number(savedRow?.sellingPrice ?? sellingPrice) || 0)),
+      productId,
+      message: shopee.message || "\u0110\xE3 c\u1EADp nh\u1EADt gi\xE1 l\xEAn Shopee."
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[Products API] POST /api/products/update-price failed:", err);
     return res.status(500).json({
       success: false,
       message: message || "Internal Server Error",
@@ -108704,6 +108839,7 @@ async function previewItemVariants(req, res) {
 var router11 = (0, import_express12.Router)();
 router11.get("/search", searchProducts);
 router11.post("/sync-shopee", handleProductSyncShopee);
+router11.post("/update-price", updateProductPrice);
 router11.post("/shopee-item-preview", previewItemVariants);
 router11.get("/shopee-item-preview", previewItemVariants);
 router11.post("/:id/sync-shopee", handleProductSyncShopee);

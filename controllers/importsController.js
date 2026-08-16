@@ -103,13 +103,17 @@ export async function getImportProductContext(req, res) {
 
   const stock = Math.max(0, Math.round(Number(product.stock) || 0));
   const oldPrice = Math.max(0, Math.round(Number(product.importPrice) || 0));
-  console.log("[Imports] product-context:", { productId, sku, stock, oldPrice, title: product.title });
+  const sellingPrice = Math.max(0, Math.round(Number(product.sellingPrice) || 0));
+  console.log("[Imports] product-context:", { productId, sku, stock, oldPrice, sellingPrice, title: product.title });
 
   return res.json({
     productId,
     stock,
     importPrice: oldPrice,
     oldPrice,
+    sellingPrice,
+    shopeeItemId: product.shopeeItemId || product.shopeeId || null,
+    shopeeModelId: product.shopeeModelId || null,
     sku,
     title: product.title || "",
     lastSupplierName: latest?.supplierName || null,

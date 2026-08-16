@@ -24,6 +24,7 @@ function normalizeProduct(row, parent) {
   const image = row?.avatarUrl || row?.imageUrl || row?.image || parent?.avatarUrl || parent?.imageUrl || '';
   const stock = Math.max(0, Math.round(Number(row?.stock ?? row?.current_stock) || 0));
   const importPrice = Math.max(0, Math.round(Number(row?.importPrice ?? row?.last_import_price) || 0));
+  const sellingPrice = Math.max(0, Math.round(Number(row?.sellingPrice ?? row?.price) || 0));
   // Lean fields only — không trả description HTML
   return {
     id,
@@ -37,6 +38,9 @@ function normalizeProduct(row, parent) {
     current_stock: stock,
     importPrice,
     last_import_price: importPrice,
+    sellingPrice,
+    shopeeItemId: row?.shopeeItemId || row?.shopeeId || parent?.shopeeItemId || undefined,
+    shopeeModelId: row?.shopeeModelId || undefined,
     modelName: row?.modelName || undefined,
     status: row?.status || 'active',
   };

@@ -2535,6 +2535,20 @@ export default function App() {
               onProductCreated={(p) =>
                 setProducts((prev) => (prev.some((x) => x.id === p.id) ? prev : [p, ...prev]))
               }
+              shopeeDefaultFeeRate={settings.shopeeDefaultFeeRate}
+              onProductPriceUpdated={(productId, sellingPrice) => {
+                setProducts((prev) =>
+                  prev.map((p) => {
+                    if (p.id === productId) return { ...p, sellingPrice };
+                    const children = getProductChildren(p);
+                    if (!children.some((c) => c.id === productId)) return p;
+                    return {
+                      ...p,
+                      children: children.map((c) => (c.id === productId ? { ...c, sellingPrice } : c)),
+                    };
+                  }),
+                );
+              }}
             />
           )}
 

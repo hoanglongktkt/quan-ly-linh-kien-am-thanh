@@ -3,6 +3,7 @@ import {
   listProducts,
   searchProducts,
   handleProductSyncShopee,
+  updateProductPrice,
   createProduct,
   replaceProducts,
   patchProduct,
@@ -19,6 +20,7 @@ const router = Router();
 
 router.get("/search", searchProducts);
 router.post("/sync-shopee", handleProductSyncShopee);
+router.post("/update-price", updateProductPrice);
 // Alias ổn định — ĐẶT TRƯỚC route /:id/*
 router.post("/shopee-item-preview", previewItemVariants);
 router.get("/shopee-item-preview", previewItemVariants);
