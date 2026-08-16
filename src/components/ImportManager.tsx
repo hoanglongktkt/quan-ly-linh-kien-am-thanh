@@ -9,6 +9,8 @@ import ImportProductSearchSelect, {
 } from './ImportProductSearchSelect';
 import ImportSupplierSelect, { ImportSupplierSelectHandle } from './ImportSupplierSelect';
 import CurrencyInput from './CurrencyInput';
+import { buildShopeeSyncPayload } from '../utils/shopeeSyncPayload';
+import { parseJsonResponse } from '../utils/apiClient';
 import {
   Plus,
   Search,
@@ -392,36 +394,56 @@ export default function ImportManager({
     }
     setUpdatingPriceId(productId);
     try {
-      const res = await fetch('/api/products/update-price', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
+      const headers = {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      };
+
+      // 1) Lưu giá bán vào kho nội bộ — sync-shopee đọc giá từ DB (giống ProductDetailModal).
+      const patchRes = await fetch(`/api/products/${encodeURIComponent(productId)}`, {
+        method: 'PATCH',
+        headers,
         body: JSON.stringify({
-          productId,
           sellingPrice,
-          item_id: line.shopeeItemId || undefined,
-          model_id: line.shopeeModelId || undefined,
+          shopeeItemId: line.shopeeItemId,
+          shopeeModelId: line.shopeeModelId,
         }),
       });
-      let data: { success?: boolean; message?: string; error?: string; sellingPrice?: number } = {};
-      try {
-        data = await res.json();
-      } catch {
-        data = {};
+      const patchData = await parseJsonResponse<{
+        success?: boolean;
+        error?: string;
+        message?: string;
+        sellingPrice?: number;
+      }>(patchRes);
+      if (patchData?.success === false) {
+        throw new Error(patchData.error || patchData.message || 'Lưu giá bán thất bại.');
       }
-      if (!res.ok || data?.success === false) {
+      const saved = Math.max(0, Math.round(Number(patchData?.sellingPrice ?? sellingPrice) || 0));
+
+      // 2) Payload GIỐNG HỆT nút Đồng bộ cam ở Quản lý kho.
+      const payload = buildShopeeSyncPayload(productId);
+      const syncRes = await fetch('/api/products/sync-shopee', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      });
+      const syncData = await parseJsonResponse<{
+        success?: boolean;
+        error?: string;
+        message?: string;
+        shopeeMessage?: string;
+      }>(syncRes);
+      if (syncData?.success === false) {
         throw new Error(
-          String(data?.message || data?.error || `Cập nhật giá Shopee thất bại (HTTP ${res.status})`),
+          syncData.error || syncData.message || syncData.shopeeMessage || 'Đồng bộ Shopee thất bại.',
         );
       }
-      const saved = Math.max(0, Math.round(Number(data?.sellingPrice ?? sellingPrice) || 0));
+
       setSelectedProducts((prev) =>
         prev.map((row) => (row.productId === productId ? { ...row, sellingPrice: saved } : row)),
       );
       onProductPriceUpdated?.(productId, saved);
-      showToast(data?.message || 'Đã cập nhật giá lên Shopee.');
+      showToast('Cập nhật giá Shopee thành công');
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Cập nhật giá Shopee thất bại.';
       showToast(message, false);
