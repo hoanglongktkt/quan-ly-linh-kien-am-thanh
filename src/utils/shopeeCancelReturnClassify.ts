@@ -1,10 +1,10 @@
 /**
  * Phân loại Hủy / RTS / Return theo Shopee Open API v2.
  *
- * - get_order_list order_status=CANCELLED = Đơn Hủy (kể cả đã refund tiền).
- * - RTS = CANCELLED + logistics/cancel_reason giao thất bại.
- * - Return/Refund = CHỈ đơn từ get_return_list (bắt buộc return_sn hoặc is_return).
- *   Refund tiền khi hủy ≠ Trả hàng hoàn tiền.
+ * - Đơn Hủy = status CANCELLED, không return_sn, bất chấp tracking_no.
+ * - RTS = CHỈ khi ĐVVC xác nhận giao thất bại (logistics / cancel_reason).
+ * - Return/Refund = có return_sn từ get_return_list (kể cả đơn đã CANCELLED).
+ *   Refund tiền khi hủy chưa giao ≠ Trả hàng hoàn tiền.
  */
 
 export type ShopeeCancelReturnKind = 'refund_return' | 'cancelled' | 'failed_delivery';
@@ -68,6 +68,7 @@ export function hasValidOutboundTracking(order: ShopeeCancelReturnInput): boolea
 export function isUnshippedShopeeCancel(order: ShopeeCancelReturnInput): boolean {
   if (!isShopeeCancelledStatus(order)) return false;
   if (hasValidOutboundTracking(order)) return false;
+  if (hasCarrierRtsEvidence(order)) return false;
   const raw = String(order.shopee_order_status || '').toUpperCase();
   if (raw === 'TO_RETURN' || raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE' || raw === 'COMPLETED') {
     return false;
@@ -80,7 +81,7 @@ export function isUnshippedShopeeCancel(order: ShopeeCancelReturnInput): boolean
   if (
     logistics &&
     /SHIPPED|PICKUP_DONE|IN_TRANSIT|DELIVERY_DONE|LOGISTICS_DELIVERY/.test(logistics) &&
-    !/FAILED|LOST|RETURN|REVERSE/.test(logistics)
+    !/FAILED|LOST|RETURN|REVERSE|REQUEST_CANCELED|REQUEST_CANCELLED/.test(logistics)
   ) {
     return false;
   }
@@ -91,6 +92,7 @@ export function isShopeeRtsLogistics(logisticsStatus?: string): boolean {
   const s = String(logisticsStatus || '').toUpperCase();
   if (!s) return false;
   if (s.includes('POST_RETURN') || s.includes('REVERSE')) return false;
+  if (s.includes('REQUEST_CANCELED') || s.includes('REQUEST_CANCELLED')) return false;
   return (
     s.includes('LOGISTICS_DELIVERY_FAILED') ||
     s.includes('LOGISTICS_LOST') ||
@@ -105,48 +107,44 @@ export function isShopeeRtsCancelReason(...reasons: Array<string | undefined>): 
   return RTS_CANCEL_REASON_RE.test(blob);
 }
 
-export function isShopeeRtsFailedDelivery(order: ShopeeCancelReturnInput): boolean {
-  if (order.is_rts === true) return true;
-  if (String(order.sub_status || '').toUpperCase() === 'RTS') return true;
-  if (String(order.shopee_cancel_return_kind || '') === 'failed_delivery') return true;
+/** RTS thép: chỉ log/trạng thái ĐVVC — CẤM suy từ tracking_no hay flag cũ. */
+export function hasCarrierRtsEvidence(order: ShopeeCancelReturnInput): boolean {
   if (isShopeeRtsLogistics(order.logistics_status)) return true;
   if (isShopeeRtsCancelReason(order.cancel_reason, order.buyer_cancel_reason)) return true;
-  // CANCELLED + mã đi hợp lệ = RTS (đã xuất kho / giao thất bại), không phải Đơn Hủy.
-  if (isShopeeCancelledStatus(order) && hasValidOutboundTracking(order)) return true;
   return false;
+}
+
+export function isShopeeRtsFailedDelivery(order: ShopeeCancelReturnInput): boolean {
+  return hasCarrierRtsEvidence(order);
 }
 
 /**
  * Return/Refund: CHỈ đơn từ get_return_list — BẮT BUỘC return_sn.
- * CANCELLED (kể cả leftover return_sn / refund tiền khi hủy) ≠ Trả hàng Hoàn tiền.
+ * CANCELLED + return_sn (đơn hoàn đã chốt) vẫn là Trả hàng Hoàn tiền.
  */
 export function isShopeeReturnRefundOrder(order: ShopeeCancelReturnInput): boolean {
-  if (isShopeeRtsFailedDelivery(order)) return false;
-  if (isShopeeCancelledStatus(order)) return false;
+  if (hasCarrierRtsEvidence(order)) return false;
   if (isUnshippedShopeeCancel(order)) return false;
   if (!hasShopeeReturnSn(order)) return false;
   return true;
 }
 
-/** get_return_list không overlay lên đơn Hủy/RTS (refund tiền khi hủy ≠ trả hàng). */
+/** get_return_list không overlay lên đơn Hủy chưa giao (refund tiền khi hủy ≠ trả hàng). */
 export function shouldApplyShopeeReturnOverlay(
   existing?: ShopeeCancelReturnInput | null,
 ): boolean {
   if (!existing) return true;
-  if (isShopeeRtsFailedDelivery(existing)) return false;
   if (isUnshippedShopeeCancel(existing)) return false;
-  if (isShopeeCancelledStatus(existing)) return false;
   return true;
 }
 
 /**
- * Thép: RTS → Return (có return_sn) → Đơn Hủy.
- * Không tin kind=refund_return cũ nếu thiếu return_sn.
+ * Thép: RTS (ĐVVC) → Return (có return_sn) → Đơn Hủy (CANCELLED, bất chấp mã VĐ).
  */
 export function classifyShopeeCancelReturnKind(
   order: ShopeeCancelReturnInput,
 ): ShopeeCancelReturnKind | null {
-  if (isShopeeRtsFailedDelivery(order)) return 'failed_delivery';
+  if (hasCarrierRtsEvidence(order)) return 'failed_delivery';
   if (isShopeeReturnRefundOrder(order)) return 'refund_return';
   if (isShopeeCancelledStatus(order)) return 'cancelled';
   const local = String(order.local_status || order.localStatus || '').toUpperCase();
@@ -154,7 +152,8 @@ export function classifyShopeeCancelReturnKind(
 
   const stored = String(order.shopee_cancel_return_kind || '').trim();
   if (stored === 'refund_return' && !hasShopeeReturnSn(order)) return 'cancelled';
-  if (stored === 'cancelled' || stored === 'failed_delivery') return stored;
+  if (stored === 'cancelled') return 'cancelled';
+  if (stored === 'failed_delivery' && hasCarrierRtsEvidence(order)) return 'failed_delivery';
   return null;
 }
 
@@ -167,24 +166,26 @@ export function resolveShopeeSubStatus(
   return undefined;
 }
 
-/** Đơn hủy thuần (chưa giao, không return_sn, không RTS) — ẩn cụm "Đang hoàn về". */
+/** Đơn hủy thuần — ẩn cụm "Đang hoàn về". */
 export function isPureUnshippedCancel(order: ShopeeCancelReturnInput): boolean {
-  if (isShopeeRtsFailedDelivery(order)) return false;
-  if (shouldShowWarehouseReturnActions(order)) return false;
-  return classifyShopeeCancelReturnKind(order) === 'cancelled' || isShopeeCancelledStatus(order);
+  return classifyShopeeCancelReturnKind(order) === 'cancelled';
 }
 
 /**
- * Chỉ RTS / YCTH / TO_RETURN mới hiện nút kho "Xác nhận đã nhận hoàn".
- * Đơn Hủy thuần (chưa từng giao) → false.
+ * Chỉ RTS / Trả hàng Hoàn tiền mới hiện nút kho "Xác nhận đã nhận hoàn".
+ * Đơn Hủy (dù có mã VĐ) → false.
  */
 export function shouldShowWarehouseReturnActions(order: ShopeeCancelReturnInput): boolean {
-  if (isShopeeRtsFailedDelivery(order)) return true;
+  const kind = classifyShopeeCancelReturnKind(order);
+  if (kind === 'cancelled') return false;
+  if (kind === 'failed_delivery' || kind === 'refund_return') return true;
   const raw = String(order.shopee_order_status || '').toUpperCase();
   if (raw === 'TO_RETURN') return true;
   const st = String(order.status || '').toLowerCase();
   if (st === 'return_pending' || st === 'return_received') return true;
-  if (hasShopeeReturnSn(order) && !isUnshippedShopeeCancel(order)) return true;
+  if (hasShopeeReturnSn(order) && !isUnshippedShopeeCancel(order) && !hasCarrierRtsEvidence(order)) {
+    return true;
+  }
   return false;
 }
 

@@ -130,7 +130,6 @@ import {
 import OrderDateFilter from './OrderDateFilter';
 import {
   classifyShopeeCancelReturnKind,
-  hasValidOutboundTracking,
   isShopeeCancelledStatus,
   isShopeeRtsFailedDelivery,
   isShopeeReturnRefundOrder,
@@ -861,33 +860,17 @@ function resolveCancelReturnKind(order: Order): CancelReturnTab | null {
 
 /** Phân loại độc quyền 1 đơn → 1 sub-tab (Return | RTS | Hủy). */
 function resolveCancelReturnBucket(order: Order): Exclude<CancelReturnTab, 'all'> | null {
+  const kind = classifyShopeeCancelReturnKind(order);
+  if (kind === 'refund_return') return 'refund_return';
+  if (kind === 'failed_delivery') return 'failed_delivery';
+  if (kind === 'cancelled') return 'cancelled';
   const raw = String(order.shopee_order_status || '').toUpperCase();
   const statusU = String(order.status || '').toUpperCase();
   const isCancelled =
     raw === 'CANCELLED' || raw === 'IN_CANCEL' || statusU === 'CANCELLED';
-  const hasReturnSn = hasReturnRequestFlag(order);
-  const hasTn = hasValidOutboundTracking(order);
-  const isRts =
-    Boolean(order.is_rts) ||
-    String(order.sub_status || '').toUpperCase() === 'RTS' ||
-    isShopeeRtsFailedDelivery(order) ||
-    (isCancelled && hasTn);
-
-  // Tab Trả hàng Hoàn tiền: BẮT BUỘC return_sn hoặc is_return — không dò chữ refund.
-  if (hasReturnSn && isShopeeReturnRefundOrder(order) && !isRts) {
-    return 'refund_return';
-  }
-  if (isRts) {
-    return 'failed_delivery';
-  }
-  // Tab Đơn Hủy: CHỈ khi CANCELLED + không return_sn + không RTS (không có mã đi).
-  if (isCancelled && !hasReturnSn && !isShopeeReturnRefundOrder(order) && !isRts && !hasTn) {
+  if (isCancelled && !hasReturnRequestFlag(order) && !isShopeeRtsFailedDelivery(order)) {
     return 'cancelled';
   }
-  const kind = classifyShopeeCancelReturnKind(order);
-  if (kind === 'failed_delivery') return 'failed_delivery';
-  if (kind === 'refund_return') return 'refund_return';
-  if (kind === 'cancelled' && !hasReturnSn && !hasTn) return 'cancelled';
   return null;
 }
 

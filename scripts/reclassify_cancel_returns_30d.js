@@ -164,15 +164,8 @@ function hasReturnSn(order) {
   return Boolean(String(order.return_sn || "").trim());
 }
 function isRts(order) {
-  if (order.is_rts === true) return true;
-  if (String(order.sub_status || "").toUpperCase() === "RTS") return true;
-  const tn = String(order.tracking_no || order.trackingNumber || "").trim();
-  const cancelled =
-    String(order.shopee_order_status || order.order_status || "").toUpperCase() === "CANCELLED" ||
-    String(order.shopee_order_status || "").toUpperCase() === "IN_CANCEL" ||
-    String(order.status || "").toUpperCase() === "CANCELLED";
-  if (cancelled && tn && tn.length >= 6 && !/^0FG/i.test(tn)) return true;
   const log = String(order.logistics_status || "").toUpperCase();
+  if (log.includes("REQUEST_CANCELED") || log.includes("REQUEST_CANCELLED")) return false;
   if (
     log.includes("LOGISTICS_DELIVERY_FAILED") ||
     log.includes("LOGISTICS_LOST") ||
@@ -187,10 +180,7 @@ function isRts(order) {
 function classify(order, returnSnSet) {
   if (isRts(order)) return "failed_delivery";
   const sn = toSn(order.orderSn || order.order_sn);
-  if (returnSnSet.has(sn) && hasReturnSn(order) && !isCancelledStatus(order)) {
-    return "refund_return";
-  }
-  if (hasReturnSn(order) && !isCancelledStatus(order) && !isRts(order)) {
+  if ((returnSnSet.has(sn) || hasReturnSn(order)) && !isRts(order)) {
     return "refund_return";
   }
   if (isCancelledStatus(order)) return "cancelled";
@@ -329,9 +319,10 @@ async function mongoOnlyReclassify(Order, limit, dryRun) {
       };
       const kind = classify(order, new Set());
       if (!kind) continue;
-      const clearReturn = kind !== "refund_return";
+      const clearReturn = kind === "cancelled" && !String(order.tracking_no || data.tracking_no || "").trim();
       const prev = String(doc.shopee_cancel_return_kind || data.shopee_cancel_return_kind || "");
-      if (prev === kind && !(clearReturn && String(order.return_sn || "").trim())) continue;
+      const prevRts = doc.is_rts === true || data.is_rts === true;
+      if (prev === kind && prevRts === (kind === "failed_delivery") && !(clearReturn && String(order.return_sn || "").trim())) continue;
       const $set = {
         shopee_cancel_return_kind: kind,
         "data.shopee_cancel_return_kind": kind,
@@ -485,7 +476,7 @@ async function main() {
           if (kind === "refund_return" && mappedReturn) {
             $set.return_sn = mappedReturn;
             $set["data.return_sn"] = mappedReturn;
-          } else {
+          } else if (kind === "cancelled" && !mappedReturn) {
             update.$unset = { return_sn: 1, "data.return_sn": 1 };
           }
           ops.push({

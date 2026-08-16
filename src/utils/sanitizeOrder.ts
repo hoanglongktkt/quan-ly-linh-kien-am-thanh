@@ -219,15 +219,18 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
       return undefined;
     })(),
     sub_status: (() => {
+      const classified = classifyShopeeCancelReturnKind(raw as any);
+      if (classified === 'failed_delivery') return 'RTS';
+      if (classified === 'cancelled') return 'CANCELLED';
+      if (classified === 'refund_return') return 'RETURN';
       const s = String(raw.sub_status || '').trim().toUpperCase();
       if (s === 'RTS' || s === 'CANCELLED' || s === 'RETURN') return s;
       return undefined;
     })(),
-    is_rts:
-      Boolean(raw.is_rts) ||
-      String(raw.sub_status || '').toUpperCase() === 'RTS' ||
-      String(raw.shopee_cancel_return_kind || '') === 'failed_delivery',
-    is_return: raw.is_return === true && !isUnshippedShopeeCancel(raw),
+    is_rts: classifyShopeeCancelReturnKind(raw as any) === 'failed_delivery',
+    is_return:
+      classifyShopeeCancelReturnKind(raw as any) === 'refund_return' &&
+      !isUnshippedShopeeCancel(raw),
     cancel_reason: raw.cancel_reason ? String(raw.cancel_reason) : undefined,
     buyer_cancel_reason: raw.buyer_cancel_reason ? String(raw.buyer_cancel_reason) : undefined,
     cancel_by: raw.cancel_by ? String(raw.cancel_by) : undefined,

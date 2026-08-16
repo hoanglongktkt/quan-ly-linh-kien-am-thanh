@@ -5340,67 +5340,42 @@ export const EMPTY_CANCEL_RETURN_COUNTERS: CancelReturnCounters = {
   rts: 0,
 };
 
-function hasOutboundTrackingMongoInner(): Record<string, unknown> {
-  const notEmpty = (field: string) => ({
-    [field]: { $exists: true, $type: "string", $nin: [""], $not: /^0FG/i },
-  });
-  return {
-    $or: [
-      notEmpty("tracking_no"),
-      notEmpty("trackingNumber"),
-      notEmpty("data.tracking_no"),
-      notEmpty("data.trackingNumber"),
-    ],
-  };
-}
-
-/** CANCELLED + mã đi hợp lệ = RTS (đã xuất kho), không nằm tab Đơn Hủy. */
-function cancelReturnShippedCancelledInner(): Record<string, unknown> {
-  return {
-    $and: [
-      {
-        $or: [
-          { status: "cancelled" },
-          { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL"] } },
-          { "data.shopee_order_status": { $in: ["CANCELLED", "IN_CANCEL"] } },
-        ],
-      },
-      hasOutboundTrackingMongoInner(),
-    ],
-  };
-}
-
 function cancelReturnRtsInner(): Record<string, unknown> {
+  const rtsReason = /FAILED[_\s-]?DELIVERY|UNDELIVERABLE|PARCEL[_\s-]?LOST|COD[_\s-]?REJECTED/i;
+  const rtsLogistics =
+    /LOGISTICS_DELIVERY_FAILED|LOGISTICS_LOST|LOGISTICS_COD_REJECTED/i;
   return {
     $or: [
-      { shopee_cancel_return_kind: "failed_delivery" },
-      { "data.shopee_cancel_return_kind": "failed_delivery" },
-      { sub_status: "RTS" },
-      { "data.sub_status": "RTS" },
-      { is_rts: true },
-      { "data.is_rts": true },
-      cancelReturnShippedCancelledInner(),
+      { logistics_status: { $regex: rtsLogistics } },
+      { "data.logistics_status": { $regex: rtsLogistics } },
+      { "data.cancel_reason": { $regex: rtsReason } },
+      { "data.buyer_cancel_reason": { $regex: rtsReason } },
     ],
   };
 }
 
 function cancelReturnReturnedInner(): Record<string, unknown> {
   return {
-    $and: [
-      {
-        $or: [
-          { shopee_cancel_return_kind: "refund_return" },
-          { "data.shopee_cancel_return_kind": "refund_return" },
-        ],
-      },
-      {
-        $or: [
-          { return_sn: { $type: "string", $nin: [""] } },
-          { "data.return_sn": { $type: "string", $nin: [""] } },
-          { is_return: true },
-          { "data.is_return": true },
-        ],
-      },
+    $or: [
+      { return_sn: { $type: "string", $nin: [""] } },
+      { "data.return_sn": { $type: "string", $nin: [""] } },
+      { is_return: true },
+      { "data.is_return": true },
+      { shopee_cancel_return_kind: "refund_return" },
+      { "data.shopee_cancel_return_kind": "refund_return" },
+    ],
+  };
+}
+
+function cancelReturnCancelledStatusInner(): Record<string, unknown> {
+  return {
+    $or: [
+      { status: "cancelled" },
+      { "data.status": "cancelled" },
+      { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL"] } },
+      { "data.shopee_order_status": { $in: ["CANCELLED", "IN_CANCEL"] } },
+      { shopee_cancel_return_kind: "cancelled" },
+      { "data.shopee_cancel_return_kind": "cancelled" },
     ],
   };
 }
@@ -5419,7 +5394,9 @@ export function orderCancelReturnKindFilter(kind?: string | null): Record<string
     return { $and: [base, rts] };
   }
   if (k === "cancelled" || k === "cancel") {
-    return { $and: [base, { $nor: [returned, rts] }] };
+    return {
+      $and: [base, cancelReturnCancelledStatusInner(), { $nor: [returned, rts] }],
+    };
   }
   return base;
 }
@@ -5541,8 +5518,10 @@ export async function reclassifyCancelReturnsInStore(opts?: {
           doc?.shopee_cancel_return_kind || doc?.data?.shopee_cancel_return_kind || "",
         ).trim();
         const prevReturn = String(doc?.return_sn || doc?.data?.return_sn || "").trim();
+        const prevRts = doc?.is_rts === true || doc?.data?.is_rts === true;
         const needWrite =
           prevKind !== kind ||
+          prevRts !== (kind === "failed_delivery") ||
           (clearReturn && Boolean(prevReturn)) ||
           Boolean(doc?.is_return) !== (kind === "refund_return");
         if (!needWrite) continue;

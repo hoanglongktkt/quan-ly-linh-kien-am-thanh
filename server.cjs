@@ -75108,6 +75108,7 @@ function hasValidOutboundTracking(order) {
 function isUnshippedShopeeCancel(order) {
   if (!isShopeeCancelledStatus(order)) return false;
   if (hasValidOutboundTracking(order)) return false;
+  if (hasCarrierRtsEvidence(order)) return false;
   const raw = String(order.shopee_order_status || "").toUpperCase();
   if (raw === "TO_RETURN" || raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE" || raw === "COMPLETED") {
     return false;
@@ -75117,7 +75118,7 @@ function isUnshippedShopeeCancel(order) {
     return false;
   }
   const logistics = String(order.logistics_status || "").toUpperCase();
-  if (logistics && /SHIPPED|PICKUP_DONE|IN_TRANSIT|DELIVERY_DONE|LOGISTICS_DELIVERY/.test(logistics) && !/FAILED|LOST|RETURN|REVERSE/.test(logistics)) {
+  if (logistics && /SHIPPED|PICKUP_DONE|IN_TRANSIT|DELIVERY_DONE|LOGISTICS_DELIVERY/.test(logistics) && !/FAILED|LOST|RETURN|REVERSE|REQUEST_CANCELED|REQUEST_CANCELLED/.test(logistics)) {
     return false;
   }
   return true;
@@ -75126,6 +75127,7 @@ function isShopeeRtsLogistics(logisticsStatus) {
   const s2 = String(logisticsStatus || "").toUpperCase();
   if (!s2) return false;
   if (s2.includes("POST_RETURN") || s2.includes("REVERSE")) return false;
+  if (s2.includes("REQUEST_CANCELED") || s2.includes("REQUEST_CANCELLED")) return false;
   return s2.includes("LOGISTICS_DELIVERY_FAILED") || s2.includes("LOGISTICS_LOST") || s2.includes("LOGISTICS_COD_REJECTED") || s2.includes("DELIVERY_FAILED") && !s2.includes("PICKUP");
 }
 function isShopeeRtsCancelReason(...reasons) {
@@ -75133,38 +75135,32 @@ function isShopeeRtsCancelReason(...reasons) {
   if (!blob) return false;
   return RTS_CANCEL_REASON_RE.test(blob);
 }
-function isShopeeRtsFailedDelivery(order) {
-  if (order.is_rts === true) return true;
-  if (String(order.sub_status || "").toUpperCase() === "RTS") return true;
-  if (String(order.shopee_cancel_return_kind || "") === "failed_delivery") return true;
+function hasCarrierRtsEvidence(order) {
   if (isShopeeRtsLogistics(order.logistics_status)) return true;
   if (isShopeeRtsCancelReason(order.cancel_reason, order.buyer_cancel_reason)) return true;
-  if (isShopeeCancelledStatus(order) && hasValidOutboundTracking(order)) return true;
   return false;
 }
 function isShopeeReturnRefundOrder(order) {
-  if (isShopeeRtsFailedDelivery(order)) return false;
-  if (isShopeeCancelledStatus(order)) return false;
+  if (hasCarrierRtsEvidence(order)) return false;
   if (isUnshippedShopeeCancel(order)) return false;
   if (!hasShopeeReturnSn(order)) return false;
   return true;
 }
 function shouldApplyShopeeReturnOverlay(existing) {
   if (!existing) return true;
-  if (isShopeeRtsFailedDelivery(existing)) return false;
   if (isUnshippedShopeeCancel(existing)) return false;
-  if (isShopeeCancelledStatus(existing)) return false;
   return true;
 }
 function classifyShopeeCancelReturnKind(order) {
-  if (isShopeeRtsFailedDelivery(order)) return "failed_delivery";
+  if (hasCarrierRtsEvidence(order)) return "failed_delivery";
   if (isShopeeReturnRefundOrder(order)) return "refund_return";
   if (isShopeeCancelledStatus(order)) return "cancelled";
   const local = String(order.local_status || order.localStatus || "").toUpperCase();
   if (local === "CANCELLED_STORED") return "cancelled";
   const stored = String(order.shopee_cancel_return_kind || "").trim();
   if (stored === "refund_return" && !hasShopeeReturnSn(order)) return "cancelled";
-  if (stored === "cancelled" || stored === "failed_delivery") return stored;
+  if (stored === "cancelled") return "cancelled";
+  if (stored === "failed_delivery" && hasCarrierRtsEvidence(order)) return "failed_delivery";
   return null;
 }
 function resolveShopeeSubStatus(kind) {
@@ -79913,63 +79909,39 @@ var EMPTY_CANCEL_RETURN_COUNTERS = {
   cancelled: 0,
   rts: 0
 };
-function hasOutboundTrackingMongoInner() {
-  const notEmpty = (field) => ({
-    [field]: { $exists: true, $type: "string", $nin: [""], $not: /^0FG/i }
-  });
-  return {
-    $or: [
-      notEmpty("tracking_no"),
-      notEmpty("trackingNumber"),
-      notEmpty("data.tracking_no"),
-      notEmpty("data.trackingNumber")
-    ]
-  };
-}
-function cancelReturnShippedCancelledInner() {
-  return {
-    $and: [
-      {
-        $or: [
-          { status: "cancelled" },
-          { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL"] } },
-          { "data.shopee_order_status": { $in: ["CANCELLED", "IN_CANCEL"] } }
-        ]
-      },
-      hasOutboundTrackingMongoInner()
-    ]
-  };
-}
 function cancelReturnRtsInner() {
+  const rtsReason = /FAILED[_\s-]?DELIVERY|UNDELIVERABLE|PARCEL[_\s-]?LOST|COD[_\s-]?REJECTED/i;
+  const rtsLogistics = /LOGISTICS_DELIVERY_FAILED|LOGISTICS_LOST|LOGISTICS_COD_REJECTED/i;
   return {
     $or: [
-      { shopee_cancel_return_kind: "failed_delivery" },
-      { "data.shopee_cancel_return_kind": "failed_delivery" },
-      { sub_status: "RTS" },
-      { "data.sub_status": "RTS" },
-      { is_rts: true },
-      { "data.is_rts": true },
-      cancelReturnShippedCancelledInner()
+      { logistics_status: { $regex: rtsLogistics } },
+      { "data.logistics_status": { $regex: rtsLogistics } },
+      { "data.cancel_reason": { $regex: rtsReason } },
+      { "data.buyer_cancel_reason": { $regex: rtsReason } }
     ]
   };
 }
 function cancelReturnReturnedInner() {
   return {
-    $and: [
-      {
-        $or: [
-          { shopee_cancel_return_kind: "refund_return" },
-          { "data.shopee_cancel_return_kind": "refund_return" }
-        ]
-      },
-      {
-        $or: [
-          { return_sn: { $type: "string", $nin: [""] } },
-          { "data.return_sn": { $type: "string", $nin: [""] } },
-          { is_return: true },
-          { "data.is_return": true }
-        ]
-      }
+    $or: [
+      { return_sn: { $type: "string", $nin: [""] } },
+      { "data.return_sn": { $type: "string", $nin: [""] } },
+      { is_return: true },
+      { "data.is_return": true },
+      { shopee_cancel_return_kind: "refund_return" },
+      { "data.shopee_cancel_return_kind": "refund_return" }
+    ]
+  };
+}
+function cancelReturnCancelledStatusInner() {
+  return {
+    $or: [
+      { status: "cancelled" },
+      { "data.status": "cancelled" },
+      { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL"] } },
+      { "data.shopee_order_status": { $in: ["CANCELLED", "IN_CANCEL"] } },
+      { shopee_cancel_return_kind: "cancelled" },
+      { "data.shopee_cancel_return_kind": "cancelled" }
     ]
   };
 }
@@ -79986,7 +79958,9 @@ function orderCancelReturnKindFilter(kind) {
     return { $and: [base, rts] };
   }
   if (k === "cancelled" || k === "cancel") {
-    return { $and: [base, { $nor: [returned, rts] }] };
+    return {
+      $and: [base, cancelReturnCancelledStatusInner(), { $nor: [returned, rts] }]
+    };
   }
   return base;
 }
@@ -80088,7 +80062,8 @@ async function reclassifyCancelReturnsInStore(opts) {
           doc?.shopee_cancel_return_kind || doc?.data?.shopee_cancel_return_kind || ""
         ).trim();
         const prevReturn = String(doc?.return_sn || doc?.data?.return_sn || "").trim();
-        const needWrite = prevKind !== kind || clearReturn && Boolean(prevReturn) || Boolean(doc?.is_return) !== (kind === "refund_return");
+        const prevRts = doc?.is_rts === true || doc?.data?.is_rts === true;
+        const needWrite = prevKind !== kind || prevRts !== (kind === "failed_delivery") || clearReturn && Boolean(prevReturn) || Boolean(doc?.is_return) !== (kind === "refund_return");
         if (!needWrite) continue;
         const $set = {
           shopee_cancel_return_kind: kind,
