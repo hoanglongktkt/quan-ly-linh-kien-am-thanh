@@ -4937,10 +4937,14 @@ async function syncShopeeReturnRequests(opts?: {
     // BẮT BUỘC duyệt HẾT shop — mỗi shop ngân sách riêng, CẤM break/return sớm.
     for (let shopIndex = 0; shopIndex < shopIds.length; shopIndex++) {
       const shopId = shopIds[shopIndex];
+      console.log(`[Return Sync] Đang xử lý shop_id=${shopId}, index=${shopIndex}`);
       const shopDeadlineAt = Date.now() + RETURN_REQUESTS_PER_SHOP_MS;
       try {
         let accessToken = await getValidShopeeAccessToken(shopId);
         if (!accessToken) {
+          console.warn(
+            `[Return Sync Error] Shop: ${shopId}, SN: -, Lỗi: no_valid_access_token — cần Ủy quyền lại Shop ${shopId}`,
+          );
           errors.push({ shopId, error: "no_valid_access_token" });
           await shopeeSyncDelay(300);
           continue;
@@ -5203,6 +5207,9 @@ async function syncShopeeReturnRequests(opts?: {
             pulled += 1;
             await shopeeSyncDelay(300);
           } catch (rowErr: any) {
+            console.warn(
+              `[Return Sync Error] Shop: ${shopId}, SN: ${returnSn}, Lỗi: ${rowErr?.message || rowErr}`,
+            );
             errors.push({
               shopId,
               returnSn,
@@ -5227,6 +5234,9 @@ async function syncShopeeReturnRequests(opts?: {
           }
         }
       } catch (shopErr: any) {
+        console.warn(
+          `[Return Sync Error] Shop: ${shopId}, SN: -, Lỗi: ${shopErr?.message || shopErr}`,
+        );
         errors.push({
           shopId,
           error: "return_requests_sync_failed",
@@ -5301,6 +5311,7 @@ async function retryPendingReturnTracking(opts?: {
     for (let shopIndex = 0; shopIndex < shopIds.length; shopIndex++) {
       if (attempted >= hardLimit) break;
       const shopId = shopIds[shopIndex];
+      console.log(`[Return Sync] Đang xử lý shop_id=${shopId}, index=${shopIndex}`);
       const shopCap = Math.min(
         RETURN_TRACKING_RETRY_PER_SHOP,
         hardLimit - attempted,
@@ -5360,7 +5371,7 @@ async function retryPendingReturnTracking(opts?: {
           const accessToken = await getValidShopeeAccessToken(orderShopId);
           if (!accessToken) {
             console.warn(
-              `[ReturnTracking Retry] skip no_token order_sn=${order?.orderSn || "-"} shop_id=${orderShopId}`,
+              `[Return Sync Error] Shop: ${orderShopId}, SN: ${order?.orderSn || "-"}, Lỗi: no_valid_access_token — cần Ủy quyền lại Shop ${orderShopId}`,
             );
             await shopeeSyncDelay(RETURN_TRACKING_RETRY_DELAY_MS);
             continue;
@@ -5383,8 +5394,7 @@ async function retryPendingReturnTracking(opts?: {
         } catch (rowErr: any) {
           errors += 1;
           console.warn(
-            `[ReturnTracking Retry] shop=${orderShopId} ${order?.orderSn || returnSn}:`,
-            rowErr?.message || rowErr,
+            `[Return Sync Error] Shop: ${orderShopId}, SN: ${order?.orderSn || returnSn}, Lỗi: ${rowErr?.message || rowErr}`,
           );
           await shopeeSyncDelay(RETURN_TRACKING_RETRY_DELAY_MS);
         }
@@ -5478,6 +5488,7 @@ async function backfillMissingReturnTracking30d(opts?: {
 
     for (let shopIndex = 0; shopIndex < shopIds.length; shopIndex++) {
       const shopId = shopIds[shopIndex];
+      console.log(`[Return Sync] Đang xử lý shop_id=${shopId}, index=${shopIndex}`);
       const shopDeadlineAt = Date.now() + RETURN_TRACKING_BACKFILL_PER_SHOP_MS;
       let shopAttempted = 0;
       let shopFilled = 0;
@@ -5485,7 +5496,9 @@ async function backfillMissingReturnTracking30d(opts?: {
         let accessToken = await getValidShopeeAccessToken(shopId);
         if (!accessToken) {
           errors += 1;
-          console.warn(`[ReturnTracking Backfill] shop=${shopId} — thiếu token, chuyển shop tiếp`);
+          console.warn(
+            `[Return Sync Error] Shop: ${shopId}, SN: -, Lỗi: no_valid_access_token — cần Ủy quyền lại Shop ${shopId}`,
+          );
           await shopeeSyncDelay(RETURN_TRACKING_BACKFILL_DELAY_MS);
           continue;
         }
@@ -5556,8 +5569,7 @@ async function backfillMissingReturnTracking30d(opts?: {
           } catch (rowErr: any) {
             errors += 1;
             console.warn(
-              `[ReturnTracking Backfill] shop=${shopId} ${orderSn}:`,
-              rowErr?.message || rowErr,
+              `[Return Sync Error] Shop: ${shopId}, SN: ${orderSn}, Lỗi: ${rowErr?.message || rowErr}`,
             );
             await shopeeSyncDelay(RETURN_TRACKING_BACKFILL_DELAY_MS);
           }
@@ -5610,8 +5622,7 @@ async function backfillMissingReturnTracking30d(opts?: {
             } catch (rowErr: any) {
               errors += 1;
               console.warn(
-                `[ReturnTracking Backfill] mongo ${orderSn}:`,
-                rowErr?.message || rowErr,
+                `[Return Sync Error] Shop: ${shopId}, SN: ${orderSn}, Lỗi: ${rowErr?.message || rowErr}`,
               );
               await shopeeSyncDelay(RETURN_TRACKING_BACKFILL_DELAY_MS);
             }
@@ -5635,8 +5646,7 @@ async function backfillMissingReturnTracking30d(opts?: {
       } catch (shopErr: any) {
         errors += 1;
         console.warn(
-          `[ReturnTracking Backfill] shop=${shopId} FAIL:`,
-          shopErr?.message || shopErr,
+          `[Return Sync Error] Shop: ${shopId}, SN: -, Lỗi: ${shopErr?.message || shopErr}`,
         );
       }
       await shopeeSyncDelay(RETURN_TRACKING_BACKFILL_DELAY_MS);
@@ -18904,6 +18914,29 @@ async function applyWebhookReturnFallback(
   const existingBefore = orders.find((o: any) => String(o.orderSn) === orderSn);
   if (existingBefore && !shouldApplyShopeeReturnOverlay(existingBefore)) {
     applyShopeeCancelReturnClassification(existingBefore);
+    if (!returnSn) {
+      returnSn = await findReturnSnForOrderWebhook(shopId, accessToken, orderSn);
+    }
+    if (!returnSn) {
+      console.warn(`[Shopee Webhook] Return fallback: không tìm thấy return_sn cho ${orderSn}`);
+      return;
+    }
+    if (!String(existingBefore.return_sn || "").trim()) existingBefore.return_sn = returnSn;
+    const { tracking } = await fetchReturnShippingTrackingNumber(
+      shopId,
+      accessToken,
+      returnSn,
+      undefined,
+      outboundTrackingOf(existingBefore),
+    );
+    await shopeeSyncDelay(300);
+    if (tracking) {
+      applyReturnTrackingAliases(existingBefore, tracking);
+      applyShopeeCancelReturnClassification(existingBefore);
+      console.log(
+        `[Shopee Webhook] Return fallback RTS/Hủy order_sn=${orderSn} return_sn=${returnSn} rtn=${tracking}`,
+      );
+    }
     return;
   }
   if (!returnSn) {

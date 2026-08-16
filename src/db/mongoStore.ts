@@ -2439,6 +2439,15 @@ export async function bulkUpdateShippedOrdersBySn(
   return ops.length;
 }
 
+/** shopId Mongo: khớp cả String và Number (AuDIO 831052930 hay bị lưu Number). */
+function shopIdTypeVariants(shopId: string): Array<string | number> {
+  const shopKey = String(shopId || "").trim();
+  const variants: Array<string | number> = [shopKey];
+  const asNum = Number(shopKey);
+  if (Number.isFinite(asNum) && String(asNum) === shopKey) variants.push(asNum);
+  return variants;
+}
+
 /**
  * Filter ghép (Compound Filter) BẮT BUỘC cho mọi thao tác update/upsert đơn hàng:
  * luôn định danh theo orderSn/_id/data.orderSn VÀ, khi biết shopId, chỉ khớp đúng
@@ -4680,8 +4689,8 @@ export async function loadReturnTrackingPendingFromStore(opts?: {
         ? [
             {
               $or: [
-                { shopId: shopKey },
-                { "data.shopId": shopKey },
+                { shopId: { $in: shopIdTypeVariants(shopKey) } },
+                { "data.shopId": { $in: shopIdTypeVariants(shopKey) } },
               ],
             },
           ]
@@ -4769,8 +4778,8 @@ export async function loadMissingReturnTrackingBackfillFromStore(opts?: {
         ? [
             {
               $or: [
-                { shopId: shopKey },
-                { "data.shopId": shopKey },
+                { shopId: { $in: shopIdTypeVariants(shopKey) } },
+                { "data.shopId": { $in: shopIdTypeVariants(shopKey) } },
               ],
             },
           ]

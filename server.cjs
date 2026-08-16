@@ -77871,6 +77871,13 @@ async function bulkUpdateShippedOrdersBySn(patches) {
   );
   return ops.length;
 }
+function shopIdTypeVariants(shopId) {
+  const shopKey = String(shopId || "").trim();
+  const variants2 = [shopKey];
+  const asNum = Number(shopKey);
+  if (Number.isFinite(asNum) && String(asNum) === shopKey) variants2.push(asNum);
+  return variants2;
+}
 function buildOrderCompoundFilter(sn, _id, shopId) {
   const identity = { $or: [{ orderSn: sn }, { _id }, { "data.orderSn": sn }] };
   const shopIdStr = shopId != null ? String(shopId).trim() : "";
@@ -79379,8 +79386,8 @@ async function loadReturnTrackingPendingFromStore(opts) {
       ...shopKey ? [
         {
           $or: [
-            { shopId: shopKey },
-            { "data.shopId": shopKey }
+            { shopId: { $in: shopIdTypeVariants(shopKey) } },
+            { "data.shopId": { $in: shopIdTypeVariants(shopKey) } }
           ]
         }
       ] : []
@@ -79450,8 +79457,8 @@ async function loadMissingReturnTrackingBackfillFromStore(opts) {
       ...shopKey ? [
         {
           $or: [
-            { shopId: shopKey },
-            { "data.shopId": shopKey }
+            { shopId: { $in: shopIdTypeVariants(shopKey) } },
+            { "data.shopId": { $in: shopIdTypeVariants(shopKey) } }
           ]
         }
       ] : []
@@ -106989,6 +106996,9 @@ if (!isShopeeConfigValid()) {
 }
 var SHOPEE_TOKENS_PATH = import_path13.default.resolve(APP_ROOT7, "data", "shopee_tokens.json");
 var SHOPEE_OAUTH_LAST_PATH = import_path13.default.resolve(APP_ROOT7, "data", "shopee_oauth_last.json");
+var CHANNEL_SETTINGS_PATH = import_path13.default.resolve(APP_ROOT7, "data", "channel_settings.json");
+var CANONICAL_SHOPEE_SHOP_IDS = ["4127421", "831052930"];
+var INDEPENDENT_SHOPEE_SHOP_IDS = new Set(CANONICAL_SHOPEE_SHOP_IDS);
 var deps11 = {
   syncOAuthShopsToChannelSettings: () => {
   },
@@ -107219,11 +107229,6 @@ function getShopeeTokenRecord(tokens, shopId) {
   for (const [k, v] of Object.entries(tokens)) {
     if (normalizeShopIdKey(k) === key) return v;
   }
-  for (const [k, v] of Object.entries(tokens)) {
-    if (normalizeShopIdKey(k) === key) continue;
-    const linked = Array.isArray(v?.shop_id_list) ? v.shop_id_list : [];
-    if (linked.some((id) => normalizeShopIdKey(id) === key)) return v;
-  }
   return null;
 }
 function resolveShopeeTokenConnectionStatus(shopId) {
@@ -107428,22 +107433,56 @@ function saveShopeeTokenForShop(shopId, record) {
   }
   console.log(`[Shopee Tokens] Saved token for shop_id=${key}. All shops: [${Object.keys(tokens).join(", ")}]`);
 }
+function listChannelSettingsShopIds() {
+  try {
+    if (!import_fs13.default.existsSync(CHANNEL_SETTINGS_PATH)) return [];
+    const raw = import_fs13.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
+    const parsed = raw.trim() ? JSON.parse(raw) : {};
+    const shops = Array.isArray(parsed?.shops) ? parsed.shops : [];
+    const ids = [];
+    for (const shop of shops) {
+      const platform = String(shop?.platform || "").toLowerCase();
+      if (platform && platform !== "shopee") continue;
+      const id = normalizeShopIdKey(shop?.shopId || shop?.id);
+      if (id) ids.push(id);
+    }
+    return ids;
+  } catch {
+    return [];
+  }
+}
+function shopHasOwnToken(tokens, shopId) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) return false;
+  const rec = tokens[key];
+  return Boolean(rec?.access_token || rec?.refresh_token);
+}
 function listShopeeOAuthShopIds() {
   return listShopeeSyncShopIds();
 }
 function listShopeeSyncShopIds() {
+  const tokens = loadShopeeTokens();
   const ids = /* @__PURE__ */ new Set();
-  for (const [rawKey, record] of Object.entries(loadShopeeTokens())) {
+  for (const id of CANONICAL_SHOPEE_SHOP_IDS) {
+    const key = normalizeShopIdKey(id);
+    if (key) ids.add(key);
+  }
+  for (const id of listChannelSettingsShopIds()) ids.add(id);
+  for (const [rawKey, record] of Object.entries(tokens)) {
     const key = normalizeShopIdKey(rawKey);
     if (key) ids.add(key);
     const recordShopId = normalizeShopIdKey(record?.shop_id);
     if (recordShopId) ids.add(recordShopId);
-    for (const rawLinkedShopId of Array.isArray(record?.shop_id_list) ? record.shop_id_list : []) {
-      const linkedShopId = normalizeShopIdKey(rawLinkedShopId);
-      if (linkedShopId) ids.add(linkedShopId);
+  }
+  const list = [...ids].sort();
+  for (const id of list) {
+    if (!shopHasOwnToken(tokens, id)) {
+      console.error(
+        `[Shopee Tokens] THI\u1EBEU token ri\xEAng shop_id=${id}. C\u1EA4M d\xF9ng token shop kh\xE1c. V\xE0o C\xE0i \u0111\u1EB7t \u2192 \u1EE6y quy\u1EC1n l\u1EA1i Shop ${id}.`
+      );
     }
   }
-  return [...ids].sort();
+  return list;
 }
 function ensureShopeeLinkedShopTokenKeys() {
   const tokens = normalizeTokenStore(loadShopeeTokens());
@@ -107467,35 +107506,27 @@ function ensureShopeeLinkedShopTokenKeys() {
     }
     const oauth = normalizeShopIdKey(record?.oauth_shop_id) || owner;
     for (const id of list) {
+      if (id === owner) continue;
       const existing = tokens[id] || updates[id];
-      if (existing?.access_token && existing?.refresh_token) {
-        if (id !== owner && existing.refresh_token && record.refresh_token && String(existing.refresh_token) !== String(record.refresh_token)) {
-          continue;
-        }
-        const mergedList = [...new Set([...(existing.shop_id_list || []).map(normalizeShopIdKey), ...list].filter(Boolean))];
-        if (mergedList.join(",") !== (existing.shop_id_list || []).map(normalizeShopIdKey).join(",")) {
-          updates[id] = {
-            ...existing,
-            shop_id: id,
-            oauth_shop_id: existing.oauth_shop_id || oauth,
-            shop_id_list: mergedList
-          };
-        }
+      const foreignIndependent = INDEPENDENT_SHOPEE_SHOP_IDS.has(owner) && INDEPENDENT_SHOPEE_SHOP_IDS.has(id);
+      if (foreignIndependent || !existing?.access_token || !existing?.refresh_token) {
+        console.error(
+          `[Shopee Tokens] C\u1EA4M clone token shop_id=${owner} \u2192 ${id}. Shop ${id} c\u1EA7n OAuth ri\xEAng (C\xE0i \u0111\u1EB7t \u2192 \u1EE6y quy\u1EC1n l\u1EA1i).`
+        );
         continue;
       }
-      updates[id] = buildShopeeTokenRecord(
-        id,
-        {
-          access_token: record.access_token,
-          refresh_token: record.refresh_token,
-          expire_in: record.expire_in,
-          obtained_at: record.obtained_at,
-          shop_id_list: list,
-          merchant_id_list: record.merchant_id_list || []
-        },
-        oauth || id,
-        existing
-      );
+      if (existing.refresh_token && record.refresh_token && String(existing.refresh_token) !== String(record.refresh_token)) {
+        continue;
+      }
+      const mergedList = [...new Set([...(existing.shop_id_list || []).map(normalizeShopIdKey), ...list].filter(Boolean))];
+      if (mergedList.join(",") !== (existing.shop_id_list || []).map(normalizeShopIdKey).join(",")) {
+        updates[id] = {
+          ...existing,
+          shop_id: id,
+          oauth_shop_id: existing.oauth_shop_id || oauth,
+          shop_id_list: mergedList
+        };
+      }
     }
   }
   for (const [rawKey, record] of Object.entries({ ...tokens, ...updates })) {
@@ -107507,7 +107538,8 @@ function ensureShopeeLinkedShopTokenKeys() {
     if (!ownerRec) continue;
     const ownerList = Array.isArray(ownerRec.shop_id_list) ? ownerRec.shop_id_list.map(normalizeShopIdKey).filter(Boolean) : [oauth];
     const sameRefresh = record.refresh_token && ownerRec.refresh_token && String(record.refresh_token) === String(ownerRec.refresh_token);
-    if (sameRefresh && !ownerList.includes(key)) {
+    const foreignIndependent = INDEPENDENT_SHOPEE_SHOP_IDS.has(key) && INDEPENDENT_SHOPEE_SHOP_IDS.has(oauth);
+    if (sameRefresh && (!ownerList.includes(key) || foreignIndependent)) {
       console.error(
         `[Shopee Tokens] G\u1EE1 shop clone gi\u1EA3 shop_id=${key} (token thu\u1ED9c ${oauth}, kh\xF4ng c\xF3 trong shop_id_list). C\u1EA7n OAuth ri\xEAng shop ${key}.`
       );
@@ -107553,6 +107585,12 @@ function propagateShopeeTokenToLinkedShops(sourceShopId, patch, opts) {
   const onlyMatchingRefresh = opts?.onlyMatchingRefreshToken ? String(opts.onlyMatchingRefreshToken) : "";
   const updates = {};
   for (const id of linked) {
+    if (id !== key && INDEPENDENT_SHOPEE_SHOP_IDS.has(key) && INDEPENDENT_SHOPEE_SHOP_IDS.has(id)) {
+      console.error(
+        `[Shopee Tokens] C\u1EA4M propagate token shop_id=${key} \u2192 ${id}. Shop ${id} c\u1EA7n OAuth ri\xEAng.`
+      );
+      continue;
+    }
     const existing = tokens[id] || (id === key ? record : null);
     if (onlyMatchingRefresh && existing?.refresh_token && String(existing.refresh_token) !== onlyMatchingRefresh && id !== key) {
       continue;
@@ -123163,10 +123201,14 @@ async function syncShopeeReturnRequests(opts) {
     );
     for (let shopIndex = 0; shopIndex < shopIds.length; shopIndex++) {
       const shopId = shopIds[shopIndex];
+      console.log(`[Return Sync] \u0110ang x\u1EED l\xFD shop_id=${shopId}, index=${shopIndex}`);
       const shopDeadlineAt = Date.now() + RETURN_REQUESTS_PER_SHOP_MS;
       try {
         let accessToken = await getValidShopeeAccessToken(shopId);
         if (!accessToken) {
+          console.warn(
+            `[Return Sync Error] Shop: ${shopId}, SN: -, L\u1ED7i: no_valid_access_token \u2014 c\u1EA7n \u1EE6y quy\u1EC1n l\u1EA1i Shop ${shopId}`
+          );
           errors.push({ shopId, error: "no_valid_access_token" });
           await shopeeSyncDelay(300);
           continue;
@@ -123390,6 +123432,9 @@ async function syncShopeeReturnRequests(opts) {
             pulled += 1;
             await shopeeSyncDelay(300);
           } catch (rowErr) {
+            console.warn(
+              `[Return Sync Error] Shop: ${shopId}, SN: ${returnSn}, L\u1ED7i: ${rowErr?.message || rowErr}`
+            );
             errors.push({
               shopId,
               returnSn,
@@ -123413,6 +123458,9 @@ async function syncShopeeReturnRequests(opts) {
           }
         }
       } catch (shopErr) {
+        console.warn(
+          `[Return Sync Error] Shop: ${shopId}, SN: -, L\u1ED7i: ${shopErr?.message || shopErr}`
+        );
         errors.push({
           shopId,
           error: "return_requests_sync_failed",
@@ -123468,6 +123516,7 @@ async function retryPendingReturnTracking(opts) {
     for (let shopIndex = 0; shopIndex < shopIds.length; shopIndex++) {
       if (attempted >= hardLimit) break;
       const shopId = shopIds[shopIndex];
+      console.log(`[Return Sync] \u0110ang x\u1EED l\xFD shop_id=${shopId}, index=${shopIndex}`);
       const shopCap = Math.min(
         RETURN_TRACKING_RETRY_PER_SHOP,
         hardLimit - attempted
@@ -123522,7 +123571,7 @@ async function retryPendingReturnTracking(opts) {
           const accessToken = await getValidShopeeAccessToken(orderShopId);
           if (!accessToken) {
             console.warn(
-              `[ReturnTracking Retry] skip no_token order_sn=${order?.orderSn || "-"} shop_id=${orderShopId}`
+              `[Return Sync Error] Shop: ${orderShopId}, SN: ${order?.orderSn || "-"}, L\u1ED7i: no_valid_access_token \u2014 c\u1EA7n \u1EE6y quy\u1EC1n l\u1EA1i Shop ${orderShopId}`
             );
             await shopeeSyncDelay(RETURN_TRACKING_RETRY_DELAY_MS);
             continue;
@@ -123545,8 +123594,7 @@ async function retryPendingReturnTracking(opts) {
         } catch (rowErr) {
           errors += 1;
           console.warn(
-            `[ReturnTracking Retry] shop=${orderShopId} ${order?.orderSn || returnSn}:`,
-            rowErr?.message || rowErr
+            `[Return Sync Error] Shop: ${orderShopId}, SN: ${order?.orderSn || returnSn}, L\u1ED7i: ${rowErr?.message || rowErr}`
           );
           await shopeeSyncDelay(RETURN_TRACKING_RETRY_DELAY_MS);
         }
@@ -123618,6 +123666,7 @@ async function backfillMissingReturnTracking30d(opts) {
     }
     for (let shopIndex = 0; shopIndex < shopIds.length; shopIndex++) {
       const shopId = shopIds[shopIndex];
+      console.log(`[Return Sync] \u0110ang x\u1EED l\xFD shop_id=${shopId}, index=${shopIndex}`);
       const shopDeadlineAt = Date.now() + RETURN_TRACKING_BACKFILL_PER_SHOP_MS;
       let shopAttempted = 0;
       let shopFilled = 0;
@@ -123625,7 +123674,9 @@ async function backfillMissingReturnTracking30d(opts) {
         let accessToken = await getValidShopeeAccessToken(shopId);
         if (!accessToken) {
           errors += 1;
-          console.warn(`[ReturnTracking Backfill] shop=${shopId} \u2014 thi\u1EBFu token, chuy\u1EC3n shop ti\u1EBFp`);
+          console.warn(
+            `[Return Sync Error] Shop: ${shopId}, SN: -, L\u1ED7i: no_valid_access_token \u2014 c\u1EA7n \u1EE6y quy\u1EC1n l\u1EA1i Shop ${shopId}`
+          );
           await shopeeSyncDelay(RETURN_TRACKING_BACKFILL_DELAY_MS);
           continue;
         }
@@ -123694,8 +123745,7 @@ async function backfillMissingReturnTracking30d(opts) {
           } catch (rowErr) {
             errors += 1;
             console.warn(
-              `[ReturnTracking Backfill] shop=${shopId} ${orderSn}:`,
-              rowErr?.message || rowErr
+              `[Return Sync Error] Shop: ${shopId}, SN: ${orderSn}, L\u1ED7i: ${rowErr?.message || rowErr}`
             );
             await shopeeSyncDelay(RETURN_TRACKING_BACKFILL_DELAY_MS);
           }
@@ -123747,8 +123797,7 @@ async function backfillMissingReturnTracking30d(opts) {
             } catch (rowErr) {
               errors += 1;
               console.warn(
-                `[ReturnTracking Backfill] mongo ${orderSn}:`,
-                rowErr?.message || rowErr
+                `[Return Sync Error] Shop: ${shopId}, SN: ${orderSn}, L\u1ED7i: ${rowErr?.message || rowErr}`
               );
               await shopeeSyncDelay(RETURN_TRACKING_BACKFILL_DELAY_MS);
             }
@@ -123771,8 +123820,7 @@ async function backfillMissingReturnTracking30d(opts) {
       } catch (shopErr) {
         errors += 1;
         console.warn(
-          `[ReturnTracking Backfill] shop=${shopId} FAIL:`,
-          shopErr?.message || shopErr
+          `[Return Sync Error] Shop: ${shopId}, SN: -, L\u1ED7i: ${shopErr?.message || shopErr}`
         );
       }
       await shopeeSyncDelay(RETURN_TRACKING_BACKFILL_DELAY_MS);
@@ -132248,7 +132296,7 @@ async function bulkAutoLinkAllPending(opts) {
     masterProductCount
   };
 }
-var CHANNEL_SETTINGS_PATH = import_path18.default.join(APP_ROOT11, "data", "channel_settings.json");
+var CHANNEL_SETTINGS_PATH2 = import_path18.default.join(APP_ROOT11, "data", "channel_settings.json");
 var DEFAULT_CHANNEL_SETTINGS = {
   shopeeConnected: false,
   shopeeShopId: "",
@@ -132401,8 +132449,8 @@ function dedupeShopsByPlatformId(shops) {
 }
 function loadChannelSettings() {
   try {
-    if (!import_fs17.default.existsSync(CHANNEL_SETTINGS_PATH)) return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
-    const raw = import_fs17.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
+    if (!import_fs17.default.existsSync(CHANNEL_SETTINGS_PATH2)) return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
+    const raw = import_fs17.default.readFileSync(CHANNEL_SETTINGS_PATH2, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : {};
     const rawShops = Array.isArray(parsed?.shops) ? parsed.shops : [];
     const shops = upsertShopsInChannelSettings([], rawShops);
@@ -132424,9 +132472,9 @@ function saveChannelSettings(settings) {
     const incoming = Array.isArray(settings?.shops) ? settings.shops : [];
     const shops = upsertShopsInChannelSettings(onDisk.shops || [], incoming);
     const payload = { ...DEFAULT_CHANNEL_SETTINGS, ...onDisk, ...settings, shops };
-    import_fs17.default.writeFileSync(CHANNEL_SETTINGS_PATH, JSON.stringify(payload, null, 2), "utf-8");
+    import_fs17.default.writeFileSync(CHANNEL_SETTINGS_PATH2, JSON.stringify(payload, null, 2), "utf-8");
     console.log(
-      `[Channel Settings] UPSERT ${shops.length} shop(s) \u2192 ${CHANNEL_SETTINGS_PATH}`,
+      `[Channel Settings] UPSERT ${shops.length} shop(s) \u2192 ${CHANNEL_SETTINGS_PATH2}`,
       shops.map((s2) => s2.shopId).join(", ")
     );
     return true;
@@ -132984,6 +133032,29 @@ async function applyWebhookReturnFallback(shopId, accessToken, orderSn, orders, 
   const existingBefore = orders.find((o) => String(o.orderSn) === orderSn);
   if (existingBefore && !shouldApplyShopeeReturnOverlay(existingBefore)) {
     applyShopeeCancelReturnClassification(existingBefore);
+    if (!returnSn) {
+      returnSn = await findReturnSnForOrderWebhook(shopId, accessToken, orderSn);
+    }
+    if (!returnSn) {
+      console.warn(`[Shopee Webhook] Return fallback: kh\xF4ng t\xECm th\u1EA5y return_sn cho ${orderSn}`);
+      return;
+    }
+    if (!String(existingBefore.return_sn || "").trim()) existingBefore.return_sn = returnSn;
+    const { tracking } = await fetchReturnShippingTrackingNumber(
+      shopId,
+      accessToken,
+      returnSn,
+      void 0,
+      outboundTrackingOf(existingBefore)
+    );
+    await shopeeSyncDelay(300);
+    if (tracking) {
+      applyReturnTrackingAliases(existingBefore, tracking);
+      applyShopeeCancelReturnClassification(existingBefore);
+      console.log(
+        `[Shopee Webhook] Return fallback RTS/H\u1EE7y order_sn=${orderSn} return_sn=${returnSn} rtn=${tracking}`
+      );
+    }
     return;
   }
   if (!returnSn) {
@@ -136698,7 +136769,7 @@ async function startServer() {
   }
   ensureGeminiClientFromEnv();
   initSettingsController({
-    CHANNEL_SETTINGS_PATH,
+    CHANNEL_SETTINGS_PATH: CHANNEL_SETTINGS_PATH2,
     DEFAULT_CHANNEL_SETTINGS,
     loadChannelSettings,
     saveChannelSettings,
