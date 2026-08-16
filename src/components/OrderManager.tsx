@@ -7880,6 +7880,7 @@ export default function OrderManager({
                     badge={resolveRowBadge(order)}
                     activeSubTab={activeSubTab}
                     shops={shops}
+                    products={products}
                     systemFees={systemFees}
                     printingOrderId={printingOrderId}
                     handingOverOrderId={handingOverOrderId}
@@ -7908,6 +7909,7 @@ export default function OrderManager({
                   badge={resolveRowBadge(order)}
                   activeSubTab={activeSubTab}
                   shops={shops}
+                  products={products}
                   systemFees={systemFees}
                   printingOrderId={printingOrderId}
                   handingOverOrderId={handingOverOrderId}

@@ -13,7 +13,7 @@ import {
   X,
   XCircle,
 } from 'lucide-react';
-import type { ConnectedShop, Order, SystemFee } from '../types';
+import type { ConnectedShop, Order, Product, SystemFee } from '../types';
 import {
   isEligibleForHandOverToCarrier,
   isOrderHandedOverToCarrier,
@@ -25,6 +25,7 @@ import {
 } from '../utils/orderHandover';
 import { getCarrierWaybillDisplay } from '../utils/orderTracking';
 import { resolveOrderShopDisplayName } from '../utils/resolveOrderShopName';
+import { getOrderTotalImportCost } from '../utils/orderImportCost';
 import {
   getShopeeItemAmount,
   getShopeeNetRevenue,
@@ -58,6 +59,7 @@ type SharedRowProps = {
   badge: OrderListRowBadge;
   activeSubTab: string;
   shops: ConnectedShop[];
+  products?: Product[];
   systemFees: SystemFee[];
   printingOrderId: string | null;
   handingOverOrderId: string | null;
@@ -133,16 +135,26 @@ function calculateDynamicFeeItems(itemAmount: number, systemFees: SystemFee[]) {
 function formatOrderNetRevenueDisplay(
   order: Order,
   systemFees: SystemFee[] = [],
-): { text: string; pending: boolean } {
+  catalogProducts: Product[] = [],
+): { text: string; pending: boolean; amount: number } {
   const pending = order.channel === 'shopee' && !isShopeeEscrowSynced(order);
   const itemAmount = getShopeeItemAmount(order);
-  const amount = pending
+  const netReceived = pending
     ? Math.max(
         0,
         itemAmount - calculateDynamicFeeItems(itemAmount, systemFees).reduce((sum, fee) => sum + fee.amount, 0),
       )
     : getShopeeNetRevenue(order);
-  return { text: `${amount.toLocaleString('vi-VN')}đ`, pending };
+  const totalImportCost = getOrderTotalImportCost(order, catalogProducts);
+  const profit = (Number.isFinite(netReceived) ? netReceived : 0) - totalImportCost;
+  const amount = Number.isFinite(profit) ? profit : 0;
+  return { text: `${amount.toLocaleString('vi-VN')}đ`, pending, amount };
+}
+
+function profitAmountClass(amount: number, pending: boolean): string {
+  if (amount < 0) return 'text-rose-600';
+  if (pending) return 'text-orange-600';
+  return 'text-emerald-600';
 }
 
 function shopChannelClass(channel: Order['channel']): string {
@@ -242,6 +254,7 @@ export const OrderTableRow = React.memo(function OrderTableRow({
   badge,
   activeSubTab,
   shops,
+  products = [],
   systemFees,
   printingOrderId,
   handingOverOrderId,
@@ -253,7 +266,7 @@ export const OrderTableRow = React.memo(function OrderTableRow({
 }: SharedRowProps) {
   const shopName = resolveOrderShopDisplayName(order, shops);
   const waybill = getOrderWaybillCode(order);
-  const revenue = formatOrderNetRevenueDisplay(order, systemFees);
+  const revenue = formatOrderNetRevenueDisplay(order, systemFees, products);
   const refundAmt =
     Number(order.refund_amount) > 0 ? Number(order.refund_amount) : Number(order.totalAmount) || 0;
   const returnReason = String(order.text_reason || order.return_reason || '').trim() || '—';
@@ -359,11 +372,14 @@ export const OrderTableRow = React.memo(function OrderTableRow({
               <div className="font-black text-gray-950 text-sm">{order.totalAmount.toLocaleString('vi-VN')}đ</div>
               <div
                 className={`text-[10px] font-bold p-0.5 px-1.5 rounded-md inline-block ${
-                  revenue.pending ? 'text-amber-700 bg-amber-50/80' : 'text-emerald-600 bg-emerald-50/50'
+                  revenue.amount < 0
+                    ? 'text-rose-600 bg-rose-50/80'
+                    : revenue.pending
+                      ? 'text-orange-600 bg-orange-50/80'
+                      : 'text-emerald-600 bg-emerald-50/50'
                 }`}
               >
                 Lãi: {revenue.text}
-                {revenue.pending && <span className="text-[9px] font-normal text-amber-700/80 ml-0.5">*</span>}
               </div>
             </td>
             <td className="p-4 text-center">
@@ -591,6 +607,7 @@ export const OrderCardRow = React.memo(function OrderCardRow({
   badge,
   activeSubTab,
   shops,
+  products = [],
   systemFees,
   printingOrderId,
   handingOverOrderId,
@@ -602,7 +619,7 @@ export const OrderCardRow = React.memo(function OrderCardRow({
 }: SharedRowProps) {
   const shopName = resolveOrderShopDisplayName(order, shops);
   const waybill = getOrderWaybillCode(order);
-  const revenue = formatOrderNetRevenueDisplay(order, systemFees);
+  const revenue = formatOrderNetRevenueDisplay(order, systemFees, products);
   const wooKey = order.id || order.orderSn;
   const cust = activeSubTab === 'web_orders' || order.channel === 'woocommerce' ? resolveWooCustomerInfo(order) : null;
   const showHandover =
@@ -670,14 +687,12 @@ export const OrderCardRow = React.memo(function OrderCardRow({
                 </span>
               </div>
               <div className="text-xs">
-                <span className="text-gray-400 text-[9px] block uppercase font-bold tracking-wider">Tổng nhận được</span>
+                <span className="text-gray-400 text-[9px] block uppercase font-bold tracking-wider">Tiền lãi</span>
                 <span
-                  className={`font-black text-sm whitespace-nowrap ${revenue.pending ? 'text-amber-700' : 'text-emerald-700'}`}
+                  className={`font-black text-sm whitespace-nowrap ${profitAmountClass(revenue.amount, revenue.pending)}`}
                 >
                   {revenue.text}
-                  {revenue.pending && (
-                    <span className="block text-[9px] font-medium text-amber-600/90 mt-0.5">Chưa gồm phí Shopee</span>
-                  )}
+                  <span className="block text-[9px] font-medium text-orange-600/90 mt-0.5">Đã trừ phí sàn & giá vốn</span>
                 </span>
               </div>
             </div>

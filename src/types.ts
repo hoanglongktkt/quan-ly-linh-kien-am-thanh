@@ -313,6 +313,11 @@ export interface Order {
     price: number;
     /** Giá gốc listing (model_original_price) trước mã giảm giá Shop */
     originalPrice?: number;
+    /** Giá nhập kho (nếu đã gắn vào dòng đơn) */
+    importPrice?: number;
+    import_price?: number;
+    last_import_price?: number;
+    cost_price?: number;
     modelId?: string;
     modelSku?: string;
     modelName?: string;
