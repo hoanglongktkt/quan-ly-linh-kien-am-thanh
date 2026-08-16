@@ -879,6 +879,36 @@ function matchesCancelReturnTab(order: Order, tab: CancelReturnTab): boolean {
   return resolveCancelReturnBucket(order) === tab;
 }
 
+function hasOrderReturnSn(order: Order): boolean {
+  return Boolean(String(order.return_sn || '').trim());
+}
+
+function isOrderCancelledStatus(order: Order): boolean {
+  const statusU = String(order.status || '').toUpperCase();
+  const raw = String(order.shopee_order_status || '').toUpperCase();
+  return statusU === 'CANCELLED' || raw === 'CANCELLED' || raw === 'IN_CANCEL';
+}
+
+/** Lớp lọc cuối — chặn đơn Hủy/Hoàn/RTS lẫn tab khi response cũ về muộn. */
+function matchesStrictDisplaySubTab(
+  order: Order,
+  subTab: OrderTab,
+  cancelTab: CancelReturnTab,
+): boolean {
+  if (subTab === 'return_requests') return hasOrderReturnSn(order);
+  if (subTab === 'cancelled') {
+    return isOrderCancelledStatus(order) && !hasOrderReturnSn(order) && !order.is_rts;
+  }
+  if (subTab === 'failed_delivery') return order.is_rts === true;
+  if (subTab !== 'cancel_returns') return true;
+  if (cancelTab === 'refund_return') return hasOrderReturnSn(order);
+  if (cancelTab === 'cancelled') {
+    return isOrderCancelledStatus(order) && !hasOrderReturnSn(order) && !order.is_rts;
+  }
+  if (cancelTab === 'failed_delivery') return order.is_rts === true;
+  return true;
+}
+
 /** Phân loại hủy/hoàn dùng chung verify realtime + background lookup. */
 function classifyScanCancelReturnBuckets(order: Order): {
   isReturnBucket: boolean;
@@ -1016,6 +1046,26 @@ export default function OrderManager({
     [],
   );
   const [searchQuery, setSearchQuery] = useState('');
+  const activeSubTabRef = useRef(activeSubTab);
+  const cancelReturnTabRef = useRef(cancelReturnTab);
+  const currentPageRef = useRef(currentPage);
+  const searchQueryRef = useRef(searchQuery);
+  activeSubTabRef.current = activeSubTab;
+  cancelReturnTabRef.current = cancelReturnTab;
+  currentPageRef.current = currentPage;
+  searchQueryRef.current = searchQuery;
+  const listScopeRef = useRef({ tab: '', kind: undefined as string | undefined, page: 1, q: '' });
+  listScopeRef.current = {
+    tab: searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab,
+    kind: searchQuery.trim()
+      ? undefined
+      : activeSubTab === 'cancel_returns'
+        ? cancelReturnKindParam(cancelReturnTab)
+        : undefined,
+    page: currentPage,
+    q: searchQuery.trim(),
+  };
+  const listFetchAbortRef = useRef<AbortController | null>(null);
   const isMobileViewport = useMediaQuery('(max-width: 768px)');
   const isWideDesktop = useMediaQuery('(min-width: 1440px)');
   const useOrderCardList = isMobileViewport || isWideDesktop;
@@ -1173,6 +1223,9 @@ export default function OrderManager({
     (opts?: { silent?: boolean; page?: number }) => {
       setHasNewOrders(false);
       const page = opts?.page && opts.page > 0 ? opts.page : currentPage;
+      listFetchAbortRef.current?.abort();
+      const controller = new AbortController();
+      listFetchAbortRef.current = controller;
       void fetchOrdersWithShop({
         silent: opts?.silent !== false,
         force: true,
@@ -1185,6 +1238,7 @@ export default function OrderManager({
           activeSubTab === 'cancel_returns'
             ? cancelReturnKindParam(cancelReturnTab)
             : undefined,
+        signal: controller.signal,
       });
       void fetchOrderCounts();
     },
@@ -1229,6 +1283,9 @@ export default function OrderManager({
     (page: number) => {
       const next = Math.max(1, Math.floor(page) || 1);
       setCurrentPage(next);
+      listFetchAbortRef.current?.abort();
+      const controller = new AbortController();
+      listFetchAbortRef.current = controller;
       void fetchOrdersWithShop({
         silent: false,
         force: true,
@@ -1241,6 +1298,7 @@ export default function OrderManager({
           activeSubTab === 'cancel_returns'
             ? cancelReturnKindParam(cancelReturnTab)
             : undefined,
+        signal: controller.signal,
       });
     },
     [activeSubTab, cancelReturnTab, fetchOrdersWithShop, searchQuery],
@@ -1299,6 +1357,7 @@ export default function OrderManager({
         window.clearTimeout(counterPollTimerRef.current);
       }
       counterAbortRef.current?.abort();
+      listFetchAbortRef.current?.abort();
       for (const id of newOrderRefreshTimersRef.current) {
         window.clearTimeout(id);
       }
@@ -1616,10 +1675,15 @@ export default function OrderManager({
     if (!tabFetchTabs.has(activeSubTab) || !onFetchOrdersRef.current) return;
 
     let cancelled = false;
+    listFetchAbortRef.current?.abort();
     const controller = new AbortController();
+    listFetchAbortRef.current = controller;
+    const expectedTab = searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab;
+    const expectedKind =
+      activeSubTab === 'cancel_returns' ? cancelReturnKindParam(cancelReturnTab) : undefined;
     const delay = datePreset === 'custom' ? 280 : 200;
     const timer = window.setTimeout(() => {
-      if (cancelled) return;
+      if (cancelled || controller.signal.aborted) return;
       setCurrentPage((p) => (p === 1 ? p : 1));
       console.log(`[Orders Tab] activeSubTab=${activeSubTab} kind=${listFetchKind || '(none)'} shops=${shopIdsKey || '(all)'} → fetch page=1`);
       const run = async () => {
@@ -1629,12 +1693,9 @@ export default function OrderManager({
             page: 1,
             limit: ORDERS_PAGE_SIZE,
             merge: false,
-            tab: searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab,
+            tab: expectedTab,
             q: searchQuery.trim() || undefined,
-            kind:
-              activeSubTab === 'cancel_returns'
-                ? cancelReturnKindParam(cancelReturnTab)
-                : undefined,
+            kind: expectedKind,
             signal: controller.signal,
           });
         } catch (error: unknown) {
@@ -1657,6 +1718,7 @@ export default function OrderManager({
       cancelled = true;
       window.clearTimeout(timer);
       controller.abort();
+      if (listFetchAbortRef.current === controller) listFetchAbortRef.current = null;
     };
     // Primitive key only — shopIds.join + dateRange + filters. CẤM object selectedShops.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1836,13 +1898,17 @@ export default function OrderManager({
     const wasFocused = prevFocusScannerRef.current;
     prevFocusScannerRef.current = focusScanner;
     if (wasFocused && !focusScanner) {
+      const expectedTab = activeSubTabRef.current;
       void onFetchOrdersRef.current?.({
         silent: true,
         page: 1,
         limit: ORDERS_PAGE_SIZE,
         merge: false,
-        tab: activeSubTab === 'all' ? '' : activeSubTab,
-        kind: listKind,
+        tab: expectedTab === 'all' ? '' : expectedTab,
+        kind:
+          expectedTab === 'cancel_returns'
+            ? cancelReturnKindParam(cancelReturnTabRef.current)
+            : undefined,
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1887,6 +1953,9 @@ export default function OrderManager({
   const applyPrintStatusFilter = React.useCallback(
     (next: 'all' | 'printed' | 'unprinted') => {
       setPrintStatusFilter(next);
+      listFetchAbortRef.current?.abort();
+      const controller = new AbortController();
+      listFetchAbortRef.current = controller;
       void Promise.resolve(
         fetchOrdersWithShop({
           silent: true,
@@ -1895,6 +1964,7 @@ export default function OrderManager({
           merge: false,
           tab: activeSubTab === 'all' ? '' : activeSubTab,
           kind: listKind,
+          signal: controller.signal,
         }),
       ).catch((error: unknown) => {
         if (error instanceof Error && error.name === 'AbortError') return;
@@ -2718,13 +2788,17 @@ export default function OrderManager({
           const saved =
             (status.summary?.cancelled || 0) + (status.summary?.returnReceived || 0);
           if (saved > 0) {
+            const expectedTab = activeSubTabRef.current;
             void onFetchOrdersRef.current?.({
               silent: true,
               page: 1,
               limit: ORDERS_PAGE_SIZE,
               merge: false,
-              tab: activeSubTab === 'all' ? '' : activeSubTab,
-              kind: listKind,
+              tab: expectedTab === 'all' ? '' : expectedTab,
+              kind:
+                expectedTab === 'cancel_returns'
+                  ? cancelReturnKindParam(cancelReturnTabRef.current)
+                  : undefined,
             });
           }
         }
@@ -4533,7 +4607,16 @@ export default function OrderManager({
     ordersRef.current = patched;
     onUpdateOrders(patched, { persist: false });
     if (onFetchOrdersPropRef.current) {
-      await fetchOrdersWithShop();
+      const scope = listScopeRef.current;
+      await fetchOrdersWithShop({
+        silent: true,
+        page: scope.page,
+        limit: ORDERS_PAGE_SIZE,
+        merge: false,
+        tab: scope.tab || undefined,
+        q: scope.q || undefined,
+        kind: scope.kind,
+      });
     }
   };
 
@@ -5124,24 +5207,36 @@ export default function OrderManager({
   const [showCreateOrderPage, setShowCreateOrderPage] = useState(false);
 
   /**
-   * Auto-refresh — PHẢI kèm tab đang xem + trang hiện tại.
+   * Auto-refresh — đọc tab/kind/page từ ref (primitive), không recreate effect.
+   * Mỗi tick AbortController mới; response lệch tab hiện tại bị App bỏ.
    */
   useEffect(() => {
     let cancelled = false;
     let timer: number | null = null;
-    const controller = new AbortController();
+    let controller: AbortController | null = null;
     const loop = async () => {
       if (cancelled) return;
       if (document.visibilityState !== 'hidden') {
+        controller?.abort();
+        controller = new AbortController();
+        const signal = controller.signal;
+        const expectedTab = activeSubTabRef.current;
+        const expectedKind =
+          expectedTab === 'cancel_returns'
+            ? cancelReturnKindParam(cancelReturnTabRef.current)
+            : undefined;
+        const expectedPage = currentPageRef.current;
+        const q = searchQueryRef.current.trim();
         try {
           await onFetchOrdersRef.current?.({
             silent: true,
-            page: currentPage,
+            page: expectedPage,
             limit: ORDERS_PAGE_SIZE,
             merge: false,
-            tab: activeSubTab === 'all' ? '' : activeSubTab,
-            kind: listKind,
-            signal: controller.signal,
+            tab: q ? '' : expectedTab === 'all' ? '' : expectedTab,
+            q: q || undefined,
+            kind: q ? undefined : expectedKind,
+            signal,
           });
         } catch (error: unknown) {
           const name =
@@ -5150,10 +5245,15 @@ export default function OrderManager({
               : typeof error === 'object' && error !== null
                 ? (error as { name?: string }).name
                 : undefined;
-          if (name === 'AbortError') return;
+          if (name === 'AbortError') {
+            /* request cũ bị hủy — vẫn schedule tick sau */
+          } else if (!cancelled) {
+            console.warn('[Orders AutoRefresh] fetch failed:', error);
+          }
         }
-        if (cancelled) return;
-        await fetchOrderCounts();
+        if (!cancelled && !signal.aborted) {
+          await fetchOrderCounts();
+        }
       }
       if (cancelled) return;
       timer = window.setTimeout(() => {
@@ -5166,11 +5266,11 @@ export default function OrderManager({
     return () => {
       cancelled = true;
       if (timer != null) window.clearTimeout(timer);
-      controller.abort();
+      controller?.abort();
     };
-    // Primitive deps — không đưa onFetchOrders / shops array vào đây.
+    // Mount once — tab/page/kind đọc từ ref. CẤM object/array deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSubTab, currentPage, listFetchKind]);
+  }, []);
 
   /**
    * Tab "Đã giao cho ĐVVC": dò API Shopee ngầm (ACK) — khi đơn thật sự SHIPPED
@@ -5277,6 +5377,9 @@ export default function OrderManager({
     setPullDistance(OM_PULL_REFRESH_THRESHOLD_PX);
     try {
       setCurrentPage(1);
+      listFetchAbortRef.current?.abort();
+      const controller = new AbortController();
+      listFetchAbortRef.current = controller;
       await fetchOrdersWithShop({
         silent: false,
         force: true,
@@ -5285,6 +5388,7 @@ export default function OrderManager({
         merge: false,
         tab: activeSubTab === 'all' ? '' : activeSubTab,
         kind: listKind,
+        signal: controller.signal,
       });
       void fetchOrderCounts();
     } finally {
@@ -5532,6 +5636,15 @@ export default function OrderManager({
     });
   }, [filteredOrdersBase, smartPickSort, activeSubTab]);
 
+  /** Màng lọc cuối — không render đơn lệch sub-tab Hủy/Hoàn dù state bị race. */
+  const displayOrders = useMemo(
+    () =>
+      filteredOrders.filter((order) =>
+        matchesStrictDisplaySubTab(order, activeSubTab, cancelReturnTab),
+      ),
+    [filteredOrders, activeSubTab, cancelReturnTab],
+  );
+
   const listPagingTotal = useMemo(() => {
     const backend = Number(ordersMeta?.total) || 0;
     if (activeSubTab !== 'cancel_returns') return backend;
@@ -5552,7 +5665,7 @@ export default function OrderManager({
   const getSelectedOrders = (): Order[] => {
     if (selectedOrderIds.length === 0) return [];
     const keySet = new Set(selectedOrderIds.map(k => String(k).trim()).filter(Boolean));
-    return filteredOrders.filter(o =>
+    return displayOrders.filter(o =>
       keySet.has(o.id) ||
       keySet.has(o.orderSn) ||
       keySet.has(`shopee-${o.orderSn}`)
@@ -5574,10 +5687,10 @@ export default function OrderManager({
 
   // Toggle selection for bulk actions
   const handleToggleSelectAll = () => {
-    if (selectedOrderIds.length === filteredOrders.length) {
+    if (selectedOrderIds.length === displayOrders.length) {
       setSelectedOrderIds([]);
     } else {
-      setSelectedOrderIds(filteredOrders.map(o => o.id));
+      setSelectedOrderIds(displayOrders.map(o => o.id));
     }
   };
 
@@ -7459,7 +7572,7 @@ export default function OrderManager({
             onClick={handleToggleSelectAll}
             className="text-gray-500 hover:text-gray-800 transition-all cursor-pointer"
           >
-            {selectedOrderIds.length === filteredOrders.length && filteredOrders.length > 0 ? (
+            {selectedOrderIds.length === displayOrders.length && displayOrders.length > 0 ? (
               <CheckSquare className="w-5 h-5 text-blue-600" />
             ) : (
               <Square className="w-5 h-5 text-gray-400" />
@@ -7495,7 +7608,7 @@ export default function OrderManager({
             onClick={() => {
               const targets =
                 selectedOrderIds.length > 0
-                  ? filteredOrders.filter((o) => selectedOrderIds.includes(o.id))
+                  ? displayOrders.filter((o) => selectedOrderIds.includes(o.id))
                   : [];
               if (targets.length === 0) {
                 showToast('Chọn đơn cần đánh dấu đã in trước.');
@@ -7514,7 +7627,7 @@ export default function OrderManager({
             onClick={() => {
               const targets =
                 selectedOrderIds.length > 0
-                  ? filteredOrders.filter((o) => selectedOrderIds.includes(o.id))
+                  ? displayOrders.filter((o) => selectedOrderIds.includes(o.id))
                   : [];
               if (targets.length === 0) {
                 showToast('Chọn đơn cần đánh dấu chưa in trước.');
@@ -7686,7 +7799,7 @@ export default function OrderManager({
             <RefreshCw className="w-10 h-10 text-slate-300 animate-spin" />
             <span className="font-semibold text-slate-600">Đang tải danh sách đơn hàng...</span>
           </div>
-        ) : filteredOrders.length === 0 ? (
+        ) : displayOrders.length === 0 ? (
           <div className="py-20 text-center text-gray-400 text-xs flex flex-col items-center gap-3">
             <ShoppingBag className="w-12 h-12 text-slate-200" />
             <span className="font-semibold text-slate-600">Không tìm thấy đơn hàng nào khớp với điều kiện lọc</span>
@@ -7704,7 +7817,7 @@ export default function OrderManager({
                   <th className="p-4 w-12 text-center">
                     <input
                       type="checkbox"
-                      checked={selectedOrderIds.length === filteredOrders.length}
+                      checked={selectedOrderIds.length === displayOrders.length}
                       onChange={handleToggleSelectAll}
                       className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer"
                     />
@@ -7731,7 +7844,7 @@ export default function OrderManager({
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {filteredOrders.map((order) => (
+                {displayOrders.map((order) => (
                   <OrderTableRow
                     key={order.id}
                     order={order}
@@ -7759,7 +7872,7 @@ export default function OrderManager({
             )}
             {useOrderCardList && (
             <div className="om-order-card-list om-order-card-list-mounted flex flex-col divide-y divide-gray-100 w-full">
-              {filteredOrders.map((order) => (
+              {displayOrders.map((order) => (
                 <OrderCardRow
                   key={order.id}
                   order={order}
@@ -7786,12 +7899,12 @@ export default function OrderManager({
           </>
         )}
 
-        {(listPagingTotal > 0 || filteredOrders.length > 0) && (
+        {(listPagingTotal > 0 || displayOrders.length > 0) && (
           <div className="px-4 py-3 bg-slate-50/80 border-t border-gray-100 flex flex-wrap items-center justify-end gap-3 text-xs text-gray-600">
             <span>
               Trang <b>{ordersMeta?.page ?? currentPage}</b>/{listPagingPages}
               {' — '}
-              {filteredOrders.length}/{listPagingTotal} đơn (mỗi trang {ORDERS_PAGE_SIZE})
+              {displayOrders.length}/{listPagingTotal} đơn (mỗi trang {ORDERS_PAGE_SIZE})
             </span>
             <div className="flex items-center gap-2">
               <button

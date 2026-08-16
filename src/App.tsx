@@ -224,6 +224,18 @@ function resolveOrdersSubTabFromUrl(): OrdersSubTabId | null {
   return normalizeOrdersSubTab(readSessionTab('omni_orders_subtab'));
 }
 
+function resolveOrdersFetchKindFromUrl(): string {
+  if (typeof window === 'undefined') return '';
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const raw = params.get('cancelTab') || readSessionTab('omni_cancel_tab') || '';
+    if (raw === 'refund_return' || raw === 'cancelled' || raw === 'failed_delivery') return raw;
+  } catch {
+    /* ignore */
+  }
+  return '';
+}
+
 function resolveTabFromPath(): string {
   if (typeof window === 'undefined') return 'dashboard';
   const path = window.location.pathname.replace(/\/$/, '') || '/';
@@ -432,6 +444,10 @@ export default function App() {
   const lastAppliedOrdersSeqRef = useRef(0);
   /** Tab đã apply gần nhất — chặn silent fetch không ?tab= đè list Đơn Hủy/Hoàn. */
   const lastAppliedOrdersTabRef = useRef('');
+  /** Kind Hủy/Hoàn đã apply gần nhất — chặn silent không ?kind= đè sub-tab. */
+  const lastAppliedOrdersKindRef = useRef('');
+  /** Scope request mới nhất (tab+kind+q) — response lệch scope bị bỏ. */
+  const latestOrdersScopeRef = useRef({ tab: '', kind: '', q: '', seq: 0 });
   /** Chỉ cho phép một lần đọc cùng mode (full / shallow) đang chạy để polling/focus/click không
    * tạo nhiều truy vấn MongoDB nặng đồng thời. */
   const fetchOrdersInFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
@@ -634,6 +650,13 @@ export default function App() {
     if (silent && !tab && !q && lastAppliedOrdersTabRef.current) {
       return fetchOrdersInFlightRef.current?.promise;
     }
+    // Silent lệch tab/kind không được đè sub-tab Đơn Hủy / Đơn Hoàn.
+    if (silent && !q && lastAppliedOrdersTabRef.current && tab !== lastAppliedOrdersTabRef.current) {
+      return fetchOrdersInFlightRef.current?.promise;
+    }
+    if (silent && !q && lastAppliedOrdersKindRef.current && kind !== lastAppliedOrdersKindRef.current) {
+      return fetchOrdersInFlightRef.current?.promise;
+    }
 
     if (!opts?.force && fetchOrdersInFlightRef.current?.key === flightKey) {
       return fetchOrdersInFlightRef.current.promise;
@@ -658,6 +681,7 @@ export default function App() {
     // danh sách đơn hàng trống vĩnh viễn cho tới khi người dùng bấm "Làm mới".
     const retriesLeft = opts?.retriesLeft ?? 4;
     const requestId = ++fetchOrdersSeqRef.current;
+    latestOrdersScopeRef.current = { tab, kind, q, seq: requestId };
     let requestTimeoutId: number | undefined;
     let didIncNonSilent = false;
     let aborted = false;
@@ -801,9 +825,23 @@ export default function App() {
         '- SỐ LƯỢNG:',
         sanitized.length,
       );
+      if (controller.signal.aborted || callerSignal?.aborted) {
+        aborted = true;
+        return;
+      }
       if (requestId !== fetchOrdersSeqRef.current) return;
+      const latestScope = latestOrdersScopeRef.current;
+      if (
+        latestScope.seq !== requestId ||
+        latestScope.tab !== tab ||
+        latestScope.kind !== kind ||
+        latestScope.q !== q
+      ) {
+        return;
+      }
       lastAppliedOrdersSeqRef.current = requestId;
       lastAppliedOrdersTabRef.current = tab;
+      lastAppliedOrdersKindRef.current = kind;
       setOrdersMeta({
         page: currentPage,
         pageSize,
@@ -1033,6 +1071,11 @@ export default function App() {
     return hint;
   }, [activeTab, ordersSubTabHint]);
 
+  const resolveOrdersFetchKind = useCallback((): string => {
+    if (resolveOrdersFetchTab() !== 'cancel_returns') return '';
+    return resolveOrdersFetchKindFromUrl();
+  }, [resolveOrdersFetchTab]);
+
   // Quay lại tab / sáng màn hình → lập tức fetch đơn mới nhất, bỏ qua cache (KHÔNG gọi Shopee).
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -1049,6 +1092,7 @@ export default function App() {
       setBackgroundRefreshing(true);
       try {
         const tab = resolveOrdersFetchTab();
+        const kind = resolveOrdersFetchKind();
         await fetchOrders({
           silent: true,
           force: true,
@@ -1056,6 +1100,7 @@ export default function App() {
           limit: 50,
           merge: false,
           ...(tab ? { tab } : {}),
+          ...(kind ? { kind } : {}),
         });
         if (
           activeTab === 'products' ||
@@ -1083,7 +1128,7 @@ export default function App() {
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [isAuthenticated, activeTab, resolveOrdersFetchTab]);
+  }, [isAuthenticated, activeTab, resolveOrdersFetchTab, resolveOrdersFetchKind]);
 
   // Poll hàng đợi dò ngầm Backend — toast toàn app kể cả khi tắt màn quét / đổi tab.
   useEffect(() => {
@@ -1128,12 +1173,14 @@ export default function App() {
           (status.summary?.cancelled || 0) + (status.summary?.returnReceived || 0);
         if (saved > 0) {
           const tab = resolveOrdersFetchTab();
+          const kind = resolveOrdersFetchKind();
           void fetchOrders({
             silent: true,
             page: 1,
             limit: 50,
             merge: false,
             ...(tab ? { tab } : {}),
+            ...(kind ? { kind } : {}),
           });
         }
       } finally {
@@ -1147,7 +1194,7 @@ export default function App() {
       if (timer != null) window.clearTimeout(timer);
       abortCtrl?.abort();
     };
-  }, [isAuthenticated, activeTab, resolveOrdersFetchTab]);
+  }, [isAuthenticated, activeTab, resolveOrdersFetchTab, resolveOrdersFetchKind]);
 
   // Poll YCTH mới từ background sync / webhook → toast góc màn hình.
   useEffect(() => {
@@ -1187,12 +1234,16 @@ export default function App() {
         await ackReturnAlerts(
           unnotified.map((j) => j.id || j.orderSn).filter(Boolean) as string[],
         );
+        const hint = String(resolveOrdersSubTabFromUrl() || '').trim().toLowerCase();
+        const tab = !hint || hint === 'all' || hint === 'order_products' ? '' : hint;
+        const kind = tab === 'cancel_returns' ? resolveOrdersFetchKindFromUrl() : '';
         void fetchOrders({
           silent: true,
           page: 1,
           limit: 50,
-          merge: true,
-          tab: 'return_requests',
+          merge: false,
+          ...(tab ? { tab } : {}),
+          ...(kind ? { kind } : {}),
         });
       } finally {
         inFlight = false;
