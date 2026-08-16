@@ -79354,6 +79354,7 @@ async function loadReturnTrackingPendingFromStore(opts) {
   );
   const cutoffIso = new Date(Date.now() - lookbackMs).toISOString();
   const cutoffDate = new Date(Date.now() - lookbackMs);
+  const shopKey = String(opts?.shopId || "").trim();
   const filter2 = {
     $and: [
       {
@@ -79374,7 +79375,15 @@ async function loadReturnTrackingPendingFromStore(opts) {
           { "data.date": { $gte: cutoffIso } },
           { last_synced_at: { $gte: cutoffDate } }
         ]
-      }
+      },
+      ...shopKey ? [
+        {
+          $or: [
+            { shopId: shopKey },
+            { "data.shopId": shopKey }
+          ]
+        }
+      ] : []
     ]
   };
   let docs;
@@ -79389,7 +79398,7 @@ async function loadReturnTrackingPendingFromStore(opts) {
   }
   if (!docs.length) return [];
   console.log(
-    `[MongoDB] return-tracking-pending candidates=${docs.length} lookbackDays=${Math.round(lookbackMs / 864e5)} cap=${limit}`
+    `[MongoDB] return-tracking-pending shop=${shopKey || "*"} candidates=${docs.length} lookbackDays=${Math.round(lookbackMs / 864e5)} cap=${limit}`
   );
   return loadOrdersFromStore({
     ids: docs.map((d) => String(d._id)).slice(0, HARD_LIMIT),
@@ -107759,7 +107768,30 @@ function tokenCacheSet(shopId, token, expireIn) {
 }
 function tokenCacheClear(shopId) {
   const key = normalizeShopIdKey(shopId);
-  if (key) shopeeAccessTokenCache.delete(key);
+  if (key) {
+    shopeeAccessTokenCache.delete(key);
+    shopeeShopTokenVerifyCache.delete(key);
+  }
+}
+var shopeeShopTokenVerifyCache = /* @__PURE__ */ new Map();
+function shopTokenVerifyCacheOk(shopId, token) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key || !token) return false;
+  const entry = shopeeShopTokenVerifyCache.get(key);
+  if (!entry?.tokenTail) return false;
+  if (Math.floor(Date.now() / 1e3) >= Number(entry.expiresAt || 0)) {
+    shopeeShopTokenVerifyCache.delete(key);
+    return false;
+  }
+  return entry.tokenTail === String(token).slice(-8);
+}
+function shopTokenVerifyCacheSet(shopId, token) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key || !token) return;
+  shopeeShopTokenVerifyCache.set(key, {
+    tokenTail: String(token).slice(-8),
+    expiresAt: Math.floor(Date.now() / 1e3) + 10 * 60
+  });
 }
 function resolveRefreshLockKey(shopId, record) {
   const key = normalizeShopIdKey(shopId);
@@ -107957,26 +107989,37 @@ async function getValidShopeeAccessToken(shopId) {
     );
     return null;
   }
+  const oauth = normalizeShopIdKey(record.oauth_shop_id);
+  const recordOwner = normalizeShopIdKey(record.shop_id);
+  const needsVerify = Boolean(oauth && oauth !== key || recordOwner && recordOwner !== key);
+  const cacheHit = Boolean(tokenCacheGet(key));
+  const rejectForeignToken = (reason) => {
+    console.error(
+      `[Shopee API] shop_id=${key} token kh\xF4ng thu\u1ED9c shop n\xE0y (oauth=${oauth || "-"} owner=${recordOwner || "-"} error=${reason}). C\u1EA7n OAuth ri\xEAng shop ${key} \u2014 kh\xF4ng d\xF9ng token shop kh\xE1c.`
+    );
+    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=${cacheHit ? "hit" : "miss"} verified=no`);
+    tokenCacheClear(key);
+    return null;
+  };
   const fresh = readShopeeAccessTokenIfFresh(key);
   if (fresh) {
-    const oauth = normalizeShopIdKey(record.oauth_shop_id);
-    const list = Array.isArray(record.shop_id_list) ? record.shop_id_list.map(normalizeShopIdKey).filter(Boolean) : [];
-    const suspectClone = oauth && oauth !== key && (!list.length || !list.includes(key)) || oauth && oauth !== key && list.length <= 1;
-    if (suspectClone) {
-      const verified = await verifyShopeeShopToken(key, fresh);
-      if (!verified.ok) {
-        console.error(
-          `[Shopee API] shop_id=${key} token clone/kh\xF4ng h\u1EE3p l\u1EC7 (error=${verified.error}). C\u1EA7n OAuth ri\xEAng shop ${key} \u2014 kh\xF4ng d\xF9ng token c\u1EE7a ${oauth}.`
-        );
-        tokenCacheClear(key);
-        return null;
+    if (needsVerify) {
+      if (shopTokenVerifyCacheOk(key, fresh)) {
+        console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=${cacheHit ? "hit" : "miss"} verified=yes`);
+        return fresh;
       }
+      const verified = await verifyShopeeShopToken(key, fresh);
+      if (!verified.ok) return rejectForeignToken(verified.error);
+      shopTokenVerifyCacheSet(key, fresh);
+      console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=${cacheHit ? "hit" : "miss"} verified=yes`);
+      return fresh;
     }
-    console.log(`[Shopee API] access_token c\xF2n h\u1EA1n shop_id=${key}`);
+    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=${cacheHit ? "hit" : "miss"} verified=n/a`);
     return fresh;
   }
   if (!record.refresh_token) {
     console.error(`[Shopee API] Shop ${key} thi\u1EBFu refresh_token \u2014 c\u1EA7n OAuth l\u1EA1i.`);
+    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
     return null;
   }
   try {
@@ -107984,16 +108027,27 @@ async function getValidShopeeAccessToken(shopId) {
       `[Shopee API] access_token shop_id=${key} H\u1EBET H\u1EA0N (expired) \u2014 g\u1ECDi Refresh Token \u2192 l\u01B0u DB...`
     );
     const refreshed = await refreshShopeeAccessTokenLocked(key, { force: false });
-    if (refreshed) {
-      console.log(`[Shopee API] Refresh OK shop_id=${key} \u2014 d\xF9ng access_token m\u1EDBi`);
+    if (!refreshed) {
+      console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
+      return null;
     }
+    if (needsVerify) {
+      const verified = await verifyShopeeShopToken(key, refreshed);
+      if (!verified.ok) return rejectForeignToken(verified.error);
+      shopTokenVerifyCacheSet(key, refreshed);
+      console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=yes`);
+      return refreshed;
+    }
+    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=n/a`);
     return refreshed;
   } catch (err) {
     if (err instanceof ShopeeRefreshTokenExpiredError) {
       console.error(`[Shopee API] ${err.message}`);
+      console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
       return null;
     }
     console.error(`[Shopee API] Refresh token th\u1EA5t b\u1EA1i shop_id=${key}:`, err);
+    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
     return null;
   }
 }
@@ -120212,15 +120266,29 @@ function buildShopeeUpdateStockEntry(stock, modelId, locationId) {
   if (mid != null) entry.model_id = mid;
   return entry;
 }
+function resolveShopeeReturnsApiShopId(shopId) {
+  return String(normalizeShopIdKey(shopId) || shopId || "").trim();
+}
+function isShopeeReturnsAuthError(result) {
+  if (!result) return false;
+  const http4 = Number(result.httpStatus || 0);
+  if (http4 === 401 || http4 === 403) return true;
+  return isShopeeInvalidTokenError(result.error, result.message);
+}
 async function shopeeGetReturnList(shopId, accessToken, opts) {
+  const apiShopId = resolveShopeeReturnsApiShopId(shopId);
+  if (!apiShopId) {
+    console.warn(`[Shopee Returns] get_return_list shop_id=${shopId} error=invalid_shop_id message=thi\u1EBFu shop_id`);
+    return { error: "invalid_shop_id", message: `get_return_list thi\u1EBFu shop_id (input=${String(shopId)})`, httpStatus: 0 };
+  }
   const apiPath = "/api/v2/returns/get_return_list";
   const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const sign = shopeeSign(apiPath, timestamp, accessToken, apiShopId);
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
     timestamp: String(timestamp),
     access_token: accessToken,
-    shop_id: shopId,
+    shop_id: apiShopId,
     sign,
     page_no: String(Math.max(1, opts?.pageNo ?? 1)),
     page_size: String(
@@ -120244,27 +120312,37 @@ async function shopeeGetReturnList(shopId, accessToken, opts) {
   try {
     const { json: json2, httpStatus } = await shopeeFetchJsonWithRetry(
       url2,
-      `get_return_list shop_id=${shopId}`
+      `get_return_list shop_id=${apiShopId}`
     );
     if (json2.error) {
       const errMsg = formatShopeeApiError(json2, httpStatus);
-      console.error(`[Shopee Returns] get_return_list l\u1ED7i: ${errMsg}`);
-      return { ...json2, message: json2.message || errMsg };
+      console.warn(
+        `[Shopee Returns] get_return_list shop_id=${apiShopId} error=${json2.error || "unknown"} message=${json2.message || errMsg}`
+      );
+      return { ...json2, message: json2.message || errMsg, httpStatus };
     }
     return json2;
   } catch (err) {
-    return shopeeApiErrorResult(err, `get_return_list fetch (shop_id=${shopId})`);
+    console.warn(
+      `[Shopee Returns] get_return_list shop_id=${apiShopId} error=exception message=${err?.message || err}`
+    );
+    return shopeeApiErrorResult(err, `get_return_list fetch (shop_id=${apiShopId})`);
   }
 }
 async function shopeeGetReturnDetail(shopId, accessToken, returnSn) {
+  const apiShopId = resolveShopeeReturnsApiShopId(shopId);
+  if (!apiShopId) {
+    console.warn(`[Shopee Returns] get_return_detail shop_id=${shopId} return_sn=${returnSn} error=invalid_shop_id message=thi\u1EBFu shop_id`);
+    return { error: "invalid_shop_id", message: `get_return_detail thi\u1EBFu shop_id (input=${String(shopId)})`, httpStatus: 0 };
+  }
   const apiPath = "/api/v2/returns/get_return_detail";
   const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const sign = shopeeSign(apiPath, timestamp, accessToken, apiShopId);
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
     timestamp: String(timestamp),
     access_token: accessToken,
-    shop_id: shopId,
+    shop_id: apiShopId,
     sign,
     return_sn: String(returnSn)
   });
@@ -120272,27 +120350,37 @@ async function shopeeGetReturnDetail(shopId, accessToken, returnSn) {
   try {
     const { json: json2, httpStatus } = await shopeeFetchJsonWithRetry(
       url2,
-      `get_return_detail shop_id=${shopId} return_sn=${returnSn}`
+      `get_return_detail shop_id=${apiShopId} return_sn=${returnSn}`
     );
     if (json2.error) {
       const errMsg = formatShopeeApiError(json2, httpStatus);
-      console.warn(`[Shopee Returns] get_return_detail ${returnSn}: ${errMsg}`);
-      return { ...json2, message: json2.message || errMsg };
+      console.warn(
+        `[Shopee Returns] get_return_detail shop_id=${apiShopId} return_sn=${returnSn} error=${json2.error || "unknown"} message=${json2.message || errMsg}`
+      );
+      return { ...json2, message: json2.message || errMsg, httpStatus };
     }
     return json2;
   } catch (err) {
+    console.warn(
+      `[Shopee Returns] get_return_detail shop_id=${apiShopId} return_sn=${returnSn} error=exception message=${err?.message || err}`
+    );
     return shopeeApiErrorResult(err, `get_return_detail fetch return_sn=${returnSn}`);
   }
 }
 async function shopeeGetReverseTrackingInfo(shopId, accessToken, returnSn) {
+  const apiShopId = resolveShopeeReturnsApiShopId(shopId);
+  if (!apiShopId) {
+    console.warn(`[Shopee Returns] get_reverse_tracking_info shop_id=${shopId} return_sn=${returnSn} error=invalid_shop_id message=thi\u1EBFu shop_id`);
+    return { error: "invalid_shop_id", message: `get_reverse_tracking_info thi\u1EBFu shop_id (input=${String(shopId)})`, httpStatus: 0 };
+  }
   const apiPath = "/api/v2/returns/get_reverse_tracking_info";
   const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const sign = shopeeSign(apiPath, timestamp, accessToken, apiShopId);
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
     timestamp: String(timestamp),
     access_token: accessToken,
-    shop_id: shopId,
+    shop_id: apiShopId,
     sign,
     return_sn: String(returnSn)
   });
@@ -120300,13 +120388,20 @@ async function shopeeGetReverseTrackingInfo(shopId, accessToken, returnSn) {
   try {
     const { json: json2, httpStatus } = await shopeeFetchJsonWithRetry(
       url2,
-      `get_reverse_tracking_info shop_id=${shopId} return_sn=${returnSn}`
+      `get_reverse_tracking_info shop_id=${apiShopId} return_sn=${returnSn}`
     );
     if (json2.error) {
-      return { ...json2, message: formatShopeeApiError(json2, httpStatus) };
+      const errMsg = formatShopeeApiError(json2, httpStatus);
+      console.warn(
+        `[Shopee Returns] get_reverse_tracking_info shop_id=${apiShopId} return_sn=${returnSn} error=${json2.error || "unknown"} message=${json2.message || errMsg}`
+      );
+      return { ...json2, message: errMsg, httpStatus };
     }
     return json2;
   } catch (err) {
+    console.warn(
+      `[Shopee Returns] get_reverse_tracking_info shop_id=${apiShopId} return_sn=${returnSn} error=exception message=${err?.message || err}`
+    );
     return shopeeApiErrorResult(err, `get_reverse_tracking_info return_sn=${returnSn}`);
   }
 }
@@ -120389,13 +120484,38 @@ async function fillReturnTrackingFromShopee(shopId, accessToken, order) {
       );
     }
   }
-  if (!returnSn) return false;
+  if (!returnSn) {
+    console.warn(
+      `[Shopee Tracking] fill return TN skip no_return_sn order_sn=${order.orderSn || "-"} shop_id=${shopId}`
+    );
+    return false;
+  }
   try {
     const detail = await shopeeGetReturnDetail(shopId, accessToken, returnSn);
     if (detail?.error) {
       const errText = `${detail.error || ""} ${detail.message || ""}`;
+      console.warn(
+        `[Shopee Tracking] get_return_detail shop_id=${shopId} return_sn=${returnSn} error=${detail.error || "unknown"} message=${detail.message || ""}`
+      );
+      if (isShopeeReturnsAuthError(detail)) {
+        return false;
+      }
+      await shopeeSyncDelay(300);
+      const { tracking: tracking2 } = await fetchReturnShippingTrackingNumber(
+        shopId,
+        accessToken,
+        returnSn,
+        void 0,
+        outboundTrackingOf(order)
+      );
+      if (tracking2) {
+        applyReturnTrackingAliases(order, tracking2);
+        return true;
+      }
       if (/error_reverse_logistics|does not have reverse logistics/i.test(errText)) {
         setTrackingEnrichCooldown(order, "reverse_logistics_pending");
+      } else {
+        setTrackingEnrichCooldown(order, "return_tracking_pending");
       }
       return false;
     }
@@ -120440,23 +120560,25 @@ async function fetchReturnShippingTrackingNumber(shopId, accessToken, returnSn, 
       );
       if (fromReverse) sources.reverse_tracking_info = fromReverse;
       console.log(
-        `[Shopee Returns] reverse_tracking return_sn=${returnSn} tracking_number=${body.tracking_number || "(empty)"} rts=${body.rts_tracking_number || "(empty)"} extracted=${fromReverse || "(empty)"}`
+        `[Shopee Returns] reverse_tracking shop_id=${shopId} return_sn=${returnSn} tracking_number=${body.tracking_number || "(empty)"} rts=${body.rts_tracking_number || "(empty)"} extracted=${fromReverse || "(empty)"}`
       );
     } else {
       const errText = `${reverse.error || ""} ${reverse.message || ""}`;
       if (/error_reverse_logistics|does not have reverse logistics/i.test(errText)) {
         console.log(
-          `[Shopee Returns] get_reverse_tracking_info pending return_sn=${returnSn}: ${errText.trim()}`
+          `[Shopee Returns] get_reverse_tracking_info pending shop_id=${shopId} return_sn=${returnSn}: ${errText.trim()}`
         );
       } else {
         console.warn(
-          `[Shopee Returns] get_reverse_tracking_info l\u1ED7i return_sn=${returnSn}:`,
-          reverse.message || reverse.error
+          `[Shopee Returns] get_reverse_tracking_info shop_id=${shopId} return_sn=${returnSn} error=${reverse.error || "unknown"} message=${reverse.message || ""}`
         );
       }
     }
   } catch (err) {
-    console.warn(`[Shopee Returns] reverse_tracking exception ${returnSn}:`, err?.message || err);
+    console.warn(
+      `[Shopee Returns] reverse_tracking exception shop_id=${shopId} return_sn=${returnSn}:`,
+      err?.message || err
+    );
   }
   let fromDetail = "";
   if (!fromReverse) {
@@ -123104,6 +123226,39 @@ async function syncShopeeReturnRequests(opts) {
                 error: detailResult.error,
                 message: detailResult.message
               });
+              console.warn(
+                `[ReturnRequests Sync] get_return_detail shop=${shopId} return_sn=${returnSn} error=${detailResult.error || "unknown"} message=${detailResult.message || ""}`
+              );
+              if (isShopeeReturnsAuthError(detailResult)) {
+                continue;
+              }
+              let existingOnErr = rowOrderSn ? orders.find((o) => String(o.orderSn) === rowOrderSn) : void 0;
+              if (!existingOnErr && rowOrderSn && isMongoReady()) {
+                try {
+                  const loaded = await loadOrdersFromStore({ orderSns: [rowOrderSn], limit: 1 });
+                  existingOnErr = loaded[0];
+                  if (existingOnErr) orders.push(existingOnErr);
+                } catch (loadErr) {
+                  console.warn(
+                    `[ReturnRequests Sync] load order ${rowOrderSn}:`,
+                    loadErr?.message || loadErr
+                  );
+                }
+              }
+              const { tracking } = await fetchReturnShippingTrackingNumber(
+                shopId,
+                accessToken,
+                returnSn,
+                void 0,
+                outboundTrackingOf(existingOnErr)
+              );
+              await shopeeSyncDelay(300);
+              if (tracking && existingOnErr) {
+                if (!String(existingOnErr.return_sn || "").trim()) existingOnErr.return_sn = returnSn;
+                applyReturnTrackingAliases(existingOnErr, tracking);
+                applyShopeeCancelReturnClassification(existingOnErr);
+                patches.push(existingOnErr);
+              }
               continue;
             }
             const detail = detailResult?.response ?? detailResult ?? {};
@@ -123115,7 +123270,11 @@ async function syncShopeeReturnRequests(opts) {
                 const loaded = await loadOrdersFromStore({ orderSns: [orderSn], limit: 1 });
                 existing = loaded[0];
                 if (existing) orders.push(existing);
-              } catch {
+              } catch (loadErr) {
+                console.warn(
+                  `[ReturnRequests Sync] load order ${orderSn}:`,
+                  loadErr?.message || loadErr
+                );
                 existing = void 0;
               }
             }
@@ -123279,6 +123438,8 @@ async function syncShopeeReturnRequests(opts) {
   }
 }
 var RETURN_TRACKING_RETRY_HARD_LIMIT = 30;
+var RETURN_TRACKING_RETRY_PER_SHOP = 15;
+var RETURN_TRACKING_RETRY_DELAY_MS = 500;
 var returnTrackingRetryInFlight = false;
 async function retryPendingReturnTracking(opts) {
   const empty = { attempted: 0, filled: 0, errors: 0 };
@@ -123294,59 +123455,106 @@ async function retryPendingReturnTracking(opts) {
       RETURN_TRACKING_RETRY_HARD_LIMIT,
       Math.max(1, Math.floor(Number(opts?.limit) || RETURN_TRACKING_RETRY_HARD_LIMIT))
     );
-    let candidates = [];
-    try {
-      candidates = await loadReturnTrackingPendingFromStore({
-        lookbackMs: 14 * 24 * 60 * 60 * 1e3,
-        limit: hardLimit
-      });
-    } catch (err) {
-      console.warn("[ReturnTracking Retry] load candidates failed:", err?.message || err);
+    ensureShopeeLinkedShopTokenKeys();
+    const shopIds = listShopeeSyncShopIds().map((id) => normalizeShopIdKey(id)).filter(Boolean);
+    if (!shopIds.length) {
+      console.warn("[ReturnTracking Retry] skip no_shopId \u2014 ch\u01B0a c\xF3 shop Shopee OAuth.");
       return empty;
     }
-    candidates = (candidates || []).filter((order) => {
-      const returnSn = String(order?.return_sn || "").trim();
-      return Boolean(returnSn) && orderNeedsRealReturnTracking(order);
-    }).slice(0, hardLimit);
-    if (!candidates.length) {
-      console.log(`[ReturnTracking Retry] trigger=${opts?.trigger || "cron"} \u2014 0 pending`);
-      return empty;
-    }
+    let attempted = 0;
     let filled = 0;
     let errors = 0;
     const touched = [];
-    for (const order of candidates) {
-      const shopId = normalizeShopIdKey(order?.shopId) || String(order?.shopId || "").trim();
-      const returnSn = String(order?.return_sn || "").trim();
-      if (!shopId || !returnSn) continue;
+    for (let shopIndex = 0; shopIndex < shopIds.length; shopIndex++) {
+      if (attempted >= hardLimit) break;
+      const shopId = shopIds[shopIndex];
+      const shopCap = Math.min(
+        RETURN_TRACKING_RETRY_PER_SHOP,
+        hardLimit - attempted
+      );
+      if (shopCap <= 0) break;
+      let candidates = [];
       try {
-        const accessToken = await getValidShopeeAccessToken(shopId);
-        if (!accessToken) {
-          await new Promise((res) => setTimeout(res, 500));
+        candidates = await loadReturnTrackingPendingFromStore({
+          shopId,
+          lookbackMs: 14 * 24 * 60 * 60 * 1e3,
+          limit: shopCap
+        });
+      } catch (err) {
+        console.warn(
+          `[ReturnTracking Retry] load shop=${shopId} failed:`,
+          err?.message || err
+        );
+        await shopeeSyncDelay(RETURN_TRACKING_RETRY_DELAY_MS);
+        continue;
+      }
+      candidates = (candidates || []).filter((order) => {
+        const returnSn = String(order?.return_sn || "").trim();
+        return Boolean(returnSn) && orderNeedsRealReturnTracking(order);
+      }).slice(0, shopCap);
+      if (!candidates.length) {
+        console.log(`[ReturnTracking Retry] shop=${shopId} \u2014 0 pending`);
+        await shopeeSyncDelay(RETURN_TRACKING_RETRY_DELAY_MS);
+        continue;
+      }
+      let shopAttempted = 0;
+      let shopFilled = 0;
+      for (const order of candidates) {
+        if (attempted >= hardLimit) break;
+        if (shopAttempted >= shopCap) break;
+        const orderShopId = normalizeShopIdKey(order?.shopId) || String(order?.shopId || "").trim() || shopId;
+        const returnSn = String(order?.return_sn || "").trim();
+        if (!orderShopId) {
+          console.warn(
+            `[ReturnTracking Retry] skip no_shopId order_sn=${order?.orderSn || "-"}`
+          );
           continue;
         }
-        const ok = await fillReturnTrackingFromShopee(shopId, accessToken, order);
-        await new Promise((res) => setTimeout(res, 500));
-        const rtn = distinctReturnTracking(
-          order.return_tracking_no || order.returnTrackingNumber,
-          order.trackingNumber || order.tracking_no
-        );
-        if (ok && rtn) {
-          applyReturnTrackingAliases(order, rtn);
-          touched.push(order);
-          filled += 1;
-          console.log(
-            `[ReturnTracking Retry] filled order_sn=${order.orderSn} return_sn=${returnSn} rtn=${rtn}`
+        if (!returnSn) {
+          console.warn(
+            `[ReturnTracking Retry] skip no_return_sn order_sn=${order?.orderSn || "-"} shop_id=${orderShopId}`
           );
+          continue;
         }
-      } catch (rowErr) {
-        errors += 1;
-        console.warn(
-          `[ReturnTracking Retry] ${order?.orderSn || returnSn}:`,
-          rowErr?.message || rowErr
-        );
-        await new Promise((res) => setTimeout(res, 500));
+        shopAttempted += 1;
+        attempted += 1;
+        try {
+          const accessToken = await getValidShopeeAccessToken(orderShopId);
+          if (!accessToken) {
+            console.warn(
+              `[ReturnTracking Retry] skip no_token order_sn=${order?.orderSn || "-"} shop_id=${orderShopId}`
+            );
+            await shopeeSyncDelay(RETURN_TRACKING_RETRY_DELAY_MS);
+            continue;
+          }
+          const ok = await fillReturnTrackingFromShopee(orderShopId, accessToken, order);
+          await shopeeSyncDelay(RETURN_TRACKING_RETRY_DELAY_MS);
+          const rtn = distinctReturnTracking(
+            order.return_tracking_no || order.returnTrackingNumber,
+            order.trackingNumber || order.tracking_no
+          );
+          if (ok && rtn) {
+            applyReturnTrackingAliases(order, rtn);
+            touched.push(order);
+            shopFilled += 1;
+            filled += 1;
+            console.log(
+              `[ReturnTracking Retry] filled shop=${orderShopId} order_sn=${order.orderSn} return_sn=${returnSn} rtn=${rtn}`
+            );
+          }
+        } catch (rowErr) {
+          errors += 1;
+          console.warn(
+            `[ReturnTracking Retry] shop=${orderShopId} ${order?.orderSn || returnSn}:`,
+            rowErr?.message || rowErr
+          );
+          await shopeeSyncDelay(RETURN_TRACKING_RETRY_DELAY_MS);
+        }
       }
+      console.log(
+        `[ReturnTracking Retry] shop=${shopId} (${shopIndex + 1}/${shopIds.length}) attempted=${shopAttempted} filled=${shopFilled}`
+      );
+      await shopeeSyncDelay(RETURN_TRACKING_RETRY_DELAY_MS);
     }
     if (touched.length && isMongoReady()) {
       try {
@@ -123356,9 +123564,9 @@ async function retryPendingReturnTracking(opts) {
       }
     }
     console.log(
-      `[ReturnTracking Retry] trigger=${opts?.trigger || "cron"} attempted=${candidates.length} filled=${filled} errors=${errors} ${Date.now() - startedAt}ms`
+      `[ReturnTracking Retry] trigger=${opts?.trigger || "cron"} shops=${shopIds.length} attempted=${attempted} filled=${filled} errors=${errors} ${Date.now() - startedAt}ms`
     );
-    return { attempted: candidates.length, filled, errors };
+    return { attempted, filled, errors };
   } finally {
     returnTrackingRetryInFlight = false;
   }
@@ -132788,10 +132996,30 @@ async function applyWebhookReturnFallback(shopId, accessToken, orderSn, orders, 
   const detailResult = await shopeeGetReturnDetail(shopId, accessToken, returnSn);
   if (detailResult?.error) {
     console.warn(
-      `[Shopee Webhook] get_return_detail ${returnSn}:`,
-      detailResult.error,
-      detailResult.message || ""
+      `[Shopee Webhook] get_return_detail shop_id=${shopId} return_sn=${returnSn} error=${detailResult.error || "unknown"} message=${detailResult.message || ""}`
     );
+    if (isShopeeReturnsAuthError(detailResult)) return;
+    const idxOnErr = orders.findIndex((o) => String(o.orderSn) === orderSn);
+    const existingOnErr = idxOnErr >= 0 ? orders[idxOnErr] : void 0;
+    const { tracking } = await fetchReturnShippingTrackingNumber(
+      shopId,
+      accessToken,
+      returnSn,
+      void 0,
+      existingOnErr?.trackingNumber || existingOnErr?.tracking_no
+    );
+    await shopeeSyncDelay(300);
+    const returnTnOnly = distinctReturnTracking(
+      tracking,
+      existingOnErr?.trackingNumber || existingOnErr?.tracking_no
+    );
+    if (returnTnOnly && existingOnErr) {
+      applyReturnTrackingAliases(existingOnErr, returnTnOnly);
+      if (!String(existingOnErr.return_sn || "").trim()) existingOnErr.return_sn = returnSn;
+      console.log(
+        `[Shopee Webhook] Return fallback reverse-only order_sn=${orderSn} return_sn=${returnSn} rtn=${returnTnOnly}`
+      );
+    }
     return;
   }
   const detail = detailResult?.response ?? detailResult ?? {};

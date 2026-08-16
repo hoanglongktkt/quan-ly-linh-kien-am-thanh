@@ -1035,7 +1035,34 @@ function tokenCacheSet(shopId, token, expireIn) {
 
 function tokenCacheClear(shopId) {
   const key = normalizeShopIdKey(shopId);
-  if (key) shopeeAccessTokenCache.delete(key);
+  if (key) {
+    shopeeAccessTokenCache.delete(key);
+    shopeeShopTokenVerifyCache.delete(key);
+  }
+}
+
+/** Cache kết quả get_shop_info — tránh spam verify mỗi đơn, TTL 10 phút. */
+const shopeeShopTokenVerifyCache = new Map();
+
+function shopTokenVerifyCacheOk(shopId, token) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key || !token) return false;
+  const entry = shopeeShopTokenVerifyCache.get(key);
+  if (!entry?.tokenTail) return false;
+  if (Math.floor(Date.now() / 1000) >= Number(entry.expiresAt || 0)) {
+    shopeeShopTokenVerifyCache.delete(key);
+    return false;
+  }
+  return entry.tokenTail === String(token).slice(-8);
+}
+
+function shopTokenVerifyCacheSet(shopId, token) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key || !token) return;
+  shopeeShopTokenVerifyCache.set(key, {
+    tokenTail: String(token).slice(-8),
+    expiresAt: Math.floor(Date.now() / 1000) + 10 * 60,
+  });
 }
 
 function resolveRefreshLockKey(shopId, record) {
@@ -1263,6 +1290,8 @@ export function resolveShopeeApiShopId(record, configuredShopId) {
 /**
  * Lấy access_token hợp lệ CHO ĐÚNG shop_id (đa shop — không đoán shop).
  * Nếu access_token hết hạn (~4h) → refresh bằng refresh_token → cập nhật DB → trả token mới.
+ * oauth_shop_id !== shopId (hoặc record thuộc shop khác) → BẮT BUỘC verify get_shop_info.
+ * Fail → clear cache, return null — CẤM trả token shop 1 cho shop 2.
  */
 export async function getValidShopeeAccessToken(shopId) {
   const key = normalizeShopIdKey(shopId);
@@ -1283,33 +1312,41 @@ export async function getValidShopeeAccessToken(shopId) {
     return null;
   }
 
+  const oauth = normalizeShopIdKey(record.oauth_shop_id);
+  const recordOwner = normalizeShopIdKey(record.shop_id);
+  const needsVerify = Boolean((oauth && oauth !== key) || (recordOwner && recordOwner !== key));
+  const cacheHit = Boolean(tokenCacheGet(key));
+
+  const rejectForeignToken = (reason) => {
+    console.error(
+      `[Shopee API] shop_id=${key} token không thuộc shop này (oauth=${oauth || "-"} owner=${recordOwner || "-"} error=${reason}).` +
+        ` Cần OAuth riêng shop ${key} — không dùng token shop khác.`,
+    );
+    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=${cacheHit ? "hit" : "miss"} verified=no`);
+    tokenCacheClear(key);
+    return null;
+  };
+
   const fresh = readShopeeAccessTokenIfFresh(key);
   if (fresh) {
-    const oauth = normalizeShopIdKey(record.oauth_shop_id);
-    const list = Array.isArray(record.shop_id_list)
-      ? record.shop_id_list.map(normalizeShopIdKey).filter(Boolean)
-      : [];
-    // Token clone / nghi ngờ không thuộc shop này → verify get_shop_info trước khi dùng.
-    const suspectClone =
-      (oauth && oauth !== key && (!list.length || !list.includes(key))) ||
-      (oauth && oauth !== key && list.length <= 1);
-    if (suspectClone) {
-      const verified = await verifyShopeeShopToken(key, fresh);
-      if (!verified.ok) {
-        console.error(
-          `[Shopee API] shop_id=${key} token clone/không hợp lệ (error=${verified.error}).` +
-            ` Cần OAuth riêng shop ${key} — không dùng token của ${oauth}.`,
-        );
-        tokenCacheClear(key);
-        return null;
+    if (needsVerify) {
+      if (shopTokenVerifyCacheOk(key, fresh)) {
+        console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=${cacheHit ? "hit" : "miss"} verified=yes`);
+        return fresh;
       }
+      const verified = await verifyShopeeShopToken(key, fresh);
+      if (!verified.ok) return rejectForeignToken(verified.error);
+      shopTokenVerifyCacheSet(key, fresh);
+      console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=${cacheHit ? "hit" : "miss"} verified=yes`);
+      return fresh;
     }
-    console.log(`[Shopee API] access_token còn hạn shop_id=${key}`);
+    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=${cacheHit ? "hit" : "miss"} verified=n/a`);
     return fresh;
   }
 
   if (!record.refresh_token) {
     console.error(`[Shopee API] Shop ${key} thiếu refresh_token — cần OAuth lại.`);
+    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
     return null;
   }
 
@@ -1318,16 +1355,27 @@ export async function getValidShopeeAccessToken(shopId) {
       `[Shopee API] access_token shop_id=${key} HẾT HẠN (expired) — gọi Refresh Token → lưu DB...`,
     );
     const refreshed = await refreshShopeeAccessTokenLocked(key, { force: false });
-    if (refreshed) {
-      console.log(`[Shopee API] Refresh OK shop_id=${key} — dùng access_token mới`);
+    if (!refreshed) {
+      console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
+      return null;
     }
+    if (needsVerify) {
+      const verified = await verifyShopeeShopToken(key, refreshed);
+      if (!verified.ok) return rejectForeignToken(verified.error);
+      shopTokenVerifyCacheSet(key, refreshed);
+      console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=yes`);
+      return refreshed;
+    }
+    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=n/a`);
     return refreshed;
   } catch (err) {
     if (err instanceof ShopeeRefreshTokenExpiredError) {
       console.error(`[Shopee API] ${err.message}`);
+      console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
       return null;
     }
     console.error(`[Shopee API] Refresh token thất bại shop_id=${key}:`, err);
+    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
     return null;
   }
 }

@@ -4641,6 +4641,7 @@ export async function loadCancelReturnMissingTrackingFromStore(opts?: {
 export async function loadReturnTrackingPendingFromStore(opts?: {
   lookbackMs?: number;
   limit?: number;
+  shopId?: string;
 }): Promise<any[]> {
   if (!isMongoReady()) return [];
   requireMongo();
@@ -4652,6 +4653,7 @@ export async function loadReturnTrackingPendingFromStore(opts?: {
   );
   const cutoffIso = new Date(Date.now() - lookbackMs).toISOString();
   const cutoffDate = new Date(Date.now() - lookbackMs);
+  const shopKey = String(opts?.shopId || "").trim();
 
   const filter: Record<string, unknown> = {
     $and: [
@@ -4674,6 +4676,16 @@ export async function loadReturnTrackingPendingFromStore(opts?: {
           { last_synced_at: { $gte: cutoffDate } },
         ],
       },
+      ...(shopKey
+        ? [
+            {
+              $or: [
+                { shopId: shopKey },
+                { "data.shopId": shopKey },
+              ],
+            },
+          ]
+        : []),
     ],
   };
 
@@ -4694,7 +4706,7 @@ export async function loadReturnTrackingPendingFromStore(opts?: {
   }
   if (!docs.length) return [];
   console.log(
-    `[MongoDB] return-tracking-pending candidates=${docs.length} lookbackDays=${Math.round(lookbackMs / 86400000)} cap=${limit}`,
+    `[MongoDB] return-tracking-pending shop=${shopKey || "*"} candidates=${docs.length} lookbackDays=${Math.round(lookbackMs / 86400000)} cap=${limit}`,
   );
   return loadOrdersFromStore({
     ids: docs.map((d) => String(d._id)).slice(0, HARD_LIMIT),
