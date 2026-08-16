@@ -6154,6 +6154,26 @@ export default function OrderManager({
   const tiktokShops = shops.filter(s => s.platform === 'tiktok');
   const woocommerceShops = shops.filter(s => s.platform === 'woocommerce');
 
+  const selectedShopeeShop =
+    selectedPlatform === 'shopee' && selectedShopId && selectedShopId !== 'all'
+      ? shopeeShops.find(
+          (s) =>
+            String(s.shopId) === String(selectedShopId) ||
+            String(s.id) === String(selectedShopId),
+        )
+      : undefined;
+  const shopeeSelectorLabel = (() => {
+    if (selectedShopeeShop?.shopName) return `Shopee: ${selectedShopeeShop.shopName}`;
+    if (selectedPlatform === 'shopee' && (!selectedShopId || selectedShopId === 'all')) {
+      if (shopeeShops.length === 1 && shopeeShops[0]?.shopName) {
+        return `Shopee: ${shopeeShops[0].shopName}`;
+      }
+      if (shopeeShops.length === 0) return 'Chọn gian hàng';
+    }
+    if (shopeeShops.length === 0) return 'Chọn gian hàng';
+    return `Shopee (${shopeeShops.length} gian hàng)`;
+  })();
+
   const clearVerifiedScanLists = () => {
     daXuatKhoListRef.current = [];
     donHuyListRef.current = [];
@@ -6459,12 +6479,19 @@ export default function OrderManager({
         processedCount > 0
           ? `✓ Đã lưu DB: Xuất kho ${safeXuat} · Hủy ${safeHuy} · Nhận hoàn ${safeHoan}${
               failedScans.length ? ` · Bỏ qua ${failedScans.length}` : ''
-            }. Sẵn sàng quét tiếp`
+            }`
           : 'Lưu thất bại, vui lòng thử lại',
       );
 
-      // 2) Reset list xong → bật lại camera.
-      resumeCameraAfterSave();
+      if (processedCount > 0) {
+        // Lưu thành công → đóng máy quét, giải phóng camera, về Quản lý đơn hàng.
+        isTearingDownScannerRef.current = false;
+        setIsFlushingQueue(false);
+        setFlushingDbCount(0);
+        closeScannerUiOnly();
+      } else {
+        resumeCameraAfterSave();
+      }
     } catch (err: unknown) {
       // Giữ 3 list đã verify — cho phép bấm lại GHI DB.
       const msg = err instanceof Error ? err.message : String(err);
@@ -6761,7 +6788,7 @@ export default function OrderManager({
             {totalVerifiedScans > 0 ? ` · Ghi DB ${totalVerifiedScans} mã` : ' · Thoát'}
           </button>
           <p className="text-center text-[10px] text-zinc-500 font-semibold">
-            Kết thúc = lưu chính thức vào database · giữ nguyên màn quét sau khi lưu
+            Kết thúc = lưu chính thức vào database · đóng máy quét và về Quản lý đơn hàng
           </p>
         </div>
 
@@ -6773,7 +6800,7 @@ export default function OrderManager({
               </p>
               <p className="text-zinc-400 text-xs leading-relaxed">
                 {totalVerifiedScans > 0
-                  ? `Sẽ ghi DB: xuất kho ${daXuatKhoList.length} · hủy ${donHuyList.length} · nhận hoàn ${daNhanHoanList.length}. Sau đó xóa list và ở lại màn quét.`
+                  ? `Sẽ ghi DB: xuất kho ${daXuatKhoList.length} · hủy ${donHuyList.length} · nhận hoàn ${daNhanHoanList.length}. Sau đó đóng máy quét và quay về Quản lý đơn hàng.`
                   : 'Chưa có mã đã dò — sẽ đóng camera và quay về tab Đơn hàng.'}
               </p>
               <div className="flex gap-2">
@@ -7011,7 +7038,7 @@ export default function OrderManager({
               }`}
             >
               <span className="w-5 h-5 bg-orange-500 text-white font-extrabold text-[10px] rounded flex items-center justify-center">S</span>
-              <span>Shopee ({shopeeShops.length} gian hàng)</span>
+              <span className="truncate max-w-40">{shopeeSelectorLabel}</span>
               <ChevronDown className="w-3.5 h-3.5 text-gray-400 shrink-0" />
             </button>
 
