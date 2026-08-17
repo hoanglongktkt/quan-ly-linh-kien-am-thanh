@@ -1845,10 +1845,12 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       $set["data.handedOverSource"] = null;
     }
 
-    // BẮT BUỘC: Shopee SHIPPED / TO_CONFIRM_RECEIVE → luôn ép status=shipping (tab Đang giao).
-    // Không phụ thuộc order.status cũ (processed / pending_confirm / handed_over…).
+    // BẮT BUỘC: raw Shopee thắng status local stale (shipping kẹt sau khi đã giao xong).
     const forceShipping =
       rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE";
+    const forceCompleted = rawStatus === "COMPLETED";
+    const forceCancelled = rawStatus === "CANCELLED" || rawStatus === "IN_CANCEL";
+    const forceToReturn = rawStatus === "TO_RETURN";
     if (forceShipping) {
       $set.status = "shipping";
       $set["data.status"] = "shipping";
@@ -1856,10 +1858,36 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
         `[MongoDB] FORCE shipping order_sn=${orderSn || _id}` +
           ` raw=${rawStatus} shopId=${shopIdStr || "-"} clear_is_handed_over=true`,
       );
+    } else if (forceCompleted) {
+      $set.status = "completed";
+      $set["data.status"] = "completed";
+      console.log(
+        `[MongoDB] FORCE completed order_sn=${orderSn || _id}` +
+          ` raw=${rawStatus} shopId=${shopIdStr || "-"}`,
+      );
+    } else if (forceCancelled) {
+      $set.status = "cancelled";
+      $set["data.status"] = "cancelled";
+    } else if (forceToReturn) {
+      const incomingLocal = String(order.status || "").trim();
+      if (incomingLocal === "return_received") {
+        $set.status = "return_received";
+        $set["data.status"] = "return_received";
+      } else {
+        $set.status = "return_pending";
+        $set["data.status"] = "return_pending";
+      }
     }
 
     // status local chỉ là helper UI — không thay shopee_order_status
-    if (!forceShipping && order.status != null && String(order.status).trim()) {
+    if (
+      !forceShipping &&
+      !forceCompleted &&
+      !forceCancelled &&
+      !forceToReturn &&
+      order.status != null &&
+      String(order.status).trim()
+    ) {
       const st = String(order.status).trim();
       $set.status = st;
       $set["data.status"] = st;
@@ -2159,6 +2187,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       packageNumber: pkgNum || null,
       shipping_carrier: carrier || null,
       forceShipping,
+      forceCompleted,
       setKeys_handed: Object.keys($set).filter((k) => /handed|local_status|internal_status/i.test(k)),
       setOnInsert_keys: Object.keys($setOnInsert),
     });
@@ -2451,10 +2480,19 @@ export async function bulkUpdateShippedOrdersBySn(
         $set["data.localStatus"] = "NONE";
         $set["data.internal_status"] = "NONE";
       }
-      // BẮT BUỘC: SHIPPED → status shipping (tab Đang giao).
+      // BẮT BUỘC: raw Shopee thắng status local (SHIPPED→shipping, COMPLETED→completed).
       if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") {
         $set.status = "shipping";
         $set["data.status"] = "shipping";
+      } else if (raw === "COMPLETED") {
+        $set.status = "completed";
+        $set["data.status"] = "completed";
+      } else if (raw === "CANCELLED" || raw === "IN_CANCEL") {
+        $set.status = "cancelled";
+        $set["data.status"] = "cancelled";
+      } else if (raw === "TO_RETURN" && String($set.status || p.status || "") !== "return_received") {
+        $set.status = "return_pending";
+        $set["data.status"] = "return_pending";
       }
     }
     if (p.ship_method != null) $set["data.ship_method"] = p.ship_method;
@@ -5245,15 +5283,55 @@ const ORDER_TAB_TO_SHIP_RAW = ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] as co
 /** Đang giao trên Shopee — loại tuyệt đối khỏi Đã xử lý / Đã giao ĐVVC. */
 const ORDER_TAB_SHIPPED_RAW = ["SHIPPED", "TO_CONFIRM_RECEIVE"] as const;
 
+/** Trạng thái kết thúc — CẤM đếm vào tab Đang giao. */
+const ORDER_TAB_SHIPPING_EXCLUDED_RAW = [
+  "COMPLETED",
+  "CANCELLED",
+  "IN_CANCEL",
+  "TO_RETURN",
+] as const;
+
 /**
- * Đơn ĐANG GIAO (SHIPPED) — bất kể is_handed_over.
- * Khớp cả top-level lẫn data.* (tránh lệch field sau sync).
+ * Đơn ĐANG GIAO: chỉ SHIPPED / TO_CONFIRM_RECEIVE (hoặc status=shipping khi thiếu raw).
+ * Loại tuyệt đối COMPLETED / CANCELLED / TO_RETURN / RTS — kể cả khi local status còn "shipping".
  */
 const ORDER_TAB_IS_SHIPPED: Record<string, unknown> = {
-  $or: [
-    { status: "shipping" },
-    { shopee_order_status: { $in: [...ORDER_TAB_SHIPPED_RAW] } },
-    { "data.shopee_order_status": { $in: [...ORDER_TAB_SHIPPED_RAW] } },
+  $and: [
+    {
+      $or: [
+        { shopee_order_status: { $in: [...ORDER_TAB_SHIPPED_RAW] } },
+        { "data.shopee_order_status": { $in: [...ORDER_TAB_SHIPPED_RAW] } },
+        {
+          $and: [
+            { status: "shipping" },
+            {
+              $or: [
+                { shopee_order_status: { $in: [null, ""] } },
+                { shopee_order_status: { $exists: false } },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    { shopee_order_status: { $nin: [...ORDER_TAB_SHIPPING_EXCLUDED_RAW] } },
+    {
+      $or: [
+        { "data.shopee_order_status": { $exists: false } },
+        { "data.shopee_order_status": { $in: [null, ""] } },
+        { "data.shopee_order_status": { $nin: [...ORDER_TAB_SHIPPING_EXCLUDED_RAW] } },
+      ],
+    },
+    { status: { $nin: ["completed", "cancelled", "return_pending", "return_received"] } },
+    { $nor: [{ is_rts: true }, { "data.is_rts": true }] },
+    {
+      $nor: [
+        { sub_status: "RTS" },
+        { "data.sub_status": "RTS" },
+        { shopee_cancel_return_kind: "failed_delivery" },
+        { "data.shopee_cancel_return_kind": "failed_delivery" },
+      ],
+    },
   ],
 };
 
@@ -5328,7 +5406,7 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
     case "shipping":
     case "shipped":
     case "dang-giao":
-      // BẮT BUỘC: chỉ SHIPPED — bất kể is_handed_over.
+      // Chỉ SHIPPED/TO_CONFIRM_RECEIVE — loại COMPLETED/CANCELLED/TO_RETURN/RTS.
       return ORDER_TAB_IS_SHIPPED;
     case "completed":
       return { $or: [{ status: "completed" }, { shopee_order_status: "COMPLETED" }] };

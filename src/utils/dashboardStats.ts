@@ -286,6 +286,7 @@ export function computeDashboardStats(
       pendingPickup: eligible.filter(
         (o) => matchesProcessedPickupTab(o) && !isPendingConfirmOrder(o),
       ).length,
+      // Cùng matchesShippingTab với OrderManager — loại COMPLETED/CANCELLED/TO_RETURN/RTS.
       shipping: eligible.filter((o) => matchesShippingTab(o)).length,
       returnPending: eligible.filter((o) => isRtsOrder(o)).length,
     },

@@ -27,8 +27,8 @@ export type { HandedOverSource } from './orderWarehouseStatus';
  *  Đơn chưa xử lý     = TO_SHIP AND chưa xử lý AND is_handed_over ≠ true
  *  Chờ lấy (Đã xử lý) = TO_SHIP AND đã xử lý AND is_handed_over ≠ true
  *  Đã giao ĐVVC       = TO_SHIP AND is_handed_over = true  (CẤM SHIPPED)
- *  Đang giao          = SHIPPED | TO_CONFIRM_RECEIVE | status=shipping
- *                       — BỎ QUA is_handed_over
+ *  Đang giao          = SHIPPED | TO_CONFIRM_RECEIVE
+ *                       — loại COMPLETED / CANCELLED / TO_RETURN / RTS
  */
 
 export function getShopeeOrderRawStatus(
@@ -111,17 +111,6 @@ export function isProcessedCondition(
   return false;
 }
 
-/** Terminal / thoát pool chờ lấy hàng — raw SHIPPED hoặc local shipping. */
-export function isShopeeShippingStatus(
-  order: Partial<Order> & Record<string, unknown>,
-): boolean {
-  const raw = getShopeeOrderRawStatus(order);
-  // BẮT BUỘC: SHIPPED từ Shopee → tab Đang giao (bỏ qua is_handed_over).
-  if (raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE') return true;
-  if (order.status === 'shipping') return true;
-  return false;
-}
-
 export function isShopeeCompletedStatus(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
@@ -138,6 +127,22 @@ export function isShopeeCancelledLikeStatus(
     order.status === 'return_pending' ||
     order.status === 'return_received'
   );
+}
+
+/** Terminal / thoát pool chờ lấy hàng — raw SHIPPED hoặc local shipping. */
+export function isShopeeShippingStatus(
+  order: Partial<Order> & Record<string, unknown>,
+): boolean {
+  if (isShopeeCompletedStatus(order)) return false;
+  if (isShopeeCancelledLikeStatus(order)) return false;
+  if (order.is_rts === true) return false;
+  if (String(order.sub_status || '').toUpperCase() === 'RTS') return false;
+  if (String(order.shopee_cancel_return_kind || '') === 'failed_delivery') return false;
+  const raw = getShopeeOrderRawStatus(order);
+  // BẮT BUỘC: SHIPPED từ Shopee → tab Đang giao (bỏ qua is_handed_over).
+  if (raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE') return true;
+  if (order.status === 'shipping') return true;
+  return false;
 }
 
 /**
@@ -222,8 +227,8 @@ export function resolveOrderBadgeStatus(order: Order): Order['status'] {
 }
 
 /**
- * TAB "ĐANG GIAO" — SHIPPED / TO_CONFIRM_RECEIVE / status=shipping.
- * Bỏ qua is_handed_over hoàn toàn.
+ * TAB "ĐANG GIAO" — chỉ SHIPPED / TO_CONFIRM_RECEIVE.
+ * Loại tuyệt đối COMPLETED / CANCELLED / TO_RETURN / RTS.
  */
 export function matchesShippingTab(order: Order): boolean {
   return isShopeeShippingStatus(order);
