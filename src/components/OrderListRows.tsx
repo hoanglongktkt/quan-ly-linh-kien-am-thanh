@@ -801,15 +801,6 @@ export const OrderCardRow = React.memo(function OrderCardRow({
                     <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                   </div>
                 )}
-                <button
-                  type="button"
-                  onClick={(e) => actions.onPrint(e, order)}
-                  disabled={printingOrderId === order.id}
-                  className="om-order-card-print-btn om-mobile-hide-print p-2 bg-blue-600 hover:bg-blue-700 border border-blue-700 text-white rounded-lg transition-all disabled:opacity-60"
-                  title="In đơn này"
-                >
-                  <Printer className={`w-4 h-4 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
-                </button>
               </>
             )}
 
@@ -844,15 +835,6 @@ export const OrderCardRow = React.memo(function OrderCardRow({
                     <Check className="w-4 h-4" />
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={(e) => actions.onPrint(e, order)}
-                  disabled={printingOrderId === order.id}
-                  className="om-order-card-print-btn om-mobile-hide-print p-2 bg-blue-600 hover:bg-blue-700 border border-blue-700 text-white rounded-lg transition-all disabled:opacity-60"
-                  title="In đơn này"
-                >
-                  <Printer className={`w-4 h-4 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
-                </button>
                 <button
                   type="button"
                   onClick={() => void actions.onHandOver(order)}
