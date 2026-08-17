@@ -978,10 +978,10 @@ export async function cleanupShipped(req, res) {
             .map((s) => s.trim())
             .filter(Boolean)
         : undefined;
-    const maxRaw = Number(body.maxOrders ?? body.max ?? req.query.max ?? 2500);
+    const maxRaw = Number(body.maxOrders ?? body.max ?? req.query.max ?? 4000);
     const maxOrders = Number.isFinite(maxRaw)
-      ? Math.min(Math.max(1, Math.floor(maxRaw)), 2500)
-      : 2500;
+      ? Math.min(Math.max(1, Math.floor(maxRaw)), 4000)
+      : 4000;
     const wait =
       body.wait === true ||
       body.wait === "1" ||
@@ -1022,7 +1022,7 @@ export async function cleanupShipped(req, res) {
       background: true,
       inFlight: true,
       message:
-        "Đang đối soát đơn kẹt Đang giao với Shopee ngầm. F5 Dashboard sau 1–2 phút.",
+        "Đang dọn đơn kẹt Đang giao (ép đơn cổ >15 ngày + đối soát Shopee theo lô). F5 Dashboard sau 1–2 phút.",
     });
 
     setImmediate(() => {

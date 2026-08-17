@@ -5951,8 +5951,12 @@ export async function loadAllHandedOverShopeeOrdersFromStore(opts?: {
   return orders;
 }
 
-const CLEANUP_SHIPPED_QUERY_CAP = 2500;
+const CLEANUP_SHIPPED_QUERY_CAP = 4000;
 const CLEANUP_SHIPPED_WRITE_BATCH = 100;
+const ANCIENT_SHIPPED_DAYS_DEFAULT = 15;
+const ANCIENT_SHIPPED_BATCH = 200;
+const ANCIENT_SHIPPED_MAX_BATCHES = 25;
+const ANCIENT_SHIPPED_DELAY_MS = 80;
 const SHOPEE_TERMINAL_RAW = new Set([
   "COMPLETED",
   "CANCELLED",
@@ -5963,9 +5967,153 @@ const SHOPEE_TERMINAL_RAW = new Set([
 export type StuckShippedOrderKey = {
   orderSn: string;
   shopId: string;
+  createdAtMs?: number;
 };
 
-/** Lean keys của tab Đang giao — không hydrate full document. */
+function parseStuckShippedCreatedAtMs(d: any): number {
+  const nested = d?.data && typeof d.data === "object" ? d.data : {};
+  const candidates = [
+    nested.create_time,
+    nested.date,
+    d?.create_time,
+    nested.createdAt,
+    nested.created_at,
+    d?.createdAt,
+  ];
+  for (let i = 0; i < candidates.length; i += 1) {
+    const raw = candidates[i];
+    if (raw == null || raw === "") continue;
+    if (raw instanceof Date) {
+      const t = raw.getTime();
+      if (Number.isFinite(t) && t > 0) return t;
+      continue;
+    }
+    if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
+      return raw < 1e12 ? Math.floor(raw * 1000) : Math.floor(raw);
+    }
+    const s = String(raw).trim();
+    if (!s) continue;
+    if (/^\d+(\.\d+)?$/.test(s)) {
+      const n = Number(s);
+      if (Number.isFinite(n) && n > 0) {
+        return n < 1e12 ? Math.floor(n * 1000) : Math.floor(n);
+      }
+    }
+    const parsed = Date.parse(s);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return 0;
+}
+
+function buildForceCompletedMongoSet(now: Date): Record<string, unknown> {
+  const iso = now.toISOString();
+  return {
+    status: "completed",
+    shopee_order_status: "COMPLETED",
+    is_pending_shopee_check: false,
+    last_synced_at: now,
+    is_handed_over: false,
+    "data.status": "completed",
+    "data.shopee_order_status": "COMPLETED",
+    "data.is_pending_shopee_check": false,
+    "data.last_synced_at": iso,
+    "data.is_handed_over": false,
+    "data.isHandedOverToCarrier": false,
+    "data.is_handed_over_to_carrier": false,
+    "data.is_handed_over_to_courier": false,
+    "data.local_status": "NONE",
+    "data.localStatus": "NONE",
+    "data.internal_status": "NONE",
+  };
+}
+
+/** Đơn SHIPPED có create_time / data.date cũ hơn cutoff — không gọi Shopee. */
+function buildAncientShippedDateFilter(cutoff: Date): Record<string, unknown> {
+  const cutoffIso = cutoff.toISOString();
+  const cutoffUnix = Math.floor(cutoff.getTime() / 1000);
+  const cutoffMs = cutoff.getTime();
+  return {
+    $or: [
+      { "data.date": { $lte: cutoffIso } },
+      { "data.date": { $lte: cutoff } },
+      { "data.create_time": { $gt: 0, $lte: cutoffUnix } },
+      { "data.create_time": { $gte: 1e12, $lte: cutoffMs } },
+      { create_time: { $lte: cutoff } },
+      { create_time: { $gt: 0, $lte: cutoffUnix } },
+      { create_time: { $gte: 1e12, $lte: cutoffMs } },
+    ],
+  };
+}
+
+/**
+ * Ép đơn kẹt tab Đang giao cũ hơn N ngày → COMPLETED (updateMany theo lô).
+ * Không gọi Shopee API. Không đụng tab khác.
+ */
+export async function forceCompleteAncientShippedOrdersFromStore(opts?: {
+  shopIds?: string[];
+  olderThanDays?: number;
+}): Promise<{ matched: number; modified: number; batches: number; cutoffIso: string }> {
+  const empty = { matched: 0, modified: 0, batches: 0, cutoffIso: "" };
+  if (!isMongoReady()) return empty;
+  requireMongo();
+  const days = Math.min(
+    30,
+    Math.max(7, Math.floor(Number(opts?.olderThanDays) || ANCIENT_SHIPPED_DAYS_DEFAULT)),
+  );
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const and: Record<string, unknown>[] = [
+    orderTabFilter("shipping"),
+    buildAncientShippedDateFilter(cutoff),
+  ];
+  const shopFilter = buildShopIdMongoFilter(undefined, opts?.shopIds);
+  if (shopFilter) and.push(shopFilter);
+  const filter = { $and: and };
+  const $set = buildForceCompletedMongoSet(new Date());
+  let matched = 0;
+  let modified = 0;
+  let batches = 0;
+  for (let i = 0; i < ANCIENT_SHIPPED_MAX_BATCHES; i += 1) {
+    const docs = await OrderModel.find(filter)
+      .select({ _id: 1 })
+      .limit(ANCIENT_SHIPPED_BATCH)
+      .maxTimeMS(20_000)
+      .lean();
+    if (!Array.isArray(docs) || docs.length === 0) break;
+    batches += 1;
+    const ids = docs.map((d: any) => d._id).filter(Boolean);
+    if (ids.length === 0) break;
+    try {
+      await withWriteTimeout(
+        enqueueWrite(async () => {
+          const result = await OrderModel.updateMany(
+            { _id: { $in: ids } },
+            { $set },
+            { maxTimeMS: 8_000 },
+          );
+          matched += Number((result as any)?.matchedCount || 0);
+          modified += Number((result as any)?.modifiedCount || 0);
+        }),
+        "cleanup_shipped_ancient",
+      );
+    } catch (err: any) {
+      console.warn(
+        "[MongoDB] forceCompleteAncientShipped batch failed:",
+        err?.message || err,
+      );
+      break;
+    }
+    if (docs.length < ANCIENT_SHIPPED_BATCH) break;
+    await new Promise((r) => setTimeout(r, ANCIENT_SHIPPED_DELAY_MS));
+  }
+  console.log(
+    `[MongoDB] forceCompleteAncientShipped days=${days} cutoff=${cutoff.toISOString()}` +
+      ` batches=${batches} matched=${matched} modified=${modified}` +
+      `${opts?.shopIds?.length ? ` shops=${opts.shopIds.join(",")}` : ""}`,
+  );
+  return { matched, modified, batches, cutoffIso: cutoff.toISOString() };
+}
+
+/** Lean keys của tab Đang giao — kèm create_time để tách đơn cổ / đơn mới. */
 export async function loadStuckShippedOrderKeysFromStore(opts?: {
   shopIds?: string[];
   limit?: number;
@@ -5981,7 +6129,17 @@ export async function loadStuckShippedOrderKeysFromStore(opts?: {
   if (shopFilter) and.push(shopFilter);
   const filter = and.length === 1 ? and[0] : { $and: and };
   const docs = await OrderModel.find(filter)
-    .select({ orderSn: 1, shopId: 1, "data.shopId": 1, "data.orderSn": 1 })
+    .select({
+      orderSn: 1,
+      shopId: 1,
+      create_time: 1,
+      createdAt: 1,
+      "data.shopId": 1,
+      "data.orderSn": 1,
+      "data.create_time": 1,
+      "data.date": 1,
+      "data.createdAt": 1,
+    })
     .limit(cap)
     .maxTimeMS(30_000)
     .lean();
@@ -5998,6 +6156,7 @@ export async function loadStuckShippedOrderKeysFromStore(opts?: {
     out.push({
       orderSn,
       shopId: String(d?.shopId || d?.data?.shopId || "").trim(),
+      createdAtMs: parseStuckShippedCreatedAtMs(d),
     });
   }
   console.log(

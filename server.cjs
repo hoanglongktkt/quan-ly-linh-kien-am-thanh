@@ -80443,14 +80443,143 @@ async function loadAllHandedOverShopeeOrdersFromStore(opts) {
   );
   return orders;
 }
-var CLEANUP_SHIPPED_QUERY_CAP = 2500;
+var CLEANUP_SHIPPED_QUERY_CAP = 4e3;
 var CLEANUP_SHIPPED_WRITE_BATCH = 100;
+var ANCIENT_SHIPPED_DAYS_DEFAULT = 15;
+var ANCIENT_SHIPPED_BATCH = 200;
+var ANCIENT_SHIPPED_MAX_BATCHES = 25;
+var ANCIENT_SHIPPED_DELAY_MS = 80;
 var SHOPEE_TERMINAL_RAW = /* @__PURE__ */ new Set([
   "COMPLETED",
   "CANCELLED",
   "IN_CANCEL",
   "TO_RETURN"
 ]);
+function parseStuckShippedCreatedAtMs(d) {
+  const nested = d?.data && typeof d.data === "object" ? d.data : {};
+  const candidates = [
+    nested.create_time,
+    nested.date,
+    d?.create_time,
+    nested.createdAt,
+    nested.created_at,
+    d?.createdAt
+  ];
+  for (let i2 = 0; i2 < candidates.length; i2 += 1) {
+    const raw = candidates[i2];
+    if (raw == null || raw === "") continue;
+    if (raw instanceof Date) {
+      const t2 = raw.getTime();
+      if (Number.isFinite(t2) && t2 > 0) return t2;
+      continue;
+    }
+    if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
+      return raw < 1e12 ? Math.floor(raw * 1e3) : Math.floor(raw);
+    }
+    const s2 = String(raw).trim();
+    if (!s2) continue;
+    if (/^\d+(\.\d+)?$/.test(s2)) {
+      const n = Number(s2);
+      if (Number.isFinite(n) && n > 0) {
+        return n < 1e12 ? Math.floor(n * 1e3) : Math.floor(n);
+      }
+    }
+    const parsed = Date.parse(s2);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return 0;
+}
+function buildForceCompletedMongoSet(now) {
+  const iso = now.toISOString();
+  return {
+    status: "completed",
+    shopee_order_status: "COMPLETED",
+    is_pending_shopee_check: false,
+    last_synced_at: now,
+    is_handed_over: false,
+    "data.status": "completed",
+    "data.shopee_order_status": "COMPLETED",
+    "data.is_pending_shopee_check": false,
+    "data.last_synced_at": iso,
+    "data.is_handed_over": false,
+    "data.isHandedOverToCarrier": false,
+    "data.is_handed_over_to_carrier": false,
+    "data.is_handed_over_to_courier": false,
+    "data.local_status": "NONE",
+    "data.localStatus": "NONE",
+    "data.internal_status": "NONE"
+  };
+}
+function buildAncientShippedDateFilter(cutoff) {
+  const cutoffIso = cutoff.toISOString();
+  const cutoffUnix = Math.floor(cutoff.getTime() / 1e3);
+  const cutoffMs = cutoff.getTime();
+  return {
+    $or: [
+      { "data.date": { $lte: cutoffIso } },
+      { "data.date": { $lte: cutoff } },
+      { "data.create_time": { $gt: 0, $lte: cutoffUnix } },
+      { "data.create_time": { $gte: 1e12, $lte: cutoffMs } },
+      { create_time: { $lte: cutoff } },
+      { create_time: { $gt: 0, $lte: cutoffUnix } },
+      { create_time: { $gte: 1e12, $lte: cutoffMs } }
+    ]
+  };
+}
+async function forceCompleteAncientShippedOrdersFromStore(opts) {
+  const empty = { matched: 0, modified: 0, batches: 0, cutoffIso: "" };
+  if (!isMongoReady()) return empty;
+  requireMongo();
+  const days = Math.min(
+    30,
+    Math.max(7, Math.floor(Number(opts?.olderThanDays) || ANCIENT_SHIPPED_DAYS_DEFAULT))
+  );
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1e3);
+  const and = [
+    orderTabFilter("shipping"),
+    buildAncientShippedDateFilter(cutoff)
+  ];
+  const shopFilter = buildShopIdMongoFilter(void 0, opts?.shopIds);
+  if (shopFilter) and.push(shopFilter);
+  const filter2 = { $and: and };
+  const $set = buildForceCompletedMongoSet(/* @__PURE__ */ new Date());
+  let matched = 0;
+  let modified = 0;
+  let batches = 0;
+  for (let i2 = 0; i2 < ANCIENT_SHIPPED_MAX_BATCHES; i2 += 1) {
+    const docs = await OrderModel.find(filter2).select({ _id: 1 }).limit(ANCIENT_SHIPPED_BATCH).maxTimeMS(2e4).lean();
+    if (!Array.isArray(docs) || docs.length === 0) break;
+    batches += 1;
+    const ids = docs.map((d) => d._id).filter(Boolean);
+    if (ids.length === 0) break;
+    try {
+      await withWriteTimeout(
+        enqueueWrite(async () => {
+          const result = await OrderModel.updateMany(
+            { _id: { $in: ids } },
+            { $set },
+            { maxTimeMS: 8e3 }
+          );
+          matched += Number(result?.matchedCount || 0);
+          modified += Number(result?.modifiedCount || 0);
+        }),
+        "cleanup_shipped_ancient"
+      );
+    } catch (err) {
+      console.warn(
+        "[MongoDB] forceCompleteAncientShipped batch failed:",
+        err?.message || err
+      );
+      break;
+    }
+    if (docs.length < ANCIENT_SHIPPED_BATCH) break;
+    await new Promise((r2) => setTimeout(r2, ANCIENT_SHIPPED_DELAY_MS));
+  }
+  console.log(
+    `[MongoDB] forceCompleteAncientShipped days=${days} cutoff=${cutoff.toISOString()} batches=${batches} matched=${matched} modified=${modified}${opts?.shopIds?.length ? ` shops=${opts.shopIds.join(",")}` : ""}`
+  );
+  return { matched, modified, batches, cutoffIso: cutoff.toISOString() };
+}
 async function loadStuckShippedOrderKeysFromStore(opts) {
   if (!isMongoReady()) return [];
   requireMongo();
@@ -80462,7 +80591,17 @@ async function loadStuckShippedOrderKeysFromStore(opts) {
   const shopFilter = buildShopIdMongoFilter(void 0, opts?.shopIds);
   if (shopFilter) and.push(shopFilter);
   const filter2 = and.length === 1 ? and[0] : { $and: and };
-  const docs = await OrderModel.find(filter2).select({ orderSn: 1, shopId: 1, "data.shopId": 1, "data.orderSn": 1 }).limit(cap).maxTimeMS(3e4).lean();
+  const docs = await OrderModel.find(filter2).select({
+    orderSn: 1,
+    shopId: 1,
+    create_time: 1,
+    createdAt: 1,
+    "data.shopId": 1,
+    "data.orderSn": 1,
+    "data.create_time": 1,
+    "data.date": 1,
+    "data.createdAt": 1
+  }).limit(cap).maxTimeMS(3e4).lean();
   const out = [];
   const seen = /* @__PURE__ */ new Set();
   for (const d of docs) {
@@ -80473,7 +80612,8 @@ async function loadStuckShippedOrderKeysFromStore(opts) {
     seen.add(orderSn);
     out.push({
       orderSn,
-      shopId: String(d?.shopId || d?.data?.shopId || "").trim()
+      shopId: String(d?.shopId || d?.data?.shopId || "").trim(),
+      createdAtMs: parseStuckShippedCreatedAtMs(d)
     });
   }
   console.log(
@@ -110771,8 +110911,8 @@ async function cleanupShipped(req, res) {
     const body = req.body || {};
     const shopIdsRaw = body.shop_ids ?? body.shopIds ?? body.shop_id ?? req.query.shop_ids;
     const shopIds = Array.isArray(shopIdsRaw) ? shopIdsRaw.map((s2) => String(s2 || "").trim()).filter(Boolean) : shopIdsRaw ? String(shopIdsRaw).split(",").map((s2) => s2.trim()).filter(Boolean) : void 0;
-    const maxRaw = Number(body.maxOrders ?? body.max ?? req.query.max ?? 2500);
-    const maxOrders = Number.isFinite(maxRaw) ? Math.min(Math.max(1, Math.floor(maxRaw)), 2500) : 2500;
+    const maxRaw = Number(body.maxOrders ?? body.max ?? req.query.max ?? 4e3);
+    const maxOrders = Number.isFinite(maxRaw) ? Math.min(Math.max(1, Math.floor(maxRaw)), 4e3) : 4e3;
     const wait = body.wait === true || body.wait === "1" || req.query.wait === "1" || req.query.wait === "true";
     if (wait) {
       const locked2 = deps15.beginCleanupStuckShippedJob();
@@ -110805,7 +110945,7 @@ async function cleanupShipped(req, res) {
       success: true,
       background: true,
       inFlight: true,
-      message: "\u0110ang \u0111\u1ED1i so\xE1t \u0111\u01A1n k\u1EB9t \u0110ang giao v\u1EDBi Shopee ng\u1EA7m. F5 Dashboard sau 1\u20132 ph\xFAt."
+      message: "\u0110ang d\u1ECDn \u0111\u01A1n k\u1EB9t \u0110ang giao (\xE9p \u0111\u01A1n c\u1ED5 >15 ng\xE0y + \u0111\u1ED1i so\xE1t Shopee theo l\xF4). F5 Dashboard sau 1\u20132 ph\xFAt."
     });
     setImmediate(() => {
       deps15.cleanupStuckShippedOrders({
@@ -122503,11 +122643,13 @@ async function reconcileHandedOverCarrierStatuses(opts) {
     handedOverStatusReconcileInFlight = false;
   }
 }
-var CLEANUP_STUCK_SHIPPED_MAX_ORDERS = 2500;
-var CLEANUP_STUCK_SHIPPED_CHUNK = 50;
-var CLEANUP_STUCK_SHIPPED_DELAY_MS = 400;
-var CLEANUP_STUCK_SHIPPED_MAX_CHUNKS = 60;
-var CLEANUP_STUCK_SHIPPED_DEADLINE_MS = 8 * 60 * 1e3;
+var CLEANUP_STUCK_SHIPPED_MAX_ORDERS = 4e3;
+var CLEANUP_STUCK_SHIPPED_CHUNK = 30;
+var CLEANUP_STUCK_SHIPPED_DELAY_MS = 500;
+var CLEANUP_STUCK_SHIPPED_MAX_CHUNKS = 120;
+var CLEANUP_STUCK_SHIPPED_DEADLINE_MS = 15 * 60 * 1e3;
+var CLEANUP_STUCK_SHIPPED_ANCIENT_DAYS = 15;
+var CLEANUP_STUCK_SHIPPED_RATE_LIMIT_RETRY_MS = 2e3;
 var SHOPEE_TERMINAL_FOR_CLEANUP = /* @__PURE__ */ new Set([
   "COMPLETED",
   "CANCELLED",
@@ -122528,12 +122670,23 @@ function beginCleanupStuckShippedJob() {
   lastCleanupStuckShipped = null;
   return true;
 }
+function isCleanupShopeeRateLimit(detail, err) {
+  const blob = `${detail?.error || ""} ${detail?.message || ""} ${err?.message || ""} ${detail?.httpStatus || ""}`.toLowerCase();
+  return blob.includes("rate") || blob.includes("too many") || blob.includes("429") || Number(detail?.httpStatus) === 429;
+}
+function collectCleanupDetailList(detail) {
+  if (Array.isArray(detail?.response?.order_list)) return detail.response.order_list;
+  if (Array.isArray(detail?.order_list)) return detail.order_list;
+  return [];
+}
 async function cleanupStuckShippedOrders(opts) {
   const trigger = String(opts?.trigger || "manual");
   const empty = {
     success: true,
     skipped: true,
     candidates: 0,
+    ancientForced: 0,
+    recentCandidates: 0,
     checked: 0,
     updated: 0,
     completed: 0,
@@ -122571,10 +122724,14 @@ async function cleanupStuckShippedOrders(opts) {
     Math.max(1, Math.floor(Number(opts?.maxOrders) || CLEANUP_STUCK_SHIPPED_MAX_ORDERS)),
     CLEANUP_STUCK_SHIPPED_MAX_ORDERS
   );
+  const shopIdsOpt = Array.isArray(opts?.shopIds) ? opts.shopIds : void 0;
+  const ancientCutoffMs = Date.now() - CLEANUP_STUCK_SHIPPED_ANCIENT_DAYS * 24 * 60 * 60 * 1e3;
   const result = {
     success: true,
     skipped: false,
     candidates: 0,
+    ancientForced: 0,
+    recentCandidates: 0,
     checked: 0,
     updated: 0,
     completed: 0,
@@ -122592,23 +122749,64 @@ async function cleanupStuckShippedOrders(opts) {
   };
   try {
     const beforeCounts = await recalculateOrderTabCountsFromStore({
-      shopIds: Array.isArray(opts?.shopIds) ? opts.shopIds : void 0
+      shopIds: shopIdsOpt
     });
     result.shippingBefore = Number(beforeCounts.shipping) || 0;
+    const ancientWrite = await forceCompleteAncientShippedOrdersFromStore({
+      shopIds: shopIdsOpt,
+      olderThanDays: CLEANUP_STUCK_SHIPPED_ANCIENT_DAYS
+    });
+    result.ancientForced = Number(ancientWrite.modified || ancientWrite.matched || 0);
+    result.completed += result.ancientForced;
+    result.updated += result.ancientForced;
     const keys = await loadStuckShippedOrderKeysFromStore({
-      shopIds: Array.isArray(opts?.shopIds) ? opts.shopIds : void 0,
+      shopIds: shopIdsOpt,
       limit: maxOrders
     });
-    result.candidates = keys.length;
-    if (keys.length === 0) {
-      result.shippingAfter = result.shippingBefore;
-      result.counts = beforeCounts;
-      result.message = "no_shipped_candidates";
+    result.candidates = keys.length + result.ancientForced;
+    const leftoverAncient = [];
+    const recentKeys = [];
+    for (let k = 0; k < keys.length; k += 1) {
+      const row = keys[k];
+      const sn = String(row.orderSn || "").replace(/^shopee-/i, "").trim();
+      if (!sn) continue;
+      const createdAtMs = Number(row.createdAtMs) || 0;
+      if (createdAtMs > 0 && createdAtMs < ancientCutoffMs) {
+        leftoverAncient.push({
+          orderSn: sn,
+          shopId: String(row.shopId || "").trim(),
+          shopee_order_status: "COMPLETED"
+        });
+        continue;
+      }
+      recentKeys.push({ orderSn: sn, shopId: String(row.shopId || "").trim() });
+    }
+    if (leftoverAncient.length > 0) {
+      const leftoverWrote = await bulkHealTerminalStatusesFromShopee(leftoverAncient);
+      const leftoverN = Number(leftoverWrote.modified || leftoverWrote.written || leftoverAncient.length);
+      result.ancientForced += leftoverN;
+      result.completed += leftoverN;
+      result.updated += leftoverN;
+    }
+    result.recentCandidates = recentKeys.length;
+    if (recentKeys.length === 0) {
+      try {
+        invalidateOrdersRefreshCache();
+      } catch {
+      }
+      const afterOnlyAncient = await recalculateOrderTabCountsFromStore({
+        shopIds: shopIdsOpt
+      });
+      result.shippingAfter = Number(afterOnlyAncient.shipping) || 0;
+      result.counts = afterOnlyAncient;
+      result.message = `ancientForced=${result.ancientForced} recent=0 shipping ${result.shippingBefore}\u2192${result.shippingAfter} ${Date.now() - startedAt}ms`;
+      console.log(`[Cleanup SHIPPED][${trigger}] DONE ${result.message}`);
       lastCleanupStuckShipped = result;
       return result;
     }
     const byShop = /* @__PURE__ */ new Map();
-    for (const row of keys) {
+    for (let r2 = 0; r2 < recentKeys.length; r2 += 1) {
+      const row = recentKeys[r2];
       const sn = String(row.orderSn || "").replace(/^shopee-/i, "").trim();
       if (!sn) continue;
       const shopId = normalizeShopIdKey(row.shopId) || String(row.shopId || "").trim();
@@ -122622,7 +122820,7 @@ async function cleanupStuckShippedOrders(opts) {
     }
     result.shops = byShop.size;
     console.log(
-      `[Cleanup SHIPPED][${trigger}] START candidates=${keys.length} shops=${byShop.size} skippedNoShop=${result.skippedNoShop} shippingBefore=${result.shippingBefore}`
+      `[Cleanup SHIPPED][${trigger}] START ancientForced=${result.ancientForced} recent=${recentKeys.length} shops=${byShop.size} skippedNoShop=${result.skippedNoShop} shippingBefore=${result.shippingBefore} chunk=${CLEANUP_STUCK_SHIPPED_CHUNK} delay=${CLEANUP_STUCK_SHIPPED_DELAY_MS}ms`
     );
     const patches = [];
     let chunkCount = 0;
@@ -122657,7 +122855,11 @@ async function cleanupStuckShippedOrders(opts) {
         chunkCount += 1;
         const chunk = orderSns.slice(i2, i2 + CLEANUP_STUCK_SHIPPED_CHUNK);
         try {
-          const detail = await shopeeGetOrderDetail(apiShopId, auth.token, chunk);
+          let detail = await shopeeGetOrderDetail(apiShopId, auth.token, chunk);
+          if (detail?.error && isCleanupShopeeRateLimit(detail)) {
+            await shopeeSyncDelay(CLEANUP_STUCK_SHIPPED_RATE_LIMIT_RETRY_MS);
+            detail = await shopeeGetOrderDetail(apiShopId, auth.token, chunk);
+          }
           if (detail?.error) {
             result.errors.push({
               shopId,
@@ -122665,8 +122867,9 @@ async function cleanupStuckShippedOrders(opts) {
               message: detail.message || "get_order_detail failed"
             });
           } else {
-            const list = Array.isArray(detail?.response?.order_list) ? detail.response.order_list : Array.isArray(detail?.order_list) ? detail.order_list : [];
-            for (const row of list) {
+            const list = collectCleanupDetailList(detail);
+            for (let li = 0; li < list.length; li += 1) {
+              const row = list[li];
               const sn = String(row?.order_sn || "").replace(/^shopee-/i, "").trim();
               const raw = String(row?.order_status || "").trim().toUpperCase();
               if (!sn) continue;
@@ -122686,33 +122889,33 @@ async function cleanupStuckShippedOrders(opts) {
             }
           }
         } catch (chunkErr) {
+          if (isCleanupShopeeRateLimit(null, chunkErr)) {
+            await shopeeSyncDelay(CLEANUP_STUCK_SHIPPED_RATE_LIMIT_RETRY_MS);
+          }
           result.errors.push({
             shopId,
             error: "cleanup_shipped_chunk_failed",
             message: chunkErr?.message || String(chunkErr)
           });
         }
-        if (i2 + CLEANUP_STUCK_SHIPPED_CHUNK < orderSns.length) {
-          await shopeeSyncDelay(CLEANUP_STUCK_SHIPPED_DELAY_MS);
-        }
+        await shopeeSyncDelay(CLEANUP_STUCK_SHIPPED_DELAY_MS);
       }
-      await shopeeSyncDelay(200);
     }
     result.chunks = chunkCount;
     if (patches.length > 0) {
       const wrote = await bulkHealTerminalStatusesFromShopee(patches);
-      result.updated = Number(wrote.modified || wrote.written || 0);
+      result.updated += Number(wrote.modified || wrote.written || 0);
     }
     try {
       invalidateOrdersRefreshCache();
     } catch {
     }
     const afterCounts = await recalculateOrderTabCountsFromStore({
-      shopIds: Array.isArray(opts?.shopIds) ? opts.shopIds : void 0
+      shopIds: shopIdsOpt
     });
     result.shippingAfter = Number(afterCounts.shipping) || 0;
     result.counts = afterCounts;
-    result.message = `candidates=${result.candidates} checked=${result.checked} updated=${result.updated} completed=${result.completed} cancelled=${result.cancelled} toReturn=${result.toReturn} stillShipped=${result.stillShipped} shipping ${result.shippingBefore}\u2192${result.shippingAfter} ${Date.now() - startedAt}ms`;
+    result.message = `ancientForced=${result.ancientForced} recent=${result.recentCandidates} checked=${result.checked} updated=${result.updated} completed=${result.completed} cancelled=${result.cancelled} toReturn=${result.toReturn} stillShipped=${result.stillShipped} shipping ${result.shippingBefore}\u2192${result.shippingAfter} ${Date.now() - startedAt}ms`;
     console.log(`[Cleanup SHIPPED][${trigger}] DONE ${result.message}`);
     lastCleanupStuckShipped = result;
     return result;
