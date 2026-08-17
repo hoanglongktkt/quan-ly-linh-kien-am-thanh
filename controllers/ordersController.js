@@ -1961,7 +1961,8 @@ export async function confirmReturnReceived(req, res) {
 
 /**
  * POST /api/orders/update-print-status
- * Cập nhật isPrinted trên DB nội bộ (không gọi Shopee).
+ * Fast path: Mongo updateMany theo orderSn — KHÔNG load orders.json,
+ * KHÔNG bulkUpsert full document, KHÔNG gọi Shopee.
  * Body: { order_sns|orderSns|orderIds: string[], is_printed|isPrinted: boolean }
  */
 export async function updatePrintStatus(req, res) {
@@ -2010,51 +2011,26 @@ export async function updatePrintStatus(req, res) {
       String(rawFlag).trim().toLowerCase() === "true" ||
       String(rawFlag).trim() === "1";
 
-    const orders = loadOrders();
-    const snSet = new Set(sns.map((s) => s.toLowerCase()));
-    const changed = [];
-    for (let i = 0; i < orders.length; i++) {
-      const o = orders[i];
-      const sn = String(o.orderSn || "").replace(/^shopee-/i, "").trim().toLowerCase();
-      const id = String(o.id || "")
-        .replace(/^shopee-/i, "")
-        .trim()
-        .toLowerCase();
-      if (!snSet.has(sn) && !snSet.has(id)) continue;
-      const nowIso = new Date().toISOString();
-      orders[i] = {
-        ...o,
-        isPrinted,
-        ...(isPrinted
-          ? { printedAt: nowIso, printed_at: nowIso }
-          : { printedAt: null, printed_at: null }),
-      };
-      changed.push(orders[i]);
-    }
-    if (changed.length > 0) {
-      await persistOrdersToDatabase(orders, changed);
-    }
-    let mongoUpdated = 0;
-    if (isMongoReady()) {
-      const shopIdHint = String(
-        changed.find((o) => o?.shopId != null && String(o.shopId).trim())?.shopId ||
-          "",
-      ).trim();
-      mongoUpdated = await markOrdersPrintedInStore(sns, isPrinted, {
-        ...(shopIdHint ? { shopId: shopIdHint } : {}),
+    if (!isMongoReady()) {
+      return res.status(503).json({
+        success: false,
+        error: "mongodb_not_ready",
+        message: "MongoDB chưa sẵn sàng — không thể cập nhật trạng thái in.",
       });
-      // Luôn gọi markOrdersPrintedInStore với đầy đủ sns, bất kể changed có rỗng không.
-      // Race condition: khi đơn không còn trong memory nhưng vẫn tồn tại trên Mongo,
-      // PATCH fire-and-forget từ FE không thể reset isPrinted=true → false.
-      invalidateOrdersRefreshCache();
     }
+
+    const shopIdHint = String(body.shopId || body.shop_id || "").trim();
+    const mongoUpdated = await markOrdersPrintedInStore(sns, isPrinted, {
+      ...(shopIdHint ? { shopId: shopIdHint } : {}),
+    });
+    invalidateOrdersRefreshCache();
+
     return res.json({
       success: true,
       isPrinted,
-      updatedCount: Math.max(changed.length, mongoUpdated, sns.length),
-      resetCount: isPrinted ? 0 : Math.max(changed.length, mongoUpdated, sns.length),
+      updatedCount: Math.max(mongoUpdated, sns.length),
+      resetCount: isPrinted ? 0 : Math.max(mongoUpdated, sns.length),
       orderSns: sns,
-      orders: changed,
     });
   } catch (error) {
     console.error("[Orders update-print-status]", error?.stack || error?.message || error);

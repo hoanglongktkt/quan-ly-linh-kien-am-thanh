@@ -2632,7 +2632,8 @@ export async function markOrderHandedOverInStore(
 /**
  * Ghi cờ isPrinted — CHỈ khi user bấm In thành công (hoặc reset Chưa in).
  * Không dùng cho background chuẩn bị PDF.
- * Dùng updateMany theo orderSn/_id — tránh upsert tạo document trùng làm lệch lọc.
+ * Hot path: updateMany theo index orderSn/_id, KHÔNG xếp hàng enqueueWrite
+ * (tránh bị bulk sync chặn 20s), KHÔNG upsert thiếu trong request.
  */
 export async function markOrdersPrintedInStore(
   orderSns: string[],
@@ -2693,47 +2694,46 @@ export async function markOrdersPrintedInStore(
     $set["data.shopId"] = shopIdStr;
   }
 
+  // Chỉ field có index (orderSn_unique + _id) — tránh $or data.orderSn scan collection.
   const filter: Record<string, unknown> = {
-    $or: [
-      { orderSn: { $in: sns } },
-      { _id: { $in: ids } },
-      { "data.orderSn": { $in: sns } },
-    ],
+    $or: [{ orderSn: { $in: sns } }, { _id: { $in: ids } }],
   };
 
-  let matched = 0;
-  await withWriteTimeout(
-    enqueueWrite(async () => {
-      const result = await OrderModel.updateMany(filter, { $set }, {
-        maxTimeMS: 8_000,
-      } as any);
-      matched = Number(result?.matchedCount || result?.n || 0);
-      const modified = Number(result?.modifiedCount || result?.nModified || 0);
-      console.log(
-        `[MongoDB] markOrdersPrintedInStore isPrinted=${printed} sns=${sns.length}` +
-          ` matched=${matched} modified=${modified}`,
-      );
+  const result = await OrderModel.updateMany(filter, { $set }, {
+    maxTimeMS: 4_000,
+  } as any);
+  const matched = Number(result?.matchedCount || result?.n || 0);
+  const modified = Number(result?.modifiedCount || result?.nModified || 0);
+  console.log(
+    `[MongoDB] markOrdersPrintedInStore isPrinted=${printed} sns=${sns.length}` +
+      ` matched=${matched} modified=${modified}`,
+  );
 
-      // Đơn chưa có trong Mongo → upsert từng sn (hiếm).
-      if (matched < sns.length) {
-        const existing = await OrderModel.find(filter)
-          .select({ orderSn: 1, _id: 1 })
-          .lean()
-          .maxTimeMS(5_000);
-        const have = new Set<string>();
-        for (const d of existing as any[]) {
-          const sn = String(d?.orderSn || String(d?._id || "").replace(/^shopee-/i, "")).trim();
-          if (sn) have.add(sn);
-        }
-        const missing = sns.filter((sn) => !have.has(sn));
-        if (missing.length > 0) {
+  // Upsert đơn thiếu — chạy ngầm, không chặn API.
+  if (matched < sns.length) {
+    const missingFilter = filter;
+    const missingSet = $set;
+    setImmediate(() => {
+      void (async () => {
+        try {
+          const existing = await OrderModel.find(missingFilter)
+            .select({ orderSn: 1, _id: 1 })
+            .lean()
+            .maxTimeMS(5_000);
+          const have = new Set<string>();
+          for (const d of existing as any[]) {
+            const sn = String(d?.orderSn || String(d?._id || "").replace(/^shopee-/i, "")).trim();
+            if (sn) have.add(sn);
+          }
+          const missing = sns.filter((sn) => !have.has(sn));
+          if (missing.length === 0) return;
           const ops = missing.map((sn) => {
             const _id = `shopee-${sn}`;
             return {
               updateOne: {
                 filter: { _id },
                 update: {
-                  $set: { ...$set, orderSn: sn, "data.orderSn": sn },
+                  $set: { ...missingSet, orderSn: sn, "data.orderSn": sn },
                   $setOnInsert: {
                     _id,
                     "data.id": _id,
@@ -2746,19 +2746,21 @@ export async function markOrdersPrintedInStore(
           });
           const up = await OrderModel.bulkWrite(ops as any, {
             ordered: false,
-            maxTimeMS: 15_000,
+            maxTimeMS: 8_000,
           });
-          matched += missing.length;
           console.log(
-            `[MongoDB] markOrdersPrintedInStore upsert missing=${missing.length}` +
+            `[MongoDB] markOrdersPrintedInStore bg-upsert missing=${missing.length}` +
               ` upserted=${up.upsertedCount || 0}`,
           );
+        } catch (err: any) {
+          console.warn(
+            "[MongoDB] markOrdersPrintedInStore bg-upsert skipped:",
+            err?.message || err,
+          );
         }
-      }
-    }),
-    "mark_printed",
-    20_000, // 20s — in/scan phải chờ đủ, không timeout sớm
-  );
+      })();
+    });
+  }
   return matched || sns.length;
 }
 

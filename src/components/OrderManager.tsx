@@ -1984,6 +1984,12 @@ export default function OrderManager({
 
   // markPrintedOnLocalPdfOpen declared after applyPrintedLocalOptimistic + updatePrintStatusForOrders (see below).
 
+  type PrintedOptimisticSnapshot = {
+    key: string;
+    isPrinted: boolean;
+    status?: Order['status'];
+  };
+
   /** Optimistic UI: set isPrinted ngay trên local state (0ms) — đơn biến mất khỏi lọc "Chưa in". */
   const applyPrintedLocalOptimistic = React.useCallback(
     (orderKeys: string[], isPrinted: boolean, status?: Order['status']) => {
@@ -1998,6 +2004,13 @@ export default function OrderManager({
         const mutation = { isPrinted, ...(status ? { status } : {}), expiresAt };
         optimisticOrderMutationsRef.current.set(key, mutation);
         optimisticOrderMutationsRef.current.set(`shopee-${key}`, mutation);
+        if (isPrinted) {
+          recentlyPrintedRef.current.set(key, expiresAt);
+          recentlyPrintedRef.current.set(`shopee-${key}`, expiresAt);
+        } else {
+          recentlyPrintedRef.current.delete(key);
+          recentlyPrintedRef.current.delete(`shopee-${key}`);
+        }
       }
       const hit: Order[] = [];
       const patched = ordersRef.current.map((o) => {
@@ -2015,8 +2028,35 @@ export default function OrderManager({
     [onUpdateOrders],
   );
 
+  const rollbackPrintedLocalOptimistic = React.useCallback(
+    (previous: PrintedOptimisticSnapshot[]) => {
+      if (!previous.length) return;
+      const prevByKey = new Map<string, PrintedOptimisticSnapshot>();
+      for (const row of previous) {
+        const key = String(row.key || '').replace(/^shopee-/i, '').trim().toLowerCase();
+        if (!key) continue;
+        prevByKey.set(key, row);
+        optimisticOrderMutationsRef.current.delete(key);
+        optimisticOrderMutationsRef.current.delete(`shopee-${key}`);
+        recentlyPrintedRef.current.delete(key);
+        recentlyPrintedRef.current.delete(`shopee-${key}`);
+      }
+      if (prevByKey.size === 0) return;
+      const patched = ordersRef.current.map((o) => {
+        const sn = String(o.orderSn || '').replace(/^shopee-/i, '').trim().toLowerCase();
+        const oid = String(o.id || '').replace(/^shopee-/i, '').trim().toLowerCase();
+        const prev = prevByKey.get(sn) || prevByKey.get(oid);
+        if (!prev) return o;
+        return { ...o, isPrinted: prev.isPrinted, ...(prev.status ? { status: prev.status } : {}) };
+      });
+      ordersRef.current = patched;
+      onUpdateOrders(patched, { persist: false });
+    },
+    [onUpdateOrders],
+  );
+
   /** Cập nhật isPrinted trên DB nội bộ (không gọi Shopee) — hỗ trợ true/false.
-   * Optimistic: local state TRƯỚC, API chạy sau (không chặn UI). Soft-fail. */
+   * Optimistic: local state TRƯỚC, API fire-and-forget. Lỗi → rollback. */
   const updatePrintStatusForOrders = React.useCallback(
     async (
       targetOrders: Order[],
@@ -2031,58 +2071,61 @@ export default function OrderManager({
         if (!opts?.silent) showToast(`Chưa chọn đơn để đánh dấu ${label}.`);
         return;
       }
+      const previous: PrintedOptimisticSnapshot[] = targetOrders.map((o) => ({
+        key: String(o.orderSn || o.id || '').replace(/^shopee-/i, '').trim().toLowerCase(),
+        isPrinted: Boolean(o.isPrinted),
+        status: o.status,
+      })).filter((row) => row.key);
       // Optimistic UI: cập nhật local NGAY, không chờ Backend.
       applyPrintedLocalOptimistic(ids, isPrinted);
-      if (!opts?.silent) setResettingPrintIds(ids);
-      try {
-        const token = localStorage.getItem('admin_token');
-        const endpoint = isPrinted
-          ? '/api/orders/mark-printed'
-          : '/api/orders/update-print-status';
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({
-            orderIds: ids,
-            orderSns: ids,
-            order_sns: ids,
-            is_printed: isPrinted,
-            isPrinted,
-          }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || data?.success === false) {
-          console.warn(
-            `[Print Status] update-print-status failed HTTP ${res.status}:`,
-            data?.message || data?.error || res.statusText,
-          );
-          if (!opts?.silent) {
-            showToast(
-              data?.message ||
-                `Không lưu được trạng thái ${label} lên server (đã cập nhật tạm trên giao diện).`,
+      if (!opts?.silent) showToast(`Đã đánh dấu ${label}: ${ids.length} đơn.`);
+      const token = localStorage.getItem('admin_token');
+      const endpoint = isPrinted
+        ? '/api/orders/mark-printed'
+        : '/api/orders/update-print-status';
+      void fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          orderIds: ids,
+          orderSns: ids,
+          order_sns: ids,
+          is_printed: isPrinted,
+          isPrinted,
+        }),
+      })
+        .then(async (res) => {
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || data?.success === false) {
+            rollbackPrintedLocalOptimistic(previous);
+            console.warn(
+              `[Print Status] update-print-status failed HTTP ${res.status}:`,
+              data?.message || data?.error || res.statusText,
             );
+            if (!opts?.silent) {
+              showToast(
+                data?.message || `Không lưu được trạng thái ${label} lên server — đã hoàn tác.`,
+              );
+            }
           }
-          return;
-        }
-        refetchOrdersPage({ silent: true });
-        if (!opts?.silent) showToast(`Đã đánh dấu ${label}: ${ids.length} đơn.`);
-      } catch (err: any) {
-        const isAbort =
-          err?.name === 'AbortError' ||
-          (err instanceof DOMException && err.name === 'AbortError') ||
-          /aborted|AbortError|signal|this operation was aborted/i.test(String(err?.message || ''));
-        console.warn('[Print Status] update-print-status exception:', err?.message || err, isAbort ? '(ignored — silent fire-and-forget)' : '');
-        if (!opts?.silent && !isAbort) {
-          showToast(err?.message || `Lỗi đánh dấu ${label} (đã cập nhật tạm trên giao diện).`);
-        }
-      } finally {
-        if (!opts?.silent) setResettingPrintIds([]);
-      }
+        })
+        .catch((err: any) => {
+          const isAbort =
+            err?.name === 'AbortError' ||
+            (err instanceof DOMException && err.name === 'AbortError') ||
+            /aborted|AbortError|signal|this operation was aborted/i.test(String(err?.message || ''));
+          console.warn('[Print Status] update-print-status exception:', err?.message || err, isAbort ? '(ignored — silent fire-and-forget)' : '');
+          if (isAbort) return;
+          rollbackPrintedLocalOptimistic(previous);
+          if (!opts?.silent) {
+            showToast(err?.message || `Lỗi đánh dấu ${label} — đã hoàn tác.`);
+          }
+        });
     },
-    [onUpdateOrders, applyPrintedLocalOptimistic, refetchOrdersPage],
+    [applyPrintedLocalOptimistic, rollbackPrintedLocalOptimistic],
   );
 
   const resetPrintStatusForOrders = React.useCallback(

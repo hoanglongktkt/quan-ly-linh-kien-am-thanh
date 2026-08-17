@@ -78087,39 +78087,37 @@ async function markOrdersPrintedInStore(orderSns, isPrinted, meta) {
     $set["data.shopId"] = shopIdStr;
   }
   const filter2 = {
-    $or: [
-      { orderSn: { $in: sns } },
-      { _id: { $in: ids } },
-      { "data.orderSn": { $in: sns } }
-    ]
+    $or: [{ orderSn: { $in: sns } }, { _id: { $in: ids } }]
   };
-  let matched = 0;
-  await withWriteTimeout(
-    enqueueWrite(async () => {
-      const result = await OrderModel.updateMany(filter2, { $set }, {
-        maxTimeMS: 8e3
-      });
-      matched = Number(result?.matchedCount || result?.n || 0);
-      const modified = Number(result?.modifiedCount || result?.nModified || 0);
-      console.log(
-        `[MongoDB] markOrdersPrintedInStore isPrinted=${printed} sns=${sns.length} matched=${matched} modified=${modified}`
-      );
-      if (matched < sns.length) {
-        const existing = await OrderModel.find(filter2).select({ orderSn: 1, _id: 1 }).lean().maxTimeMS(5e3);
-        const have = /* @__PURE__ */ new Set();
-        for (const d of existing) {
-          const sn = String(d?.orderSn || String(d?._id || "").replace(/^shopee-/i, "")).trim();
-          if (sn) have.add(sn);
-        }
-        const missing = sns.filter((sn) => !have.has(sn));
-        if (missing.length > 0) {
+  const result = await OrderModel.updateMany(filter2, { $set }, {
+    maxTimeMS: 4e3
+  });
+  const matched = Number(result?.matchedCount || result?.n || 0);
+  const modified = Number(result?.modifiedCount || result?.nModified || 0);
+  console.log(
+    `[MongoDB] markOrdersPrintedInStore isPrinted=${printed} sns=${sns.length} matched=${matched} modified=${modified}`
+  );
+  if (matched < sns.length) {
+    const missingFilter = filter2;
+    const missingSet = $set;
+    setImmediate(() => {
+      void (async () => {
+        try {
+          const existing = await OrderModel.find(missingFilter).select({ orderSn: 1, _id: 1 }).lean().maxTimeMS(5e3);
+          const have = /* @__PURE__ */ new Set();
+          for (const d of existing) {
+            const sn = String(d?.orderSn || String(d?._id || "").replace(/^shopee-/i, "")).trim();
+            if (sn) have.add(sn);
+          }
+          const missing = sns.filter((sn) => !have.has(sn));
+          if (missing.length === 0) return;
           const ops = missing.map((sn) => {
             const _id = `shopee-${sn}`;
             return {
               updateOne: {
                 filter: { _id },
                 update: {
-                  $set: { ...$set, orderSn: sn, "data.orderSn": sn },
+                  $set: { ...missingSet, orderSn: sn, "data.orderSn": sn },
                   $setOnInsert: {
                     _id,
                     "data.id": _id,
@@ -78132,19 +78130,20 @@ async function markOrdersPrintedInStore(orderSns, isPrinted, meta) {
           });
           const up = await OrderModel.bulkWrite(ops, {
             ordered: false,
-            maxTimeMS: 15e3
+            maxTimeMS: 8e3
           });
-          matched += missing.length;
           console.log(
-            `[MongoDB] markOrdersPrintedInStore upsert missing=${missing.length} upserted=${up.upsertedCount || 0}`
+            `[MongoDB] markOrdersPrintedInStore bg-upsert missing=${missing.length} upserted=${up.upsertedCount || 0}`
+          );
+        } catch (err) {
+          console.warn(
+            "[MongoDB] markOrdersPrintedInStore bg-upsert skipped:",
+            err?.message || err
           );
         }
-      }
-    }),
-    "mark_printed",
-    2e4
-    // 20s — in/scan phải chờ đủ, không timeout sớm
-  );
+      })();
+    });
+  }
   return matched || sns.length;
 }
 async function markOrdersHasPdfInStore(orderSns, meta) {
@@ -111355,42 +111354,24 @@ async function updatePrintStatus(req, res) {
     }
     const rawFlag = body.is_printed ?? body.isPrinted;
     const isPrinted = rawFlag === true || rawFlag === 1 || String(rawFlag).trim().toLowerCase() === "true" || String(rawFlag).trim() === "1";
-    const orders = loadOrders();
-    const snSet = new Set(sns.map((s2) => s2.toLowerCase()));
-    const changed = [];
-    for (let i2 = 0; i2 < orders.length; i2++) {
-      const o = orders[i2];
-      const sn = String(o.orderSn || "").replace(/^shopee-/i, "").trim().toLowerCase();
-      const id = String(o.id || "").replace(/^shopee-/i, "").trim().toLowerCase();
-      if (!snSet.has(sn) && !snSet.has(id)) continue;
-      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-      orders[i2] = {
-        ...o,
-        isPrinted,
-        ...isPrinted ? { printedAt: nowIso, printed_at: nowIso } : { printedAt: null, printed_at: null }
-      };
-      changed.push(orders[i2]);
-    }
-    if (changed.length > 0) {
-      await persistOrdersToDatabase(orders, changed);
-    }
-    let mongoUpdated = 0;
-    if (isMongoReady()) {
-      const shopIdHint = String(
-        changed.find((o) => o?.shopId != null && String(o.shopId).trim())?.shopId || ""
-      ).trim();
-      mongoUpdated = await markOrdersPrintedInStore(sns, isPrinted, {
-        ...shopIdHint ? { shopId: shopIdHint } : {}
+    if (!isMongoReady()) {
+      return res.status(503).json({
+        success: false,
+        error: "mongodb_not_ready",
+        message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng \u2014 kh\xF4ng th\u1EC3 c\u1EADp nh\u1EADt tr\u1EA1ng th\xE1i in."
       });
-      invalidateOrdersRefreshCache();
     }
+    const shopIdHint = String(body.shopId || body.shop_id || "").trim();
+    const mongoUpdated = await markOrdersPrintedInStore(sns, isPrinted, {
+      ...shopIdHint ? { shopId: shopIdHint } : {}
+    });
+    invalidateOrdersRefreshCache();
     return res.json({
       success: true,
       isPrinted,
-      updatedCount: Math.max(changed.length, mongoUpdated, sns.length),
-      resetCount: isPrinted ? 0 : Math.max(changed.length, mongoUpdated, sns.length),
-      orderSns: sns,
-      orders: changed
+      updatedCount: Math.max(mongoUpdated, sns.length),
+      resetCount: isPrinted ? 0 : Math.max(mongoUpdated, sns.length),
+      orderSns: sns
     });
   } catch (error) {
     console.error("[Orders update-print-status]", error?.stack || error?.message || error);
@@ -135494,6 +135475,9 @@ async function startServer() {
   app.post("/api/orders/silent-prefetch-pdfs", authMiddleware, silentPrefetchPdfsRoute);
   app.get("/api/orders/prefetch-status/:batchId", authMiddleware, prefetchStatusRoute);
   app.get("/api/orders/download-pdf/:orderSn", downloadPdfRoute);
+  app.post("/api/orders/mark-printed", authMiddleware, markPrinted);
+  app.post("/api/orders/update-print-status", authMiddleware, updatePrintStatus);
+  app.post("/api/orders/reset-print-status", authMiddleware, resetPrintStatus);
   app.use("/api/orders", authMiddleware, ordersRoutes);
   app.post("/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrders);
   app.post("/api/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrders);
@@ -135668,6 +135652,7 @@ async function startServer() {
   app.get("/api/orders/counts", authMiddleware, getOrderCounts);
   app.post("/api/orders/update-print-status", authMiddleware, updatePrintStatus);
   app.post("/api/orders/reset-print-status", authMiddleware, resetPrintStatus);
+  app.post("/api/orders/mark-printed", authMiddleware, markPrinted);
   app.post("/api/shopee/orders/sync", authMiddleware, syncOrders);
   app.post("/api/shopee/orders/pull", authMiddleware, pullOrders);
   app.post("/api/shopee/orders/quick-sync", authMiddleware, quickSyncOrders);

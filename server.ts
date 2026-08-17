@@ -194,6 +194,7 @@ import {
   createManualOrder,
   resetPrintStatus,
   updatePrintStatus,
+  markPrinted,
 } from "./controllers/ordersController.js";
 import {
   initStockSyncQueue,
@@ -21481,6 +21482,9 @@ async function startServer() {
   // orderSn là mã khó đoán; route GET không dùng Bearer để window.open() tải trực tiếp được.
   app.get("/api/orders/download-pdf/:orderSn", downloadPdfRoute);
 
+  app.post("/api/orders/mark-printed", authMiddleware, markPrinted);
+  app.post("/api/orders/update-print-status", authMiddleware, updatePrintStatus);
+  app.post("/api/orders/reset-print-status", authMiddleware, resetPrintStatus);
   app.use("/api/orders", authMiddleware, ordersRoutes);
   // Endpoint tạm: quét đơn thiếu mã VĐ / kẹt unprocessed → get_order_detail
   app.post("/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrdersRoute);
@@ -21687,6 +21691,7 @@ async function startServer() {
   app.get("/api/orders/counts", authMiddleware, getOrderCounts);
   app.post("/api/orders/update-print-status", authMiddleware, updatePrintStatus);
   app.post("/api/orders/reset-print-status", authMiddleware, resetPrintStatus);
+  app.post("/api/orders/mark-printed", authMiddleware, markPrinted);
   app.post("/api/shopee/orders/sync", authMiddleware, syncOrders);
   app.post("/api/shopee/orders/pull", authMiddleware, pullOrders);
   app.post("/api/shopee/orders/quick-sync", authMiddleware, quickSyncOrders);
