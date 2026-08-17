@@ -466,6 +466,9 @@ import {
   findCancelledEmptyItemsFromStore,
   patchOrderItemsOnlyInStore,
   loadAllHandedOverShopeeOrdersFromStore,
+  loadStuckShippedOrderKeysFromStore,
+  bulkHealTerminalStatusesFromShopee,
+  recalculateOrderTabCountsFromStore,
   deleteClosedOrdersByRetention,
   loadOrdersFromStore,
   findOrderByScanCodeInStore,
@@ -3276,6 +3279,273 @@ async function reconcileHandedOverCarrierStatuses(opts?: {
     return result;
   } finally {
     handedOverStatusReconcileInFlight = false;
+  }
+}
+
+const CLEANUP_STUCK_SHIPPED_MAX_ORDERS = 2500;
+const CLEANUP_STUCK_SHIPPED_CHUNK = 50;
+const CLEANUP_STUCK_SHIPPED_DELAY_MS = 400;
+const CLEANUP_STUCK_SHIPPED_MAX_CHUNKS = 60;
+const CLEANUP_STUCK_SHIPPED_DEADLINE_MS = 8 * 60 * 1000;
+const SHOPEE_TERMINAL_FOR_CLEANUP = new Set([
+  "COMPLETED",
+  "CANCELLED",
+  "IN_CANCEL",
+  "TO_RETURN",
+]);
+
+let cleanupStuckShippedInFlight = false;
+let lastCleanupStuckShipped: Record<string, unknown> | null = null;
+
+function getCleanupStuckShippedStatus() {
+  return {
+    inFlight: cleanupStuckShippedInFlight,
+    result: lastCleanupStuckShipped,
+  };
+}
+
+function beginCleanupStuckShippedJob(): boolean {
+  if (cleanupStuckShippedInFlight) return false;
+  cleanupStuckShippedInFlight = true;
+  lastCleanupStuckShipped = null;
+  return true;
+}
+
+/**
+ * Dọn đơn kẹt tab Đang giao: query SHIPPED → get_order_detail theo shop
+ * → bulkWrite COMPLETED/CANCELLED/TO_RETURN. Không đụng tab khác.
+ */
+async function cleanupStuckShippedOrders(opts?: {
+  shopIds?: string[];
+  maxOrders?: number;
+  trigger?: string;
+  alreadyLocked?: boolean;
+}): Promise<Record<string, unknown>> {
+  const trigger = String(opts?.trigger || "manual");
+  const empty = {
+    success: true,
+    skipped: true,
+    candidates: 0,
+    checked: 0,
+    updated: 0,
+    completed: 0,
+    cancelled: 0,
+    toReturn: 0,
+    stillShipped: 0,
+    skippedNoShop: 0,
+    shops: 0,
+    chunks: 0,
+    shippingBefore: 0,
+    shippingAfter: 0,
+    counts: {} as Record<string, number>,
+    errors: [] as any[],
+    message: "",
+  };
+
+  if (!opts?.alreadyLocked) {
+    if (!beginCleanupStuckShippedJob()) {
+      return { ...empty, message: "cleanup_shipped_in_flight" };
+    }
+  }
+  if (!isMongoReady()) {
+    cleanupStuckShippedInFlight = false;
+    const fail = {
+      ...empty,
+      success: false,
+      skipped: false,
+      message: "mongodb_not_ready",
+    };
+    lastCleanupStuckShipped = fail;
+    return fail;
+  }
+  const startedAt = Date.now();
+  const deadlineAt = startedAt + CLEANUP_STUCK_SHIPPED_DEADLINE_MS;
+  const maxOrders = Math.min(
+    Math.max(1, Math.floor(Number(opts?.maxOrders) || CLEANUP_STUCK_SHIPPED_MAX_ORDERS)),
+    CLEANUP_STUCK_SHIPPED_MAX_ORDERS,
+  );
+  const result = {
+    success: true,
+    skipped: false,
+    candidates: 0,
+    checked: 0,
+    updated: 0,
+    completed: 0,
+    cancelled: 0,
+    toReturn: 0,
+    stillShipped: 0,
+    skippedNoShop: 0,
+    shops: 0,
+    chunks: 0,
+    shippingBefore: 0,
+    shippingAfter: 0,
+    counts: {} as Record<string, number>,
+    errors: [] as any[],
+    message: "",
+  };
+
+  try {
+    const beforeCounts = await recalculateOrderTabCountsFromStore({
+      shopIds: Array.isArray(opts?.shopIds) ? opts.shopIds : undefined,
+    });
+    result.shippingBefore = Number(beforeCounts.shipping) || 0;
+
+    const keys = await loadStuckShippedOrderKeysFromStore({
+      shopIds: Array.isArray(opts?.shopIds) ? opts.shopIds : undefined,
+      limit: maxOrders,
+    });
+    result.candidates = keys.length;
+    if (keys.length === 0) {
+      result.shippingAfter = result.shippingBefore;
+      result.counts = beforeCounts;
+      result.message = "no_shipped_candidates";
+      lastCleanupStuckShipped = result;
+      return result;
+    }
+
+    const byShop = new Map<string, string[]>();
+    for (const row of keys) {
+      const sn = String(row.orderSn || "").replace(/^shopee-/i, "").trim();
+      if (!sn) continue;
+      const shopId =
+        normalizeShopIdKey(row.shopId) || String(row.shopId || "").trim();
+      if (!shopId) {
+        result.skippedNoShop += 1;
+        continue;
+      }
+      const sns = byShop.get(shopId) || [];
+      if (!sns.includes(sn)) sns.push(sn);
+      byShop.set(shopId, sns);
+    }
+    result.shops = byShop.size;
+
+    console.log(
+      `[Cleanup SHIPPED][${trigger}] START candidates=${keys.length}` +
+        ` shops=${byShop.size} skippedNoShop=${result.skippedNoShop}` +
+        ` shippingBefore=${result.shippingBefore}`,
+    );
+
+    const patches: Array<{
+      orderSn: string;
+      shopId: string;
+      shopee_order_status: string;
+    }> = [];
+    let chunkCount = 0;
+
+    shopLoop: for (const [shopIdRaw, orderSns] of byShop) {
+      if (Date.now() >= deadlineAt) break;
+      if (chunkCount >= CLEANUP_STUCK_SHIPPED_MAX_CHUNKS) break;
+      const shopId = String(normalizeShopIdKey(shopIdRaw) || shopIdRaw || "").trim();
+      let auth: Awaited<ReturnType<typeof getShopeeAccessTokenForApi>> | null = null;
+      try {
+        auth = await getShopeeAccessTokenForApi(shopId);
+      } catch (tokenErr: any) {
+        result.errors.push({
+          shopId,
+          error: "token_exception",
+          message: tokenErr?.message || String(tokenErr),
+        });
+        continue;
+      }
+      if (!auth?.token) {
+        const fail = describeShopeeTokenFailure(shopId);
+        result.errors.push({
+          shopId,
+          error: "no_valid_access_token",
+          message: fail?.message || `Shop ${shopId}: không lấy được access_token.`,
+        });
+        continue;
+      }
+
+      const apiShopId = String(auth.apiShopId || shopId).trim();
+      for (let i = 0; i < orderSns.length; i += CLEANUP_STUCK_SHIPPED_CHUNK) {
+        if (Date.now() >= deadlineAt) break shopLoop;
+        if (chunkCount >= CLEANUP_STUCK_SHIPPED_MAX_CHUNKS) break shopLoop;
+        chunkCount += 1;
+        const chunk = orderSns.slice(i, i + CLEANUP_STUCK_SHIPPED_CHUNK);
+        try {
+          const detail = await shopeeGetOrderDetail(apiShopId, auth.token, chunk);
+          if (detail?.error) {
+            result.errors.push({
+              shopId,
+              error: detail.error,
+              message: detail.message || "get_order_detail failed",
+            });
+          } else {
+            const list = Array.isArray(detail?.response?.order_list)
+              ? detail.response.order_list
+              : Array.isArray(detail?.order_list)
+                ? detail.order_list
+                : [];
+            for (const row of list) {
+              const sn = String(row?.order_sn || "").replace(/^shopee-/i, "").trim();
+              const raw = String(row?.order_status || "").trim().toUpperCase();
+              if (!sn) continue;
+              result.checked += 1;
+              if (SHOPEE_TERMINAL_FOR_CLEANUP.has(raw)) {
+                patches.push({
+                  orderSn: sn,
+                  shopId,
+                  shopee_order_status: raw,
+                });
+                if (raw === "COMPLETED") result.completed += 1;
+                else if (raw === "TO_RETURN") result.toReturn += 1;
+                else result.cancelled += 1;
+              } else {
+                result.stillShipped += 1;
+              }
+            }
+          }
+        } catch (chunkErr: any) {
+          result.errors.push({
+            shopId,
+            error: "cleanup_shipped_chunk_failed",
+            message: chunkErr?.message || String(chunkErr),
+          });
+        }
+        if (i + CLEANUP_STUCK_SHIPPED_CHUNK < orderSns.length) {
+          await shopeeSyncDelay(CLEANUP_STUCK_SHIPPED_DELAY_MS);
+        }
+      }
+      await shopeeSyncDelay(200);
+    }
+    result.chunks = chunkCount;
+
+    if (patches.length > 0) {
+      const wrote = await bulkHealTerminalStatusesFromShopee(patches);
+      result.updated = Number(wrote.modified || wrote.written || 0);
+    }
+
+    try {
+      invalidateOrdersRefreshCache();
+    } catch {
+      /* ignore */
+    }
+
+    const afterCounts = await recalculateOrderTabCountsFromStore({
+      shopIds: Array.isArray(opts?.shopIds) ? opts.shopIds : undefined,
+    });
+    result.shippingAfter = Number(afterCounts.shipping) || 0;
+    result.counts = afterCounts;
+    result.message =
+      `candidates=${result.candidates} checked=${result.checked}` +
+      ` updated=${result.updated} completed=${result.completed}` +
+      ` cancelled=${result.cancelled} toReturn=${result.toReturn}` +
+      ` stillShipped=${result.stillShipped}` +
+      ` shipping ${result.shippingBefore}→${result.shippingAfter}` +
+      ` ${Date.now() - startedAt}ms`;
+    console.log(`[Cleanup SHIPPED][${trigger}] DONE ${result.message}`);
+    lastCleanupStuckShipped = result;
+    return result;
+  } catch (err: any) {
+    result.success = false;
+    result.message = err?.message || String(err);
+    result.errors.push({ error: "cleanup_shipped_failed", message: result.message });
+    console.error(`[Cleanup SHIPPED][${trigger}] FATAL:`, result.message);
+    lastCleanupStuckShipped = result;
+    return result;
+  } finally {
+    cleanupStuckShippedInFlight = false;
   }
 }
 
@@ -19898,6 +20168,9 @@ async function startServer() {
     forceResyncStuckOrdersWithoutTracking,
     triggerFixStuckOrders,
     reconcileHandedOverCarrierStatuses,
+    cleanupStuckShippedOrders,
+    getCleanupStuckShippedStatus,
+    beginCleanupStuckShippedJob,
     repairMisassignedTracking,
     buildHandedOverWritePatch,
     buildClearHandedOverPatch,

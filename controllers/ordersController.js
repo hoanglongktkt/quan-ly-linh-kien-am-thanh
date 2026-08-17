@@ -166,6 +166,16 @@ let deps = {
     errors: [],
     message: "not_initialized",
   }),
+  cleanupStuckShippedOrders: async () => ({
+    success: false,
+    skipped: true,
+    message: "not_initialized",
+  }),
+  getCleanupStuckShippedStatus: () => ({
+    inFlight: false,
+    result: null,
+  }),
+  beginCleanupStuckShippedJob: () => true,
   repairMisassignedTracking: (o) => o,
   buildHandedOverWritePatch: () => ({}),
   buildClearHandedOverPatch: () => ({}),
@@ -940,6 +950,151 @@ export async function cleanupHandedOver(req, res) {
     return res.status(500).json({
       success: false,
       error: error?.message || "cleanup_failed",
+    });
+  }
+}
+
+/**
+ * POST /api/orders/cleanup-shipped
+ * ACK ngay — dọn đơn kẹt SHIPPED chạy nền (tránh timeout proxy/cPanel).
+ * Body: { shopIds?: string[], maxOrders?: number, wait?: boolean }
+ */
+export async function cleanupShipped(req, res) {
+  try {
+    if (!isMongoReady()) {
+      return res.status(503).json({
+        success: false,
+        error: "mongodb_not_ready",
+        message: "MongoDB chưa sẵn sàng.",
+      });
+    }
+    const body = req.body || {};
+    const shopIdsRaw = body.shop_ids ?? body.shopIds ?? body.shop_id ?? req.query.shop_ids;
+    const shopIds = Array.isArray(shopIdsRaw)
+      ? shopIdsRaw.map((s) => String(s || "").trim()).filter(Boolean)
+      : shopIdsRaw
+        ? String(shopIdsRaw)
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : undefined;
+    const maxRaw = Number(body.maxOrders ?? body.max ?? req.query.max ?? 2500);
+    const maxOrders = Number.isFinite(maxRaw)
+      ? Math.min(Math.max(1, Math.floor(maxRaw)), 2500)
+      : 2500;
+    const wait =
+      body.wait === true ||
+      body.wait === "1" ||
+      req.query.wait === "1" ||
+      req.query.wait === "true";
+
+    if (wait) {
+      const locked = deps.beginCleanupStuckShippedJob();
+      if (!locked) {
+        return res.status(200).json({
+          success: true,
+          background: true,
+          message: "Job dọn đơn kẹt đang chạy. Gọi GET /api/orders/cleanup-shipped để xem tiến độ.",
+        });
+      }
+      const result = await deps.cleanupStuckShippedOrders({
+        shopIds,
+        maxOrders,
+        trigger: "api_wait",
+        alreadyLocked: true,
+      });
+      ordersRefreshCache = null;
+      return res.status(200).json({ success: true, background: false, ...result });
+    }
+
+    const locked = deps.beginCleanupStuckShippedJob();
+    if (!locked) {
+      return res.status(200).json({
+        success: true,
+        background: true,
+        inFlight: true,
+        message: "Job dọn đơn kẹt đang chạy. Đợi xong rồi F5 Dashboard.",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      background: true,
+      inFlight: true,
+      message:
+        "Đang đối soát đơn kẹt Đang giao với Shopee ngầm. F5 Dashboard sau 1–2 phút.",
+    });
+
+    setImmediate(() => {
+      deps
+        .cleanupStuckShippedOrders({
+          shopIds,
+          maxOrders,
+          trigger: "api",
+          alreadyLocked: true,
+        })
+        .then((result) => {
+          ordersRefreshCache = null;
+          console.log(`[Orders] cleanup-shipped BG ${result?.message || ""}`);
+        })
+        .catch((err) => {
+          console.error("[Orders] cleanup-shipped BG failed:", err?.message || err);
+        });
+    });
+    return;
+  } catch (error) {
+    console.error("[Orders] cleanup-shipped failed:", error);
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "cleanup_shipped_failed",
+      });
+    }
+    return;
+  }
+}
+
+/** GET /api/orders/cleanup-shipped — trạng thái job dọn đơn kẹt. */
+export async function getCleanupShippedStatus(_req, res) {
+  const status = deps.getCleanupStuckShippedStatus();
+  return res.status(200).json({
+    success: true,
+    inFlight: Boolean(status?.inFlight),
+    result: status?.result || null,
+  });
+}
+
+/** POST /api/orders/recalculate-counts — đếm lại badge bằng countDocuments. */
+export async function recalculateOrderCounts(req, res) {
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  try {
+    if (!isMongoReady()) {
+      return res.status(503).json({
+        success: false,
+        error: "mongodb_not_ready",
+      });
+    }
+    const shopIds = parseShopIdsParam(
+      req.body?.shop_ids ?? req.body?.shopIds ?? req.query.shop_ids ?? req.query.shopIds,
+      req.body?.shop_id ?? req.body?.shopId ?? req.query.shop_id ?? req.query.shopId,
+    );
+    const shopId = shopIds.length === 1 ? shopIds[0] : String(req.body?.shop_id ?? req.query.shop_id ?? "").trim();
+    ordersRefreshCache = null;
+    const counts = await countOrdersByTabsFromStore({
+      shopId: shopId || undefined,
+      shopIds: shopIds.length > 1 ? shopIds : undefined,
+    });
+    console.log("[POST /api/orders/recalculate-counts] counts=", counts);
+    return res.status(200).json({
+      success: true,
+      counts,
+      shipping: Number(counts.shipping) || 0,
+      message: `Đã đếm lại: Đang giao = ${Number(counts.shipping) || 0}`,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "recalculate_failed",
     });
   }
 }

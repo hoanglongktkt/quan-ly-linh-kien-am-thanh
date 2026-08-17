@@ -5951,6 +5951,188 @@ export async function loadAllHandedOverShopeeOrdersFromStore(opts?: {
   return orders;
 }
 
+const CLEANUP_SHIPPED_QUERY_CAP = 2500;
+const CLEANUP_SHIPPED_WRITE_BATCH = 100;
+const SHOPEE_TERMINAL_RAW = new Set([
+  "COMPLETED",
+  "CANCELLED",
+  "IN_CANCEL",
+  "TO_RETURN",
+]);
+
+export type StuckShippedOrderKey = {
+  orderSn: string;
+  shopId: string;
+};
+
+/** Lean keys của tab Đang giao — không hydrate full document. */
+export async function loadStuckShippedOrderKeysFromStore(opts?: {
+  shopIds?: string[];
+  limit?: number;
+}): Promise<StuckShippedOrderKey[]> {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const cap = Math.min(
+    Math.max(1, Math.floor(Number(opts?.limit) || CLEANUP_SHIPPED_QUERY_CAP)),
+    CLEANUP_SHIPPED_QUERY_CAP,
+  );
+  const and: Record<string, unknown>[] = [orderTabFilter("shipping")];
+  const shopFilter = buildShopIdMongoFilter(undefined, opts?.shopIds);
+  if (shopFilter) and.push(shopFilter);
+  const filter = and.length === 1 ? and[0] : { $and: and };
+  const docs = await OrderModel.find(filter)
+    .select({ orderSn: 1, shopId: 1, "data.shopId": 1, "data.orderSn": 1 })
+    .limit(cap)
+    .maxTimeMS(30_000)
+    .lean();
+  const out: StuckShippedOrderKey[] = [];
+  const seen = new Set<string>();
+  for (const d of docs as any[]) {
+    const orderSn = String(
+      d?.orderSn || d?.data?.orderSn || String(d?._id || "").replace(/^shopee-/i, ""),
+    )
+      .replace(/^shopee-/i, "")
+      .trim();
+    if (!orderSn || seen.has(orderSn)) continue;
+    seen.add(orderSn);
+    out.push({
+      orderSn,
+      shopId: String(d?.shopId || d?.data?.shopId || "").trim(),
+    });
+  }
+  console.log(
+    `[MongoDB] stuck SHIPPED keys=${out.length} cap=${cap}` +
+      `${opts?.shopIds?.length ? ` shops=${opts.shopIds.join(",")}` : ""}`,
+  );
+  return out;
+}
+
+function localStatusFromShopeeTerminal(raw: string): {
+  status: string;
+  kind?: string;
+  isReturn?: boolean;
+} {
+  if (raw === "COMPLETED") return { status: "completed" };
+  if (raw === "CANCELLED" || raw === "IN_CANCEL") {
+    return { status: "cancelled", kind: "cancelled" };
+  }
+  return { status: "return_pending", kind: "refund_return", isReturn: true };
+}
+
+/**
+ * Ghi đè status Mongo khi Shopee đã COMPLETED / CANCELLED / IN_CANCEL / TO_RETURN.
+ * Chỉ $set field trạng thái — không upsert, không đụng tab khác.
+ */
+export async function bulkHealTerminalStatusesFromShopee(
+  patches: Array<{
+    orderSn: string;
+    shopId?: string;
+    shopee_order_status: string;
+  }>,
+): Promise<{ matched: number; modified: number; written: number }> {
+  if (!isMongoReady()) return { matched: 0, modified: 0, written: 0 };
+  requireMongo();
+  const list = (Array.isArray(patches) ? patches : [])
+    .map((p) => ({
+      orderSn: String(p?.orderSn || "")
+        .replace(/^shopee-/i, "")
+        .trim(),
+      shopId: String(p?.shopId || "").trim(),
+      raw: String(p?.shopee_order_status || "")
+        .trim()
+        .toUpperCase(),
+    }))
+    .filter((p) => p.orderSn && SHOPEE_TERMINAL_RAW.has(p.raw));
+  if (list.length === 0) return { matched: 0, modified: 0, written: 0 };
+
+  let matched = 0;
+  let modified = 0;
+  let written = 0;
+  const now = new Date();
+  const maxBatches = Math.ceil(CLEANUP_SHIPPED_QUERY_CAP / CLEANUP_SHIPPED_WRITE_BATCH);
+  for (let i = 0; i < list.length && i / CLEANUP_SHIPPED_WRITE_BATCH < maxBatches; i += CLEANUP_SHIPPED_WRITE_BATCH) {
+    const chunk = list.slice(i, i + CLEANUP_SHIPPED_WRITE_BATCH);
+    const ops = chunk.map((p) => {
+      const mapped = localStatusFromShopeeTerminal(p.raw);
+      const _id = `shopee-${p.orderSn}`;
+      const $set: Record<string, unknown> = {
+        orderSn: p.orderSn,
+        status: mapped.status,
+        shopee_order_status: p.raw,
+        is_pending_shopee_check: false,
+        last_synced_at: now,
+        is_handed_over: false,
+        "data.orderSn": p.orderSn,
+        "data.order_sn": p.orderSn,
+        "data.status": mapped.status,
+        "data.shopee_order_status": p.raw,
+        "data.is_pending_shopee_check": false,
+        "data.last_synced_at": now.toISOString(),
+        "data.is_handed_over": false,
+        "data.isHandedOverToCarrier": false,
+        "data.is_handed_over_to_carrier": false,
+        "data.is_handed_over_to_courier": false,
+        "data.local_status": "NONE",
+        "data.localStatus": "NONE",
+        "data.internal_status": "NONE",
+      };
+      if (mapped.kind) {
+        $set.shopee_cancel_return_kind = mapped.kind;
+        $set["data.shopee_cancel_return_kind"] = mapped.kind;
+      }
+      if (mapped.isReturn) {
+        $set.is_return = true;
+        $set["data.is_return"] = true;
+      }
+      if (p.shopId) {
+        $set.shopId = p.shopId;
+        $set["data.shopId"] = p.shopId;
+      }
+      return {
+        updateOne: {
+          filter: buildOrderCompoundFilter(p.orderSn, _id, p.shopId || null),
+          update: { $set },
+          upsert: false,
+        },
+      };
+    });
+    try {
+      await withWriteTimeout(
+        enqueueWrite(async () => {
+          const result = await OrderModel.bulkWrite(ops as any, {
+            ordered: false,
+            maxTimeMS: 8_000,
+          });
+          matched += Number(result.matchedCount || 0);
+          modified += Number(result.modifiedCount || 0);
+        }),
+        "cleanup_shipped_heal",
+      );
+      written += ops.length;
+    } catch (err: any) {
+      console.warn(
+        "[MongoDB] bulkHealTerminalStatuses batch failed:",
+        err?.message || err,
+      );
+    }
+    if (i + CLEANUP_SHIPPED_WRITE_BATCH < list.length) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
+  console.log(
+    `[MongoDB] bulkHealTerminalStatuses written=${written} matched=${matched} modified=${modified}`,
+  );
+  return { matched, modified, written };
+}
+
+/** Đếm lại badge/tab từ Mongo countDocuments — không có collection counters ảo. */
+export async function recalculateOrderTabCountsFromStore(opts?: {
+  shopId?: string;
+  shopIds?: string[];
+}): Promise<Record<string, number>> {
+  return countOrdersByTabsFromStore(opts);
+}
+
 /**
  * Khi refresh shallow (limit), vẫn phải kéo đủ đơn thuộc các tab vận hành
  * (Chưa xử lý / Đã xử lý / Chờ xác nhận / Đã giao ĐVVC) — tránh badge=4 mà list=0
@@ -7604,6 +7786,7 @@ export async function getDashboardStatsFromStore(
       ).maxTimeMS(6000),
       OrderModel.countDocuments(withDashboard(orderTabFilter("unprocessed"))).maxTimeMS(6000),
       OrderModel.countDocuments(withDashboard(orderTabFilter("processed"))).maxTimeMS(6000),
+      // Live countDocuments tab Đang giao — KHÔNG dùng cache/counters ảo.
       OrderModel.countDocuments(withDashboard(orderTabFilter("shipping"))).maxTimeMS(6000),
       OrderModel.countDocuments(withDashboard(orderTabFilter("return_pending"))).maxTimeMS(6000),
     ]);

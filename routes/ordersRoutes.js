@@ -6,6 +6,9 @@ import {
   getOrderEvents,
   listOrders,
   cleanupHandedOver,
+  cleanupShipped,
+  getCleanupShippedStatus,
+  recalculateOrderCounts,
   batchDeleteOrders,
   cleanupLabelPdfs,
   cleanupProcessedPickup,
@@ -64,6 +67,9 @@ router.post("/pull", pullOrders);
 router.post("/quick-sync", quickSyncOrders);
 router.post("/fast-process", fastProcessOrders);
 router.post("/cleanup-handed-over", h(cleanupHandedOver));
+router.post("/cleanup-shipped", h(cleanupShipped));
+router.get("/cleanup-shipped", h(getCleanupShippedStatus));
+router.post("/recalculate-counts", h(recalculateOrderCounts));
 router.post("/batch-delete", h(batchDeleteOrders));
 router.post("/cleanup-label-pdfs", h(cleanupLabelPdfs));
 router.post("/cleanup-processed-pickup", h(cleanupProcessedPickup));
