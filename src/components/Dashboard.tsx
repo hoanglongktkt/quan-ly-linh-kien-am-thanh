@@ -150,8 +150,6 @@ export default function Dashboard({
   const [stockEditItem, setStockEditItem] = useState<{ id: string; title: string; stock: number } | null>(null);
   const [stockInput, setStockInput] = useState('');
   const [stockSaving, setStockSaving] = useState(false);
-  const [cleanupBusy, setCleanupBusy] = useState(false);
-  const [cleanupMsg, setCleanupMsg] = useState<string | null>(null);
   const ordersRef = useRef(orders);
   const productsRef = useRef(products);
   ordersRef.current = orders;
@@ -251,61 +249,6 @@ export default function Dashboard({
   useEffect(() => {
     fetchDashboard(dateRange);
   }, [dateRange, fetchDashboard]);
-
-  const handleCleanupShipped = useCallback(async () => {
-    const token = localStorage.getItem('admin_token');
-    if (!token || cleanupBusy) return;
-    setCleanupBusy(true);
-    setCleanupMsg('Đang đối soát đơn kẹt Đang giao với Shopee...');
-    try {
-      const startRes = await fetch('/api/orders/cleanup-shipped', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({}),
-      });
-      const startJson = await startRes.json().catch(() => ({} as Record<string, unknown>));
-      if (!startRes.ok || (startJson as { success?: boolean }).success === false) {
-        throw new Error(
-          String((startJson as { message?: string; error?: string }).message ||
-            (startJson as { error?: string }).error ||
-            `HTTP ${startRes.status}`),
-        );
-      }
-      const deadline = Date.now() + 5 * 60 * 1000;
-      await new Promise((r) => setTimeout(r, 1500));
-      while (Date.now() < deadline) {
-        const st = await fetch('/api/orders/cleanup-shipped', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const data = (await st.json().catch(() => ({}))) as {
-          inFlight?: boolean;
-          result?: {
-            shippingBefore?: number;
-            shippingAfter?: number;
-            updated?: number;
-            message?: string;
-          } | null;
-        };
-        if (!data.inFlight && data.result) {
-          const r = data.result;
-          setCleanupMsg(
-            `Xong: Đang giao ${r.shippingBefore ?? '?'} → ${r.shippingAfter ?? '?'} (cập nhật ${r.updated ?? 0} đơn).`,
-          );
-          await fetchDashboard(dateRange);
-          return;
-        }
-        await new Promise((r) => setTimeout(r, 3000));
-      }
-      setCleanupMsg('Job vẫn chạy nền. F5 Dashboard sau 1–2 phút.');
-    } catch (err) {
-      setCleanupMsg(err instanceof Error ? err.message : 'Không chạy được dọn đơn kẹt.');
-    } finally {
-      setCleanupBusy(false);
-    }
-  }, [cleanupBusy, dateRange, fetchDashboard]);
 
   useEffect(() => {
     const token = localStorage.getItem('admin_token');
@@ -478,16 +421,7 @@ export default function Dashboard({
         <h1 className="text-lg font-extrabold text-gray-900 tracking-tight">
           Bảng Điều Khiển Tổng Quan (V2)
         </h1>
-        <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap justify-end">
-          <button
-            type="button"
-            onClick={() => void handleCleanupShipped()}
-            disabled={cleanupBusy}
-            className="px-3 py-2.5 min-h-11 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-xs font-bold rounded-xl flex items-center gap-2"
-          >
-            {cleanupBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Truck className="w-4 h-4" />}
-            {cleanupBusy ? 'Đang dọn đơn kẹt...' : 'Dọn đơn kẹt Đang giao'}
-          </button>
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <Calendar className="w-4 h-4 text-gray-400 shrink-0" />
           <select
             value={dateRange}
@@ -502,12 +436,6 @@ export default function Dashboard({
           </select>
         </div>
       </div>
-
-      {cleanupMsg && (
-        <div className="p-3 rounded-xl border border-blue-200 bg-blue-50 text-xs text-blue-800 font-semibold">
-          {cleanupMsg}
-        </div>
-      )}
 
       {usingFallback && (
         <div className="p-3 rounded-xl border border-amber-200 bg-amber-50 text-xs text-amber-800">

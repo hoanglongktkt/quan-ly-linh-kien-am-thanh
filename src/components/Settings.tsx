@@ -163,8 +163,6 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
   const [isSavingGemini, setIsSavingGemini] = useState(false);
   const [isTestingGemini, setIsTestingGemini] = useState(false);
   const [geminiToast, setGeminiToast] = useState<string | null>(null);
-  const [cleanupShippedBusy, setCleanupShippedBusy] = useState(false);
-  const [cleanupShippedMsg, setCleanupShippedMsg] = useState<string | null>(null);
 
   useEffect(() => {
     const token = localStorage.getItem('admin_token');
@@ -234,48 +232,6 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
       showGeminiToast(err.message || 'API Key không hợp lệ');
     } finally {
       setIsTestingGemini(false);
-    }
-  };
-
-  const handleCleanupShipped = async () => {
-    if (cleanupShippedBusy) return;
-    setCleanupShippedBusy(true);
-    setCleanupShippedMsg('Đang đối soát đơn kẹt Đang giao với Shopee...');
-    try {
-      const token = localStorage.getItem('admin_token');
-      const startRes = await fetch('/api/orders/cleanup-shipped', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: token ? `Bearer ${token}` : '',
-        },
-        body: JSON.stringify({}),
-      });
-      const startJson = await startRes.json();
-      if (!startRes.ok || startJson.success === false) {
-        throw new Error(startJson.message || startJson.error || 'Không chạy được job dọn đơn.');
-      }
-      const deadline = Date.now() + 5 * 60 * 1000;
-      await new Promise((r) => setTimeout(r, 1500));
-      while (Date.now() < deadline) {
-        const st = await fetch('/api/orders/cleanup-shipped', {
-          headers: { Authorization: token ? `Bearer ${token}` : '' },
-        });
-        const data = await st.json();
-        if (!data.inFlight && data.result) {
-          const r = data.result;
-          setCleanupShippedMsg(
-            `Xong: Đang giao ${r.shippingBefore ?? '?'} → ${r.shippingAfter ?? '?'} (cập nhật ${r.updated ?? 0} đơn).`,
-          );
-          return;
-        }
-        await new Promise((r) => setTimeout(r, 3000));
-      }
-      setCleanupShippedMsg('Job vẫn chạy nền. F5 Dashboard sau 1–2 phút.');
-    } catch (err: any) {
-      setCleanupShippedMsg(err.message || 'Dọn đơn kẹt thất bại.');
-    } finally {
-      setCleanupShippedBusy(false);
     }
   };
 
@@ -1230,32 +1186,6 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
             </div>
           </div>
         </div>
-      </div>
-
-      {/* Bảo trì đơn kẹt Đang giao */}
-      <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6 space-y-4">
-        <div>
-          <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
-            <Truck className="w-5 h-5 text-blue-600" /> Dọn đơn kẹt Đang giao
-          </h3>
-          <p className="text-xs text-gray-400 mt-1">
-            Đối soát toàn bộ đơn SHIPPED trong Mongo với trạng thái thật trên Shopee, rồi cập nhật COMPLETED / CANCELLED / TO_RETURN.
-          </p>
-        </div>
-        {cleanupShippedMsg && (
-          <div className="px-4 py-2.5 bg-blue-50 border border-blue-100 text-blue-800 text-xs font-bold rounded-xl">
-            {cleanupShippedMsg}
-          </div>
-        )}
-        <button
-          type="button"
-          onClick={() => void handleCleanupShipped()}
-          disabled={cleanupShippedBusy}
-          className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition-all disabled:opacity-60 flex items-center gap-2"
-        >
-          {cleanupShippedBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-          {cleanupShippedBusy ? 'Đang dọn...' : 'Chạy dọn đơn kẹt'}
-        </button>
       </div>
 
       {/* Gemini AI Configuration */}

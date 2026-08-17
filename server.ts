@@ -175,6 +175,9 @@ import {
   getSyncJobById,
   listOrders,
   cleanupHandedOver,
+  cleanupShipped,
+  getCleanupShippedStatus,
+  recalculateOrderCounts,
   cleanupClosedRetention,
   cleanupMongoTemp,
   ensureMongoTtl,
@@ -22076,6 +22079,12 @@ async function startServer() {
   app.post("/api/orders/mark-printed", authMiddleware, markPrinted);
   app.post("/api/orders/update-print-status", authMiddleware, updatePrintStatus);
   app.post("/api/orders/reset-print-status", authMiddleware, resetPrintStatus);
+  // One-time script: dọn đơn kẹt SHIPPED — đăng ký tường minh (tránh 404 nếu router cũ trên cPanel).
+  app.post("/api/orders/cleanup-shipped", authMiddleware, cleanupShipped);
+  app.get("/api/orders/cleanup-shipped", authMiddleware, getCleanupShippedStatus);
+  app.post("/api/cleanup-shipped", authMiddleware, cleanupShipped);
+  app.get("/api/cleanup-shipped", authMiddleware, getCleanupShippedStatus);
+  app.post("/api/orders/recalculate-counts", authMiddleware, recalculateOrderCounts);
   app.use("/api/orders", authMiddleware, ordersRoutes);
   // Endpoint tạm: quét đơn thiếu mã VĐ / kẹt unprocessed → get_order_detail
   app.post("/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrdersRoute);

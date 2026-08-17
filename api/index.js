@@ -23,6 +23,7 @@ import { handleScanBgEnqueue, handleScanBgStatus, handleScanBgAck } from '../_li
 import { handleHandOverCarrier } from '../_lib/handlers/handOverCarrier.js';
 import { handleConfirmReturnReceived } from '../_lib/handlers/confirmReturnReceived.js';
 import { handleCleanupHandedOver } from '../_lib/handlers/cleanupHandedOver.js';
+import { handleCleanupShipped } from '../_lib/handlers/cleanupShipped.js';
 import { handleCleanupProcessedPickup } from '../_lib/handlers/cleanupProcessedPickup.js';
 import { handleHydrateTracking } from '../_lib/handlers/hydrateTracking.js';
 import { handleLabelProxy } from '../_lib/handlers/labels.js';
@@ -78,6 +79,8 @@ const LOCAL_ROUTES = {
   'orders/hand-over-carrier': handleHandOverCarrier,
   'orders/hand-over-carrier/bulk': handleHandOverCarrier,
   'orders/cleanup-handed-over': handleCleanupHandedOver,
+  'orders/cleanup-shipped': handleCleanupShipped,
+  'cleanup-shipped': handleCleanupShipped,
   'orders/cleanup-processed-pickup': handleCleanupProcessedPickup,
   // cPanel cũ chưa có route — hydrate tracking Mongo → PATCH orders trên cPanel.
   'orders/hydrate-tracking': handleHydrateTracking,

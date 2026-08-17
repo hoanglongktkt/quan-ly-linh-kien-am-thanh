@@ -136342,6 +136342,11 @@ async function startServer() {
   app.post("/api/orders/mark-printed", authMiddleware, markPrinted);
   app.post("/api/orders/update-print-status", authMiddleware, updatePrintStatus);
   app.post("/api/orders/reset-print-status", authMiddleware, resetPrintStatus);
+  app.post("/api/orders/cleanup-shipped", authMiddleware, cleanupShipped);
+  app.get("/api/orders/cleanup-shipped", authMiddleware, getCleanupShippedStatus);
+  app.post("/api/cleanup-shipped", authMiddleware, cleanupShipped);
+  app.get("/api/cleanup-shipped", authMiddleware, getCleanupShippedStatus);
+  app.post("/api/orders/recalculate-counts", authMiddleware, recalculateOrderCounts);
   app.use("/api/orders", authMiddleware, ordersRoutes);
   app.post("/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrders);
   app.post("/api/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrders);
