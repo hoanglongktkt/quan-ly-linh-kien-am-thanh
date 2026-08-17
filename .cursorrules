@@ -1,14 +1,11 @@
-# Cursor Rules - Optimization & Automation
-- Trả lời ngắn gọn, tập trung thẳng vào giải pháp, tuyệt đối KHÔNG giải thích code dông dài.
-- Tự động áp dụng chỉnh sửa (Apply) trực tiếp vào file, tự động Lưu (Save) và nhấn Keep All.
-- Tuyệt đối KHÔNG dừng lại chờ người dùng xác nhận thủ công.
-
-# Ignore heavy directories to save tokens
-- KHÔNG quét hoặc đọc toàn bộ các thư mục `node_modules`, `.next`, `dist`, `build`.
-- Chỉ tập trung quét các file logic chính trong thư mục `src`, `pages`, `components`, `backend`.
-
-# Quy trình Tự động hóa & Phản hồi (BẮT BUỘC)
-- Sau khi sửa code xong, tự động chạy lệnh Terminal:
-  1. `npm run build`
-  2. `git add . && git commit -m "auto build and update" && git push`
-- Trong câu trả lời cuối cùng, CHỈ xuất duy nhất danh sách các file/thư mục cụ thể cần ghi đè lên cPanel.
+QUY TẮC BẮT BUỘC (VÙNG CẤM ĐỊA VÀ AN TOÀN HỆ THỐNG):
+1. KHÔNG ĐỤNG CHỌT LINH TINH: Giữ nguyên luồng hoạt động của các tab khác (Chờ xác nhận, Đang giao, Yêu cầu trả hàng...). Tuyệt đối không tự ý sửa đổi logic ở các tính năng không nằm trong yêu cầu.
+2. CHỐNG VÒNG LẶP VÔ TẬN: Mọi vòng lặp (for, while, pagination) hoặc tác vụ gọi API Shopee BẮT BUỘC phải có điều kiện dừng (`break`), giới hạn query (`limit`), và thời gian nghỉ (`sleep`/`delay` bằng Promise) để chống tràn CPU, chống Rate Limit và treo server cPanel.
+3. TỐI ƯU CODE: Dọn dẹp code gọn gàng, chia nhỏ Component nếu file quá dài để dễ quản lý.
+4. ĐẦU RA (OUTPUT):
+QUY TẮC BẮT BUỘC (VÙNG CẤM ĐỊA VÀ AN TOÀN HỆ THỐNG):
+- KHÔNG ĐỤNG CHỌT LINH TINH: Giữ nguyên luồng hoạt động của các tab khác (Chờ xác nhận, Đang giao, pull đơn thường...).
+- CHỐNG VÒNG LẶP VÔ TẬN: Vòng lặp fetch bù BẮT BUỘC phải có `sleep`/`delay` bằng Promise giữa mỗi lần gọi API Shopee.
+- Sau khi chỉnh sửa code xong, hãy tự động lưu (save) và chấp nhận tất cả thay đổi (Keep All).
+- Tự động chạy lệnh build (npm run build) và đẩy code lên GitHub (git add ., git commit, git push).
+- Trong câu trả lời cuối cùng, chỉ ghi rõ danh sách các file/thư mục cụ thể mà tôi cần copy đè lên server cPanel, không cần giải thích dài dòng.
