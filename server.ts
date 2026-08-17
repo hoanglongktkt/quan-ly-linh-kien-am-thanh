@@ -462,6 +462,7 @@ import {
   deleteHandedOverOrdersFromStore,
   clearHandedOverFlagsForShippedOrders,
   markOrdersCancelledAsShopeeNotFoundInStore,
+  findWrongShopCancelledCandidatesFromStore,
   findCancelledEmptyItemsFromStore,
   patchOrderItemsOnlyInStore,
   loadAllHandedOverShopeeOrdersFromStore,
@@ -3276,6 +3277,57 @@ async function reconcileHandedOverCarrierStatuses(opts?: {
   }
 }
 
+const MAX_CROSS_SHOP_PROBE_PER_CHUNK = 8;
+
+/**
+ * Thử get_order_detail trên các shop ủy quyền khác — shop nào trả đơn thì là chủ sở hữu.
+ */
+async function probeOrderDetailOnOtherShops(
+  orderSn: string,
+  skipShopId: string,
+): Promise<{ shopId: string; apiShopId: string; token: string; detail: any } | null> {
+  const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
+  if (!sn) return null;
+  const skip = String(normalizeShopIdKey(skipShopId) || skipShopId || "").trim();
+  const shopIds = listShopeeSyncShopIds();
+  for (const sid of shopIds) {
+    const key = String(normalizeShopIdKey(sid) || sid || "").trim();
+    if (!key || key === skip) continue;
+    try {
+      const auth = await getShopeeAccessTokenForApi(sid);
+      if (!auth?.token) continue;
+      const detail = await shopeeGetOrderDetail(auth.apiShopId || sid, auth.token, [sn]);
+      if (detail?.error) {
+        console.error(
+          `[RemapShop] probe fail order_sn=${sn} shop=${key}: ${detail.error} ${detail.message || ""}`,
+        );
+        await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+        continue;
+      }
+      const list = detail?.response?.order_list || detail?.order_list || [];
+      const hit = Array.isArray(list)
+        ? list.find((it: any) => String(it?.order_sn || "").trim() === sn)
+        : null;
+      if (hit) {
+        console.log(`[RemapShop] probe HIT order_sn=${sn} owner_shop=${key}`);
+        return {
+          shopId: key,
+          apiShopId: String(auth.apiShopId || sid),
+          token: auth.token,
+          detail: hit,
+        };
+      }
+    } catch (err: any) {
+      console.error(
+        `[RemapShop] probe exception order_sn=${sn} shop=${key}:`,
+        err?.message || err,
+      );
+    }
+    await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+  }
+  return null;
+}
+
 /**
  * Remap shopId cho đơn bị gắn nhầm AuDIO↔LKAT:
  * Thử get_order_detail với TỪNG shop có token — shop nào trả đơn thì là chủ sở hữu.
@@ -3322,6 +3374,7 @@ async function remapMisassignedOrderShopIds(orders: any[]): Promise<{
     const currentName = order?.shopName || null;
     let ownerShop: string | null = null;
     let ownerRaw: string | null = null;
+    let ownerHit: any = null;
     const probeErrors: any[] = [];
 
     for (const [sid, auth] of authByShop) {
@@ -3334,6 +3387,7 @@ async function remapMisassignedOrderShopIds(orders: any[]): Promise<{
         if (hit) {
           ownerShop = sid;
           ownerRaw = String(hit.order_status || "").toUpperCase() || null;
+          ownerHit = hit;
           break;
         }
         if (detail?.error) {
@@ -3342,6 +3396,7 @@ async function remapMisassignedOrderShopIds(orders: any[]): Promise<{
       } catch (err: any) {
         probeErrors.push({ shopId: sid, error: err?.message || String(err) });
       }
+      await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
     }
 
     if (!ownerShop) {
@@ -3353,27 +3408,46 @@ async function remapMisassignedOrderShopIds(orders: any[]): Promise<{
         action: "not_found_on_any_shop",
         probeErrors: probeErrors.slice(0, 4),
       });
+      console.error(
+        `[RemapShop] order_sn=${orderSn} không tìm thấy trên shop nào — GIỮ NGUYÊN status, KHÔNG hủy`,
+      );
       continue;
     }
 
     const correctName =
       resolveConnectedShopDisplayName(ownerShop) || `Shop ${ownerShop}`;
+    const existingRaw = String(order?.shopee_order_status || "").toUpperCase();
+    const existingLocal = String(order?.status || "").toLowerCase();
+    const wronglyCancelled =
+      Boolean(order?.shopee_not_found || order?.data?.shopee_not_found) ||
+      ((existingRaw === "CANCELLED" || existingLocal === "cancelled") &&
+        ownerRaw &&
+        ownerRaw !== "CANCELLED" &&
+        ownerRaw !== "IN_CANCEL");
+    const norm = ownerHit
+      ? normalizeShopeeOrderDetail(ownerShop, correctName, ownerHit)
+      : null;
+    const persistRow = {
+      ...(norm || order),
+      shopId: ownerShop,
+      shopName: correctName,
+      _shop_owner_verified: true,
+    };
     if (ownerShop === currentShop) {
       unchanged += 1;
-      // Vẫn sửa shopName nếu lệch canonical
-      if (String(order.shopName || "") !== correctName) {
+      if (String(order.shopName || "") !== correctName || wronglyCancelled) {
         order.shopId = ownerShop;
         order.shopName = correctName;
-        toPersist.push({
-          ...order,
-          shopId: ownerShop,
-          shopName: correctName,
-        });
+        if (norm) {
+          order.shopee_order_status = norm.shopee_order_status;
+          order.status = norm.status;
+        }
+        toPersist.push(persistRow);
         details.push({
           orderSn,
           currentShop,
           ownerShop,
-          action: "name_fixed",
+          action: wronglyCancelled ? "status_healed" : "name_fixed",
           shopName: correctName,
           shopee_raw: ownerRaw,
         });
@@ -3392,22 +3466,23 @@ async function remapMisassignedOrderShopIds(orders: any[]): Promise<{
     remapped += 1;
     order.shopId = ownerShop;
     order.shopName = correctName;
-    toPersist.push({
-      ...order,
-      shopId: ownerShop,
-      shopName: correctName,
-    });
+    if (norm) {
+      order.shopee_order_status = norm.shopee_order_status;
+      order.status = norm.status;
+    }
+    toPersist.push(persistRow);
     details.push({
       orderSn,
       currentShop,
       currentName,
       ownerShop,
       shopName: correctName,
-      action: "remapped",
+      action: wronglyCancelled ? "remapped_status_healed" : "remapped",
       shopee_raw: ownerRaw,
     });
     console.log(
-      `[RemapShop] order_sn=${orderSn} ${currentShop}(${currentName || "-"}) → ${ownerShop}(${correctName})`,
+      `[RemapShop] order_sn=${orderSn} ${currentShop}(${currentName || "-"}) → ${ownerShop}(${correctName})` +
+        ` raw=${ownerRaw || "-"}`,
     );
   }
 
@@ -3427,6 +3502,47 @@ async function remapMisassignedOrderShopIds(orders: any[]): Promise<{
     notFound,
     details,
   };
+}
+
+/**
+ * Chữa cháy: đơn CANCELLED vì sai shop_id (cờ shopee_not_found) → probe shop khác, restore status.
+ */
+async function repairWrongShopCancelledOrders(opts?: {
+  limit?: number;
+}): Promise<{ checked: number; remapped: number; healed: number }> {
+  const empty = { checked: 0, remapped: 0, healed: 0 };
+  if (!isMongoReady()) return empty;
+  const limit = Math.max(1, Math.min(20, Number(opts?.limit) || 12));
+  let keys: Array<{ orderSn: string; shopId: string }> = [];
+  try {
+    keys = await findWrongShopCancelledCandidatesFromStore({
+      limit,
+      lookbackDays: 14,
+    });
+  } catch (err: any) {
+    console.error("[RepairShop] find candidates failed:", err?.message || err);
+    return empty;
+  }
+  if (!keys.length) return empty;
+  let loaded: any[] = [];
+  try {
+    loaded = await loadOrdersFromStore({
+      orderSns: keys.map((k) => k.orderSn),
+    });
+  } catch (loadErr: any) {
+    console.error("[RepairShop] loadOrders failed:", loadErr?.message || loadErr);
+    return empty;
+  }
+  if (!loaded.length) return empty;
+  console.log(`[RepairShop] probe ${loaded.length} đơn CANCELLED/shopee_not_found...`);
+  const result = await remapMisassignedOrderShopIds(loaded);
+  const healed = (result.details || []).filter((d: any) =>
+    String(d?.action || "").includes("heal") || String(d?.action || "") === "remapped",
+  ).length;
+  console.log(
+    `[RepairShop] DONE checked=${result.checked} remapped=${result.remapped} healed≈${healed} notFound=${result.notFound}`,
+  );
+  return { checked: result.checked, remapped: result.remapped, healed };
 }
 
 /**
@@ -4592,6 +4708,25 @@ async function pullIncrementalOrdersFromShopee(opts?: {
       `[Orders Pull] perShop summary:`,
       JSON.stringify(perShopResults),
     );
+
+    if (Date.now() <= deadlineAt) {
+      try {
+        const repaired = await repairWrongShopCancelledOrders({ limit: 12 });
+        if (repaired.checked > 0) {
+          pulled += repaired.healed;
+          updated += repaired.remapped + repaired.healed;
+          syncDiag(
+            "Repair wrong-shop CANCELLED",
+            `checked=${repaired.checked} remapped=${repaired.remapped} healed=${repaired.healed}`,
+          );
+        }
+      } catch (repairErr: any) {
+        console.error(
+          "[Orders Pull] repairWrongShopCancelledOrders FAILED:",
+          repairErr?.message || repairErr,
+        );
+      }
+    }
 
     // Nút "Làm mới" phải đối soát cả các đơn cũ đang PROCESSED/READY_TO_SHIP.
     if (opts?.reconcileActive === true && Date.now() <= deadlineAt) {
@@ -10123,7 +10258,20 @@ function isShopeeOrderNotFoundError(error: unknown, message?: unknown): boolean 
   );
 }
 
-/** Đánh CANCELLED local khi Shopee báo đơn không còn (zombie / not found). */
+function isShopeeWrongShopError(error: unknown, message?: unknown): boolean {
+  const text = `${String(error || "")} ${String(message || "")}`;
+  return (
+    /invalid_shop/i.test(text) ||
+    /error_shop/i.test(text) ||
+    /wrong.?shop/i.test(text) ||
+    /sai.?shop/i.test(text) ||
+    /error_permission/i.test(text) ||
+    /shop_id.*(invalid|mismatch|not.?match|không)/i.test(text) ||
+    /(invalid|mismatch).*shop_id/i.test(text)
+  );
+}
+
+/** API lỗi ≠ đơn hủy. Chỉ log — tuyệt đối không ghi CANCELLED. */
 async function markLocalOrdersCancelledForShopeeNotFound(
   orderSns: string[],
   shopId: string,
@@ -10138,9 +10286,10 @@ async function markLocalOrdersCancelledForShopeeNotFound(
   ];
   if (!sns.length) return;
   const shopKey = String(normalizeShopIdKey(shopId) || shopId || "").trim();
-  console.warn(
-    `[Sync Shop ${shopKey || "-"}] Zombie NOT FOUND → CANCELLED n=${sns.length}` +
-      ` sns=${sns.slice(0, 8).join(",")}${sns.length > 8 ? "…" : ""} reason=${reason}`,
+  console.error(
+    `[Sync Shop ${shopKey || "-"}] get_order_detail FAIL n=${sns.length}` +
+      ` sns=${sns.slice(0, 8).join(",")}${sns.length > 8 ? "…" : ""} reason=${reason}` +
+      ` — GIỮ NGUYÊN status DB, KHÔNG đánh CANCELLED`,
   );
   try {
     await markOrdersCancelledAsShopeeNotFoundInStore(sns, {
@@ -10149,7 +10298,7 @@ async function markLocalOrdersCancelledForShopeeNotFound(
     });
   } catch (err: any) {
     console.error(
-      `[Sync Shop ${shopKey || "-"}] Lỗi ghi CANCELLED cho zombie:`,
+      `[Sync Shop ${shopKey || "-"}] log API-error skip-cancel failed:`,
       err?.message || err,
     );
   }
@@ -15487,7 +15636,10 @@ async function fetchNormalizeShopeeOrderChunk(
   ) => {
     failed_orders.push(orderSn);
     errors.push({ shopId: shopFileKey, error, message, orderSn, httpStatus });
-    if (isShopeeOrderNotFoundError(error, message)) {
+    if (
+      isShopeeOrderNotFoundError(error, message) ||
+      isShopeeWrongShopError(error, message)
+    ) {
       notFoundSns.add(orderSn);
     }
   };
@@ -15559,7 +15711,10 @@ async function fetchNormalizeShopeeOrderChunk(
             );
           } else {
             const norm = normalizeOne(orderSn, detail);
-            if (norm) normalized.push(norm);
+            if (norm) {
+              norm._shop_owner_verified = true;
+              normalized.push(norm);
+            }
           }
         }
       } catch (err: any) {
@@ -15626,12 +15781,12 @@ async function fetchNormalizeShopeeOrderChunk(
       if (detailResult?.error) {
         const message =
           detailResult.message || formatShopeeApiError(detailResult, detailResult.httpStatus);
-        // Batch cả mẻ "not found" → đánh CANCELLED luôn (không spam API lẻ).
+        // Batch not-found / sai shop — probe lẻ, KHÔNG đánh CANCELLED.
         if (isShopeeOrderNotFoundError(detailResult.error, message) && batch.length === 1) {
           pushFail(batch[0], String(detailResult.error), message, detailResult.httpStatus);
         } else if (isShopeeOrderNotFoundError(detailResult.error, message) && batch.length > 1) {
-          console.warn(
-            `[Sync Shop ${shopFileKey}] Lỗi: batch not-found — probe từng đơn: ${message}`,
+          console.error(
+            `[Sync Shop ${shopFileKey}] Lỗi: batch not-found — probe từng đơn, KHÔNG hủy: ${message}`,
           );
           await fetchBatchIndividually(batch, accessToken);
         } else {
@@ -15661,9 +15816,12 @@ async function fetchNormalizeShopeeOrderChunk(
               continue;
             }
             const norm = normalizeOne(orderSn, detail);
-            if (norm) normalized.push(norm);
+            if (norm) {
+              norm._shop_owner_verified = true;
+              normalized.push(norm);
+            }
           }
-          // Thiếu trong batch response → probe lẻ tuần tự; nếu vẫn not found → CANCELLED.
+          // Thiếu trong batch response → probe lẻ tuần tự; KHÔNG đánh CANCELLED.
           if (missingSns.length > 0) {
             console.warn(
               `[Sync Shop ${shopFileKey}] ${missingSns.length} đơn thiếu trong batch → probe lẻ: ${missingSns.slice(0, 5).join(",")}`,
@@ -15699,11 +15857,51 @@ async function fetchNormalizeShopeeOrderChunk(
   }
 
   if (notFoundSns.size > 0) {
+    const sns = [...notFoundSns];
+    console.error(
+      `[Sync Shop ${shopFileKey}] get_order_detail lỗi ${sns.length} đơn — GIỮ NGUYÊN status DB, KHÔNG đánh CANCELLED.` +
+        ` sns=${sns.slice(0, 8).join(",")}${sns.length > 8 ? "…" : ""}`,
+    );
     await markLocalOrdersCancelledForShopeeNotFound(
-      [...notFoundSns],
+      sns,
       shopApiId,
       "get_order_detail_not_found",
     );
+    let probed = 0;
+    for (const sn of sns) {
+      if (probed >= MAX_CROSS_SHOP_PROBE_PER_CHUNK) break;
+      probed += 1;
+      const hit = await probeOrderDetailOnOtherShops(sn, shopApiId);
+      if (!hit) {
+        console.error(
+          `[Sync Shop ${shopFileKey}] order_sn=${sn} sai shop/token/not-found — không tìm thấy shop khác, giữ trạng thái cũ.`,
+        );
+        continue;
+      }
+      try {
+        const ownerName =
+          resolveConnectedShopDisplayName(hit.shopId) || `Shop ${hit.shopId}`;
+        const norm = normalizeShopeeOrderDetail(hit.shopId, ownerName, hit.detail);
+        if (norm) {
+          norm._shop_owner_verified = true;
+          normalized.push(norm);
+          const failIdx = failed_orders.indexOf(sn);
+          if (failIdx >= 0) failed_orders.splice(failIdx, 1);
+          for (let ei = errors.length - 1; ei >= 0; ei -= 1) {
+            if (String(errors[ei]?.orderSn || "") === sn) errors.splice(ei, 1);
+          }
+          console.log(
+            `[Sync Shop ${shopFileKey}] REMAP order_sn=${sn} → shop=${hit.shopId} raw=${norm.shopee_order_status || "-"}`,
+          );
+        }
+      } catch (probeMapErr: any) {
+        console.error(
+          `[Sync Shop ${shopFileKey}] remap normalize fail order_sn=${sn}:`,
+          probeMapErr?.message || probeMapErr,
+        );
+      }
+      await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+    }
   }
 
   return { normalized, errors, failed_orders };
@@ -15824,9 +16022,14 @@ async function persistShopeeOrderChunk(
         continue;
       }
       // ĐA SHOP: đơn thuộc shop nào thì CHỐT shopId/shopName shop đó.
-      // Nguồn chân lý = shop đang gọi get_order_list/get_order_detail (syncCtx.apiShopId),
-      // KHÔNG kế thừa shopId cũ trong DB (bug gắn nhầm AuDIO↔LKAT).
+      // Ưu tiên shop đã xác thực từ get_order_detail thành công (kể cả probe shop khác).
+      // Fallback = shop đang chạy cron/webhook (syncCtx.apiShopId).
+      const verifiedShop =
+        normalized._shop_owner_verified === true
+          ? String(normalizeShopIdKey(normalized.shopId) || normalized.shopId || "").trim()
+          : "";
       const ownerShop =
+        verifiedShop ||
         (syncCtx?.apiShopId
           ? normalizeShopIdKey(syncCtx.apiShopId) || String(syncCtx.apiShopId)
           : "") ||
@@ -15907,6 +16110,7 @@ async function persistShopeeOrderChunk(
       row.shopId = ownerShop;
       row.shopName =
         resolveConnectedShopDisplayName(ownerShop, row.shopName) || `Shop ${ownerShop}`;
+      row._shop_owner_verified = true;
       forceHealPickupOrderIfHasTracking(row);
       promoteOrderStatusWhenTrackingReady(row);
       enforceShopeeTerminalLocalStatus(row);

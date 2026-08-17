@@ -77374,6 +77374,7 @@ async function bulkUpsertOrdersToStore(orders) {
       order.shipping_carrier || order.checkout_shipping_carrier || order.carrier || ""
     ).trim();
     const shopIdStr = order.shopId != null ? String(order.shopId).trim() : "";
+    const forceShopId = order._shop_owner_verified === true || order._force_shop_id === true;
     const channelStr = order.channel != null ? String(order.channel).trim() : "shopee";
     const $set = {
       orderSn: orderSn || null,
@@ -77465,6 +77466,12 @@ async function bulkUpsertOrdersToStore(orders) {
     }
     const returnSnStr = String(order.return_sn || "").trim();
     const $unset = {};
+    if (forceShopId) {
+      $unset.shopee_not_found = 1;
+      $unset["data.shopee_not_found"] = 1;
+      $unset["data.shopee_not_found_at"] = 1;
+      $unset["data.shopee_not_found_reason"] = 1;
+    }
     const clearCancelledReturn = order._clear_cancelled_return === true;
     const clearReturnSn = order._clear_return_sn === true || clearCancelledReturn || order.is_return === false && !returnSnStr && isUnshippedShopeeCancel(order);
     if (clearReturnSn) {
@@ -77676,7 +77683,8 @@ async function bulkUpsertOrdersToStore(orders) {
       event: null,
       orderSn,
       id: _id,
-      updateAt: incomingUpdateAt
+      updateAt: incomingUpdateAt,
+      forceShopId
     });
   }
   if (pendingWrites.length === 0) return 0;
@@ -77691,6 +77699,8 @@ async function bulkUpsertOrdersToStore(orders) {
           _id: 1,
           orderSn: 1,
           "data.orderSn": 1,
+          shopId: 1,
+          "data.shopId": 1,
           last_shopee_update_at: 1,
           status: 1,
           "data.status": 1,
@@ -77748,6 +77758,15 @@ async function bulkUpsertOrdersToStore(orders) {
           if (!$set) continue;
           stripWarehouseProtectedKeysFromSet($set);
           if (current) {
+            const existingShop = String(current.shopId || current.data?.shopId || "").trim();
+            const incomingShop = String($set.shopId || $set["data.shopId"] || "").trim();
+            if (existingShop && incomingShop && existingShop !== incomingShop && !item.forceShopId) {
+              delete $set.shopId;
+              delete $set["data.shopId"];
+              console.error(
+                `[MongoDB] KEEP shop_id=${existingShop} \u2014 skip overwrite incoming=${incomingShop} order_sn=${item.orderSn || item.id} (lu\u1ED3ng ch\u01B0a x\xE1c th\u1EF1c ch\u1EE7 \u0111\u01A1n)`
+              );
+            }
             const alreadyAcked = current.return_alert_pending === false || current.data?.return_alert_pending === false;
             const alreadyHadReturn = Boolean(
               String(current.return_sn || current.data?.return_sn || "").trim()
@@ -78766,56 +78785,71 @@ async function deleteHandedOverOrdersFromStore() {
   return { deleted, sns };
 }
 async function markOrdersCancelledAsShopeeNotFoundInStore(orderSns, opts) {
-  if (!isMongoReady()) return { matched: 0, modified: 0, sns: [] };
-  requireMongo();
   const sns = [
     ...new Set(
       (orderSns || []).map((sn) => String(sn || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
     )
   ];
-  if (sns.length === 0) return { matched: 0, modified: 0, sns: [] };
   const shopIdStr = opts?.shopId != null ? String(opts.shopId).trim() : "";
   const reason = String(opts?.reason || "shopee_get_order_detail_not_found").slice(0, 200);
-  const now = (/* @__PURE__ */ new Date()).toISOString();
-  const $set = {
-    status: "cancelled",
-    "data.status": "cancelled",
-    shopee_order_status: "CANCELLED",
-    "data.shopee_order_status": "CANCELLED",
-    is_handed_over: false,
-    "data.is_handed_over": false,
-    "data.isHandedOverToCarrier": false,
-    "data.is_handed_over_to_carrier": false,
-    "data.is_handed_over_to_courier": false,
-    "data.shopee_not_found": true,
-    "data.shopee_not_found_at": now,
-    "data.shopee_not_found_reason": reason,
-    "data.updated_at": now
-  };
-  if (shopIdStr) {
-    $set.shopId = shopIdStr;
-    $set["data.shopId"] = shopIdStr;
-  }
-  const ops = sns.map((sn) => {
-    const _id = `shopee-${sn}`;
-    return {
-      updateOne: {
-        filter: buildOrderCompoundFilter(sn, _id, shopIdStr || null),
-        update: { $set },
-        upsert: false
-      }
-    };
-  });
-  const result = await OrderModel.bulkWrite(ops, {
-    ordered: false,
-    maxTimeMS: 3e4
-  });
-  const matched = Number(result.matchedCount ?? result.nMatched ?? 0);
-  const modified = Number(result.modifiedCount ?? result.nModified ?? 0);
-  console.log(
-    `[MongoDB] markOrdersCancelledAsShopeeNotFoundInStore shop=${shopIdStr || "-"} sns=${sns.length} matched=${matched} modified=${modified} reason=${reason}`
+  console.error(
+    `[MongoDB] SKIP CANCELLED on API error shop=${shopIdStr || "-"} n=${sns.length} sns=${sns.slice(0, 8).join(",")}${sns.length > 8 ? "\u2026" : ""} reason=${reason} \u2014 gi\u1EEF nguy\xEAn tr\u1EA1ng th\xE1i c\u0169`
   );
-  return { matched, modified, sns };
+  return { matched: 0, modified: 0, sns };
+}
+async function findWrongShopCancelledCandidatesFromStore(opts) {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const limit = Math.max(1, Math.min(40, Number(opts?.limit) || 20));
+  const lookbackDays = Math.max(1, Math.min(30, Number(opts?.lookbackDays) || 14));
+  const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1e3);
+  const sinceIso = since.toISOString();
+  const docs = await OrderModel.find({
+    $and: [
+      {
+        $or: [
+          { channel: "shopee" },
+          { "data.channel": "shopee" },
+          { channel: { $exists: false } }
+        ]
+      },
+      {
+        $or: [
+          { "data.shopee_not_found": true },
+          { shopee_not_found: true },
+          { "data.shopee_not_found_reason": { $exists: true, $nin: [null, ""] } }
+        ]
+      },
+      {
+        $or: [
+          { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL"] } },
+          { "data.shopee_order_status": { $in: ["CANCELLED", "IN_CANCEL"] } },
+          { status: "cancelled" },
+          { "data.status": "cancelled" }
+        ]
+      },
+      {
+        $or: [
+          { "data.date": { $gte: sinceIso } },
+          { last_shopee_update_at: { $gte: since } },
+          { last_synced_at: { $gte: since } },
+          { "data.shopee_not_found_at": { $gte: sinceIso } }
+        ]
+      }
+    ]
+  }).select({ orderSn: 1, shopId: 1, "data.orderSn": 1, "data.shopId": 1 }).sort({ last_synced_at: -1, _id: -1 }).limit(limit).maxTimeMS(8e3).lean();
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const doc of docs || []) {
+    const sn = String(doc?.orderSn || doc?.data?.orderSn || "").replace(/^shopee-/i, "").trim();
+    if (!sn || seen.has(sn)) continue;
+    seen.add(sn);
+    out.push({
+      orderSn: sn,
+      shopId: String(doc?.shopId || doc?.data?.shopId || "").trim()
+    });
+  }
+  return out;
 }
 async function findCancelledEmptyItemsFromStore(opts) {
   if (!isMongoReady()) return [];
@@ -122130,6 +122164,47 @@ async function reconcileHandedOverCarrierStatuses(opts) {
     handedOverStatusReconcileInFlight = false;
   }
 }
+var MAX_CROSS_SHOP_PROBE_PER_CHUNK = 8;
+async function probeOrderDetailOnOtherShops(orderSn, skipShopId) {
+  const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
+  if (!sn) return null;
+  const skip = String(normalizeShopIdKey(skipShopId) || skipShopId || "").trim();
+  const shopIds = listShopeeSyncShopIds();
+  for (const sid of shopIds) {
+    const key = String(normalizeShopIdKey(sid) || sid || "").trim();
+    if (!key || key === skip) continue;
+    try {
+      const auth = await getShopeeAccessTokenForApi(sid);
+      if (!auth?.token) continue;
+      const detail = await shopeeGetOrderDetail(auth.apiShopId || sid, auth.token, [sn]);
+      if (detail?.error) {
+        console.error(
+          `[RemapShop] probe fail order_sn=${sn} shop=${key}: ${detail.error} ${detail.message || ""}`
+        );
+        await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+        continue;
+      }
+      const list = detail?.response?.order_list || detail?.order_list || [];
+      const hit = Array.isArray(list) ? list.find((it) => String(it?.order_sn || "").trim() === sn) : null;
+      if (hit) {
+        console.log(`[RemapShop] probe HIT order_sn=${sn} owner_shop=${key}`);
+        return {
+          shopId: key,
+          apiShopId: String(auth.apiShopId || sid),
+          token: auth.token,
+          detail: hit
+        };
+      }
+    } catch (err) {
+      console.error(
+        `[RemapShop] probe exception order_sn=${sn} shop=${key}:`,
+        err?.message || err
+      );
+    }
+    await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+  }
+  return null;
+}
 async function remapMisassignedOrderShopIds(orders) {
   const details = [];
   let remapped = 0;
@@ -122161,6 +122236,7 @@ async function remapMisassignedOrderShopIds(orders) {
     const currentName = order?.shopName || null;
     let ownerShop = null;
     let ownerRaw = null;
+    let ownerHit = null;
     const probeErrors = [];
     for (const [sid, auth] of authByShop) {
       try {
@@ -122170,6 +122246,7 @@ async function remapMisassignedOrderShopIds(orders) {
         if (hit) {
           ownerShop = sid;
           ownerRaw = String(hit.order_status || "").toUpperCase() || null;
+          ownerHit = hit;
           break;
         }
         if (detail?.error) {
@@ -122178,6 +122255,7 @@ async function remapMisassignedOrderShopIds(orders) {
       } catch (err) {
         probeErrors.push({ shopId: sid, error: err?.message || String(err) });
       }
+      await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
     }
     if (!ownerShop) {
       notFound += 1;
@@ -122188,24 +122266,37 @@ async function remapMisassignedOrderShopIds(orders) {
         action: "not_found_on_any_shop",
         probeErrors: probeErrors.slice(0, 4)
       });
+      console.error(
+        `[RemapShop] order_sn=${orderSn} kh\xF4ng t\xECm th\u1EA5y tr\xEAn shop n\xE0o \u2014 GI\u1EEE NGUY\xCAN status, KH\xD4NG h\u1EE7y`
+      );
       continue;
     }
     const correctName = resolveConnectedShopDisplayName(ownerShop) || `Shop ${ownerShop}`;
+    const existingRaw = String(order?.shopee_order_status || "").toUpperCase();
+    const existingLocal = String(order?.status || "").toLowerCase();
+    const wronglyCancelled = Boolean(order?.shopee_not_found || order?.data?.shopee_not_found) || (existingRaw === "CANCELLED" || existingLocal === "cancelled") && ownerRaw && ownerRaw !== "CANCELLED" && ownerRaw !== "IN_CANCEL";
+    const norm = ownerHit ? normalizeShopeeOrderDetail(ownerShop, correctName, ownerHit) : null;
+    const persistRow = {
+      ...norm || order,
+      shopId: ownerShop,
+      shopName: correctName,
+      _shop_owner_verified: true
+    };
     if (ownerShop === currentShop) {
       unchanged += 1;
-      if (String(order.shopName || "") !== correctName) {
+      if (String(order.shopName || "") !== correctName || wronglyCancelled) {
         order.shopId = ownerShop;
         order.shopName = correctName;
-        toPersist.push({
-          ...order,
-          shopId: ownerShop,
-          shopName: correctName
-        });
+        if (norm) {
+          order.shopee_order_status = norm.shopee_order_status;
+          order.status = norm.status;
+        }
+        toPersist.push(persistRow);
         details.push({
           orderSn,
           currentShop,
           ownerShop,
-          action: "name_fixed",
+          action: wronglyCancelled ? "status_healed" : "name_fixed",
           shopName: correctName,
           shopee_raw: ownerRaw
         });
@@ -122223,22 +122314,22 @@ async function remapMisassignedOrderShopIds(orders) {
     remapped += 1;
     order.shopId = ownerShop;
     order.shopName = correctName;
-    toPersist.push({
-      ...order,
-      shopId: ownerShop,
-      shopName: correctName
-    });
+    if (norm) {
+      order.shopee_order_status = norm.shopee_order_status;
+      order.status = norm.status;
+    }
+    toPersist.push(persistRow);
     details.push({
       orderSn,
       currentShop,
       currentName,
       ownerShop,
       shopName: correctName,
-      action: "remapped",
+      action: wronglyCancelled ? "remapped_status_healed" : "remapped",
       shopee_raw: ownerRaw
     });
     console.log(
-      `[RemapShop] order_sn=${orderSn} ${currentShop}(${currentName || "-"}) \u2192 ${ownerShop}(${correctName})`
+      `[RemapShop] order_sn=${orderSn} ${currentShop}(${currentName || "-"}) \u2192 ${ownerShop}(${correctName}) raw=${ownerRaw || "-"}`
     );
   }
   if (toPersist.length && isMongoReady()) {
@@ -122256,6 +122347,41 @@ async function remapMisassignedOrderShopIds(orders) {
     notFound,
     details
   };
+}
+async function repairWrongShopCancelledOrders(opts) {
+  const empty = { checked: 0, remapped: 0, healed: 0 };
+  if (!isMongoReady()) return empty;
+  const limit = Math.max(1, Math.min(20, Number(opts?.limit) || 12));
+  let keys = [];
+  try {
+    keys = await findWrongShopCancelledCandidatesFromStore({
+      limit,
+      lookbackDays: 14
+    });
+  } catch (err) {
+    console.error("[RepairShop] find candidates failed:", err?.message || err);
+    return empty;
+  }
+  if (!keys.length) return empty;
+  let loaded = [];
+  try {
+    loaded = await loadOrdersFromStore({
+      orderSns: keys.map((k) => k.orderSn)
+    });
+  } catch (loadErr) {
+    console.error("[RepairShop] loadOrders failed:", loadErr?.message || loadErr);
+    return empty;
+  }
+  if (!loaded.length) return empty;
+  console.log(`[RepairShop] probe ${loaded.length} \u0111\u01A1n CANCELLED/shopee_not_found...`);
+  const result = await remapMisassignedOrderShopIds(loaded);
+  const healed = (result.details || []).filter(
+    (d) => String(d?.action || "").includes("heal") || String(d?.action || "") === "remapped"
+  ).length;
+  console.log(
+    `[RepairShop] DONE checked=${result.checked} remapped=${result.remapped} healed\u2248${healed} notFound=${result.notFound}`
+  );
+  return { checked: result.checked, remapped: result.remapped, healed };
 }
 async function debugForceSyncHandedOverOrders(opts) {
   const startedAt = Date.now();
@@ -123232,6 +123358,24 @@ async function pullIncrementalOrdersFromShopee(opts) {
       `[Orders Pull] perShop summary:`,
       JSON.stringify(perShopResults)
     );
+    if (Date.now() <= deadlineAt) {
+      try {
+        const repaired = await repairWrongShopCancelledOrders({ limit: 12 });
+        if (repaired.checked > 0) {
+          pulled += repaired.healed;
+          updated += repaired.remapped + repaired.healed;
+          syncDiag(
+            "Repair wrong-shop CANCELLED",
+            `checked=${repaired.checked} remapped=${repaired.remapped} healed=${repaired.healed}`
+          );
+        }
+      } catch (repairErr) {
+        console.error(
+          "[Orders Pull] repairWrongShopCancelledOrders FAILED:",
+          repairErr?.message || repairErr
+        );
+      }
+    }
     if (opts?.reconcileActive === true && Date.now() <= deadlineAt) {
       try {
         const reconciled = await reconcileActiveShopeeOrdersFromStore(orders, shopIds, deadlineAt);
@@ -127349,6 +127493,10 @@ function isShopeeOrderNotFoundError(error, message) {
   const text = `${String(error || "")} ${String(message || "")}`;
   return /not\s*found/i.test(text) || /error_not_found/i.test(text) || /order[_.\s-]*not[_.\s-]*found/i.test(text) || /order_sn.*(invalid|does not exist|không tồn tại)/i.test(text);
 }
+function isShopeeWrongShopError(error, message) {
+  const text = `${String(error || "")} ${String(message || "")}`;
+  return /invalid_shop/i.test(text) || /error_shop/i.test(text) || /wrong.?shop/i.test(text) || /sai.?shop/i.test(text) || /error_permission/i.test(text) || /shop_id.*(invalid|mismatch|not.?match|không)/i.test(text) || /(invalid|mismatch).*shop_id/i.test(text);
+}
 async function markLocalOrdersCancelledForShopeeNotFound(orderSns, shopId, reason) {
   const sns = [
     ...new Set(
@@ -127357,8 +127505,8 @@ async function markLocalOrdersCancelledForShopeeNotFound(orderSns, shopId, reaso
   ];
   if (!sns.length) return;
   const shopKey = String(normalizeShopIdKey(shopId) || shopId || "").trim();
-  console.warn(
-    `[Sync Shop ${shopKey || "-"}] Zombie NOT FOUND \u2192 CANCELLED n=${sns.length} sns=${sns.slice(0, 8).join(",")}${sns.length > 8 ? "\u2026" : ""} reason=${reason}`
+  console.error(
+    `[Sync Shop ${shopKey || "-"}] get_order_detail FAIL n=${sns.length} sns=${sns.slice(0, 8).join(",")}${sns.length > 8 ? "\u2026" : ""} reason=${reason} \u2014 GI\u1EEE NGUY\xCAN status DB, KH\xD4NG \u0111\xE1nh CANCELLED`
   );
   try {
     await markOrdersCancelledAsShopeeNotFoundInStore(sns, {
@@ -127367,7 +127515,7 @@ async function markLocalOrdersCancelledForShopeeNotFound(orderSns, shopId, reaso
     });
   } catch (err) {
     console.error(
-      `[Sync Shop ${shopKey || "-"}] L\u1ED7i ghi CANCELLED cho zombie:`,
+      `[Sync Shop ${shopKey || "-"}] log API-error skip-cancel failed:`,
       err?.message || err
     );
   }
@@ -131042,7 +131190,7 @@ async function fetchNormalizeShopeeOrderChunk(apiShopId, accessToken, fileKey, o
   const pushFail = (orderSn, error, message, httpStatus) => {
     failed_orders.push(orderSn);
     errors.push({ shopId: shopFileKey, error, message, orderSn, httpStatus });
-    if (isShopeeOrderNotFoundError(error, message)) {
+    if (isShopeeOrderNotFoundError(error, message) || isShopeeWrongShopError(error, message)) {
       notFoundSns.add(orderSn);
     }
   };
@@ -131104,7 +131252,10 @@ async function fetchNormalizeShopeeOrderChunk(apiShopId, accessToken, fileKey, o
             );
           } else {
             const norm = normalizeOne(orderSn, detail);
-            if (norm) normalized.push(norm);
+            if (norm) {
+              norm._shop_owner_verified = true;
+              normalized.push(norm);
+            }
           }
         }
       } catch (err) {
@@ -131165,8 +131316,8 @@ async function fetchNormalizeShopeeOrderChunk(apiShopId, accessToken, fileKey, o
         if (isShopeeOrderNotFoundError(detailResult.error, message) && batch.length === 1) {
           pushFail(batch[0], String(detailResult.error), message, detailResult.httpStatus);
         } else if (isShopeeOrderNotFoundError(detailResult.error, message) && batch.length > 1) {
-          console.warn(
-            `[Sync Shop ${shopFileKey}] L\u1ED7i: batch not-found \u2014 probe t\u1EEBng \u0111\u01A1n: ${message}`
+          console.error(
+            `[Sync Shop ${shopFileKey}] L\u1ED7i: batch not-found \u2014 probe t\u1EEBng \u0111\u01A1n, KH\xD4NG h\u1EE7y: ${message}`
           );
           await fetchBatchIndividually(batch, accessToken);
         } else {
@@ -131196,7 +131347,10 @@ async function fetchNormalizeShopeeOrderChunk(apiShopId, accessToken, fileKey, o
               continue;
             }
             const norm = normalizeOne(orderSn, detail);
-            if (norm) normalized.push(norm);
+            if (norm) {
+              norm._shop_owner_verified = true;
+              normalized.push(norm);
+            }
           }
           if (missingSns.length > 0) {
             console.warn(
@@ -131229,11 +131383,49 @@ async function fetchNormalizeShopeeOrderChunk(apiShopId, accessToken, fileKey, o
     }
   }
   if (notFoundSns.size > 0) {
+    const sns = [...notFoundSns];
+    console.error(
+      `[Sync Shop ${shopFileKey}] get_order_detail l\u1ED7i ${sns.length} \u0111\u01A1n \u2014 GI\u1EEE NGUY\xCAN status DB, KH\xD4NG \u0111\xE1nh CANCELLED. sns=${sns.slice(0, 8).join(",")}${sns.length > 8 ? "\u2026" : ""}`
+    );
     await markLocalOrdersCancelledForShopeeNotFound(
-      [...notFoundSns],
+      sns,
       shopApiId,
       "get_order_detail_not_found"
     );
+    let probed = 0;
+    for (const sn of sns) {
+      if (probed >= MAX_CROSS_SHOP_PROBE_PER_CHUNK) break;
+      probed += 1;
+      const hit = await probeOrderDetailOnOtherShops(sn, shopApiId);
+      if (!hit) {
+        console.error(
+          `[Sync Shop ${shopFileKey}] order_sn=${sn} sai shop/token/not-found \u2014 kh\xF4ng t\xECm th\u1EA5y shop kh\xE1c, gi\u1EEF tr\u1EA1ng th\xE1i c\u0169.`
+        );
+        continue;
+      }
+      try {
+        const ownerName = resolveConnectedShopDisplayName(hit.shopId) || `Shop ${hit.shopId}`;
+        const norm = normalizeShopeeOrderDetail(hit.shopId, ownerName, hit.detail);
+        if (norm) {
+          norm._shop_owner_verified = true;
+          normalized.push(norm);
+          const failIdx = failed_orders.indexOf(sn);
+          if (failIdx >= 0) failed_orders.splice(failIdx, 1);
+          for (let ei = errors.length - 1; ei >= 0; ei -= 1) {
+            if (String(errors[ei]?.orderSn || "") === sn) errors.splice(ei, 1);
+          }
+          console.log(
+            `[Sync Shop ${shopFileKey}] REMAP order_sn=${sn} \u2192 shop=${hit.shopId} raw=${norm.shopee_order_status || "-"}`
+          );
+        }
+      } catch (probeMapErr) {
+        console.error(
+          `[Sync Shop ${shopFileKey}] remap normalize fail order_sn=${sn}:`,
+          probeMapErr?.message || probeMapErr
+        );
+      }
+      await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+    }
   }
   return { normalized, errors, failed_orders };
 }
@@ -131320,7 +131512,8 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
         console.warn("[Orders Sync] SKIP \u0111\u01A1n thi\u1EBFu orderSn \u2014 kh\xF4ng ph\u1EA3i do c\u1EDD \u0110VVC.");
         continue;
       }
-      const ownerShop = (syncCtx?.apiShopId ? normalizeShopIdKey(syncCtx.apiShopId) || String(syncCtx.apiShopId) : "") || normalizeShopIdKey(normalized.shopId) || String(normalized.shopId || "").trim();
+      const verifiedShop = normalized._shop_owner_verified === true ? String(normalizeShopIdKey(normalized.shopId) || normalized.shopId || "").trim() : "";
+      const ownerShop = verifiedShop || (syncCtx?.apiShopId ? normalizeShopIdKey(syncCtx.apiShopId) || String(syncCtx.apiShopId) : "") || normalizeShopIdKey(normalized.shopId) || String(normalized.shopId || "").trim();
       if (!ownerShop) {
         console.warn(
           `[Orders Sync] SKIP order_sn=${normalized.orderSn} \u2014 thi\u1EBFu shop_id (multi-shop b\u1EAFt bu\u1ED9c)`
@@ -131382,6 +131575,7 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
       }
       row.shopId = ownerShop;
       row.shopName = resolveConnectedShopDisplayName(ownerShop, row.shopName) || `Shop ${ownerShop}`;
+      row._shop_owner_verified = true;
       forceHealPickupOrderIfHasTracking(row);
       promoteOrderStatusWhenTrackingReady(row);
       enforceShopeeTerminalLocalStatus(row);

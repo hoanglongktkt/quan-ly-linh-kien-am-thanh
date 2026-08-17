@@ -1755,6 +1755,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     orderSn: string;
     id: string;
     updateAt: Date | null;
+    forceShopId: boolean;
   }> = [];
   for (const order of list) {
     const id = String(order.id || "").trim();
@@ -1779,9 +1780,11 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       order.shipping_carrier || order.checkout_shipping_carrier || order.carrier || "",
     ).trim();
 
-    // shop_id — BẮT BUỘC phải có để multi-shop hoạt động đúng.
-    // Auto-patch: Luôn force set shopId khi có trong payload để vá các document cũ bị null.
+    // shop_id — chỉ $set khi INSERT / shopId đang trống, hoặc luồng đã xác thực chủ đơn
+    // (get_order_detail thành công / webhook payload / remap). CẤM luồng quét rác ghi đè.
     const shopIdStr = order.shopId != null ? String(order.shopId).trim() : "";
+    const forceShopId =
+      order._shop_owner_verified === true || order._force_shop_id === true;
 
     // ——— $set: CHỈ field Shopee / vận chuyển — CẤM cờ nội bộ ———
     // KHÔNG ghi status ảo "processed" vào shopee_order_status — chỉ raw Shopee.
@@ -1810,7 +1813,8 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
         $set["data.last_shopee_update_at"] = updateAt.toISOString();
       }
     }
-    // BẮT BUỘC: Luôn force set shopId khi có để patch old documents với shopId null/thiếu.
+    // $set shopId: document mới / shopId trống sẽ được vá. Document đã có shopId khác
+    // chỉ ghi đè khi forceShopId (chủ đơn đã xác thực). Xem vòng existing bên dưới.
     if (shopIdStr) {
       $set.shopId = shopIdStr;
       $set["data.shopId"] = shopIdStr;
@@ -1913,6 +1917,12 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     // Mã YCTH (return_sn) + order_sn — luôn String (uint64-safe / alphanumeric).
     const returnSnStr = String(order.return_sn || "").trim();
     const $unset: Record<string, 1> = {};
+    if (forceShopId) {
+      $unset.shopee_not_found = 1;
+      $unset["data.shopee_not_found"] = 1;
+      $unset["data.shopee_not_found_at"] = 1;
+      $unset["data.shopee_not_found_reason"] = 1;
+    }
     const clearCancelledReturn = order._clear_cancelled_return === true;
     const clearReturnSn =
       order._clear_return_sn === true ||
@@ -2178,6 +2188,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       orderSn,
       id: _id,
       updateAt: incomingUpdateAt,
+      forceShopId,
     });
   }
   if (pendingWrites.length === 0) return 0;
@@ -2196,6 +2207,8 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
             _id: 1,
             orderSn: 1,
             "data.orderSn": 1,
+            shopId: 1,
+            "data.shopId": 1,
             last_shopee_update_at: 1,
             status: 1,
             "data.status": 1,
@@ -2257,6 +2270,16 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
           if (!$set) continue;
           stripWarehouseProtectedKeysFromSet($set);
           if (current) {
+            const existingShop = String(current.shopId || current.data?.shopId || "").trim();
+            const incomingShop = String($set.shopId || $set["data.shopId"] || "").trim();
+            if (existingShop && incomingShop && existingShop !== incomingShop && !item.forceShopId) {
+              delete $set.shopId;
+              delete $set["data.shopId"];
+              console.error(
+                `[MongoDB] KEEP shop_id=${existingShop} — skip overwrite incoming=${incomingShop}` +
+                  ` order_sn=${item.orderSn || item.id} (luồng chưa xác thực chủ đơn)`,
+              );
+            }
             const alreadyAcked =
               current.return_alert_pending === false ||
               current.data?.return_alert_pending === false;
@@ -3565,15 +3588,13 @@ export async function deleteHandedOverOrdersFromStore(): Promise<{
 }
 
 /**
- * Zombie order: Shopee get_order_detail trả "not found" → đánh CANCELLED local,
- * clear cờ Đã giao ĐVVC để sync/reconcile không quét lại mãi.
+ * TRƯỚC ĐÂY: Shopee get_order_detail "not found" → đánh CANCELLED local.
+ * ĐÃ TẮT: API lỗi (sai shop_id / token / not found) ≠ đơn hủy — giữ nguyên status DB.
  */
 export async function markOrdersCancelledAsShopeeNotFoundInStore(
   orderSns: string[],
   opts?: { shopId?: string; reason?: string },
 ): Promise<{ matched: number; modified: number; sns: string[] }> {
-  if (!isMongoReady()) return { matched: 0, modified: 0, sns: [] };
-  requireMongo();
   const sns = [
     ...new Set(
       (orderSns || [])
@@ -3581,54 +3602,82 @@ export async function markOrdersCancelledAsShopeeNotFoundInStore(
         .filter(Boolean),
     ),
   ];
-  if (sns.length === 0) return { matched: 0, modified: 0, sns: [] };
-
   const shopIdStr = opts?.shopId != null ? String(opts.shopId).trim() : "";
   const reason = String(opts?.reason || "shopee_get_order_detail_not_found").slice(0, 200);
-  const now = new Date().toISOString();
-  const $set: Record<string, unknown> = {
-    status: "cancelled",
-    "data.status": "cancelled",
-    shopee_order_status: "CANCELLED",
-    "data.shopee_order_status": "CANCELLED",
-    is_handed_over: false,
-    "data.is_handed_over": false,
-    "data.isHandedOverToCarrier": false,
-    "data.is_handed_over_to_carrier": false,
-    "data.is_handed_over_to_courier": false,
-    "data.shopee_not_found": true,
-    "data.shopee_not_found_at": now,
-    "data.shopee_not_found_reason": reason,
-    "data.updated_at": now,
-  };
-  if (shopIdStr) {
-    $set.shopId = shopIdStr;
-    $set["data.shopId"] = shopIdStr;
-  }
-
-  const ops = sns.map((sn) => {
-    const _id = `shopee-${sn}`;
-    return {
-      updateOne: {
-        filter: buildOrderCompoundFilter(sn, _id, shopIdStr || null),
-        update: { $set },
-        upsert: false,
-      },
-    };
-  });
-
-  const result = await OrderModel.bulkWrite(ops as any, {
-    ordered: false,
-    maxTimeMS: 30_000,
-  });
-  const matched = Number((result as any).matchedCount ?? (result as any).nMatched ?? 0);
-  const modified = Number((result as any).modifiedCount ?? (result as any).nModified ?? 0);
-  console.log(
-    `[MongoDB] markOrdersCancelledAsShopeeNotFoundInStore shop=${shopIdStr || "-"}` +
-      ` sns=${sns.length} matched=${matched} modified=${modified}` +
-      ` reason=${reason}`,
+  console.error(
+    `[MongoDB] SKIP CANCELLED on API error shop=${shopIdStr || "-"} n=${sns.length}` +
+      ` sns=${sns.slice(0, 8).join(",")}${sns.length > 8 ? "…" : ""} reason=${reason}` +
+      ` — giữ nguyên trạng thái cũ`,
   );
-  return { matched, modified, sns };
+  return { matched: 0, modified: 0, sns };
+}
+
+/**
+ * Đơn bị đánh CANCELLED vì get_order_detail fail (cờ shopee_not_found) — ứng viên remap shop.
+ */
+export async function findWrongShopCancelledCandidatesFromStore(opts?: {
+  limit?: number;
+  lookbackDays?: number;
+}): Promise<Array<{ orderSn: string; shopId: string }>> {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const limit = Math.max(1, Math.min(40, Number(opts?.limit) || 20));
+  const lookbackDays = Math.max(1, Math.min(30, Number(opts?.lookbackDays) || 14));
+  const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000);
+  const sinceIso = since.toISOString();
+  const docs = await OrderModel.find({
+    $and: [
+      {
+        $or: [
+          { channel: "shopee" },
+          { "data.channel": "shopee" },
+          { channel: { $exists: false } },
+        ],
+      },
+      {
+        $or: [
+          { "data.shopee_not_found": true },
+          { shopee_not_found: true },
+          { "data.shopee_not_found_reason": { $exists: true, $nin: [null, ""] } },
+        ],
+      },
+      {
+        $or: [
+          { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL"] } },
+          { "data.shopee_order_status": { $in: ["CANCELLED", "IN_CANCEL"] } },
+          { status: "cancelled" },
+          { "data.status": "cancelled" },
+        ],
+      },
+      {
+        $or: [
+          { "data.date": { $gte: sinceIso } },
+          { last_shopee_update_at: { $gte: since } },
+          { last_synced_at: { $gte: since } },
+          { "data.shopee_not_found_at": { $gte: sinceIso } },
+        ],
+      },
+    ],
+  })
+    .select({ orderSn: 1, shopId: 1, "data.orderSn": 1, "data.shopId": 1 })
+    .sort({ last_synced_at: -1, _id: -1 })
+    .limit(limit)
+    .maxTimeMS(8000)
+    .lean();
+  const out: Array<{ orderSn: string; shopId: string }> = [];
+  const seen = new Set<string>();
+  for (const doc of docs || []) {
+    const sn = String(doc?.orderSn || doc?.data?.orderSn || "")
+      .replace(/^shopee-/i, "")
+      .trim();
+    if (!sn || seen.has(sn)) continue;
+    seen.add(sn);
+    out.push({
+      orderSn: sn,
+      shopId: String(doc?.shopId || doc?.data?.shopId || "").trim(),
+    });
+  }
+  return out;
 }
 
 /**
