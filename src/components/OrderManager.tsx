@@ -58,7 +58,6 @@ import {
   fetchScanBgStatus,
   ackScanBgNotifications,
   buildScanBgPendingKeySet,
-  orderMatchesScanBgPending,
   formatScanBgToast,
 } from '../utils/scanBgQueue';
 import { 
@@ -5449,29 +5448,6 @@ export default function OrderManager({
     }
   }, [activeSubTab, fetchOrderCounts, fetchOrdersWithShop, isPullRefreshing, listKind]);
 
-  // Status Vietnamese styling and labeling helper matching mockup closely
-  const getStatusBadge = (status: Order['status']) => {
-    switch (status) {
-      case 'pending_verification':
-      case 'pending_confirm': 
-        return { text: 'Chờ xác nhận', color: 'bg-amber-50 text-amber-600 border-amber-200/60' };
-      case 'unprocessed': 
-        return { text: 'Đơn chưa xử lý', color: 'bg-sky-50 text-sky-600 border-sky-200/60 font-semibold' };
-      case 'processed': 
-        return { text: 'Chờ lấy hàng (Đã xử lý)', color: 'bg-emerald-50 text-emerald-600 border-emerald-200/60' };
-      case 'shipping': 
-        return { text: 'Đang giao', color: 'bg-indigo-50 text-indigo-600 border-indigo-200/60' };
-      case 'completed': 
-        return { text: 'Đã giao', color: 'bg-green-50 text-green-700 border-green-200/60' };
-      case 'cancelled': 
-        return { text: 'Đơn Hủy', color: 'bg-rose-50 text-rose-500 border-rose-100' };
-      case 'return_pending': 
-        return { text: 'Trả hàng Hoàn tiền', color: 'bg-orange-50 text-orange-700 border-orange-200' };
-      case 'return_received': 
-        return { text: 'Trả hàng Hoàn tiền', color: 'bg-orange-50 text-orange-700 border-orange-200' };
-    }
-  };
-
   // Helper count statistics
   const aggregatedOrderProducts = useMemo(
     () => aggregateOrderProducts(orders, products ?? []),
@@ -6639,42 +6615,6 @@ export default function OrderManager({
       <OrderDetailAccordionPanel order={order} shops={shops} systemFees={systemFees} />
     ),
     [shops, systemFees],
-  );
-
-  const resolveRowBadge = useCallback(
-    (order: Order): { text: string; color: string } => {
-      const badgeBase = getStatusBadge(resolveOrderBadgeStatus(order)) || {
-        text: String(order.status),
-        color: '',
-      };
-      if (activeSubTab === 'return_requests') {
-        return { text: 'Đang hoàn về', color: 'bg-indigo-50 text-indigo-600 border-indigo-200/60' };
-      }
-      const cancelKind = classifyShopeeCancelReturnKind(order);
-      if (cancelKind === 'failed_delivery' || String(order.sub_status || '').toUpperCase() === 'RTS') {
-        return { text: 'Giao hàng không thành công', color: 'bg-purple-50 text-purple-600 border-purple-200/60 font-bold' };
-      }
-      if (cancelKind === 'refund_return') {
-        return { text: 'Trả hàng Hoàn tiền', color: 'bg-orange-50 text-orange-700 border-orange-200' };
-      }
-      if (cancelKind === 'cancelled') {
-        return { text: 'Đơn Hủy', color: 'bg-rose-50 text-rose-500 border-rose-100' };
-      }
-      if (orderMatchesScanBgPending(order, scanBgPendingKeys)) {
-        return {
-          text: 'Đang dò ngầm...',
-          color: 'bg-sky-50 text-sky-700 border-sky-200/60 font-semibold animate-pulse',
-        };
-      }
-      if (matchesHandedOverCarrierTab(order)) {
-        return {
-          text: 'Đã quét QR - Chờ ĐVVC nhận',
-          color: 'bg-violet-50 text-violet-700 border-violet-200/60 font-semibold',
-        };
-      }
-      return badgeBase;
-    },
-    [activeSubTab, scanBgPendingKeys],
   );
 
   if (focusScanner) {
@@ -7929,7 +7869,6 @@ export default function OrderManager({
                     order={order}
                     isChecked={selectedOrderIdSet.has(order.id)}
                     isExpanded={expandedOrderId === order.id}
-                    badge={resolveRowBadge(order)}
                     activeSubTab={activeSubTab}
                     shops={shops}
                     products={products}
@@ -7958,7 +7897,6 @@ export default function OrderManager({
                   order={order}
                   isChecked={selectedOrderIdSet.has(order.id)}
                   isExpanded={expandedOrderId === order.id}
-                  badge={resolveRowBadge(order)}
                   activeSubTab={activeSubTab}
                   shops={shops}
                   products={products}

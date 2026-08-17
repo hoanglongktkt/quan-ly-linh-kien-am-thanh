@@ -38,8 +38,6 @@ import {
   shouldShowAwaitingShopeeTracking,
 } from '../utils/shopeeCancelReturnClassify';
 
-export type OrderListRowBadge = { text: string; color: string };
-
 export type OrderListRowActions = {
   onToggleSelect: (id: string) => void;
   onToggleDetails: (id: string) => void;
@@ -57,7 +55,6 @@ type SharedRowProps = {
   order: Order;
   isChecked: boolean;
   isExpanded: boolean;
-  badge: OrderListRowBadge;
   activeSubTab: string;
   shops: ConnectedShop[];
   products?: Product[];
@@ -294,7 +291,6 @@ export const OrderTableRow = React.memo(function OrderTableRow({
   order,
   isChecked,
   isExpanded,
-  badge,
   activeSubTab,
   shops,
   products = [],
@@ -449,9 +445,7 @@ export const OrderTableRow = React.memo(function OrderTableRow({
                 />
               ) : (
                 <>
-                  <span className={`inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border ${badge.color}`}>
-                    {badge.text}
-                  </span>
+                  <DeliveryStatusBadge order={order} />
                   {activeSubTab === 'received_cancel_returns' && (
                     <span className="inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border bg-teal-50 text-teal-700 border-teal-200">
                       Đã nhận hoàn
@@ -584,10 +578,6 @@ export const OrderTableRow = React.memo(function OrderTableRow({
                   </>
                 )}
 
-                {activeSubTab !== 'return_requests' && !isCancelReturnGroupTab(activeSubTab) && (
-                  <DeliveryStatusBadge order={order} />
-                )}
-
                 {activeSubTab !== 'return_requests' && !isCancelReturnGroupTab(activeSubTab) && order.status === 'return_pending' && (
                   <button
                     type="button"
@@ -632,7 +622,6 @@ export const OrderCardRow = React.memo(function OrderCardRow({
   order,
   isChecked,
   isExpanded,
-  badge,
   activeSubTab,
   shops,
   products = [],
@@ -751,9 +740,7 @@ export const OrderCardRow = React.memo(function OrderCardRow({
             </button>
           ) : activeSubTab === 'return_requests' || isCancelReturnGroupTab(activeSubTab) ? null : (
             <>
-              <span className={`inline-block px-2 py-0.5 text-[9px] font-black rounded-full border shrink-0 ${badge.color}`}>
-                {badge.text}
-              </span>
+              <DeliveryStatusBadge order={order} size="md" />
               {activeSubTab === 'received_cancel_returns' && (
                 <span className="inline-block px-2 py-0.5 text-[9px] font-black rounded-full border shrink-0 bg-teal-50 text-teal-700 border-teal-200">
                   Đã nhận hoàn
@@ -873,10 +860,6 @@ export const OrderCardRow = React.memo(function OrderCardRow({
                   <Truck className={`w-4 h-4 ${handingOverOrderId === order.id ? 'animate-pulse' : ''}`} />
                 </button>
               </>
-            )}
-
-            {activeSubTab !== 'return_requests' && !isCancelReturnGroupTab(activeSubTab) && (
-              <DeliveryStatusBadge order={order} size="md" />
             )}
 
             {activeSubTab !== 'return_requests' && !isCancelReturnGroupTab(activeSubTab) && order.status === 'return_pending' && (
