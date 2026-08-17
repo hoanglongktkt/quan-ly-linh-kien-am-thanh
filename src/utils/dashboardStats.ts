@@ -49,6 +49,13 @@ const RANGE_LABELS: Record<DashboardDateRange, string> = {
   this_year: 'Năm nay',
 };
 
+/** Khớp OrderManager tab failed_delivery: is_rts / RTS / failed_delivery. */
+export function isRtsOrder(order: Order): boolean {
+  if (order.is_rts === true) return true;
+  if (order.shopee_cancel_return_kind === 'failed_delivery') return true;
+  return String(order.sub_status || '').toUpperCase() === 'RTS';
+}
+
 /** Khớp isPendingConfirmOrder (OrderManager) — dùng chung cho ô Chờ duyệt. */
 function isPendingConfirmOrder(order: Order): boolean {
   const raw = String(order.shopee_order_status || '').toUpperCase();
@@ -280,7 +287,7 @@ export function computeDashboardStats(
         (o) => matchesProcessedPickupTab(o) && !isPendingConfirmOrder(o),
       ).length,
       shipping: eligible.filter((o) => matchesShippingTab(o)).length,
-      returnPending: eligible.filter((o) => o.status === 'return_pending').length,
+      returnPending: eligible.filter((o) => isRtsOrder(o)).length,
     },
     chart: buildChart(revenueOrders, rangeKey, start, end),
     topProducts,

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Product, Order } from '../types';
-import { computeDashboardStats } from '../utils/dashboardStats';
+import { computeDashboardStats, isRtsOrder } from '../utils/dashboardStats';
 import {
   DollarSign,
   ShoppingCart,
@@ -32,13 +32,16 @@ export type DashboardDateRange =
   | 'this_year';
 
 const DATE_RANGE_OPTIONS: { value: DashboardDateRange; label: string }[] = [
-  { value: 'today', label: 'Hôm nay' },
   { value: 'last_7_days', label: '7 ngày qua' },
   { value: 'this_month', label: 'Tháng này' },
   { value: 'last_month', label: 'Tháng trước' },
   { value: 'this_quarter', label: 'Quý này' },
   { value: 'this_year', label: 'Năm nay' },
 ];
+
+function formatVnd(amount: number): string {
+  return Math.round(Number(amount) || 0).toLocaleString('vi-VN');
+}
 
 interface DashboardData {
   dateRange: string;
@@ -84,8 +87,8 @@ function normalizeDashboardPayload(raw: Partial<DashboardData> | null | undefine
     returnPending: 0,
   };
   return {
-    dateRange: String(raw.dateRange || 'today'),
-    dateRangeLabel: String(raw.dateRangeLabel || 'Hôm nay'),
+    dateRange: String(raw.dateRange || 'last_7_days'),
+    dateRangeLabel: String(raw.dateRangeLabel || '7 ngày qua'),
     kpi: {
       revenue: Number(kpi.revenue) || 0,
       newOrders: Number(kpi.newOrders) || 0,
@@ -126,6 +129,7 @@ interface DashboardProps {
   onEditProductShortcut?: (productId: string) => void;
   onUpdateProduct?: (updated: Product, opts?: { save?: boolean }) => Promise<void>;
   onNavigateToImport?: (productId: string) => void;
+  rtsCount?: number;
 }
 
 export default function Dashboard({
@@ -135,9 +139,11 @@ export default function Dashboard({
   onEditProductShortcut,
   onUpdateProduct,
   onNavigateToImport,
+  rtsCount: rtsCountProp,
 }: DashboardProps) {
-  const [dateRange, setDateRange] = useState<DashboardDateRange>('today');
+  const [dateRange, setDateRange] = useState<DashboardDateRange>('last_7_days');
   const [data, setData] = useState<DashboardData | null>(null);
+  const [rtsCountApi, setRtsCountApi] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [usingFallback, setUsingFallback] = useState(false);
@@ -244,6 +250,33 @@ export default function Dashboard({
     fetchDashboard(dateRange);
   }, [dateRange, fetchDashboard]);
 
+  useEffect(() => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/orders/counter?t=${Date.now()}`, {
+          cache: 'no-store',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const json = await res.json().catch(() => ({} as Record<string, unknown>));
+        if (cancelled) return;
+        const rts = Number(
+          (json as { counters?: { rts?: number } })?.counters?.rts ??
+            (json as { counts?: Record<string, number> })?.counts?.failed_delivery ??
+            (json as { counts?: Record<string, number> })?.counts?.cancel_returns_rts,
+        );
+        if (Number.isFinite(rts)) setRtsCountApi(rts);
+      } catch {
+        /* fallback: orders / dashboardStats */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const refreshInventoryList = useCallback(() => {
     if (usingFallback) {
       applyFallback(dateRange);
@@ -310,6 +343,20 @@ export default function Dashboard({
       .sort((a, b) => a.stock - b.stock);
   }, [data, products, lowStockThreshold]);
 
+  const rtsFromOrders = useMemo(
+    () => orders.filter((o) => isRtsOrder(o)).length,
+    [orders],
+  );
+  const rtsCount =
+    rtsCountApi ??
+    (typeof rtsCountProp === 'number' && rtsCountProp > 0 ? rtsCountProp : null) ??
+    (usingFallback ? Number(data?.pendingOrders.returnPending) || 0 : rtsFromOrders);
+
+  const chartTotalRevenue = useMemo(
+    () => (data?.chart || []).reduce((sum, day) => sum + (Number(day.amount) || 0), 0),
+    [data?.chart],
+  );
+
   const kpiCards = data
     ? [
         {
@@ -354,7 +401,7 @@ export default function Dashboard({
         { key: 'pendingPack', title: 'Chờ đóng gói', count: data.pendingOrders.pendingPack, icon: Package, color: 'text-sky-600', bg: 'bg-sky-50' },
         { key: 'pendingPickup', title: 'Chờ lấy hàng', count: data.pendingOrders.pendingPickup, icon: Truck, color: 'text-indigo-600', bg: 'bg-indigo-50' },
         { key: 'shipping', title: 'Đang giao hàng', count: data.pendingOrders.shipping, icon: Navigation, color: 'text-blue-600', bg: 'bg-blue-50' },
-        { key: 'returnPending', title: 'Hủy giao — chờ nhận', count: data.pendingOrders.returnPending, icon: Undo2, color: 'text-purple-600', bg: 'bg-purple-50' },
+        { key: 'returnPending', title: 'Giao không thành công (RTS)', count: rtsCount, icon: Undo2, color: 'text-purple-600', bg: 'bg-purple-50' },
       ]
     : [];
   const pendingCardTargetTab: Record<string, 'pending_confirm' | 'unprocessed' | 'processed' | 'shipping' | 'cancel_returns'> = {
@@ -370,7 +417,10 @@ export default function Dashboard({
 
   return (
     <div className="space-y-6" id="dashboard-tab">
-      <div className="flex justify-end">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <h1 className="text-lg font-extrabold text-gray-900 tracking-tight">
+          Bảng Điều Khiển Tổng Quan (V2)
+        </h1>
         <div className="flex items-center gap-2 w-full sm:w-auto">
           <Calendar className="w-4 h-4 text-gray-400 shrink-0" />
           <select
@@ -417,7 +467,7 @@ export default function Dashboard({
         </div>
       ) : data ? (
         <>
-          <div className={`max-md:hidden md:grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 transition-opacity ${loading ? 'opacity-60' : ''}`}>
+          <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 transition-opacity ${loading ? 'opacity-60' : ''}`}>
             {kpiCards.map((card) => {
               const Icon = card.icon;
               return (
@@ -439,7 +489,7 @@ export default function Dashboard({
             })}
           </div>
 
-          <div className={`max-md:hidden md:block bg-white p-5 rounded-2xl border border-gray-100 shadow-xs space-y-4 ${loading ? 'opacity-60' : ''}`}>
+          <div className={`bg-white p-5 rounded-2xl border border-gray-100 shadow-xs space-y-4 ${loading ? 'opacity-60' : ''}`}>
             <h3 className="font-bold text-sm uppercase tracking-wide text-gray-500">
               Đơn hàng chờ xử lý
             </h3>
@@ -450,11 +500,18 @@ export default function Dashboard({
                   <button
                     key={card.key}
                     type="button"
-                    onClick={() =>
+                    onClick={() => {
+                      if (card.key === 'returnPending') {
+                        try {
+                          sessionStorage.setItem('omni_cancel_tab', 'failed_delivery');
+                        } catch {
+                          /* ignore */
+                        }
+                      }
                       onTabChange?.('orders', {
                         ordersSubTab: pendingCardTargetTab[card.key],
-                      })
-                    }
+                      });
+                    }}
                     className="p-4 min-h-[72px] rounded-xl border border-gray-100 bg-gray-50/50 hover:bg-white hover:border-gray-200 hover:shadow-xs transition-all text-left"
                   >
                     <div className={`w-9 h-9 rounded-lg ${card.bg} ${card.color} flex items-center justify-center mb-3`}>
@@ -470,7 +527,7 @@ export default function Dashboard({
             </div>
           </div>
 
-          <div className={`max-md:hidden md:block bg-white p-6 rounded-2xl border border-gray-100 shadow-xs ${loading ? 'opacity-60' : ''}`}>
+          <div className={`bg-white p-6 rounded-2xl border border-gray-100 shadow-xs ${loading ? 'opacity-60' : ''}`}>
             <div className="flex items-center justify-between gap-4 mb-6">
               <div>
                 <h3 className="font-bold text-gray-900 text-base flex items-center gap-2">
@@ -481,20 +538,20 @@ export default function Dashboard({
               </div>
             </div>
 
-            <div className="flex items-end justify-between gap-2 sm:gap-3 h-56 border-b border-gray-100 pb-3 overflow-x-auto">
+            <div className="flex items-end justify-between gap-2 sm:gap-3 h-64 border-b border-gray-100 pb-3 overflow-x-auto overflow-y-visible">
               {(data?.chart || []).map((day) => {
                 const heightPct = (day.amount / maxChart) * 100;
                 const barHeight = day.amount > 0 ? Math.max(heightPct, 8) : 4;
                 return (
-                  <div key={day.key} className="flex-1 min-w-[36px] flex flex-col items-center gap-2 group">
-                    <span className="text-[10px] font-mono font-bold text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity truncate max-w-full">
-                      {day.amount > 0 ? `${(day.amount / 1000).toFixed(0)}k` : '0'}
+                  <div key={day.key} className="flex-1 min-w-[44px] flex flex-col items-center gap-1.5">
+                    <span className="text-[9px] leading-tight font-bold text-gray-700 text-center whitespace-nowrap">
+                      {formatVnd(day.amount)}
                     </span>
                     <div className="w-full flex justify-center items-end h-44">
                       <div
                         className="w-full max-w-[40px] bg-blue-500 hover:bg-blue-600 rounded-t-lg transition-all duration-300"
                         style={{ height: `${barHeight}%` }}
-                        title={`${day.label}: ${day.amount.toLocaleString('vi-VN')} đ`}
+                        title={`${day.label}: ${formatVnd(day.amount)} đ`}
                       />
                     </div>
                     <span className="text-[10px] font-semibold text-gray-600 font-mono text-center">{day.label}</span>
@@ -502,6 +559,9 @@ export default function Dashboard({
                 );
               })}
             </div>
+            <p className="mt-4 text-center text-sm font-extrabold text-gray-900">
+              Tổng doanh thu: {formatVnd(chartTotalRevenue)} đ
+            </p>
           </div>
 
           <div className={`grid grid-cols-1 lg:grid-cols-2 gap-6 ${loading ? 'opacity-60' : ''}`}>

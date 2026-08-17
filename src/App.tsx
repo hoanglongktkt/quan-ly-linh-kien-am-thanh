@@ -2358,9 +2358,9 @@ export default function App() {
           <div className="md:hidden shrink-0">
             <BrandLogo size={36} className="rounded-lg" />
           </div>
-          <div className={`flex-1 min-w-0 ${activeTab === 'dashboard' || activeTab === 'picking' || activeTab === 'products' ? 'max-md:hidden' : ''}`}>
+          <div className={`flex-1 min-w-0 ${activeTab === 'picking' || activeTab === 'products' ? 'max-md:hidden' : ''}`}>
             <h2 className={`text-lg font-extrabold text-gray-900 tracking-tight ${activeTab === 'orders' ? 'om-orders-mobile-hide-page-title' : ''}`}>
-              {activeTab === 'dashboard' && 'Bảng Điều Khiển Tổng Quan'}
+              {activeTab === 'dashboard' && 'Bảng Điều Khiển Tổng Quan (V2)'}
               {activeTab === 'products' && 'Quản Lý Danh Sách Sản Phẩm'}
               {activeTab === 'publish' && 'Hệ Thống Đăng Bán Sản Phẩm Đa Kênh'}
               {activeTab === 'orders' &&
@@ -2415,6 +2415,7 @@ export default function App() {
               <Dashboard
                 orders={orders}
                 products={products}
+                rtsCount={ordersMeta.counters.rts}
                 onTabChange={(tab, options) => navigateTab(tab, options)}
                 onEditProductShortcut={handleEditProductShortcut}
                 onUpdateProduct={handleUpdateProduct}
