@@ -2358,37 +2358,38 @@ export default function App() {
           <div className="md:hidden shrink-0">
             <BrandLogo size={36} className="rounded-lg" />
           </div>
-          <div className={`flex-1 min-w-0 ${activeTab === 'picking' || activeTab === 'products' ? 'max-md:hidden' : ''}`}>
-            <h2 className={`text-lg font-extrabold text-gray-900 tracking-tight ${activeTab === 'orders' ? 'om-orders-mobile-hide-page-title' : ''}`}>
-              {activeTab === 'dashboard' && 'Bảng Điều Khiển Tổng Quan (V2)'}
-              {activeTab === 'products' && 'Quản Lý Danh Sách Sản Phẩm'}
-              {activeTab === 'publish' && 'Hệ Thống Đăng Bán Sản Phẩm Đa Kênh'}
-              {activeTab === 'orders' &&
-                (ordersSubTabHint === 'received_cancel_returns'
-                  ? 'Đã nhận đơn hủy, đơn hoàn'
-                  : 'Hệ Thống Quản Lý Đơn Hàng Đa Sàn')}
-              {activeTab === 'picking' && 'Nhặt Hàng (Picking)'}
-              {activeTab === 'bulk' && 'Chỉnh Sửa Hàng Loạt & Công Cụ AI'}
-              {activeTab === 'suppliers' && 'Quản Lý Đối Tác Nhà Cung Cấp'}
-              {activeTab === 'imports' && 'Quản Lý Nhập Hàng'}
-              {activeTab === 'financials' && 'Chi Phí Bán Hàng'}
-              {activeTab === 'settings' && 'Thiết Lập API Sàn Thương Mại'}
-            </h2>
+          <div className={`flex-1 min-w-0 ${activeTab === 'dashboard' || activeTab === 'picking' || activeTab === 'products' ? 'max-md:hidden' : ''}`}>
             {activeTab !== 'dashboard' && (
-            <p className={`text-xs text-gray-400 ${activeTab === 'orders' ? 'om-orders-mobile-hide-page-desc' : ''}`}>
-              {activeTab === 'products' && 'Quản lý giá nhập, giá bán lẻ, tồn kho và xuất bản kênh.'}
-              {activeTab === 'publish' && 'Đăng bán sản phẩm lên nhiều gian hàng đồng thời, lồng khung hình sỉ hàng loạt và tối ưu tiêu đề chống spam bằng AI.'}
-              {activeTab === 'orders' &&
-                (ordersSubTabHint === 'received_cancel_returns'
-                  ? 'Đối soát kiện hủy/hoàn đã nhận về kho — dữ liệu lưu vĩnh viễn.'
-                  : 'Quản lý 8 trạng thái đơn Shopee & TikTok, chuẩn bị hàng đóng gói và in vận đơn nhiệt.')}
-              {activeTab === 'picking' && 'Quét mã đơn, tích sản phẩm đã nhặt và chuyển sang đóng gói.'}
-              {activeTab === 'bulk' && 'Tăng giảm giá %, đặt tồn kho, tối ưu nội dung bằng AI hàng loạt.'}
-              {activeTab === 'suppliers' && 'Quản lý thông tin liên hệ, công nợ sỉ và tiền độ thanh toán cho xưởng sỉ.'}
-              {activeTab === 'imports' && 'Quản lý hóa đơn nhập đầu vào, theo dõi biến động % giá nhập hàng.'}
-              {activeTab === 'financials' && 'Theo dõi chi phí hoạt động, cơ cấu quỹ và mô phỏng lợi nhuận sau phí sàn.'}
-              {activeTab === 'settings' && 'Cập nhật mã gian hàng, API key và trỏ DNS về hosting riêng.'}
-            </p>
+              <>
+                <h2 className={`text-lg font-extrabold text-gray-900 tracking-tight ${activeTab === 'orders' ? 'om-orders-mobile-hide-page-title' : ''}`}>
+                  {activeTab === 'products' && 'Quản Lý Danh Sách Sản Phẩm'}
+                  {activeTab === 'publish' && 'Hệ Thống Đăng Bán Sản Phẩm Đa Kênh'}
+                  {activeTab === 'orders' &&
+                    (ordersSubTabHint === 'received_cancel_returns'
+                      ? 'Đã nhận đơn hủy, đơn hoàn'
+                      : 'Hệ Thống Quản Lý Đơn Hàng Đa Sàn')}
+                  {activeTab === 'picking' && 'Nhặt Hàng (Picking)'}
+                  {activeTab === 'bulk' && 'Chỉnh Sửa Hàng Loạt & Công Cụ AI'}
+                  {activeTab === 'suppliers' && 'Quản Lý Đối Tác Nhà Cung Cấp'}
+                  {activeTab === 'imports' && 'Quản Lý Nhập Hàng'}
+                  {activeTab === 'financials' && 'Chi Phí Bán Hàng'}
+                  {activeTab === 'settings' && 'Thiết Lập API Sàn Thương Mại'}
+                </h2>
+                <p className={`text-xs text-gray-400 ${activeTab === 'orders' ? 'om-orders-mobile-hide-page-desc' : ''}`}>
+                  {activeTab === 'products' && 'Quản lý giá nhập, giá bán lẻ, tồn kho và xuất bản kênh.'}
+                  {activeTab === 'publish' && 'Đăng bán sản phẩm lên nhiều gian hàng đồng thời, lồng khung hình sỉ hàng loạt và tối ưu tiêu đề chống spam bằng AI.'}
+                  {activeTab === 'orders' &&
+                    (ordersSubTabHint === 'received_cancel_returns'
+                      ? 'Đối soát kiện hủy/hoàn đã nhận về kho — dữ liệu lưu vĩnh viễn.'
+                      : 'Quản lý 8 trạng thái đơn Shopee & TikTok, chuẩn bị hàng đóng gói và in vận đơn nhiệt.')}
+                  {activeTab === 'picking' && 'Quét mã đơn, tích sản phẩm đã nhặt và chuyển sang đóng gói.'}
+                  {activeTab === 'bulk' && 'Tăng giảm giá %, đặt tồn kho, tối ưu nội dung bằng AI hàng loạt.'}
+                  {activeTab === 'suppliers' && 'Quản lý thông tin liên hệ, công nợ sỉ và tiền độ thanh toán cho xưởng sỉ.'}
+                  {activeTab === 'imports' && 'Quản lý hóa đơn nhập đầu vào, theo dõi biến động % giá nhập hàng.'}
+                  {activeTab === 'financials' && 'Theo dõi chi phí hoạt động, cơ cấu quỹ và mô phỏng lợi nhuận sau phí sàn.'}
+                  {activeTab === 'settings' && 'Cập nhật mã gian hàng, API key và trỏ DNS về hosting riêng.'}
+                </p>
+              </>
             )}
           </div>
 

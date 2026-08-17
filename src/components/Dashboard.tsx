@@ -417,24 +417,19 @@ export default function Dashboard({
 
   return (
     <div className="space-y-6" id="dashboard-tab">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <h1 className="text-lg font-extrabold text-gray-900 tracking-tight">
-          Bảng Điều Khiển Tổng Quan (V2)
-        </h1>
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          <Calendar className="w-4 h-4 text-gray-400 shrink-0" />
-          <select
-            value={dateRange}
-            onChange={(e) => setDateRange(e.target.value as DashboardDateRange)}
-            className="px-3 py-2.5 min-h-11 bg-white border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 outline-none cursor-pointer focus:border-blue-400 w-full sm:min-w-[160px]"
-          >
-            {DATE_RANGE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </div>
+      <div className="flex items-center justify-end gap-2">
+        <Calendar className="w-4 h-4 text-gray-400 shrink-0" />
+        <select
+          value={dateRange}
+          onChange={(e) => setDateRange(e.target.value as DashboardDateRange)}
+          className="px-3 py-2.5 min-h-11 bg-white border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 outline-none cursor-pointer focus:border-blue-400 w-full sm:w-auto sm:min-w-[160px]"
+        >
+          {DATE_RANGE_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
       </div>
 
       {usingFallback && (
