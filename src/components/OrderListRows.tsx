@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import type { ConnectedShop, Order, Product, SystemFee } from '../types';
 import {
+  getShopeeOrderRawStatus,
   isEligibleForHandOverToCarrier,
   isOrderHandedOverToCarrier,
   isOrderPreparedEffective,
@@ -184,6 +185,48 @@ function ReturnTrackingLine({ order }: { order: Order }) {
 
 function isCancelReturnGroupTab(tab: string): boolean {
   return tab === 'cancel_returns';
+}
+
+/** Badge trạng thái giao hàng — đọc raw Shopee, không phải nút thao tác tay. */
+function DeliveryStatusBadge({
+  order,
+  size = 'sm',
+}: {
+  order: Order;
+  size?: 'sm' | 'md';
+}) {
+  const raw = getShopeeOrderRawStatus(order);
+  const sub = String(order.sub_status || '').toUpperCase();
+  const kind = String(order.shopee_cancel_return_kind || '').toLowerCase();
+  const sizeCls =
+    size === 'md'
+      ? 'px-2.5 py-1 text-[11px] font-extrabold rounded-lg'
+      : 'px-2 py-1 text-[10px] font-semibold rounded';
+
+  let label: string | null = null;
+  let colorCls = '';
+
+  if (raw === 'COMPLETED' || order.status === 'completed') {
+    label = 'Đã giao';
+    colorCls = 'bg-emerald-50 text-emerald-700 border border-emerald-200';
+  } else if (
+    raw === 'TO_RETURN' ||
+    raw === 'CANCELLED' ||
+    raw === 'IN_CANCEL' ||
+    raw === 'RTS' ||
+    sub === 'RTS' ||
+    order.is_rts === true ||
+    kind === 'failed_delivery'
+  ) {
+    label = 'Giao thất bại';
+    colorCls = 'bg-rose-50 text-rose-700 border border-rose-200';
+  } else if (raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE' || order.status === 'shipping') {
+    label = 'Đang giao';
+    colorCls = 'bg-indigo-50 text-indigo-600 border border-indigo-200';
+  }
+
+  if (!label) return null;
+  return <span className={`inline-flex items-center ${sizeCls} ${colorCls}`}>{label}</span>;
 }
 
 function resolveWooCustomerInfo(order: Order): { name: string; phone: string; address: string } {
@@ -541,23 +584,8 @@ export const OrderTableRow = React.memo(function OrderTableRow({
                   </>
                 )}
 
-                {activeSubTab !== 'return_requests' && !isCancelReturnGroupTab(activeSubTab) && order.status === 'shipping' && (
-                  <div className="flex gap-1">
-                    <button
-                      type="button"
-                      onClick={() => actions.onPatchStatus(order, 'completed')}
-                      className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[10px] rounded"
-                    >
-                      Thắng
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => actions.onPatchStatus(order, 'return_pending')}
-                      className="px-2 py-1 bg-rose-500 hover:bg-rose-600 text-white font-semibold text-[10px] rounded animate-pulse"
-                    >
-                      Bị Hoàn
-                    </button>
-                  </div>
+                {activeSubTab !== 'return_requests' && !isCancelReturnGroupTab(activeSubTab) && (
+                  <DeliveryStatusBadge order={order} />
                 )}
 
                 {activeSubTab !== 'return_requests' && !isCancelReturnGroupTab(activeSubTab) && order.status === 'return_pending' && (
@@ -847,23 +875,8 @@ export const OrderCardRow = React.memo(function OrderCardRow({
               </>
             )}
 
-            {activeSubTab !== 'return_requests' && !isCancelReturnGroupTab(activeSubTab) && order.status === 'shipping' && (
-              <div className="flex gap-1">
-                <button
-                  type="button"
-                  onClick={() => actions.onPatchStatus(order, 'completed')}
-                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[11px] rounded-lg shadow-xs"
-                >
-                  Thắng
-                </button>
-                <button
-                  type="button"
-                  onClick={() => actions.onPatchStatus(order, 'return_pending')}
-                  className="px-2.5 py-1 bg-rose-500 hover:bg-rose-600 text-white font-extrabold text-[11px] rounded-lg shadow-xs"
-                >
-                  Bị Hoàn
-                </button>
-              </div>
+            {activeSubTab !== 'return_requests' && !isCancelReturnGroupTab(activeSubTab) && (
+              <DeliveryStatusBadge order={order} size="md" />
             )}
 
             {activeSubTab !== 'return_requests' && !isCancelReturnGroupTab(activeSubTab) && order.status === 'return_pending' && (

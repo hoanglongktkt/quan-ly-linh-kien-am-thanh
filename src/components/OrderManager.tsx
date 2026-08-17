@@ -5462,7 +5462,7 @@ export default function OrderManager({
       case 'shipping': 
         return { text: 'Đang giao', color: 'bg-indigo-50 text-indigo-600 border-indigo-200/60' };
       case 'completed': 
-        return { text: 'Thành công', color: 'bg-green-50 text-green-700 border-green-200/60' };
+        return { text: 'Đã giao', color: 'bg-green-50 text-green-700 border-green-200/60' };
       case 'cancelled': 
         return { text: 'Đơn Hủy', color: 'bg-rose-50 text-rose-500 border-rose-100' };
       case 'return_pending': 
