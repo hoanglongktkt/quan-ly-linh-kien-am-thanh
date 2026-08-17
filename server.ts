@@ -1597,12 +1597,20 @@ async function persistReturnTrackingOnly(order: any, tracking: string, shopId: s
   });
 }
 
+function existingHasReturnSn(existing: any): boolean {
+  return Boolean(
+    String(existing?.return_sn || existing?.data?.return_sn || "").trim(),
+  );
+}
+
 /** Đánh dấu YCTH mới → queue toast realtime + cờ Mongo. */
 function markNewReturnRequestAlert(order: any, existing: any): boolean {
   try {
     if (!order) return false;
-    const hadReturn = Boolean(String(existing?.return_sn || "").trim());
-    const hasReturn = Boolean(String(order.return_sn || "").trim());
+    const hadReturn = existingHasReturnSn(existing);
+    const hasReturn = Boolean(
+      String(order.return_sn || order?.data?.return_sn || "").trim(),
+    );
     if (!hasReturn || hadReturn) return false;
     order.return_alert_pending = true;
     order.return_alert_at = new Date().toISOString();
@@ -19037,8 +19045,23 @@ async function applyWebhookReturnFallback(
   const kind = mapShopeeReturnKind(detail);
   const returnStatus = String(detail.status || "").toUpperCase();
   const mappedReturnSn = extractReturnRequestCode(detail) || returnSn;
-  const idx = orders.findIndex((o: any) => String(o.orderSn) === orderSn);
-  const existing = idx >= 0 ? orders[idx] : undefined;
+  let idx = orders.findIndex((o: any) => String(o.orderSn) === orderSn);
+  let existing = idx >= 0 ? orders[idx] : undefined;
+  if (!existing && isMongoReady()) {
+    try {
+      const loaded = await loadOrdersFromStore({ orderSns: [orderSn], limit: 1 });
+      existing = loaded?.[0];
+      if (existing) {
+        orders.unshift(existing);
+        idx = 0;
+      }
+    } catch (loadErr: any) {
+      console.warn(
+        `[Shopee Webhook] load order for return alert ${orderSn}:`,
+        loadErr?.message || loadErr,
+      );
+    }
+  }
   if (returnStatus === "CANCELLED") {
     if (existing) {
       existing.return_status = "CANCELLED";

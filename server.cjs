@@ -77701,7 +77701,11 @@ async function bulkUpsertOrdersToStore(orders) {
           "data.is_return_received": 1,
           "data.local_return_status": 1,
           "data.warehouse_return_received": 1,
-          "data.isWarehouseReturnReceived": 1
+          "data.isWarehouseReturnReceived": 1,
+          return_alert_pending: 1,
+          "data.return_alert_pending": 1,
+          return_sn: 1,
+          "data.return_sn": 1
         }).lean();
         const existingByKey = /* @__PURE__ */ new Map();
         for (const row of existing) {
@@ -77743,6 +77747,18 @@ async function bulkUpsertOrdersToStore(orders) {
           const $setOnInsert = item.op?.updateOne?.update?.$setOnInsert;
           if (!$set) continue;
           stripWarehouseProtectedKeysFromSet($set);
+          if (current) {
+            const alreadyAcked = current.return_alert_pending === false || current.data?.return_alert_pending === false;
+            const alreadyHadReturn = Boolean(
+              String(current.return_sn || current.data?.return_sn || "").trim()
+            );
+            if (alreadyAcked || alreadyHadReturn) {
+              delete $set.return_alert_pending;
+              delete $set["data.return_alert_pending"];
+              delete $set.return_alert_at;
+              delete $set["data.return_alert_at"];
+            }
+          }
           if (!current) continue;
           const lock = readExistingWarehouseLock(current);
           if (lock.locked) {
@@ -120797,11 +120813,18 @@ async function persistReturnTrackingOnly(order, tracking, shopId) {
     return_status: String(order?.return_status || "").trim() || void 0
   });
 }
+function existingHasReturnSn(existing) {
+  return Boolean(
+    String(existing?.return_sn || existing?.data?.return_sn || "").trim()
+  );
+}
 function markNewReturnRequestAlert(order, existing) {
   try {
     if (!order) return false;
-    const hadReturn = Boolean(String(existing?.return_sn || "").trim());
-    const hasReturn = Boolean(String(order.return_sn || "").trim());
+    const hadReturn = existingHasReturnSn(existing);
+    const hasReturn = Boolean(
+      String(order.return_sn || order?.data?.return_sn || "").trim()
+    );
     if (!hasReturn || hadReturn) return false;
     order.return_alert_pending = true;
     order.return_alert_at = (/* @__PURE__ */ new Date()).toISOString();
@@ -133435,8 +133458,23 @@ async function applyWebhookReturnFallback(shopId, accessToken, orderSn, orders, 
   const kind = mapShopeeReturnKind(detail);
   const returnStatus = String(detail.status || "").toUpperCase();
   const mappedReturnSn = extractReturnRequestCode(detail) || returnSn;
-  const idx = orders.findIndex((o) => String(o.orderSn) === orderSn);
-  const existing = idx >= 0 ? orders[idx] : void 0;
+  let idx = orders.findIndex((o) => String(o.orderSn) === orderSn);
+  let existing = idx >= 0 ? orders[idx] : void 0;
+  if (!existing && isMongoReady()) {
+    try {
+      const loaded = await loadOrdersFromStore({ orderSns: [orderSn], limit: 1 });
+      existing = loaded?.[0];
+      if (existing) {
+        orders.unshift(existing);
+        idx = 0;
+      }
+    } catch (loadErr) {
+      console.warn(
+        `[Shopee Webhook] load order for return alert ${orderSn}:`,
+        loadErr?.message || loadErr
+      );
+    }
+  }
   if (returnStatus === "CANCELLED") {
     if (existing) {
       existing.return_status = "CANCELLED";

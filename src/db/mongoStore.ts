@@ -2207,6 +2207,10 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
             "data.local_return_status": 1,
             "data.warehouse_return_received": 1,
             "data.isWarehouseReturnReceived": 1,
+            return_alert_pending: 1,
+            "data.return_alert_pending": 1,
+            return_sn: 1,
+            "data.return_sn": 1,
           })
           .lean();
         const existingByKey = new Map<string, any>();
@@ -2252,6 +2256,20 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
             | undefined;
           if (!$set) continue;
           stripWarehouseProtectedKeysFromSet($set);
+          if (current) {
+            const alreadyAcked =
+              current.return_alert_pending === false ||
+              current.data?.return_alert_pending === false;
+            const alreadyHadReturn = Boolean(
+              String(current.return_sn || current.data?.return_sn || "").trim(),
+            );
+            if (alreadyAcked || alreadyHadReturn) {
+              delete $set.return_alert_pending;
+              delete $set["data.return_alert_pending"];
+              delete $set.return_alert_at;
+              delete $set["data.return_alert_at"];
+            }
+          }
           if (!current) continue;
           const lock = readExistingWarehouseLock(current);
           if (lock.locked) {

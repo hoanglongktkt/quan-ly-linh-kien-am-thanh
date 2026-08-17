@@ -1083,7 +1083,9 @@ export default function OrderManager({
   const counterInFlightKeyRef = useRef('');
   const counterInFlightPromiseRef = useRef<Promise<Record<string, number> | null> | null>(null);
   const lastCounterCallAtRef = useRef(0);
-  const countsFingerprintRef = useRef<string>('');
+  const prevCounters = useRef({ pending_confirm: 0, all: 0 });
+  const prevCountersReadyRef = useRef(false);
+  const prevCounterScopeRef = useRef('');
   const isSyncingRef = useRef(false);
   /** Pull-to-refresh (mobile): vuốt từ trên xuống để fetch lại đơn. */
   const [pullDistance, setPullDistance] = useState(0);
@@ -1098,22 +1100,6 @@ export default function OrderManager({
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), durationMs);
   };
-
-  const fingerprintCounts = (counts: Record<string, number>) =>
-    [
-      'all',
-      'pending_confirm',
-      'unprocessed',
-      'processed',
-      'shipping',
-      'handed_over_carrier',
-      'return_requests',
-      'cancel_returns',
-      'received_cancel_returns',
-      'web_orders',
-    ]
-      .map((k) => `${k}:${Number(counts[k]) || 0}`)
-      .join('|');
 
   const fetchOrderCounts = useCallback(async (): Promise<Record<string, number> | null> => {
     const token = localStorage.getItem('admin_token') || '';
@@ -1279,6 +1265,39 @@ export default function OrderManager({
     newOrderRefreshTimersRef.current = [t1, t2];
   }, []);
 
+  /** Chỉ báo đơn mới khi pending_confirm hoặc all TĂNG — không dùng fingerprint 10 tab. */
+  const maybeNotifyNewOrdersFromCounts = useCallback(
+    (counts: Record<string, number>) => {
+      const nextPending = Number(counts.pending_confirm) || 0;
+      const nextAll = Number(counts.all) || 0;
+      const shopIds = shopScopeRef.current.shopIds;
+      const range = dateRangeRef.current;
+      const scopeKey = `${shopIds.join(',')}|${range.startDate || ''}|${range.endDate || ''}`;
+      if (prevCounterScopeRef.current !== scopeKey) {
+        prevCounterScopeRef.current = scopeKey;
+        prevCounters.current = { pending_confirm: nextPending, all: nextAll };
+        prevCountersReadyRef.current = true;
+        return;
+      }
+      if (!prevCountersReadyRef.current) {
+        prevCounters.current = { pending_confirm: nextPending, all: nextAll };
+        prevCountersReadyRef.current = true;
+        return;
+      }
+      const prevPending = Number(prevCounters.current.pending_confirm) || 0;
+      const prevAll = Number(prevCounters.current.all) || 0;
+      // Timeout lag countDocuments → 0: giữ baseline, chỉ badge (đã set trong fetchOrderCounts).
+      if ((nextPending === 0 && prevPending > 0 && nextAll === 0) || (nextAll === 0 && prevAll > 0)) {
+        return;
+      }
+      if (nextPending > prevPending || nextAll > prevAll) {
+        scheduleNewOrderListRefresh();
+      }
+      prevCounters.current = { pending_confirm: nextPending, all: nextAll };
+    },
+    [scheduleNewOrderListRefresh],
+  );
+
   const goToOrdersPage = useCallback(
     (page: number) => {
       const next = Math.max(1, Math.floor(page) || 1);
@@ -1323,13 +1342,7 @@ export default function OrderManager({
     const pollOnce = async () => {
       const counts = await fetchOrderCounts();
       if (!counts) return;
-      const fp = fingerprintCounts(counts);
-      if (countsFingerprintRef.current && countsFingerprintRef.current !== fp) {
-        countsFingerprintRef.current = fp;
-        scheduleNewOrderListRefresh();
-      } else if (!countsFingerprintRef.current) {
-        countsFingerprintRef.current = fp;
-      }
+      maybeNotifyNewOrdersFromCounts(counts);
     };
     const loop = async () => {
       ticks += 1;
@@ -1346,7 +1359,7 @@ export default function OrderManager({
     syncPollTimerRef.current = window.setTimeout(() => {
       void loop();
     }, 2000);
-  }, [fetchOrderCounts, scheduleNewOrderListRefresh]);
+  }, [fetchOrderCounts, maybeNotifyNewOrdersFromCounts]);
 
   useEffect(() => {
     return () => {
@@ -1379,11 +1392,7 @@ export default function OrderManager({
       if (document.visibilityState !== 'hidden') {
         const counts = await fetchOrderCounts();
         if (!cancelled && counts) {
-          const fp = fingerprintCounts(counts);
-          if (countsFingerprintRef.current && countsFingerprintRef.current !== fp) {
-            scheduleNewOrderListRefresh();
-          }
-          if (fp) countsFingerprintRef.current = fp;
+          maybeNotifyNewOrdersFromCounts(counts);
         }
       }
       schedule(COUNTER_POLL_MS);
@@ -1397,7 +1406,7 @@ export default function OrderManager({
       }
       counterAbortRef.current?.abort();
     };
-  }, [fetchOrderCounts, scheduleNewOrderListRefresh]);
+  }, [fetchOrderCounts, maybeNotifyNewOrdersFromCounts]);
 
   /** Tự unlock audio sau click/touch đầu tiên của user trên trang. */
   useEffect(() => {

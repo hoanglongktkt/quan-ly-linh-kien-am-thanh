@@ -428,6 +428,7 @@ export default function App() {
   const scanBgToastTimerRef = useRef<number | null>(null);
   const [returnAlertToast, setReturnAlertToast] = useState<string | null>(null);
   const returnAlertToastTimerRef = useRef<number | null>(null);
+  const notifiedReturnAlertIdsRef = useRef<Set<string>>(new Set());
   /** Làm mới ngầm khi quay lại tab trình duyệt — không trigger Shopee sync. */
   const [backgroundRefreshing, setBackgroundRefreshing] = useState(false);
   const lastFocusRefreshAtRef = useRef(0);
@@ -1223,17 +1224,27 @@ export default function App() {
         if (cancelled || !status) return;
         const unnotified = status.unnotified || [];
         if (unnotified.length === 0) return;
-        if (returnAlertToastTimerRef.current) window.clearTimeout(returnAlertToastTimerRef.current);
-        setReturnAlertToast('Có yêu cầu trả hàng hoàn tiền mới!');
-        try {
-          playNotificationSound();
-        } catch {
-          /* ignore */
+        const seen = notifiedReturnAlertIdsRef.current;
+        const alertKey = (j: { id?: string; orderSn?: string; returnSn?: string }) =>
+          [j.returnSn, j.orderSn, j.id].map((v) => String(v || '').trim()).filter(Boolean);
+        const fresh = unnotified.filter((j) => !alertKey(j).some((k) => seen.has(k)));
+        if (fresh.length > 0) {
+          for (const j of fresh) {
+            for (const k of alertKey(j)) seen.add(k);
+          }
+          if (returnAlertToastTimerRef.current) window.clearTimeout(returnAlertToastTimerRef.current);
+          setReturnAlertToast('Có yêu cầu trả hàng hoàn tiền mới!');
+          try {
+            playNotificationSound();
+          } catch {
+            /* ignore */
+          }
+          returnAlertToastTimerRef.current = window.setTimeout(() => setReturnAlertToast(null), 8000);
         }
-        returnAlertToastTimerRef.current = window.setTimeout(() => setReturnAlertToast(null), 8000);
         await ackReturnAlerts(
           unnotified.map((j) => j.id || j.orderSn).filter(Boolean) as string[],
         );
+        if (fresh.length === 0) return;
         const hint = String(resolveOrdersSubTabFromUrl() || '').trim().toLowerCase();
         const tab = !hint || hint === 'all' || hint === 'order_products' ? '' : hint;
         const kind = tab === 'cancel_returns' ? resolveOrdersFetchKindFromUrl() : '';
