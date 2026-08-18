@@ -1073,7 +1073,7 @@ export default function OrderManager({
     page: currentPage,
     q: searchQuery.trim(),
   };
-  const listFetchAbortRef = useRef<AbortController | null>(null);
+  const isListFetchingRef = useRef(false);
   const isMobileViewport = useMediaQuery('(max-width: 768px)');
   const isWideDesktop = useMediaQuery('(min-width: 1440px)');
   const useOrderCardList = isMobileViewport || isWideDesktop;
@@ -1116,16 +1116,13 @@ export default function OrderManager({
     const range = dateRangeRef.current;
     const flightKey = `${shopIds.join(',')}|${range.startDate}|${range.endDate}`;
     const now = Date.now();
-    if (counterInFlightPromiseRef.current && counterInFlightKeyRef.current === flightKey) {
+    if (counterInFlightPromiseRef.current) {
       return counterInFlightPromiseRef.current;
     }
     if (counterInFlightKeyRef.current === flightKey && now - lastCounterCallAtRef.current < 800) {
       return counterInFlightPromiseRef.current;
     }
     lastCounterCallAtRef.current = now;
-    if (counterInFlightKeyRef.current !== flightKey) {
-      counterAbortRef.current?.abort();
-    }
     const controller = new AbortController();
     counterAbortRef.current = controller;
     counterInFlightKeyRef.current = flightKey;
@@ -1217,12 +1214,8 @@ export default function OrderManager({
     (opts?: { silent?: boolean; page?: number }) => {
       setHasNewOrders(false);
       const page = opts?.page && opts.page > 0 ? opts.page : currentPage;
-      listFetchAbortRef.current?.abort();
-      const controller = new AbortController();
-      listFetchAbortRef.current = controller;
       void fetchOrdersWithShop({
         silent: opts?.silent !== false,
-        force: true,
         page,
         limit: ORDERS_PAGE_SIZE,
         merge: false,
@@ -1232,7 +1225,6 @@ export default function OrderManager({
           activeSubTab === 'cancel_returns'
             ? cancelReturnKindParam(cancelReturnTab)
             : undefined,
-        signal: controller.signal,
       });
       void fetchOrderCounts();
     },
@@ -1308,12 +1300,8 @@ export default function OrderManager({
     (page: number) => {
       const next = Math.max(1, Math.floor(page) || 1);
       setCurrentPage(next);
-      listFetchAbortRef.current?.abort();
-      const controller = new AbortController();
-      listFetchAbortRef.current = controller;
       void fetchOrdersWithShop({
         silent: false,
-        force: true,
         page: next,
         limit: ORDERS_PAGE_SIZE,
         merge: false,
@@ -1323,7 +1311,6 @@ export default function OrderManager({
           activeSubTab === 'cancel_returns'
             ? cancelReturnKindParam(cancelReturnTab)
             : undefined,
-        signal: controller.signal,
       });
     },
     [activeSubTab, cancelReturnTab, fetchOrdersWithShop, searchQuery],
@@ -1376,7 +1363,6 @@ export default function OrderManager({
         window.clearTimeout(counterPollTimerRef.current);
       }
       counterAbortRef.current?.abort();
-      listFetchAbortRef.current?.abort();
       for (const id of newOrderRefreshTimersRef.current) {
         window.clearTimeout(id);
       }
@@ -1690,32 +1676,26 @@ export default function OrderManager({
     ]);
     if (!tabFetchTabs.has(activeSubTab) || !onFetchOrdersRef.current) return;
 
-    let cancelled = false;
-    let controller: AbortController | null = null;
     const expectedTab = searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab;
     const expectedKind =
       activeSubTab === 'cancel_returns' ? cancelReturnKindParam(cancelReturnTab) : undefined;
     const delay = datePreset === 'custom' ? 280 : 80;
     const timer = window.setTimeout(() => {
-      if (cancelled) return;
-      listFetchAbortRef.current?.abort();
-      controller = new AbortController();
-      listFetchAbortRef.current = controller;
+      isListFetchingRef.current = true;
       setCurrentPage((p) => (p === 1 ? p : 1));
       console.log(`[Orders Tab] activeSubTab=${activeSubTab} kind=${listFetchKind || '(none)'} shops=${shopIdsKey || '(all)'} → fetch page=1`);
-      const run = async () => {
-        try {
-          await onFetchOrdersRef.current?.({
-            silent: false,
-            page: 1,
-            limit: ORDERS_PAGE_SIZE,
-            merge: false,
-            tab: expectedTab,
-            q: searchQuery.trim() || undefined,
-            kind: expectedKind,
-            signal: controller!.signal,
-          });
-        } catch (error: unknown) {
+      void Promise.resolve(
+        onFetchOrdersRef.current?.({
+          silent: false,
+          page: 1,
+          limit: ORDERS_PAGE_SIZE,
+          merge: false,
+          tab: expectedTab,
+          q: searchQuery.trim() || undefined,
+          kind: expectedKind,
+        }),
+      )
+        .catch((error: unknown) => {
           const name =
             error instanceof Error
               ? error.name
@@ -1723,25 +1703,21 @@ export default function OrderManager({
                 ? (error as { name?: string }).name
                 : undefined;
           if (name === 'AbortError') return;
-          if (cancelled || controller?.signal.aborted) return;
           console.warn('[Orders Tab] fetchOrders failed:', error);
-        }
-      };
-      void run();
+        })
+        .finally(() => {
+          isListFetchingRef.current = false;
+        });
     }, delay);
 
     return () => {
-      cancelled = true;
       window.clearTimeout(timer);
-      controller?.abort();
-      if (listFetchAbortRef.current === controller) listFetchAbortRef.current = null;
     };
     // Primitive key only — shopIds.join + dateRange + filters. CẤM object selectedShops.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ordersFetchKey, shopsBootReady]);
 
   const searchBootRef = React.useRef(true);
-  const searchAbortRef = React.useRef<AbortController | null>(null);
   useEffect(() => {
     if (searchBootRef.current) {
       searchBootRef.current = false;
@@ -1750,9 +1726,6 @@ export default function OrderManager({
     const q = searchQuery.trim();
     const handle = window.setTimeout(() => {
       setCurrentPage(1);
-      searchAbortRef.current?.abort();
-      const controller = new AbortController();
-      searchAbortRef.current = controller;
       void Promise.resolve(
         onFetchOrdersRef.current?.({
           silent: false,
@@ -1765,7 +1738,6 @@ export default function OrderManager({
             !q && activeSubTab === 'cancel_returns'
               ? cancelReturnKindParam(cancelReturnTab)
               : undefined,
-          signal: controller.signal,
         }),
       ).catch((error: unknown) => {
         const name =
@@ -1779,7 +1751,6 @@ export default function OrderManager({
     }, q ? 400 : 80);
     return () => {
       window.clearTimeout(handle);
-      searchAbortRef.current?.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery]);
@@ -1969,9 +1940,6 @@ export default function OrderManager({
   const applyPrintStatusFilter = React.useCallback(
     (next: 'all' | 'printed' | 'unprinted') => {
       setPrintStatusFilter(next);
-      listFetchAbortRef.current?.abort();
-      const controller = new AbortController();
-      listFetchAbortRef.current = controller;
       void Promise.resolve(
         fetchOrdersWithShop({
           silent: true,
@@ -1980,7 +1948,6 @@ export default function OrderManager({
           merge: false,
           tab: activeSubTab === 'all' ? '' : activeSubTab,
           kind: listKind,
-          signal: controller.signal,
         }),
       ).catch((error: unknown) => {
         if (error instanceof Error && error.name === 'AbortError') return;
@@ -5370,18 +5337,13 @@ export default function OrderManager({
     setPullDistance(OM_PULL_REFRESH_THRESHOLD_PX);
     try {
       setCurrentPage(1);
-      listFetchAbortRef.current?.abort();
-      const controller = new AbortController();
-      listFetchAbortRef.current = controller;
       await fetchOrdersWithShop({
         silent: false,
-        force: true,
         page: 1,
         limit: ORDERS_PAGE_SIZE,
         merge: false,
         tab: activeSubTab === 'all' ? '' : activeSubTab,
         kind: listKind,
-        signal: controller.signal,
       });
       void fetchOrderCounts();
     } finally {

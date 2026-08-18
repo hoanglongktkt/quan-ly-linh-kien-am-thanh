@@ -80026,17 +80026,12 @@ function parseCancelReturnKindParam(raw) {
   if (k === "cancelled" || k === "cancel") return "cancelled";
   return "";
 }
-var TAB_COUNT_CACHE_MS = 5e3;
+var TAB_COUNT_CACHE_MS = 15e3;
 var tabCountCache = null;
+var dhhCountCache = { key: "", n: 0 };
 function tabCountCacheKey(opts) {
   const ids = Array.isArray(opts?.shopIds) ? opts.shopIds.map(String).join(",") : "";
   return `${ids}|${opts?.shopId || ""}|${opts?.startDate || ""}|${opts?.endDate || ""}`;
-}
-function facetCountStages(filter2) {
-  if (filter2 && Object.keys(filter2).length > 0) {
-    return [{ $match: filter2 }, { $count: "n" }];
-  }
-  return [{ $count: "n" }];
 }
 function facetN(row, key) {
   const arr = row?.[key];
@@ -80056,6 +80051,198 @@ function buildCounterMatch(opts) {
   if (parts.length === 0) return {};
   if (parts.length === 1) return parts[0];
   return { $and: parts };
+}
+var FACET_TO_SHIP = ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"];
+var FACET_SHIPPED = ["SHIPPED", "TO_CONFIRM_RECEIVE"];
+var FACET_LEFT = [
+  "READY_TO_SHIP",
+  "RETRY_SHIP",
+  "PROCESSED",
+  "SHIPPED",
+  "TO_CONFIRM_RECEIVE",
+  "COMPLETED",
+  "CANCELLED",
+  "IN_CANCEL",
+  "TO_RETURN"
+];
+var FACET_PENDING = ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"];
+var FACET_END_LOCAL = [
+  "shipping",
+  "completed",
+  "cancelled",
+  "return_pending",
+  "return_received"
+];
+function buildTabFlagProjectStage() {
+  const s2 = "$shopee_order_status";
+  const st = "$status";
+  const isToShip = {
+    $and: [{ $in: [s2, FACET_TO_SHIP] }, { $not: [{ $in: [st, FACET_END_LOCAL] }] }]
+  };
+  const hasTn = {
+    $and: [
+      { $gt: [{ $strLenCP: { $ifNull: ["$tracking_no", ""] } }, 0] },
+      { $ne: ["$tracking_no", "0"] },
+      {
+        $ne: [
+          { $toUpper: { $substrCP: [{ $ifNull: ["$tracking_no", ""] }, 0, 3] } },
+          "0FG"
+        ]
+      }
+    ]
+  };
+  const isHo = { $eq: ["$is_handed_over", true] };
+  const emptyS = { $in: [{ $ifNull: [s2, ""] }, ["", null]] };
+  const isCr = {
+    $or: [
+      { $in: [st, ["cancelled", "return_pending", "return_received"]] },
+      { $in: [s2, ["CANCELLED", "IN_CANCEL", "TO_RETURN"]] },
+      {
+        $in: [
+          "$shopee_cancel_return_kind",
+          ["cancelled", "refund_return", "failed_delivery"]
+        ]
+      },
+      { $eq: ["$sub_status", "RTS"] },
+      { $eq: ["$is_rts", true] },
+      { $eq: ["$is_return", true] },
+      { $gt: [{ $strLenCP: { $ifNull: ["$return_sn", ""] } }, 0] }
+    ]
+  };
+  const isRet = {
+    $or: [
+      { $eq: ["$is_return", true] },
+      { $eq: ["$shopee_cancel_return_kind", "refund_return"] },
+      { $gt: [{ $strLenCP: { $ifNull: ["$return_sn", ""] } }, 0] }
+    ]
+  };
+  const isRts = {
+    $or: [
+      { $eq: ["$is_rts", true] },
+      { $eq: ["$sub_status", "RTS"] },
+      { $eq: ["$shopee_cancel_return_kind", "failed_delivery"] }
+    ]
+  };
+  return {
+    $project: {
+      _id: 0,
+      _pc: {
+        $and: [
+          {
+            $or: [
+              { $in: [st, ["pending_confirm", "pending_verification"]] },
+              { $in: [s2, FACET_PENDING] }
+            ]
+          },
+          { $not: [{ $in: [s2, FACET_LEFT] }] },
+          {
+            $not: [
+              {
+                $in: [
+                  st,
+                  ["unprocessed", "processed", ...FACET_END_LOCAL]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      _un: {
+        $and: [
+          isToShip,
+          { $not: [isHo] },
+          { $not: [hasTn] },
+          { $ne: ["$isPrepared", true] },
+          {
+            $or: [
+              { $in: [s2, ["READY_TO_SHIP", "RETRY_SHIP"]] },
+              { $and: [{ $eq: [st, "unprocessed"] }, emptyS] }
+            ]
+          }
+        ]
+      },
+      _pr: {
+        $and: [
+          isToShip,
+          { $not: [isHo] },
+          {
+            $or: [
+              { $eq: [s2, "PROCESSED"] },
+              hasTn,
+              { $eq: ["$isPrepared", true] },
+              { $eq: [st, "processed"] }
+            ]
+          }
+        ]
+      },
+      _ho: { $and: [isToShip, isHo] },
+      _sh: {
+        $and: [
+          {
+            $or: [
+              { $in: [s2, FACET_SHIPPED] },
+              { $and: [{ $eq: [st, "shipping"] }, emptyS] }
+            ]
+          },
+          { $ne: ["$is_rts", true] },
+          { $ne: ["$shopee_cancel_return_kind", "failed_delivery"] },
+          {
+            $not: [
+              {
+                $in: [st, ["completed", "cancelled", "return_pending", "return_received"]]
+              }
+            ]
+          }
+        ]
+      },
+      _rp: { $eq: [st, "return_pending"] },
+      _rr: {
+        $or: [
+          { $gt: [{ $strLenCP: { $ifNull: ["$return_sn", ""] } }, 0] },
+          { $gt: [{ $strLenCP: { $ifNull: ["$return_tracking_no", ""] } }, 0] },
+          { $eq: [s2, "TO_RETURN"] },
+          { $in: [st, ["return_pending", "return_received"]] },
+          { $eq: ["$shopee_cancel_return_kind", "refund_return"] },
+          { $eq: ["$is_return", true] }
+        ]
+      },
+      _cr: isCr,
+      _ret: { $and: [isCr, isRet] },
+      _rts: { $and: [isCr, isRts] },
+      _can: {
+        $and: [
+          isCr,
+          {
+            $or: [
+              { $eq: [st, "cancelled"] },
+              { $in: [s2, ["CANCELLED", "IN_CANCEL"]] },
+              { $eq: ["$shopee_cancel_return_kind", "cancelled"] }
+            ]
+          },
+          { $not: [isRet] },
+          { $not: [isRts] }
+        ]
+      },
+      _web: { $eq: ["$channel", "woocommerce"] }
+    }
+  };
+}
+function facetTrue(flag) {
+  return [{ $match: { [flag]: true } }, { $count: "n" }];
+}
+function peekCachedTabTotal(opts, tab, kind) {
+  if (!tabCountCache || tabCountCache.expiresAt <= Date.now()) return 0;
+  if (tabCountCache.key !== tabCountCacheKey(opts)) return 0;
+  const c = tabCountCache.value;
+  const t2 = String(tab || "").trim().toLowerCase();
+  if (!t2 || t2 === "all") return Number(c.all) || 0;
+  if (t2 === "cancel_returns" || t2 === "cancel-returns" || t2 === "cancelled_returned" || t2 === "huy-hoan" || t2 === "don-huy-hoan") {
+    if (kind === "refund_return") return Number(c.cancel_returns_returned) || 0;
+    if (kind === "cancelled") return Number(c.cancel_returns_cancelled) || 0;
+    if (kind === "failed_delivery") return Number(c.cancel_returns_rts) || 0;
+    return Number(c.cancel_returns) || 0;
+  }
+  return Number(c[t2]) || 0;
 }
 async function reclassifyCancelReturnsInStore(opts) {
   const empty = { scanned: 0, updated: 0, pages: 0 };
@@ -80433,17 +80620,6 @@ async function loadPriorityTabOrdersFromStore(opts) {
     return [];
   }
 }
-async function safeCountDocuments(filter2, maxTimeMS = 6e3) {
-  try {
-    return Number(await OrderModel.countDocuments(filter2).maxTimeMS(maxTimeMS)) || 0;
-  } catch (err) {
-    console.warn(
-      "[MongoDB] safeCountDocuments failed:",
-      err?.message || err
-    );
-    return 0;
-  }
-}
 async function countOrdersByTabsFromStore(opts) {
   const empty = {
     all: 0,
@@ -80466,25 +80642,37 @@ async function countOrdersByTabsFromStore(opts) {
       return tabCountCache.value;
     }
     const match2 = buildCounterMatch(opts);
-    const facet = {
-      all: facetCountStages({}),
-      pending_confirm: facetCountStages(orderTabFilter("pending_confirm")),
-      unprocessed: facetCountStages(orderTabFilter("unprocessed")),
-      processed: facetCountStages(orderTabFilter("processed")),
-      shipping: facetCountStages(orderTabFilter("shipping")),
-      handed_over_carrier: facetCountStages(orderTabFilter("handed_over_carrier")),
-      return_pending: facetCountStages(orderTabFilter("return_pending")),
-      return_requests: facetCountStages(orderTabFilter("return_requests")),
-      web_orders: facetCountStages(orderTabFilter("web_orders")),
-      cancel_returns: facetCountStages(orderTabFilter("cancel_returns")),
-      cancel_returns_returned: facetCountStages(orderCancelReturnKindFilter("refund_return")),
-      cancel_returns_cancelled: facetCountStages(orderCancelReturnKindFilter("cancelled")),
-      cancel_returns_rts: facetCountStages(orderCancelReturnKindFilter("failed_delivery"))
-    };
-    const aggRows = await OrderModel.aggregate([
+    const pipeline3 = [
       { $match: match2 },
-      { $facet: facet }
-    ]).option({ maxTimeMS: 8e3 }).allowDiskUse(false);
+      buildTabFlagProjectStage(),
+      {
+        $facet: {
+          all: [{ $count: "n" }],
+          pending_confirm: facetTrue("_pc"),
+          unprocessed: facetTrue("_un"),
+          processed: facetTrue("_pr"),
+          shipping: facetTrue("_sh"),
+          handed_over_carrier: facetTrue("_ho"),
+          return_pending: facetTrue("_rp"),
+          return_requests: facetTrue("_rr"),
+          web_orders: facetTrue("_web"),
+          cancel_returns: facetTrue("_cr"),
+          cancel_returns_returned: facetTrue("_ret"),
+          cancel_returns_cancelled: facetTrue("_can"),
+          cancel_returns_rts: facetTrue("_rts")
+        }
+      }
+    ];
+    let aggRows = [];
+    try {
+      aggRows = await OrderModel.aggregate(pipeline3).option({ maxTimeMS: 4e3 }).hint({ "data.date": -1, _id: -1 });
+    } catch (hintErr) {
+      console.warn(
+        "[MongoDB] countOrdersByTabsFromStore hint skipped:",
+        hintErr?.message || hintErr
+      );
+      aggRows = await OrderModel.aggregate(pipeline3).option({ maxTimeMS: 6e3 });
+    }
     const row = aggRows?.[0] || {};
     const counts = { ...empty };
     counts.all = facetN(row, "all");
@@ -80503,16 +80691,14 @@ async function countOrdersByTabsFromStore(opts) {
     counts.refund_return = counts.cancel_returns_returned;
     counts.cancelled = counts.cancel_returns_cancelled;
     counts.failed_delivery = counts.cancel_returns_rts;
-    await new Promise((r2) => setTimeout(r2, 20));
-    try {
-      const dhhShop = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds) || {};
-      counts.received_cancel_returns = Number(
-        await DonHoanHuyModel.countDocuments(dhhShop).maxTimeMS(3e3)
-      );
-    } catch {
-      counts.received_cancel_returns = 0;
-    }
+    counts.received_cancel_returns = dhhCountCache.key === cacheKey ? dhhCountCache.n : dhhCountCache.n;
     tabCountCache = { key: cacheKey, expiresAt: now + TAB_COUNT_CACHE_MS, value: counts };
+    const dhhShop = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds) || {};
+    void DonHoanHuyModel.countDocuments(dhhShop).maxTimeMS(2e3).then((n) => {
+      dhhCountCache.key = cacheKey;
+      dhhCountCache.n = Number(n) || 0;
+    }).catch(() => {
+    });
     return counts;
   } catch (err) {
     console.error(
@@ -80632,7 +80818,11 @@ async function queryOrdersPageFromStore(opts) {
     const filter2 = and.length === 0 ? {} : and.length === 1 ? and[0] : { $and: and };
     let docs = [];
     try {
-      docs = await OrderModel.find(filter2).sort({ "data.date": -1, _id: -1 }).skip((page - 1) * pageSize).limit(pageSize).maxTimeMS(8e3).lean();
+      try {
+        docs = await OrderModel.find(filter2).sort({ "data.date": -1, _id: -1 }).skip((page - 1) * pageSize).limit(pageSize).hint({ "data.date": -1, _id: -1 }).maxTimeMS(4e3).lean();
+      } catch {
+        docs = await OrderModel.find(filter2).sort({ "data.date": -1, _id: -1 }).skip((page - 1) * pageSize).limit(pageSize).maxTimeMS(4e3).lean();
+      }
     } catch (findErr) {
       console.error(
         "[MongoDB] queryOrdersPageFromStore find failed:",
@@ -80640,17 +80830,17 @@ async function queryOrdersPageFromStore(opts) {
       );
       return { ...empty, page, pageSize };
     }
-    const filterIsEmpty = Object.keys(filter2).length === 0;
-    const tabWasRequested = Boolean(requestedTab && requestedTab !== "all");
-    let total = 0;
-    if (filterIsEmpty && tabWasRequested && !search) {
-      total = docs.length;
-      console.warn(
-        `[MongoDB] queryOrdersPageFromStore tab=${requestedTab} empty filter \u2014 total=${total}, kh\xF4ng count to\xE0n DB`
-      );
-    } else {
-      total = await safeCountDocuments(filter2, 4e3);
-    }
+    const cachedTotal = peekCachedTabTotal(
+      {
+        shopId: opts?.shopId,
+        shopIds: opts?.shopIds,
+        startDate: opts?.startDate,
+        endDate: opts?.endDate
+      },
+      requestedTab,
+      kind
+    );
+    const total = cachedTotal > 0 ? cachedTotal : (page - 1) * pageSize + docs.length + (docs.length === pageSize ? 1 : 0);
     console.log(
       `[MongoDB] queryOrdersPageFromStore tab=${requestedTab || "(none)"} rows=${docs.length} total=${total}`
     );
@@ -110303,7 +110493,7 @@ async function getOrderCounts(req, res) {
           shopIds: shopIds.length > 1 ? shopIds : void 0,
           ...dateQ
         }),
-        12e3,
+        5e3,
         "orders_counter"
       )
     );

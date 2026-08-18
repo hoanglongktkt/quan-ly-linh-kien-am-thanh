@@ -5485,9 +5485,10 @@ export function parseCancelReturnKindParam(raw?: string | null): string {
   return "";
 }
 
-const TAB_COUNT_CACHE_MS = 5000;
+const TAB_COUNT_CACHE_MS = 15_000;
 let tabCountCache: { key: string; expiresAt: number; value: Record<string, number> } | null =
   null;
+const dhhCountCache: { key: string; n: number } = { key: "", n: 0 };
 
 function tabCountCacheKey(opts?: {
   shopId?: string;
@@ -5497,13 +5498,6 @@ function tabCountCacheKey(opts?: {
 }): string {
   const ids = Array.isArray(opts?.shopIds) ? opts.shopIds.map(String).join(",") : "";
   return `${ids}|${opts?.shopId || ""}|${opts?.startDate || ""}|${opts?.endDate || ""}`;
-}
-
-function facetCountStages(filter: Record<string, unknown>): Record<string, unknown>[] {
-  if (filter && Object.keys(filter).length > 0) {
-    return [{ $match: filter }, { $count: "n" }];
-  }
-  return [{ $count: "n" }];
 }
 
 function facetN(row: Record<string, unknown> | undefined, key: string): number {
@@ -5532,7 +5526,214 @@ function buildCounterMatch(opts?: {
   return { $and: parts };
 }
 
-/** Đếm global 4 nhóm Hủy/Hoàn — lấy từ aggregation chung, không countDocuments tuần tự. */
+const FACET_TO_SHIP = ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"];
+const FACET_SHIPPED = ["SHIPPED", "TO_CONFIRM_RECEIVE"];
+const FACET_LEFT = [
+  "READY_TO_SHIP",
+  "RETRY_SHIP",
+  "PROCESSED",
+  "SHIPPED",
+  "TO_CONFIRM_RECEIVE",
+  "COMPLETED",
+  "CANCELLED",
+  "IN_CANCEL",
+  "TO_RETURN",
+];
+const FACET_PENDING = ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"];
+const FACET_END_LOCAL = [
+  "shipping",
+  "completed",
+  "cancelled",
+  "return_pending",
+  "return_received",
+];
+
+/** $project cờ boolean siêu nhẹ — $facet không copy cả blob `data`. */
+function buildTabFlagProjectStage(): Record<string, unknown> {
+  const s = "$shopee_order_status";
+  const st = "$status";
+  const isToShip = {
+    $and: [{ $in: [s, FACET_TO_SHIP] }, { $not: [{ $in: [st, FACET_END_LOCAL] }] }],
+  };
+  const hasTn = {
+    $and: [
+      { $gt: [{ $strLenCP: { $ifNull: ["$tracking_no", ""] } }, 0] },
+      { $ne: ["$tracking_no", "0"] },
+      {
+        $ne: [
+          { $toUpper: { $substrCP: [{ $ifNull: ["$tracking_no", ""] }, 0, 3] } },
+          "0FG",
+        ],
+      },
+    ],
+  };
+  const isHo = { $eq: ["$is_handed_over", true] };
+  const emptyS = { $in: [{ $ifNull: [s, ""] }, ["", null]] };
+  const isCr = {
+    $or: [
+      { $in: [st, ["cancelled", "return_pending", "return_received"]] },
+      { $in: [s, ["CANCELLED", "IN_CANCEL", "TO_RETURN"]] },
+      {
+        $in: [
+          "$shopee_cancel_return_kind",
+          ["cancelled", "refund_return", "failed_delivery"],
+        ],
+      },
+      { $eq: ["$sub_status", "RTS"] },
+      { $eq: ["$is_rts", true] },
+      { $eq: ["$is_return", true] },
+      { $gt: [{ $strLenCP: { $ifNull: ["$return_sn", ""] } }, 0] },
+    ],
+  };
+  const isRet = {
+    $or: [
+      { $eq: ["$is_return", true] },
+      { $eq: ["$shopee_cancel_return_kind", "refund_return"] },
+      { $gt: [{ $strLenCP: { $ifNull: ["$return_sn", ""] } }, 0] },
+    ],
+  };
+  const isRts = {
+    $or: [
+      { $eq: ["$is_rts", true] },
+      { $eq: ["$sub_status", "RTS"] },
+      { $eq: ["$shopee_cancel_return_kind", "failed_delivery"] },
+    ],
+  };
+  return {
+    $project: {
+      _id: 0,
+      _pc: {
+        $and: [
+          {
+            $or: [
+              { $in: [st, ["pending_confirm", "pending_verification"]] },
+              { $in: [s, FACET_PENDING] },
+            ],
+          },
+          { $not: [{ $in: [s, FACET_LEFT] }] },
+          {
+            $not: [
+              {
+                $in: [
+                  st,
+                  ["unprocessed", "processed", ...FACET_END_LOCAL],
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      _un: {
+        $and: [
+          isToShip,
+          { $not: [isHo] },
+          { $not: [hasTn] },
+          { $ne: ["$isPrepared", true] },
+          {
+            $or: [
+              { $in: [s, ["READY_TO_SHIP", "RETRY_SHIP"]] },
+              { $and: [{ $eq: [st, "unprocessed"] }, emptyS] },
+            ],
+          },
+        ],
+      },
+      _pr: {
+        $and: [
+          isToShip,
+          { $not: [isHo] },
+          {
+            $or: [
+              { $eq: [s, "PROCESSED"] },
+              hasTn,
+              { $eq: ["$isPrepared", true] },
+              { $eq: [st, "processed"] },
+            ],
+          },
+        ],
+      },
+      _ho: { $and: [isToShip, isHo] },
+      _sh: {
+        $and: [
+          {
+            $or: [
+              { $in: [s, FACET_SHIPPED] },
+              { $and: [{ $eq: [st, "shipping"] }, emptyS] },
+            ],
+          },
+          { $ne: ["$is_rts", true] },
+          { $ne: ["$shopee_cancel_return_kind", "failed_delivery"] },
+          {
+            $not: [
+              {
+                $in: [st, ["completed", "cancelled", "return_pending", "return_received"]],
+              },
+            ],
+          },
+        ],
+      },
+      _rp: { $eq: [st, "return_pending"] },
+      _rr: {
+        $or: [
+          { $gt: [{ $strLenCP: { $ifNull: ["$return_sn", ""] } }, 0] },
+          { $gt: [{ $strLenCP: { $ifNull: ["$return_tracking_no", ""] } }, 0] },
+          { $eq: [s, "TO_RETURN"] },
+          { $in: [st, ["return_pending", "return_received"]] },
+          { $eq: ["$shopee_cancel_return_kind", "refund_return"] },
+          { $eq: ["$is_return", true] },
+        ],
+      },
+      _cr: isCr,
+      _ret: { $and: [isCr, isRet] },
+      _rts: { $and: [isCr, isRts] },
+      _can: {
+        $and: [
+          isCr,
+          {
+            $or: [
+              { $eq: [st, "cancelled"] },
+              { $in: [s, ["CANCELLED", "IN_CANCEL"]] },
+              { $eq: ["$shopee_cancel_return_kind", "cancelled"] },
+            ],
+          },
+          { $not: [isRet] },
+          { $not: [isRts] },
+        ],
+      },
+      _web: { $eq: ["$channel", "woocommerce"] },
+    },
+  };
+}
+
+function facetTrue(flag: string): Record<string, unknown>[] {
+  return [{ $match: { [flag]: true } }, { $count: "n" }];
+}
+
+function peekCachedTabTotal(
+  opts: { shopId?: string; shopIds?: string[]; startDate?: string; endDate?: string } | undefined,
+  tab: string,
+  kind: string,
+): number {
+  if (!tabCountCache || tabCountCache.expiresAt <= Date.now()) return 0;
+  if (tabCountCache.key !== tabCountCacheKey(opts)) return 0;
+  const c = tabCountCache.value;
+  const t = String(tab || "").trim().toLowerCase();
+  if (!t || t === "all") return Number(c.all) || 0;
+  if (
+    t === "cancel_returns" ||
+    t === "cancel-returns" ||
+    t === "cancelled_returned" ||
+    t === "huy-hoan" ||
+    t === "don-huy-hoan"
+  ) {
+    if (kind === "refund_return") return Number(c.cancel_returns_returned) || 0;
+    if (kind === "cancelled") return Number(c.cancel_returns_cancelled) || 0;
+    if (kind === "failed_delivery") return Number(c.cancel_returns_rts) || 0;
+    return Number(c.cancel_returns) || 0;
+  }
+  return Number(c[t]) || 0;
+}
+
+/** Đếm global 4 nhóm Hủy/Hoàn — lấy từ aggregation $facet chung. */
 export async function countCancelReturnCountersFromStore(opts?: {
   shopId?: string;
   shopIds?: string[];
@@ -6146,7 +6347,7 @@ async function safeCountDocuments(
   }
 }
 
-/** Đếm số đơn theo tab từ MongoDB — 1 aggregation $facet, không 14 countDocuments. */
+/** Đếm số đơn theo tab — MỘT aggregate: $match ngày → $project cờ → $facet. */
 export async function countOrdersByTabsFromStore(opts?: {
   shopId?: string;
   shopIds?: string[];
@@ -6174,27 +6375,39 @@ export async function countOrdersByTabsFromStore(opts?: {
       return tabCountCache.value;
     }
     const match = buildCounterMatch(opts);
-    const facet: Record<string, Record<string, unknown>[]> = {
-      all: facetCountStages({}),
-      pending_confirm: facetCountStages(orderTabFilter("pending_confirm")),
-      unprocessed: facetCountStages(orderTabFilter("unprocessed")),
-      processed: facetCountStages(orderTabFilter("processed")),
-      shipping: facetCountStages(orderTabFilter("shipping")),
-      handed_over_carrier: facetCountStages(orderTabFilter("handed_over_carrier")),
-      return_pending: facetCountStages(orderTabFilter("return_pending")),
-      return_requests: facetCountStages(orderTabFilter("return_requests")),
-      web_orders: facetCountStages(orderTabFilter("web_orders")),
-      cancel_returns: facetCountStages(orderTabFilter("cancel_returns")),
-      cancel_returns_returned: facetCountStages(orderCancelReturnKindFilter("refund_return")),
-      cancel_returns_cancelled: facetCountStages(orderCancelReturnKindFilter("cancelled")),
-      cancel_returns_rts: facetCountStages(orderCancelReturnKindFilter("failed_delivery")),
-    };
-    const aggRows = await OrderModel.aggregate([
+    const pipeline = [
       { $match: match },
-      { $facet: facet },
-    ] as any[])
-      .option({ maxTimeMS: 8000 })
-      .allowDiskUse(false);
+      buildTabFlagProjectStage(),
+      {
+        $facet: {
+          all: [{ $count: "n" }],
+          pending_confirm: facetTrue("_pc"),
+          unprocessed: facetTrue("_un"),
+          processed: facetTrue("_pr"),
+          shipping: facetTrue("_sh"),
+          handed_over_carrier: facetTrue("_ho"),
+          return_pending: facetTrue("_rp"),
+          return_requests: facetTrue("_rr"),
+          web_orders: facetTrue("_web"),
+          cancel_returns: facetTrue("_cr"),
+          cancel_returns_returned: facetTrue("_ret"),
+          cancel_returns_cancelled: facetTrue("_can"),
+          cancel_returns_rts: facetTrue("_rts"),
+        },
+      },
+    ];
+    let aggRows: any[] = [];
+    try {
+      aggRows = await OrderModel.aggregate(pipeline as any[])
+        .option({ maxTimeMS: 4000 })
+        .hint({ "data.date": -1, _id: -1 });
+    } catch (hintErr: any) {
+      console.warn(
+        "[MongoDB] countOrdersByTabsFromStore hint skipped:",
+        hintErr?.message || hintErr,
+      );
+      aggRows = await OrderModel.aggregate(pipeline as any[]).option({ maxTimeMS: 6000 });
+    }
     const row = (aggRows?.[0] || {}) as Record<string, unknown>;
     const counts: Record<string, number> = { ...empty };
     counts.all = facetN(row, "all");
@@ -6213,16 +6426,17 @@ export async function countOrdersByTabsFromStore(opts?: {
     counts.refund_return = counts.cancel_returns_returned;
     counts.cancelled = counts.cancel_returns_cancelled;
     counts.failed_delivery = counts.cancel_returns_rts;
-    await new Promise((r) => setTimeout(r, 20));
-    try {
-      const dhhShop = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds) || {};
-      counts.received_cancel_returns = Number(
-        await DonHoanHuyModel.countDocuments(dhhShop).maxTimeMS(3000),
-      );
-    } catch {
-      counts.received_cancel_returns = 0;
-    }
+    counts.received_cancel_returns =
+      dhhCountCache.key === cacheKey ? dhhCountCache.n : dhhCountCache.n;
     tabCountCache = { key: cacheKey, expiresAt: now + TAB_COUNT_CACHE_MS, value: counts };
+    const dhhShop = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds) || {};
+    void DonHoanHuyModel.countDocuments(dhhShop)
+      .maxTimeMS(2000)
+      .then((n: number) => {
+        dhhCountCache.key = cacheKey;
+        dhhCountCache.n = Number(n) || 0;
+      })
+      .catch(() => {});
     return counts;
   } catch (err: any) {
     console.error(
@@ -6380,15 +6594,25 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
     }
     const filter = and.length === 0 ? {} : and.length === 1 ? and[0] : { $and: and };
 
-    // 1 find lean đầy đủ field + 1 count cùng filter — không hydrate vòng 2 theo _id.
+    // 1 find 50 row (index data.date) — CẤM countDocuments trên hot path refresh.
     let docs: any[] = [];
     try {
-      docs = await OrderModel.find(filter)
-        .sort({ "data.date": -1, _id: -1 })
-        .skip((page - 1) * pageSize)
-        .limit(pageSize)
-        .maxTimeMS(8000)
-        .lean();
+      try {
+        docs = await OrderModel.find(filter)
+          .sort({ "data.date": -1, _id: -1 })
+          .skip((page - 1) * pageSize)
+          .limit(pageSize)
+          .hint({ "data.date": -1, _id: -1 })
+          .maxTimeMS(4000)
+          .lean();
+      } catch {
+        docs = await OrderModel.find(filter)
+          .sort({ "data.date": -1, _id: -1 })
+          .skip((page - 1) * pageSize)
+          .limit(pageSize)
+          .maxTimeMS(4000)
+          .lean();
+      }
     } catch (findErr: any) {
       console.error(
         "[MongoDB] queryOrdersPageFromStore find failed:",
@@ -6397,17 +6621,20 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
       return { ...empty, page, pageSize };
     }
 
-    const filterIsEmpty = Object.keys(filter).length === 0;
-    const tabWasRequested = Boolean(requestedTab && requestedTab !== "all");
-    let total = 0;
-    if (filterIsEmpty && tabWasRequested && !search) {
-      total = docs.length;
-      console.warn(
-        `[MongoDB] queryOrdersPageFromStore tab=${requestedTab} empty filter — total=${total}, không count toàn DB`,
-      );
-    } else {
-      total = await safeCountDocuments(filter, 4000);
-    }
+    const cachedTotal = peekCachedTabTotal(
+      {
+        shopId: opts?.shopId,
+        shopIds: opts?.shopIds,
+        startDate: opts?.startDate,
+        endDate: opts?.endDate,
+      },
+      requestedTab,
+      kind,
+    );
+    const total =
+      cachedTotal > 0
+        ? cachedTotal
+        : (page - 1) * pageSize + docs.length + (docs.length === pageSize ? 1 : 0);
     console.log(
       `[MongoDB] queryOrdersPageFromStore tab=${requestedTab || "(none)"} rows=${docs.length} total=${total}`,
     );

@@ -446,6 +446,9 @@ export default function App() {
    * tạo nhiều truy vấn MongoDB nặng đồng thời. */
   const fetchOrdersInFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
   const fetchOrdersAbortRef = useRef<AbortController | null>(null);
+  /** Khóa mạng — trigger đúp (Strict Mode / 2 useEffect) bỏ qua, KHÔNG abort. */
+  const isFetchingRef = useRef(false);
+  const pendingFetchOptsRef = useRef<Record<string, unknown> | null>(null);
   /** Số fetch non-silent đang chạy — finally LUÔN giảm, tránh kẹt spinner khi bị abort. */
   const fetchOrdersNonSilentInFlightRef = useRef(0);
   /** Snapshot cache hydrate — tránh merge shallow đè mất cache khi setState chưa flush. */
@@ -652,20 +655,19 @@ export default function App() {
       return fetchOrdersInFlightRef.current?.promise;
     }
 
-    // Cùng flightKey đang chạy — tái sử dụng, KỂ CẢ force (tránh abort → canceled).
+    // Cùng flightKey đang chạy — tái sử dụng, không abort.
     if (fetchOrdersInFlightRef.current?.key === flightKey) {
       return fetchOrdersInFlightRef.current.promise;
     }
-    // Chỉ abort request cũ khi đổi tab/filter (flightKey khác) và request mới không silent.
-    if (fetchOrdersInFlightRef.current && !silent) {
-      fetchOrdersAbortRef.current?.abort();
+    // Đang fetch — khóa, xếp 1 lệnh mới nhất, tuyệt đối không spam / abort.
+    if (isFetchingRef.current) {
+      pendingFetchOptsRef.current = (opts || {}) as Record<string, unknown>;
+      return fetchOrdersInFlightRef.current?.promise;
     }
+    isFetchingRef.current = true;
+
     const controller = new AbortController();
     fetchOrdersAbortRef.current = controller;
-    const onCallerAbort = () => controller.abort();
-    if (callerSignal) {
-      callerSignal.addEventListener('abort', onCallerAbort, { once: true });
-    }
 
     let finishInFlight: (() => void) | undefined;
     const inFlight = new Promise<void>((resolve) => {
@@ -926,7 +928,6 @@ export default function App() {
       }
     } finally {
       if (requestTimeoutId !== undefined) window.clearTimeout(requestTimeoutId);
-      callerSignal?.removeEventListener('abort', onCallerAbort);
       if (didIncNonSilent) {
         fetchOrdersNonSilentInFlightRef.current = Math.max(
           0,
@@ -937,7 +938,6 @@ export default function App() {
         const isLatest = requestId === fetchOrdersSeqRef.current;
         if (fetchOrdersNonSilentInFlightRef.current === 0) {
           if (wasAborted) {
-            // AbortError: giữ loading + giữ list hiện tại cho request sau cùng.
             if (isLatest && !callerSignal?.aborted && retriesLeft <= 0) {
               setOrdersLoading(false);
             }
@@ -953,6 +953,12 @@ export default function App() {
         fetchOrdersAbortRef.current = null;
       }
       finishInFlight?.();
+      isFetchingRef.current = false;
+      const queued = pendingFetchOptsRef.current;
+      pendingFetchOptsRef.current = null;
+      if (queued) {
+        void fetchOrders(queued as typeof opts);
+      }
     }
   }, []);
 

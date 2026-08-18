@@ -652,7 +652,7 @@ export async function getOrderCounts(req, res) {
           shopIds: shopIds.length > 1 ? shopIds : undefined,
           ...dateQ,
         }),
-        12000,
+        5000,
         "orders_counter",
       ),
     );
