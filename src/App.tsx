@@ -652,11 +652,14 @@ export default function App() {
       return fetchOrdersInFlightRef.current?.promise;
     }
 
-    if (!opts?.force && fetchOrdersInFlightRef.current?.key === flightKey) {
+    // Cùng flightKey đang chạy — tái sử dụng, KỂ CẢ force (tránh abort → canceled).
+    if (fetchOrdersInFlightRef.current?.key === flightKey) {
       return fetchOrdersInFlightRef.current.promise;
     }
-
-    fetchOrdersAbortRef.current?.abort();
+    // Chỉ abort request cũ khi đổi tab/filter (flightKey khác) và request mới không silent.
+    if (fetchOrdersInFlightRef.current && !silent) {
+      fetchOrdersAbortRef.current?.abort();
+    }
     const controller = new AbortController();
     fetchOrdersAbortRef.current = controller;
     const onCallerAbort = () => controller.abort();
@@ -1089,7 +1092,6 @@ export default function App() {
         const kind = resolveOrdersFetchKind();
         await fetchOrders({
           silent: true,
-          force: true,
           page: 1,
           limit: 50,
           merge: false,

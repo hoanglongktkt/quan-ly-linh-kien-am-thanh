@@ -79740,30 +79740,13 @@ function parseOrderListDateRange(opts) {
 function buildOrderCreatedAtMongoFilter(range) {
   const startIso = range.start.toISOString();
   const endIso = range.end.toISOString();
-  const startUnix = Math.floor(range.start.getTime() / 1e3);
-  const endUnix = Math.ceil(range.end.getTime() / 1e3);
-  return {
-    $or: [
-      { "data.date": { $gte: startIso, $lte: endIso } },
-      { create_time: { $gte: range.start, $lte: range.end } },
-      { "data.create_time": { $gte: startUnix, $lte: endUnix } }
-    ]
-  };
+  return { "data.date": { $gte: startIso, $lte: endIso } };
 }
 function buildCancelReturnActivityDateFilter(range) {
-  const created = buildOrderCreatedAtMongoFilter(range);
-  const startUnix = Math.floor(range.start.getTime() / 1e3);
-  const endUnix = Math.ceil(range.end.getTime() / 1e3);
   return {
     $or: [
-      ...Array.isArray(created.$or) ? created.$or : [created],
-      { last_synced_at: { $gte: range.start, $lte: range.end } },
-      { last_shopee_update_at: { $gte: range.start, $lte: range.end } },
-      { return_alert_at: { $gte: range.start, $lte: range.end } },
-      { "data.return_create_time": { $gte: startUnix, $lte: endUnix } },
-      { "data.return_update_time": { $gte: startUnix, $lte: endUnix } },
-      { return_create_time: { $gte: startUnix, $lte: endUnix } },
-      { return_update_time: { $gte: startUnix, $lte: endUnix } }
+      buildOrderCreatedAtMongoFilter(range),
+      { last_shopee_update_at: { $gte: range.start, $lte: range.end } }
     ]
   };
 }
@@ -79778,15 +79761,7 @@ function buildShopIdMongoFilter(shopId, shopIds) {
   }
   const single = multi.length === 1 ? multi[0] : shopId && String(shopId).trim() && String(shopId).trim() !== "all" ? String(shopId).trim() : "";
   if (!single) return null;
-  const shopVariants = [
-    { shopId: single },
-    { "data.shopId": single }
-  ];
-  const asNum = Number(single);
-  if (Number.isFinite(asNum) && String(asNum) === single) {
-    shopVariants.push({ shopId: asNum }, { "data.shopId": asNum });
-  }
-  return { $or: shopVariants };
+  return { shopId: single };
 }
 var ORDER_TAB_LEFT_PICKUP_RAW = [
   "SHIPPED",
@@ -79796,50 +79771,14 @@ var ORDER_TAB_LEFT_PICKUP_RAW = [
   "IN_CANCEL",
   "TO_RETURN"
 ];
-var ORDER_TAB_USABLE_TRACKING = {
-  $exists: true,
-  $nin: [null, "", "0"],
-  $not: /^0FG/i
-};
 var ORDER_TAB_TRACKING_PRESENT = {
-  $or: [
-    { tracking_no: ORDER_TAB_USABLE_TRACKING },
-    { trackingNumber: ORDER_TAB_USABLE_TRACKING },
-    { "data.tracking_no": ORDER_TAB_USABLE_TRACKING },
-    { "data.trackingNumber": ORDER_TAB_USABLE_TRACKING },
-    { "data.shopee_tracking_number": ORDER_TAB_USABLE_TRACKING }
-  ]
+  tracking_no: { $type: "string", $nin: ["", "0"], $not: /^0FG/i }
 };
 var ORDER_TAB_DROPOFF_PREPARED = {
-  $and: [
-    {
-      $or: [
-        { fulfillment_type: { $in: ["dropoff", "drop_off", "drop-off"] } },
-        { "data.fulfillment_type": { $in: ["dropoff", "drop_off", "drop-off"] } },
-        { ship_method: { $in: ["dropoff", "drop_off", "drop-off"] } },
-        { "data.ship_method": { $in: ["dropoff", "drop_off", "drop-off"] } },
-        { "data.shipping_method": { $in: ["dropoff", "drop_off", "drop-off"] } }
-      ]
-    },
-    {
-      $or: [{ isPrepared: true }, { "data.isPrepared": true }]
-    }
-  ]
+  isPrepared: true
 };
 var ORDER_TAB_NOT_HANDED_OVER = {
-  $and: [
-    { is_handed_over: { $ne: true } },
-    { "data.is_handed_over": { $ne: true } },
-    { "data.isHandedOverToCarrier": { $ne: true } },
-    { "data.is_handed_over_to_carrier": { $ne: true } },
-    { "data.is_handed_over_to_courier": { $ne: true } },
-    {
-      $or: [
-        { "data.local_status": { $exists: false } },
-        { "data.local_status": { $nin: ["HANDED_OVER"] } }
-      ]
-    }
-  ]
+  is_handed_over: { $ne: true }
 };
 var ORDER_TAB_IS_HANDED_OVER = {
   $or: [
@@ -79860,100 +79799,30 @@ var ORDER_TAB_IS_HANDED_OVER = {
 };
 var ORDER_TAB_TO_SHIP_RAW = ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"];
 var ORDER_TAB_SHIPPED_RAW = ["SHIPPED", "TO_CONFIRM_RECEIVE"];
-var ORDER_TAB_SHIPPING_EXCLUDED_RAW = [
-  "COMPLETED",
-  "CANCELLED",
-  "IN_CANCEL",
-  "TO_RETURN"
-];
 var ORDER_TAB_IS_SHIPPED = {
   $and: [
     {
       $or: [
         { shopee_order_status: { $in: [...ORDER_TAB_SHIPPED_RAW] } },
-        { "data.shopee_order_status": { $in: [...ORDER_TAB_SHIPPED_RAW] } },
         {
-          $and: [
-            { status: "shipping" },
-            {
-              $or: [
-                { shopee_order_status: { $in: [null, ""] } },
-                { shopee_order_status: { $exists: false } }
-              ]
-            }
-          ]
+          status: "shipping",
+          shopee_order_status: { $in: [null, ""] }
         }
       ]
     },
-    { shopee_order_status: { $nin: [...ORDER_TAB_SHIPPING_EXCLUDED_RAW] } },
-    {
-      $or: [
-        { "data.shopee_order_status": { $exists: false } },
-        { "data.shopee_order_status": { $in: [null, ""] } },
-        { "data.shopee_order_status": { $nin: [...ORDER_TAB_SHIPPING_EXCLUDED_RAW] } }
-      ]
-    },
-    { status: { $nin: ["completed", "cancelled", "return_pending", "return_received"] } },
-    { $nor: [{ is_rts: true }, { "data.is_rts": true }] },
-    {
-      $nor: [
-        { sub_status: "RTS" },
-        { "data.sub_status": "RTS" },
-        { shopee_cancel_return_kind: "failed_delivery" },
-        { "data.shopee_cancel_return_kind": "failed_delivery" }
-      ]
-    }
+    { is_rts: { $ne: true } },
+    { shopee_cancel_return_kind: { $ne: "failed_delivery" } },
+    { status: { $nin: ["completed", "cancelled", "return_pending", "return_received"] } }
   ]
 };
 var ORDER_TAB_IS_TO_SHIP = {
-  $and: [
-    { $nor: [ORDER_TAB_IS_SHIPPED] },
-    {
-      $or: [
-        { shopee_order_status: { $in: [...ORDER_TAB_TO_SHIP_RAW] } },
-        { "data.shopee_order_status": { $in: [...ORDER_TAB_TO_SHIP_RAW] } }
-      ]
-    },
-    {
-      status: {
-        $nin: ["shipping", "completed", "cancelled", "return_pending", "return_received"]
-      }
-    }
-  ]
+  shopee_order_status: { $in: [...ORDER_TAB_TO_SHIP_RAW] },
+  status: {
+    $nin: ["shipping", "completed", "cancelled", "return_pending", "return_received"]
+  }
 };
-var ORDER_TAB_NOT_SHIPPING_LOGISTICS = {
-  $and: [
-    {
-      $or: [
-        { logistics_status: { $exists: false } },
-        { logistics_status: null },
-        { logistics_status: "" },
-        {
-          logistics_status: {
-            $not: {
-              $regex: "PICKUP_DONE|LOGISTICS_SHIPPED|LOGISTICS_DELIVERY_DONE|DELIVERY_DONE|IN_TRANSIT|TRANSPORTING",
-              $options: "i"
-            }
-          }
-        }
-      ]
-    },
-    {
-      $or: [
-        { "data.logistics_status": { $exists: false } },
-        { "data.logistics_status": null },
-        { "data.logistics_status": "" },
-        {
-          "data.logistics_status": {
-            $not: {
-              $regex: "PICKUP_DONE|LOGISTICS_SHIPPED|LOGISTICS_DELIVERY_DONE|DELIVERY_DONE|IN_TRANSIT|TRANSPORTING",
-              $options: "i"
-            }
-          }
-        }
-      ]
-    }
-  ]
+var ORDER_TAB_FAST_HANDED_OVER = {
+  is_handed_over: true
 };
 function orderTabFilter(tab) {
   const key = String(tab || "").trim().toLowerCase();
@@ -79976,45 +79845,12 @@ function orderTabFilter(tab) {
         $and: [
           ORDER_TAB_IS_TO_SHIP,
           ORDER_TAB_NOT_HANDED_OVER,
-          ORDER_TAB_NOT_SHIPPING_LOGISTICS,
           {
             $or: [
               { shopee_order_status: "PROCESSED" },
-              { "data.shopee_order_status": "PROCESSED" },
-              {
-                $and: [
-                  {
-                    $or: [
-                      { shopee_order_status: { $in: [...ORDER_TAB_TO_SHIP_RAW] } },
-                      { "data.shopee_order_status": { $in: [...ORDER_TAB_TO_SHIP_RAW] } },
-                      { status: { $in: ["processed", "unprocessed"] } }
-                    ]
-                  },
-                  ORDER_TAB_TRACKING_PRESENT
-                ]
-              },
-              {
-                $and: [
-                  {
-                    $or: [
-                      { shopee_order_status: { $in: [...ORDER_TAB_TO_SHIP_RAW] } },
-                      { "data.shopee_order_status": { $in: [...ORDER_TAB_TO_SHIP_RAW] } },
-                      { status: { $in: ["processed", "unprocessed"] } }
-                    ]
-                  },
-                  ORDER_TAB_DROPOFF_PREPARED
-                ]
-              },
-              {
-                $and: [
-                  { status: "processed" },
-                  {
-                    shopee_order_status: {
-                      $nin: ["READY_TO_SHIP", "RETRY_SHIP", ...ORDER_TAB_LEFT_PICKUP_RAW]
-                    }
-                  }
-                ]
-              }
+              ORDER_TAB_TRACKING_PRESENT,
+              ORDER_TAB_DROPOFF_PREPARED,
+              { status: "processed" }
             ]
           }
         ]
@@ -80027,32 +79863,14 @@ function orderTabFilter(tab) {
         $and: [
           ORDER_TAB_IS_TO_SHIP,
           ORDER_TAB_NOT_HANDED_OVER,
-          ORDER_TAB_NOT_SHIPPING_LOGISTICS,
-          { shopee_order_status: { $nin: ["PROCESSED", ...ORDER_TAB_LEFT_PICKUP_RAW] } },
-          {
-            $or: [
-              { "data.shopee_order_status": { $exists: false } },
-              { "data.shopee_order_status": { $in: [null, ""] } },
-              { "data.shopee_order_status": { $nin: ["PROCESSED", ...ORDER_TAB_LEFT_PICKUP_RAW] } }
-            ]
-          },
           { $nor: [ORDER_TAB_TRACKING_PRESENT] },
-          { $nor: [ORDER_TAB_DROPOFF_PREPARED] },
+          { isPrepared: { $ne: true } },
           {
             $or: [
               { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] } },
-              { "data.shopee_order_status": { $in: ["READY_TO_SHIP", "RETRY_SHIP"] } },
               {
                 status: "unprocessed",
-                $or: [
-                  { shopee_order_status: { $in: [null, ""] } },
-                  { shopee_order_status: { $exists: false } },
-                  {
-                    shopee_order_status: {
-                      $nin: ["PROCESSED", ...ORDER_TAB_LEFT_PICKUP_RAW]
-                    }
-                  }
-                ]
+                shopee_order_status: { $in: [null, ""] }
               }
             ]
           }
@@ -80100,7 +79918,7 @@ function orderTabFilter(tab) {
       };
     case "handed_over_carrier":
       return {
-        $and: [ORDER_TAB_IS_TO_SHIP, ORDER_TAB_IS_HANDED_OVER]
+        $and: [ORDER_TAB_IS_TO_SHIP, ORDER_TAB_FAST_HANDED_OVER]
       };
     case "return_requests":
     case "return-requests":
@@ -80108,19 +79926,12 @@ function orderTabFilter(tab) {
     case "yeu_cau_tra_hang":
       return {
         $or: [
-          { "data.return_sn": { $exists: true, $nin: [null, ""] } },
-          { return_sn: { $exists: true, $nin: [null, ""] } },
-          { returnTrackingNumber: { $exists: true, $nin: [null, ""] } },
-          { return_tracking_no: { $exists: true, $nin: [null, ""] } },
-          { "data.returnTrackingNumber": { $exists: true, $nin: [null, ""] } },
-          { "data.return_tracking_no": { $exists: true, $nin: [null, ""] } },
+          { return_sn: { $type: "string", $nin: [""] } },
+          { return_tracking_no: { $type: "string", $nin: [""] } },
           { shopee_order_status: "TO_RETURN" },
-          { "data.shopee_order_status": "TO_RETURN" },
           { status: { $in: ["return_pending", "return_received"] } },
-          { "data.shopee_cancel_return_kind": "refund_return" },
           { shopee_cancel_return_kind: "refund_return" },
-          { is_return: true },
-          { "data.is_return": true }
+          { is_return: true }
         ]
       };
     case "cancel_returns":
@@ -80135,54 +79946,23 @@ function orderTabFilter(tab) {
       return {
         $or: [
           { status: { $in: ["cancelled", "return_pending", "return_received"] } },
-          {
-            shopee_order_status: {
-              $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"]
-            }
-          },
-          {
-            "data.shopee_order_status": {
-              $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"]
-            }
-          },
-          { local_status: { $in: ["CANCELLED_STORED", "RETURN_RECEIVED"] } },
-          {
-            "data.local_status": {
-              $in: ["CANCELLED_STORED", "RETURN_RECEIVED"]
-            }
-          },
-          {
-            "data.shopee_cancel_return_kind": {
-              $in: ["cancelled", "refund_return", "failed_delivery"]
-            }
-          },
-          {
-            shopee_cancel_return_kind: {
-              $in: ["cancelled", "refund_return", "failed_delivery"]
-            }
-          },
-          { "data.sub_status": "RTS" },
+          { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"] } },
+          { shopee_cancel_return_kind: { $in: ["cancelled", "refund_return", "failed_delivery"] } },
           { sub_status: "RTS" },
-          { return_sn: { $type: "string", $nin: [""] } },
-          { "data.return_sn": { $type: "string", $nin: [""] } },
+          { is_rts: true },
           { is_return: true },
-          { "data.is_return": true }
+          { return_sn: { $type: "string", $nin: [""] } }
         ]
       };
     case "stale":
       return {
-        "data.channel": "shopee",
+        channel: "shopee",
         shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] },
         last_synced_at: { $lt: new Date(Date.now() - 15 * 60 * 1e3) }
       };
     case "web_orders":
     case "woocommerce":
-      return {
-        $or: [
-          { channel: "woocommerce" },
-          { "data.channel": "woocommerce" }
-        ]
-      };
+      return { channel: "woocommerce" };
     default:
       return {};
   }
@@ -80194,26 +79974,20 @@ var EMPTY_CANCEL_RETURN_COUNTERS = {
   rts: 0
 };
 function cancelReturnRtsInner() {
-  const rtsReason = /FAILED[_\s-]?DELIVERY|UNDELIVERABLE|PARCEL[_\s-]?LOST|COD[_\s-]?REJECTED/i;
-  const rtsLogistics = /LOGISTICS_DELIVERY_FAILED|LOGISTICS_LOST|LOGISTICS_COD_REJECTED/i;
   return {
     $or: [
-      { logistics_status: { $regex: rtsLogistics } },
-      { "data.logistics_status": { $regex: rtsLogistics } },
-      { "data.cancel_reason": { $regex: rtsReason } },
-      { "data.buyer_cancel_reason": { $regex: rtsReason } }
+      { is_rts: true },
+      { sub_status: "RTS" },
+      { shopee_cancel_return_kind: "failed_delivery" }
     ]
   };
 }
 function cancelReturnReturnedInner() {
   return {
     $or: [
-      { return_sn: { $type: "string", $nin: [""] } },
-      { "data.return_sn": { $type: "string", $nin: [""] } },
       { is_return: true },
-      { "data.is_return": true },
       { shopee_cancel_return_kind: "refund_return" },
-      { "data.shopee_cancel_return_kind": "refund_return" }
+      { return_sn: { $type: "string", $nin: [""] } }
     ]
   };
 }
@@ -80221,11 +79995,8 @@ function cancelReturnCancelledStatusInner() {
   return {
     $or: [
       { status: "cancelled" },
-      { "data.status": "cancelled" },
       { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL"] } },
-      { "data.shopee_order_status": { $in: ["CANCELLED", "IN_CANCEL"] } },
-      { shopee_cancel_return_kind: "cancelled" },
-      { "data.shopee_cancel_return_kind": "cancelled" }
+      { shopee_cancel_return_kind: "cancelled" }
     ]
   };
 }
@@ -80255,52 +80026,36 @@ function parseCancelReturnKindParam(raw) {
   if (k === "cancelled" || k === "cancel") return "cancelled";
   return "";
 }
-async function countCancelReturnCountersFromStore(opts) {
-  const empty = { ...EMPTY_CANCEL_RETURN_COUNTERS };
-  try {
-    requireMongo();
-    const shopAnd = [];
-    const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
-    if (shopFilter) shopAnd.push(shopFilter);
-    const dateRange = parseOrderListDateRange({
-      startDate: opts?.startDate,
-      endDate: opts?.endDate,
-      forceDefault: true,
-      lookbackMs: RETURN_TAB_DATE_LOOKBACK_MS
-    });
-    const dateFilter = dateRange ? buildCancelReturnActivityDateFilter(dateRange) : null;
-    const withShop = (tabFilter) => {
-      const parts = [...shopAnd];
-      if (tabFilter && Object.keys(tabFilter).length) parts.push(tabFilter);
-      if (dateFilter) parts.push(dateFilter);
-      if (parts.length === 0) return {};
-      if (parts.length === 1) return parts[0];
-      return { $and: parts };
-    };
-    const total = await safeCountDocuments(withShop(orderTabFilter("cancel_returns")), 8e3);
-    await new Promise((r2) => setTimeout(r2, 20));
-    const returned = await safeCountDocuments(
-      withShop(orderCancelReturnKindFilter("refund_return")),
-      8e3
-    );
-    await new Promise((r2) => setTimeout(r2, 20));
-    const cancelled = await safeCountDocuments(
-      withShop(orderCancelReturnKindFilter("cancelled")),
-      8e3
-    );
-    await new Promise((r2) => setTimeout(r2, 20));
-    const rts = await safeCountDocuments(
-      withShop(orderCancelReturnKindFilter("failed_delivery")),
-      8e3
-    );
-    return { total, returned, cancelled, rts };
-  } catch (err) {
-    console.warn(
-      "[MongoDB] countCancelReturnCountersFromStore failed:",
-      err?.message || err
-    );
-    return empty;
+var TAB_COUNT_CACHE_MS = 5e3;
+var tabCountCache = null;
+function tabCountCacheKey(opts) {
+  const ids = Array.isArray(opts?.shopIds) ? opts.shopIds.map(String).join(",") : "";
+  return `${ids}|${opts?.shopId || ""}|${opts?.startDate || ""}|${opts?.endDate || ""}`;
+}
+function facetCountStages(filter2) {
+  if (filter2 && Object.keys(filter2).length > 0) {
+    return [{ $match: filter2 }, { $count: "n" }];
   }
+  return [{ $count: "n" }];
+}
+function facetN(row, key) {
+  const arr = row?.[key];
+  if (!Array.isArray(arr) || !arr[0] || typeof arr[0] !== "object") return 0;
+  return Number(arr[0].n) || 0;
+}
+function buildCounterMatch(opts) {
+  const parts = [];
+  const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
+  if (shopFilter) parts.push(shopFilter);
+  const dateRange = parseOrderListDateRange({
+    startDate: opts?.startDate,
+    endDate: opts?.endDate,
+    forceDefault: true
+  });
+  if (dateRange) parts.push(buildOrderCreatedAtMongoFilter(dateRange));
+  if (parts.length === 0) return {};
+  if (parts.length === 1) return parts[0];
+  return { $and: parts };
 }
 async function reclassifyCancelReturnsInStore(opts) {
   const empty = { scanned: 0, updated: 0, pages: 0 };
@@ -80705,69 +80460,59 @@ async function countOrdersByTabsFromStore(opts) {
   };
   try {
     requireMongo();
-    const shopAnd = [];
-    const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
-    if (shopFilter) shopAnd.push(shopFilter);
-    const withShop = (tabFilter) => {
-      const parts = [...shopAnd];
-      if (tabFilter && Object.keys(tabFilter).length) parts.push(tabFilter);
-      if (parts.length === 0) return {};
-      if (parts.length === 1) return parts[0];
-      return { $and: parts };
-    };
-    const countTabs = [
-      "pending_confirm",
-      "unprocessed",
-      "processed",
-      "shipping",
-      "handed_over_carrier",
-      "return_pending",
-      "return_requests",
-      "web_orders"
-    ];
-    const counts = { ...empty };
-    counts.all = await safeCountDocuments(withShop({}), 4e3);
-    await new Promise((r2) => setTimeout(r2, 20));
-    for (const t2 of countTabs) {
-      counts[t2] = await safeCountDocuments(withShop(orderTabFilter(t2)), 5e3);
-      await new Promise((r2) => setTimeout(r2, 20));
+    const cacheKey = tabCountCacheKey(opts);
+    const now = Date.now();
+    if (tabCountCache && tabCountCache.key === cacheKey && tabCountCache.expiresAt > now) {
+      return tabCountCache.value;
     }
+    const match2 = buildCounterMatch(opts);
+    const facet = {
+      all: facetCountStages({}),
+      pending_confirm: facetCountStages(orderTabFilter("pending_confirm")),
+      unprocessed: facetCountStages(orderTabFilter("unprocessed")),
+      processed: facetCountStages(orderTabFilter("processed")),
+      shipping: facetCountStages(orderTabFilter("shipping")),
+      handed_over_carrier: facetCountStages(orderTabFilter("handed_over_carrier")),
+      return_pending: facetCountStages(orderTabFilter("return_pending")),
+      return_requests: facetCountStages(orderTabFilter("return_requests")),
+      web_orders: facetCountStages(orderTabFilter("web_orders")),
+      cancel_returns: facetCountStages(orderTabFilter("cancel_returns")),
+      cancel_returns_returned: facetCountStages(orderCancelReturnKindFilter("refund_return")),
+      cancel_returns_cancelled: facetCountStages(orderCancelReturnKindFilter("cancelled")),
+      cancel_returns_rts: facetCountStages(orderCancelReturnKindFilter("failed_delivery"))
+    };
+    const aggRows = await OrderModel.aggregate([
+      { $match: match2 },
+      { $facet: facet }
+    ]).option({ maxTimeMS: 8e3 }).allowDiskUse(false);
+    const row = aggRows?.[0] || {};
+    const counts = { ...empty };
+    counts.all = facetN(row, "all");
+    counts.pending_confirm = facetN(row, "pending_confirm");
+    counts.unprocessed = facetN(row, "unprocessed");
+    counts.processed = facetN(row, "processed");
+    counts.shipping = facetN(row, "shipping");
+    counts.handed_over_carrier = facetN(row, "handed_over_carrier");
+    counts.return_pending = facetN(row, "return_pending");
+    counts.return_requests = facetN(row, "return_requests");
+    counts.web_orders = facetN(row, "web_orders");
+    counts.cancel_returns = facetN(row, "cancel_returns");
+    counts.cancel_returns_returned = facetN(row, "cancel_returns_returned");
+    counts.cancel_returns_cancelled = facetN(row, "cancel_returns_cancelled");
+    counts.cancel_returns_rts = facetN(row, "cancel_returns_rts");
+    counts.refund_return = counts.cancel_returns_returned;
+    counts.cancelled = counts.cancel_returns_cancelled;
+    counts.failed_delivery = counts.cancel_returns_rts;
+    await new Promise((r2) => setTimeout(r2, 20));
     try {
-      const dhhShop = Array.isArray(opts?.shopIds) && opts.shopIds.length > 1 ? {
-        $or: [
-          { shopId: { $in: opts.shopIds.map(String) } },
-          { shop_id: { $in: opts.shopIds.map(String) } }
-        ]
-      } : opts?.shopId && opts.shopId !== "all" ? {
-        $or: [
-          { shopId: String(opts.shopId) },
-          { shop_id: String(opts.shopId) }
-        ]
-      } : Array.isArray(opts?.shopIds) && opts.shopIds.length === 1 ? {
-        $or: [
-          { shopId: String(opts.shopIds[0]) },
-          { shop_id: String(opts.shopIds[0]) }
-        ]
-      } : {};
+      const dhhShop = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds) || {};
       counts.received_cancel_returns = Number(
-        await DonHoanHuyModel.countDocuments(dhhShop).maxTimeMS(5e3)
+        await DonHoanHuyModel.countDocuments(dhhShop).maxTimeMS(3e3)
       );
     } catch {
       counts.received_cancel_returns = 0;
     }
-    const cr = await countCancelReturnCountersFromStore({
-      shopId: opts?.shopId,
-      shopIds: opts?.shopIds,
-      startDate: opts?.startDate,
-      endDate: opts?.endDate
-    });
-    counts.cancel_returns = cr.total;
-    counts.cancel_returns_returned = cr.returned;
-    counts.cancel_returns_cancelled = cr.cancelled;
-    counts.cancel_returns_rts = cr.rts;
-    counts.refund_return = cr.returned;
-    counts.cancelled = cr.cancelled;
-    counts.failed_delivery = cr.rts;
+    tabCountCache = { key: cacheKey, expiresAt: now + TAB_COUNT_CACHE_MS, value: counts };
     return counts;
   } catch (err) {
     console.error(
@@ -80875,7 +80620,7 @@ async function queryOrdersPageFromStore(opts) {
       const dateRange = parseOrderListDateRange({
         startDate: opts?.startDate,
         endDate: opts?.endDate,
-        forceDefault: isCancelReturnsTab || isReturnRequestsTab,
+        forceDefault: true,
         lookbackMs: isCancelReturnsTab || isReturnRequestsTab ? RETURN_TAB_DATE_LOOKBACK_MS : DEFAULT_ORDER_DATE_LOOKBACK_MS
       });
       if (dateRange) {
@@ -80887,7 +80632,7 @@ async function queryOrdersPageFromStore(opts) {
     const filter2 = and.length === 0 ? {} : and.length === 1 ? and[0] : { $and: and };
     let docs = [];
     try {
-      docs = await OrderModel.find(filter2).sort({ "data.date": -1, _id: -1 }).skip((page - 1) * pageSize).limit(pageSize).select({ _id: 1 }).maxTimeMS(8e3).lean();
+      docs = await OrderModel.find(filter2).sort({ "data.date": -1, _id: -1 }).skip((page - 1) * pageSize).limit(pageSize).maxTimeMS(8e3).lean();
     } catch (findErr) {
       console.error(
         "[MongoDB] queryOrdersPageFromStore find failed:",
@@ -80904,52 +80649,26 @@ async function queryOrdersPageFromStore(opts) {
         `[MongoDB] queryOrdersPageFromStore tab=${requestedTab} empty filter \u2014 total=${total}, kh\xF4ng count to\xE0n DB`
       );
     } else {
-      total = await safeCountDocuments(filter2, 8e3);
+      total = await safeCountDocuments(filter2, 4e3);
     }
     console.log(
       `[MongoDB] queryOrdersPageFromStore tab=${requestedTab || "(none)"} rows=${docs.length} total=${total}`
     );
-    const ids = docs.map((doc) => String(doc._id));
-    let rows = [];
-    try {
-      const hydrated = ids.length ? await loadOrdersFromStore({ ids }) : [];
-      const rowById = new Map(hydrated.map((row) => [String(row.id || ""), row]));
-      rows = ids.map((id) => rowById.get(id)).filter(Boolean);
-    } catch (hydrateErr) {
-      console.warn(
-        "[MongoDB] queryOrdersPageFromStore hydrate failed:",
-        hydrateErr?.message || hydrateErr
-      );
-      rows = [];
-    }
+    const rows = docs.map((doc) => hydrateOrderFromMongoDoc(doc)).filter(Boolean);
     const counts = {};
+    const counters = { ...EMPTY_CANCEL_RETURN_COUNTERS };
     if (!skipCounts) {
-      const countTabs = [
-        "pending_confirm",
-        "unprocessed",
-        "processed",
-        "shipping",
-        "return_pending"
-      ];
-      counts.all = await safeCountDocuments({}, 6e3);
-      await new Promise((r2) => setTimeout(r2, 15));
-      for (const t2 of countTabs) {
-        counts[t2] = await safeCountDocuments(orderTabFilter(t2), 6e3);
-        await new Promise((r2) => setTimeout(r2, 15));
-      }
-    }
-    let counters = { ...EMPTY_CANCEL_RETURN_COUNTERS };
-    if (isCancelReturnsTab) {
-      counters = await countCancelReturnCountersFromStore({
+      const tabCounts = await countOrdersByTabsFromStore({
         shopId: opts?.shopId,
         shopIds: opts?.shopIds,
         startDate: opts?.startDate,
         endDate: opts?.endDate
       });
-      counts.cancel_returns = counters.total;
-      counts.cancel_returns_returned = counters.returned;
-      counts.cancel_returns_cancelled = counters.cancelled;
-      counts.cancel_returns_rts = counters.rts;
+      Object.assign(counts, tabCounts);
+      counters.total = Number(tabCounts.cancel_returns) || 0;
+      counters.returned = Number(tabCounts.cancel_returns_returned) || 0;
+      counters.cancelled = Number(tabCounts.cancel_returns_cancelled) || 0;
+      counters.rts = Number(tabCounts.cancel_returns_rts) || 0;
     }
     const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / pageSize) || 1);
     return {
@@ -110440,16 +110159,6 @@ async function refreshOrders(req, res) {
           deps15.enrichOrdersFromCatalog(mergedOrders, [])
         )
       );
-      if (!searchQ && (tabLc === "cancel_returns" || tabLc === "cancel-returns" || tabLc === "cancelled_returned" || tabLc === "huy-hoan" || tabLc === "don-huy-hoan") && !(counters.total > 0)) {
-        try {
-          counters = await countCancelReturnCountersFromStore({
-            shopId: shopId || void 0,
-            shopIds: shopIds.length ? shopIds : void 0,
-            ...readOrderDateQuery(req)
-          });
-        } catch {
-        }
-      }
       const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / limit) || 1);
       const currentPage = Math.min(page, totalPages);
       console.log(

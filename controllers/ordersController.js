@@ -28,7 +28,6 @@ import {
   listScannerSyncRowsFromStore,
   queryOrdersPageFromStore,
   countOrdersByTabsFromStore,
-  countCancelReturnCountersFromStore,
   reclassifyCancelReturnsInStore,
   parseCancelReturnKindParam,
   loadPriorityTabOrdersFromStore,
@@ -491,25 +490,6 @@ export async function refreshOrders(req, res) {
           deps.enrichOrdersFromCatalog(mergedOrders, []),
         ),
       );
-      if (
-        !searchQ &&
-        (tabLc === "cancel_returns" ||
-          tabLc === "cancel-returns" ||
-          tabLc === "cancelled_returned" ||
-          tabLc === "huy-hoan" ||
-          tabLc === "don-huy-hoan") &&
-        !(counters.total > 0)
-      ) {
-        try {
-          counters = await countCancelReturnCountersFromStore({
-            shopId: shopId || undefined,
-            shopIds: shopIds.length ? shopIds : undefined,
-            ...readOrderDateQuery(req),
-          });
-        } catch {
-          /* keep zeros */
-        }
-      }
       const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / limit) || 1);
       const currentPage = Math.min(page, totalPages);
       console.log(

@@ -794,7 +794,6 @@ interface OrderManagerProps {
 const ORDERS_PAGE_SIZE = 50;
 const SCAN_BG_STATUS_POLL_MS = 15_000;
 const COUNTER_POLL_MS = 20_000;
-const ORDERS_AUTO_REFRESH_MS = 30_000;
 
 function cancelReturnKindParam(tab: CancelReturnTab): string | undefined {
   if (tab === 'all') return undefined;
@@ -1031,6 +1030,16 @@ export default function OrderManager({
   dateRangeRef.current = orderDateRange;
   /** Primitive SSOT cho useEffect fetch — không đưa object shops/filters/dateRange vào deps. */
   const ordersFetchKey = [shopIdsKey, dateRangeKey, activeSubTab, listFetchKind].join('::');
+  const shopsBootRef = useRef(false);
+  const [shopsBootReady, setShopsBootReady] = useState(false);
+  useEffect(() => {
+    if (shopsBootRef.current) return;
+    const timer = window.setTimeout(() => {
+      shopsBootRef.current = true;
+      setShopsBootReady(true);
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [shopsKey]);
   const fetchOrdersWithShop = useCallback(
     (opts?: Parameters<NonNullable<OrderManagerProps['onFetchOrders']>>[0]) => {
       const shopIds = shopScopeRef.current.shopIds;
@@ -1246,7 +1255,7 @@ export default function OrderManager({
     setCurrentPage((p) => (p === 1 ? p : 1));
   }, []);
 
-  /** Toast đơn mới → đợi Mongo commit → refetch list (lần 2 phòng replica lag). */
+  /** Toast đơn mới → đợi Mongo commit → refetch list 1 lần. */
   const scheduleNewOrderListRefresh = useCallback(() => {
     for (const id of newOrderRefreshTimersRef.current) {
       window.clearTimeout(id);
@@ -1256,12 +1265,10 @@ export default function OrderManager({
     setCurrentPage(1);
     playNotificationSound();
     showToast('Đã có đơn mới — đang làm mới danh sách', 3500);
-    const run = () => {
+    const t1 = window.setTimeout(() => {
       refetchOrdersPageRef.current({ silent: true, page: 1 });
-    };
-    const t1 = window.setTimeout(run, 800);
-    const t2 = window.setTimeout(run, 1800);
-    newOrderRefreshTimersRef.current = [t1, t2];
+    }, 800);
+    newOrderRefreshTimersRef.current = [t1];
   }, []);
 
   /** Chỉ báo đơn mới khi pending_confirm hoặc all TĂNG — không dùng fingerprint 10 tab. */
@@ -1667,6 +1674,7 @@ export default function OrderManager({
 
   // Chỉ fetch khi tab / kind / shop IDs / dateRange thật sự đổi (chuỗi primitive).
   useEffect(() => {
+    if (!shopsBootReady) return;
     if (activeSubTab === 'pending_verification') return;
     const tabFetchTabs = new Set([
       'all',
@@ -1683,15 +1691,16 @@ export default function OrderManager({
     if (!tabFetchTabs.has(activeSubTab) || !onFetchOrdersRef.current) return;
 
     let cancelled = false;
-    listFetchAbortRef.current?.abort();
-    const controller = new AbortController();
-    listFetchAbortRef.current = controller;
+    let controller: AbortController | null = null;
     const expectedTab = searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab;
     const expectedKind =
       activeSubTab === 'cancel_returns' ? cancelReturnKindParam(cancelReturnTab) : undefined;
-    const delay = datePreset === 'custom' ? 280 : 200;
+    const delay = datePreset === 'custom' ? 280 : 80;
     const timer = window.setTimeout(() => {
-      if (cancelled || controller.signal.aborted) return;
+      if (cancelled) return;
+      listFetchAbortRef.current?.abort();
+      controller = new AbortController();
+      listFetchAbortRef.current = controller;
       setCurrentPage((p) => (p === 1 ? p : 1));
       console.log(`[Orders Tab] activeSubTab=${activeSubTab} kind=${listFetchKind || '(none)'} shops=${shopIdsKey || '(all)'} → fetch page=1`);
       const run = async () => {
@@ -1704,7 +1713,7 @@ export default function OrderManager({
             tab: expectedTab,
             q: searchQuery.trim() || undefined,
             kind: expectedKind,
-            signal: controller.signal,
+            signal: controller!.signal,
           });
         } catch (error: unknown) {
           const name =
@@ -1714,23 +1723,22 @@ export default function OrderManager({
                 ? (error as { name?: string }).name
                 : undefined;
           if (name === 'AbortError') return;
-          if (cancelled || controller.signal.aborted) return;
+          if (cancelled || controller?.signal.aborted) return;
           console.warn('[Orders Tab] fetchOrders failed:', error);
         }
       };
       void run();
-      void fetchOrderCounts();
     }, delay);
 
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
-      controller.abort();
+      controller?.abort();
       if (listFetchAbortRef.current === controller) listFetchAbortRef.current = null;
     };
     // Primitive key only — shopIds.join + dateRange + filters. CẤM object selectedShops.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ordersFetchKey]);
+  }, [ordersFetchKey, shopsBootReady]);
 
   const searchBootRef = React.useRef(true);
   const searchAbortRef = React.useRef<AbortController | null>(null);
@@ -5256,72 +5264,6 @@ export default function OrderManager({
   };
 
   const [showCreateOrderPage, setShowCreateOrderPage] = useState(false);
-
-  /**
-   * Auto-refresh — đọc tab/kind/page từ ref (primitive), không recreate effect.
-   * Mỗi tick AbortController mới; response lệch tab hiện tại bị App bỏ.
-   */
-  useEffect(() => {
-    let cancelled = false;
-    let timer: number | null = null;
-    let controller: AbortController | null = null;
-    const loop = async () => {
-      if (cancelled) return;
-      if (document.visibilityState !== 'hidden') {
-        controller?.abort();
-        controller = new AbortController();
-        const signal = controller.signal;
-        const expectedTab = activeSubTabRef.current;
-        const expectedKind =
-          expectedTab === 'cancel_returns'
-            ? cancelReturnKindParam(cancelReturnTabRef.current)
-            : undefined;
-        const expectedPage = currentPageRef.current;
-        const q = searchQueryRef.current.trim();
-        try {
-          await onFetchOrdersRef.current?.({
-            silent: true,
-            page: expectedPage,
-            limit: ORDERS_PAGE_SIZE,
-            merge: false,
-            tab: q ? '' : expectedTab === 'all' ? '' : expectedTab,
-            q: q || undefined,
-            kind: q ? undefined : expectedKind,
-            signal,
-          });
-        } catch (error: unknown) {
-          const name =
-            error instanceof Error
-              ? error.name
-              : typeof error === 'object' && error !== null
-                ? (error as { name?: string }).name
-                : undefined;
-          if (name === 'AbortError') {
-            /* request cũ bị hủy — vẫn schedule tick sau */
-          } else if (!cancelled) {
-            console.warn('[Orders AutoRefresh] fetch failed:', error);
-          }
-        }
-        if (!cancelled && !signal.aborted) {
-          await fetchOrderCounts();
-        }
-      }
-      if (cancelled) return;
-      timer = window.setTimeout(() => {
-        void loop();
-      }, ORDERS_AUTO_REFRESH_MS);
-    };
-    timer = window.setTimeout(() => {
-      void loop();
-    }, ORDERS_AUTO_REFRESH_MS);
-    return () => {
-      cancelled = true;
-      if (timer != null) window.clearTimeout(timer);
-      controller?.abort();
-    };
-    // Mount once — tab/page/kind đọc từ ref. CẤM object/array deps.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   /**
    * Tab "Đã giao cho ĐVVC": dò API Shopee ngầm (ACK) — khi đơn thật sự SHIPPED
