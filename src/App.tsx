@@ -46,7 +46,6 @@ import {
   PackageCheck,
   CheckCircle2,
   Loader2,
-  Undo2,
 } from 'lucide-react';
 import type { OrdersSubTabId } from './components/OrderManager';
 import {
@@ -54,12 +53,9 @@ import {
   ackScanBgNotifications,
   formatScanBgToast,
 } from './utils/scanBgQueue';
-import { fetchReturnAlerts, ackReturnAlerts } from './utils/returnAlerts';
-import { playNotificationSound } from './utils/notificationSound';
 
 /** Polling nhẹ — recursive setTimeout, không chồng request. */
 const SCAN_BG_STATUS_POLL_MS = 15_000;
-const RETURN_ALERTS_POLL_MS = 15_000;
 
 /** Gộp shallow fetch vào cache: cập nhật đơn cũ, prepend đơn mới.
  * - Không downgrade cờ bàn giao ĐVVC (true → false) khi fresh còn stale.
@@ -426,9 +422,6 @@ export default function App() {
   const [scanBgToast, setScanBgToast] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [scanBgPendingCount, setScanBgPendingCount] = useState(0);
   const scanBgToastTimerRef = useRef<number | null>(null);
-  const [returnAlertToast, setReturnAlertToast] = useState<string | null>(null);
-  const returnAlertToastTimerRef = useRef<number | null>(null);
-  const notifiedReturnAlertIdsRef = useRef<Set<string>>(new Set());
   /** Làm mới ngầm khi quay lại tab trình duyệt — không trigger Shopee sync. */
   const [backgroundRefreshing, setBackgroundRefreshing] = useState(false);
   const lastFocusRefreshAtRef = useRef(0);
@@ -1196,79 +1189,6 @@ export default function App() {
       abortCtrl?.abort();
     };
   }, [isAuthenticated, activeTab, resolveOrdersFetchTab, resolveOrdersFetchKind]);
-
-  // Poll YCTH mới từ background sync / webhook → toast góc màn hình.
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    let cancelled = false;
-    let timer: number | null = null;
-    let abortCtrl: AbortController | null = null;
-    let inFlight = false;
-    const schedule = () => {
-      if (cancelled) return;
-      timer = window.setTimeout(() => {
-        void poll();
-      }, RETURN_ALERTS_POLL_MS);
-    };
-    const poll = async () => {
-      if (cancelled || inFlight) return;
-      if (document.visibilityState === 'hidden') {
-        schedule();
-        return;
-      }
-      inFlight = true;
-      abortCtrl = new AbortController();
-      const signal = abortCtrl.signal;
-      try {
-        const status = await fetchReturnAlerts(signal);
-        if (cancelled || !status) return;
-        const unnotified = status.unnotified || [];
-        if (unnotified.length === 0) return;
-        const seen = notifiedReturnAlertIdsRef.current;
-        const alertKey = (j: { id?: string; orderSn?: string; returnSn?: string }) =>
-          [j.returnSn, j.orderSn, j.id].map((v) => String(v || '').trim()).filter(Boolean);
-        const fresh = unnotified.filter((j) => !alertKey(j).some((k) => seen.has(k)));
-        if (fresh.length > 0) {
-          for (const j of fresh) {
-            for (const k of alertKey(j)) seen.add(k);
-          }
-          if (returnAlertToastTimerRef.current) window.clearTimeout(returnAlertToastTimerRef.current);
-          setReturnAlertToast('Có yêu cầu trả hàng hoàn tiền mới!');
-          try {
-            playNotificationSound();
-          } catch {
-            /* ignore */
-          }
-          returnAlertToastTimerRef.current = window.setTimeout(() => setReturnAlertToast(null), 8000);
-        }
-        await ackReturnAlerts(
-          unnotified.map((j) => j.id || j.orderSn).filter(Boolean) as string[],
-        );
-        if (fresh.length === 0) return;
-        const hint = String(resolveOrdersSubTabFromUrl() || '').trim().toLowerCase();
-        const tab = !hint || hint === 'all' || hint === 'order_products' ? '' : hint;
-        const kind = tab === 'cancel_returns' ? resolveOrdersFetchKindFromUrl() : '';
-        void fetchOrders({
-          silent: true,
-          page: 1,
-          limit: 50,
-          merge: false,
-          ...(tab ? { tab } : {}),
-          ...(kind ? { kind } : {}),
-        });
-      } finally {
-        inFlight = false;
-        schedule();
-      }
-    };
-    void poll();
-    return () => {
-      cancelled = true;
-      if (timer != null) window.clearTimeout(timer);
-      abortCtrl?.abort();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -2136,16 +2056,6 @@ export default function App() {
         >
           <CheckCircle2 className="w-4 h-4 shrink-0" />
           <span className="flex-1">{scanBgToast.text}</span>
-        </div>
-      )}
-      {returnAlertToast && (
-        <div
-          className="fixed top-16 left-3 right-3 md:left-auto md:right-3 md:max-w-md z-[120] text-sm font-extrabold px-4 py-3 rounded-xl shadow-lg flex items-center gap-2 bg-orange-600 text-white border border-orange-400"
-          role="alert"
-          aria-live="assertive"
-        >
-          <Undo2 className="w-5 h-5 shrink-0" />
-          <span className="flex-1">{returnAlertToast}</span>
         </div>
       )}
       {/* Sidebar Navigation */}
