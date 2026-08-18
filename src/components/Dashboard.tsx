@@ -416,13 +416,13 @@ export default function Dashboard({
   const maxChart = Math.max(...(data?.chart.map((c) => c.amount) || [1]), 1);
 
   return (
-    <div className="space-y-6" id="dashboard-tab">
+    <div className="space-y-4" id="dashboard-tab">
       <div className="flex items-center justify-end gap-2">
         <Calendar className="w-4 h-4 text-gray-400 shrink-0" />
         <select
           value={dateRange}
           onChange={(e) => setDateRange(e.target.value as DashboardDateRange)}
-          className="px-3 py-2.5 min-h-11 bg-white border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 outline-none cursor-pointer focus:border-blue-400 w-full sm:w-auto sm:min-w-[160px]"
+          className="px-3 py-2 min-h-10 bg-white border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 outline-none cursor-pointer focus:border-blue-400 w-full sm:w-auto sm:min-w-[160px]"
         >
           {DATE_RANGE_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>
