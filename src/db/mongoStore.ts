@@ -128,6 +128,8 @@ type OrderDoc = {
   /** Thời điểm bản trạng thái Shopee cuối cùng được xác minh. */
   last_synced_at?: Date | null;
   last_shopee_update_at?: Date | null;
+  /** Thời điểm tạo đơn (Date) — $match list/counter, compound index với shopId. */
+  create_time?: Date | null;
   sync_state?: string | null;
   /** Nguồn đơn: woocommerce / shopee / tiktok */
   channel?: string | null;
@@ -266,6 +268,7 @@ const OrderSchema = new Schema<OrderDoc>(
     last_synced_at: { type: Date, default: null, index: true },
     /** Tương đương Shopee update_time — index giảm dần phục vụ quét đơn mới. */
     last_shopee_update_at: { type: Date, default: null },
+    create_time: { type: Date, default: null, index: true },
     sync_state: { type: String, default: "verified", index: true },
     /** Nguồn đơn: woocommerce / shopee / tiktok */
     channel: { type: String, default: null, index: true },
@@ -298,6 +301,8 @@ OrderSchema.index(
 OrderSchema.index({ hasPdf: 1, isPrinted: 1 });
 // Quét đơn mới theo chiều giảm dần (Shopee update_time → last_shopee_update_at).
 OrderSchema.index({ last_shopee_update_at: -1 });
+OrderSchema.index({ shopId: 1, create_time: -1 }, { name: "shopId_1_create_time_-1" });
+OrderSchema.index({ shopId: 1, last_shopee_update_at: -1 }, { name: "shopId_1_last_shopee_update_at_-1" });
 // Giữ compound index cho các truy vấn theo shop trong luồng reconciliation.
 OrderSchema.index({ orderSn: 1, shopId: 1 });
 // Lookup / quét theo package_number (OFG...).
@@ -1811,6 +1816,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
         incomingUpdateAt = updateAt;
         $set.last_shopee_update_at = updateAt;
         $set["data.last_shopee_update_at"] = updateAt.toISOString();
+        $set.create_time = updateAt;
       }
     }
     // $set shopId: document mới / shopId trống sẽ được vá. Document đã có shopId khác
@@ -2044,7 +2050,11 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
         }
       }
     }
-    if (order.date != null) $set["data.date"] = order.date;
+    if (order.date != null) {
+      $set["data.date"] = order.date;
+      const created = new Date(String(order.date));
+      if (!Number.isNaN(created.getTime())) $set.create_time = created;
+    }
     if (Number(order.totalAmount) > 0) $set["data.totalAmount"] = order.totalAmount;
     if (order.fulfillment_type != null) {
       $set["data.fulfillment_type"] = order.fulfillment_type;
@@ -5123,27 +5133,20 @@ export function parseOrderListDateRange(opts?: {
   return { start, end };
 }
 
-/** Mongo filter theo data.date (ISO) — field đã index, tránh $or đa field COLLSCAN. */
+/** Mongo filter 1 trường Date có index — CẤM $or đa field / data.date ISO. */
 export function buildOrderCreatedAtMongoFilter(range: {
   start: Date;
   end: Date;
 }): Record<string, unknown> {
-  const startIso = range.start.toISOString();
-  const endIso = range.end.toISOString();
-  return { "data.date": { $gte: startIso, $lte: endIso } };
+  return { last_shopee_update_at: { $gte: range.start, $lte: range.end } };
 }
 
-/** Tab Hủy/Hoàn: ngày tạo đơn HOẶC lần cập nhật Shopee (2 field đã index). */
+/** Cùng 1 trường Date với list thường — không $or last_shopee_update_at + data.date. */
 export function buildCancelReturnActivityDateFilter(range: {
   start: Date;
   end: Date;
 }): Record<string, unknown> {
-  return {
-    $or: [
-      buildOrderCreatedAtMongoFilter(range),
-      { last_shopee_update_at: { $gte: range.start, $lte: range.end } },
-    ],
-  };
+  return buildOrderCreatedAtMongoFilter(range);
 }
 
 /** Build Mongo filter cho 1 hoặc nhiều shopId (string + number variants). */
@@ -5186,7 +5189,7 @@ const ORDER_TAB_LEFT_PICKUP_RAW = [
 ] as const;
 
 const ORDER_TAB_TRACKING_PRESENT: Record<string, unknown> = {
-  tracking_no: { $type: "string", $nin: ["", "0"], $not: /^0FG/i },
+  tracking_no: { $nin: [null, "", "0"] },
 };
 
 const ORDER_TAB_DROPOFF_PREPARED: Record<string, unknown> = {
@@ -5526,186 +5529,146 @@ function buildCounterMatch(opts?: {
   return { $and: parts };
 }
 
+function shopTimeIndexHint(hasShop: boolean): Record<string, 1 | -1> {
+  return hasShop
+    ? { shopId: 1, last_shopee_update_at: -1 }
+    : { last_shopee_update_at: -1 };
+}
+
 const FACET_TO_SHIP = ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"];
 const FACET_SHIPPED = ["SHIPPED", "TO_CONFIRM_RECEIVE"];
-const FACET_LEFT = [
-  "READY_TO_SHIP",
-  "RETRY_SHIP",
-  "PROCESSED",
-  "SHIPPED",
-  "TO_CONFIRM_RECEIVE",
-  "COMPLETED",
-  "CANCELLED",
-  "IN_CANCEL",
-  "TO_RETURN",
-];
 const FACET_PENDING = ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"];
-const FACET_END_LOCAL = [
-  "shipping",
-  "completed",
-  "cancelled",
-  "return_pending",
-  "return_received",
-];
+const FACET_CANCEL = ["CANCELLED", "IN_CANCEL", "TO_RETURN"];
 
-/** $project cờ boolean siêu nhẹ — $facet không copy cả blob `data`. */
+/** $project vài field top-level — $facet không copy blob `data`. */
 function buildTabFlagProjectStage(): Record<string, unknown> {
-  const s = "$shopee_order_status";
-  const st = "$status";
-  const isToShip = {
-    $and: [{ $in: [s, FACET_TO_SHIP] }, { $not: [{ $in: [st, FACET_END_LOCAL] }] }],
-  };
-  const hasTn = {
-    $and: [
-      { $gt: [{ $strLenCP: { $ifNull: ["$tracking_no", ""] } }, 0] },
-      { $ne: ["$tracking_no", "0"] },
-      {
-        $ne: [
-          { $toUpper: { $substrCP: [{ $ifNull: ["$tracking_no", ""] }, 0, 3] } },
-          "0FG",
-        ],
-      },
-    ],
-  };
-  const isHo = { $eq: ["$is_handed_over", true] };
-  const emptyS = { $in: [{ $ifNull: [s, ""] }, ["", null]] };
-  const isCr = {
-    $or: [
-      { $in: [st, ["cancelled", "return_pending", "return_received"]] },
-      { $in: [s, ["CANCELLED", "IN_CANCEL", "TO_RETURN"]] },
-      {
-        $in: [
-          "$shopee_cancel_return_kind",
-          ["cancelled", "refund_return", "failed_delivery"],
-        ],
-      },
-      { $eq: ["$sub_status", "RTS"] },
-      { $eq: ["$is_rts", true] },
-      { $eq: ["$is_return", true] },
-      { $gt: [{ $strLenCP: { $ifNull: ["$return_sn", ""] } }, 0] },
-    ],
-  };
-  const isRet = {
-    $or: [
-      { $eq: ["$is_return", true] },
-      { $eq: ["$shopee_cancel_return_kind", "refund_return"] },
-      { $gt: [{ $strLenCP: { $ifNull: ["$return_sn", ""] } }, 0] },
-    ],
-  };
-  const isRts = {
-    $or: [
-      { $eq: ["$is_rts", true] },
-      { $eq: ["$sub_status", "RTS"] },
-      { $eq: ["$shopee_cancel_return_kind", "failed_delivery"] },
-    ],
-  };
   return {
     $project: {
       _id: 0,
-      _pc: {
-        $and: [
-          {
-            $or: [
-              { $in: [st, ["pending_confirm", "pending_verification"]] },
-              { $in: [s, FACET_PENDING] },
-            ],
-          },
-          { $not: [{ $in: [s, FACET_LEFT] }] },
-          {
-            $not: [
-              {
-                $in: [
-                  st,
-                  ["unprocessed", "processed", ...FACET_END_LOCAL],
-                ],
-              },
-            ],
-          },
-        ],
-      },
-      _un: {
-        $and: [
-          isToShip,
-          { $not: [isHo] },
-          { $not: [hasTn] },
-          { $ne: ["$isPrepared", true] },
-          {
-            $or: [
-              { $in: [s, ["READY_TO_SHIP", "RETRY_SHIP"]] },
-              { $and: [{ $eq: [st, "unprocessed"] }, emptyS] },
-            ],
-          },
-        ],
-      },
-      _pr: {
-        $and: [
-          isToShip,
-          { $not: [isHo] },
-          {
-            $or: [
-              { $eq: [s, "PROCESSED"] },
-              hasTn,
-              { $eq: ["$isPrepared", true] },
-              { $eq: [st, "processed"] },
-            ],
-          },
-        ],
-      },
-      _ho: { $and: [isToShip, isHo] },
-      _sh: {
-        $and: [
-          {
-            $or: [
-              { $in: [s, FACET_SHIPPED] },
-              { $and: [{ $eq: [st, "shipping"] }, emptyS] },
-            ],
-          },
-          { $ne: ["$is_rts", true] },
-          { $ne: ["$shopee_cancel_return_kind", "failed_delivery"] },
-          {
-            $not: [
-              {
-                $in: [st, ["completed", "cancelled", "return_pending", "return_received"]],
-              },
-            ],
-          },
-        ],
-      },
-      _rp: { $eq: [st, "return_pending"] },
-      _rr: {
-        $or: [
-          { $gt: [{ $strLenCP: { $ifNull: ["$return_sn", ""] } }, 0] },
-          { $gt: [{ $strLenCP: { $ifNull: ["$return_tracking_no", ""] } }, 0] },
-          { $eq: [s, "TO_RETURN"] },
-          { $in: [st, ["return_pending", "return_received"]] },
-          { $eq: ["$shopee_cancel_return_kind", "refund_return"] },
-          { $eq: ["$is_return", true] },
-        ],
-      },
-      _cr: isCr,
-      _ret: { $and: [isCr, isRet] },
-      _rts: { $and: [isCr, isRts] },
-      _can: {
-        $and: [
-          isCr,
-          {
-            $or: [
-              { $eq: [st, "cancelled"] },
-              { $in: [s, ["CANCELLED", "IN_CANCEL"]] },
-              { $eq: ["$shopee_cancel_return_kind", "cancelled"] },
-            ],
-          },
-          { $not: [isRet] },
-          { $not: [isRts] },
-        ],
-      },
-      _web: { $eq: ["$channel", "woocommerce"] },
+      s: "$shopee_order_status",
+      st: "$status",
+      ho: "$is_handed_over",
+      ch: "$channel",
+      kind: "$shopee_cancel_return_kind",
+      rts: "$is_rts",
+      ret: "$is_return",
     },
   };
 }
 
-function facetTrue(flag: string): Record<string, unknown>[] {
-  return [{ $match: { [flag]: true } }, { $count: "n" }];
+function facetStatusIn(values: string[]): Record<string, unknown>[] {
+  return [{ $match: { s: { $in: values } } }, { $count: "n" }];
+}
+
+function facetEq(field: string, value: unknown): Record<string, unknown>[] {
+  return [{ $match: { [field]: value } }, { $count: "n" }];
+}
+
+/** Điều kiện tab SAU $match shop+time — equality/in trên field đã index, không $or data.*. */
+function tabIndexFilter(tab?: string, kind?: string): Record<string, unknown> {
+  const key = String(tab || "").trim().toLowerCase();
+  const k = String(kind || "").trim().toLowerCase();
+  switch (key) {
+    case "shipping":
+    case "shipped":
+    case "dang-giao":
+      return { shopee_order_status: { $in: [...FACET_SHIPPED] } };
+    case "unprocessed":
+    case "chua-xu-ly":
+    case "ready_to_ship":
+    case "cho-lay-hang":
+      return {
+        shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] },
+        is_handed_over: { $ne: true },
+      };
+    case "processed":
+    case "da-xu-ly":
+    case "processed_pickup":
+      return { shopee_order_status: "PROCESSED", is_handed_over: { $ne: true } };
+    case "handed_over_carrier":
+      return {
+        shopee_order_status: { $in: [...FACET_TO_SHIP] },
+        is_handed_over: true,
+      };
+    case "pending_confirm":
+    case "pending_verification":
+    case "cho-xac-nhan":
+      return { shopee_order_status: { $in: [...FACET_PENDING] } };
+    case "web_orders":
+    case "woocommerce":
+      return { channel: "woocommerce" };
+    case "return_pending":
+    case "return-pending":
+      return { status: "return_pending" };
+    case "return_requests":
+    case "return-requests":
+    case "yeu-cau-tra-hang":
+    case "yeu_cau_tra_hang":
+      return { shopee_order_status: "TO_RETURN" };
+    case "cancel_returns":
+    case "cancel-returns":
+    case "don-huy-hoan":
+    case "cancelled_returned":
+    case "huy-hoan":
+      if (k === "refund_return" || k === "returned") {
+        return { shopee_cancel_return_kind: "refund_return" };
+      }
+      if (k === "cancelled" || k === "cancel") {
+        return { shopee_cancel_return_kind: "cancelled" };
+      }
+      if (k === "failed_delivery" || k === "rts") {
+        return { shopee_cancel_return_kind: "failed_delivery" };
+      }
+      return { shopee_order_status: { $in: [...FACET_CANCEL] } };
+    default:
+      return {};
+  }
+}
+
+const ORDER_LIST_UI_PROJECTION: Record<string, 1> = {
+  _id: 1,
+  orderSn: 1,
+  status: 1,
+  shopee_order_status: 1,
+  shopId: 1,
+  tracking_no: 1,
+  trackingNumber: 1,
+  return_tracking_no: 1,
+  returnTrackingNumber: 1,
+  return_sn: 1,
+  is_return: 1,
+  shipping_carrier: 1,
+  packageNumber: 1,
+  is_handed_over: 1,
+  isPrinted: 1,
+  hasPdf: 1,
+  isPrepared: 1,
+  waybill_url: 1,
+  channel: 1,
+  customerName: 1,
+  customerPhone: 1,
+  customerAddress: 1,
+  customerEmail: 1,
+  billing: 1,
+  shipping: 1,
+  shopee_cancel_return_kind: 1,
+  is_rts: 1,
+  sub_status: 1,
+  last_shopee_update_at: 1,
+  last_synced_at: 1,
+  create_time: 1,
+  "data.items": 1,
+  "data.date": 1,
+  "data.shopName": 1,
+  "data.totalAmount": 1,
+  "data.labelUrl": 1,
+  "data.pdfUrl": 1,
+  "data.pdfFilename": 1,
+  "data.escrowAmount": 1,
+};
+
+function facetAnd(match: Record<string, unknown>): Record<string, unknown>[] {
+  return [{ $match: match }, { $count: "n" }];
 }
 
 function peekCachedTabTotal(
@@ -6375,32 +6338,40 @@ export async function countOrdersByTabsFromStore(opts?: {
       return tabCountCache.value;
     }
     const match = buildCounterMatch(opts);
+    const hasShop = Boolean(buildShopIdMongoFilter(opts?.shopId, opts?.shopIds));
     const pipeline = [
       { $match: match },
       buildTabFlagProjectStage(),
       {
         $facet: {
           all: [{ $count: "n" }],
-          pending_confirm: facetTrue("_pc"),
-          unprocessed: facetTrue("_un"),
-          processed: facetTrue("_pr"),
-          shipping: facetTrue("_sh"),
-          handed_over_carrier: facetTrue("_ho"),
-          return_pending: facetTrue("_rp"),
-          return_requests: facetTrue("_rr"),
-          web_orders: facetTrue("_web"),
-          cancel_returns: facetTrue("_cr"),
-          cancel_returns_returned: facetTrue("_ret"),
-          cancel_returns_cancelled: facetTrue("_can"),
-          cancel_returns_rts: facetTrue("_rts"),
+          pending_confirm: facetStatusIn([...FACET_PENDING]),
+          unprocessed: facetAnd({
+            s: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] },
+            ho: { $ne: true },
+          }),
+          processed: facetAnd({ s: "PROCESSED", ho: { $ne: true } }),
+          shipping: facetStatusIn([...FACET_SHIPPED]),
+          handed_over_carrier: facetAnd({
+            s: { $in: [...FACET_TO_SHIP] },
+            ho: true,
+          }),
+          return_pending: facetEq("st", "return_pending"),
+          return_requests: facetEq("s", "TO_RETURN"),
+          web_orders: facetEq("ch", "woocommerce"),
+          cancel_returns: facetStatusIn([...FACET_CANCEL]),
+          cancel_returns_returned: facetEq("kind", "refund_return"),
+          cancel_returns_cancelled: facetEq("kind", "cancelled"),
+          cancel_returns_rts: facetEq("kind", "failed_delivery"),
         },
       },
     ];
     let aggRows: any[] = [];
     try {
-      aggRows = await OrderModel.aggregate(pipeline as any[])
-        .option({ maxTimeMS: 4000 })
-        .hint({ "data.date": -1, _id: -1 });
+      aggRows = await OrderModel.aggregate(pipeline as any[]).option({
+        maxTimeMS: 4000,
+        hint: shopTimeIndexHint(hasShop),
+      });
     } catch (hintErr: any) {
       console.warn(
         "[MongoDB] countOrdersByTabsFromStore hint skipped:",
@@ -6477,7 +6448,6 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
       Math.min(5000, Math.floor(Number(opts?.pageSize) || 50)),
     );
     const skipCounts = Boolean(opts?.skipCounts);
-    const and: Record<string, unknown>[] = [];
     const search = String(opts?.query || "").trim();
     const requestedTab = String(opts?.tab || "").trim().toLowerCase();
     const kind = parseCancelReturnKindParam(opts?.kind);
@@ -6492,89 +6462,10 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
       requestedTab === "return-requests" ||
       requestedTab === "yeu-cau-tra-hang" ||
       requestedTab === "yeu_cau_tra_hang";
-    // q= → quét TOÀN BỘ collection, không kẹp tab hiện tại.
-    let tabFilter = search
-      ? {}
-      : isCancelReturnsTab && kind
-        ? orderCancelReturnKindFilter(kind)
-        : orderTabFilter(requestedTab);
-    if (!search && requestedTab && requestedTab !== "all" && Object.keys(tabFilter).length === 0) {
-      console.warn(
-        `[MongoDB] queryOrdersPageFromStore unknown tab=${requestedTab} — không count toàn DB`,
-      );
-    }
-    if (Object.keys(tabFilter).length) and.push(tabFilter);
     const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
-    if (shopFilter) and.push(shopFilter);
-    if (!search && opts?.carrier && opts.carrier !== "all") {
-      and.push({ shipping_carrier: String(opts.carrier) });
-    }
-    const printStatus = String(opts?.printStatus || "").trim().toLowerCase();
-    // SSOT khớp docToOrder: ưu tiên isPrinted top-level; chỉ fallback data.isPrinted khi top-level thiếu.
-    if (printStatus === "printed" || printStatus === "da-in" || printStatus === "true") {
-      and.push({
-        $or: [
-          { isPrinted: true },
-          {
-            $and: [
-              {
-                $or: [
-                  { isPrinted: { $exists: false } },
-                  { isPrinted: null },
-                ],
-              },
-              { "data.isPrinted": true },
-            ],
-          },
-        ],
-      });
-    } else if (
-      printStatus === "unprinted" ||
-      printStatus === "chua-in" ||
-      printStatus === "false" ||
-      printStatus === "not_printed"
-    ) {
-      and.push({
-        $nor: [
-          { isPrinted: true },
-          {
-            $and: [
-              {
-                $or: [
-                  { isPrinted: { $exists: false } },
-                  { isPrinted: null },
-                ],
-              },
-              { "data.isPrinted": true },
-            ],
-          },
-        ],
-      });
-    }
-    if (search) {
-      const regex = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-      and.push({
-        $or: [
-          { orderSn: regex },
-          { "data.orderSn": regex },
-          { "data.order_sn": regex },
-          { tracking_no: regex },
-          { trackingNumber: regex },
-          { "data.tracking_no": regex },
-          { "data.trackingNumber": regex },
-          { return_tracking_no: regex },
-          { "data.return_tracking_no": regex },
-          { "data.return_sn": regex },
-          { return_sn: regex },
-          { "data.shopName": regex },
-          { "data.shipping_carrier": regex },
-          { shipping_carrier: regex },
-          { "data.items.productTitle": regex },
-        ],
-      });
-    } else {
-      // Search q= bỏ lọc ngày để tìm được đơn cũ theo mã.
-      // Tab Hủy/Hoàn: fallback 30 ngày nếu FE không gửi startDate/endDate.
+    const firstMatch: Record<string, unknown> = {};
+    if (shopFilter) Object.assign(firstMatch, shopFilter);
+    if (!search) {
       const dateRange = parseOrderListDateRange({
         startDate: opts?.startDate,
         endDate: opts?.endDate,
@@ -6584,34 +6475,65 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
             ? RETURN_TAB_DATE_LOOKBACK_MS
             : DEFAULT_ORDER_DATE_LOOKBACK_MS,
       });
-      if (dateRange) {
-        and.push(
-          isCancelReturnsTab || isReturnRequestsTab
-            ? buildCancelReturnActivityDateFilter(dateRange)
-            : buildOrderCreatedAtMongoFilter(dateRange),
+      if (dateRange) Object.assign(firstMatch, buildOrderCreatedAtMongoFilter(dateRange));
+    }
+    const pipeline: Record<string, unknown>[] = [];
+    if (Object.keys(firstMatch).length) pipeline.push({ $match: firstMatch });
+    if (!search && requestedTab && requestedTab !== "all") {
+      const tabFilter = tabIndexFilter(requestedTab, kind);
+      if (Object.keys(tabFilter).length) {
+        pipeline.push({ $match: tabFilter });
+      } else {
+        console.warn(
+          `[MongoDB] queryOrdersPageFromStore unknown tab=${requestedTab} — không count toàn DB`,
         );
       }
     }
-    const filter = and.length === 0 ? {} : and.length === 1 ? and[0] : { $and: and };
+    if (!search && opts?.carrier && opts.carrier !== "all") {
+      pipeline.push({ $match: { shipping_carrier: String(opts.carrier) } });
+    }
+    const printStatus = String(opts?.printStatus || "").trim().toLowerCase();
+    if (printStatus === "printed" || printStatus === "da-in" || printStatus === "true") {
+      pipeline.push({ $match: { isPrinted: true } });
+    } else if (
+      printStatus === "unprinted" ||
+      printStatus === "chua-in" ||
+      printStatus === "false" ||
+      printStatus === "not_printed"
+    ) {
+      pipeline.push({ $match: { isPrinted: { $ne: true } } });
+    }
+    if (search) {
+      pipeline.push({
+        $match: {
+          $or: [
+            { orderSn: search },
+            { tracking_no: search },
+            { trackingNumber: search },
+            { return_sn: search },
+            { return_tracking_no: search },
+            { returnTrackingNumber: search },
+          ],
+        },
+      });
+    }
+    pipeline.push(
+      { $sort: { last_shopee_update_at: -1 } },
+      { $skip: (page - 1) * pageSize },
+      { $limit: pageSize },
+      { $project: ORDER_LIST_UI_PROJECTION },
+    );
 
-    // 1 find 50 row (index data.date) — CẤM countDocuments trên hot path refresh.
     let docs: any[] = [];
     try {
+      const listHint = search ? undefined : shopTimeIndexHint(Boolean(shopFilter));
       try {
-        docs = await OrderModel.find(filter)
-          .sort({ "data.date": -1, _id: -1 })
-          .skip((page - 1) * pageSize)
-          .limit(pageSize)
-          .hint({ "data.date": -1, _id: -1 })
-          .maxTimeMS(4000)
-          .lean();
+        docs = await OrderModel.aggregate(pipeline as any[]).option({
+          maxTimeMS: 4000,
+          ...(listHint ? { hint: listHint } : {}),
+        });
       } catch {
-        docs = await OrderModel.find(filter)
-          .sort({ "data.date": -1, _id: -1 })
-          .skip((page - 1) * pageSize)
-          .limit(pageSize)
-          .maxTimeMS(4000)
-          .lean();
+        docs = await OrderModel.aggregate(pipeline as any[]).option({ maxTimeMS: 4000 });
       }
     } catch (findErr: any) {
       console.error(
