@@ -10,6 +10,7 @@ import BulkEditModal from './BulkEditModal';
 import ProductLinking from './ProductLinking';
 import InventoryAudit from './InventoryAudit';
 import { parseJsonResponse, formatShopeeSyncAlertLines } from '../utils/apiClient';
+import { calculateProfitWithSystemFees } from '../utils/profitCalculator';
 import { buildShopeeSyncPayload } from '../utils/shopeeSyncPayload';
 import { clearInventoryBrowserCache } from '../utils/catalogStorage';
 import CurrencyInput from './CurrencyInput';
@@ -79,17 +80,7 @@ interface ProductListProps {
 }
 
 function calculateEstimatedProductProfit(product: Product, systemFees: SystemFee[]): number {
-  const sellingPrice = Math.max(0, Number(product.sellingPrice) || 0);
-  const importPrice = Math.max(0, Number(product.importPrice) || 0);
-  const totalFees = systemFees
-    .filter((fee) => fee.active && fee.name.trim() && Number(fee.value) > 0)
-    .reduce(
-      (sum, fee) => sum + (fee.calculationType === 'percentage'
-        ? Math.round((sellingPrice * Number(fee.value)) / 100)
-        : Math.round(Number(fee.value))),
-      0,
-    );
-  return sellingPrice - importPrice - totalFees;
+  return calculateProfitWithSystemFees(product.sellingPrice, product.importPrice, systemFees);
 }
 
 export default function ProductList({ 

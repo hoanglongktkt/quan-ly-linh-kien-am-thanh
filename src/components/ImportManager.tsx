@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { ImportTransaction, Supplier, Product } from '../types';
+import { ImportTransaction, Supplier, Product, SystemFee } from '../types';
 import {
   calcImportPriceChangePercent,
   getImportPriceChangeStatus,
 } from '../utils/importPriceChange';
+import { calculateProfitWithSystemFees } from '../utils/profitCalculator';
 import ImportProductSearchSelect, {
   ImportProductSearchSelectHandle,
 } from './ImportProductSearchSelect';
@@ -34,36 +35,16 @@ import {
   RefreshCw,
 } from 'lucide-react';
 
-const DEFAULT_PLATFORM_FEE_PERCENT = 0.12;
-
-function resolvePlatformFeePercent(rate?: number): number {
-  const raw = Number(rate);
-  if (!Number.isFinite(raw) || raw < 0) return DEFAULT_PLATFORM_FEE_PERCENT;
-  if (raw === 0) return 0;
-  return raw > 1 ? raw / 100 : raw;
-}
-
-function calcEstProfit(sellingPrice: number, importPrice: number, feePercent: number): number {
-  const sell = Number(sellingPrice);
-  const cost = Number(importPrice);
-  const fee = Number(feePercent);
-  if (!Number.isFinite(sell) || !Number.isFinite(cost) || !Number.isFinite(fee)) return 0;
-  const safeSell = Math.max(0, sell);
-  const safeCost = Math.max(0, cost);
-  const safeFee = Math.max(0, fee);
-  return Math.round(safeSell - safeSell * safeFee - safeCost);
-}
-
 const ImportEstProfitCell = React.memo(function ImportEstProfitCell({
   sellingPrice,
   unitPrice,
-  feePercent,
+  systemFees,
 }: {
   sellingPrice: number;
   unitPrice: number;
-  feePercent: number;
+  systemFees: SystemFee[];
 }) {
-  const profit = calcEstProfit(sellingPrice, unitPrice, feePercent);
+  const profit = calculateProfitWithSystemFees(sellingPrice, unitPrice, systemFees);
   const isProfit = profit >= 0;
   return (
     <span className={`font-mono font-bold whitespace-nowrap ${isProfit ? 'text-emerald-600' : 'text-rose-600'}`}>
@@ -140,7 +121,7 @@ interface ImportManagerProps {
   initialProductId?: string | null;
   onInitialProductConsumed?: () => void;
   onProductCreated?: (product: Product) => void;
-  shopeeDefaultFeeRate?: number;
+  systemFees?: SystemFee[];
   onProductPriceUpdated?: (productId: string, sellingPrice: number) => void;
 }
 
@@ -155,7 +136,7 @@ export default function ImportManager({
   initialProductId,
   onInitialProductConsumed,
   onProductCreated,
-  shopeeDefaultFeeRate,
+  systemFees = [],
   onProductPriceUpdated,
 }: ImportManagerProps) {
   const [localSuppliers, setLocalSuppliers] = useState<Supplier[]>(suppliersProp);
@@ -199,10 +180,6 @@ export default function ImportManager({
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState<{ text: string; ok: boolean } | null>(null);
   const [updatingPriceId, setUpdatingPriceId] = useState<string | null>(null);
-  const platformFeePercent = useMemo(
-    () => resolvePlatformFeePercent(shopeeDefaultFeeRate),
-    [shopeeDefaultFeeRate],
-  );
 
   const showToast = useCallback((text: string, ok = true) => {
     setToast({ text, ok });
@@ -797,7 +774,7 @@ export default function ImportManager({
                         <th className="px-3 py-3 w-36 text-right">
                           Lợi nhuận (est.)
                           <span className="block normal-case font-medium text-[10px] text-gray-400 tracking-normal">
-                            sau phí sàn {(platformFeePercent * 100).toLocaleString('vi-VN')}%
+                            dựa trên cấu hình phí hệ thống
                           </span>
                         </th>
                         <th className="px-3 py-3 w-36 text-right">Thành tiền</th>
@@ -950,7 +927,7 @@ export default function ImportManager({
                                 <ImportEstProfitCell
                                   sellingPrice={line.sellingPrice}
                                   unitPrice={line.unitPrice}
-                                  feePercent={platformFeePercent}
+                                  systemFees={systemFees}
                                 />
                               </td>
                               <td className="px-3 py-2.5 text-right font-mono font-bold text-slate-800 align-middle whitespace-nowrap">

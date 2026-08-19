@@ -2467,7 +2467,7 @@ export default function App() {
               onProductCreated={(p) =>
                 setProducts((prev) => (prev.some((x) => x.id === p.id) ? prev : [p, ...prev]))
               }
-              shopeeDefaultFeeRate={settings.shopeeDefaultFeeRate}
+              systemFees={settings.systemFees ?? []}
               onProductPriceUpdated={(productId, sellingPrice) => {
                 setProducts((prev) =>
                   prev.map((p) => {

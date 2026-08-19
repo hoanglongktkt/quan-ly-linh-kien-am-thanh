@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Product, SystemFee, getProductChildren } from '../types';
 import { parseJsonResponse, formatShopeeSyncAlertLines } from '../utils/apiClient';
+import { calculateProfitWithSystemFees } from '../utils/profitCalculator';
 import { buildShopeeSyncPayload } from '../utils/shopeeSyncPayload';
 import { X, RefreshCw, Check, Package, TrendingUp, TrendingDown, Save, AlertCircle } from 'lucide-react';
 
@@ -166,22 +167,6 @@ export function buildProductGroups(products: Product[]): ProductGroupRow[] {
   }
 
   return rows.sort((a, b) => a.displayTitle.localeCompare(b.displayTitle, 'vi'));
-}
-
-function calculateEstimatedProfitVnd(sellingPrice: number, importPrice: number, systemFees: SystemFee[]): number {
-  const sell = Math.max(0, Number(sellingPrice) || 0);
-  const cost = Math.max(0, Number(importPrice) || 0);
-  const totalFees = systemFees
-    .filter((fee) => fee.active && fee.name.trim() && Number(fee.value) > 0)
-    .reduce(
-      (sum, fee) =>
-        sum +
-        (fee.calculationType === 'percentage'
-          ? Math.round((sell * Number(fee.value)) / 100)
-          : Math.round(Number(fee.value))),
-      0,
-    );
-  return sell - cost - totalFees;
 }
 
 interface ProductDetailModalProps {
@@ -401,7 +386,7 @@ export default function ProductDetailModal({
       priceSelectionRef.current = { input: event.target, caret: nextCaret };
     };
 
-  const estimatedProfit = calculateEstimatedProfitVnd(editSellingPrice, editImportPrice, systemFees);
+  const estimatedProfit = calculateProfitWithSystemFees(editSellingPrice, editImportPrice, systemFees);
   const isProfit = estimatedProfit >= 0;
 
   return (
