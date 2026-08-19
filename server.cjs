@@ -79082,9 +79082,13 @@ function buildExactScanOrFilter(rawCode) {
     pushScanFieldVariants($or, "data.order_sn", [code]);
     pushScanFieldVariants($or, "return_sn", [code]);
     pushScanFieldVariants($or, "data.return_sn", [code]);
+    pushScanFieldVariants($or, "data.internalTrackingCode", [code]);
     const orderSn = code.replace(/^SHOPEE-/, "");
     if (orderSn && orderSn !== code) {
       $or.push({ orderSn }, { "data.orderSn": orderSn }, { "data.order_sn": orderSn });
+      $or.push({ _id: `shopee-${orderSn}` });
+    } else {
+      $or.push({ _id: `shopee-${code}` });
     }
   }
   return $or.length ? { $or } : null;
@@ -81193,13 +81197,29 @@ async function upsertDonHoanHuyBatch(rows) {
   if (ops.length === 0) {
     return { ok, failed, errors };
   }
+  const DHH_BULK_CHUNK = 250;
+  const DHH_BULK_DELAY_MS = 40;
   try {
-    const result = await DonHoanHuyModel.bulkWrite(ops, {
-      ordered: false
-    });
+    let upserted = 0;
+    let modified = 0;
+    let matched = 0;
+    for (let i2 = 0; i2 < ops.length; i2 += DHH_BULK_CHUNK) {
+      const chunk = ops.slice(i2, i2 + DHH_BULK_CHUNK);
+      const result = await withWriteTimeout(
+        DonHoanHuyModel.bulkWrite(chunk, { ordered: false }),
+        "don_hoan_huy_bulkWrite",
+        12e3
+      );
+      upserted += result.upsertedCount || 0;
+      modified += result.modifiedCount || 0;
+      matched += result.matchedCount || 0;
+      if (i2 + DHH_BULK_CHUNK < ops.length) {
+        await new Promise((r2) => setTimeout(r2, DHH_BULK_DELAY_MS));
+      }
+    }
     ok = opSns.length;
     console.log(
-      `[MongoDB] bulkWrite don_hoan_huy ONE shot \u2014 ops=${ops.length} upserted=${result.upsertedCount || 0} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0}`
+      `[MongoDB] bulkWrite don_hoan_huy ONE shot \u2014 ops=${ops.length} upserted=${upserted} modified=${modified} matched=${matched}`
     );
   } catch (err) {
     const writeErrors = Array.isArray(err?.writeErrors) ? err.writeErrors : [];
@@ -81323,9 +81343,25 @@ async function markOrdersScanFlagsBatch(rows) {
     });
   }
   if (ops.length === 0) return 0;
-  const result = await OrderModel.bulkWrite(ops, { ordered: false });
+  const FLAG_BULK_CHUNK = 250;
+  const FLAG_BULK_DELAY_MS = 40;
+  let modified = 0;
+  let upserted = 0;
+  for (let i2 = 0; i2 < ops.length; i2 += FLAG_BULK_CHUNK) {
+    const chunk = ops.slice(i2, i2 + FLAG_BULK_CHUNK);
+    const result = await withWriteTimeout(
+      OrderModel.bulkWrite(chunk, { ordered: false }),
+      "markOrdersScanFlags_bulkWrite",
+      12e3
+    );
+    modified += result.modifiedCount || 0;
+    upserted += result.upsertedCount || 0;
+    if (i2 + FLAG_BULK_CHUNK < ops.length) {
+      await new Promise((r2) => setTimeout(r2, FLAG_BULK_DELAY_MS));
+    }
+  }
   console.log(
-    `[MongoDB] bulkWrite markOrdersScanFlags \u2014 ops=${ops.length} modified=${result.modifiedCount || 0} upserted=${result.upsertedCount || 0}`
+    `[MongoDB] bulkWrite markOrdersScanFlags \u2014 ops=${ops.length} modified=${modified} upserted=${upserted}`
   );
   return ops.length;
 }
@@ -81407,21 +81443,133 @@ async function listScannerSyncRowsFromStore() {
   }
   return rows;
 }
+var SCAN_BATCH_IN_SIZE = 300;
+var SCAN_BATCH_DELAY_MS = 40;
+function collectHydratedOrderScanKeys(order) {
+  const keys = [];
+  const add = (v) => {
+    const n = normalizeScannedCode(v);
+    if (!n) return;
+    keys.push(n);
+    const stripped = stripScannedSeparators(n);
+    if (stripped && stripped !== n) keys.push(stripped);
+  };
+  add(order?.orderSn);
+  add(order?.order_sn);
+  add(order?.tracking_no);
+  add(order?.trackingNumber);
+  add(order?.return_tracking_no);
+  add(order?.returnTrackingNumber);
+  add(order?.packageNumber);
+  add(order?.package_number);
+  add(order?.internalTrackingCode);
+  add(order?.return_sn);
+  add(String(order?.id || "").replace(/^shopee-/i, ""));
+  return keys;
+}
+function buildScanCodesInFilter(chunk) {
+  const variants2 = /* @__PURE__ */ new Set();
+  const ids = [];
+  const sns = [];
+  for (const code of chunk) {
+    const scanned = normalizeScannedCode(code);
+    if (!scanned) continue;
+    variants2.add(scanned);
+    const stripped = stripScannedSeparators(scanned);
+    if (stripped) variants2.add(stripped);
+    const sn = scanned.replace(/^SHOPEE-/, "");
+    if (sn) sns.push(sn);
+    ids.push(scanned.startsWith("SHOPEE-") ? `shopee-${sn}` : `shopee-${scanned}`);
+    ids.push(scanned);
+  }
+  const codes = [...variants2];
+  const snList = [...new Set(sns.filter(Boolean))];
+  if (codes.length === 0 && snList.length === 0) return null;
+  return {
+    $or: [
+      { orderSn: { $in: snList } },
+      { tracking_no: { $in: codes } },
+      { trackingNumber: { $in: codes } },
+      { return_tracking_no: { $in: codes } },
+      { returnTrackingNumber: { $in: codes } },
+      { packageNumber: { $in: codes } },
+      { return_sn: { $in: codes } },
+      { "data.orderSn": { $in: snList } },
+      { "data.order_sn": { $in: snList } },
+      { "data.tracking_no": { $in: codes } },
+      { "data.trackingNumber": { $in: codes } },
+      { "data.return_tracking_no": { $in: codes } },
+      { "data.returnTrackingNumber": { $in: codes } },
+      { "data.packageNumber": { $in: codes } },
+      { "data.package_number": { $in: codes } },
+      { "data.internalTrackingCode": { $in: codes } },
+      { "data.return_sn": { $in: codes } },
+      { _id: { $in: [...new Set(ids)] } }
+    ]
+  };
+}
+async function sleepMs(ms) {
+  await new Promise((r2) => setTimeout(r2, ms));
+}
 async function findOrdersByScanCodesInStore(rawCodes) {
   const result = /* @__PURE__ */ new Map();
   if (!isMongoReady() || !Array.isArray(rawCodes) || rawCodes.length === 0) {
     return result;
   }
-  const cache = /* @__PURE__ */ new Map();
+  requireMongo();
+  const uniqueCodes = [];
+  const seen = /* @__PURE__ */ new Set();
   for (const raw of rawCodes) {
-    const scannedCode = normalizeScannedCode(raw);
-    if (!scannedCode) continue;
-    if (!cache.has(scannedCode)) {
-      cache.set(scannedCode, await findOrderByScanCodeInStore(scannedCode));
-    }
-    const found = cache.get(scannedCode);
-    if (found) result.set(raw, found);
+    const scanned = normalizeScannedCode(raw);
+    if (!scanned || seen.has(scanned)) continue;
+    seen.add(scanned);
+    uniqueCodes.push(scanned);
   }
+  if (uniqueCodes.length === 0) return result;
+  const byScanKey = /* @__PURE__ */ new Map();
+  const ingestDocs = (docs) => {
+    for (const doc of docs || []) {
+      const order = hydrateOrderFromMongoDoc(doc);
+      if (!order) continue;
+      for (const k of collectHydratedOrderScanKeys(order)) {
+        if (k && !byScanKey.has(k)) byScanKey.set(k, order);
+      }
+    }
+  };
+  for (let i2 = 0; i2 < uniqueCodes.length; i2 += SCAN_BATCH_IN_SIZE) {
+    const chunk = uniqueCodes.slice(i2, i2 + SCAN_BATCH_IN_SIZE);
+    const filter2 = buildScanCodesInFilter(chunk);
+    if (!filter2) continue;
+    try {
+      const docs = await withWriteTimeout(
+        OrderModel.find(filter2).limit(Math.min(Math.max(chunk.length * 3, 50), 2e3)).maxTimeMS(8e3).lean().exec(),
+        "scan_codes_in_lookup",
+        9e3
+      );
+      ingestDocs(docs);
+    } catch (err) {
+      console.warn(
+        "[MongoDB] findOrdersByScanCodesInStore chunk fail:",
+        err?.message || err
+      );
+    }
+    if (i2 + SCAN_BATCH_IN_SIZE < uniqueCodes.length) {
+      await sleepMs(SCAN_BATCH_DELAY_MS);
+    }
+  }
+  for (const raw of rawCodes) {
+    const scanned = normalizeScannedCode(raw);
+    if (!scanned) continue;
+    const stripped = stripScannedSeparators(scanned);
+    const found = byScanKey.get(scanned) || (stripped ? byScanKey.get(stripped) : void 0);
+    if (found) {
+      result.set(raw, found);
+      result.set(scanned, found);
+    }
+  }
+  console.log(
+    `[MongoDB] findOrdersByScanCodesInStore codes=${uniqueCodes.length} hits=${result.size} $in (no per-code findOne)`
+  );
   return result;
 }
 async function mergeDonHoanHuyIntoOrders(orders) {
@@ -81763,6 +81911,7 @@ async function seedStoreFromArrays(products, listings) {
 // controllers/scanController.js
 var deps2 = {
   findOrderByScanCodeInStore: async () => null,
+  findOrdersByScanCodesInStore: async () => /* @__PURE__ */ new Map(),
   resolveOrderFromShopeeByScanCode: async () => null,
   isValidOrder: () => false,
   mirrorTrackingFieldsForRead: (o) => o
@@ -81803,22 +81952,6 @@ async function ensureDbConnected() {
 }
 function orderHasItems(order) {
   return Array.isArray(order?.items) && order.items.length > 0;
-}
-async function resolveFullOrderForScan(rawCode) {
-  const code = String(rawCode || "").trim().toUpperCase();
-  if (!code) return null;
-  let found = null;
-  try {
-    found = await deps2.findOrderByScanCodeInStore(code);
-    if (found && !deps2.isValidOrder(found)) found = null;
-    if (found) found = deps2.mirrorTrackingFieldsForRead(found);
-  } catch (err) {
-    console.warn(`[Scan Save] local lookup fail code=${code}:`, err?.message || err);
-  }
-  if (!found) return null;
-  const sn = normalizeOrderSn(found.orderSn);
-  if (!sn || isCarrierTrackingCode2(sn)) return null;
-  return found;
 }
 async function saveScanOrders(req, res) {
   try {
@@ -81893,8 +82026,22 @@ async function saveScanOrders(req, res) {
     const failed = [];
     const orderSns = [];
     const toUpsert = [];
+    const uniqueCodes = unique.map((j) => j.code);
+    let foundByCode = /* @__PURE__ */ new Map();
+    try {
+      if (typeof deps2.findOrdersByScanCodesInStore === "function") {
+        foundByCode = await deps2.findOrdersByScanCodesInStore(uniqueCodes);
+      }
+    } catch (batchErr) {
+      console.warn(
+        "[Scan Save] batch lookup fail:",
+        batchErr?.message || batchErr
+      );
+    }
     for (const job of unique) {
-      const order = await resolveFullOrderForScan(job.code);
+      let order = foundByCode.get(job.code) || null;
+      if (order && !deps2.isValidOrder(order)) order = null;
+      if (order) order = deps2.mirrorTrackingFieldsForRead(order);
       if (!order) {
         failed.push({
           code: job.code,
@@ -104473,6 +104620,7 @@ var deps7 = {
   markOrderHandedOverInStore: async () => false,
   markOrderLocalStatusInStore: async () => false,
   restoreLocalStockOnCancelReturnScan: async () => ({ restored: false }),
+  restoreLocalStockOnCancelReturnScanBatch: async () => ({ restored: 0, qty: 0 }),
   loadProductsForOrders: async () => [],
   enrichOrdersFromCatalog: (orders) => orders,
   invalidateOrdersRefreshCache: () => {
@@ -104504,29 +104652,25 @@ async function scanBulkUpdate(req, res) {
       foundByCode = await deps7.findOrdersByScanCodesInStore(codes);
     } catch (batchLookupErr) {
       console.warn(
-        "[Orders Scan Bulk] batch lookup fail \u2014 fallback per-code:",
+        "[Orders Scan Bulk] batch lookup fail:",
         batchLookupErr?.message || batchLookupErr
       );
     }
-    const lookupPairs = await Promise.all(
-      codes.map(async (code) => {
-        const scannedCode = String(code || "").trim().toUpperCase();
-        let found = foundByCode.get(code) || foundByCode.get(scannedCode) || null;
-        try {
-          if (!found) {
-            found = await deps7.findOrderByScanCodeInStore(scannedCode);
-          }
-          if (found && !deps7.isValidOrder(found)) found = null;
-          if (found) found = deps7.mirrorTrackingFieldsForRead(found);
-        } catch (lookupErr) {
-          console.warn(
-            `[Orders Scan Bulk] lookup miss code=${scannedCode}:`,
-            lookupErr?.message || lookupErr
-          );
-        }
-        return { code: scannedCode, found };
-      })
-    );
+    const lookupPairs = codes.map((code) => {
+      const scannedCode = String(code || "").trim().toUpperCase();
+      let found = foundByCode.get(code) || foundByCode.get(scannedCode) || null;
+      try {
+        if (found && !deps7.isValidOrder(found)) found = null;
+        if (found) found = deps7.mirrorTrackingFieldsForRead(found);
+      } catch (lookupErr) {
+        console.warn(
+          `[Orders Scan Bulk] hydrate miss code=${scannedCode}:`,
+          lookupErr?.message || lookupErr
+        );
+        found = null;
+      }
+      return { code: scannedCode, found };
+    });
     if (lookupPairs.every((p) => !p.found)) {
       return res.status(404).json({
         success: false,
@@ -104552,6 +104696,7 @@ async function scanBulkUpdate(req, res) {
     const failed_scans = [];
     const changedOrders = [];
     const updatedById = /* @__PURE__ */ new Map();
+    const restockJobs = [];
     const summary = { daXuatKho: 0, donHuy: 0, daNhanHoan: 0 };
     let donHoanHuyAlready = 0;
     const norm = (c) => String(c || "").trim().toUpperCase();
@@ -104723,21 +104868,7 @@ async function scanBulkUpdate(req, res) {
         const updated = { ...order };
         deps7.clearHandedOverLocalForCancelReturn(updated);
         deps7.setOrderLocalStatus(updated, "RETURN_RECEIVED");
-        try {
-          const restock = await deps7.restoreLocalStockOnCancelReturnScan(updated, {
-            wasHandedOver
-          });
-          if (restock?.restored) {
-            console.log(
-              `[Orders Scan Bulk] Restock +${restock.qty || 0} order_sn=${updated.orderSn}`
-            );
-          }
-        } catch (restockErr) {
-          console.warn(
-            `[Orders Scan Bulk] Restock fail order_sn=${updated.orderSn}:`,
-            restockErr?.message || restockErr
-          );
-        }
+        restockJobs.push({ order: updated, wasHandedOver });
         orders[index] = updated;
         changedOrders.push(updated);
         updatedById.set(updated.id, updated);
@@ -104787,21 +104918,7 @@ async function scanBulkUpdate(req, res) {
         if (updated.status !== "cancelled") updated.status = "cancelled";
         deps7.clearHandedOverLocalForCancelReturn(updated);
         deps7.setOrderLocalStatus(updated, "CANCELLED_STORED");
-        try {
-          const restock = await deps7.restoreLocalStockOnCancelReturnScan(updated, {
-            wasHandedOver
-          });
-          if (restock?.restored) {
-            console.log(
-              `[Orders Scan Bulk] Restock +${restock.qty || 0} order_sn=${updated.orderSn}`
-            );
-          }
-        } catch (restockErr) {
-          console.warn(
-            `[Orders Scan Bulk] Restock fail order_sn=${updated.orderSn}:`,
-            restockErr?.message || restockErr
-          );
-        }
+        restockJobs.push({ order: updated, wasHandedOver });
         orders[index] = updated;
         changedOrders.push(updated);
         updatedById.set(updated.id, updated);
@@ -104867,6 +104984,23 @@ async function scanBulkUpdate(req, res) {
         orderSn: order.orderSn,
         reason: `Tr\u1EA1ng th\xE1i "${status}" kh\xF4ng thu\u1ED9c quy t\u1EAFc qu\xE9t \u0110VVC`
       });
+    }
+    if (restockJobs.length > 0) {
+      try {
+        if (typeof deps7.restoreLocalStockOnCancelReturnScanBatch === "function") {
+          const restock = await deps7.restoreLocalStockOnCancelReturnScanBatch(restockJobs);
+          if (restock?.restored) {
+            console.log(
+              `[Orders Scan Bulk] Restock BATCH +${restock.qty || 0} t\u1ED3n / ${restock.restored} \u0111\u01A1n`
+            );
+          }
+        }
+      } catch (restockErr) {
+        console.warn(
+          "[Orders Scan Bulk] Restock batch fail:",
+          restockErr?.message || restockErr
+        );
+      }
     }
     const scanCodeByOrderSn = /* @__PURE__ */ new Map();
     for (const r2 of results) {
@@ -104938,23 +105072,6 @@ async function scanBulkUpdate(req, res) {
       }
     }
     if (changedOrders.length > 0) {
-      const handoverOnly = changedOrders.filter((o) => {
-        const local = String(
-          o?.local_status || o?.localStatus || o?.internal_status || ""
-        ).toUpperCase();
-        return local === "HANDED_OVER" || o?.is_handed_over === true || o?.isHandedOverToCarrier === true;
-      });
-      if (handoverOnly.length > 0) {
-        try {
-          await deps7.persistChangedOrdersPatch(handoverOnly);
-        } catch (persistErr) {
-          console.warn(
-            "[Orders Scan Bulk] persistChangedOrdersPatch handover:",
-            deps7.describeMongoWriteError(persistErr),
-            persistErr
-          );
-        }
-      }
       let flagOk = 0;
       const flagRows = [];
       for (const o of changedOrders) {
@@ -104984,41 +105101,7 @@ async function scanBulkUpdate(req, res) {
       }
       if (flagRows.length > 0) {
         try {
-          if (typeof deps7.markOrdersScanFlagsBatch === "function") {
-            flagOk = await deps7.markOrdersScanFlagsBatch(flagRows);
-          } else {
-            for (const row of flagRows) {
-              try {
-                if (row.localStatus === "HANDED_OVER") {
-                  const ok = await deps7.markOrderHandedOverInStore(row.orderSn, {
-                    source: row.source,
-                    handedOverAt: row.handedOverAt,
-                    shopId: row.shopId
-                  });
-                  if (ok) flagOk += 1;
-                } else {
-                  const ok = await deps7.markOrderLocalStatusInStore(
-                    row.orderSn,
-                    row.localStatus,
-                    {
-                      shopId: row.shopId,
-                      clearHandedOver: true,
-                      status: row.localStatus === "RETURN_RECEIVED" ? "return_received" : "cancelled",
-                      stockRestored: row.stockRestored,
-                      stockRestoredAt: row.stockRestoredAt
-                    }
-                  );
-                  if (ok) flagOk += 1;
-                }
-              } catch (flagErr) {
-                console.error(
-                  `[Orders Scan Bulk] mark flag fail order_sn=${row.orderSn}:`,
-                  deps7.describeMongoWriteError(flagErr),
-                  flagErr
-                );
-              }
-            }
-          }
+          flagOk = await deps7.markOrdersScanFlagsBatch(flagRows);
         } catch (flagBatchErr) {
           console.error(
             "[Orders Scan Bulk] markOrdersScanFlagsBatch FAIL:",
@@ -105033,8 +105116,6 @@ async function scanBulkUpdate(req, res) {
       deps7.invalidateOrdersRefreshCache();
     }
     const updatedList = [...updatedById.values()];
-    const products = await deps7.loadProductsForOrders(updatedList);
-    const enriched = deps7.enrichOrdersFromCatalog(updatedList, products);
     const processedCount = summary.daXuatKho + summary.donHuy + summary.daNhanHoan;
     console.log(
       `[Orders Scan Bulk] PERSISTED codes=${codes.length} updated=${changedOrders.length} summary=${JSON.stringify(summary)} failed=${failed_scans.length} mongo=${deps7.isMongoReady()}`
@@ -105059,7 +105140,7 @@ async function scanBulkUpdate(req, res) {
       },
       results,
       failed_scans,
-      orders: enriched
+      orders: updatedList
     });
   } catch (error) {
     console.error("[Orders Scan Bulk] Error:", error);
@@ -128158,7 +128239,7 @@ function isPackageShouldPrintFirstError(error, message) {
   const text = `${String(error || "")} ${String(message || "")}`;
   return /should[_\s-]*print[_\s-]*first/i.test(text);
 }
-var sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+var sleepMs2 = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 var PackageShouldPrintFirstError = class extends Error {
   constructor(message) {
     super(message || "The package should print first");
@@ -128330,7 +128411,7 @@ async function fetchSingleOrderWaybillFromRows(shopId, accessToken, orderSn, row
         break;
       }
       if (attempt < maxPoll) {
-        await sleepMs(1500);
+        await sleepMs2(1500);
         continue;
       }
     }
@@ -129194,70 +129275,103 @@ async function restoreLocalStockForPartialCancel(shopId, existing, incoming) {
     }
   }
 }
-async function restoreLocalStockOnCancelReturnScan(order, opts) {
-  if (!order?.orderSn) return { restored: false, skipped: "no_order" };
-  if (order.stock_restored === true || order.stock_restored_at) {
-    return { restored: false, skipped: "already_restored" };
-  }
-  const hasTn = Boolean(
-    String(
-      order.trackingNumber || order.tracking_no || order.return_tracking_no || order.shopee_tracking_number || ""
-    ).trim()
-  );
-  const wasHandedOver = opts?.wasHandedOver === true || order.is_handed_over === true || order.isHandedOverToCarrier === true || String(order.local_status || order.localStatus || "").toUpperCase() === "HANDED_OVER";
-  if (!hasTn && !wasHandedOver) {
-    return { restored: false, skipped: "not_shipped" };
-  }
-  const items = Array.isArray(order.items) ? order.items : [];
-  if (!items.length) return { restored: false, skipped: "no_items" };
+async function restoreLocalStockOnCancelReturnScanBatch(jobs) {
+  const list = (Array.isArray(jobs) ? jobs : []).filter((j) => j?.order);
+  if (!list.length) return { restored: 0, qty: 0 };
   let listings = [];
-  let products = [];
   try {
     listings = await readChannelListingsDb();
-    products = await loadProductsFromStore();
   } catch {
-    return { restored: false, skipped: "catalog_unavailable" };
+    return { restored: 0, qty: 0 };
   }
-  const shopId = order.shopId ? String(order.shopId) : void 0;
   const restoreByProduct = /* @__PURE__ */ new Map();
-  for (const item of items) {
-    const restoreQty = Math.max(
-      0,
-      Number(item?.originalQuantity) || Number(item?.quantity) || 0
+  const orderLinkedIds = /* @__PURE__ */ new Map();
+  for (const job of list) {
+    const order = job.order;
+    if (!order?.orderSn) continue;
+    if (order.stock_restored === true || order.stock_restored_at) continue;
+    const hasTn = Boolean(
+      String(
+        order.trackingNumber || order.tracking_no || order.return_tracking_no || order.shopee_tracking_number || ""
+      ).trim()
     );
-    if (restoreQty <= 0) continue;
-    const productId = String(item?.productId || "");
-    if (!productId) continue;
-    const modelId = item?.modelId ? String(item.modelId) : void 0;
-    const linkedId = findLinkedProductIdForShopeeLine(listings, shopId, productId, modelId) || findLinkedProductIdForShopeeLine(listings, shopId, productId, void 0) || (item?.linkedProductId ? String(item.linkedProductId) : "");
-    if (!linkedId) continue;
-    restoreByProduct.set(linkedId, (restoreByProduct.get(linkedId) || 0) + restoreQty);
+    const wasHandedOver = job.wasHandedOver === true || order.is_handed_over === true || order.isHandedOverToCarrier === true || String(order.local_status || order.localStatus || "").toUpperCase() === "HANDED_OVER";
+    if (!hasTn && !wasHandedOver) continue;
+    const items = Array.isArray(order.items) ? order.items : [];
+    if (!items.length) continue;
+    const shopId = order.shopId ? String(order.shopId) : void 0;
+    const linkedForOrder = /* @__PURE__ */ new Set();
+    for (const item of items) {
+      const restoreQty = Math.max(
+        0,
+        Number(item?.originalQuantity) || Number(item?.quantity) || 0
+      );
+      if (restoreQty <= 0) continue;
+      const productId = String(item?.productId || "");
+      if (!productId) continue;
+      const modelId = item?.modelId ? String(item.modelId) : void 0;
+      const linkedId = findLinkedProductIdForShopeeLine(listings, shopId, productId, modelId) || findLinkedProductIdForShopeeLine(listings, shopId, productId, void 0) || (item?.linkedProductId ? String(item.linkedProductId) : "");
+      if (!linkedId) continue;
+      restoreByProduct.set(linkedId, (restoreByProduct.get(linkedId) || 0) + restoreQty);
+      linkedForOrder.add(linkedId);
+    }
+    if (linkedForOrder.size > 0) orderLinkedIds.set(order, linkedForOrder);
   }
-  if (restoreByProduct.size === 0) return { restored: false, skipped: "no_linked_products" };
-  let changed = false;
+  if (restoreByProduct.size === 0) return { restored: 0, qty: 0 };
+  let products = [];
+  try {
+    products = await loadProductsByIdsFromStore([...restoreByProduct.keys()]);
+  } catch {
+    return { restored: 0, qty: 0 };
+  }
+  const byId = new Map(products.map((p) => [String(p?.id), p]));
+  const changed = [];
+  const changedIds = /* @__PURE__ */ new Set();
   let totalQty = 0;
   for (const [linkedId, restoreQty] of restoreByProduct) {
-    const idx = products.findIndex((p) => String(p?.id) === linkedId);
-    if (idx < 0) continue;
-    products[idx] = applyBulkProductUpdate(products[idx], { stock: { mode: "increase", value: restoreQty } });
-    changed = true;
+    const p = byId.get(linkedId);
+    if (!p) continue;
+    const updated = applyBulkProductUpdate(p, { stock: { mode: "increase", value: restoreQty } });
+    byId.set(linkedId, updated);
+    changed.push(updated);
+    changedIds.add(linkedId);
     totalQty += restoreQty;
-    console.log(
-      `[Scan Restock] +${restoreQty} t\u1ED3n cho ${linkedId} (order ${order.orderSn})`
-    );
+    console.log(`[Scan Restock] +${restoreQty} t\u1ED3n cho ${linkedId}`);
   }
-  if (!changed) return { restored: false, skipped: "product_not_found" };
+  if (!changed.length) return { restored: 0, qty: 0 };
   try {
-    await saveProductsToStoreAsync(products);
+    await upsertProductsToStoreAsync(changed);
     invalidateMasterSkuIndexCache("scan_cancel_return_restock");
   } catch (err) {
-    console.warn("[Scan Restock] L\u01B0u t\u1ED3n kho th\u1EA5t b\u1EA1i:", err);
-    return { restored: false, skipped: "save_failed" };
+    console.warn("[Scan Restock] batch upsert fail:", err);
+    return { restored: 0, qty: 0 };
   }
   const now = (/* @__PURE__ */ new Date()).toISOString();
-  order.stock_restored = true;
-  order.stock_restored_at = now;
-  return { restored: true, qty: totalQty };
+  let restoredOrders = 0;
+  for (const [order, linkedIds] of orderLinkedIds) {
+    let hit = false;
+    for (const id of linkedIds) {
+      if (changedIds.has(id)) {
+        hit = true;
+        break;
+      }
+    }
+    if (!hit) continue;
+    order.stock_restored = true;
+    order.stock_restored_at = now;
+    restoredOrders += 1;
+  }
+  console.log(
+    `[Scan Restock] BATCH +${totalQty} t\u1ED3n cho ${changed.length} SP / ${restoredOrders} \u0111\u01A1n (upsertProducts bulkWrite)`
+  );
+  return { restored: restoredOrders, qty: totalQty };
+}
+async function restoreLocalStockOnCancelReturnScan(order, opts) {
+  if (!order?.orderSn) return { restored: false, skipped: "no_order" };
+  const r2 = await restoreLocalStockOnCancelReturnScanBatch([
+    { order, wasHandedOver: opts?.wasHandedOver }
+  ]);
+  return { restored: r2.restored > 0, qty: r2.qty };
 }
 function mapShopeeOrderLineItem(it, opts) {
   if (!it || typeof it !== "object") return null;
@@ -134974,6 +135088,7 @@ async function startServer() {
   });
   initScanController({
     findOrderByScanCodeInStore,
+    findOrdersByScanCodesInStore,
     resolveOrderFromShopeeByScanCode: async () => null,
     isValidOrder,
     mirrorTrackingFieldsForRead
@@ -135020,6 +135135,7 @@ async function startServer() {
     markOrderHandedOverInStore,
     markOrderLocalStatusInStore,
     restoreLocalStockOnCancelReturnScan,
+    restoreLocalStockOnCancelReturnScanBatch,
     loadProductsForOrders,
     enrichOrdersFromCatalog,
     invalidateOrdersRefreshCache

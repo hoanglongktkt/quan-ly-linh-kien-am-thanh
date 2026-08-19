@@ -8,6 +8,7 @@ import {
 /** Deps từ server.ts — resolve đơn thật (orderSn + items) trước khi ghi don_hoan_huy. */
 let deps = {
   findOrderByScanCodeInStore: async () => null,
+  findOrdersByScanCodesInStore: async () => new Map(),
   resolveOrderFromShopeeByScanCode: async () => null,
   isValidOrder: () => false,
   mirrorTrackingFieldsForRead: (o) => o,
@@ -175,11 +176,26 @@ export async function saveScanOrders(req, res) {
     const saved = [];
     const failed = [];
     const orderSns = [];
-    /** Resolve trước (có thể gọi Shopee) — ghi DB 1 lần bulkWrite. */
+    /** Lookup Mongo 1 lần `$in` — ghi DB 1 lần bulkWrite. Không gọi Shopee. */
     const toUpsert = [];
 
+    const uniqueCodes = unique.map((j) => j.code);
+    let foundByCode = new Map();
+    try {
+      if (typeof deps.findOrdersByScanCodesInStore === "function") {
+        foundByCode = await deps.findOrdersByScanCodesInStore(uniqueCodes);
+      }
+    } catch (batchErr) {
+      console.warn(
+        "[Scan Save] batch lookup fail:",
+        batchErr?.message || batchErr,
+      );
+    }
+
     for (const job of unique) {
-      const order = await resolveFullOrderForScan(job.code);
+      let order = foundByCode.get(job.code) || null;
+      if (order && !deps.isValidOrder(order)) order = null;
+      if (order) order = deps.mirrorTrackingFieldsForRead(order);
       if (!order) {
         failed.push({
           code: job.code,

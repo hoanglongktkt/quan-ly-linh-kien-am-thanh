@@ -4239,9 +4239,13 @@ function buildExactScanOrFilter(rawCode: string): Record<string, unknown> | null
     pushScanFieldVariants($or, "data.order_sn", [code]);
     pushScanFieldVariants($or, "return_sn", [code]);
     pushScanFieldVariants($or, "data.return_sn", [code]);
+    pushScanFieldVariants($or, "data.internalTrackingCode", [code]);
     const orderSn = code.replace(/^SHOPEE-/, "");
     if (orderSn && orderSn !== code) {
       $or.push({ orderSn }, { "data.orderSn": orderSn }, { "data.order_sn": orderSn });
+      $or.push({ _id: `shopee-${orderSn}` });
+    } else {
+      $or.push({ _id: `shopee-${code}` });
     }
   }
   return $or.length ? { $or } : null;
@@ -7232,15 +7236,30 @@ export async function upsertDonHoanHuyBatch(
     return { ok, failed, errors };
   }
 
+  const DHH_BULK_CHUNK = 250;
+  const DHH_BULK_DELAY_MS = 40;
   try {
-    const result = await DonHoanHuyModel.bulkWrite(ops, {
-      ordered: false,
-    });
+    let upserted = 0;
+    let modified = 0;
+    let matched = 0;
+    for (let i = 0; i < ops.length; i += DHH_BULK_CHUNK) {
+      const chunk = ops.slice(i, i + DHH_BULK_CHUNK);
+      const result = await withWriteTimeout(
+        DonHoanHuyModel.bulkWrite(chunk, { ordered: false }),
+        "don_hoan_huy_bulkWrite",
+        12_000,
+      );
+      upserted += result.upsertedCount || 0;
+      modified += result.modifiedCount || 0;
+      matched += result.matchedCount || 0;
+      if (i + DHH_BULK_CHUNK < ops.length) {
+        await new Promise((r) => setTimeout(r, DHH_BULK_DELAY_MS));
+      }
+    }
     ok = opSns.length;
     console.log(
       `[MongoDB] bulkWrite don_hoan_huy ONE shot — ops=${ops.length}` +
-        ` upserted=${result.upsertedCount || 0} modified=${result.modifiedCount || 0}` +
-        ` matched=${result.matchedCount || 0}`,
+        ` upserted=${upserted} modified=${modified} matched=${matched}`,
     );
   } catch (err: any) {
     // ordered:false — một phần có thể đã ghi; đếm writeErrors.
@@ -7386,10 +7405,26 @@ export async function markOrdersScanFlagsBatch(
   }
 
   if (ops.length === 0) return 0;
-  const result = await OrderModel.bulkWrite(ops, { ordered: false });
+  const FLAG_BULK_CHUNK = 250;
+  const FLAG_BULK_DELAY_MS = 40;
+  let modified = 0;
+  let upserted = 0;
+  for (let i = 0; i < ops.length; i += FLAG_BULK_CHUNK) {
+    const chunk = ops.slice(i, i + FLAG_BULK_CHUNK);
+    const result = await withWriteTimeout(
+      OrderModel.bulkWrite(chunk, { ordered: false }),
+      "markOrdersScanFlags_bulkWrite",
+      12_000,
+    );
+    modified += result.modifiedCount || 0;
+    upserted += result.upsertedCount || 0;
+    if (i + FLAG_BULK_CHUNK < ops.length) {
+      await new Promise((r) => setTimeout(r, FLAG_BULK_DELAY_MS));
+    }
+  }
   console.log(
     `[MongoDB] bulkWrite markOrdersScanFlags — ops=${ops.length}` +
-      ` modified=${result.modifiedCount || 0} upserted=${result.upsertedCount || 0}`,
+      ` modified=${modified} upserted=${upserted}`,
   );
   return ops.length;
 }
@@ -7511,7 +7546,79 @@ export async function listScannerSyncRowsFromStore(): Promise<ScannerSyncRow[]> 
   return rows;
 }
 
-/** Lookup N mã quét — exact $eq tuần tự (index), không regex. */
+const SCAN_BATCH_IN_SIZE = 300;
+const SCAN_BATCH_DELAY_MS = 40;
+
+function collectHydratedOrderScanKeys(order: any): string[] {
+  const keys: string[] = [];
+  const add = (v: unknown) => {
+    const n = normalizeScannedCode(v);
+    if (!n) return;
+    keys.push(n);
+    const stripped = stripScannedSeparators(n);
+    if (stripped && stripped !== n) keys.push(stripped);
+  };
+  add(order?.orderSn);
+  add(order?.order_sn);
+  add(order?.tracking_no);
+  add(order?.trackingNumber);
+  add(order?.return_tracking_no);
+  add(order?.returnTrackingNumber);
+  add(order?.packageNumber);
+  add(order?.package_number);
+  add(order?.internalTrackingCode);
+  add(order?.return_sn);
+  add(String(order?.id || "").replace(/^shopee-/i, ""));
+  return keys;
+}
+
+function buildScanCodesInFilter(chunk: string[]): Record<string, unknown> | null {
+  const variants = new Set<string>();
+  const ids: string[] = [];
+  const sns: string[] = [];
+  for (const code of chunk) {
+    const scanned = normalizeScannedCode(code);
+    if (!scanned) continue;
+    variants.add(scanned);
+    const stripped = stripScannedSeparators(scanned);
+    if (stripped) variants.add(stripped);
+    const sn = scanned.replace(/^SHOPEE-/, "");
+    if (sn) sns.push(sn);
+    ids.push(scanned.startsWith("SHOPEE-") ? `shopee-${sn}` : `shopee-${scanned}`);
+    ids.push(scanned);
+  }
+  const codes = [...variants];
+  const snList = [...new Set(sns.filter(Boolean))];
+  if (codes.length === 0 && snList.length === 0) return null;
+  return {
+    $or: [
+      { orderSn: { $in: snList } },
+      { tracking_no: { $in: codes } },
+      { trackingNumber: { $in: codes } },
+      { return_tracking_no: { $in: codes } },
+      { returnTrackingNumber: { $in: codes } },
+      { packageNumber: { $in: codes } },
+      { return_sn: { $in: codes } },
+      { "data.orderSn": { $in: snList } },
+      { "data.order_sn": { $in: snList } },
+      { "data.tracking_no": { $in: codes } },
+      { "data.trackingNumber": { $in: codes } },
+      { "data.return_tracking_no": { $in: codes } },
+      { "data.returnTrackingNumber": { $in: codes } },
+      { "data.packageNumber": { $in: codes } },
+      { "data.package_number": { $in: codes } },
+      { "data.internalTrackingCode": { $in: codes } },
+      { "data.return_sn": { $in: codes } },
+      { _id: { $in: [...new Set(ids)] } },
+    ],
+  };
+}
+
+async function sleepMs(ms: number): Promise<void> {
+  await new Promise((r) => setTimeout(r, ms));
+}
+
+/** Lookup N mã quét — ĐÚNG 1 (hoặc vài chunk) find `$in` trên index. CẤM N lần findOne. */
 export async function findOrdersByScanCodesInStore(
   rawCodes: string[],
 ): Promise<Map<string, any>> {
@@ -7519,16 +7626,69 @@ export async function findOrdersByScanCodesInStore(
   if (!isMongoReady() || !Array.isArray(rawCodes) || rawCodes.length === 0) {
     return result;
   }
-  const cache = new Map<string, any>();
+  requireMongo();
+
+  const uniqueCodes: string[] = [];
+  const seen = new Set<string>();
   for (const raw of rawCodes) {
-    const scannedCode = normalizeScannedCode(raw);
-    if (!scannedCode) continue;
-    if (!cache.has(scannedCode)) {
-      cache.set(scannedCode, await findOrderByScanCodeInStore(scannedCode));
-    }
-    const found = cache.get(scannedCode);
-    if (found) result.set(raw, found);
+    const scanned = normalizeScannedCode(raw);
+    if (!scanned || seen.has(scanned)) continue;
+    seen.add(scanned);
+    uniqueCodes.push(scanned);
   }
+  if (uniqueCodes.length === 0) return result;
+
+  const byScanKey = new Map<string, any>();
+  const ingestDocs = (docs: any[]) => {
+    for (const doc of docs || []) {
+      const order = hydrateOrderFromMongoDoc(doc);
+      if (!order) continue;
+      for (const k of collectHydratedOrderScanKeys(order)) {
+        if (k && !byScanKey.has(k)) byScanKey.set(k, order);
+      }
+    }
+  };
+
+  for (let i = 0; i < uniqueCodes.length; i += SCAN_BATCH_IN_SIZE) {
+    const chunk = uniqueCodes.slice(i, i + SCAN_BATCH_IN_SIZE);
+    const filter = buildScanCodesInFilter(chunk);
+    if (!filter) continue;
+    try {
+      const docs = await withWriteTimeout(
+        OrderModel.find(filter)
+          .limit(Math.min(Math.max(chunk.length * 3, 50), 2000))
+          .maxTimeMS(8000)
+          .lean()
+          .exec(),
+        "scan_codes_in_lookup",
+        9000,
+      );
+      ingestDocs(docs as any[]);
+    } catch (err: any) {
+      console.warn(
+        "[MongoDB] findOrdersByScanCodesInStore chunk fail:",
+        err?.message || err,
+      );
+    }
+    if (i + SCAN_BATCH_IN_SIZE < uniqueCodes.length) {
+      await sleepMs(SCAN_BATCH_DELAY_MS);
+    }
+  }
+
+  for (const raw of rawCodes) {
+    const scanned = normalizeScannedCode(raw);
+    if (!scanned) continue;
+    const stripped = stripScannedSeparators(scanned);
+    const found = byScanKey.get(scanned) || (stripped ? byScanKey.get(stripped) : undefined);
+    if (found) {
+      result.set(raw, found);
+      result.set(scanned, found);
+    }
+  }
+
+  console.log(
+    `[MongoDB] findOrdersByScanCodesInStore codes=${uniqueCodes.length} hits=${result.size} $in (no per-code findOne)`,
+  );
   return result;
 }
 

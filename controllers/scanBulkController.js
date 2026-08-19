@@ -30,6 +30,7 @@ let deps = {
   markOrderHandedOverInStore: async () => false,
   markOrderLocalStatusInStore: async () => false,
   restoreLocalStockOnCancelReturnScan: async () => ({ restored: false }),
+  restoreLocalStockOnCancelReturnScanBatch: async () => ({ restored: 0, qty: 0 }),
   loadProductsForOrders: async () => [],
   enrichOrdersFromCatalog: (orders) => orders,
   invalidateOrdersRefreshCache: () => {},
@@ -66,36 +67,32 @@ export async function scanBulkUpdate(req, res) {
     const forceCancelCodes = toCodeSet(req.body?.donHuyCodes);
     const forceReturnCodes = toCodeSet(req.body?.daNhanHoanCodes);
 
-    // Lookup Mongo exact $eq — KHÔNG gọi Shopee.
+    // Lookup Mongo exact $eq `$in` — 1 query. KHÔNG gọi Shopee. KHÔNG N lần findOne.
     let foundByCode = new Map();
     try {
       foundByCode = await deps.findOrdersByScanCodesInStore(codes);
     } catch (batchLookupErr) {
       console.warn(
-        "[Orders Scan Bulk] batch lookup fail — fallback per-code:",
+        "[Orders Scan Bulk] batch lookup fail:",
         batchLookupErr?.message || batchLookupErr,
       );
     }
 
-    const lookupPairs = await Promise.all(
-      codes.map(async (code) => {
-        const scannedCode = String(code || "").trim().toUpperCase();
-        let found = foundByCode.get(code) || foundByCode.get(scannedCode) || null;
-        try {
-          if (!found) {
-            found = await deps.findOrderByScanCodeInStore(scannedCode);
-          }
-          if (found && !deps.isValidOrder(found)) found = null;
-          if (found) found = deps.mirrorTrackingFieldsForRead(found);
-        } catch (lookupErr) {
-          console.warn(
-            `[Orders Scan Bulk] lookup miss code=${scannedCode}:`,
-            lookupErr?.message || lookupErr,
-          );
-        }
-        return { code: scannedCode, found };
-      }),
-    );
+    const lookupPairs = codes.map((code) => {
+      const scannedCode = String(code || "").trim().toUpperCase();
+      let found = foundByCode.get(code) || foundByCode.get(scannedCode) || null;
+      try {
+        if (found && !deps.isValidOrder(found)) found = null;
+        if (found) found = deps.mirrorTrackingFieldsForRead(found);
+      } catch (lookupErr) {
+        console.warn(
+          `[Orders Scan Bulk] hydrate miss code=${scannedCode}:`,
+          lookupErr?.message || lookupErr,
+        );
+        found = null;
+      }
+      return { code: scannedCode, found };
+    });
 
     if (lookupPairs.every((p) => !p.found)) {
       return res.status(404).json({
@@ -124,6 +121,8 @@ export async function scanBulkUpdate(req, res) {
     const failed_scans = [];
     const changedOrders = [];
     const updatedById = new Map();
+    /** Restock tồn local — gom lại 1 lần upsertProducts, không deleteMany từng đơn. */
+    const restockJobs = [];
     /** Chỉ đếm record THỰC SỰ vừa UPDATE thành công trong DB. */
     const summary = { daXuatKho: 0, donHuy: 0, daNhanHoan: 0 };
     /** Số đơn hủy/hoàn đã có sẵn trong don_hoan_huy (idempotent). */
@@ -351,21 +350,7 @@ export async function scanBulkUpdate(req, res) {
         const updated = { ...order };
         deps.clearHandedOverLocalForCancelReturn(updated);
         deps.setOrderLocalStatus(updated, "RETURN_RECEIVED");
-        try {
-          const restock = await deps.restoreLocalStockOnCancelReturnScan(updated, {
-            wasHandedOver,
-          });
-          if (restock?.restored) {
-            console.log(
-              `[Orders Scan Bulk] Restock +${restock.qty || 0} order_sn=${updated.orderSn}`,
-            );
-          }
-        } catch (restockErr) {
-          console.warn(
-            `[Orders Scan Bulk] Restock fail order_sn=${updated.orderSn}:`,
-            restockErr?.message || restockErr,
-          );
-        }
+        restockJobs.push({ order: updated, wasHandedOver });
         orders[index] = updated;
         changedOrders.push(updated);
         updatedById.set(updated.id, updated);
@@ -423,21 +408,7 @@ export async function scanBulkUpdate(req, res) {
         if (updated.status !== "cancelled") updated.status = "cancelled";
         deps.clearHandedOverLocalForCancelReturn(updated);
         deps.setOrderLocalStatus(updated, "CANCELLED_STORED");
-        try {
-          const restock = await deps.restoreLocalStockOnCancelReturnScan(updated, {
-            wasHandedOver,
-          });
-          if (restock?.restored) {
-            console.log(
-              `[Orders Scan Bulk] Restock +${restock.qty || 0} order_sn=${updated.orderSn}`,
-            );
-          }
-        } catch (restockErr) {
-          console.warn(
-            `[Orders Scan Bulk] Restock fail order_sn=${updated.orderSn}:`,
-            restockErr?.message || restockErr,
-          );
-        }
+        restockJobs.push({ order: updated, wasHandedOver });
         orders[index] = updated;
         changedOrders.push(updated);
         updatedById.set(updated.id, updated);
@@ -508,8 +479,27 @@ export async function scanBulkUpdate(req, res) {
       });
     }
 
+    // Restock tồn local 1 lần (upsertProducts bulkWrite) — KHÔNG sync Shopee.
+    if (restockJobs.length > 0) {
+      try {
+        if (typeof deps.restoreLocalStockOnCancelReturnScanBatch === "function") {
+          const restock = await deps.restoreLocalStockOnCancelReturnScanBatch(restockJobs);
+          if (restock?.restored) {
+            console.log(
+              `[Orders Scan Bulk] Restock BATCH +${restock.qty || 0} tồn / ${restock.restored} đơn`,
+            );
+          }
+        }
+      } catch (restockErr) {
+        console.warn(
+          "[Orders Scan Bulk] Restock batch fail:",
+          restockErr?.message || restockErr,
+        );
+      }
+    }
+
     // Persist: hủy/hoàn → collection don_hoan_huy (SSOT tab);
-    // xuất kho → markOrderHandedOver. Không phụ thuộc order_events.
+    // xuất kho → markOrdersScanFlagsBatch. Không phụ thuộc order_events. Không gọi Shopee.
     const scanCodeByOrderSn = new Map();
     for (const r of results) {
       const sn = String(r?.orderSn || "").replace(/^shopee-/i, "").trim();
@@ -584,29 +574,6 @@ export async function scanBulkUpdate(req, res) {
     }
 
     if (changedOrders.length > 0) {
-      // Handed-over vẫn ghi orders; hủy/hoàn ưu tiên don_hoan_huy (cờ orders là phụ).
-      const handoverOnly = changedOrders.filter((o) => {
-        const local = String(
-          o?.local_status || o?.localStatus || o?.internal_status || "",
-        ).toUpperCase();
-        return (
-          local === "HANDED_OVER" ||
-          o?.is_handed_over === true ||
-          o?.isHandedOverToCarrier === true
-        );
-      });
-      if (handoverOnly.length > 0) {
-        try {
-          await deps.persistChangedOrdersPatch(handoverOnly);
-        } catch (persistErr) {
-          console.warn(
-            "[Orders Scan Bulk] persistChangedOrdersPatch handover:",
-            deps.describeMongoWriteError(persistErr),
-            persistErr,
-          );
-        }
-      }
-
       let flagOk = 0;
       const flagRows = [];
       for (const o of changedOrders) {
@@ -642,45 +609,7 @@ export async function scanBulkUpdate(req, res) {
       }
       if (flagRows.length > 0) {
         try {
-          if (typeof deps.markOrdersScanFlagsBatch === "function") {
-            flagOk = await deps.markOrdersScanFlagsBatch(flagRows);
-          } else {
-            // Fallback legacy: từng đơn (chậm) — chỉ khi batch chưa wire.
-            for (const row of flagRows) {
-              try {
-                if (row.localStatus === "HANDED_OVER") {
-                  const ok = await deps.markOrderHandedOverInStore(row.orderSn, {
-                    source: row.source,
-                    handedOverAt: row.handedOverAt,
-                    shopId: row.shopId,
-                  });
-                  if (ok) flagOk += 1;
-                } else {
-                  const ok = await deps.markOrderLocalStatusInStore(
-                    row.orderSn,
-                    row.localStatus,
-                    {
-                      shopId: row.shopId,
-                      clearHandedOver: true,
-                      status:
-                        row.localStatus === "RETURN_RECEIVED"
-                          ? "return_received"
-                          : "cancelled",
-                      stockRestored: row.stockRestored,
-                      stockRestoredAt: row.stockRestoredAt,
-                    },
-                  );
-                  if (ok) flagOk += 1;
-                }
-              } catch (flagErr) {
-                console.error(
-                  `[Orders Scan Bulk] mark flag fail order_sn=${row.orderSn}:`,
-                  deps.describeMongoWriteError(flagErr),
-                  flagErr,
-                );
-              }
-            }
-          }
+          flagOk = await deps.markOrdersScanFlagsBatch(flagRows);
         } catch (flagBatchErr) {
           console.error(
             "[Orders Scan Bulk] markOrdersScanFlagsBatch FAIL:",
@@ -697,8 +626,6 @@ export async function scanBulkUpdate(req, res) {
     }
 
     const updatedList = [...updatedById.values()];
-    const products = await deps.loadProductsForOrders(updatedList);
-    const enriched = deps.enrichOrdersFromCatalog(updatedList, products);
     const processedCount = summary.daXuatKho + summary.donHuy + summary.daNhanHoan;
 
     console.log(
@@ -725,7 +652,7 @@ export async function scanBulkUpdate(req, res) {
       },
       results,
       failed_scans,
-      orders: enriched,
+      orders: updatedList,
     });
   } catch (error) {
     console.error("[Orders Scan Bulk] Error:", error);

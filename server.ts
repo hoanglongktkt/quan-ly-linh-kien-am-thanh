@@ -12121,97 +12121,132 @@ async function restoreLocalStockForPartialCancel(
 /**
  * Cộng lại tồn local khi quét nhận hủy/hoàn lần đầu (đơn đã ship / có mã VĐ / từng HANDED_OVER).
  * Idempotent qua stock_restored / stock_restored_at — không cộng 2 lần; không đẩy update_stock Shopee.
+ * Batch: load listings 1 lần + upsertProducts bulkWrite 1 lần (CẤM deleteMany toàn catalog).
  */
+async function restoreLocalStockOnCancelReturnScanBatch(
+  jobs: Array<{ order: any; wasHandedOver?: boolean }>,
+): Promise<{ restored: number; qty: number }> {
+  const list = (Array.isArray(jobs) ? jobs : []).filter((j) => j?.order);
+  if (!list.length) return { restored: 0, qty: 0 };
+
+  let listings: any[] = [];
+  try {
+    listings = await readChannelListingsDb();
+  } catch {
+    return { restored: 0, qty: 0 };
+  }
+
+  const restoreByProduct = new Map<string, number>();
+  const orderLinkedIds = new Map<any, Set<string>>();
+
+  for (const job of list) {
+    const order = job.order;
+    if (!order?.orderSn) continue;
+    if (order.stock_restored === true || order.stock_restored_at) continue;
+    const hasTn = Boolean(
+      String(
+        order.trackingNumber ||
+          order.tracking_no ||
+          order.return_tracking_no ||
+          order.shopee_tracking_number ||
+          "",
+      ).trim(),
+    );
+    const wasHandedOver =
+      job.wasHandedOver === true ||
+      order.is_handed_over === true ||
+      order.isHandedOverToCarrier === true ||
+      String(order.local_status || order.localStatus || "").toUpperCase() === "HANDED_OVER";
+    if (!hasTn && !wasHandedOver) continue;
+    const items = Array.isArray(order.items) ? order.items : [];
+    if (!items.length) continue;
+
+    const shopId = order.shopId ? String(order.shopId) : undefined;
+    const linkedForOrder = new Set<string>();
+    for (const item of items) {
+      const restoreQty = Math.max(
+        0,
+        Number(item?.originalQuantity) || Number(item?.quantity) || 0,
+      );
+      if (restoreQty <= 0) continue;
+      const productId = String(item?.productId || "");
+      if (!productId) continue;
+      const modelId = item?.modelId ? String(item.modelId) : undefined;
+      const linkedId =
+        findLinkedProductIdForShopeeLine(listings, shopId, productId, modelId) ||
+        findLinkedProductIdForShopeeLine(listings, shopId, productId, undefined) ||
+        (item?.linkedProductId ? String(item.linkedProductId) : "");
+      if (!linkedId) continue;
+      restoreByProduct.set(linkedId, (restoreByProduct.get(linkedId) || 0) + restoreQty);
+      linkedForOrder.add(linkedId);
+    }
+    if (linkedForOrder.size > 0) orderLinkedIds.set(order, linkedForOrder);
+  }
+
+  if (restoreByProduct.size === 0) return { restored: 0, qty: 0 };
+
+  let products: any[] = [];
+  try {
+    products = await loadProductsByIdsFromStore([...restoreByProduct.keys()]);
+  } catch {
+    return { restored: 0, qty: 0 };
+  }
+
+  const byId = new Map(products.map((p) => [String(p?.id), p]));
+  const changed: any[] = [];
+  const changedIds = new Set<string>();
+  let totalQty = 0;
+  for (const [linkedId, restoreQty] of restoreByProduct) {
+    const p = byId.get(linkedId);
+    if (!p) continue;
+    const updated = applyBulkProductUpdate(p, { stock: { mode: "increase", value: restoreQty } });
+    byId.set(linkedId, updated);
+    changed.push(updated);
+    changedIds.add(linkedId);
+    totalQty += restoreQty;
+    console.log(`[Scan Restock] +${restoreQty} tồn cho ${linkedId}`);
+  }
+
+  if (!changed.length) return { restored: 0, qty: 0 };
+
+  try {
+    await upsertProductsToStoreAsync(changed);
+    invalidateMasterSkuIndexCache("scan_cancel_return_restock");
+  } catch (err) {
+    console.warn("[Scan Restock] batch upsert fail:", err);
+    return { restored: 0, qty: 0 };
+  }
+
+  const now = new Date().toISOString();
+  let restoredOrders = 0;
+  for (const [order, linkedIds] of orderLinkedIds) {
+    let hit = false;
+    for (const id of linkedIds) {
+      if (changedIds.has(id)) {
+        hit = true;
+        break;
+      }
+    }
+    if (!hit) continue;
+    order.stock_restored = true;
+    order.stock_restored_at = now;
+    restoredOrders += 1;
+  }
+  console.log(
+    `[Scan Restock] BATCH +${totalQty} tồn cho ${changed.length} SP / ${restoredOrders} đơn (upsertProducts bulkWrite)`,
+  );
+  return { restored: restoredOrders, qty: totalQty };
+}
+
 async function restoreLocalStockOnCancelReturnScan(
   order: any,
   opts?: { wasHandedOver?: boolean },
 ): Promise<{ restored: boolean; skipped?: string; qty?: number }> {
   if (!order?.orderSn) return { restored: false, skipped: "no_order" };
-  if (order.stock_restored === true || order.stock_restored_at) {
-    return { restored: false, skipped: "already_restored" };
-  }
-
-  const hasTn = Boolean(
-    String(
-      order.trackingNumber ||
-        order.tracking_no ||
-        order.return_tracking_no ||
-        order.shopee_tracking_number ||
-        "",
-    ).trim(),
-  );
-  const wasHandedOver =
-    opts?.wasHandedOver === true ||
-    order.is_handed_over === true ||
-    order.isHandedOverToCarrier === true ||
-    String(order.local_status || order.localStatus || "").toUpperCase() === "HANDED_OVER";
-
-  // Hủy trước khi ship (chưa có TN, chưa bàn giao) → không cộng tồn.
-  if (!hasTn && !wasHandedOver) {
-    return { restored: false, skipped: "not_shipped" };
-  }
-
-  const items = Array.isArray(order.items) ? order.items : [];
-  if (!items.length) return { restored: false, skipped: "no_items" };
-
-  let listings: any[] = [];
-  let products: any[] = [];
-  try {
-    listings = await readChannelListingsDb();
-    products = await loadProductsFromStore();
-  } catch {
-    return { restored: false, skipped: "catalog_unavailable" };
-  }
-
-  const shopId = order.shopId ? String(order.shopId) : undefined;
-  const restoreByProduct = new Map<string, number>();
-  for (const item of items) {
-    // Kiện về kho: cộng theo SL đã xuất trên dòng (không trừ cancelledQty — đơn full cancel thường cancelled=purchased).
-    const restoreQty = Math.max(
-      0,
-      Number(item?.originalQuantity) || Number(item?.quantity) || 0,
-    );
-    if (restoreQty <= 0) continue;
-    const productId = String(item?.productId || "");
-    if (!productId) continue;
-    const modelId = item?.modelId ? String(item.modelId) : undefined;
-    const linkedId =
-      findLinkedProductIdForShopeeLine(listings, shopId, productId, modelId) ||
-      findLinkedProductIdForShopeeLine(listings, shopId, productId, undefined) ||
-      (item?.linkedProductId ? String(item.linkedProductId) : "");
-    if (!linkedId) continue;
-    restoreByProduct.set(linkedId, (restoreByProduct.get(linkedId) || 0) + restoreQty);
-  }
-
-  if (restoreByProduct.size === 0) return { restored: false, skipped: "no_linked_products" };
-
-  let changed = false;
-  let totalQty = 0;
-  for (const [linkedId, restoreQty] of restoreByProduct) {
-    const idx = products.findIndex((p) => String(p?.id) === linkedId);
-    if (idx < 0) continue;
-    products[idx] = applyBulkProductUpdate(products[idx], { stock: { mode: "increase", value: restoreQty } });
-    changed = true;
-    totalQty += restoreQty;
-    console.log(
-      `[Scan Restock] +${restoreQty} tồn cho ${linkedId} (order ${order.orderSn})`,
-    );
-  }
-
-  if (!changed) return { restored: false, skipped: "product_not_found" };
-
-  try {
-    await saveProductsToStoreAsync(products);
-    invalidateMasterSkuIndexCache("scan_cancel_return_restock");
-  } catch (err) {
-    console.warn("[Scan Restock] Lưu tồn kho thất bại:", err);
-    return { restored: false, skipped: "save_failed" };
-  }
-
-  const now = new Date().toISOString();
-  order.stock_restored = true;
-  order.stock_restored_at = now;
-  return { restored: true, qty: totalQty };
+  const r = await restoreLocalStockOnCancelReturnScanBatch([
+    { order, wasHandedOver: opts?.wasHandedOver },
+  ]);
+  return { restored: r.restored > 0, qty: r.qty };
 }
 
 function mapShopeeOrderLineItem(it: any, opts?: { orderStatus?: string }) {
@@ -20502,6 +20537,7 @@ async function startServer() {
   // --- Scan save / list don_hoan_huy — chỉ Mongo local, không gọi Shopee ---
   initScanController({
     findOrderByScanCodeInStore,
+    findOrdersByScanCodesInStore,
     resolveOrderFromShopeeByScanCode: async () => null,
     isValidOrder,
     mirrorTrackingFieldsForRead,
@@ -20550,6 +20586,7 @@ async function startServer() {
     markOrderHandedOverInStore,
     markOrderLocalStatusInStore,
     restoreLocalStockOnCancelReturnScan,
+    restoreLocalStockOnCancelReturnScanBatch,
     loadProductsForOrders,
     enrichOrdersFromCatalog,
     invalidateOrdersRefreshCache,
