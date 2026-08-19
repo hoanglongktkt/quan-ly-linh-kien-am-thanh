@@ -75227,6 +75227,18 @@ function getShopeeRaw(order) {
 function isToShipLikeRaw(raw) {
   return raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "PROCESSED";
 }
+function isLaggingPendingRaw(raw) {
+  return raw === "UNPAID" || raw === "PENDING" || raw === "IN_REVIEW" || raw === "FRAUD_CHECK" || raw === "INVOICE_PENDING";
+}
+function hasUsableOutboundTracking(order) {
+  const candidates = [order.trackingNumber, order.tracking_no, order.shopee_tracking_number];
+  for (const c of candidates) {
+    const tn = String(c || "").trim();
+    if (!tn || tn === "0" || /^0FG/i.test(tn)) continue;
+    return true;
+  }
+  return false;
+}
 function getInternalStatusRaw(order) {
   return String(
     order.internal_status ?? order.local_status ?? order.localStatus ?? order.scanFlag ?? ""
@@ -75317,11 +75329,17 @@ function matchesHandedOverCarrierTab(order) {
   const raw = getShopeeRaw(order);
   if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") return false;
   if (raw) {
-    if (!isToShipLikeRaw(raw)) return false;
+    if (!isToShipLikeRaw(raw)) {
+      if (!(isLaggingPendingRaw(raw) && hasUsableOutboundTracking(order))) return false;
+    }
   } else {
     const st = String(order.status || "");
     if (st === "shipping" || st === "completed") return false;
-    if (st !== "processed" && st !== "unprocessed") return false;
+    if (st !== "processed" && st !== "unprocessed") {
+      if (!((st === "pending_confirm" || st === "pending_verification") && hasUsableOutboundTracking(order))) {
+        return false;
+      }
+    }
   }
   return true;
 }
@@ -75411,6 +75429,7 @@ function isPickupPoolOrder(order) {
   if (isShopeeCompletedStatus(order)) return false;
   if (isShopeeCancelledLikeStatus(order)) return false;
   if (isShopeeReadyToShipStatus(order)) return true;
+  if (hasOrderTrackingNo(order)) return true;
   const status = String(order.status || "");
   return status === "unprocessed" || status === "processed";
 }
@@ -75438,10 +75457,13 @@ function matchesUnprocessedPickupTab(order) {
 function isEligibleForHandOverToCarrier(order) {
   if (isOrderHandedOverToCarrier(order)) return false;
   if (hasLeftHandedOverCarrierTab(order)) return false;
+  if (isShopeeCancelledLikeStatus(order) || isShopeeShippingStatus(order) || isShopeeCompletedStatus(order)) {
+    return false;
+  }
+  if (hasOrderTrackingNo(order)) return true;
   if (!isPickupPoolOrder(order)) return false;
   if (!isProcessedCondition(order)) return false;
-  if (!hasOrderTrackingNo(order)) return false;
-  return true;
+  return false;
 }
 function getHandOverIneligibleReason(order) {
   if (isOrderHandedOverToCarrier(order)) {
@@ -75450,16 +75472,17 @@ function getHandOverIneligibleReason(order) {
   if (hasLeftHandedOverCarrierTab(order)) {
     return `\u0110\u01A1n \u0111\xE3 \u0110ang giao/ho\xE0n t\u1EA5t/h\u1EE7y (status=${order.status}, shopee=${order.shopee_order_status || "-"})`;
   }
+  if (isShopeeCancelledLikeStatus(order) || isShopeeShippingStatus(order) || isShopeeCompletedStatus(order)) {
+    return `\u0110\u01A1n \u0111\xE3 \u0110ang giao/ho\xE0n t\u1EA5t/h\u1EE7y (status=${order.status}, shopee=${order.shopee_order_status || "-"})`;
+  }
+  if (hasOrderTrackingNo(order)) return "";
   if (!isPickupPoolOrder(order)) {
     return `Kh\xF4ng c\xF2n ch\u1EDD l\u1EA5y h\xE0ng (status=${order.status}, shopee=${order.shopee_order_status || "-"})`;
   }
   if (!isProcessedCondition(order)) {
     return "Ch\u01B0a \u0111\u1EE7 \u0111i\u1EC1u ki\u1EC7n \u0110\xE3 x\u1EED l\xFD (thi\u1EBFu PROCESSED/m\xE3 V\u0110)";
   }
-  if (!hasOrderTrackingNo(order)) {
-    return "Ch\u01B0a c\xF3 m\xE3 v\u1EADn \u0111\u01A1n outbound (trackingNumber/tracking_no)";
-  }
-  return "";
+  return "Ch\u01B0a c\xF3 m\xE3 v\u1EADn \u0111\u01A1n outbound (trackingNumber/tracking_no)";
 }
 
 // src/services/redis.ts
@@ -78073,6 +78096,19 @@ async function markOrderHandedOverInStore(orderSn, meta) {
   try {
     const updated = await writeExisting();
     if (updated) {
+      const raw = String(
+        updated.shopee_order_status || updated.data?.shopee_order_status || ""
+      ).toUpperCase();
+      const st = String(updated.status || updated.data?.status || "").trim();
+      const tn = String(
+        updated.tracking_no || updated.trackingNumber || updated.data?.tracking_no || updated.data?.trackingNumber || ""
+      ).trim();
+      if (tn && !/^0FG/i.test(tn) && isLaggingPendingConfirmPair(raw, st)) {
+        await OrderModel.updateOne(identityFilter, { $set: { ...LAGGING_PENDING_PROMOTE_SET } });
+        console.log(
+          `[MongoDB] markOrderHandedOver promote PROCESSED order_sn=${sn} (raw was ${raw || st})`
+        );
+      }
       console.log(
         `[MongoDB] markOrderHandedOver UPDATE is_handed_over=true order_sn=${sn} shopId=${shopIdStr || "-"} ok=true`
       );
@@ -78445,6 +78481,77 @@ async function updateOrderPendingShopeeCheckInStore(orderSn, isPending, patch, s
   );
   return Boolean(result);
 }
+var LAGGING_PENDING_RAW = [
+  "UNPAID",
+  "PENDING",
+  "IN_REVIEW",
+  "FRAUD_CHECK",
+  "INVOICE_PENDING"
+];
+var LAGGING_PENDING_LOCAL = ["pending_confirm", "pending_verification"];
+var TERMINAL_SHOPEE_RAW = [
+  "SHIPPED",
+  "TO_CONFIRM_RECEIVE",
+  "COMPLETED",
+  "CANCELLED",
+  "IN_CANCEL",
+  "TO_RETURN"
+];
+function isLaggingPendingConfirmPair(raw, status) {
+  const r2 = String(raw || "").toUpperCase();
+  const st = String(status || "").trim();
+  if (TERMINAL_SHOPEE_RAW.includes(r2)) return false;
+  if (st === "shipping" || st === "completed" || st === "cancelled") return false;
+  if (LAGGING_PENDING_RAW.includes(r2)) return true;
+  if (LAGGING_PENDING_LOCAL.includes(st)) return true;
+  if (!r2 && (st === "pending_confirm" || st === "pending_verification")) return true;
+  return false;
+}
+function applyLaggingPendingPromotionToSet($set, extra) {
+  const raw = String(
+    $set.shopee_order_status || extra?.shopee_order_status || ""
+  ).toUpperCase();
+  const st = String($set.status || extra?.status || "").trim();
+  if (!isLaggingPendingConfirmPair(raw, st)) return false;
+  $set.shopee_order_status = "PROCESSED";
+  $set["data.shopee_order_status"] = "PROCESSED";
+  $set.status = "processed";
+  $set["data.status"] = "processed";
+  $set.isPrepared = true;
+  $set["data.isPrepared"] = true;
+  $set.is_pending_shopee_check = false;
+  $set["data.is_pending_shopee_check"] = false;
+  return true;
+}
+var LAGGING_PENDING_PROMOTE_SET = {
+  shopee_order_status: "PROCESSED",
+  "data.shopee_order_status": "PROCESSED",
+  status: "processed",
+  "data.status": "processed",
+  isPrepared: true,
+  "data.isPrepared": true,
+  is_pending_shopee_check: false,
+  "data.is_pending_shopee_check": false
+};
+function laggingPendingConfirmMongoFilter() {
+  return {
+    $and: [
+      {
+        shopee_order_status: {
+          $nin: [...TERMINAL_SHOPEE_RAW, "READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"]
+        }
+      },
+      {
+        $or: [
+          { shopee_order_status: { $in: [...LAGGING_PENDING_RAW, null, ""] } },
+          { status: { $in: [...LAGGING_PENDING_LOCAL] } },
+          { "data.shopee_order_status": { $in: [...LAGGING_PENDING_RAW, null, ""] } },
+          { "data.status": { $in: [...LAGGING_PENDING_LOCAL] } }
+        ]
+      }
+    ]
+  };
+}
 async function updateOrderTrackingInStore(orderSn, trackingNo, extra) {
   if (!isMongoReady()) return false;
   requireMongo();
@@ -78456,7 +78563,8 @@ async function updateOrderTrackingInStore(orderSn, trackingNo, extra) {
   const _id = `shopee-${sn}`;
   const shopIdStr = extra?.shopId != null ? String(extra.shopId).trim() : "";
   const $set = {};
-  if (tn && !/^0FG/i.test(tn)) {
+  const hasOutboundTn = Boolean(tn && !/^0FG/i.test(tn));
+  if (hasOutboundTn) {
     $set.tracking_no = tn;
     $set.trackingNumber = tn;
     $set["data.tracking_no"] = tn;
@@ -78488,14 +78596,20 @@ async function updateOrderTrackingInStore(orderSn, trackingNo, extra) {
     $set["data.status"] = String(extra.status);
   }
   if (extra?.isPrepared != null) {
+    $set.isPrepared = extra.isPrepared;
     $set["data.isPrepared"] = extra.isPrepared;
   }
   if (extra?.shopee_order_status != null) {
-    $set["data.shopee_order_status"] = String(extra.shopee_order_status);
+    const rawIn = String(extra.shopee_order_status).toUpperCase();
+    $set.shopee_order_status = rawIn;
+    $set["data.shopee_order_status"] = rawIn;
   }
   if (extra?.is_pending_shopee_check != null) {
     $set.is_pending_shopee_check = extra.is_pending_shopee_check;
     $set["data.is_pending_shopee_check"] = extra.is_pending_shopee_check;
+  }
+  if (hasOutboundTn) {
+    applyLaggingPendingPromotionToSet($set, extra);
   }
   if (Object.keys($set).length === 0) return false;
   const $setOnInsert = {
@@ -78505,13 +78619,27 @@ async function updateOrderTrackingInStore(orderSn, trackingNo, extra) {
     "data.orderSn": sn,
     "data.channel": "shopee"
   };
+  const identity = buildOrderCompoundFilter(sn, _id, shopIdStr);
   const result = await OrderModel.findOneAndUpdate(
-    buildOrderCompoundFilter(sn, _id, shopIdStr),
+    identity,
     { $set, $setOnInsert },
     { new: true, upsert: true }
   );
+  if (hasOutboundTn && result) {
+    try {
+      await OrderModel.updateOne(
+        { $and: [identity, laggingPendingConfirmMongoFilter()] },
+        { $set: { ...LAGGING_PENDING_PROMOTE_SET } }
+      );
+    } catch (promoErr) {
+      console.warn(
+        `[MongoDB] tracking promote PROCESSED failed order_sn=${sn}:`,
+        promoErr?.message || promoErr
+      );
+    }
+  }
   console.log(
-    `[MongoDB] findOneAndUpdate tracking_no=${tn} order_sn=${sn} shopId=${shopIdStr || "-"} status=${extra?.status || "-"} ok=${Boolean(result)}`
+    `[MongoDB] findOneAndUpdate tracking_no=${tn} order_sn=${sn} shopId=${shopIdStr || "-"} status=${$set.status || extra?.status || "-"} raw=${$set.shopee_order_status || extra?.shopee_order_status || "-"} ok=${Boolean(result)}`
   );
   return Boolean(result);
 }
@@ -78600,6 +78728,9 @@ async function bulkSetTrackingNumbersInStore(items) {
     if (!sn || !tn || /^0FG/i.test(tn)) continue;
     const _id = `shopee-${sn}`;
     const shopIdStr = item?.shopId != null ? String(item.shopId).trim() : "";
+    const identity = {
+      $or: [{ orderSn: sn }, { "data.orderSn": sn }, { _id }]
+    };
     const $set = {
       tracking_no: tn,
       trackingNumber: tn,
@@ -78618,10 +78749,15 @@ async function bulkSetTrackingNumbersInStore(items) {
     }
     ops.push({
       updateOne: {
-        filter: {
-          $or: [{ orderSn: sn }, { "data.orderSn": sn }, { _id }]
-        },
+        filter: identity,
         update: { $set },
+        upsert: false
+      }
+    });
+    ops.push({
+      updateOne: {
+        filter: { $and: [identity, laggingPendingConfirmMongoFilter()] },
+        update: { $set: { ...LAGGING_PENDING_PROMOTE_SET } },
         upsert: false
       }
     });
@@ -79017,6 +79153,32 @@ async function clearHandedOverFlagsForShippedOrders() {
   );
   return { matched, modified };
 }
+async function healLaggingPendingConfirmWithTrackingInStore() {
+  if (!isMongoReady()) return { matched: 0, modified: 0 };
+  requireMongo();
+  const filter2 = {
+    $and: [
+      laggingPendingConfirmMongoFilter(),
+      {
+        $or: [
+          { tracking_no: { $regex: /^(?!0FG).+$/i } },
+          { trackingNumber: { $regex: /^(?!0FG).+$/i } },
+          { "data.tracking_no": { $regex: /^(?!0FG).+$/i } },
+          { "data.trackingNumber": { $regex: /^(?!0FG).+$/i } }
+        ]
+      }
+    ]
+  };
+  const result = await OrderModel.updateMany(filter2, { $set: { ...LAGGING_PENDING_PROMOTE_SET } }, {
+    maxTimeMS: 3e4
+  });
+  const matched = Number(result.matchedCount ?? result.n ?? 0);
+  const modified = Number(result.modifiedCount ?? result.nModified ?? 0);
+  console.log(
+    `[MongoDB] healLaggingPendingConfirmWithTracking \u2014 matched=${matched} modified=${modified}`
+  );
+  return { matched, modified };
+}
 async function mirrorTopLevelTrackingIntoData() {
   if (!isMongoReady()) return 0;
   requireMongo();
@@ -79284,6 +79446,15 @@ function hydrateOrderFromMongoDoc(d) {
     if (cancelKind === "cancelled" && isUnshippedShopeeCancel(hydrated)) {
       delete hydrated.return_sn;
     }
+  }
+  const hydrateTn = String(hydrated.tracking_no || hydrated.trackingNumber || tn || "").trim();
+  const hydrateRaw = String(hydrated.shopee_order_status || "").toUpperCase();
+  const hydrateSt = String(hydrated.status || "");
+  if (hydrateTn && hydrateTn !== "0" && !/^0FG/i.test(hydrateTn) && isLaggingPendingConfirmPair(hydrateRaw, hydrateSt)) {
+    hydrated.shopee_order_status = "PROCESSED";
+    hydrated.status = "processed";
+    hydrated.isPrepared = true;
+    hydrated.is_pending_shopee_check = false;
   }
   return hydrated;
 }
@@ -79885,10 +80056,35 @@ var ORDER_TAB_IS_SHIPPED = {
   ]
 };
 var ORDER_TAB_IS_TO_SHIP = {
-  shopee_order_status: { $in: [...ORDER_TAB_TO_SHIP_RAW] },
-  status: {
-    $nin: ["shipping", "completed", "cancelled", "return_pending", "return_received"]
-  }
+  $and: [
+    {
+      $or: [
+        { shopee_order_status: { $in: [...ORDER_TAB_TO_SHIP_RAW] } },
+        {
+          $and: [
+            {
+              shopee_order_status: {
+                $in: ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING", null, ""]
+              }
+            },
+            {
+              $or: [
+                { tracking_no: { $regex: /^(?!0FG).+$/i } },
+                { trackingNumber: { $regex: /^(?!0FG).+$/i } },
+                { "data.tracking_no": { $regex: /^(?!0FG).+$/i } },
+                { "data.trackingNumber": { $regex: /^(?!0FG).+$/i } }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      status: {
+        $nin: ["shipping", "completed", "cancelled", "return_pending", "return_received"]
+      }
+    }
+  ]
 };
 var ORDER_TAB_FAST_HANDED_OVER = {
   is_handed_over: true
@@ -79982,6 +80178,15 @@ function orderTabFilter(tab) {
                 "return_received"
               ]
             }
+          },
+          // Đã có mã VĐ outbound (không phải 0FG) → tuyệt đối không còn Chờ xác nhận.
+          {
+            $nor: [
+              { tracking_no: { $regex: /^(?!0FG).+$/i } },
+              { trackingNumber: { $regex: /^(?!0FG).+$/i } },
+              { "data.tracking_no": { $regex: /^(?!0FG).+$/i } },
+              { "data.trackingNumber": { $regex: /^(?!0FG).+$/i } }
+            ]
           }
         ]
       };
@@ -110789,6 +110994,8 @@ async function listOrders(req, res) {
   } else if (tab === "pending_confirm" || tab === "pending_verification" || tab === "cho-xac-nhan" || tab === "pending_shopee_check" || tab === "dang_kiem_tra_shopee" || tab === "shopee_check") {
     rawOrders = rawOrders.filter((o) => {
       const raw = String(o.shopee_order_status || "").toUpperCase();
+      const tn = String(o.tracking_no || o.trackingNumber || "").trim();
+      if (tn && tn !== "0" && !/^0FG/i.test(tn)) return false;
       if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "PROCESSED" || raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE" || raw === "COMPLETED" || raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN") {
         return false;
       }
@@ -129577,6 +129784,8 @@ function applyDeepShopeeTrackingPayload(order, payload, label = "payload") {
 }
 async function persistOrderTrackingToDb(order) {
   repairMisassignedTracking(order);
+  forceHealPickupOrderIfHasTracking(order);
+  promoteOrderStatusWhenTrackingReady(order);
   const sn = String(order?.orderSn || "").trim();
   if (!sn) return;
   const pkg = String(order?.packageNumber || order?.package_number || "").trim();
@@ -129903,9 +130112,15 @@ function forceHealPickupOrderIfHasTracking(order) {
   }
   const shouldProcess = hasTn || raw === "PROCESSED" || isDropoff && (hasTn || order.isPrepared === true);
   if (!shouldProcess) return false;
+  const prevStatus = String(order.status || "");
+  const laggingRaw = !raw || raw === "UNPAID" || raw === "PENDING" || raw === "IN_REVIEW" || raw === "FRAUD_CHECK" || raw === "INVOICE_PENDING";
+  const laggingLocal = prevStatus === "pending_confirm" || prevStatus === "pending_verification";
   order.status = "processed";
   order.isPrepared = true;
   order.is_pending_shopee_check = false;
+  if (hasTn && (laggingRaw || laggingLocal) && raw !== "READY_TO_SHIP" && raw !== "RETRY_SHIP" && raw !== "PROCESSED") {
+    order.shopee_order_status = "PROCESSED";
+  }
   if (isDropoff) {
     order.fulfillment_type = "dropoff";
     order.ship_method = "dropoff";
@@ -130216,6 +130431,19 @@ function promoteOrderStatusWhenTrackingReady(order) {
     order.isPrepared = true;
     order.is_pending_shopee_check = false;
     return true;
+  }
+  const tn = String(order.trackingNumber || order.tracking_no || "").trim();
+  const hasTn = Boolean(tn && !isShopeeInternalTrackingCode2(tn));
+  if (hasTn) {
+    const laggingRaw = !raw || raw === "UNPAID" || raw === "PENDING" || raw === "IN_REVIEW" || raw === "FRAUD_CHECK" || raw === "INVOICE_PENDING";
+    const laggingLocal = status === "pending_confirm" || status === "pending_verification";
+    if (laggingRaw || laggingLocal) {
+      order.shopee_order_status = "PROCESSED";
+      order.status = "processed";
+      order.isPrepared = true;
+      order.is_pending_shopee_check = false;
+      return true;
+    }
   }
   return false;
 }
@@ -134434,7 +134662,7 @@ function applyShopeePushFieldsToOrder(order, parsed) {
     repairMisassignedTracking(order);
     return;
   }
-  if (hasTn && (!raw || raw === "PENDING" || raw === "UNPAID" || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP")) {
+  if (hasTn && (!raw || raw === "PENDING" || raw === "UNPAID" || raw === "IN_REVIEW" || raw === "FRAUD_CHECK" || raw === "INVOICE_PENDING" || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP")) {
     order.shopee_order_status = "PROCESSED";
     raw = "PROCESSED";
   }
@@ -139090,6 +139318,18 @@ async function startServer() {
         }).catch((err) => {
           console.warn(
             "[Boot] clearHandedOverFlagsForShippedOrders failed:",
+            err instanceof Error ? err.message : err
+          );
+        });
+        void healLaggingPendingConfirmWithTrackingInStore().then((r2) => {
+          if (r2.modified > 0) {
+            console.log(
+              `[Boot] Promoted ${r2.modified} UNPAID+tracking orders \u2192 PROCESSED (matched=${r2.matched}).`
+            );
+          }
+        }).catch((err) => {
+          console.warn(
+            "[Boot] healLaggingPendingConfirmWithTrackingInStore failed:",
             err instanceof Error ? err.message : err
           );
         });

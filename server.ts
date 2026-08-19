@@ -464,6 +464,7 @@ import {
   deleteOrdersFromStore,
   deleteHandedOverOrdersFromStore,
   clearHandedOverFlagsForShippedOrders,
+  healLaggingPendingConfirmWithTrackingInStore,
   markOrdersCancelledAsShopeeNotFoundInStore,
   findWrongShopCancelledCandidatesFromStore,
   findCancelledEmptyItemsFromStore,
@@ -12809,6 +12810,8 @@ function applyDeepShopeeTrackingPayload(order: any, payload: unknown, label = "p
 
 async function persistOrderTrackingToDb(order: any): Promise<void> {
   repairMisassignedTracking(order);
+  forceHealPickupOrderIfHasTracking(order);
+  promoteOrderStatusWhenTrackingReady(order);
   const sn = String(order?.orderSn || "").trim();
   if (!sn) return;
   const pkg = String(order?.packageNumber || order?.package_number || "").trim();
@@ -13253,10 +13256,28 @@ function forceHealPickupOrderIfHasTracking(order: any): boolean {
 
   if (!shouldProcess) return false;
 
-  // Chỉ cập nhật local status — KHÔNG giả mạo shopee_order_status (raw = SSOT từ Shopee).
+  const prevStatus = String(order.status || "");
+  const laggingRaw =
+    !raw ||
+    raw === "UNPAID" ||
+    raw === "PENDING" ||
+    raw === "IN_REVIEW" ||
+    raw === "FRAUD_CHECK" ||
+    raw === "INVOICE_PENDING";
+  const laggingLocal = prevStatus === "pending_confirm" || prevStatus === "pending_verification";
   order.status = "processed";
   order.isPrepared = true;
   order.is_pending_shopee_check = false;
+  // Mã VĐ thật + raw còn UNPAID/PENDING (lag Seller Center) → promote PROCESSED để nhảy tab.
+  if (
+    hasTn &&
+    (laggingRaw || laggingLocal) &&
+    raw !== "READY_TO_SHIP" &&
+    raw !== "RETRY_SHIP" &&
+    raw !== "PROCESSED"
+  ) {
+    order.shopee_order_status = "PROCESSED";
+  }
   if (isDropoff) {
     order.fulfillment_type = "dropoff";
     order.ship_method = "dropoff";
@@ -13712,6 +13733,25 @@ function promoteOrderStatusWhenTrackingReady(order: any): boolean {
     order.isPrepared = true;
     order.is_pending_shopee_check = false;
     return true;
+  }
+  const tn = String(order.trackingNumber || order.tracking_no || "").trim();
+  const hasTn = Boolean(tn && !isShopeeInternalTrackingCode(tn));
+  if (hasTn) {
+    const laggingRaw =
+      !raw ||
+      raw === "UNPAID" ||
+      raw === "PENDING" ||
+      raw === "IN_REVIEW" ||
+      raw === "FRAUD_CHECK" ||
+      raw === "INVOICE_PENDING";
+    const laggingLocal = status === "pending_confirm" || status === "pending_verification";
+    if (laggingRaw || laggingLocal) {
+      order.shopee_order_status = "PROCESSED";
+      order.status = "processed";
+      order.isPrepared = true;
+      order.is_pending_shopee_check = false;
+      return true;
+    }
   }
   return false;
 }
@@ -20062,7 +20102,7 @@ function applyShopeePushFieldsToOrder(order: any, parsed: {
   }
 
   // Code 4 TrackingNo / có mã: đơn đã được chuẩn bị trên Shopee (mọi ĐVVC).
-  if (hasTn && (!raw || raw === "PENDING" || raw === "UNPAID" || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP")) {
+  if (hasTn && (!raw || raw === "PENDING" || raw === "UNPAID" || raw === "IN_REVIEW" || raw === "FRAUD_CHECK" || raw === "INVOICE_PENDING" || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP")) {
     order.shopee_order_status = "PROCESSED";
     raw = "PROCESSED";
   }
@@ -25639,6 +25679,20 @@ async function startServer() {
           .catch((err) => {
             console.warn(
               "[Boot] clearHandedOverFlagsForShippedOrders failed:",
+              err instanceof Error ? err.message : err,
+            );
+          });
+        void healLaggingPendingConfirmWithTrackingInStore()
+          .then((r) => {
+            if (r.modified > 0) {
+              console.log(
+                `[Boot] Promoted ${r.modified} UNPAID+tracking orders → PROCESSED (matched=${r.matched}).`,
+              );
+            }
+          })
+          .catch((err) => {
+            console.warn(
+              "[Boot] healLaggingPendingConfirmWithTrackingInStore failed:",
               err instanceof Error ? err.message : err,
             );
           });

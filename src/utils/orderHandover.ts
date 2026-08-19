@@ -168,6 +168,8 @@ function isPickupPoolOrder(order: Partial<Order> & Record<string, unknown>): boo
   if (isShopeeCompletedStatus(order)) return false;
   if (isShopeeCancelledLikeStatus(order)) return false;
   if (isShopeeReadyToShipStatus(order)) return true;
+  // Bypass lag: đã có mã VĐ thật nhưng raw còn UNPAID/PENDING.
+  if (hasOrderTrackingNo(order)) return true;
   // Fallback khi thiếu shopee_order_status (doc cũ / merge lệch) nhưng local vẫn chờ lấy hàng.
   const status = String(order.status || '');
   return status === 'unprocessed' || status === 'processed';
@@ -268,14 +270,18 @@ export function matchesUnprocessedPickupTab(order: Order): boolean {
 
 /**
  * Đủ điều kiện BÀN GIAO ĐVVC (QR / nút).
+ * Cho phép bypass khi raw Shopee còn UNPAID/PENDING (lag) nhưng đã có mã VĐ hợp lệ.
  */
 export function isEligibleForHandOverToCarrier(order: Order): boolean {
   if (isOrderHandedOverToCarrier(order)) return false;
   if (hasLeftHandedOverCarrierTab(order)) return false;
+  if (isShopeeCancelledLikeStatus(order) || isShopeeShippingStatus(order) || isShopeeCompletedStatus(order)) {
+    return false;
+  }
+  if (hasOrderTrackingNo(order)) return true;
   if (!isPickupPoolOrder(order)) return false;
   if (!isProcessedCondition(order)) return false;
-  if (!hasOrderTrackingNo(order)) return false;
-  return true;
+  return false;
 }
 
 export function getHandOverIneligibleReason(order: Order): string {
@@ -285,14 +291,15 @@ export function getHandOverIneligibleReason(order: Order): string {
   if (hasLeftHandedOverCarrierTab(order)) {
     return `Đơn đã Đang giao/hoàn tất/hủy (status=${order.status}, shopee=${order.shopee_order_status || '-'})`;
   }
+  if (isShopeeCancelledLikeStatus(order) || isShopeeShippingStatus(order) || isShopeeCompletedStatus(order)) {
+    return `Đơn đã Đang giao/hoàn tất/hủy (status=${order.status}, shopee=${order.shopee_order_status || '-'})`;
+  }
+  if (hasOrderTrackingNo(order)) return '';
   if (!isPickupPoolOrder(order)) {
     return `Không còn chờ lấy hàng (status=${order.status}, shopee=${order.shopee_order_status || '-'})`;
   }
   if (!isProcessedCondition(order)) {
     return 'Chưa đủ điều kiện Đã xử lý (thiếu PROCESSED/mã VĐ)';
   }
-  if (!hasOrderTrackingNo(order)) {
-    return 'Chưa có mã vận đơn outbound (trackingNumber/tracking_no)';
-  }
-  return '';
+  return 'Chưa có mã vận đơn outbound (trackingNumber/tracking_no)';
 }

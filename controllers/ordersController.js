@@ -851,6 +851,8 @@ export async function listOrders(req, res) {
     // Khớp isPendingConfirmOrder / orderTabFilter("pending_confirm")
     rawOrders = rawOrders.filter((o) => {
       const raw = String(o.shopee_order_status || "").toUpperCase();
+      const tn = String(o.tracking_no || o.trackingNumber || "").trim();
+      if (tn && tn !== "0" && !/^0FG/i.test(tn)) return false;
       if (
         raw === "READY_TO_SHIP" ||
         raw === "RETRY_SHIP" ||

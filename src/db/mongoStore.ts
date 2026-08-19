@@ -2665,6 +2665,23 @@ export async function markOrderHandedOverInStore(
   try {
     const updated = await writeExisting();
     if (updated) {
+      const raw = String(
+        (updated as any).shopee_order_status || (updated as any).data?.shopee_order_status || "",
+      ).toUpperCase();
+      const st = String((updated as any).status || (updated as any).data?.status || "").trim();
+      const tn = String(
+        (updated as any).tracking_no ||
+          (updated as any).trackingNumber ||
+          (updated as any).data?.tracking_no ||
+          (updated as any).data?.trackingNumber ||
+          "",
+      ).trim();
+      if (tn && !/^0FG/i.test(tn) && isLaggingPendingConfirmPair(raw, st)) {
+        await OrderModel.updateOne(identityFilter, { $set: { ...LAGGING_PENDING_PROMOTE_SET } });
+        console.log(
+          `[MongoDB] markOrderHandedOver promote PROCESSED order_sn=${sn} (raw was ${raw || st})`,
+        );
+      }
       console.log(
         `[MongoDB] markOrderHandedOver UPDATE is_handed_over=true order_sn=${sn} shopId=${shopIdStr || "-"} ok=true`,
       );
@@ -3147,6 +3164,86 @@ export async function updateOrderPendingShopeeCheckInStore(
   return Boolean(result);
 }
 
+const LAGGING_PENDING_RAW = [
+  "UNPAID",
+  "PENDING",
+  "IN_REVIEW",
+  "FRAUD_CHECK",
+  "INVOICE_PENDING",
+] as const;
+const LAGGING_PENDING_LOCAL = ["pending_confirm", "pending_verification"] as const;
+const TERMINAL_SHOPEE_RAW = [
+  "SHIPPED",
+  "TO_CONFIRM_RECEIVE",
+  "COMPLETED",
+  "CANCELLED",
+  "IN_CANCEL",
+  "TO_RETURN",
+] as const;
+
+function isLaggingPendingConfirmPair(raw: string, status: string): boolean {
+  const r = String(raw || "").toUpperCase();
+  const st = String(status || "").trim();
+  if ((TERMINAL_SHOPEE_RAW as readonly string[]).includes(r)) return false;
+  if (st === "shipping" || st === "completed" || st === "cancelled") return false;
+  if ((LAGGING_PENDING_RAW as readonly string[]).includes(r)) return true;
+  if ((LAGGING_PENDING_LOCAL as readonly string[]).includes(st)) return true;
+  if (!r && (st === "pending_confirm" || st === "pending_verification")) return true;
+  return false;
+}
+
+/** UNPAID/PENDING/pending_confirm + mã VĐ thật → PROCESSED (root + data). */
+function applyLaggingPendingPromotionToSet(
+  $set: Record<string, unknown>,
+  extra?: { status?: string; shopee_order_status?: string },
+): boolean {
+  const raw = String(
+    $set.shopee_order_status || extra?.shopee_order_status || "",
+  ).toUpperCase();
+  const st = String($set.status || extra?.status || "").trim();
+  if (!isLaggingPendingConfirmPair(raw, st)) return false;
+  $set.shopee_order_status = "PROCESSED";
+  $set["data.shopee_order_status"] = "PROCESSED";
+  $set.status = "processed";
+  $set["data.status"] = "processed";
+  $set.isPrepared = true;
+  $set["data.isPrepared"] = true;
+  $set.is_pending_shopee_check = false;
+  $set["data.is_pending_shopee_check"] = false;
+  return true;
+}
+
+const LAGGING_PENDING_PROMOTE_SET: Record<string, unknown> = {
+  shopee_order_status: "PROCESSED",
+  "data.shopee_order_status": "PROCESSED",
+  status: "processed",
+  "data.status": "processed",
+  isPrepared: true,
+  "data.isPrepared": true,
+  is_pending_shopee_check: false,
+  "data.is_pending_shopee_check": false,
+};
+
+function laggingPendingConfirmMongoFilter(): Record<string, unknown> {
+  return {
+    $and: [
+      {
+        shopee_order_status: {
+          $nin: [...TERMINAL_SHOPEE_RAW, "READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"],
+        },
+      },
+      {
+        $or: [
+          { shopee_order_status: { $in: [...LAGGING_PENDING_RAW, null, ""] } },
+          { status: { $in: [...LAGGING_PENDING_LOCAL] } },
+          { "data.shopee_order_status": { $in: [...LAGGING_PENDING_RAW, null, ""] } },
+          { "data.status": { $in: [...LAGGING_PENDING_LOCAL] } },
+        ],
+      },
+    ],
+  };
+}
+
 /** findOneAndUpdate tracking_no / trackingNumber (+ status heal) vào Mongo theo order_sn. */
 export async function updateOrderTrackingInStore(
   orderSn: string,
@@ -3175,7 +3272,8 @@ export async function updateOrderTrackingInStore(
   const _id = `shopee-${sn}`;
   const shopIdStr = extra?.shopId != null ? String(extra.shopId).trim() : "";
   const $set: Record<string, unknown> = {};
-  if (tn && !/^0FG/i.test(tn)) {
+  const hasOutboundTn = Boolean(tn && !/^0FG/i.test(tn));
+  if (hasOutboundTn) {
     $set.tracking_no = tn;
     $set.trackingNumber = tn;
     $set["data.tracking_no"] = tn;
@@ -3207,14 +3305,21 @@ export async function updateOrderTrackingInStore(
     $set["data.status"] = String(extra.status);
   }
   if (extra?.isPrepared != null) {
+    $set.isPrepared = extra.isPrepared;
     $set["data.isPrepared"] = extra.isPrepared;
   }
   if (extra?.shopee_order_status != null) {
-    $set["data.shopee_order_status"] = String(extra.shopee_order_status);
+    const rawIn = String(extra.shopee_order_status).toUpperCase();
+    $set.shopee_order_status = rawIn;
+    $set["data.shopee_order_status"] = rawIn;
   }
   if (extra?.is_pending_shopee_check != null) {
     $set.is_pending_shopee_check = extra.is_pending_shopee_check;
     $set["data.is_pending_shopee_check"] = extra.is_pending_shopee_check;
+  }
+  // Có mã VĐ outbound + đang kẹt Chờ xác nhận → BẮT BUỘC promote PROCESSED (root + data).
+  if (hasOutboundTn) {
+    applyLaggingPendingPromotionToSet($set, extra);
   }
   if (Object.keys($set).length === 0) return false;
   const $setOnInsert: Record<string, unknown> = {
@@ -3224,13 +3329,28 @@ export async function updateOrderTrackingInStore(
     "data.orderSn": sn,
     "data.channel": "shopee",
   };
+  const identity = buildOrderCompoundFilter(sn, _id, shopIdStr);
   const result = await OrderModel.findOneAndUpdate(
-    buildOrderCompoundFilter(sn, _id, shopIdStr),
+    identity,
     { $set, $setOnInsert },
     { new: true, upsert: true },
   );
+  // Extra có thể thiếu raw — đối soát DB: UNPAID/pending_confirm + tracking → PROCESSED.
+  if (hasOutboundTn && result) {
+    try {
+      await OrderModel.updateOne(
+        { $and: [identity, laggingPendingConfirmMongoFilter()] },
+        { $set: { ...LAGGING_PENDING_PROMOTE_SET } },
+      );
+    } catch (promoErr) {
+      console.warn(
+        `[MongoDB] tracking promote PROCESSED failed order_sn=${sn}:`,
+        (promoErr as Error)?.message || promoErr,
+      );
+    }
+  }
   console.log(
-    `[MongoDB] findOneAndUpdate tracking_no=${tn} order_sn=${sn} shopId=${shopIdStr || "-"} status=${extra?.status || "-"} ok=${Boolean(result)}`,
+    `[MongoDB] findOneAndUpdate tracking_no=${tn} order_sn=${sn} shopId=${shopIdStr || "-"} status=${$set.status || extra?.status || "-"} raw=${$set.shopee_order_status || extra?.shopee_order_status || "-"} ok=${Boolean(result)}`,
   );
   return Boolean(result);
 }
@@ -3352,6 +3472,9 @@ export async function bulkSetTrackingNumbersInStore(
     if (!sn || !tn || /^0FG/i.test(tn)) continue;
     const _id = `shopee-${sn}`;
     const shopIdStr = item?.shopId != null ? String(item.shopId).trim() : "";
+    const identity = {
+      $or: [{ orderSn: sn }, { "data.orderSn": sn }, { _id }],
+    };
     const $set: Record<string, unknown> = {
       tracking_no: tn,
       trackingNumber: tn,
@@ -3370,10 +3493,16 @@ export async function bulkSetTrackingNumbersInStore(
     }
     ops.push({
       updateOne: {
-        filter: {
-          $or: [{ orderSn: sn }, { "data.orderSn": sn }, { _id }],
-        },
+        filter: identity,
         update: { $set },
+        upsert: false,
+      },
+    });
+    // Promote riêng: chỉ khi doc đang UNPAID/PENDING/pending_confirm — không đụng SHIPPED.
+    ops.push({
+      updateOne: {
+        filter: { $and: [identity, laggingPendingConfirmMongoFilter()] },
+        update: { $set: { ...LAGGING_PENDING_PROMOTE_SET } },
         upsert: false,
       },
     });
@@ -3876,6 +4005,40 @@ export async function clearHandedOverFlagsForShippedOrders(): Promise<{
   const modified = Number((result as any).modifiedCount ?? (result as any).nModified ?? 0);
   console.log(
     `[MongoDB] clearHandedOverFlagsForShippedOrders — matched=${matched} modified=${modified}`,
+  );
+  return { matched, modified };
+}
+
+/**
+ * One-shot: đơn kẹt Chờ xác nhận (UNPAID/PENDING/pending_confirm) nhưng ĐÃ có tracking_no
+ * → promote PROCESSED ở root + data để nhảy tab Đã xử lý.
+ */
+export async function healLaggingPendingConfirmWithTrackingInStore(): Promise<{
+  matched: number;
+  modified: number;
+}> {
+  if (!isMongoReady()) return { matched: 0, modified: 0 };
+  requireMongo();
+  const filter = {
+    $and: [
+      laggingPendingConfirmMongoFilter(),
+      {
+        $or: [
+          { tracking_no: { $regex: /^(?!0FG).+$/i } },
+          { trackingNumber: { $regex: /^(?!0FG).+$/i } },
+          { "data.tracking_no": { $regex: /^(?!0FG).+$/i } },
+          { "data.trackingNumber": { $regex: /^(?!0FG).+$/i } },
+        ],
+      },
+    ],
+  };
+  const result = await OrderModel.updateMany(filter, { $set: { ...LAGGING_PENDING_PROMOTE_SET } }, {
+    maxTimeMS: 30_000,
+  } as any);
+  const matched = Number((result as any).matchedCount ?? (result as any).n ?? 0);
+  const modified = Number((result as any).modifiedCount ?? (result as any).nModified ?? 0);
+  console.log(
+    `[MongoDB] healLaggingPendingConfirmWithTracking — matched=${matched} modified=${modified}`,
   );
   return { matched, modified };
 }
@@ -4588,6 +4751,20 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
     if (cancelKind === "cancelled" && isUnshippedShopeeCancel(hydrated)) {
       delete hydrated.return_sn;
     }
+  }
+  const hydrateTn = String(hydrated.tracking_no || hydrated.trackingNumber || tn || "").trim();
+  const hydrateRaw = String(hydrated.shopee_order_status || "").toUpperCase();
+  const hydrateSt = String(hydrated.status || "");
+  if (
+    hydrateTn &&
+    hydrateTn !== "0" &&
+    !/^0FG/i.test(hydrateTn) &&
+    isLaggingPendingConfirmPair(hydrateRaw, hydrateSt)
+  ) {
+    hydrated.shopee_order_status = "PROCESSED";
+    hydrated.status = "processed";
+    hydrated.isPrepared = true;
+    hydrated.is_pending_shopee_check = false;
   }
   return hydrated;
 }
@@ -5377,12 +5554,38 @@ const ORDER_TAB_IS_SHIPPED: Record<string, unknown> = {
 
 /**
  * Đơn còn TO_SHIP (chưa SHIPPED) — tab Đã xử lý / Đã giao ĐVVC / Chờ lấy hàng.
+ * Gồm cả raw UNPAID/PENDING + đã có tracking_no (lag Seller Center).
  */
 const ORDER_TAB_IS_TO_SHIP: Record<string, unknown> = {
-  shopee_order_status: { $in: [...ORDER_TAB_TO_SHIP_RAW] },
-  status: {
-    $nin: ["shipping", "completed", "cancelled", "return_pending", "return_received"],
-  },
+  $and: [
+    {
+      $or: [
+        { shopee_order_status: { $in: [...ORDER_TAB_TO_SHIP_RAW] } },
+        {
+          $and: [
+            {
+              shopee_order_status: {
+                $in: ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING", null, ""],
+              },
+            },
+            {
+              $or: [
+                { tracking_no: { $regex: /^(?!0FG).+$/i } },
+                { trackingNumber: { $regex: /^(?!0FG).+$/i } },
+                { "data.tracking_no": { $regex: /^(?!0FG).+$/i } },
+                { "data.trackingNumber": { $regex: /^(?!0FG).+$/i } },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    {
+      status: {
+        $nin: ["shipping", "completed", "cancelled", "return_pending", "return_received"],
+      },
+    },
+  ],
 };
 
 /** Cờ bàn giao top-level — list/count (healing vẫn dùng ORDER_TAB_IS_HANDED_OVER đầy đủ). */
@@ -5488,6 +5691,15 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
                 "return_received",
               ],
             },
+          },
+          // Đã có mã VĐ outbound (không phải 0FG) → tuyệt đối không còn Chờ xác nhận.
+          {
+            $nor: [
+              { tracking_no: { $regex: /^(?!0FG).+$/i } },
+              { trackingNumber: { $regex: /^(?!0FG).+$/i } },
+              { "data.tracking_no": { $regex: /^(?!0FG).+$/i } },
+              { "data.trackingNumber": { $regex: /^(?!0FG).+$/i } },
+            ],
           },
         ],
       };

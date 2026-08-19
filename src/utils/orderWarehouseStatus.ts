@@ -47,6 +47,28 @@ function isToShipLikeRaw(raw: string): boolean {
   return raw === 'READY_TO_SHIP' || raw === 'RETRY_SHIP' || raw === 'PROCESSED';
 }
 
+function isLaggingPendingRaw(raw: string): boolean {
+  return (
+    raw === 'UNPAID' ||
+    raw === 'PENDING' ||
+    raw === 'IN_REVIEW' ||
+    raw === 'FRAUD_CHECK' ||
+    raw === 'INVOICE_PENDING'
+  );
+}
+
+function hasUsableOutboundTracking(
+  order: Partial<Order> & Record<string, unknown>,
+): boolean {
+  const candidates = [order.trackingNumber, order.tracking_no, order.shopee_tracking_number];
+  for (const c of candidates) {
+    const tn = String(c || '').trim();
+    if (!tn || tn === '0' || /^0FG/i.test(tn)) continue;
+    return true;
+  }
+  return false;
+}
+
 function getInternalStatusRaw(
   order: Partial<Order> & Record<string, unknown>,
 ): string {
@@ -200,11 +222,23 @@ export function matchesHandedOverCarrierTab(
   const raw = getShopeeRaw(order);
   if (raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE') return false;
   if (raw) {
-    if (!isToShipLikeRaw(raw)) return false;
+    if (!isToShipLikeRaw(raw)) {
+      // Bypass: raw còn UNPAID/PENDING (lag) nhưng đã bàn giao + có mã VĐ.
+      if (!(isLaggingPendingRaw(raw) && hasUsableOutboundTracking(order))) return false;
+    }
   } else {
     const st = String(order.status || '');
     if (st === 'shipping' || st === 'completed') return false;
-    if (st !== 'processed' && st !== 'unprocessed') return false;
+    if (st !== 'processed' && st !== 'unprocessed') {
+      if (
+        !(
+          (st === 'pending_confirm' || st === 'pending_verification') &&
+          hasUsableOutboundTracking(order)
+        )
+      ) {
+        return false;
+      }
+    }
   }
   return true;
 }
