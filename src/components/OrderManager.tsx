@@ -4073,11 +4073,11 @@ export default function OrderManager({
         : `Đang lấy ${uniqueIds.length} PDF từ kho nội bộ...`,
     );
     reportProgress(0);
-    // Chặn treo vô hạn nếu mạng/proxy im lặng không trả response — khớp trần chờ Backend (~210s) + đệm.
+    // Chặn treo vô hạn nếu mạng/proxy im lặng không trả response — khớp trần chờ Backend (~25s) + đệm.
     const printChunkController = new AbortController();
     const printChunkTimeoutId = window.setTimeout(
       () => printChunkController.abort(),
-      220_000,
+      35_000,
     );
     try {
       const res = await fetch('/api/shopee/print-document/chunk', {
@@ -5958,8 +5958,7 @@ export default function OrderManager({
       
       // Cho phép backend fallback polling Shopee khi PDF nền chưa READY.
       const controller = new AbortController();
-      // Backend dừng ở 210s; FE chừa 5s nhận response thay vì hủy request khi server vẫn xử lý.
-      const timeoutId = setTimeout(() => controller.abort(), 215_000);
+      const timeoutId = setTimeout(() => controller.abort(), 35_000);
       
       try {
         const response = await fetch('/api/orders/batch-print-only', {
