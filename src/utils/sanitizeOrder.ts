@@ -66,7 +66,9 @@ export function sortOrdersByCreatedAtDesc(list: Order[]): Order[] {
 
 /** Chuẩn hóa đơn từ API — tránh crash khi thiếu date/orderSn/items. */
 export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Order {
-  const orderSn = String(raw.orderSn || raw.id || '').replace(/^shopee-/i, '').trim();
+  const orderSn = String(raw.orderSn || raw.order_sn || raw.id || '')
+    .replace(/^shopee-/i, '')
+    .trim();
   const id = String(raw.id || (orderSn ? `shopee-${orderSn}` : `order-${Date.now()}`));
   const shippingCarrierRaw = String(raw.shipping_carrier || raw.shippingCarrier || '').trim();
   const checkoutCarrierRaw = String(
@@ -105,8 +107,20 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
   return {
     id,
     orderSn: orderSn || id,
-    channel: (raw.channel as Order['channel']) || 'manual',
-    shopId: raw.shopId ? String(raw.shopId) : undefined,
+    channel: ((): Order['channel'] => {
+      const ch = String(raw.channel || '').trim().toLowerCase();
+      if (ch === 'shopee' || ch === 'tiktok' || ch === 'woocommerce' || ch === 'manual') {
+        return ch;
+      }
+      // Refresh $project có thể chỉ còn root channel / shopee_order_status — không default 'manual'.
+      if (raw.shopee_order_status || raw.shopId || raw.shop_id) return 'shopee';
+      return 'manual';
+    })(),
+    shopId: raw.shopId
+      ? String(raw.shopId)
+      : raw.shop_id
+        ? String(raw.shop_id)
+        : undefined,
     shopName: raw.shopName
       ? String(raw.shopName)
       : raw.shop_name

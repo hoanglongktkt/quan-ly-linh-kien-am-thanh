@@ -4441,14 +4441,29 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
       : null) ||
     undefined;
 
+  const channelHydrated = String(d?.channel || data.channel || "").trim();
+  const shopIdHydrated =
+    d?.shopId != null && String(d.shopId).trim()
+      ? d.shopId
+      : data.shopId != null && String(data.shopId).trim()
+        ? data.shopId
+        : data.shop_id != null && String(data.shop_id).trim()
+          ? data.shop_id
+          : d?.shop_id;
   const hydrated: any = {
     ...data,
     id: data.id || d._id || (sn ? `shopee-${sn}` : undefined),
-    orderSn: sn || data.orderSn,
+    orderSn: sn || data.orderSn || data.order_sn,
+    order_sn: sn || data.order_sn || data.orderSn,
     status: d?.status != null ? d.status : data.status,
     shopee_order_status: rawStatus || data.shopee_order_status || undefined,
-    shopId: d?.shopId != null ? d.shopId : data.shopId,
-    shopName: d?.shopName || data.shopName || undefined,
+    channel: channelHydrated || undefined,
+    shopId: shopIdHydrated,
+    shop_id: shopIdHydrated,
+    shopName: d?.shopName || data.shopName || data.shop_name || undefined,
+    fulfillment_type: d?.fulfillment_type || data.fulfillment_type || undefined,
+    ship_method: d?.ship_method || data.ship_method || undefined,
+    pickup_info: d?.pickup_info || data.pickup_info || undefined,
     items: Array.isArray(data.items) && data.items.length > 0
       ? data.items
       : mapShopeeItemListForPrint(data.item_list),
@@ -4480,6 +4495,8 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
     packageNumber: pkg || undefined,
     package_number: pkg || undefined,
     shipping_carrier: carrier || data.shipping_carrier || undefined,
+    checkout_shipping_carrier:
+      d?.checkout_shipping_carrier || data.checkout_shipping_carrier || undefined,
     is_pending_shopee_check:
       d?.is_pending_shopee_check != null
         ? Boolean(d.is_pending_shopee_check)
@@ -5725,14 +5742,17 @@ function tabIndexFilter(tab?: string, kind?: string): Record<string, unknown> {
   }
 }
 
-/** Field list/UI + In Đơn — CẤM `data: 1` (blob Shopee đầy đủ). */
+/** Field list/UI + In Đơn + Bulk Confirm — CẤM `data: 1` (blob Shopee đầy đủ). */
 const ORDER_LIST_UI_PROJECTION: Record<string, 1> = {
   _id: 1,
   orderSn: 1,
+  order_sn: 1,
   status: 1,
   shopee_order_status: 1,
   shopId: 1,
+  shop_id: 1,
   shopName: 1,
+  shop_name: 1,
   tracking_no: 1,
   trackingNumber: 1,
   return_tracking_no: 1,
@@ -5740,6 +5760,7 @@ const ORDER_LIST_UI_PROJECTION: Record<string, 1> = {
   return_sn: 1,
   is_return: 1,
   shipping_carrier: 1,
+  checkout_shipping_carrier: 1,
   packageNumber: 1,
   package_number: 1,
   internalTrackingCode: 1,
@@ -5753,6 +5774,11 @@ const ORDER_LIST_UI_PROJECTION: Record<string, 1> = {
   pdfUrl: 1,
   pdfFilename: 1,
   channel: 1,
+  fulfillment_type: 1,
+  ship_method: 1,
+  pickup_info: 1,
+  logistics_channel_id: 1,
+  shipping_type: 1,
   customerName: 1,
   customerPhone: 1,
   customerAddress: 1,
@@ -5766,10 +5792,14 @@ const ORDER_LIST_UI_PROJECTION: Record<string, 1> = {
   last_synced_at: 1,
   create_time: 1,
   "data.id": 1,
+  "data.status": 1,
   "data.orderSn": 1,
+  "data.order_sn": 1,
   "data.channel": 1,
   "data.shopId": 1,
+  "data.shop_id": 1,
   "data.shopName": 1,
+  "data.shop_name": 1,
   "data.items": 1,
   "data.item_list": 1,
   "data.date": 1,
@@ -5792,6 +5822,14 @@ const ORDER_LIST_UI_PROJECTION: Record<string, 1> = {
   "data.hasPdf": 1,
   "data.readyToPrint": 1,
   "data.escrowAmount": 1,
+  "data.shipping_carrier": 1,
+  "data.checkout_shipping_carrier": 1,
+  "data.fulfillment_type": 1,
+  "data.ship_method": 1,
+  "data.pickup_info": 1,
+  "data.pickup": 1,
+  "data.logistics_channel_id": 1,
+  "data.shipping_type": 1,
 };
 
 function facetAnd(match: Record<string, unknown>): Record<string, unknown>[] {
