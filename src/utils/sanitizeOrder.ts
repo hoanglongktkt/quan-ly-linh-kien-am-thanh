@@ -66,6 +66,27 @@ export function sortOrdersByCreatedAtDesc(list: Order[]): Order[] {
 
 /** Chuẩn hóa đơn từ API — tránh crash khi thiếu date/orderSn/items. */
 export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Order {
+  const nestedData =
+    raw.data && typeof raw.data === 'object' && !Array.isArray(raw.data)
+      ? (raw.data as Record<string, unknown>)
+      : {};
+  if (Object.keys(nestedData).length > 0) {
+    raw = {
+      ...nestedData,
+      ...raw,
+      tracking_no: raw.tracking_no || raw.trackingNumber || nestedData.tracking_no || nestedData.trackingNumber,
+      trackingNumber: raw.trackingNumber || raw.tracking_no || nestedData.trackingNumber || nestedData.tracking_no,
+      hasPdf: raw.hasPdf ?? nestedData.hasPdf,
+      readyToPrint: raw.readyToPrint ?? nestedData.readyToPrint,
+      isPrinted: raw.isPrinted ?? nestedData.isPrinted,
+      isPrepared: raw.isPrepared ?? nestedData.isPrepared,
+      barcode: raw.barcode || nestedData.barcode,
+      waybill_url: (raw as { waybill_url?: unknown }).waybill_url || nestedData.waybill_url,
+      labelUrl: raw.labelUrl || nestedData.labelUrl,
+      pdfUrl: raw.pdfUrl || nestedData.pdfUrl,
+      pdfFilename: raw.pdfFilename || nestedData.pdfFilename,
+    };
+  }
   const orderSn = String(raw.orderSn || raw.order_sn || raw.id || '')
     .replace(/^shopee-/i, '')
     .trim();

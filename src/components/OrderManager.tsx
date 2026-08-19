@@ -1074,6 +1074,18 @@ export default function OrderManager({
     q: searchQuery.trim(),
   };
   const isListFetchingRef = useRef(false);
+  /** Đóng modal xác nhận: gộp set tab+filter, CẤM fetch blocking (spinner) lần nữa. */
+  const skipNextOrdersTabFetchRef = useRef(false);
+  const hasPdfPollGenRef = useRef(0);
+  const hasPdfPollTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    return () => {
+      if (hasPdfPollTimerRef.current != null) {
+        window.clearTimeout(hasPdfPollTimerRef.current);
+        hasPdfPollTimerRef.current = null;
+      }
+    };
+  }, []);
   const isMobileViewport = useMediaQuery('(max-width: 768px)');
   const isWideDesktop = useMediaQuery('(min-width: 1440px)');
   const useOrderCardList = isMobileViewport || isWideDesktop;
@@ -1675,6 +1687,10 @@ export default function OrderManager({
       'web_orders',
     ]);
     if (!tabFetchTabs.has(activeSubTab) || !onFetchOrdersRef.current) return;
+    if (skipNextOrdersTabFetchRef.current) {
+      skipNextOrdersTabFetchRef.current = false;
+      return;
+    }
 
     const expectedTab = searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab;
     const expectedKind =
@@ -4640,6 +4656,8 @@ export default function OrderManager({
             : o.shopee_order_status,
         fulfillment_type: opts?.shipMethod || o.fulfillment_type,
         ship_method: opts?.shipMethod || o.ship_method,
+        hasPdf: Boolean(o.hasPdf || o.readyToPrint || o.labelUrl || o.pdfUrl || o.waybill_url),
+        readyToPrint: Boolean(o.readyToPrint || o.hasPdf || o.labelUrl || o.pdfUrl || o.waybill_url),
         ...(opts?.markPrinted && isProcessedCondition({ ...o, status: 'processed', isPrepared: true })
           ? { isPrinted: true }
           : {}),
@@ -4648,12 +4666,16 @@ export default function OrderManager({
 
   const refreshOrdersAfterShip = async (
     queuedOrders: Order[],
-    opts?: { markPrinted?: boolean; shipMethod?: 'pickup' | 'dropoff' }
+    opts?: { markPrinted?: boolean; shipMethod?: 'pickup' | 'dropoff'; deferTabSwitch?: boolean }
   ) => {
     const queuedKeys = buildQueuedOrderKeys(queuedOrders);
     const patched = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys, opts);
     ordersRef.current = patched;
     onUpdateOrders(patched, { persist: false });
+    if (opts?.deferTabSwitch) {
+      void fetchOrderCounts();
+      return;
+    }
     setActiveSubTab('processed');
     void fetchOrdersWithShop({
       silent: true,
@@ -4821,7 +4843,7 @@ export default function OrderManager({
         .filter((k) => k && !k.toLowerCase().startsWith('shopee-'))
         .map((sn) => ({ id: `shopee-${sn}`, orderSn: sn })) as Order[];
       if (queued.length > 0) {
-        void refreshOrdersAfterShip(queued, { markPrinted: false, shipMethod });
+        void refreshOrdersAfterShip(queued, { markPrinted: false, shipMethod, deferTabSwitch: true });
       }
     }
 
@@ -4860,6 +4882,105 @@ export default function OrderManager({
           : String(item?.orderSn || item?.orderId || '').replace(/^shopee-/i, '').trim(),
       )
       .filter(Boolean);
+
+  const normalizeConfirmSn = (raw: string): string =>
+    String(raw || '').replace(/^shopee-/i, '').trim().toLowerCase();
+
+  const stopHasPdfBackgroundPoll = () => {
+    hasPdfPollGenRef.current += 1;
+    if (hasPdfPollTimerRef.current != null) {
+      window.clearTimeout(hasPdfPollTimerRef.current);
+      hasPdfPollTimerRef.current = null;
+    }
+  };
+
+  /** Poll hasPdf ngầm — không spinner, không await chặn render. Tối đa 20 lần, delay 1.5s. */
+  const startHasPdfBackgroundPoll = (orderSns: string[]): void => {
+    const targets = [
+      ...new Set(orderSns.map((sn) => normalizeConfirmSn(sn)).filter(Boolean)),
+    ];
+    if (targets.length === 0) return;
+    stopHasPdfBackgroundPoll();
+    const gen = hasPdfPollGenRef.current;
+    let attempt = 0;
+    const maxAttempts = 20;
+    const tick = () => {
+      if (gen !== hasPdfPollGenRef.current) return;
+      const remaining = targets.filter((sn) => {
+        const hit = ordersRef.current.find((o) => {
+          const key = normalizeConfirmSn(o.orderSn || o.id || '');
+          return key === sn;
+        });
+        return !(hit?.hasPdf || hit?.readyToPrint || hit?.labelUrl || hit?.pdfUrl || hit?.waybill_url);
+      });
+      if (remaining.length === 0 || attempt >= maxAttempts) return;
+      attempt += 1;
+      void Promise.resolve(
+        fetchOrdersWithShop({
+          silent: true,
+          page: 1,
+          limit: ORDERS_PAGE_SIZE,
+          merge: true,
+          tab: 'processed',
+          force: true,
+        }),
+      )
+        .catch((error: unknown) => {
+          if (error instanceof Error && error.name === 'AbortError') return;
+        })
+        .finally(() => {
+          if (gen !== hasPdfPollGenRef.current) return;
+          hasPdfPollTimerRef.current = window.setTimeout(tick, 1500);
+        });
+    };
+    hasPdfPollTimerRef.current = window.setTimeout(tick, 1200);
+  };
+
+  /**
+   * Đóng modal → hiện tab Đã xử lý + lọc Chưa in ngay (nút xám).
+   * Gộp state 1 tick, bỏ fetch blocking; PDF poll chạy ngầm.
+   */
+  const revealProcessedUnprintedTab = (orderSns: string[]): void => {
+    const want = new Set(orderSns.map((sn) => normalizeConfirmSn(sn)).filter(Boolean));
+    const optimistic = ordersRef.current
+      .filter((o) => {
+        const sn = normalizeConfirmSn(o.orderSn || '');
+        const id = normalizeConfirmSn(o.id || '');
+        return want.has(sn) || want.has(id);
+      })
+      .map((o) => ({
+        ...o,
+        status: 'processed' as const,
+        isPrepared: true,
+        isPrinted: false,
+        hasPdf: Boolean(o.hasPdf || o.readyToPrint || o.labelUrl || o.pdfUrl || o.waybill_url),
+        readyToPrint: Boolean(o.readyToPrint || o.hasPdf || o.labelUrl || o.pdfUrl || o.waybill_url),
+      }));
+    if (optimistic.length > 0) {
+      ordersRef.current = optimistic;
+      onUpdateOrders(optimistic, { persist: false });
+    }
+    skipNextOrdersTabFetchRef.current = true;
+    React.startTransition(() => {
+      setActiveSubTab('processed');
+      setPrintStatusFilter('unprinted');
+      setCurrentPage(1);
+    });
+    void Promise.resolve(
+      fetchOrdersWithShop({
+        silent: true,
+        page: 1,
+        limit: ORDERS_PAGE_SIZE,
+        merge: optimistic.length > 0,
+        tab: 'processed',
+        force: true,
+      }),
+    ).catch((error: unknown) => {
+      if (error instanceof Error && error.name === 'AbortError') return;
+    });
+    void fetchOrderCounts();
+    startHasPdfBackgroundPoll(orderSns);
+  };
 
   const startSilentPdfPrefetch = (orderSns: string[]): void => {
     if (!orderSns.length) return;
@@ -4932,12 +5053,11 @@ export default function OrderManager({
         }
 
         setSelectedOrderIds([]);
-        setPrintStatusFilter('unprinted');
         const queued = successfulSns.map((sn) => ({
           id: `shopee-${sn}`,
           orderSn: sn,
         })) as Order[];
-        void refreshOrdersAfterShip(queued, { markPrinted: false, shipMethod });
+        void refreshOrdersAfterShip(queued, { markPrinted: false, shipMethod, deferTabSwitch: true });
         void startSilentPdfPrefetch(successfulSns);
       }
 
@@ -7953,9 +8073,9 @@ export default function OrderManager({
                     <button
                       type="button"
                       onClick={() => {
-                        if (shipConfirmSummary.successfulOrderIds.length > 0) {
-                          setActiveSubTab('processed');
-                          setPrintStatusFilter('unprinted');
+                        const sns = shipConfirmSummary.successfulOrderIds || [];
+                        if (sns.length > 0) {
+                          revealProcessedUnprintedTab(sns);
                         }
                         clearShipProgressOverlay();
                       }}

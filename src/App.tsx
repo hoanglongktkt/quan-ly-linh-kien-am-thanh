@@ -633,25 +633,26 @@ export default function App() {
     const endDate = String(opts?.endDate || '').trim();
     const shopIds = normalizeShopIdsParam(opts?.shopIds, opts?.shopId);
     const shopKey = shopIds.join(',') || 'all';
+    const force = Boolean(opts?.force);
     const flightKey = `page:${page}|limit:${limit}|print:${printStatus || 'all'}|tab:${tab || 'all'}|q:${q || ''}|kind:${kind || 'all'}|shops:${shopKey}|from:${startDate || ''}|to:${endDate || ''}`;
 
     // Silent không được hủy request đang hiện spinner (P0 race: bootstrap abort tab fetch).
-    if (silent && fetchOrdersNonSilentInFlightRef.current > 0) {
+    if (silent && !force && fetchOrdersNonSilentInFlightRef.current > 0) {
       return fetchOrdersInFlightRef.current?.promise;
     }
     // Silent khác tab/key không được abort fetch tab đang chạy (Đơn Hủy/Hoàn bị trống).
-    if (silent && fetchOrdersInFlightRef.current && fetchOrdersInFlightRef.current.key !== flightKey) {
+    if (silent && !force && fetchOrdersInFlightRef.current && fetchOrdersInFlightRef.current.key !== flightKey) {
       return fetchOrdersInFlightRef.current.promise;
     }
     // Silent không ?tab= không được REPLACE list đã lọc theo tab.
-    if (silent && !tab && !q && lastAppliedOrdersTabRef.current) {
+    if (silent && !force && !tab && !q && lastAppliedOrdersTabRef.current) {
       return fetchOrdersInFlightRef.current?.promise;
     }
     // Silent lệch tab/kind không được đè sub-tab Đơn Hủy / Đơn Hoàn.
-    if (silent && !q && lastAppliedOrdersTabRef.current && tab !== lastAppliedOrdersTabRef.current) {
+    if (silent && !force && !q && lastAppliedOrdersTabRef.current && tab !== lastAppliedOrdersTabRef.current) {
       return fetchOrdersInFlightRef.current?.promise;
     }
-    if (silent && !q && lastAppliedOrdersKindRef.current && kind !== lastAppliedOrdersKindRef.current) {
+    if (silent && !force && !q && lastAppliedOrdersKindRef.current && kind !== lastAppliedOrdersKindRef.current) {
       return fetchOrdersInFlightRef.current?.promise;
     }
 

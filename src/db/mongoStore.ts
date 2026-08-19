@@ -4337,11 +4337,19 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
   const sn = String(d?.orderSn || data.orderSn || String(d?._id || "").replace(/^shopee-/i, "")).trim();
   if (!sn && !d?._id) return null;
   // Outbound TN — KHÔNG fallback return_tracking_no (mã chiều hoàn giữ riêng).
+  const pkgList0 =
+    Array.isArray(data.package_list) && data.package_list[0] && typeof data.package_list[0] === "object"
+      ? (data.package_list[0] as Record<string, unknown>)
+      : {};
   const tn = String(
     d?.tracking_no ||
       d?.trackingNumber ||
       data.tracking_no ||
       data.trackingNumber ||
+      data.shopee_tracking_number ||
+      pkgList0.tracking_number ||
+      pkgList0.tracking_no ||
+      pkgList0.trackingNumber ||
       "",
   ).trim();
   const returnTnRaw = String(
@@ -4475,9 +4483,9 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
     package_list: Array.isArray(data.package_list) ? data.package_list : undefined,
     recipient_address: data.recipient_address || undefined,
     buyer_username: data.buyer_username || undefined,
-    barcode: data.barcode || undefined,
-    note: data.note || undefined,
-    scan_code: data.scan_code || undefined,
+    barcode: d?.barcode || data.barcode || undefined,
+    note: d?.note || data.note || undefined,
+    scan_code: d?.scan_code || data.scan_code || undefined,
     internalTrackingCode:
       d?.internalTrackingCode || data.internalTrackingCode || undefined,
     // Customer — luôn surface root cho FE (camelCase + snake_case)
@@ -5701,11 +5709,24 @@ function tabIndexFilter(tab?: string, kind?: string): Record<string, unknown> {
       return {
         shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] },
         is_handed_over: { $ne: true },
+        isPrepared: { $ne: true },
+        $nor: [{ tracking_no: { $nin: [null, "", "0"] } }],
       };
     case "processed":
     case "da-xu-ly":
     case "processed_pickup":
-      return { shopee_order_status: "PROCESSED", is_handed_over: { $ne: true } };
+      // Khớp orderTabFilter: PROCESSED / có mã VĐ / isPrepared / status processed.
+      // CẤM chỉ match PROCESSED — đơn vừa xác nhận thường còn READY_TO_SHIP + tracking.
+      return {
+        shopee_order_status: { $in: [...FACET_TO_SHIP] },
+        is_handed_over: { $ne: true },
+        $or: [
+          { shopee_order_status: "PROCESSED" },
+          { tracking_no: { $nin: [null, "", "0"] } },
+          { isPrepared: true },
+          { status: "processed" },
+        ],
+      };
     case "handed_over_carrier":
       return {
         shopee_order_status: { $in: [...FACET_TO_SHIP] },
@@ -5770,9 +5791,14 @@ const ORDER_LIST_UI_PROJECTION: Record<string, 1> = {
   internalTrackingCode: 1,
   is_handed_over: 1,
   isPrinted: 1,
+  printedAt: 1,
+  printed_at: 1,
   hasPdf: 1,
   readyToPrint: 1,
   isPrepared: 1,
+  barcode: 1,
+  scan_code: 1,
+  note: 1,
   waybill_url: 1,
   labelUrl: 1,
   pdfUrl: 1,
@@ -5818,6 +5844,7 @@ const ORDER_LIST_UI_PROJECTION: Record<string, 1> = {
   "data.packageNumber": 1,
   "data.tracking_no": 1,
   "data.trackingNumber": 1,
+  "data.shopee_tracking_number": 1,
   "data.internalTrackingCode": 1,
   "data.labelUrl": 1,
   "data.pdfUrl": 1,
@@ -5825,6 +5852,17 @@ const ORDER_LIST_UI_PROJECTION: Record<string, 1> = {
   "data.waybill_url": 1,
   "data.hasPdf": 1,
   "data.readyToPrint": 1,
+  "data.isPrinted": 1,
+  "data.printedAt": 1,
+  "data.printed_at": 1,
+  "data.isPrepared": 1,
+  "data.is_handed_over": 1,
+  "data.isHandedOverToCarrier": 1,
+  "data.is_handed_over_to_carrier": 1,
+  "data.is_handed_over_to_courier": 1,
+  "data.shopee_order_status": 1,
+  "data.create_time": 1,
+  "data.createTime": 1,
   "data.escrowAmount": 1,
   "data.shipping_carrier": 1,
   "data.checkout_shipping_carrier": 1,

@@ -79159,8 +79159,9 @@ function hydrateOrderFromMongoDoc(d) {
   const data = d?.data && typeof d.data === "object" ? { ...d.data } : {};
   const sn = String(d?.orderSn || data.orderSn || String(d?._id || "").replace(/^shopee-/i, "")).trim();
   if (!sn && !d?._id) return null;
+  const pkgList0 = Array.isArray(data.package_list) && data.package_list[0] && typeof data.package_list[0] === "object" ? data.package_list[0] : {};
   const tn = String(
-    d?.tracking_no || d?.trackingNumber || data.tracking_no || data.trackingNumber || ""
+    d?.tracking_no || d?.trackingNumber || data.tracking_no || data.trackingNumber || data.shopee_tracking_number || pkgList0.tracking_number || pkgList0.tracking_no || pkgList0.trackingNumber || ""
   ).trim();
   const returnTnRaw = String(
     d?.return_tracking_no || d?.returnTrackingNumber || data.return_tracking_no || data.returnTrackingNumber || ""
@@ -79216,9 +79217,9 @@ function hydrateOrderFromMongoDoc(d) {
     package_list: Array.isArray(data.package_list) ? data.package_list : void 0,
     recipient_address: data.recipient_address || void 0,
     buyer_username: data.buyer_username || void 0,
-    barcode: data.barcode || void 0,
-    note: data.note || void 0,
-    scan_code: data.scan_code || void 0,
+    barcode: d?.barcode || data.barcode || void 0,
+    note: d?.note || data.note || void 0,
+    scan_code: d?.scan_code || data.scan_code || void 0,
     internalTrackingCode: d?.internalTrackingCode || data.internalTrackingCode || void 0,
     // Customer — luôn surface root cho FE (camelCase + snake_case)
     customerName: customerNameHydrated || data.customerName || void 0,
@@ -80115,12 +80116,23 @@ function tabIndexFilter(tab, kind) {
     case "cho-lay-hang":
       return {
         shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] },
-        is_handed_over: { $ne: true }
+        is_handed_over: { $ne: true },
+        isPrepared: { $ne: true },
+        $nor: [{ tracking_no: { $nin: [null, "", "0"] } }]
       };
     case "processed":
     case "da-xu-ly":
     case "processed_pickup":
-      return { shopee_order_status: "PROCESSED", is_handed_over: { $ne: true } };
+      return {
+        shopee_order_status: { $in: [...FACET_TO_SHIP] },
+        is_handed_over: { $ne: true },
+        $or: [
+          { shopee_order_status: "PROCESSED" },
+          { tracking_no: { $nin: [null, "", "0"] } },
+          { isPrepared: true },
+          { status: "processed" }
+        ]
+      };
     case "handed_over_carrier":
       return {
         shopee_order_status: { $in: [...FACET_TO_SHIP] },
@@ -80183,9 +80195,14 @@ var ORDER_LIST_UI_PROJECTION = {
   internalTrackingCode: 1,
   is_handed_over: 1,
   isPrinted: 1,
+  printedAt: 1,
+  printed_at: 1,
   hasPdf: 1,
   readyToPrint: 1,
   isPrepared: 1,
+  barcode: 1,
+  scan_code: 1,
+  note: 1,
   waybill_url: 1,
   labelUrl: 1,
   pdfUrl: 1,
@@ -80231,6 +80248,7 @@ var ORDER_LIST_UI_PROJECTION = {
   "data.packageNumber": 1,
   "data.tracking_no": 1,
   "data.trackingNumber": 1,
+  "data.shopee_tracking_number": 1,
   "data.internalTrackingCode": 1,
   "data.labelUrl": 1,
   "data.pdfUrl": 1,
@@ -80238,6 +80256,17 @@ var ORDER_LIST_UI_PROJECTION = {
   "data.waybill_url": 1,
   "data.hasPdf": 1,
   "data.readyToPrint": 1,
+  "data.isPrinted": 1,
+  "data.printedAt": 1,
+  "data.printed_at": 1,
+  "data.isPrepared": 1,
+  "data.is_handed_over": 1,
+  "data.isHandedOverToCarrier": 1,
+  "data.is_handed_over_to_carrier": 1,
+  "data.is_handed_over_to_courier": 1,
+  "data.shopee_order_status": 1,
+  "data.create_time": 1,
+  "data.createTime": 1,
   "data.escrowAmount": 1,
   "data.shipping_carrier": 1,
   "data.checkout_shipping_carrier": 1,
