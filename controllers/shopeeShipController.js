@@ -14,6 +14,8 @@ let deps = {
   isShopeePendingVerificationError: () => false,
   forceHealPickupOrderIfHasTracking: () => {},
   persistOrdersToDatabase: async () => {},
+  persistConfirmedShipOrdersToMongo: async () => 0,
+  syncConfirmedOrdersFromShopee: async () => {},
   persistPendingShopeeCheckFlag: async () => {},
   /** Full bulk sync handler body — inject từ server. */
   handleShipBulk: null,
@@ -91,6 +93,14 @@ export async function shipOrder(req, res) {
       };
       deps.forceHealPickupOrderIfHasTracking(orders[index]);
       await deps.persistOrdersToDatabase(orders, [orders[index]]);
+      if (typeof deps.persistConfirmedShipOrdersToMongo === "function") {
+        await deps.persistConfirmedShipOrdersToMongo([orders[index]], shipMethod);
+      }
+      if (typeof deps.syncConfirmedOrdersFromShopee === "function") {
+        setImmediate(() => {
+          void deps.syncConfirmedOrdersFromShopee([orders[index]], shipMethod);
+        });
+      }
       return res.json({ success: true, mode: result.mode, order: orders[index] });
     }
 

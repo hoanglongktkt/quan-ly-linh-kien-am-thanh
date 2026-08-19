@@ -12971,7 +12971,8 @@ function forceHealPickupOrderIfHasTracking(order: any): boolean {
 
 /**
  * Sửa đơn READY_TO_SHIP bị đẩy nhầm sang "Đã xử lý" (bug dropoff auto-heal cũ):
- * raw vẫn RTS/RETRY, chưa có mã VĐ outbound, chưa in → về lại Chưa xử lý.
+ * raw vẫn RTS/RETRY, chưa có mã VĐ outbound, chưa in, CHƯA chuẩn bị hàng → về lại Chưa xử lý.
+ * User đã ship_order (isPrepared=true) thì GIỮ Đã xử lý dù Shopee còn READY_TO_SHIP.
  */
 function repairFalseProcessedReadyToShip(order: any): boolean {
   if (!order || String(order.channel || "") !== "shopee") return false;
@@ -12981,7 +12982,8 @@ function repairFalseProcessedReadyToShip(order: any): boolean {
   const tn = String(order.trackingNumber || order.tracking_no || "").trim();
   if (tn && !isShopeeInternalTrackingCode(tn)) return false;
   if (order.isPrinted === true) return false;
-  if (order.status !== "processed" && order.isPrepared !== true) return false;
+  if (order.isPrepared === true) return false;
+  if (order.status !== "processed") return false;
   order.status = "unprocessed";
   order.isPrepared = false;
   order.is_pending_shopee_check = false;
@@ -16571,8 +16573,18 @@ async function persistShopeeOrderChunk(
             normalized.status !== "completed" &&
             !hasUsableShopeeTrackingNumber(normalized)
           ) {
-            normalized.status = "unprocessed";
-            normalized.isPrepared = false;
+            const alreadyPrepared =
+              existing?.isPrepared === true ||
+              existing?.status === "processed" ||
+              normalized.isPrepared === true ||
+              normalized.status === "processed";
+            if (alreadyPrepared) {
+              normalized.status = "processed";
+              normalized.isPrepared = true;
+            } else {
+              normalized.status = "unprocessed";
+              normalized.isPrepared = false;
+            }
           }
         }
       }
@@ -16707,6 +16719,136 @@ async function persistShopeeOrderChunk(
   }
 
   return { added, updated };
+}
+
+const CONFIRM_SYNC_SHOP_DELAY_MS = ORDER_DETAIL_BATCH_DELAY_MS;
+
+function buildConfirmedShipMongoPatches(orders: any[], shipMethod?: string) {
+  return (Array.isArray(orders) ? orders : [])
+    .filter((o) => o && (o.isPrepared === true || String(o.status || "") === "processed"))
+    .map((o) => {
+      const sn = String(o.orderSn || o.order_sn || "")
+        .replace(/^shopee-/i, "")
+        .trim();
+      const raw = String(o.shopee_order_status || "").trim().toUpperCase();
+      const pickup =
+        !raw ||
+        raw === "READY_TO_SHIP" ||
+        raw === "RETRY_SHIP" ||
+        raw === "PROCESSED";
+      return {
+        orderSn: sn,
+        shopId: o.shopId != null ? String(o.shopId) : undefined,
+        status: pickup ? "processed" : o.status,
+        shopee_order_status:
+          pickup && (!raw || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP")
+            ? "PROCESSED"
+            : raw || undefined,
+        ship_method: o.ship_method || shipMethod,
+        fulfillment_type: o.fulfillment_type || shipMethod,
+        tracking_no: String(o.tracking_no || o.trackingNumber || "").trim() || undefined,
+        isPrepared: true,
+      };
+    })
+    .filter((p) => p.orderSn);
+}
+
+/** Ghi isPrepared + status processed ngay sau ship_order — không chờ bulkUpsert (bỏ cờ nội bộ). */
+async function persistConfirmedShipOrdersToMongo(
+  orders: any[],
+  shipMethod?: string,
+): Promise<number> {
+  const patches = buildConfirmedShipMongoPatches(orders, shipMethod);
+  if (!patches.length) return 0;
+  try {
+    const n = await bulkUpdateShippedOrdersBySn(patches);
+    console.log(
+      `[Confirm Persist] bulkUpdateShippedOrdersBySn n=${n} sns=${patches
+        .map((p) => p.orderSn)
+        .join(",")}`,
+    );
+    return n;
+  } catch (err: any) {
+    console.warn("[Confirm Persist] bulkUpdateShippedOrdersBySn:", err?.message || err);
+    return 0;
+  }
+}
+
+/**
+ * Sau xác nhận thành công: kéo get_order_detail (trạng thái + mã VĐ) rồi khóa lại isPrepared.
+ * Có delay giữa shop để chống rate-limit Shopee.
+ */
+async function syncConfirmedOrdersFromShopee(
+  orders: any[],
+  shipMethod?: string,
+): Promise<void> {
+  const list = (Array.isArray(orders) ? orders : []).filter(
+    (o) => o && String(o.orderSn || o.order_sn || "").trim(),
+  );
+  if (!list.length) return;
+  await delay(CONFIRM_SYNC_SHOP_DELAY_MS);
+  const byShop = new Map<string, any[]>();
+  for (const o of list) {
+    const shopId = String(o.shopId || o.shop_id || "").trim();
+    if (!shopId) continue;
+    const bucket = byShop.get(shopId) || [];
+    bucket.push(o);
+    byShop.set(shopId, bucket);
+  }
+  let shopIdx = 0;
+  for (const [shopId, shopOrders] of byShop) {
+    if (shopIdx > 0) await delay(CONFIRM_SYNC_SHOP_DELAY_MS);
+    shopIdx += 1;
+    const sns = [
+      ...new Set(
+        shopOrders
+          .map((o) =>
+            String(o.orderSn || o.order_sn || "")
+              .replace(/^shopee-/i, "")
+              .trim(),
+          )
+          .filter(Boolean),
+      ),
+    ];
+    if (!sns.length) continue;
+    try {
+      const auth = await getShopeeAccessTokenForApi(shopId);
+      if (!auth?.token) {
+        console.warn(`[Confirm Sync] no token shopId=${shopId}`);
+        continue;
+      }
+      const working: any[] = [...shopOrders];
+      const { normalized } = await fetchNormalizeShopeeOrderChunk(
+        auth.apiShopId,
+        auth.token,
+        auth.fileKey || shopId,
+        sns,
+        { enrichTracking: true },
+      );
+      if (normalized.length > 0) {
+        for (const row of normalized) {
+          row.isPrepared = true;
+          const raw = String(row.shopee_order_status || "").toUpperCase();
+          if (
+            raw === "READY_TO_SHIP" ||
+            raw === "RETRY_SHIP" ||
+            raw === "PROCESSED" ||
+            !raw
+          ) {
+            row.status = "processed";
+          }
+        }
+        await persistShopeeOrderChunk(working, normalized, {
+          apiShopId: auth.apiShopId,
+          accessToken: auth.token,
+          skipTracking: false,
+        });
+      }
+    } catch (err: any) {
+      console.warn(`[Confirm Sync] shopId=${shopId}:`, err?.message || err);
+    }
+  }
+  await persistConfirmedShipOrdersToMongo(list, shipMethod);
 }
 
 let forceRescueShopeeOrderSnsOnce = false;
@@ -20713,7 +20855,16 @@ async function startServer() {
           error: String(result.error || "confirm_failed"),
           message: String(result.message || result.error || "Xác nhận thất bại"),
         }));
-      
+
+      const confirmedRows = toShip
+        .map(({ index }) => orders[index])
+        .filter((o: any) => o && o.isPrepared === true);
+      try {
+        await persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod);
+      } catch (persistErr: any) {
+        console.warn("[Confirm Only] persistConfirmedShipOrdersToMongo:", persistErr?.message || persistErr);
+      }
+
       res.status(200).json({
         success: true,
         results,
@@ -20725,11 +20876,12 @@ async function startServer() {
         message: `Đã xác nhận ${successSns.length}/${toShip.length} đơn`,
       });
 
-      // Frontend đã nhận 200 OK; ghi database chạy nền và không giữ luồng xác nhận.
       setImmediate(() => {
-        const changed = toShip.map(({ index }) => orders[index]).filter(Boolean);
-        void persistOrdersToDatabase(orders, changed).catch((err: any) => {
+        void persistOrdersToDatabase(orders, confirmedRows).catch((err: any) => {
           console.warn("[Confirm Only] background persist failed:", err?.message || err);
+        });
+        void syncConfirmedOrdersFromShopee(confirmedRows, shipMethod).catch((err: any) => {
+          console.warn("[Confirm Only] background sync failed:", err?.message || err);
         });
       });
       return;
@@ -21433,14 +21585,23 @@ async function startServer() {
         }
       });
 
-      // Lưu vào DB
+      // Lưu vào DB — khóa isPrepared TRƯỚC khi trả response (tab Đã xử lý).
       try {
+        const confirmedRows = toShip
+          .map(({ index }) => orders[index])
+          .filter((o: any) => o && o.isPrepared === true);
+        await persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod);
         const changed = toShip.map(({ index }) => orders[index]).filter(Boolean);
         await runBeforeBatchDeadline(
           deadlineAt,
           "persist_orders",
           () => persistOrdersToDatabase(orders, changed),
         );
+        setImmediate(() => {
+          void syncConfirmedOrdersFromShopee(confirmedRows, shipMethod).catch((err: any) => {
+            console.warn("[Batch Confirm Print] background sync failed:", err?.message || err);
+          });
+        });
       } catch (err: any) {
         console.warn("[Batch Confirm Print] persist failed:", err?.message || err);
       }
@@ -22987,6 +23148,15 @@ async function startServer() {
         })
         .filter((p) => p.orderSn);
 
+      const confirmedRows = toShip
+        .map(({ index }) => orders[index])
+        .filter((o: any) => o && o.isPrepared === true);
+      try {
+        await persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod);
+      } catch (persistErr: any) {
+        console.warn("[Fast Process] persistConfirmedShipOrdersToMongo:", persistErr?.message || persistErr);
+      }
+
       setImmediate(() => {
         void bulkUpdateShippedOrdersBySn(mongoPatchesShip).catch(async (err: any) => {
           console.warn("[Fast Process] bulkUpdateShippedOrdersBySn:", err?.message || err);
@@ -22996,6 +23166,9 @@ async function startServer() {
           } catch (err2: any) {
             console.warn("[Fast Process] persistOrdersToDatabase fallback:", err2?.message || err2);
           }
+        });
+        void syncConfirmedOrdersFromShopee(confirmedRows, shipMethod).catch((err: any) => {
+          console.warn("[Fast Process] background sync failed:", err?.message || err);
         });
       });
 
@@ -23112,6 +23285,13 @@ async function startServer() {
 
     const changedOrders = toShip.map(({ index }) => orders[index]).filter(Boolean);
     await persistOrdersToDatabase(orders, changedOrders);
+    const confirmedRows = changedOrders.filter((o: any) => o && o.isPrepared === true);
+    await persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod);
+    setImmediate(() => {
+      void syncConfirmedOrdersFromShopee(confirmedRows, shipMethod).catch((err: any) => {
+        console.warn("[Ship Order Bulk] background sync failed:", err?.message || err);
+      });
+    });
     const successCount = batch.successCount;
     console.log(`[Ship Order Bulk] Ho\xE0n t\u1EA5t: ${successCount}/${toShip.length} \u0111\u01A1n chu\u1EA9n b\u1EB1 h\xE0ng th\xE0nh c\xF4ng (không tạo PDF).`);
 
@@ -23971,10 +24151,17 @@ async function startServer() {
       });
       job.results = Array.isArray(batch.results) ? batch.results : [];
 
-      // Persist kết quả ship
+      // Persist kết quả ship + khóa isPrepared (tab Đã xử lý).
       try {
         const changed = toShip.map(({ index }) => orders[index]).filter(Boolean);
         await persistOrdersToDatabase(orders, changed);
+        const confirmedRows = changed.filter((o: any) => o && o.isPrepared === true);
+        await persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod);
+        setImmediate(() => {
+          void syncConfirmedOrdersFromShopee(confirmedRows, shipMethod).catch((err: any) => {
+            console.warn("[Ship Order Job] background sync failed:", err?.message || err);
+          });
+        });
       } catch (err: any) {
         console.warn("[Ship Order Job] persist failed:", err?.message || err);
       }
@@ -24022,6 +24209,8 @@ async function startServer() {
     isShopeePendingVerificationError,
     forceHealPickupOrderIfHasTracking,
     persistOrdersToDatabase,
+    persistConfirmedShipOrdersToMongo,
+    syncConfirmedOrdersFromShopee,
     persistPendingShopeeCheckFlag,
     handleShipBulk,
     handleFastProcess,

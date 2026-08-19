@@ -1789,6 +1789,7 @@ export default function OrderManager({
   const ordersRef = React.useRef(orders);
   type OptimisticOrderMutation = {
     isPrinted?: boolean;
+    isPrepared?: boolean;
     status?: Order['status'];
     expiresAt: number;
   };
@@ -1853,13 +1854,24 @@ export default function OrderManager({
           : wasRecentlyPrinted
             ? { isPrinted: true }
             : {}),
+        ...(mutation?.isPrepared != null
+          ? { isPrepared: mutation.isPrepared }
+          : mutation?.status === 'processed' || wasRecentlyPrinted
+            ? { isPrepared: true }
+            : {}),
         ...(mutation?.status
           ? { status: mutation.status }
           : wasRecentlyPrinted
             ? { status: 'processed' as const }
             : {}),
       };
-      if (next.isPrinted !== order.isPrinted || next.status !== order.status) changed = true;
+      if (
+        next.isPrinted !== order.isPrinted ||
+        next.status !== order.status ||
+        next.isPrepared !== order.isPrepared
+      ) {
+        changed = true;
+      }
       return next;
     });
     ordersRef.current = guarded;
@@ -1975,7 +1987,12 @@ export default function OrderManager({
       if (idSet.size === 0) return [] as Order[];
       const expiresAt = Date.now() + 5 * 60 * 1000;
       for (const key of idSet) {
-        const mutation = { isPrinted, ...(status ? { status } : {}), expiresAt };
+        const mutation = {
+          isPrinted,
+          isPrepared: status === 'processed' ? true : undefined,
+          ...(status ? { status } : {}),
+          expiresAt,
+        };
         optimisticOrderMutationsRef.current.set(key, mutation);
         optimisticOrderMutationsRef.current.set(`shopee-${key}`, mutation);
         if (isPrinted) {
@@ -1991,7 +2008,12 @@ export default function OrderManager({
         const sn = String(o.orderSn || '').replace(/^shopee-/i, '').trim().toLowerCase();
         const oid = String(o.id || '').replace(/^shopee-/i, '').trim().toLowerCase();
         if (!idSet.has(sn) && !idSet.has(oid) && !idSet.has(`shopee-${sn}`)) return o;
-        const next = { ...o, isPrinted, ...(status ? { status } : {}) };
+        const next = {
+          ...o,
+          isPrinted,
+          ...(status === 'processed' ? { isPrepared: true } : {}),
+          ...(status ? { status } : {}),
+        };
         hit.push(next);
         return next;
       });
@@ -4632,18 +4654,15 @@ export default function OrderManager({
     const patched = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys, opts);
     ordersRef.current = patched;
     onUpdateOrders(patched, { persist: false });
-    if (onFetchOrdersPropRef.current) {
-      const scope = listScopeRef.current;
-      await fetchOrdersWithShop({
-        silent: true,
-        page: scope.page,
-        limit: ORDERS_PAGE_SIZE,
-        merge: false,
-        tab: scope.tab || undefined,
-        q: scope.q || undefined,
-        kind: scope.kind,
-      });
-    }
+    setActiveSubTab('processed');
+    void fetchOrdersWithShop({
+      silent: true,
+      page: 1,
+      limit: ORDERS_PAGE_SIZE,
+      merge: false,
+      tab: 'processed',
+    });
+    void fetchOrderCounts();
   };
 
   /**
@@ -4798,6 +4817,12 @@ export default function OrderManager({
       });
       ordersRef.current = patched;
       onUpdateOrders(patched, { persist: false });
+      const queued = [...queuedKeys]
+        .filter((k) => k && !k.toLowerCase().startsWith('shopee-'))
+        .map((sn) => ({ id: `shopee-${sn}`, orderSn: sn })) as Order[];
+      if (queued.length > 0) {
+        void refreshOrdersAfterShip(queued, { markPrinted: false, shipMethod });
+      }
     }
 
     return summary;
@@ -4908,8 +4933,11 @@ export default function OrderManager({
 
         setSelectedOrderIds([]);
         setPrintStatusFilter('unprinted');
-        setActiveSubTab('processed');
-
+        const queued = successfulSns.map((sn) => ({
+          id: `shopee-${sn}`,
+          orderSn: sn,
+        })) as Order[];
+        void refreshOrdersAfterShip(queued, { markPrinted: false, shipMethod });
         void startSilentPdfPrefetch(successfulSns);
       }
 
@@ -5040,6 +5068,11 @@ export default function OrderManager({
         setShipConfirmSummary(null);
         setShipJobResults([]);
         clearShipProgressOverlay();
+        const queuedBatch = successfulSns.map((sn: string) => ({
+          id: `shopee-${sn}`,
+          orderSn: sn,
+        })) as Order[];
+        void refreshOrdersAfterShip(queuedBatch, { markPrinted: true, shipMethod });
         
         onAddLog({
           id: `log-${Date.now()}`,
@@ -5127,6 +5160,11 @@ export default function OrderManager({
         setShipConfirmSummary(null);
         setShipJobResults([]);
         clearShipProgressOverlay();
+        const queuedSingle = successfulSns.map((sn) => ({
+          id: `shopee-${sn}`,
+          orderSn: sn,
+        })) as Order[];
+        void refreshOrdersAfterShip(queuedSingle, { markPrinted: true, shipMethod });
         
         onAddLog({
           id: `log-${Date.now()}`,

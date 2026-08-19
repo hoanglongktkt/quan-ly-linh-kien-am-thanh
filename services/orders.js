@@ -9,6 +9,7 @@ import {
   isMongoReady,
   loadOrdersFromStore,
   bulkUpsertOrdersToStore,
+  bulkUpdateShippedOrdersBySn,
   deleteOrdersFromStore,
   deleteHandedOverOrdersFromStore,
   deleteClosedOrdersByRetention,
@@ -164,6 +165,49 @@ export async function persistOrdersToDatabase(orders, changedOrders) {
   if (!isMongoReady()) throw new Error("mongodb_not_ready");
   try {
     const n = await bulkUpsertOrdersToStore(changedOrders);
+    // bulkUpsert cố ý BỎ cờ nội bộ (isPrepared/isPrinted). Sau ship_order phải ghi riêng
+    // để đơn rời tab Chưa xử lý → Đã xử lý.
+    const shipPatches = changedOrders
+      .filter((o) => o && (o.isPrepared === true || String(o.status || "") === "processed"))
+      .map((o) => {
+        const sn = String(o.orderSn || o.order_sn || "")
+          .replace(/^shopee-/i, "")
+          .trim();
+        const raw = String(o.shopee_order_status || "").trim().toUpperCase();
+        const pickup =
+          !raw ||
+          raw === "READY_TO_SHIP" ||
+          raw === "RETRY_SHIP" ||
+          raw === "PROCESSED";
+        return {
+          orderSn: sn,
+          shopId: o.shopId != null ? String(o.shopId) : undefined,
+          status: pickup ? "processed" : o.status,
+          shopee_order_status: pickup && (!raw || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP")
+            ? "PROCESSED"
+            : raw || undefined,
+          ship_method: o.ship_method,
+          fulfillment_type: o.fulfillment_type,
+          tracking_no: String(o.tracking_no || o.trackingNumber || "").trim() || undefined,
+          isPrepared: true,
+        };
+      })
+      .filter((p) => p.orderSn);
+    if (shipPatches.length > 0) {
+      try {
+        await bulkUpdateShippedOrdersBySn(shipPatches);
+        console.log(
+          `[Orders Persist] ship flags locked n=${shipPatches.length} sns=${shipPatches
+            .map((p) => p.orderSn)
+            .join(",")}`,
+        );
+      } catch (flagErr) {
+        console.warn(
+          "[Orders Persist] bulkUpdateShippedOrdersBySn:",
+          flagErr?.message || flagErr,
+        );
+      }
+    }
     queueOrdersJsonMirror(orders);
     console.log(`[Orders Persist] Mongo bulkWrite OK — upsertedDocs=${n}`);
     return n;
