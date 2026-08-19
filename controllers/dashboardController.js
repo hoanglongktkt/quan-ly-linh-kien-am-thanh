@@ -13,6 +13,7 @@ let deps = {
     dashboardOrdersCount: 0,
     ordersInRangeCount: 0,
     revenue: 0,
+    profit: 0,
     newOrders: 0,
     returns: 0,
     cancelled: 0,
@@ -22,6 +23,7 @@ let deps = {
   }),
   getLowStockProductsFromStore: async () => [],
   loadProductsByIdsFromStore: async () => [],
+  loadChannelSettings: () => ({ systemFees: [] }),
 };
 
 export function initDashboardController(partial) {
@@ -44,7 +46,7 @@ export async function getDashboard(req, res) {
         startDate: startKey,
         endDate: endKey,
         meta: { totalOrdersInDb: 0, dashboardOrders: 0, ordersInRange: 0 },
-        kpi: { revenue: 0, newOrders: 0, returns: 0, cancelled: 0 },
+        kpi: { revenue: 0, profit: 0, newOrders: 0, returns: 0, cancelled: 0 },
         pendingOrders: {
           pendingApproval: 0,
           pendingPayment: 0,
@@ -61,9 +63,11 @@ export async function getDashboard(req, res) {
     }
 
     const LOW_STOCK_THRESHOLD = 5;
+    const channelSettings = deps.loadChannelSettings() || {};
+    const systemFees = Array.isArray(channelSettings.systemFees) ? channelSettings.systemFees : [];
 
     const [stats, lowStockRows] = await Promise.all([
-      deps.withLocalDbTimeout(deps.getDashboardStatsFromStore(startKey, endKey), 8000, "dashboard_stats"),
+      deps.withLocalDbTimeout(deps.getDashboardStatsFromStore(startKey, endKey, systemFees), 8000, "dashboard_stats"),
       deps.withLocalDbTimeout(
         deps.getLowStockProductsFromStore(LOW_STOCK_THRESHOLD, 50),
         8000,
@@ -113,6 +117,7 @@ export async function getDashboard(req, res) {
       },
       kpi: {
         revenue: stats.revenue,
+        profit: stats.profit || 0,
         newOrders: stats.newOrders,
         returns: stats.returns,
         cancelled: stats.cancelled,

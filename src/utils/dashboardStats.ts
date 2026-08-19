@@ -1,5 +1,7 @@
-import { Order, Product } from '../types';
+import { Order, Product, SystemFee } from '../types';
 import type { DashboardDateRange } from '../components/Dashboard';
+import { calculateProfitWithSystemFees } from './profitCalculator';
+import { getOrderTotalImportCost } from './orderImportCost';
 import {
   matchesProcessedPickupTab,
   matchesShippingTab,
@@ -13,6 +15,7 @@ export interface DashboardStats {
   endDate: string;
   kpi: {
     revenue: number;
+    profit: number;
     newOrders: number;
     returns: number;
     cancelled: number;
@@ -25,7 +28,7 @@ export interface DashboardStats {
     shipping: number;
     returnPending: number;
   };
-  chart: { key: string; label: string; amount: number }[];
+  chart: { key: string; label: string; amount: number; profit: number }[];
   topProducts: {
     rank: number;
     productId: string;
@@ -165,15 +168,24 @@ function isDashboardOrder(order: Order): boolean {
   return true;
 }
 
-function buildChart(orders: Order[], rangeKey: DashboardDateRange, start: Date, end: Date) {
-  const buckets = new Map<string, { key: string; label: string; amount: number }>();
+function buildChart(
+  orders: Order[],
+  products: Product[],
+  systemFees: SystemFee[],
+  rangeKey: DashboardDateRange,
+  start: Date,
+  end: Date,
+) {
+  const buckets = new Map<string, { key: string; label: string; amount: number; profit: number }>();
 
   if (rangeKey === 'this_year' || rangeKey === 'this_quarter') {
     const cursor = new Date(start.getFullYear(), start.getMonth(), 1);
     const endMonth = new Date(end.getFullYear(), end.getMonth(), 1);
+    let monthGuard = 0;
     while (cursor <= endMonth) {
+      if (monthGuard++ >= 24) break;
       const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`;
-      buckets.set(key, { key, label: `T${cursor.getMonth() + 1}`, amount: 0 });
+      buckets.set(key, { key, label: `T${cursor.getMonth() + 1}`, amount: 0, profit: 0 });
       cursor.setMonth(cursor.getMonth() + 1);
     }
   } else {
@@ -181,18 +193,22 @@ function buildChart(orders: Order[], rangeKey: DashboardDateRange, start: Date, 
     cursor.setHours(0, 0, 0, 0);
     const endDay = new Date(end);
     endDay.setHours(0, 0, 0, 0);
+    let dayGuard = 0;
     while (cursor <= endDay) {
+      if (dayGuard++ >= 400) break;
       const key = toDateKey(cursor);
       buckets.set(key, {
         key,
         label: `${String(cursor.getDate()).padStart(2, '0')}/${String(cursor.getMonth() + 1).padStart(2, '0')}`,
         amount: 0,
+        profit: 0,
       });
       cursor.setDate(cursor.getDate() + 1);
     }
   }
 
-  for (const order of orders) {
+  for (let i = 0; i < Math.min(orders.length, 50000); i++) {
+    const order = orders[i];
     const dateStr = String(order.date || '').split('T')[0];
     let bucketKey = dateStr;
     if (rangeKey === 'this_year' || rangeKey === 'this_quarter') {
@@ -200,7 +216,12 @@ function buildChart(orders: Order[], rangeKey: DashboardDateRange, start: Date, 
       bucketKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
     }
     const bucket = buckets.get(bucketKey);
-    if (bucket) bucket.amount += Number(order.totalAmount) || 0;
+    if (bucket) {
+      const amount = Number(order.totalAmount) || 0;
+      const importCost = getOrderTotalImportCost(order, products);
+      bucket.amount += amount;
+      bucket.profit += calculateProfitWithSystemFees(amount, importCost, systemFees);
+    }
   }
 
   return Array.from(buckets.values());
@@ -209,7 +230,8 @@ function buildChart(orders: Order[], rangeKey: DashboardDateRange, start: Date, 
 export function computeDashboardStats(
   orders: Order[],
   products: Product[],
-  rangeKey: DashboardDateRange
+  rangeKey: DashboardDateRange,
+  systemFees: SystemFee[] = [],
 ): DashboardStats {
   const { start, end } = getDateRange(rangeKey);
   const eligible = orders.filter(isDashboardOrder);
@@ -265,6 +287,9 @@ export function computeDashboardStats(
     }))
     .sort((a, b) => a.stock - b.stock);
 
+  const chart = buildChart(revenueOrders, products, systemFees, rangeKey, start, end);
+  const totalProfit = chart.reduce((sum, day) => sum + (Number(day.profit) || 0), 0);
+
   return {
     dateRange: rangeKey,
     dateRangeLabel: RANGE_LABELS[rangeKey],
@@ -272,6 +297,7 @@ export function computeDashboardStats(
     endDate: toDateKey(end),
     kpi: {
       revenue: revenueOrders.reduce((s, o) => s + (Number(o.totalAmount) || 0), 0),
+      profit: totalProfit,
       newOrders: inRange.filter((o) => o.status === 'pending_verification' || o.status === 'pending_confirm' || o.status === 'unprocessed').length,
       returns: inRange.filter((o) => o.status === 'return_pending' || o.status === 'return_received').length,
       cancelled: inRange.filter((o) => o.status === 'cancelled').length,
@@ -290,7 +316,7 @@ export function computeDashboardStats(
       shipping: eligible.filter((o) => matchesShippingTab(o)).length,
       returnPending: eligible.filter((o) => isRtsOrder(o)).length,
     },
-    chart: buildChart(revenueOrders, rangeKey, start, end),
+    chart,
     topProducts,
     inventory: {
       lowStockThreshold: LOW,

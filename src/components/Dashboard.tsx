@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Product, Order } from '../types';
+import { Product, Order, SystemFee } from '../types';
 import { computeDashboardStats, isRtsOrder } from '../utils/dashboardStats';
 import {
   DollarSign,
@@ -48,6 +48,7 @@ interface DashboardData {
   dateRangeLabel: string;
   kpi: {
     revenue: number;
+    profit: number;
     newOrders: number;
     returns: number;
     cancelled: number;
@@ -60,7 +61,7 @@ interface DashboardData {
     shipping: number;
     returnPending: number;
   };
-  chart: { key: string; label: string; amount: number }[];
+  chart: { key: string; label: string; amount: number; profit: number }[];
   topProducts: {
     rank: number;
     productId: string;
@@ -77,7 +78,7 @@ interface DashboardData {
 
 function normalizeDashboardPayload(raw: Partial<DashboardData> | null | undefined): DashboardData | null {
   if (!raw || typeof raw !== 'object') return null;
-  const kpi = raw.kpi || { revenue: 0, newOrders: 0, returns: 0, cancelled: 0 };
+  const kpi = raw.kpi || { revenue: 0, profit: 0, newOrders: 0, returns: 0, cancelled: 0 };
   const pending = raw.pendingOrders || {
     pendingApproval: 0,
     pendingPayment: 0,
@@ -91,6 +92,7 @@ function normalizeDashboardPayload(raw: Partial<DashboardData> | null | undefine
     dateRangeLabel: String(raw.dateRangeLabel || '7 ngày qua'),
     kpi: {
       revenue: Number(kpi.revenue) || 0,
+      profit: Number(kpi.profit) || 0,
       newOrders: Number(kpi.newOrders) || 0,
       returns: Number(kpi.returns) || 0,
       cancelled: Number(kpi.cancelled) || 0,
@@ -103,7 +105,14 @@ function normalizeDashboardPayload(raw: Partial<DashboardData> | null | undefine
       shipping: Number(pending.shipping) || 0,
       returnPending: Number(pending.returnPending) || 0,
     },
-    chart: Array.isArray(raw.chart) ? raw.chart : [],
+    chart: Array.isArray(raw.chart)
+      ? raw.chart.map((day) => ({
+          key: String(day?.key || ''),
+          label: String(day?.label || ''),
+          amount: Number(day?.amount) || 0,
+          profit: Number(day?.profit) || 0,
+        }))
+      : [],
     topProducts: Array.isArray(raw.topProducts) ? raw.topProducts : [],
     inventory: {
       lowStockThreshold: Number(raw.inventory?.lowStockThreshold) || 5,
@@ -130,6 +139,7 @@ interface DashboardProps {
   onUpdateProduct?: (updated: Product, opts?: { save?: boolean }) => Promise<void>;
   onNavigateToImport?: (productId: string) => void;
   rtsCount?: number;
+  systemFees?: SystemFee[];
 }
 
 export default function Dashboard({
@@ -140,6 +150,7 @@ export default function Dashboard({
   onUpdateProduct,
   onNavigateToImport,
   rtsCount: rtsCountProp,
+  systemFees = [],
 }: DashboardProps) {
   const [dateRange, setDateRange] = useState<DashboardDateRange>('last_7_days');
   const [data, setData] = useState<DashboardData | null>(null);
@@ -152,11 +163,18 @@ export default function Dashboard({
   const [stockSaving, setStockSaving] = useState(false);
   const ordersRef = useRef(orders);
   const productsRef = useRef(products);
+  const systemFeesRef = useRef(systemFees);
   ordersRef.current = orders;
   productsRef.current = products;
+  systemFeesRef.current = systemFees;
 
   const applyFallback = useCallback((range: DashboardDateRange) => {
-    const stats = computeDashboardStats(ordersRef.current, productsRef.current, range);
+    const stats = computeDashboardStats(
+      ordersRef.current,
+      productsRef.current,
+      range,
+      systemFeesRef.current,
+    );
     console.log('[Dashboard] Client fallback stats:', stats);
     setData(normalizeDashboardPayload(stats as unknown as DashboardData));
     setUsingFallback(true);
@@ -356,6 +374,12 @@ export default function Dashboard({
     () => (data?.chart || []).reduce((sum, day) => sum + (Number(day.amount) || 0), 0),
     [data?.chart],
   );
+  const chartTotalProfit = useMemo(
+    () =>
+      Number(data?.kpi?.profit) ||
+      (data?.chart || []).reduce((sum, day) => sum + (Number(day.profit) || 0), 0),
+    [data?.kpi?.profit, data?.chart],
+  );
 
   const kpiCards = data
     ? [
@@ -542,11 +566,14 @@ export default function Dashboard({
                     <span className="text-[9px] leading-tight font-bold text-gray-700 text-center whitespace-nowrap">
                       {formatVnd(day.amount)}
                     </span>
+                    <span className="text-[9px] leading-tight font-bold text-green-600 text-center whitespace-nowrap">
+                      {formatVnd(day.profit)}
+                    </span>
                     <div className="w-full flex justify-center items-end h-44">
                       <div
                         className="w-full max-w-[40px] bg-blue-500 hover:bg-blue-600 rounded-t-lg transition-all duration-300"
                         style={{ height: `${barHeight}%` }}
-                        title={`${day.label}: ${formatVnd(day.amount)} đ`}
+                        title={`${day.label}: DT ${formatVnd(day.amount)} đ | LN ${formatVnd(day.profit)} đ`}
                       />
                     </div>
                     <span className="text-[10px] font-semibold text-gray-600 font-mono text-center">{day.label}</span>
@@ -556,6 +583,9 @@ export default function Dashboard({
             </div>
             <p className="mt-4 text-center text-sm font-extrabold text-gray-900">
               Tổng doanh thu: {formatVnd(chartTotalRevenue)} đ
+            </p>
+            <p className="mt-1 text-center text-sm text-green-600 font-bold">
+              Tổng lợi nhuận: {formatVnd(chartTotalProfit)} đ
             </p>
           </div>
 

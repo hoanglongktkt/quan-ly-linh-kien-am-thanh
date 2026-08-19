@@ -76165,6 +76165,29 @@ function countChannelListingsOnDisk() {
   return readChannelListingsFromDisk().length;
 }
 
+// src/utils/profitCalculator.ts
+function toSafeAmount(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return n;
+}
+function isFeeActive(fee) {
+  return fee.active === true;
+}
+function calculateProfitWithSystemFees(sellPrice, importPrice, systemFees) {
+  const sell = toSafeAmount(sellPrice);
+  const cost = toSafeAmount(importPrice);
+  const fees = Array.isArray(systemFees) ? systemFees : [];
+  const totalFees = fees.filter((fee) => isFeeActive(fee) && String(fee?.name || "").trim() && toSafeAmount(fee?.value) > 0).reduce((sum, fee) => {
+    const value = toSafeAmount(fee.value);
+    if (fee.calculationType === "percentage") {
+      return sum + Math.round(sell * (value / 100));
+    }
+    return sum + Math.round(value);
+  }, 0);
+  return sell - cost - totalFees;
+}
+
 // src/db/mongoStore.ts
 var ORDER_EVENT_TTL_SECONDS = Math.max(
   24 * 60 * 60,
@@ -82003,7 +82026,92 @@ async function getLowStockProductsFromStore(threshold, limit = 50) {
     image: null
   }));
 }
-async function getDashboardStatsFromStore(rangeStartKey, rangeEndKey) {
+var DASHBOARD_ITEM_UNIT_IMPORT_EXPR = {
+  $max: [
+    0,
+    { $convert: { input: { $ifNull: ["$$this.importPrice", 0] }, to: "double", onError: 0, onNull: 0 } },
+    { $convert: { input: { $ifNull: ["$$this.import_price", 0] }, to: "double", onError: 0, onNull: 0 } },
+    { $convert: { input: { $ifNull: ["$$this.last_import_price", 0] }, to: "double", onError: 0, onNull: 0 } },
+    { $convert: { input: { $ifNull: ["$$this.cost_price", 0] }, to: "double", onError: 0, onNull: 0 } }
+  ]
+};
+var DASHBOARD_IMPORT_COST_EXPR = {
+  $reduce: {
+    input: { $ifNull: ["$data.items", []] },
+    initialValue: 0,
+    in: {
+      $add: [
+        "$$value",
+        {
+          $multiply: [
+            { $max: [0, { $convert: { input: { $ifNull: ["$$this.quantity", 0] }, to: "double", onError: 0, onNull: 0 } }] },
+            DASHBOARD_ITEM_UNIT_IMPORT_EXPR
+          ]
+        }
+      ]
+    }
+  }
+};
+var DASHBOARD_GAP_ITEMS_EXPR = {
+  $map: {
+    input: {
+      $filter: {
+        input: { $ifNull: ["$data.items", []] },
+        as: "it",
+        cond: {
+          $and: [
+            { $gt: [{ $convert: { input: { $ifNull: ["$$it.quantity", 0] }, to: "double", onError: 0, onNull: 0 } }, 0] },
+            { $ne: [{ $ifNull: ["$$it.productId", ""] }, ""] },
+            {
+              $lte: [
+                {
+                  $max: [
+                    0,
+                    { $convert: { input: { $ifNull: ["$$it.importPrice", 0] }, to: "double", onError: 0, onNull: 0 } },
+                    { $convert: { input: { $ifNull: ["$$it.import_price", 0] }, to: "double", onError: 0, onNull: 0 } },
+                    { $convert: { input: { $ifNull: ["$$it.last_import_price", 0] }, to: "double", onError: 0, onNull: 0 } },
+                    { $convert: { input: { $ifNull: ["$$it.cost_price", 0] }, to: "double", onError: 0, onNull: 0 } }
+                  ]
+                },
+                0
+              ]
+            }
+          ]
+        }
+      }
+    },
+    as: "g",
+    in: {
+      pid: { $toString: { $ifNull: ["$$g.productId", ""] } },
+      qty: { $max: [0, { $convert: { input: { $ifNull: ["$$g.quantity", 0] }, to: "double", onError: 0, onNull: 0 } }] }
+    }
+  }
+};
+var MAX_DASHBOARD_PROFIT_ORDERS = 5e4;
+function catalogImportPriceById(products) {
+  const map = /* @__PURE__ */ new Map();
+  const setPrice = (rawId, rawPrice) => {
+    const id = String(rawId || "").trim();
+    const price = Number(rawPrice);
+    if (!id || !Number.isFinite(price) || price <= 0) return;
+    if (!map.has(id)) map.set(id, price);
+  };
+  const walk = (row, depth) => {
+    if (!row || depth > 3) return;
+    const price = row.importPrice ?? row.import_price ?? row.last_import_price ?? row.cost_price;
+    setPrice(row.id, price);
+    setPrice(row.sku, price);
+    setPrice(row.shopeeItemId, price);
+    setPrice(row.shopeeModelId, price);
+    const children = Array.isArray(row.children) ? row.children : Array.isArray(row.children_models) ? row.children_models : [];
+    const limit = Math.min(children.length, 200);
+    for (let i2 = 0; i2 < limit; i2++) walk(children[i2], depth + 1);
+  };
+  const n = Math.min(Array.isArray(products) ? products.length : 0, 5e3);
+  for (let i2 = 0; i2 < n; i2++) walk(products[i2], 0);
+  return map;
+}
+async function getDashboardStatsFromStore(rangeStartKey, rangeEndKey, systemFees = []) {
   requireMongo();
   const isDashboardOrderMatch = {
     $expr: {
@@ -82075,6 +82183,20 @@ async function getDashboardStatsFromStore(rangeStartKey, rangeEndKey) {
             { $group: { _id: "$_dateKey", amount: { $sum: "$data.totalAmount" } } },
             { $project: { _id: 0, date: "$_id", amount: 1 } }
           ],
+          revenueOrders: [
+            { $match: { _dateKey: { $gte: rangeStartKey, $lte: rangeEndKey } } },
+            { $match: { status: { $ne: "cancelled" }, "data.totalAmount": { $gt: 0 } } },
+            {
+              $project: {
+                _id: 0,
+                date: "$_dateKey",
+                amount: { $ifNull: ["$data.totalAmount", 0] },
+                importCost: DASHBOARD_IMPORT_COST_EXPR,
+                gapItems: DASHBOARD_GAP_ITEMS_EXPR
+              }
+            },
+            { $limit: MAX_DASHBOARD_PROFIT_ORDERS }
+          ],
           topProducts: [
             { $match: { _dateKey: { $gte: rangeStartKey, $lte: rangeEndKey } } },
             { $match: { status: { $ne: "cancelled" }, "data.totalAmount": { $gt: 0 } } },
@@ -82109,11 +82231,58 @@ async function getDashboardStatsFromStore(rangeStartKey, rangeEndKey) {
   ]);
   const facet = facetResult?.[0] || {};
   const kpi = facet.kpi?.[0] || {};
+  const revenueOrders = Array.isArray(facet.revenueOrders) ? facet.revenueOrders : [];
+  const gapIds = [];
+  const gapIdSeen = /* @__PURE__ */ new Set();
+  const gapScanLimit = Math.min(revenueOrders.length, MAX_DASHBOARD_PROFIT_ORDERS);
+  for (let i2 = 0; i2 < gapScanLimit; i2++) {
+    const items = Array.isArray(revenueOrders[i2]?.gapItems) ? revenueOrders[i2].gapItems : [];
+    const itemLimit = Math.min(items.length, 80);
+    for (let j = 0; j < itemLimit; j++) {
+      const pid = String(items[j]?.pid || "").trim();
+      if (!pid || gapIdSeen.has(pid)) continue;
+      gapIdSeen.add(pid);
+      gapIds.push(pid);
+      if (gapIds.length >= 2e3) break;
+    }
+    if (gapIds.length >= 2e3) break;
+  }
+  const catalogRows = gapIds.length > 0 ? await loadProductsByIdsFromStore(gapIds, []) : [];
+  const importById = catalogImportPriceById(catalogRows);
+  const dailyProfit = /* @__PURE__ */ new Map();
+  let totalProfit = 0;
+  const profitLimit = Math.min(revenueOrders.length, MAX_DASHBOARD_PROFIT_ORDERS);
+  for (let i2 = 0; i2 < profitLimit; i2++) {
+    const row = revenueOrders[i2];
+    const dateKey = String(row?.date || "").slice(0, 10);
+    const amount = Number(row?.amount) || 0;
+    let importCost = Number(row?.importCost) || 0;
+    const gaps = Array.isArray(row?.gapItems) ? row.gapItems : [];
+    const gapLimit = Math.min(gaps.length, 80);
+    for (let j = 0; j < gapLimit; j++) {
+      const pid = String(gaps[j]?.pid || "").trim();
+      const qty = Number(gaps[j]?.qty) || 0;
+      if (!pid || qty <= 0) continue;
+      importCost += (importById.get(pid) || 0) * qty;
+    }
+    const profit = calculateProfitWithSystemFees(amount, importCost, systemFees);
+    totalProfit += profit;
+    if (dateKey) dailyProfit.set(dateKey, (dailyProfit.get(dateKey) || 0) + profit);
+  }
+  const dailyRevenue = (Array.isArray(facet.dailyRevenue) ? facet.dailyRevenue : []).map((row) => {
+    const date = String(row?.date || "");
+    return {
+      date,
+      amount: Number(row?.amount) || 0,
+      profit: dailyProfit.get(date) || 0
+    };
+  });
   return {
     totalOrdersInDb,
     dashboardOrdersCount: facet.dashboardOrdersCount?.[0]?.count || 0,
     ordersInRangeCount: kpi.ordersInRangeCount || 0,
     revenue: kpi.revenue || 0,
+    profit: totalProfit,
     newOrders: kpi.newOrders || 0,
     returns: kpi.returns || 0,
     cancelled: kpi.cancelled || 0,
@@ -82125,7 +82294,7 @@ async function getDashboardStatsFromStore(rangeStartKey, rangeEndKey) {
       shipping: Number(shipping) || 0,
       returnPending: Number(returnPending) || 0
     },
-    dailyRevenue: Array.isArray(facet.dailyRevenue) ? facet.dailyRevenue : [],
+    dailyRevenue,
     topProducts: Array.isArray(facet.topProducts) ? facet.topProducts.map((row) => ({
       productId: String(row._id || ""),
       quantitySold: Number(row.quantitySold) || 0,
@@ -104629,12 +104798,15 @@ function buildDashboardChart(dailyRevenue, range) {
   if (range.key === "this_year" || range.key === "this_quarter") {
     const cursor = new Date(range.start.getFullYear(), range.start.getMonth(), 1);
     const endMonth = new Date(range.end.getFullYear(), range.end.getMonth(), 1);
+    let monthGuard = 0;
     while (cursor <= endMonth) {
+      if (monthGuard++ >= 24) break;
       const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}`;
       buckets.set(key, {
         key,
         label: `T${cursor.getMonth() + 1}`,
-        amount: 0
+        amount: 0,
+        profit: 0
       });
       cursor.setMonth(cursor.getMonth() + 1);
     }
@@ -104643,17 +104815,23 @@ function buildDashboardChart(dailyRevenue, range) {
     cursor.setHours(0, 0, 0, 0);
     const endDay = new Date(range.end);
     endDay.setHours(0, 0, 0, 0);
+    let dayGuard = 0;
     while (cursor <= endDay) {
+      if (dayGuard++ >= 400) break;
       const key = toDateKey(cursor);
       buckets.set(key, {
         key,
         label: `${String(cursor.getDate()).padStart(2, "0")}/${String(cursor.getMonth() + 1).padStart(2, "0")}`,
-        amount: 0
+        amount: 0,
+        profit: 0
       });
       cursor.setDate(cursor.getDate() + 1);
     }
   }
-  for (const row of dailyRevenue) {
+  const rows = Array.isArray(dailyRevenue) ? dailyRevenue : [];
+  const rowLimit = Math.min(rows.length, 400);
+  for (let i2 = 0; i2 < rowLimit; i2++) {
+    const row = rows[i2];
     const dateStr = String(row?.date || "");
     let bucketKey = dateStr;
     if (range.key === "this_year" || range.key === "this_quarter") {
@@ -104662,6 +104840,7 @@ function buildDashboardChart(dailyRevenue, range) {
     const bucket = buckets.get(bucketKey);
     if (bucket) {
       bucket.amount += Number(row?.amount) || 0;
+      bucket.profit += Number(row?.profit) || 0;
     }
   }
   return Array.from(buckets.values());
@@ -104676,6 +104855,7 @@ var deps6 = {
     dashboardOrdersCount: 0,
     ordersInRangeCount: 0,
     revenue: 0,
+    profit: 0,
     newOrders: 0,
     returns: 0,
     cancelled: 0,
@@ -104684,7 +104864,8 @@ var deps6 = {
     topProducts: []
   }),
   getLowStockProductsFromStore: async () => [],
-  loadProductsByIdsFromStore: async () => []
+  loadProductsByIdsFromStore: async () => [],
+  loadChannelSettings: () => ({ systemFees: [] })
 };
 function initDashboardController(partial) {
   deps6 = { ...deps6, ...partial };
@@ -104703,7 +104884,7 @@ async function getDashboard(req, res) {
         startDate: startKey,
         endDate: endKey,
         meta: { totalOrdersInDb: 0, dashboardOrders: 0, ordersInRange: 0 },
-        kpi: { revenue: 0, newOrders: 0, returns: 0, cancelled: 0 },
+        kpi: { revenue: 0, profit: 0, newOrders: 0, returns: 0, cancelled: 0 },
         pendingOrders: {
           pendingApproval: 0,
           pendingPayment: 0,
@@ -104719,8 +104900,10 @@ async function getDashboard(req, res) {
       });
     }
     const LOW_STOCK_THRESHOLD = 5;
+    const channelSettings = deps6.loadChannelSettings() || {};
+    const systemFees = Array.isArray(channelSettings.systemFees) ? channelSettings.systemFees : [];
     const [stats, lowStockRows] = await Promise.all([
-      deps6.withLocalDbTimeout(deps6.getDashboardStatsFromStore(startKey, endKey), 8e3, "dashboard_stats"),
+      deps6.withLocalDbTimeout(deps6.getDashboardStatsFromStore(startKey, endKey, systemFees), 8e3, "dashboard_stats"),
       deps6.withLocalDbTimeout(
         deps6.getLowStockProductsFromStore(LOW_STOCK_THRESHOLD, 50),
         8e3,
@@ -104763,6 +104946,7 @@ async function getDashboard(req, res) {
       },
       kpi: {
         revenue: stats.revenue,
+        profit: stats.profit || 0,
         newOrders: stats.newOrders,
         returns: stats.returns,
         cancelled: stats.cancelled
@@ -135155,7 +135339,8 @@ async function startServer() {
     withLocalDbTimeout,
     getDashboardStatsFromStore,
     getLowStockProductsFromStore,
-    loadProductsByIdsFromStore
+    loadProductsByIdsFromStore,
+    loadChannelSettings
   });
   app.use("/api/dashboard", authMiddleware, dashboardRoutes);
   initOrdersService({

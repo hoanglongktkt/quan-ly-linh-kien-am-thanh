@@ -2335,6 +2335,7 @@ export default function App() {
               <Dashboard
                 orders={orders}
                 products={products}
+                systemFees={settings.systemFees ?? []}
                 rtsCount={ordersMeta.counters.rts}
                 onTabChange={(tab, options) => navigateTab(tab, options)}
                 onEditProductShortcut={handleEditProductShortcut}

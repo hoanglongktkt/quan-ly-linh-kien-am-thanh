@@ -20672,6 +20672,7 @@ async function startServer() {
     getDashboardStatsFromStore,
     getLowStockProductsFromStore,
     loadProductsByIdsFromStore,
+    loadChannelSettings,
   });
   app.use("/api/dashboard", authMiddleware, dashboardRoutes);
 

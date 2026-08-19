@@ -52,12 +52,15 @@ export function buildDashboardChart(dailyRevenue, range) {
   if (range.key === "this_year" || range.key === "this_quarter") {
     const cursor = new Date(range.start.getFullYear(), range.start.getMonth(), 1);
     const endMonth = new Date(range.end.getFullYear(), range.end.getMonth(), 1);
+    let monthGuard = 0;
     while (cursor <= endMonth) {
+      if (monthGuard++ >= 24) break;
       const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}`;
       buckets.set(key, {
         key,
         label: `T${cursor.getMonth() + 1}`,
         amount: 0,
+        profit: 0,
       });
       cursor.setMonth(cursor.getMonth() + 1);
     }
@@ -66,18 +69,24 @@ export function buildDashboardChart(dailyRevenue, range) {
     cursor.setHours(0, 0, 0, 0);
     const endDay = new Date(range.end);
     endDay.setHours(0, 0, 0, 0);
+    let dayGuard = 0;
     while (cursor <= endDay) {
+      if (dayGuard++ >= 400) break;
       const key = toDateKey(cursor);
       buckets.set(key, {
         key,
         label: `${String(cursor.getDate()).padStart(2, "0")}/${String(cursor.getMonth() + 1).padStart(2, "0")}`,
         amount: 0,
+        profit: 0,
       });
       cursor.setDate(cursor.getDate() + 1);
     }
   }
 
-  for (const row of dailyRevenue) {
+  const rows = Array.isArray(dailyRevenue) ? dailyRevenue : [];
+  const rowLimit = Math.min(rows.length, 400);
+  for (let i = 0; i < rowLimit; i++) {
+    const row = rows[i];
     const dateStr = String(row?.date || "");
     let bucketKey = dateStr;
     if (range.key === "this_year" || range.key === "this_quarter") {
@@ -86,6 +95,7 @@ export function buildDashboardChart(dailyRevenue, range) {
     const bucket = buckets.get(bucketKey);
     if (bucket) {
       bucket.amount += Number(row?.amount) || 0;
+      bucket.profit += Number(row?.profit) || 0;
     }
   }
 

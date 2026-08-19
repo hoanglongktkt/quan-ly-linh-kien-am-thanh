@@ -53,6 +53,8 @@ import {
   isUnshippedShopeeCancel,
   resolveShopeeSubStatus,
 } from "../utils/shopeeCancelReturnClassify.ts";
+import { calculateProfitWithSystemFees } from "../utils/profitCalculator.ts";
+import type { SystemFee } from "../types";
 
 export { isProductsDiskMode, getProductsDiskPath, setProductsDiskAppRoot, inheritShopeeLinkFromParent };
 export { getChannelListingsDiskPath };
@@ -8254,6 +8256,7 @@ export type DashboardStatsResult = {
   dashboardOrdersCount: number;
   ordersInRangeCount: number;
   revenue: number;
+  profit: number;
   newOrders: number;
   returns: number;
   cancelled: number;
@@ -8265,9 +8268,104 @@ export type DashboardStatsResult = {
     shipping: number;
     returnPending: number;
   };
-  dailyRevenue: Array<{ date: string; amount: number }>;
+  dailyRevenue: Array<{ date: string; amount: number; profit: number }>;
   topProducts: Array<{ productId: string; quantitySold: number; title: string | null; image: string | null }>;
 };
+
+/** Giá nhập 1 dòng hàng: importPrice / import_price / last_import_price / cost_price. */
+const DASHBOARD_ITEM_UNIT_IMPORT_EXPR = {
+  $max: [
+    0,
+    { $convert: { input: { $ifNull: ["$$this.importPrice", 0] }, to: "double", onError: 0, onNull: 0 } },
+    { $convert: { input: { $ifNull: ["$$this.import_price", 0] }, to: "double", onError: 0, onNull: 0 } },
+    { $convert: { input: { $ifNull: ["$$this.last_import_price", 0] }, to: "double", onError: 0, onNull: 0 } },
+    { $convert: { input: { $ifNull: ["$$this.cost_price", 0] }, to: "double", onError: 0, onNull: 0 } },
+  ],
+};
+
+const DASHBOARD_IMPORT_COST_EXPR = {
+  $reduce: {
+    input: { $ifNull: ["$data.items", []] },
+    initialValue: 0,
+    in: {
+      $add: [
+        "$$value",
+        {
+          $multiply: [
+            { $max: [0, { $convert: { input: { $ifNull: ["$$this.quantity", 0] }, to: "double", onError: 0, onNull: 0 } }] },
+            DASHBOARD_ITEM_UNIT_IMPORT_EXPR,
+          ],
+        },
+      ],
+    },
+  },
+};
+
+const DASHBOARD_GAP_ITEMS_EXPR = {
+  $map: {
+    input: {
+      $filter: {
+        input: { $ifNull: ["$data.items", []] },
+        as: "it",
+        cond: {
+          $and: [
+            { $gt: [{ $convert: { input: { $ifNull: ["$$it.quantity", 0] }, to: "double", onError: 0, onNull: 0 } }, 0] },
+            { $ne: [{ $ifNull: ["$$it.productId", ""] }, ""] },
+            {
+              $lte: [
+                {
+                  $max: [
+                    0,
+                    { $convert: { input: { $ifNull: ["$$it.importPrice", 0] }, to: "double", onError: 0, onNull: 0 } },
+                    { $convert: { input: { $ifNull: ["$$it.import_price", 0] }, to: "double", onError: 0, onNull: 0 } },
+                    { $convert: { input: { $ifNull: ["$$it.last_import_price", 0] }, to: "double", onError: 0, onNull: 0 } },
+                    { $convert: { input: { $ifNull: ["$$it.cost_price", 0] }, to: "double", onError: 0, onNull: 0 } },
+                  ],
+                },
+                0,
+              ],
+            },
+          ],
+        },
+      },
+    },
+    as: "g",
+    in: {
+      pid: { $toString: { $ifNull: ["$$g.productId", ""] } },
+      qty: { $max: [0, { $convert: { input: { $ifNull: ["$$g.quantity", 0] }, to: "double", onError: 0, onNull: 0 } }] },
+    },
+  },
+};
+
+const MAX_DASHBOARD_PROFIT_ORDERS = 50000;
+
+function catalogImportPriceById(products: any[]): Map<string, number> {
+  const map = new Map<string, number>();
+  const setPrice = (rawId: unknown, rawPrice: unknown) => {
+    const id = String(rawId || "").trim();
+    const price = Number(rawPrice);
+    if (!id || !Number.isFinite(price) || price <= 0) return;
+    if (!map.has(id)) map.set(id, price);
+  };
+  const walk = (row: any, depth: number) => {
+    if (!row || depth > 3) return;
+    const price = row.importPrice ?? row.import_price ?? row.last_import_price ?? row.cost_price;
+    setPrice(row.id, price);
+    setPrice(row.sku, price);
+    setPrice(row.shopeeItemId, price);
+    setPrice(row.shopeeModelId, price);
+    const children = Array.isArray(row.children)
+      ? row.children
+      : Array.isArray(row.children_models)
+        ? row.children_models
+        : [];
+    const limit = Math.min(children.length, 200);
+    for (let i = 0; i < limit; i++) walk(children[i], depth + 1);
+  };
+  const n = Math.min(Array.isArray(products) ? products.length : 0, 5000);
+  for (let i = 0; i < n; i++) walk(products[i], 0);
+  return map;
+}
 
 /**
  * Số liệu Dashboard tính TOÀN BỘ bằng MongoDB Aggregation ($facet, 1 round-trip) —
@@ -8282,6 +8380,7 @@ export type DashboardStatsResult = {
 export async function getDashboardStatsFromStore(
   rangeStartKey: string,
   rangeEndKey: string,
+  systemFees: SystemFee[] = [],
 ): Promise<DashboardStatsResult> {
   requireMongo();
 
@@ -8362,6 +8461,20 @@ export async function getDashboardStatsFromStore(
               { $group: { _id: "$_dateKey", amount: { $sum: "$data.totalAmount" } } },
               { $project: { _id: 0, date: "$_id", amount: 1 } },
             ],
+            revenueOrders: [
+              { $match: { _dateKey: { $gte: rangeStartKey, $lte: rangeEndKey } } },
+              { $match: { status: { $ne: "cancelled" }, "data.totalAmount": { $gt: 0 } } },
+              {
+                $project: {
+                  _id: 0,
+                  date: "$_dateKey",
+                  amount: { $ifNull: ["$data.totalAmount", 0] },
+                  importCost: DASHBOARD_IMPORT_COST_EXPR,
+                  gapItems: DASHBOARD_GAP_ITEMS_EXPR,
+                },
+              },
+              { $limit: MAX_DASHBOARD_PROFIT_ORDERS },
+            ],
             topProducts: [
               { $match: { _dateKey: { $gte: rangeStartKey, $lte: rangeEndKey } } },
               { $match: { status: { $ne: "cancelled" }, "data.totalAmount": { $gt: 0 } } },
@@ -8402,12 +8515,68 @@ export async function getDashboardStatsFromStore(
 
   const facet = facetResult?.[0] || {};
   const kpi = facet.kpi?.[0] || {};
+  const revenueOrders: Array<{
+    date?: string;
+    amount?: number;
+    importCost?: number;
+    gapItems?: Array<{ pid?: string; qty?: number }>;
+  }> = Array.isArray(facet.revenueOrders) ? facet.revenueOrders : [];
+
+  const gapIds: string[] = [];
+  const gapIdSeen = new Set<string>();
+  const gapScanLimit = Math.min(revenueOrders.length, MAX_DASHBOARD_PROFIT_ORDERS);
+  for (let i = 0; i < gapScanLimit; i++) {
+    const items = Array.isArray(revenueOrders[i]?.gapItems) ? revenueOrders[i].gapItems : [];
+    const itemLimit = Math.min(items.length, 80);
+    for (let j = 0; j < itemLimit; j++) {
+      const pid = String(items[j]?.pid || "").trim();
+      if (!pid || gapIdSeen.has(pid)) continue;
+      gapIdSeen.add(pid);
+      gapIds.push(pid);
+      if (gapIds.length >= 2000) break;
+    }
+    if (gapIds.length >= 2000) break;
+  }
+
+  const catalogRows = gapIds.length > 0 ? await loadProductsByIdsFromStore(gapIds, []) : [];
+  const importById = catalogImportPriceById(catalogRows);
+
+  const dailyProfit = new Map<string, number>();
+  let totalProfit = 0;
+  const profitLimit = Math.min(revenueOrders.length, MAX_DASHBOARD_PROFIT_ORDERS);
+  for (let i = 0; i < profitLimit; i++) {
+    const row = revenueOrders[i];
+    const dateKey = String(row?.date || "").slice(0, 10);
+    const amount = Number(row?.amount) || 0;
+    let importCost = Number(row?.importCost) || 0;
+    const gaps = Array.isArray(row?.gapItems) ? row.gapItems : [];
+    const gapLimit = Math.min(gaps.length, 80);
+    for (let j = 0; j < gapLimit; j++) {
+      const pid = String(gaps[j]?.pid || "").trim();
+      const qty = Number(gaps[j]?.qty) || 0;
+      if (!pid || qty <= 0) continue;
+      importCost += (importById.get(pid) || 0) * qty;
+    }
+    const profit = calculateProfitWithSystemFees(amount, importCost, systemFees);
+    totalProfit += profit;
+    if (dateKey) dailyProfit.set(dateKey, (dailyProfit.get(dateKey) || 0) + profit);
+  }
+
+  const dailyRevenue = (Array.isArray(facet.dailyRevenue) ? facet.dailyRevenue : []).map((row: any) => {
+    const date = String(row?.date || "");
+    return {
+      date,
+      amount: Number(row?.amount) || 0,
+      profit: dailyProfit.get(date) || 0,
+    };
+  });
 
   return {
     totalOrdersInDb,
     dashboardOrdersCount: facet.dashboardOrdersCount?.[0]?.count || 0,
     ordersInRangeCount: kpi.ordersInRangeCount || 0,
     revenue: kpi.revenue || 0,
+    profit: totalProfit,
     newOrders: kpi.newOrders || 0,
     returns: kpi.returns || 0,
     cancelled: kpi.cancelled || 0,
@@ -8419,7 +8588,7 @@ export async function getDashboardStatsFromStore(
       shipping: Number(shipping) || 0,
       returnPending: Number(returnPending) || 0,
     },
-    dailyRevenue: Array.isArray(facet.dailyRevenue) ? facet.dailyRevenue : [],
+    dailyRevenue,
     topProducts: Array.isArray(facet.topProducts)
       ? facet.topProducts.map((row: any) => ({
           productId: String(row._id || ""),
