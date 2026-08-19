@@ -8301,70 +8301,11 @@ const DASHBOARD_IMPORT_COST_EXPR = {
   },
 };
 
-const DASHBOARD_GAP_ITEMS_EXPR = {
-  $map: {
-    input: {
-      $filter: {
-        input: { $ifNull: ["$data.items", []] },
-        as: "it",
-        cond: {
-          $and: [
-            { $gt: [{ $convert: { input: { $ifNull: ["$$it.quantity", 0] }, to: "double", onError: 0, onNull: 0 } }, 0] },
-            { $ne: [{ $ifNull: ["$$it.productId", ""] }, ""] },
-            {
-              $lte: [
-                {
-                  $max: [
-                    0,
-                    { $convert: { input: { $ifNull: ["$$it.importPrice", 0] }, to: "double", onError: 0, onNull: 0 } },
-                    { $convert: { input: { $ifNull: ["$$it.import_price", 0] }, to: "double", onError: 0, onNull: 0 } },
-                    { $convert: { input: { $ifNull: ["$$it.last_import_price", 0] }, to: "double", onError: 0, onNull: 0 } },
-                    { $convert: { input: { $ifNull: ["$$it.cost_price", 0] }, to: "double", onError: 0, onNull: 0 } },
-                  ],
-                },
-                0,
-              ],
-            },
-          ],
-        },
-      },
-    },
-    as: "g",
-    in: {
-      pid: { $toString: { $ifNull: ["$$g.productId", ""] } },
-      qty: { $max: [0, { $convert: { input: { $ifNull: ["$$g.quantity", 0] }, to: "double", onError: 0, onNull: 0 } }] },
-    },
-  },
-};
+const MAX_DASHBOARD_PROFIT_DAYS = 400;
 
-const MAX_DASHBOARD_PROFIT_ORDERS = 50000;
-
-function catalogImportPriceById(products: any[]): Map<string, number> {
-  const map = new Map<string, number>();
-  const setPrice = (rawId: unknown, rawPrice: unknown) => {
-    const id = String(rawId || "").trim();
-    const price = Number(rawPrice);
-    if (!id || !Number.isFinite(price) || price <= 0) return;
-    if (!map.has(id)) map.set(id, price);
-  };
-  const walk = (row: any, depth: number) => {
-    if (!row || depth > 3) return;
-    const price = row.importPrice ?? row.import_price ?? row.last_import_price ?? row.cost_price;
-    setPrice(row.id, price);
-    setPrice(row.sku, price);
-    setPrice(row.shopeeItemId, price);
-    setPrice(row.shopeeModelId, price);
-    const children = Array.isArray(row.children)
-      ? row.children
-      : Array.isArray(row.children_models)
-        ? row.children_models
-        : [];
-    const limit = Math.min(children.length, 200);
-    for (let i = 0; i < limit; i++) walk(children[i], depth + 1);
-  };
-  const n = Math.min(Array.isArray(products) ? products.length : 0, 5000);
-  for (let i = 0; i < n; i++) walk(products[i], 0);
-  return map;
+function toSafeMoney(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
 }
 
 /**
@@ -8458,22 +8399,33 @@ export async function getDashboardStatsFromStore(
             dailyRevenue: [
               { $match: { _dateKey: { $gte: rangeStartKey, $lte: rangeEndKey } } },
               { $match: { status: { $ne: "cancelled" }, "data.totalAmount": { $gt: 0 } } },
-              { $group: { _id: "$_dateKey", amount: { $sum: "$data.totalAmount" } } },
-              { $project: { _id: 0, date: "$_id", amount: 1 } },
-            ],
-            revenueOrders: [
-              { $match: { _dateKey: { $gte: rangeStartKey, $lte: rangeEndKey } } },
-              { $match: { status: { $ne: "cancelled" }, "data.totalAmount": { $gt: 0 } } },
               {
-                $project: {
-                  _id: 0,
-                  date: "$_dateKey",
-                  amount: { $ifNull: ["$data.totalAmount", 0] },
-                  importCost: DASHBOARD_IMPORT_COST_EXPR,
-                  gapItems: DASHBOARD_GAP_ITEMS_EXPR,
+                $addFields: {
+                  _importCost: {
+                    $cond: [
+                      { $isArray: "$data.items" },
+                      DASHBOARD_IMPORT_COST_EXPR,
+                      0,
+                    ],
+                  },
                 },
               },
-              { $limit: MAX_DASHBOARD_PROFIT_ORDERS },
+              {
+                $group: {
+                  _id: "$_dateKey",
+                  amount: {
+                    $sum: {
+                      $convert: { input: { $ifNull: ["$data.totalAmount", 0] }, to: "double", onError: 0, onNull: 0 },
+                    },
+                  },
+                  importCost: {
+                    $sum: {
+                      $convert: { input: { $ifNull: ["$_importCost", 0] }, to: "double", onError: 0, onNull: 0 },
+                    },
+                  },
+                },
+              },
+              { $project: { _id: 0, date: "$_id", amount: 1, importCost: 1 } },
             ],
             topProducts: [
               { $match: { _dateKey: { $gte: rangeStartKey, $lte: rangeEndKey } } },
@@ -8515,68 +8467,35 @@ export async function getDashboardStatsFromStore(
 
   const facet = facetResult?.[0] || {};
   const kpi = facet.kpi?.[0] || {};
-  const revenueOrders: Array<{
-    date?: string;
-    amount?: number;
-    importCost?: number;
-    gapItems?: Array<{ pid?: string; qty?: number }>;
-  }> = Array.isArray(facet.revenueOrders) ? facet.revenueOrders : [];
+  const dailyRows: Array<{ date?: string; amount?: number; importCost?: number }> = Array.isArray(
+    facet.dailyRevenue,
+  )
+    ? facet.dailyRevenue
+    : [];
 
-  const gapIds: string[] = [];
-  const gapIdSeen = new Set<string>();
-  const gapScanLimit = Math.min(revenueOrders.length, MAX_DASHBOARD_PROFIT_ORDERS);
-  for (let i = 0; i < gapScanLimit; i++) {
-    const items = Array.isArray(revenueOrders[i]?.gapItems) ? revenueOrders[i].gapItems : [];
-    const itemLimit = Math.min(items.length, 80);
-    for (let j = 0; j < itemLimit; j++) {
-      const pid = String(items[j]?.pid || "").trim();
-      if (!pid || gapIdSeen.has(pid)) continue;
-      gapIdSeen.add(pid);
-      gapIds.push(pid);
-      if (gapIds.length >= 2000) break;
-    }
-    if (gapIds.length >= 2000) break;
-  }
-
-  const catalogRows = gapIds.length > 0 ? await loadProductsByIdsFromStore(gapIds, []) : [];
-  const importById = catalogImportPriceById(catalogRows);
-
-  const dailyProfit = new Map<string, number>();
   let totalProfit = 0;
-  const profitLimit = Math.min(revenueOrders.length, MAX_DASHBOARD_PROFIT_ORDERS);
-  for (let i = 0; i < profitLimit; i++) {
-    const row = revenueOrders[i];
-    const dateKey = String(row?.date || "").slice(0, 10);
-    const amount = Number(row?.amount) || 0;
-    let importCost = Number(row?.importCost) || 0;
-    const gaps = Array.isArray(row?.gapItems) ? row.gapItems : [];
-    const gapLimit = Math.min(gaps.length, 80);
-    for (let j = 0; j < gapLimit; j++) {
-      const pid = String(gaps[j]?.pid || "").trim();
-      const qty = Number(gaps[j]?.qty) || 0;
-      if (!pid || qty <= 0) continue;
-      importCost += (importById.get(pid) || 0) * qty;
-    }
-    const profit = calculateProfitWithSystemFees(amount, importCost, systemFees);
-    totalProfit += profit;
-    if (dateKey) dailyProfit.set(dateKey, (dailyProfit.get(dateKey) || 0) + profit);
+  const dailyLimit = Math.min(dailyRows.length, MAX_DASHBOARD_PROFIT_DAYS);
+  const dailyRevenue: Array<{ date: string; amount: number; profit: number }> = [];
+  for (let i = 0; i < dailyLimit; i++) {
+    const row = dailyRows[i];
+    const amount = toSafeMoney(row?.amount) || 0;
+    const importCost = toSafeMoney(row?.importCost) || 0;
+    const calculatedProfit = calculateProfitWithSystemFees(amount, importCost, systemFees);
+    const profit = Number.isFinite(Number(calculatedProfit)) ? Number(calculatedProfit) : 0;
+    totalProfit += profit || 0;
+    dailyRevenue.push({
+      date: String(row?.date || ""),
+      amount,
+      profit: profit || 0,
+    });
   }
-
-  const dailyRevenue = (Array.isArray(facet.dailyRevenue) ? facet.dailyRevenue : []).map((row: any) => {
-    const date = String(row?.date || "");
-    return {
-      date,
-      amount: Number(row?.amount) || 0,
-      profit: dailyProfit.get(date) || 0,
-    };
-  });
 
   return {
     totalOrdersInDb,
     dashboardOrdersCount: facet.dashboardOrdersCount?.[0]?.count || 0,
     ordersInRangeCount: kpi.ordersInRangeCount || 0,
-    revenue: kpi.revenue || 0,
-    profit: totalProfit,
+    revenue: toSafeMoney(kpi.revenue) || 0,
+    profit: Number.isFinite(totalProfit) ? totalProfit : 0,
     newOrders: kpi.newOrders || 0,
     returns: kpi.returns || 0,
     cancelled: kpi.cancelled || 0,

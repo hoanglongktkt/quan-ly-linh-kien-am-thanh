@@ -117,7 +117,7 @@ export async function getDashboard(req, res) {
       },
       kpi: {
         revenue: stats.revenue,
-        profit: stats.profit || 0,
+        profit: Number.isFinite(Number(stats.profit)) ? Number(stats.profit) : 0,
         newOrders: stats.newOrders,
         returns: stats.returns,
         cancelled: stats.cancelled,

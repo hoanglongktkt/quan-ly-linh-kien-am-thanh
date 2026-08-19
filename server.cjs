@@ -76168,24 +76168,26 @@ function countChannelListingsOnDisk() {
 // src/utils/profitCalculator.ts
 function toSafeAmount(value) {
   const n = Number(value);
-  if (!Number.isFinite(n) || n < 0) return 0;
-  return n;
+  return Number.isFinite(n) ? Math.max(0, n) : 0;
 }
 function isFeeActive(fee) {
-  return fee.active === true;
+  return fee?.active === true;
 }
 function calculateProfitWithSystemFees(sellPrice, importPrice, systemFees) {
-  const sell = toSafeAmount(sellPrice);
-  const cost = toSafeAmount(importPrice);
+  const safeSellPrice = Number(sellPrice) || 0;
+  const safeImportPrice = Number(importPrice) || 0;
+  const sell = toSafeAmount(safeSellPrice);
+  const cost = toSafeAmount(safeImportPrice);
   const fees = Array.isArray(systemFees) ? systemFees : [];
   const totalFees = fees.filter((fee) => isFeeActive(fee) && String(fee?.name || "").trim() && toSafeAmount(fee?.value) > 0).reduce((sum, fee) => {
-    const value = toSafeAmount(fee.value);
-    if (fee.calculationType === "percentage") {
+    const value = toSafeAmount(fee?.value);
+    if (fee?.calculationType === "percentage") {
       return sum + Math.round(sell * (value / 100));
     }
     return sum + Math.round(value);
   }, 0);
-  return sell - cost - totalFees;
+  const profit = sell - cost - totalFees;
+  return Number.isFinite(profit) ? profit : 0;
 }
 
 // src/db/mongoStore.ts
@@ -82052,64 +82054,10 @@ var DASHBOARD_IMPORT_COST_EXPR = {
     }
   }
 };
-var DASHBOARD_GAP_ITEMS_EXPR = {
-  $map: {
-    input: {
-      $filter: {
-        input: { $ifNull: ["$data.items", []] },
-        as: "it",
-        cond: {
-          $and: [
-            { $gt: [{ $convert: { input: { $ifNull: ["$$it.quantity", 0] }, to: "double", onError: 0, onNull: 0 } }, 0] },
-            { $ne: [{ $ifNull: ["$$it.productId", ""] }, ""] },
-            {
-              $lte: [
-                {
-                  $max: [
-                    0,
-                    { $convert: { input: { $ifNull: ["$$it.importPrice", 0] }, to: "double", onError: 0, onNull: 0 } },
-                    { $convert: { input: { $ifNull: ["$$it.import_price", 0] }, to: "double", onError: 0, onNull: 0 } },
-                    { $convert: { input: { $ifNull: ["$$it.last_import_price", 0] }, to: "double", onError: 0, onNull: 0 } },
-                    { $convert: { input: { $ifNull: ["$$it.cost_price", 0] }, to: "double", onError: 0, onNull: 0 } }
-                  ]
-                },
-                0
-              ]
-            }
-          ]
-        }
-      }
-    },
-    as: "g",
-    in: {
-      pid: { $toString: { $ifNull: ["$$g.productId", ""] } },
-      qty: { $max: [0, { $convert: { input: { $ifNull: ["$$g.quantity", 0] }, to: "double", onError: 0, onNull: 0 } }] }
-    }
-  }
-};
-var MAX_DASHBOARD_PROFIT_ORDERS = 5e4;
-function catalogImportPriceById(products) {
-  const map = /* @__PURE__ */ new Map();
-  const setPrice = (rawId, rawPrice) => {
-    const id = String(rawId || "").trim();
-    const price = Number(rawPrice);
-    if (!id || !Number.isFinite(price) || price <= 0) return;
-    if (!map.has(id)) map.set(id, price);
-  };
-  const walk = (row, depth) => {
-    if (!row || depth > 3) return;
-    const price = row.importPrice ?? row.import_price ?? row.last_import_price ?? row.cost_price;
-    setPrice(row.id, price);
-    setPrice(row.sku, price);
-    setPrice(row.shopeeItemId, price);
-    setPrice(row.shopeeModelId, price);
-    const children = Array.isArray(row.children) ? row.children : Array.isArray(row.children_models) ? row.children_models : [];
-    const limit = Math.min(children.length, 200);
-    for (let i2 = 0; i2 < limit; i2++) walk(children[i2], depth + 1);
-  };
-  const n = Math.min(Array.isArray(products) ? products.length : 0, 5e3);
-  for (let i2 = 0; i2 < n; i2++) walk(products[i2], 0);
-  return map;
+var MAX_DASHBOARD_PROFIT_DAYS = 400;
+function toSafeMoney(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
 }
 async function getDashboardStatsFromStore(rangeStartKey, rangeEndKey, systemFees = []) {
   requireMongo();
@@ -82180,22 +82128,33 @@ async function getDashboardStatsFromStore(rangeStartKey, rangeEndKey, systemFees
           dailyRevenue: [
             { $match: { _dateKey: { $gte: rangeStartKey, $lte: rangeEndKey } } },
             { $match: { status: { $ne: "cancelled" }, "data.totalAmount": { $gt: 0 } } },
-            { $group: { _id: "$_dateKey", amount: { $sum: "$data.totalAmount" } } },
-            { $project: { _id: 0, date: "$_id", amount: 1 } }
-          ],
-          revenueOrders: [
-            { $match: { _dateKey: { $gte: rangeStartKey, $lte: rangeEndKey } } },
-            { $match: { status: { $ne: "cancelled" }, "data.totalAmount": { $gt: 0 } } },
             {
-              $project: {
-                _id: 0,
-                date: "$_dateKey",
-                amount: { $ifNull: ["$data.totalAmount", 0] },
-                importCost: DASHBOARD_IMPORT_COST_EXPR,
-                gapItems: DASHBOARD_GAP_ITEMS_EXPR
+              $addFields: {
+                _importCost: {
+                  $cond: [
+                    { $isArray: "$data.items" },
+                    DASHBOARD_IMPORT_COST_EXPR,
+                    0
+                  ]
+                }
               }
             },
-            { $limit: MAX_DASHBOARD_PROFIT_ORDERS }
+            {
+              $group: {
+                _id: "$_dateKey",
+                amount: {
+                  $sum: {
+                    $convert: { input: { $ifNull: ["$data.totalAmount", 0] }, to: "double", onError: 0, onNull: 0 }
+                  }
+                },
+                importCost: {
+                  $sum: {
+                    $convert: { input: { $ifNull: ["$_importCost", 0] }, to: "double", onError: 0, onNull: 0 }
+                  }
+                }
+              }
+            },
+            { $project: { _id: 0, date: "$_id", amount: 1, importCost: 1 } }
           ],
           topProducts: [
             { $match: { _dateKey: { $gte: rangeStartKey, $lte: rangeEndKey } } },
@@ -82231,58 +82190,31 @@ async function getDashboardStatsFromStore(rangeStartKey, rangeEndKey, systemFees
   ]);
   const facet = facetResult?.[0] || {};
   const kpi = facet.kpi?.[0] || {};
-  const revenueOrders = Array.isArray(facet.revenueOrders) ? facet.revenueOrders : [];
-  const gapIds = [];
-  const gapIdSeen = /* @__PURE__ */ new Set();
-  const gapScanLimit = Math.min(revenueOrders.length, MAX_DASHBOARD_PROFIT_ORDERS);
-  for (let i2 = 0; i2 < gapScanLimit; i2++) {
-    const items = Array.isArray(revenueOrders[i2]?.gapItems) ? revenueOrders[i2].gapItems : [];
-    const itemLimit = Math.min(items.length, 80);
-    for (let j = 0; j < itemLimit; j++) {
-      const pid = String(items[j]?.pid || "").trim();
-      if (!pid || gapIdSeen.has(pid)) continue;
-      gapIdSeen.add(pid);
-      gapIds.push(pid);
-      if (gapIds.length >= 2e3) break;
-    }
-    if (gapIds.length >= 2e3) break;
-  }
-  const catalogRows = gapIds.length > 0 ? await loadProductsByIdsFromStore(gapIds, []) : [];
-  const importById = catalogImportPriceById(catalogRows);
-  const dailyProfit = /* @__PURE__ */ new Map();
+  const dailyRows = Array.isArray(
+    facet.dailyRevenue
+  ) ? facet.dailyRevenue : [];
   let totalProfit = 0;
-  const profitLimit = Math.min(revenueOrders.length, MAX_DASHBOARD_PROFIT_ORDERS);
-  for (let i2 = 0; i2 < profitLimit; i2++) {
-    const row = revenueOrders[i2];
-    const dateKey = String(row?.date || "").slice(0, 10);
-    const amount = Number(row?.amount) || 0;
-    let importCost = Number(row?.importCost) || 0;
-    const gaps = Array.isArray(row?.gapItems) ? row.gapItems : [];
-    const gapLimit = Math.min(gaps.length, 80);
-    for (let j = 0; j < gapLimit; j++) {
-      const pid = String(gaps[j]?.pid || "").trim();
-      const qty = Number(gaps[j]?.qty) || 0;
-      if (!pid || qty <= 0) continue;
-      importCost += (importById.get(pid) || 0) * qty;
-    }
-    const profit = calculateProfitWithSystemFees(amount, importCost, systemFees);
-    totalProfit += profit;
-    if (dateKey) dailyProfit.set(dateKey, (dailyProfit.get(dateKey) || 0) + profit);
+  const dailyLimit = Math.min(dailyRows.length, MAX_DASHBOARD_PROFIT_DAYS);
+  const dailyRevenue = [];
+  for (let i2 = 0; i2 < dailyLimit; i2++) {
+    const row = dailyRows[i2];
+    const amount = toSafeMoney(row?.amount) || 0;
+    const importCost = toSafeMoney(row?.importCost) || 0;
+    const calculatedProfit = calculateProfitWithSystemFees(amount, importCost, systemFees);
+    const profit = Number.isFinite(Number(calculatedProfit)) ? Number(calculatedProfit) : 0;
+    totalProfit += profit || 0;
+    dailyRevenue.push({
+      date: String(row?.date || ""),
+      amount,
+      profit: profit || 0
+    });
   }
-  const dailyRevenue = (Array.isArray(facet.dailyRevenue) ? facet.dailyRevenue : []).map((row) => {
-    const date = String(row?.date || "");
-    return {
-      date,
-      amount: Number(row?.amount) || 0,
-      profit: dailyProfit.get(date) || 0
-    };
-  });
   return {
     totalOrdersInDb,
     dashboardOrdersCount: facet.dashboardOrdersCount?.[0]?.count || 0,
     ordersInRangeCount: kpi.ordersInRangeCount || 0,
-    revenue: kpi.revenue || 0,
-    profit: totalProfit,
+    revenue: toSafeMoney(kpi.revenue) || 0,
+    profit: Number.isFinite(totalProfit) ? totalProfit : 0,
     newOrders: kpi.newOrders || 0,
     returns: kpi.returns || 0,
     cancelled: kpi.cancelled || 0,
@@ -104840,7 +104772,8 @@ function buildDashboardChart(dailyRevenue, range) {
     const bucket = buckets.get(bucketKey);
     if (bucket) {
       bucket.amount += Number(row?.amount) || 0;
-      bucket.profit += Number(row?.profit) || 0;
+      const dayProfit = Number(row?.profit);
+      bucket.profit += Number.isFinite(dayProfit) ? dayProfit : 0;
     }
   }
   return Array.from(buckets.values());
@@ -104946,7 +104879,7 @@ async function getDashboard(req, res) {
       },
       kpi: {
         revenue: stats.revenue,
-        profit: stats.profit || 0,
+        profit: Number.isFinite(Number(stats.profit)) ? Number(stats.profit) : 0,
         newOrders: stats.newOrders,
         returns: stats.returns,
         cancelled: stats.cancelled

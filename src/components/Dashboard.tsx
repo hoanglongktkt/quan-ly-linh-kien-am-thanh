@@ -92,7 +92,7 @@ function normalizeDashboardPayload(raw: Partial<DashboardData> | null | undefine
     dateRangeLabel: String(raw.dateRangeLabel || '7 ngày qua'),
     kpi: {
       revenue: Number(kpi.revenue) || 0,
-      profit: Number(kpi.profit) || 0,
+      profit: Number.isFinite(Number(kpi.profit)) ? Number(kpi.profit) : 0,
       newOrders: Number(kpi.newOrders) || 0,
       returns: Number(kpi.returns) || 0,
       cancelled: Number(kpi.cancelled) || 0,
@@ -110,7 +110,7 @@ function normalizeDashboardPayload(raw: Partial<DashboardData> | null | undefine
           key: String(day?.key || ''),
           label: String(day?.label || ''),
           amount: Number(day?.amount) || 0,
-          profit: Number(day?.profit) || 0,
+          profit: Number.isFinite(Number(day?.profit)) ? Number(day.profit) : 0,
         }))
       : [],
     topProducts: Array.isArray(raw.topProducts) ? raw.topProducts : [],
@@ -374,12 +374,11 @@ export default function Dashboard({
     () => (data?.chart || []).reduce((sum, day) => sum + (Number(day.amount) || 0), 0),
     [data?.chart],
   );
-  const chartTotalProfit = useMemo(
-    () =>
-      Number(data?.kpi?.profit) ||
-      (data?.chart || []).reduce((sum, day) => sum + (Number(day.profit) || 0), 0),
-    [data?.kpi?.profit, data?.chart],
-  );
+  const chartTotalProfit = useMemo(() => {
+    const fromKpi = Number(data?.kpi?.profit);
+    if (Number.isFinite(fromKpi)) return fromKpi;
+    return (data?.chart || []).reduce((sum, day) => sum + (Number(day.profit) || 0), 0);
+  }, [data?.kpi?.profit, data?.chart]);
 
   const kpiCards = data
     ? [

@@ -95,7 +95,8 @@ export function buildDashboardChart(dailyRevenue, range) {
     const bucket = buckets.get(bucketKey);
     if (bucket) {
       bucket.amount += Number(row?.amount) || 0;
-      bucket.profit += Number(row?.profit) || 0;
+      const dayProfit = Number(row?.profit);
+      bucket.profit += Number.isFinite(dayProfit) ? dayProfit : 0;
     }
   }
 
