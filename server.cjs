@@ -79106,6 +79106,50 @@ function readPrintedFlag(top, nested) {
   if (fromTop != null) return fromTop;
   return pick(nested) === true;
 }
+function mapShopeeItemListForPrint(rawList) {
+  if (!Array.isArray(rawList) || rawList.length === 0) return [];
+  const out = [];
+  for (const it of rawList) {
+    if (!it || typeof it !== "object") continue;
+    const row = it;
+    const imgInfo = row.image_info && typeof row.image_info === "object" ? row.image_info : {};
+    const qty = Math.max(
+      0,
+      Number(row.model_quantity_purchased ?? row.quantity ?? row.qty) || 0
+    );
+    out.push({
+      productId: String(row.item_id ?? row.productId ?? row.item_sku ?? ""),
+      productTitle: String(
+        row.item_name ?? row.productTitle ?? row.name ?? row.model_name ?? ""
+      ),
+      productImage: String(
+        imgInfo.image_url ?? row.productImage ?? row.image_url ?? row.image ?? ""
+      ).trim() || void 0,
+      quantity: qty,
+      price: Number(row.model_discounted_price ?? row.item_price ?? row.price) || 0,
+      originalPrice: Number(row.model_original_price ?? row.originalPrice) || void 0,
+      modelId: row.model_id != null ? String(row.model_id) : void 0,
+      modelSku: row.model_sku != null ? String(row.model_sku) : void 0,
+      modelName: row.model_name != null ? String(row.model_name) : void 0
+    });
+  }
+  return out;
+}
+function recipientAddressFromData(data) {
+  const addr = data?.recipient_address && typeof data.recipient_address === "object" ? data.recipient_address : {};
+  const name = String(addr.name || addr.recipient_name || "").trim();
+  const phone = String(addr.phone || addr.phone_number || "").trim();
+  const address = [
+    addr.full_address,
+    addr.address,
+    addr.district,
+    addr.city,
+    addr.state,
+    addr.zipcode,
+    addr.country
+  ].map((p) => String(p || "").trim()).filter(Boolean).join(", ");
+  return { name, phone, address };
+}
 function hydrateOrderFromMongoDoc(d) {
   if (!d) return null;
   const data = d?.data && typeof d.data === "object" ? { ...d.data } : {};
@@ -79132,14 +79176,15 @@ function hydrateOrderFromMongoDoc(d) {
     data.local_status || data.localStatus || data.internal_status || ""
   ).toUpperCase();
   const localStored = localRaw === "CANCELLED_STORED" || localRaw === "RETURN_RECEIVED" ? localRaw : handed ? "HANDED_OVER" : localRaw === "NONE" || localRaw === "HANDED_OVER" ? leftHandoverPhase ? "NONE" : localRaw : "";
+  const recipient = recipientAddressFromData(data);
   const customerNameHydrated = String(
-    d?.customerName || data.customerName || data.customer_name || ""
+    d?.customerName || data.customerName || data.customer_name || data.buyer_username || recipient.name || ""
   ).trim();
   const customerPhoneHydrated = String(
-    d?.customerPhone || data.customerPhone || data.customer_phone || ""
+    d?.customerPhone || data.customerPhone || data.customer_phone || recipient.phone || ""
   ).trim();
   const customerAddressHydrated = String(
-    d?.customerAddress || data.customerAddress || data.customer_address || ""
+    d?.customerAddress || data.customerAddress || data.customer_address || recipient.address || ""
   ).trim();
   const customerEmailHydrated = String(
     d?.customerEmail || data.customerEmail || data.customer_email || ""
@@ -79153,6 +79198,16 @@ function hydrateOrderFromMongoDoc(d) {
     status: d?.status != null ? d.status : data.status,
     shopee_order_status: rawStatus || data.shopee_order_status || void 0,
     shopId: d?.shopId != null ? d.shopId : data.shopId,
+    shopName: d?.shopName || data.shopName || void 0,
+    items: Array.isArray(data.items) && data.items.length > 0 ? data.items : mapShopeeItemListForPrint(data.item_list),
+    item_list: Array.isArray(data.item_list) ? data.item_list : void 0,
+    package_list: Array.isArray(data.package_list) ? data.package_list : void 0,
+    recipient_address: data.recipient_address || void 0,
+    buyer_username: data.buyer_username || void 0,
+    barcode: data.barcode || void 0,
+    note: data.note || void 0,
+    scan_code: data.scan_code || void 0,
+    internalTrackingCode: d?.internalTrackingCode || data.internalTrackingCode || void 0,
     // Customer — luôn surface root cho FE (camelCase + snake_case)
     customerName: customerNameHydrated || data.customerName || void 0,
     customerPhone: customerPhoneHydrated || data.customerPhone || void 0,
@@ -79178,21 +79233,23 @@ function hydrateOrderFromMongoDoc(d) {
     is_handed_over_to_carrier: handed,
     is_handed_over_to_courier: handed,
     isPrinted: readPrintedFlag(d?.isPrinted, data.isPrinted),
-    hasPdf: d?.hasPdf != null ? Boolean(d.hasPdf) : Boolean(data.hasPdf ?? data.readyToPrint) || Boolean(
-      String(
-        data.waybill_url || data.labelUrl || data.pdfUrl || data.pdfFilename || ""
-      ).trim()
-    ),
-    readyToPrint: d?.hasPdf != null ? Boolean(d.hasPdf) : Boolean(data.readyToPrint ?? data.hasPdf) || Boolean(
-      String(
-        data.waybill_url || data.labelUrl || data.pdfUrl || data.pdfFilename || ""
-      ).trim()
-    ),
+    hasPdf: (() => {
+      const pdfHint = String(
+        d?.waybill_url || d?.labelUrl || d?.pdfUrl || d?.pdfFilename || data.waybill_url || data.labelUrl || data.pdfUrl || data.pdfFilename || ""
+      ).trim();
+      return d?.hasPdf === true || data.hasPdf === true || d?.readyToPrint === true || data.readyToPrint === true || Boolean(pdfHint);
+    })(),
+    readyToPrint: (() => {
+      const pdfHint = String(
+        d?.waybill_url || d?.labelUrl || d?.pdfUrl || d?.pdfFilename || data.waybill_url || data.labelUrl || data.pdfUrl || data.pdfFilename || ""
+      ).trim();
+      return d?.readyToPrint === true || data.readyToPrint === true || d?.hasPdf === true || data.hasPdf === true || Boolean(pdfHint);
+    })(),
     isPrepared: d?.isPrepared != null ? Boolean(d.isPrepared) : Boolean(data.isPrepared),
     waybill_url: d?.waybill_url || data.waybill_url || data.labelUrl || data.pdfUrl || void 0,
-    labelUrl: data.labelUrl || data.pdfUrl || data.waybill_url || d?.waybill_url || void 0,
-    pdfUrl: data.pdfUrl || data.labelUrl || data.waybill_url || void 0,
-    pdfFilename: data.pdfFilename || void 0,
+    labelUrl: d?.labelUrl || data.labelUrl || data.pdfUrl || data.waybill_url || d?.waybill_url || void 0,
+    pdfUrl: d?.pdfUrl || data.pdfUrl || data.labelUrl || data.waybill_url || void 0,
+    pdfFilename: d?.pdfFilename || data.pdfFilename || void 0,
     ...localStored ? {
       local_status: localStored,
       localStatus: localStored,
@@ -80096,6 +80153,7 @@ var ORDER_LIST_UI_PROJECTION = {
   status: 1,
   shopee_order_status: 1,
   shopId: 1,
+  shopName: 1,
   tracking_no: 1,
   trackingNumber: 1,
   return_tracking_no: 1,
@@ -80104,11 +80162,17 @@ var ORDER_LIST_UI_PROJECTION = {
   is_return: 1,
   shipping_carrier: 1,
   packageNumber: 1,
+  package_number: 1,
+  internalTrackingCode: 1,
   is_handed_over: 1,
   isPrinted: 1,
   hasPdf: 1,
+  readyToPrint: 1,
   isPrepared: 1,
   waybill_url: 1,
+  labelUrl: 1,
+  pdfUrl: 1,
+  pdfFilename: 1,
   channel: 1,
   customerName: 1,
   customerPhone: 1,
@@ -80122,13 +80186,32 @@ var ORDER_LIST_UI_PROJECTION = {
   last_shopee_update_at: 1,
   last_synced_at: 1,
   create_time: 1,
-  "data.items": 1,
-  "data.date": 1,
+  "data.id": 1,
+  "data.orderSn": 1,
+  "data.channel": 1,
+  "data.shopId": 1,
   "data.shopName": 1,
+  "data.items": 1,
+  "data.item_list": 1,
+  "data.date": 1,
   "data.totalAmount": 1,
+  "data.recipient_address": 1,
+  "data.buyer_username": 1,
+  "data.barcode": 1,
+  "data.note": 1,
+  "data.scan_code": 1,
+  "data.package_list": 1,
+  "data.package_number": 1,
+  "data.packageNumber": 1,
+  "data.tracking_no": 1,
+  "data.trackingNumber": 1,
+  "data.internalTrackingCode": 1,
   "data.labelUrl": 1,
   "data.pdfUrl": 1,
   "data.pdfFilename": 1,
+  "data.waybill_url": 1,
+  "data.hasPdf": 1,
+  "data.readyToPrint": 1,
   "data.escrowAmount": 1
 };
 function facetAnd(match2) {

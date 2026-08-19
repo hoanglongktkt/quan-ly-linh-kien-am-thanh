@@ -4267,6 +4267,66 @@ function readPrintedFlag(top: unknown, nested: unknown): boolean {
   return pick(nested) === true;
 }
 
+/** Map Shopee `item_list` → `items` UI khi `data.items` bị gọt / rỗng. */
+function mapShopeeItemListForPrint(rawList: unknown): any[] {
+  if (!Array.isArray(rawList) || rawList.length === 0) return [];
+  const out: any[] = [];
+  for (const it of rawList) {
+    if (!it || typeof it !== "object") continue;
+    const row = it as Record<string, unknown>;
+    const imgInfo =
+      row.image_info && typeof row.image_info === "object"
+        ? (row.image_info as Record<string, unknown>)
+        : {};
+    const qty = Math.max(
+      0,
+      Number(row.model_quantity_purchased ?? row.quantity ?? row.qty) || 0,
+    );
+    out.push({
+      productId: String(row.item_id ?? row.productId ?? row.item_sku ?? ""),
+      productTitle: String(
+        row.item_name ?? row.productTitle ?? row.name ?? row.model_name ?? "",
+      ),
+      productImage: String(
+        imgInfo.image_url ?? row.productImage ?? row.image_url ?? row.image ?? "",
+      ).trim() || undefined,
+      quantity: qty,
+      price: Number(row.model_discounted_price ?? row.item_price ?? row.price) || 0,
+      originalPrice: Number(row.model_original_price ?? row.originalPrice) || undefined,
+      modelId: row.model_id != null ? String(row.model_id) : undefined,
+      modelSku: row.model_sku != null ? String(row.model_sku) : undefined,
+      modelName: row.model_name != null ? String(row.model_name) : undefined,
+    });
+  }
+  return out;
+}
+
+function recipientAddressFromData(data: any): {
+  name: string;
+  phone: string;
+  address: string;
+} {
+  const addr =
+    data?.recipient_address && typeof data.recipient_address === "object"
+      ? data.recipient_address
+      : {};
+  const name = String(addr.name || addr.recipient_name || "").trim();
+  const phone = String(addr.phone || addr.phone_number || "").trim();
+  const address = [
+    addr.full_address,
+    addr.address,
+    addr.district,
+    addr.city,
+    addr.state,
+    addr.zipcode,
+    addr.country,
+  ]
+    .map((p) => String(p || "").trim())
+    .filter(Boolean)
+    .join(", ");
+  return { name, phone, address };
+}
+
 function hydrateOrderFromMongoDoc(d: any): any | null {
   if (!d) return null;
   const data = d?.data && typeof d.data === "object" ? { ...d.data } : {};
@@ -4338,23 +4398,28 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
             ? "NONE"
             : localRaw
           : "";
-  // Customer fields — ưu tiên root (woo fix) → data.* → snake_case alias
+  // Customer — root / data.* / Shopee recipient_address (In Đơn)
+  const recipient = recipientAddressFromData(data);
   const customerNameHydrated = String(
     d?.customerName ||
       data.customerName ||
       data.customer_name ||
+      data.buyer_username ||
+      recipient.name ||
       "",
   ).trim();
   const customerPhoneHydrated = String(
     d?.customerPhone ||
       data.customerPhone ||
       data.customer_phone ||
+      recipient.phone ||
       "",
   ).trim();
   const customerAddressHydrated = String(
     d?.customerAddress ||
       data.customerAddress ||
       data.customer_address ||
+      recipient.address ||
       "",
   ).trim();
   const customerEmailHydrated = String(
@@ -4383,6 +4448,19 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
     status: d?.status != null ? d.status : data.status,
     shopee_order_status: rawStatus || data.shopee_order_status || undefined,
     shopId: d?.shopId != null ? d.shopId : data.shopId,
+    shopName: d?.shopName || data.shopName || undefined,
+    items: Array.isArray(data.items) && data.items.length > 0
+      ? data.items
+      : mapShopeeItemListForPrint(data.item_list),
+    item_list: Array.isArray(data.item_list) ? data.item_list : undefined,
+    package_list: Array.isArray(data.package_list) ? data.package_list : undefined,
+    recipient_address: data.recipient_address || undefined,
+    buyer_username: data.buyer_username || undefined,
+    barcode: data.barcode || undefined,
+    note: data.note || undefined,
+    scan_code: data.scan_code || undefined,
+    internalTrackingCode:
+      d?.internalTrackingCode || data.internalTrackingCode || undefined,
     // Customer — luôn surface root cho FE (camelCase + snake_case)
     customerName: customerNameHydrated || data.customerName || undefined,
     customerPhone: customerPhoneHydrated || data.customerPhone || undefined,
@@ -4411,31 +4489,53 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
     is_handed_over_to_carrier: handed,
     is_handed_over_to_courier: handed,
     isPrinted: readPrintedFlag(d?.isPrinted, data.isPrinted),
-    hasPdf:
-      d?.hasPdf != null
-        ? Boolean(d.hasPdf)
-        : Boolean(data.hasPdf ?? data.readyToPrint) ||
-          Boolean(
-            String(
-              data.waybill_url || data.labelUrl || data.pdfUrl || data.pdfFilename || "",
-            ).trim(),
-          ),
-    readyToPrint:
-      d?.hasPdf != null
-        ? Boolean(d.hasPdf)
-        : Boolean(data.readyToPrint ?? data.hasPdf) ||
-          Boolean(
-            String(
-              data.waybill_url || data.labelUrl || data.pdfUrl || data.pdfFilename || "",
-            ).trim(),
-          ),
+    hasPdf: (() => {
+      const pdfHint = String(
+        d?.waybill_url ||
+          d?.labelUrl ||
+          d?.pdfUrl ||
+          d?.pdfFilename ||
+          data.waybill_url ||
+          data.labelUrl ||
+          data.pdfUrl ||
+          data.pdfFilename ||
+          "",
+      ).trim();
+      return (
+        d?.hasPdf === true ||
+        data.hasPdf === true ||
+        d?.readyToPrint === true ||
+        data.readyToPrint === true ||
+        Boolean(pdfHint)
+      );
+    })(),
+    readyToPrint: (() => {
+      const pdfHint = String(
+        d?.waybill_url ||
+          d?.labelUrl ||
+          d?.pdfUrl ||
+          d?.pdfFilename ||
+          data.waybill_url ||
+          data.labelUrl ||
+          data.pdfUrl ||
+          data.pdfFilename ||
+          "",
+      ).trim();
+      return (
+        d?.readyToPrint === true ||
+        data.readyToPrint === true ||
+        d?.hasPdf === true ||
+        data.hasPdf === true ||
+        Boolean(pdfHint)
+      );
+    })(),
     isPrepared: d?.isPrepared != null ? Boolean(d.isPrepared) : Boolean(data.isPrepared),
     waybill_url:
       d?.waybill_url || data.waybill_url || data.labelUrl || data.pdfUrl || undefined,
     labelUrl:
-      data.labelUrl || data.pdfUrl || data.waybill_url || d?.waybill_url || undefined,
-    pdfUrl: data.pdfUrl || data.labelUrl || data.waybill_url || undefined,
-    pdfFilename: data.pdfFilename || undefined,
+      d?.labelUrl || data.labelUrl || data.pdfUrl || data.waybill_url || d?.waybill_url || undefined,
+    pdfUrl: d?.pdfUrl || data.pdfUrl || data.labelUrl || data.waybill_url || undefined,
+    pdfFilename: d?.pdfFilename || data.pdfFilename || undefined,
     ...(localStored
       ? {
           local_status: localStored,
@@ -5625,12 +5725,14 @@ function tabIndexFilter(tab?: string, kind?: string): Record<string, unknown> {
   }
 }
 
+/** Field list/UI + In Đơn — CẤM `data: 1` (blob Shopee đầy đủ). */
 const ORDER_LIST_UI_PROJECTION: Record<string, 1> = {
   _id: 1,
   orderSn: 1,
   status: 1,
   shopee_order_status: 1,
   shopId: 1,
+  shopName: 1,
   tracking_no: 1,
   trackingNumber: 1,
   return_tracking_no: 1,
@@ -5639,11 +5741,17 @@ const ORDER_LIST_UI_PROJECTION: Record<string, 1> = {
   is_return: 1,
   shipping_carrier: 1,
   packageNumber: 1,
+  package_number: 1,
+  internalTrackingCode: 1,
   is_handed_over: 1,
   isPrinted: 1,
   hasPdf: 1,
+  readyToPrint: 1,
   isPrepared: 1,
   waybill_url: 1,
+  labelUrl: 1,
+  pdfUrl: 1,
+  pdfFilename: 1,
   channel: 1,
   customerName: 1,
   customerPhone: 1,
@@ -5657,13 +5765,32 @@ const ORDER_LIST_UI_PROJECTION: Record<string, 1> = {
   last_shopee_update_at: 1,
   last_synced_at: 1,
   create_time: 1,
-  "data.items": 1,
-  "data.date": 1,
+  "data.id": 1,
+  "data.orderSn": 1,
+  "data.channel": 1,
+  "data.shopId": 1,
   "data.shopName": 1,
+  "data.items": 1,
+  "data.item_list": 1,
+  "data.date": 1,
   "data.totalAmount": 1,
+  "data.recipient_address": 1,
+  "data.buyer_username": 1,
+  "data.barcode": 1,
+  "data.note": 1,
+  "data.scan_code": 1,
+  "data.package_list": 1,
+  "data.package_number": 1,
+  "data.packageNumber": 1,
+  "data.tracking_no": 1,
+  "data.trackingNumber": 1,
+  "data.internalTrackingCode": 1,
   "data.labelUrl": 1,
   "data.pdfUrl": 1,
   "data.pdfFilename": 1,
+  "data.waybill_url": 1,
+  "data.hasPdf": 1,
+  "data.readyToPrint": 1,
   "data.escrowAmount": 1,
 };
 

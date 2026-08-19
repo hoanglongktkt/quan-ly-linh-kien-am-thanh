@@ -150,7 +150,25 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
       if (ms > 0) return new Date(ms).toISOString();
       return String(raw.date || '').trim();
     })(),
-    items: Array.isArray(raw.items) ? raw.items : [],
+    items: Array.isArray(raw.items) && raw.items.length > 0
+      ? raw.items
+      : (() => {
+          const list = (raw as any).item_list;
+          if (!Array.isArray(list) || list.length === 0) return [];
+          return list.map((it: any) => ({
+            productId: String(it?.item_id ?? it?.productId ?? ''),
+            productTitle: String(it?.item_name ?? it?.productTitle ?? it?.name ?? ''),
+            productImage: String(
+              it?.image_info?.image_url ?? it?.productImage ?? it?.image_url ?? '',
+            ).trim() || undefined,
+            quantity: Math.max(0, Number(it?.model_quantity_purchased ?? it?.quantity) || 0),
+            price: Number(it?.model_discounted_price ?? it?.item_price ?? it?.price) || 0,
+            originalPrice: Number(it?.model_original_price ?? it?.originalPrice) || undefined,
+            modelId: it?.model_id != null ? String(it.model_id) : undefined,
+            modelSku: it?.model_sku != null ? String(it.model_sku) : undefined,
+            modelName: it?.model_name != null ? String(it.model_name) : undefined,
+          }));
+        })(),
     // Mã hoàn trả không phải vận đơn giao đi. Dùng nó ở đây sẽ làm đơn hoàn bị
     // phân loại nhầm là đã xử lý/đang giao.
     trackingNumber: raw.trackingNumber || raw.tracking_no
@@ -244,16 +262,34 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     hasPdf: Boolean(
       raw.hasPdf ??
         raw.readyToPrint ??
+        (raw as any).waybill_url ??
         (raw.labelUrl || raw.pdfUrl || raw.pdfFilename),
     ),
     readyToPrint: Boolean(
       raw.readyToPrint ??
         raw.hasPdf ??
+        (raw as any).waybill_url ??
         (raw.labelUrl || raw.pdfUrl || raw.pdfFilename),
     ),
-    labelUrl: raw.labelUrl ? String(raw.labelUrl) : undefined,
-    pdfUrl: raw.pdfUrl ? String(raw.pdfUrl) : raw.labelUrl ? String(raw.labelUrl) : undefined,
+    labelUrl: raw.labelUrl
+      ? String(raw.labelUrl)
+      : (raw as any).waybill_url
+        ? String((raw as any).waybill_url)
+        : undefined,
+    pdfUrl: raw.pdfUrl
+      ? String(raw.pdfUrl)
+      : raw.labelUrl
+        ? String(raw.labelUrl)
+        : (raw as any).waybill_url
+          ? String((raw as any).waybill_url)
+          : undefined,
     pdfFilename: raw.pdfFilename ? String(raw.pdfFilename) : undefined,
+    waybill_url: (() => {
+      const v = String(
+        (raw as any).waybill_url || raw.labelUrl || raw.pdfUrl || '',
+      ).trim();
+      return v || undefined;
+    })(),
     is_handed_over: (() => {
       const rawSt = String(raw.shopee_order_status || '').toUpperCase();
       if (
@@ -404,14 +440,25 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     notes: raw.notes ? String(raw.notes) : undefined,
     // ── WooCommerce / Web customer info (BẮT BUỘC khôi phục) ──
     customerName: (() => {
+      const addr = (raw as any).recipient_address;
       const v = String(
-        raw.customerName || (raw as any).customer_name || '',
+        raw.customerName ||
+          (raw as any).customer_name ||
+          (raw as any).buyer_username ||
+          addr?.name ||
+          addr?.recipient_name ||
+          '',
       ).trim();
       return v || undefined;
     })(),
     customerPhone: (() => {
+      const addr = (raw as any).recipient_address;
       const v = String(
-        raw.customerPhone || (raw as any).customer_phone || '',
+        raw.customerPhone ||
+          (raw as any).customer_phone ||
+          addr?.phone ||
+          addr?.phone_number ||
+          '',
       ).trim();
       return v || undefined;
     })(),
@@ -422,8 +469,15 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
       return v || undefined;
     })(),
     customerAddress: (() => {
+      const addr = (raw as any).recipient_address;
+      const fromAddr = addr
+        ? [addr.full_address, addr.address, addr.district, addr.city, addr.state]
+            .map((p) => String(p || '').trim())
+            .filter(Boolean)
+            .join(', ')
+        : '';
       const v = String(
-        raw.customerAddress || (raw as any).customer_address || '',
+        raw.customerAddress || (raw as any).customer_address || fromAddr || '',
       ).trim();
       return v || undefined;
     })(),
