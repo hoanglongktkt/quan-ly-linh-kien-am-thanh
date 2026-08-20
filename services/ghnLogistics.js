@@ -559,4 +559,256 @@ export async function testGhnConnection({ token, shopId } = {}) {
   }
 }
 
+function uniqueGhnShopIds(preferred, creds) {
+  const out = [];
+  const push = (value) => {
+    const s = String(value || "").trim();
+    if (s && !out.includes(s)) out.push(s);
+  };
+  push(preferred);
+  push(creds?.shopId);
+  push(creds?.ghnShopId1);
+  push(creds?.ghnShopId2);
+  push(creds?.ghnShopId3);
+  const extra = Array.isArray(creds?.ghnShopIds) ? creds.ghnShopIds : [];
+  for (let i = 0; i < extra.length && i < 3; i += 1) push(extra[i]);
+  return out.slice(0, 3);
+}
+
+function ghnResultMessage(result) {
+  const data = result?.json?.data;
+  const rowMsg = Array.isArray(data)
+    ? String(data[0]?.message || data[0]?.msg || "").trim()
+    : String(data?.message || "").trim();
+  return String(
+    result?.json?.message ||
+      result?.json?.code_message ||
+      result?.json?.msg ||
+      rowMsg ||
+      "",
+  ).trim();
+}
+
+function isGhnAlreadyCancelledMessage(msg) {
+  return /đã hủy|da huy|already cancel|canceled|cancelled/i.test(String(msg || ""));
+}
+
+function isGhnNotFoundMessage(msg, httpStatus) {
+  if (Number(httpStatus) === 404) return true;
+  return /không tồn tại|khong ton tai|not found|not exist|order does not exist/i.test(
+    String(msg || ""),
+  );
+}
+
+function classifyGhnTransportError(err) {
+  const name = String(err?.name || "");
+  const code = String(err?.code || "");
+  const msg = String(err?.message || "");
+  if (name === "AbortError" || code === "ETIMEDOUT" || /timeout/i.test(msg)) {
+    return new Error("Không kết nối được máy chủ GHN (timeout). Thử lại sau.");
+  }
+  if (!err?.response && /fetch|network|ECONN|ENOTFOUND|EAI_AGAIN/i.test(`${code} ${msg}`)) {
+    return new Error("Không kết nối được máy chủ GHN. Kiểm tra mạng rồi thử lại.");
+  }
+  return err instanceof Error ? err : new Error(msg || "Lỗi GHN không xác định");
+}
+
+/**
+ * Map trạng thái GHN → trạng thái nội bộ đơn ngoại sàn.
+ * ready_to_pick / picking → Đã tạo đơn
+ * cancel → Đã hủy
+ * delivering / transporting → Đang giao
+ * delivered → Giao thành công
+ * return* / delivery_fail → RTS
+ */
+export function mapGhnStatusToExternal(ghnStatus) {
+  const st = String(ghnStatus || "")
+    .trim()
+    .toLowerCase();
+  if (!st) return "created";
+  if (st === "cancel" || st === "cancelled" || st === "canceled") return "cancelled";
+  if (st === "delivered") return "delivered";
+  if (
+    st === "delivery_fail" ||
+    st === "waiting_to_return" ||
+    st === "return" ||
+    st === "return_transporting" ||
+    st === "return_sorting" ||
+    st === "returning" ||
+    st === "return_fail" ||
+    st === "returned" ||
+    st === "exception" ||
+    st === "damage" ||
+    st === "lost"
+  ) {
+    return "rts";
+  }
+  if (
+    st === "picked" ||
+    st === "storing" ||
+    st === "transporting" ||
+    st === "sorting" ||
+    st === "delivering" ||
+    st === "money_collect_delivering"
+  ) {
+    return "shipping";
+  }
+  return "created";
+}
+
+/**
+ * Hủy vận đơn GHN — POST /v2/switch-status/cancel
+ * https://online-gateway.ghn.vn/shiip/public-api/v2/switch-status/cancel
+ */
+export async function cancelGhnShippingOrder(orderCode, shopIdOverride) {
+  const creds = await ghnCreds();
+  if (!creds.token) {
+    throw new Error("Thiếu Token GHN trên Database. Vào Cài đặt → lưu Token GHN rồi thử lại.");
+  }
+  const code = String(orderCode || "").trim();
+  if (!code) throw new Error("Thiếu mã vận đơn GHN (order_code).");
+
+  const shopIds = uniqueGhnShopIds(shopIdOverride, creds);
+  if (!shopIds.length) {
+    throw new Error("Thiếu Shop ID GHN. Vào Cài đặt nhập Shop ID rồi thử lại.");
+  }
+
+  let lastMsg = "";
+  try {
+    for (let i = 0; i < shopIds.length; i += 1) {
+      if (i > 0) await sleep(120);
+      const result = await ghnFetch(creds.apiUrl, "/v2/switch-status/cancel", {
+        token: creds.token,
+        shopId: shopIds[i],
+        body: { order_codes: [code] },
+      });
+      const apiCode = Number(result.json?.code);
+      const msg = ghnResultMessage(result);
+      lastMsg = msg || lastMsg;
+      const rows = Array.isArray(result.json?.data) ? result.json.data : [];
+      const row = rows.find((r) => String(r?.order_code || "").trim() === code) || rows[0] || null;
+      const rowOk = row?.result === true || row?.result === "true" || row?.result === 1;
+
+      if (result.ok && apiCode === 200 && (rowOk || rows.length === 0)) {
+        return {
+          ok: true,
+          alreadyCancelled: false,
+          shopId: shopIds[i],
+          message: msg || "Hủy đơn GHN thành công",
+          raw: result.json?.data || null,
+        };
+      }
+      if (isGhnAlreadyCancelledMessage(msg) || isGhnAlreadyCancelledMessage(row?.message)) {
+        return {
+          ok: true,
+          alreadyCancelled: true,
+          shopId: shopIds[i],
+          message: msg || row?.message || "Đơn GHN đã hủy trước đó",
+          raw: result.json?.data || null,
+        };
+      }
+      if (
+        i < shopIds.length - 1 &&
+        (isGhnNotFoundMessage(msg, result.status) ||
+          /không thuộc|khong thuoc|not belong|wrong shop/i.test(msg))
+      ) {
+        continue;
+      }
+      if (isGhnNotFoundMessage(msg, result.status)) {
+        const err = new Error(msg || `Không tìm thấy mã vận đơn GHN: ${code}`);
+        err.code = "ghn_not_found";
+        err.status = 404;
+        throw err;
+      }
+      if (i === shopIds.length - 1) {
+        const err = new Error(msg || `GHN hủy đơn thất bại (HTTP ${result.status})`);
+        err.code = "ghn_cancel_failed";
+        err.status = result.ok ? 400 : result.status || 502;
+        throw err;
+      }
+    }
+  } catch (err) {
+    if (err?.code === "ghn_not_found" || err?.code === "ghn_cancel_failed") throw err;
+    throw classifyGhnTransportError(err);
+  }
+  const err = new Error(lastMsg || "GHN hủy đơn thất bại");
+  err.code = "ghn_cancel_failed";
+  err.status = 400;
+  throw err;
+}
+
+/**
+ * Chi tiết vận đơn GHN — POST /v2/shipping-order/detail
+ * https://online-gateway.ghn.vn/shiip/public-api/v2/shipping-order/detail
+ */
+export async function getGhnOrderDetail(orderCode, shopIdOverride) {
+  const creds = await ghnCreds();
+  if (!creds.token) {
+    throw new Error("Thiếu Token GHN trên Database. Vào Cài đặt → lưu Token GHN rồi thử lại.");
+  }
+  const code = String(orderCode || "").trim();
+  if (!code) throw new Error("Thiếu mã vận đơn GHN (order_code).");
+
+  const shopIds = uniqueGhnShopIds(shopIdOverride, creds);
+  if (!shopIds.length) {
+    throw new Error("Thiếu Shop ID GHN. Vào Cài đặt nhập Shop ID rồi thử lại.");
+  }
+
+  let lastMsg = "";
+  try {
+    for (let i = 0; i < shopIds.length; i += 1) {
+      if (i > 0) await sleep(120);
+      const result = await ghnFetch(creds.apiUrl, "/v2/shipping-order/detail", {
+        token: creds.token,
+        shopId: shopIds[i],
+        body: { order_code: code },
+      });
+      const apiCode = Number(result.json?.code);
+      const msg = ghnResultMessage(result);
+      lastMsg = msg || lastMsg;
+      const payload = Array.isArray(result.json?.data)
+        ? result.json.data[0]
+        : result.json?.data;
+      const data = payload && typeof payload === "object" ? payload : null;
+      const ghnStatus = String(data?.status || data?.order_status || "").trim();
+      if (result.ok && apiCode === 200 && data && ghnStatus) {
+        return {
+          ok: true,
+          shopId: shopIds[i],
+          orderCode: String(data.order_code || code),
+          status: ghnStatus,
+          externalStatus: mapGhnStatusToExternal(ghnStatus),
+          data,
+        };
+      }
+      if (
+        i < shopIds.length - 1 &&
+        (isGhnNotFoundMessage(msg, result.status) ||
+          /không thuộc|khong thuoc|not belong|wrong shop/i.test(msg))
+      ) {
+        continue;
+      }
+      if (isGhnNotFoundMessage(msg, result.status)) {
+        const err = new Error(msg || `Không tìm thấy mã vận đơn GHN: ${code}`);
+        err.code = "ghn_not_found";
+        err.status = 404;
+        throw err;
+      }
+      if (i === shopIds.length - 1) {
+        const err = new Error(msg || `GHN không trả thông tin đơn (HTTP ${result.status})`);
+        err.code = "ghn_detail_failed";
+        err.status = result.ok ? 400 : result.status || 502;
+        throw err;
+      }
+    }
+  } catch (err) {
+    if (err?.code === "ghn_not_found" || err?.code === "ghn_detail_failed") throw err;
+    throw classifyGhnTransportError(err);
+  }
+  const err = new Error(lastMsg || "GHN không trả thông tin đơn");
+  err.code = "ghn_detail_failed";
+  err.status = 400;
+  throw err;
+}
+
 export { sleep as ghnSleep };

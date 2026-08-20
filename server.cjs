@@ -77778,6 +77778,15 @@ async function bulkUpsertOrdersToStore(orders) {
         if (order.external_status) {
           $set["data.external_status"] = String(order.external_status);
         }
+        if (order.ghnShopId || order.ghn_shop_id) {
+          $set["data.ghnShopId"] = String(order.ghnShopId || order.ghn_shop_id);
+        }
+        if (order.ghn_status) {
+          $set["data.ghn_status"] = String(order.ghn_status);
+        }
+        if (order.ghn_synced_at) {
+          $set["data.ghn_synced_at"] = String(order.ghn_synced_at);
+        }
         if (order.cod_amount != null || Number(order.totalAmount) > 0) {
           $set["data.cod_amount"] = Number(order.cod_amount ?? order.totalAmount) || 0;
         }
@@ -79510,6 +79519,9 @@ function hydrateOrderFromMongoDoc(d) {
     carrier: data.carrier || d?.carrier || void 0,
     provider: data.provider || data.carrier || void 0,
     external_status: data.external_status || void 0,
+    ghnShopId: data.ghnShopId || data.ghn_shop_id || void 0,
+    ghn_status: data.ghn_status || void 0,
+    ghn_synced_at: data.ghn_synced_at || void 0,
     cod_amount: data.cod_amount != null ? data.cod_amount : void 0,
     tracking_no: tn || void 0,
     trackingNumber: tn || void 0,
@@ -80599,6 +80611,9 @@ var ORDER_LIST_UI_PROJECTION = {
   "data.carrier": 1,
   "data.provider": 1,
   "data.external_status": 1,
+  "data.ghnShopId": 1,
+  "data.ghn_status": 1,
+  "data.ghn_synced_at": 1,
   "data.cod_amount": 1,
   "data.shippingAddress": 1,
   shopee_cancel_return_kind: 1,
@@ -110970,6 +110985,192 @@ async function testGhnConnection({ token, shopId } = {}) {
     };
   }
 }
+function uniqueGhnShopIds(preferred, creds) {
+  const out = [];
+  const push = (value) => {
+    const s2 = String(value || "").trim();
+    if (s2 && !out.includes(s2)) out.push(s2);
+  };
+  push(preferred);
+  push(creds?.shopId);
+  push(creds?.ghnShopId1);
+  push(creds?.ghnShopId2);
+  push(creds?.ghnShopId3);
+  const extra = Array.isArray(creds?.ghnShopIds) ? creds.ghnShopIds : [];
+  for (let i2 = 0; i2 < extra.length && i2 < 3; i2 += 1) push(extra[i2]);
+  return out.slice(0, 3);
+}
+function ghnResultMessage(result) {
+  const data = result?.json?.data;
+  const rowMsg = Array.isArray(data) ? String(data[0]?.message || data[0]?.msg || "").trim() : String(data?.message || "").trim();
+  return String(
+    result?.json?.message || result?.json?.code_message || result?.json?.msg || rowMsg || ""
+  ).trim();
+}
+function isGhnAlreadyCancelledMessage(msg) {
+  return /đã hủy|da huy|already cancel|canceled|cancelled/i.test(String(msg || ""));
+}
+function isGhnNotFoundMessage(msg, httpStatus) {
+  if (Number(httpStatus) === 404) return true;
+  return /không tồn tại|khong ton tai|not found|not exist|order does not exist/i.test(
+    String(msg || "")
+  );
+}
+function classifyGhnTransportError(err) {
+  const name = String(err?.name || "");
+  const code = String(err?.code || "");
+  const msg = String(err?.message || "");
+  if (name === "AbortError" || code === "ETIMEDOUT" || /timeout/i.test(msg)) {
+    return new Error("Kh\xF4ng k\u1EBFt n\u1ED1i \u0111\u01B0\u1EE3c m\xE1y ch\u1EE7 GHN (timeout). Th\u1EED l\u1EA1i sau.");
+  }
+  if (!err?.response && /fetch|network|ECONN|ENOTFOUND|EAI_AGAIN/i.test(`${code} ${msg}`)) {
+    return new Error("Kh\xF4ng k\u1EBFt n\u1ED1i \u0111\u01B0\u1EE3c m\xE1y ch\u1EE7 GHN. Ki\u1EC3m tra m\u1EA1ng r\u1ED3i th\u1EED l\u1EA1i.");
+  }
+  return err instanceof Error ? err : new Error(msg || "L\u1ED7i GHN kh\xF4ng x\xE1c \u0111\u1ECBnh");
+}
+function mapGhnStatusToExternal(ghnStatus) {
+  const st = String(ghnStatus || "").trim().toLowerCase();
+  if (!st) return "created";
+  if (st === "cancel" || st === "cancelled" || st === "canceled") return "cancelled";
+  if (st === "delivered") return "delivered";
+  if (st === "delivery_fail" || st === "waiting_to_return" || st === "return" || st === "return_transporting" || st === "return_sorting" || st === "returning" || st === "return_fail" || st === "returned" || st === "exception" || st === "damage" || st === "lost") {
+    return "rts";
+  }
+  if (st === "picked" || st === "storing" || st === "transporting" || st === "sorting" || st === "delivering" || st === "money_collect_delivering") {
+    return "shipping";
+  }
+  return "created";
+}
+async function cancelGhnShippingOrder(orderCode, shopIdOverride) {
+  const creds = await ghnCreds();
+  if (!creds.token) {
+    throw new Error("Thi\u1EBFu Token GHN tr\xEAn Database. V\xE0o C\xE0i \u0111\u1EB7t \u2192 l\u01B0u Token GHN r\u1ED3i th\u1EED l\u1EA1i.");
+  }
+  const code = String(orderCode || "").trim();
+  if (!code) throw new Error("Thi\u1EBFu m\xE3 v\u1EADn \u0111\u01A1n GHN (order_code).");
+  const shopIds = uniqueGhnShopIds(shopIdOverride, creds);
+  if (!shopIds.length) {
+    throw new Error("Thi\u1EBFu Shop ID GHN. V\xE0o C\xE0i \u0111\u1EB7t nh\u1EADp Shop ID r\u1ED3i th\u1EED l\u1EA1i.");
+  }
+  let lastMsg = "";
+  try {
+    for (let i2 = 0; i2 < shopIds.length; i2 += 1) {
+      if (i2 > 0) await sleep3(120);
+      const result = await ghnFetch2(creds.apiUrl, "/v2/switch-status/cancel", {
+        token: creds.token,
+        shopId: shopIds[i2],
+        body: { order_codes: [code] }
+      });
+      const apiCode = Number(result.json?.code);
+      const msg = ghnResultMessage(result);
+      lastMsg = msg || lastMsg;
+      const rows = Array.isArray(result.json?.data) ? result.json.data : [];
+      const row = rows.find((r2) => String(r2?.order_code || "").trim() === code) || rows[0] || null;
+      const rowOk = row?.result === true || row?.result === "true" || row?.result === 1;
+      if (result.ok && apiCode === 200 && (rowOk || rows.length === 0)) {
+        return {
+          ok: true,
+          alreadyCancelled: false,
+          shopId: shopIds[i2],
+          message: msg || "H\u1EE7y \u0111\u01A1n GHN th\xE0nh c\xF4ng",
+          raw: result.json?.data || null
+        };
+      }
+      if (isGhnAlreadyCancelledMessage(msg) || isGhnAlreadyCancelledMessage(row?.message)) {
+        return {
+          ok: true,
+          alreadyCancelled: true,
+          shopId: shopIds[i2],
+          message: msg || row?.message || "\u0110\u01A1n GHN \u0111\xE3 h\u1EE7y tr\u01B0\u1EDBc \u0111\xF3",
+          raw: result.json?.data || null
+        };
+      }
+      if (i2 < shopIds.length - 1 && (isGhnNotFoundMessage(msg, result.status) || /không thuộc|khong thuoc|not belong|wrong shop/i.test(msg))) {
+        continue;
+      }
+      if (isGhnNotFoundMessage(msg, result.status)) {
+        const err2 = new Error(msg || `Kh\xF4ng t\xECm th\u1EA5y m\xE3 v\u1EADn \u0111\u01A1n GHN: ${code}`);
+        err2.code = "ghn_not_found";
+        err2.status = 404;
+        throw err2;
+      }
+      if (i2 === shopIds.length - 1) {
+        const err2 = new Error(msg || `GHN h\u1EE7y \u0111\u01A1n th\u1EA5t b\u1EA1i (HTTP ${result.status})`);
+        err2.code = "ghn_cancel_failed";
+        err2.status = result.ok ? 400 : result.status || 502;
+        throw err2;
+      }
+    }
+  } catch (err2) {
+    if (err2?.code === "ghn_not_found" || err2?.code === "ghn_cancel_failed") throw err2;
+    throw classifyGhnTransportError(err2);
+  }
+  const err = new Error(lastMsg || "GHN h\u1EE7y \u0111\u01A1n th\u1EA5t b\u1EA1i");
+  err.code = "ghn_cancel_failed";
+  err.status = 400;
+  throw err;
+}
+async function getGhnOrderDetail(orderCode, shopIdOverride) {
+  const creds = await ghnCreds();
+  if (!creds.token) {
+    throw new Error("Thi\u1EBFu Token GHN tr\xEAn Database. V\xE0o C\xE0i \u0111\u1EB7t \u2192 l\u01B0u Token GHN r\u1ED3i th\u1EED l\u1EA1i.");
+  }
+  const code = String(orderCode || "").trim();
+  if (!code) throw new Error("Thi\u1EBFu m\xE3 v\u1EADn \u0111\u01A1n GHN (order_code).");
+  const shopIds = uniqueGhnShopIds(shopIdOverride, creds);
+  if (!shopIds.length) {
+    throw new Error("Thi\u1EBFu Shop ID GHN. V\xE0o C\xE0i \u0111\u1EB7t nh\u1EADp Shop ID r\u1ED3i th\u1EED l\u1EA1i.");
+  }
+  let lastMsg = "";
+  try {
+    for (let i2 = 0; i2 < shopIds.length; i2 += 1) {
+      if (i2 > 0) await sleep3(120);
+      const result = await ghnFetch2(creds.apiUrl, "/v2/shipping-order/detail", {
+        token: creds.token,
+        shopId: shopIds[i2],
+        body: { order_code: code }
+      });
+      const apiCode = Number(result.json?.code);
+      const msg = ghnResultMessage(result);
+      lastMsg = msg || lastMsg;
+      const payload = Array.isArray(result.json?.data) ? result.json.data[0] : result.json?.data;
+      const data = payload && typeof payload === "object" ? payload : null;
+      const ghnStatus = String(data?.status || data?.order_status || "").trim();
+      if (result.ok && apiCode === 200 && data && ghnStatus) {
+        return {
+          ok: true,
+          shopId: shopIds[i2],
+          orderCode: String(data.order_code || code),
+          status: ghnStatus,
+          externalStatus: mapGhnStatusToExternal(ghnStatus),
+          data
+        };
+      }
+      if (i2 < shopIds.length - 1 && (isGhnNotFoundMessage(msg, result.status) || /không thuộc|khong thuoc|not belong|wrong shop/i.test(msg))) {
+        continue;
+      }
+      if (isGhnNotFoundMessage(msg, result.status)) {
+        const err2 = new Error(msg || `Kh\xF4ng t\xECm th\u1EA5y m\xE3 v\u1EADn \u0111\u01A1n GHN: ${code}`);
+        err2.code = "ghn_not_found";
+        err2.status = 404;
+        throw err2;
+      }
+      if (i2 === shopIds.length - 1) {
+        const err2 = new Error(msg || `GHN kh\xF4ng tr\u1EA3 th\xF4ng tin \u0111\u01A1n (HTTP ${result.status})`);
+        err2.code = "ghn_detail_failed";
+        err2.status = result.ok ? 400 : result.status || 502;
+        throw err2;
+      }
+    }
+  } catch (err2) {
+    if (err2?.code === "ghn_not_found" || err2?.code === "ghn_detail_failed") throw err2;
+    throw classifyGhnTransportError(err2);
+  }
+  const err = new Error(lastMsg || "GHN kh\xF4ng tr\u1EA3 th\xF4ng tin \u0111\u01A1n");
+  err.code = "ghn_detail_failed";
+  err.status = 400;
+  throw err;
+}
 
 // services/spxLogistics.js
 var import_crypto2 = __toESM(require("crypto"), 1);
@@ -117920,11 +118121,49 @@ var EXTERNAL_STATUS_MAP = {
   created: { status: "unprocessed", shopee: "EXTERNAL_CREATED", label: "\u0110\xE3 t\u1EA1o \u0111\u01A1n" },
   shipping: { status: "shipping", shopee: "EXTERNAL_SHIPPING", label: "\u0110ang giao" },
   delivered: { status: "completed", shopee: "EXTERNAL_DELIVERED", label: "Giao th\xE0nh c\xF4ng" },
-  rts: { status: "cancelled", shopee: "EXTERNAL_RTS", label: "Giao kh\xF4ng th\xE0nh c\xF4ng / RTS" }
+  rts: { status: "cancelled", shopee: "EXTERNAL_RTS", label: "Giao kh\xF4ng th\xE0nh c\xF4ng / RTS" },
+  cancelled: { status: "cancelled", shopee: "EXTERNAL_CANCELLED", label: "\u0110\xE3 h\u1EE7y" }
 };
 function mapExternalStatus(raw) {
   const key = String(raw || "created").toLowerCase();
   return EXTERNAL_STATUS_MAP[key] || EXTERNAL_STATUS_MAP.created;
+}
+function applyExternalMappedStatus(order, mappedKey, extra = {}) {
+  const mapped = mapExternalStatus(mappedKey);
+  const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+  return {
+    ...order,
+    external_status: mappedKey,
+    status: mapped.status,
+    shopee_order_status: mapped.shopee,
+    is_rts: mappedKey === "rts",
+    ghn_synced_at: nowIso,
+    ...extra
+  };
+}
+async function loadManualOrderByKey(key) {
+  const raw = String(key || "").trim();
+  if (!raw || !isMongoReady()) return null;
+  const sn = raw.replace(/^ext-/i, "").replace(/^shopee-/i, "").trim();
+  const ids = [...new Set([raw, sn, `ext-${sn}`, `shopee-${sn}`].filter(Boolean))];
+  const sns = [...new Set([sn, raw].filter(Boolean))];
+  const rows = await loadOrdersFromStore({ orderSns: sns, ids, limit: 8 });
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const rawLc = raw.toLowerCase();
+  const snLc = sn.toLowerCase();
+  return rows.find((o) => {
+    const candidates = [o?.id, o?._id, o?.orderSn, o?.order_sn];
+    return candidates.some((c) => {
+      const s2 = String(c || "").trim().toLowerCase();
+      return s2 && (s2 === rawLc || s2 === snLc || s2.replace(/^ext-|^shopee-/i, "") === snLc);
+    });
+  }) || rows[0];
+}
+function ghnHttpStatusOf(err, fallback = 502) {
+  const n = Number(err?.status || err?.statusCode);
+  if (Number.isFinite(n) && n >= 400 && n < 600) return n;
+  if (err?.code === "ghn_not_found") return 404;
+  return fallback;
 }
 function carrierDisplayName(carrier) {
   if (carrier === "ghn") return "Giao H\xE0ng Nhanh";
@@ -120184,6 +120423,173 @@ async function streamExternalWaybillFile(req, res) {
     return import_fs17.default.createReadStream(filePath).pipe(res);
   } catch (error) {
     return res.status(500).json({ error: error.message || "Kh\xF4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c PDF" });
+  }
+}
+async function syncGhnOrderStatus(req, res) {
+  try {
+    const key = String(req.params.id || req.body?.orderSn || req.body?.order_sn || "").trim();
+    if (!key) {
+      return res.status(400).json({
+        success: false,
+        error: "missing_order_id",
+        message: "Thi\u1EBFu m\xE3 \u0111\u01A1n (id / orderSn)."
+      });
+    }
+    if (!isMongoReady()) {
+      return res.status(503).json({ success: false, error: "mongodb_not_ready" });
+    }
+    const order = await loadManualOrderByKey(key);
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        error: "order_not_found",
+        message: `Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng: ${key}`
+      });
+    }
+    const provider = String(order.provider || order.carrier || "").toLowerCase();
+    if (provider !== "ghn") {
+      return res.status(400).json({
+        success: false,
+        error: "not_ghn_order",
+        message: "Ch\u1EC9 \u0111\u1ED3ng b\u1ED9 tr\u1EA1ng th\xE1i cho \u0111\u01A1n GHN."
+      });
+    }
+    const trackingNo = String(order.tracking_no || order.trackingNumber || "").trim();
+    if (!trackingNo) {
+      return res.status(400).json({
+        success: false,
+        error: "missing_tracking",
+        message: "\u0110\u01A1n ch\u01B0a c\xF3 m\xE3 v\u1EADn \u0111\u01A1n GHN. Kh\xF4ng th\u1EC3 \u0111\u1ED3ng b\u1ED9."
+      });
+    }
+    const detail = await getGhnOrderDetail(trackingNo, order.ghnShopId || order.ghn_shop_id);
+    const mappedKey = String(detail.externalStatus || "created");
+    const mapped = mapExternalStatus(mappedKey);
+    const updated = applyExternalMappedStatus(order, mappedKey, {
+      ghn_status: detail.status,
+      ghnShopId: detail.shopId || order.ghnShopId
+    });
+    await persistExternalOrder(updated);
+    return res.json({
+      success: true,
+      order: updated,
+      ghnStatus: detail.status,
+      externalStatus: mappedKey,
+      label: mapped.label,
+      message: `GHN: ${detail.status} \u2192 ${mapped.label}`
+    });
+  } catch (err) {
+    console.error("[Orders sync-ghn]", err?.message || err);
+    return res.status(ghnHttpStatusOf(err)).json({
+      success: false,
+      error: err?.code || "ghn_sync_failed",
+      message: err?.message || "\u0110\u1ED3ng b\u1ED9 tr\u1EA1ng th\xE1i GHN th\u1EA5t b\u1EA1i."
+    });
+  }
+}
+async function cancelGhnOrder(req, res) {
+  try {
+    const key = String(req.params.id || req.body?.orderSn || req.body?.order_sn || "").trim();
+    if (!key) {
+      return res.status(400).json({
+        success: false,
+        error: "missing_order_id",
+        message: "Thi\u1EBFu m\xE3 \u0111\u01A1n (id / orderSn)."
+      });
+    }
+    if (!isMongoReady()) {
+      return res.status(503).json({ success: false, error: "mongodb_not_ready" });
+    }
+    const order = await loadManualOrderByKey(key);
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        error: "order_not_found",
+        message: `Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng: ${key}`
+      });
+    }
+    const provider = String(order.provider || order.carrier || "").toLowerCase();
+    if (provider !== "ghn") {
+      return res.status(400).json({
+        success: false,
+        error: "not_ghn_order",
+        message: "Ch\u1EC9 h\u1EE7y v\u1EADn \u0111\u01A1n GHN tr\xEAn h\xE3ng. \u0110\u01A1n n\xE0y kh\xF4ng ph\u1EA3i GHN."
+      });
+    }
+    const currentExt = String(order.external_status || "").toLowerCase();
+    const currentGhn = String(order.ghn_status || "").toLowerCase();
+    if (currentExt === "cancelled" || currentGhn === "cancel" || currentGhn === "cancelled") {
+      const already = applyExternalMappedStatus(order, "cancelled", {
+        ghn_status: order.ghn_status || "cancel"
+      });
+      await persistExternalOrder(already);
+      return res.json({
+        success: true,
+        alreadyCancelled: true,
+        order: already,
+        ghnStatus: already.ghn_status,
+        externalStatus: "cancelled",
+        label: EXTERNAL_STATUS_MAP.cancelled.label,
+        message: "\u0110\u01A1n \u0111\xE3 \u1EDF tr\u1EA1ng th\xE1i \u0110\xE3 h\u1EE7y."
+      });
+    }
+    const trackingNo = String(order.tracking_no || order.trackingNumber || "").trim();
+    if (!trackingNo) {
+      return res.status(400).json({
+        success: false,
+        error: "missing_tracking",
+        message: "\u0110\u01A1n ch\u01B0a c\xF3 m\xE3 v\u1EADn \u0111\u01A1n GHN. Kh\xF4ng th\u1EC3 h\u1EE7y tr\xEAn h\xE3ng."
+      });
+    }
+    const cancelled = await cancelGhnShippingOrder(
+      trackingNo,
+      order.ghnShopId || order.ghn_shop_id
+    );
+    const updated = applyExternalMappedStatus(order, "cancelled", {
+      ghn_status: "cancel",
+      ghnShopId: cancelled.shopId || order.ghnShopId
+    });
+    await persistExternalOrder(updated);
+    return res.json({
+      success: true,
+      alreadyCancelled: Boolean(cancelled.alreadyCancelled),
+      order: updated,
+      ghnStatus: "cancel",
+      externalStatus: "cancelled",
+      label: EXTERNAL_STATUS_MAP.cancelled.label,
+      message: cancelled.message || "\u0110\xE3 h\u1EE7y \u0111\u01A1n tr\xEAn GHN v\xE0 Database."
+    });
+  } catch (err) {
+    console.error("[Orders cancel-ghn]", err?.message || err);
+    const msg = String(err?.message || "");
+    if (/đã hủy|da huy|already cancel|canceled|cancelled/i.test(msg)) {
+      try {
+        const key = String(req.params.id || req.body?.orderSn || "").trim();
+        const order = await loadManualOrderByKey(key);
+        if (order) {
+          const updated = applyExternalMappedStatus(order, "cancelled", {
+            ghn_status: "cancel"
+          });
+          await persistExternalOrder(updated);
+          return res.json({
+            success: true,
+            alreadyCancelled: true,
+            order: updated,
+            ghnStatus: "cancel",
+            externalStatus: "cancelled",
+            label: EXTERNAL_STATUS_MAP.cancelled.label,
+            message: "\u0110\u01A1n \u0111\xE3 h\u1EE7y tr\xEAn GHN \u2014 \u0111\xE3 c\u1EADp nh\u1EADt Database."
+          });
+        }
+      } catch (healErr) {
+        console.warn("[Orders cancel-ghn] heal cancelled:", healErr?.message || healErr);
+      }
+    }
+    return res.status(ghnHttpStatusOf(err)).json({
+      success: false,
+      error: err?.code || "ghn_cancel_failed",
+      message: err?.message || "H\u1EE7y \u0111\u01A1n GHN th\u1EA5t b\u1EA1i."
+    });
   }
 }
 
@@ -123140,6 +123546,8 @@ router14.post("/mark-printed", h3(markPrinted));
 router14.get("/:orderSn/events", h3(getOrderEvents));
 router14.post("/:id/hand-over-carrier", h3(handOverCarrierById));
 router14.post("/:id/confirm-return-received", h3(confirmReturnReceived));
+router14.post("/:id/sync-ghn", h3(syncGhnOrderStatus));
+router14.post("/:id/cancel-ghn", h3(cancelGhnOrder));
 router14.get("/", h3(listOrders));
 router14.patch("/:id", h3(patchOrder));
 router14.delete("/:id", h3(deleteOrder));

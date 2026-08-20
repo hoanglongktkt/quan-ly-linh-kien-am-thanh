@@ -232,6 +232,26 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     })(),
     shipping_carrier: inferredCarrier || undefined,
     checkout_shipping_carrier: checkoutCarrierRaw || undefined,
+    carrier: (() => {
+      const v = String(raw.carrier || raw.provider || '').toLowerCase();
+      if (v === 'ghn' || v === 'spx' || v === 'self') return v as Order['carrier'];
+      return undefined;
+    })(),
+    provider: (() => {
+      const v = String(raw.provider || raw.carrier || '').trim();
+      return v || undefined;
+    })(),
+    external_status: raw.external_status ? String(raw.external_status) : undefined,
+    ghnShopId: (() => {
+      const v = String(raw.ghnShopId || (raw as { ghn_shop_id?: string }).ghn_shop_id || '').trim();
+      return v || undefined;
+    })(),
+    ghn_status: raw.ghn_status ? String(raw.ghn_status) : undefined,
+    ghn_synced_at: raw.ghn_synced_at ? String(raw.ghn_synced_at) : undefined,
+    cod_amount:
+      raw.cod_amount != null && Number.isFinite(Number(raw.cod_amount))
+        ? Number(raw.cod_amount)
+        : undefined,
     logistics_channel_id:
       Number.isFinite(logisticsChannelId) && logisticsChannelId > 0
         ? logisticsChannelId
@@ -280,7 +300,11 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
       if (s === 'RTS' || s === 'CANCELLED' || s === 'RETURN') return s;
       return undefined;
     })(),
-    is_rts: classifyShopeeCancelReturnKind(raw as any) === 'failed_delivery',
+    is_rts:
+      classifyShopeeCancelReturnKind(raw as any) === 'failed_delivery' ||
+      raw.is_rts === true ||
+      String(raw.external_status || '').toLowerCase() === 'rts' ||
+      String(raw.shopee_order_status || '').toUpperCase() === 'EXTERNAL_RTS',
     is_return:
       classifyShopeeCancelReturnKind(raw as any) === 'refund_return' &&
       !isUnshippedShopeeCancel(raw),

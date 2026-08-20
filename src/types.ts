@@ -183,8 +183,14 @@ export interface Order {
   carrier?: 'self' | 'ghn' | 'spx';
   /** Đơn ngoại sàn — GHN / SPX / tự giao */
   provider?: 'ghn' | 'spx' | 'self' | string;
-  /** created | shipping | delivered | rts */
-  external_status?: 'created' | 'shipping' | 'delivered' | 'rts' | string;
+  /** created | shipping | delivered | rts | cancelled */
+  external_status?: 'created' | 'shipping' | 'delivered' | 'rts' | 'cancelled' | string;
+  /** Shop ID GHN lúc tạo vận đơn */
+  ghnShopId?: string;
+  /** Trạng thái thô từ API GHN (ready_to_pick, cancel, delivered, ...) */
+  ghn_status?: string;
+  /** Thời điểm đồng bộ GHN gần nhất */
+  ghn_synced_at?: string;
   /** COD thu hộ */
   cod_amount?: number;
   /** Tên ĐVVC từ Shopee (shipping_carrier / package_list) — VD: SPX Express, Giao Hàng Nhanh */

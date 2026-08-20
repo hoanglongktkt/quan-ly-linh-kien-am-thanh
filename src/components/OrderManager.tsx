@@ -8099,6 +8099,16 @@ export default function OrderManager({
               orders={displayOrders}
               printingOrderId={printingOrderId}
               onPrintWaybill={(order) => void handlePrintExternalWaybill(order)}
+              onOrderUpdated={(updated) => {
+                const sn = String(updated.orderSn || '').trim();
+                const id = String(updated.id || '').trim();
+                onUpdateOrders(
+                  orders.map((o) =>
+                    (sn && o.orderSn === sn) || (id && o.id === id) ? { ...o, ...updated } : o,
+                  ),
+                  { persist: false },
+                );
+              }}
             />
           </div>
         ) : (

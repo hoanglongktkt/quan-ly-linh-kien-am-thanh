@@ -2246,6 +2246,15 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
         if (order.external_status) {
           $set["data.external_status"] = String(order.external_status);
         }
+        if (order.ghnShopId || order.ghn_shop_id) {
+          $set["data.ghnShopId"] = String(order.ghnShopId || order.ghn_shop_id);
+        }
+        if (order.ghn_status) {
+          $set["data.ghn_status"] = String(order.ghn_status);
+        }
+        if (order.ghn_synced_at) {
+          $set["data.ghn_synced_at"] = String(order.ghn_synced_at);
+        }
         if (order.cod_amount != null || Number(order.totalAmount) > 0) {
           $set["data.cod_amount"] = Number(order.cod_amount ?? order.totalAmount) || 0;
         }
@@ -4779,6 +4788,9 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
     carrier: data.carrier || d?.carrier || undefined,
     provider: data.provider || data.carrier || undefined,
     external_status: data.external_status || undefined,
+    ghnShopId: data.ghnShopId || data.ghn_shop_id || undefined,
+    ghn_status: data.ghn_status || undefined,
+    ghn_synced_at: data.ghn_synced_at || undefined,
     cod_amount: data.cod_amount != null ? data.cod_amount : undefined,
     tracking_no: tn || undefined,
     trackingNumber: tn || undefined,
@@ -6217,6 +6229,9 @@ const ORDER_LIST_UI_PROJECTION: Record<string, 1> = {
   "data.carrier": 1,
   "data.provider": 1,
   "data.external_status": 1,
+  "data.ghnShopId": 1,
+  "data.ghn_status": 1,
+  "data.ghn_synced_at": 1,
   "data.cod_amount": 1,
   "data.shippingAddress": 1,
   shopee_cancel_return_kind: 1,

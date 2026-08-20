@@ -33,6 +33,8 @@ import {
   createManualOrder,
   printExternalWaybill,
   streamExternalWaybillFile,
+  syncGhnOrderStatus,
+  cancelGhnOrder,
   resetPrintStatus,
   updatePrintStatus,
   markPrinted,
@@ -114,6 +116,8 @@ router.post("/mark-printed", h(markPrinted));
 router.get("/:orderSn/events", h(getOrderEvents));
 router.post("/:id/hand-over-carrier", h(handOverCarrierById));
 router.post("/:id/confirm-return-received", h(confirmReturnReceived));
+router.post("/:id/sync-ghn", h(syncGhnOrderStatus));
+router.post("/:id/cancel-ghn", h(cancelGhnOrder));
 router.get("/", h(listOrders));
 router.patch("/:id", h(patchOrder));
 router.delete("/:id", h(deleteOrder));

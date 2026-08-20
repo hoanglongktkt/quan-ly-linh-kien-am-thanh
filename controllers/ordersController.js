@@ -47,7 +47,12 @@ import {
   invalidateTabCountCache,
 } from "../src/db/mongoStore.ts";
 import { saveAddressBookEntry } from "../services/addressBook.js";
-import { createGhnShippingOrder, getGhnPrintUrl } from "../services/ghnLogistics.js";
+import {
+  createGhnShippingOrder,
+  getGhnPrintUrl,
+  cancelGhnShippingOrder,
+  getGhnOrderDetail,
+} from "../services/ghnLogistics.js";
 import { createSpxShippingOrder, getSpxWaybill } from "../services/spxLogistics.js";
 import { loadSpxCredentialsFromMongo } from "../services/logisticsConfig.js";
 
@@ -197,11 +202,54 @@ const EXTERNAL_STATUS_MAP = {
   shipping: { status: "shipping", shopee: "EXTERNAL_SHIPPING", label: "Đang giao" },
   delivered: { status: "completed", shopee: "EXTERNAL_DELIVERED", label: "Giao thành công" },
   rts: { status: "cancelled", shopee: "EXTERNAL_RTS", label: "Giao không thành công / RTS" },
+  cancelled: { status: "cancelled", shopee: "EXTERNAL_CANCELLED", label: "Đã hủy" },
 };
 
 function mapExternalStatus(raw) {
   const key = String(raw || "created").toLowerCase();
   return EXTERNAL_STATUS_MAP[key] || EXTERNAL_STATUS_MAP.created;
+}
+
+function applyExternalMappedStatus(order, mappedKey, extra = {}) {
+  const mapped = mapExternalStatus(mappedKey);
+  const nowIso = new Date().toISOString();
+  return {
+    ...order,
+    external_status: mappedKey,
+    status: mapped.status,
+    shopee_order_status: mapped.shopee,
+    is_rts: mappedKey === "rts",
+    ghn_synced_at: nowIso,
+    ...extra,
+  };
+}
+
+async function loadManualOrderByKey(key) {
+  const raw = String(key || "").trim();
+  if (!raw || !isMongoReady()) return null;
+  const sn = raw.replace(/^ext-/i, "").replace(/^shopee-/i, "").trim();
+  const ids = [...new Set([raw, sn, `ext-${sn}`, `shopee-${sn}`].filter(Boolean))];
+  const sns = [...new Set([sn, raw].filter(Boolean))];
+  const rows = await loadOrdersFromStore({ orderSns: sns, ids, limit: 8 });
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const rawLc = raw.toLowerCase();
+  const snLc = sn.toLowerCase();
+  return (
+    rows.find((o) => {
+      const candidates = [o?.id, o?._id, o?.orderSn, o?.order_sn];
+      return candidates.some((c) => {
+        const s = String(c || "").trim().toLowerCase();
+        return s && (s === rawLc || s === snLc || s.replace(/^ext-|^shopee-/i, "") === snLc);
+      });
+    }) || rows[0]
+  );
+}
+
+function ghnHttpStatusOf(err, fallback = 502) {
+  const n = Number(err?.status || err?.statusCode);
+  if (Number.isFinite(n) && n >= 400 && n < 600) return n;
+  if (err?.code === "ghn_not_found") return 404;
+  return fallback;
 }
 
 function carrierDisplayName(carrier) {
@@ -2949,5 +2997,189 @@ export async function streamExternalWaybillFile(req, res) {
     return fs.createReadStream(filePath).pipe(res);
   } catch (error) {
     return res.status(500).json({ error: error.message || "Không đọc được PDF" });
+  }
+}
+
+/**
+ * POST /api/orders/:id/sync-ghn
+ * Đồng bộ trạng thái vận đơn từ GHN (shipping-order/detail) → MongoDB.
+ */
+export async function syncGhnOrderStatus(req, res) {
+  try {
+    const key = String(req.params.id || req.body?.orderSn || req.body?.order_sn || "").trim();
+    if (!key) {
+      return res.status(400).json({
+        success: false,
+        error: "missing_order_id",
+        message: "Thiếu mã đơn (id / orderSn).",
+      });
+    }
+    if (!isMongoReady()) {
+      return res.status(503).json({ success: false, error: "mongodb_not_ready" });
+    }
+
+    const order = await loadManualOrderByKey(key);
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        error: "order_not_found",
+        message: `Không tìm thấy đơn hàng: ${key}`,
+      });
+    }
+    const provider = String(order.provider || order.carrier || "").toLowerCase();
+    if (provider !== "ghn") {
+      return res.status(400).json({
+        success: false,
+        error: "not_ghn_order",
+        message: "Chỉ đồng bộ trạng thái cho đơn GHN.",
+      });
+    }
+    const trackingNo = String(order.tracking_no || order.trackingNumber || "").trim();
+    if (!trackingNo) {
+      return res.status(400).json({
+        success: false,
+        error: "missing_tracking",
+        message: "Đơn chưa có mã vận đơn GHN. Không thể đồng bộ.",
+      });
+    }
+
+    const detail = await getGhnOrderDetail(trackingNo, order.ghnShopId || order.ghn_shop_id);
+    const mappedKey = String(detail.externalStatus || "created");
+    const mapped = mapExternalStatus(mappedKey);
+    const updated = applyExternalMappedStatus(order, mappedKey, {
+      ghn_status: detail.status,
+      ghnShopId: detail.shopId || order.ghnShopId,
+    });
+    await persistExternalOrder(updated);
+
+    return res.json({
+      success: true,
+      order: updated,
+      ghnStatus: detail.status,
+      externalStatus: mappedKey,
+      label: mapped.label,
+      message: `GHN: ${detail.status} → ${mapped.label}`,
+    });
+  } catch (err) {
+    console.error("[Orders sync-ghn]", err?.message || err);
+    return res.status(ghnHttpStatusOf(err)).json({
+      success: false,
+      error: err?.code || "ghn_sync_failed",
+      message: err?.message || "Đồng bộ trạng thái GHN thất bại.",
+    });
+  }
+}
+
+/**
+ * POST /api/orders/:id/cancel-ghn
+ * Hủy vận đơn trên GHN rồi cập nhật trạng thái Đã hủy trên Database.
+ */
+export async function cancelGhnOrder(req, res) {
+  try {
+    const key = String(req.params.id || req.body?.orderSn || req.body?.order_sn || "").trim();
+    if (!key) {
+      return res.status(400).json({
+        success: false,
+        error: "missing_order_id",
+        message: "Thiếu mã đơn (id / orderSn).",
+      });
+    }
+    if (!isMongoReady()) {
+      return res.status(503).json({ success: false, error: "mongodb_not_ready" });
+    }
+
+    const order = await loadManualOrderByKey(key);
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        error: "order_not_found",
+        message: `Không tìm thấy đơn hàng: ${key}`,
+      });
+    }
+    const provider = String(order.provider || order.carrier || "").toLowerCase();
+    if (provider !== "ghn") {
+      return res.status(400).json({
+        success: false,
+        error: "not_ghn_order",
+        message: "Chỉ hủy vận đơn GHN trên hãng. Đơn này không phải GHN.",
+      });
+    }
+    const currentExt = String(order.external_status || "").toLowerCase();
+    const currentGhn = String(order.ghn_status || "").toLowerCase();
+    if (currentExt === "cancelled" || currentGhn === "cancel" || currentGhn === "cancelled") {
+      const already = applyExternalMappedStatus(order, "cancelled", {
+        ghn_status: order.ghn_status || "cancel",
+      });
+      await persistExternalOrder(already);
+      return res.json({
+        success: true,
+        alreadyCancelled: true,
+        order: already,
+        ghnStatus: already.ghn_status,
+        externalStatus: "cancelled",
+        label: EXTERNAL_STATUS_MAP.cancelled.label,
+        message: "Đơn đã ở trạng thái Đã hủy.",
+      });
+    }
+    const trackingNo = String(order.tracking_no || order.trackingNumber || "").trim();
+    if (!trackingNo) {
+      return res.status(400).json({
+        success: false,
+        error: "missing_tracking",
+        message: "Đơn chưa có mã vận đơn GHN. Không thể hủy trên hãng.",
+      });
+    }
+
+    const cancelled = await cancelGhnShippingOrder(
+      trackingNo,
+      order.ghnShopId || order.ghn_shop_id,
+    );
+    const updated = applyExternalMappedStatus(order, "cancelled", {
+      ghn_status: "cancel",
+      ghnShopId: cancelled.shopId || order.ghnShopId,
+    });
+    await persistExternalOrder(updated);
+
+    return res.json({
+      success: true,
+      alreadyCancelled: Boolean(cancelled.alreadyCancelled),
+      order: updated,
+      ghnStatus: "cancel",
+      externalStatus: "cancelled",
+      label: EXTERNAL_STATUS_MAP.cancelled.label,
+      message: cancelled.message || "Đã hủy đơn trên GHN và Database.",
+    });
+  } catch (err) {
+    console.error("[Orders cancel-ghn]", err?.message || err);
+    const msg = String(err?.message || "");
+    // Đơn đã hủy trên portal GHN — vẫn cập nhật Database cho khớp.
+    if (/đã hủy|da huy|already cancel|canceled|cancelled/i.test(msg)) {
+      try {
+        const key = String(req.params.id || req.body?.orderSn || "").trim();
+        const order = await loadManualOrderByKey(key);
+        if (order) {
+          const updated = applyExternalMappedStatus(order, "cancelled", {
+            ghn_status: "cancel",
+          });
+          await persistExternalOrder(updated);
+          return res.json({
+            success: true,
+            alreadyCancelled: true,
+            order: updated,
+            ghnStatus: "cancel",
+            externalStatus: "cancelled",
+            label: EXTERNAL_STATUS_MAP.cancelled.label,
+            message: "Đơn đã hủy trên GHN — đã cập nhật Database.",
+          });
+        }
+      } catch (healErr) {
+        console.warn("[Orders cancel-ghn] heal cancelled:", healErr?.message || healErr);
+      }
+    }
+    return res.status(ghnHttpStatusOf(err)).json({
+      success: false,
+      error: err?.code || "ghn_cancel_failed",
+      message: err?.message || "Hủy đơn GHN thất bại.",
+    });
   }
 }
