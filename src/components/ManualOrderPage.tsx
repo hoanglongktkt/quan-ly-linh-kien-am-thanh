@@ -45,7 +45,7 @@ interface ManualOrderPageProps {
 
 function mapWarehouseProduct(p: any): Product {
   return {
-    id: String(p?.id || ''),
+    id: String(p?.id || p?._id || p?.product_id || ''),
     title: String(p?.title || p?.name || ''),
     sku: String(p?.sku || ''),
     stock: Math.max(0, Math.round(Number(p?.stock ?? p?.current_stock) || 0)),
@@ -91,7 +91,7 @@ function flattenWarehouseHits(list: Product[], limit = 50): Product[] {
         const child = mapWarehouseProduct({
           ...p,
           ...c,
-          id: c.id,
+          id: c.id || (c as any)._id || (c as any).product_id,
           title: c.title || (c as any).name || p.title,
           sku: c.sku || p.sku,
           stock: c.stock ?? 0,
@@ -141,14 +141,20 @@ function ProductSearchCombobox({
   authHeadersRef.current = authHeaders;
 
   const searchTerm = query.trim();
-  const selected =
-    (picked && picked.id === value ? picked : null) ||
-    products.find((p) => p.id === value) ||
-    remoteProducts.find((p) => p.id === value);
+  const selected = value
+    ? (picked && picked.id === value ? picked : null) ||
+      products.find((p) => p.id === value) ||
+      remoteProducts.find((p) => p.id === value)
+    : null;
 
   useEffect(() => {
+    if (!value) {
+      setPicked(null);
+      setQuery('');
+      return;
+    }
     if (selected) setQuery(selected.title);
-  }, [selected?.id]);
+  }, [value, selected?.id]);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -215,9 +221,12 @@ function ProductSearchCombobox({
   }, []);
 
   const pickProduct = (p: Product) => {
-    setPicked(p);
-    onChange(p.id, p);
-    setQuery(p.title);
+    const id = String(p.id || '').trim();
+    if (!id) return;
+    const row = { ...p, id };
+    setPicked(row);
+    onChange(id, row);
+    setQuery(row.title);
     setOpen(false);
   };
 
@@ -330,6 +339,8 @@ export default function ManualOrderPage({
 
   const [productMode, setProductMode] = useState<'warehouse' | 'custom'>('warehouse');
   const [selectedProdId, setSelectedProdId] = useState('');
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const selectedProductRef = useRef<Product | null>(null);
   const [selectedQty, setSelectedQty] = useState(1);
   const [selectedPrice, setSelectedPrice] = useState(0);
   const [selectedWeight, setSelectedWeight] = useState(100);
@@ -363,52 +374,64 @@ export default function ManualOrderPage({
   }, [totalWeightGrams, orderItems.length]);
 
   const handleAddWarehouseItem = () => {
-    if (!selectedProdId) {
+    const prodId = String(selectedProdId || selectedProduct?.id || selectedProductRef.current?.id || '').trim();
+    const prod =
+      selectedProductRef.current ||
+      selectedProduct ||
+      catalogProducts.find((p) => String(p.id) === prodId) ||
+      extraProducts.find((p) => String(p.id) === prodId);
+
+    if (!prod || !String(prod.id || '').trim()) {
       alert('Vui lòng chọn một sản phẩm từ kho!');
       return;
     }
-    const prod = catalogProducts.find((p) => p.id === selectedProdId);
-    if (!prod) return;
 
-    if (selectedQty <= 0) {
-      alert('Số lượng sản phẩm phải lớn hơn 0!');
-      return;
-    }
-    const isQuickCreated = extraProducts.some((p) => p.id === selectedProdId);
-    if (!isQuickCreated && selectedQty > prod.stock) {
+    const qty = Math.max(1, Number(selectedQty) || 1);
+    const price = Math.max(0, Number(selectedPrice) || Number(prod.sellingPrice) || 0);
+    const weight = Math.max(1, Number(selectedWeight) || Number(prod.weight) || 100);
+    const productId = String(prod.id);
+
+    const isQuickCreated = extraProducts.some((p) => String(p.id) === productId);
+    if (!isQuickCreated && typeof prod.stock === 'number' && qty > prod.stock) {
       alert(`⚠️ Tồn kho khả dụng chỉ còn ${prod.stock}.`);
       return;
     }
 
-    const weight = selectedWeight || prod.weight || 100;
-    const existing = orderItems.find((it) => it.productId === selectedProdId && !it.isCustom);
-    if (existing) {
-      if (!isQuickCreated && existing.quantity + selectedQty > prod.stock) {
-        alert(`⚠️ Tổng số lượng vượt quá tồn kho (${prod.stock})!`);
-        return;
+    const existingQty =
+      orderItems.find((it) => it.productId === productId && !it.isCustom)?.quantity || 0;
+    if (!isQuickCreated && typeof prod.stock === 'number' && existingQty + qty > prod.stock) {
+      alert(`⚠️ Tổng số lượng vượt quá tồn kho (${prod.stock})!`);
+      return;
+    }
+
+    setOrderItems((prev) => {
+      const existing = prev.find((it) => it.productId === productId && !it.isCustom);
+      if (existing) {
+        if (!isQuickCreated && typeof prod.stock === 'number' && existing.quantity + qty > prod.stock) {
+          return prev;
+        }
+        return prev.map((it) =>
+          it.productId === productId && !it.isCustom
+            ? { ...it, quantity: it.quantity + qty, price, weightGrams: weight }
+            : it,
+        );
       }
-      setOrderItems((prev) =>
-        prev.map((it) =>
-          it.productId === selectedProdId && !it.isCustom
-            ? { ...it, quantity: it.quantity + selectedQty }
-            : it
-        )
-      );
-    } else {
-      setOrderItems((prev) => [
+      return [
         ...prev,
         {
-          productId: prod.id,
+          productId,
           productTitle: prod.title,
-          sku: prod.sku,
-          quantity: selectedQty,
-          price: selectedPrice || prod.sellingPrice,
+          sku: prod.sku || '',
+          quantity: qty,
+          price,
           weightGrams: weight,
           stock: prod.stock,
         },
-      ]);
-    }
+      ];
+    });
 
+    selectedProductRef.current = null;
+    setSelectedProduct(null);
     setSelectedProdId('');
     setSelectedQty(1);
     setSelectedPrice(0);
@@ -706,10 +729,15 @@ export default function ManualOrderPage({
                     setExtraProducts((prev) => (prev.some((x) => x.id === p.id) ? prev : [p, ...prev]))
                   }
                   onChange={(id, prod) => {
-                    setSelectedProdId(id);
+                    const nextId = String(id || prod?.id || '').trim();
+                    setSelectedProdId(nextId);
+                    setSelectedProduct(prod || null);
+                    selectedProductRef.current = prod || null;
                     if (prod) {
-                      setExtraProducts((prev) => (prev.some((x) => x.id === prod.id) ? prev : [prod, ...prev]));
-                      setSelectedPrice(prod.sellingPrice);
+                      setExtraProducts((prev) =>
+                        prev.some((x) => String(x.id) === String(prod.id)) ? prev : [prod, ...prev],
+                      );
+                      setSelectedPrice(Number(prod.sellingPrice) || 0);
                       setSelectedWeight(prod.weight || 100);
                     }
                   }}
@@ -748,7 +776,11 @@ export default function ManualOrderPage({
                   <div className="flex items-end">
                     <button
                       type="button"
-                      onClick={handleAddWarehouseItem}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleAddWarehouseItem();
+                      }}
                       className="w-full py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-sm rounded-xl border border-emerald-200 flex items-center justify-center gap-1.5"
                     >
                       <Plus className="w-4 h-4" /> Thêm

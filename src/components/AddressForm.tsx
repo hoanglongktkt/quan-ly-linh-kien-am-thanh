@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { BookUser, Loader2, MapPin, X } from 'lucide-react';
+import SearchableSelect from './SearchableSelect';
 import {
   AddressMode,
   StructuredAddressValue,
@@ -114,7 +115,6 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
 
   const inputClass =
     'w-full h-10 px-3 bg-white rounded-lg border border-gray-200 focus:border-orange-500 focus:ring-1 focus:ring-orange-200 focus:outline-none text-sm text-gray-800';
-  const selectClass = inputClass;
   const labelClass = 'text-[12px] font-medium text-gray-600';
   const star = <span className="text-red-500">*</span>;
 
@@ -488,42 +488,31 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
         <div
           className={`mt-1 grid gap-2 ${value.addressMode === 'new2' ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 sm:grid-cols-3'}`}
         >
-          <select
+          <SearchableSelect
             value={value.provinceCode}
-            onChange={(e) => {
-              void onProvinceChange(e.target.value);
+            onChange={(code) => {
+              void onProvinceChange(code);
             }}
-            className={selectClass}
-          >
-            <option value="">Chọn Tỉnh/Thành</option>
-            {provinces.map((p) => (
-              <option key={unitKey(p)} value={unitKey(p)}>
-                {p.name}
-              </option>
-            ))}
-          </select>
+            placeholder="Chọn Tỉnh/Thành"
+            searchPlaceholder="Gõ tên tỉnh, vd: Nai..."
+            options={provinces.map((p) => ({ value: unitKey(p), label: p.name }))}
+          />
 
           {value.addressMode === 'old3' && (
-            <select
+            <SearchableSelect
               value={value.districtCode}
-              onChange={(e) => {
-                void onDistrictChange(e.target.value);
+              onChange={(code) => {
+                void onDistrictChange(code);
               }}
-              className={selectClass}
-            >
-              <option value="">Chọn Quận/Huyện</option>
-              {districts.map((d) => (
-                <option key={unitKey(d)} value={unitKey(d)}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
+              placeholder="Chọn Quận/Huyện"
+              searchPlaceholder="Gõ tên quận/huyện..."
+              options={districts.map((d) => ({ value: unitKey(d), label: d.name }))}
+            />
           )}
 
-          <select
+          <SearchableSelect
             value={value.wardCode}
-            onChange={(e) => {
-              const code = e.target.value;
+            onChange={(code) => {
               const w = wards.find((x) => unitKey(x) === code);
               onChange({
                 ...value,
@@ -537,15 +526,10 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
                   : {}),
               });
             }}
-            className={selectClass}
-          >
-            <option value="">Chọn Phường/Xã</option>
-            {wards.map((w) => (
-              <option key={unitKey(w)} value={unitKey(w)}>
-                {w.name}
-              </option>
-            ))}
-          </select>
+            placeholder="Chọn Phường/Xã"
+            searchPlaceholder="Gõ tên phường/xã..."
+            options={wards.map((w) => ({ value: unitKey(w), label: w.name }))}
+          />
         </div>
       </div>
 
