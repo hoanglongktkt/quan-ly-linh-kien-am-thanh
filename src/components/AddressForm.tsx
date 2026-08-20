@@ -13,6 +13,32 @@ const PARSE_TIMEOUT_MS = 5_000;
 const LIST_TIMEOUT_MS = 8_000;
 const TOAST_MS = 4_000;
 const MANUAL_ERROR = 'AI tách lỗi hoặc quá tải. Vui lòng chọn thủ công.';
+const AI_OVERLOAD_MSG =
+  'Hệ thống AI đang quá tải (429). Vui lòng sử dụng tính năng chọn địa chỉ thủ công bên dưới!';
+
+/** Không bao giờ đưa raw object / chuỗi lỗi kỹ thuật ra UI. */
+function toSafeUiText(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim();
+  if (!trimmed) return fallback;
+  const lower = trimmed.toLowerCase();
+  if (
+    trimmed.length > 140 ||
+    lower.includes('quota') ||
+    lower.includes('google') ||
+    lower.includes('generativelanguage') ||
+    lower.includes('too many requests') ||
+    lower.includes('resource_exhausted') ||
+    lower.includes('gemini') ||
+    lower.includes('error fetching') ||
+    lower.includes('stack') ||
+    trimmed.includes('{') ||
+    /^\s*\[/.test(trimmed)
+  ) {
+    return fallback;
+  }
+  return trimmed;
+}
 
 const PASTE_PLACEHOLDER =
   'Nhập toàn bộ thông tin và hệ thống sẽ tự động điền tên, số điện thoại và địa chỉ.\nVí dụ: Nguyen Van A, 0908888888, 12 Le Duan, Phuong Ben Nghe, Quan 1, TP. HCM';
@@ -258,7 +284,7 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
           phone: normalizePhone(parsed.phone || value.phone),
           street: parsed.detail || raw,
         });
-        const msg = data.details || data.message || data.error || MANUAL_ERROR;
+        const msg = AI_OVERLOAD_MSG;
         setParseError(msg);
         showToast(msg);
         return;
@@ -284,15 +310,11 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
         setParseError('Chưa khớp đủ địa chỉ. Vui lòng chọn thủ công.');
         showToast('Chưa khớp đủ địa chỉ. Vui lòng chọn thủ công.');
       }
-    } catch (error: unknown) {
+    } catch {
       setIsLoading(false);
       onChange({ ...value, street: value.street || raw });
-      const details =
-        error instanceof Error && error.message && error.message !== 'TIMEOUT'
-          ? error.message
-          : MANUAL_ERROR;
-      setParseError(MANUAL_ERROR);
-      showToast(details);
+      setParseError(AI_OVERLOAD_MSG);
+      showToast(AI_OVERLOAD_MSG);
     } finally {
       setIsLoading(false);
     }
@@ -305,7 +327,7 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
 
   return (
     <div className="space-y-4">
-      {toast && (
+      {typeof toast === 'string' && toast ? (
         <div className="fixed top-5 right-5 z-120 bg-slate-900 text-white font-semibold text-xs px-5 py-3 rounded-2xl shadow-2xl border border-slate-700 flex items-center gap-2 max-w-sm">
           <span>{toast}</span>
           <button
@@ -316,7 +338,7 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
-      )}
+      ) : null}
 
       <div className="flex items-center justify-between">
         <h2 className="text-[15px] font-bold text-gray-900">2. Địa chỉ người nhận</h2>
@@ -404,7 +426,9 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
             'Dán và nhập tự động'
           )}
         </button>
-        {parseError && <p className="text-[12px] text-amber-700">{parseError}</p>}
+        {typeof parseError === 'string' && parseError ? (
+          <p className="text-[12px] text-amber-700">{toSafeUiText(parseError, AI_OVERLOAD_MSG)}</p>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

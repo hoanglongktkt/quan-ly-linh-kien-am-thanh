@@ -15,7 +15,8 @@ export type ParsedAddress = {
 
 const GEMINI_TIMEOUT_MS = 4_000;
 const DEFAULT_MODEL = "gemini-1.5-flash";
-const FALLBACK_MODELS = ["gemini-3.5-flash", "gemini-2.0-flash"];
+/** Không fallback sang gemini-3.5-flash (quota free tier rất chặt, dễ 429). */
+const FALLBACK_MODELS: string[] = [];
 
 const SYSTEM_PROMPT = `Bạn là chuyên gia bóc tách thông tin người nhận và địa chỉ giao hàng Việt Nam.
 Nhiệm vụ: tách chuỗi dán thô thành JSON nghiêm ngặt, KHÔNG markdown, KHÔNG giải thích.
@@ -96,6 +97,23 @@ function isModelUnavailable(err: unknown): boolean {
   );
 }
 
+function wrapGeminiError(err: unknown): Error {
+  const msg = String((err as { message?: string })?.message || err || "").toLowerCase();
+  if (
+    msg.includes("gemini_overload") ||
+    msg.includes("429") ||
+    msg.includes("quota") ||
+    msg.includes("resource_exhausted") ||
+    msg.includes("too many requests")
+  ) {
+    return new Error("GEMINI_OVERLOAD");
+  }
+  if (msg.includes("timeout")) {
+    return new Error("GEMINI_TIMEOUT");
+  }
+  return new Error("GEMINI_PARSE_FAILED");
+}
+
 async function generateWithModel(modelName: string, rawAddress: string): Promise<string> {
   const model = getClient().getGenerativeModel({
     model: modelName,
@@ -133,7 +151,9 @@ export async function parseAddressWithGemini(rawAddress: string): Promise<Parsed
     return { name: "", phone: "", province: "", district: "", ward: "", detail: "" };
   }
 
-  const primary = String(process.env.GEMINI_ADDRESS_MODEL || DEFAULT_MODEL).trim() || DEFAULT_MODEL;
+  const envModel = String(process.env.GEMINI_ADDRESS_MODEL || "").trim();
+  const primary =
+    envModel && !envModel.includes("3.5") ? envModel : DEFAULT_MODEL;
   const models = [primary, ...FALLBACK_MODELS.filter((m) => m !== primary)].slice(0, 2);
   const startedAt = Date.now();
 
@@ -149,13 +169,13 @@ export async function parseAddressWithGemini(rawAddress: string): Promise<Parsed
       }
       return parsed;
     } catch (err) {
-      lastError = err;
+      lastError = wrapGeminiError(err);
       if (!isModelUnavailable(err) || i >= models.length - 1) break;
       await sleep(200);
     }
   }
 
-  throw lastError instanceof Error ? lastError : new Error("GEMINI_PARSE_FAILED");
+  throw wrapGeminiError(lastError);
 }
 
 export function isGeminiConfigured(): boolean {

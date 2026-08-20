@@ -115508,7 +115508,7 @@ var GoogleGenerativeAI = class {
 // services/geminiService.ts
 var GEMINI_TIMEOUT_MS = 4e3;
 var DEFAULT_MODEL = "gemini-1.5-flash";
-var FALLBACK_MODELS = ["gemini-3.5-flash", "gemini-2.0-flash"];
+var FALLBACK_MODELS = [];
 var SYSTEM_PROMPT = `B\u1EA1n l\xE0 chuy\xEAn gia b\xF3c t\xE1ch th\xF4ng tin ng\u01B0\u1EDDi nh\u1EADn v\xE0 \u0111\u1ECBa ch\u1EC9 giao h\xE0ng Vi\u1EC7t Nam.
 Nhi\u1EC7m v\u1EE5: t\xE1ch chu\u1ED7i d\xE1n th\xF4 th\xE0nh JSON nghi\xEAm ng\u1EB7t, KH\xD4NG markdown, KH\xD4NG gi\u1EA3i th\xEDch.
 
@@ -115569,6 +115569,16 @@ function isModelUnavailable(err) {
   const msg = String(err?.message || err || "").toLowerCase();
   return msg.includes("not found") || msg.includes("is not supported") || msg.includes("unknown model") || msg.includes("404");
 }
+function wrapGeminiError(err) {
+  const msg = String(err?.message || err || "").toLowerCase();
+  if (msg.includes("gemini_overload") || msg.includes("429") || msg.includes("quota") || msg.includes("resource_exhausted") || msg.includes("too many requests")) {
+    return new Error("GEMINI_OVERLOAD");
+  }
+  if (msg.includes("timeout")) {
+    return new Error("GEMINI_TIMEOUT");
+  }
+  return new Error("GEMINI_PARSE_FAILED");
+}
 async function generateWithModel(modelName, rawAddress) {
   const model = getClient().getGenerativeModel({
     model: modelName,
@@ -115598,7 +115608,8 @@ async function parseAddressWithGemini(rawAddress) {
   if (!raw) {
     return { name: "", phone: "", province: "", district: "", ward: "", detail: "" };
   }
-  const primary = String(process.env.GEMINI_ADDRESS_MODEL || DEFAULT_MODEL).trim() || DEFAULT_MODEL;
+  const envModel = String(process.env.GEMINI_ADDRESS_MODEL || "").trim();
+  const primary = envModel && !envModel.includes("3.5") ? envModel : DEFAULT_MODEL;
   const models = [primary, ...FALLBACK_MODELS.filter((m2) => m2 !== primary)].slice(0, 2);
   const startedAt = Date.now();
   let lastError = null;
@@ -115613,12 +115624,12 @@ async function parseAddressWithGemini(rawAddress) {
       }
       return parsed;
     } catch (err) {
-      lastError = err;
+      lastError = wrapGeminiError(err);
       if (!isModelUnavailable(err) || i2 >= models.length - 1) break;
       await sleep4(200);
     }
   }
-  throw lastError instanceof Error ? lastError : new Error("GEMINI_PARSE_FAILED");
+  throw wrapGeminiError(lastError);
 }
 function isGeminiConfigured() {
   const key = readGeminiApiKey();
@@ -115835,13 +115846,13 @@ var MATCH_TIMEOUT_MS = 2e3;
 function emptyParsed(detail = "") {
   return { name: "", phone: "", province: "", district: "", ward: "", detail };
 }
+var AI_OVERLOAD_MESSAGE = "AI qu\xE1 t\u1EA3i, vui l\xF2ng nh\u1EADp th\u1EE7 c\xF4ng";
 function errorPayload(rawAddress, message) {
   const raw = String(rawAddress || "").trim();
   return {
     success: false,
     fallback: true,
-    error: message || "L\u1ED7i AI t\xE1ch \u0111\u1ECBa ch\u1EC9. Vui l\xF2ng ch\u1ECDn th\u1EE7 c\xF4ng.",
-    message: message || "L\u1ED7i AI t\xE1ch \u0111\u1ECBa ch\u1EC9. Vui l\xF2ng ch\u1ECDn th\u1EE7 c\xF4ng.",
+    message: message || AI_OVERLOAD_MESSAGE,
     raw_address: raw,
     parsed: emptyParsed(raw),
     matched: null,
@@ -115871,13 +115882,8 @@ async function parseOrderAddress(req, res) {
   }
   try {
     if (!isGeminiConfigured()) {
-      const missing = new Error("GEMINI_API_KEY missing");
-      console.error("=== GEMINI ERROR ===", missing.message);
-      return sendJson2(res, 500, {
-        ...errorPayload(raw, "L\u1ED7i AI: ch\u01B0a c\u1EA5u h\xECnh GEMINI_API_KEY. Vui l\xF2ng ch\u1ECDn th\u1EE7 c\xF4ng."),
-        error: "L\u1ED7i AI",
-        details: missing.message
-      });
+      console.error("=== GEMINI ERROR === GEMINI_API_KEY missing");
+      return sendJson2(res, 500, errorPayload(raw, AI_OVERLOAD_MESSAGE));
     }
     const { parsed, master } = await withTimeout(
       (async () => {
@@ -115916,16 +115922,7 @@ async function parseOrderAddress(req, res) {
     });
   } catch (error) {
     console.error("=== GEMINI ERROR ===", error?.response?.data || error?.message || error);
-    const details = String(error?.message || error || "L\u1ED7i AI");
-    const timedOut = details.includes("TIMEOUT");
-    return sendJson2(res, 500, {
-      ...errorPayload(
-        raw,
-        timedOut ? "L\u1ED7i AI: qu\xE1 th\u1EDDi gian ch\u1EDD. Vui l\xF2ng ch\u1ECDn th\u1EE7 c\xF4ng." : "L\u1ED7i AI"
-      ),
-      error: "L\u1ED7i AI",
-      details
-    });
+    return sendJson2(res, 500, errorPayload(raw, AI_OVERLOAD_MESSAGE));
   }
 }
 

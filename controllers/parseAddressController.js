@@ -8,13 +8,14 @@ function emptyParsed(detail = "") {
   return { name: "", phone: "", province: "", district: "", ward: "", detail };
 }
 
+const AI_OVERLOAD_MESSAGE = "AI quá tải, vui lòng nhập thủ công";
+
 function errorPayload(rawAddress, message) {
   const raw = String(rawAddress || "").trim();
   return {
     success: false,
     fallback: true,
-    error: message || "Lỗi AI tách địa chỉ. Vui lòng chọn thủ công.",
-    message: message || "Lỗi AI tách địa chỉ. Vui lòng chọn thủ công.",
+    message: message || AI_OVERLOAD_MESSAGE,
     raw_address: raw,
     parsed: emptyParsed(raw),
     matched: null,
@@ -54,13 +55,8 @@ export async function parseOrderAddress(req, res) {
 
   try {
     if (!isGeminiConfigured()) {
-      const missing = new Error("GEMINI_API_KEY missing");
-      console.error("=== GEMINI ERROR ===", missing.message);
-      return sendJson(res, 500, {
-        ...errorPayload(raw, "Lỗi AI: chưa cấu hình GEMINI_API_KEY. Vui lòng chọn thủ công."),
-        error: "Lỗi AI",
-        details: missing.message,
-      });
+      console.error("=== GEMINI ERROR === GEMINI_API_KEY missing");
+      return sendJson(res, 500, errorPayload(raw, AI_OVERLOAD_MESSAGE));
     }
 
     const { parsed, master } = await withTimeout(
@@ -101,17 +97,6 @@ export async function parseOrderAddress(req, res) {
     });
   } catch (error) {
     console.error("=== GEMINI ERROR ===", error?.response?.data || error?.message || error);
-    const details = String(error?.message || error || "Lỗi AI");
-    const timedOut = details.includes("TIMEOUT");
-    return sendJson(res, 500, {
-      ...errorPayload(
-        raw,
-        timedOut
-          ? "Lỗi AI: quá thời gian chờ. Vui lòng chọn thủ công."
-          : "Lỗi AI",
-      ),
-      error: "Lỗi AI",
-      details,
-    });
+    return sendJson(res, 500, errorPayload(raw, AI_OVERLOAD_MESSAGE));
   }
 }
