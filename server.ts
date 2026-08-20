@@ -57,6 +57,7 @@ import healthRoutesImport from "./routes/healthRoutes.js";
 import vietnamAddressRoutesImport from "./routes/vietnamAddressRoutes.js";
 import suppliersRoutesImport from "./routes/suppliersRoutes.js";
 import expensesRoutesImport from "./routes/expensesRoutes.js";
+import addressBookRoutesImport from "./routes/addressBookRoutes.js";
 import importsRoutesImport from "./routes/importsRoutes.js";
 import settingsRoutesImport from "./routes/settingsRoutes.js";
 import aiRoutesImport from "./routes/aiRoutes.js";
@@ -404,6 +405,7 @@ const healthRoutes = asRouter(healthRoutesImport);
 const vietnamAddressRoutes = asRouter(vietnamAddressRoutesImport);
 const suppliersRoutes = asRouter(suppliersRoutesImport);
 const expensesRoutes = asRouter(expensesRoutesImport);
+const addressBookRoutes = asRouter(addressBookRoutesImport);
 const importsRoutes = asRouter(importsRoutesImport);
 const settingsRoutes = asRouter(settingsRoutesImport);
 const aiRoutes = asRouter(aiRoutesImport);
@@ -20709,6 +20711,7 @@ async function startServer() {
 
   // --- Expenses API (data/expenses.json) — Phase 1 MVC ---
   app.use("/api/expenses", authMiddleware, expensesRoutes);
+  app.use("/api/address-book", authMiddleware, addressBookRoutes);
 
   // --- Dashboard API — Phase 2 MVC ---
   // CHỈ đọc MongoDB — không gọi Shopee API.

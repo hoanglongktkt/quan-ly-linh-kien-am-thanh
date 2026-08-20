@@ -8,7 +8,7 @@ import {
   formatFullAddress,
   normalizePhone,
 } from '../utils/vietnamAddress';
-import { AddressBookEntry, loadAddressBook } from '../utils/addressBook';
+import { AddressBookEntry, fetchAddressBook, postAddressBookEntry } from '../utils/addressBook';
 
 const PARSE_TIMEOUT_MS = 5_000;
 const LIST_TIMEOUT_MS = 8_000;
@@ -197,6 +197,32 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
     });
   };
 
+  const persistToAddressBook = useCallback(
+    async (addr: StructuredAddressValue, opts?: { silent?: boolean }) => {
+      if (!addr.saveToAddressBook) return false;
+      if (!addr.name.trim() || !addr.phone.trim()) return false;
+      await postAddressBookEntry(
+        {
+          name: addr.name.trim(),
+          phone: addr.phone.trim(),
+          provinceCode: addr.provinceCode,
+          provinceName: addr.provinceName,
+          districtCode: addr.districtCode,
+          districtName: addr.districtName,
+          wardCode: addr.wardCode,
+          wardName: addr.wardName,
+          street: addr.street.trim(),
+          addressMode: addr.addressMode,
+          fullAddress: formatFullAddress(addr),
+        },
+        authHeadersRef.current,
+      );
+      if (!opts?.silent) showToast('Đã lưu vào sổ địa chỉ');
+      return true;
+    },
+    [showToast],
+  );
+
   const applyBookEntry = (entry: AddressBookEntry) => {
     onChange({
       ...value,
@@ -278,12 +304,13 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
 
       if (!res.ok || data.fallback || !data.success) {
         setIsLoading(false);
-        onChange({
+        const fallbackAddr = {
           ...value,
           name: parsed.name || value.name,
           phone: normalizePhone(parsed.phone || value.phone),
           street: parsed.detail || raw,
-        });
+        };
+        onChange(fallbackAddr);
         const msg = AI_OVERLOAD_MSG;
         setParseError(msg);
         showToast(msg);
@@ -293,7 +320,7 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
       const province = matched.province;
       const district = matched.district;
       const ward = matched.ward;
-      onChange({
+      const nextAddr = {
         ...value,
         name: String(parsed.name || value.name || '').trim(),
         phone: normalizePhone(parsed.phone || value.phone),
@@ -304,11 +331,21 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
         wardCode: ward ? String(ward.id) : '',
         wardName: ward?.name || parsed.ward || '',
         street: String(parsed.detail || '').trim(),
-      });
-
-      if (!province || !ward || (value.addressMode === 'old3' && !district)) {
+      };
+      onChange(nextAddr);
+      const incomplete = !province || !ward || (value.addressMode === 'old3' && !district);
+      const canSave =
+        nextAddr.saveToAddressBook && !!nextAddr.name.trim() && !!nextAddr.phone.trim();
+      if (incomplete) {
         setParseError('Chưa khớp đủ địa chỉ. Vui lòng chọn thủ công.');
-        showToast('Chưa khớp đủ địa chỉ. Vui lòng chọn thủ công.');
+        showToast(
+          canSave
+            ? 'Chưa khớp đủ địa chỉ. Đã lưu vào sổ địa chỉ.'
+            : 'Chưa khớp đủ địa chỉ. Vui lòng chọn thủ công.',
+        );
+        void persistToAddressBook(nextAddr, { silent: true });
+      } else {
+        void persistToAddressBook(nextAddr);
       }
     } catch {
       setIsLoading(false);
@@ -346,8 +383,13 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
           <button
             type="button"
             onClick={() => {
-              setAddressBook(loadAddressBook());
-              setBookOpen((open) => !open);
+              setBookOpen((open) => {
+                const next = !open;
+                if (next) {
+                  void fetchAddressBook(authHeadersRef.current).then(setAddressBook);
+                }
+                return next;
+              });
             }}
             className="inline-flex items-center gap-1 text-[13px] font-semibold text-orange-600 hover:text-orange-700"
           >
@@ -434,18 +476,15 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className={labelClass}>{star} Điện thoại</label>
-          <div className="mt-1 flex">
-            <span className="inline-flex items-center px-2.5 h-10 rounded-l-lg border border-r-0 border-gray-200 bg-gray-50 text-[12px] font-semibold text-gray-500">
-              +84
-            </span>
-            <input
-              type="tel"
-              value={value.phone}
-              onChange={(e) => onChange({ ...value, phone: normalizePhone(e.target.value) })}
-              placeholder="908888888"
-              className={`${inputClass} rounded-l-none`}
-            />
-          </div>
+          <input
+            type="tel"
+            inputMode="numeric"
+            autoComplete="tel"
+            value={value.phone}
+            onChange={(e) => onChange({ ...value, phone: normalizePhone(e.target.value) })}
+            placeholder="0944123456"
+            className={`mt-1 ${inputClass}`}
+          />
         </div>
         <div>
           <label className={labelClass}>{star} Tên</label>

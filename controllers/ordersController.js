@@ -2795,17 +2795,22 @@ export async function createManualOrder(req, res) {
     let addressBookEntry = null;
     if (save_to_address_book === true || save_to_address_book === "true" || save_to_address_book === 1) {
       try {
-        addressBookEntry = saveAddressBookEntry({
+        addressBookEntry = await saveAddressBookEntry({
           name,
           phone,
           province: addr.province,
+          provinceName: addr.province,
           provinceCode: addr.provinceCode,
           district: addr.district || "",
+          districtName: addr.district || "",
           districtCode: addr.districtCode || "",
           ward: addr.ward,
+          wardName: addr.ward,
           wardCode: addr.wardCode,
           street: addr.street.trim(),
+          address: addr.street.trim(),
           fullAddress,
+          addressMode,
         });
       } catch (bookErr) {
         console.warn("[Orders manual] address book:", bookErr?.message || bookErr);

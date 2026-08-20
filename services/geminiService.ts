@@ -72,8 +72,7 @@ function extractJsonObject(text: string): Record<string, unknown> {
 function normalizePhone(raw: unknown): string {
   const digits = String(raw || "").replace(/\D/g, "");
   if (!digits) return "";
-  if (digits.startsWith("84") && digits.length >= 11) return `0${digits.slice(2)}`;
-  if (digits.length === 9) return `0${digits}`;
+  if (digits.startsWith("840") && digits.length >= 12) return digits.slice(2);
   return digits;
 }
 

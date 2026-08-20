@@ -921,8 +921,8 @@ var require_ms = __commonJS({
   "node_modules/body-parser/node_modules/ms/index.js"(exports2, module2) {
     var s2 = 1e3;
     var m2 = s2 * 60;
-    var h3 = m2 * 60;
-    var d = h3 * 24;
+    var h4 = m2 * 60;
+    var d = h4 * 24;
     var y = d * 365.25;
     module2.exports = function(val, options) {
       options = options || {};
@@ -965,7 +965,7 @@ var require_ms = __commonJS({
         case "hrs":
         case "hr":
         case "h":
-          return n * h3;
+          return n * h4;
         case "minutes":
         case "minute":
         case "mins":
@@ -992,8 +992,8 @@ var require_ms = __commonJS({
       if (ms >= d) {
         return Math.round(ms / d) + "d";
       }
-      if (ms >= h3) {
-        return Math.round(ms / h3) + "h";
+      if (ms >= h4) {
+        return Math.round(ms / h4) + "h";
       }
       if (ms >= m2) {
         return Math.round(ms / m2) + "m";
@@ -1004,7 +1004,7 @@ var require_ms = __commonJS({
       return ms + "ms";
     }
     function fmtLong(ms) {
-      return plural(ms, d, "day") || plural(ms, h3, "hour") || plural(ms, m2, "minute") || plural(ms, s2, "second") || ms + " ms";
+      return plural(ms, d, "day") || plural(ms, h4, "hour") || plural(ms, m2, "minute") || plural(ms, s2, "second") || ms + " ms";
     }
     function plural(ms, n, name) {
       if (ms < n) {
@@ -17342,8 +17342,8 @@ var require_ms2 = __commonJS({
   "node_modules/finalhandler/node_modules/ms/index.js"(exports2, module2) {
     var s2 = 1e3;
     var m2 = s2 * 60;
-    var h3 = m2 * 60;
-    var d = h3 * 24;
+    var h4 = m2 * 60;
+    var d = h4 * 24;
     var y = d * 365.25;
     module2.exports = function(val, options) {
       options = options || {};
@@ -17386,7 +17386,7 @@ var require_ms2 = __commonJS({
         case "hrs":
         case "hr":
         case "h":
-          return n * h3;
+          return n * h4;
         case "minutes":
         case "minute":
         case "mins":
@@ -17413,8 +17413,8 @@ var require_ms2 = __commonJS({
       if (ms >= d) {
         return Math.round(ms / d) + "d";
       }
-      if (ms >= h3) {
-        return Math.round(ms / h3) + "h";
+      if (ms >= h4) {
+        return Math.round(ms / h4) + "h";
       }
       if (ms >= m2) {
         return Math.round(ms / m2) + "m";
@@ -17425,7 +17425,7 @@ var require_ms2 = __commonJS({
       return ms + "ms";
     }
     function fmtLong(ms) {
-      return plural(ms, d, "day") || plural(ms, h3, "hour") || plural(ms, m2, "minute") || plural(ms, s2, "second") || ms + " ms";
+      return plural(ms, d, "day") || plural(ms, h4, "hour") || plural(ms, m2, "minute") || plural(ms, s2, "second") || ms + " ms";
     }
     function plural(ms, n, name) {
       if (ms < n) {
@@ -18061,8 +18061,8 @@ var require_ms3 = __commonJS({
   "node_modules/express/node_modules/ms/index.js"(exports2, module2) {
     var s2 = 1e3;
     var m2 = s2 * 60;
-    var h3 = m2 * 60;
-    var d = h3 * 24;
+    var h4 = m2 * 60;
+    var d = h4 * 24;
     var y = d * 365.25;
     module2.exports = function(val, options) {
       options = options || {};
@@ -18105,7 +18105,7 @@ var require_ms3 = __commonJS({
         case "hrs":
         case "hr":
         case "h":
-          return n * h3;
+          return n * h4;
         case "minutes":
         case "minute":
         case "mins":
@@ -18132,8 +18132,8 @@ var require_ms3 = __commonJS({
       if (ms >= d) {
         return Math.round(ms / d) + "d";
       }
-      if (ms >= h3) {
-        return Math.round(ms / h3) + "h";
+      if (ms >= h4) {
+        return Math.round(ms / h4) + "h";
       }
       if (ms >= m2) {
         return Math.round(ms / m2) + "m";
@@ -18144,7 +18144,7 @@ var require_ms3 = __commonJS({
       return ms + "ms";
     }
     function fmtLong(ms) {
-      return plural(ms, d, "day") || plural(ms, h3, "hour") || plural(ms, m2, "minute") || plural(ms, s2, "second") || ms + " ms";
+      return plural(ms, d, "day") || plural(ms, h4, "hour") || plural(ms, m2, "minute") || plural(ms, s2, "second") || ms + " ms";
     }
     function plural(ms, n, name) {
       if (ms < n) {
@@ -18908,17 +18908,17 @@ var require_router = __commonJS({
     var toString3 = Object.prototype.toString;
     var proto = module2.exports = function(options) {
       var opts = options || {};
-      function router23(req, res, next) {
-        router23.handle(req, res, next);
+      function router24(req, res, next) {
+        router24.handle(req, res, next);
       }
-      setPrototypeOf(router23, proto);
-      router23.params = {};
-      router23._params = [];
-      router23.caseSensitive = opts.caseSensitive;
-      router23.mergeParams = opts.mergeParams;
-      router23.strict = opts.strict;
-      router23.stack = [];
-      return router23;
+      setPrototypeOf(router24, proto);
+      router24.params = {};
+      router24._params = [];
+      router24.caseSensitive = opts.caseSensitive;
+      router24.mergeParams = opts.mergeParams;
+      router24.strict = opts.strict;
+      router24.stack = [];
+      return router24;
     };
     proto.param = function param(name, fn) {
       if (typeof name === "function") {
@@ -19627,8 +19627,8 @@ var require_ms4 = __commonJS({
   "node_modules/send/node_modules/debug/node_modules/ms/index.js"(exports2, module2) {
     var s2 = 1e3;
     var m2 = s2 * 60;
-    var h3 = m2 * 60;
-    var d = h3 * 24;
+    var h4 = m2 * 60;
+    var d = h4 * 24;
     var y = d * 365.25;
     module2.exports = function(val, options) {
       options = options || {};
@@ -19671,7 +19671,7 @@ var require_ms4 = __commonJS({
         case "hrs":
         case "hr":
         case "h":
-          return n * h3;
+          return n * h4;
         case "minutes":
         case "minute":
         case "mins":
@@ -19698,8 +19698,8 @@ var require_ms4 = __commonJS({
       if (ms >= d) {
         return Math.round(ms / d) + "d";
       }
-      if (ms >= h3) {
-        return Math.round(ms / h3) + "h";
+      if (ms >= h4) {
+        return Math.round(ms / h4) + "h";
       }
       if (ms >= m2) {
         return Math.round(ms / m2) + "m";
@@ -19710,7 +19710,7 @@ var require_ms4 = __commonJS({
       return ms + "ms";
     }
     function fmtLong(ms) {
-      return plural(ms, d, "day") || plural(ms, h3, "hour") || plural(ms, m2, "minute") || plural(ms, s2, "second") || ms + " ms";
+      return plural(ms, d, "day") || plural(ms, h4, "hour") || plural(ms, m2, "minute") || plural(ms, s2, "second") || ms + " ms";
     }
     function plural(ms, n, name) {
       if (ms < n) {
@@ -20227,8 +20227,8 @@ var require_ms5 = __commonJS({
   "node_modules/ms/index.js"(exports2, module2) {
     var s2 = 1e3;
     var m2 = s2 * 60;
-    var h3 = m2 * 60;
-    var d = h3 * 24;
+    var h4 = m2 * 60;
+    var d = h4 * 24;
     var w = d * 7;
     var y = d * 365.25;
     module2.exports = function(val, options) {
@@ -20276,7 +20276,7 @@ var require_ms5 = __commonJS({
         case "hrs":
         case "hr":
         case "h":
-          return n * h3;
+          return n * h4;
         case "minutes":
         case "minute":
         case "mins":
@@ -20304,8 +20304,8 @@ var require_ms5 = __commonJS({
       if (msAbs >= d) {
         return Math.round(ms / d) + "d";
       }
-      if (msAbs >= h3) {
-        return Math.round(ms / h3) + "h";
+      if (msAbs >= h4) {
+        return Math.round(ms / h4) + "h";
       }
       if (msAbs >= m2) {
         return Math.round(ms / m2) + "m";
@@ -20320,8 +20320,8 @@ var require_ms5 = __commonJS({
       if (msAbs >= d) {
         return plural(ms, msAbs, d, "day");
       }
-      if (msAbs >= h3) {
-        return plural(ms, msAbs, h3, "hour");
+      if (msAbs >= h4) {
+        return plural(ms, msAbs, h4, "hour");
       }
       if (msAbs >= m2) {
         return plural(ms, msAbs, m2, "minute");
@@ -21935,7 +21935,7 @@ var require_application = __commonJS({
   "node_modules/express/lib/application.js"(exports2, module2) {
     "use strict";
     var finalhandler = require_finalhandler();
-    var Router23 = require_router();
+    var Router24 = require_router();
     var methods = require_methods();
     var middleware = require_init();
     var query = require_query();
@@ -22000,7 +22000,7 @@ var require_application = __commonJS({
     };
     app.lazyrouter = function lazyrouter() {
       if (!this._router) {
-        this._router = new Router23({
+        this._router = new Router24({
           caseSensitive: this.enabled("case sensitive routing"),
           strict: this.enabled("strict routing")
         });
@@ -22009,17 +22009,17 @@ var require_application = __commonJS({
       }
     };
     app.handle = function handle(req, res, callback) {
-      var router23 = this._router;
+      var router24 = this._router;
       var done = callback || finalhandler(req, res, {
         env: this.get("env"),
         onerror: logerror.bind(this)
       });
-      if (!router23) {
+      if (!router24) {
         debug("no routes defined on app");
         done();
         return;
       }
-      router23.handle(req, res, done);
+      router24.handle(req, res, done);
     };
     app.use = function use(fn) {
       var offset = 0;
@@ -22039,15 +22039,15 @@ var require_application = __commonJS({
         throw new TypeError("app.use() requires a middleware function");
       }
       this.lazyrouter();
-      var router23 = this._router;
+      var router24 = this._router;
       fns.forEach(function(fn2) {
         if (!fn2 || !fn2.handle || !fn2.set) {
-          return router23.use(path21, fn2);
+          return router24.use(path21, fn2);
         }
         debug(".use app under %s", path21);
         fn2.mountpath = path21;
         fn2.parent = this;
-        router23.use(path21, function mounted_app(req, res, next) {
+        router24.use(path21, function mounted_app(req, res, next) {
           var orig = req.app;
           fn2.handle(req, res, function(err) {
             setPrototypeOf(req, orig.request);
@@ -23864,7 +23864,7 @@ var require_express = __commonJS({
     var mixin = require_merge_descriptors();
     var proto = require_application();
     var Route = require_route();
-    var Router23 = require_router();
+    var Router24 = require_router();
     var req = require_request();
     var res = require_response();
     exports2 = module2.exports = createApplication;
@@ -23887,7 +23887,7 @@ var require_express = __commonJS({
     exports2.request = req;
     exports2.response = res;
     exports2.Route = Route;
-    exports2.Router = Router23;
+    exports2.Router = Router24;
     exports2.json = bodyParser.json;
     exports2.query = require_query();
     exports2.raw = bodyParser.raw;
@@ -25361,7 +25361,7 @@ var require_trees = __commonJS({
       var extra = desc.stat_desc.extra_bits;
       var base = desc.stat_desc.extra_base;
       var max_length = desc.stat_desc.max_length;
-      var h3;
+      var h4;
       var n, m2;
       var bits;
       var xbits;
@@ -25371,8 +25371,8 @@ var require_trees = __commonJS({
         s2.bl_count[bits] = 0;
       }
       tree[s2.heap[s2.heap_max] * 2 + 1] = 0;
-      for (h3 = s2.heap_max + 1; h3 < HEAP_SIZE; h3++) {
-        n = s2.heap[h3];
+      for (h4 = s2.heap_max + 1; h4 < HEAP_SIZE; h4++) {
+        n = s2.heap[h4];
         bits = tree[tree[n * 2 + 1] * 2 + 1] + 1;
         if (bits > max_length) {
           bits = max_length;
@@ -25409,7 +25409,7 @@ var require_trees = __commonJS({
       for (bits = max_length; bits !== 0; bits--) {
         n = s2.bl_count[bits];
         while (n !== 0) {
-          m2 = s2.heap[--h3];
+          m2 = s2.heap[--h4];
           if (m2 > max_code) {
             continue;
           }
@@ -33912,27 +33912,27 @@ var require_UPNG = __commonJS({
     }
     var UPNG = {};
     UPNG.toRGBA8 = function(out) {
-      var w = out.width, h3 = out.height;
-      if (out.tabs.acTL == null) return [UPNG.toRGBA8.decodeImage(out.data, w, h3, out).buffer];
+      var w = out.width, h4 = out.height;
+      if (out.tabs.acTL == null) return [UPNG.toRGBA8.decodeImage(out.data, w, h4, out).buffer];
       var frms = [];
       if (out.frames[0].data == null) out.frames[0].data = out.data;
-      var len = w * h3 * 4, img = new Uint8Array(len), empty = new Uint8Array(len), prev = new Uint8Array(len);
+      var len = w * h4 * 4, img = new Uint8Array(len), empty = new Uint8Array(len), prev = new Uint8Array(len);
       for (var i2 = 0; i2 < out.frames.length; i2++) {
         var frm = out.frames[i2];
         var fx = frm.rect.x, fy = frm.rect.y, fw = frm.rect.width, fh = frm.rect.height;
         var fdata = UPNG.toRGBA8.decodeImage(frm.data, fw, fh, out);
         if (i2 != 0) for (var j = 0; j < len; j++) prev[j] = img[j];
-        if (frm.blend == 0) UPNG._copyTile(fdata, fw, fh, img, w, h3, fx, fy, 0);
-        else if (frm.blend == 1) UPNG._copyTile(fdata, fw, fh, img, w, h3, fx, fy, 1);
+        if (frm.blend == 0) UPNG._copyTile(fdata, fw, fh, img, w, h4, fx, fy, 0);
+        else if (frm.blend == 1) UPNG._copyTile(fdata, fw, fh, img, w, h4, fx, fy, 1);
         frms.push(img.buffer.slice(0));
         if (frm.dispose == 0) {
-        } else if (frm.dispose == 1) UPNG._copyTile(empty, fw, fh, img, w, h3, fx, fy, 0);
+        } else if (frm.dispose == 1) UPNG._copyTile(empty, fw, fh, img, w, h4, fx, fy, 0);
         else if (frm.dispose == 2) for (var j = 0; j < len; j++) img[j] = prev[j];
       }
       return frms;
     };
-    UPNG.toRGBA8.decodeImage = function(data, w, h3, out) {
-      var area = w * h3, bpp = UPNG.decode._getBPP(out);
+    UPNG.toRGBA8.decodeImage = function(data, w, h4, out) {
+      var area = w * h4, bpp = UPNG.decode._getBPP(out);
       var bpl = Math.ceil(w * bpp / 8);
       var bf = new Uint8Array(area * 4), bf32 = new Uint32Array(bf.buffer);
       var ctype = out.ctype, depth = out.depth;
@@ -33975,7 +33975,7 @@ var require_UPNG = __commonJS({
         }
       } else if (ctype == 3) {
         var p = out.tabs["PLTE"], ap = out.tabs["tRNS"], tl = ap ? ap.length : 0;
-        if (depth == 1) for (var y = 0; y < h3; y++) {
+        if (depth == 1) for (var y = 0; y < h4; y++) {
           var s0 = y * bpl, t0 = y * w;
           for (var i2 = 0; i2 < w; i2++) {
             var qi = t0 + i2 << 2, j = data[s0 + (i2 >> 3)] >> 7 - ((i2 & 7) << 0) & 1, cj = 3 * j;
@@ -33985,7 +33985,7 @@ var require_UPNG = __commonJS({
             bf[qi + 3] = j < tl ? ap[j] : 255;
           }
         }
-        if (depth == 2) for (var y = 0; y < h3; y++) {
+        if (depth == 2) for (var y = 0; y < h4; y++) {
           var s0 = y * bpl, t0 = y * w;
           for (var i2 = 0; i2 < w; i2++) {
             var qi = t0 + i2 << 2, j = data[s0 + (i2 >> 2)] >> 6 - ((i2 & 3) << 1) & 3, cj = 3 * j;
@@ -33995,7 +33995,7 @@ var require_UPNG = __commonJS({
             bf[qi + 3] = j < tl ? ap[j] : 255;
           }
         }
-        if (depth == 4) for (var y = 0; y < h3; y++) {
+        if (depth == 4) for (var y = 0; y < h4; y++) {
           var s0 = y * bpl, t0 = y * w;
           for (var i2 = 0; i2 < w; i2++) {
             var qi = t0 + i2 << 2, j = data[s0 + (i2 >> 1)] >> 4 - ((i2 & 1) << 2) & 15, cj = 3 * j;
@@ -34029,7 +34029,7 @@ var require_UPNG = __commonJS({
         }
       } else if (ctype == 0) {
         var tr = out.tabs["tRNS"] ? out.tabs["tRNS"] : -1;
-        for (var y = 0; y < h3; y++) {
+        for (var y = 0; y < h4; y++) {
           var off = y * bpl, to = y * w;
           if (depth == 1) for (var x2 = 0; x2 < w; x2++) {
             var gr = 255 * (data[off + (x2 >>> 3)] >>> 7 - (x2 & 7) & 1), al = gr == tr * 255 ? 0 : 255;
@@ -34166,12 +34166,12 @@ var require_UPNG = __commonJS({
       delete out.filter;
       return out;
     };
-    UPNG.decode._decompress = function(out, dd, w, h3) {
+    UPNG.decode._decompress = function(out, dd, w, h4) {
       var time = Date.now();
-      var bpp = UPNG.decode._getBPP(out), bpl = Math.ceil(w * bpp / 8), buff = new Uint8Array((bpl + 1 + out.interlace) * h3);
+      var bpp = UPNG.decode._getBPP(out), bpl = Math.ceil(w * bpp / 8), buff = new Uint8Array((bpl + 1 + out.interlace) * h4);
       dd = UPNG.decode._inflate(dd, buff);
       var time = Date.now();
-      if (out.interlace == 0) dd = UPNG.decode._filterZero(dd, out, 0, w, h3);
+      if (out.interlace == 0) dd = UPNG.decode._filterZero(dd, out, 0, w, h4);
       else if (out.interlace == 1) dd = UPNG.decode._readInterlace(dd, out);
       return dd;
     };
@@ -34183,7 +34183,7 @@ var require_UPNG = __commonJS({
       var H = {};
       H.H = {};
       H.H.N = function(N, W) {
-        var R = Uint8Array, i2 = 0, m2 = 0, J = 0, h3 = 0, Q = 0, X = 0, u = 0, w = 0, d = 0, v, C;
+        var R = Uint8Array, i2 = 0, m2 = 0, J = 0, h4 = 0, Q = 0, X = 0, u = 0, w = 0, d = 0, v, C;
         if (N[0] == 3 && N[1] == 0) return W ? W : new R(0);
         var V = H.H, n = V.b, A2 = V.e, l = V.R, M = V.n, I = V.A, e2 = V.Z, b = V.m, Z2 = W == null;
         if (Z2) W = new R(N.length >>> 2 << 3);
@@ -34209,7 +34209,7 @@ var require_UPNG = __commonJS({
           }
           if (m2 == 2) {
             J = A2(N, d, 5) + 257;
-            h3 = A2(N, d + 5, 5) + 1;
+            h4 = A2(N, d + 5, 5) + 1;
             Q = A2(N, d + 10, 4) + 4;
             d += 14;
             var E = d, j = 1;
@@ -34227,10 +34227,10 @@ var require_UPNG = __commonJS({
             I(b.Q, j, b.u);
             v = b.w;
             C = b.d;
-            d = l(b.u, (1 << j) - 1, J + h3, N, d, b.v);
+            d = l(b.u, (1 << j) - 1, J + h4, N, d, b.v);
             var r2 = V.V(b.v, 0, J, b.C);
             X = (1 << r2) - 1;
-            var S2 = V.V(b.v, J, h3, b.D);
+            var S2 = V.V(b.v, J, h4, b.D);
             u = (1 << S2) - 1;
             M(b.C, r2);
             I(b.C, r2, v);
@@ -34452,9 +34452,9 @@ var require_UPNG = __commonJS({
       return H.H.N;
     })();
     UPNG.decode._readInterlace = function(data, out) {
-      var w = out.width, h3 = out.height;
+      var w = out.width, h4 = out.height;
       var bpp = UPNG.decode._getBPP(out), cbpp = bpp >> 3, bpl = Math.ceil(w * bpp / 8);
-      var img = new Uint8Array(h3 * bpl);
+      var img = new Uint8Array(h4 * bpl);
       var di = 0;
       var starting_row = [0, 0, 4, 0, 2, 0, 1];
       var starting_col = [0, 4, 0, 2, 0, 1, 0];
@@ -34465,7 +34465,7 @@ var require_UPNG = __commonJS({
         var ri = row_increment[pass], ci = col_increment[pass];
         var sw = 0, sh = 0;
         var cr = starting_row[pass];
-        while (cr < h3) {
+        while (cr < h4) {
           cr += ri;
           sh++;
         }
@@ -34477,7 +34477,7 @@ var require_UPNG = __commonJS({
         var bpll = Math.ceil(sw * bpp / 8);
         UPNG.decode._filterZero(data, out, di, sw, sh);
         var y = 0, row = starting_row[pass];
-        while (row < h3) {
+        while (row < h4) {
           var col = starting_col[pass];
           var cdi = di + y * bpll << 3;
           while (col < w) {
@@ -34515,13 +34515,13 @@ var require_UPNG = __commonJS({
       var noc = [1, null, 3, 1, 2, null, 4][out.ctype];
       return noc * out.depth;
     };
-    UPNG.decode._filterZero = function(data, out, off, w, h3) {
+    UPNG.decode._filterZero = function(data, out, off, w, h4) {
       var bpp = UPNG.decode._getBPP(out), bpl = Math.ceil(w * bpp / 8), paeth = UPNG.decode._paeth;
       bpp = Math.ceil(bpp / 8);
       var i2 = 0, di = 1, type = data[off], x2 = 0;
       if (type > 1) data[off] = [0, 0, 1][type - 2];
       if (type == 3) for (x2 = bpp; x2 < bpl; x2++) data[x2 + 1] = data[x2 + 1] + (data[x2 + 1 - bpp] >>> 1) & 255;
-      for (var y = 0; y < h3; y++) {
+      for (var y = 0; y < h4; y++) {
         i2 = off + y * bpl;
         di = i2 + y + 1;
         type = data[di - 1];
@@ -34614,9 +34614,9 @@ var require_UPNG = __commonJS({
       }
     };
     UPNG._copyTile = function(sb, sw, sh, tb, tw, th, xoff, yoff, mode) {
-      var w = Math.min(sw, tw), h3 = Math.min(sh, th);
+      var w = Math.min(sw, tw), h4 = Math.min(sh, th);
       var si = 0, ti = 0;
-      for (var y = 0; y < h3; y++) for (var x2 = 0; x2 < w; x2++) {
+      for (var y = 0; y < h4; y++) for (var x2 = 0; x2 < w; x2++) {
         if (xoff >= 0 && yoff >= 0) {
           si = y * sw + x2 << 2;
           ti = (yoff + y) * tw + xoff + x2 << 2;
@@ -34660,14 +34660,14 @@ var require_UPNG = __commonJS({
       }
       return true;
     };
-    UPNG.encode = function(bufs, w, h3, ps, dels, tabs, forbidPlte) {
+    UPNG.encode = function(bufs, w, h4, ps, dels, tabs, forbidPlte) {
       if (ps == null) ps = 0;
       if (forbidPlte == null) forbidPlte = false;
-      var nimg = UPNG.encode.compress(bufs, w, h3, ps, [false, false, false, 0, forbidPlte]);
+      var nimg = UPNG.encode.compress(bufs, w, h4, ps, [false, false, false, 0, forbidPlte]);
       UPNG.encode.compressPNG(nimg, -1);
-      return UPNG.encode._main(nimg, w, h3, dels, tabs);
+      return UPNG.encode._main(nimg, w, h4, dels, tabs);
     };
-    UPNG.encodeLL = function(bufs, w, h3, cc, ac, depth, dels, tabs) {
+    UPNG.encodeLL = function(bufs, w, h4, cc, ac, depth, dels, tabs) {
       var nimg = {
         ctype: 0 + (cc == 1 ? 0 : 2) + (ac == 0 ? 0 : 4),
         depth,
@@ -34680,7 +34680,7 @@ var require_UPNG = __commonJS({
           x: 0,
           y: 0,
           width: w,
-          height: h3
+          height: h4
         },
         img: new Uint8Array(bufs[i2]),
         blend: 0,
@@ -34689,10 +34689,10 @@ var require_UPNG = __commonJS({
         bpl: Math.ceil(bipl / 8)
       });
       UPNG.encode.compressPNG(nimg, 0, true);
-      var out = UPNG.encode._main(nimg, w, h3, dels, tabs);
+      var out = UPNG.encode._main(nimg, w, h4, dels, tabs);
       return out;
     };
-    UPNG.encode._main = function(nimg, w, h3, dels, tabs) {
+    UPNG.encode._main = function(nimg, w, h4, dels, tabs) {
       if (tabs == null) tabs = {};
       var crc = UPNG.crc.crc, wUi = UPNG._bin.writeUint, wUs = UPNG._bin.writeUshort, wAs = UPNG._bin.writeASCII;
       var offset = 8, anim = nimg.frames.length > 1, pltAlpha = false;
@@ -34720,7 +34720,7 @@ var require_UPNG = __commonJS({
       offset += 4;
       wUi(data, offset, w);
       offset += 4;
-      wUi(data, offset, h3);
+      wUi(data, offset, h4);
       offset += 4;
       data[offset] = nimg.depth;
       offset++;
@@ -34855,7 +34855,7 @@ var require_UPNG = __commonJS({
         frm.cimg = UPNG.encode._filterZero(frm.img, nh, frm.bpp, frm.bpl, fdata, filter2, levelZero);
       }
     };
-    UPNG.encode.compress = function(bufs, w, h3, ps, prms) {
+    UPNG.encode.compress = function(bufs, w, h4, ps, prms) {
       var onlyBlend = prms[0], evenCrd = prms[1], forbidPrev = prms[2], minBits = prms[3], forbidPlte = prms[4];
       var ctype = 6, depth = 8, alphaAnd = 255;
       for (var j = 0; j < bufs.length; j++) {
@@ -34863,7 +34863,7 @@ var require_UPNG = __commonJS({
         for (var i2 = 0; i2 < ilen; i2 += 4) alphaAnd &= img[i2 + 3];
       }
       var gotAlpha = alphaAnd != 255;
-      var frms = UPNG.encode.framize(bufs, w, h3, onlyBlend, evenCrd, forbidPrev);
+      var frms = UPNG.encode.framize(bufs, w, h4, onlyBlend, evenCrd, forbidPrev);
       var cmap = {}, plte = [], inds = [];
       if (ps != 0) {
         var nbufs = [];
@@ -34953,18 +34953,18 @@ var require_UPNG = __commonJS({
         frames: frms
       };
     };
-    UPNG.encode.framize = function(bufs, w, h3, alwaysBlend, evenCrd, forbidPrev) {
+    UPNG.encode.framize = function(bufs, w, h4, alwaysBlend, evenCrd, forbidPrev) {
       var frms = [];
       for (var j = 0; j < bufs.length; j++) {
         var cimg = new Uint8Array(bufs[j]), cimg32 = new Uint32Array(cimg.buffer);
         var nimg;
-        var nx = 0, ny = 0, nw = w, nh = h3, blend = alwaysBlend ? 1 : 0;
+        var nx = 0, ny = 0, nw = w, nh = h4, blend = alwaysBlend ? 1 : 0;
         if (j != 0) {
           var tlim = forbidPrev || alwaysBlend || j == 1 || frms[j - 2].dispose != 0 ? 1 : 2, tstp = 0, tarea = 1e9;
           for (var it = 0; it < tlim; it++) {
             var pimg = new Uint8Array(bufs[j - 1 - it]), p32 = new Uint32Array(bufs[j - 1 - it]);
-            var mix = w, miy = h3, max = -1, may = -1;
-            for (var y = 0; y < h3; y++) for (var x2 = 0; x2 < w; x2++) {
+            var mix = w, miy = h4, max = -1, may = -1;
+            for (var y = 0; y < h4; y++) for (var x2 = 0; x2 < w; x2++) {
               var i2 = y * w + x2;
               if (cimg32[i2] != p32[i2]) {
                 if (x2 < mix) mix = x2;
@@ -34991,15 +34991,15 @@ var require_UPNG = __commonJS({
           var pimg = new Uint8Array(bufs[j - 1 - tstp]);
           if (tstp == 1) frms[j - 1].dispose = 2;
           nimg = new Uint8Array(nw * nh * 4);
-          UPNG._copyTile(pimg, w, h3, nimg, nw, nh, -nx, -ny, 0);
-          blend = UPNG._copyTile(cimg, w, h3, nimg, nw, nh, -nx, -ny, 3) ? 1 : 0;
-          if (blend == 1) UPNG.encode._prepareDiff(cimg, w, h3, nimg, {
+          UPNG._copyTile(pimg, w, h4, nimg, nw, nh, -nx, -ny, 0);
+          blend = UPNG._copyTile(cimg, w, h4, nimg, nw, nh, -nx, -ny, 3) ? 1 : 0;
+          if (blend == 1) UPNG.encode._prepareDiff(cimg, w, h4, nimg, {
             x: nx,
             y: ny,
             width: nw,
             height: nh
           });
-          else UPNG._copyTile(cimg, w, h3, nimg, nw, nh, -nx, -ny, 0);
+          else UPNG._copyTile(cimg, w, h4, nimg, nw, nh, -nx, -ny, 0);
         } else nimg = cimg.slice(0);
         frms.push({
           rect: {
@@ -35026,8 +35026,8 @@ var require_UPNG = __commonJS({
           height: maY - miY
         };
         frms[j - 1].dispose = 1;
-        if (j - 1 != 0) UPNG.encode._updateFrame(bufs, w, h3, frms, j - 1, r2, evenCrd);
-        UPNG.encode._updateFrame(bufs, w, h3, frms, j, r2, evenCrd);
+        if (j - 1 != 0) UPNG.encode._updateFrame(bufs, w, h4, frms, j - 1, r2, evenCrd);
+        UPNG.encode._updateFrame(bufs, w, h4, frms, j, r2, evenCrd);
       }
       var area = 0;
       if (bufs.length != 1) for (var i2 = 0; i2 < frms.length; i2++) {
@@ -35036,11 +35036,11 @@ var require_UPNG = __commonJS({
       }
       return frms;
     };
-    UPNG.encode._updateFrame = function(bufs, w, h3, frms, i2, r2, evenCrd) {
+    UPNG.encode._updateFrame = function(bufs, w, h4, frms, i2, r2, evenCrd) {
       var U8 = Uint8Array, U32 = Uint32Array;
       var pimg = new U8(bufs[i2 - 1]), pimg32 = new U32(bufs[i2 - 1]), nimg = i2 + 1 < bufs.length ? new U8(bufs[i2 + 1]) : null;
       var cimg = new U8(bufs[i2]), cimg32 = new U32(cimg.buffer);
-      var mix = w, miy = h3, max = -1, may = -1;
+      var mix = w, miy = h4, max = -1, may = -1;
       for (var y = 0; y < r2.height; y++) for (var x2 = 0; x2 < r2.width; x2++) {
         var cx = r2.x + x2, cy = r2.y + y;
         var j = cy * w + cx, cc = cimg32[j];
@@ -35068,24 +35068,24 @@ var require_UPNG = __commonJS({
       fr.blend = 1;
       fr.img = new Uint8Array(r2.width * r2.height * 4);
       if (frms[i2 - 1].dispose == 0) {
-        UPNG._copyTile(pimg, w, h3, fr.img, r2.width, r2.height, -r2.x, -r2.y, 0);
-        UPNG.encode._prepareDiff(cimg, w, h3, fr.img, r2);
-      } else UPNG._copyTile(cimg, w, h3, fr.img, r2.width, r2.height, -r2.x, -r2.y, 0);
+        UPNG._copyTile(pimg, w, h4, fr.img, r2.width, r2.height, -r2.x, -r2.y, 0);
+        UPNG.encode._prepareDiff(cimg, w, h4, fr.img, r2);
+      } else UPNG._copyTile(cimg, w, h4, fr.img, r2.width, r2.height, -r2.x, -r2.y, 0);
     };
-    UPNG.encode._prepareDiff = function(cimg, w, h3, nimg, rec) {
-      UPNG._copyTile(cimg, w, h3, nimg, rec.width, rec.height, -rec.x, -rec.y, 2);
+    UPNG.encode._prepareDiff = function(cimg, w, h4, nimg, rec) {
+      UPNG._copyTile(cimg, w, h4, nimg, rec.width, rec.height, -rec.x, -rec.y, 2);
     };
-    UPNG.encode._filterZero = function(img, h3, bpp, bpl, data, filter2, levelZero) {
+    UPNG.encode._filterZero = function(img, h4, bpp, bpl, data, filter2, levelZero) {
       var fls = [], ftry = [0, 1, 2, 3, 4];
       if (filter2 != -1) ftry = [filter2];
-      else if (h3 * bpl > 5e5 || bpp == 1) ftry = [0];
+      else if (h4 * bpl > 5e5 || bpp == 1) ftry = [0];
       var opts;
       if (levelZero) opts = {
         level: 0
       };
       var CMPR = levelZero && UZIP != null ? UZIP : _pako.default;
       for (var i2 = 0; i2 < ftry.length; i2++) {
-        for (var y = 0; y < h3; y++) UPNG.encode._filterLine(data, img, y, bpl, bpp, ftry[i2]);
+        for (var y = 0; y < h4; y++) UPNG.encode._filterLine(data, img, y, bpl, bpp, ftry[i2]);
         fls.push(CMPR["deflate"](data, opts));
       }
       var ti, tsize = 1e9;
@@ -40538,19 +40538,19 @@ var require_rotations = __commonJS({
       if (degreeAngle === void 0) {
         degreeAngle = 0;
       }
-      var x2 = rectangle.x, y = rectangle.y, w = rectangle.width, h3 = rectangle.height;
+      var x2 = rectangle.x, y = rectangle.y, w = rectangle.width, h4 = rectangle.height;
       var r2 = exports2.reduceRotation(degreeAngle);
       var b = borderWidth / 2;
       if (r2 === 0)
-        return { x: x2 - b, y: y - b, width: w, height: h3 };
+        return { x: x2 - b, y: y - b, width: w, height: h4 };
       else if (r2 === 90)
-        return { x: x2 - h3 + b, y: y - b, width: h3, height: w };
+        return { x: x2 - h4 + b, y: y - b, width: h4, height: w };
       else if (r2 === 180)
-        return { x: x2 - w + b, y: y - h3 + b, width: w, height: h3 };
+        return { x: x2 - w + b, y: y - h4 + b, width: w, height: h4 };
       else if (r2 === 270)
-        return { x: x2 - b, y: y - w + b, width: h3, height: w };
+        return { x: x2 - b, y: y - w + b, width: h4, height: w };
       else
-        return { x: x2 - b, y: y - b, width: w, height: h3 };
+        return { x: x2 - b, y: y - b, width: w, height: h4 };
     };
   }
 });
@@ -58338,12 +58338,12 @@ Content-Type: ${v.type || "application/octet-stream"}\r
   c.push(`--${b}--`);
   return new B(c, { type: "multipart/form-data; boundary=" + b });
 }
-var t, i, h, r, m, f, e, x, FormData2;
+var t, i, h2, r, m, f, e, x, FormData2;
 var init_esm_min = __esm({
   "node_modules/formdata-polyfill/esm.min.js"() {
     init_fetch_blob();
     init_file();
-    ({ toStringTag: t, iterator: i, hasInstance: h } = Symbol);
+    ({ toStringTag: t, iterator: i, hasInstance: h2 } = Symbol);
     r = Math.random;
     m = "append,set,get,getAll,delete,keys,values,entries,forEach,constructor".split(",");
     f = (a, b, c) => (a += "", /^(Blob|File)$/.test(b && b[t]) ? [(c = c !== void 0 ? c + "" : b[t] == "File" ? b.name : "blob", a), b.name !== c || b[t] == "blob" ? new file_default([b], c, b) : b] : [a, b + ""]);
@@ -58364,7 +58364,7 @@ var init_esm_min = __esm({
       [i]() {
         return this.entries();
       }
-      static [h](o) {
+      static [h2](o) {
         return o && typeof o === "object" && o[t] === "FormData" && !m.some((m2) => typeof o[m2] != "function");
       }
       append(...a) {
@@ -71528,7 +71528,7 @@ var require_websocket_server = __commonJS({
       socket.once("finish", socket.destroy);
       socket.end(
         `HTTP/1.1 ${code} ${http4.STATUS_CODES[code]}\r
-` + Object.keys(headers).map((h3) => `${h3}: ${headers[h3]}`).join("\r\n") + "\r\n\r\n" + message
+` + Object.keys(headers).map((h4) => `${h4}: ${headers[h4]}`).join("\r\n") + "\r\n\r\n" + message
       );
     }
     function abortHandshakeOrEmitwsClientError(server, req, socket, code, message, headers) {
@@ -73844,7 +73844,7 @@ var init_wooCommerce = __esm({
 });
 
 // server.ts
-var import_express24 = __toESM(require_express2(), 1);
+var import_express25 = __toESM(require_express2(), 1);
 var import_path20 = __toESM(require("path"), 1);
 var import_fs19 = __toESM(require("fs"), 1);
 var import_crypto4 = __toESM(require("crypto"), 1);
@@ -74776,16 +74776,16 @@ function queueAfterAck(queue, req, routeLabel) {
 }
 function createShopeeWebhookRouter(processPayload, routePath = "/shopee") {
   const queue = createBoundedQueue(processPayload);
-  const router23 = import_express.default.Router();
+  const router24 = import_express.default.Router();
   const path21 = routePath.startsWith("/") ? routePath : `/${routePath}`;
-  router23.get(path21, (_req, res) => {
+  router24.get(path21, (_req, res) => {
     ackShopeeOk(res);
   });
-  router23.post(path21, import_express.default.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
+  router24.post(path21, import_express.default.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
     ackShopeeOk(res);
     queueAfterAck(queue, req, `POST ${path21}`);
   });
-  return router23;
+  return router24;
 }
 
 // src/utils/orderItemVariation.ts
@@ -83637,14 +83637,235 @@ router6.post("/clear-all", clearAllExpenses);
 router6.delete("/:id", deleteExpense);
 var expensesRoutes_default = router6;
 
-// routes/importsRoutes.js
+// routes/addressBookRoutes.js
 var import_express8 = __toESM(require_express2(), 1);
 
-// controllers/importsController.js
+// services/addressBook.js
 var import_fs9 = __toESM(require("fs"), 1);
 var import_path9 = __toESM(require("path"), 1);
+var import_mongoose5 = __toESM(require("mongoose"), 1);
+
+// models/AddressBook.js
+var import_mongoose4 = __toESM(require("mongoose"), 1);
+var AddressBookSchema = new import_mongoose4.default.Schema(
+  {
+    id: { type: String, trim: true, index: true },
+    name: { type: String, default: "", trim: true },
+    phone: { type: String, default: "", trim: true, index: true },
+    street: { type: String, default: "", trim: true },
+    address: { type: String, default: "", trim: true },
+    province: { type: String, default: "", trim: true },
+    provinceName: { type: String, default: "", trim: true },
+    provinceCode: { type: String, default: "", trim: true },
+    district: { type: String, default: "", trim: true },
+    districtName: { type: String, default: "", trim: true },
+    districtCode: { type: String, default: "", trim: true },
+    ward: { type: String, default: "", trim: true },
+    wardName: { type: String, default: "", trim: true },
+    wardCode: { type: String, default: "", trim: true },
+    fullAddress: { type: String, default: "", trim: true },
+    addressMode: { type: String, default: "new2", trim: true },
+    savedAt: { type: Date, default: Date.now }
+  },
+  {
+    collection: "address_book",
+    versionKey: false,
+    strict: false
+  }
+);
+AddressBookSchema.index({ phone: 1, street: 1, wardCode: 1 }, { name: "address_book_dedup" });
+AddressBookSchema.index({ savedAt: -1 }, { name: "address_book_savedAt" });
+var AddressBook = import_mongoose4.default.models.AddressBook || import_mongoose4.default.model("AddressBook", AddressBookSchema);
+var AddressBook_default = AddressBook;
+
+// services/addressBook.js
+var FILE_PATH = import_path9.default.join(resolveAppRoot(), "data", "address_book.json");
+var MAX_ENTRIES = 200;
+function readBook() {
+  try {
+    if (!import_fs9.default.existsSync(FILE_PATH)) return [];
+    const raw = import_fs9.default.readFileSync(FILE_PATH, "utf-8");
+    const data = JSON.parse(raw);
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+function writeBook(list) {
+  const dir = import_path9.default.dirname(FILE_PATH);
+  if (!import_fs9.default.existsSync(dir)) import_fs9.default.mkdirSync(dir, { recursive: true });
+  import_fs9.default.writeFileSync(FILE_PATH, JSON.stringify(list, null, 2), "utf-8");
+}
+function mongoReady2() {
+  return import_mongoose5.default.connection?.readyState === 1;
+}
+function normalizeEntry(entry) {
+  const name = String(entry?.name || "").trim();
+  const phone = String(entry?.phone || "").replace(/\D/g, "");
+  const street = String(entry?.street || entry?.address || "").trim();
+  const province = String(entry?.province || entry?.provinceName || "").trim();
+  const provinceName = String(entry?.provinceName || entry?.province || "").trim();
+  const provinceCode = String(entry?.provinceCode || "").trim();
+  const district = String(entry?.district || entry?.districtName || "").trim();
+  const districtName = String(entry?.districtName || entry?.district || "").trim();
+  const districtCode = String(entry?.districtCode || "").trim();
+  const ward = String(entry?.ward || entry?.wardName || "").trim();
+  const wardName = String(entry?.wardName || entry?.ward || "").trim();
+  const wardCode = String(entry?.wardCode || "").trim();
+  const fullAddress = String(
+    entry?.fullAddress || [street, wardName || ward, districtName || district, provinceName || province].filter(Boolean).join(", ")
+  ).trim();
+  const addressMode = entry?.addressMode === "old3" ? "old3" : "new2";
+  return {
+    name,
+    phone,
+    street,
+    address: street,
+    province,
+    provinceName,
+    provinceCode,
+    district,
+    districtName,
+    districtCode,
+    ward,
+    wardName,
+    wardCode,
+    fullAddress,
+    addressMode
+  };
+}
+function toPublicEntry(doc) {
+  const o = doc && typeof doc.toObject === "function" ? doc.toObject() : doc || {};
+  const id = String(o.id || o._id || "");
+  const street = String(o.street || o.address || "").trim();
+  return {
+    id,
+    name: String(o.name || "").trim(),
+    phone: String(o.phone || "").replace(/\D/g, ""),
+    street,
+    address: street,
+    province: String(o.province || o.provinceName || "").trim(),
+    provinceName: String(o.provinceName || o.province || "").trim(),
+    provinceCode: String(o.provinceCode || "").trim(),
+    district: String(o.district || o.districtName || "").trim(),
+    districtName: String(o.districtName || o.district || "").trim(),
+    districtCode: String(o.districtCode || "").trim(),
+    ward: String(o.ward || o.wardName || "").trim(),
+    wardName: String(o.wardName || o.ward || "").trim(),
+    wardCode: String(o.wardCode || "").trim(),
+    fullAddress: String(o.fullAddress || "").trim(),
+    addressMode: o.addressMode === "old3" ? "old3" : "new2",
+    savedAt: o.savedAt ? new Date(o.savedAt).toISOString() : (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
+async function trimMongoBook() {
+  const extra = await AddressBook_default.find({}).sort({ savedAt: -1 }).skip(MAX_ENTRIES).select("_id").limit(80).lean();
+  if (!extra.length) return;
+  const ids = extra.map((row) => row._id);
+  await AddressBook_default.deleteMany({ _id: { $in: ids } });
+}
+function saveToJsonFile(normalized) {
+  const list = readBook();
+  const next = {
+    id: `addr-${Date.now()}`,
+    savedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    ...normalized
+  };
+  const deduped = list.filter(
+    (item) => !(String(item.phone || "").replace(/\D/g, "") === next.phone && item.street === next.street && String(item.wardCode || "") === next.wardCode)
+  );
+  const merged = [next, ...deduped].slice(0, MAX_ENTRIES);
+  writeBook(merged);
+  return next;
+}
+async function listAddressBookEntries() {
+  if (mongoReady2()) {
+    const rows = await AddressBook_default.find({}).sort({ savedAt: -1 }).limit(MAX_ENTRIES).lean();
+    return rows.map(toPublicEntry);
+  }
+  return readBook().map(toPublicEntry);
+}
+async function saveAddressBookEntry(entry) {
+  const normalized = normalizeEntry(entry);
+  if (!normalized.phone && !normalized.name) {
+    throw new Error("Thi\u1EBFu t\xEAn ho\u1EB7c s\u1ED1 \u0111i\u1EC7n tho\u1EA1i \u0111\u1EC3 l\u01B0u s\u1ED5 \u0111\u1ECBa ch\u1EC9.");
+  }
+  if (mongoReady2()) {
+    const filter2 = {
+      phone: normalized.phone,
+      street: normalized.street,
+      wardCode: normalized.wardCode
+    };
+    const saved = await AddressBook_default.findOneAndUpdate(
+      filter2,
+      {
+        $set: {
+          ...normalized,
+          savedAt: /* @__PURE__ */ new Date()
+        },
+        $setOnInsert: {
+          id: `addr-${Date.now()}`
+        }
+      },
+      { new: true, upsert: true }
+    );
+    await trimMongoBook();
+    return toPublicEntry(saved);
+  }
+  return saveToJsonFile(normalized);
+}
+
+// controllers/addressBookController.js
+async function listAddressBook(_req, res) {
+  try {
+    const entries = await listAddressBookEntries();
+    return res.json({ success: true, entries });
+  } catch (error) {
+    console.error("[AddressBook list]", error);
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c s\u1ED5 \u0111\u1ECBa ch\u1EC9",
+      entries: []
+    });
+  }
+}
+async function createAddressBookEntry(req, res) {
+  try {
+    const body = req.body || {};
+    const name = String(body.name || "").trim();
+    const phone = String(body.phone || "").replace(/\D/g, "");
+    if (!name && !phone) {
+      return res.status(400).json({
+        success: false,
+        error: "C\u1EA7n t\xEAn ho\u1EB7c s\u1ED1 \u0111i\u1EC7n tho\u1EA1i \u0111\u1EC3 l\u01B0u s\u1ED5 \u0111\u1ECBa ch\u1EC9."
+      });
+    }
+    const entry = await saveAddressBookEntry(body);
+    return res.json({ success: true, entry, message: "\u0110\xE3 l\u01B0u v\xE0o s\u1ED5 \u0111\u1ECBa ch\u1EC9" });
+  } catch (error) {
+    console.error("[AddressBook save]", error);
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "L\u01B0u s\u1ED5 \u0111\u1ECBa ch\u1EC9 th\u1EA5t b\u1EA1i"
+    });
+  }
+}
+
+// routes/addressBookRoutes.js
+var router7 = (0, import_express8.Router)();
+var h = asyncHandler;
+router7.get("/", h(listAddressBook));
+router7.post("/", h(createAddressBookEntry));
+var addressBookRoutes_default = router7;
+
+// routes/importsRoutes.js
+var import_express9 = __toESM(require_express2(), 1);
+
+// controllers/importsController.js
+var import_fs10 = __toESM(require("fs"), 1);
+var import_path10 = __toESM(require("path"), 1);
 var APP_ROOT4 = resolveAppRoot();
-var IMPORTS_DB_PATH = import_path9.default.join(APP_ROOT4, "data", "imports.json");
+var IMPORTS_DB_PATH = import_path10.default.join(APP_ROOT4, "data", "imports.json");
 var deps4 = {
   loadProductById: async () => null,
   loadProducts: async () => [],
@@ -83657,8 +83878,8 @@ function initImportsController(partial) {
 }
 function loadImports() {
   try {
-    if (!import_fs9.default.existsSync(IMPORTS_DB_PATH)) return [];
-    const raw = import_fs9.default.readFileSync(IMPORTS_DB_PATH, "utf-8");
+    if (!import_fs10.default.existsSync(IMPORTS_DB_PATH)) return [];
+    const raw = import_fs10.default.readFileSync(IMPORTS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
@@ -83668,8 +83889,8 @@ function loadImports() {
 }
 function saveImports(imports) {
   try {
-    import_fs9.default.mkdirSync(import_path9.default.dirname(IMPORTS_DB_PATH), { recursive: true });
-    import_fs9.default.writeFileSync(IMPORTS_DB_PATH, JSON.stringify(imports, null, 2), "utf-8");
+    import_fs10.default.mkdirSync(import_path10.default.dirname(IMPORTS_DB_PATH), { recursive: true });
+    import_fs10.default.writeFileSync(IMPORTS_DB_PATH, JSON.stringify(imports, null, 2), "utf-8");
   } catch (error) {
     console.error("[Imports DB] Failed to write imports.json:", error);
   }
@@ -83825,22 +84046,22 @@ async function clearAllImports(_req, res) {
 }
 
 // routes/importsRoutes.js
-var router7 = (0, import_express8.Router)();
-router7.get("/", listImports);
-router7.get("/history/:productId", getImportHistory);
-router7.get("/product-context/:productId", getImportProductContext);
-router7.post("/", createImport);
-router7.post("/clear-all", clearAllImports);
-var importsRoutes_default = router7;
+var router8 = (0, import_express9.Router)();
+router8.get("/", listImports);
+router8.get("/history/:productId", getImportHistory);
+router8.get("/product-context/:productId", getImportProductContext);
+router8.post("/", createImport);
+router8.post("/clear-all", clearAllImports);
+var importsRoutes_default = router8;
 
 // routes/settingsRoutes.js
-var import_express9 = __toESM(require_express2(), 1);
+var import_express10 = __toESM(require_express2(), 1);
 
 // node_modules/@google/genai/dist/node/index.mjs
 var import_p_retry = __toESM(require_p_retry(), 1);
 var import_google_auth_library = __toESM(require_src9(), 1);
-var import_fs10 = require("fs");
-var fs11 = __toESM(require("fs/promises"), 1);
+var import_fs11 = require("fs");
+var fs12 = __toESM(require("fs/promises"), 1);
 var import_promises = require("fs/promises");
 var import_node_stream3 = require("node:stream");
 var import_promises2 = require("node:stream/promises");
@@ -83856,7 +84077,7 @@ var import_websocket = __toESM(require_websocket(), 1);
 var import_websocket_server = __toESM(require_websocket_server(), 1);
 
 // node_modules/@google/genai/dist/node/index.mjs
-var path10 = __toESM(require("path"), 1);
+var path11 = __toESM(require("path"), 1);
 var _defaultBaseGeminiUrl = void 0;
 var _defaultBaseVertexUrl = void 0;
 function getDefaultBaseUrls() {
@@ -102527,7 +102748,7 @@ var NodeDownloader = class {
     if (params.downloadPath) {
       const response = await downloadFile(params, apiClient);
       if (response instanceof HttpResponse) {
-        const writer = (0, import_fs10.createWriteStream)(params.downloadPath);
+        const writer = (0, import_fs11.createWriteStream)(params.downloadPath);
         const body = import_node_stream3.Readable.fromWeb(response.responseInternal.body);
         body.pipe(writer);
         await (0, import_promises2.finished)(writer);
@@ -104401,7 +104622,7 @@ var NodeUploader = class {
   async stat(file) {
     const fileStat = { size: 0, type: void 0 };
     if (typeof file === "string") {
-      const originalStat = await fs11.stat(file);
+      const originalStat = await fs12.stat(file);
       fileStat.size = originalStat.size;
       fileStat.type = this.inferMimeType(file);
       return fileStat;
@@ -104547,9 +104768,9 @@ var NodeUploader = class {
     let response = new HttpResponse(new Response());
     let uploadCommand = "upload";
     let fileHandle;
-    const fileName = path10.basename(file);
+    const fileName = path11.basename(file);
     try {
-      fileHandle = await fs11.open(file, "r");
+      fileHandle = await fs12.open(file, "r");
       if (!fileHandle) {
         throw new Error(`Failed to open file`);
       }
@@ -104781,14 +105002,14 @@ function getApiKeyFromEnv() {
 }
 
 // utils/env.js
-var import_fs11 = __toESM(require("fs"), 1);
-var import_path10 = __toESM(require("path"), 1);
+var import_fs12 = __toESM(require("fs"), 1);
+var import_path11 = __toESM(require("path"), 1);
 var APP_ROOT5 = resolveAppRoot();
-var ENV_PATH = import_path10.default.join(APP_ROOT5, ".env");
+var ENV_PATH = import_path11.default.join(APP_ROOT5, ".env");
 function updateEnvVar(key, value) {
   let content = "";
-  if (import_fs11.default.existsSync(ENV_PATH)) {
-    content = import_fs11.default.readFileSync(ENV_PATH, "utf-8");
+  if (import_fs12.default.existsSync(ENV_PATH)) {
+    content = import_fs12.default.readFileSync(ENV_PATH, "utf-8");
   }
   const regex = new RegExp(`^${key}\\s*=.*$`, "m");
   const line = `${key}=${value}`;
@@ -104797,7 +105018,7 @@ function updateEnvVar(key, value) {
   } else {
     content = (content.trimEnd() ? content.trimEnd() + "\n" : "") + line + "\n";
   }
-  import_fs11.default.writeFileSync(ENV_PATH, content, "utf-8");
+  import_fs12.default.writeFileSync(ENV_PATH, content, "utf-8");
   process.env[key] = value;
 }
 function maskApiKey(key) {
@@ -104806,13 +105027,13 @@ function maskApiKey(key) {
 }
 
 // services/logisticsConfig.js
-var import_fs12 = __toESM(require("fs"), 1);
-var import_path11 = __toESM(require("path"), 1);
-var CONFIG_PATH = import_path11.default.join(resolveAppRoot(), "data", "logistics_config.json");
+var import_fs13 = __toESM(require("fs"), 1);
+var import_path12 = __toESM(require("path"), 1);
+var CONFIG_PATH = import_path12.default.join(resolveAppRoot(), "data", "logistics_config.json");
 function readJsonFile() {
   try {
-    if (!import_fs12.default.existsSync(CONFIG_PATH)) return {};
-    const raw = import_fs12.default.readFileSync(CONFIG_PATH, "utf-8");
+    if (!import_fs13.default.existsSync(CONFIG_PATH)) return {};
+    const raw = import_fs13.default.readFileSync(CONFIG_PATH, "utf-8");
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch (err) {
@@ -105052,8 +105273,8 @@ async function saveLogisticsConfig(partial) {
   }
   await saveLogisticsSettingsToStore(next);
   try {
-    import_fs12.default.mkdirSync(import_path11.default.dirname(CONFIG_PATH), { recursive: true });
-    import_fs12.default.writeFileSync(CONFIG_PATH, JSON.stringify(next, null, 2), "utf-8");
+    import_fs13.default.mkdirSync(import_path12.default.dirname(CONFIG_PATH), { recursive: true });
+    import_fs13.default.writeFileSync(CONFIG_PATH, JSON.stringify(next, null, 2), "utf-8");
   } catch (err) {
     console.warn("[Logistics config] JSON backup write failed:", err?.message || err);
   }
@@ -106421,9 +106642,9 @@ var InterceptorManager = class {
    * @returns {void}
    */
   forEach(fn) {
-    utils_default.forEach(this.handlers, function forEachHandler(h3) {
-      if (h3 !== null) {
-        fn(h3);
+    utils_default.forEach(this.handlers, function forEachHandler(h4) {
+      if (h4 !== null) {
+        fn(h4);
       }
     });
   }
@@ -106902,7 +107123,7 @@ var import_http = __toESM(require("http"), 1);
 var import_https = __toESM(require("https"), 1);
 var import_http22 = __toESM(require("http2"), 1);
 var import_util3 = __toESM(require("util"), 1);
-var import_path12 = require("path");
+var import_path13 = require("path");
 var import_follow_redirects = __toESM(require_follow_redirects(), 1);
 var import_zlib = __toESM(require("zlib"), 1);
 
@@ -107346,13 +107567,13 @@ var normalizeIPAddress = (host) => {
   if (typeof host !== "string" || !host || host.indexOf(":") !== -1) {
     return host;
   }
-  let h3 = host;
-  if (h3.charAt(0) === "[" && h3.charAt(h3.length - 1) === "]") {
-    h3 = h3.slice(1, -1);
+  let h4 = host;
+  if (h4.charAt(0) === "[" && h4.charAt(h4.length - 1) === "]") {
+    h4 = h4.slice(1, -1);
   }
-  h3 = h3.replace(/\.+$/, "");
-  if (!/^[0-9.xXa-fA-F]+$/.test(h3)) return host;
-  const parts = h3.split(".");
+  h4 = h4.replace(/\.+$/, "");
+  if (!/^[0-9.xXa-fA-F]+$/.test(h4)) return host;
+  const parts = h4.split(".");
   if (parts.some((p) => p === "")) return host;
   if (parts.length === 4) {
     const octets = parts.map(parseIPv4Octet);
@@ -108326,9 +108547,9 @@ var http_default = isHttpAdapterSupported && function httpAdapter(config) {
       const allowedSocketPaths = own2("allowedSocketPaths");
       if (allowedSocketPaths != null) {
         const allowed = Array.isArray(allowedSocketPaths) ? allowedSocketPaths : [allowedSocketPaths];
-        const resolvedSocket = (0, import_path12.resolve)(socketPath);
+        const resolvedSocket = (0, import_path13.resolve)(socketPath);
         const isAllowed = allowed.some(
-          (entry) => typeof entry === "string" && (0, import_path12.resolve)(entry) === resolvedSocket
+          (entry) => typeof entry === "string" && (0, import_path13.resolve)(entry) === resolvedSocket
         );
         if (!isAllowed) {
           return reject(
@@ -111553,21 +111774,21 @@ async function testSpxSettings(req, res) {
 }
 
 // routes/settingsRoutes.js
-var router8 = (0, import_express9.Router)();
-router8.get("/channels", getChannelSettings);
-router8.put("/channels", putChannelSettings);
-router8.get("/gemini-status", getGeminiStatus);
-router8.post("/update-gemini-key", updateGeminiKey);
-router8.post("/test-gemini-key", testGeminiKey);
-router8.post("/shop-connection-status", postShopConnectionStatus);
-router8.get("/logistics", getLogisticsSettings);
-router8.post("/logistics", saveLogisticsSettings);
-router8.post("/test-ghn", testGhnSettings);
-router8.post("/test-spx", testSpxSettings);
-var settingsRoutes_default = router8;
+var router9 = (0, import_express10.Router)();
+router9.get("/channels", getChannelSettings);
+router9.put("/channels", putChannelSettings);
+router9.get("/gemini-status", getGeminiStatus);
+router9.post("/update-gemini-key", updateGeminiKey);
+router9.post("/test-gemini-key", testGeminiKey);
+router9.post("/shop-connection-status", postShopConnectionStatus);
+router9.get("/logistics", getLogisticsSettings);
+router9.post("/logistics", saveLogisticsSettings);
+router9.post("/test-ghn", testGhnSettings);
+router9.post("/test-spx", testSpxSettings);
+var settingsRoutes_default = router9;
 
 // routes/aiRoutes.js
-var import_express10 = __toESM(require_express2(), 1);
+var import_express11 = __toESM(require_express2(), 1);
 
 // controllers/aiController.js
 function markdownToHtml(text) {
@@ -111812,14 +112033,14 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
 }
 
 // routes/aiRoutes.js
-var router9 = (0, import_express10.Router)();
-router9.post("/gemini/optimize", authMiddleware, geminiOptimize);
-router9.post("/ai/parse-address", authMiddleware, parseAddress);
-router9.post("/ai/generate-description", authMiddleware, generateDescription);
-var aiRoutes_default = router9;
+var router10 = (0, import_express11.Router)();
+router10.post("/gemini/optimize", authMiddleware, geminiOptimize);
+router10.post("/ai/parse-address", authMiddleware, parseAddress);
+router10.post("/ai/generate-description", authMiddleware, generateDescription);
+var aiRoutes_default = router10;
 
 // routes/dashboardRoutes.js
-var import_express11 = __toESM(require_express2(), 1);
+var import_express12 = __toESM(require_express2(), 1);
 
 // utils/dashboard.js
 function toDateKey(d) {
@@ -112041,9 +112262,9 @@ async function getDashboard(req, res) {
 }
 
 // routes/dashboardRoutes.js
-var router10 = (0, import_express11.Router)();
-router10.get("/", getDashboard);
-var dashboardRoutes_default = router10;
+var router11 = (0, import_express12.Router)();
+router11.get("/", getDashboard);
+var dashboardRoutes_default = router11;
 
 // middlewares/cors.js
 function corsMiddleware(req, res, next) {
@@ -112063,18 +112284,18 @@ function corsMiddleware(req, res, next) {
 var cors_default = corsMiddleware;
 
 // middlewares/dbReady.js
-var import_mongoose4 = __toESM(require("mongoose"), 1);
+var import_mongoose6 = __toESM(require("mongoose"), 1);
 function dbReadyMiddleware(req, res, next) {
   const pathName = String(req.path || req.originalUrl || "").split("?")[0];
   if (!pathName.startsWith("/api/")) return next();
   const allowWithoutDb = pathName === "/api/login" || pathName.startsWith("/api/health") || pathName.startsWith("/api/auth/") || pathName === "/api/shopee/callback" || pathName === "/api/shopee/oauth/complete" || pathName === "/api/shopee/webhook" || pathName.startsWith("/api/public/") || pathName.startsWith("/api/shopee/ship-order") || pathName === "/api/shopee/print-document";
   if (allowWithoutDb) return next();
-  if (import_mongoose4.default.connection.readyState !== 1) {
+  if (import_mongoose6.default.connection.readyState !== 1) {
     return res.status(503).json({
       success: false,
       message: "Database \u0111ang k\u1EBFt n\u1ED1i, vui l\xF2ng th\u1EED l\u1EA1i sau",
       error: "database_connecting",
-      readyState: import_mongoose4.default.connection.readyState
+      readyState: import_mongoose6.default.connection.readyState
     });
   }
   return next();
@@ -112644,10 +112865,10 @@ async function scanBulkUpdate(req, res) {
 }
 
 // services/scanBgQueue.js
-var import_fs13 = __toESM(require("fs"), 1);
-var import_path13 = __toESM(require("path"), 1);
+var import_fs14 = __toESM(require("fs"), 1);
+var import_path14 = __toESM(require("path"), 1);
 var APP_ROOT6 = resolveAppRoot();
-var SCAN_BG_QUEUE_PATH = import_path13.default.join(APP_ROOT6, "data", "scan-bg-queue.json");
+var SCAN_BG_QUEUE_PATH = import_path14.default.join(APP_ROOT6, "data", "scan-bg-queue.json");
 var scanBgJobs = [];
 var scanBgJobKeys = /* @__PURE__ */ new Set();
 var scanBgWorkerRunning = false;
@@ -112691,8 +112912,8 @@ function normalizeScanBgKey(code) {
 }
 function loadScanBgQueueFromDisk() {
   try {
-    if (!import_fs13.default.existsSync(SCAN_BG_QUEUE_PATH)) return;
-    const raw = JSON.parse(import_fs13.default.readFileSync(SCAN_BG_QUEUE_PATH, "utf-8"));
+    if (!import_fs14.default.existsSync(SCAN_BG_QUEUE_PATH)) return;
+    const raw = JSON.parse(import_fs14.default.readFileSync(SCAN_BG_QUEUE_PATH, "utf-8"));
     const list = Array.isArray(raw?.jobs) ? raw.jobs : Array.isArray(raw) ? raw : [];
     for (const j of list) {
       const code = String(j?.code || "").trim();
@@ -112735,11 +112956,11 @@ function persistScanBgQueueSoon() {
   scanBgPersistTimer = setTimeout(() => {
     scanBgPersistTimer = null;
     try {
-      import_fs13.default.mkdirSync(import_path13.default.dirname(SCAN_BG_QUEUE_PATH), { recursive: true });
+      import_fs14.default.mkdirSync(import_path14.default.dirname(SCAN_BG_QUEUE_PATH), { recursive: true });
       const pending = scanBgJobs.filter((j) => j.status === "pending" || j.status === "running");
       const recent = scanBgJobs.filter((j) => j.status !== "pending" && j.status !== "running").slice(-80);
       const jobs = [...pending, ...recent];
-      import_fs13.default.writeFileSync(SCAN_BG_QUEUE_PATH, JSON.stringify({ jobs }, null, 0), "utf-8");
+      import_fs14.default.writeFileSync(SCAN_BG_QUEUE_PATH, JSON.stringify({ jobs }, null, 0), "utf-8");
     } catch (err) {
       console.warn("[Scan BG] persist failed:", err?.message || err);
     }
@@ -112967,7 +113188,7 @@ try {
 }
 
 // routes/productsRoutes.js
-var import_express12 = __toESM(require_express2(), 1);
+var import_express13 = __toESM(require_express2(), 1);
 
 // utils/concurrency.js
 var DEFAULT_DELAY_MS = 1e3;
@@ -114614,12 +114835,12 @@ async function bulkChannelSync(req, res) {
 }
 
 // services/shopee/auth.js
-var import_fs14 = __toESM(require("fs"), 1);
-var import_path15 = __toESM(require("path"), 1);
+var import_fs15 = __toESM(require("fs"), 1);
+var import_path16 = __toESM(require("path"), 1);
 var import_crypto3 = __toESM(require("crypto"), 1);
 
 // services/shopee/client.js
-var import_path14 = __toESM(require("path"), 1);
+var import_path15 = __toESM(require("path"), 1);
 var import_node_module = require("node:module");
 var import_meta = {};
 var SHOPEE_API_MAX_RETRY = 3;
@@ -114644,7 +114865,7 @@ function resolveCreateRequireFilename() {
     if (metaUrl && metaUrl !== "undefined") return metaUrl;
   } catch {
   }
-  return import_path14.default.resolve(process.cwd(), "server.cjs");
+  return import_path15.default.resolve(process.cwd(), "server.cjs");
 }
 var shopeeHttpDispatcher = void 0;
 try {
@@ -115057,9 +115278,9 @@ if (!isShopeeConfigValid()) {
     `[Shopee API] \u26A0\uFE0F SHOPEE_PARTNER_ID (hi\u1EC7n t\u1EA1i: "${SHOPEE_PARTNER_ID || "(r\u1ED7ng)"}") ho\u1EB7c SHOPEE_PARTNER_KEY ch\u01B0a \u0111\u01B0\u1EE3c \u0111i\u1EC1n \u0111\xFAng trong .env. Partner_id ph\u1EA3i l\xE0 m\u1ED9t s\u1ED1 nguy\xEAn (v\xED d\u1EE5: 2001234), l\u1EA5y t\u1EEB App PRODUCTION (Live) tr\xEAn open.shopee.com, KH\xD4NG d\xF9ng Sandbox. M\u1ECDi l\u1EA7n g\u1ECDi API Shopee s\u1EBD b\u1EC3 tr\u1EA3 l\u1ED7i error_param cho \u0111\u1EBFn khi s\u1EEDa \u0111\xFAng gi\xE1 tr\u1ECB n\xE0y.`
   );
 }
-var SHOPEE_TOKENS_PATH = import_path15.default.resolve(APP_ROOT7, "data", "shopee_tokens.json");
-var SHOPEE_OAUTH_LAST_PATH = import_path15.default.resolve(APP_ROOT7, "data", "shopee_oauth_last.json");
-var CHANNEL_SETTINGS_PATH = import_path15.default.resolve(APP_ROOT7, "data", "channel_settings.json");
+var SHOPEE_TOKENS_PATH = import_path16.default.resolve(APP_ROOT7, "data", "shopee_tokens.json");
+var SHOPEE_OAUTH_LAST_PATH = import_path16.default.resolve(APP_ROOT7, "data", "shopee_oauth_last.json");
+var CHANNEL_SETTINGS_PATH = import_path16.default.resolve(APP_ROOT7, "data", "channel_settings.json");
 var CANONICAL_SHOPEE_SHOP_IDS = ["4127421", "831052930"];
 var INDEPENDENT_SHOPEE_SHOP_IDS = new Set(CANONICAL_SHOPEE_SHOP_IDS);
 var deps11 = {
@@ -115072,16 +115293,16 @@ function initShopeeAuth(partial) {
   deps11 = { ...deps11, ...partial };
 }
 function ensureDataDirs() {
-  const dataDir = import_path15.default.join(APP_ROOT7, "data");
-  import_fs14.default.mkdirSync(dataDir, { recursive: true });
-  if (!import_fs14.default.existsSync(SHOPEE_TOKENS_PATH)) {
-    import_fs14.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
+  const dataDir = import_path16.default.join(APP_ROOT7, "data");
+  import_fs15.default.mkdirSync(dataDir, { recursive: true });
+  if (!import_fs15.default.existsSync(SHOPEE_TOKENS_PATH)) {
+    import_fs15.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
   }
 }
 function saveOAuthAudit(entry) {
   try {
     ensureDataDirs();
-    import_fs14.default.writeFileSync(
+    import_fs15.default.writeFileSync(
       SHOPEE_OAUTH_LAST_PATH,
       JSON.stringify({ ...entry, at: (/* @__PURE__ */ new Date()).toISOString() }, null, 2),
       "utf-8"
@@ -115092,8 +115313,8 @@ function saveOAuthAudit(entry) {
 }
 function loadLastOAuthAudit() {
   try {
-    if (!import_fs14.default.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
-    return JSON.parse(import_fs14.default.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
+    if (!import_fs15.default.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
+    return JSON.parse(import_fs15.default.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
   } catch {
     return null;
   }
@@ -115110,13 +115331,13 @@ function bootShopeeAuth() {
     console.error("[Boot] Failed to normalize shopee_tokens.json:", error);
   }
   console.log(
-    `[Boot] APP_ROOT=${APP_ROOT7} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs14.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL2}`
+    `[Boot] APP_ROOT=${APP_ROOT7} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs15.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL2}`
   );
 }
 function loadShopeeTokens() {
   try {
-    if (!import_fs14.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
-    const raw = import_fs14.default.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
+    if (!import_fs15.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
+    const raw = import_fs15.default.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
     if (!raw.trim()) return {};
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
@@ -115150,7 +115371,7 @@ function maskTokenStoreForLog(tokens) {
   return masked;
 }
 function saveShopeeTokens(tokensToWrite) {
-  const absPath = import_path15.default.resolve(SHOPEE_TOKENS_PATH);
+  const absPath = import_path16.default.resolve(SHOPEE_TOKENS_PATH);
   try {
     ensureDataDirs();
     const onDisk = normalizeTokenStore(loadShopeeTokens());
@@ -115187,10 +115408,10 @@ function saveShopeeTokens(tokensToWrite) {
         byteLength: Buffer.byteLength(payload, "utf-8")
       })
     );
-    import_fs14.default.writeFileSync(absPath, payload, "utf-8");
+    import_fs15.default.writeFileSync(absPath, payload, "utf-8");
     console.log(
       "[Shopee Tokens] fs.writeFileSync \u2014 GHI TH\xC0NH C\xD4NG",
-      JSON.stringify({ absPath, keys: keysAfter, fileSize: import_fs14.default.statSync(absPath).size })
+      JSON.stringify({ absPath, keys: keysAfter, fileSize: import_fs15.default.statSync(absPath).size })
     );
     return true;
   } catch (error) {
@@ -115498,8 +115719,8 @@ function saveShopeeTokenForShop(shopId, record) {
 }
 function listChannelSettingsShopIds() {
   try {
-    if (!import_fs14.default.existsSync(CHANNEL_SETTINGS_PATH)) return [];
-    const raw = import_fs14.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
+    if (!import_fs15.default.existsSync(CHANNEL_SETTINGS_PATH)) return [];
+    const raw = import_fs15.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : {};
     const shops = Array.isArray(parsed?.shops) ? parsed.shops : [];
     const ids = [];
@@ -115624,7 +115845,7 @@ function ensureShopeeLinkedShopTokenKeys() {
       delete next[id];
     }
     Object.assign(next, updates);
-    import_fs14.default.writeFileSync(SHOPEE_TOKENS_PATH, JSON.stringify(next, null, 2), "utf8");
+    import_fs15.default.writeFileSync(SHOPEE_TOKENS_PATH, JSON.stringify(next, null, 2), "utf8");
     console.log(
       `[Shopee Tokens] ensureLinkedShopTokenKeys \u2014 upsert=[${Object.keys(updates).join(", ")}] deleted=[${deleteKeys.map((k) => k.replace(/^__delete__/, "")).join(", ")}] pruned=${pruned}`
     );
@@ -116621,27 +116842,27 @@ async function previewItemVariants(req, res) {
 }
 
 // routes/productsRoutes.js
-var router11 = (0, import_express12.Router)();
-router11.get("/search", searchProducts);
-router11.post("/sync-shopee", handleProductSyncShopee);
-router11.post("/update-price", updateProductPrice);
-router11.post("/shopee-item-preview", previewItemVariants);
-router11.get("/shopee-item-preview", previewItemVariants);
-router11.post("/:id/sync-shopee", handleProductSyncShopee);
-router11.put("/replace", replaceProducts);
-router11.post("/inventory-balance", inventoryBalance);
-router11.post("/bulk-save", bulkSaveProducts);
-router11.post("/clear-all", clearAllProducts);
-router11.post("/bulk-update", bulkUpdateProducts);
-router11.post("/bulk-channel-sync", bulkChannelSync);
-router11.get("/", listProducts);
-router11.post("/", createProduct);
-router11.patch("/:id", patchProduct);
-router11.delete("/:id", deleteProduct);
-var productsRoutes_default = router11;
+var router12 = (0, import_express13.Router)();
+router12.get("/search", searchProducts);
+router12.post("/sync-shopee", handleProductSyncShopee);
+router12.post("/update-price", updateProductPrice);
+router12.post("/shopee-item-preview", previewItemVariants);
+router12.get("/shopee-item-preview", previewItemVariants);
+router12.post("/:id/sync-shopee", handleProductSyncShopee);
+router12.put("/replace", replaceProducts);
+router12.post("/inventory-balance", inventoryBalance);
+router12.post("/bulk-save", bulkSaveProducts);
+router12.post("/clear-all", clearAllProducts);
+router12.post("/bulk-update", bulkUpdateProducts);
+router12.post("/bulk-channel-sync", bulkChannelSync);
+router12.get("/", listProducts);
+router12.post("/", createProduct);
+router12.patch("/:id", patchProduct);
+router12.delete("/:id", deleteProduct);
+var productsRoutes_default = router12;
 
 // routes/mappingRoutes.js
-var import_express13 = __toESM(require_express2(), 1);
+var import_express14 = __toESM(require_express2(), 1);
 
 // controllers/mappingController.js
 var deps13 = {
@@ -116966,31 +117187,31 @@ async function handleMappingPurgeBroken(_req, res) {
 }
 
 // routes/mappingRoutes.js
-var router12 = (0, import_express13.Router)();
-router12.get("/sku-index", handleMappingSkuIndex);
-router12.post("/auto-link-single", handleSingleAutoLink);
-router12.post("/batch-auto-link", handleBatchAutoLink);
-router12.post("/bulk-auto-link", handleBulkAutoLinkByIds);
-router12.post("/purge-broken", handleMappingPurgeBroken);
-router12.post("/heal", handleMappingProductsHeal);
-router12.get("/", handleMappingProductsGet);
-router12.put("/", handleMappingProductsUpsert);
-router12.post("/", handleMappingProductsUpsert);
-var mappingRoutes_default = router12;
+var router13 = (0, import_express14.Router)();
+router13.get("/sku-index", handleMappingSkuIndex);
+router13.post("/auto-link-single", handleSingleAutoLink);
+router13.post("/batch-auto-link", handleBatchAutoLink);
+router13.post("/bulk-auto-link", handleBulkAutoLinkByIds);
+router13.post("/purge-broken", handleMappingPurgeBroken);
+router13.post("/heal", handleMappingProductsHeal);
+router13.get("/", handleMappingProductsGet);
+router13.put("/", handleMappingProductsUpsert);
+router13.post("/", handleMappingProductsUpsert);
+var mappingRoutes_default = router13;
 
 // routes/ordersRoutes.js
-var import_express14 = __toESM(require_express2(), 1);
+var import_express15 = __toESM(require_express2(), 1);
 
 // controllers/ordersController.js
 var import_fs17 = __toESM(require("fs"), 1);
 var import_path18 = __toESM(require("path"), 1);
 
 // services/orders.js
-var import_fs15 = __toESM(require("fs"), 1);
-var import_path16 = __toESM(require("path"), 1);
+var import_fs16 = __toESM(require("fs"), 1);
+var import_path17 = __toESM(require("path"), 1);
 var APP_ROOT8 = resolveAppRoot();
-var ORDERS_DB_PATH = import_path16.default.join(APP_ROOT8, "data", "orders.json");
-var HANDED_OVER_CLEANUP_MARKER = import_path16.default.join(APP_ROOT8, "data", ".cleanup-handed-over-v2");
+var ORDERS_DB_PATH = import_path17.default.join(APP_ROOT8, "data", "orders.json");
+var HANDED_OVER_CLEANUP_MARKER = import_path17.default.join(APP_ROOT8, "data", ".cleanup-handed-over-v2");
 var deps14 = {
   repairMisassignedTracking: (o) => o,
   repairFalseProcessedReadyToShip: (o) => o,
@@ -117046,11 +117267,11 @@ function rebuildOrderLookupIndex(orders) {
 }
 function loadOrders() {
   try {
-    if (!import_fs15.default.existsSync(ORDERS_DB_PATH)) {
+    if (!import_fs16.default.existsSync(ORDERS_DB_PATH)) {
       orderLookupIndex = rebuildOrderLookupIndex([]);
       return [];
     }
-    const raw = import_fs15.default.readFileSync(ORDERS_DB_PATH, "utf-8");
+    const raw = import_fs16.default.readFileSync(ORDERS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     const orders = Array.isArray(parsed) ? parsed.map(deps14.repairMisassignedTracking) : [];
     orderLookupIndex = rebuildOrderLookupIndex(orders);
@@ -117255,8 +117476,8 @@ function saveOrders(orders) {
         (err) => console.warn("[Orders JSON Mirror] Mongo sync failed:", err?.message || err)
       );
     }
-    import_fs15.default.mkdirSync(import_path16.default.dirname(ORDERS_DB_PATH), { recursive: true });
-    import_fs15.default.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
+    import_fs16.default.mkdirSync(import_path17.default.dirname(ORDERS_DB_PATH), { recursive: true });
+    import_fs16.default.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
     orderLookupIndex = rebuildOrderLookupIndex(sanitized);
     console.log(
       `[Orders DB] WRITE OK \u2014 path=${ORDERS_DB_PATH} count=${sanitized.length}`
@@ -117278,7 +117499,7 @@ async function purgeHandedOverGarbageOrdersOnce(opts) {
   const force = Boolean(opts?.force);
   const orders = loadOrders();
   const garbage = orders.filter(isHandedOverGarbageOrder);
-  if (!force && garbage.length === 0 && import_fs15.default.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
+  if (!force && garbage.length === 0 && import_fs16.default.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
     return { removed: 0, sns: [], skipped: true };
   }
   const sns = garbage.map((o) => String(o.orderSn || o.id || "").trim()).filter(Boolean);
@@ -117308,10 +117529,10 @@ async function purgeHandedOverGarbageOrdersOnce(opts) {
   const stillLeft = loadOrders().filter(isHandedOverGarbageOrder).length;
   if (stillLeft === 0) {
     try {
-      const v1 = import_path16.default.join(APP_ROOT8, "data", ".cleanup-handed-over-v1");
-      if (import_fs15.default.existsSync(v1)) import_fs15.default.unlinkSync(v1);
-      import_fs15.default.mkdirSync(import_path16.default.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
-      import_fs15.default.writeFileSync(
+      const v1 = import_path17.default.join(APP_ROOT8, "data", ".cleanup-handed-over-v1");
+      if (import_fs16.default.existsSync(v1)) import_fs16.default.unlinkSync(v1);
+      import_fs16.default.mkdirSync(import_path17.default.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
+      import_fs16.default.writeFileSync(
         HANDED_OVER_CLEANUP_MARKER,
         JSON.stringify(
           {
@@ -117563,51 +117784,6 @@ async function handOverOrderToCarrierByIndex(orders, index, opts) {
     `[Orders Handover] \u0111\u01A1n ${updated.orderSn} \u2192 is_handed_over=true source=${source} tn=${updated.trackingNumber || updated.tracking_no || "-"}`
   );
   return { ok: true, order: updated, changed: true };
-}
-
-// services/addressBook.js
-var import_fs16 = __toESM(require("fs"), 1);
-var import_path17 = __toESM(require("path"), 1);
-var FILE_PATH = import_path17.default.join(resolveAppRoot(), "data", "address_book.json");
-var MAX_ENTRIES = 200;
-function readBook() {
-  try {
-    if (!import_fs16.default.existsSync(FILE_PATH)) return [];
-    const raw = import_fs16.default.readFileSync(FILE_PATH, "utf-8");
-    const data = JSON.parse(raw);
-    return Array.isArray(data) ? data : [];
-  } catch {
-    return [];
-  }
-}
-function writeBook(list) {
-  const dir = import_path17.default.dirname(FILE_PATH);
-  if (!import_fs16.default.existsSync(dir)) import_fs16.default.mkdirSync(dir, { recursive: true });
-  import_fs16.default.writeFileSync(FILE_PATH, JSON.stringify(list, null, 2), "utf-8");
-}
-function saveAddressBookEntry(entry) {
-  const list = readBook();
-  const phone = String(entry?.phone || "").replace(/\D/g, "");
-  const next = {
-    id: `addr-${Date.now()}`,
-    savedAt: (/* @__PURE__ */ new Date()).toISOString(),
-    name: String(entry?.name || "").trim(),
-    phone,
-    province: String(entry?.province || "").trim(),
-    provinceCode: String(entry?.provinceCode || "").trim(),
-    district: String(entry?.district || "").trim(),
-    districtCode: String(entry?.districtCode || "").trim(),
-    ward: String(entry?.ward || "").trim(),
-    wardCode: String(entry?.wardCode || "").trim(),
-    street: String(entry?.street || "").trim(),
-    fullAddress: String(entry?.fullAddress || "").trim()
-  };
-  const deduped = list.filter(
-    (item) => !(String(item.phone || "").replace(/\D/g, "") === phone && item.street === next.street && item.wardCode === next.wardCode)
-  );
-  const merged = [next, ...deduped].slice(0, MAX_ENTRIES);
-  writeBook(merged);
-  return next;
 }
 
 // controllers/ordersController.js
@@ -119868,17 +120044,22 @@ async function createManualOrder(req, res) {
     let addressBookEntry = null;
     if (save_to_address_book === true || save_to_address_book === "true" || save_to_address_book === 1) {
       try {
-        addressBookEntry = saveAddressBookEntry({
+        addressBookEntry = await saveAddressBookEntry({
           name,
           phone,
           province: addr.province,
+          provinceName: addr.province,
           provinceCode: addr.provinceCode,
           district: addr.district || "",
+          districtName: addr.district || "",
           districtCode: addr.districtCode || "",
           ward: addr.ward,
+          wardName: addr.ward,
           wardCode: addr.wardCode,
           street: addr.street.trim(),
-          fullAddress
+          address: addr.street.trim(),
+          fullAddress,
+          addressMode
         });
       } catch (bookErr) {
         console.warn("[Orders manual] address book:", bookErr?.message || bookErr);
@@ -122450,8 +122631,7 @@ function extractJsonObject(text) {
 function normalizePhone(raw) {
   const digits = String(raw || "").replace(/\D/g, "");
   if (!digits) return "";
-  if (digits.startsWith("84") && digits.length >= 11) return `0${digits.slice(2)}`;
-  if (digits.length === 9) return `0${digits}`;
+  if (digits.startsWith("840") && digits.length >= 12) return digits.slice(2);
   return digits;
 }
 function normalizeParsed(raw, fallbackDetail) {
@@ -122907,66 +123087,66 @@ data: ${JSON.stringify({ at: Date.now() })}
 }
 
 // routes/ordersRoutes.js
-var router13 = (0, import_express14.Router)();
-var h2 = asyncHandler;
-router13.get("/refresh", h2(refreshOrders));
-router13.get("/query", h2(queryOrders));
-router13.get("/counts", h2(getOrderCounts));
-router13.get("/counter", h2(getOrderCounts));
-router13.get("/live", streamOrderLive);
-router13.get("/products-summary", h2(getFulfillmentProductsSummary));
-router13.get("/lookup", h2(lookupOrder));
-router13.get("/scanner-sync", h2(scannerSync));
-router13.post("/sync", syncOrders);
-router13.post("/pull", pullOrders);
-router13.post("/quick-sync", quickSyncOrders);
-router13.post("/fast-process", fastProcessOrders);
-router13.post("/cleanup-handed-over", h2(cleanupHandedOver));
-router13.post("/cleanup-shipped", h2(cleanupShipped));
-router13.get("/cleanup-shipped", h2(getCleanupShippedStatus));
-router13.post("/recalculate-counts", h2(recalculateOrderCounts));
-router13.post("/batch-delete", h2(batchDeleteOrders));
-router13.post("/cleanup-label-pdfs", h2(cleanupLabelPdfs));
-router13.post("/cleanup-processed-pickup", h2(cleanupProcessedPickup));
-router13.post("/cleanup-mock", h2(cleanupMockOrders));
-router13.post("/hydrate-tracking", h2(hydrateTracking));
-router13.post("/enrich-tracking", h2(enrichTracking));
-router13.get("/heal-tracking-cancelled", h2(healTrackingCancelled));
-router13.post("/heal-tracking-cancelled", h2(healTrackingCancelled));
-router13.post("/reclassify-cancel-returns", h2(reclassifyCancelReturns));
-router13.get("/reclassify-cancel-returns", h2(reclassifyCancelReturns));
-router13.post("/force-resync-stuck", h2(forceResyncStuck));
-router13.post("/trigger-fix-stuck-orders", h2(triggerFixStuckOrders));
-router13.post("/reconcile-handed-over", h2(reconcileHandedOver));
-router13.post("/hand-over-carrier/bulk", h2(handOverCarrierBulk));
-router13.post("/hand-over-carrier", h2(handOverCarrierByCode));
-router13.post("/heal-handed-over", h2(healHandedOver));
-router13.post("/manual", h2(createManualOrder));
-router13.post("/external/print-waybill", h2(printExternalWaybill));
-router13.get("/external/waybill-file/:orderSn", h2(streamExternalWaybillFile));
-router13.get("/don-hoan-huy", h2(listDonHoanHuy));
-router13.post("/don-hoan-huy", h2(saveScanOrders));
-router13.post("/scan-bg-enqueue", h2(enqueueScanBg));
-router13.get("/scan-bg-status", h2(getScanBgStatus));
-router13.post("/scan-bg-ack", h2(ackScanBg));
-router13.get("/return-alerts", h2(getReturnAlerts));
-router13.post("/return-alerts-ack", h2(ackReturnAlertsApi));
-router13.post("/scan-bulk-update", h2(scanBulkUpdate));
-router13.post("/parse-address", h2(parseOrderAddress));
-router13.post("/confirm-return-received", h2(confirmReturnReceived));
-router13.post("/reset-print-status", h2(resetPrintStatus));
-router13.post("/update-print-status", h2(updatePrintStatus));
-router13.post("/mark-printed", h2(markPrinted));
-router13.get("/:orderSn/events", h2(getOrderEvents));
-router13.post("/:id/hand-over-carrier", h2(handOverCarrierById));
-router13.post("/:id/confirm-return-received", h2(confirmReturnReceived));
-router13.get("/", h2(listOrders));
-router13.patch("/:id", h2(patchOrder));
-router13.delete("/:id", h2(deleteOrder));
-var ordersRoutes_default = router13;
+var router14 = (0, import_express15.Router)();
+var h3 = asyncHandler;
+router14.get("/refresh", h3(refreshOrders));
+router14.get("/query", h3(queryOrders));
+router14.get("/counts", h3(getOrderCounts));
+router14.get("/counter", h3(getOrderCounts));
+router14.get("/live", streamOrderLive);
+router14.get("/products-summary", h3(getFulfillmentProductsSummary));
+router14.get("/lookup", h3(lookupOrder));
+router14.get("/scanner-sync", h3(scannerSync));
+router14.post("/sync", syncOrders);
+router14.post("/pull", pullOrders);
+router14.post("/quick-sync", quickSyncOrders);
+router14.post("/fast-process", fastProcessOrders);
+router14.post("/cleanup-handed-over", h3(cleanupHandedOver));
+router14.post("/cleanup-shipped", h3(cleanupShipped));
+router14.get("/cleanup-shipped", h3(getCleanupShippedStatus));
+router14.post("/recalculate-counts", h3(recalculateOrderCounts));
+router14.post("/batch-delete", h3(batchDeleteOrders));
+router14.post("/cleanup-label-pdfs", h3(cleanupLabelPdfs));
+router14.post("/cleanup-processed-pickup", h3(cleanupProcessedPickup));
+router14.post("/cleanup-mock", h3(cleanupMockOrders));
+router14.post("/hydrate-tracking", h3(hydrateTracking));
+router14.post("/enrich-tracking", h3(enrichTracking));
+router14.get("/heal-tracking-cancelled", h3(healTrackingCancelled));
+router14.post("/heal-tracking-cancelled", h3(healTrackingCancelled));
+router14.post("/reclassify-cancel-returns", h3(reclassifyCancelReturns));
+router14.get("/reclassify-cancel-returns", h3(reclassifyCancelReturns));
+router14.post("/force-resync-stuck", h3(forceResyncStuck));
+router14.post("/trigger-fix-stuck-orders", h3(triggerFixStuckOrders));
+router14.post("/reconcile-handed-over", h3(reconcileHandedOver));
+router14.post("/hand-over-carrier/bulk", h3(handOverCarrierBulk));
+router14.post("/hand-over-carrier", h3(handOverCarrierByCode));
+router14.post("/heal-handed-over", h3(healHandedOver));
+router14.post("/manual", h3(createManualOrder));
+router14.post("/external/print-waybill", h3(printExternalWaybill));
+router14.get("/external/waybill-file/:orderSn", h3(streamExternalWaybillFile));
+router14.get("/don-hoan-huy", h3(listDonHoanHuy));
+router14.post("/don-hoan-huy", h3(saveScanOrders));
+router14.post("/scan-bg-enqueue", h3(enqueueScanBg));
+router14.get("/scan-bg-status", h3(getScanBgStatus));
+router14.post("/scan-bg-ack", h3(ackScanBg));
+router14.get("/return-alerts", h3(getReturnAlerts));
+router14.post("/return-alerts-ack", h3(ackReturnAlertsApi));
+router14.post("/scan-bulk-update", h3(scanBulkUpdate));
+router14.post("/parse-address", h3(parseOrderAddress));
+router14.post("/confirm-return-received", h3(confirmReturnReceived));
+router14.post("/reset-print-status", h3(resetPrintStatus));
+router14.post("/update-print-status", h3(updatePrintStatus));
+router14.post("/mark-printed", h3(markPrinted));
+router14.get("/:orderSn/events", h3(getOrderEvents));
+router14.post("/:id/hand-over-carrier", h3(handOverCarrierById));
+router14.post("/:id/confirm-return-received", h3(confirmReturnReceived));
+router14.get("/", h3(listOrders));
+router14.patch("/:id", h3(patchOrder));
+router14.delete("/:id", h3(deleteOrder));
+var ordersRoutes_default = router14;
 
 // routes/shopeeAuthRoutes.js
-var import_express15 = __toESM(require_express2(), 1);
+var import_express16 = __toESM(require_express2(), 1);
 
 // controllers/shopeeAuthController.js
 var APP_ROOT10 = resolveAppRoot();
@@ -123216,45 +123396,45 @@ async function getAuthUrl(req, res) {
 }
 
 // routes/shopeeAuthRoutes.js
-var router14 = (0, import_express15.Router)();
-router14.get("/oauth/complete", oauthComplete);
-router14.get("/callback", oauthCallback);
-router14.get("/webhook", webhookProbe);
-router14.get("/oauth-shops", authMiddleware, listOauthShops);
-router14.get("/auth-url", authMiddleware, getAuthUrl);
-var shopeeAuthRoutes_default = router14;
+var router15 = (0, import_express16.Router)();
+router15.get("/oauth/complete", oauthComplete);
+router15.get("/callback", oauthCallback);
+router15.get("/webhook", webhookProbe);
+router15.get("/oauth-shops", authMiddleware, listOauthShops);
+router15.get("/auth-url", authMiddleware, getAuthUrl);
+var shopeeAuthRoutes_default = router15;
 
 // routes/shopeeOrdersRoutes.js
-var import_express16 = __toESM(require_express2(), 1);
-var router15 = (0, import_express16.Router)();
-router15.post("/orders/sync", syncOrders);
-router15.post("/orders/pull", pullOrders);
-router15.post("/orders/quick-sync", quickSyncOrders);
-router15.get("/diagnostics", getDiagnostics);
-router15.get("/debug/return-by-order", debugReturnByOrder);
-var shopeeOrdersRoutes_default = router15;
-
-// routes/shopeeProductsRoutes.js
 var import_express17 = __toESM(require_express2(), 1);
 var router16 = (0, import_express17.Router)();
-router16.post("/products/sync", syncProducts);
-router16.post("/products/sync-item-variants", syncItemVariants);
-router16.post("/products/item-preview", previewItemVariants);
-router16.get("/products/item-preview", previewItemVariants);
-var shopeeProductsRoutes_default = router16;
+router16.post("/orders/sync", syncOrders);
+router16.post("/orders/pull", pullOrders);
+router16.post("/orders/quick-sync", quickSyncOrders);
+router16.get("/diagnostics", getDiagnostics);
+router16.get("/debug/return-by-order", debugReturnByOrder);
+var shopeeOrdersRoutes_default = router16;
 
-// routes/shopeeShipRoutes.js
+// routes/shopeeProductsRoutes.js
 var import_express18 = __toESM(require_express2(), 1);
 var router17 = (0, import_express18.Router)();
-router17.post("/ship-order", shipOrder);
-router17.post("/ship-order/bulk", shipOrderBulk);
-router17.post("/ship-order/bulk-async", shipOrderBulkAsync);
-router17.get("/ship-order/job/:jobId", getShipOrderJob);
-router17.post("/orders/fast-process", fastProcessOrders);
-var shopeeShipRoutes_default = router17;
+router17.post("/products/sync", syncProducts);
+router17.post("/products/sync-item-variants", syncItemVariants);
+router17.post("/products/item-preview", previewItemVariants);
+router17.get("/products/item-preview", previewItemVariants);
+var shopeeProductsRoutes_default = router17;
+
+// routes/shopeeShipRoutes.js
+var import_express19 = __toESM(require_express2(), 1);
+var router18 = (0, import_express19.Router)();
+router18.post("/ship-order", shipOrder);
+router18.post("/ship-order/bulk", shipOrderBulk);
+router18.post("/ship-order/bulk-async", shipOrderBulkAsync);
+router18.get("/ship-order/job/:jobId", getShipOrderJob);
+router18.post("/orders/fast-process", fastProcessOrders);
+var shopeeShipRoutes_default = router18;
 
 // routes/shopeePrintRoutes.js
-var import_express19 = __toESM(require_express2(), 1);
+var import_express20 = __toESM(require_express2(), 1);
 
 // controllers/shopeePrintController.js
 var deps19 = {
@@ -123341,61 +123521,61 @@ async function getPrintDocumentJob(req, res) {
 }
 
 // routes/shopeePrintRoutes.js
-var router18 = (0, import_express19.Router)();
-router18.post("/print-document", printDocument);
-router18.post("/print-document/async", printDocumentAsync);
-router18.get("/print-document/job/:jobId", getPrintDocumentJob);
-var shopeePrintRoutes_default = router18;
+var router19 = (0, import_express20.Router)();
+router19.post("/print-document", printDocument);
+router19.post("/print-document/async", printDocumentAsync);
+router19.get("/print-document/job/:jobId", getPrintDocumentJob);
+var shopeePrintRoutes_default = router19;
 
 // routes/inventoryRoutes.js
-var import_express20 = __toESM(require_express2(), 1);
-var router19 = (0, import_express20.Router)();
-router19.get("/local-inventory", authMiddleware, getLocalInventory);
-router19.post("/local-inventory/refresh", authMiddleware, refreshLocalInventory);
-router19.post("/sync-stock", authMiddleware, syncStock);
-router19.delete("/inventory/clear-all", authMiddleware, handleInventoryClearAll);
-router19.post("/inventory/clear-all", authMiddleware, handleInventoryClearAll);
-var inventoryRoutes_default = router19;
-
-// routes/autoLinkRoutes.js
 var import_express21 = __toESM(require_express2(), 1);
 var router20 = (0, import_express21.Router)();
-router20.post("/mapping/bulk-update", authMiddleware, handleBulkAutoLinkByIds);
-router20.post("/shopee/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
-router20.post("/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
-router20.post("/auto-link", authMiddleware, handleBatchAutoLink);
-var autoLinkRoutes_default = router20;
+router20.get("/local-inventory", authMiddleware, getLocalInventory);
+router20.post("/local-inventory/refresh", authMiddleware, refreshLocalInventory);
+router20.post("/sync-stock", authMiddleware, syncStock);
+router20.delete("/inventory/clear-all", authMiddleware, handleInventoryClearAll);
+router20.post("/inventory/clear-all", authMiddleware, handleInventoryClearAll);
+var inventoryRoutes_default = router20;
 
-// routes/apiSystemRoutes.js
+// routes/autoLinkRoutes.js
 var import_express22 = __toESM(require_express2(), 1);
 var router21 = (0, import_express22.Router)();
-router21.get("/sync-jobs/:jobId", authMiddleware, getSyncJobById);
-router21.get("/order-counts", authMiddleware, getOrderCounts);
-router21.post("/sync-shopee", authMiddleware, syncShopee);
-router21.post("/mongo/cleanup-temp", authMiddleware, cleanupMongoTemp);
-router21.post("/mongo/ensure-ttl", authMiddleware, ensureMongoTtl);
-router21.post("/orders/pull", authMiddleware, pullOrders);
-router21.post("/sync-from-shop", authMiddleware, syncFromShop);
-var apiSystemRoutes_default = router21;
+router21.post("/mapping/bulk-update", authMiddleware, handleBulkAutoLinkByIds);
+router21.post("/shopee/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
+router21.post("/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
+router21.post("/auto-link", authMiddleware, handleBatchAutoLink);
+var autoLinkRoutes_default = router21;
+
+// routes/apiSystemRoutes.js
+var import_express23 = __toESM(require_express2(), 1);
+var router22 = (0, import_express23.Router)();
+router22.get("/sync-jobs/:jobId", authMiddleware, getSyncJobById);
+router22.get("/order-counts", authMiddleware, getOrderCounts);
+router22.post("/sync-shopee", authMiddleware, syncShopee);
+router22.post("/mongo/cleanup-temp", authMiddleware, cleanupMongoTemp);
+router22.post("/mongo/ensure-ttl", authMiddleware, ensureMongoTtl);
+router22.post("/orders/pull", authMiddleware, pullOrders);
+router22.post("/sync-from-shop", authMiddleware, syncFromShop);
+var apiSystemRoutes_default = router22;
 
 // routes/labelsRoutes.js
-var import_express23 = __toESM(require_express2(), 1);
+var import_express24 = __toESM(require_express2(), 1);
 var serveHandler = null;
 function initLabelsRoutes(handler) {
   serveHandler = handler;
 }
-var router22 = (0, import_express23.Router)();
+var router23 = (0, import_express24.Router)();
 function handlePublicLabelGet(req, res) {
   if (typeof serveHandler !== "function") {
     return res.status(503).type("text/plain").send("Label service ch\u01B0a s\u1EB5n s\xE0ng.");
   }
   return serveHandler(req, res);
 }
-router22.get("/api/public/labels/:filename", handlePublicLabelGet);
-router22.get("/api/labels/:filename", handlePublicLabelGet);
-router22.get("/labels/:filename", handlePublicLabelGet);
-router22.get("/prints/:filename", handlePublicLabelGet);
-var labelsRoutes_default = router22;
+router23.get("/api/public/labels/:filename", handlePublicLabelGet);
+router23.get("/api/labels/:filename", handlePublicLabelGet);
+router23.get("/labels/:filename", handlePublicLabelGet);
+router23.get("/prints/:filename", handlePublicLabelGet);
+var labelsRoutes_default = router23;
 
 // services/shopee/axiosClient.js
 var SHOPEE_AXIOS_TIMEOUT_MS = 3e4;
@@ -124524,6 +124704,7 @@ var healthRoutes = asRouter(healthRoutes_default);
 var vietnamAddressRoutes = asRouter(vietnamAddressRoutes_default);
 var suppliersRoutes = asRouter(suppliersRoutes_default);
 var expensesRoutes = asRouter(expensesRoutes_default);
+var addressBookRoutes = asRouter(addressBookRoutes_default);
 var importsRoutes = asRouter(importsRoutes_default);
 var settingsRoutes = asRouter(settingsRoutes_default);
 var aiRoutes = asRouter(aiRoutes_default);
@@ -127260,13 +127441,13 @@ async function debugForceSyncHandedOverOrders(opts) {
     Math.max(Number(opts?.maxOrders) || 150, 1),
     200
   );
-  const mongoReady2 = isMongoReady();
+  const mongoReady3 = isMongoReady();
   const tokenShops = listShopeeSyncShopIds();
   const tabFilter = orderTabFilter("handed_over_carrier");
   const out = {
     success: false,
     endpoint: "GET /api/test-sync-shopee",
-    mongoReady: mongoReady2,
+    mongoReady: mongoReady3,
     tokenShops,
     shopNameCanonical: {
       "4127421": "LKAT",
@@ -127294,7 +127475,7 @@ async function debugForceSyncHandedOverOrders(opts) {
     elapsedMs: 0,
     message: ""
   };
-  if (!mongoReady2) {
+  if (!mongoReady3) {
     out.message = "MongoDB ch\u01B0a s\u1EB5n s\xE0ng \u2014 kh\xF4ng th\u1EC3 d\xF2/c\u1EADp nh\u1EADt.";
     out.elapsedMs = Date.now() - startedAt;
     return out;
@@ -127324,8 +127505,8 @@ async function debugForceSyncHandedOverOrders(opts) {
     }));
     if (candidates.length === 0) {
       try {
-        const { default: mongoose5 } = await import("mongoose");
-        const col = mongoose5.connection?.db?.collection("orders");
+        const { default: mongoose7 } = await import("mongoose");
+        const col = mongoose7.connection?.db?.collection("orders");
         if (col) {
           const rawHanded = await col.countDocuments({
             $or: [
@@ -138933,7 +139114,7 @@ async function upsertShopeeWebhookShallow(body, orders) {
   return String(merged.orderSn);
 }
 async function startServer() {
-  const app = (0, import_express24.default)();
+  const app = (0, import_express25.default)();
   const PORT = process.env.PORT || 3e3;
   const appWithRouteMethods = app;
   for (const method of ["get", "post", "put", "patch", "delete"]) {
@@ -138983,8 +139164,8 @@ async function startServer() {
     listShopeeOAuthShopIds
   });
   app.use("/api/shopee", createShopeeWebhookRouter(processShopeeWebhookPayload, "/webhook"));
-  app.use(import_express24.default.json({ limit: "50mb" }));
-  app.use(import_express24.default.urlencoded({ limit: "50mb", extended: true }));
+  app.use(import_express25.default.json({ limit: "50mb" }));
+  app.use(import_express25.default.urlencoded({ limit: "50mb", extended: true }));
   try {
     ensureLabelsDir();
   } catch (err) {
@@ -139120,6 +139301,7 @@ async function startServer() {
   });
   app.use("/api/imports", authMiddleware, importsRoutes);
   app.use("/api/expenses", authMiddleware, expensesRoutes);
+  app.use("/api/address-book", authMiddleware, addressBookRoutes);
   initDashboardController({
     isMongoReady,
     withLocalDbTimeout,
@@ -143238,14 +143420,14 @@ async function startServer() {
       console.warn("[Boot] Passenger/cPanel detected without NODE_ENV=production; forcing static production runtime.");
     }
     const publicPdfDir = import_path20.default.join(APP_ROOT11, "public", "pdfs");
-    app.use("/pdfs", import_express24.default.static(publicPdfDir, {
+    app.use("/pdfs", import_express25.default.static(publicPdfDir, {
       setHeaders(res) {
         res.setHeader("Content-Type", "application/pdf");
         res.setHeader("Cache-Control", "public, max-age=300");
       }
     }));
     const distPath = import_path20.default.join(APP_ROOT11, "dist");
-    app.use(import_express24.default.static(distPath, {
+    app.use(import_express25.default.static(distPath, {
       setHeaders(res, filePath) {
         if (filePath.endsWith("index.html")) {
           res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");

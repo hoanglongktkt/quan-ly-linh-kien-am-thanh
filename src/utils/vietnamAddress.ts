@@ -33,7 +33,7 @@ export const emptyStructuredAddress = (): StructuredAddressValue => ({
   wardName: '',
   street: '',
   addressMode: 'new2',
-  saveToAddressBook: false,
+  saveToAddressBook: true,
 });
 
 export function formatFullAddress(addr: StructuredAddressValue): string {
@@ -107,10 +107,11 @@ export function matchAdminUnit<T extends VnAdminUnit>(list: T[], query: string):
   return bestScore >= 60 ? best : undefined;
 }
 
+/** Chỉ giữ chữ số. Không tự thêm số 0 đầu (tránh 0944 → 00944 khi đang gõ). */
 export function normalizePhone(raw: string): string {
   const digits = String(raw || '').replace(/\D/g, '');
   if (!digits) return '';
-  if (digits.startsWith('84') && digits.length >= 11) return `0${digits.slice(2)}`;
-  if (digits.length === 9) return `0${digits}`;
+  // Dán +840944... / 840944... → bỏ mã 84, giữ số 0 người dùng đã có.
+  if (digits.startsWith('840') && digits.length >= 12) return digits.slice(2);
   return digits;
 }

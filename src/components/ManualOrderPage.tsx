@@ -21,7 +21,7 @@ import {
   isStructuredAddressComplete,
   StructuredAddressValue,
 } from '../utils/vietnamAddress';
-import { saveAddressBookEntry } from '../utils/addressBook';
+import { postAddressBookEntry } from '../utils/addressBook';
 import { normalizeProductSearchText } from '../utils/productSearch';
 
 export type ManualOrderItem = {
@@ -708,20 +708,25 @@ export default function ManualOrderPage({
       }
 
       const fullAddr = formatFullAddress(shippingAddress);
+      let savedToBook = Boolean(data.addressBookSaved);
       if (shippingAddress.saveToAddressBook) {
-        saveAddressBookEntry({
-          name: shippingAddress.name.trim(),
-          phone: shippingAddress.phone.trim(),
-          provinceCode: shippingAddress.provinceCode,
-          provinceName: shippingAddress.provinceName,
-          districtCode: shippingAddress.districtCode,
-          districtName: shippingAddress.districtName,
-          wardCode: shippingAddress.wardCode,
-          wardName: shippingAddress.wardName,
-          street: shippingAddress.street.trim(),
-          addressMode: shippingAddress.addressMode,
-          fullAddress: fullAddr,
-        });
+        const saved = await postAddressBookEntry(
+          {
+            name: shippingAddress.name.trim(),
+            phone: shippingAddress.phone.trim(),
+            provinceCode: shippingAddress.provinceCode,
+            provinceName: shippingAddress.provinceName,
+            districtCode: shippingAddress.districtCode,
+            districtName: shippingAddress.districtName,
+            wardCode: shippingAddress.wardCode,
+            wardName: shippingAddress.wardName,
+            street: shippingAddress.street.trim(),
+            addressMode: shippingAddress.addressMode,
+            fullAddress: fullAddr,
+          },
+          authHeaders,
+        );
+        savedToBook = savedToBook || Boolean(saved);
       }
 
       const qtyTotal = orderItems.reduce((acc, it) => acc + it.quantity, 0);
@@ -733,7 +738,9 @@ export default function ManualOrderPage({
             : 'Tự giao hàng';
 
       alert(
-        `🎉 Đã tạo đơn ngoài sàn thành công!\n\n• Mã đơn: ${newOrder.orderSn}\n• Địa chỉ: ${fullAddr}\n• Vận chuyển: ${carrierLabel}\n• Mã vận đơn: ${generatedTracking || '(tự giao — không có mã hãng)'}\n\nĐã khấu trừ ${qtyTotal} sản phẩm trong kho (nếu có).`,
+        `🎉 Đã tạo đơn ngoài sàn thành công!\n\n• Mã đơn: ${newOrder.orderSn}\n• Địa chỉ: ${fullAddr}\n• Vận chuyển: ${carrierLabel}\n• Mã vận đơn: ${generatedTracking || '(tự giao — không có mã hãng)'}\n\nĐã khấu trừ ${qtyTotal} sản phẩm trong kho (nếu có).${
+          savedToBook ? '\nĐã lưu vào sổ địa chỉ.' : ''
+        }`,
       );
 
       onBack();
