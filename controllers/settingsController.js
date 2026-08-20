@@ -240,6 +240,11 @@ export async function getLogisticsSettings(_req, res) {
       ghn: {
         connected: cfg.ghn.connected,
         shopId: cfg.ghn.shopId,
+        ghnShopId1: cfg.ghn.ghnShopId1 || "",
+        ghnShopId2: cfg.ghn.ghnShopId2 || "",
+        ghnShopId3: cfg.ghn.ghnShopId3 || "",
+        ghnShopIds: Array.isArray(cfg.ghn.ghnShopIds) ? cfg.ghn.ghnShopIds : [],
+        shops: Array.isArray(cfg.ghn.shops) ? cfg.ghn.shops : [],
         tokenMasked: maskSecret(cfg.ghn.token),
         hasToken: Boolean(cfg.ghn.token),
         service: cfg.ghn.service,
@@ -274,7 +279,26 @@ export async function saveLogisticsSettings(req, res) {
         patch.ghn.token = String(body.ghn.token).trim();
       }
       if (body.ghn.shopId != null) patch.ghn.shopId = String(body.ghn.shopId).trim();
+      if (body.ghn.ghnShopId1 != null) patch.ghn.ghnShopId1 = String(body.ghn.ghnShopId1).trim();
+      if (body.ghn.ghnShopId2 != null) patch.ghn.ghnShopId2 = String(body.ghn.ghnShopId2).trim();
+      if (body.ghn.ghnShopId3 != null) patch.ghn.ghnShopId3 = String(body.ghn.ghnShopId3).trim();
+      if (Array.isArray(body.ghn.ghnShopIds)) {
+        patch.ghn.ghnShopIds = body.ghn.ghnShopIds.map((id) => String(id || "").trim()).slice(0, 3);
+        if (patch.ghn.ghnShopId1 == null) patch.ghn.ghnShopId1 = patch.ghn.ghnShopIds[0] || "";
+        if (patch.ghn.ghnShopId2 == null) patch.ghn.ghnShopId2 = patch.ghn.ghnShopIds[1] || "";
+        if (patch.ghn.ghnShopId3 == null) patch.ghn.ghnShopId3 = patch.ghn.ghnShopIds[2] || "";
+      }
       if (body.ghn.service != null) patch.ghn.service = String(body.ghn.service).trim();
+      const id1 = String(patch.ghn.ghnShopId1 || "").trim();
+      const id2 = String(patch.ghn.ghnShopId2 || "").trim();
+      const id3 = String(patch.ghn.ghnShopId3 || "").trim();
+      if (id1 || id2 || id3 || patch.ghn.shopId != null) {
+        patch.ghn.ghnShopId1 = id1 || (patch.ghn.shopId && !id2 && !id3 ? String(patch.ghn.shopId).trim() : id1);
+        patch.ghn.ghnShopId2 = id2;
+        patch.ghn.ghnShopId3 = id3;
+        patch.ghn.ghnShopIds = [patch.ghn.ghnShopId1, patch.ghn.ghnShopId2, patch.ghn.ghnShopId3];
+        patch.ghn.shopId = patch.ghn.ghnShopId1 || patch.ghn.ghnShopId2 || patch.ghn.ghnShopId3 || "";
+      }
     }
     if (body.spx && typeof body.spx === "object") {
       patch.spx = {};

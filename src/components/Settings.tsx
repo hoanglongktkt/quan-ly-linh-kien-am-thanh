@@ -146,9 +146,29 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
   };
 
   // Shipping Carrier configs (persist to localStorage)
-  const [ghnConfig, setGhnConfig] = useState(() =>
-    safeGetJson('omni_ghn_config', { connected: false, token: '', shopId: '', service: 'standard' }),
-  );
+  const [ghnConfig, setGhnConfig] = useState(() => {
+    const saved = safeGetJson('omni_ghn_config', {
+      connected: false,
+      token: '',
+      shopId: '',
+      shopId1: '',
+      shopId2: '',
+      shopId3: '',
+      service: 'standard',
+    });
+    const id1 = String(saved.shopId1 || saved.ghnShopId1 || saved.shopId || '').trim();
+    const id2 = String(saved.shopId2 || saved.ghnShopId2 || '').trim();
+    const id3 = String(saved.shopId3 || saved.ghnShopId3 || '').trim();
+    return {
+      connected: Boolean(saved.connected),
+      token: String(saved.token || ''),
+      shopId: id1 || id2 || id3,
+      shopId1: id1,
+      shopId2: id2,
+      shopId3: id3,
+      service: saved.service || 'standard',
+    };
+  });
 
   const [spxConfig, setSpxConfig] = useState(() =>
     safeGetJson('omni_spx_config', {
@@ -194,10 +214,19 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
           setGhnConfig((prev) => {
             const prevToken = String(prev.token || '');
             const isFakeToken = !prevToken || prevToken.includes('••••') || prevToken.startsWith('ghn-tok-');
+            const id1 = String(
+              data.ghn.ghnShopId1 || data.ghn.ghnShopIds?.[0] || data.ghn.shopId || '',
+            ).trim();
+            const id2 = String(data.ghn.ghnShopId2 || data.ghn.ghnShopIds?.[1] || '').trim();
+            const id3 = String(data.ghn.ghnShopId3 || data.ghn.ghnShopIds?.[2] || '').trim();
+            const fallbackId = prev.shopId === '1938210' ? '' : String(prev.shopId1 || prev.shopId || '');
             return {
               ...prev,
               connected: Boolean(data.ghn.connected),
-              shopId: data.ghn.shopId || (prev.shopId === '1938210' ? '' : prev.shopId),
+              shopId: id1 || id2 || id3 || fallbackId,
+              shopId1: id1 || (id2 || id3 ? '' : fallbackId),
+              shopId2: id2,
+              shopId3: id3,
               token: isFakeToken ? '' : prevToken,
               service: data.ghn.service || prev.service || 'standard',
             };
@@ -292,7 +321,21 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
         },
         body: JSON.stringify(
           carrier === 'ghn'
-            ? { ghn: { token: updated.token, shopId: updated.shopId, service: updated.service } }
+            ? {
+                ghn: {
+                  token: updated.token,
+                  shopId: String(updated.shopId1 || updated.shopId2 || updated.shopId3 || updated.shopId || '').trim(),
+                  ghnShopId1: String(updated.shopId1 || '').trim(),
+                  ghnShopId2: String(updated.shopId2 || '').trim(),
+                  ghnShopId3: String(updated.shopId3 || '').trim(),
+                  ghnShopIds: [
+                    String(updated.shopId1 || '').trim(),
+                    String(updated.shopId2 || '').trim(),
+                    String(updated.shopId3 || '').trim(),
+                  ],
+                  service: updated.service,
+                },
+              }
             : {
                 spx: {
                   clientId: updated.clientId,
@@ -337,10 +380,12 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
 
       if (carrier === 'ghn') {
         const token = String(ghnConfig.token || '').trim();
-        const shopId = String(ghnConfig.shopId || '').trim();
+        const shopId = String(
+          ghnConfig.shopId1 || ghnConfig.shopId2 || ghnConfig.shopId3 || ghnConfig.shopId || '',
+        ).trim();
         if (!token || !shopId || token.includes('••••') || token.startsWith('ghn-tok-')) {
-          pushLog('THẤT BẠI: Vui lòng nhập Token và Shop ID');
-          alert('Vui lòng nhập Token và Shop ID');
+          pushLog('THẤT BẠI: Vui lòng nhập Token và ít nhất 1 Shop ID');
+          alert('Vui lòng nhập Token và ít nhất 1 Shop ID');
           return;
         }
         pushLog('[1/2] Gửi HTTP request thật tới máy chủ GHN (online-gateway.ghn.vn)...');
@@ -1181,28 +1226,51 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="text-[11px] font-semibold text-gray-600">Mã Cửa Hàng (Shop ID)</label>
-                  <input 
+                  <label className="text-[11px] font-semibold text-gray-600">Shop ID 1 (Kho hàng nhẹ)</label>
+                  <input
                     type="text"
-                    value={ghnConfig.shopId}
-                    onChange={(e) => setGhnConfig({ ...ghnConfig, shopId: e.target.value })}
-                    placeholder="Shop ID..."
+                    value={ghnConfig.shopId1 || ''}
+                    onChange={(e) => {
+                      const shopId1 = e.target.value;
+                      setGhnConfig({ ...ghnConfig, shopId1, shopId: shopId1 || ghnConfig.shopId2 || ghnConfig.shopId3 });
+                    }}
+                    placeholder="VD: 1938210"
                     className="w-full mt-1 px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-emerald-500 focus:outline-none text-xs font-mono font-medium"
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] font-semibold text-gray-600">Dịch vụ mặc định</label>
-                  <select 
-                    value={ghnConfig.service}
-                    onChange={(e) => setGhnConfig({ ...ghnConfig, service: e.target.value })}
-                    className="w-full mt-1 px-2.5 py-2 bg-white rounded-xl border border-gray-200 focus:border-emerald-500 focus:outline-none text-xs font-semibold text-gray-700"
-                  >
-                    <option value="standard">Chuẩn (Standard)</option>
-                    <option value="fast">Nhanh (Fast)</option>
-                  </select>
+                  <label className="text-[11px] font-semibold text-gray-600">Shop ID 2 (Kho hàng vừa)</label>
+                  <input
+                    type="text"
+                    value={ghnConfig.shopId2 || ''}
+                    onChange={(e) => setGhnConfig({ ...ghnConfig, shopId2: e.target.value })}
+                    placeholder="VD: Shop hàng vừa"
+                    className="w-full mt-1 px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-emerald-500 focus:outline-none text-xs font-mono font-medium"
+                  />
                 </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-gray-600">Shop ID 3 (Kho hàng nặng)</label>
+                  <input
+                    type="text"
+                    value={ghnConfig.shopId3 || ''}
+                    onChange={(e) => setGhnConfig({ ...ghnConfig, shopId3: e.target.value })}
+                    placeholder="VD: Shop hàng nặng"
+                    className="w-full mt-1 px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-emerald-500 focus:outline-none text-xs font-mono font-medium"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold text-gray-600">Dịch vụ mặc định</label>
+                <select
+                  value={ghnConfig.service}
+                  onChange={(e) => setGhnConfig({ ...ghnConfig, service: e.target.value })}
+                  className="w-full mt-1 px-2.5 py-2 bg-white rounded-xl border border-gray-200 focus:border-emerald-500 focus:outline-none text-xs font-semibold text-gray-700"
+                >
+                  <option value="standard">Chuẩn (Standard)</option>
+                  <option value="fast">Nhanh (Fast)</option>
+                </select>
               </div>
             </div>
 

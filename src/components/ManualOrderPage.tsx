@@ -430,6 +430,8 @@ export default function ManualOrderPage({
   const [customWeight, setCustomWeight] = useState(100);
 
   const [selectedCarrier, setSelectedCarrier] = useState<'self' | 'ghn' | 'spx'>('self');
+  const [ghnShopOptions, setGhnShopOptions] = useState<Array<{ id: string; label: string }>>([]);
+  const [selectedGhnShopId, setSelectedGhnShopId] = useState('');
   const [carrierNotes, setCarrierNotes] = useState('Cho xem hàng không cho thử');
   const [packageWeight, setPackageWeight] = useState(500);
   const [packageLength, setPackageLength] = useState(10);
@@ -456,6 +458,46 @@ export default function ManualOrderPage({
       setPackageWeight(totalWeightGrams);
     }
   }, [totalWeightGrams, orderItems.length]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadGhnShops = async () => {
+      try {
+        const res = await fetch('/api/settings/logistics', { headers: { ...authHeaders() } });
+        const data = await res.json().catch(() => ({}));
+        if (cancelled || !data?.success || !data.ghn) return;
+        const labels = ['Kho hàng nhẹ', 'Kho hàng vừa', 'Kho hàng nặng'];
+        const fromApi = Array.isArray(data.ghn.shops) ? data.ghn.shops : [];
+        const ids = [
+          String(data.ghn.ghnShopId1 || data.ghn.ghnShopIds?.[0] || data.ghn.shopId || '').trim(),
+          String(data.ghn.ghnShopId2 || data.ghn.ghnShopIds?.[1] || '').trim(),
+          String(data.ghn.ghnShopId3 || data.ghn.ghnShopIds?.[2] || '').trim(),
+        ];
+        const options = (fromApi.length
+          ? fromApi.map((row: any, idx: number) => ({
+              id: String(row?.id || '').trim(),
+              label: String(row?.label || `Shop ID ${idx + 1} (${labels[idx] || 'Kho'})`),
+            }))
+          : ids.map((id, idx) => ({
+              id,
+              label: `Shop ID ${idx + 1} (${labels[idx]})`,
+            }))
+        ).filter((row: { id: string }) => row.id);
+        setGhnShopOptions(options);
+        setSelectedGhnShopId((prev) => {
+          if (prev && options.some((o: { id: string }) => o.id === prev)) return prev;
+          return options.length === 1 ? options[0].id : '';
+        });
+      } catch {
+        if (!cancelled) setGhnShopOptions([]);
+      }
+    };
+    loadGhnShops();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleAddWarehouseItem = () => {
     const query = searchQueryRef.current;
@@ -571,6 +613,10 @@ export default function ManualOrderPage({
       alert('Vui lòng thêm ít nhất 1 sản phẩm vào đơn hàng!');
       return;
     }
+    if (selectedCarrier === 'ghn' && !String(selectedGhnShopId || '').trim()) {
+      alert('Vui lòng chọn Kho xuất hàng (Shop ID) khi tạo đơn GHN.');
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -596,6 +642,8 @@ export default function ManualOrderPage({
           },
           items: orderItems,
           carrier: selectedCarrier,
+          ghnShopId: selectedCarrier === 'ghn' ? String(selectedGhnShopId || '').trim() : undefined,
+          shopId: selectedCarrier === 'ghn' ? String(selectedGhnShopId || '').trim() : undefined,
           packageWeight: packageWeight || totalWeightGrams || 500,
           packageLength,
           packageWidth,
@@ -747,6 +795,32 @@ export default function ManualOrderPage({
                 <option value="spx">Shopee SPX Express (API)</option>
               </select>
             </div>
+
+            {selectedCarrier === 'ghn' && (
+              <div>
+                <label className="text-[11px] font-semibold text-gray-500">
+                  Chọn Kho xuất hàng (Shop ID) <span className="text-red-500">*</span>
+                </label>
+                <select
+                  required
+                  value={selectedGhnShopId}
+                  onChange={(e) => setSelectedGhnShopId(e.target.value)}
+                  className="w-full mt-1 px-3 py-2.5 bg-white rounded-xl border border-emerald-200 focus:border-emerald-500 focus:outline-none text-sm font-semibold text-gray-700"
+                >
+                  <option value="">-- Chọn kho xuất hàng --</option>
+                  {ghnShopOptions.map((shop) => (
+                    <option key={shop.id} value={shop.id}>
+                      {shop.label} — {shop.id}
+                    </option>
+                  ))}
+                </select>
+                {ghnShopOptions.length === 0 && (
+                  <p className="text-[11px] text-amber-600 mt-1">
+                    Chưa có Shop ID. Vào Cài đặt → GHN để nhập Shop ID 1 / 2 / 3.
+                  </p>
+                )}
+              </div>
+            )}
 
             {selectedCarrier !== 'self' && (
               <div className="p-4 bg-blue-50/60 border border-blue-100 rounded-xl space-y-3">

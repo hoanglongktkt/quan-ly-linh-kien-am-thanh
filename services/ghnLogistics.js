@@ -326,13 +326,15 @@ export async function createGhnShippingOrder({
   allowInspect,
   allowTry,
   partialDelivery,
+  shopId: shopIdOverride,
 }) {
   const creds = await ghnCreds();
   if (!creds.token) {
     throw new Error("Thiếu Token GHN trên Database. Vào Cài đặt → lưu Token GHN rồi thử lại.");
   }
-  if (!creds.shopId) {
-    throw new Error("Thiếu Shop ID GHN trên Database. Vào Cài đặt → lưu Shop ID GHN rồi thử lại.");
+  const shopId = String(shopIdOverride || creds.shopId || "").trim();
+  if (!shopId) {
+    throw new Error("Thiếu Shop ID GHN. Vào Cài đặt nhập Shop ID 1/2/3 rồi chọn Kho xuất hàng khi tạo đơn.");
   }
 
   const resolved = await resolveGhnAddress(address, creds);
@@ -389,7 +391,7 @@ export async function createGhnShippingOrder({
 
   const result = await ghnFetch(creds.apiUrl, "/v2/shipping-order/create", {
     token: creds.token,
-    shopId: creds.shopId,
+    shopId,
     body,
   });
   const code = Number(result.json?.code);
@@ -408,6 +410,7 @@ export async function createGhnShippingOrder({
     provider: "ghn",
     trackingNo: orderCode,
     orderCode,
+    shopId,
     fee: Number(result.json?.data?.total_fee || result.json?.data?.fee || 0) || 0,
     expectedDelivery: result.json?.data?.expected_delivery_time || null,
     resolvedAddress: resolved,
@@ -419,7 +422,7 @@ export async function createGhnShippingOrder({
  * Gọi gen-token rồi ghép URL in A5/A6 gốc của GHN.
  * Token in hết hạn ~30 phút — luôn gen mới khi user bấm In.
  */
-export async function getGhnPrintUrl(orderCode, format = "a5") {
+export async function getGhnPrintUrl(orderCode, format = "a5", shopIdOverride) {
   const creds = await ghnCreds();
   if (!creds.token) {
     throw new Error("Thiếu Token GHN để in vận đơn.");
@@ -429,10 +432,11 @@ export async function getGhnPrintUrl(orderCode, format = "a5") {
 
   const key = String(format || "a5").toLowerCase();
   const printPath = PRINT_FORMATS[key] || PRINT_FORMATS.a5;
+  const shopId = String(shopIdOverride || creds.shopId || "").trim();
 
   const result = await ghnFetch(creds.apiUrl, "/v2/a5/gen-token", {
     token: creds.token,
-    shopId: creds.shopId || undefined,
+    shopId: shopId || undefined,
     body: { order_codes: [code] },
   });
   const token = String(result.json?.data?.token || "").trim();

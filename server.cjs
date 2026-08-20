@@ -104872,11 +104872,33 @@ function pickSpx(raw) {
     createPath: String(raw && typeof raw === "object" ? raw.createPath || mapped.createPath || "" : mapped.createPath || "").trim()
   };
 }
+var GHN_SHOP_LABELS = ["Kho h\xE0ng nh\u1EB9", "Kho h\xE0ng v\u1EEBa", "Kho h\xE0ng n\u1EB7ng"];
+function normalizeGhnShopIds(src) {
+  const obj = src && typeof src === "object" ? src : {};
+  const fromArray = Array.isArray(obj.ghnShopIds) ? obj.ghnShopIds.map((id) => String(id || "").trim()) : [];
+  const id1 = String(obj.ghnShopId1 || fromArray[0] || obj.shopId || "").trim();
+  const id2 = String(obj.ghnShopId2 || fromArray[1] || "").trim();
+  const id3 = String(obj.ghnShopId3 || fromArray[2] || "").trim();
+  const ghnShopIds = [id1, id2, id3];
+  const shopId = id1 || id2 || id3;
+  const shops = ghnShopIds.map((id, idx) => ({
+    id,
+    label: `Shop ID ${idx + 1} (${GHN_SHOP_LABELS[idx]})`,
+    slot: idx + 1
+  })).filter((row) => row.id);
+  return { shopId, ghnShopId1: id1, ghnShopId2: id2, ghnShopId3: id3, ghnShopIds, shops };
+}
 function pickGhn(raw) {
   const src = raw && typeof raw === "object" ? raw : {};
+  const shops = normalizeGhnShopIds(src);
   return {
     token: String(src.token || "").trim(),
-    shopId: String(src.shopId || "").trim(),
+    shopId: shops.shopId,
+    ghnShopId1: shops.ghnShopId1,
+    ghnShopId2: shops.ghnShopId2,
+    ghnShopId3: shops.ghnShopId3,
+    ghnShopIds: shops.ghnShopIds,
+    shops: shops.shops,
     apiUrl: String(src.apiUrl || "").trim().replace(/\/$/, ""),
     printHost: String(src.printHost || "").trim().replace(/\/$/, ""),
     service: String(src.service || "").trim()
@@ -104890,9 +104912,18 @@ function mergeLogisticsSources(mongoDoc, fileDoc) {
   const ghnToken = String(
     mongoGhn.token || fileGhn.token || process.env.GHN_TOKEN || process.env.GHN_API_TOKEN || ""
   ).trim();
-  const ghnShopId = String(
-    mongoGhn.shopId || fileGhn.shopId || process.env.GHN_SHOP_ID || process.env.GHN_SHOPID || ""
-  ).trim();
+  const envShopId = String(process.env.GHN_SHOP_ID || process.env.GHN_SHOPID || "").trim();
+  const mergedShopIds = normalizeGhnShopIds({
+    ghnShopId1: mongoGhn.ghnShopId1 || fileGhn.ghnShopId1 || mongoGhn.shopId || fileGhn.shopId || envShopId,
+    ghnShopId2: mongoGhn.ghnShopId2 || fileGhn.ghnShopId2,
+    ghnShopId3: mongoGhn.ghnShopId3 || fileGhn.ghnShopId3,
+    ghnShopIds: [
+      mongoGhn.ghnShopIds?.[0] || fileGhn.ghnShopIds?.[0] || "",
+      mongoGhn.ghnShopIds?.[1] || fileGhn.ghnShopIds?.[1] || "",
+      mongoGhn.ghnShopIds?.[2] || fileGhn.ghnShopIds?.[2] || ""
+    ]
+  });
+  const ghnShopId = mergedShopIds.shopId;
   const ghnApiUrl = String(
     mongoGhn.apiUrl || fileGhn.apiUrl || process.env.GHN_API_URL || "https://online-gateway.ghn.vn/shiip/public-api"
   ).trim().replace(/\/$/, "");
@@ -104910,6 +104941,11 @@ function mergeLogisticsSources(mongoDoc, fileDoc) {
     ghn: {
       token: ghnToken,
       shopId: ghnShopId,
+      ghnShopId1: mergedShopIds.ghnShopId1,
+      ghnShopId2: mergedShopIds.ghnShopId2,
+      ghnShopId3: mergedShopIds.ghnShopId3,
+      ghnShopIds: mergedShopIds.ghnShopIds,
+      shops: mergedShopIds.shops,
       apiUrl: ghnApiUrl,
       printHost: ghnPrintHost,
       service: mongoGhn.service || fileGhn.service || "standard",
@@ -104980,8 +105016,26 @@ async function saveLogisticsConfig(partial) {
     ...partial?.spx || {}
   };
   const mappedSpx = extractSpxCredentials({ spx: mergedSpx });
+  const mergedGhnRaw = { ...mongoObj.ghn || {}, ...file.ghn || {}, ...partial?.ghn || {} };
+  const fromPartialGhn = partial?.ghn && typeof partial.ghn === "object" ? partial.ghn : {};
+  const hasExplicitShops = fromPartialGhn.ghnShopId1 != null || fromPartialGhn.ghnShopId2 != null || fromPartialGhn.ghnShopId3 != null || Array.isArray(fromPartialGhn.ghnShopIds);
+  const mergedGhnShops = normalizeGhnShopIds(
+    hasExplicitShops ? {
+      ghnShopId1: fromPartialGhn.ghnShopId1 ?? mergedGhnRaw.ghnShopId1 ?? "",
+      ghnShopId2: fromPartialGhn.ghnShopId2 ?? mergedGhnRaw.ghnShopId2 ?? "",
+      ghnShopId3: fromPartialGhn.ghnShopId3 ?? mergedGhnRaw.ghnShopId3 ?? "",
+      ghnShopIds: Array.isArray(fromPartialGhn.ghnShopIds) ? fromPartialGhn.ghnShopIds : mergedGhnRaw.ghnShopIds
+    } : mergedGhnRaw
+  );
   const next = {
-    ghn: { ...mongoObj.ghn || {}, ...file.ghn || {}, ...partial?.ghn || {} },
+    ghn: {
+      ...mergedGhnRaw,
+      shopId: mergedGhnShops.shopId,
+      ghnShopId1: mergedGhnShops.ghnShopId1,
+      ghnShopId2: mergedGhnShops.ghnShopId2,
+      ghnShopId3: mergedGhnShops.ghnShopId3,
+      ghnShopIds: mergedGhnShops.ghnShopIds
+    },
     spx: {
       ...mergedSpx,
       clientId: mappedSpx.clientId,
@@ -110493,14 +110547,16 @@ async function createGhnShippingOrder({
   height: heightIn,
   allowInspect,
   allowTry,
-  partialDelivery
+  partialDelivery,
+  shopId: shopIdOverride
 }) {
   const creds = await ghnCreds();
   if (!creds.token) {
     throw new Error("Thi\u1EBFu Token GHN tr\xEAn Database. V\xE0o C\xE0i \u0111\u1EB7t \u2192 l\u01B0u Token GHN r\u1ED3i th\u1EED l\u1EA1i.");
   }
-  if (!creds.shopId) {
-    throw new Error("Thi\u1EBFu Shop ID GHN tr\xEAn Database. V\xE0o C\xE0i \u0111\u1EB7t \u2192 l\u01B0u Shop ID GHN r\u1ED3i th\u1EED l\u1EA1i.");
+  const shopId = String(shopIdOverride || creds.shopId || "").trim();
+  if (!shopId) {
+    throw new Error("Thi\u1EBFu Shop ID GHN. V\xE0o C\xE0i \u0111\u1EB7t nh\u1EADp Shop ID 1/2/3 r\u1ED3i ch\u1ECDn Kho xu\u1EA5t h\xE0ng khi t\u1EA1o \u0111\u01A1n.");
   }
   const resolved = await resolveGhnAddress(address, creds);
   const toAddress = String(address?.street || address?.fullAddress || "").trim();
@@ -110552,7 +110608,7 @@ async function createGhnShippingOrder({
   };
   const result = await ghnFetch2(creds.apiUrl, "/v2/shipping-order/create", {
     token: creds.token,
-    shopId: creds.shopId,
+    shopId,
     body
   });
   const code = Number(result.json?.code);
@@ -110567,13 +110623,14 @@ async function createGhnShippingOrder({
     provider: "ghn",
     trackingNo: orderCode,
     orderCode,
+    shopId,
     fee: Number(result.json?.data?.total_fee || result.json?.data?.fee || 0) || 0,
     expectedDelivery: result.json?.data?.expected_delivery_time || null,
     resolvedAddress: resolved,
     raw: result.json?.data || null
   };
 }
-async function getGhnPrintUrl(orderCode, format = "a5") {
+async function getGhnPrintUrl(orderCode, format = "a5", shopIdOverride) {
   const creds = await ghnCreds();
   if (!creds.token) {
     throw new Error("Thi\u1EBFu Token GHN \u0111\u1EC3 in v\u1EADn \u0111\u01A1n.");
@@ -110582,9 +110639,10 @@ async function getGhnPrintUrl(orderCode, format = "a5") {
   if (!code) throw new Error("Thi\u1EBFu m\xE3 v\u1EADn \u0111\u01A1n GHN (order_code).");
   const key = String(format || "a5").toLowerCase();
   const printPath = PRINT_FORMATS[key] || PRINT_FORMATS.a5;
+  const shopId = String(shopIdOverride || creds.shopId || "").trim();
   const result = await ghnFetch2(creds.apiUrl, "/v2/a5/gen-token", {
     token: creds.token,
-    shopId: creds.shopId || void 0,
+    shopId: shopId || void 0,
     body: { order_codes: [code] }
   });
   const token = String(result.json?.data?.token || "").trim();
@@ -111286,6 +111344,11 @@ async function getLogisticsSettings(_req, res) {
       ghn: {
         connected: cfg.ghn.connected,
         shopId: cfg.ghn.shopId,
+        ghnShopId1: cfg.ghn.ghnShopId1 || "",
+        ghnShopId2: cfg.ghn.ghnShopId2 || "",
+        ghnShopId3: cfg.ghn.ghnShopId3 || "",
+        ghnShopIds: Array.isArray(cfg.ghn.ghnShopIds) ? cfg.ghn.ghnShopIds : [],
+        shops: Array.isArray(cfg.ghn.shops) ? cfg.ghn.shops : [],
         tokenMasked: maskSecret(cfg.ghn.token),
         hasToken: Boolean(cfg.ghn.token),
         service: cfg.ghn.service
@@ -111318,7 +111381,26 @@ async function saveLogisticsSettings(req, res) {
         patch.ghn.token = String(body.ghn.token).trim();
       }
       if (body.ghn.shopId != null) patch.ghn.shopId = String(body.ghn.shopId).trim();
+      if (body.ghn.ghnShopId1 != null) patch.ghn.ghnShopId1 = String(body.ghn.ghnShopId1).trim();
+      if (body.ghn.ghnShopId2 != null) patch.ghn.ghnShopId2 = String(body.ghn.ghnShopId2).trim();
+      if (body.ghn.ghnShopId3 != null) patch.ghn.ghnShopId3 = String(body.ghn.ghnShopId3).trim();
+      if (Array.isArray(body.ghn.ghnShopIds)) {
+        patch.ghn.ghnShopIds = body.ghn.ghnShopIds.map((id) => String(id || "").trim()).slice(0, 3);
+        if (patch.ghn.ghnShopId1 == null) patch.ghn.ghnShopId1 = patch.ghn.ghnShopIds[0] || "";
+        if (patch.ghn.ghnShopId2 == null) patch.ghn.ghnShopId2 = patch.ghn.ghnShopIds[1] || "";
+        if (patch.ghn.ghnShopId3 == null) patch.ghn.ghnShopId3 = patch.ghn.ghnShopIds[2] || "";
+      }
       if (body.ghn.service != null) patch.ghn.service = String(body.ghn.service).trim();
+      const id1 = String(patch.ghn.ghnShopId1 || "").trim();
+      const id2 = String(patch.ghn.ghnShopId2 || "").trim();
+      const id3 = String(patch.ghn.ghnShopId3 || "").trim();
+      if (id1 || id2 || id3 || patch.ghn.shopId != null) {
+        patch.ghn.ghnShopId1 = id1 || (patch.ghn.shopId && !id2 && !id3 ? String(patch.ghn.shopId).trim() : id1);
+        patch.ghn.ghnShopId2 = id2;
+        patch.ghn.ghnShopId3 = id3;
+        patch.ghn.ghnShopIds = [patch.ghn.ghnShopId1, patch.ghn.ghnShopId2, patch.ghn.ghnShopId3];
+        patch.ghn.shopId = patch.ghn.ghnShopId1 || patch.ghn.ghnShopId2 || patch.ghn.ghnShopId3 || "";
+      }
     }
     if (body.spx && typeof body.spx === "object") {
       patch.spx = {};
@@ -119611,6 +119693,9 @@ async function createManualOrder(req, res) {
     const orderSn = `DON-NGOAI-${Date.now().toString(36).toUpperCase()}`;
     const orderId = `ext-${orderSn}`;
     const provider = carrier === "ghn" || carrier === "spx" ? carrier : "self";
+    const selectedGhnShopId = String(
+      body.ghnShopId || body.ghn_shop_id || body.shopId || body.shop_id || ""
+    ).trim();
     const mapped = mapExternalStatus("created");
     const lengthCm = Math.max(1, Math.min(150, Math.round(Number(packageLength) || 10)));
     const widthCm = Math.max(1, Math.min(150, Math.round(Number(packageWidth) || 10)));
@@ -119659,6 +119744,12 @@ async function createManualOrder(req, res) {
       );
     }
     if (provider === "ghn") {
+      if (!selectedGhnShopId) {
+        return res.status(400).json({
+          success: false,
+          error: "Vui l\xF2ng ch\u1ECDn Kho xu\u1EA5t h\xE0ng (Shop ID) khi t\u1EA1o \u0111\u01A1n GHN."
+        });
+      }
       try {
         logisticsResult = await createGhnShippingOrder({
           clientOrderCode: orderSn,
@@ -119673,7 +119764,8 @@ async function createManualOrder(req, res) {
           note: carrierNotes,
           shippingFeePayer,
           allowInspect: inspectAllowed,
-          partialDelivery: partial
+          partialDelivery: partial,
+          shopId: selectedGhnShopId
         });
         trackingNumber = String(logisticsResult.trackingNo || "").trim();
       } catch (ghnErr) {
@@ -119745,6 +119837,7 @@ async function createManualOrder(req, res) {
       },
       carrier: provider,
       provider,
+      ghnShopId: provider === "ghn" ? selectedGhnShopId : void 0,
       shipping_carrier: carrierDisplayName(provider),
       totalAmount,
       revenue: totalAmount,
@@ -119839,7 +119932,7 @@ async function printExternalWaybill(req, res) {
       });
     }
     if (provider === "ghn") {
-      const printed = await getGhnPrintUrl(trackingNo, format);
+      const printed = await getGhnPrintUrl(trackingNo, format, order.ghnShopId);
       return res.json({
         success: true,
         provider: "ghn",

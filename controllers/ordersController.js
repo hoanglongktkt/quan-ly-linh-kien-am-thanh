@@ -2610,6 +2610,9 @@ export async function createManualOrder(req, res) {
     const orderSn = `DON-NGOAI-${Date.now().toString(36).toUpperCase()}`;
     const orderId = `ext-${orderSn}`;
     const provider = carrier === "ghn" || carrier === "spx" ? carrier : "self";
+    const selectedGhnShopId = String(
+      body.ghnShopId || body.ghn_shop_id || body.shopId || body.shop_id || "",
+    ).trim();
     const mapped = mapExternalStatus("created");
     const lengthCm = Math.max(1, Math.min(150, Math.round(Number(packageLength) || 10)));
     const widthCm = Math.max(1, Math.min(150, Math.round(Number(packageWidth) || 10)));
@@ -2665,6 +2668,12 @@ export async function createManualOrder(req, res) {
     }
 
     if (provider === "ghn") {
+      if (!selectedGhnShopId) {
+        return res.status(400).json({
+          success: false,
+          error: "Vui lòng chọn Kho xuất hàng (Shop ID) khi tạo đơn GHN.",
+        });
+      }
       try {
         logisticsResult = await createGhnShippingOrder({
           clientOrderCode: orderSn,
@@ -2680,6 +2689,7 @@ export async function createManualOrder(req, res) {
           shippingFeePayer,
           allowInspect: inspectAllowed,
           partialDelivery: partial,
+          shopId: selectedGhnShopId,
         });
         trackingNumber = String(logisticsResult.trackingNo || "").trim();
       } catch (ghnErr) {
@@ -2752,6 +2762,7 @@ export async function createManualOrder(req, res) {
       },
       carrier: provider,
       provider,
+      ghnShopId: provider === "ghn" ? selectedGhnShopId : undefined,
       shipping_carrier: carrierDisplayName(provider),
       totalAmount,
       revenue: totalAmount,
@@ -2858,7 +2869,7 @@ export async function printExternalWaybill(req, res) {
     }
 
     if (provider === "ghn") {
-      const printed = await getGhnPrintUrl(trackingNo, format);
+      const printed = await getGhnPrintUrl(trackingNo, format, order.ghnShopId);
       return res.json({
         success: true,
         provider: "ghn",

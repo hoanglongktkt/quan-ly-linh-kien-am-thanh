@@ -107,11 +107,39 @@ function pickSpx(raw) {
   };
 }
 
+const GHN_SHOP_LABELS = ["Kho hàng nhẹ", "Kho hàng vừa", "Kho hàng nặng"];
+
+function normalizeGhnShopIds(src) {
+  const obj = src && typeof src === "object" ? src : {};
+  const fromArray = Array.isArray(obj.ghnShopIds)
+    ? obj.ghnShopIds.map((id) => String(id || "").trim())
+    : [];
+  const id1 = String(obj.ghnShopId1 || fromArray[0] || obj.shopId || "").trim();
+  const id2 = String(obj.ghnShopId2 || fromArray[1] || "").trim();
+  const id3 = String(obj.ghnShopId3 || fromArray[2] || "").trim();
+  const ghnShopIds = [id1, id2, id3];
+  const shopId = id1 || id2 || id3;
+  const shops = ghnShopIds
+    .map((id, idx) => ({
+      id,
+      label: `Shop ID ${idx + 1} (${GHN_SHOP_LABELS[idx]})`,
+      slot: idx + 1,
+    }))
+    .filter((row) => row.id);
+  return { shopId, ghnShopId1: id1, ghnShopId2: id2, ghnShopId3: id3, ghnShopIds, shops };
+}
+
 function pickGhn(raw) {
   const src = raw && typeof raw === "object" ? raw : {};
+  const shops = normalizeGhnShopIds(src);
   return {
     token: String(src.token || "").trim(),
-    shopId: String(src.shopId || "").trim(),
+    shopId: shops.shopId,
+    ghnShopId1: shops.ghnShopId1,
+    ghnShopId2: shops.ghnShopId2,
+    ghnShopId3: shops.ghnShopId3,
+    ghnShopIds: shops.ghnShopIds,
+    shops: shops.shops,
     apiUrl: String(src.apiUrl || "").trim().replace(/\/$/, ""),
     printHost: String(src.printHost || "").trim().replace(/\/$/, ""),
     service: String(src.service || "").trim(),
@@ -127,9 +155,18 @@ function mergeLogisticsSources(mongoDoc, fileDoc) {
   const ghnToken = String(
     mongoGhn.token || fileGhn.token || process.env.GHN_TOKEN || process.env.GHN_API_TOKEN || "",
   ).trim();
-  const ghnShopId = String(
-    mongoGhn.shopId || fileGhn.shopId || process.env.GHN_SHOP_ID || process.env.GHN_SHOPID || "",
-  ).trim();
+  const envShopId = String(process.env.GHN_SHOP_ID || process.env.GHN_SHOPID || "").trim();
+  const mergedShopIds = normalizeGhnShopIds({
+    ghnShopId1: mongoGhn.ghnShopId1 || fileGhn.ghnShopId1 || mongoGhn.shopId || fileGhn.shopId || envShopId,
+    ghnShopId2: mongoGhn.ghnShopId2 || fileGhn.ghnShopId2,
+    ghnShopId3: mongoGhn.ghnShopId3 || fileGhn.ghnShopId3,
+    ghnShopIds: [
+      mongoGhn.ghnShopIds?.[0] || fileGhn.ghnShopIds?.[0] || "",
+      mongoGhn.ghnShopIds?.[1] || fileGhn.ghnShopIds?.[1] || "",
+      mongoGhn.ghnShopIds?.[2] || fileGhn.ghnShopIds?.[2] || "",
+    ],
+  });
+  const ghnShopId = mergedShopIds.shopId;
   const ghnApiUrl = String(
     mongoGhn.apiUrl ||
       fileGhn.apiUrl ||
@@ -162,6 +199,11 @@ function mergeLogisticsSources(mongoDoc, fileDoc) {
     ghn: {
       token: ghnToken,
       shopId: ghnShopId,
+      ghnShopId1: mergedShopIds.ghnShopId1,
+      ghnShopId2: mergedShopIds.ghnShopId2,
+      ghnShopId3: mergedShopIds.ghnShopId3,
+      ghnShopIds: mergedShopIds.ghnShopIds,
+      shops: mergedShopIds.shops,
       apiUrl: ghnApiUrl,
       printHost: ghnPrintHost,
       service: mongoGhn.service || fileGhn.service || "standard",
@@ -236,8 +278,34 @@ export async function saveLogisticsConfig(partial) {
     ...(partial?.spx || {}),
   };
   const mappedSpx = extractSpxCredentials({ spx: mergedSpx });
+  const mergedGhnRaw = { ...(mongoObj.ghn || {}), ...(file.ghn || {}), ...(partial?.ghn || {}) };
+  const fromPartialGhn = partial?.ghn && typeof partial.ghn === "object" ? partial.ghn : {};
+  const hasExplicitShops =
+    fromPartialGhn.ghnShopId1 != null ||
+    fromPartialGhn.ghnShopId2 != null ||
+    fromPartialGhn.ghnShopId3 != null ||
+    Array.isArray(fromPartialGhn.ghnShopIds);
+  const mergedGhnShops = normalizeGhnShopIds(
+    hasExplicitShops
+      ? {
+          ghnShopId1: fromPartialGhn.ghnShopId1 ?? mergedGhnRaw.ghnShopId1 ?? "",
+          ghnShopId2: fromPartialGhn.ghnShopId2 ?? mergedGhnRaw.ghnShopId2 ?? "",
+          ghnShopId3: fromPartialGhn.ghnShopId3 ?? mergedGhnRaw.ghnShopId3 ?? "",
+          ghnShopIds: Array.isArray(fromPartialGhn.ghnShopIds)
+            ? fromPartialGhn.ghnShopIds
+            : mergedGhnRaw.ghnShopIds,
+        }
+      : mergedGhnRaw,
+  );
   const next = {
-    ghn: { ...(mongoObj.ghn || {}), ...(file.ghn || {}), ...(partial?.ghn || {}) },
+    ghn: {
+      ...mergedGhnRaw,
+      shopId: mergedGhnShops.shopId,
+      ghnShopId1: mergedGhnShops.ghnShopId1,
+      ghnShopId2: mergedGhnShops.ghnShopId2,
+      ghnShopId3: mergedGhnShops.ghnShopId3,
+      ghnShopIds: mergedGhnShops.ghnShopIds,
+    },
     spx: {
       ...mergedSpx,
       clientId: mappedSpx.clientId,
