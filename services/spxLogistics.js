@@ -13,8 +13,8 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 }
 
-function spxCreds() {
-  const { spx } = loadLogisticsConfig();
+async function spxCreds() {
+  const { spx } = await loadLogisticsConfig();
   return spx;
 }
 
@@ -24,15 +24,17 @@ function signBody(appId, secret, timestamp, rawBody) {
 }
 
 async function spxFetch(apiUrl, path, bodyObj) {
-  const creds = spxCreds();
-  if (!creds.userId || !creds.secret) {
+  const creds = await spxCreds();
+  const appId = String(creds.clientId || creds.userId || "").trim();
+  const secret = String(creds.clientSecret || creds.secret || "").trim();
+  if (!appId || !secret) {
     throw new Error(
-      "Thiếu SPX User ID / Secret. Vào Cài đặt → lưu SPX hoặc set env SPX_USER_ID + SPX_SECRET.",
+      "Thiếu SPX Client ID / Client Secret trên Database. Vào Cài đặt → nhập Client ID, Client Secret, Merchant ID rồi bấm Lưu cấu hình SPX.",
     );
   }
   const rawBody = JSON.stringify(bodyObj || {});
   const timestamp = String(Math.floor(Date.now() / 1000));
-  const sign = signBody(creds.userId, creds.secret, timestamp, rawBody);
+  const sign = signBody(appId, secret, timestamp, rawBody);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
@@ -41,8 +43,8 @@ async function spxFetch(apiUrl, path, bodyObj) {
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
-        "app-id": creds.userId,
-        appid: creds.userId,
+        "app-id": appId,
+        appid: appId,
         timestamp,
         sign,
       },
@@ -129,7 +131,7 @@ export async function createSpxShippingOrder({
   codAmount,
   note,
 }) {
-  const creds = spxCreds();
+  const creds = await spxCreds();
   const apiUrl = creds.apiUrl;
   const itemName = (Array.isArray(items) ? items : [])
     .map((it) => String(it.productTitle || it.name || "Hàng").slice(0, 80))
@@ -205,7 +207,7 @@ export async function createSpxShippingOrder({
  * Lấy link PDF / Base64 vận đơn gốc từ SPX theo tracking_no.
  */
 export async function getSpxWaybill(trackingNo) {
-  const creds = spxCreds();
+  const creds = await spxCreds();
   const tn = String(trackingNo || "").trim();
   if (!tn) throw new Error("Thiếu mã vận đơn SPX (tracking_no).");
 

@@ -1,10 +1,16 @@
 /**
- * Cấu hình GHN / SPX Express — env ưu tiên, fallback data/logistics_config.json.
- * Không hard-code token. File JSON để Settings lưu từ UI xuống server.
+ * Cấu hình GHN / SPX Express.
+ * SPX: MongoDB (meta.logistics_config) là nguồn chính — KHÔNG đọc process.env.SPX_*.
+ * GHN: MongoDB → file JSON → env (giữ tương thích tab GHN).
  */
 import fs from "fs";
 import path from "path";
 import { resolveAppRoot } from "../utils/appPaths.js";
+import {
+  isMongoReady,
+  loadLogisticsSettingsFromStore,
+  saveLogisticsSettingsToStore,
+} from "../src/db/mongoStore.ts";
 
 const CONFIG_PATH = path.join(resolveAppRoot(), "data", "logistics_config.json");
 
@@ -20,51 +26,60 @@ function readJsonFile() {
   }
 }
 
-export function loadLogisticsConfig() {
-  const file = readJsonFile();
-  const ghnFile = file.ghn && typeof file.ghn === "object" ? file.ghn : {};
-  const spxFile = file.spx && typeof file.spx === "object" ? file.spx : {};
+function pickSpx(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  const clientId = String(src.clientId || src.userId || src.appId || "").trim();
+  const clientSecret = String(src.clientSecret || src.secret || "").trim();
+  const merchantId = String(src.merchantId || "").trim();
+  const apiUrl = String(src.apiUrl || "").trim().replace(/\/$/, "");
+  return { clientId, clientSecret, merchantId, apiUrl };
+}
+
+function pickGhn(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  return {
+    token: String(src.token || "").trim(),
+    shopId: String(src.shopId || "").trim(),
+    apiUrl: String(src.apiUrl || "").trim().replace(/\/$/, ""),
+    printHost: String(src.printHost || "").trim().replace(/\/$/, ""),
+    service: String(src.service || "").trim(),
+  };
+}
+
+function mergeLogisticsSources(mongoDoc, fileDoc) {
+  const mongoGhn = pickGhn(mongoDoc?.ghn);
+  const fileGhn = pickGhn(fileDoc?.ghn);
+  const mongoSpx = pickSpx(mongoDoc?.spx);
+  const fileSpx = pickSpx(fileDoc?.spx);
 
   const ghnToken = String(
-    process.env.GHN_TOKEN || process.env.GHN_API_TOKEN || ghnFile.token || "",
+    mongoGhn.token || fileGhn.token || process.env.GHN_TOKEN || process.env.GHN_API_TOKEN || "",
   ).trim();
   const ghnShopId = String(
-    process.env.GHN_SHOP_ID || process.env.GHN_SHOPID || ghnFile.shopId || "",
+    mongoGhn.shopId || fileGhn.shopId || process.env.GHN_SHOP_ID || process.env.GHN_SHOPID || "",
   ).trim();
   const ghnApiUrl = String(
-    process.env.GHN_API_URL ||
-      ghnFile.apiUrl ||
+    mongoGhn.apiUrl ||
+      fileGhn.apiUrl ||
+      process.env.GHN_API_URL ||
       "https://online-gateway.ghn.vn/shiip/public-api",
   )
     .trim()
     .replace(/\/$/, "");
   const ghnPrintHost = String(
-    process.env.GHN_PRINT_HOST || ghnFile.printHost || "https://online-gateway.ghn.vn",
+    mongoGhn.printHost ||
+      fileGhn.printHost ||
+      process.env.GHN_PRINT_HOST ||
+      "https://online-gateway.ghn.vn",
   )
     .trim()
     .replace(/\/$/, "");
 
-  const spxUserId = String(
-    process.env.SPX_USER_ID ||
-      process.env.SPX_APP_ID ||
-      spxFile.clientId ||
-      spxFile.userId ||
-      spxFile.appId ||
-      "",
-  ).trim();
-  const spxSecret = String(
-    process.env.SPX_SECRET ||
-      process.env.SPX_USER_SECRET ||
-      spxFile.clientSecret ||
-      spxFile.secret ||
-      "",
-  ).trim();
-  const spxMerchantId = String(
-    process.env.SPX_MERCHANT_ID || spxFile.merchantId || "",
-  ).trim();
-  const spxApiUrl = String(
-    process.env.SPX_API_URL || spxFile.apiUrl || "https://spx.vn",
-  )
+  // SPX: chỉ MongoDB → file JSON đã lưu từ Cài đặt. Không đọc SPX_USER_ID / SPX_SECRET.
+  const spxClientId = mongoSpx.clientId || fileSpx.clientId;
+  const spxClientSecret = mongoSpx.clientSecret || fileSpx.clientSecret;
+  const spxMerchantId = mongoSpx.merchantId || fileSpx.merchantId;
+  const spxApiUrl = String(mongoSpx.apiUrl || fileSpx.apiUrl || "https://spx.vn")
     .trim()
     .replace(/\/$/, "");
 
@@ -74,28 +89,61 @@ export function loadLogisticsConfig() {
       shopId: ghnShopId,
       apiUrl: ghnApiUrl,
       printHost: ghnPrintHost,
-      service: String(ghnFile.service || "standard").trim() || "standard",
+      service: mongoGhn.service || fileGhn.service || "standard",
       connected: Boolean(ghnToken),
     },
     spx: {
-      userId: spxUserId,
-      secret: spxSecret,
+      clientId: spxClientId,
+      clientSecret: spxClientSecret,
       merchantId: spxMerchantId,
       apiUrl: spxApiUrl,
-      connected: Boolean(spxUserId && spxSecret),
+      userId: spxClientId,
+      secret: spxClientSecret,
+      connected: Boolean(spxClientId && spxClientSecret),
     },
   };
 }
 
-export function saveLogisticsConfig(partial) {
-  const current = readJsonFile();
+export async function loadLogisticsConfig() {
+  const file = readJsonFile();
+  let mongoDoc = null;
+  if (isMongoReady()) {
+    try {
+      mongoDoc = await loadLogisticsSettingsFromStore();
+    } catch (err) {
+      console.warn("[Logistics config] Mongo read failed:", err?.message || err);
+    }
+  }
+  return mergeLogisticsSources(mongoDoc, file);
+}
+
+export async function saveLogisticsConfig(partial) {
+  const file = readJsonFile();
+  let mongoDoc = null;
+  if (isMongoReady()) {
+    try {
+      mongoDoc = await loadLogisticsSettingsFromStore();
+    } catch (err) {
+      console.warn("[Logistics config] Mongo read before save failed:", err?.message || err);
+    }
+  }
   const next = {
-    ghn: { ...(current.ghn || {}), ...(partial?.ghn || {}) },
-    spx: { ...(current.spx || {}), ...(partial?.spx || {}) },
+    ghn: { ...(mongoDoc?.ghn || {}), ...(file.ghn || {}), ...(partial?.ghn || {}) },
+    spx: { ...(mongoDoc?.spx || {}), ...(file.spx || {}), ...(partial?.spx || {}) },
     updatedAt: new Date().toISOString(),
   };
-  fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(next, null, 2), "utf-8");
+
+  if (!isMongoReady()) {
+    throw new Error("Chưa kết nối được Database, không lưu được cấu hình GHN/SPX.");
+  }
+  await saveLogisticsSettingsToStore(next);
+
+  try {
+    fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(next, null, 2), "utf-8");
+  } catch (err) {
+    console.warn("[Logistics config] JSON backup write failed:", err?.message || err);
+  }
   return loadLogisticsConfig();
 }
 

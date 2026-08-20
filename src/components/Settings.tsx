@@ -177,6 +177,20 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
         }
       })
       .catch(() => {});
+    fetch('/api/settings/logistics', {
+      headers: { Authorization: token ? `Bearer ${token}` : '' },
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (!data?.success || !data.spx) return;
+        setSpxConfig((prev) => ({
+          ...prev,
+          connected: Boolean(data.spx.connected),
+          clientId: data.spx.clientId || data.spx.userId || prev.clientId,
+          merchantId: data.spx.merchantId || prev.merchantId,
+        }));
+      })
+      .catch(() => {});
   }, []);
 
   const showGeminiToast = (msg: string) => {

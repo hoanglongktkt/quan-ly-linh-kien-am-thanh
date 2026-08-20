@@ -232,7 +232,7 @@ export async function postShopConnectionStatus(req, res) {
 /** GET /api/settings/logistics */
 export async function getLogisticsSettings(_req, res) {
   try {
-    const cfg = loadLogisticsConfig();
+    const cfg = await loadLogisticsConfig();
     return res.json({
       success: true,
       ghn: {
@@ -244,10 +244,11 @@ export async function getLogisticsSettings(_req, res) {
       },
       spx: {
         connected: cfg.spx.connected,
-        userId: cfg.spx.userId,
+        clientId: cfg.spx.clientId,
+        userId: cfg.spx.clientId,
         merchantId: cfg.spx.merchantId,
-        secretMasked: maskSecret(cfg.spx.secret),
-        hasSecret: Boolean(cfg.spx.secret),
+        secretMasked: maskSecret(cfg.spx.clientSecret || cfg.spx.secret),
+        hasSecret: Boolean(cfg.spx.clientSecret || cfg.spx.secret),
         apiUrl: cfg.spx.apiUrl,
       },
     });
@@ -286,7 +287,7 @@ export async function saveLogisticsSettings(req, res) {
       if (body.spx.merchantId != null) patch.spx.merchantId = String(body.spx.merchantId).trim();
       if (body.spx.apiUrl != null) patch.spx.apiUrl = String(body.spx.apiUrl).trim();
     }
-    const cfg = saveLogisticsConfig(patch);
+    const cfg = await saveLogisticsConfig(patch);
     return res.json({
       success: true,
       message: "Đã lưu cấu hình GHN/SPX trên server.",

@@ -77211,6 +77211,24 @@ async function setMeta(key, value) {
   requireMongo();
   await MetaModel.findByIdAndUpdate(key, { value }, { upsert: true });
 }
+var LOGISTICS_CONFIG_META_KEY = "logistics_config";
+async function loadLogisticsSettingsFromStore() {
+  if (!isMongoReady()) return null;
+  ensureModels();
+  const doc = await MetaModel.findById(LOGISTICS_CONFIG_META_KEY).lean();
+  const raw = doc && typeof doc === "object" ? doc.value : null;
+  if (raw == null || raw === "") return null;
+  try {
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+async function saveLogisticsSettingsToStore(config) {
+  requireMongo();
+  await setMeta(LOGISTICS_CONFIG_META_KEY, JSON.stringify(config || {}));
+}
 async function saveProductsToStoreAsync(products) {
   const list = Array.isArray(products) ? products.filter((p) => p != null && typeof p === "object") : [];
   if (isProductsDiskMode()) {
@@ -104787,61 +104805,102 @@ function readJsonFile() {
     return {};
   }
 }
-function loadLogisticsConfig() {
-  const file = readJsonFile();
-  const ghnFile = file.ghn && typeof file.ghn === "object" ? file.ghn : {};
-  const spxFile = file.spx && typeof file.spx === "object" ? file.spx : {};
+function pickSpx(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  const clientId = String(src.clientId || src.userId || src.appId || "").trim();
+  const clientSecret = String(src.clientSecret || src.secret || "").trim();
+  const merchantId = String(src.merchantId || "").trim();
+  const apiUrl = String(src.apiUrl || "").trim().replace(/\/$/, "");
+  return { clientId, clientSecret, merchantId, apiUrl };
+}
+function pickGhn(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  return {
+    token: String(src.token || "").trim(),
+    shopId: String(src.shopId || "").trim(),
+    apiUrl: String(src.apiUrl || "").trim().replace(/\/$/, ""),
+    printHost: String(src.printHost || "").trim().replace(/\/$/, ""),
+    service: String(src.service || "").trim()
+  };
+}
+function mergeLogisticsSources(mongoDoc, fileDoc) {
+  const mongoGhn = pickGhn(mongoDoc?.ghn);
+  const fileGhn = pickGhn(fileDoc?.ghn);
+  const mongoSpx = pickSpx(mongoDoc?.spx);
+  const fileSpx = pickSpx(fileDoc?.spx);
   const ghnToken = String(
-    process.env.GHN_TOKEN || process.env.GHN_API_TOKEN || ghnFile.token || ""
+    mongoGhn.token || fileGhn.token || process.env.GHN_TOKEN || process.env.GHN_API_TOKEN || ""
   ).trim();
   const ghnShopId = String(
-    process.env.GHN_SHOP_ID || process.env.GHN_SHOPID || ghnFile.shopId || ""
+    mongoGhn.shopId || fileGhn.shopId || process.env.GHN_SHOP_ID || process.env.GHN_SHOPID || ""
   ).trim();
   const ghnApiUrl = String(
-    process.env.GHN_API_URL || ghnFile.apiUrl || "https://online-gateway.ghn.vn/shiip/public-api"
+    mongoGhn.apiUrl || fileGhn.apiUrl || process.env.GHN_API_URL || "https://online-gateway.ghn.vn/shiip/public-api"
   ).trim().replace(/\/$/, "");
   const ghnPrintHost = String(
-    process.env.GHN_PRINT_HOST || ghnFile.printHost || "https://online-gateway.ghn.vn"
+    mongoGhn.printHost || fileGhn.printHost || process.env.GHN_PRINT_HOST || "https://online-gateway.ghn.vn"
   ).trim().replace(/\/$/, "");
-  const spxUserId = String(
-    process.env.SPX_USER_ID || process.env.SPX_APP_ID || spxFile.clientId || spxFile.userId || spxFile.appId || ""
-  ).trim();
-  const spxSecret = String(
-    process.env.SPX_SECRET || process.env.SPX_USER_SECRET || spxFile.clientSecret || spxFile.secret || ""
-  ).trim();
-  const spxMerchantId = String(
-    process.env.SPX_MERCHANT_ID || spxFile.merchantId || ""
-  ).trim();
-  const spxApiUrl = String(
-    process.env.SPX_API_URL || spxFile.apiUrl || "https://spx.vn"
-  ).trim().replace(/\/$/, "");
+  const spxClientId = mongoSpx.clientId || fileSpx.clientId;
+  const spxClientSecret = mongoSpx.clientSecret || fileSpx.clientSecret;
+  const spxMerchantId = mongoSpx.merchantId || fileSpx.merchantId;
+  const spxApiUrl = String(mongoSpx.apiUrl || fileSpx.apiUrl || "https://spx.vn").trim().replace(/\/$/, "");
   return {
     ghn: {
       token: ghnToken,
       shopId: ghnShopId,
       apiUrl: ghnApiUrl,
       printHost: ghnPrintHost,
-      service: String(ghnFile.service || "standard").trim() || "standard",
+      service: mongoGhn.service || fileGhn.service || "standard",
       connected: Boolean(ghnToken)
     },
     spx: {
-      userId: spxUserId,
-      secret: spxSecret,
+      clientId: spxClientId,
+      clientSecret: spxClientSecret,
       merchantId: spxMerchantId,
       apiUrl: spxApiUrl,
-      connected: Boolean(spxUserId && spxSecret)
+      userId: spxClientId,
+      secret: spxClientSecret,
+      connected: Boolean(spxClientId && spxClientSecret)
     }
   };
 }
-function saveLogisticsConfig(partial) {
-  const current = readJsonFile();
+async function loadLogisticsConfig() {
+  const file = readJsonFile();
+  let mongoDoc = null;
+  if (isMongoReady()) {
+    try {
+      mongoDoc = await loadLogisticsSettingsFromStore();
+    } catch (err) {
+      console.warn("[Logistics config] Mongo read failed:", err?.message || err);
+    }
+  }
+  return mergeLogisticsSources(mongoDoc, file);
+}
+async function saveLogisticsConfig(partial) {
+  const file = readJsonFile();
+  let mongoDoc = null;
+  if (isMongoReady()) {
+    try {
+      mongoDoc = await loadLogisticsSettingsFromStore();
+    } catch (err) {
+      console.warn("[Logistics config] Mongo read before save failed:", err?.message || err);
+    }
+  }
   const next = {
-    ghn: { ...current.ghn || {}, ...partial?.ghn || {} },
-    spx: { ...current.spx || {}, ...partial?.spx || {} },
+    ghn: { ...mongoDoc?.ghn || {}, ...file.ghn || {}, ...partial?.ghn || {} },
+    spx: { ...mongoDoc?.spx || {}, ...file.spx || {}, ...partial?.spx || {} },
     updatedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
-  import_fs12.default.mkdirSync(import_path11.default.dirname(CONFIG_PATH), { recursive: true });
-  import_fs12.default.writeFileSync(CONFIG_PATH, JSON.stringify(next, null, 2), "utf-8");
+  if (!isMongoReady()) {
+    throw new Error("Ch\u01B0a k\u1EBFt n\u1ED1i \u0111\u01B0\u1EE3c Database, kh\xF4ng l\u01B0u \u0111\u01B0\u1EE3c c\u1EA5u h\xECnh GHN/SPX.");
+  }
+  await saveLogisticsSettingsToStore(next);
+  try {
+    import_fs12.default.mkdirSync(import_path11.default.dirname(CONFIG_PATH), { recursive: true });
+    import_fs12.default.writeFileSync(CONFIG_PATH, JSON.stringify(next, null, 2), "utf-8");
+  } catch (err) {
+    console.warn("[Logistics config] JSON backup write failed:", err?.message || err);
+  }
   return loadLogisticsConfig();
 }
 function maskSecret(value) {
@@ -105053,7 +105112,7 @@ async function postShopConnectionStatus(req, res) {
 }
 async function getLogisticsSettings(_req, res) {
   try {
-    const cfg = loadLogisticsConfig();
+    const cfg = await loadLogisticsConfig();
     return res.json({
       success: true,
       ghn: {
@@ -105065,10 +105124,11 @@ async function getLogisticsSettings(_req, res) {
       },
       spx: {
         connected: cfg.spx.connected,
-        userId: cfg.spx.userId,
+        clientId: cfg.spx.clientId,
+        userId: cfg.spx.clientId,
         merchantId: cfg.spx.merchantId,
-        secretMasked: maskSecret(cfg.spx.secret),
-        hasSecret: Boolean(cfg.spx.secret),
+        secretMasked: maskSecret(cfg.spx.clientSecret || cfg.spx.secret),
+        hasSecret: Boolean(cfg.spx.clientSecret || cfg.spx.secret),
         apiUrl: cfg.spx.apiUrl
       }
     });
@@ -105101,7 +105161,7 @@ async function saveLogisticsSettings(req, res) {
       if (body.spx.merchantId != null) patch.spx.merchantId = String(body.spx.merchantId).trim();
       if (body.spx.apiUrl != null) patch.spx.apiUrl = String(body.spx.apiUrl).trim();
     }
-    const cfg = saveLogisticsConfig(patch);
+    const cfg = await saveLogisticsConfig(patch);
     return res.json({
       success: true,
       message: "\u0110\xE3 l\u01B0u c\u1EA5u h\xECnh GHN/SPX tr\xEAn server.",
@@ -111183,8 +111243,8 @@ var PRINT_FORMATS = {
 function sleep4(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 }
-function ghnCreds() {
-  const { ghn } = loadLogisticsConfig();
+async function ghnCreds() {
+  const { ghn } = await loadLogisticsConfig();
   return ghn;
 }
 async function ghnFetch2(apiUrl, path21, { method = "POST", token, shopId, body } = {}) {
@@ -111235,7 +111295,7 @@ async function createGhnShippingOrder({
   note,
   shippingFeePayer
 }) {
-  const creds = ghnCreds();
+  const creds = await ghnCreds();
   if (!creds.token) {
     throw new Error("Thi\u1EBFu GHN_TOKEN. V\xE0o C\xE0i \u0111\u1EB7t \u2192 l\u01B0u Token GHN ho\u1EB7c set env GHN_TOKEN.");
   }
@@ -111302,7 +111362,7 @@ async function createGhnShippingOrder({
   };
 }
 async function getGhnPrintUrl(orderCode, format = "a5") {
-  const creds = ghnCreds();
+  const creds = await ghnCreds();
   if (!creds.token) {
     throw new Error("Thi\u1EBFu GHN_TOKEN \u0111\u1EC3 in v\u1EADn \u0111\u01A1n.");
   }
@@ -111331,8 +111391,8 @@ var TIMEOUT_MS2 = 15e3;
 function sleep5(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 }
-function spxCreds() {
-  const { spx } = loadLogisticsConfig();
+async function spxCreds() {
+  const { spx } = await loadLogisticsConfig();
   return spx;
 }
 function signBody(appId, secret, timestamp, rawBody) {
@@ -111340,15 +111400,17 @@ function signBody(appId, secret, timestamp, rawBody) {
   return import_crypto2.default.createHmac("sha256", String(secret)).update(payload).digest("hex");
 }
 async function spxFetch(apiUrl, path21, bodyObj) {
-  const creds = spxCreds();
-  if (!creds.userId || !creds.secret) {
+  const creds = await spxCreds();
+  const appId = String(creds.clientId || creds.userId || "").trim();
+  const secret = String(creds.clientSecret || creds.secret || "").trim();
+  if (!appId || !secret) {
     throw new Error(
-      "Thi\u1EBFu SPX User ID / Secret. V\xE0o C\xE0i \u0111\u1EB7t \u2192 l\u01B0u SPX ho\u1EB7c set env SPX_USER_ID + SPX_SECRET."
+      "Thi\u1EBFu SPX Client ID / Client Secret tr\xEAn Database. V\xE0o C\xE0i \u0111\u1EB7t \u2192 nh\u1EADp Client ID, Client Secret, Merchant ID r\u1ED3i b\u1EA5m L\u01B0u c\u1EA5u h\xECnh SPX."
     );
   }
   const rawBody = JSON.stringify(bodyObj || {});
   const timestamp = String(Math.floor(Date.now() / 1e3));
-  const sign = signBody(creds.userId, creds.secret, timestamp, rawBody);
+  const sign = signBody(appId, secret, timestamp, rawBody);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS2);
   try {
@@ -111357,8 +111419,8 @@ async function spxFetch(apiUrl, path21, bodyObj) {
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
-        "app-id": creds.userId,
-        appid: creds.userId,
+        "app-id": appId,
+        appid: appId,
         timestamp,
         sign
       },
@@ -111417,7 +111479,7 @@ async function createSpxShippingOrder({
   codAmount,
   note
 }) {
-  const creds = spxCreds();
+  const creds = await spxCreds();
   const apiUrl = creds.apiUrl;
   const itemName = (Array.isArray(items) ? items : []).map((it) => String(it.productTitle || it.name || "H\xE0ng").slice(0, 80)).join(", ").slice(0, 200);
   const body = {
@@ -111479,7 +111541,7 @@ async function createSpxShippingOrder({
   throw new Error(String(lastErr));
 }
 async function getSpxWaybill(trackingNo) {
-  const creds = spxCreds();
+  const creds = await spxCreds();
   const tn = String(trackingNo || "").trim();
   if (!tn) throw new Error("Thi\u1EBFu m\xE3 v\u1EADn \u0111\u01A1n SPX (tracking_no).");
   const payloads = [

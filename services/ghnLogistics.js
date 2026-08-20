@@ -18,8 +18,8 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 }
 
-function ghnCreds() {
-  const { ghn } = loadLogisticsConfig();
+async function ghnCreds() {
+  const { ghn } = await loadLogisticsConfig();
   return ghn;
 }
 
@@ -76,7 +76,7 @@ export async function createGhnShippingOrder({
   note,
   shippingFeePayer,
 }) {
-  const creds = ghnCreds();
+  const creds = await ghnCreds();
   if (!creds.token) {
     throw new Error("Thiếu GHN_TOKEN. Vào Cài đặt → lưu Token GHN hoặc set env GHN_TOKEN.");
   }
@@ -157,7 +157,7 @@ export async function createGhnShippingOrder({
  * Token in hết hạn ~30 phút — luôn gen mới khi user bấm In.
  */
 export async function getGhnPrintUrl(orderCode, format = "a5") {
-  const creds = ghnCreds();
+  const creds = await ghnCreds();
   if (!creds.token) {
     throw new Error("Thiếu GHN_TOKEN để in vận đơn.");
   }

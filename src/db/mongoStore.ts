@@ -1485,6 +1485,28 @@ async function setMeta(key: string, value: string): Promise<void> {
   await MetaModel.findByIdAndUpdate(key, { value }, { upsert: true });
 }
 
+/** Cấu hình GHN/SPX do user lưu ở Cài đặt — collection `meta`, _id = logistics_config. */
+const LOGISTICS_CONFIG_META_KEY = "logistics_config";
+
+export async function loadLogisticsSettingsFromStore(): Promise<Record<string, any> | null> {
+  if (!isMongoReady()) return null;
+  ensureModels();
+  const doc = await MetaModel.findById(LOGISTICS_CONFIG_META_KEY).lean();
+  const raw = doc && typeof doc === "object" ? (doc as { value?: unknown }).value : null;
+  if (raw == null || raw === "") return null;
+  try {
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, any>) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveLogisticsSettingsToStore(config: Record<string, any>): Promise<void> {
+  requireMongo();
+  await setMeta(LOGISTICS_CONFIG_META_KEY, JSON.stringify(config || {}));
+}
+
 /** Ghi đè toàn bộ products chỉ cho thao tác quản trị/migration đã xác nhận. */
 export async function saveProductsToStoreAsync(products: any[]): Promise<void> {
   const list = Array.isArray(products)
