@@ -104846,7 +104846,7 @@ function extractSpxCredentials(stored) {
     src.clientSecret || src.secret || src.userSecret || src.spxSecret || src.client_secret || src.user_secret || doc.clientSecret || doc.secret || ""
   ).trim();
   const clientSecret = clientSecretRaw.includes("\u2022\u2022\u2022\u2022") ? "" : clientSecretRaw;
-  const merchantId = String(src.merchantId || doc.merchantId || "").trim();
+  const merchantId = String(src.merchantId || src.accountId || doc.merchantId || "").trim();
   const apiUrl = String(src.apiUrl || doc.apiUrl || "https://spx.vn").trim().replace(/\/$/, "");
   const createPath = String(
     src.createPath || src.createOrderPath || doc.createPath || "/open/api/v1/order/batch_create_order"
@@ -110741,6 +110741,11 @@ function buildSpxAuthHeaders(appId, secret, rawBody) {
   };
 }
 function pickSpxAppId(creds) {
+  return String(
+    creds?.merchantId || creds?.accountId || creds?.clientId || creds?.userId || creds?.appId || ""
+  ).trim();
+}
+function pickSpxUserId(creds) {
   return String(creds?.clientId || creds?.userId || creds?.appId || "").trim();
 }
 function pickSpxSecret(creds) {
@@ -110751,7 +110756,7 @@ async function spxFetch(apiUrl, path21, bodyObj, creds) {
   const secret = pickSpxSecret(creds);
   if (!appId || !secret) {
     throw new Error(
-      "Thi\u1EBFu SPX User ID / Secret tr\xEAn Database. V\xE0o C\xE0i \u0111\u1EB7t \u2192 nh\u1EADp User ID (ho\u1EB7c Client ID) v\xE0 Secret r\u1ED3i b\u1EA5m L\u01B0u c\u1EA5u h\xECnh SPX."
+      "Thi\u1EBFu SPX ID t\xE0i kho\u1EA3n / Secret tr\xEAn Database. Nh\u1EADp ID t\xE0i kho\u1EA3n v\xE0o \xF4 Merchant ID (v\xE0 M\xE3 ng\u01B0\u1EDDi d\xF9ng + Secret) r\u1ED3i L\u01B0u c\u1EA5u h\xECnh SPX."
     );
   }
   const rawBody = stringifySpxBody(bodyObj);
@@ -110868,7 +110873,8 @@ async function createSpxShippingOrder({
     apiUrl: creds.apiUrl,
     createPath: creds.createPath
   });
-  const userId = pickSpxAppId(creds);
+  const appId = pickSpxAppId(creds);
+  const userId = pickSpxUserId(creds);
   const weight = Math.max(1, Math.round(Number(weightGrams) || 500));
   const itemList = buildItemList(items, weight);
   const receiverAddress = buildReceiverAddress(address) || String(address?.street || "").trim();
@@ -110877,7 +110883,7 @@ async function createSpxShippingOrder({
   }
   const orderRow = {
     order_sn: String(clientOrderCode || "").slice(0, 50),
-    merchant_id: creds.merchantId || void 0,
+    merchant_id: appId || void 0,
     user_id: userId || void 0,
     weight,
     allow_inspect: allowInspect !== false && allowInspect !== "false",
@@ -111002,20 +111008,29 @@ function classifySpxTestFailure(error) {
     message: error?.message || "Ki\u1EC3m tra k\u1EBFt n\u1ED1i SPX th\u1EA5t b\u1EA1i"
   };
 }
-async function testSpxConnection({ userId, secret, apiUrl, createPath } = {}) {
+async function testSpxConnection({
+  userId,
+  merchantId,
+  accountId,
+  secret,
+  apiUrl,
+  createPath
+} = {}) {
   const uid = String(userId || "").trim();
+  const accId = String(merchantId || accountId || "").trim();
+  const appId = accId || uid;
   const sec = String(secret || "").trim();
-  if (isBlankSpxSecret(uid) || isBlankSpxSecret(sec)) {
+  if (isBlankSpxSecret(appId) || isBlankSpxSecret(sec)) {
     return {
       success: false,
       httpStatus: 0,
-      message: "Vui l\xF2ng nh\u1EADp User ID v\xE0 Secret"
+      message: "Vui l\xF2ng nh\u1EADp ID t\xE0i kho\u1EA3n (ho\u1EB7c M\xE3 ng\u01B0\u1EDDi d\xF9ng) v\xE0 Secret"
     };
   }
   const gateway = resolveSpxGateway({ apiUrl, createPath });
-  const body = { user_id: uid };
+  const body = { user_id: uid || appId };
   const rawBody = stringifySpxBody(body);
-  const headers = buildSpxAuthHeaders(uid, sec, rawBody);
+  const headers = buildSpxAuthHeaders(appId, sec, rawBody);
   try {
     const response = await axios_default.post(gateway.url, rawBody, {
       timeout: TIMEOUT_MS2,
@@ -111377,19 +111392,28 @@ async function testSpxSettings(req, res) {
   const userId = String(
     req.body?.userId || req.body?.clientId || req.body?.spxUserId || ""
   ).trim();
+  const merchantId = String(
+    req.body?.merchantId || req.body?.accountId || ""
+  ).trim();
   const secret = String(
     req.body?.secret || req.body?.clientSecret || req.body?.userSecret || ""
   ).trim();
   const apiUrl = String(req.body?.apiUrl || "").trim();
   const createPath = String(req.body?.createPath || "").trim();
-  if (!userId || !secret || secret.includes("\u2022\u2022\u2022\u2022")) {
+  if (!merchantId && !userId || !secret || secret.includes("\u2022\u2022\u2022\u2022")) {
     return res.status(400).json({
       success: false,
-      message: "Vui l\xF2ng nh\u1EADp User ID v\xE0 Secret"
+      message: "Vui l\xF2ng nh\u1EADp ID t\xE0i kho\u1EA3n (Merchant ID), M\xE3 ng\u01B0\u1EDDi d\xF9ng v\xE0 Secret"
     });
   }
   try {
-    const result = await testSpxConnection({ userId, secret, apiUrl, createPath });
+    const result = await testSpxConnection({
+      userId,
+      merchantId,
+      secret,
+      apiUrl,
+      createPath
+    });
     if (!result?.success || result.httpStatus !== 200) {
       const status = result?.httpStatus === 401 || result?.httpStatus === 403 || result?.httpStatus === 404 ? result.httpStatus : 400;
       return res.status(status).json({

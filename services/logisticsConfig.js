@@ -74,7 +74,7 @@ function extractSpxCredentials(stored) {
       "",
   ).trim();
   const clientSecret = clientSecretRaw.includes("••••") ? "" : clientSecretRaw;
-  const merchantId = String(src.merchantId || doc.merchantId || "").trim();
+  const merchantId = String(src.merchantId || src.accountId || doc.merchantId || "").trim();
   const apiUrl = String(src.apiUrl || doc.apiUrl || "https://spx.vn")
     .trim()
     .replace(/\/$/, "");

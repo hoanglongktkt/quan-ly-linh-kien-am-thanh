@@ -1,6 +1,6 @@
 /**
  * SPX Express Open API — tạo đơn + lấy waybill PDF gốc (URL hoặc Base64 của hãng).
- * Auth: HMAC-SHA256(app-id + timestamp + rawJsonBody, secret) → hex. User ID / Secret trên MongoDB.
+ * Auth: HMAC-SHA256(ID tài khoản + timestamp + rawJsonBody, secret) → hex.
  * TUYỆT ĐỐI không đọc process.env.SPX_*. Không vẽ barcode HTML.
  */
 import crypto from "crypto";
@@ -81,7 +81,17 @@ function buildSpxAuthHeaders(appId, secret, rawBody) {
   };
 }
 
+/**
+ * HMAC `app-id`: ID tài khoản (Account ID / merchantId).
+ * Mã người dùng (clientId) chỉ đưa vào body `user_id`, không dùng để băm.
+ */
 function pickSpxAppId(creds) {
+  return String(
+    creds?.merchantId || creds?.accountId || creds?.clientId || creds?.userId || creds?.appId || "",
+  ).trim();
+}
+
+function pickSpxUserId(creds) {
   return String(creds?.clientId || creds?.userId || creds?.appId || "").trim();
 }
 
@@ -94,7 +104,7 @@ async function spxFetch(apiUrl, path, bodyObj, creds) {
   const secret = pickSpxSecret(creds);
   if (!appId || !secret) {
     throw new Error(
-      "Thiếu SPX User ID / Secret trên Database. Vào Cài đặt → nhập User ID (hoặc Client ID) và Secret rồi bấm Lưu cấu hình SPX.",
+      "Thiếu SPX ID tài khoản / Secret trên Database. Nhập ID tài khoản vào ô Merchant ID (và Mã người dùng + Secret) rồi Lưu cấu hình SPX.",
     );
   }
   const rawBody = stringifySpxBody(bodyObj);
@@ -245,7 +255,8 @@ export async function createSpxShippingOrder({
     apiUrl: creds.apiUrl,
     createPath: creds.createPath,
   });
-  const userId = pickSpxAppId(creds);
+  const appId = pickSpxAppId(creds);
+  const userId = pickSpxUserId(creds);
   const weight = Math.max(1, Math.round(Number(weightGrams) || 500));
   const itemList = buildItemList(items, weight);
   const receiverAddress = buildReceiverAddress(address) || String(address?.street || "").trim();
@@ -255,7 +266,7 @@ export async function createSpxShippingOrder({
 
   const orderRow = {
     order_sn: String(clientOrderCode || "").slice(0, 50),
-    merchant_id: creds.merchantId || undefined,
+    merchant_id: appId || undefined,
     user_id: userId || undefined,
     weight,
     allow_inspect: allowInspect !== false && allowInspect !== "false",
@@ -413,21 +424,30 @@ function classifySpxTestFailure(error) {
  * Ping thật tới máy chủ SPX (HMAC-SHA256 + Axios).
  * Chỉ trả success:true khi HTTP status === 200 từ SPX và không phải lỗi 401/403.
  */
-export async function testSpxConnection({ userId, secret, apiUrl, createPath } = {}) {
+export async function testSpxConnection({
+  userId,
+  merchantId,
+  accountId,
+  secret,
+  apiUrl,
+  createPath,
+} = {}) {
   const uid = String(userId || "").trim();
+  const accId = String(merchantId || accountId || "").trim();
+  const appId = accId || uid;
   const sec = String(secret || "").trim();
-  if (isBlankSpxSecret(uid) || isBlankSpxSecret(sec)) {
+  if (isBlankSpxSecret(appId) || isBlankSpxSecret(sec)) {
     return {
       success: false,
       httpStatus: 0,
-      message: "Vui lòng nhập User ID và Secret",
+      message: "Vui lòng nhập ID tài khoản (hoặc Mã người dùng) và Secret",
     };
   }
 
   const gateway = resolveSpxGateway({ apiUrl, createPath });
-  const body = { user_id: uid };
+  const body = { user_id: uid || appId };
   const rawBody = stringifySpxBody(body);
-  const headers = buildSpxAuthHeaders(uid, sec, rawBody);
+  const headers = buildSpxAuthHeaders(appId, sec, rawBody);
 
   try {
     const response = await axios.post(gateway.url, rawBody, {

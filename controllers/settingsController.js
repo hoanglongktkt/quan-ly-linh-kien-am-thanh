@@ -352,19 +352,28 @@ export async function testSpxSettings(req, res) {
   const userId = String(
     req.body?.userId || req.body?.clientId || req.body?.spxUserId || "",
   ).trim();
+  const merchantId = String(
+    req.body?.merchantId || req.body?.accountId || "",
+  ).trim();
   const secret = String(
     req.body?.secret || req.body?.clientSecret || req.body?.userSecret || "",
   ).trim();
   const apiUrl = String(req.body?.apiUrl || "").trim();
   const createPath = String(req.body?.createPath || "").trim();
-  if (!userId || !secret || secret.includes("••••")) {
+  if ((!merchantId && !userId) || !secret || secret.includes("••••")) {
     return res.status(400).json({
       success: false,
-      message: "Vui lòng nhập User ID và Secret",
+      message: "Vui lòng nhập ID tài khoản (Merchant ID), Mã người dùng và Secret",
     });
   }
   try {
-    const result = await testSpxConnection({ userId, secret, apiUrl, createPath });
+    const result = await testSpxConnection({
+      userId,
+      merchantId,
+      secret,
+      apiUrl,
+      createPath,
+    });
     if (!result?.success || result.httpStatus !== 200) {
       const status =
         result?.httpStatus === 401 || result?.httpStatus === 403 || result?.httpStatus === 404
