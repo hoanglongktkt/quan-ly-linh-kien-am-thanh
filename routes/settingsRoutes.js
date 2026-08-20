@@ -8,6 +8,8 @@ import {
   postShopConnectionStatus,
   getLogisticsSettings,
   saveLogisticsSettings,
+  testGhnSettings,
+  testSpxSettings,
 } from "../controllers/settingsController.js";
 
 const router = Router();
@@ -20,6 +22,8 @@ router.post("/test-gemini-key", testGeminiKey);
 router.post("/shop-connection-status", postShopConnectionStatus);
 router.get("/logistics", getLogisticsSettings);
 router.post("/logistics", saveLogisticsSettings);
+router.post("/test-ghn", testGhnSettings);
+router.post("/test-spx", testSpxSettings);
 
 export default router;
 export { router };

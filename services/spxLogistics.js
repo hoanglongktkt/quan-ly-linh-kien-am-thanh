@@ -4,6 +4,7 @@
  * TUYỆT ĐỐI không đọc process.env.SPX_*. Không vẽ barcode HTML.
  */
 import crypto from "crypto";
+import axios from "axios";
 import { loadSpxCredentialsFromMongo } from "./logisticsConfig.js";
 
 const TIMEOUT_MS = 15_000;
@@ -291,6 +292,128 @@ export async function getSpxWaybill(trackingNo) {
     }
   }
   throw new Error(String(lastErr));
+}
+
+function isBlankSpxSecret(value) {
+  const s = String(value || "").trim();
+  return !s || s.includes("••••");
+}
+
+function isSpxAuthFailure(httpStatus, json) {
+  if (httpStatus === 401 || httpStatus === 403) return true;
+  const ret = json?.ret_code ?? json?.retcode ?? json?.code;
+  if (ret === 401 || ret === 403 || ret === "401" || ret === "403") return true;
+  const msg = String(json?.message || json?.msg || json?.error || json?.raw || "").toLowerCase();
+  return /unauthor|forbidden|invalid sign|sign error|signature|invalid.*(secret|app-id|appid|user.?id)/i.test(
+    msg,
+  );
+}
+
+/**
+ * Ping thật tới máy chủ SPX (HMAC-SHA256 + Axios).
+ * Chỉ trả success:true khi HTTP status === 200 từ SPX và không phải lỗi 401/403.
+ */
+export async function testSpxConnection({ userId, secret, apiUrl } = {}) {
+  const uid = String(userId || "").trim();
+  const sec = String(secret || "").trim();
+  if (isBlankSpxSecret(uid) || isBlankSpxSecret(sec)) {
+    return {
+      success: false,
+      httpStatus: 0,
+      message: "Vui lòng nhập User ID và Secret",
+    };
+  }
+
+  const base = String(apiUrl || "https://spx.vn")
+    .trim()
+    .replace(/\/$/, "") || "https://spx.vn";
+  const attempts = [
+    { path: "/open/api/v1/order/get_order_list", body: { page_no: 1, page_size: 1 } },
+    { path: "/open/api/v1/order/batch_get_awb", body: { tracking_no_list: [] } },
+  ].slice(0, 2);
+
+  let lastMessage = "Kết nối SPX thất bại";
+  let lastHttp = 0;
+
+  for (let i = 0; i < attempts.length; i += 1) {
+    if (i > 0) await sleep(250);
+    const { path, body } = attempts[i];
+    const rawBody = JSON.stringify(body || {});
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const sign = signBody(uid, sec, timestamp, rawBody);
+
+    try {
+      const response = await axios.post(`${base}${path}`, rawBody, {
+        timeout: TIMEOUT_MS,
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "app-id": uid,
+          appid: uid,
+          "user-id": uid,
+          timestamp,
+          sign,
+        },
+        transformRequest: [(data) => data],
+        validateStatus: () => true,
+      });
+      const httpStatus = Number(response.status) || 0;
+      lastHttp = httpStatus;
+      const json =
+        response.data && typeof response.data === "object"
+          ? response.data
+          : { raw: String(response.data || "") };
+
+      if (isSpxAuthFailure(httpStatus, json)) {
+        return {
+          success: false,
+          httpStatus: httpStatus || 401,
+          message: "User ID / Secret SPX không hợp lệ!",
+        };
+      }
+
+      if (httpStatus === 200) {
+        const looksLikeSpxJson =
+          isSpxSuccess(json) ||
+          json.ret_code != null ||
+          json.retcode != null ||
+          json.code != null ||
+          json.data != null ||
+          json.message != null ||
+          json.msg != null;
+        if (looksLikeSpxJson) {
+          return {
+            success: true,
+            httpStatus: 200,
+            message: "Kết nối SPX thành công!",
+          };
+        }
+      }
+
+      lastMessage =
+        json?.message || json?.msg || json?.error || `SPX ${path} HTTP ${httpStatus}`;
+    } catch (err) {
+      const httpStatus = Number(err?.response?.status) || 0;
+      lastHttp = httpStatus;
+      if (httpStatus === 401 || httpStatus === 403) {
+        return {
+          success: false,
+          httpStatus,
+          message: "User ID / Secret SPX không hợp lệ!",
+        };
+      }
+      if (err?.code === "ECONNABORTED") {
+        return {
+          success: false,
+          httpStatus: 0,
+          message: `Timeout kết nối máy chủ SPX (>${TIMEOUT_MS}ms)`,
+        };
+      }
+      lastMessage = err?.message || lastMessage;
+    }
+  }
+
+  return { success: false, httpStatus: lastHttp, message: String(lastMessage) };
 }
 
 export { sleep as spxSleep };

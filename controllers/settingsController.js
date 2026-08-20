@@ -5,6 +5,8 @@ import {
   saveLogisticsConfig,
   maskSecret,
 } from "../services/logisticsConfig.js";
+import { testGhnConnection } from "../services/ghnLogistics.js";
+import { testSpxConnection } from "../services/spxLogistics.js";
 
 /** Shared Gemini client — Settings cập nhật key, AI routes dùng chung. */
 let ai = null;
@@ -303,6 +305,86 @@ export async function saveLogisticsSettings(req, res) {
     return res.status(500).json({
       success: false,
       error: error?.message || "Lưu cấu hình logistics thất bại",
+    });
+  }
+}
+
+/** POST /api/settings/test-ghn — Axios thật tới máy chủ GHN, không mock. */
+export async function testGhnSettings(req, res) {
+  const token = String(req.body?.token || "").trim();
+  const shopId = String(req.body?.shopId || "").trim();
+  if (!token || !shopId || token.includes("••••") || token.startsWith("ghn-tok-")) {
+    return res.status(400).json({
+      success: false,
+      message: "Vui lòng nhập Token và Shop ID",
+    });
+  }
+  try {
+    const result = await testGhnConnection({ token, shopId });
+    if (!result?.success || result.httpStatus !== 200) {
+      const status = result?.httpStatus === 401 ? 401 : 400;
+      return res.status(status).json({
+        success: false,
+        message: result?.message || "Token GHN không hợp lệ!",
+      });
+    }
+    return res.json({
+      success: true,
+      message: result.message || "Kết nối GHN thành công!",
+      httpStatus: 200,
+    });
+  } catch (error) {
+    const httpStatus = Number(error?.response?.status) || 0;
+    if (httpStatus === 401) {
+      return res.status(401).json({ success: false, message: "Token GHN không hợp lệ!" });
+    }
+    return res.status(400).json({
+      success: false,
+      message: error?.message || "Token GHN không hợp lệ!",
+    });
+  }
+}
+
+/** POST /api/settings/test-spx — Axios + HMAC-SHA256 thật tới máy chủ SPX, không mock. */
+export async function testSpxSettings(req, res) {
+  const userId = String(
+    req.body?.userId || req.body?.clientId || req.body?.spxUserId || "",
+  ).trim();
+  const secret = String(
+    req.body?.secret || req.body?.clientSecret || req.body?.userSecret || "",
+  ).trim();
+  const apiUrl = String(req.body?.apiUrl || "").trim();
+  if (!userId || !secret || secret.includes("••••")) {
+    return res.status(400).json({
+      success: false,
+      message: "Vui lòng nhập User ID và Secret",
+    });
+  }
+  try {
+    const result = await testSpxConnection({ userId, secret, apiUrl });
+    if (!result?.success || result.httpStatus !== 200) {
+      const status = result?.httpStatus === 401 || result?.httpStatus === 403 ? result.httpStatus : 400;
+      return res.status(status).json({
+        success: false,
+        message: result?.message || "User ID / Secret SPX không hợp lệ!",
+      });
+    }
+    return res.json({
+      success: true,
+      message: result.message || "Kết nối SPX thành công!",
+      httpStatus: 200,
+    });
+  } catch (error) {
+    const httpStatus = Number(error?.response?.status) || 0;
+    if (httpStatus === 401 || httpStatus === 403) {
+      return res.status(httpStatus).json({
+        success: false,
+        message: "User ID / Secret SPX không hợp lệ!",
+      });
+    }
+    return res.status(400).json({
+      success: false,
+      message: error?.message || "User ID / Secret SPX không hợp lệ!",
     });
   }
 }

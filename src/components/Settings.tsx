@@ -147,7 +147,7 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
 
   // Shipping Carrier configs (persist to localStorage)
   const [ghnConfig, setGhnConfig] = useState(() =>
-    safeGetJson('omni_ghn_config', { connected: true, token: 'ghn-tok-987293x18239081', shopId: '1938210', service: 'standard' }),
+    safeGetJson('omni_ghn_config', { connected: false, token: '', shopId: '', service: 'standard' }),
   );
 
   const [spxConfig, setSpxConfig] = useState(() =>
@@ -182,14 +182,29 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
     })
       .then((r) => r.json())
       .then((data) => {
-        if (!data?.success || !data.spx) return;
-        setSpxConfig((prev) => ({
-          ...prev,
-          connected: Boolean(data.spx.connected),
-          clientId: data.spx.clientId || data.spx.userId || (prev.clientId === 'spx-client-id-demo' ? '' : prev.clientId),
-          merchantId: data.spx.merchantId || prev.merchantId,
-          clientSecret: String(prev.clientSecret || '').includes('••••') ? '' : prev.clientSecret,
-        }));
+        if (!data?.success) return;
+        if (data.ghn) {
+          setGhnConfig((prev) => {
+            const prevToken = String(prev.token || '');
+            const isFakeToken = !prevToken || prevToken.includes('••••') || prevToken.startsWith('ghn-tok-');
+            return {
+              ...prev,
+              connected: Boolean(data.ghn.connected),
+              shopId: data.ghn.shopId || (prev.shopId === '1938210' ? '' : prev.shopId),
+              token: isFakeToken ? '' : prevToken,
+              service: data.ghn.service || prev.service || 'standard',
+            };
+          });
+        }
+        if (data.spx) {
+          setSpxConfig((prev) => ({
+            ...prev,
+            connected: Boolean(data.spx.connected),
+            clientId: data.spx.clientId || data.spx.userId || (prev.clientId === 'spx-client-id-demo' ? '' : prev.clientId),
+            merchantId: data.spx.merchantId || prev.merchantId,
+            clientSecret: String(prev.clientSecret || '').includes('••••') ? '' : prev.clientSecret,
+          }));
+        }
       })
       .catch(() => {});
   }, []);
@@ -294,47 +309,82 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
     }
   };
 
-  const runLogisticsDiagnostics = (carrier: 'ghn' | 'spx') => {
+  const runLogisticsDiagnostics = async (carrier: 'ghn' | 'spx') => {
     setIsTestingLogistics(carrier);
     setTerminalLogs([]);
+    const stamp = () => new Date().toLocaleTimeString('vi-VN');
+    const pushLog = (line: string) => {
+      setTerminalLogs((prev) => [...prev, `[LOG ${stamp()}] ${line}`]);
+    };
 
-    const name = carrier === 'ghn' ? 'Giao Hàng Nhanh (GHN)' : 'Shopee SPX Express';
-    const config = carrier === 'ghn' ? ghnConfig : spxConfig;
+    try {
+      const authToken = localStorage.getItem('admin_token');
+      const headers = {
+        'Content-Type': 'application/json',
+        Authorization: authToken ? `Bearer ${authToken}` : '',
+      };
 
-    if (carrier === 'ghn') {
-      const steps = [
-        `[1/5] Khởi tạo kết nối cổng Sandbox GHN (Giao Hàng Nhanh)...`,
-        `[2/5] Truyền API Token: ${config.token.substring(0, 12)}...`,
-        `[3/5] Xác minh mã định danh cửa hàng ShopID: ${config.shopId}...`,
-        `[4/5] Kết nối cổng vận chuyển thành công! Dịch vụ mặc định: ${config.service === 'standard' ? 'Chuẩn (Standard)' : 'Nhanh (Fast)'}...`,
-        `[5/5] Hoàn tất! Phản hồi HTTP 200 OK từ GHN API. Hệ thống đã liên kết và sẵn sàng tự động lên đơn!`
-      ];
+      if (carrier === 'ghn') {
+        const token = String(ghnConfig.token || '').trim();
+        const shopId = String(ghnConfig.shopId || '').trim();
+        if (!token || !shopId || token.includes('••••') || token.startsWith('ghn-tok-')) {
+          pushLog('THẤT BẠI: Vui lòng nhập Token và Shop ID');
+          alert('Vui lòng nhập Token và Shop ID');
+          return;
+        }
+        pushLog('[1/2] Gửi HTTP request thật tới máy chủ GHN (online-gateway.ghn.vn)...');
+        const res = await fetch('/api/settings/test-ghn', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ token, shopId }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.success !== true) {
+          const msg = data.message || data.error || 'Token GHN không hợp lệ!';
+          pushLog(`THẤT BẠI HTTP ${res.status}: ${msg}`);
+          alert(msg);
+          return;
+        }
+        pushLog('[2/2] HOÀN TẤT: Máy chủ GHN trả HTTP 200 — Kết nối thành công!');
+        setGhnConfig((prev) => ({ ...prev, connected: true }));
+        alert(data.message || 'Kết nối GHN thành công!');
+        return;
+      }
 
-      steps.forEach((step, index) => {
-        setTimeout(() => {
-          setTerminalLogs(prev => [...prev, `[LOG ${new Date().toLocaleTimeString('vi-VN')}] ${step}`]);
-          if (index === steps.length - 1) {
-            setIsTestingLogistics(null);
-          }
-        }, 200 + index * 300);
+      const userId = String(spxConfig.clientId || '').trim();
+      const secret = String(spxConfig.clientSecret || '').trim();
+      if (!userId || !secret || secret.includes('••••')) {
+        pushLog('THẤT BẠI: Vui lòng nhập User ID và Secret');
+        alert('Vui lòng nhập User ID và Secret');
+        return;
+      }
+      pushLog('[1/2] Ký HMAC-SHA256 và gửi HTTP request thật tới máy chủ SPX...');
+      const res = await fetch('/api/settings/test-spx', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          userId,
+          clientId: userId,
+          secret,
+          clientSecret: secret,
+        }),
       });
-    } else {
-      const steps = [
-        `[1/5] Khởi tạo kết nối OAuth 2.0 tới Shopee SPX Express Gateway...`,
-        `[2/5] Truyền Client ID [${config.clientId}] & Client Secret [••••••••]...`,
-        `[3/5] Lấy Access Token thành công từ cổng SPX...`,
-        `[4/5] Truy cập Merchant ID: ${config.merchantId} tại bưu cục SPX Việt Nam...`,
-        `[5/5] Hoàn tất! Phản hồi HTTP 200 OK. Cổng tự động lên đơn Shopee SPX đã sẵn sàng!`
-      ];
-
-      steps.forEach((step, index) => {
-        setTimeout(() => {
-          setTerminalLogs(prev => [...prev, `[LOG ${new Date().toLocaleTimeString('vi-VN')}] ${step}`]);
-          if (index === steps.length - 1) {
-            setIsTestingLogistics(null);
-          }
-        }, 200 + index * 300);
-      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success !== true) {
+        const msg = data.message || data.error || 'User ID / Secret SPX không hợp lệ!';
+        pushLog(`THẤT BẠI HTTP ${res.status}: ${msg}`);
+        alert(msg);
+        return;
+      }
+      pushLog('[2/2] HOÀN TẤT: Máy chủ SPX trả HTTP 200 — Kết nối thành công!');
+      setSpxConfig((prev) => ({ ...prev, connected: true }));
+      alert(data.message || 'Kết nối SPX thành công!');
+    } catch (err: any) {
+      const msg = err?.message || 'Không kết nối được máy chủ vận chuyển';
+      pushLog(`THẤT BẠI: ${msg}`);
+      alert(msg);
+    } finally {
+      setIsTestingLogistics(null);
     }
   };
 
@@ -1312,7 +1362,7 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
           </div>
           <div className="font-mono text-[11px] text-emerald-400 bg-black/50 p-4 rounded-xl leading-relaxed space-y-1 max-h-[300px] overflow-y-auto">
             {terminalLogs.map((log, index) => (
-              <div key={index} className={log.includes('HOÀN TẤT') || log.includes('Thành công') ? 'text-emerald-300 font-bold' : log.includes('KẾT NỐI') ? 'text-blue-300 font-bold' : 'text-emerald-500/80'}>
+              <div key={index} className={log.includes('THẤT BẠI') || log.includes('không hợp lệ') ? 'text-red-400 font-bold' : log.includes('HOÀN TẤT') || log.includes('Thành công') ? 'text-emerald-300 font-bold' : log.includes('KẾT NỐI') ? 'text-blue-300 font-bold' : 'text-emerald-500/80'}>
                 {log}
               </div>
             ))}

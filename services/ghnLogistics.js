@@ -4,6 +4,7 @@
  * TUYỆT ĐỐI không đẩy mã hành chính VN (provinces.open-api.vn) lên GHN.
  * DistrictID / WardCode phải resolve từ GHN Master Data.
  */
+import axios from "axios";
 import { loadLogisticsConfig } from "./logisticsConfig.js";
 
 const TIMEOUT_MS = 15_000;
@@ -445,6 +446,113 @@ export async function getGhnPrintUrl(orderCode, format = "a5") {
   await sleep(80);
   const url = `${creds.printHost}/a5/public-api/${printPath}?token=${encodeURIComponent(token)}`;
   return { url, token, format: printPath, expiresInSec: 1800 };
+}
+
+const GHN_SHOP_ALL_URL = "https://online-gateway.ghn.vn/shiip/public-api/v2/shop/all";
+
+function isBlankGhnSecret(value) {
+  const s = String(value || "").trim();
+  return !s || s.includes("••••") || s.startsWith("ghn-tok-");
+}
+
+/**
+ * Ping thật tới máy chủ GHN (POST /v2/shop/all — tài liệu chính thức GHN).
+ * Chỉ trả success:true khi HTTP status === 200 VÀ body.code === 200 từ GHN.
+ */
+export async function testGhnConnection({ token, shopId } = {}) {
+  const t = String(token || "").trim();
+  const sid = String(shopId || "").trim();
+  if (isBlankGhnSecret(t) || !sid) {
+    return {
+      success: false,
+      httpStatus: 0,
+      message: "Vui lòng nhập Token và Shop ID",
+    };
+  }
+
+  try {
+    const response = await axios.post(
+      GHN_SHOP_ALL_URL,
+      { offset: 0, limit: 50, client_phone: "" },
+      {
+        timeout: TIMEOUT_MS,
+        headers: {
+          "Content-Type": "application/json",
+          Token: t,
+          ShopId: sid,
+        },
+      },
+    );
+
+    const httpStatus = Number(response.status) || 0;
+    const body = response.data && typeof response.data === "object" ? response.data : {};
+    const ghnCode = Number(body.code);
+
+    if (httpStatus !== 200) {
+      return {
+        success: false,
+        httpStatus,
+        message: body.message || `GHN HTTP ${httpStatus}`,
+      };
+    }
+    if (ghnCode === 401) {
+      return { success: false, httpStatus, message: "Token GHN không hợp lệ!" };
+    }
+    if (ghnCode !== 200) {
+      return {
+        success: false,
+        httpStatus,
+        message: String(body.message || body.code_message || "Token GHN không hợp lệ!"),
+      };
+    }
+
+    const shops = Array.isArray(body?.data?.shops) ? body.data.shops : [];
+    if (shops.length > 0) {
+      const matched = shops.some(
+        (shop) => String(shop?._id ?? shop?.shop_id ?? shop?.id ?? "") === sid,
+      );
+      if (!matched) {
+        return {
+          success: false,
+          httpStatus,
+          message: `Shop ID ${sid} không thuộc Token GHN này.`,
+        };
+      }
+    }
+
+    return {
+      success: true,
+      httpStatus: 200,
+      message: "Kết nối GHN thành công!",
+      shopCount: shops.length,
+    };
+  } catch (err) {
+    const httpStatus = Number(err?.response?.status) || 0;
+    if (httpStatus === 401 || Number(err?.response?.data?.code) === 401) {
+      return { success: false, httpStatus: httpStatus || 401, message: "Token GHN không hợp lệ!" };
+    }
+    if (err?.code === "ECONNABORTED" || err?.name === "AbortError") {
+      return {
+        success: false,
+        httpStatus: 0,
+        message: `Timeout kết nối máy chủ GHN (>${TIMEOUT_MS}ms)`,
+      };
+    }
+    if (!err?.response) {
+      return {
+        success: false,
+        httpStatus: 0,
+        message: err?.message || "Không kết nối được máy chủ GHN",
+      };
+    }
+    return {
+      success: false,
+      httpStatus,
+      message: String(
+        err?.response?.data?.message || err?.message || "Token GHN không hợp lệ!",
+      ),
+    };
+  }
 }
 
 export { sleep as ghnSleep };
