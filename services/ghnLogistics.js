@@ -1,17 +1,39 @@
 /**
  * GHN Open API — tạo đơn + in vận đơn PDF gốc (gen-token → printA5/printA6).
- * Tài liệu: https://api.ghn.vn/home/docs/detail?id=100 (gen-token)
- *           https://api.ghn.vn/home/docs/detail?id=63  (create order)
- * TUYỆT ĐỐI không vẽ barcode HTML — chỉ trả URL in chuẩn của GHN.
+ * Tài liệu: https://api.ghn.vn/home/docs/detail?id=63  (create order)
+ * TUYỆT ĐỐI không đẩy mã hành chính VN (provinces.open-api.vn) lên GHN.
+ * DistrictID / WardCode phải resolve từ GHN Master Data.
  */
 import { loadLogisticsConfig } from "./logisticsConfig.js";
 
 const TIMEOUT_MS = 15_000;
+const GHN_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_DISTRICT_SCAN = 40;
 const PRINT_FORMATS = {
   a5: "printA5",
   a6: "printA6",
   "80x80": "print80x80",
   "52x70": "print52x70",
+};
+
+const ALIASES = {
+  hcm: "ho chi minh",
+  tphcm: "ho chi minh",
+  "tp hcm": "ho chi minh",
+  "tp ho chi minh": "ho chi minh",
+  "sai gon": "ho chi minh",
+  hn: "ha noi",
+  "tp ha noi": "ha noi",
+  dn: "da nang",
+  "tp da nang": "da nang",
+};
+
+let ghnMasterCache = {
+  at: 0,
+  tokenKey: "",
+  provinces: [],
+  districts: new Map(),
+  wards: new Map(),
 };
 
 function sleep(ms) {
@@ -21,6 +43,78 @@ function sleep(ms) {
 async function ghnCreds() {
   const { ghn } = await loadLogisticsConfig();
   return ghn;
+}
+
+function normalizeVnName(s) {
+  return String(s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function unitName(unit) {
+  return String(
+    unit?.ProvinceName ||
+      unit?.province_name ||
+      unit?.DistrictName ||
+      unit?.district_name ||
+      unit?.WardName ||
+      unit?.ward_name ||
+      unit?.name ||
+      "",
+  ).trim();
+}
+
+function matchNamedUnit(list, query) {
+  if (!query?.trim() || !Array.isArray(list) || !list.length) return null;
+  const raw = normalizeVnName(query);
+  const expanded = ALIASES[raw] || raw;
+  const stripPrefix = (n) =>
+    n.replace(/^(tinh|thanh pho|tp|quan|huyen|thi xa|phuong|xa|thi tran)\s+/, "");
+
+  let best = null;
+  let bestScore = 0;
+  for (let i = 0; i < list.length; i += 1) {
+    const n = normalizeVnName(unitName(list[i]));
+    if (!n) continue;
+    let score = 0;
+    if (n === expanded || n === raw) score = 100;
+    else if (n.includes(expanded) || expanded.includes(n)) score = 80;
+    else {
+      const stripped = stripPrefix(n);
+      const qStripped = stripPrefix(expanded);
+      if (stripped === qStripped || stripped === expanded) score = 70;
+      else if (stripped.includes(qStripped) || qStripped.includes(stripped)) score = 60;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = list[i];
+    }
+  }
+  return bestScore >= 60 ? best : null;
+}
+
+function getMasterCache(token) {
+  const tokenKey = String(token || "").slice(0, 12);
+  const now = Date.now();
+  if (
+    !ghnMasterCache ||
+    ghnMasterCache.tokenKey !== tokenKey ||
+    now - ghnMasterCache.at > GHN_CACHE_TTL_MS
+  ) {
+    ghnMasterCache = {
+      at: now,
+      tokenKey,
+      provinces: [],
+      districts: new Map(),
+      wards: new Map(),
+    };
+  }
+  return ghnMasterCache;
 }
 
 async function ghnFetch(apiUrl, path, { method = "POST", token, shopId, body } = {}) {
@@ -56,11 +150,161 @@ async function ghnFetch(apiUrl, path, { method = "POST", token, shopId, body } =
   }
 }
 
-function requiredNoteFromText(note) {
+async function ghnMasterList(creds, path, body) {
+  const result = await ghnFetch(creds.apiUrl, path, {
+    method: "POST",
+    token: creds.token,
+    shopId: creds.shopId || undefined,
+    body: body || {},
+  });
+  const data = result.json?.data;
+  return Array.isArray(data) ? data : [];
+}
+
+async function loadGhnProvinces(creds) {
+  const cache = getMasterCache(creds.token);
+  if (cache.provinces.length) return cache.provinces;
+  const rows = await ghnMasterList(creds, "/master-data/province", {});
+  cache.provinces = rows;
+  return rows;
+}
+
+async function loadGhnDistricts(creds, provinceId) {
+  const key = String(provinceId);
+  const cache = getMasterCache(creds.token);
+  if (cache.districts.has(key)) return cache.districts.get(key) || [];
+  const rows = await ghnMasterList(creds, "/master-data/district", {
+    province_id: Number(provinceId) || provinceId,
+  });
+  const filtered = rows.filter(
+    (d) => String(d.ProvinceID ?? d.province_id ?? "") === String(provinceId),
+  );
+  const list = filtered.length ? filtered : rows;
+  cache.districts.set(key, list);
+  return list;
+}
+
+async function loadGhnWards(creds, districtId) {
+  const key = String(districtId);
+  const cache = getMasterCache(creds.token);
+  if (cache.wards.has(key)) return cache.wards.get(key) || [];
+  const rows = await ghnMasterList(creds, "/master-data/ward", {
+    district_id: Number(districtId) || districtId,
+  });
+  cache.wards.set(key, rows);
+  return rows;
+}
+
+function pickDistrictId(unit) {
+  const n = Number(unit?.DistrictID ?? unit?.district_id ?? unit?.id);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function pickWardCode(unit) {
+  return String(unit?.WardCode ?? unit?.ward_code ?? unit?.id ?? "").trim();
+}
+
+/**
+ * Resolve tên Tỉnh/Huyện/Xã → DistrictID + WardCode chuẩn GHN.
+ * Không bao giờ trả mã hành chính VN.
+ */
+export async function resolveGhnAddress(address, credsIn) {
+  const creds = credsIn || (await ghnCreds());
+  if (!creds?.token) {
+    throw new Error("Thiếu Token GHN trên Database. Vào Cài đặt → lưu Token GHN rồi thử lại.");
+  }
+
+  const provinceName = String(address?.province || address?.to_province_name || "").trim();
+  const districtName = String(address?.district || address?.to_district_name || "").trim();
+  const wardName = String(address?.ward || address?.to_ward_name || "").trim();
+  if (!provinceName || !wardName) {
+    throw new Error("Thiếu Tỉnh/Thành hoặc Phường/Xã để map địa chỉ GHN.");
+  }
+
+  const provinces = await loadGhnProvinces(creds);
+  const province = matchNamedUnit(provinces, provinceName);
+  if (!province) {
+    throw new Error(`GHN không nhận diện tỉnh/thành: "${provinceName}".`);
+  }
+  const provinceId = Number(province.ProvinceID ?? province.province_id ?? province.id);
+  if (!Number.isFinite(provinceId) || provinceId <= 0) {
+    throw new Error(`GHN không trả ProvinceID cho "${provinceName}".`);
+  }
+
+  await sleep(80);
+  const districts = await loadGhnDistricts(creds, provinceId);
+  let district = districtName ? matchNamedUnit(districts, districtName) : null;
+
+  if (!district && wardName && districts.length) {
+    const limit = Math.min(districts.length, MAX_DISTRICT_SCAN);
+    for (let i = 0; i < limit; i += 1) {
+      const d = districts[i];
+      const did = pickDistrictId(d);
+      if (!did) continue;
+      if (i > 0) await sleep(120);
+      const wards = await loadGhnWards(creds, did);
+      const w = matchNamedUnit(wards, wardName);
+      if (w && pickWardCode(w)) {
+        return {
+          to_district_id: did,
+          to_ward_code: pickWardCode(w),
+          to_ward_name: unitName(w) || wardName,
+          to_district_name: unitName(d) || districtName,
+          to_province_name: unitName(province) || provinceName,
+        };
+      }
+    }
+  }
+
+  if (!district) {
+    throw new Error(
+      `GHN không nhận diện quận/huyện cho "${districtName || wardName}" tại ${provinceName}. Chọn đủ Tỉnh / Quận / Phường (địa chỉ 3 cấp) rồi thử lại.`,
+    );
+  }
+
+  const districtId = pickDistrictId(district);
+  if (!districtId) {
+    throw new Error(`GHN không trả DistrictID cho "${districtName || unitName(district)}".`);
+  }
+
+  await sleep(80);
+  const wards = await loadGhnWards(creds, districtId);
+  const ward = matchNamedUnit(wards, wardName);
+  const wardCode = ward ? pickWardCode(ward) : "";
+  if (!ward || !wardCode) {
+    throw new Error(
+      `GHN không nhận diện phường/xã: "${wardName}" (huyện ${districtName || districtId}).`,
+    );
+  }
+
+  return {
+    to_district_id: districtId,
+    to_ward_code: String(wardCode),
+    to_ward_name: unitName(ward) || wardName,
+    to_district_name: unitName(district) || districtName,
+    to_province_name: unitName(province) || provinceName,
+  };
+}
+
+function requiredNoteFromFlags({ note, allowInspect, allowTry }) {
+  if (allowTry === true || allowTry === "true") return "CHOTHUHANG";
+  if (allowInspect === false || allowInspect === "false") return "KHONGCHOXEMHANG";
+  if (allowInspect === true || allowInspect === "true") return "CHOXEMHANGKHONGTHU";
   const s = String(note || "").toUpperCase();
   if (s.includes("THU HANG") || s.includes("THỬ")) return "CHOTHUHANG";
   if (s.includes("KHONGCHOXEM") || s.includes("KHÔNG CHO XEM")) return "KHONGCHOXEMHANG";
   return "CHOXEMHANGKHONGTHU";
+}
+
+function paymentTypeIdFromPayer(shippingFeePayer) {
+  const payer = String(shippingFeePayer || "").toLowerCase();
+  if (payer === "shop" || payer === "sender") return 1;
+  return 2;
+}
+
+function clampCm(value, fallback = 10) {
+  const n = Math.round(Number(value) || fallback);
+  return Math.max(1, Math.min(150, n));
 }
 
 /**
@@ -75,53 +319,72 @@ export async function createGhnShippingOrder({
   codAmount,
   note,
   shippingFeePayer,
+  length: lengthIn,
+  width: widthIn,
+  height: heightIn,
+  allowInspect,
+  allowTry,
+  partialDelivery,
 }) {
   const creds = await ghnCreds();
   if (!creds.token) {
-    throw new Error("Thiếu GHN_TOKEN. Vào Cài đặt → lưu Token GHN hoặc set env GHN_TOKEN.");
+    throw new Error("Thiếu Token GHN trên Database. Vào Cài đặt → lưu Token GHN rồi thử lại.");
   }
   if (!creds.shopId) {
-    throw new Error("Thiếu GHN_SHOP_ID. Vào Cài đặt → lưu Shop ID GHN hoặc set env GHN_SHOP_ID.");
+    throw new Error("Thiếu Shop ID GHN trên Database. Vào Cài đặt → lưu Shop ID GHN rồi thử lại.");
   }
 
-  const districtId = Number(address?.districtCode || address?.to_district_id);
-  const wardCode = String(address?.wardCode || address?.to_ward_code || "").trim();
+  const resolved = await resolveGhnAddress(address, creds);
   const toAddress = String(address?.street || address?.fullAddress || "").trim();
+  if (!toAddress) {
+    throw new Error("Thiếu địa chỉ chi tiết người nhận (to_address).");
+  }
+
   const serviceTypeId = creds.service === "fast" ? 1 : 2;
-  const paymentTypeId = shippingFeePayer === "shop" ? 1 : 2;
+  const paymentTypeId = paymentTypeIdFromPayer(shippingFeePayer);
   const weight = Math.max(1, Math.round(Number(weightGrams) || 500));
+  const length = clampCm(lengthIn, 10);
+  const width = clampCm(widthIn, 10);
+  const height = clampCm(heightIn, 10);
   const itemRows = (Array.isArray(items) ? items : []).slice(0, 50).map((it) => ({
     name: String(it.productTitle || it.name || "Hàng hóa").slice(0, 120),
     code: String(it.sku || it.productId || "").slice(0, 50),
     quantity: Math.max(1, Math.round(Number(it.quantity) || 1)),
     price: Math.max(0, Math.round(Number(it.price) || 0)),
-    weight: Math.max(1, Math.round(weight / Math.max(1, items.length))),
+    weight: Math.max(1, Math.round(Number(it.weightGrams || it.weight) || weight / Math.max(1, items.length))),
   }));
+  if (itemRows.length === 0) {
+    throw new Error("GHN yêu cầu danh sách sản phẩm (Items) không được rỗng.");
+  }
+
+  const requiredNote = requiredNoteFromFlags({
+    note,
+    allowInspect,
+    allowTry: allowTry === true || partialDelivery === true,
+  });
 
   const body = {
     payment_type_id: paymentTypeId,
-    required_note: requiredNoteFromText(note),
+    required_note: requiredNote,
     client_order_code: String(clientOrderCode || "").slice(0, 50),
     to_name: String(customer?.name || "").slice(0, 80),
     to_phone: String(customer?.phone || "").replace(/\s+/g, "").slice(0, 20),
     to_address: toAddress.slice(0, 200),
-    to_ward_code: wardCode,
-    to_ward_name: String(address?.ward || "").trim(),
-    to_district_name: String(address?.district || "").trim(),
-    to_province_name: String(address?.province || "").trim(),
+    to_ward_code: resolved.to_ward_code,
+    to_district_id: resolved.to_district_id,
+    to_ward_name: resolved.to_ward_name,
+    to_district_name: resolved.to_district_name,
+    to_province_name: resolved.to_province_name,
     cod_amount: Math.max(0, Math.round(Number(codAmount) || 0)),
     weight,
-    length: 10,
-    width: 10,
-    height: 10,
+    length,
+    width,
+    height,
     service_type_id: serviceTypeId,
     note: String(note || "").slice(0, 200),
     content: itemRows.map((r) => r.name).join(", ").slice(0, 200),
     items: itemRows,
   };
-  if (Number.isFinite(districtId) && districtId > 0) {
-    body.to_district_id = districtId;
-  }
 
   const result = await ghnFetch(creds.apiUrl, "/v2/shipping-order/create", {
     token: creds.token,
@@ -130,9 +393,7 @@ export async function createGhnShippingOrder({
   });
   const code = Number(result.json?.code);
   const orderCode = String(
-    result.json?.data?.order_code ||
-      result.json?.data?.order_codes?.[0] ||
-      "",
+    result.json?.data?.order_code || result.json?.data?.order_codes?.[0] || "",
   ).trim();
   if (!result.ok || code !== 200 || !orderCode) {
     const msg =
@@ -148,6 +409,7 @@ export async function createGhnShippingOrder({
     orderCode,
     fee: Number(result.json?.data?.total_fee || result.json?.data?.fee || 0) || 0,
     expectedDelivery: result.json?.data?.expected_delivery_time || null,
+    resolvedAddress: resolved,
     raw: result.json?.data || null,
   };
 }
@@ -159,7 +421,7 @@ export async function createGhnShippingOrder({
 export async function getGhnPrintUrl(orderCode, format = "a5") {
   const creds = await ghnCreds();
   if (!creds.token) {
-    throw new Error("Thiếu GHN_TOKEN để in vận đơn.");
+    throw new Error("Thiếu Token GHN để in vận đơn.");
   }
   const code = String(orderCode || "").trim();
   if (!code) throw new Error("Thiếu mã vận đơn GHN (order_code).");

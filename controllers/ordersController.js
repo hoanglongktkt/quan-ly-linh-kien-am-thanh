@@ -2555,6 +2555,9 @@ export async function createManualOrder(req, res) {
       items,
       carrier = "self",
       packageWeight = 500,
+      packageLength = 10,
+      packageWidth = 10,
+      packageHeight = 10,
       shippingFee = 0,
       shippingFeePayer = "customer",
       orderDiscount = 0,
@@ -2562,6 +2565,8 @@ export async function createManualOrder(req, res) {
       customerName = "",
       customerPhone = "",
       save_to_address_book = false,
+      allowInspect = true,
+      partialDelivery = false,
     } = body;
 
     const addr = shippingAddress || {};
@@ -2572,18 +2577,23 @@ export async function createManualOrder(req, res) {
 
     if (!addr.provinceCode || !addr.wardCode || !addr.street?.trim()) {
       return res.status(400).json({
+        success: false,
         error:
           "Địa chỉ chưa đầy đủ. Vui lòng chọn Tỉnh, Phường/Xã và nhập địa chỉ chi tiết.",
       });
     }
     if (!isTwoLevel && !addr.districtCode) {
       return res.status(400).json({
+        success: false,
         error: "Địa chỉ 3 cấp cần chọn thêm Quận/Huyện.",
       });
     }
 
     if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: "Đơn hàng cần ít nhất 1 sản phẩm." });
+      return res.status(400).json({
+        success: false,
+        error: "Đơn hàng cần ít nhất 1 sản phẩm.",
+      });
     }
 
     const subtotal = items.reduce(
@@ -2601,6 +2611,12 @@ export async function createManualOrder(req, res) {
     const orderId = `ext-${orderSn}`;
     const provider = carrier === "ghn" || carrier === "spx" ? carrier : "self";
     const mapped = mapExternalStatus("created");
+    const lengthCm = Math.max(1, Math.min(150, Math.round(Number(packageLength) || 10)));
+    const widthCm = Math.max(1, Math.min(150, Math.round(Number(packageWidth) || 10)));
+    const heightCm = Math.max(1, Math.min(150, Math.round(Number(packageHeight) || 10)));
+    const inspectAllowed = allowInspect !== false && allowInspect !== "false" && allowInspect !== 0;
+    const partial = partialDelivery === true || partialDelivery === "true" || partialDelivery === 1;
+
     const lineItems = items.slice(0, 80).map((it) => ({
       productId: String(it.productId || ""),
       productTitle: String(it.productTitle || it.name || ""),
@@ -2609,10 +2625,10 @@ export async function createManualOrder(req, res) {
       sku: String(it.sku || ""),
       quantity: Number(it.quantity) || 0,
       price: Number(it.price) || 0,
+      weightGrams: Math.max(1, Math.round(Number(it.weightGrams || it.weight) || 100)),
     }));
 
     let trackingNumber = "";
-    let carrierError = "";
     let logisticsResult = null;
     const logisticsPayload =
       provider !== "self"
@@ -2630,8 +2646,13 @@ export async function createManualOrder(req, res) {
             },
             {
               weight: Number(packageWeight) || 500,
+              length: lengthCm,
+              width: widthCm,
+              height: heightCm,
               note: carrierNotes || "",
               codAmount: totalAmount,
+              allowInspect: inspectAllowed,
+              partialDelivery: partial,
             },
           )
         : null;
@@ -2651,14 +2672,29 @@ export async function createManualOrder(req, res) {
           address: addr,
           items: lineItems,
           weightGrams: packageWeight,
+          length: lengthCm,
+          width: widthCm,
+          height: heightCm,
           codAmount: totalAmount,
           note: carrierNotes,
           shippingFeePayer,
+          allowInspect: inspectAllowed,
+          partialDelivery: partial,
         });
         trackingNumber = String(logisticsResult.trackingNo || "").trim();
       } catch (ghnErr) {
-        carrierError = ghnErr?.message || "GHN tạo vận đơn thất bại";
+        const carrierError = ghnErr?.message || "GHN tạo vận đơn thất bại";
         console.error("[Orders manual] GHN create:", carrierError);
+        return res.status(400).json({
+          success: false,
+          error: `Lỗi từ hãng: ${carrierError}`,
+        });
+      }
+      if (!trackingNumber) {
+        return res.status(400).json({
+          success: false,
+          error: "Lỗi từ hãng: GHN không trả mã vận đơn (tracking number).",
+        });
       }
     } else if (provider === "spx") {
       try {
@@ -2671,12 +2707,23 @@ export async function createManualOrder(req, res) {
           weightGrams: packageWeight,
           codAmount: totalAmount,
           note: carrierNotes,
+          allowInspect: inspectAllowed,
           creds: spxCredsDb,
         });
         trackingNumber = String(logisticsResult.trackingNo || "").trim();
       } catch (spxErr) {
-        carrierError = spxErr?.message || "SPX tạo vận đơn thất bại";
+        const carrierError = spxErr?.message || "SPX tạo vận đơn thất bại";
         console.error("[Orders manual] SPX create:", carrierError);
+        return res.status(400).json({
+          success: false,
+          error: `Lỗi từ hãng: ${carrierError}`,
+        });
+      }
+      if (!trackingNumber) {
+        return res.status(400).json({
+          success: false,
+          error: "Lỗi từ hãng: SPX không trả mã vận đơn (tracking number).",
+        });
       }
     }
 
@@ -2720,7 +2767,12 @@ export async function createManualOrder(req, res) {
       isPrinted: false,
       items: lineItems,
       logisticsPayload,
-      carrier_error: carrierError || null,
+      packageLength: lengthCm,
+      packageWidth: widthCm,
+      packageHeight: heightCm,
+      allowInspect: inspectAllowed,
+      partialDelivery: partial,
+      carrier_error: null,
     };
 
     await persistExternalOrder(newOrder);
@@ -2749,13 +2801,16 @@ export async function createManualOrder(req, res) {
       success: true,
       order: newOrder,
       trackingNumber,
-      carrierError: carrierError || null,
+      carrierError: null,
       logisticsPayload,
       addressBookSaved: Boolean(addressBookEntry),
     });
   } catch (error) {
     console.error("[Orders manual]", error);
-    return res.status(500).json({ error: error.message || "Tạo đơn thủ công thất bại" });
+    return res.status(500).json({
+      success: false,
+      error: error.message || "Tạo đơn thủ công thất bại",
+    });
   }
 }
 

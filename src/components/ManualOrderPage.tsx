@@ -19,6 +19,7 @@ import {
   emptyStructuredAddress,
   formatFullAddress,
   isStructuredAddressComplete,
+  StructuredAddressValue,
 } from '../utils/vietnamAddress';
 import { saveAddressBookEntry } from '../utils/addressBook';
 import { normalizeProductSearchText } from '../utils/productSearch';
@@ -431,6 +432,11 @@ export default function ManualOrderPage({
   const [selectedCarrier, setSelectedCarrier] = useState<'self' | 'ghn' | 'spx'>('self');
   const [carrierNotes, setCarrierNotes] = useState('Cho xem hàng không cho thử');
   const [packageWeight, setPackageWeight] = useState(500);
+  const [packageLength, setPackageLength] = useState(10);
+  const [packageWidth, setPackageWidth] = useState(10);
+  const [packageHeight, setPackageHeight] = useState(10);
+  const [allowInspect, setAllowInspect] = useState(true);
+  const [partialDelivery, setPartialDelivery] = useState(false);
   const [shippingFee, setShippingFee] = useState(0);
   const [shippingFeePayer, setShippingFeePayer] = useState<'sender' | 'customer'>('customer');
   const [orderDiscount, setOrderDiscount] = useState(0);
@@ -591,21 +597,30 @@ export default function ManualOrderPage({
           items: orderItems,
           carrier: selectedCarrier,
           packageWeight: packageWeight || totalWeightGrams || 500,
+          packageLength,
+          packageWidth,
+          packageHeight,
           shippingFee,
           shippingFeePayer,
           orderDiscount,
           carrierNotes,
+          allowInspect,
+          partialDelivery,
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || 'Tạo đơn hàng thất bại!');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) {
+        alert(data.error || data.message || 'Tạo đơn hàng thất bại!');
         return;
       }
 
       const newOrder: Order = data.order;
-      const generatedTracking = data.trackingNumber || newOrder.trackingNumber || '';
+      const generatedTracking = data.trackingNumber || newOrder?.trackingNumber || '';
+      if (selectedCarrier !== 'self' && !generatedTracking) {
+        alert(data.error || 'Hãng không trả mã vận đơn. Đơn chưa được lưu.');
+        return;
+      }
 
       if (onUpdateProduct) {
         orderItems
@@ -639,10 +654,8 @@ export default function ManualOrderPage({
           timestamp: new Date().toISOString(),
           channel: selectedCarrier,
           type: 'stock_sync',
-          status: data.carrierError ? 'failed' : 'success',
-          message: data.carrierError
-            ? `[API LOGISTICS] ${selectedCarrier.toUpperCase()} lỗi: ${data.carrierError}`
-            : `[API LOGISTICS] Đã đẩy đơn sang ${selectedCarrier === 'ghn' ? 'Giao Hàng Nhanh' : 'Shopee SPX Express'}. Tracking: ${generatedTracking}`,
+          status: 'success',
+          message: `[API LOGISTICS] Đã đẩy đơn sang ${selectedCarrier === 'ghn' ? 'Giao Hàng Nhanh' : 'Shopee SPX Express'}. Tracking: ${generatedTracking}`,
         });
       }
 
@@ -671,9 +684,8 @@ export default function ManualOrderPage({
             ? 'Shopee SPX Express'
             : 'Tự giao hàng';
 
-      const warn = data.carrierError ? `\n\n⚠ Hãng: ${data.carrierError}` : '';
       alert(
-        `🎉 Đã tạo đơn ngoài sàn thành công!\n\n• Mã đơn: ${newOrder.orderSn}\n• Địa chỉ: ${fullAddr}\n• Vận chuyển: ${carrierLabel}\n• Mã vận đơn: ${generatedTracking || '(chưa có — xem tab Đơn ngoại sàn)'}${warn}\n\nĐã khấu trừ ${qtyTotal} sản phẩm trong kho (nếu có).`,
+        `🎉 Đã tạo đơn ngoài sàn thành công!\n\n• Mã đơn: ${newOrder.orderSn}\n• Địa chỉ: ${fullAddr}\n• Vận chuyển: ${carrierLabel}\n• Mã vận đơn: ${generatedTracking || '(tự giao — không có mã hãng)'}\n\nĐã khấu trừ ${qtyTotal} sản phẩm trong kho (nếu có).`,
       );
 
       onBack();
@@ -739,7 +751,7 @@ export default function ManualOrderPage({
             {selectedCarrier !== 'self' && (
               <div className="p-4 bg-blue-50/60 border border-blue-100 rounded-xl space-y-3">
                 <p className="text-xs text-blue-700 leading-relaxed">
-                  Đơn sẽ tự động khởi tạo vận đơn trên {selectedCarrier === 'ghn' ? 'GHN' : 'SPX'} sau khi tạo.
+                  Đơn chỉ được lưu khi {selectedCarrier === 'ghn' ? 'GHN' : 'SPX'} trả mã vận đơn thật.
                 </p>
                 <div>
                   <label className="text-[11px] font-semibold text-gray-500">Trọng lượng kiện (g)</label>
@@ -751,6 +763,59 @@ export default function ManualOrderPage({
                     className="w-full mt-1 px-3 py-2 bg-white rounded-xl border border-gray-200 text-sm font-mono"
                   />
                 </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="text-[11px] font-semibold text-gray-500">Dài (cm)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={150}
+                      value={packageLength}
+                      onChange={(e) => setPackageLength(Math.max(1, Number(e.target.value) || 10))}
+                      className="w-full mt-1 px-2 py-2 bg-white rounded-xl border border-gray-200 text-sm font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-gray-500">Rộng (cm)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={150}
+                      value={packageWidth}
+                      onChange={(e) => setPackageWidth(Math.max(1, Number(e.target.value) || 10))}
+                      className="w-full mt-1 px-2 py-2 bg-white rounded-xl border border-gray-200 text-sm font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-gray-500">Cao (cm)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={150}
+                      value={packageHeight}
+                      onChange={(e) => setPackageHeight(Math.max(1, Number(e.target.value) || 10))}
+                      className="w-full mt-1 px-2 py-2 bg-white rounded-xl border border-gray-200 text-sm font-mono"
+                    />
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 text-xs font-semibold text-gray-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={allowInspect}
+                    onChange={(e) => setAllowInspect(e.target.checked)}
+                    className="accent-blue-600 w-4 h-4"
+                  />
+                  Cho xem hàng
+                </label>
+                <label className="flex items-center gap-2 text-xs font-semibold text-gray-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={partialDelivery}
+                    onChange={(e) => setPartialDelivery(e.target.checked)}
+                    className="accent-blue-600 w-4 h-4"
+                  />
+                  Giao hàng một phần / Cho thử hàng
+                </label>
                 <div>
                   <label className="text-[11px] font-semibold text-gray-500">Ghi chú bưu tá</label>
                   <input

@@ -104822,8 +104822,8 @@ function readJsonFile() {
 }
 function pickSpx(raw) {
   const src = raw && typeof raw === "object" ? raw : {};
-  const clientId = String(src.clientId || src.userId || src.appId || "").trim();
-  const clientSecret = String(src.clientSecret || src.secret || "").trim();
+  const clientId = String(src.clientId || src.userId || src.appId || src.app_id || "").trim();
+  const clientSecret = String(src.clientSecret || src.secret || src.userSecret || src.user_secret || "").trim();
   const merchantId = String(src.merchantId || "").trim();
   const apiUrl = String(src.apiUrl || "").trim().replace(/\/$/, "");
   return { clientId, clientSecret, merchantId, apiUrl };
@@ -104897,26 +104897,27 @@ async function loadSpxCredentialsFromMongo() {
   }
   const stored = await loadLogisticsSettingsFromStore();
   const spxRaw = stored?.spx && typeof stored.spx === "object" ? stored.spx : stored || {};
-  const clientId = String(
-    spxRaw.clientId || spxRaw.userId || spxRaw.appId || stored?.clientId || ""
+  const userId = String(
+    spxRaw.userId || spxRaw.clientId || spxRaw.appId || spxRaw.app_id || stored?.userId || stored?.clientId || ""
   ).trim();
-  const clientSecret = String(
-    spxRaw.clientSecret || spxRaw.secret || stored?.clientSecret || ""
+  const secret = String(
+    spxRaw.secret || spxRaw.clientSecret || spxRaw.userSecret || spxRaw.user_secret || stored?.secret || stored?.clientSecret || ""
   ).trim();
   const merchantId = String(spxRaw.merchantId || stored?.merchantId || "").trim();
   const apiUrl = String(spxRaw.apiUrl || stored?.apiUrl || "https://spx.vn").trim().replace(/\/$/, "");
-  if (!clientId || !clientSecret) {
+  if (!userId || !secret) {
     throw new Error(
-      "Thi\u1EBFu SPX Client ID / Client Secret tr\xEAn Database. V\xE0o C\xE0i \u0111\u1EB7t \u2192 nh\u1EADp Client ID, Client Secret, Merchant ID r\u1ED3i b\u1EA5m L\u01B0u c\u1EA5u h\xECnh SPX."
+      "Thi\u1EBFu SPX User ID / Secret tr\xEAn Database. V\xE0o C\xE0i \u0111\u1EB7t \u2192 nh\u1EADp User ID (ho\u1EB7c Client ID) v\xE0 Secret r\u1ED3i b\u1EA5m L\u01B0u c\u1EA5u h\xECnh SPX."
     );
   }
   return {
-    clientId,
-    clientSecret,
+    userId,
+    secret,
+    clientId: userId,
+    clientSecret: secret,
+    appId: userId,
     merchantId,
-    apiUrl,
-    userId: clientId,
-    secret: clientSecret
+    apiUrl
   };
 }
 async function saveLogisticsConfig(partial) {
@@ -111277,11 +111278,31 @@ function saveAddressBookEntry(entry) {
 
 // services/ghnLogistics.js
 var TIMEOUT_MS = 15e3;
+var GHN_CACHE_TTL_MS = 24 * 60 * 60 * 1e3;
+var MAX_DISTRICT_SCAN = 40;
 var PRINT_FORMATS = {
   a5: "printA5",
   a6: "printA6",
   "80x80": "print80x80",
   "52x70": "print52x70"
+};
+var ALIASES = {
+  hcm: "ho chi minh",
+  tphcm: "ho chi minh",
+  "tp hcm": "ho chi minh",
+  "tp ho chi minh": "ho chi minh",
+  "sai gon": "ho chi minh",
+  hn: "ha noi",
+  "tp ha noi": "ha noi",
+  dn: "da nang",
+  "tp da nang": "da nang"
+};
+var ghnMasterCache = {
+  at: 0,
+  tokenKey: "",
+  provinces: [],
+  districts: /* @__PURE__ */ new Map(),
+  wards: /* @__PURE__ */ new Map()
 };
 function sleep4(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
@@ -111289,6 +111310,54 @@ function sleep4(ms) {
 async function ghnCreds() {
   const { ghn } = await loadLogisticsConfig();
   return ghn;
+}
+function normalizeVnName(s2) {
+  return String(s2 || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+function unitName(unit) {
+  return String(
+    unit?.ProvinceName || unit?.province_name || unit?.DistrictName || unit?.district_name || unit?.WardName || unit?.ward_name || unit?.name || ""
+  ).trim();
+}
+function matchNamedUnit(list, query) {
+  if (!query?.trim() || !Array.isArray(list) || !list.length) return null;
+  const raw = normalizeVnName(query);
+  const expanded = ALIASES[raw] || raw;
+  const stripPrefix = (n) => n.replace(/^(tinh|thanh pho|tp|quan|huyen|thi xa|phuong|xa|thi tran)\s+/, "");
+  let best = null;
+  let bestScore = 0;
+  for (let i2 = 0; i2 < list.length; i2 += 1) {
+    const n = normalizeVnName(unitName(list[i2]));
+    if (!n) continue;
+    let score = 0;
+    if (n === expanded || n === raw) score = 100;
+    else if (n.includes(expanded) || expanded.includes(n)) score = 80;
+    else {
+      const stripped = stripPrefix(n);
+      const qStripped = stripPrefix(expanded);
+      if (stripped === qStripped || stripped === expanded) score = 70;
+      else if (stripped.includes(qStripped) || qStripped.includes(stripped)) score = 60;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = list[i2];
+    }
+  }
+  return bestScore >= 60 ? best : null;
+}
+function getMasterCache(token) {
+  const tokenKey = String(token || "").slice(0, 12);
+  const now = Date.now();
+  if (!ghnMasterCache || ghnMasterCache.tokenKey !== tokenKey || now - ghnMasterCache.at > GHN_CACHE_TTL_MS) {
+    ghnMasterCache = {
+      at: now,
+      tokenKey,
+      provinces: [],
+      districts: /* @__PURE__ */ new Map(),
+      wards: /* @__PURE__ */ new Map()
+    };
+  }
+  return ghnMasterCache;
 }
 async function ghnFetch2(apiUrl, path21, { method = "POST", token, shopId, body } = {}) {
   const controller = new AbortController();
@@ -111322,11 +111391,140 @@ async function ghnFetch2(apiUrl, path21, { method = "POST", token, shopId, body 
     clearTimeout(timer);
   }
 }
-function requiredNoteFromText(note) {
+async function ghnMasterList(creds, path21, body) {
+  const result = await ghnFetch2(creds.apiUrl, path21, {
+    method: "POST",
+    token: creds.token,
+    shopId: creds.shopId || void 0,
+    body: body || {}
+  });
+  const data = result.json?.data;
+  return Array.isArray(data) ? data : [];
+}
+async function loadGhnProvinces(creds) {
+  const cache = getMasterCache(creds.token);
+  if (cache.provinces.length) return cache.provinces;
+  const rows = await ghnMasterList(creds, "/master-data/province", {});
+  cache.provinces = rows;
+  return rows;
+}
+async function loadGhnDistricts(creds, provinceId) {
+  const key = String(provinceId);
+  const cache = getMasterCache(creds.token);
+  if (cache.districts.has(key)) return cache.districts.get(key) || [];
+  const rows = await ghnMasterList(creds, "/master-data/district", {
+    province_id: Number(provinceId) || provinceId
+  });
+  const filtered = rows.filter(
+    (d) => String(d.ProvinceID ?? d.province_id ?? "") === String(provinceId)
+  );
+  const list = filtered.length ? filtered : rows;
+  cache.districts.set(key, list);
+  return list;
+}
+async function loadGhnWards(creds, districtId) {
+  const key = String(districtId);
+  const cache = getMasterCache(creds.token);
+  if (cache.wards.has(key)) return cache.wards.get(key) || [];
+  const rows = await ghnMasterList(creds, "/master-data/ward", {
+    district_id: Number(districtId) || districtId
+  });
+  cache.wards.set(key, rows);
+  return rows;
+}
+function pickDistrictId(unit) {
+  const n = Number(unit?.DistrictID ?? unit?.district_id ?? unit?.id);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+function pickWardCode(unit) {
+  return String(unit?.WardCode ?? unit?.ward_code ?? unit?.id ?? "").trim();
+}
+async function resolveGhnAddress(address, credsIn) {
+  const creds = credsIn || await ghnCreds();
+  if (!creds?.token) {
+    throw new Error("Thi\u1EBFu Token GHN tr\xEAn Database. V\xE0o C\xE0i \u0111\u1EB7t \u2192 l\u01B0u Token GHN r\u1ED3i th\u1EED l\u1EA1i.");
+  }
+  const provinceName = String(address?.province || address?.to_province_name || "").trim();
+  const districtName = String(address?.district || address?.to_district_name || "").trim();
+  const wardName = String(address?.ward || address?.to_ward_name || "").trim();
+  if (!provinceName || !wardName) {
+    throw new Error("Thi\u1EBFu T\u1EC9nh/Th\xE0nh ho\u1EB7c Ph\u01B0\u1EDDng/X\xE3 \u0111\u1EC3 map \u0111\u1ECBa ch\u1EC9 GHN.");
+  }
+  const provinces = await loadGhnProvinces(creds);
+  const province = matchNamedUnit(provinces, provinceName);
+  if (!province) {
+    throw new Error(`GHN kh\xF4ng nh\u1EADn di\u1EC7n t\u1EC9nh/th\xE0nh: "${provinceName}".`);
+  }
+  const provinceId = Number(province.ProvinceID ?? province.province_id ?? province.id);
+  if (!Number.isFinite(provinceId) || provinceId <= 0) {
+    throw new Error(`GHN kh\xF4ng tr\u1EA3 ProvinceID cho "${provinceName}".`);
+  }
+  await sleep4(80);
+  const districts = await loadGhnDistricts(creds, provinceId);
+  let district = districtName ? matchNamedUnit(districts, districtName) : null;
+  if (!district && wardName && districts.length) {
+    const limit = Math.min(districts.length, MAX_DISTRICT_SCAN);
+    for (let i2 = 0; i2 < limit; i2 += 1) {
+      const d = districts[i2];
+      const did = pickDistrictId(d);
+      if (!did) continue;
+      if (i2 > 0) await sleep4(120);
+      const wards2 = await loadGhnWards(creds, did);
+      const w = matchNamedUnit(wards2, wardName);
+      if (w && pickWardCode(w)) {
+        return {
+          to_district_id: did,
+          to_ward_code: pickWardCode(w),
+          to_ward_name: unitName(w) || wardName,
+          to_district_name: unitName(d) || districtName,
+          to_province_name: unitName(province) || provinceName
+        };
+      }
+    }
+  }
+  if (!district) {
+    throw new Error(
+      `GHN kh\xF4ng nh\u1EADn di\u1EC7n qu\u1EADn/huy\u1EC7n cho "${districtName || wardName}" t\u1EA1i ${provinceName}. Ch\u1ECDn \u0111\u1EE7 T\u1EC9nh / Qu\u1EADn / Ph\u01B0\u1EDDng (\u0111\u1ECBa ch\u1EC9 3 c\u1EA5p) r\u1ED3i th\u1EED l\u1EA1i.`
+    );
+  }
+  const districtId = pickDistrictId(district);
+  if (!districtId) {
+    throw new Error(`GHN kh\xF4ng tr\u1EA3 DistrictID cho "${districtName || unitName(district)}".`);
+  }
+  await sleep4(80);
+  const wards = await loadGhnWards(creds, districtId);
+  const ward = matchNamedUnit(wards, wardName);
+  const wardCode = ward ? pickWardCode(ward) : "";
+  if (!ward || !wardCode) {
+    throw new Error(
+      `GHN kh\xF4ng nh\u1EADn di\u1EC7n ph\u01B0\u1EDDng/x\xE3: "${wardName}" (huy\u1EC7n ${districtName || districtId}).`
+    );
+  }
+  return {
+    to_district_id: districtId,
+    to_ward_code: String(wardCode),
+    to_ward_name: unitName(ward) || wardName,
+    to_district_name: unitName(district) || districtName,
+    to_province_name: unitName(province) || provinceName
+  };
+}
+function requiredNoteFromFlags({ note, allowInspect, allowTry }) {
+  if (allowTry === true || allowTry === "true") return "CHOTHUHANG";
+  if (allowInspect === false || allowInspect === "false") return "KHONGCHOXEMHANG";
+  if (allowInspect === true || allowInspect === "true") return "CHOXEMHANGKHONGTHU";
   const s2 = String(note || "").toUpperCase();
   if (s2.includes("THU HANG") || s2.includes("TH\u1EEC")) return "CHOTHUHANG";
   if (s2.includes("KHONGCHOXEM") || s2.includes("KH\xD4NG CHO XEM")) return "KHONGCHOXEMHANG";
   return "CHOXEMHANGKHONGTHU";
+}
+function paymentTypeIdFromPayer(shippingFeePayer) {
+  const payer = String(shippingFeePayer || "").toLowerCase();
+  if (payer === "shop" || payer === "sender") return 1;
+  return 2;
+}
+function clampCm(value, fallback = 10) {
+  const n = Math.round(Number(value) || fallback);
+  return Math.max(1, Math.min(150, n));
 }
 async function createGhnShippingOrder({
   clientOrderCode,
@@ -111336,52 +111534,69 @@ async function createGhnShippingOrder({
   weightGrams,
   codAmount,
   note,
-  shippingFeePayer
+  shippingFeePayer,
+  length: lengthIn,
+  width: widthIn,
+  height: heightIn,
+  allowInspect,
+  allowTry,
+  partialDelivery
 }) {
   const creds = await ghnCreds();
   if (!creds.token) {
-    throw new Error("Thi\u1EBFu GHN_TOKEN. V\xE0o C\xE0i \u0111\u1EB7t \u2192 l\u01B0u Token GHN ho\u1EB7c set env GHN_TOKEN.");
+    throw new Error("Thi\u1EBFu Token GHN tr\xEAn Database. V\xE0o C\xE0i \u0111\u1EB7t \u2192 l\u01B0u Token GHN r\u1ED3i th\u1EED l\u1EA1i.");
   }
   if (!creds.shopId) {
-    throw new Error("Thi\u1EBFu GHN_SHOP_ID. V\xE0o C\xE0i \u0111\u1EB7t \u2192 l\u01B0u Shop ID GHN ho\u1EB7c set env GHN_SHOP_ID.");
+    throw new Error("Thi\u1EBFu Shop ID GHN tr\xEAn Database. V\xE0o C\xE0i \u0111\u1EB7t \u2192 l\u01B0u Shop ID GHN r\u1ED3i th\u1EED l\u1EA1i.");
   }
-  const districtId = Number(address?.districtCode || address?.to_district_id);
-  const wardCode = String(address?.wardCode || address?.to_ward_code || "").trim();
+  const resolved = await resolveGhnAddress(address, creds);
   const toAddress = String(address?.street || address?.fullAddress || "").trim();
+  if (!toAddress) {
+    throw new Error("Thi\u1EBFu \u0111\u1ECBa ch\u1EC9 chi ti\u1EBFt ng\u01B0\u1EDDi nh\u1EADn (to_address).");
+  }
   const serviceTypeId = creds.service === "fast" ? 1 : 2;
-  const paymentTypeId = shippingFeePayer === "shop" ? 1 : 2;
+  const paymentTypeId = paymentTypeIdFromPayer(shippingFeePayer);
   const weight = Math.max(1, Math.round(Number(weightGrams) || 500));
+  const length = clampCm(lengthIn, 10);
+  const width = clampCm(widthIn, 10);
+  const height = clampCm(heightIn, 10);
   const itemRows = (Array.isArray(items) ? items : []).slice(0, 50).map((it) => ({
     name: String(it.productTitle || it.name || "H\xE0ng h\xF3a").slice(0, 120),
     code: String(it.sku || it.productId || "").slice(0, 50),
     quantity: Math.max(1, Math.round(Number(it.quantity) || 1)),
     price: Math.max(0, Math.round(Number(it.price) || 0)),
-    weight: Math.max(1, Math.round(weight / Math.max(1, items.length)))
+    weight: Math.max(1, Math.round(Number(it.weightGrams || it.weight) || weight / Math.max(1, items.length)))
   }));
+  if (itemRows.length === 0) {
+    throw new Error("GHN y\xEAu c\u1EA7u danh s\xE1ch s\u1EA3n ph\u1EA9m (Items) kh\xF4ng \u0111\u01B0\u1EE3c r\u1ED7ng.");
+  }
+  const requiredNote = requiredNoteFromFlags({
+    note,
+    allowInspect,
+    allowTry: allowTry === true || partialDelivery === true
+  });
   const body = {
     payment_type_id: paymentTypeId,
-    required_note: requiredNoteFromText(note),
+    required_note: requiredNote,
     client_order_code: String(clientOrderCode || "").slice(0, 50),
     to_name: String(customer?.name || "").slice(0, 80),
     to_phone: String(customer?.phone || "").replace(/\s+/g, "").slice(0, 20),
     to_address: toAddress.slice(0, 200),
-    to_ward_code: wardCode,
-    to_ward_name: String(address?.ward || "").trim(),
-    to_district_name: String(address?.district || "").trim(),
-    to_province_name: String(address?.province || "").trim(),
+    to_ward_code: resolved.to_ward_code,
+    to_district_id: resolved.to_district_id,
+    to_ward_name: resolved.to_ward_name,
+    to_district_name: resolved.to_district_name,
+    to_province_name: resolved.to_province_name,
     cod_amount: Math.max(0, Math.round(Number(codAmount) || 0)),
     weight,
-    length: 10,
-    width: 10,
-    height: 10,
+    length,
+    width,
+    height,
     service_type_id: serviceTypeId,
     note: String(note || "").slice(0, 200),
     content: itemRows.map((r2) => r2.name).join(", ").slice(0, 200),
     items: itemRows
   };
-  if (Number.isFinite(districtId) && districtId > 0) {
-    body.to_district_id = districtId;
-  }
   const result = await ghnFetch2(creds.apiUrl, "/v2/shipping-order/create", {
     token: creds.token,
     shopId: creds.shopId,
@@ -111401,13 +111616,14 @@ async function createGhnShippingOrder({
     orderCode,
     fee: Number(result.json?.data?.total_fee || result.json?.data?.fee || 0) || 0,
     expectedDelivery: result.json?.data?.expected_delivery_time || null,
+    resolvedAddress: resolved,
     raw: result.json?.data || null
   };
 }
 async function getGhnPrintUrl(orderCode, format = "a5") {
   const creds = await ghnCreds();
   if (!creds.token) {
-    throw new Error("Thi\u1EBFu GHN_TOKEN \u0111\u1EC3 in v\u1EADn \u0111\u01A1n.");
+    throw new Error("Thi\u1EBFu Token GHN \u0111\u1EC3 in v\u1EADn \u0111\u01A1n.");
   }
   const code = String(orderCode || "").trim();
   if (!code) throw new Error("Thi\u1EBFu m\xE3 v\u1EADn \u0111\u01A1n GHN (order_code).");
@@ -111431,24 +111647,28 @@ async function getGhnPrintUrl(orderCode, format = "a5") {
 // services/spxLogistics.js
 var import_crypto2 = __toESM(require("crypto"), 1);
 var TIMEOUT_MS2 = 15e3;
+var MAX_CREATE_PATHS = 3;
+var MAX_WAYBILL_PATHS = 4;
+var MAX_WAYBILL_BODIES = 4;
 function sleep5(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
-}
-async function spxCreds() {
-  const { spx } = await loadLogisticsConfig();
-  return spx;
 }
 function signBody(appId, secret, timestamp, rawBody) {
   const payload = `${appId}${timestamp}${rawBody}`;
   return import_crypto2.default.createHmac("sha256", String(secret)).update(payload).digest("hex");
 }
-async function spxFetch(apiUrl, path21, bodyObj, credsOverride) {
-  const creds = credsOverride || await spxCreds();
-  const appId = String(creds.clientId || creds.userId || "").trim();
-  const secret = String(creds.clientSecret || creds.secret || "").trim();
+function pickSpxAppId(creds) {
+  return String(creds?.userId || creds?.clientId || creds?.appId || "").trim();
+}
+function pickSpxSecret(creds) {
+  return String(creds?.secret || creds?.clientSecret || "").trim();
+}
+async function spxFetch(apiUrl, path21, bodyObj, creds) {
+  const appId = pickSpxAppId(creds);
+  const secret = pickSpxSecret(creds);
   if (!appId || !secret) {
     throw new Error(
-      "Thi\u1EBFu SPX Client ID / Client Secret tr\xEAn Database. V\xE0o C\xE0i \u0111\u1EB7t \u2192 nh\u1EADp Client ID, Client Secret, Merchant ID r\u1ED3i b\u1EA5m L\u01B0u c\u1EA5u h\xECnh SPX."
+      "Thi\u1EBFu SPX User ID / Secret tr\xEAn Database. V\xE0o C\xE0i \u0111\u1EB7t \u2192 nh\u1EADp User ID (ho\u1EB7c Client ID) v\xE0 Secret r\u1ED3i b\u1EA5m L\u01B0u c\u1EA5u h\xECnh SPX."
     );
   }
   const rawBody = JSON.stringify(bodyObj || {});
@@ -111464,6 +111684,7 @@ async function spxFetch(apiUrl, path21, bodyObj, credsOverride) {
         Accept: "application/json",
         "app-id": appId,
         appid: appId,
+        "user-id": appId,
         timestamp,
         sign
       },
@@ -111498,7 +111719,7 @@ function pickTracking(data) {
   const list = data.orders || data.order_list || data.tracking_no_list || data.data;
   const first = Array.isArray(list) ? list[0] : data;
   return String(
-    first?.tracking_no || first?.tracking_number || first?.waybill_no || first?.spx_tn || data.tracking_no || data.tracking_number || ""
+    first?.tracking_no || first?.tracking_number || first?.waybill_no || first?.spx_tn || first?.order_sn || data.tracking_no || data.tracking_number || ""
   ).trim();
 }
 function pickWaybill(data) {
@@ -111513,6 +111734,50 @@ function pickWaybill(data) {
   ).trim();
   return { url: url2, base64 };
 }
+function buildItemList(items, fallbackWeight) {
+  const rows = (Array.isArray(items) ? items : []).slice(0, 50);
+  if (!rows.length) {
+    return [
+      {
+        item_name: "Hang hoa",
+        name: "Hang hoa",
+        quantity: 1,
+        item_quantity: 1,
+        price: 0,
+        item_price: 0,
+        weight: Math.max(1, Math.round(Number(fallbackWeight) || 500)),
+        item_weight: Math.max(1, Math.round(Number(fallbackWeight) || 500))
+      }
+    ];
+  }
+  return rows.map((it) => {
+    const name = String(it.productTitle || it.name || "Hang hoa").slice(0, 120);
+    const qty = Math.max(1, Math.round(Number(it.quantity) || 1));
+    const price = Math.max(0, Math.round(Number(it.price) || 0));
+    const weight = Math.max(
+      1,
+      Math.round(Number(it.weightGrams || it.weight || it.item_weight) || 100)
+    );
+    return {
+      item_name: name,
+      name,
+      quantity: qty,
+      item_quantity: qty,
+      price,
+      item_price: price,
+      weight,
+      item_weight: weight
+    };
+  });
+}
+function buildReceiverAddress(address) {
+  return [
+    address?.street,
+    address?.ward,
+    address?.district,
+    address?.province
+  ].filter(Boolean).join(", ");
+}
 async function createSpxShippingOrder({
   clientOrderCode,
   customer,
@@ -111521,71 +111786,62 @@ async function createSpxShippingOrder({
   weightGrams,
   codAmount,
   note,
+  allowInspect,
   creds: credsIn
 }) {
   const creds = credsIn || await loadSpxCredentialsFromMongo();
   const apiUrl = creds.apiUrl;
-  const itemName = (Array.isArray(items) ? items : []).map((it) => String(it.productTitle || it.name || "H\xE0ng").slice(0, 80)).join(", ").slice(0, 200);
-  const body = {
-    orders: [
-      {
-        order_id: String(clientOrderCode || "").slice(0, 50),
-        merchant_id: creds.merchantId || void 0,
-        payment_role: 0,
-        cod_collection: Number(codAmount) > 0 ? 1 : 0,
-        cod_amount: Math.max(0, Math.round(Number(codAmount) || 0)),
-        item_name: itemName || "Hang hoa",
-        item_weight: Math.max(1, Math.round(Number(weightGrams) || 500)),
-        parcel_weight: Math.max(1, Math.round(Number(weightGrams) || 500)),
-        remark: String(note || "").slice(0, 200),
-        deliver_info: {
-          deliver_name: String(customer?.name || "").slice(0, 80),
-          deliver_phone: String(customer?.phone || "").replace(/\s+/g, "").slice(0, 20),
-          deliver_detail_address: String(address?.street || "").trim(),
-          deliver_address: [
-            address?.street,
-            address?.ward,
-            address?.district,
-            address?.province
-          ].filter(Boolean).join(", "),
-          deliver_ward: String(address?.ward || "").trim(),
-          deliver_district: String(address?.district || "").trim(),
-          deliver_province: String(address?.province || "").trim(),
-          deliver_ward_id: String(address?.wardCode || "").trim(),
-          deliver_district_id: String(address?.districtCode || "").trim(),
-          deliver_province_id: String(address?.provinceCode || "").trim()
-        }
-      }
-    ]
+  const userId = pickSpxAppId(creds);
+  const weight = Math.max(1, Math.round(Number(weightGrams) || 500));
+  const itemList = buildItemList(items, weight);
+  const receiverAddress = buildReceiverAddress(address) || String(address?.street || "").trim();
+  if (!receiverAddress) {
+    throw new Error("Thi\u1EBFu \u0111\u1ECBa ch\u1EC9 ng\u01B0\u1EDDi nh\u1EADn (receiver_address) \u0111\u1EC3 t\u1EA1o \u0111\u01A1n SPX.");
+  }
+  const orderRow = {
+    order_sn: String(clientOrderCode || "").slice(0, 50),
+    merchant_id: creds.merchantId || void 0,
+    user_id: userId || void 0,
+    weight,
+    allow_inspect: allowInspect !== false && allowInspect !== "false",
+    cod_amount: Math.max(0, Math.round(Number(codAmount) || 0)),
+    receiver_name: String(customer?.name || "").slice(0, 80),
+    receiver_phone: String(customer?.phone || "").replace(/\s+/g, "").slice(0, 20),
+    receiver_address: receiverAddress,
+    item_list: itemList,
+    remark: String(note || "").slice(0, 200)
   };
+  const payloads = [{ user_id: userId || void 0, orders: [orderRow] }, { ...orderRow, user_id: userId || void 0 }];
   const paths = [
     "/open/api/v1/order/create_order",
     "/open/api/v1/order/batch_create_order",
     "/open/api/order/create_order"
-  ];
+  ].slice(0, MAX_CREATE_PATHS);
   let lastErr = "SPX t\u1EA1o \u0111\u01A1n th\u1EA5t b\u1EA1i";
   for (let i2 = 0; i2 < paths.length; i2 += 1) {
-    if (i2 > 0) await sleep5(250);
-    const result = await spxFetch(apiUrl, paths[i2], body, creds);
-    if (isSpxSuccess(result.json)) {
-      const trackingNo = pickTracking(result.json?.data || result.json);
-      if (trackingNo) {
-        return {
-          provider: "spx",
-          trackingNo,
-          orderCode: trackingNo,
-          raw: result.json?.data || result.json
-        };
+    for (let p = 0; p < payloads.length; p += 1) {
+      if (i2 + p > 0) await sleep5(250);
+      const result = await spxFetch(apiUrl, paths[i2], payloads[p], creds);
+      if (isSpxSuccess(result.json)) {
+        const trackingNo = pickTracking(result.json?.data || result.json);
+        if (trackingNo) {
+          return {
+            provider: "spx",
+            trackingNo,
+            orderCode: trackingNo,
+            raw: result.json?.data || result.json
+          };
+        }
+        lastErr = "SPX t\u1EA1o \u0111\u01A1n xong nh\u01B0ng kh\xF4ng tr\u1EA3 tracking_no";
+        continue;
       }
-      lastErr = "SPX t\u1EA1o \u0111\u01A1n xong nh\u01B0ng kh\xF4ng tr\u1EA3 tracking_no";
-      continue;
+      lastErr = result.json?.message || result.json?.msg || result.json?.error || `SPX ${paths[i2]} HTTP ${result.status}`;
     }
-    lastErr = result.json?.message || result.json?.msg || result.json?.error || `SPX ${paths[i2]} HTTP ${result.status}`;
   }
   throw new Error(String(lastErr));
 }
 async function getSpxWaybill(trackingNo) {
-  const creds = await spxCreds();
+  const creds = await loadSpxCredentialsFromMongo();
   const tn = String(trackingNo || "").trim();
   if (!tn) throw new Error("Thi\u1EBFu m\xE3 v\u1EADn \u0111\u01A1n SPX (tracking_no).");
   const payloads = [
@@ -111593,18 +111849,18 @@ async function getSpxWaybill(trackingNo) {
     { tracking_nos: [tn] },
     { order_list: [{ tracking_no: tn }] },
     { tracking_no: tn }
-  ];
+  ].slice(0, MAX_WAYBILL_BODIES);
   const paths = [
     "/open/api/v1/order/batch_get_awb",
     "/open/api/v1/order/get_awb",
     "/open/api/order/batch_get_awb",
     "/open/api/v1/order/print_label"
-  ];
+  ].slice(0, MAX_WAYBILL_PATHS);
   let lastErr = "SPX kh\xF4ng tr\u1EA3 waybill";
   for (let p = 0; p < paths.length; p += 1) {
     for (let b = 0; b < payloads.length; b += 1) {
       if (p + b > 0) await sleep5(200);
-      const result = await spxFetch(creds.apiUrl, paths[p], payloads[b]);
+      const result = await spxFetch(creds.apiUrl, paths[p], payloads[b], creds);
       if (!isSpxSuccess(result.json) && result.status >= 400) {
         lastErr = result.json?.message || result.json?.msg || `SPX ${paths[p]} HTTP ${result.status}`;
         continue;
@@ -113656,13 +113912,18 @@ async function createManualOrder(req, res) {
       items,
       carrier = "self",
       packageWeight = 500,
+      packageLength = 10,
+      packageWidth = 10,
+      packageHeight = 10,
       shippingFee = 0,
       shippingFeePayer = "customer",
       orderDiscount = 0,
       carrierNotes = "",
       customerName = "",
       customerPhone = "",
-      save_to_address_book = false
+      save_to_address_book = false,
+      allowInspect = true,
+      partialDelivery = false
     } = body;
     const addr = shippingAddress || {};
     const addressMode = String(addr.addressMode || body.addressMode || "old3");
@@ -113671,16 +113932,21 @@ async function createManualOrder(req, res) {
     const phone = String(customerPhone || addr.phone || "").trim() || "0900000000";
     if (!addr.provinceCode || !addr.wardCode || !addr.street?.trim()) {
       return res.status(400).json({
+        success: false,
         error: "\u0110\u1ECBa ch\u1EC9 ch\u01B0a \u0111\u1EA7y \u0111\u1EE7. Vui l\xF2ng ch\u1ECDn T\u1EC9nh, Ph\u01B0\u1EDDng/X\xE3 v\xE0 nh\u1EADp \u0111\u1ECBa ch\u1EC9 chi ti\u1EBFt."
       });
     }
     if (!isTwoLevel && !addr.districtCode) {
       return res.status(400).json({
+        success: false,
         error: "\u0110\u1ECBa ch\u1EC9 3 c\u1EA5p c\u1EA7n ch\u1ECDn th\xEAm Qu\u1EADn/Huy\u1EC7n."
       });
     }
     if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: "\u0110\u01A1n h\xE0ng c\u1EA7n \xEDt nh\u1EA5t 1 s\u1EA3n ph\u1EA9m." });
+      return res.status(400).json({
+        success: false,
+        error: "\u0110\u01A1n h\xE0ng c\u1EA7n \xEDt nh\u1EA5t 1 s\u1EA3n ph\u1EA9m."
+      });
     }
     const subtotal = items.reduce(
       (acc, it) => acc + Number(it.price || 0) * Number(it.quantity || 0),
@@ -113693,6 +113959,11 @@ async function createManualOrder(req, res) {
     const orderId = `ext-${orderSn}`;
     const provider = carrier === "ghn" || carrier === "spx" ? carrier : "self";
     const mapped = mapExternalStatus("created");
+    const lengthCm = Math.max(1, Math.min(150, Math.round(Number(packageLength) || 10)));
+    const widthCm = Math.max(1, Math.min(150, Math.round(Number(packageWidth) || 10)));
+    const heightCm = Math.max(1, Math.min(150, Math.round(Number(packageHeight) || 10)));
+    const inspectAllowed = allowInspect !== false && allowInspect !== "false" && allowInspect !== 0;
+    const partial = partialDelivery === true || partialDelivery === "true" || partialDelivery === 1;
     const lineItems = items.slice(0, 80).map((it) => ({
       productId: String(it.productId || ""),
       productTitle: String(it.productTitle || it.name || ""),
@@ -113700,10 +113971,10 @@ async function createManualOrder(req, res) {
       productImage: it.productImage || "",
       sku: String(it.sku || ""),
       quantity: Number(it.quantity) || 0,
-      price: Number(it.price) || 0
+      price: Number(it.price) || 0,
+      weightGrams: Math.max(1, Math.round(Number(it.weightGrams || it.weight) || 100))
     }));
     let trackingNumber = "";
-    let carrierError = "";
     let logisticsResult = null;
     const logisticsPayload = provider !== "self" ? deps15.buildCarrierLogisticsPayload(
       provider,
@@ -113719,8 +113990,13 @@ async function createManualOrder(req, res) {
       },
       {
         weight: Number(packageWeight) || 500,
+        length: lengthCm,
+        width: widthCm,
+        height: heightCm,
         note: carrierNotes || "",
-        codAmount: totalAmount
+        codAmount: totalAmount,
+        allowInspect: inspectAllowed,
+        partialDelivery: partial
       }
     ) : null;
     if (logisticsPayload) {
@@ -113737,14 +114013,29 @@ async function createManualOrder(req, res) {
           address: addr,
           items: lineItems,
           weightGrams: packageWeight,
+          length: lengthCm,
+          width: widthCm,
+          height: heightCm,
           codAmount: totalAmount,
           note: carrierNotes,
-          shippingFeePayer
+          shippingFeePayer,
+          allowInspect: inspectAllowed,
+          partialDelivery: partial
         });
         trackingNumber = String(logisticsResult.trackingNo || "").trim();
       } catch (ghnErr) {
-        carrierError = ghnErr?.message || "GHN t\u1EA1o v\u1EADn \u0111\u01A1n th\u1EA5t b\u1EA1i";
+        const carrierError = ghnErr?.message || "GHN t\u1EA1o v\u1EADn \u0111\u01A1n th\u1EA5t b\u1EA1i";
         console.error("[Orders manual] GHN create:", carrierError);
+        return res.status(400).json({
+          success: false,
+          error: `L\u1ED7i t\u1EEB h\xE3ng: ${carrierError}`
+        });
+      }
+      if (!trackingNumber) {
+        return res.status(400).json({
+          success: false,
+          error: "L\u1ED7i t\u1EEB h\xE3ng: GHN kh\xF4ng tr\u1EA3 m\xE3 v\u1EADn \u0111\u01A1n (tracking number)."
+        });
       }
     } else if (provider === "spx") {
       try {
@@ -113757,12 +114048,23 @@ async function createManualOrder(req, res) {
           weightGrams: packageWeight,
           codAmount: totalAmount,
           note: carrierNotes,
+          allowInspect: inspectAllowed,
           creds: spxCredsDb
         });
         trackingNumber = String(logisticsResult.trackingNo || "").trim();
       } catch (spxErr) {
-        carrierError = spxErr?.message || "SPX t\u1EA1o v\u1EADn \u0111\u01A1n th\u1EA5t b\u1EA1i";
+        const carrierError = spxErr?.message || "SPX t\u1EA1o v\u1EADn \u0111\u01A1n th\u1EA5t b\u1EA1i";
         console.error("[Orders manual] SPX create:", carrierError);
+        return res.status(400).json({
+          success: false,
+          error: `L\u1ED7i t\u1EEB h\xE3ng: ${carrierError}`
+        });
+      }
+      if (!trackingNumber) {
+        return res.status(400).json({
+          success: false,
+          error: "L\u1ED7i t\u1EEB h\xE3ng: SPX kh\xF4ng tr\u1EA3 m\xE3 v\u1EADn \u0111\u01A1n (tracking number)."
+        });
       }
     }
     const nowIso = (/* @__PURE__ */ new Date()).toISOString();
@@ -113805,7 +114107,12 @@ async function createManualOrder(req, res) {
       isPrinted: false,
       items: lineItems,
       logisticsPayload,
-      carrier_error: carrierError || null
+      packageLength: lengthCm,
+      packageWidth: widthCm,
+      packageHeight: heightCm,
+      allowInspect: inspectAllowed,
+      partialDelivery: partial,
+      carrier_error: null
     };
     await persistExternalOrder(newOrder);
     let addressBookEntry = null;
@@ -113831,13 +114138,16 @@ async function createManualOrder(req, res) {
       success: true,
       order: newOrder,
       trackingNumber,
-      carrierError: carrierError || null,
+      carrierError: null,
       logisticsPayload,
       addressBookSaved: Boolean(addressBookEntry)
     });
   } catch (error) {
     console.error("[Orders manual]", error);
-    return res.status(500).json({ error: error.message || "T\u1EA1o \u0111\u01A1n th\u1EE7 c\xF4ng th\u1EA5t b\u1EA1i" });
+    return res.status(500).json({
+      success: false,
+      error: error.message || "T\u1EA1o \u0111\u01A1n th\u1EE7 c\xF4ng th\u1EA5t b\u1EA1i"
+    });
   }
 }
 async function printExternalWaybill(req, res) {
@@ -116473,8 +116783,8 @@ function isGeminiConfigured() {
 // services/addressMasterData.ts
 var GHN_BASE2 = String(process.env.GHN_API_URL || "").trim() || "https://online-gateway.ghn.vn/shiip/public-api";
 var GHN_TIMEOUT_MS2 = 1e4;
-var GHN_CACHE_TTL_MS = 24 * 60 * 60 * 1e3;
-var ALIASES = {
+var GHN_CACHE_TTL_MS2 = 24 * 60 * 60 * 1e3;
+var ALIASES2 = {
   hcm: "ho chi minh",
   tphcm: "ho chi minh",
   "tp hcm": "ho chi minh",
@@ -116486,15 +116796,15 @@ var ALIASES = {
   "tp da nang": "da nang"
 };
 var ghnCache = null;
-function normalizeVnName(s2) {
+function normalizeVnName2(s2) {
   return String(s2 || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
 }
-function matchNamedUnit(list, query) {
+function matchNamedUnit2(list, query) {
   if (!query?.trim() || !list.length) return void 0;
-  const raw = normalizeVnName(query);
-  const expanded = ALIASES[raw] || raw;
+  const raw = normalizeVnName2(query);
+  const expanded = ALIASES2[raw] || raw;
   const score = (name) => {
-    const n = normalizeVnName(name);
+    const n = normalizeVnName2(name);
     if (n === expanded || n === raw) return 100;
     if (n.includes(expanded) || expanded.includes(n)) return 80;
     const stripped = n.replace(
@@ -116532,7 +116842,7 @@ function readGhnToken2() {
 }
 function getGhnCache() {
   const now = Date.now();
-  if (!ghnCache || now - ghnCache.at > GHN_CACHE_TTL_MS) {
+  if (!ghnCache || now - ghnCache.at > GHN_CACHE_TTL_MS2) {
     ghnCache = { at: now, provinces: [], districts: /* @__PURE__ */ new Map(), wards: /* @__PURE__ */ new Map() };
   }
   return ghnCache;
@@ -116575,7 +116885,7 @@ async function ghnFetch3(path21, query) {
     clearTimeout(timer);
   }
 }
-async function loadGhnProvinces() {
+async function loadGhnProvinces2() {
   const cache = getGhnCache();
   if (cache.provinces.length) return cache.provinces;
   const rows = await ghnFetch3("/master-data/province");
@@ -116586,7 +116896,7 @@ async function loadGhnProvinces() {
   }));
   return cache.provinces;
 }
-async function loadGhnDistricts(provinceId) {
+async function loadGhnDistricts2(provinceId) {
   if (!provinceId) return [];
   const cache = getGhnCache();
   if (cache.districts.has(provinceId)) return cache.districts.get(provinceId) || [];
@@ -116599,7 +116909,7 @@ async function loadGhnDistricts(provinceId) {
   cache.districts.set(provinceId, list);
   return list;
 }
-async function loadGhnWards(districtId) {
+async function loadGhnWards2(districtId) {
   if (!districtId) return [];
   const cache = getGhnCache();
   if (cache.wards.has(districtId)) return cache.wards.get(districtId) || [];
@@ -116626,15 +116936,15 @@ function toCarrierIds(province, district, ward) {
 async function matchGhn(provinceName, districtName, wardName) {
   if (!readGhnToken2()) return null;
   try {
-    const provinces = await loadGhnProvinces();
-    const province = toNamedId(matchNamedUnit(provinces, provinceName));
+    const provinces = await loadGhnProvinces2();
+    const province = toNamedId(matchNamedUnit2(provinces, provinceName));
     if (!province) return null;
-    const districts = await loadGhnDistricts(province.id);
-    const district = toNamedId(matchNamedUnit(districts, districtName));
+    const districts = await loadGhnDistricts2(province.id);
+    const district = toNamedId(matchNamedUnit2(districts, districtName));
     let ward = null;
     if (district) {
-      const wards = await loadGhnWards(district.id);
-      ward = toNamedId(matchNamedUnit(wards, wardName));
+      const wards = await loadGhnWards2(district.id);
+      ward = toNamedId(matchNamedUnit2(wards, wardName));
     }
     return toCarrierIds(province, district, ward);
   } catch (err) {
@@ -116653,15 +116963,15 @@ async function matchParsedAddressToMaster(parsed) {
   };
   try {
     const provinces = await listVnProvinces();
-    const province = toNamedId(matchNamedUnit(provinces, provinceName));
+    const province = toNamedId(matchNamedUnit2(provinces, provinceName));
     let district = null;
     let ward = null;
     if (province) {
       const districts = await listVnDistricts(province.id);
-      district = toNamedId(matchNamedUnit(districts, districtName));
+      district = toNamedId(matchNamedUnit2(districts, districtName));
       if (district) {
         const wards = await listVnWards(district.id);
-        ward = toNamedId(matchNamedUnit(wards, wardName));
+        ward = toNamedId(matchNamedUnit2(wards, wardName));
       }
     }
     const vn = { province, district, ward };
@@ -138313,25 +138623,23 @@ async function startServer() {
         to_district_name: addr.district,
         to_province_name: addr.province,
         weight: extras.weight,
+        length: extras.length || 10,
+        width: extras.width || 10,
+        height: extras.height || 10,
         note: extras.note,
-        cod_amount: extras.codAmount
+        cod_amount: extras.codAmount,
+        required_note: extras.allowInspect === false ? "KHONGCHOXEMHANG" : "CHOXEMHANGKHONGTHU"
       };
     }
     if (carrier === "spx") {
       return {
         provider: "spx",
-        deliver_info: {
-          deliver_name: customer.name,
-          deliver_phone: customer.phone,
-          deliver_detail_address: addr.street,
-          deliver_ward: addr.ward,
-          deliver_district: addr.district,
-          deliver_province: addr.province,
-          deliver_ward_id: addr.wardCode,
-          deliver_district_id: addr.districtCode,
-          deliver_province_id: addr.provinceCode
-        },
-        parcel_weight: extras.weight,
+        order_sn: "",
+        receiver_name: customer.name,
+        receiver_phone: customer.phone,
+        receiver_address: [addr.street, addr.ward, addr.district, addr.province].filter(Boolean).join(", "),
+        weight: extras.weight,
+        allow_inspect: extras.allowInspect !== false,
         remark: extras.note,
         cod_amount: extras.codAmount
       };

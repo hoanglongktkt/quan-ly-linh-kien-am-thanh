@@ -20753,7 +20753,16 @@ async function startServer() {
       ward: string;
       wardCode: string;
     },
-    extras: { weight: number; note: string; codAmount: number },
+    extras: {
+      weight: number;
+      note: string;
+      codAmount: number;
+      length?: number;
+      width?: number;
+      height?: number;
+      allowInspect?: boolean;
+      partialDelivery?: boolean;
+    },
   ) => {
     if (carrier === "ghn") {
       return {
@@ -20768,25 +20777,25 @@ async function startServer() {
         to_district_name: addr.district,
         to_province_name: addr.province,
         weight: extras.weight,
+        length: extras.length || 10,
+        width: extras.width || 10,
+        height: extras.height || 10,
         note: extras.note,
         cod_amount: extras.codAmount,
+        required_note: extras.allowInspect === false ? "KHONGCHOXEMHANG" : "CHOXEMHANGKHONGTHU",
       };
     }
     if (carrier === "spx") {
       return {
         provider: "spx",
-        deliver_info: {
-          deliver_name: customer.name,
-          deliver_phone: customer.phone,
-          deliver_detail_address: addr.street,
-          deliver_ward: addr.ward,
-          deliver_district: addr.district,
-          deliver_province: addr.province,
-          deliver_ward_id: addr.wardCode,
-          deliver_district_id: addr.districtCode,
-          deliver_province_id: addr.provinceCode,
-        },
-        parcel_weight: extras.weight,
+        order_sn: "",
+        receiver_name: customer.name,
+        receiver_phone: customer.phone,
+        receiver_address: [addr.street, addr.ward, addr.district, addr.province]
+          .filter(Boolean)
+          .join(", "),
+        weight: extras.weight,
+        allow_inspect: extras.allowInspect !== false,
         remark: extras.note,
         cod_amount: extras.codAmount,
       };

@@ -28,8 +28,8 @@ function readJsonFile() {
 
 function pickSpx(raw) {
   const src = raw && typeof raw === "object" ? raw : {};
-  const clientId = String(src.clientId || src.userId || src.appId || "").trim();
-  const clientSecret = String(src.clientSecret || src.secret || "").trim();
+  const clientId = String(src.clientId || src.userId || src.appId || src.app_id || "").trim();
+  const clientSecret = String(src.clientSecret || src.secret || src.userSecret || src.user_secret || "").trim();
   const merchantId = String(src.merchantId || "").trim();
   const apiUrl = String(src.apiUrl || "").trim().replace(/\/$/, "");
   return { clientId, clientSecret, merchantId, apiUrl };
@@ -117,35 +117,48 @@ export async function loadLogisticsConfig() {
   return mergeLogisticsSources(mongoDoc, file);
 }
 
-/** Tạo đơn SPX: chỉ đọc MongoDB meta._id = logistics_config (clientId / clientSecret / merchantId). */
+/** Tạo đơn SPX: chỉ đọc MongoDB meta._id = logistics_config. Không đọc process.env. */
 export async function loadSpxCredentialsFromMongo() {
   if (!isMongoReady()) {
     throw new Error("Chưa kết nối Database, không tạo được vận đơn SPX.");
   }
   const stored = await loadLogisticsSettingsFromStore();
   const spxRaw = stored?.spx && typeof stored.spx === "object" ? stored.spx : stored || {};
-  const clientId = String(
-    spxRaw.clientId || spxRaw.userId || spxRaw.appId || stored?.clientId || "",
+  const userId = String(
+    spxRaw.userId ||
+      spxRaw.clientId ||
+      spxRaw.appId ||
+      spxRaw.app_id ||
+      stored?.userId ||
+      stored?.clientId ||
+      "",
   ).trim();
-  const clientSecret = String(
-    spxRaw.clientSecret || spxRaw.secret || stored?.clientSecret || "",
+  const secret = String(
+    spxRaw.secret ||
+      spxRaw.clientSecret ||
+      spxRaw.userSecret ||
+      spxRaw.user_secret ||
+      stored?.secret ||
+      stored?.clientSecret ||
+      "",
   ).trim();
   const merchantId = String(spxRaw.merchantId || stored?.merchantId || "").trim();
   const apiUrl = String(spxRaw.apiUrl || stored?.apiUrl || "https://spx.vn")
     .trim()
     .replace(/\/$/, "");
-  if (!clientId || !clientSecret) {
+  if (!userId || !secret) {
     throw new Error(
-      "Thiếu SPX Client ID / Client Secret trên Database. Vào Cài đặt → nhập Client ID, Client Secret, Merchant ID rồi bấm Lưu cấu hình SPX.",
+      "Thiếu SPX User ID / Secret trên Database. Vào Cài đặt → nhập User ID (hoặc Client ID) và Secret rồi bấm Lưu cấu hình SPX.",
     );
   }
   return {
-    clientId,
-    clientSecret,
+    userId,
+    secret,
+    clientId: userId,
+    clientSecret: secret,
+    appId: userId,
     merchantId,
     apiUrl,
-    userId: clientId,
-    secret: clientSecret,
   };
 }
 
