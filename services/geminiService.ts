@@ -11,9 +11,9 @@ export type ParsedAddress = {
   detail: string;
 };
 
-const GEMINI_TIMEOUT_MS = 15_000;
+const GEMINI_TIMEOUT_MS = 8_000;
 const DEFAULT_MODEL = "gemini-1.5-flash";
-const FALLBACK_MODELS = ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-3.5-flash"];
+const FALLBACK_MODELS = ["gemini-3.5-flash", "gemini-2.0-flash"];
 
 const SYSTEM_PROMPT = `Bạn là chuyên gia bóc tách địa chỉ giao hàng Việt Nam.
 Nhiệm vụ: tách chuỗi địa chỉ thô thành JSON nghiêm ngặt, KHÔNG markdown, KHÔNG giải thích.
@@ -120,10 +120,12 @@ export async function parseAddressWithGemini(rawAddress: string): Promise<Parsed
   }
 
   const primary = String(process.env.GEMINI_ADDRESS_MODEL || DEFAULT_MODEL).trim() || DEFAULT_MODEL;
-  const models = [primary, ...FALLBACK_MODELS.filter((m) => m !== primary)];
+  const models = [primary, ...FALLBACK_MODELS.filter((m) => m !== primary)].slice(0, 2);
+  const startedAt = Date.now();
 
   let lastError: unknown = null;
   for (let i = 0; i < models.length; i += 1) {
+    if (Date.now() - startedAt > GEMINI_TIMEOUT_MS + 2_000) break;
     const modelName = models[i];
     try {
       const text = await generateWithModel(modelName, raw);
@@ -135,7 +137,7 @@ export async function parseAddressWithGemini(rawAddress: string): Promise<Parsed
     } catch (err) {
       lastError = err;
       if (!isModelUnavailable(err) || i >= models.length - 1) break;
-      await sleep(400);
+      await sleep(200);
     }
   }
 

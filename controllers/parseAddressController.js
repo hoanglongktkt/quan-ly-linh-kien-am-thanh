@@ -1,28 +1,47 @@
 import { isGeminiConfigured, parseAddressWithGemini } from "../services/geminiService.ts";
 import { matchParsedAddressToMaster } from "../services/addressMasterData.ts";
 
+const HANDLER_TIMEOUT_MS = 15_000;
+const MATCH_TIMEOUT_MS = 5_000;
+
 function emptyParsed(detail = "") {
   return { province: "", district: "", ward: "", detail };
 }
 
-function fallbackPayload(rawAddress, message) {
+function errorPayload(rawAddress, message) {
   const raw = String(rawAddress || "").trim();
   return {
     success: false,
     fallback: true,
+    error: message || "Lỗi AI tách địa chỉ. Vui lòng chọn thủ công.",
+    message: message || "Lỗi AI tách địa chỉ. Vui lòng chọn thủ công.",
     raw_address: raw,
     parsed: emptyParsed(raw),
     matched: null,
     ghn: null,
     spx: null,
-    message: message || "Không tách được địa chỉ. Vui lòng nhập thủ công.",
   };
+}
+
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(label)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+function sendJson(res, status, body) {
+  if (res.headersSent) return;
+  return res.status(status).json(body);
 }
 
 /**
  * POST /api/orders/parse-address
  * Body: { raw_address }
- * Lỗi AI/master-data → 200 + chuỗi gốc để user nhập tay.
+ * Gemini lỗi / timeout → 500 JSON (không để request treo).
  */
 export async function parseOrderAddress(req, res) {
   const raw = String(
@@ -30,20 +49,40 @@ export async function parseOrderAddress(req, res) {
   ).trim();
 
   if (!raw) {
-    return res.status(400).json(fallbackPayload("", "Thiếu raw_address"));
+    return sendJson(res, 400, errorPayload("", "Thiếu raw_address"));
   }
 
   try {
     if (!isGeminiConfigured()) {
-      return res.json(
-        fallbackPayload(raw, "Chưa cấu hình GEMINI_API_KEY. Vui lòng nhập địa chỉ thủ công."),
+      return sendJson(
+        res,
+        500,
+        errorPayload(raw, "Lỗi AI: chưa cấu hình GEMINI_API_KEY. Vui lòng chọn thủ công."),
       );
     }
 
-    const parsed = await parseAddressWithGemini(raw);
-    const master = await matchParsedAddressToMaster(parsed);
+    const parsed = await withTimeout(
+      parseAddressWithGemini(raw),
+      HANDLER_TIMEOUT_MS,
+      "PARSE_ADDRESS_TIMEOUT",
+    );
 
-    return res.json({
+    let master = {
+      vn: { province: null, district: null, ward: null },
+      ghn: null,
+      spx: null,
+    };
+    try {
+      master = await withTimeout(
+        matchParsedAddressToMaster(parsed),
+        MATCH_TIMEOUT_MS,
+        "ADDRESS_MATCH_TIMEOUT",
+      );
+    } catch (matchErr) {
+      console.warn("[parse-address] master match:", matchErr?.message || matchErr);
+    }
+
+    return sendJson(res, 200, {
       success: true,
       fallback: false,
       raw_address: raw,
@@ -58,8 +97,16 @@ export async function parseOrderAddress(req, res) {
     });
   } catch (error) {
     console.error("[parse-address]", error?.message || error);
-    return res.json(
-      fallbackPayload(raw, "AI tạm thời không phản hồi. Vui lòng nhập địa chỉ thủ công."),
+    const timedOut = String(error?.message || "").includes("TIMEOUT");
+    return sendJson(
+      res,
+      500,
+      errorPayload(
+        raw,
+        timedOut
+          ? "Lỗi AI: quá thời gian chờ. Vui lòng chọn thủ công."
+          : "Lỗi AI tách địa chỉ. Vui lòng chọn thủ công.",
+      ),
     );
   }
 }

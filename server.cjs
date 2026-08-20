@@ -98882,8 +98882,8 @@ function wrapSDKError(error) {
   return error;
 }
 function wrapAPIError(error) {
-  const errorPayload = getErrorPayload(error);
-  const wrapped = APIError.generate(error.statusCode, errorPayload, error.message, error.headers);
+  const errorPayload2 = getErrorPayload(error);
+  const wrapped = APIError.generate(error.statusCode, errorPayload2, error.message, error.headers);
   defineReadonly(wrapped, "body", error.body);
   defineReadonly(wrapped, "contentType", error.contentType);
   defineReadonly(wrapped, "rawResponse", error.rawResponse);
@@ -115229,9 +115229,9 @@ var GoogleGenerativeAI = class {
 };
 
 // services/geminiService.ts
-var GEMINI_TIMEOUT_MS = 15e3;
+var GEMINI_TIMEOUT_MS = 8e3;
 var DEFAULT_MODEL = "gemini-1.5-flash";
-var FALLBACK_MODELS = ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-3.5-flash"];
+var FALLBACK_MODELS = ["gemini-3.5-flash", "gemini-2.0-flash"];
 var SYSTEM_PROMPT = `B\u1EA1n l\xE0 chuy\xEAn gia b\xF3c t\xE1ch \u0111\u1ECBa ch\u1EC9 giao h\xE0ng Vi\u1EC7t Nam.
 Nhi\u1EC7m v\u1EE5: t\xE1ch chu\u1ED7i \u0111\u1ECBa ch\u1EC9 th\xF4 th\xE0nh JSON nghi\xEAm ng\u1EB7t, KH\xD4NG markdown, KH\xD4NG gi\u1EA3i th\xEDch.
 
@@ -115311,9 +115311,11 @@ async function parseAddressWithGemini(rawAddress) {
     return { province: "", district: "", ward: "", detail: "" };
   }
   const primary = String(process.env.GEMINI_ADDRESS_MODEL || DEFAULT_MODEL).trim() || DEFAULT_MODEL;
-  const models = [primary, ...FALLBACK_MODELS.filter((m2) => m2 !== primary)];
+  const models = [primary, ...FALLBACK_MODELS.filter((m2) => m2 !== primary)].slice(0, 2);
+  const startedAt = Date.now();
   let lastError = null;
   for (let i2 = 0; i2 < models.length; i2 += 1) {
+    if (Date.now() - startedAt > GEMINI_TIMEOUT_MS + 2e3) break;
     const modelName = models[i2];
     try {
       const text = await generateWithModel(modelName, raw);
@@ -115325,7 +115327,7 @@ async function parseAddressWithGemini(rawAddress) {
     } catch (err) {
       lastError = err;
       if (!isModelUnavailable(err) || i2 >= models.length - 1) break;
-      await sleep3(400);
+      await sleep3(200);
     }
   }
   throw lastError instanceof Error ? lastError : new Error("GEMINI_PARSE_FAILED");
@@ -115540,38 +115542,73 @@ async function matchParsedAddressToMaster(parsed) {
 }
 
 // controllers/parseAddressController.js
+var HANDLER_TIMEOUT_MS = 15e3;
+var MATCH_TIMEOUT_MS = 5e3;
 function emptyParsed(detail = "") {
   return { province: "", district: "", ward: "", detail };
 }
-function fallbackPayload(rawAddress, message) {
+function errorPayload(rawAddress, message) {
   const raw = String(rawAddress || "").trim();
   return {
     success: false,
     fallback: true,
+    error: message || "L\u1ED7i AI t\xE1ch \u0111\u1ECBa ch\u1EC9. Vui l\xF2ng ch\u1ECDn th\u1EE7 c\xF4ng.",
+    message: message || "L\u1ED7i AI t\xE1ch \u0111\u1ECBa ch\u1EC9. Vui l\xF2ng ch\u1ECDn th\u1EE7 c\xF4ng.",
     raw_address: raw,
     parsed: emptyParsed(raw),
     matched: null,
     ghn: null,
-    spx: null,
-    message: message || "Kh\xF4ng t\xE1ch \u0111\u01B0\u1EE3c \u0111\u1ECBa ch\u1EC9. Vui l\xF2ng nh\u1EADp th\u1EE7 c\xF4ng."
+    spx: null
   };
+}
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(label)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+function sendJson2(res, status, body) {
+  if (res.headersSent) return;
+  return res.status(status).json(body);
 }
 async function parseOrderAddress(req, res) {
   const raw = String(
     req.body?.raw_address || req.body?.rawAddress || req.body?.address || ""
   ).trim();
   if (!raw) {
-    return res.status(400).json(fallbackPayload("", "Thi\u1EBFu raw_address"));
+    return sendJson2(res, 400, errorPayload("", "Thi\u1EBFu raw_address"));
   }
   try {
     if (!isGeminiConfigured()) {
-      return res.json(
-        fallbackPayload(raw, "Ch\u01B0a c\u1EA5u h\xECnh GEMINI_API_KEY. Vui l\xF2ng nh\u1EADp \u0111\u1ECBa ch\u1EC9 th\u1EE7 c\xF4ng.")
+      return sendJson2(
+        res,
+        500,
+        errorPayload(raw, "L\u1ED7i AI: ch\u01B0a c\u1EA5u h\xECnh GEMINI_API_KEY. Vui l\xF2ng ch\u1ECDn th\u1EE7 c\xF4ng.")
       );
     }
-    const parsed = await parseAddressWithGemini(raw);
-    const master = await matchParsedAddressToMaster(parsed);
-    return res.json({
+    const parsed = await withTimeout(
+      parseAddressWithGemini(raw),
+      HANDLER_TIMEOUT_MS,
+      "PARSE_ADDRESS_TIMEOUT"
+    );
+    let master = {
+      vn: { province: null, district: null, ward: null },
+      ghn: null,
+      spx: null
+    };
+    try {
+      master = await withTimeout(
+        matchParsedAddressToMaster(parsed),
+        MATCH_TIMEOUT_MS,
+        "ADDRESS_MATCH_TIMEOUT"
+      );
+    } catch (matchErr) {
+      console.warn("[parse-address] master match:", matchErr?.message || matchErr);
+    }
+    return sendJson2(res, 200, {
       success: true,
       fallback: false,
       raw_address: raw,
@@ -115586,8 +115623,14 @@ async function parseOrderAddress(req, res) {
     });
   } catch (error) {
     console.error("[parse-address]", error?.message || error);
-    return res.json(
-      fallbackPayload(raw, "AI t\u1EA1m th\u1EDDi kh\xF4ng ph\u1EA3n h\u1ED3i. Vui l\xF2ng nh\u1EADp \u0111\u1ECBa ch\u1EC9 th\u1EE7 c\xF4ng.")
+    const timedOut = String(error?.message || "").includes("TIMEOUT");
+    return sendJson2(
+      res,
+      500,
+      errorPayload(
+        raw,
+        timedOut ? "L\u1ED7i AI: qu\xE1 th\u1EDDi gian ch\u1EDD. Vui l\xF2ng ch\u1ECDn th\u1EE7 c\xF4ng." : "L\u1ED7i AI t\xE1ch \u0111\u1ECBa ch\u1EC9. Vui l\xF2ng ch\u1ECDn th\u1EE7 c\xF4ng."
+      )
     );
   }
 }

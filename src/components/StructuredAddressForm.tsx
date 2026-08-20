@@ -1,6 +1,10 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, Sparkles } from 'lucide-react';
 import { StructuredAddressValue, VnAdminUnit } from '../utils/vietnamAddress';
+
+const PARSE_TIMEOUT_MS = 16_000;
+const LIST_TIMEOUT_MS = 8_000;
+const MANUAL_ERROR = 'AI tách lỗi hoặc quá tải. Vui lòng chọn thủ công.';
 
 function friendlyGeminiError(res: Response, data: unknown): string {
   const err = data as { error?: string; message?: string };
@@ -23,11 +27,11 @@ function friendlyGeminiError(res: Response, data: unknown): string {
       return 'Gemini API Key không hợp lệ. Vào Cài đặt → Cấu hình AI để cập nhật key.';
     }
     if (raw.startsWith('{') || raw.includes('"error"') || raw.includes('GoogleGenerativeAI')) {
-      return 'AI tạm thời không phản hồi. Vui lòng nhập địa chỉ thủ công hoặc thử lại sau.';
+      return MANUAL_ERROR;
     }
     return raw;
   }
-  return 'Không thể phân tích địa chỉ bằng AI. Vui lòng nhập thủ công.';
+  return MANUAL_ERROR;
 }
 
 interface StructuredAddressFormProps {
@@ -44,23 +48,29 @@ export default function StructuredAddressForm({
   const [provinces, setProvinces] = useState<VnAdminUnit[]>([]);
   const [districts, setDistricts] = useState<VnAdminUnit[]>([]);
   const [wards, setWards] = useState<VnAdminUnit[]>([]);
-  const [loadingProvinces, setLoadingProvinces] = useState(false);
-  const [loadingDistricts, setLoadingDistricts] = useState(false);
-  const [loadingWards, setLoadingWards] = useState(false);
   const [quickPaste, setQuickPaste] = useState('');
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState('');
+  const parseAbortRef = useRef<AbortController | null>(null);
+  const parseGenRef = useRef(0);
+  const lastParsedRef = useRef('');
 
   const fetchProvinces = useCallback(async () => {
-    setLoadingProvinces(true);
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), LIST_TIMEOUT_MS);
     try {
-      const res = await fetch('/api/vietnam-address/provinces', { headers: authHeaders() });
+      const res = await fetch('/api/vietnam-address/provinces', {
+        headers: authHeaders(),
+        signal: controller.signal,
+      });
       if (res.ok) {
         const data = await res.json();
         setProvinces(Array.isArray(data) ? data : []);
       }
+    } catch {
+      /* dropdown vẫn mở — user chọn thủ công khi list đã có */
     } finally {
-      setLoadingProvinces(false);
+      window.clearTimeout(timer);
     }
   }, [authHeaders]);
 
@@ -68,24 +78,24 @@ export default function StructuredAddressForm({
     async (provinceCode: string) => {
       if (!provinceCode) {
         setDistricts([]);
-        return [];
+        return;
       }
-      setLoadingDistricts(true);
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), LIST_TIMEOUT_MS);
       try {
         const res = await fetch(`/api/vietnam-address/districts/${provinceCode}`, {
           headers: authHeaders(),
+          signal: controller.signal,
         });
         if (res.ok) {
           const data = await res.json();
-          const list = Array.isArray(data) ? data : [];
-          setDistricts(list);
-          return list;
+          setDistricts(Array.isArray(data) ? data : []);
         }
+      } catch {
+        /* giữ list cũ / rỗng — không khóa select */
       } finally {
-        setLoadingDistricts(false);
+        window.clearTimeout(timer);
       }
-      setDistricts([]);
-      return [];
     },
     [authHeaders]
   );
@@ -94,24 +104,24 @@ export default function StructuredAddressForm({
     async (districtCode: string) => {
       if (!districtCode) {
         setWards([]);
-        return [];
+        return;
       }
-      setLoadingWards(true);
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), LIST_TIMEOUT_MS);
       try {
         const res = await fetch(`/api/vietnam-address/wards/${districtCode}`, {
           headers: authHeaders(),
+          signal: controller.signal,
         });
         if (res.ok) {
           const data = await res.json();
-          const list = Array.isArray(data) ? data : [];
-          setWards(list);
-          return list;
+          setWards(Array.isArray(data) ? data : []);
         }
+      } catch {
+        /* giữ list cũ / rỗng — không khóa select */
       } finally {
-        setLoadingWards(false);
+        window.clearTimeout(timer);
       }
-      setWards([]);
-      return [];
     },
     [authHeaders]
   );
@@ -133,7 +143,16 @@ export default function StructuredAddressForm({
   const handleParseAddress = async (text: string) => {
     const raw = text.trim();
     if (raw.length < 8) return;
+    if (raw === lastParsedRef.current) return;
 
+    parseAbortRef.current?.abort();
+    const controller = new AbortController();
+    parseAbortRef.current = controller;
+    const gen = parseGenRef.current + 1;
+    parseGenRef.current = gen;
+    const timer = window.setTimeout(() => controller.abort(), PARSE_TIMEOUT_MS);
+
+    let alertMsg = '';
     setParsing(true);
     setParseError('');
     try {
@@ -141,19 +160,24 @@ export default function StructuredAddressForm({
         method: 'POST',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ raw_address: raw }),
+        signal: controller.signal,
       });
       const data = await res.json().catch(() => ({}));
+      if (gen !== parseGenRef.current) return;
+
       const original = String(data.raw_address || data.parsed?.detail || raw);
 
       if (!res.ok) {
         setParseError(friendlyGeminiError(res, data));
         onChange({ ...value, street: original });
+        alertMsg = MANUAL_ERROR;
         return;
       }
 
       if (data.fallback || !data.success) {
         onChange({ ...value, street: original });
-        setParseError(data.message || 'Không khớp địa chỉ. Vui lòng chọn thủ công.');
+        setParseError(data.message || data.error || MANUAL_ERROR);
+        alertMsg = MANUAL_ERROR;
         return;
       }
 
@@ -165,6 +189,7 @@ export default function StructuredAddressForm({
         return;
       }
 
+      lastParsedRef.current = raw;
       onChange({
         provinceCode: String(matched.province.id),
         provinceName: matched.province.name,
@@ -180,23 +205,33 @@ export default function StructuredAddressForm({
       } else if (!matched.ward) {
         setParseError('Không khớp Phường/Xã. Vui lòng chọn thủ công.');
       }
-    } catch {
-      setParseError('Không thể kết nối AI phân tích địa chỉ');
+    } catch (error) {
+      if (gen !== parseGenRef.current) return;
+      setParseError(MANUAL_ERROR);
       onChange({ ...value, street: raw });
+      alertMsg = MANUAL_ERROR;
     } finally {
-      setParsing(false);
+      window.clearTimeout(timer);
+      if (parseAbortRef.current === controller) {
+        parseAbortRef.current = null;
+      }
+      if (gen === parseGenRef.current) {
+        setParsing(false);
+      }
+    }
+
+    if (alertMsg && gen === parseGenRef.current) {
+      window.alert(alertMsg);
     }
   };
 
   const handleQuickPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
     const pasted = e.clipboardData.getData('text');
-    if (pasted.trim()) {
-      setTimeout(() => handleParseAddress(pasted), 50);
-    }
+    if (pasted.trim()) handleParseAddress(pasted);
   };
 
   const selectClass =
-    'w-full mt-1 px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-emerald-500 focus:outline-none text-xs font-medium text-gray-800 disabled:opacity-60';
+    'w-full mt-1 px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-emerald-500 focus:outline-none text-xs font-medium text-gray-800';
 
   return (
     <div className="space-y-3">
@@ -209,13 +244,16 @@ export default function StructuredAddressForm({
           value={quickPaste}
           onChange={(e) => setQuickPaste(e.target.value)}
           onPaste={handleQuickPaste}
-          onBlur={() => quickPaste.trim() && handleParseAddress(quickPaste)}
+          onBlur={() => {
+            if (parseAbortRef.current) return;
+            if (quickPaste.trim()) handleParseAddress(quickPaste);
+          }}
           placeholder='VD: "123 Lê Lợi, Q.1, TP. Hồ Chí Minh"'
           className="w-full mt-1 px-3 py-2.5 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl border-2 border-emerald-200 focus:border-emerald-500 focus:outline-none text-xs font-medium text-gray-800 placeholder:text-emerald-600/50"
         />
         {parsing && (
           <span className="absolute right-3 top-9 flex items-center gap-1 text-[10px] text-emerald-600">
-            <Loader2 className="w-3 h-3 animate-spin" /> Đang tách...
+            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Đang tách...
           </span>
         )}
         {parseError && <p className="text-[10px] text-amber-600 mt-1">{parseError}</p>}
@@ -226,7 +264,6 @@ export default function StructuredAddressForm({
         <select
           required
           value={value.provinceCode}
-          disabled={loadingProvinces}
           onChange={(e) => {
             const code = e.target.value;
             const p = provinces.find((x) => String(x.code) === code);
@@ -256,7 +293,7 @@ export default function StructuredAddressForm({
         <select
           required
           value={value.districtCode}
-          disabled={!value.provinceCode || loadingDistricts}
+          disabled={!value.provinceCode}
           onChange={(e) => {
             const code = e.target.value;
             const d = districts.find((x) => String(x.code) === code);
@@ -284,7 +321,7 @@ export default function StructuredAddressForm({
         <select
           required
           value={value.wardCode}
-          disabled={!value.districtCode || loadingWards}
+          disabled={!value.districtCode}
           onChange={(e) => {
             const code = e.target.value;
             const w = wards.find((x) => String(x.code) === code);
