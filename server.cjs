@@ -76866,7 +76866,7 @@ async function searchProductsFromStore(query, limit = 40) {
   const q = String(query || "").trim();
   const safeLimit = Math.min(100, Math.max(1, Math.floor(Number(limit) || 40)));
   const parentFetchLimit = Math.min(120, Math.max(safeLimit * 2, 40));
-  const qLower = q.toLowerCase();
+  const qLower = normalizeProductSearchText(q);
   let docs = [];
   if (isProductsDiskMode()) {
     const parents2 = searchProductsFromDisk(q, parentFetchLimit);
@@ -76954,15 +76954,17 @@ async function searchProductsFromStore(query, limit = 40) {
   const resolveId = (row, fallbackDocId = "") => String(row?.id || row?._id || fallbackDocId || "").trim();
   const matchesQuery = (row, extra = "") => {
     if (!q) return true;
-    const hay = [
-      row?.sku,
-      row?.barcode,
-      row?.title,
-      row?.name,
-      row?.modelName,
-      ...Array.isArray(row?.tierLabels) ? row.tierLabels : [],
-      extra
-    ].map((v) => String(v ?? "").toLowerCase()).join(" ");
+    const hay = normalizeProductSearchText(
+      [
+        row?.sku,
+        row?.barcode,
+        row?.title,
+        row?.name,
+        row?.modelName,
+        ...Array.isArray(row?.tierLabels) ? row.tierLabels : [],
+        extra
+      ].map((v) => String(v ?? "")).join(" ")
+    );
     return hay.includes(qLower);
   };
   const pushRow = (row) => {
