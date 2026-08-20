@@ -4,8 +4,6 @@ QUY TẮC BẮT BUỘC (VÙNG CẤM ĐỊA VÀ AN TOÀN HỆ THỐNG):
 3. TỐI ƯU CODE: Dọn dẹp code gọn gàng, chia nhỏ Component nếu file quá dài để dễ quản lý.
 4. ĐẦU RA (OUTPUT):
 QUY TẮC BẮT BUỘC (VÙNG CẤM ĐỊA VÀ AN TOÀN HỆ THỐNG):
-- KHÔNG ĐỤNG CHỌT LINH TINH: Giữ nguyên luồng hoạt động của các tab khác (Chờ xác nhận, Đang giao, pull đơn thường...).
-- CHỐNG VÒNG LẶP VÔ TẬN: Vòng lặp fetch bù BẮT BUỘC phải có `sleep`/`delay` bằng Promise giữa mỗi lần gọi API Shopee.
 - Sau khi chỉnh sửa code xong, hãy tự động lưu (save) và chấp nhận tất cả thay đổi (Keep All).
 - Tự động chạy lệnh build (npm run build) và đẩy code lên GitHub (git add ., git commit, git push).
 - Trong câu trả lời cuối cùng, chỉ ghi rõ danh sách các file/thư mục cụ thể mà tôi cần copy đè lên server cPanel, không cần giải thích dài dòng.
