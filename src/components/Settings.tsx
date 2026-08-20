@@ -408,21 +408,19 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
       }
 
       const userId = String(spxConfig.clientId || '').trim();
-      const merchantId = String(spxConfig.merchantId || '').trim();
       const secret = String(spxConfig.clientSecret || '').trim();
       if (!userId || !secret || secret.includes('••••')) {
         pushLog('THẤT BẠI: Vui lòng nhập Mã người dùng (User ID) và Secret Key');
-        alert('Vui lòng nhập Mã người dùng (User ID) và Secret Key. Không dùng Account ID để ký HMAC.');
+        alert('Vui lòng nhập Mã người dùng (User ID) và Secret Key.');
         return;
       }
-      pushLog('[1/2] HMAC app-id = Mã người dùng (User ID); Account ID không dùng để ký...');
+      pushLog('[1/2] Gọi SPX Open API với app-id = User ID (không dùng Account ID shop)...');
       const res = await fetch('/api/settings/test-spx', {
         method: 'POST',
         headers,
         body: JSON.stringify({
           userId,
           clientId: userId,
-          merchantId,
           secret,
           clientSecret: secret,
           apiUrl: String(spxConfig.apiUrl || '').trim(),
@@ -1314,12 +1312,12 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
 
             <div className="space-y-3 pt-1">
               <div>
-                <label className="text-[11px] font-semibold text-gray-600">Mã người dùng (User ID) — dùng cho HMAC app-id</label>
+                <label className="text-[11px] font-semibold text-gray-600">Mã người dùng (User ID)</label>
                 <input 
                   type="text"
                   value={spxConfig.clientId}
                   onChange={(e) => setSpxConfig({ ...spxConfig, clientId: e.target.value })}
-                  placeholder="User ID ~15 số trên Hồ sơ shop SPX (không phải Account ID)..."
+                  placeholder="User ID ~15 số trên Hồ sơ shop SPX..."
                   className="w-full mt-1 px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-orange-500 focus:outline-none text-xs font-mono font-medium"
                 />
               </div>
@@ -1336,16 +1334,20 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] font-semibold text-gray-600">ID tài khoản (Account ID) — tùy chọn, không ký HMAC</label>
+                  <label className="text-[11px] font-semibold text-gray-600">Partner App ID (Open API) — nếu có trong tài liệu SPX</label>
                   <input
                     type="text"
                     value={spxConfig.merchantId}
                     onChange={(e) => setSpxConfig({ ...spxConfig, merchantId: e.target.value })}
-                    placeholder="Account ID (không dùng để ký API)..."
+                    placeholder="Để trống = dùng User ID. Account ID shop thường bị Invalid app-id"
                     className="w-full mt-1 px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-orange-500 focus:outline-none text-xs font-mono font-medium"
                   />
                 </div>
               </div>
+              <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1.5">
+                Lưu ý: Sapo/Haravan kết nối chỉ bằng User ID + Secret vì họ đã có Partner App ID riêng.
+                Gọi trực tiếp Open API (`spx.vn/open/api/...`) cần App ID được SPX cấp — Account ID trên Hồ sơ shop thường không dùng được.
+              </p>
 
               <div>
                 <label className="text-[11px] font-semibold text-gray-600">API Gateway URL (tài liệu đối tác SPX)</label>

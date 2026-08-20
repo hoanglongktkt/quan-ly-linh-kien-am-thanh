@@ -82,11 +82,18 @@ function buildSpxAuthHeaders(appId, secret, rawBody) {
 }
 
 /**
- * HMAC `app-id` = Mã người dùng (User ID) trên Hồ sơ shop SPX.
- * KHÔNG dùng Account ID / merchantId để ký — OneCart/Pushsale: Account ID không dùng cho API.
+ * HMAC `app-id` = Partner App ID nếu có (`partnerAppId` / `openAppId`);
+ * mặc định = Mã người dùng (User ID). Không lấy Account ID shop làm app-id.
  */
 function pickSpxAppId(creds) {
-  return String(creds?.clientId || creds?.userId || creds?.appId || "").trim();
+  return String(
+    creds?.partnerAppId ||
+      creds?.openAppId ||
+      creds?.clientId ||
+      creds?.userId ||
+      creds?.appId ||
+      "",
+  ).trim();
 }
 
 function pickSpxUserId(creds) {
@@ -350,16 +357,104 @@ function looksLikeHtmlPayload(value) {
   );
 }
 
-function isSpxAuthFailure(httpStatus, json) {
-  if (httpStatus === 401 || httpStatus === 403) return true;
-  if (!json || typeof json !== "object") return false;
+function pickSpxRetCode(json) {
+  if (!json || typeof json !== "object") return null;
   const ret = json.ret_code ?? json.retcode ?? json.code;
-  if (ret === 401 || ret === 403 || ret === "401" || ret === "403") return true;
-  const msg = String(json.message || json.msg || json.error || "").toLowerCase();
-  if (!msg || looksLikeHtmlPayload(msg)) return false;
-  return /unauthor|forbidden|invalid sign|sign error|signature|invalid.*(secret|app-id|appid|user.?id)/i.test(
-    msg,
-  );
+  return ret == null ? null : ret;
+}
+
+function pickSpxMessage(json) {
+  if (!json || typeof json !== "object") return "";
+  return String(json.message || json.msg || json.error || "").trim();
+}
+
+/** Phân loại JSON SPX — không gộp Invalid app-id thành lỗi HMAC. */
+function classifySpxJsonResult(httpStatus, json) {
+  const ret = pickSpxRetCode(json);
+  const msg = pickSpxMessage(json);
+  const msgLower = msg.toLowerCase();
+
+  if (httpStatus === 401 || httpStatus === 403) {
+    return {
+      success: false,
+      httpStatus,
+      retCode: ret,
+      message: `Lỗi HTTP ${httpStatus}: ${msg || "Unauthorized/Forbidden từ SPX."}`,
+    };
+  }
+
+  if (/invalid\s*app-?id/i.test(msg) || ret === 1005 || ret === "1005") {
+    return {
+      success: false,
+      httpStatus: httpStatus || 200,
+      retCode: ret ?? 1005,
+      message:
+        "SPX từ chối app-id (ret_code 1005: Invalid app-id). User ID / Account ID trên Hồ sơ shop KHÔNG được Open API chấp nhận làm app-id. Cần Partner App ID từ tài liệu đối tác SPX (Sapo/Haravan dùng App ID riêng của họ), hoặc nhờ SPX kích hoạt Open API cho tài khoản.",
+    };
+  }
+
+  if (
+    /invalid sign|sign error|check.?sign|signature|chữ ký/i.test(msgLower) ||
+    ret === 1004 ||
+    ret === "1004"
+  ) {
+    return {
+      success: false,
+      httpStatus: httpStatus || 200,
+      retCode: ret,
+      message: `Lỗi chữ ký HMAC (ret_code ${ret ?? "?"}): ${msg || "Sai Secret Key hoặc công thức sign."}`,
+    };
+  }
+
+  if (/timestamp/i.test(msgLower) || ret === 1003 || ret === "1003") {
+    return {
+      success: false,
+      httpStatus: httpStatus || 200,
+      retCode: ret,
+      message: `Lỗi timestamp từ SPX (ret_code ${ret ?? "?"}): ${msg || "Thiếu/sai timestamp."}`,
+    };
+  }
+
+  // Auth OK khi ret_code = 0, hoặc lỗi nghiệp vụ (thiếu orders...) — chứng tỏ ký/app-id đã qua.
+  if (ret === 0 || ret === "0" || ret === 200 || ret === "200") {
+    return {
+      success: true,
+      httpStatus: 200,
+      retCode: ret,
+      message: "Kết nối SPX thành công!",
+    };
+  }
+
+  if (msg && !/unauthor|forbidden|invalid app|invalid sign|sign error/i.test(msgLower)) {
+    // Ví dụ: thiếu orders / param — auth đã qua cổng.
+    if (
+      /order|param|required|missing|invalid.*(phone|address|weight|cod)/i.test(msgLower) ||
+      (ret != null && Number(ret) >= 2000)
+    ) {
+      return {
+        success: true,
+        httpStatus: 200,
+        retCode: ret,
+        message: `Xác thực SPX OK (app-id/sign hợp lệ). Phản hồi nghiệp vụ: ${msg}`,
+      };
+    }
+  }
+
+  if (httpStatus === 200 && ret != null) {
+    return {
+      success: false,
+      httpStatus: 200,
+      retCode: ret,
+      message: `SPX ret_code ${ret}: ${msg || "Yêu cầu bị từ chối."}`,
+    };
+  }
+
+  return {
+    success: false,
+    httpStatus: httpStatus || 0,
+    retCode: ret,
+    message: msg || `Lỗi HTTP ${httpStatus || "?"}: Vui lòng kiểm tra lại cấu hình.`,
+  };
 }
 
 function classifySpxTestFailure(error) {
@@ -376,6 +471,9 @@ function classifySpxTestFailure(error) {
         : String(rawData || "");
 
   if (error?.response) {
+    if (typeof rawData === "object" && rawData) {
+      return classifySpxJsonResult(status, rawData);
+    }
     if (status === 404) {
       return {
         success: false,
@@ -387,7 +485,7 @@ function classifySpxTestFailure(error) {
       return {
         success: false,
         httpStatus: status,
-        message: "Lỗi 401/403: Sai User ID hoặc Secret Key (Chữ ký HMAC không khớp).",
+        message: `Lỗi HTTP ${status}: Unauthorized/Forbidden từ SPX (không chắc là HMAC).`,
       };
     }
     if (looksLikeHtmlPayload(text) || error?.isJsonParseError) {
@@ -397,6 +495,13 @@ function classifySpxTestFailure(error) {
         message: "Lỗi Data: Máy chủ SPX trả về định dạng không hợp lệ (HTML). Sai API Gateway URL.",
       };
     }
+    let parsed = null;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = null;
+    }
+    if (parsed) return classifySpxJsonResult(status, parsed);
     return {
       success: false,
       httpStatus: status,
@@ -431,7 +536,8 @@ function classifySpxTestFailure(error) {
 
 /**
  * Ping thật tới máy chủ SPX (HMAC-SHA256 + Axios).
- * Chỉ trả success:true khi HTTP status === 200 từ SPX và không phải lỗi 401/403.
+ * Thành công khi ret_code=0 hoặc lỗi nghiệp vụ (chứng tỏ app-id/sign đã qua).
+ * Không gộp Invalid app-id thành "HMAC không khớp".
  */
 export async function testSpxConnection({
   userId,
@@ -440,18 +546,27 @@ export async function testSpxConnection({
   secret,
   apiUrl,
   createPath,
+  appId: appIdIn,
 } = {}) {
   const uid = String(userId || "").trim();
-  // Account ID không dùng cho HMAC; chỉ giữ tham số để tương thích payload cũ.
+  // Chỉ dùng Partner App ID khi caller truyền appIdIn rõ ràng; không lấy Account ID shop.
+  const partner = String(appIdIn || "").trim();
+  const appId = partner || uid;
+  const sec = String(secret || "").trim();
   void merchantId;
   void accountId;
-  const appId = uid;
-  const sec = String(secret || "").trim();
-  if (isBlankSpxSecret(appId) || isBlankSpxSecret(sec)) {
+  if (isBlankSpxSecret(uid) || isBlankSpxSecret(sec)) {
     return {
       success: false,
       httpStatus: 0,
-      message: "Vui lòng nhập Mã người dùng (User ID) và Secret Key — không dùng Account ID để ký",
+      message: "Vui lòng nhập Mã người dùng (User ID) và Secret Key",
+    };
+  }
+  if (isBlankSpxSecret(appId)) {
+    return {
+      success: false,
+      httpStatus: 0,
+      message: "Thiếu app-id để gọi Open API SPX",
     };
   }
 
@@ -466,6 +581,7 @@ export async function testSpxConnection({
       responseType: "text",
       headers,
       transformRequest: [(data) => data],
+      validateStatus: () => true,
     });
     const httpStatus = Number(response.status) || 0;
     const text = String(response.data ?? "");
@@ -483,25 +599,7 @@ export async function testSpxConnection({
       parseErr.isJsonParseError = true;
       return classifySpxTestFailure(parseErr);
     }
-    if (isSpxAuthFailure(httpStatus, json)) {
-      return {
-        success: false,
-        httpStatus: httpStatus || 401,
-        message: "Lỗi 401/403: Sai User ID hoặc Secret Key (Chữ ký HMAC không khớp).",
-      };
-    }
-    if (httpStatus === 200) {
-      return {
-        success: true,
-        httpStatus: 200,
-        message: "Kết nối SPX thành công!",
-      };
-    }
-    return {
-      success: false,
-      httpStatus,
-      message: `Lỗi HTTP ${httpStatus}: Vui lòng kiểm tra lại cấu hình.`,
-    };
+    return classifySpxJsonResult(httpStatus, json);
   } catch (error) {
     return classifySpxTestFailure(error);
   }

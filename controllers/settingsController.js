@@ -376,8 +376,8 @@ export async function testSpxSettings(req, res) {
   const userId = String(
     req.body?.userId || req.body?.clientId || req.body?.spxUserId || "",
   ).trim();
-  const merchantId = String(
-    req.body?.merchantId || req.body?.accountId || "",
+  const appId = String(
+    req.body?.appId || req.body?.partnerAppId || req.body?.openAppId || "",
   ).trim();
   const secret = String(
     req.body?.secret || req.body?.clientSecret || req.body?.userSecret || "",
@@ -387,18 +387,18 @@ export async function testSpxSettings(req, res) {
   if (!userId || !secret || secret.includes("••••")) {
     return res.status(400).json({
       success: false,
-      message: "Vui lòng nhập Mã người dùng (User ID) và Secret Key — không dùng Account ID để ký HMAC",
+      message: "Vui lòng nhập Mã người dùng (User ID) và Secret Key",
     });
   }
   try {
     const result = await testSpxConnection({
       userId,
-      merchantId,
+      appId: appId || undefined,
       secret,
       apiUrl,
       createPath,
     });
-    if (!result?.success || result.httpStatus !== 200) {
+    if (!result?.success) {
       const status =
         result?.httpStatus === 401 || result?.httpStatus === 403 || result?.httpStatus === 404
           ? result.httpStatus
@@ -406,12 +406,15 @@ export async function testSpxSettings(req, res) {
       return res.status(status).json({
         success: false,
         message: result?.message || "Kiểm tra kết nối SPX thất bại",
+        retCode: result?.retCode ?? null,
+        httpStatus: result?.httpStatus ?? 0,
       });
     }
     return res.json({
       success: true,
       message: result.message || "Kết nối SPX thành công!",
       httpStatus: 200,
+      retCode: result?.retCode ?? 0,
     });
   } catch (error) {
     const httpStatus = Number(error?.response?.status) || 0;

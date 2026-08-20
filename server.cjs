@@ -111390,7 +111390,9 @@ function buildSpxAuthHeaders(appId, secret, rawBody) {
   };
 }
 function pickSpxAppId(creds) {
-  return String(creds?.clientId || creds?.userId || creds?.appId || "").trim();
+  return String(
+    creds?.partnerAppId || creds?.openAppId || creds?.clientId || creds?.userId || creds?.appId || ""
+  ).trim();
 }
 function pickSpxUserId(creds) {
   return String(creds?.clientId || creds?.userId || creds?.appId || "").trim();
@@ -111598,16 +111600,83 @@ function looksLikeHtmlPayload(value) {
   const s2 = String(value || "").trimStart();
   return s2.startsWith("<") || /^<!doctype\s+html/i.test(s2) || /<html[\s>]/i.test(s2);
 }
-function isSpxAuthFailure(httpStatus, json2) {
-  if (httpStatus === 401 || httpStatus === 403) return true;
-  if (!json2 || typeof json2 !== "object") return false;
+function pickSpxRetCode(json2) {
+  if (!json2 || typeof json2 !== "object") return null;
   const ret = json2.ret_code ?? json2.retcode ?? json2.code;
-  if (ret === 401 || ret === 403 || ret === "401" || ret === "403") return true;
-  const msg = String(json2.message || json2.msg || json2.error || "").toLowerCase();
-  if (!msg || looksLikeHtmlPayload(msg)) return false;
-  return /unauthor|forbidden|invalid sign|sign error|signature|invalid.*(secret|app-id|appid|user.?id)/i.test(
-    msg
-  );
+  return ret == null ? null : ret;
+}
+function pickSpxMessage(json2) {
+  if (!json2 || typeof json2 !== "object") return "";
+  return String(json2.message || json2.msg || json2.error || "").trim();
+}
+function classifySpxJsonResult(httpStatus, json2) {
+  const ret = pickSpxRetCode(json2);
+  const msg = pickSpxMessage(json2);
+  const msgLower = msg.toLowerCase();
+  if (httpStatus === 401 || httpStatus === 403) {
+    return {
+      success: false,
+      httpStatus,
+      retCode: ret,
+      message: `L\u1ED7i HTTP ${httpStatus}: ${msg || "Unauthorized/Forbidden t\u1EEB SPX."}`
+    };
+  }
+  if (/invalid\s*app-?id/i.test(msg) || ret === 1005 || ret === "1005") {
+    return {
+      success: false,
+      httpStatus: httpStatus || 200,
+      retCode: ret ?? 1005,
+      message: "SPX t\u1EEB ch\u1ED1i app-id (ret_code 1005: Invalid app-id). User ID / Account ID tr\xEAn H\u1ED3 s\u01A1 shop KH\xD4NG \u0111\u01B0\u1EE3c Open API ch\u1EA5p nh\u1EADn l\xE0m app-id. C\u1EA7n Partner App ID t\u1EEB t\xE0i li\u1EC7u \u0111\u1ED1i t\xE1c SPX (Sapo/Haravan d\xF9ng App ID ri\xEAng c\u1EE7a h\u1ECD), ho\u1EB7c nh\u1EDD SPX k\xEDch ho\u1EA1t Open API cho t\xE0i kho\u1EA3n."
+    };
+  }
+  if (/invalid sign|sign error|check.?sign|signature|chữ ký/i.test(msgLower) || ret === 1004 || ret === "1004") {
+    return {
+      success: false,
+      httpStatus: httpStatus || 200,
+      retCode: ret,
+      message: `L\u1ED7i ch\u1EEF k\xFD HMAC (ret_code ${ret ?? "?"}): ${msg || "Sai Secret Key ho\u1EB7c c\xF4ng th\u1EE9c sign."}`
+    };
+  }
+  if (/timestamp/i.test(msgLower) || ret === 1003 || ret === "1003") {
+    return {
+      success: false,
+      httpStatus: httpStatus || 200,
+      retCode: ret,
+      message: `L\u1ED7i timestamp t\u1EEB SPX (ret_code ${ret ?? "?"}): ${msg || "Thi\u1EBFu/sai timestamp."}`
+    };
+  }
+  if (ret === 0 || ret === "0" || ret === 200 || ret === "200") {
+    return {
+      success: true,
+      httpStatus: 200,
+      retCode: ret,
+      message: "K\u1EBFt n\u1ED1i SPX th\xE0nh c\xF4ng!"
+    };
+  }
+  if (msg && !/unauthor|forbidden|invalid app|invalid sign|sign error/i.test(msgLower)) {
+    if (/order|param|required|missing|invalid.*(phone|address|weight|cod)/i.test(msgLower) || ret != null && Number(ret) >= 2e3) {
+      return {
+        success: true,
+        httpStatus: 200,
+        retCode: ret,
+        message: `X\xE1c th\u1EF1c SPX OK (app-id/sign h\u1EE3p l\u1EC7). Ph\u1EA3n h\u1ED3i nghi\u1EC7p v\u1EE5: ${msg}`
+      };
+    }
+  }
+  if (httpStatus === 200 && ret != null) {
+    return {
+      success: false,
+      httpStatus: 200,
+      retCode: ret,
+      message: `SPX ret_code ${ret}: ${msg || "Y\xEAu c\u1EA7u b\u1ECB t\u1EEB ch\u1ED1i."}`
+    };
+  }
+  return {
+    success: false,
+    httpStatus: httpStatus || 0,
+    retCode: ret,
+    message: msg || `L\u1ED7i HTTP ${httpStatus || "?"}: Vui l\xF2ng ki\u1EC3m tra l\u1EA1i c\u1EA5u h\xECnh.`
+  };
 }
 function classifySpxTestFailure(error) {
   const status = Number(error?.response?.status) || 0;
@@ -111617,6 +111686,9 @@ function classifySpxTestFailure(error) {
   }
   const text = typeof rawData === "string" ? rawData : rawData != null && typeof rawData === "object" ? "" : String(rawData || "");
   if (error?.response) {
+    if (typeof rawData === "object" && rawData) {
+      return classifySpxJsonResult(status, rawData);
+    }
     if (status === 404) {
       return {
         success: false,
@@ -111628,7 +111700,7 @@ function classifySpxTestFailure(error) {
       return {
         success: false,
         httpStatus: status,
-        message: "L\u1ED7i 401/403: Sai User ID ho\u1EB7c Secret Key (Ch\u1EEF k\xFD HMAC kh\xF4ng kh\u1EDBp)."
+        message: `L\u1ED7i HTTP ${status}: Unauthorized/Forbidden t\u1EEB SPX (kh\xF4ng ch\u1EAFc l\xE0 HMAC).`
       };
     }
     if (looksLikeHtmlPayload(text) || error?.isJsonParseError) {
@@ -111638,6 +111710,13 @@ function classifySpxTestFailure(error) {
         message: "L\u1ED7i Data: M\xE1y ch\u1EE7 SPX tr\u1EA3 v\u1EC1 \u0111\u1ECBnh d\u1EA1ng kh\xF4ng h\u1EE3p l\u1EC7 (HTML). Sai API Gateway URL."
       };
     }
+    let parsed = null;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = null;
+    }
+    if (parsed) return classifySpxJsonResult(status, parsed);
     return {
       success: false,
       httpStatus: status,
@@ -111670,18 +111749,27 @@ async function testSpxConnection({
   accountId,
   secret,
   apiUrl,
-  createPath
+  createPath,
+  appId: appIdIn
 } = {}) {
   const uid = String(userId || "").trim();
+  const partner = String(appIdIn || "").trim();
+  const appId = partner || uid;
+  const sec = String(secret || "").trim();
   void merchantId;
   void accountId;
-  const appId = uid;
-  const sec = String(secret || "").trim();
-  if (isBlankSpxSecret(appId) || isBlankSpxSecret(sec)) {
+  if (isBlankSpxSecret(uid) || isBlankSpxSecret(sec)) {
     return {
       success: false,
       httpStatus: 0,
-      message: "Vui l\xF2ng nh\u1EADp M\xE3 ng\u01B0\u1EDDi d\xF9ng (User ID) v\xE0 Secret Key \u2014 kh\xF4ng d\xF9ng Account ID \u0111\u1EC3 k\xFD"
+      message: "Vui l\xF2ng nh\u1EADp M\xE3 ng\u01B0\u1EDDi d\xF9ng (User ID) v\xE0 Secret Key"
+    };
+  }
+  if (isBlankSpxSecret(appId)) {
+    return {
+      success: false,
+      httpStatus: 0,
+      message: "Thi\u1EBFu app-id \u0111\u1EC3 g\u1ECDi Open API SPX"
     };
   }
   const gateway = resolveSpxGateway({ apiUrl, createPath });
@@ -111693,7 +111781,8 @@ async function testSpxConnection({
       timeout: TIMEOUT_MS2,
       responseType: "text",
       headers,
-      transformRequest: [(data) => data]
+      transformRequest: [(data) => data],
+      validateStatus: () => true
     });
     const httpStatus = Number(response.status) || 0;
     const text = String(response.data ?? "");
@@ -111711,25 +111800,7 @@ async function testSpxConnection({
       parseErr.isJsonParseError = true;
       return classifySpxTestFailure(parseErr);
     }
-    if (isSpxAuthFailure(httpStatus, json2)) {
-      return {
-        success: false,
-        httpStatus: httpStatus || 401,
-        message: "L\u1ED7i 401/403: Sai User ID ho\u1EB7c Secret Key (Ch\u1EEF k\xFD HMAC kh\xF4ng kh\u1EDBp)."
-      };
-    }
-    if (httpStatus === 200) {
-      return {
-        success: true,
-        httpStatus: 200,
-        message: "K\u1EBFt n\u1ED1i SPX th\xE0nh c\xF4ng!"
-      };
-    }
-    return {
-      success: false,
-      httpStatus,
-      message: `L\u1ED7i HTTP ${httpStatus}: Vui l\xF2ng ki\u1EC3m tra l\u1EA1i c\u1EA5u h\xECnh.`
-    };
+    return classifySpxJsonResult(httpStatus, json2);
   } catch (error) {
     return classifySpxTestFailure(error);
   }
@@ -112073,8 +112144,8 @@ async function testSpxSettings(req, res) {
   const userId = String(
     req.body?.userId || req.body?.clientId || req.body?.spxUserId || ""
   ).trim();
-  const merchantId = String(
-    req.body?.merchantId || req.body?.accountId || ""
+  const appId = String(
+    req.body?.appId || req.body?.partnerAppId || req.body?.openAppId || ""
   ).trim();
   const secret = String(
     req.body?.secret || req.body?.clientSecret || req.body?.userSecret || ""
@@ -112084,28 +112155,31 @@ async function testSpxSettings(req, res) {
   if (!userId || !secret || secret.includes("\u2022\u2022\u2022\u2022")) {
     return res.status(400).json({
       success: false,
-      message: "Vui l\xF2ng nh\u1EADp M\xE3 ng\u01B0\u1EDDi d\xF9ng (User ID) v\xE0 Secret Key \u2014 kh\xF4ng d\xF9ng Account ID \u0111\u1EC3 k\xFD HMAC"
+      message: "Vui l\xF2ng nh\u1EADp M\xE3 ng\u01B0\u1EDDi d\xF9ng (User ID) v\xE0 Secret Key"
     });
   }
   try {
     const result = await testSpxConnection({
       userId,
-      merchantId,
+      appId: appId || void 0,
       secret,
       apiUrl,
       createPath
     });
-    if (!result?.success || result.httpStatus !== 200) {
+    if (!result?.success) {
       const status = result?.httpStatus === 401 || result?.httpStatus === 403 || result?.httpStatus === 404 ? result.httpStatus : 400;
       return res.status(status).json({
         success: false,
-        message: result?.message || "Ki\u1EC3m tra k\u1EBFt n\u1ED1i SPX th\u1EA5t b\u1EA1i"
+        message: result?.message || "Ki\u1EC3m tra k\u1EBFt n\u1ED1i SPX th\u1EA5t b\u1EA1i",
+        retCode: result?.retCode ?? null,
+        httpStatus: result?.httpStatus ?? 0
       });
     }
     return res.json({
       success: true,
       message: result.message || "K\u1EBFt n\u1ED1i SPX th\xE0nh c\xF4ng!",
-      httpStatus: 200
+      httpStatus: 200,
+      retCode: result?.retCode ?? 0
     });
   } catch (error) {
     const httpStatus = Number(error?.response?.status) || 0;
