@@ -110683,12 +110683,8 @@ async function testGhnConnection({ token, shopId } = {}) {
 // services/spxLogistics.js
 var import_crypto2 = __toESM(require("crypto"), 1);
 var TIMEOUT_MS2 = 15e3;
-var MAX_CREATE_PATHS = 3;
-var MAX_WAYBILL_PATHS = 4;
-var MAX_WAYBILL_BODIES = 4;
-function sleep4(ms) {
-  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
-}
+var SPX_DEFAULT_HOST = "https://spx.vn";
+var SPX_CREATE_ORDER_PATH = "/open/api/v1/order/create_order";
 function signBody(appId, secret, timestamp, rawBody) {
   const payload = `${appId}${timestamp}${rawBody}`;
   return import_crypto2.default.createHmac("sha256", String(secret)).update(payload).digest("hex");
@@ -110826,7 +110822,7 @@ async function createSpxShippingOrder({
   creds: credsIn
 }) {
   const creds = credsIn || await loadSpxCredentialsFromMongo();
-  const apiUrl = creds.apiUrl;
+  const apiUrl = String(creds.apiUrl || SPX_DEFAULT_HOST).replace(/\/$/, "") || SPX_DEFAULT_HOST;
   const userId = pickSpxAppId(creds);
   const weight = Math.max(1, Math.round(Number(weightGrams) || 500));
   const itemList = buildItemList(items, weight);
@@ -110847,68 +110843,45 @@ async function createSpxShippingOrder({
     item_list: itemList,
     remark: String(note || "").slice(0, 200)
   };
-  const payloads = [{ user_id: userId || void 0, orders: [orderRow] }, { ...orderRow, user_id: userId || void 0 }];
-  const paths = [
-    "/open/api/v1/order/create_order",
-    "/open/api/v1/order/batch_create_order",
-    "/open/api/order/create_order"
-  ].slice(0, MAX_CREATE_PATHS);
-  let lastErr = "SPX t\u1EA1o \u0111\u01A1n th\u1EA5t b\u1EA1i";
-  for (let i2 = 0; i2 < paths.length; i2 += 1) {
-    for (let p = 0; p < payloads.length; p += 1) {
-      if (i2 + p > 0) await sleep4(250);
-      const result = await spxFetch(apiUrl, paths[i2], payloads[p], creds);
-      if (isSpxSuccess(result.json)) {
-        const trackingNo = pickTracking(result.json?.data || result.json);
-        if (trackingNo) {
-          return {
-            provider: "spx",
-            trackingNo,
-            orderCode: trackingNo,
-            raw: result.json?.data || result.json
-          };
-        }
-        lastErr = "SPX t\u1EA1o \u0111\u01A1n xong nh\u01B0ng kh\xF4ng tr\u1EA3 tracking_no";
-        continue;
-      }
-      lastErr = result.json?.message || result.json?.msg || result.json?.error || `SPX ${paths[i2]} HTTP ${result.status}`;
-    }
+  const payload = { user_id: userId || void 0, orders: [orderRow] };
+  const result = await spxFetch(apiUrl, SPX_CREATE_ORDER_PATH, payload, creds);
+  if (result.status === 404) {
+    throw new Error(
+      `SPX HTTP 404 t\u1EA1i ${SPX_CREATE_ORDER_PATH}. Ki\u1EC3m tra host Open API (m\u1EB7c \u0111\u1ECBnh ${SPX_DEFAULT_HOST}).`
+    );
   }
-  throw new Error(String(lastErr));
+  if (!isSpxSuccess(result.json)) {
+    throw new Error(
+      String(
+        result.json?.message || result.json?.msg || result.json?.error || `SPX ${SPX_CREATE_ORDER_PATH} HTTP ${result.status}`
+      )
+    );
+  }
+  const data = result.json?.data || result.json;
+  const trackingNo = pickTracking(data);
+  if (!trackingNo) {
+    throw new Error("SPX t\u1EA1o \u0111\u01A1n xong nh\u01B0ng kh\xF4ng tr\u1EA3 tracking_no");
+  }
+  const waybill = pickWaybill(data);
+  return {
+    provider: "spx",
+    trackingNo,
+    orderCode: trackingNo,
+    url: waybill.url,
+    base64: waybill.base64,
+    raw: data
+  };
 }
-async function getSpxWaybill(trackingNo) {
-  const creds = await loadSpxCredentialsFromMongo();
+async function getSpxWaybill(trackingNo, storedWaybill) {
   const tn = String(trackingNo || "").trim();
   if (!tn) throw new Error("Thi\u1EBFu m\xE3 v\u1EADn \u0111\u01A1n SPX (tracking_no).");
-  const payloads = [
-    { tracking_no_list: [tn] },
-    { tracking_nos: [tn] },
-    { order_list: [{ tracking_no: tn }] },
-    { tracking_no: tn }
-  ].slice(0, MAX_WAYBILL_BODIES);
-  const paths = [
-    "/open/api/v1/order/batch_get_awb",
-    "/open/api/v1/order/get_awb",
-    "/open/api/order/batch_get_awb",
-    "/open/api/v1/order/print_label"
-  ].slice(0, MAX_WAYBILL_PATHS);
-  let lastErr = "SPX kh\xF4ng tr\u1EA3 waybill";
-  for (let p = 0; p < paths.length; p += 1) {
-    for (let b = 0; b < payloads.length; b += 1) {
-      if (p + b > 0) await sleep4(200);
-      const result = await spxFetch(creds.apiUrl, paths[p], payloads[b], creds);
-      if (!isSpxSuccess(result.json) && result.status >= 400) {
-        lastErr = result.json?.message || result.json?.msg || `SPX ${paths[p]} HTTP ${result.status}`;
-        continue;
-      }
-      const picked = pickWaybill(result.json?.data || result.json);
-      if (picked.url || picked.base64) {
-        return { ...picked, trackingNo: tn, raw: result.json?.data || null };
-      }
-      lastErr = result.json?.message || result.json?.msg || "SPX waybill r\u1ED7ng (kh\xF4ng c\xF3 awb_url / file_data)";
-    }
+  const picked = pickWaybill(storedWaybill && typeof storedWaybill === "object" ? storedWaybill : {});
+  if (picked.url || picked.base64) {
+    return { ...picked, trackingNo: tn, raw: storedWaybill || null };
   }
-  throw new Error(String(lastErr));
+  throw new Error(
+    "Kh\xF4ng c\xF3 phi\u1EBFu v\u1EADn \u0111\u01A1n SPX t\u1EEB l\xFAc t\u1EA1o \u0111\u01A1n (create_order). H\u1EC7 th\u1ED1ng kh\xF4ng g\u1ECDi endpoint gi\u1EA3 batch_get_awb."
+  );
 }
 function isBlankSpxSecret(value) {
   const s2 = String(value || "").trim();
@@ -110933,76 +110906,85 @@ async function testSpxConnection({ userId, secret, apiUrl } = {}) {
       message: "Vui l\xF2ng nh\u1EADp User ID v\xE0 Secret"
     };
   }
-  const base = String(apiUrl || "https://spx.vn").trim().replace(/\/$/, "") || "https://spx.vn";
-  const attempts = [
-    { path: "/open/api/v1/order/get_order_list", body: { page_no: 1, page_size: 1 } },
-    { path: "/open/api/v1/order/batch_get_awb", body: { tracking_no_list: [] } }
-  ].slice(0, 2);
-  let lastMessage = "K\u1EBFt n\u1ED1i SPX th\u1EA5t b\u1EA1i";
-  let lastHttp = 0;
-  for (let i2 = 0; i2 < attempts.length; i2 += 1) {
-    if (i2 > 0) await sleep4(250);
-    const { path: path21, body } = attempts[i2];
-    const rawBody = JSON.stringify(body || {});
-    const timestamp = String(Math.floor(Date.now() / 1e3));
-    const sign = signBody(uid, sec, timestamp, rawBody);
-    try {
-      const response = await axios_default.post(`${base}${path21}`, rawBody, {
-        timeout: TIMEOUT_MS2,
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-          "app-id": uid,
-          appid: uid,
-          "user-id": uid,
-          timestamp,
-          sign
-        },
-        transformRequest: [(data) => data],
-        validateStatus: () => true
-      });
-      const httpStatus = Number(response.status) || 0;
-      lastHttp = httpStatus;
-      const json2 = response.data && typeof response.data === "object" ? response.data : { raw: String(response.data || "") };
-      if (isSpxAuthFailure(httpStatus, json2)) {
-        return {
-          success: false,
-          httpStatus: httpStatus || 401,
-          message: "User ID / Secret SPX kh\xF4ng h\u1EE3p l\u1EC7!"
-        };
-      }
-      if (httpStatus === 200) {
-        const looksLikeSpxJson = isSpxSuccess(json2) || json2.ret_code != null || json2.retcode != null || json2.code != null || json2.data != null || json2.message != null || json2.msg != null;
-        if (looksLikeSpxJson) {
-          return {
-            success: true,
-            httpStatus: 200,
-            message: "K\u1EBFt n\u1ED1i SPX th\xE0nh c\xF4ng!"
-          };
-        }
-      }
-      lastMessage = json2?.message || json2?.msg || json2?.error || `SPX ${path21} HTTP ${httpStatus}`;
-    } catch (err) {
-      const httpStatus = Number(err?.response?.status) || 0;
-      lastHttp = httpStatus;
-      if (httpStatus === 401 || httpStatus === 403) {
-        return {
-          success: false,
-          httpStatus,
-          message: "User ID / Secret SPX kh\xF4ng h\u1EE3p l\u1EC7!"
-        };
-      }
-      if (err?.code === "ECONNABORTED") {
-        return {
-          success: false,
-          httpStatus: 0,
-          message: `Timeout k\u1EBFt n\u1ED1i m\xE1y ch\u1EE7 SPX (>${TIMEOUT_MS2}ms)`
-        };
-      }
-      lastMessage = err?.message || lastMessage;
+  const base = String(apiUrl || SPX_DEFAULT_HOST).trim().replace(/\/$/, "") || SPX_DEFAULT_HOST;
+  const body = { user_id: uid };
+  const rawBody = JSON.stringify(body);
+  const timestamp = String(Math.floor(Date.now() / 1e3));
+  const sign = signBody(uid, sec, timestamp, rawBody);
+  try {
+    const response = await axios_default.post(`${base}${SPX_CREATE_ORDER_PATH}`, rawBody, {
+      timeout: TIMEOUT_MS2,
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "app-id": uid,
+        appid: uid,
+        "user-id": uid,
+        timestamp,
+        sign
+      },
+      transformRequest: [(data) => data],
+      validateStatus: () => true
+    });
+    const httpStatus = Number(response.status) || 0;
+    const json2 = response.data && typeof response.data === "object" ? response.data : { raw: String(response.data || "") };
+    if (httpStatus === 404) {
+      return {
+        success: false,
+        httpStatus: 404,
+        message: `SPX HTTP 404 t\u1EA1i ${SPX_CREATE_ORDER_PATH}. Endpoint kh\xF4ng t\u1ED3n t\u1EA1i tr\xEAn gateway ${base}.`
+      };
     }
+    if (isSpxAuthFailure(httpStatus, json2)) {
+      return {
+        success: false,
+        httpStatus: httpStatus || 401,
+        message: "User ID / Secret SPX kh\xF4ng h\u1EE3p l\u1EC7!"
+      };
+    }
+    if (httpStatus === 200) {
+      return {
+        success: true,
+        httpStatus: 200,
+        message: "K\u1EBFt n\u1ED1i SPX th\xE0nh c\xF4ng!"
+      };
+    }
+    return {
+      success: false,
+      httpStatus,
+      message: String(
+        json2?.message || json2?.msg || json2?.error || `SPX ${SPX_CREATE_ORDER_PATH} HTTP ${httpStatus}`
+      )
+    };
+  } catch (err) {
+    const httpStatus = Number(err?.response?.status) || 0;
+    if (httpStatus === 401 || httpStatus === 403) {
+      return {
+        success: false,
+        httpStatus,
+        message: "User ID / Secret SPX kh\xF4ng h\u1EE3p l\u1EC7!"
+      };
+    }
+    if (httpStatus === 404) {
+      return {
+        success: false,
+        httpStatus: 404,
+        message: `SPX HTTP 404 t\u1EA1i ${SPX_CREATE_ORDER_PATH}.`
+      };
+    }
+    if (err?.code === "ECONNABORTED") {
+      return {
+        success: false,
+        httpStatus: 0,
+        message: `Timeout k\u1EBFt n\u1ED1i m\xE1y ch\u1EE7 SPX (>${TIMEOUT_MS2}ms)`
+      };
+    }
+    return {
+      success: false,
+      httpStatus,
+      message: err?.message || "K\u1EBFt n\u1ED1i SPX th\u1EA5t b\u1EA1i"
+    };
   }
-  return { success: false, httpStatus: lastHttp, message: String(lastMessage) };
 }
 
 // controllers/settingsController.js
@@ -112776,7 +112758,7 @@ var import_express12 = __toESM(require_express2(), 1);
 // utils/concurrency.js
 var DEFAULT_DELAY_MS = 1e3;
 var DEFAULT_YIELD_MS = 50;
-function sleep5(ms) {
+function sleep4(ms) {
   return new Promise((r2) => setTimeout(r2, ms));
 }
 async function mapWithConcurrency(items, concurrency, worker) {
@@ -112801,7 +112783,7 @@ async function mapWithConcurrency(items, concurrency, worker) {
   return results;
 }
 function delay2(ms = DEFAULT_DELAY_MS) {
-  return sleep5(ms);
+  return sleep4(ms);
 }
 async function yieldEventLoop(ms = DEFAULT_YIELD_MS) {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -113072,7 +113054,7 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
       }
     }
     if (opts.syncPrice) {
-      await sleep5(SHOPEE_SYNC_QUEUE_GAP_MS);
+      await sleep4(SHOPEE_SYNC_QUEUE_GAP_MS);
       const priceEntry = deps9.buildShopeeUpdatePriceEntry(mapped.sellingPrice, modelId);
       try {
         console.log(
@@ -113121,7 +113103,7 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
       }
     }
     if (opts.syncSku && modelId != null && typeof deps9.shopeeUpdateModelSku === "function") {
-      await sleep5(SHOPEE_SYNC_QUEUE_GAP_MS);
+      await sleep4(SHOPEE_SYNC_QUEUE_GAP_MS);
       const modelSku = String(mapped.sku || "").trim();
       try {
         console.log(
@@ -113250,7 +113232,7 @@ async function processShopeeSyncQueue() {
         const row = await deps9.loadProductById(job.productId);
         if (!row) {
           console.warn(`[Shopee Sync Queue] B\u1ECF qua \u2014 kh\xF4ng th\u1EA5y productId=${job.productId}`);
-          await sleep5(SHOPEE_SYNC_QUEUE_GAP_MS);
+          await sleep4(SHOPEE_SYNC_QUEUE_GAP_MS);
           continue;
         }
         const mapped = await resolveProductWithShopeeMapping(row);
@@ -113258,7 +113240,7 @@ async function processShopeeSyncQueue() {
           console.log(
             `[Shopee Sync Queue] Skip SKU=${row.sku || job.productId} \u2014 ch\u01B0a Mapping Shopee`
           );
-          await sleep5(SHOPEE_SYNC_QUEUE_GAP_MS);
+          await sleep4(SHOPEE_SYNC_QUEUE_GAP_MS);
           continue;
         }
         const shopIds = job.shopId ? [String(job.shopId)] : typeof deps9.resolveShopeeShopIdsForSync === "function" ? deps9.resolveShopeeShopIdsForSync("") : deps9.listAuthorizedShopeeShopIds?.() || [];
@@ -113320,7 +113302,7 @@ async function processShopeeSyncQueue() {
           console.error(`[Shopee Sync Queue] DROPPED exception \u2014 ${job.productId}: ${msg}`);
         }
       }
-      await sleep5(SHOPEE_SYNC_QUEUE_GAP_MS);
+      await sleep4(SHOPEE_SYNC_QUEUE_GAP_MS);
     }
   } finally {
     shopeeSyncQueueRunning = false;
@@ -114561,16 +114543,16 @@ async function runInShopeeBatches(items, processor, opts) {
     console.log(`[Shopee Throttle] Batch ${batchNo}/${totalBatches} (${batch.length} item)...`);
     for (let j = 0; j < batch.length; j++) {
       await processor(batch[j], batchStart + j);
-      if (j < batch.length - 1) await sleep5(itemDelayMs);
+      if (j < batch.length - 1) await sleep4(itemDelayMs);
     }
     if (batchStart + batchSize < items.length) {
       console.log(`[Shopee Throttle] Ngh\u1EC9 ${batchPauseMs}ms tr\u01B0\u1EDBc batch k\u1EBF...`);
-      await sleep5(batchPauseMs);
+      await sleep4(batchPauseMs);
     }
   }
 }
 function shopeeSyncDelay(ms = SHOPEE_SYNC_BATCH_DELAY_MS) {
-  return sleep5(ms);
+  return sleep4(ms);
 }
 function shopeeApiErrorResult(err, context, httpStatus) {
   const message = err instanceof Error ? err.message : String(err);
@@ -114722,7 +114704,7 @@ async function shopeeFetchJsonWithRetry(url2, context, opts) {
       if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
         shopeeRetryTelemetry.retries++;
         console.warn(`[Shopee API] ${context} l\u1ED7i m\u1EA1ng, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`);
-        await sleep5(waitMs);
+        await sleep4(waitMs);
         continue;
       }
       const netMsg = err instanceof Error ? err.message : String(err);
@@ -114750,7 +114732,7 @@ async function shopeeFetchJsonWithRetry(url2, context, opts) {
       console.warn(
         `[Shopee API] ${context} HTTP ${res.status}, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`
       );
-      await sleep5(waitMs);
+      await sleep4(waitMs);
       continue;
     }
     if (res.status === 401 || res.status === 429 || res.status === 504 || res.status >= 400 && json2?.error) {
@@ -114789,7 +114771,7 @@ async function shopeePostJsonWithRetry(url2, body, context, opts) {
       if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
         shopeeRetryTelemetry.retries++;
         console.warn(`[Shopee API] ${context} l\u1ED7i m\u1EA1ng, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`);
-        await sleep5(waitMs);
+        await sleep4(waitMs);
         continue;
       }
       const netMsg = err instanceof Error ? err.message : String(err);
@@ -114817,7 +114799,7 @@ async function shopeePostJsonWithRetry(url2, body, context, opts) {
       console.warn(
         `[Shopee API] ${context} HTTP ${res.status}, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`
       );
-      await sleep5(waitMs);
+      await sleep4(waitMs);
       continue;
     }
     if (json2?.error && !json2.message) {
@@ -119646,6 +119628,10 @@ async function createManualOrder(req, res) {
       isPrinted: false,
       items: lineItems,
       logisticsPayload,
+      spxAwbUrl: logisticsResult?.url || "",
+      spxAwbBase64: logisticsResult?.base64 || "",
+      waybill_url: logisticsResult?.url || "",
+      carrierRaw: logisticsResult?.raw || null,
       packageLength: lengthCm,
       packageWidth: widthCm,
       packageHeight: heightCm,
@@ -119731,7 +119717,11 @@ async function printExternalWaybill(req, res) {
       });
     }
     if (provider === "spx") {
-      const waybill = await getSpxWaybill(trackingNo);
+      const waybill = await getSpxWaybill(trackingNo, {
+        awb_url: order.spxAwbUrl || order.waybill_url,
+        awb_file: order.spxAwbBase64,
+        ...order.carrierRaw && typeof order.carrierRaw === "object" ? order.carrierRaw : {}
+      });
       if (waybill.url) {
         return res.json({
           success: true,
@@ -120582,10 +120572,10 @@ async function debugReturnByOrder(req, res) {
           if (!deps16.parseShopeeReturnListMore(listResult) && rows.length < 100) break;
           if (rows.length === 0) break;
           pageNo++;
-          await sleep5(400);
+          await sleep4(400);
         }
         if (matchedReturnSn) break;
-        await sleep5(300);
+        await sleep4(300);
       }
       if (matchedReturnSn) break;
     }
@@ -122212,7 +122202,7 @@ var genAIKey = "";
 function readGeminiApiKey() {
   return String(process.env.GEMINI_API_KEY || "").trim();
 }
-function sleep6(ms) {
+function sleep5(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 function getClient() {
@@ -122309,7 +122299,7 @@ async function parseAddressWithGemini(rawAddress) {
     } catch (err) {
       lastError = wrapGeminiError(err);
       if (!isModelUnavailable(err) || i2 >= models.length - 1) break;
-      await sleep6(200);
+      await sleep5(200);
     }
   }
   throw wrapGeminiError(lastError);
@@ -124937,7 +124927,7 @@ async function yieldToLogisticsIfBusy(maxWaitMs = 15e3) {
   if (!isLogisticsBusy()) return;
   const t0 = Date.now();
   while (isLogisticsBusy() && Date.now() - t0 < maxWaitMs) {
-    await sleep5(200);
+    await sleep4(200);
   }
 }
 function releaseOrdersPullLock(reason = "finally") {
@@ -129220,10 +129210,10 @@ async function shopeeGetModelList(shopId, accessToken, itemId) {
 async function shopeeGetModelListWithRetry(shopId, accessToken, itemId, retries = 3) {
   let last = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
-    if (attempt > 0) await sleep5(SHOPEE_PRODUCT_API_DELAY_MS2 * attempt);
+    if (attempt > 0) await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2 * attempt);
     last = await shopeeGetModelList(shopId, accessToken, itemId);
     if (!last?.error) return last;
-    if (isShopeeRateLimited(0, last)) await sleep5(SHOPEE_PRODUCT_API_DELAY_MS2 * 2);
+    if (isShopeeRateLimited(0, last)) await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2 * 2);
   }
   return last;
 }
@@ -129859,7 +129849,7 @@ async function publishOneItemToShopee(shopId, payload) {
     const { buf, filename, mime } = await resolvePublishImageBuffer(src);
     if (buf.length > 10 * 1024 * 1024) throw new Error(`\u1EA2nh v\u01B0\u1EE3t 10MB: ${filename}`);
     imageIds.push(await shopeeUploadImage(shopId, accessToken, buf, filename, mime));
-    await sleep5(SHOPEE_PRODUCT_API_DELAY_MS2);
+    await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
   }
   const fullChannels = await shopeeGetChannelList(shopId, accessToken);
   let enabledLogistics = Array.isArray(payload?.enabledLogistics) ? payload.enabledLogistics.map(Number).filter((n) => n > 0) : [];
@@ -129874,7 +129864,7 @@ async function publishOneItemToShopee(shopId, payload) {
   if (!logisticInfo.length) {
     throw new Error("Shop ch\u01B0a c\xF3 k\xEAnh v\u1EADn chuy\u1EC3n enabled (get_channel_list) ho\u1EB7c k\xEDch th\u01B0\u1EDBc g\xF3i h\xE0ng kh\xF4ng ph\xF9 h\u1EE3p v\u1EDBi b\u1EA5t k\u1EF3 k\xEAnh n\xE0o");
   }
-  await sleep5(SHOPEE_PRODUCT_API_DELAY_MS2);
+  await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
   let mandatoryAttrs = [];
   let attributeTreeError = null;
   try {
@@ -129884,7 +129874,7 @@ async function publishOneItemToShopee(shopId, payload) {
     attributeTreeError = err?.message || String(err);
     console.log("[SHOPEE UPLOAD ERROR]:", JSON.stringify({ step: "get_attribute_tree", error: attributeTreeError }, null, 2));
   }
-  await sleep5(SHOPEE_PRODUCT_API_DELAY_MS2);
+  await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
   const attributeList = buildShopeeAttributeListFromPayload(payload, mandatoryAttrs);
   const missingMandatory = mandatoryAttrs.filter(
     (a) => !attributeList.some((x2) => Number(x2.attribute_id) === Number(a.attribute_id))
@@ -129975,7 +129965,7 @@ async function publishOneItemToShopee(shopId, payload) {
       throw new Error("add_item kh\xF4ng tr\u1EA3 v\u1EC1 item_id h\u1EE3p l\u1EC7 (Shopee kh\xF4ng t\u1EA1o s\u1EA3n ph\u1EA9m)");
     }
   }
-  await sleep5(SHOPEE_PRODUCT_API_DELAY_MS2);
+  await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
   if (hasVariants && !existingItemId) {
     const itemIdNum = toShopeeIdNumber(itemId) ?? Number(itemId);
     if (!Number.isFinite(itemIdNum) || itemIdNum <= 0) {
@@ -130034,7 +130024,7 @@ async function publishOneItemToShopee(shopId, payload) {
           },
           "init_tier_variation"
         );
-        await sleep5(SHOPEE_PRODUCT_API_DELAY_MS2);
+        await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
         await shopeeProductPost(
           "/api/v2/product/add_model",
           shopId,
@@ -130055,7 +130045,7 @@ async function publishOneItemToShopee(shopId, payload) {
   let modelIds = [];
   if (hasVariants && !existingItemId) {
     try {
-      await sleep5(SHOPEE_PRODUCT_API_DELAY_MS2);
+      await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
       const modelListResp = await shopeeGetModelListWithRetry(shopId, accessToken, itemId, 2);
       if (modelListResp && !modelListResp.error) {
         const rawModels = modelListResp.response?.model || modelListResp.response?.model_list || [];
@@ -130227,7 +130217,7 @@ async function syncProductToShopee(product, shopId, accessToken) {
       { ...base, action: "update_price" }
     ];
   }
-  await sleep5(SHOPEE_PRODUCT_API_DELAY_MS2);
+  await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
   const priceResult = await shopeeUpdatePrice(shopId, accessToken, itemId, [priceEntry]);
   if (isShopeeItemNotFoundError(priceResult)) {
     await markShopeeItemsInvalidInDb([itemId], priceResult?.error || "product.error_item_not_found");
@@ -130591,7 +130581,7 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
       }
       continue;
     }
-    await sleep5(SHOPEE_PRODUCT_API_DELAY_MS2);
+    await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
     const locationId = await resolveShopeeStockLocationId(resolved.shopId, resolved.accessToken);
     const stockList = [];
     for (const p of rows) {
@@ -130629,7 +130619,7 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
     }
     if (stockList.length === 0) {
       processedInBatch++;
-      await sleep5(SHOPEE_PRODUCT_API_DELAY_MS2);
+      await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
       continue;
     }
     let result;
@@ -130651,10 +130641,10 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
         });
       }
       processedInBatch++;
-      await sleep5(SHOPEE_PRODUCT_API_DELAY_MS2);
+      await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
       if (processedInBatch % SHOPEE_PRODUCT_BATCH_SIZE2 === 0 && processedInBatch < itemEntries.length) {
         console.log(`[Shopee Push Stock] Ngh\u1EC9 ${SHOPEE_PRODUCT_BATCH_PAUSE_MS2}ms sau ${processedInBatch}/${itemEntries.length} item...`);
-        await sleep5(SHOPEE_PRODUCT_BATCH_PAUSE_MS2);
+        await sleep4(SHOPEE_PRODUCT_BATCH_PAUSE_MS2);
       }
       continue;
     }
@@ -130702,10 +130692,10 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
       pushed += rows.length;
     }
     processedInBatch++;
-    await sleep5(SHOPEE_PRODUCT_API_DELAY_MS2);
+    await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
     if (processedInBatch % SHOPEE_PRODUCT_BATCH_SIZE2 === 0 && processedInBatch < itemEntries.length) {
       console.log(`[Shopee Push Stock] Ngh\u1EC9 ${SHOPEE_PRODUCT_BATCH_PAUSE_MS2}ms sau ${processedInBatch}/${itemEntries.length} item...`);
-      await sleep5(SHOPEE_PRODUCT_BATCH_PAUSE_MS2);
+      await sleep4(SHOPEE_PRODUCT_BATCH_PAUSE_MS2);
     }
   }
   if (invalidItemIds.size > 0) {
@@ -131353,7 +131343,7 @@ async function fetchAllShopeeItemIds(shopId, accessToken) {
     hasNext = !!listResult.response?.has_next_page && items.length > 0;
     offset = listResult.response?.next_offset ?? offset + items.length;
     pageGuard++;
-    if (hasNext) await sleep5(SHOPEE_PRODUCT_API_DELAY_MS2);
+    if (hasNext) await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
   }
   return allItemIds;
 }
@@ -131379,7 +131369,7 @@ async function fetchShopeeBaseItemsByIds(shopId, accessToken, itemIds) {
       console.error(`[Shopee Sync] get_item_base_info batch ${batchIdx} exception: ${msg}`);
     }
     if (batchIdx < batches.length - 1) {
-      await sleep5(SHOPEE_PRODUCT_API_DELAY_MS2);
+      await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
     }
   }
   return allItems;
@@ -134054,7 +134044,7 @@ async function forceResyncStuckOrdersWithoutTracking(opts) {
       console.error(`[Force Resync] ${orderSn} FAILED:`, err?.stack || err);
     }
     results.push(item);
-    await sleep5(SHOPEE_TRACKING_FETCH_DELAY_MS);
+    await sleep4(SHOPEE_TRACKING_FETCH_DELAY_MS);
   }
   console.log(
     `[Force Resync] DONE attempted=${results.length} healed=${healed} ok=${results.filter((r2) => r2.ok).length}`
@@ -134303,7 +134293,7 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
           );
         }
       }
-      if (i2 + SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS < sns.length) await sleep5(PRINT_API_DELAY_MS);
+      if (i2 + SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS < sns.length) await sleep4(PRINT_API_DELAY_MS);
     }
   }
   let nextOrderIndex = 0;
@@ -134539,7 +134529,7 @@ async function shopeeGetTrackingNumberWithRetry(shopId, accessToken, orderSn, pa
       last = { error: "exception", message: err?.message || String(err) };
       if (attempt >= maxAttempts) return last;
     }
-    await sleep5(300);
+    await sleep4(300);
   }
   return last;
 }
@@ -134785,7 +134775,7 @@ async function backfillMissingGhnTrackingNumbers() {
               apiErr?.message || apiErr
             );
             errors += 1;
-            await sleep5(SHOPEE_TRACKING_FETCH_DELAY_MS);
+            await sleep4(SHOPEE_TRACKING_FETCH_DELAY_MS);
             continue;
           }
           let tn = extractRawGhnTrackingNumber(result);
@@ -134832,7 +134822,7 @@ async function backfillMissingGhnTrackingNumbers() {
             orderErr?.message || orderErr
           );
         }
-        await sleep5(SHOPEE_TRACKING_FETCH_DELAY_MS);
+        await sleep4(SHOPEE_TRACKING_FETCH_DELAY_MS);
       }
     }
     if (pendingWrites.length > 0) {
@@ -135225,7 +135215,7 @@ async function repairMissingShopeeTrackingInOrders(orders, opts) {
       attempted++;
       continue;
     } finally {
-      await sleep5(SHOPEE_TRACKING_FETCH_DELAY_MS);
+      await sleep4(SHOPEE_TRACKING_FETCH_DELAY_MS);
     }
   }
   if (attempted > 0) {
@@ -135354,7 +135344,7 @@ async function healCancelledReturnTrackingOrders(opts) {
           err?.message || err
         );
       } finally {
-        await sleep5(HEAL_ITEM_DELAY_MS);
+        await sleep4(HEAL_ITEM_DELAY_MS);
       }
     }
     try {
@@ -136201,7 +136191,7 @@ function scheduleDeferredTrackingEnrich(apiShopId, accessToken, orders) {
             error?.message || error
           );
         }
-        await sleep5(SHOPEE_TRACKING_FETCH_DELAY_MS);
+        await sleep4(SHOPEE_TRACKING_FETCH_DELAY_MS);
       }
       try {
         queueOrdersJsonMirrorFromMongo();
@@ -137507,7 +137497,7 @@ async function batchAutoLinkFromDatabase(opts) {
     if (wroteChanges) {
       await bulkUpsertChannelListingsToStore(newlyLinkedRows);
       await flushDbWrites();
-      await sleep5(200);
+      await sleep4(200);
     }
     const unlinkedRemaining = dbListings.filter((row) => {
       const safeRow = sanitizeChannelListingRow(row);
@@ -138449,7 +138439,7 @@ async function findReturnSnForOrderWebhook(shopId, accessToken, orderSn) {
     }
     if (!parseShopeeReturnListMore(listResult) || rows.length === 0) break;
     pageNo += 1;
-    await sleep5(150);
+    await sleep4(150);
   }
   return "";
 }
@@ -138797,7 +138787,7 @@ async function startServer() {
     sanitizeChannelListingRow,
     bulkUpsertChannelListingsToStore,
     flushDbWrites,
-    sleep: sleep5,
+    sleep: sleep4,
     loadProducts,
     persistHealedBrokenMappingLinks,
     readChannelListingsDb,
@@ -140017,7 +140007,7 @@ async function startServer() {
               console.warn(`[Batch Confirm Print] Poll ${orderSn} attempt ${attempt}:`, err?.message || err);
             }
             if (attempt < 10 && Date.now() < deadlineAt) {
-              await sleep5(Math.min(PRINT_WAYBILL_POLL_INTERVAL_MS, Math.max(0, deadlineAt - Date.now())));
+              await sleep4(Math.min(PRINT_WAYBILL_POLL_INTERVAL_MS, Math.max(0, deadlineAt - Date.now())));
             }
           }
           if (!pdfReady) {
@@ -140257,7 +140247,7 @@ async function startServer() {
               console.warn(`[Batch Print Only] Poll ${orderSn} attempt ${attempt}:`, err?.message || err);
             }
             if (attempt < 10 && Date.now() < deadlineAt) {
-              await sleep5(Math.min(PRINT_WAYBILL_POLL_INTERVAL_MS, Math.max(0, deadlineAt - Date.now())));
+              await sleep4(Math.min(PRINT_WAYBILL_POLL_INTERVAL_MS, Math.max(0, deadlineAt - Date.now())));
             }
           }
           if (!pdfReady) {
@@ -140986,7 +140976,7 @@ async function startServer() {
         console.error("L\u1ED7i 1 \u0111\u01A1n (ship batch):", error);
       }
       if (k < runIndices.length - 1 && SHIP_ORDER_CHUNK_PAUSE_MS > 0) {
-        await sleep5(SHIP_ORDER_CHUNK_PAUSE_MS);
+        await sleep4(SHIP_ORDER_CHUNK_PAUSE_MS);
       }
     }
     const compactResults = results.filter(Boolean);
@@ -141185,7 +141175,7 @@ async function startServer() {
           });
         }
         if (SHIP_ORDER_CHUNK_PAUSE_MS > 0) {
-          await sleep5(SHIP_ORDER_CHUNK_PAUSE_MS);
+          await sleep4(SHIP_ORDER_CHUNK_PAUSE_MS);
         }
       }
       const mongoPatchesShip = toShip.map(({ index, order }) => {
@@ -142576,7 +142566,7 @@ async function startServer() {
         let error_message;
         if (platform === "shopee") {
           try {
-            if (i2 > 0) await sleep5(SHOPEE_PRODUCT_API_DELAY_MS2 * 2);
+            if (i2 > 0) await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2 * 2);
             if (!shopKey) throw new Error("Thi\u1EBFu Shopee shop_id (OAuth)");
             const existingListing = allRows.find(
               (r2) => r2.product_id === productId && String(r2.shop_id) === shopKey && r2.platform === "shopee" && r2.status === "success" && r2.platform_product_id

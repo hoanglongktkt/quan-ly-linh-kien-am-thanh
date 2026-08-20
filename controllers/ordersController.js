@@ -2767,6 +2767,10 @@ export async function createManualOrder(req, res) {
       isPrinted: false,
       items: lineItems,
       logisticsPayload,
+      spxAwbUrl: logisticsResult?.url || "",
+      spxAwbBase64: logisticsResult?.base64 || "",
+      waybill_url: logisticsResult?.url || "",
+      carrierRaw: logisticsResult?.raw || null,
       packageLength: lengthCm,
       packageWidth: widthCm,
       packageHeight: heightCm,
@@ -2865,7 +2869,11 @@ export async function printExternalWaybill(req, res) {
     }
 
     if (provider === "spx") {
-      const waybill = await getSpxWaybill(trackingNo);
+      const waybill = await getSpxWaybill(trackingNo, {
+        awb_url: order.spxAwbUrl || order.waybill_url,
+        awb_file: order.spxAwbBase64,
+        ...(order.carrierRaw && typeof order.carrierRaw === "object" ? order.carrierRaw : {}),
+      });
       if (waybill.url) {
         return res.json({
           success: true,

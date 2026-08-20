@@ -8,9 +8,9 @@ import axios from "axios";
 import { loadSpxCredentialsFromMongo } from "./logisticsConfig.js";
 
 const TIMEOUT_MS = 15_000;
-const MAX_CREATE_PATHS = 3;
-const MAX_WAYBILL_PATHS = 4;
-const MAX_WAYBILL_BODIES = 4;
+/** Gateway SPX Express Việt Nam + path tạo đơn chuẩn (single create). Không dùng path batch đoán mò. */
+const SPX_DEFAULT_HOST = "https://spx.vn";
+const SPX_CREATE_ORDER_PATH = "/open/api/v1/order/create_order";
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
@@ -190,7 +190,7 @@ export async function createSpxShippingOrder({
   creds: credsIn,
 }) {
   const creds = credsIn || (await loadSpxCredentialsFromMongo());
-  const apiUrl = creds.apiUrl;
+  const apiUrl = String(creds.apiUrl || SPX_DEFAULT_HOST).replace(/\/$/, "") || SPX_DEFAULT_HOST;
   const userId = pickSpxAppId(creds);
   const weight = Math.max(1, Math.round(Number(weightGrams) || 500));
   const itemList = buildItemList(items, weight);
@@ -213,85 +213,53 @@ export async function createSpxShippingOrder({
     remark: String(note || "").slice(0, 200),
   };
 
-  const payloads = [{ user_id: userId || undefined, orders: [orderRow] }, { ...orderRow, user_id: userId || undefined }];
-  const paths = [
-    "/open/api/v1/order/create_order",
-    "/open/api/v1/order/batch_create_order",
-    "/open/api/order/create_order",
-  ].slice(0, MAX_CREATE_PATHS);
-
-  let lastErr = "SPX tạo đơn thất bại";
-  for (let i = 0; i < paths.length; i += 1) {
-    for (let p = 0; p < payloads.length; p += 1) {
-      if (i + p > 0) await sleep(250);
-      const result = await spxFetch(apiUrl, paths[i], payloads[p], creds);
-      if (isSpxSuccess(result.json)) {
-        const trackingNo = pickTracking(result.json?.data || result.json);
-        if (trackingNo) {
-          return {
-            provider: "spx",
-            trackingNo,
-            orderCode: trackingNo,
-            raw: result.json?.data || result.json,
-          };
-        }
-        lastErr = "SPX tạo đơn xong nhưng không trả tracking_no";
-        continue;
-      }
-      lastErr =
-        result.json?.message ||
-        result.json?.msg ||
-        result.json?.error ||
-        `SPX ${paths[i]} HTTP ${result.status}`;
-    }
+  const payload = { user_id: userId || undefined, orders: [orderRow] };
+  const result = await spxFetch(apiUrl, SPX_CREATE_ORDER_PATH, payload, creds);
+  if (result.status === 404) {
+    throw new Error(
+      `SPX HTTP 404 tại ${SPX_CREATE_ORDER_PATH}. Kiểm tra host Open API (mặc định ${SPX_DEFAULT_HOST}).`,
+    );
   }
-  throw new Error(String(lastErr));
+  if (!isSpxSuccess(result.json)) {
+    throw new Error(
+      String(
+        result.json?.message ||
+          result.json?.msg ||
+          result.json?.error ||
+          `SPX ${SPX_CREATE_ORDER_PATH} HTTP ${result.status}`,
+      ),
+    );
+  }
+  const data = result.json?.data || result.json;
+  const trackingNo = pickTracking(data);
+  if (!trackingNo) {
+    throw new Error("SPX tạo đơn xong nhưng không trả tracking_no");
+  }
+  const waybill = pickWaybill(data);
+  return {
+    provider: "spx",
+    trackingNo,
+    orderCode: trackingNo,
+    url: waybill.url,
+    base64: waybill.base64,
+    raw: data,
+  };
 }
 
 /**
- * Lấy link PDF / Base64 vận đơn gốc từ SPX theo tracking_no.
+ * Phiếu in SPX lấy từ response create_order (awb_url / file_data) đã lưu trên đơn.
+ * Không gọi endpoint giả batch_get_awb / get_awb / print_label.
  */
-export async function getSpxWaybill(trackingNo) {
-  const creds = await loadSpxCredentialsFromMongo();
+export async function getSpxWaybill(trackingNo, storedWaybill) {
   const tn = String(trackingNo || "").trim();
   if (!tn) throw new Error("Thiếu mã vận đơn SPX (tracking_no).");
-
-  const payloads = [
-    { tracking_no_list: [tn] },
-    { tracking_nos: [tn] },
-    { order_list: [{ tracking_no: tn }] },
-    { tracking_no: tn },
-  ].slice(0, MAX_WAYBILL_BODIES);
-  const paths = [
-    "/open/api/v1/order/batch_get_awb",
-    "/open/api/v1/order/get_awb",
-    "/open/api/order/batch_get_awb",
-    "/open/api/v1/order/print_label",
-  ].slice(0, MAX_WAYBILL_PATHS);
-
-  let lastErr = "SPX không trả waybill";
-  for (let p = 0; p < paths.length; p += 1) {
-    for (let b = 0; b < payloads.length; b += 1) {
-      if (p + b > 0) await sleep(200);
-      const result = await spxFetch(creds.apiUrl, paths[p], payloads[b], creds);
-      if (!isSpxSuccess(result.json) && result.status >= 400) {
-        lastErr =
-          result.json?.message ||
-          result.json?.msg ||
-          `SPX ${paths[p]} HTTP ${result.status}`;
-        continue;
-      }
-      const picked = pickWaybill(result.json?.data || result.json);
-      if (picked.url || picked.base64) {
-        return { ...picked, trackingNo: tn, raw: result.json?.data || null };
-      }
-      lastErr =
-        result.json?.message ||
-        result.json?.msg ||
-        "SPX waybill rỗng (không có awb_url / file_data)";
-    }
+  const picked = pickWaybill(storedWaybill && typeof storedWaybill === "object" ? storedWaybill : {});
+  if (picked.url || picked.base64) {
+    return { ...picked, trackingNo: tn, raw: storedWaybill || null };
   }
-  throw new Error(String(lastErr));
+  throw new Error(
+    "Không có phiếu vận đơn SPX từ lúc tạo đơn (create_order). Hệ thống không gọi endpoint giả batch_get_awb.",
+  );
 }
 
 function isBlankSpxSecret(value) {
@@ -324,96 +292,93 @@ export async function testSpxConnection({ userId, secret, apiUrl } = {}) {
     };
   }
 
-  const base = String(apiUrl || "https://spx.vn")
-    .trim()
-    .replace(/\/$/, "") || "https://spx.vn";
-  const attempts = [
-    { path: "/open/api/v1/order/get_order_list", body: { page_no: 1, page_size: 1 } },
-    { path: "/open/api/v1/order/batch_get_awb", body: { tracking_no_list: [] } },
-  ].slice(0, 2);
+  const base =
+    String(apiUrl || SPX_DEFAULT_HOST)
+      .trim()
+      .replace(/\/$/, "") || SPX_DEFAULT_HOST;
+  const body = { user_id: uid };
+  const rawBody = JSON.stringify(body);
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const sign = signBody(uid, sec, timestamp, rawBody);
 
-  let lastMessage = "Kết nối SPX thất bại";
-  let lastHttp = 0;
+  try {
+    const response = await axios.post(`${base}${SPX_CREATE_ORDER_PATH}`, rawBody, {
+      timeout: TIMEOUT_MS,
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "app-id": uid,
+        appid: uid,
+        "user-id": uid,
+        timestamp,
+        sign,
+      },
+      transformRequest: [(data) => data],
+      validateStatus: () => true,
+    });
+    const httpStatus = Number(response.status) || 0;
+    const json =
+      response.data && typeof response.data === "object"
+        ? response.data
+        : { raw: String(response.data || "") };
 
-  for (let i = 0; i < attempts.length; i += 1) {
-    if (i > 0) await sleep(250);
-    const { path, body } = attempts[i];
-    const rawBody = JSON.stringify(body || {});
-    const timestamp = String(Math.floor(Date.now() / 1000));
-    const sign = signBody(uid, sec, timestamp, rawBody);
-
-    try {
-      const response = await axios.post(`${base}${path}`, rawBody, {
-        timeout: TIMEOUT_MS,
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-          "app-id": uid,
-          appid: uid,
-          "user-id": uid,
-          timestamp,
-          sign,
-        },
-        transformRequest: [(data) => data],
-        validateStatus: () => true,
-      });
-      const httpStatus = Number(response.status) || 0;
-      lastHttp = httpStatus;
-      const json =
-        response.data && typeof response.data === "object"
-          ? response.data
-          : { raw: String(response.data || "") };
-
-      if (isSpxAuthFailure(httpStatus, json)) {
-        return {
-          success: false,
-          httpStatus: httpStatus || 401,
-          message: "User ID / Secret SPX không hợp lệ!",
-        };
-      }
-
-      if (httpStatus === 200) {
-        const looksLikeSpxJson =
-          isSpxSuccess(json) ||
-          json.ret_code != null ||
-          json.retcode != null ||
-          json.code != null ||
-          json.data != null ||
-          json.message != null ||
-          json.msg != null;
-        if (looksLikeSpxJson) {
-          return {
-            success: true,
-            httpStatus: 200,
-            message: "Kết nối SPX thành công!",
-          };
-        }
-      }
-
-      lastMessage =
-        json?.message || json?.msg || json?.error || `SPX ${path} HTTP ${httpStatus}`;
-    } catch (err) {
-      const httpStatus = Number(err?.response?.status) || 0;
-      lastHttp = httpStatus;
-      if (httpStatus === 401 || httpStatus === 403) {
-        return {
-          success: false,
-          httpStatus,
-          message: "User ID / Secret SPX không hợp lệ!",
-        };
-      }
-      if (err?.code === "ECONNABORTED") {
-        return {
-          success: false,
-          httpStatus: 0,
-          message: `Timeout kết nối máy chủ SPX (>${TIMEOUT_MS}ms)`,
-        };
-      }
-      lastMessage = err?.message || lastMessage;
+    if (httpStatus === 404) {
+      return {
+        success: false,
+        httpStatus: 404,
+        message: `SPX HTTP 404 tại ${SPX_CREATE_ORDER_PATH}. Endpoint không tồn tại trên gateway ${base}.`,
+      };
     }
+    if (isSpxAuthFailure(httpStatus, json)) {
+      return {
+        success: false,
+        httpStatus: httpStatus || 401,
+        message: "User ID / Secret SPX không hợp lệ!",
+      };
+    }
+    if (httpStatus === 200) {
+      return {
+        success: true,
+        httpStatus: 200,
+        message: "Kết nối SPX thành công!",
+      };
+    }
+    return {
+      success: false,
+      httpStatus,
+      message: String(
+        json?.message || json?.msg || json?.error || `SPX ${SPX_CREATE_ORDER_PATH} HTTP ${httpStatus}`,
+      ),
+    };
+  } catch (err) {
+    const httpStatus = Number(err?.response?.status) || 0;
+    if (httpStatus === 401 || httpStatus === 403) {
+      return {
+        success: false,
+        httpStatus,
+        message: "User ID / Secret SPX không hợp lệ!",
+      };
+    }
+    if (httpStatus === 404) {
+      return {
+        success: false,
+        httpStatus: 404,
+        message: `SPX HTTP 404 tại ${SPX_CREATE_ORDER_PATH}.`,
+      };
+    }
+    if (err?.code === "ECONNABORTED") {
+      return {
+        success: false,
+        httpStatus: 0,
+        message: `Timeout kết nối máy chủ SPX (>${TIMEOUT_MS}ms)`,
+      };
+    }
+    return {
+      success: false,
+      httpStatus,
+      message: err?.message || "Kết nối SPX thất bại",
+    };
   }
-
-  return { success: false, httpStatus: lastHttp, message: String(lastMessage) };
 }
 
 export { sleep as spxSleep };
