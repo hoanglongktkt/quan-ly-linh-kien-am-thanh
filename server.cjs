@@ -74471,6 +74471,89 @@ function scheduleLabelPdfCleanup() {
   }
   console.log(`[Labels Cleanup Cron] ON \u2014 02:00 Asia/Ho_Chi_Minh + setInterval 24h, dir=${PDF_DIR}, TTL=7d`);
 }
+var ghnStatusSyncScheduled = false;
+var ghnStatusSyncTask = null;
+var ghnStatusSyncInterval = null;
+var ghnStatusSyncBootTimer = null;
+function runGhnStatusSyncTick(deps22, trigger) {
+  if (typeof deps22.runSync !== "function") return;
+  console.log(`[CRON] Tick GHN status sync (\u0111\u01A1n ngo\u1EA1i s\xE0n c\xF2n m\u1EDF) trigger=${trigger}`);
+  try {
+    void Promise.resolve(deps22.runSync({ trigger })).then((r2) => {
+      if (r2?.skipped) {
+        console.log(`[CRON] GHN status sync skipped: ${r2.message || "busy"}`);
+        return;
+      }
+      console.log(
+        `[CRON] GHN status sync done scanned=${r2?.scanned || 0} updated=${r2?.updated || 0} unchanged=${r2?.unchanged || 0} errors=${r2?.errors || 0}`
+      );
+    }).catch((err) => {
+      console.error("[CRON] GHN status sync tick failed:", err?.message || err);
+    });
+  } catch (err) {
+    console.error("[CRON] GHN status sync tick failed:", err?.message || err);
+  }
+}
+function scheduleGhnStatusSync(deps22 = {}) {
+  if (ghnStatusSyncScheduled) {
+    console.log("[CRON] GHN status sync already scheduled (idempotent).");
+    return;
+  }
+  ghnStatusSyncScheduled = true;
+  const disabled = String(process.env.AUTO_GHN_STATUS_SYNC_CRON || "1").trim() === "0" || String(process.env.AUTO_GHN_STATUS_SYNC_CRON || "").toLowerCase() === "off" || String(process.env.AUTO_GHN_STATUS_SYNC_CRON || "").toLowerCase() === "false";
+  if (disabled) {
+    console.log("[CRON] GHN status sync DISABLED (AUTO_GHN_STATUS_SYNC_CRON=0).");
+    return;
+  }
+  if (typeof deps22.runSync !== "function") {
+    console.warn("[CRON] GHN status sync NOT started \u2014 thi\u1EBFu deps.runSync");
+    return;
+  }
+  const cronExpr = String(
+    deps22.cronExpr || process.env.AUTO_GHN_STATUS_SYNC_CRON_EXPR || "*/30 * * * *"
+  ).trim();
+  const intervalMs = Math.max(
+    10 * 60 * 1e3,
+    Number(deps22.intervalMs) || Number(process.env.AUTO_GHN_STATUS_SYNC_MS) || 30 * 60 * 1e3
+  );
+  if (import_node_cron.default.validate(cronExpr)) {
+    ghnStatusSyncTask = import_node_cron.default.schedule(cronExpr, () => {
+      runGhnStatusSyncTick(deps22, "cron");
+    });
+    console.log(`[CRON] GHN status sync ON \u2014 expr="${cronExpr}" (\u0111\u01A1n ngo\u1EA1i s\xE0n GHN c\xF2n m\u1EDF).`);
+  } else {
+    console.error(
+      `[CRON] Invalid GHN status sync expr="${cronExpr}" \u2014 d\xF9ng setInterval thay th\u1EBF`
+    );
+  }
+  if (ghnStatusSyncInterval) {
+    try {
+      clearInterval(ghnStatusSyncInterval);
+    } catch {
+    }
+  }
+  ghnStatusSyncInterval = setInterval(() => {
+    runGhnStatusSyncTick(deps22, "interval");
+  }, intervalMs);
+  if (typeof ghnStatusSyncInterval.unref === "function") {
+    ghnStatusSyncInterval.unref();
+  }
+  if (ghnStatusSyncBootTimer) {
+    try {
+      clearTimeout(ghnStatusSyncBootTimer);
+    } catch {
+    }
+  }
+  ghnStatusSyncBootTimer = setTimeout(() => {
+    runGhnStatusSyncTick(deps22, "boot");
+  }, 75e3);
+  if (typeof ghnStatusSyncBootTimer.unref === "function") {
+    ghnStatusSyncBootTimer.unref();
+  }
+  console.log(
+    `[CRON] GHN status sync interval=${Math.round(intervalMs / 6e4)} ph\xFAt + boot kick 75s. Mutex ch\u1ED1ng ch\u1ED3ng job.`
+  );
+}
 
 // src/webhooks/shopeeWebhookHandler.ts
 var import_express = __toESM(require_express2(), 1);
@@ -79654,6 +79737,92 @@ async function loadOrdersFromStore(opts) {
     if (order) out.push(order);
   }
   return out;
+}
+var GHN_OPEN_SYNC_TERMINAL_EXT = ["cancelled", "delivered", "rts"];
+var GHN_OPEN_SYNC_TERMINAL_SHOPEE = [
+  "EXTERNAL_CANCELLED",
+  "EXTERNAL_DELIVERED",
+  "EXTERNAL_RTS"
+];
+var GHN_OPEN_SYNC_TERMINAL_GHN = [
+  "cancel",
+  "cancelled",
+  "canceled",
+  "delivered",
+  "returned"
+];
+async function findOpenGhnExternalOrdersFromStore(opts) {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const limit = Math.min(Math.max(1, Math.floor(Number(opts?.limit) || 25)), 40);
+  const lookbackDays = Math.min(
+    Math.max(7, Math.floor(Number(opts?.lookbackDays) || 90)),
+    180
+  );
+  const cutoff = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1e3);
+  const cutoffIso = cutoff.toISOString();
+  const filter2 = {
+    $and: [
+      { $or: [{ channel: "manual" }, { "data.channel": "manual" }] },
+      {
+        $or: [
+          { "data.provider": { $regex: /^ghn$/i } },
+          { "data.carrier": { $regex: /^ghn$/i } }
+        ]
+      },
+      {
+        $or: [
+          { tracking_no: { $exists: true, $nin: [null, "", "0"] } },
+          { trackingNumber: { $exists: true, $nin: [null, "", "0"] } },
+          { "data.tracking_no": { $exists: true, $nin: [null, "", "0"] } },
+          { "data.trackingNumber": { $exists: true, $nin: [null, "", "0"] } }
+        ]
+      },
+      {
+        $nor: [
+          { "data.external_status": { $in: GHN_OPEN_SYNC_TERMINAL_EXT } },
+          { "data.ghn_status": { $in: GHN_OPEN_SYNC_TERMINAL_GHN } },
+          { shopee_order_status: { $in: GHN_OPEN_SYNC_TERMINAL_SHOPEE } },
+          { "data.shopee_order_status": { $in: GHN_OPEN_SYNC_TERMINAL_SHOPEE } }
+        ]
+      },
+      {
+        $or: [
+          { create_time: { $gte: cutoff } },
+          { "data.date": { $gte: cutoffIso } },
+          { "data.create_time": { $gte: cutoffIso } },
+          { create_time: { $exists: false } },
+          { create_time: null }
+        ]
+      }
+    ]
+  };
+  try {
+    const docs = await OrderModel.find(filter2).sort({ "data.ghn_synced_at": 1, create_time: 1, _id: 1 }).limit(limit).maxTimeMS(8e3).lean();
+    const out = [];
+    for (let i2 = 0; i2 < docs.length; i2 += 1) {
+      const order = hydrateOrderFromMongoDoc(docs[i2]);
+      if (!order) continue;
+      const tn = String(order.tracking_no || order.trackingNumber || "").trim();
+      if (!tn || tn === "0" || /^0FG/i.test(tn)) continue;
+      const provider = String(order.provider || order.carrier || "").toLowerCase();
+      if (provider !== "ghn") continue;
+      const ext = String(order.external_status || "").toLowerCase();
+      const ghn = String(order.ghn_status || "").toLowerCase();
+      const raw = String(order.shopee_order_status || "").toUpperCase();
+      if (GHN_OPEN_SYNC_TERMINAL_EXT.includes(ext)) continue;
+      if (GHN_OPEN_SYNC_TERMINAL_GHN.includes(ghn)) continue;
+      if (GHN_OPEN_SYNC_TERMINAL_SHOPEE.includes(raw)) continue;
+      out.push(order);
+    }
+    return out.slice(0, limit);
+  } catch (err) {
+    console.warn(
+      "[MongoDB] findOpenGhnExternalOrdersFromStore failed:",
+      err?.message || err
+    );
+    return [];
+  }
 }
 async function loadShopeeTrackingEnrichCandidatesFromStore(opts) {
   if (!isMongoReady()) return [];
@@ -123985,6 +124154,191 @@ router23.get("/labels/:filename", handlePublicLabelGet);
 router23.get("/prints/:filename", handlePublicLabelGet);
 var labelsRoutes_default = router23;
 
+// services/ghnStatusSync.js
+var EXTERNAL_STATUS_MAP2 = {
+  created: { status: "unprocessed", shopee: "EXTERNAL_CREATED" },
+  shipping: { status: "shipping", shopee: "EXTERNAL_SHIPPING" },
+  delivered: { status: "completed", shopee: "EXTERNAL_DELIVERED" },
+  rts: { status: "cancelled", shopee: "EXTERNAL_RTS" },
+  cancelled: { status: "cancelled", shopee: "EXTERNAL_CANCELLED" }
+};
+var DEFAULT_LIMIT = 25;
+var MAX_LIMIT = 40;
+var DEFAULT_DELAY_MS2 = 300;
+var DEFAULT_MAX_MS = 9e4;
+var DEFAULT_LOOKBACK_DAYS = 90;
+var MAX_CONSECUTIVE_ERRORS = 5;
+var ghnStatusSyncInFlight = false;
+function clampInt(value, fallback, min, max) {
+  const n = Math.floor(Number(value));
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+function applyMappedStatus(order, mappedKey, extra = {}) {
+  const mapped = EXTERNAL_STATUS_MAP2[mappedKey] || EXTERNAL_STATUS_MAP2.created;
+  return {
+    ...order,
+    external_status: mappedKey,
+    status: mapped.status,
+    shopee_order_status: mapped.shopee,
+    is_rts: mappedKey === "rts",
+    ghn_synced_at: (/* @__PURE__ */ new Date()).toISOString(),
+    ...extra
+  };
+}
+function currentExternalKey(order) {
+  const ext = String(order?.external_status || "").toLowerCase();
+  if (EXTERNAL_STATUS_MAP2[ext]) return ext;
+  return mapGhnStatusToExternal(order?.ghn_status);
+}
+async function runGhnStatusSync(opts = {}) {
+  const trigger = String(opts.trigger || "cron");
+  if (ghnStatusSyncInFlight) {
+    return {
+      skipped: true,
+      message: "busy",
+      trigger,
+      scanned: 0,
+      updated: 0,
+      unchanged: 0,
+      errors: 0
+    };
+  }
+  if (!isMongoReady()) {
+    return {
+      skipped: true,
+      message: "mongodb_not_ready",
+      trigger,
+      scanned: 0,
+      updated: 0,
+      unchanged: 0,
+      errors: 0
+    };
+  }
+  const limit = clampInt(
+    opts.limit ?? process.env.AUTO_GHN_STATUS_SYNC_LIMIT,
+    DEFAULT_LIMIT,
+    1,
+    MAX_LIMIT
+  );
+  const delayMs = clampInt(
+    opts.delayMs ?? process.env.AUTO_GHN_STATUS_SYNC_DELAY_MS,
+    DEFAULT_DELAY_MS2,
+    120,
+    2e3
+  );
+  const maxMs = clampInt(
+    opts.maxMs ?? process.env.AUTO_GHN_STATUS_SYNC_MAX_MS,
+    DEFAULT_MAX_MS,
+    15e3,
+    12e4
+  );
+  const lookbackDays = clampInt(
+    opts.lookbackDays ?? process.env.AUTO_GHN_STATUS_SYNC_LOOKBACK_DAYS,
+    DEFAULT_LOOKBACK_DAYS,
+    7,
+    180
+  );
+  ghnStatusSyncInFlight = true;
+  const startedAt = Date.now();
+  let scanned = 0;
+  let updated = 0;
+  let unchanged = 0;
+  let errors = 0;
+  let consecutiveErrors = 0;
+  let stopped = "";
+  try {
+    const candidates = await findOpenGhnExternalOrdersFromStore({ limit, lookbackDays });
+    const batch = Array.isArray(candidates) ? candidates.slice(0, limit) : [];
+    console.log(
+      `[GHN Status Sync] START trigger=${trigger} candidates=${batch.length} limit=${limit} delay=${delayMs}ms`
+    );
+    for (let i2 = 0; i2 < batch.length; i2 += 1) {
+      if (Date.now() - startedAt >= maxMs) {
+        stopped = "deadline";
+        break;
+      }
+      if (i2 > 0) await sleep3(delayMs);
+      const order = batch[i2];
+      const trackingNo = String(order?.tracking_no || order?.trackingNumber || "").trim();
+      if (!trackingNo) continue;
+      scanned += 1;
+      try {
+        const detail = await getGhnOrderDetail(
+          trackingNo,
+          order.ghnShopId || order.ghn_shop_id
+        );
+        consecutiveErrors = 0;
+        const mappedKey = String(detail.externalStatus || mapGhnStatusToExternal(detail.status));
+        const prevKey = currentExternalKey(order);
+        const prevGhn = String(order.ghn_status || "").toLowerCase();
+        const nextGhn = String(detail.status || "").toLowerCase();
+        if (mappedKey === prevKey && nextGhn === prevGhn) {
+          unchanged += 1;
+          await persistChangedOrdersPatch([
+            { ...order, ghn_synced_at: (/* @__PURE__ */ new Date()).toISOString() }
+          ]);
+          continue;
+        }
+        const patched = applyMappedStatus(order, mappedKey, {
+          ghn_status: detail.status,
+          ghnShopId: detail.shopId || order.ghnShopId
+        });
+        await persistChangedOrdersPatch([patched]);
+        updated += 1;
+        console.log(
+          `[GHN Status Sync] ${order.orderSn || trackingNo} ${prevKey}/${prevGhn || "-"} \u2192 ${mappedKey}/${nextGhn}`
+        );
+      } catch (err) {
+        errors += 1;
+        consecutiveErrors += 1;
+        console.warn(
+          `[GHN Status Sync] skip ${order?.orderSn || trackingNo}:`,
+          err?.message || err
+        );
+        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+          stopped = "consecutive_errors";
+          break;
+        }
+      }
+    }
+    if (updated > 0) {
+      try {
+        invalidateTabCountCache();
+      } catch {
+      }
+    }
+    const elapsed = Date.now() - startedAt;
+    console.log(
+      `[GHN Status Sync] DONE trigger=${trigger} scanned=${scanned} updated=${updated} unchanged=${unchanged} errors=${errors} stopped=${stopped || "ok"} ${elapsed}ms`
+    );
+    return {
+      skipped: false,
+      trigger,
+      scanned,
+      updated,
+      unchanged,
+      errors,
+      stopped: stopped || null,
+      elapsedMs: elapsed,
+      message: `scanned=${scanned} updated=${updated} unchanged=${unchanged} errors=${errors}`
+    };
+  } catch (err) {
+    console.error("[GHN Status Sync] FAILED:", err?.message || err);
+    return {
+      skipped: false,
+      trigger,
+      scanned,
+      updated,
+      unchanged,
+      errors: errors + 1,
+      message: err?.message || "ghn_status_sync_failed"
+    };
+  } finally {
+    ghnStatusSyncInFlight = false;
+  }
+}
+
 // services/shopee/axiosClient.js
 var SHOPEE_AXIOS_TIMEOUT_MS = 3e4;
 var shopeeAxios = axios_default.create({
@@ -135972,6 +136326,13 @@ function scheduleHandedOverStatusReconcileSafe() {
     intervalMs: Number(process.env.AUTO_HANDED_OVER_RECONCILE_MS) || 5 * 60 * 1e3
   });
 }
+function scheduleGhnStatusSyncSafe() {
+  scheduleGhnStatusSync({
+    runSync: (opts) => runGhnStatusSync({ ...opts, trigger: opts?.trigger || "cron" }),
+    cronExpr: process.env.AUTO_GHN_STATUS_SYNC_CRON_EXPR || "*/30 * * * *",
+    intervalMs: Number(process.env.AUTO_GHN_STATUS_SYNC_MS) || 30 * 60 * 1e3
+  });
+}
 function isShopeeOrderPreparedForPrint(order) {
   if (order?.isPrepared === true) return true;
   const status = String(order?.status || "").toLowerCase();
@@ -143898,6 +144259,7 @@ async function startServer() {
         scheduleReadyToShipBackfillSafe();
         scheduleShopeeReturnRequestsSyncSafe();
         scheduleHandedOverStatusReconcileSafe();
+        scheduleGhnStatusSyncSafe();
         setTimeout(() => {
           void backfillCancelledEmptyItems({
             limit: 20,

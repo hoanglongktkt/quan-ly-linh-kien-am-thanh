@@ -4993,6 +4993,106 @@ export async function loadOrdersFromStore(opts?: {
   return out;
 }
 
+const GHN_OPEN_SYNC_TERMINAL_EXT = ["cancelled", "delivered", "rts"];
+const GHN_OPEN_SYNC_TERMINAL_SHOPEE = [
+  "EXTERNAL_CANCELLED",
+  "EXTERNAL_DELIVERED",
+  "EXTERNAL_RTS",
+];
+const GHN_OPEN_SYNC_TERMINAL_GHN = [
+  "cancel",
+  "cancelled",
+  "canceled",
+  "delivered",
+  "returned",
+];
+
+/**
+ * Đơn ngoại sàn GHN còn mở (Đã tạo đơn / Đang lấy / Đang giao) — cron sync trạng thái.
+ * Bỏ đơn đã hủy, giao thành công, RTS/trả hàng. Limit bắt buộc, không full-scan.
+ */
+export async function findOpenGhnExternalOrdersFromStore(opts?: {
+  limit?: number;
+  lookbackDays?: number;
+}): Promise<any[]> {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const limit = Math.min(Math.max(1, Math.floor(Number(opts?.limit) || 25)), 40);
+  const lookbackDays = Math.min(
+    Math.max(7, Math.floor(Number(opts?.lookbackDays) || 90)),
+    180,
+  );
+  const cutoff = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000);
+  const cutoffIso = cutoff.toISOString();
+  const filter: Record<string, unknown> = {
+    $and: [
+      { $or: [{ channel: "manual" }, { "data.channel": "manual" }] },
+      {
+        $or: [
+          { "data.provider": { $regex: /^ghn$/i } },
+          { "data.carrier": { $regex: /^ghn$/i } },
+        ],
+      },
+      {
+        $or: [
+          { tracking_no: { $exists: true, $nin: [null, "", "0"] } },
+          { trackingNumber: { $exists: true, $nin: [null, "", "0"] } },
+          { "data.tracking_no": { $exists: true, $nin: [null, "", "0"] } },
+          { "data.trackingNumber": { $exists: true, $nin: [null, "", "0"] } },
+        ],
+      },
+      {
+        $nor: [
+          { "data.external_status": { $in: GHN_OPEN_SYNC_TERMINAL_EXT } },
+          { "data.ghn_status": { $in: GHN_OPEN_SYNC_TERMINAL_GHN } },
+          { shopee_order_status: { $in: GHN_OPEN_SYNC_TERMINAL_SHOPEE } },
+          { "data.shopee_order_status": { $in: GHN_OPEN_SYNC_TERMINAL_SHOPEE } },
+        ],
+      },
+      {
+        $or: [
+          { create_time: { $gte: cutoff } },
+          { "data.date": { $gte: cutoffIso } },
+          { "data.create_time": { $gte: cutoffIso } },
+          { create_time: { $exists: false } },
+          { create_time: null },
+        ],
+      },
+    ],
+  };
+
+  try {
+    const docs = await OrderModel.find(filter)
+      .sort({ "data.ghn_synced_at": 1, create_time: 1, _id: 1 })
+      .limit(limit)
+      .maxTimeMS(8_000)
+      .lean();
+    const out: any[] = [];
+    for (let i = 0; i < docs.length; i += 1) {
+      const order = hydrateOrderFromMongoDoc(docs[i]);
+      if (!order) continue;
+      const tn = String(order.tracking_no || order.trackingNumber || "").trim();
+      if (!tn || tn === "0" || /^0FG/i.test(tn)) continue;
+      const provider = String(order.provider || order.carrier || "").toLowerCase();
+      if (provider !== "ghn") continue;
+      const ext = String(order.external_status || "").toLowerCase();
+      const ghn = String(order.ghn_status || "").toLowerCase();
+      const raw = String(order.shopee_order_status || "").toUpperCase();
+      if (GHN_OPEN_SYNC_TERMINAL_EXT.includes(ext)) continue;
+      if (GHN_OPEN_SYNC_TERMINAL_GHN.includes(ghn)) continue;
+      if (GHN_OPEN_SYNC_TERMINAL_SHOPEE.includes(raw)) continue;
+      out.push(order);
+    }
+    return out.slice(0, limit);
+  } catch (err: any) {
+    console.warn(
+      "[MongoDB] findOpenGhnExternalOrdersFromStore failed:",
+      err?.message || err,
+    );
+    return [];
+  }
+}
+
 /**
  * Candidate cho scheduler bù mã vận đơn — filter Mongo + limit, không full-scan collection.
  * Cooldown (`data.tracking_enrich_cooldown_until`) loại đơn vừa CLEAR / reverse_logistics / thiếu mã.

@@ -6,7 +6,7 @@ import dotenv from "dotenv";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { PDFDocument } from "pdf-lib";
-import { scheduleAutoIncrementalOrdersSync, scheduleHandedOverStatusReconcile, scheduleShopeeReturnRequestsSync, scheduleReadyToShipBackfill, scheduleLabelPdfCleanup } from "./cron/index.js";
+import { scheduleAutoIncrementalOrdersSync, scheduleHandedOverStatusReconcile, scheduleShopeeReturnRequestsSync, scheduleReadyToShipBackfill, scheduleLabelPdfCleanup, scheduleGhnStatusSync } from "./cron/index.js";
 import {
   initOrderSyncService,
   registerLabelPdfDownloader,
@@ -166,6 +166,7 @@ import {
   purgeClosedOrdersByRetention,
   archiveStaleReceivedCancelReturnOrders,
 } from "./services/orders.js";
+import { runGhnStatusSync } from "./services/ghnStatusSync.js";
 import {
   initOrdersController,
   invalidateOrdersRefreshCache,
@@ -15045,6 +15046,15 @@ function scheduleHandedOverStatusReconcileSafe(): void {
   });
 }
 
+/** Đồng bộ trạng thái đơn ngoại sàn GHN — 30 phút. Tắt: AUTO_GHN_STATUS_SYNC_CRON=0 */
+function scheduleGhnStatusSyncSafe(): void {
+  scheduleGhnStatusSync({
+    runSync: (opts) => runGhnStatusSync({ ...opts, trigger: opts?.trigger || "cron" }),
+    cronExpr: process.env.AUTO_GHN_STATUS_SYNC_CRON_EXPR || "*/30 * * * *",
+    intervalMs: Number(process.env.AUTO_GHN_STATUS_SYNC_MS) || 30 * 60 * 1000,
+  });
+}
+
 /**
  * Scanner chuyên trị mã vận đơn:
  * Query mọi đơn READY_TO_SHIP / SHIPPING / CANCELLED / TO_RETURN (và PROCESSED…) thiếu tracking_no,
@@ -25763,6 +25773,7 @@ async function startServer() {
         scheduleReadyToShipBackfillSafe(); // READY_TO_SHIP lookback 7 ngày
         scheduleShopeeReturnRequestsSyncSafe(); // Return APIs → tab Yêu cầu trả hàng
         scheduleHandedOverStatusReconcileSafe(); // dò ĐVVC → SHIPPED (cron + interval)
+        scheduleGhnStatusSyncSafe(); // đơn ngoại sàn GHN: cancel/delivered/shipping auto-update
         setTimeout(() => {
           void backfillCancelledEmptyItems({
             limit: 20,
