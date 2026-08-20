@@ -3,6 +3,7 @@ import {
   refreshOrders,
   queryOrders,
   getOrderCounts,
+  getFulfillmentProductsSummary,
   getOrderEvents,
   listOrders,
   cleanupHandedOver,
@@ -58,6 +59,7 @@ router.get("/query", h(queryOrders));
 router.get("/counts", h(getOrderCounts));
 /** Badge count nhanh — chỉ countDocuments Mongo, không gọi Shopee / không trả list. */
 router.get("/counter", h(getOrderCounts));
+router.get("/products-summary", h(getFulfillmentProductsSummary));
 router.get("/lookup", h(lookupOrder));
 /** Sync siêu tốc máy quét — chỉ order_id / tracking_code / return_waybill / status. */
 router.get("/scanner-sync", h(scannerSync));

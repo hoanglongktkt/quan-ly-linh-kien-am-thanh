@@ -80312,6 +80312,37 @@ var FACET_TO_SHIP = ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"];
 var FACET_SHIPPED = ["SHIPPED", "TO_CONFIRM_RECEIVE"];
 var FACET_PENDING = ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"];
 var FACET_CANCEL = ["CANCELLED", "IN_CANCEL", "TO_RETURN"];
+var FULFILLMENT_LOCAL_STATUSES = [
+  "pending_confirm",
+  "pending_verification",
+  "unprocessed",
+  "processed"
+];
+var FULFILLMENT_SHOPEE_STATUSES = [...FACET_PENDING, ...FACET_TO_SHIP];
+var FULFILLMENT_EXCLUDE_LOCAL = [
+  "cancelled",
+  "return_pending",
+  "return_received",
+  "shipping",
+  "completed"
+];
+var FULFILLMENT_EXCLUDE_SHOPEE = [...FACET_SHIPPED, ...FACET_CANCEL, "COMPLETED"];
+function fulfillmentProductsMatch() {
+  return {
+    $and: [
+      {
+        $or: [
+          { status: { $in: [...FULFILLMENT_LOCAL_STATUSES] } },
+          { shopee_order_status: { $in: [...FULFILLMENT_SHOPEE_STATUSES] } }
+        ]
+      },
+      { status: { $nin: [...FULFILLMENT_EXCLUDE_LOCAL] } },
+      { shopee_order_status: { $nin: [...FULFILLMENT_EXCLUDE_SHOPEE] } },
+      { is_handed_over: { $ne: true } },
+      { is_rts: { $ne: true } }
+    ]
+  };
+}
 function buildTabFlagProjectStage() {
   return {
     $project: {
@@ -80372,6 +80403,10 @@ function tabIndexFilter(tab, kind) {
     case "pending_verification":
     case "cho-xac-nhan":
       return { shopee_order_status: { $in: [...FACET_PENDING] } };
+    case "order_products":
+    case "products-summary":
+    case "fulfillment_products":
+      return fulfillmentProductsMatch();
     case "web_orders":
     case "woocommerce":
       return { channel: "woocommerce" };
@@ -81140,6 +81175,219 @@ async function queryOrdersPageFromStore(opts) {
       err?.message || err
     );
     return empty;
+  }
+}
+async function aggregateFulfillmentProductsFromStore(opts) {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
+  const dateRange = parseOrderListDateRange({
+    startDate: opts?.startDate,
+    endDate: opts?.endDate,
+    forceDefault: true,
+    lookbackMs: DEFAULT_ORDER_DATE_LOOKBACK_MS
+  });
+  const firstMatch = {};
+  if (shopFilter) Object.assign(firstMatch, shopFilter);
+  if (dateRange) Object.assign(firstMatch, buildOrderCreatedAtMongoFilter(dateRange));
+  Object.assign(firstMatch, fulfillmentProductsMatch());
+  const pipeline3 = [
+    { $match: firstMatch },
+    { $limit: 2e4 },
+    {
+      $addFields: {
+        _lines: {
+          $cond: [
+            { $gt: [{ $size: { $ifNull: ["$data.items", []] } }, 0] },
+            "$data.items",
+            { $ifNull: ["$data.item_list", []] }
+          ]
+        }
+      }
+    },
+    { $unwind: { path: "$_lines", preserveNullAndEmptyArrays: false } },
+    {
+      $addFields: {
+        _qty: {
+          $convert: {
+            input: {
+              $ifNull: ["$_lines.quantity", "$_lines.model_quantity_purchased"]
+            },
+            to: "double",
+            onError: 0,
+            onNull: 0
+          }
+        },
+        _productId: {
+          $convert: {
+            input: { $ifNull: ["$_lines.productId", "$_lines.item_id"] },
+            to: "string",
+            onError: "unknown",
+            onNull: "unknown"
+          }
+        },
+        _modelId: {
+          $convert: {
+            input: { $ifNull: ["$_lines.modelId", "$_lines.model_id"] },
+            to: "string",
+            onError: "0",
+            onNull: "0"
+          }
+        },
+        _modelName: {
+          $ifNull: [
+            "$_lines.modelName",
+            { $ifNull: ["$_lines.model_name", "$_lines.variation_name"] }
+          ]
+        },
+        _sku: {
+          $ifNull: [
+            "$_lines.modelSku",
+            {
+              $ifNull: [
+                "$_lines.model_sku",
+                { $ifNull: ["$_lines.item_sku", "$_lines.sku"] }
+              ]
+            }
+          ]
+        },
+        _title: {
+          $ifNull: ["$_lines.productTitle", "$_lines.item_name"]
+        },
+        _image: {
+          $ifNull: [
+            "$_lines.productImage",
+            {
+              $ifNull: [
+                "$_lines.image_info.image_url",
+                { $arrayElemAt: ["$_lines.image_info.image_url_list", 0] }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    { $match: { _qty: { $gt: 0 } } },
+    {
+      $group: {
+        _id: {
+          productId: "$_productId",
+          modelId: "$_modelId",
+          modelName: { $ifNull: ["$_modelName", ""] }
+        },
+        totalQuantity: { $sum: "$_qty" },
+        baseTitle: { $first: "$_title" },
+        productImage: { $first: "$_image" },
+        variationSku: { $first: "$_sku" }
+      }
+    },
+    { $sort: { totalQuantity: -1 } },
+    { $limit: 2e3 },
+    {
+      $project: {
+        _id: 0,
+        productId: { $ifNull: ["$_id.productId", "unknown"] },
+        modelId: { $ifNull: ["$_id.modelId", "0"] },
+        baseTitle: { $ifNull: ["$baseTitle", "S\u1EA3n ph\u1EA9m kh\xF4ng t\xEAn"] },
+        modelName: {
+          $cond: [
+            { $gt: [{ $strLenCP: { $ifNull: ["$_id.modelName", ""] } }, 0] },
+            "$_id.modelName",
+            "$$REMOVE"
+          ]
+        },
+        variationName: {
+          $cond: [
+            { $gt: [{ $strLenCP: { $ifNull: ["$_id.modelName", ""] } }, 0] },
+            "$_id.modelName",
+            "$$REMOVE"
+          ]
+        },
+        variationSku: {
+          $ifNull: [
+            {
+              $cond: [
+                {
+                  $gt: [
+                    { $strLenCP: { $trim: { input: { $ifNull: ["$variationSku", ""] } } } },
+                    0
+                  ]
+                },
+                "$variationSku",
+                null
+              ]
+            },
+            "Kh\xF4ng c\xF3 SKU"
+          ]
+        },
+        productImage: 1,
+        totalQuantity: 1,
+        groupKey: {
+          $concat: [
+            { $ifNull: ["$_id.productId", "unknown"] },
+            "_",
+            {
+              $cond: [
+                {
+                  $and: [
+                    { $ne: ["$_id.modelId", "0"] },
+                    { $ne: ["$_id.modelId", ""] }
+                  ]
+                },
+                { $ifNull: ["$_id.modelId", "0"] },
+                {
+                  $cond: [
+                    { $gt: [{ $strLenCP: { $ifNull: ["$_id.modelName", ""] } }, 0] },
+                    { $ifNull: ["$_id.modelName", "unknown"] },
+                    "unknown"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ];
+  try {
+    const hint = shopTimeIndexHint(Boolean(shopFilter));
+    let rows = [];
+    try {
+      rows = await OrderModel.aggregate(pipeline3).option({
+        maxTimeMS: 6e3,
+        hint
+      });
+    } catch {
+      rows = await OrderModel.aggregate(pipeline3).option({ maxTimeMS: 6e3 });
+    }
+    const out = [];
+    const n = Math.min(rows.length, 2e3);
+    for (let i2 = 0; i2 < n; i2++) {
+      const row = rows[i2];
+      const qty = Number(row?.totalQuantity) || 0;
+      if (qty <= 0) continue;
+      out.push({
+        groupKey: String(row?.groupKey || `${row?.productId || "unknown"}_unknown`),
+        productId: String(row?.productId || "unknown"),
+        modelId: String(row?.modelId || "0"),
+        baseTitle: String(row?.baseTitle || "S\u1EA3n ph\u1EA9m kh\xF4ng t\xEAn"),
+        modelName: row?.modelName ? String(row.modelName) : void 0,
+        variationName: row?.variationName ? String(row.variationName) : void 0,
+        variationSku: String(row?.variationSku || "Kh\xF4ng c\xF3 SKU"),
+        productImage: row?.productImage ? String(row.productImage) : void 0,
+        totalQuantity: qty
+      });
+    }
+    console.log(
+      `[MongoDB] aggregateFulfillmentProductsFromStore rows=${out.length} shop=${opts?.shopId || (opts?.shopIds || []).join(",") || "(all)"}`
+    );
+    return out;
+  } catch (err) {
+    console.error(
+      "[MongoDB] aggregateFulfillmentProductsFromStore failed:",
+      err?.message || err
+    );
+    return [];
   }
 }
 async function createSyncJob(type, requestedBy) {
@@ -110983,6 +111231,49 @@ async function getOrderCounts(req, res) {
     });
   }
 }
+async function getFulfillmentProductsSummary(req, res) {
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  try {
+    if (!isMongoReady()) {
+      return res.status(200).json({
+        success: false,
+        data: [],
+        error: "mongodb_not_ready"
+      });
+    }
+    const shopIds = parseShopIdsParam(
+      req.query.shop_ids ?? req.query.shopIds,
+      req.query.shop_id ?? req.query.shopId
+    );
+    const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "").trim();
+    const dateQ = readOrderDateQuery(req);
+    const rows = await deps15.withLocalDbTimeout(
+      aggregateFulfillmentProductsFromStore({
+        shopId: shopId || void 0,
+        shopIds: shopIds.length > 1 ? shopIds : void 0,
+        ...dateQ
+      }),
+      7e3,
+      "orders_products_summary"
+    );
+    const data = Array.isArray(rows) ? rows : [];
+    console.log(
+      `[GET /api/orders/products-summary] shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} rows=${data.length}`
+    );
+    return res.status(200).json({ success: true, data, total: data.length });
+  } catch (error) {
+    console.error(
+      "[GET /api/orders/products-summary] failed:",
+      error?.stack || error?.message || error
+    );
+    return res.status(200).json({
+      success: false,
+      data: [],
+      error: "products_summary_failed",
+      message: error?.message || "Kh\xF4ng th\u1EC3 t\u1ED5ng h\u1EE3p s\u1EA3n ph\u1EA9m t\u1EEB \u0111\u01A1n h\xE0ng."
+    });
+  }
+}
 async function listOrders(req, res) {
   res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   res.setHeader("Pragma", "no-cache");
@@ -113885,6 +114176,7 @@ router13.get("/refresh", h2(refreshOrders));
 router13.get("/query", h2(queryOrders));
 router13.get("/counts", h2(getOrderCounts));
 router13.get("/counter", h2(getOrderCounts));
+router13.get("/products-summary", h2(getFulfillmentProductsSummary));
 router13.get("/lookup", h2(lookupOrder));
 router13.get("/scanner-sync", h2(scannerSync));
 router13.post("/sync", syncOrders);

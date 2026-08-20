@@ -90,7 +90,11 @@ export function aggregateOrderProducts(
   catalogProducts: Product[] = []
 ): AggregatedOrderProduct[] {
   const relevant = orders.filter(
-    (o) => o.status === 'unprocessed' || o.status === 'processed'
+    (o) =>
+      o.status === 'pending_confirm' ||
+      o.status === 'pending_verification' ||
+      o.status === 'unprocessed' ||
+      o.status === 'processed'
   );
 
   const map = new Map<string, AggregatedOrderProduct>();

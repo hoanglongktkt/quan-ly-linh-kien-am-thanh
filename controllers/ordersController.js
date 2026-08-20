@@ -28,6 +28,7 @@ import {
   listScannerSyncRowsFromStore,
   queryOrdersPageFromStore,
   countOrdersByTabsFromStore,
+  aggregateFulfillmentProductsFromStore,
   reclassifyCancelReturnsInStore,
   parseCancelReturnKindParam,
   loadPriorityTabOrdersFromStore,
@@ -680,6 +681,55 @@ export async function getOrderCounts(req, res) {
       counts: {},
       error: "order_counts_failed",
       message: error?.message || "Không thể đếm đơn hàng từ MongoDB.",
+    });
+  }
+}
+
+/** GET /api/orders/products-summary — tổng hợp SKU từ 3 tab kho (không kẹp 1 tab FE). */
+export async function getFulfillmentProductsSummary(req, res) {
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  try {
+    if (!isMongoReady()) {
+      return res.status(200).json({
+        success: false,
+        data: [],
+        error: "mongodb_not_ready",
+      });
+    }
+    const shopIds = parseShopIdsParam(
+      req.query.shop_ids ?? req.query.shopIds,
+      req.query.shop_id ?? req.query.shopId,
+    );
+    const shopId =
+      shopIds.length === 1
+        ? shopIds[0]
+        : String(req.query.shop_id ?? req.query.shopId ?? "").trim();
+    const dateQ = readOrderDateQuery(req);
+    const rows = await deps.withLocalDbTimeout(
+      aggregateFulfillmentProductsFromStore({
+        shopId: shopId || undefined,
+        shopIds: shopIds.length > 1 ? shopIds : undefined,
+        ...dateQ,
+      }),
+      7000,
+      "orders_products_summary",
+    );
+    const data = Array.isArray(rows) ? rows : [];
+    console.log(
+      `[GET /api/orders/products-summary] shopId=${shopId || "(all)"}` +
+        ` shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} rows=${data.length}`,
+    );
+    return res.status(200).json({ success: true, data, total: data.length });
+  } catch (error) {
+    console.error(
+      "[GET /api/orders/products-summary] failed:",
+      error?.stack || error?.message || error,
+    );
+    return res.status(200).json({
+      success: false,
+      data: [],
+      error: "products_summary_failed",
+      message: error?.message || "Không thể tổng hợp sản phẩm từ đơn hàng.",
     });
   }
 }

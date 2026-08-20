@@ -5883,6 +5883,45 @@ const FACET_SHIPPED = ["SHIPPED", "TO_CONFIRM_RECEIVE"];
 const FACET_PENDING = ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"];
 const FACET_CANCEL = ["CANCELLED", "IN_CANCEL", "TO_RETURN"];
 
+/**
+ * 3 tab kho gộp cho "Những sản phẩm có trong đơn":
+ * Chờ xác nhận + Đơn chưa xử lý + Chờ lấy hàng (Đã xử lý).
+ * $in trên status / shopee_order_status (đã index) — CẤM $or data.*.
+ */
+const FULFILLMENT_LOCAL_STATUSES = [
+  "pending_confirm",
+  "pending_verification",
+  "unprocessed",
+  "processed",
+] as const;
+const FULFILLMENT_SHOPEE_STATUSES = [...FACET_PENDING, ...FACET_TO_SHIP] as const;
+const FULFILLMENT_EXCLUDE_LOCAL = [
+  "cancelled",
+  "return_pending",
+  "return_received",
+  "shipping",
+  "completed",
+] as const;
+const FULFILLMENT_EXCLUDE_SHOPEE = [...FACET_SHIPPED, ...FACET_CANCEL, "COMPLETED"] as const;
+
+/** $match gộp 3 tab kho — loại Hủy/Hoàn/Đang giao/Đã giao/Đã bàn giao ĐVVC. */
+export function fulfillmentProductsMatch(): Record<string, unknown> {
+  return {
+    $and: [
+      {
+        $or: [
+          { status: { $in: [...FULFILLMENT_LOCAL_STATUSES] } },
+          { shopee_order_status: { $in: [...FULFILLMENT_SHOPEE_STATUSES] } },
+        ],
+      },
+      { status: { $nin: [...FULFILLMENT_EXCLUDE_LOCAL] } },
+      { shopee_order_status: { $nin: [...FULFILLMENT_EXCLUDE_SHOPEE] } },
+      { is_handed_over: { $ne: true } },
+      { is_rts: { $ne: true } },
+    ],
+  };
+}
+
 /** $project vài field top-level — $facet không copy blob `data`. */
 function buildTabFlagProjectStage(): Record<string, unknown> {
   return {
@@ -5950,6 +5989,10 @@ function tabIndexFilter(tab?: string, kind?: string): Record<string, unknown> {
     case "pending_verification":
     case "cho-xac-nhan":
       return { shopee_order_status: { $in: [...FACET_PENDING] } };
+    case "order_products":
+    case "products-summary":
+    case "fulfillment_products":
+      return fulfillmentProductsMatch();
     case "web_orders":
     case "woocommerce":
       return { channel: "woocommerce" };
@@ -7018,6 +7061,245 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
       err?.message || err,
     );
     return empty;
+  }
+}
+
+export type FulfillmentAggregatedProduct = {
+  groupKey: string;
+  productId: string;
+  modelId: string;
+  baseTitle: string;
+  modelName?: string;
+  variationName?: string;
+  variationSku: string;
+  productImage?: string;
+  totalQuantity: number;
+};
+
+/**
+ * Tổng hợp sản phẩm từ 3 tab kho (Chờ xác nhận + Chưa xử lý + Đã xử lý).
+ * $match $in trên field đã index → $unwind item → $group cộng dồn số lượng.
+ */
+export async function aggregateFulfillmentProductsFromStore(opts?: {
+  shopId?: string;
+  shopIds?: string[];
+  startDate?: string;
+  endDate?: string;
+}): Promise<FulfillmentAggregatedProduct[]> {
+  if (!isMongoReady()) return [];
+  requireMongo();
+
+  const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
+  const dateRange = parseOrderListDateRange({
+    startDate: opts?.startDate,
+    endDate: opts?.endDate,
+    forceDefault: true,
+    lookbackMs: DEFAULT_ORDER_DATE_LOOKBACK_MS,
+  });
+  const firstMatch: Record<string, unknown> = {};
+  if (shopFilter) Object.assign(firstMatch, shopFilter);
+  if (dateRange) Object.assign(firstMatch, buildOrderCreatedAtMongoFilter(dateRange));
+  Object.assign(firstMatch, fulfillmentProductsMatch());
+
+  const pipeline: Record<string, unknown>[] = [
+    { $match: firstMatch },
+    { $limit: 20000 },
+    {
+      $addFields: {
+        _lines: {
+          $cond: [
+            { $gt: [{ $size: { $ifNull: ["$data.items", []] } }, 0] },
+            "$data.items",
+            { $ifNull: ["$data.item_list", []] },
+          ],
+        },
+      },
+    },
+    { $unwind: { path: "$_lines", preserveNullAndEmptyArrays: false } },
+    {
+      $addFields: {
+        _qty: {
+          $convert: {
+            input: {
+              $ifNull: ["$_lines.quantity", "$_lines.model_quantity_purchased"],
+            },
+            to: "double",
+            onError: 0,
+            onNull: 0,
+          },
+        },
+        _productId: {
+          $convert: {
+            input: { $ifNull: ["$_lines.productId", "$_lines.item_id"] },
+            to: "string",
+            onError: "unknown",
+            onNull: "unknown",
+          },
+        },
+        _modelId: {
+          $convert: {
+            input: { $ifNull: ["$_lines.modelId", "$_lines.model_id"] },
+            to: "string",
+            onError: "0",
+            onNull: "0",
+          },
+        },
+        _modelName: {
+          $ifNull: [
+            "$_lines.modelName",
+            { $ifNull: ["$_lines.model_name", "$_lines.variation_name"] },
+          ],
+        },
+        _sku: {
+          $ifNull: [
+            "$_lines.modelSku",
+            {
+              $ifNull: [
+                "$_lines.model_sku",
+                { $ifNull: ["$_lines.item_sku", "$_lines.sku"] },
+              ],
+            },
+          ],
+        },
+        _title: {
+          $ifNull: ["$_lines.productTitle", "$_lines.item_name"],
+        },
+        _image: {
+          $ifNull: [
+            "$_lines.productImage",
+            {
+              $ifNull: [
+                "$_lines.image_info.image_url",
+                { $arrayElemAt: ["$_lines.image_info.image_url_list", 0] },
+              ],
+            },
+          ],
+        },
+      },
+    },
+    { $match: { _qty: { $gt: 0 } } },
+    {
+      $group: {
+        _id: {
+          productId: "$_productId",
+          modelId: "$_modelId",
+          modelName: { $ifNull: ["$_modelName", ""] },
+        },
+        totalQuantity: { $sum: "$_qty" },
+        baseTitle: { $first: "$_title" },
+        productImage: { $first: "$_image" },
+        variationSku: { $first: "$_sku" },
+      },
+    },
+    { $sort: { totalQuantity: -1 } },
+    { $limit: 2000 },
+    {
+      $project: {
+        _id: 0,
+        productId: { $ifNull: ["$_id.productId", "unknown"] },
+        modelId: { $ifNull: ["$_id.modelId", "0"] },
+        baseTitle: { $ifNull: ["$baseTitle", "Sản phẩm không tên"] },
+        modelName: {
+          $cond: [
+            { $gt: [{ $strLenCP: { $ifNull: ["$_id.modelName", ""] } }, 0] },
+            "$_id.modelName",
+            "$$REMOVE",
+          ],
+        },
+        variationName: {
+          $cond: [
+            { $gt: [{ $strLenCP: { $ifNull: ["$_id.modelName", ""] } }, 0] },
+            "$_id.modelName",
+            "$$REMOVE",
+          ],
+        },
+        variationSku: {
+          $ifNull: [
+            {
+              $cond: [
+                {
+                  $gt: [
+                    { $strLenCP: { $trim: { input: { $ifNull: ["$variationSku", ""] } } } },
+                    0,
+                  ],
+                },
+                "$variationSku",
+                null,
+              ],
+            },
+            "Không có SKU",
+          ],
+        },
+        productImage: 1,
+        totalQuantity: 1,
+        groupKey: {
+          $concat: [
+            { $ifNull: ["$_id.productId", "unknown"] },
+            "_",
+            {
+              $cond: [
+                {
+                  $and: [
+                    { $ne: ["$_id.modelId", "0"] },
+                    { $ne: ["$_id.modelId", ""] },
+                  ],
+                },
+                { $ifNull: ["$_id.modelId", "0"] },
+                {
+                  $cond: [
+                    { $gt: [{ $strLenCP: { $ifNull: ["$_id.modelName", ""] } }, 0] },
+                    { $ifNull: ["$_id.modelName", "unknown"] },
+                    "unknown",
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    },
+  ];
+
+  try {
+    const hint = shopTimeIndexHint(Boolean(shopFilter));
+    let rows: any[] = [];
+    try {
+      rows = await OrderModel.aggregate(pipeline as any[]).option({
+        maxTimeMS: 6000,
+        hint,
+      });
+    } catch {
+      rows = await OrderModel.aggregate(pipeline as any[]).option({ maxTimeMS: 6000 });
+    }
+    const out: FulfillmentAggregatedProduct[] = [];
+    const n = Math.min(rows.length, 2000);
+    for (let i = 0; i < n; i++) {
+      const row = rows[i];
+      const qty = Number(row?.totalQuantity) || 0;
+      if (qty <= 0) continue;
+      out.push({
+        groupKey: String(row?.groupKey || `${row?.productId || "unknown"}_unknown`),
+        productId: String(row?.productId || "unknown"),
+        modelId: String(row?.modelId || "0"),
+        baseTitle: String(row?.baseTitle || "Sản phẩm không tên"),
+        modelName: row?.modelName ? String(row.modelName) : undefined,
+        variationName: row?.variationName ? String(row.variationName) : undefined,
+        variationSku: String(row?.variationSku || "Không có SKU"),
+        productImage: row?.productImage ? String(row.productImage) : undefined,
+        totalQuantity: qty,
+      });
+    }
+    console.log(
+      `[MongoDB] aggregateFulfillmentProductsFromStore rows=${out.length}` +
+        ` shop=${opts?.shopId || (opts?.shopIds || []).join(",") || "(all)"}`,
+    );
+    return out;
+  } catch (err: any) {
+    console.error(
+      "[MongoDB] aggregateFulfillmentProductsFromStore failed:",
+      err?.message || err,
+    );
+    return [];
   }
 }
 

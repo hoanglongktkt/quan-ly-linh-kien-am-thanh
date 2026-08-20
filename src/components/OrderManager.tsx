@@ -92,7 +92,7 @@ import {
 import { Order, ConnectedShop, SyncLog, Product, SystemFee } from '../types';
 import ManualOrderPage from './ManualOrderPage';
 import { resolveLabelFetchUrl, parseJsonResponse, readResponseJson } from '../utils/apiClient';
-import { aggregateOrderProducts } from '../utils/aggregateOrderProducts';
+import { aggregateOrderProducts, type AggregatedOrderProduct } from '../utils/aggregateOrderProducts';
 import { getCarrierWaybillDisplay } from '../utils/orderTracking';
 import {
   getOrderCarrierText,
@@ -1095,6 +1095,9 @@ export default function OrderManager({
   const [lastSyncSummary, setLastSyncSummary] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [serverOrderCounts, setServerOrderCounts] = useState<Record<string, number> | null>(null);
+  const [fulfillmentProducts, setFulfillmentProducts] = useState<AggregatedOrderProduct[] | null>(null);
+  const [fulfillmentProductsLoading, setFulfillmentProductsLoading] = useState(false);
+  const fulfillmentAbortRef = useRef<AbortController | null>(null);
   const [hasNewOrders, setHasNewOrders] = useState(false);
   const [audioEnabled, setAudioEnabled] = useState(() => isAudioUnlockedState());
   const syncPollTimerRef = useRef<number | null>(null);
@@ -1222,9 +1225,60 @@ export default function OrderManager({
     return run;
   }, []);
 
+  const fetchFulfillmentProducts = useCallback(async (): Promise<AggregatedOrderProduct[]> => {
+    const token = localStorage.getItem('admin_token') || '';
+    if (!token) return [];
+    fulfillmentAbortRef.current?.abort();
+    const controller = new AbortController();
+    fulfillmentAbortRef.current = controller;
+    setFulfillmentProductsLoading(true);
+    try {
+      const shopIds = shopScopeRef.current.shopIds;
+      const range = dateRangeRef.current;
+      const params = new URLSearchParams();
+      params.set('t', String(Date.now()));
+      if (shopIds.length === 1) params.set('shop_id', shopIds[0]);
+      else if (shopIds.length > 1) params.set('shop_ids', shopIds.join(','));
+      if (range.startDate) params.set('startDate', range.startDate);
+      if (range.endDate) params.set('endDate', range.endDate);
+      const res = await fetch(`/api/orders/products-summary?${params.toString()}`, {
+        cache: 'no-store',
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          Pragma: 'no-cache',
+        },
+      });
+      const json = await res.json().catch(() => ({} as Record<string, unknown>));
+      const rows = Array.isArray(json?.data) ? (json.data as AggregatedOrderProduct[]) : [];
+      if (!controller.signal.aborted) setFulfillmentProducts(rows);
+      return rows;
+    } catch (err) {
+      const aborted =
+        (err instanceof DOMException && err.name === 'AbortError') ||
+        (typeof err === 'object' && err !== null && (err as { name?: string }).name === 'AbortError');
+      if (!aborted) {
+        console.warn('[OrderProducts] fetch products-summary failed:', err);
+        if (!controller.signal.aborted) setFulfillmentProducts([]);
+      }
+      return [];
+    } finally {
+      if (fulfillmentAbortRef.current === controller) {
+        fulfillmentAbortRef.current = null;
+        setFulfillmentProductsLoading(false);
+      }
+    }
+  }, []);
+
   const refetchOrdersPage = useCallback(
     (opts?: { silent?: boolean; page?: number }) => {
       setHasNewOrders(false);
+      if (activeSubTab === 'order_products') {
+        void fetchFulfillmentProducts();
+        void fetchOrderCounts();
+        return;
+      }
       const page = opts?.page && opts.page > 0 ? opts.page : currentPage;
       void fetchOrdersWithShop({
         silent: opts?.silent !== false,
@@ -1240,7 +1294,7 @@ export default function OrderManager({
       });
       void fetchOrderCounts();
     },
-    [activeSubTab, cancelReturnTab, currentPage, fetchOrderCounts, fetchOrdersWithShop, searchQuery],
+    [activeSubTab, cancelReturnTab, currentPage, fetchFulfillmentProducts, fetchOrderCounts, fetchOrdersWithShop, searchQuery],
   );
 
   const refetchOrdersPageRef = useRef(refetchOrdersPage);
@@ -1733,12 +1787,26 @@ export default function OrderManager({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ordersFetchKey, shopsBootReady]);
 
+  // Tab sản phẩm trong đơn: Backend tự gộp 3 tab kho — KHÔNG gửi 1 status cứng.
+  useEffect(() => {
+    if (!shopsBootReady) return;
+    if (activeSubTab !== 'order_products') return;
+    const timer = window.setTimeout(() => {
+      void fetchFulfillmentProducts();
+    }, 80);
+    return () => {
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSubTab, shopIdsKey, dateRangeKey, shopsBootReady, fetchFulfillmentProducts]);
+
   const searchBootRef = React.useRef(true);
   useEffect(() => {
     if (searchBootRef.current) {
       searchBootRef.current = false;
       return;
     }
+    if (activeSubTab === 'order_products') return;
     const q = searchQuery.trim();
     const handle = window.setTimeout(() => {
       setCurrentPage(1);
@@ -5495,25 +5563,29 @@ export default function OrderManager({
     setPullDistance(OM_PULL_REFRESH_THRESHOLD_PX);
     try {
       setCurrentPage(1);
-      await fetchOrdersWithShop({
-        silent: false,
-        page: 1,
-        limit: ORDERS_PAGE_SIZE,
-        merge: false,
-        tab: activeSubTab === 'all' ? '' : activeSubTab,
-        kind: listKind,
-      });
+      if (activeSubTab === 'order_products') {
+        await fetchFulfillmentProducts();
+      } else {
+        await fetchOrdersWithShop({
+          silent: false,
+          page: 1,
+          limit: ORDERS_PAGE_SIZE,
+          merge: false,
+          tab: activeSubTab === 'all' ? '' : activeSubTab,
+          kind: listKind,
+        });
+      }
       void fetchOrderCounts();
     } finally {
       setIsPullRefreshing(false);
       setPullDistance(0);
     }
-  }, [activeSubTab, fetchOrderCounts, fetchOrdersWithShop, isPullRefreshing, listKind]);
+  }, [activeSubTab, fetchFulfillmentProducts, fetchOrderCounts, fetchOrdersWithShop, isPullRefreshing, listKind]);
 
-  // Helper count statistics
+  // Helper count statistics — ưu tiên tổng hợp Mongo 3 tab; fallback list đang mở.
   const aggregatedOrderProducts = useMemo(
-    () => aggregateOrderProducts(orders, products ?? []),
-    [orders, products]
+    () => fulfillmentProducts ?? aggregateOrderProducts(orders, products ?? []),
+    [fulfillmentProducts, orders, products]
   );
 
   /** Counter 3 nhóm Hủy/Hoàn/RTS — CHỈ đọc global count từ BE, CẤM array.length trang 50. */
@@ -7785,11 +7857,16 @@ export default function OrderManager({
               Những sản phẩm có trong đơn
             </h3>
             <p className="text-[11px] text-gray-500 mt-1">
-              Tổng hợp từ đơn <strong>Đơn chưa xử lý</strong> và <strong>Chờ lấy hàng (Đã xử lý)</strong>
+              Tổng hợp từ <strong>Chờ xác nhận</strong>, <strong>Đơn chưa xử lý</strong> và <strong>Chờ lấy hàng (Đã xử lý)</strong>
             </p>
           </div>
 
-          {aggregatedOrderProducts.length === 0 ? (
+          {fulfillmentProductsLoading ? (
+            <div className="py-20 text-center text-gray-400 text-sm flex flex-col items-center gap-3 px-4">
+              <RefreshCw className="w-10 h-10 text-slate-300 animate-spin" />
+              <span className="font-semibold text-slate-600">Đang tổng hợp sản phẩm từ 3 tab kho...</span>
+            </div>
+          ) : aggregatedOrderProducts.length === 0 ? (
             <div className="py-20 text-center text-gray-400 text-sm flex flex-col items-center gap-3 px-4">
               <Package className="w-12 h-12 text-slate-200" />
               <span className="font-semibold text-slate-600">Không có sản phẩm nào cần chuẩn bị</span>
