@@ -1,6 +1,7 @@
 export interface VnAdminUnit {
   name: string;
   code: number;
+  id?: string | number;
   districtCode?: number;
   districtName?: string;
 }

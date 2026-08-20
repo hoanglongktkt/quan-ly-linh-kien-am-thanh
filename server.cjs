@@ -83054,91 +83054,249 @@ var healthRoutes_default = router3;
 var import_express5 = __toESM(require_express2(), 1);
 
 // controllers/vietnamAddressController.js
-var VN_ADDRESS_API = "https://provinces.open-api.vn/api";
+var VN_ADDRESS_API_V1 = "https://provinces.open-api.vn/api/v1";
+var VN_ADDRESS_API_V2 = "https://provinces.open-api.vn/api/v2";
+var VN_ADDRESS_API_LEGACY = "https://provinces.open-api.vn/api";
 var VN_ADDRESS_TIMEOUT_MS = 1e4;
-var vnProvincesCache = null;
+var FALLBACK_DELAY_MS = 200;
+var MAX_FALLBACK_TRIES = 4;
+var GHN_BASE = String(process.env.GHN_API_URL || "").trim() || "https://online-gateway.ghn.vn/shiip/public-api";
+var GHN_TIMEOUT_MS = 1e4;
+var vnProvincesCacheV1 = null;
+var vnProvincesCacheV2 = null;
 var vnDistrictsCache = /* @__PURE__ */ new Map();
 var vnWardsCache = /* @__PURE__ */ new Map();
-async function fetchVnJson(url2) {
+var vnWardsByProvinceCache = /* @__PURE__ */ new Map();
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+function mapUnit(item) {
+  if (!item) return null;
+  const id = item.id ?? item.code ?? item.ProvinceID ?? item.DistrictID ?? item.WardCode;
+  const name = item.name || item.ProvinceName || item.DistrictName || item.WardName || "";
+  if (id == null || id === "" || !name) return null;
+  return {
+    name: String(name),
+    code: item.code ?? id,
+    id,
+    districtCode: item.districtCode ?? item.DistrictID,
+    districtName: item.districtName || item.DistrictName || ""
+  };
+}
+function mapUnits(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (let i2 = 0; i2 < list.length; i2 += 1) {
+    const unit = mapUnit(list[i2]);
+    if (unit) out.push(unit);
+  }
+  return out;
+}
+function unwrapList(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.data)) return data.data;
+  return null;
+}
+async function fetchJson(url2, headers = {}, timeoutMs = VN_ADDRESS_TIMEOUT_MS) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), VN_ADDRESS_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url2, {
-      headers: { Accept: "application/json" },
+      headers: { Accept: "application/json", ...headers },
       signal: controller.signal
     });
-    if (!res.ok) throw new Error(`VN address API ${res.status}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${url2}`);
     return await res.json();
   } catch (error) {
     if (error?.name === "AbortError") {
-      throw new Error(`VN address API timeout sau ${VN_ADDRESS_TIMEOUT_MS / 1e3}s`);
+      throw new Error(`timeout sau ${timeoutMs / 1e3}s: ${url2}`);
     }
     throw error;
   } finally {
     clearTimeout(timer);
   }
 }
-async function listVnProvinces() {
-  if (!vnProvincesCache) {
-    vnProvincesCache = await fetchVnJson(`${VN_ADDRESS_API}/p/`);
+async function fetchFirstList(urls) {
+  const limit = Math.min(urls.length, MAX_FALLBACK_TRIES);
+  for (let i2 = 0; i2 < limit; i2 += 1) {
+    const url2 = urls[i2];
+    try {
+      const data = await fetchJson(url2);
+      const list = unwrapList(data);
+      if (list?.length) return list;
+    } catch (error) {
+      console.warn("[VN Address] fetch fail:", url2, error?.message || error);
+    }
+    if (i2 < limit - 1) await sleep(FALLBACK_DELAY_MS);
   }
-  return (vnProvincesCache || []).map((p) => ({
-    name: p.name,
-    code: p.code
-  }));
+  return null;
+}
+function readGhnToken() {
+  return String(process.env.GHN_TOKEN || process.env.GHN_API_TOKEN || "").trim();
+}
+async function ghnFetch(path20, query) {
+  const token = readGhnToken();
+  if (!token) return null;
+  const url2 = new URL(`${GHN_BASE}${path20}`);
+  if (query) {
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== void 0 && value !== "") url2.searchParams.set(key, String(value));
+    }
+  }
+  try {
+    const json2 = await fetchJson(
+      url2.toString(),
+      { Token: token, "Content-Type": "application/json" },
+      GHN_TIMEOUT_MS
+    );
+    return unwrapList(json2);
+  } catch (error) {
+    console.warn("[GHN Master]", path20, error?.message || error);
+    return null;
+  }
+}
+async function listGhnProvinces() {
+  const rows = await ghnFetch("/master-data/province");
+  return mapUnits(rows || []);
+}
+async function listGhnDistricts(provinceId) {
+  if (!provinceId) return [];
+  const rows = await ghnFetch("/master-data/district", {
+    province_id: Number(provinceId) || provinceId
+  });
+  const filtered = (rows || []).filter(
+    (d) => String(d.ProvinceID ?? d.province_id ?? "") === String(provinceId)
+  );
+  return mapUnits(filtered);
+}
+async function listGhnWards(districtId) {
+  if (!districtId) return [];
+  const rows = await ghnFetch("/master-data/ward", {
+    district_id: Number(districtId) || districtId
+  });
+  return mapUnits(rows || []);
+}
+async function listVnProvinces() {
+  if (vnProvincesCacheV1?.length) return vnProvincesCacheV1;
+  const raw = await fetchFirstList([
+    `${VN_ADDRESS_API_V1}/p/`,
+    `${VN_ADDRESS_API_LEGACY}/p/`
+  ]);
+  let mapped = mapUnits(raw || []);
+  if (!mapped.length) {
+    mapped = await listGhnProvinces();
+  }
+  if (mapped.length) vnProvincesCacheV1 = mapped;
+  return mapped;
+}
+async function listVnProvincesV2() {
+  if (vnProvincesCacheV2?.length) return vnProvincesCacheV2;
+  const raw = await fetchFirstList([`${VN_ADDRESS_API_V2}/p/`]);
+  let mapped = mapUnits(raw || []);
+  if (!mapped.length) {
+    mapped = await listVnProvinces();
+  }
+  if (mapped.length) vnProvincesCacheV2 = mapped;
+  return mapped;
 }
 async function listVnDistricts(provinceCode) {
-  const code = Number(provinceCode);
+  const code = String(provinceCode || "").trim();
   if (!code) return [];
-  if (!vnDistrictsCache.has(code)) {
-    const data = await fetchVnJson(`${VN_ADDRESS_API}/p/${code}?depth=2`);
-    const districts = Array.isArray(data?.districts) ? data.districts : [];
-    vnDistrictsCache.set(
-      code,
-      districts.map((d) => ({ name: d.name, code: d.code }))
-    );
+  if (vnDistrictsCache.has(code)) return vnDistrictsCache.get(code) || [];
+  let mapped = [];
+  try {
+    const data = await fetchJson(`${VN_ADDRESS_API_V1}/p/${code}?depth=2`);
+    mapped = mapUnits(Array.isArray(data?.districts) ? data.districts : []);
+  } catch (error) {
+    console.warn("[VN Address] districts v1:", error?.message || error);
   }
-  return vnDistrictsCache.get(code) || [];
-}
-var vnWardsByProvinceCache = /* @__PURE__ */ new Map();
-async function listVnWardsByProvince(provinceCode) {
-  const code = Number(provinceCode);
-  if (!code) return [];
-  if (!vnWardsByProvinceCache.has(code)) {
-    const data = await fetchVnJson(`${VN_ADDRESS_API}/p/${code}?depth=3`);
-    const districts = Array.isArray(data?.districts) ? data.districts : [];
-    const wards = [];
-    for (const d of districts) {
-      const list = Array.isArray(d?.wards) ? d.wards : [];
-      for (const w of list) {
-        wards.push({
-          name: w.name,
-          code: w.code,
-          districtCode: d.code,
-          districtName: d.name
-        });
-      }
+  if (!mapped.length) {
+    try {
+      await sleep(FALLBACK_DELAY_MS);
+      const data = await fetchJson(`${VN_ADDRESS_API_LEGACY}/p/${code}?depth=2`);
+      mapped = mapUnits(Array.isArray(data?.districts) ? data.districts : []);
+    } catch (error) {
+      console.warn("[VN Address] districts legacy:", error?.message || error);
     }
-    vnWardsByProvinceCache.set(code, wards);
   }
-  return vnWardsByProvinceCache.get(code) || [];
+  if (!mapped.length) {
+    mapped = await listGhnDistricts(code);
+  }
+  if (mapped.length) vnDistrictsCache.set(code, mapped);
+  return mapped;
+}
+async function listVnWardsByProvince(provinceCode) {
+  const code = String(provinceCode || "").trim();
+  if (!code) return [];
+  const cacheKey = `v2:${code}`;
+  if (vnWardsByProvinceCache.has(cacheKey)) return vnWardsByProvinceCache.get(cacheKey) || [];
+  let wards = [];
+  try {
+    const data = await fetchJson(`${VN_ADDRESS_API_V2}/p/${code}?depth=2`);
+    wards = mapUnits(Array.isArray(data?.wards) ? data.wards : []);
+  } catch (error) {
+    console.warn("[VN Address] wards-by-province v2:", error?.message || error);
+  }
+  if (!wards.length) {
+    try {
+      await sleep(FALLBACK_DELAY_MS);
+      const data = await fetchJson(`${VN_ADDRESS_API_V1}/p/${code}?depth=3`);
+      const districts = Array.isArray(data?.districts) ? data.districts : [];
+      const flat = [];
+      for (let di = 0; di < districts.length; di += 1) {
+        const d = districts[di];
+        const list = Array.isArray(d?.wards) ? d.wards : [];
+        for (let wi = 0; wi < list.length; wi += 1) {
+          const unit = mapUnit({
+            ...list[wi],
+            districtCode: d.code,
+            districtName: d.name
+          });
+          if (unit) flat.push(unit);
+        }
+      }
+      wards = flat;
+    } catch (error) {
+      console.warn("[VN Address] wards-by-province v1:", error?.message || error);
+    }
+  }
+  if (wards.length) vnWardsByProvinceCache.set(cacheKey, wards);
+  return wards;
 }
 async function listVnWards(districtCode) {
-  const code = Number(districtCode);
+  const code = String(districtCode || "").trim();
   if (!code) return [];
-  if (!vnWardsCache.has(code)) {
-    const data = await fetchVnJson(`${VN_ADDRESS_API}/d/${code}?depth=2`);
-    const wards = Array.isArray(data?.wards) ? data.wards : [];
-    vnWardsCache.set(
-      code,
-      wards.map((w) => ({ name: w.name, code: w.code }))
-    );
-  }
-  return vnWardsCache.get(code) || [];
-}
-async function getProvinces(_req, res) {
+  if (vnWardsCache.has(code)) return vnWardsCache.get(code) || [];
+  let mapped = [];
   try {
-    return res.json(await listVnProvinces());
+    const data = await fetchJson(`${VN_ADDRESS_API_V1}/d/${code}?depth=2`);
+    mapped = mapUnits(Array.isArray(data?.wards) ? data.wards : []);
+  } catch (error) {
+    console.warn("[VN Address] wards v1:", error?.message || error);
+  }
+  if (!mapped.length) {
+    try {
+      await sleep(FALLBACK_DELAY_MS);
+      const data = await fetchJson(`${VN_ADDRESS_API_LEGACY}/d/${code}?depth=2`);
+      mapped = mapUnits(Array.isArray(data?.wards) ? data.wards : []);
+    } catch (error) {
+      console.warn("[VN Address] wards legacy:", error?.message || error);
+    }
+  }
+  if (!mapped.length) {
+    mapped = await listGhnWards(code);
+  }
+  if (mapped.length) vnWardsCache.set(code, mapped);
+  return mapped;
+}
+function isNew2Mode(req) {
+  const raw = String(req.query?.mode || req.query?.version || "").toLowerCase();
+  return raw === "new2" || raw === "v2";
+}
+async function getProvinces(req, res) {
+  try {
+    const list = isNew2Mode(req) ? await listVnProvincesV2() : await listVnProvinces();
+    return res.json(list);
   } catch (error) {
     console.error("[VN Address] provinces:", error);
     return res.status(502).json({ error: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c danh s\xE1ch T\u1EC9nh/Th\xE0nh" });
@@ -104120,7 +104278,7 @@ async function uploadBlobInternal(file, uploadUrl, apiClient, httpOptions) {
         break;
       }
       retryCount++;
-      await sleep(currentDelayMs);
+      await sleep2(currentDelayMs);
       currentDelayMs = currentDelayMs * DELAY_MULTIPLIER;
     }
     offset += chunkSize;
@@ -104137,7 +104295,7 @@ async function getBlobStat(file) {
   const fileStat = { size: file.size, type: file.type };
   return fileStat;
 }
-function sleep(ms) {
+function sleep2(ms) {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 }
 var NodeUploader = class {
@@ -104322,7 +104480,7 @@ var NodeUploader = class {
             break;
           }
           retryCount++;
-          await sleep(currentDelayMs);
+          await sleep2(currentDelayMs);
           currentDelayMs = currentDelayMs * DELAY_MULTIPLIER;
         }
         offset += bytesRead;
@@ -106165,7 +106323,7 @@ var import_express12 = __toESM(require_express2(), 1);
 // utils/concurrency.js
 var DEFAULT_DELAY_MS = 1e3;
 var DEFAULT_YIELD_MS = 50;
-function sleep2(ms) {
+function sleep3(ms) {
   return new Promise((r2) => setTimeout(r2, ms));
 }
 async function mapWithConcurrency(items, concurrency, worker) {
@@ -106190,7 +106348,7 @@ async function mapWithConcurrency(items, concurrency, worker) {
   return results;
 }
 function delay2(ms = DEFAULT_DELAY_MS) {
-  return sleep2(ms);
+  return sleep3(ms);
 }
 async function yieldEventLoop(ms = DEFAULT_YIELD_MS) {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -106461,7 +106619,7 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
       }
     }
     if (opts.syncPrice) {
-      await sleep2(SHOPEE_SYNC_QUEUE_GAP_MS);
+      await sleep3(SHOPEE_SYNC_QUEUE_GAP_MS);
       const priceEntry = deps9.buildShopeeUpdatePriceEntry(mapped.sellingPrice, modelId);
       try {
         console.log(
@@ -106510,7 +106668,7 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
       }
     }
     if (opts.syncSku && modelId != null && typeof deps9.shopeeUpdateModelSku === "function") {
-      await sleep2(SHOPEE_SYNC_QUEUE_GAP_MS);
+      await sleep3(SHOPEE_SYNC_QUEUE_GAP_MS);
       const modelSku = String(mapped.sku || "").trim();
       try {
         console.log(
@@ -106639,7 +106797,7 @@ async function processShopeeSyncQueue() {
         const row = await deps9.loadProductById(job.productId);
         if (!row) {
           console.warn(`[Shopee Sync Queue] B\u1ECF qua \u2014 kh\xF4ng th\u1EA5y productId=${job.productId}`);
-          await sleep2(SHOPEE_SYNC_QUEUE_GAP_MS);
+          await sleep3(SHOPEE_SYNC_QUEUE_GAP_MS);
           continue;
         }
         const mapped = await resolveProductWithShopeeMapping(row);
@@ -106647,7 +106805,7 @@ async function processShopeeSyncQueue() {
           console.log(
             `[Shopee Sync Queue] Skip SKU=${row.sku || job.productId} \u2014 ch\u01B0a Mapping Shopee`
           );
-          await sleep2(SHOPEE_SYNC_QUEUE_GAP_MS);
+          await sleep3(SHOPEE_SYNC_QUEUE_GAP_MS);
           continue;
         }
         const shopIds = job.shopId ? [String(job.shopId)] : typeof deps9.resolveShopeeShopIdsForSync === "function" ? deps9.resolveShopeeShopIdsForSync("") : deps9.listAuthorizedShopeeShopIds?.() || [];
@@ -106709,7 +106867,7 @@ async function processShopeeSyncQueue() {
           console.error(`[Shopee Sync Queue] DROPPED exception \u2014 ${job.productId}: ${msg}`);
         }
       }
-      await sleep2(SHOPEE_SYNC_QUEUE_GAP_MS);
+      await sleep3(SHOPEE_SYNC_QUEUE_GAP_MS);
     }
   } finally {
     shopeeSyncQueueRunning = false;
@@ -107950,16 +108108,16 @@ async function runInShopeeBatches(items, processor, opts) {
     console.log(`[Shopee Throttle] Batch ${batchNo}/${totalBatches} (${batch.length} item)...`);
     for (let j = 0; j < batch.length; j++) {
       await processor(batch[j], batchStart + j);
-      if (j < batch.length - 1) await sleep2(itemDelayMs);
+      if (j < batch.length - 1) await sleep3(itemDelayMs);
     }
     if (batchStart + batchSize < items.length) {
       console.log(`[Shopee Throttle] Ngh\u1EC9 ${batchPauseMs}ms tr\u01B0\u1EDBc batch k\u1EBF...`);
-      await sleep2(batchPauseMs);
+      await sleep3(batchPauseMs);
     }
   }
 }
 function shopeeSyncDelay(ms = SHOPEE_SYNC_BATCH_DELAY_MS) {
-  return sleep2(ms);
+  return sleep3(ms);
 }
 function shopeeApiErrorResult(err, context, httpStatus) {
   const message = err instanceof Error ? err.message : String(err);
@@ -108111,7 +108269,7 @@ async function shopeeFetchJsonWithRetry(url2, context, opts) {
       if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
         shopeeRetryTelemetry.retries++;
         console.warn(`[Shopee API] ${context} l\u1ED7i m\u1EA1ng, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`);
-        await sleep2(waitMs);
+        await sleep3(waitMs);
         continue;
       }
       const netMsg = err instanceof Error ? err.message : String(err);
@@ -108139,7 +108297,7 @@ async function shopeeFetchJsonWithRetry(url2, context, opts) {
       console.warn(
         `[Shopee API] ${context} HTTP ${res.status}, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`
       );
-      await sleep2(waitMs);
+      await sleep3(waitMs);
       continue;
     }
     if (res.status === 401 || res.status === 429 || res.status === 504 || res.status >= 400 && json2?.error) {
@@ -108178,7 +108336,7 @@ async function shopeePostJsonWithRetry(url2, body, context, opts) {
       if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
         shopeeRetryTelemetry.retries++;
         console.warn(`[Shopee API] ${context} l\u1ED7i m\u1EA1ng, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`);
-        await sleep2(waitMs);
+        await sleep3(waitMs);
         continue;
       }
       const netMsg = err instanceof Error ? err.message : String(err);
@@ -108206,7 +108364,7 @@ async function shopeePostJsonWithRetry(url2, body, context, opts) {
       console.warn(
         `[Shopee API] ${context} HTTP ${res.status}, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`
       );
-      await sleep2(waitMs);
+      await sleep3(waitMs);
       continue;
     }
     if (json2?.error && !json2.message) {
@@ -113735,10 +113893,10 @@ async function debugReturnByOrder(req, res) {
           if (!deps16.parseShopeeReturnListMore(listResult) && rows.length < 100) break;
           if (rows.length === 0) break;
           pageNo++;
-          await sleep2(400);
+          await sleep3(400);
         }
         if (matchedReturnSn) break;
-        await sleep2(300);
+        await sleep3(300);
       }
       if (matchedReturnSn) break;
     }
@@ -115365,7 +115523,7 @@ var genAIKey = "";
 function readGeminiApiKey() {
   return String(process.env.GEMINI_API_KEY || "").trim();
 }
-function sleep3(ms) {
+function sleep4(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 function getClient() {
@@ -115451,7 +115609,7 @@ async function parseAddressWithGemini(rawAddress) {
     } catch (err) {
       lastError = err;
       if (!isModelUnavailable(err) || i2 >= models.length - 1) break;
-      await sleep3(200);
+      await sleep4(200);
     }
   }
   throw lastError instanceof Error ? lastError : new Error("GEMINI_PARSE_FAILED");
@@ -115462,8 +115620,8 @@ function isGeminiConfigured() {
 }
 
 // services/addressMasterData.ts
-var GHN_BASE = String(process.env.GHN_API_URL || "").trim() || "https://online-gateway.ghn.vn/shiip/public-api";
-var GHN_TIMEOUT_MS = 1e4;
+var GHN_BASE2 = String(process.env.GHN_API_URL || "").trim() || "https://online-gateway.ghn.vn/shiip/public-api";
+var GHN_TIMEOUT_MS2 = 1e4;
 var GHN_CACHE_TTL_MS = 24 * 60 * 60 * 1e3;
 var ALIASES = {
   hcm: "ho chi minh",
@@ -115518,7 +115676,7 @@ function toNamedId(unit) {
   if (!id || !name) return null;
   return { id, name };
 }
-function readGhnToken() {
+function readGhnToken2() {
   return String(process.env.GHN_TOKEN || process.env.GHN_API_TOKEN || "").trim();
 }
 function getGhnCache() {
@@ -115528,17 +115686,17 @@ function getGhnCache() {
   }
   return ghnCache;
 }
-async function ghnFetch(path20, query) {
-  const token = readGhnToken();
+async function ghnFetch2(path20, query) {
+  const token = readGhnToken2();
   if (!token) return null;
-  const url2 = new URL(`${GHN_BASE}${path20}`);
+  const url2 = new URL(`${GHN_BASE2}${path20}`);
   if (query) {
     for (const [key, value] of Object.entries(query)) {
       if (value !== void 0 && value !== "") url2.searchParams.set(key, String(value));
     }
   }
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), GHN_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), GHN_TIMEOUT_MS2);
   try {
     const res = await fetch(url2.toString(), {
       method: "GET",
@@ -115569,7 +115727,7 @@ async function ghnFetch(path20, query) {
 async function loadGhnProvinces() {
   const cache = getGhnCache();
   if (cache.provinces.length) return cache.provinces;
-  const rows = await ghnFetch("/master-data/province");
+  const rows = await ghnFetch2("/master-data/province");
   cache.provinces = (rows || []).map((p) => ({
     name: String(p.ProvinceName || p.province_name || ""),
     id: p.ProvinceID ?? p.province_id,
@@ -115581,7 +115739,7 @@ async function loadGhnDistricts(provinceId) {
   if (!provinceId) return [];
   const cache = getGhnCache();
   if (cache.districts.has(provinceId)) return cache.districts.get(provinceId) || [];
-  const rows = await ghnFetch("/master-data/district", { province_id: Number(provinceId) || provinceId });
+  const rows = await ghnFetch2("/master-data/district", { province_id: Number(provinceId) || provinceId });
   const list = (rows || []).filter((d) => String(d.ProvinceID ?? d.province_id ?? "") === String(provinceId)).map((d) => ({
     name: String(d.DistrictName || d.district_name || ""),
     id: d.DistrictID ?? d.district_id,
@@ -115594,7 +115752,7 @@ async function loadGhnWards(districtId) {
   if (!districtId) return [];
   const cache = getGhnCache();
   if (cache.wards.has(districtId)) return cache.wards.get(districtId) || [];
-  const rows = await ghnFetch("/master-data/ward", { district_id: Number(districtId) || districtId });
+  const rows = await ghnFetch2("/master-data/ward", { district_id: Number(districtId) || districtId });
   const list = (rows || []).map((w) => ({
     name: String(w.WardName || w.ward_name || ""),
     id: w.WardCode ?? w.ward_code ?? w.WardID ?? w.ward_id,
@@ -115615,7 +115773,7 @@ function toCarrierIds(province, district, ward) {
   };
 }
 async function matchGhn(provinceName, districtName, wardName) {
-  if (!readGhnToken()) return null;
+  if (!readGhnToken2()) return null;
   try {
     const provinces = await loadGhnProvinces();
     const province = toNamedId(matchNamedUnit(provinces, provinceName));
@@ -115707,11 +115865,13 @@ async function parseOrderAddress(req, res) {
   }
   try {
     if (!isGeminiConfigured()) {
-      return sendJson2(
-        res,
-        500,
-        errorPayload(raw, "L\u1ED7i AI: ch\u01B0a c\u1EA5u h\xECnh GEMINI_API_KEY. Vui l\xF2ng ch\u1ECDn th\u1EE7 c\xF4ng.")
-      );
+      const missing = new Error("GEMINI_API_KEY missing");
+      console.error("=== GEMINI ERROR ===", missing.message);
+      return sendJson2(res, 500, {
+        ...errorPayload(raw, "L\u1ED7i AI: ch\u01B0a c\u1EA5u h\xECnh GEMINI_API_KEY. Vui l\xF2ng ch\u1ECDn th\u1EE7 c\xF4ng."),
+        error: "L\u1ED7i AI",
+        details: missing.message
+      });
     }
     const { parsed, master } = await withTimeout(
       (async () => {
@@ -115749,16 +115909,17 @@ async function parseOrderAddress(req, res) {
       spx: master.spx
     });
   } catch (error) {
-    console.error("[parse-address]", error?.message || error);
-    const timedOut = String(error?.message || "").includes("TIMEOUT");
-    return sendJson2(
-      res,
-      500,
-      errorPayload(
+    console.error("=== GEMINI ERROR ===", error?.response?.data || error?.message || error);
+    const details = String(error?.message || error || "L\u1ED7i AI");
+    const timedOut = details.includes("TIMEOUT");
+    return sendJson2(res, 500, {
+      ...errorPayload(
         raw,
-        timedOut ? "L\u1ED7i AI: qu\xE1 th\u1EDDi gian ch\u1EDD. Vui l\xF2ng ch\u1ECDn th\u1EE7 c\xF4ng." : "L\u1ED7i AI t\xE1ch \u0111\u1ECBa ch\u1EC9. Vui l\xF2ng ch\u1ECDn th\u1EE7 c\xF4ng."
-      )
-    );
+        timedOut ? "L\u1ED7i AI: qu\xE1 th\u1EDDi gian ch\u1EDD. Vui l\xF2ng ch\u1ECDn th\u1EE7 c\xF4ng." : "L\u1ED7i AI"
+      ),
+      error: "L\u1ED7i AI",
+      details
+    });
   }
 }
 
@@ -123305,7 +123466,7 @@ async function yieldToLogisticsIfBusy(maxWaitMs = 15e3) {
   if (!isLogisticsBusy()) return;
   const t0 = Date.now();
   while (isLogisticsBusy() && Date.now() - t0 < maxWaitMs) {
-    await sleep2(200);
+    await sleep3(200);
   }
 }
 function releaseOrdersPullLock(reason = "finally") {
@@ -127588,10 +127749,10 @@ async function shopeeGetModelList(shopId, accessToken, itemId) {
 async function shopeeGetModelListWithRetry(shopId, accessToken, itemId, retries = 3) {
   let last = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
-    if (attempt > 0) await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2 * attempt);
+    if (attempt > 0) await sleep3(SHOPEE_PRODUCT_API_DELAY_MS2 * attempt);
     last = await shopeeGetModelList(shopId, accessToken, itemId);
     if (!last?.error) return last;
-    if (isShopeeRateLimited(0, last)) await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2 * 2);
+    if (isShopeeRateLimited(0, last)) await sleep3(SHOPEE_PRODUCT_API_DELAY_MS2 * 2);
   }
   return last;
 }
@@ -128227,7 +128388,7 @@ async function publishOneItemToShopee(shopId, payload) {
     const { buf, filename, mime } = await resolvePublishImageBuffer(src);
     if (buf.length > 10 * 1024 * 1024) throw new Error(`\u1EA2nh v\u01B0\u1EE3t 10MB: ${filename}`);
     imageIds.push(await shopeeUploadImage(shopId, accessToken, buf, filename, mime));
-    await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
+    await sleep3(SHOPEE_PRODUCT_API_DELAY_MS2);
   }
   const fullChannels = await shopeeGetChannelList(shopId, accessToken);
   let enabledLogistics = Array.isArray(payload?.enabledLogistics) ? payload.enabledLogistics.map(Number).filter((n) => n > 0) : [];
@@ -128242,7 +128403,7 @@ async function publishOneItemToShopee(shopId, payload) {
   if (!logisticInfo.length) {
     throw new Error("Shop ch\u01B0a c\xF3 k\xEAnh v\u1EADn chuy\u1EC3n enabled (get_channel_list) ho\u1EB7c k\xEDch th\u01B0\u1EDBc g\xF3i h\xE0ng kh\xF4ng ph\xF9 h\u1EE3p v\u1EDBi b\u1EA5t k\u1EF3 k\xEAnh n\xE0o");
   }
-  await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
+  await sleep3(SHOPEE_PRODUCT_API_DELAY_MS2);
   let mandatoryAttrs = [];
   let attributeTreeError = null;
   try {
@@ -128252,7 +128413,7 @@ async function publishOneItemToShopee(shopId, payload) {
     attributeTreeError = err?.message || String(err);
     console.log("[SHOPEE UPLOAD ERROR]:", JSON.stringify({ step: "get_attribute_tree", error: attributeTreeError }, null, 2));
   }
-  await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
+  await sleep3(SHOPEE_PRODUCT_API_DELAY_MS2);
   const attributeList = buildShopeeAttributeListFromPayload(payload, mandatoryAttrs);
   const missingMandatory = mandatoryAttrs.filter(
     (a) => !attributeList.some((x2) => Number(x2.attribute_id) === Number(a.attribute_id))
@@ -128343,7 +128504,7 @@ async function publishOneItemToShopee(shopId, payload) {
       throw new Error("add_item kh\xF4ng tr\u1EA3 v\u1EC1 item_id h\u1EE3p l\u1EC7 (Shopee kh\xF4ng t\u1EA1o s\u1EA3n ph\u1EA9m)");
     }
   }
-  await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
+  await sleep3(SHOPEE_PRODUCT_API_DELAY_MS2);
   if (hasVariants && !existingItemId) {
     const itemIdNum = toShopeeIdNumber(itemId) ?? Number(itemId);
     if (!Number.isFinite(itemIdNum) || itemIdNum <= 0) {
@@ -128402,7 +128563,7 @@ async function publishOneItemToShopee(shopId, payload) {
           },
           "init_tier_variation"
         );
-        await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
+        await sleep3(SHOPEE_PRODUCT_API_DELAY_MS2);
         await shopeeProductPost(
           "/api/v2/product/add_model",
           shopId,
@@ -128423,7 +128584,7 @@ async function publishOneItemToShopee(shopId, payload) {
   let modelIds = [];
   if (hasVariants && !existingItemId) {
     try {
-      await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
+      await sleep3(SHOPEE_PRODUCT_API_DELAY_MS2);
       const modelListResp = await shopeeGetModelListWithRetry(shopId, accessToken, itemId, 2);
       if (modelListResp && !modelListResp.error) {
         const rawModels = modelListResp.response?.model || modelListResp.response?.model_list || [];
@@ -128595,7 +128756,7 @@ async function syncProductToShopee(product, shopId, accessToken) {
       { ...base, action: "update_price" }
     ];
   }
-  await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
+  await sleep3(SHOPEE_PRODUCT_API_DELAY_MS2);
   const priceResult = await shopeeUpdatePrice(shopId, accessToken, itemId, [priceEntry]);
   if (isShopeeItemNotFoundError(priceResult)) {
     await markShopeeItemsInvalidInDb([itemId], priceResult?.error || "product.error_item_not_found");
@@ -128959,7 +129120,7 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
       }
       continue;
     }
-    await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
+    await sleep3(SHOPEE_PRODUCT_API_DELAY_MS2);
     const locationId = await resolveShopeeStockLocationId(resolved.shopId, resolved.accessToken);
     const stockList = [];
     for (const p of rows) {
@@ -128997,7 +129158,7 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
     }
     if (stockList.length === 0) {
       processedInBatch++;
-      await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
+      await sleep3(SHOPEE_PRODUCT_API_DELAY_MS2);
       continue;
     }
     let result;
@@ -129019,10 +129180,10 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
         });
       }
       processedInBatch++;
-      await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
+      await sleep3(SHOPEE_PRODUCT_API_DELAY_MS2);
       if (processedInBatch % SHOPEE_PRODUCT_BATCH_SIZE2 === 0 && processedInBatch < itemEntries.length) {
         console.log(`[Shopee Push Stock] Ngh\u1EC9 ${SHOPEE_PRODUCT_BATCH_PAUSE_MS2}ms sau ${processedInBatch}/${itemEntries.length} item...`);
-        await sleep2(SHOPEE_PRODUCT_BATCH_PAUSE_MS2);
+        await sleep3(SHOPEE_PRODUCT_BATCH_PAUSE_MS2);
       }
       continue;
     }
@@ -129070,10 +129231,10 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
       pushed += rows.length;
     }
     processedInBatch++;
-    await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
+    await sleep3(SHOPEE_PRODUCT_API_DELAY_MS2);
     if (processedInBatch % SHOPEE_PRODUCT_BATCH_SIZE2 === 0 && processedInBatch < itemEntries.length) {
       console.log(`[Shopee Push Stock] Ngh\u1EC9 ${SHOPEE_PRODUCT_BATCH_PAUSE_MS2}ms sau ${processedInBatch}/${itemEntries.length} item...`);
-      await sleep2(SHOPEE_PRODUCT_BATCH_PAUSE_MS2);
+      await sleep3(SHOPEE_PRODUCT_BATCH_PAUSE_MS2);
     }
   }
   if (invalidItemIds.size > 0) {
@@ -129721,7 +129882,7 @@ async function fetchAllShopeeItemIds(shopId, accessToken) {
     hasNext = !!listResult.response?.has_next_page && items.length > 0;
     offset = listResult.response?.next_offset ?? offset + items.length;
     pageGuard++;
-    if (hasNext) await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
+    if (hasNext) await sleep3(SHOPEE_PRODUCT_API_DELAY_MS2);
   }
   return allItemIds;
 }
@@ -129747,7 +129908,7 @@ async function fetchShopeeBaseItemsByIds(shopId, accessToken, itemIds) {
       console.error(`[Shopee Sync] get_item_base_info batch ${batchIdx} exception: ${msg}`);
     }
     if (batchIdx < batches.length - 1) {
-      await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
+      await sleep3(SHOPEE_PRODUCT_API_DELAY_MS2);
     }
   }
   return allItems;
@@ -132422,7 +132583,7 @@ async function forceResyncStuckOrdersWithoutTracking(opts) {
       console.error(`[Force Resync] ${orderSn} FAILED:`, err?.stack || err);
     }
     results.push(item);
-    await sleep2(SHOPEE_TRACKING_FETCH_DELAY_MS);
+    await sleep3(SHOPEE_TRACKING_FETCH_DELAY_MS);
   }
   console.log(
     `[Force Resync] DONE attempted=${results.length} healed=${healed} ok=${results.filter((r2) => r2.ok).length}`
@@ -132671,7 +132832,7 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
           );
         }
       }
-      if (i2 + SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS < sns.length) await sleep2(PRINT_API_DELAY_MS);
+      if (i2 + SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS < sns.length) await sleep3(PRINT_API_DELAY_MS);
     }
   }
   let nextOrderIndex = 0;
@@ -132907,7 +133068,7 @@ async function shopeeGetTrackingNumberWithRetry(shopId, accessToken, orderSn, pa
       last = { error: "exception", message: err?.message || String(err) };
       if (attempt >= maxAttempts) return last;
     }
-    await sleep2(300);
+    await sleep3(300);
   }
   return last;
 }
@@ -133153,7 +133314,7 @@ async function backfillMissingGhnTrackingNumbers() {
               apiErr?.message || apiErr
             );
             errors += 1;
-            await sleep2(SHOPEE_TRACKING_FETCH_DELAY_MS);
+            await sleep3(SHOPEE_TRACKING_FETCH_DELAY_MS);
             continue;
           }
           let tn = extractRawGhnTrackingNumber(result);
@@ -133200,7 +133361,7 @@ async function backfillMissingGhnTrackingNumbers() {
             orderErr?.message || orderErr
           );
         }
-        await sleep2(SHOPEE_TRACKING_FETCH_DELAY_MS);
+        await sleep3(SHOPEE_TRACKING_FETCH_DELAY_MS);
       }
     }
     if (pendingWrites.length > 0) {
@@ -133593,7 +133754,7 @@ async function repairMissingShopeeTrackingInOrders(orders, opts) {
       attempted++;
       continue;
     } finally {
-      await sleep2(SHOPEE_TRACKING_FETCH_DELAY_MS);
+      await sleep3(SHOPEE_TRACKING_FETCH_DELAY_MS);
     }
   }
   if (attempted > 0) {
@@ -133722,7 +133883,7 @@ async function healCancelledReturnTrackingOrders(opts) {
           err?.message || err
         );
       } finally {
-        await sleep2(HEAL_ITEM_DELAY_MS);
+        await sleep3(HEAL_ITEM_DELAY_MS);
       }
     }
     try {
@@ -134569,7 +134730,7 @@ function scheduleDeferredTrackingEnrich(apiShopId, accessToken, orders) {
             error?.message || error
           );
         }
-        await sleep2(SHOPEE_TRACKING_FETCH_DELAY_MS);
+        await sleep3(SHOPEE_TRACKING_FETCH_DELAY_MS);
       }
       try {
         queueOrdersJsonMirrorFromMongo();
@@ -135875,7 +136036,7 @@ async function batchAutoLinkFromDatabase(opts) {
     if (wroteChanges) {
       await bulkUpsertChannelListingsToStore(newlyLinkedRows);
       await flushDbWrites();
-      await sleep2(200);
+      await sleep3(200);
     }
     const unlinkedRemaining = dbListings.filter((row) => {
       const safeRow = sanitizeChannelListingRow(row);
@@ -136817,7 +136978,7 @@ async function findReturnSnForOrderWebhook(shopId, accessToken, orderSn) {
     }
     if (!parseShopeeReturnListMore(listResult) || rows.length === 0) break;
     pageNo += 1;
-    await sleep2(150);
+    await sleep3(150);
   }
   return "";
 }
@@ -137165,7 +137326,7 @@ async function startServer() {
     sanitizeChannelListingRow,
     bulkUpsertChannelListingsToStore,
     flushDbWrites,
-    sleep: sleep2,
+    sleep: sleep3,
     loadProducts,
     persistHealedBrokenMappingLinks,
     readChannelListingsDb,
@@ -138387,7 +138548,7 @@ async function startServer() {
               console.warn(`[Batch Confirm Print] Poll ${orderSn} attempt ${attempt}:`, err?.message || err);
             }
             if (attempt < 10 && Date.now() < deadlineAt) {
-              await sleep2(Math.min(PRINT_WAYBILL_POLL_INTERVAL_MS, Math.max(0, deadlineAt - Date.now())));
+              await sleep3(Math.min(PRINT_WAYBILL_POLL_INTERVAL_MS, Math.max(0, deadlineAt - Date.now())));
             }
           }
           if (!pdfReady) {
@@ -138627,7 +138788,7 @@ async function startServer() {
               console.warn(`[Batch Print Only] Poll ${orderSn} attempt ${attempt}:`, err?.message || err);
             }
             if (attempt < 10 && Date.now() < deadlineAt) {
-              await sleep2(Math.min(PRINT_WAYBILL_POLL_INTERVAL_MS, Math.max(0, deadlineAt - Date.now())));
+              await sleep3(Math.min(PRINT_WAYBILL_POLL_INTERVAL_MS, Math.max(0, deadlineAt - Date.now())));
             }
           }
           if (!pdfReady) {
@@ -139356,7 +139517,7 @@ async function startServer() {
         console.error("L\u1ED7i 1 \u0111\u01A1n (ship batch):", error);
       }
       if (k < runIndices.length - 1 && SHIP_ORDER_CHUNK_PAUSE_MS > 0) {
-        await sleep2(SHIP_ORDER_CHUNK_PAUSE_MS);
+        await sleep3(SHIP_ORDER_CHUNK_PAUSE_MS);
       }
     }
     const compactResults = results.filter(Boolean);
@@ -139555,7 +139716,7 @@ async function startServer() {
           });
         }
         if (SHIP_ORDER_CHUNK_PAUSE_MS > 0) {
-          await sleep2(SHIP_ORDER_CHUNK_PAUSE_MS);
+          await sleep3(SHIP_ORDER_CHUNK_PAUSE_MS);
         }
       }
       const mongoPatchesShip = toShip.map(({ index, order }) => {
@@ -140946,7 +141107,7 @@ async function startServer() {
         let error_message;
         if (platform === "shopee") {
           try {
-            if (i2 > 0) await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2 * 2);
+            if (i2 > 0) await sleep3(SHOPEE_PRODUCT_API_DELAY_MS2 * 2);
             if (!shopKey) throw new Error("Thi\u1EBFu Shopee shop_id (OAuth)");
             const existingListing = allRows.find(
               (r2) => r2.product_id === productId && String(r2.shop_id) === shopKey && r2.platform === "shopee" && r2.status === "success" && r2.platform_product_id

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { BookUser, Loader2, MapPin } from 'lucide-react';
+import { BookUser, Loader2, MapPin, X } from 'lucide-react';
 import {
   AddressMode,
   StructuredAddressValue,
@@ -11,6 +11,7 @@ import { AddressBookEntry, loadAddressBook } from '../utils/addressBook';
 
 const PARSE_TIMEOUT_MS = 5_000;
 const LIST_TIMEOUT_MS = 8_000;
+const TOAST_MS = 4_000;
 const MANUAL_ERROR = 'AI tách lỗi hoặc quá tải. Vui lòng chọn thủ công.';
 
 const PASTE_PLACEHOLDER =
@@ -22,6 +23,12 @@ interface AddressFormProps {
   value: StructuredAddressValue;
   onChange: (v: StructuredAddressValue) => void;
   authHeaders: () => Record<string, string>;
+}
+
+function unitKey(item: { id?: string | number; code?: string | number } | null | undefined): string {
+  if (!item) return '';
+  const raw = item.id ?? item.code;
+  return raw == null ? '' : String(raw);
 }
 
 function fetchWithTimeout(url: string, init: RequestInit, ms: number): Promise<Response> {
@@ -41,6 +48,29 @@ function fetchWithTimeout(url: string, init: RequestInit, ms: number): Promise<R
   });
 }
 
+function normalizeUnits(data: unknown): WardUnit[] {
+  const list = Array.isArray(data)
+    ? data
+    : Array.isArray((data as { data?: unknown })?.data)
+      ? ((data as { data: unknown[] }).data)
+      : [];
+  const out: WardUnit[] = [];
+  for (let i = 0; i < list.length; i += 1) {
+    const item = list[i] as Record<string, unknown>;
+    const name = String(item?.name || '').trim();
+    const id = item?.id ?? item?.code;
+    if (!name || id == null || id === '') continue;
+    out.push({
+      name,
+      code: Number(item.code ?? item.id) || 0,
+      id: id as string | number,
+      districtCode: item.districtCode != null ? Number(item.districtCode) : undefined,
+      districtName: item.districtName ? String(item.districtName) : undefined,
+    });
+  }
+  return out;
+}
+
 export default function AddressForm({ value, onChange, authHeaders }: AddressFormProps) {
   const [provinces, setProvinces] = useState<VnAdminUnit[]>([]);
   const [districts, setDistricts] = useState<VnAdminUnit[]>([]);
@@ -48,9 +78,13 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
   const [pasteText, setPasteText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [parseError, setParseError] = useState('');
+  const [toast, setToast] = useState('');
   const [bookOpen, setBookOpen] = useState(false);
   const [addressBook, setAddressBook] = useState<AddressBookEntry[]>([]);
   const bookRef = useRef<HTMLDivElement>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const authHeadersRef = useRef(authHeaders);
+  authHeadersRef.current = authHeaders;
 
   const inputClass =
     'w-full h-10 px-3 bg-white rounded-lg border border-gray-200 focus:border-orange-500 focus:ring-1 focus:ring-orange-200 focus:outline-none text-sm text-gray-800';
@@ -58,20 +92,42 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
   const labelClass = 'text-[12px] font-medium text-gray-600';
   const star = <span className="text-red-500">*</span>;
 
-  const fetchJsonList = useCallback(async (url: string): Promise<WardUnit[]> => {
-    try {
-      const res = await fetchWithTimeout(url, { headers: authHeaders() }, LIST_TIMEOUT_MS);
-      if (!res.ok) return [];
-      const data = await res.json();
-      return Array.isArray(data) ? data : [];
-    } catch {
-      return [];
-    }
-  }, [authHeaders]);
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToast(''), TOAST_MS);
+  }, []);
 
   useEffect(() => {
-    fetchJsonList('/api/vietnam-address/provinces').then(setProvinces);
-  }, [fetchJsonList]);
+    return () => {
+      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    };
+  }, []);
+
+  const fetchJsonList = useCallback(async (url: string): Promise<WardUnit[]> => {
+    try {
+      const res = await fetchWithTimeout(url, { headers: authHeadersRef.current() }, LIST_TIMEOUT_MS);
+      const data = await res.json().catch(() => []);
+      if (!res.ok) {
+        console.error('[AddressForm] master data', url, data);
+        return [];
+      }
+      return normalizeUnits(data);
+    } catch (err) {
+      console.error('[AddressForm] master data', url, err);
+      return [];
+    }
+  }, []);
+
+  useEffect(() => {
+    const mode = value.addressMode === 'new2' ? 'new2' : 'old3';
+    fetchJsonList(`/api/vietnam-address/provinces?mode=${mode}`).then((list) => {
+      setProvinces(list);
+      if (!list.length) {
+        showToast('Không tải được danh sách Tỉnh/Thành. Vui lòng thử lại.');
+      }
+    });
+  }, [value.addressMode, fetchJsonList, showToast]);
 
   useEffect(() => {
     if (!value.provinceCode) {
@@ -132,12 +188,51 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
     setBookOpen(false);
   };
 
+  const onProvinceChange = async (provinceId: string) => {
+    const p = provinces.find((x) => unitKey(x) === provinceId);
+    onChange({
+      ...value,
+      provinceCode: provinceId,
+      provinceName: p?.name || '',
+      districtCode: '',
+      districtName: '',
+      wardCode: '',
+      wardName: '',
+    });
+    setDistricts([]);
+    setWards([]);
+    if (!provinceId) return;
+    if (value.addressMode === 'new2') {
+      const nextWards = await fetchJsonList(`/api/vietnam-address/wards-by-province/${provinceId}`);
+      setWards(nextWards);
+      return;
+    }
+    const nextDistricts = await fetchJsonList(`/api/vietnam-address/districts/${provinceId}`);
+    setDistricts(nextDistricts);
+  };
+
+  const onDistrictChange = async (districtId: string) => {
+    const d = districts.find((x) => unitKey(x) === districtId);
+    onChange({
+      ...value,
+      districtCode: districtId,
+      districtName: d?.name || '',
+      wardCode: '',
+      wardName: '',
+    });
+    setWards([]);
+    if (!districtId) return;
+    const nextWards = await fetchJsonList(`/api/vietnam-address/wards/${districtId}`);
+    setWards(nextWards);
+  };
+
   const handleParseAddress = async () => {
     const raw = pasteText.trim();
     if (raw.length < 8) {
       setParseError('Vui lòng dán đầy đủ tên, SĐT và địa chỉ.');
       return;
     }
+    if (isLoading) return;
 
     setIsLoading(true);
     setParseError('');
@@ -146,7 +241,7 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
         '/api/orders/parse-address',
         {
           method: 'POST',
-          headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+          headers: { ...authHeadersRef.current(), 'Content-Type': 'application/json' },
           body: JSON.stringify({ raw_address: raw, address_mode: value.addressMode }),
         },
         PARSE_TIMEOUT_MS,
@@ -156,14 +251,16 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
       const matched = data.matched || {};
 
       if (!res.ok || data.fallback || !data.success) {
+        setIsLoading(false);
         onChange({
           ...value,
           name: parsed.name || value.name,
           phone: normalizePhone(parsed.phone || value.phone),
           street: parsed.detail || raw,
         });
-        setParseError(data.message || data.error || MANUAL_ERROR);
-        window.alert(MANUAL_ERROR);
+        const msg = data.details || data.message || data.error || MANUAL_ERROR;
+        setParseError(msg);
+        showToast(msg);
         return;
       }
 
@@ -185,11 +282,17 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
 
       if (!province || !ward || (value.addressMode === 'old3' && !district)) {
         setParseError('Chưa khớp đủ địa chỉ. Vui lòng chọn thủ công.');
+        showToast('Chưa khớp đủ địa chỉ. Vui lòng chọn thủ công.');
       }
-    } catch {
+    } catch (error: unknown) {
+      setIsLoading(false);
       onChange({ ...value, street: value.street || raw });
+      const details =
+        error instanceof Error && error.message && error.message !== 'TIMEOUT'
+          ? error.message
+          : MANUAL_ERROR;
       setParseError(MANUAL_ERROR);
-      window.alert(MANUAL_ERROR);
+      showToast(details);
     } finally {
       setIsLoading(false);
     }
@@ -202,6 +305,19 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
 
   return (
     <div className="space-y-4">
+      {toast && (
+        <div className="fixed top-5 right-5 z-120 bg-slate-900 text-white font-semibold text-xs px-5 py-3 rounded-2xl shadow-2xl border border-slate-700 flex items-center gap-2 max-w-sm">
+          <span>{toast}</span>
+          <button
+            type="button"
+            onClick={() => setToast('')}
+            className="ml-1 text-gray-400 hover:text-white cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <h2 className="text-[15px] font-bold text-gray-900">2. Địa chỉ người nhận</h2>
         <div className="relative" ref={bookRef}>
@@ -351,23 +467,13 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
           <select
             value={value.provinceCode}
             onChange={(e) => {
-              const code = e.target.value;
-              const p = provinces.find((x) => String(x.code) === code);
-              onChange({
-                ...value,
-                provinceCode: code,
-                provinceName: p?.name || '',
-                districtCode: '',
-                districtName: '',
-                wardCode: '',
-                wardName: '',
-              });
+              void onProvinceChange(e.target.value);
             }}
             className={selectClass}
           >
             <option value="">Chọn Tỉnh/Thành</option>
             {provinces.map((p) => (
-              <option key={p.code} value={String(p.code)}>
+              <option key={unitKey(p)} value={unitKey(p)}>
                 {p.name}
               </option>
             ))}
@@ -377,21 +483,13 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
             <select
               value={value.districtCode}
               onChange={(e) => {
-                const code = e.target.value;
-                const d = districts.find((x) => String(x.code) === code);
-                onChange({
-                  ...value,
-                  districtCode: code,
-                  districtName: d?.name || '',
-                  wardCode: '',
-                  wardName: '',
-                });
+                void onDistrictChange(e.target.value);
               }}
               className={selectClass}
             >
               <option value="">Chọn Quận/Huyện</option>
               {districts.map((d) => (
-                <option key={d.code} value={String(d.code)}>
+                <option key={unitKey(d)} value={unitKey(d)}>
                   {d.name}
                 </option>
               ))}
@@ -402,7 +500,7 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
             value={value.wardCode}
             onChange={(e) => {
               const code = e.target.value;
-              const w = wards.find((x) => String(x.code) === code);
+              const w = wards.find((x) => unitKey(x) === code);
               onChange({
                 ...value,
                 wardCode: code,
@@ -419,7 +517,7 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
           >
             <option value="">Chọn Phường/Xã</option>
             {wards.map((w) => (
-              <option key={w.code} value={String(w.code)}>
+              <option key={unitKey(w)} value={unitKey(w)}>
                 {w.name}
               </option>
             ))}

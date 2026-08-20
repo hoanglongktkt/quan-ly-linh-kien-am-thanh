@@ -54,11 +54,13 @@ export async function parseOrderAddress(req, res) {
 
   try {
     if (!isGeminiConfigured()) {
-      return sendJson(
-        res,
-        500,
-        errorPayload(raw, "Lỗi AI: chưa cấu hình GEMINI_API_KEY. Vui lòng chọn thủ công."),
-      );
+      const missing = new Error("GEMINI_API_KEY missing");
+      console.error("=== GEMINI ERROR ===", missing.message);
+      return sendJson(res, 500, {
+        ...errorPayload(raw, "Lỗi AI: chưa cấu hình GEMINI_API_KEY. Vui lòng chọn thủ công."),
+        error: "Lỗi AI",
+        details: missing.message,
+      });
     }
 
     const { parsed, master } = await withTimeout(
@@ -98,17 +100,18 @@ export async function parseOrderAddress(req, res) {
       spx: master.spx,
     });
   } catch (error) {
-    console.error("[parse-address]", error?.message || error);
-    const timedOut = String(error?.message || "").includes("TIMEOUT");
-    return sendJson(
-      res,
-      500,
-      errorPayload(
+    console.error("=== GEMINI ERROR ===", error?.response?.data || error?.message || error);
+    const details = String(error?.message || error || "Lỗi AI");
+    const timedOut = details.includes("TIMEOUT");
+    return sendJson(res, 500, {
+      ...errorPayload(
         raw,
         timedOut
           ? "Lỗi AI: quá thời gian chờ. Vui lòng chọn thủ công."
-          : "Lỗi AI tách địa chỉ. Vui lòng chọn thủ công.",
+          : "Lỗi AI",
       ),
-    );
+      error: "Lỗi AI",
+      details,
+    });
   }
 }
