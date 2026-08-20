@@ -5,28 +5,32 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export type ParsedAddress = {
+  name: string;
+  phone: string;
   province: string;
   district: string;
   ward: string;
   detail: string;
 };
 
-const GEMINI_TIMEOUT_MS = 8_000;
+const GEMINI_TIMEOUT_MS = 4_000;
 const DEFAULT_MODEL = "gemini-1.5-flash";
 const FALLBACK_MODELS = ["gemini-3.5-flash", "gemini-2.0-flash"];
 
-const SYSTEM_PROMPT = `Bạn là chuyên gia bóc tách địa chỉ giao hàng Việt Nam.
-Nhiệm vụ: tách chuỗi địa chỉ thô thành JSON nghiêm ngặt, KHÔNG markdown, KHÔNG giải thích.
+const SYSTEM_PROMPT = `Bạn là chuyên gia bóc tách thông tin người nhận và địa chỉ giao hàng Việt Nam.
+Nhiệm vụ: tách chuỗi dán thô thành JSON nghiêm ngặt, KHÔNG markdown, KHÔNG giải thích.
 
 Cấu trúc bắt buộc:
-{"province":"Tên Tỉnh/Thành phố chuẩn","district":"Tên Quận/Huyện/Thị xã chuẩn","ward":"Tên Phường/Xã/Thị trấn chuẩn","detail":"Số nhà, ngõ ngách, tên đường"}
+{"name":"Họ tên người nhận","phone":"Số điện thoại 0xxxxxxxxx","province":"Tên Tỉnh/Thành phố chuẩn","district":"Tên Quận/Huyện/Thị xã chuẩn","ward":"Tên Phường/Xã/Thị trấn chuẩn","detail":"Số nhà, ngõ ngách, tên đường"}
 
-Quy tắc chuẩn hóa:
-- province: tên đầy đủ (VD: "Hà Nội", "Thành phố Hồ Chí Minh", "Đà Nẵng"). Viết tắt: HN → Hà Nội, HCM/TPHCM/SG → Thành phố Hồ Chí Minh, DN → Đà Nẵng.
-- district: tên chuẩn có tiền tố (VD: "Quận Thanh Xuân", "Huyện Đông Anh", "Thành phố Thủ Đức"). Q.1 / Q1 → Quận 1.
-- ward: tên chuẩn có tiền tố (VD: "Phường Khương Trung", "Xã ..."). P. / P → Phường.
-- detail: CHỈ số nhà, ngõ, hẻm, tên đường — KHÔNG lặp lại tỉnh/quận/xã.
-- Nếu thiếu một cấp hành chính, để chuỗi rỗng "".
+Quy tắc:
+- name: họ tên người nhận. Nếu không có thì "".
+- phone: chỉ chữ số, dạng 0xxxxxxxxx (bỏ +84 / 84). Nếu không có thì "".
+- province: tên đầy đủ. Viết tắt: HN → Hà Nội, HCM/TPHCM/SG → Thành phố Hồ Chí Minh, DN → Đà Nẵng.
+- district: tên chuẩn có tiền tố. Q.1 / Q1 → Quận 1. Địa chỉ 2 cấp (không còn quận) thì district = "".
+- ward: tên chuẩn có tiền tố. P. / P → Phường.
+- detail: CHỈ số nhà, ngõ, hẻm, tên đường — KHÔNG lặp tỉnh/quận/xã, KHÔNG lặp tên/SĐT.
+- Nếu thiếu một trường, để chuỗi rỗng "".
 - Chỉ trả về đúng một object JSON.`;
 
 let genAI: GoogleGenerativeAI | null = null;
@@ -64,12 +68,22 @@ function extractJsonObject(text: string): Record<string, unknown> {
   return JSON.parse(match[0]);
 }
 
+function normalizePhone(raw: unknown): string {
+  const digits = String(raw || "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("84") && digits.length >= 11) return `0${digits.slice(2)}`;
+  if (digits.length === 9) return `0${digits}`;
+  return digits;
+}
+
 function normalizeParsed(raw: Record<string, unknown>, fallbackDetail: string): ParsedAddress {
   const province = String(raw.province || "").trim();
   const district = String(raw.district || "").trim();
   const ward = String(raw.ward || "").trim();
   const detail = String(raw.detail || raw.street || "").trim() || fallbackDetail;
-  return { province, district, ward, detail };
+  const name = String(raw.name || raw.customerName || "").trim();
+  const phone = normalizePhone(raw.phone || raw.tel || raw.mobile);
+  return { name, phone, province, district, ward, detail };
 }
 
 function isModelUnavailable(err: unknown): boolean {
@@ -93,7 +107,7 @@ async function generateWithModel(modelName: string, rawAddress: string): Promise
   });
 
   const work = model.generateContent(
-    `Tách địa chỉ Việt Nam sau thành JSON:\n"${rawAddress}"`,
+    `Tách thông tin người nhận và địa chỉ Việt Nam sau thành JSON:\n"${rawAddress}"`,
   );
 
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -116,7 +130,7 @@ async function generateWithModel(modelName: string, rawAddress: string): Promise
 export async function parseAddressWithGemini(rawAddress: string): Promise<ParsedAddress> {
   const raw = String(rawAddress || "").trim();
   if (!raw) {
-    return { province: "", district: "", ward: "", detail: "" };
+    return { name: "", phone: "", province: "", district: "", ward: "", detail: "" };
   }
 
   const primary = String(process.env.GEMINI_ADDRESS_MODEL || DEFAULT_MODEL).trim() || DEFAULT_MODEL;
@@ -130,7 +144,7 @@ export async function parseAddressWithGemini(rawAddress: string): Promise<Parsed
     try {
       const text = await generateWithModel(modelName, raw);
       const parsed = normalizeParsed(extractJsonObject(text), raw);
-      if (!parsed.province && !parsed.district && !parsed.ward && !parsed.detail) {
+      if (!parsed.province && !parsed.district && !parsed.ward && !parsed.detail && !parsed.name && !parsed.phone) {
         throw new Error("GEMINI_EMPTY_PARSE");
       }
       return parsed;

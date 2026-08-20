@@ -13,14 +13,14 @@ import {
   X,
 } from 'lucide-react';
 import { Order, Product, SyncLog } from '../types';
-import StructuredAddressForm from './StructuredAddressForm';
+import AddressForm from './AddressForm';
 import QuickAddProductModal from './QuickAddProductModal';
 import {
   emptyStructuredAddress,
   formatFullAddress,
   isStructuredAddressComplete,
-  StructuredAddressValue,
 } from '../utils/vietnamAddress';
+import { saveAddressBookEntry } from '../utils/addressBook';
 
 export type ManualOrderItem = {
   productId: string;
@@ -318,7 +318,7 @@ export default function ManualOrderPage({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isStructuredAddressComplete(shippingAddress)) {
-      alert('Vui lòng chọn đầy đủ Tỉnh/Quận/Phường và nhập địa chỉ chi tiết!');
+      alert('Vui lòng nhập Tên, SĐT, địa chỉ chi tiết và chọn Tỉnh/Phường!');
       return;
     }
     if (orderItems.length === 0) {
@@ -332,7 +332,13 @@ export default function ManualOrderPage({
         method: 'POST',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          customerName: shippingAddress.name.trim(),
+          customerPhone: shippingAddress.phone.trim(),
+          save_to_address_book: shippingAddress.saveToAddressBook === true,
+          addressMode: shippingAddress.addressMode,
           shippingAddress: {
+            name: shippingAddress.name.trim(),
+            phone: shippingAddress.phone.trim(),
             province: shippingAddress.provinceName,
             provinceCode: shippingAddress.provinceCode,
             district: shippingAddress.districtName,
@@ -340,6 +346,7 @@ export default function ManualOrderPage({
             ward: shippingAddress.wardName,
             wardCode: shippingAddress.wardCode,
             street: shippingAddress.street.trim(),
+            addressMode: shippingAddress.addressMode,
           },
           items: orderItems,
           carrier: selectedCarrier,
@@ -398,6 +405,22 @@ export default function ManualOrderPage({
       }
 
       const fullAddr = formatFullAddress(shippingAddress);
+      if (shippingAddress.saveToAddressBook) {
+        saveAddressBookEntry({
+          name: shippingAddress.name.trim(),
+          phone: shippingAddress.phone.trim(),
+          provinceCode: shippingAddress.provinceCode,
+          provinceName: shippingAddress.provinceName,
+          districtCode: shippingAddress.districtCode,
+          districtName: shippingAddress.districtName,
+          wardCode: shippingAddress.wardCode,
+          wardName: shippingAddress.wardName,
+          street: shippingAddress.street.trim(),
+          addressMode: shippingAddress.addressMode,
+          fullAddress: fullAddr,
+        });
+      }
+
       const qtyTotal = orderItems.reduce((acc, it) => acc + it.quantity, 0);
       const carrierLabel =
         selectedCarrier === 'ghn'
@@ -439,11 +462,8 @@ export default function ManualOrderPage({
 
       <form onSubmit={handleSubmit} className="flex-1 grid grid-cols-1 xl:grid-cols-12 gap-6">
         <div className="xl:col-span-5 space-y-5">
-          <section className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-4">
-            <h2 className="text-sm font-bold text-gray-800 flex items-center gap-2 border-b border-gray-100 pb-3">
-              <Truck className="w-4 h-4 text-emerald-600" /> Địa chỉ giao hàng
-            </h2>
-            <StructuredAddressForm
+          <section className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+            <AddressForm
               value={shippingAddress}
               onChange={setShippingAddress}
               authHeaders={authHeaders}

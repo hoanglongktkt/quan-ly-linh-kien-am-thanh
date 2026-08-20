@@ -51,6 +51,32 @@ export async function listVnDistricts(provinceCode) {
   return vnDistrictsCache.get(code) || [];
 }
 
+/** Cache Phường/Xã theo mã tỉnh (địa chỉ 2 cấp — flatten từ depth=3). */
+const vnWardsByProvinceCache = new Map();
+
+export async function listVnWardsByProvince(provinceCode) {
+  const code = Number(provinceCode);
+  if (!code) return [];
+  if (!vnWardsByProvinceCache.has(code)) {
+    const data = await fetchVnJson(`${VN_ADDRESS_API}/p/${code}?depth=3`);
+    const districts = Array.isArray(data?.districts) ? data.districts : [];
+    const wards = [];
+    for (const d of districts) {
+      const list = Array.isArray(d?.wards) ? d.wards : [];
+      for (const w of list) {
+        wards.push({
+          name: w.name,
+          code: w.code,
+          districtCode: d.code,
+          districtName: d.name,
+        });
+      }
+    }
+    vnWardsByProvinceCache.set(code, wards);
+  }
+  return vnWardsByProvinceCache.get(code) || [];
+}
+
 /** Cache Phường/Xã theo mã quận. */
 export async function listVnWards(districtCode) {
   const code = Number(districtCode);
@@ -99,5 +125,17 @@ export async function getWards(req, res) {
   } catch (error) {
     console.error("[VN Address] wards:", error);
     return res.status(502).json({ error: "Không tải được danh sách Phường/Xã" });
+  }
+}
+
+/**
+ * GET /api/vietnam-address/wards-by-province/:provinceCode
+ */
+export async function getWardsByProvince(req, res) {
+  try {
+    return res.json(await listVnWardsByProvince(req.params.provinceCode));
+  } catch (error) {
+    console.error("[VN Address] wards-by-province:", error);
+    return res.status(502).json({ error: "Không tải được danh sách Phường/Xã theo Tỉnh" });
   }
 }

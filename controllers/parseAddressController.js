@@ -1,11 +1,11 @@
 import { isGeminiConfigured, parseAddressWithGemini } from "../services/geminiService.ts";
 import { matchParsedAddressToMaster } from "../services/addressMasterData.ts";
 
-const HANDLER_TIMEOUT_MS = 15_000;
-const MATCH_TIMEOUT_MS = 5_000;
+const HANDLER_TIMEOUT_MS = 5_000;
+const MATCH_TIMEOUT_MS = 2_000;
 
 function emptyParsed(detail = "") {
-  return { province: "", district: "", ward: "", detail };
+  return { name: "", phone: "", province: "", district: "", ward: "", detail };
 }
 
 function errorPayload(rawAddress, message) {
@@ -61,26 +61,28 @@ export async function parseOrderAddress(req, res) {
       );
     }
 
-    const parsed = await withTimeout(
-      parseAddressWithGemini(raw),
+    const { parsed, master } = await withTimeout(
+      (async () => {
+        const parsedInner = await parseAddressWithGemini(raw);
+        let masterInner = {
+          vn: { province: null, district: null, ward: null },
+          ghn: null,
+          spx: null,
+        };
+        try {
+          masterInner = await withTimeout(
+            matchParsedAddressToMaster(parsedInner),
+            MATCH_TIMEOUT_MS,
+            "ADDRESS_MATCH_TIMEOUT",
+          );
+        } catch (matchErr) {
+          console.warn("[parse-address] master match:", matchErr?.message || matchErr);
+        }
+        return { parsed: parsedInner, master: masterInner };
+      })(),
       HANDLER_TIMEOUT_MS,
       "PARSE_ADDRESS_TIMEOUT",
     );
-
-    let master = {
-      vn: { province: null, district: null, ward: null },
-      ghn: null,
-      spx: null,
-    };
-    try {
-      master = await withTimeout(
-        matchParsedAddressToMaster(parsed),
-        MATCH_TIMEOUT_MS,
-        "ADDRESS_MATCH_TIMEOUT",
-      );
-    } catch (matchErr) {
-      console.warn("[parse-address] master match:", matchErr?.message || matchErr);
-    }
 
     return sendJson(res, 200, {
       success: true,

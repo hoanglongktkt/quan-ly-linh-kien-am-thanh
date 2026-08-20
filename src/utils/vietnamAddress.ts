@@ -1,9 +1,15 @@
 export interface VnAdminUnit {
   name: string;
   code: number;
+  districtCode?: number;
+  districtName?: string;
 }
 
+export type AddressMode = 'new2' | 'old3';
+
 export interface StructuredAddressValue {
+  name: string;
+  phone: string;
   provinceCode: string;
   provinceName: string;
   districtCode: string;
@@ -11,9 +17,13 @@ export interface StructuredAddressValue {
   wardCode: string;
   wardName: string;
   street: string;
+  addressMode: AddressMode;
+  saveToAddressBook: boolean;
 }
 
 export const emptyStructuredAddress = (): StructuredAddressValue => ({
+  name: '',
+  phone: '',
   provinceCode: '',
   provinceName: '',
   districtCode: '',
@@ -21,15 +31,29 @@ export const emptyStructuredAddress = (): StructuredAddressValue => ({
   wardCode: '',
   wardName: '',
   street: '',
+  addressMode: 'new2',
+  saveToAddressBook: false,
 });
 
 export function formatFullAddress(addr: StructuredAddressValue): string {
-  const parts = [addr.street, addr.wardName, addr.districtName, addr.provinceName].filter(Boolean);
-  return parts.join(', ');
+  const parts =
+    addr.addressMode === 'new2'
+      ? [addr.street, addr.wardName, addr.provinceName]
+      : [addr.street, addr.wardName, addr.districtName, addr.provinceName];
+  return parts.filter(Boolean).join(', ');
 }
 
 export function isStructuredAddressComplete(addr: StructuredAddressValue): boolean {
-  return !!(addr.provinceCode && addr.districtCode && addr.wardCode && addr.street.trim());
+  const hasCore = !!(
+    addr.name.trim() &&
+    addr.phone.trim() &&
+    addr.street.trim() &&
+    addr.provinceCode &&
+    addr.wardCode
+  );
+  if (!hasCore) return false;
+  if (addr.addressMode === 'old3' && !addr.districtCode) return false;
+  return true;
 }
 
 export function normalizeVnName(s: string): string {
@@ -80,4 +104,12 @@ export function matchAdminUnit<T extends VnAdminUnit>(list: T[], query: string):
     }
   }
   return bestScore >= 60 ? best : undefined;
+}
+
+export function normalizePhone(raw: string): string {
+  const digits = String(raw || '').replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('84') && digits.length >= 11) return `0${digits.slice(2)}`;
+  if (digits.length === 9) return `0${digits}`;
+  return digits;
 }

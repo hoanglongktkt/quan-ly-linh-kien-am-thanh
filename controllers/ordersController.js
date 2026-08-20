@@ -45,6 +45,7 @@ import {
   markOrdersPrintedInStore,
   upsertDonHoanHuy,
 } from "../src/db/mongoStore.ts";
+import { saveAddressBookEntry } from "../services/addressBook.js";
 
 const APP_ROOT = resolveAppRoot();
 
@@ -2524,13 +2525,26 @@ export async function createManualOrder(req, res) {
       shippingFeePayer = "customer",
       orderDiscount = 0,
       carrierNotes = "",
+      customerName = "",
+      customerPhone = "",
+      save_to_address_book = false,
     } = body;
 
     const addr = shippingAddress || {};
-    if (!addr.provinceCode || !addr.districtCode || !addr.wardCode || !addr.street?.trim()) {
+    const addressMode = String(addr.addressMode || body.addressMode || "old3");
+    const isTwoLevel = addressMode === "new2";
+    const name = String(customerName || addr.name || "").trim() || "Khách sỉ";
+    const phone = String(customerPhone || addr.phone || "").trim() || "0900000000";
+
+    if (!addr.provinceCode || !addr.wardCode || !addr.street?.trim()) {
       return res.status(400).json({
         error:
-          "Địa chỉ chưa đầy đủ. Vui lòng chọn Tỉnh, Quận/Huyện, Phường/Xã và nhập địa chỉ chi tiết.",
+          "Địa chỉ chưa đầy đủ. Vui lòng chọn Tỉnh, Phường/Xã và nhập địa chỉ chi tiết.",
+      });
+    }
+    if (!isTwoLevel && !addr.districtCode) {
+      return res.status(400).json({
+        error: "Địa chỉ 3 cấp cần chọn thêm Quận/Huyện.",
       });
     }
 
@@ -2554,7 +2568,7 @@ export async function createManualOrder(req, res) {
       carrier !== "self"
         ? deps.buildCarrierLogisticsPayload(
             carrier,
-            { name: "Khách sỉ", phone: "0900000000" },
+            { name, phone },
             {
               street: addr.street.trim(),
               province: addr.province,
@@ -2583,15 +2597,19 @@ export async function createManualOrder(req, res) {
       id: `order-manual-${Date.now()}`,
       orderSn: `DON-NGOAI-${Math.floor(100000 + Math.random() * 900000)}`,
       channel: "manual",
+      customerName: name,
+      customerPhone: phone,
+      customerAddress: fullAddress,
       shippingAddress: {
         province: addr.province,
         provinceCode: String(addr.provinceCode),
-        district: addr.district,
-        districtCode: String(addr.districtCode),
+        district: addr.district || "",
+        districtCode: String(addr.districtCode || ""),
         ward: addr.ward,
         wardCode: String(addr.wardCode),
         street: addr.street.trim(),
         fullAddress,
+        addressMode,
       },
       carrier,
       totalAmount,
@@ -2615,11 +2633,32 @@ export async function createManualOrder(req, res) {
     orders.unshift(newOrder);
     saveOrders(orders);
 
+    let addressBookEntry = null;
+    if (save_to_address_book === true || save_to_address_book === "true" || save_to_address_book === 1) {
+      try {
+        addressBookEntry = saveAddressBookEntry({
+          name,
+          phone,
+          province: addr.province,
+          provinceCode: addr.provinceCode,
+          district: addr.district || "",
+          districtCode: addr.districtCode || "",
+          ward: addr.ward,
+          wardCode: addr.wardCode,
+          street: addr.street.trim(),
+          fullAddress,
+        });
+      } catch (bookErr) {
+        console.warn("[Orders manual] address book:", bookErr?.message || bookErr);
+      }
+    }
+
     return res.json({
       success: true,
       order: newOrder,
       trackingNumber,
       logisticsPayload,
+      addressBookSaved: Boolean(addressBookEntry),
       orders: orders.filter(deps.isValidOrder),
     });
   } catch (error) {
