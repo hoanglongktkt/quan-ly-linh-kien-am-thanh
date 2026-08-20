@@ -2142,11 +2142,11 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     }
     stripWarehouseProtectedKeysFromSet($set);
 
-    // ── WooCommerce: GHI ĐÈ TƯỜNG MINH customer info (UPSERT overwrite) ───────
+    // ── WooCommerce + đơn ngoại sàn: GHI ĐÈ TƯỜNG MINH customer info ──────────
     // Chạy SAU generic loop để đè lên data.* — đảm bảo re-sync vá record rỗng.
     // FE resolveWooCustomerInfo đọc: order.customerName / order.billing / order.shipping
     // (hydrateOrderFromMongoDoc: ...data + root override)
-    if (channelStr === "woocommerce") {
+    if (channelStr === "woocommerce" || channelStr === "manual") {
       const cName = String(
         order.customerName || order.customer_name || "",
       ).trim();
@@ -2193,13 +2193,31 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
         $set["data.shippingAddress"] = order.shippingAddress;
       }
 
-      $set.source = "woocommerce";
-      $set["data.source"] = "woocommerce";
-      $set.channel = "woocommerce";
-      $set["data.channel"] = "woocommerce";
+      $set.source = channelStr === "manual" ? "external" : "woocommerce";
+      $set["data.source"] = $set.source;
+      $set.channel = channelStr;
+      $set["data.channel"] = channelStr;
+
+      if (channelStr === "manual") {
+        const provider = String(order.provider || order.carrier || "").trim();
+        if (provider) {
+          $set["data.carrier"] = provider;
+          $set["data.provider"] = provider;
+        }
+        if (order.external_status) {
+          $set["data.external_status"] = String(order.external_status);
+        }
+        if (order.cod_amount != null || Number(order.totalAmount) > 0) {
+          $set["data.cod_amount"] = Number(order.cod_amount ?? order.totalAmount) || 0;
+        }
+        if (order.status) {
+          $set.status = String(order.status);
+          $set["data.status"] = String(order.status);
+        }
+      }
 
       console.log(
-        `[MongoDB] WOO UPSERT customer — orderSn=${orderSn} name="${cName}" phone="${cPhone}" addr="${cAddr.slice(0, 40)}"`,
+        `[MongoDB] ${channelStr.toUpperCase()} UPSERT customer — orderSn=${orderSn} name="${cName}" phone="${cPhone}" addr="${cAddr.slice(0, 40)}"`,
       );
     }
 
@@ -4719,6 +4737,10 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
     customer_address: customerAddressHydrated || data.customer_address || undefined,
     billing: billingHydrated || data.billing || undefined,
     shipping: shippingHydrated || data.shipping || undefined,
+    carrier: data.carrier || d?.carrier || undefined,
+    provider: data.provider || data.carrier || undefined,
+    external_status: data.external_status || undefined,
+    cod_amount: data.cod_amount != null ? data.cod_amount : undefined,
     tracking_no: tn || undefined,
     trackingNumber: tn || undefined,
     return_tracking_no: returnTn || undefined,
@@ -5649,6 +5671,7 @@ const ORDER_TAB_IS_TO_SHIP: Record<string, unknown> = {
         $nin: ["shipping", "completed", "cancelled", "return_pending", "return_received"],
       },
     },
+    { channel: { $nin: ["woocommerce", "manual"] } },
   ],
 };
 
@@ -5701,12 +5724,14 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
     case "ready_to_ship":
     case "cho-lay-hang":
       // TO_SHIP + chưa xử lý + chưa bàn giao + chưa có mã VĐ — loại SHIPPED tuyệt đối.
+      // Loại đơn Woo / ngoại sàn (tab riêng) để không lẫn Shopee.
       return {
         $and: [
           ORDER_TAB_IS_TO_SHIP,
           ORDER_TAB_NOT_HANDED_OVER,
           ORDER_TAB_TRACKING_ABSENT,
           { isPrepared: { $ne: true } },
+          { channel: { $nin: ["woocommerce", "manual"] } },
           {
             $or: [
               { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] } },
@@ -5815,6 +5840,11 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
     case "web_orders":
     case "woocommerce":
       return { channel: "woocommerce" };
+    case "external_orders":
+    case "don-ngoai-san":
+    case "manual":
+    case "don_ngoai_san":
+      return { channel: "manual" };
     default:
       return {};
   }
@@ -6030,6 +6060,7 @@ function tabIndexFilter(tab?: string, kind?: string): Record<string, unknown> {
         shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] },
         is_handed_over: { $ne: true },
         isPrepared: { $ne: true },
+        channel: { $nin: ["woocommerce", "manual"] },
         $or: [{ tracking_no: { $exists: false } }, { tracking_no: { $in: [null, "", "0"] } }],
       };
     case "processed":
@@ -6063,6 +6094,11 @@ function tabIndexFilter(tab?: string, kind?: string): Record<string, unknown> {
     case "web_orders":
     case "woocommerce":
       return { channel: "woocommerce" };
+    case "external_orders":
+    case "don-ngoai-san":
+    case "manual":
+    case "don_ngoai_san":
+      return { channel: "manual" };
     case "return_pending":
     case "return-pending":
       return { status: "return_pending" };
@@ -6139,6 +6175,11 @@ const ORDER_LIST_UI_PROJECTION: Record<string, 1> = {
   customerEmail: 1,
   billing: 1,
   shipping: 1,
+  "data.carrier": 1,
+  "data.provider": 1,
+  "data.external_status": 1,
+  "data.cod_amount": 1,
+  "data.shippingAddress": 1,
   shopee_cancel_return_kind: 1,
   is_rts: 1,
   sub_status: 1,
@@ -6860,6 +6901,7 @@ export async function countOrdersByTabsFromStore(opts?: {
     cancel_returns: 0,
     received_cancel_returns: 0,
     web_orders: 0,
+    external_orders: 0,
   };
   try {
     requireMongo();
@@ -6890,6 +6932,7 @@ export async function countOrdersByTabsFromStore(opts?: {
           return_pending: facetEq("st", "return_pending"),
           return_requests: facetEq("s", "TO_RETURN"),
           web_orders: facetEq("ch", "woocommerce"),
+          external_orders: facetEq("ch", "manual"),
           cancel_returns: facetStatusIn([...FACET_CANCEL]),
           cancel_returns_returned: facetEq("kind", "refund_return"),
           cancel_returns_cancelled: facetEq("kind", "cancelled"),
@@ -6921,6 +6964,22 @@ export async function countOrdersByTabsFromStore(opts?: {
     counts.return_pending = facetN(row, "return_pending");
     counts.return_requests = facetN(row, "return_requests");
     counts.web_orders = facetN(row, "web_orders");
+    counts.external_orders = facetN(row, "external_orders");
+    try {
+      const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
+      if (shopFilter) {
+        const dateRange = parseOrderListDateRange({
+          startDate: opts?.startDate,
+          endDate: opts?.endDate,
+          forceDefault: true,
+        });
+        const extMatch: Record<string, unknown> = { channel: "manual" };
+        if (dateRange) Object.assign(extMatch, buildOrderCreatedAtMongoFilter(dateRange));
+        counts.external_orders = await OrderModel.countDocuments(extMatch).maxTimeMS(3000);
+      }
+    } catch (extErr: any) {
+      console.warn("[MongoDB] external_orders count:", extErr?.message || extErr);
+    }
     counts.cancel_returns = facetN(row, "cancel_returns");
     counts.cancel_returns_returned = facetN(row, "cancel_returns_returned");
     counts.cancel_returns_cancelled = facetN(row, "cancel_returns_cancelled");
@@ -6993,7 +7052,14 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
       requestedTab === "return-requests" ||
       requestedTab === "yeu-cau-tra-hang" ||
       requestedTab === "yeu_cau_tra_hang";
-    const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
+    const isExternalOrdersTab =
+      requestedTab === "external_orders" ||
+      requestedTab === "don-ngoai-san" ||
+      requestedTab === "manual" ||
+      requestedTab === "don_ngoai_san";
+    const shopFilter = isExternalOrdersTab
+      ? null
+      : buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
     const firstMatch: Record<string, unknown> = {};
     if (shopFilter) Object.assign(firstMatch, shopFilter);
     if (!search) {

@@ -1,5 +1,10 @@
 import { GoogleGenAI } from "@google/genai";
 import { updateEnvVar, maskApiKey } from "../utils/env.js";
+import {
+  loadLogisticsConfig,
+  saveLogisticsConfig,
+  maskSecret,
+} from "../services/logisticsConfig.js";
 
 /** Shared Gemini client — Settings cập nhật key, AI routes dùng chung. */
 let ai = null;
@@ -220,6 +225,78 @@ export async function postShopConnectionStatus(req, res) {
       success: false,
       error: error?.message || "Kiểm tra kết nối thất bại",
       message: error?.message || "Kiểm tra kết nối thất bại",
+    });
+  }
+}
+
+/** GET /api/settings/logistics */
+export async function getLogisticsSettings(_req, res) {
+  try {
+    const cfg = loadLogisticsConfig();
+    return res.json({
+      success: true,
+      ghn: {
+        connected: cfg.ghn.connected,
+        shopId: cfg.ghn.shopId,
+        tokenMasked: maskSecret(cfg.ghn.token),
+        hasToken: Boolean(cfg.ghn.token),
+        service: cfg.ghn.service,
+      },
+      spx: {
+        connected: cfg.spx.connected,
+        userId: cfg.spx.userId,
+        merchantId: cfg.spx.merchantId,
+        secretMasked: maskSecret(cfg.spx.secret),
+        hasSecret: Boolean(cfg.spx.secret),
+        apiUrl: cfg.spx.apiUrl,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "Không đọc được cấu hình GHN/SPX",
+    });
+  }
+}
+
+/** POST /api/settings/logistics */
+export async function saveLogisticsSettings(req, res) {
+  try {
+    const body = req.body || {};
+    const patch = {};
+    if (body.ghn && typeof body.ghn === "object") {
+      patch.ghn = {};
+      if (body.ghn.token != null && String(body.ghn.token).trim() && !String(body.ghn.token).includes("••••")) {
+        patch.ghn.token = String(body.ghn.token).trim();
+      }
+      if (body.ghn.shopId != null) patch.ghn.shopId = String(body.ghn.shopId).trim();
+      if (body.ghn.service != null) patch.ghn.service = String(body.ghn.service).trim();
+    }
+    if (body.spx && typeof body.spx === "object") {
+      patch.spx = {};
+      if (body.spx.clientId != null) patch.spx.clientId = String(body.spx.clientId).trim();
+      if (body.spx.userId != null) patch.spx.userId = String(body.spx.userId).trim();
+      if (
+        body.spx.clientSecret != null &&
+        String(body.spx.clientSecret).trim() &&
+        !String(body.spx.clientSecret).includes("••••")
+      ) {
+        patch.spx.clientSecret = String(body.spx.clientSecret).trim();
+      }
+      if (body.spx.merchantId != null) patch.spx.merchantId = String(body.spx.merchantId).trim();
+      if (body.spx.apiUrl != null) patch.spx.apiUrl = String(body.spx.apiUrl).trim();
+    }
+    const cfg = saveLogisticsConfig(patch);
+    return res.json({
+      success: true,
+      message: "Đã lưu cấu hình GHN/SPX trên server.",
+      ghnConnected: cfg.ghn.connected,
+      spxConnected: cfg.spx.connected,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "Lưu cấu hình logistics thất bại",
     });
   }
 }

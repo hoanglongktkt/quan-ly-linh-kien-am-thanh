@@ -1292,8 +1292,8 @@ var require_node = __commonJS({
           }
           break;
         case "FILE":
-          var fs20 = require("fs");
-          stream5 = new fs20.SyncWriteStream(fd2, { autoClose: false });
+          var fs21 = require("fs");
+          stream5 = new fs21.SyncWriteStream(fd2, { autoClose: false });
           stream5._type = "fs";
           break;
         case "PIPE":
@@ -14080,11 +14080,11 @@ var require_mime_types = __commonJS({
       }
       return exts[0];
     }
-    function lookup(path20) {
-      if (!path20 || typeof path20 !== "string") {
+    function lookup(path21) {
+      if (!path21 || typeof path21 !== "string") {
         return false;
       }
-      var extension3 = extname("x." + path20).toLowerCase().substr(1);
+      var extension3 = extname("x." + path21).toLowerCase().substr(1);
       if (!extension3) {
         return false;
       }
@@ -17713,8 +17713,8 @@ var require_node2 = __commonJS({
           }
           break;
         case "FILE":
-          var fs20 = require("fs");
-          stream5 = new fs20.SyncWriteStream(fd2, { autoClose: false });
+          var fs21 = require("fs");
+          stream5 = new fs21.SyncWriteStream(fd2, { autoClose: false });
           stream5._type = "fs";
           break;
         case "PIPE":
@@ -18432,8 +18432,8 @@ var require_node3 = __commonJS({
           }
           break;
         case "FILE":
-          var fs20 = require("fs");
-          stream5 = new fs20.SyncWriteStream(fd2, { autoClose: false });
+          var fs21 = require("fs");
+          stream5 = new fs21.SyncWriteStream(fd2, { autoClose: false });
           stream5._type = "fs";
           break;
         case "PIPE":
@@ -18521,7 +18521,7 @@ var require_path_to_regexp = __commonJS({
   "node_modules/path-to-regexp/index.js"(exports2, module2) {
     module2.exports = pathToRegexp;
     var MATCHING_GROUP_REGEXP = /\\.|\((?:\?<(.*?)>)?(?!\?)/g;
-    function pathToRegexp(path20, keys, options) {
+    function pathToRegexp(path21, keys, options) {
       options = options || {};
       keys = keys || [];
       var strict = options.strict;
@@ -18535,8 +18535,8 @@ var require_path_to_regexp = __commonJS({
       var pos = 0;
       var backtrack = "";
       var m2;
-      if (path20 instanceof RegExp) {
-        while (m2 = MATCHING_GROUP_REGEXP.exec(path20.source)) {
+      if (path21 instanceof RegExp) {
+        while (m2 = MATCHING_GROUP_REGEXP.exec(path21.source)) {
           if (m2[0][0] === "\\") continue;
           keys.push({
             name: m2[1] || name++,
@@ -18544,18 +18544,18 @@ var require_path_to_regexp = __commonJS({
             offset: m2.index
           });
         }
-        return path20;
+        return path21;
       }
-      if (Array.isArray(path20)) {
-        path20 = path20.map(function(value) {
+      if (Array.isArray(path21)) {
+        path21 = path21.map(function(value) {
           return pathToRegexp(value, keys, options).source;
         });
-        return new RegExp(path20.join("|"), flags);
+        return new RegExp(path21.join("|"), flags);
       }
-      if (typeof path20 !== "string") {
+      if (typeof path21 !== "string") {
         throw new TypeError("path must be a string, array of strings, or regular expression");
       }
-      path20 = path20.replace(
+      path21 = path21.replace(
         /\\.|(\/)?(\.)?:(\w+)(\(.*?\))?(\*)?(\?)?|[.*]|\/\(/g,
         function(match2, slash, format, key, capture, star, optional, offset) {
           if (match2[0] === "\\") {
@@ -18572,7 +18572,7 @@ var require_path_to_regexp = __commonJS({
           if (slash || format) {
             backtrack = "";
           } else {
-            backtrack += path20.slice(pos, offset);
+            backtrack += path21.slice(pos, offset);
           }
           pos = offset + match2.length;
           if (match2 === "*") {
@@ -18602,7 +18602,7 @@ var require_path_to_regexp = __commonJS({
           return result;
         }
       );
-      while (m2 = MATCHING_GROUP_REGEXP.exec(path20)) {
+      while (m2 = MATCHING_GROUP_REGEXP.exec(path21)) {
         if (m2[0][0] === "\\") continue;
         if (keysOffset + i2 === keys.length || keys[keysOffset + i2].offset > m2.index) {
           keys.splice(keysOffset + i2, 0, {
@@ -18614,13 +18614,13 @@ var require_path_to_regexp = __commonJS({
         }
         i2++;
       }
-      path20 += strict ? "" : path20[path20.length - 1] === "/" ? "?" : "/?";
+      path21 += strict ? "" : path21[path21.length - 1] === "/" ? "?" : "/?";
       if (end) {
-        path20 += "$";
-      } else if (path20[path20.length - 1] !== "/") {
-        path20 += lookahead ? "(?=/|$)" : "(?:/|$)";
+        path21 += "$";
+      } else if (path21[path21.length - 1] !== "/") {
+        path21 += lookahead ? "(?=/|$)" : "(?:/|$)";
       }
-      return new RegExp("^" + path20, flags);
+      return new RegExp("^" + path21, flags);
     }
   }
 });
@@ -18633,19 +18633,19 @@ var require_layer = __commonJS({
     var debug = require_src3()("express:router:layer");
     var hasOwnProperty2 = Object.prototype.hasOwnProperty;
     module2.exports = Layer;
-    function Layer(path20, options, fn) {
+    function Layer(path21, options, fn) {
       if (!(this instanceof Layer)) {
-        return new Layer(path20, options, fn);
+        return new Layer(path21, options, fn);
       }
-      debug("new %o", path20);
+      debug("new %o", path21);
       var opts = options || {};
       this.handle = fn;
       this.name = fn.name || "<anonymous>";
       this.params = void 0;
       this.path = void 0;
-      this.regexp = pathRegexp(path20, this.keys = [], opts);
-      this.regexp.fast_star = path20 === "*";
-      this.regexp.fast_slash = path20 === "/" && opts.end === false;
+      this.regexp = pathRegexp(path21, this.keys = [], opts);
+      this.regexp.fast_star = path21 === "*";
+      this.regexp.fast_slash = path21 === "/" && opts.end === false;
     }
     Layer.prototype.handle_error = function handle_error(error, req, res, next) {
       var fn = this.handle;
@@ -18669,20 +18669,20 @@ var require_layer = __commonJS({
         next(err);
       }
     };
-    Layer.prototype.match = function match2(path20) {
+    Layer.prototype.match = function match2(path21) {
       var match3;
-      if (path20 != null) {
+      if (path21 != null) {
         if (this.regexp.fast_slash) {
           this.params = {};
           this.path = "";
           return true;
         }
         if (this.regexp.fast_star) {
-          this.params = { "0": decode_param(path20) };
-          this.path = path20;
+          this.params = { "0": decode_param(path21) };
+          this.path = path21;
           return true;
         }
-        match3 = this.regexp.exec(path20);
+        match3 = this.regexp.exec(path21);
       }
       if (!match3) {
         this.params = void 0;
@@ -18775,10 +18775,10 @@ var require_route = __commonJS({
     var slice = Array.prototype.slice;
     var toString3 = Object.prototype.toString;
     module2.exports = Route;
-    function Route(path20) {
-      this.path = path20;
+    function Route(path21) {
+      this.path = path21;
       this.stack = [];
-      debug("new %o", path20);
+      debug("new %o", path21);
       this.methods = {};
     }
     Route.prototype._handles_method = function _handles_method(method) {
@@ -18990,8 +18990,8 @@ var require_router = __commonJS({
         if (++sync > 100) {
           return setImmediate(next, err);
         }
-        var path20 = getPathname(req);
-        if (path20 == null) {
+        var path21 = getPathname(req);
+        if (path21 == null) {
           return done(layerError);
         }
         var layer;
@@ -18999,7 +18999,7 @@ var require_router = __commonJS({
         var route;
         while (match2 !== true && idx < stack.length) {
           layer = stack[idx++];
-          match2 = matchLayer(layer, path20);
+          match2 = matchLayer(layer, path21);
           route = layer.route;
           if (typeof match2 !== "boolean") {
             layerError = layerError || match2;
@@ -19037,18 +19037,18 @@ var require_router = __commonJS({
           } else if (route) {
             layer.handle_request(req, res, next);
           } else {
-            trim_prefix(layer, layerError, layerPath, path20);
+            trim_prefix(layer, layerError, layerPath, path21);
           }
           sync = 0;
         });
       }
-      function trim_prefix(layer, layerError, layerPath, path20) {
+      function trim_prefix(layer, layerError, layerPath, path21) {
         if (layerPath.length !== 0) {
-          if (layerPath !== path20.slice(0, layerPath.length)) {
+          if (layerPath !== path21.slice(0, layerPath.length)) {
             next(layerError);
             return;
           }
-          var c = path20[layerPath.length];
+          var c = path21[layerPath.length];
           if (c && c !== "/" && c !== ".") return next(layerError);
           debug("trim prefix (%s) from url %s", layerPath, req.url);
           removed = layerPath;
@@ -19126,7 +19126,7 @@ var require_router = __commonJS({
     };
     proto.use = function use(fn) {
       var offset = 0;
-      var path20 = "/";
+      var path21 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -19134,7 +19134,7 @@ var require_router = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path20 = fn;
+          path21 = fn;
         }
       }
       var callbacks = flatten(slice.call(arguments, offset));
@@ -19146,8 +19146,8 @@ var require_router = __commonJS({
         if (typeof fn !== "function") {
           throw new TypeError("Router.use() requires a middleware function but got a " + gettype(fn));
         }
-        debug("use %o %s", path20, fn.name || "<anonymous>");
-        var layer = new Layer(path20, {
+        debug("use %o %s", path21, fn.name || "<anonymous>");
+        var layer = new Layer(path21, {
           sensitive: this.caseSensitive,
           strict: false,
           end: false
@@ -19157,9 +19157,9 @@ var require_router = __commonJS({
       }
       return this;
     };
-    proto.route = function route(path20) {
-      var route2 = new Route(path20);
-      var layer = new Layer(path20, {
+    proto.route = function route(path21) {
+      var route2 = new Route(path21);
+      var layer = new Layer(path21, {
         sensitive: this.caseSensitive,
         strict: this.strict,
         end: true
@@ -19169,8 +19169,8 @@ var require_router = __commonJS({
       return route2;
     };
     methods.concat("all").forEach(function(method) {
-      proto[method] = function(path20) {
-        var route = this.route(path20);
+      proto[method] = function(path21) {
+        var route = this.route(path21);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
@@ -19206,9 +19206,9 @@ var require_router = __commonJS({
       }
       return toString3.call(obj).replace(objectRegExp, "$1");
     }
-    function matchLayer(layer, path20) {
+    function matchLayer(layer, path21) {
       try {
-        return layer.match(path20);
+        return layer.match(path21);
       } catch (err) {
         return err;
       }
@@ -19326,13 +19326,13 @@ var require_view = __commonJS({
   "node_modules/express/lib/view.js"(exports2, module2) {
     "use strict";
     var debug = require_src3()("express:view");
-    var path20 = require("path");
-    var fs20 = require("fs");
-    var dirname = path20.dirname;
-    var basename3 = path20.basename;
-    var extname = path20.extname;
-    var join = path20.join;
-    var resolve = path20.resolve;
+    var path21 = require("path");
+    var fs21 = require("fs");
+    var dirname = path21.dirname;
+    var basename3 = path21.basename;
+    var extname = path21.extname;
+    var join = path21.join;
+    var resolve = path21.resolve;
     module2.exports = View;
     function View(name, options) {
       var opts = options || {};
@@ -19361,17 +19361,17 @@ var require_view = __commonJS({
       this.path = this.lookup(fileName);
     }
     View.prototype.lookup = function lookup(name) {
-      var path21;
+      var path22;
       var roots = [].concat(this.root);
       debug('lookup "%s"', name);
-      for (var i2 = 0; i2 < roots.length && !path21; i2++) {
+      for (var i2 = 0; i2 < roots.length && !path22; i2++) {
         var root = roots[i2];
         var loc = resolve(root, name);
         var dir = dirname(loc);
         var file = basename3(loc);
-        path21 = this.resolve(dir, file);
+        path22 = this.resolve(dir, file);
       }
-      return path21;
+      return path22;
     };
     View.prototype.render = function render(options, callback) {
       debug('render "%s"', this.path);
@@ -19379,21 +19379,21 @@ var require_view = __commonJS({
     };
     View.prototype.resolve = function resolve2(dir, file) {
       var ext = this.ext;
-      var path21 = join(dir, file);
-      var stat3 = tryStat(path21);
+      var path22 = join(dir, file);
+      var stat3 = tryStat(path22);
       if (stat3 && stat3.isFile()) {
-        return path21;
+        return path22;
       }
-      path21 = join(dir, basename3(file, ext), "index" + ext);
-      stat3 = tryStat(path21);
+      path22 = join(dir, basename3(file, ext), "index" + ext);
+      stat3 = tryStat(path22);
       if (stat3 && stat3.isFile()) {
-        return path21;
+        return path22;
       }
     };
-    function tryStat(path21) {
-      debug('stat "%s"', path21);
+    function tryStat(path22) {
+      debug('stat "%s"', path22);
       try {
-        return fs20.statSync(path21);
+        return fs21.statSync(path22);
       } catch (e2) {
         return void 0;
       }
@@ -19998,8 +19998,8 @@ var require_node4 = __commonJS({
           }
           break;
         case "FILE":
-          var fs20 = require("fs");
-          stream5 = new fs20.SyncWriteStream(fd2, { autoClose: false });
+          var fs21 = require("fs");
+          stream5 = new fs21.SyncWriteStream(fd2, { autoClose: false });
           stream5._type = "fs";
           break;
         case "PIPE":
@@ -20051,14 +20051,14 @@ var require_etag = __commonJS({
   "node_modules/etag/index.js"(exports2, module2) {
     "use strict";
     module2.exports = etag;
-    var crypto5 = require("crypto");
+    var crypto6 = require("crypto");
     var Stats = require("fs").Stats;
     var toString3 = Object.prototype.toString;
     function entitytag(entity) {
       if (entity.length === 0) {
         return '"0-2jmj7l5rSw0yVb/vlWAYkK/YBwk"';
       }
-      var hash = crypto5.createHash("sha1").update(entity, "utf8").digest("base64").substring(0, 27);
+      var hash = crypto6.createHash("sha1").update(entity, "utf8").digest("base64").substring(0, 27);
       var len = typeof entity === "string" ? Buffer.byteLength(entity, "utf8") : entity.length;
       return '"' + len.toString(16) + "-" + hash + '"';
     }
@@ -20171,8 +20171,8 @@ var require_types = __commonJS({
 // node_modules/mime/mime.js
 var require_mime = __commonJS({
   "node_modules/mime/mime.js"(exports2, module2) {
-    var path20 = require("path");
-    var fs20 = require("fs");
+    var path21 = require("path");
+    var fs21 = require("fs");
     function Mime() {
       this.types = /* @__PURE__ */ Object.create(null);
       this.extensions = /* @__PURE__ */ Object.create(null);
@@ -20193,7 +20193,7 @@ var require_mime = __commonJS({
     };
     Mime.prototype.load = function(file) {
       this._loading = file;
-      var map = {}, content = fs20.readFileSync(file, "ascii"), lines = content.split(/[\r\n]+/);
+      var map = {}, content = fs21.readFileSync(file, "ascii"), lines = content.split(/[\r\n]+/);
       lines.forEach(function(line) {
         var fields = line.replace(/\s*#.*|^\s*|\s*$/g, "").split(/\s+/);
         map[fields.shift()] = fields;
@@ -20201,8 +20201,8 @@ var require_mime = __commonJS({
       this.define(map);
       this._loading = null;
     };
-    Mime.prototype.lookup = function(path21, fallback) {
-      var ext = path21.replace(/^.*[\.\/\\]/, "").toLowerCase();
+    Mime.prototype.lookup = function(path22, fallback) {
+      var ext = path22.replace(/^.*[\.\/\\]/, "").toLowerCase();
       return this.types[ext] || fallback || this.default_type;
     };
     Mime.prototype.extension = function(mimeType) {
@@ -20431,33 +20431,33 @@ var require_send = __commonJS({
     var escapeHtml2 = require_escape_html();
     var etag = require_etag();
     var fresh = require_fresh();
-    var fs20 = require("fs");
+    var fs21 = require("fs");
     var mime = require_mime();
     var ms = require_ms5();
     var onFinished = require_on_finished();
     var parseRange = require_range_parser();
-    var path20 = require("path");
+    var path21 = require("path");
     var statuses = require_statuses();
     var Stream4 = require("stream");
     var util4 = require("util");
-    var extname = path20.extname;
-    var join = path20.join;
-    var normalize = path20.normalize;
-    var resolve = path20.resolve;
-    var sep = path20.sep;
+    var extname = path21.extname;
+    var join = path21.join;
+    var normalize = path21.normalize;
+    var resolve = path21.resolve;
+    var sep = path21.sep;
     var BYTES_RANGE_REGEXP = /^ *bytes=/;
     var MAX_MAXAGE = 60 * 60 * 24 * 365 * 1e3;
     var UP_PATH_REGEXP = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
     module2.exports = send;
     module2.exports.mime = mime;
-    function send(req, path21, options) {
-      return new SendStream(req, path21, options);
+    function send(req, path22, options) {
+      return new SendStream(req, path22, options);
     }
-    function SendStream(req, path21, options) {
+    function SendStream(req, path22, options) {
       Stream4.call(this);
       var opts = options || {};
       this.options = opts;
-      this.path = path21;
+      this.path = path22;
       this.req = req;
       this._acceptRanges = opts.acceptRanges !== void 0 ? Boolean(opts.acceptRanges) : true;
       this._cacheControl = opts.cacheControl !== void 0 ? Boolean(opts.cacheControl) : true;
@@ -20503,8 +20503,8 @@ var require_send = __commonJS({
       this._index = index2;
       return this;
     }, "send.index: pass index as option");
-    SendStream.prototype.root = function root(path21) {
-      this._root = resolve(String(path21));
+    SendStream.prototype.root = function root(path22) {
+      this._root = resolve(String(path22));
       debug("root %s", this._root);
       return this;
     };
@@ -20617,10 +20617,10 @@ var require_send = __commonJS({
       var lastModified = this.res.getHeader("Last-Modified");
       return parseHttpDate(lastModified) <= parseHttpDate(ifRange);
     };
-    SendStream.prototype.redirect = function redirect(path21) {
+    SendStream.prototype.redirect = function redirect(path22) {
       var res = this.res;
       if (hasListeners(this, "directory")) {
-        this.emit("directory", res, path21);
+        this.emit("directory", res, path22);
         return;
       }
       if (this.hasTrailingSlash()) {
@@ -20640,42 +20640,42 @@ var require_send = __commonJS({
     SendStream.prototype.pipe = function pipe(res) {
       var root = this._root;
       this.res = res;
-      var path21 = decode(this.path);
-      if (path21 === -1) {
+      var path22 = decode(this.path);
+      if (path22 === -1) {
         this.error(400);
         return res;
       }
-      if (~path21.indexOf("\0")) {
+      if (~path22.indexOf("\0")) {
         this.error(400);
         return res;
       }
       var parts;
       if (root !== null) {
-        if (path21) {
-          path21 = normalize("." + sep + path21);
+        if (path22) {
+          path22 = normalize("." + sep + path22);
         }
-        if (UP_PATH_REGEXP.test(path21)) {
-          debug('malicious path "%s"', path21);
+        if (UP_PATH_REGEXP.test(path22)) {
+          debug('malicious path "%s"', path22);
           this.error(403);
           return res;
         }
-        parts = path21.split(sep);
-        path21 = normalize(join(root, path21));
+        parts = path22.split(sep);
+        path22 = normalize(join(root, path22));
       } else {
-        if (UP_PATH_REGEXP.test(path21)) {
-          debug('malicious path "%s"', path21);
+        if (UP_PATH_REGEXP.test(path22)) {
+          debug('malicious path "%s"', path22);
           this.error(403);
           return res;
         }
-        parts = normalize(path21).split(sep);
-        path21 = resolve(path21);
+        parts = normalize(path22).split(sep);
+        path22 = resolve(path22);
       }
       if (containsDotFile(parts)) {
         var access = this._dotfiles;
         if (access === void 0) {
           access = parts[parts.length - 1][0] === "." ? this._hidden ? "allow" : "ignore" : "allow";
         }
-        debug('%s dotfile "%s"', access, path21);
+        debug('%s dotfile "%s"', access, path22);
         switch (access) {
           case "allow":
             break;
@@ -20689,13 +20689,13 @@ var require_send = __commonJS({
         }
       }
       if (this._index.length && this.hasTrailingSlash()) {
-        this.sendIndex(path21);
+        this.sendIndex(path22);
         return res;
       }
-      this.sendFile(path21);
+      this.sendFile(path22);
       return res;
     };
-    SendStream.prototype.send = function send2(path21, stat3) {
+    SendStream.prototype.send = function send2(path22, stat3) {
       var len = stat3.size;
       var options = this.options;
       var opts = {};
@@ -20707,9 +20707,9 @@ var require_send = __commonJS({
         this.headersAlreadySent();
         return;
       }
-      debug('pipe "%s"', path21);
-      this.setHeader(path21, stat3);
-      this.type(path21);
+      debug('pipe "%s"', path22);
+      this.setHeader(path22, stat3);
+      this.type(path22);
       if (this.isConditionalGET()) {
         if (this.isPreconditionFailure()) {
           this.error(412);
@@ -20758,28 +20758,28 @@ var require_send = __commonJS({
         res.end();
         return;
       }
-      this.stream(path21, opts);
+      this.stream(path22, opts);
     };
-    SendStream.prototype.sendFile = function sendFile(path21) {
+    SendStream.prototype.sendFile = function sendFile(path22) {
       var i2 = 0;
       var self2 = this;
-      debug('stat "%s"', path21);
-      fs20.stat(path21, function onstat(err, stat3) {
-        if (err && err.code === "ENOENT" && !extname(path21) && path21[path21.length - 1] !== sep) {
+      debug('stat "%s"', path22);
+      fs21.stat(path22, function onstat(err, stat3) {
+        if (err && err.code === "ENOENT" && !extname(path22) && path22[path22.length - 1] !== sep) {
           return next(err);
         }
         if (err) return self2.onStatError(err);
-        if (stat3.isDirectory()) return self2.redirect(path21);
-        self2.emit("file", path21, stat3);
-        self2.send(path21, stat3);
+        if (stat3.isDirectory()) return self2.redirect(path22);
+        self2.emit("file", path22, stat3);
+        self2.send(path22, stat3);
       });
       function next(err) {
         if (self2._extensions.length <= i2) {
           return err ? self2.onStatError(err) : self2.error(404);
         }
-        var p = path21 + "." + self2._extensions[i2++];
+        var p = path22 + "." + self2._extensions[i2++];
         debug('stat "%s"', p);
-        fs20.stat(p, function(err2, stat3) {
+        fs21.stat(p, function(err2, stat3) {
           if (err2) return next(err2);
           if (stat3.isDirectory()) return next();
           self2.emit("file", p, stat3);
@@ -20787,7 +20787,7 @@ var require_send = __commonJS({
         });
       }
     };
-    SendStream.prototype.sendIndex = function sendIndex(path21) {
+    SendStream.prototype.sendIndex = function sendIndex(path22) {
       var i2 = -1;
       var self2 = this;
       function next(err) {
@@ -20795,9 +20795,9 @@ var require_send = __commonJS({
           if (err) return self2.onStatError(err);
           return self2.error(404);
         }
-        var p = join(path21, self2._index[i2]);
+        var p = join(path22, self2._index[i2]);
         debug('stat "%s"', p);
-        fs20.stat(p, function(err2, stat3) {
+        fs21.stat(p, function(err2, stat3) {
           if (err2) return next(err2);
           if (stat3.isDirectory()) return next();
           self2.emit("file", p, stat3);
@@ -20806,10 +20806,10 @@ var require_send = __commonJS({
       }
       next();
     };
-    SendStream.prototype.stream = function stream4(path21, options) {
+    SendStream.prototype.stream = function stream4(path22, options) {
       var self2 = this;
       var res = this.res;
-      var stream5 = fs20.createReadStream(path21, options);
+      var stream5 = fs21.createReadStream(path22, options);
       this.emit("stream", stream5);
       stream5.pipe(res);
       function cleanup() {
@@ -20824,10 +20824,10 @@ var require_send = __commonJS({
         self2.emit("end");
       });
     };
-    SendStream.prototype.type = function type(path21) {
+    SendStream.prototype.type = function type(path22) {
       var res = this.res;
       if (res.getHeader("Content-Type")) return;
-      var type2 = mime.lookup(path21);
+      var type2 = mime.lookup(path22);
       if (!type2) {
         debug("no content-type");
         return;
@@ -20836,9 +20836,9 @@ var require_send = __commonJS({
       debug("content-type %s", type2);
       res.setHeader("Content-Type", type2 + (charset ? "; charset=" + charset : ""));
     };
-    SendStream.prototype.setHeader = function setHeader(path21, stat3) {
+    SendStream.prototype.setHeader = function setHeader(path22, stat3) {
       var res = this.res;
-      this.emit("headers", res, path21, stat3);
+      this.emit("headers", res, path22, stat3);
       if (this._acceptRanges && !res.getHeader("Accept-Ranges")) {
         debug("accept ranges");
         res.setHeader("Accept-Ranges", "bytes");
@@ -20897,9 +20897,9 @@ var require_send = __commonJS({
       }
       return err instanceof Error ? createError(status, err, { expose: false }) : createError(status, err);
     }
-    function decode(path21) {
+    function decode(path22) {
       try {
-        return decodeURIComponent(path21);
+        return decodeURIComponent(path22);
       } catch (err) {
         return -1;
       }
@@ -21808,10 +21808,10 @@ var require_utils2 = __commonJS({
     var querystring = require("querystring");
     exports2.etag = createETagGenerator({ weak: false });
     exports2.wetag = createETagGenerator({ weak: true });
-    exports2.isAbsolute = function(path20) {
-      if ("/" === path20[0]) return true;
-      if (":" === path20[1] && ("\\" === path20[2] || "/" === path20[2])) return true;
-      if ("\\\\" === path20.substring(0, 2)) return true;
+    exports2.isAbsolute = function(path21) {
+      if ("/" === path21[0]) return true;
+      if (":" === path21[1] && ("\\" === path21[2] || "/" === path21[2])) return true;
+      if ("\\\\" === path21.substring(0, 2)) return true;
     };
     exports2.flatten = deprecate3.function(
       flatten,
@@ -22023,7 +22023,7 @@ var require_application = __commonJS({
     };
     app.use = function use(fn) {
       var offset = 0;
-      var path20 = "/";
+      var path21 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -22031,7 +22031,7 @@ var require_application = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path20 = fn;
+          path21 = fn;
         }
       }
       var fns = flatten(slice.call(arguments, offset));
@@ -22042,12 +22042,12 @@ var require_application = __commonJS({
       var router23 = this._router;
       fns.forEach(function(fn2) {
         if (!fn2 || !fn2.handle || !fn2.set) {
-          return router23.use(path20, fn2);
+          return router23.use(path21, fn2);
         }
-        debug(".use app under %s", path20);
-        fn2.mountpath = path20;
+        debug(".use app under %s", path21);
+        fn2.mountpath = path21;
         fn2.parent = this;
-        router23.use(path20, function mounted_app(req, res, next) {
+        router23.use(path21, function mounted_app(req, res, next) {
           var orig = req.app;
           fn2.handle(req, res, function(err) {
             setPrototypeOf(req, orig.request);
@@ -22059,9 +22059,9 @@ var require_application = __commonJS({
       }, this);
       return this;
     };
-    app.route = function route(path20) {
+    app.route = function route(path21) {
       this.lazyrouter();
-      return this._router.route(path20);
+      return this._router.route(path21);
     };
     app.engine = function engine(ext, fn) {
       if (typeof fn !== "function") {
@@ -22112,7 +22112,7 @@ var require_application = __commonJS({
       }
       return this;
     };
-    app.path = function path20() {
+    app.path = function path21() {
       return this.parent ? this.parent.path() + this.mountpath : "";
     };
     app.enabled = function enabled(setting) {
@@ -22128,19 +22128,19 @@ var require_application = __commonJS({
       return this.set(setting, false);
     };
     methods.forEach(function(method) {
-      app[method] = function(path20) {
+      app[method] = function(path21) {
         if (method === "get" && arguments.length === 1) {
-          return this.set(path20);
+          return this.set(path21);
         }
         this.lazyrouter();
-        var route = this._router.route(path20);
+        var route = this._router.route(path21);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
     });
-    app.all = function all3(path20) {
+    app.all = function all3(path21) {
       this.lazyrouter();
-      var route = this._router.route(path20);
+      var route = this._router.route(path21);
       var args = slice.call(arguments, 1);
       for (var i2 = 0; i2 < methods.length; i2++) {
         route[methods[i2]].apply(route, args);
@@ -22899,7 +22899,7 @@ var require_request = __commonJS({
       var subdomains2 = !isIP2(hostname) ? hostname.split(".").reverse() : [hostname];
       return subdomains2.slice(offset);
     });
-    defineGetter(req, "path", function path20() {
+    defineGetter(req, "path", function path21() {
       return parse(this).pathname;
     });
     defineGetter(req, "hostname", function hostname() {
@@ -22951,11 +22951,11 @@ var require_request = __commonJS({
 // node_modules/cookie-signature/index.js
 var require_cookie_signature = __commonJS({
   "node_modules/cookie-signature/index.js"(exports2) {
-    var crypto5 = require("crypto");
+    var crypto6 = require("crypto");
     exports2.sign = function(val, secret) {
       if ("string" !== typeof val) throw new TypeError("Cookie value must be provided as a string.");
       if (null == secret) throw new TypeError("Secret key must be provided.");
-      return val + "." + crypto5.createHmac("sha256", secret).update(val).digest("base64").replace(/\=+$/, "");
+      return val + "." + crypto6.createHmac("sha256", secret).update(val).digest("base64").replace(/\=+$/, "");
     };
     exports2.unsign = function(val, secret) {
       if ("string" !== typeof val) throw new TypeError("Signed cookie string must be provided.");
@@ -22964,7 +22964,7 @@ var require_cookie_signature = __commonJS({
       return sha1(mac) == sha1(val) ? str : false;
     };
     function sha1(str) {
-      return crypto5.createHash("sha1").update(str).digest("hex");
+      return crypto6.createHash("sha1").update(str).digest("hex");
     }
   }
 });
@@ -23221,7 +23221,7 @@ var require_response = __commonJS({
     var http4 = require("http");
     var isAbsolute = require_utils2().isAbsolute;
     var onFinished = require_on_finished();
-    var path20 = require("path");
+    var path21 = require("path");
     var statuses = require_statuses();
     var merge2 = require_utils_merge();
     var sign = require_cookie_signature().sign;
@@ -23230,9 +23230,9 @@ var require_response = __commonJS({
     var setCharset = require_utils2().setCharset;
     var cookie = require_cookie();
     var send = require_send();
-    var extname = path20.extname;
+    var extname = path21.extname;
     var mime = send.mime;
-    var resolve = path20.resolve;
+    var resolve = path21.resolve;
     var vary = require_vary();
     var res = Object.create(http4.ServerResponse.prototype);
     module2.exports = res;
@@ -23409,26 +23409,26 @@ var require_response = __commonJS({
       this.type("txt");
       return this.send(body);
     };
-    res.sendFile = function sendFile(path21, options, callback) {
+    res.sendFile = function sendFile(path22, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
       var next = req.next;
       var opts = options || {};
-      if (!path21) {
+      if (!path22) {
         throw new TypeError("path argument is required to res.sendFile");
       }
-      if (typeof path21 !== "string") {
+      if (typeof path22 !== "string") {
         throw new TypeError("path must be a string to res.sendFile");
       }
       if (typeof options === "function") {
         done = options;
         opts = {};
       }
-      if (!opts.root && !isAbsolute(path21)) {
+      if (!opts.root && !isAbsolute(path22)) {
         throw new TypeError("path must be absolute or specify root to res.sendFile");
       }
-      var pathname = encodeURI(path21);
+      var pathname = encodeURI(path22);
       var file = send(req, pathname, opts);
       sendfile(res2, file, opts, function(err) {
         if (done) return done(err);
@@ -23438,7 +23438,7 @@ var require_response = __commonJS({
         }
       });
     };
-    res.sendfile = function(path21, options, callback) {
+    res.sendfile = function(path22, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
@@ -23448,7 +23448,7 @@ var require_response = __commonJS({
         done = options;
         opts = {};
       }
-      var file = send(req, path21, opts);
+      var file = send(req, path22, opts);
       sendfile(res2, file, opts, function(err) {
         if (done) return done(err);
         if (err && err.code === "EISDIR") return next();
@@ -23461,7 +23461,7 @@ var require_response = __commonJS({
       res.sendfile,
       "res.sendfile: Use res.sendFile instead"
     );
-    res.download = function download(path21, filename, options, callback) {
+    res.download = function download(path22, filename, options, callback) {
       var done = callback;
       var name = filename;
       var opts = options || null;
@@ -23478,7 +23478,7 @@ var require_response = __commonJS({
         opts = filename;
       }
       var headers = {
-        "Content-Disposition": contentDisposition(name || path21)
+        "Content-Disposition": contentDisposition(name || path22)
       };
       if (opts && opts.headers) {
         var keys = Object.keys(opts.headers);
@@ -23491,7 +23491,7 @@ var require_response = __commonJS({
       }
       opts = Object.create(opts);
       opts.headers = headers;
-      var fullPath = !opts.root ? resolve(path21) : path21;
+      var fullPath = !opts.root ? resolve(path22) : path22;
       return this.sendFile(fullPath, opts, done);
     };
     res.contentType = res.type = function contentType(type) {
@@ -23792,11 +23792,11 @@ var require_serve_static = __commonJS({
         }
         var forwardError = !fallthrough;
         var originalUrl = parseUrl2.original(req);
-        var path20 = parseUrl2(req).pathname;
-        if (path20 === "/" && originalUrl.pathname.substr(-1) !== "/") {
-          path20 = "";
+        var path21 = parseUrl2(req).pathname;
+        if (path21 === "/" && originalUrl.pathname.substr(-1) !== "/") {
+          path21 = "";
         }
-        var stream4 = send(req, path20, opts);
+        var stream4 = send(req, path21, opts);
         stream4.on("directory", onDirectory);
         if (setHeaders) {
           stream4.on("headers", setHeaders);
@@ -23935,10 +23935,10 @@ var require_express2 = __commonJS({
 // node_modules/dotenv/lib/main.js
 var require_main = __commonJS({
   "node_modules/dotenv/lib/main.js"(exports2, module2) {
-    var fs20 = require("fs");
-    var path20 = require("path");
+    var fs21 = require("fs");
+    var path21 = require("path");
     var os = require("os");
-    var crypto5 = require("crypto");
+    var crypto6 = require("crypto");
     var TIPS = [
       "\u25C8 encrypted .env [www.dotenvx.com]",
       "\u25C8 secrets for agents [www.dotenvx.com]",
@@ -24067,7 +24067,7 @@ var require_main = __commonJS({
       if (options && options.path && options.path.length > 0) {
         if (Array.isArray(options.path)) {
           for (const filepath of options.path) {
-            if (fs20.existsSync(filepath)) {
+            if (fs21.existsSync(filepath)) {
               possibleVaultPath = filepath.endsWith(".vault") ? filepath : `${filepath}.vault`;
             }
           }
@@ -24075,15 +24075,15 @@ var require_main = __commonJS({
           possibleVaultPath = options.path.endsWith(".vault") ? options.path : `${options.path}.vault`;
         }
       } else {
-        possibleVaultPath = path20.resolve(process.cwd(), ".env.vault");
+        possibleVaultPath = path21.resolve(process.cwd(), ".env.vault");
       }
-      if (fs20.existsSync(possibleVaultPath)) {
+      if (fs21.existsSync(possibleVaultPath)) {
         return possibleVaultPath;
       }
       return null;
     }
     function _resolveHome(envPath) {
-      return envPath[0] === "~" ? path20.join(os.homedir(), envPath.slice(1)) : envPath;
+      return envPath[0] === "~" ? path21.join(os.homedir(), envPath.slice(1)) : envPath;
     }
     function _configVault(options) {
       const debug = parseBoolean(process.env.DOTENV_CONFIG_DEBUG || options && options.debug);
@@ -24100,7 +24100,7 @@ var require_main = __commonJS({
       return { parsed };
     }
     function configDotenv(options) {
-      const dotenvPath = path20.resolve(process.cwd(), ".env");
+      const dotenvPath = path21.resolve(process.cwd(), ".env");
       let encoding = "utf8";
       let processEnv = process.env;
       if (options && options.processEnv != null) {
@@ -24128,13 +24128,13 @@ var require_main = __commonJS({
       }
       let lastError;
       const parsedAll = {};
-      for (const path21 of optionPaths) {
+      for (const path22 of optionPaths) {
         try {
-          const parsed = DotenvModule.parse(fs20.readFileSync(path21, { encoding }));
+          const parsed = DotenvModule.parse(fs21.readFileSync(path22, { encoding }));
           DotenvModule.populate(parsedAll, parsed, options);
         } catch (e2) {
           if (debug) {
-            _debug(`failed to load ${path21} ${e2.message}`);
+            _debug(`failed to load ${path22} ${e2.message}`);
           }
           lastError = e2;
         }
@@ -24147,7 +24147,7 @@ var require_main = __commonJS({
         const shortPaths = [];
         for (const filePath of optionPaths) {
           try {
-            const relative = path20.relative(process.cwd(), filePath);
+            const relative = path21.relative(process.cwd(), filePath);
             shortPaths.push(relative);
           } catch (e2) {
             if (debug) {
@@ -24182,7 +24182,7 @@ var require_main = __commonJS({
       const authTag = ciphertext.subarray(-16);
       ciphertext = ciphertext.subarray(12, -16);
       try {
-        const aesgcm = crypto5.createDecipheriv("aes-256-gcm", key, nonce);
+        const aesgcm = crypto6.createDecipheriv("aes-256-gcm", key, nonce);
         aesgcm.setAuthTag(authTag);
         return `${aesgcm.update(ciphertext)}${aesgcm.final()}`;
       } catch (error) {
@@ -40888,14 +40888,14 @@ var require_svgPath = __commonJS({
       ["Z", 0],
       ["z", 0]
     ]);
-    var parse = function(path20) {
+    var parse = function(path21) {
       var cmd;
       var ret = [];
       var args = [];
       var curArg = "";
       var foundDecimal = false;
       var params = 0;
-      for (var _i = 0, path_1 = path20; _i < path_1.length; _i++) {
+      for (var _i = 0, path_1 = path21; _i < path_1.length; _i++) {
         var c = path_1[_i];
         if (parameters.has(c)) {
           params = parameters.get(c);
@@ -41209,8 +41209,8 @@ var require_svgPath = __commonJS({
       ];
       return result;
     };
-    exports2.svgPathToOperators = function(path20) {
-      return apply(parse(path20));
+    exports2.svgPathToOperators = function(path21) {
+      return apply(parse(path21));
     };
   }
 });
@@ -41393,7 +41393,7 @@ var require_operations = __commonJS({
         operators_1.popGraphicsState()
       ]).filter(Boolean);
     };
-    exports2.drawSvgPath = function(path20, options) {
+    exports2.drawSvgPath = function(path21, options) {
       var _a2, _b, _c;
       return tslib_1.__spreadArrays([
         operators_1.pushGraphicsState(),
@@ -41407,7 +41407,7 @@ var require_operations = __commonJS({
         options.borderWidth && operators_1.setLineWidth(options.borderWidth),
         options.borderLineCap && operators_1.setLineCap(options.borderLineCap),
         operators_1.setDashPattern((_b = options.borderDashArray) !== null && _b !== void 0 ? _b : [], (_c = options.borderDashPhase) !== null && _c !== void 0 ? _c : 0)
-      ], svgPath_1.svgPathToOperators(path20), [
+      ], svgPath_1.svgPathToOperators(path21), [
         // prettier-ignore
         options.color && options.borderWidth ? operators_1.fillAndStroke() : options.color ? operators_1.fill() : options.borderColor ? operators_1.stroke() : operators_1.closePath(),
         operators_1.popGraphicsState()
@@ -45705,12 +45705,12 @@ var require_PDFPage = __commonJS({
             graphicsState: graphicsStateKey
           }));
         };
-        PDFPage2.prototype.drawSvgPath = function(path20, options) {
+        PDFPage2.prototype.drawSvgPath = function(path21, options) {
           var _a2, _b, _c, _d, _e, _f, _g, _h, _j;
           if (options === void 0) {
             options = {};
           }
-          utils_1.assertIs(path20, "path", ["string"]);
+          utils_1.assertIs(path21, "path", ["string"]);
           utils_1.assertOrUndefined(options.x, "options.x", ["number"]);
           utils_1.assertOrUndefined(options.y, "options.y", ["number"]);
           utils_1.assertOrUndefined(options.scale, "options.scale", ["number"]);
@@ -45739,7 +45739,7 @@ var require_PDFPage = __commonJS({
             options.borderColor = colors_1.rgb(0, 0, 0);
           }
           var contentStream = this.getContentStream();
-          contentStream.push.apply(contentStream, operations_1.drawSvgPath(path20, {
+          contentStream.push.apply(contentStream, operations_1.drawSvgPath(path21, {
             x: (_a2 = options.x) !== null && _a2 !== void 0 ? _a2 : this.x,
             y: (_b = options.y) !== null && _b !== void 0 ? _b : this.y,
             scale: options.scale,
@@ -48325,14 +48325,14 @@ var require_buffer_equal_constant_time = __commonJS({
 var require_jwa = __commonJS({
   "node_modules/jwa/index.js"(exports2, module2) {
     var Buffer4 = require_safe_buffer().Buffer;
-    var crypto5 = require("crypto");
+    var crypto6 = require("crypto");
     var formatEcdsa = require_ecdsa_sig_formatter();
     var util4 = require("util");
     var MSG_INVALID_ALGORITHM = '"%s" is not a valid algorithm.\n  Supported algorithms are:\n  "HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512" and "none".';
     var MSG_INVALID_SECRET = "secret must be a string or buffer";
     var MSG_INVALID_VERIFIER_KEY = "key must be a string or a buffer";
     var MSG_INVALID_SIGNER_KEY = "key must be a string, a buffer or an object";
-    var supportsKeyObjects = typeof crypto5.createPublicKey === "function";
+    var supportsKeyObjects = typeof crypto6.createPublicKey === "function";
     if (supportsKeyObjects) {
       MSG_INVALID_VERIFIER_KEY += " or a KeyObject";
       MSG_INVALID_SECRET += "or a KeyObject";
@@ -48422,17 +48422,17 @@ var require_jwa = __commonJS({
       return function sign(thing, secret) {
         checkIsSecretKey(secret);
         thing = normalizeInput(thing);
-        var hmac = crypto5.createHmac("sha" + bits, secret);
+        var hmac = crypto6.createHmac("sha" + bits, secret);
         var sig = (hmac.update(thing), hmac.digest("base64"));
         return fromBase64(sig);
       };
     }
     var bufferEqual;
-    var timingSafeEqual = "timingSafeEqual" in crypto5 ? function timingSafeEqual2(a, b) {
+    var timingSafeEqual = "timingSafeEqual" in crypto6 ? function timingSafeEqual2(a, b) {
       if (a.byteLength !== b.byteLength) {
         return false;
       }
-      return crypto5.timingSafeEqual(a, b);
+      return crypto6.timingSafeEqual(a, b);
     } : function timingSafeEqual2(a, b) {
       if (!bufferEqual) {
         bufferEqual = require_buffer_equal_constant_time();
@@ -48449,7 +48449,7 @@ var require_jwa = __commonJS({
       return function sign(thing, privateKey) {
         checkIsPrivateKey(privateKey);
         thing = normalizeInput(thing);
-        var signer = crypto5.createSign("RSA-SHA" + bits);
+        var signer = crypto6.createSign("RSA-SHA" + bits);
         var sig = (signer.update(thing), signer.sign(privateKey, "base64"));
         return fromBase64(sig);
       };
@@ -48459,7 +48459,7 @@ var require_jwa = __commonJS({
         checkIsPublicKey(publicKey);
         thing = normalizeInput(thing);
         signature = toBase64(signature);
-        var verifier = crypto5.createVerify("RSA-SHA" + bits);
+        var verifier = crypto6.createVerify("RSA-SHA" + bits);
         verifier.update(thing);
         return verifier.verify(publicKey, signature, "base64");
       };
@@ -48468,11 +48468,11 @@ var require_jwa = __commonJS({
       return function sign(thing, privateKey) {
         checkIsPrivateKey(privateKey);
         thing = normalizeInput(thing);
-        var signer = crypto5.createSign("RSA-SHA" + bits);
+        var signer = crypto6.createSign("RSA-SHA" + bits);
         var sig = (signer.update(thing), signer.sign({
           key: privateKey,
-          padding: crypto5.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto5.constants.RSA_PSS_SALTLEN_DIGEST
+          padding: crypto6.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto6.constants.RSA_PSS_SALTLEN_DIGEST
         }, "base64"));
         return fromBase64(sig);
       };
@@ -48482,12 +48482,12 @@ var require_jwa = __commonJS({
         checkIsPublicKey(publicKey);
         thing = normalizeInput(thing);
         signature = toBase64(signature);
-        var verifier = crypto5.createVerify("RSA-SHA" + bits);
+        var verifier = crypto6.createVerify("RSA-SHA" + bits);
         verifier.update(thing);
         return verifier.verify({
           key: publicKey,
-          padding: crypto5.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto5.constants.RSA_PSS_SALTLEN_DIGEST
+          padding: crypto6.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto6.constants.RSA_PSS_SALTLEN_DIGEST
         }, signature, "base64");
       };
     }
@@ -58515,22 +58515,22 @@ var init_from = __esm({
     init_file();
     init_fetch_blob();
     ({ stat } = import_node_fs.promises);
-    blobFromSync = (path20, type) => fromBlob((0, import_node_fs.statSync)(path20), path20, type);
-    blobFrom = (path20, type) => stat(path20).then((stat3) => fromBlob(stat3, path20, type));
-    fileFrom = (path20, type) => stat(path20).then((stat3) => fromFile(stat3, path20, type));
-    fileFromSync = (path20, type) => fromFile((0, import_node_fs.statSync)(path20), path20, type);
-    fromBlob = (stat3, path20, type = "") => new fetch_blob_default([new BlobDataItem({
-      path: path20,
+    blobFromSync = (path21, type) => fromBlob((0, import_node_fs.statSync)(path21), path21, type);
+    blobFrom = (path21, type) => stat(path21).then((stat3) => fromBlob(stat3, path21, type));
+    fileFrom = (path21, type) => stat(path21).then((stat3) => fromFile(stat3, path21, type));
+    fileFromSync = (path21, type) => fromFile((0, import_node_fs.statSync)(path21), path21, type);
+    fromBlob = (stat3, path21, type = "") => new fetch_blob_default([new BlobDataItem({
+      path: path21,
       size: stat3.size,
       lastModified: stat3.mtimeMs,
       start: 0
     })], { type });
-    fromFile = (stat3, path20, type = "") => new file_default([new BlobDataItem({
-      path: path20,
+    fromFile = (stat3, path21, type = "") => new file_default([new BlobDataItem({
+      path: path21,
       size: stat3.size,
       lastModified: stat3.mtimeMs,
       start: 0
-    })], (0, import_node_path.basename)(path20), { type, lastModified: stat3.mtimeMs });
+    })], (0, import_node_path.basename)(path21), { type, lastModified: stat3.mtimeMs });
     BlobDataItem = class _BlobDataItem {
       #path;
       #start;
@@ -61615,22 +61615,22 @@ var require_crypto2 = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.NodeCrypto = void 0;
-    var crypto5 = require("crypto");
+    var crypto6 = require("crypto");
     var NodeCrypto = class {
       async sha256DigestBase64(str) {
-        return crypto5.createHash("sha256").update(str).digest("base64");
+        return crypto6.createHash("sha256").update(str).digest("base64");
       }
       randomBytesBase64(count) {
-        return crypto5.randomBytes(count).toString("base64");
+        return crypto6.randomBytes(count).toString("base64");
       }
       async verify(pubkey, data, signature) {
-        const verifier = crypto5.createVerify("RSA-SHA256");
+        const verifier = crypto6.createVerify("RSA-SHA256");
         verifier.update(data);
         verifier.end();
         return verifier.verify(pubkey, signature, "base64");
       }
       async sign(privateKey, data) {
-        const signer = crypto5.createSign("RSA-SHA256");
+        const signer = crypto6.createSign("RSA-SHA256");
         signer.update(data);
         signer.end();
         return signer.sign(privateKey, "base64");
@@ -61648,7 +61648,7 @@ var require_crypto2 = __commonJS({
        *   string in hexadecimal encoding.
        */
       async sha256DigestHex(str) {
-        return crypto5.createHash("sha256").update(str).digest("hex");
+        return crypto6.createHash("sha256").update(str).digest("hex");
       }
       /**
        * Computes the HMAC hash of a message using the provided crypto key and the
@@ -61660,7 +61660,7 @@ var require_crypto2 = __commonJS({
        */
       async signWithHmacSha256(key, msg) {
         const cryptoKey = typeof key === "string" ? key : toBuffer(key);
-        return toArrayBuffer(crypto5.createHmac("sha256", cryptoKey).update(msg).digest());
+        return toArrayBuffer(crypto6.createHmac("sha256", cryptoKey).update(msg).digest());
       }
     };
     exports2.NodeCrypto = NodeCrypto;
@@ -61727,9 +61727,9 @@ var require_util2 = __commonJS({
     exports2.removeUndefinedValuesInObject = removeUndefinedValuesInObject;
     exports2.isValidFile = isValidFile;
     exports2.getWellKnownCertificateConfigFileLocation = getWellKnownCertificateConfigFileLocation;
-    var fs20 = require("fs");
+    var fs21 = require("fs");
     var os = require("os");
-    var path20 = require("path");
+    var path21 = require("path");
     var WELL_KNOWN_CERTIFICATE_CONFIG_FILE = "certificate_config.json";
     var CLOUDSDK_CONFIG_DIRECTORY = "gcloud";
     function snakeToCamel(str) {
@@ -61815,15 +61815,15 @@ var require_util2 = __commonJS({
     }
     async function isValidFile(filePath) {
       try {
-        const stats = await fs20.promises.lstat(filePath);
+        const stats = await fs21.promises.lstat(filePath);
         return stats.isFile();
       } catch (e2) {
         return false;
       }
     }
     function getWellKnownCertificateConfigFileLocation() {
-      const configDir = process.env.CLOUDSDK_CONFIG || (_isWindows() ? path20.join(process.env.APPDATA || "", CLOUDSDK_CONFIG_DIRECTORY) : path20.join(process.env.HOME || "", ".config", CLOUDSDK_CONFIG_DIRECTORY));
-      return path20.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
+      const configDir = process.env.CLOUDSDK_CONFIG || (_isWindows() ? path21.join(process.env.APPDATA || "", CLOUDSDK_CONFIG_DIRECTORY) : path21.join(process.env.HOME || "", ".config", CLOUDSDK_CONFIG_DIRECTORY));
+      return path21.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
     }
     function _isWindows() {
       return os.platform().startsWith("win");
@@ -62351,10 +62351,10 @@ var require_oauth2client = __commonJS({
        * https://github.com/googleapis/google-auth-library-nodejs/blob/main/samples/oauth2-codeVerifier.js
        */
       async generateCodeVerifierAsync() {
-        const crypto5 = (0, crypto_1.createCrypto)();
-        const randomString = crypto5.randomBytesBase64(96);
+        const crypto6 = (0, crypto_1.createCrypto)();
+        const randomString = crypto6.randomBytesBase64(96);
         const codeVerifier = randomString.replace(/\+/g, "~").replace(/=/g, "_").replace(/\//g, "-");
-        const unencodedCodeChallenge = await crypto5.sha256DigestBase64(codeVerifier);
+        const unencodedCodeChallenge = await crypto6.sha256DigestBase64(codeVerifier);
         const codeChallenge = unencodedCodeChallenge.split("=")[0].replace(/\+/g, "-").replace(/\//g, "_");
         return { codeVerifier, codeChallenge };
       }
@@ -62795,7 +62795,7 @@ var require_oauth2client = __commonJS({
        * @return Returns a promise resolving to LoginTicket on verification.
        */
       async verifySignedJwtWithCertsAsync(jwt2, certs, requiredAudience, issuers, maxExpiry) {
-        const crypto5 = (0, crypto_1.createCrypto)();
+        const crypto6 = (0, crypto_1.createCrypto)();
         if (!maxExpiry) {
           maxExpiry = _OAuth2Client.DEFAULT_MAX_TOKEN_LIFETIME_SECS_;
         }
@@ -62808,7 +62808,7 @@ var require_oauth2client = __commonJS({
         let envelope;
         let payload;
         try {
-          envelope = JSON.parse(crypto5.decodeBase64StringUtf8(segments[0]));
+          envelope = JSON.parse(crypto6.decodeBase64StringUtf8(segments[0]));
         } catch (err) {
           if (err instanceof Error) {
             err.message = `Can't parse token envelope: ${segments[0]}': ${err.message}`;
@@ -62819,7 +62819,7 @@ var require_oauth2client = __commonJS({
           throw new Error("Can't parse token envelope: " + segments[0]);
         }
         try {
-          payload = JSON.parse(crypto5.decodeBase64StringUtf8(segments[1]));
+          payload = JSON.parse(crypto6.decodeBase64StringUtf8(segments[1]));
         } catch (err) {
           if (err instanceof Error) {
             err.message = `Can't parse token payload '${segments[0]}`;
@@ -62836,7 +62836,7 @@ var require_oauth2client = __commonJS({
         if (envelope.alg === "ES256") {
           signature = formatEcdsa.joseToDer(signature, "ES256").toString("base64");
         }
-        const verified = await crypto5.verify(cert, signed, signature);
+        const verified = await crypto6.verify(cert, signed, signature);
         if (!verified) {
           throw new Error("Invalid token signature: " + jwt2);
         }
@@ -63226,11 +63226,11 @@ var require_getCredentials = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.getCredentials = getCredentials;
-    var path20 = require("path");
-    var fs20 = require("fs");
+    var path21 = require("path");
+    var fs21 = require("fs");
     var util_1 = require("util");
     var errorWithCode_1 = require_errorWithCode();
-    var readFile = fs20.readFile ? (0, util_1.promisify)(fs20.readFile) : async () => {
+    var readFile = fs21.readFile ? (0, util_1.promisify)(fs21.readFile) : async () => {
       throw new errorWithCode_1.ErrorWithCode("use key rather than keyFile.", "MISSING_CREDENTIALS");
     };
     var ExtensionFiles;
@@ -63298,7 +63298,7 @@ var require_getCredentials = __commonJS({
        * @returns An instance of a class that implements ICredentialsProvider.
        */
       static create(keyFilePath) {
-        const keyFileExtension = path20.extname(keyFilePath);
+        const keyFileExtension = path21.extname(keyFilePath);
         switch (keyFileExtension) {
           case ExtensionFiles.JSON:
             return new JsonCredentialsProvider(keyFilePath);
@@ -64907,12 +64907,12 @@ var require_filesubjecttokensupplier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FileSubjectTokenSupplier = void 0;
     var util_1 = require("util");
-    var fs20 = require("fs");
-    var readFile = (0, util_1.promisify)(fs20.readFile ?? (() => {
+    var fs21 = require("fs");
+    var readFile = (0, util_1.promisify)(fs21.readFile ?? (() => {
     }));
-    var realpath = (0, util_1.promisify)(fs20.realpath ?? (() => {
+    var realpath = (0, util_1.promisify)(fs21.realpath ?? (() => {
     }));
-    var lstat = (0, util_1.promisify)(fs20.lstat ?? (() => {
+    var lstat = (0, util_1.promisify)(fs21.lstat ?? (() => {
     }));
     var FileSubjectTokenSupplier = class {
       filePath;
@@ -65030,7 +65030,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CertificateSubjectTokenSupplier = exports2.InvalidConfigurationError = exports2.CertificateSourceUnavailableError = exports2.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = void 0;
     var util_1 = require_util2();
-    var fs20 = require("fs");
+    var fs21 = require("fs");
     var crypto_1 = require("crypto");
     var https3 = require("https");
     exports2.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = "GOOGLE_API_CERTIFICATE_CONFIG";
@@ -65124,7 +65124,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
         const configPath = this.certificateConfigPath;
         let fileContents;
         try {
-          fileContents = await fs20.promises.readFile(configPath, "utf8");
+          fileContents = await fs21.promises.readFile(configPath, "utf8");
         } catch (err) {
           throw new CertificateSourceUnavailableError(`Failed to read certificate config file at: ${configPath}`);
         }
@@ -65149,14 +65149,14 @@ var require_certificatesubjecttokensupplier = __commonJS({
       async #getKeyAndCert(certPath, keyPath) {
         let cert, key;
         try {
-          cert = await fs20.promises.readFile(certPath);
+          cert = await fs21.promises.readFile(certPath);
           new crypto_1.X509Certificate(cert);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           throw new CertificateSourceUnavailableError(`Failed to read certificate file at ${certPath}: ${message}`);
         }
         try {
-          key = await fs20.promises.readFile(keyPath);
+          key = await fs21.promises.readFile(keyPath);
           (0, crypto_1.createPrivateKey)(key);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -65175,7 +65175,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
           return JSON.stringify([leafCert.raw.toString("base64")]);
         }
         try {
-          const chainPems = await fs20.promises.readFile(this.trustChainPath, "utf8");
+          const chainPems = await fs21.promises.readFile(this.trustChainPath, "utf8");
           const pemBlocks = chainPems.match(/-----BEGIN CERTIFICATE-----[^-]+-----END CERTIFICATE-----/g) ?? [];
           const chainCerts = pemBlocks.map((pem, index) => {
             try {
@@ -65406,14 +65406,14 @@ var require_awsrequestsigner = __commonJS({
       }
     };
     exports2.AwsRequestSigner = AwsRequestSigner;
-    async function sign(crypto5, key, msg) {
-      return await crypto5.signWithHmacSha256(key, msg);
+    async function sign(crypto6, key, msg) {
+      return await crypto6.signWithHmacSha256(key, msg);
     }
-    async function getSigningKey(crypto5, key, dateStamp, region, serviceName) {
-      const kDate = await sign(crypto5, `AWS4${key}`, dateStamp);
-      const kRegion = await sign(crypto5, kDate, region);
-      const kService = await sign(crypto5, kRegion, serviceName);
-      const kSigning = await sign(crypto5, kService, "aws4_request");
+    async function getSigningKey(crypto6, key, dateStamp, region, serviceName) {
+      const kDate = await sign(crypto6, `AWS4${key}`, dateStamp);
+      const kRegion = await sign(crypto6, kDate, region);
+      const kService = await sign(crypto6, kRegion, serviceName);
+      const kSigning = await sign(crypto6, kService, "aws4_request");
       return kSigning;
     }
     async function generateAuthenticationHeaderMap(options) {
@@ -65877,7 +65877,7 @@ var require_pluggable_auth_handler = __commonJS({
     exports2.PluggableAuthHandler = exports2.ExecutableError = void 0;
     var executable_response_1 = require_executable_response();
     var childProcess = require("child_process");
-    var fs20 = require("fs");
+    var fs21 = require("fs");
     var ExecutableError = class extends Error {
       /**
        * The exit code returned by the executable.
@@ -65962,14 +65962,14 @@ var require_pluggable_auth_handler = __commonJS({
         }
         let filePath;
         try {
-          filePath = await fs20.promises.realpath(this.outputFile);
+          filePath = await fs21.promises.realpath(this.outputFile);
         } catch {
           return void 0;
         }
-        if (!(await fs20.promises.lstat(filePath)).isFile()) {
+        if (!(await fs21.promises.lstat(filePath)).isFile()) {
           return void 0;
         }
-        const responseString = await fs20.promises.readFile(filePath, {
+        const responseString = await fs21.promises.readFile(filePath, {
           encoding: "utf8"
         });
         if (responseString === "") {
@@ -66379,8 +66379,8 @@ var require_gdchclient = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GdchClient = exports2.GDCH_SERVICE_ACCOUNT_TYPE = void 0;
-    var crypto5 = require("crypto");
-    var fs20 = require("fs");
+    var crypto6 = require("crypto");
+    var fs21 = require("fs");
     var https3 = require("https");
     var oauth2client_1 = require_oauth2client();
     var DEFAULT_LIFETIME_IN_SECONDS = 3600;
@@ -66570,7 +66570,7 @@ var require_gdchclient = __commonJS({
         const encodedHeader = this.base64UrlEncode(JSON.stringify(header));
         const encodedPayload = this.base64UrlEncode(JSON.stringify(payload));
         const signingInput = `${encodedHeader}.${encodedPayload}`;
-        const signature = crypto5.sign("sha256", Buffer.from(signingInput), {
+        const signature = crypto6.sign("sha256", Buffer.from(signingInput), {
           key: this.privateKey,
           dsaEncoding: "ieee-p1363"
         });
@@ -66603,7 +66603,7 @@ var require_gdchclient = __commonJS({
         const currentPath = this.caCertPath;
         this.caAgentPromise = (async () => {
           try {
-            const ca = await fs20.promises.readFile(currentPath);
+            const ca = await fs21.promises.readFile(currentPath);
             return new https3.Agent({ ca });
           } catch (err) {
             if (this.cachedCaCertPath === currentPath) {
@@ -66663,11 +66663,11 @@ var require_googleauth = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GoogleAuth = exports2.GoogleAuthExceptionMessages = void 0;
     var child_process_1 = require("child_process");
-    var fs20 = require("fs");
+    var fs21 = require("fs");
     var gaxios_1 = require_src6();
     var gcpMetadata = require_src8();
     var os = require("os");
-    var path20 = require("path");
+    var path21 = require("path");
     var crypto_1 = require_crypto3();
     var computeclient_1 = require_computeclient();
     var idtokenclient_1 = require_idtokenclient();
@@ -66954,12 +66954,12 @@ var require_googleauth = __commonJS({
         } else {
           const home = process.env["HOME"];
           if (home) {
-            location = path20.join(home, ".config");
+            location = path21.join(home, ".config");
           }
         }
         if (location) {
-          location = path20.join(location, "gcloud", "application_default_credentials.json");
-          if (!fs20.existsSync(location)) {
+          location = path21.join(location, "gcloud", "application_default_credentials.json");
+          if (!fs21.existsSync(location)) {
             location = null;
           }
         }
@@ -66980,8 +66980,8 @@ var require_googleauth = __commonJS({
           throw new Error("The file path is invalid.");
         }
         try {
-          filePath = fs20.realpathSync(filePath);
-          if (!fs20.lstatSync(filePath).isFile()) {
+          filePath = fs21.realpathSync(filePath);
+          if (!fs21.lstatSync(filePath).isFile()) {
             throw new Error();
           }
         } catch (err) {
@@ -66990,7 +66990,7 @@ var require_googleauth = __commonJS({
           }
           throw err;
         }
-        const readStream2 = fs20.createReadStream(filePath);
+        const readStream2 = fs21.createReadStream(filePath);
         return this.fromStream(readStream2, options);
       }
       /**
@@ -67317,8 +67317,8 @@ var require_googleauth = __commonJS({
         if (this.jsonContent) {
           return this._cacheClientFromJSON(this.jsonContent, this.clientOptions);
         } else if (this.keyFilename) {
-          const filePath = path20.resolve(this.keyFilename);
-          const stream4 = fs20.createReadStream(filePath);
+          const filePath = path21.resolve(this.keyFilename);
+          const stream4 = fs21.createReadStream(filePath);
           return await this.fromStreamAsync(stream4, this.clientOptions);
         } else if (this.apiKey) {
           const client = await this.fromAPIKey(this.apiKey, this.clientOptions);
@@ -67431,24 +67431,24 @@ var require_googleauth = __commonJS({
           const signed = await client.sign(data);
           return signed.signedBlob;
         }
-        const crypto5 = (0, crypto_1.createCrypto)();
+        const crypto6 = (0, crypto_1.createCrypto)();
         if (client instanceof jwtclient_1.JWT && client.key) {
-          const sign = await crypto5.sign(client.key, data);
+          const sign = await crypto6.sign(client.key, data);
           return sign;
         }
         const creds = await this.getCredentials();
         if (!creds.client_email) {
           throw new Error("Cannot sign data without `client_email`.");
         }
-        return this.signBlob(crypto5, creds.client_email, data, endpoint);
+        return this.signBlob(crypto6, creds.client_email, data, endpoint);
       }
-      async signBlob(crypto5, emailOrUniqueId, data, endpoint) {
+      async signBlob(crypto6, emailOrUniqueId, data, endpoint) {
         const url2 = new URL(endpoint + `${emailOrUniqueId}:signBlob`);
         const res = await this.request({
           method: "POST",
           url: url2.href,
           data: {
-            payload: crypto5.encodeBase64StringUtf8(data)
+            payload: crypto6.encodeBase64StringUtf8(data)
           },
           retry: true,
           retryConfig: {
@@ -72074,13 +72074,13 @@ var require_form_data = __commonJS({
     "use strict";
     var CombinedStream = require_combined_stream();
     var util4 = require("util");
-    var path20 = require("path");
+    var path21 = require("path");
     var http4 = require("http");
     var https3 = require("https");
     var parseUrl2 = require("url").parse;
-    var fs20 = require("fs");
+    var fs21 = require("fs");
     var Stream4 = require("stream").Stream;
-    var crypto5 = require("crypto");
+    var crypto6 = require("crypto");
     var mime = require_mime_types();
     var asynckit = require_asynckit();
     var setToStringTag = require_es_set_tostringtag();
@@ -72148,7 +72148,7 @@ var require_form_data = __commonJS({
         if (value.end != void 0 && value.end != Infinity && value.start != void 0) {
           callback(null, value.end + 1 - (value.start ? value.start : 0));
         } else {
-          fs20.stat(value.path, function(err, stat3) {
+          fs21.stat(value.path, function(err, stat3) {
             if (err) {
               callback(err);
               return;
@@ -72205,11 +72205,11 @@ var require_form_data = __commonJS({
     FormData5.prototype._getContentDisposition = function(value, options) {
       var filename;
       if (typeof options.filepath === "string") {
-        filename = path20.normalize(options.filepath).replace(/\\/g, "/");
+        filename = path21.normalize(options.filepath).replace(/\\/g, "/");
       } else if (options.filename || value && (value.name || value.path)) {
-        filename = path20.basename(options.filename || value && (value.name || value.path));
+        filename = path21.basename(options.filename || value && (value.name || value.path));
       } else if (value && value.readable && hasOwn2(value, "httpVersion")) {
-        filename = path20.basename(value.client._httpMessage.path || "");
+        filename = path21.basename(value.client._httpMessage.path || "");
       }
       if (filename) {
         return 'filename="' + escapeHeaderParam(filename) + '"';
@@ -72289,7 +72289,7 @@ var require_form_data = __commonJS({
       return Buffer.concat([dataBuffer, Buffer.from(this._lastBoundary())]);
     };
     FormData5.prototype._generateBoundary = function() {
-      this._boundary = "--------------------------" + crypto5.randomBytes(12).toString("hex");
+      this._boundary = "--------------------------" + crypto6.randomBytes(12).toString("hex");
     };
     FormData5.prototype.getLengthSync = function() {
       var knownLength = this._overheadLength + this._valueLength;
@@ -73845,9 +73845,9 @@ var init_wooCommerce = __esm({
 
 // server.ts
 var import_express24 = __toESM(require_express2(), 1);
-var import_path19 = __toESM(require("path"), 1);
-var import_fs18 = __toESM(require("fs"), 1);
-var import_crypto3 = __toESM(require("crypto"), 1);
+var import_path20 = __toESM(require("path"), 1);
+var import_fs19 = __toESM(require("fs"), 1);
+var import_crypto4 = __toESM(require("crypto"), 1);
 var import_dotenv2 = __toESM(require_main(), 1);
 var import_node_stream4 = require("node:stream");
 var import_promises3 = require("node:stream/promises");
@@ -74777,13 +74777,13 @@ function queueAfterAck(queue, req, routeLabel) {
 function createShopeeWebhookRouter(processPayload, routePath = "/shopee") {
   const queue = createBoundedQueue(processPayload);
   const router23 = import_express.default.Router();
-  const path20 = routePath.startsWith("/") ? routePath : `/${routePath}`;
-  router23.get(path20, (_req, res) => {
+  const path21 = routePath.startsWith("/") ? routePath : `/${routePath}`;
+  router23.get(path21, (_req, res) => {
     ackShopeeOk(res);
   });
-  router23.post(path20, import_express.default.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
+  router23.post(path21, import_express.default.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
     ackShopeeOk(res);
-    queueAfterAck(queue, req, `POST ${path20}`);
+    queueAfterAck(queue, req, `POST ${path21}`);
   });
   return router23;
 }
@@ -77693,7 +77693,7 @@ async function bulkUpsertOrdersToStore(orders) {
       $set[`data.${key}`] = value;
     }
     stripWarehouseProtectedKeysFromSet($set);
-    if (channelStr === "woocommerce") {
+    if (channelStr === "woocommerce" || channelStr === "manual") {
       const cName = String(
         order.customerName || order.customer_name || ""
       ).trim();
@@ -77732,12 +77732,29 @@ async function bulkUpsertOrdersToStore(orders) {
       if (order.shippingAddress != null) {
         $set["data.shippingAddress"] = order.shippingAddress;
       }
-      $set.source = "woocommerce";
-      $set["data.source"] = "woocommerce";
-      $set.channel = "woocommerce";
-      $set["data.channel"] = "woocommerce";
+      $set.source = channelStr === "manual" ? "external" : "woocommerce";
+      $set["data.source"] = $set.source;
+      $set.channel = channelStr;
+      $set["data.channel"] = channelStr;
+      if (channelStr === "manual") {
+        const provider = String(order.provider || order.carrier || "").trim();
+        if (provider) {
+          $set["data.carrier"] = provider;
+          $set["data.provider"] = provider;
+        }
+        if (order.external_status) {
+          $set["data.external_status"] = String(order.external_status);
+        }
+        if (order.cod_amount != null || Number(order.totalAmount) > 0) {
+          $set["data.cod_amount"] = Number(order.cod_amount ?? order.totalAmount) || 0;
+        }
+        if (order.status) {
+          $set.status = String(order.status);
+          $set["data.status"] = String(order.status);
+        }
+      }
       console.log(
-        `[MongoDB] WOO UPSERT customer \u2014 orderSn=${orderSn} name="${cName}" phone="${cPhone}" addr="${cAddr.slice(0, 40)}"`
+        `[MongoDB] ${channelStr.toUpperCase()} UPSERT customer \u2014 orderSn=${orderSn} name="${cName}" phone="${cPhone}" addr="${cAddr.slice(0, 40)}"`
       );
     }
     const insertWatermark = incomingUpdateAt || /* @__PURE__ */ new Date();
@@ -79457,6 +79474,10 @@ function hydrateOrderFromMongoDoc(d) {
     customer_address: customerAddressHydrated || data.customer_address || void 0,
     billing: billingHydrated || data.billing || void 0,
     shipping: shippingHydrated || data.shipping || void 0,
+    carrier: data.carrier || d?.carrier || void 0,
+    provider: data.provider || data.carrier || void 0,
+    external_status: data.external_status || void 0,
+    cod_amount: data.cod_amount != null ? data.cod_amount : void 0,
     tracking_no: tn || void 0,
     trackingNumber: tn || void 0,
     return_tracking_no: returnTn || void 0,
@@ -80150,7 +80171,8 @@ var ORDER_TAB_IS_TO_SHIP = {
       status: {
         $nin: ["shipping", "completed", "cancelled", "return_pending", "return_received"]
       }
-    }
+    },
+    { channel: { $nin: ["woocommerce", "manual"] } }
   ]
 };
 var ORDER_TAB_FAST_HANDED_OVER = {
@@ -80197,6 +80219,7 @@ function orderTabFilter(tab) {
           ORDER_TAB_NOT_HANDED_OVER,
           ORDER_TAB_TRACKING_ABSENT,
           { isPrepared: { $ne: true } },
+          { channel: { $nin: ["woocommerce", "manual"] } },
           {
             $or: [
               { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] } },
@@ -80304,6 +80327,11 @@ function orderTabFilter(tab) {
     case "web_orders":
     case "woocommerce":
       return { channel: "woocommerce" };
+    case "external_orders":
+    case "don-ngoai-san":
+    case "manual":
+    case "don_ngoai_san":
+      return { channel: "manual" };
     default:
       return {};
   }
@@ -80424,6 +80452,7 @@ function tabIndexFilter(tab, kind) {
         shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] },
         is_handed_over: { $ne: true },
         isPrepared: { $ne: true },
+        channel: { $nin: ["woocommerce", "manual"] },
         $or: [{ tracking_no: { $exists: false } }, { tracking_no: { $in: [null, "", "0"] } }]
       };
     case "processed":
@@ -80455,6 +80484,11 @@ function tabIndexFilter(tab, kind) {
     case "web_orders":
     case "woocommerce":
       return { channel: "woocommerce" };
+    case "external_orders":
+    case "don-ngoai-san":
+    case "manual":
+    case "don_ngoai_san":
+      return { channel: "manual" };
     case "return_pending":
     case "return-pending":
       return { status: "return_pending" };
@@ -80529,6 +80563,11 @@ var ORDER_LIST_UI_PROJECTION = {
   customerEmail: 1,
   billing: 1,
   shipping: 1,
+  "data.carrier": 1,
+  "data.provider": 1,
+  "data.external_status": 1,
+  "data.cod_amount": 1,
+  "data.shippingAddress": 1,
   shopee_cancel_return_kind: 1,
   is_rts: 1,
   sub_status: 1,
@@ -80992,7 +81031,8 @@ async function countOrdersByTabsFromStore(opts) {
     return_requests: 0,
     cancel_returns: 0,
     received_cancel_returns: 0,
-    web_orders: 0
+    web_orders: 0,
+    external_orders: 0
   };
   try {
     requireMongo();
@@ -81023,6 +81063,7 @@ async function countOrdersByTabsFromStore(opts) {
           return_pending: facetEq("st", "return_pending"),
           return_requests: facetEq("s", "TO_RETURN"),
           web_orders: facetEq("ch", "woocommerce"),
+          external_orders: facetEq("ch", "manual"),
           cancel_returns: facetStatusIn([...FACET_CANCEL]),
           cancel_returns_returned: facetEq("kind", "refund_return"),
           cancel_returns_cancelled: facetEq("kind", "cancelled"),
@@ -81054,6 +81095,22 @@ async function countOrdersByTabsFromStore(opts) {
     counts.return_pending = facetN(row, "return_pending");
     counts.return_requests = facetN(row, "return_requests");
     counts.web_orders = facetN(row, "web_orders");
+    counts.external_orders = facetN(row, "external_orders");
+    try {
+      const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
+      if (shopFilter) {
+        const dateRange = parseOrderListDateRange({
+          startDate: opts?.startDate,
+          endDate: opts?.endDate,
+          forceDefault: true
+        });
+        const extMatch = { channel: "manual" };
+        if (dateRange) Object.assign(extMatch, buildOrderCreatedAtMongoFilter(dateRange));
+        counts.external_orders = await OrderModel.countDocuments(extMatch).maxTimeMS(3e3);
+      }
+    } catch (extErr) {
+      console.warn("[MongoDB] external_orders count:", extErr?.message || extErr);
+    }
     counts.cancel_returns = facetN(row, "cancel_returns");
     counts.cancel_returns_returned = facetN(row, "cancel_returns_returned");
     counts.cancel_returns_cancelled = facetN(row, "cancel_returns_cancelled");
@@ -81102,7 +81159,8 @@ async function queryOrdersPageFromStore(opts) {
     const kind = parseCancelReturnKindParam(opts?.kind);
     const isCancelReturnsTab = requestedTab === "cancel_returns" || requestedTab === "cancel-returns" || requestedTab === "cancelled_returned" || requestedTab === "huy-hoan" || requestedTab === "don-huy-hoan";
     const isReturnRequestsTab = requestedTab === "return_requests" || requestedTab === "return-requests" || requestedTab === "yeu-cau-tra-hang" || requestedTab === "yeu_cau_tra_hang";
-    const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
+    const isExternalOrdersTab = requestedTab === "external_orders" || requestedTab === "don-ngoai-san" || requestedTab === "manual" || requestedTab === "don_ngoai_san";
+    const shopFilter = isExternalOrdersTab ? null : buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
     const firstMatch = {};
     if (shopFilter) Object.assign(firstMatch, shopFilter);
     if (!search) {
@@ -83142,10 +83200,10 @@ async function fetchFirstList(urls) {
 function readGhnToken() {
   return String(process.env.GHN_TOKEN || process.env.GHN_API_TOKEN || "").trim();
 }
-async function ghnFetch(path20, query) {
+async function ghnFetch(path21, query) {
   const token = readGhnToken();
   if (!token) return null;
-  const url2 = new URL(`${GHN_BASE}${path20}`);
+  const url2 = new URL(`${GHN_BASE}${path21}`);
   if (query) {
     for (const [key, value] of Object.entries(query)) {
       if (value !== void 0 && value !== "") url2.searchParams.set(key, String(value));
@@ -83159,7 +83217,7 @@ async function ghnFetch(path20, query) {
     );
     return unwrapList(json2);
   } catch (error) {
-    console.warn("[GHN Master]", path20, error?.message || error);
+    console.warn("[GHN Master]", path21, error?.message || error);
     return null;
   }
 }
@@ -87355,7 +87413,7 @@ var Batches = class extends BaseModule {
       params
     );
     const urlParams = body["_url"];
-    const path20 = formatMap("{model}:batchGenerateContent", urlParams);
+    const path21 = formatMap("{model}:batchGenerateContent", urlParams);
     const batch = body["batch"];
     const inputConfig = batch["inputConfig"];
     const requestsWrapper = inputConfig["requests"];
@@ -87376,7 +87434,7 @@ var Batches = class extends BaseModule {
     delete body["config"];
     delete body["_url"];
     delete body["_query"];
-    return { path: path20, body };
+    return { path: path21, body };
   }
   // Helper function to get the first GCS URI
   getGcsUri(src) {
@@ -87432,16 +87490,16 @@ var Batches = class extends BaseModule {
   async createInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createBatchJobParametersToVertex(this.apiClient, params);
-      path20 = formatMap("batchPredictionJobs", body["_url"]);
+      path21 = formatMap("batchPredictionJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -87456,12 +87514,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = createBatchJobParametersToMldev(this.apiClient, params);
-      path20 = formatMap("{model}:batchGenerateContent", body["_url"]);
+      path21 = formatMap("{model}:batchGenerateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -87486,18 +87544,18 @@ var Batches = class extends BaseModule {
   async createEmbeddingsInternal(params) {
     var _a2, _b;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createEmbeddingsBatchJobParametersToMldev(this.apiClient, params);
-      path20 = formatMap("{model}:asyncBatchEmbedContent", body["_url"]);
+      path21 = formatMap("{model}:asyncBatchEmbedContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -87526,16 +87584,16 @@ var Batches = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getBatchJobParametersToVertex(this.apiClient, params);
-      path20 = formatMap("batchPredictionJobs/{name}", body["_url"]);
+      path21 = formatMap("batchPredictionJobs/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -87550,12 +87608,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = getBatchJobParametersToMldev(this.apiClient, params);
-      path20 = formatMap("batches/{name}", body["_url"]);
+      path21 = formatMap("batches/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -87583,16 +87641,16 @@ var Batches = class extends BaseModule {
    */
   async cancel(params) {
     var _a2, _b, _c, _d;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = cancelBatchJobParametersToVertex(this.apiClient, params);
-      path20 = formatMap("batchPredictionJobs/{name}:cancel", body["_url"]);
+      path21 = formatMap("batchPredictionJobs/{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -87601,12 +87659,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = cancelBatchJobParametersToMldev(this.apiClient, params);
-      path20 = formatMap("batches/{name}:cancel", body["_url"]);
+      path21 = formatMap("batches/{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -87618,16 +87676,16 @@ var Batches = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listBatchJobsParametersToVertex(params);
-      path20 = formatMap("batchPredictionJobs", body["_url"]);
+      path21 = formatMap("batchPredictionJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -87650,12 +87708,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = listBatchJobsParametersToMldev(params);
-      path20 = formatMap("batches", body["_url"]);
+      path21 = formatMap("batches", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -87692,16 +87750,16 @@ var Batches = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteBatchJobParametersToVertex(this.apiClient, params);
-      path20 = formatMap("batchPredictionJobs/{name}", body["_url"]);
+      path21 = formatMap("batchPredictionJobs/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -87722,12 +87780,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = deleteBatchJobParametersToMldev(this.apiClient, params);
-      path20 = formatMap("batches/{name}", body["_url"]);
+      path21 = formatMap("batches/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -88651,16 +88709,16 @@ var Caches = class extends BaseModule {
   async create(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createCachedContentParametersToVertex(this.apiClient, params);
-      path20 = formatMap("cachedContents", body["_url"]);
+      path21 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -88674,12 +88732,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = createCachedContentParametersToMldev(this.apiClient, params);
-      path20 = formatMap("cachedContents", body["_url"]);
+      path21 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -88707,16 +88765,16 @@ var Caches = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getCachedContentParametersToVertex(this.apiClient, params);
-      path20 = formatMap("{name}", body["_url"]);
+      path21 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -88730,12 +88788,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = getCachedContentParametersToMldev(this.apiClient, params);
-      path20 = formatMap("{name}", body["_url"]);
+      path21 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -88763,16 +88821,16 @@ var Caches = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteCachedContentParametersToVertex(this.apiClient, params);
-      path20 = formatMap("{name}", body["_url"]);
+      path21 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -88795,12 +88853,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = deleteCachedContentParametersToMldev(this.apiClient, params);
-      path20 = formatMap("{name}", body["_url"]);
+      path21 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -88840,16 +88898,16 @@ var Caches = class extends BaseModule {
   async update(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = updateCachedContentParametersToVertex(this.apiClient, params);
-      path20 = formatMap("{name}", body["_url"]);
+      path21 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -88863,12 +88921,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = updateCachedContentParametersToMldev(this.apiClient, params);
-      path20 = formatMap("{name}", body["_url"]);
+      path21 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -88885,16 +88943,16 @@ var Caches = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listCachedContentsParametersToVertex(params);
-      path20 = formatMap("cachedContents", body["_url"]);
+      path21 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -88917,12 +88975,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = listCachedContentsParametersToMldev(params);
-      path20 = formatMap("cachedContents", body["_url"]);
+      path21 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -89518,18 +89576,18 @@ var Files = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listFilesParametersToMldev(params);
-      path20 = formatMap("files", body["_url"]);
+      path21 = formatMap("files", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -89555,18 +89613,18 @@ var Files = class extends BaseModule {
   async createInternal(params) {
     var _a2, _b;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createFileParametersToMldev(params);
-      path20 = formatMap("upload/v1beta/files", body["_url"]);
+      path21 = formatMap("upload/v1beta/files", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -89601,18 +89659,18 @@ var Files = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getFileParametersToMldev(params);
-      path20 = formatMap("files/{file}", body["_url"]);
+      path21 = formatMap("files/{file}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -89642,18 +89700,18 @@ var Files = class extends BaseModule {
   async delete(params) {
     var _a2, _b;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteFileParametersToMldev(params);
-      path20 = formatMap("files/{file}", body["_url"]);
+      path21 = formatMap("files/{file}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -89679,18 +89737,18 @@ var Files = class extends BaseModule {
   async registerFilesInternal(params) {
     var _a2, _b;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = internalRegisterFilesParametersToMldev(params);
-      path20 = formatMap("files:register", body["_url"]);
+      path21 = formatMap("files:register", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -94944,13 +95002,13 @@ var ApiClient = class {
       throw new Error("HTTP options are not correctly set.");
     }
   }
-  constructUrl(path20, httpOptions, prependProjectLocation) {
+  constructUrl(path21, httpOptions, prependProjectLocation) {
     const urlElement = [this.getRequestUrlInternal(httpOptions)];
     if (prependProjectLocation) {
       urlElement.push(this.getBaseResourcePath());
     }
-    if (path20 !== "") {
-      urlElement.push(path20);
+    if (path21 !== "") {
+      urlElement.push(path21);
     }
     const url2 = new URL(`${urlElement.join("/")}`);
     return url2;
@@ -95249,8 +95307,8 @@ var ApiClient = class {
       file: fileToUpload
     };
     const fileName = this.getFileName(file);
-    const path20 = formatMap("upload/v1beta/files", body["_url"]);
-    const uploadUrl = await this.fetchUploadUrl(path20, fileToUpload.sizeBytes, fileToUpload.mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
+    const path21 = formatMap("upload/v1beta/files", body["_url"]);
+    const uploadUrl = await this.fetchUploadUrl(path21, fileToUpload.sizeBytes, fileToUpload.mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
     return uploader.upload(file, uploadUrl, this);
   }
   /**
@@ -95274,13 +95332,13 @@ var ApiClient = class {
     if (mimeType === void 0 || mimeType === "") {
       throw new Error("Can not determine mimeType. Please provide mimeType in the config.");
     }
-    const path20 = `upload/v1beta/${fileSearchStoreName}:uploadToFileSearchStore`;
+    const path21 = `upload/v1beta/${fileSearchStoreName}:uploadToFileSearchStore`;
     const fileName = this.getFileName(file);
     const body = {};
     if (config != null) {
       uploadToFileSearchStoreConfigToMldev(config, body);
     }
-    const uploadUrl = await this.fetchUploadUrl(path20, sizeBytes, mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
+    const uploadUrl = await this.fetchUploadUrl(path21, sizeBytes, mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
     return uploader.uploadToFileSearchStore(file, uploadUrl, this);
   }
   /**
@@ -95293,7 +95351,7 @@ var ApiClient = class {
     const downloader = this.clientOptions.downloader;
     await downloader.download(params, this);
   }
-  async fetchUploadUrl(path20, sizeBytes, mimeType, fileName, body, configHttpOptions) {
+  async fetchUploadUrl(path21, sizeBytes, mimeType, fileName, body, configHttpOptions) {
     var _a2;
     let httpOptions = {};
     if (configHttpOptions) {
@@ -95306,7 +95364,7 @@ var ApiClient = class {
       };
     }
     const httpResponse = await this.request({
-      path: path20,
+      path: path21,
       body: JSON.stringify(body),
       httpMethod: "POST",
       httpOptions
@@ -96502,16 +96560,16 @@ var Models = class extends BaseModule {
   async generateContentInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateContentParametersToVertex(this.apiClient, params);
-      path20 = formatMap("{model}:generateContent", body["_url"]);
+      path21 = formatMap("{model}:generateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -96534,12 +96592,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateContentParametersToMldev(this.apiClient, params);
-      path20 = formatMap("{model}:generateContent", body["_url"]);
+      path21 = formatMap("{model}:generateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -96565,17 +96623,17 @@ var Models = class extends BaseModule {
   async generateContentStreamInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateContentParametersToVertex(this.apiClient, params);
-      path20 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
+      path21 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       const apiClient = this.apiClient;
       response = apiClient.requestStream({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -96611,13 +96669,13 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateContentParametersToMldev(this.apiClient, params);
-      path20 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
+      path21 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       const apiClient = this.apiClient;
       response = apiClient.requestStream({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -96677,17 +96735,17 @@ var Models = class extends BaseModule {
   async embedContentInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = embedContentParametersPrivateToVertex(this.apiClient, params, params);
       const endpointUrl = tIsVertexEmbedContentModel(params.model) ? "{model}:embedContent" : "{model}:predict";
-      path20 = formatMap(endpointUrl, body["_url"]);
+      path21 = formatMap(endpointUrl, body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -96710,12 +96768,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = embedContentParametersPrivateToMldev(this.apiClient, params);
-      path20 = formatMap("{model}:batchEmbedContents", body["_url"]);
+      path21 = formatMap("{model}:batchEmbedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -96744,16 +96802,16 @@ var Models = class extends BaseModule {
   async generateImagesInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateImagesParametersToVertex(this.apiClient, params);
-      path20 = formatMap("{model}:predict", body["_url"]);
+      path21 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -96776,12 +96834,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateImagesParametersToMldev(this.apiClient, params);
-      path20 = formatMap("{model}:predict", body["_url"]);
+      path21 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -96810,16 +96868,16 @@ var Models = class extends BaseModule {
   async editImageInternal(params) {
     var _a2, _b;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = editImageParametersInternalToVertex(this.apiClient, params);
-      path20 = formatMap("{model}:predict", body["_url"]);
+      path21 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -96850,16 +96908,16 @@ var Models = class extends BaseModule {
   async upscaleImageInternal(params) {
     var _a2, _b;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = upscaleImageAPIParametersInternalToVertex(this.apiClient, params);
-      path20 = formatMap("{model}:predict", body["_url"]);
+      path21 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -96911,16 +96969,16 @@ var Models = class extends BaseModule {
   async recontextImage(params) {
     var _a2, _b;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = recontextImageParametersToVertex(this.apiClient, params);
-      path20 = formatMap("{model}:predict", body["_url"]);
+      path21 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -96962,16 +97020,16 @@ var Models = class extends BaseModule {
   async segmentImage(params) {
     var _a2, _b;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = segmentImageParametersToVertex(this.apiClient, params);
-      path20 = formatMap("{model}:predict", body["_url"]);
+      path21 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -97001,16 +97059,16 @@ var Models = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getModelParametersToVertex(this.apiClient, params);
-      path20 = formatMap("{name}", body["_url"]);
+      path21 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -97025,12 +97083,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = getModelParametersToMldev(this.apiClient, params);
-      path20 = formatMap("{name}", body["_url"]);
+      path21 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -97048,16 +97106,16 @@ var Models = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listModelsParametersToVertex(this.apiClient, params);
-      path20 = formatMap("{models_url}", body["_url"]);
+      path21 = formatMap("{models_url}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -97080,12 +97138,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = listModelsParametersToMldev(this.apiClient, params);
-      path20 = formatMap("{models_url}", body["_url"]);
+      path21 = formatMap("{models_url}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -97128,16 +97186,16 @@ var Models = class extends BaseModule {
   async update(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = updateModelParametersToVertex(this.apiClient, params);
-      path20 = formatMap("{model}", body["_url"]);
+      path21 = formatMap("{model}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -97152,12 +97210,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = updateModelParametersToMldev(this.apiClient, params);
-      path20 = formatMap("{name}", body["_url"]);
+      path21 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -97186,16 +97244,16 @@ var Models = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteModelParametersToVertex(this.apiClient, params);
-      path20 = formatMap("{name}", body["_url"]);
+      path21 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -97218,12 +97276,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = deleteModelParametersToMldev(this.apiClient, params);
-      path20 = formatMap("{name}", body["_url"]);
+      path21 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -97265,16 +97323,16 @@ var Models = class extends BaseModule {
   async countTokens(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = countTokensParametersToVertex(this.apiClient, params);
-      path20 = formatMap("{model}:countTokens", body["_url"]);
+      path21 = formatMap("{model}:countTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -97297,12 +97355,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = countTokensParametersToMldev(this.apiClient, params);
-      path20 = formatMap("{model}:countTokens", body["_url"]);
+      path21 = formatMap("{model}:countTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -97346,16 +97404,16 @@ var Models = class extends BaseModule {
   async computeTokens(params) {
     var _a2, _b;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = computeTokensParametersToVertex(this.apiClient, params);
-      path20 = formatMap("{model}:computeTokens", body["_url"]);
+      path21 = formatMap("{model}:computeTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -97386,16 +97444,16 @@ var Models = class extends BaseModule {
   async generateVideosInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateVideosParametersToVertex(this.apiClient, params);
-      path20 = formatMap("{model}:predictLongRunning", body["_url"]);
+      path21 = formatMap("{model}:predictLongRunning", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -97412,12 +97470,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateVideosParametersToMldev(this.apiClient, params);
-      path20 = formatMap("{model}:predictLongRunning", body["_url"]);
+      path21 = formatMap("{model}:predictLongRunning", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -97519,16 +97577,16 @@ var Operations = class extends BaseModule {
   async getVideosOperationInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getOperationParametersToVertex(params);
-      path20 = formatMap("{operationName}", body["_url"]);
+      path21 = formatMap("{operationName}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -97540,12 +97598,12 @@ var Operations = class extends BaseModule {
       return response;
     } else {
       const body = getOperationParametersToMldev(params);
-      path20 = formatMap("{operationName}", body["_url"]);
+      path21 = formatMap("{operationName}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -97560,16 +97618,16 @@ var Operations = class extends BaseModule {
   async fetchPredictVideosOperationInternal(params) {
     var _a2, _b;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = fetchPredictOperationParametersToVertex(params);
-      path20 = formatMap("{resourceName}:fetchPredictOperation", body["_url"]);
+      path21 = formatMap("{resourceName}:fetchPredictOperation", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -98257,20 +98315,20 @@ var Tokens = class extends BaseModule {
   async create(params) {
     var _a2, _b;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("The client.tokens.create method is only supported by the Gemini Developer API.");
     } else {
       const body = createAuthTokenParametersToMldev(this.apiClient, params);
-      path20 = formatMap("auth_tokens", body["_url"]);
+      path21 = formatMap("auth_tokens", body["_url"]);
       queryParams = body["_query"];
       delete body["config"];
       delete body["_url"];
       delete body["_query"];
       const transformedBody = convertBidiSetupToTokenSetup(body, params.config);
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(transformedBody),
         httpMethod: "POST",
@@ -98380,18 +98438,18 @@ var Documents = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getDocumentParametersToMldev(params);
-      path20 = formatMap("{name}", body["_url"]);
+      path21 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -98412,18 +98470,18 @@ var Documents = class extends BaseModule {
    */
   async delete(params) {
     var _a2, _b;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteDocumentParametersToMldev(params);
-      path20 = formatMap("{name}", body["_url"]);
+      path21 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -98435,18 +98493,18 @@ var Documents = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listDocumentsParametersToMldev(params);
-      path20 = formatMap("{parent}/documents", body["_url"]);
+      path21 = formatMap("{parent}/documents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -98563,18 +98621,18 @@ var FileSearchStores = class extends BaseModule {
   async create(params) {
     var _a2, _b;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createFileSearchStoreParametersToMldev(this.apiClient, params);
-      path20 = formatMap("fileSearchStores", body["_url"]);
+      path21 = formatMap("fileSearchStores", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -98597,18 +98655,18 @@ var FileSearchStores = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getFileSearchStoreParametersToMldev(params);
-      path20 = formatMap("{name}", body["_url"]);
+      path21 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -98629,18 +98687,18 @@ var FileSearchStores = class extends BaseModule {
    */
   async delete(params) {
     var _a2, _b;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteFileSearchStoreParametersToMldev(params);
-      path20 = formatMap("{name}", body["_url"]);
+      path21 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -98652,18 +98710,18 @@ var FileSearchStores = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listFileSearchStoresParametersToMldev(params);
-      path20 = formatMap("fileSearchStores", body["_url"]);
+      path21 = formatMap("fileSearchStores", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -98683,18 +98741,18 @@ var FileSearchStores = class extends BaseModule {
   async uploadToFileSearchStoreInternal(params) {
     var _a2, _b;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = uploadToFileSearchStoreParametersToMldev(params);
-      path20 = formatMap("upload/v1beta/{file_search_store_name}:uploadToFileSearchStore", body["_url"]);
+      path21 = formatMap("upload/v1beta/{file_search_store_name}:uploadToFileSearchStore", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -98722,18 +98780,18 @@ var FileSearchStores = class extends BaseModule {
   async importFile(params) {
     var _a2, _b;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = importFileParametersToMldev(params);
-      path20 = formatMap("{file_search_store_name}:importFile", body["_url"]);
+      path21 = formatMap("{file_search_store_name}:importFile", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -99869,16 +99927,16 @@ var ClientSDK = class {
   }
   _createRequest(context, conf, options) {
     var _a2, _b, _c, _d, _e;
-    const { method, path: path20, query, headers: opHeaders, security } = conf;
+    const { method, path: path21, query, headers: opHeaders, security } = conf;
     const base = (_a2 = conf.baseURL) !== null && _a2 !== void 0 ? _a2 : this._baseURL;
     if (!base) {
       return ERR(new InvalidRequestError("No base URL provided for operation"));
     }
     const baseURL = new URL(base);
     let reqURL;
-    if (path20) {
+    if (path21) {
       baseURL.pathname = baseURL.pathname.replace(/\/+$/, "") + "/";
-      reqURL = new URL(path20, baseURL);
+      reqURL = new URL(path21, baseURL);
       if (!reqURL.search && baseURL.search) {
         reqURL.search = baseURL.search;
       }
@@ -100694,7 +100752,7 @@ async function $do$e(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path20 = pathToFunc("/{api_version}/agents")(pathParams);
+  const path21 = pathToFunc("/{api_version}/agents")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -100725,7 +100783,7 @@ async function $do$e(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path20,
+    path: path21,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -100769,7 +100827,7 @@ async function $do$d(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path20 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
+  const path21 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -100799,7 +100857,7 @@ async function $do$d(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path20,
+    path: path21,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -100843,7 +100901,7 @@ async function $do$c(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path20 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
+  const path21 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -100873,7 +100931,7 @@ async function $do$c(client, id, api_version, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path20,
+    path: path21,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -100915,7 +100973,7 @@ async function $do$b(client, api_version, page_size, page_token, parent, options
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload === null || payload === void 0 ? void 0 : payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path20 = pathToFunc("/{api_version}/agents")(pathParams);
+  const path21 = pathToFunc("/{api_version}/agents")(pathParams);
   const query = encodeFormQuery({
     "page_size": payload === null || payload === void 0 ? void 0 : payload.page_size,
     "page_token": payload === null || payload === void 0 ? void 0 : payload.page_token,
@@ -100950,7 +101008,7 @@ async function $do$b(client, api_version, page_size, page_token, parent, options
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path20,
+    path: path21,
     headers,
     query,
     body,
@@ -101102,7 +101160,7 @@ async function $do$a(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path20 = pathToFunc("/{api_version}/interactions/{id}/cancel")(pathParams);
+  const path21 = pathToFunc("/{api_version}/interactions/{id}/cancel")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -101132,7 +101190,7 @@ async function $do$a(client, id, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path20,
+    path: path21,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -101175,7 +101233,7 @@ async function $do$9(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path20 = pathToFunc("/{api_version}/interactions")(pathParams);
+  const path21 = pathToFunc("/{api_version}/interactions")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: ((_b = input === null || input === void 0 ? void 0 : input.body) === null || _b === void 0 ? void 0 : _b.stream) ? "text/event-stream" : "application/json"
@@ -101206,7 +101264,7 @@ async function $do$9(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path20,
+    path: path21,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -101256,7 +101314,7 @@ async function $do$8(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path20 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
+  const path21 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -101286,7 +101344,7 @@ async function $do$8(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path20,
+    path: path21,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -101336,7 +101394,7 @@ async function $do$7(client, id, stream4, last_event_id, include_input, api_vers
       charEncoding: "percent"
     })
   };
-  const path20 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
+  const path21 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
   const query = encodeFormQuery({
     "include_input": payload.include_input,
     "last_event_id": payload.last_event_id,
@@ -101371,7 +101429,7 @@ async function $do$7(client, id, stream4, last_event_id, include_input, api_vers
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path20,
+    path: path21,
     headers,
     query,
     body,
@@ -101445,7 +101503,7 @@ async function $do$6(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path20 = pathToFunc("/{api_version}/webhooks")(pathParams);
+  const path21 = pathToFunc("/{api_version}/webhooks")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -101476,7 +101534,7 @@ async function $do$6(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path20,
+    path: path21,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -101520,7 +101578,7 @@ async function $do$5(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path20 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path21 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -101550,7 +101608,7 @@ async function $do$5(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path20,
+    path: path21,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -101594,7 +101652,7 @@ async function $do$4(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path20 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path21 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -101624,7 +101682,7 @@ async function $do$4(client, id, api_version, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path20,
+    path: path21,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -101665,7 +101723,7 @@ async function $do$3(client, api_version, page_size, page_token, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload === null || payload === void 0 ? void 0 : payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path20 = pathToFunc("/{api_version}/webhooks")(pathParams);
+  const path21 = pathToFunc("/{api_version}/webhooks")(pathParams);
   const query = encodeFormQuery({
     "page_size": payload === null || payload === void 0 ? void 0 : payload.page_size,
     "page_token": payload === null || payload === void 0 ? void 0 : payload.page_token
@@ -101699,7 +101757,7 @@ async function $do$3(client, api_version, page_size, page_token, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path20,
+    path: path21,
     headers,
     query,
     body,
@@ -101745,7 +101803,7 @@ async function $do$2(client, id, api_version, body, options) {
       charEncoding: "percent"
     })
   };
-  const path20 = pathToFunc("/{api_version}/webhooks/{id}:ping")(pathParams);
+  const path21 = pathToFunc("/{api_version}/webhooks/{id}:ping")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -101776,7 +101834,7 @@ async function $do$2(client, id, api_version, body, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path20,
+    path: path21,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -101821,7 +101879,7 @@ async function $do$1(client, id, api_version, body, options) {
       charEncoding: "percent"
     })
   };
-  const path20 = pathToFunc("/{api_version}/webhooks/{id}:rotateSigningSecret")(pathParams);
+  const path21 = pathToFunc("/{api_version}/webhooks/{id}:rotateSigningSecret")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -101852,7 +101910,7 @@ async function $do$1(client, id, api_version, body, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path20,
+    path: path21,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -101898,7 +101956,7 @@ async function $do(client, id, api_version, update_mask, body, options) {
       charEncoding: "percent"
     })
   };
-  const path20 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path21 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const query = encodeFormQuery({
     "update_mask": payload.update_mask
   });
@@ -101932,7 +101990,7 @@ async function $do(client, id, api_version, update_mask, body, options) {
     security: requestSecurity,
     method: "PATCH",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path20,
+    path: path21,
     headers,
     query,
     body: body$,
@@ -103948,16 +104006,16 @@ var Tunings = class extends BaseModule {
   async getInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getTuningJobParametersToVertex(params);
-      path20 = formatMap("{name}", body["_url"]);
+      path21 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -103978,12 +104036,12 @@ var Tunings = class extends BaseModule {
       });
     } else {
       const body = getTuningJobParametersToMldev(params);
-      path20 = formatMap("{name}", body["_url"]);
+      path21 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -104007,16 +104065,16 @@ var Tunings = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listTuningJobsParametersToVertex(params);
-      path20 = formatMap("tuningJobs", body["_url"]);
+      path21 = formatMap("tuningJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -104055,16 +104113,16 @@ var Tunings = class extends BaseModule {
   async cancel(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = cancelTuningJobParametersToVertex(params);
-      path20 = formatMap("{name}:cancel", body["_url"]);
+      path21 = formatMap("{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -104087,12 +104145,12 @@ var Tunings = class extends BaseModule {
       });
     } else {
       const body = cancelTuningJobParametersToMldev(params);
-      path20 = formatMap("{name}:cancel", body["_url"]);
+      path21 = formatMap("{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -104118,16 +104176,16 @@ var Tunings = class extends BaseModule {
   async tuneInternal(params) {
     var _a2, _b;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createTuningJobParametersPrivateToVertex(params, params);
-      path20 = formatMap("tuningJobs", body["_url"]);
+      path21 = formatMap("tuningJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -104153,18 +104211,18 @@ var Tunings = class extends BaseModule {
   async tuneMldevInternal(params) {
     var _a2, _b;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createTuningJobParametersPrivateToMldev(params);
-      path20 = formatMap("tunedModels", body["_url"]);
+      path21 = formatMap("tunedModels", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -104188,16 +104246,16 @@ var Tunings = class extends BaseModule {
   async validateReward(params) {
     var _a2, _b;
     let response;
-    let path20 = "";
+    let path21 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = validateRewardParametersToVertex(params);
-      path20 = formatMap("{parent}/tuningJobs:validateReinforcementTuningReward", body["_url"]);
+      path21 = formatMap("{parent}/tuningJobs:validateReinforcementTuningReward", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path20,
+        path: path21,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -104714,6 +104772,85 @@ function maskApiKey(key) {
   return key.slice(0, 4) + "\u2022\u2022\u2022\u2022" + key.slice(-4);
 }
 
+// services/logisticsConfig.js
+var import_fs12 = __toESM(require("fs"), 1);
+var import_path11 = __toESM(require("path"), 1);
+var CONFIG_PATH = import_path11.default.join(resolveAppRoot(), "data", "logistics_config.json");
+function readJsonFile() {
+  try {
+    if (!import_fs12.default.existsSync(CONFIG_PATH)) return {};
+    const raw = import_fs12.default.readFileSync(CONFIG_PATH, "utf-8");
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (err) {
+    console.warn("[Logistics config] read failed:", err?.message || err);
+    return {};
+  }
+}
+function loadLogisticsConfig() {
+  const file = readJsonFile();
+  const ghnFile = file.ghn && typeof file.ghn === "object" ? file.ghn : {};
+  const spxFile = file.spx && typeof file.spx === "object" ? file.spx : {};
+  const ghnToken = String(
+    process.env.GHN_TOKEN || process.env.GHN_API_TOKEN || ghnFile.token || ""
+  ).trim();
+  const ghnShopId = String(
+    process.env.GHN_SHOP_ID || process.env.GHN_SHOPID || ghnFile.shopId || ""
+  ).trim();
+  const ghnApiUrl = String(
+    process.env.GHN_API_URL || ghnFile.apiUrl || "https://online-gateway.ghn.vn/shiip/public-api"
+  ).trim().replace(/\/$/, "");
+  const ghnPrintHost = String(
+    process.env.GHN_PRINT_HOST || ghnFile.printHost || "https://online-gateway.ghn.vn"
+  ).trim().replace(/\/$/, "");
+  const spxUserId = String(
+    process.env.SPX_USER_ID || process.env.SPX_APP_ID || spxFile.clientId || spxFile.userId || spxFile.appId || ""
+  ).trim();
+  const spxSecret = String(
+    process.env.SPX_SECRET || process.env.SPX_USER_SECRET || spxFile.clientSecret || spxFile.secret || ""
+  ).trim();
+  const spxMerchantId = String(
+    process.env.SPX_MERCHANT_ID || spxFile.merchantId || ""
+  ).trim();
+  const spxApiUrl = String(
+    process.env.SPX_API_URL || spxFile.apiUrl || "https://spx.vn"
+  ).trim().replace(/\/$/, "");
+  return {
+    ghn: {
+      token: ghnToken,
+      shopId: ghnShopId,
+      apiUrl: ghnApiUrl,
+      printHost: ghnPrintHost,
+      service: String(ghnFile.service || "standard").trim() || "standard",
+      connected: Boolean(ghnToken)
+    },
+    spx: {
+      userId: spxUserId,
+      secret: spxSecret,
+      merchantId: spxMerchantId,
+      apiUrl: spxApiUrl,
+      connected: Boolean(spxUserId && spxSecret)
+    }
+  };
+}
+function saveLogisticsConfig(partial) {
+  const current = readJsonFile();
+  const next = {
+    ghn: { ...current.ghn || {}, ...partial?.ghn || {} },
+    spx: { ...current.spx || {}, ...partial?.spx || {} },
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  import_fs12.default.mkdirSync(import_path11.default.dirname(CONFIG_PATH), { recursive: true });
+  import_fs12.default.writeFileSync(CONFIG_PATH, JSON.stringify(next, null, 2), "utf-8");
+  return loadLogisticsConfig();
+}
+function maskSecret(value) {
+  const s2 = String(value || "").trim();
+  if (!s2) return "";
+  if (s2.length <= 8) return "\u2022\u2022\u2022\u2022";
+  return `${s2.slice(0, 4)}\u2022\u2022\u2022\u2022${s2.slice(-4)}`;
+}
+
 // controllers/settingsController.js
 var ai = null;
 function getGeminiClient() {
@@ -104914,6 +105051,70 @@ async function postShopConnectionStatus(req, res) {
     });
   }
 }
+async function getLogisticsSettings(_req, res) {
+  try {
+    const cfg = loadLogisticsConfig();
+    return res.json({
+      success: true,
+      ghn: {
+        connected: cfg.ghn.connected,
+        shopId: cfg.ghn.shopId,
+        tokenMasked: maskSecret(cfg.ghn.token),
+        hasToken: Boolean(cfg.ghn.token),
+        service: cfg.ghn.service
+      },
+      spx: {
+        connected: cfg.spx.connected,
+        userId: cfg.spx.userId,
+        merchantId: cfg.spx.merchantId,
+        secretMasked: maskSecret(cfg.spx.secret),
+        hasSecret: Boolean(cfg.spx.secret),
+        apiUrl: cfg.spx.apiUrl
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "Kh\xF4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c c\u1EA5u h\xECnh GHN/SPX"
+    });
+  }
+}
+async function saveLogisticsSettings(req, res) {
+  try {
+    const body = req.body || {};
+    const patch = {};
+    if (body.ghn && typeof body.ghn === "object") {
+      patch.ghn = {};
+      if (body.ghn.token != null && String(body.ghn.token).trim() && !String(body.ghn.token).includes("\u2022\u2022\u2022\u2022")) {
+        patch.ghn.token = String(body.ghn.token).trim();
+      }
+      if (body.ghn.shopId != null) patch.ghn.shopId = String(body.ghn.shopId).trim();
+      if (body.ghn.service != null) patch.ghn.service = String(body.ghn.service).trim();
+    }
+    if (body.spx && typeof body.spx === "object") {
+      patch.spx = {};
+      if (body.spx.clientId != null) patch.spx.clientId = String(body.spx.clientId).trim();
+      if (body.spx.userId != null) patch.spx.userId = String(body.spx.userId).trim();
+      if (body.spx.clientSecret != null && String(body.spx.clientSecret).trim() && !String(body.spx.clientSecret).includes("\u2022\u2022\u2022\u2022")) {
+        patch.spx.clientSecret = String(body.spx.clientSecret).trim();
+      }
+      if (body.spx.merchantId != null) patch.spx.merchantId = String(body.spx.merchantId).trim();
+      if (body.spx.apiUrl != null) patch.spx.apiUrl = String(body.spx.apiUrl).trim();
+    }
+    const cfg = saveLogisticsConfig(patch);
+    return res.json({
+      success: true,
+      message: "\u0110\xE3 l\u01B0u c\u1EA5u h\xECnh GHN/SPX tr\xEAn server.",
+      ghnConnected: cfg.ghn.connected,
+      spxConnected: cfg.spx.connected
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "L\u01B0u c\u1EA5u h\xECnh logistics th\u1EA5t b\u1EA1i"
+    });
+  }
+}
 
 // routes/settingsRoutes.js
 var router8 = (0, import_express9.Router)();
@@ -104923,6 +105124,8 @@ router8.get("/gemini-status", getGeminiStatus);
 router8.post("/update-gemini-key", updateGeminiKey);
 router8.post("/test-gemini-key", testGeminiKey);
 router8.post("/shop-connection-status", postShopConnectionStatus);
+router8.get("/logistics", getLogisticsSettings);
+router8.post("/logistics", saveLogisticsSettings);
 var settingsRoutes_default = router8;
 
 // routes/aiRoutes.js
@@ -106003,10 +106206,10 @@ async function scanBulkUpdate(req, res) {
 }
 
 // services/scanBgQueue.js
-var import_fs12 = __toESM(require("fs"), 1);
-var import_path11 = __toESM(require("path"), 1);
+var import_fs13 = __toESM(require("fs"), 1);
+var import_path12 = __toESM(require("path"), 1);
 var APP_ROOT6 = resolveAppRoot();
-var SCAN_BG_QUEUE_PATH = import_path11.default.join(APP_ROOT6, "data", "scan-bg-queue.json");
+var SCAN_BG_QUEUE_PATH = import_path12.default.join(APP_ROOT6, "data", "scan-bg-queue.json");
 var scanBgJobs = [];
 var scanBgJobKeys = /* @__PURE__ */ new Set();
 var scanBgWorkerRunning = false;
@@ -106050,8 +106253,8 @@ function normalizeScanBgKey(code) {
 }
 function loadScanBgQueueFromDisk() {
   try {
-    if (!import_fs12.default.existsSync(SCAN_BG_QUEUE_PATH)) return;
-    const raw = JSON.parse(import_fs12.default.readFileSync(SCAN_BG_QUEUE_PATH, "utf-8"));
+    if (!import_fs13.default.existsSync(SCAN_BG_QUEUE_PATH)) return;
+    const raw = JSON.parse(import_fs13.default.readFileSync(SCAN_BG_QUEUE_PATH, "utf-8"));
     const list = Array.isArray(raw?.jobs) ? raw.jobs : Array.isArray(raw) ? raw : [];
     for (const j of list) {
       const code = String(j?.code || "").trim();
@@ -106094,11 +106297,11 @@ function persistScanBgQueueSoon() {
   scanBgPersistTimer = setTimeout(() => {
     scanBgPersistTimer = null;
     try {
-      import_fs12.default.mkdirSync(import_path11.default.dirname(SCAN_BG_QUEUE_PATH), { recursive: true });
+      import_fs13.default.mkdirSync(import_path12.default.dirname(SCAN_BG_QUEUE_PATH), { recursive: true });
       const pending = scanBgJobs.filter((j) => j.status === "pending" || j.status === "running");
       const recent = scanBgJobs.filter((j) => j.status !== "pending" && j.status !== "running").slice(-80);
       const jobs = [...pending, ...recent];
-      import_fs12.default.writeFileSync(SCAN_BG_QUEUE_PATH, JSON.stringify({ jobs }, null, 0), "utf-8");
+      import_fs13.default.writeFileSync(SCAN_BG_QUEUE_PATH, JSON.stringify({ jobs }, null, 0), "utf-8");
     } catch (err) {
       console.warn("[Scan BG] persist failed:", err?.message || err);
     }
@@ -107973,12 +108176,12 @@ async function bulkChannelSync(req, res) {
 }
 
 // services/shopee/auth.js
-var import_fs13 = __toESM(require("fs"), 1);
-var import_path13 = __toESM(require("path"), 1);
+var import_fs14 = __toESM(require("fs"), 1);
+var import_path14 = __toESM(require("path"), 1);
 var import_crypto = __toESM(require("crypto"), 1);
 
 // services/shopee/client.js
-var import_path12 = __toESM(require("path"), 1);
+var import_path13 = __toESM(require("path"), 1);
 var import_node_module = require("node:module");
 var import_meta = {};
 var SHOPEE_API_MAX_RETRY = 3;
@@ -108003,7 +108206,7 @@ function resolveCreateRequireFilename() {
     if (metaUrl && metaUrl !== "undefined") return metaUrl;
   } catch {
   }
-  return import_path12.default.resolve(process.cwd(), "server.cjs");
+  return import_path13.default.resolve(process.cwd(), "server.cjs");
 }
 var shopeeHttpDispatcher = void 0;
 try {
@@ -108416,9 +108619,9 @@ if (!isShopeeConfigValid()) {
     `[Shopee API] \u26A0\uFE0F SHOPEE_PARTNER_ID (hi\u1EC7n t\u1EA1i: "${SHOPEE_PARTNER_ID || "(r\u1ED7ng)"}") ho\u1EB7c SHOPEE_PARTNER_KEY ch\u01B0a \u0111\u01B0\u1EE3c \u0111i\u1EC1n \u0111\xFAng trong .env. Partner_id ph\u1EA3i l\xE0 m\u1ED9t s\u1ED1 nguy\xEAn (v\xED d\u1EE5: 2001234), l\u1EA5y t\u1EEB App PRODUCTION (Live) tr\xEAn open.shopee.com, KH\xD4NG d\xF9ng Sandbox. M\u1ECDi l\u1EA7n g\u1ECDi API Shopee s\u1EBD b\u1EC3 tr\u1EA3 l\u1ED7i error_param cho \u0111\u1EBFn khi s\u1EEDa \u0111\xFAng gi\xE1 tr\u1ECB n\xE0y.`
   );
 }
-var SHOPEE_TOKENS_PATH = import_path13.default.resolve(APP_ROOT7, "data", "shopee_tokens.json");
-var SHOPEE_OAUTH_LAST_PATH = import_path13.default.resolve(APP_ROOT7, "data", "shopee_oauth_last.json");
-var CHANNEL_SETTINGS_PATH = import_path13.default.resolve(APP_ROOT7, "data", "channel_settings.json");
+var SHOPEE_TOKENS_PATH = import_path14.default.resolve(APP_ROOT7, "data", "shopee_tokens.json");
+var SHOPEE_OAUTH_LAST_PATH = import_path14.default.resolve(APP_ROOT7, "data", "shopee_oauth_last.json");
+var CHANNEL_SETTINGS_PATH = import_path14.default.resolve(APP_ROOT7, "data", "channel_settings.json");
 var CANONICAL_SHOPEE_SHOP_IDS = ["4127421", "831052930"];
 var INDEPENDENT_SHOPEE_SHOP_IDS = new Set(CANONICAL_SHOPEE_SHOP_IDS);
 var deps11 = {
@@ -108431,16 +108634,16 @@ function initShopeeAuth(partial) {
   deps11 = { ...deps11, ...partial };
 }
 function ensureDataDirs() {
-  const dataDir = import_path13.default.join(APP_ROOT7, "data");
-  import_fs13.default.mkdirSync(dataDir, { recursive: true });
-  if (!import_fs13.default.existsSync(SHOPEE_TOKENS_PATH)) {
-    import_fs13.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
+  const dataDir = import_path14.default.join(APP_ROOT7, "data");
+  import_fs14.default.mkdirSync(dataDir, { recursive: true });
+  if (!import_fs14.default.existsSync(SHOPEE_TOKENS_PATH)) {
+    import_fs14.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
   }
 }
 function saveOAuthAudit(entry) {
   try {
     ensureDataDirs();
-    import_fs13.default.writeFileSync(
+    import_fs14.default.writeFileSync(
       SHOPEE_OAUTH_LAST_PATH,
       JSON.stringify({ ...entry, at: (/* @__PURE__ */ new Date()).toISOString() }, null, 2),
       "utf-8"
@@ -108451,8 +108654,8 @@ function saveOAuthAudit(entry) {
 }
 function loadLastOAuthAudit() {
   try {
-    if (!import_fs13.default.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
-    return JSON.parse(import_fs13.default.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
+    if (!import_fs14.default.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
+    return JSON.parse(import_fs14.default.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
   } catch {
     return null;
   }
@@ -108469,13 +108672,13 @@ function bootShopeeAuth() {
     console.error("[Boot] Failed to normalize shopee_tokens.json:", error);
   }
   console.log(
-    `[Boot] APP_ROOT=${APP_ROOT7} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs13.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL2}`
+    `[Boot] APP_ROOT=${APP_ROOT7} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs14.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL2}`
   );
 }
 function loadShopeeTokens() {
   try {
-    if (!import_fs13.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
-    const raw = import_fs13.default.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
+    if (!import_fs14.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
+    const raw = import_fs14.default.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
     if (!raw.trim()) return {};
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
@@ -108509,7 +108712,7 @@ function maskTokenStoreForLog(tokens) {
   return masked;
 }
 function saveShopeeTokens(tokensToWrite) {
-  const absPath = import_path13.default.resolve(SHOPEE_TOKENS_PATH);
+  const absPath = import_path14.default.resolve(SHOPEE_TOKENS_PATH);
   try {
     ensureDataDirs();
     const onDisk = normalizeTokenStore(loadShopeeTokens());
@@ -108546,10 +108749,10 @@ function saveShopeeTokens(tokensToWrite) {
         byteLength: Buffer.byteLength(payload, "utf-8")
       })
     );
-    import_fs13.default.writeFileSync(absPath, payload, "utf-8");
+    import_fs14.default.writeFileSync(absPath, payload, "utf-8");
     console.log(
       "[Shopee Tokens] fs.writeFileSync \u2014 GHI TH\xC0NH C\xD4NG",
-      JSON.stringify({ absPath, keys: keysAfter, fileSize: import_fs13.default.statSync(absPath).size })
+      JSON.stringify({ absPath, keys: keysAfter, fileSize: import_fs14.default.statSync(absPath).size })
     );
     return true;
   } catch (error) {
@@ -108857,8 +109060,8 @@ function saveShopeeTokenForShop(shopId, record) {
 }
 function listChannelSettingsShopIds() {
   try {
-    if (!import_fs13.default.existsSync(CHANNEL_SETTINGS_PATH)) return [];
-    const raw = import_fs13.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
+    if (!import_fs14.default.existsSync(CHANNEL_SETTINGS_PATH)) return [];
+    const raw = import_fs14.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : {};
     const shops = Array.isArray(parsed?.shops) ? parsed.shops : [];
     const ids = [];
@@ -108983,7 +109186,7 @@ function ensureShopeeLinkedShopTokenKeys() {
       delete next[id];
     }
     Object.assign(next, updates);
-    import_fs13.default.writeFileSync(SHOPEE_TOKENS_PATH, JSON.stringify(next, null, 2), "utf8");
+    import_fs14.default.writeFileSync(SHOPEE_TOKENS_PATH, JSON.stringify(next, null, 2), "utf8");
     console.log(
       `[Shopee Tokens] ensureLinkedShopTokenKeys \u2014 upsert=[${Object.keys(updates).join(", ")}] deleted=[${deleteKeys.map((k) => k.replace(/^__delete__/, "")).join(", ")}] pruned=${pruned}`
     );
@@ -110341,15 +110544,15 @@ var mappingRoutes_default = router12;
 var import_express14 = __toESM(require_express2(), 1);
 
 // controllers/ordersController.js
-var import_fs16 = __toESM(require("fs"), 1);
-var import_path16 = __toESM(require("path"), 1);
+var import_fs17 = __toESM(require("fs"), 1);
+var import_path17 = __toESM(require("path"), 1);
 
 // services/orders.js
-var import_fs14 = __toESM(require("fs"), 1);
-var import_path14 = __toESM(require("path"), 1);
+var import_fs15 = __toESM(require("fs"), 1);
+var import_path15 = __toESM(require("path"), 1);
 var APP_ROOT8 = resolveAppRoot();
-var ORDERS_DB_PATH = import_path14.default.join(APP_ROOT8, "data", "orders.json");
-var HANDED_OVER_CLEANUP_MARKER = import_path14.default.join(APP_ROOT8, "data", ".cleanup-handed-over-v2");
+var ORDERS_DB_PATH = import_path15.default.join(APP_ROOT8, "data", "orders.json");
+var HANDED_OVER_CLEANUP_MARKER = import_path15.default.join(APP_ROOT8, "data", ".cleanup-handed-over-v2");
 var deps14 = {
   repairMisassignedTracking: (o) => o,
   repairFalseProcessedReadyToShip: (o) => o,
@@ -110405,11 +110608,11 @@ function rebuildOrderLookupIndex(orders) {
 }
 function loadOrders() {
   try {
-    if (!import_fs14.default.existsSync(ORDERS_DB_PATH)) {
+    if (!import_fs15.default.existsSync(ORDERS_DB_PATH)) {
       orderLookupIndex = rebuildOrderLookupIndex([]);
       return [];
     }
-    const raw = import_fs14.default.readFileSync(ORDERS_DB_PATH, "utf-8");
+    const raw = import_fs15.default.readFileSync(ORDERS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     const orders = Array.isArray(parsed) ? parsed.map(deps14.repairMisassignedTracking) : [];
     orderLookupIndex = rebuildOrderLookupIndex(orders);
@@ -110614,8 +110817,8 @@ function saveOrders(orders) {
         (err) => console.warn("[Orders JSON Mirror] Mongo sync failed:", err?.message || err)
       );
     }
-    import_fs14.default.mkdirSync(import_path14.default.dirname(ORDERS_DB_PATH), { recursive: true });
-    import_fs14.default.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
+    import_fs15.default.mkdirSync(import_path15.default.dirname(ORDERS_DB_PATH), { recursive: true });
+    import_fs15.default.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
     orderLookupIndex = rebuildOrderLookupIndex(sanitized);
     console.log(
       `[Orders DB] WRITE OK \u2014 path=${ORDERS_DB_PATH} count=${sanitized.length}`
@@ -110637,7 +110840,7 @@ async function purgeHandedOverGarbageOrdersOnce(opts) {
   const force = Boolean(opts?.force);
   const orders = loadOrders();
   const garbage = orders.filter(isHandedOverGarbageOrder);
-  if (!force && garbage.length === 0 && import_fs14.default.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
+  if (!force && garbage.length === 0 && import_fs15.default.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
     return { removed: 0, sns: [], skipped: true };
   }
   const sns = garbage.map((o) => String(o.orderSn || o.id || "").trim()).filter(Boolean);
@@ -110667,10 +110870,10 @@ async function purgeHandedOverGarbageOrdersOnce(opts) {
   const stillLeft = loadOrders().filter(isHandedOverGarbageOrder).length;
   if (stillLeft === 0) {
     try {
-      const v1 = import_path14.default.join(APP_ROOT8, "data", ".cleanup-handed-over-v1");
-      if (import_fs14.default.existsSync(v1)) import_fs14.default.unlinkSync(v1);
-      import_fs14.default.mkdirSync(import_path14.default.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
-      import_fs14.default.writeFileSync(
+      const v1 = import_path15.default.join(APP_ROOT8, "data", ".cleanup-handed-over-v1");
+      if (import_fs15.default.existsSync(v1)) import_fs15.default.unlinkSync(v1);
+      import_fs15.default.mkdirSync(import_path15.default.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
+      import_fs15.default.writeFileSync(
         HANDED_OVER_CLEANUP_MARKER,
         JSON.stringify(
           {
@@ -110925,14 +111128,14 @@ async function handOverOrderToCarrierByIndex(orders, index, opts) {
 }
 
 // services/addressBook.js
-var import_fs15 = __toESM(require("fs"), 1);
-var import_path15 = __toESM(require("path"), 1);
-var FILE_PATH = import_path15.default.join(resolveAppRoot(), "data", "address_book.json");
+var import_fs16 = __toESM(require("fs"), 1);
+var import_path16 = __toESM(require("path"), 1);
+var FILE_PATH = import_path16.default.join(resolveAppRoot(), "data", "address_book.json");
 var MAX_ENTRIES = 200;
 function readBook() {
   try {
-    if (!import_fs15.default.existsSync(FILE_PATH)) return [];
-    const raw = import_fs15.default.readFileSync(FILE_PATH, "utf-8");
+    if (!import_fs16.default.existsSync(FILE_PATH)) return [];
+    const raw = import_fs16.default.readFileSync(FILE_PATH, "utf-8");
     const data = JSON.parse(raw);
     return Array.isArray(data) ? data : [];
   } catch {
@@ -110940,9 +111143,9 @@ function readBook() {
   }
 }
 function writeBook(list) {
-  const dir = import_path15.default.dirname(FILE_PATH);
-  if (!import_fs15.default.existsSync(dir)) import_fs15.default.mkdirSync(dir, { recursive: true });
-  import_fs15.default.writeFileSync(FILE_PATH, JSON.stringify(list, null, 2), "utf-8");
+  const dir = import_path16.default.dirname(FILE_PATH);
+  if (!import_fs16.default.existsSync(dir)) import_fs16.default.mkdirSync(dir, { recursive: true });
+  import_fs16.default.writeFileSync(FILE_PATH, JSON.stringify(list, null, 2), "utf-8");
 }
 function saveAddressBookEntry(entry) {
   const list = readBook();
@@ -110969,6 +111172,347 @@ function saveAddressBookEntry(entry) {
   return next;
 }
 
+// services/ghnLogistics.js
+var TIMEOUT_MS = 15e3;
+var PRINT_FORMATS = {
+  a5: "printA5",
+  a6: "printA6",
+  "80x80": "print80x80",
+  "52x70": "print52x70"
+};
+function sleep4(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+function ghnCreds() {
+  const { ghn } = loadLogisticsConfig();
+  return ghn;
+}
+async function ghnFetch2(apiUrl, path21, { method = "POST", token, shopId, body } = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const headers = {
+    "Content-Type": "application/json",
+    Token: String(token || "").trim()
+  };
+  if (shopId) headers.ShopId = String(shopId).trim();
+  try {
+    const res = await fetch(`${apiUrl}${path21}`, {
+      method,
+      headers,
+      body: body != null ? JSON.stringify(body) : void 0,
+      signal: controller.signal
+    });
+    const text = await res.text();
+    let json2 = null;
+    try {
+      json2 = JSON.parse(text);
+    } catch {
+      json2 = { raw: text };
+    }
+    return { ok: res.ok, status: res.status, json: json2 };
+  } catch (err) {
+    if (err?.name === "AbortError") {
+      throw new Error(`GHN API timeout (>${TIMEOUT_MS}ms) ${path21}`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function requiredNoteFromText(note) {
+  const s2 = String(note || "").toUpperCase();
+  if (s2.includes("THU HANG") || s2.includes("TH\u1EEC")) return "CHOTHUHANG";
+  if (s2.includes("KHONGCHOXEM") || s2.includes("KH\xD4NG CHO XEM")) return "KHONGCHOXEMHANG";
+  return "CHOXEMHANGKHONGTHU";
+}
+async function createGhnShippingOrder({
+  clientOrderCode,
+  customer,
+  address,
+  items,
+  weightGrams,
+  codAmount,
+  note,
+  shippingFeePayer
+}) {
+  const creds = ghnCreds();
+  if (!creds.token) {
+    throw new Error("Thi\u1EBFu GHN_TOKEN. V\xE0o C\xE0i \u0111\u1EB7t \u2192 l\u01B0u Token GHN ho\u1EB7c set env GHN_TOKEN.");
+  }
+  if (!creds.shopId) {
+    throw new Error("Thi\u1EBFu GHN_SHOP_ID. V\xE0o C\xE0i \u0111\u1EB7t \u2192 l\u01B0u Shop ID GHN ho\u1EB7c set env GHN_SHOP_ID.");
+  }
+  const districtId = Number(address?.districtCode || address?.to_district_id);
+  const wardCode = String(address?.wardCode || address?.to_ward_code || "").trim();
+  const toAddress = String(address?.street || address?.fullAddress || "").trim();
+  const serviceTypeId = creds.service === "fast" ? 1 : 2;
+  const paymentTypeId = shippingFeePayer === "shop" ? 1 : 2;
+  const weight = Math.max(1, Math.round(Number(weightGrams) || 500));
+  const itemRows = (Array.isArray(items) ? items : []).slice(0, 50).map((it) => ({
+    name: String(it.productTitle || it.name || "H\xE0ng h\xF3a").slice(0, 120),
+    code: String(it.sku || it.productId || "").slice(0, 50),
+    quantity: Math.max(1, Math.round(Number(it.quantity) || 1)),
+    price: Math.max(0, Math.round(Number(it.price) || 0)),
+    weight: Math.max(1, Math.round(weight / Math.max(1, items.length)))
+  }));
+  const body = {
+    payment_type_id: paymentTypeId,
+    required_note: requiredNoteFromText(note),
+    client_order_code: String(clientOrderCode || "").slice(0, 50),
+    to_name: String(customer?.name || "").slice(0, 80),
+    to_phone: String(customer?.phone || "").replace(/\s+/g, "").slice(0, 20),
+    to_address: toAddress.slice(0, 200),
+    to_ward_code: wardCode,
+    to_ward_name: String(address?.ward || "").trim(),
+    to_district_name: String(address?.district || "").trim(),
+    to_province_name: String(address?.province || "").trim(),
+    cod_amount: Math.max(0, Math.round(Number(codAmount) || 0)),
+    weight,
+    length: 10,
+    width: 10,
+    height: 10,
+    service_type_id: serviceTypeId,
+    note: String(note || "").slice(0, 200),
+    content: itemRows.map((r2) => r2.name).join(", ").slice(0, 200),
+    items: itemRows
+  };
+  if (Number.isFinite(districtId) && districtId > 0) {
+    body.to_district_id = districtId;
+  }
+  const result = await ghnFetch2(creds.apiUrl, "/v2/shipping-order/create", {
+    token: creds.token,
+    shopId: creds.shopId,
+    body
+  });
+  const code = Number(result.json?.code);
+  const orderCode = String(
+    result.json?.data?.order_code || result.json?.data?.order_codes?.[0] || ""
+  ).trim();
+  if (!result.ok || code !== 200 || !orderCode) {
+    const msg = result.json?.message || result.json?.code_message || result.json?.msg || `GHN t\u1EA1o \u0111\u01A1n th\u1EA5t b\u1EA1i (HTTP ${result.status})`;
+    throw new Error(String(msg));
+  }
+  return {
+    provider: "ghn",
+    trackingNo: orderCode,
+    orderCode,
+    fee: Number(result.json?.data?.total_fee || result.json?.data?.fee || 0) || 0,
+    expectedDelivery: result.json?.data?.expected_delivery_time || null,
+    raw: result.json?.data || null
+  };
+}
+async function getGhnPrintUrl(orderCode, format = "a5") {
+  const creds = ghnCreds();
+  if (!creds.token) {
+    throw new Error("Thi\u1EBFu GHN_TOKEN \u0111\u1EC3 in v\u1EADn \u0111\u01A1n.");
+  }
+  const code = String(orderCode || "").trim();
+  if (!code) throw new Error("Thi\u1EBFu m\xE3 v\u1EADn \u0111\u01A1n GHN (order_code).");
+  const key = String(format || "a5").toLowerCase();
+  const printPath = PRINT_FORMATS[key] || PRINT_FORMATS.a5;
+  const result = await ghnFetch2(creds.apiUrl, "/v2/a5/gen-token", {
+    token: creds.token,
+    shopId: creds.shopId || void 0,
+    body: { order_codes: [code] }
+  });
+  const token = String(result.json?.data?.token || "").trim();
+  if (!token) {
+    const msg = result.json?.message || result.json?.code_message || `GHN gen-token th\u1EA5t b\u1EA1i (HTTP ${result.status})`;
+    throw new Error(String(msg));
+  }
+  await sleep4(80);
+  const url2 = `${creds.printHost}/a5/public-api/${printPath}?token=${encodeURIComponent(token)}`;
+  return { url: url2, token, format: printPath, expiresInSec: 1800 };
+}
+
+// services/spxLogistics.js
+var import_crypto2 = __toESM(require("crypto"), 1);
+var TIMEOUT_MS2 = 15e3;
+function sleep5(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+function spxCreds() {
+  const { spx } = loadLogisticsConfig();
+  return spx;
+}
+function signBody(appId, secret, timestamp, rawBody) {
+  const payload = `${appId}${timestamp}${rawBody}`;
+  return import_crypto2.default.createHmac("sha256", String(secret)).update(payload).digest("hex");
+}
+async function spxFetch(apiUrl, path21, bodyObj) {
+  const creds = spxCreds();
+  if (!creds.userId || !creds.secret) {
+    throw new Error(
+      "Thi\u1EBFu SPX User ID / Secret. V\xE0o C\xE0i \u0111\u1EB7t \u2192 l\u01B0u SPX ho\u1EB7c set env SPX_USER_ID + SPX_SECRET."
+    );
+  }
+  const rawBody = JSON.stringify(bodyObj || {});
+  const timestamp = String(Math.floor(Date.now() / 1e3));
+  const sign = signBody(creds.userId, creds.secret, timestamp, rawBody);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS2);
+  try {
+    const res = await fetch(`${apiUrl}${path21}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "app-id": creds.userId,
+        appid: creds.userId,
+        timestamp,
+        sign
+      },
+      body: rawBody,
+      signal: controller.signal
+    });
+    const text = await res.text();
+    let json2 = null;
+    try {
+      json2 = JSON.parse(text);
+    } catch {
+      json2 = { raw: text };
+    }
+    return { ok: res.ok, status: res.status, json: json2 };
+  } catch (err) {
+    if (err?.name === "AbortError") {
+      throw new Error(`SPX API timeout (>${TIMEOUT_MS2}ms) ${path21}`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function isSpxSuccess(json2) {
+  const ret = json2?.ret_code ?? json2?.retcode ?? json2?.code;
+  if (ret === 0 || ret === "0" || ret === 200) return true;
+  if (json2?.success === true) return true;
+  return false;
+}
+function pickTracking(data) {
+  if (!data || typeof data !== "object") return "";
+  const list = data.orders || data.order_list || data.tracking_no_list || data.data;
+  const first = Array.isArray(list) ? list[0] : data;
+  return String(
+    first?.tracking_no || first?.tracking_number || first?.waybill_no || first?.spx_tn || data.tracking_no || data.tracking_number || ""
+  ).trim();
+}
+function pickWaybill(data) {
+  if (!data || typeof data !== "object") return { url: "", base64: "" };
+  const list = data.awb_list || data.waybill_list || data.orders || data.list;
+  const first = Array.isArray(list) ? list[0] : data;
+  const url2 = String(
+    first?.awb_url || first?.waybill_url || first?.pdf_url || first?.file_url || first?.print_url || data.awb_url || data.waybill_url || data.pdf_url || ""
+  ).trim();
+  const base64 = String(
+    first?.awb_file || first?.awb_base64 || first?.file_data || first?.pdf_base64 || first?.label_base64 || data.awb_file || data.file_data || ""
+  ).trim();
+  return { url: url2, base64 };
+}
+async function createSpxShippingOrder({
+  clientOrderCode,
+  customer,
+  address,
+  items,
+  weightGrams,
+  codAmount,
+  note
+}) {
+  const creds = spxCreds();
+  const apiUrl = creds.apiUrl;
+  const itemName = (Array.isArray(items) ? items : []).map((it) => String(it.productTitle || it.name || "H\xE0ng").slice(0, 80)).join(", ").slice(0, 200);
+  const body = {
+    orders: [
+      {
+        order_id: String(clientOrderCode || "").slice(0, 50),
+        merchant_id: creds.merchantId || void 0,
+        payment_role: 0,
+        cod_collection: Number(codAmount) > 0 ? 1 : 0,
+        cod_amount: Math.max(0, Math.round(Number(codAmount) || 0)),
+        item_name: itemName || "Hang hoa",
+        item_weight: Math.max(1, Math.round(Number(weightGrams) || 500)),
+        parcel_weight: Math.max(1, Math.round(Number(weightGrams) || 500)),
+        remark: String(note || "").slice(0, 200),
+        deliver_info: {
+          deliver_name: String(customer?.name || "").slice(0, 80),
+          deliver_phone: String(customer?.phone || "").replace(/\s+/g, "").slice(0, 20),
+          deliver_detail_address: String(address?.street || "").trim(),
+          deliver_address: [
+            address?.street,
+            address?.ward,
+            address?.district,
+            address?.province
+          ].filter(Boolean).join(", "),
+          deliver_ward: String(address?.ward || "").trim(),
+          deliver_district: String(address?.district || "").trim(),
+          deliver_province: String(address?.province || "").trim(),
+          deliver_ward_id: String(address?.wardCode || "").trim(),
+          deliver_district_id: String(address?.districtCode || "").trim(),
+          deliver_province_id: String(address?.provinceCode || "").trim()
+        }
+      }
+    ]
+  };
+  const paths = [
+    "/open/api/v1/order/create_order",
+    "/open/api/v1/order/batch_create_order",
+    "/open/api/order/create_order"
+  ];
+  let lastErr = "SPX t\u1EA1o \u0111\u01A1n th\u1EA5t b\u1EA1i";
+  for (let i2 = 0; i2 < paths.length; i2 += 1) {
+    if (i2 > 0) await sleep5(250);
+    const result = await spxFetch(apiUrl, paths[i2], body);
+    if (isSpxSuccess(result.json)) {
+      const trackingNo = pickTracking(result.json?.data || result.json);
+      if (trackingNo) {
+        return {
+          provider: "spx",
+          trackingNo,
+          orderCode: trackingNo,
+          raw: result.json?.data || result.json
+        };
+      }
+      lastErr = "SPX t\u1EA1o \u0111\u01A1n xong nh\u01B0ng kh\xF4ng tr\u1EA3 tracking_no";
+      continue;
+    }
+    lastErr = result.json?.message || result.json?.msg || result.json?.error || `SPX ${paths[i2]} HTTP ${result.status}`;
+  }
+  throw new Error(String(lastErr));
+}
+async function getSpxWaybill(trackingNo) {
+  const creds = spxCreds();
+  const tn = String(trackingNo || "").trim();
+  if (!tn) throw new Error("Thi\u1EBFu m\xE3 v\u1EADn \u0111\u01A1n SPX (tracking_no).");
+  const payloads = [
+    { tracking_no_list: [tn] },
+    { tracking_nos: [tn] },
+    { order_list: [{ tracking_no: tn }] },
+    { tracking_no: tn }
+  ];
+  const paths = [
+    "/open/api/v1/order/batch_get_awb",
+    "/open/api/v1/order/get_awb",
+    "/open/api/order/batch_get_awb",
+    "/open/api/v1/order/print_label"
+  ];
+  let lastErr = "SPX kh\xF4ng tr\u1EA3 waybill";
+  for (let p = 0; p < paths.length; p += 1) {
+    for (let b = 0; b < payloads.length; b += 1) {
+      if (p + b > 0) await sleep5(200);
+      const result = await spxFetch(creds.apiUrl, paths[p], payloads[b]);
+      if (!isSpxSuccess(result.json) && result.status >= 400) {
+        lastErr = result.json?.message || result.json?.msg || `SPX ${paths[p]} HTTP ${result.status}`;
+        continue;
+      }
+      const picked = pickWaybill(result.json?.data || result.json);
+      if (picked.url || picked.base64) {
+        return { ...picked, trackingNo: tn, raw: result.json?.data || null };
+      }
+      lastErr = result.json?.message || result.json?.msg || "SPX waybill r\u1ED7ng (kh\xF4ng c\xF3 awb_url / file_data)";
+    }
+  }
+  throw new Error(String(lastErr));
+}
+
 // controllers/ordersController.js
 var APP_ROOT9 = resolveAppRoot();
 function hasOrderPdfOnDisk(order) {
@@ -110981,7 +111525,7 @@ function hasOrderPdfOnDisk(order) {
     } catch {
     }
     const fromUrl = value.match(/\/api\/public\/labels\/([^/?#]+)/i)?.[1];
-    const filename = import_path16.default.basename(fromUrl || value);
+    const filename = import_path17.default.basename(fromUrl || value);
     if (/\.pdf$/i.test(filename)) filenames.add(filename);
   };
   addFilename(order?.pdfFilename);
@@ -110998,7 +111542,7 @@ function hasOrderPdfOnDisk(order) {
     filenames.add(`${orderSn}.pdf`);
   }
   for (const filename of filenames) {
-    if (import_fs16.default.existsSync(import_path16.default.join(PDF_DIR, filename))) return true;
+    if (import_fs17.default.existsSync(import_path17.default.join(PDF_DIR, filename))) return true;
   }
   return false;
 }
@@ -111099,6 +111643,31 @@ var deps15 = {
   buildCarrierLogisticsPayload: () => null,
   generateCarrierTracking: () => ""
 };
+var EXTERNAL_STATUS_MAP = {
+  created: { status: "unprocessed", shopee: "EXTERNAL_CREATED", label: "\u0110\xE3 t\u1EA1o \u0111\u01A1n" },
+  shipping: { status: "shipping", shopee: "EXTERNAL_SHIPPING", label: "\u0110ang giao" },
+  delivered: { status: "completed", shopee: "EXTERNAL_DELIVERED", label: "Giao th\xE0nh c\xF4ng" },
+  rts: { status: "cancelled", shopee: "EXTERNAL_RTS", label: "Giao kh\xF4ng th\xE0nh c\xF4ng / RTS" }
+};
+function mapExternalStatus(raw) {
+  const key = String(raw || "created").toLowerCase();
+  return EXTERNAL_STATUS_MAP[key] || EXTERNAL_STATUS_MAP.created;
+}
+function carrierDisplayName(carrier) {
+  if (carrier === "ghn") return "Giao H\xE0ng Nhanh";
+  if (carrier === "spx") return "SPX Express";
+  return "T\u1EF1 giao h\xE0ng";
+}
+async function persistExternalOrder(order) {
+  if (!isMongoReady()) {
+    throw new Error("mongodb_not_ready");
+  }
+  await persistChangedOrdersPatch([order]);
+  try {
+    invalidateTabCountCache();
+  } catch {
+  }
+}
 var ordersRefreshInFlight = null;
 var ordersRefreshCache = null;
 var ordersRefreshCoalesce = /* @__PURE__ */ new Map();
@@ -111730,8 +112299,8 @@ async function cleanupHandedOver(req, res) {
   try {
     for (const name of [".cleanup-handed-over-v1", ".cleanup-handed-over-v2"]) {
       try {
-        const p = import_path16.default.join(APP_ROOT9, "data", name);
-        if (import_fs16.default.existsSync(p)) import_fs16.default.unlinkSync(p);
+        const p = import_path17.default.join(APP_ROOT9, "data", name);
+        if (import_fs17.default.existsSync(p)) import_fs17.default.unlinkSync(p);
       } catch {
       }
     }
@@ -113012,11 +113581,26 @@ async function createManualOrder(req, res) {
       0
     );
     const feeToCollect = shippingFeePayer === "customer" ? Number(shippingFee) : 0;
-    const totalAmount = subtotal + feeToCollect - Number(orderDiscount);
+    const totalAmount = Math.max(0, subtotal + feeToCollect - Number(orderDiscount));
     const fullAddress = [addr.street, addr.ward, addr.district, addr.province].filter(Boolean).join(", ");
-    const trackingNumber = deps15.generateCarrierTracking(carrier);
-    const logisticsPayload = carrier !== "self" ? deps15.buildCarrierLogisticsPayload(
-      carrier,
+    const orderSn = `DON-NGOAI-${Date.now().toString(36).toUpperCase()}`;
+    const orderId = `ext-${orderSn}`;
+    const provider = carrier === "ghn" || carrier === "spx" ? carrier : "self";
+    const mapped = mapExternalStatus("created");
+    const lineItems = items.slice(0, 80).map((it) => ({
+      productId: String(it.productId || ""),
+      productTitle: String(it.productTitle || it.name || ""),
+      name: String(it.productTitle || it.name || ""),
+      productImage: it.productImage || "",
+      sku: String(it.sku || ""),
+      quantity: Number(it.quantity) || 0,
+      price: Number(it.price) || 0
+    }));
+    let trackingNumber = "";
+    let carrierError = "";
+    let logisticsResult = null;
+    const logisticsPayload = provider !== "self" ? deps15.buildCarrierLogisticsPayload(
+      provider,
       { name, phone },
       {
         street: addr.street.trim(),
@@ -113035,14 +113619,53 @@ async function createManualOrder(req, res) {
     ) : null;
     if (logisticsPayload) {
       console.log(
-        `[Logistics ${carrier.toUpperCase()}] Payload \u0111\u1EA9y \u0111\u01A1n:`,
+        `[Logistics ${provider.toUpperCase()}] Payload \u0111\u1EA9y \u0111\u01A1n:`,
         JSON.stringify(logisticsPayload, null, 2)
       );
     }
+    if (provider === "ghn") {
+      try {
+        logisticsResult = await createGhnShippingOrder({
+          clientOrderCode: orderSn,
+          customer: { name, phone },
+          address: addr,
+          items: lineItems,
+          weightGrams: packageWeight,
+          codAmount: totalAmount,
+          note: carrierNotes,
+          shippingFeePayer
+        });
+        trackingNumber = String(logisticsResult.trackingNo || "").trim();
+      } catch (ghnErr) {
+        carrierError = ghnErr?.message || "GHN t\u1EA1o v\u1EADn \u0111\u01A1n th\u1EA5t b\u1EA1i";
+        console.error("[Orders manual] GHN create:", carrierError);
+      }
+    } else if (provider === "spx") {
+      try {
+        logisticsResult = await createSpxShippingOrder({
+          clientOrderCode: orderSn,
+          customer: { name, phone },
+          address: addr,
+          items: lineItems,
+          weightGrams: packageWeight,
+          codAmount: totalAmount,
+          note: carrierNotes
+        });
+        trackingNumber = String(logisticsResult.trackingNo || "").trim();
+      } catch (spxErr) {
+        carrierError = spxErr?.message || "SPX t\u1EA1o v\u1EADn \u0111\u01A1n th\u1EA5t b\u1EA1i";
+        console.error("[Orders manual] SPX create:", carrierError);
+      }
+    }
+    const nowIso = (/* @__PURE__ */ new Date()).toISOString();
     const newOrder = {
-      id: `order-manual-${Date.now()}`,
-      orderSn: `DON-NGOAI-${Math.floor(1e5 + Math.random() * 9e5)}`,
+      id: orderId,
+      _id: orderId,
+      orderSn,
+      order_sn: orderSn,
       channel: "manual",
+      source: "external",
+      shopId: null,
       customerName: name,
       customerPhone: phone,
       customerAddress: fullAddress,
@@ -113057,26 +113680,26 @@ async function createManualOrder(req, res) {
         fullAddress,
         addressMode
       },
-      carrier,
+      carrier: provider,
+      provider,
+      shipping_carrier: carrierDisplayName(provider),
       totalAmount,
       revenue: totalAmount,
-      status: "unprocessed",
-      date: (/* @__PURE__ */ new Date()).toISOString(),
-      trackingNumber,
-      isPrepared: carrier !== "self",
+      cod_amount: totalAmount,
+      status: mapped.status,
+      shopee_order_status: mapped.shopee,
+      external_status: "created",
+      date: nowIso,
+      create_time: nowIso,
+      trackingNumber: trackingNumber || null,
+      tracking_no: trackingNumber || null,
+      isPrepared: false,
       isPrinted: false,
-      items: items.map((it) => ({
-        productId: it.productId,
-        productTitle: it.productTitle,
-        productImage: it.productImage,
-        quantity: Number(it.quantity),
-        price: Number(it.price)
-      })),
-      logisticsPayload
+      items: lineItems,
+      logisticsPayload,
+      carrier_error: carrierError || null
     };
-    const orders = loadOrders();
-    orders.unshift(newOrder);
-    saveOrders(orders);
+    await persistExternalOrder(newOrder);
     let addressBookEntry = null;
     if (save_to_address_book === true || save_to_address_book === "true" || save_to_address_book === 1) {
       try {
@@ -113100,13 +113723,114 @@ async function createManualOrder(req, res) {
       success: true,
       order: newOrder,
       trackingNumber,
+      carrierError: carrierError || null,
       logisticsPayload,
-      addressBookSaved: Boolean(addressBookEntry),
-      orders: orders.filter(deps15.isValidOrder)
+      addressBookSaved: Boolean(addressBookEntry)
     });
   } catch (error) {
     console.error("[Orders manual]", error);
     return res.status(500).json({ error: error.message || "T\u1EA1o \u0111\u01A1n th\u1EE7 c\xF4ng th\u1EA5t b\u1EA1i" });
+  }
+}
+async function printExternalWaybill(req, res) {
+  try {
+    const body = req.body || {};
+    const orderSn = String(body.orderSn || body.order_sn || req.query.orderSn || "").trim().replace(/^ext-/i, "");
+    const format = String(body.format || req.query.format || "a5").toLowerCase();
+    if (!orderSn) {
+      return res.status(400).json({ success: false, error: "Thi\u1EBFu m\xE3 \u0111\u01A1n (orderSn)." });
+    }
+    if (!isMongoReady()) {
+      return res.status(503).json({ success: false, error: "mongodb_not_ready" });
+    }
+    const rows = await loadOrdersFromStore({ orderSns: [orderSn], limit: 1 });
+    const order = rows?.[0] || null;
+    if (!order) {
+      return res.status(404).json({ success: false, error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n ngo\u1EA1i s\xE0n." });
+    }
+    const channel = String(order.channel || "").toLowerCase();
+    if (channel !== "manual") {
+      return res.status(400).json({
+        success: false,
+        error: "Ch\u1EC9 in v\u1EADn \u0111\u01A1n g\u1ED1c cho \u0111\u01A1n ngo\u1EA1i s\xE0n (GHN/SPX)."
+      });
+    }
+    const provider = String(order.provider || order.carrier || "").toLowerCase();
+    const trackingNo = String(order.tracking_no || order.trackingNumber || "").trim();
+    if (!trackingNo) {
+      return res.status(400).json({
+        success: false,
+        error: "\u0110\u01A1n ch\u01B0a c\xF3 m\xE3 v\u1EADn \u0111\u01A1n t\u1EEB h\xE3ng. Kh\xF4ng th\u1EC3 in phi\u1EBFu g\u1ED1c."
+      });
+    }
+    if (provider === "ghn") {
+      const printed = await getGhnPrintUrl(trackingNo, format);
+      return res.json({
+        success: true,
+        provider: "ghn",
+        url: printed.url,
+        format: printed.format,
+        source: "ghn_gen_token"
+      });
+    }
+    if (provider === "spx") {
+      const waybill = await getSpxWaybill(trackingNo);
+      if (waybill.url) {
+        return res.json({
+          success: true,
+          provider: "spx",
+          url: waybill.url,
+          source: "spx_awb_url"
+        });
+      }
+      if (waybill.base64) {
+        const fs21 = await import("fs");
+        const path21 = await import("path");
+        const fileName = `external-${orderSn}.pdf`;
+        const filePath = path21.join(PDF_DIR, fileName);
+        fs21.mkdirSync(PDF_DIR, { recursive: true });
+        const buf = Buffer.from(waybill.base64.replace(/^data:application\/pdf;base64,/i, ""), "base64");
+        fs21.writeFileSync(filePath, buf);
+        const base = `${req.protocol}://${req.get("host") || ""}`.replace(/\/$/, "");
+        const url2 = `${base}/api/orders/external/waybill-file/${encodeURIComponent(orderSn)}`;
+        return res.json({
+          success: true,
+          provider: "spx",
+          url: url2,
+          pdfBase64: waybill.base64.replace(/^data:application\/pdf;base64,/i, ""),
+          source: "spx_awb_base64"
+        });
+      }
+      return res.status(502).json({
+        success: false,
+        error: "SPX kh\xF4ng tr\u1EA3 URL/PDF waybill g\u1ED1c."
+      });
+    }
+    return res.status(400).json({
+      success: false,
+      error: "\u0110\u01A1n t\u1EF1 giao kh\xF4ng c\xF3 phi\u1EBFu g\u1EEDi h\xE0ng chu\u1EA9n b\u01B0u c\u1EE5c."
+    });
+  } catch (error) {
+    console.error("[Orders external print]", error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || "In v\u1EADn \u0111\u01A1n th\u1EA5t b\u1EA1i"
+    });
+  }
+}
+async function streamExternalWaybillFile(req, res) {
+  try {
+    const orderSn = String(req.params.orderSn || "").trim();
+    if (!orderSn) return res.status(400).json({ error: "Thi\u1EBFu m\xE3 \u0111\u01A1n" });
+    const filePath = import_path17.default.join(PDF_DIR, `external-${orderSn}.pdf`);
+    if (!import_fs17.default.existsSync(filePath)) {
+      return res.status(404).json({ error: "Ch\u01B0a c\xF3 file PDF waybill. B\u1EA5m In v\u1EADn \u0111\u01A1n l\u1EA1i." });
+    }
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${orderSn}.pdf"`);
+    return import_fs17.default.createReadStream(filePath).pipe(res);
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Kh\xF4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c PDF" });
   }
 }
 
@@ -115531,7 +116255,7 @@ var genAIKey = "";
 function readGeminiApiKey() {
   return String(process.env.GEMINI_API_KEY || "").trim();
 }
-function sleep4(ms) {
+function sleep6(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 function getClient() {
@@ -115628,7 +116352,7 @@ async function parseAddressWithGemini(rawAddress) {
     } catch (err) {
       lastError = wrapGeminiError(err);
       if (!isModelUnavailable(err) || i2 >= models.length - 1) break;
-      await sleep4(200);
+      await sleep6(200);
     }
   }
   throw wrapGeminiError(lastError);
@@ -115705,10 +116429,10 @@ function getGhnCache() {
   }
   return ghnCache;
 }
-async function ghnFetch2(path20, query) {
+async function ghnFetch3(path21, query) {
   const token = readGhnToken2();
   if (!token) return null;
-  const url2 = new URL(`${GHN_BASE2}${path20}`);
+  const url2 = new URL(`${GHN_BASE2}${path21}`);
   if (query) {
     for (const [key, value] of Object.entries(query)) {
       if (value !== void 0 && value !== "") url2.searchParams.set(key, String(value));
@@ -115726,7 +116450,7 @@ async function ghnFetch2(path20, query) {
       signal: controller.signal
     });
     if (!res.ok) {
-      console.warn(`[GHN Master] ${path20} HTTP ${res.status}`);
+      console.warn(`[GHN Master] ${path21} HTTP ${res.status}`);
       return null;
     }
     const json2 = await res.json();
@@ -115734,9 +116458,9 @@ async function ghnFetch2(path20, query) {
     return Array.isArray(data) ? data : null;
   } catch (err) {
     if (err?.name === "AbortError") {
-      console.warn(`[GHN Master] ${path20} timeout`);
+      console.warn(`[GHN Master] ${path21} timeout`);
     } else {
-      console.warn(`[GHN Master] ${path20}:`, err?.message || err);
+      console.warn(`[GHN Master] ${path21}:`, err?.message || err);
     }
     return null;
   } finally {
@@ -115746,7 +116470,7 @@ async function ghnFetch2(path20, query) {
 async function loadGhnProvinces() {
   const cache = getGhnCache();
   if (cache.provinces.length) return cache.provinces;
-  const rows = await ghnFetch2("/master-data/province");
+  const rows = await ghnFetch3("/master-data/province");
   cache.provinces = (rows || []).map((p) => ({
     name: String(p.ProvinceName || p.province_name || ""),
     id: p.ProvinceID ?? p.province_id,
@@ -115758,7 +116482,7 @@ async function loadGhnDistricts(provinceId) {
   if (!provinceId) return [];
   const cache = getGhnCache();
   if (cache.districts.has(provinceId)) return cache.districts.get(provinceId) || [];
-  const rows = await ghnFetch2("/master-data/district", { province_id: Number(provinceId) || provinceId });
+  const rows = await ghnFetch3("/master-data/district", { province_id: Number(provinceId) || provinceId });
   const list = (rows || []).filter((d) => String(d.ProvinceID ?? d.province_id ?? "") === String(provinceId)).map((d) => ({
     name: String(d.DistrictName || d.district_name || ""),
     id: d.DistrictID ?? d.district_id,
@@ -115771,7 +116495,7 @@ async function loadGhnWards(districtId) {
   if (!districtId) return [];
   const cache = getGhnCache();
   if (cache.wards.has(districtId)) return cache.wards.get(districtId) || [];
-  const rows = await ghnFetch2("/master-data/ward", { district_id: Number(districtId) || districtId });
+  const rows = await ghnFetch3("/master-data/ward", { district_id: Number(districtId) || districtId });
   const list = (rows || []).map((w) => ({
     name: String(w.WardName || w.ward_name || ""),
     id: w.WardCode ?? w.ward_code ?? w.WardID ?? w.ward_id,
@@ -116046,6 +116770,8 @@ router13.post("/hand-over-carrier/bulk", h2(handOverCarrierBulk));
 router13.post("/hand-over-carrier", h2(handOverCarrierByCode));
 router13.post("/heal-handed-over", h2(healHandedOver));
 router13.post("/manual", h2(createManualOrder));
+router13.post("/external/print-waybill", h2(printExternalWaybill));
+router13.get("/external/waybill-file/:orderSn", h2(streamExternalWaybillFile));
 router13.get("/don-hoan-huy", h2(listDonHoanHuy));
 router13.post("/don-hoan-huy", h2(saveScanOrders));
 router13.post("/scan-bg-enqueue", h2(enqueueScanBg));
@@ -117594,9 +118320,9 @@ function isVisitable(thing) {
 function removeBrackets(key) {
   return utils_default.endsWith(key, "[]") ? key.slice(0, -2) : key;
 }
-function renderKey(path20, key, dots) {
-  if (!path20) return key;
-  return path20.concat(key).map(function each(token, i2) {
+function renderKey(path21, key, dots) {
+  if (!path21) return key;
+  return path21.concat(key).map(function each(token, i2) {
     token = removeBrackets(token);
     return !dots && i2 ? "[" + token + "]" : token;
   }).join(dots ? "." : "");
@@ -117682,13 +118408,13 @@ function toFormData2(obj, formData, options) {
       return currentValue;
     });
   }
-  function defaultVisitor(value, key, path20) {
+  function defaultVisitor(value, key, path21) {
     let arr = value;
     if (utils_default.isReactNative(formData) && utils_default.isReactNativeBlob(value)) {
-      formData.append(renderKey(path20, key, dots), convertValue(value));
+      formData.append(renderKey(path21, key, dots), convertValue(value));
       return false;
     }
-    if (value && !path20 && typeof value === "object") {
+    if (value && !path21 && typeof value === "object") {
       if (utils_default.endsWith(key, "{}")) {
         key = metaTokens ? key : key.slice(0, -2);
         value = stringifyWithDepthLimit(value, 1);
@@ -117707,7 +118433,7 @@ function toFormData2(obj, formData, options) {
     if (isVisitable(value)) {
       return true;
     }
-    formData.append(renderKey(path20, key, dots), convertValue(value));
+    formData.append(renderKey(path21, key, dots), convertValue(value));
     return false;
   }
   const exposedHelpers = Object.assign(predicates, {
@@ -117715,17 +118441,17 @@ function toFormData2(obj, formData, options) {
     convertValue,
     isVisitable
   });
-  function build(value, path20, depth = 0) {
+  function build(value, path21, depth = 0) {
     if (utils_default.isUndefined(value)) return;
     throwIfMaxDepthExceeded(depth);
     if (stack.indexOf(value) !== -1) {
-      throw new Error("Circular reference detected in " + path20.join("."));
+      throw new Error("Circular reference detected in " + path21.join("."));
     }
     stack.push(value);
     utils_default.forEach(value, function each(el, key) {
-      const result = !(utils_default.isUndefined(el) || el === null) && visitor.call(formData, el, utils_default.isString(key) ? key.trim() : key, path20, exposedHelpers);
+      const result = !(utils_default.isUndefined(el) || el === null) && visitor.call(formData, el, utils_default.isString(key) ? key.trim() : key, path21, exposedHelpers);
       if (result === true) {
-        build(el, path20 ? path20.concat(key) : [key], depth + 1);
+        build(el, path21 ? path21.concat(key) : [key], depth + 1);
       }
     });
     stack.pop();
@@ -117874,7 +118600,7 @@ var transitional_default = {
 };
 
 // node_modules/axios/lib/platform/node/index.js
-var import_crypto2 = __toESM(require("crypto"), 1);
+var import_crypto3 = __toESM(require("crypto"), 1);
 
 // node_modules/axios/lib/platform/node/classes/URLSearchParams.js
 var import_url = __toESM(require("url"), 1);
@@ -117892,7 +118618,7 @@ var generateString = (size = 16, alphabet = ALPHABET.ALPHA_DIGIT) => {
   let str = "";
   const { length } = alphabet;
   const randomValues = new Uint32Array(size);
-  import_crypto2.default.randomFillSync(randomValues);
+  import_crypto3.default.randomFillSync(randomValues);
   for (let i2 = 0; i2 < size; i2++) {
     str += alphabet[randomValues[i2] % length];
   }
@@ -117937,7 +118663,7 @@ var platform_default = {
 // node_modules/axios/lib/helpers/toURLEncodedForm.js
 function toURLEncodedForm(data, options) {
   return toFormData_default(data, new platform_default.classes.URLSearchParams(), {
-    visitor: function(value, key, path20, helpers) {
+    visitor: function(value, key, path21, helpers) {
       if (platform_default.isNode && utils_default.isBuffer(value)) {
         this.append(key, value.toString("base64"));
         return false;
@@ -117959,14 +118685,14 @@ function throwIfDepthExceeded(index) {
   }
 }
 function parsePropPath(name) {
-  const path20 = [];
+  const path21 = [];
   const pattern = /[^.[\]]+|\[([^.[\]]*)]/g;
   let match2;
   while ((match2 = pattern.exec(name)) !== null) {
-    throwIfDepthExceeded(path20.length);
-    path20.push(match2[0] === "[]" ? "" : match2[1] || match2[0]);
+    throwIfDepthExceeded(path21.length);
+    path21.push(match2[0] === "[]" ? "" : match2[1] || match2[0]);
   }
-  return path20;
+  return path21;
 }
 function arrayToObject(arr) {
   const obj = {};
@@ -117981,12 +118707,12 @@ function arrayToObject(arr) {
   return obj;
 }
 function formDataToJSON(formData) {
-  function buildPath(path20, value, target, index) {
+  function buildPath(path21, value, target, index) {
     throwIfDepthExceeded(index);
-    let name = path20[index++];
+    let name = path21[index++];
     if (name === "__proto__") return true;
     const isNumericKey = Number.isFinite(+name);
-    const isLast = index >= path20.length;
+    const isLast = index >= path21.length;
     name = !name && utils_default.isArray(target) ? target.length : name;
     if (isLast) {
       if (utils_default.hasOwnProp(target, name)) {
@@ -117999,7 +118725,7 @@ function formDataToJSON(formData) {
     if (!utils_default.hasOwnProp(target, name) || !utils_default.isObject(target[name])) {
       target[name] = [];
     }
-    const result = buildPath(path20, value, target[name], index);
+    const result = buildPath(path21, value, target[name], index);
     if (result && utils_default.isArray(target[name])) {
       target[name] = arrayToObject(target[name]);
     }
@@ -118335,7 +119061,7 @@ var import_http = __toESM(require("http"), 1);
 var import_https = __toESM(require("https"), 1);
 var import_http22 = __toESM(require("http2"), 1);
 var import_util3 = __toESM(require("util"), 1);
-var import_path17 = require("path");
+var import_path18 = require("path");
 var import_follow_redirects = __toESM(require_follow_redirects(), 1);
 var import_zlib = __toESM(require("zlib"), 1);
 
@@ -119717,9 +120443,9 @@ var http_default = isHttpAdapterSupported && function httpAdapter(config) {
       auth = urlUsername + ":" + urlPassword;
     }
     auth && headers.delete("authorization");
-    let path20;
+    let path21;
     try {
-      path20 = buildURL(
+      path21 = buildURL(
         parsed.pathname + parsed.search,
         own2("params"),
         own2("paramsSerializer")
@@ -119738,7 +120464,7 @@ var http_default = isHttpAdapterSupported && function httpAdapter(config) {
       false
     );
     const options = Object.assign(/* @__PURE__ */ Object.create(null), {
-      path: path20,
+      path: path21,
       method,
       headers: toByteStringHeaderObject(headers),
       agents: { http: httpAgent, https: httpsAgent },
@@ -119759,9 +120485,9 @@ var http_default = isHttpAdapterSupported && function httpAdapter(config) {
       const allowedSocketPaths = own2("allowedSocketPaths");
       if (allowedSocketPaths != null) {
         const allowed = Array.isArray(allowedSocketPaths) ? allowedSocketPaths : [allowedSocketPaths];
-        const resolvedSocket = (0, import_path17.resolve)(socketPath);
+        const resolvedSocket = (0, import_path18.resolve)(socketPath);
         const isAllowed = allowed.some(
-          (entry) => typeof entry === "string" && (0, import_path17.resolve)(entry) === resolvedSocket
+          (entry) => typeof entry === "string" && (0, import_path18.resolve)(entry) === resolvedSocket
         );
         if (!isAllowed) {
           return reject(
@@ -120140,14 +120866,14 @@ var isURLSameOrigin_default = platform_default.hasStandardBrowserEnv ? /* @__PUR
 var cookies_default = platform_default.hasStandardBrowserEnv ? (
   // Standard browser envs support document.cookie
   {
-    write(name, value, expires, path20, domain, secure, sameSite) {
+    write(name, value, expires, path21, domain, secure, sameSite) {
       if (typeof document === "undefined") return;
       const cookie = [`${name}=${encodeURIComponent(value)}`];
       if (utils_default.isNumber(expires)) {
         cookie.push(`expires=${new Date(expires).toUTCString()}`);
       }
-      if (utils_default.isString(path20)) {
-        cookie.push(`path=${path20}`);
+      if (utils_default.isString(path21)) {
+        cookie.push(`path=${path21}`);
       }
       if (utils_default.isString(domain)) {
         cookie.push(`domain=${domain}`);
@@ -121757,14 +122483,14 @@ async function shopeeAxiosPost(url2, body, context = "shopee_post") {
 }
 
 // services/shopee/categories.js
-var import_fs17 = __toESM(require("fs"), 1);
-var import_path18 = __toESM(require("path"), 1);
+var import_fs18 = __toESM(require("fs"), 1);
+var import_path19 = __toESM(require("path"), 1);
 var CACHE_TTL_MS = 12 * 60 * 60 * 1e3;
 var INVALID_CATEGORY_MSG = "Danh m\u1EE5c c\u0169 c\u1EE7a s\u1EA3n ph\u1EA9m \u0111\xE3 b\u1ECB Shopee thay \u0111\u1ED5i. Vui l\xF2ng ch\u1ECDn l\u1EA1i danh m\u1EE5c m\u1EDBi tr\u01B0\u1EDBc khi \u0111\u0103ng b\xE1n!";
 var SHOPEE_INVALID_CATEGORY_CODE = "product.error_invalid_category";
 var SHOPEE_INVALID_CATEGORY_USER_MSG = INVALID_CATEGORY_MSG;
 function resolveCachePath(appRoot) {
-  return import_path18.default.join(appRoot || process.cwd(), "data", "shopee_categories.json");
+  return import_path19.default.join(appRoot || process.cwd(), "data", "shopee_categories.json");
 }
 function isShopeeInvalidCategoryError(errOrText) {
   const text = String(
@@ -121821,8 +122547,8 @@ function collectShopeeLeafIds(categoryList) {
 function readShopeeCategoryCache(appRoot) {
   const file = resolveCachePath(appRoot);
   try {
-    if (!import_fs17.default.existsSync(file)) return null;
-    const parsed = JSON.parse(import_fs17.default.readFileSync(file, "utf-8"));
+    if (!import_fs18.default.existsSync(file)) return null;
+    const parsed = JSON.parse(import_fs18.default.readFileSync(file, "utf-8"));
     if (!parsed || !Array.isArray(parsed.category_list)) return null;
     return parsed;
   } catch {
@@ -121831,9 +122557,9 @@ function readShopeeCategoryCache(appRoot) {
 }
 function writeShopeeCategoryCache(appRoot, payload) {
   const file = resolveCachePath(appRoot);
-  const dir = import_path18.default.dirname(file);
-  if (!import_fs17.default.existsSync(dir)) import_fs17.default.mkdirSync(dir, { recursive: true });
-  import_fs17.default.writeFileSync(file, JSON.stringify(payload, null, 2), "utf-8");
+  const dir = import_path19.default.dirname(file);
+  if (!import_fs18.default.existsSync(dir)) import_fs18.default.mkdirSync(dir, { recursive: true });
+  import_fs18.default.writeFileSync(file, JSON.stringify(payload, null, 2), "utf-8");
 }
 function isShopeeCategoryCacheFresh(cache, ttlMs = CACHE_TTL_MS) {
   if (!cache?.synced_at) return false;
@@ -122867,12 +123593,12 @@ function writeCpanelCrashLog(kind, err) {
 ${(/* @__PURE__ */ new Date()).toISOString()}
 `;
     const targets = [
-      import_path19.default.join(process.cwd(), "cpanel_error_log.txt"),
-      typeof __dirname !== "undefined" ? import_path19.default.join(__dirname, "cpanel_error_log.txt") : ""
+      import_path20.default.join(process.cwd(), "cpanel_error_log.txt"),
+      typeof __dirname !== "undefined" ? import_path20.default.join(__dirname, "cpanel_error_log.txt") : ""
     ].filter(Boolean);
     for (const file of targets) {
       try {
-        import_fs18.default.writeFileSync(file, line);
+        import_fs19.default.writeFileSync(file, line);
       } catch {
       }
     }
@@ -122906,12 +123632,12 @@ if (isCpanelPassengerRuntime) {
   console.log(`[Boot] runtime=cpanel-production pid=${process.pid}; static dist only, dev middleware disabled.`);
 }
 var dotenvCandidates = [
-  import_path19.default.join(APP_ROOT11, ".env"),
-  import_path19.default.join(process.cwd(), ".env"),
-  import_path19.default.resolve(".env")
+  import_path20.default.join(APP_ROOT11, ".env"),
+  import_path20.default.join(process.cwd(), ".env"),
+  import_path20.default.resolve(".env")
 ];
 for (const envPath of dotenvCandidates) {
-  if (import_fs18.default.existsSync(envPath)) {
+  if (import_fs19.default.existsSync(envPath)) {
     const loaded = import_dotenv2.default.config({ path: envPath });
     if (loaded.error) {
       console.error(`[Config] dotenv l\u1ED7i khi \u0111\u1ECDc ${envPath}:`, loaded.error.message);
@@ -122933,8 +123659,8 @@ console.log(
 function writeCpanelCrashLogToAppRoot(kind, err) {
   try {
     const stack = err instanceof Error ? err.stack || err.message : typeof err === "string" ? err : JSON.stringify(err);
-    import_fs18.default.writeFileSync(
-      import_path19.default.join(APP_ROOT11, "cpanel_error_log.txt"),
+    import_fs19.default.writeFileSync(
+      import_path20.default.join(APP_ROOT11, "cpanel_error_log.txt"),
       `${kind}: ${stack}
 ---
 ${(/* @__PURE__ */ new Date()).toISOString()}
@@ -122957,8 +123683,8 @@ process.on("unhandledRejection", (err) => {
   } catch {
   }
 });
-var WAYBILLS_DIR = import_path19.default.join(APP_ROOT11, "storage", "waybills");
-var LEGACY_PUBLIC_PRINTS_DIR = import_path19.default.join(APP_ROOT11, "public", "prints");
+var WAYBILLS_DIR = import_path20.default.join(APP_ROOT11, "storage", "waybills");
+var LEGACY_PUBLIC_PRINTS_DIR = import_path20.default.join(APP_ROOT11, "public", "prints");
 var WAYBILL_FILE_RE = /\.(pdf|zip|html)$/i;
 var LABEL_DISK_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
 var LABEL_RAM_TTL_MS = 60 * 60 * 1e3;
@@ -122967,47 +123693,47 @@ var LABEL_MEM_MAX_ENTRIES = 48;
 var LABEL_MEM_MAX_BYTES = 96 * 1024 * 1024;
 function ensureLabelsDir() {
   try {
-    if (!import_fs18.default.existsSync(PDF_DIR)) import_fs18.default.mkdirSync(PDF_DIR, { recursive: true });
+    if (!import_fs19.default.existsSync(PDF_DIR)) import_fs19.default.mkdirSync(PDF_DIR, { recursive: true });
   } catch (err) {
     console.error("[Labels] Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c storage/labels:", err);
   }
 }
 function assertLabelsDirWritable() {
   ensureLabelsDir();
-  const probe = import_path19.default.join(PDF_DIR, `.write_probe_${process.pid}`);
+  const probe = import_path20.default.join(PDF_DIR, `.write_probe_${process.pid}`);
   try {
-    import_fs18.default.writeFileSync(probe, "ok");
-    import_fs18.default.unlinkSync(probe);
+    import_fs19.default.writeFileSync(probe, "ok");
+    import_fs19.default.unlinkSync(probe);
   } catch (err) {
     console.error("[Labels] Kh\xF4ng ghi \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c storage/labels:", err);
     throw err instanceof Error ? err : new Error(String(err));
   }
 }
 function safeLabelFilename(raw) {
-  const base = import_path19.default.basename(String(raw || "").trim());
+  const base = import_path20.default.basename(String(raw || "").trim());
   if (!base || base.includes("..") || !/\.pdf$/i.test(base)) return null;
   return base;
 }
 function buildCachedLabelFilename(orderSns) {
   const safe = orderSns.map((sn) => String(sn || "").replace(/[^a-zA-Z0-9_-]/g, "")).filter(Boolean);
   if (safe.length <= 1) return `order_${safe[0] || "unknown"}.pdf`;
-  const digest = import_crypto3.default.createHash("sha1").update([...safe].sort().join("|")).digest("hex").slice(0, 12);
+  const digest = import_crypto4.default.createHash("sha1").update([...safe].sort().join("|")).digest("hex").slice(0, 12);
   return `orders_${safe.length}_${digest}.pdf`;
 }
 function getValidLabelDiskFile(filename) {
   const safe = safeLabelFilename(filename);
   if (!safe) return null;
-  const filePath = import_path19.default.join(PDF_DIR, safe);
+  const filePath = import_path20.default.join(PDF_DIR, safe);
   try {
-    if (!import_fs18.default.existsSync(filePath)) return null;
-    const stat3 = import_fs18.default.statSync(filePath);
+    if (!import_fs19.default.existsSync(filePath)) return null;
+    const stat3 = import_fs19.default.statSync(filePath);
     if (!stat3.isFile() || stat3.size <= 0) return null;
-    const fd = import_fs18.default.openSync(filePath, "r");
+    const fd = import_fs19.default.openSync(filePath, "r");
     try {
       const magic = Buffer.allocUnsafe(4);
-      if (import_fs18.default.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") return null;
+      if (import_fs19.default.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") return null;
     } finally {
-      import_fs18.default.closeSync(fd);
+      import_fs19.default.closeSync(fd);
     }
     return { safe, filePath, size: stat3.size };
   } catch {
@@ -123017,12 +123743,12 @@ function getValidLabelDiskFile(filename) {
 async function getValidLabelDiskFileAsync(filename) {
   const safe = safeLabelFilename(filename);
   if (!safe) return null;
-  const filePath = import_path19.default.join(PDF_DIR, safe);
+  const filePath = import_path20.default.join(PDF_DIR, safe);
   let handle;
   try {
-    const stat3 = await import_fs18.default.promises.stat(filePath);
+    const stat3 = await import_fs19.default.promises.stat(filePath);
     if (!stat3.isFile() || stat3.size <= 0) return null;
-    handle = await import_fs18.default.promises.open(filePath, "r");
+    handle = await import_fs19.default.promises.open(filePath, "r");
     const magic = Buffer.allocUnsafe(4);
     const { bytesRead } = await handle.read(magic, 0, 4, 0);
     if (bytesRead !== 4 || magic.toString() !== "%PDF") return null;
@@ -123067,14 +123793,14 @@ function removeExistingLabelFilesForOrderSns(orderSns) {
   if (sns.length === 0) return 0;
   let deleted = 0;
   try {
-    for (const name of import_fs18.default.readdirSync(PDF_DIR)) {
+    for (const name of import_fs19.default.readdirSync(PDF_DIR)) {
       if (!/\.pdf$/i.test(name)) continue;
       const hit = sns.some(
         (sn) => name === `${sn}.pdf` || name === `order_${sn}.pdf` || name.startsWith(`${sn}_`) || name.startsWith(`order_${sn}_`)
       );
       if (!hit) continue;
       try {
-        import_fs18.default.unlinkSync(import_path19.default.join(PDF_DIR, name));
+        import_fs19.default.unlinkSync(import_path20.default.join(PDF_DIR, name));
         labelMemCache.delete(name);
         deleted += 1;
       } catch {
@@ -123114,11 +123840,11 @@ function putLabelMem(filename, buffer, contentType) {
       expires: Date.now() + LABEL_RAM_TTL_MS,
       contentType: "application/pdf"
     });
-    const dest = import_path19.default.join(PDF_DIR, safe);
+    const dest = import_path20.default.join(PDF_DIR, safe);
     console.log(`[Labels] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${dest}`);
     setImmediate(() => {
       ensureLabelsDir();
-      void import_fs18.default.promises.writeFile(dest, buffer).then(() => {
+      void import_fs19.default.promises.writeFile(dest, buffer).then(() => {
         console.log(`[Labels] K\u1EBFt qu\u1EA3: OK \u2014 Disk ${safe} (${buffer.length} bytes) \u2192 ${dest}`);
       }).catch((err) => {
         console.warn(`[Labels] Ghi \u0111\u0129a n\u1EC1n th\u1EA5t b\u1EA1i ${safe}:`, err?.message || err);
@@ -123142,19 +123868,19 @@ function getLabelMem(filename) {
       return { buf: ram.buf, contentType: ram.contentType || "application/pdf" };
     }
   }
-  const filePath = import_path19.default.join(PDF_DIR, safe);
+  const filePath = import_path20.default.join(PDF_DIR, safe);
   try {
-    if (!import_fs18.default.existsSync(filePath)) return null;
-    const st = import_fs18.default.statSync(filePath);
+    if (!import_fs19.default.existsSync(filePath)) return null;
+    const st = import_fs19.default.statSync(filePath);
     if (!st.isFile() || st.size <= 0) {
       console.warn(`[Labels] B\u1ECF qua file r\u1ED7ng tr\xEAn \u0111\u0129a: ${filePath}`);
       try {
-        import_fs18.default.unlinkSync(filePath);
+        import_fs19.default.unlinkSync(filePath);
       } catch {
       }
       return null;
     }
-    const buf = import_fs18.default.readFileSync(filePath);
+    const buf = import_fs19.default.readFileSync(filePath);
     if (!buf.length || !isPdfBuffer(buf)) return null;
     labelMemCache.set(safe, {
       buf,
@@ -123185,9 +123911,9 @@ function assertLabelFileReady(filename) {
   if (!isPdfBuffer(hit.buf)) {
     throw new Error(`File v\u1EADn \u0111\u01A1n kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7: ${safe}`);
   }
-  const diskPath = import_path19.default.join(PDF_DIR, safe);
-  if (import_fs18.default.existsSync(diskPath)) {
-    const st = import_fs18.default.statSync(diskPath);
+  const diskPath = import_path20.default.join(PDF_DIR, safe);
+  if (import_fs19.default.existsSync(diskPath)) {
+    const st = import_fs19.default.statSync(diskPath);
     if (st.size <= 0) {
       throw new Error(`File v\u1EADn \u0111\u01A1n tr\xEAn \u0111\u0129a r\u1ED7ng (0 bytes): ${diskPath}`);
     }
@@ -123206,13 +123932,13 @@ function cleanupExpiredLabelFiles() {
   try {
     ensureLabelsDir();
     const cutoff = now - LABEL_DISK_TTL_MS;
-    for (const name of import_fs18.default.readdirSync(PDF_DIR)) {
+    for (const name of import_fs19.default.readdirSync(PDF_DIR)) {
       if (!WAYBILL_FILE_RE.test(name)) continue;
-      const full = import_path19.default.join(PDF_DIR, name);
+      const full = import_path20.default.join(PDF_DIR, name);
       try {
-        const st = import_fs18.default.statSync(full);
+        const st = import_fs19.default.statSync(full);
         if (st.size <= 0 || st.mtimeMs < cutoff) {
-          import_fs18.default.unlinkSync(full);
+          import_fs19.default.unlinkSync(full);
           labelMemCache.delete(name);
           deleted += 1;
         }
@@ -123231,11 +123957,11 @@ function wipeLegacyPublicPrints() {
   let deleted = 0;
   for (const dir of [LEGACY_PUBLIC_PRINTS_DIR, WAYBILLS_DIR]) {
     try {
-      if (!import_fs18.default.existsSync(dir)) continue;
-      for (const name of import_fs18.default.readdirSync(dir)) {
+      if (!import_fs19.default.existsSync(dir)) continue;
+      for (const name of import_fs19.default.readdirSync(dir)) {
         if (!WAYBILL_FILE_RE.test(name)) continue;
         try {
-          import_fs18.default.unlinkSync(import_path19.default.join(dir, name));
+          import_fs19.default.unlinkSync(import_path20.default.join(dir, name));
           deleted += 1;
         } catch {
         }
@@ -123271,7 +123997,7 @@ function serveLabelPdfFromMem(filename, res) {
       res.setHeader("Content-Length", String(disk.size));
       res.setHeader("Cache-Control", "private, max-age=300");
       res.setHeader("X-Content-Type-Options", "nosniff");
-      const stream4 = import_fs18.default.createReadStream(disk.filePath);
+      const stream4 = import_fs19.default.createReadStream(disk.filePath);
       stream4.on("error", (err) => {
         console.error(`[Labels] Stream disk l\u1ED7i ${safe}:`, err);
         if (!res.headersSent) res.status(500).end();
@@ -123330,7 +124056,7 @@ function absoluteLabelUrl(relativePath) {
   } else {
     const p = relativePath.startsWith("/") ? relativePath : `/${relativePath}`;
     const fnMatch = p.match(/\/(?:api\/(?:public\/)?labels|labels|prints)\/([^/?#]+)$/i);
-    fn = decodeURIComponent(fnMatch?.[1] || import_path19.default.basename(p));
+    fn = decodeURIComponent(fnMatch?.[1] || import_path20.default.basename(p));
   }
   if (!safeLabelFilename(fn)) return null;
   try {
@@ -128074,9 +128800,9 @@ async function resolvePublishImageBuffer(src) {
   }
   const framedMatch = raw.match(/\/api\/framed-images\/([^/?#]+)/i);
   if (framedMatch) {
-    const filePath = import_path19.default.join(APP_ROOT11, "data", "framed_images", `${decodeURIComponent(framedMatch[1])}.jpg`);
-    if (import_fs18.default.existsSync(filePath)) {
-      return { buf: import_fs18.default.readFileSync(filePath), filename: "item.jpg", mime: "image/jpeg" };
+    const filePath = import_path20.default.join(APP_ROOT11, "data", "framed_images", `${decodeURIComponent(framedMatch[1])}.jpg`);
+    if (import_fs19.default.existsSync(filePath)) {
+      return { buf: import_fs19.default.readFileSync(filePath), filename: "item.jpg", mime: "image/jpeg" };
     }
   }
   let fetchUrl = raw;
@@ -130620,7 +131346,7 @@ async function shopeeDownloadShippingDocument(shopId, accessToken, orderList, fi
   ensureLabelsDir();
   const safe = safeLabelFilename(filename);
   if (!safe) return { error: "invalid_filename", message: "T\xEAn file PDF cache kh\xF4ng h\u1EE3p l\u1EC7." };
-  const destination = import_path19.default.join(PDF_DIR, safe);
+  const destination = import_path20.default.join(PDF_DIR, safe);
   const cached = getValidLabelDiskFile(safe);
   if (cached) {
     console.log(`[Shopee API] PDF cache HIT ${safe} (${cached.size} bytes) \u2014 b\u1ECF qua download`);
@@ -130689,24 +131415,24 @@ async function shopeeDownloadShippingDocument(shopId, accessToken, orderList, fi
     await (0, import_promises3.pipeline)(
       import_node_stream4.Readable.fromWeb(res.body),
       limiter,
-      import_fs18.default.createWriteStream(tempPath, { flags: "wx" })
+      import_fs19.default.createWriteStream(tempPath, { flags: "wx" })
     );
     if (receivedBytes < 64) throw new Error(`PDF r\u1ED7ng ho\u1EB7c qu\xE1 nh\u1ECF (${receivedBytes} bytes).`);
-    const tempFd = import_fs18.default.openSync(tempPath, "r");
+    const tempFd = import_fs19.default.openSync(tempPath, "r");
     try {
       const magic = Buffer.allocUnsafe(4);
-      if (import_fs18.default.readSync(tempFd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
+      if (import_fs19.default.readSync(tempFd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
         throw new Error("D\u1EEF li\u1EC7u t\u1EA3i v\u1EC1 kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7.");
       }
     } finally {
-      import_fs18.default.closeSync(tempFd);
+      import_fs19.default.closeSync(tempFd);
     }
-    if (import_fs18.default.existsSync(destination)) import_fs18.default.unlinkSync(destination);
-    import_fs18.default.renameSync(tempPath, destination);
+    if (import_fs19.default.existsSync(destination)) import_fs19.default.unlinkSync(destination);
+    import_fs19.default.renameSync(tempPath, destination);
     console.log(`[Shopee API] ${apiPath} stream OK file=${safe} size=${receivedBytes} bytes`);
   } catch (readErr) {
     try {
-      if (import_fs18.default.existsSync(tempPath)) import_fs18.default.unlinkSync(tempPath);
+      if (import_fs19.default.existsSync(tempPath)) import_fs19.default.unlinkSync(tempPath);
     } catch {
     }
     console.error(`[Shopee API] ${apiPath} stream th\u1EA5t b\u1EA1i:`, readErr?.message || readErr);
@@ -130748,7 +131474,7 @@ async function cacheOrderWaybillPdf(orderSn, buffer) {
   const filename = `order_${sn}.pdf`;
   putLabelMem(filename, buffer, "application/pdf");
   ensureLabelsDir();
-  await import_fs18.default.promises.writeFile(import_path19.default.join(PDF_DIR, filename), buffer);
+  await import_fs19.default.promises.writeFile(import_path20.default.join(PDF_DIR, filename), buffer);
 }
 async function splitMergedWaybillPdfToOrders(mergedBuffer, orderSns) {
   const result = /* @__PURE__ */ new Map();
@@ -130880,7 +131606,7 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
     const pendingByOrder = /* @__PURE__ */ new Map();
     for (const [sn, rows] of byOrder) {
       const filename = `order_${sn}.pdf`;
-      if (import_fs18.default.existsSync(import_path19.default.join(PDF_DIR, filename))) {
+      if (import_fs19.default.existsSync(import_path20.default.join(PDF_DIR, filename))) {
         const cached = getValidLabelDiskFile(filename);
         if (cached) {
           console.log(`[Shopee Batch Waybill] CACHE HIT ${filename} (${cached.size} bytes)`);
@@ -130999,7 +131725,7 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
               opts?.signal
             );
             if (downloadResult?.filePath && downloadResult?.filename && downloadResult?.size) {
-              const mergedBuf = await import_fs18.default.promises.readFile(downloadResult.filePath);
+              const mergedBuf = await import_fs19.default.promises.readFile(downloadResult.filePath);
               if (mergedBuf.length && isPdfBuffer(mergedBuf)) {
                 putLabelMem(downloadResult.filename, mergedBuf, "application/pdf");
                 const splitMap = await splitMergedWaybillPdfToOrders(mergedBuf, uniquePendingSns);
@@ -131012,7 +131738,7 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
                       success: true,
                       orderSn: sn,
                       filename: `order_${sn}.pdf`,
-                      filePath: import_path19.default.join(PDF_DIR, `order_${sn}.pdf`),
+                      filePath: import_path20.default.join(PDF_DIR, `order_${sn}.pdf`),
                       size: buf.length,
                       contentType: "application/pdf",
                       cached: false
@@ -131057,7 +131783,7 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
                   opts?.signal
                 );
                 if (!one?.filePath || !one?.filename || !one?.size) return;
-                const buf = await import_fs18.default.promises.readFile(one.filePath);
+                const buf = await import_fs19.default.promises.readFile(one.filePath);
                 if (!buf.length || !isPdfBuffer(buf)) return;
                 putLabelMem(one.filename, buf, "application/pdf");
                 readyOrderSns.push(sn);
@@ -131919,7 +132645,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
   const sources = [];
   let carrier;
   let internal;
-  const consider = (key, value, path20) => {
+  const consider = (key, value, path21) => {
     if (!SHOPEE_TRACKING_KEY_RE.test(key) && key.toLowerCase() !== "tracking_number" && key.toLowerCase() !== "tracking_no") {
       if (!/tracking/i.test(key) || /time|date|url|info|hint|status|type/i.test(key)) return;
     }
@@ -131929,22 +132655,22 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
     if (isShopeeInternalTrackingCode2(s2)) {
       if (!internal) {
         internal = s2;
-        sources.push(`${path20}=${s2}(internal)`);
+        sources.push(`${path21}=${s2}(internal)`);
       }
       return;
     }
     if (!carrier) {
       carrier = s2;
-      sources.push(`${path20}=${s2}`);
+      sources.push(`${path21}=${s2}`);
     } else if (isCarrierTrackingCode3(s2) && !isCarrierTrackingCode3(carrier)) {
       carrier = s2;
-      sources.push(`${path20}=${s2}`);
+      sources.push(`${path21}=${s2}`);
     }
   };
-  const walk = (node, path20, depth) => {
+  const walk = (node, path21, depth) => {
     if (node == null || depth > 8) return;
     if (Array.isArray(node)) {
-      node.forEach((item, i2) => walk(item, `${path20}[${i2}]`, depth + 1));
+      node.forEach((item, i2) => walk(item, `${path21}[${i2}]`, depth + 1));
       return;
     }
     if (typeof node !== "object") return;
@@ -131953,7 +132679,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
       if (nodeSn && nodeSn !== wantSn) return;
     }
     for (const [k, v] of Object.entries(node)) {
-      const childPath = path20 ? `${path20}.${k}` : k;
+      const childPath = path21 ? `${path21}.${k}` : k;
       if (v != null && (typeof v === "string" || typeof v === "number")) {
         consider(k, v, childPath);
       } else {
@@ -135279,9 +136005,9 @@ function withLocalDbTimeout(promise, timeoutMs, label) {
   return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
 }
 var MONGO_ORDER_RECONCILE_COOLDOWN_MS = 5 * 60 * 1e3;
-var PRODUCTS_DB_PATH = import_path19.default.join(APP_ROOT11, "data", "products.json");
-var LOCAL_INVENTORY_CACHE_PATH = import_path19.default.join(APP_ROOT11, "data", "local_inventory.json");
-var SQLITE_LEGACY_PATH = import_path19.default.join(APP_ROOT11, "database.sqlite");
+var PRODUCTS_DB_PATH = import_path20.default.join(APP_ROOT11, "data", "products.json");
+var LOCAL_INVENTORY_CACHE_PATH = import_path20.default.join(APP_ROOT11, "data", "local_inventory.json");
+var SQLITE_LEGACY_PATH = import_path20.default.join(APP_ROOT11, "database.sqlite");
 function getProductChildrenList(p) {
   try {
     if (Array.isArray(p?.children) && p.children.length > 0) return p.children;
@@ -135377,18 +136103,18 @@ async function saveProducts(products) {
     throw error instanceof Error ? error : new Error(String(error));
   }
 }
-var INVENTORY_AUDIT_PATH = import_path19.default.join(APP_ROOT11, "data", "inventory_audit.json");
-var INVENTORY_BACKUP_DIR = import_path19.default.join(APP_ROOT11, "data", "inventory_backups");
+var INVENTORY_AUDIT_PATH = import_path20.default.join(APP_ROOT11, "data", "inventory_audit.json");
+var INVENTORY_BACKUP_DIR = import_path20.default.join(APP_ROOT11, "data", "inventory_backups");
 function writeInventoryAudit(event, details = {}) {
   try {
     ensureDataDirs();
     let existing = [];
-    if (import_fs18.default.existsSync(INVENTORY_AUDIT_PATH)) {
-      const parsed = JSON.parse(import_fs18.default.readFileSync(INVENTORY_AUDIT_PATH, "utf-8"));
+    if (import_fs19.default.existsSync(INVENTORY_AUDIT_PATH)) {
+      const parsed = JSON.parse(import_fs19.default.readFileSync(INVENTORY_AUDIT_PATH, "utf-8"));
       if (Array.isArray(parsed)) existing = parsed;
     }
     const entry = { id: `inventory-audit-${Date.now()}`, event, at: (/* @__PURE__ */ new Date()).toISOString(), ...details };
-    import_fs18.default.writeFileSync(INVENTORY_AUDIT_PATH, JSON.stringify([...existing.slice(-199), entry], null, 2), "utf-8");
+    import_fs19.default.writeFileSync(INVENTORY_AUDIT_PATH, JSON.stringify([...existing.slice(-199), entry], null, 2), "utf-8");
     console.warn(`[Inventory Audit] ${event}`, details);
   } catch (error) {
     console.error("[Inventory Audit] Kh\xF4ng th\u1EC3 ghi audit:", error);
@@ -135396,36 +136122,36 @@ function writeInventoryAudit(event, details = {}) {
 }
 async function backupInventoryBeforeDestructiveAction(reason) {
   ensureDataDirs();
-  import_fs18.default.mkdirSync(INVENTORY_BACKUP_DIR, { recursive: true });
+  import_fs19.default.mkdirSync(INVENTORY_BACKUP_DIR, { recursive: true });
   const [products, listings] = await Promise.all([loadProducts(), readChannelListingsDb()]);
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const fileName = `inventory-${reason}-${stamp}.json`;
-  import_fs18.default.writeFileSync(
-    import_path19.default.join(INVENTORY_BACKUP_DIR, fileName),
+  import_fs19.default.writeFileSync(
+    import_path20.default.join(INVENTORY_BACKUP_DIR, fileName),
     JSON.stringify({ createdAt: (/* @__PURE__ */ new Date()).toISOString(), reason, products, listings }, null, 2),
     "utf-8"
   );
   writeInventoryAudit("backup_created", { reason, fileName, productCount: products.length, listingCount: listings.length });
   return fileName;
 }
-var CHANNEL_LISTINGS_DB_PATH = import_path19.default.join(APP_ROOT11, "data", "channel_listings.json");
-var SHOPEE_SYNC_ERRORS_DB_PATH = import_path19.default.join(APP_ROOT11, "data", "shopee_sync_errors.json");
+var CHANNEL_LISTINGS_DB_PATH = import_path20.default.join(APP_ROOT11, "data", "channel_listings.json");
+var SHOPEE_SYNC_ERRORS_DB_PATH = import_path20.default.join(APP_ROOT11, "data", "shopee_sync_errors.json");
 var SHOPEE_SYNC_ERRORS_MAX_ROWS = 500;
 function renameLegacyJsonIfExists(filePath) {
-  if (!import_fs18.default.existsSync(filePath)) return;
+  if (!import_fs19.default.existsSync(filePath)) return;
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const dest = `${filePath}.migrated.${stamp}`;
   try {
-    import_fs18.default.renameSync(filePath, dest);
-    console.log(`[Mongo Migrate] Renamed ${import_path19.default.basename(filePath)} \u2192 ${import_path19.default.basename(dest)}`);
+    import_fs19.default.renameSync(filePath, dest);
+    console.log(`[Mongo Migrate] Renamed ${import_path20.default.basename(filePath)} \u2192 ${import_path20.default.basename(dest)}`);
   } catch (err) {
     console.warn(`[Mongo Migrate] Kh\xF4ng rename \u0111\u01B0\u1EE3c ${filePath}:`, err);
   }
 }
 function readLegacyJsonArray(filePath) {
   try {
-    if (!import_fs18.default.existsSync(filePath)) return [];
-    const raw = import_fs18.default.readFileSync(filePath, "utf-8");
+    if (!import_fs19.default.existsSync(filePath)) return [];
+    const raw = import_fs19.default.readFileSync(filePath, "utf-8");
     if (!raw || !raw.trim()) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -135434,26 +136160,26 @@ function readLegacyJsonArray(filePath) {
   }
 }
 function findLatestMigratedJson(baseName) {
-  const dataDir = import_path19.default.join(APP_ROOT11, "data");
-  if (!import_fs18.default.existsSync(dataDir)) return null;
+  const dataDir = import_path20.default.join(APP_ROOT11, "data");
+  if (!import_fs19.default.existsSync(dataDir)) return null;
   const prefix = `${baseName}.migrated.`;
-  const matches = import_fs18.default.readdirSync(dataDir).filter((f3) => f3.startsWith(prefix)).sort();
+  const matches = import_fs19.default.readdirSync(dataDir).filter((f3) => f3.startsWith(prefix)).sort();
   if (matches.length === 0) return null;
-  return import_path19.default.join(dataDir, matches[matches.length - 1]);
+  return import_path20.default.join(dataDir, matches[matches.length - 1]);
 }
 async function maybeMigrateJsonToMongoOnBoot() {
   if (isProductsDiskMode()) {
     try {
-      const existing = import_fs18.default.existsSync(getProductsDiskPath()) ? JSON.parse(import_fs18.default.readFileSync(getProductsDiskPath(), "utf-8") || "[]") : [];
+      const existing = import_fs19.default.existsSync(getProductsDiskPath()) ? JSON.parse(import_fs19.default.readFileSync(getProductsDiskPath(), "utf-8") || "[]") : [];
       if (!Array.isArray(existing) || existing.length === 0) {
-        const dataDir = import_path19.default.join(APP_ROOT11, "data");
-        if (import_fs18.default.existsSync(dataDir)) {
-          const migrated = import_fs18.default.readdirSync(dataDir).filter((n) => /^products\.json\.migrated\./i.test(n)).sort();
+        const dataDir = import_path20.default.join(APP_ROOT11, "data");
+        if (import_fs19.default.existsSync(dataDir)) {
+          const migrated = import_fs19.default.readdirSync(dataDir).filter((n) => /^products\.json\.migrated\./i.test(n)).sort();
           const latest = migrated[migrated.length - 1];
           if (latest) {
-            const src = import_path19.default.join(dataDir, latest);
+            const src = import_path20.default.join(dataDir, latest);
             const dest = getProductsDiskPath();
-            import_fs18.default.copyFileSync(src, dest);
+            import_fs19.default.copyFileSync(src, dest);
             console.log(`[Products Disk] Kh\xF4i ph\u1EE5c Kho G\u1ED1c t\u1EEB ${latest} \u2192 products.json`);
           }
         }
@@ -135470,9 +136196,9 @@ async function maybeMigrateJsonToMongoOnBoot() {
   try {
     const productCount = await countProducts();
     const listingCount = await countChannelListings();
-    const legacyProducts = PRODUCTS_DB_PATH && import_fs18.default.existsSync(PRODUCTS_DB_PATH) ? PRODUCTS_DB_PATH : findLatestMigratedJson("products.json");
-    const legacyListings = import_fs18.default.existsSync(CHANNEL_LISTINGS_DB_PATH) ? CHANNEL_LISTINGS_DB_PATH : findLatestMigratedJson("channel_listings.json");
-    const hasLegacy = !!legacyProducts || !!legacyListings || import_fs18.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) || !!findLatestMigratedJson("local_inventory.json");
+    const legacyProducts = PRODUCTS_DB_PATH && import_fs19.default.existsSync(PRODUCTS_DB_PATH) ? PRODUCTS_DB_PATH : findLatestMigratedJson("products.json");
+    const legacyListings = import_fs19.default.existsSync(CHANNEL_LISTINGS_DB_PATH) ? CHANNEL_LISTINGS_DB_PATH : findLatestMigratedJson("channel_listings.json");
+    const hasLegacy = !!legacyProducts || !!legacyListings || import_fs19.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) || !!findLatestMigratedJson("local_inventory.json");
     if (!hasLegacy) {
       console.log(
         `[MongoDB] Ready \u2014 products=${productCount}, listings=${listingCount} @ ${getMongoUriMasked()} (ready=${isMongoReady()})`
@@ -135491,10 +136217,10 @@ async function maybeMigrateJsonToMongoOnBoot() {
     console.log("[Mongo Migrate] Mongo tr\u1ED1ng + c\xF2n JSON legacy \u2014 b\u1EAFt \u0111\u1EA7u migrate...");
     let products = legacyProducts ? readLegacyJsonArray(legacyProducts) : [];
     let listings = legacyListings ? readLegacyJsonArray(legacyListings) : [];
-    const invPath = import_fs18.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) ? LOCAL_INVENTORY_CACHE_PATH : findLatestMigratedJson("local_inventory.json");
+    const invPath = import_fs19.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) ? LOCAL_INVENTORY_CACHE_PATH : findLatestMigratedJson("local_inventory.json");
     if (invPath) {
       try {
-        const inv = JSON.parse(import_fs18.default.readFileSync(invPath, "utf-8"));
+        const inv = JSON.parse(import_fs19.default.readFileSync(invPath, "utf-8"));
         const invProducts = Array.isArray(inv?.products) ? inv.products : [];
         const invListings = Array.isArray(inv?.listings) ? inv.listings : [];
         const byId = /* @__PURE__ */ new Map();
@@ -135520,10 +136246,10 @@ async function maybeMigrateJsonToMongoOnBoot() {
     renameLegacyJsonIfExists(PRODUCTS_DB_PATH);
     renameLegacyJsonIfExists(CHANNEL_LISTINGS_DB_PATH);
     renameLegacyJsonIfExists(LOCAL_INVENTORY_CACHE_PATH);
-    if (import_fs18.default.existsSync(SQLITE_LEGACY_PATH)) {
+    if (import_fs19.default.existsSync(SQLITE_LEGACY_PATH)) {
       try {
         const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-        import_fs18.default.renameSync(SQLITE_LEGACY_PATH, `${SQLITE_LEGACY_PATH}.legacy.${stamp}`);
+        import_fs19.default.renameSync(SQLITE_LEGACY_PATH, `${SQLITE_LEGACY_PATH}.legacy.${stamp}`);
         console.log("[Mongo Migrate] Archived database.sqlite (kh\xF4ng c\xF2n d\xF9ng)");
       } catch {
       }
@@ -135534,8 +136260,8 @@ async function maybeMigrateJsonToMongoOnBoot() {
 }
 function readShopeeSyncErrorsDb() {
   try {
-    if (!import_fs18.default.existsSync(SHOPEE_SYNC_ERRORS_DB_PATH)) return [];
-    const raw = import_fs18.default.readFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, "utf-8");
+    if (!import_fs19.default.existsSync(SHOPEE_SYNC_ERRORS_DB_PATH)) return [];
+    const raw = import_fs19.default.readFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, "utf-8");
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
   } catch (err) {
@@ -135559,8 +136285,8 @@ async function appendShopeeSyncErrorToDb(entry) {
   try {
     const prev = readShopeeSyncErrorsDb();
     const next = [row, ...prev].slice(0, SHOPEE_SYNC_ERRORS_MAX_ROWS);
-    import_fs18.default.mkdirSync(import_path19.default.dirname(SHOPEE_SYNC_ERRORS_DB_PATH), { recursive: true });
-    import_fs18.default.writeFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, JSON.stringify(next, null, 2), "utf-8");
+    import_fs19.default.mkdirSync(import_path20.default.dirname(SHOPEE_SYNC_ERRORS_DB_PATH), { recursive: true });
+    import_fs19.default.writeFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, JSON.stringify(next, null, 2), "utf-8");
   } catch (err) {
     console.error("[Shopee Sync Errors DB] Failed to write:", err);
   }
@@ -136241,7 +136967,7 @@ async function bulkAutoLinkAllPending(opts) {
     masterProductCount
   };
 }
-var CHANNEL_SETTINGS_PATH2 = import_path19.default.join(APP_ROOT11, "data", "channel_settings.json");
+var CHANNEL_SETTINGS_PATH2 = import_path20.default.join(APP_ROOT11, "data", "channel_settings.json");
 var DEFAULT_CHANNEL_SETTINGS = {
   shopeeConnected: false,
   shopeeShopId: "",
@@ -136394,8 +137120,8 @@ function dedupeShopsByPlatformId(shops) {
 }
 function loadChannelSettings() {
   try {
-    if (!import_fs18.default.existsSync(CHANNEL_SETTINGS_PATH2)) return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
-    const raw = import_fs18.default.readFileSync(CHANNEL_SETTINGS_PATH2, "utf-8");
+    if (!import_fs19.default.existsSync(CHANNEL_SETTINGS_PATH2)) return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
+    const raw = import_fs19.default.readFileSync(CHANNEL_SETTINGS_PATH2, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : {};
     const rawShops = Array.isArray(parsed?.shops) ? parsed.shops : [];
     const shops = upsertShopsInChannelSettings([], rawShops);
@@ -136417,7 +137143,7 @@ function saveChannelSettings(settings) {
     const incoming = Array.isArray(settings?.shops) ? settings.shops : [];
     const shops = upsertShopsInChannelSettings(onDisk.shops || [], incoming);
     const payload = { ...DEFAULT_CHANNEL_SETTINGS, ...onDisk, ...settings, shops };
-    import_fs18.default.writeFileSync(CHANNEL_SETTINGS_PATH2, JSON.stringify(payload, null, 2), "utf-8");
+    import_fs19.default.writeFileSync(CHANNEL_SETTINGS_PATH2, JSON.stringify(payload, null, 2), "utf-8");
     console.log(
       `[Channel Settings] UPSERT ${shops.length} shop(s) \u2192 ${CHANNEL_SETTINGS_PATH2}`,
       shops.map((s2) => s2.shopId).join(", ")
@@ -137411,10 +138137,10 @@ async function startServer() {
     writeInventoryAudit,
     writeChannelListingsDb,
     writeProductListingsDb: (rows) => {
-      const dest = import_path19.default.join(APP_ROOT11, "data", "product_listings.json");
-      const dir = import_path19.default.dirname(dest);
-      if (!import_fs18.default.existsSync(dir)) import_fs18.default.mkdirSync(dir, { recursive: true });
-      import_fs18.default.writeFileSync(dest, JSON.stringify(rows, null, 2), "utf-8");
+      const dest = import_path20.default.join(APP_ROOT11, "data", "product_listings.json");
+      const dir = import_path20.default.dirname(dest);
+      if (!import_fs19.default.existsSync(dir)) import_fs19.default.mkdirSync(dir, { recursive: true });
+      import_fs19.default.writeFileSync(dest, JSON.stringify(rows, null, 2), "utf-8");
     },
     pushStockUpdatesToShopee,
     resolveShopeeTokenShopId,
@@ -137652,25 +138378,25 @@ async function startServer() {
   };
   const streamDelegatedPdf = (res, filePath, filename) => {
     const valid = getValidLabelDiskFile(filename);
-    if (!valid || import_path19.default.resolve(valid.filePath) !== import_path19.default.resolve(filePath)) return false;
+    if (!valid || import_path20.default.resolve(valid.filePath) !== import_path20.default.resolve(filePath)) return false;
     res.status(200);
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
     res.setHeader("Content-Length", String(valid.size));
     res.setHeader("Cache-Control", "private, max-age=300");
     res.setHeader("X-Content-Type-Options", "nosniff");
-    import_fs18.default.createReadStream(valid.filePath).pipe(res);
+    import_fs19.default.createReadStream(valid.filePath).pipe(res);
     return true;
   };
   const downloadPdfRoute = async (req, res) => {
     const orderSn = String(req.params.orderSn || "").replace(/^shopee-/i, "").trim();
     const expectedFilename = buildCachedLabelFilename([orderSn]);
-    const expectedPath = import_path19.default.join(PDF_DIR, expectedFilename);
+    const expectedPath = import_path20.default.join(PDF_DIR, expectedFilename);
     const failDownload = (error, fallbackMessage) => {
       console.error("DEBUG DOWNLOAD PDF FAIL for order:", orderSn, error);
       try {
-        if (import_fs18.default.existsSync(expectedPath) && !getValidLabelDiskFile(expectedFilename)) {
-          import_fs18.default.unlinkSync(expectedPath);
+        if (import_fs19.default.existsSync(expectedPath) && !getValidLabelDiskFile(expectedFilename)) {
+          import_fs19.default.unlinkSync(expectedPath);
         }
       } catch (cleanupError) {
         console.error("DEBUG DOWNLOAD PDF FAIL for order:", orderSn, cleanupError);
@@ -137686,7 +138412,7 @@ async function startServer() {
     if (!/^[A-Za-z0-9_-]+$/.test(orderSn)) {
       return failDownload(new Error("M\xE3 \u0111\u01A1n kh\xF4ng h\u1EE3p l\u1EC7."), "M\xE3 \u0111\u01A1n kh\xF4ng h\u1EE3p l\u1EC7.");
     }
-    if (import_fs18.default.existsSync(expectedPath) && streamDelegatedPdf(res, expectedPath, expectedFilename)) {
+    if (import_fs19.default.existsSync(expectedPath) && streamDelegatedPdf(res, expectedPath, expectedFilename)) {
       console.log(`[Delegated PDF] LOCAL HIT ${expectedFilename} \u2014 b\u1ECF qua Shopee API`);
       return;
     }
@@ -138170,12 +138896,12 @@ async function startServer() {
     );
     const pendingSns = [];
     for (const orderSn of orderSns) {
-      const localLabelPath = import_path19.default.join(PDF_DIR, `order_${orderSn}.pdf`);
-      if (import_fs18.default.existsSync(localLabelPath)) {
+      const localLabelPath = import_path20.default.join(PDF_DIR, `order_${orderSn}.pdf`);
+      if (import_fs19.default.existsSync(localLabelPath)) {
         try {
-          const stat3 = import_fs18.default.statSync(localLabelPath);
+          const stat3 = import_fs19.default.statSync(localLabelPath);
           if (stat3.isFile() && stat3.size > 0) {
-            const buf = await import_fs18.default.promises.readFile(localLabelPath);
+            const buf = await import_fs19.default.promises.readFile(localLabelPath);
             if (isPdfBuffer(buf)) {
               console.log(`[${logPrefix}] B1 CACHE HIT order_${orderSn}.pdf (${buf.length} bytes)`);
               putLabelMem(`order_${orderSn}.pdf`, buf, "application/pdf");
@@ -138945,7 +139671,7 @@ async function startServer() {
     };
     beginLogisticsWork("silent-prefetch-pdfs");
     try {
-      const publicPdfDir = import_path19.default.join(APP_ROOT11, "public", "pdfs");
+      const publicPdfDir = import_path20.default.join(APP_ROOT11, "public", "pdfs");
       let nextIndex = 0;
       const workerCount = Math.min(SILENT_PREFETCH_CONCURRENCY, orderSns.length);
       const runWorker = async () => {
@@ -138978,11 +139704,11 @@ async function startServer() {
             const filename = buildCachedLabelFilename([orderSn]);
             const storedPdf = getValidLabelDiskFile(filename);
             if (!storedPdf) {
-              throw new Error(`PDF ch\u01B0a \u0111\u01B0\u1EE3c ghi th\xE0nh c\xF4ng v\xE0o ${import_path19.default.join(PDF_DIR, filename)}`);
+              throw new Error(`PDF ch\u01B0a \u0111\u01B0\u1EE3c ghi th\xE0nh c\xF4ng v\xE0o ${import_path20.default.join(PDF_DIR, filename)}`);
             }
             try {
-              import_fs18.default.mkdirSync(publicPdfDir, { recursive: true });
-              import_fs18.default.writeFileSync(import_path19.default.join(publicPdfDir, filename), document2.buffer);
+              import_fs19.default.mkdirSync(publicPdfDir, { recursive: true });
+              import_fs19.default.writeFileSync(import_path20.default.join(publicPdfDir, filename), document2.buffer);
             } catch (publicCopyErr) {
               console.warn(
                 `[Silent Prefetch] Kh\xF4ng th\u1EC3 ghi b\u1EA3n ph\u1EE5 public/pdfs cho ${orderSn}:`,
@@ -139953,9 +140679,9 @@ async function startServer() {
     }
     try {
       ensureLabelsDir();
-      const matches = import_fs18.default.readdirSync(PDF_DIR).filter((name) => nameMatches(name)).map((name) => {
-        const full = import_path19.default.join(PDF_DIR, name);
-        const stat3 = import_fs18.default.statSync(full);
+      const matches = import_fs19.default.readdirSync(PDF_DIR).filter((name) => nameMatches(name)).map((name) => {
+        const full = import_path20.default.join(PDF_DIR, name);
+        const stat3 = import_fs19.default.statSync(full);
         return { name, mtime: stat3.mtimeMs, size: stat3.size };
       }).filter((x2) => x2.size > 0).sort((a, b) => b.mtime - a.mtime);
       const newest = matches[0]?.name;
@@ -140806,11 +141532,11 @@ async function startServer() {
     enrichShopsWithConnectionStatus
   });
   app.use("/api/settings", authMiddleware, settingsRoutes);
-  const LISTINGS_DB_PATH = import_path19.default.join(APP_ROOT11, "data", "multi_channel_listings.json");
+  const LISTINGS_DB_PATH = import_path20.default.join(APP_ROOT11, "data", "multi_channel_listings.json");
   const readListingsDb = () => {
     try {
-      if (!import_fs18.default.existsSync(LISTINGS_DB_PATH)) return [];
-      const raw = import_fs18.default.readFileSync(LISTINGS_DB_PATH, "utf-8");
+      if (!import_fs19.default.existsSync(LISTINGS_DB_PATH)) return [];
+      const raw = import_fs19.default.readFileSync(LISTINGS_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
@@ -140818,9 +141544,9 @@ async function startServer() {
     }
   };
   const writeListingsDb = (listings) => {
-    const dir = import_path19.default.dirname(LISTINGS_DB_PATH);
-    if (!import_fs18.default.existsSync(dir)) import_fs18.default.mkdirSync(dir, { recursive: true });
-    import_fs18.default.writeFileSync(LISTINGS_DB_PATH, JSON.stringify(listings, null, 2), "utf-8");
+    const dir = import_path20.default.dirname(LISTINGS_DB_PATH);
+    if (!import_fs19.default.existsSync(dir)) import_fs19.default.mkdirSync(dir, { recursive: true });
+    import_fs19.default.writeFileSync(LISTINGS_DB_PATH, JSON.stringify(listings, null, 2), "utf-8");
   };
   app.use("/api", aiRoutes);
   app.get("/api/multi-channel/listing", authMiddleware, async (_req, res) => {
@@ -140842,11 +141568,11 @@ async function startServer() {
       return res.status(500).json({ success: false, error: error.message || "L\u01B0u th\u1EA5t b\u1EA1i" });
     }
   });
-  const PRODUCT_LISTINGS_DB_PATH = import_path19.default.join(APP_ROOT11, "data", "product_listings.json");
+  const PRODUCT_LISTINGS_DB_PATH = import_path20.default.join(APP_ROOT11, "data", "product_listings.json");
   const readProductListingsDb = () => {
     try {
-      if (!import_fs18.default.existsSync(PRODUCT_LISTINGS_DB_PATH)) return [];
-      const raw = import_fs18.default.readFileSync(PRODUCT_LISTINGS_DB_PATH, "utf-8");
+      if (!import_fs19.default.existsSync(PRODUCT_LISTINGS_DB_PATH)) return [];
+      const raw = import_fs19.default.readFileSync(PRODUCT_LISTINGS_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
@@ -140854,9 +141580,9 @@ async function startServer() {
     }
   };
   const writeProductListingsDb = (rows) => {
-    const dir = import_path19.default.dirname(PRODUCT_LISTINGS_DB_PATH);
-    if (!import_fs18.default.existsSync(dir)) import_fs18.default.mkdirSync(dir, { recursive: true });
-    import_fs18.default.writeFileSync(PRODUCT_LISTINGS_DB_PATH, JSON.stringify(rows, null, 2), "utf-8");
+    const dir = import_path20.default.dirname(PRODUCT_LISTINGS_DB_PATH);
+    if (!import_fs19.default.existsSync(dir)) import_fs19.default.mkdirSync(dir, { recursive: true });
+    import_fs19.default.writeFileSync(PRODUCT_LISTINGS_DB_PATH, JSON.stringify(rows, null, 2), "utf-8");
   };
   const computeOverallListingStatus = (statuses) => {
     if (!statuses.length) return "pending";
@@ -141437,12 +142163,12 @@ async function startServer() {
       });
     }
   });
-  const PUBLISH_EDIT_DB_PATH = import_path19.default.join(APP_ROOT11, "data", "publish_edit.json");
-  const FRAMED_IMAGES_DIR = import_path19.default.join(APP_ROOT11, "data", "framed_images");
+  const PUBLISH_EDIT_DB_PATH = import_path20.default.join(APP_ROOT11, "data", "publish_edit.json");
+  const FRAMED_IMAGES_DIR = import_path20.default.join(APP_ROOT11, "data", "framed_images");
   const readPublishEditDb = () => {
     try {
-      if (!import_fs18.default.existsSync(PUBLISH_EDIT_DB_PATH)) return { config: {}, meta: {} };
-      const raw = import_fs18.default.readFileSync(PUBLISH_EDIT_DB_PATH, "utf-8");
+      if (!import_fs19.default.existsSync(PUBLISH_EDIT_DB_PATH)) return { config: {}, meta: {} };
+      const raw = import_fs19.default.readFileSync(PUBLISH_EDIT_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return { config: parsed.config || {}, meta: parsed.meta || {} };
     } catch {
@@ -141450,9 +142176,9 @@ async function startServer() {
     }
   };
   const writePublishEditDb = (data) => {
-    const dir = import_path19.default.dirname(PUBLISH_EDIT_DB_PATH);
-    if (!import_fs18.default.existsSync(dir)) import_fs18.default.mkdirSync(dir, { recursive: true });
-    import_fs18.default.writeFileSync(PUBLISH_EDIT_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
+    const dir = import_path20.default.dirname(PUBLISH_EDIT_DB_PATH);
+    if (!import_fs19.default.existsSync(dir)) import_fs19.default.mkdirSync(dir, { recursive: true });
+    import_fs19.default.writeFileSync(PUBLISH_EDIT_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
   };
   app.get("/api/publish-edit", authMiddleware, async (_req, res) => {
     const db = readPublishEditDb();
@@ -141493,11 +142219,11 @@ async function startServer() {
       if (!productId || !imageDataUrl) {
         return res.status(400).json({ success: false, error: "Thi\u1EBFu productId ho\u1EB7c \u1EA3nh" });
       }
-      if (!import_fs18.default.existsSync(FRAMED_IMAGES_DIR)) import_fs18.default.mkdirSync(FRAMED_IMAGES_DIR, { recursive: true });
+      if (!import_fs19.default.existsSync(FRAMED_IMAGES_DIR)) import_fs19.default.mkdirSync(FRAMED_IMAGES_DIR, { recursive: true });
       const base64 = String(imageDataUrl).replace(/^data:image\/\w+;base64,/, "");
       const buf = Buffer.from(base64, "base64");
       const filename = `${productId}.jpg`;
-      import_fs18.default.writeFileSync(import_path19.default.join(FRAMED_IMAGES_DIR, filename), buf);
+      import_fs19.default.writeFileSync(import_path20.default.join(FRAMED_IMAGES_DIR, filename), buf);
       const imageUrl = `/api/framed-images/${productId}`;
       const products = await loadProducts();
       const idx = products.findIndex((p) => p.id === productId);
@@ -141519,12 +142245,12 @@ async function startServer() {
     }
   });
   app.get("/api/framed-images/:productId", (req, res) => {
-    const filePath = import_path19.default.join(FRAMED_IMAGES_DIR, `${req.params.productId}.jpg`);
-    if (!import_fs18.default.existsSync(filePath)) {
+    const filePath = import_path20.default.join(FRAMED_IMAGES_DIR, `${req.params.productId}.jpg`);
+    if (!import_fs19.default.existsSync(filePath)) {
       return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y \u1EA3nh" });
     }
     res.setHeader("Content-Type", "image/jpeg");
-    return res.send(import_fs18.default.readFileSync(filePath));
+    return res.send(import_fs19.default.readFileSync(filePath));
   });
   app.use("/api", (req, res) => {
     res.status(404).json({
@@ -141539,11 +142265,11 @@ async function startServer() {
       const { pathToFileURL } = await import("node:url");
       const devServerFile = ["dev", "Server.ts"].join("");
       const candidates = [
-        import_path19.default.join(APP_ROOT11, devServerFile),
-        import_path19.default.join(APP_ROOT11, "..", devServerFile),
-        import_path19.default.join(process.cwd(), devServerFile)
+        import_path20.default.join(APP_ROOT11, devServerFile),
+        import_path20.default.join(APP_ROOT11, "..", devServerFile),
+        import_path20.default.join(process.cwd(), devServerFile)
       ];
-      const found = candidates.find((p) => import_fs18.default.existsSync(p));
+      const found = candidates.find((p) => import_fs19.default.existsSync(p));
       if (!found) {
         console.warn("[Boot] devServer.ts not found \u2014 skipping Vite middleware");
       } else {
@@ -141558,14 +142284,14 @@ async function startServer() {
     if (isCpanelPassengerRuntime && process.env.NODE_ENV !== "production") {
       console.warn("[Boot] Passenger/cPanel detected without NODE_ENV=production; forcing static production runtime.");
     }
-    const publicPdfDir = import_path19.default.join(APP_ROOT11, "public", "pdfs");
+    const publicPdfDir = import_path20.default.join(APP_ROOT11, "public", "pdfs");
     app.use("/pdfs", import_express24.default.static(publicPdfDir, {
       setHeaders(res) {
         res.setHeader("Content-Type", "application/pdf");
         res.setHeader("Cache-Control", "public, max-age=300");
       }
     }));
-    const distPath = import_path19.default.join(APP_ROOT11, "dist");
+    const distPath = import_path20.default.join(APP_ROOT11, "dist");
     app.use(import_express24.default.static(distPath, {
       setHeaders(res, filePath) {
         if (filePath.endsWith("index.html")) {
@@ -141591,7 +142317,7 @@ async function startServer() {
       }
       res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
       res.setHeader("Content-Type", "text/html; charset=utf-8");
-      return res.sendFile(import_path19.default.join(distPath, "index.html"));
+      return res.sendFile(import_path20.default.join(distPath, "index.html"));
     });
   }
   async function connectDB2() {

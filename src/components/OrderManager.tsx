@@ -91,6 +91,7 @@ import {
 } from 'lucide-react';
 import { Order, ConnectedShop, SyncLog, Product, SystemFee } from '../types';
 import ManualOrderPage from './ManualOrderPage';
+import { ExternalOrdersTable } from './ExternalOrdersTable';
 import { resolveLabelFetchUrl, parseJsonResponse, readResponseJson } from '../utils/apiClient';
 import { aggregateOrderProducts, type AggregatedOrderProduct } from '../utils/aggregateOrderProducts';
 import { getCarrierWaybillDisplay } from '../utils/orderTracking';
@@ -633,7 +634,8 @@ type OrderTab =
   | 'cancel_returns'
   | 'received_cancel_returns'
   | 'order_products'
-  | 'web_orders';
+  | 'web_orders'
+  | 'external_orders';
 
 export type OrdersSubTabId = OrderTab;
 
@@ -652,6 +654,7 @@ const ORDER_TAB_SET = new Set<string>([
   'received_cancel_returns',
   'order_products',
   'web_orders',
+  'external_orders',
 ]);
 
 const ORDER_TAB_ALIASES: Record<string, OrderTab> = {
@@ -668,6 +671,9 @@ const ORDER_TAB_ALIASES: Record<string, OrderTab> = {
   'don-tren-web': 'web_orders',
   'web_orders': 'web_orders',
   'woocommerce': 'web_orders',
+  'don-ngoai-san': 'external_orders',
+  'external_orders': 'external_orders',
+  'manual-orders': 'external_orders',
 };
 
 function normalizeOrderTab(raw: string | null | undefined): OrderTab | null {
@@ -1792,6 +1798,7 @@ export default function OrderManager({
       'cancel_returns',
       'received_cancel_returns',
       'web_orders',
+      'external_orders',
     ]);
     if (!tabFetchTabs.has(activeSubTab) || !onFetchOrdersRef.current) return;
     if (skipNextOrdersTabFetchRef.current) {
@@ -3550,6 +3557,44 @@ export default function OrderManager({
   // Real Shopee/TikTok logistics API call state (ship_order / shipping document)
   const [printingOrderId, setPrintingOrderId] = useState<string | null>(null);
   const [isBulkPrinting, setIsBulkPrinting] = useState(false);
+
+  const handlePrintExternalWaybill = useCallback(async (order: Order) => {
+    const key = String(order.id || order.orderSn || '').trim();
+    if (!key || printingOrderId) return;
+    setPrintingOrderId(key);
+    try {
+      const token = localStorage.getItem('admin_token') || '';
+      const res = await fetch('/api/orders/external/print-waybill', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({ orderSn: order.orderSn, format: 'a5' }),
+      });
+      const data = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (!res.ok || !data?.success) {
+        throw new Error(String(data?.error || 'In vận đơn thất bại'));
+      }
+      const pdfB64 = String(data.pdfBase64 || '').trim();
+      if (pdfB64) {
+        const bin = atob(pdfB64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+        const blobUrl = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+        window.open(blobUrl, '_blank');
+        return;
+      }
+      const url = String(data.url || '').trim();
+      if (!url) throw new Error('Hãng không trả link PDF gốc.');
+      window.open(url, '_blank');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'In vận đơn thất bại';
+      window.alert(msg);
+    } finally {
+      setPrintingOrderId(null);
+    }
+  }, [printingOrderId]);
 
   // "Xác nhận đơn hàng" modal — lets the seller choose pickup vs dropoff before
   // any ship_order call is made, for one order (single button) or many (bulk).
@@ -5678,6 +5723,9 @@ export default function OrderManager({
     if (status === 'web_orders') {
       return orders.filter((o) => o.channel === 'woocommerce').length;
     }
+    if (status === 'external_orders') {
+      return orders.filter((o) => o.channel === 'manual').length;
+    }
     let clientCount = 0;
     if (status === 'cancel_returns') {
       clientCount = Number(cancelReturnKindCounts.all) || 0;
@@ -7611,6 +7659,25 @@ export default function OrderManager({
           </span>
         </button>
 
+        <button
+          onClick={() => {
+            selectOrdersSubTab('external_orders');
+            setSelectedPlatform('manual');
+            setSelectedShopId('all');
+          }}
+          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+            activeSubTab === 'external_orders'
+              ? 'border-emerald-600 text-emerald-700 font-extrabold bg-emerald-50/40'
+              : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+          }`}
+        >
+          <span className="w-4 h-4 bg-emerald-600 text-white font-extrabold text-[9px] rounded flex items-center justify-center shrink-0">N</span>
+          <span>Đơn ngoại sàn</span>
+          <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+            {getCount('external_orders')}
+          </span>
+        </button>
+
       </div>
 
       {activeSubTab === 'cancel_returns' && (
@@ -7673,6 +7740,12 @@ export default function OrderManager({
             {isSyncing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
             Đồng bộ WooCommerce
           </button>
+        </div>
+      )}
+
+      {activeSubTab === 'external_orders' && (
+        <div className="bg-emerald-50/80 border border-emerald-100 rounded-2xl px-4 py-3 text-xs text-emerald-950 font-semibold leading-relaxed">
+          Đơn GHN / SPX Express tạo ngoài sàn — in vận đơn bằng file PDF gốc của hãng (không vẽ mã vạch HTML).
         </div>
       )}
 
@@ -7769,6 +7842,7 @@ export default function OrderManager({
       {/* 5. BULK ACTION BAR — ẩn hoàn toàn ở tab Đơn Hủy, Đơn Hoàn */}
       {activeSubTab !== 'order_products' &&
         activeSubTab !== 'web_orders' &&
+        activeSubTab !== 'external_orders' &&
         activeSubTab !== 'cancel_returns' && (
       <div className="om-orders-mobile-hide-bulk-bar bg-slate-50 border border-slate-200/80 p-3 max-md:p-2.5 rounded-2xl flex items-center justify-between gap-4 max-md:gap-2">
         <div className="flex items-center gap-3 flex-wrap">
@@ -8014,8 +8088,18 @@ export default function OrderManager({
             <ShoppingBag className="w-12 h-12 text-slate-200" />
             <span className="font-semibold text-slate-600">Không tìm thấy đơn hàng nào khớp với điều kiện lọc</span>
             <p className="text-[11px] text-gray-400 max-w-sm leading-relaxed">
-              Hãy thay đổi bộ lọc sàn TMĐT hoặc chuyển sang các tab khác như "Đơn chưa xử lý" để xem thêm.
+              {activeSubTab === 'external_orders'
+                ? 'Chưa có đơn ngoại sàn. Bấm “Tạo đơn hàng ngoài sàn” để lên đơn GHN/SPX.'
+                : 'Hãy thay đổi bộ lọc sàn TMĐT hoặc chuyển sang các tab khác như "Đơn chưa xử lý" để xem thêm.'}
             </p>
+          </div>
+        ) : activeSubTab === 'external_orders' ? (
+          <div className="p-2 max-md:p-0">
+            <ExternalOrdersTable
+              orders={displayOrders}
+              printingOrderId={printingOrderId}
+              onPrintWaybill={(order) => void handlePrintExternalWaybill(order)}
+            />
           </div>
         ) : (
           <>

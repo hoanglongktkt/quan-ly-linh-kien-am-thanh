@@ -235,7 +235,7 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
     }
   };
 
-  const handleSaveLogistics = (carrier: 'ghn' | 'spx', updated: any) => {
+  const handleSaveLogistics = async (carrier: 'ghn' | 'spx', updated: any) => {
     if (carrier === 'ghn') {
       setGhnConfig(updated);
       safeSetItem('omni_ghn_config', JSON.stringify(updated));
@@ -243,7 +243,38 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
       setSpxConfig(updated);
       safeSetItem('omni_spx_config', JSON.stringify(updated));
     }
-    alert(`Đã lưu thành công cấu hình đơn vị vận chuyển ${carrier === 'ghn' ? 'Giao Hàng Nhanh (GHN)' : 'Shopee SPX Express'}!`);
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await fetch('/api/settings/logistics', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify(
+          carrier === 'ghn'
+            ? { ghn: { token: updated.token, shopId: updated.shopId, service: updated.service } }
+            : {
+                spx: {
+                  clientId: updated.clientId,
+                  clientSecret: updated.clientSecret,
+                  merchantId: updated.merchantId,
+                },
+              },
+        ),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error || 'Lưu server thất bại');
+      }
+      alert(
+        `Đã lưu cấu hình ${carrier === 'ghn' ? 'Giao Hàng Nhanh (GHN)' : 'Shopee SPX Express'} trên server.`,
+      );
+    } catch (err: any) {
+      alert(
+        `Đã lưu local nhưng server: ${err?.message || 'lỗi'}. Kiểm tra Token/Shop ID trên Cài đặt.`,
+      );
+    }
   };
 
   const runLogisticsDiagnostics = (carrier: 'ghn' | 'spx') => {

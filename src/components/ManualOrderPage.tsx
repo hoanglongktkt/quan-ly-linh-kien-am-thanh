@@ -639,8 +639,10 @@ export default function ManualOrderPage({
           timestamp: new Date().toISOString(),
           channel: selectedCarrier,
           type: 'stock_sync',
-          status: 'success',
-          message: `[API LOGISTICS] Đã tự động gọi API đẩy đơn sỉ sang ${selectedCarrier === 'ghn' ? 'Giao Hàng Nhanh' : 'Shopee SPX Express'}. Tracking: ${generatedTracking}`,
+          status: data.carrierError ? 'failed' : 'success',
+          message: data.carrierError
+            ? `[API LOGISTICS] ${selectedCarrier.toUpperCase()} lỗi: ${data.carrierError}`
+            : `[API LOGISTICS] Đã đẩy đơn sang ${selectedCarrier === 'ghn' ? 'Giao Hàng Nhanh' : 'Shopee SPX Express'}. Tracking: ${generatedTracking}`,
         });
       }
 
@@ -669,8 +671,9 @@ export default function ManualOrderPage({
             ? 'Shopee SPX Express'
             : 'Tự giao hàng';
 
+      const warn = data.carrierError ? `\n\n⚠ Hãng: ${data.carrierError}` : '';
       alert(
-        `🎉 Đã tạo đơn ngoài sàn thành công!\n\n• Mã đơn: ${newOrder.orderSn}\n• Địa chỉ: ${fullAddr}\n• Vận chuyển: ${carrierLabel}\n• Mã vận đơn: ${generatedTracking}\n\nĐã khấu trừ ${qtyTotal} sản phẩm trong kho (nếu có).`
+        `🎉 Đã tạo đơn ngoài sàn thành công!\n\n• Mã đơn: ${newOrder.orderSn}\n• Địa chỉ: ${fullAddr}\n• Vận chuyển: ${carrierLabel}\n• Mã vận đơn: ${generatedTracking || '(chưa có — xem tab Đơn ngoại sàn)'}${warn}\n\nĐã khấu trừ ${qtyTotal} sản phẩm trong kho (nếu có).`,
       );
 
       onBack();

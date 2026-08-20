@@ -44,8 +44,11 @@ import {
   markOrderLocalStatusInStore,
   markOrdersPrintedInStore,
   upsertDonHoanHuy,
+  invalidateTabCountCache,
 } from "../src/db/mongoStore.ts";
 import { saveAddressBookEntry } from "../services/addressBook.js";
+import { createGhnShippingOrder, getGhnPrintUrl } from "../services/ghnLogistics.js";
+import { createSpxShippingOrder, getSpxWaybill } from "../services/spxLogistics.js";
 
 const APP_ROOT = resolveAppRoot();
 
@@ -187,6 +190,36 @@ let deps = {
   buildCarrierLogisticsPayload: () => null,
   generateCarrierTracking: () => "",
 };
+
+const EXTERNAL_STATUS_MAP = {
+  created: { status: "unprocessed", shopee: "EXTERNAL_CREATED", label: "Đã tạo đơn" },
+  shipping: { status: "shipping", shopee: "EXTERNAL_SHIPPING", label: "Đang giao" },
+  delivered: { status: "completed", shopee: "EXTERNAL_DELIVERED", label: "Giao thành công" },
+  rts: { status: "cancelled", shopee: "EXTERNAL_RTS", label: "Giao không thành công / RTS" },
+};
+
+function mapExternalStatus(raw) {
+  const key = String(raw || "created").toLowerCase();
+  return EXTERNAL_STATUS_MAP[key] || EXTERNAL_STATUS_MAP.created;
+}
+
+function carrierDisplayName(carrier) {
+  if (carrier === "ghn") return "Giao Hàng Nhanh";
+  if (carrier === "spx") return "SPX Express";
+  return "Tự giao hàng";
+}
+
+async function persistExternalOrder(order) {
+  if (!isMongoReady()) {
+    throw new Error("mongodb_not_ready");
+  }
+  await persistChangedOrdersPatch([order]);
+  try {
+    invalidateTabCountCache();
+  } catch {
+    /* cache optional */
+  }
+}
 
 let ordersRefreshInFlight = null;
 let ordersRefreshCache = null;
@@ -2557,17 +2590,33 @@ export async function createManualOrder(req, res) {
       0,
     );
     const feeToCollect = shippingFeePayer === "customer" ? Number(shippingFee) : 0;
-    const totalAmount = subtotal + feeToCollect - Number(orderDiscount);
+    const totalAmount = Math.max(0, subtotal + feeToCollect - Number(orderDiscount));
 
     const fullAddress = [addr.street, addr.ward, addr.district, addr.province]
       .filter(Boolean)
       .join(", ");
 
-    const trackingNumber = deps.generateCarrierTracking(carrier);
+    const orderSn = `DON-NGOAI-${Date.now().toString(36).toUpperCase()}`;
+    const orderId = `ext-${orderSn}`;
+    const provider = carrier === "ghn" || carrier === "spx" ? carrier : "self";
+    const mapped = mapExternalStatus("created");
+    const lineItems = items.slice(0, 80).map((it) => ({
+      productId: String(it.productId || ""),
+      productTitle: String(it.productTitle || it.name || ""),
+      name: String(it.productTitle || it.name || ""),
+      productImage: it.productImage || "",
+      sku: String(it.sku || ""),
+      quantity: Number(it.quantity) || 0,
+      price: Number(it.price) || 0,
+    }));
+
+    let trackingNumber = "";
+    let carrierError = "";
+    let logisticsResult = null;
     const logisticsPayload =
-      carrier !== "self"
+      provider !== "self"
         ? deps.buildCarrierLogisticsPayload(
-            carrier,
+            provider,
             { name, phone },
             {
               street: addr.street.trim(),
@@ -2588,15 +2637,55 @@ export async function createManualOrder(req, res) {
 
     if (logisticsPayload) {
       console.log(
-        `[Logistics ${carrier.toUpperCase()}] Payload đẩy đơn:`,
+        `[Logistics ${provider.toUpperCase()}] Payload đẩy đơn:`,
         JSON.stringify(logisticsPayload, null, 2),
       );
     }
 
+    if (provider === "ghn") {
+      try {
+        logisticsResult = await createGhnShippingOrder({
+          clientOrderCode: orderSn,
+          customer: { name, phone },
+          address: addr,
+          items: lineItems,
+          weightGrams: packageWeight,
+          codAmount: totalAmount,
+          note: carrierNotes,
+          shippingFeePayer,
+        });
+        trackingNumber = String(logisticsResult.trackingNo || "").trim();
+      } catch (ghnErr) {
+        carrierError = ghnErr?.message || "GHN tạo vận đơn thất bại";
+        console.error("[Orders manual] GHN create:", carrierError);
+      }
+    } else if (provider === "spx") {
+      try {
+        logisticsResult = await createSpxShippingOrder({
+          clientOrderCode: orderSn,
+          customer: { name, phone },
+          address: addr,
+          items: lineItems,
+          weightGrams: packageWeight,
+          codAmount: totalAmount,
+          note: carrierNotes,
+        });
+        trackingNumber = String(logisticsResult.trackingNo || "").trim();
+      } catch (spxErr) {
+        carrierError = spxErr?.message || "SPX tạo vận đơn thất bại";
+        console.error("[Orders manual] SPX create:", carrierError);
+      }
+    }
+
+    const nowIso = new Date().toISOString();
     const newOrder = {
-      id: `order-manual-${Date.now()}`,
-      orderSn: `DON-NGOAI-${Math.floor(100000 + Math.random() * 900000)}`,
+      id: orderId,
+      _id: orderId,
+      orderSn,
+      order_sn: orderSn,
       channel: "manual",
+      source: "external",
+      shopId: null,
       customerName: name,
       customerPhone: phone,
       customerAddress: fullAddress,
@@ -2611,27 +2700,27 @@ export async function createManualOrder(req, res) {
         fullAddress,
         addressMode,
       },
-      carrier,
+      carrier: provider,
+      provider,
+      shipping_carrier: carrierDisplayName(provider),
       totalAmount,
       revenue: totalAmount,
-      status: "unprocessed",
-      date: new Date().toISOString(),
-      trackingNumber,
-      isPrepared: carrier !== "self",
+      cod_amount: totalAmount,
+      status: mapped.status,
+      shopee_order_status: mapped.shopee,
+      external_status: "created",
+      date: nowIso,
+      create_time: nowIso,
+      trackingNumber: trackingNumber || null,
+      tracking_no: trackingNumber || null,
+      isPrepared: false,
       isPrinted: false,
-      items: items.map((it) => ({
-        productId: it.productId,
-        productTitle: it.productTitle,
-        productImage: it.productImage,
-        quantity: Number(it.quantity),
-        price: Number(it.price),
-      })),
+      items: lineItems,
       logisticsPayload,
+      carrier_error: carrierError || null,
     };
 
-    const orders = loadOrders();
-    orders.unshift(newOrder);
-    saveOrders(orders);
+    await persistExternalOrder(newOrder);
 
     let addressBookEntry = null;
     if (save_to_address_book === true || save_to_address_book === "true" || save_to_address_book === 1) {
@@ -2657,12 +2746,126 @@ export async function createManualOrder(req, res) {
       success: true,
       order: newOrder,
       trackingNumber,
+      carrierError: carrierError || null,
       logisticsPayload,
       addressBookSaved: Boolean(addressBookEntry),
-      orders: orders.filter(deps.isValidOrder),
     });
   } catch (error) {
     console.error("[Orders manual]", error);
     return res.status(500).json({ error: error.message || "Tạo đơn thủ công thất bại" });
+  }
+}
+
+/**
+ * POST /api/orders/external/print-waybill
+ * Trả URL PDF gốc GHN (gen-token → printA5) hoặc SPX waybill — không vẽ HTML.
+ */
+export async function printExternalWaybill(req, res) {
+  try {
+    const body = req.body || {};
+    const orderSn = String(body.orderSn || body.order_sn || req.query.orderSn || "")
+      .trim()
+      .replace(/^ext-/i, "");
+    const format = String(body.format || req.query.format || "a5").toLowerCase();
+    if (!orderSn) {
+      return res.status(400).json({ success: false, error: "Thiếu mã đơn (orderSn)." });
+    }
+    if (!isMongoReady()) {
+      return res.status(503).json({ success: false, error: "mongodb_not_ready" });
+    }
+
+    const rows = await loadOrdersFromStore({ orderSns: [orderSn], limit: 1 });
+    const order = rows?.[0] || null;
+    if (!order) {
+      return res.status(404).json({ success: false, error: "Không tìm thấy đơn ngoại sàn." });
+    }
+    const channel = String(order.channel || "").toLowerCase();
+    if (channel !== "manual") {
+      return res.status(400).json({
+        success: false,
+        error: "Chỉ in vận đơn gốc cho đơn ngoại sàn (GHN/SPX).",
+      });
+    }
+    const provider = String(order.provider || order.carrier || "").toLowerCase();
+    const trackingNo = String(order.tracking_no || order.trackingNumber || "").trim();
+    if (!trackingNo) {
+      return res.status(400).json({
+        success: false,
+        error: "Đơn chưa có mã vận đơn từ hãng. Không thể in phiếu gốc.",
+      });
+    }
+
+    if (provider === "ghn") {
+      const printed = await getGhnPrintUrl(trackingNo, format);
+      return res.json({
+        success: true,
+        provider: "ghn",
+        url: printed.url,
+        format: printed.format,
+        source: "ghn_gen_token",
+      });
+    }
+
+    if (provider === "spx") {
+      const waybill = await getSpxWaybill(trackingNo);
+      if (waybill.url) {
+        return res.json({
+          success: true,
+          provider: "spx",
+          url: waybill.url,
+          source: "spx_awb_url",
+        });
+      }
+      if (waybill.base64) {
+        const fs = await import("fs");
+        const path = await import("path");
+        const fileName = `external-${orderSn}.pdf`;
+        const filePath = path.join(PDF_DIR, fileName);
+        fs.mkdirSync(PDF_DIR, { recursive: true });
+        const buf = Buffer.from(waybill.base64.replace(/^data:application\/pdf;base64,/i, ""), "base64");
+        fs.writeFileSync(filePath, buf);
+        const base = `${req.protocol}://${req.get("host") || ""}`.replace(/\/$/, "");
+        const url = `${base}/api/orders/external/waybill-file/${encodeURIComponent(orderSn)}`;
+        return res.json({
+          success: true,
+          provider: "spx",
+          url,
+          pdfBase64: waybill.base64.replace(/^data:application\/pdf;base64,/i, ""),
+          source: "spx_awb_base64",
+        });
+      }
+      return res.status(502).json({
+        success: false,
+        error: "SPX không trả URL/PDF waybill gốc.",
+      });
+    }
+
+    return res.status(400).json({
+      success: false,
+      error: "Đơn tự giao không có phiếu gửi hàng chuẩn bưu cục.",
+    });
+  } catch (error) {
+    console.error("[Orders external print]", error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || "In vận đơn thất bại",
+    });
+  }
+}
+
+/** GET — stream PDF waybill SPX đã cache (bytes gốc từ hãng, không HTML). */
+export async function streamExternalWaybillFile(req, res) {
+  try {
+    const orderSn = String(req.params.orderSn || "").trim();
+    if (!orderSn) return res.status(400).json({ error: "Thiếu mã đơn" });
+    const filePath = path.join(PDF_DIR, `external-${orderSn}.pdf`);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "Chưa có file PDF waybill. Bấm In vận đơn lại." });
+    }
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${orderSn}.pdf"`);
+    return fs.createReadStream(filePath).pipe(res);
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Không đọc được PDF" });
   }
 }

@@ -31,6 +31,8 @@ import {
   handOverCarrierBulk,
   healHandedOver,
   createManualOrder,
+  printExternalWaybill,
+  streamExternalWaybillFile,
   resetPrintStatus,
   updatePrintStatus,
   markPrinted,
@@ -94,6 +96,8 @@ router.post("/hand-over-carrier/bulk", h(handOverCarrierBulk));
 router.post("/hand-over-carrier", h(handOverCarrierByCode));
 router.post("/heal-handed-over", h(healHandedOver));
 router.post("/manual", h(createManualOrder));
+router.post("/external/print-waybill", h(printExternalWaybill));
+router.get("/external/waybill-file/:orderSn", h(streamExternalWaybillFile));
 router.get("/don-hoan-huy", h(listDonHoanHuy));
 router.post("/don-hoan-huy", h(saveScanOrders));
 router.post("/scan-bg-enqueue", h(enqueueScanBg));

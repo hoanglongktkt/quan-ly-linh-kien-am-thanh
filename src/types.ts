@@ -181,6 +181,12 @@ export interface Order {
     country?: string;
   };
   carrier?: 'self' | 'ghn' | 'spx';
+  /** Đơn ngoại sàn — GHN / SPX / tự giao */
+  provider?: 'ghn' | 'spx' | 'self' | string;
+  /** created | shipping | delivered | rts */
+  external_status?: 'created' | 'shipping' | 'delivered' | 'rts' | string;
+  /** COD thu hộ */
+  cod_amount?: number;
   /** Tên ĐVVC từ Shopee (shipping_carrier / package_list) — VD: SPX Express, Giao Hàng Nhanh */
   shipping_carrier?: string;
   /** Tên kênh giao khi mask (checkout_shipping_carrier) — VD: Nhanh, Hỏa Tốc */
