@@ -110723,8 +110723,22 @@ function resolveSpxGateway({ apiUrl, createPath } = {}) {
   return { host, path: path21, url: `${host}${path21}` };
 }
 function signBody(appId, secret, timestamp, rawBody) {
-  const payload = `${appId}${timestamp}${rawBody}`;
-  return import_crypto2.default.createHmac("sha256", String(secret)).update(payload).digest("hex");
+  const raw = `${String(appId)}${String(timestamp)}${String(rawBody ?? "")}`;
+  return import_crypto2.default.createHmac("sha256", String(secret)).update(raw, "utf8").digest("hex");
+}
+function stringifySpxBody(bodyObj) {
+  return JSON.stringify(bodyObj ?? {});
+}
+function buildSpxAuthHeaders(appId, secret, rawBody) {
+  const timestamp = String(Math.floor(Date.now() / 1e3));
+  const sign = signBody(appId, secret, timestamp, rawBody);
+  return {
+    "Content-Type": "application/json; charset=UTF-8",
+    Accept: "application/json",
+    "app-id": String(appId),
+    timestamp,
+    sign
+  };
 }
 function pickSpxAppId(creds) {
   return String(creds?.clientId || creds?.userId || creds?.appId || "").trim();
@@ -110740,23 +110754,14 @@ async function spxFetch(apiUrl, path21, bodyObj, creds) {
       "Thi\u1EBFu SPX User ID / Secret tr\xEAn Database. V\xE0o C\xE0i \u0111\u1EB7t \u2192 nh\u1EADp User ID (ho\u1EB7c Client ID) v\xE0 Secret r\u1ED3i b\u1EA5m L\u01B0u c\u1EA5u h\xECnh SPX."
     );
   }
-  const rawBody = JSON.stringify(bodyObj || {});
-  const timestamp = String(Math.floor(Date.now() / 1e3));
-  const sign = signBody(appId, secret, timestamp, rawBody);
+  const rawBody = stringifySpxBody(bodyObj);
+  const headers = buildSpxAuthHeaders(appId, secret, rawBody);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS2);
   try {
     const res = await fetch(`${apiUrl}${path21}`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        "app-id": appId,
-        appid: appId,
-        "user-id": appId,
-        timestamp,
-        sign
-      },
+      headers,
       body: rawBody,
       signal: controller.signal
     });
@@ -111009,22 +111014,13 @@ async function testSpxConnection({ userId, secret, apiUrl, createPath } = {}) {
   }
   const gateway = resolveSpxGateway({ apiUrl, createPath });
   const body = { user_id: uid };
-  const rawBody = JSON.stringify(body);
-  const timestamp = String(Math.floor(Date.now() / 1e3));
-  const sign = signBody(uid, sec, timestamp, rawBody);
+  const rawBody = stringifySpxBody(body);
+  const headers = buildSpxAuthHeaders(uid, sec, rawBody);
   try {
     const response = await axios_default.post(gateway.url, rawBody, {
       timeout: TIMEOUT_MS2,
       responseType: "text",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        "app-id": uid,
-        appid: uid,
-        "user-id": uid,
-        timestamp,
-        sign
-      },
+      headers,
       transformRequest: [(data) => data]
     });
     const httpStatus = Number(response.status) || 0;

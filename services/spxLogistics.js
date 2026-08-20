@@ -1,6 +1,6 @@
 /**
  * SPX Express Open API — tạo đơn + lấy waybill PDF gốc (URL hoặc Base64 của hãng).
- * Auth: HMAC-SHA256(user_id + timestamp + body, secret) — User ID / Secret trên MongoDB.
+ * Auth: HMAC-SHA256(app-id + timestamp + rawJsonBody, secret) → hex. User ID / Secret trên MongoDB.
  * TUYỆT ĐỐI không đọc process.env.SPX_*. Không vẽ barcode HTML.
  */
 import crypto from "crypto";
@@ -49,9 +49,36 @@ export function resolveSpxGateway({ apiUrl, createPath } = {}) {
   return { host, path, url: `${host}${path}` };
 }
 
+/**
+ * SPX B2C / SLS Open API — chữ ký HMAC-SHA256.
+ *
+ * Chuỗi gốc (không khoảng trắng, không `\n`):
+ *   raw = appId + timestamp + rawJsonBody
+ * Key: Secret Key trên Hồ sơ shop SPX.
+ * Output: hex lowercase 64 ký tự (không Base64).
+ *
+ * Header bắt buộc: app-id, timestamp (Unix giây), sign.
+ * Body ký phải là đúng byte JSON gửi đi (UTF-8, compact).
+ */
 function signBody(appId, secret, timestamp, rawBody) {
-  const payload = `${appId}${timestamp}${rawBody}`;
-  return crypto.createHmac("sha256", String(secret)).update(payload).digest("hex");
+  const raw = `${String(appId)}${String(timestamp)}${String(rawBody ?? "")}`;
+  return crypto.createHmac("sha256", String(secret)).update(raw, "utf8").digest("hex");
+}
+
+function stringifySpxBody(bodyObj) {
+  return JSON.stringify(bodyObj ?? {});
+}
+
+function buildSpxAuthHeaders(appId, secret, rawBody) {
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const sign = signBody(appId, secret, timestamp, rawBody);
+  return {
+    "Content-Type": "application/json; charset=UTF-8",
+    Accept: "application/json",
+    "app-id": String(appId),
+    timestamp,
+    sign,
+  };
 }
 
 function pickSpxAppId(creds) {
@@ -70,23 +97,14 @@ async function spxFetch(apiUrl, path, bodyObj, creds) {
       "Thiếu SPX User ID / Secret trên Database. Vào Cài đặt → nhập User ID (hoặc Client ID) và Secret rồi bấm Lưu cấu hình SPX.",
     );
   }
-  const rawBody = JSON.stringify(bodyObj || {});
-  const timestamp = String(Math.floor(Date.now() / 1000));
-  const sign = signBody(appId, secret, timestamp, rawBody);
+  const rawBody = stringifySpxBody(bodyObj);
+  const headers = buildSpxAuthHeaders(appId, secret, rawBody);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
     const res = await fetch(`${apiUrl}${path}`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        "app-id": appId,
-        appid: appId,
-        "user-id": appId,
-        timestamp,
-        sign,
-      },
+      headers,
       body: rawBody,
       signal: controller.signal,
     });
@@ -408,23 +426,14 @@ export async function testSpxConnection({ userId, secret, apiUrl, createPath } =
 
   const gateway = resolveSpxGateway({ apiUrl, createPath });
   const body = { user_id: uid };
-  const rawBody = JSON.stringify(body);
-  const timestamp = String(Math.floor(Date.now() / 1000));
-  const sign = signBody(uid, sec, timestamp, rawBody);
+  const rawBody = stringifySpxBody(body);
+  const headers = buildSpxAuthHeaders(uid, sec, rawBody);
 
   try {
     const response = await axios.post(gateway.url, rawBody, {
       timeout: TIMEOUT_MS,
       responseType: "text",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        "app-id": uid,
-        appid: uid,
-        "user-id": uid,
-        timestamp,
-        sign,
-      },
+      headers,
       transformRequest: [(data) => data],
     });
     const httpStatus = Number(response.status) || 0;
