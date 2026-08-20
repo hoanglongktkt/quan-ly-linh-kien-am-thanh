@@ -77405,6 +77405,28 @@ function readExistingWarehouseLock(doc) {
   const flag = data.is_return_received === true || data.warehouse_return_received === true || data.isWarehouseReturnReceived === true || local === "RETURN_RECEIVED" || local === "CANCELLED_STORED";
   return { locked: flag, local };
 }
+function coerceShopeeWatermarkDate(value) {
+  if (value == null || value === "") return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const ms = value > 0 && value < 1e12 ? value * 1e3 : value;
+    const d2 = new Date(ms);
+    return Number.isNaN(d2.getTime()) ? null : d2;
+  }
+  const raw = String(value).trim();
+  if (!raw) return null;
+  if (/^\d+(\.\d+)?$/.test(raw)) {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return null;
+    const ms = n > 0 && n < 1e12 ? n * 1e3 : n;
+    const d2 = new Date(ms);
+    return Number.isNaN(d2.getTime()) ? null : d2;
+  }
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
 async function bulkUpsertOrdersToStore(orders) {
   requireMongo();
   const list = Array.isArray(orders) ? orders.filter((o) => o != null && typeof o === "object") : [];
@@ -77447,15 +77469,13 @@ async function bulkUpsertOrdersToStore(orders) {
       "data.last_synced_at": (/* @__PURE__ */ new Date()).toISOString(),
       "data.sync_state": String(order.sync_state || "verified")
     };
-    let incomingUpdateAt = null;
-    if (order.last_shopee_update_at != null) {
-      const updateAt = new Date(String(order.last_shopee_update_at));
-      if (!Number.isNaN(updateAt.getTime())) {
-        incomingUpdateAt = updateAt;
-        $set.last_shopee_update_at = updateAt;
-        $set["data.last_shopee_update_at"] = updateAt.toISOString();
-        $set.create_time = updateAt;
-      }
+    let incomingUpdateAt = coerceShopeeWatermarkDate(
+      order.last_shopee_update_at ?? order.update_time ?? order.updateTime ?? order.create_time ?? order.date
+    );
+    if (incomingUpdateAt) {
+      $set.last_shopee_update_at = incomingUpdateAt;
+      $set["data.last_shopee_update_at"] = incomingUpdateAt.toISOString();
+      $set.create_time = incomingUpdateAt;
     }
     if (shopIdStr) {
       $set.shopId = shopIdStr;
@@ -77712,12 +77732,16 @@ async function bulkUpsertOrdersToStore(orders) {
         `[MongoDB] WOO UPSERT customer \u2014 orderSn=${orderSn} name="${cName}" phone="${cPhone}" addr="${cAddr.slice(0, 40)}"`
       );
     }
+    const insertWatermark = incomingUpdateAt || /* @__PURE__ */ new Date();
     const $setOnInsertRaw = {
       _id,
       is_handed_over: false,
       isPrinted: false,
       hasPdf: false,
       isPrepared: false,
+      last_shopee_update_at: insertWatermark,
+      create_time: insertWatermark,
+      "data.last_shopee_update_at": insertWatermark.toISOString(),
       "data.is_handed_over": false,
       "data.isPrinted": false,
       "data.hasPdf": false,
@@ -77810,7 +77834,8 @@ async function bulkUpsertOrdersToStore(orders) {
           const current = existingByKey.get(item.id) || existingByKey.get(item.orderSn);
           if (!current || !item.updateAt) return true;
           const currentAt = current.last_shopee_update_at ? new Date(current.last_shopee_update_at) : null;
-          if (currentAt && !Number.isNaN(currentAt.getTime()) && currentAt > item.updateAt) {
+          const STALE_SKEW_MS = 15 * 60 * 1e3;
+          if (currentAt && !Number.isNaN(currentAt.getTime()) && currentAt.getTime() - item.updateAt.getTime() > STALE_SKEW_MS) {
             console.warn(
               `[MongoDB] STALE Shopee snapshot ignored order_sn=${item.orderSn || item.id} incoming=${item.updateAt.toISOString()} stored=${currentAt.toISOString()}`
             );
@@ -77818,6 +77843,7 @@ async function bulkUpsertOrdersToStore(orders) {
           }
           if (current) {
             const identityFilter = item.op.updateOne.filter;
+            const watermarkCeil = new Date(item.updateAt.getTime() + STALE_SKEW_MS);
             item.op.updateOne.filter = {
               $and: [
                 identityFilter,
@@ -77825,7 +77851,7 @@ async function bulkUpsertOrdersToStore(orders) {
                   $or: [
                     { last_shopee_update_at: null },
                     { last_shopee_update_at: { $exists: false } },
-                    { last_shopee_update_at: { $lte: item.updateAt } }
+                    { last_shopee_update_at: { $lte: watermarkCeil } }
                   ]
                 }
               ]
@@ -77840,6 +77866,11 @@ async function bulkUpsertOrdersToStore(orders) {
           const $setOnInsert = item.op?.updateOne?.update?.$setOnInsert;
           if (!$set) continue;
           stripWarehouseProtectedKeysFromSet($set);
+          if (current && $set.last_shopee_update_at == null && !current.last_shopee_update_at) {
+            const backfillAt = item.updateAt || /* @__PURE__ */ new Date();
+            $set.last_shopee_update_at = backfillAt;
+            $set["data.last_shopee_update_at"] = backfillAt.toISOString();
+          }
           if (current) {
             const existingShop = String(current.shopId || current.data?.shopId || "").trim();
             const incomingShop = String($set.shopId || $set["data.shopId"] || "").trim();
@@ -80037,7 +80068,10 @@ var ORDER_TAB_LEFT_PICKUP_RAW = [
   "TO_RETURN"
 ];
 var ORDER_TAB_TRACKING_PRESENT = {
-  tracking_no: { $nin: [null, "", "0"] }
+  tracking_no: { $exists: true, $nin: [null, "", "0"] }
+};
+var ORDER_TAB_TRACKING_ABSENT = {
+  $or: [{ tracking_no: { $exists: false } }, { tracking_no: { $in: [null, "", "0"] } }]
 };
 var ORDER_TAB_DROPOFF_PREPARED = {
   isPrepared: true
@@ -80153,7 +80187,7 @@ function orderTabFilter(tab) {
         $and: [
           ORDER_TAB_IS_TO_SHIP,
           ORDER_TAB_NOT_HANDED_OVER,
-          { $nor: [ORDER_TAB_TRACKING_PRESENT] },
+          ORDER_TAB_TRACKING_ABSENT,
           { isPrepared: { $ne: true } },
           {
             $or: [
@@ -80281,6 +80315,9 @@ function parseCancelReturnKindParam(raw) {
 }
 var TAB_COUNT_CACHE_MS = 15e3;
 var tabCountCache = null;
+function invalidateTabCountCache() {
+  tabCountCache = null;
+}
 var dhhCountCache = { key: "", n: 0 };
 function tabCountCacheKey(opts) {
   const ids = Array.isArray(opts?.shopIds) ? opts.shopIds.map(String).join(",") : "";
@@ -80379,7 +80416,7 @@ function tabIndexFilter(tab, kind) {
         shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] },
         is_handed_over: { $ne: true },
         isPrepared: { $ne: true },
-        $nor: [{ tracking_no: { $nin: [null, "", "0"] } }]
+        $or: [{ tracking_no: { $exists: false } }, { tracking_no: { $in: [null, "", "0"] } }]
       };
     case "processed":
     case "da-xu-ly":
@@ -80389,7 +80426,7 @@ function tabIndexFilter(tab, kind) {
         is_handed_over: { $ne: true },
         $or: [
           { shopee_order_status: "PROCESSED" },
-          { tracking_no: { $nin: [null, "", "0"] } },
+          { tracking_no: { $exists: true, $nin: [null, "", "0"] } },
           { isPrepared: true },
           { status: "processed" }
         ]
@@ -82847,10 +82884,17 @@ function getJwtSecret() {
 // middlewares/auth.js
 function authMiddleware(req, res, next) {
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+  let token = "";
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    token = authHeader.slice(7);
+  } else {
+    const pathOnly = String(req.originalUrl || req.path || "").split("?")[0];
+    const isLiveSse = req.method === "GET" && pathOnly.endsWith("/orders/live");
+    if (isLiveSse) token = String(req.query?.token || "").trim();
+  }
+  if (!token) {
     return res.status(401).json({ error: "Kh\xF4ng c\xF3 token x\xE1c th\u1EF1c." });
   }
-  const token = authHeader.slice(7);
   try {
     const decoded = import_jsonwebtoken.default.verify(token, getJwtSecret());
     req.user = decoded;
@@ -114169,6 +114213,88 @@ async function ackReturnAlertsApi(req, res) {
   }
 }
 
+// services/orderRealtime.js
+var MAX_SSE_CLIENTS = 20;
+var HEARTBEAT_MS = 15e3;
+var clients = /* @__PURE__ */ new Set();
+function pruneDeadClients() {
+  for (const res of clients) {
+    if (res.writableEnded || res.destroyed) {
+      clients.delete(res);
+    }
+  }
+}
+function emitNewOrder(payload) {
+  pruneDeadClients();
+  if (clients.size === 0) return;
+  const body = {
+    orderSn: payload?.orderSn ? String(payload.orderSn) : "",
+    orderSns: Array.isArray(payload?.orderSns) ? payload.orderSns.map((s2) => String(s2 || "").trim()).filter(Boolean) : payload?.orderSn ? [String(payload.orderSn)] : [],
+    shopId: payload?.shopId != null ? String(payload.shopId) : "",
+    shopIds: Array.isArray(payload?.shopIds) ? payload.shopIds.map((s2) => String(s2 || "").trim()).filter(Boolean) : payload?.shopId ? [String(payload.shopId)] : [],
+    status: payload?.status ? String(payload.status) : "",
+    count: Number(payload?.count) || 0,
+    at: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  if (!body.count) body.count = body.orderSns.length || (body.orderSn ? 1 : 0);
+  const chunk = `event: new_order
+data: ${JSON.stringify(body)}
+
+`;
+  for (const res of clients) {
+    try {
+      res.write(chunk);
+    } catch {
+      clients.delete(res);
+    }
+  }
+}
+function streamOrderLive(req, res) {
+  pruneDeadClients();
+  while (clients.size >= MAX_SSE_CLIENTS) {
+    const oldest = clients.values().next().value;
+    if (!oldest) break;
+    clients.delete(oldest);
+    try {
+      oldest.end();
+    } catch {
+    }
+  }
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  if (typeof res.flushHeaders === "function") res.flushHeaders();
+  res.write(`event: ping
+data: ${JSON.stringify({ ok: true, at: Date.now() })}
+
+`);
+  clients.add(res);
+  const heartbeat = setInterval(() => {
+    if (res.writableEnded || res.destroyed) {
+      clearInterval(heartbeat);
+      clients.delete(res);
+      return;
+    }
+    try {
+      res.write(`event: ping
+data: ${JSON.stringify({ at: Date.now() })}
+
+`);
+    } catch {
+      clearInterval(heartbeat);
+      clients.delete(res);
+    }
+  }, HEARTBEAT_MS);
+  const onClose = () => {
+    clearInterval(heartbeat);
+    clients.delete(res);
+  };
+  req.on("close", onClose);
+  req.on("aborted", onClose);
+  res.on("close", onClose);
+}
+
 // routes/ordersRoutes.js
 var router13 = (0, import_express14.Router)();
 var h2 = asyncHandler;
@@ -114176,6 +114302,7 @@ router13.get("/refresh", h2(refreshOrders));
 router13.get("/query", h2(queryOrders));
 router13.get("/counts", h2(getOrderCounts));
 router13.get("/counter", h2(getOrderCounts));
+router13.get("/live", streamOrderLive);
 router13.get("/products-summary", h2(getFulfillmentProductsSummary));
 router13.get("/lookup", h2(lookupOrder));
 router13.get("/scanner-sync", h2(scannerSync));
@@ -132099,7 +132226,7 @@ function normalizeShopeeOrderDetail(shopId, shopName, item) {
       date: item?.create_time ? new Date(Number(item.create_time) * 1e3).toISOString() : (/* @__PURE__ */ new Date()).toISOString(),
       // Watermark của Shopee, KHÔNG phải giờ server nhận payload. Mongo dùng field
       // này để chặn webhook/pull đến trễ ghi đè snapshot mới hơn.
-      last_shopee_update_at: item?.update_time ? new Date(Number(item.update_time) * 1e3).toISOString() : void 0,
+      last_shopee_update_at: item?.update_time ? new Date(Number(item.update_time) * 1e3).toISOString() : item?.create_time ? new Date(Number(item.create_time) * 1e3).toISOString() : (/* @__PURE__ */ new Date()).toISOString(),
       packageNumber: pkg?.package_number || item?.package_number || void 0,
       package_number: pkg?.package_number || item?.package_number || void 0,
       isPrepared: mappedStatus === "processed" || mappedStatus === "shipping" || rawStatus === "PROCESSED" || rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE",
@@ -132936,6 +133063,7 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
     return { added, updated };
   }
   const touched = [];
+  const newlyInsertedSns = [];
   if (isMongoReady()) {
     try {
       const snNeed = batchNormalized.map((o) => String(o?.orderSn || "").trim()).filter(Boolean).filter((sn) => !orders.some((o) => String(o?.orderSn || "") === sn));
@@ -133025,10 +133153,15 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
         orders.unshift(normalized);
         row = orders[0];
         added++;
+        const insertedSn = String(row?.orderSn || normalized?.orderSn || "").trim();
+        if (insertedSn) newlyInsertedSns.push(insertedSn);
       }
       row.shopId = ownerShop;
       row.shopName = resolveConnectedShopDisplayName(ownerShop, row.shopName) || `Shop ${ownerShop}`;
       row._shop_owner_verified = true;
+      if (!row.last_shopee_update_at) {
+        row.last_shopee_update_at = row.date || (/* @__PURE__ */ new Date()).toISOString();
+      }
       forceHealPickupOrderIfHasTracking(row);
       promoteOrderStatusWhenTrackingReady(row);
       enforceShopeeTerminalLocalStatus(row);
@@ -133065,10 +133198,25 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
       invalidateOrdersRefreshCache();
     } catch {
     }
+    try {
+      invalidateTabCountCache();
+    } catch {
+    }
     queueOrdersJsonMirrorFromMongo();
     console.log(
       `[DB UPDATED] Mongo bulkWrite OK \u2014 batch=${touched.length} written=${mongoN} (+${added}/~${updated}) order_sn=${touched.map((o) => o.orderSn).join(",")}`
     );
+    if (added > 0 && newlyInsertedSns.length > 0) {
+      emitNewOrder({
+        orderSns: newlyInsertedSns,
+        shopId: String(touched[0]?.shopId || syncCtx?.apiShopId || ""),
+        shopIds: [
+          ...new Set(touched.map((o) => String(o?.shopId || "").trim()).filter(Boolean))
+        ],
+        status: String(touched[0]?.status || ""),
+        count: newlyInsertedSns.length
+      });
+    }
     for (const row of touched) {
       const sn = String(row?.orderSn || "").trim();
       if (!sn) continue;
@@ -134895,6 +135043,8 @@ function normalizeShopeeOrder(payload) {
   const itemList = Array.isArray(data.item_list) ? data.item_list : [];
   const mappedItems = itemList.length ? itemList.map((it) => mapShopeeOrderLineItem(it, { orderStatus: rawStatus })).filter(Boolean) : [];
   const mappedStatus = rawStatus ? mapShopeeStatusToLocal(rawStatus, { hasTracking: Boolean(webhookTracking) }) : webhookTracking ? "processed" : "unprocessed";
+  const watermarkUnix = Number(data.update_time || data.create_time || payload?.timestamp || 0);
+  const lastShopeeUpdateAt = watermarkUnix ? new Date(watermarkUnix < 1e12 ? watermarkUnix * 1e3 : watermarkUnix).toISOString() : (/* @__PURE__ */ new Date()).toISOString();
   const order = {
     id: `shopee-${orderSn}`,
     orderSn: String(orderSn),
@@ -134908,6 +135058,7 @@ function normalizeShopeeOrder(payload) {
     shopee_order_status: rawStatus || (webhookTracking ? "PROCESSED" : void 0),
     status: mappedStatus,
     date: data.create_time ? new Date(data.create_time * 1e3).toISOString() : (/* @__PURE__ */ new Date()).toISOString(),
+    last_shopee_update_at: lastShopeeUpdateAt,
     packageNumber: data.package_number || void 0,
     isPrepared: mappedStatus === "processed" || mappedStatus === "shipping" || Boolean(webhookTracking),
     isPrinted: false,
@@ -135326,10 +135477,23 @@ async function upsertShopeeWebhookShallow(body, orders) {
         invalidateOrdersRefreshCache();
       } catch {
       }
+      try {
+        invalidateTabCountCache();
+      } catch {
+      }
       queueOrdersJsonMirrorFromMongo();
       console.log(
         `[DB UPDATED] (webhook-shallow) order_sn=${merged.orderSn} shop_id=${merged.shopId || "?"} \u2014 upsert OK`
       );
+      if (existingIndex < 0) {
+        emitNewOrder({
+          orderSn: String(merged.orderSn),
+          orderSns: [String(merged.orderSn)],
+          shopId: String(merged.shopId || ""),
+          status: String(merged.status || ""),
+          count: 1
+        });
+      }
     } catch (mongoErr) {
       console.error(
         `[Shopee Webhook] shallow Mongo upsert FAILED order_sn=${merged.orderSn}:`,

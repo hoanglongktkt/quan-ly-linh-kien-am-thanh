@@ -1106,7 +1106,7 @@ export default function OrderManager({
   const counterInFlightKeyRef = useRef('');
   const counterInFlightPromiseRef = useRef<Promise<Record<string, number> | null> | null>(null);
   const lastCounterCallAtRef = useRef(0);
-  const prevCounters = useRef({ pending_confirm: 0, all: 0 });
+  const prevCounters = useRef({ pending_confirm: 0, all: 0, unprocessed: 0 });
   const prevCountersReadyRef = useRef(false);
   const prevCounterScopeRef = useRef('');
   const isSyncingRef = useRef(false);
@@ -1302,6 +1302,7 @@ export default function OrderManager({
   const onFetchOrdersRef = useRef(fetchOrdersWithShop);
   onFetchOrdersRef.current = fetchOrdersWithShop;
   const newOrderRefreshTimersRef = useRef<number[]>([]);
+  const lastNewOrderNotifyAtRef = useRef(0);
 
   /** Set tab + sub-tab + page cùng 1 tick — tránh fetch 2 lần khi vào nhóm Hủy/Hoàn. */
   const selectOrdersSubTab = useCallback((tab: OrderTab, cancelReturn?: CancelReturnTab) => {
@@ -1321,43 +1322,49 @@ export default function OrderManager({
     newOrderRefreshTimersRef.current = [];
     setHasNewOrders(true);
     setCurrentPage(1);
-    playNotificationSound();
-    showToast('Đã có đơn mới — đang làm mới danh sách', 3500);
+    const now = Date.now();
+    if (now - lastNewOrderNotifyAtRef.current > 2500) {
+      lastNewOrderNotifyAtRef.current = now;
+      playNotificationSound();
+      showToast('Đã có đơn mới — đang làm mới danh sách', 3500);
+    }
     const t1 = window.setTimeout(() => {
-      refetchOrdersPageRef.current({ silent: true, page: 1 });
-    }, 800);
+      refetchOrdersPageRef.current({ silent: false, page: 1 });
+    }, 400);
     newOrderRefreshTimersRef.current = [t1];
   }, []);
 
-  /** Chỉ báo đơn mới khi pending_confirm hoặc all TĂNG — không dùng fingerprint 10 tab. */
+  /** Báo đơn mới khi pending_confirm / unprocessed / all TĂNG. SSE `new_order` là đường chính. */
   const maybeNotifyNewOrdersFromCounts = useCallback(
     (counts: Record<string, number>) => {
       const nextPending = Number(counts.pending_confirm) || 0;
       const nextAll = Number(counts.all) || 0;
+      const nextUnprocessed = Number(counts.unprocessed) || 0;
       const shopIds = shopScopeRef.current.shopIds;
       const range = dateRangeRef.current;
       const scopeKey = `${shopIds.join(',')}|${range.startDate || ''}|${range.endDate || ''}`;
       if (prevCounterScopeRef.current !== scopeKey) {
         prevCounterScopeRef.current = scopeKey;
-        prevCounters.current = { pending_confirm: nextPending, all: nextAll };
+        prevCounters.current = { pending_confirm: nextPending, all: nextAll, unprocessed: nextUnprocessed };
         prevCountersReadyRef.current = true;
         return;
       }
       if (!prevCountersReadyRef.current) {
-        prevCounters.current = { pending_confirm: nextPending, all: nextAll };
+        prevCounters.current = { pending_confirm: nextPending, all: nextAll, unprocessed: nextUnprocessed };
         prevCountersReadyRef.current = true;
         return;
       }
       const prevPending = Number(prevCounters.current.pending_confirm) || 0;
       const prevAll = Number(prevCounters.current.all) || 0;
+      const prevUnprocessed = Number(prevCounters.current.unprocessed) || 0;
       // Timeout lag countDocuments → 0: giữ baseline, chỉ badge (đã set trong fetchOrderCounts).
       if ((nextPending === 0 && prevPending > 0 && nextAll === 0) || (nextAll === 0 && prevAll > 0)) {
         return;
       }
-      if (nextPending > prevPending || nextAll > prevAll) {
+      if (nextPending > prevPending || nextAll > prevAll || nextUnprocessed > prevUnprocessed) {
         scheduleNewOrderListRefresh();
       }
-      prevCounters.current = { pending_confirm: nextPending, all: nextAll };
+      prevCounters.current = { pending_confirm: nextPending, all: nextAll, unprocessed: nextUnprocessed };
     },
     [scheduleNewOrderListRefresh],
   );
@@ -1465,6 +1472,52 @@ export default function OrderManager({
       counterAbortRef.current?.abort();
     };
   }, [fetchOrderCounts, maybeNotifyNewOrdersFromCounts]);
+
+  /** Lắng nghe SSE `new_order` — popup + refresh ngay, không chờ poll counter. */
+  useEffect(() => {
+    const token = localStorage.getItem('admin_token') || '';
+    if (!token || typeof EventSource === 'undefined') return;
+    const url = `/api/orders/live?token=${encodeURIComponent(token)}`;
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource(url);
+    } catch {
+      return;
+    }
+    const onNewOrder = (ev: MessageEvent) => {
+      let payload: {
+        shopId?: string;
+        shopIds?: string[];
+        orderSn?: string;
+        orderSns?: string[];
+      } = {};
+      try {
+        payload = JSON.parse(String(ev.data || '{}')) as typeof payload;
+      } catch {
+        payload = {};
+      }
+      const scoped = shopScopeRef.current.shopIds.map(String);
+      const eventShops = [
+        ...(Array.isArray(payload.shopIds) ? payload.shopIds : []),
+        payload.shopId || '',
+      ]
+        .map((s) => String(s || '').trim())
+        .filter(Boolean);
+      if (scoped.length > 0 && eventShops.length > 0) {
+        const hit = eventShops.some((id) => scoped.includes(id));
+        if (!hit) return;
+      }
+      scheduleNewOrderListRefresh();
+    };
+    es.addEventListener('new_order', onNewOrder as EventListener);
+    es.onerror = () => {
+      /* EventSource tự reconnect; không spam log. */
+    };
+    return () => {
+      es.removeEventListener('new_order', onNewOrder as EventListener);
+      es.close();
+    };
+  }, [scheduleNewOrderListRefresh]);
 
   /** Tự unlock audio sau click/touch đầu tiên của user trên trang. */
   useEffect(() => {

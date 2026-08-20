@@ -505,8 +505,10 @@ import {
   mirrorTopLevelTrackingIntoData,
   getDashboardStatsFromStore,
   getLowStockProductsFromStore,
+  invalidateTabCountCache,
   type LocalInventoryCache,
 } from "./src/db/mongoStore.ts";
+import { emitNewOrder } from "./services/orderRealtime.js";
 import { pushReturnAlert } from "./services/returnAlertQueue.js";
 import {
   getReturnAlerts,
@@ -15649,7 +15651,9 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
       // này để chặn webhook/pull đến trễ ghi đè snapshot mới hơn.
       last_shopee_update_at: item?.update_time
         ? new Date(Number(item.update_time) * 1000).toISOString()
-        : undefined,
+        : item?.create_time
+          ? new Date(Number(item.create_time) * 1000).toISOString()
+          : new Date().toISOString(),
       packageNumber: pkg?.package_number || item?.package_number || undefined,
       package_number: pkg?.package_number || item?.package_number || undefined,
       isPrepared:
@@ -16828,6 +16832,7 @@ async function persistShopeeOrderChunk(
 
   // ——— BƯỚC 1: Lưu thông tin cơ bản từ get_order_detail (chưa gọi logistics) ———
   const touched: any[] = [];
+  const newlyInsertedSns: string[] = [];
 
   // Preload bản ghi Mongo theo order_sn của batch — đảm bảo giữ tracking_no khi hủy/hoàn
   // dù mảng `orders` in-memory thiếu (full-scan timeout / webhook working-set).
@@ -16953,11 +16958,16 @@ async function persistShopeeOrderChunk(
         orders.unshift(normalized);
         row = orders[0];
         added++;
+        const insertedSn = String(row?.orderSn || normalized?.orderSn || "").trim();
+        if (insertedSn) newlyInsertedSns.push(insertedSn);
       }
       row.shopId = ownerShop;
       row.shopName =
         resolveConnectedShopDisplayName(ownerShop, row.shopName) || `Shop ${ownerShop}`;
       row._shop_owner_verified = true;
+      if (!row.last_shopee_update_at) {
+        row.last_shopee_update_at = row.date || new Date().toISOString();
+      }
       forceHealPickupOrderIfHasTracking(row);
       promoteOrderStatusWhenTrackingReady(row);
       enforceShopeeTerminalLocalStatus(row);
@@ -17001,10 +17011,26 @@ async function persistShopeeOrderChunk(
     } catch {
       /* ignore */
     }
+    try {
+      invalidateTabCountCache();
+    } catch {
+      /* ignore */
+    }
     queueOrdersJsonMirrorFromMongo();
     console.log(
       `[DB UPDATED] Mongo bulkWrite OK — batch=${touched.length} written=${mongoN} (+${added}/~${updated}) order_sn=${touched.map((o) => o.orderSn).join(",")}`,
     );
+    if (added > 0 && newlyInsertedSns.length > 0) {
+      emitNewOrder({
+        orderSns: newlyInsertedSns,
+        shopId: String(touched[0]?.shopId || syncCtx?.apiShopId || ""),
+        shopIds: [
+          ...new Set(touched.map((o) => String(o?.shopId || "").trim()).filter(Boolean)),
+        ],
+        status: String(touched[0]?.status || ""),
+        count: newlyInsertedSns.length,
+      });
+    }
 
     // PDF chỉ khi đã có tracking_no + package_number (GHN chưa mã → create_shipping_document fail).
     for (const row of touched) {
@@ -19833,6 +19859,11 @@ function normalizeShopeeOrder(payload: any): any | null {
       ? "processed"
       : "unprocessed";
 
+  const watermarkUnix = Number(data.update_time || data.create_time || payload?.timestamp || 0);
+  const lastShopeeUpdateAt = watermarkUnix
+    ? new Date(watermarkUnix < 1e12 ? watermarkUnix * 1000 : watermarkUnix).toISOString()
+    : new Date().toISOString();
+
   const order: any = {
     id: `shopee-${orderSn}`,
     orderSn: String(orderSn),
@@ -19846,6 +19877,7 @@ function normalizeShopeeOrder(payload: any): any | null {
     shopee_order_status: rawStatus || (webhookTracking ? "PROCESSED" : undefined),
     status: mappedStatus,
     date: data.create_time ? new Date(data.create_time * 1000).toISOString() : new Date().toISOString(),
+    last_shopee_update_at: lastShopeeUpdateAt,
     packageNumber: data.package_number || undefined,
     isPrepared: mappedStatus === "processed" || mappedStatus === "shipping" || Boolean(webhookTracking),
     isPrinted: false,
@@ -20391,10 +20423,24 @@ async function upsertShopeeWebhookShallow(body: any, orders: any[]): Promise<str
       } catch {
         /* ignore */
       }
+      try {
+        invalidateTabCountCache();
+      } catch {
+        /* ignore */
+      }
       queueOrdersJsonMirrorFromMongo();
       console.log(
         `[DB UPDATED] (webhook-shallow) order_sn=${merged.orderSn} shop_id=${merged.shopId || "?"} — upsert OK`,
       );
+      if (existingIndex < 0) {
+        emitNewOrder({
+          orderSn: String(merged.orderSn),
+          orderSns: [String(merged.orderSn)],
+          shopId: String(merged.shopId || ""),
+          status: String(merged.status || ""),
+          count: 1,
+        });
+      }
     } catch (mongoErr: any) {
       console.error(
         `[Shopee Webhook] shallow Mongo upsert FAILED order_sn=${merged.orderSn}:`,

@@ -1742,6 +1742,30 @@ function readExistingWarehouseLock(doc: any): {
   return { locked: flag, local };
 }
 
+/** Parse Shopee unix (giây/ms) hoặc ISO/Date → Date hợp lệ. */
+function coerceShopeeWatermarkDate(value: unknown): Date | null {
+  if (value == null || value === "") return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const ms = value > 0 && value < 1e12 ? value * 1000 : value;
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  const raw = String(value).trim();
+  if (!raw) return null;
+  if (/^\d+(\.\d+)?$/.test(raw)) {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return null;
+    const ms = n > 0 && n < 1e12 ? n * 1000 : n;
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 /**
  * Upsert đơn Shopee → Mongo:
  * - `$set` = data gốc Shopee (shopee_order_status, tracking_no, shipping_carrier, …)
@@ -1811,15 +1835,17 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       "data.last_synced_at": new Date().toISOString(),
       "data.sync_state": String(order.sync_state || "verified"),
     };
-    let incomingUpdateAt: Date | null = null;
-    if (order.last_shopee_update_at != null) {
-      const updateAt = new Date(String(order.last_shopee_update_at));
-      if (!Number.isNaN(updateAt.getTime())) {
-        incomingUpdateAt = updateAt;
-        $set.last_shopee_update_at = updateAt;
-        $set["data.last_shopee_update_at"] = updateAt.toISOString();
-        $set.create_time = updateAt;
-      }
+    let incomingUpdateAt: Date | null = coerceShopeeWatermarkDate(
+      order.last_shopee_update_at ??
+        order.update_time ??
+        order.updateTime ??
+        order.create_time ??
+        order.date,
+    );
+    if (incomingUpdateAt) {
+      $set.last_shopee_update_at = incomingUpdateAt;
+      $set["data.last_shopee_update_at"] = incomingUpdateAt.toISOString();
+      $set.create_time = incomingUpdateAt;
     }
     // $set shopId: document mới / shopId trống sẽ được vá. Document đã có shopId khác
     // chỉ ghi đè khi forceShopId (chủ đơn đã xác thực). Xem vòng existing bên dưới.
@@ -2167,12 +2193,16 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     // QUAN TRỌNG: MongoDB CẤM cùng path xuất hiện ở cả $set và $setOnInsert
     // → lỗi "Updating the path 'is_handed_over' would create a conflict".
     // Khi SHIPPED đã $set clear flags → phải gỡ các key trùng khỏi $setOnInsert.
+    const insertWatermark = incomingUpdateAt || new Date();
     const $setOnInsertRaw: Record<string, unknown> = {
       _id,
       is_handed_over: false,
       isPrinted: false,
       hasPdf: false,
       isPrepared: false,
+      last_shopee_update_at: insertWatermark,
+      create_time: insertWatermark,
+      "data.last_shopee_update_at": insertWatermark.toISOString(),
       "data.is_handed_over": false,
       "data.isPrinted": false,
       "data.hasPdf": false,
@@ -2277,7 +2307,13 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
           const current = existingByKey.get(item.id) || existingByKey.get(item.orderSn);
           if (!current || !item.updateAt) return true;
           const currentAt = current.last_shopee_update_at ? new Date(current.last_shopee_update_at) : null;
-          if (currentAt && !Number.isNaN(currentAt.getTime()) && currentAt > item.updateAt) {
+          // Cho lệch ≤ 15 phút: webhook fallback now()/push timestamp vs get_order_detail update_time.
+          const STALE_SKEW_MS = 15 * 60 * 1000;
+          if (
+            currentAt &&
+            !Number.isNaN(currentAt.getTime()) &&
+            currentAt.getTime() - item.updateAt.getTime() > STALE_SKEW_MS
+          ) {
             console.warn(
               `[MongoDB] STALE Shopee snapshot ignored order_sn=${item.orderSn || item.id} ` +
                 `incoming=${item.updateAt.toISOString()} stored=${currentAt.toISOString()}`,
@@ -2286,6 +2322,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
           }
           if (current) {
             const identityFilter = item.op.updateOne.filter;
+            const watermarkCeil = new Date(item.updateAt.getTime() + STALE_SKEW_MS);
             item.op.updateOne.filter = {
               $and: [
                 identityFilter,
@@ -2293,7 +2330,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
                   $or: [
                     { last_shopee_update_at: null },
                     { last_shopee_update_at: { $exists: false } },
-                    { last_shopee_update_at: { $lte: item.updateAt } },
+                    { last_shopee_update_at: { $lte: watermarkCeil } },
                   ],
                 },
               ],
@@ -2310,6 +2347,11 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
             | undefined;
           if (!$set) continue;
           stripWarehouseProtectedKeysFromSet($set);
+          if (current && $set.last_shopee_update_at == null && !current.last_shopee_update_at) {
+            const backfillAt = item.updateAt || new Date();
+            $set.last_shopee_update_at = backfillAt;
+            $set["data.last_shopee_update_at"] = backfillAt.toISOString();
+          }
           if (current) {
             const existingShop = String(current.shopId || current.data?.shopId || "").trim();
             const incomingShop = String($set.shopId || $set["data.shopId"] || "").trim();
@@ -5496,8 +5538,14 @@ const ORDER_TAB_LEFT_PICKUP_RAW = [
   "TO_RETURN",
 ] as const;
 
+/** Có mã VĐ thật — CẤM $nin trần (Mongo $nin khớp cả document THIẾU field). */
 const ORDER_TAB_TRACKING_PRESENT: Record<string, unknown> = {
-  tracking_no: { $nin: [null, "", "0"] },
+  tracking_no: { $exists: true, $nin: [null, "", "0"] },
+};
+
+/** Chưa có mã VĐ (thiếu field / null / rỗng / "0") — đơn đã thanh toán lọt tab Chưa xử lý. */
+const ORDER_TAB_TRACKING_ABSENT: Record<string, unknown> = {
+  $or: [{ tracking_no: { $exists: false } }, { tracking_no: { $in: [null, "", "0"] } }],
 };
 
 const ORDER_TAB_DROPOFF_PREPARED: Record<string, unknown> = {
@@ -5638,12 +5686,12 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
     case "chua-xu-ly":
     case "ready_to_ship":
     case "cho-lay-hang":
-      // TO_SHIP + chưa xử lý + chưa bàn giao — loại SHIPPED tuyệt đối.
+      // TO_SHIP + chưa xử lý + chưa bàn giao + chưa có mã VĐ — loại SHIPPED tuyệt đối.
       return {
         $and: [
           ORDER_TAB_IS_TO_SHIP,
           ORDER_TAB_NOT_HANDED_OVER,
-          { $nor: [ORDER_TAB_TRACKING_PRESENT] },
+          ORDER_TAB_TRACKING_ABSENT,
           { isPrepared: { $ne: true } },
           {
             $or: [
@@ -5834,6 +5882,11 @@ export function parseCancelReturnKindParam(raw?: string | null): string {
 const TAB_COUNT_CACHE_MS = 15_000;
 let tabCountCache: { key: string; expiresAt: number; value: Record<string, number> } | null =
   null;
+
+/** Xóa cache badge ngay khi có đơn mới — tránh detector đọc số cũ 15s. */
+export function invalidateTabCountCache(): void {
+  tabCountCache = null;
+}
 const dhhCountCache: { key: string; n: number } = { key: "", n: 0 };
 
 function tabCountCacheKey(opts?: {
@@ -5963,7 +6016,7 @@ function tabIndexFilter(tab?: string, kind?: string): Record<string, unknown> {
         shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] },
         is_handed_over: { $ne: true },
         isPrepared: { $ne: true },
-        $nor: [{ tracking_no: { $nin: [null, "", "0"] } }],
+        $or: [{ tracking_no: { $exists: false } }, { tracking_no: { $in: [null, "", "0"] } }],
       };
     case "processed":
     case "da-xu-ly":
@@ -5975,7 +6028,7 @@ function tabIndexFilter(tab?: string, kind?: string): Record<string, unknown> {
         is_handed_over: { $ne: true },
         $or: [
           { shopee_order_status: "PROCESSED" },
-          { tracking_no: { $nin: [null, "", "0"] } },
+          { tracking_no: { $exists: true, $nin: [null, "", "0"] } },
           { isPrepared: true },
           { status: "processed" },
         ],

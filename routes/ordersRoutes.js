@@ -49,6 +49,7 @@ import {
 } from "../controllers/returnAlertController.js";
 import { scanBulkUpdate } from "../controllers/scanBulkController.js";
 import { asyncHandler } from "../middlewares/errorHandler.js";
+import { streamOrderLive } from "../services/orderRealtime.js";
 
 const router = Router();
 const h = asyncHandler;
@@ -59,6 +60,8 @@ router.get("/query", h(queryOrders));
 router.get("/counts", h(getOrderCounts));
 /** Badge count nhanh — chỉ countDocuments Mongo, không gọi Shopee / không trả list. */
 router.get("/counter", h(getOrderCounts));
+/** SSE đơn mới — EventSource (query token vì EventSource không gửi Bearer). */
+router.get("/live", streamOrderLive);
 router.get("/products-summary", h(getFulfillmentProductsSummary));
 router.get("/lookup", h(lookupOrder));
 /** Sync siêu tốc máy quét — chỉ order_id / tracking_code / return_waybill / status. */
