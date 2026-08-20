@@ -303,14 +303,92 @@ function isBlankSpxSecret(value) {
   return !s || s.includes("••••");
 }
 
+function looksLikeHtmlPayload(value) {
+  const s = String(value || "").trimStart();
+  return (
+    s.startsWith("<") ||
+    /^<!doctype\s+html/i.test(s) ||
+    /<html[\s>]/i.test(s)
+  );
+}
+
 function isSpxAuthFailure(httpStatus, json) {
   if (httpStatus === 401 || httpStatus === 403) return true;
-  const ret = json?.ret_code ?? json?.retcode ?? json?.code;
+  if (!json || typeof json !== "object") return false;
+  const ret = json.ret_code ?? json.retcode ?? json.code;
   if (ret === 401 || ret === 403 || ret === "401" || ret === "403") return true;
-  const msg = String(json?.message || json?.msg || json?.error || json?.raw || "").toLowerCase();
+  const msg = String(json.message || json.msg || json.error || "").toLowerCase();
+  if (!msg || looksLikeHtmlPayload(msg)) return false;
   return /unauthor|forbidden|invalid sign|sign error|signature|invalid.*(secret|app-id|appid|user.?id)/i.test(
     msg,
   );
+}
+
+function classifySpxTestFailure(error) {
+  const status = Number(error?.response?.status) || 0;
+  const rawData = error?.response?.data;
+  if (status) {
+    console.error("[SPX test] HTTP error", status, rawData);
+  }
+  const text =
+    typeof rawData === "string"
+      ? rawData
+      : rawData != null && typeof rawData === "object"
+        ? ""
+        : String(rawData || "");
+
+  if (error?.response) {
+    if (status === 404) {
+      return {
+        success: false,
+        httpStatus: 404,
+        message: "Lỗi 404: Sai API Gateway URL hoặc Path. Máy chủ từ chối kết nối.",
+      };
+    }
+    if (status === 401 || status === 403) {
+      return {
+        success: false,
+        httpStatus: status,
+        message: "Lỗi 401/403: Sai User ID hoặc Secret Key (Chữ ký HMAC không khớp).",
+      };
+    }
+    if (looksLikeHtmlPayload(text) || error?.isJsonParseError) {
+      return {
+        success: false,
+        httpStatus: status,
+        message: "Lỗi Data: Máy chủ SPX trả về định dạng không hợp lệ (HTML). Sai API Gateway URL.",
+      };
+    }
+    return {
+      success: false,
+      httpStatus: status,
+      message: `Lỗi HTTP ${status}: Vui lòng kiểm tra lại cấu hình.`,
+    };
+  }
+
+  if (
+    error?.isJsonParseError ||
+    error?.name === "SyntaxError" ||
+    looksLikeHtmlPayload(error?.message)
+  ) {
+    return {
+      success: false,
+      httpStatus: 0,
+      message: "Lỗi Data: Máy chủ SPX trả về định dạng không hợp lệ (HTML). Sai API Gateway URL.",
+    };
+  }
+  if (error?.code === "ECONNABORTED") {
+    return {
+      success: false,
+      httpStatus: 0,
+      message: `Timeout kết nối máy chủ SPX (>${TIMEOUT_MS}ms)`,
+    };
+  }
+  return {
+    success: false,
+    httpStatus: 0,
+    message: error?.message || "Kiểm tra kết nối SPX thất bại",
+  };
 }
 
 /**
@@ -337,6 +415,7 @@ export async function testSpxConnection({ userId, secret, apiUrl, createPath } =
   try {
     const response = await axios.post(gateway.url, rawBody, {
       timeout: TIMEOUT_MS,
+      responseType: "text",
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
@@ -347,26 +426,28 @@ export async function testSpxConnection({ userId, secret, apiUrl, createPath } =
         sign,
       },
       transformRequest: [(data) => data],
-      validateStatus: () => true,
     });
     const httpStatus = Number(response.status) || 0;
-    const json =
-      response.data && typeof response.data === "object"
-        ? response.data
-        : { raw: String(response.data || "") };
-
-    if (httpStatus === 404) {
+    const text = String(response.data ?? "");
+    if (looksLikeHtmlPayload(text)) {
       return {
         success: false,
-        httpStatus: 404,
-        message: `SPX HTTP 404 tại ${gateway.url}. Nhập API Gateway URL đúng từ tài liệu đối tác SPX.`,
+        httpStatus: httpStatus || 0,
+        message: "Lỗi Data: Máy chủ SPX trả về định dạng không hợp lệ (HTML). Sai API Gateway URL.",
       };
+    }
+    let json = null;
+    try {
+      json = text ? JSON.parse(text) : {};
+    } catch (parseErr) {
+      parseErr.isJsonParseError = true;
+      return classifySpxTestFailure(parseErr);
     }
     if (isSpxAuthFailure(httpStatus, json)) {
       return {
         success: false,
         httpStatus: httpStatus || 401,
-        message: "User ID / Secret SPX không hợp lệ!",
+        message: "Lỗi 401/403: Sai User ID hoặc Secret Key (Chữ ký HMAC không khớp).",
       };
     }
     if (httpStatus === 200) {
@@ -379,38 +460,10 @@ export async function testSpxConnection({ userId, secret, apiUrl, createPath } =
     return {
       success: false,
       httpStatus,
-      message: String(
-        json?.message || json?.msg || json?.error || `SPX ${gateway.path} HTTP ${httpStatus}`,
-      ),
+      message: `Lỗi HTTP ${httpStatus}: Vui lòng kiểm tra lại cấu hình.`,
     };
-  } catch (err) {
-    const httpStatus = Number(err?.response?.status) || 0;
-    if (httpStatus === 401 || httpStatus === 403) {
-      return {
-        success: false,
-        httpStatus,
-        message: "User ID / Secret SPX không hợp lệ!",
-      };
-    }
-    if (httpStatus === 404) {
-      return {
-        success: false,
-        httpStatus: 404,
-        message: `SPX HTTP 404 tại ${gateway.url}.`,
-      };
-    }
-    if (err?.code === "ECONNABORTED") {
-      return {
-        success: false,
-        httpStatus: 0,
-        message: `Timeout kết nối máy chủ SPX (>${TIMEOUT_MS}ms)`,
-      };
-    }
-    return {
-      success: false,
-      httpStatus,
-      message: err?.message || "Kết nối SPX thất bại",
-    };
+  } catch (error) {
+    return classifySpxTestFailure(error);
   }
 }
 

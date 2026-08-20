@@ -110927,14 +110927,75 @@ function isBlankSpxSecret(value) {
   const s2 = String(value || "").trim();
   return !s2 || s2.includes("\u2022\u2022\u2022\u2022");
 }
+function looksLikeHtmlPayload(value) {
+  const s2 = String(value || "").trimStart();
+  return s2.startsWith("<") || /^<!doctype\s+html/i.test(s2) || /<html[\s>]/i.test(s2);
+}
 function isSpxAuthFailure(httpStatus, json2) {
   if (httpStatus === 401 || httpStatus === 403) return true;
-  const ret = json2?.ret_code ?? json2?.retcode ?? json2?.code;
+  if (!json2 || typeof json2 !== "object") return false;
+  const ret = json2.ret_code ?? json2.retcode ?? json2.code;
   if (ret === 401 || ret === 403 || ret === "401" || ret === "403") return true;
-  const msg = String(json2?.message || json2?.msg || json2?.error || json2?.raw || "").toLowerCase();
+  const msg = String(json2.message || json2.msg || json2.error || "").toLowerCase();
+  if (!msg || looksLikeHtmlPayload(msg)) return false;
   return /unauthor|forbidden|invalid sign|sign error|signature|invalid.*(secret|app-id|appid|user.?id)/i.test(
     msg
   );
+}
+function classifySpxTestFailure(error) {
+  const status = Number(error?.response?.status) || 0;
+  const rawData = error?.response?.data;
+  if (status) {
+    console.error("[SPX test] HTTP error", status, rawData);
+  }
+  const text = typeof rawData === "string" ? rawData : rawData != null && typeof rawData === "object" ? "" : String(rawData || "");
+  if (error?.response) {
+    if (status === 404) {
+      return {
+        success: false,
+        httpStatus: 404,
+        message: "L\u1ED7i 404: Sai API Gateway URL ho\u1EB7c Path. M\xE1y ch\u1EE7 t\u1EEB ch\u1ED1i k\u1EBFt n\u1ED1i."
+      };
+    }
+    if (status === 401 || status === 403) {
+      return {
+        success: false,
+        httpStatus: status,
+        message: "L\u1ED7i 401/403: Sai User ID ho\u1EB7c Secret Key (Ch\u1EEF k\xFD HMAC kh\xF4ng kh\u1EDBp)."
+      };
+    }
+    if (looksLikeHtmlPayload(text) || error?.isJsonParseError) {
+      return {
+        success: false,
+        httpStatus: status,
+        message: "L\u1ED7i Data: M\xE1y ch\u1EE7 SPX tr\u1EA3 v\u1EC1 \u0111\u1ECBnh d\u1EA1ng kh\xF4ng h\u1EE3p l\u1EC7 (HTML). Sai API Gateway URL."
+      };
+    }
+    return {
+      success: false,
+      httpStatus: status,
+      message: `L\u1ED7i HTTP ${status}: Vui l\xF2ng ki\u1EC3m tra l\u1EA1i c\u1EA5u h\xECnh.`
+    };
+  }
+  if (error?.isJsonParseError || error?.name === "SyntaxError" || looksLikeHtmlPayload(error?.message)) {
+    return {
+      success: false,
+      httpStatus: 0,
+      message: "L\u1ED7i Data: M\xE1y ch\u1EE7 SPX tr\u1EA3 v\u1EC1 \u0111\u1ECBnh d\u1EA1ng kh\xF4ng h\u1EE3p l\u1EC7 (HTML). Sai API Gateway URL."
+    };
+  }
+  if (error?.code === "ECONNABORTED") {
+    return {
+      success: false,
+      httpStatus: 0,
+      message: `Timeout k\u1EBFt n\u1ED1i m\xE1y ch\u1EE7 SPX (>${TIMEOUT_MS2}ms)`
+    };
+  }
+  return {
+    success: false,
+    httpStatus: 0,
+    message: error?.message || "Ki\u1EC3m tra k\u1EBFt n\u1ED1i SPX th\u1EA5t b\u1EA1i"
+  };
 }
 async function testSpxConnection({ userId, secret, apiUrl, createPath } = {}) {
   const uid = String(userId || "").trim();
@@ -110954,6 +111015,7 @@ async function testSpxConnection({ userId, secret, apiUrl, createPath } = {}) {
   try {
     const response = await axios_default.post(gateway.url, rawBody, {
       timeout: TIMEOUT_MS2,
+      responseType: "text",
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
@@ -110963,23 +111025,29 @@ async function testSpxConnection({ userId, secret, apiUrl, createPath } = {}) {
         timestamp,
         sign
       },
-      transformRequest: [(data) => data],
-      validateStatus: () => true
+      transformRequest: [(data) => data]
     });
     const httpStatus = Number(response.status) || 0;
-    const json2 = response.data && typeof response.data === "object" ? response.data : { raw: String(response.data || "") };
-    if (httpStatus === 404) {
+    const text = String(response.data ?? "");
+    if (looksLikeHtmlPayload(text)) {
       return {
         success: false,
-        httpStatus: 404,
-        message: `SPX HTTP 404 t\u1EA1i ${gateway.url}. Nh\u1EADp API Gateway URL \u0111\xFAng t\u1EEB t\xE0i li\u1EC7u \u0111\u1ED1i t\xE1c SPX.`
+        httpStatus: httpStatus || 0,
+        message: "L\u1ED7i Data: M\xE1y ch\u1EE7 SPX tr\u1EA3 v\u1EC1 \u0111\u1ECBnh d\u1EA1ng kh\xF4ng h\u1EE3p l\u1EC7 (HTML). Sai API Gateway URL."
       };
+    }
+    let json2 = null;
+    try {
+      json2 = text ? JSON.parse(text) : {};
+    } catch (parseErr) {
+      parseErr.isJsonParseError = true;
+      return classifySpxTestFailure(parseErr);
     }
     if (isSpxAuthFailure(httpStatus, json2)) {
       return {
         success: false,
         httpStatus: httpStatus || 401,
-        message: "User ID / Secret SPX kh\xF4ng h\u1EE3p l\u1EC7!"
+        message: "L\u1ED7i 401/403: Sai User ID ho\u1EB7c Secret Key (Ch\u1EEF k\xFD HMAC kh\xF4ng kh\u1EDBp)."
       };
     }
     if (httpStatus === 200) {
@@ -110992,38 +111060,10 @@ async function testSpxConnection({ userId, secret, apiUrl, createPath } = {}) {
     return {
       success: false,
       httpStatus,
-      message: String(
-        json2?.message || json2?.msg || json2?.error || `SPX ${gateway.path} HTTP ${httpStatus}`
-      )
+      message: `L\u1ED7i HTTP ${httpStatus}: Vui l\xF2ng ki\u1EC3m tra l\u1EA1i c\u1EA5u h\xECnh.`
     };
-  } catch (err) {
-    const httpStatus = Number(err?.response?.status) || 0;
-    if (httpStatus === 401 || httpStatus === 403) {
-      return {
-        success: false,
-        httpStatus,
-        message: "User ID / Secret SPX kh\xF4ng h\u1EE3p l\u1EC7!"
-      };
-    }
-    if (httpStatus === 404) {
-      return {
-        success: false,
-        httpStatus: 404,
-        message: `SPX HTTP 404 t\u1EA1i ${gateway.url}.`
-      };
-    }
-    if (err?.code === "ECONNABORTED") {
-      return {
-        success: false,
-        httpStatus: 0,
-        message: `Timeout k\u1EBFt n\u1ED1i m\xE1y ch\u1EE7 SPX (>${TIMEOUT_MS2}ms)`
-      };
-    }
-    return {
-      success: false,
-      httpStatus,
-      message: err?.message || "K\u1EBFt n\u1ED1i SPX th\u1EA5t b\u1EA1i"
-    };
+  } catch (error) {
+    return classifySpxTestFailure(error);
   }
 }
 
@@ -111355,10 +111395,10 @@ async function testSpxSettings(req, res) {
   try {
     const result = await testSpxConnection({ userId, secret, apiUrl, createPath });
     if (!result?.success || result.httpStatus !== 200) {
-      const status = result?.httpStatus === 401 || result?.httpStatus === 403 ? result.httpStatus : 400;
+      const status = result?.httpStatus === 401 || result?.httpStatus === 403 || result?.httpStatus === 404 ? result.httpStatus : 400;
       return res.status(status).json({
         success: false,
-        message: result?.message || "User ID / Secret SPX kh\xF4ng h\u1EE3p l\u1EC7!"
+        message: result?.message || "Ki\u1EC3m tra k\u1EBFt n\u1ED1i SPX th\u1EA5t b\u1EA1i"
       });
     }
     return res.json({
@@ -111368,15 +111408,44 @@ async function testSpxSettings(req, res) {
     });
   } catch (error) {
     const httpStatus = Number(error?.response?.status) || 0;
-    if (httpStatus === 401 || httpStatus === 403) {
-      return res.status(httpStatus).json({
+    const rawData = error?.response?.data;
+    if (httpStatus) {
+      console.error("[SPX test] HTTP error", httpStatus, rawData);
+    }
+    if (error?.response) {
+      if (httpStatus === 404) {
+        return res.status(404).json({
+          success: false,
+          message: "L\u1ED7i 404: Sai API Gateway URL ho\u1EB7c Path. M\xE1y ch\u1EE7 t\u1EEB ch\u1ED1i k\u1EBFt n\u1ED1i."
+        });
+      }
+      if (httpStatus === 401 || httpStatus === 403) {
+        return res.status(httpStatus).json({
+          success: false,
+          message: "L\u1ED7i 401/403: Sai User ID ho\u1EB7c Secret Key (Ch\u1EEF k\xFD HMAC kh\xF4ng kh\u1EDBp)."
+        });
+      }
+      const text = typeof rawData === "string" ? rawData : "";
+      if (text.trimStart().startsWith("<") || /<!doctype\s+html|<html[\s>]/i.test(text)) {
+        return res.status(400).json({
+          success: false,
+          message: "L\u1ED7i Data: M\xE1y ch\u1EE7 SPX tr\u1EA3 v\u1EC1 \u0111\u1ECBnh d\u1EA1ng kh\xF4ng h\u1EE3p l\u1EC7 (HTML). Sai API Gateway URL."
+        });
+      }
+      return res.status(400).json({
         success: false,
-        message: "User ID / Secret SPX kh\xF4ng h\u1EE3p l\u1EC7!"
+        message: `L\u1ED7i HTTP ${httpStatus}: Vui l\xF2ng ki\u1EC3m tra l\u1EA1i c\u1EA5u h\xECnh.`
+      });
+    }
+    if (error?.name === "SyntaxError" || error?.isJsonParseError || /unexpected token|json/i.test(String(error?.message || ""))) {
+      return res.status(400).json({
+        success: false,
+        message: "L\u1ED7i Data: M\xE1y ch\u1EE7 SPX tr\u1EA3 v\u1EC1 \u0111\u1ECBnh d\u1EA1ng kh\xF4ng h\u1EE3p l\u1EC7 (HTML). Sai API Gateway URL."
       });
     }
     return res.status(400).json({
       success: false,
-      message: error?.message || "User ID / Secret SPX kh\xF4ng h\u1EE3p l\u1EC7!"
+      message: error?.message || "Ki\u1EC3m tra k\u1EBFt n\u1ED1i SPX th\u1EA5t b\u1EA1i"
     });
   }
 }

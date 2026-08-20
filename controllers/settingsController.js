@@ -366,10 +366,13 @@ export async function testSpxSettings(req, res) {
   try {
     const result = await testSpxConnection({ userId, secret, apiUrl, createPath });
     if (!result?.success || result.httpStatus !== 200) {
-      const status = result?.httpStatus === 401 || result?.httpStatus === 403 ? result.httpStatus : 400;
+      const status =
+        result?.httpStatus === 401 || result?.httpStatus === 403 || result?.httpStatus === 404
+          ? result.httpStatus
+          : 400;
       return res.status(status).json({
         success: false,
-        message: result?.message || "User ID / Secret SPX không hợp lệ!",
+        message: result?.message || "Kiểm tra kết nối SPX thất bại",
       });
     }
     return res.json({
@@ -379,15 +382,51 @@ export async function testSpxSettings(req, res) {
     });
   } catch (error) {
     const httpStatus = Number(error?.response?.status) || 0;
-    if (httpStatus === 401 || httpStatus === 403) {
-      return res.status(httpStatus).json({
+    const rawData = error?.response?.data;
+    if (httpStatus) {
+      console.error("[SPX test] HTTP error", httpStatus, rawData);
+    }
+    if (error?.response) {
+      if (httpStatus === 404) {
+        return res.status(404).json({
+          success: false,
+          message: "Lỗi 404: Sai API Gateway URL hoặc Path. Máy chủ từ chối kết nối.",
+        });
+      }
+      if (httpStatus === 401 || httpStatus === 403) {
+        return res.status(httpStatus).json({
+          success: false,
+          message: "Lỗi 401/403: Sai User ID hoặc Secret Key (Chữ ký HMAC không khớp).",
+        });
+      }
+      const text = typeof rawData === "string" ? rawData : "";
+      if (
+        text.trimStart().startsWith("<") ||
+        /<!doctype\s+html|<html[\s>]/i.test(text)
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Lỗi Data: Máy chủ SPX trả về định dạng không hợp lệ (HTML). Sai API Gateway URL.",
+        });
+      }
+      return res.status(400).json({
         success: false,
-        message: "User ID / Secret SPX không hợp lệ!",
+        message: `Lỗi HTTP ${httpStatus}: Vui lòng kiểm tra lại cấu hình.`,
+      });
+    }
+    if (
+      error?.name === "SyntaxError" ||
+      error?.isJsonParseError ||
+      /unexpected token|json/i.test(String(error?.message || ""))
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Lỗi Data: Máy chủ SPX trả về định dạng không hợp lệ (HTML). Sai API Gateway URL.",
       });
     }
     return res.status(400).json({
       success: false,
-      message: error?.message || "User ID / Secret SPX không hợp lệ!",
+      message: error?.message || "Kiểm tra kết nối SPX thất bại",
     });
   }
 }

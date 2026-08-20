@@ -384,7 +384,7 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data.success !== true) {
-        const msg = data.message || data.error || 'User ID / Secret SPX không hợp lệ!';
+        const msg = data.message || data.error || 'Kiểm tra kết nối SPX thất bại';
         pushLog(`THẤT BẠI HTTP ${res.status}: ${msg}`);
         alert(msg);
         return;
