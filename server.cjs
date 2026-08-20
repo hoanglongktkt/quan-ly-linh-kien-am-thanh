@@ -76730,6 +76730,8 @@ function buildProductListSearchFilter(search) {
   return {
     $or: [
       { sku: regex },
+      { name: regex },
+      { title: regex },
       { "data.sku": regex },
       { "data.name": regex },
       { "data.title": regex },
@@ -76894,7 +76896,7 @@ async function searchProductsFromStore(query, limit = 40) {
           ]
         },
         { sku: 1, data: 1 }
-      ).limit(parentFetchLimit).lean();
+      ).limit(parentFetchLimit).maxTimeMS(15e3).lean();
       if (docs.length < safeLimit) {
         const more = await ProductModel.find(
           {
@@ -76906,7 +76908,7 @@ async function searchProductsFromStore(query, limit = 40) {
             ]
           },
           { sku: 1, data: 1 }
-        ).limit(parentFetchLimit).lean();
+        ).limit(parentFetchLimit).maxTimeMS(15e3).lean();
         const seenIds = new Set(docs.map((d) => String(d._id)));
         for (const d of more) {
           const key = String(d._id);
@@ -76916,17 +76918,21 @@ async function searchProductsFromStore(query, limit = 40) {
         }
       }
       if (docs.length < safeLimit) {
-        const more = await ProductModel.find(
-          {
-            $or: [
-              { "data.title": contains },
-              { "data.modelName": contains },
-              { "data.children.title": contains },
-              { "data.children_models.title": contains }
-            ]
-          },
-          { sku: 1, data: 1 }
-        ).limit(parentFetchLimit).lean();
+        const nameFilter = buildProductListSearchFilter(q);
+        const moreFilter = Object.keys(nameFilter).length > 0 ? nameFilter : {
+          $or: [
+            { name: contains },
+            { title: contains },
+            { "data.name": contains },
+            { "data.title": contains },
+            { "data.modelName": contains },
+            { "data.children.name": contains },
+            { "data.children.title": contains },
+            { "data.children_models.name": contains },
+            { "data.children_models.title": contains }
+          ]
+        };
+        const more = await ProductModel.find(moreFilter, { sku: 1, data: 1 }).limit(parentFetchLimit).maxTimeMS(15e3).lean();
         const seenIds = new Set(docs.map((d) => String(d._id)));
         for (const d of more) {
           const key = String(d._id);

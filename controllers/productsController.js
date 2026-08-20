@@ -100,7 +100,7 @@ export async function listProducts(req, res) {
       .replace(/\s+/g, " ")
       .trim();
 
-    // Chỉ đọc 1 trang (mặc định 50) — cấm fallback loadProducts()/find({}) toàn kho.
+    // Có search: $regex trên toàn collection (name/title/sku), rồi mới limit 50 — không lọc local page 1.
     const paged = await deps.withLocalDbTimeout(
       deps.loadProductsPageFromStore(page, pageSize, search),
       diskMode ? 15_000 : 30_000,

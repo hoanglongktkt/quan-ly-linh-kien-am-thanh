@@ -43,41 +43,168 @@ interface ManualOrderPageProps {
   authHeaders: () => Record<string, string>;
 }
 
+function mapWarehouseProduct(p: any): Product {
+  return {
+    id: String(p?.id || ''),
+    title: String(p?.title || p?.name || ''),
+    sku: String(p?.sku || ''),
+    stock: Math.max(0, Math.round(Number(p?.stock ?? p?.current_stock) || 0)),
+    importPrice: Math.max(0, Math.round(Number(p?.importPrice ?? p?.last_import_price) || 0)),
+    sellingPrice: Math.max(0, Math.round(Number(p?.sellingPrice ?? p?.price) || 0)),
+    weight: Math.max(1, Math.round(Number(p?.weight) || 100)),
+    barcode: p?.barcode || '',
+    channels: Array.isArray(p?.channels) ? p.channels : [],
+    category: p?.category || '',
+    status: p?.status || 'active',
+    description: typeof p?.description === 'string' ? p.description : '',
+    imageUrl: p?.imageUrl || p?.image || p?.avatarUrl,
+    avatarUrl: p?.avatarUrl || p?.image || p?.imageUrl,
+    modelName: p?.modelName,
+    children: Array.isArray(p?.children) ? p.children : undefined,
+    children_models: Array.isArray(p?.children_models) ? p.children_models : undefined,
+    shopeeItemId: p?.shopeeItemId,
+    shopeeModelId: p?.shopeeModelId,
+  };
+}
+
+/** Parent khớp từ khóa → bung biến thể để chọn đúng SKU, tối đa 50 dòng. */
+function flattenWarehouseHits(list: Product[], limit = 50): Product[] {
+  const out: Product[] = [];
+  const seen = new Set<string>();
+  const push = (row: Product) => {
+    const id = String(row.id || '').trim();
+    if (!id || seen.has(id) || out.length >= limit) return;
+    seen.add(id);
+    out.push(row);
+  };
+  for (const p of list) {
+    if (out.length >= limit) break;
+    const children =
+      Array.isArray(p.children) && p.children.length
+        ? p.children
+        : Array.isArray(p.children_models)
+          ? p.children_models
+          : [];
+    if (children.length > 0) {
+      const before = out.length;
+      for (const c of children) {
+        const child = mapWarehouseProduct({
+          ...p,
+          ...c,
+          id: c.id,
+          title: c.title || (c as any).name || p.title,
+          sku: c.sku || p.sku,
+          stock: c.stock ?? 0,
+          sellingPrice: c.sellingPrice ?? p.sellingPrice,
+          weight: c.weight ?? p.weight ?? 100,
+          importPrice: c.importPrice ?? p.importPrice,
+          imageUrl: c.imageUrl || p.imageUrl,
+          avatarUrl: c.avatarUrl || p.avatarUrl,
+          children: undefined,
+          children_models: undefined,
+        });
+        push(child);
+        if (out.length >= limit) break;
+      }
+      if (out.length === before) push(p);
+    } else {
+      push(p);
+    }
+  }
+  return out;
+}
+
 function ProductSearchCombobox({
   products,
   value,
   onChange,
   onProductCreated,
+  authHeaders,
 }: {
   products: Product[];
   value: string;
   onChange: (id: string, prod?: Product) => void;
   onProductCreated?: (product: Product) => void;
+  authHeaders: () => Record<string, string>;
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
+  const [remoteProducts, setRemoteProducts] = useState<Product[]>([]);
+  const [picked, setPicked] = useState<Product | null>(null);
+  const [searching, setSearching] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const reqSeqRef = useRef(0);
+  const authHeadersRef = useRef(authHeaders);
+  authHeadersRef.current = authHeaders;
 
-  const selected = products.find((p) => p.id === value);
+  const searchTerm = query.trim();
+  const selected =
+    (picked && picked.id === value ? picked : null) ||
+    products.find((p) => p.id === value) ||
+    remoteProducts.find((p) => p.id === value);
 
   useEffect(() => {
     if (selected) setQuery(selected.title);
   }, [selected?.id]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const available = products.filter((p) => p.stock > 0 || p.id === value);
-    if (!q) return available.slice(0, 40);
-    return available
-      .filter(
-        (p) =>
-          p.title.toLowerCase().includes(q) ||
-          p.sku.toLowerCase().includes(q) ||
-          (p.barcode || '').toLowerCase().includes(q)
-      )
-      .slice(0, 30);
-  }, [products, query, value]);
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    if (!searchTerm) {
+      abortRef.current?.abort();
+      setRemoteProducts([]);
+      setSearching(false);
+      return;
+    }
+
+    debounceRef.current = setTimeout(async () => {
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      const seq = ++reqSeqRef.current;
+      setSearching(true);
+      try {
+        const params = new URLSearchParams({
+          search: searchTerm,
+          page: '1',
+          pageSize: '50',
+          t: String(Date.now()),
+        });
+        const res = await fetch(`/api/products?${params.toString()}`, {
+          method: 'GET',
+          cache: 'no-store',
+          signal: controller.signal,
+          headers: {
+            ...authHeadersRef.current(),
+            'Cache-Control': 'no-cache',
+            Pragma: 'no-cache',
+          },
+        });
+        const data = await res.json().catch(() => ({}));
+        if (seq !== reqSeqRef.current) return;
+        if (!res.ok || data?.success === false) {
+          throw new Error(data?.message || data?.error || `Lỗi tìm kiếm (HTTP ${res.status})`);
+        }
+        const list = (Array.isArray(data.products) ? data.products : []).map(mapWarehouseProduct);
+        setRemoteProducts(flattenWarehouseHits(list, 50));
+      } catch (err: any) {
+        if (err?.name === 'AbortError') return;
+        if (seq !== reqSeqRef.current) return;
+        console.error('[ManualOrderSearch] /api/products?search= failed:', err);
+        setRemoteProducts([]);
+      } finally {
+        if (seq === reqSeqRef.current) setSearching(false);
+      }
+    }, 500);
+
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      abortRef.current?.abort();
+    };
+  }, [searchTerm]);
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
@@ -88,6 +215,7 @@ function ProductSearchCombobox({
   }, []);
 
   const pickProduct = (p: Product) => {
+    setPicked(p);
     onChange(p.id, p);
     setQuery(p.title);
     setOpen(false);
@@ -106,10 +234,13 @@ function ProductSearchCombobox({
               onChange={(e) => {
                 setQuery(e.target.value);
                 setOpen(true);
-                if (!e.target.value.trim()) onChange('');
+                if (!e.target.value.trim()) {
+                  setPicked(null);
+                  onChange('');
+                }
               }}
               onFocus={() => setOpen(true)}
-              placeholder="Gõ tên hoặc SKU để tìm..."
+              placeholder="Gõ tên hoặc SKU để tìm trên toàn kho..."
               className="w-full pl-9 pr-3 py-2.5 bg-white rounded-xl border border-gray-200 focus:border-emerald-500 focus:outline-none text-sm text-gray-800"
             />
           </div>
@@ -128,10 +259,17 @@ function ProductSearchCombobox({
         {open && (
           <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-lg text-sm overflow-hidden">
             <ul className="max-h-56 overflow-y-auto">
-              {filtered.length === 0 ? (
+              {searching && remoteProducts.length === 0 ? (
+                <li className="px-3 py-3 text-gray-400 text-xs inline-flex items-center gap-2">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  Đang tìm trên toàn kho...
+                </li>
+              ) : !searchTerm ? (
+                <li className="px-3 py-3 text-gray-400 text-xs">Gõ tên hoặc SKU để tìm sản phẩm trong kho</li>
+              ) : !searching && remoteProducts.length === 0 ? (
                 <li className="px-3 py-3 text-gray-400 text-xs">Không tìm thấy sản phẩm khả dụng</li>
               ) : (
-                filtered.map((p) => (
+                remoteProducts.map((p) => (
                   <li key={p.id}>
                     <button
                       type="button"
@@ -563,12 +701,14 @@ export default function ManualOrderPage({
                 <ProductSearchCombobox
                   products={catalogProducts}
                   value={selectedProdId}
+                  authHeaders={authHeaders}
                   onProductCreated={(p) =>
                     setExtraProducts((prev) => (prev.some((x) => x.id === p.id) ? prev : [p, ...prev]))
                   }
                   onChange={(id, prod) => {
                     setSelectedProdId(id);
                     if (prod) {
+                      setExtraProducts((prev) => (prev.some((x) => x.id === prod.id) ? prev : [prod, ...prev]));
                       setSelectedPrice(prod.sellingPrice);
                       setSelectedWeight(prod.weight || 100);
                     }
