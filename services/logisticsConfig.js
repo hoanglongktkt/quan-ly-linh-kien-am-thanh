@@ -43,7 +43,7 @@ function unwrapJson(value, depth = 0) {
 
 /**
  * Chuẩn hóa SPX credentials từ Mongo.
- * DB ghi clientId/clientSecret (form Cài đặt) → map sang userId/secret cho HMAC.
+ * DB ghi clientId/clientSecret (form Cài đặt) → map sang userId/secret cho HMAC (User ID, không phải Account ID).
  */
 function extractSpxCredentials(stored) {
   const root = unwrapJson(stored);

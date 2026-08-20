@@ -1,6 +1,6 @@
 /**
  * SPX Express Open API — tạo đơn + lấy waybill PDF gốc (URL hoặc Base64 của hãng).
- * Auth: HMAC-SHA256(ID tài khoản + timestamp + rawJsonBody, secret) → hex.
+ * Auth: HMAC-SHA256(User ID + timestamp + rawJsonBody, secret) → hex.
  * TUYỆT ĐỐI không đọc process.env.SPX_*. Không vẽ barcode HTML.
  */
 import crypto from "crypto";
@@ -82,17 +82,20 @@ function buildSpxAuthHeaders(appId, secret, rawBody) {
 }
 
 /**
- * HMAC `app-id`: ID tài khoản (Account ID / merchantId).
- * Mã người dùng (clientId) chỉ đưa vào body `user_id`, không dùng để băm.
+ * HMAC `app-id` = Mã người dùng (User ID) trên Hồ sơ shop SPX.
+ * KHÔNG dùng Account ID / merchantId để ký — OneCart/Pushsale: Account ID không dùng cho API.
  */
 function pickSpxAppId(creds) {
-  return String(
-    creds?.merchantId || creds?.accountId || creds?.clientId || creds?.userId || creds?.appId || "",
-  ).trim();
+  return String(creds?.clientId || creds?.userId || creds?.appId || "").trim();
 }
 
 function pickSpxUserId(creds) {
   return String(creds?.clientId || creds?.userId || creds?.appId || "").trim();
+}
+
+/** Account ID chỉ dùng (tuỳ chọn) trong body merchant_id khi tạo đơn — không ký HMAC. */
+function pickSpxMerchantId(creds) {
+  return String(creds?.merchantId || creds?.accountId || "").trim();
 }
 
 function pickSpxSecret(creds) {
@@ -104,7 +107,7 @@ async function spxFetch(apiUrl, path, bodyObj, creds) {
   const secret = pickSpxSecret(creds);
   if (!appId || !secret) {
     throw new Error(
-      "Thiếu SPX ID tài khoản / Secret trên Database. Nhập ID tài khoản vào ô Merchant ID (và Mã người dùng + Secret) rồi Lưu cấu hình SPX.",
+      "Thiếu SPX Mã người dùng (User ID) / Secret trên Database. Nhập User ID + Secret Key rồi Lưu cấu hình SPX (không dùng Account ID để ký HMAC).",
     );
   }
   const rawBody = stringifySpxBody(bodyObj);
@@ -257,16 +260,22 @@ export async function createSpxShippingOrder({
   });
   const appId = pickSpxAppId(creds);
   const userId = pickSpxUserId(creds);
+  const merchantId = pickSpxMerchantId(creds);
   const weight = Math.max(1, Math.round(Number(weightGrams) || 500));
   const itemList = buildItemList(items, weight);
   const receiverAddress = buildReceiverAddress(address) || String(address?.street || "").trim();
   if (!receiverAddress) {
     throw new Error("Thiếu địa chỉ người nhận (receiver_address) để tạo đơn SPX.");
   }
+  if (!appId) {
+    throw new Error(
+      "Thiếu SPX Mã người dùng (User ID) trên Database. Không dùng Account ID để ký HMAC.",
+    );
+  }
 
   const orderRow = {
     order_sn: String(clientOrderCode || "").slice(0, 50),
-    merchant_id: appId || undefined,
+    merchant_id: merchantId || undefined,
     user_id: userId || undefined,
     weight,
     allow_inspect: allowInspect !== false && allowInspect !== "false",
@@ -433,19 +442,21 @@ export async function testSpxConnection({
   createPath,
 } = {}) {
   const uid = String(userId || "").trim();
-  const accId = String(merchantId || accountId || "").trim();
-  const appId = accId || uid;
+  // Account ID không dùng cho HMAC; chỉ giữ tham số để tương thích payload cũ.
+  void merchantId;
+  void accountId;
+  const appId = uid;
   const sec = String(secret || "").trim();
   if (isBlankSpxSecret(appId) || isBlankSpxSecret(sec)) {
     return {
       success: false,
       httpStatus: 0,
-      message: "Vui lòng nhập ID tài khoản (hoặc Mã người dùng) và Secret",
+      message: "Vui lòng nhập Mã người dùng (User ID) và Secret Key — không dùng Account ID để ký",
     };
   }
 
   const gateway = resolveSpxGateway({ apiUrl, createPath });
-  const body = { user_id: uid || appId };
+  const body = { user_id: uid };
   const rawBody = stringifySpxBody(body);
   const headers = buildSpxAuthHeaders(appId, sec, rawBody);
 

@@ -384,10 +384,10 @@ export async function testSpxSettings(req, res) {
   ).trim();
   const apiUrl = String(req.body?.apiUrl || "").trim();
   const createPath = String(req.body?.createPath || "").trim();
-  if ((!merchantId && !userId) || !secret || secret.includes("••••")) {
+  if (!userId || !secret || secret.includes("••••")) {
     return res.status(400).json({
       success: false,
-      message: "Vui lòng nhập ID tài khoản (Merchant ID), Mã người dùng và Secret",
+      message: "Vui lòng nhập Mã người dùng (User ID) và Secret Key — không dùng Account ID để ký HMAC",
     });
   }
   try {

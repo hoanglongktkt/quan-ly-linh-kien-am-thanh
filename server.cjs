@@ -111390,12 +111390,13 @@ function buildSpxAuthHeaders(appId, secret, rawBody) {
   };
 }
 function pickSpxAppId(creds) {
-  return String(
-    creds?.merchantId || creds?.accountId || creds?.clientId || creds?.userId || creds?.appId || ""
-  ).trim();
+  return String(creds?.clientId || creds?.userId || creds?.appId || "").trim();
 }
 function pickSpxUserId(creds) {
   return String(creds?.clientId || creds?.userId || creds?.appId || "").trim();
+}
+function pickSpxMerchantId(creds) {
+  return String(creds?.merchantId || creds?.accountId || "").trim();
 }
 function pickSpxSecret(creds) {
   return String(creds?.clientSecret || creds?.secret || "").trim();
@@ -111405,7 +111406,7 @@ async function spxFetch(apiUrl, path21, bodyObj, creds) {
   const secret = pickSpxSecret(creds);
   if (!appId || !secret) {
     throw new Error(
-      "Thi\u1EBFu SPX ID t\xE0i kho\u1EA3n / Secret tr\xEAn Database. Nh\u1EADp ID t\xE0i kho\u1EA3n v\xE0o \xF4 Merchant ID (v\xE0 M\xE3 ng\u01B0\u1EDDi d\xF9ng + Secret) r\u1ED3i L\u01B0u c\u1EA5u h\xECnh SPX."
+      "Thi\u1EBFu SPX M\xE3 ng\u01B0\u1EDDi d\xF9ng (User ID) / Secret tr\xEAn Database. Nh\u1EADp User ID + Secret Key r\u1ED3i L\u01B0u c\u1EA5u h\xECnh SPX (kh\xF4ng d\xF9ng Account ID \u0111\u1EC3 k\xFD HMAC)."
     );
   }
   const rawBody = stringifySpxBody(bodyObj);
@@ -111524,15 +111525,21 @@ async function createSpxShippingOrder({
   });
   const appId = pickSpxAppId(creds);
   const userId = pickSpxUserId(creds);
+  const merchantId = pickSpxMerchantId(creds);
   const weight = Math.max(1, Math.round(Number(weightGrams) || 500));
   const itemList = buildItemList(items, weight);
   const receiverAddress = buildReceiverAddress(address) || String(address?.street || "").trim();
   if (!receiverAddress) {
     throw new Error("Thi\u1EBFu \u0111\u1ECBa ch\u1EC9 ng\u01B0\u1EDDi nh\u1EADn (receiver_address) \u0111\u1EC3 t\u1EA1o \u0111\u01A1n SPX.");
   }
+  if (!appId) {
+    throw new Error(
+      "Thi\u1EBFu SPX M\xE3 ng\u01B0\u1EDDi d\xF9ng (User ID) tr\xEAn Database. Kh\xF4ng d\xF9ng Account ID \u0111\u1EC3 k\xFD HMAC."
+    );
+  }
   const orderRow = {
     order_sn: String(clientOrderCode || "").slice(0, 50),
-    merchant_id: appId || void 0,
+    merchant_id: merchantId || void 0,
     user_id: userId || void 0,
     weight,
     allow_inspect: allowInspect !== false && allowInspect !== "false",
@@ -111666,18 +111673,19 @@ async function testSpxConnection({
   createPath
 } = {}) {
   const uid = String(userId || "").trim();
-  const accId = String(merchantId || accountId || "").trim();
-  const appId = accId || uid;
+  void merchantId;
+  void accountId;
+  const appId = uid;
   const sec = String(secret || "").trim();
   if (isBlankSpxSecret(appId) || isBlankSpxSecret(sec)) {
     return {
       success: false,
       httpStatus: 0,
-      message: "Vui l\xF2ng nh\u1EADp ID t\xE0i kho\u1EA3n (ho\u1EB7c M\xE3 ng\u01B0\u1EDDi d\xF9ng) v\xE0 Secret"
+      message: "Vui l\xF2ng nh\u1EADp M\xE3 ng\u01B0\u1EDDi d\xF9ng (User ID) v\xE0 Secret Key \u2014 kh\xF4ng d\xF9ng Account ID \u0111\u1EC3 k\xFD"
     };
   }
   const gateway = resolveSpxGateway({ apiUrl, createPath });
-  const body = { user_id: uid || appId };
+  const body = { user_id: uid };
   const rawBody = stringifySpxBody(body);
   const headers = buildSpxAuthHeaders(appId, sec, rawBody);
   try {
@@ -112073,10 +112081,10 @@ async function testSpxSettings(req, res) {
   ).trim();
   const apiUrl = String(req.body?.apiUrl || "").trim();
   const createPath = String(req.body?.createPath || "").trim();
-  if (!merchantId && !userId || !secret || secret.includes("\u2022\u2022\u2022\u2022")) {
+  if (!userId || !secret || secret.includes("\u2022\u2022\u2022\u2022")) {
     return res.status(400).json({
       success: false,
-      message: "Vui l\xF2ng nh\u1EADp ID t\xE0i kho\u1EA3n (Merchant ID), M\xE3 ng\u01B0\u1EDDi d\xF9ng v\xE0 Secret"
+      message: "Vui l\xF2ng nh\u1EADp M\xE3 ng\u01B0\u1EDDi d\xF9ng (User ID) v\xE0 Secret Key \u2014 kh\xF4ng d\xF9ng Account ID \u0111\u1EC3 k\xFD HMAC"
     });
   }
   try {

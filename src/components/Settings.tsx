@@ -410,12 +410,12 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
       const userId = String(spxConfig.clientId || '').trim();
       const merchantId = String(spxConfig.merchantId || '').trim();
       const secret = String(spxConfig.clientSecret || '').trim();
-      if ((!merchantId && !userId) || !secret || secret.includes('••••')) {
-        pushLog('THẤT BẠI: Vui lòng nhập ID tài khoản, Mã người dùng và Secret');
-        alert('Vui lòng nhập ID tài khoản, Mã người dùng và Secret');
+      if (!userId || !secret || secret.includes('••••')) {
+        pushLog('THẤT BẠI: Vui lòng nhập Mã người dùng (User ID) và Secret Key');
+        alert('Vui lòng nhập Mã người dùng (User ID) và Secret Key. Không dùng Account ID để ký HMAC.');
         return;
       }
-      pushLog('[1/2] HMAC app-id = ID tài khoản (merchantId); body user_id = Mã người dùng...');
+      pushLog('[1/2] HMAC app-id = Mã người dùng (User ID); Account ID không dùng để ký...');
       const res = await fetch('/api/settings/test-spx', {
         method: 'POST',
         headers,
@@ -1314,12 +1314,12 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
 
             <div className="space-y-3 pt-1">
               <div>
-                <label className="text-[11px] font-semibold text-gray-600">Mã người dùng (User ID)</label>
+                <label className="text-[11px] font-semibold text-gray-600">Mã người dùng (User ID) — dùng cho HMAC app-id</label>
                 <input 
                   type="text"
                   value={spxConfig.clientId}
                   onChange={(e) => setSpxConfig({ ...spxConfig, clientId: e.target.value })}
-                  placeholder="Mã người dùng trên Hồ sơ shop SPX..."
+                  placeholder="User ID ~15 số trên Hồ sơ shop SPX (không phải Account ID)..."
                   className="w-full mt-1 px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-orange-500 focus:outline-none text-xs font-mono font-medium"
                 />
               </div>
@@ -1336,12 +1336,12 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] font-semibold text-gray-600">ID tài khoản (Account ID) — dùng cho HMAC app-id</label>
+                  <label className="text-[11px] font-semibold text-gray-600">ID tài khoản (Account ID) — tùy chọn, không ký HMAC</label>
                   <input
                     type="text"
                     value={spxConfig.merchantId}
                     onChange={(e) => setSpxConfig({ ...spxConfig, merchantId: e.target.value })}
-                    placeholder="ID tài khoản trên Hồ sơ shop SPX..."
+                    placeholder="Account ID (không dùng để ký API)..."
                     className="w-full mt-1 px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-orange-500 focus:outline-none text-xs font-mono font-medium"
                   />
                 </div>
