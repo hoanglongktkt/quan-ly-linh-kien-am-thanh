@@ -21,11 +21,11 @@ function signBody(appId, secret, timestamp, rawBody) {
 }
 
 function pickSpxAppId(creds) {
-  return String(creds?.userId || creds?.clientId || creds?.appId || "").trim();
+  return String(creds?.clientId || creds?.userId || creds?.appId || "").trim();
 }
 
 function pickSpxSecret(creds) {
-  return String(creds?.secret || creds?.clientSecret || "").trim();
+  return String(creds?.clientSecret || creds?.secret || "").trim();
 }
 
 async function spxFetch(apiUrl, path, bodyObj, creds) {

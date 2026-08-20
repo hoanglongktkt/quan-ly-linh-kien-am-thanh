@@ -104820,13 +104820,52 @@ function readJsonFile() {
     return {};
   }
 }
+function unwrapJson(value, depth = 0) {
+  if (depth > 3) return value;
+  if (typeof value === "string") {
+    const s2 = value.trim();
+    if (s2.startsWith("{") || s2.startsWith("[")) {
+      try {
+        return unwrapJson(JSON.parse(s2), depth + 1);
+      } catch {
+        return value;
+      }
+    }
+  }
+  return value;
+}
+function extractSpxCredentials(stored) {
+  const root = unwrapJson(stored);
+  const doc = root && typeof root === "object" ? root : {};
+  let src = doc.spx != null ? unwrapJson(doc.spx) : doc;
+  if (!src || typeof src !== "object") src = {};
+  const clientId = String(
+    src.clientId || src.userId || src.spxUserId || src.appId || src.app_id || src.user_id || doc.clientId || doc.userId || ""
+  ).trim();
+  const clientSecretRaw = String(
+    src.clientSecret || src.secret || src.userSecret || src.spxSecret || src.client_secret || src.user_secret || doc.clientSecret || doc.secret || ""
+  ).trim();
+  const clientSecret = clientSecretRaw.includes("\u2022\u2022\u2022\u2022") ? "" : clientSecretRaw;
+  const merchantId = String(src.merchantId || doc.merchantId || "").trim();
+  const apiUrl = String(src.apiUrl || doc.apiUrl || "https://spx.vn").trim().replace(/\/$/, "");
+  return {
+    clientId,
+    clientSecret,
+    userId: clientId,
+    secret: clientSecret,
+    appId: clientId,
+    merchantId,
+    apiUrl
+  };
+}
 function pickSpx(raw) {
-  const src = raw && typeof raw === "object" ? raw : {};
-  const clientId = String(src.clientId || src.userId || src.appId || src.app_id || "").trim();
-  const clientSecret = String(src.clientSecret || src.secret || src.userSecret || src.user_secret || "").trim();
-  const merchantId = String(src.merchantId || "").trim();
-  const apiUrl = String(src.apiUrl || "").trim().replace(/\/$/, "");
-  return { clientId, clientSecret, merchantId, apiUrl };
+  const mapped = extractSpxCredentials({ spx: raw });
+  return {
+    clientId: mapped.clientId,
+    clientSecret: mapped.clientSecret,
+    merchantId: mapped.merchantId,
+    apiUrl: String(raw && typeof raw === "object" ? raw.apiUrl || "" : "").trim().replace(/\/$/, "")
+  };
 }
 function pickGhn(raw) {
   const src = raw && typeof raw === "object" ? raw : {};
@@ -104895,29 +104934,21 @@ async function loadSpxCredentialsFromMongo() {
   if (!isMongoReady()) {
     throw new Error("Ch\u01B0a k\u1EBFt n\u1ED1i Database, kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c v\u1EADn \u0111\u01A1n SPX.");
   }
-  const stored = await loadLogisticsSettingsFromStore();
-  const spxRaw = stored?.spx && typeof stored.spx === "object" ? stored.spx : stored || {};
-  const userId = String(
-    spxRaw.userId || spxRaw.clientId || spxRaw.appId || spxRaw.app_id || stored?.userId || stored?.clientId || ""
-  ).trim();
-  const secret = String(
-    spxRaw.secret || spxRaw.clientSecret || spxRaw.userSecret || spxRaw.user_secret || stored?.secret || stored?.clientSecret || ""
-  ).trim();
-  const merchantId = String(spxRaw.merchantId || stored?.merchantId || "").trim();
-  const apiUrl = String(spxRaw.apiUrl || stored?.apiUrl || "https://spx.vn").trim().replace(/\/$/, "");
-  if (!userId || !secret) {
+  const stored = unwrapJson(await loadLogisticsSettingsFromStore());
+  const mapped = extractSpxCredentials(stored);
+  if (!mapped.clientId || !mapped.clientSecret) {
     throw new Error(
-      "Thi\u1EBFu SPX User ID / Secret tr\xEAn Database. V\xE0o C\xE0i \u0111\u1EB7t \u2192 nh\u1EADp User ID (ho\u1EB7c Client ID) v\xE0 Secret r\u1ED3i b\u1EA5m L\u01B0u c\u1EA5u h\xECnh SPX."
+      "Thi\u1EBFu SPX User ID / Secret tr\xEAn Database. V\xE0o C\xE0i \u0111\u1EB7t \u2192 nh\u1EADp SPX User ID (ho\u1EB7c Client ID) v\xE0 Secret Key r\u1ED3i b\u1EA5m L\u01B0u c\u1EA5u h\xECnh SPX."
     );
   }
   return {
-    userId,
-    secret,
-    clientId: userId,
-    clientSecret: secret,
-    appId: userId,
-    merchantId,
-    apiUrl
+    userId: mapped.clientId,
+    secret: mapped.clientSecret,
+    clientId: mapped.clientId,
+    clientSecret: mapped.clientSecret,
+    appId: mapped.clientId,
+    merchantId: mapped.merchantId,
+    apiUrl: mapped.apiUrl
   };
 }
 async function saveLogisticsConfig(partial) {
@@ -104930,9 +104961,24 @@ async function saveLogisticsConfig(partial) {
       console.warn("[Logistics config] Mongo read before save failed:", err?.message || err);
     }
   }
+  const mongoNorm = unwrapJson(mongoDoc);
+  const mongoObj = mongoNorm && typeof mongoNorm === "object" ? mongoNorm : {};
+  const mongoSpx = unwrapJson(mongoObj.spx);
+  const mergedSpx = {
+    ...mongoSpx && typeof mongoSpx === "object" ? mongoSpx : {},
+    ...file.spx || {},
+    ...partial?.spx || {}
+  };
+  const mappedSpx = extractSpxCredentials({ spx: mergedSpx });
   const next = {
-    ghn: { ...mongoDoc?.ghn || {}, ...file.ghn || {}, ...partial?.ghn || {} },
-    spx: { ...mongoDoc?.spx || {}, ...file.spx || {}, ...partial?.spx || {} },
+    ghn: { ...mongoObj.ghn || {}, ...file.ghn || {}, ...partial?.ghn || {} },
+    spx: {
+      ...mergedSpx,
+      clientId: mappedSpx.clientId,
+      userId: mappedSpx.clientId,
+      ...mappedSpx.clientSecret ? { clientSecret: mappedSpx.clientSecret, secret: mappedSpx.clientSecret } : {},
+      merchantId: mappedSpx.merchantId
+    },
     updatedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   if (!isMongoReady()) {
@@ -105169,7 +105215,7 @@ async function getLogisticsSettings(_req, res) {
       spx: {
         connected: cfg.spx.connected,
         clientId: cfg.spx.clientId,
-        userId: cfg.spx.clientId,
+        userId: cfg.spx.clientId || cfg.spx.userId,
         merchantId: cfg.spx.merchantId,
         secretMasked: maskSecret(cfg.spx.clientSecret || cfg.spx.secret),
         hasSecret: Boolean(cfg.spx.clientSecret || cfg.spx.secret),
@@ -105197,10 +105243,19 @@ async function saveLogisticsSettings(req, res) {
     }
     if (body.spx && typeof body.spx === "object") {
       patch.spx = {};
-      if (body.spx.clientId != null) patch.spx.clientId = String(body.spx.clientId).trim();
-      if (body.spx.userId != null) patch.spx.userId = String(body.spx.userId).trim();
-      if (body.spx.clientSecret != null && String(body.spx.clientSecret).trim() && !String(body.spx.clientSecret).includes("\u2022\u2022\u2022\u2022")) {
-        patch.spx.clientSecret = String(body.spx.clientSecret).trim();
+      const clientId = String(
+        body.spx.clientId || body.spx.userId || body.spx.spxUserId || ""
+      ).trim();
+      const clientSecret = String(
+        body.spx.clientSecret || body.spx.secret || body.spx.userSecret || ""
+      ).trim();
+      if (clientId) {
+        patch.spx.clientId = clientId;
+        patch.spx.userId = clientId;
+      }
+      if (clientSecret && !clientSecret.includes("\u2022\u2022\u2022\u2022")) {
+        patch.spx.clientSecret = clientSecret;
+        patch.spx.secret = clientSecret;
       }
       if (body.spx.merchantId != null) patch.spx.merchantId = String(body.spx.merchantId).trim();
       if (body.spx.apiUrl != null) patch.spx.apiUrl = String(body.spx.apiUrl).trim();
@@ -111658,10 +111713,10 @@ function signBody(appId, secret, timestamp, rawBody) {
   return import_crypto2.default.createHmac("sha256", String(secret)).update(payload).digest("hex");
 }
 function pickSpxAppId(creds) {
-  return String(creds?.userId || creds?.clientId || creds?.appId || "").trim();
+  return String(creds?.clientId || creds?.userId || creds?.appId || "").trim();
 }
 function pickSpxSecret(creds) {
-  return String(creds?.secret || creds?.clientSecret || "").trim();
+  return String(creds?.clientSecret || creds?.secret || "").trim();
 }
 async function spxFetch(apiUrl, path21, bodyObj, creds) {
   const appId = pickSpxAppId(creds);

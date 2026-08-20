@@ -151,7 +151,7 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
   );
 
   const [spxConfig, setSpxConfig] = useState(() =>
-    safeGetJson('omni_spx_config', { connected: false, clientId: 'spx-client-id-demo', clientSecret: '••••••••••••••••', merchantId: 'SPX_MERCH_4812' }),
+    safeGetJson('omni_spx_config', { connected: false, clientId: '', clientSecret: '', merchantId: '' }),
   );
 
   const [isTestingLogistics, setIsTestingLogistics] = useState<'ghn' | 'spx' | null>(null);
@@ -186,8 +186,9 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
         setSpxConfig((prev) => ({
           ...prev,
           connected: Boolean(data.spx.connected),
-          clientId: data.spx.clientId || data.spx.userId || prev.clientId,
+          clientId: data.spx.clientId || data.spx.userId || (prev.clientId === 'spx-client-id-demo' ? '' : prev.clientId),
           merchantId: data.spx.merchantId || prev.merchantId,
+          clientSecret: String(prev.clientSecret || '').includes('••••') ? '' : prev.clientSecret,
         }));
       })
       .catch(() => {});
@@ -271,7 +272,9 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
             : {
                 spx: {
                   clientId: updated.clientId,
+                  userId: updated.clientId,
                   clientSecret: updated.clientSecret,
+                  secret: updated.clientSecret,
                   merchantId: updated.merchantId,
                 },
               },
@@ -1178,24 +1181,24 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
 
             <div className="space-y-3 pt-1">
               <div>
-                <label className="text-[11px] font-semibold text-gray-600">Client ID (OAuth 2.0)</label>
+                <label className="text-[11px] font-semibold text-gray-600">SPX User ID (hoặc Client ID)</label>
                 <input 
                   type="text"
                   value={spxConfig.clientId}
                   onChange={(e) => setSpxConfig({ ...spxConfig, clientId: e.target.value })}
-                  placeholder="Mã Client ID được SPX cấp..."
+                  placeholder="User ID 15 số trên portal SPX (hoặc Client ID)..."
                   className="w-full mt-1 px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-orange-500 focus:outline-none text-xs font-mono font-medium"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[11px] font-semibold text-gray-600">Client Secret</label>
+                  <label className="text-[11px] font-semibold text-gray-600">SPX Secret Key</label>
                   <input 
                     type="password"
                     value={spxConfig.clientSecret}
                     onChange={(e) => setSpxConfig({ ...spxConfig, clientSecret: e.target.value })}
-                    placeholder="Mật mã bí mật SPX..."
+                    placeholder="Secret Key trên portal SPX..."
                     className="w-full mt-1 px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-orange-500 focus:outline-none text-xs font-mono font-medium"
                   />
                 </div>

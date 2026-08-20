@@ -245,7 +245,7 @@ export async function getLogisticsSettings(_req, res) {
       spx: {
         connected: cfg.spx.connected,
         clientId: cfg.spx.clientId,
-        userId: cfg.spx.clientId,
+        userId: cfg.spx.clientId || cfg.spx.userId,
         merchantId: cfg.spx.merchantId,
         secretMasked: maskSecret(cfg.spx.clientSecret || cfg.spx.secret),
         hasSecret: Boolean(cfg.spx.clientSecret || cfg.spx.secret),
@@ -275,14 +275,19 @@ export async function saveLogisticsSettings(req, res) {
     }
     if (body.spx && typeof body.spx === "object") {
       patch.spx = {};
-      if (body.spx.clientId != null) patch.spx.clientId = String(body.spx.clientId).trim();
-      if (body.spx.userId != null) patch.spx.userId = String(body.spx.userId).trim();
-      if (
-        body.spx.clientSecret != null &&
-        String(body.spx.clientSecret).trim() &&
-        !String(body.spx.clientSecret).includes("••••")
-      ) {
-        patch.spx.clientSecret = String(body.spx.clientSecret).trim();
+      const clientId = String(
+        body.spx.clientId || body.spx.userId || body.spx.spxUserId || "",
+      ).trim();
+      const clientSecret = String(
+        body.spx.clientSecret || body.spx.secret || body.spx.userSecret || "",
+      ).trim();
+      if (clientId) {
+        patch.spx.clientId = clientId;
+        patch.spx.userId = clientId;
+      }
+      if (clientSecret && !clientSecret.includes("••••")) {
+        patch.spx.clientSecret = clientSecret;
+        patch.spx.secret = clientSecret;
       }
       if (body.spx.merchantId != null) patch.spx.merchantId = String(body.spx.merchantId).trim();
       if (body.spx.apiUrl != null) patch.spx.apiUrl = String(body.spx.apiUrl).trim();

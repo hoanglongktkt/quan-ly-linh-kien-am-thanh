@@ -26,13 +26,78 @@ function readJsonFile() {
   }
 }
 
+function unwrapJson(value, depth = 0) {
+  if (depth > 3) return value;
+  if (typeof value === "string") {
+    const s = value.trim();
+    if (s.startsWith("{") || s.startsWith("[")) {
+      try {
+        return unwrapJson(JSON.parse(s), depth + 1);
+      } catch {
+        return value;
+      }
+    }
+  }
+  return value;
+}
+
+/**
+ * Chuẩn hóa SPX credentials từ Mongo.
+ * DB ghi clientId/clientSecret (form Cài đặt) → map sang userId/secret cho HMAC.
+ */
+function extractSpxCredentials(stored) {
+  const root = unwrapJson(stored);
+  const doc = root && typeof root === "object" ? root : {};
+  let src = doc.spx != null ? unwrapJson(doc.spx) : doc;
+  if (!src || typeof src !== "object") src = {};
+
+  const clientId = String(
+    src.clientId ||
+      src.userId ||
+      src.spxUserId ||
+      src.appId ||
+      src.app_id ||
+      src.user_id ||
+      doc.clientId ||
+      doc.userId ||
+      "",
+  ).trim();
+  const clientSecretRaw = String(
+    src.clientSecret ||
+      src.secret ||
+      src.userSecret ||
+      src.spxSecret ||
+      src.client_secret ||
+      src.user_secret ||
+      doc.clientSecret ||
+      doc.secret ||
+      "",
+  ).trim();
+  const clientSecret = clientSecretRaw.includes("••••") ? "" : clientSecretRaw;
+  const merchantId = String(src.merchantId || doc.merchantId || "").trim();
+  const apiUrl = String(src.apiUrl || doc.apiUrl || "https://spx.vn")
+    .trim()
+    .replace(/\/$/, "");
+
+  return {
+    clientId,
+    clientSecret,
+    userId: clientId,
+    secret: clientSecret,
+    appId: clientId,
+    merchantId,
+    apiUrl,
+  };
+}
+
 function pickSpx(raw) {
-  const src = raw && typeof raw === "object" ? raw : {};
-  const clientId = String(src.clientId || src.userId || src.appId || src.app_id || "").trim();
-  const clientSecret = String(src.clientSecret || src.secret || src.userSecret || src.user_secret || "").trim();
-  const merchantId = String(src.merchantId || "").trim();
-  const apiUrl = String(src.apiUrl || "").trim().replace(/\/$/, "");
-  return { clientId, clientSecret, merchantId, apiUrl };
+  const mapped = extractSpxCredentials({ spx: raw });
+  return {
+    clientId: mapped.clientId,
+    clientSecret: mapped.clientSecret,
+    merchantId: mapped.merchantId,
+    apiUrl: String(raw && typeof raw === "object" ? raw.apiUrl || "" : "").trim().replace(/\/$/, ""),
+  };
 }
 
 function pickGhn(raw) {
@@ -117,48 +182,26 @@ export async function loadLogisticsConfig() {
   return mergeLogisticsSources(mongoDoc, file);
 }
 
-/** Tạo đơn SPX: chỉ đọc MongoDB meta._id = logistics_config. Không đọc process.env. */
+/** Tạo đơn SPX: chỉ đọc MongoDB. Map clientId/clientSecret → userId/secret (HMAC). */
 export async function loadSpxCredentialsFromMongo() {
   if (!isMongoReady()) {
     throw new Error("Chưa kết nối Database, không tạo được vận đơn SPX.");
   }
-  const stored = await loadLogisticsSettingsFromStore();
-  const spxRaw = stored?.spx && typeof stored.spx === "object" ? stored.spx : stored || {};
-  const userId = String(
-    spxRaw.userId ||
-      spxRaw.clientId ||
-      spxRaw.appId ||
-      spxRaw.app_id ||
-      stored?.userId ||
-      stored?.clientId ||
-      "",
-  ).trim();
-  const secret = String(
-    spxRaw.secret ||
-      spxRaw.clientSecret ||
-      spxRaw.userSecret ||
-      spxRaw.user_secret ||
-      stored?.secret ||
-      stored?.clientSecret ||
-      "",
-  ).trim();
-  const merchantId = String(spxRaw.merchantId || stored?.merchantId || "").trim();
-  const apiUrl = String(spxRaw.apiUrl || stored?.apiUrl || "https://spx.vn")
-    .trim()
-    .replace(/\/$/, "");
-  if (!userId || !secret) {
+  const stored = unwrapJson(await loadLogisticsSettingsFromStore());
+  const mapped = extractSpxCredentials(stored);
+  if (!mapped.clientId || !mapped.clientSecret) {
     throw new Error(
-      "Thiếu SPX User ID / Secret trên Database. Vào Cài đặt → nhập User ID (hoặc Client ID) và Secret rồi bấm Lưu cấu hình SPX.",
+      "Thiếu SPX User ID / Secret trên Database. Vào Cài đặt → nhập SPX User ID (hoặc Client ID) và Secret Key rồi bấm Lưu cấu hình SPX.",
     );
   }
   return {
-    userId,
-    secret,
-    clientId: userId,
-    clientSecret: secret,
-    appId: userId,
-    merchantId,
-    apiUrl,
+    userId: mapped.clientId,
+    secret: mapped.clientSecret,
+    clientId: mapped.clientId,
+    clientSecret: mapped.clientSecret,
+    appId: mapped.clientId,
+    merchantId: mapped.merchantId,
+    apiUrl: mapped.apiUrl,
   };
 }
 
@@ -172,9 +215,26 @@ export async function saveLogisticsConfig(partial) {
       console.warn("[Logistics config] Mongo read before save failed:", err?.message || err);
     }
   }
+  const mongoNorm = unwrapJson(mongoDoc);
+  const mongoObj = mongoNorm && typeof mongoNorm === "object" ? mongoNorm : {};
+  const mongoSpx = unwrapJson(mongoObj.spx);
+  const mergedSpx = {
+    ...(mongoSpx && typeof mongoSpx === "object" ? mongoSpx : {}),
+    ...(file.spx || {}),
+    ...(partial?.spx || {}),
+  };
+  const mappedSpx = extractSpxCredentials({ spx: mergedSpx });
   const next = {
-    ghn: { ...(mongoDoc?.ghn || {}), ...(file.ghn || {}), ...(partial?.ghn || {}) },
-    spx: { ...(mongoDoc?.spx || {}), ...(file.spx || {}), ...(partial?.spx || {}) },
+    ghn: { ...(mongoObj.ghn || {}), ...(file.ghn || {}), ...(partial?.ghn || {}) },
+    spx: {
+      ...mergedSpx,
+      clientId: mappedSpx.clientId,
+      userId: mappedSpx.clientId,
+      ...(mappedSpx.clientSecret
+        ? { clientSecret: mappedSpx.clientSecret, secret: mappedSpx.clientSecret }
+        : {}),
+      merchantId: mappedSpx.merchantId,
+    },
     updatedAt: new Date().toISOString(),
   };
 
