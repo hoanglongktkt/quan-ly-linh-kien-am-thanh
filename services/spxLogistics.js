@@ -8,12 +8,45 @@ import axios from "axios";
 import { loadSpxCredentialsFromMongo } from "./logisticsConfig.js";
 
 const TIMEOUT_MS = 15_000;
-/** Gateway SPX Express Việt Nam + path tạo đơn chuẩn (single create). Không dùng path batch đoán mò. */
+/** Host VN trong tài liệu Open API đối tác. Path tạo đơn chuẩn là batch_create_order (kể cả 1 đơn). */
 const SPX_DEFAULT_HOST = "https://spx.vn";
-const SPX_CREATE_ORDER_PATH = "/open/api/v1/order/create_order";
+const SPX_CREATE_ORDER_PATH = "/open/api/v1/order/batch_create_order";
+const SPX_FORBIDDEN_CREATE_PATH = "/open/api/v1/order/create_order";
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
+/**
+ * Ghép host + path từ DB / form. Không bao giờ gọi path giả create_order trên website spx.vn.
+ * apiUrl có thể là host (https://spx.vn) hoặc full URL endpoint từ tài liệu đối tác.
+ */
+export function resolveSpxGateway({ apiUrl, createPath } = {}) {
+  let host = String(apiUrl || "").trim();
+  let path = String(createPath || "").trim();
+
+  if (/^https?:\/\//i.test(host)) {
+    try {
+      const parsed = new URL(host);
+      const pathname = String(parsed.pathname || "").replace(/\/$/, "");
+      host = `${parsed.protocol}//${parsed.host}`.replace(/\/$/, "");
+      if (!path && pathname && pathname !== "/") {
+        path = pathname;
+      }
+    } catch {
+      host = host.replace(/\/$/, "");
+    }
+  } else {
+    host = host.replace(/\/$/, "");
+  }
+
+  if (!host) host = SPX_DEFAULT_HOST;
+  if (!path || path === SPX_FORBIDDEN_CREATE_PATH || /\/order\/create_order\/?$/i.test(path)) {
+    path = SPX_CREATE_ORDER_PATH;
+  }
+  if (!path.startsWith("/")) path = `/${path}`;
+
+  return { host, path, url: `${host}${path}` };
 }
 
 function signBody(appId, secret, timestamp, rawBody) {
@@ -190,7 +223,10 @@ export async function createSpxShippingOrder({
   creds: credsIn,
 }) {
   const creds = credsIn || (await loadSpxCredentialsFromMongo());
-  const apiUrl = String(creds.apiUrl || SPX_DEFAULT_HOST).replace(/\/$/, "") || SPX_DEFAULT_HOST;
+  const gateway = resolveSpxGateway({
+    apiUrl: creds.apiUrl,
+    createPath: creds.createPath,
+  });
   const userId = pickSpxAppId(creds);
   const weight = Math.max(1, Math.round(Number(weightGrams) || 500));
   const itemList = buildItemList(items, weight);
@@ -214,10 +250,10 @@ export async function createSpxShippingOrder({
   };
 
   const payload = { user_id: userId || undefined, orders: [orderRow] };
-  const result = await spxFetch(apiUrl, SPX_CREATE_ORDER_PATH, payload, creds);
+  const result = await spxFetch(gateway.host, gateway.path, payload, creds);
   if (result.status === 404) {
     throw new Error(
-      `SPX HTTP 404 tại ${SPX_CREATE_ORDER_PATH}. Kiểm tra host Open API (mặc định ${SPX_DEFAULT_HOST}).`,
+      `SPX HTTP 404 tại ${gateway.url}. Nhập đúng API Gateway URL từ tài liệu đối tác SPX (Cài đặt → Logistics).`,
     );
   }
   if (!isSpxSuccess(result.json)) {
@@ -226,7 +262,7 @@ export async function createSpxShippingOrder({
         result.json?.message ||
           result.json?.msg ||
           result.json?.error ||
-          `SPX ${SPX_CREATE_ORDER_PATH} HTTP ${result.status}`,
+          `SPX ${gateway.path} HTTP ${result.status}`,
       ),
     );
   }
@@ -281,7 +317,7 @@ function isSpxAuthFailure(httpStatus, json) {
  * Ping thật tới máy chủ SPX (HMAC-SHA256 + Axios).
  * Chỉ trả success:true khi HTTP status === 200 từ SPX và không phải lỗi 401/403.
  */
-export async function testSpxConnection({ userId, secret, apiUrl } = {}) {
+export async function testSpxConnection({ userId, secret, apiUrl, createPath } = {}) {
   const uid = String(userId || "").trim();
   const sec = String(secret || "").trim();
   if (isBlankSpxSecret(uid) || isBlankSpxSecret(sec)) {
@@ -292,17 +328,14 @@ export async function testSpxConnection({ userId, secret, apiUrl } = {}) {
     };
   }
 
-  const base =
-    String(apiUrl || SPX_DEFAULT_HOST)
-      .trim()
-      .replace(/\/$/, "") || SPX_DEFAULT_HOST;
+  const gateway = resolveSpxGateway({ apiUrl, createPath });
   const body = { user_id: uid };
   const rawBody = JSON.stringify(body);
   const timestamp = String(Math.floor(Date.now() / 1000));
   const sign = signBody(uid, sec, timestamp, rawBody);
 
   try {
-    const response = await axios.post(`${base}${SPX_CREATE_ORDER_PATH}`, rawBody, {
+    const response = await axios.post(gateway.url, rawBody, {
       timeout: TIMEOUT_MS,
       headers: {
         "Content-Type": "application/json",
@@ -326,7 +359,7 @@ export async function testSpxConnection({ userId, secret, apiUrl } = {}) {
       return {
         success: false,
         httpStatus: 404,
-        message: `SPX HTTP 404 tại ${SPX_CREATE_ORDER_PATH}. Endpoint không tồn tại trên gateway ${base}.`,
+        message: `SPX HTTP 404 tại ${gateway.url}. Nhập API Gateway URL đúng từ tài liệu đối tác SPX.`,
       };
     }
     if (isSpxAuthFailure(httpStatus, json)) {
@@ -347,7 +380,7 @@ export async function testSpxConnection({ userId, secret, apiUrl } = {}) {
       success: false,
       httpStatus,
       message: String(
-        json?.message || json?.msg || json?.error || `SPX ${SPX_CREATE_ORDER_PATH} HTTP ${httpStatus}`,
+        json?.message || json?.msg || json?.error || `SPX ${gateway.path} HTTP ${httpStatus}`,
       ),
     };
   } catch (err) {
@@ -363,7 +396,7 @@ export async function testSpxConnection({ userId, secret, apiUrl } = {}) {
       return {
         success: false,
         httpStatus: 404,
-        message: `SPX HTTP 404 tại ${SPX_CREATE_ORDER_PATH}.`,
+        message: `SPX HTTP 404 tại ${gateway.url}.`,
       };
     }
     if (err?.code === "ECONNABORTED") {

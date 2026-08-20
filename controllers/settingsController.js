@@ -252,6 +252,7 @@ export async function getLogisticsSettings(_req, res) {
         secretMasked: maskSecret(cfg.spx.clientSecret || cfg.spx.secret),
         hasSecret: Boolean(cfg.spx.clientSecret || cfg.spx.secret),
         apiUrl: cfg.spx.apiUrl,
+        createPath: cfg.spx.createPath,
       },
     });
   } catch (error) {
@@ -293,6 +294,7 @@ export async function saveLogisticsSettings(req, res) {
       }
       if (body.spx.merchantId != null) patch.spx.merchantId = String(body.spx.merchantId).trim();
       if (body.spx.apiUrl != null) patch.spx.apiUrl = String(body.spx.apiUrl).trim();
+      if (body.spx.createPath != null) patch.spx.createPath = String(body.spx.createPath).trim();
     }
     const cfg = await saveLogisticsConfig(patch);
     return res.json({
@@ -354,6 +356,7 @@ export async function testSpxSettings(req, res) {
     req.body?.secret || req.body?.clientSecret || req.body?.userSecret || "",
   ).trim();
   const apiUrl = String(req.body?.apiUrl || "").trim();
+  const createPath = String(req.body?.createPath || "").trim();
   if (!userId || !secret || secret.includes("••••")) {
     return res.status(400).json({
       success: false,
@@ -361,7 +364,7 @@ export async function testSpxSettings(req, res) {
     });
   }
   try {
-    const result = await testSpxConnection({ userId, secret, apiUrl });
+    const result = await testSpxConnection({ userId, secret, apiUrl, createPath });
     if (!result?.success || result.httpStatus !== 200) {
       const status = result?.httpStatus === 401 || result?.httpStatus === 403 ? result.httpStatus : 400;
       return res.status(status).json({

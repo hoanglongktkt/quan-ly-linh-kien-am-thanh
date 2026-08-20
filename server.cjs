@@ -104848,6 +104848,9 @@ function extractSpxCredentials(stored) {
   const clientSecret = clientSecretRaw.includes("\u2022\u2022\u2022\u2022") ? "" : clientSecretRaw;
   const merchantId = String(src.merchantId || doc.merchantId || "").trim();
   const apiUrl = String(src.apiUrl || doc.apiUrl || "https://spx.vn").trim().replace(/\/$/, "");
+  const createPath = String(
+    src.createPath || src.createOrderPath || doc.createPath || "/open/api/v1/order/batch_create_order"
+  ).trim();
   return {
     clientId,
     clientSecret,
@@ -104855,7 +104858,8 @@ function extractSpxCredentials(stored) {
     secret: clientSecret,
     appId: clientId,
     merchantId,
-    apiUrl
+    apiUrl,
+    createPath
   };
 }
 function pickSpx(raw) {
@@ -104864,7 +104868,8 @@ function pickSpx(raw) {
     clientId: mapped.clientId,
     clientSecret: mapped.clientSecret,
     merchantId: mapped.merchantId,
-    apiUrl: String(raw && typeof raw === "object" ? raw.apiUrl || "" : "").trim().replace(/\/$/, "")
+    apiUrl: String(raw && typeof raw === "object" ? raw.apiUrl || mapped.apiUrl || "" : mapped.apiUrl || "").trim().replace(/\/$/, ""),
+    createPath: String(raw && typeof raw === "object" ? raw.createPath || mapped.createPath || "" : mapped.createPath || "").trim()
   };
 }
 function pickGhn(raw) {
@@ -104898,6 +104903,9 @@ function mergeLogisticsSources(mongoDoc, fileDoc) {
   const spxClientSecret = mongoSpx.clientSecret || fileSpx.clientSecret;
   const spxMerchantId = mongoSpx.merchantId || fileSpx.merchantId;
   const spxApiUrl = String(mongoSpx.apiUrl || fileSpx.apiUrl || "https://spx.vn").trim().replace(/\/$/, "");
+  const spxCreatePath = String(
+    mongoSpx.createPath || fileSpx.createPath || "/open/api/v1/order/batch_create_order"
+  ).trim();
   return {
     ghn: {
       token: ghnToken,
@@ -104912,6 +104920,7 @@ function mergeLogisticsSources(mongoDoc, fileDoc) {
       clientSecret: spxClientSecret,
       merchantId: spxMerchantId,
       apiUrl: spxApiUrl,
+      createPath: spxCreatePath,
       userId: spxClientId,
       secret: spxClientSecret,
       connected: Boolean(spxClientId && spxClientSecret)
@@ -104948,7 +104957,8 @@ async function loadSpxCredentialsFromMongo() {
     clientSecret: mapped.clientSecret,
     appId: mapped.clientId,
     merchantId: mapped.merchantId,
-    apiUrl: mapped.apiUrl
+    apiUrl: mapped.apiUrl,
+    createPath: mapped.createPath
   };
 }
 async function saveLogisticsConfig(partial) {
@@ -104977,7 +104987,9 @@ async function saveLogisticsConfig(partial) {
       clientId: mappedSpx.clientId,
       userId: mappedSpx.clientId,
       ...mappedSpx.clientSecret ? { clientSecret: mappedSpx.clientSecret, secret: mappedSpx.clientSecret } : {},
-      merchantId: mappedSpx.merchantId
+      merchantId: mappedSpx.merchantId,
+      apiUrl: mappedSpx.apiUrl,
+      createPath: mappedSpx.createPath
     },
     updatedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
@@ -110684,7 +110696,32 @@ async function testGhnConnection({ token, shopId } = {}) {
 var import_crypto2 = __toESM(require("crypto"), 1);
 var TIMEOUT_MS2 = 15e3;
 var SPX_DEFAULT_HOST = "https://spx.vn";
-var SPX_CREATE_ORDER_PATH = "/open/api/v1/order/create_order";
+var SPX_CREATE_ORDER_PATH = "/open/api/v1/order/batch_create_order";
+var SPX_FORBIDDEN_CREATE_PATH = "/open/api/v1/order/create_order";
+function resolveSpxGateway({ apiUrl, createPath } = {}) {
+  let host = String(apiUrl || "").trim();
+  let path21 = String(createPath || "").trim();
+  if (/^https?:\/\//i.test(host)) {
+    try {
+      const parsed = new URL(host);
+      const pathname = String(parsed.pathname || "").replace(/\/$/, "");
+      host = `${parsed.protocol}//${parsed.host}`.replace(/\/$/, "");
+      if (!path21 && pathname && pathname !== "/") {
+        path21 = pathname;
+      }
+    } catch {
+      host = host.replace(/\/$/, "");
+    }
+  } else {
+    host = host.replace(/\/$/, "");
+  }
+  if (!host) host = SPX_DEFAULT_HOST;
+  if (!path21 || path21 === SPX_FORBIDDEN_CREATE_PATH || /\/order\/create_order\/?$/i.test(path21)) {
+    path21 = SPX_CREATE_ORDER_PATH;
+  }
+  if (!path21.startsWith("/")) path21 = `/${path21}`;
+  return { host, path: path21, url: `${host}${path21}` };
+}
 function signBody(appId, secret, timestamp, rawBody) {
   const payload = `${appId}${timestamp}${rawBody}`;
   return import_crypto2.default.createHmac("sha256", String(secret)).update(payload).digest("hex");
@@ -110822,7 +110859,10 @@ async function createSpxShippingOrder({
   creds: credsIn
 }) {
   const creds = credsIn || await loadSpxCredentialsFromMongo();
-  const apiUrl = String(creds.apiUrl || SPX_DEFAULT_HOST).replace(/\/$/, "") || SPX_DEFAULT_HOST;
+  const gateway = resolveSpxGateway({
+    apiUrl: creds.apiUrl,
+    createPath: creds.createPath
+  });
   const userId = pickSpxAppId(creds);
   const weight = Math.max(1, Math.round(Number(weightGrams) || 500));
   const itemList = buildItemList(items, weight);
@@ -110844,16 +110884,16 @@ async function createSpxShippingOrder({
     remark: String(note || "").slice(0, 200)
   };
   const payload = { user_id: userId || void 0, orders: [orderRow] };
-  const result = await spxFetch(apiUrl, SPX_CREATE_ORDER_PATH, payload, creds);
+  const result = await spxFetch(gateway.host, gateway.path, payload, creds);
   if (result.status === 404) {
     throw new Error(
-      `SPX HTTP 404 t\u1EA1i ${SPX_CREATE_ORDER_PATH}. Ki\u1EC3m tra host Open API (m\u1EB7c \u0111\u1ECBnh ${SPX_DEFAULT_HOST}).`
+      `SPX HTTP 404 t\u1EA1i ${gateway.url}. Nh\u1EADp \u0111\xFAng API Gateway URL t\u1EEB t\xE0i li\u1EC7u \u0111\u1ED1i t\xE1c SPX (C\xE0i \u0111\u1EB7t \u2192 Logistics).`
     );
   }
   if (!isSpxSuccess(result.json)) {
     throw new Error(
       String(
-        result.json?.message || result.json?.msg || result.json?.error || `SPX ${SPX_CREATE_ORDER_PATH} HTTP ${result.status}`
+        result.json?.message || result.json?.msg || result.json?.error || `SPX ${gateway.path} HTTP ${result.status}`
       )
     );
   }
@@ -110896,7 +110936,7 @@ function isSpxAuthFailure(httpStatus, json2) {
     msg
   );
 }
-async function testSpxConnection({ userId, secret, apiUrl } = {}) {
+async function testSpxConnection({ userId, secret, apiUrl, createPath } = {}) {
   const uid = String(userId || "").trim();
   const sec = String(secret || "").trim();
   if (isBlankSpxSecret(uid) || isBlankSpxSecret(sec)) {
@@ -110906,13 +110946,13 @@ async function testSpxConnection({ userId, secret, apiUrl } = {}) {
       message: "Vui l\xF2ng nh\u1EADp User ID v\xE0 Secret"
     };
   }
-  const base = String(apiUrl || SPX_DEFAULT_HOST).trim().replace(/\/$/, "") || SPX_DEFAULT_HOST;
+  const gateway = resolveSpxGateway({ apiUrl, createPath });
   const body = { user_id: uid };
   const rawBody = JSON.stringify(body);
   const timestamp = String(Math.floor(Date.now() / 1e3));
   const sign = signBody(uid, sec, timestamp, rawBody);
   try {
-    const response = await axios_default.post(`${base}${SPX_CREATE_ORDER_PATH}`, rawBody, {
+    const response = await axios_default.post(gateway.url, rawBody, {
       timeout: TIMEOUT_MS2,
       headers: {
         "Content-Type": "application/json",
@@ -110932,7 +110972,7 @@ async function testSpxConnection({ userId, secret, apiUrl } = {}) {
       return {
         success: false,
         httpStatus: 404,
-        message: `SPX HTTP 404 t\u1EA1i ${SPX_CREATE_ORDER_PATH}. Endpoint kh\xF4ng t\u1ED3n t\u1EA1i tr\xEAn gateway ${base}.`
+        message: `SPX HTTP 404 t\u1EA1i ${gateway.url}. Nh\u1EADp API Gateway URL \u0111\xFAng t\u1EEB t\xE0i li\u1EC7u \u0111\u1ED1i t\xE1c SPX.`
       };
     }
     if (isSpxAuthFailure(httpStatus, json2)) {
@@ -110953,7 +110993,7 @@ async function testSpxConnection({ userId, secret, apiUrl } = {}) {
       success: false,
       httpStatus,
       message: String(
-        json2?.message || json2?.msg || json2?.error || `SPX ${SPX_CREATE_ORDER_PATH} HTTP ${httpStatus}`
+        json2?.message || json2?.msg || json2?.error || `SPX ${gateway.path} HTTP ${httpStatus}`
       )
     };
   } catch (err) {
@@ -110969,7 +111009,7 @@ async function testSpxConnection({ userId, secret, apiUrl } = {}) {
       return {
         success: false,
         httpStatus: 404,
-        message: `SPX HTTP 404 t\u1EA1i ${SPX_CREATE_ORDER_PATH}.`
+        message: `SPX HTTP 404 t\u1EA1i ${gateway.url}.`
       };
     }
     if (err?.code === "ECONNABORTED") {
@@ -111206,7 +111246,8 @@ async function getLogisticsSettings(_req, res) {
         merchantId: cfg.spx.merchantId,
         secretMasked: maskSecret(cfg.spx.clientSecret || cfg.spx.secret),
         hasSecret: Boolean(cfg.spx.clientSecret || cfg.spx.secret),
-        apiUrl: cfg.spx.apiUrl
+        apiUrl: cfg.spx.apiUrl,
+        createPath: cfg.spx.createPath
       }
     });
   } catch (error) {
@@ -111246,6 +111287,7 @@ async function saveLogisticsSettings(req, res) {
       }
       if (body.spx.merchantId != null) patch.spx.merchantId = String(body.spx.merchantId).trim();
       if (body.spx.apiUrl != null) patch.spx.apiUrl = String(body.spx.apiUrl).trim();
+      if (body.spx.createPath != null) patch.spx.createPath = String(body.spx.createPath).trim();
     }
     const cfg = await saveLogisticsConfig(patch);
     return res.json({
@@ -111303,6 +111345,7 @@ async function testSpxSettings(req, res) {
     req.body?.secret || req.body?.clientSecret || req.body?.userSecret || ""
   ).trim();
   const apiUrl = String(req.body?.apiUrl || "").trim();
+  const createPath = String(req.body?.createPath || "").trim();
   if (!userId || !secret || secret.includes("\u2022\u2022\u2022\u2022")) {
     return res.status(400).json({
       success: false,
@@ -111310,7 +111353,7 @@ async function testSpxSettings(req, res) {
     });
   }
   try {
-    const result = await testSpxConnection({ userId, secret, apiUrl });
+    const result = await testSpxConnection({ userId, secret, apiUrl, createPath });
     if (!result?.success || result.httpStatus !== 200) {
       const status = result?.httpStatus === 401 || result?.httpStatus === 403 ? result.httpStatus : 400;
       return res.status(status).json({

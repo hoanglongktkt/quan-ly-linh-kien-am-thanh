@@ -151,7 +151,14 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
   );
 
   const [spxConfig, setSpxConfig] = useState(() =>
-    safeGetJson('omni_spx_config', { connected: false, clientId: '', clientSecret: '', merchantId: '' }),
+    safeGetJson('omni_spx_config', {
+      connected: false,
+      clientId: '',
+      clientSecret: '',
+      merchantId: '',
+      apiUrl: 'https://spx.vn',
+      createPath: '/open/api/v1/order/batch_create_order',
+    }),
   );
 
   const [isTestingLogistics, setIsTestingLogistics] = useState<'ghn' | 'spx' | null>(null);
@@ -203,6 +210,8 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
             clientId: data.spx.clientId || data.spx.userId || (prev.clientId === 'spx-client-id-demo' ? '' : prev.clientId),
             merchantId: data.spx.merchantId || prev.merchantId,
             clientSecret: String(prev.clientSecret || '').includes('••••') ? '' : prev.clientSecret,
+            apiUrl: data.spx.apiUrl || prev.apiUrl || 'https://spx.vn',
+            createPath: data.spx.createPath || prev.createPath || '/open/api/v1/order/batch_create_order',
           }));
         }
       })
@@ -291,6 +300,8 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
                   clientSecret: updated.clientSecret,
                   secret: updated.clientSecret,
                   merchantId: updated.merchantId,
+                  apiUrl: updated.apiUrl,
+                  createPath: updated.createPath,
                 },
               },
         ),
@@ -367,6 +378,8 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
           clientId: userId,
           secret,
           clientSecret: secret,
+          apiUrl: String(spxConfig.apiUrl || '').trim(),
+          createPath: String(spxConfig.createPath || '').trim(),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -1262,6 +1275,28 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
                     className="w-full mt-1 px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-orange-500 focus:outline-none text-xs font-mono font-medium"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-semibold text-gray-600">API Gateway URL (tài liệu đối tác SPX)</label>
+                <input
+                  type="text"
+                  value={spxConfig.apiUrl || ''}
+                  onChange={(e) => setSpxConfig({ ...spxConfig, apiUrl: e.target.value })}
+                  placeholder="https://spx.vn hoặc full URL gateway trong tài liệu SPX"
+                  className="w-full mt-1 px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-orange-500 focus:outline-none text-xs font-mono font-medium"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold text-gray-600">Path tạo đơn Open API</label>
+                <input
+                  type="text"
+                  value={spxConfig.createPath || ''}
+                  onChange={(e) => setSpxConfig({ ...spxConfig, createPath: e.target.value })}
+                  placeholder="/open/api/v1/order/batch_create_order"
+                  className="w-full mt-1 px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-orange-500 focus:outline-none text-xs font-mono font-medium"
+                />
+                <p className="text-[10px] text-gray-400 mt-1">Không dùng /open/api/v1/order/create_order (path này không tồn tại trên website spx.vn).</p>
               </div>
             </div>
 

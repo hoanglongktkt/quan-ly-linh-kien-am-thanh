@@ -78,6 +78,9 @@ function extractSpxCredentials(stored) {
   const apiUrl = String(src.apiUrl || doc.apiUrl || "https://spx.vn")
     .trim()
     .replace(/\/$/, "");
+  const createPath = String(
+    src.createPath || src.createOrderPath || doc.createPath || "/open/api/v1/order/batch_create_order",
+  ).trim();
 
   return {
     clientId,
@@ -87,6 +90,7 @@ function extractSpxCredentials(stored) {
     appId: clientId,
     merchantId,
     apiUrl,
+    createPath,
   };
 }
 
@@ -96,7 +100,10 @@ function pickSpx(raw) {
     clientId: mapped.clientId,
     clientSecret: mapped.clientSecret,
     merchantId: mapped.merchantId,
-    apiUrl: String(raw && typeof raw === "object" ? raw.apiUrl || "" : "").trim().replace(/\/$/, ""),
+    apiUrl: String(raw && typeof raw === "object" ? raw.apiUrl || mapped.apiUrl || "" : mapped.apiUrl || "")
+      .trim()
+      .replace(/\/$/, ""),
+    createPath: String(raw && typeof raw === "object" ? raw.createPath || mapped.createPath || "" : mapped.createPath || "").trim(),
   };
 }
 
@@ -147,6 +154,9 @@ function mergeLogisticsSources(mongoDoc, fileDoc) {
   const spxApiUrl = String(mongoSpx.apiUrl || fileSpx.apiUrl || "https://spx.vn")
     .trim()
     .replace(/\/$/, "");
+  const spxCreatePath = String(
+    mongoSpx.createPath || fileSpx.createPath || "/open/api/v1/order/batch_create_order",
+  ).trim();
 
   return {
     ghn: {
@@ -162,6 +172,7 @@ function mergeLogisticsSources(mongoDoc, fileDoc) {
       clientSecret: spxClientSecret,
       merchantId: spxMerchantId,
       apiUrl: spxApiUrl,
+      createPath: spxCreatePath,
       userId: spxClientId,
       secret: spxClientSecret,
       connected: Boolean(spxClientId && spxClientSecret),
@@ -202,6 +213,7 @@ export async function loadSpxCredentialsFromMongo() {
     appId: mapped.clientId,
     merchantId: mapped.merchantId,
     apiUrl: mapped.apiUrl,
+    createPath: mapped.createPath,
   };
 }
 
@@ -234,6 +246,8 @@ export async function saveLogisticsConfig(partial) {
         ? { clientSecret: mappedSpx.clientSecret, secret: mappedSpx.clientSecret }
         : {}),
       merchantId: mappedSpx.merchantId,
+      apiUrl: mappedSpx.apiUrl,
+      createPath: mappedSpx.createPath,
     },
     updatedAt: new Date().toISOString(),
   };
