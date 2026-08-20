@@ -1491,8 +1491,25 @@ const LOGISTICS_CONFIG_META_KEY = "logistics_config";
 export async function loadLogisticsSettingsFromStore(): Promise<Record<string, any> | null> {
   if (!isMongoReady()) return null;
   ensureModels();
-  const doc = await MetaModel.findById(LOGISTICS_CONFIG_META_KEY).lean();
-  const raw = doc && typeof doc === "object" ? (doc as { value?: unknown }).value : null;
+  let raw: unknown = null;
+  try {
+    const doc = await MetaModel.findById(LOGISTICS_CONFIG_META_KEY).lean();
+    raw = doc && typeof doc === "object" ? (doc as { value?: unknown }).value : null;
+  } catch (err: any) {
+    console.warn("[Logistics] meta.findById failed:", err?.message || err);
+  }
+  if (raw == null || raw === "") {
+    try {
+      const native = await mongoose.connection.db
+        ?.collection("meta")
+        .findOne({ _id: LOGISTICS_CONFIG_META_KEY });
+      if (native && typeof native === "object") {
+        raw = (native as { value?: unknown }).value ?? native;
+      }
+    } catch (err: any) {
+      console.warn("[Logistics] meta native query failed:", err?.message || err);
+    }
+  }
   if (raw == null || raw === "") return null;
   try {
     const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;

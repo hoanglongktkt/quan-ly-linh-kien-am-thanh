@@ -49,6 +49,7 @@ import {
 import { saveAddressBookEntry } from "../services/addressBook.js";
 import { createGhnShippingOrder, getGhnPrintUrl } from "../services/ghnLogistics.js";
 import { createSpxShippingOrder, getSpxWaybill } from "../services/spxLogistics.js";
+import { loadSpxCredentialsFromMongo } from "../services/logisticsConfig.js";
 
 const APP_ROOT = resolveAppRoot();
 
@@ -2661,6 +2662,7 @@ export async function createManualOrder(req, res) {
       }
     } else if (provider === "spx") {
       try {
+        const spxCredsDb = await loadSpxCredentialsFromMongo();
         logisticsResult = await createSpxShippingOrder({
           clientOrderCode: orderSn,
           customer: { name, phone },
@@ -2669,6 +2671,7 @@ export async function createManualOrder(req, res) {
           weightGrams: packageWeight,
           codAmount: totalAmount,
           note: carrierNotes,
+          creds: spxCredsDb,
         });
         trackingNumber = String(logisticsResult.trackingNo || "").trim();
       } catch (spxErr) {

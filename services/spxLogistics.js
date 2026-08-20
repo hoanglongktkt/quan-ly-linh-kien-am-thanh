@@ -5,7 +5,7 @@
  * TUYỆT ĐỐI không vẽ barcode HTML — chỉ trả PDF/URL gốc từ SPX.
  */
 import crypto from "crypto";
-import { loadLogisticsConfig } from "./logisticsConfig.js";
+import { loadLogisticsConfig, loadSpxCredentialsFromMongo } from "./logisticsConfig.js";
 
 const TIMEOUT_MS = 15_000;
 
@@ -23,8 +23,8 @@ function signBody(appId, secret, timestamp, rawBody) {
   return crypto.createHmac("sha256", String(secret)).update(payload).digest("hex");
 }
 
-async function spxFetch(apiUrl, path, bodyObj) {
-  const creds = await spxCreds();
+async function spxFetch(apiUrl, path, bodyObj, credsOverride) {
+  const creds = credsOverride || (await spxCreds());
   const appId = String(creds.clientId || creds.userId || "").trim();
   const secret = String(creds.clientSecret || creds.secret || "").trim();
   if (!appId || !secret) {
@@ -130,8 +130,9 @@ export async function createSpxShippingOrder({
   weightGrams,
   codAmount,
   note,
+  creds: credsIn,
 }) {
-  const creds = await spxCreds();
+  const creds = credsIn || (await loadSpxCredentialsFromMongo());
   const apiUrl = creds.apiUrl;
   const itemName = (Array.isArray(items) ? items : [])
     .map((it) => String(it.productTitle || it.name || "Hàng").slice(0, 80))
@@ -180,7 +181,7 @@ export async function createSpxShippingOrder({
   let lastErr = "SPX tạo đơn thất bại";
   for (let i = 0; i < paths.length; i += 1) {
     if (i > 0) await sleep(250);
-    const result = await spxFetch(apiUrl, paths[i], body);
+    const result = await spxFetch(apiUrl, paths[i], body, creds);
     if (isSpxSuccess(result.json)) {
       const trackingNo = pickTracking(result.json?.data || result.json);
       if (trackingNo) {

@@ -117,6 +117,38 @@ export async function loadLogisticsConfig() {
   return mergeLogisticsSources(mongoDoc, file);
 }
 
+/** Tạo đơn SPX: chỉ đọc MongoDB meta._id = logistics_config (clientId / clientSecret / merchantId). */
+export async function loadSpxCredentialsFromMongo() {
+  if (!isMongoReady()) {
+    throw new Error("Chưa kết nối Database, không tạo được vận đơn SPX.");
+  }
+  const stored = await loadLogisticsSettingsFromStore();
+  const spxRaw = stored?.spx && typeof stored.spx === "object" ? stored.spx : stored || {};
+  const clientId = String(
+    spxRaw.clientId || spxRaw.userId || spxRaw.appId || stored?.clientId || "",
+  ).trim();
+  const clientSecret = String(
+    spxRaw.clientSecret || spxRaw.secret || stored?.clientSecret || "",
+  ).trim();
+  const merchantId = String(spxRaw.merchantId || stored?.merchantId || "").trim();
+  const apiUrl = String(spxRaw.apiUrl || stored?.apiUrl || "https://spx.vn")
+    .trim()
+    .replace(/\/$/, "");
+  if (!clientId || !clientSecret) {
+    throw new Error(
+      "Thiếu SPX Client ID / Client Secret trên Database. Vào Cài đặt → nhập Client ID, Client Secret, Merchant ID rồi bấm Lưu cấu hình SPX.",
+    );
+  }
+  return {
+    clientId,
+    clientSecret,
+    merchantId,
+    apiUrl,
+    userId: clientId,
+    secret: clientSecret,
+  };
+}
+
 export async function saveLogisticsConfig(partial) {
   const file = readJsonFile();
   let mongoDoc = null;

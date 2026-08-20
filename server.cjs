@@ -77215,8 +77215,23 @@ var LOGISTICS_CONFIG_META_KEY = "logistics_config";
 async function loadLogisticsSettingsFromStore() {
   if (!isMongoReady()) return null;
   ensureModels();
-  const doc = await MetaModel.findById(LOGISTICS_CONFIG_META_KEY).lean();
-  const raw = doc && typeof doc === "object" ? doc.value : null;
+  let raw = null;
+  try {
+    const doc = await MetaModel.findById(LOGISTICS_CONFIG_META_KEY).lean();
+    raw = doc && typeof doc === "object" ? doc.value : null;
+  } catch (err) {
+    console.warn("[Logistics] meta.findById failed:", err?.message || err);
+  }
+  if (raw == null || raw === "") {
+    try {
+      const native = await import_mongoose3.default.connection.db?.collection("meta").findOne({ _id: LOGISTICS_CONFIG_META_KEY });
+      if (native && typeof native === "object") {
+        raw = native.value ?? native;
+      }
+    } catch (err) {
+      console.warn("[Logistics] meta native query failed:", err?.message || err);
+    }
+  }
   if (raw == null || raw === "") return null;
   try {
     const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
@@ -104876,6 +104891,34 @@ async function loadLogisticsConfig() {
   }
   return mergeLogisticsSources(mongoDoc, file);
 }
+async function loadSpxCredentialsFromMongo() {
+  if (!isMongoReady()) {
+    throw new Error("Ch\u01B0a k\u1EBFt n\u1ED1i Database, kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c v\u1EADn \u0111\u01A1n SPX.");
+  }
+  const stored = await loadLogisticsSettingsFromStore();
+  const spxRaw = stored?.spx && typeof stored.spx === "object" ? stored.spx : stored || {};
+  const clientId = String(
+    spxRaw.clientId || spxRaw.userId || spxRaw.appId || stored?.clientId || ""
+  ).trim();
+  const clientSecret = String(
+    spxRaw.clientSecret || spxRaw.secret || stored?.clientSecret || ""
+  ).trim();
+  const merchantId = String(spxRaw.merchantId || stored?.merchantId || "").trim();
+  const apiUrl = String(spxRaw.apiUrl || stored?.apiUrl || "https://spx.vn").trim().replace(/\/$/, "");
+  if (!clientId || !clientSecret) {
+    throw new Error(
+      "Thi\u1EBFu SPX Client ID / Client Secret tr\xEAn Database. V\xE0o C\xE0i \u0111\u1EB7t \u2192 nh\u1EADp Client ID, Client Secret, Merchant ID r\u1ED3i b\u1EA5m L\u01B0u c\u1EA5u h\xECnh SPX."
+    );
+  }
+  return {
+    clientId,
+    clientSecret,
+    merchantId,
+    apiUrl,
+    userId: clientId,
+    secret: clientSecret
+  };
+}
 async function saveLogisticsConfig(partial) {
   const file = readJsonFile();
   let mongoDoc = null;
@@ -111399,8 +111442,8 @@ function signBody(appId, secret, timestamp, rawBody) {
   const payload = `${appId}${timestamp}${rawBody}`;
   return import_crypto2.default.createHmac("sha256", String(secret)).update(payload).digest("hex");
 }
-async function spxFetch(apiUrl, path21, bodyObj) {
-  const creds = await spxCreds();
+async function spxFetch(apiUrl, path21, bodyObj, credsOverride) {
+  const creds = credsOverride || await spxCreds();
   const appId = String(creds.clientId || creds.userId || "").trim();
   const secret = String(creds.clientSecret || creds.secret || "").trim();
   if (!appId || !secret) {
@@ -111477,9 +111520,10 @@ async function createSpxShippingOrder({
   items,
   weightGrams,
   codAmount,
-  note
+  note,
+  creds: credsIn
 }) {
-  const creds = await spxCreds();
+  const creds = credsIn || await loadSpxCredentialsFromMongo();
   const apiUrl = creds.apiUrl;
   const itemName = (Array.isArray(items) ? items : []).map((it) => String(it.productTitle || it.name || "H\xE0ng").slice(0, 80)).join(", ").slice(0, 200);
   const body = {
@@ -111522,7 +111566,7 @@ async function createSpxShippingOrder({
   let lastErr = "SPX t\u1EA1o \u0111\u01A1n th\u1EA5t b\u1EA1i";
   for (let i2 = 0; i2 < paths.length; i2 += 1) {
     if (i2 > 0) await sleep5(250);
-    const result = await spxFetch(apiUrl, paths[i2], body);
+    const result = await spxFetch(apiUrl, paths[i2], body, creds);
     if (isSpxSuccess(result.json)) {
       const trackingNo = pickTracking(result.json?.data || result.json);
       if (trackingNo) {
@@ -113704,6 +113748,7 @@ async function createManualOrder(req, res) {
       }
     } else if (provider === "spx") {
       try {
+        const spxCredsDb = await loadSpxCredentialsFromMongo();
         logisticsResult = await createSpxShippingOrder({
           clientOrderCode: orderSn,
           customer: { name, phone },
@@ -113711,7 +113756,8 @@ async function createManualOrder(req, res) {
           items: lineItems,
           weightGrams: packageWeight,
           codAmount: totalAmount,
-          note: carrierNotes
+          note: carrierNotes,
+          creds: spxCredsDb
         });
         trackingNumber = String(logisticsResult.trackingNo || "").trim();
       } catch (spxErr) {
