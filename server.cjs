@@ -83078,16 +83078,44 @@ async function fetchVnJson(url2) {
     clearTimeout(timer);
   }
 }
+async function listVnProvinces() {
+  if (!vnProvincesCache) {
+    vnProvincesCache = await fetchVnJson(`${VN_ADDRESS_API}/p/`);
+  }
+  return (vnProvincesCache || []).map((p) => ({
+    name: p.name,
+    code: p.code
+  }));
+}
+async function listVnDistricts(provinceCode) {
+  const code = Number(provinceCode);
+  if (!code) return [];
+  if (!vnDistrictsCache.has(code)) {
+    const data = await fetchVnJson(`${VN_ADDRESS_API}/p/${code}?depth=2`);
+    const districts = Array.isArray(data?.districts) ? data.districts : [];
+    vnDistrictsCache.set(
+      code,
+      districts.map((d) => ({ name: d.name, code: d.code }))
+    );
+  }
+  return vnDistrictsCache.get(code) || [];
+}
+async function listVnWards(districtCode) {
+  const code = Number(districtCode);
+  if (!code) return [];
+  if (!vnWardsCache.has(code)) {
+    const data = await fetchVnJson(`${VN_ADDRESS_API}/d/${code}?depth=2`);
+    const wards = Array.isArray(data?.wards) ? data.wards : [];
+    vnWardsCache.set(
+      code,
+      wards.map((w) => ({ name: w.name, code: w.code }))
+    );
+  }
+  return vnWardsCache.get(code) || [];
+}
 async function getProvinces(_req, res) {
   try {
-    if (!vnProvincesCache) {
-      vnProvincesCache = await fetchVnJson(`${VN_ADDRESS_API}/p/`);
-    }
-    const list = (vnProvincesCache || []).map((p) => ({
-      name: p.name,
-      code: p.code
-    }));
-    return res.json(list);
+    return res.json(await listVnProvinces());
   } catch (error) {
     console.error("[VN Address] provinces:", error);
     return res.status(502).json({ error: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c danh s\xE1ch T\u1EC9nh/Th\xE0nh" });
@@ -83095,17 +83123,7 @@ async function getProvinces(_req, res) {
 }
 async function getDistricts(req, res) {
   try {
-    const provinceCode = Number(req.params.provinceCode);
-    if (!provinceCode) return res.json([]);
-    if (!vnDistrictsCache.has(provinceCode)) {
-      const data = await fetchVnJson(`${VN_ADDRESS_API}/p/${provinceCode}?depth=2`);
-      const districts = Array.isArray(data?.districts) ? data.districts : [];
-      vnDistrictsCache.set(
-        provinceCode,
-        districts.map((d) => ({ name: d.name, code: d.code }))
-      );
-    }
-    return res.json(vnDistrictsCache.get(provinceCode) || []);
+    return res.json(await listVnDistricts(req.params.provinceCode));
   } catch (error) {
     console.error("[VN Address] districts:", error);
     return res.status(502).json({ error: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c danh s\xE1ch Qu\u1EADn/Huy\u1EC7n" });
@@ -83113,17 +83131,7 @@ async function getDistricts(req, res) {
 }
 async function getWards(req, res) {
   try {
-    const districtCode = Number(req.params.districtCode);
-    if (!districtCode) return res.json([]);
-    if (!vnWardsCache.has(districtCode)) {
-      const data = await fetchVnJson(`${VN_ADDRESS_API}/d/${districtCode}?depth=2`);
-      const wards = Array.isArray(data?.wards) ? data.wards : [];
-      vnWardsCache.set(
-        districtCode,
-        wards.map((w) => ({ name: w.name, code: w.code }))
-      );
-    }
-    return res.json(vnWardsCache.get(districtCode) || []);
+    return res.json(await listVnWards(req.params.districtCode));
   } catch (error) {
     console.error("[VN Address] wards:", error);
     return res.status(502).json({ error: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c danh s\xE1ch Ph\u01B0\u1EDDng/X\xE3" });
@@ -84038,11 +84046,11 @@ function videoFromVertex$1(fromObject) {
   return toObject;
 }
 var Outcome;
-(function(Outcome2) {
-  Outcome2["OUTCOME_UNSPECIFIED"] = "OUTCOME_UNSPECIFIED";
-  Outcome2["OUTCOME_OK"] = "OUTCOME_OK";
-  Outcome2["OUTCOME_FAILED"] = "OUTCOME_FAILED";
-  Outcome2["OUTCOME_DEADLINE_EXCEEDED"] = "OUTCOME_DEADLINE_EXCEEDED";
+(function(Outcome3) {
+  Outcome3["OUTCOME_UNSPECIFIED"] = "OUTCOME_UNSPECIFIED";
+  Outcome3["OUTCOME_OK"] = "OUTCOME_OK";
+  Outcome3["OUTCOME_FAILED"] = "OUTCOME_FAILED";
+  Outcome3["OUTCOME_DEADLINE_EXCEEDED"] = "OUTCOME_DEADLINE_EXCEEDED";
 })(Outcome || (Outcome = {}));
 var Language;
 (function(Language2) {
@@ -84152,18 +84160,18 @@ var ProminentPeople;
   ProminentPeople2["BLOCK_PROMINENT_PEOPLE"] = "BLOCK_PROMINENT_PEOPLE";
 })(ProminentPeople || (ProminentPeople = {}));
 var HarmCategory;
-(function(HarmCategory2) {
-  HarmCategory2["HARM_CATEGORY_UNSPECIFIED"] = "HARM_CATEGORY_UNSPECIFIED";
-  HarmCategory2["HARM_CATEGORY_HARASSMENT"] = "HARM_CATEGORY_HARASSMENT";
-  HarmCategory2["HARM_CATEGORY_HATE_SPEECH"] = "HARM_CATEGORY_HATE_SPEECH";
-  HarmCategory2["HARM_CATEGORY_SEXUALLY_EXPLICIT"] = "HARM_CATEGORY_SEXUALLY_EXPLICIT";
-  HarmCategory2["HARM_CATEGORY_DANGEROUS_CONTENT"] = "HARM_CATEGORY_DANGEROUS_CONTENT";
-  HarmCategory2["HARM_CATEGORY_CIVIC_INTEGRITY"] = "HARM_CATEGORY_CIVIC_INTEGRITY";
-  HarmCategory2["HARM_CATEGORY_IMAGE_HATE"] = "HARM_CATEGORY_IMAGE_HATE";
-  HarmCategory2["HARM_CATEGORY_IMAGE_DANGEROUS_CONTENT"] = "HARM_CATEGORY_IMAGE_DANGEROUS_CONTENT";
-  HarmCategory2["HARM_CATEGORY_IMAGE_HARASSMENT"] = "HARM_CATEGORY_IMAGE_HARASSMENT";
-  HarmCategory2["HARM_CATEGORY_IMAGE_SEXUALLY_EXPLICIT"] = "HARM_CATEGORY_IMAGE_SEXUALLY_EXPLICIT";
-  HarmCategory2["HARM_CATEGORY_JAILBREAK"] = "HARM_CATEGORY_JAILBREAK";
+(function(HarmCategory3) {
+  HarmCategory3["HARM_CATEGORY_UNSPECIFIED"] = "HARM_CATEGORY_UNSPECIFIED";
+  HarmCategory3["HARM_CATEGORY_HARASSMENT"] = "HARM_CATEGORY_HARASSMENT";
+  HarmCategory3["HARM_CATEGORY_HATE_SPEECH"] = "HARM_CATEGORY_HATE_SPEECH";
+  HarmCategory3["HARM_CATEGORY_SEXUALLY_EXPLICIT"] = "HARM_CATEGORY_SEXUALLY_EXPLICIT";
+  HarmCategory3["HARM_CATEGORY_DANGEROUS_CONTENT"] = "HARM_CATEGORY_DANGEROUS_CONTENT";
+  HarmCategory3["HARM_CATEGORY_CIVIC_INTEGRITY"] = "HARM_CATEGORY_CIVIC_INTEGRITY";
+  HarmCategory3["HARM_CATEGORY_IMAGE_HATE"] = "HARM_CATEGORY_IMAGE_HATE";
+  HarmCategory3["HARM_CATEGORY_IMAGE_DANGEROUS_CONTENT"] = "HARM_CATEGORY_IMAGE_DANGEROUS_CONTENT";
+  HarmCategory3["HARM_CATEGORY_IMAGE_HARASSMENT"] = "HARM_CATEGORY_IMAGE_HARASSMENT";
+  HarmCategory3["HARM_CATEGORY_IMAGE_SEXUALLY_EXPLICIT"] = "HARM_CATEGORY_IMAGE_SEXUALLY_EXPLICIT";
+  HarmCategory3["HARM_CATEGORY_JAILBREAK"] = "HARM_CATEGORY_JAILBREAK";
 })(HarmCategory || (HarmCategory = {}));
 var HarmBlockMethod;
 (function(HarmBlockMethod2) {
@@ -84172,13 +84180,13 @@ var HarmBlockMethod;
   HarmBlockMethod2["PROBABILITY"] = "PROBABILITY";
 })(HarmBlockMethod || (HarmBlockMethod = {}));
 var HarmBlockThreshold;
-(function(HarmBlockThreshold2) {
-  HarmBlockThreshold2["HARM_BLOCK_THRESHOLD_UNSPECIFIED"] = "HARM_BLOCK_THRESHOLD_UNSPECIFIED";
-  HarmBlockThreshold2["BLOCK_LOW_AND_ABOVE"] = "BLOCK_LOW_AND_ABOVE";
-  HarmBlockThreshold2["BLOCK_MEDIUM_AND_ABOVE"] = "BLOCK_MEDIUM_AND_ABOVE";
-  HarmBlockThreshold2["BLOCK_ONLY_HIGH"] = "BLOCK_ONLY_HIGH";
-  HarmBlockThreshold2["BLOCK_NONE"] = "BLOCK_NONE";
-  HarmBlockThreshold2["OFF"] = "OFF";
+(function(HarmBlockThreshold3) {
+  HarmBlockThreshold3["HARM_BLOCK_THRESHOLD_UNSPECIFIED"] = "HARM_BLOCK_THRESHOLD_UNSPECIFIED";
+  HarmBlockThreshold3["BLOCK_LOW_AND_ABOVE"] = "BLOCK_LOW_AND_ABOVE";
+  HarmBlockThreshold3["BLOCK_MEDIUM_AND_ABOVE"] = "BLOCK_MEDIUM_AND_ABOVE";
+  HarmBlockThreshold3["BLOCK_ONLY_HIGH"] = "BLOCK_ONLY_HIGH";
+  HarmBlockThreshold3["BLOCK_NONE"] = "BLOCK_NONE";
+  HarmBlockThreshold3["OFF"] = "OFF";
 })(HarmBlockThreshold || (HarmBlockThreshold = {}));
 var FunctionCallingConfigMode;
 (function(FunctionCallingConfigMode2) {
@@ -84189,32 +84197,32 @@ var FunctionCallingConfigMode;
   FunctionCallingConfigMode2["VALIDATED"] = "VALIDATED";
 })(FunctionCallingConfigMode || (FunctionCallingConfigMode = {}));
 var FinishReason;
-(function(FinishReason2) {
-  FinishReason2["FINISH_REASON_UNSPECIFIED"] = "FINISH_REASON_UNSPECIFIED";
-  FinishReason2["STOP"] = "STOP";
-  FinishReason2["MAX_TOKENS"] = "MAX_TOKENS";
-  FinishReason2["SAFETY"] = "SAFETY";
-  FinishReason2["RECITATION"] = "RECITATION";
-  FinishReason2["LANGUAGE"] = "LANGUAGE";
-  FinishReason2["OTHER"] = "OTHER";
-  FinishReason2["BLOCKLIST"] = "BLOCKLIST";
-  FinishReason2["PROHIBITED_CONTENT"] = "PROHIBITED_CONTENT";
-  FinishReason2["SPII"] = "SPII";
-  FinishReason2["MALFORMED_FUNCTION_CALL"] = "MALFORMED_FUNCTION_CALL";
-  FinishReason2["IMAGE_SAFETY"] = "IMAGE_SAFETY";
-  FinishReason2["UNEXPECTED_TOOL_CALL"] = "UNEXPECTED_TOOL_CALL";
-  FinishReason2["IMAGE_PROHIBITED_CONTENT"] = "IMAGE_PROHIBITED_CONTENT";
-  FinishReason2["NO_IMAGE"] = "NO_IMAGE";
-  FinishReason2["IMAGE_RECITATION"] = "IMAGE_RECITATION";
-  FinishReason2["IMAGE_OTHER"] = "IMAGE_OTHER";
+(function(FinishReason3) {
+  FinishReason3["FINISH_REASON_UNSPECIFIED"] = "FINISH_REASON_UNSPECIFIED";
+  FinishReason3["STOP"] = "STOP";
+  FinishReason3["MAX_TOKENS"] = "MAX_TOKENS";
+  FinishReason3["SAFETY"] = "SAFETY";
+  FinishReason3["RECITATION"] = "RECITATION";
+  FinishReason3["LANGUAGE"] = "LANGUAGE";
+  FinishReason3["OTHER"] = "OTHER";
+  FinishReason3["BLOCKLIST"] = "BLOCKLIST";
+  FinishReason3["PROHIBITED_CONTENT"] = "PROHIBITED_CONTENT";
+  FinishReason3["SPII"] = "SPII";
+  FinishReason3["MALFORMED_FUNCTION_CALL"] = "MALFORMED_FUNCTION_CALL";
+  FinishReason3["IMAGE_SAFETY"] = "IMAGE_SAFETY";
+  FinishReason3["UNEXPECTED_TOOL_CALL"] = "UNEXPECTED_TOOL_CALL";
+  FinishReason3["IMAGE_PROHIBITED_CONTENT"] = "IMAGE_PROHIBITED_CONTENT";
+  FinishReason3["NO_IMAGE"] = "NO_IMAGE";
+  FinishReason3["IMAGE_RECITATION"] = "IMAGE_RECITATION";
+  FinishReason3["IMAGE_OTHER"] = "IMAGE_OTHER";
 })(FinishReason || (FinishReason = {}));
 var HarmProbability;
-(function(HarmProbability2) {
-  HarmProbability2["HARM_PROBABILITY_UNSPECIFIED"] = "HARM_PROBABILITY_UNSPECIFIED";
-  HarmProbability2["NEGLIGIBLE"] = "NEGLIGIBLE";
-  HarmProbability2["LOW"] = "LOW";
-  HarmProbability2["MEDIUM"] = "MEDIUM";
-  HarmProbability2["HIGH"] = "HIGH";
+(function(HarmProbability3) {
+  HarmProbability3["HARM_PROBABILITY_UNSPECIFIED"] = "HARM_PROBABILITY_UNSPECIFIED";
+  HarmProbability3["NEGLIGIBLE"] = "NEGLIGIBLE";
+  HarmProbability3["LOW"] = "LOW";
+  HarmProbability3["MEDIUM"] = "MEDIUM";
+  HarmProbability3["HIGH"] = "HIGH";
 })(HarmProbability || (HarmProbability = {}));
 var HarmSeverity;
 (function(HarmSeverity2) {
@@ -114213,6 +114221,1377 @@ async function ackReturnAlertsApi(req, res) {
   }
 }
 
+// node_modules/@google/generative-ai/dist/index.mjs
+var SchemaType;
+(function(SchemaType2) {
+  SchemaType2["STRING"] = "string";
+  SchemaType2["NUMBER"] = "number";
+  SchemaType2["INTEGER"] = "integer";
+  SchemaType2["BOOLEAN"] = "boolean";
+  SchemaType2["ARRAY"] = "array";
+  SchemaType2["OBJECT"] = "object";
+})(SchemaType || (SchemaType = {}));
+var ExecutableCodeLanguage;
+(function(ExecutableCodeLanguage2) {
+  ExecutableCodeLanguage2["LANGUAGE_UNSPECIFIED"] = "language_unspecified";
+  ExecutableCodeLanguage2["PYTHON"] = "python";
+})(ExecutableCodeLanguage || (ExecutableCodeLanguage = {}));
+var Outcome2;
+(function(Outcome3) {
+  Outcome3["OUTCOME_UNSPECIFIED"] = "outcome_unspecified";
+  Outcome3["OUTCOME_OK"] = "outcome_ok";
+  Outcome3["OUTCOME_FAILED"] = "outcome_failed";
+  Outcome3["OUTCOME_DEADLINE_EXCEEDED"] = "outcome_deadline_exceeded";
+})(Outcome2 || (Outcome2 = {}));
+var POSSIBLE_ROLES = ["user", "model", "function", "system"];
+var HarmCategory2;
+(function(HarmCategory3) {
+  HarmCategory3["HARM_CATEGORY_UNSPECIFIED"] = "HARM_CATEGORY_UNSPECIFIED";
+  HarmCategory3["HARM_CATEGORY_HATE_SPEECH"] = "HARM_CATEGORY_HATE_SPEECH";
+  HarmCategory3["HARM_CATEGORY_SEXUALLY_EXPLICIT"] = "HARM_CATEGORY_SEXUALLY_EXPLICIT";
+  HarmCategory3["HARM_CATEGORY_HARASSMENT"] = "HARM_CATEGORY_HARASSMENT";
+  HarmCategory3["HARM_CATEGORY_DANGEROUS_CONTENT"] = "HARM_CATEGORY_DANGEROUS_CONTENT";
+  HarmCategory3["HARM_CATEGORY_CIVIC_INTEGRITY"] = "HARM_CATEGORY_CIVIC_INTEGRITY";
+})(HarmCategory2 || (HarmCategory2 = {}));
+var HarmBlockThreshold2;
+(function(HarmBlockThreshold3) {
+  HarmBlockThreshold3["HARM_BLOCK_THRESHOLD_UNSPECIFIED"] = "HARM_BLOCK_THRESHOLD_UNSPECIFIED";
+  HarmBlockThreshold3["BLOCK_LOW_AND_ABOVE"] = "BLOCK_LOW_AND_ABOVE";
+  HarmBlockThreshold3["BLOCK_MEDIUM_AND_ABOVE"] = "BLOCK_MEDIUM_AND_ABOVE";
+  HarmBlockThreshold3["BLOCK_ONLY_HIGH"] = "BLOCK_ONLY_HIGH";
+  HarmBlockThreshold3["BLOCK_NONE"] = "BLOCK_NONE";
+})(HarmBlockThreshold2 || (HarmBlockThreshold2 = {}));
+var HarmProbability2;
+(function(HarmProbability3) {
+  HarmProbability3["HARM_PROBABILITY_UNSPECIFIED"] = "HARM_PROBABILITY_UNSPECIFIED";
+  HarmProbability3["NEGLIGIBLE"] = "NEGLIGIBLE";
+  HarmProbability3["LOW"] = "LOW";
+  HarmProbability3["MEDIUM"] = "MEDIUM";
+  HarmProbability3["HIGH"] = "HIGH";
+})(HarmProbability2 || (HarmProbability2 = {}));
+var BlockReason;
+(function(BlockReason2) {
+  BlockReason2["BLOCKED_REASON_UNSPECIFIED"] = "BLOCKED_REASON_UNSPECIFIED";
+  BlockReason2["SAFETY"] = "SAFETY";
+  BlockReason2["OTHER"] = "OTHER";
+})(BlockReason || (BlockReason = {}));
+var FinishReason2;
+(function(FinishReason3) {
+  FinishReason3["FINISH_REASON_UNSPECIFIED"] = "FINISH_REASON_UNSPECIFIED";
+  FinishReason3["STOP"] = "STOP";
+  FinishReason3["MAX_TOKENS"] = "MAX_TOKENS";
+  FinishReason3["SAFETY"] = "SAFETY";
+  FinishReason3["RECITATION"] = "RECITATION";
+  FinishReason3["LANGUAGE"] = "LANGUAGE";
+  FinishReason3["BLOCKLIST"] = "BLOCKLIST";
+  FinishReason3["PROHIBITED_CONTENT"] = "PROHIBITED_CONTENT";
+  FinishReason3["SPII"] = "SPII";
+  FinishReason3["MALFORMED_FUNCTION_CALL"] = "MALFORMED_FUNCTION_CALL";
+  FinishReason3["OTHER"] = "OTHER";
+})(FinishReason2 || (FinishReason2 = {}));
+var TaskType;
+(function(TaskType2) {
+  TaskType2["TASK_TYPE_UNSPECIFIED"] = "TASK_TYPE_UNSPECIFIED";
+  TaskType2["RETRIEVAL_QUERY"] = "RETRIEVAL_QUERY";
+  TaskType2["RETRIEVAL_DOCUMENT"] = "RETRIEVAL_DOCUMENT";
+  TaskType2["SEMANTIC_SIMILARITY"] = "SEMANTIC_SIMILARITY";
+  TaskType2["CLASSIFICATION"] = "CLASSIFICATION";
+  TaskType2["CLUSTERING"] = "CLUSTERING";
+})(TaskType || (TaskType = {}));
+var FunctionCallingMode;
+(function(FunctionCallingMode2) {
+  FunctionCallingMode2["MODE_UNSPECIFIED"] = "MODE_UNSPECIFIED";
+  FunctionCallingMode2["AUTO"] = "AUTO";
+  FunctionCallingMode2["ANY"] = "ANY";
+  FunctionCallingMode2["NONE"] = "NONE";
+})(FunctionCallingMode || (FunctionCallingMode = {}));
+var DynamicRetrievalMode;
+(function(DynamicRetrievalMode2) {
+  DynamicRetrievalMode2["MODE_UNSPECIFIED"] = "MODE_UNSPECIFIED";
+  DynamicRetrievalMode2["MODE_DYNAMIC"] = "MODE_DYNAMIC";
+})(DynamicRetrievalMode || (DynamicRetrievalMode = {}));
+var GoogleGenerativeAIError = class extends Error {
+  constructor(message) {
+    super(`[GoogleGenerativeAI Error]: ${message}`);
+  }
+};
+var GoogleGenerativeAIResponseError = class extends GoogleGenerativeAIError {
+  constructor(message, response) {
+    super(message);
+    this.response = response;
+  }
+};
+var GoogleGenerativeAIFetchError = class extends GoogleGenerativeAIError {
+  constructor(message, status, statusText, errorDetails) {
+    super(message);
+    this.status = status;
+    this.statusText = statusText;
+    this.errorDetails = errorDetails;
+  }
+};
+var GoogleGenerativeAIRequestInputError = class extends GoogleGenerativeAIError {
+};
+var GoogleGenerativeAIAbortError = class extends GoogleGenerativeAIError {
+};
+var DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com";
+var DEFAULT_API_VERSION = "v1beta";
+var PACKAGE_VERSION = "0.24.1";
+var PACKAGE_LOG_HEADER = "genai-js";
+var Task;
+(function(Task2) {
+  Task2["GENERATE_CONTENT"] = "generateContent";
+  Task2["STREAM_GENERATE_CONTENT"] = "streamGenerateContent";
+  Task2["COUNT_TOKENS"] = "countTokens";
+  Task2["EMBED_CONTENT"] = "embedContent";
+  Task2["BATCH_EMBED_CONTENTS"] = "batchEmbedContents";
+})(Task || (Task = {}));
+var RequestUrl = class {
+  constructor(model, task, apiKey, stream4, requestOptions) {
+    this.model = model;
+    this.task = task;
+    this.apiKey = apiKey;
+    this.stream = stream4;
+    this.requestOptions = requestOptions;
+  }
+  toString() {
+    var _a2, _b;
+    const apiVersion = ((_a2 = this.requestOptions) === null || _a2 === void 0 ? void 0 : _a2.apiVersion) || DEFAULT_API_VERSION;
+    const baseUrl = ((_b = this.requestOptions) === null || _b === void 0 ? void 0 : _b.baseUrl) || DEFAULT_BASE_URL;
+    let url2 = `${baseUrl}/${apiVersion}/${this.model}:${this.task}`;
+    if (this.stream) {
+      url2 += "?alt=sse";
+    }
+    return url2;
+  }
+};
+function getClientHeaders(requestOptions) {
+  const clientHeaders = [];
+  if (requestOptions === null || requestOptions === void 0 ? void 0 : requestOptions.apiClient) {
+    clientHeaders.push(requestOptions.apiClient);
+  }
+  clientHeaders.push(`${PACKAGE_LOG_HEADER}/${PACKAGE_VERSION}`);
+  return clientHeaders.join(" ");
+}
+async function getHeaders(url2) {
+  var _a2;
+  const headers = new Headers();
+  headers.append("Content-Type", "application/json");
+  headers.append("x-goog-api-client", getClientHeaders(url2.requestOptions));
+  headers.append("x-goog-api-key", url2.apiKey);
+  let customHeaders = (_a2 = url2.requestOptions) === null || _a2 === void 0 ? void 0 : _a2.customHeaders;
+  if (customHeaders) {
+    if (!(customHeaders instanceof Headers)) {
+      try {
+        customHeaders = new Headers(customHeaders);
+      } catch (e2) {
+        throw new GoogleGenerativeAIRequestInputError(`unable to convert customHeaders value ${JSON.stringify(customHeaders)} to Headers: ${e2.message}`);
+      }
+    }
+    for (const [headerName, headerValue] of customHeaders.entries()) {
+      if (headerName === "x-goog-api-key") {
+        throw new GoogleGenerativeAIRequestInputError(`Cannot set reserved header name ${headerName}`);
+      } else if (headerName === "x-goog-api-client") {
+        throw new GoogleGenerativeAIRequestInputError(`Header name ${headerName} can only be set using the apiClient field`);
+      }
+      headers.append(headerName, headerValue);
+    }
+  }
+  return headers;
+}
+async function constructModelRequest(model, task, apiKey, stream4, body, requestOptions) {
+  const url2 = new RequestUrl(model, task, apiKey, stream4, requestOptions);
+  return {
+    url: url2.toString(),
+    fetchOptions: Object.assign(Object.assign({}, buildFetchOptions(requestOptions)), { method: "POST", headers: await getHeaders(url2), body })
+  };
+}
+async function makeModelRequest(model, task, apiKey, stream4, body, requestOptions = {}, fetchFn = fetch) {
+  const { url: url2, fetchOptions } = await constructModelRequest(model, task, apiKey, stream4, body, requestOptions);
+  return makeRequest(url2, fetchOptions, fetchFn);
+}
+async function makeRequest(url2, fetchOptions, fetchFn = fetch) {
+  let response;
+  try {
+    response = await fetchFn(url2, fetchOptions);
+  } catch (e2) {
+    handleResponseError(e2, url2);
+  }
+  if (!response.ok) {
+    await handleResponseNotOk(response, url2);
+  }
+  return response;
+}
+function handleResponseError(e2, url2) {
+  let err = e2;
+  if (err.name === "AbortError") {
+    err = new GoogleGenerativeAIAbortError(`Request aborted when fetching ${url2.toString()}: ${e2.message}`);
+    err.stack = e2.stack;
+  } else if (!(e2 instanceof GoogleGenerativeAIFetchError || e2 instanceof GoogleGenerativeAIRequestInputError)) {
+    err = new GoogleGenerativeAIError(`Error fetching from ${url2.toString()}: ${e2.message}`);
+    err.stack = e2.stack;
+  }
+  throw err;
+}
+async function handleResponseNotOk(response, url2) {
+  let message = "";
+  let errorDetails;
+  try {
+    const json2 = await response.json();
+    message = json2.error.message;
+    if (json2.error.details) {
+      message += ` ${JSON.stringify(json2.error.details)}`;
+      errorDetails = json2.error.details;
+    }
+  } catch (e2) {
+  }
+  throw new GoogleGenerativeAIFetchError(`Error fetching from ${url2.toString()}: [${response.status} ${response.statusText}] ${message}`, response.status, response.statusText, errorDetails);
+}
+function buildFetchOptions(requestOptions) {
+  const fetchOptions = {};
+  if ((requestOptions === null || requestOptions === void 0 ? void 0 : requestOptions.signal) !== void 0 || (requestOptions === null || requestOptions === void 0 ? void 0 : requestOptions.timeout) >= 0) {
+    const controller = new AbortController();
+    if ((requestOptions === null || requestOptions === void 0 ? void 0 : requestOptions.timeout) >= 0) {
+      setTimeout(() => controller.abort(), requestOptions.timeout);
+    }
+    if (requestOptions === null || requestOptions === void 0 ? void 0 : requestOptions.signal) {
+      requestOptions.signal.addEventListener("abort", () => {
+        controller.abort();
+      });
+    }
+    fetchOptions.signal = controller.signal;
+  }
+  return fetchOptions;
+}
+function addHelpers(response) {
+  response.text = () => {
+    if (response.candidates && response.candidates.length > 0) {
+      if (response.candidates.length > 1) {
+        console.warn(`This response had ${response.candidates.length} candidates. Returning text from the first candidate only. Access response.candidates directly to use the other candidates.`);
+      }
+      if (hadBadFinishReason(response.candidates[0])) {
+        throw new GoogleGenerativeAIResponseError(`${formatBlockErrorMessage(response)}`, response);
+      }
+      return getText(response);
+    } else if (response.promptFeedback) {
+      throw new GoogleGenerativeAIResponseError(`Text not available. ${formatBlockErrorMessage(response)}`, response);
+    }
+    return "";
+  };
+  response.functionCall = () => {
+    if (response.candidates && response.candidates.length > 0) {
+      if (response.candidates.length > 1) {
+        console.warn(`This response had ${response.candidates.length} candidates. Returning function calls from the first candidate only. Access response.candidates directly to use the other candidates.`);
+      }
+      if (hadBadFinishReason(response.candidates[0])) {
+        throw new GoogleGenerativeAIResponseError(`${formatBlockErrorMessage(response)}`, response);
+      }
+      console.warn(`response.functionCall() is deprecated. Use response.functionCalls() instead.`);
+      return getFunctionCalls(response)[0];
+    } else if (response.promptFeedback) {
+      throw new GoogleGenerativeAIResponseError(`Function call not available. ${formatBlockErrorMessage(response)}`, response);
+    }
+    return void 0;
+  };
+  response.functionCalls = () => {
+    if (response.candidates && response.candidates.length > 0) {
+      if (response.candidates.length > 1) {
+        console.warn(`This response had ${response.candidates.length} candidates. Returning function calls from the first candidate only. Access response.candidates directly to use the other candidates.`);
+      }
+      if (hadBadFinishReason(response.candidates[0])) {
+        throw new GoogleGenerativeAIResponseError(`${formatBlockErrorMessage(response)}`, response);
+      }
+      return getFunctionCalls(response);
+    } else if (response.promptFeedback) {
+      throw new GoogleGenerativeAIResponseError(`Function call not available. ${formatBlockErrorMessage(response)}`, response);
+    }
+    return void 0;
+  };
+  return response;
+}
+function getText(response) {
+  var _a2, _b, _c, _d;
+  const textStrings = [];
+  if ((_b = (_a2 = response.candidates) === null || _a2 === void 0 ? void 0 : _a2[0].content) === null || _b === void 0 ? void 0 : _b.parts) {
+    for (const part of (_d = (_c = response.candidates) === null || _c === void 0 ? void 0 : _c[0].content) === null || _d === void 0 ? void 0 : _d.parts) {
+      if (part.text) {
+        textStrings.push(part.text);
+      }
+      if (part.executableCode) {
+        textStrings.push("\n```" + part.executableCode.language + "\n" + part.executableCode.code + "\n```\n");
+      }
+      if (part.codeExecutionResult) {
+        textStrings.push("\n```\n" + part.codeExecutionResult.output + "\n```\n");
+      }
+    }
+  }
+  if (textStrings.length > 0) {
+    return textStrings.join("");
+  } else {
+    return "";
+  }
+}
+function getFunctionCalls(response) {
+  var _a2, _b, _c, _d;
+  const functionCalls = [];
+  if ((_b = (_a2 = response.candidates) === null || _a2 === void 0 ? void 0 : _a2[0].content) === null || _b === void 0 ? void 0 : _b.parts) {
+    for (const part of (_d = (_c = response.candidates) === null || _c === void 0 ? void 0 : _c[0].content) === null || _d === void 0 ? void 0 : _d.parts) {
+      if (part.functionCall) {
+        functionCalls.push(part.functionCall);
+      }
+    }
+  }
+  if (functionCalls.length > 0) {
+    return functionCalls;
+  } else {
+    return void 0;
+  }
+}
+var badFinishReasons = [
+  FinishReason2.RECITATION,
+  FinishReason2.SAFETY,
+  FinishReason2.LANGUAGE
+];
+function hadBadFinishReason(candidate) {
+  return !!candidate.finishReason && badFinishReasons.includes(candidate.finishReason);
+}
+function formatBlockErrorMessage(response) {
+  var _a2, _b, _c;
+  let message = "";
+  if ((!response.candidates || response.candidates.length === 0) && response.promptFeedback) {
+    message += "Response was blocked";
+    if ((_a2 = response.promptFeedback) === null || _a2 === void 0 ? void 0 : _a2.blockReason) {
+      message += ` due to ${response.promptFeedback.blockReason}`;
+    }
+    if ((_b = response.promptFeedback) === null || _b === void 0 ? void 0 : _b.blockReasonMessage) {
+      message += `: ${response.promptFeedback.blockReasonMessage}`;
+    }
+  } else if ((_c = response.candidates) === null || _c === void 0 ? void 0 : _c[0]) {
+    const firstCandidate = response.candidates[0];
+    if (hadBadFinishReason(firstCandidate)) {
+      message += `Candidate was blocked due to ${firstCandidate.finishReason}`;
+      if (firstCandidate.finishMessage) {
+        message += `: ${firstCandidate.finishMessage}`;
+      }
+    }
+  }
+  return message;
+}
+function __await3(v) {
+  return this instanceof __await3 ? (this.v = v, this) : new __await3(v);
+}
+function __asyncGenerator3(thisArg, _arguments, generator) {
+  if (!Symbol.asyncIterator) throw new TypeError("Symbol.asyncIterator is not defined.");
+  var g = generator.apply(thisArg, _arguments || []), i2, q = [];
+  return i2 = {}, verb("next"), verb("throw"), verb("return"), i2[Symbol.asyncIterator] = function() {
+    return this;
+  }, i2;
+  function verb(n) {
+    if (g[n]) i2[n] = function(v) {
+      return new Promise(function(a, b) {
+        q.push([n, v, a, b]) > 1 || resume(n, v);
+      });
+    };
+  }
+  function resume(n, v) {
+    try {
+      step(g[n](v));
+    } catch (e2) {
+      settle2(q[0][3], e2);
+    }
+  }
+  function step(r2) {
+    r2.value instanceof __await3 ? Promise.resolve(r2.value.v).then(fulfill, reject) : settle2(q[0][2], r2);
+  }
+  function fulfill(value) {
+    resume("next", value);
+  }
+  function reject(value) {
+    resume("throw", value);
+  }
+  function settle2(f3, v) {
+    if (f3(v), q.shift(), q.length) resume(q[0][0], q[0][1]);
+  }
+}
+var responseLineRE = /^data\: (.*)(?:\n\n|\r\r|\r\n\r\n)/;
+function processStream(response) {
+  const inputStream = response.body.pipeThrough(new TextDecoderStream("utf8", { fatal: true }));
+  const responseStream = getResponseStream(inputStream);
+  const [stream1, stream22] = responseStream.tee();
+  return {
+    stream: generateResponseSequence(stream1),
+    response: getResponsePromise(stream22)
+  };
+}
+async function getResponsePromise(stream4) {
+  const allResponses = [];
+  const reader = stream4.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      return addHelpers(aggregateResponses(allResponses));
+    }
+    allResponses.push(value);
+  }
+}
+function generateResponseSequence(stream4) {
+  return __asyncGenerator3(this, arguments, function* generateResponseSequence_1() {
+    const reader = stream4.getReader();
+    while (true) {
+      const { value, done } = yield __await3(reader.read());
+      if (done) {
+        break;
+      }
+      yield yield __await3(addHelpers(value));
+    }
+  });
+}
+function getResponseStream(inputStream) {
+  const reader = inputStream.getReader();
+  const stream4 = new ReadableStream({
+    start(controller) {
+      let currentText = "";
+      return pump2();
+      function pump2() {
+        return reader.read().then(({ value, done }) => {
+          if (done) {
+            if (currentText.trim()) {
+              controller.error(new GoogleGenerativeAIError("Failed to parse stream"));
+              return;
+            }
+            controller.close();
+            return;
+          }
+          currentText += value;
+          let match2 = currentText.match(responseLineRE);
+          let parsedResponse;
+          while (match2) {
+            try {
+              parsedResponse = JSON.parse(match2[1]);
+            } catch (e2) {
+              controller.error(new GoogleGenerativeAIError(`Error parsing JSON response: "${match2[1]}"`));
+              return;
+            }
+            controller.enqueue(parsedResponse);
+            currentText = currentText.substring(match2[0].length);
+            match2 = currentText.match(responseLineRE);
+          }
+          return pump2();
+        }).catch((e2) => {
+          let err = e2;
+          err.stack = e2.stack;
+          if (err.name === "AbortError") {
+            err = new GoogleGenerativeAIAbortError("Request aborted when reading from the stream");
+          } else {
+            err = new GoogleGenerativeAIError("Error reading from the stream");
+          }
+          throw err;
+        });
+      }
+    }
+  });
+  return stream4;
+}
+function aggregateResponses(responses) {
+  const lastResponse = responses[responses.length - 1];
+  const aggregatedResponse = {
+    promptFeedback: lastResponse === null || lastResponse === void 0 ? void 0 : lastResponse.promptFeedback
+  };
+  for (const response of responses) {
+    if (response.candidates) {
+      let candidateIndex = 0;
+      for (const candidate of response.candidates) {
+        if (!aggregatedResponse.candidates) {
+          aggregatedResponse.candidates = [];
+        }
+        if (!aggregatedResponse.candidates[candidateIndex]) {
+          aggregatedResponse.candidates[candidateIndex] = {
+            index: candidateIndex
+          };
+        }
+        aggregatedResponse.candidates[candidateIndex].citationMetadata = candidate.citationMetadata;
+        aggregatedResponse.candidates[candidateIndex].groundingMetadata = candidate.groundingMetadata;
+        aggregatedResponse.candidates[candidateIndex].finishReason = candidate.finishReason;
+        aggregatedResponse.candidates[candidateIndex].finishMessage = candidate.finishMessage;
+        aggregatedResponse.candidates[candidateIndex].safetyRatings = candidate.safetyRatings;
+        if (candidate.content && candidate.content.parts) {
+          if (!aggregatedResponse.candidates[candidateIndex].content) {
+            aggregatedResponse.candidates[candidateIndex].content = {
+              role: candidate.content.role || "user",
+              parts: []
+            };
+          }
+          const newPart = {};
+          for (const part of candidate.content.parts) {
+            if (part.text) {
+              newPart.text = part.text;
+            }
+            if (part.functionCall) {
+              newPart.functionCall = part.functionCall;
+            }
+            if (part.executableCode) {
+              newPart.executableCode = part.executableCode;
+            }
+            if (part.codeExecutionResult) {
+              newPart.codeExecutionResult = part.codeExecutionResult;
+            }
+            if (Object.keys(newPart).length === 0) {
+              newPart.text = "";
+            }
+            aggregatedResponse.candidates[candidateIndex].content.parts.push(newPart);
+          }
+        }
+      }
+      candidateIndex++;
+    }
+    if (response.usageMetadata) {
+      aggregatedResponse.usageMetadata = response.usageMetadata;
+    }
+  }
+  return aggregatedResponse;
+}
+async function generateContentStream(apiKey, model, params, requestOptions) {
+  const response = await makeModelRequest(
+    model,
+    Task.STREAM_GENERATE_CONTENT,
+    apiKey,
+    /* stream */
+    true,
+    JSON.stringify(params),
+    requestOptions
+  );
+  return processStream(response);
+}
+async function generateContent(apiKey, model, params, requestOptions) {
+  const response = await makeModelRequest(
+    model,
+    Task.GENERATE_CONTENT,
+    apiKey,
+    /* stream */
+    false,
+    JSON.stringify(params),
+    requestOptions
+  );
+  const responseJson = await response.json();
+  const enhancedResponse = addHelpers(responseJson);
+  return {
+    response: enhancedResponse
+  };
+}
+function formatSystemInstruction(input) {
+  if (input == null) {
+    return void 0;
+  } else if (typeof input === "string") {
+    return { role: "system", parts: [{ text: input }] };
+  } else if (input.text) {
+    return { role: "system", parts: [input] };
+  } else if (input.parts) {
+    if (!input.role) {
+      return { role: "system", parts: input.parts };
+    } else {
+      return input;
+    }
+  }
+}
+function formatNewContent(request) {
+  let newParts = [];
+  if (typeof request === "string") {
+    newParts = [{ text: request }];
+  } else {
+    for (const partOrString of request) {
+      if (typeof partOrString === "string") {
+        newParts.push({ text: partOrString });
+      } else {
+        newParts.push(partOrString);
+      }
+    }
+  }
+  return assignRoleToPartsAndValidateSendMessageRequest(newParts);
+}
+function assignRoleToPartsAndValidateSendMessageRequest(parts) {
+  const userContent = { role: "user", parts: [] };
+  const functionContent = { role: "function", parts: [] };
+  let hasUserContent = false;
+  let hasFunctionContent = false;
+  for (const part of parts) {
+    if ("functionResponse" in part) {
+      functionContent.parts.push(part);
+      hasFunctionContent = true;
+    } else {
+      userContent.parts.push(part);
+      hasUserContent = true;
+    }
+  }
+  if (hasUserContent && hasFunctionContent) {
+    throw new GoogleGenerativeAIError("Within a single message, FunctionResponse cannot be mixed with other type of part in the request for sending chat message.");
+  }
+  if (!hasUserContent && !hasFunctionContent) {
+    throw new GoogleGenerativeAIError("No content is provided for sending chat message.");
+  }
+  if (hasUserContent) {
+    return userContent;
+  }
+  return functionContent;
+}
+function formatCountTokensInput(params, modelParams) {
+  var _a2;
+  let formattedGenerateContentRequest = {
+    model: modelParams === null || modelParams === void 0 ? void 0 : modelParams.model,
+    generationConfig: modelParams === null || modelParams === void 0 ? void 0 : modelParams.generationConfig,
+    safetySettings: modelParams === null || modelParams === void 0 ? void 0 : modelParams.safetySettings,
+    tools: modelParams === null || modelParams === void 0 ? void 0 : modelParams.tools,
+    toolConfig: modelParams === null || modelParams === void 0 ? void 0 : modelParams.toolConfig,
+    systemInstruction: modelParams === null || modelParams === void 0 ? void 0 : modelParams.systemInstruction,
+    cachedContent: (_a2 = modelParams === null || modelParams === void 0 ? void 0 : modelParams.cachedContent) === null || _a2 === void 0 ? void 0 : _a2.name,
+    contents: []
+  };
+  const containsGenerateContentRequest = params.generateContentRequest != null;
+  if (params.contents) {
+    if (containsGenerateContentRequest) {
+      throw new GoogleGenerativeAIRequestInputError("CountTokensRequest must have one of contents or generateContentRequest, not both.");
+    }
+    formattedGenerateContentRequest.contents = params.contents;
+  } else if (containsGenerateContentRequest) {
+    formattedGenerateContentRequest = Object.assign(Object.assign({}, formattedGenerateContentRequest), params.generateContentRequest);
+  } else {
+    const content = formatNewContent(params);
+    formattedGenerateContentRequest.contents = [content];
+  }
+  return { generateContentRequest: formattedGenerateContentRequest };
+}
+function formatGenerateContentInput(params) {
+  let formattedRequest;
+  if (params.contents) {
+    formattedRequest = params;
+  } else {
+    const content = formatNewContent(params);
+    formattedRequest = { contents: [content] };
+  }
+  if (params.systemInstruction) {
+    formattedRequest.systemInstruction = formatSystemInstruction(params.systemInstruction);
+  }
+  return formattedRequest;
+}
+function formatEmbedContentInput(params) {
+  if (typeof params === "string" || Array.isArray(params)) {
+    const content = formatNewContent(params);
+    return { content };
+  }
+  return params;
+}
+var VALID_PART_FIELDS = [
+  "text",
+  "inlineData",
+  "functionCall",
+  "functionResponse",
+  "executableCode",
+  "codeExecutionResult"
+];
+var VALID_PARTS_PER_ROLE = {
+  user: ["text", "inlineData"],
+  function: ["functionResponse"],
+  model: ["text", "functionCall", "executableCode", "codeExecutionResult"],
+  // System instructions shouldn't be in history anyway.
+  system: ["text"]
+};
+function validateChatHistory(history) {
+  let prevContent = false;
+  for (const currContent of history) {
+    const { role, parts } = currContent;
+    if (!prevContent && role !== "user") {
+      throw new GoogleGenerativeAIError(`First content should be with role 'user', got ${role}`);
+    }
+    if (!POSSIBLE_ROLES.includes(role)) {
+      throw new GoogleGenerativeAIError(`Each item should include role field. Got ${role} but valid roles are: ${JSON.stringify(POSSIBLE_ROLES)}`);
+    }
+    if (!Array.isArray(parts)) {
+      throw new GoogleGenerativeAIError("Content should have 'parts' property with an array of Parts");
+    }
+    if (parts.length === 0) {
+      throw new GoogleGenerativeAIError("Each Content should have at least one part");
+    }
+    const countFields = {
+      text: 0,
+      inlineData: 0,
+      functionCall: 0,
+      functionResponse: 0,
+      fileData: 0,
+      executableCode: 0,
+      codeExecutionResult: 0
+    };
+    for (const part of parts) {
+      for (const key of VALID_PART_FIELDS) {
+        if (key in part) {
+          countFields[key] += 1;
+        }
+      }
+    }
+    const validParts = VALID_PARTS_PER_ROLE[role];
+    for (const key of VALID_PART_FIELDS) {
+      if (!validParts.includes(key) && countFields[key] > 0) {
+        throw new GoogleGenerativeAIError(`Content with role '${role}' can't contain '${key}' part`);
+      }
+    }
+    prevContent = true;
+  }
+}
+function isValidResponse2(response) {
+  var _a2;
+  if (response.candidates === void 0 || response.candidates.length === 0) {
+    return false;
+  }
+  const content = (_a2 = response.candidates[0]) === null || _a2 === void 0 ? void 0 : _a2.content;
+  if (content === void 0) {
+    return false;
+  }
+  if (content.parts === void 0 || content.parts.length === 0) {
+    return false;
+  }
+  for (const part of content.parts) {
+    if (part === void 0 || Object.keys(part).length === 0) {
+      return false;
+    }
+    if (part.text !== void 0 && part.text === "") {
+      return false;
+    }
+  }
+  return true;
+}
+var SILENT_ERROR = "SILENT_ERROR";
+var ChatSession = class {
+  constructor(apiKey, model, params, _requestOptions = {}) {
+    this.model = model;
+    this.params = params;
+    this._requestOptions = _requestOptions;
+    this._history = [];
+    this._sendPromise = Promise.resolve();
+    this._apiKey = apiKey;
+    if (params === null || params === void 0 ? void 0 : params.history) {
+      validateChatHistory(params.history);
+      this._history = params.history;
+    }
+  }
+  /**
+   * Gets the chat history so far. Blocked prompts are not added to history.
+   * Blocked candidates are not added to history, nor are the prompts that
+   * generated them.
+   */
+  async getHistory() {
+    await this._sendPromise;
+    return this._history;
+  }
+  /**
+   * Sends a chat message and receives a non-streaming
+   * {@link GenerateContentResult}.
+   *
+   * Fields set in the optional {@link SingleRequestOptions} parameter will
+   * take precedence over the {@link RequestOptions} values provided to
+   * {@link GoogleGenerativeAI.getGenerativeModel }.
+   */
+  async sendMessage(request, requestOptions = {}) {
+    var _a2, _b, _c, _d, _e, _f;
+    await this._sendPromise;
+    const newContent = formatNewContent(request);
+    const generateContentRequest = {
+      safetySettings: (_a2 = this.params) === null || _a2 === void 0 ? void 0 : _a2.safetySettings,
+      generationConfig: (_b = this.params) === null || _b === void 0 ? void 0 : _b.generationConfig,
+      tools: (_c = this.params) === null || _c === void 0 ? void 0 : _c.tools,
+      toolConfig: (_d = this.params) === null || _d === void 0 ? void 0 : _d.toolConfig,
+      systemInstruction: (_e = this.params) === null || _e === void 0 ? void 0 : _e.systemInstruction,
+      cachedContent: (_f = this.params) === null || _f === void 0 ? void 0 : _f.cachedContent,
+      contents: [...this._history, newContent]
+    };
+    const chatSessionRequestOptions = Object.assign(Object.assign({}, this._requestOptions), requestOptions);
+    let finalResult;
+    this._sendPromise = this._sendPromise.then(() => generateContent(this._apiKey, this.model, generateContentRequest, chatSessionRequestOptions)).then((result) => {
+      var _a3;
+      if (isValidResponse2(result.response)) {
+        this._history.push(newContent);
+        const responseContent = Object.assign({
+          parts: [],
+          // Response seems to come back without a role set.
+          role: "model"
+        }, (_a3 = result.response.candidates) === null || _a3 === void 0 ? void 0 : _a3[0].content);
+        this._history.push(responseContent);
+      } else {
+        const blockErrorMessage = formatBlockErrorMessage(result.response);
+        if (blockErrorMessage) {
+          console.warn(`sendMessage() was unsuccessful. ${blockErrorMessage}. Inspect response object for details.`);
+        }
+      }
+      finalResult = result;
+    }).catch((e2) => {
+      this._sendPromise = Promise.resolve();
+      throw e2;
+    });
+    await this._sendPromise;
+    return finalResult;
+  }
+  /**
+   * Sends a chat message and receives the response as a
+   * {@link GenerateContentStreamResult} containing an iterable stream
+   * and a response promise.
+   *
+   * Fields set in the optional {@link SingleRequestOptions} parameter will
+   * take precedence over the {@link RequestOptions} values provided to
+   * {@link GoogleGenerativeAI.getGenerativeModel }.
+   */
+  async sendMessageStream(request, requestOptions = {}) {
+    var _a2, _b, _c, _d, _e, _f;
+    await this._sendPromise;
+    const newContent = formatNewContent(request);
+    const generateContentRequest = {
+      safetySettings: (_a2 = this.params) === null || _a2 === void 0 ? void 0 : _a2.safetySettings,
+      generationConfig: (_b = this.params) === null || _b === void 0 ? void 0 : _b.generationConfig,
+      tools: (_c = this.params) === null || _c === void 0 ? void 0 : _c.tools,
+      toolConfig: (_d = this.params) === null || _d === void 0 ? void 0 : _d.toolConfig,
+      systemInstruction: (_e = this.params) === null || _e === void 0 ? void 0 : _e.systemInstruction,
+      cachedContent: (_f = this.params) === null || _f === void 0 ? void 0 : _f.cachedContent,
+      contents: [...this._history, newContent]
+    };
+    const chatSessionRequestOptions = Object.assign(Object.assign({}, this._requestOptions), requestOptions);
+    const streamPromise = generateContentStream(this._apiKey, this.model, generateContentRequest, chatSessionRequestOptions);
+    this._sendPromise = this._sendPromise.then(() => streamPromise).catch((_ignored) => {
+      throw new Error(SILENT_ERROR);
+    }).then((streamResult) => streamResult.response).then((response) => {
+      if (isValidResponse2(response)) {
+        this._history.push(newContent);
+        const responseContent = Object.assign({}, response.candidates[0].content);
+        if (!responseContent.role) {
+          responseContent.role = "model";
+        }
+        this._history.push(responseContent);
+      } else {
+        const blockErrorMessage = formatBlockErrorMessage(response);
+        if (blockErrorMessage) {
+          console.warn(`sendMessageStream() was unsuccessful. ${blockErrorMessage}. Inspect response object for details.`);
+        }
+      }
+    }).catch((e2) => {
+      if (e2.message !== SILENT_ERROR) {
+        console.error(e2);
+      }
+    });
+    return streamPromise;
+  }
+};
+async function countTokens(apiKey, model, params, singleRequestOptions) {
+  const response = await makeModelRequest(model, Task.COUNT_TOKENS, apiKey, false, JSON.stringify(params), singleRequestOptions);
+  return response.json();
+}
+async function embedContent(apiKey, model, params, requestOptions) {
+  const response = await makeModelRequest(model, Task.EMBED_CONTENT, apiKey, false, JSON.stringify(params), requestOptions);
+  return response.json();
+}
+async function batchEmbedContents(apiKey, model, params, requestOptions) {
+  const requestsWithModel = params.requests.map((request) => {
+    return Object.assign(Object.assign({}, request), { model });
+  });
+  const response = await makeModelRequest(model, Task.BATCH_EMBED_CONTENTS, apiKey, false, JSON.stringify({ requests: requestsWithModel }), requestOptions);
+  return response.json();
+}
+var GenerativeModel = class {
+  constructor(apiKey, modelParams, _requestOptions = {}) {
+    this.apiKey = apiKey;
+    this._requestOptions = _requestOptions;
+    if (modelParams.model.includes("/")) {
+      this.model = modelParams.model;
+    } else {
+      this.model = `models/${modelParams.model}`;
+    }
+    this.generationConfig = modelParams.generationConfig || {};
+    this.safetySettings = modelParams.safetySettings || [];
+    this.tools = modelParams.tools;
+    this.toolConfig = modelParams.toolConfig;
+    this.systemInstruction = formatSystemInstruction(modelParams.systemInstruction);
+    this.cachedContent = modelParams.cachedContent;
+  }
+  /**
+   * Makes a single non-streaming call to the model
+   * and returns an object containing a single {@link GenerateContentResponse}.
+   *
+   * Fields set in the optional {@link SingleRequestOptions} parameter will
+   * take precedence over the {@link RequestOptions} values provided to
+   * {@link GoogleGenerativeAI.getGenerativeModel }.
+   */
+  async generateContent(request, requestOptions = {}) {
+    var _a2;
+    const formattedParams = formatGenerateContentInput(request);
+    const generativeModelRequestOptions = Object.assign(Object.assign({}, this._requestOptions), requestOptions);
+    return generateContent(this.apiKey, this.model, Object.assign({ generationConfig: this.generationConfig, safetySettings: this.safetySettings, tools: this.tools, toolConfig: this.toolConfig, systemInstruction: this.systemInstruction, cachedContent: (_a2 = this.cachedContent) === null || _a2 === void 0 ? void 0 : _a2.name }, formattedParams), generativeModelRequestOptions);
+  }
+  /**
+   * Makes a single streaming call to the model and returns an object
+   * containing an iterable stream that iterates over all chunks in the
+   * streaming response as well as a promise that returns the final
+   * aggregated response.
+   *
+   * Fields set in the optional {@link SingleRequestOptions} parameter will
+   * take precedence over the {@link RequestOptions} values provided to
+   * {@link GoogleGenerativeAI.getGenerativeModel }.
+   */
+  async generateContentStream(request, requestOptions = {}) {
+    var _a2;
+    const formattedParams = formatGenerateContentInput(request);
+    const generativeModelRequestOptions = Object.assign(Object.assign({}, this._requestOptions), requestOptions);
+    return generateContentStream(this.apiKey, this.model, Object.assign({ generationConfig: this.generationConfig, safetySettings: this.safetySettings, tools: this.tools, toolConfig: this.toolConfig, systemInstruction: this.systemInstruction, cachedContent: (_a2 = this.cachedContent) === null || _a2 === void 0 ? void 0 : _a2.name }, formattedParams), generativeModelRequestOptions);
+  }
+  /**
+   * Gets a new {@link ChatSession} instance which can be used for
+   * multi-turn chats.
+   */
+  startChat(startChatParams) {
+    var _a2;
+    return new ChatSession(this.apiKey, this.model, Object.assign({ generationConfig: this.generationConfig, safetySettings: this.safetySettings, tools: this.tools, toolConfig: this.toolConfig, systemInstruction: this.systemInstruction, cachedContent: (_a2 = this.cachedContent) === null || _a2 === void 0 ? void 0 : _a2.name }, startChatParams), this._requestOptions);
+  }
+  /**
+   * Counts the tokens in the provided request.
+   *
+   * Fields set in the optional {@link SingleRequestOptions} parameter will
+   * take precedence over the {@link RequestOptions} values provided to
+   * {@link GoogleGenerativeAI.getGenerativeModel }.
+   */
+  async countTokens(request, requestOptions = {}) {
+    const formattedParams = formatCountTokensInput(request, {
+      model: this.model,
+      generationConfig: this.generationConfig,
+      safetySettings: this.safetySettings,
+      tools: this.tools,
+      toolConfig: this.toolConfig,
+      systemInstruction: this.systemInstruction,
+      cachedContent: this.cachedContent
+    });
+    const generativeModelRequestOptions = Object.assign(Object.assign({}, this._requestOptions), requestOptions);
+    return countTokens(this.apiKey, this.model, formattedParams, generativeModelRequestOptions);
+  }
+  /**
+   * Embeds the provided content.
+   *
+   * Fields set in the optional {@link SingleRequestOptions} parameter will
+   * take precedence over the {@link RequestOptions} values provided to
+   * {@link GoogleGenerativeAI.getGenerativeModel }.
+   */
+  async embedContent(request, requestOptions = {}) {
+    const formattedParams = formatEmbedContentInput(request);
+    const generativeModelRequestOptions = Object.assign(Object.assign({}, this._requestOptions), requestOptions);
+    return embedContent(this.apiKey, this.model, formattedParams, generativeModelRequestOptions);
+  }
+  /**
+   * Embeds an array of {@link EmbedContentRequest}s.
+   *
+   * Fields set in the optional {@link SingleRequestOptions} parameter will
+   * take precedence over the {@link RequestOptions} values provided to
+   * {@link GoogleGenerativeAI.getGenerativeModel }.
+   */
+  async batchEmbedContents(batchEmbedContentRequest, requestOptions = {}) {
+    const generativeModelRequestOptions = Object.assign(Object.assign({}, this._requestOptions), requestOptions);
+    return batchEmbedContents(this.apiKey, this.model, batchEmbedContentRequest, generativeModelRequestOptions);
+  }
+};
+var GoogleGenerativeAI = class {
+  constructor(apiKey) {
+    this.apiKey = apiKey;
+  }
+  /**
+   * Gets a {@link GenerativeModel} instance for the provided model name.
+   */
+  getGenerativeModel(modelParams, requestOptions) {
+    if (!modelParams.model) {
+      throw new GoogleGenerativeAIError(`Must provide a model name. Example: genai.getGenerativeModel({ model: 'my-model-name' })`);
+    }
+    return new GenerativeModel(this.apiKey, modelParams, requestOptions);
+  }
+  /**
+   * Creates a {@link GenerativeModel} instance from provided content cache.
+   */
+  getGenerativeModelFromCachedContent(cachedContent, modelParams, requestOptions) {
+    if (!cachedContent.name) {
+      throw new GoogleGenerativeAIRequestInputError("Cached content must contain a `name` field.");
+    }
+    if (!cachedContent.model) {
+      throw new GoogleGenerativeAIRequestInputError("Cached content must contain a `model` field.");
+    }
+    const disallowedDuplicates = ["model", "systemInstruction"];
+    for (const key of disallowedDuplicates) {
+      if ((modelParams === null || modelParams === void 0 ? void 0 : modelParams[key]) && cachedContent[key] && (modelParams === null || modelParams === void 0 ? void 0 : modelParams[key]) !== cachedContent[key]) {
+        if (key === "model") {
+          const modelParamsComp = modelParams.model.startsWith("models/") ? modelParams.model.replace("models/", "") : modelParams.model;
+          const cachedContentComp = cachedContent.model.startsWith("models/") ? cachedContent.model.replace("models/", "") : cachedContent.model;
+          if (modelParamsComp === cachedContentComp) {
+            continue;
+          }
+        }
+        throw new GoogleGenerativeAIRequestInputError(`Different value for "${key}" specified in modelParams (${modelParams[key]}) and cachedContent (${cachedContent[key]})`);
+      }
+    }
+    const modelParamsFromCache = Object.assign(Object.assign({}, modelParams), { model: cachedContent.model, tools: cachedContent.tools, toolConfig: cachedContent.toolConfig, systemInstruction: cachedContent.systemInstruction, cachedContent });
+    return new GenerativeModel(this.apiKey, modelParamsFromCache, requestOptions);
+  }
+};
+
+// services/geminiService.ts
+var GEMINI_TIMEOUT_MS = 15e3;
+var DEFAULT_MODEL = "gemini-1.5-flash";
+var FALLBACK_MODELS = ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-3.5-flash"];
+var SYSTEM_PROMPT = `B\u1EA1n l\xE0 chuy\xEAn gia b\xF3c t\xE1ch \u0111\u1ECBa ch\u1EC9 giao h\xE0ng Vi\u1EC7t Nam.
+Nhi\u1EC7m v\u1EE5: t\xE1ch chu\u1ED7i \u0111\u1ECBa ch\u1EC9 th\xF4 th\xE0nh JSON nghi\xEAm ng\u1EB7t, KH\xD4NG markdown, KH\xD4NG gi\u1EA3i th\xEDch.
+
+C\u1EA5u tr\xFAc b\u1EAFt bu\u1ED9c:
+{"province":"T\xEAn T\u1EC9nh/Th\xE0nh ph\u1ED1 chu\u1EA9n","district":"T\xEAn Qu\u1EADn/Huy\u1EC7n/Th\u1ECB x\xE3 chu\u1EA9n","ward":"T\xEAn Ph\u01B0\u1EDDng/X\xE3/Th\u1ECB tr\u1EA5n chu\u1EA9n","detail":"S\u1ED1 nh\xE0, ng\xF5 ng\xE1ch, t\xEAn \u0111\u01B0\u1EDDng"}
+
+Quy t\u1EAFc chu\u1EA9n h\xF3a:
+- province: t\xEAn \u0111\u1EA7y \u0111\u1EE7 (VD: "H\xE0 N\u1ED9i", "Th\xE0nh ph\u1ED1 H\u1ED3 Ch\xED Minh", "\u0110\xE0 N\u1EB5ng"). Vi\u1EBFt t\u1EAFt: HN \u2192 H\xE0 N\u1ED9i, HCM/TPHCM/SG \u2192 Th\xE0nh ph\u1ED1 H\u1ED3 Ch\xED Minh, DN \u2192 \u0110\xE0 N\u1EB5ng.
+- district: t\xEAn chu\u1EA9n c\xF3 ti\u1EC1n t\u1ED1 (VD: "Qu\u1EADn Thanh Xu\xE2n", "Huy\u1EC7n \u0110\xF4ng Anh", "Th\xE0nh ph\u1ED1 Th\u1EE7 \u0110\u1EE9c"). Q.1 / Q1 \u2192 Qu\u1EADn 1.
+- ward: t\xEAn chu\u1EA9n c\xF3 ti\u1EC1n t\u1ED1 (VD: "Ph\u01B0\u1EDDng Kh\u01B0\u01A1ng Trung", "X\xE3 ..."). P. / P \u2192 Ph\u01B0\u1EDDng.
+- detail: CH\u1EC8 s\u1ED1 nh\xE0, ng\xF5, h\u1EBBm, t\xEAn \u0111\u01B0\u1EDDng \u2014 KH\xD4NG l\u1EB7p l\u1EA1i t\u1EC9nh/qu\u1EADn/x\xE3.
+- N\u1EBFu thi\u1EBFu m\u1ED9t c\u1EA5p h\xE0nh ch\xEDnh, \u0111\u1EC3 chu\u1ED7i r\u1ED7ng "".
+- Ch\u1EC9 tr\u1EA3 v\u1EC1 \u0111\xFAng m\u1ED9t object JSON.`;
+var genAI = null;
+var genAIKey = "";
+function readGeminiApiKey() {
+  return String(process.env.GEMINI_API_KEY || "").trim();
+}
+function sleep3(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+function getClient() {
+  const apiKey = readGeminiApiKey();
+  if (!apiKey || apiKey === "chua_co_key_tam_thoi") {
+    throw new Error("GEMINI_API_KEY_MISSING");
+  }
+  if (!genAI || genAIKey !== apiKey) {
+    genAI = new GoogleGenerativeAI(apiKey);
+    genAIKey = apiKey;
+  }
+  return genAI;
+}
+function extractJsonObject(text) {
+  const trimmed = String(text || "").trim().replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```$/i, "").trim();
+  const match2 = trimmed.match(/\{[\s\S]*\}/);
+  if (!match2) throw new Error("GEMINI_INVALID_JSON");
+  return JSON.parse(match2[0]);
+}
+function normalizeParsed(raw, fallbackDetail) {
+  const province = String(raw.province || "").trim();
+  const district = String(raw.district || "").trim();
+  const ward = String(raw.ward || "").trim();
+  const detail = String(raw.detail || raw.street || "").trim() || fallbackDetail;
+  return { province, district, ward, detail };
+}
+function isModelUnavailable(err) {
+  const msg = String(err?.message || err || "").toLowerCase();
+  return msg.includes("not found") || msg.includes("is not supported") || msg.includes("unknown model") || msg.includes("404");
+}
+async function generateWithModel(modelName, rawAddress) {
+  const model = getClient().getGenerativeModel({
+    model: modelName,
+    systemInstruction: SYSTEM_PROMPT,
+    generationConfig: {
+      temperature: 0.1,
+      responseMimeType: "application/json"
+    }
+  });
+  const work = model.generateContent(
+    `T\xE1ch \u0111\u1ECBa ch\u1EC9 Vi\u1EC7t Nam sau th\xE0nh JSON:
+"${rawAddress}"`
+  );
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("GEMINI_TIMEOUT")), GEMINI_TIMEOUT_MS);
+  });
+  try {
+    const result = await Promise.race([work, timeout]);
+    return result.response.text();
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+async function parseAddressWithGemini(rawAddress) {
+  const raw = String(rawAddress || "").trim();
+  if (!raw) {
+    return { province: "", district: "", ward: "", detail: "" };
+  }
+  const primary = String(process.env.GEMINI_ADDRESS_MODEL || DEFAULT_MODEL).trim() || DEFAULT_MODEL;
+  const models = [primary, ...FALLBACK_MODELS.filter((m2) => m2 !== primary)];
+  let lastError = null;
+  for (let i2 = 0; i2 < models.length; i2 += 1) {
+    const modelName = models[i2];
+    try {
+      const text = await generateWithModel(modelName, raw);
+      const parsed = normalizeParsed(extractJsonObject(text), raw);
+      if (!parsed.province && !parsed.district && !parsed.ward && !parsed.detail) {
+        throw new Error("GEMINI_EMPTY_PARSE");
+      }
+      return parsed;
+    } catch (err) {
+      lastError = err;
+      if (!isModelUnavailable(err) || i2 >= models.length - 1) break;
+      await sleep3(400);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("GEMINI_PARSE_FAILED");
+}
+function isGeminiConfigured() {
+  const key = readGeminiApiKey();
+  return Boolean(key && key !== "chua_co_key_tam_thoi");
+}
+
+// services/addressMasterData.ts
+var GHN_BASE = String(process.env.GHN_API_URL || "").trim() || "https://online-gateway.ghn.vn/shiip/public-api";
+var GHN_TIMEOUT_MS = 1e4;
+var GHN_CACHE_TTL_MS = 24 * 60 * 60 * 1e3;
+var ALIASES = {
+  hcm: "ho chi minh",
+  tphcm: "ho chi minh",
+  "tp hcm": "ho chi minh",
+  "tp ho chi minh": "ho chi minh",
+  "sai gon": "ho chi minh",
+  hn: "ha noi",
+  "tp ha noi": "ha noi",
+  dn: "da nang",
+  "tp da nang": "da nang"
+};
+var ghnCache = null;
+function normalizeVnName(s2) {
+  return String(s2 || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+function matchNamedUnit(list, query) {
+  if (!query?.trim() || !list.length) return void 0;
+  const raw = normalizeVnName(query);
+  const expanded = ALIASES[raw] || raw;
+  const score = (name) => {
+    const n = normalizeVnName(name);
+    if (n === expanded || n === raw) return 100;
+    if (n.includes(expanded) || expanded.includes(n)) return 80;
+    const stripped = n.replace(
+      /^(tinh|thanh pho|tp|quan|huyen|thi xa|phuong|xa|thi tran)\s+/,
+      ""
+    );
+    const qStripped = expanded.replace(
+      /^(tinh|thanh pho|tp|quan|huyen|thi xa|phuong|xa|thi tran)\s+/,
+      ""
+    );
+    if (stripped === qStripped || stripped === expanded || qStripped === n) return 70;
+    if (stripped.includes(qStripped) || qStripped.includes(stripped)) return 60;
+    return 0;
+  };
+  let best;
+  let bestScore = 0;
+  for (const item of list) {
+    const s2 = score(item.name);
+    if (s2 > bestScore) {
+      bestScore = s2;
+      best = item;
+    }
+  }
+  return bestScore >= 60 ? best : void 0;
+}
+function toNamedId(unit) {
+  if (!unit) return null;
+  const id = String(unit.code ?? unit.id ?? "").trim();
+  const name = String(unit.name || "").trim();
+  if (!id || !name) return null;
+  return { id, name };
+}
+function readGhnToken() {
+  return String(process.env.GHN_TOKEN || process.env.GHN_API_TOKEN || "").trim();
+}
+function getGhnCache() {
+  const now = Date.now();
+  if (!ghnCache || now - ghnCache.at > GHN_CACHE_TTL_MS) {
+    ghnCache = { at: now, provinces: [], districts: /* @__PURE__ */ new Map(), wards: /* @__PURE__ */ new Map() };
+  }
+  return ghnCache;
+}
+async function ghnFetch(path19, query) {
+  const token = readGhnToken();
+  if (!token) return null;
+  const url2 = new URL(`${GHN_BASE}${path19}`);
+  if (query) {
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== void 0 && value !== "") url2.searchParams.set(key, String(value));
+    }
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), GHN_TIMEOUT_MS);
+  try {
+    const res = await fetch(url2.toString(), {
+      method: "GET",
+      headers: {
+        Token: token,
+        "Content-Type": "application/json"
+      },
+      signal: controller.signal
+    });
+    if (!res.ok) {
+      console.warn(`[GHN Master] ${path19} HTTP ${res.status}`);
+      return null;
+    }
+    const json2 = await res.json();
+    const data = json2?.data;
+    return Array.isArray(data) ? data : null;
+  } catch (err) {
+    if (err?.name === "AbortError") {
+      console.warn(`[GHN Master] ${path19} timeout`);
+    } else {
+      console.warn(`[GHN Master] ${path19}:`, err?.message || err);
+    }
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function loadGhnProvinces() {
+  const cache = getGhnCache();
+  if (cache.provinces.length) return cache.provinces;
+  const rows = await ghnFetch("/master-data/province");
+  cache.provinces = (rows || []).map((p) => ({
+    name: String(p.ProvinceName || p.province_name || ""),
+    id: p.ProvinceID ?? p.province_id,
+    code: p.ProvinceID ?? p.province_id
+  }));
+  return cache.provinces;
+}
+async function loadGhnDistricts(provinceId) {
+  if (!provinceId) return [];
+  const cache = getGhnCache();
+  if (cache.districts.has(provinceId)) return cache.districts.get(provinceId) || [];
+  const rows = await ghnFetch("/master-data/district", { province_id: Number(provinceId) || provinceId });
+  const list = (rows || []).filter((d) => String(d.ProvinceID ?? d.province_id ?? "") === String(provinceId)).map((d) => ({
+    name: String(d.DistrictName || d.district_name || ""),
+    id: d.DistrictID ?? d.district_id,
+    code: d.DistrictID ?? d.district_id
+  }));
+  cache.districts.set(provinceId, list);
+  return list;
+}
+async function loadGhnWards(districtId) {
+  if (!districtId) return [];
+  const cache = getGhnCache();
+  if (cache.wards.has(districtId)) return cache.wards.get(districtId) || [];
+  const rows = await ghnFetch("/master-data/ward", { district_id: Number(districtId) || districtId });
+  const list = (rows || []).map((w) => ({
+    name: String(w.WardName || w.ward_name || ""),
+    id: w.WardCode ?? w.ward_code ?? w.WardID ?? w.ward_id,
+    code: w.WardCode ?? w.ward_code ?? w.WardID ?? w.ward_id
+  }));
+  cache.wards.set(districtId, list);
+  return list;
+}
+function toCarrierIds(province, district, ward) {
+  if (!province) return null;
+  return {
+    provinceId: province.id,
+    provinceName: province.name,
+    districtId: district?.id || "",
+    districtName: district?.name || "",
+    wardId: ward?.id || "",
+    wardName: ward?.name || ""
+  };
+}
+async function matchGhn(provinceName, districtName, wardName) {
+  if (!readGhnToken()) return null;
+  try {
+    const provinces = await loadGhnProvinces();
+    const province = toNamedId(matchNamedUnit(provinces, provinceName));
+    if (!province) return null;
+    const districts = await loadGhnDistricts(province.id);
+    const district = toNamedId(matchNamedUnit(districts, districtName));
+    let ward = null;
+    if (district) {
+      const wards = await loadGhnWards(district.id);
+      ward = toNamedId(matchNamedUnit(wards, wardName));
+    }
+    return toCarrierIds(province, district, ward);
+  } catch (err) {
+    console.warn("[GHN Master] match failed:", err?.message || err);
+    return null;
+  }
+}
+async function matchParsedAddressToMaster(parsed) {
+  const provinceName = String(parsed?.province || "").trim();
+  const districtName = String(parsed?.district || "").trim();
+  const wardName = String(parsed?.ward || "").trim();
+  const empty = {
+    vn: { province: null, district: null, ward: null },
+    ghn: null,
+    spx: null
+  };
+  try {
+    const provinces = await listVnProvinces();
+    const province = toNamedId(matchNamedUnit(provinces, provinceName));
+    let district = null;
+    let ward = null;
+    if (province) {
+      const districts = await listVnDistricts(province.id);
+      district = toNamedId(matchNamedUnit(districts, districtName));
+      if (district) {
+        const wards = await listVnWards(district.id);
+        ward = toNamedId(matchNamedUnit(wards, wardName));
+      }
+    }
+    const vn = { province, district, ward };
+    const spx = toCarrierIds(province, district, ward);
+    const ghn = await matchGhn(provinceName, districtName, wardName);
+    return { vn, ghn, spx };
+  } catch (err) {
+    console.warn("[Address Master] match failed:", err?.message || err);
+    return empty;
+  }
+}
+
+// controllers/parseAddressController.js
+function emptyParsed(detail = "") {
+  return { province: "", district: "", ward: "", detail };
+}
+function fallbackPayload(rawAddress, message) {
+  const raw = String(rawAddress || "").trim();
+  return {
+    success: false,
+    fallback: true,
+    raw_address: raw,
+    parsed: emptyParsed(raw),
+    matched: null,
+    ghn: null,
+    spx: null,
+    message: message || "Kh\xF4ng t\xE1ch \u0111\u01B0\u1EE3c \u0111\u1ECBa ch\u1EC9. Vui l\xF2ng nh\u1EADp th\u1EE7 c\xF4ng."
+  };
+}
+async function parseOrderAddress(req, res) {
+  const raw = String(
+    req.body?.raw_address || req.body?.rawAddress || req.body?.address || ""
+  ).trim();
+  if (!raw) {
+    return res.status(400).json(fallbackPayload("", "Thi\u1EBFu raw_address"));
+  }
+  try {
+    if (!isGeminiConfigured()) {
+      return res.json(
+        fallbackPayload(raw, "Ch\u01B0a c\u1EA5u h\xECnh GEMINI_API_KEY. Vui l\xF2ng nh\u1EADp \u0111\u1ECBa ch\u1EC9 th\u1EE7 c\xF4ng.")
+      );
+    }
+    const parsed = await parseAddressWithGemini(raw);
+    const master = await matchParsedAddressToMaster(parsed);
+    return res.json({
+      success: true,
+      fallback: false,
+      raw_address: raw,
+      parsed,
+      matched: {
+        province: master.vn.province,
+        district: master.vn.district,
+        ward: master.vn.ward
+      },
+      ghn: master.ghn,
+      spx: master.spx
+    });
+  } catch (error) {
+    console.error("[parse-address]", error?.message || error);
+    return res.json(
+      fallbackPayload(raw, "AI t\u1EA1m th\u1EDDi kh\xF4ng ph\u1EA3n h\u1ED3i. Vui l\xF2ng nh\u1EADp \u0111\u1ECBa ch\u1EC9 th\u1EE7 c\xF4ng.")
+    );
+  }
+}
+
 // services/orderRealtime.js
 var MAX_SSE_CLIENTS = 20;
 var HEARTBEAT_MS = 15e3;
@@ -114339,6 +115718,7 @@ router13.post("/scan-bg-ack", h2(ackScanBg));
 router13.get("/return-alerts", h2(getReturnAlerts));
 router13.post("/return-alerts-ack", h2(ackReturnAlertsApi));
 router13.post("/scan-bulk-update", h2(scanBulkUpdate));
+router13.post("/parse-address", h2(parseOrderAddress));
 router13.post("/confirm-return-received", h2(confirmReturnReceived));
 router13.post("/reset-print-status", h2(resetPrintStatus));
 router13.post("/update-print-status", h2(updatePrintStatus));
@@ -140353,6 +141733,25 @@ node-domexception/index.js:
    * SPDX-License-Identifier: Apache-2.0
    *
    * g3-prettier-ignore-file
+   *)
+
+@google/generative-ai/dist/index.mjs:
+@google/generative-ai/dist/index.mjs:
+  (**
+   * @license
+   * Copyright 2024 Google LLC
+   *
+   * Licensed under the Apache License, Version 2.0 (the "License");
+   * you may not use this file except in compliance with the License.
+   * You may obtain a copy of the License at
+   *
+   *   http://www.apache.org/licenses/LICENSE-2.0
+   *
+   * Unless required by applicable law or agreed to in writing, software
+   * distributed under the License is distributed on an "AS IS" BASIS,
+   * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   * See the License for the specific language governing permissions and
+   * limitations under the License.
    *)
 */
 //# sourceMappingURL=server.cjs.map

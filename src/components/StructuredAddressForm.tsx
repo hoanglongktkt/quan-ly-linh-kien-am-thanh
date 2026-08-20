@@ -1,10 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Loader2, Sparkles } from 'lucide-react';
-import {
-  StructuredAddressValue,
-  VnAdminUnit,
-  matchAdminUnit,
-} from '../utils/vietnamAddress';
+import { StructuredAddressValue, VnAdminUnit } from '../utils/vietnamAddress';
 
 function friendlyGeminiError(res: Response, data: unknown): string {
   const err = data as { error?: string; message?: string };
@@ -134,60 +130,6 @@ export default function StructuredAddressForm({
     else setWards([]);
   }, [value.districtCode, fetchWards]);
 
-  const applyParsed = async (parsed: {
-    province?: string;
-    district?: string;
-    ward?: string;
-    street?: string;
-  }) => {
-    setParseError('');
-    let provList = provinces;
-    if (!provList.length) {
-      const res = await fetch('/api/vietnam-address/provinces', { headers: authHeaders() });
-      if (res.ok) {
-        provList = await res.json();
-        setProvinces(provList);
-      }
-    }
-
-    const province = matchAdminUnit(provList, parsed.province || '');
-    if (!province) {
-      setParseError('Không khớp Tỉnh/Thành. Vui lòng chọn thủ công.');
-      onChange({ ...value, street: parsed.street || value.street });
-      return;
-    }
-
-    const distList = await fetchDistricts(String(province.code));
-    const district = matchAdminUnit(distList, parsed.district || '');
-    if (!district) {
-      onChange({
-        ...value,
-        provinceCode: String(province.code),
-        provinceName: province.name,
-        street: parsed.street || value.street,
-      });
-      setParseError('Không khớp Quận/Huyện. Vui lòng chọn thủ công.');
-      return;
-    }
-
-    const wardList = await fetchWards(String(district.code));
-    const ward = matchAdminUnit(wardList, parsed.ward || '');
-
-    onChange({
-      provinceCode: String(province.code),
-      provinceName: province.name,
-      districtCode: String(district.code),
-      districtName: district.name,
-      wardCode: ward ? String(ward.code) : '',
-      wardName: ward ? ward.name : '',
-      street: parsed.street || '',
-    });
-
-    if (!ward) {
-      setParseError('Không khớp Phường/Xã. Vui lòng chọn thủ công.');
-    }
-  };
-
   const handleParseAddress = async (text: string) => {
     const raw = text.trim();
     if (raw.length < 8) return;
@@ -195,19 +137,52 @@ export default function StructuredAddressForm({
     setParsing(true);
     setParseError('');
     try {
-      const res = await fetch('/api/ai/parse-address', {
+      const res = await fetch('/api/orders/parse-address', {
         method: 'POST',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address: raw }),
+        body: JSON.stringify({ raw_address: raw }),
       });
       const data = await res.json().catch(() => ({}));
+      const original = String(data.raw_address || data.parsed?.detail || raw);
+
       if (!res.ok) {
         setParseError(friendlyGeminiError(res, data));
+        onChange({ ...value, street: original });
         return;
       }
-      await applyParsed(data.parsed || {});
+
+      if (data.fallback || !data.success) {
+        onChange({ ...value, street: original });
+        setParseError(data.message || 'Không khớp địa chỉ. Vui lòng chọn thủ công.');
+        return;
+      }
+
+      const matched = data.matched || {};
+      const parsed = data.parsed || {};
+      if (!matched.province) {
+        onChange({ ...value, street: parsed.detail || original });
+        setParseError('Không khớp Tỉnh/Thành. Vui lòng chọn thủ công.');
+        return;
+      }
+
+      onChange({
+        provinceCode: String(matched.province.id),
+        provinceName: matched.province.name,
+        districtCode: matched.district ? String(matched.district.id) : '',
+        districtName: matched.district?.name || '',
+        wardCode: matched.ward ? String(matched.ward.id) : '',
+        wardName: matched.ward?.name || '',
+        street: parsed.detail || '',
+      });
+
+      if (!matched.district) {
+        setParseError('Không khớp Quận/Huyện. Vui lòng chọn thủ công.');
+      } else if (!matched.ward) {
+        setParseError('Không khớp Phường/Xã. Vui lòng chọn thủ công.');
+      }
     } catch {
       setParseError('Không thể kết nối AI phân tích địa chỉ');
+      onChange({ ...value, street: raw });
     } finally {
       setParsing(false);
     }

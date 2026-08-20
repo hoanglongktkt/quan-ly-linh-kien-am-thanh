@@ -48,6 +48,7 @@ import {
   ackReturnAlertsApi,
 } from "../controllers/returnAlertController.js";
 import { scanBulkUpdate } from "../controllers/scanBulkController.js";
+import { parseOrderAddress } from "../controllers/parseAddressController.js";
 import { asyncHandler } from "../middlewares/errorHandler.js";
 import { streamOrderLive } from "../services/orderRealtime.js";
 
@@ -101,6 +102,7 @@ router.post("/scan-bg-ack", h(ackScanBg));
 router.get("/return-alerts", h(getReturnAlerts));
 router.post("/return-alerts-ack", h(ackReturnAlertsApi));
 router.post("/scan-bulk-update", h(scanBulkUpdate));
+router.post("/parse-address", h(parseOrderAddress));
 router.post("/confirm-return-received", h(confirmReturnReceived));
 router.post("/reset-print-status", h(resetPrintStatus));
 router.post("/update-print-status", h(updatePrintStatus));

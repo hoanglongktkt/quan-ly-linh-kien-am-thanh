@@ -25,19 +25,53 @@ async function fetchVnJson(url) {
   }
 }
 
+/** Cache Tỉnh/Thành — dùng chung dropdown + parse-address. */
+export async function listVnProvinces() {
+  if (!vnProvincesCache) {
+    vnProvincesCache = await fetchVnJson(`${VN_ADDRESS_API}/p/`);
+  }
+  return (vnProvincesCache || []).map((p) => ({
+    name: p.name,
+    code: p.code,
+  }));
+}
+
+/** Cache Quận/Huyện theo mã tỉnh. */
+export async function listVnDistricts(provinceCode) {
+  const code = Number(provinceCode);
+  if (!code) return [];
+  if (!vnDistrictsCache.has(code)) {
+    const data = await fetchVnJson(`${VN_ADDRESS_API}/p/${code}?depth=2`);
+    const districts = Array.isArray(data?.districts) ? data.districts : [];
+    vnDistrictsCache.set(
+      code,
+      districts.map((d) => ({ name: d.name, code: d.code })),
+    );
+  }
+  return vnDistrictsCache.get(code) || [];
+}
+
+/** Cache Phường/Xã theo mã quận. */
+export async function listVnWards(districtCode) {
+  const code = Number(districtCode);
+  if (!code) return [];
+  if (!vnWardsCache.has(code)) {
+    const data = await fetchVnJson(`${VN_ADDRESS_API}/d/${code}?depth=2`);
+    const wards = Array.isArray(data?.wards) ? data.wards : [];
+    vnWardsCache.set(
+      code,
+      wards.map((w) => ({ name: w.name, code: w.code })),
+    );
+  }
+  return vnWardsCache.get(code) || [];
+}
+
 /**
  * GET /api/vietnam-address/provinces
  */
 export async function getProvinces(_req, res) {
   try {
-    if (!vnProvincesCache) {
-      vnProvincesCache = await fetchVnJson(`${VN_ADDRESS_API}/p/`);
-    }
-    const list = (vnProvincesCache || []).map((p) => ({
-      name: p.name,
-      code: p.code,
-    }));
-    return res.json(list);
+    return res.json(await listVnProvinces());
   } catch (error) {
     console.error("[VN Address] provinces:", error);
     return res.status(502).json({ error: "Không tải được danh sách Tỉnh/Thành" });
@@ -49,18 +83,7 @@ export async function getProvinces(_req, res) {
  */
 export async function getDistricts(req, res) {
   try {
-    const provinceCode = Number(req.params.provinceCode);
-    if (!provinceCode) return res.json([]);
-
-    if (!vnDistrictsCache.has(provinceCode)) {
-      const data = await fetchVnJson(`${VN_ADDRESS_API}/p/${provinceCode}?depth=2`);
-      const districts = Array.isArray(data?.districts) ? data.districts : [];
-      vnDistrictsCache.set(
-        provinceCode,
-        districts.map((d) => ({ name: d.name, code: d.code })),
-      );
-    }
-    return res.json(vnDistrictsCache.get(provinceCode) || []);
+    return res.json(await listVnDistricts(req.params.provinceCode));
   } catch (error) {
     console.error("[VN Address] districts:", error);
     return res.status(502).json({ error: "Không tải được danh sách Quận/Huyện" });
@@ -72,18 +95,7 @@ export async function getDistricts(req, res) {
  */
 export async function getWards(req, res) {
   try {
-    const districtCode = Number(req.params.districtCode);
-    if (!districtCode) return res.json([]);
-
-    if (!vnWardsCache.has(districtCode)) {
-      const data = await fetchVnJson(`${VN_ADDRESS_API}/d/${districtCode}?depth=2`);
-      const wards = Array.isArray(data?.wards) ? data.wards : [];
-      vnWardsCache.set(
-        districtCode,
-        wards.map((w) => ({ name: w.name, code: w.code })),
-      );
-    }
-    return res.json(vnWardsCache.get(districtCode) || []);
+    return res.json(await listVnWards(req.params.districtCode));
   } catch (error) {
     console.error("[VN Address] wards:", error);
     return res.status(502).json({ error: "Không tải được danh sách Phường/Xã" });
