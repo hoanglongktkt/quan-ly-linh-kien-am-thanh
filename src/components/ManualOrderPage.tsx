@@ -21,6 +21,7 @@ import {
   isStructuredAddressComplete,
 } from '../utils/vietnamAddress';
 import { saveAddressBookEntry } from '../utils/addressBook';
+import { normalizeProductSearchText } from '../utils/productSearch';
 
 export type ManualOrderItem = {
   productId: string;
@@ -114,30 +115,53 @@ function flattenWarehouseHits(list: Product[], limit = 50): Product[] {
   return out;
 }
 
+function productMatchesQuery(p: Product, query: string): boolean {
+  const q = normalizeProductSearchText(query);
+  if (!q) return false;
+  const hay = normalizeProductSearchText(
+    `${p.title || ''} ${p.sku || ''} ${p.barcode || ''} ${p.modelName || ''} ${(p.tierLabels || []).join(' ')}`,
+  );
+  return hay.includes(q);
+}
+
+function pickBestProductMatch(list: Product[], query: string): Product | null {
+  const usable = list.filter((p) => String(p.id || '').trim());
+  if (usable.length === 0) return null;
+  const q = normalizeProductSearchText(query);
+  if (!q) return usable[0];
+  const exactSku = usable.find((p) => normalizeProductSearchText(p.sku) === q);
+  if (exactSku) return exactSku;
+  const exactTitle = usable.find((p) => normalizeProductSearchText(p.title) === q);
+  if (exactTitle) return exactTitle;
+  const partial = usable.filter((p) => productMatchesQuery(p, query));
+  return partial[0] || usable[0];
+}
+
 function ProductSearchCombobox({
   products,
   value,
   onChange,
   onProductCreated,
+  onHitsChange,
   authHeaders,
 }: {
   products: Product[];
   value: string;
   onChange: (id: string, prod?: Product) => void;
   onProductCreated?: (product: Product) => void;
+  onHitsChange?: (hits: Product[], query: string) => void;
   authHeaders: () => Record<string, string>;
 }) {
   const [query, setQuery] = useState('');
-  const [open, setOpen] = useState(false);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [remoteProducts, setRemoteProducts] = useState<Product[]>([]);
   const [picked, setPicked] = useState<Product | null>(null);
   const [searching, setSearching] = useState(false);
-  const wrapRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const reqSeqRef = useRef(0);
   const authHeadersRef = useRef(authHeaders);
+  const prevValueRef = useRef(value);
   authHeadersRef.current = authHeaders;
 
   const searchTerm = query.trim();
@@ -147,13 +171,72 @@ function ProductSearchCombobox({
       remoteProducts.find((p) => p.id === value)
     : null;
 
+  const localHits = useMemo(() => {
+    if (!searchTerm) return [];
+    const out: Product[] = [];
+    const seen = new Set<string>();
+    for (const p of products) {
+      if (out.length >= 50) break;
+      const children =
+        Array.isArray(p.children) && p.children.length
+          ? p.children
+          : Array.isArray(p.children_models)
+            ? p.children_models
+            : [];
+      if (children.length > 0) {
+        for (const c of children) {
+          const child = mapWarehouseProduct({
+            ...p,
+            ...c,
+            id: c.id || (c as any)._id || (c as any).product_id,
+            title: c.title || (c as any).name || p.title,
+            sku: c.sku || p.sku,
+            children: undefined,
+            children_models: undefined,
+          });
+          if (!child.id || seen.has(child.id) || !productMatchesQuery(child, searchTerm)) continue;
+          seen.add(child.id);
+          out.push(child);
+          if (out.length >= 50) break;
+        }
+      } else if (productMatchesQuery(p, searchTerm) && p.id && !seen.has(p.id)) {
+        seen.add(p.id);
+        out.push(p);
+      }
+    }
+    return out;
+  }, [products, searchTerm]);
+
+  const hits = useMemo(() => {
+    const seen = new Set<string>();
+    const out: Product[] = [];
+    for (const p of [...remoteProducts, ...localHits]) {
+      const id = String(p.id || '').trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push(p);
+      if (out.length >= 50) break;
+    }
+    return out;
+  }, [remoteProducts, localHits]);
+
+  const onHitsChangeRef = useRef(onHitsChange);
+  onHitsChangeRef.current = onHitsChange;
+
   useEffect(() => {
-    if (!value) {
+    onHitsChangeRef.current?.(hits, searchTerm);
+  }, [hits, searchTerm]);
+
+  useEffect(() => {
+    const prev = prevValueRef.current;
+    prevValueRef.current = value;
+    if (prev && !value) {
       setPicked(null);
       setQuery('');
+      setRemoteProducts([]);
       return;
     }
-    if (selected) setQuery(selected.title);
+    if (value && selected) setQuery(selected.title);
   }, [value, selected?.id]);
 
   useEffect(() => {
@@ -174,12 +257,11 @@ function ProductSearchCombobox({
       setSearching(true);
       try {
         const params = new URLSearchParams({
-          search: searchTerm,
-          page: '1',
-          pageSize: '50',
-          t: String(Date.now()),
+          q: searchTerm,
+          query: searchTerm,
+          limit: '40',
         });
-        const res = await fetch(`/api/products?${params.toString()}`, {
+        const res = await fetch(`/api/products/search?${params.toString()}`, {
           method: 'GET',
           cache: 'no-store',
           signal: controller.signal,
@@ -194,31 +276,25 @@ function ProductSearchCombobox({
         if (!res.ok || data?.success === false) {
           throw new Error(data?.message || data?.error || `Lỗi tìm kiếm (HTTP ${res.status})`);
         }
-        const list = (Array.isArray(data.products) ? data.products : []).map(mapWarehouseProduct);
-        setRemoteProducts(flattenWarehouseHits(list, 50));
+        const list = (Array.isArray(data.products) ? data.products : [])
+          .map(mapWarehouseProduct)
+          .filter((p) => String(p.id || '').trim());
+        setRemoteProducts(list);
       } catch (err: any) {
         if (err?.name === 'AbortError') return;
         if (seq !== reqSeqRef.current) return;
-        console.error('[ManualOrderSearch] /api/products?search= failed:', err);
+        console.error('[ManualOrderSearch] /api/products/search failed:', err);
         setRemoteProducts([]);
       } finally {
         if (seq === reqSeqRef.current) setSearching(false);
       }
-    }, 500);
+    }, 300);
 
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       abortRef.current?.abort();
     };
   }, [searchTerm]);
-
-  useEffect(() => {
-    const onDoc = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, []);
 
   const pickProduct = (p: Product) => {
     const id = String(p.id || '').trim();
@@ -227,12 +303,11 @@ function ProductSearchCombobox({
     setPicked(row);
     onChange(id, row);
     setQuery(row.title);
-    setOpen(false);
   };
 
   return (
     <>
-      <div ref={wrapRef} className="relative">
+      <div>
         <label className="text-[11px] font-semibold text-gray-500">Tìm sản phẩm (Tên / SKU)</label>
         <div className="flex items-stretch gap-2 mt-1">
           <div className="relative flex-1 min-w-0">
@@ -241,50 +316,54 @@ function ProductSearchCombobox({
               type="text"
               value={query}
               onChange={(e) => {
-                setQuery(e.target.value);
-                setOpen(true);
-                if (!e.target.value.trim()) {
+                const next = e.target.value;
+                setQuery(next);
+                if (!next.trim()) {
                   setPicked(null);
                   onChange('');
+                  setRemoteProducts([]);
                 }
               }}
-              onFocus={() => setOpen(true)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  const best = pickBestProductMatch(hits, query);
+                  if (best) pickProduct(best);
+                }
+              }}
               placeholder="Gõ tên hoặc SKU để tìm trên toàn kho..."
               className="w-full pl-9 pr-3 py-2.5 bg-white rounded-xl border border-gray-200 focus:border-emerald-500 focus:outline-none text-sm text-gray-800"
+              autoComplete="off"
             />
           </div>
           <button
             type="button"
-            onClick={() => {
-              setOpen(false);
-              setShowQuickAdd(true);
-            }}
+            onClick={() => setShowQuickAdd(true)}
             className="shrink-0 px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs rounded-xl border border-emerald-200 inline-flex items-center gap-1"
           >
             <Plus className="w-3.5 h-3.5" />
             Thêm mới
           </button>
         </div>
-        {open && (
-          <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-lg text-sm overflow-hidden">
+
+        {searchTerm ? (
+          <div className="mt-2 border border-emerald-100 rounded-xl bg-white shadow-sm overflow-hidden">
             <ul className="max-h-56 overflow-y-auto">
-              {searching && remoteProducts.length === 0 ? (
+              {searching && hits.length === 0 ? (
                 <li className="px-3 py-3 text-gray-400 text-xs inline-flex items-center gap-2">
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   Đang tìm trên toàn kho...
                 </li>
-              ) : !searchTerm ? (
-                <li className="px-3 py-3 text-gray-400 text-xs">Gõ tên hoặc SKU để tìm sản phẩm trong kho</li>
-              ) : !searching && remoteProducts.length === 0 ? (
-                <li className="px-3 py-3 text-gray-400 text-xs">Không tìm thấy sản phẩm khả dụng</li>
+              ) : !searching && hits.length === 0 ? (
+                <li className="px-3 py-3 text-gray-400 text-xs">Không tìm thấy sản phẩm khả dụng. Bấm “Thêm mới” nếu chưa có trong kho.</li>
               ) : (
-                remoteProducts.map((p) => (
+                hits.map((p) => (
                   <li key={p.id}>
                     <button
                       type="button"
                       onClick={() => pickProduct(p)}
                       className={`w-full text-left px-3 py-2.5 hover:bg-emerald-50 border-b border-gray-50 last:border-0 ${
-                        value === p.id ? 'bg-emerald-50/80' : ''
+                        value === p.id ? 'bg-emerald-50 font-semibold' : ''
                       }`}
                     >
                       <p className="font-semibold text-gray-800 truncate">{p.title}</p>
@@ -298,17 +377,14 @@ function ProductSearchCombobox({
             </ul>
             <button
               type="button"
-              onClick={() => {
-                setOpen(false);
-                setShowQuickAdd(true);
-              }}
+              onClick={() => setShowQuickAdd(true)}
               className="w-full flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-t border-emerald-100"
             >
               <Plus className="w-3.5 h-3.5" />
               Thêm sản phẩm mới
             </button>
           </div>
-        )}
+        ) : null}
       </div>
       <QuickAddProductModal
         open={showQuickAdd}
@@ -341,6 +417,8 @@ export default function ManualOrderPage({
   const [selectedProdId, setSelectedProdId] = useState('');
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const selectedProductRef = useRef<Product | null>(null);
+  const searchHitsRef = useRef<Product[]>([]);
+  const searchQueryRef = useRef('');
   const [selectedQty, setSelectedQty] = useState(1);
   const [selectedPrice, setSelectedPrice] = useState(0);
   const [selectedWeight, setSelectedWeight] = useState(100);
@@ -374,15 +452,24 @@ export default function ManualOrderPage({
   }, [totalWeightGrams, orderItems.length]);
 
   const handleAddWarehouseItem = () => {
-    const prodId = String(selectedProdId || selectedProduct?.id || selectedProductRef.current?.id || '').trim();
+    const query = searchQueryRef.current;
+    const hits = searchHitsRef.current;
+    const selected = selectedProductRef.current || selectedProduct;
+    const selectedMatchesQuery =
+      !!selected &&
+      (!query ||
+        productMatchesQuery(selected, query) ||
+        normalizeProductSearchText(selected.title) === normalizeProductSearchText(query));
+    const prodId = String(selectedProdId || selected?.id || '').trim();
     const prod =
-      selectedProductRef.current ||
-      selectedProduct ||
+      (selectedMatchesQuery ? selected : null) ||
+      pickBestProductMatch(hits, query) ||
       catalogProducts.find((p) => String(p.id) === prodId) ||
-      extraProducts.find((p) => String(p.id) === prodId);
+      extraProducts.find((p) => String(p.id) === prodId) ||
+      pickBestProductMatch([...extraProducts, ...catalogProducts], query);
 
     if (!prod || !String(prod.id || '').trim()) {
-      alert('Vui lòng chọn một sản phẩm từ kho!');
+      alert('Không tìm thấy sản phẩm khớp. Hãy bấm chọn một dòng trong danh sách kết quả.');
       return;
     }
 
@@ -392,24 +479,16 @@ export default function ManualOrderPage({
     const productId = String(prod.id);
 
     const isQuickCreated = extraProducts.some((p) => String(p.id) === productId);
-    if (!isQuickCreated && typeof prod.stock === 'number' && qty > prod.stock) {
-      alert(`⚠️ Tồn kho khả dụng chỉ còn ${prod.stock}.`);
-      return;
-    }
-
     const existingQty =
       orderItems.find((it) => it.productId === productId && !it.isCustom)?.quantity || 0;
     if (!isQuickCreated && typeof prod.stock === 'number' && existingQty + qty > prod.stock) {
-      alert(`⚠️ Tổng số lượng vượt quá tồn kho (${prod.stock})!`);
-      return;
+      const ok = window.confirm(`Tồn kho còn ${prod.stock}. Vẫn thêm vào đơn ngoại sàn?`);
+      if (!ok) return;
     }
 
     setOrderItems((prev) => {
       const existing = prev.find((it) => it.productId === productId && !it.isCustom);
       if (existing) {
-        if (!isQuickCreated && typeof prod.stock === 'number' && existing.quantity + qty > prod.stock) {
-          return prev;
-        }
         return prev.map((it) =>
           it.productId === productId && !it.isCustom
             ? { ...it, quantity: it.quantity + qty, price, weightGrams: weight }
@@ -725,6 +804,10 @@ export default function ManualOrderPage({
                   products={catalogProducts}
                   value={selectedProdId}
                   authHeaders={authHeaders}
+                  onHitsChange={(hits, query) => {
+                    searchHitsRef.current = hits;
+                    searchQueryRef.current = query;
+                  }}
                   onProductCreated={(p) =>
                     setExtraProducts((prev) => (prev.some((x) => x.id === p.id) ? prev : [p, ...prev]))
                   }
