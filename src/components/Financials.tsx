@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ChannelSettings, Expense, Product, Order, SystemFee } from '../types';
 import {
   Plus,
@@ -10,10 +10,16 @@ import {
   Edit,
   Save,
   X,
+  Settings2,
 } from 'lucide-react';
+import CurrencyInput from './CurrencyInput';
 
-type ExpenseCategory = Expense['category'];
 type TimeFilter = 'this_month' | 'last_month' | 'this_quarter' | 'this_year';
+
+interface ExpenseGroup {
+  id: string;
+  label: string;
+}
 
 const TIME_FILTER_LABELS: Record<TimeFilter, string> = {
   this_month: 'Tháng này',
@@ -22,19 +28,85 @@ const TIME_FILTER_LABELS: Record<TimeFilter, string> = {
   this_year: 'Năm nay',
 };
 
-const ALL_CATEGORIES: ExpenseCategory[] = [
-  'advertising',
-  'packaging',
-  'fees',
-  'shipping',
-  'warehouse',
-  'labor',
-  'other',
+const DEFAULT_EXPENSE_GROUPS: ExpenseGroup[] = [
+  { id: 'advertising', label: 'Quảng cáo (Ads)' },
+  { id: 'packaging', label: 'Đóng gói (Bao bì)' },
+  { id: 'fees', label: 'Phí sàn & Giao dịch' },
+  { id: 'shipping', label: 'Vận chuyển' },
+  { id: 'warehouse', label: 'Mặt bằng / Kho bãi' },
+  { id: 'labor', label: 'Thuê nhân công' },
+  { id: 'other', label: 'Khác' },
 ];
+
+const EXPENSE_GROUPS_STORAGE_KEY = 'omni_expense_groups_v1';
+
+const GROUP_COLOR_CLASSES = [
+  'bg-blue-50 text-blue-600 border-blue-100',
+  'bg-emerald-50 text-emerald-600 border-emerald-100',
+  'bg-purple-50 text-purple-600 border-purple-100',
+  'bg-amber-50 text-amber-600 border-amber-100',
+  'bg-rose-50 text-rose-600 border-rose-100',
+  'bg-orange-50 text-orange-600 border-orange-100',
+  'bg-gray-50 text-gray-600 border-gray-100',
+  'bg-cyan-50 text-cyan-600 border-cyan-100',
+  'bg-indigo-50 text-indigo-600 border-indigo-100',
+];
+
+const GROUP_BAR_COLORS = [
+  'bg-blue-500',
+  'bg-emerald-500',
+  'bg-purple-500',
+  'bg-amber-500',
+  'bg-rose-500',
+  'bg-orange-500',
+  'bg-gray-400',
+  'bg-cyan-500',
+  'bg-indigo-500',
+];
+
+function loadExpenseGroups(): ExpenseGroup[] {
+  try {
+    const raw = localStorage.getItem(EXPENSE_GROUPS_STORAGE_KEY);
+    if (!raw) return DEFAULT_EXPENSE_GROUPS.map((g) => ({ ...g }));
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      return DEFAULT_EXPENSE_GROUPS.map((g) => ({ ...g }));
+    }
+    const groups: ExpenseGroup[] = [];
+    const limit = Math.min(parsed.length, 100);
+    for (let i = 0; i < limit; i++) {
+      const item = parsed[i];
+      const id = String(item?.id || '').trim();
+      const label = String(item?.label || '').trim();
+      if (!id || !label) continue;
+      groups.push({ id, label });
+    }
+    return groups.length > 0 ? groups : DEFAULT_EXPENSE_GROUPS.map((g) => ({ ...g }));
+  } catch {
+    return DEFAULT_EXPENSE_GROUPS.map((g) => ({ ...g }));
+  }
+}
+
+function saveExpenseGroups(groups: ExpenseGroup[]) {
+  try {
+    localStorage.setItem(EXPENSE_GROUPS_STORAGE_KEY, JSON.stringify(groups));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
 
 function parseExpenseDate(dateStr: string): Date {
   const [yy, mm, dd] = dateStr.split('-').map(Number);
   return new Date(yy, (mm || 1) - 1, dd || 1);
+}
+
+/** YYYY-MM-DD → DD/MM/YYYY */
+function formatDateVN(dateStr: string): string {
+  const parts = String(dateStr || '').split('-');
+  if (parts.length !== 3) return dateStr;
+  const [yy, mm, dd] = parts;
+  if (!yy || !mm || !dd) return dateStr;
+  return `${dd.padStart(2, '0')}/${mm.padStart(2, '0')}/${yy}`;
 }
 
 function getFilterRange(filter: TimeFilter): { start: Date; end: Date } {
@@ -90,6 +162,14 @@ function groupExpensesByTime(expenses: Expense[], filter: TimeFilter) {
   return Array.from(buckets.values()).sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 }
 
+function colorIndexForId(id: string): number {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = (hash + id.charCodeAt(i) * (i + 1)) % 997;
+  }
+  return hash % GROUP_COLOR_CLASSES.length;
+}
+
 interface FinancialsProps {
   expenses: Expense[];
   products: Product[];
@@ -103,11 +183,16 @@ interface FinancialsProps {
 export default function Financials({ expenses, onAddExpense, onDeleteExpense, settings, onUpdateSettings }: FinancialsProps) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [title, setTitle] = useState('');
-  const [amount, setAmount] = useState(100000);
-  const [category, setCategory] = useState<ExpenseCategory>('advertising');
+  const [amount, setAmount] = useState(0);
+  const [category, setCategory] = useState('advertising');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [notes, setNotes] = useState('');
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('this_month');
+
+  const [expenseGroups, setExpenseGroups] = useState<ExpenseGroup[]>(() => loadExpenseGroups());
+  const [showGroupsModal, setShowGroupsModal] = useState(false);
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [groupDraftLabel, setGroupDraftLabel] = useState('');
 
   const [showSystemFeeForm, setShowSystemFeeForm] = useState(false);
   const [editingSystemFeeId, setEditingSystemFeeId] = useState<string | null>(null);
@@ -115,24 +200,87 @@ export default function Financials({ expenses, onAddExpense, onDeleteExpense, se
   const [systemFeeType, setSystemFeeType] = useState<SystemFee['calculationType']>('percentage');
   const [systemFeeValue, setSystemFeeValue] = useState('');
 
+  useEffect(() => {
+    saveExpenseGroups(expenseGroups);
+  }, [expenseGroups]);
+
+  useEffect(() => {
+    if (!expenseGroups.some((g) => g.id === category) && expenseGroups.length > 0) {
+      setCategory(expenseGroups[0].id);
+    }
+  }, [expenseGroups, category]);
+
+  const getCategoryLabel = (catId: string) => {
+    const found = expenseGroups.find((g) => g.id === catId);
+    if (found) return found.label;
+    const fallback = DEFAULT_EXPENSE_GROUPS.find((g) => g.id === catId);
+    return fallback?.label || catId || 'Chi phí khác';
+  };
+
+  const getCategoryColor = (catId: string) => GROUP_COLOR_CLASSES[colorIndexForId(catId)];
+  const getCategoryBarColor = (catId: string) => GROUP_BAR_COLORS[colorIndexForId(catId)];
+
   const handleCreateExpense = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title) return;
+    if (!title.trim() || amount <= 0) return;
 
     onAddExpense({
       id: `exp-${Date.now()}`,
-      title,
+      title: title.trim(),
       amount: Number(amount),
-      category,
+      category: category as Expense['category'],
       date,
-      notes,
+      notes: notes.trim() || undefined,
     });
 
     setTitle('');
-    setAmount(100000);
-    setCategory('advertising');
+    setAmount(0);
+    setCategory(expenseGroups[0]?.id || 'other');
     setNotes('');
+    setDate(new Date().toISOString().split('T')[0]);
     setShowAddForm(false);
+  };
+
+  const openAddGroup = () => {
+    setEditingGroupId(null);
+    setGroupDraftLabel('');
+  };
+
+  const openEditGroup = (group: ExpenseGroup) => {
+    setEditingGroupId(group.id);
+    setGroupDraftLabel(group.label);
+  };
+
+  const saveGroupDraft = () => {
+    const label = groupDraftLabel.trim();
+    if (!label) return;
+
+    if (editingGroupId) {
+      setExpenseGroups((prev) =>
+        prev.map((g) => (g.id === editingGroupId ? { ...g, label } : g))
+      );
+    } else {
+      const id = `group-${Date.now()}`;
+      setExpenseGroups((prev) => [...prev, { id, label }]);
+      setCategory(id);
+    }
+    setEditingGroupId(null);
+    setGroupDraftLabel('');
+  };
+
+  const deleteGroup = (id: string) => {
+    if (expenseGroups.length <= 1) {
+      alert('Phải giữ lại ít nhất một nhóm chi phí.');
+      return;
+    }
+    if (!confirm('Xóa nhóm chi phí này?')) return;
+    const next = expenseGroups.filter((g) => g.id !== id);
+    setExpenseGroups(next);
+    if (category === id && next[0]) setCategory(next[0].id);
+    if (editingGroupId === id) {
+      setEditingGroupId(null);
+      setGroupDraftLabel('');
+    }
   };
 
   const { start, end } = useMemo(() => getFilterRange(timeFilter), [timeFilter]);
@@ -140,6 +288,16 @@ export default function Financials({ expenses, onAddExpense, onDeleteExpense, se
   const filteredExpenses = useMemo(
     () => filterByRange(expenses, start, end),
     [expenses, start, end]
+  );
+
+  const sortedExpenses = useMemo(
+    () =>
+      [...expenses].sort((a, b) => {
+        const byDate = b.date.localeCompare(a.date);
+        if (byDate !== 0) return byDate;
+        return b.id.localeCompare(a.id);
+      }),
+    [expenses]
   );
 
   const timeSeries = useMemo(
@@ -155,62 +313,18 @@ export default function Financials({ expenses, onAddExpense, onDeleteExpense, se
   const totalExpenses = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
   const allTimeTotal = expenses.reduce((sum, e) => sum + e.amount, 0);
 
-  const getCategoryColor = (cat: string) => {
-    switch (cat) {
-      case 'advertising':
-        return 'bg-blue-50 text-blue-600 border-blue-100';
-      case 'packaging':
-        return 'bg-emerald-50 text-emerald-600 border-emerald-100';
-      case 'fees':
-        return 'bg-purple-50 text-purple-600 border-purple-100';
-      case 'shipping':
-        return 'bg-amber-50 text-amber-600 border-amber-100';
-      case 'warehouse':
-        return 'bg-rose-50 text-rose-600 border-rose-100';
-      case 'labor':
-        return 'bg-orange-50 text-orange-600 border-orange-100';
-      default:
-        return 'bg-gray-50 text-gray-600 border-gray-100';
+  const chartGroups = useMemo(() => {
+    const known = new Map(expenseGroups.map((g) => [g.id, g]));
+    const limit = Math.min(filteredExpenses.length, 500);
+    for (let i = 0; i < limit; i++) {
+      const cat = filteredExpenses[i].category;
+      if (!known.has(cat)) {
+        const fallback = DEFAULT_EXPENSE_GROUPS.find((g) => g.id === cat);
+        known.set(cat, { id: cat, label: fallback?.label || cat || 'Chi phí khác' });
+      }
     }
-  };
-
-  const getCategoryLabel = (cat: string) => {
-    switch (cat) {
-      case 'advertising':
-        return 'Quảng cáo (Ads)';
-      case 'packaging':
-        return 'Đóng gói (Bao bì)';
-      case 'fees':
-        return 'Phí sàn & Giao dịch';
-      case 'shipping':
-        return 'Vận chuyển';
-      case 'warehouse':
-        return 'Mặt bằng / Kho bãi';
-      case 'labor':
-        return 'Thuê nhân công';
-      default:
-        return 'Chi phí khác';
-    }
-  };
-
-  const getCategoryBarColor = (cat: string) => {
-    switch (cat) {
-      case 'advertising':
-        return 'bg-blue-500';
-      case 'packaging':
-        return 'bg-emerald-500';
-      case 'fees':
-        return 'bg-purple-500';
-      case 'shipping':
-        return 'bg-amber-500';
-      case 'warehouse':
-        return 'bg-rose-500';
-      case 'labor':
-        return 'bg-orange-500';
-      default:
-        return 'bg-gray-400';
-    }
-  };
+    return Array.from(known.values());
+  }, [expenseGroups, filteredExpenses]);
 
   const systemFees = settings.systemFees ?? [];
 
@@ -265,6 +379,21 @@ export default function Financials({ expenses, onAddExpense, onDeleteExpense, se
           {showAddForm && (
             <form onSubmit={handleCreateExpense} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-4 animate-in fade-in">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Ô 1 */}
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-gray-700">Số tiền (VNĐ)</label>
+                  <CurrencyInput
+                    value={amount}
+                    onChange={setAmount}
+                    smartShorthand
+                    min={0}
+                    placeholder="VD: 20 → 20.000"
+                    className="w-full px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-blue-500 text-xs outline-none font-bold font-mono"
+                  />
+                  <p className="text-[10px] text-gray-400">Gõ số nhỏ (&lt;1000) rồi rời ô → tự ×1000. Hiển thị có dấu chấm.</p>
+                </div>
+
+                {/* Ô 2 */}
                 <div className="space-y-1">
                   <label className="text-xs font-semibold text-gray-700">Tên chi phí / Nội dung thanh toán</label>
                   <input
@@ -277,48 +406,36 @@ export default function Financials({ expenses, onAddExpense, onDeleteExpense, se
                   />
                 </div>
 
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-gray-700">Số tiền (VNĐ)</label>
-                  <input
-                    type="number"
-                    required
-                    min="1"
-                    value={amount}
-                    onChange={(e) => setAmount(Math.max(1, Number(e.target.value)))}
-                    className="w-full px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-blue-500 text-xs outline-none font-bold font-mono"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {/* Ô 3 */}
                 <div className="space-y-1">
                   <label className="text-xs font-semibold text-gray-700">Nhóm chi phí</label>
-                  <select
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value as ExpenseCategory)}
-                    className="w-full px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-blue-500 text-xs outline-none cursor-pointer"
-                  >
-                    <option value="advertising">Quảng cáo (Ads)</option>
-                    <option value="packaging">Đóng gói (Bao bì)</option>
-                    <option value="fees">Phí sàn & Giao dịch</option>
-                    <option value="shipping">Vận chuyển</option>
-                    <option value="warehouse">Mặt bằng / Kho bãi</option>
-                    <option value="labor">Thuê nhân công</option>
-                    <option value="other">Khác</option>
-                  </select>
+                  <div className="flex gap-2">
+                    <select
+                      value={category}
+                      onChange={(e) => setCategory(e.target.value)}
+                      className="flex-1 min-w-0 px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-blue-500 text-xs outline-none cursor-pointer"
+                    >
+                      {expenseGroups.map((g) => (
+                        <option key={g.id} value={g.id}>
+                          {g.label}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        openAddGroup();
+                        setShowGroupsModal(true);
+                      }}
+                      className="shrink-0 px-2.5 py-2 bg-white border border-gray-200 hover:border-blue-400 hover:bg-blue-50 text-gray-600 hover:text-blue-600 rounded-xl transition-colors"
+                      title="Quản lý nhóm chi phí"
+                    >
+                      <Settings2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
 
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-gray-700">Ngày phát sinh</label>
-                  <input
-                    type="date"
-                    required
-                    value={date}
-                    onChange={(e) => setDate(e.target.value)}
-                    className="w-full px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-blue-500 text-xs outline-none font-medium"
-                  />
-                </div>
-
+                {/* Ô 4 */}
                 <div className="space-y-1">
                   <label className="text-xs font-semibold text-gray-700">Ghi chú thêm</label>
                   <input
@@ -327,6 +444,18 @@ export default function Financials({ expenses, onAddExpense, onDeleteExpense, se
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
                     className="w-full px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-blue-500 text-xs outline-none text-gray-600"
+                  />
+                </div>
+
+                {/* Ô 5 */}
+                <div className="space-y-1 sm:col-span-2">
+                  <label className="text-xs font-semibold text-gray-700">Ngày phát sinh</label>
+                  <input
+                    type="date"
+                    required
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    className="w-full max-w-xs px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-blue-500 text-xs outline-none font-medium"
                   />
                 </div>
               </div>
@@ -358,14 +487,14 @@ export default function Financials({ expenses, onAddExpense, onDeleteExpense, se
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50 text-xs">
-                {expenses.length === 0 ? (
+                {sortedExpenses.length === 0 ? (
                   <tr>
                     <td colSpan={5} className="p-8 text-center text-gray-400">
                       Chưa ghi nhận bất kỳ chi phí phát sinh ngoài nào.
                     </td>
                   </tr>
                 ) : (
-                  expenses.map((exp) => (
+                  sortedExpenses.map((exp) => (
                     <tr key={exp.id} className="hover:bg-gray-50/50">
                       <td className="p-3.5">
                         <div className="font-semibold text-gray-800">{exp.title}</div>
@@ -378,7 +507,7 @@ export default function Financials({ expenses, onAddExpense, onDeleteExpense, se
                           {getCategoryLabel(exp.category)}
                         </span>
                       </td>
-                      <td className="p-3.5 text-gray-500 font-mono">{exp.date}</td>
+                      <td className="p-3.5 text-gray-500 font-mono">{formatDateVN(exp.date)}</td>
                       <td className="p-3.5 text-right font-bold font-mono text-gray-900">
                         {exp.amount.toLocaleString('vi-VN')} đ
                       </td>
@@ -464,21 +593,26 @@ export default function Financials({ expenses, onAddExpense, onDeleteExpense, se
 
           <div className="space-y-3 pt-1 border-t border-gray-100">
             <h4 className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Theo nhóm chi phí</h4>
-            {ALL_CATEGORIES.map((cat) => {
-              const catAmount = filteredExpenses.filter((e) => e.category === cat).reduce((sum, e) => sum + e.amount, 0);
+            {chartGroups.map((group) => {
+              const catAmount = filteredExpenses
+                .filter((e) => e.category === group.id)
+                .reduce((sum, e) => sum + e.amount, 0);
               const percent = totalExpenses > 0 ? (catAmount / totalExpenses) * 100 : 0;
               if (catAmount === 0) return null;
 
               return (
-                <div key={cat} className="space-y-1">
+                <div key={group.id} className="space-y-1">
                   <div className="flex justify-between items-center text-xs text-gray-600">
-                    <span className="font-medium">{getCategoryLabel(cat)}</span>
+                    <span className="font-medium">{group.label}</span>
                     <span className="font-mono font-bold">
                       {catAmount.toLocaleString('vi-VN')} đ ({percent.toFixed(0)}%)
                     </span>
                   </div>
                   <div className="w-full bg-gray-100 h-1.5 rounded-full overflow-hidden">
-                    <div className={`h-full rounded-full ${getCategoryBarColor(cat)}`} style={{ width: `${percent}%` }} />
+                    <div
+                      className={`h-full rounded-full ${getCategoryBarColor(group.id)}`}
+                      style={{ width: `${percent}%` }}
+                    />
                   </div>
                 </div>
               );
@@ -595,6 +729,87 @@ export default function Financials({ expenses, onAddExpense, onDeleteExpense, se
           </div>
         )}
       </div>
+
+      {showGroupsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setShowGroupsModal(false)}>
+          <div
+            className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[85vh] overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <h4 className="font-bold text-gray-900 text-sm flex items-center gap-2">
+                <Settings2 className="w-4 h-4 text-blue-500" /> Quản lý nhóm chi phí
+              </h4>
+              <button
+                type="button"
+                onClick={() => setShowGroupsModal(false)}
+                className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3 overflow-y-auto flex-1">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={groupDraftLabel}
+                  onChange={(e) => setGroupDraftLabel(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      saveGroupDraft();
+                    }
+                  }}
+                  placeholder={editingGroupId ? 'Sửa tên nhóm…' : 'Tên nhóm mới…'}
+                  className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs outline-none focus:border-blue-500"
+                />
+                <button
+                  type="button"
+                  onClick={saveGroupDraft}
+                  className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1"
+                >
+                  {editingGroupId ? <Save className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                  {editingGroupId ? 'Lưu' : 'Thêm'}
+                </button>
+                {editingGroupId && (
+                  <button
+                    type="button"
+                    onClick={openAddGroup}
+                    className="px-3 py-2 border border-gray-200 text-gray-600 rounded-xl text-xs font-medium"
+                  >
+                    Hủy
+                  </button>
+                )}
+              </div>
+
+              <ul className="divide-y divide-gray-50 border border-gray-100 rounded-xl overflow-hidden">
+                {expenseGroups.map((group) => (
+                  <li key={group.id} className="flex items-center gap-2 px-3 py-2.5 bg-white hover:bg-gray-50/80">
+                    <span className="flex-1 text-xs font-medium text-gray-800 truncate">{group.label}</span>
+                    <button
+                      type="button"
+                      onClick={() => openEditGroup(group)}
+                      className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg"
+                      title="Sửa tên"
+                    >
+                      <Edit className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteGroup(group.id)}
+                      className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg"
+                      title="Xóa nhóm"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
