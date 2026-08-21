@@ -188,6 +188,9 @@ export default function ProductList({
     };
   }, [search]);
 
+  // Image zoom overlay
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+
   // Detail Modal state
   const [activeProduct, setActiveProduct] = useState<Product | null>(null);
   const [syncingProductId, setSyncingProductId] = useState<string | null>(null);
@@ -1203,7 +1206,17 @@ export default function ProductList({
                             <span className="w-7 shrink-0" />
                           )}
                           {(prod.avatarUrl || prod.imageUrl) ? (
-                            <img src={prod.avatarUrl || prod.imageUrl} alt={group.displayTitle} className="w-11 h-11 rounded-lg object-cover border border-gray-100 shrink-0" referrerPolicy="no-referrer" />
+                            <img
+                              src={prod.avatarUrl || prod.imageUrl}
+                              alt={group.displayTitle}
+                              className="w-11 h-11 rounded-lg object-cover border border-gray-100 shrink-0 cursor-zoom-in hover:opacity-90 transition-opacity"
+                              referrerPolicy="no-referrer"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedImage(prod.avatarUrl || prod.imageUrl || null);
+                              }}
+                              title="Nhấn để phóng to"
+                            />
                           ) : (
                             <div className="w-11 h-11 rounded-lg bg-gray-100 text-gray-400 flex items-center justify-center text-xs font-bold shrink-0">SP</div>
                           )}
@@ -1391,7 +1404,17 @@ export default function ProductList({
                           <td className="p-3 pl-12 max-w-xs">
                             <div className="flex items-center gap-2 border-l-2 border-indigo-200 pl-3">
                               {(child.avatarUrl || child.imageUrl) ? (
-                                <img src={child.avatarUrl || child.imageUrl} alt={child.modelName || child.title} className="w-8 h-8 rounded-md object-cover border border-gray-100 shrink-0" referrerPolicy="no-referrer" />
+                                <img
+                                  src={child.avatarUrl || child.imageUrl}
+                                  alt={child.modelName || child.title}
+                                  className="w-8 h-8 rounded-md object-cover border border-gray-100 shrink-0 cursor-zoom-in hover:opacity-90 transition-opacity"
+                                  referrerPolicy="no-referrer"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedImage(child.avatarUrl || child.imageUrl || null);
+                                  }}
+                                  title="Nhấn để phóng to"
+                                />
                               ) : (
                                 <div className="w-8 h-8 rounded-md bg-indigo-50 text-indigo-400 flex items-center justify-center text-[10px] font-bold shrink-0">SK</div>
                               )}
@@ -1586,8 +1609,13 @@ export default function ProductList({
                     <img 
                       src={prod.avatarUrl || prod.imageUrl} 
                       alt={group.displayTitle} 
-                      className="w-12 h-12 rounded-xl object-cover border border-gray-100 shrink-0" 
-                      referrerPolicy="no-referrer" 
+                      className="w-12 h-12 rounded-xl object-cover border border-gray-100 shrink-0 cursor-zoom-in active:opacity-80" 
+                      referrerPolicy="no-referrer"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedImage(prod.avatarUrl || prod.imageUrl || null);
+                      }}
+                      title="Nhấn để phóng to"
                     />
                   ) : (
                     <div className="w-12 h-12 rounded-xl bg-gray-100 text-gray-400 flex items-center justify-center text-xs font-bold shrink-0">
@@ -1976,6 +2004,35 @@ export default function ProductList({
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Image Zoom Overlay */}
+      {selectedImage && (
+        <div
+          className="fixed inset-0 z-[9999] bg-black/80 flex items-center justify-center p-4"
+          onClick={() => setSelectedImage(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Phóng to ảnh sản phẩm"
+        >
+          <button
+            type="button"
+            onClick={() => setSelectedImage(null)}
+            className="absolute top-4 right-4 z-[10000] w-10 h-10 flex items-center justify-center rounded-full bg-white/15 hover:bg-white/25 text-white transition-colors cursor-pointer"
+            aria-label="Đóng"
+            title="Đóng"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          <img
+            src={selectedImage}
+            alt="Ảnh sản phẩm phóng to"
+            className="max-w-full max-h-[90vh] w-auto h-auto object-contain rounded-lg shadow-2xl"
+            style={{ objectFit: 'contain' }}
+            referrerPolicy="no-referrer"
+            onClick={(e) => e.stopPropagation()}
+          />
         </div>
       )}
 
