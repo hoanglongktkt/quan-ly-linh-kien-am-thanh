@@ -3599,7 +3599,7 @@ export default function OrderManager({
   // "Xác nhận đơn hàng" modal — lets the seller choose pickup vs dropoff before
   // any ship_order call is made, for one order (single button) or many (bulk).
   const [shipConfirmOrders, setShipConfirmOrders] = useState<Order[] | null>(null);
-  const [shipMethod, setShipMethod] = useState<'pickup' | 'dropoff'>('pickup');
+  const [shipMethod, setShipMethod] = useState<'pickup' | 'dropoff'>('dropoff');
   const [isShipping, setIsShipping] = useState(false);
   const [isScanBusy, setIsScanBusy] = useState(false);
 
@@ -5944,7 +5944,7 @@ export default function OrderManager({
       return;
     }
     setShowBulkActionsDropdown(false);
-    setShipMethod('pickup');
+    setShipMethod('dropoff');
     setShipConfirmOrders(targets);
   };
 
@@ -6283,7 +6283,7 @@ export default function OrderManager({
   // Single-order "Chuẩn bị hàng" — opens the pickup/dropoff confirmation modal;
   // the real ship_order call fires only after the seller confirms a method.
   const handleSinglePrepare = useCallback((order: Order) => {
-    setShipMethod('pickup');
+    setShipMethod('dropoff');
     setShipConfirmOrders([order]);
   }, []);
 
@@ -8456,20 +8456,6 @@ export default function OrderManager({
 
             <div className="p-5 space-y-3">
               <button
-                onClick={() => setShipMethod('pickup')}
-                disabled={isShipping}
-                className={`w-full text-left p-4 rounded-2xl border-2 transition-all flex items-start gap-3 ${shipMethod === 'pickup' ? 'border-blue-600 bg-blue-50' : 'border-gray-100 hover:border-gray-200'}`}
-              >
-                <div className={`w-5 h-5 mt-0.5 rounded-full border-2 flex items-center justify-center shrink-0 ${shipMethod === 'pickup' ? 'border-blue-600' : 'border-gray-300'}`}>
-                  {shipMethod === 'pickup' && <div className="w-2.5 h-2.5 rounded-full bg-blue-600"></div>}
-                </div>
-                <div>
-                  <p className="text-xs font-black text-gray-800">Lấy hàng (Pickup)</p>
-                  <p className="text-[11px] text-gray-500 mt-0.5">Đơn vị vận chuyển sẽ đến lấy hàng tại địa chỉ shop. Hệ thống tự động lấy lịch hẹn lấy hàng khả dụng gần nhất từ Shopee.</p>
-                </div>
-              </button>
-
-              <button
                 onClick={() => setShipMethod('dropoff')}
                 disabled={isShipping}
                 className={`w-full text-left p-4 rounded-2xl border-2 transition-all flex items-start gap-3 ${shipMethod === 'dropoff' ? 'border-blue-600 bg-blue-50' : 'border-gray-100 hover:border-gray-200'}`}
@@ -8480,6 +8466,20 @@ export default function OrderManager({
                 <div>
                   <p className="text-xs font-black text-gray-800">Tự mang hàng ra bưu cục (Dropoff)</p>
                   <p className="text-[11px] text-gray-500 mt-0.5">Bạn tự mang hàng ra bưu cục/điểm gửi gần nhất của đơn vị vận chuyển để gửi hàng.</p>
+                </div>
+              </button>
+
+              <button
+                onClick={() => setShipMethod('pickup')}
+                disabled={isShipping}
+                className={`w-full text-left p-4 rounded-2xl border-2 transition-all flex items-start gap-3 ${shipMethod === 'pickup' ? 'border-blue-600 bg-blue-50' : 'border-gray-100 hover:border-gray-200'}`}
+              >
+                <div className={`w-5 h-5 mt-0.5 rounded-full border-2 flex items-center justify-center shrink-0 ${shipMethod === 'pickup' ? 'border-blue-600' : 'border-gray-300'}`}>
+                  {shipMethod === 'pickup' && <div className="w-2.5 h-2.5 rounded-full bg-blue-600"></div>}
+                </div>
+                <div>
+                  <p className="text-xs font-black text-gray-800">Lấy hàng (Pickup)</p>
+                  <p className="text-[11px] text-gray-500 mt-0.5">Đơn vị vận chuyển sẽ đến lấy hàng tại địa chỉ shop. Hệ thống tự động lấy lịch hẹn lấy hàng khả dụng gần nhất từ Shopee.</p>
                 </div>
               </button>
 
