@@ -573,8 +573,9 @@ export async function scanBulkUpdate(req, res) {
       }
     }
 
+    let flagWriteError = null;
+    let flagOk = 0;
     if (changedOrders.length > 0) {
-      let flagOk = 0;
       const flagRows = [];
       for (const o of changedOrders) {
         const sn = String(o?.orderSn || "").replace(/^shopee-/i, "").trim();
@@ -611,29 +612,28 @@ export async function scanBulkUpdate(req, res) {
         try {
           flagOk = await deps.markOrdersScanFlagsBatch(flagRows);
         } catch (flagBatchErr) {
+          flagWriteError = deps.describeMongoWriteError(flagBatchErr);
           console.error(
             "[Orders Scan Bulk] markOrdersScanFlagsBatch FAIL:",
-            deps.describeMongoWriteError(flagBatchErr),
+            flagWriteError,
             flagBatchErr,
           );
         }
       }
       console.log(
         `[Orders Scan Bulk] don_hoan_huy ok=${donHoanHuyWrite.ok} fail=${donHoanHuyWrite.failed}` +
-          ` handoverFlags=${flagOk} changed=${changedOrders.length}`,
+          ` handoverFlags=${flagOk} changed=${changedOrders.length}` +
+          (flagWriteError ? ` flagError=${flagWriteError}` : ""),
       );
       deps.invalidateOrdersRefreshCache();
     }
 
     const updatedList = [...updatedById.values()];
     const processedCount = summary.daXuatKho + summary.donHuy + summary.daNhanHoan;
-
-    console.log(
-      `[Orders Scan Bulk] PERSISTED codes=${codes.length} updated=${changedOrders.length} summary=${JSON.stringify(summary)} failed=${failed_scans.length} mongo=${deps.isMongoReady()}`,
-    );
-
-    return res.json({
-      success: true,
+    const partialFailure = Boolean(flagWriteError);
+    const responsePayload = {
+      success: !partialFailure,
+      partialFailure,
       processedCount,
       persistedCount: changedOrders.length,
       donHoanHuy: {
@@ -653,12 +653,27 @@ export async function scanBulkUpdate(req, res) {
       results,
       failed_scans,
       orders: updatedList,
-    });
+    };
+
+    if (partialFailure) {
+      return res.status(500).json({
+        ...responsePayload,
+        message: `Ghi cờ phân loại thất bại: ${flagWriteError}`,
+        error: "scan_flags_batch_failed",
+      });
+    }
+
+    console.log(
+      `[Orders Scan Bulk] PERSISTED codes=${codes.length} updated=${changedOrders.length} summary=${JSON.stringify(summary)} failed=${failed_scans.length} mongo=${deps.isMongoReady()}`,
+    );
+
+    return res.json(responsePayload);
   } catch (error) {
     console.error("[Orders Scan Bulk] Error:", error);
     const detail = deps.describeMongoWriteError(error);
     return res.status(500).json({
       success: false,
+      partialFailure: false,
       message: deps.isMongoConnectionError(error)
         ? "Lỗi kết nối MongoDB"
         : detail || "Không thể cập nhật hàng loạt đơn đã quét.",

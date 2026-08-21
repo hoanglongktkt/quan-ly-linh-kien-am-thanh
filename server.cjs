@@ -113234,8 +113234,9 @@ async function scanBulkUpdate(req, res) {
         });
       }
     }
+    let flagWriteError = null;
+    let flagOk = 0;
     if (changedOrders.length > 0) {
-      let flagOk = 0;
       const flagRows = [];
       for (const o of changedOrders) {
         const sn = String(o?.orderSn || "").replace(/^shopee-/i, "").trim();
@@ -113266,25 +113267,25 @@ async function scanBulkUpdate(req, res) {
         try {
           flagOk = await deps7.markOrdersScanFlagsBatch(flagRows);
         } catch (flagBatchErr) {
+          flagWriteError = deps7.describeMongoWriteError(flagBatchErr);
           console.error(
             "[Orders Scan Bulk] markOrdersScanFlagsBatch FAIL:",
-            deps7.describeMongoWriteError(flagBatchErr),
+            flagWriteError,
             flagBatchErr
           );
         }
       }
       console.log(
-        `[Orders Scan Bulk] don_hoan_huy ok=${donHoanHuyWrite.ok} fail=${donHoanHuyWrite.failed} handoverFlags=${flagOk} changed=${changedOrders.length}`
+        `[Orders Scan Bulk] don_hoan_huy ok=${donHoanHuyWrite.ok} fail=${donHoanHuyWrite.failed} handoverFlags=${flagOk} changed=${changedOrders.length}` + (flagWriteError ? ` flagError=${flagWriteError}` : "")
       );
       deps7.invalidateOrdersRefreshCache();
     }
     const updatedList = [...updatedById.values()];
     const processedCount = summary.daXuatKho + summary.donHuy + summary.daNhanHoan;
-    console.log(
-      `[Orders Scan Bulk] PERSISTED codes=${codes.length} updated=${changedOrders.length} summary=${JSON.stringify(summary)} failed=${failed_scans.length} mongo=${deps7.isMongoReady()}`
-    );
-    return res.json({
-      success: true,
+    const partialFailure = Boolean(flagWriteError);
+    const responsePayload = {
+      success: !partialFailure,
+      partialFailure,
       processedCount,
       persistedCount: changedOrders.length,
       donHoanHuy: {
@@ -113304,12 +113305,24 @@ async function scanBulkUpdate(req, res) {
       results,
       failed_scans,
       orders: updatedList
-    });
+    };
+    if (partialFailure) {
+      return res.status(500).json({
+        ...responsePayload,
+        message: `Ghi c\u1EDD ph\xE2n lo\u1EA1i th\u1EA5t b\u1EA1i: ${flagWriteError}`,
+        error: "scan_flags_batch_failed"
+      });
+    }
+    console.log(
+      `[Orders Scan Bulk] PERSISTED codes=${codes.length} updated=${changedOrders.length} summary=${JSON.stringify(summary)} failed=${failed_scans.length} mongo=${deps7.isMongoReady()}`
+    );
+    return res.json(responsePayload);
   } catch (error) {
     console.error("[Orders Scan Bulk] Error:", error);
     const detail = deps7.describeMongoWriteError(error);
     return res.status(500).json({
       success: false,
+      partialFailure: false,
       message: deps7.isMongoConnectionError(error) ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB" : detail || "Kh\xF4ng th\u1EC3 c\u1EADp nh\u1EADt h\xE0ng lo\u1EA1t \u0111\u01A1n \u0111\xE3 qu\xE9t.",
       error: error?.message || "scan_bulk_update_failed"
     });
