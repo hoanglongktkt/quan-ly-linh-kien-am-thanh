@@ -1,9 +1,10 @@
 QUY TẮC BẮT BUỘC (VÙNG CẤM ĐỊA VÀ AN TOÀN HỆ THỐNG):
+
 1. KHÔNG ĐỤNG CHỌT LINH TINH: Giữ nguyên luồng hoạt động của các tab khác (Chờ xác nhận, Đang giao, Yêu cầu trả hàng...). Tuyệt đối không tự ý sửa đổi logic ở các tính năng không nằm trong yêu cầu.
 2. CHỐNG VÒNG LẶP VÔ TẬN: Mọi vòng lặp (for, while, pagination) hoặc tác vụ gọi API Shopee BẮT BUỘC phải có điều kiện dừng (`break`), giới hạn query (`limit`), và thời gian nghỉ (`sleep`/`delay` bằng Promise) để chống tràn CPU, chống Rate Limit và treo server cPanel.
 3. TỐI ƯU CODE: Dọn dẹp code gọn gàng, chia nhỏ Component nếu file quá dài để dễ quản lý.
-4. ĐẦU RA (OUTPUT):
-QUY TẮC BẮT BUỘC (VÙNG CẤM ĐỊA VÀ AN TOÀN HỆ THỐNG):
-- Sau khi chỉnh sửa code xong, hãy tự động lưu (save) và chấp nhận tất cả thay đổi (Keep All).
-- Tự động chạy lệnh build (npm run build) và đẩy code lên GitHub (git add ., git commit, git push).
-- Trong câu trả lời cuối cùng, chỉ ghi rõ danh sách các file/thư mục cụ thể mà tôi cần copy đè lên server cPanel, không cần giải thích dài dòng.
+4. ĐẦU RA (OUTPUT) VÀ QUẢN LÝ GIT:
+   - Sau khi chỉnh sửa code xong, hãy tự động lưu (save) và chấp nhận tất cả thay đổi (Keep All).
+   - Tự động chạy lệnh build (`npm run build`).
+   - QUY TẮC ĐẨY CODE (PUSH): TUYỆT ĐỐI KHÔNG tự ý tạo nhánh mới (branch). BẮT BUỘC phải đẩy thẳng code lên nhánh chính bằng đúng chuỗi lệnh sau: `git checkout main` -> `git add .` -> `git commit -m "Thông báo rõ ràng"` -> `git push origin main`.
+   - Trong câu trả lời cuối cùng, CHỈ ghi rõ danh sách các file/thư mục cụ thể mà tôi cần copy đè lên server cPanel, không cần giải thích dài dòng.

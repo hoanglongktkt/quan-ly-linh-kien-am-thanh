@@ -6715,13 +6715,15 @@ export default function OrderManager({
         message: `[QUÉT QR COMMIT] xuất kho ${safeXuat}, đơn hủy ${safeHuy}, nhận hoàn ${safeHoan}.`,
       });
 
-      clearVerifiedScanLists();
-
-      // Toast global — sống sót sau closeScannerUiOnly (scanToast bị set null khi đóng).
+      // Toast trên màn quét + global — đọc ~1.5s rồi mới đóng UI.
       const successMsg = `Đã lưu thành công — Xuất kho ${safeXuat} / Hủy ${safeHuy} / Nhận hoàn ${safeHoan}${
         failedScans.length ? ` · Bỏ qua ${failedScans.length}` : ''
       }`;
+      showScanToast(successMsg, 'success');
       showToast(successMsg, 5500);
+      setCameraScanResult(
+        `✓ Đã lưu DB: Xuất kho ${safeXuat} · Hủy ${safeHuy} · Nhận hoàn ${safeHoan}`,
+      );
       if (failedScans.length > 0) {
         window.setTimeout(() => {
           showToast(`Bỏ qua ${failedScans.length} mã (trùng/không hợp lệ)`, 4500);
@@ -6734,7 +6736,6 @@ export default function OrderManager({
       const msg = err instanceof Error ? err.message : String(err);
       const failMsg =
         msg?.trim() || 'Lưu thất bại — không rõ nguyên nhân. Xem log server.';
-      // Global toast + scan toast (còn trên màn quét).
       showToast(failMsg, 7000);
       showScanToast(failMsg, 'error');
       setCameraScanResult(`${failMsg} — còn ${codes.length} mã. Bấm Kết thúc để thử lại`);
@@ -6744,8 +6745,12 @@ export default function OrderManager({
       setIsFlushingQueue(false);
       setFlushingDbCount(0);
       if (shouldCloseScanner) {
-        isTearingDownScannerRef.current = false;
-        closeScannerUiOnly();
+        // Giữ teardown lock — tránh camera useEffect tự bật lại trước khi unmount.
+        isTearingDownScannerRef.current = true;
+        window.setTimeout(() => {
+          isTearingDownScannerRef.current = false;
+          closeScannerUiOnly();
+        }, 1500);
       } else if (shouldResumeCamera) {
         isTearingDownScannerRef.current = false;
         window.setTimeout(() => {
