@@ -3232,8 +3232,7 @@ export default function OrderManager({
             daNhanHoanListRef.current = next;
             return next;
           });
-          // Ghi ngay local_status=RETURN_RECEIVED xuống Mongo (tab lọc theo field này).
-          void persistCancelReturnScanFlag(order, 'return', trimmed);
+          // Continuous scan: chỉ ghi list cục bộ — commit Mongo 1 lần khi bấm Kết thúc.
           setCameraScanResult(
             waybill
               ? `✓ YCTH · VĐ hoàn ${waybill} · #${order.orderSn}`
@@ -3258,8 +3257,7 @@ export default function OrderManager({
             donHuyListRef.current = next;
             return next;
           });
-          // Ghi ngay local_status=CANCELLED_STORED xuống Mongo (tab lọc theo field này).
-          void persistCancelReturnScanFlag(order, 'cancel', trimmed);
+          // Continuous scan: chỉ ghi list cục bộ — commit Mongo 1 lần khi bấm Kết thúc.
           setCameraScanResult(
             waybill
               ? isFailedDelivery
@@ -3287,12 +3285,7 @@ export default function OrderManager({
             daXuatKhoListRef.current = next;
             return next;
           });
-          // Optimistic UI + API nền — không await, cho quét mã tiếp ngay.
-          void handOverOrderToCarrier(order, {
-            fromScan: true,
-            switchTab: false,
-            silent: true,
-          });
+          // Continuous scan: chỉ ghi list cục bộ — commit Mongo 1 lần khi bấm Kết thúc.
           setCameraScanResult(
             waybill
               ? `✓ Xuất kho · VĐ ${waybill} · #${order.orderSn}`
@@ -3353,7 +3346,7 @@ export default function OrderManager({
         }
       }
     },
-    [isFlushingQueue, orderScanIndex, onUpdateOrders, persistCancelReturnScanFlag, handOverOrderToCarrier]
+    [isFlushingQueue, orderScanIndex, onUpdateOrders]
   );
 
   useEffect(() => {
@@ -6471,7 +6464,7 @@ export default function OrderManager({
     closeScannerUiOnly();
   };
 
-  /** Kết thúc: tắt camera → ghi DB (timeout 45s) → reset list → bật lại camera. */
+  /** Kết thúc: tắt camera → ghi DB (timeout 90s) → reset list → bật lại camera. */
   const handleFinishContinuousScan = async () => {
     // Chống double-click / gọi trùng khi đang ghi DB.
     if (isFlushingQueue) return;
@@ -6523,7 +6516,7 @@ export default function OrderManager({
       return;
     }
 
-    const SCAN_SAVE_TIMEOUT_MS = 45_000;
+    const SCAN_SAVE_TIMEOUT_MS = 90_000;
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), SCAN_SAVE_TIMEOUT_MS);
     let shouldCloseScanner = false;
