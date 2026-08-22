@@ -1785,6 +1785,13 @@ export default function OrderManager({
     }
   }, [activeSubTab]);
 
+  /** Tab Đơn chưa xử lý: luôn mặc định GHN — tránh xác nhận loạt nhầm toàn bộ ĐVVC. */
+  useEffect(() => {
+    if (activeSubTab !== 'unprocessed') return;
+    setSelectedShippingCarrier('ghn');
+    setSelectedOrderIds([]);
+  }, [activeSubTab]);
+
   // Sync URL khi đổi tab / nhóm Hủy-Hoàn — không fetch (tránh abort list khi bấm sub-tab).
   useEffect(() => {
     if (activeSubTab === 'pending_verification') return;
@@ -3547,7 +3554,7 @@ export default function OrderManager({
   const [showBulkActionsDropdown, setShowBulkActionsDropdown] = useState(false);
   /** Tab Đơn chưa xử lý: lọc theo ĐVVC — all | spx | ghn | instant | other */
   const [selectedShippingCarrier, setSelectedShippingCarrier] =
-    useState<ShippingCarrierFilter>('all');
+    useState<ShippingCarrierFilter>(() => (activeSubTab === 'unprocessed' ? 'ghn' : 'all'));
 
   // Detail Modal & Bulk Print Modal
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
@@ -7801,9 +7808,9 @@ export default function OrderManager({
             <span className="text-xs font-bold text-slate-600 shrink-0">Đơn vị vận chuyển</span>
             {(
               [
+                { key: 'ghn' as const, label: 'Giao Hàng Nhanh', highlight: false },
                 { key: 'all' as const, label: 'Tất cả', highlight: false },
                 { key: 'spx' as const, label: 'SPX Express', highlight: false },
-                { key: 'ghn' as const, label: 'Giao Hàng Nhanh', highlight: false },
                 { key: 'instant' as const, label: 'Đơn Hỏa Tốc', highlight: true },
                 { key: 'other' as const, label: 'ĐVVC Khác', highlight: false },
               ] as const
