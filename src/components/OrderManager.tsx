@@ -195,6 +195,16 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
+/** GHN luôn ưu tiên Pickup; các ĐVVC khác mặc định Dropoff. */
+function resolveDefaultShipMethod(orders: Order[]): 'pickup' | 'dropoff' {
+  return orders.some((o) => {
+    const carrierText = getOrderCarrierText(o);
+    return carrierText.includes('giao hang nhanh') || carrierText.includes('ghn');
+  })
+    ? 'pickup'
+    : 'dropoff';
+}
+
 /** Pool concurrency giới hạn — chạy gần song song có kiểm soát. */
 async function mapPoolLimited<T, R>(
   items: T[],
@@ -5937,7 +5947,7 @@ export default function OrderManager({
       return;
     }
     setShowBulkActionsDropdown(false);
-    setShipMethod('dropoff');
+    setShipMethod(resolveDefaultShipMethod(targets));
     setShipConfirmOrders(targets);
   };
 
@@ -6276,7 +6286,7 @@ export default function OrderManager({
   // Single-order "Chuẩn bị hàng" — opens the pickup/dropoff confirmation modal;
   // the real ship_order call fires only after the seller confirms a method.
   const handleSinglePrepare = useCallback((order: Order) => {
-    setShipMethod('dropoff');
+    setShipMethod(resolveDefaultShipMethod([order]));
     setShipConfirmOrders([order]);
   }, []);
 
