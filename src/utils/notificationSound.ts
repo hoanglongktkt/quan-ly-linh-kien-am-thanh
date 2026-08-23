@@ -1,7 +1,7 @@
 /**
  * Âm thanh thông báo đơn mới — file tientien_1.mp3 + fallback Web Audio.
  */
-import notificationMp3Url from '../assets/tientien_1.mp3?url';
+import notificationMp3Url from '../sounds/tientien_1.mp3?url';
 
 let audioCtx: AudioContext | null = null;
 let isAudioUnlocked = false;
