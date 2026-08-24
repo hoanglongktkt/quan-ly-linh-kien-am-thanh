@@ -99,6 +99,21 @@ interface InventoryAuditProps {
 }
 
 const PAGE_SIZES = [20, 50, 100];
+const SEARCH_DEBOUNCE_MS = 350;
+const SEARCH_RESULT_LIMIT = 50;
+
+function normalizeSearchProduct(row: Product): Product {
+  const r = row as Product & { name?: string; current_stock?: number; image?: string };
+  return {
+    ...row,
+    id: String(row.id || ''),
+    title: String(row.title || r.name || '').trim(),
+    sku: String(row.sku || ''),
+    stock: row.stock ?? r.current_stock ?? 0,
+    avatarUrl: row.avatarUrl || row.imageUrl || r.image,
+    imageUrl: row.imageUrl || row.avatarUrl || r.image,
+  };
+}
 
 export default function InventoryAudit({ products, shopId, onRefreshProducts }: InventoryAuditProps) {
   const [search, setSearch] = useState('');
@@ -110,21 +125,91 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
   const [balancing, setBalancing] = useState(false);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
+  const [remoteSearchProducts, setRemoteSearchProducts] = useState<Product[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchFetchedFor, setSearchFetchedFor] = useState('');
 
   const searchRef = useRef<HTMLInputElement>(null);
   const mobileSearchRef = useRef<HTMLInputElement>(null);
   const qtyRefs = useRef<Map<string, HTMLInputElement>>(new Map());
+  const searchReqSeqRef = useRef(0);
+  const searchAbortRef = useRef<AbortController | null>(null);
 
-  /** Danh sách SKU kiểm kho = cha không phân loại + từng SKU phân loại. */
+  /** Danh sách SKU kiểm kho = cha không phân loại + từng SKU phân loại (trang hiện tại — chỉ fallback). */
   const inventorySkus = useMemo(() => flattenInventorySkus(products), [products]);
 
   const addedIds = useMemo(() => new Set(auditLines.map((l) => l.product.id)), [auditLines]);
 
+  const fetchSearchProducts = useCallback(async (rawQ: string, signal?: AbortSignal): Promise<Product[]> => {
+    const q = rawQ.replace(/\s+/g, ' ').trim();
+    if (!q) return [];
+    const token = localStorage.getItem('admin_token');
+    if (!token) return [];
+
+    const params = new URLSearchParams({ q, limit: String(SEARCH_RESULT_LIMIT) });
+    const res = await fetch(`/api/products/search?${params.toString()}`, {
+      method: 'GET',
+      cache: 'no-store',
+      signal,
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data?.success === false) return [];
+    return (Array.isArray(data.products) ? data.products : []).map((p: Product) =>
+      normalizeSearchProduct(p)
+    );
+  }, []);
+
+  useEffect(() => {
+    const q = search.replace(/\s+/g, ' ').trim();
+    if (!q) {
+      searchAbortRef.current?.abort();
+      setRemoteSearchProducts([]);
+      setSearchLoading(false);
+      setSearchFetchedFor('');
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      const seq = ++searchReqSeqRef.current;
+      searchAbortRef.current?.abort();
+      const controller = new AbortController();
+      searchAbortRef.current = controller;
+      setSearchLoading(true);
+
+      void (async () => {
+        try {
+          const list = await fetchSearchProducts(q, controller.signal);
+          if (seq !== searchReqSeqRef.current) return;
+          setRemoteSearchProducts(list);
+          setSearchFetchedFor(q.toLowerCase());
+        } catch (err) {
+          if (err instanceof DOMException && err.name === 'AbortError') return;
+          if (seq !== searchReqSeqRef.current) return;
+          setRemoteSearchProducts([]);
+          setSearchFetchedFor(q.toLowerCase());
+        } finally {
+          if (seq === searchReqSeqRef.current) setSearchLoading(false);
+        }
+      })();
+    }, SEARCH_DEBOUNCE_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [search, fetchSearchProducts]);
+
+  /** Tìm trên toàn DB (API), không lọc lại mảng products đã phân trang. */
+  const searchableSkus = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return [];
+    if (searchFetchedFor === q) return remoteSearchProducts;
+    return [];
+  }, [search, searchFetchedFor, remoteSearchProducts]);
+
   const suggestions = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return [];
-    return inventorySkus.filter((p) => matchesProductQuery(p, q)).slice(0, 25);
-  }, [inventorySkus, search]);
+    return searchableSkus.filter((p) => matchesProductQuery(p, q)).slice(0, 25);
+  }, [searchableSkus, search]);
 
   const totalPages = Math.max(1, Math.ceil(auditLines.length / pageSize));
   const pagedLines = useMemo(() => {
@@ -181,17 +266,40 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
   };
 
   const lookupFromSearch = useCallback(
-    (raw: string) => {
+    async (raw: string) => {
       const q = raw.trim().toLowerCase();
       if (!q) return;
-      const exact = inventorySkus.find(
+
+      let pool = searchableSkus;
+      if (searchFetchedFor !== q) {
+        try {
+          pool = await fetchSearchProducts(raw);
+          setRemoteSearchProducts(pool);
+          setSearchFetchedFor(q);
+        } catch {
+          pool = [];
+        }
+      }
+
+      const exact = pool.find(
         (p) =>
           String(p.sku || '').toLowerCase() === q || (p.barcode || '').toLowerCase() === q
       );
-      const prod = exact || inventorySkus.find((p) => matchesProductQuery(p, q));
-      if (prod) addProduct(prod);
+      const prod = exact || pool.find((p) => matchesProductQuery(p, q));
+      if (prod) {
+        addProduct(prod);
+        return;
+      }
+
+      // Fallback: trang hiện tại (nếu API lỗi tạm thời)
+      const localExact = inventorySkus.find(
+        (p) =>
+          String(p.sku || '').toLowerCase() === q || (p.barcode || '').toLowerCase() === q
+      );
+      const localProd = localExact || inventorySkus.find((p) => matchesProductQuery(p, q));
+      if (localProd) addProduct(localProd);
     },
-    [inventorySkus, addProduct]
+    [searchableSkus, searchFetchedFor, fetchSearchProducts, inventorySkus, addProduct]
   );
 
   useEffect(() => {
@@ -235,7 +343,7 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
       } else if (suggestions.length === 1) {
         addProduct(suggestions[0]);
       } else {
-        lookupFromSearch(search);
+        void lookupFromSearch(search);
       }
       return;
     }
@@ -465,6 +573,7 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
                 setSearch(e.target.value);
                 setShowSuggestions(true);
                 setHighlightIdx(0);
+                setCurrentPage(1);
               }}
               onFocus={() => search.trim() && setShowSuggestions(true)}
               onBlur={() => setTimeout(() => setShowSuggestions(false), 180)}
@@ -473,7 +582,12 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
             />
             {showSuggestions && search.trim() && (
               <div className="absolute left-0 right-0 top-full z-30 bg-white border border-gray-200 border-t-0 shadow-lg max-h-80 overflow-y-auto">
-                {suggestions.length > 0 ? (
+                {searchLoading ? (
+                  <div className="px-4 py-4 text-center text-xs text-gray-400 flex items-center justify-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Đang tìm trên toàn kho...
+                  </div>
+                ) : suggestions.length > 0 ? (
                   suggestions.map((prod, idx) => renderSuggestionItem(prod, idx))
                 ) : (
                   <div className="px-4 py-4 text-center">
@@ -607,6 +721,7 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
                 setSearch(e.target.value);
                 setShowSuggestions(true);
                 setHighlightIdx(0);
+                setCurrentPage(1);
               }}
               onFocus={() => search.trim() && setShowSuggestions(true)}
               onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
@@ -616,7 +731,12 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
             />
             {showSuggestions && search.trim() && (
               <ul className="ia-mobile-dropdown absolute left-0 right-0 top-full mt-1 max-h-[45vh] overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-xl z-30">
-                {suggestions.length > 0 ? (
+                {searchLoading ? (
+                  <li className="px-4 py-4 text-center text-xs text-gray-400 flex items-center justify-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Đang tìm trên toàn kho...
+                  </li>
+                ) : suggestions.length > 0 ? (
                   suggestions.map((prod, idx) => (
                     <li key={prod.id}>{renderSuggestionItem(prod, idx)}</li>
                   ))
