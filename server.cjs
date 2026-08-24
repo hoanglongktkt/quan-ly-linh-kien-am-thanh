@@ -118687,6 +118687,14 @@ async function refreshOrders(req, res) {
       let total = 0;
       let hasMore = false;
       let counters = { total: 0, returned: 0, cancelled: 0, rts: 0 };
+      if (req.aborted || req.destroyed) {
+        return {
+          success: false,
+          data: [],
+          total: 0,
+          error: "client_aborted"
+        };
+      }
       if (!searchQ && (tabLc === "received_cancel_returns" || tabLc === "received-cancel-returns" || tabLc === "da_nhan_huy_hoan")) {
         const allReceived = await deps15.withLocalDbTimeout(
           readOrdersForRefresh(5e3, {
@@ -118698,6 +118706,7 @@ async function refreshOrders(req, res) {
           1e4,
           "orders_refresh_received"
         );
+        await new Promise((resolve) => setTimeout(resolve, 20));
         total = allReceived.length;
         const start = (page - 1) * limit;
         mergedOrders = allReceived.slice(start, start + limit);
@@ -118719,6 +118728,7 @@ async function refreshOrders(req, res) {
           1e4,
           "orders_refresh"
         );
+        await new Promise((resolve) => setTimeout(resolve, 20));
         mergedOrders = pageResult.rows.filter(
           (order) => Boolean(order?.orderSn || order?.id)
         );
@@ -118736,7 +118746,18 @@ async function refreshOrders(req, res) {
           }
         }
       }
+      if (req.aborted || req.destroyed) {
+        return {
+          success: false,
+          data: [],
+          total: 0,
+          error: "client_aborted"
+        };
+      }
       mergedOrders = filterOrdersByPrintStatus(mergedOrders, printStatus);
+      if (mergedOrders.length > 80) {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      }
       const orders = attachPdfAvailability(
         deps15.enrichOrdersWithShopNames(
           deps15.enrichOrdersFromCatalog(mergedOrders, [])

@@ -446,9 +446,12 @@ export default function App() {
    * tạo nhiều truy vấn MongoDB nặng đồng thời. */
   const fetchOrdersInFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
   const fetchOrdersAbortRef = useRef<AbortController | null>(null);
-  /** Khóa mạng — cùng flightKey dedupe; ĐỔI tab/page → abort request cũ (chống race). */
+  /** Khóa mạng — cùng flightKey dedupe; ĐỔI tab → xếp hàng + invalidate seq (KHÔNG abort spam Mongo). */
   const isFetchingRef = useRef(false);
   const pendingFetchOptsRef = useRef<Record<string, unknown> | null>(null);
+  /** Chống spam: tối thiểu 300ms giữa 2 lần BẮT ĐẦU refresh thật. */
+  const lastOrdersFetchStartAtRef = useRef(0);
+  const pendingFetchTimerRef = useRef<number | null>(null);
   /** Số fetch non-silent đang chạy — finally LUÔN giảm, tránh kẹt spinner khi bị abort. */
   const fetchOrdersNonSilentInFlightRef = useRef(0);
   /** Snapshot cache hydrate — tránh merge shallow đè mất cache khi setState chưa flush. */
@@ -676,27 +679,45 @@ export default function App() {
     if (fetchOrdersInFlightRef.current?.key === flightKey) {
       return fetchOrdersInFlightRef.current.promise;
     }
-    // Đang fetch khác scope: silent → xếp 1 lệnh mới nhất; non-silent/force → abort ngay (chống race đè tab).
+    // Đang fetch khác scope: XẾP HÀNG 1 lệnh mới nhất + invalidate seq ngay (chống race đè tab).
+    // CẤM abort/gọi chồng — abort spam khiến Mongo trên cPanel chạy song song → CPU 100%.
     if (isFetchingRef.current) {
-      if (silent && !force) {
-        pendingFetchOptsRef.current = (opts || {}) as Record<string, unknown>;
-        return fetchOrdersInFlightRef.current?.promise;
-      }
-      pendingFetchOptsRef.current = null;
-      fetchOrdersAbortRef.current?.abort();
+      pendingFetchOptsRef.current = (opts || {}) as Record<string, unknown>;
+      const invalidateSeq = ++fetchOrdersSeqRef.current;
+      latestOrdersScopeRef.current = { tab, kind, q, seq: invalidateSeq };
+      return fetchOrdersInFlightRef.current?.promise;
     }
+
+    // Rate-limit: gộp các lần gọi dồn trong 300ms thành 1 request (chống loop useEffect).
+    const nowStart = Date.now();
+    const elapsed = nowStart - lastOrdersFetchStartAtRef.current;
+    if (!force && elapsed < 300) {
+      pendingFetchOptsRef.current = (opts || {}) as Record<string, unknown>;
+      const invalidateSeq = ++fetchOrdersSeqRef.current;
+      latestOrdersScopeRef.current = { tab, kind, q, seq: invalidateSeq };
+      if (pendingFetchTimerRef.current == null) {
+        pendingFetchTimerRef.current = window.setTimeout(() => {
+          pendingFetchTimerRef.current = null;
+          const queued = pendingFetchOptsRef.current;
+          pendingFetchOptsRef.current = null;
+          if (queued && !isFetchingRef.current) {
+            void fetchOrders(queued as typeof opts);
+          }
+        }, 300 - elapsed);
+      }
+      return;
+    }
+
     isFetchingRef.current = true;
+    lastOrdersFetchStartAtRef.current = nowStart;
 
     const controller = new AbortController();
     fetchOrdersAbortRef.current = controller;
-    // Liên kết signal từ useEffect cleanup (đổi tab) → hủy fetch đang pending.
-    if (callerSignal) {
-      if (callerSignal.aborted) {
-        isFetchingRef.current = false;
-        if (fetchOrdersAbortRef.current === controller) fetchOrdersAbortRef.current = null;
-        return;
-      }
-      callerSignal.addEventListener('abort', () => controller.abort(), { once: true });
+    // callerSignal chỉ bỏ apply nếu đã hủy — KHÔNG gắn abort HTTP (tránh storm Mongo).
+    if (callerSignal?.aborted) {
+      isFetchingRef.current = false;
+      if (fetchOrdersAbortRef.current === controller) fetchOrdersAbortRef.current = null;
+      return;
     }
 
     let finishInFlight: (() => void) | undefined;
@@ -939,27 +960,7 @@ export default function App() {
         (typeof err === 'object' && err !== null && (err as { name?: string }).name === 'AbortError');
       if (aborted || (err as { name?: string })?.name === 'AbortError') {
         aborted = true;
-        // AbortError: KHÔNG setOrders([]), KHÔNG tắt loading, KHÔNG toast.
-        // Timeout abort (vẫn là request mới nhất) → retry; tab-switch abort thì seq đã tăng.
-        if (retriesLeft > 0 && requestId === fetchOrdersSeqRef.current && !callerSignal?.aborted) {
-          window.setTimeout(() => {
-            if (requestId !== fetchOrdersSeqRef.current) return;
-            void fetchOrders({
-              silent,
-              bustCache,
-              limit,
-              merge,
-              page,
-              tab,
-              q,
-              kind,
-              startDate: startDate || undefined,
-              endDate: endDate || undefined,
-              shopIds: shopIds.length ? shopIds : undefined,
-              retriesLeft: retriesLeft - 1,
-            });
-          }, 1500);
-        }
+        // AbortError: KHÔNG retry — tránh vòng lặp abort→retry→abort đốt CPU cPanel.
         return;
       }
       console.error('[FRONTEND FETCHED] /api/orders/refresh THẤT BẠI:', err);
@@ -991,17 +992,9 @@ export default function App() {
           0,
           fetchOrdersNonSilentInFlightRef.current - 1,
         );
-        const wasAborted =
-          aborted || controller.signal.aborted || Boolean(callerSignal?.aborted);
-        const isLatest = requestId === fetchOrdersSeqRef.current;
         if (fetchOrdersNonSilentInFlightRef.current === 0) {
-          if (wasAborted) {
-            if (isLatest && !callerSignal?.aborted && retriesLeft <= 0) {
-              setOrdersLoading(false);
-            }
-          } else {
-            setOrdersLoading(false);
-          }
+          // Abort cũng phải tắt spinner — không còn retry AbortError.
+          setOrdersLoading(false);
         }
       }
       const stillOwner = fetchOrdersInFlightRef.current?.promise === inFlight;

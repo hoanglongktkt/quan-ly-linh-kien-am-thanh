@@ -514,6 +514,16 @@ export async function refreshOrders(req, res) {
       let hasMore = false;
       let counters = { total: 0, returned: 0, cancelled: 0, rts: 0 };
 
+      // Client đã ngắt kết nối → dừng sớm, nhả CPU (không chạy Mongo nặng).
+      if (req.aborted || req.destroyed) {
+        return {
+          success: false,
+          data: [],
+          total: 0,
+          error: "client_aborted",
+        };
+      }
+
       if (
         !searchQ &&
         (tabLc === "received_cancel_returns" ||
@@ -530,6 +540,8 @@ export async function refreshOrders(req, res) {
           10000,
           "orders_refresh_received",
         );
+        // Nhả event loop trước khi slice/filter mảng lớn.
+        await new Promise((resolve) => setTimeout(resolve, 20));
         total = allReceived.length;
         const start = (page - 1) * limit;
         mergedOrders = allReceived.slice(start, start + limit);
@@ -551,6 +563,7 @@ export async function refreshOrders(req, res) {
           10000,
           "orders_refresh",
         );
+        await new Promise((resolve) => setTimeout(resolve, 20));
         mergedOrders = pageResult.rows.filter((order) =>
           Boolean(order?.orderSn || order?.id),
         );
@@ -568,7 +581,19 @@ export async function refreshOrders(req, res) {
           }
         }
       }
+      if (req.aborted || req.destroyed) {
+        return {
+          success: false,
+          data: [],
+          total: 0,
+          error: "client_aborted",
+        };
+      }
       mergedOrders = filterOrdersByPrintStatus(mergedOrders, printStatus);
+      // Chunk nhả CPU khi enrich mảng lớn trên cPanel.
+      if (mergedOrders.length > 80) {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      }
       const orders = attachPdfAvailability(
         deps.enrichOrdersWithShopNames(
           deps.enrichOrdersFromCatalog(mergedOrders, []),
