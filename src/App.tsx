@@ -446,13 +446,28 @@ export default function App() {
    * tạo nhiều truy vấn MongoDB nặng đồng thời. */
   const fetchOrdersInFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
   const fetchOrdersAbortRef = useRef<AbortController | null>(null);
-  /** Khóa mạng — trigger đúp (Strict Mode / 2 useEffect) bỏ qua, KHÔNG abort. */
+  /** Khóa mạng — cùng flightKey dedupe; ĐỔI tab/page → abort request cũ (chống race). */
   const isFetchingRef = useRef(false);
   const pendingFetchOptsRef = useRef<Record<string, unknown> | null>(null);
   /** Số fetch non-silent đang chạy — finally LUÔN giảm, tránh kẹt spinner khi bị abort. */
   const fetchOrdersNonSilentInFlightRef = useRef(0);
   /** Snapshot cache hydrate — tránh merge shallow đè mất cache khi setState chưa flush. */
   const ordersHydrateRef = useRef<Order[]>([]);
+  /** Cache tạm theo tab (SWR): chuyển lại tab cũ → hiện data cũ, không màn hình trắng. */
+  type OrdersTabCacheEntry = {
+    orders: Order[];
+    meta: {
+      page: number;
+      pageSize: number;
+      total: number;
+      totalPages: number;
+      hasMore: boolean;
+      counters: { total: number; returned: number; cancelled: number; rts: number };
+    };
+    at: number;
+  };
+  const ordersTabCacheRef = useRef<Map<string, OrdersTabCacheEntry>>(new Map());
+  const MAX_ORDERS_TAB_CACHE = 12;
   /** Từ khóa search Kho SP chính — giữ qua phân trang / focus refresh. */
   const productsSearchRef = useRef('');
   /** Sequence guard — tránh response search cũ ghi đè kết quả mới hơn. */
@@ -635,6 +650,7 @@ export default function App() {
     const shopKey = shopIds.join(',') || 'all';
     const force = Boolean(opts?.force);
     const flightKey = `page:${page}|limit:${limit}|print:${printStatus || 'all'}|tab:${tab || 'all'}|q:${q || ''}|kind:${kind || 'all'}|shops:${shopKey}|from:${startDate || ''}|to:${endDate || ''}`;
+    const tabCacheKey = `tab:${tab || 'all'}|kind:${kind || 'all'}|q:${q || ''}|shops:${shopKey}|from:${startDate || ''}|to:${endDate || ''}|page:${page}|limit:${limit}`;
 
     // Silent không được hủy request đang hiện spinner (P0 race: bootstrap abort tab fetch).
     if (silent && !force && fetchOrdersNonSilentInFlightRef.current > 0) {
@@ -660,15 +676,28 @@ export default function App() {
     if (fetchOrdersInFlightRef.current?.key === flightKey) {
       return fetchOrdersInFlightRef.current.promise;
     }
-    // Đang fetch — khóa, xếp 1 lệnh mới nhất, tuyệt đối không spam / abort.
+    // Đang fetch khác scope: silent → xếp 1 lệnh mới nhất; non-silent/force → abort ngay (chống race đè tab).
     if (isFetchingRef.current) {
-      pendingFetchOptsRef.current = (opts || {}) as Record<string, unknown>;
-      return fetchOrdersInFlightRef.current?.promise;
+      if (silent && !force) {
+        pendingFetchOptsRef.current = (opts || {}) as Record<string, unknown>;
+        return fetchOrdersInFlightRef.current?.promise;
+      }
+      pendingFetchOptsRef.current = null;
+      fetchOrdersAbortRef.current?.abort();
     }
     isFetchingRef.current = true;
 
     const controller = new AbortController();
     fetchOrdersAbortRef.current = controller;
+    // Liên kết signal từ useEffect cleanup (đổi tab) → hủy fetch đang pending.
+    if (callerSignal) {
+      if (callerSignal.aborted) {
+        isFetchingRef.current = false;
+        if (fetchOrdersAbortRef.current === controller) fetchOrdersAbortRef.current = null;
+        return;
+      }
+      callerSignal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
 
     let finishInFlight: (() => void) | undefined;
     const inFlight = new Promise<void>((resolve) => {
@@ -685,11 +714,24 @@ export default function App() {
     let requestTimeoutId: number | undefined;
     let didIncNonSilent = false;
     let aborted = false;
+    /** Có cache tab → hiện data cũ ngay, không spinner trắng (SWR). */
+    let usedTabCache = false;
     try {
+      if (!silent && !merge) {
+        const cached = ordersTabCacheRef.current.get(tabCacheKey);
+        if (cached && Array.isArray(cached.orders)) {
+          usedTabCache = true;
+          setOrders(cached.orders);
+          setOrdersMeta(cached.meta);
+          ordersHydrateRef.current = cached.orders;
+          setHasLoadedOrdersOnce(true);
+        }
+      }
       if (!silent) {
         fetchOrdersNonSilentInFlightRef.current += 1;
         didIncNonSilent = true;
-        setOrdersLoading(true);
+        // Có cache tab → tắt spinner (hiện data cũ); chưa có → spinner full-page.
+        setOrdersLoading(!usedTabCache);
       }
       // Refresh chỉ đọc MongoDB nội bộ, không gọi Shopee API.
       const authHeaders = {
@@ -842,7 +884,7 @@ export default function App() {
       lastAppliedOrdersSeqRef.current = requestId;
       lastAppliedOrdersTabRef.current = tab;
       lastAppliedOrdersKindRef.current = kind;
-      setOrdersMeta({
+      const nextMeta = {
         page: currentPage,
         pageSize,
         total,
@@ -855,7 +897,8 @@ export default function App() {
           cancelled: counters.cancelled,
           rts: counters.rts,
         },
-      });
+      };
+      setOrdersMeta(nextMeta);
       // Thành công: setOrders ĐÚNG 1 LẦN sau khi gộp + sort — không đè từng shop.
       if (merge) {
         setOrders((prev) => {
@@ -869,6 +912,20 @@ export default function App() {
         setOrders(sanitized);
         ordersHydrateRef.current = sanitized;
         if (sanitized.length > 0) void saveOrdersCache(sanitized);
+        // SWR cache theo tab — chuyển lại tab cũ hiện ngay, không chờ mạng.
+        const cacheMap = ordersTabCacheRef.current;
+        cacheMap.set(tabCacheKey, { orders: sanitized, meta: nextMeta, at: Date.now() });
+        if (cacheMap.size > MAX_ORDERS_TAB_CACHE) {
+          let oldestKey = '';
+          let oldestAt = Number.POSITIVE_INFINITY;
+          for (const [k, v] of cacheMap) {
+            if (v.at < oldestAt) {
+              oldestAt = v.at;
+              oldestKey = k;
+            }
+          }
+          if (oldestKey) cacheMap.delete(oldestKey);
+        }
       }
       setHasLoadedOrdersOnce(true);
       console.log(
@@ -947,18 +1004,22 @@ export default function App() {
           }
         }
       }
-      if (fetchOrdersInFlightRef.current?.promise === inFlight) {
+      const stillOwner = fetchOrdersInFlightRef.current?.promise === inFlight;
+      if (stillOwner) {
         fetchOrdersInFlightRef.current = null;
       }
       if (fetchOrdersAbortRef.current === controller) {
         fetchOrdersAbortRef.current = null;
       }
       finishInFlight?.();
-      isFetchingRef.current = false;
-      const queued = pendingFetchOptsRef.current;
-      pendingFetchOptsRef.current = null;
-      if (queued) {
-        void fetchOrders(queued as typeof opts);
+      // Chỉ owner mới mở khóa + chạy pending — tránh abort+supersede làm clear nhầm request mới.
+      if (stillOwner) {
+        isFetchingRef.current = false;
+        const queued = pendingFetchOptsRef.current;
+        pendingFetchOptsRef.current = null;
+        if (queued) {
+          void fetchOrders(queued as typeof opts);
+        }
       }
     }
   }, []);

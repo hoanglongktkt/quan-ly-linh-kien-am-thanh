@@ -1860,7 +1860,9 @@ export default function OrderManager({
     const expectedKind =
       activeSubTab === 'cancel_returns' ? cancelReturnKindParam(cancelReturnTab) : undefined;
     const delay = datePreset === 'custom' ? 280 : 80;
+    const controller = new AbortController();
     const timer = window.setTimeout(() => {
+      if (controller.signal.aborted) return;
       isListFetchingRef.current = true;
       setCurrentPage((p) => (p === 1 ? p : 1));
       console.log(`[Orders Tab] activeSubTab=${activeSubTab} kind=${listFetchKind || '(none)'} shops=${shopIdsKey || '(all)'} → fetch page=1`);
@@ -1873,6 +1875,7 @@ export default function OrderManager({
           tab: expectedTab,
           q: searchQuery.trim() || undefined,
           kind: expectedKind,
+          signal: controller.signal,
         }),
       )
         .catch((error: unknown) => {
@@ -1886,12 +1889,15 @@ export default function OrderManager({
           console.warn('[Orders Tab] fetchOrders failed:', error);
         })
         .finally(() => {
-          isListFetchingRef.current = false;
+          if (!controller.signal.aborted) isListFetchingRef.current = false;
         });
     }, delay);
 
     return () => {
       window.clearTimeout(timer);
+      // Hủy request tab cũ ngay khi chuyển tab mới — chống race đè state.
+      controller.abort();
+      isListFetchingRef.current = false;
     };
     // Primitive key only — shopIds.join + dateRange + filters. CẤM object selectedShops.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1918,7 +1924,9 @@ export default function OrderManager({
     }
     if (activeSubTab === 'order_products') return;
     const q = searchQuery.trim();
+    const controller = new AbortController();
     const handle = window.setTimeout(() => {
+      if (controller.signal.aborted) return;
       setCurrentPage(1);
       void Promise.resolve(
         onFetchOrdersRef.current?.({
@@ -1932,6 +1940,7 @@ export default function OrderManager({
             !q && activeSubTab === 'cancel_returns'
               ? cancelReturnKindParam(cancelReturnTab)
               : undefined,
+          signal: controller.signal,
         }),
       ).catch((error: unknown) => {
         const name =
@@ -1945,6 +1954,7 @@ export default function OrderManager({
     }, q ? 400 : 80);
     return () => {
       window.clearTimeout(handle);
+      controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery]);
