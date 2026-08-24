@@ -1111,6 +1111,7 @@ export default function OrderManager({
   const [lastSyncSummary, setLastSyncSummary] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [serverOrderCounts, setServerOrderCounts] = useState<Record<string, number> | null>(null);
+  const serverOrderCountsRef = useRef<Record<string, number> | null>(null);
   const [fulfillmentProducts, setFulfillmentProducts] = useState<AggregatedOrderProduct[] | null>(null);
   const [fulfillmentProductsLoading, setFulfillmentProductsLoading] = useState(false);
   const fulfillmentAbortRef = useRef<AbortController | null>(null);
@@ -1140,18 +1141,26 @@ export default function OrderManager({
     setTimeout(() => setToastMessage(null), durationMs);
   };
 
-  const fetchOrderCounts = useCallback(async (): Promise<Record<string, number> | null> => {
+  const fetchOrderCounts = useCallback(async (opts?: { force?: boolean }): Promise<Record<string, number> | null> => {
     const token = localStorage.getItem('admin_token') || '';
     if (!token) return null;
     const shopIds = shopScopeRef.current.shopIds;
     const range = dateRangeRef.current;
     const flightKey = `${shopIds.join(',')}|${range.startDate}|${range.endDate}`;
     const now = Date.now();
-    if (counterInFlightPromiseRef.current) {
-      return counterInFlightPromiseRef.current;
-    }
-    if (counterInFlightKeyRef.current === flightKey && now - lastCounterCallAtRef.current < 800) {
-      return counterInFlightPromiseRef.current;
+    const force = opts?.force === true;
+    if (!force) {
+      if (counterInFlightPromiseRef.current) {
+        return counterInFlightPromiseRef.current;
+      }
+      if (counterInFlightKeyRef.current === flightKey && now - lastCounterCallAtRef.current < 800) {
+        return serverOrderCountsRef.current;
+      }
+    } else {
+      counterAbortRef.current?.abort();
+      counterInFlightPromiseRef.current = null;
+      counterInFlightKeyRef.current = '';
+      lastCounterCallAtRef.current = 0;
     }
     lastCounterCallAtRef.current = now;
     const controller = new AbortController();
@@ -1223,6 +1232,7 @@ export default function OrderManager({
           mergedCounts.failed_delivery = mergedCounters.rts;
         }
         setServerOrderCounts(mergedCounts);
+        serverOrderCountsRef.current = mergedCounts;
         return mergedCounts;
       } catch (err) {
         const aborted =
@@ -1240,6 +1250,29 @@ export default function OrderManager({
     counterInFlightPromiseRef.current = run;
     return run;
   }, []);
+
+  /** Cập nhật badge lạc quan ngay sau xác nhận — không chờ poll counter / cache BE. */
+  const applyOptimisticTabCountDelta = useCallback(
+    (delta: Partial<Record<'unprocessed' | 'processed' | 'pending_confirm', number>>) => {
+      setServerOrderCounts((prev) => {
+        if (!prev) return prev;
+        const next = { ...prev };
+        for (const [key, rawDelta] of Object.entries(delta)) {
+          const d = Number(rawDelta) || 0;
+          if (!d) continue;
+          const cur = Number(next[key]) || 0;
+          next[key] = Math.max(0, cur + d);
+        }
+        serverOrderCountsRef.current = next;
+        return next;
+      });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    serverOrderCountsRef.current = serverOrderCounts;
+  }, [serverOrderCounts]);
 
   const fetchFulfillmentProducts = useCallback(async (): Promise<AggregatedOrderProduct[]> => {
     const token = localStorage.getItem('admin_token') || '';
@@ -4845,11 +4878,36 @@ export default function OrderManager({
     opts?: { markPrinted?: boolean; shipMethod?: 'pickup' | 'dropoff'; deferTabSwitch?: boolean }
   ) => {
     const queuedKeys = buildQueuedOrderKeys(queuedOrders);
+    let movedFromUnprocessed = 0;
+    for (const o of ordersRef.current) {
+      if (
+        !queuedKeys.has(o.id) &&
+        !queuedKeys.has(o.orderSn) &&
+        !queuedKeys.has(`shopee-${o.orderSn}`)
+      ) {
+        continue;
+      }
+      if (matchesUnprocessedPickupTab(o) && !isPendingConfirmOrder(o)) movedFromUnprocessed += 1;
+    }
     const patched = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys, opts);
     ordersRef.current = patched;
     onUpdateOrders(patched, { persist: false });
+    if (movedFromUnprocessed > 0) {
+      applyOptimisticTabCountDelta({
+        unprocessed: -movedFromUnprocessed,
+        processed: movedFromUnprocessed,
+      });
+    }
     if (opts?.deferTabSwitch) {
-      void fetchOrderCounts();
+      void fetchOrdersWithShop({
+        silent: true,
+        page: 1,
+        limit: ORDERS_PAGE_SIZE,
+        merge: false,
+        tab: activeSubTab === 'all' ? '' : activeSubTab,
+        force: true,
+      });
+      void fetchOrderCounts({ force: true });
       return;
     }
     setActiveSubTab('processed');
@@ -4860,7 +4918,7 @@ export default function OrderManager({
       merge: false,
       tab: 'processed',
     });
-    void fetchOrderCounts();
+    void fetchOrderCounts({ force: true });
   };
 
   /**
@@ -5154,7 +5212,7 @@ export default function OrderManager({
     ).catch((error: unknown) => {
       if (error instanceof Error && error.name === 'AbortError') return;
     });
-    void fetchOrderCounts();
+    void fetchOrderCounts({ force: true });
     startHasPdfBackgroundPoll(orderSns);
   };
 
@@ -5723,10 +5781,26 @@ export default function OrderManager({
     if (status === 'order_products') {
       return aggregatedOrderProducts.length;
     }
+    const countTabKey = status === 'pending_verification' ? 'pending_confirm' : status;
+    const listSyncTabs: OrderTab[] = [
+      'pending_confirm',
+      'pending_verification',
+      'unprocessed',
+      'processed',
+      'handed_over_carrier',
+      'shipping',
+      'web_orders',
+      'external_orders',
+      'return_requests',
+      'received_cancel_returns',
+    ];
+    if (status === activeSubTab && listSyncTabs.includes(status)) {
+      const listTotal = Number(ordersMeta?.total);
+      if (Number.isFinite(listTotal) && listTotal >= 0) return listTotal;
+    }
     // Ưu tiên counter API (Mongo countDocuments) — badge nhảy độc lập với list.
     if (serverOrderCounts) {
-      const key = status === 'pending_verification' ? 'pending_confirm' : status;
-      const serverN = Number(serverOrderCounts[key]);
+      const serverN = Number(serverOrderCounts[countTabKey]);
       if (Number.isFinite(serverN)) return serverN;
     }
     // web_orders: đếm trực tiếp từ orders array khi chưa có server counter

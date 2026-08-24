@@ -17,6 +17,7 @@ import {
   purgeMongoTempCollections,
   markOrderHandedOverInStore,
   findOrderByScanCodeInStore,
+  invalidateTabCountCache,
 } from "../src/db/mongoStore.ts";
 
 const APP_ROOT = resolveAppRoot();
@@ -309,6 +310,11 @@ export async function persistChangedOrdersPatch(changedOrders) {
   if (changed.length === 0) return 0;
   if (!isMongoReady()) throw new Error("mongodb_not_ready");
   const written = await bulkUpsertOrdersToStore(changed);
+  try {
+    invalidateTabCountCache();
+  } catch {
+    /* cache optional */
+  }
   queueOrdersJsonMirrorFromMongo();
   return written;
 }

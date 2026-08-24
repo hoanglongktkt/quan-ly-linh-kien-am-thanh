@@ -2685,6 +2685,7 @@ export async function bulkUpdateShippedOrdersBySn(
     }),
     "ship_persist",
   );
+  invalidateTabCountCache();
   return ops.length;
 }
 
@@ -7036,6 +7037,31 @@ async function safeCountDocuments(
   }
 }
 
+/** Badge ≡ GET /api/orders?tab= — dùng orderTabFilter, không dùng $facet rút gọn. */
+async function countOperationalTabsFromStore(
+  match: Record<string, unknown>,
+): Promise<Partial<Record<string, number>>> {
+  const tabs = [
+    "pending_confirm",
+    "unprocessed",
+    "processed",
+    "handed_over_carrier",
+    "shipping",
+  ] as const;
+  const out: Partial<Record<string, number>> = {};
+  for (let i = 0; i < tabs.length; i++) {
+    const tab = tabs[i];
+    const tabFilter = orderTabFilter(tab);
+    const combined =
+      Object.keys(match).length === 0 ? tabFilter : { $and: [match, tabFilter] };
+    out[tab] = await safeCountDocuments(combined);
+    if (i < tabs.length - 1) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  }
+  return out;
+}
+
 /** Đếm số đơn theo tab — MỘT aggregate: $match ngày → $project cờ → $facet. */
 export async function countOrdersByTabsFromStore(opts?: {
   shopId?: string;
@@ -7143,6 +7169,15 @@ export async function countOrdersByTabsFromStore(opts?: {
     counts.failed_delivery = counts.cancel_returns_rts;
     counts.received_cancel_returns =
       dhhCountCache.key === cacheKey ? dhhCountCache.n : dhhCountCache.n;
+    try {
+      const opCounts = await countOperationalTabsFromStore(match);
+      Object.assign(counts, opCounts);
+    } catch (opErr: any) {
+      console.warn(
+        "[MongoDB] countOperationalTabsFromStore:",
+        opErr?.message || opErr,
+      );
+    }
     tabCountCache = { key: cacheKey, expiresAt: now + TAB_COUNT_CACHE_MS, value: counts };
     const dhhShop = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds) || {};
     void DonHoanHuyModel.countDocuments(dhhShop)

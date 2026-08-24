@@ -1195,6 +1195,7 @@ export async function recalculateOrderCounts(req, res) {
     );
     const shopId = shopIds.length === 1 ? shopIds[0] : String(req.body?.shop_id ?? req.query.shop_id ?? "").trim();
     ordersRefreshCache = null;
+    invalidateTabCountCache();
     const counts = await countOrdersByTabsFromStore({
       shopId: shopId || undefined,
       shopIds: shopIds.length > 1 ? shopIds : undefined,

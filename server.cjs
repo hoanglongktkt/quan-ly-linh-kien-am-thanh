@@ -78230,6 +78230,7 @@ async function bulkUpdateShippedOrdersBySn(patches) {
     }),
     "ship_persist"
   );
+  invalidateTabCountCache();
   return ops.length;
 }
 function shopIdTypeVariants(shopId) {
@@ -81236,6 +81237,37 @@ async function loadPriorityTabOrdersFromStore(opts) {
     return [];
   }
 }
+async function safeCountDocuments(filter2, maxTimeMS = 6e3) {
+  try {
+    return Number(await OrderModel.countDocuments(filter2).maxTimeMS(maxTimeMS)) || 0;
+  } catch (err) {
+    console.warn(
+      "[MongoDB] safeCountDocuments failed:",
+      err?.message || err
+    );
+    return 0;
+  }
+}
+async function countOperationalTabsFromStore(match2) {
+  const tabs = [
+    "pending_confirm",
+    "unprocessed",
+    "processed",
+    "handed_over_carrier",
+    "shipping"
+  ];
+  const out = {};
+  for (let i2 = 0; i2 < tabs.length; i2++) {
+    const tab = tabs[i2];
+    const tabFilter = orderTabFilter(tab);
+    const combined = Object.keys(match2).length === 0 ? tabFilter : { $and: [match2, tabFilter] };
+    out[tab] = await safeCountDocuments(combined);
+    if (i2 < tabs.length - 1) {
+      await new Promise((r2) => setTimeout(r2, 25));
+    }
+  }
+  return out;
+}
 async function countOrdersByTabsFromStore(opts) {
   const empty = {
     all: 0,
@@ -81336,6 +81368,15 @@ async function countOrdersByTabsFromStore(opts) {
     counts.cancelled = counts.cancel_returns_cancelled;
     counts.failed_delivery = counts.cancel_returns_rts;
     counts.received_cancel_returns = dhhCountCache.key === cacheKey ? dhhCountCache.n : dhhCountCache.n;
+    try {
+      const opCounts = await countOperationalTabsFromStore(match2);
+      Object.assign(counts, opCounts);
+    } catch (opErr) {
+      console.warn(
+        "[MongoDB] countOperationalTabsFromStore:",
+        opErr?.message || opErr
+      );
+    }
     tabCountCache = { key: cacheKey, expiresAt: now + TAB_COUNT_CACHE_MS, value: counts };
     const dhhShop = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds) || {};
     void DonHoanHuyModel.countDocuments(dhhShop).maxTimeMS(2e3).then((n) => {
@@ -117900,6 +117941,10 @@ async function persistChangedOrdersPatch(changedOrders) {
   if (changed.length === 0) return 0;
   if (!isMongoReady()) throw new Error("mongodb_not_ready");
   const written = await bulkUpsertOrdersToStore(changed);
+  try {
+    invalidateTabCountCache();
+  } catch {
+  }
   queueOrdersJsonMirrorFromMongo();
   return written;
 }
@@ -119192,6 +119237,7 @@ async function recalculateOrderCounts(req, res) {
     );
     const shopId = shopIds.length === 1 ? shopIds[0] : String(req.body?.shop_id ?? req.query.shop_id ?? "").trim();
     ordersRefreshCache = null;
+    invalidateTabCountCache();
     const counts = await countOrdersByTabsFromStore({
       shopId: shopId || void 0,
       shopIds: shopIds.length > 1 ? shopIds : void 0
