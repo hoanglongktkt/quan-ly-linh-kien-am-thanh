@@ -1,4 +1,4 @@
-import { Order, Product, SystemFee } from '../types';
+import { Order, Product, SystemFee, getProductChildren } from '../types';
 import type { DashboardDateRange } from '../components/Dashboard';
 import { calculateProfitWithSystemFees } from './profitCalculator';
 import { getOrderTotalImportCost } from './orderImportCost';
@@ -278,15 +278,29 @@ export function computeDashboardStats(
     });
 
   const LOW = 5;
-  const lowStockProducts = products
-    .filter((p) => (Number(p.stock) || 0) < LOW)
-    .map((p) => ({
-      id: p.id,
-      title: p.title || p.sku || p.id,
-      sku: p.sku || '',
-      stock: Number(p.stock) || 0,
-    }))
-    .sort((a, b) => a.stock - b.stock);
+  const lowStockProducts = (() => {
+    const flat: Product[] = [];
+    for (const p of products) {
+      const children = getProductChildren(p);
+      if (children.length > 0) {
+        for (const c of children) flat.push(c);
+      } else {
+        flat.push(p);
+      }
+      // Chống vòng lặp vô tận khi catalog lớn (client fallback).
+      if (flat.length >= 5000) break;
+    }
+    return flat
+      .filter((p) => (Number(p.stock) || 0) < LOW)
+      .map((p) => ({
+        id: p.id,
+        title: p.title || p.sku || p.id,
+        sku: p.sku || '',
+        stock: Number(p.stock) || 0,
+      }))
+      .sort((a, b) => a.stock - b.stock)
+      .slice(0, 50);
+  })();
 
   const chart = buildChart(revenueOrders, products, systemFees, rangeKey, start, end);
   const totalProfit = chart.reduce((sum, day) => sum + (Number(day.profit) || 0), 0);

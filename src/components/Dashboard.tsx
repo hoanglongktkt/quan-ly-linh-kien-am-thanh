@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Product, Order, SystemFee } from '../types';
+import { Product, Order, SystemFee, getProductChildren } from '../types';
 import { computeDashboardStats, isRtsOrder } from '../utils/dashboardStats';
+import { buildShopeeSyncPayload } from '../utils/shopeeSyncPayload';
 import {
   DollarSign,
   ShoppingCart,
@@ -18,9 +19,9 @@ import {
   TrendingUp,
   Loader2,
   AlertCircle,
-  Pencil,
-  X,
   ImageOff,
+  CheckCircle2,
+  XCircle,
 } from 'lucide-react';
 
 export type DashboardDateRange =
@@ -136,7 +137,10 @@ interface DashboardProps {
     },
   ) => void;
   onEditProductShortcut?: (productId: string) => void;
-  onUpdateProduct?: (updated: Product, opts?: { save?: boolean }) => Promise<void>;
+  onUpdateProduct?: (
+    updated: Product,
+    opts?: { save?: boolean },
+  ) => Promise<void | { success?: boolean; error?: string }>;
   onNavigateToImport?: (productId: string) => void;
   rtsCount?: number;
   systemFees?: SystemFee[];
@@ -158,15 +162,21 @@ export default function Dashboard({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [usingFallback, setUsingFallback] = useState(false);
-  const [stockEditItem, setStockEditItem] = useState<{ id: string; title: string; stock: number } | null>(null);
-  const [stockInput, setStockInput] = useState('');
-  const [stockSaving, setStockSaving] = useState(false);
+  /** Draft số lượng theo product id — sửa inline trong widget. */
+  const [stockDrafts, setStockDrafts] = useState<Record<string, string>>({});
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ ok: boolean; message: string } | null>(null);
   const ordersRef = useRef(orders);
   const productsRef = useRef(products);
   const systemFeesRef = useRef(systemFees);
   ordersRef.current = orders;
   productsRef.current = products;
   systemFeesRef.current = systemFees;
+
+  const showToast = useCallback((message: string, ok = true) => {
+    setToast({ ok, message });
+    window.setTimeout(() => setToast(null), 4000);
+  }, []);
 
   const applyFallback = useCallback((range: DashboardDateRange) => {
     const stats = computeDashboardStats(
@@ -303,55 +313,159 @@ export default function Dashboard({
     }
   }, [usingFallback, applyFallback, dateRange, fetchDashboard]);
 
-  const openStockModal = (item: { id: string; title: string; stock: number }) => {
-    setStockEditItem(item);
-    setStockInput(String(item.stock));
-  };
+  const findProductRow = useCallback(
+    (productId: string): Product | undefined => {
+      for (const p of products) {
+        if (p.id === productId) return p;
+        const child = getProductChildren(p).find((c) => c.id === productId);
+        if (child) return child;
+      }
+      return undefined;
+    },
+    [products],
+  );
 
-  const closeStockModal = () => {
-    if (stockSaving) return;
-    setStockEditItem(null);
-    setStockInput('');
-  };
+  const handleInlineStockUpdate = useCallback(
+    async (item: { id: string; title: string; sku: string; stock: number }) => {
+      const raw = stockDrafts[item.id] ?? String(item.stock);
+      const qty = Math.round(Number(raw));
+      if (!Number.isFinite(qty) || qty < 0) {
+        showToast('Vui lòng nhập số lượng hợp lệ (≥ 0).', false);
+        return;
+      }
 
-  const handleConfirmStock = async () => {
-    if (!stockEditItem || !onUpdateProduct) return;
-    const qty = Number(stockInput);
-    if (!Number.isFinite(qty) || qty < 0) {
-      alert('Vui lòng nhập số lượng hợp lệ (≥ 0).');
-      return;
-    }
-    const product = products.find((p) => p.id === stockEditItem.id);
-    if (!product) return;
+      const token = localStorage.getItem('admin_token');
+      if (!token) {
+        showToast('Chưa đăng nhập.', false);
+        return;
+      }
 
-    setStockSaving(true);
-    try {
-      await onUpdateProduct({ ...product, stock: qty }, { save: true });
-      setStockEditItem(null);
-      setStockInput('');
-      refreshInventoryList();
-    } finally {
-      setStockSaving(false);
-    }
-  };
+      setUpdatingId(item.id);
+      try {
+        // 1) Lưu kho nội bộ — PATCH /api/products/:id (đã có sẵn, không phụ thuộc phân trang FE).
+        const patchRes = await fetch(`/api/products/${encodeURIComponent(item.id)}`, {
+          method: 'PATCH',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ stock: qty }),
+        });
+        const patchData = await patchRes.json().catch(() => ({} as Record<string, unknown>));
+        if (!patchRes.ok || patchData?.success === false) {
+          showToast(
+            String(patchData?.error || patchData?.message || `Lưu tồn kho thất bại (HTTP ${patchRes.status}).`),
+            false,
+          );
+          return;
+        }
+
+        // Đồng bộ state FE nếu SKU đang nằm trong trang sản phẩm hiện tại.
+        const localRow = findProductRow(item.id);
+        if (localRow && onUpdateProduct) {
+          void onUpdateProduct({ ...localRow, stock: qty }, { save: false });
+        }
+
+        // 2) Đồng bộ lên sàn — POST /api/products/sync-shopee (đã có sẵn).
+        const syncRes = await fetch('/api/products/sync-shopee', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(buildShopeeSyncPayload(item.id)),
+        });
+        const syncData = await syncRes.json().catch(() => ({} as Record<string, unknown>));
+        if (!syncRes.ok || syncData?.success === false) {
+          showToast(
+            String(
+              syncData?.error ||
+                syncData?.message ||
+                syncData?.shopeeMessage ||
+                `Đã lưu kho nhưng đồng bộ sàn thất bại (HTTP ${syncRes.status}).`,
+            ),
+            false,
+          );
+          refreshInventoryList();
+          return;
+        }
+
+        showToast(`Đã cập nhật tồn "${item.sku || item.title}" = ${qty} và đồng bộ sàn.`, true);
+
+        setData((prev) => {
+          if (!prev) return prev;
+          const threshold = prev.inventory.lowStockThreshold || 5;
+          const nextList = prev.inventory.lowStockProducts
+            .map((row) => (row.id === item.id ? { ...row, stock: qty } : row))
+            .filter((row) => row.stock < threshold);
+          return {
+            ...prev,
+            inventory: { ...prev.inventory, lowStockProducts: nextList },
+          };
+        });
+        setStockDrafts((prev) => {
+          const next = { ...prev };
+          const threshold = data?.inventory.lowStockThreshold ?? 5;
+          if (qty >= threshold) delete next[item.id];
+          else next[item.id] = String(qty);
+          return next;
+        });
+
+        refreshInventoryList();
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : 'Cập nhật tồn kho thất bại.', false);
+      } finally {
+        setUpdatingId(null);
+      }
+    },
+    [
+      stockDrafts,
+      findProductRow,
+      onUpdateProduct,
+      showToast,
+      refreshInventoryList,
+      data?.inventory.lowStockThreshold,
+    ],
+  );
 
   const lowStockThreshold = data?.inventory.lowStockThreshold ?? 5;
   const lowStockProducts = useMemo(() => {
     const resolveImage = (id: string) => {
-      const prod = products.find((p) => p.id === id);
+      const prod = findProductRow(id);
       return prod?.avatarUrl || prod?.imageUrl || null;
     };
 
+    const fromApi = data?.inventory.lowStockProducts;
+    const fromClient = () => {
+      const flat: { id: string; title: string; sku: string; stock: number; imageUrl?: string | null }[] = [];
+      for (const p of products) {
+        const children = getProductChildren(p);
+        const rows = children.length > 0 ? children : [p];
+        for (const row of rows) {
+          const stock = Number(row.stock) || 0;
+          if (stock < lowStockThreshold) {
+            flat.push({
+              id: row.id,
+              title: row.title || row.sku || row.id,
+              sku: row.sku || '',
+              stock,
+              imageUrl: row.avatarUrl || row.imageUrl || null,
+            });
+          }
+        }
+        if (flat.length >= 200) break;
+      }
+      return flat.sort((a, b) => a.stock - b.stock);
+    };
+
+    // API trả mảng (kể cả rỗng) khi Mongo OK — ưu tiên API.
+    // Fallback client chỉ khi đang dùng computeDashboardStats hoặc chưa có data.
     const base =
-      data?.inventory.lowStockProducts ??
-      products
-        .filter((p) => (Number(p.stock) || 0) < lowStockThreshold)
-        .map((p) => ({
-          id: p.id,
-          title: p.title || p.sku || p.id,
-          sku: p.sku || '',
-          stock: Number(p.stock) || 0,
-        }));
+      Array.isArray(fromApi) && !usingFallback
+        ? fromApi
+        : fromApi && fromApi.length > 0
+          ? fromApi
+          : fromClient();
 
     return base
       .map((item) => ({
@@ -359,7 +473,18 @@ export default function Dashboard({
         imageUrl: item.imageUrl ?? resolveImage(item.id),
       }))
       .sort((a, b) => a.stock - b.stock);
-  }, [data, products, lowStockThreshold]);
+  }, [data, products, lowStockThreshold, usingFallback, findProductRow]);
+
+  // Đồng bộ draft input khi danh sách low-stock thay đổi.
+  useEffect(() => {
+    setStockDrafts((prev) => {
+      const next: Record<string, string> = {};
+      for (const item of lowStockProducts) {
+        next[item.id] = prev[item.id] !== undefined ? prev[item.id] : String(item.stock);
+      }
+      return next;
+    });
+  }, [lowStockProducts]);
 
   const rtsFromOrders = useMemo(
     () => orders.filter((o) => isRtsOrder(o)).length,
@@ -632,89 +757,98 @@ export default function Dashboard({
               )}
             </div>
 
-            <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-xs flex flex-col">
+            <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-xs flex flex-col min-h-0">
               <h3 className="font-bold text-gray-900 text-base flex items-center gap-2 mb-1">
                 <Warehouse className="w-5 h-5 text-indigo-500" />
                 Thông Tin Kho
               </h3>
               <p className="text-[11px] text-gray-400 mb-4">
-                Sản phẩm tồn &lt; {lowStockThreshold} cái
+                Sản phẩm tồn &lt; {lowStockThreshold} cái — sửa số &amp; cập nhật thẳng lên sàn
               </p>
 
-              <div className="max-h-64 overflow-y-auto rounded-xl border border-gray-100 divide-y divide-gray-50">
+              <div className="max-h-72 overflow-y-auto rounded-xl border border-gray-100 divide-y divide-gray-50">
                 {lowStockProducts.length === 0 ? (
                   <p className="text-sm text-gray-400 text-center py-10 px-4">
                     Không có sản phẩm nào dưới định mức
                   </p>
                 ) : (
-                  lowStockProducts.map((item) => (
-                    <div
-                      key={item.id}
-                      className="flex flex-col sm:flex-row sm:items-center gap-2.5 px-3 py-3 hover:bg-rose-50/80 transition-colors group"
-                    >
-                      <div className="flex items-center gap-2.5 flex-1 min-w-0">
-                        {item.imageUrl ? (
-                          <img
-                            src={item.imageUrl}
-                            alt=""
-                            className="w-10 h-10 rounded-lg object-cover border border-gray-100 shrink-0"
-                            referrerPolicy="no-referrer"
-                          />
-                        ) : (
-                          <div
-                            className="w-10 h-10 rounded-lg bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0"
-                            title="Không có ảnh"
+                  lowStockProducts.map((item) => {
+                    const busy = updatingId === item.id;
+                    return (
+                      <div
+                        key={item.id}
+                        className="flex flex-col gap-2 px-3 py-2.5 hover:bg-rose-50/60 transition-colors"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          {item.imageUrl ? (
+                            <img
+                              src={item.imageUrl}
+                              alt=""
+                              className="w-9 h-9 rounded-lg object-cover border border-gray-100 shrink-0"
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : (
+                            <div
+                              className="w-9 h-9 rounded-lg bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0"
+                              title="Không có ảnh"
+                            >
+                              <ImageOff className="w-3.5 h-3.5 text-gray-400" />
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => onEditProductShortcut?.(item.id)}
+                            className="flex-1 min-w-0 text-left"
                           >
-                            <ImageOff className="w-4 h-4 text-gray-400" />
-                          </div>
-                        )}
+                            <p className="text-[13px] font-medium text-gray-800 line-clamp-1 hover:text-rose-700">
+                              {item.title}
+                            </p>
+                            <p className="text-[10px] font-mono text-gray-400 truncate">
+                              {item.sku || '—'} · Tồn: {item.stock}
+                            </p>
+                          </button>
+                        </div>
 
-                        <button
-                          type="button"
-                          onClick={() => onEditProductShortcut?.(item.id)}
-                          className="flex-1 min-w-0 text-left"
-                        >
-                          <p className="text-sm font-medium text-gray-800 group-hover:text-rose-800 line-clamp-1">
-                            {item.title}
-                          </p>
-                          <p className="text-[11px] font-mono text-gray-400 truncate">{item.sku || '—'}</p>
-                        </button>
-                      </div>
-
-                      <div className="flex items-center justify-between sm:justify-end gap-2 sm:gap-1 shrink-0 pl-[3.25rem] sm:pl-0">
-                        <span className="text-sm font-bold text-rose-600 whitespace-nowrap">
-                          Tồn: {item.stock}
-                        </span>
-
-                        <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          title="Điều chỉnh tồn kho nhanh"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openStockModal(item);
-                          }}
-                          className="inline-flex items-center justify-center gap-1 min-h-11 px-3 py-2 text-[11px] font-semibold rounded-lg border border-gray-200 bg-white text-gray-600 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 hover:shadow-sm transition-all"
-                        >
-                          <Pencil className="w-3.5 h-3.5" />
-                          Sửa
-                        </button>
-                        <button
-                          type="button"
-                          title="Nhập hàng cho sản phẩm này"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onNavigateToImport?.(item.id);
-                          }}
-                          className="inline-flex items-center justify-center gap-1 min-h-11 px-3 py-2 text-[11px] font-semibold rounded-lg border border-gray-200 bg-white text-gray-600 hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700 hover:shadow-sm transition-all"
-                        >
-                          <Truck className="w-3.5 h-3.5" />
-                          Nhập
-                        </button>
+                        <div className="flex items-center gap-1.5 pl-[2.75rem] sm:pl-0 sm:justify-end">
+                          <input
+                            type="number"
+                            min={0}
+                            step={1}
+                            disabled={busy}
+                            value={stockDrafts[item.id] ?? String(item.stock)}
+                            onChange={(e) =>
+                              setStockDrafts((prev) => ({ ...prev, [item.id]: e.target.value }))
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') void handleInlineStockUpdate(item);
+                            }}
+                            className="w-20 shrink-0 border border-gray-200 rounded-lg px-2 py-1.5 text-sm font-semibold text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400 disabled:opacity-60"
+                            aria-label={`Số lượng mới cho ${item.sku || item.title}`}
+                          />
+                          <button
+                            type="button"
+                            disabled={busy}
+                            title="Lưu tồn kho và đồng bộ lên sàn"
+                            onClick={() => void handleInlineStockUpdate(item)}
+                            className="inline-flex items-center justify-center gap-1 min-h-9 px-2.5 py-1.5 text-[11px] font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60 transition-colors shrink-0"
+                          >
+                            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                            Cập nhật
+                          </button>
+                          <button
+                            type="button"
+                            title="Nhập hàng cho sản phẩm này"
+                            disabled={busy}
+                            onClick={() => onNavigateToImport?.(item.id)}
+                            className="inline-flex items-center justify-center gap-1 min-h-9 px-2 py-1.5 text-[11px] font-semibold rounded-lg border border-gray-200 bg-white text-gray-600 hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700 transition-all shrink-0"
+                          >
+                            <Truck className="w-3.5 h-3.5" />
+                            Nhập
+                          </button>
                         </div>
                       </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </div>
@@ -722,54 +856,23 @@ export default function Dashboard({
         </>
       ) : null}
 
-      {stockEditItem && (
+      {toast ? (
         <div
-          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4"
-          onClick={closeStockModal}
+          className={`fixed bottom-6 right-6 z-[90] max-w-sm px-4 py-3 rounded-xl shadow-lg border text-sm font-medium flex items-start gap-2 ${
+            toast.ok
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+              : 'bg-rose-50 border-rose-200 text-rose-800'
+          }`}
+          role="status"
         >
-          <div
-            className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-5 border border-gray-100"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-3 mb-4">
-              <div>
-                <h4 className="font-bold text-gray-900 text-base">Điều chỉnh tồn kho nhanh</h4>
-                <p className="text-xs text-gray-500 mt-1 line-clamp-2">{stockEditItem.title}</p>
-              </div>
-              <button
-                type="button"
-                onClick={closeStockModal}
-                disabled={stockSaving}
-                className="p-1 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <label className="block text-xs font-semibold text-gray-600 mb-1.5">
-              Nhập số lượng thực tế
-            </label>
-            <input
-              type="number"
-              min={0}
-              step={1}
-              value={stockInput}
-              onChange={(e) => setStockInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && void handleConfirmStock()}
-              autoFocus
-              className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400"
-            />
-            <button
-              type="button"
-              onClick={() => void handleConfirmStock()}
-              disabled={stockSaving}
-              className="mt-4 w-full py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700 disabled:opacity-60 transition-colors flex items-center justify-center gap-2"
-            >
-              {stockSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-              Xác nhận
-            </button>
-          </div>
+          {toast.ok ? (
+            <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
+          ) : (
+            <XCircle className="w-4 h-4 mt-0.5 shrink-0" />
+          )}
+          <span>{toast.message}</span>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

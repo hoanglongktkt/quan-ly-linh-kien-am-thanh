@@ -101,6 +101,7 @@ export async function getDashboard(req, res) {
       title: p.title || p.sku || p.id,
       sku: p.sku,
       stock: p.stock,
+      imageUrl: p.image || null,
     }));
 
     const chart = buildDashboardChart(stats.dailyRevenue, range);

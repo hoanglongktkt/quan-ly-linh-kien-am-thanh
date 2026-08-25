@@ -8820,38 +8820,135 @@ export type DashboardLiteProduct = {
 };
 
 /**
- * Tồn kho thấp CHỈ dùng cho Dashboard — query CÓ ĐIỀU KIỆN + LIMIT + SORT ngay trong
- * MongoDB (KHÔNG còn `find({})` quét toàn bộ collection rồi lọc/sort thủ công trong
- * Node). Cần index `{ "data.stock": 1 }` (đã khai báo ở ProductSchema) để tránh COLLSCAN
- * khi catalog lớn dần. `.maxTimeMS()` đảm bảo Mongo tự huỷ query treo, KHÔNG giữ
- * connection trong pool vô thời hạn (nguyên nhân gây dồn ứ tiến trình khi pool cạn).
+ * Tồn kho thấp CHỈ dùng cho Dashboard — aggregate CÓ ĐIỀU KIỆN + LIMIT + SORT trong
+ * MongoDB (không `find({})` rồi lọc thủ công cả kho trong Node).
+ * - Ép stock về số (`$convert`) vì nhiều bản ghi lưu stock dạng string → `$lt` số bị miss.
+ * - Flatten Parent→Child (`children` / `children_models`) để báo đúng SKU tồn < threshold
+ *   (không chỉ nhìn `data.stock` của parent đã cộng gộp).
+ * `.maxTimeMS()` tự huỷ query treo, tránh giữ connection trong pool.
  */
 export async function getLowStockProductsFromStore(
   threshold: number,
   limit = 50,
 ): Promise<DashboardLiteProduct[]> {
   requireMongo();
-  const docs = await ProductModel.find(
-    { "data.stock": { $lt: threshold, $gte: 0 } },
+  const safeThreshold = Math.max(1, Math.floor(Number(threshold) || 5));
+  const safeLimit = Math.max(1, Math.min(200, Math.floor(Number(limit) || 50)));
+
+  const toStockNum = (field: string) => ({
+    $max: [
+      0,
+      {
+        $convert: {
+          input: { $ifNull: [field, 0] },
+          to: "double",
+          onError: 0,
+          onNull: 0,
+        },
+      },
+    ],
+  });
+
+  const docs = await ProductModel.aggregate([
     {
-      sku: 1,
-      "data.id": 1,
-      "data.title": 1,
-      "data.name": 1,
-      "data.sku": 1,
-      "data.stock": 1,
+      $addFields: {
+        _children: {
+          $cond: [
+            { $gt: [{ $size: { $ifNull: ["$data.children", []] } }, 0] },
+            { $ifNull: ["$data.children", []] },
+            {
+              $cond: [
+                { $gt: [{ $size: { $ifNull: ["$data.children_models", []] } }, 0] },
+                { $ifNull: ["$data.children_models", []] },
+                [],
+              ],
+            },
+          ],
+        },
+      },
     },
-  )
-    .sort({ "data.stock": 1 })
-    .limit(Math.max(1, Math.min(200, limit)))
-    .maxTimeMS(6000)
-    .lean();
+    {
+      $project: {
+        rows: {
+          $cond: [
+            { $gt: [{ $size: "$_children" }, 0] },
+            {
+              $map: {
+                input: "$_children",
+                as: "c",
+                in: {
+                  id: { $toString: { $ifNull: ["$$c.id", ""] } },
+                  title: {
+                    $ifNull: [
+                      "$$c.title",
+                      {
+                        $ifNull: [
+                          "$$c.name",
+                          {
+                            $ifNull: [
+                              "$$c.modelName",
+                              { $ifNull: ["$data.title", { $ifNull: ["$data.name", ""] }] },
+                            ],
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                  sku: { $ifNull: ["$$c.sku", ""] },
+                  stock: toStockNum("$$c.stock"),
+                  image: {
+                    $ifNull: [
+                      "$$c.avatarUrl",
+                      {
+                        $ifNull: [
+                          "$$c.imageUrl",
+                          { $ifNull: ["$data.avatarUrl", { $ifNull: ["$data.imageUrl", null] }] },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+            [
+              {
+                id: {
+                  $toString: { $ifNull: ["$data.id", { $ifNull: ["$_id", ""] }] },
+                },
+                title: {
+                  $ifNull: ["$data.title", { $ifNull: ["$data.name", { $ifNull: ["$data.id", ""] }] }],
+                },
+                sku: { $ifNull: ["$data.sku", { $ifNull: ["$sku", ""] }] },
+                stock: toStockNum("$data.stock"),
+                image: {
+                  $ifNull: ["$data.avatarUrl", { $ifNull: ["$data.imageUrl", null] }],
+                },
+              },
+            ],
+          ],
+        },
+      },
+    },
+    { $unwind: "$rows" },
+    { $replaceRoot: { newRoot: "$rows" } },
+    {
+      $match: {
+        id: { $nin: ["", null] },
+        stock: { $lt: safeThreshold, $gte: 0 },
+      },
+    },
+    { $sort: { stock: 1, sku: 1 } },
+    { $limit: safeLimit },
+  ])
+    .option({ maxTimeMS: 8000 })
+    .exec();
+
   return (docs as any[]).map((d) => ({
-    id: String(d?.data?.id || d?._id || ""),
-    title: String(d?.data?.title || d?.data?.name || d?.data?.id || ""),
-    sku: String(d?.data?.sku || d?.sku || ""),
-    stock: Number(d?.data?.stock) || 0,
-    image: null,
+    id: String(d?.id || ""),
+    title: String(d?.title || d?.sku || d?.id || ""),
+    sku: String(d?.sku || ""),
+    stock: Math.max(0, Math.round(Number(d?.stock) || 0)),
+    image: d?.image ? String(d.image) : null,
   }));
 }
 

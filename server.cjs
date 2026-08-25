@@ -82618,23 +82618,118 @@ async function purgeMongoTempCollections(opts) {
 }
 async function getLowStockProductsFromStore(threshold, limit = 50) {
   requireMongo();
-  const docs = await ProductModel.find(
-    { "data.stock": { $lt: threshold, $gte: 0 } },
+  const safeThreshold = Math.max(1, Math.floor(Number(threshold) || 5));
+  const safeLimit = Math.max(1, Math.min(200, Math.floor(Number(limit) || 50)));
+  const toStockNum = (field) => ({
+    $max: [
+      0,
+      {
+        $convert: {
+          input: { $ifNull: [field, 0] },
+          to: "double",
+          onError: 0,
+          onNull: 0
+        }
+      }
+    ]
+  });
+  const docs = await ProductModel.aggregate([
     {
-      sku: 1,
-      "data.id": 1,
-      "data.title": 1,
-      "data.name": 1,
-      "data.sku": 1,
-      "data.stock": 1
-    }
-  ).sort({ "data.stock": 1 }).limit(Math.max(1, Math.min(200, limit))).maxTimeMS(6e3).lean();
+      $addFields: {
+        _children: {
+          $cond: [
+            { $gt: [{ $size: { $ifNull: ["$data.children", []] } }, 0] },
+            { $ifNull: ["$data.children", []] },
+            {
+              $cond: [
+                { $gt: [{ $size: { $ifNull: ["$data.children_models", []] } }, 0] },
+                { $ifNull: ["$data.children_models", []] },
+                []
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      $project: {
+        rows: {
+          $cond: [
+            { $gt: [{ $size: "$_children" }, 0] },
+            {
+              $map: {
+                input: "$_children",
+                as: "c",
+                in: {
+                  id: { $toString: { $ifNull: ["$$c.id", ""] } },
+                  title: {
+                    $ifNull: [
+                      "$$c.title",
+                      {
+                        $ifNull: [
+                          "$$c.name",
+                          {
+                            $ifNull: [
+                              "$$c.modelName",
+                              { $ifNull: ["$data.title", { $ifNull: ["$data.name", ""] }] }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  sku: { $ifNull: ["$$c.sku", ""] },
+                  stock: toStockNum("$$c.stock"),
+                  image: {
+                    $ifNull: [
+                      "$$c.avatarUrl",
+                      {
+                        $ifNull: [
+                          "$$c.imageUrl",
+                          { $ifNull: ["$data.avatarUrl", { $ifNull: ["$data.imageUrl", null] }] }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            [
+              {
+                id: {
+                  $toString: { $ifNull: ["$data.id", { $ifNull: ["$_id", ""] }] }
+                },
+                title: {
+                  $ifNull: ["$data.title", { $ifNull: ["$data.name", { $ifNull: ["$data.id", ""] }] }]
+                },
+                sku: { $ifNull: ["$data.sku", { $ifNull: ["$sku", ""] }] },
+                stock: toStockNum("$data.stock"),
+                image: {
+                  $ifNull: ["$data.avatarUrl", { $ifNull: ["$data.imageUrl", null] }]
+                }
+              }
+            ]
+          ]
+        }
+      }
+    },
+    { $unwind: "$rows" },
+    { $replaceRoot: { newRoot: "$rows" } },
+    {
+      $match: {
+        id: { $nin: ["", null] },
+        stock: { $lt: safeThreshold, $gte: 0 }
+      }
+    },
+    { $sort: { stock: 1, sku: 1 } },
+    { $limit: safeLimit }
+  ]).option({ maxTimeMS: 8e3 }).exec();
   return docs.map((d) => ({
-    id: String(d?.data?.id || d?._id || ""),
-    title: String(d?.data?.title || d?.data?.name || d?.data?.id || ""),
-    sku: String(d?.data?.sku || d?.sku || ""),
-    stock: Number(d?.data?.stock) || 0,
-    image: null
+    id: String(d?.id || ""),
+    title: String(d?.title || d?.sku || d?.id || ""),
+    sku: String(d?.sku || ""),
+    stock: Math.max(0, Math.round(Number(d?.stock) || 0)),
+    image: d?.image ? String(d.image) : null
   }));
 }
 var DASHBOARD_ITEM_UNIT_IMPORT_EXPR = {
@@ -112717,7 +112812,8 @@ async function getDashboard(req, res) {
       id: p.id,
       title: p.title || p.sku || p.id,
       sku: p.sku,
-      stock: p.stock
+      stock: p.stock,
+      imageUrl: p.image || null
     }));
     const chart = buildDashboardChart(stats.dailyRevenue, range);
     return res.json({
