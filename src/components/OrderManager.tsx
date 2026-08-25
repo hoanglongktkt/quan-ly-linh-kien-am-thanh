@@ -5247,85 +5247,50 @@ export default function OrderManager({
     setProgressCompleted(0);
     setProgressTotal(orderSns.length);
     try {
-      const response = await fetch('/api/orders/batch-confirm', {
+      const response = await fetch('/api/orders/batch-confirm-async', {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({ orderIds, orderSns, method: shipMethod }),
       });
       const data = await readResponseJson<any>(response);
-      if (!response.ok || !data.success) {
+      if (!response.ok || !data.accepted || !data.jobId) {
         throw new Error(data.message || data.error || `HTTP ${response.status}`);
       }
 
+      const finalJob = await pollShipJobUntilDone(String(data.jobId), orderSns.length);
+      if (!finalJob || (finalJob.status !== 'done' && finalJob.status !== 'failed')) {
+        throw new Error(finalJob?.message || 'Hết thời gian chờ xác nhận đơn.');
+      }
+      if (
+        finalJob.status === 'failed' &&
+        !(Array.isArray(finalJob.results) && finalJob.results.length > 0)
+      ) {
+        throw new Error(finalJob.message || finalJob.error || 'Xác nhận thất bại.');
+      }
+
+      const summary = await finishShipJobResult(finalJob, orderSns.length);
       const successfulSns = [
-        ...new Set<string>(
-          (Array.isArray(data.successOrders)
-            ? data.successOrders
-            : (Array.isArray(data.results) ? data.results : []).filter((result: any) => result?.success))
-            .map((result: any) =>
-              String(typeof result === 'string' ? result : result?.orderSn || result?.orderId || '')
-                .replace(/^shopee-/i, '')
-                .trim(),
-            )
+        ...new Set(
+          (summary.successfulOrderIds || [])
+            .map((id: string) => String(id || '').replace(/^shopee-/i, '').trim())
             .filter(Boolean),
         ),
       ];
-      const failedOrders = (
-        Array.isArray(data.failedOrders)
-          ? data.failedOrders
-          : (Array.isArray(data.results) ? data.results : []).filter((result: any) => !result?.success)
-      ).map((result: any) => ({
-        orderId: String(result?.orderId || ''),
-        orderSn: String(result?.orderSn || '').replace(/^shopee-/i, '').trim(),
-        error: String(result?.error || 'confirm_failed'),
-        message: String(result?.message || result?.error || 'Xác nhận thất bại'),
-      }));
 
       if (successfulSns.length > 0) {
         const optimisticTargets = applyPrintedLocalOptimistic(successfulSns, false, 'processed');
         if (optimisticTargets.length > 0) {
           void updatePrintStatusForOrders(optimisticTargets, false, { silent: true }).catch(() => {});
         }
-
         setSelectedOrderIds([]);
-        const queued = successfulSns.map((sn) => ({
-          id: `shopee-${sn}`,
-          orderSn: sn,
-        })) as Order[];
-        void refreshOrdersAfterShip(queued, { markPrinted: false, shipMethod, deferTabSwitch: true });
         void startSilentPdfPrefetch(successfulSns);
       }
 
-      const summary = {
-        total: Number(data.total) || successfulSns.length + failedOrders.length,
-        successCount: successfulSns.length,
-        failCount: failedOrders.length,
-        successfulOrderIds: successfulSns,
-        failedOrderDetails: failedOrders,
-      };
-      setProgressCompleted(successfulSns.length);
-      setProgressTotal(summary.total);
-      setProgressDone(true);
-      setProgressMessage('Kết quả xác nhận hàng loạt');
-      setShipJobResults([
-        ...successfulSns.map((orderSn) => ({ orderSn, success: true })),
-        ...failedOrders.map((failure: any) => ({ ...failure, success: false })),
-      ]);
-      setShipConfirmSummary(summary);
       showToast(
-        failedOrders.length > 0
-          ? `Thành công ${successfulSns.length} đơn, thất bại ${failedOrders.length} đơn.`
-          : `Đã xác nhận ${successfulSns.length} đơn — PDF đang được tải ngầm.`,
+        summary.failCount > 0
+          ? `Thành công ${summary.successCount} đơn, thất bại ${summary.failCount} đơn.`
+          : `Đã xác nhận ${summary.successCount} đơn — PDF đang được tải ngầm.`,
       );
-
-      onAddLog({
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        channel: 'shopee',
-        type: 'stock_sync',
-        status: successfulSns.length > 0 ? 'success' : 'failed',
-        message: `Xác nhận thành công ${successfulSns.length}, thất bại ${failedOrders.length}; đã xếp hàng tải PDF nền.`,
-      });
     } catch (err) {
       clearShipProgressOverlay();
       showToast(`Xác nhận thất bại: ${err instanceof Error ? err.message : 'Lỗi không xác định'}`);

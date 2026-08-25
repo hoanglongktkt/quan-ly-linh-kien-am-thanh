@@ -140721,6 +140721,232 @@ async function startServer() {
       endLogisticsWork();
     }
   };
+  const executeConfirmOnlyBackgroundJob = async (jobId, shipMethod, idList, snList) => {
+    const job = shipOrderJobs.get(jobId);
+    if (!job) return;
+    const t0 = Date.now();
+    beginLogisticsWork(`confirm-async:${jobId}`);
+    try {
+      job.status = "running";
+      job.phase = "loading";
+      job.message = "\u0110ang t\u1EA3i \u0111\u01A1n h\xE0ng...";
+      job.updatedAt = Date.now();
+      let orders = [];
+      try {
+        orders = await loadOrdersForShipScoped(idList, snList);
+      } catch (loadErr) {
+        console.warn("[Confirm Async] loadOrdersForShipScoped:", loadErr?.message || loadErr);
+      }
+      if (!orders.length) {
+        try {
+          const loaded = await loadOrdersForApi({ readOnly: true });
+          const idSet = /* @__PURE__ */ new Set([...idList, ...snList, ...snList.map((s2) => `shopee-${s2}`)]);
+          orders = (loaded.orders || []).filter(
+            (o) => idSet.has(String(o.id || "")) || idSet.has(String(o.orderSn || "")) || idSet.has(`shopee-${o.orderSn}`)
+          );
+        } catch {
+          orders = [];
+        }
+      }
+      const toShip = resolveOrdersFromRequest(orders, idList, snList);
+      job.total = toShip.length;
+      if (toShip.length === 0) {
+        job.status = "failed";
+        job.phase = "failed";
+        job.error = "orders_not_found";
+        job.message = "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n n\xE0o trong database.";
+        job.updatedAt = Date.now();
+        return;
+      }
+      job.phase = "calling_shopee";
+      job.message = `\u0110ang x\xE1c nh\u1EADn 0/${toShip.length} \u0111\u01A1n l\xEAn s\xE0n...`;
+      job.updatedAt = Date.now();
+      console.log(`[Confirm Async ${jobId}] X\xE1c nh\u1EADn ${toShip.length} \u0111\u01A1n method=${shipMethod}`);
+      const results = [];
+      const successSns = [];
+      let completedCount = 0;
+      const bumpProgress = () => {
+        completedCount += 1;
+        job.completed = completedCount;
+        job.total = toShip.length;
+        job.message = `\u0110ang x\xE1c nh\u1EADn ${completedCount}/${toShip.length} \u0111\u01A1n l\xEAn s\xE0n...`;
+        job.updatedAt = Date.now();
+      };
+      const confirmOneOrder = async ({ index, order }) => {
+        const orderSn = String(order.orderSn || "");
+        const orderId = String(order.id || "");
+        try {
+          const resolvedShopId = resolveOrderShopId(order);
+          if (resolvedShopId && !order.shopId) {
+            orders[index].shopId = resolvedShopId;
+            order.shopId = resolvedShopId;
+          }
+          console.log(`[Confirm Async ${jobId}] X\xE1c nh\u1EADn \u0111\u01A1n ${orderSn}...`);
+          let shipResult;
+          try {
+            shipResult = await withOperationTimeout(
+              (signal) => arrangeShipment(order, shipMethod, signal, { skipRecover: true }),
+              BATCH_CONFIRM_OPERATION_TIMEOUT_MS,
+              `Ship order ${orderSn}`
+            );
+          } catch (shipErr) {
+            shipResult = {
+              success: false,
+              error: /timeout/i.test(String(shipErr?.message || "")) ? "timeout" : "internal_server_error",
+              message: "L\u1ED7i server: " + (shipErr?.message || String(shipErr))
+            };
+          }
+          const treatedAsSuccess = shipResult.success || isAlreadyShippedError(shipResult);
+          if (!treatedAsSuccess) {
+            results.push({ orderId, orderSn, success: false, ...shipResult });
+            return;
+          }
+          const tn = String(
+            order.trackingNumber || order.tracking_no || shipResult.trackingNumber || orders[index].trackingNumber || ""
+          ).trim();
+          orders[index] = {
+            ...orders[index],
+            ...order,
+            isPrepared: true,
+            isPrinted: false,
+            status: "processed",
+            is_pending_shopee_check: false,
+            fulfillment_type: shipMethod,
+            ship_method: shipMethod,
+            trackingNumber: tn || orders[index].trackingNumber,
+            tracking_no: tn || orders[index].tracking_no || orders[index].trackingNumber,
+            shopId: orders[index].shopId || order.shopId || shipResult.shopId || resolvedShopId,
+            shopee_order_status: "PROCESSED",
+            shopeeSyncPending: false,
+            shopeeSyncError: void 0
+          };
+          forceHealPickupOrderIfHasTracking(orders[index]);
+          results.push({ orderId, orderSn, success: true, ...shipResult });
+          successSns.push(orderSn);
+        } catch (orderErr) {
+          console.error(`[Confirm Async ${jobId}] L\u1ED7i \u0111\u01A1n ${orderSn}:`, orderErr?.stack || orderErr);
+          results.push({
+            orderId,
+            orderSn,
+            success: false,
+            error: "order_process_error",
+            message: String(orderErr?.message || orderErr)
+          });
+        } finally {
+          bumpProgress();
+        }
+      };
+      await Promise.all(toShip.map(confirmOneOrder));
+      const failedOrders = results.filter((result) => !result?.success).map((result) => ({
+        orderId: String(result.orderId || ""),
+        orderSn: String(result.orderSn || ""),
+        error: String(result.error || "confirm_failed"),
+        message: String(result.message || result.error || "X\xE1c nh\u1EADn th\u1EA5t b\u1EA1i")
+      }));
+      const confirmedRows = toShip.map(({ index }) => orders[index]).filter((o) => o && o.isPrepared === true);
+      try {
+        await persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod);
+      } catch (persistErr) {
+        console.warn("[Confirm Async] persistConfirmedShipOrdersToMongo:", persistErr?.message || persistErr);
+      }
+      const summary = buildShipConfirmSummaryPayload(toShip.length, {
+        successCount: successSns.length,
+        failedCount: failedOrders.length,
+        failedOrders,
+        results
+      });
+      job.results = results;
+      job.successCount = summary.successCount;
+      job.failedCount = summary.failCount;
+      job.failCount = summary.failCount;
+      job.failedOrders = summary.failedOrderDetails;
+      job.failedOrderDetails = summary.failedOrderDetails;
+      job.successfulOrderIds = summary.successfulOrderIds;
+      job.completed = toShip.length;
+      job.total = toShip.length;
+      job.orders = null;
+      job.phase = "done";
+      job.status = "done";
+      job.message = `Th\xE0nh c\xF4ng: ${summary.successCount} \u0111\u01A1n. Th\u1EA5t b\u1EA1i: ${summary.failCount} \u0111\u01A1n (${Date.now() - t0}ms).`;
+      job.updatedAt = Date.now();
+      console.log(
+        `[Confirm Async ${jobId}] DONE ${summary.successCount}/${toShip.length} success (${Date.now() - t0}ms)`
+      );
+      setImmediate(() => {
+        void persistOrdersToDatabase(orders, confirmedRows).catch((err) => {
+          console.warn("[Confirm Async] background persist failed:", err?.message || err);
+        });
+        void syncConfirmedOrdersFromShopee(confirmedRows, shipMethod).catch((err) => {
+          console.warn("[Confirm Async] background sync failed:", err?.message || err);
+        });
+      });
+    } catch (err) {
+      job.status = "failed";
+      job.phase = "failed";
+      job.error = err?.message || String(err);
+      job.message = "L\u1ED7i n\u1ED9i b\u1ED9: " + (err?.message || String(err));
+      job.updatedAt = Date.now();
+      console.error(`[Confirm Async ${jobId}] Failed:`, err?.stack || err);
+    } finally {
+      endLogisticsWork(`confirm-async:${jobId}`);
+    }
+  };
+  const confirmOnlyAsyncRoute = async (req, res) => {
+    try {
+      pruneOldShipOrderJobs();
+      const { orderIds, orderSns, order_ids, order_sns, method } = req.body || {};
+      const shipMethod = method === "dropoff" ? "dropoff" : "pickup";
+      const idList = [
+        ...Array.isArray(orderIds) ? orderIds : [],
+        ...Array.isArray(order_ids) ? order_ids : []
+      ].map(String);
+      const snList = [
+        ...Array.isArray(orderSns) ? orderSns : [],
+        ...Array.isArray(order_sns) ? order_sns : []
+      ].map(String);
+      if (idList.length === 0 && snList.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Thi\u1EBFu danh s\xE1ch orderIds ho\u1EB7c orderSns."
+        });
+      }
+      const estimatedTotal = Math.max(
+        new Set(
+          [...idList, ...snList].map((s2) => String(s2 || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
+        ).size,
+        idList.length || snList.length
+      );
+      const jobId = createShipOrderJobId();
+      shipOrderJobs.set(jobId, {
+        id: jobId,
+        status: "pending",
+        phase: "pending",
+        message: "\u0110\xE3 ti\u1EBFp nh\u1EADn \u2014 \u0111ang x\u1EBFp h\xE0ng x\u1EED l\xFD...",
+        total: estimatedTotal,
+        completed: 0,
+        successCount: 0,
+        results: [],
+        printDocument: null,
+        orders: null,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      });
+      res.once("finish", () => {
+        setImmediate(() => {
+          void executeConfirmOnlyBackgroundJob(jobId, shipMethod, idList, snList);
+        });
+      });
+      return res.status(202).json({ accepted: true, jobId, total: estimatedTotal });
+    } catch (error) {
+      console.error("[Confirm Async] L\u1ED7i:", error?.stack || error);
+      if (!res.headersSent) {
+        return res.status(500).json({
+          success: false,
+          message: "L\u1ED7i server: " + error.message
+        });
+      }
+    }
+  };
   const getPdfRoute = async (req, res) => {
     try {
       const { orderSns } = req.body || {};
@@ -141883,6 +142109,7 @@ async function startServer() {
   app.post("/api/shopee/orders/fast-process", authMiddleware, fastProcessRouteGuard);
   app.post("/api/orders/confirm", authMiddleware, confirmOnlyRoute);
   app.post("/api/orders/batch-confirm", authMiddleware, confirmOnlyRoute);
+  app.post("/api/orders/batch-confirm-async", authMiddleware, confirmOnlyAsyncRoute);
   app.post("/api/orders/get-pdf", authMiddleware, getPdfRoute);
   app.post("/api/orders/batch-confirm-print", authMiddleware, batchConfirmPrintRoute);
   app.post("/api/orders/batch-print-only", authMiddleware, batchPrintOnlyRoute);

@@ -39,6 +39,7 @@ const LONG_RUNNING_PREFIXES = [
   'orders/pull',
   'orders/fast-process',
   'orders/batch-confirm',
+  'orders/batch-confirm-async',
   'orders/batch-confirm-print',
   'orders/batch-print-only',
   'shopee/orders/fast-process',
@@ -83,6 +84,9 @@ export function resolveProxyTimeoutMs(pathPart) {
   }
   if (p === 'orders/batch-confirm') {
     return 90_000;
+  }
+  if (p === 'orders/batch-confirm-async') {
+    return 30_000;
   }
   if (LONG_RUNNING_PREFIXES.some((prefix) => p === prefix || p.startsWith(`${prefix}/`))) {
     return 240_000;
