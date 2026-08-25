@@ -3585,6 +3585,46 @@ export default function OrderManager({
 
   // Multi-select bulk state
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
+  /**
+   * Map orderSn / orderId từ kết quả Confirm → `order.id` để checkbox tick đúng.
+   * Fallback: `shopee-{sn}` nếu đơn chưa có trong list (sau khi chuyển tab vẫn match được).
+   */
+  const resolveSelectableOrderIds = (keys: Array<string | number | undefined | null>): string[] => {
+    const want = new Set<string>();
+    for (const raw of keys || []) {
+      const s = String(raw || '').trim();
+      if (!s) continue;
+      const sn = s.replace(/^shopee-/i, '');
+      want.add(s);
+      if (sn) {
+        want.add(sn);
+        want.add(`shopee-${sn}`);
+      }
+    }
+    if (want.size === 0) return [];
+    const fromList = (ordersRef.current || [])
+      .filter((o) => {
+        const id = String(o?.id || '').trim();
+        const sn = String(o?.orderSn || '').trim();
+        return (
+          (id && want.has(id)) ||
+          (sn && (want.has(sn) || want.has(`shopee-${sn}`)))
+        );
+      })
+      .map((o) => String(o.id || '').trim())
+      .filter(Boolean);
+    if (fromList.length > 0) return [...new Set(fromList)];
+    return [
+      ...new Set(
+        [...want]
+          .map((k) => {
+            const sn = String(k || '').replace(/^shopee-/i, '').trim();
+            return sn ? `shopee-${sn}` : '';
+          })
+          .filter(Boolean),
+      ),
+    ];
+  };
   const [showBulkActionsDropdown, setShowBulkActionsDropdown] = useState(false);
   /** Tab Đơn chưa xử lý: lọc theo ĐVVC — all | spx | ghn | instant | other */
   const [selectedShippingCarrier, setSelectedShippingCarrier] =
@@ -5195,6 +5235,11 @@ export default function OrderManager({
       ordersRef.current = optimistic;
       onUpdateOrders(optimistic, { persist: false });
     }
+    // Giữ tick chọn các đơn vừa Confirm khi sang tab Đã xử lý / Chưa in.
+    const autoSelectIds = resolveSelectableOrderIds(orderSns);
+    if (autoSelectIds.length > 0) {
+      setSelectedOrderIds(autoSelectIds);
+    }
     skipNextOrdersTabFetchRef.current = true;
     React.startTransition(() => {
       setActiveSubTab('processed');
@@ -5282,7 +5327,11 @@ export default function OrderManager({
         if (optimisticTargets.length > 0) {
           void updatePrintStatusForOrders(optimisticTargets, false, { silent: true }).catch(() => {});
         }
-        setSelectedOrderIds([]);
+        // Auto-tick các đơn Confirm thành công — sẵn sàng In đơn, không cần chọn lại.
+        const autoSelectIds = resolveSelectableOrderIds(
+          summary.successfulOrderIds?.length ? summary.successfulOrderIds : successfulSns,
+        );
+        setSelectedOrderIds(autoSelectIds);
         void startSilentPdfPrefetch(successfulSns);
       }
 
