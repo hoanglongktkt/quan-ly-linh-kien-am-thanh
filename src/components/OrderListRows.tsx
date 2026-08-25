@@ -32,6 +32,7 @@ import {
   getShopeeNetRevenue,
   isShopeeEscrowSynced,
 } from '../utils/shopeeFees';
+import { getShippingCarrierBadgeMeta } from '../utils/shippingCarrier';
 import { ReturnWarehouseStatusBlock } from './ReturnWarehouseStatusBlock';
 import {
   isShopeeCancelledStatus,
@@ -160,6 +161,20 @@ function shopChannelClass(channel: Order['channel']): string {
   if (channel === 'tiktok') return 'bg-zinc-100 text-zinc-800 border border-zinc-200';
   if (channel === 'woocommerce') return 'bg-indigo-50 text-indigo-700 border border-indigo-200';
   return 'bg-blue-50 text-blue-700 border border-blue-200';
+}
+
+/** Tag ĐVVC cạnh tag shop — chỉ đọc text/render, không đụng filter. */
+function ShippingCarrierBadge({ order }: { order: Order }) {
+  const meta = getShippingCarrierBadgeMeta(order);
+  if (!meta) return null;
+  return (
+    <span
+      className={`px-2 py-0.5 text-[10px] font-bold rounded truncate max-w-[10rem] inline-block shrink-0 ${meta.className}`}
+      title={meta.label}
+    >
+      {meta.label}
+    </span>
+  );
 }
 
 function getDistinctReturnTrackingNo(order: Order): string {
@@ -376,13 +391,14 @@ export const OrderTableRow = React.memo(function OrderTableRow({
         ) : (
           <>
             <td className="p-4 space-y-1">
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span
-                  className={`px-2 py-0.5 text-[10px] font-bold rounded truncate max-w-[11rem] inline-block ${shopChannelClass(order.channel)}`}
+                  className={`px-2 py-0.5 text-[10px] font-bold rounded truncate max-w-[11rem] inline-block shrink-0 ${shopChannelClass(order.channel)}`}
                   title={shopName}
                 >
                   {shopName}
                 </span>
+                <ShippingCarrierBadge order={order} />
               </div>
               {waybill ? (
                 <div
@@ -656,13 +672,14 @@ export const OrderCardRow = React.memo(function OrderCardRow({
             className="om-mobile-hide-checkbox w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer shrink-0"
           />
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
               <span
                 className={`px-2 py-0.5 text-[10px] font-bold rounded truncate max-w-44 inline-block shrink-0 ${shopChannelClass(order.channel)}`}
                 title={shopName}
               >
                 {shopName}
               </span>
+              <ShippingCarrierBadge order={order} />
             </div>
             {waybill ? (
               <p className="font-mono font-extrabold text-gray-900 text-sm truncate mt-0.5 flex items-center gap-1" title={waybill}>

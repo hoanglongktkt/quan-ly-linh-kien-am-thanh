@@ -178,3 +178,25 @@ export function inferShippingCarrierLabel(
   }
   return undefined;
 }
+
+/** Class màu badge ĐVVC — GHN xanh lá, SPX xanh dương, còn lại cam. */
+export function getShippingCarrierBadgeClass(
+  order: Order | Record<string, unknown>,
+): string {
+  const group = getShippingCarrierGroup(order);
+  if (group === 'ghn') return 'bg-green-50 text-green-700 border border-green-200';
+  if (group === 'spx') return 'bg-blue-50 text-blue-700 border border-blue-200';
+  return 'bg-orange-50 text-orange-700 border border-orange-200';
+}
+
+/**
+ * Nhãn + màu badge ĐVVC cạnh tag shop (chỉ UI).
+ * Không có tín hiệu ĐVVC rõ → null (không render badge trống).
+ */
+export function getShippingCarrierBadgeMeta(
+  order: Order | Record<string, unknown>,
+): { label: string; className: string } | null {
+  const label = inferShippingCarrierLabel(order);
+  if (!label) return null;
+  return { label, className: getShippingCarrierBadgeClass(order) };
+}
