@@ -82617,15 +82617,46 @@ async function purgeMongoTempCollections(opts) {
   };
 }
 async function getLowStockProductsFromStore(threshold, limit = 50) {
-  requireMongo();
   const safeThreshold = Math.max(1, Math.floor(Number(threshold) || 5));
   const safeLimit = Math.max(1, Math.min(200, Math.floor(Number(limit) || 50)));
-  const toStockNum = (field) => ({
+  const MAX_COLLECT = Math.max(safeLimit * 20, 500);
+  if (isProductsDiskMode()) {
+    const products = readProductsFromDisk();
+    const flat = [];
+    for (let i2 = 0; i2 < products.length; i2++) {
+      const p = products[i2];
+      if (!p || typeof p !== "object") continue;
+      const children = Array.isArray(p.children) && p.children.length > 0 ? p.children : Array.isArray(p.children_models) && p.children_models.length > 0 ? p.children_models : null;
+      const rows = children && children.length > 0 ? children : [p];
+      for (const row of rows) {
+        if (!row || typeof row !== "object") continue;
+        const id = String(row.id || (children ? "" : p.id) || "").trim();
+        if (!id) continue;
+        const stock = Math.max(0, Math.round(Number(row.stock ?? row.current_stock) || 0));
+        if (stock >= safeThreshold) continue;
+        const image = row.avatarUrl || row.imageUrl || p.avatarUrl || p.imageUrl || null;
+        flat.push({
+          id,
+          title: String(
+            row.title || row.name || row.modelName || p.title || p.name || row.sku || id
+          ),
+          sku: String(row.sku || ""),
+          stock,
+          image: image ? String(image) : null
+        });
+        if (flat.length >= MAX_COLLECT) break;
+      }
+      if (flat.length >= MAX_COLLECT) break;
+    }
+    return flat.sort((a, b) => a.stock - b.stock || a.sku.localeCompare(b.sku)).slice(0, safeLimit);
+  }
+  requireMongo();
+  const toStockNum = (primary, fallback) => ({
     $max: [
       0,
       {
         $convert: {
-          input: { $ifNull: [field, 0] },
+          input: { $ifNull: [primary, { $ifNull: [fallback, 0] }] },
           to: "double",
           onError: 0,
           onNull: 0
@@ -82679,7 +82710,7 @@ async function getLowStockProductsFromStore(threshold, limit = 50) {
                     ]
                   },
                   sku: { $ifNull: ["$$c.sku", ""] },
-                  stock: toStockNum("$$c.stock"),
+                  stock: toStockNum("$$c.stock", "$$c.current_stock"),
                   image: {
                     $ifNull: [
                       "$$c.avatarUrl",
@@ -82703,7 +82734,7 @@ async function getLowStockProductsFromStore(threshold, limit = 50) {
                   $ifNull: ["$data.title", { $ifNull: ["$data.name", { $ifNull: ["$data.id", ""] }] }]
                 },
                 sku: { $ifNull: ["$data.sku", { $ifNull: ["$sku", ""] }] },
-                stock: toStockNum("$data.stock"),
+                stock: toStockNum("$data.stock", "$data.current_stock"),
                 image: {
                   $ifNull: ["$data.avatarUrl", { $ifNull: ["$data.imageUrl", null] }]
                 }
@@ -112758,7 +112789,25 @@ async function getDashboard(req, res) {
     const range = getDashboardDateRange(dateRange);
     const startKey = toDateKey(range.start);
     const endKey = toDateKey(range.end);
+    const LOW_STOCK_THRESHOLD = 5;
     if (!deps6.isMongoReady()) {
+      let lowStockProducts2 = [];
+      try {
+        const lowStockRows2 = await deps6.withLocalDbTimeout(
+          deps6.getLowStockProductsFromStore(LOW_STOCK_THRESHOLD, 50),
+          8e3,
+          "dashboard_low_stock"
+        );
+        lowStockProducts2 = (Array.isArray(lowStockRows2) ? lowStockRows2 : []).map((p) => ({
+          id: p.id,
+          title: p.title || p.sku || p.id,
+          sku: p.sku,
+          stock: p.stock,
+          imageUrl: p.image || null
+        }));
+      } catch (err) {
+        console.warn("[Dashboard API] low-stock (mongo not ready):", err?.message || err);
+      }
       return res.status(200).json({
         dateRange: range.key,
         dateRangeLabel: range.label,
@@ -112776,11 +112825,10 @@ async function getDashboard(req, res) {
         },
         chart: [],
         topProducts: [],
-        inventory: { lowStockThreshold: 5, lowStockProducts: [] },
+        inventory: { lowStockThreshold: LOW_STOCK_THRESHOLD, lowStockProducts: lowStockProducts2 },
         message: "mongodb_not_ready"
       });
     }
-    const LOW_STOCK_THRESHOLD = 5;
     const channelSettings = deps6.loadChannelSettings() || {};
     const systemFees = Array.isArray(channelSettings.systemFees) ? channelSettings.systemFees : [];
     const [stats, lowStockRows] = await Promise.all([

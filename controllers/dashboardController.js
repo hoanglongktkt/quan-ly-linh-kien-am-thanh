@@ -39,7 +39,27 @@ export async function getDashboard(req, res) {
     const startKey = toDateKey(range.start);
     const endKey = toDateKey(range.end);
 
+    const LOW_STOCK_THRESHOLD = 5;
+
     if (!deps.isMongoReady()) {
+      // Kho gốc có thể đang disk — vẫn trả low-stock dù Mongo orders chưa sẵn.
+      let lowStockProducts = [];
+      try {
+        const lowStockRows = await deps.withLocalDbTimeout(
+          deps.getLowStockProductsFromStore(LOW_STOCK_THRESHOLD, 50),
+          8000,
+          "dashboard_low_stock",
+        );
+        lowStockProducts = (Array.isArray(lowStockRows) ? lowStockRows : []).map((p) => ({
+          id: p.id,
+          title: p.title || p.sku || p.id,
+          sku: p.sku,
+          stock: p.stock,
+          imageUrl: p.image || null,
+        }));
+      } catch (err) {
+        console.warn("[Dashboard API] low-stock (mongo not ready):", err?.message || err);
+      }
       return res.status(200).json({
         dateRange: range.key,
         dateRangeLabel: range.label,
@@ -57,12 +77,11 @@ export async function getDashboard(req, res) {
         },
         chart: [],
         topProducts: [],
-        inventory: { lowStockThreshold: 5, lowStockProducts: [] },
+        inventory: { lowStockThreshold: LOW_STOCK_THRESHOLD, lowStockProducts },
         message: "mongodb_not_ready",
       });
     }
 
-    const LOW_STOCK_THRESHOLD = 5;
     const channelSettings = deps.loadChannelSettings() || {};
     const systemFees = Array.isArray(channelSettings.systemFees) ? channelSettings.systemFees : [];
 

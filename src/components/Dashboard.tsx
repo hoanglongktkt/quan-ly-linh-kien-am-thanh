@@ -458,8 +458,8 @@ export default function Dashboard({
       return flat.sort((a, b) => a.stock - b.stock);
     };
 
-    // API trả mảng (kể cả rỗng) khi Mongo OK — ưu tiên API.
-    // Fallback client chỉ khi đang dùng computeDashboardStats hoặc chưa có data.
+    // Ưu tiên API (đã query toàn kho disk/Mongo, không phụ thuộc phân trang FE).
+    // Client fallback chỉ khi computeDashboardStats / chưa có payload inventory.
     const base =
       Array.isArray(fromApi) && !usingFallback
         ? fromApi

@@ -8820,27 +8820,68 @@ export type DashboardLiteProduct = {
 };
 
 /**
- * Tồn kho thấp CHỈ dùng cho Dashboard — aggregate CÓ ĐIỀU KIỆN + LIMIT + SORT trong
- * MongoDB (không `find({})` rồi lọc thủ công cả kho trong Node).
- * - Ép stock về số (`$convert`) vì nhiều bản ghi lưu stock dạng string → `$lt` số bị miss.
- * - Flatten Parent→Child (`children` / `children_models`) để báo đúng SKU tồn < threshold
- *   (không chỉ nhìn `data.stock` của parent đã cộng gộp).
- * `.maxTimeMS()` tự huỷ query treo, tránh giữ connection trong pool.
+ * Tồn kho thấp CHỈ dùng cho Dashboard.
+ * - Disk (`PRODUCTS_STORAGE=disk`): đọc `data/products.json`, flatten Parent→Child, lọc + sort + limit trong Node.
+ * - Mongo: aggregate CÓ ĐIỀU KIỆN + LIMIT + SORT (không `find({})` rồi lọc cả kho).
+ * - Ép stock về số; coalesce `stock` / `current_stock` vì một số bản ghi chỉ có alias.
+ * - Flatten `children` / `children_models` để báo đúng SKU biến thể (không chỉ stock parent đã cộng gộp).
  */
 export async function getLowStockProductsFromStore(
   threshold: number,
   limit = 50,
 ): Promise<DashboardLiteProduct[]> {
-  requireMongo();
   const safeThreshold = Math.max(1, Math.floor(Number(threshold) || 5));
   const safeLimit = Math.max(1, Math.min(200, Math.floor(Number(limit) || 50)));
+  /** Trần thu thập trước khi sort — chống treo CPU khi catalog cực lớn. */
+  const MAX_COLLECT = Math.max(safeLimit * 20, 500);
 
-  const toStockNum = (field: string) => ({
+  if (isProductsDiskMode()) {
+    const products = readProductsFromDisk();
+    const flat: DashboardLiteProduct[] = [];
+    for (let i = 0; i < products.length; i++) {
+      const p = products[i];
+      if (!p || typeof p !== "object") continue;
+      const children =
+        Array.isArray(p.children) && p.children.length > 0
+          ? p.children
+          : Array.isArray(p.children_models) && p.children_models.length > 0
+            ? p.children_models
+            : null;
+      const rows = children && children.length > 0 ? children : [p];
+      for (const row of rows) {
+        if (!row || typeof row !== "object") continue;
+        const id = String(row.id || (children ? "" : p.id) || "").trim();
+        if (!id) continue;
+        const stock = Math.max(0, Math.round(Number(row.stock ?? row.current_stock) || 0));
+        if (stock >= safeThreshold) continue;
+        const image =
+          row.avatarUrl || row.imageUrl || p.avatarUrl || p.imageUrl || null;
+        flat.push({
+          id,
+          title: String(
+            row.title || row.name || row.modelName || p.title || p.name || row.sku || id,
+          ),
+          sku: String(row.sku || ""),
+          stock,
+          image: image ? String(image) : null,
+        });
+        if (flat.length >= MAX_COLLECT) break;
+      }
+      if (flat.length >= MAX_COLLECT) break;
+    }
+    return flat
+      .sort((a, b) => a.stock - b.stock || a.sku.localeCompare(b.sku))
+      .slice(0, safeLimit);
+  }
+
+  requireMongo();
+
+  const toStockNum = (primary: string, fallback: string) => ({
     $max: [
       0,
       {
         $convert: {
-          input: { $ifNull: [field, 0] },
+          input: { $ifNull: [primary, { $ifNull: [fallback, 0] }] },
           to: "double",
           onError: 0,
           onNull: 0,
@@ -8895,7 +8936,7 @@ export async function getLowStockProductsFromStore(
                     ],
                   },
                   sku: { $ifNull: ["$$c.sku", ""] },
-                  stock: toStockNum("$$c.stock"),
+                  stock: toStockNum("$$c.stock", "$$c.current_stock"),
                   image: {
                     $ifNull: [
                       "$$c.avatarUrl",
@@ -8919,7 +8960,7 @@ export async function getLowStockProductsFromStore(
                   $ifNull: ["$data.title", { $ifNull: ["$data.name", { $ifNull: ["$data.id", ""] }] }],
                 },
                 sku: { $ifNull: ["$data.sku", { $ifNull: ["$sku", ""] }] },
-                stock: toStockNum("$data.stock"),
+                stock: toStockNum("$data.stock", "$data.current_stock"),
                 image: {
                   $ifNull: ["$data.avatarUrl", { $ifNull: ["$data.imageUrl", null] }],
                 },
