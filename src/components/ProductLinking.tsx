@@ -481,6 +481,9 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedShopFilter, setSelectedShopFilter] = useState<string>('all');
   const [showShopFilterDropdown, setShowShopFilterDropdown] = useState(false);
+  // Client-side pagination — chỉ cắt mảng lúc render, không đụng API/Sync
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 50;
   
   // Chỉ giữ các thao tác live data từ Database hiện tại.
   const [isAutoLinking, setIsAutoLinking] = useState(false);
@@ -1569,6 +1572,43 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     return true;
   });
 
+  const totalPages = Math.max(1, Math.ceil(filteredListings.length / itemsPerPage));
+  const safePage = Math.min(currentPage, totalPages);
+  const paginatedListings = filteredListings.slice(
+    (safePage - 1) * itemsPerPage,
+    safePage * itemsPerPage
+  );
+
+  const renderPaginationBar = (position: 'top' | 'bottom') => (
+    <div
+      className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 bg-slate-50/60 ${
+        position === 'top' ? 'border-b border-gray-100' : 'border-t border-gray-100'
+      }`}
+    >
+      <span className="text-xs font-bold text-gray-600">
+        Trang {safePage} / {totalPages} (Tổng {filteredListings.length} sản phẩm)
+      </span>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          disabled={safePage <= 1}
+          onClick={() => setCurrentPage(safePage - 1)}
+          className="px-3 py-1.5 text-xs font-bold rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white transition-all"
+        >
+          Trang trước
+        </button>
+        <button
+          type="button"
+          disabled={safePage >= totalPages || filteredListings.length === 0}
+          onClick={() => setCurrentPage(safePage + 1)}
+          className="px-3 py-1.5 text-xs font-bold rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white transition-all"
+        >
+          Trang sau
+        </button>
+      </div>
+    </div>
+  );
+
   // Get list of unique shop names in our current listings for filter dropdown
   const uniqueShopsInListings = Array.from(new Set(listings.map(l => l.shopName)));
 
@@ -1625,7 +1665,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         {/* Connection status counters for tags */}
         <div className="flex bg-gray-100/80 p-1 rounded-xl w-full sm:w-auto">
           <button
-            onClick={() => { setActiveSubTab('all'); setSelectedListingIds([]); }}
+            onClick={() => { setActiveSubTab('all'); setSelectedListingIds([]); setCurrentPage(1); }}
             className={`flex-1 sm:flex-initial px-4 py-2 rounded-lg text-xs font-bold transition-all ${
               activeSubTab === 'all' 
                 ? 'bg-white text-blue-600 shadow-xs font-extrabold' 
@@ -1636,7 +1676,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
           </button>
           
           <button
-            onClick={() => { setActiveSubTab('success'); setSelectedListingIds([]); }}
+            onClick={() => { setActiveSubTab('success'); setSelectedListingIds([]); setCurrentPage(1); }}
             className={`flex-1 sm:flex-initial px-4 py-2 rounded-lg text-xs font-bold transition-all ${
               activeSubTab === 'success' 
                 ? 'bg-white text-emerald-600 shadow-xs font-extrabold' 
@@ -1647,7 +1687,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
           </button>
 
           <button
-            onClick={() => { setActiveSubTab('unlinked'); setSelectedListingIds([]); }}
+            onClick={() => { setActiveSubTab('unlinked'); setSelectedListingIds([]); setCurrentPage(1); }}
             className={`flex-1 sm:flex-initial px-4 py-2 rounded-lg text-xs font-bold transition-all ${
               activeSubTab === 'unlinked' 
                 ? 'bg-white text-amber-600 shadow-xs font-extrabold' 
@@ -1658,7 +1698,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
           </button>
 
           <button
-            onClick={() => { setActiveSubTab('failed'); setSelectedListingIds([]); }}
+            onClick={() => { setActiveSubTab('failed'); setSelectedListingIds([]); setCurrentPage(1); }}
             className={`flex-1 sm:flex-initial px-4 py-2 rounded-lg text-xs font-bold transition-all ${
               activeSubTab === 'failed' 
                 ? 'bg-white text-rose-600 shadow-xs font-extrabold' 
@@ -1768,7 +1808,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
             {showShopFilterDropdown && (
               <div className="absolute left-0 mt-1.5 w-56 bg-white border border-gray-100 rounded-xl shadow-lg z-20 py-1.5">
                 <button
-                  onClick={() => { setSelectedShopFilter('all'); setShowShopFilterDropdown(false); }}
+                  onClick={() => { setSelectedShopFilter('all'); setShowShopFilterDropdown(false); setCurrentPage(1); }}
                   className="w-full text-left px-4 py-2 text-xs font-bold text-gray-700 hover:bg-slate-50 flex items-center gap-2"
                 >
                   <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
@@ -1777,7 +1817,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                 {uniqueShopsInListings.map(shopName => (
                   <button
                     key={shopName}
-                    onClick={() => { setSelectedShopFilter(shopName); setShowShopFilterDropdown(false); }}
+                    onClick={() => { setSelectedShopFilter(shopName); setShowShopFilterDropdown(false); setCurrentPage(1); }}
                     className="w-full text-left px-4 py-2 text-xs font-bold text-gray-700 hover:bg-slate-50 flex items-center gap-2"
                   >
                     <span className="w-1.5 h-1.5 rounded-full bg-gray-400"></span>
@@ -1795,7 +1835,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
               type="text"
               placeholder="Tìm kiếm sản phẩm theo tên, SKU hoặc ID..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
               className="pl-9 pr-4 py-2.5 w-full bg-gray-50/50 focus:bg-white focus:ring-1 focus:ring-blue-500 text-xs font-bold text-gray-800 rounded-xl border border-gray-150 outline-none transition-all"
             />
           </div>
@@ -1816,6 +1856,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         </div>
       )}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-2xs overflow-hidden">
+        {renderPaginationBar('top')}
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
@@ -1853,7 +1894,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                   </td>
                 </tr>
               ) : (
-                filteredListings.map((item) => {
+                paginatedListings.map((item) => {
                   // Lookup hoàn toàn từ DATA model — defensive optional chaining.
                   const linked = resolveLinkedMasterFromData(item, flattenedMasterProducts);
                   const linkedTitle = linked?.title || '';
@@ -2054,6 +2095,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
             </tbody>
           </table>
         </div>
+        {renderPaginationBar('bottom')}
       </div>
 
       {/* ========================================================================= */}
