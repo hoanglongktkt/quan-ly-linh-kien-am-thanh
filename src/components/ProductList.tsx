@@ -39,6 +39,7 @@ import {
   ChevronRight,
   ChevronDown,
   Save,
+  Loader2,
   ArrowUp,
   ArrowDown,
   ArrowUpDown
@@ -220,6 +221,7 @@ export default function ProductList({
   const [activeProduct, setActiveProduct] = useState<Product | null>(null);
   const [syncingProductId, setSyncingProductId] = useState<string | null>(null);
   const [savingImportPriceId, setSavingImportPriceId] = useState<string | null>(null);
+  const [savingAllVariantsParentId, setSavingAllVariantsParentId] = useState<string | null>(null);
   const [actionToast, setActionToast] = useState<string | null>(null);
   const [actionToastOk, setActionToastOk] = useState(false);
   const [shopeeSyncError, setShopeeSyncError] = useState<string[] | null>(null);
@@ -286,6 +288,93 @@ export default function ProductList({
       showActionToast(`Lỗi: ${err?.message || 'Lưu phân loại thất bại.'}`);
     } finally {
       setSavingImportPriceId(null);
+    }
+  };
+
+  /** Lưu hàng loạt toàn bộ SKU con của 1 sản phẩm cha (không ảnh hưởng lưu lẻ từng dòng). */
+  const handleSaveAllVariants = async (parentId: string, variantsInput?: Product[]) => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) {
+      showActionToast('Chưa đăng nhập.');
+      return;
+    }
+
+    let variants: Product[] = Array.isArray(variantsInput) ? variantsInput : [];
+    if (variants.length === 0) {
+      const parent = products.find((p) => p.id === parentId);
+      variants = parent ? getProductChildren(parent) : [];
+    }
+
+    if (variants.length === 0) {
+      showActionToast('Không có phân loại nào để lưu.');
+      return;
+    }
+
+    const updates: BulkSaveProductUpdate[] = variants.map((v) => ({
+      id: v.id,
+      importPrice: Math.max(0, Math.round(Number(v.importPrice) || 0)),
+      sellingPrice: Math.max(0, Math.round(Number(v.sellingPrice) || 0)),
+      stock: Math.max(0, Math.round(Number(v.stock) || 0)),
+      sku: String(v.sku ?? '').trim(),
+    }));
+
+    setSavingAllVariantsParentId(parentId);
+    try {
+      if (onBulkSave) {
+        const ok = await onBulkSave(updates);
+        if (!ok) throw new Error('Lưu hàng loạt thất bại.');
+      } else {
+        // Fallback: gọi PATCH song song từng SKU (giới hạn batch + delay chống rate limit).
+        const BATCH = 10;
+        for (let i = 0; i < variants.length; i += BATCH) {
+          const chunk = variants.slice(i, i + BATCH);
+          await Promise.all(
+            chunk.map(async (product) => {
+              const importPrice = Math.max(0, Math.round(Number(product.importPrice) || 0));
+              const sellingPrice = Math.max(0, Math.round(Number(product.sellingPrice) || 0));
+              const stock = Math.max(0, Math.round(Number(product.stock) || 0));
+              const sku = String(product.sku ?? '').trim();
+              const response = await fetch(`/api/products/${encodeURIComponent(product.id)}`, {
+                method: 'PATCH',
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  importPrice,
+                  sellingPrice,
+                  stock,
+                  sku,
+                  shopeeItemId: product.shopeeItemId,
+                  shopeeModelId: product.shopeeModelId,
+                  shopeeId: product.shopeeId,
+                }),
+              });
+              const data = await parseJsonResponse(response);
+              if (!response.ok || data?.success === false) {
+                throw new Error(
+                  data?.error || data?.message || `Lưu thất bại: ${product.sku || product.id}`
+                );
+              }
+              onUpdateProduct({
+                ...product,
+                importPrice: Math.max(0, Math.round(Number(data?.importPrice ?? importPrice) || 0)),
+                sellingPrice: Math.max(0, Math.round(Number(data?.sellingPrice ?? sellingPrice) || 0)),
+                stock: Math.max(0, Math.round(Number(data?.stock ?? stock) || 0)),
+                sku: String(data?.sku ?? sku),
+              });
+            })
+          );
+          if (i + BATCH < variants.length) {
+            await new Promise((r) => setTimeout(r, 200));
+          }
+        }
+      }
+      showActionToast(`Đã lưu thành công ${updates.length} phân loại!`, true);
+    } catch (err: any) {
+      showActionToast(`Lỗi: ${err?.message || 'Lưu toàn bộ phân loại thất bại.'}`);
+    } finally {
+      setSavingAllVariantsParentId(null);
     }
   };
 
@@ -1376,6 +1465,24 @@ export default function ProductList({
                           >
                             <Edit3 className="w-4 h-4" />
                           </button>
+                          {group.hasVariants && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleSaveAllVariants(group.groupId, group.variants);
+                              }}
+                              disabled={savingAllVariantsParentId === group.groupId}
+                              className="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all disabled:opacity-60"
+                              title="Lưu toàn bộ phân loại"
+                              aria-label="Lưu toàn bộ"
+                            >
+                              {savingAllVariantsParentId === group.groupId ? (
+                                <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
+                              ) : (
+                                <Save className="w-4 h-4" />
+                              )}
+                            </button>
+                          )}
                           {!group.hasVariants && (
                             <button
                               onClick={(e) => {
@@ -1692,6 +1799,22 @@ export default function ProductList({
                   >
                     <Edit3 className="w-4 h-4" />
                   </button>
+                  {group.hasVariants && (
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveAllVariants(group.groupId, group.variants)}
+                      disabled={savingAllVariantsParentId === group.groupId}
+                      className="w-9 h-9 flex items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-100 shrink-0 transition-all disabled:opacity-60"
+                      title="Lưu toàn bộ phân loại"
+                      aria-label="Lưu toàn bộ"
+                    >
+                      {savingAllVariantsParentId === group.groupId ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Save className="w-4 h-4" />
+                      )}
+                    </button>
+                  )}
                 </div>
 
                 {group.hasVariants && isExpanded && (
