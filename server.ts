@@ -8847,28 +8847,49 @@ function resolveUpsertItemModelFromRow(item: any): { itemId: string; modelId: st
   return { itemId, modelId, channelId };
 }
 
+type ChannelListingUpsertStats = {
+  scanned: number;
+  newlyAdded: number;
+  skipped: number;
+  updated: number;
+  touched: number;
+};
+
 /**
  * UPSERT incremental channel_listings theo khóa item_id + model_id.
- * Có rồi → cập nhật; chưa có → thêm. Không dùng insert/create thuần (tránh duplicate crash).
+ * - skipExisting=false (mặc định): Có rồi → cập nhật; chưa có → thêm.
+ * - skipExisting=true (Tải mapping từ sàn): Có rồi → BỎ QUA (không ghi đè); chưa có → THÊM MỚI.
  * Caller phải await và yield giữa các lần gọi (xem upsertChannelListingsBatchSequential).
  */
 async function upsertChannelListingsBatch(
   batchRows: any[],
   shopId: string,
-  shopName: string
-): Promise<number> {
+  shopName: string,
+  options?: { skipExisting?: boolean },
+): Promise<ChannelListingUpsertStats> {
+  const empty: ChannelListingUpsertStats = {
+    scanned: 0,
+    newlyAdded: 0,
+    skipped: 0,
+    updated: 0,
+    touched: 0,
+  };
   try {
-    if (!Array.isArray(batchRows) || batchRows.length === 0) return 0;
+    if (!Array.isArray(batchRows) || batchRows.length === 0) return empty;
 
+    const skipExisting = options?.skipExisting === true;
     ensureDataDirs();
 
     const existing = await readChannelListingsDb();
     const byKey = new Map<string, any>();
+    const existingSkus = new Set<string>();
     for (const listing of existing) {
       if (!listing || typeof listing !== "object") continue;
       const ids = resolveUpsertItemModelFromRow(listing);
       if (!ids) continue;
       byKey.set(channelListingUpsertKey(ids.itemId, ids.modelId), listing);
+      const skuKey = normalizeSkuKey(listing?.sku);
+      if (skuKey) existingSkus.add(skuKey);
     }
 
     let flatRows: any[] = [];
@@ -8879,24 +8900,36 @@ async function upsertChannelListingsBatch(
       flatRows = batchRows.filter((r) => r != null);
     }
 
-    let saved = 0;
-    let inserted = 0;
+    let scanned = 0;
+    let newlyAdded = 0;
+    let skipped = 0;
     let updated = 0;
+    let touched = 0;
+    let dirty = false;
 
     for (const item of flatRows) {
       try {
         const ids = resolveUpsertItemModelFromRow(item);
         if (!ids) continue;
+        scanned++;
 
         const key = channelListingUpsertKey(ids.itemId, ids.modelId);
         const prev = byKey.get(key);
+        const skuKey = normalizeSkuKey(item?.sku);
+
+        // Mapping sync: bỏ qua nếu đã có theo item_id(+model_id) hoặc SKU trùng.
+        if (skipExisting && (prev || (skuKey && existingSkus.has(skuKey)))) {
+          skipped++;
+          continue;
+        }
+
         const keepExistingLink =
           prev?.status === "success" &&
           !!prev?.linkedProductId &&
           !isSyntheticShopeePullProduct({ id: prev.linkedProductId });
 
         if (prev) updated++;
-        else inserted++;
+        else newlyAdded++;
 
         byKey.set(
           key,
@@ -8916,19 +8949,25 @@ async function upsertChannelListingsBatch(
             stock: Math.max(0, Math.round(Number(item?.stock) || 0)),
             status: keepExistingLink ? "success" : prev?.status === "failed" ? "failed" : "unlinked",
             linkedProductId: keepExistingLink ? prev.linkedProductId : undefined,
-          })
+          }),
         );
-        saved++;
+        if (skuKey) existingSkus.add(skuKey);
+        touched++;
+        dirty = true;
       } catch (rowErr: unknown) {
         console.error("DB Save Error: (skip row)", rowErr);
       }
     }
 
-    await writeChannelListingsDbAsync(Array.from(byKey.values()));
+    if (dirty) {
+      await writeChannelListingsDbAsync(Array.from(byKey.values()));
+    }
     console.log(
-      `Đã lưu DB thành công — channel_listings UPSERT insert=${inserted}, update=${updated}, touched=${saved}, totalKeys=${byKey.size}`
+      `Đã lưu DB thành công — channel_listings ${skipExisting ? "INSERT_MISSING" : "UPSERT"}` +
+        ` scanned=${scanned} newlyAdded=${newlyAdded} skipped=${skipped} updated=${updated}` +
+        ` touched=${touched} totalKeys=${byKey.size}`,
     );
-    return saved;
+    return { scanned, newlyAdded, skipped, updated, touched };
   } catch (err: unknown) {
     console.error("DB Save Error:", err);
     throw err instanceof Error ? err : new Error(String(err));
@@ -8939,17 +8978,18 @@ async function upsertChannelListingsBatch(
 async function upsertChannelListingsBatchSequential(
   batchRows: any[],
   shopId: string,
-  shopName: string
-): Promise<number> {
-  const saved = await upsertChannelListingsBatch(batchRows, shopId, shopName);
+  shopName: string,
+  options?: { skipExisting?: boolean },
+): Promise<ChannelListingUpsertStats> {
+  const stats = await upsertChannelListingsBatch(batchRows, shopId, shopName, options);
   await yieldEventLoop(CHANNEL_FETCH_YIELD_MS);
-  return saved;
+  return stats;
 }
 
 /**
  * Pull 1 trang Shopee → xử lý STRICT SEQUENCE: micro-batch ≤10 id,
- * mỗi item sync + upsert DB xong 100% rồi mới sang item tiếp (có yield 50ms).
- * CẤM Promise.all / map(async).
+ * mỗi item sync + INSERT-MISSING DB xong 100% rồi mới sang item tiếp (có yield 50ms).
+ * Đã có trong mapping (item_id/SKU) → BỎ QUA, không ghi đè. CẤM Promise.all / map(async).
  */
 async function pullShopeeChannelListingsPage(
   shopId: string,
@@ -8963,11 +9003,17 @@ async function pullShopeeChannelListingsPage(
   hasMore: boolean;
   pageIndex: number;
   rowsSaved: number;
+  totalScanned: number;
+  skipped: number;
+  newlyAdded: number;
   pageStats: {
     itemsInPage: number;
     rowsInPage: number;
     variantItemCount: number;
     skippedCount: number;
+    totalScanned: number;
+    skipped: number;
+    newlyAdded: number;
   };
   skippedItems: { itemId: string; reason: string }[];
 }> {
@@ -8980,7 +9026,18 @@ async function pullShopeeChannelListingsPage(
         hasMore: false,
         pageIndex: page.pageIndex,
         rowsSaved: 0,
-        pageStats: { itemsInPage: 0, rowsInPage: 0, variantItemCount: 0, skippedCount: 0 },
+        totalScanned: 0,
+        skipped: 0,
+        newlyAdded: 0,
+        pageStats: {
+          itemsInPage: 0,
+          rowsInPage: 0,
+          variantItemCount: 0,
+          skippedCount: 0,
+          totalScanned: 0,
+          skipped: 0,
+          newlyAdded: 0,
+        },
         skippedItems: [],
       };
     }
@@ -8988,32 +9045,66 @@ async function pullShopeeChannelListingsPage(
     let rowsSaved = 0;
     let rowsInPage = 0;
     let variantItemCount = 0;
+    let totalScanned = 0;
+    let skipped = 0;
+    let newlyAdded = 0;
     const skippedItems: { itemId: string; reason: string }[] = [];
     const allIds = asShopeeArray(page.itemIds).filter((n) => Number.isFinite(Number(n)) && Number(n) > 0);
+
+    // Index item_id đã có trong mapping — bỏ qua gọi API chi tiết nếu đã tồn tại (tìm SP bị sót).
+    const existingListings = await readChannelListingsDb();
+    const existingItemIds = new Set<string>();
+    for (const listing of existingListings) {
+      const ids = resolveUpsertItemModelFromRow(listing);
+      if (ids?.itemId) existingItemIds.add(String(ids.itemId));
+    }
 
     // Micro-batch ≤10 id — tuần tự tuyệt đối, không gom cả trang vào RAM.
     for (let batchStart = 0; batchStart < allIds.length; batchStart += CHANNEL_FETCH_MICRO_BATCH) {
       const idBatch = allIds.slice(batchStart, batchStart + CHANNEL_FETCH_MICRO_BATCH);
-      const baseItems = await fetchShopeeBaseItemsByIds(shopId, accessToken, idBatch);
+      const missingIds = idBatch.filter((id) => !existingItemIds.has(String(id)));
+      const alreadyKnown = idBatch.length - missingIds.length;
+      if (alreadyKnown > 0) {
+        totalScanned += alreadyKnown;
+        skipped += alreadyKnown;
+      }
+      if (missingIds.length === 0) {
+        await yieldEventLoop(CHANNEL_FETCH_YIELD_MS);
+        continue;
+      }
+
+      const baseItems = await fetchShopeeBaseItemsByIds(shopId, accessToken, missingIds);
       await yieldEventLoop(CHANNEL_FETCH_YIELD_MS);
 
       for (const item of asShopeeArray(baseItems)) {
         if (!item || item.item_id == null) continue;
+        totalScanned += 1;
         try {
           const r = await syncShopeeItemToWarehouseRows(shopId, accessToken, item);
           if (r.error && (!r.rows || r.rows.length === 0)) {
             skippedItems.push({ itemId: String(item.item_id), reason: r.error });
+            skipped += 1;
           } else {
             if (r.modelCount > 0) variantItemCount++;
             const rows = asShopeeArray(r.rows);
             rowsInPage += rows.length;
-            // Await upsert dứt điểm TỪNG sản phẩm trước khi sang item tiếp theo.
-            rowsSaved += await upsertChannelListingsBatchSequential(rows, shopId, shopName);
+            // Chỉ THÊM MỚI — bỏ qua dòng đã có (item_id/SKU), không ghi đè.
+            const stats = await upsertChannelListingsBatchSequential(rows, shopId, shopName, {
+              skipExisting: true,
+            });
+            rowsSaved += stats.newlyAdded;
+            if (stats.newlyAdded > 0) {
+              newlyAdded += 1;
+              existingItemIds.add(String(item.item_id));
+            } else {
+              skipped += 1;
+            }
           }
         } catch (itemErr: unknown) {
           const reason = itemErr instanceof Error ? itemErr.message : String(itemErr);
           console.error(`[Shopee Channel Fetch] item_id=${item?.item_id}: ${reason}`);
           skippedItems.push({ itemId: String(item?.item_id ?? "?"), reason });
+          skipped += 1;
           try {
             await appendShopeeSyncErrorToDb({
               itemId: item?.item_id,
@@ -9032,7 +9123,8 @@ async function pullShopeeChannelListingsPage(
     }
 
     console.log(
-      `[Shopee Channel Fetch] Trang offset=${offset}: ${allIds.length} item -> ${rowsInPage} dong, da luu ${rowsSaved} vao DB (sequential)`,
+      `[Shopee Channel Fetch] Trang offset=${offset}: items=${allIds.length} rows=${rowsInPage}` +
+        ` scanned=${totalScanned} skipped=${skipped} newlyAdded=${newlyAdded}`,
     );
 
     return {
@@ -9041,11 +9133,17 @@ async function pullShopeeChannelListingsPage(
       hasMore: page.hasMore,
       pageIndex: page.pageIndex,
       rowsSaved,
+      totalScanned,
+      skipped,
+      newlyAdded,
       pageStats: {
         itemsInPage: allIds.length,
         rowsInPage,
         variantItemCount,
-        skippedCount: skippedItems.length,
+        skippedCount: skippedItems.length + skipped,
+        totalScanned,
+        skipped,
+        newlyAdded,
       },
       skippedItems,
     };

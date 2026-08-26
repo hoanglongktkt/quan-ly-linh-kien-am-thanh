@@ -121236,9 +121236,12 @@ var deps16 = {
   resolveConnectedShopDisplayName: () => "",
   pullShopeeChannelListingsPage: async () => ({
     rowsSaved: 0,
+    totalScanned: 0,
+    skipped: 0,
+    newlyAdded: 0,
     hasMore: false,
     pageIndex: 0,
-    pageStats: { rowsInPage: 0 },
+    pageStats: { rowsInPage: 0, totalScanned: 0, skipped: 0, newlyAdded: 0 },
     currentOffset: 0,
     nextOffset: null,
     skippedItems: []
@@ -122003,9 +122006,12 @@ async function syncFromShop(req, res) {
     console.log(
       `\u0110\xE3 l\u01B0u DB th\xE0nh c\xF4ng \u2014 trang offset=${offset}, listingsInDb=${listingsCount} mongo=${deps16.isMongoReady()}`
     );
+    const totalScanned = Number(pageResult.totalScanned) || 0;
+    const skipped = Number(pageResult.skipped) || 0;
+    const newlyAdded = Number(pageResult.newlyAdded) || 0;
     return res.status(200).json({
       success: true,
-      message: pageResult.rowsSaved > 0 ? `\u0110\xE3 l\u01B0u trang ${pageResult.pageIndex + 1}: ${pageResult.pageStats.rowsInPage} parent (${pageResult.rowsSaved} SKU)` : pageResult.hasMore ? "Trang tr\u1ED1ng \u2014 \u0111ang chuy\u1EC3n trang ti\u1EBFp theo" : "Ho\xE0n t\u1EA5t t\u1EA3i d\u1EEF li\u1EC7u t\u1EEB s\xE0n",
+      message: newlyAdded > 0 ? `Trang ${pageResult.pageIndex + 1}: qu\xE9t ${totalScanned}, b\u1ECF qua ${skipped} \u0111\xE3 c\xF3, th\xEAm m\u1EDBi ${newlyAdded} b\u1ECB s\xF3t` : pageResult.hasMore ? `Trang ${pageResult.pageIndex + 1}: qu\xE9t ${totalScanned}, b\u1ECF qua ${skipped} \u0111\xE3 c\xF3 \u2014 ti\u1EBFp t\u1EE5c` : `Ho\xE0n t\u1EA5t: qu\xE9t ${totalScanned}, b\u1ECF qua ${skipped} \u0111\xE3 c\xF3, th\xEAm m\u1EDBi ${newlyAdded}`,
       shopId,
       shop_id: requestedShopId,
       shopName,
@@ -122017,8 +122023,12 @@ async function syncFromShop(req, res) {
       hasMore: pageResult.hasMore,
       pageSize: deps16.SHOPEE_ITEM_LIST_PAGE_SIZE,
       pageStats: pageResult.pageStats,
-      savedCount: pageResult.rowsSaved,
-      fetchedCount: pageResult.pageStats.rowsInPage,
+      // Stats tìm sản phẩm bị sót (skip existing, không ghi đè)
+      totalScanned,
+      skipped,
+      newlyAdded,
+      savedCount: newlyAdded,
+      fetchedCount: totalScanned,
       parentCount: pageResult.pageStats.rowsInPage,
       listingsCount,
       skippedItems: pageResult.skippedItems.length > 0 ? pageResult.skippedItems.slice(0, 50) : void 0
@@ -132486,17 +132496,28 @@ function resolveUpsertItemModelFromRow(item) {
   const channelId = modelId ? `${itemId}:${modelId}` : itemId;
   return { itemId, modelId, channelId };
 }
-async function upsertChannelListingsBatch(batchRows, shopId, shopName) {
+async function upsertChannelListingsBatch(batchRows, shopId, shopName, options) {
+  const empty = {
+    scanned: 0,
+    newlyAdded: 0,
+    skipped: 0,
+    updated: 0,
+    touched: 0
+  };
   try {
-    if (!Array.isArray(batchRows) || batchRows.length === 0) return 0;
+    if (!Array.isArray(batchRows) || batchRows.length === 0) return empty;
+    const skipExisting = options?.skipExisting === true;
     ensureDataDirs();
     const existing = await readChannelListingsDb();
     const byKey = /* @__PURE__ */ new Map();
+    const existingSkus = /* @__PURE__ */ new Set();
     for (const listing of existing) {
       if (!listing || typeof listing !== "object") continue;
       const ids = resolveUpsertItemModelFromRow(listing);
       if (!ids) continue;
       byKey.set(channelListingUpsertKey(ids.itemId, ids.modelId), listing);
+      const skuKey = normalizeSkuKey(listing?.sku);
+      if (skuKey) existingSkus.add(skuKey);
     }
     let flatRows = [];
     try {
@@ -132505,18 +132526,27 @@ async function upsertChannelListingsBatch(batchRows, shopId, shopName) {
       console.error("DB Save Error:", flatErr);
       flatRows = batchRows.filter((r2) => r2 != null);
     }
-    let saved = 0;
-    let inserted = 0;
+    let scanned = 0;
+    let newlyAdded = 0;
+    let skipped = 0;
     let updated = 0;
+    let touched = 0;
+    let dirty = false;
     for (const item of flatRows) {
       try {
         const ids = resolveUpsertItemModelFromRow(item);
         if (!ids) continue;
+        scanned++;
         const key = channelListingUpsertKey(ids.itemId, ids.modelId);
         const prev = byKey.get(key);
+        const skuKey = normalizeSkuKey(item?.sku);
+        if (skipExisting && (prev || skuKey && existingSkus.has(skuKey))) {
+          skipped++;
+          continue;
+        }
         const keepExistingLink = prev?.status === "success" && !!prev?.linkedProductId && !isSyntheticShopeePullProduct({ id: prev.linkedProductId });
         if (prev) updated++;
-        else inserted++;
+        else newlyAdded++;
         byKey.set(
           key,
           sanitizeChannelListingRow({
@@ -132537,25 +132567,29 @@ async function upsertChannelListingsBatch(batchRows, shopId, shopName) {
             linkedProductId: keepExistingLink ? prev.linkedProductId : void 0
           })
         );
-        saved++;
+        if (skuKey) existingSkus.add(skuKey);
+        touched++;
+        dirty = true;
       } catch (rowErr) {
         console.error("DB Save Error: (skip row)", rowErr);
       }
     }
-    await writeChannelListingsDbAsync(Array.from(byKey.values()));
+    if (dirty) {
+      await writeChannelListingsDbAsync(Array.from(byKey.values()));
+    }
     console.log(
-      `\u0110\xE3 l\u01B0u DB th\xE0nh c\xF4ng \u2014 channel_listings UPSERT insert=${inserted}, update=${updated}, touched=${saved}, totalKeys=${byKey.size}`
+      `\u0110\xE3 l\u01B0u DB th\xE0nh c\xF4ng \u2014 channel_listings ${skipExisting ? "INSERT_MISSING" : "UPSERT"} scanned=${scanned} newlyAdded=${newlyAdded} skipped=${skipped} updated=${updated} touched=${touched} totalKeys=${byKey.size}`
     );
-    return saved;
+    return { scanned, newlyAdded, skipped, updated, touched };
   } catch (err) {
     console.error("DB Save Error:", err);
     throw err instanceof Error ? err : new Error(String(err));
   }
 }
-async function upsertChannelListingsBatchSequential(batchRows, shopId, shopName) {
-  const saved = await upsertChannelListingsBatch(batchRows, shopId, shopName);
+async function upsertChannelListingsBatchSequential(batchRows, shopId, shopName, options) {
+  const stats = await upsertChannelListingsBatch(batchRows, shopId, shopName, options);
   await yieldEventLoop(CHANNEL_FETCH_YIELD_MS);
-  return saved;
+  return stats;
 }
 async function pullShopeeChannelListingsPage(shopId, accessToken, shopName, offset, updateWindow) {
   try {
@@ -132567,35 +132601,77 @@ async function pullShopeeChannelListingsPage(shopId, accessToken, shopName, offs
         hasMore: false,
         pageIndex: page.pageIndex,
         rowsSaved: 0,
-        pageStats: { itemsInPage: 0, rowsInPage: 0, variantItemCount: 0, skippedCount: 0 },
+        totalScanned: 0,
+        skipped: 0,
+        newlyAdded: 0,
+        pageStats: {
+          itemsInPage: 0,
+          rowsInPage: 0,
+          variantItemCount: 0,
+          skippedCount: 0,
+          totalScanned: 0,
+          skipped: 0,
+          newlyAdded: 0
+        },
         skippedItems: []
       };
     }
     let rowsSaved = 0;
     let rowsInPage = 0;
     let variantItemCount = 0;
+    let totalScanned = 0;
+    let skipped = 0;
+    let newlyAdded = 0;
     const skippedItems = [];
     const allIds = asShopeeArray(page.itemIds).filter((n) => Number.isFinite(Number(n)) && Number(n) > 0);
+    const existingListings = await readChannelListingsDb();
+    const existingItemIds = /* @__PURE__ */ new Set();
+    for (const listing of existingListings) {
+      const ids = resolveUpsertItemModelFromRow(listing);
+      if (ids?.itemId) existingItemIds.add(String(ids.itemId));
+    }
     for (let batchStart = 0; batchStart < allIds.length; batchStart += CHANNEL_FETCH_MICRO_BATCH) {
       const idBatch = allIds.slice(batchStart, batchStart + CHANNEL_FETCH_MICRO_BATCH);
-      const baseItems = await fetchShopeeBaseItemsByIds(shopId, accessToken, idBatch);
+      const missingIds = idBatch.filter((id) => !existingItemIds.has(String(id)));
+      const alreadyKnown = idBatch.length - missingIds.length;
+      if (alreadyKnown > 0) {
+        totalScanned += alreadyKnown;
+        skipped += alreadyKnown;
+      }
+      if (missingIds.length === 0) {
+        await yieldEventLoop(CHANNEL_FETCH_YIELD_MS);
+        continue;
+      }
+      const baseItems = await fetchShopeeBaseItemsByIds(shopId, accessToken, missingIds);
       await yieldEventLoop(CHANNEL_FETCH_YIELD_MS);
       for (const item of asShopeeArray(baseItems)) {
         if (!item || item.item_id == null) continue;
+        totalScanned += 1;
         try {
           const r2 = await syncShopeeItemToWarehouseRows(shopId, accessToken, item);
           if (r2.error && (!r2.rows || r2.rows.length === 0)) {
             skippedItems.push({ itemId: String(item.item_id), reason: r2.error });
+            skipped += 1;
           } else {
             if (r2.modelCount > 0) variantItemCount++;
             const rows = asShopeeArray(r2.rows);
             rowsInPage += rows.length;
-            rowsSaved += await upsertChannelListingsBatchSequential(rows, shopId, shopName);
+            const stats = await upsertChannelListingsBatchSequential(rows, shopId, shopName, {
+              skipExisting: true
+            });
+            rowsSaved += stats.newlyAdded;
+            if (stats.newlyAdded > 0) {
+              newlyAdded += 1;
+              existingItemIds.add(String(item.item_id));
+            } else {
+              skipped += 1;
+            }
           }
         } catch (itemErr) {
           const reason = itemErr instanceof Error ? itemErr.message : String(itemErr);
           console.error(`[Shopee Channel Fetch] item_id=${item?.item_id}: ${reason}`);
           skippedItems.push({ itemId: String(item?.item_id ?? "?"), reason });
+          skipped += 1;
           try {
             await appendShopeeSyncErrorToDb({
               itemId: item?.item_id,
@@ -132611,7 +132687,7 @@ async function pullShopeeChannelListingsPage(shopId, accessToken, shopName, offs
       await yieldEventLoop(CHANNEL_FETCH_YIELD_MS);
     }
     console.log(
-      `[Shopee Channel Fetch] Trang offset=${offset}: ${allIds.length} item -> ${rowsInPage} dong, da luu ${rowsSaved} vao DB (sequential)`
+      `[Shopee Channel Fetch] Trang offset=${offset}: items=${allIds.length} rows=${rowsInPage} scanned=${totalScanned} skipped=${skipped} newlyAdded=${newlyAdded}`
     );
     return {
       currentOffset: offset,
@@ -132619,11 +132695,17 @@ async function pullShopeeChannelListingsPage(shopId, accessToken, shopName, offs
       hasMore: page.hasMore,
       pageIndex: page.pageIndex,
       rowsSaved,
+      totalScanned,
+      skipped,
+      newlyAdded,
       pageStats: {
         itemsInPage: allIds.length,
         rowsInPage,
         variantItemCount,
-        skippedCount: skippedItems.length
+        skippedCount: skippedItems.length + skipped,
+        totalScanned,
+        skipped,
+        newlyAdded
       },
       skippedItems
     };

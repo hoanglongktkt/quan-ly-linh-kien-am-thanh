@@ -636,6 +636,13 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   const [syncShopId, setSyncShopId] = useState('');
   const [syncTimeRange, setSyncTimeRange] = useState<'all' | '24h'>('24h');
   const [isFetchingFromChannel, setIsFetchingFromChannel] = useState(false);
+  const [syncProgress, setSyncProgress] = useState({
+    page: 0,
+    totalScanned: 0,
+    skipped: 0,
+    newlyAdded: 0,
+  });
+  const [syncResultMessage, setSyncResultMessage] = useState<string | null>(null);
   const syncPlatformShops = useMemo(
     () => shops.filter((shop) => shop.connected && shop.platform === syncPlatform),
     [shops, syncPlatform]
@@ -654,6 +661,8 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   const handleOpenSyncModal = () => {
     setSyncPlatform('shopee');
     setSyncTimeRange('24h');
+    setSyncProgress({ page: 0, totalScanned: 0, skipped: 0, newlyAdded: 0 });
+    setSyncResultMessage(null);
     setShowSyncModal(true);
   };
 
@@ -666,6 +675,8 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     }
 
     setIsFetchingFromChannel(true);
+    setSyncResultMessage(null);
+    setSyncProgress({ page: 0, totalScanned: 0, skipped: 0, newlyAdded: 0 });
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 600000);
 
@@ -676,13 +687,22 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       let offset = 0;
       let hasMore = true;
       let pageIndex = 0;
-      let totalSaved = 0;
+      let totalScanned = 0;
+      let totalSkipped = 0;
+      let totalNewlyAdded = 0;
       let lastListingsCount = 0;
       const maxPages = 200;
       const syncTo = Math.floor(Date.now() / 1000);
 
       while (hasMore && pageIndex < maxPages) {
         pageIndex += 1;
+        setSyncProgress({
+          page: pageIndex,
+          totalScanned,
+          skipped: totalSkipped,
+          newlyAdded: totalNewlyAdded,
+        });
+
         const res = await apiFetch('/api/sync-from-shop', {
           method: 'POST',
           signal: controller.signal,
@@ -704,6 +724,9 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
           listingsCount?: number;
           hasMore?: boolean;
           nextOffset?: number | null;
+          totalScanned?: number;
+          skipped?: number;
+          newlyAdded?: number;
           message?: string;
           error?: string;
         }>(res);
@@ -714,8 +737,21 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
           );
         }
 
-        totalSaved += Number(data.savedCount || data.fetchedCount || 0);
+        const pageScanned = Number(data.totalScanned ?? data.fetchedCount ?? 0) || 0;
+        const pageSkipped = Number(data.skipped ?? 0) || 0;
+        const pageAdded = Number(data.newlyAdded ?? data.savedCount ?? 0) || 0;
+        totalScanned += pageScanned;
+        totalSkipped += pageSkipped;
+        totalNewlyAdded += pageAdded;
         lastListingsCount = Number(data.listingsCount || lastListingsCount);
+
+        setSyncProgress({
+          page: pageIndex,
+          totalScanned,
+          skipped: totalSkipped,
+          newlyAdded: totalNewlyAdded,
+        });
+
         hasMore = data.hasMore === true;
         offset = data.nextOffset != null ? Number(data.nextOffset) : offset;
         if (!hasMore) break;
@@ -726,20 +762,26 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       if (onRefreshProducts) await onRefreshProducts({ forceRefresh: true });
       void loadMasterCatalog();
 
-      const count = lastListingsCount || totalSaved;
-      const rangeLabel = syncTimeRange === 'all' ? 'toàn thời gian' : '24h qua';
-      showToast(
-        `Đã tải ${rangeLabel}: ${pageIndex} trang — lưu DB thành công ${count} sản phẩm từ Shopee`
-      );
+      const resultText =
+        `Hoàn tất! Đã quét ${totalScanned} sản phẩm. ` +
+        `Bỏ qua ${totalSkipped} sản phẩm đã có. ` +
+        `Thêm mới ${totalNewlyAdded} sản phẩm bị sót.`;
+      setSyncResultMessage(resultText);
+      showToast(resultText);
       onAddLog({
         id: `log-${Date.now()}`,
         timestamp: new Date().toISOString(),
         channel: 'shopee',
         type: 'product_sync',
         status: 'success',
-        message: `Tải ${rangeLabel}, ${pageIndex} trang (${count} dòng) từ gian hàng [${shop.shopName}]`,
+        message:
+          `Tải mapping [${shop.shopName}]: quét ${totalScanned}, bỏ qua ${totalSkipped}, thêm mới ${totalNewlyAdded}` +
+          ` (${pageIndex} trang, listings=${lastListingsCount})`,
       });
+      // Giữ modal ~1.2s để user thấy kết quả trước khi đóng
+      await new Promise<void>((resolve) => setTimeout(resolve, 1200));
       setShowSyncModal(false);
+      setSyncResultMessage(null);
     } catch (err: unknown) {
       const e = err as { name?: string; message?: string };
       const rawMsg = String(e?.message || '');
@@ -1638,7 +1680,11 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
             {isFetchingFromChannel ? (
               <>
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>Đang tải...</span>
+                <span>
+                  {syncProgress.totalScanned > 0
+                    ? `Đang tải ${syncProgress.totalScanned} SP (mới ${syncProgress.newlyAdded})…`
+                    : 'Đang quét dữ liệu từ sàn…'}
+                </span>
               </>
             ) : (
               <>
@@ -2262,6 +2308,29 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                   Tính năng chưa tích hợp API
                 </div>
               )}
+
+              {isFetchingFromChannel && (
+                <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl space-y-1.5">
+                  <p className="text-xs font-extrabold text-blue-800 flex items-center gap-1.5">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    Đang quét dữ liệu từ sàn…
+                    {syncProgress.page > 0 ? ` (trang ${syncProgress.page})` : ''}
+                  </p>
+                  <p className="text-[11px] font-semibold text-blue-700">
+                    Đã quét {syncProgress.totalScanned} · Bỏ qua {syncProgress.skipped} đã có · Thêm mới{' '}
+                    {syncProgress.newlyAdded}
+                  </p>
+                </div>
+              )}
+
+              {syncResultMessage && !isFetchingFromChannel && (
+                <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl">
+                  <p className="text-xs font-extrabold text-emerald-800 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    {syncResultMessage}
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="px-5 py-4 bg-slate-50 border-t border-gray-100 flex justify-end gap-3">
@@ -2279,8 +2348,19 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                 disabled={!syncShopId || isFetchingFromChannel || syncPlatform === 'tiktok'}
                 className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white font-extrabold text-xs rounded-xl flex items-center gap-1.5"
               >
-                <ArrowDownToLine className="w-3.5 h-3.5" />
-                {isFetchingFromChannel ? 'Đang tải...' : 'Bắt đầu tải'}
+                {isFetchingFromChannel ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    {syncProgress.totalScanned > 0
+                      ? `Đang tải ${syncProgress.totalScanned}…`
+                      : 'Đang quét…'}
+                  </>
+                ) : (
+                  <>
+                    <ArrowDownToLine className="w-3.5 h-3.5" />
+                    Bắt đầu tải
+                  </>
+                )}
               </button>
             </div>
           </div>

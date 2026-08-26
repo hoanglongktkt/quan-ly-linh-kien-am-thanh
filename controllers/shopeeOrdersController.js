@@ -69,9 +69,12 @@ let deps = {
   resolveConnectedShopDisplayName: () => "",
   pullShopeeChannelListingsPage: async () => ({
     rowsSaved: 0,
+    totalScanned: 0,
+    skipped: 0,
+    newlyAdded: 0,
     hasMore: false,
     pageIndex: 0,
-    pageStats: { rowsInPage: 0 },
+    pageStats: { rowsInPage: 0, totalScanned: 0, skipped: 0, newlyAdded: 0 },
     currentOffset: 0,
     nextOffset: null,
     skippedItems: [],
@@ -983,14 +986,18 @@ export async function syncFromShop(req, res) {
       `Đã lưu DB thành công — trang offset=${offset}, listingsInDb=${listingsCount} mongo=${deps.isMongoReady()}`,
     );
 
+    const totalScanned = Number(pageResult.totalScanned) || 0;
+    const skipped = Number(pageResult.skipped) || 0;
+    const newlyAdded = Number(pageResult.newlyAdded) || 0;
+
     return res.status(200).json({
       success: true,
       message:
-        pageResult.rowsSaved > 0
-          ? `Đã lưu trang ${pageResult.pageIndex + 1}: ${pageResult.pageStats.rowsInPage} parent (${pageResult.rowsSaved} SKU)`
+        newlyAdded > 0
+          ? `Trang ${pageResult.pageIndex + 1}: quét ${totalScanned}, bỏ qua ${skipped} đã có, thêm mới ${newlyAdded} bị sót`
           : pageResult.hasMore
-            ? "Trang trống — đang chuyển trang tiếp theo"
-            : "Hoàn tất tải dữ liệu từ sàn",
+            ? `Trang ${pageResult.pageIndex + 1}: quét ${totalScanned}, bỏ qua ${skipped} đã có — tiếp tục`
+            : `Hoàn tất: quét ${totalScanned}, bỏ qua ${skipped} đã có, thêm mới ${newlyAdded}`,
       shopId,
       shop_id: requestedShopId,
       shopName,
@@ -1002,8 +1009,12 @@ export async function syncFromShop(req, res) {
       hasMore: pageResult.hasMore,
       pageSize: deps.SHOPEE_ITEM_LIST_PAGE_SIZE,
       pageStats: pageResult.pageStats,
-      savedCount: pageResult.rowsSaved,
-      fetchedCount: pageResult.pageStats.rowsInPage,
+      // Stats tìm sản phẩm bị sót (skip existing, không ghi đè)
+      totalScanned,
+      skipped,
+      newlyAdded,
+      savedCount: newlyAdded,
+      fetchedCount: totalScanned,
       parentCount: pageResult.pageStats.rowsInPage,
       listingsCount,
       skippedItems:
