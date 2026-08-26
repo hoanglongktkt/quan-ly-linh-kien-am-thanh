@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Product, ConnectedShop, SyncLog, Supplier, BulkSaveProductUpdate, SystemFee, getProductChildren } from '../types';
 import ProductDetailModal, {
   buildProductGroups,
@@ -81,6 +81,31 @@ interface ProductListProps {
 
 function calculateEstimatedProductProfit(product: Product, systemFees: SystemFee[]): number {
   return calculateProfitWithSystemFees(product.sellingPrice, product.importPrice, systemFees);
+}
+
+/**
+ * Map Shop ID → tên hiển thị trên toast đồng bộ thành công.
+ * Thêm cặp ID mới tại đây khi có shop khác.
+ */
+const SHOPEE_SYNC_SUCCESS_SHOP_NAMES: Record<string, string> = {
+  '831052930': 'ÂM THANH',
+  '4127421': 'LK AT',
+};
+
+function resolveShopeeSyncShopName(shopId: string): string {
+  return SHOPEE_SYNC_SUCCESS_SHOP_NAMES[shopId] || `Shop ${shopId}`;
+}
+
+/** Đổi `[831052930] ...` thành toast thân thiện với tên shop. */
+function formatShopeeSyncSuccessToast(shopeeMessage?: string | null): string {
+  const raw = String(shopeeMessage ?? '');
+  const ids = [...raw.matchAll(/\[(\d+)\]/g)].map((m) => m[1]);
+  const uniqueIds = [...new Set(ids)];
+  if (uniqueIds.length === 0) {
+    return 'Đồng bộ Shopee thành công! Đã cập nhật giá và tồn kho.';
+  }
+  const names = uniqueIds.map(resolveShopeeSyncShopName).join(', ');
+  return `Đồng bộ Shopee (${names}) thành công! Đã cập nhật giá và tồn kho.`;
 }
 
 export default function ProductList({ 
@@ -198,11 +223,16 @@ export default function ProductList({
   const [actionToast, setActionToast] = useState<string | null>(null);
   const [actionToastOk, setActionToastOk] = useState(false);
   const [shopeeSyncError, setShopeeSyncError] = useState<string[] | null>(null);
+  const actionToastTimerRef = useRef<number | null>(null);
 
-  const showActionToast = (message: string, ok = false) => {
+  const showActionToast = (message: string, ok = false, durationMs = 4500) => {
     setActionToastOk(ok);
     setActionToast(message);
-    setTimeout(() => setActionToast(null), 4500);
+    if (actionToastTimerRef.current) window.clearTimeout(actionToastTimerRef.current);
+    actionToastTimerRef.current = window.setTimeout(() => {
+      setActionToast(null);
+      actionToastTimerRef.current = null;
+    }, durationMs);
   };
 
   const handleSaveImportPrice = async (product: Product) => {
@@ -285,6 +315,10 @@ export default function ProductList({
     }
     setSyncingProductId(productId);
     setShopeeSyncError(null);
+    if (actionToastTimerRef.current) {
+      window.clearTimeout(actionToastTimerRef.current);
+      actionToastTimerRef.current = null;
+    }
     setActionToastOk(false);
     setActionToast('Đang đồng bộ giá và tồn kho lên Shopee...');
     try {
@@ -302,12 +336,7 @@ export default function ProductList({
       if (!response.ok || data?.success === false) {
         throw new Error(data?.error || data?.message || data?.shopeeMessage || `Đồng bộ Shopee thất bại (HTTP ${response.status})`);
       }
-      showActionToast(
-        data?.shopeeMessage
-          ? `Đồng bộ Shopee thành công! ${data.shopeeMessage}`
-          : 'Đồng bộ Shopee thành công!',
-        true
-      );
+      showActionToast(formatShopeeSyncSuccessToast(data?.shopeeMessage), true, 3000);
       onAddLog({
         id: `sync-${Date.now()}`,
         timestamp: new Date().toISOString(),
@@ -873,14 +902,29 @@ export default function ProductList({
         </div>
       )}
       {actionToast && (
-        <div className="fixed top-5 right-5 z-50 bg-slate-900 text-white font-bold text-xs px-5 py-3 rounded-2xl shadow-2xl border border-slate-700 flex items-center gap-2 max-w-sm">
+        <div
+          className={`fixed top-5 right-5 z-50 text-white font-bold text-xs px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-2 max-w-sm ${
+            actionToastOk
+              ? 'bg-blue-600 border border-blue-500'
+              : 'bg-slate-900 border border-slate-700'
+          }`}
+        >
           {actionToastOk ? (
-            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <CheckCircle2 className="w-4 h-4 text-white shrink-0" />
           ) : (
             <RefreshCw className={`w-4 h-4 shrink-0 ${syncingProductId || savingImportPriceId ? 'animate-spin text-orange-400' : 'text-orange-400'}`} />
           )}
           <span>{actionToast}</span>
-          <button onClick={() => setActionToast(null)} className="ml-1 text-gray-400 hover:text-white cursor-pointer">
+          <button
+            onClick={() => {
+              if (actionToastTimerRef.current) {
+                window.clearTimeout(actionToastTimerRef.current);
+                actionToastTimerRef.current = null;
+              }
+              setActionToast(null);
+            }}
+            className="ml-1 text-white/70 hover:text-white cursor-pointer"
+          >
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
