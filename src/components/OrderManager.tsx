@@ -75,6 +75,7 @@ import {
   ArrowRight, 
   AlertCircle, 
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   CheckSquare,
   Square,
@@ -7256,7 +7257,7 @@ export default function OrderManager({
 
   return (
     <div
-      className="space-y-6 max-md:space-y-4 om-orders-page relative"
+      className="space-y-6 max-md:space-y-2 om-orders-page relative"
       onTouchStart={handlePullTouchStart}
       onTouchMove={handlePullTouchMove}
       onTouchEnd={() => void handlePullTouchEnd()}
@@ -8095,26 +8096,26 @@ export default function OrderManager({
 
       {/* 6. MAIN LIST / AGGREGATED PRODUCTS */}
       {activeSubTab === 'order_products' ? (
-        <div className="bg-white rounded-3xl border border-gray-100 shadow-xs overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100 bg-violet-50/40">
+        <div className="bg-white rounded-xl md:rounded-3xl border border-gray-100 shadow-xs overflow-hidden">
+          <div className="px-3 py-3 md:px-5 md:py-4 border-b border-gray-100 bg-violet-50/40">
             <h3 className="text-sm font-extrabold text-gray-900 flex items-center gap-2">
               <Layers className="w-4 h-4 text-violet-600" />
               Những sản phẩm có trong đơn
             </h3>
-            <p className="text-[11px] text-gray-500 mt-1">
+            <p className="text-[11px] text-gray-500 mt-1 max-md:leading-snug">
               Tổng hợp từ <strong>Chờ xác nhận</strong>, <strong>Đơn chưa xử lý</strong> và <strong>Chờ lấy hàng (Đã xử lý)</strong>
             </p>
           </div>
 
           {fulfillmentProductsLoading ? (
-            <div className="py-20 text-center text-gray-400 text-sm flex flex-col items-center gap-3 px-4">
-              <RefreshCw className="w-10 h-10 text-slate-300 animate-spin" />
-              <span className="font-semibold text-slate-600">Đang tổng hợp sản phẩm từ 3 tab kho...</span>
+            <div className="py-10 md:py-20 text-center text-gray-400 text-sm flex flex-col items-center gap-2 md:gap-3 px-3 md:px-4">
+              <RefreshCw className="w-8 h-8 md:w-10 md:h-10 text-slate-300 animate-spin" />
+              <span className="font-semibold text-slate-600 text-xs md:text-sm">Đang tổng hợp sản phẩm từ 3 tab kho...</span>
             </div>
           ) : aggregatedOrderProducts.length === 0 ? (
-            <div className="py-20 text-center text-gray-400 text-sm flex flex-col items-center gap-3 px-4">
-              <Package className="w-12 h-12 text-slate-200" />
-              <span className="font-semibold text-slate-600">Không có sản phẩm nào cần chuẩn bị</span>
+            <div className="py-10 md:py-20 text-center text-gray-400 text-sm flex flex-col items-center gap-2 md:gap-3 px-3 md:px-4">
+              <Package className="w-8 h-8 md:w-12 md:h-12 text-slate-200" />
+              <span className="font-semibold text-slate-600 text-xs md:text-sm">Không có sản phẩm nào cần chuẩn bị</span>
             </div>
           ) : (
             <>
@@ -8165,16 +8166,16 @@ export default function OrderManager({
               {useOrderCardList && (
               <div className="om-order-card-list om-order-card-list-mounted app-wide-card-grid divide-y divide-gray-100 max-md:divide-y">
                 {aggregatedOrderProducts.map((item) => (
-                  <div key={item.groupKey} className="flex items-center gap-3 p-4 max-md:border-0">
+                  <div key={item.groupKey} className="flex items-center gap-2.5 md:gap-3 p-3 md:p-4 max-md:border-0">
                     {item.productImage ? (
                       <img
                         src={item.productImage}
                         alt=""
-                        className="w-12 h-12 rounded-xl object-cover border border-gray-100 shrink-0"
+                        className="w-11 h-11 md:w-12 md:h-12 rounded-xl object-cover border border-gray-100 shrink-0"
                         referrerPolicy="no-referrer"
                       />
                     ) : (
-                      <div className="w-12 h-12 rounded-xl bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0">
+                      <div className="w-11 h-11 md:w-12 md:h-12 rounded-xl bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0">
                         <ImageOff className="w-4 h-4 text-gray-400" />
                       </div>
                     )}
@@ -8195,17 +8196,19 @@ export default function OrderManager({
           )}
         </div>
       ) : (
-      <div className="bg-white rounded-3xl border border-gray-100 shadow-xs overflow-hidden">
+      <div className="bg-white rounded-xl md:rounded-3xl border border-gray-100 shadow-xs overflow-hidden">
         {ordersLoading ? (
-          <div className="py-20 text-center text-gray-400 text-xs flex flex-col items-center gap-3">
-            <RefreshCw className="w-10 h-10 text-slate-300 animate-spin" />
+          <div className="py-10 md:py-20 text-center text-gray-400 text-xs flex flex-col items-center gap-2 md:gap-3 px-3">
+            <RefreshCw className="w-8 h-8 md:w-10 md:h-10 text-slate-300 animate-spin" />
             <span className="font-semibold text-slate-600">Đang tải danh sách đơn hàng...</span>
           </div>
         ) : displayOrders.length === 0 ? (
-          <div className="py-20 text-center text-gray-400 text-xs flex flex-col items-center gap-3">
-            <ShoppingBag className="w-12 h-12 text-slate-200" />
-            <span className="font-semibold text-slate-600">Không tìm thấy đơn hàng nào khớp với điều kiện lọc</span>
-            <p className="text-[11px] text-gray-400 max-w-sm leading-relaxed">
+          <div className="py-8 md:py-20 text-center text-gray-400 text-xs flex flex-col items-center gap-2 md:gap-3 px-3 md:px-4">
+            <ShoppingBag className="w-8 h-8 md:w-12 md:h-12 text-slate-200" />
+            <span className="font-semibold text-slate-600 text-xs md:text-sm leading-snug">
+              Không tìm thấy đơn hàng nào khớp với điều kiện lọc
+            </span>
+            <p className="text-[11px] text-gray-400 max-w-sm leading-snug md:leading-relaxed">
               {activeSubTab === 'external_orders'
                 ? 'Chưa có đơn ngoại sàn. Bấm “Tạo đơn hàng ngoài sàn” để lên đơn GHN/SPX.'
                 : 'Hãy thay đổi bộ lọc sàn TMĐT hoặc chuyển sang các tab khác như "Đơn chưa xử lý" để xem thêm.'}
@@ -8322,20 +8325,28 @@ export default function OrderManager({
         )}
 
         {(listPagingTotal > 0 || displayOrders.length > 0) && (
-          <div className="px-4 py-3 bg-slate-50/80 border-t border-gray-100 flex flex-wrap items-center justify-end gap-3 text-xs text-gray-600">
-            <span>
+          <div className="px-3 py-2.5 md:px-4 md:py-3 bg-slate-50/80 border-t border-gray-100 flex flex-col md:flex-row md:flex-wrap items-stretch md:items-center md:justify-end gap-2 md:gap-3 text-xs text-gray-600">
+            <span className="text-center md:text-left leading-snug">
               Trang <b>{ordersMeta?.page ?? currentPage}</b>/{listPagingPages}
-              {' — '}
-              {displayOrders.length}/{listPagingTotal} đơn (mỗi trang {ORDERS_PAGE_SIZE})
+              <span className="max-md:hidden">
+                {' — '}
+                {displayOrders.length}/{listPagingTotal} đơn (mỗi trang {ORDERS_PAGE_SIZE})
+              </span>
+              <span className="md:hidden text-gray-500">
+                {' · '}
+                {displayOrders.length}/{listPagingTotal} đơn
+              </span>
             </span>
-            <div className="flex items-center gap-2">
+            <div className="grid grid-cols-2 md:flex md:items-center gap-2">
               <button
                 type="button"
                 disabled={ordersLoading || currentPage <= 1}
                 onClick={() => goToOrdersPage(currentPage - 1)}
-                className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 font-semibold cursor-pointer"
+                className="min-h-11 md:min-h-0 px-3 py-2 md:py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 font-semibold cursor-pointer inline-flex items-center justify-center gap-1"
               >
-                Trang trước
+                <ChevronLeft className="w-4 h-4 md:hidden shrink-0" />
+                <span className="md:hidden">Trước</span>
+                <span className="max-md:hidden">Trang trước</span>
               </button>
               <button
                 type="button"
@@ -8343,9 +8354,11 @@ export default function OrderManager({
                   ordersLoading || currentPage >= listPagingPages
                 }
                 onClick={() => goToOrdersPage(currentPage + 1)}
-                className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 font-semibold cursor-pointer"
+                className="min-h-11 md:min-h-0 px-3 py-2 md:py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 font-semibold cursor-pointer inline-flex items-center justify-center gap-1"
               >
-                Trang sau
+                <span className="md:hidden">Sau</span>
+                <span className="max-md:hidden">Trang sau</span>
+                <ChevronRight className="w-4 h-4 md:hidden shrink-0" />
               </button>
             </div>
           </div>

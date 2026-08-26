@@ -663,8 +663,8 @@ export const OrderCardRow = React.memo(function OrderCardRow({
 
   return (
     <div className={`w-full transition-colors ${isChecked ? 'bg-blue-50/20' : 'bg-white'}`}>
-      <div className="om-order-card-row flex flex-col lg:flex-row lg:items-center gap-3 lg:gap-4 p-4 w-full">
-        <div className="flex items-center gap-2 shrink-0 lg:min-w-[11rem]">
+      <div className="om-order-card-row flex flex-col lg:flex-row lg:items-center gap-2 md:gap-3 lg:gap-4 p-3 md:p-4 w-full">
+        <div className="flex items-center gap-2 shrink-0 lg:min-w-[11rem] min-w-0">
           <input
             type="checkbox"
             checked={isChecked}
@@ -711,9 +711,9 @@ export const OrderCardRow = React.memo(function OrderCardRow({
           <OrderItemsCell order={order} compactTitle />
         </div>
 
-        <div className="flex flex-wrap items-center gap-3 lg:gap-4 shrink-0 lg:ml-auto">
-          <div className="flex flex-col items-end gap-2">
-            <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2 md:gap-3 lg:gap-4 shrink-0 lg:ml-auto">
+          <div className="flex flex-col items-end gap-1.5 md:gap-2">
+            <div className="flex flex-col gap-1.5 md:gap-2">
               <div className="text-xs">
                 <span className="text-gray-400 text-[9px] block uppercase font-bold tracking-wider">Tổng thanh toán</span>
                 <span className="font-black text-slate-900 text-sm whitespace-nowrap">

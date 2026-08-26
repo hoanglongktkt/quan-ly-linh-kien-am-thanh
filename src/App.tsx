@@ -2410,7 +2410,7 @@ export default function App() {
         </header>
 
         {/* Active Tab rendering */}
-        <div className={`app-main-container app-page-content app-scroll-list ${activeTab === 'picking' ? 'max-md:pt-1 max-md:px-2' : activeTab === 'products' ? 'max-md:pt-1 max-md:px-2' : 'max-md:pt-2 max-md:px-3'} ${activeTab === 'dashboard' ? 'px-4 pt-3 pb-24 md:px-6 md:pt-4 md:pb-6' : 'p-4 md:p-6 pb-24 md:pb-6'}`}>
+        <div className={`app-main-container app-page-content app-scroll-list ${activeTab === 'picking' || activeTab === 'products' || activeTab === 'orders' ? 'max-md:pt-1 max-md:px-2' : 'max-md:pt-2 max-md:px-3'} ${activeTab === 'dashboard' ? 'px-4 pt-3 pb-24 md:px-6 md:pt-4 md:pb-6' : 'p-4 md:p-6 pb-24 md:pb-6'}`}>
           {activeTab === 'dashboard' && (
             <ErrorBoundary label="Tổng quan">
               <Dashboard
