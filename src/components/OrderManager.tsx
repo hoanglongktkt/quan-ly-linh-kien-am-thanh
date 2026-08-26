@@ -5640,7 +5640,7 @@ export default function OrderManager({
   const runBatchPrintOnly = async (
     orderSnsInput: string[],
     opts?: { logTag?: string },
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     const orderSns = [
       ...new Set(
         orderSnsInput.map((sn) => String(sn || '').replace(/^shopee-/i, '').trim()).filter(Boolean),
@@ -5648,7 +5648,7 @@ export default function OrderManager({
     ];
     if (!orderSns.length) {
       showToast('Không tìm thấy mã đơn hợp lệ.');
-      return;
+      return false;
     }
 
     const logTag = opts?.logTag || 'IN LẠI';
@@ -5703,10 +5703,12 @@ export default function OrderManager({
             status: 'success',
             message: `[${logTag}] ${data.pdfCount} đơn → ${data.filename}`,
           });
+          return true;
         } else {
           closeReservedPrintWindow(reservedPrintWindow);
           showToast(`In gộp thất bại: ${data.message || 'Lỗi không xác định'}`);
           clearShipProgressOverlay();
+          return false;
         }
       } catch (fetchErr: any) {
         window.clearTimeout(timeoutId);
@@ -5717,12 +5719,14 @@ export default function OrderManager({
           throw fetchErr;
         }
         clearShipProgressOverlay();
+        return false;
       }
     } catch (err) {
       closeReservedPrintWindow(reservedPrintWindow);
       console.error('[BatchPrintOnly] Error:', err);
       showToast('Không thể kết nối API in gộp. Vui lòng thử lại.');
       clearShipProgressOverlay();
+      return false;
     }
   };
 
@@ -5741,7 +5745,20 @@ export default function OrderManager({
     setShipJobResults([]);
 
     try {
-      await runBatchPrintOnly(orderSns, { logTag: 'IN TỪ MODAL XÁC NHẬN' });
+      const printedOk = await runBatchPrintOnly(orderSns, { logTag: 'IN TỪ MODAL XÁC NHẬN' });
+      // Đánh dấu Đã in cho các đơn Thành công (cùng logic nút "Đánh dấu đã in")
+      if (printedOk && orderSns.length > 0) {
+        const markTargets: Order[] = orderSns.map((sn) => {
+          const key = sn.toLowerCase();
+          const found = ordersRef.current.find((o) => {
+            const oSn = String(o.orderSn || '').replace(/^shopee-/i, '').trim().toLowerCase();
+            const oId = String(o.id || '').replace(/^shopee-/i, '').trim().toLowerCase();
+            return oSn === key || oId === key;
+          });
+          return (found || { id: `shopee-${sn}`, orderSn: sn }) as Order;
+        });
+        markPrintedOnLocalPdfOpen(markTargets);
+      }
     } finally {
       setIsPrintingFromSummary(false);
     }
