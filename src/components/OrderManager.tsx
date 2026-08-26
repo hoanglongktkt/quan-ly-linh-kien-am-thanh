@@ -1819,12 +1819,25 @@ export default function OrderManager({
     }
   }, [activeSubTab]);
 
-  /** Tab Đơn chưa xử lý: luôn mặc định GHN — tránh xác nhận loạt nhầm toàn bộ ĐVVC. */
+  /**
+   * Tab Đơn chưa xử lý: PC mặc định GHN (panel ĐVVC hiện — tránh xác nhận loạt nhầm).
+   * Mobile: panel `.om-orders-filters-panel` bị ẩn → luôn `'all'` để list khớp badge tab.
+   * Chỉ reset `'all'` khi rời unprocessed (tránh kẹt GHN trên Chờ lấy hàng).
+   */
+  const prevOrdersSubTabRef = useRef(activeSubTab);
   useEffect(() => {
-    if (activeSubTab !== 'unprocessed') return;
-    setSelectedShippingCarrier('ghn');
-    setSelectedOrderIds([]);
-  }, [activeSubTab]);
+    const prev = prevOrdersSubTabRef.current;
+    prevOrdersSubTabRef.current = activeSubTab;
+
+    if (activeSubTab === 'unprocessed') {
+      setSelectedShippingCarrier(isMobileViewport ? 'all' : 'ghn');
+      setSelectedOrderIds([]);
+      return;
+    }
+    if (prev === 'unprocessed') {
+      setSelectedShippingCarrier('all');
+    }
+  }, [activeSubTab, isMobileViewport]);
 
   // Sync URL khi đổi tab / nhóm Hủy-Hoàn — không fetch (tránh abort list khi bấm sub-tab).
   useEffect(() => {
@@ -3627,9 +3640,14 @@ export default function OrderManager({
     ];
   };
   const [showBulkActionsDropdown, setShowBulkActionsDropdown] = useState(false);
-  /** Tab Đơn chưa xử lý: lọc theo ĐVVC — all | spx | ghn | instant | other */
+  /**
+   * Lọc ĐVVC: all | spx | ghn | instant | other.
+   * PC + unprocessed → GHN; Mobile / tab khác → all (panel lọc mobile bị ẩn).
+   */
   const [selectedShippingCarrier, setSelectedShippingCarrier] =
-    useState<ShippingCarrierFilter>(() => (activeSubTab === 'unprocessed' ? 'ghn' : 'all'));
+    useState<ShippingCarrierFilter>(
+      activeSubTab === 'unprocessed' && !isMobileViewport ? 'ghn' : 'all',
+    );
 
   // Detail Modal & Bulk Print Modal
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
@@ -6050,6 +6068,8 @@ export default function OrderManager({
     return ordersPoolBeforeCarrier
       .filter((order) => {
         if (searchQuery.trim()) return true;
+        // Mobile ẩn panel ĐVVC — không áp filter carrier (tránh Empty State giả).
+        if (isMobileViewport) return true;
         return orderMatchesShippingCarrierFilter(order, selectedShippingCarrier);
       })
       .sort((a, b) => {
@@ -6067,6 +6087,7 @@ export default function OrderManager({
     selectedSort,
     activeSubTab,
     cancelReturnTab,
+    isMobileViewport,
   ]);
 
   const filteredOrders = useMemo(() => {
