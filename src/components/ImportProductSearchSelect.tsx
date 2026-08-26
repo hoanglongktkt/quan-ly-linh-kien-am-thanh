@@ -42,6 +42,7 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
     const [remoteProducts, setRemoteProducts] = useState<Product[]>([]);
     const [searching, setSearching] = useState(false);
     const [showQuickAdd, setShowQuickAdd] = useState(false);
+    const [checkedProducts, setCheckedProducts] = useState<Product[]>([]);
     const rootRef = useRef<HTMLDivElement>(null);
     const listRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
@@ -70,11 +71,20 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
       const onDocClick = (e: MouseEvent) => {
         if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
           setOpen(false);
+          setCheckedProducts([]);
         }
       };
       document.addEventListener('mousedown', onDocClick);
       return () => document.removeEventListener('mousedown', onDocClick);
     }, [showDropdown]);
+
+    // Loại bỏ khỏi danh sách tích chọn các SP đã nằm trong bảng nhập
+    useEffect(() => {
+      setCheckedProducts((prev) => {
+        const next = prev.filter((p) => !excludeSet.has(p.id));
+        return next.length === prev.length ? prev : next;
+      });
+    }, [excludeSet]);
 
     useEffect(() => {
       if (!showDropdown || !listRef.current) return;
@@ -91,6 +101,7 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
         setRemoteProducts([]);
         setSearching(false);
         setOpen(false);
+        setCheckedProducts([]);
         return;
       }
 
@@ -166,11 +177,34 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
       setQuery('');
       setOpen(false);
       setRemoteProducts([]);
+      setCheckedProducts([]);
+      setTimeout(() => inputRef.current?.focus(), 50);
+    };
+
+    const toggleChecked = (p: Product) => {
+      setCheckedProducts((prev) => {
+        if (prev.some((x) => x.id === p.id)) {
+          return prev.filter((x) => x.id !== p.id);
+        }
+        return [...prev, p];
+      });
+    };
+
+    const confirmMultiSelect = () => {
+      if (checkedProducts.length === 0) return;
+      for (const p of checkedProducts) {
+        onSelect(p);
+      }
+      setCheckedProducts([]);
+      setQuery('');
+      setOpen(false);
+      setRemoteProducts([]);
       setTimeout(() => inputRef.current?.focus(), 50);
     };
 
     const openQuickAdd = () => {
       setOpen(false);
+      setCheckedProducts([]);
       setShowQuickAdd(true);
     };
 
@@ -247,16 +281,35 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
                     {filtered.map((p, idx) => {
                       const img = getProductImage(p);
                       const isActive = idx === highlightIndex;
+                      const isChecked = checkedProducts.some((x) => x.id === p.id);
                       return (
-                        <button
+                        <div
                           key={p.id}
-                          type="button"
+                          role="button"
+                          tabIndex={-1}
                           onMouseEnter={() => setHighlightIndex(idx)}
                           onClick={() => selectProduct(p)}
-                          className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left border-b border-gray-50 last:border-b-0 transition-colors ${
+                          className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left border-b border-gray-50 last:border-b-0 transition-colors cursor-pointer ${
                             isActive ? 'bg-indigo-50/80' : 'hover:bg-gray-50'
-                          }`}
+                          } ${isChecked ? 'bg-indigo-50/40' : ''}`}
                         >
+                          <label
+                            className="shrink-0 flex items-center justify-center p-0.5 cursor-pointer"
+                            onClick={(e) => e.stopPropagation()}
+                            onMouseDown={(e) => e.stopPropagation()}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={(e) => {
+                                e.stopPropagation();
+                                toggleChecked(p);
+                              }}
+                              onClick={(e) => e.stopPropagation()}
+                              className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+                              aria-label={`Chọn ${p.sku || p.title}`}
+                            />
+                          </label>
                           {img ? (
                             <img
                               src={img}
@@ -287,18 +340,28 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
                               <span className="font-bold text-gray-600">{Number(p.stock) || 0}</span>
                             </p>
                           </div>
-                        </button>
+                        </div>
                       );
                     })}
                   </div>
-                  <button
-                    type="button"
-                    onClick={openQuickAdd}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-t border-emerald-100 transition-colors"
-                  >
-                    <Plus className="w-4 h-4" />
-                    Thêm sản phẩm mới
-                  </button>
+                  {checkedProducts.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={confirmMultiSelect}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 border-t border-indigo-500 transition-colors"
+                    >
+                      Chọn nhiều sản phẩm ({checkedProducts.length})
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={openQuickAdd}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-t border-emerald-100 transition-colors"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Thêm sản phẩm mới
+                    </button>
+                  )}
                 </>
               )}
             </div>
