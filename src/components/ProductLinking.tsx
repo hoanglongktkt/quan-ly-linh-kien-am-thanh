@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Product, SyncLog, ConnectedShop } from '../types';
 import { parseJsonResponse, apiFetch } from '../utils/apiClient';
+import { normalizeProductSearchText } from '../utils/productSearch';
 import { 
   Check, 
   AlertCircle, 
@@ -1628,25 +1629,17 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     }
   };
 
-  // Master product search in manual mapping modal (toàn bộ kho gốc qua sku-index)
-  const normalizedSearch = normalizeSKU(mappingSearch);
-  const searchRaw = String(mappingSearch || '').trim().toLowerCase();
+  // Master product search in manual mapping modal — khớp 1 chiều: title/SKU chứa từ khóa (không reverse-includes).
+  const mappingSearchNorm = normalizeProductSearchText(mappingSearch);
   const filteredMasterProducts = (() => {
     const matched = flattenedMasterProducts.filter((p) => {
-      if (!searchRaw) return true;
-      const titleMatch = String(p.title || '')
-        .trim()
-        .toLowerCase()
-        .includes(searchRaw);
-      const rawSku = String(p.sku || '').trim().toLowerCase();
-      const normalizedSku = normalizeSKU(p.sku);
-      const skuMatch = rawSku.includes(searchRaw) || searchRaw.includes(rawSku);
-      const normalizedSkuMatch = normalizedSearch
-        ? normalizedSku.includes(normalizedSearch) || normalizedSearch.includes(normalizedSku)
-        : false;
-      return titleMatch || skuMatch || normalizedSkuMatch;
+      if (!mappingSearchNorm) return true;
+      const titleNorm = normalizeProductSearchText(p.title);
+      const skuNorm = normalizeProductSearchText(p.sku);
+      // Chỉ giữ khi TÊN hoặc SKU chứa từ khóa — tuyệt đối không match vì SKU ngắn nằm trong chuỗi tìm kiếm.
+      return titleNorm.includes(mappingSearchNorm) || skuNorm.includes(mappingSearchNorm);
     });
-    return matched.slice(0, searchRaw ? 80 : 30);
+    return matched.slice(0, mappingSearchNorm ? 80 : 30);
   })();
 
   return (
