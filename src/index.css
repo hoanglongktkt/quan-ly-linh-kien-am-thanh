@@ -26,6 +26,15 @@ body {
   overflow: visible !important;
 }
 
+/* Ẩn thanh cuộn nhưng vẫn vuốt/scroll được (mobile tabs, v.v.) */
+.scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
 /* ── Layout: PC 32" (≥1440px) + Điện thoại (≤768px) ── */
 .app-main-container {
   width: 100%;
@@ -303,12 +312,27 @@ body {
     display: none !important;
   }
 
+  /* Tab đơn hàng: cuộn ngang trên mobile, ẩn scrollbar */
   .om-orders-sub-tabs {
     margin-top: 0 !important;
-    flex-direction: column !important;
-    gap: 0.5rem !important;
-    border-bottom: none !important;
-    padding: 0.5rem !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch;
+    gap: 0.25rem !important;
+    border-bottom: 1px solid rgb(229 231 235) !important;
+    padding: 0.25rem !important;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .om-orders-sub-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .om-orders-sub-tabs > button {
+    flex-shrink: 0 !important;
+    white-space: nowrap !important;
   }
 
   .om-orders-mobile-hide-subtab,
@@ -318,14 +342,17 @@ body {
   }
 
   .om-orders-sub-tabs .om-orders-mobile-show-subtab {
-    width: 100%;
-    justify-content: space-between;
+    width: auto;
+    flex-shrink: 0;
+    justify-content: center;
     border-radius: 0.75rem;
     border: 1px solid rgb(243 244 246);
     border-bottom-width: 1px !important;
     text-transform: none;
     letter-spacing: normal;
-    min-height: 48px;
+    min-height: 44px;
+    padding-left: 0.875rem;
+    padding-right: 0.875rem;
   }
 
   .om-orders-sub-tabs .om-orders-mobile-show-subtab[class*='border-blue-600'] {

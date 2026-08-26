@@ -232,6 +232,12 @@ function resolveOrdersFetchKindFromUrl(): string {
   return '';
 }
 
+/** Mobile viewport — khớp breakpoint Tailwind `md` (768px). */
+function isMobileViewport(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.innerWidth < 768;
+}
+
 function resolveTabFromPath(): string {
   if (typeof window === 'undefined') return 'dashboard';
   const path = window.location.pathname.replace(/\/$/, '') || '/';
@@ -246,10 +252,18 @@ function resolveTabFromPath(): string {
   if (qTab && MAIN_NAV_TABS.has(qTab)) return qTab;
   if (params.get('ordersTab') || params.get('subtab')) return 'orders';
 
+  // Mobile vào root `/` (không có ?tab=) → mặc định Quản lý đơn hàng
+  const isBareRoot =
+    path === '/' && !qTab && !params.get('ordersTab') && !params.get('subtab');
+  if (isBareRoot && isMobileViewport()) {
+    return 'orders';
+  }
+
   const stored = readSessionTab('omni_active_tab');
   if (stored && MAIN_NAV_TABS.has(stored)) return stored;
 
-  return 'dashboard';
+  // PC: Tổng quan · Mobile: Quản lý đơn hàng
+  return isMobileViewport() ? 'orders' : 'dashboard';
 }
 
 function buildNavUrl(tab: string, ordersSubTab?: string | null): string {
@@ -531,6 +545,7 @@ export default function App() {
   }, []);
 
   // Chuẩn hóa URL khi F5 vào tab đã lưu (vd: ?tab=da-giao-dvvc → ?tab=orders&ordersTab=handed_over_carrier)
+  // Mobile + root `/` không có ?tab= → redirect sang Quản lý đơn hàng
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const path = window.location.pathname.replace(/\/$/, '') || '/';
@@ -538,13 +553,25 @@ export default function App() {
       writeSessionTab('omni_active_tab', 'picking');
       return;
     }
-    const sub = activeTab === 'orders' ? ordersSubTabHint || resolveOrdersSubTabFromUrl() : null;
-    const nextUrl = buildNavUrl(activeTab, sub);
+
+    const params = new URLSearchParams(window.location.search);
+    const hasExplicitTab =
+      Boolean(params.get('tab')) ||
+      Boolean(params.get('ordersTab')) ||
+      Boolean(params.get('subtab'));
+    let tab = activeTab;
+    if (path === '/' && !hasExplicitTab && isMobileViewport()) {
+      tab = 'orders';
+      if (activeTab !== 'orders') setActiveTab('orders');
+    }
+
+    const sub = tab === 'orders' ? ordersSubTabHint || resolveOrdersSubTabFromUrl() : null;
+    const nextUrl = buildNavUrl(tab, sub);
     const cur = `${window.location.pathname}${window.location.search}`;
     if (cur !== nextUrl) {
-      window.history.replaceState({ tab: activeTab, ordersTab: sub }, '', nextUrl);
+      window.history.replaceState({ tab, ordersTab: sub }, '', nextUrl);
     }
-    writeSessionTab('omni_active_tab', activeTab);
+    writeSessionTab('omni_active_tab', tab);
     if (sub) writeSessionTab('omni_orders_subtab', sub);
   }, []);
 

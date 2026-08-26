@@ -7634,7 +7634,7 @@ export default function OrderManager({
       )}
 
       {/* 2. SUB-TABS: Horizontal scrollable subtabs with counts — orders[] từ App.fetchOrders → GET /api/orders (cùng origin). Không import mock JSON. */}
-      <div className="om-orders-sub-tabs border-b border-gray-200 flex flex-wrap gap-1 bg-white p-1 rounded-xl">
+      <div className="om-orders-sub-tabs border-b border-gray-200 flex flex-nowrap md:flex-wrap overflow-x-auto md:overflow-x-visible gap-1 bg-white p-1 rounded-xl whitespace-nowrap md:whitespace-normal scrollbar-hide">
         <button
           onClick={() => selectOrdersSubTab('all')}
           className={`om-orders-mobile-hide-subtab px-4 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer ${
