@@ -682,6 +682,20 @@ export default function App() {
     const flightKey = `page:${page}|limit:${limit}|print:${printStatus || 'all'}|tab:${tab || 'all'}|q:${q || ''}|kind:${kind || 'all'}|shops:${shopKey}|from:${startDate || ''}|to:${endDate || ''}`;
     const tabCacheKey = `tab:${tab || 'all'}|kind:${kind || 'all'}|q:${q || ''}|shops:${shopKey}|from:${startDate || ''}|to:${endDate || ''}|page:${page}|limit:${limit}`;
 
+    /** SWR sớm: đổi sub-tab hiện cache ngay (kể cả khi fetch đang xếp hàng) — không spinner trắng. */
+    let usedTabCache = false;
+    if (!silent && !merge) {
+      const cached = ordersTabCacheRef.current.get(tabCacheKey);
+      if (cached && Array.isArray(cached.orders)) {
+        usedTabCache = true;
+        setOrders(cached.orders);
+        setOrdersMeta(cached.meta);
+        ordersHydrateRef.current = cached.orders;
+        setHasLoadedOrdersOnce(true);
+        setOrdersLoading(false);
+      }
+    }
+
     // Silent không được hủy request đang hiện spinner (P0 race: bootstrap abort tab fetch).
     if (silent && !force && fetchOrdersNonSilentInFlightRef.current > 0) {
       return fetchOrdersInFlightRef.current?.promise;
@@ -762,19 +776,7 @@ export default function App() {
     let requestTimeoutId: number | undefined;
     let didIncNonSilent = false;
     let aborted = false;
-    /** Có cache tab → hiện data cũ ngay, không spinner trắng (SWR). */
-    let usedTabCache = false;
     try {
-      if (!silent && !merge) {
-        const cached = ordersTabCacheRef.current.get(tabCacheKey);
-        if (cached && Array.isArray(cached.orders)) {
-          usedTabCache = true;
-          setOrders(cached.orders);
-          setOrdersMeta(cached.meta);
-          ordersHydrateRef.current = cached.orders;
-          setHasLoadedOrdersOnce(true);
-        }
-      }
       if (!silent) {
         fetchOrdersNonSilentInFlightRef.current += 1;
         didIncNonSilent = true;
@@ -1170,6 +1172,8 @@ export default function App() {
 
     const refreshFromLocalDb = async () => {
       if (document.visibilityState === 'hidden') return;
+      // Tab Đơn hàng: OrderManager đã có SSE + counter — tránh /refresh chồng poll.
+      if (activeTab === 'orders') return;
       const now = Date.now();
       if (now - lastFocusRefreshAtRef.current < FOCUS_REFRESH_COOLDOWN_MS) return;
       lastFocusRefreshAtRef.current = now;

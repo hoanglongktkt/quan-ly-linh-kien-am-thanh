@@ -809,8 +809,11 @@ interface OrderManagerProps {
 }
 
 const ORDERS_PAGE_SIZE = 50;
-const SCAN_BG_STATUS_POLL_MS = 15_000;
-const COUNTER_POLL_MS = 20_000;
+/** Có mã đang dò ngầm — poll nhanh hơn. */
+const SCAN_BG_STATUS_POLL_MS = 30_000;
+/** Không pending / unnotified — nới chu kỳ để giảm spam Network. */
+const SCAN_BG_STATUS_IDLE_POLL_MS = 60_000;
+const COUNTER_POLL_MS = 45_000;
 
 function cancelReturnKindParam(tab: CancelReturnTab): string | undefined {
   if (tab === 'all') return undefined;
@@ -1504,6 +1507,11 @@ export default function OrderManager({
     };
     const poll = async () => {
       if (cancelled) return;
+      // Sync burst đang chạy → bỏ tick counter (tránh /counter chồng).
+      if (syncPollTimerRef.current != null) {
+        schedule(COUNTER_POLL_MS);
+        return;
+      }
       if (document.visibilityState !== 'hidden') {
         const counts = await fetchOrderCounts();
         if (!cancelled && counts) {
@@ -3010,21 +3018,22 @@ export default function OrderManager({
     let timer: number | null = null;
     let abortCtrl: AbortController | null = null;
     let inFlight = false;
-    const schedule = () => {
+    const schedule = (delayMs: number = SCAN_BG_STATUS_POLL_MS) => {
       if (cancelled) return;
       timer = window.setTimeout(() => {
         void poll();
-      }, SCAN_BG_STATUS_POLL_MS);
+      }, delayMs);
     };
     const poll = async () => {
       if (cancelled || inFlight) return;
       if (document.visibilityState === 'hidden') {
-        schedule();
+        schedule(SCAN_BG_STATUS_IDLE_POLL_MS);
         return;
       }
       inFlight = true;
       abortCtrl = new AbortController();
       const signal = abortCtrl.signal;
+      let nextDelay = SCAN_BG_STATUS_IDLE_POLL_MS;
       try {
         const status = await fetchScanBgStatus(signal);
         if (cancelled || !status) return;
@@ -3033,6 +3042,11 @@ export default function OrderManager({
         setScanBgPendingCount(status.pendingCount || 0);
 
         const unnotified = status.unnotified || [];
+        const pending = Number(status.pendingCount) || 0;
+        nextDelay =
+          pending > 0 || unnotified.length > 0
+            ? SCAN_BG_STATUS_POLL_MS
+            : SCAN_BG_STATUS_IDLE_POLL_MS;
         if (unnotified.length > 0) {
           const toast = formatScanBgToast(status.summary);
           if (toast) {
@@ -3061,7 +3075,7 @@ export default function OrderManager({
         }
       } finally {
         inFlight = false;
-        schedule();
+        schedule(nextDelay);
       }
     };
     void poll();
