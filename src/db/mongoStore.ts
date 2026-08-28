@@ -2087,23 +2087,46 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       $set["data.shopee_cancel_return_kind"] = cancelKind;
     }
     const subStatus = String(order.sub_status || "").trim().toUpperCase();
+    const derivedSub =
+      cancelKind === "cancelled"
+        ? "CANCELLED"
+        : cancelKind === "failed_delivery"
+          ? "RTS"
+          : cancelKind === "refund_return"
+            ? "RETURN"
+            : subStatus;
     if (
       !clearCancelledReturn &&
-      (subStatus === "RTS" || subStatus === "CANCELLED" || subStatus === "RETURN")
+      (derivedSub === "RTS" || derivedSub === "CANCELLED" || derivedSub === "RETURN")
     ) {
-      $set.sub_status = subStatus;
-      $set["data.sub_status"] = subStatus;
+      $set.sub_status = derivedSub;
+      $set["data.sub_status"] = derivedSub;
     }
-    if (order.is_rts === true || cancelKind === "failed_delivery" || subStatus === "RTS") {
+    if (cancelKind === "cancelled") {
+      $set.is_rts = false;
+      $set["data.is_rts"] = false;
+      $set.is_return = false;
+      $set["data.is_return"] = false;
+      $unset.is_return_received = 1;
+      $unset["data.is_return_received"] = 1;
+      $unset.local_return_status = 1;
+      $unset["data.local_return_status"] = 1;
+      $unset.warehouse_return_received = 1;
+      $unset["data.warehouse_return_received"] = 1;
+      $unset.isWarehouseReturnReceived = 1;
+      $unset["data.isWarehouseReturnReceived"] = 1;
+    } else if (cancelKind === "failed_delivery") {
       $set.is_rts = true;
       $set["data.is_rts"] = true;
     } else if (
       order.is_rts === false ||
-      cancelKind === "cancelled" ||
       cancelKind === "refund_return"
     ) {
       $set.is_rts = false;
       $set["data.is_rts"] = false;
+    } else if (order.is_rts === true) {
+      $set.is_rts = true;
+      $set["data.is_rts"] = true;
     }
     if (order.return_alert_pending === true) {
       $set.return_alert_pending = true;
@@ -3111,9 +3134,29 @@ export async function markOrderLocalStatusInStore(
     $set["data.stock_restored"] = true;
     $set["data.stock_restored_at"] = restoredAt;
   }
+  const $unset: Record<string, 1> = {};
   if (status === "RETURN_RECEIVED") {
     $set.status = "return_received";
     $set["data.status"] = "return_received";
+  } else if (status === "CANCELLED_STORED") {
+    $set.is_rts = false;
+    $set["data.is_rts"] = false;
+    $set.is_return = false;
+    $set["data.is_return"] = false;
+    $set.sub_status = "CANCELLED";
+    $set["data.sub_status"] = "CANCELLED";
+    $unset.is_return_received = 1;
+    $unset["data.is_return_received"] = 1;
+    $unset.local_return_status = 1;
+    $unset["data.local_return_status"] = 1;
+    $unset.warehouse_return_received = 1;
+    $unset["data.warehouse_return_received"] = 1;
+    $unset.isWarehouseReturnReceived = 1;
+    $unset["data.isWarehouseReturnReceived"] = 1;
+    if (meta?.status) {
+      $set.status = String(meta.status);
+      $set["data.status"] = String(meta.status);
+    }
   } else if (meta?.status) {
     $set.status = String(meta.status);
     $set["data.status"] = String(meta.status);
@@ -3127,6 +3170,7 @@ export async function markOrderLocalStatusInStore(
     buildOrderCompoundFilter(sn, _id, shopIdStr),
     {
       $set,
+      ...(Object.keys($unset).length ? { $unset } : {}),
       $setOnInsert: {
         _id,
         orderSn: sn,
@@ -6516,6 +6560,16 @@ export async function reclassifyCancelReturnsInStore(opts?: {
           $set["data.sub_status"] = sub;
         }
         const $unset: Record<string, 1> = {};
+        if (kind === "cancelled") {
+          $unset.is_return_received = 1;
+          $unset["data.is_return_received"] = 1;
+          $unset.local_return_status = 1;
+          $unset["data.local_return_status"] = 1;
+          $unset.warehouse_return_received = 1;
+          $unset["data.warehouse_return_received"] = 1;
+          $unset.isWarehouseReturnReceived = 1;
+          $unset["data.isWarehouseReturnReceived"] = 1;
+        }
         if (clearReturn) {
           $unset.return_sn = 1;
           $unset["data.return_sn"] = 1;

@@ -1251,15 +1251,22 @@ function applyShopeeCancelReturnClassification(order: any, detail?: any): void {
   }
   const kind = classifyShopeeCancelReturnKind(order);
   if (kind) order.shopee_cancel_return_kind = kind;
-  const sub = resolveShopeeSubStatus(kind);
-  if (sub) order.sub_status = sub;
-  order.is_rts = kind === "failed_delivery";
-  order.is_return = kind === "refund_return";
-  // Hủy chưa giao: refund tiền ≠ trả hàng — gỡ leftover return_sn từ get_return_list.
-  if (kind === "cancelled" && isUnshippedShopeeCancel(order)) {
+  if (kind === "cancelled") {
+    order.is_rts = false;
     order.is_return = false;
-    order.return_sn = "";
-    order._clear_return_sn = true;
+    order.sub_status = "CANCELLED";
+    order.is_return_received = false;
+    order.local_return_status = "";
+    // Hủy chưa giao: refund tiền ≠ trả hàng — gỡ leftover return_sn từ get_return_list.
+    if (isUnshippedShopeeCancel(order)) {
+      order.return_sn = "";
+      order._clear_return_sn = true;
+    }
+  } else {
+    const sub = resolveShopeeSubStatus(kind);
+    if (sub) order.sub_status = sub;
+    order.is_rts = kind === "failed_delivery";
+    order.is_return = kind === "refund_return";
   }
 }
 

@@ -35,6 +35,8 @@ import {
 import { getShippingCarrierBadgeMeta } from '../utils/shippingCarrier';
 import { ReturnWarehouseStatusBlock } from './ReturnWarehouseStatusBlock';
 import {
+  classifyShopeeCancelReturnKind,
+  isPureUnshippedCancel,
   isShopeeCancelledStatus,
   shouldShowAwaitingShopeeTracking,
 } from '../utils/shopeeCancelReturnClassify';
@@ -196,7 +198,12 @@ function ReturnTrackingLine({ order }: { order: Order }) {
 }
 
 function isCancelReturnGroupTab(tab: string): boolean {
-  return tab === 'cancel_returns';
+  return tab === 'cancel_returns' || tab === 'received_cancel_returns';
+}
+
+/** Đơn Hủy thuần — ẩn mọi tag giao hàng / hoàn hàng. */
+function isPureCancelledOrder(order: Order): boolean {
+  return classifyShopeeCancelReturnKind(order) === 'cancelled' || isPureUnshippedCancel(order);
 }
 
 /** Badge trạng thái giao hàng — đọc raw Shopee, không phải nút thao tác tay. */
@@ -207,6 +214,8 @@ function DeliveryStatusBadge({
   order: Order;
   size?: 'sm' | 'md';
 }) {
+  if (isPureCancelledOrder(order)) return null;
+
   const raw = getShopeeOrderRawStatus(order);
   const sub = String(order.sub_status || '').toUpperCase();
   const kind = String(order.shopee_cancel_return_kind || '').toLowerCase();
@@ -222,9 +231,6 @@ function DeliveryStatusBadge({
     label = 'Đã giao';
     colorCls = 'bg-emerald-50 text-emerald-700 border border-emerald-200';
   } else if (
-    raw === 'TO_RETURN' ||
-    raw === 'CANCELLED' ||
-    raw === 'IN_CANCEL' ||
     raw === 'RTS' ||
     sub === 'RTS' ||
     order.is_rts === true ||
@@ -460,14 +466,7 @@ export const OrderTableRow = React.memo(function OrderTableRow({
                   onConfirm={actions.onConfirmReturn}
                 />
               ) : (
-                <>
-                  <DeliveryStatusBadge order={order} />
-                  {activeSubTab === 'received_cancel_returns' && (
-                    <span className="inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border bg-teal-50 text-teal-700 border-teal-200">
-                      Đã nhận hoàn
-                    </span>
-                  )}
-                </>
+                <DeliveryStatusBadge order={order} />
               )}
             </td>
             <td className="p-4 text-center">
@@ -756,14 +755,7 @@ export const OrderCardRow = React.memo(function OrderCardRow({
               In nhanh
             </button>
           ) : activeSubTab === 'return_requests' || isCancelReturnGroupTab(activeSubTab) ? null : (
-            <>
-              <DeliveryStatusBadge order={order} size="md" />
-              {activeSubTab === 'received_cancel_returns' && (
-                <span className="inline-block px-2 py-0.5 text-[9px] font-black rounded-full border shrink-0 bg-teal-50 text-teal-700 border-teal-200">
-                  Đã nhận hoàn
-                </span>
-              )}
-            </>
+            <DeliveryStatusBadge order={order} size="md" />
           )}
 
           {!isCancelReturnGroupTab(activeSubTab) && (

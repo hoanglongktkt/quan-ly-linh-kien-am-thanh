@@ -77740,16 +77740,33 @@ async function bulkUpsertOrdersToStore(orders) {
       $set["data.shopee_cancel_return_kind"] = cancelKind;
     }
     const subStatus = String(order.sub_status || "").trim().toUpperCase();
-    if (!clearCancelledReturn && (subStatus === "RTS" || subStatus === "CANCELLED" || subStatus === "RETURN")) {
-      $set.sub_status = subStatus;
-      $set["data.sub_status"] = subStatus;
+    const derivedSub = cancelKind === "cancelled" ? "CANCELLED" : cancelKind === "failed_delivery" ? "RTS" : cancelKind === "refund_return" ? "RETURN" : subStatus;
+    if (!clearCancelledReturn && (derivedSub === "RTS" || derivedSub === "CANCELLED" || derivedSub === "RETURN")) {
+      $set.sub_status = derivedSub;
+      $set["data.sub_status"] = derivedSub;
     }
-    if (order.is_rts === true || cancelKind === "failed_delivery" || subStatus === "RTS") {
-      $set.is_rts = true;
-      $set["data.is_rts"] = true;
-    } else if (order.is_rts === false || cancelKind === "cancelled" || cancelKind === "refund_return") {
+    if (cancelKind === "cancelled") {
       $set.is_rts = false;
       $set["data.is_rts"] = false;
+      $set.is_return = false;
+      $set["data.is_return"] = false;
+      $unset.is_return_received = 1;
+      $unset["data.is_return_received"] = 1;
+      $unset.local_return_status = 1;
+      $unset["data.local_return_status"] = 1;
+      $unset.warehouse_return_received = 1;
+      $unset["data.warehouse_return_received"] = 1;
+      $unset.isWarehouseReturnReceived = 1;
+      $unset["data.isWarehouseReturnReceived"] = 1;
+    } else if (cancelKind === "failed_delivery") {
+      $set.is_rts = true;
+      $set["data.is_rts"] = true;
+    } else if (order.is_rts === false || cancelKind === "refund_return") {
+      $set.is_rts = false;
+      $set["data.is_rts"] = false;
+    } else if (order.is_rts === true) {
+      $set.is_rts = true;
+      $set["data.is_rts"] = true;
     }
     if (order.return_alert_pending === true) {
       $set.return_alert_pending = true;
@@ -78558,9 +78575,29 @@ async function markOrderLocalStatusInStore(orderSn, localStatus, meta) {
     $set["data.stock_restored"] = true;
     $set["data.stock_restored_at"] = restoredAt;
   }
+  const $unset = {};
   if (status === "RETURN_RECEIVED") {
     $set.status = "return_received";
     $set["data.status"] = "return_received";
+  } else if (status === "CANCELLED_STORED") {
+    $set.is_rts = false;
+    $set["data.is_rts"] = false;
+    $set.is_return = false;
+    $set["data.is_return"] = false;
+    $set.sub_status = "CANCELLED";
+    $set["data.sub_status"] = "CANCELLED";
+    $unset.is_return_received = 1;
+    $unset["data.is_return_received"] = 1;
+    $unset.local_return_status = 1;
+    $unset["data.local_return_status"] = 1;
+    $unset.warehouse_return_received = 1;
+    $unset["data.warehouse_return_received"] = 1;
+    $unset.isWarehouseReturnReceived = 1;
+    $unset["data.isWarehouseReturnReceived"] = 1;
+    if (meta?.status) {
+      $set.status = String(meta.status);
+      $set["data.status"] = String(meta.status);
+    }
   } else if (meta?.status) {
     $set.status = String(meta.status);
     $set["data.status"] = String(meta.status);
@@ -78573,6 +78610,7 @@ async function markOrderLocalStatusInStore(orderSn, localStatus, meta) {
     buildOrderCompoundFilter(sn, _id, shopIdStr),
     {
       $set,
+      ...Object.keys($unset).length ? { $unset } : {},
       $setOnInsert: {
         _id,
         orderSn: sn,
@@ -80930,6 +80968,16 @@ async function reclassifyCancelReturnsInStore(opts) {
           $set["data.sub_status"] = sub;
         }
         const $unset = {};
+        if (kind === "cancelled") {
+          $unset.is_return_received = 1;
+          $unset["data.is_return_received"] = 1;
+          $unset.local_return_status = 1;
+          $unset["data.local_return_status"] = 1;
+          $unset.warehouse_return_received = 1;
+          $unset["data.warehouse_return_received"] = 1;
+          $unset.isWarehouseReturnReceived = 1;
+          $unset["data.isWarehouseReturnReceived"] = 1;
+        }
         if (clearReturn) {
           $unset.return_sn = 1;
           $unset["data.return_sn"] = 1;
@@ -126399,14 +126447,21 @@ function applyShopeeCancelReturnClassification(order, detail) {
   }
   const kind = classifyShopeeCancelReturnKind(order);
   if (kind) order.shopee_cancel_return_kind = kind;
-  const sub = resolveShopeeSubStatus(kind);
-  if (sub) order.sub_status = sub;
-  order.is_rts = kind === "failed_delivery";
-  order.is_return = kind === "refund_return";
-  if (kind === "cancelled" && isUnshippedShopeeCancel(order)) {
+  if (kind === "cancelled") {
+    order.is_rts = false;
     order.is_return = false;
-    order.return_sn = "";
-    order._clear_return_sn = true;
+    order.sub_status = "CANCELLED";
+    order.is_return_received = false;
+    order.local_return_status = "";
+    if (isUnshippedShopeeCancel(order)) {
+      order.return_sn = "";
+      order._clear_return_sn = true;
+    }
+  } else {
+    const sub = resolveShopeeSubStatus(kind);
+    if (sub) order.sub_status = sub;
+    order.is_rts = kind === "failed_delivery";
+    order.is_return = kind === "refund_return";
   }
 }
 function logShopeeSyncApiError(error, context) {
