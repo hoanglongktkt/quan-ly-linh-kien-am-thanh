@@ -197,6 +197,20 @@ export default function ProductList({
   const [sortField, setSortField] = useState<'stock' | 'sellingPrice' | null>(null);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc' | null>(null);
 
+  const runProductSearch = (raw: string) => {
+    const q = raw.replace(/\s+/g, ' ').trim();
+    setServerSearch(q);
+    void onRefreshProductsRef.current?.({ page: 1, append: false, search: q });
+  };
+
+  const triggerSearchNow = () => {
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+      searchDebounceRef.current = null;
+    }
+    runProductSearch(search);
+  };
+
   // Server-side search: debounce 400ms, luôn reset page về 1 khi đổi từ khóa.
   useEffect(() => {
     if (searchInitRef.current) {
@@ -205,9 +219,7 @@ export default function ProductList({
     }
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
     searchDebounceRef.current = setTimeout(() => {
-      const q = search.replace(/\s+/g, ' ').trim();
-      setServerSearch(q);
-      void onRefreshProductsRef.current?.({ page: 1, append: false, search: q });
+      runProductSearch(search);
     }, 400);
     return () => {
       if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
@@ -370,6 +382,11 @@ export default function ProductList({
           }
         }
       }
+      setExpandedParentIds((prev) => {
+        const next = new Set(prev);
+        next.add(parentId);
+        return next;
+      });
       showActionToast(`Đã lưu thành công ${updates.length} phân loại!`, true);
     } catch (err: any) {
       showActionToast(`Lỗi: ${err?.message || 'Lưu toàn bộ phân loại thất bại.'}`);
@@ -1146,6 +1163,12 @@ export default function ProductList({
               placeholder="Tìm kiếm theo Tên sản phẩm, SKU..." 
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  triggerSearchNow();
+                }
+              }}
               className="pl-9 pr-4 py-2.5 w-full bg-gray-50/50 hover:bg-gray-50 focus:bg-white text-sm rounded-xl border border-gray-100 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
             />
           </div>

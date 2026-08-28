@@ -1667,6 +1667,63 @@ export default function App() {
     return null;
   };
 
+  /** Tìm SKU trong cây sản phẩm (parent + children) — dùng khi merge bulk-save. */
+  const findProductInTree = (tree: Product[], id: string): Product | undefined => {
+    const sid = String(id);
+    for (const p of tree) {
+      if (String(p.id) === sid) return p;
+      for (const c of getProductChildren(p)) {
+        if (String(c.id) === sid) return c;
+      }
+    }
+    return undefined;
+  };
+
+  /** Merge bulk-save vào danh sách trang hiện tại — không thay cả kho, giữ pagination/search UI. */
+  const mergeBulkSaveIntoProducts = (
+    prev: Product[],
+    updates: BulkSaveProductUpdate[],
+    sourceTree?: Product[]
+  ): Product[] => {
+    const updateMap = new Map(updates.map((u) => [String(u.id), u]));
+    const updateIds = new Set(updateMap.keys());
+
+    return prev.map((p) => {
+      if (updateIds.has(String(p.id))) {
+        const fresh = sourceTree ? findProductInTree(sourceTree, p.id) : undefined;
+        const patch = updateMap.get(String(p.id))!;
+        if (fresh) return { ...p, ...fresh };
+        return {
+          ...p,
+          importPrice: patch.importPrice ?? p.importPrice,
+          sellingPrice: patch.sellingPrice ?? p.sellingPrice,
+          stock: patch.stock ?? p.stock,
+          sku: patch.sku ?? p.sku,
+        };
+      }
+
+      const children = getProductChildren(p);
+      if (children.length === 0) return p;
+      if (!children.some((c) => updateIds.has(String(c.id)))) return p;
+
+      const nextChildren = children.map((c) => {
+        if (!updateIds.has(String(c.id))) return c;
+        const fresh = sourceTree ? findProductInTree(sourceTree, c.id) : undefined;
+        const patch = updateMap.get(String(c.id))!;
+        if (fresh) return { ...c, ...fresh };
+        return {
+          ...c,
+          importPrice: patch.importPrice ?? c.importPrice,
+          sellingPrice: patch.sellingPrice ?? c.sellingPrice,
+          stock: patch.stock ?? c.stock,
+          sku: patch.sku ?? c.sku,
+        };
+      });
+      const totalStock = nextChildren.reduce((s, c) => s + (Number(c.stock) || 0), 0);
+      return { ...p, children: nextChildren, stock: totalStock };
+    });
+  };
+
   const handleBulkSaveProducts = async (updates: BulkSaveProductUpdate[]): Promise<boolean> => {
     const token = localStorage.getItem('admin_token');
     if (!token) return false;
@@ -1679,9 +1736,8 @@ export default function App() {
       });
       if (!response.ok) return false;
       const data = await response.json();
-      if (Array.isArray(data.products)) {
-        setProducts(data.products);
-      }
+      const sourceTree = Array.isArray(data.products) ? (data.products as Product[]) : undefined;
+      setProducts((prev) => mergeBulkSaveIntoProducts(prev, updates, sourceTree));
       return true;
     } catch (err) {
       console.error('Bulk save products error:', err);
