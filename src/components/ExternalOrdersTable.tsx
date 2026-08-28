@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Loader2, Printer, RefreshCw, Ban } from 'lucide-react';
 import type { Order } from '../types';
+import { orderCreatedAtMs, parseOrderTimeMs } from '../utils/sanitizeOrder';
 
 type ExternalStatusKey = 'created' | 'shipping' | 'delivered' | 'rts' | 'cancelled';
 
@@ -129,6 +130,56 @@ function orderKeyOf(order: Order): string {
 function codOf(order: Order): number {
   const n = Number((order as { cod_amount?: number }).cod_amount ?? order.totalAmount);
   return Number.isFinite(n) ? n : 0;
+}
+
+function formatOrderDateTime(raw: unknown): string {
+  const ms = parseOrderTimeMs(raw);
+  if (ms <= 0) return '—';
+  try {
+    return new Date(ms).toLocaleString('vi-VN', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return String(raw || '—');
+  }
+}
+
+function orderDeliveredAtMs(order: Order): number {
+  const raw = order as Record<string, unknown>;
+  const candidates = [
+    order.ghn_synced_at,
+    raw.updated_at,
+    raw.updatedAt,
+    raw.update_time,
+    order.local_status_updated_at,
+    order.localStatusAt,
+  ];
+  for (let i = 0; i < candidates.length; i += 1) {
+    const t = parseOrderTimeMs(candidates[i]);
+    if (t > 0) return t;
+  }
+  return 0;
+}
+
+function OrderTimeCell({ order, status }: { order: Order; status: ExternalStatusKey }) {
+  const createdMs = orderCreatedAtMs(order);
+  const deliveredMs = status === 'delivered' ? orderDeliveredAtMs(order) : 0;
+  return (
+    <div className="leading-snug">
+      <div className="font-bold text-gray-900 text-[11px] whitespace-nowrap">
+        Tạo: {formatOrderDateTime(createdMs > 0 ? createdMs : order.date)}
+      </div>
+      {status === 'delivered' && deliveredMs > 0 ? (
+        <div className="text-[10px] text-emerald-600 font-semibold mt-0.5 whitespace-nowrap">
+          Giao: {formatOrderDateTime(deliveredMs)}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 async function postGhnOrderAction(path: string, order: Order): Promise<Record<string, unknown>> {
@@ -283,7 +334,7 @@ export function ExternalOrdersTable({
         <table className="w-full text-left border-collapse text-xs">
           <thead>
             <tr className="bg-slate-50 border-b border-gray-100 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-              <th className="p-4 w-36">Mã đơn</th>
+              <th className="p-4 w-40">Thời gian</th>
               <th className="p-4 w-48">Mã vận đơn</th>
               <th className="p-4 w-44">Khách hàng</th>
               <th className="p-4">Địa chỉ</th>
@@ -305,9 +356,7 @@ export function ExternalOrdersTable({
               return (
                 <tr key={order.id || order.orderSn} className="hover:bg-slate-50/40">
                   <td className="p-4">
-                    <div className="font-mono font-extrabold text-gray-900 text-sm">
-                      {order.orderSn}
-                    </div>
+                    <OrderTimeCell order={order} status={st} />
                   </td>
                   <td className="p-4">
                     <div className="flex items-center gap-1.5">
@@ -376,9 +425,9 @@ export function ExternalOrdersTable({
           const busyKind = printBusy ? 'print' : rowBusy ? actionKind : null;
           return (
             <div key={`card-${order.id || order.orderSn}`} className="p-4 space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-mono font-extrabold text-sm">{order.orderSn}</span>
-                <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${meta.className}`}>
+              <div className="flex items-start justify-between gap-2">
+                <OrderTimeCell order={order} status={st} />
+                <span className={`shrink-0 px-2 py-0.5 text-[10px] font-bold rounded-full border ${meta.className}`}>
                   {meta.label}
                 </span>
               </div>
