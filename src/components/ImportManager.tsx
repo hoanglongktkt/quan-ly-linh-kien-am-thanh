@@ -179,11 +179,16 @@ export default function ImportManager({
   const [paidAmount, setPaidAmount] = useState<number>(0);
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState<{ text: string; ok: boolean } | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [updatingPriceId, setUpdatingPriceId] = useState<string | null>(null);
 
-  const showToast = useCallback((text: string, ok = true) => {
+  const showToast = useCallback((text: string, ok = true, durationMs = 3500) => {
     setToast({ text, ok });
-    setTimeout(() => setToast(null), 3500);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+    }, durationMs);
   }, []);
   const [historyModal, setHistoryModal] = useState<{
     productId: string;
@@ -599,7 +604,7 @@ export default function ImportManager({
       }
 
       setViewMode('list');
-      alert(`Đã lưu đơn nhập kho thành công (${selectedProducts.length} sản phẩm). Tồn kho đã được cập nhật.`);
+      showToast('Đã lưu đơn nhập kho thành công! Tồn kho đã được cập nhật.', true, 5000);
     } catch (err) {
       console.error(err);
       alert('Có lỗi khi lưu đơn nhập. Vui lòng thử lại.');
@@ -666,30 +671,32 @@ export default function ImportManager({
     </div>
   );
 
+  const toastNode = toast && (
+    <div
+      className={`fixed bottom-5 right-5 z-70 text-white font-semibold text-sm px-5 py-3 rounded-xl shadow-lg flex items-center gap-2 max-w-sm ${
+        toast.ok ? 'bg-emerald-600' : 'bg-rose-600'
+      }`}
+    >
+      {toast.ok ? (
+        <CheckCircle2 className="w-4 h-4 shrink-0" />
+      ) : (
+        <AlertTriangle className="w-4 h-4 shrink-0" />
+      )}
+      <span>{toast.text}</span>
+      <button
+        type="button"
+        onClick={() => setToast(null)}
+        className={`ml-1 hover:text-white ${toast.ok ? 'text-emerald-200' : 'text-rose-200'}`}
+      >
+        <X className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  );
+
   if (viewMode === 'create') {
     return (
       <div className="space-y-0 -mx-4 sm:-mx-6 lg:-mx-8">
-        {toast && (
-          <div
-            className={`fixed top-5 right-5 z-70 text-white font-semibold text-sm px-5 py-3 rounded-xl shadow-lg flex items-center gap-2 ${
-              toast.ok ? 'bg-emerald-600' : 'bg-rose-600'
-            }`}
-          >
-            {toast.ok ? (
-              <CheckCircle2 className="w-4 h-4 shrink-0" />
-            ) : (
-              <AlertTriangle className="w-4 h-4 shrink-0" />
-            )}
-            <span>{toast.text}</span>
-            <button
-              type="button"
-              onClick={() => setToast(null)}
-              className={`ml-1 hover:text-white ${toast.ok ? 'text-emerald-200' : 'text-rose-200'}`}
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
+        {toastNode}
 
         <div className="bg-white border-y border-gray-100 shadow-sm">
           <div className="px-6 lg:px-10 py-4 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1030,6 +1037,7 @@ export default function ImportManager({
 
   return (
     <div className="space-y-6">
+      {toastNode}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
         <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-xs flex items-center gap-4">
           <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
