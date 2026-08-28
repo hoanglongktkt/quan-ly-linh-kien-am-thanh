@@ -22,6 +22,7 @@ import {
 } from "./src/utils/shopeeOrderListPagination.ts";
 import {
   classifyShopeeCancelReturnKind,
+  isShopeeRtsLogistics,
   isUnshippedShopeeCancel,
   resolveShopeeSubStatus,
   shouldApplyShopeeReturnOverlay,
@@ -1252,7 +1253,7 @@ function applyShopeeCancelReturnClassification(order: any, detail?: any): void {
   if (kind) order.shopee_cancel_return_kind = kind;
   const sub = resolveShopeeSubStatus(kind);
   if (sub) order.sub_status = sub;
-  order.is_rts = kind === "failed_delivery" || sub === "RTS";
+  order.is_rts = kind === "failed_delivery";
   order.is_return = kind === "refund_return";
   // Hủy chưa giao: refund tiền ≠ trả hàng — gỡ leftover return_sn từ get_return_list.
   if (kind === "cancelled" && isUnshippedShopeeCancel(order)) {
@@ -11759,7 +11760,15 @@ function promoteRawStatusFromLogistics(
   order: any,
   logisticsStatus?: string | null,
 ): boolean {
-  if (!order || !isLogisticsHandedToCarrier(logisticsStatus ?? order.logistics_status)) {
+  if (!order) return false;
+  const logistics = String(logisticsStatus ?? order.logistics_status ?? "").toUpperCase();
+  if (
+    logistics &&
+    (/FAILED|RETURN|REVERSE/.test(logistics) || isShopeeRtsLogistics(logistics))
+  ) {
+    return false;
+  }
+  if (!isLogisticsHandedToCarrier(logisticsStatus ?? order.logistics_status)) {
     return false;
   }
   const raw = String(order.shopee_order_status || "").toUpperCase();
@@ -11811,6 +11820,17 @@ function mapShopeeStatusToLocal(
   opts?: { hasTracking?: boolean; logisticsStatus?: string },
 ): string {
   const raw = String(rawStatus || "").toUpperCase();
+  const logistics = String(opts?.logisticsStatus || "").toUpperCase();
+
+  if (raw === "TO_RETURN") return "return_pending";
+  if (logistics && isShopeeRtsLogistics(logistics)) return "cancelled";
+  if (
+    logistics &&
+    /RETURN|REVERSE/.test(logistics) &&
+    !/POST_RETURN/.test(logistics)
+  ) {
+    return "return_pending";
+  }
 
   if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") return "shipping";
   if (raw === "COMPLETED") return "completed";
@@ -13272,12 +13292,39 @@ function isShopeeCancelOrReturnLikeOrder(order: any): boolean {
 function enforceShopeeTerminalLocalStatus(order: any): boolean {
   if (!order || String(order.channel || "") !== "shopee") return false;
   const raw = String(order.shopee_order_status || "").toUpperCase();
+  const logistics = String(order.logistics_status || "").toUpperCase();
 
   if (raw === "COMPLETED") {
     order.status = "completed";
     order.shopee_order_status = "COMPLETED";
     order.isPrepared = true;
     order.is_pending_shopee_check = false;
+    return true;
+  }
+  if (raw === "TO_RETURN") {
+    if (order.status !== "return_received") order.status = "return_pending";
+    order.shopee_order_status = "TO_RETURN";
+    order.isPrepared = false;
+    order.is_pending_shopee_check = false;
+    clearHandedOverLocalForCancelReturn(order);
+    return true;
+  }
+  if (logistics && isShopeeRtsLogistics(logistics)) {
+    order.status = "cancelled";
+    order.isPrepared = false;
+    order.is_pending_shopee_check = false;
+    clearHandedOverLocalForCancelReturn(order);
+    return true;
+  }
+  if (
+    logistics &&
+    /RETURN|REVERSE/.test(logistics) &&
+    !/POST_RETURN/.test(logistics)
+  ) {
+    if (order.status !== "return_received") order.status = "return_pending";
+    order.isPrepared = false;
+    order.is_pending_shopee_check = false;
+    clearHandedOverLocalForCancelReturn(order);
     return true;
   }
   if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") {
@@ -13290,14 +13337,6 @@ function enforceShopeeTerminalLocalStatus(order: any): boolean {
   if (raw === "CANCELLED" || raw === "IN_CANCEL") {
     order.status = "cancelled";
     order.shopee_order_status = raw;
-    order.isPrepared = false;
-    order.is_pending_shopee_check = false;
-    clearHandedOverLocalForCancelReturn(order);
-    return true;
-  }
-  if (raw === "TO_RETURN") {
-    if (order.status !== "return_received") order.status = "return_pending";
-    order.shopee_order_status = "TO_RETURN";
     order.isPrepared = false;
     order.is_pending_shopee_check = false;
     clearHandedOverLocalForCancelReturn(order);

@@ -302,6 +302,9 @@ export function putOrderIntoScannerSyncMap(
     tracking_code: tracking,
     return_waybill: returnWb || (scannedIsReturn ? String(scannedCode || '').trim() : ''),
     status: String(order.status || '').trim().toLowerCase(),
+    logistics_status: order.logistics_status,
+    shopee_cancel_return_kind: order.shopee_cancel_return_kind,
+    is_rts: order.is_rts,
     matchedReturn: scannedIsReturn,
   };
   const put = (raw: string, matchedReturn = false) => {
@@ -413,6 +416,9 @@ export type ScannerSyncRow = {
   tracking_code: string;
   return_waybill: string;
   status: string;
+  logistics_status?: string;
+  shopee_cancel_return_kind?: string;
+  is_rts?: boolean;
 };
 
 export type ScannerSyncEntry = ScannerSyncRow & {
@@ -429,6 +435,9 @@ export function buildScannerSyncMap(rows: ScannerSyncRow[]): Map<string, Scanner
       tracking_code: String(row.tracking_code || '').trim(),
       return_waybill: String(row.return_waybill || '').trim(),
       status: String(row.status || '').trim().toLowerCase(),
+      logistics_status: row.logistics_status,
+      shopee_cancel_return_kind: row.shopee_cancel_return_kind,
+      is_rts: row.is_rts,
     };
     if (!base.order_id) continue;
     const put = (raw: string, matchedReturn = false) => {
@@ -476,8 +485,16 @@ export function scannerSyncEntryToOrder(entry: ScannerSyncEntry): Order {
   let is_handed_over = false;
   let return_sn: string | undefined;
   let local_status: string | undefined;
+  let is_rts = entry.is_rts === true;
+  let shopee_cancel_return_kind = entry.shopee_cancel_return_kind;
+  const logistics_status = entry.logistics_status;
 
-  if (statusRaw === 'shipping' || statusRaw === 'handed_over') {
+  if (statusRaw === 'rts' || entry.shopee_cancel_return_kind === 'failed_delivery' || is_rts) {
+    status = 'cancelled';
+    shopee_order_status = 'CANCELLED';
+    is_rts = true;
+    shopee_cancel_return_kind = 'failed_delivery';
+  } else if (statusRaw === 'shipping' || statusRaw === 'handed_over') {
     if (statusRaw === 'shipping') {
       status = 'shipping';
       shopee_order_status = 'SHIPPED';
@@ -527,6 +544,9 @@ export function scannerSyncEntryToOrder(entry: ScannerSyncEntry): Order {
     return_sn,
     is_handed_over,
     local_status,
+    is_rts,
+    shopee_cancel_return_kind,
+    logistics_status,
     isPrinted: true,
     channel: 'shopee',
     date: new Date().toISOString(),

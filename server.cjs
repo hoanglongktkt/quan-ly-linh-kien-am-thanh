@@ -75182,28 +75182,29 @@ function isShopeeCancelledStatus(order) {
   const st = String(order.status || "").toUpperCase();
   return raw === "CANCELLED" || raw === "IN_CANCEL" || st === "CANCELLED";
 }
-function hasValidOutboundTracking(order) {
-  const tn = String(order.tracking_no || order.trackingNumber || "").trim();
-  if (!tn || tn.length < 6) return false;
-  if (/^0FG/i.test(tn)) return false;
-  return true;
+function hasOutboundPickupEvidence(order) {
+  const raw = String(order.shopee_order_status || "").toUpperCase();
+  if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE" || raw === "TO_RETURN") {
+    return true;
+  }
+  const st = String(order.status || "").toLowerCase();
+  if (st === "shipping" || st === "return_pending" || st === "return_received" || st === "completed") {
+    return true;
+  }
+  const logistics = String(order.logistics_status || "").toUpperCase();
+  if (!logistics) return false;
+  if (isShopeeRtsLogistics(logistics)) return true;
+  if (/RETURN|REVERSE/.test(logistics) && !/POST_RETURN/.test(logistics)) return true;
+  if (/FAILED|CANCEL|REQUEST_CANCELED|REQUEST_CANCELLED/.test(logistics)) return false;
+  return /PICKUP_DONE|IN_TRANSIT|LOGISTICS_SHIPPED|LOGISTICS_PICKUP_DONE|DELIVERY_DONE|LOGISTICS_DELIVERY_DONE|TRANSPORTING/.test(
+    logistics
+  );
 }
 function isUnshippedShopeeCancel(order) {
   if (!isShopeeCancelledStatus(order)) return false;
-  if (hasValidOutboundTracking(order)) return false;
-  if (hasCarrierRtsEvidence(order)) return false;
+  if (hasOutboundPickupEvidence(order)) return false;
   const raw = String(order.shopee_order_status || "").toUpperCase();
-  if (raw === "TO_RETURN" || raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE" || raw === "COMPLETED") {
-    return false;
-  }
-  const st = String(order.status || "").toLowerCase();
-  if (st === "shipping" || st === "completed" || st === "return_pending" || st === "return_received") {
-    return false;
-  }
-  const logistics = String(order.logistics_status || "").toUpperCase();
-  if (logistics && /SHIPPED|PICKUP_DONE|IN_TRANSIT|DELIVERY_DONE|LOGISTICS_DELIVERY/.test(logistics) && !/FAILED|LOST|RETURN|REVERSE|REQUEST_CANCELED|REQUEST_CANCELLED/.test(logistics)) {
-    return false;
-  }
+  if (raw === "TO_RETURN" || raw === "COMPLETED") return false;
   return true;
 }
 function isShopeeRtsLogistics(logisticsStatus) {
@@ -75220,7 +75221,9 @@ function isShopeeRtsCancelReason(...reasons) {
 }
 function hasCarrierRtsEvidence(order) {
   if (isShopeeRtsLogistics(order.logistics_status)) return true;
-  if (isShopeeRtsCancelReason(order.cancel_reason, order.buyer_cancel_reason)) return true;
+  if (hasOutboundPickupEvidence(order) && isShopeeRtsCancelReason(order.cancel_reason, order.buyer_cancel_reason)) {
+    return true;
+  }
   return false;
 }
 function isCancelledReturnRequest(order) {
@@ -75268,14 +75271,19 @@ function shouldApplyShopeeReturnOverlay(existing) {
 }
 function classifyShopeeCancelReturnKind(order) {
   if (isShopeeReturnRefundOrder(order)) return "refund_return";
-  if (hasCarrierRtsEvidence(order)) return "failed_delivery";
+  if (isShopeeCancelledStatus(order) && isUnshippedShopeeCancel(order)) return "cancelled";
+  if (hasCarrierRtsEvidence(order) && hasOutboundPickupEvidence(order)) {
+    return "failed_delivery";
+  }
   if (isShopeeCancelledStatus(order)) return "cancelled";
   const local = String(order.local_status || order.localStatus || "").toUpperCase();
   if (local === "CANCELLED_STORED") return "cancelled";
   const stored = String(order.shopee_cancel_return_kind || "").trim();
   if (stored === "refund_return" && !hasShopeeReturnSn(order)) return "cancelled";
   if (stored === "cancelled") return "cancelled";
-  if (stored === "failed_delivery" && hasCarrierRtsEvidence(order)) return "failed_delivery";
+  if (stored === "failed_delivery" && hasCarrierRtsEvidence(order) && hasOutboundPickupEvidence(order)) {
+    return "failed_delivery";
+  }
   return null;
 }
 function resolveShopeeSubStatus(kind) {
@@ -82237,9 +82245,17 @@ function deriveScannerSyncStatus(d) {
   const data = d?.data && typeof d.data === "object" ? d.data : {};
   const raw = String(d?.shopee_order_status || data.shopee_order_status || "").trim().toUpperCase();
   const st = String(d?.status || data.status || "").trim().toLowerCase();
+  const logistics = String(d?.logistics_status || data.logistics_status || "").trim().toUpperCase();
+  const cancelKind = String(
+    d?.shopee_cancel_return_kind || data.shopee_cancel_return_kind || ""
+  ).trim();
+  const isRts = d?.is_rts === true || data.is_rts === true;
   const handed = d?.is_handed_over === true || data.is_handed_over === true || data.isHandedOverToCarrier === true || data.is_handed_over_to_carrier === true;
   if (st === "return_received" || st === "return_pending" || raw === "TO_RETURN" || Boolean(String(d?.return_sn || data.return_sn || "").trim())) {
     return st === "return_received" ? "return_received" : "return_pending";
+  }
+  if (cancelKind === "failed_delivery" || isRts || logistics && isShopeeRtsLogistics(logistics)) {
+    return "rts";
   }
   if (st === "cancelled" || raw === "CANCELLED" || raw === "IN_CANCEL") {
     return "cancelled";
@@ -82276,6 +82292,9 @@ async function listScannerSyncRowsFromStore() {
     return_tracking_no: 1,
     returnTrackingNumber: 1,
     is_handed_over: 1,
+    logistics_status: 1,
+    shopee_cancel_return_kind: 1,
+    is_rts: 1,
     "data.orderSn": 1,
     "data.status": 1,
     "data.shopee_order_status": 1,
@@ -82287,6 +82306,9 @@ async function listScannerSyncRowsFromStore() {
     "data.isHandedOverToCarrier": 1,
     "data.is_handed_over_to_carrier": 1,
     "data.return_sn": 1,
+    "data.logistics_status": 1,
+    "data.shopee_cancel_return_kind": 1,
+    "data.is_rts": 1,
     return_sn: 1
   }).limit(2e4).lean().maxTimeMS(15e3);
   const rows = [];
@@ -82306,7 +82328,14 @@ async function listScannerSyncRowsFromStore() {
       order_id: orderId,
       tracking_code: tracking,
       return_waybill: returnWb,
-      status: deriveScannerSyncStatus(d)
+      status: deriveScannerSyncStatus(d),
+      logistics_status: String(
+        d?.logistics_status || data.logistics_status || ""
+      ).trim() || void 0,
+      shopee_cancel_return_kind: String(
+        d?.shopee_cancel_return_kind || data.shopee_cancel_return_kind || ""
+      ).trim() || void 0,
+      is_rts: d?.is_rts === true || data.is_rts === true || void 0
     });
   }
   return rows;
@@ -126372,7 +126401,7 @@ function applyShopeeCancelReturnClassification(order, detail) {
   if (kind) order.shopee_cancel_return_kind = kind;
   const sub = resolveShopeeSubStatus(kind);
   if (sub) order.sub_status = sub;
-  order.is_rts = kind === "failed_delivery" || sub === "RTS";
+  order.is_rts = kind === "failed_delivery";
   order.is_return = kind === "refund_return";
   if (kind === "cancelled" && isUnshippedShopeeCancel(order)) {
     order.is_return = false;
@@ -134218,7 +134247,12 @@ function isLogisticsHandedToCarrier(logisticsStatus) {
   return s2.includes("PICKUP_DONE") || s2.includes("LOGISTICS_SHIPPED") || s2 === "LOGISTICS_SHIPPED" || s2.includes("LOGISTICS_DELIVERY_DONE") || s2.includes("DELIVERY_DONE") || s2.includes("IN_TRANSIT") || s2.includes("TRANSPORTING") || s2.includes("LOGISTICS_PICKUP_DONE");
 }
 function promoteRawStatusFromLogistics(order, logisticsStatus) {
-  if (!order || !isLogisticsHandedToCarrier(logisticsStatus ?? order.logistics_status)) {
+  if (!order) return false;
+  const logistics = String(logisticsStatus ?? order.logistics_status ?? "").toUpperCase();
+  if (logistics && (/FAILED|RETURN|REVERSE/.test(logistics) || isShopeeRtsLogistics(logistics))) {
+    return false;
+  }
+  if (!isLogisticsHandedToCarrier(logisticsStatus ?? order.logistics_status)) {
     return false;
   }
   const raw = String(order.shopee_order_status || "").toUpperCase();
@@ -134245,6 +134279,12 @@ function promoteRawStatusFromLogistics(order, logisticsStatus) {
 }
 function mapShopeeStatusToLocal(rawStatus, opts) {
   const raw = String(rawStatus || "").toUpperCase();
+  const logistics = String(opts?.logisticsStatus || "").toUpperCase();
+  if (raw === "TO_RETURN") return "return_pending";
+  if (logistics && isShopeeRtsLogistics(logistics)) return "cancelled";
+  if (logistics && /RETURN|REVERSE/.test(logistics) && !/POST_RETURN/.test(logistics)) {
+    return "return_pending";
+  }
   if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") return "shipping";
   if (raw === "COMPLETED") return "completed";
   if (isLogisticsHandedToCarrier(opts?.logisticsStatus) && (raw === "PROCESSED" || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || !raw)) {
@@ -135323,11 +135363,34 @@ function isShopeeCancelOrReturnLikeOrder(order) {
 function enforceShopeeTerminalLocalStatus(order) {
   if (!order || String(order.channel || "") !== "shopee") return false;
   const raw = String(order.shopee_order_status || "").toUpperCase();
+  const logistics = String(order.logistics_status || "").toUpperCase();
   if (raw === "COMPLETED") {
     order.status = "completed";
     order.shopee_order_status = "COMPLETED";
     order.isPrepared = true;
     order.is_pending_shopee_check = false;
+    return true;
+  }
+  if (raw === "TO_RETURN") {
+    if (order.status !== "return_received") order.status = "return_pending";
+    order.shopee_order_status = "TO_RETURN";
+    order.isPrepared = false;
+    order.is_pending_shopee_check = false;
+    clearHandedOverLocalForCancelReturn(order);
+    return true;
+  }
+  if (logistics && isShopeeRtsLogistics(logistics)) {
+    order.status = "cancelled";
+    order.isPrepared = false;
+    order.is_pending_shopee_check = false;
+    clearHandedOverLocalForCancelReturn(order);
+    return true;
+  }
+  if (logistics && /RETURN|REVERSE/.test(logistics) && !/POST_RETURN/.test(logistics)) {
+    if (order.status !== "return_received") order.status = "return_pending";
+    order.isPrepared = false;
+    order.is_pending_shopee_check = false;
+    clearHandedOverLocalForCancelReturn(order);
     return true;
   }
   if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") {
@@ -135340,14 +135403,6 @@ function enforceShopeeTerminalLocalStatus(order) {
   if (raw === "CANCELLED" || raw === "IN_CANCEL") {
     order.status = "cancelled";
     order.shopee_order_status = raw;
-    order.isPrepared = false;
-    order.is_pending_shopee_check = false;
-    clearHandedOverLocalForCancelReturn(order);
-    return true;
-  }
-  if (raw === "TO_RETURN") {
-    if (order.status !== "return_received") order.status = "return_pending";
-    order.shopee_order_status = "TO_RETURN";
     order.isPrepared = false;
     order.is_pending_shopee_check = false;
     clearHandedOverLocalForCancelReturn(order);

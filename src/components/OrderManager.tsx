@@ -3234,10 +3234,17 @@ export default function OrderManager({
         const isReturnBucket = classified.isReturnBucket || matchedReturnWaybill;
         const isCancelBucket = !isReturnBucket && classified.isCancelBucket;
 
-        // Đang giao (SHIPPED) / đã bàn giao thuần — tìm thấy rồi, không báo "không tìm thấy".
+        // Đang giao (SHIPPED) / đã bàn giao thuần — không ghi đè nhánh Hủy/RTS/Hoàn.
         const isShippingOnly =
           !isReturnBucket &&
           !isCancelBucket &&
+          cancelReturnKind !== 'failed_delivery' &&
+          !isShopeeRtsFailedDelivery(order) &&
+          order.status !== 'cancelled' &&
+          raw !== 'TO_RETURN' &&
+          raw !== 'CANCELLED' &&
+          raw !== 'IN_CANCEL' &&
+          !order.return_sn &&
           (matchesShippingTab(order) ||
             badge === 'shipping' ||
             order.status === 'shipping' ||

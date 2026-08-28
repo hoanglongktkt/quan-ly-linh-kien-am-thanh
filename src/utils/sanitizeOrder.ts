@@ -300,11 +300,7 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
       if (s === 'RTS' || s === 'CANCELLED' || s === 'RETURN') return s;
       return undefined;
     })(),
-    is_rts:
-      classifyShopeeCancelReturnKind(raw as any) === 'failed_delivery' ||
-      raw.is_rts === true ||
-      String(raw.external_status || '').toLowerCase() === 'rts' ||
-      String(raw.shopee_order_status || '').toUpperCase() === 'EXTERNAL_RTS',
+    is_rts: classifyShopeeCancelReturnKind(raw as any) === 'failed_delivery',
     is_return:
       classifyShopeeCancelReturnKind(raw as any) === 'refund_return' &&
       !isUnshippedShopeeCancel(raw),

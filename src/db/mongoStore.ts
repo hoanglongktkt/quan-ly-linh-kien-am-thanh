@@ -50,6 +50,7 @@ import {
 } from "../utils/orderTracking.ts";
 import {
   classifyShopeeCancelReturnKind,
+  isShopeeRtsLogistics,
   isUnshippedShopeeCancel,
   resolveShopeeSubStatus,
 } from "../utils/shopeeCancelReturnClassify.ts";
@@ -8290,9 +8291,12 @@ export type ScannerSyncRow = {
   tracking_code: string;
   return_waybill: string;
   status: string;
+  logistics_status?: string;
+  shopee_cancel_return_kind?: string;
+  is_rts?: boolean;
 };
 
-/** Derive status gọn cho máy quét (payload 4 field). */
+/** Derive status gọn cho máy quét. */
 function deriveScannerSyncStatus(d: any): string {
   const data = d?.data && typeof d.data === "object" ? d.data : {};
   const raw = String(d?.shopee_order_status || data.shopee_order_status || "")
@@ -8301,6 +8305,13 @@ function deriveScannerSyncStatus(d: any): string {
   const st = String(d?.status || data.status || "")
     .trim()
     .toLowerCase();
+  const logistics = String(d?.logistics_status || data.logistics_status || "")
+    .trim()
+    .toUpperCase();
+  const cancelKind = String(
+    d?.shopee_cancel_return_kind || data.shopee_cancel_return_kind || "",
+  ).trim();
+  const isRts = d?.is_rts === true || data.is_rts === true;
   const handed =
     d?.is_handed_over === true ||
     data.is_handed_over === true ||
@@ -8314,6 +8325,13 @@ function deriveScannerSyncStatus(d: any): string {
     Boolean(String(d?.return_sn || data.return_sn || "").trim())
   ) {
     return st === "return_received" ? "return_received" : "return_pending";
+  }
+  if (
+    cancelKind === "failed_delivery" ||
+    isRts ||
+    (logistics && isShopeeRtsLogistics(logistics))
+  ) {
+    return "rts";
   }
   if (st === "cancelled" || raw === "CANCELLED" || raw === "IN_CANCEL") {
     return "cancelled";
@@ -8358,6 +8376,9 @@ export async function listScannerSyncRowsFromStore(): Promise<ScannerSyncRow[]> 
       return_tracking_no: 1,
       returnTrackingNumber: 1,
       is_handed_over: 1,
+      logistics_status: 1,
+      shopee_cancel_return_kind: 1,
+      is_rts: 1,
       "data.orderSn": 1,
       "data.status": 1,
       "data.shopee_order_status": 1,
@@ -8369,6 +8390,9 @@ export async function listScannerSyncRowsFromStore(): Promise<ScannerSyncRow[]> 
       "data.isHandedOverToCarrier": 1,
       "data.is_handed_over_to_carrier": 1,
       "data.return_sn": 1,
+      "data.logistics_status": 1,
+      "data.shopee_cancel_return_kind": 1,
+      "data.is_rts": 1,
       return_sn: 1,
     })
     .limit(20000)
@@ -8397,6 +8421,13 @@ export async function listScannerSyncRowsFromStore(): Promise<ScannerSyncRow[]> 
       tracking_code: tracking,
       return_waybill: returnWb,
       status: deriveScannerSyncStatus(d),
+      logistics_status: String(
+        d?.logistics_status || data.logistics_status || "",
+      ).trim() || undefined,
+      shopee_cancel_return_kind: String(
+        d?.shopee_cancel_return_kind || data.shopee_cancel_return_kind || "",
+      ).trim() || undefined,
+      is_rts: d?.is_rts === true || data.is_rts === true || undefined,
     });
   }
   return rows;
