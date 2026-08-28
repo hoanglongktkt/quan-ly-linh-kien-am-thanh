@@ -809,6 +809,22 @@ interface OrderManagerProps {
 }
 
 const ORDERS_PAGE_SIZE = 50;
+const itemsPerPage = ORDERS_PAGE_SIZE;
+
+/** Số trang hiển thị trên thanh phân trang client-side (rút gọn khi nhiều trang). */
+function buildClientPageNumbers(current: number, totalPages: number): (number | 'ellipsis')[] {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, i) => i + 1);
+  }
+  const items: (number | 'ellipsis')[] = [1];
+  const start = Math.max(2, current - 1);
+  const end = Math.min(totalPages - 1, current + 1);
+  if (start > 2) items.push('ellipsis');
+  for (let p = start; p <= end; p += 1) items.push(p);
+  if (end < totalPages - 1) items.push('ellipsis');
+  if (totalPages > 1) items.push(totalPages);
+  return items;
+}
 /** Có mã đang dò ngầm — poll nhanh hơn. */
 const SCAN_BG_STATUS_POLL_MS = 30_000;
 /** Không pending / unnotified — nới chu kỳ để giảm spam Network. */
@@ -1422,33 +1438,10 @@ export default function OrderManager({
     [scheduleNewOrderListRefresh],
   );
 
-  const goToOrdersPage = useCallback(
-    (page: number) => {
-      const next = Math.max(1, Math.floor(page) || 1);
-      setCurrentPage(next);
-      void fetchOrdersWithShop({
-        silent: false,
-        page: next,
-        limit: ORDERS_PAGE_SIZE,
-        merge: false,
-        tab: searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab,
-        q: searchQuery.trim() || undefined,
-        kind:
-          activeSubTab === 'cancel_returns'
-            ? cancelReturnKindParam(cancelReturnTab)
-            : undefined,
-      });
-    },
-    [activeSubTab, cancelReturnTab, fetchOrdersWithShop, searchQuery],
-  );
-
-  // Đồng bộ currentPage với metadata API (sau fetch).
-  useEffect(() => {
-    if (ordersMeta?.page && ordersMeta.page > 0 && ordersMeta.page !== currentPage) {
-      setCurrentPage(ordersMeta.page);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ordersMeta?.page]);
+  /** Client-side pagination — chỉ đổi trang UI, không gọi lại API. */
+  const goToOrdersPage = useCallback((page: number) => {
+    setCurrentPage(Math.max(1, Math.floor(page) || 1));
+  }, []);
 
   /** Sau sync nền: chỉ poll counter nhẹ — không kéo 150–400 đơn + merge. */
   const startSyncPolling = useCallback(() => {
@@ -2168,6 +2161,7 @@ export default function OrderManager({
    * Đồng bộ lại cờ từ Mongo (KHÔNG gửi print_status: merge subset làm lệch cờ các đơn không nằm trong response). */
   const applyPrintStatusFilter = React.useCallback(
     (next: 'all' | 'printed' | 'unprinted') => {
+      setCurrentPage(1);
       setPrintStatusFilter(next);
       void Promise.resolve(
         fetchOrdersWithShop({
@@ -6158,19 +6152,33 @@ export default function OrderManager({
     [filteredOrders, activeSubTab, cancelReturnTab],
   );
 
-  const listPagingTotal = useMemo(() => {
-    const backend = Number(ordersMeta?.total) || 0;
-    if (activeSubTab !== 'cancel_returns') return backend;
-    if (cancelReturnTab === 'all') {
-      return Number(cancelReturnKindCounts.all) || backend;
-    }
-    return backend || Number(cancelReturnKindCounts[cancelReturnTab]) || 0;
-  }, [activeSubTab, cancelReturnTab, cancelReturnKindCounts, ordersMeta?.total]);
+  const listPagingTotal = displayOrders.length;
 
-  const listPagingPages = useMemo(() => {
-    if (activeSubTab !== 'cancel_returns') return ordersMeta?.totalPages ?? 1;
-    return Math.max(1, Math.ceil(listPagingTotal / ORDERS_PAGE_SIZE) || 1);
-  }, [activeSubTab, listPagingTotal, ordersMeta?.totalPages]);
+  const listPagingPages = useMemo(
+    () => Math.max(1, Math.ceil(listPagingTotal / itemsPerPage) || 1),
+    [listPagingTotal],
+  );
+
+  const paginatedDisplayOrders = useMemo(() => {
+    const safePage = Math.min(Math.max(1, currentPage), listPagingPages);
+    const start = (safePage - 1) * itemsPerPage;
+    return displayOrders.slice(start, start + itemsPerPage);
+  }, [displayOrders, currentPage, listPagingPages]);
+
+  const clientPageNumbers = useMemo(
+    () => buildClientPageNumbers(currentPage, listPagingPages),
+    [currentPage, listPagingPages],
+  );
+
+  useEffect(() => {
+    if (currentPage > listPagingPages) {
+      setCurrentPage(listPagingPages);
+    }
+  }, [currentPage, listPagingPages]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedShippingCarrier, printStatusFilter]);
 
 
   // Resolve checkbox selections to full Order rows — CHỈ lấy đơn đang hiển thị
@@ -7997,6 +8005,7 @@ export default function OrderManager({
                   onClick={() => {
                     setSelectedShippingCarrier(opt.key);
                     setSelectedOrderIds([]);
+                    setCurrentPage(1);
                   }}
                   className={`text-[11px] px-3.5 py-1.5 rounded-full transition-all cursor-pointer whitespace-nowrap ${
                     opt.highlight
@@ -8276,7 +8285,7 @@ export default function OrderManager({
         ) : activeSubTab === 'external_orders' ? (
           <div className="p-2 max-md:p-0">
             <ExternalOrdersTable
-              orders={displayOrders}
+              orders={paginatedDisplayOrders}
               printingOrderId={printingOrderId}
               onPrintWaybill={(order) => void handlePrintExternalWaybill(order)}
               onOrderUpdated={(updated) => {
@@ -8328,7 +8337,7 @@ export default function OrderManager({
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {displayOrders.map((order) => (
+                {paginatedDisplayOrders.map((order) => (
                   <OrderTableRow
                     key={order.id}
                     order={order}
@@ -8356,7 +8365,7 @@ export default function OrderManager({
             )}
             {useOrderCardList && (
             <div className="om-order-card-list om-order-card-list-mounted flex flex-col divide-y divide-gray-100 w-full">
-              {displayOrders.map((order) => (
+              {paginatedDisplayOrders.map((order) => (
                 <OrderCardRow
                   key={order.id}
                   order={order}
@@ -8384,19 +8393,42 @@ export default function OrderManager({
         )}
 
         {(listPagingTotal > 0 || displayOrders.length > 0) && (
-          <div className="px-3 py-2.5 md:px-4 md:py-3 bg-slate-50/80 border-t border-gray-100 flex flex-col md:flex-row md:flex-wrap items-stretch md:items-center md:justify-end gap-2 md:gap-3 text-xs text-gray-600">
+          <div className="px-3 py-2.5 md:px-4 md:py-3 bg-slate-50/80 border-t border-gray-100 flex flex-col md:flex-row md:flex-wrap items-stretch md:items-center md:justify-between gap-2 md:gap-3 text-xs text-gray-600">
             <span className="text-center md:text-left leading-snug">
-              Trang <b>{ordersMeta?.page ?? currentPage}</b>/{listPagingPages}
-              <span className="max-md:hidden">
-                {' — '}
-                {displayOrders.length}/{listPagingTotal} đơn (mỗi trang {ORDERS_PAGE_SIZE})
+              Trang <b>{currentPage}</b> / <b>{listPagingPages}</b>
+              <span className="text-gray-500">
+                {' '}(Tổng <b>{listPagingTotal}</b> đơn hàng)
               </span>
-              <span className="md:hidden text-gray-500">
-                {' · '}
-                {displayOrders.length}/{listPagingTotal} đơn
+              <span className="max-md:hidden text-gray-400">
+                {' — '}
+                Hiển thị {paginatedDisplayOrders.length} đơn (mỗi trang {itemsPerPage})
               </span>
             </span>
-            <div className="grid grid-cols-2 md:flex md:items-center gap-2">
+            <div className="flex flex-col md:flex-row md:items-center gap-2">
+              <div className="hidden md:flex items-center gap-1 flex-wrap justify-end">
+                {clientPageNumbers.map((item, idx) =>
+                  item === 'ellipsis' ? (
+                    <span key={`ellipsis-${idx}`} className="px-1 text-gray-400 select-none">
+                      …
+                    </span>
+                  ) : (
+                    <button
+                      key={item}
+                      type="button"
+                      disabled={ordersLoading}
+                      onClick={() => goToOrdersPage(item)}
+                      className={`min-w-9 px-2 py-1.5 rounded-lg border font-semibold cursor-pointer transition-colors ${
+                        item === currentPage
+                          ? 'border-blue-600 bg-blue-600 text-white'
+                          : 'border-gray-200 bg-white hover:border-gray-300'
+                      }`}
+                    >
+                      {item}
+                    </button>
+                  ),
+                )}
+              </div>
+              <div className="grid grid-cols-2 md:flex md:items-center gap-2">
               <button
                 type="button"
                 disabled={ordersLoading || currentPage <= 1}
@@ -8419,6 +8451,7 @@ export default function OrderManager({
                 <span className="max-md:hidden">Trang sau</span>
                 <ChevronRight className="w-4 h-4 md:hidden shrink-0" />
               </button>
+              </div>
             </div>
           </div>
         )}
