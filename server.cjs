@@ -139017,13 +139017,34 @@ function findMasterProductBySku(masterSkuIndex, listingSku, _masterData) {
   if (!key) return null;
   return masterSkuIndex.get(key) || null;
 }
-function isListingAlreadyLinkedProtected(listing) {
+function isListingAlreadyLinkedProtected(listing, masterProducts) {
   if (!listing || typeof listing !== "object") return false;
   if (listing.linkBroken === true) return false;
+  if (String(listing.status || "") !== "success") return false;
   const linkedId = listing.linkedProductId != null && String(listing.linkedProductId).trim() !== "" ? String(listing.linkedProductId).trim() : listing.linkedProduct?.id != null && String(listing.linkedProduct.id).trim() !== "" ? String(listing.linkedProduct.id).trim() : "";
-  if (linkedId) return true;
-  if (listing.status === "success" && listing.linkedProduct != null) return true;
+  if (!linkedId) return false;
+  const listingSku = normalizeSkuKey(listing?.sku);
+  if (!listingSku) return false;
+  const snapshotSku = normalizeSkuKey(
+    listing?.linkedProductSku || listing?.linkedProduct?.sku || ""
+  );
+  if (snapshotSku && snapshotSku === listingSku) return true;
+  if (Array.isArray(masterProducts) && masterProducts.length > 0) {
+    const lookup = buildMasterProductLookupById(masterProducts);
+    const master = lookup.get(linkedId);
+    if (master && normalizeSkuKey(master?.sku) === listingSku) return true;
+  }
   return false;
+}
+function buildAutoLinkFailedRow(current, syncError) {
+  return sanitizeChannelListingRow({
+    ...current,
+    status: "failed",
+    linkedProductId: void 0,
+    linkedProductTitle: void 0,
+    linkedProductSku: void 0,
+    syncError
+  });
 }
 function persistBatchAutoLinkListingUpdate(dbListings, rowIndex, nextRow) {
   const patched = sanitizeChannelListingRow(nextRow);
@@ -139062,7 +139083,7 @@ async function autoLinkSingleListingFromDatabase(opts) {
   if (!Array.isArray(masterProducts) || masterProducts.length === 0) {
     throw new Error("Kho s\u1EA3n ph\u1EA9m ch\xEDnh \u0111ang tr\u1ED1ng. H\xE3y kh\u1EDFi t\u1EA1o/sync d\u1EEF li\u1EC7u tr\u01B0\u1EDBc.");
   }
-  if (isListingAlreadyLinkedProtected(current)) {
+  if (isListingAlreadyLinkedProtected(current, masterProducts)) {
     const enrichedExisting = enrichChannelListingsWithMaster([current], masterProducts)[0];
     return {
       success: true,
@@ -139073,17 +139094,34 @@ async function autoLinkSingleListingFromDatabase(opts) {
   }
   const normalizedSku = normalizeSkuKey(current?.sku);
   if (!normalizedSku) {
+    const failedRow = persistBatchAutoLinkListingUpdate(
+      dbListings,
+      rowIndex,
+      buildAutoLinkFailedRow(current, "SKU s\u1EA3n ph\u1EA9m s\xE0n \u0111ang tr\u1ED1ng ho\u1EB7c kh\xF4ng h\u1EE3p l\u1EC7.")
+    );
+    await upsertChannelListingToStore(failedRow);
+    await flushDbWrites();
     return {
       success: false,
-      listing: enrichChannelListingsWithMaster([current], masterProducts)[0],
+      listing: enrichChannelListingsWithMaster([failedRow], masterProducts)[0],
       message: "SKU s\u1EA3n ph\u1EA9m s\xE0n \u0111ang tr\u1ED1ng ho\u1EB7c kh\xF4ng h\u1EE3p l\u1EC7."
     };
   }
   const masterItem = findMasterProductBySku(masterSkuIndex, current?.sku, masterProducts);
   if (!masterItem) {
+    const failedRow = persistBatchAutoLinkListingUpdate(
+      dbListings,
+      rowIndex,
+      buildAutoLinkFailedRow(
+        current,
+        `Kh\xF4ng t\xECm th\u1EA5y SKU kh\u1EDBp trong Kho g\u1ED1c cho "${normalizedSku}" (g\u1ED1c: "${String(current?.sku || "").trim()}").`
+      )
+    );
+    await upsertChannelListingToStore(failedRow);
+    await flushDbWrites();
     return {
       success: false,
-      listing: enrichChannelListingsWithMaster([current], masterProducts)[0],
+      listing: enrichChannelListingsWithMaster([failedRow], masterProducts)[0],
       message: `Kh\xF4ng t\xECm th\u1EA5y SKU kh\u1EDBp trong Kho g\u1ED1c cho "${normalizedSku}" (g\u1ED1c: "${String(current?.sku || "").trim()}").`
     };
   }
@@ -139138,7 +139176,7 @@ async function batchAutoLinkFromDatabase(opts) {
     );
     for (let rowIndex = requestedCursor; rowIndex < dbListings.length; rowIndex += 1) {
       const item = sanitizeChannelListingRow(dbListings[rowIndex]);
-      if (item.status !== "unlinked" && item.status !== "failed" || isListingAlreadyLinkedProtected(item)) {
+      if (item.status !== "unlinked" && item.status !== "failed" || isListingAlreadyLinkedProtected(item, masterProducts)) {
         alreadyLinked += 1;
         continue;
       }
@@ -139174,7 +139212,7 @@ async function batchAutoLinkFromDatabase(opts) {
     }
     const unlinkedRemaining = dbListings.filter((row) => {
       const safeRow = sanitizeChannelListingRow(row);
-      return (safeRow.status === "unlinked" || safeRow.status === "failed") && !isListingAlreadyLinkedProtected(safeRow);
+      return (safeRow.status === "unlinked" || safeRow.status === "failed") && !isListingAlreadyLinkedProtected(safeRow, masterProducts);
     }).length;
     const hasMore = nextCursor < dbListings.length;
     console.log(
@@ -139236,7 +139274,7 @@ async function bulkAutoLinkListingsByIds(rawIds) {
       continue;
     }
     const current = found.row;
-    if (isListingAlreadyLinkedProtected(current)) {
+    if (isListingAlreadyLinkedProtected(current, masterProducts)) {
       skippedCount += 1;
       const enriched = enrichChannelListingsWithMaster([current], masterProducts)[0];
       results.push({
@@ -139250,11 +139288,10 @@ async function bulkAutoLinkListingsByIds(rawIds) {
     const normalizedSku = normalizeSkuKey(current?.sku);
     if (!normalizedSku) {
       failedCount += 1;
-      const failedRow = sanitizeChannelListingRow({
-        ...current,
-        status: "failed",
-        syncError: "SKU s\u1EA3n ph\u1EA9m s\xE0n \u0111ang tr\u1ED1ng ho\u1EB7c kh\xF4ng h\u1EE3p l\u1EC7."
-      });
+      const failedRow = buildAutoLinkFailedRow(
+        current,
+        "SKU s\u1EA3n ph\u1EA9m s\xE0n \u0111ang tr\u1ED1ng ho\u1EB7c kh\xF4ng h\u1EE3p l\u1EC7."
+      );
       dbListings[found.index] = failedRow;
       toWrite.push(failedRow);
       results.push({
@@ -139268,11 +139305,10 @@ async function bulkAutoLinkListingsByIds(rawIds) {
     const masterItem = findMasterProductBySku(masterSkuIndex, current?.sku, masterProducts);
     if (!masterItem) {
       failedCount += 1;
-      const failedRow = sanitizeChannelListingRow({
-        ...current,
-        status: "failed",
-        syncError: `Kh\xF4ng t\xECm th\u1EA5y SKU kh\u1EDBp trong Kho g\u1ED1c: ${normalizedSku}`
-      });
+      const failedRow = buildAutoLinkFailedRow(
+        current,
+        `Kh\xF4ng t\xECm th\u1EA5y SKU kh\u1EDBp trong Kho g\u1ED1c: ${normalizedSku}`
+      );
       dbListings[found.index] = failedRow;
       toWrite.push(failedRow);
       results.push({
@@ -139330,12 +139366,13 @@ async function bulkAutoLinkAllPending(opts) {
   if (!Array.isArray(dbListings) || dbListings.length === 0) {
     throw new Error("Kh\xF4ng c\xF3 d\u1EEF li\u1EC7u channel_listings \u0111\u1EC3 li\xEAn k\u1EBFt.");
   }
+  const { products: masterProductsForPending } = await getCachedMasterSkuIndex();
   const pendingIds = [];
   for (const row of dbListings) {
     const safe = sanitizeChannelListingRow(row);
     const id = String(safe?.id || "").trim();
     if (!id) continue;
-    if (isListingAlreadyLinkedProtected(safe)) continue;
+    if (isListingAlreadyLinkedProtected(safe, masterProductsForPending)) continue;
     if (safe.status === "unlinked" || safe.status === "failed") pendingIds.push(id);
   }
   const maxTotal = Math.min(

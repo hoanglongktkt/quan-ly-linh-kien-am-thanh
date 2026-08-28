@@ -36,6 +36,52 @@ function buildMasterSkuIndex(products) {
   return index;
 }
 
+function findMasterById(products, linkedId) {
+  const id = String(linkedId || '').trim();
+  if (!id) return null;
+  for (const product of Array.isArray(products) ? products : []) {
+    if (String(product?.id || '').trim() === id) return product;
+    for (const child of getChildren(product)) {
+      if (String(child?.id || '').trim() === id) return child;
+    }
+  }
+  return null;
+}
+
+/** Chỉ bảo vệ khi status=success + linkedProductId + SKU khớp. */
+function isListingAlreadyLinkedProtected(listing, products) {
+  if (!listing || typeof listing !== 'object') return false;
+  if (listing.linkBroken === true) return false;
+  if (String(listing.status || '') !== 'success') return false;
+
+  const linkedId = String(listing?.linkedProductId || listing?.linkedProduct?.id || '').trim();
+  if (!linkedId) return false;
+
+  const listingSku = normalizeSkuKey(listing?.sku);
+  if (!listingSku) return false;
+
+  const snapshotSku = normalizeSkuKey(listing?.linkedProductSku || listing?.linkedProduct?.sku || '');
+  if (snapshotSku && snapshotSku === listingSku) return true;
+
+  const master = findMasterById(products, linkedId);
+  if (master && normalizeSkuKey(master?.sku) === listingSku) return true;
+
+  return false;
+}
+
+function buildAutoLinkFailedRow(current, syncError) {
+  return {
+    ...current,
+    status: 'failed',
+    linkedProductId: undefined,
+    linkedProductTitle: undefined,
+    linkedProductSku: undefined,
+    linkedProduct: undefined,
+    syncError,
+    linkBroken: false,
+  };
+}
+
 async function fetchJson(backendUrl, req, pathPart, init = {}, timeoutMs = 120000) {
   const target = buildCpanelTarget(backendUrl, pathPart, {});
   const headers = {
@@ -121,8 +167,7 @@ async function fallbackBulkAutoLink(backendUrl, req, ids) {
       continue;
     }
 
-    const linkedId = String(current?.linkedProductId || current?.linkedProduct?.id || '').trim();
-    if (linkedId) {
+    if (isListingAlreadyLinkedProtected(current, products)) {
       skippedCount += 1;
       results.push({
         id,
@@ -137,13 +182,12 @@ async function fallbackBulkAutoLink(backendUrl, req, ids) {
     const master = key ? skuIndex.get(key) : null;
     if (!master?.id) {
       failedCount += 1;
-      const failed = {
-        ...current,
-        status: 'failed',
-        syncError: key
+      const failed = buildAutoLinkFailedRow(
+        current,
+        key
           ? `Không tìm thấy SKU khớp trong Kho gốc: ${key}`
           : 'SKU sản phẩm sàn đang trống hoặc không hợp lệ.',
-      };
+      );
       toWrite.push(failed);
       results.push({
         id,

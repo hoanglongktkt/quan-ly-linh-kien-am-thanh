@@ -392,6 +392,18 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     );
   }, []);
 
+  const commitAutoLinkedListing = useCallback(
+    async (listing: ChannelListing): Promise<ChannelListing> => {
+      const normalized = normalizeListingRecord(listing);
+      if (!normalized) return listing;
+      const saved = await persistListings([normalized]);
+      const final = saved?.[0] ?? normalized;
+      mergeListingIntoState(final);
+      return final;
+    },
+    [mergeListingIntoState, persistListings]
+  );
+
   const requestSingleAutoLink = useCallback(async (item: ChannelListing): Promise<{
     success: boolean;
     listing: ChannelListing | null;
@@ -1133,19 +1145,33 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     try {
       const result = await requestSingleAutoLink(item);
       if (result.success && result.listing) {
-        mergeListingIntoState(result.listing);
-        if (!silent) {
-          showToast(`⚡ ${result.message}`);
-          onAddLog({
-            id: `log-${Date.now()}`,
-            timestamp: new Date().toISOString(),
-            channel: (item.platform === 'lazada' ? 'shopee' : item.platform) as any,
-            type: 'product_sync',
-            status: 'success',
-            message: `Liên kết tự động thành công sản phẩm sàn [ID: ${item.channelId}] với Kho chính [${result.listing.linkedProductSku || result.listing.linkedProductTitle || 'matched'}]`,
-          });
+        const linkedOk = result.listing.status === 'success' && !!result.listing.linkedProductId;
+        if (linkedOk) {
+          const saved = await commitAutoLinkedListing(result.listing);
+          if (!silent) {
+            const isAlreadyLinked = /đã được liên kết trước đó/i.test(result.message);
+            showToast(
+              isAlreadyLinked
+                ? `⚡ ${result.message}`
+                : `⚡ Liên kết tự động thành công với Kho chính [${saved.linkedProductSku || saved.linkedProductTitle || 'matched'}]`
+            );
+            onAddLog({
+              id: `log-${Date.now()}`,
+              timestamp: new Date().toISOString(),
+              channel: (item.platform === 'lazada' ? 'shopee' : item.platform) as any,
+              type: 'product_sync',
+              status: 'success',
+              message: isAlreadyLinked
+                ? `Sản phẩm sàn [ID: ${item.channelId}] đã liên kết hợp lệ trước đó.`
+                : `Liên kết tự động thành công sản phẩm sàn [ID: ${item.channelId}] với Kho chính [${saved.linkedProductSku || saved.linkedProductTitle || 'matched'}]`,
+            });
+          }
+          return true;
         }
-        return true;
+      }
+
+      if (!result.success && result.listing) {
+        mergeListingIntoState(result.listing);
       }
 
       // Fallback: khớp local từ sku-index toàn kho nếu API trả không khớp (không phải lỗi quota)

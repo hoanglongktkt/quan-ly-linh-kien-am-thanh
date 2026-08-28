@@ -18665,19 +18665,51 @@ function findMasterProductBySku(
   return masterSkuIndex.get(key) || null;
 }
 
-/** Đã có liên kết → BẢO VỆ, tuyệt đối không ghi đè. */
-function isListingAlreadyLinkedProtected(listing: any): boolean {
+/**
+ * Chỉ bảo vệ (không ghi đè) khi liên kết hợp lệ:
+ * status=success + linkedProductId + SKU sàn khớp SKU kho gốc.
+ * failed/unlinked hoặc ghost link (có ID cũ nhưng SKU lệch) → cho phép re-map.
+ */
+function isListingAlreadyLinkedProtected(listing: any, masterProducts?: any[]): boolean {
   if (!listing || typeof listing !== "object") return false;
   if (listing.linkBroken === true) return false;
+  if (String(listing.status || "") !== "success") return false;
+
   const linkedId =
     listing.linkedProductId != null && String(listing.linkedProductId).trim() !== ""
       ? String(listing.linkedProductId).trim()
       : listing.linkedProduct?.id != null && String(listing.linkedProduct.id).trim() !== ""
         ? String(listing.linkedProduct.id).trim()
         : "";
-  if (linkedId) return true;
-  if (listing.status === "success" && listing.linkedProduct != null) return true;
+  if (!linkedId) return false;
+
+  const listingSku = normalizeSkuKey(listing?.sku);
+  if (!listingSku) return false;
+
+  const snapshotSku = normalizeSkuKey(
+    listing?.linkedProductSku || listing?.linkedProduct?.sku || "",
+  );
+  if (snapshotSku && snapshotSku === listingSku) return true;
+
+  if (Array.isArray(masterProducts) && masterProducts.length > 0) {
+    const lookup = buildMasterProductLookupById(masterProducts);
+    const master = lookup.get(linkedId);
+    if (master && normalizeSkuKey(master?.sku) === listingSku) return true;
+  }
+
   return false;
+}
+
+/** Ghi failed + xóa ghost link (linkedProductId cũ còn sót khi status failed/unlinked). */
+function buildAutoLinkFailedRow(current: any, syncError: string): any {
+  return sanitizeChannelListingRow({
+    ...current,
+    status: "failed",
+    linkedProductId: undefined,
+    linkedProductTitle: undefined,
+    linkedProductSku: undefined,
+    syncError,
+  });
 }
 
 /** Ghi products MongoDB 1 lần — không cần refresh file cache. */
@@ -18753,7 +18785,7 @@ async function autoLinkSingleListingFromDatabase(opts?: {
     throw new Error("Kho sản phẩm chính đang trống. Hãy khởi tạo/sync dữ liệu trước.");
   }
 
-  if (isListingAlreadyLinkedProtected(current)) {
+  if (isListingAlreadyLinkedProtected(current, masterProducts)) {
     const enrichedExisting = enrichChannelListingsWithMaster([current], masterProducts)[0];
     return {
       success: true,
@@ -18768,18 +18800,35 @@ async function autoLinkSingleListingFromDatabase(opts?: {
 
   const normalizedSku = normalizeSkuKey(current?.sku);
   if (!normalizedSku) {
+    const failedRow = persistBatchAutoLinkListingUpdate(
+      dbListings,
+      rowIndex,
+      buildAutoLinkFailedRow(current, "SKU sản phẩm sàn đang trống hoặc không hợp lệ."),
+    );
+    await upsertChannelListingToStore(failedRow);
+    await flushDbWrites();
     return {
       success: false,
-      listing: enrichChannelListingsWithMaster([current], masterProducts)[0],
+      listing: enrichChannelListingsWithMaster([failedRow], masterProducts)[0],
       message: "SKU sản phẩm sàn đang trống hoặc không hợp lệ.",
     };
   }
 
   const masterItem = findMasterProductBySku(masterSkuIndex, current?.sku, masterProducts);
   if (!masterItem) {
+    const failedRow = persistBatchAutoLinkListingUpdate(
+      dbListings,
+      rowIndex,
+      buildAutoLinkFailedRow(
+        current,
+        `Không tìm thấy SKU khớp trong Kho gốc cho "${normalizedSku}" (gốc: "${String(current?.sku || "").trim()}").`,
+      ),
+    );
+    await upsertChannelListingToStore(failedRow);
+    await flushDbWrites();
     return {
       success: false,
-      listing: enrichChannelListingsWithMaster([current], masterProducts)[0],
+      listing: enrichChannelListingsWithMaster([failedRow], masterProducts)[0],
       message: `Không tìm thấy SKU khớp trong Kho gốc cho "${normalizedSku}" (gốc: "${String(current?.sku || "").trim()}").`,
     };
   }
@@ -18883,7 +18932,7 @@ async function batchAutoLinkFromDatabase(opts?: {
       // Retry cả failed (SKU trước đó không khớp / lỗi tạm) — không chỉ unlinked.
       if (
         (item.status !== "unlinked" && item.status !== "failed") ||
-        isListingAlreadyLinkedProtected(item)
+        isListingAlreadyLinkedProtected(item, masterProducts)
       ) {
         alreadyLinked += 1;
         continue;
@@ -18931,7 +18980,7 @@ async function batchAutoLinkFromDatabase(opts?: {
       const safeRow = sanitizeChannelListingRow(row);
       return (
         (safeRow.status === "unlinked" || safeRow.status === "failed") &&
-        !isListingAlreadyLinkedProtected(safeRow)
+        !isListingAlreadyLinkedProtected(safeRow, masterProducts)
       );
     }).length;
     const hasMore = nextCursor < dbListings.length;
@@ -19019,7 +19068,7 @@ async function bulkAutoLinkListingsByIds(rawIds: unknown[]): Promise<{
     }
 
     const current = found.row;
-    if (isListingAlreadyLinkedProtected(current)) {
+    if (isListingAlreadyLinkedProtected(current, masterProducts)) {
       skippedCount += 1;
       const enriched = enrichChannelListingsWithMaster([current], masterProducts)[0];
       results.push({
@@ -19034,11 +19083,10 @@ async function bulkAutoLinkListingsByIds(rawIds: unknown[]): Promise<{
     const normalizedSku = normalizeSkuKey(current?.sku);
     if (!normalizedSku) {
       failedCount += 1;
-      const failedRow = sanitizeChannelListingRow({
-        ...current,
-        status: "failed",
-        syncError: "SKU sản phẩm sàn đang trống hoặc không hợp lệ.",
-      });
+      const failedRow = buildAutoLinkFailedRow(
+        current,
+        "SKU sản phẩm sàn đang trống hoặc không hợp lệ.",
+      );
       dbListings[found.index] = failedRow;
       toWrite.push(failedRow);
       results.push({
@@ -19053,11 +19101,10 @@ async function bulkAutoLinkListingsByIds(rawIds: unknown[]): Promise<{
     const masterItem = findMasterProductBySku(masterSkuIndex, current?.sku, masterProducts);
     if (!masterItem) {
       failedCount += 1;
-      const failedRow = sanitizeChannelListingRow({
-        ...current,
-        status: "failed",
-        syncError: `Không tìm thấy SKU khớp trong Kho gốc: ${normalizedSku}`,
-      });
+      const failedRow = buildAutoLinkFailedRow(
+        current,
+        `Không tìm thấy SKU khớp trong Kho gốc: ${normalizedSku}`,
+      );
       dbListings[found.index] = failedRow;
       toWrite.push(failedRow);
       results.push({
@@ -19138,12 +19185,13 @@ async function bulkAutoLinkAllPending(opts?: { limit?: number }): Promise<{
     throw new Error("Không có dữ liệu channel_listings để liên kết.");
   }
 
+  const { products: masterProductsForPending } = await getCachedMasterSkuIndex();
   const pendingIds: string[] = [];
   for (const row of dbListings) {
     const safe = sanitizeChannelListingRow(row);
     const id = String(safe?.id || "").trim();
     if (!id) continue;
-    if (isListingAlreadyLinkedProtected(safe)) continue;
+    if (isListingAlreadyLinkedProtected(safe, masterProductsForPending)) continue;
     if (safe.status === "unlinked" || safe.status === "failed") pendingIds.push(id);
   }
 

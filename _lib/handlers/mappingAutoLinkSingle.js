@@ -42,6 +42,52 @@ function findMasterProductBySku(masterSkuIndex, listingSku) {
   return masterSkuIndex.get(key) || null;
 }
 
+function findMasterById(products, linkedId) {
+  const id = String(linkedId || '').trim();
+  if (!id) return null;
+  for (const product of Array.isArray(products) ? products : []) {
+    if (String(product?.id || '').trim() === id) return product;
+    for (const child of getChildren(product)) {
+      if (String(child?.id || '').trim() === id) return child;
+    }
+  }
+  return null;
+}
+
+/** Chỉ bảo vệ khi status=success + linkedProductId + SKU khớp. */
+function isListingAlreadyLinkedProtected(listing, products) {
+  if (!listing || typeof listing !== 'object') return false;
+  if (listing.linkBroken === true) return false;
+  if (String(listing.status || '') !== 'success') return false;
+
+  const linkedId = String(listing?.linkedProductId || listing?.linkedProduct?.id || '').trim();
+  if (!linkedId) return false;
+
+  const listingSku = normalizeSkuKey(listing?.sku);
+  if (!listingSku) return false;
+
+  const snapshotSku = normalizeSkuKey(listing?.linkedProductSku || listing?.linkedProduct?.sku || '');
+  if (snapshotSku && snapshotSku === listingSku) return true;
+
+  const master = findMasterById(products, linkedId);
+  if (master && normalizeSkuKey(master?.sku) === listingSku) return true;
+
+  return false;
+}
+
+function buildAutoLinkFailedRow(current, syncError) {
+  return {
+    ...current,
+    status: 'failed',
+    linkedProductId: undefined,
+    linkedProductTitle: undefined,
+    linkedProductSku: undefined,
+    linkedProduct: undefined,
+    syncError,
+    linkBroken: false,
+  };
+}
+
 function resolveListingIndex(listings, body) {
   const listingId = String(body?.id || body?.listingId || '').trim();
   const channelId = String(body?.channelId || '').trim();
@@ -134,28 +180,36 @@ export async function handleMappingAutoLinkSingle(req, res) {
     }
 
     const current = listings[rowIndex];
-    const linkedId = String(current?.linkedProductId || current?.linkedProduct?.id || '').trim();
-    if (linkedId) {
+    if (isListingAlreadyLinkedProtected(current, products)) {
       return res.status(200).json({
         success: true,
         listing: current,
-        matchedProductId: linkedId,
+        matchedProductId: String(current?.linkedProductId || current?.linkedProduct?.id || '').trim() || undefined,
         message: 'Sản phẩm này đã được liên kết trước đó.',
       });
     }
 
     const normalizedSku = normalizeSkuKey(current?.sku);
     if (!normalizedSku) {
-      return res.status(200).json({ success: false, listing: current, message: 'SKU sản phẩm sàn đang trống hoặc không hợp lệ.' });
+      const failed = buildAutoLinkFailedRow(current, 'SKU sản phẩm sàn đang trống hoặc không hợp lệ.');
+      await fetchJson(backend.url, req, 'mapping-products', {
+        method: 'PUT',
+        body: JSON.stringify({ listings: [failed] }),
+      });
+      return res.status(200).json({ success: false, listing: failed, message: failed.syncError });
     }
 
     const masterItem = findMasterProductBySku(buildMasterSkuIndex(products), current?.sku, products);
     if (!masterItem) {
-      return res.status(200).json({
-        success: false,
-        listing: current,
-        message: `Không tìm thấy SKU khớp trong Kho gốc cho "${normalizedSku}" (gốc: "${String(current?.sku || '').trim()}").`,
+      const failed = buildAutoLinkFailedRow(
+        current,
+        `Không tìm thấy SKU khớp trong Kho gốc cho "${normalizedSku}" (gốc: "${String(current?.sku || '').trim()}").`,
+      );
+      await fetchJson(backend.url, req, 'mapping-products', {
+        method: 'PUT',
+        body: JSON.stringify({ listings: [failed] }),
       });
+      return res.status(200).json({ success: false, listing: failed, message: failed.syncError });
     }
 
     // Micro payload tối đa: chỉ gửi đúng các field cần thiết cho sanitizeChannelListingRow.
