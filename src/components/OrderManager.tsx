@@ -7929,12 +7929,6 @@ export default function OrderManager({
         </div>
       )}
 
-      {activeSubTab === 'external_orders' && (
-        <div className="bg-emerald-50/80 border border-emerald-100 rounded-2xl px-4 py-3 text-xs text-emerald-950 font-semibold leading-relaxed">
-          Đơn GHN / SPX Express tạo ngoài sàn — in vận đơn bằng file PDF gốc của hãng (không vẽ mã vạch HTML).
-        </div>
-      )}
-
       {/* 4. FILTER BOX — search + ĐVVC (ẩn trên màn sản phẩm trong đơn) */}
       {activeSubTab !== 'order_products' && (
       <div className="om-orders-filters-panel bg-white p-5 max-md:p-4 rounded-3xl border border-gray-100 shadow-xs">
