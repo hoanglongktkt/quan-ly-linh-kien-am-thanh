@@ -76788,12 +76788,12 @@ async function initMongo(appRoot) {
       }
     }
     try {
-      await OrderModel.syncIndexes();
+      const scannerIdx = await ensureScannerIndexesInStore();
       console.log(
-        "[MongoDB] Order indexes synced (orderSn_unique, hasPdf+isPrinted, last_shopee_update_at:-1, \u2026)"
+        `[MongoDB] Scanner indexes ensured (compound=${scannerIdx.scannerIndexes.filter((x2) => x2.present).length}/${scannerIdx.scannerIndexes.length} total=${scannerIdx.totalIndexes})`
       );
     } catch (idxErr) {
-      console.warn("[MongoDB] syncIndexes orders:", idxErr);
+      console.warn("[MongoDB] ensureScannerIndexesInStore:", idxErr);
     }
     try {
       const ttl = await ensureRetentionTtlIndexes();
@@ -113285,7 +113285,7 @@ var import_mongoose6 = __toESM(require("mongoose"), 1);
 function dbReadyMiddleware(req, res, next) {
   const pathName = String(req.path || req.originalUrl || "").split("?")[0];
   if (!pathName.startsWith("/api/")) return next();
-  const allowWithoutDb = pathName === "/api/login" || pathName.startsWith("/api/health") || pathName.startsWith("/api/auth/") || pathName === "/api/shopee/callback" || pathName === "/api/shopee/oauth/complete" || pathName === "/api/shopee/webhook" || pathName.startsWith("/api/public/") || pathName.startsWith("/api/shopee/ship-order") || pathName === "/api/shopee/print-document" || pathName === "/api/system/setup-indexes";
+  const allowWithoutDb = pathName === "/api/login" || pathName.startsWith("/api/health") || pathName.startsWith("/api/auth/") || pathName === "/api/shopee/callback" || pathName === "/api/shopee/oauth/complete" || pathName === "/api/shopee/webhook" || pathName.startsWith("/api/public/") || pathName.startsWith("/api/shopee/ship-order") || pathName === "/api/shopee/print-document";
   if (allowWithoutDb) return next();
   if (import_mongoose6.default.connection.readyState !== 1) {
     return res.status(503).json({
@@ -124846,42 +124846,7 @@ var autoLinkRoutes_default = router21;
 
 // routes/apiSystemRoutes.js
 var import_express23 = __toESM(require_express2(), 1);
-
-// controllers/systemController.js
-async function setupScannerIndexes(_req, res) {
-  try {
-    if (!isMongoReady()) {
-      return res.status(503).json({
-        success: false,
-        error: "mongodb_not_ready",
-        message: "MongoDB ch\u01B0a k\u1EBFt n\u1ED1i. Ki\u1EC3m tra MONGODB_URI trong .env r\u1ED3i restart Node tr\xEAn cPanel."
-      });
-    }
-    const result = await ensureScannerIndexesInStore();
-    return res.status(result.success ? 200 : 207).json({
-      success: result.success,
-      message: result.success ? "\u0110\xE3 t\u1EA1o/\u0111\u1ED3ng b\u1ED9 index scanner th\xE0nh c\xF4ng tr\xEAn collection orders." : "syncIndexes \u0111\xE3 ch\u1EA1y nh\u01B0ng m\u1ED9t s\u1ED1 index scanner ch\u01B0a th\u1EA5y \u2014 xem chi ti\u1EBFt scannerIndexes.",
-      syncResult: result.syncResult,
-      scannerIndexes: result.scannerIndexes,
-      lookupIndexes: result.lookupIndexes,
-      totalIndexes: result.totalIndexes,
-      allIndexNames: result.allIndexNames,
-      ranAt: (/* @__PURE__ */ new Date()).toISOString(),
-      hint: "Sau khi index OK, h\xE3y x\xF3a route GET /api/system/setup-indexes kh\u1ECFi server \u0111\u1EC3 b\u1EA3o m\u1EADt."
-    });
-  } catch (error) {
-    console.error("[Setup Scanner Indexes] API error:", error);
-    return res.status(500).json({
-      success: false,
-      error: error?.message || "setup_indexes_failed",
-      message: error?.message || "Kh\xF4ng th\u1EC3 t\u1EA1o index MongoDB."
-    });
-  }
-}
-
-// routes/apiSystemRoutes.js
 var router22 = (0, import_express23.Router)();
-router22.get("/system/setup-indexes", setupScannerIndexes);
 router22.get("/sync-jobs/:jobId", authMiddleware, getSyncJobById);
 router22.get("/order-counts", authMiddleware, getOrderCounts);
 router22.post("/sync-shopee", authMiddleware, syncShopee);

@@ -1,10 +1,7 @@
 /**
  * Tạo compound index phục vụ scanner-sync / lookup nhanh trên collection orders.
- *
- * Cách 1 (cPanel — khuyến nghị): mở trình duyệt
- *   https://YOUR-DOMAIN/api/system/setup-indexes
- *
- * Cách 2 (local có terminal):
+ * Index được tự động đồng bộ lúc server boot (ensureScannerIndexesInStore trong mongoStore).
+ * Script này chỉ dùng khi cần chạy tay trên máy local có terminal:
  *   node scripts/ensure_scanner_indexes.mjs
  */
 import mongoose from 'mongoose';

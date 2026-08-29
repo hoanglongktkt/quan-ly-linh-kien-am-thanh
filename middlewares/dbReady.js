@@ -16,8 +16,7 @@ export function dbReadyMiddleware(req, res, next) {
     pathName === "/api/shopee/webhook" ||
     pathName.startsWith("/api/public/") ||
     pathName.startsWith("/api/shopee/ship-order") ||
-    pathName === "/api/shopee/print-document" ||
-    pathName === "/api/system/setup-indexes";
+    pathName === "/api/shopee/print-document";
   if (allowWithoutDb) return next();
   if (mongoose.connection.readyState !== 1) {
     return res.status(503).json({

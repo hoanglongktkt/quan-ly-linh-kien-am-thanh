@@ -691,12 +691,14 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
     }
 
     try {
-      await OrderModel.syncIndexes();
+      const scannerIdx = await ensureScannerIndexesInStore();
       console.log(
-        "[MongoDB] Order indexes synced (orderSn_unique, hasPdf+isPrinted, last_shopee_update_at:-1, …)",
+        "[MongoDB] Scanner indexes ensured" +
+          ` (compound=${scannerIdx.scannerIndexes.filter((x) => x.present).length}/${scannerIdx.scannerIndexes.length}` +
+          ` total=${scannerIdx.totalIndexes})`,
       );
     } catch (idxErr) {
-      console.warn("[MongoDB] syncIndexes orders:", idxErr);
+      console.warn("[MongoDB] ensureScannerIndexesInStore:", idxErr);
     }
 
     // TTL + dọn ngay order_events/sync_jobs (Atlas Free 512MB — không chờ TTL monitor).

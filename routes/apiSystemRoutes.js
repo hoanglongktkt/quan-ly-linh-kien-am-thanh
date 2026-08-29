@@ -7,13 +7,9 @@ import {
   ensureMongoTtl,
 } from "../controllers/ordersController.js";
 import { pullOrders, syncFromShop, syncShopee } from "../controllers/shopeeOrdersController.js";
-import { setupScannerIndexes } from "../controllers/systemController.js";
 
 /** Mount tại /api — paths hệ thống (auth từng route) */
 const router = Router();
-
-/** One-shot: tạo index scanner — không auth (xóa route sau khi chạy xong). */
-router.get("/system/setup-indexes", setupScannerIndexes);
 
 router.get("/sync-jobs/:jobId", authMiddleware, getSyncJobById);
 router.get("/order-counts", authMiddleware, getOrderCounts);
