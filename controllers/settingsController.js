@@ -109,13 +109,23 @@ export async function putChannelSettings(req, res) {
         message: "Không ghi được file channel_settings.json trên máy chủ",
       });
     }
-    // Đồng bộ TikTok Custom App credentials → data/tiktok_tokens.json
+    // Đồng bộ TikTok + đổi Authorization Code → access/refresh token
+    let shopsAfterToken = mergedShops;
+    let tiktokTokenReports = [];
     try {
-      const { syncTiktokCredentialsFromShops } = await import("../services/tiktok/auth.js");
-      const n = syncTiktokCredentialsFromShops(mergedShops);
-      if (n > 0) console.log(`[Channel Settings] Synced ${n} TikTok shop credential(s)`);
+      const { syncAndExchangeTiktokShops } = await import("../services/tiktok/token.js");
+      const tokenSync = await syncAndExchangeTiktokShops(mergedShops);
+      shopsAfterToken = tokenSync.shops;
+      tiktokTokenReports = tokenSync.reports || [];
+      const failed = tiktokTokenReports.filter((r) => !r.success);
+      if (failed.length) {
+        console.warn("[Channel Settings] TikTok token exchange issues:", JSON.stringify(failed));
+      }
+      // Ghi lại shop đã được patch accessToken thật (sau exchange)
+      const payload2 = { ...payload, shops: shopsAfterToken };
+      deps.saveChannelSettings(payload2);
     } catch (syncErr) {
-      console.warn("[Channel Settings] TikTok credential sync skipped:", syncErr?.message || syncErr);
+      console.warn("[Channel Settings] TikTok token exchange skipped:", syncErr?.message || syncErr);
     }
     const saved = deps.loadChannelSettings();
     const shops = deps.enrichShopsWithConnectionStatus(saved.shops || []);
@@ -127,6 +137,7 @@ export async function putChannelSettings(req, res) {
       success: true,
       settings: { ...saved, shops },
       shopCount: shops.length,
+      tiktokTokenReports,
     });
   } catch (error) {
     deps.logOAuthSaveError("PUT /api/settings/channels", error);

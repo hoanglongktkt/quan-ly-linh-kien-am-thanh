@@ -1,48 +1,22 @@
 /**
- * Live ping TikTok Shop — dùng appKey/appSecret/accessToken của shop hoặc .env.
+ * Live ping TikTok Shop — exchange auth code nếu cần, rồi gọi OpenAPI.
  */
 import { tiktokApiRequest } from "./client.js";
 import {
   resolveTiktokCustomAppCredentials,
-  upsertTiktokCustomAppCredentials,
   extractTiktokFieldsFromShop,
 } from "./auth.js";
+import { ensureTiktokInboundCredential, refreshTikTokToken } from "./token.js";
 
 const SHOPS_PING_PATH = "/authorization/202309/shops";
 
-/**
- * Map shop FE/Settings → credentials (kết hợp .env toàn cục).
- */
 export function credentialsFromShopRecord(shop) {
-  const fields = extractTiktokFieldsFromShop(shop);
-  const shopId = fields?.shop_id || String(shop?.shopId || shop?.shop_id || "").trim();
-
-  if (shopId && fields && (fields.access_token || fields.app_key || fields.app_secret)) {
-    try {
-      const existing = resolveTiktokCustomAppCredentials(shopId);
-      upsertTiktokCustomAppCredentials(shopId, {
-        app_key: fields.app_key || existing.app_key,
-        app_secret: fields.app_secret || existing.app_secret,
-        access_token: fields.access_token || existing.access_token,
-        shop_cipher: fields.shop_cipher || existing.shop_cipher,
-        shop_name: fields.shop_name || existing.shop_name,
-      });
-    } catch {
-      /* ignore */
-    }
-  }
-
+  const shopId = String(shop?.shopId || shop?.shop_id || "").trim();
   return resolveTiktokCustomAppCredentials(shopId, shop);
 }
 
-/**
- * Ping thật TikTok OpenAPI bằng credentials đã resolve.
- */
 export async function pingTiktokShopConnection(shop) {
   const shopId = String(shop?.shopId || shop?.shop_id || "").trim();
-  const fields = extractTiktokFieldsFromShop(shop);
-  const accessToken = fields?.access_token || "";
-
   if (!shopId) {
     return {
       online: false,
@@ -51,35 +25,70 @@ export async function pingTiktokShopConnection(shop) {
     };
   }
 
-  const creds = credentialsFromShopRecord(shop);
-
-  if (!creds.access_token && !accessToken) {
+  // Cấp token lần đầu nếu UI gửi Authorization Code
+  const inbound = await ensureTiktokInboundCredential(shop);
+  if (!inbound.success && inbound.error === "app_key_mistake") {
     return {
       online: false,
       connection_status: "missing",
-      message: "Thiếu Access Token TikTok trên shop hoặc .env (TIKTOK_ACCESS_TOKEN)",
+      message: inbound.message,
     };
   }
+  if (!inbound.success && inbound.error === "missing_token_input") {
+    return {
+      online: false,
+      connection_status: "missing",
+      message: inbound.message,
+    };
+  }
+  // Nếu exchange auth_code thất bại → báo rõ, không giả Online
+  if (!inbound.success && inbound.error !== "missing_token_input") {
+    const fields = extractTiktokFieldsFromShop(shop);
+    if (fields?.access_token) {
+      // vẫn thử ping bằng token cũ nếu có
+    } else {
+      return {
+        online: false,
+        connection_status: "expired",
+        message: inbound.message || "Không cấp được Access Token từ Authorization Code.",
+      };
+    }
+  }
+
+  let creds = resolveTiktokCustomAppCredentials(shopId, inbound.shopPatch
+    ? { ...shop, ...inbound.shopPatch }
+    : shop);
 
   if (!creds.valid) {
     const missing = [];
-    if (!creds.app_key) missing.push("App Key (shop.appKey hoặc TIKTOK_APP_KEY)");
-    if (!creds.app_secret) missing.push("App Secret (shop.apiSecret hoặc TIKTOK_APP_SECRET)");
-    if (!creds.access_token) missing.push("Access Token");
+    if (!creds.app_key) missing.push("App Key (.env TIKTOK_APP_KEY)");
+    if (!creds.app_secret) missing.push("App Secret (.env TIKTOK_APP_SECRET)");
+    if (!creds.access_token) missing.push("Access Token / Authorization Code");
     return {
       online: false,
       connection_status: "missing",
-      message: `Thiếu credentials TikTok: ${missing.join(", ")}. Điền trên UI hoặc file .env cPanel.`,
-      env_app_key_configured: creds.env_app_key_configured,
-      env_app_secret_configured: creds.env_app_secret_configured,
+      message: `Thiếu credentials TikTok: ${missing.join(", ")}`,
       source: creds.source,
     };
   }
 
-  const result = await tiktokApiRequest("GET", SHOPS_PING_PATH, {
+  let result = await tiktokApiRequest("GET", SHOPS_PING_PATH, {
     shopId,
     credentials: creds,
   });
+
+  // Fallback: nếu vẫn auth fail và có refresh_token — refresh rồi ping lại
+  if (!result.success) {
+    const refreshed = await refreshTikTokToken(shopId);
+    if (refreshed.success) {
+      creds = resolveTiktokCustomAppCredentials(shopId);
+      result = await tiktokApiRequest("GET", SHOPS_PING_PATH, {
+        shopId,
+        credentials: creds,
+        _retried: true,
+      });
+    }
+  }
 
   if (result.success) {
     const shops =
@@ -92,13 +101,13 @@ export async function pingTiktokShopConnection(shop) {
       connection_status: "online",
       message:
         count > 0
-          ? `TikTok API OK — ${count} shop được ủy quyền (Live ping, source=${creds.source})`
-          : `TikTok API OK — Access Token hợp lệ (Live ping, source=${creds.source})`,
+          ? `TikTok API OK — ${count} shop được ủy quyền${inbound.exchanged ? " (đã đổi Auth Code)" : ""}`
+          : `TikTok API OK — Token hợp lệ${inbound.exchanged ? " (đã đổi Auth Code)" : ""}`,
     };
   }
 
   const msg = String(result.message || result.error || "TikTok API lỗi");
-  const authFail = /token|auth|unauthorized|expire|invalid|permission|sign/i.test(msg);
+  const authFail = /token|auth|unauthorized|expire|invalid|permission|sign|refresh/i.test(msg);
   return {
     online: false,
     connection_status: authFail ? "expired" : "missing",

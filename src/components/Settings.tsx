@@ -1546,7 +1546,7 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
                   {platform === 'woocommerce'
                     ? 'Mật Mã Khách Hàng (WooCommerce Consumer Secret)'
                     : platform === 'tiktok'
-                      ? 'Access Token (TikTok Custom App)'
+                      ? 'Authorization Code / Access Token (TikTok)'
                       : 'API Partner Key / Access Token'}
                 </label>
                 <input 
@@ -1556,7 +1556,7 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
                     platform === 'woocommerce'
                       ? 'Ví dụ: cs_a1b2c3d4e5f6g7h8...'
                       : platform === 'tiktok'
-                        ? 'Dán Access Token từ Seller Center / Custom App'
+                        ? 'Dán Authorization Code (sau authorize) — hệ thống tự đổi lấy Access Token'
                         : 'Nhập Token kết nối API...'
                   }
                   value={apiKey}

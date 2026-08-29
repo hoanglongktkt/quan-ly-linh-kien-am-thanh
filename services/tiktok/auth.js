@@ -118,6 +118,9 @@ export function upsertTiktokCustomAppCredentials(shopId, payload = {}) {
     app_key: String(payload.app_key ?? prev.app_key ?? "").trim() || undefined,
     app_secret: String(payload.app_secret ?? prev.app_secret ?? "").trim() || undefined,
     access_token: String(payload.access_token ?? prev.access_token ?? "").trim() || undefined,
+    refresh_token: String(payload.refresh_token ?? prev.refresh_token ?? "").trim() || undefined,
+    access_token_expire_in: payload.access_token_expire_in ?? prev.access_token_expire_in,
+    refresh_token_expire_in: payload.refresh_token_expire_in ?? prev.refresh_token_expire_in,
     shop_cipher: String(payload.shop_cipher ?? prev.shop_cipher ?? "").trim() || undefined,
     shop_name: String(payload.shop_name ?? prev.shop_name ?? "").trim() || undefined,
     updated_at: new Date().toISOString(),
@@ -137,6 +140,8 @@ function sanitizeCredentialRecord(record) {
     has_app_key: Boolean(record.app_key),
     has_app_secret: Boolean(record.app_secret),
     has_access_token: Boolean(record.access_token),
+    has_refresh_token: Boolean(record.refresh_token),
+    access_token_expire_in: record.access_token_expire_in ?? null,
     updated_at: record.updated_at || null,
   };
 }

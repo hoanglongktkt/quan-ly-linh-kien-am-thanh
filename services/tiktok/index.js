@@ -15,6 +15,15 @@ export {
 export { tiktokApiRequest, signTiktokRequest, tiktokApiDelay } from "./client.js";
 
 export {
+  exchangeTiktokAuthCode,
+  refreshTikTokToken,
+  ensureTiktokInboundCredential,
+  syncAndExchangeTiktokShops,
+  classifyTiktokCredentialInput,
+  isTiktokTokenExpiredError,
+} from "./token.js";
+
+export {
   fetchTiktokOrderListPage,
   fetchTiktokOrderDetails,
   fetchTiktokOrdersPaginated,

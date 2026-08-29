@@ -1,6 +1,6 @@
 /**
  * TikTok Shop OpenAPI HTTP client — Custom App.
- * Ký HMAC-SHA256 + header x-tts-access-token; chống rate-limit bằng delay/limit.
+ * Ký HMAC-SHA256 + auto refresh khi token hết hạn (retry 1 lần).
  */
 import crypto from "crypto";
 import { sleep } from "../../utils/concurrency.js";
@@ -9,6 +9,7 @@ import {
   getTiktokApiHost,
   resolveTiktokCustomAppCredentials,
 } from "./auth.js";
+import { refreshTikTokToken, isTiktokTokenExpiredError } from "./token.js";
 
 export const TIKTOK_HTTP_TIMEOUT_MS = 30_000;
 export const TIKTOK_API_DELAY_MS = 400;
@@ -17,7 +18,6 @@ export const TIKTOK_MAX_PAGES = 20;
 
 /**
  * Chữ ký TikTok Shop OpenAPI (Custom App).
- * input = secret + path + sorted(key+value, bỏ sign & access_token) + body + secret
  */
 export function signTiktokRequest(appSecret, apiPath, queryParams, bodyString = "") {
   const secret = String(appSecret || "");
@@ -43,24 +43,7 @@ function buildQuery(params) {
   return qs.toString();
 }
 
-/**
- * Gọi TikTok Shop OpenAPI với credentials Custom App.
- * @param {string} method
- * @param {string} apiPath ví dụ /order/202309/orders/search
- * @param {{ shopId?: string, query?: Record<string, any>, body?: object|null, credentials?: object }} [opts]
- */
-export async function tiktokApiRequest(method, apiPath, opts = {}) {
-  const creds = opts.credentials || resolveTiktokCustomAppCredentials(opts.shopId);
-  if (!creds?.valid) {
-    return {
-      success: false,
-      error: "tiktok_credentials_missing",
-      message:
-        "Thiếu App Key / App Secret / Access Token Custom App. Lưu qua Seller Center → /api/tiktok/custom-app/credentials hoặc .env.",
-      data: null,
-    };
-  }
-
+async function tiktokApiRequestOnce(method, apiPath, opts, creds) {
   const timestamp = String(Math.floor(Date.now() / 1000));
   const query = {
     app_key: creds.app_key,
@@ -143,7 +126,63 @@ export async function tiktokApiRequest(method, apiPath, opts = {}) {
   }
 }
 
-/** Nghỉ giữa các lần gọi (rate-limit / cPanel). */
+/**
+ * Gọi TikTok Shop OpenAPI — tự refresh + retry 1 lần khi token hết hạn.
+ * @param {string} method
+ * @param {string} apiPath
+ * @param {{ shopId?: string, query?: Record<string, any>, body?: object|null, credentials?: object, _retried?: boolean }} [opts]
+ */
+export async function tiktokApiRequest(method, apiPath, opts = {}) {
+  let creds = opts.credentials || resolveTiktokCustomAppCredentials(opts.shopId);
+  if (!creds?.valid) {
+    return {
+      success: false,
+      error: "tiktok_credentials_missing",
+      message:
+        "Thiếu App Key / App Secret / Access Token. Lưu Authorization Code hoặc credentials Custom App / .env.",
+      data: null,
+    };
+  }
+
+  const first = await tiktokApiRequestOnce(method, apiPath, opts, creds);
+  if (first.success) return first;
+
+  const shopId = String(opts.shopId || creds.shop_id || "").trim();
+  if (opts._retried || !shopId || !isTiktokTokenExpiredError(first)) {
+    return first;
+  }
+
+  console.warn(
+    `[TikTok API] Token hết hạn shop=${shopId} — auto refresh rồi retry ${apiPath}`,
+  );
+  const refreshed = await refreshTikTokToken(shopId);
+  if (!refreshed.success) {
+    return {
+      success: false,
+      error: "tiktok_refresh_failed",
+      message:
+        refreshed.message ||
+        "Access Token hết hạn và không refresh được. Hãy dán Authorization Code mới.",
+      data: null,
+      refresh: refreshed,
+      previous: first,
+    };
+  }
+
+  creds = resolveTiktokCustomAppCredentials(shopId);
+  if (!creds?.valid) {
+    return {
+      success: false,
+      error: "tiktok_credentials_missing_after_refresh",
+      message: "Đã refresh nhưng credentials vẫn thiếu.",
+      data: null,
+    };
+  }
+
+  await sleep(200);
+  return tiktokApiRequestOnce(method, apiPath, { ...opts, _retried: true }, creds);
+}
+
 export async function tiktokApiDelay(ms = TIKTOK_API_DELAY_MS) {
   await sleep(Math.max(0, Number(ms) || 0));
 }

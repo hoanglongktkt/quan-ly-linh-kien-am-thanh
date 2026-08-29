@@ -73403,32 +73403,6 @@ var require_follow_redirects = __commonJS({
 });
 
 // services/tiktok/auth.js
-var auth_exports = {};
-__export(auth_exports, {
-  TIKTOK_ACCESS_TOKEN: () => TIKTOK_ACCESS_TOKEN,
-  TIKTOK_API_HOST: () => TIKTOK_API_HOST,
-  TIKTOK_APP_KEY: () => TIKTOK_APP_KEY,
-  TIKTOK_APP_SECRET: () => TIKTOK_APP_SECRET,
-  TIKTOK_CALLBACK_IDLE_MSG: () => TIKTOK_CALLBACK_IDLE_MSG,
-  TIKTOK_CALLBACK_URL: () => TIKTOK_CALLBACK_URL,
-  TIKTOK_SHOP_CIPHER: () => TIKTOK_SHOP_CIPHER,
-  TIKTOK_SHOP_ID: () => TIKTOK_SHOP_ID,
-  TIKTOK_TOKENS_PATH: () => TIKTOK_TOKENS_PATH,
-  buildOAuthFrontendRedirectUrl: () => buildOAuthFrontendRedirectUrl,
-  exchangeTiktokAuthCode: () => exchangeTiktokAuthCode,
-  extractTiktokFieldsFromShop: () => extractTiktokFieldsFromShop,
-  getTiktokApiHost: () => getTiktokApiHost,
-  isTiktokConfigValid: () => isTiktokConfigValid,
-  isTiktokCustomAppConfigured: () => isTiktokCustomAppConfigured,
-  listTiktokCredentialSummaries: () => listTiktokCredentialSummaries,
-  loadTiktokTokens: () => loadTiktokTokens,
-  queryParamOne: () => queryParamOne,
-  resolveTiktokCustomAppCredentials: () => resolveTiktokCustomAppCredentials,
-  saveTiktokTokens: () => saveTiktokTokens,
-  shouldOAuthRedirectToFrontend: () => shouldOAuthRedirectToFrontend,
-  syncTiktokCredentialsFromShops: () => syncTiktokCredentialsFromShops,
-  upsertTiktokCustomAppCredentials: () => upsertTiktokCustomAppCredentials
-});
 function getTiktokApiHost() {
   return String(process.env.TIKTOK_API_HOST || "https://open-api.tiktokglobalshop.com").trim().replace(/\/$/, "");
 }
@@ -73504,6 +73478,9 @@ function upsertTiktokCustomAppCredentials(shopId, payload = {}) {
     app_key: String(payload.app_key ?? prev.app_key ?? "").trim() || void 0,
     app_secret: String(payload.app_secret ?? prev.app_secret ?? "").trim() || void 0,
     access_token: String(payload.access_token ?? prev.access_token ?? "").trim() || void 0,
+    refresh_token: String(payload.refresh_token ?? prev.refresh_token ?? "").trim() || void 0,
+    access_token_expire_in: payload.access_token_expire_in ?? prev.access_token_expire_in,
+    refresh_token_expire_in: payload.refresh_token_expire_in ?? prev.refresh_token_expire_in,
     shop_cipher: String(payload.shop_cipher ?? prev.shop_cipher ?? "").trim() || void 0,
     shop_name: String(payload.shop_name ?? prev.shop_name ?? "").trim() || void 0,
     updated_at: (/* @__PURE__ */ new Date()).toISOString()
@@ -73522,6 +73499,8 @@ function sanitizeCredentialRecord(record) {
     has_app_key: Boolean(record.app_key),
     has_app_secret: Boolean(record.app_secret),
     has_access_token: Boolean(record.access_token),
+    has_refresh_token: Boolean(record.refresh_token),
+    access_token_expire_in: record.access_token_expire_in ?? null,
     updated_at: record.updated_at || null
   };
 }
@@ -73567,25 +73546,6 @@ function loadTiktokShopFromChannelSettings(shopId) {
     return null;
   }
 }
-function syncTiktokCredentialsFromShops(shops) {
-  const list = Array.isArray(shops) ? shops : [];
-  let synced = 0;
-  for (const shop of list) {
-    if (String(shop?.platform || "").toLowerCase() !== "tiktok") continue;
-    const fields = extractTiktokFieldsFromShop(shop);
-    if (!fields?.shop_id) continue;
-    if (!fields.access_token && !fields.app_key && !fields.app_secret) continue;
-    upsertTiktokCustomAppCredentials(fields.shop_id, {
-      app_key: fields.app_key,
-      app_secret: fields.app_secret,
-      access_token: fields.access_token,
-      shop_cipher: fields.shop_cipher,
-      shop_name: fields.shop_name
-    });
-    synced += 1;
-  }
-  return synced;
-}
 function resolveTiktokCustomAppCredentials(shopId, shopOverride = null) {
   const want = String(shopId || envTiktokShopId() || "").trim();
   const fromOverride = shopOverride ? extractTiktokFieldsFromShop(shopOverride) : null;
@@ -73624,12 +73584,6 @@ function resolveTiktokCustomAppCredentials(shopId, shopOverride = null) {
     env_app_key_configured: Boolean(envTiktokAppKey()),
     env_app_secret_configured: Boolean(envTiktokAppSecret())
   };
-}
-function isTiktokCustomAppConfigured(shopId) {
-  return resolveTiktokCustomAppCredentials(shopId).valid;
-}
-function isTiktokConfigValid() {
-  return isTiktokCustomAppConfigured(envTiktokShopId());
 }
 async function exchangeTiktokAuthCode(code, opts = {}) {
   const shopId = String(opts.shopId || "").trim();
@@ -73670,6 +73624,345 @@ var init_auth = __esm({
     TIKTOK_ACCESS_TOKEN = envTiktokAccessToken();
     TIKTOK_SHOP_ID = envTiktokShopId();
     TIKTOK_SHOP_CIPHER = envTiktokShopCipher();
+  }
+});
+
+// services/tiktok/token.js
+var token_exports = {};
+__export(token_exports, {
+  classifyTiktokCredentialInput: () => classifyTiktokCredentialInput,
+  ensureTiktokInboundCredential: () => ensureTiktokInboundCredential,
+  exchangeTiktokAuthCode: () => exchangeTiktokAuthCode2,
+  isTiktokTokenExpiredError: () => isTiktokTokenExpiredError,
+  refreshTikTokToken: () => refreshTikTokToken,
+  syncAndExchangeTiktokShops: () => syncAndExchangeTiktokShops
+});
+function envAppKey() {
+  return String(process.env.TIKTOK_APP_KEY || "").trim();
+}
+function envAppSecret() {
+  return String(process.env.TIKTOK_APP_SECRET || "").trim();
+}
+function classifyTiktokCredentialInput(raw, appKeyHint = "") {
+  const value = String(raw || "").trim();
+  if (!value) return { kind: "empty", value: "" };
+  const appKey = String(appKeyHint || envAppKey() || "").trim();
+  if (appKey && value === appKey) {
+    return {
+      kind: "app_key_mistake",
+      value,
+      message: "B\u1EA1n \u0111ang d\xE1n App Key v\xE0o \xF4 Token. H\xE3y d\xE1n Authorization Code (sau khi authorize) ho\u1EB7c Access Token."
+    };
+  }
+  if (/^TTP[_-]/i.test(value) || value.length >= 80) {
+    return { kind: "access_token", value };
+  }
+  if (value.length >= 8 && value.length < 80) {
+    return { kind: "auth_code", value };
+  }
+  return { kind: "access_token", value };
+}
+async function callTiktokAuthApi(path22, query) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(query || {})) {
+    if (v != null && v !== "") qs.set(k, String(v));
+  }
+  const url2 = `${AUTH_HOST()}${path22}?${qs.toString()}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TOKEN_HTTP_TIMEOUT_MS);
+  try {
+    const res = await fetch(url2, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      signal: controller.signal
+    });
+    const text = await res.text();
+    let json2 = null;
+    try {
+      json2 = text ? JSON.parse(text) : null;
+    } catch {
+      json2 = null;
+    }
+    const code = json2?.code ?? json2?.error_code;
+    const ok = res.ok && (code === 0 || code === "0");
+    if (!ok) {
+      return {
+        success: false,
+        error: "tiktok_token_api_error",
+        message: json2?.message || json2?.msg || `TikTok token API HTTP ${res.status}${code != null ? ` code=${code}` : ""}`,
+        http_status: res.status,
+        code,
+        data: json2?.data ?? null,
+        raw: json2
+      };
+    }
+    return { success: true, data: json2?.data ?? json2, raw: json2 };
+  } catch (error) {
+    const aborted = error?.name === "AbortError";
+    return {
+      success: false,
+      error: aborted ? "tiktok_token_timeout" : "tiktok_token_network",
+      message: aborted ? `TikTok token API timeout sau ${TOKEN_HTTP_TIMEOUT_MS}ms` : error?.message || "Kh\xF4ng g\u1ECDi \u0111\u01B0\u1EE3c TikTok token API"
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function persistTokenResponse(shopId, data, extra = {}) {
+  const access_token = String(data?.access_token || "").trim();
+  const refresh_token = String(data?.refresh_token || "").trim();
+  if (!access_token) {
+    return {
+      success: false,
+      error: "empty_access_token",
+      message: "TikTok kh\xF4ng tr\u1EA3 access_token."
+    };
+  }
+  const tokens = loadTiktokTokens();
+  const prev = tokens[shopId] && typeof tokens[shopId] === "object" ? tokens[shopId] : {};
+  tokens[shopId] = {
+    ...prev,
+    shop_id: shopId,
+    mode: "custom_app",
+    app_key: extra.app_key || prev.app_key,
+    app_secret: extra.app_secret || prev.app_secret,
+    access_token,
+    refresh_token: refresh_token || prev.refresh_token,
+    access_token_expire_in: data?.access_token_expire_in ?? prev.access_token_expire_in,
+    refresh_token_expire_in: data?.refresh_token_expire_in ?? prev.refresh_token_expire_in,
+    open_id: data?.open_id || prev.open_id,
+    seller_name: data?.seller_name || prev.seller_name,
+    shop_cipher: data?.cipher || data?.shop_cipher || extra.shop_cipher || prev.shop_cipher,
+    shop_name: extra.shop_name || data?.seller_name || prev.shop_name,
+    updated_at: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  saveTiktokTokens(tokens);
+  return {
+    success: true,
+    shop_id: shopId,
+    access_token,
+    refresh_token: refresh_token || void 0,
+    access_token_expire_in: data?.access_token_expire_in,
+    refresh_token_expire_in: data?.refresh_token_expire_in,
+    open_id: data?.open_id,
+    seller_name: data?.seller_name
+  };
+}
+async function exchangeTiktokAuthCode2(authCode, opts = {}) {
+  const code = String(authCode || "").trim();
+  const shopId = String(opts.shopId || "").trim();
+  const app_key = String(opts.appKey || envAppKey() || "").trim();
+  const app_secret = String(opts.appSecret || envAppSecret() || "").trim();
+  if (!code) {
+    return { success: false, error: "missing_auth_code", message: "Thi\u1EBFu Authorization Code." };
+  }
+  if (!app_key || !app_secret) {
+    return {
+      success: false,
+      error: "missing_app_credentials",
+      message: "Thi\u1EBFu TIKTOK_APP_KEY / TIKTOK_APP_SECRET tr\xEAn .env (ho\u1EB7c App Key/Secret tr\xEAn shop) \u0111\u1EC3 \u0111\u1ED5i Authorization Code."
+    };
+  }
+  if (!shopId) {
+    return { success: false, error: "missing_shop_id", message: "Thi\u1EBFu shopId khi \u0111\u1ED5i token." };
+  }
+  const result = await callTiktokAuthApi("/api/v2/token/get", {
+    app_key,
+    app_secret,
+    auth_code: code,
+    grant_type: "authorized_code"
+  });
+  if (!result.success) return { ...result, shop_id: shopId };
+  return persistTokenResponse(shopId, result.data, {
+    app_key,
+    app_secret,
+    shop_name: opts.shopName,
+    shop_cipher: opts.shopCipher
+  });
+}
+async function refreshTikTokToken(shopId) {
+  const id = String(shopId || "").trim();
+  if (!id) {
+    return { success: false, error: "missing_shop_id", message: "Thi\u1EBFu shopId khi refresh token." };
+  }
+  if (refreshLocks.has(id)) {
+    return refreshLocks.get(id);
+  }
+  const job = (async () => {
+    const creds = resolveTiktokCustomAppCredentials(id);
+    const tokens = loadTiktokTokens();
+    const rec = tokens[id] || {};
+    const refresh_token = String(rec.refresh_token || "").trim();
+    const app_key = String(creds.app_key || envAppKey() || "").trim();
+    const app_secret = String(creds.app_secret || envAppSecret() || "").trim();
+    if (!refresh_token) {
+      return {
+        success: false,
+        error: "missing_refresh_token",
+        message: "Ch\u01B0a c\xF3 refresh_token. H\xE3y d\xE1n Authorization Code m\u1EDBi t\u1EEB TikTok (kh\xF4ng ph\u1EA3i App Key) \u0111\u1EC3 c\u1EA5p token l\u1EA7n \u0111\u1EA7u."
+      };
+    }
+    if (!app_key || !app_secret) {
+      return {
+        success: false,
+        error: "missing_app_credentials",
+        message: "Thi\u1EBFu App Key/Secret \u0111\u1EC3 refresh token TikTok."
+      };
+    }
+    console.log(`[TikTok Token] Refresh token cho shop ${id}...`);
+    const result = await callTiktokAuthApi("/api/v2/token/refresh", {
+      app_key,
+      app_secret,
+      refresh_token,
+      grant_type: "refresh_token"
+    });
+    if (!result.success) {
+      console.error(`[TikTok Token] Refresh th\u1EA5t b\u1EA1i shop=${id}:`, result.message);
+      return { ...result, shop_id: id };
+    }
+    const saved = persistTokenResponse(id, result.data, {
+      app_key,
+      app_secret,
+      shop_name: creds.shop_name || rec.shop_name,
+      shop_cipher: creds.shop_cipher || rec.shop_cipher
+    });
+    console.log(`[TikTok Token] Refresh OK shop=${id}`);
+    return saved;
+  })();
+  refreshLocks.set(id, job);
+  try {
+    return await job;
+  } finally {
+    refreshLocks.delete(id);
+  }
+}
+async function ensureTiktokInboundCredential(shop) {
+  const fields = extractTiktokFieldsFromShop(shop);
+  if (!fields?.shop_id) {
+    return { success: false, error: "missing_shop_id", message: "Thi\u1EBFu shopId." };
+  }
+  const app_key = String(fields.app_key || envAppKey() || "").trim();
+  const app_secret = String(fields.app_secret || envAppSecret() || "").trim();
+  const raw = String(fields.access_token || "").trim();
+  const classified = classifyTiktokCredentialInput(raw, app_key);
+  if (classified.kind === "empty") {
+    return {
+      success: false,
+      error: "missing_token_input",
+      message: "Thi\u1EBFu Authorization Code ho\u1EB7c Access Token."
+    };
+  }
+  if (classified.kind === "app_key_mistake") {
+    return {
+      success: false,
+      error: "app_key_mistake",
+      message: classified.message
+    };
+  }
+  if (app_key || app_secret) {
+    upsertTiktokCustomAppCredentials(fields.shop_id, {
+      app_key: app_key || void 0,
+      app_secret: app_secret || void 0,
+      shop_name: fields.shop_name,
+      shop_cipher: fields.shop_cipher
+    });
+  }
+  if (classified.kind === "auth_code") {
+    const exchanged = await exchangeTiktokAuthCode2(classified.value, {
+      shopId: fields.shop_id,
+      appKey: app_key,
+      appSecret: app_secret,
+      shopName: fields.shop_name,
+      shopCipher: fields.shop_cipher
+    });
+    if (!exchanged.success) return exchanged;
+    return {
+      success: true,
+      exchanged: true,
+      shop_id: fields.shop_id,
+      access_token: exchanged.access_token,
+      refresh_token: exchanged.refresh_token,
+      shopPatch: {
+        accessToken: exchanged.access_token,
+        apiKey: exchanged.access_token,
+        appKey: app_key || void 0,
+        apiSecret: app_secret || void 0
+      },
+      message: "\u0110\xE3 \u0111\u1ED5i Authorization Code \u2192 Access Token + Refresh Token."
+    };
+  }
+  upsertTiktokCustomAppCredentials(fields.shop_id, {
+    app_key: app_key || void 0,
+    app_secret: app_secret || void 0,
+    access_token: classified.value,
+    shop_name: fields.shop_name,
+    shop_cipher: fields.shop_cipher
+  });
+  return {
+    success: true,
+    exchanged: false,
+    shop_id: fields.shop_id,
+    access_token: classified.value,
+    shopPatch: {
+      accessToken: classified.value,
+      apiKey: classified.value,
+      appKey: app_key || void 0,
+      apiSecret: app_secret || void 0
+    },
+    message: "\u0110\xE3 l\u01B0u Access Token."
+  };
+}
+async function syncAndExchangeTiktokShops(shops) {
+  const list = Array.isArray(shops) ? shops : [];
+  const next = [];
+  const reports = [];
+  for (const shop of list) {
+    if (String(shop?.platform || "").toLowerCase() !== "tiktok") {
+      next.push(shop);
+      continue;
+    }
+    try {
+      const result = await ensureTiktokInboundCredential(shop);
+      reports.push({
+        shop_id: shop.shopId,
+        success: result.success,
+        message: result.message || result.error,
+        exchanged: Boolean(result.exchanged)
+      });
+      if (result.success && result.shopPatch) {
+        next.push({ ...shop, ...result.shopPatch });
+      } else {
+        next.push(shop);
+      }
+    } catch (error) {
+      reports.push({
+        shop_id: shop.shopId,
+        success: false,
+        message: error?.message || "token_sync_failed"
+      });
+      next.push(shop);
+    }
+  }
+  return { shops: next, reports };
+}
+function isTiktokTokenExpiredError(result) {
+  if (!result || result.success) return false;
+  const status = Number(result.http_status || 0);
+  if (status === 401 || status === 403) return true;
+  const code = String(result.code ?? "");
+  if (["105001", "105002", "105003", "36009002", "36009003", "36009004", "36009005"].includes(code)) {
+    return true;
+  }
+  const msg = String(result.message || result.error || "");
+  return /access.?token|token.?expir|expired|unauthorized|invalid.?token|refresh.?token/i.test(msg);
+}
+var AUTH_HOST, TOKEN_HTTP_TIMEOUT_MS, refreshLocks;
+var init_token = __esm({
+  "services/tiktok/token.js"() {
+    init_auth();
+    AUTH_HOST = () => String(process.env.TIKTOK_AUTH_HOST || "https://auth.tiktok-shops.com").trim().replace(/\/$/, "");
+    TOKEN_HTTP_TIMEOUT_MS = 25e3;
+    refreshLocks = /* @__PURE__ */ new Map();
   }
 });
 
@@ -73751,16 +74044,7 @@ function buildQuery(params) {
   }
   return qs.toString();
 }
-async function tiktokApiRequest(method, apiPath, opts = {}) {
-  const creds = opts.credentials || resolveTiktokCustomAppCredentials(opts.shopId);
-  if (!creds?.valid) {
-    return {
-      success: false,
-      error: "tiktok_credentials_missing",
-      message: "Thi\u1EBFu App Key / App Secret / Access Token Custom App. L\u01B0u qua Seller Center \u2192 /api/tiktok/custom-app/credentials ho\u1EB7c .env.",
-      data: null
-    };
-  }
+async function tiktokApiRequestOnce(method, apiPath, opts, creds) {
   const timestamp = String(Math.floor(Date.now() / 1e3));
   const query = {
     app_key: creds.app_key,
@@ -73830,6 +74114,48 @@ async function tiktokApiRequest(method, apiPath, opts = {}) {
     clearTimeout(timer);
   }
 }
+async function tiktokApiRequest(method, apiPath, opts = {}) {
+  let creds = opts.credentials || resolveTiktokCustomAppCredentials(opts.shopId);
+  if (!creds?.valid) {
+    return {
+      success: false,
+      error: "tiktok_credentials_missing",
+      message: "Thi\u1EBFu App Key / App Secret / Access Token. L\u01B0u Authorization Code ho\u1EB7c credentials Custom App / .env.",
+      data: null
+    };
+  }
+  const first = await tiktokApiRequestOnce(method, apiPath, opts, creds);
+  if (first.success) return first;
+  const shopId = String(opts.shopId || creds.shop_id || "").trim();
+  if (opts._retried || !shopId || !isTiktokTokenExpiredError(first)) {
+    return first;
+  }
+  console.warn(
+    `[TikTok API] Token h\u1EBFt h\u1EA1n shop=${shopId} \u2014 auto refresh r\u1ED3i retry ${apiPath}`
+  );
+  const refreshed = await refreshTikTokToken(shopId);
+  if (!refreshed.success) {
+    return {
+      success: false,
+      error: "tiktok_refresh_failed",
+      message: refreshed.message || "Access Token h\u1EBFt h\u1EA1n v\xE0 kh\xF4ng refresh \u0111\u01B0\u1EE3c. H\xE3y d\xE1n Authorization Code m\u1EDBi.",
+      data: null,
+      refresh: refreshed,
+      previous: first
+    };
+  }
+  creds = resolveTiktokCustomAppCredentials(shopId);
+  if (!creds?.valid) {
+    return {
+      success: false,
+      error: "tiktok_credentials_missing_after_refresh",
+      message: "\u0110\xE3 refresh nh\u01B0ng credentials v\u1EABn thi\u1EBFu.",
+      data: null
+    };
+  }
+  await sleep4(200);
+  return tiktokApiRequestOnce(method, apiPath, { ...opts, _retried: true }, creds);
+}
 async function tiktokApiDelay(ms = TIKTOK_API_DELAY_MS) {
   await sleep4(Math.max(0, Number(ms) || 0));
 }
@@ -73839,6 +74165,7 @@ var init_client = __esm({
     import_crypto4 = __toESM(require("crypto"), 1);
     init_concurrency();
     init_auth();
+    init_token();
     TIKTOK_HTTP_TIMEOUT_MS = 3e4;
     TIKTOK_API_DELAY_MS = 400;
     TIKTOK_PAGE_LIMIT = 50;
@@ -74325,27 +74652,11 @@ __export(ping_exports, {
   pingTiktokShopConnection: () => pingTiktokShopConnection
 });
 function credentialsFromShopRecord(shop) {
-  const fields = extractTiktokFieldsFromShop(shop);
-  const shopId = fields?.shop_id || String(shop?.shopId || shop?.shop_id || "").trim();
-  if (shopId && fields && (fields.access_token || fields.app_key || fields.app_secret)) {
-    try {
-      const existing = resolveTiktokCustomAppCredentials(shopId);
-      upsertTiktokCustomAppCredentials(shopId, {
-        app_key: fields.app_key || existing.app_key,
-        app_secret: fields.app_secret || existing.app_secret,
-        access_token: fields.access_token || existing.access_token,
-        shop_cipher: fields.shop_cipher || existing.shop_cipher,
-        shop_name: fields.shop_name || existing.shop_name
-      });
-    } catch {
-    }
-  }
+  const shopId = String(shop?.shopId || shop?.shop_id || "").trim();
   return resolveTiktokCustomAppCredentials(shopId, shop);
 }
 async function pingTiktokShopConnection(shop) {
   const shopId = String(shop?.shopId || shop?.shop_id || "").trim();
-  const fields = extractTiktokFieldsFromShop(shop);
-  const accessToken = fields?.access_token || "";
   if (!shopId) {
     return {
       online: false,
@@ -74353,43 +74664,71 @@ async function pingTiktokShopConnection(shop) {
       message: "Thi\u1EBFu Seller ID (shopId) TikTok"
     };
   }
-  const creds = credentialsFromShopRecord(shop);
-  if (!creds.access_token && !accessToken) {
+  const inbound = await ensureTiktokInboundCredential(shop);
+  if (!inbound.success && inbound.error === "app_key_mistake") {
     return {
       online: false,
       connection_status: "missing",
-      message: "Thi\u1EBFu Access Token TikTok tr\xEAn shop ho\u1EB7c .env (TIKTOK_ACCESS_TOKEN)"
+      message: inbound.message
     };
   }
-  if (!creds.valid) {
-    const missing = [];
-    if (!creds.app_key) missing.push("App Key (shop.appKey ho\u1EB7c TIKTOK_APP_KEY)");
-    if (!creds.app_secret) missing.push("App Secret (shop.apiSecret ho\u1EB7c TIKTOK_APP_SECRET)");
-    if (!creds.access_token) missing.push("Access Token");
+  if (!inbound.success && inbound.error === "missing_token_input") {
     return {
       online: false,
       connection_status: "missing",
-      message: `Thi\u1EBFu credentials TikTok: ${missing.join(", ")}. \u0110i\u1EC1n tr\xEAn UI ho\u1EB7c file .env cPanel.`,
-      env_app_key_configured: creds.env_app_key_configured,
-      env_app_secret_configured: creds.env_app_secret_configured,
+      message: inbound.message
+    };
+  }
+  if (!inbound.success && inbound.error !== "missing_token_input") {
+    const fields = extractTiktokFieldsFromShop(shop);
+    if (fields?.access_token) {
+    } else {
+      return {
+        online: false,
+        connection_status: "expired",
+        message: inbound.message || "Kh\xF4ng c\u1EA5p \u0111\u01B0\u1EE3c Access Token t\u1EEB Authorization Code."
+      };
+    }
+  }
+  let creds = resolveTiktokCustomAppCredentials(shopId, inbound.shopPatch ? { ...shop, ...inbound.shopPatch } : shop);
+  if (!creds.valid) {
+    const missing = [];
+    if (!creds.app_key) missing.push("App Key (.env TIKTOK_APP_KEY)");
+    if (!creds.app_secret) missing.push("App Secret (.env TIKTOK_APP_SECRET)");
+    if (!creds.access_token) missing.push("Access Token / Authorization Code");
+    return {
+      online: false,
+      connection_status: "missing",
+      message: `Thi\u1EBFu credentials TikTok: ${missing.join(", ")}`,
       source: creds.source
     };
   }
-  const result = await tiktokApiRequest("GET", SHOPS_PING_PATH, {
+  let result = await tiktokApiRequest("GET", SHOPS_PING_PATH, {
     shopId,
     credentials: creds
   });
+  if (!result.success) {
+    const refreshed = await refreshTikTokToken(shopId);
+    if (refreshed.success) {
+      creds = resolveTiktokCustomAppCredentials(shopId);
+      result = await tiktokApiRequest("GET", SHOPS_PING_PATH, {
+        shopId,
+        credentials: creds,
+        _retried: true
+      });
+    }
+  }
   if (result.success) {
     const shops = result.data?.shops || result.data?.shop_list || (Array.isArray(result.data) ? result.data : []);
     const count = Array.isArray(shops) ? shops.length : 0;
     return {
       online: true,
       connection_status: "online",
-      message: count > 0 ? `TikTok API OK \u2014 ${count} shop \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n (Live ping, source=${creds.source})` : `TikTok API OK \u2014 Access Token h\u1EE3p l\u1EC7 (Live ping, source=${creds.source})`
+      message: count > 0 ? `TikTok API OK \u2014 ${count} shop \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n${inbound.exchanged ? " (\u0111\xE3 \u0111\u1ED5i Auth Code)" : ""}` : `TikTok API OK \u2014 Token h\u1EE3p l\u1EC7${inbound.exchanged ? " (\u0111\xE3 \u0111\u1ED5i Auth Code)" : ""}`
     };
   }
   const msg = String(result.message || result.error || "TikTok API l\u1ED7i");
-  const authFail = /token|auth|unauthorized|expire|invalid|permission|sign/i.test(msg);
+  const authFail = /token|auth|unauthorized|expire|invalid|permission|sign|refresh/i.test(msg);
   return {
     online: false,
     connection_status: authFail ? "expired" : "missing",
@@ -74401,6 +74740,7 @@ var init_ping = __esm({
   "services/tiktok/ping.js"() {
     init_client();
     init_auth();
+    init_token();
     SHOPS_PING_PATH = "/authorization/202309/shops";
   }
 });
@@ -112965,12 +113305,21 @@ async function putChannelSettings(req, res) {
         message: "Kh\xF4ng ghi \u0111\u01B0\u1EE3c file channel_settings.json tr\xEAn m\xE1y ch\u1EE7"
       });
     }
+    let shopsAfterToken = mergedShops;
+    let tiktokTokenReports = [];
     try {
-      const { syncTiktokCredentialsFromShops: syncTiktokCredentialsFromShops2 } = await Promise.resolve().then(() => (init_auth(), auth_exports));
-      const n = syncTiktokCredentialsFromShops2(mergedShops);
-      if (n > 0) console.log(`[Channel Settings] Synced ${n} TikTok shop credential(s)`);
+      const { syncAndExchangeTiktokShops: syncAndExchangeTiktokShops2 } = await Promise.resolve().then(() => (init_token(), token_exports));
+      const tokenSync = await syncAndExchangeTiktokShops2(mergedShops);
+      shopsAfterToken = tokenSync.shops;
+      tiktokTokenReports = tokenSync.reports || [];
+      const failed = tiktokTokenReports.filter((r2) => !r2.success);
+      if (failed.length) {
+        console.warn("[Channel Settings] TikTok token exchange issues:", JSON.stringify(failed));
+      }
+      const payload2 = { ...payload, shops: shopsAfterToken };
+      deps5.saveChannelSettings(payload2);
     } catch (syncErr) {
-      console.warn("[Channel Settings] TikTok credential sync skipped:", syncErr?.message || syncErr);
+      console.warn("[Channel Settings] TikTok token exchange skipped:", syncErr?.message || syncErr);
     }
     const saved = deps5.loadChannelSettings();
     const shops = deps5.enrichShopsWithConnectionStatus(saved.shops || []);
@@ -112981,7 +113330,8 @@ async function putChannelSettings(req, res) {
     return res.json({
       success: true,
       settings: { ...saved, shops },
-      shopCount: shops.length
+      shopCount: shops.length,
+      tiktokTokenReports
     });
   } catch (error) {
     deps5.logOAuthSaveError("PUT /api/settings/channels", error);
