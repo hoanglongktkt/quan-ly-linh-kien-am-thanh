@@ -344,7 +344,14 @@ export interface ConnectedShop {
   shopId: string;
   shopName: string;
   apiKey: string;
-  apiSecret?: string; // For WooCommerce Customer Secret
+  /** App Secret (TikTok) hoặc WooCommerce Consumer Secret */
+  apiSecret?: string;
+  /** TikTok Custom App Key */
+  appKey?: string;
+  /** TikTok Access Token (ưu tiên hơn apiKey khi gọi OpenAPI) */
+  accessToken?: string;
+  /** TikTok shop_cipher (nếu có) */
+  shopCipher?: string;
   wooUrl?: string; // For WooCommerce Website URL
   connected: boolean;
   lastSynced?: string;

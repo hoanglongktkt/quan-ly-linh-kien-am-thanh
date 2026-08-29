@@ -602,6 +602,9 @@ dotenv.config(); // fallback: process.cwd()/.env nếu còn biến thiếu
 console.log(
   `[Config] APP_ROOT=${APP_ROOT} cwd=${process.cwd()} | MONGODB_URI=${process.env.MONGODB_URI || process.env.MONGO_URL ? "set" : "MISSING"}`
 );
+console.log(
+  `[Config] TikTok Custom App: TIKTOK_APP_KEY=${process.env.TIKTOK_APP_KEY ? "set" : "MISSING"} TIKTOK_APP_SECRET=${process.env.TIKTOK_APP_SECRET ? "set" : "MISSING"} TIKTOK_ACCESS_TOKEN=${process.env.TIKTOK_ACCESS_TOKEN ? "set" : "optional"}`,
+);
 setProductsDiskAppRoot(APP_ROOT);
 initShopeeAuth({ syncOAuthShopsToChannelSettings, logOAuthSaveError });
 bootShopeeAuth();
@@ -19331,7 +19334,13 @@ function normalizeConnectedShop(raw: any): Record<string, any> | null {
   if (!["shopee", "tiktok", "woocommerce"].includes(platform)) return null;
   const shopId = String(raw?.shopId ?? raw?.shop_id ?? "").trim();
   const shopName = String(raw?.shopName ?? raw?.shop_name ?? raw?.name ?? "").trim();
-  const apiKey = String(raw?.apiKey ?? raw?.api_key ?? raw?.partner_id ?? "").trim();
+  // TikTok: accessToken là token thật; apiKey giữ tương thích (có thể = accessToken).
+  const accessToken = String(
+    raw?.accessToken ?? raw?.access_token ?? "",
+  ).trim();
+  const apiKey = String(
+    raw?.apiKey ?? raw?.api_key ?? raw?.partner_id ?? accessToken ?? "",
+  ).trim();
   if (!shopId || !shopName || !apiKey) {
     console.warn(
       "[Channel Settings] Shop thiếu trường bắt buộc:",
@@ -19348,7 +19357,18 @@ function normalizeConnectedShop(raw: any): Record<string, any> | null {
     connected: Boolean(raw?.connected),
     lastSynced: raw?.lastSynced ? String(raw.lastSynced) : undefined,
   };
-  if (raw?.apiSecret) shop.apiSecret = String(raw.apiSecret).trim();
+  if (raw?.apiSecret || raw?.appSecret || raw?.app_secret) {
+    shop.apiSecret = String(raw.apiSecret || raw.appSecret || raw.app_secret).trim();
+  }
+  if (raw?.appKey || raw?.app_key || raw?.tiktokAppKey) {
+    shop.appKey = String(raw.appKey || raw.app_key || raw.tiktokAppKey).trim();
+  }
+  if (accessToken || (platform === "tiktok" && apiKey)) {
+    shop.accessToken = accessToken || apiKey;
+  }
+  if (raw?.shopCipher || raw?.shop_cipher || raw?.tiktokShopCipher) {
+    shop.shopCipher = String(raw.shopCipher || raw.shop_cipher || raw.tiktokShopCipher).trim();
+  }
   if (raw?.wooUrl) shop.wooUrl = String(raw.wooUrl).trim();
   return shop;
 }
@@ -19393,6 +19413,9 @@ function upsertShopsInChannelSettings(
         shopName: (!incomingIsGeneric && incomingName) || prevName || incomingName,
         apiKey: normalized.apiKey || prev.apiKey,
         apiSecret: normalized.apiSecret ?? prev.apiSecret,
+        appKey: normalized.appKey ?? prev.appKey,
+        accessToken: normalized.accessToken ?? prev.accessToken,
+        shopCipher: normalized.shopCipher ?? prev.shopCipher,
         wooUrl: normalized.wooUrl ?? prev.wooUrl,
         connected: normalized.connected ?? prev.connected,
         lastSynced: normalized.lastSynced || prev.lastSynced,

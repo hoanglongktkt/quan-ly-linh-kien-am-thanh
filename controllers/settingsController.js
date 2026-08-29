@@ -109,6 +109,14 @@ export async function putChannelSettings(req, res) {
         message: "Không ghi được file channel_settings.json trên máy chủ",
       });
     }
+    // Đồng bộ TikTok Custom App credentials → data/tiktok_tokens.json
+    try {
+      const { syncTiktokCredentialsFromShops } = await import("../services/tiktok/auth.js");
+      const n = syncTiktokCredentialsFromShops(mergedShops);
+      if (n > 0) console.log(`[Channel Settings] Synced ${n} TikTok shop credential(s)`);
+    } catch (syncErr) {
+      console.warn("[Channel Settings] TikTok credential sync skipped:", syncErr?.message || syncErr);
+    }
     const saved = deps.loadChannelSettings();
     const shops = deps.enrichShopsWithConnectionStatus(saved.shops || []);
     console.log(

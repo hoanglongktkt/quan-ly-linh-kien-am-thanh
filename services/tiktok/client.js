@@ -6,6 +6,7 @@ import crypto from "crypto";
 import { sleep } from "../../utils/concurrency.js";
 import {
   TIKTOK_API_HOST,
+  getTiktokApiHost,
   resolveTiktokCustomAppCredentials,
 } from "./auth.js";
 
@@ -79,7 +80,8 @@ export async function tiktokApiRequest(method, apiPath, opts = {}) {
 
   query.sign = signTiktokRequest(creds.app_secret, apiPath, query, bodyString);
 
-  const url = `${TIKTOK_API_HOST}${apiPath}?${buildQuery(query)}`;
+  const host = getTiktokApiHost() || TIKTOK_API_HOST;
+  const url = `${host}${apiPath}?${buildQuery(query)}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIKTOK_HTTP_TIMEOUT_MS);
 

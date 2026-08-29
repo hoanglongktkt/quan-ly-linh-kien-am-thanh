@@ -73402,6 +73402,277 @@ var require_follow_redirects = __commonJS({
   }
 });
 
+// services/tiktok/auth.js
+var auth_exports = {};
+__export(auth_exports, {
+  TIKTOK_ACCESS_TOKEN: () => TIKTOK_ACCESS_TOKEN,
+  TIKTOK_API_HOST: () => TIKTOK_API_HOST,
+  TIKTOK_APP_KEY: () => TIKTOK_APP_KEY,
+  TIKTOK_APP_SECRET: () => TIKTOK_APP_SECRET,
+  TIKTOK_CALLBACK_IDLE_MSG: () => TIKTOK_CALLBACK_IDLE_MSG,
+  TIKTOK_CALLBACK_URL: () => TIKTOK_CALLBACK_URL,
+  TIKTOK_SHOP_CIPHER: () => TIKTOK_SHOP_CIPHER,
+  TIKTOK_SHOP_ID: () => TIKTOK_SHOP_ID,
+  TIKTOK_TOKENS_PATH: () => TIKTOK_TOKENS_PATH,
+  buildOAuthFrontendRedirectUrl: () => buildOAuthFrontendRedirectUrl,
+  exchangeTiktokAuthCode: () => exchangeTiktokAuthCode,
+  extractTiktokFieldsFromShop: () => extractTiktokFieldsFromShop,
+  getTiktokApiHost: () => getTiktokApiHost,
+  isTiktokConfigValid: () => isTiktokConfigValid,
+  isTiktokCustomAppConfigured: () => isTiktokCustomAppConfigured,
+  listTiktokCredentialSummaries: () => listTiktokCredentialSummaries,
+  loadTiktokTokens: () => loadTiktokTokens,
+  queryParamOne: () => queryParamOne,
+  resolveTiktokCustomAppCredentials: () => resolveTiktokCustomAppCredentials,
+  saveTiktokTokens: () => saveTiktokTokens,
+  shouldOAuthRedirectToFrontend: () => shouldOAuthRedirectToFrontend,
+  syncTiktokCredentialsFromShops: () => syncTiktokCredentialsFromShops,
+  upsertTiktokCustomAppCredentials: () => upsertTiktokCustomAppCredentials
+});
+function getTiktokApiHost() {
+  return String(process.env.TIKTOK_API_HOST || "https://open-api.tiktokglobalshop.com").trim().replace(/\/$/, "");
+}
+function envTiktokAppKey() {
+  return String(process.env.TIKTOK_APP_KEY || "").trim();
+}
+function envTiktokAppSecret() {
+  return String(process.env.TIKTOK_APP_SECRET || "").trim();
+}
+function envTiktokAccessToken() {
+  return String(process.env.TIKTOK_ACCESS_TOKEN || "").trim();
+}
+function envTiktokShopId() {
+  return String(process.env.TIKTOK_SHOP_ID || "").trim();
+}
+function envTiktokShopCipher() {
+  return String(process.env.TIKTOK_SHOP_CIPHER || "").trim();
+}
+function queryParamOne(value) {
+  if (Array.isArray(value)) return String(value[0] ?? "").trim();
+  return String(value ?? "").trim();
+}
+function shouldOAuthRedirectToFrontend(req) {
+  if (queryParamOne(req.query?.format) === "json") return false;
+  if (queryParamOne(req.query?.redirect) === "0") return false;
+  return true;
+}
+function buildOAuthFrontendRedirectUrl(req, result) {
+  const shopId = String(result.shop_id || queryParamOne(req.query?.shop_id) || "");
+  const base = `${APP_BASE_URL2}/?tab=settings`;
+  if (result.success) {
+    const shopQ2 = shopId ? `&shop_id=${encodeURIComponent(shopId)}` : "";
+    return `${base}&tiktok_linked=1${shopQ2}`;
+  }
+  const errMsg = result.message || result.error || "token_exchange_failed";
+  const shopQ = shopId ? `&shop_id=${encodeURIComponent(shopId)}` : "";
+  return `${base}&tiktok_linked=0${shopQ}&error=${encodeURIComponent(errMsg)}`;
+}
+function ensureTokensFile() {
+  const dir = import_path14.default.dirname(TIKTOK_TOKENS_PATH);
+  if (!import_fs14.default.existsSync(dir)) import_fs14.default.mkdirSync(dir, { recursive: true });
+  if (!import_fs14.default.existsSync(TIKTOK_TOKENS_PATH)) {
+    import_fs14.default.writeFileSync(TIKTOK_TOKENS_PATH, "{}\n", "utf-8");
+  }
+}
+function loadTiktokTokens() {
+  try {
+    ensureTokensFile();
+    const raw = import_fs14.default.readFileSync(TIKTOK_TOKENS_PATH, "utf-8");
+    const parsed = JSON.parse(raw || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+function saveTiktokTokens(tokens) {
+  ensureTokensFile();
+  import_fs14.default.writeFileSync(TIKTOK_TOKENS_PATH, `${JSON.stringify(tokens || {}, null, 2)}
+`, "utf-8");
+  return true;
+}
+function upsertTiktokCustomAppCredentials(shopId, payload = {}) {
+  const key = String(shopId || "").trim();
+  if (!key) {
+    return { success: false, error: "shop_id_required", message: "Thi\u1EBFu shop_id / Seller ID." };
+  }
+  const tokens = loadTiktokTokens();
+  const prev = tokens[key] && typeof tokens[key] === "object" ? tokens[key] : {};
+  const next = {
+    ...prev,
+    shop_id: key,
+    mode: "custom_app",
+    app_key: String(payload.app_key ?? prev.app_key ?? "").trim() || void 0,
+    app_secret: String(payload.app_secret ?? prev.app_secret ?? "").trim() || void 0,
+    access_token: String(payload.access_token ?? prev.access_token ?? "").trim() || void 0,
+    shop_cipher: String(payload.shop_cipher ?? prev.shop_cipher ?? "").trim() || void 0,
+    shop_name: String(payload.shop_name ?? prev.shop_name ?? "").trim() || void 0,
+    updated_at: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  tokens[key] = next;
+  saveTiktokTokens(tokens);
+  return { success: true, shop_id: key, record: sanitizeCredentialRecord(next) };
+}
+function sanitizeCredentialRecord(record) {
+  if (!record || typeof record !== "object") return null;
+  return {
+    shop_id: record.shop_id || null,
+    mode: record.mode || "custom_app",
+    shop_name: record.shop_name || null,
+    shop_cipher: record.shop_cipher || null,
+    has_app_key: Boolean(record.app_key),
+    has_app_secret: Boolean(record.app_secret),
+    has_access_token: Boolean(record.access_token),
+    updated_at: record.updated_at || null
+  };
+}
+function extractTiktokFieldsFromShop(shop) {
+  if (!shop || typeof shop !== "object") return null;
+  const shop_id = String(shop.shopId || shop.shop_id || "").trim();
+  if (!shop_id) return null;
+  const access_token = String(
+    shop.accessToken || shop.access_token || shop.apiKey || shop.api_key || ""
+  ).trim();
+  const app_key = String(
+    shop.appKey || shop.app_key || shop.tiktokAppKey || ""
+  ).trim();
+  const app_secret = String(
+    shop.appSecret || shop.app_secret || shop.apiSecret || shop.api_secret || ""
+  ).trim();
+  const shop_cipher = String(
+    shop.shopCipher || shop.shop_cipher || shop.tiktokShopCipher || ""
+  ).trim();
+  const shop_name = String(shop.shopName || shop.shop_name || "").trim();
+  return {
+    shop_id,
+    shop_name: shop_name || void 0,
+    access_token: access_token || void 0,
+    app_key: app_key || void 0,
+    app_secret: app_secret || void 0,
+    shop_cipher: shop_cipher || void 0,
+    connected: Boolean(shop.connected)
+  };
+}
+function loadTiktokShopFromChannelSettings(shopId) {
+  try {
+    if (!import_fs14.default.existsSync(CHANNEL_SETTINGS_PATH)) return null;
+    const raw = import_fs14.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
+    const parsed = JSON.parse(raw || "{}");
+    const shops = Array.isArray(parsed?.shops) ? parsed.shops : [];
+    const want = String(shopId || "").trim();
+    const shop = shops.find(
+      (s2) => String(s2?.platform || "").toLowerCase() === "tiktok" && String(s2?.shopId || s2?.id || "").trim() === want
+    );
+    return extractTiktokFieldsFromShop(shop);
+  } catch {
+    return null;
+  }
+}
+function syncTiktokCredentialsFromShops(shops) {
+  const list = Array.isArray(shops) ? shops : [];
+  let synced = 0;
+  for (const shop of list) {
+    if (String(shop?.platform || "").toLowerCase() !== "tiktok") continue;
+    const fields = extractTiktokFieldsFromShop(shop);
+    if (!fields?.shop_id) continue;
+    if (!fields.access_token && !fields.app_key && !fields.app_secret) continue;
+    upsertTiktokCustomAppCredentials(fields.shop_id, {
+      app_key: fields.app_key,
+      app_secret: fields.app_secret,
+      access_token: fields.access_token,
+      shop_cipher: fields.shop_cipher,
+      shop_name: fields.shop_name
+    });
+    synced += 1;
+  }
+  return synced;
+}
+function resolveTiktokCustomAppCredentials(shopId, shopOverride = null) {
+  const want = String(shopId || envTiktokShopId() || "").trim();
+  const fromOverride = shopOverride ? extractTiktokFieldsFromShop(shopOverride) : null;
+  const fromFile2 = want ? loadTiktokTokens()[want] : null;
+  const fromSettings = want ? loadTiktokShopFromChannelSettings(want) : null;
+  const app_key = String(
+    fromOverride?.app_key || fromFile2?.app_key || fromSettings?.app_key || envTiktokAppKey() || ""
+  ).trim();
+  const app_secret = String(
+    fromOverride?.app_secret || fromFile2?.app_secret || fromSettings?.app_secret || envTiktokAppSecret() || ""
+  ).trim();
+  const access_token = String(
+    fromOverride?.access_token || fromFile2?.access_token || fromSettings?.access_token || envTiktokAccessToken() || ""
+  ).trim();
+  const shop_cipher = String(
+    fromOverride?.shop_cipher || fromFile2?.shop_cipher || fromSettings?.shop_cipher || envTiktokShopCipher() || ""
+  ).trim();
+  const shop_id = want || String(fromOverride?.shop_id || fromFile2?.shop_id || fromSettings?.shop_id || envTiktokShopId() || "").trim();
+  const placeholder = /CHUA_CO|YOUR_|PLACEHOLDER/i;
+  const valid = Boolean(app_key) && Boolean(app_secret) && Boolean(access_token) && !placeholder.test(app_key) && !placeholder.test(app_secret) && !placeholder.test(access_token);
+  let source = "none";
+  if (fromOverride?.access_token || fromOverride?.app_key) source = "shop_payload";
+  else if (fromFile2?.access_token || fromFile2?.app_key) source = "tiktok_tokens";
+  else if (fromSettings?.access_token || fromSettings?.app_key) source = "channel_settings";
+  else if (access_token || app_key) source = "env";
+  return {
+    mode: "custom_app",
+    shop_id: shop_id || void 0,
+    shop_name: fromOverride?.shop_name || fromFile2?.shop_name || fromSettings?.shop_name || void 0,
+    shop_cipher: shop_cipher || void 0,
+    app_key: app_key || void 0,
+    app_secret: app_secret || void 0,
+    access_token: access_token || void 0,
+    valid,
+    source,
+    env_app_key_configured: Boolean(envTiktokAppKey()),
+    env_app_secret_configured: Boolean(envTiktokAppSecret())
+  };
+}
+function isTiktokCustomAppConfigured(shopId) {
+  return resolveTiktokCustomAppCredentials(shopId).valid;
+}
+function isTiktokConfigValid() {
+  return isTiktokCustomAppConfigured(envTiktokShopId());
+}
+async function exchangeTiktokAuthCode(code, opts = {}) {
+  const shopId = String(opts.shopId || "").trim();
+  if (!code) {
+    return {
+      success: false,
+      shop_id: shopId || void 0,
+      error: "missing_code",
+      message: "Thi\u1EBFu authorization code t\u1EEB TikTok Shop."
+    };
+  }
+  return {
+    success: true,
+    pending: true,
+    shop_id: shopId || void 0,
+    message: "\u0110\xE3 nh\u1EADn code. H\u1EC7 th\u1ED1ng d\xF9ng Custom App \u2014 l\u01B0u App Key/Secret/Access Token t\u1EEB Seller Center."
+  };
+}
+function listTiktokCredentialSummaries() {
+  const tokens = loadTiktokTokens();
+  return Object.keys(tokens).map((id) => sanitizeCredentialRecord(tokens[id]));
+}
+var import_fs14, import_path14, APP_ROOT6, APP_BASE_URL2, TIKTOK_TOKENS_PATH, CHANNEL_SETTINGS_PATH, TIKTOK_CALLBACK_URL, TIKTOK_CALLBACK_IDLE_MSG, TIKTOK_API_HOST, TIKTOK_APP_KEY, TIKTOK_APP_SECRET, TIKTOK_ACCESS_TOKEN, TIKTOK_SHOP_ID, TIKTOK_SHOP_CIPHER;
+var init_auth = __esm({
+  "services/tiktok/auth.js"() {
+    import_fs14 = __toESM(require("fs"), 1);
+    import_path14 = __toESM(require("path"), 1);
+    init_appPaths();
+    APP_ROOT6 = resolveAppRoot();
+    APP_BASE_URL2 = resolveAppBaseUrl();
+    TIKTOK_TOKENS_PATH = import_path14.default.resolve(APP_ROOT6, "data", "tiktok_tokens.json");
+    CHANNEL_SETTINGS_PATH = import_path14.default.resolve(APP_ROOT6, "data", "channel_settings.json");
+    TIKTOK_CALLBACK_URL = String(process.env.TIKTOK_CALLBACK_URL || "").trim().replace(/\/$/, "") || `${APP_BASE_URL2}/api/tiktok/callback`;
+    TIKTOK_CALLBACK_IDLE_MSG = "Callback route is active. Waiting for TikTok Shop parameters (code, shop_id)...";
+    TIKTOK_API_HOST = getTiktokApiHost();
+    TIKTOK_APP_KEY = envTiktokAppKey();
+    TIKTOK_APP_SECRET = envTiktokAppSecret();
+    TIKTOK_ACCESS_TOKEN = envTiktokAccessToken();
+    TIKTOK_SHOP_ID = envTiktokShopId();
+    TIKTOK_SHOP_CIPHER = envTiktokShopCipher();
+  }
+});
+
 // utils/concurrency.js
 function sleep4(ms) {
   return new Promise((r2) => setTimeout(r2, ms));
@@ -73459,179 +73730,6 @@ var init_concurrency = __esm({
   }
 });
 
-// services/tiktok/auth.js
-function queryParamOne2(value) {
-  if (Array.isArray(value)) return String(value[0] ?? "").trim();
-  return String(value ?? "").trim();
-}
-function shouldOAuthRedirectToFrontend2(req) {
-  if (queryParamOne2(req.query?.format) === "json") return false;
-  if (queryParamOne2(req.query?.redirect) === "0") return false;
-  return true;
-}
-function buildOAuthFrontendRedirectUrl2(req, result) {
-  const shopId = String(result.shop_id || queryParamOne2(req.query?.shop_id) || "");
-  const base = `${APP_BASE_URL3}/?tab=settings`;
-  if (result.success) {
-    const shopQ2 = shopId ? `&shop_id=${encodeURIComponent(shopId)}` : "";
-    return `${base}&tiktok_linked=1${shopQ2}`;
-  }
-  const errMsg = result.message || result.error || "token_exchange_failed";
-  const shopQ = shopId ? `&shop_id=${encodeURIComponent(shopId)}` : "";
-  return `${base}&tiktok_linked=0${shopQ}&error=${encodeURIComponent(errMsg)}`;
-}
-function ensureTokensFile() {
-  const dir = import_path19.default.dirname(TIKTOK_TOKENS_PATH);
-  if (!import_fs18.default.existsSync(dir)) import_fs18.default.mkdirSync(dir, { recursive: true });
-  if (!import_fs18.default.existsSync(TIKTOK_TOKENS_PATH)) {
-    import_fs18.default.writeFileSync(TIKTOK_TOKENS_PATH, "{}\n", "utf-8");
-  }
-}
-function loadTiktokTokens() {
-  try {
-    ensureTokensFile();
-    const raw = import_fs18.default.readFileSync(TIKTOK_TOKENS_PATH, "utf-8");
-    const parsed = JSON.parse(raw || "{}");
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-function saveTiktokTokens(tokens) {
-  ensureTokensFile();
-  import_fs18.default.writeFileSync(TIKTOK_TOKENS_PATH, `${JSON.stringify(tokens || {}, null, 2)}
-`, "utf-8");
-  return true;
-}
-function upsertTiktokCustomAppCredentials(shopId, payload = {}) {
-  const key = String(shopId || "").trim();
-  if (!key) {
-    return { success: false, error: "shop_id_required", message: "Thi\u1EBFu shop_id / Seller ID." };
-  }
-  const tokens = loadTiktokTokens();
-  const prev = tokens[key] && typeof tokens[key] === "object" ? tokens[key] : {};
-  const next = {
-    ...prev,
-    shop_id: key,
-    mode: "custom_app",
-    app_key: String(payload.app_key ?? prev.app_key ?? "").trim() || void 0,
-    app_secret: String(payload.app_secret ?? prev.app_secret ?? "").trim() || void 0,
-    access_token: String(payload.access_token ?? prev.access_token ?? "").trim() || void 0,
-    shop_cipher: String(payload.shop_cipher ?? prev.shop_cipher ?? "").trim() || void 0,
-    shop_name: String(payload.shop_name ?? prev.shop_name ?? "").trim() || void 0,
-    updated_at: (/* @__PURE__ */ new Date()).toISOString()
-  };
-  tokens[key] = next;
-  saveTiktokTokens(tokens);
-  return { success: true, shop_id: key, record: sanitizeCredentialRecord(next) };
-}
-function sanitizeCredentialRecord(record) {
-  if (!record || typeof record !== "object") return null;
-  return {
-    shop_id: record.shop_id || null,
-    mode: record.mode || "custom_app",
-    shop_name: record.shop_name || null,
-    shop_cipher: record.shop_cipher || null,
-    has_app_key: Boolean(record.app_key),
-    has_app_secret: Boolean(record.app_secret),
-    has_access_token: Boolean(record.access_token),
-    updated_at: record.updated_at || null
-  };
-}
-function loadTiktokShopFromChannelSettings(shopId) {
-  try {
-    if (!import_fs18.default.existsSync(CHANNEL_SETTINGS_PATH2)) return null;
-    const raw = import_fs18.default.readFileSync(CHANNEL_SETTINGS_PATH2, "utf-8");
-    const parsed = JSON.parse(raw || "{}");
-    const shops = Array.isArray(parsed?.shops) ? parsed.shops : [];
-    const want = String(shopId || "").trim();
-    const shop = shops.find(
-      (s2) => String(s2?.platform || "").toLowerCase() === "tiktok" && String(s2?.shopId || s2?.id || "").trim() === want
-    );
-    if (!shop) return null;
-    return {
-      shop_id: String(shop.shopId || shop.id || "").trim(),
-      shop_name: String(shop.shopName || "").trim() || void 0,
-      // FE hiện lưu Access Token vào apiKey; App Secret (nếu có) vào apiSecret.
-      access_token: String(shop.apiKey || "").trim() || void 0,
-      app_secret: String(shop.apiSecret || "").trim() || void 0,
-      app_key: String(shop.appKey || shop.tiktokAppKey || "").trim() || void 0,
-      shop_cipher: String(shop.shopCipher || shop.tiktokShopCipher || "").trim() || void 0,
-      connected: Boolean(shop.connected)
-    };
-  } catch {
-    return null;
-  }
-}
-function resolveTiktokCustomAppCredentials(shopId) {
-  const want = String(shopId || TIKTOK_SHOP_ID || "").trim();
-  const fromFile2 = want ? loadTiktokTokens()[want] : null;
-  const fromSettings = want ? loadTiktokShopFromChannelSettings(want) : null;
-  const app_key = String(fromFile2?.app_key || fromSettings?.app_key || TIKTOK_APP_KEY || "").trim();
-  const app_secret = String(fromFile2?.app_secret || fromSettings?.app_secret || TIKTOK_APP_SECRET || "").trim();
-  const access_token = String(fromFile2?.access_token || fromSettings?.access_token || TIKTOK_ACCESS_TOKEN || "").trim();
-  const shop_cipher = String(fromFile2?.shop_cipher || fromSettings?.shop_cipher || TIKTOK_SHOP_CIPHER || "").trim();
-  const shop_id = want || String(fromFile2?.shop_id || fromSettings?.shop_id || TIKTOK_SHOP_ID || "").trim();
-  const valid = Boolean(app_key) && Boolean(app_secret) && Boolean(access_token) && !/CHUA_CO|YOUR_|PLACEHOLDER/i.test(app_key) && !/CHUA_CO|YOUR_|PLACEHOLDER/i.test(app_secret) && !/CHUA_CO|YOUR_|PLACEHOLDER/i.test(access_token);
-  return {
-    mode: "custom_app",
-    shop_id: shop_id || void 0,
-    shop_name: fromFile2?.shop_name || fromSettings?.shop_name || void 0,
-    shop_cipher: shop_cipher || void 0,
-    app_key: app_key || void 0,
-    app_secret: app_secret || void 0,
-    access_token: access_token || void 0,
-    valid,
-    source: fromFile2?.access_token ? "tiktok_tokens" : fromSettings?.access_token ? "channel_settings" : access_token ? "env" : "none"
-  };
-}
-async function exchangeTiktokAuthCode(code, opts = {}) {
-  const shopId = String(opts.shopId || "").trim();
-  if (!code) {
-    return {
-      success: false,
-      shop_id: shopId || void 0,
-      error: "missing_code",
-      message: "Thi\u1EBFu authorization code t\u1EEB TikTok Shop."
-    };
-  }
-  console.warn(
-    "[TikTok] OAuth Partner kh\xF4ng d\xF9ng cho Custom App. H\xE3y l\u01B0u Access Token th\u1EE7 c\xF4ng qua /api/tiktok/custom-app/credentials."
-  );
-  return {
-    success: true,
-    pending: true,
-    shop_id: shopId || void 0,
-    message: "\u0110\xE3 nh\u1EADn code. H\u1EC7 th\u1ED1ng \u0111ang d\xF9ng m\xF4 h\xECnh Custom App \u2014 h\xE3y nh\u1EADp App Key/Secret/Access Token th\u1EE7 c\xF4ng t\u1EEB Seller Center."
-  };
-}
-function listTiktokCredentialSummaries() {
-  const tokens = loadTiktokTokens();
-  return Object.keys(tokens).map((id) => sanitizeCredentialRecord(tokens[id]));
-}
-var import_fs18, import_path19, APP_ROOT11, APP_BASE_URL3, TIKTOK_TOKENS_PATH, CHANNEL_SETTINGS_PATH2, TIKTOK_CALLBACK_URL, TIKTOK_CALLBACK_IDLE_MSG, TIKTOK_API_HOST, TIKTOK_APP_KEY, TIKTOK_APP_SECRET, TIKTOK_ACCESS_TOKEN, TIKTOK_SHOP_ID, TIKTOK_SHOP_CIPHER;
-var init_auth = __esm({
-  "services/tiktok/auth.js"() {
-    import_fs18 = __toESM(require("fs"), 1);
-    import_path19 = __toESM(require("path"), 1);
-    init_appPaths();
-    APP_ROOT11 = resolveAppRoot();
-    APP_BASE_URL3 = resolveAppBaseUrl();
-    TIKTOK_TOKENS_PATH = import_path19.default.resolve(APP_ROOT11, "data", "tiktok_tokens.json");
-    CHANNEL_SETTINGS_PATH2 = import_path19.default.resolve(APP_ROOT11, "data", "channel_settings.json");
-    TIKTOK_CALLBACK_URL = String(process.env.TIKTOK_CALLBACK_URL || "").trim().replace(/\/$/, "") || `${APP_BASE_URL3}/api/tiktok/callback`;
-    TIKTOK_CALLBACK_IDLE_MSG = "Callback route is active. Waiting for TikTok Shop parameters (code, shop_id)...";
-    TIKTOK_API_HOST = String(
-      process.env.TIKTOK_API_HOST || "https://open-api.tiktokglobalshop.com"
-    ).trim().replace(/\/$/, "");
-    TIKTOK_APP_KEY = String(process.env.TIKTOK_APP_KEY || "").trim();
-    TIKTOK_APP_SECRET = String(process.env.TIKTOK_APP_SECRET || "").trim();
-    TIKTOK_ACCESS_TOKEN = String(process.env.TIKTOK_ACCESS_TOKEN || "").trim();
-    TIKTOK_SHOP_ID = String(process.env.TIKTOK_SHOP_ID || "").trim();
-    TIKTOK_SHOP_CIPHER = String(process.env.TIKTOK_SHOP_CIPHER || "").trim();
-  }
-});
-
 // services/tiktok/client.js
 function signTiktokRequest(appSecret, apiPath, queryParams, bodyString = "") {
   const secret = String(appSecret || "");
@@ -73678,7 +73776,8 @@ async function tiktokApiRequest(method, apiPath, opts = {}) {
   const bodyObj = opts.body === void 0 ? null : opts.body;
   const bodyString = bodyObj == null ? "" : typeof bodyObj === "string" ? bodyObj : JSON.stringify(bodyObj);
   query.sign = signTiktokRequest(creds.app_secret, apiPath, query, bodyString);
-  const url2 = `${TIKTOK_API_HOST}${apiPath}?${buildQuery(query)}`;
+  const host = getTiktokApiHost() || TIKTOK_API_HOST;
+  const url2 = `${host}${apiPath}?${buildQuery(query)}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIKTOK_HTTP_TIMEOUT_MS);
   try {
@@ -74226,64 +74325,54 @@ __export(ping_exports, {
   pingTiktokShopConnection: () => pingTiktokShopConnection
 });
 function credentialsFromShopRecord(shop) {
-  if (!shop || typeof shop !== "object") {
-    return resolveTiktokCustomAppCredentials("");
-  }
-  const shopId = String(shop.shopId || shop.shop_id || shop.id || "").trim();
-  const access_token = String(
-    shop.access_token || shop.accessToken || shop.apiKey || ""
-  ).trim();
-  const app_secret = String(
-    shop.app_secret || shop.appSecret || shop.apiSecret || ""
-  ).trim();
-  const app_key = String(
-    shop.app_key || shop.appKey || shop.tiktokAppKey || ""
-  ).trim();
-  const shop_cipher = String(
-    shop.shop_cipher || shop.shopCipher || shop.tiktokShopCipher || ""
-  ).trim();
-  if (shopId && (access_token || app_key || app_secret)) {
+  const fields = extractTiktokFieldsFromShop(shop);
+  const shopId = fields?.shop_id || String(shop?.shopId || shop?.shop_id || "").trim();
+  if (shopId && fields && (fields.access_token || fields.app_key || fields.app_secret)) {
     try {
       const existing = resolveTiktokCustomAppCredentials(shopId);
       upsertTiktokCustomAppCredentials(shopId, {
-        app_key: app_key || existing.app_key,
-        app_secret: app_secret || existing.app_secret,
-        access_token: access_token || existing.access_token,
-        shop_cipher: shop_cipher || existing.shop_cipher,
-        shop_name: String(shop.shopName || shop.shop_name || "").trim() || void 0
+        app_key: fields.app_key || existing.app_key,
+        app_secret: fields.app_secret || existing.app_secret,
+        access_token: fields.access_token || existing.access_token,
+        shop_cipher: fields.shop_cipher || existing.shop_cipher,
+        shop_name: fields.shop_name || existing.shop_name
       });
     } catch {
     }
   }
-  const merged = resolveTiktokCustomAppCredentials(shopId);
-  return {
-    ...merged,
-    shop_id: shopId || merged.shop_id,
-    app_key: app_key || merged.app_key,
-    app_secret: app_secret || merged.app_secret,
-    access_token: access_token || merged.access_token,
-    shop_cipher: shop_cipher || merged.shop_cipher,
-    valid: Boolean(
-      (app_key || merged.app_key) && (app_secret || merged.app_secret) && (access_token || merged.access_token)
-    )
-  };
+  return resolveTiktokCustomAppCredentials(shopId, shop);
 }
 async function pingTiktokShopConnection(shop) {
   const shopId = String(shop?.shopId || shop?.shop_id || "").trim();
-  const accessToken = String(shop?.apiKey || shop?.access_token || "").trim();
-  if (!shopId || !accessToken) {
+  const fields = extractTiktokFieldsFromShop(shop);
+  const accessToken = fields?.access_token || "";
+  if (!shopId) {
     return {
       online: false,
       connection_status: "missing",
-      message: "Thi\u1EBFu Seller ID ho\u1EB7c Access Token TikTok"
+      message: "Thi\u1EBFu Seller ID (shopId) TikTok"
     };
   }
   const creds = credentialsFromShopRecord(shop);
-  if (!creds.valid) {
+  if (!creds.access_token && !accessToken) {
     return {
       online: false,
       connection_status: "missing",
-      message: "Thi\u1EBFu App Key / App Secret / Access Token \u2014 kh\xF4ng th\u1EC3 g\u1ECDi API TikTok. L\u01B0u \u0111\u1EE7 credentials Custom App (Seller Center) r\u1ED3i Test l\u1EA1i."
+      message: "Thi\u1EBFu Access Token TikTok tr\xEAn shop ho\u1EB7c .env (TIKTOK_ACCESS_TOKEN)"
+    };
+  }
+  if (!creds.valid) {
+    const missing = [];
+    if (!creds.app_key) missing.push("App Key (shop.appKey ho\u1EB7c TIKTOK_APP_KEY)");
+    if (!creds.app_secret) missing.push("App Secret (shop.apiSecret ho\u1EB7c TIKTOK_APP_SECRET)");
+    if (!creds.access_token) missing.push("Access Token");
+    return {
+      online: false,
+      connection_status: "missing",
+      message: `Thi\u1EBFu credentials TikTok: ${missing.join(", ")}. \u0110i\u1EC1n tr\xEAn UI ho\u1EB7c file .env cPanel.`,
+      env_app_key_configured: creds.env_app_key_configured,
+      env_app_secret_configured: creds.env_app_secret_configured,
+      source: creds.source
     };
   }
   const result = await tiktokApiRequest("GET", SHOPS_PING_PATH, {
@@ -74296,7 +74385,7 @@ async function pingTiktokShopConnection(shop) {
     return {
       online: true,
       connection_status: "online",
-      message: count > 0 ? `TikTok API OK \u2014 ${count} shop \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n (Live ping)` : "TikTok API OK \u2014 Access Token h\u1EE3p l\u1EC7 (Live ping)"
+      message: count > 0 ? `TikTok API OK \u2014 ${count} shop \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n (Live ping, source=${creds.source})` : `TikTok API OK \u2014 Access Token h\u1EE3p l\u1EC7 (Live ping, source=${creds.source})`
     };
   }
   const msg = String(result.message || result.error || "TikTok API l\u1ED7i");
@@ -112876,6 +112965,13 @@ async function putChannelSettings(req, res) {
         message: "Kh\xF4ng ghi \u0111\u01B0\u1EE3c file channel_settings.json tr\xEAn m\xE1y ch\u1EE7"
       });
     }
+    try {
+      const { syncTiktokCredentialsFromShops: syncTiktokCredentialsFromShops2 } = await Promise.resolve().then(() => (init_auth(), auth_exports));
+      const n = syncTiktokCredentialsFromShops2(mergedShops);
+      if (n > 0) console.log(`[Channel Settings] Synced ${n} TikTok shop credential(s)`);
+    } catch (syncErr) {
+      console.warn("[Channel Settings] TikTok credential sync skipped:", syncErr?.message || syncErr);
+    }
     const saved = deps5.loadChannelSettings();
     const shops = deps5.enrichShopsWithConnectionStatus(saved.shops || []);
     console.log(
@@ -114349,11 +114445,11 @@ async function scanBulkUpdate(req, res) {
 }
 
 // services/scanBgQueue.js
-var import_fs14 = __toESM(require("fs"), 1);
-var import_path14 = __toESM(require("path"), 1);
+var import_fs15 = __toESM(require("fs"), 1);
+var import_path15 = __toESM(require("path"), 1);
 init_appPaths();
-var APP_ROOT6 = resolveAppRoot();
-var SCAN_BG_QUEUE_PATH = import_path14.default.join(APP_ROOT6, "data", "scan-bg-queue.json");
+var APP_ROOT7 = resolveAppRoot();
+var SCAN_BG_QUEUE_PATH = import_path15.default.join(APP_ROOT7, "data", "scan-bg-queue.json");
 var scanBgJobs = [];
 var scanBgJobKeys = /* @__PURE__ */ new Set();
 var scanBgWorkerRunning = false;
@@ -114397,8 +114493,8 @@ function normalizeScanBgKey(code) {
 }
 function loadScanBgQueueFromDisk() {
   try {
-    if (!import_fs14.default.existsSync(SCAN_BG_QUEUE_PATH)) return;
-    const raw = JSON.parse(import_fs14.default.readFileSync(SCAN_BG_QUEUE_PATH, "utf-8"));
+    if (!import_fs15.default.existsSync(SCAN_BG_QUEUE_PATH)) return;
+    const raw = JSON.parse(import_fs15.default.readFileSync(SCAN_BG_QUEUE_PATH, "utf-8"));
     const list = Array.isArray(raw?.jobs) ? raw.jobs : Array.isArray(raw) ? raw : [];
     for (const j of list) {
       const code = String(j?.code || "").trim();
@@ -114441,11 +114537,11 @@ function persistScanBgQueueSoon() {
   scanBgPersistTimer = setTimeout(() => {
     scanBgPersistTimer = null;
     try {
-      import_fs14.default.mkdirSync(import_path14.default.dirname(SCAN_BG_QUEUE_PATH), { recursive: true });
+      import_fs15.default.mkdirSync(import_path15.default.dirname(SCAN_BG_QUEUE_PATH), { recursive: true });
       const pending = scanBgJobs.filter((j) => j.status === "pending" || j.status === "running");
       const recent = scanBgJobs.filter((j) => j.status !== "pending" && j.status !== "running").slice(-80);
       const jobs = [...pending, ...recent];
-      import_fs14.default.writeFileSync(SCAN_BG_QUEUE_PATH, JSON.stringify({ jobs }, null, 0), "utf-8");
+      import_fs15.default.writeFileSync(SCAN_BG_QUEUE_PATH, JSON.stringify({ jobs }, null, 0), "utf-8");
     } catch (err) {
       console.warn("[Scan BG] persist failed:", err?.message || err);
     }
@@ -116269,13 +116365,13 @@ async function bulkChannelSync(req, res) {
 }
 
 // services/shopee/auth.js
-var import_fs15 = __toESM(require("fs"), 1);
-var import_path16 = __toESM(require("path"), 1);
+var import_fs16 = __toESM(require("fs"), 1);
+var import_path17 = __toESM(require("path"), 1);
 var import_crypto3 = __toESM(require("crypto"), 1);
 init_appPaths();
 
 // services/shopee/client.js
-var import_path15 = __toESM(require("path"), 1);
+var import_path16 = __toESM(require("path"), 1);
 var import_node_module = require("node:module");
 init_concurrency();
 var import_meta = {};
@@ -116301,7 +116397,7 @@ function resolveCreateRequireFilename() {
     if (metaUrl && metaUrl !== "undefined") return metaUrl;
   } catch {
   }
-  return import_path15.default.resolve(process.cwd(), "server.cjs");
+  return import_path16.default.resolve(process.cwd(), "server.cjs");
 }
 var shopeeHttpDispatcher = void 0;
 try {
@@ -116689,15 +116785,15 @@ async function shopeePostJsonWithRetry(url2, body, context, opts) {
 }
 
 // services/shopee/auth.js
-var APP_ROOT7 = resolveAppRoot();
-var APP_BASE_URL2 = resolveAppBaseUrl();
+var APP_ROOT8 = resolveAppRoot();
+var APP_BASE_URL3 = resolveAppBaseUrl();
 function resolveShopeeCallbackUrl2() {
   const explicit = String(process.env.SHOPEE_CALLBACK_URL || "").trim().replace(/\/$/, "");
   if (explicit) return explicit;
-  return `${APP_BASE_URL2}/api/shopee/callback`;
+  return `${APP_BASE_URL3}/api/shopee/callback`;
 }
 var SHOPEE_CALLBACK_URL2 = resolveShopeeCallbackUrl2();
-var SHOPEE_WEBHOOK_URL2 = `${APP_BASE_URL2}/api/shopee/webhook`;
+var SHOPEE_WEBHOOK_URL2 = `${APP_BASE_URL3}/api/shopee/webhook`;
 var SHOPEE_CALLBACK_IDLE_MSG = "Callback route is active. Waiting for Shopee parameters (code, shop_id)...";
 var SHOPEE_ENV = (process.env.SHOPEE_ENV || "live").toLowerCase();
 var SHOPEE_HOST = "https://partner.shopeemobile.com";
@@ -116714,9 +116810,9 @@ if (!isShopeeConfigValid()) {
     `[Shopee API] \u26A0\uFE0F SHOPEE_PARTNER_ID (hi\u1EC7n t\u1EA1i: "${SHOPEE_PARTNER_ID || "(r\u1ED7ng)"}") ho\u1EB7c SHOPEE_PARTNER_KEY ch\u01B0a \u0111\u01B0\u1EE3c \u0111i\u1EC1n \u0111\xFAng trong .env. Partner_id ph\u1EA3i l\xE0 m\u1ED9t s\u1ED1 nguy\xEAn (v\xED d\u1EE5: 2001234), l\u1EA5y t\u1EEB App PRODUCTION (Live) tr\xEAn open.shopee.com, KH\xD4NG d\xF9ng Sandbox. M\u1ECDi l\u1EA7n g\u1ECDi API Shopee s\u1EBD b\u1EC3 tr\u1EA3 l\u1ED7i error_param cho \u0111\u1EBFn khi s\u1EEDa \u0111\xFAng gi\xE1 tr\u1ECB n\xE0y.`
   );
 }
-var SHOPEE_TOKENS_PATH = import_path16.default.resolve(APP_ROOT7, "data", "shopee_tokens.json");
-var SHOPEE_OAUTH_LAST_PATH = import_path16.default.resolve(APP_ROOT7, "data", "shopee_oauth_last.json");
-var CHANNEL_SETTINGS_PATH = import_path16.default.resolve(APP_ROOT7, "data", "channel_settings.json");
+var SHOPEE_TOKENS_PATH = import_path17.default.resolve(APP_ROOT8, "data", "shopee_tokens.json");
+var SHOPEE_OAUTH_LAST_PATH = import_path17.default.resolve(APP_ROOT8, "data", "shopee_oauth_last.json");
+var CHANNEL_SETTINGS_PATH2 = import_path17.default.resolve(APP_ROOT8, "data", "channel_settings.json");
 var CANONICAL_SHOPEE_SHOP_IDS = ["4127421", "831052930"];
 var INDEPENDENT_SHOPEE_SHOP_IDS = new Set(CANONICAL_SHOPEE_SHOP_IDS);
 var deps11 = {
@@ -116729,16 +116825,16 @@ function initShopeeAuth(partial) {
   deps11 = { ...deps11, ...partial };
 }
 function ensureDataDirs() {
-  const dataDir = import_path16.default.join(APP_ROOT7, "data");
-  import_fs15.default.mkdirSync(dataDir, { recursive: true });
-  if (!import_fs15.default.existsSync(SHOPEE_TOKENS_PATH)) {
-    import_fs15.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
+  const dataDir = import_path17.default.join(APP_ROOT8, "data");
+  import_fs16.default.mkdirSync(dataDir, { recursive: true });
+  if (!import_fs16.default.existsSync(SHOPEE_TOKENS_PATH)) {
+    import_fs16.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
   }
 }
 function saveOAuthAudit(entry) {
   try {
     ensureDataDirs();
-    import_fs15.default.writeFileSync(
+    import_fs16.default.writeFileSync(
       SHOPEE_OAUTH_LAST_PATH,
       JSON.stringify({ ...entry, at: (/* @__PURE__ */ new Date()).toISOString() }, null, 2),
       "utf-8"
@@ -116749,8 +116845,8 @@ function saveOAuthAudit(entry) {
 }
 function loadLastOAuthAudit() {
   try {
-    if (!import_fs15.default.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
-    return JSON.parse(import_fs15.default.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
+    if (!import_fs16.default.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
+    return JSON.parse(import_fs16.default.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
   } catch {
     return null;
   }
@@ -116767,13 +116863,13 @@ function bootShopeeAuth() {
     console.error("[Boot] Failed to normalize shopee_tokens.json:", error);
   }
   console.log(
-    `[Boot] APP_ROOT=${APP_ROOT7} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs15.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL2}`
+    `[Boot] APP_ROOT=${APP_ROOT8} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs16.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL2}`
   );
 }
 function loadShopeeTokens() {
   try {
-    if (!import_fs15.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
-    const raw = import_fs15.default.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
+    if (!import_fs16.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
+    const raw = import_fs16.default.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
     if (!raw.trim()) return {};
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
@@ -116807,7 +116903,7 @@ function maskTokenStoreForLog(tokens) {
   return masked;
 }
 function saveShopeeTokens(tokensToWrite) {
-  const absPath = import_path16.default.resolve(SHOPEE_TOKENS_PATH);
+  const absPath = import_path17.default.resolve(SHOPEE_TOKENS_PATH);
   try {
     ensureDataDirs();
     const onDisk = normalizeTokenStore(loadShopeeTokens());
@@ -116839,15 +116935,15 @@ function saveShopeeTokens(tokensToWrite) {
       JSON.stringify({
         absPath,
         SHOPEE_TOKENS_PATH,
-        APP_ROOT: APP_ROOT7,
+        APP_ROOT: APP_ROOT8,
         keys: keysAfter,
         byteLength: Buffer.byteLength(payload, "utf-8")
       })
     );
-    import_fs15.default.writeFileSync(absPath, payload, "utf-8");
+    import_fs16.default.writeFileSync(absPath, payload, "utf-8");
     console.log(
       "[Shopee Tokens] fs.writeFileSync \u2014 GHI TH\xC0NH C\xD4NG",
-      JSON.stringify({ absPath, keys: keysAfter, fileSize: import_fs15.default.statSync(absPath).size })
+      JSON.stringify({ absPath, keys: keysAfter, fileSize: import_fs16.default.statSync(absPath).size })
     );
     return true;
   } catch (error) {
@@ -116868,25 +116964,25 @@ function normalizeShopIdKey(shopId) {
   const key = String(shopId ?? "").trim();
   return /^\d+$/.test(key) ? key : "";
 }
-function queryParamOne(value) {
+function queryParamOne2(value) {
   if (Array.isArray(value)) return String(value[0] ?? "").trim();
   return String(value ?? "").trim();
 }
-function shouldOAuthRedirectToFrontend(req) {
-  if (queryParamOne(req.query?.format) === "json") return false;
-  if (queryParamOne(req.query?.redirect) === "0") return false;
+function shouldOAuthRedirectToFrontend2(req) {
+  if (queryParamOne2(req.query?.format) === "json") return false;
+  if (queryParamOne2(req.query?.redirect) === "0") return false;
   return true;
 }
-function buildOAuthFrontendRedirectUrl(req, result) {
-  const oauthShopId = String(result.oauth_shop_id || queryParamOne(req.query.shop_id) || "");
-  const expectedShop = queryParamOne(req.query?.expected_shop) || String(result.expected_shop_id || "");
+function buildOAuthFrontendRedirectUrl2(req, result) {
+  const oauthShopId = String(result.oauth_shop_id || queryParamOne2(req.query.shop_id) || "");
+  const expectedShop = queryParamOne2(req.query?.expected_shop) || String(result.expected_shop_id || "");
   if (result.success) {
     const savedQuery = encodeURIComponent((result.saved_shop_ids || []).join(","));
     const expectedQuery = expectedShop ? `&expected_shop=${encodeURIComponent(expectedShop)}` : "";
-    return `${APP_BASE_URL2}/?shopee_linked=1&shop_id=${encodeURIComponent(oauthShopId)}&saved_shops=${savedQuery}${expectedQuery}`;
+    return `${APP_BASE_URL3}/?shopee_linked=1&shop_id=${encodeURIComponent(oauthShopId)}&saved_shops=${savedQuery}${expectedQuery}`;
   }
   const errMsg = result.message || result.error || "token_exchange_failed";
-  return `${APP_BASE_URL2}/?shopee_linked=0&shop_id=${encodeURIComponent(oauthShopId)}&error=${encodeURIComponent(errMsg)}`;
+  return `${APP_BASE_URL3}/?shopee_linked=0&shop_id=${encodeURIComponent(oauthShopId)}&error=${encodeURIComponent(errMsg)}`;
 }
 function normalizeShopeeTokenResponse(raw) {
   const inner = raw?.response && typeof raw.response === "object" && !Array.isArray(raw.response) ? raw.response : raw?.data && typeof raw.data === "object" ? raw.data : raw;
@@ -117110,7 +117206,7 @@ async function completeShopeeOAuthFlow(code, params) {
     shopee_shop_id_list: tokenResult.shop_id_list || [],
     file_keys_after: Object.keys(loadShopeeTokens()),
     tokens_path: SHOPEE_TOKENS_PATH,
-    app_root: APP_ROOT7
+    app_root: APP_ROOT8
   });
   return {
     success: Boolean(tokenResult.access_token) && verified && !shopMismatch,
@@ -117155,8 +117251,8 @@ function saveShopeeTokenForShop(shopId, record) {
 }
 function listChannelSettingsShopIds() {
   try {
-    if (!import_fs15.default.existsSync(CHANNEL_SETTINGS_PATH)) return [];
-    const raw = import_fs15.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
+    if (!import_fs16.default.existsSync(CHANNEL_SETTINGS_PATH2)) return [];
+    const raw = import_fs16.default.readFileSync(CHANNEL_SETTINGS_PATH2, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : {};
     const shops = Array.isArray(parsed?.shops) ? parsed.shops : [];
     const ids = [];
@@ -117281,7 +117377,7 @@ function ensureShopeeLinkedShopTokenKeys() {
       delete next[id];
     }
     Object.assign(next, updates);
-    import_fs15.default.writeFileSync(SHOPEE_TOKENS_PATH, JSON.stringify(next, null, 2), "utf8");
+    import_fs16.default.writeFileSync(SHOPEE_TOKENS_PATH, JSON.stringify(next, null, 2), "utf8");
     console.log(
       `[Shopee Tokens] ensureLinkedShopTokenKeys \u2014 upsert=[${Object.keys(updates).join(", ")}] deleted=[${deleteKeys.map((k) => k.replace(/^__delete__/, "")).join(", ")}] pruned=${pruned}`
     );
@@ -118639,17 +118735,17 @@ var mappingRoutes_default = router13;
 var import_express15 = __toESM(require_express2(), 1);
 
 // controllers/ordersController.js
-var import_fs17 = __toESM(require("fs"), 1);
-var import_path18 = __toESM(require("path"), 1);
+var import_fs18 = __toESM(require("fs"), 1);
+var import_path19 = __toESM(require("path"), 1);
 init_appPaths();
 
 // services/orders.js
-var import_fs16 = __toESM(require("fs"), 1);
-var import_path17 = __toESM(require("path"), 1);
+var import_fs17 = __toESM(require("fs"), 1);
+var import_path18 = __toESM(require("path"), 1);
 init_appPaths();
-var APP_ROOT8 = resolveAppRoot();
-var ORDERS_DB_PATH = import_path17.default.join(APP_ROOT8, "data", "orders.json");
-var HANDED_OVER_CLEANUP_MARKER = import_path17.default.join(APP_ROOT8, "data", ".cleanup-handed-over-v2");
+var APP_ROOT9 = resolveAppRoot();
+var ORDERS_DB_PATH = import_path18.default.join(APP_ROOT9, "data", "orders.json");
+var HANDED_OVER_CLEANUP_MARKER = import_path18.default.join(APP_ROOT9, "data", ".cleanup-handed-over-v2");
 var deps14 = {
   repairMisassignedTracking: (o) => o,
   repairFalseProcessedReadyToShip: (o) => o,
@@ -118705,11 +118801,11 @@ function rebuildOrderLookupIndex(orders) {
 }
 function loadOrders() {
   try {
-    if (!import_fs16.default.existsSync(ORDERS_DB_PATH)) {
+    if (!import_fs17.default.existsSync(ORDERS_DB_PATH)) {
       orderLookupIndex = rebuildOrderLookupIndex([]);
       return [];
     }
-    const raw = import_fs16.default.readFileSync(ORDERS_DB_PATH, "utf-8");
+    const raw = import_fs17.default.readFileSync(ORDERS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     const orders = Array.isArray(parsed) ? parsed.map(deps14.repairMisassignedTracking) : [];
     orderLookupIndex = rebuildOrderLookupIndex(orders);
@@ -118918,8 +119014,8 @@ function saveOrders(orders) {
         (err) => console.warn("[Orders JSON Mirror] Mongo sync failed:", err?.message || err)
       );
     }
-    import_fs16.default.mkdirSync(import_path17.default.dirname(ORDERS_DB_PATH), { recursive: true });
-    import_fs16.default.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
+    import_fs17.default.mkdirSync(import_path18.default.dirname(ORDERS_DB_PATH), { recursive: true });
+    import_fs17.default.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
     orderLookupIndex = rebuildOrderLookupIndex(sanitized);
     console.log(
       `[Orders DB] WRITE OK \u2014 path=${ORDERS_DB_PATH} count=${sanitized.length}`
@@ -118941,7 +119037,7 @@ async function purgeHandedOverGarbageOrdersOnce(opts) {
   const force = Boolean(opts?.force);
   const orders = loadOrders();
   const garbage = orders.filter(isHandedOverGarbageOrder);
-  if (!force && garbage.length === 0 && import_fs16.default.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
+  if (!force && garbage.length === 0 && import_fs17.default.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
     return { removed: 0, sns: [], skipped: true };
   }
   const sns = garbage.map((o) => String(o.orderSn || o.id || "").trim()).filter(Boolean);
@@ -118971,10 +119067,10 @@ async function purgeHandedOverGarbageOrdersOnce(opts) {
   const stillLeft = loadOrders().filter(isHandedOverGarbageOrder).length;
   if (stillLeft === 0) {
     try {
-      const v1 = import_path17.default.join(APP_ROOT8, "data", ".cleanup-handed-over-v1");
-      if (import_fs16.default.existsSync(v1)) import_fs16.default.unlinkSync(v1);
-      import_fs16.default.mkdirSync(import_path17.default.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
-      import_fs16.default.writeFileSync(
+      const v1 = import_path18.default.join(APP_ROOT9, "data", ".cleanup-handed-over-v1");
+      if (import_fs17.default.existsSync(v1)) import_fs17.default.unlinkSync(v1);
+      import_fs17.default.mkdirSync(import_path18.default.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
+      import_fs17.default.writeFileSync(
         HANDED_OVER_CLEANUP_MARKER,
         JSON.stringify(
           {
@@ -119229,7 +119325,7 @@ async function handOverOrderToCarrierByIndex(orders, index, opts) {
 }
 
 // controllers/ordersController.js
-var APP_ROOT9 = resolveAppRoot();
+var APP_ROOT10 = resolveAppRoot();
 function hasOrderPdfOnDisk(order) {
   const filenames = /* @__PURE__ */ new Set();
   const addFilename = (raw) => {
@@ -119240,7 +119336,7 @@ function hasOrderPdfOnDisk(order) {
     } catch {
     }
     const fromUrl = value.match(/\/api\/public\/labels\/([^/?#]+)/i)?.[1];
-    const filename = import_path18.default.basename(fromUrl || value);
+    const filename = import_path19.default.basename(fromUrl || value);
     if (/\.pdf$/i.test(filename)) filenames.add(filename);
   };
   addFilename(order?.pdfFilename);
@@ -119257,7 +119353,7 @@ function hasOrderPdfOnDisk(order) {
     filenames.add(`${orderSn}.pdf`);
   }
   for (const filename of filenames) {
-    if (import_fs17.default.existsSync(import_path18.default.join(PDF_DIR, filename))) return true;
+    if (import_fs18.default.existsSync(import_path19.default.join(PDF_DIR, filename))) return true;
   }
   return false;
 }
@@ -120073,8 +120169,8 @@ async function cleanupHandedOver(req, res) {
   try {
     for (const name of [".cleanup-handed-over-v1", ".cleanup-handed-over-v2"]) {
       try {
-        const p = import_path18.default.join(APP_ROOT9, "data", name);
-        if (import_fs17.default.existsSync(p)) import_fs17.default.unlinkSync(p);
+        const p = import_path19.default.join(APP_ROOT10, "data", name);
+        if (import_fs18.default.existsSync(p)) import_fs18.default.unlinkSync(p);
       } catch {
       }
     }
@@ -121703,13 +121799,13 @@ async function streamExternalWaybillFile(req, res) {
   try {
     const orderSn = String(req.params.orderSn || "").trim();
     if (!orderSn) return res.status(400).json({ error: "Thi\u1EBFu m\xE3 \u0111\u01A1n" });
-    const filePath = import_path18.default.join(PDF_DIR, `external-${orderSn}.pdf`);
-    if (!import_fs17.default.existsSync(filePath)) {
+    const filePath = import_path19.default.join(PDF_DIR, `external-${orderSn}.pdf`);
+    if (!import_fs18.default.existsSync(filePath)) {
       return res.status(404).json({ error: "Ch\u01B0a c\xF3 file PDF waybill. B\u1EA5m In v\u1EADn \u0111\u01A1n l\u1EA1i." });
     }
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="${orderSn}.pdf"`);
-    return import_fs17.default.createReadStream(filePath).pipe(res);
+    return import_fs18.default.createReadStream(filePath).pipe(res);
   } catch (error) {
     return res.status(500).json({ error: error.message || "Kh\xF4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c PDF" });
   }
@@ -124858,7 +124954,7 @@ var import_express16 = __toESM(require_express2(), 1);
 
 // controllers/shopeeAuthController.js
 init_appPaths();
-var APP_ROOT10 = resolveAppRoot();
+var APP_ROOT11 = resolveAppRoot();
 var deps18 = {
   logOAuthSaveError: (ctx, err) => console.error(ctx, err)
 };
@@ -124881,10 +124977,10 @@ function logShopeeIngress(prefix, req) {
 async function oauthComplete(req, res) {
   console.log("DEBUG RAW RESPONSE:", JSON.stringify(req.query));
   logShopeeIngress("[Shopee OAuth Complete]", req);
-  const code = queryParamOne(req.query.code);
-  const shopIdRaw = queryParamOne(req.query.shop_id);
-  const mainAccountIdRaw = queryParamOne(req.query.main_account_id);
-  const expectedShop = queryParamOne(req.query.expected_shop);
+  const code = queryParamOne2(req.query.code);
+  const shopIdRaw = queryParamOne2(req.query.shop_id);
+  const mainAccountIdRaw = queryParamOne2(req.query.main_account_id);
+  const expectedShop = queryParamOne2(req.query.expected_shop);
   console.log(
     "[Shopee OAuth Complete] REQUEST (Vercel proxy JSON)",
     JSON.stringify({
@@ -124926,10 +125022,10 @@ async function oauthComplete(req, res) {
 async function oauthCallback(req, res) {
   console.log("DEBUG RAW RESPONSE:", JSON.stringify(req.query));
   logShopeeIngress("[Shopee Callback]", req);
-  const code = queryParamOne(req.query.code);
-  const shopIdRaw = queryParamOne(req.query.shop_id);
-  const mainAccountIdRaw = queryParamOne(req.query.main_account_id);
-  const expectedShop = queryParamOne(req.query.expected_shop);
+  const code = queryParamOne2(req.query.code);
+  const shopIdRaw = queryParamOne2(req.query.shop_id);
+  const mainAccountIdRaw = queryParamOne2(req.query.main_account_id);
+  const expectedShop = queryParamOne2(req.query.expected_shop);
   console.log(
     "[Shopee Callback] REQUEST NH\u1EACN \u0110\u01AF\u1EE2C",
     JSON.stringify({
@@ -124944,7 +125040,7 @@ async function oauthCallback(req, res) {
       query: req.query || {},
       SHOPEE_TOKENS_PATH,
       SHOPEE_CALLBACK_URL: SHOPEE_CALLBACK_URL2,
-      APP_ROOT: APP_ROOT10,
+      APP_ROOT: APP_ROOT11,
       cwd: process.cwd()
     })
   );
@@ -124970,15 +125066,15 @@ async function oauthCallback(req, res) {
     });
     if (!result.success) {
       console.error(`[Shopee Callback] \u0110\u1ED5i code th\u1EA5t b\u1EA1i:`, result.error, result.message);
-      if (queryParamOne(req.query.format) === "json") {
+      if (queryParamOne2(req.query.format) === "json") {
         return res.status(400).json({
           ...result,
           message: result.message || result.error || "token_exchange_failed",
           tokens_path: SHOPEE_TOKENS_PATH
         });
       }
-      if (shouldOAuthRedirectToFrontend(req)) {
-        return res.redirect(302, buildOAuthFrontendRedirectUrl(req, result));
+      if (shouldOAuthRedirectToFrontend2(req)) {
+        return res.redirect(302, buildOAuthFrontendRedirectUrl2(req, result));
       }
       const errMsg = result.message || result.error || "token_exchange_failed";
       return res.status(400).type("text/html; charset=utf-8").send(
@@ -124992,7 +125088,7 @@ async function oauthCallback(req, res) {
     console.log(
       `[Shopee Callback] OAuth OK. Token \u0111\xE3 l\u01B0u cho: [${savedIds.join(", ")}]. verified=${result.verified_in_file} File: ${SHOPEE_TOKENS_PATH}`
     );
-    if (queryParamOne(req.query.format) === "json") {
+    if (queryParamOne2(req.query.format) === "json") {
       return res.status(200).json({
         ...result,
         message: result.message || `\u1EE6y quy\u1EC1n th\xE0nh c\xF4ng. Token \u0111\xE3 l\u01B0u cho: [${savedIds.join(", ")}].`,
@@ -125000,7 +125096,7 @@ async function oauthCallback(req, res) {
         callback_url: SHOPEE_CALLBACK_URL2
       });
     }
-    const frontendUrl = buildOAuthFrontendRedirectUrl(req, result);
+    const frontendUrl = buildOAuthFrontendRedirectUrl2(req, result);
     const shopLabel = savedIds.join(", ") || result.oauth_shop_id || oauthShopId || mainAccountId || "";
     return res.status(200).type("text/html; charset=utf-8").send(
       `<!doctype html><html><head><meta charset="utf-8"><title>\u1EE6y quy\u1EC1n th\xE0nh c\xF4ng</title>
@@ -125020,7 +125116,7 @@ async function oauthCallback(req, res) {
       success: false,
       error: error?.message || "unknown_error",
       tokens_path: SHOPEE_TOKENS_PATH,
-      app_root: APP_ROOT10
+      app_root: APP_ROOT11
     });
     const failResult = {
       success: false,
@@ -125028,14 +125124,14 @@ async function oauthCallback(req, res) {
       message: error?.message || "L\u1ED7i x\u1EED l\xFD OAuth callback",
       oauth_shop_id: oauthShopId
     };
-    if (queryParamOne(req.query.format) === "json") {
+    if (queryParamOne2(req.query.format) === "json") {
       return res.status(500).json({
         ...failResult,
         tokens_path: SHOPEE_TOKENS_PATH
       });
     }
-    if (shouldOAuthRedirectToFrontend(req)) {
-      return res.redirect(302, buildOAuthFrontendRedirectUrl(req, failResult));
+    if (shouldOAuthRedirectToFrontend2(req)) {
+      return res.redirect(302, buildOAuthFrontendRedirectUrl2(req, failResult));
     }
     return res.status(500).type("text/html; charset=utf-8").send(
       `<!doctype html><html><body><h2>\u1EE6y quy\u1EC1n th\u1EA5t b\u1EA1i</h2><p>${escapeHtml(failResult.message)}</p></body></html>`
@@ -125075,7 +125171,7 @@ async function listOauthShops(_req, res) {
     shopIds,
     details,
     tokensPath: SHOPEE_TOKENS_PATH,
-    appRoot: APP_ROOT10,
+    appRoot: APP_ROOT11,
     lastOAuth,
     count: shopIds.length
   });
@@ -125131,9 +125227,9 @@ function logTiktokIngress(prefix, req) {
 }
 async function oauthCallback2(req, res) {
   logTiktokIngress("[TikTok Callback]", req);
-  const code = queryParamOne2(req.query.code);
-  const shopId = queryParamOne2(req.query.shop_id) || queryParamOne2(req.query.open_id);
-  const state = queryParamOne2(req.query.state);
+  const code = queryParamOne(req.query.code);
+  const shopId = queryParamOne(req.query.shop_id) || queryParamOne(req.query.open_id);
+  const state = queryParamOne(req.query.state);
   console.log(
     "[TikTok Callback] REQUEST",
     JSON.stringify({
@@ -125150,14 +125246,14 @@ async function oauthCallback2(req, res) {
   }
   try {
     const result = await exchangeTiktokAuthCode(code, { shopId: shopId || void 0 });
-    if (queryParamOne2(req.query.format) === "json") {
+    if (queryParamOne(req.query.format) === "json") {
       return res.status(result.success ? 200 : 400).json({
         ...result,
         callback_url: TIKTOK_CALLBACK_URL
       });
     }
-    if (shouldOAuthRedirectToFrontend2(req)) {
-      return res.redirect(302, buildOAuthFrontendRedirectUrl2(req, result));
+    if (shouldOAuthRedirectToFrontend(req)) {
+      return res.redirect(302, buildOAuthFrontendRedirectUrl(req, result));
     }
     if (result.success) {
       return res.status(200).type("text/html; charset=utf-8").send(
@@ -125175,11 +125271,11 @@ async function oauthCallback2(req, res) {
       error: error?.message || "unknown_error",
       message: error?.message || "L\u1ED7i x\u1EED l\xFD OAuth callback TikTok"
     };
-    if (queryParamOne2(req.query.format) === "json") {
+    if (queryParamOne(req.query.format) === "json") {
       return res.status(500).json(failResult);
     }
-    if (shouldOAuthRedirectToFrontend2(req)) {
-      return res.redirect(302, buildOAuthFrontendRedirectUrl2(req, failResult));
+    if (shouldOAuthRedirectToFrontend(req)) {
+      return res.redirect(302, buildOAuthFrontendRedirectUrl(req, failResult));
     }
     return res.status(500).type("text/html; charset=utf-8").send(
       `<!doctype html><html><body><h2>\u1EE6y quy\u1EC1n th\u1EA5t b\u1EA1i</h2><p>${escapeHtml2(failResult.message)}</p></body></html>`
@@ -125381,7 +125477,7 @@ async function saveCustomAppCredentials(req, res) {
 }
 async function getCustomAppStatus(req, res) {
   try {
-    const shopId = queryParamOne2(req.query.shop_id) || queryParamOne2(req.query.shopId);
+    const shopId = queryParamOne(req.query.shop_id) || queryParamOne(req.query.shopId);
     const creds = resolveTiktokCustomAppCredentials(shopId);
     return res.json({
       success: true,
@@ -125440,7 +125536,7 @@ async function syncOrders2(req, res) {
 }
 async function previewOrders(req, res) {
   try {
-    const shopId = queryParamOne2(req.query.shop_id);
+    const shopId = queryParamOne(req.query.shop_id);
     const page_size = Math.min(20, Math.max(1, Number(req.query.page_size) || 10));
     const result = await fetchTiktokOrderListPage({ shopId: shopId || void 0, page_size });
     return res.status(result.success ? 200 : 400).json({
@@ -125458,7 +125554,7 @@ async function previewOrders(req, res) {
 async function getOrderDetail(req, res) {
   try {
     const orderId = String(req.params.orderId || "").trim();
-    const shopId = queryParamOne2(req.query.shop_id);
+    const shopId = queryParamOne(req.query.shop_id);
     const result = await fetchTiktokOrderDetails([orderId], { shopId: shopId || void 0 });
     return res.status(result.success ? 200 : 400).json({
       mode: "custom_app",
@@ -125475,7 +125571,7 @@ async function getOrderDetail(req, res) {
 async function getProductDetail(req, res) {
   try {
     const productId = String(req.params.productId || "").trim();
-    const shopId = queryParamOne2(req.query.shop_id);
+    const shopId = queryParamOne(req.query.shop_id);
     const result = await fetchTiktokProductDetail(productId, { shopId: shopId || void 0 });
     return res.status(result.success ? 200 : 400).json({
       mode: "custom_app",
@@ -125491,7 +125587,7 @@ async function getProductDetail(req, res) {
 }
 async function previewProducts(req, res) {
   try {
-    const shopId = queryParamOne2(req.query.shop_id);
+    const shopId = queryParamOne(req.query.shop_id);
     const page_size = Math.min(20, Math.max(1, Number(req.query.page_size) || 10));
     const result = await fetchTiktokProductListPage({
       shopId: shopId || void 0,
@@ -127139,6 +127235,9 @@ for (const envPath of dotenvCandidates) {
 import_dotenv2.default.config();
 console.log(
   `[Config] APP_ROOT=${APP_ROOT12} cwd=${process.cwd()} | MONGODB_URI=${process.env.MONGODB_URI || process.env.MONGO_URL ? "set" : "MISSING"}`
+);
+console.log(
+  `[Config] TikTok Custom App: TIKTOK_APP_KEY=${process.env.TIKTOK_APP_KEY ? "set" : "MISSING"} TIKTOK_APP_SECRET=${process.env.TIKTOK_APP_SECRET ? "set" : "MISSING"} TIKTOK_ACCESS_TOKEN=${process.env.TIKTOK_ACCESS_TOKEN ? "set" : "optional"}`
 );
 setProductsDiskAppRoot(APP_ROOT12);
 initShopeeAuth({ syncOAuthShopsToChannelSettings, logOAuthSaveError });
@@ -140688,7 +140787,12 @@ function normalizeConnectedShop(raw) {
   if (!["shopee", "tiktok", "woocommerce"].includes(platform)) return null;
   const shopId = String(raw?.shopId ?? raw?.shop_id ?? "").trim();
   const shopName = String(raw?.shopName ?? raw?.shop_name ?? raw?.name ?? "").trim();
-  const apiKey = String(raw?.apiKey ?? raw?.api_key ?? raw?.partner_id ?? "").trim();
+  const accessToken = String(
+    raw?.accessToken ?? raw?.access_token ?? ""
+  ).trim();
+  const apiKey = String(
+    raw?.apiKey ?? raw?.api_key ?? raw?.partner_id ?? accessToken ?? ""
+  ).trim();
   if (!shopId || !shopName || !apiKey) {
     console.warn(
       "[Channel Settings] Shop thi\u1EBFu tr\u01B0\u1EDDng b\u1EAFt bu\u1ED9c:",
@@ -140705,7 +140809,18 @@ function normalizeConnectedShop(raw) {
     connected: Boolean(raw?.connected),
     lastSynced: raw?.lastSynced ? String(raw.lastSynced) : void 0
   };
-  if (raw?.apiSecret) shop.apiSecret = String(raw.apiSecret).trim();
+  if (raw?.apiSecret || raw?.appSecret || raw?.app_secret) {
+    shop.apiSecret = String(raw.apiSecret || raw.appSecret || raw.app_secret).trim();
+  }
+  if (raw?.appKey || raw?.app_key || raw?.tiktokAppKey) {
+    shop.appKey = String(raw.appKey || raw.app_key || raw.tiktokAppKey).trim();
+  }
+  if (accessToken || platform === "tiktok" && apiKey) {
+    shop.accessToken = accessToken || apiKey;
+  }
+  if (raw?.shopCipher || raw?.shop_cipher || raw?.tiktokShopCipher) {
+    shop.shopCipher = String(raw.shopCipher || raw.shop_cipher || raw.tiktokShopCipher).trim();
+  }
   if (raw?.wooUrl) shop.wooUrl = String(raw.wooUrl).trim();
   return shop;
 }
@@ -140738,6 +140853,9 @@ function upsertShopsInChannelSettings(existing = [], incoming = []) {
         shopName: !incomingIsGeneric && incomingName || prevName || incomingName,
         apiKey: normalized.apiKey || prev.apiKey,
         apiSecret: normalized.apiSecret ?? prev.apiSecret,
+        appKey: normalized.appKey ?? prev.appKey,
+        accessToken: normalized.accessToken ?? prev.accessToken,
+        shopCipher: normalized.shopCipher ?? prev.shopCipher,
         wooUrl: normalized.wooUrl ?? prev.wooUrl,
         connected: normalized.connected ?? prev.connected,
         lastSynced: normalized.lastSynced || prev.lastSynced

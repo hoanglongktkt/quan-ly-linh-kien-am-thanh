@@ -5,6 +5,9 @@ export {
   resolveTiktokCustomAppCredentials,
   upsertTiktokCustomAppCredentials,
   isTiktokCustomAppConfigured,
+  syncTiktokCredentialsFromShops,
+  extractTiktokFieldsFromShop,
+  getTiktokApiHost,
   TIKTOK_API_HOST,
   TIKTOK_TOKENS_PATH,
 } from "./auth.js";

@@ -50,6 +50,7 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
   const [shopName, setShopName] = useState('');
   const [shopId, setShopId] = useState('');
   const [apiKey, setApiKey] = useState('');
+  const [appKey, setAppKey] = useState('');
   const [wooUrl, setWooUrl] = useState('');
   const [apiSecret, setApiSecret] = useState('');
   const [connected, setConnected] = useState(true);
@@ -450,6 +451,7 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
     setShopName('');
     setShopId('');
     setApiKey('');
+    setAppKey('');
     setWooUrl('');
     setApiSecret('');
     setConnected(true);
@@ -462,7 +464,8 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
     setPlatform(shop.platform);
     setShopName(shop.shopName);
     setShopId(shop.shopId);
-    setApiKey(shop.apiKey);
+    setApiKey(shop.accessToken || shop.apiKey);
+    setAppKey(shop.appKey || '');
     setWooUrl(shop.wooUrl || '');
     setApiSecret(shop.apiSecret || '');
     setConnected(shop.connected);
@@ -482,14 +485,26 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
 
     let nextSettings: ChannelSettings;
 
+    const tiktokFields =
+      platform === 'tiktok'
+        ? {
+            appKey: appKey.trim() || undefined,
+            apiSecret: apiSecret.trim() || undefined,
+            accessToken: apiKey.trim(),
+            apiKey: apiKey.trim(),
+          }
+        : {
+            apiKey: apiKey.trim(),
+            apiSecret: platform === 'woocommerce' ? apiSecret.trim() : undefined,
+          };
+
     if (editingShop) {
       const updatedShops = shops.map(s => s.id === editingShop.id ? {
         ...s,
         platform,
         shopName: shopName.trim(),
         shopId: shopId.trim(),
-        apiKey: apiKey.trim(),
-        apiSecret: platform === 'woocommerce' ? apiSecret.trim() : undefined,
+        ...tiktokFields,
         wooUrl: platform === 'woocommerce' ? wooUrl.trim() : undefined,
         connected
       } : s);
@@ -500,8 +515,7 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
         platform,
         shopName: shopName.trim(),
         shopId: shopId.trim(),
-        apiKey: apiKey.trim(),
-        apiSecret: platform === 'woocommerce' ? apiSecret.trim() : undefined,
+        ...tiktokFields,
         wooUrl: platform === 'woocommerce' ? wooUrl.trim() : undefined,
         connected,
         lastSynced: new Date().toISOString()
@@ -1529,17 +1543,55 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
 
               <div className="space-y-1">
                 <label className="text-xs font-semibold text-gray-700">
-                  {platform === 'woocommerce' ? 'Mật Mã Khách Hàng (WooCommerce Consumer Secret)' : 'API Partner Key / Access Token'}
+                  {platform === 'woocommerce'
+                    ? 'Mật Mã Khách Hàng (WooCommerce Consumer Secret)'
+                    : platform === 'tiktok'
+                      ? 'Access Token (TikTok Custom App)'
+                      : 'API Partner Key / Access Token'}
                 </label>
                 <input 
                   type="password" 
                   required
-                  placeholder={platform === 'woocommerce' ? 'Ví dụ: cs_a1b2c3d4e5f6g7h8...' : 'Nhập Token kết nối API...'}
+                  placeholder={
+                    platform === 'woocommerce'
+                      ? 'Ví dụ: cs_a1b2c3d4e5f6g7h8...'
+                      : platform === 'tiktok'
+                        ? 'Dán Access Token từ Seller Center / Custom App'
+                        : 'Nhập Token kết nối API...'
+                  }
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
                   className="w-full px-3 py-2.5 bg-gray-50/50 rounded-xl border border-gray-100 focus:border-blue-500 focus:bg-white text-sm outline-none transition-all font-mono"
                 />
               </div>
+
+              {platform === 'tiktok' && (
+                <div className="space-y-3 p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl">
+                  <p className="text-[11px] font-semibold text-zinc-800">
+                    TikTok Custom App — App Key / App Secret (Seller Center). Có thể để trống nếu đã cấu hình TIKTOK_APP_KEY / TIKTOK_APP_SECRET trên .env server.
+                  </p>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-gray-700">App Key</label>
+                    <input
+                      type="text"
+                      placeholder="App Key từ TikTok Custom App"
+                      value={appKey}
+                      onChange={(e) => setAppKey(e.target.value)}
+                      className="w-full px-3 py-2.5 bg-white rounded-xl border border-gray-200 focus:border-blue-500 text-sm outline-none font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-gray-700">App Secret</label>
+                    <input
+                      type="password"
+                      placeholder="App Secret từ TikTok Custom App"
+                      value={apiSecret}
+                      onChange={(e) => setApiSecret(e.target.value)}
+                      className="w-full px-3 py-2.5 bg-white rounded-xl border border-gray-200 focus:border-blue-500 text-sm outline-none font-mono"
+                    />
+                  </div>
+                </div>
+              )}
 
               {platform === 'shopee' && (
                 <div className="space-y-2.5 p-3.5 bg-orange-50/50 border border-orange-100 rounded-xl">

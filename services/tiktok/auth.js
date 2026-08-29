@@ -1,7 +1,7 @@
 /**
  * TikTok Shop — Custom App credentials (Seller Center).
- * Không phụ thuộc Partner Center / OAuth công khai.
- * Nguồn: .env, data/tiktok_tokens.json, hoặc shop trong channel_settings.
+ * Nguồn (ưu tiên): shop record → tiktok_tokens.json → channel_settings → .env
+ * Đọc TIKTOK_APP_KEY / TIKTOK_APP_SECRET lúc runtime (sau dotenv).
  */
 import fs from "fs";
 import path from "path";
@@ -20,18 +20,38 @@ export const TIKTOK_CALLBACK_URL =
 export const TIKTOK_CALLBACK_IDLE_MSG =
   "Callback route is active. Waiting for TikTok Shop parameters (code, shop_id)...";
 
-/** Host OpenAPI (Custom App / Seller API). */
-export const TIKTOK_API_HOST = String(
-  process.env.TIKTOK_API_HOST || "https://open-api.tiktokglobalshop.com",
-)
-  .trim()
-  .replace(/\/$/, "");
+/** Host OpenAPI — đọc runtime. */
+export function getTiktokApiHost() {
+  return String(process.env.TIKTOK_API_HOST || "https://open-api.tiktokglobalshop.com")
+    .trim()
+    .replace(/\/$/, "");
+}
 
-export const TIKTOK_APP_KEY = String(process.env.TIKTOK_APP_KEY || "").trim();
-export const TIKTOK_APP_SECRET = String(process.env.TIKTOK_APP_SECRET || "").trim();
-export const TIKTOK_ACCESS_TOKEN = String(process.env.TIKTOK_ACCESS_TOKEN || "").trim();
-export const TIKTOK_SHOP_ID = String(process.env.TIKTOK_SHOP_ID || "").trim();
-export const TIKTOK_SHOP_CIPHER = String(process.env.TIKTOK_SHOP_CIPHER || "").trim();
+/** @deprecated dùng getTiktokApiHost() */
+export const TIKTOK_API_HOST = getTiktokApiHost();
+
+function envTiktokAppKey() {
+  return String(process.env.TIKTOK_APP_KEY || "").trim();
+}
+function envTiktokAppSecret() {
+  return String(process.env.TIKTOK_APP_SECRET || "").trim();
+}
+function envTiktokAccessToken() {
+  return String(process.env.TIKTOK_ACCESS_TOKEN || "").trim();
+}
+function envTiktokShopId() {
+  return String(process.env.TIKTOK_SHOP_ID || "").trim();
+}
+function envTiktokShopCipher() {
+  return String(process.env.TIKTOK_SHOP_CIPHER || "").trim();
+}
+
+/** Snapshot env lúc import (có thể rỗng nếu dotenv chưa load) — giữ export cũ. */
+export const TIKTOK_APP_KEY = envTiktokAppKey();
+export const TIKTOK_APP_SECRET = envTiktokAppSecret();
+export const TIKTOK_ACCESS_TOKEN = envTiktokAccessToken();
+export const TIKTOK_SHOP_ID = envTiktokShopId();
+export const TIKTOK_SHOP_CIPHER = envTiktokShopCipher();
 
 export function queryParamOne(value) {
   if (Array.isArray(value)) return String(value[0] ?? "").trim();
@@ -82,9 +102,7 @@ export function saveTiktokTokens(tokens) {
 }
 
 /**
- * Lưu / cập nhật credentials Custom App (thủ công từ Seller Center).
- * @param {string} shopId
- * @param {{ app_key?: string, app_secret?: string, access_token?: string, shop_cipher?: string, shop_name?: string }} payload
+ * Lưu / cập nhật credentials Custom App.
  */
 export function upsertTiktokCustomAppCredentials(shopId, payload = {}) {
   const key = String(shopId || "").trim();
@@ -123,6 +141,35 @@ function sanitizeCredentialRecord(record) {
   };
 }
 
+/** Trích credentials từ 1 shop object (channel_settings / FE body). */
+export function extractTiktokFieldsFromShop(shop) {
+  if (!shop || typeof shop !== "object") return null;
+  const shop_id = String(shop.shopId || shop.shop_id || "").trim();
+  if (!shop_id) return null;
+  const access_token = String(
+    shop.accessToken || shop.access_token || shop.apiKey || shop.api_key || "",
+  ).trim();
+  const app_key = String(
+    shop.appKey || shop.app_key || shop.tiktokAppKey || "",
+  ).trim();
+  const app_secret = String(
+    shop.appSecret || shop.app_secret || shop.apiSecret || shop.api_secret || "",
+  ).trim();
+  const shop_cipher = String(
+    shop.shopCipher || shop.shop_cipher || shop.tiktokShopCipher || "",
+  ).trim();
+  const shop_name = String(shop.shopName || shop.shop_name || "").trim();
+  return {
+    shop_id,
+    shop_name: shop_name || undefined,
+    access_token: access_token || undefined,
+    app_key: app_key || undefined,
+    app_secret: app_secret || undefined,
+    shop_cipher: shop_cipher || undefined,
+    connected: Boolean(shop.connected),
+  };
+}
+
 function loadTiktokShopFromChannelSettings(shopId) {
   try {
     if (!fs.existsSync(CHANNEL_SETTINGS_PATH)) return null;
@@ -135,67 +182,102 @@ function loadTiktokShopFromChannelSettings(shopId) {
         String(s?.platform || "").toLowerCase() === "tiktok" &&
         String(s?.shopId || s?.id || "").trim() === want,
     );
-    if (!shop) return null;
-    return {
-      shop_id: String(shop.shopId || shop.id || "").trim(),
-      shop_name: String(shop.shopName || "").trim() || undefined,
-      // FE hiện lưu Access Token vào apiKey; App Secret (nếu có) vào apiSecret.
-      access_token: String(shop.apiKey || "").trim() || undefined,
-      app_secret: String(shop.apiSecret || "").trim() || undefined,
-      app_key: String(shop.appKey || shop.tiktokAppKey || "").trim() || undefined,
-      shop_cipher: String(shop.shopCipher || shop.tiktokShopCipher || "").trim() || undefined,
-      connected: Boolean(shop.connected),
-    };
+    return extractTiktokFieldsFromShop(shop);
   } catch {
     return null;
   }
 }
 
 /**
- * Resolve credentials Custom App theo thứ tự:
- * 1) data/tiktok_tokens.json (shop)
- * 2) channel_settings shops[]
- * 3) biến môi trường (.env)
+ * Đồng bộ mọi shop TikTok từ channel_settings → tiktok_tokens.json
+ * (gọi sau khi PUT /api/settings/channels).
  */
-export function resolveTiktokCustomAppCredentials(shopId) {
-  const want = String(shopId || TIKTOK_SHOP_ID || "").trim();
+export function syncTiktokCredentialsFromShops(shops) {
+  const list = Array.isArray(shops) ? shops : [];
+  let synced = 0;
+  for (const shop of list) {
+    if (String(shop?.platform || "").toLowerCase() !== "tiktok") continue;
+    const fields = extractTiktokFieldsFromShop(shop);
+    if (!fields?.shop_id) continue;
+    if (!fields.access_token && !fields.app_key && !fields.app_secret) continue;
+    upsertTiktokCustomAppCredentials(fields.shop_id, {
+      app_key: fields.app_key,
+      app_secret: fields.app_secret,
+      access_token: fields.access_token,
+      shop_cipher: fields.shop_cipher,
+      shop_name: fields.shop_name,
+    });
+    synced += 1;
+  }
+  return synced;
+}
+
+/**
+ * Resolve credentials — luôn đọc .env lúc gọi (sau dotenv trên cPanel).
+ * Ưu tiên: override shop → tokens file → channel_settings → env toàn cục.
+ */
+export function resolveTiktokCustomAppCredentials(shopId, shopOverride = null) {
+  const want = String(shopId || envTiktokShopId() || "").trim();
+  const fromOverride = shopOverride ? extractTiktokFieldsFromShop(shopOverride) : null;
   const fromFile = want ? loadTiktokTokens()[want] : null;
   const fromSettings = want ? loadTiktokShopFromChannelSettings(want) : null;
 
-  const app_key =
-    String(fromFile?.app_key || fromSettings?.app_key || TIKTOK_APP_KEY || "").trim();
-  const app_secret =
-    String(fromFile?.app_secret || fromSettings?.app_secret || TIKTOK_APP_SECRET || "").trim();
-  const access_token =
-    String(fromFile?.access_token || fromSettings?.access_token || TIKTOK_ACCESS_TOKEN || "").trim();
-  const shop_cipher =
-    String(fromFile?.shop_cipher || fromSettings?.shop_cipher || TIKTOK_SHOP_CIPHER || "").trim();
-  const shop_id = want || String(fromFile?.shop_id || fromSettings?.shop_id || TIKTOK_SHOP_ID || "").trim();
+  const app_key = String(
+    fromOverride?.app_key || fromFile?.app_key || fromSettings?.app_key || envTiktokAppKey() || "",
+  ).trim();
+  const app_secret = String(
+    fromOverride?.app_secret ||
+      fromFile?.app_secret ||
+      fromSettings?.app_secret ||
+      envTiktokAppSecret() ||
+      "",
+  ).trim();
+  const access_token = String(
+    fromOverride?.access_token ||
+      fromFile?.access_token ||
+      fromSettings?.access_token ||
+      envTiktokAccessToken() ||
+      "",
+  ).trim();
+  const shop_cipher = String(
+    fromOverride?.shop_cipher ||
+      fromFile?.shop_cipher ||
+      fromSettings?.shop_cipher ||
+      envTiktokShopCipher() ||
+      "",
+  ).trim();
+  const shop_id =
+    want ||
+    String(fromOverride?.shop_id || fromFile?.shop_id || fromSettings?.shop_id || envTiktokShopId() || "").trim();
 
+  const placeholder = /CHUA_CO|YOUR_|PLACEHOLDER/i;
   const valid =
     Boolean(app_key) &&
     Boolean(app_secret) &&
     Boolean(access_token) &&
-    !/CHUA_CO|YOUR_|PLACEHOLDER/i.test(app_key) &&
-    !/CHUA_CO|YOUR_|PLACEHOLDER/i.test(app_secret) &&
-    !/CHUA_CO|YOUR_|PLACEHOLDER/i.test(access_token);
+    !placeholder.test(app_key) &&
+    !placeholder.test(app_secret) &&
+    !placeholder.test(access_token);
+
+  let source = "none";
+  if (fromOverride?.access_token || fromOverride?.app_key) source = "shop_payload";
+  else if (fromFile?.access_token || fromFile?.app_key) source = "tiktok_tokens";
+  else if (fromSettings?.access_token || fromSettings?.app_key) source = "channel_settings";
+  else if (access_token || app_key) source = "env";
 
   return {
     mode: "custom_app",
     shop_id: shop_id || undefined,
-    shop_name: fromFile?.shop_name || fromSettings?.shop_name || undefined,
+    shop_name:
+      fromOverride?.shop_name || fromFile?.shop_name || fromSettings?.shop_name || undefined,
     shop_cipher: shop_cipher || undefined,
     app_key: app_key || undefined,
     app_secret: app_secret || undefined,
     access_token: access_token || undefined,
     valid,
-    source: fromFile?.access_token
-      ? "tiktok_tokens"
-      : fromSettings?.access_token
-        ? "channel_settings"
-        : access_token
-          ? "env"
-          : "none",
+    source,
+    env_app_key_configured: Boolean(envTiktokAppKey()),
+    env_app_secret_configured: Boolean(envTiktokAppSecret()),
   };
 }
 
@@ -203,14 +285,11 @@ export function isTiktokCustomAppConfigured(shopId) {
   return resolveTiktokCustomAppCredentials(shopId).valid;
 }
 
-/** Alias cũ — Custom App cần App Key + Secret + Access Token. */
 export function isTiktokConfigValid() {
-  return isTiktokCustomAppConfigured(TIKTOK_SHOP_ID);
+  return isTiktokCustomAppConfigured(envTiktokShopId());
 }
 
-/**
- * @deprecated Partner OAuth — giữ khung tương thích callback; ưu tiên Custom App + token thủ công.
- */
+/** @deprecated Partner OAuth — ưu tiên Custom App. */
 export async function exchangeTiktokAuthCode(code, opts = {}) {
   const shopId = String(opts.shopId || "").trim();
   if (!code) {
@@ -221,15 +300,12 @@ export async function exchangeTiktokAuthCode(code, opts = {}) {
       message: "Thiếu authorization code từ TikTok Shop.",
     };
   }
-  console.warn(
-    "[TikTok] OAuth Partner không dùng cho Custom App. Hãy lưu Access Token thủ công qua /api/tiktok/custom-app/credentials.",
-  );
   return {
     success: true,
     pending: true,
     shop_id: shopId || undefined,
     message:
-      "Đã nhận code. Hệ thống đang dùng mô hình Custom App — hãy nhập App Key/Secret/Access Token thủ công từ Seller Center.",
+      "Đã nhận code. Hệ thống dùng Custom App — lưu App Key/Secret/Access Token từ Seller Center.",
   };
 }
 
