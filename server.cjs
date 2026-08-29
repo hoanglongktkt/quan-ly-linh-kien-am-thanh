@@ -17780,8 +17780,8 @@ var require_escape_html = __commonJS({
   "node_modules/escape-html/index.js"(exports2, module2) {
     "use strict";
     var matchHtmlRegExp = /["'&<>]/;
-    module2.exports = escapeHtml2;
-    function escapeHtml2(string) {
+    module2.exports = escapeHtml3;
+    function escapeHtml3(string) {
       var str = "" + string;
       var match2 = matchHtmlRegExp.exec(str);
       if (!match2) {
@@ -17912,7 +17912,7 @@ var require_finalhandler = __commonJS({
     "use strict";
     var debug = require_src2()("finalhandler");
     var encodeUrl = require_encodeurl();
-    var escapeHtml2 = require_escape_html();
+    var escapeHtml3 = require_escape_html();
     var onFinished = require_on_finished();
     var parseUrl2 = require_parseurl();
     var statuses = require_statuses();
@@ -17924,7 +17924,7 @@ var require_finalhandler = __commonJS({
     };
     var isFinished = onFinished.isFinished;
     function createHtmlDocument(message) {
-      var body = escapeHtml2(message).replace(NEWLINE_REGEXP, "<br>").replace(DOUBLE_SPACE_REGEXP, " &nbsp;");
+      var body = escapeHtml3(message).replace(NEWLINE_REGEXP, "<br>").replace(DOUBLE_SPACE_REGEXP, " &nbsp;");
       return '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>Error</title>\n</head>\n<body>\n<pre>' + body + "</pre>\n</body>\n</html>\n";
     }
     module2.exports = finalhandler;
@@ -18908,17 +18908,17 @@ var require_router = __commonJS({
     var toString3 = Object.prototype.toString;
     var proto = module2.exports = function(options) {
       var opts = options || {};
-      function router24(req, res, next) {
-        router24.handle(req, res, next);
+      function router25(req, res, next) {
+        router25.handle(req, res, next);
       }
-      setPrototypeOf(router24, proto);
-      router24.params = {};
-      router24._params = [];
-      router24.caseSensitive = opts.caseSensitive;
-      router24.mergeParams = opts.mergeParams;
-      router24.strict = opts.strict;
-      router24.stack = [];
-      return router24;
+      setPrototypeOf(router25, proto);
+      router25.params = {};
+      router25._params = [];
+      router25.caseSensitive = opts.caseSensitive;
+      router25.mergeParams = opts.mergeParams;
+      router25.strict = opts.strict;
+      router25.stack = [];
+      return router25;
     };
     proto.param = function param(name, fn) {
       if (typeof name === "function") {
@@ -20428,7 +20428,7 @@ var require_send = __commonJS({
     var deprecate3 = require_depd()("send");
     var destroy = require_destroy();
     var encodeUrl = require_encodeurl();
-    var escapeHtml2 = require_escape_html();
+    var escapeHtml3 = require_escape_html();
     var etag = require_etag();
     var fresh = require_fresh();
     var fs21 = require("fs");
@@ -20528,7 +20528,7 @@ var require_send = __commonJS({
       }
       var res = this.res;
       var msg = statuses.message[status] || String(status);
-      var doc = createHtmlDocument("Error", escapeHtml2(msg));
+      var doc = createHtmlDocument("Error", escapeHtml3(msg));
       clearHeaders(res);
       if (err && err.headers) {
         setHeaders(res, err.headers);
@@ -20628,7 +20628,7 @@ var require_send = __commonJS({
         return;
       }
       var loc = encodeUrl(collapseLeadingSlashes(this.path + "/"));
-      var doc = createHtmlDocument("Redirecting", "Redirecting to " + escapeHtml2(loc));
+      var doc = createHtmlDocument("Redirecting", "Redirecting to " + escapeHtml3(loc));
       res.statusCode = 301;
       res.setHeader("Content-Type", "text/html; charset=UTF-8");
       res.setHeader("Content-Length", Buffer.byteLength(doc));
@@ -21935,7 +21935,7 @@ var require_application = __commonJS({
   "node_modules/express/lib/application.js"(exports2, module2) {
     "use strict";
     var finalhandler = require_finalhandler();
-    var Router24 = require_router();
+    var Router25 = require_router();
     var methods = require_methods();
     var middleware = require_init();
     var query = require_query();
@@ -22000,7 +22000,7 @@ var require_application = __commonJS({
     };
     app.lazyrouter = function lazyrouter() {
       if (!this._router) {
-        this._router = new Router24({
+        this._router = new Router25({
           caseSensitive: this.enabled("case sensitive routing"),
           strict: this.enabled("strict routing")
         });
@@ -22009,17 +22009,17 @@ var require_application = __commonJS({
       }
     };
     app.handle = function handle(req, res, callback) {
-      var router24 = this._router;
+      var router25 = this._router;
       var done = callback || finalhandler(req, res, {
         env: this.get("env"),
         onerror: logerror.bind(this)
       });
-      if (!router24) {
+      if (!router25) {
         debug("no routes defined on app");
         done();
         return;
       }
-      router24.handle(req, res, done);
+      router25.handle(req, res, done);
     };
     app.use = function use(fn) {
       var offset = 0;
@@ -22039,15 +22039,15 @@ var require_application = __commonJS({
         throw new TypeError("app.use() requires a middleware function");
       }
       this.lazyrouter();
-      var router24 = this._router;
+      var router25 = this._router;
       fns.forEach(function(fn2) {
         if (!fn2 || !fn2.handle || !fn2.set) {
-          return router24.use(path21, fn2);
+          return router25.use(path21, fn2);
         }
         debug(".use app under %s", path21);
         fn2.mountpath = path21;
         fn2.parent = this;
-        router24.use(path21, function mounted_app(req, res, next) {
+        router25.use(path21, function mounted_app(req, res, next) {
           var orig = req.app;
           fn2.handle(req, res, function(err) {
             setPrototypeOf(req, orig.request);
@@ -23217,7 +23217,7 @@ var require_response = __commonJS({
     var createError = require_http_errors();
     var deprecate3 = require_depd()("express");
     var encodeUrl = require_encodeurl();
-    var escapeHtml2 = require_escape_html();
+    var escapeHtml3 = require_escape_html();
     var http4 = require("http");
     var isAbsolute = require_utils2().isAbsolute;
     var onFinished = require_on_finished();
@@ -23623,7 +23623,7 @@ var require_response = __commonJS({
           body = statuses.message[status] + ". Redirecting to " + address;
         },
         html: function() {
-          var u = escapeHtml2(address);
+          var u = escapeHtml3(address);
           body = "<p>" + statuses.message[status] + ". Redirecting to " + u + "</p>";
         },
         default: function() {
@@ -23755,7 +23755,7 @@ var require_serve_static = __commonJS({
   "node_modules/serve-static/index.js"(exports2, module2) {
     "use strict";
     var encodeUrl = require_encodeurl();
-    var escapeHtml2 = require_escape_html();
+    var escapeHtml3 = require_escape_html();
     var parseUrl2 = require_parseurl();
     var resolve = require("path").resolve;
     var send = require_send();
@@ -23842,7 +23842,7 @@ var require_serve_static = __commonJS({
         originalUrl.path = null;
         originalUrl.pathname = collapseLeadingSlashes(originalUrl.pathname + "/");
         var loc = encodeUrl(url2.format(originalUrl));
-        var doc = createHtmlDocument("Redirecting", "Redirecting to " + escapeHtml2(loc));
+        var doc = createHtmlDocument("Redirecting", "Redirecting to " + escapeHtml3(loc));
         res.statusCode = 301;
         res.setHeader("Content-Type", "text/html; charset=UTF-8");
         res.setHeader("Content-Length", Buffer.byteLength(doc));
@@ -23864,7 +23864,7 @@ var require_express = __commonJS({
     var mixin = require_merge_descriptors();
     var proto = require_application();
     var Route = require_route();
-    var Router24 = require_router();
+    var Router25 = require_router();
     var req = require_request();
     var res = require_response();
     exports2 = module2.exports = createApplication;
@@ -23887,7 +23887,7 @@ var require_express = __commonJS({
     exports2.request = req;
     exports2.response = res;
     exports2.Route = Route;
-    exports2.Router = Router24;
+    exports2.Router = Router25;
     exports2.json = bodyParser.json;
     exports2.query = require_query();
     exports2.raw = bodyParser.raw;
@@ -73844,7 +73844,7 @@ var init_wooCommerce = __esm({
 });
 
 // server.ts
-var import_express25 = __toESM(require_express2(), 1);
+var import_express26 = __toESM(require_express2(), 1);
 var import_path20 = __toESM(require("path"), 1);
 var import_fs19 = __toESM(require("fs"), 1);
 var import_crypto4 = __toESM(require("crypto"), 1);
@@ -74959,19 +74959,19 @@ function queueAfterAck(queue, req, routeLabel) {
 }
 function createShopeeWebhookRouter(processPayload, routePath = "/shopee", options = {}) {
   const queue = createBoundedQueue(processPayload, options.onQueueOverflow);
-  const router24 = import_express.default.Router();
+  const router25 = import_express.default.Router();
   const path21 = routePath.startsWith("/") ? routePath : `/${routePath}`;
   console.log(
     `[Shopee Webhook] Queue config maxConcurrent=${MAX_CONCURRENT_JOBS} maxPending=${MAX_PENDING_JOBS} jobTimeoutMs=${WEBHOOK_JOB_TIMEOUT_MS}`
   );
-  router24.get(path21, (_req, res) => {
+  router25.get(path21, (_req, res) => {
     ackShopeeOk(res);
   });
-  router24.post(path21, import_express.default.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
+  router25.post(path21, import_express.default.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
     ackShopeeOk(res);
     queueAfterAck(queue, req, `POST ${path21}`);
   });
-  return router24;
+  return router25;
 }
 
 // src/utils/orderItemVariation.ts
@@ -113285,7 +113285,7 @@ var import_mongoose6 = __toESM(require("mongoose"), 1);
 function dbReadyMiddleware(req, res, next) {
   const pathName = String(req.path || req.originalUrl || "").split("?")[0];
   if (!pathName.startsWith("/api/")) return next();
-  const allowWithoutDb = pathName === "/api/login" || pathName.startsWith("/api/health") || pathName.startsWith("/api/auth/") || pathName === "/api/shopee/callback" || pathName === "/api/shopee/oauth/complete" || pathName === "/api/shopee/webhook" || pathName.startsWith("/api/public/") || pathName.startsWith("/api/shopee/ship-order") || pathName === "/api/shopee/print-document";
+  const allowWithoutDb = pathName === "/api/login" || pathName.startsWith("/api/health") || pathName.startsWith("/api/auth/") || pathName === "/api/shopee/callback" || pathName === "/api/shopee/oauth/complete" || pathName === "/api/shopee/webhook" || pathName === "/api/tiktok/callback" || pathName.startsWith("/api/public/") || pathName.startsWith("/api/shopee/ship-order") || pathName === "/api/shopee/print-document";
   if (allowWithoutDb) return next();
   if (import_mongoose6.default.connection.readyState !== 1) {
     return res.status(503).json({
@@ -124702,37 +124702,200 @@ router15.get("/oauth-shops", authMiddleware, listOauthShops);
 router15.get("/auth-url", authMiddleware, getAuthUrl);
 var shopeeAuthRoutes_default = router15;
 
-// routes/shopeeOrdersRoutes.js
+// routes/tiktokAuthRoutes.js
 var import_express17 = __toESM(require_express2(), 1);
-var router16 = (0, import_express17.Router)();
-router16.post("/orders/sync", syncOrders);
-router16.post("/orders/pull", pullOrders);
-router16.post("/orders/quick-sync", quickSyncOrders);
-router16.get("/diagnostics", getDiagnostics);
-router16.get("/debug/return-by-order", debugReturnByOrder);
-var shopeeOrdersRoutes_default = router16;
 
-// routes/shopeeProductsRoutes.js
+// services/tiktok/auth.js
+var APP_BASE_URL3 = resolveAppBaseUrl();
+function resolveTiktokCallbackUrl() {
+  const explicit = String(process.env.TIKTOK_CALLBACK_URL || "").trim().replace(/\/$/, "");
+  if (explicit) return explicit;
+  return `${APP_BASE_URL3}/api/tiktok/callback`;
+}
+var TIKTOK_CALLBACK_URL = resolveTiktokCallbackUrl();
+var TIKTOK_CALLBACK_IDLE_MSG = "Callback route is active. Waiting for TikTok Shop parameters (code, shop_id)...";
+var TIKTOK_APP_KEY = String(process.env.TIKTOK_APP_KEY || "").trim();
+var TIKTOK_APP_SECRET = String(process.env.TIKTOK_APP_SECRET || "").trim();
+var TIKTOK_TOKEN_HOST = String(process.env.TIKTOK_TOKEN_HOST || "https://auth.tiktok-shops.com").trim().replace(/\/$/, "");
+function isTiktokConfigValid() {
+  return TIKTOK_APP_KEY.length > 0 && TIKTOK_APP_SECRET.length > 0 && !/CHUA_CO|YOUR_|PLACEHOLDER/i.test(TIKTOK_APP_KEY) && !/CHUA_CO|YOUR_|PLACEHOLDER/i.test(TIKTOK_APP_SECRET);
+}
+function queryParamOne2(value) {
+  if (Array.isArray(value)) return String(value[0] ?? "").trim();
+  return String(value ?? "").trim();
+}
+function shouldOAuthRedirectToFrontend2(req) {
+  if (queryParamOne2(req.query?.format) === "json") return false;
+  if (queryParamOne2(req.query?.redirect) === "0") return false;
+  return true;
+}
+function buildOAuthFrontendRedirectUrl2(req, result) {
+  const shopId = String(result.shop_id || queryParamOne2(req.query?.shop_id) || "");
+  const base = `${APP_BASE_URL3}/?tab=settings`;
+  if (result.success) {
+    const shopQ2 = shopId ? `&shop_id=${encodeURIComponent(shopId)}` : "";
+    return `${base}&tiktok_linked=1${shopQ2}`;
+  }
+  const errMsg = result.message || result.error || "token_exchange_failed";
+  const shopQ = shopId ? `&shop_id=${encodeURIComponent(shopId)}` : "";
+  return `${base}&tiktok_linked=0${shopQ}&error=${encodeURIComponent(errMsg)}`;
+}
+async function exchangeTiktokAuthCode(code, opts = {}) {
+  const shopId = String(opts.shopId || "").trim();
+  if (!code) {
+    return {
+      success: false,
+      shop_id: shopId || void 0,
+      error: "missing_code",
+      message: "Thi\u1EBFu authorization code t\u1EEB TikTok Shop."
+    };
+  }
+  if (!isTiktokConfigValid()) {
+    console.warn(
+      "[TikTok OAuth] Nh\u1EADn code OK nh\u01B0ng TIKTOK_APP_KEY/TIKTOK_APP_SECRET ch\u01B0a c\u1EA5u h\xECnh \u2014 b\u1ECF qua token exchange.",
+      JSON.stringify({ code_length: code.length, shop_id: shopId || null })
+    );
+    return {
+      success: true,
+      pending: true,
+      shop_id: shopId || void 0,
+      message: "\u0110\xE3 nh\u1EADn authorization code t\u1EEB TikTok. Ch\u01B0a \u0111\u1ED5i token v\xEC App Key/Secret ch\u01B0a c\u1EA5u h\xECnh tr\xEAn server."
+    };
+  }
+  try {
+    console.log(
+      "[TikTok OAuth] TODO token exchange \u2014 App Key \u0111\xE3 c\xF3, ch\u1EDD implement call API.",
+      JSON.stringify({
+        code_length: code.length,
+        shop_id: shopId || null,
+        token_host: TIKTOK_TOKEN_HOST
+      })
+    );
+    return {
+      success: true,
+      pending: true,
+      shop_id: shopId || void 0,
+      message: "\u0110\xE3 nh\u1EADn code. Token exchange TikTok Shop \u0111ang \u1EDF tr\u1EA1ng th\xE1i TODO \u2014 s\u1EBD l\u01B0u token khi ho\xE0n thi\u1EC7n API call."
+    };
+  } catch (error) {
+    return {
+      success: false,
+      shop_id: shopId || void 0,
+      error: error?.message || "token_exchange_error",
+      message: error?.message || "L\u1ED7i \u0111\u1ED5i code l\u1EA5y access_token TikTok."
+    };
+  }
+}
+
+// controllers/tiktokAuthController.js
+function logTiktokIngress(prefix, req) {
+  console.log(
+    prefix,
+    JSON.stringify({
+      at: (/* @__PURE__ */ new Date()).toISOString(),
+      method: req.method,
+      url: req.url,
+      query: req.query || {}
+    })
+  );
+}
+async function oauthCallback2(req, res) {
+  logTiktokIngress("[TikTok Callback]", req);
+  const code = queryParamOne2(req.query.code);
+  const shopId = queryParamOne2(req.query.shop_id) || queryParamOne2(req.query.open_id);
+  const state = queryParamOne2(req.query.state);
+  console.log(
+    "[TikTok Callback] REQUEST",
+    JSON.stringify({
+      code_present: Boolean(code),
+      code_length: code.length,
+      shop_id: shopId || null,
+      state: state || null,
+      callback_url: TIKTOK_CALLBACK_URL
+    })
+  );
+  if (!code) {
+    console.log("[TikTok Callback] Truy c\u1EADp tr\u1EF1c ti\u1EBFp \u2014 thi\u1EBFu code");
+    return res.status(200).type("text/plain; charset=utf-8").send(TIKTOK_CALLBACK_IDLE_MSG);
+  }
+  try {
+    const result = await exchangeTiktokAuthCode(code, { shopId: shopId || void 0 });
+    if (queryParamOne2(req.query.format) === "json") {
+      return res.status(result.success ? 200 : 400).json({
+        ...result,
+        callback_url: TIKTOK_CALLBACK_URL
+      });
+    }
+    if (shouldOAuthRedirectToFrontend2(req)) {
+      return res.redirect(302, buildOAuthFrontendRedirectUrl2(req, result));
+    }
+    if (result.success) {
+      return res.status(200).type("text/html; charset=utf-8").send(
+        `<!doctype html><html><body style="font-family:sans-serif;padding:2rem"><h2>\u1EE6y quy\u1EC1n TikTok th\xE0nh c\xF4ng</h2><p>${escapeHtml2(result.message || "OK")}</p><p>B\u1EA1n c\xF3 th\u1EC3 \u0111\xF3ng tab n\xE0y.</p></body></html>`
+      );
+    }
+    return res.status(400).type("text/html; charset=utf-8").send(
+      `<!doctype html><html><body style="font-family:sans-serif;padding:2rem"><h2>\u1EE6y quy\u1EC1n TikTok th\u1EA5t b\u1EA1i</h2><p>${escapeHtml2(result.message || result.error || "error")}</p></body></html>`
+    );
+  } catch (error) {
+    console.error("[TikTok Callback] L\u1ED7i:", error?.stack || error);
+    const failResult = {
+      success: false,
+      shop_id: shopId || void 0,
+      error: error?.message || "unknown_error",
+      message: error?.message || "L\u1ED7i x\u1EED l\xFD OAuth callback TikTok"
+    };
+    if (queryParamOne2(req.query.format) === "json") {
+      return res.status(500).json(failResult);
+    }
+    if (shouldOAuthRedirectToFrontend2(req)) {
+      return res.redirect(302, buildOAuthFrontendRedirectUrl2(req, failResult));
+    }
+    return res.status(500).type("text/html; charset=utf-8").send(
+      `<!doctype html><html><body><h2>\u1EE6y quy\u1EC1n th\u1EA5t b\u1EA1i</h2><p>${escapeHtml2(failResult.message)}</p></body></html>`
+    );
+  }
+}
+function escapeHtml2(s2) {
+  return String(s2 || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// routes/tiktokAuthRoutes.js
+var router16 = (0, import_express17.Router)();
+router16.get("/callback", oauthCallback2);
+var tiktokAuthRoutes_default = router16;
+
+// routes/shopeeOrdersRoutes.js
 var import_express18 = __toESM(require_express2(), 1);
 var router17 = (0, import_express18.Router)();
-router17.post("/products/sync", syncProducts);
-router17.post("/products/sync-item-variants", syncItemVariants);
-router17.post("/products/item-preview", previewItemVariants);
-router17.get("/products/item-preview", previewItemVariants);
-var shopeeProductsRoutes_default = router17;
+router17.post("/orders/sync", syncOrders);
+router17.post("/orders/pull", pullOrders);
+router17.post("/orders/quick-sync", quickSyncOrders);
+router17.get("/diagnostics", getDiagnostics);
+router17.get("/debug/return-by-order", debugReturnByOrder);
+var shopeeOrdersRoutes_default = router17;
 
-// routes/shopeeShipRoutes.js
+// routes/shopeeProductsRoutes.js
 var import_express19 = __toESM(require_express2(), 1);
 var router18 = (0, import_express19.Router)();
-router18.post("/ship-order", shipOrder);
-router18.post("/ship-order/bulk", shipOrderBulk);
-router18.post("/ship-order/bulk-async", shipOrderBulkAsync);
-router18.get("/ship-order/job/:jobId", getShipOrderJob);
-router18.post("/orders/fast-process", fastProcessOrders);
-var shopeeShipRoutes_default = router18;
+router18.post("/products/sync", syncProducts);
+router18.post("/products/sync-item-variants", syncItemVariants);
+router18.post("/products/item-preview", previewItemVariants);
+router18.get("/products/item-preview", previewItemVariants);
+var shopeeProductsRoutes_default = router18;
+
+// routes/shopeeShipRoutes.js
+var import_express20 = __toESM(require_express2(), 1);
+var router19 = (0, import_express20.Router)();
+router19.post("/ship-order", shipOrder);
+router19.post("/ship-order/bulk", shipOrderBulk);
+router19.post("/ship-order/bulk-async", shipOrderBulkAsync);
+router19.get("/ship-order/job/:jobId", getShipOrderJob);
+router19.post("/orders/fast-process", fastProcessOrders);
+var shopeeShipRoutes_default = router19;
 
 // routes/shopeePrintRoutes.js
-var import_express20 = __toESM(require_express2(), 1);
+var import_express21 = __toESM(require_express2(), 1);
 
 // controllers/shopeePrintController.js
 var deps19 = {
@@ -124819,61 +124982,61 @@ async function getPrintDocumentJob(req, res) {
 }
 
 // routes/shopeePrintRoutes.js
-var router19 = (0, import_express20.Router)();
-router19.post("/print-document", printDocument);
-router19.post("/print-document/async", printDocumentAsync);
-router19.get("/print-document/job/:jobId", getPrintDocumentJob);
-var shopeePrintRoutes_default = router19;
+var router20 = (0, import_express21.Router)();
+router20.post("/print-document", printDocument);
+router20.post("/print-document/async", printDocumentAsync);
+router20.get("/print-document/job/:jobId", getPrintDocumentJob);
+var shopeePrintRoutes_default = router20;
 
 // routes/inventoryRoutes.js
-var import_express21 = __toESM(require_express2(), 1);
-var router20 = (0, import_express21.Router)();
-router20.get("/local-inventory", authMiddleware, getLocalInventory);
-router20.post("/local-inventory/refresh", authMiddleware, refreshLocalInventory);
-router20.post("/sync-stock", authMiddleware, syncStock);
-router20.delete("/inventory/clear-all", authMiddleware, handleInventoryClearAll);
-router20.post("/inventory/clear-all", authMiddleware, handleInventoryClearAll);
-var inventoryRoutes_default = router20;
-
-// routes/autoLinkRoutes.js
 var import_express22 = __toESM(require_express2(), 1);
 var router21 = (0, import_express22.Router)();
-router21.post("/mapping/bulk-update", authMiddleware, handleBulkAutoLinkByIds);
-router21.post("/shopee/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
-router21.post("/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
-router21.post("/auto-link", authMiddleware, handleBatchAutoLink);
-var autoLinkRoutes_default = router21;
+router21.get("/local-inventory", authMiddleware, getLocalInventory);
+router21.post("/local-inventory/refresh", authMiddleware, refreshLocalInventory);
+router21.post("/sync-stock", authMiddleware, syncStock);
+router21.delete("/inventory/clear-all", authMiddleware, handleInventoryClearAll);
+router21.post("/inventory/clear-all", authMiddleware, handleInventoryClearAll);
+var inventoryRoutes_default = router21;
 
-// routes/apiSystemRoutes.js
+// routes/autoLinkRoutes.js
 var import_express23 = __toESM(require_express2(), 1);
 var router22 = (0, import_express23.Router)();
-router22.get("/sync-jobs/:jobId", authMiddleware, getSyncJobById);
-router22.get("/order-counts", authMiddleware, getOrderCounts);
-router22.post("/sync-shopee", authMiddleware, syncShopee);
-router22.post("/mongo/cleanup-temp", authMiddleware, cleanupMongoTemp);
-router22.post("/mongo/ensure-ttl", authMiddleware, ensureMongoTtl);
-router22.post("/orders/pull", authMiddleware, pullOrders);
-router22.post("/sync-from-shop", authMiddleware, syncFromShop);
-var apiSystemRoutes_default = router22;
+router22.post("/mapping/bulk-update", authMiddleware, handleBulkAutoLinkByIds);
+router22.post("/shopee/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
+router22.post("/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
+router22.post("/auto-link", authMiddleware, handleBatchAutoLink);
+var autoLinkRoutes_default = router22;
+
+// routes/apiSystemRoutes.js
+var import_express24 = __toESM(require_express2(), 1);
+var router23 = (0, import_express24.Router)();
+router23.get("/sync-jobs/:jobId", authMiddleware, getSyncJobById);
+router23.get("/order-counts", authMiddleware, getOrderCounts);
+router23.post("/sync-shopee", authMiddleware, syncShopee);
+router23.post("/mongo/cleanup-temp", authMiddleware, cleanupMongoTemp);
+router23.post("/mongo/ensure-ttl", authMiddleware, ensureMongoTtl);
+router23.post("/orders/pull", authMiddleware, pullOrders);
+router23.post("/sync-from-shop", authMiddleware, syncFromShop);
+var apiSystemRoutes_default = router23;
 
 // routes/labelsRoutes.js
-var import_express24 = __toESM(require_express2(), 1);
+var import_express25 = __toESM(require_express2(), 1);
 var serveHandler = null;
 function initLabelsRoutes(handler) {
   serveHandler = handler;
 }
-var router23 = (0, import_express24.Router)();
+var router24 = (0, import_express25.Router)();
 function handlePublicLabelGet(req, res) {
   if (typeof serveHandler !== "function") {
     return res.status(503).type("text/plain").send("Label service ch\u01B0a s\u1EB5n s\xE0ng.");
   }
   return serveHandler(req, res);
 }
-router23.get("/api/public/labels/:filename", handlePublicLabelGet);
-router23.get("/api/labels/:filename", handlePublicLabelGet);
-router23.get("/labels/:filename", handlePublicLabelGet);
-router23.get("/prints/:filename", handlePublicLabelGet);
-var labelsRoutes_default = router23;
+router24.get("/api/public/labels/:filename", handlePublicLabelGet);
+router24.get("/api/labels/:filename", handlePublicLabelGet);
+router24.get("/labels/:filename", handlePublicLabelGet);
+router24.get("/prints/:filename", handlePublicLabelGet);
+var labelsRoutes_default = router24;
 
 // services/ghnStatusSync.js
 var EXTERNAL_STATUS_MAP2 = {
@@ -126242,6 +126405,7 @@ var productsRoutes = asRouter(productsRoutes_default);
 var mappingRoutes = asRouter(mappingRoutes_default);
 var ordersRoutes = asRouter(ordersRoutes_default);
 var shopeeAuthRoutes = asRouter(shopeeAuthRoutes_default);
+var tiktokAuthRoutes = asRouter(tiktokAuthRoutes_default);
 var shopeeOrdersRoutes = asRouter(shopeeOrdersRoutes_default);
 var shopeeProductsRoutes = asRouter(shopeeProductsRoutes_default);
 var shopeeShipRoutes = asRouter(shopeeShipRoutes_default);
@@ -126701,7 +126865,7 @@ function serveLabelPdfFromMem(filename, res) {
     return "invalid";
   }
 }
-var APP_BASE_URL3 = resolveAppBaseUrl();
+var APP_BASE_URL4 = resolveAppBaseUrl();
 function resolveLabelsPublicBaseUrl() {
   const explicit = String(
     process.env.LABELS_BASE_URL || process.env.CPANEL_PUBLIC_URL || process.env.CPANEL_BACKEND_URL || ""
@@ -131479,7 +131643,7 @@ async function resolvePublishImageBuffer(src) {
   }
   let fetchUrl = raw;
   if (raw.startsWith("/")) {
-    fetchUrl = `${APP_BASE_URL3.replace(/\/$/, "")}${raw}`;
+    fetchUrl = `${APP_BASE_URL4.replace(/\/$/, "")}${raw}`;
   }
   const res = await fetch(fetchUrl);
   if (!res.ok) throw new Error(`Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c \u1EA3nh (${res.status}): ${raw.slice(0, 120)}`);
@@ -140792,7 +140956,7 @@ async function upsertShopeeWebhookShallow(body, orders) {
   return String(merged.orderSn);
 }
 async function startServer() {
-  const app = (0, import_express25.default)();
+  const app = (0, import_express26.default)();
   const PORT = process.env.PORT || 3e3;
   const appWithRouteMethods = app;
   for (const method of ["get", "post", "put", "patch", "delete"]) {
@@ -140847,8 +141011,8 @@ async function startServer() {
       onQueueOverflow: handleWebhookQueueOverflow
     })
   );
-  app.use(import_express25.default.json({ limit: "50mb" }));
-  app.use(import_express25.default.urlencoded({ limit: "50mb", extended: true }));
+  app.use(import_express26.default.json({ limit: "50mb" }));
+  app.use(import_express26.default.urlencoded({ limit: "50mb", extended: true }));
   try {
     ensureLabelsDir();
   } catch (err) {
@@ -140861,7 +141025,7 @@ async function startServer() {
     loadLastOAuthAudit,
     tokensPath: SHOPEE_TOKENS_PATH,
     appRoot: APP_ROOT11,
-    appBaseUrl: APP_BASE_URL3,
+    appBaseUrl: APP_BASE_URL4,
     shopeeCallbackUrl: SHOPEE_CALLBACK_URL2,
     shopeeWebhookUrl: SHOPEE_WEBHOOK_URL2
   });
@@ -140903,6 +141067,7 @@ async function startServer() {
   app.use(labelsRoutes);
   initShopeeAuthController({ logOAuthSaveError });
   app.use("/api/shopee", shopeeAuthRoutes);
+  app.use("/api/tiktok", tiktokAuthRoutes);
   initStockSyncQueue({
     getProductChildrenList,
     inheritShopeeLinkFromParent,
@@ -145332,14 +145497,14 @@ async function startServer() {
       console.warn("[Boot] Passenger/cPanel detected without NODE_ENV=production; forcing static production runtime.");
     }
     const publicPdfDir = import_path20.default.join(APP_ROOT11, "public", "pdfs");
-    app.use("/pdfs", import_express25.default.static(publicPdfDir, {
+    app.use("/pdfs", import_express26.default.static(publicPdfDir, {
       setHeaders(res) {
         res.setHeader("Content-Type", "application/pdf");
         res.setHeader("Cache-Control", "public, max-age=300");
       }
     }));
     const distPath = import_path20.default.join(APP_ROOT11, "dist");
-    app.use(import_express25.default.static(distPath, {
+    app.use(import_express26.default.static(distPath, {
       setHeaders(res, filePath) {
         if (filePath.endsWith("index.html")) {
           res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -145453,7 +145618,7 @@ async function startServer() {
       console.log(
         process.env.PORT ? `Server optimized for cPanel Phusion Passenger: listening on ${PORT}` : `Server running locally on port ${PORT}`
       );
-      console.log(`[Config] APP_BASE_URL=${APP_BASE_URL3}`);
+      console.log(`[Config] APP_BASE_URL=${APP_BASE_URL4}`);
       console.log(`[Config] NODE_ENV=${process.env.NODE_ENV || "unset"}`);
       console.log(`[Shopee] Callback=${SHOPEE_CALLBACK_URL2}`);
       console.log(`[Shopee] Webhook=${SHOPEE_WEBHOOK_URL2}`);

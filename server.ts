@@ -136,6 +136,7 @@ import productsRoutesImport from "./routes/productsRoutes.js";
 import mappingRoutesImport from "./routes/mappingRoutes.js";
 import ordersRoutesImport from "./routes/ordersRoutes.js";
 import shopeeAuthRoutesImport from "./routes/shopeeAuthRoutes.js";
+import tiktokAuthRoutesImport from "./routes/tiktokAuthRoutes.js";
 import shopeeOrdersRoutesImport from "./routes/shopeeOrdersRoutes.js";
 import shopeeProductsRoutesImport from "./routes/shopeeProductsRoutes.js";
 import shopeeShipRoutesImport from "./routes/shopeeShipRoutes.js";
@@ -417,6 +418,7 @@ const productsRoutes = asRouter(productsRoutesImport);
 const mappingRoutes = asRouter(mappingRoutesImport);
 const ordersRoutes = asRouter(ordersRoutesImport);
 const shopeeAuthRoutes = asRouter(shopeeAuthRoutesImport);
+const tiktokAuthRoutes = asRouter(tiktokAuthRoutesImport);
 const shopeeOrdersRoutes = asRouter(shopeeOrdersRoutesImport);
 const shopeeProductsRoutes = asRouter(shopeeProductsRoutesImport);
 const shopeeShipRoutes = asRouter(shopeeShipRoutesImport);
@@ -20829,6 +20831,7 @@ async function startServer() {
 
   initShopeeAuthController({ logOAuthSaveError });
   app.use("/api/shopee", shopeeAuthRoutes);
+  app.use("/api/tiktok", tiktokAuthRoutes);
 
   // Real synced orders list  // Real synced orders list — this is what the Order Management UI reads from.
   // --- Products warehouse API — Phase 4 MVC ---

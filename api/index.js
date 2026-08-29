@@ -7,6 +7,7 @@ import 'dotenv/config';
 import { handleLogin } from '../_lib/handlers/login.js';
 import { handleAuthVerify } from '../_lib/handlers/authVerify.js';
 import { handleShopeeCallback } from '../_lib/handlers/shopeeCallback.js';
+import { handleTiktokCallback } from '../_lib/handlers/tiktokCallback.js';
 import { handleShopeeWebhook } from '../_lib/handlers/shopeeWebhook.js';
 import { handleHealthCpanel } from '../_lib/handlers/healthCpanel.js';
 import { handleChannelAutoLink } from '../_lib/handlers/channelAutoLink.js';
@@ -51,6 +52,7 @@ const LOCAL_ROUTES = {
   login: handleLogin,
   'auth/verify': handleAuthVerify,
   'shopee/callback': handleShopeeCallback,
+  'tiktok/callback': handleTiktokCallback,
   'shopee/webhook': handleShopeeWebhook,
   'health/cpanel': handleHealthCpanel,
   // Chạy local trên Vercel — cPanel cũ trả 404 HTML cho route auto-link mới.
