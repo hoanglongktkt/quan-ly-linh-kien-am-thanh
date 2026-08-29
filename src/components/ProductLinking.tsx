@@ -829,6 +829,11 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   const [initVariants, setInitVariants] = useState<InitVariantRow[]>([]);
   const [initLoading, setInitLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [initSubmitProgress, setInitSubmitProgress] = useState<{
+    phase: 'creating' | 'linking';
+    current: number;
+    total: number;
+  } | null>(null);
   const [initError, setInitError] = useState<string | null>(null);
 
   const buildInitVariantsFromListing = (item: ChannelListing): InitVariantRow[] => {
@@ -1215,6 +1220,57 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     }
   };
 
+  const resolveListingForInitVariant = useCallback(
+    (
+      allListings: ChannelListing[],
+      sourceListing: ChannelListing,
+      variant: InitVariantRow,
+      variantIndex: number,
+      variantCount: number
+    ): ChannelListing | null => {
+      const cid = String(sourceListing.channelId || '').trim();
+      const itemFromCid = (cid.match(/(\d{6,})/) || [])[1] || '';
+      const itemId = String(variant.itemId || sourceListing.itemId || itemFromCid || '').trim();
+      const modelId = String(variant.modelId || '').trim();
+      const sameShop = (row: ChannelListing) =>
+        row.platform === sourceListing.platform &&
+        (row.shopName === sourceListing.shopName ||
+          (sourceListing.shopId && row.shopId === sourceListing.shopId));
+
+      if (itemId && modelId) {
+        const targetChannelId = `${itemId}:${modelId}`;
+        const byChannel = allListings.find(
+          (row) => sameShop(row) && String(row.channelId) === targetChannelId
+        );
+        if (byChannel) return byChannel;
+        const byParts = allListings.find(
+          (row) =>
+            sameShop(row) &&
+            String(row.itemId || '') === itemId &&
+            String(row.modelId || '') === modelId
+        );
+        if (byParts) return byParts;
+      }
+
+      const sku = variant.sku.trim();
+      if (sku) {
+        const bySku = allListings.find(
+          (row) => sameShop(row) && skusMatchLikeSearch(row.sku, sku)
+        );
+        if (bySku) return bySku;
+      }
+
+      if (variantCount === 1 || variantIndex === 0) {
+        return sourceListing;
+      }
+
+      return null;
+    },
+    []
+  );
+
+  const delayInitApiGap = (ms = 200) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
   const linkInitListingToSavedProduct = useCallback(
     async (listing: ChannelListing, savedProduct: Product): Promise<boolean> => {
       const productId = String(savedProduct.id || '').trim();
@@ -1268,7 +1324,9 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   const handleConfirmInitToWarehouse = async () => {
     if (!initListing || !initTitle.trim() || isSubmitting) return;
 
+    const totalSteps = initVariants.length;
     setIsSubmitting(true);
+    setInitSubmitProgress(null);
     try {
       const validPlatforms = ['shopee', 'tiktok', 'woocommerce'];
       const channelList = validPlatforms.includes(initListing.platform)
@@ -1316,35 +1374,102 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         };
       });
 
-      // Bước 1: Lưu từng phiên bản vào Kho gốc — đợi API trả về productId thật từ DB.
+      // Bước 1: Lưu tuần tự từng phiên bản vào Kho gốc — mỗi SKU có try/catch riêng.
       const savedProducts: Product[] = [];
-      for (const p of createdProducts) {
-        if (onAddProduct) {
-          const saved = await onAddProduct(p);
-          savedProducts.push(saved?.id ? saved : p);
-        } else {
-          savedProducts.push(p);
+      let createFailed = 0;
+      setInitSubmitProgress({ phase: 'creating', current: 0, total: totalSteps });
+      for (let idx = 0; idx < createdProducts.length; idx++) {
+        const p = createdProducts[idx];
+        setInitSubmitProgress({ phase: 'creating', current: idx + 1, total: totalSteps });
+        try {
+          if (onAddProduct) {
+            const saved = await onAddProduct(p);
+            savedProducts.push(saved?.id ? saved : p);
+          } else {
+            savedProducts.push(p);
+          }
+        } catch (err) {
+          createFailed += 1;
+          console.warn('[ProductLinking] init create SKU failed:', p.sku, err);
+          onAddLog({
+            id: `log-${Date.now()}-${idx}`,
+            timestamp: new Date().toISOString(),
+            channel: (initListing.platform === 'lazada' ? 'shopee' : initListing.platform) as 'shopee' | 'tiktok' | 'woocommerce',
+            type: 'product_sync',
+            status: 'failed',
+            message: `Khởi tạo SKU [${p.sku}] thất bại: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        }
+        if (idx < createdProducts.length - 1) {
+          await delayInitApiGap();
         }
       }
 
-      // Bước 2: Chỉ sau khi lưu Kho thành công mới gọi liên kết mapping (tránh race condition).
+      // Bước 2: Liên kết tuần tự từng SKU — chỉ chạy sau khi Kho đã lưu xong từng dòng.
+      let linkedCount = 0;
+      let linkFailed = 0;
       if (initAutoLink && savedProducts.length > 0) {
-        const primary = savedProducts[0];
-        const linked = await linkInitListingToSavedProduct(initListing, primary);
-        if (!linked) {
+        setInitSubmitProgress({ phase: 'linking', current: 0, total: savedProducts.length });
+        for (let idx = 0; idx < savedProducts.length; idx++) {
+          const savedProduct = savedProducts[idx];
+          const variant = initVariants[idx];
+          setInitSubmitProgress({ phase: 'linking', current: idx + 1, total: savedProducts.length });
+          try {
+            const targetListing = variant
+              ? resolveListingForInitVariant(listings, initListing, variant, idx, initVariants.length)
+              : initListing;
+            if (!targetListing) {
+              linkFailed += 1;
+              console.warn('[ProductLinking] init link skipped — no listing for variant:', savedProduct.sku);
+              continue;
+            }
+            const linked = await linkInitListingToSavedProduct(targetListing, savedProduct);
+            if (linked) {
+              linkedCount += 1;
+            } else {
+              linkFailed += 1;
+            }
+          } catch (err) {
+            linkFailed += 1;
+            console.warn('[ProductLinking] init link SKU failed:', savedProduct.sku, err);
+            onAddLog({
+              id: `log-${Date.now()}-link-${idx}`,
+              timestamp: new Date().toISOString(),
+              channel: (initListing.platform === 'lazada' ? 'shopee' : initListing.platform) as 'shopee' | 'tiktok' | 'woocommerce',
+              type: 'product_sync',
+              status: 'failed',
+              message: `Liên kết SKU [${savedProduct.sku}] thất bại: ${err instanceof Error ? err.message : String(err)}`,
+            });
+          }
+          if (idx < savedProducts.length - 1) {
+            await delayInitApiGap();
+          }
+        }
+      }
+
+      const createdOk = savedProducts.length;
+      if (initAutoLink && createdOk > 0) {
+        if (linkedCount === createdOk) {
+          showToast(`🎉 Đã tạo ${createdOk} phiên bản và liên kết đầy đủ "${initTitle}" về Kho gốc!`);
+        } else if (linkedCount > 0) {
+          showToast(
+            `Đã tạo ${createdOk} phiên bản (${createFailed} lỗi tạo). Liên kết ${linkedCount}/${createdOk} SKU — ${linkFailed} SKU cần liên kết thủ công.`
+          );
+        } else {
           showToast('Đã tạo sản phẩm về Kho nhưng liên kết tự động thất bại. Vui lòng liên kết thủ công.');
         }
+      } else {
+        showToast(`🎉 Đã tạo ${createdOk} phiên bản sản phẩm "${initTitle}" về Kho gốc!`);
       }
 
-      showToast(`🎉 Đã tạo ${createdProducts.length} phiên bản sản phẩm "${initTitle}" về Kho gốc!`);
       void loadMasterCatalog();
       onAddLog({
         id: `log-${Date.now()}`,
         timestamp: new Date().toISOString(),
         channel: (initListing.platform === 'lazada' ? 'shopee' : initListing.platform) as 'shopee' | 'tiktok' | 'woocommerce',
         type: 'product_sync',
-        status: 'success',
-        message: `Khởi tạo sản phẩm sàn [ID: ${initListing.channelId}] về Kho gốc (${createdProducts.length} phiên bản).`,
+        status: createFailed > 0 || linkFailed > 0 ? 'failed' : 'success',
+        message: `Khởi tạo sàn [ID: ${initListing.channelId}] — tạo ${createdOk}/${totalSteps}, liên kết ${linkedCount}/${savedProducts.length}.`,
       });
 
       setInitListing(null);
@@ -1353,6 +1478,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       showToast(`Khởi tạo thất bại: ${message}`);
     } finally {
       setIsSubmitting(false);
+      setInitSubmitProgress(null);
     }
   };
 
@@ -2327,7 +2453,11 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                 {isSubmitting ? (
                   <>
                     <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    Đang xử lý…
+                    {initSubmitProgress?.phase === 'linking'
+                      ? `Đang liên kết (${initSubmitProgress.current}/${initSubmitProgress.total})…`
+                      : initSubmitProgress?.phase === 'creating'
+                        ? `Đang tạo Kho (${initSubmitProgress.current}/${initSubmitProgress.total})…`
+                        : 'Đang xử lý…'}
                   </>
                 ) : (
                   <>
