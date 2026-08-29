@@ -959,22 +959,27 @@ export default function App() {
           return merged;
         });
       } else {
-        setOrders(sanitized);
-        ordersHydrateRef.current = sanitized;
-        if (sanitized.length > 0) void saveOrdersCache(sanitized);
-        // SWR cache theo tab — chuyển lại tab cũ hiện ngay, không chờ mạng.
-        const cacheMap = ordersTabCacheRef.current;
-        cacheMap.set(tabCacheKey, { orders: sanitized, meta: nextMeta, at: Date.now() });
-        if (cacheMap.size > MAX_ORDERS_TAB_CACHE) {
-          let oldestKey = '';
-          let oldestAt = Number.POSITIVE_INFINITY;
-          for (const [k, v] of cacheMap) {
-            if (v.at < oldestAt) {
-              oldestAt = v.at;
-              oldestKey = k;
+        const isRealEmpty = sanitized.length === 0 && Number(total) === 0;
+        // Không đè list/cache bằng [] khi response rỗng nhưng total>0 (race/lỗi trang).
+        if (sanitized.length > 0 || isRealEmpty) {
+          setOrders(sanitized);
+          ordersHydrateRef.current = sanitized;
+          if (sanitized.length > 0) void saveOrdersCache(sanitized);
+          const cacheMap = ordersTabCacheRef.current;
+          cacheMap.set(tabCacheKey, { orders: sanitized, meta: nextMeta, at: Date.now() });
+          if (cacheMap.size > MAX_ORDERS_TAB_CACHE) {
+            let oldestKey = '';
+            let oldestAt = Number.POSITIVE_INFINITY;
+            for (const [k, v] of cacheMap) {
+              if (v.at < oldestAt) {
+                oldestAt = v.at;
+                oldestKey = k;
+              }
             }
+            if (oldestKey) cacheMap.delete(oldestKey);
           }
-          if (oldestKey) cacheMap.delete(oldestKey);
+        } else if (ordersHydrateRef.current.length === 0) {
+          setOrders([]);
         }
       }
       setHasLoadedOrdersOnce(true);
@@ -1021,10 +1026,10 @@ export default function App() {
           0,
           fetchOrdersNonSilentInFlightRef.current - 1,
         );
-        if (fetchOrdersNonSilentInFlightRef.current === 0) {
-          // Abort cũng phải tắt spinner — không còn retry AbortError.
-          setOrdersLoading(false);
-        }
+      }
+      // Mọi nhánh (OK / lỗi / abort / early-return trong try) đều tắt spinner.
+      if (fetchOrdersNonSilentInFlightRef.current === 0) {
+        setOrdersLoading(false);
       }
       const stillOwner = fetchOrdersInFlightRef.current?.promise === inFlight;
       if (stillOwner) {

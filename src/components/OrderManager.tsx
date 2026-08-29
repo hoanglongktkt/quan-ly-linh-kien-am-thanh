@@ -1864,24 +1864,17 @@ export default function OrderManager({
   }, [activeSubTab]);
 
   /**
-   * Tab Đơn chưa xử lý: PC mặc định GHN (panel ĐVVC hiện — tránh xác nhận loạt nhầm).
-   * Mobile: panel `.om-orders-filters-panel` bị ẩn → luôn `'all'` để list khớp badge tab.
-   * Chỉ reset `'all'` khi rời unprocessed (tránh kẹt GHN trên Chờ lấy hàng).
+   * Đổi tab: luôn reset ĐVVC về `'all'` + clear selection.
+   * CẤM auto-GHN (tránh Empty giả khi Main badge > 0 nhưng chip GHN = 0).
    */
   const prevOrdersSubTabRef = useRef(activeSubTab);
   useEffect(() => {
     const prev = prevOrdersSubTabRef.current;
     prevOrdersSubTabRef.current = activeSubTab;
-
-    if (activeSubTab === 'unprocessed') {
-      setSelectedShippingCarrier(isMobileViewport ? 'all' : 'ghn');
-      setSelectedOrderIds([]);
-      return;
-    }
-    if (prev === 'unprocessed') {
-      setSelectedShippingCarrier('all');
-    }
-  }, [activeSubTab, isMobileViewport]);
+    if (prev === activeSubTab) return;
+    setSelectedShippingCarrier('all');
+    setSelectedOrderIds([]);
+  }, [activeSubTab]);
 
   // Sync URL khi đổi tab / nhóm Hủy-Hoàn — không fetch (tránh abort list khi bấm sub-tab).
   useEffect(() => {
@@ -3709,14 +3702,9 @@ export default function OrderManager({
     ];
   };
   const [showBulkActionsDropdown, setShowBulkActionsDropdown] = useState(false);
-  /**
-   * Lọc ĐVVC: all | spx | ghn | instant | other.
-   * PC + unprocessed → GHN; Mobile / tab khác → all (panel lọc mobile bị ẩn).
-   */
+  /** Lọc ĐVVC: all | spx | ghn | instant | other — mặc định luôn `'all'`. */
   const [selectedShippingCarrier, setSelectedShippingCarrier] =
-    useState<ShippingCarrierFilter>(
-      activeSubTab === 'unprocessed' && !isMobileViewport ? 'ghn' : 'all',
-    );
+    useState<ShippingCarrierFilter>('all');
 
   // Detail Modal & Bulk Print Modal
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
@@ -6005,64 +5993,24 @@ export default function OrderManager({
     { id: 'failed_delivery', label: 'Đơn Giao hàng không thành công' },
   ];
 
+  /** Main Tab badge — SSOT duy nhất: `/api/orders/counter` (`serverOrderCounts`). */
   const getCount = (status: OrderTab) => {
     if (status === 'order_products') {
       return aggregatedOrderProducts.length;
     }
+    if (!serverOrderCounts) return 0;
     const countTabKey = status === 'pending_verification' ? 'pending_confirm' : status;
-    const listSyncTabs: OrderTab[] = [
-      'pending_confirm',
-      'pending_verification',
-      'unprocessed',
-      'processed',
-      'handed_over_carrier',
-      'shipping',
-      'web_orders',
-      'external_orders',
-      'return_requests',
-      'received_cancel_returns',
-    ];
-    if (status === activeSubTab && listSyncTabs.includes(status)) {
-      const listTotal = Number(ordersMeta?.total);
-      if (Number.isFinite(listTotal) && listTotal >= 0) return listTotal;
-    }
-    // Ưu tiên counter API (Mongo countDocuments) — badge nhảy độc lập với list.
-    if (serverOrderCounts) {
-      const serverN = Number(serverOrderCounts[countTabKey]);
-      if (Number.isFinite(serverN)) return serverN;
-    }
-    // web_orders: đếm trực tiếp từ orders array khi chưa có server counter
-    if (status === 'web_orders') {
-      return orders.filter((o) => o.channel === 'woocommerce').length;
-    }
-    if (status === 'external_orders') {
-      return orders.filter((o) => o.channel === 'manual').length;
-    }
-    let clientCount = 0;
     if (status === 'cancel_returns') {
-      clientCount = Number(cancelReturnKindCounts.all) || 0;
-    } else if (status === 'return_requests') {
-      clientCount = orders.filter((o) => isReturnRequestOrder(o)).length;
-    } else if (status === 'received_cancel_returns') {
-      clientCount = orders.filter((o) => matchesReceivedCancelReturnTab(o)).length;
-    } else {
-      clientCount = orders.filter((o) => {
-        if (status === 'all') return true;
-        if (status === 'pending_confirm' || status === 'pending_verification') {
-          return isPendingConfirmOrder(o);
-        }
-        if (status === 'unprocessed') {
-          return matchesUnprocessedPickupTab(o) && !isPendingConfirmOrder(o);
-        }
-        if (status === 'processed') {
-          return matchesProcessedPickupTab(o) && !isPendingConfirmOrder(o);
-        }
-        if (status === 'shipping') return matchesShippingTab(o);
-        if (status === 'handed_over_carrier') return matchesHandedOverCarrierTab(o);
-        return o.status === status;
-      }).length;
+      const fromServer = Number(serverOrderCounts.cancel_returns) || 0;
+      if (fromServer > 0) return fromServer;
+      return (
+        (Number(serverOrderCounts.cancel_returns_returned ?? serverOrderCounts.refund_return) || 0) +
+        (Number(serverOrderCounts.cancel_returns_cancelled) || 0) +
+        (Number(serverOrderCounts.cancel_returns_rts ?? serverOrderCounts.failed_delivery) || 0)
+      );
     }
-    return clientCount;
+    const serverN = Number(serverOrderCounts[countTabKey]);
+    return Number.isFinite(serverN) ? serverN : 0;
   };
 
   /**
@@ -6120,6 +6068,7 @@ export default function OrderManager({
       'pending_verification',
       'unprocessed',
       'processed',
+      'handed_over_carrier',
       'cancel_returns',
       'received_cancel_returns',
     ]);
@@ -6227,6 +6176,23 @@ export default function OrderManager({
   useEffect(() => {
     setCurrentPage(1);
   }, [selectedShippingCarrier, printStatusFilter]);
+
+  /** Reset lọc FE (ĐVVC + in ấn) về mặc định — dùng cho Empty giả. */
+  const resetListLocalFilters = useCallback(() => {
+    setSelectedShippingCarrier('all');
+    setPrintStatusFilter('all');
+    setSelectedOrderIds([]);
+    setCurrentPage(1);
+  }, []);
+
+  const listMetaTotal = Number(ordersMeta?.total);
+  const isRealEmptyList =
+    !ordersLoading && Number.isFinite(listMetaTotal) && listMetaTotal === 0;
+  const isFilterEmptyList =
+    !ordersLoading &&
+    Number.isFinite(listMetaTotal) &&
+    listMetaTotal > 0 &&
+    displayOrders.length === 0;
 
 
   // Resolve checkbox selections to full Order rows — CHỈ lấy đơn đang hiển thị
@@ -8315,17 +8281,48 @@ export default function OrderManager({
             <RefreshCw className="w-8 h-8 md:w-10 md:h-10 text-slate-300 animate-spin" />
             <span className="font-semibold text-slate-600">Đang tải danh sách đơn hàng...</span>
           </div>
-        ) : displayOrders.length === 0 ? (
+        ) : isRealEmptyList ? (
           <div className="py-8 md:py-20 text-center text-gray-400 text-xs flex flex-col items-center gap-2 md:gap-3 px-3 md:px-4">
             <ShoppingBag className="w-8 h-8 md:w-12 md:h-12 text-slate-200" />
             <span className="font-semibold text-slate-600 text-xs md:text-sm leading-snug">
-              Không tìm thấy đơn hàng nào khớp với điều kiện lọc
+              Không có đơn hàng
             </span>
             <p className="text-[11px] text-gray-400 max-w-sm leading-snug md:leading-relaxed">
               {activeSubTab === 'external_orders'
                 ? 'Chưa có đơn ngoại sàn. Bấm “Tạo đơn hàng ngoài sàn” để lên đơn GHN/SPX.'
-                : 'Hãy thay đổi bộ lọc sàn TMĐT hoặc chuyển sang các tab khác như "Đơn chưa xử lý" để xem thêm.'}
+                : 'Chưa có đơn trong tab này. Thử đổi khoảng ngày hoặc chuyển tab khác.'}
             </p>
+          </div>
+        ) : isFilterEmptyList ? (
+          <div className="py-8 md:py-20 text-center text-gray-400 text-xs flex flex-col items-center gap-2 md:gap-3 px-3 md:px-4">
+            <ShoppingBag className="w-8 h-8 md:w-12 md:h-12 text-slate-200" />
+            <span className="font-semibold text-slate-600 text-xs md:text-sm leading-snug">
+              Không có đơn hàng nào khớp với bộ lọc hiện tại
+            </span>
+            <p className="text-[11px] text-gray-400 max-w-sm leading-snug md:leading-relaxed">
+              Tab đang có {listMetaTotal} đơn, nhưng không khớp ĐVVC / trạng thái in đã chọn.
+            </p>
+            <button
+              type="button"
+              onClick={resetListLocalFilters}
+              className="mt-1 px-4 py-2 rounded-xl text-xs font-bold text-white bg-[#ee4d2d] hover:bg-[#d73211] transition-colors cursor-pointer"
+            >
+              Xóa bộ lọc
+            </button>
+          </div>
+        ) : displayOrders.length === 0 ? (
+          <div className="py-8 md:py-20 text-center text-gray-400 text-xs flex flex-col items-center gap-2 md:gap-3 px-3 md:px-4">
+            <ShoppingBag className="w-8 h-8 md:w-12 md:h-12 text-slate-200" />
+            <span className="font-semibold text-slate-600 text-xs md:text-sm leading-snug">
+              Không có đơn hàng nào khớp với bộ lọc hiện tại
+            </span>
+            <button
+              type="button"
+              onClick={resetListLocalFilters}
+              className="mt-1 px-4 py-2 rounded-xl text-xs font-bold text-white bg-[#ee4d2d] hover:bg-[#d73211] transition-colors cursor-pointer"
+            >
+              Xóa bộ lọc
+            </button>
           </div>
         ) : activeSubTab === 'external_orders' ? (
           <div className="p-2 max-md:p-0">
