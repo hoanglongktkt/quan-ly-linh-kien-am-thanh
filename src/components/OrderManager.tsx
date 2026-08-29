@@ -5965,19 +5965,36 @@ export default function OrderManager({
     [fulfillmentProducts, orders, products]
   );
 
-  /** Counter 3 nhóm Hủy/Hoàn/RTS — CHỈ đọc global count từ BE, CẤM array.length trang 50. */
+  /**
+   * Counter 3 nhóm Hủy/Hoàn/RTS — CHỈ đọc counter Đơn Hủy/Hoàn từ BE.
+   * CẤM dùng ordersMeta.counters.total (dễ dính total tab "Tất cả đơn hàng")
+   * và CẤM array.length trang 50.
+   */
   const cancelReturnKindCounts = useMemo(() => {
     const c = ordersMeta?.counters;
     const sc = serverOrderCounts || {};
-    const src = Number(c?.total) > 0 ? c : null;
-    const total = Number(src?.total ?? sc.cancel_returns) || 0;
     const returned =
-      Number(src?.returned ?? sc.cancel_returns_returned ?? sc.refund_return) || 0;
+      Number(sc.cancel_returns_returned ?? sc.refund_return) || Number(c?.returned) || 0;
     const cancelled =
-      Number(src?.cancelled ?? sc.cancel_returns_cancelled) || 0;
-    const rts = Number(src?.rts ?? sc.cancel_returns_rts ?? sc.failed_delivery) || 0;
+      Number(sc.cancel_returns_cancelled) || Number(c?.cancelled) || 0;
+    const rts =
+      Number(sc.cancel_returns_rts ?? sc.failed_delivery) || Number(c?.rts) || 0;
+    const fromParts = returned + cancelled + rts;
+    const fromServer = Number(sc.cancel_returns) || 0;
+    // Khi đang ở sub-tab "Tất cả" của Đơn Hủy/Hoàn: meta.total = tổng list đã lọc Hủy/Hoàn.
+    const fromCancelListMeta =
+      activeSubTab === 'cancel_returns' && cancelReturnTab === 'all'
+        ? Number(ordersMeta?.total) || 0
+        : 0;
+    const total = fromServer || fromParts || fromCancelListMeta || 0;
     return { refund_return: returned, cancelled, failed_delivery: rts, all: total };
-  }, [ordersMeta?.counters, serverOrderCounts]);
+  }, [
+    activeSubTab,
+    cancelReturnTab,
+    ordersMeta?.counters,
+    ordersMeta?.total,
+    serverOrderCounts,
+  ]);
 
   const getCancelReturnCount = (tab: CancelReturnTab) => Number(cancelReturnKindCounts[tab]) || 0;
 

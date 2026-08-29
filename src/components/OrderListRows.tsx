@@ -201,6 +201,11 @@ function isCancelReturnGroupTab(tab: string): boolean {
   return tab === 'cancel_returns' || tab === 'received_cancel_returns';
 }
 
+/** Nhãn Hủy/Hoàn/RTS — hiện ở mọi tab (kể cả Tất cả đơn hàng), không chặn theo activeSubTab. */
+function shouldShowCancelReturnStatus(order: Order): boolean {
+  return classifyShopeeCancelReturnKind(order) != null;
+}
+
 /** Đơn Hủy thuần — ẩn mọi tag giao hàng / hoàn hàng. */
 function isPureCancelledOrder(order: Order): boolean {
   return classifyShopeeCancelReturnKind(order) === 'cancelled' || isPureUnshippedCancel(order);
@@ -459,7 +464,7 @@ export const OrderTableRow = React.memo(function OrderTableRow({
                   <Printer className={`w-3.5 h-3.5 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
                   In nhanh
                 </button>
-              ) : isCancelReturnGroupTab(activeSubTab) ? (
+              ) : isCancelReturnGroupTab(activeSubTab) || shouldShowCancelReturnStatus(order) ? (
                 <ReturnWarehouseStatusBlock
                   order={order}
                   confirming={confirmingReturn}
@@ -729,7 +734,9 @@ export const OrderCardRow = React.memo(function OrderCardRow({
                 </span>
               </div>
             </div>
-            {(activeSubTab === 'return_requests' || isCancelReturnGroupTab(activeSubTab)) && (
+            {(activeSubTab === 'return_requests' ||
+              isCancelReturnGroupTab(activeSubTab) ||
+              shouldShowCancelReturnStatus(order)) && (
               <ReturnWarehouseStatusBlock
                 order={order}
                 compact
@@ -754,7 +761,9 @@ export const OrderCardRow = React.memo(function OrderCardRow({
               <Printer className={`w-3.5 h-3.5 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
               In nhanh
             </button>
-          ) : activeSubTab === 'return_requests' || isCancelReturnGroupTab(activeSubTab) ? null : (
+          ) : activeSubTab === 'return_requests' ||
+            isCancelReturnGroupTab(activeSubTab) ||
+            shouldShowCancelReturnStatus(order) ? null : (
             <DeliveryStatusBadge order={order} size="md" />
           )}
 
