@@ -23,3 +23,5 @@ export {
   fetchTiktokProductDetails,
   fetchTiktokProductListPage,
 } from "./products.js";
+
+export { pingTiktokShopConnection, credentialsFromShopRecord } from "./ping.js";

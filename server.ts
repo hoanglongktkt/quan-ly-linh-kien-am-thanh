@@ -25210,17 +25210,25 @@ async function startServer() {
     }
 
     if (shop.platform === "tiktok") {
-      if (!shop.shopId || !shop.apiKey) {
-        return { online: false, connection_status: "missing", message: "Thiếu Seller ID hoặc API Key" };
-      }
-      if (!shop?.connected) {
+      // Live ping OpenAPI — tuyệt đối không báo Online chỉ vì đã lưu DB.
+      try {
+        const { pingTiktokShopConnection } = await import("./services/tiktok/ping.js");
+        const ping = await pingTiktokShopConnection(shop);
+        if (ping.online && !shop?.connected) {
+          return {
+            online: false,
+            connection_status: "online",
+            message: "Token TikTok hợp lệ nhưng đồng bộ đang tắt (Sync OFF)",
+          };
+        }
+        return ping;
+      } catch (error: any) {
         return {
           online: false,
-          connection_status: "online",
-          message: "Credentials đã cấu hình nhưng đồng bộ đang tắt",
+          connection_status: "missing",
+          message: error?.message || "Không kiểm tra được kết nối TikTok",
         };
       }
-      return { online: true, connection_status: "online", message: "Credentials TikTok Shop đã cấu hình" };
     }
 
     return { online: false, connection_status: "missing", message: "Nền tảng không hỗ trợ" };
@@ -25252,12 +25260,13 @@ async function startServer() {
       }
       if (shop.platform === "tiktok") {
         const hasCreds = Boolean(shop.shopId && shop.apiKey);
+        // Không gán Online ảo khi chỉ có credentials trong DB — chờ live ping.
         return {
           ...shop,
-          connection_status: hasCreds ? "online" : "missing",
+          connection_status: "missing",
           connection_message: hasCreds
-            ? "Đã cấu hình TikTok credentials"
-            : "Thiếu Seller ID hoặc API Key",
+            ? "Credentials đã lưu — chưa xác thực API (cần Test kết nối)"
+            : "Thiếu Seller ID hoặc Access Token",
         };
       }
       return { ...shop, connection_status: "missing", connection_message: "Nền tảng không hỗ trợ" };
