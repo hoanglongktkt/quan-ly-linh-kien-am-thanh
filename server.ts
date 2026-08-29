@@ -388,6 +388,7 @@ import {
 import {
   initShopeeWebhookController,
   processShopeeWebhookPayload,
+  handleWebhookQueueOverflow,
 } from "./controllers/shopeeWebhookController.js";
 
 import { PDF_DIR, resolveAppRoot, resolveAppBaseUrl } from "./utils/appPaths.js";
@@ -20754,7 +20755,12 @@ async function startServer() {
   });
   // Canonical Push URL duy nhất: POST/GET /api/shopee/webhook
   // PHẢI mount TRƯỚC express.json (dùng express.raw để giữ raw body).
-  app.use("/api/shopee", createShopeeWebhookRouter(processShopeeWebhookPayload, "/webhook"));
+  app.use(
+    "/api/shopee",
+    createShopeeWebhookRouter(processShopeeWebhookPayload, "/webhook", {
+      onQueueOverflow: handleWebhookQueueOverflow,
+    }),
+  );
 
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));

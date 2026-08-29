@@ -4,15 +4,42 @@ import { parseShopeeJson } from "../../services/shopee/jsonBig.js";
 // import { verifyShopeeWebhookSignature } from "./shopeeSignature.ts";
 
 type WebhookProcessor = (payload: Record<string, unknown>) => Promise<void>;
+type QueueOverflowHandler = (payload: Record<string, unknown>) => void | Promise<void>;
 
 const MAX_PENDING_JOBS = 200;
-// Hai event cho CÙNG một đơn phải chạy theo thứ tự; các đơn khác nhau có thể xử lý
-// song song. Giới hạn 2 giữ số request get_order_detail trong ngưỡng an toàn.
-const MAX_CONCURRENT_JOBS = 2;
+// Song song nhiều đơn khác nhau; cùng order_sn vẫn tuần tự. Mặc định 4 (env override).
+const MAX_CONCURRENT_JOBS = Math.max(
+  2,
+  Math.min(8, Number(process.env.SHOPEE_WEBHOOK_MAX_CONCURRENT) || 4),
+);
 /** Hard cap mỗi job nền — quá hạn thì nhả slot (tránh hang → process leak cPanel). */
 const WEBHOOK_JOB_TIMEOUT_MS = 45_000;
 
-function webhookOrderKey(payload: Record<string, unknown>): string {
+/** Metric in-process — log trên cPanel, không cần DB. */
+const queueMetrics = {
+  overflowCount: 0,
+  completedJobs: 0,
+  failedJobs: 0,
+  lastJobDurationMs: 0,
+  maxJobDurationMs: 0,
+  totalJobDurationMs: 0,
+};
+
+function logQueueMetrics(context: string, pending: number, running: number): void {
+  const avgMs =
+    queueMetrics.completedJobs > 0
+      ? Math.round(queueMetrics.totalJobDurationMs / queueMetrics.completedJobs)
+      : 0;
+  console.log(
+    `[Shopee Webhook][Queue] ${context}` +
+      ` depth=${pending} running=${running}/${MAX_CONCURRENT_JOBS}` +
+      ` overflowCount=${queueMetrics.overflowCount}` +
+      ` completed=${queueMetrics.completedJobs} failed=${queueMetrics.failedJobs}` +
+      ` lastJobMs=${queueMetrics.lastJobDurationMs} avgJobMs=${avgMs} maxJobMs=${queueMetrics.maxJobDurationMs}`,
+  );
+}
+
+export function webhookOrderKey(payload: Record<string, unknown>): string {
   const data =
     payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
       ? (payload.data as Record<string, unknown>)
@@ -44,7 +71,10 @@ function withJobTimeout<T>(work: Promise<T>, ms: number, label: string): Promise
  * payload/promise trong RAM. Không spawn process/worker nên không tạo zombie process.
  * Mỗi job có hard timeout — slot luôn được giải phóng.
  */
-function createBoundedQueue(processPayload: WebhookProcessor) {
+function createBoundedQueue(
+  processPayload: WebhookProcessor,
+  onQueueOverflow?: QueueOverflowHandler,
+) {
   const pending: Array<Record<string, unknown>> = [];
   let running = 0;
   let scheduled = false;
@@ -73,14 +103,35 @@ function createBoundedQueue(processPayload: WebhookProcessor) {
       if (batch.length === 0) return;
 
       running += batch.length;
+      logQueueMetrics("job_batch_start", pending.length, running);
+
       void Promise.allSettled(
-        batch.map(({ payload }) =>
-          withJobTimeout(
-            processPayload(payload),
-            WEBHOOK_JOB_TIMEOUT_MS,
-            "webhook_job",
-          ),
-        ),
+        batch.map(({ payload, orderKey }) => {
+          const startedAt = Date.now();
+          return withJobTimeout(processPayload(payload), WEBHOOK_JOB_TIMEOUT_MS, "webhook_job")
+            .then(() => {
+              const durationMs = Date.now() - startedAt;
+              queueMetrics.completedJobs += 1;
+              queueMetrics.lastJobDurationMs = durationMs;
+              queueMetrics.totalJobDurationMs += durationMs;
+              if (durationMs > queueMetrics.maxJobDurationMs) {
+                queueMetrics.maxJobDurationMs = durationMs;
+              }
+              console.log(
+                `[Shopee Webhook][Queue] job_done orderKey=${orderKey || "?"} durationMs=${durationMs}`,
+              );
+            })
+            .catch((err) => {
+              queueMetrics.failedJobs += 1;
+              const durationMs = Date.now() - startedAt;
+              queueMetrics.lastJobDurationMs = durationMs;
+              console.error(
+                `[Shopee Webhook][Queue] job_failed orderKey=${orderKey || "?"} durationMs=${durationMs}:`,
+                err,
+              );
+              throw err;
+            });
+        }),
       )
         .then((results) => {
           for (const result of results) {
@@ -94,6 +145,7 @@ function createBoundedQueue(processPayload: WebhookProcessor) {
           for (const { orderKey } of batch) {
             if (orderKey) activeOrderKeys.delete(orderKey);
           }
+          logQueueMetrics("job_batch_end", pending.length, running);
           scheduleDrain();
         });
     });
@@ -102,16 +154,35 @@ function createBoundedQueue(processPayload: WebhookProcessor) {
   return {
     enqueue(payload: Record<string, unknown>): boolean {
       if (pending.length >= MAX_PENDING_JOBS) {
-        // Emergency: không reject HTTP — drop + log, vẫn đã ACK 200 cho Shopee.
-        // KHÔNG spawn processPayload unbounded (gây process leak trên cPanel).
+        queueMetrics.overflowCount += 1;
+        const orderKey = webhookOrderKey(payload);
         console.error(
-          "[Shopee Webhook] Queue full; dropping payload after ACK 200 (no unbounded fallback).",
+          `[Shopee Webhook] Queue full — overflow persist fallback` +
+            ` depth=${pending.length} running=${running}` +
+            ` overflowCount=${queueMetrics.overflowCount} orderKey=${orderKey || "?"}`,
         );
+        if (onQueueOverflow) {
+          void Promise.resolve(onQueueOverflow(payload)).catch((overflowErr) => {
+            console.error(
+              "[Shopee Webhook] onQueueOverflow handler failed:",
+              overflowErr?.message || overflowErr,
+            );
+          });
+        }
         return false;
       }
       pending.push(payload);
+      logQueueMetrics("enqueue", pending.length, running);
       scheduleDrain();
       return true;
+    },
+    getMetrics() {
+      return {
+        ...queueMetrics,
+        pendingDepth: pending.length,
+        running,
+        maxConcurrent: MAX_CONCURRENT_JOBS,
+      };
     },
   };
 }
@@ -203,7 +274,8 @@ function queueAfterAck(
 
       console.log("[WEBHOOK RECEIVED] req.body (parsed object):", JSON.stringify(payload));
 
-      if (!queue.enqueue(payload)) return;
+      const queued = queue.enqueue(payload);
+      if (!queued) return;
 
       const data =
         payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
@@ -224,6 +296,11 @@ function queueAfterAck(
   });
 }
 
+export type ShopeeWebhookRouterOptions = {
+  /** Khi queue đầy: persist tối thiểu thay vì drop im lặng. */
+  onQueueOverflow?: QueueOverflowHandler;
+};
+
 /**
  * Tạo endpoint webhook Shopee (canonical hoặc legacy).
  * SIÊU DỄ DÃI: LUÔN trả 200 OK ngay — không HMAC, không validate chặn request.
@@ -232,10 +309,15 @@ function queueAfterAck(
 export function createShopeeWebhookRouter(
   processPayload: WebhookProcessor,
   routePath: string = "/shopee",
+  options: ShopeeWebhookRouterOptions = {},
 ): Router {
-  const queue = createBoundedQueue(processPayload);
+  const queue = createBoundedQueue(processPayload, options.onQueueOverflow);
   const router = express.Router();
   const path = routePath.startsWith("/") ? routePath : `/${routePath}`;
+
+  console.log(
+    `[Shopee Webhook] Queue config maxConcurrent=${MAX_CONCURRENT_JOBS} maxPending=${MAX_PENDING_JOBS} jobTimeoutMs=${WEBHOOK_JOB_TIMEOUT_MS}`,
+  );
 
   // GET probe cho Shopee verification.
   router.get(path, (_req, res) => {

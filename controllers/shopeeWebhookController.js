@@ -21,6 +21,7 @@ import {
   getShopeeUnauthorizedShopMessage,
   ShopeeRefreshTokenExpiredError,
 } from "../services/shopee/auth.js";
+import { triggerWebhookRescuePull } from "../services/orderSync/orderSyncService.js";
 
 let deps = {
   parseShopeePushEvent: () => ({}),
@@ -42,6 +43,28 @@ let deps = {
   applyWebhookReturnFallback: async () => {},
   listShopeeOAuthShopIds: () => [],
 };
+
+/** Trigger incremental pull ngắn — heal đơn khi get_order_detail fail hoặc queue overflow. */
+function scheduleWebhookRescuePull(orderSn, shopId, reason = "webhook_detail_fail") {
+  const sn = String(orderSn || "").trim();
+  if (!sn) return;
+  const sid = String(shopId || "").trim();
+  try {
+    const ack = triggerWebhookRescuePull({
+      orderSn: sn,
+      shopId: sid,
+      trigger: reason,
+    });
+    console.log(
+      `[Shopee Webhook] webhook_rescue scheduled reason=${reason} order_sn=${sn} shop=${sid || "all"} accepted=${ack.accepted}`,
+    );
+  } catch (err) {
+    console.warn(
+      `[Shopee Webhook] scheduleWebhookRescuePull failed reason=${reason} order_sn=${sn}:`,
+      err?.message || err,
+    );
+  }
+}
 
 export function initShopeeWebhookController(partial) {
   deps = { ...deps, ...partial };
@@ -696,6 +719,7 @@ async function processShopeeWebhookPayloadInner(body) {
           `shallow fallback lỗi — ${shallowErr?.message || shallowErr}`,
         );
       }
+      scheduleWebhookRescuePull(orderSn, shopId, "webhook_detail_fail");
     }
 
     let idx = orders.findIndex((o) => String(o.orderSn) === orderSn);
@@ -821,6 +845,41 @@ async function processShopeeWebhookPayloadInner(body) {
       `exception — ${processErr?.message || processErr}`,
     );
   }
+}
+
+/**
+ * Queue overflow: persist payload tối thiểu (order_sn + shop_id) + rescue pull ngắn.
+ * Gọi từ webhook router khi hàng đợi đầy (sau ACK 200).
+ */
+export async function handleWebhookQueueOverflow(body) {
+  if (!body || typeof body !== "object") {
+    console.warn("[Shopee Webhook] Queue overflow — payload không hợp lệ, bỏ qua persist.");
+    return;
+  }
+
+  const parsed = deps.parseShopeePushEvent(body);
+  const { orderSn, shopId } = extractOrderSnAndShopId(body, parsed);
+
+  console.warn(
+    `[Shopee Webhook] Queue overflow — persist minimal order_sn=${orderSn || "?"} shop_id=${shopId || "?"}`,
+  );
+
+  if (!orderSn) return;
+
+  try {
+    const orders = await loadWorkingOrdersForWebhook(orderSn);
+    await deps.upsertShopeeWebhookShallow(body, orders);
+    console.log(
+      `[Shopee Webhook] Queue overflow shallow persist OK order_sn=${orderSn} shop_id=${shopId || "?"}`,
+    );
+  } catch (err) {
+    console.error(
+      `[Shopee Webhook] Queue overflow shallow persist FAILED order_sn=${orderSn}:`,
+      err?.message || err,
+    );
+  }
+
+  scheduleWebhookRescuePull(orderSn, shopId, "webhook_queue_overflow");
 }
 
 /**

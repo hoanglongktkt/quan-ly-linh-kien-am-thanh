@@ -73956,6 +73956,11 @@ function flushPending() {
 
 // services/orderSync/orderSyncService.js
 var DEFAULT_INCREMENTAL_LOOKBACK_SEC = 2 * 60 * 60;
+var WEBHOOK_RESCUE_LOOKBACK_SEC = Math.max(
+  300,
+  Math.min(3600, Number(process.env.WEBHOOK_RESCUE_LOOKBACK_SEC) || 600)
+);
+var webhookRescueDedupe = /* @__PURE__ */ new Set();
 var deps = {
   /** @type {(opts?: any) => Promise<any>} */
   pullIncrementalOrdersFromShopee: async () => ({
@@ -74130,6 +74135,45 @@ function triggerBackgroundOrderSync(opts = {}) {
     message: "H\u1EC7 th\u1ED1ng \u0111ang \u0111\u1ED3ng b\u1ED9 ng\u1EA7m",
     lookbackSec: opts.lookbackSec || DEFAULT_INCREMENTAL_LOOKBACK_SEC
   };
+}
+function triggerWebhookRescuePull(opts = {}) {
+  const orderSn = String(opts.orderSn || "").trim();
+  const shopId = String(opts.shopId || "").trim();
+  const trigger = String(opts.trigger || "webhook_rescue");
+  const dedupeKey = orderSn ? `${shopId}:${orderSn}` : "";
+  if (dedupeKey && webhookRescueDedupe.has(dedupeKey)) {
+    console.log(
+      `[OrderSyncService] webhook_rescue SKIP dedupe order_sn=${orderSn} shop=${shopId || "all"}`
+    );
+    return { accepted: false, busy: false, reason: "dedupe", lookbackSec: WEBHOOK_RESCUE_LOOKBACK_SEC };
+  }
+  if (dedupeKey) {
+    webhookRescueDedupe.add(dedupeKey);
+    setTimeout(() => webhookRescueDedupe.delete(dedupeKey), 12e4);
+  }
+  const lookbackSec = WEBHOOK_RESCUE_LOOKBACK_SEC;
+  console.log(
+    `[OrderSyncService] webhook_rescue TRIGGER trigger=${trigger} order_sn=${orderSn || "?"} shop=${shopId || "all"} lookbackSec=${lookbackSec}`
+  );
+  setImmediate(() => {
+    void deps.pullIncrementalOrdersFromShopee({
+      lookbackSec,
+      shopIds: shopId ? [shopId] : void 0,
+      allowShortLookback: true,
+      reconcileActive: false,
+      enrichTracking: false
+    }).then((result) => {
+      console.log(
+        `[OrderSyncService] webhook_rescue DONE trigger=${trigger} order_sn=${orderSn || "?"} pulled=${result?.pulled || 0} +${result?.added || 0}/~${result?.updated || 0} skipped=${Boolean(result?.skipped)} elapsedMs=${result?.elapsedMs || "?"}`
+      );
+    }).catch((err) => {
+      console.error(
+        `[OrderSyncService] webhook_rescue FAILED trigger=${trigger} order_sn=${orderSn || "?"}`,
+        err?.stack || err?.message || err
+      );
+    });
+  });
+  return { accepted: true, busy: false, lookbackSec, trigger };
 }
 
 // cron/index.js
@@ -74686,8 +74730,25 @@ function normalizeShopeeProductIds(payload) {
 
 // src/webhooks/shopeeWebhookHandler.ts
 var MAX_PENDING_JOBS = 200;
-var MAX_CONCURRENT_JOBS = 2;
+var MAX_CONCURRENT_JOBS = Math.max(
+  2,
+  Math.min(8, Number(process.env.SHOPEE_WEBHOOK_MAX_CONCURRENT) || 4)
+);
 var WEBHOOK_JOB_TIMEOUT_MS = 45e3;
+var queueMetrics = {
+  overflowCount: 0,
+  completedJobs: 0,
+  failedJobs: 0,
+  lastJobDurationMs: 0,
+  maxJobDurationMs: 0,
+  totalJobDurationMs: 0
+};
+function logQueueMetrics(context, pending, running) {
+  const avgMs = queueMetrics.completedJobs > 0 ? Math.round(queueMetrics.totalJobDurationMs / queueMetrics.completedJobs) : 0;
+  console.log(
+    `[Shopee Webhook][Queue] ${context} depth=${pending} running=${running}/${MAX_CONCURRENT_JOBS} overflowCount=${queueMetrics.overflowCount} completed=${queueMetrics.completedJobs} failed=${queueMetrics.failedJobs} lastJobMs=${queueMetrics.lastJobDurationMs} avgJobMs=${avgMs} maxJobMs=${queueMetrics.maxJobDurationMs}`
+  );
+}
 function webhookOrderKey(payload) {
   const data = payload.data && typeof payload.data === "object" && !Array.isArray(payload.data) ? payload.data : payload;
   const shopId = String(payload.shop_id ?? data.shop_id ?? "").trim();
@@ -74710,7 +74771,7 @@ function withJobTimeout(work, ms, label) {
     if (timer) clearTimeout(timer);
   });
 }
-function createBoundedQueue(processPayload) {
+function createBoundedQueue(processPayload, onQueueOverflow) {
   const pending = [];
   let running = 0;
   let scheduled = false;
@@ -74736,14 +74797,32 @@ function createBoundedQueue(processPayload) {
       }
       if (batch.length === 0) return;
       running += batch.length;
+      logQueueMetrics("job_batch_start", pending.length, running);
       void Promise.allSettled(
-        batch.map(
-          ({ payload }) => withJobTimeout(
-            processPayload(payload),
-            WEBHOOK_JOB_TIMEOUT_MS,
-            "webhook_job"
-          )
-        )
+        batch.map(({ payload, orderKey }) => {
+          const startedAt = Date.now();
+          return withJobTimeout(processPayload(payload), WEBHOOK_JOB_TIMEOUT_MS, "webhook_job").then(() => {
+            const durationMs = Date.now() - startedAt;
+            queueMetrics.completedJobs += 1;
+            queueMetrics.lastJobDurationMs = durationMs;
+            queueMetrics.totalJobDurationMs += durationMs;
+            if (durationMs > queueMetrics.maxJobDurationMs) {
+              queueMetrics.maxJobDurationMs = durationMs;
+            }
+            console.log(
+              `[Shopee Webhook][Queue] job_done orderKey=${orderKey || "?"} durationMs=${durationMs}`
+            );
+          }).catch((err) => {
+            queueMetrics.failedJobs += 1;
+            const durationMs = Date.now() - startedAt;
+            queueMetrics.lastJobDurationMs = durationMs;
+            console.error(
+              `[Shopee Webhook][Queue] job_failed orderKey=${orderKey || "?"} durationMs=${durationMs}:`,
+              err
+            );
+            throw err;
+          });
+        })
       ).then((results) => {
         for (const result of results) {
           if (result.status === "rejected") {
@@ -74755,6 +74834,7 @@ function createBoundedQueue(processPayload) {
         for (const { orderKey } of batch) {
           if (orderKey) activeOrderKeys.delete(orderKey);
         }
+        logQueueMetrics("job_batch_end", pending.length, running);
         scheduleDrain();
       });
     });
@@ -74762,14 +74842,33 @@ function createBoundedQueue(processPayload) {
   return {
     enqueue(payload) {
       if (pending.length >= MAX_PENDING_JOBS) {
+        queueMetrics.overflowCount += 1;
+        const orderKey = webhookOrderKey(payload);
         console.error(
-          "[Shopee Webhook] Queue full; dropping payload after ACK 200 (no unbounded fallback)."
+          `[Shopee Webhook] Queue full \u2014 overflow persist fallback depth=${pending.length} running=${running} overflowCount=${queueMetrics.overflowCount} orderKey=${orderKey || "?"}`
         );
+        if (onQueueOverflow) {
+          void Promise.resolve(onQueueOverflow(payload)).catch((overflowErr) => {
+            console.error(
+              "[Shopee Webhook] onQueueOverflow handler failed:",
+              overflowErr?.message || overflowErr
+            );
+          });
+        }
         return false;
       }
       pending.push(payload);
+      logQueueMetrics("enqueue", pending.length, running);
       scheduleDrain();
       return true;
+    },
+    getMetrics() {
+      return {
+        ...queueMetrics,
+        pendingDepth: pending.length,
+        running,
+        maxConcurrent: MAX_CONCURRENT_JOBS
+      };
     }
   };
 }
@@ -74841,7 +74940,8 @@ function queueAfterAck(queue, req, routeLabel) {
         return;
       }
       console.log("[WEBHOOK RECEIVED] req.body (parsed object):", JSON.stringify(payload));
-      if (!queue.enqueue(payload)) return;
+      const queued = queue.enqueue(payload);
+      if (!queued) return;
       const data = payload.data && typeof payload.data === "object" && !Array.isArray(payload.data) ? payload.data : {};
       console.log(
         "[WEBHOOK RECEIVED] payload queued after ACK \u2014 will get_order_detail + UPSERT:",
@@ -74857,10 +74957,13 @@ function queueAfterAck(queue, req, routeLabel) {
     }
   });
 }
-function createShopeeWebhookRouter(processPayload, routePath = "/shopee") {
-  const queue = createBoundedQueue(processPayload);
+function createShopeeWebhookRouter(processPayload, routePath = "/shopee", options = {}) {
+  const queue = createBoundedQueue(processPayload, options.onQueueOverflow);
   const router24 = import_express.default.Router();
   const path21 = routePath.startsWith("/") ? routePath : `/${routePath}`;
+  console.log(
+    `[Shopee Webhook] Queue config maxConcurrent=${MAX_CONCURRENT_JOBS} maxPending=${MAX_PENDING_JOBS} jobTimeoutMs=${WEBHOOK_JOB_TIMEOUT_MS}`
+  );
   router24.get(path21, (_req, res) => {
     ackShopeeOk(res);
   });
@@ -125190,6 +125293,26 @@ var deps21 = {
   },
   listShopeeOAuthShopIds: () => []
 };
+function scheduleWebhookRescuePull(orderSn, shopId, reason = "webhook_detail_fail") {
+  const sn = String(orderSn || "").trim();
+  if (!sn) return;
+  const sid = String(shopId || "").trim();
+  try {
+    const ack = triggerWebhookRescuePull({
+      orderSn: sn,
+      shopId: sid,
+      trigger: reason
+    });
+    console.log(
+      `[Shopee Webhook] webhook_rescue scheduled reason=${reason} order_sn=${sn} shop=${sid || "all"} accepted=${ack.accepted}`
+    );
+  } catch (err) {
+    console.warn(
+      `[Shopee Webhook] scheduleWebhookRescuePull failed reason=${reason} order_sn=${sn}:`,
+      err?.message || err
+    );
+  }
+}
 function initShopeeWebhookController(partial) {
   deps21 = { ...deps21, ...partial };
 }
@@ -125724,6 +125847,7 @@ async function processShopeeWebhookPayloadInner(body) {
           `shallow fallback l\u1ED7i \u2014 ${shallowErr?.message || shallowErr}`
         );
       }
+      scheduleWebhookRescuePull(orderSn, shopId, "webhook_detail_fail");
     }
     let idx = orders.findIndex((o) => String(o.orderSn) === orderSn);
     if (idx < 0 && (parsed.trackingNo || parsed.status || orderSn)) {
@@ -125815,6 +125939,31 @@ async function processShopeeWebhookPayloadInner(body) {
       `exception \u2014 ${processErr?.message || processErr}`
     );
   }
+}
+async function handleWebhookQueueOverflow(body) {
+  if (!body || typeof body !== "object") {
+    console.warn("[Shopee Webhook] Queue overflow \u2014 payload kh\xF4ng h\u1EE3p l\u1EC7, b\u1ECF qua persist.");
+    return;
+  }
+  const parsed = deps21.parseShopeePushEvent(body);
+  const { orderSn, shopId } = extractOrderSnAndShopId(body, parsed);
+  console.warn(
+    `[Shopee Webhook] Queue overflow \u2014 persist minimal order_sn=${orderSn || "?"} shop_id=${shopId || "?"}`
+  );
+  if (!orderSn) return;
+  try {
+    const orders = await loadWorkingOrdersForWebhook(orderSn);
+    await deps21.upsertShopeeWebhookShallow(body, orders);
+    console.log(
+      `[Shopee Webhook] Queue overflow shallow persist OK order_sn=${orderSn} shop_id=${shopId || "?"}`
+    );
+  } catch (err) {
+    console.error(
+      `[Shopee Webhook] Queue overflow shallow persist FAILED order_sn=${orderSn}:`,
+      err?.message || err
+    );
+  }
+  scheduleWebhookRescuePull(orderSn, shopId, "webhook_queue_overflow");
 }
 async function processShopeeWebhookPayload(body) {
   let timer;
@@ -140467,7 +140616,12 @@ async function startServer() {
     applyWebhookReturnFallback,
     listShopeeOAuthShopIds
   });
-  app.use("/api/shopee", createShopeeWebhookRouter(processShopeeWebhookPayload, "/webhook"));
+  app.use(
+    "/api/shopee",
+    createShopeeWebhookRouter(processShopeeWebhookPayload, "/webhook", {
+      onQueueOverflow: handleWebhookQueueOverflow
+    })
+  );
   app.use(import_express25.default.json({ limit: "50mb" }));
   app.use(import_express25.default.urlencoded({ limit: "50mb", extended: true }));
   try {

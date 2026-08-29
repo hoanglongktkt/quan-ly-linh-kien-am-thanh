@@ -11,6 +11,13 @@
 import { enqueueLabelPdfDownload } from "./labelPdfQueue.js";
 
 const DEFAULT_INCREMENTAL_LOOKBACK_SEC = 2 * 60 * 60; // 2 giờ (trong khoảng 1–3h)
+/** Webhook rescue: incremental pull ngắn khi get_order_detail fail (5–10 phút). */
+const WEBHOOK_RESCUE_LOOKBACK_SEC = Math.max(
+  300,
+  Math.min(3600, Number(process.env.WEBHOOK_RESCUE_LOOKBACK_SEC) || 600),
+);
+/** Dedupe rescue cùng order_sn trong cửa sổ ngắn — tránh spam pull. */
+const webhookRescueDedupe = new Set();
 
 let deps = {
   /** @type {(opts?: any) => Promise<any>} */
@@ -230,4 +237,60 @@ export function triggerBackgroundOrderSync(opts = {}) {
   };
 }
 
-export { DEFAULT_INCREMENTAL_LOOKBACK_SEC };
+/**
+ * Incremental pull ngắn sau webhook fail / queue overflow — không chờ cron 5 phút.
+ * Chạy nền, không block HTTP; bỏ qua bgRunning (ưu tiên heal đơn vừa push).
+ * @param {{ orderSn?: string, shopId?: string, trigger?: string }} [opts]
+ */
+export function triggerWebhookRescuePull(opts = {}) {
+  const orderSn = String(opts.orderSn || "").trim();
+  const shopId = String(opts.shopId || "").trim();
+  const trigger = String(opts.trigger || "webhook_rescue");
+  const dedupeKey = orderSn ? `${shopId}:${orderSn}` : "";
+
+  if (dedupeKey && webhookRescueDedupe.has(dedupeKey)) {
+    console.log(
+      `[OrderSyncService] webhook_rescue SKIP dedupe order_sn=${orderSn} shop=${shopId || "all"}`,
+    );
+    return { accepted: false, busy: false, reason: "dedupe", lookbackSec: WEBHOOK_RESCUE_LOOKBACK_SEC };
+  }
+  if (dedupeKey) {
+    webhookRescueDedupe.add(dedupeKey);
+    setTimeout(() => webhookRescueDedupe.delete(dedupeKey), 120_000);
+  }
+
+  const lookbackSec = WEBHOOK_RESCUE_LOOKBACK_SEC;
+  console.log(
+    `[OrderSyncService] webhook_rescue TRIGGER trigger=${trigger}` +
+      ` order_sn=${orderSn || "?"} shop=${shopId || "all"} lookbackSec=${lookbackSec}`,
+  );
+
+  setImmediate(() => {
+    void deps
+      .pullIncrementalOrdersFromShopee({
+        lookbackSec,
+        shopIds: shopId ? [shopId] : undefined,
+        allowShortLookback: true,
+        reconcileActive: false,
+        enrichTracking: false,
+      })
+      .then((result) => {
+        console.log(
+          `[OrderSyncService] webhook_rescue DONE trigger=${trigger}` +
+            ` order_sn=${orderSn || "?"}` +
+            ` pulled=${result?.pulled || 0} +${result?.added || 0}/~${result?.updated || 0}` +
+            ` skipped=${Boolean(result?.skipped)} elapsedMs=${result?.elapsedMs || "?"}`,
+        );
+      })
+      .catch((err) => {
+        console.error(
+          `[OrderSyncService] webhook_rescue FAILED trigger=${trigger} order_sn=${orderSn || "?"}`,
+          err?.stack || err?.message || err,
+        );
+      });
+  });
+
+  return { accepted: true, busy: false, lookbackSec, trigger };
+}
+
+export { DEFAULT_INCREMENTAL_LOOKBACK_SEC, WEBHOOK_RESCUE_LOOKBACK_SEC };
