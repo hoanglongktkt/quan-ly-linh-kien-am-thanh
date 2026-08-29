@@ -8615,6 +8615,76 @@ function docsToScannerSyncRows(docs: any[]): ScannerSyncRow[] {
   return rows;
 }
 
+const SCANNER_COMPOUND_INDEX_NAMES = [
+  "scanner_handover_status",
+  "scanner_cancelled_status",
+  "scanner_return_kind_date",
+  "scanner_rts_date",
+] as const;
+
+/**
+ * Đồng bộ index scanner trên collection orders (dùng OrderSchema đã khai báo sẵn).
+ * Gọi từ GET /api/system/setup-indexes — không cần terminal cPanel.
+ */
+export async function ensureScannerIndexesInStore(): Promise<{
+  success: boolean;
+  syncResult: Record<string, string>;
+  scannerIndexes: Array<{ name: string; present: boolean; key?: Record<string, unknown> }>;
+  lookupIndexes: Array<{ name: string; present: boolean; key?: Record<string, unknown> }>;
+  totalIndexes: number;
+  allIndexNames: string[];
+}> {
+  if (!isMongoReady()) {
+    throw new Error("mongodb_not_ready");
+  }
+  requireMongo();
+
+  const syncResult = (await OrderModel.syncIndexes()) as Record<string, string>;
+  const indexes = (await OrderModel.collection.indexes()) as Array<{
+    name?: string;
+    key?: Record<string, unknown>;
+  }>;
+  const allIndexNames = indexes.map((ix) => String(ix.name || ""));
+
+  const scannerIndexes = SCANNER_COMPOUND_INDEX_NAMES.map((name) => {
+    const doc = indexes.find((ix) => ix.name === name);
+    return {
+      name,
+      present: Boolean(doc),
+      key: doc?.key,
+    };
+  });
+
+  const lookupFieldHints = [
+    "data.tracking_no",
+    "data.trackingNumber",
+    "data.orderSn",
+    "data.order_sn",
+    "data.internalTrackingCode",
+    "return_sn",
+    "data.return_sn",
+  ];
+  const lookupIndexes = indexes
+    .filter((ix) => {
+      const keys = Object.keys(ix.key || {});
+      return keys.some((k) => lookupFieldHints.includes(k));
+    })
+    .map((ix) => ({
+      name: String(ix.name || ""),
+      present: true,
+      key: ix.key,
+    }));
+
+  return {
+    success: scannerIndexes.every((x) => x.present),
+    syncResult,
+    scannerIndexes,
+    lookupIndexes,
+    totalIndexes: indexes.length,
+    allIndexNames,
+  };
+}
+
 /**
  * Sync siêu tốc cho Barcode Scanner — chỉ field tối thiểu, không hydrate items.
  * mode=handover: Chờ lấy (đã xử lý) + đơn hủy (~100).

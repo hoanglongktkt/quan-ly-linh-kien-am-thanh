@@ -1,6 +1,10 @@
 /**
  * Tạo compound index phục vụ scanner-sync / lookup nhanh trên collection orders.
- * Chạy trên server (hoặc local có MONGODB_URI):
+ *
+ * Cách 1 (cPanel — khuyến nghị): mở trình duyệt
+ *   https://YOUR-DOMAIN/api/system/setup-indexes
+ *
+ * Cách 2 (local có terminal):
  *   node scripts/ensure_scanner_indexes.mjs
  */
 import mongoose from 'mongoose';
