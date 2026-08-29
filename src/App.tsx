@@ -533,6 +533,16 @@ export default function App() {
   // Selected products for bulk editing
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
+  /** Mở Quét mã: nếu list tab đang rỗng nhưng hydrate còn data → khôi phục pool fallback (không đụng filter list). */
+  useEffect(() => {
+    if (!focusScanner) return;
+    if (orders.length > 0) return;
+    const hydrated = ordersHydrateRef.current;
+    if (Array.isArray(hydrated) && hydrated.length > 0) {
+      setOrders(hydrated);
+    }
+  }, [focusScanner, orders.length]);
+
   useEffect(() => {
     const onPopState = () => {
       const nextTab = resolveTabFromPath();
@@ -960,26 +970,28 @@ export default function App() {
         });
       } else {
         const isRealEmpty = sanitized.length === 0 && Number(total) === 0;
-        // Không đè list/cache bằng [] khi response rỗng nhưng total>0 (race/lỗi trang).
-        if (sanitized.length > 0 || isRealEmpty) {
+        const cacheMap = ordersTabCacheRef.current;
+        if (sanitized.length > 0) {
           setOrders(sanitized);
           ordersHydrateRef.current = sanitized;
-          if (sanitized.length > 0) void saveOrdersCache(sanitized);
-          const cacheMap = ordersTabCacheRef.current;
+          void saveOrdersCache(sanitized);
           cacheMap.set(tabCacheKey, { orders: sanitized, meta: nextMeta, at: Date.now() });
-          if (cacheMap.size > MAX_ORDERS_TAB_CACHE) {
-            let oldestKey = '';
-            let oldestAt = Number.POSITIVE_INFINITY;
-            for (const [k, v] of cacheMap) {
-              if (v.at < oldestAt) {
-                oldestAt = v.at;
-                oldestKey = k;
-              }
-            }
-            if (oldestKey) cacheMap.delete(oldestKey);
-          }
-        } else if (ordersHydrateRef.current.length === 0) {
+        } else if (isRealEmpty) {
+          // Tab list thật sự rỗng — chỉ clear UI list, KHÔNG phá hydrate (scanner/picking fallback).
           setOrders([]);
+          cacheMap.set(tabCacheKey, { orders: [], meta: nextMeta, at: Date.now() });
+        }
+        // sanitized=[] nhưng total>0 (race/lỗi trang): không đè list/cache.
+        if (cacheMap.size > MAX_ORDERS_TAB_CACHE) {
+          let oldestKey = '';
+          let oldestAt = Number.POSITIVE_INFINITY;
+          for (const [k, v] of cacheMap) {
+            if (v.at < oldestAt) {
+              oldestAt = v.at;
+              oldestKey = k;
+            }
+          }
+          if (oldestKey) cacheMap.delete(oldestKey);
         }
       }
       setHasLoadedOrdersOnce(true);

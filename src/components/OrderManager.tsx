@@ -1885,8 +1885,10 @@ export default function OrderManager({
   }, [activeSubTab, cancelReturnTab]);
 
   // Chỉ fetch khi tab / kind / shop IDs / dateRange thật sự đổi (chuỗi primitive).
+  // Đang mở Quét mã: CẤM fetch list (tránh đè orders=[], abort Mongo, xung đột scanner-sync).
   useEffect(() => {
     if (!shopsBootReady) return;
+    if (focusScanner) return;
     if (activeSubTab === 'pending_verification') return;
     const tabFetchTabs = new Set([
       'all',
@@ -1951,7 +1953,7 @@ export default function OrderManager({
     };
     // Primitive key only — shopIds.join + dateRange + filters. CẤM object selectedShops.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ordersFetchKey, shopsBootReady]);
+  }, [ordersFetchKey, shopsBootReady, focusScanner]);
 
   // Tab sản phẩm trong đơn: Backend tự gộp 3 tab kho — KHÔNG gửi 1 status cứng.
   useEffect(() => {
@@ -3608,11 +3610,13 @@ export default function OrderManager({
     };
   }, [focusScanner, cameraRestartKey]);
 
-  // Prefetch scanner-sync 1 lần khi mở quét — HashMap local O(1), không shallow 50.
+  // Prefetch scanner-sync khi mở quét — HashMap O(1), ĐỘC LẬP list filter / shop / ĐVVC.
   useEffect(() => {
     if (!focusScanner) return;
     let cancelled = false;
-    (async () => {
+    let attempt = 0;
+
+    const run = async () => {
       const token = localStorage.getItem('admin_token') || '';
       try {
         const res = await fetch('/api/orders/scanner-sync', {
@@ -3641,18 +3645,28 @@ export default function OrderManager({
         );
       } catch (err) {
         console.warn('[Scan Prefetch] scanner-sync fail:', err);
-        if (!cancelled) {
-          setScannerSyncMap(new Map());
+        if (cancelled) return;
+        if (attempt < 1) {
+          attempt += 1;
+          await new Promise((r) => window.setTimeout(r, 800));
+          if (!cancelled) void run();
+          return;
+        }
+        // Giữ map cũ nếu đã có — không xóa trắng khi lỗi tạm thời.
+        if (scannerSyncMapRef.current.size === 0) {
           setScannerSyncCodeCount(0);
           showScanToast('Không tải được danh sách mã quét — thử mở lại màn quét', 'error');
         }
       }
-    })();
+    };
+
+    void run();
     return () => {
       cancelled = true;
     };
+    // Chỉ phụ thuộc focusScanner — CẤM shopIdsKey / filter list (tránh hủy request + map rỗng).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusScanner, shopIdsKey]);
+  }, [focusScanner]);
 
   // Search / sort
   const [selectedSort] = useState<'newest' | 'oldest' | 'highest_value'>('newest');
