@@ -214,7 +214,7 @@ interface ProductLinkingProps {
   shops: ConnectedShop[];
   onAddLog: (log: SyncLog) => void;
   onUpdateProduct: (product: Product, opts?: { save?: boolean }) => void;
-  onAddProduct?: (product: Product) => void | Promise<void>;
+  onAddProduct?: (product: Product) => Product | void | Promise<Product | void>;
   onRefreshProducts?: (opts?: { page?: number; append?: boolean; pageSize?: number; forceRefresh?: boolean }) => Promise<void>;
 }
 
@@ -828,6 +828,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   const [initAutoLink, setInitAutoLink] = useState(true);
   const [initVariants, setInitVariants] = useState<InitVariantRow[]>([]);
   const [initLoading, setInitLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
 
   const buildInitVariantsFromListing = (item: ChannelListing): InitVariantRow[] => {
@@ -1214,91 +1215,145 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     }
   };
 
-  const handleConfirmInitToWarehouse = async () => {
-    if (!initListing || !initTitle.trim()) return;
+  const linkInitListingToSavedProduct = useCallback(
+    async (listing: ChannelListing, savedProduct: Product): Promise<boolean> => {
+      const productId = String(savedProduct.id || '').trim();
+      if (!productId) return false;
 
-    const validPlatforms = ['shopee', 'tiktok', 'woocommerce'];
-    const channelList = validPlatforms.includes(initListing.platform)
-      ? [initListing.platform as 'shopee' | 'tiktok' | 'woocommerce']
-      : ['shopee'];
-
-    const createdProducts: Product[] = initVariants.map((row, idx) => {
-      const baseTitle = initTitle.trim();
-      const title = initVariants.length > 1 ? `${baseTitle} - ${row.label}` : baseTitle;
-      let shopeeId: string | undefined;
-      let shopeeItemId: string | undefined;
-      let shopeeModelId: string | undefined;
-      if (initListing.platform === 'shopee') {
-        const cid = String(initListing.channelId || '').trim();
-        const itemFromCid = (cid.match(/(\d{6,})/) || [])[1] || '';
-        shopeeItemId = String(row.itemId || initListing.itemId || itemFromCid || '').trim() || undefined;
-        shopeeModelId = String(row.modelId || '').trim() || undefined;
-        if (!shopeeModelId && cid.includes(':')) {
-          const modelPart = cid.split(':')[1];
-          shopeeModelId = (String(modelPart).match(/(\d+)/) || [])[1] || modelPart || undefined;
-        }
-        shopeeId = shopeeModelId && shopeeItemId
-          ? `${shopeeItemId}:${shopeeModelId}`
-          : shopeeItemId || cid;
-      }
-      return {
-        id: `prod-imported-${Date.now()}-${idx}`,
-        title,
-        sku: row.sku.trim() || `SP-${initListing.channelId}-${idx}`,
-        category: 'Chưa phân loại',
-        stock: Math.max(0, Math.round(row.stock)),
-        importPrice: 0,
-        sellingPrice: Math.max(0, Math.round(row.price)),
-        weight: Math.max(0, row.weight),
-        channels: channelList,
-        imageUrl: initListing.imageUrl || 'https://images.unsplash.com/photo-1608248597279-f99d160bfcbc?w=400&auto=format&fit=crop&q=60&ixlib=rb-4.0.3',
-        description: `Sản phẩm khởi tạo từ sàn ${initListing.platform.toUpperCase()} - ${initListing.shopName}. ID sàn: ${initListing.channelId}`,
-        status: row.stock > 0 ? 'active' as const : 'out_of_stock' as const,
-        shopeeId,
-        shopeeItemId,
-        shopeeModelId,
-        modelName: initVariants.length > 1 ? row.label : undefined,
-        tiktokId: initListing.platform === 'tiktok' ? initListing.channelId : undefined,
-        lastSynced: new Date().toISOString(),
+      const updatedListing: ChannelListing = {
+        ...listing,
+        status: 'success',
+        linkedProductId: productId,
+        linkedProductTitle: savedProduct.title,
+        linkedProductSku: savedProduct.sku,
+        linkedProduct: { id: productId, title: savedProduct.title, sku: savedProduct.sku },
+        sku: listing.sku || savedProduct.sku,
+        syncError: undefined,
+        linkBroken: false,
       };
-    });
 
-    // a+b) Lưu DB qua API (server refreshCache) — UI nhận inventory từ cache response.
-    for (const p of createdProducts) {
-      if (onAddProduct) await onAddProduct(p);
+      const persisted = await persistListings([updatedListing]);
+      if (!persisted?.[0]) return false;
+      mergeListingIntoState(persisted[0]);
+
+      try {
+        const token = localStorage.getItem('admin_token');
+        if (token) {
+          const patched = applyProductChannelLink(savedProduct, listing);
+          await apiFetch(`/api/products/${encodeURIComponent(productId)}`, {
+            method: 'PATCH',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              channels: patched.channels,
+              shopeeId: patched.shopeeId,
+              shopeeItemId: patched.shopeeItemId,
+              shopeeModelId: patched.shopeeModelId,
+              tiktokId: patched.tiktokId,
+              wooId: patched.wooId,
+            }),
+          });
+        }
+      } catch (err) {
+        console.warn('[ProductLinking] patch channel link after init failed', err);
+      }
+
+      return true;
+    },
+    [mergeListingIntoState, persistListings]
+  );
+
+  const handleConfirmInitToWarehouse = async () => {
+    if (!initListing || !initTitle.trim() || isSubmitting) return;
+
+    setIsSubmitting(true);
+    try {
+      const validPlatforms = ['shopee', 'tiktok', 'woocommerce'];
+      const channelList = validPlatforms.includes(initListing.platform)
+        ? [initListing.platform as 'shopee' | 'tiktok' | 'woocommerce']
+        : ['shopee'];
+
+      const createdProducts: Product[] = initVariants.map((row, idx) => {
+        const baseTitle = initTitle.trim();
+        const title = initVariants.length > 1 ? `${baseTitle} - ${row.label}` : baseTitle;
+        let shopeeId: string | undefined;
+        let shopeeItemId: string | undefined;
+        let shopeeModelId: string | undefined;
+        if (initListing.platform === 'shopee') {
+          const cid = String(initListing.channelId || '').trim();
+          const itemFromCid = (cid.match(/(\d{6,})/) || [])[1] || '';
+          shopeeItemId = String(row.itemId || initListing.itemId || itemFromCid || '').trim() || undefined;
+          shopeeModelId = String(row.modelId || '').trim() || undefined;
+          if (!shopeeModelId && cid.includes(':')) {
+            const modelPart = cid.split(':')[1];
+            shopeeModelId = (String(modelPart).match(/(\d+)/) || [])[1] || modelPart || undefined;
+          }
+          shopeeId = shopeeModelId && shopeeItemId
+            ? `${shopeeItemId}:${shopeeModelId}`
+            : shopeeItemId || cid;
+        }
+        return {
+          id: `prod-imported-${Date.now()}-${idx}`,
+          title,
+          sku: row.sku.trim() || `SP-${initListing.channelId}-${idx}`,
+          category: 'Chưa phân loại',
+          stock: Math.max(0, Math.round(row.stock)),
+          importPrice: 0,
+          sellingPrice: Math.max(0, Math.round(row.price)),
+          weight: Math.max(0, row.weight),
+          channels: channelList,
+          imageUrl: initListing.imageUrl || 'https://images.unsplash.com/photo-1608248597279-f99d160bfcbc?w=400&auto=format&fit=crop&q=60&ixlib=rb-4.0.3',
+          description: `Sản phẩm khởi tạo từ sàn ${initListing.platform.toUpperCase()} - ${initListing.shopName}. ID sàn: ${initListing.channelId}`,
+          status: row.stock > 0 ? 'active' as const : 'out_of_stock' as const,
+          shopeeId,
+          shopeeItemId,
+          shopeeModelId,
+          modelName: initVariants.length > 1 ? row.label : undefined,
+          tiktokId: initListing.platform === 'tiktok' ? initListing.channelId : undefined,
+          lastSynced: new Date().toISOString(),
+        };
+      });
+
+      // Bước 1: Lưu từng phiên bản vào Kho gốc — đợi API trả về productId thật từ DB.
+      const savedProducts: Product[] = [];
+      for (const p of createdProducts) {
+        if (onAddProduct) {
+          const saved = await onAddProduct(p);
+          savedProducts.push(saved?.id ? saved : p);
+        } else {
+          savedProducts.push(p);
+        }
+      }
+
+      // Bước 2: Chỉ sau khi lưu Kho thành công mới gọi liên kết mapping (tránh race condition).
+      if (initAutoLink && savedProducts.length > 0) {
+        const primary = savedProducts[0];
+        const linked = await linkInitListingToSavedProduct(initListing, primary);
+        if (!linked) {
+          showToast('Đã tạo sản phẩm về Kho nhưng liên kết tự động thất bại. Vui lòng liên kết thủ công.');
+        }
+      }
+
+      showToast(`🎉 Đã tạo ${createdProducts.length} phiên bản sản phẩm "${initTitle}" về Kho gốc!`);
+      void loadMasterCatalog();
+      onAddLog({
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        channel: (initListing.platform === 'lazada' ? 'shopee' : initListing.platform) as 'shopee' | 'tiktok' | 'woocommerce',
+        type: 'product_sync',
+        status: 'success',
+        message: `Khởi tạo sản phẩm sàn [ID: ${initListing.channelId}] về Kho gốc (${createdProducts.length} phiên bản).`,
+      });
+
+      setInitListing(null);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      showToast(`Khởi tạo thất bại: ${message}`);
+    } finally {
+      setIsSubmitting(false);
     }
-
-    if (initAutoLink) {
-      const primary = createdProducts[0];
-      saveListings((prev) =>
-        prev.map((listing) =>
-          listing.id === initListing.id
-            ? {
-                ...listing,
-                status: 'success' as const,
-                linkedProductId: primary.id,
-                linkedProductTitle: primary.title,
-                linkedProductSku: primary.sku,
-                linkedProduct: { id: primary.id, title: primary.title, sku: primary.sku },
-                sku: primary.sku,
-              }
-            : listing
-        )
-      );
-    }
-
-    showToast(`🎉 Đã tạo ${createdProducts.length} phiên bản sản phẩm "${initTitle}" về Kho gốc!`);
-    void loadMasterCatalog();
-    onAddLog({
-      id: `log-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      channel: (initListing.platform === 'lazada' ? 'shopee' : initListing.platform) as 'shopee' | 'tiktok' | 'woocommerce',
-      type: 'product_sync',
-      status: 'success',
-      message: `Khởi tạo sản phẩm sàn [ID: ${initListing.channelId}] về Kho gốc (${createdProducts.length} phiên bản).`,
-    });
-
-    setInitListing(null);
   };
 
   const handleStopAutoLink = () => {
@@ -2129,8 +2184,9 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
               </h3>
               <button
                 type="button"
-                onClick={() => setInitListing(null)}
-                className="p-1 hover:bg-gray-200 rounded-full transition-all text-gray-400 hover:text-gray-700"
+                onClick={() => !isSubmitting && setInitListing(null)}
+                disabled={isSubmitting}
+                className="p-1 hover:bg-gray-200 rounded-full transition-all text-gray-400 hover:text-gray-700 disabled:opacity-40"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -2257,18 +2313,28 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
               <button
                 type="button"
                 onClick={() => setInitListing(null)}
-                className="px-5 py-2.5 bg-white hover:bg-gray-100 border border-gray-200 text-gray-700 font-extrabold text-xs rounded-xl"
+                disabled={isSubmitting}
+                className="px-5 py-2.5 bg-white hover:bg-gray-100 border border-gray-200 text-gray-700 font-extrabold text-xs rounded-xl disabled:opacity-50"
               >
                 Hủy
               </button>
               <button
                 type="button"
-                onClick={handleConfirmInitToWarehouse}
-                disabled={!initTitle.trim() || initLoading || initVariants.length === 0}
+                onClick={() => void handleConfirmInitToWarehouse()}
+                disabled={!initTitle.trim() || initLoading || initVariants.length === 0 || isSubmitting}
                 className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white font-extrabold text-xs rounded-xl flex items-center gap-1.5"
               >
-                <ArrowDownToLine className="w-3.5 h-3.5" />
-                Khởi tạo về Kho
+                {isSubmitting ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    Đang xử lý…
+                  </>
+                ) : (
+                  <>
+                    <ArrowDownToLine className="w-3.5 h-3.5" />
+                    Khởi tạo về Kho
+                  </>
+                )}
               </button>
             </div>
           </div>

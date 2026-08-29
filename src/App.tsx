@@ -1453,7 +1453,7 @@ export default function App() {
   };
 
   // 3. Actions handlers
-  const handleAddProduct = async (prod: Product) => {
+  const handleAddProduct = async (prod: Product): Promise<Product> => {
     const token = localStorage.getItem('admin_token');
     if (token) {
       try {
@@ -1512,6 +1512,7 @@ export default function App() {
       status: 'success',
       message: `Đã khởi tạo và đăng thành công sản phẩm mới [${prod.title}] lên ${channelsLabel}`,
     });
+    return prod;
   };
 
   const handleUpdateProduct = async (updated: Product, opts?: { save?: boolean }) => {
