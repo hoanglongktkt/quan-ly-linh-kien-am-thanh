@@ -1437,8 +1437,25 @@ export async function scannerSync(req, res) {
         code_count: 0,
       });
     }
+    const modeRaw = String(req.query.mode || "handover").trim().toLowerCase();
+    if (modeRaw !== "handover" && modeRaw !== "return") {
+      return res.status(400).json({
+        success: false,
+        error: "mode phải là handover hoặc return",
+        orders: [],
+        total: 0,
+        code_count: 0,
+      });
+    }
+    const lookbackDays =
+      modeRaw === "return"
+        ? Math.max(1, Math.min(30, Number(req.query.lookbackDays) || 30))
+        : undefined;
     const t0 = Date.now();
-    const orders = await listScannerSyncRowsFromStore();
+    const orders = await listScannerSyncRowsFromStore({
+      mode: modeRaw,
+      lookbackDays,
+    });
     let codeCount = 0;
     for (const row of orders) {
       if (row.tracking_code) codeCount += 1;
@@ -1446,10 +1463,12 @@ export async function scannerSync(req, res) {
     }
     const ms = Date.now() - t0;
     console.log(
-      `[GET /api/orders/scanner-sync] rows=${orders.length} codes=${codeCount} ${ms}ms`,
+      `[GET /api/orders/scanner-sync] mode=${modeRaw} rows=${orders.length} codes=${codeCount} ${ms}ms`,
     );
     return res.json({
       success: true,
+      mode: modeRaw,
+      lookback_days: lookbackDays ?? null,
       orders,
       total: orders.length,
       code_count: codeCount,

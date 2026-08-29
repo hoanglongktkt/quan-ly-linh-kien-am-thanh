@@ -82433,21 +82433,41 @@ function deriveScannerSyncStatus(d) {
   if (st === "processed" || raw === "PROCESSED") return "processed";
   return st || "processed";
 }
-async function listScannerSyncRowsFromStore() {
-  if (!isMongoReady()) return [];
-  requireMongo();
-  const filter2 = {
+function buildScannerSyncLookbackFilter(lookbackDays) {
+  const days = Math.max(1, Math.min(30, Math.floor(Number(lookbackDays) || 30)));
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1e3);
+  const sinceIso = since.toISOString();
+  return {
     $or: [
-      orderTabFilter("unprocessed"),
-      orderTabFilter("processed"),
-      orderTabFilter("pending_confirm"),
-      orderTabFilter("handed_over_carrier"),
-      orderTabFilter("shipping"),
-      orderTabFilter("return_requests"),
-      orderTabFilter("cancelled"),
-      orderTabFilter("cancel_returns")
+      { create_time: { $gte: since } },
+      { last_synced_at: { $gte: since } },
+      { last_shopee_update_at: { $gte: since } },
+      { updatedAt: { $gte: since } },
+      { "data.date": { $gte: sinceIso } }
     ]
   };
+}
+async function listScannerSyncRowsFromStore(opts) {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const mode = opts?.mode === "return" ? "return" : "handover";
+  let filter2;
+  let limit = 500;
+  if (mode === "handover") {
+    filter2 = {
+      $or: [orderTabFilter("processed"), orderTabFilter("cancelled")]
+    };
+    limit = 500;
+  } else {
+    const lookbackDays = Math.max(1, Math.min(30, Number(opts?.lookbackDays) || 30));
+    filter2 = {
+      $and: [
+        orderTabFilter("cancel_returns"),
+        buildScannerSyncLookbackFilter(lookbackDays)
+      ]
+    };
+    limit = 1e3;
+  }
   const docs = await OrderModel.find(filter2).select({
     _id: 1,
     orderSn: 1,
@@ -82476,7 +82496,7 @@ async function listScannerSyncRowsFromStore() {
     "data.shopee_cancel_return_kind": 1,
     "data.is_rts": 1,
     return_sn: 1
-  }).limit(2e4).lean().maxTimeMS(15e3);
+  }).limit(limit).lean().maxTimeMS(12e3);
   const rows = [];
   for (const d of docs) {
     const data = d?.data && typeof d.data === "object" ? d.data : {};
@@ -119790,8 +119810,22 @@ async function scannerSync(req, res) {
         code_count: 0
       });
     }
+    const modeRaw = String(req.query.mode || "handover").trim().toLowerCase();
+    if (modeRaw !== "handover" && modeRaw !== "return") {
+      return res.status(400).json({
+        success: false,
+        error: "mode ph\u1EA3i l\xE0 handover ho\u1EB7c return",
+        orders: [],
+        total: 0,
+        code_count: 0
+      });
+    }
+    const lookbackDays = modeRaw === "return" ? Math.max(1, Math.min(30, Number(req.query.lookbackDays) || 30)) : void 0;
     const t0 = Date.now();
-    const orders = await listScannerSyncRowsFromStore();
+    const orders = await listScannerSyncRowsFromStore({
+      mode: modeRaw,
+      lookbackDays
+    });
     let codeCount = 0;
     for (const row of orders) {
       if (row.tracking_code) codeCount += 1;
@@ -119799,10 +119833,12 @@ async function scannerSync(req, res) {
     }
     const ms = Date.now() - t0;
     console.log(
-      `[GET /api/orders/scanner-sync] rows=${orders.length} codes=${codeCount} ${ms}ms`
+      `[GET /api/orders/scanner-sync] mode=${modeRaw} rows=${orders.length} codes=${codeCount} ${ms}ms`
     );
     return res.json({
       success: true,
+      mode: modeRaw,
+      lookback_days: lookbackDays ?? null,
       orders,
       total: orders.length,
       code_count: codeCount,

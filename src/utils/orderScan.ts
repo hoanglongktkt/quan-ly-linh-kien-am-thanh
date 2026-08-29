@@ -1,6 +1,8 @@
 import type { Order } from '../types';
 import { isShopeeInternalTrackingCode } from './orderTracking';
 
+export type ScannerMode = 'handover' | 'return';
+
 /** Normalize for comparison: uppercase, strip common separators. */
 export function normalizeOrderScanKey(raw: string): string {
   return String(raw || '')

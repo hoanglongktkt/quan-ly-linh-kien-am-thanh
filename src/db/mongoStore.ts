@@ -8414,26 +8414,56 @@ function deriveScannerSyncStatus(d: any): string {
   return st || "processed";
 }
 
+export type ScannerSyncMode = "handover" | "return";
+
+function buildScannerSyncLookbackFilter(lookbackDays: number): Record<string, unknown> {
+  const days = Math.max(1, Math.min(30, Math.floor(Number(lookbackDays) || 30)));
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const sinceIso = since.toISOString();
+  return {
+    $or: [
+      { create_time: { $gte: since } },
+      { last_synced_at: { $gte: since } },
+      { last_shopee_update_at: { $gte: since } },
+      { updatedAt: { $gte: since } },
+      { "data.date": { $gte: sinceIso } },
+    ],
+  };
+}
+
 /**
- * Sync siêu tốc cho Barcode Scanner — chỉ 4 field, không hydrate items.
- * Pool: Đã xử lý + Đã giao ĐVVC + Đang giao + YCTH + Đơn hủy.
+ * Sync siêu tốc cho Barcode Scanner — chỉ field tối thiểu, không hydrate items.
+ * mode=handover: Chờ lấy (đã xử lý) + đơn hủy (~100).
+ * mode=return: Hủy / RTS / Trả hàng hoàn tiền 30 ngày (<500).
  */
-export async function listScannerSyncRowsFromStore(): Promise<ScannerSyncRow[]> {
+export async function listScannerSyncRowsFromStore(opts?: {
+  mode?: ScannerSyncMode;
+  lookbackDays?: number;
+}): Promise<ScannerSyncRow[]> {
   if (!isMongoReady()) return [];
   requireMongo();
 
-  const filter = {
-    $or: [
-      orderTabFilter("unprocessed"),
-      orderTabFilter("processed"),
-      orderTabFilter("pending_confirm"),
-      orderTabFilter("handed_over_carrier"),
-      orderTabFilter("shipping"),
-      orderTabFilter("return_requests"),
-      orderTabFilter("cancelled"),
-      orderTabFilter("cancel_returns"),
-    ],
-  };
+  const mode: ScannerSyncMode =
+    opts?.mode === "return" ? "return" : "handover";
+
+  let filter: Record<string, unknown>;
+  let limit = 500;
+
+  if (mode === "handover") {
+    filter = {
+      $or: [orderTabFilter("processed"), orderTabFilter("cancelled")],
+    };
+    limit = 500;
+  } else {
+    const lookbackDays = Math.max(1, Math.min(30, Number(opts?.lookbackDays) || 30));
+    filter = {
+      $and: [
+        orderTabFilter("cancel_returns"),
+        buildScannerSyncLookbackFilter(lookbackDays),
+      ],
+    };
+    limit = 1000;
+  }
 
   const docs = await OrderModel.find(filter)
     .select({
@@ -8465,9 +8495,9 @@ export async function listScannerSyncRowsFromStore(): Promise<ScannerSyncRow[]> 
       "data.is_rts": 1,
       return_sn: 1,
     })
-    .limit(20000)
+    .limit(limit)
     .lean()
-    .maxTimeMS(15_000);
+    .maxTimeMS(12_000);
 
   const rows: ScannerSyncRow[] = [];
   for (const d of docs as any[]) {

@@ -23,6 +23,7 @@ import {
   putOrderIntoScannerSyncMap,
   ScanLookupError,
   type ScannerSyncEntry,
+  type ScannerMode,
 } from '../utils/orderScan';
 import {
   isOrderHandedOverToCarrier,
@@ -2044,6 +2045,11 @@ export default function OrderManager({
   const [isFlushingQueue, setIsFlushingQueue] = useState(false);
   const [flushingDbCount, setFlushingDbCount] = useState(0);
   const [isVerifyingScan, setIsVerifyingScan] = useState(false);
+  /** Chế độ quét: null = màn chọn mode, handover | return = đang quét. */
+  const [scannerMode, setScannerMode] = useState<ScannerMode | null>(null);
+  const [scannerSyncLoading, setScannerSyncLoading] = useState(false);
+  const [scannerSyncReady, setScannerSyncReady] = useState(false);
+  const scannerModeRef = React.useRef<ScannerMode | null>(null);
 
   const ordersRef = React.useRef(orders);
   type OptimisticOrderMutation = {
@@ -2073,7 +2079,10 @@ export default function OrderManager({
   /** Instance scanner sống — dùng để await stop/clear trước khi unmount. */
   const liveScannerRef = React.useRef<LiveQrScannerHandle | null>(null);
   const isTearingDownScannerRef = React.useRef(false);
-  const orderScanIndex = useMemo(() => buildOrderScanIndex(orders), [orders]);
+  const orderScanIndex = useMemo(
+    () => (focusScanner ? buildOrderScanIndex([]) : buildOrderScanIndex(orders)),
+    [focusScanner, orders],
+  );
   /** Hash map mã VĐ từ /api/orders/scanner-sync — lookup O(1), không phụ thuộc pool orders UI. */
   const [scannerSyncMap, setScannerSyncMap] = useState<Map<string, ScannerSyncEntry>>(
     () => new Map(),
@@ -2082,7 +2091,12 @@ export default function OrderManager({
   const [scannerSyncCodeCount, setScannerSyncCodeCount] = useState(0);
   /** Tổng mã VĐ đã tải local — UI "Đã dò x/{n}". */
   const continuousScanTarget = scannerSyncCodeCount;
-  const totalVerifiedScans = daXuatKhoList.length + donHuyList.length + daNhanHoanList.length;
+  const totalVerifiedScans =
+    scannerMode === 'handover'
+      ? daXuatKhoList.length + donHuyList.length
+      : scannerMode === 'return'
+        ? daNhanHoanList.length
+        : daXuatKhoList.length + donHuyList.length + daNhanHoanList.length;
 
   useEffect(() => {
     const now = Date.now();
@@ -2138,6 +2152,10 @@ export default function OrderManager({
   }, [orders, onUpdateOrders]);
 
   useEffect(() => {
+    scannerModeRef.current = scannerMode;
+  }, [scannerMode]);
+
+  useEffect(() => {
     scannerSyncMapRef.current = scannerSyncMap;
   }, [scannerSyncMap]);
 
@@ -2156,6 +2174,9 @@ export default function OrderManager({
     const wasFocused = prevFocusScannerRef.current;
     prevFocusScannerRef.current = focusScanner;
     if (wasFocused && !focusScanner) {
+      setScannerMode(null);
+      setScannerSyncReady(false);
+      setScannerSyncLoading(false);
       const expectedTab = activeSubTabRef.current;
       void onFetchOrdersRef.current?.({
         silent: true,
@@ -2176,6 +2197,49 @@ export default function OrderManager({
     setScanToast({ text, type });
     setTimeout(() => setScanToast(null), 2800);
   };
+
+  const clearScannerSessionData = React.useCallback(() => {
+    daXuatKhoListRef.current = [];
+    donHuyListRef.current = [];
+    daNhanHoanListRef.current = [];
+    setDaXuatKhoList([]);
+    setDonHuyList([]);
+    setDaNhanHoanList([]);
+    setScanStatModal(null);
+    pendingScanQueueRef.current = [];
+    isScanBusyRef.current = false;
+    lastQrScanRef.current = { key: '', at: 0 };
+    scannerSyncMapRef.current = new Map();
+    setScannerSyncMap(new Map());
+    setScannerSyncCodeCount(0);
+    setScannerSyncReady(false);
+    setScannerSyncLoading(false);
+  }, []);
+
+  const exitScannerModeToPicker = React.useCallback(async () => {
+    stopTapToFocusAssist(CAMERA_TAP_LAYER_ID);
+    const handle = liveScannerRef.current;
+    liveScannerRef.current = null;
+    await handle?.stop().catch(() => undefined);
+    clearScannerSessionData();
+    setScannerMode(null);
+    setCameraError('');
+    setCameraScanSuccess(false);
+    setCameraScanError(false);
+    setCameraScanResult('Chọn chế độ quét để bắt đầu');
+  }, [clearScannerSessionData]);
+
+  const enterScannerMode = React.useCallback(
+    (mode: ScannerMode) => {
+      clearScannerSessionData();
+      setScannerMode(mode);
+      setScannerSyncLoading(true);
+      setScannerSyncReady(false);
+      setCameraError('');
+      setCameraScanResult('Đang tải danh sách mã quét...');
+    },
+    [clearScannerSessionData],
+  );
 
   /** `all` | `printed` | `unprinted` — lọc theo isPrinted từ DB. */
   const [printStatusFilter, setPrintStatusFilter] = useState<'all' | 'printed' | 'unprinted'>('all');
@@ -3164,12 +3228,11 @@ export default function OrderManager({
 
       lastQrScanRef.current = { key, at: now };
 
-      // Local HashMap O(1) từ scanner-sync — miss thì BẮT BUỘC fallback HTTP lookup.
+      // Local HashMap O(1) từ scanner-sync — miss thì fallback HTTP lookup (1 mã).
       const syncHit = lookupScannerSyncMap(scannerSyncMapRef.current, trimmed);
       let localOrder: Order | null = null;
       if (syncHit) {
-        const fromPool = findOrderByScanPayload(ordersRef.current, trimmed, orderScanIndex);
-        localOrder = fromPool || scannerSyncEntryToOrder(syncHit);
+        localOrder = scannerSyncEntryToOrder(syncHit);
         if (syncHit.matchedReturn && localOrder) {
           localOrder = {
             ...localOrder,
@@ -3185,18 +3248,14 @@ export default function OrderManager({
 
       isScanBusyRef.current = true;
       setIsVerifyingScan(true);
+      const activeMode = scannerModeRef.current;
 
       try {
         if (!localOrder) {
-          setCameraScanResult(`Đang tra cứu mã hoàn: ${trimmed}...`);
+          setCameraScanResult(`Đang tra cứu mã: ${trimmed}...`);
           const token = localStorage.getItem('admin_token') || '';
           try {
-            const remote = await lookupOrderByScanCode(
-              trimmed,
-              ordersRef.current,
-              token,
-              orderScanIndex,
-            );
+            const remote = await lookupOrderByScanCode(trimmed, [], token);
             if (remote) {
               const scannedIsReturn =
                 scannedMatchesReturnWaybill(remote, trimmed) ||
@@ -3222,7 +3281,6 @@ export default function OrderManager({
                 trimmed,
               );
               scannerSyncMapRef.current = nextMap;
-              setScannerSyncMap(nextMap);
             }
           } catch (lookupErr) {
             console.warn(
@@ -3232,8 +3290,8 @@ export default function OrderManager({
             playScanSound('error');
             vibrateScan('error');
             flashViewfinder('error', 400);
-            setCameraScanResult('Lỗi kết nối máy chủ khi tìm mã hoàn');
-            showScanToast('Lỗi kết nối máy chủ khi tìm mã hoàn', 'error');
+            setCameraScanResult('Lỗi kết nối máy chủ khi tìm mã');
+            showScanToast('Lỗi kết nối máy chủ khi tìm mã', 'error');
             return;
           }
         }
@@ -3255,20 +3313,6 @@ export default function OrderManager({
         setCameraScanResult(`Đang phân loại: ${trimmed}...`);
         const order = localOrder;
 
-        const idx = ordersRef.current.findIndex(
-          (o) => o.id === order.id || o.orderSn === order.orderSn,
-        );
-        if (idx >= 0) {
-          const merged = ordersRef.current.map((o, i) => (i === idx ? { ...o, ...order } : o));
-          ordersRef.current = merged;
-          onUpdateOrders(merged, { persist: false });
-        } else {
-          const merged = [order, ...ordersRef.current];
-          ordersRef.current = merged;
-          onUpdateOrders(merged, { persist: false });
-        }
-
-        // Phân loại theo cancel/return kind + badge — gồm failed_delivery / hoàn / hủy.
         const badge = resolveOrderBadgeStatus(order);
         const raw = getShopeeOrderRawStatus(order);
         const cancelReturnKind = resolveCancelReturnKind(order);
@@ -3277,7 +3321,6 @@ export default function OrderManager({
         const isReturnBucket = classified.isReturnBucket || matchedReturnWaybill;
         const isCancelBucket = !isReturnBucket && classified.isCancelBucket;
 
-        // Đang giao (SHIPPED) / đã bàn giao thuần — không ghi đè nhánh Hủy/RTS/Hoàn.
         const isShippingOnly =
           !isReturnBucket &&
           !isCancelBucket &&
@@ -3293,36 +3336,6 @@ export default function OrderManager({
             order.status === 'shipping' ||
             raw === 'SHIPPED' ||
             raw === 'TO_CONFIRM_RECEIVE');
-
-        // Chặn trùng DB — HANDED_OVER + hủy/hoàn đã được nới trong isOrderAlreadyScanProcessed.
-        if (isOrderAlreadyScanProcessed(order) && !isReturnBucket && !isCancelBucket) {
-          const reason = isShippingOnly
-            ? `Đơn #${order.orderSn} đang giao / đã bàn giao ĐVVC`
-            : getScanProcessedReason(order);
-          playScanSound('warning');
-          vibrateScan('warning');
-          flashViewfinder('error', 500);
-          setCameraScanResult(`⚠ ${reason}`);
-          showScanToast(reason, 'error');
-          return;
-        }
-
-        if (isShippingOnly && !isEligibleForHandOverToCarrier(order)) {
-          const waybillShip = getOrderWaybillCode(order);
-          playScanSound('warning');
-          vibrateScan('warning');
-          flashViewfinder('error', 500);
-          setCameraScanResult(
-            waybillShip
-              ? `Đang giao · VĐ ${waybillShip} · #${order.orderSn}`
-              : `Đơn #${order.orderSn} đang giao`,
-          );
-          showScanToast(
-            `Đơn #${order.orderSn} đang giao — không cần xuất kho lại`,
-            'error',
-          );
-          return;
-        }
 
         const waybill =
           (matchedReturnWaybill && order.return_tracking_no) ||
@@ -3351,109 +3364,205 @@ export default function OrderManager({
           at: now,
         };
 
-        // Ưu tiên hủy/hoàn trước xuất kho — đơn từng bàn giao rồi bị hủy/hoàn.
-        if (isReturnBucket) {
-          playScanSound('success');
-          vibrateScan('success');
-          flashViewfinder('success', 500);
-          setDaNhanHoanList((prev) => {
-            const next = [item, ...prev];
-            daNhanHoanListRef.current = next;
-            return next;
-          });
-          // Continuous scan: chỉ ghi list cục bộ — commit Mongo 1 lần khi bấm Kết thúc.
-          setCameraScanResult(
-            waybill
-              ? `✓ YCTH · VĐ hoàn ${waybill} · #${order.orderSn}`
-              : `✓ Yêu cầu trả hàng #${order.orderSn}`,
-          );
-          showScanToast(
-            waybill
-              ? `Yêu cầu trả hàng #${order.orderSn} — mã VĐ hoàn: ${waybill}`
-              : `Đơn hoàn #${order.orderSn} — đã ghi nhận vào Yêu cầu trả hàng`,
-            'success',
-          );
-          return;
-        }
+        if (activeMode === 'handover') {
+          if (isReturnBucket) {
+            playScanSound('error');
+            vibrateScan('error');
+            flashViewfinder('error', 500);
+            setCameraScanResult(`Đơn hoàn #${order.orderSn} — chuyển sang chế độ Quét hàng hoàn`);
+            showScanToast('Đơn hoàn/trả — dùng chế độ Quét hàng hoàn', 'error');
+            return;
+          }
 
-        if (isCancelBucket) {
-          const isFailedDelivery = cancelReturnKind === 'failed_delivery';
-          playScanSound('warning');
-          vibrateScan('warning');
-          flashViewfinder('error', 500);
-          setDonHuyList((prev) => {
-            const next = [item, ...prev];
-            donHuyListRef.current = next;
-            return next;
-          });
-          // Continuous scan: chỉ ghi list cục bộ — commit Mongo 1 lần khi bấm Kết thúc.
-          setCameraScanResult(
-            waybill
-              ? isFailedDelivery
-                ? `⚠ GIAO THẤT BẠI · VĐ ${waybill} · #${order.orderSn}`
-                : `⚠ ĐƠN HỦY · VĐ ${waybill} · #${order.orderSn}`
-              : isFailedDelivery
-                ? `⚠ GIAO THẤT BẠI #${order.orderSn}`
-                : `⚠ ĐƠN HỦY #${order.orderSn} — loại kiện này ra!`,
-          );
-          showScanToast(
-            isFailedDelivery
-              ? `Giao không thành công #${order.orderSn} — đã ghi nhận nhận kiện`
-              : `CẢNH BÁO: Đơn hủy #${order.orderSn} — hãy loại kiện hàng này`,
-            'error',
-          );
-          return;
-        }
+          if (isCancelBucket) {
+            playScanSound('warning');
+            vibrateScan('warning');
+            flashViewfinder('error', 500);
+            setDonHuyList((prev) => {
+              const next = [item, ...prev];
+              donHuyListRef.current = next;
+              return next;
+            });
+            const isFailedDelivery = cancelReturnKind === 'failed_delivery';
+            setCameraScanResult(
+              waybill
+                ? isFailedDelivery
+                  ? `⚠ GIAO THẤT BẠI · VĐ ${waybill} · #${order.orderSn}`
+                  : `⚠ ĐƠN HỦY · VĐ ${waybill} · #${order.orderSn}`
+                : isFailedDelivery
+                  ? `⚠ GIAO THẤT BẠI #${order.orderSn}`
+                  : `⚠ ĐƠN HỦY #${order.orderSn} — loại kiện này ra!`,
+            );
+            showScanToast(
+              isFailedDelivery
+                ? `Giao không thành công #${order.orderSn} — không bàn giao shipper`
+                : `CẢNH BÁO: Đơn hủy #${order.orderSn} — hãy loại kiện hàng này`,
+              'error',
+            );
+            return;
+          }
 
-        if (isEligibleForHandOverToCarrier(order)) {
-          playScanSound('success');
-          vibrateScan('success');
-          flashViewfinder('success', 500);
-          setDaXuatKhoList((prev) => {
-            const next = [item, ...prev];
-            daXuatKhoListRef.current = next;
-            return next;
-          });
-          // Continuous scan: chỉ ghi list cục bộ — commit Mongo 1 lần khi bấm Kết thúc.
-          setCameraScanResult(
-            waybill
-              ? `✓ Xuất kho · VĐ ${waybill} · #${order.orderSn}`
-              : `✓ Xuất kho #${order.orderSn}`,
-          );
-          showScanToast(
-            waybill
-              ? `Xuất kho #${order.orderSn} — mã VĐ: ${waybill}`
-              : `Đơn chờ lấy hàng (đã xử lý) #${order.orderSn} — đã ghi nhận xuất kho`,
-            'success',
-          );
-          return;
-        }
+          if (isOrderAlreadyScanProcessed(order)) {
+            const reason = isShippingOnly
+              ? `Đơn #${order.orderSn} đang giao / đã bàn giao ĐVVC`
+              : getScanProcessedReason(order);
+            playScanSound('warning');
+            vibrateScan('warning');
+            flashViewfinder('error', 500);
+            setCameraScanResult(`⚠ ${reason}`);
+            showScanToast(reason, 'error');
+            return;
+          }
 
-        if (badge === 'unprocessed' || order.status === 'unprocessed') {
+          if (isShippingOnly && !isEligibleForHandOverToCarrier(order)) {
+            playScanSound('warning');
+            vibrateScan('warning');
+            flashViewfinder('error', 500);
+            setCameraScanResult(
+              waybill
+                ? `Đang giao · VĐ ${waybill} · #${order.orderSn}`
+                : `Đơn #${order.orderSn} đang giao`,
+            );
+            showScanToast(`Đơn #${order.orderSn} đang giao — không cần xuất kho lại`, 'error');
+            return;
+          }
+
+          if (isEligibleForHandOverToCarrier(order)) {
+            playScanSound('success');
+            vibrateScan('success');
+            flashViewfinder('success', 500);
+            setDaXuatKhoList((prev) => {
+              const next = [item, ...prev];
+              daXuatKhoListRef.current = next;
+              return next;
+            });
+            setCameraScanResult(
+              waybill
+                ? `✓ Xuất kho · VĐ ${waybill} · #${order.orderSn}`
+                : `✓ Xuất kho #${order.orderSn}`,
+            );
+            showScanToast(
+              waybill
+                ? `Xuất kho #${order.orderSn} — mã VĐ: ${waybill}`
+                : `Đơn chờ lấy hàng (đã xử lý) #${order.orderSn} — đã ghi nhận xuất kho`,
+              'success',
+            );
+            return;
+          }
+
+          if (badge === 'unprocessed' || order.status === 'unprocessed') {
+            playScanSound('error');
+            vibrateScan('error');
+            flashViewfinder('error', 500);
+            setCameraScanResult(`Đơn #${order.orderSn} còn Chưa xử lý — không xuất kho ĐVVC`);
+            showScanToast('Chỉ quét đơn Chờ lấy hàng (đã xử lý) hoặc đơn hủy', 'error');
+            return;
+          }
+
+          const reason = getHandOverIneligibleReason(order);
           playScanSound('error');
           vibrateScan('error');
           flashViewfinder('error', 500);
-          setCameraScanResult(`Đơn #${order.orderSn} còn Chưa xử lý — không xuất kho ĐVVC`);
-          showScanToast(
-            `Chỉ quét đơn ở Chờ lấy hàng (đã xử lý), Đơn hủy hoặc Đơn hoàn`,
-            'error',
+          setCameraScanResult(
+            reason
+              ? `Đơn #${order.orderSn} — ${reason}`
+              : `Đơn #${order.orderSn} — trạng thái không xử lý được`,
           );
+          showScanToast(reason || `Đơn #${order.orderSn} không thuộc pool bàn giao`, 'error');
           return;
         }
 
-        const reason = getHandOverIneligibleReason(order);
+        if (activeMode === 'return') {
+          if (
+            isEligibleForHandOverToCarrier(order) &&
+            !isReturnBucket &&
+            !isCancelBucket
+          ) {
+            playScanSound('error');
+            vibrateScan('error');
+            flashViewfinder('error', 500);
+            setCameraScanResult(
+              `Đơn chờ bàn giao #${order.orderSn} — chuyển sang chế độ Bàn giao đơn`,
+            );
+            showScanToast('Đơn chờ xuất kho — dùng chế độ Bàn giao đơn', 'error');
+            return;
+          }
+
+          if (isReturnBucket) {
+            playScanSound('success');
+            vibrateScan('success');
+            flashViewfinder('success', 500);
+            setDaNhanHoanList((prev) => {
+              const next = [item, ...prev];
+              daNhanHoanListRef.current = next;
+              return next;
+            });
+            setCameraScanResult(
+              waybill
+                ? `✓ YCTH · VĐ hoàn ${waybill} · #${order.orderSn}`
+                : `✓ Yêu cầu trả hàng #${order.orderSn}`,
+            );
+            showScanToast(
+              waybill
+                ? `Yêu cầu trả hàng #${order.orderSn} — mã VĐ hoàn: ${waybill}`
+                : `Đơn hoàn #${order.orderSn} — đã ghi nhận nhận kiện`,
+              'success',
+            );
+            return;
+          }
+
+          if (isCancelBucket) {
+            const isFailedDelivery = cancelReturnKind === 'failed_delivery';
+            if (isFailedDelivery || cancelReturnKind === 'cancelled') {
+              playScanSound('success');
+              vibrateScan('success');
+              flashViewfinder('success', 500);
+              setDaNhanHoanList((prev) => {
+                const next = [item, ...prev];
+                daNhanHoanListRef.current = next;
+                return next;
+              });
+              setCameraScanResult(
+                waybill
+                  ? isFailedDelivery
+                    ? `✓ Giao thất bại · VĐ ${waybill} · #${order.orderSn}`
+                    : `✓ Nhận kiện hủy · VĐ ${waybill} · #${order.orderSn}`
+                  : isFailedDelivery
+                    ? `✓ Giao thất bại #${order.orderSn}`
+                    : `✓ Nhận kiện hủy #${order.orderSn}`,
+              );
+              showScanToast(
+                isFailedDelivery
+                  ? `Giao không thành công #${order.orderSn} — đã ghi nhận nhận kiện`
+                  : `Đơn hủy #${order.orderSn} — đã ghi nhận nhận kiện`,
+                'success',
+              );
+              return;
+            }
+          }
+
+          if (isWarehouseReturnReceived(order)) {
+            playScanSound('warning');
+            vibrateScan('warning');
+            flashViewfinder('error', 500);
+            setCameraScanResult(`Đơn #${order.orderSn} đã nhận hoàn trước đó`);
+            showScanToast(`Đơn #${order.orderSn} đã nhận hoàn trước đó`, 'error');
+            return;
+          }
+
+          playScanSound('error');
+          vibrateScan('error');
+          flashViewfinder('error', 500);
+          setCameraScanResult(`Mã #${order.orderSn} không thuộc pool nhận hàng hoàn (30 ngày)`);
+          showScanToast(`Mã không thuộc pool Quét hàng hoàn: #${order.orderSn}`, 'error');
+          return;
+        }
+
         playScanSound('error');
         vibrateScan('error');
         flashViewfinder('error', 500);
-        setCameraScanResult(
-          reason
-            ? `Đơn #${order.orderSn} — ${reason}`
-            : `Đơn #${order.orderSn} — trạng thái không xử lý được`,
-        );
-        showScanToast(
-          reason || `Đơn #${order.orderSn} không thuộc trạng thái cần phân loại`,
-          'error',
-        );
+        setCameraScanResult('Chưa chọn chế độ quét');
+        showScanToast('Chưa chọn chế độ quét', 'error');
       } finally {
         isScanBusyRef.current = false;
         setIsVerifyingScan(false);
@@ -3475,7 +3584,7 @@ export default function OrderManager({
         }
       }
     },
-    [isFlushingQueue, orderScanIndex, onUpdateOrders]
+    [isFlushingQueue]
   );
 
   useEffect(() => {
@@ -3486,7 +3595,7 @@ export default function OrderManager({
 
   // Súng USB: bắt phím ở document — không focus input (tránh bàn phím ảo mobile).
   useEffect(() => {
-    if (!focusScanner) return;
+    if (!focusScanner || !scannerMode || !scannerSyncReady) return;
     try {
       scanGunInputRef.current?.blur();
     } catch {
@@ -3523,12 +3632,12 @@ export default function OrderManager({
       window.removeEventListener('keydown', onKey);
       if (flushTimer) window.clearTimeout(flushTimer);
     };
-  }, [focusScanner]);
+  }, [focusScanner, scannerMode, scannerSyncReady]);
 
   useEffect(() => {
     let isMounted = true;
 
-    if (focusScanner) {
+    if (focusScanner && scannerMode && scannerSyncReady) {
       // Tránh restart camera khi đang graceful teardown / đang ghi DB.
       if (isTearingDownScannerRef.current) {
         return () => {
@@ -3548,9 +3657,12 @@ export default function OrderManager({
         prev.includes('Nhận hoàn') ||
         prev.includes('sẵn sàng quét tiếp') ||
         prev.includes('Đã lưu') ||
-        prev.includes('Lưu thất bại')
+        prev.includes('Lưu thất bại') ||
+        prev.includes('tải')
           ? prev
-          : 'Quét realtime QR + mã vạch — dò trạng thái ngay mỗi mã',
+          : scannerMode === 'handover'
+            ? 'Bàn giao đơn — quét QR/mã vạch vận đơn'
+            : 'Quét hàng hoàn — quét mã kiện trả về',
       );
 
       const timer = setTimeout(() => {
@@ -3608,18 +3720,22 @@ export default function OrderManager({
     return () => {
       isMounted = false;
     };
-  }, [focusScanner, cameraRestartKey]);
+  }, [focusScanner, scannerMode, scannerSyncReady, cameraRestartKey]);
 
-  // Prefetch scanner-sync khi mở quét — HashMap O(1), ĐỘC LẬP list filter / shop / ĐVVC.
+  // Prefetch scanner-sync theo mode — chỉ sau khi user chọn chế độ.
   useEffect(() => {
-    if (!focusScanner) return;
+    if (!focusScanner || !scannerMode) return;
     let cancelled = false;
     let attempt = 0;
 
     const run = async () => {
       const token = localStorage.getItem('admin_token') || '';
+      const query =
+        scannerMode === 'return'
+          ? 'mode=return&lookbackDays=30'
+          : 'mode=handover';
       try {
-        const res = await fetch('/api/orders/scanner-sync', {
+        const res = await fetch(`/api/orders/scanner-sync?${query}`, {
           headers: {
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
@@ -3643,6 +3759,13 @@ export default function OrderManager({
         setScannerSyncCodeCount(
           Number.isFinite(Number(data.code_count)) ? Number(data.code_count) : map.size,
         );
+        setScannerSyncReady(true);
+        setScannerSyncLoading(false);
+        setCameraScanResult(
+          scannerMode === 'handover'
+            ? `Sẵn sàng bàn giao · ${rows.length} đơn · ${map.size} mã`
+            : `Sẵn sàng nhận hoàn · ${rows.length} đơn · ${map.size} mã`,
+        );
       } catch (err) {
         console.warn('[Scan Prefetch] scanner-sync fail:', err);
         if (cancelled) return;
@@ -3652,21 +3775,23 @@ export default function OrderManager({
           if (!cancelled) void run();
           return;
         }
-        // Giữ map cũ nếu đã có — không xóa trắng khi lỗi tạm thời.
+        setScannerSyncLoading(false);
+        setScannerSyncReady(false);
         if (scannerSyncMapRef.current.size === 0) {
           setScannerSyncCodeCount(0);
-          showScanToast('Không tải được danh sách mã quét — thử mở lại màn quét', 'error');
+          showScanToast('Không tải được danh sách mã quét — thử lại', 'error');
+          setCameraScanResult('Lỗi tải dữ liệu — bấm Quay lại và chọn lại chế độ');
         }
       }
     };
 
+    setScannerSyncLoading(true);
+    setScannerSyncReady(false);
     void run();
     return () => {
       cancelled = true;
     };
-    // Chỉ phụ thuộc focusScanner — CẤM shopIdsKey / filter list (tránh hủy request + map rỗng).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusScanner]);
+  }, [focusScanner, scannerMode]);
 
   // Search / sort
   const [selectedSort] = useState<'newest' | 'oldest' | 'highest_value'>('newest');
@@ -6668,7 +6793,9 @@ export default function OrderManager({
   /** Chỉ đóng UI quét khi user chủ động thoát — không redirect trang chủ. */
   const closeScannerUiOnly = () => {
     clearVerifiedScanLists();
-    setCameraScanResult('Quét realtime QR + mã vạch — dò trạng thái ngay mỗi mã');
+    clearScannerSessionData();
+    setScannerMode(null);
+    setCameraScanResult('Chọn chế độ quét để bắt đầu');
     setCameraScanSuccess(false);
     setScanToast(null);
     setShowEndConfirm(false);
@@ -7067,6 +7194,91 @@ export default function OrderManager({
   if (focusScanner) {
     const modalMeta = scanStatModal ? scanStatModalMeta[scanStatModal] : null;
 
+    if (!scannerMode) {
+      return (
+        <div className="fixed inset-0 bg-zinc-950 z-50 flex flex-col select-none font-sans">
+          <div className="shrink-0 px-4 pt-6 pb-3">
+            <p className="text-white font-black text-lg uppercase tracking-wide text-center">
+              Chọn chế độ quét
+            </p>
+            <p className="text-zinc-500 text-xs text-center mt-2 font-semibold">
+              Mỗi chế độ chỉ tải đúng pool đơn cần thiết — camera mở nhanh
+            </p>
+          </div>
+          <div className="flex-1 px-4 flex flex-col gap-4 justify-center pb-8">
+            <button
+              type="button"
+              onClick={() => enterScannerMode('handover')}
+              className="w-full min-h-[120px] rounded-2xl bg-emerald-600/20 border-2 border-emerald-500/50 hover:bg-emerald-600/30 active:scale-[0.98] transition-all p-5 text-left flex items-start gap-4"
+            >
+              <div className="w-12 h-12 rounded-xl bg-emerald-500/30 flex items-center justify-center shrink-0">
+                <Truck className="w-7 h-7 text-emerald-400" />
+              </div>
+              <div>
+                <p className="text-emerald-300 font-black text-base uppercase tracking-wide">
+                  Bàn giao đơn
+                </p>
+                <p className="text-zinc-400 text-xs mt-1.5 leading-relaxed">
+                  Xuất kho cho shipper · Chỉ tải đơn Chờ lấy (đã xử lý) + đơn hủy (~100 đơn)
+                </p>
+              </div>
+            </button>
+            <button
+              type="button"
+              onClick={() => enterScannerMode('return')}
+              className="w-full min-h-[120px] rounded-2xl bg-amber-600/20 border-2 border-amber-500/50 hover:bg-amber-600/30 active:scale-[0.98] transition-all p-5 text-left flex items-start gap-4"
+            >
+              <div className="w-12 h-12 rounded-xl bg-amber-500/30 flex items-center justify-center shrink-0">
+                <Package className="w-7 h-7 text-amber-400" />
+              </div>
+              <div>
+                <p className="text-amber-300 font-black text-base uppercase tracking-wide">
+                  Quét hàng hoàn
+                </p>
+                <p className="text-zinc-400 text-xs mt-1.5 leading-relaxed">
+                  Nhận kiện trả về · Hủy / Giao thất bại / Trả hàng hoàn tiền 30 ngày (&lt;500 đơn)
+                </p>
+              </div>
+            </button>
+          </div>
+          <div className="shrink-0 p-4 border-t border-zinc-800">
+            <button
+              type="button"
+              onClick={() => {
+                if (onCloseScanner) onCloseScanner();
+                else if (onEndScanSession) onEndScanSession();
+              }}
+              className="w-full min-h-12 rounded-xl bg-zinc-800 text-zinc-300 font-bold text-sm"
+            >
+              Thoát
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    if (scannerSyncLoading || !scannerSyncReady) {
+      return (
+        <div className="fixed inset-0 bg-zinc-950 z-50 flex flex-col items-center justify-center select-none font-sans p-6">
+          <Loader2 className="w-10 h-10 text-blue-400 animate-spin mb-4" />
+          <p className="text-white font-bold text-sm">
+            {scannerMode === 'handover' ? 'Đang tải pool bàn giao...' : 'Đang tải pool nhận hoàn...'}
+          </p>
+          <p className="text-zinc-500 text-xs mt-2 text-center">{cameraScanResult}</p>
+          <button
+            type="button"
+            onClick={() => void exitScannerModeToPicker()}
+            className="mt-8 min-h-11 px-6 rounded-xl bg-zinc-800 text-zinc-300 font-bold text-sm"
+          >
+            Quay lại
+          </button>
+        </div>
+      );
+    }
+
+    const scanModeLabel =
+      scannerMode === 'handover' ? 'Bàn giao đơn' : 'Quét hàng hoàn';
+
     return (
       <div
         className={`fixed inset-0 bg-zinc-950 z-50 flex flex-col select-none font-sans transition-colors duration-300 ${
@@ -7085,47 +7297,76 @@ export default function OrderManager({
         />
         {/* Counters dashboard — clickable */}
         <div className="shrink-0 px-3 pt-3 pb-2 space-y-2">
-          <div className="flex items-center justify-between px-1">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-white font-extrabold text-[10px] uppercase tracking-widest">
-                Quét realtime · QR + mã vạch
+          <div className="flex items-center justify-between px-1 gap-2">
+            <button
+              type="button"
+              onClick={() => void exitScannerModeToPicker()}
+              className="shrink-0 min-h-8 px-2.5 rounded-lg bg-zinc-800 text-zinc-400 text-[10px] font-bold uppercase"
+            >
+              ← Chế độ
+            </button>
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+              <span className="text-white font-extrabold text-[10px] uppercase tracking-widest truncate">
+                {scanModeLabel}
               </span>
             </div>
-            <div className="rounded-lg bg-blue-500/20 border border-blue-400/40 px-2.5 py-1">
+            <div className="rounded-lg bg-blue-500/20 border border-blue-400/40 px-2.5 py-1 shrink-0">
               <span className="text-blue-300 font-black text-xs tabular-nums">
-                Đã dò {totalVerifiedScans}/{continuousScanTarget || 0}
+                {totalVerifiedScans}/{continuousScanTarget || 0}
               </span>
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-2">
-            <button
-              type="button"
-              onClick={() => setScanStatModal('daXuatKho')}
-              className="rounded-xl bg-emerald-500/15 border border-emerald-500/30 px-2 py-2.5 text-center cursor-pointer hover:bg-emerald-500/25 hover:border-emerald-400/50 active:scale-[0.98] transition-all"
-            >
-              <p className="text-[9px] font-bold text-emerald-400/90 uppercase tracking-wide leading-tight">Đã xuất kho</p>
-              <p className="text-2xl font-black text-emerald-400 tabular-nums mt-0.5">{daXuatKhoList.length}</p>
-            </button>
-            <button
-              type="button"
-              onClick={() => setScanStatModal('donHuy')}
-              className="rounded-xl bg-rose-500/15 border border-rose-500/30 px-2 py-2.5 text-center cursor-pointer hover:bg-rose-500/25 hover:border-rose-400/50 active:scale-[0.98] transition-all"
-            >
-              <p className="text-[9px] font-bold text-rose-400/90 uppercase tracking-wide leading-tight">Đơn báo hủy</p>
-              <p className="text-2xl font-black text-rose-400 tabular-nums mt-0.5">{donHuyList.length}</p>
-            </button>
-            <button
-              type="button"
-              onClick={() => setScanStatModal('daNhanHoan')}
-              className="rounded-xl bg-amber-500/15 border border-amber-500/30 px-2 py-2.5 text-center cursor-pointer hover:bg-amber-500/25 hover:border-amber-400/50 active:scale-[0.98] transition-all"
-            >
-              <p className="text-[9px] font-bold text-amber-400/90 uppercase tracking-wide leading-tight">Đã nhận hoàn</p>
-              <p className="text-2xl font-black text-amber-400 tabular-nums mt-0.5">{daNhanHoanList.length}</p>
-            </button>
+          <div
+            className={`grid gap-2 ${scannerMode === 'handover' ? 'grid-cols-2' : 'grid-cols-1'}`}
+          >
+            {scannerMode === 'handover' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setScanStatModal('daXuatKho')}
+                  className="rounded-xl bg-emerald-500/15 border border-emerald-500/30 px-2 py-2.5 text-center cursor-pointer hover:bg-emerald-500/25 hover:border-emerald-400/50 active:scale-[0.98] transition-all"
+                >
+                  <p className="text-[9px] font-bold text-emerald-400/90 uppercase tracking-wide leading-tight">
+                    Đã xuất kho
+                  </p>
+                  <p className="text-2xl font-black text-emerald-400 tabular-nums mt-0.5">
+                    {daXuatKhoList.length}
+                  </p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScanStatModal('donHuy')}
+                  className="rounded-xl bg-rose-500/15 border border-rose-500/30 px-2 py-2.5 text-center cursor-pointer hover:bg-rose-500/25 hover:border-rose-400/50 active:scale-[0.98] transition-all"
+                >
+                  <p className="text-[9px] font-bold text-rose-400/90 uppercase tracking-wide leading-tight">
+                    Đơn báo hủy
+                  </p>
+                  <p className="text-2xl font-black text-rose-400 tabular-nums mt-0.5">
+                    {donHuyList.length}
+                  </p>
+                </button>
+              </>
+            )}
+            {scannerMode === 'return' && (
+              <button
+                type="button"
+                onClick={() => setScanStatModal('daNhanHoan')}
+                className="rounded-xl bg-amber-500/15 border border-amber-500/30 px-2 py-2.5 text-center cursor-pointer hover:bg-amber-500/25 hover:border-amber-400/50 active:scale-[0.98] transition-all"
+              >
+                <p className="text-[9px] font-bold text-amber-400/90 uppercase tracking-wide leading-tight">
+                  Đã nhận hoàn
+                </p>
+                <p className="text-2xl font-black text-amber-400 tabular-nums mt-0.5">
+                  {daNhanHoanList.length}
+                </p>
+              </button>
+            )}
           </div>
           <p className="text-center text-[10px] text-zinc-500 font-semibold">
-            Chạm vào ô thống kê để xem danh sách mã · Đơn hủy sẽ báo đỏ + âm cảnh báo ngay
+            {scannerMode === 'handover'
+              ? 'Quét đơn chờ lấy → xuất kho · Quét đơn hủy → cảnh báo đỏ'
+              : 'Quét mã kiện hàng hoàn / hủy / giao thất bại trả về kho'}
           </p>
         </div>
 
