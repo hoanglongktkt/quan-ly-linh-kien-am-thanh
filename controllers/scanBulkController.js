@@ -34,6 +34,8 @@ let deps = {
   loadProductsForOrders: async () => [],
   enrichOrdersFromCatalog: (orders) => orders,
   invalidateOrdersRefreshCache: () => {},
+  applyHandedOverWrite: (order) => order,
+  getHandOverIneligibleReasonShared: () => "",
 };
 
 export function initScanBulkController(partial) {
@@ -121,8 +123,8 @@ export async function scanBulkUpdate(req, res) {
     const failed_scans = [];
     const changedOrders = [];
     const updatedById = new Map();
-    /** Restock tồn local — gom lại 1 lần upsertProducts, không deleteMany từng đơn. */
-    const restockJobs = [];
+    /** Restock tồn local — chạy nền sau response. */
+    const restockJobsDeferred = [];
     /** Chỉ đếm record THỰC SỰ vừa UPDATE thành công trong DB. */
     const summary = { daXuatKho: 0, donHuy: 0, daNhanHoan: 0 };
     /** Số đơn hủy/hoàn đã có sẵn trong don_hoan_huy (idempotent). */
@@ -144,6 +146,8 @@ export async function scanBulkUpdate(req, res) {
     } catch {
       alreadyInDonHoanHuySet = new Set();
     }
+
+    /** Handover batch — gom cờ qua changedOrders → markOrdersScanFlagsBatch 1 lần. */
 
     for (const { code, found } of lookupPairs) {
       const codeKey = norm(code);
@@ -269,42 +273,64 @@ export async function scanBulkUpdate(req, res) {
         continue;
       }
 
-      // FE phân loại xuất kho (chỉ Chờ lấy hàng đã xử lý) → WRITE HANDED_OVER.
+      // FE phân loại xuất kho (chỉ Chờ lấy hàng đã xử lý) → WRITE HANDED_OVER (bulk cuối).
       if (forceHandOver) {
-        const result = await deps.handOverOrderToCarrierByIndex(orders, index, {
-          persist: false,
-          source: "qr_scan",
-        });
-        if (!result.ok) {
+        const alreadyHanded =
+          existingLocal === "HANDED_OVER" ||
+          order.is_handed_over === true ||
+          order.isHandedOverToCarrier === true;
+        if (alreadyHanded) {
+          summary.daXuatKho += 1;
+          results.push({
+            code,
+            action: "handed_over",
+            orderId: order.id,
+            orderSn: order.orderSn,
+            message: `Đơn #${order.orderSn} đã có cờ ĐVVC`,
+            local_status: deps.ORDER_LOCAL_STATUS.HANDED_OVER,
+          });
+          continue;
+        }
+        if (!deps.isEligibleForHandOverShared(order)) {
+          const detail =
+            deps.getHandOverIneligibleReasonShared?.(order) ||
+            `status=${order?.status}, shopee=${order?.shopee_order_status || "-"}`;
           results.push({
             code,
             action: "rejected",
             orderId: order.id,
             orderSn: order.orderSn,
-            message: result.error,
+            message: detail,
             local_status: existingLocal,
           });
           failed_scans.push({
             code,
             orderId: order.id,
             orderSn: order.orderSn,
-            reason: result.error,
+            reason: detail,
           });
           continue;
         }
-        if (result.changed) {
-          changedOrders.push(result.order);
-          updatedById.set(result.order.id, result.order);
-          summary.daXuatKho += 1;
-        }
+        const sn = String(order.orderSn || "").replace(/^shopee-/i, "").trim();
+        const updated = deps.applyHandedOverWrite
+          ? deps.applyHandedOverWrite({ ...order }, undefined, "qr_scan")
+          : {
+              ...order,
+              is_handed_over: true,
+              isHandedOverToCarrier: true,
+              local_status: "HANDED_OVER",
+              localStatus: "HANDED_OVER",
+            };
+        orders[index] = updated;
+        changedOrders.push(updated);
+        updatedById.set(updated.id, updated);
+        summary.daXuatKho += 1;
         results.push({
           code,
           action: "handed_over",
-          orderId: result.order.id,
-          orderSn: result.order.orderSn,
-          message: result.changed
-            ? `Đã bàn giao ĐVVC — đơn #${result.order.orderSn}`
-            : `Đơn #${result.order.orderSn} đã có cờ ĐVVC`,
+          orderId: updated.id,
+          orderSn: updated.orderSn,
+          message: `Đã bàn giao ĐVVC — đơn #${updated.orderSn}`,
           local_status: deps.ORDER_LOCAL_STATUS.HANDED_OVER,
         });
         continue;
@@ -350,7 +376,7 @@ export async function scanBulkUpdate(req, res) {
         const updated = { ...order };
         deps.clearHandedOverLocalForCancelReturn(updated);
         deps.setOrderLocalStatus(updated, "RETURN_RECEIVED");
-        restockJobs.push({ order: updated, wasHandedOver });
+        restockJobsDeferred.push({ order: updated, wasHandedOver });
         orders[index] = updated;
         changedOrders.push(updated);
         updatedById.set(updated.id, updated);
@@ -408,7 +434,7 @@ export async function scanBulkUpdate(req, res) {
         if (updated.status !== "cancelled") updated.status = "cancelled";
         deps.clearHandedOverLocalForCancelReturn(updated);
         deps.setOrderLocalStatus(updated, "CANCELLED_STORED");
-        restockJobs.push({ order: updated, wasHandedOver });
+        restockJobsDeferred.push({ order: updated, wasHandedOver });
         orders[index] = updated;
         changedOrders.push(updated);
         updatedById.set(updated.id, updated);
@@ -479,24 +505,26 @@ export async function scanBulkUpdate(req, res) {
       });
     }
 
-    // Restock tồn local 1 lần (upsertProducts bulkWrite) — KHÔNG sync Shopee.
-    if (restockJobs.length > 0) {
-      try {
-        if (typeof deps.restoreLocalStockOnCancelReturnScanBatch === "function") {
-          const restock = await deps.restoreLocalStockOnCancelReturnScanBatch(restockJobs);
+    // Restock tồn local — chạy nền sau khi trả response (không block quét).
+    const runRestockBackground = (jobs) => {
+      if (!jobs.length) return;
+      if (typeof deps.restoreLocalStockOnCancelReturnScanBatch !== "function") return;
+      void deps
+        .restoreLocalStockOnCancelReturnScanBatch(jobs)
+        .then((restock) => {
           if (restock?.restored) {
             console.log(
-              `[Orders Scan Bulk] Restock BATCH +${restock.qty || 0} tồn / ${restock.restored} đơn`,
+              `[Orders Scan Bulk] Restock BG +${restock.qty || 0} tồn / ${restock.restored} đơn`,
             );
           }
-        }
-      } catch (restockErr) {
-        console.warn(
-          "[Orders Scan Bulk] Restock batch fail:",
-          restockErr?.message || restockErr,
-        );
-      }
-    }
+        })
+        .catch((restockErr) => {
+          console.warn(
+            "[Orders Scan Bulk] Restock BG fail:",
+            restockErr?.message || restockErr,
+          );
+        });
+    };
 
     // Persist: hủy/hoàn → collection don_hoan_huy (SSOT tab);
     // xuất kho → markOrdersScanFlagsBatch. Không phụ thuộc order_events. Không gọi Shopee.
@@ -627,6 +655,8 @@ export async function scanBulkUpdate(req, res) {
       );
       deps.invalidateOrdersRefreshCache();
     }
+
+    runRestockBackground(restockJobsDeferred);
 
     const updatedList = [...updatedById.values()];
     const processedCount = summary.daXuatKho + summary.donHuy + summary.daNhanHoan;

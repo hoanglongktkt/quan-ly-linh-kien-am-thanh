@@ -6817,7 +6817,7 @@ export default function OrderManager({
     closeScannerUiOnly();
   };
 
-  /** Kết thúc: tắt camera → ghi DB (timeout 90s) → reset list → bật lại camera. */
+  /** Kết thúc: ghi DB ngay (timeout 90s) — tắt camera song song, không chờ 3s trước API. */
   const handleFinishContinuousScan = async () => {
     // Chống double-click / gọi trùng khi đang ghi DB.
     if (isFlushingQueue) return;
@@ -6880,8 +6880,8 @@ export default function OrderManager({
     setCameraScanResult(`Đang ghi DB ${codes.length} đơn đã phân loại...`);
 
     try {
-      // 1) Tắt camera trong try — lỗi/treo stop không bỏ sót finally tắt loading.
-      await stopCameraWithTimeout();
+      // Tắt camera song song — không block gọi API ghi DB.
+      void stopCameraWithTimeout();
 
       const token = localStorage.getItem('admin_token');
       if (!token) {

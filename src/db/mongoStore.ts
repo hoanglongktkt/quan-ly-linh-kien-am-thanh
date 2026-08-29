@@ -335,6 +335,28 @@ OrderSchema.index({ return_sn: 1 });
 OrderSchema.index({ "data.return_sn": 1 });
 OrderSchema.index({ shopee_cancel_return_kind: 1, "data.date": -1 });
 OrderSchema.index({ "data.shopee_cancel_return_kind": 1, "data.date": -1 });
+// Scanner handover — TO_SHIP + chưa bàn giao (IXSCAN, không regex).
+OrderSchema.index(
+  { shopee_order_status: 1, is_handed_over: 1, status: 1 },
+  { name: "scanner_handover_status" },
+);
+// Scanner handover — pool đơn hủy.
+OrderSchema.index(
+  { status: 1, shopee_order_status: 1, last_shopee_update_at: -1 },
+  { name: "scanner_cancelled_status" },
+);
+// Scanner return — kind + ngày (lookback 30 ngày).
+OrderSchema.index(
+  { shopee_cancel_return_kind: 1, last_shopee_update_at: -1 },
+  { name: "scanner_return_kind_date" },
+);
+OrderSchema.index(
+  { is_rts: 1, last_shopee_update_at: -1 },
+  {
+    name: "scanner_rts_date",
+    partialFilterExpression: { is_rts: true },
+  },
+);
 
 const OrderEventSchema = new Schema<OrderEventDoc>(
   {
@@ -4584,7 +4606,55 @@ function buildExactScanOrFilter(rawCode: string): Record<string, unknown> | null
   return $or.length ? { $or } : null;
 }
 
-const SCAN_LOOKUP_MAX_MS = 2_500;
+const SCAN_LOOKUP_MAX_MS = 800;
+const SCAN_LOOKUP_LEAN_MAX_MS = 800;
+
+/** Projection tối thiểu — lookup phân loại scanner (không items). */
+const SCANNER_LOOKUP_SELECT = {
+  _id: 1,
+  orderSn: 1,
+  shopId: 1,
+  status: 1,
+  shopee_order_status: 1,
+  tracking_no: 1,
+  trackingNumber: 1,
+  return_tracking_no: 1,
+  returnTrackingNumber: 1,
+  return_sn: 1,
+  is_handed_over: 1,
+  isPrepared: 1,
+  is_rts: 1,
+  is_return: 1,
+  shopee_cancel_return_kind: 1,
+  logistics_status: 1,
+  sub_status: 1,
+  "data.orderSn": 1,
+  "data.status": 1,
+  "data.shopee_order_status": 1,
+  "data.tracking_no": 1,
+  "data.trackingNumber": 1,
+  "data.return_tracking_no": 1,
+  "data.returnTrackingNumber": 1,
+  "data.return_sn": 1,
+  "data.is_handed_over": 1,
+  "data.isHandedOverToCarrier": 1,
+  "data.local_status": 1,
+  "data.localStatus": 1,
+  "data.internal_status": 1,
+  "data.shopee_cancel_return_kind": 1,
+  "data.is_rts": 1,
+  "data.is_return": 1,
+  "data.shopId": 1,
+} as const;
+
+/** Projection scan-bulk — thêm items cho restock nền. */
+const SCANNER_BULK_SELECT = {
+  ...SCANNER_LOOKUP_SELECT,
+  "data.items": 1,
+  "data.item_list": 1,
+  "data.stock_restored": 1,
+  "data.stock_restored_at": 1,
+} as const;
 
 /** Đọc cờ isPrinted — ưu tiên top-level, fallback data.isPrinted (khớp badge/lọc UI). */
 function readPrintedFlag(top: unknown, nested: unknown): boolean {
@@ -4948,8 +5018,12 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
 
 /**
  * Lookup 1 đơn theo mã quét — exact $eq trên index, KHÔNG regex, KHÔNG Shopee.
+ * lean=true: projection tối thiểu, không kéo full data blob.
  */
-export async function findOrderByScanCodeInStore(rawCode: string): Promise<any | null> {
+export async function findOrderByScanCodeInStore(
+  rawCode: string,
+  opts?: { lean?: boolean },
+): Promise<any | null> {
   if (!isMongoReady()) return null;
   requireMongo();
   const scannedCode = normalizeScannedCode(rawCode);
@@ -4957,8 +5031,13 @@ export async function findOrderByScanCodeInStore(rawCode: string): Promise<any |
   const filter = buildExactScanOrFilter(scannedCode);
   if (!filter) return null;
 
+  const lean = opts?.lean === true;
+  const maxMs = lean ? SCAN_LOOKUP_LEAN_MAX_MS : SCAN_LOOKUP_MAX_MS;
+
   try {
-    const doc = await OrderModel.findOne(filter).maxTimeMS(SCAN_LOOKUP_MAX_MS).lean();
+    let q = OrderModel.findOne(filter).maxTimeMS(maxMs);
+    if (lean) q = q.select(SCANNER_LOOKUP_SELECT);
+    const doc = await q.lean();
     return hydrateOrderFromMongoDoc(doc);
   } catch (err: any) {
     console.warn("[MongoDB] findOrderByScanCodeInStore failed:", err?.message || err);
@@ -8416,96 +8495,99 @@ function deriveScannerSyncStatus(d: any): string {
 
 export type ScannerSyncMode = "handover" | "return";
 
-function buildScannerSyncLookbackFilter(lookbackDays: number): Record<string, unknown> {
+/** Pool handover — Chờ lấy (đã xử lý), không regex, không orderTabFilter. */
+const SCANNER_HANDOVER_PROCESSED_FILTER: Record<string, unknown> = {
+  $and: [
+    { is_handed_over: { $ne: true } },
+    { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
+    {
+      status: {
+        $nin: ["shipping", "completed", "cancelled", "return_pending", "return_received"],
+      },
+    },
+    {
+      $or: [
+        { shopee_order_status: "PROCESSED" },
+        { status: "processed" },
+        { isPrepared: true },
+        { tracking_no: { $exists: true, $type: "string", $nin: ["", "0"] } },
+        { trackingNumber: { $exists: true, $type: "string", $nin: ["", "0"] } },
+      ],
+    },
+  ],
+};
+
+/** Pool handover — đơn hủy cần cảnh báo trước bàn giao. */
+const SCANNER_HANDOVER_CANCELLED_FILTER: Record<string, unknown> = {
+  $or: [
+    { status: "cancelled" },
+    { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL"] } },
+  ],
+};
+
+const SCANNER_RETURN_KINDS = ["cancelled", "refund_return", "failed_delivery"] as const;
+
+function buildScannerReturnFilter(lookbackDays: number): Record<string, unknown> {
   const days = Math.max(1, Math.min(30, Math.floor(Number(lookbackDays) || 30)));
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  const sinceIso = since.toISOString();
   return {
-    $or: [
-      { create_time: { $gte: since } },
-      { last_synced_at: { $gte: since } },
-      { last_shopee_update_at: { $gte: since } },
-      { updatedAt: { $gte: since } },
-      { "data.date": { $gte: sinceIso } },
+    $and: [
+      {
+        $or: [{ last_shopee_update_at: { $gte: since } }, { create_time: { $gte: since } }],
+      },
+      {
+        $or: [
+          { shopee_cancel_return_kind: { $in: [...SCANNER_RETURN_KINDS] } },
+          { is_rts: true },
+          { return_sn: { $exists: true, $type: "string", $nin: [""] } },
+          { status: { $in: ["cancelled", "return_pending", "return_received"] } },
+          { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"] } },
+        ],
+      },
     ],
   };
 }
 
-/**
- * Sync siêu tốc cho Barcode Scanner — chỉ field tối thiểu, không hydrate items.
- * mode=handover: Chờ lấy (đã xử lý) + đơn hủy (~100).
- * mode=return: Hủy / RTS / Trả hàng hoàn tiền 30 ngày (<500).
- */
-export async function listScannerSyncRowsFromStore(opts?: {
-  mode?: ScannerSyncMode;
-  lookbackDays?: number;
-}): Promise<ScannerSyncRow[]> {
-  if (!isMongoReady()) return [];
-  requireMongo();
+const SCANNER_SYNC_SELECT = {
+  _id: 1,
+  orderSn: 1,
+  status: 1,
+  shopee_order_status: 1,
+  tracking_no: 1,
+  trackingNumber: 1,
+  return_tracking_no: 1,
+  returnTrackingNumber: 1,
+  is_handed_over: 1,
+  logistics_status: 1,
+  shopee_cancel_return_kind: 1,
+  is_rts: 1,
+  "data.orderSn": 1,
+  "data.status": 1,
+  "data.shopee_order_status": 1,
+  "data.tracking_no": 1,
+  "data.trackingNumber": 1,
+  "data.return_tracking_no": 1,
+  "data.returnTrackingNumber": 1,
+  "data.is_handed_over": 1,
+  "data.isHandedOverToCarrier": 1,
+  "data.is_handed_over_to_carrier": 1,
+  "data.return_sn": 1,
+  "data.logistics_status": 1,
+  "data.shopee_cancel_return_kind": 1,
+  "data.is_rts": 1,
+  return_sn: 1,
+} as const;
 
-  const mode: ScannerSyncMode =
-    opts?.mode === "return" ? "return" : "handover";
-
-  let filter: Record<string, unknown>;
-  let limit = 500;
-
-  if (mode === "handover") {
-    filter = {
-      $or: [orderTabFilter("processed"), orderTabFilter("cancelled")],
-    };
-    limit = 500;
-  } else {
-    const lookbackDays = Math.max(1, Math.min(30, Number(opts?.lookbackDays) || 30));
-    filter = {
-      $and: [
-        orderTabFilter("cancel_returns"),
-        buildScannerSyncLookbackFilter(lookbackDays),
-      ],
-    };
-    limit = 1000;
-  }
-
-  const docs = await OrderModel.find(filter)
-    .select({
-      _id: 1,
-      orderSn: 1,
-      status: 1,
-      shopee_order_status: 1,
-      tracking_no: 1,
-      trackingNumber: 1,
-      return_tracking_no: 1,
-      returnTrackingNumber: 1,
-      is_handed_over: 1,
-      logistics_status: 1,
-      shopee_cancel_return_kind: 1,
-      is_rts: 1,
-      "data.orderSn": 1,
-      "data.status": 1,
-      "data.shopee_order_status": 1,
-      "data.tracking_no": 1,
-      "data.trackingNumber": 1,
-      "data.return_tracking_no": 1,
-      "data.returnTrackingNumber": 1,
-      "data.is_handed_over": 1,
-      "data.isHandedOverToCarrier": 1,
-      "data.is_handed_over_to_carrier": 1,
-      "data.return_sn": 1,
-      "data.logistics_status": 1,
-      "data.shopee_cancel_return_kind": 1,
-      "data.is_rts": 1,
-      return_sn: 1,
-    })
-    .limit(limit)
-    .lean()
-    .maxTimeMS(12_000);
-
+function docsToScannerSyncRows(docs: any[]): ScannerSyncRow[] {
   const rows: ScannerSyncRow[] = [];
-  for (const d of docs as any[]) {
+  const seen = new Set<string>();
+  for (const d of docs) {
     const data = d?.data && typeof d.data === "object" ? d.data : {};
     const orderId = String(
       d?.orderSn || data.orderSn || String(d?._id || "").replace(/^shopee-/i, ""),
     ).trim();
-    if (!orderId) continue;
+    if (!orderId || seen.has(orderId)) continue;
+    seen.add(orderId);
     const tracking = String(
       d?.tracking_no || d?.trackingNumber || data.tracking_no || data.trackingNumber || "",
     ).trim();
@@ -8531,6 +8613,46 @@ export async function listScannerSyncRowsFromStore(opts?: {
     });
   }
   return rows;
+}
+
+/**
+ * Sync siêu tốc cho Barcode Scanner — chỉ field tối thiểu, không hydrate items.
+ * mode=handover: Chờ lấy (đã xử lý) + đơn hủy (~100).
+ * mode=return: Hủy / RTS / Trả hàng hoàn tiền 30 ngày (<500).
+ */
+export async function listScannerSyncRowsFromStore(opts?: {
+  mode?: ScannerSyncMode;
+  lookbackDays?: number;
+}): Promise<ScannerSyncRow[]> {
+  if (!isMongoReady()) return [];
+  requireMongo();
+
+  const mode: ScannerSyncMode =
+    opts?.mode === "return" ? "return" : "handover";
+
+  if (mode === "handover") {
+    const [processedDocs, cancelledDocs] = await Promise.all([
+      OrderModel.find(SCANNER_HANDOVER_PROCESSED_FILTER)
+        .select(SCANNER_SYNC_SELECT)
+        .limit(450)
+        .lean()
+        .maxTimeMS(6_000),
+      OrderModel.find(SCANNER_HANDOVER_CANCELLED_FILTER)
+        .select(SCANNER_SYNC_SELECT)
+        .limit(150)
+        .lean()
+        .maxTimeMS(4_000),
+    ]);
+    return docsToScannerSyncRows([...(processedDocs as any[]), ...(cancelledDocs as any[])]);
+  }
+
+  const lookbackDays = Math.max(1, Math.min(30, Number(opts?.lookbackDays) || 30));
+  const docs = await OrderModel.find(buildScannerReturnFilter(lookbackDays))
+    .select(SCANNER_SYNC_SELECT)
+    .limit(1000)
+    .lean()
+    .maxTimeMS(8_000);
+  return docsToScannerSyncRows(docs as any[]);
 }
 
 const SCAN_BATCH_IN_SIZE = 300;
@@ -8643,12 +8765,13 @@ export async function findOrdersByScanCodesInStore(
     try {
       const docs = await withWriteTimeout(
         OrderModel.find(filter)
+          .select(SCANNER_BULK_SELECT)
           .limit(Math.min(Math.max(chunk.length * 3, 50), 2000))
-          .maxTimeMS(8000)
+          .maxTimeMS(5000)
           .lean()
           .exec(),
         "scan_codes_in_lookup",
-        9000,
+        6000,
       );
       ingestDocs(docs as any[]);
     } catch (err: any) {

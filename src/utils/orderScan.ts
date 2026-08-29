@@ -228,13 +228,14 @@ export class ScanLookupError extends Error {
   }
 }
 
-const SCAN_LOOKUP_TIMEOUT_MS = 5_000;
+const SCAN_LOOKUP_TIMEOUT_MS = 3_000;
 
 export async function lookupOrderByScanCode(
   raw: string,
   localOrders: Order[],
   token?: string | null,
-  scanIndex?: OrderScanIndex
+  scanIndex?: OrderScanIndex,
+  opts?: { lean?: boolean },
 ): Promise<Order | null> {
   const trimmed = raw.trim();
   if (!trimmed) return null;
@@ -244,17 +245,21 @@ export async function lookupOrderByScanCode(
     if (local) return local;
   }
 
+  const leanQ = opts?.lean !== false ? '&lean=scanner' : '';
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timer =
     controller && typeof window !== 'undefined'
       ? window.setTimeout(() => controller.abort(), SCAN_LOOKUP_TIMEOUT_MS)
       : undefined;
   try {
-    const res = await fetch(`/api/orders/lookup?code=${encodeURIComponent(trimmed)}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      signal: controller?.signal,
-      cache: 'no-store',
-    });
+    const res = await fetch(
+      `/api/orders/lookup?code=${encodeURIComponent(trimmed)}${leanQ}`,
+      {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        signal: controller?.signal,
+        cache: 'no-store',
+      },
+    );
     if (res.status === 404) return null;
     if (!res.ok) {
       throw new ScanLookupError(`HTTP ${res.status}`, 'http');

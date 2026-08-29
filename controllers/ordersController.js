@@ -1489,6 +1489,8 @@ export async function scannerSync(req, res) {
 /** GET /api/orders/lookup — chỉ Mongo exact. CẤM Shopee live (get_return_list / reverse). */
 export async function lookupOrder(req, res) {
   const code = String(req.query.code || req.query.q || "").trim().toUpperCase();
+  const leanRaw = String(req.query.lean || req.query.mode || "").trim().toLowerCase();
+  const leanScanner = leanRaw === "scanner" || leanRaw === "1" || leanRaw === "true";
   if (!code) {
     return res.status(400).json({
       success: false,
@@ -1497,9 +1499,10 @@ export async function lookupOrder(req, res) {
     });
   }
   try {
+    const t0 = Date.now();
     let foundRaw = null;
     try {
-      foundRaw = await findOrderByScanCodeInStore(code);
+      foundRaw = await findOrderByScanCodeInStore(code, { lean: leanScanner });
       if (foundRaw && !deps.isValidOrder(foundRaw)) foundRaw = null;
       if (foundRaw) foundRaw = mirrorTrackingFieldsForRead(foundRaw);
     } catch (err) {
@@ -1513,6 +1516,14 @@ export async function lookupOrder(req, res) {
         notFound: true,
         scannedCode: code,
       });
+    }
+
+    const ms = Date.now() - t0;
+    if (leanScanner) {
+      if (ms > 300) {
+        console.warn(`[Orders Lookup] lean scanner slow: ${ms}ms code=${code}`);
+      }
+      return res.json(foundRaw);
     }
 
     try {

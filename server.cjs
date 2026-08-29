@@ -76526,6 +76526,25 @@ OrderSchema.index({ return_sn: 1 });
 OrderSchema.index({ "data.return_sn": 1 });
 OrderSchema.index({ shopee_cancel_return_kind: 1, "data.date": -1 });
 OrderSchema.index({ "data.shopee_cancel_return_kind": 1, "data.date": -1 });
+OrderSchema.index(
+  { shopee_order_status: 1, is_handed_over: 1, status: 1 },
+  { name: "scanner_handover_status" }
+);
+OrderSchema.index(
+  { status: 1, shopee_order_status: 1, last_shopee_update_at: -1 },
+  { name: "scanner_cancelled_status" }
+);
+OrderSchema.index(
+  { shopee_cancel_return_kind: 1, last_shopee_update_at: -1 },
+  { name: "scanner_return_kind_date" }
+);
+OrderSchema.index(
+  { is_rts: 1, last_shopee_update_at: -1 },
+  {
+    name: "scanner_rts_date",
+    partialFilterExpression: { is_rts: true }
+  }
+);
 var OrderEventSchema = new import_mongoose3.Schema(
   {
     _id: { type: String, required: true },
@@ -79611,7 +79630,51 @@ function buildExactScanOrFilter(rawCode) {
   }
   return $or.length ? { $or } : null;
 }
-var SCAN_LOOKUP_MAX_MS = 2500;
+var SCAN_LOOKUP_MAX_MS = 800;
+var SCAN_LOOKUP_LEAN_MAX_MS = 800;
+var SCANNER_LOOKUP_SELECT = {
+  _id: 1,
+  orderSn: 1,
+  shopId: 1,
+  status: 1,
+  shopee_order_status: 1,
+  tracking_no: 1,
+  trackingNumber: 1,
+  return_tracking_no: 1,
+  returnTrackingNumber: 1,
+  return_sn: 1,
+  is_handed_over: 1,
+  isPrepared: 1,
+  is_rts: 1,
+  is_return: 1,
+  shopee_cancel_return_kind: 1,
+  logistics_status: 1,
+  sub_status: 1,
+  "data.orderSn": 1,
+  "data.status": 1,
+  "data.shopee_order_status": 1,
+  "data.tracking_no": 1,
+  "data.trackingNumber": 1,
+  "data.return_tracking_no": 1,
+  "data.returnTrackingNumber": 1,
+  "data.return_sn": 1,
+  "data.is_handed_over": 1,
+  "data.isHandedOverToCarrier": 1,
+  "data.local_status": 1,
+  "data.localStatus": 1,
+  "data.internal_status": 1,
+  "data.shopee_cancel_return_kind": 1,
+  "data.is_rts": 1,
+  "data.is_return": 1,
+  "data.shopId": 1
+};
+var SCANNER_BULK_SELECT = {
+  ...SCANNER_LOOKUP_SELECT,
+  "data.items": 1,
+  "data.item_list": 1,
+  "data.stock_restored": 1,
+  "data.stock_restored_at": 1
+};
 function readPrintedFlag(top, nested) {
   const pick = (v) => {
     if (v === true || v === 1) return true;
@@ -79821,15 +79884,19 @@ function hydrateOrderFromMongoDoc(d) {
   }
   return hydrated;
 }
-async function findOrderByScanCodeInStore(rawCode) {
+async function findOrderByScanCodeInStore(rawCode, opts) {
   if (!isMongoReady()) return null;
   requireMongo();
   const scannedCode = normalizeScannedCode(rawCode);
   if (!scannedCode) return null;
   const filter2 = buildExactScanOrFilter(scannedCode);
   if (!filter2) return null;
+  const lean = opts?.lean === true;
+  const maxMs = lean ? SCAN_LOOKUP_LEAN_MAX_MS : SCAN_LOOKUP_MAX_MS;
   try {
-    const doc = await OrderModel.findOne(filter2).maxTimeMS(SCAN_LOOKUP_MAX_MS).lean();
+    let q = OrderModel.findOne(filter2).maxTimeMS(maxMs);
+    if (lean) q = q.select(SCANNER_LOOKUP_SELECT);
+    const doc = await q.lean();
     return hydrateOrderFromMongoDoc(doc);
   } catch (err) {
     console.warn("[MongoDB] findOrderByScanCodeInStore failed:", err?.message || err);
@@ -82433,77 +82500,92 @@ function deriveScannerSyncStatus(d) {
   if (st === "processed" || raw === "PROCESSED") return "processed";
   return st || "processed";
 }
-function buildScannerSyncLookbackFilter(lookbackDays) {
+var SCANNER_HANDOVER_PROCESSED_FILTER = {
+  $and: [
+    { is_handed_over: { $ne: true } },
+    { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
+    {
+      status: {
+        $nin: ["shipping", "completed", "cancelled", "return_pending", "return_received"]
+      }
+    },
+    {
+      $or: [
+        { shopee_order_status: "PROCESSED" },
+        { status: "processed" },
+        { isPrepared: true },
+        { tracking_no: { $exists: true, $type: "string", $nin: ["", "0"] } },
+        { trackingNumber: { $exists: true, $type: "string", $nin: ["", "0"] } }
+      ]
+    }
+  ]
+};
+var SCANNER_HANDOVER_CANCELLED_FILTER = {
+  $or: [
+    { status: "cancelled" },
+    { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL"] } }
+  ]
+};
+var SCANNER_RETURN_KINDS = ["cancelled", "refund_return", "failed_delivery"];
+function buildScannerReturnFilter(lookbackDays) {
   const days = Math.max(1, Math.min(30, Math.floor(Number(lookbackDays) || 30)));
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1e3);
-  const sinceIso = since.toISOString();
   return {
-    $or: [
-      { create_time: { $gte: since } },
-      { last_synced_at: { $gte: since } },
-      { last_shopee_update_at: { $gte: since } },
-      { updatedAt: { $gte: since } },
-      { "data.date": { $gte: sinceIso } }
+    $and: [
+      {
+        $or: [{ last_shopee_update_at: { $gte: since } }, { create_time: { $gte: since } }]
+      },
+      {
+        $or: [
+          { shopee_cancel_return_kind: { $in: [...SCANNER_RETURN_KINDS] } },
+          { is_rts: true },
+          { return_sn: { $exists: true, $type: "string", $nin: [""] } },
+          { status: { $in: ["cancelled", "return_pending", "return_received"] } },
+          { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"] } }
+        ]
+      }
     ]
   };
 }
-async function listScannerSyncRowsFromStore(opts) {
-  if (!isMongoReady()) return [];
-  requireMongo();
-  const mode = opts?.mode === "return" ? "return" : "handover";
-  let filter2;
-  let limit = 500;
-  if (mode === "handover") {
-    filter2 = {
-      $or: [orderTabFilter("processed"), orderTabFilter("cancelled")]
-    };
-    limit = 500;
-  } else {
-    const lookbackDays = Math.max(1, Math.min(30, Number(opts?.lookbackDays) || 30));
-    filter2 = {
-      $and: [
-        orderTabFilter("cancel_returns"),
-        buildScannerSyncLookbackFilter(lookbackDays)
-      ]
-    };
-    limit = 1e3;
-  }
-  const docs = await OrderModel.find(filter2).select({
-    _id: 1,
-    orderSn: 1,
-    status: 1,
-    shopee_order_status: 1,
-    tracking_no: 1,
-    trackingNumber: 1,
-    return_tracking_no: 1,
-    returnTrackingNumber: 1,
-    is_handed_over: 1,
-    logistics_status: 1,
-    shopee_cancel_return_kind: 1,
-    is_rts: 1,
-    "data.orderSn": 1,
-    "data.status": 1,
-    "data.shopee_order_status": 1,
-    "data.tracking_no": 1,
-    "data.trackingNumber": 1,
-    "data.return_tracking_no": 1,
-    "data.returnTrackingNumber": 1,
-    "data.is_handed_over": 1,
-    "data.isHandedOverToCarrier": 1,
-    "data.is_handed_over_to_carrier": 1,
-    "data.return_sn": 1,
-    "data.logistics_status": 1,
-    "data.shopee_cancel_return_kind": 1,
-    "data.is_rts": 1,
-    return_sn: 1
-  }).limit(limit).lean().maxTimeMS(12e3);
+var SCANNER_SYNC_SELECT = {
+  _id: 1,
+  orderSn: 1,
+  status: 1,
+  shopee_order_status: 1,
+  tracking_no: 1,
+  trackingNumber: 1,
+  return_tracking_no: 1,
+  returnTrackingNumber: 1,
+  is_handed_over: 1,
+  logistics_status: 1,
+  shopee_cancel_return_kind: 1,
+  is_rts: 1,
+  "data.orderSn": 1,
+  "data.status": 1,
+  "data.shopee_order_status": 1,
+  "data.tracking_no": 1,
+  "data.trackingNumber": 1,
+  "data.return_tracking_no": 1,
+  "data.returnTrackingNumber": 1,
+  "data.is_handed_over": 1,
+  "data.isHandedOverToCarrier": 1,
+  "data.is_handed_over_to_carrier": 1,
+  "data.return_sn": 1,
+  "data.logistics_status": 1,
+  "data.shopee_cancel_return_kind": 1,
+  "data.is_rts": 1,
+  return_sn: 1
+};
+function docsToScannerSyncRows(docs) {
   const rows = [];
+  const seen = /* @__PURE__ */ new Set();
   for (const d of docs) {
     const data = d?.data && typeof d.data === "object" ? d.data : {};
     const orderId = String(
       d?.orderSn || data.orderSn || String(d?._id || "").replace(/^shopee-/i, "")
     ).trim();
-    if (!orderId) continue;
+    if (!orderId || seen.has(orderId)) continue;
+    seen.add(orderId);
     const tracking = String(
       d?.tracking_no || d?.trackingNumber || data.tracking_no || data.trackingNumber || ""
     ).trim();
@@ -82525,6 +82607,21 @@ async function listScannerSyncRowsFromStore(opts) {
     });
   }
   return rows;
+}
+async function listScannerSyncRowsFromStore(opts) {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const mode = opts?.mode === "return" ? "return" : "handover";
+  if (mode === "handover") {
+    const [processedDocs, cancelledDocs] = await Promise.all([
+      OrderModel.find(SCANNER_HANDOVER_PROCESSED_FILTER).select(SCANNER_SYNC_SELECT).limit(450).lean().maxTimeMS(6e3),
+      OrderModel.find(SCANNER_HANDOVER_CANCELLED_FILTER).select(SCANNER_SYNC_SELECT).limit(150).lean().maxTimeMS(4e3)
+    ]);
+    return docsToScannerSyncRows([...processedDocs, ...cancelledDocs]);
+  }
+  const lookbackDays = Math.max(1, Math.min(30, Number(opts?.lookbackDays) || 30));
+  const docs = await OrderModel.find(buildScannerReturnFilter(lookbackDays)).select(SCANNER_SYNC_SELECT).limit(1e3).lean().maxTimeMS(8e3);
+  return docsToScannerSyncRows(docs);
 }
 var SCAN_BATCH_IN_SIZE = 300;
 var SCAN_BATCH_DELAY_MS = 40;
@@ -82625,9 +82722,9 @@ async function findOrdersByScanCodesInStore(rawCodes) {
     if (!filter2) continue;
     try {
       const docs = await withWriteTimeout(
-        OrderModel.find(filter2).limit(Math.min(Math.max(chunk.length * 3, 50), 2e3)).maxTimeMS(8e3).lean().exec(),
+        OrderModel.find(filter2).select(SCANNER_BULK_SELECT).limit(Math.min(Math.max(chunk.length * 3, 50), 2e3)).maxTimeMS(5e3).lean().exec(),
         "scan_codes_in_lookup",
-        9e3
+        6e3
       );
       ingestDocs(docs);
     } catch (err) {
@@ -113187,7 +113284,9 @@ var deps7 = {
   loadProductsForOrders: async () => [],
   enrichOrdersFromCatalog: (orders) => orders,
   invalidateOrdersRefreshCache: () => {
-  }
+  },
+  applyHandedOverWrite: (order) => order,
+  getHandOverIneligibleReasonShared: () => ""
 };
 function initScanBulkController(partial) {
   deps7 = { ...deps7, ...partial };
@@ -113259,7 +113358,7 @@ async function scanBulkUpdate(req, res) {
     const failed_scans = [];
     const changedOrders = [];
     const updatedById = /* @__PURE__ */ new Map();
-    const restockJobs = [];
+    const restockJobsDeferred = [];
     const summary = { daXuatKho: 0, donHuy: 0, daNhanHoan: 0 };
     let donHoanHuyAlready = 0;
     const norm = (c) => String(c || "").trim().toUpperCase();
@@ -113362,38 +113461,55 @@ async function scanBulkUpdate(req, res) {
         continue;
       }
       if (forceHandOver) {
-        const result = await deps7.handOverOrderToCarrierByIndex(orders, index, {
-          persist: false,
-          source: "qr_scan"
-        });
-        if (!result.ok) {
+        const alreadyHanded = existingLocal === "HANDED_OVER" || order.is_handed_over === true || order.isHandedOverToCarrier === true;
+        if (alreadyHanded) {
+          summary.daXuatKho += 1;
+          results.push({
+            code,
+            action: "handed_over",
+            orderId: order.id,
+            orderSn: order.orderSn,
+            message: `\u0110\u01A1n #${order.orderSn} \u0111\xE3 c\xF3 c\u1EDD \u0110VVC`,
+            local_status: deps7.ORDER_LOCAL_STATUS.HANDED_OVER
+          });
+          continue;
+        }
+        if (!deps7.isEligibleForHandOverShared(order)) {
+          const detail = deps7.getHandOverIneligibleReasonShared?.(order) || `status=${order?.status}, shopee=${order?.shopee_order_status || "-"}`;
           results.push({
             code,
             action: "rejected",
             orderId: order.id,
             orderSn: order.orderSn,
-            message: result.error,
+            message: detail,
             local_status: existingLocal
           });
           failed_scans.push({
             code,
             orderId: order.id,
             orderSn: order.orderSn,
-            reason: result.error
+            reason: detail
           });
           continue;
         }
-        if (result.changed) {
-          changedOrders.push(result.order);
-          updatedById.set(result.order.id, result.order);
-          summary.daXuatKho += 1;
-        }
+        const sn = String(order.orderSn || "").replace(/^shopee-/i, "").trim();
+        const updated = deps7.applyHandedOverWrite ? deps7.applyHandedOverWrite({ ...order }, void 0, "qr_scan") : {
+          ...order,
+          is_handed_over: true,
+          isHandedOverToCarrier: true,
+          local_status: "HANDED_OVER",
+          localStatus: "HANDED_OVER"
+        };
+        orders[index] = updated;
+        changedOrders.push(updated);
+        updatedById.set(updated.id, updated);
+        summary.daXuatKho += 1;
         results.push({
           code,
           action: "handed_over",
-          orderId: result.order.id,
-          orderSn: result.order.orderSn,
-          message: result.changed ? `\u0110\xE3 b\xE0n giao \u0110VVC \u2014 \u0111\u01A1n #${result.order.orderSn}` : `\u0110\u01A1n #${result.order.orderSn} \u0111\xE3 c\xF3 c\u1EDD \u0110VVC`,
+          orderId: updated.id,
+          orderSn: updated.orderSn,
+          message: `\u0110\xE3 b\xE0n giao \u0110VVC \u2014 \u0111\u01A1n #${updated.orderSn}`,
           local_status: deps7.ORDER_LOCAL_STATUS.HANDED_OVER
         });
         continue;
@@ -113431,7 +113547,7 @@ async function scanBulkUpdate(req, res) {
         const updated = { ...order };
         deps7.clearHandedOverLocalForCancelReturn(updated);
         deps7.setOrderLocalStatus(updated, "RETURN_RECEIVED");
-        restockJobs.push({ order: updated, wasHandedOver });
+        restockJobsDeferred.push({ order: updated, wasHandedOver });
         orders[index] = updated;
         changedOrders.push(updated);
         updatedById.set(updated.id, updated);
@@ -113481,7 +113597,7 @@ async function scanBulkUpdate(req, res) {
         if (updated.status !== "cancelled") updated.status = "cancelled";
         deps7.clearHandedOverLocalForCancelReturn(updated);
         deps7.setOrderLocalStatus(updated, "CANCELLED_STORED");
-        restockJobs.push({ order: updated, wasHandedOver });
+        restockJobsDeferred.push({ order: updated, wasHandedOver });
         orders[index] = updated;
         changedOrders.push(updated);
         updatedById.set(updated.id, updated);
@@ -113548,23 +113664,22 @@ async function scanBulkUpdate(req, res) {
         reason: `Tr\u1EA1ng th\xE1i "${status}" kh\xF4ng thu\u1ED9c quy t\u1EAFc qu\xE9t \u0110VVC`
       });
     }
-    if (restockJobs.length > 0) {
-      try {
-        if (typeof deps7.restoreLocalStockOnCancelReturnScanBatch === "function") {
-          const restock = await deps7.restoreLocalStockOnCancelReturnScanBatch(restockJobs);
-          if (restock?.restored) {
-            console.log(
-              `[Orders Scan Bulk] Restock BATCH +${restock.qty || 0} t\u1ED3n / ${restock.restored} \u0111\u01A1n`
-            );
-          }
+    const runRestockBackground = (jobs) => {
+      if (!jobs.length) return;
+      if (typeof deps7.restoreLocalStockOnCancelReturnScanBatch !== "function") return;
+      void deps7.restoreLocalStockOnCancelReturnScanBatch(jobs).then((restock) => {
+        if (restock?.restored) {
+          console.log(
+            `[Orders Scan Bulk] Restock BG +${restock.qty || 0} t\u1ED3n / ${restock.restored} \u0111\u01A1n`
+          );
         }
-      } catch (restockErr) {
+      }).catch((restockErr) => {
         console.warn(
-          "[Orders Scan Bulk] Restock batch fail:",
+          "[Orders Scan Bulk] Restock BG fail:",
           restockErr?.message || restockErr
         );
-      }
-    }
+      });
+    };
     const scanCodeByOrderSn = /* @__PURE__ */ new Map();
     for (const r2 of results) {
       const sn = String(r2?.orderSn || "").replace(/^shopee-/i, "").trim();
@@ -113680,6 +113795,7 @@ async function scanBulkUpdate(req, res) {
       );
       deps7.invalidateOrdersRefreshCache();
     }
+    runRestockBackground(restockJobsDeferred);
     const updatedList = [...updatedById.values()];
     const processedCount = summary.daXuatKho + summary.donHuy + summary.daNhanHoan;
     const partialFailure = Boolean(flagWriteError);
@@ -119857,6 +119973,8 @@ async function scannerSync(req, res) {
 }
 async function lookupOrder(req, res) {
   const code = String(req.query.code || req.query.q || "").trim().toUpperCase();
+  const leanRaw = String(req.query.lean || req.query.mode || "").trim().toLowerCase();
+  const leanScanner = leanRaw === "scanner" || leanRaw === "1" || leanRaw === "true";
   if (!code) {
     return res.status(400).json({
       success: false,
@@ -119865,9 +119983,10 @@ async function lookupOrder(req, res) {
     });
   }
   try {
+    const t0 = Date.now();
     let foundRaw = null;
     try {
-      foundRaw = await findOrderByScanCodeInStore(code);
+      foundRaw = await findOrderByScanCodeInStore(code, { lean: leanScanner });
       if (foundRaw && !deps15.isValidOrder(foundRaw)) foundRaw = null;
       if (foundRaw) foundRaw = mirrorTrackingFieldsForRead(foundRaw);
     } catch (err) {
@@ -119880,6 +119999,13 @@ async function lookupOrder(req, res) {
         notFound: true,
         scannedCode: code
       });
+    }
+    const ms = Date.now() - t0;
+    if (leanScanner) {
+      if (ms > 300) {
+        console.warn(`[Orders Lookup] lean scanner slow: ${ms}ms code=${code}`);
+      }
+      return res.json(foundRaw);
     }
     try {
       const products = await deps15.loadProductsForOrders([foundRaw]);
@@ -141008,7 +141134,9 @@ async function startServer() {
     restoreLocalStockOnCancelReturnScanBatch,
     loadProductsForOrders,
     enrichOrdersFromCatalog,
-    invalidateOrdersRefreshCache
+    invalidateOrdersRefreshCache,
+    applyHandedOverWrite,
+    getHandOverIneligibleReasonShared: getHandOverIneligibleReason
   });
   let boundFastProcessHandler = null;
   const fastProcessRouteGuard = (req, res) => {

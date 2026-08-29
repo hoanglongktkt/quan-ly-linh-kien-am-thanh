@@ -21157,6 +21157,8 @@ async function startServer() {
     loadProductsForOrders,
     enrichOrdersFromCatalog,
     invalidateOrdersRefreshCache,
+    applyHandedOverWrite,
+    getHandOverIneligibleReasonShared,
   });
 
   // Orders + system + Vietnam + Shopee (routers) — sau init scan/bulk deps
