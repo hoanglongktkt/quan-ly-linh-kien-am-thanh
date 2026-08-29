@@ -943,6 +943,47 @@ function matchesStrictDisplaySubTab(
   return true;
 }
 
+/** Partial match (includes) — mã đơn, khách, SP, mã bưu cục / vận đơn. Không min-length. */
+function orderMatchesSearchKeyword(order: Order, rawKeyword: string): boolean {
+  const q = String(rawKeyword || '')
+    .trim()
+    .toLowerCase();
+  if (!q) return true;
+
+  const hay = (v: unknown) => String(v || '').toLowerCase();
+
+  if (hay(order.orderSn).includes(q)) return true;
+  if (hay(order.trackingNumber).includes(q)) return true;
+  if (hay(order.tracking_no).includes(q)) return true;
+  if (hay(order.returnTrackingNumber).includes(q)) return true;
+  if (hay(order.return_tracking_no).includes(q)) return true;
+  if (hay(order.return_sn).includes(q)) return true;
+  if (hay(order.internalTrackingCode).includes(q)) return true;
+  if (hay(getOrderWaybillCode(order)).includes(q)) return true;
+  if (hay((order as { packageNumber?: string }).packageNumber).includes(q)) return true;
+
+  if ((order.items || []).some((it) => hay(it.productTitle || it.name || it.modelName || it.modelSku).includes(q))) {
+    return true;
+  }
+
+  if (order.channel === 'woocommerce') {
+    const cust = resolveWooCustomerInfo(order);
+    if (
+      cust &&
+      [cust.name, cust.phone, cust.email, cust.address].some((v) => hay(v).includes(q))
+    ) {
+      return true;
+    }
+  }
+
+  if (hay(order.customerName).includes(q)) return true;
+  if (hay(order.customerPhone).includes(q)) return true;
+  if (hay(order.customerEmail).includes(q)) return true;
+  if (hay((order as { buyer_username?: string }).buyer_username).includes(q)) return true;
+
+  return false;
+}
+
 /** Phân loại hủy/hoàn dùng chung verify realtime + background lookup. */
 function classifyScanCancelReturnBuckets(order: Order): {
   isReturnBucket: boolean;
@@ -1357,9 +1398,11 @@ export default function OrderManager({
         tab: searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab,
         q: searchQuery.trim() || undefined,
         kind:
-          activeSubTab === 'cancel_returns'
-            ? cancelReturnKindParam(cancelReturnTab)
-            : undefined,
+          searchQuery.trim()
+            ? undefined
+            : activeSubTab === 'cancel_returns'
+              ? cancelReturnKindParam(cancelReturnTab)
+              : undefined,
       });
       void fetchOrderCounts();
     },
@@ -1873,7 +1916,11 @@ export default function OrderManager({
 
     const expectedTab = searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab;
     const expectedKind =
-      activeSubTab === 'cancel_returns' ? cancelReturnKindParam(cancelReturnTab) : undefined;
+      searchQuery.trim()
+        ? undefined
+        : activeSubTab === 'cancel_returns'
+          ? cancelReturnKindParam(cancelReturnTab)
+          : undefined;
     const delay = datePreset === 'custom' ? 280 : 120;
     // Chỉ clearTimeout khi đổi deps — KHÔNG abort HTTP (abort storm → CPU 100% cPanel).
     const timer = window.setTimeout(() => {
@@ -1935,13 +1982,20 @@ export default function OrderManager({
     if (activeSubTab === 'order_products') return;
     const q = searchQuery.trim();
     const handle = window.setTimeout(() => {
+      // Luôn về trang 1 khi bắt đầu / đổi từ khóa tìm kiếm.
       setCurrentPage(1);
+      // Có từ khóa → ép UI về "Tất cả đơn hàng" (scope toàn cục), tránh fetch tab 2 lần.
+      if (q && activeSubTab !== 'all') {
+        skipNextOrdersTabFetchRef.current = true;
+        setActiveSubTab('all');
+      }
       void Promise.resolve(
         onFetchOrdersRef.current?.({
           silent: false,
           page: 1,
           limit: ORDERS_PAGE_SIZE,
           merge: false,
+          // Có search → luôn tab rỗng (tất cả đơn); không kẹp activeSubTab.
           tab: q ? '' : activeSubTab === 'all' ? '' : activeSubTab,
           q: q || undefined,
           kind:
@@ -6003,33 +6057,8 @@ export default function OrderManager({
     const isBackendCancelReturnTab =
       activeSubTab === 'cancel_returns' || activeSubTab === 'received_cancel_returns';
 
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      const matchSn = String(order.orderSn || '').toLowerCase().includes(q);
-      const matchTracking = Boolean(
-        (order.trackingNumber && order.trackingNumber.toLowerCase().includes(q)) ||
-          (order.tracking_no && String(order.tracking_no).toLowerCase().includes(q)) ||
-          (order.returnTrackingNumber && String(order.returnTrackingNumber).toLowerCase().includes(q)) ||
-          (order.return_tracking_no && String(order.return_tracking_no).toLowerCase().includes(q)) ||
-          (getOrderWaybillCode(order) && getOrderWaybillCode(order).toLowerCase().includes(q)),
-      );
-      const matchInternal = order.internalTrackingCode
-        ? order.internalTrackingCode.toLowerCase().includes(q)
-        : false;
-      const matchProduct = (order.items || []).some((it) =>
-        String(it.productTitle || it.name || '').toLowerCase().includes(q),
-      );
-      const cust = order.channel === 'woocommerce' ? resolveWooCustomerInfo(order) : null;
-      const matchCustomer = cust
-        ? [cust.name, cust.phone, cust.email, cust.address].some((v) =>
-            String(v || '').toLowerCase().includes(q),
-          )
-        : Boolean(
-            (order.customerName && order.customerName.toLowerCase().includes(q)) ||
-              (order.customerPhone && order.customerPhone.toLowerCase().includes(q)),
-          );
-      if (!matchSn && !matchTracking && !matchInternal && !matchProduct && !matchCustomer) return false;
-    }
+    // Partial match — không min-length; khi có từ khóa thì bỏ qua phạm vi tab (xem displayOrders).
+    if (searchQuery.trim() && !orderMatchesSearchKeyword(order, searchQuery)) return false;
 
     // Backend đã trả list chuẩn của tab Hủy/Hoàn — render 100%, không chặn shop/sàn/print.
     if (isBackendCancelReturnTab) return true;
@@ -6143,14 +6172,16 @@ export default function OrderManager({
     });
   }, [filteredOrdersBase, smartPickSort, activeSubTab]);
 
-  /** Màng lọc cuối — không render đơn lệch sub-tab Hủy/Hoàn dù state bị race. */
-  const displayOrders = useMemo(
-    () =>
-      filteredOrders.filter((order) =>
-        matchesStrictDisplaySubTab(order, activeSubTab, cancelReturnTab),
-      ),
-    [filteredOrders, activeSubTab, cancelReturnTab],
-  );
+  /**
+   * Màng lọc cuối — không render đơn lệch sub-tab Hủy/Hoàn dù state bị race.
+   * Khi đang tìm kiếm: BỎ QUA lọc tab — dùng toàn bộ kết quả (scope = Tất cả đơn hàng).
+   */
+  const displayOrders = useMemo(() => {
+    if (searchQuery.trim()) return filteredOrders;
+    return filteredOrders.filter((order) =>
+      matchesStrictDisplaySubTab(order, activeSubTab, cancelReturnTab),
+    );
+  }, [filteredOrders, activeSubTab, cancelReturnTab, searchQuery]);
 
   const listPagingTotal = displayOrders.length;
 
@@ -7939,7 +7970,10 @@ export default function OrderManager({
               type="text" 
               placeholder="Tìm kiếm theo mã đơn hàng, tên khách hàng, sản phẩm hoặc mã bưu cục..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setCurrentPage(1);
+              }}
               className="w-full pl-10 pr-4 py-2.5 bg-gray-50/50 rounded-xl border border-gray-100 focus:border-blue-500 focus:bg-white text-xs outline-none transition-all font-medium"
             />
           </div>

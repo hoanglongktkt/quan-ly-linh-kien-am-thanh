@@ -81611,15 +81611,30 @@ async function queryOrdersPageFromStore(opts) {
       pipeline3.push({ $match: { isPrinted: { $ne: true } } });
     }
     if (search) {
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const contains = { $regex: escaped, $options: "i" };
       pipeline3.push({
         $match: {
           $or: [
-            { orderSn: search },
-            { tracking_no: search },
-            { trackingNumber: search },
-            { return_sn: search },
-            { return_tracking_no: search },
-            { returnTrackingNumber: search }
+            { orderSn: contains },
+            { tracking_no: contains },
+            { trackingNumber: contains },
+            { return_sn: contains },
+            { return_tracking_no: contains },
+            { returnTrackingNumber: contains },
+            { packageNumber: contains },
+            { customerName: contains },
+            { customerPhone: contains },
+            { customerEmail: contains },
+            { "data.buyer_username": contains },
+            { "data.customerName": contains },
+            { "data.customer_name": contains },
+            { "data.items.productTitle": contains },
+            { "data.items.name": contains },
+            { "data.items.modelName": contains },
+            { "data.items.modelSku": contains },
+            { "data.internalTrackingCode": contains },
+            { internalTrackingCode: contains }
           ]
         }
       });
