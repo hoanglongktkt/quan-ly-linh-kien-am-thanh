@@ -38,6 +38,7 @@ import {
   resetPrintStatus,
   updatePrintStatus,
   markPrinted,
+  checkPdfOnDisk,
 } from "../controllers/ordersController.js";
 import { pullOrders, quickSyncOrders, syncOrders } from "../controllers/shopeeOrdersController.js";
 import { fastProcessOrders } from "../controllers/shopeeShipController.js";
@@ -112,6 +113,7 @@ router.post("/parse-address", h(parseOrderAddress));
 router.post("/confirm-return-received", h(confirmReturnReceived));
 router.post("/reset-print-status", h(resetPrintStatus));
 router.post("/update-print-status", h(updatePrintStatus));
+router.post("/check-pdf-on-disk", h(checkPdfOnDisk));
 router.post("/mark-printed", h(markPrinted));
 router.get("/:orderSn/events", h(getOrderEvents));
 router.post("/:id/hand-over-carrier", h(handOverCarrierById));

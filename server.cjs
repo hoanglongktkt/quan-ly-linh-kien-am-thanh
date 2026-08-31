@@ -1292,8 +1292,8 @@ var require_node = __commonJS({
           }
           break;
         case "FILE":
-          var fs22 = require("fs");
-          stream5 = new fs22.SyncWriteStream(fd2, { autoClose: false });
+          var fs23 = require("fs");
+          stream5 = new fs23.SyncWriteStream(fd2, { autoClose: false });
           stream5._type = "fs";
           break;
         case "PIPE":
@@ -14080,11 +14080,11 @@ var require_mime_types = __commonJS({
       }
       return exts[0];
     }
-    function lookup(path22) {
-      if (!path22 || typeof path22 !== "string") {
+    function lookup(path23) {
+      if (!path23 || typeof path23 !== "string") {
         return false;
       }
-      var extension3 = extname("x." + path22).toLowerCase().substr(1);
+      var extension3 = extname("x." + path23).toLowerCase().substr(1);
       if (!extension3) {
         return false;
       }
@@ -17713,8 +17713,8 @@ var require_node2 = __commonJS({
           }
           break;
         case "FILE":
-          var fs22 = require("fs");
-          stream5 = new fs22.SyncWriteStream(fd2, { autoClose: false });
+          var fs23 = require("fs");
+          stream5 = new fs23.SyncWriteStream(fd2, { autoClose: false });
           stream5._type = "fs";
           break;
         case "PIPE":
@@ -18432,8 +18432,8 @@ var require_node3 = __commonJS({
           }
           break;
         case "FILE":
-          var fs22 = require("fs");
-          stream5 = new fs22.SyncWriteStream(fd2, { autoClose: false });
+          var fs23 = require("fs");
+          stream5 = new fs23.SyncWriteStream(fd2, { autoClose: false });
           stream5._type = "fs";
           break;
         case "PIPE":
@@ -18521,7 +18521,7 @@ var require_path_to_regexp = __commonJS({
   "node_modules/path-to-regexp/index.js"(exports2, module2) {
     module2.exports = pathToRegexp;
     var MATCHING_GROUP_REGEXP = /\\.|\((?:\?<(.*?)>)?(?!\?)/g;
-    function pathToRegexp(path22, keys, options) {
+    function pathToRegexp(path23, keys, options) {
       options = options || {};
       keys = keys || [];
       var strict = options.strict;
@@ -18535,8 +18535,8 @@ var require_path_to_regexp = __commonJS({
       var pos = 0;
       var backtrack = "";
       var m2;
-      if (path22 instanceof RegExp) {
-        while (m2 = MATCHING_GROUP_REGEXP.exec(path22.source)) {
+      if (path23 instanceof RegExp) {
+        while (m2 = MATCHING_GROUP_REGEXP.exec(path23.source)) {
           if (m2[0][0] === "\\") continue;
           keys.push({
             name: m2[1] || name++,
@@ -18544,18 +18544,18 @@ var require_path_to_regexp = __commonJS({
             offset: m2.index
           });
         }
-        return path22;
+        return path23;
       }
-      if (Array.isArray(path22)) {
-        path22 = path22.map(function(value) {
+      if (Array.isArray(path23)) {
+        path23 = path23.map(function(value) {
           return pathToRegexp(value, keys, options).source;
         });
-        return new RegExp(path22.join("|"), flags);
+        return new RegExp(path23.join("|"), flags);
       }
-      if (typeof path22 !== "string") {
+      if (typeof path23 !== "string") {
         throw new TypeError("path must be a string, array of strings, or regular expression");
       }
-      path22 = path22.replace(
+      path23 = path23.replace(
         /\\.|(\/)?(\.)?:(\w+)(\(.*?\))?(\*)?(\?)?|[.*]|\/\(/g,
         function(match2, slash, format, key, capture, star, optional, offset) {
           if (match2[0] === "\\") {
@@ -18572,7 +18572,7 @@ var require_path_to_regexp = __commonJS({
           if (slash || format) {
             backtrack = "";
           } else {
-            backtrack += path22.slice(pos, offset);
+            backtrack += path23.slice(pos, offset);
           }
           pos = offset + match2.length;
           if (match2 === "*") {
@@ -18602,7 +18602,7 @@ var require_path_to_regexp = __commonJS({
           return result;
         }
       );
-      while (m2 = MATCHING_GROUP_REGEXP.exec(path22)) {
+      while (m2 = MATCHING_GROUP_REGEXP.exec(path23)) {
         if (m2[0][0] === "\\") continue;
         if (keysOffset + i2 === keys.length || keys[keysOffset + i2].offset > m2.index) {
           keys.splice(keysOffset + i2, 0, {
@@ -18614,13 +18614,13 @@ var require_path_to_regexp = __commonJS({
         }
         i2++;
       }
-      path22 += strict ? "" : path22[path22.length - 1] === "/" ? "?" : "/?";
+      path23 += strict ? "" : path23[path23.length - 1] === "/" ? "?" : "/?";
       if (end) {
-        path22 += "$";
-      } else if (path22[path22.length - 1] !== "/") {
-        path22 += lookahead ? "(?=/|$)" : "(?:/|$)";
+        path23 += "$";
+      } else if (path23[path23.length - 1] !== "/") {
+        path23 += lookahead ? "(?=/|$)" : "(?:/|$)";
       }
-      return new RegExp("^" + path22, flags);
+      return new RegExp("^" + path23, flags);
     }
   }
 });
@@ -18633,19 +18633,19 @@ var require_layer = __commonJS({
     var debug = require_src3()("express:router:layer");
     var hasOwnProperty2 = Object.prototype.hasOwnProperty;
     module2.exports = Layer;
-    function Layer(path22, options, fn) {
+    function Layer(path23, options, fn) {
       if (!(this instanceof Layer)) {
-        return new Layer(path22, options, fn);
+        return new Layer(path23, options, fn);
       }
-      debug("new %o", path22);
+      debug("new %o", path23);
       var opts = options || {};
       this.handle = fn;
       this.name = fn.name || "<anonymous>";
       this.params = void 0;
       this.path = void 0;
-      this.regexp = pathRegexp(path22, this.keys = [], opts);
-      this.regexp.fast_star = path22 === "*";
-      this.regexp.fast_slash = path22 === "/" && opts.end === false;
+      this.regexp = pathRegexp(path23, this.keys = [], opts);
+      this.regexp.fast_star = path23 === "*";
+      this.regexp.fast_slash = path23 === "/" && opts.end === false;
     }
     Layer.prototype.handle_error = function handle_error(error, req, res, next) {
       var fn = this.handle;
@@ -18669,20 +18669,20 @@ var require_layer = __commonJS({
         next(err);
       }
     };
-    Layer.prototype.match = function match2(path22) {
+    Layer.prototype.match = function match2(path23) {
       var match3;
-      if (path22 != null) {
+      if (path23 != null) {
         if (this.regexp.fast_slash) {
           this.params = {};
           this.path = "";
           return true;
         }
         if (this.regexp.fast_star) {
-          this.params = { "0": decode_param(path22) };
-          this.path = path22;
+          this.params = { "0": decode_param(path23) };
+          this.path = path23;
           return true;
         }
-        match3 = this.regexp.exec(path22);
+        match3 = this.regexp.exec(path23);
       }
       if (!match3) {
         this.params = void 0;
@@ -18775,10 +18775,10 @@ var require_route = __commonJS({
     var slice = Array.prototype.slice;
     var toString3 = Object.prototype.toString;
     module2.exports = Route;
-    function Route(path22) {
-      this.path = path22;
+    function Route(path23) {
+      this.path = path23;
       this.stack = [];
-      debug("new %o", path22);
+      debug("new %o", path23);
       this.methods = {};
     }
     Route.prototype._handles_method = function _handles_method(method) {
@@ -18990,8 +18990,8 @@ var require_router = __commonJS({
         if (++sync > 100) {
           return setImmediate(next, err);
         }
-        var path22 = getPathname(req);
-        if (path22 == null) {
+        var path23 = getPathname(req);
+        if (path23 == null) {
           return done(layerError);
         }
         var layer;
@@ -18999,7 +18999,7 @@ var require_router = __commonJS({
         var route;
         while (match2 !== true && idx < stack.length) {
           layer = stack[idx++];
-          match2 = matchLayer(layer, path22);
+          match2 = matchLayer(layer, path23);
           route = layer.route;
           if (typeof match2 !== "boolean") {
             layerError = layerError || match2;
@@ -19037,18 +19037,18 @@ var require_router = __commonJS({
           } else if (route) {
             layer.handle_request(req, res, next);
           } else {
-            trim_prefix(layer, layerError, layerPath, path22);
+            trim_prefix(layer, layerError, layerPath, path23);
           }
           sync = 0;
         });
       }
-      function trim_prefix(layer, layerError, layerPath, path22) {
+      function trim_prefix(layer, layerError, layerPath, path23) {
         if (layerPath.length !== 0) {
-          if (layerPath !== path22.slice(0, layerPath.length)) {
+          if (layerPath !== path23.slice(0, layerPath.length)) {
             next(layerError);
             return;
           }
-          var c = path22[layerPath.length];
+          var c = path23[layerPath.length];
           if (c && c !== "/" && c !== ".") return next(layerError);
           debug("trim prefix (%s) from url %s", layerPath, req.url);
           removed = layerPath;
@@ -19126,7 +19126,7 @@ var require_router = __commonJS({
     };
     proto.use = function use(fn) {
       var offset = 0;
-      var path22 = "/";
+      var path23 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -19134,7 +19134,7 @@ var require_router = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path22 = fn;
+          path23 = fn;
         }
       }
       var callbacks = flatten(slice.call(arguments, offset));
@@ -19146,8 +19146,8 @@ var require_router = __commonJS({
         if (typeof fn !== "function") {
           throw new TypeError("Router.use() requires a middleware function but got a " + gettype(fn));
         }
-        debug("use %o %s", path22, fn.name || "<anonymous>");
-        var layer = new Layer(path22, {
+        debug("use %o %s", path23, fn.name || "<anonymous>");
+        var layer = new Layer(path23, {
           sensitive: this.caseSensitive,
           strict: false,
           end: false
@@ -19157,9 +19157,9 @@ var require_router = __commonJS({
       }
       return this;
     };
-    proto.route = function route(path22) {
-      var route2 = new Route(path22);
-      var layer = new Layer(path22, {
+    proto.route = function route(path23) {
+      var route2 = new Route(path23);
+      var layer = new Layer(path23, {
         sensitive: this.caseSensitive,
         strict: this.strict,
         end: true
@@ -19169,8 +19169,8 @@ var require_router = __commonJS({
       return route2;
     };
     methods.concat("all").forEach(function(method) {
-      proto[method] = function(path22) {
-        var route = this.route(path22);
+      proto[method] = function(path23) {
+        var route = this.route(path23);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
@@ -19206,9 +19206,9 @@ var require_router = __commonJS({
       }
       return toString3.call(obj).replace(objectRegExp, "$1");
     }
-    function matchLayer(layer, path22) {
+    function matchLayer(layer, path23) {
       try {
-        return layer.match(path22);
+        return layer.match(path23);
       } catch (err) {
         return err;
       }
@@ -19326,13 +19326,13 @@ var require_view = __commonJS({
   "node_modules/express/lib/view.js"(exports2, module2) {
     "use strict";
     var debug = require_src3()("express:view");
-    var path22 = require("path");
-    var fs22 = require("fs");
-    var dirname = path22.dirname;
-    var basename3 = path22.basename;
-    var extname = path22.extname;
-    var join = path22.join;
-    var resolve = path22.resolve;
+    var path23 = require("path");
+    var fs23 = require("fs");
+    var dirname = path23.dirname;
+    var basename3 = path23.basename;
+    var extname = path23.extname;
+    var join = path23.join;
+    var resolve = path23.resolve;
     module2.exports = View;
     function View(name, options) {
       var opts = options || {};
@@ -19361,17 +19361,17 @@ var require_view = __commonJS({
       this.path = this.lookup(fileName);
     }
     View.prototype.lookup = function lookup(name) {
-      var path23;
+      var path24;
       var roots = [].concat(this.root);
       debug('lookup "%s"', name);
-      for (var i2 = 0; i2 < roots.length && !path23; i2++) {
+      for (var i2 = 0; i2 < roots.length && !path24; i2++) {
         var root = roots[i2];
         var loc = resolve(root, name);
         var dir = dirname(loc);
         var file = basename3(loc);
-        path23 = this.resolve(dir, file);
+        path24 = this.resolve(dir, file);
       }
-      return path23;
+      return path24;
     };
     View.prototype.render = function render(options, callback) {
       debug('render "%s"', this.path);
@@ -19379,21 +19379,21 @@ var require_view = __commonJS({
     };
     View.prototype.resolve = function resolve2(dir, file) {
       var ext = this.ext;
-      var path23 = join(dir, file);
-      var stat3 = tryStat(path23);
+      var path24 = join(dir, file);
+      var stat3 = tryStat(path24);
       if (stat3 && stat3.isFile()) {
-        return path23;
+        return path24;
       }
-      path23 = join(dir, basename3(file, ext), "index" + ext);
-      stat3 = tryStat(path23);
+      path24 = join(dir, basename3(file, ext), "index" + ext);
+      stat3 = tryStat(path24);
       if (stat3 && stat3.isFile()) {
-        return path23;
+        return path24;
       }
     };
-    function tryStat(path23) {
-      debug('stat "%s"', path23);
+    function tryStat(path24) {
+      debug('stat "%s"', path24);
       try {
-        return fs22.statSync(path23);
+        return fs23.statSync(path24);
       } catch (e2) {
         return void 0;
       }
@@ -19998,8 +19998,8 @@ var require_node4 = __commonJS({
           }
           break;
         case "FILE":
-          var fs22 = require("fs");
-          stream5 = new fs22.SyncWriteStream(fd2, { autoClose: false });
+          var fs23 = require("fs");
+          stream5 = new fs23.SyncWriteStream(fd2, { autoClose: false });
           stream5._type = "fs";
           break;
         case "PIPE":
@@ -20171,8 +20171,8 @@ var require_types = __commonJS({
 // node_modules/mime/mime.js
 var require_mime = __commonJS({
   "node_modules/mime/mime.js"(exports2, module2) {
-    var path22 = require("path");
-    var fs22 = require("fs");
+    var path23 = require("path");
+    var fs23 = require("fs");
     function Mime() {
       this.types = /* @__PURE__ */ Object.create(null);
       this.extensions = /* @__PURE__ */ Object.create(null);
@@ -20193,7 +20193,7 @@ var require_mime = __commonJS({
     };
     Mime.prototype.load = function(file) {
       this._loading = file;
-      var map = {}, content = fs22.readFileSync(file, "ascii"), lines = content.split(/[\r\n]+/);
+      var map = {}, content = fs23.readFileSync(file, "ascii"), lines = content.split(/[\r\n]+/);
       lines.forEach(function(line) {
         var fields = line.replace(/\s*#.*|^\s*|\s*$/g, "").split(/\s+/);
         map[fields.shift()] = fields;
@@ -20201,8 +20201,8 @@ var require_mime = __commonJS({
       this.define(map);
       this._loading = null;
     };
-    Mime.prototype.lookup = function(path23, fallback) {
-      var ext = path23.replace(/^.*[\.\/\\]/, "").toLowerCase();
+    Mime.prototype.lookup = function(path24, fallback) {
+      var ext = path24.replace(/^.*[\.\/\\]/, "").toLowerCase();
       return this.types[ext] || fallback || this.default_type;
     };
     Mime.prototype.extension = function(mimeType) {
@@ -20431,33 +20431,33 @@ var require_send = __commonJS({
     var escapeHtml3 = require_escape_html();
     var etag = require_etag();
     var fresh = require_fresh();
-    var fs22 = require("fs");
+    var fs23 = require("fs");
     var mime = require_mime();
     var ms = require_ms5();
     var onFinished = require_on_finished();
     var parseRange = require_range_parser();
-    var path22 = require("path");
+    var path23 = require("path");
     var statuses = require_statuses();
     var Stream4 = require("stream");
     var util4 = require("util");
-    var extname = path22.extname;
-    var join = path22.join;
-    var normalize = path22.normalize;
-    var resolve = path22.resolve;
-    var sep = path22.sep;
+    var extname = path23.extname;
+    var join = path23.join;
+    var normalize = path23.normalize;
+    var resolve = path23.resolve;
+    var sep = path23.sep;
     var BYTES_RANGE_REGEXP = /^ *bytes=/;
     var MAX_MAXAGE = 60 * 60 * 24 * 365 * 1e3;
     var UP_PATH_REGEXP = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
     module2.exports = send;
     module2.exports.mime = mime;
-    function send(req, path23, options) {
-      return new SendStream(req, path23, options);
+    function send(req, path24, options) {
+      return new SendStream(req, path24, options);
     }
-    function SendStream(req, path23, options) {
+    function SendStream(req, path24, options) {
       Stream4.call(this);
       var opts = options || {};
       this.options = opts;
-      this.path = path23;
+      this.path = path24;
       this.req = req;
       this._acceptRanges = opts.acceptRanges !== void 0 ? Boolean(opts.acceptRanges) : true;
       this._cacheControl = opts.cacheControl !== void 0 ? Boolean(opts.cacheControl) : true;
@@ -20503,8 +20503,8 @@ var require_send = __commonJS({
       this._index = index2;
       return this;
     }, "send.index: pass index as option");
-    SendStream.prototype.root = function root(path23) {
-      this._root = resolve(String(path23));
+    SendStream.prototype.root = function root(path24) {
+      this._root = resolve(String(path24));
       debug("root %s", this._root);
       return this;
     };
@@ -20617,10 +20617,10 @@ var require_send = __commonJS({
       var lastModified = this.res.getHeader("Last-Modified");
       return parseHttpDate(lastModified) <= parseHttpDate(ifRange);
     };
-    SendStream.prototype.redirect = function redirect(path23) {
+    SendStream.prototype.redirect = function redirect(path24) {
       var res = this.res;
       if (hasListeners(this, "directory")) {
-        this.emit("directory", res, path23);
+        this.emit("directory", res, path24);
         return;
       }
       if (this.hasTrailingSlash()) {
@@ -20640,42 +20640,42 @@ var require_send = __commonJS({
     SendStream.prototype.pipe = function pipe(res) {
       var root = this._root;
       this.res = res;
-      var path23 = decode(this.path);
-      if (path23 === -1) {
+      var path24 = decode(this.path);
+      if (path24 === -1) {
         this.error(400);
         return res;
       }
-      if (~path23.indexOf("\0")) {
+      if (~path24.indexOf("\0")) {
         this.error(400);
         return res;
       }
       var parts;
       if (root !== null) {
-        if (path23) {
-          path23 = normalize("." + sep + path23);
+        if (path24) {
+          path24 = normalize("." + sep + path24);
         }
-        if (UP_PATH_REGEXP.test(path23)) {
-          debug('malicious path "%s"', path23);
+        if (UP_PATH_REGEXP.test(path24)) {
+          debug('malicious path "%s"', path24);
           this.error(403);
           return res;
         }
-        parts = path23.split(sep);
-        path23 = normalize(join(root, path23));
+        parts = path24.split(sep);
+        path24 = normalize(join(root, path24));
       } else {
-        if (UP_PATH_REGEXP.test(path23)) {
-          debug('malicious path "%s"', path23);
+        if (UP_PATH_REGEXP.test(path24)) {
+          debug('malicious path "%s"', path24);
           this.error(403);
           return res;
         }
-        parts = normalize(path23).split(sep);
-        path23 = resolve(path23);
+        parts = normalize(path24).split(sep);
+        path24 = resolve(path24);
       }
       if (containsDotFile(parts)) {
         var access = this._dotfiles;
         if (access === void 0) {
           access = parts[parts.length - 1][0] === "." ? this._hidden ? "allow" : "ignore" : "allow";
         }
-        debug('%s dotfile "%s"', access, path23);
+        debug('%s dotfile "%s"', access, path24);
         switch (access) {
           case "allow":
             break;
@@ -20689,13 +20689,13 @@ var require_send = __commonJS({
         }
       }
       if (this._index.length && this.hasTrailingSlash()) {
-        this.sendIndex(path23);
+        this.sendIndex(path24);
         return res;
       }
-      this.sendFile(path23);
+      this.sendFile(path24);
       return res;
     };
-    SendStream.prototype.send = function send2(path23, stat3) {
+    SendStream.prototype.send = function send2(path24, stat3) {
       var len = stat3.size;
       var options = this.options;
       var opts = {};
@@ -20707,9 +20707,9 @@ var require_send = __commonJS({
         this.headersAlreadySent();
         return;
       }
-      debug('pipe "%s"', path23);
-      this.setHeader(path23, stat3);
-      this.type(path23);
+      debug('pipe "%s"', path24);
+      this.setHeader(path24, stat3);
+      this.type(path24);
       if (this.isConditionalGET()) {
         if (this.isPreconditionFailure()) {
           this.error(412);
@@ -20758,28 +20758,28 @@ var require_send = __commonJS({
         res.end();
         return;
       }
-      this.stream(path23, opts);
+      this.stream(path24, opts);
     };
-    SendStream.prototype.sendFile = function sendFile(path23) {
+    SendStream.prototype.sendFile = function sendFile(path24) {
       var i2 = 0;
       var self2 = this;
-      debug('stat "%s"', path23);
-      fs22.stat(path23, function onstat(err, stat3) {
-        if (err && err.code === "ENOENT" && !extname(path23) && path23[path23.length - 1] !== sep) {
+      debug('stat "%s"', path24);
+      fs23.stat(path24, function onstat(err, stat3) {
+        if (err && err.code === "ENOENT" && !extname(path24) && path24[path24.length - 1] !== sep) {
           return next(err);
         }
         if (err) return self2.onStatError(err);
-        if (stat3.isDirectory()) return self2.redirect(path23);
-        self2.emit("file", path23, stat3);
-        self2.send(path23, stat3);
+        if (stat3.isDirectory()) return self2.redirect(path24);
+        self2.emit("file", path24, stat3);
+        self2.send(path24, stat3);
       });
       function next(err) {
         if (self2._extensions.length <= i2) {
           return err ? self2.onStatError(err) : self2.error(404);
         }
-        var p = path23 + "." + self2._extensions[i2++];
+        var p = path24 + "." + self2._extensions[i2++];
         debug('stat "%s"', p);
-        fs22.stat(p, function(err2, stat3) {
+        fs23.stat(p, function(err2, stat3) {
           if (err2) return next(err2);
           if (stat3.isDirectory()) return next();
           self2.emit("file", p, stat3);
@@ -20787,7 +20787,7 @@ var require_send = __commonJS({
         });
       }
     };
-    SendStream.prototype.sendIndex = function sendIndex(path23) {
+    SendStream.prototype.sendIndex = function sendIndex(path24) {
       var i2 = -1;
       var self2 = this;
       function next(err) {
@@ -20795,9 +20795,9 @@ var require_send = __commonJS({
           if (err) return self2.onStatError(err);
           return self2.error(404);
         }
-        var p = join(path23, self2._index[i2]);
+        var p = join(path24, self2._index[i2]);
         debug('stat "%s"', p);
-        fs22.stat(p, function(err2, stat3) {
+        fs23.stat(p, function(err2, stat3) {
           if (err2) return next(err2);
           if (stat3.isDirectory()) return next();
           self2.emit("file", p, stat3);
@@ -20806,10 +20806,10 @@ var require_send = __commonJS({
       }
       next();
     };
-    SendStream.prototype.stream = function stream4(path23, options) {
+    SendStream.prototype.stream = function stream4(path24, options) {
       var self2 = this;
       var res = this.res;
-      var stream5 = fs22.createReadStream(path23, options);
+      var stream5 = fs23.createReadStream(path24, options);
       this.emit("stream", stream5);
       stream5.pipe(res);
       function cleanup() {
@@ -20824,10 +20824,10 @@ var require_send = __commonJS({
         self2.emit("end");
       });
     };
-    SendStream.prototype.type = function type(path23) {
+    SendStream.prototype.type = function type(path24) {
       var res = this.res;
       if (res.getHeader("Content-Type")) return;
-      var type2 = mime.lookup(path23);
+      var type2 = mime.lookup(path24);
       if (!type2) {
         debug("no content-type");
         return;
@@ -20836,9 +20836,9 @@ var require_send = __commonJS({
       debug("content-type %s", type2);
       res.setHeader("Content-Type", type2 + (charset ? "; charset=" + charset : ""));
     };
-    SendStream.prototype.setHeader = function setHeader(path23, stat3) {
+    SendStream.prototype.setHeader = function setHeader(path24, stat3) {
       var res = this.res;
-      this.emit("headers", res, path23, stat3);
+      this.emit("headers", res, path24, stat3);
       if (this._acceptRanges && !res.getHeader("Accept-Ranges")) {
         debug("accept ranges");
         res.setHeader("Accept-Ranges", "bytes");
@@ -20897,9 +20897,9 @@ var require_send = __commonJS({
       }
       return err instanceof Error ? createError(status, err, { expose: false }) : createError(status, err);
     }
-    function decode(path23) {
+    function decode(path24) {
       try {
-        return decodeURIComponent(path23);
+        return decodeURIComponent(path24);
       } catch (err) {
         return -1;
       }
@@ -21808,10 +21808,10 @@ var require_utils2 = __commonJS({
     var querystring = require("querystring");
     exports2.etag = createETagGenerator({ weak: false });
     exports2.wetag = createETagGenerator({ weak: true });
-    exports2.isAbsolute = function(path22) {
-      if ("/" === path22[0]) return true;
-      if (":" === path22[1] && ("\\" === path22[2] || "/" === path22[2])) return true;
-      if ("\\\\" === path22.substring(0, 2)) return true;
+    exports2.isAbsolute = function(path23) {
+      if ("/" === path23[0]) return true;
+      if (":" === path23[1] && ("\\" === path23[2] || "/" === path23[2])) return true;
+      if ("\\\\" === path23.substring(0, 2)) return true;
     };
     exports2.flatten = deprecate3.function(
       flatten,
@@ -22023,7 +22023,7 @@ var require_application = __commonJS({
     };
     app.use = function use(fn) {
       var offset = 0;
-      var path22 = "/";
+      var path23 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -22031,7 +22031,7 @@ var require_application = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path22 = fn;
+          path23 = fn;
         }
       }
       var fns = flatten(slice.call(arguments, offset));
@@ -22042,12 +22042,12 @@ var require_application = __commonJS({
       var router25 = this._router;
       fns.forEach(function(fn2) {
         if (!fn2 || !fn2.handle || !fn2.set) {
-          return router25.use(path22, fn2);
+          return router25.use(path23, fn2);
         }
-        debug(".use app under %s", path22);
-        fn2.mountpath = path22;
+        debug(".use app under %s", path23);
+        fn2.mountpath = path23;
         fn2.parent = this;
-        router25.use(path22, function mounted_app(req, res, next) {
+        router25.use(path23, function mounted_app(req, res, next) {
           var orig = req.app;
           fn2.handle(req, res, function(err) {
             setPrototypeOf(req, orig.request);
@@ -22059,9 +22059,9 @@ var require_application = __commonJS({
       }, this);
       return this;
     };
-    app.route = function route(path22) {
+    app.route = function route(path23) {
       this.lazyrouter();
-      return this._router.route(path22);
+      return this._router.route(path23);
     };
     app.engine = function engine(ext, fn) {
       if (typeof fn !== "function") {
@@ -22112,7 +22112,7 @@ var require_application = __commonJS({
       }
       return this;
     };
-    app.path = function path22() {
+    app.path = function path23() {
       return this.parent ? this.parent.path() + this.mountpath : "";
     };
     app.enabled = function enabled(setting) {
@@ -22128,19 +22128,19 @@ var require_application = __commonJS({
       return this.set(setting, false);
     };
     methods.forEach(function(method) {
-      app[method] = function(path22) {
+      app[method] = function(path23) {
         if (method === "get" && arguments.length === 1) {
-          return this.set(path22);
+          return this.set(path23);
         }
         this.lazyrouter();
-        var route = this._router.route(path22);
+        var route = this._router.route(path23);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
     });
-    app.all = function all3(path22) {
+    app.all = function all3(path23) {
       this.lazyrouter();
-      var route = this._router.route(path22);
+      var route = this._router.route(path23);
       var args = slice.call(arguments, 1);
       for (var i2 = 0; i2 < methods.length; i2++) {
         route[methods[i2]].apply(route, args);
@@ -22899,7 +22899,7 @@ var require_request = __commonJS({
       var subdomains2 = !isIP2(hostname) ? hostname.split(".").reverse() : [hostname];
       return subdomains2.slice(offset);
     });
-    defineGetter(req, "path", function path22() {
+    defineGetter(req, "path", function path23() {
       return parse(this).pathname;
     });
     defineGetter(req, "hostname", function hostname() {
@@ -23221,7 +23221,7 @@ var require_response = __commonJS({
     var http4 = require("http");
     var isAbsolute = require_utils2().isAbsolute;
     var onFinished = require_on_finished();
-    var path22 = require("path");
+    var path23 = require("path");
     var statuses = require_statuses();
     var merge2 = require_utils_merge();
     var sign = require_cookie_signature().sign;
@@ -23230,9 +23230,9 @@ var require_response = __commonJS({
     var setCharset = require_utils2().setCharset;
     var cookie = require_cookie();
     var send = require_send();
-    var extname = path22.extname;
+    var extname = path23.extname;
     var mime = send.mime;
-    var resolve = path22.resolve;
+    var resolve = path23.resolve;
     var vary = require_vary();
     var res = Object.create(http4.ServerResponse.prototype);
     module2.exports = res;
@@ -23409,26 +23409,26 @@ var require_response = __commonJS({
       this.type("txt");
       return this.send(body);
     };
-    res.sendFile = function sendFile(path23, options, callback) {
+    res.sendFile = function sendFile(path24, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
       var next = req.next;
       var opts = options || {};
-      if (!path23) {
+      if (!path24) {
         throw new TypeError("path argument is required to res.sendFile");
       }
-      if (typeof path23 !== "string") {
+      if (typeof path24 !== "string") {
         throw new TypeError("path must be a string to res.sendFile");
       }
       if (typeof options === "function") {
         done = options;
         opts = {};
       }
-      if (!opts.root && !isAbsolute(path23)) {
+      if (!opts.root && !isAbsolute(path24)) {
         throw new TypeError("path must be absolute or specify root to res.sendFile");
       }
-      var pathname = encodeURI(path23);
+      var pathname = encodeURI(path24);
       var file = send(req, pathname, opts);
       sendfile(res2, file, opts, function(err) {
         if (done) return done(err);
@@ -23438,7 +23438,7 @@ var require_response = __commonJS({
         }
       });
     };
-    res.sendfile = function(path23, options, callback) {
+    res.sendfile = function(path24, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
@@ -23448,7 +23448,7 @@ var require_response = __commonJS({
         done = options;
         opts = {};
       }
-      var file = send(req, path23, opts);
+      var file = send(req, path24, opts);
       sendfile(res2, file, opts, function(err) {
         if (done) return done(err);
         if (err && err.code === "EISDIR") return next();
@@ -23461,7 +23461,7 @@ var require_response = __commonJS({
       res.sendfile,
       "res.sendfile: Use res.sendFile instead"
     );
-    res.download = function download(path23, filename, options, callback) {
+    res.download = function download(path24, filename, options, callback) {
       var done = callback;
       var name = filename;
       var opts = options || null;
@@ -23478,7 +23478,7 @@ var require_response = __commonJS({
         opts = filename;
       }
       var headers = {
-        "Content-Disposition": contentDisposition(name || path23)
+        "Content-Disposition": contentDisposition(name || path24)
       };
       if (opts && opts.headers) {
         var keys = Object.keys(opts.headers);
@@ -23491,7 +23491,7 @@ var require_response = __commonJS({
       }
       opts = Object.create(opts);
       opts.headers = headers;
-      var fullPath = !opts.root ? resolve(path23) : path23;
+      var fullPath = !opts.root ? resolve(path24) : path24;
       return this.sendFile(fullPath, opts, done);
     };
     res.contentType = res.type = function contentType(type) {
@@ -23792,11 +23792,11 @@ var require_serve_static = __commonJS({
         }
         var forwardError = !fallthrough;
         var originalUrl = parseUrl2.original(req);
-        var path22 = parseUrl2(req).pathname;
-        if (path22 === "/" && originalUrl.pathname.substr(-1) !== "/") {
-          path22 = "";
+        var path23 = parseUrl2(req).pathname;
+        if (path23 === "/" && originalUrl.pathname.substr(-1) !== "/") {
+          path23 = "";
         }
-        var stream4 = send(req, path22, opts);
+        var stream4 = send(req, path23, opts);
         stream4.on("directory", onDirectory);
         if (setHeaders) {
           stream4.on("headers", setHeaders);
@@ -23935,8 +23935,8 @@ var require_express2 = __commonJS({
 // node_modules/dotenv/lib/main.js
 var require_main = __commonJS({
   "node_modules/dotenv/lib/main.js"(exports2, module2) {
-    var fs22 = require("fs");
-    var path22 = require("path");
+    var fs23 = require("fs");
+    var path23 = require("path");
     var os = require("os");
     var crypto7 = require("crypto");
     var TIPS = [
@@ -24067,7 +24067,7 @@ var require_main = __commonJS({
       if (options && options.path && options.path.length > 0) {
         if (Array.isArray(options.path)) {
           for (const filepath of options.path) {
-            if (fs22.existsSync(filepath)) {
+            if (fs23.existsSync(filepath)) {
               possibleVaultPath = filepath.endsWith(".vault") ? filepath : `${filepath}.vault`;
             }
           }
@@ -24075,15 +24075,15 @@ var require_main = __commonJS({
           possibleVaultPath = options.path.endsWith(".vault") ? options.path : `${options.path}.vault`;
         }
       } else {
-        possibleVaultPath = path22.resolve(process.cwd(), ".env.vault");
+        possibleVaultPath = path23.resolve(process.cwd(), ".env.vault");
       }
-      if (fs22.existsSync(possibleVaultPath)) {
+      if (fs23.existsSync(possibleVaultPath)) {
         return possibleVaultPath;
       }
       return null;
     }
     function _resolveHome(envPath) {
-      return envPath[0] === "~" ? path22.join(os.homedir(), envPath.slice(1)) : envPath;
+      return envPath[0] === "~" ? path23.join(os.homedir(), envPath.slice(1)) : envPath;
     }
     function _configVault(options) {
       const debug = parseBoolean(process.env.DOTENV_CONFIG_DEBUG || options && options.debug);
@@ -24100,7 +24100,7 @@ var require_main = __commonJS({
       return { parsed };
     }
     function configDotenv(options) {
-      const dotenvPath = path22.resolve(process.cwd(), ".env");
+      const dotenvPath = path23.resolve(process.cwd(), ".env");
       let encoding = "utf8";
       let processEnv = process.env;
       if (options && options.processEnv != null) {
@@ -24128,13 +24128,13 @@ var require_main = __commonJS({
       }
       let lastError;
       const parsedAll = {};
-      for (const path23 of optionPaths) {
+      for (const path24 of optionPaths) {
         try {
-          const parsed = DotenvModule.parse(fs22.readFileSync(path23, { encoding }));
+          const parsed = DotenvModule.parse(fs23.readFileSync(path24, { encoding }));
           DotenvModule.populate(parsedAll, parsed, options);
         } catch (e2) {
           if (debug) {
-            _debug(`failed to load ${path23} ${e2.message}`);
+            _debug(`failed to load ${path24} ${e2.message}`);
           }
           lastError = e2;
         }
@@ -24147,7 +24147,7 @@ var require_main = __commonJS({
         const shortPaths = [];
         for (const filePath of optionPaths) {
           try {
-            const relative = path22.relative(process.cwd(), filePath);
+            const relative = path23.relative(process.cwd(), filePath);
             shortPaths.push(relative);
           } catch (e2) {
             if (debug) {
@@ -40888,14 +40888,14 @@ var require_svgPath = __commonJS({
       ["Z", 0],
       ["z", 0]
     ]);
-    var parse = function(path22) {
+    var parse = function(path23) {
       var cmd;
       var ret = [];
       var args = [];
       var curArg = "";
       var foundDecimal = false;
       var params = 0;
-      for (var _i = 0, path_1 = path22; _i < path_1.length; _i++) {
+      for (var _i = 0, path_1 = path23; _i < path_1.length; _i++) {
         var c = path_1[_i];
         if (parameters.has(c)) {
           params = parameters.get(c);
@@ -41209,8 +41209,8 @@ var require_svgPath = __commonJS({
       ];
       return result;
     };
-    exports2.svgPathToOperators = function(path22) {
-      return apply(parse(path22));
+    exports2.svgPathToOperators = function(path23) {
+      return apply(parse(path23));
     };
   }
 });
@@ -41393,7 +41393,7 @@ var require_operations = __commonJS({
         operators_1.popGraphicsState()
       ]).filter(Boolean);
     };
-    exports2.drawSvgPath = function(path22, options) {
+    exports2.drawSvgPath = function(path23, options) {
       var _a2, _b, _c;
       return tslib_1.__spreadArrays([
         operators_1.pushGraphicsState(),
@@ -41407,7 +41407,7 @@ var require_operations = __commonJS({
         options.borderWidth && operators_1.setLineWidth(options.borderWidth),
         options.borderLineCap && operators_1.setLineCap(options.borderLineCap),
         operators_1.setDashPattern((_b = options.borderDashArray) !== null && _b !== void 0 ? _b : [], (_c = options.borderDashPhase) !== null && _c !== void 0 ? _c : 0)
-      ], svgPath_1.svgPathToOperators(path22), [
+      ], svgPath_1.svgPathToOperators(path23), [
         // prettier-ignore
         options.color && options.borderWidth ? operators_1.fillAndStroke() : options.color ? operators_1.fill() : options.borderColor ? operators_1.stroke() : operators_1.closePath(),
         operators_1.popGraphicsState()
@@ -45705,12 +45705,12 @@ var require_PDFPage = __commonJS({
             graphicsState: graphicsStateKey
           }));
         };
-        PDFPage2.prototype.drawSvgPath = function(path22, options) {
+        PDFPage2.prototype.drawSvgPath = function(path23, options) {
           var _a2, _b, _c, _d, _e, _f, _g, _h, _j;
           if (options === void 0) {
             options = {};
           }
-          utils_1.assertIs(path22, "path", ["string"]);
+          utils_1.assertIs(path23, "path", ["string"]);
           utils_1.assertOrUndefined(options.x, "options.x", ["number"]);
           utils_1.assertOrUndefined(options.y, "options.y", ["number"]);
           utils_1.assertOrUndefined(options.scale, "options.scale", ["number"]);
@@ -45739,7 +45739,7 @@ var require_PDFPage = __commonJS({
             options.borderColor = colors_1.rgb(0, 0, 0);
           }
           var contentStream = this.getContentStream();
-          contentStream.push.apply(contentStream, operations_1.drawSvgPath(path22, {
+          contentStream.push.apply(contentStream, operations_1.drawSvgPath(path23, {
             x: (_a2 = options.x) !== null && _a2 !== void 0 ? _a2 : this.x,
             y: (_b = options.y) !== null && _b !== void 0 ? _b : this.y,
             scale: options.scale,
@@ -58546,22 +58546,22 @@ var init_from = __esm({
     init_file();
     init_fetch_blob();
     ({ stat } = import_node_fs.promises);
-    blobFromSync = (path22, type) => fromBlob((0, import_node_fs.statSync)(path22), path22, type);
-    blobFrom = (path22, type) => stat(path22).then((stat3) => fromBlob(stat3, path22, type));
-    fileFrom = (path22, type) => stat(path22).then((stat3) => fromFile(stat3, path22, type));
-    fileFromSync = (path22, type) => fromFile((0, import_node_fs.statSync)(path22), path22, type);
-    fromBlob = (stat3, path22, type = "") => new fetch_blob_default([new BlobDataItem({
-      path: path22,
+    blobFromSync = (path23, type) => fromBlob((0, import_node_fs.statSync)(path23), path23, type);
+    blobFrom = (path23, type) => stat(path23).then((stat3) => fromBlob(stat3, path23, type));
+    fileFrom = (path23, type) => stat(path23).then((stat3) => fromFile(stat3, path23, type));
+    fileFromSync = (path23, type) => fromFile((0, import_node_fs.statSync)(path23), path23, type);
+    fromBlob = (stat3, path23, type = "") => new fetch_blob_default([new BlobDataItem({
+      path: path23,
       size: stat3.size,
       lastModified: stat3.mtimeMs,
       start: 0
     })], { type });
-    fromFile = (stat3, path22, type = "") => new file_default([new BlobDataItem({
-      path: path22,
+    fromFile = (stat3, path23, type = "") => new file_default([new BlobDataItem({
+      path: path23,
       size: stat3.size,
       lastModified: stat3.mtimeMs,
       start: 0
-    })], (0, import_node_path.basename)(path22), { type, lastModified: stat3.mtimeMs });
+    })], (0, import_node_path.basename)(path23), { type, lastModified: stat3.mtimeMs });
     BlobDataItem = class _BlobDataItem {
       #path;
       #start;
@@ -61758,9 +61758,9 @@ var require_util2 = __commonJS({
     exports2.removeUndefinedValuesInObject = removeUndefinedValuesInObject;
     exports2.isValidFile = isValidFile;
     exports2.getWellKnownCertificateConfigFileLocation = getWellKnownCertificateConfigFileLocation;
-    var fs22 = require("fs");
+    var fs23 = require("fs");
     var os = require("os");
-    var path22 = require("path");
+    var path23 = require("path");
     var WELL_KNOWN_CERTIFICATE_CONFIG_FILE = "certificate_config.json";
     var CLOUDSDK_CONFIG_DIRECTORY = "gcloud";
     function snakeToCamel(str) {
@@ -61846,15 +61846,15 @@ var require_util2 = __commonJS({
     }
     async function isValidFile(filePath) {
       try {
-        const stats = await fs22.promises.lstat(filePath);
+        const stats = await fs23.promises.lstat(filePath);
         return stats.isFile();
       } catch (e2) {
         return false;
       }
     }
     function getWellKnownCertificateConfigFileLocation() {
-      const configDir = process.env.CLOUDSDK_CONFIG || (_isWindows() ? path22.join(process.env.APPDATA || "", CLOUDSDK_CONFIG_DIRECTORY) : path22.join(process.env.HOME || "", ".config", CLOUDSDK_CONFIG_DIRECTORY));
-      return path22.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
+      const configDir = process.env.CLOUDSDK_CONFIG || (_isWindows() ? path23.join(process.env.APPDATA || "", CLOUDSDK_CONFIG_DIRECTORY) : path23.join(process.env.HOME || "", ".config", CLOUDSDK_CONFIG_DIRECTORY));
+      return path23.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
     }
     function _isWindows() {
       return os.platform().startsWith("win");
@@ -63257,11 +63257,11 @@ var require_getCredentials = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.getCredentials = getCredentials;
-    var path22 = require("path");
-    var fs22 = require("fs");
+    var path23 = require("path");
+    var fs23 = require("fs");
     var util_1 = require("util");
     var errorWithCode_1 = require_errorWithCode();
-    var readFile = fs22.readFile ? (0, util_1.promisify)(fs22.readFile) : async () => {
+    var readFile = fs23.readFile ? (0, util_1.promisify)(fs23.readFile) : async () => {
       throw new errorWithCode_1.ErrorWithCode("use key rather than keyFile.", "MISSING_CREDENTIALS");
     };
     var ExtensionFiles;
@@ -63329,7 +63329,7 @@ var require_getCredentials = __commonJS({
        * @returns An instance of a class that implements ICredentialsProvider.
        */
       static create(keyFilePath) {
-        const keyFileExtension = path22.extname(keyFilePath);
+        const keyFileExtension = path23.extname(keyFilePath);
         switch (keyFileExtension) {
           case ExtensionFiles.JSON:
             return new JsonCredentialsProvider(keyFilePath);
@@ -64938,12 +64938,12 @@ var require_filesubjecttokensupplier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FileSubjectTokenSupplier = void 0;
     var util_1 = require("util");
-    var fs22 = require("fs");
-    var readFile = (0, util_1.promisify)(fs22.readFile ?? (() => {
+    var fs23 = require("fs");
+    var readFile = (0, util_1.promisify)(fs23.readFile ?? (() => {
     }));
-    var realpath = (0, util_1.promisify)(fs22.realpath ?? (() => {
+    var realpath = (0, util_1.promisify)(fs23.realpath ?? (() => {
     }));
-    var lstat = (0, util_1.promisify)(fs22.lstat ?? (() => {
+    var lstat = (0, util_1.promisify)(fs23.lstat ?? (() => {
     }));
     var FileSubjectTokenSupplier = class {
       filePath;
@@ -65061,7 +65061,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CertificateSubjectTokenSupplier = exports2.InvalidConfigurationError = exports2.CertificateSourceUnavailableError = exports2.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = void 0;
     var util_1 = require_util2();
-    var fs22 = require("fs");
+    var fs23 = require("fs");
     var crypto_1 = require("crypto");
     var https3 = require("https");
     exports2.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = "GOOGLE_API_CERTIFICATE_CONFIG";
@@ -65155,7 +65155,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
         const configPath = this.certificateConfigPath;
         let fileContents;
         try {
-          fileContents = await fs22.promises.readFile(configPath, "utf8");
+          fileContents = await fs23.promises.readFile(configPath, "utf8");
         } catch (err) {
           throw new CertificateSourceUnavailableError(`Failed to read certificate config file at: ${configPath}`);
         }
@@ -65180,14 +65180,14 @@ var require_certificatesubjecttokensupplier = __commonJS({
       async #getKeyAndCert(certPath, keyPath) {
         let cert, key;
         try {
-          cert = await fs22.promises.readFile(certPath);
+          cert = await fs23.promises.readFile(certPath);
           new crypto_1.X509Certificate(cert);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           throw new CertificateSourceUnavailableError(`Failed to read certificate file at ${certPath}: ${message}`);
         }
         try {
-          key = await fs22.promises.readFile(keyPath);
+          key = await fs23.promises.readFile(keyPath);
           (0, crypto_1.createPrivateKey)(key);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -65206,7 +65206,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
           return JSON.stringify([leafCert.raw.toString("base64")]);
         }
         try {
-          const chainPems = await fs22.promises.readFile(this.trustChainPath, "utf8");
+          const chainPems = await fs23.promises.readFile(this.trustChainPath, "utf8");
           const pemBlocks = chainPems.match(/-----BEGIN CERTIFICATE-----[^-]+-----END CERTIFICATE-----/g) ?? [];
           const chainCerts = pemBlocks.map((pem, index) => {
             try {
@@ -65908,7 +65908,7 @@ var require_pluggable_auth_handler = __commonJS({
     exports2.PluggableAuthHandler = exports2.ExecutableError = void 0;
     var executable_response_1 = require_executable_response();
     var childProcess = require("child_process");
-    var fs22 = require("fs");
+    var fs23 = require("fs");
     var ExecutableError = class extends Error {
       /**
        * The exit code returned by the executable.
@@ -65993,14 +65993,14 @@ var require_pluggable_auth_handler = __commonJS({
         }
         let filePath;
         try {
-          filePath = await fs22.promises.realpath(this.outputFile);
+          filePath = await fs23.promises.realpath(this.outputFile);
         } catch {
           return void 0;
         }
-        if (!(await fs22.promises.lstat(filePath)).isFile()) {
+        if (!(await fs23.promises.lstat(filePath)).isFile()) {
           return void 0;
         }
-        const responseString = await fs22.promises.readFile(filePath, {
+        const responseString = await fs23.promises.readFile(filePath, {
           encoding: "utf8"
         });
         if (responseString === "") {
@@ -66411,7 +66411,7 @@ var require_gdchclient = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GdchClient = exports2.GDCH_SERVICE_ACCOUNT_TYPE = void 0;
     var crypto7 = require("crypto");
-    var fs22 = require("fs");
+    var fs23 = require("fs");
     var https3 = require("https");
     var oauth2client_1 = require_oauth2client();
     var DEFAULT_LIFETIME_IN_SECONDS = 3600;
@@ -66634,7 +66634,7 @@ var require_gdchclient = __commonJS({
         const currentPath = this.caCertPath;
         this.caAgentPromise = (async () => {
           try {
-            const ca = await fs22.promises.readFile(currentPath);
+            const ca = await fs23.promises.readFile(currentPath);
             return new https3.Agent({ ca });
           } catch (err) {
             if (this.cachedCaCertPath === currentPath) {
@@ -66694,11 +66694,11 @@ var require_googleauth = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GoogleAuth = exports2.GoogleAuthExceptionMessages = void 0;
     var child_process_1 = require("child_process");
-    var fs22 = require("fs");
+    var fs23 = require("fs");
     var gaxios_1 = require_src6();
     var gcpMetadata = require_src8();
     var os = require("os");
-    var path22 = require("path");
+    var path23 = require("path");
     var crypto_1 = require_crypto3();
     var computeclient_1 = require_computeclient();
     var idtokenclient_1 = require_idtokenclient();
@@ -66985,12 +66985,12 @@ var require_googleauth = __commonJS({
         } else {
           const home = process.env["HOME"];
           if (home) {
-            location = path22.join(home, ".config");
+            location = path23.join(home, ".config");
           }
         }
         if (location) {
-          location = path22.join(location, "gcloud", "application_default_credentials.json");
-          if (!fs22.existsSync(location)) {
+          location = path23.join(location, "gcloud", "application_default_credentials.json");
+          if (!fs23.existsSync(location)) {
             location = null;
           }
         }
@@ -67011,8 +67011,8 @@ var require_googleauth = __commonJS({
           throw new Error("The file path is invalid.");
         }
         try {
-          filePath = fs22.realpathSync(filePath);
-          if (!fs22.lstatSync(filePath).isFile()) {
+          filePath = fs23.realpathSync(filePath);
+          if (!fs23.lstatSync(filePath).isFile()) {
             throw new Error();
           }
         } catch (err) {
@@ -67021,7 +67021,7 @@ var require_googleauth = __commonJS({
           }
           throw err;
         }
-        const readStream2 = fs22.createReadStream(filePath);
+        const readStream2 = fs23.createReadStream(filePath);
         return this.fromStream(readStream2, options);
       }
       /**
@@ -67348,8 +67348,8 @@ var require_googleauth = __commonJS({
         if (this.jsonContent) {
           return this._cacheClientFromJSON(this.jsonContent, this.clientOptions);
         } else if (this.keyFilename) {
-          const filePath = path22.resolve(this.keyFilename);
-          const stream4 = fs22.createReadStream(filePath);
+          const filePath = path23.resolve(this.keyFilename);
+          const stream4 = fs23.createReadStream(filePath);
           return await this.fromStreamAsync(stream4, this.clientOptions);
         } else if (this.apiKey) {
           const client = await this.fromAPIKey(this.apiKey, this.clientOptions);
@@ -72105,11 +72105,11 @@ var require_form_data = __commonJS({
     "use strict";
     var CombinedStream = require_combined_stream();
     var util4 = require("util");
-    var path22 = require("path");
+    var path23 = require("path");
     var http4 = require("http");
     var https3 = require("https");
     var parseUrl2 = require("url").parse;
-    var fs22 = require("fs");
+    var fs23 = require("fs");
     var Stream4 = require("stream").Stream;
     var crypto7 = require("crypto");
     var mime = require_mime_types();
@@ -72179,7 +72179,7 @@ var require_form_data = __commonJS({
         if (value.end != void 0 && value.end != Infinity && value.start != void 0) {
           callback(null, value.end + 1 - (value.start ? value.start : 0));
         } else {
-          fs22.stat(value.path, function(err, stat3) {
+          fs23.stat(value.path, function(err, stat3) {
             if (err) {
               callback(err);
               return;
@@ -72236,11 +72236,11 @@ var require_form_data = __commonJS({
     FormData5.prototype._getContentDisposition = function(value, options) {
       var filename;
       if (typeof options.filepath === "string") {
-        filename = path22.normalize(options.filepath).replace(/\\/g, "/");
+        filename = path23.normalize(options.filepath).replace(/\\/g, "/");
       } else if (options.filename || value && (value.name || value.path)) {
-        filename = path22.basename(options.filename || value && (value.name || value.path));
+        filename = path23.basename(options.filename || value && (value.name || value.path));
       } else if (value && value.readable && hasOwn2(value, "httpVersion")) {
-        filename = path22.basename(value.client._httpMessage.path || "");
+        filename = path23.basename(value.client._httpMessage.path || "");
       }
       if (filename) {
         return 'filename="' + escapeHeaderParam(filename) + '"';
@@ -73662,12 +73662,12 @@ function classifyTiktokCredentialInput(raw, appKeyHint = "") {
   }
   return { kind: "access_token", value };
 }
-async function callTiktokAuthApi(path22, query) {
+async function callTiktokAuthApi(path23, query) {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(query || {})) {
     if (v != null && v !== "") qs.set(k, String(v));
   }
-  const url2 = `${AUTH_HOST()}${path22}?${qs.toString()}`;
+  const url2 = `${AUTH_HOST()}${path23}?${qs.toString()}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TOKEN_HTTP_TIMEOUT_MS);
   try {
@@ -74747,8 +74747,8 @@ var init_ping = __esm({
 
 // server.ts
 var import_express26 = __toESM(require_express2(), 1);
-var import_path21 = __toESM(require("path"), 1);
-var import_fs20 = __toESM(require("fs"), 1);
+var import_path22 = __toESM(require("path"), 1);
+var import_fs21 = __toESM(require("fs"), 1);
 var import_crypto5 = __toESM(require("crypto"), 1);
 var import_dotenv2 = __toESM(require_main(), 1);
 var import_node_stream4 = require("node:stream");
@@ -75837,16 +75837,16 @@ function queueAfterAck(queue, req, routeLabel) {
 function createShopeeWebhookRouter(processPayload, routePath = "/shopee", options = {}) {
   const queue = createBoundedQueue(processPayload, options.onQueueOverflow);
   const router25 = import_express.default.Router();
-  const path22 = routePath.startsWith("/") ? routePath : `/${routePath}`;
+  const path23 = routePath.startsWith("/") ? routePath : `/${routePath}`;
   console.log(
     `[Shopee Webhook] Queue config maxConcurrent=${MAX_CONCURRENT_JOBS} maxPending=${MAX_PENDING_JOBS} jobTimeoutMs=${WEBHOOK_JOB_TIMEOUT_MS}`
   );
-  router25.get(path22, (_req, res) => {
+  router25.get(path23, (_req, res) => {
     ackShopeeOk(res);
   });
-  router25.post(path22, import_express.default.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
+  router25.post(path23, import_express.default.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
     ackShopeeOk(res);
-    queueAfterAck(queue, req, `POST ${path22}`);
+    queueAfterAck(queue, req, `POST ${path23}`);
   });
   return router25;
 }
@@ -77410,6 +77410,10 @@ OrderSchema.index(
 OrderSchema.index(
   { status: 1, shopee_order_status: 1, last_shopee_update_at: -1 },
   { name: "scanner_cancelled_status" }
+);
+OrderSchema.index(
+  { shopId: 1, shopee_order_status: 1, last_shopee_update_at: -1 },
+  { name: "list_cancel_returns_shop_status_time" }
 );
 OrderSchema.index(
   { shopee_cancel_return_kind: 1, last_shopee_update_at: -1 },
@@ -81689,6 +81693,14 @@ function buildCounterMatch(opts) {
 function shopTimeIndexHint(hasShop) {
   return hasShop ? { shopId: 1, last_shopee_update_at: -1 } : { last_shopee_update_at: -1 };
 }
+function mergeOrdersListFilters(...parts) {
+  const valid = parts.filter(
+    (p) => Boolean(p) && Object.keys(p).length > 0
+  );
+  if (valid.length === 0) return {};
+  if (valid.length === 1) return valid[0];
+  return { $and: valid };
+}
 var FACET_TO_SHIP = ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"];
 var FACET_SHIPPED = ["SHIPPED", "TO_CONFIRM_RECEIVE"];
 var FACET_PENDING = ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"];
@@ -82529,77 +82541,70 @@ async function queryOrdersPageFromStore(opts) {
         startDate: opts?.startDate,
         endDate: opts?.endDate,
         forceDefault: true,
-        lookbackMs: isCancelReturnsTab || isReturnRequestsTab ? RETURN_TAB_DATE_LOOKBACK_MS : DEFAULT_ORDER_DATE_LOOKBACK_MS
+        lookbackMs: isReturnRequestsTab ? RETURN_TAB_DATE_LOOKBACK_MS : DEFAULT_ORDER_DATE_LOOKBACK_MS
       });
       if (dateRange) Object.assign(firstMatch, buildOrderCreatedAtMongoFilter(dateRange));
     }
-    const pipeline3 = [];
-    if (Object.keys(firstMatch).length) pipeline3.push({ $match: firstMatch });
-    if (!search && requestedTab && requestedTab !== "all") {
-      const tabFilter = tabIndexFilter(requestedTab, kind);
-      if (Object.keys(tabFilter).length) {
-        pipeline3.push({ $match: tabFilter });
-      } else {
-        console.warn(
-          `[MongoDB] queryOrdersPageFromStore unknown tab=${requestedTab} \u2014 kh\xF4ng count to\xE0n DB`
-        );
-      }
+    const tabFilter = !search && requestedTab && requestedTab !== "all" ? tabIndexFilter(requestedTab, kind) : null;
+    if (!search && requestedTab && requestedTab !== "all" && tabFilter && Object.keys(tabFilter).length === 0) {
+      console.warn(
+        `[MongoDB] queryOrdersPageFromStore unknown tab=${requestedTab} \u2014 kh\xF4ng count to\xE0n DB`
+      );
     }
+    let carrierFilter = null;
     if (!search && opts?.carrier && opts.carrier !== "all") {
-      pipeline3.push({ $match: { shipping_carrier: String(opts.carrier) } });
+      carrierFilter = { shipping_carrier: String(opts.carrier) };
     }
     const printStatus = String(opts?.printStatus || "").trim().toLowerCase();
+    let printFilter = null;
     if (printStatus === "printed" || printStatus === "da-in" || printStatus === "true") {
-      pipeline3.push({ $match: { isPrinted: true } });
+      printFilter = { isPrinted: true };
     } else if (printStatus === "unprinted" || printStatus === "chua-in" || printStatus === "false" || printStatus === "not_printed") {
-      pipeline3.push({ $match: { isPrinted: { $ne: true } } });
+      printFilter = { isPrinted: { $ne: true } };
     }
+    let searchFilter = null;
     if (search) {
       const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const contains = { $regex: escaped, $options: "i" };
-      pipeline3.push({
-        $match: {
-          $or: [
-            { orderSn: contains },
-            { tracking_no: contains },
-            { trackingNumber: contains },
-            { return_sn: contains },
-            { return_tracking_no: contains },
-            { returnTrackingNumber: contains },
-            { packageNumber: contains },
-            { customerName: contains },
-            { customerPhone: contains },
-            { customerEmail: contains },
-            { "data.buyer_username": contains },
-            { "data.customerName": contains },
-            { "data.customer_name": contains },
-            { "data.items.productTitle": contains },
-            { "data.items.name": contains },
-            { "data.items.modelName": contains },
-            { "data.items.modelSku": contains },
-            { "data.internalTrackingCode": contains },
-            { internalTrackingCode: contains }
-          ]
-        }
-      });
+      searchFilter = {
+        $or: [
+          { orderSn: contains },
+          { tracking_no: contains },
+          { trackingNumber: contains },
+          { return_sn: contains },
+          { return_tracking_no: contains },
+          { returnTrackingNumber: contains },
+          { packageNumber: contains },
+          { customerName: contains },
+          { customerPhone: contains },
+          { customerEmail: contains },
+          { "data.buyer_username": contains },
+          { "data.customerName": contains },
+          { "data.customer_name": contains },
+          { "data.items.productTitle": contains },
+          { "data.items.name": contains },
+          { "data.items.modelName": contains },
+          { "data.items.modelSku": contains },
+          { "data.internalTrackingCode": contains },
+          { internalTrackingCode: contains }
+        ]
+      };
     }
-    pipeline3.push(
-      { $sort: { last_shopee_update_at: -1 } },
-      { $skip: (page - 1) * pageSize },
-      { $limit: pageSize },
-      { $project: ORDER_LIST_UI_PROJECTION }
+    const listFilter = mergeOrdersListFilters(
+      Object.keys(firstMatch).length ? firstMatch : null,
+      tabFilter,
+      carrierFilter,
+      printFilter,
+      searchFilter
     );
     let docs = [];
     try {
-      const listHint = search ? void 0 : shopTimeIndexHint(Boolean(shopFilter));
-      try {
-        docs = await OrderModel.aggregate(pipeline3).option({
-          maxTimeMS: 4e3,
-          ...listHint ? { hint: listHint } : {}
-        });
-      } catch {
-        docs = await OrderModel.aggregate(pipeline3).option({ maxTimeMS: 4e3 });
+      const skipListHint = isCancelReturnsTab || isReturnRequestsTab;
+      let listQuery = OrderModel.find(listFilter).sort({ last_shopee_update_at: -1 }).skip((page - 1) * pageSize).limit(pageSize).select(ORDER_LIST_UI_PROJECTION).lean().maxTimeMS(4e3);
+      if (!skipListHint && !search) {
+        listQuery = listQuery.hint(shopTimeIndexHint(Boolean(shopFilter)));
       }
+      docs = await listQuery.exec();
     } catch (findErr) {
       console.error(
         "[MongoDB] queryOrdersPageFromStore find failed:",
@@ -83489,7 +83494,8 @@ var SCANNER_COMPOUND_INDEX_NAMES = [
   "scanner_handover_status",
   "scanner_cancelled_status",
   "scanner_return_kind_date",
-  "scanner_rts_date"
+  "scanner_rts_date",
+  "list_cancel_returns_shop_status_time"
 ];
 async function ensureScannerIndexesInStore() {
   if (!isMongoReady()) {
@@ -84822,10 +84828,10 @@ async function fetchFirstList(urls) {
 function readGhnToken() {
   return String(process.env.GHN_TOKEN || process.env.GHN_API_TOKEN || "").trim();
 }
-async function ghnFetch(path22, query) {
+async function ghnFetch(path23, query) {
   const token = readGhnToken();
   if (!token) return null;
-  const url2 = new URL(`${GHN_BASE}${path22}`);
+  const url2 = new URL(`${GHN_BASE}${path23}`);
   if (query) {
     for (const [key, value] of Object.entries(query)) {
       if (value !== void 0 && value !== "") url2.searchParams.set(key, String(value));
@@ -84839,7 +84845,7 @@ async function ghnFetch(path22, query) {
     );
     return unwrapList(json2);
   } catch (error) {
-    console.warn("[GHN Master]", path22, error?.message || error);
+    console.warn("[GHN Master]", path23, error?.message || error);
     return null;
   }
 }
@@ -89260,7 +89266,7 @@ var Batches = class extends BaseModule {
       params
     );
     const urlParams = body["_url"];
-    const path22 = formatMap("{model}:batchGenerateContent", urlParams);
+    const path23 = formatMap("{model}:batchGenerateContent", urlParams);
     const batch = body["batch"];
     const inputConfig = batch["inputConfig"];
     const requestsWrapper = inputConfig["requests"];
@@ -89281,7 +89287,7 @@ var Batches = class extends BaseModule {
     delete body["config"];
     delete body["_url"];
     delete body["_query"];
-    return { path: path22, body };
+    return { path: path23, body };
   }
   // Helper function to get the first GCS URI
   getGcsUri(src) {
@@ -89337,16 +89343,16 @@ var Batches = class extends BaseModule {
   async createInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createBatchJobParametersToVertex(this.apiClient, params);
-      path22 = formatMap("batchPredictionJobs", body["_url"]);
+      path23 = formatMap("batchPredictionJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -89361,12 +89367,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = createBatchJobParametersToMldev(this.apiClient, params);
-      path22 = formatMap("{model}:batchGenerateContent", body["_url"]);
+      path23 = formatMap("{model}:batchGenerateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -89391,18 +89397,18 @@ var Batches = class extends BaseModule {
   async createEmbeddingsInternal(params) {
     var _a2, _b;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createEmbeddingsBatchJobParametersToMldev(this.apiClient, params);
-      path22 = formatMap("{model}:asyncBatchEmbedContent", body["_url"]);
+      path23 = formatMap("{model}:asyncBatchEmbedContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -89431,16 +89437,16 @@ var Batches = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getBatchJobParametersToVertex(this.apiClient, params);
-      path22 = formatMap("batchPredictionJobs/{name}", body["_url"]);
+      path23 = formatMap("batchPredictionJobs/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -89455,12 +89461,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = getBatchJobParametersToMldev(this.apiClient, params);
-      path22 = formatMap("batches/{name}", body["_url"]);
+      path23 = formatMap("batches/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -89488,16 +89494,16 @@ var Batches = class extends BaseModule {
    */
   async cancel(params) {
     var _a2, _b, _c, _d;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = cancelBatchJobParametersToVertex(this.apiClient, params);
-      path22 = formatMap("batchPredictionJobs/{name}:cancel", body["_url"]);
+      path23 = formatMap("batchPredictionJobs/{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -89506,12 +89512,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = cancelBatchJobParametersToMldev(this.apiClient, params);
-      path22 = formatMap("batches/{name}:cancel", body["_url"]);
+      path23 = formatMap("batches/{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -89523,16 +89529,16 @@ var Batches = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listBatchJobsParametersToVertex(params);
-      path22 = formatMap("batchPredictionJobs", body["_url"]);
+      path23 = formatMap("batchPredictionJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -89555,12 +89561,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = listBatchJobsParametersToMldev(params);
-      path22 = formatMap("batches", body["_url"]);
+      path23 = formatMap("batches", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -89597,16 +89603,16 @@ var Batches = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteBatchJobParametersToVertex(this.apiClient, params);
-      path22 = formatMap("batchPredictionJobs/{name}", body["_url"]);
+      path23 = formatMap("batchPredictionJobs/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -89627,12 +89633,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = deleteBatchJobParametersToMldev(this.apiClient, params);
-      path22 = formatMap("batches/{name}", body["_url"]);
+      path23 = formatMap("batches/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -90556,16 +90562,16 @@ var Caches = class extends BaseModule {
   async create(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createCachedContentParametersToVertex(this.apiClient, params);
-      path22 = formatMap("cachedContents", body["_url"]);
+      path23 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -90579,12 +90585,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = createCachedContentParametersToMldev(this.apiClient, params);
-      path22 = formatMap("cachedContents", body["_url"]);
+      path23 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -90612,16 +90618,16 @@ var Caches = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getCachedContentParametersToVertex(this.apiClient, params);
-      path22 = formatMap("{name}", body["_url"]);
+      path23 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -90635,12 +90641,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = getCachedContentParametersToMldev(this.apiClient, params);
-      path22 = formatMap("{name}", body["_url"]);
+      path23 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -90668,16 +90674,16 @@ var Caches = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteCachedContentParametersToVertex(this.apiClient, params);
-      path22 = formatMap("{name}", body["_url"]);
+      path23 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -90700,12 +90706,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = deleteCachedContentParametersToMldev(this.apiClient, params);
-      path22 = formatMap("{name}", body["_url"]);
+      path23 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -90745,16 +90751,16 @@ var Caches = class extends BaseModule {
   async update(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = updateCachedContentParametersToVertex(this.apiClient, params);
-      path22 = formatMap("{name}", body["_url"]);
+      path23 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -90768,12 +90774,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = updateCachedContentParametersToMldev(this.apiClient, params);
-      path22 = formatMap("{name}", body["_url"]);
+      path23 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -90790,16 +90796,16 @@ var Caches = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listCachedContentsParametersToVertex(params);
-      path22 = formatMap("cachedContents", body["_url"]);
+      path23 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -90822,12 +90828,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = listCachedContentsParametersToMldev(params);
-      path22 = formatMap("cachedContents", body["_url"]);
+      path23 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -91423,18 +91429,18 @@ var Files = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listFilesParametersToMldev(params);
-      path22 = formatMap("files", body["_url"]);
+      path23 = formatMap("files", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -91460,18 +91466,18 @@ var Files = class extends BaseModule {
   async createInternal(params) {
     var _a2, _b;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createFileParametersToMldev(params);
-      path22 = formatMap("upload/v1beta/files", body["_url"]);
+      path23 = formatMap("upload/v1beta/files", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -91506,18 +91512,18 @@ var Files = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getFileParametersToMldev(params);
-      path22 = formatMap("files/{file}", body["_url"]);
+      path23 = formatMap("files/{file}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -91547,18 +91553,18 @@ var Files = class extends BaseModule {
   async delete(params) {
     var _a2, _b;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteFileParametersToMldev(params);
-      path22 = formatMap("files/{file}", body["_url"]);
+      path23 = formatMap("files/{file}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -91584,18 +91590,18 @@ var Files = class extends BaseModule {
   async registerFilesInternal(params) {
     var _a2, _b;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = internalRegisterFilesParametersToMldev(params);
-      path22 = formatMap("files:register", body["_url"]);
+      path23 = formatMap("files:register", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -96849,13 +96855,13 @@ var ApiClient = class {
       throw new Error("HTTP options are not correctly set.");
     }
   }
-  constructUrl(path22, httpOptions, prependProjectLocation) {
+  constructUrl(path23, httpOptions, prependProjectLocation) {
     const urlElement = [this.getRequestUrlInternal(httpOptions)];
     if (prependProjectLocation) {
       urlElement.push(this.getBaseResourcePath());
     }
-    if (path22 !== "") {
-      urlElement.push(path22);
+    if (path23 !== "") {
+      urlElement.push(path23);
     }
     const url2 = new URL(`${urlElement.join("/")}`);
     return url2;
@@ -97154,8 +97160,8 @@ var ApiClient = class {
       file: fileToUpload
     };
     const fileName = this.getFileName(file);
-    const path22 = formatMap("upload/v1beta/files", body["_url"]);
-    const uploadUrl = await this.fetchUploadUrl(path22, fileToUpload.sizeBytes, fileToUpload.mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
+    const path23 = formatMap("upload/v1beta/files", body["_url"]);
+    const uploadUrl = await this.fetchUploadUrl(path23, fileToUpload.sizeBytes, fileToUpload.mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
     return uploader.upload(file, uploadUrl, this);
   }
   /**
@@ -97179,13 +97185,13 @@ var ApiClient = class {
     if (mimeType === void 0 || mimeType === "") {
       throw new Error("Can not determine mimeType. Please provide mimeType in the config.");
     }
-    const path22 = `upload/v1beta/${fileSearchStoreName}:uploadToFileSearchStore`;
+    const path23 = `upload/v1beta/${fileSearchStoreName}:uploadToFileSearchStore`;
     const fileName = this.getFileName(file);
     const body = {};
     if (config != null) {
       uploadToFileSearchStoreConfigToMldev(config, body);
     }
-    const uploadUrl = await this.fetchUploadUrl(path22, sizeBytes, mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
+    const uploadUrl = await this.fetchUploadUrl(path23, sizeBytes, mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
     return uploader.uploadToFileSearchStore(file, uploadUrl, this);
   }
   /**
@@ -97198,7 +97204,7 @@ var ApiClient = class {
     const downloader = this.clientOptions.downloader;
     await downloader.download(params, this);
   }
-  async fetchUploadUrl(path22, sizeBytes, mimeType, fileName, body, configHttpOptions) {
+  async fetchUploadUrl(path23, sizeBytes, mimeType, fileName, body, configHttpOptions) {
     var _a2;
     let httpOptions = {};
     if (configHttpOptions) {
@@ -97211,7 +97217,7 @@ var ApiClient = class {
       };
     }
     const httpResponse = await this.request({
-      path: path22,
+      path: path23,
       body: JSON.stringify(body),
       httpMethod: "POST",
       httpOptions
@@ -98407,16 +98413,16 @@ var Models = class extends BaseModule {
   async generateContentInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateContentParametersToVertex(this.apiClient, params);
-      path22 = formatMap("{model}:generateContent", body["_url"]);
+      path23 = formatMap("{model}:generateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -98439,12 +98445,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateContentParametersToMldev(this.apiClient, params);
-      path22 = formatMap("{model}:generateContent", body["_url"]);
+      path23 = formatMap("{model}:generateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -98470,17 +98476,17 @@ var Models = class extends BaseModule {
   async generateContentStreamInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateContentParametersToVertex(this.apiClient, params);
-      path22 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
+      path23 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       const apiClient = this.apiClient;
       response = apiClient.requestStream({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -98516,13 +98522,13 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateContentParametersToMldev(this.apiClient, params);
-      path22 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
+      path23 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       const apiClient = this.apiClient;
       response = apiClient.requestStream({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -98582,17 +98588,17 @@ var Models = class extends BaseModule {
   async embedContentInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = embedContentParametersPrivateToVertex(this.apiClient, params, params);
       const endpointUrl = tIsVertexEmbedContentModel(params.model) ? "{model}:embedContent" : "{model}:predict";
-      path22 = formatMap(endpointUrl, body["_url"]);
+      path23 = formatMap(endpointUrl, body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -98615,12 +98621,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = embedContentParametersPrivateToMldev(this.apiClient, params);
-      path22 = formatMap("{model}:batchEmbedContents", body["_url"]);
+      path23 = formatMap("{model}:batchEmbedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -98649,16 +98655,16 @@ var Models = class extends BaseModule {
   async generateImagesInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateImagesParametersToVertex(this.apiClient, params);
-      path22 = formatMap("{model}:predict", body["_url"]);
+      path23 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -98681,12 +98687,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateImagesParametersToMldev(this.apiClient, params);
-      path22 = formatMap("{model}:predict", body["_url"]);
+      path23 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -98715,16 +98721,16 @@ var Models = class extends BaseModule {
   async editImageInternal(params) {
     var _a2, _b;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = editImageParametersInternalToVertex(this.apiClient, params);
-      path22 = formatMap("{model}:predict", body["_url"]);
+      path23 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -98755,16 +98761,16 @@ var Models = class extends BaseModule {
   async upscaleImageInternal(params) {
     var _a2, _b;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = upscaleImageAPIParametersInternalToVertex(this.apiClient, params);
-      path22 = formatMap("{model}:predict", body["_url"]);
+      path23 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -98816,16 +98822,16 @@ var Models = class extends BaseModule {
   async recontextImage(params) {
     var _a2, _b;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = recontextImageParametersToVertex(this.apiClient, params);
-      path22 = formatMap("{model}:predict", body["_url"]);
+      path23 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -98867,16 +98873,16 @@ var Models = class extends BaseModule {
   async segmentImage(params) {
     var _a2, _b;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = segmentImageParametersToVertex(this.apiClient, params);
-      path22 = formatMap("{model}:predict", body["_url"]);
+      path23 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -98906,16 +98912,16 @@ var Models = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getModelParametersToVertex(this.apiClient, params);
-      path22 = formatMap("{name}", body["_url"]);
+      path23 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -98930,12 +98936,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = getModelParametersToMldev(this.apiClient, params);
-      path22 = formatMap("{name}", body["_url"]);
+      path23 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -98953,16 +98959,16 @@ var Models = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listModelsParametersToVertex(this.apiClient, params);
-      path22 = formatMap("{models_url}", body["_url"]);
+      path23 = formatMap("{models_url}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -98985,12 +98991,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = listModelsParametersToMldev(this.apiClient, params);
-      path22 = formatMap("{models_url}", body["_url"]);
+      path23 = formatMap("{models_url}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -99033,16 +99039,16 @@ var Models = class extends BaseModule {
   async update(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = updateModelParametersToVertex(this.apiClient, params);
-      path22 = formatMap("{model}", body["_url"]);
+      path23 = formatMap("{model}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -99057,12 +99063,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = updateModelParametersToMldev(this.apiClient, params);
-      path22 = formatMap("{name}", body["_url"]);
+      path23 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -99091,16 +99097,16 @@ var Models = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteModelParametersToVertex(this.apiClient, params);
-      path22 = formatMap("{name}", body["_url"]);
+      path23 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -99123,12 +99129,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = deleteModelParametersToMldev(this.apiClient, params);
-      path22 = formatMap("{name}", body["_url"]);
+      path23 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -99170,16 +99176,16 @@ var Models = class extends BaseModule {
   async countTokens(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = countTokensParametersToVertex(this.apiClient, params);
-      path22 = formatMap("{model}:countTokens", body["_url"]);
+      path23 = formatMap("{model}:countTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -99202,12 +99208,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = countTokensParametersToMldev(this.apiClient, params);
-      path22 = formatMap("{model}:countTokens", body["_url"]);
+      path23 = formatMap("{model}:countTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -99251,16 +99257,16 @@ var Models = class extends BaseModule {
   async computeTokens(params) {
     var _a2, _b;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = computeTokensParametersToVertex(this.apiClient, params);
-      path22 = formatMap("{model}:computeTokens", body["_url"]);
+      path23 = formatMap("{model}:computeTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -99291,16 +99297,16 @@ var Models = class extends BaseModule {
   async generateVideosInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateVideosParametersToVertex(this.apiClient, params);
-      path22 = formatMap("{model}:predictLongRunning", body["_url"]);
+      path23 = formatMap("{model}:predictLongRunning", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -99317,12 +99323,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateVideosParametersToMldev(this.apiClient, params);
-      path22 = formatMap("{model}:predictLongRunning", body["_url"]);
+      path23 = formatMap("{model}:predictLongRunning", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -99424,16 +99430,16 @@ var Operations = class extends BaseModule {
   async getVideosOperationInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getOperationParametersToVertex(params);
-      path22 = formatMap("{operationName}", body["_url"]);
+      path23 = formatMap("{operationName}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -99445,12 +99451,12 @@ var Operations = class extends BaseModule {
       return response;
     } else {
       const body = getOperationParametersToMldev(params);
-      path22 = formatMap("{operationName}", body["_url"]);
+      path23 = formatMap("{operationName}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -99465,16 +99471,16 @@ var Operations = class extends BaseModule {
   async fetchPredictVideosOperationInternal(params) {
     var _a2, _b;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = fetchPredictOperationParametersToVertex(params);
-      path22 = formatMap("{resourceName}:fetchPredictOperation", body["_url"]);
+      path23 = formatMap("{resourceName}:fetchPredictOperation", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -100162,20 +100168,20 @@ var Tokens = class extends BaseModule {
   async create(params) {
     var _a2, _b;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("The client.tokens.create method is only supported by the Gemini Developer API.");
     } else {
       const body = createAuthTokenParametersToMldev(this.apiClient, params);
-      path22 = formatMap("auth_tokens", body["_url"]);
+      path23 = formatMap("auth_tokens", body["_url"]);
       queryParams = body["_query"];
       delete body["config"];
       delete body["_url"];
       delete body["_query"];
       const transformedBody = convertBidiSetupToTokenSetup(body, params.config);
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(transformedBody),
         httpMethod: "POST",
@@ -100285,18 +100291,18 @@ var Documents = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getDocumentParametersToMldev(params);
-      path22 = formatMap("{name}", body["_url"]);
+      path23 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -100317,18 +100323,18 @@ var Documents = class extends BaseModule {
    */
   async delete(params) {
     var _a2, _b;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteDocumentParametersToMldev(params);
-      path22 = formatMap("{name}", body["_url"]);
+      path23 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -100340,18 +100346,18 @@ var Documents = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listDocumentsParametersToMldev(params);
-      path22 = formatMap("{parent}/documents", body["_url"]);
+      path23 = formatMap("{parent}/documents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -100468,18 +100474,18 @@ var FileSearchStores = class extends BaseModule {
   async create(params) {
     var _a2, _b;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createFileSearchStoreParametersToMldev(this.apiClient, params);
-      path22 = formatMap("fileSearchStores", body["_url"]);
+      path23 = formatMap("fileSearchStores", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -100502,18 +100508,18 @@ var FileSearchStores = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getFileSearchStoreParametersToMldev(params);
-      path22 = formatMap("{name}", body["_url"]);
+      path23 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -100534,18 +100540,18 @@ var FileSearchStores = class extends BaseModule {
    */
   async delete(params) {
     var _a2, _b;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteFileSearchStoreParametersToMldev(params);
-      path22 = formatMap("{name}", body["_url"]);
+      path23 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -100557,18 +100563,18 @@ var FileSearchStores = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listFileSearchStoresParametersToMldev(params);
-      path22 = formatMap("fileSearchStores", body["_url"]);
+      path23 = formatMap("fileSearchStores", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -100588,18 +100594,18 @@ var FileSearchStores = class extends BaseModule {
   async uploadToFileSearchStoreInternal(params) {
     var _a2, _b;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = uploadToFileSearchStoreParametersToMldev(params);
-      path22 = formatMap("upload/v1beta/{file_search_store_name}:uploadToFileSearchStore", body["_url"]);
+      path23 = formatMap("upload/v1beta/{file_search_store_name}:uploadToFileSearchStore", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -100627,18 +100633,18 @@ var FileSearchStores = class extends BaseModule {
   async importFile(params) {
     var _a2, _b;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = importFileParametersToMldev(params);
-      path22 = formatMap("{file_search_store_name}:importFile", body["_url"]);
+      path23 = formatMap("{file_search_store_name}:importFile", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -101774,16 +101780,16 @@ var ClientSDK = class {
   }
   _createRequest(context, conf, options) {
     var _a2, _b, _c, _d, _e;
-    const { method, path: path22, query, headers: opHeaders, security } = conf;
+    const { method, path: path23, query, headers: opHeaders, security } = conf;
     const base = (_a2 = conf.baseURL) !== null && _a2 !== void 0 ? _a2 : this._baseURL;
     if (!base) {
       return ERR(new InvalidRequestError("No base URL provided for operation"));
     }
     const baseURL = new URL(base);
     let reqURL;
-    if (path22) {
+    if (path23) {
       baseURL.pathname = baseURL.pathname.replace(/\/+$/, "") + "/";
-      reqURL = new URL(path22, baseURL);
+      reqURL = new URL(path23, baseURL);
       if (!reqURL.search && baseURL.search) {
         reqURL.search = baseURL.search;
       }
@@ -102599,7 +102605,7 @@ async function $do$e(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path22 = pathToFunc("/{api_version}/agents")(pathParams);
+  const path23 = pathToFunc("/{api_version}/agents")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -102630,7 +102636,7 @@ async function $do$e(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path22,
+    path: path23,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -102674,7 +102680,7 @@ async function $do$d(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path22 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
+  const path23 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -102704,7 +102710,7 @@ async function $do$d(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path22,
+    path: path23,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -102748,7 +102754,7 @@ async function $do$c(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path22 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
+  const path23 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -102778,7 +102784,7 @@ async function $do$c(client, id, api_version, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path22,
+    path: path23,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -102820,7 +102826,7 @@ async function $do$b(client, api_version, page_size, page_token, parent, options
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload === null || payload === void 0 ? void 0 : payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path22 = pathToFunc("/{api_version}/agents")(pathParams);
+  const path23 = pathToFunc("/{api_version}/agents")(pathParams);
   const query = encodeFormQuery({
     "page_size": payload === null || payload === void 0 ? void 0 : payload.page_size,
     "page_token": payload === null || payload === void 0 ? void 0 : payload.page_token,
@@ -102855,7 +102861,7 @@ async function $do$b(client, api_version, page_size, page_token, parent, options
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path22,
+    path: path23,
     headers,
     query,
     body,
@@ -103007,7 +103013,7 @@ async function $do$a(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path22 = pathToFunc("/{api_version}/interactions/{id}/cancel")(pathParams);
+  const path23 = pathToFunc("/{api_version}/interactions/{id}/cancel")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -103037,7 +103043,7 @@ async function $do$a(client, id, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path22,
+    path: path23,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -103080,7 +103086,7 @@ async function $do$9(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path22 = pathToFunc("/{api_version}/interactions")(pathParams);
+  const path23 = pathToFunc("/{api_version}/interactions")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: ((_b = input === null || input === void 0 ? void 0 : input.body) === null || _b === void 0 ? void 0 : _b.stream) ? "text/event-stream" : "application/json"
@@ -103111,7 +103117,7 @@ async function $do$9(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path22,
+    path: path23,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -103161,7 +103167,7 @@ async function $do$8(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path22 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
+  const path23 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -103191,7 +103197,7 @@ async function $do$8(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path22,
+    path: path23,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -103241,7 +103247,7 @@ async function $do$7(client, id, stream4, last_event_id, include_input, api_vers
       charEncoding: "percent"
     })
   };
-  const path22 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
+  const path23 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
   const query = encodeFormQuery({
     "include_input": payload.include_input,
     "last_event_id": payload.last_event_id,
@@ -103276,7 +103282,7 @@ async function $do$7(client, id, stream4, last_event_id, include_input, api_vers
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path22,
+    path: path23,
     headers,
     query,
     body,
@@ -103350,7 +103356,7 @@ async function $do$6(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path22 = pathToFunc("/{api_version}/webhooks")(pathParams);
+  const path23 = pathToFunc("/{api_version}/webhooks")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -103381,7 +103387,7 @@ async function $do$6(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path22,
+    path: path23,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -103425,7 +103431,7 @@ async function $do$5(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path22 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path23 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -103455,7 +103461,7 @@ async function $do$5(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path22,
+    path: path23,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -103499,7 +103505,7 @@ async function $do$4(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path22 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path23 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -103529,7 +103535,7 @@ async function $do$4(client, id, api_version, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path22,
+    path: path23,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -103570,7 +103576,7 @@ async function $do$3(client, api_version, page_size, page_token, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload === null || payload === void 0 ? void 0 : payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path22 = pathToFunc("/{api_version}/webhooks")(pathParams);
+  const path23 = pathToFunc("/{api_version}/webhooks")(pathParams);
   const query = encodeFormQuery({
     "page_size": payload === null || payload === void 0 ? void 0 : payload.page_size,
     "page_token": payload === null || payload === void 0 ? void 0 : payload.page_token
@@ -103604,7 +103610,7 @@ async function $do$3(client, api_version, page_size, page_token, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path22,
+    path: path23,
     headers,
     query,
     body,
@@ -103650,7 +103656,7 @@ async function $do$2(client, id, api_version, body, options) {
       charEncoding: "percent"
     })
   };
-  const path22 = pathToFunc("/{api_version}/webhooks/{id}:ping")(pathParams);
+  const path23 = pathToFunc("/{api_version}/webhooks/{id}:ping")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -103681,7 +103687,7 @@ async function $do$2(client, id, api_version, body, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path22,
+    path: path23,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -103726,7 +103732,7 @@ async function $do$1(client, id, api_version, body, options) {
       charEncoding: "percent"
     })
   };
-  const path22 = pathToFunc("/{api_version}/webhooks/{id}:rotateSigningSecret")(pathParams);
+  const path23 = pathToFunc("/{api_version}/webhooks/{id}:rotateSigningSecret")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -103757,7 +103763,7 @@ async function $do$1(client, id, api_version, body, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path22,
+    path: path23,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -103803,7 +103809,7 @@ async function $do(client, id, api_version, update_mask, body, options) {
       charEncoding: "percent"
     })
   };
-  const path22 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path23 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const query = encodeFormQuery({
     "update_mask": payload.update_mask
   });
@@ -103837,7 +103843,7 @@ async function $do(client, id, api_version, update_mask, body, options) {
     security: requestSecurity,
     method: "PATCH",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path22,
+    path: path23,
     headers,
     query,
     body: body$,
@@ -105853,16 +105859,16 @@ var Tunings = class extends BaseModule {
   async getInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getTuningJobParametersToVertex(params);
-      path22 = formatMap("{name}", body["_url"]);
+      path23 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -105883,12 +105889,12 @@ var Tunings = class extends BaseModule {
       });
     } else {
       const body = getTuningJobParametersToMldev(params);
-      path22 = formatMap("{name}", body["_url"]);
+      path23 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -105912,16 +105918,16 @@ var Tunings = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listTuningJobsParametersToVertex(params);
-      path22 = formatMap("tuningJobs", body["_url"]);
+      path23 = formatMap("tuningJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -105960,16 +105966,16 @@ var Tunings = class extends BaseModule {
   async cancel(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = cancelTuningJobParametersToVertex(params);
-      path22 = formatMap("{name}:cancel", body["_url"]);
+      path23 = formatMap("{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -105992,12 +105998,12 @@ var Tunings = class extends BaseModule {
       });
     } else {
       const body = cancelTuningJobParametersToMldev(params);
-      path22 = formatMap("{name}:cancel", body["_url"]);
+      path23 = formatMap("{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -106023,16 +106029,16 @@ var Tunings = class extends BaseModule {
   async tuneInternal(params) {
     var _a2, _b;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createTuningJobParametersPrivateToVertex(params, params);
-      path22 = formatMap("tuningJobs", body["_url"]);
+      path23 = formatMap("tuningJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -106058,18 +106064,18 @@ var Tunings = class extends BaseModule {
   async tuneMldevInternal(params) {
     var _a2, _b;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createTuningJobParametersPrivateToMldev(params);
-      path22 = formatMap("tunedModels", body["_url"]);
+      path23 = formatMap("tunedModels", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -106093,16 +106099,16 @@ var Tunings = class extends BaseModule {
   async validateReward(params) {
     var _a2, _b;
     let response;
-    let path22 = "";
+    let path23 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = validateRewardParametersToVertex(params);
-      path22 = formatMap("{parent}/tuningJobs:validateReinforcementTuningReward", body["_url"]);
+      path23 = formatMap("{parent}/tuningJobs:validateReinforcementTuningReward", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path22,
+        path: path23,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -107977,9 +107983,9 @@ function isVisitable(thing) {
 function removeBrackets(key) {
   return utils_default.endsWith(key, "[]") ? key.slice(0, -2) : key;
 }
-function renderKey(path22, key, dots) {
-  if (!path22) return key;
-  return path22.concat(key).map(function each(token, i2) {
+function renderKey(path23, key, dots) {
+  if (!path23) return key;
+  return path23.concat(key).map(function each(token, i2) {
     token = removeBrackets(token);
     return !dots && i2 ? "[" + token + "]" : token;
   }).join(dots ? "." : "");
@@ -108065,13 +108071,13 @@ function toFormData2(obj, formData, options) {
       return currentValue;
     });
   }
-  function defaultVisitor(value, key, path22) {
+  function defaultVisitor(value, key, path23) {
     let arr = value;
     if (utils_default.isReactNative(formData) && utils_default.isReactNativeBlob(value)) {
-      formData.append(renderKey(path22, key, dots), convertValue(value));
+      formData.append(renderKey(path23, key, dots), convertValue(value));
       return false;
     }
-    if (value && !path22 && typeof value === "object") {
+    if (value && !path23 && typeof value === "object") {
       if (utils_default.endsWith(key, "{}")) {
         key = metaTokens ? key : key.slice(0, -2);
         value = stringifyWithDepthLimit(value, 1);
@@ -108090,7 +108096,7 @@ function toFormData2(obj, formData, options) {
     if (isVisitable(value)) {
       return true;
     }
-    formData.append(renderKey(path22, key, dots), convertValue(value));
+    formData.append(renderKey(path23, key, dots), convertValue(value));
     return false;
   }
   const exposedHelpers = Object.assign(predicates, {
@@ -108098,17 +108104,17 @@ function toFormData2(obj, formData, options) {
     convertValue,
     isVisitable
   });
-  function build(value, path22, depth = 0) {
+  function build(value, path23, depth = 0) {
     if (utils_default.isUndefined(value)) return;
     throwIfMaxDepthExceeded(depth);
     if (stack.indexOf(value) !== -1) {
-      throw new Error("Circular reference detected in " + path22.join("."));
+      throw new Error("Circular reference detected in " + path23.join("."));
     }
     stack.push(value);
     utils_default.forEach(value, function each(el, key) {
-      const result = !(utils_default.isUndefined(el) || el === null) && visitor.call(formData, el, utils_default.isString(key) ? key.trim() : key, path22, exposedHelpers);
+      const result = !(utils_default.isUndefined(el) || el === null) && visitor.call(formData, el, utils_default.isString(key) ? key.trim() : key, path23, exposedHelpers);
       if (result === true) {
-        build(el, path22 ? path22.concat(key) : [key], depth + 1);
+        build(el, path23 ? path23.concat(key) : [key], depth + 1);
       }
     });
     stack.pop();
@@ -108320,7 +108326,7 @@ var platform_default = {
 // node_modules/axios/lib/helpers/toURLEncodedForm.js
 function toURLEncodedForm(data, options) {
   return toFormData_default(data, new platform_default.classes.URLSearchParams(), {
-    visitor: function(value, key, path22, helpers) {
+    visitor: function(value, key, path23, helpers) {
       if (platform_default.isNode && utils_default.isBuffer(value)) {
         this.append(key, value.toString("base64"));
         return false;
@@ -108342,14 +108348,14 @@ function throwIfDepthExceeded(index) {
   }
 }
 function parsePropPath(name) {
-  const path22 = [];
+  const path23 = [];
   const pattern = /[^.[\]]+|\[([^.[\]]*)]/g;
   let match2;
   while ((match2 = pattern.exec(name)) !== null) {
-    throwIfDepthExceeded(path22.length);
-    path22.push(match2[0] === "[]" ? "" : match2[1] || match2[0]);
+    throwIfDepthExceeded(path23.length);
+    path23.push(match2[0] === "[]" ? "" : match2[1] || match2[0]);
   }
-  return path22;
+  return path23;
 }
 function arrayToObject(arr) {
   const obj = {};
@@ -108364,12 +108370,12 @@ function arrayToObject(arr) {
   return obj;
 }
 function formDataToJSON(formData) {
-  function buildPath(path22, value, target, index) {
+  function buildPath(path23, value, target, index) {
     throwIfDepthExceeded(index);
-    let name = path22[index++];
+    let name = path23[index++];
     if (name === "__proto__") return true;
     const isNumericKey = Number.isFinite(+name);
-    const isLast = index >= path22.length;
+    const isLast = index >= path23.length;
     name = !name && utils_default.isArray(target) ? target.length : name;
     if (isLast) {
       if (utils_default.hasOwnProp(target, name)) {
@@ -108382,7 +108388,7 @@ function formDataToJSON(formData) {
     if (!utils_default.hasOwnProp(target, name) || !utils_default.isObject(target[name])) {
       target[name] = [];
     }
-    const result = buildPath(path22, value, target[name], index);
+    const result = buildPath(path23, value, target[name], index);
     if (result && utils_default.isArray(target[name])) {
       target[name] = arrayToObject(target[name]);
     }
@@ -110100,9 +110106,9 @@ var http_default = isHttpAdapterSupported && function httpAdapter(config) {
       auth = urlUsername + ":" + urlPassword;
     }
     auth && headers.delete("authorization");
-    let path22;
+    let path23;
     try {
-      path22 = buildURL(
+      path23 = buildURL(
         parsed.pathname + parsed.search,
         own2("params"),
         own2("paramsSerializer")
@@ -110121,7 +110127,7 @@ var http_default = isHttpAdapterSupported && function httpAdapter(config) {
       false
     );
     const options = Object.assign(/* @__PURE__ */ Object.create(null), {
-      path: path22,
+      path: path23,
       method,
       headers: toByteStringHeaderObject(headers),
       agents: { http: httpAgent, https: httpsAgent },
@@ -110523,14 +110529,14 @@ var isURLSameOrigin_default = platform_default.hasStandardBrowserEnv ? /* @__PUR
 var cookies_default = platform_default.hasStandardBrowserEnv ? (
   // Standard browser envs support document.cookie
   {
-    write(name, value, expires, path22, domain, secure, sameSite) {
+    write(name, value, expires, path23, domain, secure, sameSite) {
       if (typeof document === "undefined") return;
       const cookie = [`${name}=${encodeURIComponent(value)}`];
       if (utils_default.isNumber(expires)) {
         cookie.push(`expires=${new Date(expires).toUTCString()}`);
       }
-      if (utils_default.isString(path22)) {
-        cookie.push(`path=${path22}`);
+      if (utils_default.isString(path23)) {
+        cookie.push(`path=${path23}`);
       }
       if (utils_default.isString(domain)) {
         cookie.push(`domain=${domain}`);
@@ -112182,7 +112188,7 @@ function getMasterCache(token) {
   }
   return ghnMasterCache;
 }
-async function ghnFetch2(apiUrl, path22, { method = "POST", token, shopId, body } = {}) {
+async function ghnFetch2(apiUrl, path23, { method = "POST", token, shopId, body } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   const headers = {
@@ -112191,7 +112197,7 @@ async function ghnFetch2(apiUrl, path22, { method = "POST", token, shopId, body 
   };
   if (shopId) headers.ShopId = String(shopId).trim();
   try {
-    const res = await fetch(`${apiUrl}${path22}`, {
+    const res = await fetch(`${apiUrl}${path23}`, {
       method,
       headers,
       body: body != null ? JSON.stringify(body) : void 0,
@@ -112207,15 +112213,15 @@ async function ghnFetch2(apiUrl, path22, { method = "POST", token, shopId, body 
     return { ok: res.ok, status: res.status, json: json2 };
   } catch (err) {
     if (err?.name === "AbortError") {
-      throw new Error(`GHN API timeout (>${TIMEOUT_MS}ms) ${path22}`);
+      throw new Error(`GHN API timeout (>${TIMEOUT_MS}ms) ${path23}`);
     }
     throw err;
   } finally {
     clearTimeout(timer);
   }
 }
-async function ghnMasterList(creds, path22, body) {
-  const result = await ghnFetch2(creds.apiUrl, path22, {
+async function ghnMasterList(creds, path23, body) {
+  const result = await ghnFetch2(creds.apiUrl, path23, {
     method: "POST",
     token: creds.token,
     shopId: creds.shopId || void 0,
@@ -112760,14 +112766,14 @@ var SPX_CREATE_ORDER_PATH = "/open/api/v1/order/batch_create_order";
 var SPX_FORBIDDEN_CREATE_PATH = "/open/api/v1/order/create_order";
 function resolveSpxGateway({ apiUrl, createPath } = {}) {
   let host = String(apiUrl || "").trim();
-  let path22 = String(createPath || "").trim();
+  let path23 = String(createPath || "").trim();
   if (/^https?:\/\//i.test(host)) {
     try {
       const parsed = new URL(host);
       const pathname = String(parsed.pathname || "").replace(/\/$/, "");
       host = `${parsed.protocol}//${parsed.host}`.replace(/\/$/, "");
-      if (!path22 && pathname && pathname !== "/") {
-        path22 = pathname;
+      if (!path23 && pathname && pathname !== "/") {
+        path23 = pathname;
       }
     } catch {
       host = host.replace(/\/$/, "");
@@ -112776,11 +112782,11 @@ function resolveSpxGateway({ apiUrl, createPath } = {}) {
     host = host.replace(/\/$/, "");
   }
   if (!host) host = SPX_DEFAULT_HOST;
-  if (!path22 || path22 === SPX_FORBIDDEN_CREATE_PATH || /\/order\/create_order\/?$/i.test(path22)) {
-    path22 = SPX_CREATE_ORDER_PATH;
+  if (!path23 || path23 === SPX_FORBIDDEN_CREATE_PATH || /\/order\/create_order\/?$/i.test(path23)) {
+    path23 = SPX_CREATE_ORDER_PATH;
   }
-  if (!path22.startsWith("/")) path22 = `/${path22}`;
-  return { host, path: path22, url: `${host}${path22}` };
+  if (!path23.startsWith("/")) path23 = `/${path23}`;
+  return { host, path: path23, url: `${host}${path23}` };
 }
 function signBody(appId, secret, timestamp, rawBody) {
   const raw = `${String(appId)}${String(timestamp)}${String(rawBody ?? "")}`;
@@ -112814,7 +112820,7 @@ function pickSpxMerchantId(creds) {
 function pickSpxSecret(creds) {
   return String(creds?.clientSecret || creds?.secret || "").trim();
 }
-async function spxFetch(apiUrl, path22, bodyObj, creds) {
+async function spxFetch(apiUrl, path23, bodyObj, creds) {
   const appId = pickSpxAppId(creds);
   const secret = pickSpxSecret(creds);
   if (!appId || !secret) {
@@ -112827,7 +112833,7 @@ async function spxFetch(apiUrl, path22, bodyObj, creds) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS2);
   try {
-    const res = await fetch(`${apiUrl}${path22}`, {
+    const res = await fetch(`${apiUrl}${path23}`, {
       method: "POST",
       headers,
       body: rawBody,
@@ -112843,7 +112849,7 @@ async function spxFetch(apiUrl, path22, bodyObj, creds) {
     return { ok: res.ok, status: res.status, json: json2 };
   } catch (err) {
     if (err?.name === "AbortError") {
-      throw new Error(`SPX API timeout (>${TIMEOUT_MS2}ms) ${path22}`);
+      throw new Error(`SPX API timeout (>${TIMEOUT_MS2}ms) ${path23}`);
     }
     throw err;
   } finally {
@@ -119085,17 +119091,60 @@ var mappingRoutes_default = router13;
 var import_express15 = __toESM(require_express2(), 1);
 
 // controllers/ordersController.js
-var import_fs18 = __toESM(require("fs"), 1);
-var import_path19 = __toESM(require("path"), 1);
+var import_fs19 = __toESM(require("fs"), 1);
+var import_path20 = __toESM(require("path"), 1);
 init_appPaths();
 
-// services/orders.js
+// utils/orderPdfAvailability.js
 var import_fs17 = __toESM(require("fs"), 1);
 var import_path18 = __toESM(require("path"), 1);
 init_appPaths();
+function hasOrderPdfOnDisk(order) {
+  const filenames = /* @__PURE__ */ new Set();
+  const addFilename = (raw) => {
+    if (!raw) return;
+    let value = String(raw).trim();
+    try {
+      value = decodeURIComponent(value);
+    } catch {
+    }
+    const fromUrl = value.match(/\/api\/public\/labels\/([^/?#]+)/i)?.[1];
+    const filename = import_path18.default.basename(fromUrl || value);
+    if (/\.pdf$/i.test(filename)) filenames.add(filename);
+  };
+  addFilename(order?.pdfFilename);
+  addFilename(order?.data?.pdfFilename);
+  addFilename(order?.labelUrl);
+  addFilename(order?.pdfUrl);
+  addFilename(order?.waybill_url);
+  addFilename(order?.data?.labelUrl);
+  addFilename(order?.data?.pdfUrl);
+  addFilename(order?.data?.waybill_url);
+  const orderSn = String(order?.orderSn || order?.id || "").replace(/^shopee-/i, "").replace(/[^a-zA-Z0-9_-]/g, "");
+  if (orderSn) {
+    filenames.add(`order_${orderSn}.pdf`);
+    filenames.add(`${orderSn}.pdf`);
+  }
+  for (const filename of filenames) {
+    if (import_fs17.default.existsSync(import_path18.default.join(PDF_DIR, filename))) return true;
+  }
+  return false;
+}
+function attachPdfAvailability(orders) {
+  if (!Array.isArray(orders)) return [];
+  return orders.map((order) => ({
+    ...order,
+    hasPdf: hasOrderPdfOnDisk(order)
+  }));
+}
+
+// services/orders.js
+var import_fs18 = __toESM(require("fs"), 1);
+var import_path19 = __toESM(require("path"), 1);
+init_appPaths();
 var APP_ROOT9 = resolveAppRoot();
-var ORDERS_DB_PATH = import_path18.default.join(APP_ROOT9, "data", "orders.json");
-var HANDED_OVER_CLEANUP_MARKER = import_path18.default.join(APP_ROOT9, "data", ".cleanup-handed-over-v2");
+var ORDERS_DB_PATH = import_path19.default.join(APP_ROOT9, "data", "orders.json");
+var HANDED_OVER_CLEANUP_MARKER = import_path19.default.join(APP_ROOT9, "data", ".cleanup-handed-over-v2");
 var deps14 = {
   repairMisassignedTracking: (o) => o,
   repairFalseProcessedReadyToShip: (o) => o,
@@ -119151,11 +119200,11 @@ function rebuildOrderLookupIndex(orders) {
 }
 function loadOrders() {
   try {
-    if (!import_fs17.default.existsSync(ORDERS_DB_PATH)) {
+    if (!import_fs18.default.existsSync(ORDERS_DB_PATH)) {
       orderLookupIndex = rebuildOrderLookupIndex([]);
       return [];
     }
-    const raw = import_fs17.default.readFileSync(ORDERS_DB_PATH, "utf-8");
+    const raw = import_fs18.default.readFileSync(ORDERS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     const orders = Array.isArray(parsed) ? parsed.map(deps14.repairMisassignedTracking) : [];
     orderLookupIndex = rebuildOrderLookupIndex(orders);
@@ -119364,8 +119413,8 @@ function saveOrders(orders) {
         (err) => console.warn("[Orders JSON Mirror] Mongo sync failed:", err?.message || err)
       );
     }
-    import_fs17.default.mkdirSync(import_path18.default.dirname(ORDERS_DB_PATH), { recursive: true });
-    import_fs17.default.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
+    import_fs18.default.mkdirSync(import_path19.default.dirname(ORDERS_DB_PATH), { recursive: true });
+    import_fs18.default.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
     orderLookupIndex = rebuildOrderLookupIndex(sanitized);
     console.log(
       `[Orders DB] WRITE OK \u2014 path=${ORDERS_DB_PATH} count=${sanitized.length}`
@@ -119387,7 +119436,7 @@ async function purgeHandedOverGarbageOrdersOnce(opts) {
   const force = Boolean(opts?.force);
   const orders = loadOrders();
   const garbage = orders.filter(isHandedOverGarbageOrder);
-  if (!force && garbage.length === 0 && import_fs17.default.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
+  if (!force && garbage.length === 0 && import_fs18.default.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
     return { removed: 0, sns: [], skipped: true };
   }
   const sns = garbage.map((o) => String(o.orderSn || o.id || "").trim()).filter(Boolean);
@@ -119417,10 +119466,10 @@ async function purgeHandedOverGarbageOrdersOnce(opts) {
   const stillLeft = loadOrders().filter(isHandedOverGarbageOrder).length;
   if (stillLeft === 0) {
     try {
-      const v1 = import_path18.default.join(APP_ROOT9, "data", ".cleanup-handed-over-v1");
-      if (import_fs17.default.existsSync(v1)) import_fs17.default.unlinkSync(v1);
-      import_fs17.default.mkdirSync(import_path18.default.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
-      import_fs17.default.writeFileSync(
+      const v1 = import_path19.default.join(APP_ROOT9, "data", ".cleanup-handed-over-v1");
+      if (import_fs18.default.existsSync(v1)) import_fs18.default.unlinkSync(v1);
+      import_fs18.default.mkdirSync(import_path19.default.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
+      import_fs18.default.writeFileSync(
         HANDED_OVER_CLEANUP_MARKER,
         JSON.stringify(
           {
@@ -119676,43 +119725,6 @@ async function handOverOrderToCarrierByIndex(orders, index, opts) {
 
 // controllers/ordersController.js
 var APP_ROOT10 = resolveAppRoot();
-function hasOrderPdfOnDisk(order) {
-  const filenames = /* @__PURE__ */ new Set();
-  const addFilename = (raw) => {
-    if (!raw) return;
-    let value = String(raw).trim();
-    try {
-      value = decodeURIComponent(value);
-    } catch {
-    }
-    const fromUrl = value.match(/\/api\/public\/labels\/([^/?#]+)/i)?.[1];
-    const filename = import_path19.default.basename(fromUrl || value);
-    if (/\.pdf$/i.test(filename)) filenames.add(filename);
-  };
-  addFilename(order?.pdfFilename);
-  addFilename(order?.data?.pdfFilename);
-  addFilename(order?.labelUrl);
-  addFilename(order?.pdfUrl);
-  addFilename(order?.waybill_url);
-  addFilename(order?.data?.labelUrl);
-  addFilename(order?.data?.pdfUrl);
-  addFilename(order?.data?.waybill_url);
-  const orderSn = String(order?.orderSn || order?.id || "").replace(/^shopee-/i, "").replace(/[^a-zA-Z0-9_-]/g, "");
-  if (orderSn) {
-    filenames.add(`order_${orderSn}.pdf`);
-    filenames.add(`${orderSn}.pdf`);
-  }
-  for (const filename of filenames) {
-    if (import_fs18.default.existsSync(import_path19.default.join(PDF_DIR, filename))) return true;
-  }
-  return false;
-}
-function attachPdfAvailability(orders) {
-  return orders.map((order) => ({
-    ...order,
-    hasPdf: hasOrderPdfOnDisk(order)
-  }));
-}
 function parseShopIdsParam(rawShopIds, rawShopId) {
   const out = [];
   const seen = /* @__PURE__ */ new Set();
@@ -120136,10 +120148,8 @@ async function refreshOrders(req, res) {
       if (mergedOrders.length > 80) {
         await new Promise((resolve) => setTimeout(resolve, 30));
       }
-      const orders = attachPdfAvailability(
-        deps15.enrichOrdersWithShopNames(
-          deps15.enrichOrdersFromCatalog(mergedOrders, [])
-        )
+      const orders = deps15.enrichOrdersWithShopNames(
+        deps15.enrichOrdersFromCatalog(mergedOrders, [])
       );
       const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / limit) || 1);
       const currentPage = Math.min(page, totalPages);
@@ -120406,10 +120416,8 @@ async function listOrders(req, res) {
           catalogErr?.message || catalogErr
         );
       }
-      const rows = attachPdfAvailability(
-        deps15.enrichOrdersWithShopNames(
-          deps15.enrichOrdersFromCatalog(page.rows, products2)
-        )
+      const rows = deps15.enrichOrdersWithShopNames(
+        deps15.enrichOrdersFromCatalog(page.rows, products2)
       );
       const totalPages = Math.max(
         1,
@@ -120505,10 +120513,8 @@ async function listOrders(req, res) {
     rawOrders = rawOrders.slice(0, Math.min(Math.floor(fallbackLimit), 5e3));
   }
   const products = await deps15.loadProductsForOrders(rawOrders);
-  const orders = attachPdfAvailability(
-    deps15.enrichOrdersWithShopNames(
-      deps15.enrichOrdersFromCatalog(rawOrders, products)
-    )
+  const orders = deps15.enrichOrdersWithShopNames(
+    deps15.enrichOrdersFromCatalog(rawOrders, products)
   );
   console.log(
     `[GET /api/orders] READ-ONLY return length=${orders.length} tab=${tab || "(all)"} mongoReady=${isMongoReady()}`
@@ -120519,8 +120525,8 @@ async function cleanupHandedOver(req, res) {
   try {
     for (const name of [".cleanup-handed-over-v1", ".cleanup-handed-over-v2"]) {
       try {
-        const p = import_path19.default.join(APP_ROOT10, "data", name);
-        if (import_fs18.default.existsSync(p)) import_fs18.default.unlinkSync(p);
+        const p = import_path20.default.join(APP_ROOT10, "data", name);
+        if (import_fs19.default.existsSync(p)) import_fs19.default.unlinkSync(p);
       } catch {
       }
     }
@@ -121559,6 +121565,42 @@ async function updatePrintStatus(req, res) {
     });
   }
 }
+async function checkPdfOnDisk(req, res) {
+  try {
+    const raw = req.body?.orderSns ?? req.body?.order_ids ?? req.body?.orderIds ?? [];
+    const cleanSns = (Array.isArray(raw) ? raw : [raw]).map((sn) => String(sn || "").replace(/^shopee-/i, "").trim()).filter(Boolean).slice(0, 100);
+    if (cleanSns.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "missing_order_sns",
+        message: "Thi\u1EBFu danh s\xE1ch orderSns."
+      });
+    }
+    let orders = [];
+    try {
+      orders = await loadOrdersForShipScoped(
+        cleanSns.map((sn) => `shopee-${sn}`),
+        cleanSns
+      );
+    } catch (loadErr) {
+      console.warn("[check-pdf-on-disk] load failed:", loadErr?.message || loadErr);
+    }
+    const checked = attachPdfAvailability(Array.isArray(orders) ? orders : []);
+    const hasPdf = {};
+    for (const o of checked) {
+      const sn = String(o?.orderSn || o?.id || "").replace(/^shopee-/i, "").trim();
+      if (sn) hasPdf[sn] = Boolean(o.hasPdf);
+    }
+    return res.json({ success: true, hasPdf, data: checked });
+  } catch (err) {
+    console.error("[check-pdf-on-disk] failed:", err?.message || err);
+    return res.status(500).json({
+      success: false,
+      error: "check_pdf_failed",
+      message: err?.message || "Kh\xF4ng th\u1EC3 ki\u1EC3m tra PDF."
+    });
+  }
+}
 async function markPrinted(req, res) {
   req.body = { ...req.body || {}, isPrinted: true, is_printed: true };
   return updatePrintStatus(req, res);
@@ -122111,13 +122153,13 @@ async function printExternalWaybill(req, res) {
         });
       }
       if (waybill.base64) {
-        const fs22 = await import("fs");
-        const path22 = await import("path");
+        const fs23 = await import("fs");
+        const path23 = await import("path");
         const fileName = `external-${orderSn}.pdf`;
-        const filePath = path22.join(PDF_DIR, fileName);
-        fs22.mkdirSync(PDF_DIR, { recursive: true });
+        const filePath = path23.join(PDF_DIR, fileName);
+        fs23.mkdirSync(PDF_DIR, { recursive: true });
         const buf = Buffer.from(waybill.base64.replace(/^data:application\/pdf;base64,/i, ""), "base64");
-        fs22.writeFileSync(filePath, buf);
+        fs23.writeFileSync(filePath, buf);
         const base = `${req.protocol}://${req.get("host") || ""}`.replace(/\/$/, "");
         const url2 = `${base}/api/orders/external/waybill-file/${encodeURIComponent(orderSn)}`;
         return res.json({
@@ -122149,13 +122191,13 @@ async function streamExternalWaybillFile(req, res) {
   try {
     const orderSn = String(req.params.orderSn || "").trim();
     if (!orderSn) return res.status(400).json({ error: "Thi\u1EBFu m\xE3 \u0111\u01A1n" });
-    const filePath = import_path19.default.join(PDF_DIR, `external-${orderSn}.pdf`);
-    if (!import_fs18.default.existsSync(filePath)) {
+    const filePath = import_path20.default.join(PDF_DIR, `external-${orderSn}.pdf`);
+    if (!import_fs19.default.existsSync(filePath)) {
       return res.status(404).json({ error: "Ch\u01B0a c\xF3 file PDF waybill. B\u1EA5m In v\u1EADn \u0111\u01A1n l\u1EA1i." });
     }
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="${orderSn}.pdf"`);
-    return import_fs18.default.createReadStream(filePath).pipe(res);
+    return import_fs19.default.createReadStream(filePath).pipe(res);
   } catch (error) {
     return res.status(500).json({ error: error.message || "Kh\xF4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c PDF" });
   }
@@ -124933,10 +124975,10 @@ function getGhnCache() {
   }
   return ghnCache;
 }
-async function ghnFetch3(path22, query) {
+async function ghnFetch3(path23, query) {
   const token = readGhnToken2();
   if (!token) return null;
-  const url2 = new URL(`${GHN_BASE2}${path22}`);
+  const url2 = new URL(`${GHN_BASE2}${path23}`);
   if (query) {
     for (const [key, value] of Object.entries(query)) {
       if (value !== void 0 && value !== "") url2.searchParams.set(key, String(value));
@@ -124954,7 +124996,7 @@ async function ghnFetch3(path22, query) {
       signal: controller.signal
     });
     if (!res.ok) {
-      console.warn(`[GHN Master] ${path22} HTTP ${res.status}`);
+      console.warn(`[GHN Master] ${path23} HTTP ${res.status}`);
       return null;
     }
     const json2 = await res.json();
@@ -124962,9 +125004,9 @@ async function ghnFetch3(path22, query) {
     return Array.isArray(data) ? data : null;
   } catch (err) {
     if (err?.name === "AbortError") {
-      console.warn(`[GHN Master] ${path22} timeout`);
+      console.warn(`[GHN Master] ${path23} timeout`);
     } else {
-      console.warn(`[GHN Master] ${path22}:`, err?.message || err);
+      console.warn(`[GHN Master] ${path23}:`, err?.message || err);
     }
     return null;
   } finally {
@@ -125288,6 +125330,7 @@ router14.post("/parse-address", h3(parseOrderAddress));
 router14.post("/confirm-return-received", h3(confirmReturnReceived));
 router14.post("/reset-print-status", h3(resetPrintStatus));
 router14.post("/update-print-status", h3(updatePrintStatus));
+router14.post("/check-pdf-on-disk", h3(checkPdfOnDisk));
 router14.post("/mark-printed", h3(markPrinted));
 router14.get("/:orderSn/events", h3(getOrderEvents));
 router14.post("/:id/hand-over-carrier", h3(handOverCarrierById));
@@ -126370,14 +126413,14 @@ async function shopeeAxiosPost(url2, body, context = "shopee_post") {
 }
 
 // services/shopee/categories.js
-var import_fs19 = __toESM(require("fs"), 1);
-var import_path20 = __toESM(require("path"), 1);
+var import_fs20 = __toESM(require("fs"), 1);
+var import_path21 = __toESM(require("path"), 1);
 var CACHE_TTL_MS = 12 * 60 * 60 * 1e3;
 var INVALID_CATEGORY_MSG = "Danh m\u1EE5c c\u0169 c\u1EE7a s\u1EA3n ph\u1EA9m \u0111\xE3 b\u1ECB Shopee thay \u0111\u1ED5i. Vui l\xF2ng ch\u1ECDn l\u1EA1i danh m\u1EE5c m\u1EDBi tr\u01B0\u1EDBc khi \u0111\u0103ng b\xE1n!";
 var SHOPEE_INVALID_CATEGORY_CODE = "product.error_invalid_category";
 var SHOPEE_INVALID_CATEGORY_USER_MSG = INVALID_CATEGORY_MSG;
 function resolveCachePath(appRoot) {
-  return import_path20.default.join(appRoot || process.cwd(), "data", "shopee_categories.json");
+  return import_path21.default.join(appRoot || process.cwd(), "data", "shopee_categories.json");
 }
 function isShopeeInvalidCategoryError(errOrText) {
   const text = String(
@@ -126434,8 +126477,8 @@ function collectShopeeLeafIds(categoryList) {
 function readShopeeCategoryCache(appRoot) {
   const file = resolveCachePath(appRoot);
   try {
-    if (!import_fs19.default.existsSync(file)) return null;
-    const parsed = JSON.parse(import_fs19.default.readFileSync(file, "utf-8"));
+    if (!import_fs20.default.existsSync(file)) return null;
+    const parsed = JSON.parse(import_fs20.default.readFileSync(file, "utf-8"));
     if (!parsed || !Array.isArray(parsed.category_list)) return null;
     return parsed;
   } catch {
@@ -126444,9 +126487,9 @@ function readShopeeCategoryCache(appRoot) {
 }
 function writeShopeeCategoryCache(appRoot, payload) {
   const file = resolveCachePath(appRoot);
-  const dir = import_path20.default.dirname(file);
-  if (!import_fs19.default.existsSync(dir)) import_fs19.default.mkdirSync(dir, { recursive: true });
-  import_fs19.default.writeFileSync(file, JSON.stringify(payload, null, 2), "utf-8");
+  const dir = import_path21.default.dirname(file);
+  if (!import_fs20.default.existsSync(dir)) import_fs20.default.mkdirSync(dir, { recursive: true });
+  import_fs20.default.writeFileSync(file, JSON.stringify(payload, null, 2), "utf-8");
 }
 function isShopeeCategoryCacheFresh(cache, ttlMs = CACHE_TTL_MS) {
   if (!cache?.synced_at) return false;
@@ -127529,12 +127572,12 @@ function writeCpanelCrashLog(kind, err) {
 ${(/* @__PURE__ */ new Date()).toISOString()}
 `;
     const targets = [
-      import_path21.default.join(process.cwd(), "cpanel_error_log.txt"),
-      typeof __dirname !== "undefined" ? import_path21.default.join(__dirname, "cpanel_error_log.txt") : ""
+      import_path22.default.join(process.cwd(), "cpanel_error_log.txt"),
+      typeof __dirname !== "undefined" ? import_path22.default.join(__dirname, "cpanel_error_log.txt") : ""
     ].filter(Boolean);
     for (const file of targets) {
       try {
-        import_fs20.default.writeFileSync(file, line);
+        import_fs21.default.writeFileSync(file, line);
       } catch {
       }
     }
@@ -127568,12 +127611,12 @@ if (isCpanelPassengerRuntime) {
   console.log(`[Boot] runtime=cpanel-production pid=${process.pid}; static dist only, dev middleware disabled.`);
 }
 var dotenvCandidates = [
-  import_path21.default.join(APP_ROOT12, ".env"),
-  import_path21.default.join(process.cwd(), ".env"),
-  import_path21.default.resolve(".env")
+  import_path22.default.join(APP_ROOT12, ".env"),
+  import_path22.default.join(process.cwd(), ".env"),
+  import_path22.default.resolve(".env")
 ];
 for (const envPath of dotenvCandidates) {
-  if (import_fs20.default.existsSync(envPath)) {
+  if (import_fs21.default.existsSync(envPath)) {
     const loaded = import_dotenv2.default.config({ path: envPath });
     if (loaded.error) {
       console.error(`[Config] dotenv l\u1ED7i khi \u0111\u1ECDc ${envPath}:`, loaded.error.message);
@@ -127598,8 +127641,8 @@ console.log(
 function writeCpanelCrashLogToAppRoot(kind, err) {
   try {
     const stack = err instanceof Error ? err.stack || err.message : typeof err === "string" ? err : JSON.stringify(err);
-    import_fs20.default.writeFileSync(
-      import_path21.default.join(APP_ROOT12, "cpanel_error_log.txt"),
+    import_fs21.default.writeFileSync(
+      import_path22.default.join(APP_ROOT12, "cpanel_error_log.txt"),
       `${kind}: ${stack}
 ---
 ${(/* @__PURE__ */ new Date()).toISOString()}
@@ -127622,8 +127665,8 @@ process.on("unhandledRejection", (err) => {
   } catch {
   }
 });
-var WAYBILLS_DIR = import_path21.default.join(APP_ROOT12, "storage", "waybills");
-var LEGACY_PUBLIC_PRINTS_DIR = import_path21.default.join(APP_ROOT12, "public", "prints");
+var WAYBILLS_DIR = import_path22.default.join(APP_ROOT12, "storage", "waybills");
+var LEGACY_PUBLIC_PRINTS_DIR = import_path22.default.join(APP_ROOT12, "public", "prints");
 var WAYBILL_FILE_RE = /\.(pdf|zip|html)$/i;
 var LABEL_DISK_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
 var LABEL_RAM_TTL_MS = 60 * 60 * 1e3;
@@ -127632,24 +127675,24 @@ var LABEL_MEM_MAX_ENTRIES = 48;
 var LABEL_MEM_MAX_BYTES = 96 * 1024 * 1024;
 function ensureLabelsDir() {
   try {
-    if (!import_fs20.default.existsSync(PDF_DIR)) import_fs20.default.mkdirSync(PDF_DIR, { recursive: true });
+    if (!import_fs21.default.existsSync(PDF_DIR)) import_fs21.default.mkdirSync(PDF_DIR, { recursive: true });
   } catch (err) {
     console.error("[Labels] Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c storage/labels:", err);
   }
 }
 function assertLabelsDirWritable() {
   ensureLabelsDir();
-  const probe = import_path21.default.join(PDF_DIR, `.write_probe_${process.pid}`);
+  const probe = import_path22.default.join(PDF_DIR, `.write_probe_${process.pid}`);
   try {
-    import_fs20.default.writeFileSync(probe, "ok");
-    import_fs20.default.unlinkSync(probe);
+    import_fs21.default.writeFileSync(probe, "ok");
+    import_fs21.default.unlinkSync(probe);
   } catch (err) {
     console.error("[Labels] Kh\xF4ng ghi \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c storage/labels:", err);
     throw err instanceof Error ? err : new Error(String(err));
   }
 }
 function safeLabelFilename(raw) {
-  const base = import_path21.default.basename(String(raw || "").trim());
+  const base = import_path22.default.basename(String(raw || "").trim());
   if (!base || base.includes("..") || !/\.pdf$/i.test(base)) return null;
   return base;
 }
@@ -127662,17 +127705,17 @@ function buildCachedLabelFilename(orderSns) {
 function getValidLabelDiskFile(filename) {
   const safe = safeLabelFilename(filename);
   if (!safe) return null;
-  const filePath = import_path21.default.join(PDF_DIR, safe);
+  const filePath = import_path22.default.join(PDF_DIR, safe);
   try {
-    if (!import_fs20.default.existsSync(filePath)) return null;
-    const stat3 = import_fs20.default.statSync(filePath);
+    if (!import_fs21.default.existsSync(filePath)) return null;
+    const stat3 = import_fs21.default.statSync(filePath);
     if (!stat3.isFile() || stat3.size <= 0) return null;
-    const fd = import_fs20.default.openSync(filePath, "r");
+    const fd = import_fs21.default.openSync(filePath, "r");
     try {
       const magic = Buffer.allocUnsafe(4);
-      if (import_fs20.default.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") return null;
+      if (import_fs21.default.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") return null;
     } finally {
-      import_fs20.default.closeSync(fd);
+      import_fs21.default.closeSync(fd);
     }
     return { safe, filePath, size: stat3.size };
   } catch {
@@ -127682,12 +127725,12 @@ function getValidLabelDiskFile(filename) {
 async function getValidLabelDiskFileAsync(filename) {
   const safe = safeLabelFilename(filename);
   if (!safe) return null;
-  const filePath = import_path21.default.join(PDF_DIR, safe);
+  const filePath = import_path22.default.join(PDF_DIR, safe);
   let handle;
   try {
-    const stat3 = await import_fs20.default.promises.stat(filePath);
+    const stat3 = await import_fs21.default.promises.stat(filePath);
     if (!stat3.isFile() || stat3.size <= 0) return null;
-    handle = await import_fs20.default.promises.open(filePath, "r");
+    handle = await import_fs21.default.promises.open(filePath, "r");
     const magic = Buffer.allocUnsafe(4);
     const { bytesRead } = await handle.read(magic, 0, 4, 0);
     if (bytesRead !== 4 || magic.toString() !== "%PDF") return null;
@@ -127732,14 +127775,14 @@ function removeExistingLabelFilesForOrderSns(orderSns) {
   if (sns.length === 0) return 0;
   let deleted = 0;
   try {
-    for (const name of import_fs20.default.readdirSync(PDF_DIR)) {
+    for (const name of import_fs21.default.readdirSync(PDF_DIR)) {
       if (!/\.pdf$/i.test(name)) continue;
       const hit = sns.some(
         (sn) => name === `${sn}.pdf` || name === `order_${sn}.pdf` || name.startsWith(`${sn}_`) || name.startsWith(`order_${sn}_`)
       );
       if (!hit) continue;
       try {
-        import_fs20.default.unlinkSync(import_path21.default.join(PDF_DIR, name));
+        import_fs21.default.unlinkSync(import_path22.default.join(PDF_DIR, name));
         labelMemCache.delete(name);
         deleted += 1;
       } catch {
@@ -127779,11 +127822,11 @@ function putLabelMem(filename, buffer, contentType) {
       expires: Date.now() + LABEL_RAM_TTL_MS,
       contentType: "application/pdf"
     });
-    const dest = import_path21.default.join(PDF_DIR, safe);
+    const dest = import_path22.default.join(PDF_DIR, safe);
     console.log(`[Labels] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${dest}`);
     setImmediate(() => {
       ensureLabelsDir();
-      void import_fs20.default.promises.writeFile(dest, buffer).then(() => {
+      void import_fs21.default.promises.writeFile(dest, buffer).then(() => {
         console.log(`[Labels] K\u1EBFt qu\u1EA3: OK \u2014 Disk ${safe} (${buffer.length} bytes) \u2192 ${dest}`);
       }).catch((err) => {
         console.warn(`[Labels] Ghi \u0111\u0129a n\u1EC1n th\u1EA5t b\u1EA1i ${safe}:`, err?.message || err);
@@ -127807,19 +127850,19 @@ function getLabelMem(filename) {
       return { buf: ram.buf, contentType: ram.contentType || "application/pdf" };
     }
   }
-  const filePath = import_path21.default.join(PDF_DIR, safe);
+  const filePath = import_path22.default.join(PDF_DIR, safe);
   try {
-    if (!import_fs20.default.existsSync(filePath)) return null;
-    const st = import_fs20.default.statSync(filePath);
+    if (!import_fs21.default.existsSync(filePath)) return null;
+    const st = import_fs21.default.statSync(filePath);
     if (!st.isFile() || st.size <= 0) {
       console.warn(`[Labels] B\u1ECF qua file r\u1ED7ng tr\xEAn \u0111\u0129a: ${filePath}`);
       try {
-        import_fs20.default.unlinkSync(filePath);
+        import_fs21.default.unlinkSync(filePath);
       } catch {
       }
       return null;
     }
-    const buf = import_fs20.default.readFileSync(filePath);
+    const buf = import_fs21.default.readFileSync(filePath);
     if (!buf.length || !isPdfBuffer(buf)) return null;
     labelMemCache.set(safe, {
       buf,
@@ -127850,9 +127893,9 @@ function assertLabelFileReady(filename) {
   if (!isPdfBuffer(hit.buf)) {
     throw new Error(`File v\u1EADn \u0111\u01A1n kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7: ${safe}`);
   }
-  const diskPath = import_path21.default.join(PDF_DIR, safe);
-  if (import_fs20.default.existsSync(diskPath)) {
-    const st = import_fs20.default.statSync(diskPath);
+  const diskPath = import_path22.default.join(PDF_DIR, safe);
+  if (import_fs21.default.existsSync(diskPath)) {
+    const st = import_fs21.default.statSync(diskPath);
     if (st.size <= 0) {
       throw new Error(`File v\u1EADn \u0111\u01A1n tr\xEAn \u0111\u0129a r\u1ED7ng (0 bytes): ${diskPath}`);
     }
@@ -127871,13 +127914,13 @@ function cleanupExpiredLabelFiles() {
   try {
     ensureLabelsDir();
     const cutoff = now - LABEL_DISK_TTL_MS;
-    for (const name of import_fs20.default.readdirSync(PDF_DIR)) {
+    for (const name of import_fs21.default.readdirSync(PDF_DIR)) {
       if (!WAYBILL_FILE_RE.test(name)) continue;
-      const full = import_path21.default.join(PDF_DIR, name);
+      const full = import_path22.default.join(PDF_DIR, name);
       try {
-        const st = import_fs20.default.statSync(full);
+        const st = import_fs21.default.statSync(full);
         if (st.size <= 0 || st.mtimeMs < cutoff) {
-          import_fs20.default.unlinkSync(full);
+          import_fs21.default.unlinkSync(full);
           labelMemCache.delete(name);
           deleted += 1;
         }
@@ -127896,11 +127939,11 @@ function wipeLegacyPublicPrints() {
   let deleted = 0;
   for (const dir of [LEGACY_PUBLIC_PRINTS_DIR, WAYBILLS_DIR]) {
     try {
-      if (!import_fs20.default.existsSync(dir)) continue;
-      for (const name of import_fs20.default.readdirSync(dir)) {
+      if (!import_fs21.default.existsSync(dir)) continue;
+      for (const name of import_fs21.default.readdirSync(dir)) {
         if (!WAYBILL_FILE_RE.test(name)) continue;
         try {
-          import_fs20.default.unlinkSync(import_path21.default.join(dir, name));
+          import_fs21.default.unlinkSync(import_path22.default.join(dir, name));
           deleted += 1;
         } catch {
         }
@@ -127936,7 +127979,7 @@ function serveLabelPdfFromMem(filename, res) {
       res.setHeader("Content-Length", String(disk.size));
       res.setHeader("Cache-Control", "private, max-age=300");
       res.setHeader("X-Content-Type-Options", "nosniff");
-      const stream4 = import_fs20.default.createReadStream(disk.filePath);
+      const stream4 = import_fs21.default.createReadStream(disk.filePath);
       stream4.on("error", (err) => {
         console.error(`[Labels] Stream disk l\u1ED7i ${safe}:`, err);
         if (!res.headersSent) res.status(500).end();
@@ -127995,7 +128038,7 @@ function absoluteLabelUrl(relativePath) {
   } else {
     const p = relativePath.startsWith("/") ? relativePath : `/${relativePath}`;
     const fnMatch = p.match(/\/(?:api\/(?:public\/)?labels|labels|prints)\/([^/?#]+)$/i);
-    fn = decodeURIComponent(fnMatch?.[1] || import_path21.default.basename(p));
+    fn = decodeURIComponent(fnMatch?.[1] || import_path22.default.basename(p));
   }
   if (!safeLabelFilename(fn)) return null;
   try {
@@ -132746,9 +132789,9 @@ async function resolvePublishImageBuffer(src) {
   }
   const framedMatch = raw.match(/\/api\/framed-images\/([^/?#]+)/i);
   if (framedMatch) {
-    const filePath = import_path21.default.join(APP_ROOT12, "data", "framed_images", `${decodeURIComponent(framedMatch[1])}.jpg`);
-    if (import_fs20.default.existsSync(filePath)) {
-      return { buf: import_fs20.default.readFileSync(filePath), filename: "item.jpg", mime: "image/jpeg" };
+    const filePath = import_path22.default.join(APP_ROOT12, "data", "framed_images", `${decodeURIComponent(framedMatch[1])}.jpg`);
+    if (import_fs21.default.existsSync(filePath)) {
+      return { buf: import_fs21.default.readFileSync(filePath), filename: "item.jpg", mime: "image/jpeg" };
     }
   }
   let fetchUrl = raw;
@@ -135364,7 +135407,7 @@ async function shopeeDownloadShippingDocument(shopId, accessToken, orderList, fi
   ensureLabelsDir();
   const safe = safeLabelFilename(filename);
   if (!safe) return { error: "invalid_filename", message: "T\xEAn file PDF cache kh\xF4ng h\u1EE3p l\u1EC7." };
-  const destination = import_path21.default.join(PDF_DIR, safe);
+  const destination = import_path22.default.join(PDF_DIR, safe);
   const cached = getValidLabelDiskFile(safe);
   if (cached) {
     console.log(`[Shopee API] PDF cache HIT ${safe} (${cached.size} bytes) \u2014 b\u1ECF qua download`);
@@ -135433,24 +135476,24 @@ async function shopeeDownloadShippingDocument(shopId, accessToken, orderList, fi
     await (0, import_promises3.pipeline)(
       import_node_stream4.Readable.fromWeb(res.body),
       limiter,
-      import_fs20.default.createWriteStream(tempPath, { flags: "wx" })
+      import_fs21.default.createWriteStream(tempPath, { flags: "wx" })
     );
     if (receivedBytes < 64) throw new Error(`PDF r\u1ED7ng ho\u1EB7c qu\xE1 nh\u1ECF (${receivedBytes} bytes).`);
-    const tempFd = import_fs20.default.openSync(tempPath, "r");
+    const tempFd = import_fs21.default.openSync(tempPath, "r");
     try {
       const magic = Buffer.allocUnsafe(4);
-      if (import_fs20.default.readSync(tempFd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
+      if (import_fs21.default.readSync(tempFd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
         throw new Error("D\u1EEF li\u1EC7u t\u1EA3i v\u1EC1 kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7.");
       }
     } finally {
-      import_fs20.default.closeSync(tempFd);
+      import_fs21.default.closeSync(tempFd);
     }
-    if (import_fs20.default.existsSync(destination)) import_fs20.default.unlinkSync(destination);
-    import_fs20.default.renameSync(tempPath, destination);
+    if (import_fs21.default.existsSync(destination)) import_fs21.default.unlinkSync(destination);
+    import_fs21.default.renameSync(tempPath, destination);
     console.log(`[Shopee API] ${apiPath} stream OK file=${safe} size=${receivedBytes} bytes`);
   } catch (readErr) {
     try {
-      if (import_fs20.default.existsSync(tempPath)) import_fs20.default.unlinkSync(tempPath);
+      if (import_fs21.default.existsSync(tempPath)) import_fs21.default.unlinkSync(tempPath);
     } catch {
     }
     console.error(`[Shopee API] ${apiPath} stream th\u1EA5t b\u1EA1i:`, readErr?.message || readErr);
@@ -135492,7 +135535,7 @@ async function cacheOrderWaybillPdf(orderSn, buffer) {
   const filename = `order_${sn}.pdf`;
   putLabelMem(filename, buffer, "application/pdf");
   ensureLabelsDir();
-  await import_fs20.default.promises.writeFile(import_path21.default.join(PDF_DIR, filename), buffer);
+  await import_fs21.default.promises.writeFile(import_path22.default.join(PDF_DIR, filename), buffer);
 }
 async function splitMergedWaybillPdfToOrders(mergedBuffer, orderSns) {
   const result = /* @__PURE__ */ new Map();
@@ -135624,7 +135667,7 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
     const pendingByOrder = /* @__PURE__ */ new Map();
     for (const [sn, rows] of byOrder) {
       const filename = `order_${sn}.pdf`;
-      if (import_fs20.default.existsSync(import_path21.default.join(PDF_DIR, filename))) {
+      if (import_fs21.default.existsSync(import_path22.default.join(PDF_DIR, filename))) {
         const cached = getValidLabelDiskFile(filename);
         if (cached) {
           console.log(`[Shopee Batch Waybill] CACHE HIT ${filename} (${cached.size} bytes)`);
@@ -135743,7 +135786,7 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
               opts?.signal
             );
             if (downloadResult?.filePath && downloadResult?.filename && downloadResult?.size) {
-              const mergedBuf = await import_fs20.default.promises.readFile(downloadResult.filePath);
+              const mergedBuf = await import_fs21.default.promises.readFile(downloadResult.filePath);
               if (mergedBuf.length && isPdfBuffer(mergedBuf)) {
                 putLabelMem(downloadResult.filename, mergedBuf, "application/pdf");
                 const splitMap = await splitMergedWaybillPdfToOrders(mergedBuf, uniquePendingSns);
@@ -135756,7 +135799,7 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
                       success: true,
                       orderSn: sn,
                       filename: `order_${sn}.pdf`,
-                      filePath: import_path21.default.join(PDF_DIR, `order_${sn}.pdf`),
+                      filePath: import_path22.default.join(PDF_DIR, `order_${sn}.pdf`),
                       size: buf.length,
                       contentType: "application/pdf",
                       cached: false
@@ -135801,7 +135844,7 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
                   opts?.signal
                 );
                 if (!one?.filePath || !one?.filename || !one?.size) return;
-                const buf = await import_fs20.default.promises.readFile(one.filePath);
+                const buf = await import_fs21.default.promises.readFile(one.filePath);
                 if (!buf.length || !isPdfBuffer(buf)) return;
                 putLabelMem(one.filename, buf, "application/pdf");
                 readyOrderSns.push(sn);
@@ -136674,7 +136717,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
   const sources = [];
   let carrier;
   let internal;
-  const consider = (key, value, path22) => {
+  const consider = (key, value, path23) => {
     if (!SHOPEE_TRACKING_KEY_RE.test(key) && key.toLowerCase() !== "tracking_number" && key.toLowerCase() !== "tracking_no") {
       if (!/tracking/i.test(key) || /time|date|url|info|hint|status|type/i.test(key)) return;
     }
@@ -136684,22 +136727,22 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
     if (isShopeeInternalTrackingCode2(s2)) {
       if (!internal) {
         internal = s2;
-        sources.push(`${path22}=${s2}(internal)`);
+        sources.push(`${path23}=${s2}(internal)`);
       }
       return;
     }
     if (!carrier) {
       carrier = s2;
-      sources.push(`${path22}=${s2}`);
+      sources.push(`${path23}=${s2}`);
     } else if (isCarrierTrackingCode3(s2) && !isCarrierTrackingCode3(carrier)) {
       carrier = s2;
-      sources.push(`${path22}=${s2}`);
+      sources.push(`${path23}=${s2}`);
     }
   };
-  const walk = (node, path22, depth) => {
+  const walk = (node, path23, depth) => {
     if (node == null || depth > 8) return;
     if (Array.isArray(node)) {
-      node.forEach((item, i2) => walk(item, `${path22}[${i2}]`, depth + 1));
+      node.forEach((item, i2) => walk(item, `${path23}[${i2}]`, depth + 1));
       return;
     }
     if (typeof node !== "object") return;
@@ -136708,7 +136751,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
       if (nodeSn && nodeSn !== wantSn) return;
     }
     for (const [k, v] of Object.entries(node)) {
-      const childPath = path22 ? `${path22}.${k}` : k;
+      const childPath = path23 ? `${path23}.${k}` : k;
       if (v != null && (typeof v === "string" || typeof v === "number")) {
         consider(k, v, childPath);
       } else {
@@ -140056,9 +140099,9 @@ function withLocalDbTimeout(promise, timeoutMs, label) {
   return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
 }
 var MONGO_ORDER_RECONCILE_COOLDOWN_MS = 5 * 60 * 1e3;
-var PRODUCTS_DB_PATH = import_path21.default.join(APP_ROOT12, "data", "products.json");
-var LOCAL_INVENTORY_CACHE_PATH = import_path21.default.join(APP_ROOT12, "data", "local_inventory.json");
-var SQLITE_LEGACY_PATH = import_path21.default.join(APP_ROOT12, "database.sqlite");
+var PRODUCTS_DB_PATH = import_path22.default.join(APP_ROOT12, "data", "products.json");
+var LOCAL_INVENTORY_CACHE_PATH = import_path22.default.join(APP_ROOT12, "data", "local_inventory.json");
+var SQLITE_LEGACY_PATH = import_path22.default.join(APP_ROOT12, "database.sqlite");
 function getProductChildrenList(p) {
   try {
     if (Array.isArray(p?.children) && p.children.length > 0) return p.children;
@@ -140154,18 +140197,18 @@ async function saveProducts(products) {
     throw error instanceof Error ? error : new Error(String(error));
   }
 }
-var INVENTORY_AUDIT_PATH = import_path21.default.join(APP_ROOT12, "data", "inventory_audit.json");
-var INVENTORY_BACKUP_DIR = import_path21.default.join(APP_ROOT12, "data", "inventory_backups");
+var INVENTORY_AUDIT_PATH = import_path22.default.join(APP_ROOT12, "data", "inventory_audit.json");
+var INVENTORY_BACKUP_DIR = import_path22.default.join(APP_ROOT12, "data", "inventory_backups");
 function writeInventoryAudit(event, details = {}) {
   try {
     ensureDataDirs();
     let existing = [];
-    if (import_fs20.default.existsSync(INVENTORY_AUDIT_PATH)) {
-      const parsed = JSON.parse(import_fs20.default.readFileSync(INVENTORY_AUDIT_PATH, "utf-8"));
+    if (import_fs21.default.existsSync(INVENTORY_AUDIT_PATH)) {
+      const parsed = JSON.parse(import_fs21.default.readFileSync(INVENTORY_AUDIT_PATH, "utf-8"));
       if (Array.isArray(parsed)) existing = parsed;
     }
     const entry = { id: `inventory-audit-${Date.now()}`, event, at: (/* @__PURE__ */ new Date()).toISOString(), ...details };
-    import_fs20.default.writeFileSync(INVENTORY_AUDIT_PATH, JSON.stringify([...existing.slice(-199), entry], null, 2), "utf-8");
+    import_fs21.default.writeFileSync(INVENTORY_AUDIT_PATH, JSON.stringify([...existing.slice(-199), entry], null, 2), "utf-8");
     console.warn(`[Inventory Audit] ${event}`, details);
   } catch (error) {
     console.error("[Inventory Audit] Kh\xF4ng th\u1EC3 ghi audit:", error);
@@ -140173,36 +140216,36 @@ function writeInventoryAudit(event, details = {}) {
 }
 async function backupInventoryBeforeDestructiveAction(reason) {
   ensureDataDirs();
-  import_fs20.default.mkdirSync(INVENTORY_BACKUP_DIR, { recursive: true });
+  import_fs21.default.mkdirSync(INVENTORY_BACKUP_DIR, { recursive: true });
   const [products, listings] = await Promise.all([loadProducts(), readChannelListingsDb()]);
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const fileName = `inventory-${reason}-${stamp}.json`;
-  import_fs20.default.writeFileSync(
-    import_path21.default.join(INVENTORY_BACKUP_DIR, fileName),
+  import_fs21.default.writeFileSync(
+    import_path22.default.join(INVENTORY_BACKUP_DIR, fileName),
     JSON.stringify({ createdAt: (/* @__PURE__ */ new Date()).toISOString(), reason, products, listings }, null, 2),
     "utf-8"
   );
   writeInventoryAudit("backup_created", { reason, fileName, productCount: products.length, listingCount: listings.length });
   return fileName;
 }
-var CHANNEL_LISTINGS_DB_PATH = import_path21.default.join(APP_ROOT12, "data", "channel_listings.json");
-var SHOPEE_SYNC_ERRORS_DB_PATH = import_path21.default.join(APP_ROOT12, "data", "shopee_sync_errors.json");
+var CHANNEL_LISTINGS_DB_PATH = import_path22.default.join(APP_ROOT12, "data", "channel_listings.json");
+var SHOPEE_SYNC_ERRORS_DB_PATH = import_path22.default.join(APP_ROOT12, "data", "shopee_sync_errors.json");
 var SHOPEE_SYNC_ERRORS_MAX_ROWS = 500;
 function renameLegacyJsonIfExists(filePath) {
-  if (!import_fs20.default.existsSync(filePath)) return;
+  if (!import_fs21.default.existsSync(filePath)) return;
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const dest = `${filePath}.migrated.${stamp}`;
   try {
-    import_fs20.default.renameSync(filePath, dest);
-    console.log(`[Mongo Migrate] Renamed ${import_path21.default.basename(filePath)} \u2192 ${import_path21.default.basename(dest)}`);
+    import_fs21.default.renameSync(filePath, dest);
+    console.log(`[Mongo Migrate] Renamed ${import_path22.default.basename(filePath)} \u2192 ${import_path22.default.basename(dest)}`);
   } catch (err) {
     console.warn(`[Mongo Migrate] Kh\xF4ng rename \u0111\u01B0\u1EE3c ${filePath}:`, err);
   }
 }
 function readLegacyJsonArray(filePath) {
   try {
-    if (!import_fs20.default.existsSync(filePath)) return [];
-    const raw = import_fs20.default.readFileSync(filePath, "utf-8");
+    if (!import_fs21.default.existsSync(filePath)) return [];
+    const raw = import_fs21.default.readFileSync(filePath, "utf-8");
     if (!raw || !raw.trim()) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -140211,26 +140254,26 @@ function readLegacyJsonArray(filePath) {
   }
 }
 function findLatestMigratedJson(baseName) {
-  const dataDir = import_path21.default.join(APP_ROOT12, "data");
-  if (!import_fs20.default.existsSync(dataDir)) return null;
+  const dataDir = import_path22.default.join(APP_ROOT12, "data");
+  if (!import_fs21.default.existsSync(dataDir)) return null;
   const prefix = `${baseName}.migrated.`;
-  const matches = import_fs20.default.readdirSync(dataDir).filter((f3) => f3.startsWith(prefix)).sort();
+  const matches = import_fs21.default.readdirSync(dataDir).filter((f3) => f3.startsWith(prefix)).sort();
   if (matches.length === 0) return null;
-  return import_path21.default.join(dataDir, matches[matches.length - 1]);
+  return import_path22.default.join(dataDir, matches[matches.length - 1]);
 }
 async function maybeMigrateJsonToMongoOnBoot() {
   if (isProductsDiskMode()) {
     try {
-      const existing = import_fs20.default.existsSync(getProductsDiskPath()) ? JSON.parse(import_fs20.default.readFileSync(getProductsDiskPath(), "utf-8") || "[]") : [];
+      const existing = import_fs21.default.existsSync(getProductsDiskPath()) ? JSON.parse(import_fs21.default.readFileSync(getProductsDiskPath(), "utf-8") || "[]") : [];
       if (!Array.isArray(existing) || existing.length === 0) {
-        const dataDir = import_path21.default.join(APP_ROOT12, "data");
-        if (import_fs20.default.existsSync(dataDir)) {
-          const migrated = import_fs20.default.readdirSync(dataDir).filter((n) => /^products\.json\.migrated\./i.test(n)).sort();
+        const dataDir = import_path22.default.join(APP_ROOT12, "data");
+        if (import_fs21.default.existsSync(dataDir)) {
+          const migrated = import_fs21.default.readdirSync(dataDir).filter((n) => /^products\.json\.migrated\./i.test(n)).sort();
           const latest = migrated[migrated.length - 1];
           if (latest) {
-            const src = import_path21.default.join(dataDir, latest);
+            const src = import_path22.default.join(dataDir, latest);
             const dest = getProductsDiskPath();
-            import_fs20.default.copyFileSync(src, dest);
+            import_fs21.default.copyFileSync(src, dest);
             console.log(`[Products Disk] Kh\xF4i ph\u1EE5c Kho G\u1ED1c t\u1EEB ${latest} \u2192 products.json`);
           }
         }
@@ -140247,9 +140290,9 @@ async function maybeMigrateJsonToMongoOnBoot() {
   try {
     const productCount = await countProducts();
     const listingCount = await countChannelListings();
-    const legacyProducts = PRODUCTS_DB_PATH && import_fs20.default.existsSync(PRODUCTS_DB_PATH) ? PRODUCTS_DB_PATH : findLatestMigratedJson("products.json");
-    const legacyListings = import_fs20.default.existsSync(CHANNEL_LISTINGS_DB_PATH) ? CHANNEL_LISTINGS_DB_PATH : findLatestMigratedJson("channel_listings.json");
-    const hasLegacy = !!legacyProducts || !!legacyListings || import_fs20.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) || !!findLatestMigratedJson("local_inventory.json");
+    const legacyProducts = PRODUCTS_DB_PATH && import_fs21.default.existsSync(PRODUCTS_DB_PATH) ? PRODUCTS_DB_PATH : findLatestMigratedJson("products.json");
+    const legacyListings = import_fs21.default.existsSync(CHANNEL_LISTINGS_DB_PATH) ? CHANNEL_LISTINGS_DB_PATH : findLatestMigratedJson("channel_listings.json");
+    const hasLegacy = !!legacyProducts || !!legacyListings || import_fs21.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) || !!findLatestMigratedJson("local_inventory.json");
     if (!hasLegacy) {
       console.log(
         `[MongoDB] Ready \u2014 products=${productCount}, listings=${listingCount} @ ${getMongoUriMasked()} (ready=${isMongoReady()})`
@@ -140268,10 +140311,10 @@ async function maybeMigrateJsonToMongoOnBoot() {
     console.log("[Mongo Migrate] Mongo tr\u1ED1ng + c\xF2n JSON legacy \u2014 b\u1EAFt \u0111\u1EA7u migrate...");
     let products = legacyProducts ? readLegacyJsonArray(legacyProducts) : [];
     let listings = legacyListings ? readLegacyJsonArray(legacyListings) : [];
-    const invPath = import_fs20.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) ? LOCAL_INVENTORY_CACHE_PATH : findLatestMigratedJson("local_inventory.json");
+    const invPath = import_fs21.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) ? LOCAL_INVENTORY_CACHE_PATH : findLatestMigratedJson("local_inventory.json");
     if (invPath) {
       try {
-        const inv = JSON.parse(import_fs20.default.readFileSync(invPath, "utf-8"));
+        const inv = JSON.parse(import_fs21.default.readFileSync(invPath, "utf-8"));
         const invProducts = Array.isArray(inv?.products) ? inv.products : [];
         const invListings = Array.isArray(inv?.listings) ? inv.listings : [];
         const byId = /* @__PURE__ */ new Map();
@@ -140297,10 +140340,10 @@ async function maybeMigrateJsonToMongoOnBoot() {
     renameLegacyJsonIfExists(PRODUCTS_DB_PATH);
     renameLegacyJsonIfExists(CHANNEL_LISTINGS_DB_PATH);
     renameLegacyJsonIfExists(LOCAL_INVENTORY_CACHE_PATH);
-    if (import_fs20.default.existsSync(SQLITE_LEGACY_PATH)) {
+    if (import_fs21.default.existsSync(SQLITE_LEGACY_PATH)) {
       try {
         const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-        import_fs20.default.renameSync(SQLITE_LEGACY_PATH, `${SQLITE_LEGACY_PATH}.legacy.${stamp}`);
+        import_fs21.default.renameSync(SQLITE_LEGACY_PATH, `${SQLITE_LEGACY_PATH}.legacy.${stamp}`);
         console.log("[Mongo Migrate] Archived database.sqlite (kh\xF4ng c\xF2n d\xF9ng)");
       } catch {
       }
@@ -140311,8 +140354,8 @@ async function maybeMigrateJsonToMongoOnBoot() {
 }
 function readShopeeSyncErrorsDb() {
   try {
-    if (!import_fs20.default.existsSync(SHOPEE_SYNC_ERRORS_DB_PATH)) return [];
-    const raw = import_fs20.default.readFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, "utf-8");
+    if (!import_fs21.default.existsSync(SHOPEE_SYNC_ERRORS_DB_PATH)) return [];
+    const raw = import_fs21.default.readFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, "utf-8");
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
   } catch (err) {
@@ -140336,8 +140379,8 @@ async function appendShopeeSyncErrorToDb(entry) {
   try {
     const prev = readShopeeSyncErrorsDb();
     const next = [row, ...prev].slice(0, SHOPEE_SYNC_ERRORS_MAX_ROWS);
-    import_fs20.default.mkdirSync(import_path21.default.dirname(SHOPEE_SYNC_ERRORS_DB_PATH), { recursive: true });
-    import_fs20.default.writeFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, JSON.stringify(next, null, 2), "utf-8");
+    import_fs21.default.mkdirSync(import_path22.default.dirname(SHOPEE_SYNC_ERRORS_DB_PATH), { recursive: true });
+    import_fs21.default.writeFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, JSON.stringify(next, null, 2), "utf-8");
   } catch (err) {
     console.error("[Shopee Sync Errors DB] Failed to write:", err);
   }
@@ -141055,7 +141098,7 @@ async function bulkAutoLinkAllPending(opts) {
     masterProductCount
   };
 }
-var CHANNEL_SETTINGS_PATH3 = import_path21.default.join(APP_ROOT12, "data", "channel_settings.json");
+var CHANNEL_SETTINGS_PATH3 = import_path22.default.join(APP_ROOT12, "data", "channel_settings.json");
 var DEFAULT_CHANNEL_SETTINGS = {
   shopeeConnected: false,
   shopeeShopId: "",
@@ -141227,8 +141270,8 @@ function dedupeShopsByPlatformId(shops) {
 }
 function loadChannelSettings() {
   try {
-    if (!import_fs20.default.existsSync(CHANNEL_SETTINGS_PATH3)) return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
-    const raw = import_fs20.default.readFileSync(CHANNEL_SETTINGS_PATH3, "utf-8");
+    if (!import_fs21.default.existsSync(CHANNEL_SETTINGS_PATH3)) return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
+    const raw = import_fs21.default.readFileSync(CHANNEL_SETTINGS_PATH3, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : {};
     const rawShops = Array.isArray(parsed?.shops) ? parsed.shops : [];
     const shops = upsertShopsInChannelSettings([], rawShops);
@@ -141250,7 +141293,7 @@ function saveChannelSettings(settings) {
     const incoming = Array.isArray(settings?.shops) ? settings.shops : [];
     const shops = upsertShopsInChannelSettings(onDisk.shops || [], incoming);
     const payload = { ...DEFAULT_CHANNEL_SETTINGS, ...onDisk, ...settings, shops };
-    import_fs20.default.writeFileSync(CHANNEL_SETTINGS_PATH3, JSON.stringify(payload, null, 2), "utf-8");
+    import_fs21.default.writeFileSync(CHANNEL_SETTINGS_PATH3, JSON.stringify(payload, null, 2), "utf-8");
     console.log(
       `[Channel Settings] UPSERT ${shops.length} shop(s) \u2192 ${CHANNEL_SETTINGS_PATH3}`,
       shops.map((s2) => s2.shopId).join(", ")
@@ -142250,10 +142293,10 @@ async function startServer() {
     writeInventoryAudit,
     writeChannelListingsDb,
     writeProductListingsDb: (rows) => {
-      const dest = import_path21.default.join(APP_ROOT12, "data", "product_listings.json");
-      const dir = import_path21.default.dirname(dest);
-      if (!import_fs20.default.existsSync(dir)) import_fs20.default.mkdirSync(dir, { recursive: true });
-      import_fs20.default.writeFileSync(dest, JSON.stringify(rows, null, 2), "utf-8");
+      const dest = import_path22.default.join(APP_ROOT12, "data", "product_listings.json");
+      const dir = import_path22.default.dirname(dest);
+      if (!import_fs21.default.existsSync(dir)) import_fs21.default.mkdirSync(dir, { recursive: true });
+      import_fs21.default.writeFileSync(dest, JSON.stringify(rows, null, 2), "utf-8");
     },
     pushStockUpdatesToShopee,
     resolveShopeeTokenShopId,
@@ -142492,25 +142535,25 @@ async function startServer() {
   };
   const streamDelegatedPdf = (res, filePath, filename) => {
     const valid = getValidLabelDiskFile(filename);
-    if (!valid || import_path21.default.resolve(valid.filePath) !== import_path21.default.resolve(filePath)) return false;
+    if (!valid || import_path22.default.resolve(valid.filePath) !== import_path22.default.resolve(filePath)) return false;
     res.status(200);
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
     res.setHeader("Content-Length", String(valid.size));
     res.setHeader("Cache-Control", "private, max-age=300");
     res.setHeader("X-Content-Type-Options", "nosniff");
-    import_fs20.default.createReadStream(valid.filePath).pipe(res);
+    import_fs21.default.createReadStream(valid.filePath).pipe(res);
     return true;
   };
   const downloadPdfRoute = async (req, res) => {
     const orderSn = String(req.params.orderSn || "").replace(/^shopee-/i, "").trim();
     const expectedFilename = buildCachedLabelFilename([orderSn]);
-    const expectedPath = import_path21.default.join(PDF_DIR, expectedFilename);
+    const expectedPath = import_path22.default.join(PDF_DIR, expectedFilename);
     const failDownload = (error, fallbackMessage) => {
       console.error("DEBUG DOWNLOAD PDF FAIL for order:", orderSn, error);
       try {
-        if (import_fs20.default.existsSync(expectedPath) && !getValidLabelDiskFile(expectedFilename)) {
-          import_fs20.default.unlinkSync(expectedPath);
+        if (import_fs21.default.existsSync(expectedPath) && !getValidLabelDiskFile(expectedFilename)) {
+          import_fs21.default.unlinkSync(expectedPath);
         }
       } catch (cleanupError) {
         console.error("DEBUG DOWNLOAD PDF FAIL for order:", orderSn, cleanupError);
@@ -142526,7 +142569,7 @@ async function startServer() {
     if (!/^[A-Za-z0-9_-]+$/.test(orderSn)) {
       return failDownload(new Error("M\xE3 \u0111\u01A1n kh\xF4ng h\u1EE3p l\u1EC7."), "M\xE3 \u0111\u01A1n kh\xF4ng h\u1EE3p l\u1EC7.");
     }
-    if (import_fs20.default.existsSync(expectedPath) && streamDelegatedPdf(res, expectedPath, expectedFilename)) {
+    if (import_fs21.default.existsSync(expectedPath) && streamDelegatedPdf(res, expectedPath, expectedFilename)) {
       console.log(`[Delegated PDF] LOCAL HIT ${expectedFilename} \u2014 b\u1ECF qua Shopee API`);
       return;
     }
@@ -143236,12 +143279,12 @@ async function startServer() {
     );
     const pendingSns = [];
     for (const orderSn of orderSns) {
-      const localLabelPath = import_path21.default.join(PDF_DIR, `order_${orderSn}.pdf`);
-      if (import_fs20.default.existsSync(localLabelPath)) {
+      const localLabelPath = import_path22.default.join(PDF_DIR, `order_${orderSn}.pdf`);
+      if (import_fs21.default.existsSync(localLabelPath)) {
         try {
-          const stat3 = import_fs20.default.statSync(localLabelPath);
+          const stat3 = import_fs21.default.statSync(localLabelPath);
           if (stat3.isFile() && stat3.size > 0) {
-            const buf = await import_fs20.default.promises.readFile(localLabelPath);
+            const buf = await import_fs21.default.promises.readFile(localLabelPath);
             if (isPdfBuffer(buf)) {
               console.log(`[${logPrefix}] B1 CACHE HIT order_${orderSn}.pdf (${buf.length} bytes)`);
               putLabelMem(`order_${orderSn}.pdf`, buf, "application/pdf");
@@ -144011,7 +144054,7 @@ async function startServer() {
     };
     beginLogisticsWork("silent-prefetch-pdfs");
     try {
-      const publicPdfDir = import_path21.default.join(APP_ROOT12, "public", "pdfs");
+      const publicPdfDir = import_path22.default.join(APP_ROOT12, "public", "pdfs");
       let nextIndex = 0;
       const workerCount = Math.min(SILENT_PREFETCH_CONCURRENCY, orderSns.length);
       const runWorker = async () => {
@@ -144044,11 +144087,11 @@ async function startServer() {
             const filename = buildCachedLabelFilename([orderSn]);
             const storedPdf = getValidLabelDiskFile(filename);
             if (!storedPdf) {
-              throw new Error(`PDF ch\u01B0a \u0111\u01B0\u1EE3c ghi th\xE0nh c\xF4ng v\xE0o ${import_path21.default.join(PDF_DIR, filename)}`);
+              throw new Error(`PDF ch\u01B0a \u0111\u01B0\u1EE3c ghi th\xE0nh c\xF4ng v\xE0o ${import_path22.default.join(PDF_DIR, filename)}`);
             }
             try {
-              import_fs20.default.mkdirSync(publicPdfDir, { recursive: true });
-              import_fs20.default.writeFileSync(import_path21.default.join(publicPdfDir, filename), document2.buffer);
+              import_fs21.default.mkdirSync(publicPdfDir, { recursive: true });
+              import_fs21.default.writeFileSync(import_path22.default.join(publicPdfDir, filename), document2.buffer);
             } catch (publicCopyErr) {
               console.warn(
                 `[Silent Prefetch] Kh\xF4ng th\u1EC3 ghi b\u1EA3n ph\u1EE5 public/pdfs cho ${orderSn}:`,
@@ -145020,9 +145063,9 @@ async function startServer() {
     }
     try {
       ensureLabelsDir();
-      const matches = import_fs20.default.readdirSync(PDF_DIR).filter((name) => nameMatches(name)).map((name) => {
-        const full = import_path21.default.join(PDF_DIR, name);
-        const stat3 = import_fs20.default.statSync(full);
+      const matches = import_fs21.default.readdirSync(PDF_DIR).filter((name) => nameMatches(name)).map((name) => {
+        const full = import_path22.default.join(PDF_DIR, name);
+        const stat3 = import_fs21.default.statSync(full);
         return { name, mtime: stat3.mtimeMs, size: stat3.size };
       }).filter((x2) => x2.size > 0).sort((a, b) => b.mtime - a.mtime);
       const newest = matches[0]?.name;
@@ -145880,11 +145923,11 @@ async function startServer() {
     enrichShopsWithConnectionStatus
   });
   app.use("/api/settings", authMiddleware, settingsRoutes);
-  const LISTINGS_DB_PATH = import_path21.default.join(APP_ROOT12, "data", "multi_channel_listings.json");
+  const LISTINGS_DB_PATH = import_path22.default.join(APP_ROOT12, "data", "multi_channel_listings.json");
   const readListingsDb = () => {
     try {
-      if (!import_fs20.default.existsSync(LISTINGS_DB_PATH)) return [];
-      const raw = import_fs20.default.readFileSync(LISTINGS_DB_PATH, "utf-8");
+      if (!import_fs21.default.existsSync(LISTINGS_DB_PATH)) return [];
+      const raw = import_fs21.default.readFileSync(LISTINGS_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
@@ -145892,9 +145935,9 @@ async function startServer() {
     }
   };
   const writeListingsDb = (listings) => {
-    const dir = import_path21.default.dirname(LISTINGS_DB_PATH);
-    if (!import_fs20.default.existsSync(dir)) import_fs20.default.mkdirSync(dir, { recursive: true });
-    import_fs20.default.writeFileSync(LISTINGS_DB_PATH, JSON.stringify(listings, null, 2), "utf-8");
+    const dir = import_path22.default.dirname(LISTINGS_DB_PATH);
+    if (!import_fs21.default.existsSync(dir)) import_fs21.default.mkdirSync(dir, { recursive: true });
+    import_fs21.default.writeFileSync(LISTINGS_DB_PATH, JSON.stringify(listings, null, 2), "utf-8");
   };
   app.use("/api", aiRoutes);
   app.get("/api/multi-channel/listing", authMiddleware, async (_req, res) => {
@@ -145916,11 +145959,11 @@ async function startServer() {
       return res.status(500).json({ success: false, error: error.message || "L\u01B0u th\u1EA5t b\u1EA1i" });
     }
   });
-  const PRODUCT_LISTINGS_DB_PATH = import_path21.default.join(APP_ROOT12, "data", "product_listings.json");
+  const PRODUCT_LISTINGS_DB_PATH = import_path22.default.join(APP_ROOT12, "data", "product_listings.json");
   const readProductListingsDb = () => {
     try {
-      if (!import_fs20.default.existsSync(PRODUCT_LISTINGS_DB_PATH)) return [];
-      const raw = import_fs20.default.readFileSync(PRODUCT_LISTINGS_DB_PATH, "utf-8");
+      if (!import_fs21.default.existsSync(PRODUCT_LISTINGS_DB_PATH)) return [];
+      const raw = import_fs21.default.readFileSync(PRODUCT_LISTINGS_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
@@ -145928,9 +145971,9 @@ async function startServer() {
     }
   };
   const writeProductListingsDb = (rows) => {
-    const dir = import_path21.default.dirname(PRODUCT_LISTINGS_DB_PATH);
-    if (!import_fs20.default.existsSync(dir)) import_fs20.default.mkdirSync(dir, { recursive: true });
-    import_fs20.default.writeFileSync(PRODUCT_LISTINGS_DB_PATH, JSON.stringify(rows, null, 2), "utf-8");
+    const dir = import_path22.default.dirname(PRODUCT_LISTINGS_DB_PATH);
+    if (!import_fs21.default.existsSync(dir)) import_fs21.default.mkdirSync(dir, { recursive: true });
+    import_fs21.default.writeFileSync(PRODUCT_LISTINGS_DB_PATH, JSON.stringify(rows, null, 2), "utf-8");
   };
   const computeOverallListingStatus = (statuses) => {
     if (!statuses.length) return "pending";
@@ -146511,12 +146554,12 @@ async function startServer() {
       });
     }
   });
-  const PUBLISH_EDIT_DB_PATH = import_path21.default.join(APP_ROOT12, "data", "publish_edit.json");
-  const FRAMED_IMAGES_DIR = import_path21.default.join(APP_ROOT12, "data", "framed_images");
+  const PUBLISH_EDIT_DB_PATH = import_path22.default.join(APP_ROOT12, "data", "publish_edit.json");
+  const FRAMED_IMAGES_DIR = import_path22.default.join(APP_ROOT12, "data", "framed_images");
   const readPublishEditDb = () => {
     try {
-      if (!import_fs20.default.existsSync(PUBLISH_EDIT_DB_PATH)) return { config: {}, meta: {} };
-      const raw = import_fs20.default.readFileSync(PUBLISH_EDIT_DB_PATH, "utf-8");
+      if (!import_fs21.default.existsSync(PUBLISH_EDIT_DB_PATH)) return { config: {}, meta: {} };
+      const raw = import_fs21.default.readFileSync(PUBLISH_EDIT_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return { config: parsed.config || {}, meta: parsed.meta || {} };
     } catch {
@@ -146524,9 +146567,9 @@ async function startServer() {
     }
   };
   const writePublishEditDb = (data) => {
-    const dir = import_path21.default.dirname(PUBLISH_EDIT_DB_PATH);
-    if (!import_fs20.default.existsSync(dir)) import_fs20.default.mkdirSync(dir, { recursive: true });
-    import_fs20.default.writeFileSync(PUBLISH_EDIT_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
+    const dir = import_path22.default.dirname(PUBLISH_EDIT_DB_PATH);
+    if (!import_fs21.default.existsSync(dir)) import_fs21.default.mkdirSync(dir, { recursive: true });
+    import_fs21.default.writeFileSync(PUBLISH_EDIT_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
   };
   app.get("/api/publish-edit", authMiddleware, async (_req, res) => {
     const db = readPublishEditDb();
@@ -146567,11 +146610,11 @@ async function startServer() {
       if (!productId || !imageDataUrl) {
         return res.status(400).json({ success: false, error: "Thi\u1EBFu productId ho\u1EB7c \u1EA3nh" });
       }
-      if (!import_fs20.default.existsSync(FRAMED_IMAGES_DIR)) import_fs20.default.mkdirSync(FRAMED_IMAGES_DIR, { recursive: true });
+      if (!import_fs21.default.existsSync(FRAMED_IMAGES_DIR)) import_fs21.default.mkdirSync(FRAMED_IMAGES_DIR, { recursive: true });
       const base64 = String(imageDataUrl).replace(/^data:image\/\w+;base64,/, "");
       const buf = Buffer.from(base64, "base64");
       const filename = `${productId}.jpg`;
-      import_fs20.default.writeFileSync(import_path21.default.join(FRAMED_IMAGES_DIR, filename), buf);
+      import_fs21.default.writeFileSync(import_path22.default.join(FRAMED_IMAGES_DIR, filename), buf);
       const imageUrl = `/api/framed-images/${productId}`;
       const products = await loadProducts();
       const idx = products.findIndex((p) => p.id === productId);
@@ -146593,12 +146636,12 @@ async function startServer() {
     }
   });
   app.get("/api/framed-images/:productId", (req, res) => {
-    const filePath = import_path21.default.join(FRAMED_IMAGES_DIR, `${req.params.productId}.jpg`);
-    if (!import_fs20.default.existsSync(filePath)) {
+    const filePath = import_path22.default.join(FRAMED_IMAGES_DIR, `${req.params.productId}.jpg`);
+    if (!import_fs21.default.existsSync(filePath)) {
       return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y \u1EA3nh" });
     }
     res.setHeader("Content-Type", "image/jpeg");
-    return res.send(import_fs20.default.readFileSync(filePath));
+    return res.send(import_fs21.default.readFileSync(filePath));
   });
   app.use("/api", (req, res) => {
     res.status(404).json({
@@ -146613,11 +146656,11 @@ async function startServer() {
       const { pathToFileURL } = await import("node:url");
       const devServerFile = ["dev", "Server.ts"].join("");
       const candidates = [
-        import_path21.default.join(APP_ROOT12, devServerFile),
-        import_path21.default.join(APP_ROOT12, "..", devServerFile),
-        import_path21.default.join(process.cwd(), devServerFile)
+        import_path22.default.join(APP_ROOT12, devServerFile),
+        import_path22.default.join(APP_ROOT12, "..", devServerFile),
+        import_path22.default.join(process.cwd(), devServerFile)
       ];
-      const found = candidates.find((p) => import_fs20.default.existsSync(p));
+      const found = candidates.find((p) => import_fs21.default.existsSync(p));
       if (!found) {
         console.warn("[Boot] devServer.ts not found \u2014 skipping Vite middleware");
       } else {
@@ -146632,14 +146675,14 @@ async function startServer() {
     if (isCpanelPassengerRuntime && process.env.NODE_ENV !== "production") {
       console.warn("[Boot] Passenger/cPanel detected without NODE_ENV=production; forcing static production runtime.");
     }
-    const publicPdfDir = import_path21.default.join(APP_ROOT12, "public", "pdfs");
+    const publicPdfDir = import_path22.default.join(APP_ROOT12, "public", "pdfs");
     app.use("/pdfs", import_express26.default.static(publicPdfDir, {
       setHeaders(res) {
         res.setHeader("Content-Type", "application/pdf");
         res.setHeader("Cache-Control", "public, max-age=300");
       }
     }));
-    const distPath = import_path21.default.join(APP_ROOT12, "dist");
+    const distPath = import_path22.default.join(APP_ROOT12, "dist");
     app.use(import_express26.default.static(distPath, {
       setHeaders(res, filePath) {
         if (filePath.endsWith("index.html")) {
@@ -146665,7 +146708,7 @@ async function startServer() {
       }
       res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
       res.setHeader("Content-Type", "text/html; charset=utf-8");
-      return res.sendFile(import_path21.default.join(distPath, "index.html"));
+      return res.sendFile(import_path22.default.join(distPath, "index.html"));
     });
   }
   async function connectDB2() {
