@@ -795,6 +795,11 @@ interface OrderManagerProps {
     shopIds?: string[];
   }) => Promise<void> | void;
   ordersLoading?: boolean;
+  /** Tab API đã apply — khớp với activeSubTab thì mới hiện Filter/Pagination. */
+  ordersAppliedTab?: string;
+  ordersAppliedKind?: string;
+  /** Gọi trước fetch tab/shop/date — xóa stale list. */
+  onPrepareTabFetch?: () => void;
   shops: ConnectedShop[];
   systemFees?: SystemFee[];
   onAddLog: (log: SyncLog) => void;
@@ -1051,6 +1056,9 @@ export default function OrderManager({
   onUpdateOrders, 
   onFetchOrders,
   ordersLoading = false,
+  ordersAppliedTab = '',
+  ordersAppliedKind = '',
+  onPrepareTabFetch,
   shops, 
   systemFees = [],
   onAddLog, 
@@ -1096,6 +1104,8 @@ export default function OrderManager({
   shopScopeRef.current = { shopIds: resolvedShopIds, shopIdsKey, selectedPlatform };
   const onFetchOrdersPropRef = useRef(onFetchOrders);
   onFetchOrdersPropRef.current = onFetchOrders;
+  const onPrepareTabFetchRef = useRef(onPrepareTabFetch);
+  onPrepareTabFetchRef.current = onPrepareTabFetch;
   const [datePreset, setDatePreset] = useState<OrderDatePreset>('30d');
   const [customStartDate, setCustomStartDate] = useState(() => defaultCustomDateInputs().start);
   const [customEndDate, setCustomEndDate] = useState(() => defaultCustomDateInputs().end);
@@ -1910,6 +1920,8 @@ export default function OrderManager({
       return;
     }
 
+    onPrepareTabFetchRef.current?.();
+
     const expectedTab = searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab;
     const expectedKind =
       searchQuery.trim()
@@ -1976,6 +1988,7 @@ export default function OrderManager({
       return;
     }
     if (activeSubTab === 'order_products') return;
+    onPrepareTabFetchRef.current?.();
     const q = searchQuery.trim();
     const handle = window.setTimeout(() => {
       // Luôn về trang 1 khi bắt đầu / đổi từ khóa tìm kiếm.
@@ -6194,6 +6207,16 @@ export default function OrderManager({
   );
 
   /** Badge count ĐVVC — cùng logic getShippingCarrierGroup với filter list. */
+  const expectedListTab = searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab;
+  const expectedListKind =
+    !searchQuery.trim() && activeSubTab === 'cancel_returns'
+      ? cancelReturnKindParam(cancelReturnTab) || ''
+      : '';
+  const ordersListReady =
+    !ordersLoading &&
+    (ordersAppliedTab || '') === expectedListTab &&
+    (ordersAppliedKind || '') === expectedListKind;
+
   const shippingCarrierCounts = useMemo(() => {
     const counts: Record<ShippingCarrierFilter, number> = {
       all: 0,
@@ -6202,6 +6225,7 @@ export default function OrderManager({
       instant: 0,
       other: 0,
     };
+    if (!ordersListReady) return counts;
     const carrierFilterTabs = new Set([
       'pending_confirm',
       'pending_verification',
@@ -6222,7 +6246,7 @@ export default function OrderManager({
       counts[group] += 1;
     }
     return counts;
-  }, [activeSubTab, cancelReturnTab, ordersPoolBeforeCarrier]);
+  }, [activeSubTab, cancelReturnTab, ordersPoolBeforeCarrier, ordersListReady]);
 
   const singleItemSortKey = (order: Order) => {
     const item = (order.items || [])[0];
@@ -6288,7 +6312,7 @@ export default function OrderManager({
     );
   }, [filteredOrders, activeSubTab, cancelReturnTab, searchQuery]);
 
-  const listPagingTotal = displayOrders.length;
+  const listPagingTotal = ordersListReady ? displayOrders.length : 0;
 
   const listPagingPages = useMemo(
     () => Math.max(1, Math.ceil(listPagingTotal / itemsPerPage) || 1),
@@ -8262,19 +8286,23 @@ export default function OrderManager({
                 { key: 'other' as const, label: 'ĐVVC Khác', highlight: false },
               ] as const
             ).map((opt) => {
-              const count = shippingCarrierCounts[opt.key];
+              const count = ordersListReady ? shippingCarrierCounts[opt.key] : null;
               const active = selectedShippingCarrier === opt.key;
               return (
                 <button
                   key={opt.key}
                   type="button"
+                  disabled={!ordersListReady}
                   onClick={() => {
+                    if (!ordersListReady) return;
                     setSelectedShippingCarrier(opt.key);
                     setSelectedOrderIds([]);
                     setCurrentPage(1);
                   }}
-                  className={`text-[11px] px-3.5 py-1.5 rounded-full transition-all cursor-pointer whitespace-nowrap ${
-                    opt.highlight
+                  className={`text-[11px] px-3.5 py-1.5 rounded-full transition-all whitespace-nowrap ${
+                    !ordersListReady
+                      ? 'border border-gray-200 text-slate-400 bg-slate-50 font-bold cursor-not-allowed opacity-60'
+                      : opt.highlight
                       ? active
                         ? 'border-2 border-orange-500 text-orange-600 bg-orange-100 font-black shadow-sm'
                         : 'border-2 border-orange-400 text-orange-500 bg-orange-50 font-black hover:bg-orange-100'
@@ -8283,7 +8311,7 @@ export default function OrderManager({
                         : 'border border-gray-200 text-slate-700 bg-white font-bold hover:border-gray-300'
                   }`}
                 >
-                  {opt.label} ({count})
+                  {opt.label} ({count ?? '…'})
                 </button>
               );
             })}
@@ -8689,7 +8717,7 @@ export default function OrderManager({
           </>
         )}
 
-        {(listPagingTotal > 0 || displayOrders.length > 0) && (
+        {ordersListReady && (listPagingTotal > 0 || displayOrders.length > 0) && (
           <div className="px-3 py-2.5 md:px-4 md:py-3 bg-slate-50/80 border-t border-gray-100 flex flex-col md:flex-row md:flex-wrap items-stretch md:items-center md:justify-between gap-2 md:gap-3 text-xs text-gray-600">
             <span className="text-center md:text-left leading-snug">
               Trang <b>{currentPage}</b> / <b>{listPagingPages}</b>

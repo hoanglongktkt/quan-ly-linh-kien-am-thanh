@@ -416,14 +416,18 @@ export default function App() {
 
   const [orders, setOrders] = useState<Order[]>([]);
   const [ordersLoading, setOrdersLoading] = useState<boolean>(false);
-  const [ordersMeta, setOrdersMeta] = useState({
+  const EMPTY_ORDERS_META = {
     page: 1,
     pageSize: 50,
     total: 0,
     totalPages: 1,
     hasMore: false,
     counters: { total: 0, returned: 0, cancelled: 0, rts: 0 },
-  });
+  };
+  const [ordersMeta, setOrdersMeta] = useState(EMPTY_ORDERS_META);
+  /** Tab/kind đã apply gần nhất — OrderManager dùng để ẩn Filter/Pagination khi data lệch tab. */
+  const [ordersAppliedTab, setOrdersAppliedTab] = useState('');
+  const [ordersAppliedKind, setOrdersAppliedKind] = useState('');
   /** true chỉ sau khi ĐÃ có ít nhất 1 response thành công (success:true) từ
    * /api/orders/refresh — dùng để phân biệt "chưa tải xong lần đầu" (phải hiện
    * loading) với "đã tải xong và THẬT SỰ không có đơn nào" (mới hiện "0 đơn").
@@ -485,6 +489,15 @@ export default function App() {
   };
   const ordersTabCacheRef = useRef<Map<string, OrdersTabCacheEntry>>(new Map());
   const MAX_ORDERS_TAB_CACHE = 12;
+
+  /** Xóa list + meta trước fetch tab mới — chống hiển thị stale data khi loading. */
+  const prepareOrdersListFetch = useCallback(() => {
+    setOrders([]);
+    setOrdersMeta(EMPTY_ORDERS_META);
+    setOrdersAppliedTab('');
+    setOrdersAppliedKind('');
+    setOrdersLoading(true);
+  }, []);
   /** Từ khóa search Kho SP chính — giữ qua phân trang / focus refresh. */
   const productsSearchRef = useRef('');
   /** Sequence guard — tránh response search cũ ghi đè kết quả mới hơn. */
@@ -701,9 +714,20 @@ export default function App() {
         setOrders(cached.orders);
         setOrdersMeta(cached.meta);
         ordersHydrateRef.current = cached.orders;
+        lastAppliedOrdersTabRef.current = tab;
+        lastAppliedOrdersKindRef.current = kind;
+        setOrdersAppliedTab(tab);
+        setOrdersAppliedKind(kind);
         setHasLoadedOrdersOnce(true);
         setOrdersLoading(false);
       }
+    }
+
+    if (!silent && !merge && !usedTabCache) {
+      setOrders([]);
+      setOrdersMeta(EMPTY_ORDERS_META);
+      setOrdersAppliedTab('');
+      setOrdersAppliedKind('');
     }
 
     // Silent không được hủy request đang hiện spinner (P0 race: bootstrap abort tab fetch).
@@ -944,6 +968,8 @@ export default function App() {
       lastAppliedOrdersSeqRef.current = requestId;
       lastAppliedOrdersTabRef.current = tab;
       lastAppliedOrdersKindRef.current = kind;
+      setOrdersAppliedTab(tab);
+      setOrdersAppliedKind(kind);
       const nextMeta = {
         page: currentPage,
         pageSize,
@@ -1969,10 +1995,10 @@ export default function App() {
     const bootstrapCatalog = async () => {
       purgeLegacyCatalogCache();
 
-      // Stale-while-revalidate: IndexedDB hiện ngay (<0.5s); API ngầm lấy 50 đơn mới nhất.
+      // IndexedDB chỉ hydrate ref (scanner fallback) — KHÔNG đổ mixed cache vào list tab cụ thể.
       const cached = await loadOrdersCache();
       ordersHydrateRef.current = cached;
-      if (cached.length > 0) {
+      if (cached.length > 0 && activeTabRef.current !== 'orders') {
         setOrders(cached);
         setHasLoadedOrdersOnce(true);
       }
@@ -2564,6 +2590,9 @@ export default function App() {
               ordersMeta={ordersMeta}
               onUpdateOrders={handleUpdateOrders}
               onFetchOrders={fetchOrders}
+              onPrepareTabFetch={prepareOrdersListFetch}
+              ordersAppliedTab={ordersAppliedTab}
+              ordersAppliedKind={ordersAppliedKind}
               ordersLoading={ordersLoading || (!hasLoadedOrdersOnce && orders.length === 0)}
               shops={settings.shops || []}
               systemFees={settings.systemFees ?? []}
