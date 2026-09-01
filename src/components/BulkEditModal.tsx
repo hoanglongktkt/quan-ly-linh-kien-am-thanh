@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Product, Supplier, BulkSaveProductUpdate } from '../types';
-import { Search, X, RefreshCw, Package, SlidersHorizontal } from 'lucide-react';
+import { Search, X, RefreshCw, Package, SlidersHorizontal, CheckCircle2, AlertCircle } from 'lucide-react';
 
 export interface BulkEditRow {
   id: string;
@@ -32,6 +32,9 @@ interface BulkEditModalProps {
 type PriceAction = 'set' | 'percent_up' | 'percent_down' | 'fixed_up' | 'fixed_down';
 type StockAction = 'set' | 'increase' | 'decrease';
 type ThresholdFilter = 'all' | 'below_min' | 'above_max';
+type ToastType = 'success' | 'error' | 'info';
+
+const TOAST_DURATION_MS = 5000;
 
 const SAPO = {
   blue: '#0078D4',
@@ -146,9 +149,26 @@ export default function BulkEditModal({ products, selectedIds, suppliers, onClos
   const [stockValue, setStockValue] = useState(0);
 
   const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
 
   const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
+  }, []);
+
+  const showToast = (message: string, type: ToastType = 'info', onDone?: () => void) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast({ message, type });
+    toastTimerRef.current = setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+      onDone?.();
+    }, TOAST_DURATION_MS);
+  };
 
   useEffect(() => {
     const mapped = sourceProducts.map(productToRow);
@@ -194,28 +214,26 @@ export default function BulkEditModal({ products, selectedIds, suppliers, onClos
 
   const handleApplyPrice = () => {
     if (filteredRows.length === 0) {
-      setToast('Không có sản phẩm nào khớp bộ lọc để áp dụng.');
+      showToast('Không có sản phẩm nào khớp bộ lọc để áp dụng.', 'error');
       return;
     }
     setRows(prev => prev.map(r => {
       if (!filteredIds.has(r.id)) return r;
       return { ...r, sellingPrice: applyPriceAction(r.sellingPrice, r.importPrice, priceAction, priceValue) };
     }));
-    setToast(`Đã áp dụng công thức giá cho ${filteredRows.length} sản phẩm.`);
-    setTimeout(() => setToast(null), 2500);
+    showToast(`Đã áp dụng công thức giá cho ${filteredRows.length} sản phẩm.`, 'info');
   };
 
   const handleApplyStock = () => {
     if (filteredRows.length === 0) {
-      setToast('Không có sản phẩm nào khớp bộ lọc để áp dụng.');
+      showToast('Không có sản phẩm nào khớp bộ lọc để áp dụng.', 'error');
       return;
     }
     setRows(prev => prev.map(r => {
       if (!filteredIds.has(r.id)) return r;
       return { ...r, stock: applyStockAction(r.stock, stockAction, stockValue) };
     }));
-    setToast(`Đã áp dụng công thức tồn kho cho ${filteredRows.length} sản phẩm.`);
-    setTimeout(() => setToast(null), 2500);
+    showToast(`Đã áp dụng công thức tồn kho cho ${filteredRows.length} sản phẩm.`, 'info');
   };
 
   const handleSaveAll = async () => {
@@ -236,8 +254,15 @@ export default function BulkEditModal({ products, selectedIds, suppliers, onClos
     }));
     const ok = await onSave(updates);
     setSaving(false);
-    if (ok) onClose();
-    else setToast('Cập nhật thất bại. Vui lòng thử lại.');
+    if (ok) {
+      showToast(
+        `Cập nhật thành công ${updates.length} sản phẩm! Đã lưu kho và đồng bộ Shopee.`,
+        'success',
+        () => onClose(),
+      );
+    } else {
+      showToast('Cập nhật thất bại. Vui lòng kiểm tra kết nối và thử lại.', 'error');
+    }
   };
 
   const filterSelect = 'w-full px-2.5 py-[7px] text-[13px] border border-[#E0E0E0] rounded-[4px] bg-white text-[#424242] focus:border-[#0078D4] focus:ring-1 focus:ring-[#0078D4]/20 outline-none';
@@ -404,7 +429,6 @@ export default function BulkEditModal({ products, selectedIds, suppliers, onClos
             <div className="bg-white border rounded-[4px] shrink-0" style={{ borderColor: SAPO.border }}>
               <div className="px-4 py-2.5 border-b flex items-center justify-between" style={{ borderColor: SAPO.border }}>
                 <span className="text-[13px] font-semibold text-[#212121]">Thao tác hàng loạt</span>
-                {toast && <span className="text-[12px] text-[#0078D4]">{toast}</span>}
               </div>
               <div className="px-4 py-3 space-y-3">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -602,6 +626,33 @@ export default function BulkEditModal({ products, selectedIds, suppliers, onClos
           </button>
         </div>
       </div>
+
+      {toast && (
+        <div
+          className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[60] max-w-[min(92vw,520px)] animate-in fade-in slide-in-from-bottom-2 duration-300"
+          role="status"
+          aria-live="polite"
+        >
+          <div
+            className={`flex items-start gap-2.5 px-5 py-3.5 rounded-lg shadow-2xl text-[13px] font-medium leading-snug ${
+              toast.type === 'success'
+                ? 'bg-emerald-600 text-white'
+                : toast.type === 'error'
+                  ? 'bg-red-600 text-white'
+                  : 'bg-[#0078D4] text-white'
+            }`}
+          >
+            {toast.type === 'success' ? (
+              <CheckCircle2 className="w-5 h-5 shrink-0 mt-0.5" />
+            ) : toast.type === 'error' ? (
+              <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+            ) : (
+              <RefreshCw className="w-5 h-5 shrink-0 mt-0.5" />
+            )}
+            <span>{toast.message}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
