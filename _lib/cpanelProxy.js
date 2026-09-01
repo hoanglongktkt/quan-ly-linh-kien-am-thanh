@@ -27,6 +27,7 @@ const LONG_RUNNING_PREFIXES = [
   'shopee/products/item-preview',
   'products/shopee-item-preview',
   'products/bulk-save',
+  'products/bulk-update-prices',
   'products/bulk-channel-sync',
   'catalog/wipe-all',
   'shopee/ship-order',

@@ -7,6 +7,7 @@ import ProductDetailModal, {
   type ProductGroupRow,
 } from './ProductDetailModal';
 import BulkEditModal from './BulkEditModal';
+import BulkPriceEditModal from './BulkPriceEditModal';
 import ProductLinking from './ProductLinking';
 import InventoryAudit from './InventoryAudit';
 import { parseJsonResponse, formatShopeeSyncAlertLines } from '../utils/apiClient';
@@ -471,6 +472,7 @@ export default function ProductList({
 
   // Bulk edit modal (Sapo-style)
   const [showBulkModal, setShowBulkModal] = useState(false);
+  const [showBulkPriceModal, setShowBulkPriceModal] = useState(false);
   /** Parent đã mở — chỉ render children khi expand. */
   const [expandedParentIds, setExpandedParentIds] = useState<Set<string>>(new Set());
 
@@ -498,6 +500,56 @@ export default function ProductList({
       onBulkSelect([]);
     }
     return ok;
+  };
+
+  const handleBulkPriceApply = async (
+    updates: { id: string; new_price: number }[],
+  ): Promise<boolean> => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) {
+      showActionToast('Chưa đăng nhập.');
+      return false;
+    }
+    try {
+      const response = await fetch('/api/products/bulk-update-prices', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ updates }),
+      });
+      const data = await parseJsonResponse<{
+        success?: boolean;
+        message?: string;
+        error?: string;
+        products?: Product[];
+      }>(response);
+      if (!response.ok || data?.success === false) {
+        throw new Error(data?.message || data?.error || 'Cập nhật giá hàng loạt thất bại.');
+      }
+      if (Array.isArray(data.products) && onProductsUpdated) {
+        onProductsUpdated(data.products);
+      }
+      await onRefreshProducts?.({ page: 1, append: false, forceRefresh: true });
+      onAddLog({
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        channel: 'shopee',
+        type: 'price_update',
+        status: 'success',
+        message: data.message || `Cập nhật giá hàng loạt cho ${updates.length} sản phẩm thành công.`,
+      });
+      showActionToast(
+        data.message || `Đã cập nhật giá cho ${updates.length} sản phẩm và đồng bộ Shopee.`,
+      );
+      onBulkSelect([]);
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Cập nhật giá hàng loạt thất bại.';
+      showActionToast(message);
+      return false;
+    }
   };
 
   const openProductDetail = (prod: Product) => {
@@ -1221,6 +1273,12 @@ export default function ProductList({
             <span className="text-sm font-semibold">Đang chọn {selectedIds.length} sản phẩm</span>
           </div>
           <div className="flex gap-2">
+            <button 
+              onClick={() => setShowBulkPriceModal(true)}
+              className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-lg transition-all flex items-center gap-1.5"
+            >
+              <TrendingUp className="w-3.5 h-3.5" /> 📈 Sửa giá hàng loạt
+            </button>
             <button 
               onClick={() => setShowBulkModal(true)}
               className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg transition-all flex items-center gap-1.5"
@@ -1971,6 +2029,15 @@ export default function ProductList({
           onSyncItemVariants={onSyncItemVariants}
           onProductsRefresh={handleProductsRefresh}
           systemFees={systemFees}
+        />
+      )}
+
+      {showBulkPriceModal && (
+        <BulkPriceEditModal
+          products={products}
+          selectedIds={selectedIds}
+          onClose={() => setShowBulkPriceModal(false)}
+          onApply={handleBulkPriceApply}
         />
       )}
 

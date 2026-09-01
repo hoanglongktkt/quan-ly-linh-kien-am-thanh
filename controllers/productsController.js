@@ -1028,6 +1028,106 @@ export async function handleInventoryClearAll(req, res) {
   }
 }
 
+/** POST /api/products/bulk-update-prices — FE gửi giá đã tính sẵn, cập nhật DB + đồng bộ Shopee */
+export async function bulkUpdatePrices(req, res) {
+  try {
+    const raw = req.body?.updates ?? req.body?.items ?? [];
+    if (!Array.isArray(raw) || raw.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "updates_required",
+        message: "Thiếu danh sách cập nhật giá.",
+      });
+    }
+
+    const priceUpdates = [];
+    for (const item of raw) {
+      const id = String(item?.id ?? item?.sku ?? item?.productId ?? "").trim();
+      const sellingPrice = Math.max(
+        0,
+        Math.round(
+          Number(item?.new_price ?? item?.newPrice ?? item?.sellingPrice ?? item?.price) || 0,
+        ),
+      );
+      if (!id || sellingPrice <= 0) continue;
+      priceUpdates.push({ id, sellingPrice });
+    }
+
+    if (priceUpdates.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "invalid_updates",
+        message: "Không có bản ghi giá hợp lệ trong payload.",
+      });
+    }
+
+    const products = await deps.loadProducts();
+    const beforeFlat = deps.flattenProductsForStockSync(products);
+    let updatedCount = 0;
+    const changedRows = [];
+    const patchMap = new Map(priceUpdates.map((u) => [u.id, u.sellingPrice]));
+
+    const next = products.map((p) => {
+      const directPrice = patchMap.get(String(p.id));
+      if (directPrice !== undefined) {
+        updatedCount++;
+        patchMap.delete(String(p.id));
+        const merged = deps.mergeProductPatch(p, { sellingPrice: directPrice });
+        const before = beforeFlat.find((b) => String(b.id) === String(p.id));
+        const changes = detectStockPriceChanges(before || p, merged);
+        if (changes.price) changedRows.push(merged);
+        return merged;
+      }
+
+      const children = deps.getProductChildrenList(p);
+      if (children.length === 0) return p;
+
+      let childChanged = false;
+      const nextChildren = children.map((c) => {
+        const childPrice = patchMap.get(String(c.id));
+        if (childPrice === undefined) return c;
+        updatedCount++;
+        patchMap.delete(String(c.id));
+        childChanged = true;
+        const mergedChild = deps.mergeProductPatch(c, { sellingPrice: childPrice });
+        const beforeChild = beforeFlat.find((b) => String(b.id) === String(c.id));
+        const changes = detectStockPriceChanges(beforeChild || c, mergedChild);
+        if (changes.price) changedRows.push(mergedChild);
+        return mergedChild;
+      });
+      if (!childChanged) return p;
+
+      const totalStock = nextChildren.reduce((s, c) => s + (Number(c.stock) || 0), 0);
+      return { ...p, children: nextChildren, stock: totalStock };
+    });
+
+    const parentsToUpsert = next.filter((product, index) => product !== products[index]);
+    for (const parent of parentsToUpsert) {
+      await deps.upsertProductsToStoreAsync([parent]);
+      await new Promise((r) => setTimeout(r, 30));
+    }
+
+    if (changedRows.length > 0) {
+      await enqueueShopeeStockPriceSync(changedRows, { syncStock: false, syncPrice: true });
+    }
+
+    return res.json({
+      success: true,
+      updated: updatedCount,
+      products: next,
+      message: `Đã cập nhật giá cho ${updatedCount} sản phẩm và đồng bộ Shopee.`,
+    });
+  } catch (err) {
+    console.error("[Products API] POST /api/products/bulk-update-prices failed:", err);
+    const message = err instanceof Error ? err.message : String(err);
+    return res.status(500).json({
+      success: false,
+      error: "bulk_update_prices_failed",
+      message: message || "Cập nhật giá hàng loạt thất bại.",
+    });
+  }
+}
+
 /** POST /api/products/bulk-update */
 export async function bulkUpdateProducts(req, res) {
   const { productIds, stock, price } = req.body || {};

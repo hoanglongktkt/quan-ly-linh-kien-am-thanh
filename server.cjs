@@ -116563,6 +116563,94 @@ async function handleInventoryClearAll(req, res) {
     });
   }
 }
+async function bulkUpdatePrices(req, res) {
+  try {
+    const raw = req.body?.updates ?? req.body?.items ?? [];
+    if (!Array.isArray(raw) || raw.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "updates_required",
+        message: "Thi\u1EBFu danh s\xE1ch c\u1EADp nh\u1EADt gi\xE1."
+      });
+    }
+    const priceUpdates = [];
+    for (const item of raw) {
+      const id = String(item?.id ?? item?.sku ?? item?.productId ?? "").trim();
+      const sellingPrice = Math.max(
+        0,
+        Math.round(
+          Number(item?.new_price ?? item?.newPrice ?? item?.sellingPrice ?? item?.price) || 0
+        )
+      );
+      if (!id || sellingPrice <= 0) continue;
+      priceUpdates.push({ id, sellingPrice });
+    }
+    if (priceUpdates.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "invalid_updates",
+        message: "Kh\xF4ng c\xF3 b\u1EA3n ghi gi\xE1 h\u1EE3p l\u1EC7 trong payload."
+      });
+    }
+    const products = await deps10.loadProducts();
+    const beforeFlat = deps10.flattenProductsForStockSync(products);
+    let updatedCount = 0;
+    const changedRows = [];
+    const patchMap = new Map(priceUpdates.map((u) => [u.id, u.sellingPrice]));
+    const next = products.map((p) => {
+      const directPrice = patchMap.get(String(p.id));
+      if (directPrice !== void 0) {
+        updatedCount++;
+        patchMap.delete(String(p.id));
+        const merged = deps10.mergeProductPatch(p, { sellingPrice: directPrice });
+        const before = beforeFlat.find((b) => String(b.id) === String(p.id));
+        const changes = detectStockPriceChanges(before || p, merged);
+        if (changes.price) changedRows.push(merged);
+        return merged;
+      }
+      const children = deps10.getProductChildrenList(p);
+      if (children.length === 0) return p;
+      let childChanged = false;
+      const nextChildren = children.map((c) => {
+        const childPrice = patchMap.get(String(c.id));
+        if (childPrice === void 0) return c;
+        updatedCount++;
+        patchMap.delete(String(c.id));
+        childChanged = true;
+        const mergedChild = deps10.mergeProductPatch(c, { sellingPrice: childPrice });
+        const beforeChild = beforeFlat.find((b) => String(b.id) === String(c.id));
+        const changes = detectStockPriceChanges(beforeChild || c, mergedChild);
+        if (changes.price) changedRows.push(mergedChild);
+        return mergedChild;
+      });
+      if (!childChanged) return p;
+      const totalStock = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
+      return { ...p, children: nextChildren, stock: totalStock };
+    });
+    const parentsToUpsert = next.filter((product, index) => product !== products[index]);
+    for (const parent of parentsToUpsert) {
+      await deps10.upsertProductsToStoreAsync([parent]);
+      await new Promise((r2) => setTimeout(r2, 30));
+    }
+    if (changedRows.length > 0) {
+      await enqueueShopeeStockPriceSync(changedRows, { syncStock: false, syncPrice: true });
+    }
+    return res.json({
+      success: true,
+      updated: updatedCount,
+      products: next,
+      message: `\u0110\xE3 c\u1EADp nh\u1EADt gi\xE1 cho ${updatedCount} s\u1EA3n ph\u1EA9m v\xE0 \u0111\u1ED3ng b\u1ED9 Shopee.`
+    });
+  } catch (err) {
+    console.error("[Products API] POST /api/products/bulk-update-prices failed:", err);
+    const message = err instanceof Error ? err.message : String(err);
+    return res.status(500).json({
+      success: false,
+      error: "bulk_update_prices_failed",
+      message: message || "C\u1EADp nh\u1EADt gi\xE1 h\xE0ng lo\u1EA1t th\u1EA5t b\u1EA1i."
+    });
+  }
+}
 async function bulkUpdateProducts(req, res) {
   const { productIds, stock, price } = req.body || {};
   if (!Array.isArray(productIds) || productIds.length === 0) {
@@ -118764,6 +118852,7 @@ router12.post("/inventory-balance", inventoryBalance);
 router12.post("/bulk-save", bulkSaveProducts);
 router12.post("/clear-all", clearAllProducts);
 router12.post("/bulk-update", bulkUpdateProducts);
+router12.post("/bulk-update-prices", bulkUpdatePrices);
 router12.post("/bulk-channel-sync", bulkChannelSync);
 router12.get("/", listProducts);
 router12.post("/", createProduct);
