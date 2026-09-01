@@ -153,7 +153,8 @@ export default function ImportManager({
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
-        setLocalSuppliers(await res.json());
+        const data = await res.json();
+        setLocalSuppliers(Array.isArray(data) ? data : Array.isArray(data?.suppliers) ? data.suppliers : []);
       }
     } catch (err) {
       console.error('Fetch suppliers for import error:', err);
@@ -168,7 +169,8 @@ export default function ImportManager({
     setLocalSuppliers(suppliersProp);
   }, [suppliersProp]);
 
-  const suppliers = localSuppliers;
+  const suppliers = Array.isArray(localSuppliers) ? localSuppliers : [];
+  const importRows = Array.isArray(imports) ? imports : [];
 
   const [search, setSearch] = useState('');
   const [selectedSupplierFilter, setSelectedSupplierFilter] = useState('all');
@@ -205,11 +207,12 @@ export default function ImportManager({
   );
   const totalCost = goodsTotal + importCost;
 
-  const filteredImports = imports.filter((imp) => {
+  const filteredImports = importRows.filter((imp) => {
+    const q = search.toLowerCase();
     const matchesSearch =
-      imp.productTitle.toLowerCase().includes(search.toLowerCase()) ||
-      imp.productSku.toLowerCase().includes(search.toLowerCase()) ||
-      imp.supplierName.toLowerCase().includes(search.toLowerCase());
+      String(imp.productTitle || '').toLowerCase().includes(q) ||
+      String(imp.productSku || '').toLowerCase().includes(q) ||
+      String(imp.supplierName || '').toLowerCase().includes(q);
     const matchesSupplier = selectedSupplierFilter === 'all' || imp.supplierId === selectedSupplierFilter;
     return matchesSearch && matchesSupplier;
   });

@@ -29,6 +29,7 @@ export default function SupplierManager({
   onUpdateSupplier,
   onDeleteSupplier,
 }: SupplierManagerProps) {
+  const supplierRows = Array.isArray(suppliers) ? suppliers : [];
   const [search, setSearch] = useState('');
   const [filterDebt, setFilterDebt] = useState<'all' | 'has_debt' | 'no_debt'>('all');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -42,16 +43,16 @@ export default function SupplierManager({
   const [supplierCode, setSupplierCode] = useState('');
   const [status, setStatus] = useState<'active' | 'inactive'>('active');
 
-  const totalPurchases = suppliers.reduce((sum, s) => sum + s.totalOrderValue, 0);
-  const totalPaid = suppliers.reduce((sum, s) => sum + s.totalPaid, 0);
-  const totalDebt = suppliers.reduce((sum, s) => sum + s.totalDebt, 0);
+  const totalPurchases = supplierRows.reduce((sum, s) => sum + (Number(s.totalOrderValue) || 0), 0);
+  const totalPaid = supplierRows.reduce((sum, s) => sum + (Number(s.totalPaid) || 0), 0);
+  const totalDebt = supplierRows.reduce((sum, s) => sum + (Number(s.totalDebt) || 0), 0);
 
-  const filteredSuppliers = suppliers.filter((sup) => {
+  const filteredSuppliers = supplierRows.filter((sup) => {
     const q = search.toLowerCase();
     const matchesSearch =
       !q ||
-      sup.name.toLowerCase().includes(q) ||
-      sup.supplierCode.toLowerCase().includes(q);
+      String(sup.name || '').toLowerCase().includes(q) ||
+      String(sup.supplierCode || '').toLowerCase().includes(q);
 
     const matchesDebt =
       filterDebt === 'all'

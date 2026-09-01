@@ -236,13 +236,31 @@ function isMobileViewport(): boolean {
   return window.innerWidth < 768;
 }
 
+/** Tab đã gỡ khỏi sidebar — tránh màn trắng khi URL/session còn ?tab=cũ. */
+const LEGACY_REMOVED_TABS = new Set(['bulk']);
+
+function normalizeLegacyTab(tab: string | null | undefined): string | null {
+  const raw = String(tab || '').trim();
+  if (!raw || LEGACY_REMOVED_TABS.has(raw)) return null;
+  return raw;
+}
+
+function parseJsonArray<T>(payload: unknown, listKey?: string): T[] {
+  if (Array.isArray(payload)) return payload as T[];
+  if (payload && typeof payload === 'object' && listKey) {
+    const nested = (payload as Record<string, unknown>)[listKey];
+    if (Array.isArray(nested)) return nested as T[];
+  }
+  return [];
+}
+
 function resolveTabFromPath(): string {
   if (typeof window === 'undefined') return 'dashboard';
   const path = window.location.pathname.replace(/\/$/, '') || '/';
   if (path === '/picking') return 'picking';
 
   const params = new URLSearchParams(window.location.search);
-  const qTab = params.get('tab');
+  const qTab = normalizeLegacyTab(params.get('tab'));
   // ?tab=da-giao-dvvc (alias sub-tab) → mở màn Quản lý đơn
   if (qTab && normalizeOrdersSubTab(qTab) && !MAIN_NAV_TABS.has(qTab)) {
     return 'orders';
@@ -257,7 +275,7 @@ function resolveTabFromPath(): string {
     return 'orders';
   }
 
-  const stored = readSessionTab('omni_active_tab');
+  const stored = normalizeLegacyTab(readSessionTab('omni_active_tab'));
   if (stored && MAIN_NAV_TABS.has(stored)) return stored;
 
   // PC: Tổng quan · Mobile: Quản lý đơn hàng
@@ -1917,7 +1935,8 @@ export default function App() {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (response.ok) {
-        setSuppliers(await response.json());
+        const data = await response.json();
+        setSuppliers(parseJsonArray<Supplier>(data, 'suppliers'));
       }
     } catch (err) {
       console.error('Fetch suppliers error:', err);
@@ -2008,12 +2027,22 @@ export default function App() {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (response.ok) {
-        setImports(await response.json());
+        const data = await response.json();
+        setImports(parseJsonArray<ImportTransaction>(data, 'imports'));
       }
     } catch (err) {
       console.error('Fetch imports error:', err);
     }
   };
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (activeTab === 'suppliers') {
+      void fetchSuppliers();
+    } else if (activeTab === 'imports') {
+      void fetchImports();
+    }
+  }, [activeTab, isAuthenticated]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -2636,43 +2665,47 @@ export default function App() {
           )}
 
           {activeTab === 'suppliers' && (
-            <SupplierManager 
-              suppliers={suppliers}
-              onAddSupplier={handleAddSupplier}
-              onUpdateSupplier={handleUpdateSupplier}
-              onDeleteSupplier={handleDeleteSupplier}
-            />
+            <ErrorBoundary label="Nhà cung cấp">
+              <SupplierManager 
+                suppliers={suppliers}
+                onAddSupplier={handleAddSupplier}
+                onUpdateSupplier={handleUpdateSupplier}
+                onDeleteSupplier={handleDeleteSupplier}
+              />
+            </ErrorBoundary>
           )}
 
           {activeTab === 'imports' && (
-            <ImportManager 
-              imports={imports}
-              suppliers={suppliers}
-              onRefreshSuppliers={fetchSuppliers}
-              onSuppliersUpdated={setSuppliers}
-              products={products}
-              onAddImport={handleAddImport}
-              onEditProductShortcut={handleEditProductShortcut}
-              initialProductId={importPrefillProductId}
-              onInitialProductConsumed={() => setImportPrefillProductId(null)}
-              onProductCreated={(p) =>
-                setProducts((prev) => (prev.some((x) => x.id === p.id) ? prev : [p, ...prev]))
-              }
-              systemFees={settings.systemFees ?? []}
-              onProductPriceUpdated={(productId, sellingPrice) => {
-                setProducts((prev) =>
-                  prev.map((p) => {
-                    if (p.id === productId) return { ...p, sellingPrice };
-                    const children = getProductChildren(p);
-                    if (!children.some((c) => c.id === productId)) return p;
-                    return {
-                      ...p,
-                      children: children.map((c) => (c.id === productId ? { ...c, sellingPrice } : c)),
-                    };
-                  }),
-                );
-              }}
-            />
+            <ErrorBoundary label="Nhập hàng">
+              <ImportManager 
+                imports={imports}
+                suppliers={suppliers}
+                onRefreshSuppliers={fetchSuppliers}
+                onSuppliersUpdated={setSuppliers}
+                products={products}
+                onAddImport={handleAddImport}
+                onEditProductShortcut={handleEditProductShortcut}
+                initialProductId={importPrefillProductId}
+                onInitialProductConsumed={() => setImportPrefillProductId(null)}
+                onProductCreated={(p) =>
+                  setProducts((prev) => (prev.some((x) => x.id === p.id) ? prev : [p, ...prev]))
+                }
+                systemFees={settings.systemFees ?? []}
+                onProductPriceUpdated={(productId, sellingPrice) => {
+                  setProducts((prev) =>
+                    prev.map((p) => {
+                      if (p.id === productId) return { ...p, sellingPrice };
+                      const children = getProductChildren(p);
+                      if (!children.some((c) => c.id === productId)) return p;
+                      return {
+                        ...p,
+                        children: children.map((c) => (c.id === productId ? { ...c, sellingPrice } : c)),
+                      };
+                    }),
+                  );
+                }}
+              />
+            </ErrorBoundary>
           )}
 
           {activeTab === 'financials' && (
