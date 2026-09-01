@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Product, SyncLog, BulkUpdatePayload, ConnectedShop } from '../types';
 import {
   buildProductGroups,
   formatPriceRange,
   type ProductGroupRow,
 } from './ProductDetailModal';
+import { normalizeProductSearchText } from '../utils/productSearch';
 import { 
   Sparkles, 
   TrendingUp, 
@@ -20,6 +21,14 @@ import {
 
 type SyncLogLine = { type: 'info' | 'success' | 'error'; text: string };
 
+interface ProductsMeta {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  hasMore: boolean;
+}
+
 interface BulkEditorProps {
   products: Product[];
   selectedIds: string[];
@@ -27,11 +36,36 @@ interface BulkEditorProps {
   onUpdateBulk: (updatedProducts: Product[]) => void;
   onBulkUpdate?: (payload: BulkUpdatePayload) => Promise<boolean>;
   onAddLog: (log: SyncLog) => void;
+  onRefreshProducts?: (opts?: {
+    page?: number;
+    append?: boolean;
+    pageSize?: number;
+    search?: string;
+  }) => void | Promise<void>;
+  productsMeta?: ProductsMeta;
+  productsLoading?: boolean;
 }
 
-export default function BulkEditor({ products, selectedIds, shops = [], onUpdateBulk, onBulkUpdate, onAddLog }: BulkEditorProps) {
+const BULK_PAGE_SIZE = 50;
+
+export default function BulkEditor({
+  products,
+  selectedIds,
+  shops = [],
+  onUpdateBulk,
+  onBulkUpdate,
+  onAddLog,
+  onRefreshProducts,
+  productsMeta,
+  productsLoading = false,
+}: BulkEditorProps) {
   // Local state for product selection and search query
   const [searchQuery, setSearchQuery] = useState('');
+  const [serverSearch, setServerSearch] = useState('');
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchInitRef = useRef(true);
+  const onRefreshProductsRef = useRef(onRefreshProducts);
+  onRefreshProductsRef.current = onRefreshProducts;
   const [localSelectedIds, setLocalSelectedIds] = useState<string[]>(() => {
     return selectedIds.length > 0 ? selectedIds : products.map(p => p.id);
   });
@@ -72,24 +106,79 @@ export default function BulkEditor({ products, selectedIds, shops = [], onUpdate
 
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
 
+  const runProductSearch = (raw: string) => {
+    const q = raw.replace(/\s+/g, ' ').trim();
+    setServerSearch(q);
+    void onRefreshProductsRef.current?.({
+      page: 1,
+      append: false,
+      pageSize: BULK_PAGE_SIZE,
+      search: q,
+    });
+  };
+
+  // Server-side search: debounce 400ms, reset page về 1 khi đổi từ khóa.
+  useEffect(() => {
+    if (searchInitRef.current) {
+      searchInitRef.current = false;
+      return;
+    }
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => {
+      runProductSearch(searchQuery);
+    }, 400);
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+  }, [searchQuery]);
+
   const productGroups = useMemo(() => buildProductGroups(products), [products]);
 
-  const filteredGroups = useMemo(() => {
-    const q = searchQuery.toLowerCase().trim();
+  const [clientPage, setClientPage] = useState(1);
+
+  useEffect(() => {
+    setClientPage(1);
+  }, [searchQuery]);
+
+  /** Fallback lọc client (bỏ dấu tiếng Việt) khi chưa có API refresh — tránh lọc lại khi đã search server. */
+  const displayGroups = useMemo(() => {
+    if (onRefreshProducts) return productGroups;
+    const q = normalizeProductSearchText(searchQuery);
     if (!q) return productGroups;
-    return productGroups.filter(
-      (group) =>
-        group.displayTitle.toLowerCase().includes(q) ||
-        group.variants.some(
-          (v) =>
-            v.title.toLowerCase().includes(q) || v.sku.toLowerCase().includes(q)
-        )
-    );
-  }, [productGroups, searchQuery]);
+    return productGroups.filter((group) => {
+      const titleNorm = normalizeProductSearchText(group.displayTitle);
+      if (titleNorm.includes(q)) return true;
+      return group.variants.some((v) => {
+        const skuNorm = normalizeProductSearchText(v.sku);
+        const variantTitleNorm = normalizeProductSearchText(v.title);
+        const modelNorm = normalizeProductSearchText(v.modelName);
+        return skuNorm.includes(q) || variantTitleNorm.includes(q) || modelNorm.includes(q);
+      });
+    });
+  }, [productGroups, searchQuery, onRefreshProducts]);
+
+  const clientPagination = useMemo(() => {
+    if (onRefreshProducts) {
+      const page = productsMeta?.page ?? 1;
+      const totalPages = Math.max(1, productsMeta?.totalPages ?? 1);
+      const total = productsMeta?.total ?? displayGroups.length;
+      return { page, totalPages, total, hasMore: !!productsMeta?.hasMore };
+    }
+    const total = displayGroups.length;
+    const totalPages = Math.max(1, Math.ceil(total / BULK_PAGE_SIZE));
+    const page = Math.min(clientPage, totalPages);
+    return { page, totalPages, total, hasMore: page < totalPages };
+  }, [onRefreshProducts, productsMeta, displayGroups.length, clientPage]);
+
+  const paginatedGroups = useMemo(() => {
+    if (onRefreshProducts) return displayGroups;
+    const start = (clientPagination.page - 1) * BULK_PAGE_SIZE;
+    return displayGroups.slice(start, start + BULK_PAGE_SIZE);
+  }, [displayGroups, onRefreshProducts, clientPagination.page]);
 
   const allFilteredIds = useMemo(
-    () => filteredGroups.flatMap((g) => g.variants.map((v) => v.id)),
-    [filteredGroups]
+    () => paginatedGroups.flatMap((g) => g.variants.map((v) => v.id)),
+    [paginatedGroups]
   );
 
   const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(new Set());
@@ -649,22 +738,31 @@ export default function BulkEditor({ products, selectedIds, shops = [], onUpdate
                 id="toggle-all-bulk"
               />
               <label htmlFor="toggle-all-bulk" className="font-bold text-gray-700 cursor-pointer select-none">
-                Chọn tất cả ({filteredGroups.length} sản phẩm tìm thấy)
+                Chọn tất cả ({paginatedGroups.length} sản phẩm trên trang này)
               </label>
             </div>
             
             <span className="font-semibold text-gray-500">
-              Đã chọn <strong className="text-blue-600 font-extrabold">{targetProducts.length}</strong> / {products.length} SKU
+              Đã chọn <strong className="text-blue-600 font-extrabold">{targetProducts.length}</strong>
+              {clientPagination.total > 0 && (
+                <> — Tổng <strong className="text-gray-700">{clientPagination.total}</strong> kết quả</>
+              )}
             </span>
           </div>
 
-          <div className="max-h-[300px] overflow-y-auto divide-y divide-gray-100 border border-gray-100 rounded-2xl bg-gray-50/25 px-2 py-1 scrollbar-thin">
-            {filteredGroups.length === 0 ? (
+          <div className="max-h-[420px] overflow-y-auto divide-y divide-gray-100 border border-gray-100 rounded-2xl bg-gray-50/25 px-2 py-1 scrollbar-thin">
+            {productsLoading ? (
               <div className="py-12 text-center text-gray-400 text-xs">
-                Không tìm thấy sản phẩm nào khớp với từ khóa tìm kiếm.
+                Đang tải danh sách sản phẩm...
+              </div>
+            ) : paginatedGroups.length === 0 ? (
+              <div className="py-12 text-center text-gray-400 text-xs">
+                {serverSearch || searchQuery.trim()
+                  ? 'Không tìm thấy sản phẩm nào khớp với từ khóa tìm kiếm.'
+                  : 'Chưa có sản phẩm trong Kho gốc.'}
               </div>
             ) : (
-              filteredGroups.map((group) => {
+              paginatedGroups.map((group) => {
                 const prod = group.representative;
                 const isExpanded = expandedGroupIds.has(group.groupId);
                 const priceLabel = formatPriceRange(group.minSellingPrice, group.maxSellingPrice);
@@ -812,6 +910,60 @@ export default function BulkEditor({ products, selectedIds, shops = [], onUpdate
               })
             )}
           </div>
+
+          {(clientPagination.total > 0 || productsLoading) && (
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 text-xs text-gray-600">
+              <span className="font-semibold">
+                Trang <b>{clientPagination.page}</b>/{clientPagination.totalPages}
+                {' '}(Tổng {clientPagination.total} sản phẩm
+                {serverSearch ? ` khớp "${serverSearch}"` : ''})
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={productsLoading || clientPagination.page <= 1}
+                  onClick={() => {
+                    if (onRefreshProducts) {
+                      void onRefreshProducts({
+                        page: clientPagination.page - 1,
+                        append: false,
+                        pageSize: BULK_PAGE_SIZE,
+                        search: serverSearch,
+                      });
+                    } else {
+                      setClientPage((p) => Math.max(1, p - 1));
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 font-bold hover:bg-gray-50 transition-all"
+                >
+                  Trang trước
+                </button>
+                <button
+                  type="button"
+                  disabled={
+                    productsLoading ||
+                    clientPagination.page >= clientPagination.totalPages ||
+                    clientPagination.total === 0
+                  }
+                  onClick={() => {
+                    if (onRefreshProducts) {
+                      void onRefreshProducts({
+                        page: clientPagination.page + 1,
+                        append: false,
+                        pageSize: BULK_PAGE_SIZE,
+                        search: serverSearch,
+                      });
+                    } else {
+                      setClientPage((p) => p + 1);
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 font-bold hover:bg-gray-50 transition-all"
+                >
+                  Trang sau
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

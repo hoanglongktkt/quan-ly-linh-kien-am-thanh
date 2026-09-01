@@ -2686,6 +2686,9 @@ export default function App() {
               onUpdateBulk={handleUpdateBulk}
               onBulkUpdate={handleBulkUpdateApi}
               onAddLog={handleAddLog}
+              onRefreshProducts={fetchProducts}
+              productsMeta={productsMeta}
+              productsLoading={productsLoading}
             />
           )}
 

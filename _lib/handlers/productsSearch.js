@@ -46,25 +46,37 @@ function normalizeProduct(row, parent) {
   };
 }
 
-function matchesQuery(row, qLower, extra = '') {
-  if (!qLower) return true;
-  const hay = [
-    row?.sku,
-    row?.barcode,
-    row?.title,
-    row?.name,
-    row?.modelName,
-    ...(Array.isArray(row?.tierLabels) ? row.tierLabels : []),
-    extra,
-  ]
-    .map((v) => String(v ?? '').toLowerCase())
-    .join(' ');
-  return hay.includes(qLower);
+function normalizeSearchText(input) {
+  return String(input ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/gi, 'd')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function matchesQuery(row, qNorm, extra = '') {
+  if (!qNorm) return true;
+  const hay = normalizeSearchText(
+    [
+      row?.sku,
+      row?.barcode,
+      row?.title,
+      row?.name,
+      row?.modelName,
+      ...(Array.isArray(row?.tierLabels) ? row.tierLabels : []),
+      extra,
+    ]
+      .map((v) => String(v ?? ''))
+      .join(' '),
+  );
+  return hay.includes(qNorm);
 }
 
 function searchInProducts(products, query, limit = 40) {
   const q = String(query || '').trim();
-  const qLower = q.toLowerCase();
+  const qNorm = normalizeSearchText(q);
   const safeLimit = Math.min(100, Math.max(1, Math.floor(Number(limit) || 40)));
   const flat = [];
   const seen = new Set();
@@ -82,7 +94,7 @@ function searchInProducts(products, query, limit = 40) {
     if (children.length > 0) {
       let childMatched = 0;
       for (const c of children) {
-        if (!matchesQuery(c, qLower, `${p.title || ''} ${p.sku || ''}`)) continue;
+        if (!matchesQuery(c, qNorm, `${p.title || ''} ${p.sku || ''}`)) continue;
         const merged = normalizeProduct(
           {
             ...c,
@@ -99,18 +111,18 @@ function searchInProducts(products, query, limit = 40) {
         flat.push(merged);
         childMatched += 1;
       }
-      if (childMatched === 0 && matchesQuery(p, qLower)) push(p);
-    } else if (matchesQuery(p, qLower)) {
+      if (childMatched === 0 && matchesQuery(p, qNorm)) push(p);
+    } else if (matchesQuery(p, qNorm)) {
       push(p);
     }
   }
 
   if (q) {
     flat.sort((a, b) => {
-      const aSku = String(a.sku || '').toLowerCase();
-      const bSku = String(b.sku || '').toLowerCase();
-      const aExact = aSku === qLower ? 0 : aSku.includes(qLower) ? 1 : 2;
-      const bExact = bSku === qLower ? 0 : bSku.includes(qLower) ? 1 : 2;
+      const aSku = normalizeSearchText(a.sku);
+      const bSku = normalizeSearchText(b.sku);
+      const aExact = aSku === qNorm ? 0 : aSku.includes(qNorm) ? 1 : 2;
+      const bExact = bSku === qNorm ? 0 : bSku.includes(qNorm) ? 1 : 2;
       return aExact - bExact;
     });
   }
