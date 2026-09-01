@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Product, Expense, Order, ChannelSettings, SyncLog, Supplier, ImportTransaction, BulkUpdatePayload, BulkSaveProductUpdate, ConnectedShop, getProductChildren } from './types';
+import { Product, Expense, Order, ChannelSettings, SyncLog, Supplier, ImportTransaction, BulkSaveProductUpdate, ConnectedShop, getProductChildren } from './types';
 import { 
   INITIAL_SYNC_LOGS,
 } from './data';
 import Dashboard from './components/Dashboard';
 import ProductList from './components/ProductList';
 import InventoryAudit from './components/InventoryAudit';
-import BulkEditor from './components/BulkEditor';
 import Financials from './components/Financials';
 import SettingsView from './components/Settings';
 import SupplierManager from './components/SupplierManager';
@@ -27,7 +26,6 @@ import { clearLegacyOrdersLocalStorage, loadOrdersCache, saveOrdersCache } from 
 import { 
   LayoutDashboard, 
   Package, 
-  Sparkles, 
   Coins, 
   Settings, 
   HelpCircle,
@@ -148,7 +146,6 @@ const MAIN_NAV_TABS = new Set([
   'publish',
   'orders',
   'picking',
-  'bulk',
   'suppliers',
   'imports',
   'financials',
@@ -1718,33 +1715,6 @@ export default function App() {
     setSelectedIds((prev) => prev.filter((item) => item !== id));
   };
 
-  const handleUpdateBulk = (updatedProducts: Product[]) => {
-    setProducts(prev => {
-      const map = new Map(prev.map(p => [p.id, p]));
-      updatedProducts.forEach(up => map.set(up.id, up));
-      return Array.from(map.values());
-    });
-  };
-
-  const handleBulkUpdateApi = async (payload: BulkUpdatePayload): Promise<boolean> => {
-    const token = localStorage.getItem('admin_token');
-    if (!token) return false;
-    try {
-      const response = await fetch('/api/products/bulk-update', {
-        method: 'POST',
-        headers: apiAuthHeaders(),
-        body: JSON.stringify(payload),
-      });
-      if (!response.ok) return false;
-      const data = await response.json();
-      if (Array.isArray(data.products)) setProducts(data.products);
-      return true;
-    } catch (err) {
-      console.error('Bulk update products error:', err);
-      return false;
-    }
-  };
-
   const handleSyncItemVariants = async (itemId: string): Promise<Product[] | null> => {
     const token = localStorage.getItem('admin_token');
     if (!token) throw new Error('Chưa đăng nhập');
@@ -2369,13 +2339,6 @@ export default function App() {
           </button>
 
           <button
-            onClick={() => navigateTab('bulk')}
-            className={navButtonClass('bulk')}
-          >
-            <Sparkles className="w-4 h-4 shrink-0" /> Sửa hàng loạt & AI
-          </button>
-
-          <button
             onClick={() => navigateTab('suppliers')}
             className={navButtonClass('suppliers')}
           >
@@ -2473,9 +2436,6 @@ export default function App() {
               <button onClick={() => navigateTab('orders', { openScanner: true })} className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${activeTab === 'orders' && focusScanner ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 hover:text-white text-slate-400'}`}>
                 <Barcode className="w-4 h-4 shrink-0" /> Quét mã vạch
               </button>
-              <button onClick={() => navigateTab('bulk')} className={navButtonClass('bulk')}>
-                <Sparkles className="w-4 h-4 shrink-0" /> Sửa hàng loạt & AI
-              </button>
               <button onClick={() => navigateTab('suppliers')} className={navButtonClass('suppliers')}>
                 <Users className="w-4 h-4 shrink-0" /> Nhà Cung Cấp
               </button>
@@ -2529,7 +2489,6 @@ export default function App() {
                       ? 'Đã nhận đơn hủy, đơn hoàn'
                       : 'Hệ Thống Quản Lý Đơn Hàng Đa Sàn')}
                   {activeTab === 'picking' && 'Nhặt Hàng (Picking)'}
-                  {activeTab === 'bulk' && 'Chỉnh Sửa Hàng Loạt & Công Cụ AI'}
                   {activeTab === 'suppliers' && 'Quản Lý Đối Tác Nhà Cung Cấp'}
                   {activeTab === 'imports' && 'Quản Lý Nhập Hàng'}
                   {activeTab === 'financials' && 'Chi Phí Bán Hàng'}
@@ -2543,7 +2502,6 @@ export default function App() {
                       ? 'Đối soát kiện hủy/hoàn đã nhận về kho — dữ liệu lưu vĩnh viễn.'
                       : 'Quản lý 8 trạng thái đơn Shopee & TikTok, chuẩn bị hàng đóng gói và in vận đơn nhiệt.')}
                   {activeTab === 'picking' && 'Quét mã đơn, tích sản phẩm đã nhặt và chuyển sang đóng gói.'}
-                  {activeTab === 'bulk' && 'Tăng giảm giá %, đặt tồn kho, tối ưu nội dung bằng AI hàng loạt.'}
                   {activeTab === 'suppliers' && 'Quản lý thông tin liên hệ, công nợ sỉ và tiền độ thanh toán cho xưởng sỉ.'}
                   {activeTab === 'imports' && 'Quản lý hóa đơn nhập đầu vào, theo dõi biến động % giá nhập hàng.'}
                   {activeTab === 'financials' && 'Theo dõi chi phí hoạt động, cơ cấu quỹ và mô phỏng lợi nhuận sau phí sàn.'}
@@ -2608,7 +2566,6 @@ export default function App() {
                   onProductsUpdated={(prods) => setProducts(prods)}
                   onBulkSelect={setSelectedIds}
                   selectedIds={selectedIds}
-                  onTabChange={setActiveTab}
                   highlightProductId={highlightProductId}
                   onClearHighlight={() => setHighlightProductId(null)}
                   shops={settings.shops || []}
@@ -2676,20 +2633,6 @@ export default function App() {
               }}
             />
             </ErrorBoundary>
-          )}
-
-          {activeTab === 'bulk' && (
-            <BulkEditor 
-              products={products}
-              selectedIds={selectedIds}
-              shops={settings.shops || []}
-              onUpdateBulk={handleUpdateBulk}
-              onBulkUpdate={handleBulkUpdateApi}
-              onAddLog={handleAddLog}
-              onRefreshProducts={fetchProducts}
-              productsMeta={productsMeta}
-              productsLoading={productsLoading}
-            />
           )}
 
           {activeTab === 'suppliers' && (

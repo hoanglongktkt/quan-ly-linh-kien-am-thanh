@@ -64,7 +64,6 @@ interface ProductListProps {
   onProductsUpdated?: (products: Product[]) => void;
   onBulkSelect: (selectedIds: string[]) => void;
   selectedIds: string[];
-  onTabChange: (tab: string) => void;
   highlightProductId?: string | null;
   onClearHighlight?: () => void;
   shops?: ConnectedShop[];
@@ -122,7 +121,6 @@ export default function ProductList({
   onProductsUpdated,
   onBulkSelect,
   selectedIds,
-  onTabChange,
   highlightProductId,
   onClearHighlight,
   shops = [],
@@ -1284,12 +1282,6 @@ export default function ProductList({
               className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg transition-all flex items-center gap-1.5"
             >
               <Edit3 className="w-3.5 h-3.5" /> Sửa hàng loạt
-            </button>
-            <button 
-              onClick={() => onTabChange('bulk')}
-              className="px-3 py-1.5 bg-white border border-indigo-200 hover:bg-indigo-100 text-indigo-700 font-medium text-xs rounded-lg transition-all flex items-center gap-1.5"
-            >
-              <Sparkles className="w-3.5 h-3.5" /> AI
             </button>
             <button 
               onClick={() => onBulkSelect([])}
