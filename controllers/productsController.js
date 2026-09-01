@@ -1101,6 +1101,7 @@ export async function bulkChannelSync(req, res) {
 
     const shopList = Array.isArray(shops) ? shops : [];
     const wooShop = shopList.find((s) => s.platform === "woocommerce" && s.connected !== false);
+    const tiktokShop = shopList.find((s) => s.platform === "tiktok" && s.connected !== false);
 
     const requestedShopeeShop =
       shopId || shopList.find((s) => s.platform === "shopee")?.shopId || "";
@@ -1159,22 +1160,36 @@ export async function bulkChannelSync(req, res) {
     }
 
     const logs = [];
+    const SKU_SYNC_DELAY_MS = 300;
 
     for (const product of products) {
       for (const channel of channelList) {
-        if (channel === "shopee" && shopeeTokensByShop.size > 0) {
-          for (const [sid, token] of shopeeTokensByShop.entries()) {
-            const lines = await deps.syncProductToShopee(product, sid, token);
+        try {
+          if (channel === "shopee" && shopeeTokensByShop.size > 0) {
+            for (const [sid, token] of shopeeTokensByShop.entries()) {
+              const lines = await deps.syncProductToShopee(product, sid, token);
+              logs.push(...lines);
+              await new Promise((r) => setTimeout(r, SKU_SYNC_DELAY_MS));
+            }
+          } else if (channel === "woocommerce") {
+            const lines = await deps.syncProductToWoo(product, wooShop);
             logs.push(...lines);
-            await new Promise((r) => setTimeout(r, 150));
+            await new Promise((r) => setTimeout(r, SKU_SYNC_DELAY_MS));
+          } else if (channel === "tiktok") {
+            const lines = await deps.syncProductToTikTok(product, tiktokShop);
+            logs.push(...lines);
+            await new Promise((r) => setTimeout(r, SKU_SYNC_DELAY_MS));
           }
-        } else if (channel === "woocommerce") {
-          const lines = await deps.syncProductToWoo(product, wooShop);
-          logs.push(...lines);
-          await new Promise((r) => setTimeout(r, 100));
-        } else if (channel === "tiktok") {
-          const lines = await deps.syncProductToTikTok(product);
-          logs.push(...lines);
+        } catch (syncErr) {
+          console.error(`[Bulk Channel Sync] SKU=${product.sku} channel=${channel}:`, syncErr);
+          logs.push({
+            productId: product.id,
+            sku: product.sku,
+            channel,
+            action: "sync",
+            success: false,
+            message: syncErr?.message || String(syncErr),
+          });
         }
       }
     }
@@ -1192,28 +1207,22 @@ export async function bulkChannelSync(req, res) {
       await deps.saveProducts(next);
     }
 
+    const failMessages = logs
+      .filter((l) => !l.success)
+      .map((l) => l.message)
+      .filter(Boolean);
+    const summaryError =
+      failMessages.length > 0
+        ? `Đồng bộ có lỗi: ${failMessages.slice(0, 3).join(" | ")}${failMessages.length > 3 ? " …" : ""}`
+        : "Một số kênh từ chối cập nhật giá/tồn kho";
+
     return res.status(failCount === 0 ? 200 : 400).json({
       success: failCount === 0,
       message:
         failCount === 0
           ? "Đồng bộ thành công"
-          : `Lỗi từ Shopee: ${
-              logs
-                .filter((l) => !l.success)
-                .map((l) => l.message)
-                .filter(Boolean)
-                .join(" | ") || "Shopee từ chối cập nhật giá/tồn kho"
-            }`,
-      error:
-        failCount === 0
-          ? undefined
-          : `Lỗi từ Shopee: ${
-              logs
-                .filter((l) => !l.success)
-                .map((l) => l.message)
-                .filter(Boolean)
-                .join(" | ") || "Shopee từ chối cập nhật giá/tồn kho"
-            }`,
+          : summaryError,
+      error: failCount === 0 ? undefined : summaryError,
       logs,
       successCount,
       failCount,

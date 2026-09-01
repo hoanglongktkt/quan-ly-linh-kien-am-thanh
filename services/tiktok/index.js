@@ -34,6 +34,10 @@ export {
   fetchTiktokProductDetail,
   fetchTiktokProductDetails,
   fetchTiktokProductListPage,
+  resolveTiktokSkuFromDetail,
+  updateTiktokProductInventory,
+  updateTiktokProductPrices,
+  syncTiktokProductStockPrice,
 } from "./products.js";
 
 export { pingTiktokShopConnection, credentialsFromShopRecord } from "./ping.js";

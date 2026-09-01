@@ -365,6 +365,7 @@ import {
   updateWooProductStockPrice,
   resolveWooCredentials,
 } from "./services/wooCommerce.js";
+import { syncTiktokProductStockPrice } from "./services/tiktok/products.js";
 import {
   initShopeeProductsController,
   syncProducts,
@@ -7729,7 +7730,7 @@ async function syncProductToShopee(
       sku: product.sku,
       channel: "shopee",
       success: false,
-      message: "Thiếu shopeeItemId — SKU chưa liên kết Shopee",
+      message: "Thiếu ID liên kết Shopee - Bỏ qua",
     };
     return [
       { ...base, action: "update_stock" },
@@ -7864,15 +7865,22 @@ async function syncProductToWoo(product: any, shop: any): Promise<ChannelSyncLin
     productId: product.id,
     sku: product.sku,
     channel: "woocommerce",
-    action: "update_product",
   };
 
   const { wooUrl, consumerKey, consumerSecret } = resolveWooCredentials(shop || {});
   if (!wooUrl || !consumerKey || !consumerSecret) {
-    return [{ ...base, success: false, message: "Chưa cấu hình WooCommerce (URL/Consumer Key/Secret)" }];
+    const msg = "Chưa cấu hình WooCommerce (URL/Consumer Key/Secret)";
+    return [
+      { ...base, action: "update_stock", success: false, message: msg },
+      { ...base, action: "update_price", success: false, message: msg },
+    ];
   }
   if (!product.wooId) {
-    return [{ ...base, success: false, message: "Thiếu wooId — SKU chưa liên kết WooCommerce" }];
+    const msg = "Thiếu ID liên kết WooCommerce - Bỏ qua";
+    return [
+      { ...base, action: "update_stock", success: false, message: msg },
+      { ...base, action: "update_price", success: false, message: msg },
+    ];
   }
 
   try {
@@ -7881,25 +7889,29 @@ async function syncProductToWoo(product: any, shop: any): Promise<ChannelSyncLin
       stock_quantity: Math.max(0, Math.round(Number(product.stock) || 0)),
     });
     if (!result.success) {
-      return [{ ...base, success: false, message: result.message || "WooCommerce từ chối cập nhật" }];
+      const msg = result.message || "WooCommerce từ chối cập nhật";
+      return [
+        { ...base, action: "update_stock", success: false, message: msg },
+        { ...base, action: "update_price", success: false, message: msg },
+      ];
     }
-    return [{ ...base, success: true, message: `Cập nhật giá & tồn kho WooCommerce thành công (ID: ${product.wooId})` }];
+    const okMsg = `Cập nhật giá & tồn kho WooCommerce thành công (ID: ${product.wooId})`;
+    return [
+      { ...base, action: "update_stock", success: true, message: okMsg },
+      { ...base, action: "update_price", success: true, message: okMsg },
+    ];
   } catch (e: any) {
-    return [{ ...base, success: false, message: `Lỗi kết nối WooCommerce: ${e?.message || "network error"}` }];
+    const msg = `Lỗi kết nối WooCommerce: ${e?.message || "network error"}`;
+    return [
+      { ...base, action: "update_stock", success: false, message: msg },
+      { ...base, action: "update_price", success: false, message: msg },
+    ];
   }
 }
 
-async function syncProductToTikTok(product: any): Promise<ChannelSyncLine[]> {
-  const base = {
-    productId: product.id,
-    sku: product.sku,
-    channel: "tiktok",
-    action: "update_product",
-  };
-  if (!product.tiktokId) {
-    return [{ ...base, success: false, message: "Thiếu tiktokId — SKU chưa liên kết TikTok Shop" }];
-  }
-  return [{ ...base, success: false, message: "API TikTok Shop chưa được tích hợp trên server" }];
+async function syncProductToTikTok(product: any, shop?: any): Promise<ChannelSyncLine[]> {
+  const shopId = String(shop?.shopId || shop?.shop_id || "").trim() || undefined;
+  return syncTiktokProductStockPrice(product, { shopId }) as Promise<ChannelSyncLine[]>;
 }
 
 async function resolveShopeeShopForItemId(

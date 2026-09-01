@@ -116627,6 +116627,7 @@ async function bulkChannelSync(req, res) {
     }
     const shopList = Array.isArray(shops) ? shops : [];
     const wooShop = shopList.find((s2) => s2.platform === "woocommerce" && s2.connected !== false);
+    const tiktokShop = shopList.find((s2) => s2.platform === "tiktok" && s2.connected !== false);
     const requestedShopeeShop = shopId || shopList.find((s2) => s2.platform === "shopee")?.shopId || "";
     const shopeeShopIds = typeof deps10.resolveShopeeShopIdsForSync === "function" ? deps10.resolveShopeeShopIdsForSync(requestedShopeeShop) : (() => {
       const one = deps10.resolveShopeeTokenShopId(requestedShopeeShop);
@@ -116677,21 +116678,35 @@ async function bulkChannelSync(req, res) {
       }
     }
     const logs = [];
+    const SKU_SYNC_DELAY_MS = 300;
     for (const product of products) {
       for (const channel of channelList) {
-        if (channel === "shopee" && shopeeTokensByShop.size > 0) {
-          for (const [sid, token] of shopeeTokensByShop.entries()) {
-            const lines = await deps10.syncProductToShopee(product, sid, token);
+        try {
+          if (channel === "shopee" && shopeeTokensByShop.size > 0) {
+            for (const [sid, token] of shopeeTokensByShop.entries()) {
+              const lines = await deps10.syncProductToShopee(product, sid, token);
+              logs.push(...lines);
+              await new Promise((r2) => setTimeout(r2, SKU_SYNC_DELAY_MS));
+            }
+          } else if (channel === "woocommerce") {
+            const lines = await deps10.syncProductToWoo(product, wooShop);
             logs.push(...lines);
-            await new Promise((r2) => setTimeout(r2, 150));
+            await new Promise((r2) => setTimeout(r2, SKU_SYNC_DELAY_MS));
+          } else if (channel === "tiktok") {
+            const lines = await deps10.syncProductToTikTok(product, tiktokShop);
+            logs.push(...lines);
+            await new Promise((r2) => setTimeout(r2, SKU_SYNC_DELAY_MS));
           }
-        } else if (channel === "woocommerce") {
-          const lines = await deps10.syncProductToWoo(product, wooShop);
-          logs.push(...lines);
-          await new Promise((r2) => setTimeout(r2, 100));
-        } else if (channel === "tiktok") {
-          const lines = await deps10.syncProductToTikTok(product);
-          logs.push(...lines);
+        } catch (syncErr) {
+          console.error(`[Bulk Channel Sync] SKU=${product.sku} channel=${channel}:`, syncErr);
+          logs.push({
+            productId: product.id,
+            sku: product.sku,
+            channel,
+            action: "sync",
+            success: false,
+            message: syncErr?.message || String(syncErr)
+          });
         }
       }
     }
@@ -116706,10 +116721,12 @@ async function bulkChannelSync(req, res) {
       );
       await deps10.saveProducts(next);
     }
+    const failMessages = logs.filter((l) => !l.success).map((l) => l.message).filter(Boolean);
+    const summaryError = failMessages.length > 0 ? `\u0110\u1ED3ng b\u1ED9 c\xF3 l\u1ED7i: ${failMessages.slice(0, 3).join(" | ")}${failMessages.length > 3 ? " \u2026" : ""}` : "M\u1ED9t s\u1ED1 k\xEAnh t\u1EEB ch\u1ED1i c\u1EADp nh\u1EADt gi\xE1/t\u1ED3n kho";
     return res.status(failCount === 0 ? 200 : 400).json({
       success: failCount === 0,
-      message: failCount === 0 ? "\u0110\u1ED3ng b\u1ED9 th\xE0nh c\xF4ng" : `L\u1ED7i t\u1EEB Shopee: ${logs.filter((l) => !l.success).map((l) => l.message).filter(Boolean).join(" | ") || "Shopee t\u1EEB ch\u1ED1i c\u1EADp nh\u1EADt gi\xE1/t\u1ED3n kho"}`,
-      error: failCount === 0 ? void 0 : `L\u1ED7i t\u1EEB Shopee: ${logs.filter((l) => !l.success).map((l) => l.message).filter(Boolean).join(" | ") || "Shopee t\u1EEB ch\u1ED1i c\u1EADp nh\u1EADt gi\xE1/t\u1ED3n kho"}`,
+      message: failCount === 0 ? "\u0110\u1ED3ng b\u1ED9 th\xE0nh c\xF4ng" : summaryError,
+      error: failCount === 0 ? void 0 : summaryError,
       logs,
       successCount,
       failCount,
@@ -125850,6 +125867,148 @@ async function fetchTiktokProductListPage(opts = {}) {
     body
   });
 }
+var PRODUCT_PRICES_UPDATE_PATH = (productId) => `${PRODUCT_DETAIL_PATH}/${encodeURIComponent(String(productId))}/prices/update`;
+var PRODUCT_INVENTORY_UPDATE_PATH = (productId) => `${PRODUCT_DETAIL_PATH}/${encodeURIComponent(String(productId))}/inventory/update`;
+function resolveTiktokSkuFromDetail(productData, localSku) {
+  const skus = productData?.skus || productData?.sku_list || [];
+  if (!Array.isArray(skus) || skus.length === 0) return null;
+  const local = String(localSku || "").trim().toLowerCase();
+  if (local) {
+    const matched = skus.find((s2) => {
+      const sellerSku = String(s2.seller_sku || s2.sellerSku || s2.external_sku_id || "").trim().toLowerCase();
+      return sellerSku && sellerSku === local;
+    });
+    if (matched) return matched;
+  }
+  if (skus.length === 1) return skus[0];
+  return skus.find((s2) => s2.id) || skus[0];
+}
+function getTiktokSkuCurrency(sku) {
+  const price = sku?.price || sku?.original_price || {};
+  const currency = String(price.currency || price.currency_type || "VND").trim();
+  return currency || "VND";
+}
+function getTiktokWarehouseId(sku) {
+  const inv = sku?.inventory;
+  if (Array.isArray(inv) && inv.length > 0 && inv[0]?.warehouse_id) {
+    return String(inv[0].warehouse_id);
+  }
+  return null;
+}
+async function updateTiktokProductInventory(productId, skuId, quantity, opts = {}) {
+  const pid = String(productId || "").trim();
+  const sid = String(skuId || "").trim();
+  if (!pid || !sid) {
+    return { success: false, message: "Thi\u1EBFu product_id ho\u1EB7c sku_id TikTok." };
+  }
+  const qty = Math.max(0, Math.round(Number(quantity) || 0));
+  const inventoryEntry = { quantity: qty };
+  if (opts.warehouseId) {
+    inventoryEntry.warehouse_id = String(opts.warehouseId);
+  }
+  const res = await tiktokApiRequest("POST", PRODUCT_INVENTORY_UPDATE_PATH(pid), {
+    shopId: opts.shopId,
+    body: {
+      skus: [{ id: sid, inventory: [inventoryEntry] }]
+    }
+  });
+  if (!res.success) {
+    return { success: false, message: res.message || "TikTok inventory/update th\u1EA5t b\u1EA1i" };
+  }
+  return { success: true, message: `C\u1EADp nh\u1EADt t\u1ED3n kho TikTok th\xE0nh c\xF4ng (qty=${qty})`, data: res.data };
+}
+async function updateTiktokProductPrices(productId, skuId, priceAmount, currency, opts = {}) {
+  const pid = String(productId || "").trim();
+  const sid = String(skuId || "").trim();
+  if (!pid || !sid) {
+    return { success: false, message: "Thi\u1EBFu product_id ho\u1EB7c sku_id TikTok." };
+  }
+  const amount = String(Math.max(0, Math.round(Number(priceAmount) || 0)));
+  const curr = String(currency || "VND").trim() || "VND";
+  const res = await tiktokApiRequest("POST", PRODUCT_PRICES_UPDATE_PATH(pid), {
+    shopId: opts.shopId,
+    body: {
+      skus: [
+        {
+          id: sid,
+          price: { amount, currency: curr }
+        }
+      ]
+    }
+  });
+  if (!res.success) {
+    return { success: false, message: res.message || "TikTok prices/update th\u1EA5t b\u1EA1i" };
+  }
+  return { success: true, message: `C\u1EADp nh\u1EADt gi\xE1 TikTok th\xE0nh c\xF4ng (${amount} ${curr})`, data: res.data };
+}
+async function syncTiktokProductStockPrice(localProduct, opts = {}) {
+  const base = {
+    productId: String(localProduct?.id || ""),
+    sku: String(localProduct?.sku || ""),
+    channel: "tiktok"
+  };
+  const tiktokProductId = String(localProduct?.tiktokId || "").trim();
+  if (!tiktokProductId) {
+    const msg = "Thi\u1EBFu ID li\xEAn k\u1EBFt TikTok - B\u1ECF qua";
+    return [
+      { ...base, action: "update_stock", success: false, message: msg },
+      { ...base, action: "update_price", success: false, message: msg }
+    ];
+  }
+  const shopId = String(opts.shopId || "").trim() || void 0;
+  const creds = resolveTiktokCustomAppCredentials(shopId);
+  if (!creds.valid) {
+    const msg = "Ch\u01B0a c\u1EA5u h\xECnh TikTok Shop (App Key/Secret/Access Token)";
+    return [
+      { ...base, action: "auth", success: false, message: msg }
+    ];
+  }
+  const detailRes = await fetchTiktokProductDetail(tiktokProductId, { shopId: creds.shop_id });
+  if (!detailRes.success) {
+    const msg = detailRes.message || "Kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c chi ti\u1EBFt s\u1EA3n ph\u1EA9m TikTok";
+    return [
+      { ...base, action: "update_stock", success: false, message: msg },
+      { ...base, action: "update_price", success: false, message: msg }
+    ];
+  }
+  const productData = detailRes.data || {};
+  const matchedSku = resolveTiktokSkuFromDetail(productData, localProduct.sku);
+  if (!matchedSku?.id) {
+    const msg = `Kh\xF4ng t\xECm th\u1EA5y SKU TikTok kh\u1EDBp "${localProduct.sku || ""}" tr\xEAn s\u1EA3n ph\u1EA9m ${tiktokProductId}`;
+    return [
+      { ...base, action: "update_stock", success: false, message: msg },
+      { ...base, action: "update_price", success: false, message: msg }
+    ];
+  }
+  const skuId = String(matchedSku.id);
+  const warehouseId = getTiktokWarehouseId(matchedSku);
+  const currency = getTiktokSkuCurrency(matchedSku);
+  const stock = Math.max(0, Math.round(Number(localProduct.stock) || 0));
+  const price = Math.max(0, Math.round(Number(localProduct.sellingPrice) || 0));
+  const stockRes = await updateTiktokProductInventory(tiktokProductId, skuId, stock, {
+    shopId: creds.shop_id,
+    warehouseId
+  });
+  if (!stockRes.success) {
+    return [
+      { ...base, action: "update_stock", success: false, message: stockRes.message },
+      { ...base, action: "update_price", success: false, message: "B\u1ECF qua c\u1EADp nh\u1EADt gi\xE1 do l\u1ED7i t\u1ED3n kho" }
+    ];
+  }
+  await tiktokApiDelay(300);
+  const priceRes = await updateTiktokProductPrices(tiktokProductId, skuId, price, currency, {
+    shopId: creds.shop_id
+  });
+  return [
+    { ...base, action: "update_stock", success: true, message: stockRes.message },
+    {
+      ...base,
+      action: "update_price",
+      success: priceRes.success,
+      message: priceRes.success ? priceRes.message : priceRes.message
+    }
+  ];
+}
 
 // controllers/tiktokCustomAppController.js
 async function saveCustomAppCredentials(req, res) {
@@ -133369,7 +133528,7 @@ async function syncProductToShopee(product, shopId, accessToken) {
       sku: product.sku,
       channel: "shopee",
       success: false,
-      message: "Thi\u1EBFu shopeeItemId \u2014 SKU ch\u01B0a li\xEAn k\u1EBFt Shopee"
+      message: "Thi\u1EBFu ID li\xEAn k\u1EBFt Shopee - B\u1ECF qua"
     };
     return [
       { ...base, action: "update_stock" },
@@ -133495,15 +133654,22 @@ async function syncProductToWoo(product, shop) {
   const base = {
     productId: product.id,
     sku: product.sku,
-    channel: "woocommerce",
-    action: "update_product"
+    channel: "woocommerce"
   };
   const { wooUrl, consumerKey, consumerSecret } = resolveWooCredentials(shop || {});
   if (!wooUrl || !consumerKey || !consumerSecret) {
-    return [{ ...base, success: false, message: "Ch\u01B0a c\u1EA5u h\xECnh WooCommerce (URL/Consumer Key/Secret)" }];
+    const msg = "Ch\u01B0a c\u1EA5u h\xECnh WooCommerce (URL/Consumer Key/Secret)";
+    return [
+      { ...base, action: "update_stock", success: false, message: msg },
+      { ...base, action: "update_price", success: false, message: msg }
+    ];
   }
   if (!product.wooId) {
-    return [{ ...base, success: false, message: "Thi\u1EBFu wooId \u2014 SKU ch\u01B0a li\xEAn k\u1EBFt WooCommerce" }];
+    const msg = "Thi\u1EBFu ID li\xEAn k\u1EBFt WooCommerce - B\u1ECF qua";
+    return [
+      { ...base, action: "update_stock", success: false, message: msg },
+      { ...base, action: "update_price", success: false, message: msg }
+    ];
   }
   try {
     const result = await updateWooProductStockPrice(shop, product.wooId, {
@@ -133511,24 +133677,28 @@ async function syncProductToWoo(product, shop) {
       stock_quantity: Math.max(0, Math.round(Number(product.stock) || 0))
     });
     if (!result.success) {
-      return [{ ...base, success: false, message: result.message || "WooCommerce t\u1EEB ch\u1ED1i c\u1EADp nh\u1EADt" }];
+      const msg = result.message || "WooCommerce t\u1EEB ch\u1ED1i c\u1EADp nh\u1EADt";
+      return [
+        { ...base, action: "update_stock", success: false, message: msg },
+        { ...base, action: "update_price", success: false, message: msg }
+      ];
     }
-    return [{ ...base, success: true, message: `C\u1EADp nh\u1EADt gi\xE1 & t\u1ED3n kho WooCommerce th\xE0nh c\xF4ng (ID: ${product.wooId})` }];
+    const okMsg = `C\u1EADp nh\u1EADt gi\xE1 & t\u1ED3n kho WooCommerce th\xE0nh c\xF4ng (ID: ${product.wooId})`;
+    return [
+      { ...base, action: "update_stock", success: true, message: okMsg },
+      { ...base, action: "update_price", success: true, message: okMsg }
+    ];
   } catch (e2) {
-    return [{ ...base, success: false, message: `L\u1ED7i k\u1EBFt n\u1ED1i WooCommerce: ${e2?.message || "network error"}` }];
+    const msg = `L\u1ED7i k\u1EBFt n\u1ED1i WooCommerce: ${e2?.message || "network error"}`;
+    return [
+      { ...base, action: "update_stock", success: false, message: msg },
+      { ...base, action: "update_price", success: false, message: msg }
+    ];
   }
 }
-async function syncProductToTikTok(product) {
-  const base = {
-    productId: product.id,
-    sku: product.sku,
-    channel: "tiktok",
-    action: "update_product"
-  };
-  if (!product.tiktokId) {
-    return [{ ...base, success: false, message: "Thi\u1EBFu tiktokId \u2014 SKU ch\u01B0a li\xEAn k\u1EBFt TikTok Shop" }];
-  }
-  return [{ ...base, success: false, message: "API TikTok Shop ch\u01B0a \u0111\u01B0\u1EE3c t\xEDch h\u1EE3p tr\xEAn server" }];
+async function syncProductToTikTok(product, shop) {
+  const shopId = String(shop?.shopId || shop?.shop_id || "").trim() || void 0;
+  return syncTiktokProductStockPrice(product, { shopId });
 }
 async function resolveShopeeShopForItemId(itemId, preferredShopId) {
   const shopIds = listShopeeSyncShopIds();
