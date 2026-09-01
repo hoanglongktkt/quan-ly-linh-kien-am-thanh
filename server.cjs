@@ -84566,12 +84566,17 @@ var import_express3 = __toESM(require_express2(), 1);
 var import_jsonwebtoken = __toESM(require_jsonwebtoken(), 1);
 
 // _lib/jwtSecret.js
+var FALLBACK_JWT_SECRET = "omnisales-vn-super-secret-key-2026";
 function getJwtSecret() {
   const secret = process.env.JWT_SECRET;
-  if (!secret && process.env.VERCEL) {
-    console.warn("[JWT] JWT_SECRET ch\u01B0a set tr\xEAn Vercel \u2014 token s\u1EBD kh\xF4ng kh\u1EDBp backend cPanel. Set c\xF9ng gi\xE1 tr\u1ECB v\u1EDBi cPanel (.htaccess / Node env).");
+  return secret || FALLBACK_JWT_SECRET;
+}
+function warnJwtSecretOnStartup() {
+  if (!String(process.env.JWT_SECRET || "").trim()) {
+    console.warn(
+      "[JWT] C\u1EA2NH B\xC1O: JWT_SECRET ch\u01B0a \u0111\u01B0\u1EE3c set \u2014 \u0111ang d\xF9ng secret fallback m\u1EB7c \u0111\u1ECBnh. Token c\xF3 th\u1EC3 KH\xD4NG kh\u1EDBp gi\u1EEFa Vercel v\xE0 cPanel. H\xE3y set JWT_SECRET gi\u1ED1ng nhau tr\xEAn cPanel (.htaccess / Node env) v\xE0 Vercel Environment Variables."
+    );
   }
-  return secret || "omnisales-vn-super-secret-key-2026";
 }
 
 // middlewares/auth.js
@@ -84597,7 +84602,7 @@ function authMiddleware(req, res, next) {
   }
 }
 function signAdminToken(username) {
-  return import_jsonwebtoken.default.sign({ username }, getJwtSecret(), { expiresIn: "24h" });
+  return import_jsonwebtoken.default.sign({ username }, getJwtSecret(), { expiresIn: "7d" });
 }
 
 // controllers/authController.js
@@ -146794,6 +146799,7 @@ async function startServer() {
     const onReady = () => {
       resetHeavyJob();
       console.log("[Boot] Heavy-job lock reset.");
+      warnJwtSecretOnStartup();
       console.log(
         process.env.PORT ? `Server optimized for cPanel Phusion Passenger: listening on ${PORT}` : `Server running locally on port ${PORT}`
       );

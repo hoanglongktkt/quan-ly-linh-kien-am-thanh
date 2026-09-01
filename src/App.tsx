@@ -22,6 +22,7 @@ import { purgeLegacyCatalogCache } from './utils/catalogStorage';
 import { sanitizeOrders, sortOrdersByCreatedAtDesc, orderCreatedAtMs } from './utils/sanitizeOrder';
 import { safeGetJson, safeRemoveItem, safeSetItem } from './utils/safeStorage';
 import { parseJsonResponse } from './utils/apiClient';
+import { decodeJwtPayload, isJwtLocallyValid } from './utils/jwtClient';
 import { clearLegacyOrdersLocalStorage, loadOrdersCache, saveOrdersCache } from './utils/orderCache';
 import { 
   LayoutDashboard, 
@@ -612,8 +613,47 @@ export default function App() {
     safeSetItem('omni_settings', JSON.stringify(settings));
   }, [settings]);
 
-  // Token Verification on Mount
+  // Token Verification on Mount — chỉ xóa token khi server trả 401 (token thật sự invalid).
   useEffect(() => {
+    let cancelled = false;
+
+    const applyLocalAuthBypass = (token: string): boolean => {
+      if (!isJwtLocallyValid(token)) return false;
+      const payload = decodeJwtPayload(token);
+      if (!payload?.username) return false;
+      setIsAuthenticated(true);
+      setAdminUser(payload.username);
+      return true;
+    };
+
+    const retryVerifyInBackground = (token: string, attempt = 1) => {
+      if (cancelled || attempt > 3) return;
+      const delayMs = attempt * 5000;
+      window.setTimeout(async () => {
+        if (cancelled) return;
+        try {
+          const response = await fetch('/api/auth/verify', {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (cancelled) return;
+          if (response.ok) {
+            const data = await response.json();
+            setIsAuthenticated(true);
+            setAdminUser(data.username);
+          } else if (response.status === 401) {
+            safeRemoveItem('admin_token');
+            setIsAuthenticated(false);
+            setAdminUser('');
+          } else {
+            retryVerifyInBackground(token, attempt + 1);
+          }
+        } catch {
+          if (!cancelled) retryVerifyInBackground(token, attempt + 1);
+        }
+      }, delayMs);
+    };
+
     const verifyToken = async () => {
       const token = localStorage.getItem('admin_token');
       if (!token) {
@@ -626,7 +666,7 @@ export default function App() {
         const response = await fetch('/api/auth/verify', {
           method: 'GET',
           headers: {
-            'Authorization': `Bearer ${token}`,
+            Authorization: `Bearer ${token}`,
           },
         });
 
@@ -634,20 +674,36 @@ export default function App() {
           const data = await response.json();
           setIsAuthenticated(true);
           setAdminUser(data.username);
-        } else {
+        } else if (response.status === 401) {
           safeRemoveItem('admin_token');
           setIsAuthenticated(false);
+          setAdminUser('');
+        } else {
+          console.warn(
+            `[Auth] Verify HTTP ${response.status} — giữ token, thử bypass local nếu còn hạn.`,
+          );
+          if (!applyLocalAuthBypass(token)) {
+            setIsAuthenticated(false);
+          } else {
+            retryVerifyInBackground(token);
+          }
         }
       } catch (err) {
-        console.error("Auth verification error:", err);
-        safeRemoveItem('admin_token');
-        setIsAuthenticated(false);
+        console.error('Auth verification error (network/backend):', err);
+        if (!applyLocalAuthBypass(token)) {
+          setIsAuthenticated(false);
+        } else {
+          retryVerifyInBackground(token);
+        }
       } finally {
         setAuthChecking(false);
       }
     };
 
     verifyToken();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Fetch orders: Mongo-only pagination (default limit=50, replace — không shallow merge).

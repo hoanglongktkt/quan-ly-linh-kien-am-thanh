@@ -29,9 +29,9 @@ export function authMiddleware(req, res, next) {
   }
 }
 
-/** Đăng nhập admin — cùng secret/expiresIn như trước. */
+/** Đăng nhập admin — JWT stateless, không refresh token (Phase B.2: 7 ngày). */
 export function signAdminToken(username) {
-  return jwt.sign({ username }, getJwtSecret(), { expiresIn: "24h" });
+  return jwt.sign({ username }, getJwtSecret(), { expiresIn: "7d" });
 }
 
 export default authMiddleware;

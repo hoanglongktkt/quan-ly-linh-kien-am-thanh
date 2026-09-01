@@ -65,6 +65,7 @@ import aiRoutesImport from "./routes/aiRoutes.js";
 import dashboardRoutesImport from "./routes/dashboardRoutes.js";
 import errorHandler from "./middlewares/errorHandler.js";
 import { authMiddleware } from "./middlewares/auth.js";
+import { warnJwtSecretOnStartup } from "./_lib/jwtSecret.js";
 import corsMiddleware from "./middlewares/cors.js";
 import dbReadyMiddleware from "./middlewares/dbReady.js";
 import { saveScanOrders, listDonHoanHuy, initScanController } from "./controllers/scanController.js";
@@ -26338,6 +26339,7 @@ async function startServer() {
     const onReady = () => {
       resetHeavyJob();
       console.log("[Boot] Heavy-job lock reset.");
+      warnJwtSecretOnStartup();
 
       console.log(
         process.env.PORT

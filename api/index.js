@@ -4,6 +4,7 @@
  * Shared code nằm ở /_lib (ngoài /api) để không bị đếm vào giới hạn 12 functions.
  */
 import 'dotenv/config';
+import { warnJwtSecretOnStartup } from '../_lib/jwtSecret.js';
 import { handleLogin } from '../_lib/handlers/login.js';
 import { handleAuthVerify } from '../_lib/handlers/authVerify.js';
 import { handleShopeeCallback } from '../_lib/handlers/shopeeCallback.js';
@@ -29,6 +30,8 @@ import { handleCleanupProcessedPickup } from '../_lib/handlers/cleanupProcessedP
 import { handleHydrateTracking } from '../_lib/handlers/hydrateTracking.js';
 import { handleLabelProxy } from '../_lib/handlers/labels.js';
 import { proxyRequestToCpanel, resolveProxyTimeoutMs } from '../_lib/cpanelProxy.js';
+
+warnJwtSecretOnStartup();
 
 function resolveRoutePath(req) {
   const raw = req.query?.path;
