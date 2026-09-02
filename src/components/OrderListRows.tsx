@@ -751,7 +751,7 @@ export const OrderCardRow = React.memo(function OrderCardRow({
               type="button"
               onClick={(e) => actions.onPrint(e, order)}
               disabled={!order.hasPdf || printingOrderId === order.id}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 font-bold text-[10px] rounded-lg transition-all border shrink-0 ${
+              className={`hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 font-bold text-[10px] rounded-lg transition-all border shrink-0 ${
                 !order.hasPdf
                   ? 'bg-gray-300 text-gray-600 border-gray-400 cursor-not-allowed'
                   : 'bg-blue-600 hover:bg-blue-700 text-white border-blue-700 disabled:opacity-60'
@@ -872,7 +872,7 @@ export const OrderCardRow = React.memo(function OrderCardRow({
                   type="button"
                   onClick={() => void actions.onHandOver(order)}
                   disabled={handingOverOrderId === order.id}
-                  className="p-2 bg-indigo-600 hover:bg-indigo-700 border border-indigo-700 text-white rounded-lg transition-all disabled:opacity-60"
+                  className="hidden md:inline-flex p-2 bg-indigo-600 hover:bg-indigo-700 border border-indigo-700 text-white rounded-lg transition-all disabled:opacity-60"
                   title="Giao cho ĐVVC"
                 >
                   <Truck className={`w-4 h-4 ${handingOverOrderId === order.id ? 'animate-pulse' : ''}`} />
