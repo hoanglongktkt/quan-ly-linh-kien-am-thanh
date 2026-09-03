@@ -11,6 +11,7 @@ import {
   findOrderByScanPayload,
   scanFeedback,
   playScanSound,
+  playDuplicateHandedOverSound,
   vibrateScan,
   isLikelyTrackingCode,
   buildOrderScanIndex,
@@ -2091,7 +2092,7 @@ export default function OrderManager({
   const [donHuyList, setDonHuyList] = useState<ScanVerifiedItem[]>([]);
   const [daNhanHoanList, setDaNhanHoanList] = useState<ScanVerifiedItem[]>([]);
   const [scanStatModal, setScanStatModal] = useState<ScanStatModalKey | null>(null);
-  const [scanToast, setScanToast] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [scanToast, setScanToast] = useState<{ text: string; type: 'success' | 'error' | 'warning' } | null>(null);
   const [handingOverOrderId, setHandingOverOrderId] = useState<string | null>(null);
   const [confirmingReturnId, setConfirmingReturnId] = useState<string | null>(null);
   const [isBulkHandingOver, setIsBulkHandingOver] = useState(false);
@@ -2247,7 +2248,7 @@ export default function OrderManager({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusScanner]);
 
-  const showScanToast = (text: string, type: 'success' | 'error') => {
+  const showScanToast = (text: string, type: 'success' | 'error' | 'warning') => {
     setScanToast({ text, type });
     setTimeout(() => setScanToast(null), 2800);
   };
@@ -3453,6 +3454,23 @@ export default function OrderManager({
                 : `CẢNH BÁO: Đơn hủy #${order.orderSn} — hãy loại kiện hàng này`,
               'error',
             );
+            return;
+          }
+
+          // Quét trùng đơn đã bàn giao ĐVVC — dừng xuất kho, cảnh báo vàng + âm riêng.
+          if (
+            isOrderHandedOverToCarrier(order) ||
+            order.is_handed_over === true ||
+            String(order.status || '').toLowerCase() === 'handed_over' ||
+            String(order.local_status || order.localStatus || '').toUpperCase() === 'HANDED_OVER'
+          ) {
+            playDuplicateHandedOverSound();
+            vibrateScan('duplicate');
+            // Không flash error (đỏ) — giữ banner vàng mặc định.
+            setCameraScanSuccess(false);
+            setCameraScanError(false);
+            setCameraScanResult('ĐƠN ĐÃ QUÉT GIAO ĐVVC RỒI');
+            showScanToast('ĐƠN ĐÃ QUÉT GIAO ĐVVC RỒI', 'warning');
             return;
           }
 
@@ -7551,6 +7569,8 @@ export default function OrderManager({
                 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                 : cameraScanError
                   ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                  : cameraScanResult.includes('ĐÃ QUÉT GIAO ĐVVC')
+                    ? 'bg-amber-500/20 text-yellow-500 border border-amber-500/40'
                   : cameraScanResult.includes('sẵn sàng') || cameraScanResult.includes('realtime')
                     ? 'text-zinc-500'
                     : 'bg-zinc-800 text-yellow-400 border border-zinc-700'
@@ -7563,7 +7583,11 @@ export default function OrderManager({
         {scanToast && (
           <div
             className={`fixed top-16 left-3 right-3 z-60 text-xs font-bold px-4 py-3 rounded-xl shadow-lg flex items-center gap-2 ${
-              scanToast.type === 'success' ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'
+              scanToast.type === 'success'
+                ? 'bg-emerald-600 text-white'
+                : scanToast.type === 'warning'
+                  ? 'bg-amber-500 text-black'
+                  : 'bg-rose-600 text-white'
             }`}
           >
             <CheckCircle2 className="w-4 h-4 shrink-0" />

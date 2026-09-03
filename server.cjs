@@ -83406,6 +83406,36 @@ var SCANNER_HANDOVER_CANCELLED_FILTER = {
     { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL"] } }
   ]
 };
+function buildScannerHandoverHandedFilter() {
+  return {
+    $and: [
+      {
+        $or: [
+          { is_handed_over: true },
+          { "data.is_handed_over": true },
+          { "data.isHandedOverToCarrier": true },
+          { "data.is_handed_over_to_carrier": true }
+        ]
+      },
+      {
+        shopee_order_status: {
+          $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"]
+        }
+      },
+      {
+        status: {
+          $nin: [
+            "shipping",
+            "completed",
+            "cancelled",
+            "return_pending",
+            "return_received"
+          ]
+        }
+      }
+    ]
+  };
+}
 var SCANNER_RETURN_KINDS = ["cancelled", "refund_return", "failed_delivery"];
 function buildScannerReturnFilter(lookbackDays) {
   const days = Math.max(1, Math.min(30, Math.floor(Number(lookbackDays) || 30)));
@@ -83437,6 +83467,7 @@ var SCANNER_SYNC_SELECT = {
   return_tracking_no: 1,
   returnTrackingNumber: 1,
   is_handed_over: 1,
+  handedOverAt: 1,
   logistics_status: 1,
   shopee_cancel_return_kind: 1,
   is_rts: 1,
@@ -83450,6 +83481,7 @@ var SCANNER_SYNC_SELECT = {
   "data.is_handed_over": 1,
   "data.isHandedOverToCarrier": 1,
   "data.is_handed_over_to_carrier": 1,
+  "data.handedOverAt": 1,
   "data.return_sn": 1,
   "data.logistics_status": 1,
   "data.shopee_cancel_return_kind": 1,
@@ -83542,11 +83574,16 @@ async function listScannerSyncRowsFromStore(opts) {
   requireMongo();
   const mode = opts?.mode === "return" ? "return" : "handover";
   if (mode === "handover") {
-    const [processedDocs, cancelledDocs] = await Promise.all([
+    const [processedDocs, handedDocs, cancelledDocs] = await Promise.all([
       OrderModel.find(SCANNER_HANDOVER_PROCESSED_FILTER).select(SCANNER_SYNC_SELECT).limit(450).lean().maxTimeMS(6e3),
+      OrderModel.find(buildScannerHandoverHandedFilter()).select(SCANNER_SYNC_SELECT).sort({ handedOverAt: -1, "data.handedOverAt": -1 }).limit(450).lean().maxTimeMS(6e3),
       OrderModel.find(SCANNER_HANDOVER_CANCELLED_FILTER).select(SCANNER_SYNC_SELECT).limit(150).lean().maxTimeMS(4e3)
     ]);
-    return docsToScannerSyncRows([...processedDocs, ...cancelledDocs]);
+    return docsToScannerSyncRows([
+      ...processedDocs,
+      ...handedDocs,
+      ...cancelledDocs
+    ]);
   }
   const lookbackDays = Math.max(1, Math.min(30, Number(opts?.lookbackDays) || 30));
   const docs = await OrderModel.find(buildScannerReturnFilter(lookbackDays)).select(SCANNER_SYNC_SELECT).limit(1e3).lean().maxTimeMS(8e3);

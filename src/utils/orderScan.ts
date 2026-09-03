@@ -304,11 +304,20 @@ export function putOrderIntoScannerSyncMap(
   const scannedIsReturn = Boolean(
     matchesReturn || (!matchesOutbound && scannedNorm && order.return_sn),
   );
+  const handed =
+    order.is_handed_over === true ||
+    order.isHandedOverToCarrier === true ||
+    order.is_handed_over_to_carrier === true ||
+    order.is_handed_over_to_courier === true ||
+    String(order.local_status || order.localStatus || order.internal_status || '')
+      .toUpperCase() === 'HANDED_OVER';
   const entry: ScannerSyncEntry = {
     order_id: orderId,
     tracking_code: tracking,
     return_waybill: returnWb || (scannedIsReturn ? String(scannedCode || '').trim() : ''),
-    status: String(order.status || '').trim().toLowerCase(),
+    status: handed
+      ? 'handed_over'
+      : String(order.status || '').trim().toLowerCase(),
     logistics_status: order.logistics_status,
     shopee_cancel_return_kind: order.shopee_cancel_return_kind,
     is_rts: order.is_rts,
@@ -336,9 +345,11 @@ export const SCAN_SOUND_URLS = {
     'https://actions.google.com/sounds/v1/cartoon/wood_plank_flicks.ogg',
   pending:
     'https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg',
+  /** Quét trùng đơn đã bàn giao ĐVVC — file local, khác success/hủy/hoàn. */
+  duplicate: '/sounds/warning.mp3',
 } as const;
 
-export type ScanSoundType = 'success' | 'warning' | 'error' | 'pending';
+export type ScanSoundType = 'success' | 'warning' | 'error' | 'pending' | 'duplicate';
 
 function playHtmlAudio(url: string) {
   try {
@@ -347,6 +358,26 @@ function playHtmlAudio(url: string) {
     void audio.play().catch(() => undefined);
   } catch {
     /* ignore */
+  }
+}
+
+/**
+ * Âm riêng khi quét trùng đơn ĐÃ giao ĐVVC.
+ * Ưu tiên /sounds/warning.mp3; fallback Web Audio nếu file lỗi / autoplay bị chặn.
+ */
+export function playDuplicateHandedOverSound() {
+  try {
+    const audio = new Audio(SCAN_SOUND_URLS.duplicate);
+    audio.volume = 0.9;
+    void audio.play().catch(() => {
+      playWebAudioTone('duplicate');
+    });
+  } catch {
+    try {
+      playWebAudioTone('duplicate');
+    } catch {
+      /* ignore DOM Exception / autoplay */
+    }
   }
 }
 
@@ -381,6 +412,12 @@ function playWebAudioTone(type: ScanSoundType) {
       beep(740, 0, 0.07, 0.3, 'sine');
       beep(880, 0.1, 0.07, 0.28, 'sine');
       beep(740, 0.2, 0.1, 0.25, 'sine');
+    } else if (type === 'duplicate') {
+      // 4 beep vàng nhanh — khác hẳn success (xanh) / warning hủy (còi) / error.
+      beep(880, 0, 0.09, 0.38, 'sawtooth');
+      beep(660, 0.11, 0.09, 0.38, 'sawtooth');
+      beep(880, 0.22, 0.09, 0.36, 'sawtooth');
+      beep(660, 0.33, 0.12, 0.34, 'sawtooth');
     } else {
       beep(320, 0, 0.28, 0.4, 'triangle');
     }
@@ -390,6 +427,10 @@ function playWebAudioTone(type: ScanSoundType) {
 }
 
 export function playScanSound(type: ScanSoundType = 'success') {
+  if (type === 'duplicate') {
+    playDuplicateHandedOverSound();
+    return;
+  }
   playHtmlAudio(SCAN_SOUND_URLS[type]);
   playWebAudioTone(type);
 }
@@ -402,7 +443,7 @@ export function playScanBeep(type: 'success' | 'error' = 'success') {
 export function vibrateScan(type: ScanSoundType | 'success' | 'error' = 'success') {
   if (typeof navigator !== 'undefined' && navigator.vibrate) {
     if (type === 'success') navigator.vibrate([30, 20, 30]);
-    else if (type === 'warning') navigator.vibrate([100, 50, 100, 50, 120]);
+    else if (type === 'warning' || type === 'duplicate') navigator.vibrate([100, 50, 100, 50, 120]);
     else if (type === 'pending') navigator.vibrate([40, 30, 40, 30, 40]);
     else navigator.vibrate([80, 40, 80]);
   }
@@ -410,7 +451,11 @@ export function vibrateScan(type: ScanSoundType | 'success' | 'error' = 'success
 
 export function scanFeedback(type: ScanSoundType | 'success' | 'error') {
   playScanSound(
-    type === 'success' || type === 'warning' || type === 'error' || type === 'pending'
+    type === 'success' ||
+      type === 'warning' ||
+      type === 'error' ||
+      type === 'pending' ||
+      type === 'duplicate'
       ? type
       : 'error',
   );

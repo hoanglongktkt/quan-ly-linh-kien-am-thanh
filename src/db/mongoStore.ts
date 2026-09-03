@@ -8551,6 +8551,41 @@ const SCANNER_HANDOVER_CANCELLED_FILTER: Record<string, unknown> = {
   ],
 };
 
+/**
+ * Pool handover — đơn ĐÃ bàn giao ĐVVC (is_handed_over) để phát hiện quét trùng.
+ * TO_SHIP + is_handed_over=true (cùng scope tab Đã giao ĐVVC).
+ */
+function buildScannerHandoverHandedFilter(): Record<string, unknown> {
+  return {
+    $and: [
+      {
+        $or: [
+          { is_handed_over: true },
+          { "data.is_handed_over": true },
+          { "data.isHandedOverToCarrier": true },
+          { "data.is_handed_over_to_carrier": true },
+        ],
+      },
+      {
+        shopee_order_status: {
+          $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"],
+        },
+      },
+      {
+        status: {
+          $nin: [
+            "shipping",
+            "completed",
+            "cancelled",
+            "return_pending",
+            "return_received",
+          ],
+        },
+      },
+    ],
+  };
+}
+
 const SCANNER_RETURN_KINDS = ["cancelled", "refund_return", "failed_delivery"] as const;
 
 function buildScannerReturnFilter(lookbackDays: number): Record<string, unknown> {
@@ -8584,6 +8619,7 @@ const SCANNER_SYNC_SELECT = {
   return_tracking_no: 1,
   returnTrackingNumber: 1,
   is_handed_over: 1,
+  handedOverAt: 1,
   logistics_status: 1,
   shopee_cancel_return_kind: 1,
   is_rts: 1,
@@ -8597,6 +8633,7 @@ const SCANNER_SYNC_SELECT = {
   "data.is_handed_over": 1,
   "data.isHandedOverToCarrier": 1,
   "data.is_handed_over_to_carrier": 1,
+  "data.handedOverAt": 1,
   "data.return_sn": 1,
   "data.logistics_status": 1,
   "data.shopee_cancel_return_kind": 1,
@@ -8714,7 +8751,7 @@ export async function ensureScannerIndexesInStore(): Promise<{
 
 /**
  * Sync siêu tốc cho Barcode Scanner — chỉ field tối thiểu, không hydrate items.
- * mode=handover: Chờ lấy (đã xử lý) + đơn hủy (~100).
+ * mode=handover: Chờ lấy (đã xử lý) + đã bàn giao (đối chiếu quét trùng) + đơn hủy.
  * mode=return: Hủy / RTS / Trả hàng hoàn tiền 30 ngày (<500).
  */
 export async function listScannerSyncRowsFromStore(opts?: {
@@ -8728,9 +8765,15 @@ export async function listScannerSyncRowsFromStore(opts?: {
     opts?.mode === "return" ? "return" : "handover";
 
   if (mode === "handover") {
-    const [processedDocs, cancelledDocs] = await Promise.all([
+    const [processedDocs, handedDocs, cancelledDocs] = await Promise.all([
       OrderModel.find(SCANNER_HANDOVER_PROCESSED_FILTER)
         .select(SCANNER_SYNC_SELECT)
+        .limit(450)
+        .lean()
+        .maxTimeMS(6_000),
+      OrderModel.find(buildScannerHandoverHandedFilter())
+        .select(SCANNER_SYNC_SELECT)
+        .sort({ handedOverAt: -1, "data.handedOverAt": -1 })
         .limit(450)
         .lean()
         .maxTimeMS(6_000),
@@ -8740,7 +8783,11 @@ export async function listScannerSyncRowsFromStore(opts?: {
         .lean()
         .maxTimeMS(4_000),
     ]);
-    return docsToScannerSyncRows([...(processedDocs as any[]), ...(cancelledDocs as any[])]);
+    return docsToScannerSyncRows([
+      ...(processedDocs as any[]),
+      ...(handedDocs as any[]),
+      ...(cancelledDocs as any[]),
+    ]);
   }
 
   const lookbackDays = Math.max(1, Math.min(30, Number(opts?.lookbackDays) || 30));
