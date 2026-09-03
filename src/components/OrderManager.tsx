@@ -836,6 +836,8 @@ const SCAN_BG_STATUS_POLL_MS = 30_000;
 /** Không pending / unnotified — nới chu kỳ để giảm spam Network. */
 const SCAN_BG_STATUS_IDLE_POLL_MS = 60_000;
 const COUNTER_POLL_MS = 45_000;
+/** Cooldown wake-up sau ngủ đông — chặn spam khi user chuyển tab liên tục. */
+const WAKE_COOLDOWN_MS = 3_000;
 
 function cancelReturnKindParam(tab: CancelReturnTab): string | undefined {
   if (tab === 'all') return undefined;
@@ -1426,6 +1428,7 @@ export default function OrderManager({
   onFetchOrdersRef.current = fetchOrdersWithShop;
   const newOrderRefreshTimersRef = useRef<number[]>([]);
   const lastNewOrderNotifyAtRef = useRef(0);
+  const lastWakeAtRef = useRef(0);
 
   /** Set tab + sub-tab + page cùng 1 tick — tránh fetch 2 lần khi vào nhóm Hủy/Hoàn. */
   const selectOrdersSubTab = useCallback((tab: OrderTab, cancelReturn?: CancelReturnTab) => {
@@ -1578,17 +1581,17 @@ export default function OrderManager({
     };
   }, [fetchOrderCounts, maybeNotifyNewOrdersFromCounts]);
 
-  /** Lắng nghe SSE `new_order` — popup + refresh ngay, không chờ poll counter. */
+  /**
+   * SSE `new_order` + wake-up sau ngủ đông.
+   * Khi tab visible lại: reconnect SSE nếu đứt + silent catch-up list/counter (không sync Shopee).
+   */
   useEffect(() => {
     const token = localStorage.getItem('admin_token') || '';
     if (!token || typeof EventSource === 'undefined') return;
     const url = `/api/orders/live?token=${encodeURIComponent(token)}`;
     let es: EventSource | null = null;
-    try {
-      es = new EventSource(url);
-    } catch {
-      return;
-    }
+    let cancelled = false;
+
     const onNewOrder = (ev: MessageEvent) => {
       let payload: {
         shopId?: string;
@@ -1614,15 +1617,53 @@ export default function OrderManager({
       }
       scheduleNewOrderListRefresh();
     };
-    es.addEventListener('new_order', onNewOrder as EventListener);
-    es.onerror = () => {
-      /* EventSource tự reconnect; không spam log. */
-    };
-    return () => {
+
+    const closeSse = () => {
+      if (!es) return;
       es.removeEventListener('new_order', onNewOrder as EventListener);
       es.close();
+      es = null;
     };
-  }, [scheduleNewOrderListRefresh]);
+
+    const openSse = () => {
+      if (cancelled) return;
+      try {
+        const next = new EventSource(url);
+        next.addEventListener('new_order', onNewOrder as EventListener);
+        next.onerror = () => {
+          /* EventSource tự reconnect; không spam log. */
+        };
+        es = next;
+      } catch {
+        es = null;
+      }
+    };
+
+    const reconnectSseIfNeeded = () => {
+      if (es && es.readyState === EventSource.OPEN) return;
+      closeSse();
+      openSse();
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      if (now - lastWakeAtRef.current < WAKE_COOLDOWN_MS) return;
+      lastWakeAtRef.current = now;
+
+      reconnectSseIfNeeded();
+      void fetchOrderCounts();
+      refetchOrdersPageRef.current({ silent: true, page: 1 });
+    };
+
+    openSse();
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      closeSse();
+    };
+  }, [scheduleNewOrderListRefresh, fetchOrderCounts]);
 
   /** Tự unlock audio sau click/touch đầu tiên của user trên trang. */
   useEffect(() => {
