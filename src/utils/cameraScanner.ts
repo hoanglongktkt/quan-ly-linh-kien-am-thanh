@@ -2,6 +2,8 @@
  * Live QR scanner — Continuous Frame Processing.
  * Primary: BarcodeDetector (Chrome/Android = Google ML Kit / Play Services).
  * Fallback: @zxing/browser continuous decode.
+ *
+ * Flagship phone tuning: continuous AF + digital zoom (default 2x) + multi-lens switch.
  */
 import { BrowserMultiFormatReader } from '@zxing/browser';
 import { BarcodeFormat, DecodeHintType } from '@zxing/library';
@@ -20,11 +22,28 @@ const DECODE_MAX_EDGE = 720;
 const DETECTOR_INTERVAL_MS = 50;
 /** ZXing poll khi chạy song song với detector (nhẹ hơn một chút). */
 const ZXING_INTERVAL_MS = 80;
+/** Zoom kỹ thuật số mặc định — máy cảm biến lớn đứng xa ~20cm vẫn đọc được. */
+const DEFAULT_SCAN_ZOOM = 2.0;
+
+export type ScannerZoomCaps = {
+  supported: boolean;
+  min: number;
+  max: number;
+  step: number;
+  current: number;
+};
 
 export type LiveQrScannerHandle = {
   stop: () => Promise<void>;
   clear: () => Promise<void>;
   destroy: () => Promise<void>;
+  /** Áp dụng zoom kỹ thuật số (clamp theo capability). */
+  setZoom: (zoom: number) => Promise<boolean>;
+  getZoomCaps: () => ScannerZoomCaps;
+  /** Đổi ống kính sau (wide / ultrawide / main…). */
+  switchCamera: () => Promise<boolean>;
+  getCameraLabel: () => string;
+  getCameraCount: () => number;
 };
 
 type ExtendedCaps = MediaTrackCapabilities & {
@@ -45,7 +64,8 @@ declare global {
 }
 
 const REAR_LABEL = /back|rear|environment|后置|後鏡|sau|arrière|trás/i;
-const WIDE_LABEL = /wide|ultra|0\.5|góc rộng/i;
+const FRONT_LABEL = /front|user|facetime|selfie|trước|avant|frontal/i;
+const WIDE_LABEL = /wide|ultra|0\.5|góc rộng|ultrawide|macro/i;
 const TELE_LABEL = /tele|zoom|2x|3x|5x|periscope|telephoto/i;
 
 const tapFocusStops = new Map<string, () => void>();
@@ -114,35 +134,87 @@ async function listVideoInputDevices(): Promise<MediaDeviceInfo[]> {
   }
 }
 
-function pickRearDeviceId(devices: MediaDeviceInfo[]): string | undefined {
-  if (!devices.length) return undefined;
-  const label = (d: MediaDeviceInfo) => d.label || '';
-  const nonTele = devices.filter((d) => !TELE_LABEL.test(label(d)));
-  const list = nonTele.length ? nonTele : devices;
-  const wide = list.find((d) => WIDE_LABEL.test(label(d)));
-  if (wide) return wide.deviceId;
-  const back = list.find((d) => REAR_LABEL.test(label(d)));
-  if (back) return back.deviceId;
-  if (list.length === 1) return list[0].deviceId;
-  return list[list.length - 1]?.deviceId;
+/** Ưu tiên ống kính sau; loại selfie. Ultrawide/macro trước (quét gần tốt trên flagship). */
+function listRearCameras(devices: MediaDeviceInfo[]): MediaDeviceInfo[] {
+  if (!devices.length) return [];
+  const rear = devices.filter((d) => {
+    const label = d.label || '';
+    if (FRONT_LABEL.test(label)) return false;
+    return REAR_LABEL.test(label) || !label;
+  });
+  const pool = rear.length ? rear : devices.filter((d) => !FRONT_LABEL.test(d.label || ''));
+  const list = pool.length ? pool : devices;
+
+  const score = (d: MediaDeviceInfo) => {
+    const label = d.label || '';
+    if (WIDE_LABEL.test(label)) return 0;
+    if (TELE_LABEL.test(label)) return 3;
+    if (REAR_LABEL.test(label)) return 1;
+    return 2;
+  };
+  return [...list].sort((a, b) => score(a) - score(b));
 }
 
-/** Constraints: camera sau, độ phân giải thấp (AF/exposure apply sau khi mở stream). */
+function pickRearDeviceId(devices: MediaDeviceInfo[]): string | undefined {
+  return listRearCameras(devices)[0]?.deviceId;
+}
+
+function readZoomCaps(track: MediaStreamTrack | null | undefined): ScannerZoomCaps {
+  const empty: ScannerZoomCaps = {
+    supported: false,
+    min: 1,
+    max: 1,
+    step: 0.1,
+    current: 1,
+  };
+  if (!track) return empty;
+  try {
+    const caps = (
+      typeof track.getCapabilities === 'function' ? track.getCapabilities() : {}
+    ) as ExtendedCaps;
+    const settings =
+      typeof track.getSettings === 'function' ? (track.getSettings() as { zoom?: number }) : {};
+    if (!caps.zoom || !(caps.zoom.max > caps.zoom.min)) return empty;
+    return {
+      supported: true,
+      min: Number(caps.zoom.min) || 1,
+      max: Number(caps.zoom.max) || 1,
+      step: Number(caps.zoom.step) || 0.1,
+      current: Number(settings.zoom ?? caps.zoom.min) || caps.zoom.min,
+    };
+  } catch {
+    return empty;
+  }
+}
+
+function clampZoom(value: number, caps: ScannerZoomCaps): number {
+  if (!caps.supported) return value;
+  const stepped =
+    caps.step > 0
+      ? Math.round((value - caps.min) / caps.step) * caps.step + caps.min
+      : value;
+  return Math.min(caps.max, Math.max(caps.min, stepped));
+}
+
+/** Constraints: camera sau + AF continuous (nếu browser nhận trong getUserMedia). */
 function buildStreamConstraints(deviceId?: string): MediaStreamConstraints {
-  const video: MediaTrackConstraints = {
+  const video: MediaTrackConstraints & Record<string, unknown> = {
     width: { ideal: CAPTURE_WIDTH },
     height: { ideal: CAPTURE_HEIGHT },
     frameRate: { ideal: 30, max: 30 },
     ...(deviceId
       ? { deviceId: { exact: deviceId } }
       : { facingMode: { ideal: 'environment' } }),
+    // Non-standard — Chromium có thể nhận; Safari cũ bỏ qua.
+    focusMode: 'continuous',
+    zoom: DEFAULT_SCAN_ZOOM,
   };
-  return { audio: false, video };
+  return { audio: false, video: video as MediaTrackConstraints };
 }
 
-async function openRearCameraStream(): Promise<MediaStream> {
+async function openCameraStream(preferredDeviceId?: string): Promise<MediaStream> {
   const devices = await listVideoInputDevices();
-  const rearId = pickRearDeviceId(devices);
+  const rearId = preferredDeviceId || pickRearDeviceId(devices);
   const attempts: MediaStreamConstraints[] = [
     buildStreamConstraints(rearId),
     buildStreamConstraints(undefined),
@@ -167,42 +239,82 @@ async function openRearCameraStream(): Promise<MediaStream> {
   throw lastError instanceof Error ? lastError : new Error('Không thể khởi động camera.');
 }
 
-async function applyContinuousFocusAndExposure(track: MediaStreamTrack): Promise<void> {
-  if (!track?.applyConstraints) return;
-  const caps = (
-    typeof track.getCapabilities === 'function' ? track.getCapabilities() : {}
-  ) as ExtendedCaps;
+async function openRearCameraStream(): Promise<MediaStream> {
+  return openCameraStream();
+}
 
-  const applyAdvanced = async (constraint: Record<string, unknown>) => {
+async function applyTrackConstraintSafe(
+  track: MediaStreamTrack,
+  constraint: Record<string, unknown>,
+): Promise<boolean> {
+  if (!track?.applyConstraints) return false;
+  try {
+    await track.applyConstraints({ advanced: [constraint] } as unknown as MediaTrackConstraints);
+    return true;
+  } catch {
     try {
-      await track.applyConstraints({ advanced: [constraint] } as unknown as MediaTrackConstraints);
+      await track.applyConstraints(constraint as unknown as MediaTrackConstraints);
+      return true;
     } catch {
-      /* ignore unsupported constraint */
+      return false;
     }
-  };
+  }
+}
 
-  // Zoom về minimum — quét gần dễ hơn, không phải đứng xa.
-  if (caps.zoom && caps.zoom.max > caps.zoom.min) {
-    await applyAdvanced({ zoom: caps.zoom.min });
+/**
+ * Continuous AF + exposure + zoom mặc định 2x (clamp theo capability).
+ * Mọi API zoom/ImageCapture-related đều bọc try/catch — không crash iOS Safari cũ.
+ */
+async function applyContinuousFocusAndExposure(
+  track: MediaStreamTrack,
+  preferredZoom: number = DEFAULT_SCAN_ZOOM,
+): Promise<void> {
+  if (!track?.applyConstraints) return;
+
+  let caps: ExtendedCaps = {};
+  try {
+    caps = (
+      typeof track.getCapabilities === 'function' ? track.getCapabilities() : {}
+    ) as ExtendedCaps;
+  } catch {
+    caps = {};
   }
 
+  // focusMode: continuous (ưu tiên) → auto
   if (caps.focusMode?.includes('continuous')) {
-    await applyAdvanced({ focusMode: 'continuous' });
+    await applyTrackConstraintSafe(track, { focusMode: 'continuous' });
   } else if (caps.focusMode?.includes('auto')) {
-    await applyAdvanced({ focusMode: 'auto' });
+    await applyTrackConstraintSafe(track, { focusMode: 'auto' });
+  }
+
+  // Zoom kỹ thuật số — default 2.0 giúp flagship đứng xa vẫn đọc barcode.
+  try {
+    if (caps.zoom && caps.zoom.max > caps.zoom.min) {
+      const zoomCaps: ScannerZoomCaps = {
+        supported: true,
+        min: caps.zoom.min,
+        max: caps.zoom.max,
+        step: caps.zoom.step || 0.1,
+        current: caps.zoom.min,
+      };
+      const target = clampZoom(preferredZoom, zoomCaps);
+      await applyTrackConstraintSafe(track, { zoom: target });
+    }
+  } catch {
+    /* Zoom không support — bỏ qua */
   }
 
   if (caps.exposureMode?.includes('continuous')) {
-    await applyAdvanced({ exposureMode: 'continuous' });
+    await applyTrackConstraintSafe(track, { exposureMode: 'continuous' });
   } else if (caps.exposureMode?.includes('auto')) {
-    await applyAdvanced({ exposureMode: 'auto' });
+    await applyTrackConstraintSafe(track, { exposureMode: 'auto' });
   }
 
   // Bù sáng nhẹ nếu tối (QR trên phiếu in).
   if (caps.exposureCompensation) {
     const { min, max } = caps.exposureCompensation;
     const bias = Math.min(max, Math.max(min, 0.3));
-    await applyAdvanced({ exposureCompensation: bias });
+    await applyTrackConstraintSafe(track, { exposureCompensation: bias });
   }
 }
 
@@ -233,7 +345,8 @@ export async function triggerTapToFocus(scannerElementId: string): Promise<void>
     }
   }
 
-  await applyContinuousFocusAndExposure(track);
+  const zoomCaps = readZoomCaps(track);
+  await applyContinuousFocusAndExposure(track, zoomCaps.current || DEFAULT_SCAN_ZOOM);
 }
 
 export function stopTapToFocusAssist(tapLayerId: string): void {
@@ -263,7 +376,28 @@ export function startTapToFocusAssist(scannerElementId: string, tapLayerId: stri
 export async function applyScannerAutofocus(scannerElementId: string): Promise<void> {
   const video = document.querySelector(`#${scannerElementId} video`) as HTMLVideoElement | null;
   const track = (video?.srcObject as MediaStream | null)?.getVideoTracks()?.[0];
-  if (track) await applyContinuousFocusAndExposure(track);
+  if (track) {
+    const zoomCaps = readZoomCaps(track);
+    await applyContinuousFocusAndExposure(track, zoomCaps.current || DEFAULT_SCAN_ZOOM);
+  }
+}
+
+/** Áp zoom lên track đang active của scanner container (safe). */
+export async function applyScannerZoom(
+  scannerElementId: string,
+  zoom: number,
+): Promise<boolean> {
+  try {
+    const video = document.querySelector(`#${scannerElementId} video`) as HTMLVideoElement | null;
+    const track = (video?.srcObject as MediaStream | null)?.getVideoTracks()?.[0];
+    if (!track) return false;
+    const caps = readZoomCaps(track);
+    if (!caps.supported) return false;
+    const target = clampZoom(zoom, caps);
+    return applyTrackConstraintSafe(track, { zoom: target });
+  } catch {
+    return false;
+  }
 }
 
 function drawDownscaledFrame(
@@ -317,6 +451,14 @@ export async function startLiveQrScanner(opts: {
   tapLayerId?: string;
   onSuccess: (decodedText: string) => void;
   onError?: (error: Error) => void;
+  /** Gọi khi stream sẵn sàng / đổi camera / đổi zoom capability. */
+  onCapabilities?: (info: {
+    zoom: ScannerZoomCaps;
+    cameraCount: number;
+    cameraLabel: string;
+  }) => void;
+  preferredDeviceId?: string;
+  preferredZoom?: number;
 }): Promise<LiveQrScannerHandle> {
   const blocked = getCameraBlockedReason();
   if (blocked) throw new Error(blocked);
@@ -336,21 +478,47 @@ export async function startLiveQrScanner(opts: {
   video.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;background:#000;';
   container.appendChild(video);
 
-  const stream = await openRearCameraStream();
+  let stream = await openCameraStream(opts.preferredDeviceId);
   video.srcObject = stream;
   await video.play().catch(() => undefined);
 
-  const track = stream.getVideoTracks()[0];
-  if (track) {
-    await applyContinuousFocusAndExposure(track);
-    // Re-apply sau khi camera warm-up (một số máy chỉ nhận AF sau vài trăm ms).
+  const devices = await listVideoInputDevices();
+  const rearCameras = listRearCameras(devices);
+  let cameraIndex = 0;
+  const activeDeviceId = stream.getVideoTracks()[0]?.getSettings?.()?.deviceId;
+  if (activeDeviceId) {
+    const idx = rearCameras.findIndex((d) => d.deviceId === activeDeviceId);
+    if (idx >= 0) cameraIndex = idx;
+  }
+
+  let currentZoom = opts.preferredZoom ?? DEFAULT_SCAN_ZOOM;
+
+  const notifyCaps = () => {
+    try {
+      const track = stream.getVideoTracks()[0];
+      opts.onCapabilities?.({
+        zoom: readZoomCaps(track),
+        cameraCount: Math.max(rearCameras.length, 1),
+        cameraLabel: rearCameras[cameraIndex]?.label || track?.label || 'Camera',
+      });
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const warmUpFocus = (track: MediaStreamTrack | undefined) => {
+    if (!track) return;
+    void applyContinuousFocusAndExposure(track, currentZoom);
     window.setTimeout(() => {
-      void applyContinuousFocusAndExposure(track);
+      void applyContinuousFocusAndExposure(track, currentZoom);
     }, 400);
     window.setTimeout(() => {
-      void applyContinuousFocusAndExposure(track);
+      void applyContinuousFocusAndExposure(track, currentZoom);
     }, 1200);
-  }
+  };
+
+  warmUpFocus(stream.getVideoTracks()[0]);
+  notifyCaps();
 
   if (opts.tapLayerId) {
     startTapToFocusAssist(opts.containerId, opts.tapLayerId);
@@ -523,6 +691,78 @@ export async function startLiveQrScanner(opts: {
     destroy: async () => {
       await handle.stop();
     },
+    setZoom: async (zoom: number) => {
+      try {
+        if (stopped) return false;
+        const track = stream.getVideoTracks()[0];
+        if (!track) return false;
+        const caps = readZoomCaps(track);
+        if (!caps.supported) return false;
+        const target = clampZoom(zoom, caps);
+        const ok = await applyTrackConstraintSafe(track, { zoom: target });
+        if (ok) currentZoom = target;
+        notifyCaps();
+        return ok;
+      } catch {
+        return false;
+      }
+    },
+    getZoomCaps: () => {
+      try {
+        return readZoomCaps(stream.getVideoTracks()[0]);
+      } catch {
+        return {
+          supported: false,
+          min: 1,
+          max: 1,
+          step: 0.1,
+          current: 1,
+        };
+      }
+    },
+    switchCamera: async () => {
+      try {
+        if (stopped) return false;
+        const cams = rearCameras.length
+          ? rearCameras
+          : listRearCameras(await listVideoInputDevices());
+        if (cams.length < 2) return false;
+        cameraIndex = (cameraIndex + 1) % cams.length;
+        const nextId = cams[cameraIndex]?.deviceId;
+        if (!nextId) return false;
+
+        const nextStream = await openCameraStream(nextId);
+        const oldTracks = stream.getTracks();
+        stream = nextStream;
+        video.srcObject = nextStream;
+        await video.play().catch(() => undefined);
+        oldTracks.forEach((t) => {
+          try {
+            t.stop();
+          } catch {
+            /* ignore */
+          }
+        });
+        warmUpFocus(stream.getVideoTracks()[0]);
+        notifyCaps();
+        return true;
+      } catch (err) {
+        console.warn('[QR Scanner] switchCamera failed:', err);
+        return false;
+      }
+    },
+    getCameraLabel: () => {
+      try {
+        return (
+          rearCameras[cameraIndex]?.label ||
+          stream.getVideoTracks()[0]?.label ||
+          'Camera'
+        );
+      } catch {
+        return 'Camera';
+      }
+    },
+    getCameraCount: () => Math.max(rearCameras.length, 1),
   };
 
   activeScanners.set(opts.containerId, handle);
