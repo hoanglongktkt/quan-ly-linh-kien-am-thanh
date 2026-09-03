@@ -453,15 +453,18 @@ export const OrderTableRow = React.memo(function OrderTableRow({
                 <button
                   type="button"
                   onClick={(e) => actions.onPrint(e, order)}
-                  disabled={!order.hasPdf || printingOrderId === order.id}
+                  disabled={printingOrderId === order.id}
                   className={`inline-flex items-center gap-1.5 px-3 py-1.5 font-bold text-[10px] rounded-lg transition-all border ${
                     !order.hasPdf
-                      ? 'bg-gray-300 text-gray-600 border-gray-400 cursor-not-allowed'
+                      ? 'bg-gray-300 text-gray-600 border-gray-400'
                       : 'bg-blue-600 hover:bg-blue-700 text-white border-blue-700 disabled:opacity-60'
                   }`}
-                  title={!order.hasPdf ? 'Đang tải file in...' : 'In đơn này'}
+                  title={!order.hasPdf ? 'Đang tải file in — bấm để lấy PDF' : 'In đơn này'}
                 >
-                  <Printer className={`w-3.5 h-3.5 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
+                  <Printer className={`w-3.5 h-3.5 ${!order.hasPdf || printingOrderId === order.id ? 'animate-spin' : ''}`} />
+                  {printingOrderId === order.id ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : null}
                   In nhanh
                 </button>
               ) : isCancelReturnGroupTab(activeSubTab) || shouldShowCancelReturnStatus(order) ? (
@@ -750,15 +753,15 @@ export const OrderCardRow = React.memo(function OrderCardRow({
             <button
               type="button"
               onClick={(e) => actions.onPrint(e, order)}
-              disabled={!order.hasPdf || printingOrderId === order.id}
+              disabled={printingOrderId === order.id}
               className={`hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 font-bold text-[10px] rounded-lg transition-all border shrink-0 ${
                 !order.hasPdf
-                  ? 'bg-gray-300 text-gray-600 border-gray-400 cursor-not-allowed'
+                  ? 'bg-gray-300 text-gray-600 border-gray-400'
                   : 'bg-blue-600 hover:bg-blue-700 text-white border-blue-700 disabled:opacity-60'
               }`}
-              title={!order.hasPdf ? 'Đang tải file in...' : 'In đơn này'}
+              title={!order.hasPdf ? 'Đang tải file in — bấm để lấy PDF' : 'In đơn này'}
             >
-              <Printer className={`w-3.5 h-3.5 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
+              <Printer className={`w-3.5 h-3.5 ${!order.hasPdf || printingOrderId === order.id ? 'animate-spin' : ''}`} />
               In nhanh
             </button>
           ) : activeSubTab === 'return_requests' ||

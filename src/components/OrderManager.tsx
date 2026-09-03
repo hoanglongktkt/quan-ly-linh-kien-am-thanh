@@ -5445,46 +5445,78 @@ export default function OrderManager({
     }
   };
 
-  /** Poll hasPdf ngầm — không spinner, không await chặn render. Tối đa 20 lần, delay 1.5s. */
+  /** Poll hasPdf nhẹ — GET /api/orders/has-pdf, không reload cả tab. Tối đa 25 lần, delay 800ms. */
+  const patchLocalHasPdfReady = (orderSns: string[]): void => {
+    const want = new Set(orderSns.map((sn) => normalizeConfirmSn(sn)).filter(Boolean));
+    if (want.size === 0) return;
+    let changed = false;
+    const patched = ordersRef.current.map((o) => {
+      const sn = normalizeConfirmSn(o.orderSn || '');
+      const id = normalizeConfirmSn(o.id || '');
+      if (!want.has(sn) && !want.has(id)) return o;
+      if (o.hasPdf && o.readyToPrint) return o;
+      const fileSn = String(o.orderSn || '').replace(/^shopee-/i, '').trim();
+      const filename = o.pdfFilename || (fileSn ? `order_${fileSn}.pdf` : '');
+      const url = o.labelUrl || o.pdfUrl || o.waybill_url || (filename ? `/api/public/labels/${filename}` : '');
+      changed = true;
+      return {
+        ...o,
+        hasPdf: true,
+        readyToPrint: true,
+        pdfFilename: filename || o.pdfFilename,
+        labelUrl: url || o.labelUrl,
+        pdfUrl: url || o.pdfUrl,
+        waybill_url: url || o.waybill_url,
+      };
+    });
+    if (!changed) return;
+    ordersRef.current = patched;
+    onUpdateOrders(patched, { persist: false });
+  };
+
   const startHasPdfBackgroundPoll = (orderSns: string[]): void => {
     const targets = [
-      ...new Set(orderSns.map((sn) => normalizeConfirmSn(sn)).filter(Boolean)),
+      ...new Set(
+        orderSns
+          .map((sn) => String(sn || '').replace(/^shopee-/i, '').trim())
+          .filter(Boolean),
+      ),
     ];
     if (targets.length === 0) return;
     stopHasPdfBackgroundPoll();
     const gen = hasPdfPollGenRef.current;
     let attempt = 0;
-    const maxAttempts = 20;
+    const maxAttempts = 25;
     const tick = () => {
       if (gen !== hasPdfPollGenRef.current) return;
       const remaining = targets.filter((sn) => {
+        const key = normalizeConfirmSn(sn);
         const hit = ordersRef.current.find((o) => {
-          const key = normalizeConfirmSn(o.orderSn || o.id || '');
-          return key === sn;
+          const oKey = normalizeConfirmSn(o.orderSn || o.id || '');
+          return oKey === key;
         });
         return !(hit?.hasPdf || hit?.readyToPrint || hit?.labelUrl || hit?.pdfUrl || hit?.waybill_url);
       });
       if (remaining.length === 0 || attempt >= maxAttempts) return;
       attempt += 1;
-      void Promise.resolve(
-        fetchOrdersWithShop({
-          silent: true,
-          page: 1,
-          limit: ORDERS_PAGE_SIZE,
-          merge: true,
-          tab: 'processed',
-          force: true,
-        }),
-      )
+      void fetch(`/api/orders/has-pdf?sns=${encodeURIComponent(remaining.join(','))}`, {
+        headers: authHeaders(),
+      })
+        .then(async (response) => {
+          if (!response.ok) return;
+          const data = await parseJsonResponse<{ ready?: string[] }>(response);
+          const ready = Array.isArray(data?.ready) ? data.ready : [];
+          if (ready.length > 0) patchLocalHasPdfReady(ready);
+        })
         .catch((error: unknown) => {
           if (error instanceof Error && error.name === 'AbortError') return;
         })
         .finally(() => {
           if (gen !== hasPdfPollGenRef.current) return;
-          hasPdfPollTimerRef.current = window.setTimeout(tick, 1500);
+          hasPdfPollTimerRef.current = window.setTimeout(tick, 800);
         });
     };
-    hasPdfPollTimerRef.current = window.setTimeout(tick, 1200);
+    hasPdfPollTimerRef.current = window.setTimeout(tick, 400);
   };
 
   /**
@@ -5539,10 +5571,9 @@ export default function OrderManager({
   };
 
   /**
-   * Kick silent-prefetch + poll /prefetch-status đến khi isDone.
-   * Không đụng fetch PDF Shopee — chỉ theo dõi tiến trình đã có sẵn.
+   * Kick silent-prefetch (không await). Spinner overlay theo has-pdf; nút In không bị khóa.
    */
-  const startSilentPdfPrefetch = async (orderSns: string[]): Promise<void> => {
+  const startSilentPdfPrefetch = (orderSns: string[]): void => {
     const cleanSns = [
       ...new Set(
         orderSns.map((sn) => String(sn || '').replace(/^shopee-/i, '').trim()).filter(Boolean),
@@ -5554,44 +5585,52 @@ export default function OrderManager({
     }
     const gen = ++pdfPrefetchGenRef.current;
     setIsPdfReady(false);
-    try {
-      const response = await fetch('/api/orders/silent-prefetch-pdfs', {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ orderSns: cleanSns }),
-      });
-      const data = await readResponseJson<any>(response);
-      if (gen !== pdfPrefetchGenRef.current) return;
-      const batchId = String(data?.batchId || '').trim();
-      if (!response.ok || !data?.success || !batchId) {
-        return;
-      }
-      // Poll có giới hạn — chống vòng lặp vô tận / treo UI.
-      const maxPolls = 40;
-      for (let attempt = 0; attempt < maxPolls; attempt += 1) {
+    startHasPdfBackgroundPoll(cleanSns);
+    void (async () => {
+      try {
+        const response = await fetch('/api/orders/silent-prefetch-pdfs', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ orderSns: cleanSns }),
+        });
+        const data = await readResponseJson<any>(response);
         if (gen !== pdfPrefetchGenRef.current) return;
-        if (attempt > 0) {
-          await new Promise((resolve) => window.setTimeout(resolve, 1000));
-          if (gen !== pdfPrefetchGenRef.current) return;
+        const batchId = String(data?.batchId || '').trim();
+        if (!response.ok || !data?.success || !batchId) {
+          setIsPdfReady(true);
+          return;
         }
-        try {
-          const statusRes = await fetch(`/api/orders/prefetch-status/${encodeURIComponent(batchId)}`, {
-            headers: authHeaders(),
-          });
-          const status = await readResponseJson<any>(statusRes);
+        const maxPolls = 20;
+        for (let attempt = 0; attempt < maxPolls; attempt += 1) {
           if (gen !== pdfPrefetchGenRef.current) return;
-          if (statusRes.ok && status?.isDone) break;
-        } catch {
-          /* mạng tạm lỗi — tiếp tục poll đến max */
+          if (attempt > 0) {
+            await new Promise((resolve) => window.setTimeout(resolve, 800));
+            if (gen !== pdfPrefetchGenRef.current) return;
+          }
+          try {
+            const statusRes = await fetch(`/api/orders/prefetch-status/${encodeURIComponent(batchId)}`, {
+              headers: authHeaders(),
+            });
+            const status = await readResponseJson<any>(statusRes);
+            if (gen !== pdfPrefetchGenRef.current) return;
+            const ready = Array.isArray(status?.readyOrderSns) ? status.readyOrderSns : [];
+            if (ready.length > 0) patchLocalHasPdfReady(ready);
+            if (statusRes.ok && status?.isDone) {
+              setIsPdfReady(true);
+              return;
+            }
+          } catch {
+            /* mạng tạm lỗi — tiếp tục poll đến max */
+          }
+        }
+      } catch {
+        /* prefetch kick fail — vẫn mở nút in */
+      } finally {
+        if (gen === pdfPrefetchGenRef.current) {
+          setIsPdfReady(true);
         }
       }
-    } catch {
-      /* prefetch kick fail — vẫn mở nút để user thử in gộp */
-    } finally {
-      if (gen === pdfPrefetchGenRef.current) {
-        setIsPdfReady(true);
-      }
-    }
+    })();
   };
 
   const handleBatchConfirmOnly = async () => {
@@ -5988,7 +6027,7 @@ export default function OrderManager({
           .filter(Boolean),
       ),
     ];
-    if (!orderSns.length || isPrintingFromSummary || !isPdfReady) return;
+    if (!orderSns.length || isPrintingFromSummary) return;
 
     setIsPrintingFromSummary(true);
     setShipConfirmSummary(null);
@@ -6781,6 +6820,16 @@ export default function OrderManager({
     // label to be generated. If it doesn't, Shopee's own error message (surfaced
     // in the alert below) explains why — no more local pre-check blocking the request.
     setPrintingOrderId(order.id);
+    const sn = String(order.orderSn || '').replace(/^shopee-/i, '').trim();
+    if (!order.hasPdf && sn) {
+      beginPrintProgressSession(1, 'Đang lấy PDF vận đơn...');
+      const pdfUrl = `/api/orders/download-pdf/${encodeURIComponent(sn)}`;
+      window.open(pdfUrl, '_blank', 'noopener,noreferrer');
+      startHasPdfBackgroundPoll([sn]);
+      setPrintingOrderId(null);
+      scheduleCloseProgressOverlay(400);
+      return;
+    }
     beginPrintProgressSession(1, 'Đang in 1 đơn — xử lý ngay...');
     onAddLog({
       id: `log-${Date.now()}`,
@@ -8901,11 +8950,9 @@ export default function OrderManager({
                       disabled={
                         isPrintingFromSummary ||
                         isFetchingPdf ||
-                        !isPdfReady ||
                         !shipConfirmSummary.successfulOrderIds.length
                       }
                       className={`flex-1 py-3 rounded-2xl text-sm font-bold transition-colors inline-flex items-center justify-center gap-2 disabled:cursor-not-allowed ${
-                        isPdfReady &&
                         !isPrintingFromSummary &&
                         !isFetchingPdf &&
                         shipConfirmSummary.successfulOrderIds.length > 0

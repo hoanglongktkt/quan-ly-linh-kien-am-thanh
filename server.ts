@@ -10986,6 +10986,89 @@ async function cacheOrderWaybillPdf(orderSn: string, buffer: Buffer): Promise<vo
   putLabelMem(filename, buffer, "application/pdf");
 }
 
+const LABEL_PKG_RETRY_MAX = 6;
+const LABEL_PKG_RETRY_MS = 500;
+
+function isOrderLabelFileReady(orderSn: string): boolean {
+  const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
+  if (!sn) return false;
+  for (const c of new Set([sn, sn.toUpperCase(), sn.toLowerCase()])) {
+    const filename = `order_${c}.pdf`;
+    if (hasLabelMem(filename) || getValidLabelDiskFile(filename)) return true;
+  }
+  return false;
+}
+
+function resolveReadyLabelFilename(orderSn: string): string | null {
+  const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
+  if (!sn) return null;
+  for (const c of new Set([sn, sn.toUpperCase(), sn.toLowerCase()])) {
+    const filename = `order_${c}.pdf`;
+    if (hasLabelMem(filename) || getValidLabelDiskFile(filename)) return filename;
+  }
+  return null;
+}
+
+async function markHasPdfIfLabelFileReady(
+  orderSns: string[],
+  shopId?: string,
+): Promise<void> {
+  const sns = [
+    ...new Set(
+      (Array.isArray(orderSns) ? orderSns : [])
+        .map((s) => String(s || "").replace(/^shopee-/i, "").trim())
+        .filter(Boolean),
+    ),
+  ];
+  for (const sn of sns) {
+    const filename = resolveReadyLabelFilename(sn);
+    if (!filename) continue;
+    const url = absoluteLabelUrl(`/api/public/labels/${filename}`) || "";
+    try {
+      await markOrdersHasPdfInStore([sn], {
+        shopId,
+        labelUrl: url,
+        waybill_url: url,
+        pdfFilename: filename,
+      });
+    } catch (err: any) {
+      console.warn(`[hasPdf] persist ${sn}:`, err?.message || err);
+    }
+  }
+}
+
+async function retryFillPackageNumberForPrint(
+  shopId: string,
+  accessToken: string,
+  order: any,
+): Promise<boolean> {
+  if (buildShopeeShippingDocOrderRows(order).length > 0) return true;
+  const sn = String(order?.orderSn || "").replace(/^shopee-/i, "").trim();
+  if (!sn) return false;
+  for (let attempt = 1; attempt <= LABEL_PKG_RETRY_MAX; attempt++) {
+    try {
+      const tnRes = await shopeeGetTrackingNumber(
+        shopId,
+        accessToken,
+        sn,
+        String(order.packageNumber || order.package_number || "").trim() || undefined,
+      );
+      applyShopeeGetTrackingResponse(order, tnRes);
+    } catch (err: any) {
+      console.warn(
+        `[Label Prepare] get_tracking retry ${attempt}/${LABEL_PKG_RETRY_MAX} ${sn}:`,
+        err?.message || err,
+      );
+    }
+    if (buildShopeeShippingDocOrderRows(order).length > 0) {
+      await persistOrderTrackingToDb(order).catch(() => {});
+      return true;
+    }
+    if (attempt < LABEL_PKG_RETRY_MAX) await sleepMs(LABEL_PKG_RETRY_MS);
+  }
+  return false;
+}
+
 /** Tách PDF gộp Shopee thành file từng đơn khi số trang = số đơn. */
 async function splitMergedWaybillPdfToOrders(
   mergedBuffer: Buffer,
@@ -21699,6 +21782,19 @@ async function startServer() {
       });
 
       setImmediate(() => {
+        try {
+          fireCreateShippingDocumentsForOrders(
+            confirmedRows.map((o: any) => ({
+              order: o,
+              shopId: String(o?.shopId || resolveOrderShopId(o) || ""),
+              orderSn: String(o?.orderSn || "").replace(/^shopee-/i, "").trim(),
+              packageNumber: String(o?.packageNumber || o?.package_number || "").trim() || undefined,
+              trackingNumber: trackingForShopeeShippingDoc(o) || undefined,
+            })),
+          );
+        } catch (primeErr: any) {
+          console.warn("[Confirm Only] BG PDF kick:", primeErr?.message || primeErr);
+        }
         void persistOrdersToDatabase(orders, confirmedRows).catch((err: any) => {
           console.warn("[Confirm Only] background persist failed:", err?.message || err);
         });
@@ -21908,6 +22004,19 @@ async function startServer() {
       );
 
       setImmediate(() => {
+        try {
+          fireCreateShippingDocumentsForOrders(
+            confirmedRows.map((o: any) => ({
+              order: o,
+              shopId: String(o?.shopId || resolveOrderShopId(o) || ""),
+              orderSn: String(o?.orderSn || "").replace(/^shopee-/i, "").trim(),
+              packageNumber: String(o?.packageNumber || o?.package_number || "").trim() || undefined,
+              trackingNumber: trackingForShopeeShippingDoc(o) || undefined,
+            })),
+          );
+        } catch (primeErr: any) {
+          console.warn("[Confirm Async] BG PDF kick:", primeErr?.message || primeErr);
+        }
         void persistOrdersToDatabase(orders, confirmedRows).catch((err: any) => {
           console.warn("[Confirm Async] background persist failed:", err?.message || err);
         });
@@ -22289,6 +22398,7 @@ async function startServer() {
               console.log(`[${logPrefix}] B1 CACHE HIT order_${orderSn}.pdf (${buf.length} bytes)`);
               putLabelMem(`order_${orderSn}.pdf`, buf, "application/pdf");
               documents.push({ orderSns: [orderSn], buffer: buf });
+              void markHasPdfIfLabelFileReady([orderSn], String(orderBySn.get(orderSn)?.shopId || "").trim() || undefined);
               continue;
             }
             unlinkWaybillFileQuiet(localLabelPath);
@@ -22412,6 +22522,7 @@ async function startServer() {
               }
               putLabelMem(filename, buf, "application/pdf");
               documents.push({ orderSns: [orderSn], buffer: buf });
+              void markHasPdfIfLabelFileReady([orderSn], shopId);
             } catch (readErr: any) {
               unlinkWaybillFileQuiet(path.join(PDF_DIR, filename));
               const described = describeShopeeWaybillPayloadError("", null);
@@ -23200,6 +23311,7 @@ async function startServer() {
     failed: number;
     isDone: boolean;
     errors: BatchPdfFailure[];
+    readyOrderSns: string[];
   };
 
   const SILENT_PREFETCH_DEADLINE_MS = 45_000;
@@ -23223,6 +23335,7 @@ async function startServer() {
         status.errors.push(failure);
       } else {
         status.succeeded = Math.min(status.total, status.succeeded + 1);
+        if (!status.readyOrderSns.includes(orderSn)) status.readyOrderSns.push(orderSn);
       }
       status.isDone = status.succeeded + status.failed >= status.total;
     };
@@ -23264,9 +23377,13 @@ async function startServer() {
             if (!storedPdf) {
               throw new Error(`PDF chưa được ghi thành công vào ${path.join(PDF_DIR, filename)}`);
             }
+            void markHasPdfIfLabelFileReady([orderSn]);
             try {
-              fs.mkdirSync(publicPdfDir, { recursive: true });
-              fs.writeFileSync(path.join(publicPdfDir, filename), document.buffer);
+              await fs.promises.mkdir(publicPdfDir, { recursive: true });
+              const publicDest = path.join(publicPdfDir, filename);
+              const publicTmp = `${publicDest}.${process.pid}.${Date.now()}.part`;
+              await fs.promises.writeFile(publicTmp, document.buffer);
+              await fs.promises.rename(publicTmp, publicDest);
             } catch (publicCopyErr: any) {
               console.warn(
                 `[Silent Prefetch] Không thể ghi bản phụ public/pdfs cho ${orderSn}:`,
@@ -23348,6 +23465,7 @@ async function startServer() {
       failed: 0,
       isDone: queued.length === 0,
       errors: [],
+      readyOrderSns: [],
     });
     res.status(200).json({
       success: true,
@@ -23379,7 +23497,28 @@ async function startServer() {
       failed: status.failed,
       isDone: status.isDone,
       errors: status.errors.slice(0, 20),
+      readyOrderSns: status.readyOrderSns || [],
     });
+  };
+
+  const hasPdfStatusRoute = (req: any, res: any) => {
+    const raw = String(req.query?.sns || req.query?.orderSns || "").trim();
+    const fromQuery = raw
+      .split(/[,+\s]+/)
+      .map((s) => String(s || "").replace(/^shopee-/i, "").trim())
+      .filter(Boolean);
+    const sns = [...new Set(fromQuery)].slice(0, 50);
+    if (sns.length === 0) {
+      return res.status(400).json({ success: false, message: "Thiếu danh sách sns.", ready: [], pending: [] });
+    }
+    const ready: string[] = [];
+    const pending: string[] = [];
+    for (let i = 0; i < sns.length; i++) {
+      const sn = sns[i];
+      if (isOrderLabelFileReady(sn)) ready.push(sn);
+      else pending.push(sn);
+    }
+    return res.status(200).json({ success: true, ready, pending });
   };
 
   app.post("/api/orders/fast-process", authMiddleware, fastProcessRouteGuard);
@@ -23392,6 +23531,7 @@ async function startServer() {
   app.post("/api/orders/batch-print-only", authMiddleware, batchPrintOnlyRoute);
   app.post("/api/orders/silent-prefetch-pdfs", authMiddleware, silentPrefetchPdfsRoute);
   app.get("/api/orders/prefetch-status/:batchId", authMiddleware, prefetchStatusRoute);
+  app.get("/api/orders/has-pdf", authMiddleware, hasPdfStatusRoute);
   // orderSn là mã khó đoán; route GET không dùng Bearer để window.open() tải trực tiếp được.
   app.get("/api/orders/download-pdf/:orderSn", downloadPdfRoute);
 
@@ -25043,15 +25183,25 @@ async function startServer() {
     setImmediate(() => {
       void (async () => {
         const queue: any[] = [];
+        const localReady: Array<{ sn: string; shopId?: string }> = [];
         for (const it of items) {
           const o = it.order || it;
           const sn = String(it.orderSn || o?.orderSn || "")
             .replace(/^shopee-/i, "")
             .trim();
           if (!sn || labelPrepareInFlight.has(sn)) continue;
-          if (resolveLocalLabelForOrder(o)) continue;
+          const localHit = resolveLocalLabelForOrder(o) || isOrderLabelFileReady(sn);
+          if (localHit) {
+            localReady.push({ sn, shopId: String(it.shopId || o?.shopId || "").trim() || undefined });
+            continue;
+          }
           labelPrepareInFlight.add(sn);
           queue.push({ ...o, shopId: it.shopId || o?.shopId, orderSn: sn });
+        }
+        if (localReady.length > 0) {
+          void Promise.all(
+            localReady.map((row) => markHasPdfIfLabelFileReady([row.sn], row.shopId)),
+          ).catch(() => {});
         }
         if (queue.length === 0) return;
 
@@ -25086,12 +25236,16 @@ async function startServer() {
               return;
             }
 
-            const shippingRows = buildShopeeShippingDocOrderRows(order);
+            let shippingRows = buildShopeeShippingDocOrderRows(order);
             if (shippingRows.length === 0) {
-              console.warn(
-                `[Label Prepare BG] FAILED ${sn}: missing_package_number; Create/Poll/Download blocked`,
-              );
-              return;
+              const filled = await retryFillPackageNumberForPrint(shopId, accessToken, order);
+              shippingRows = buildShopeeShippingDocOrderRows(order);
+              if (!filled || shippingRows.length === 0) {
+                console.warn(
+                  `[Label Prepare BG] FAILED ${sn}: missing_package_number after ${LABEL_PKG_RETRY_MAX} retries`,
+                );
+                return;
+              }
             }
 
             const gen = await generateShopeeShippingDocument(shopId, shippingRows);
