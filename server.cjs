@@ -4494,7 +4494,7 @@ var require_streams = __commonJS({
   "node_modules/iconv-lite/lib/streams.js"(exports2, module2) {
     "use strict";
     var Buffer4 = require("buffer").Buffer;
-    var Transform2 = require("stream").Transform;
+    var Transform = require("stream").Transform;
     module2.exports = function(iconv) {
       iconv.encodeStream = function encodeStream(encoding, options) {
         return new IconvLiteEncoderStream(iconv.getEncoder(encoding, options), options);
@@ -4511,9 +4511,9 @@ var require_streams = __commonJS({
       this.conv = conv;
       options = options || {};
       options.decodeStrings = false;
-      Transform2.call(this, options);
+      Transform.call(this, options);
     }
-    IconvLiteEncoderStream.prototype = Object.create(Transform2.prototype, {
+    IconvLiteEncoderStream.prototype = Object.create(Transform.prototype, {
       constructor: { value: IconvLiteEncoderStream }
     });
     IconvLiteEncoderStream.prototype._transform = function(chunk, encoding, done) {
@@ -4551,9 +4551,9 @@ var require_streams = __commonJS({
       this.conv = conv;
       options = options || {};
       options.encoding = this.encoding = "utf8";
-      Transform2.call(this, options);
+      Transform.call(this, options);
     }
-    IconvLiteDecoderStream.prototype = Object.create(Transform2.prototype, {
+    IconvLiteDecoderStream.prototype = Object.create(Transform.prototype, {
       constructor: { value: IconvLiteDecoderStream }
     });
     IconvLiteDecoderStream.prototype._transform = function(chunk, encoding, done) {
@@ -4719,13 +4719,13 @@ var require_extend_node = __commonJS({
           return length;
         };
         if (iconv.supportsStreams) {
-          var Readable4 = require("stream").Readable;
-          original.ReadableSetEncoding = Readable4.prototype.setEncoding;
-          Readable4.prototype.setEncoding = function setEncoding(enc, options) {
+          var Readable3 = require("stream").Readable;
+          original.ReadableSetEncoding = Readable3.prototype.setEncoding;
+          Readable3.prototype.setEncoding = function setEncoding(enc, options) {
             this._readableState.decoder = iconv.getDecoder(enc, options);
             this._readableState.encoding = enc;
           };
-          Readable4.prototype.collect = iconv._collect;
+          Readable3.prototype.collect = iconv._collect;
         }
       };
       iconv.undoExtendNodeEncodings = function undoExtendNodeEncodings() {
@@ -4742,9 +4742,9 @@ var require_extend_node = __commonJS({
         Buffer4.prototype.toString = original.BufferToString;
         Buffer4.prototype.write = original.BufferWrite;
         if (iconv.supportsStreams) {
-          var Readable4 = require("stream").Readable;
-          Readable4.prototype.setEncoding = original.ReadableSetEncoding;
-          delete Readable4.prototype.collect;
+          var Readable3 = require("stream").Readable;
+          Readable3.prototype.setEncoding = original.ReadableSetEncoding;
+          delete Readable3.prototype.collect;
         }
         original = void 0;
       };
@@ -70144,7 +70144,7 @@ var require_websocket = __commonJS({
     var net = require("net");
     var tls = require("tls");
     var { randomBytes, createHash } = require("crypto");
-    var { Duplex, Readable: Readable4 } = require("stream");
+    var { Duplex, Readable: Readable3 } = require("stream");
     var { URL: URL2 } = require("url");
     var PerMessageDeflate2 = require_permessage_deflate();
     var Receiver2 = require_receiver();
@@ -74751,8 +74751,6 @@ var import_path22 = __toESM(require("path"), 1);
 var import_fs21 = __toESM(require("fs"), 1);
 var import_crypto5 = __toESM(require("crypto"), 1);
 var import_dotenv2 = __toESM(require_main(), 1);
-var import_node_stream4 = require("node:stream");
-var import_promises3 = require("node:stream/promises");
 var import_pdf_lib = __toESM(require_cjs(), 1);
 
 // cron/index.js
@@ -82407,7 +82405,7 @@ async function countOrdersByTabsFromStore(opts) {
     }
     const match2 = buildCounterMatch(opts);
     const hasShop = Boolean(buildShopIdMongoFilter(opts?.shopId, opts?.shopIds));
-    const pipeline3 = [
+    const pipeline2 = [
       { $match: match2 },
       buildTabFlagProjectStage(),
       {
@@ -82437,7 +82435,7 @@ async function countOrdersByTabsFromStore(opts) {
     ];
     let aggRows = [];
     try {
-      aggRows = await OrderModel.aggregate(pipeline3).option({
+      aggRows = await OrderModel.aggregate(pipeline2).option({
         maxTimeMS: 4e3,
         hint: shopTimeIndexHint(hasShop)
       });
@@ -82446,7 +82444,7 @@ async function countOrdersByTabsFromStore(opts) {
         "[MongoDB] countOrdersByTabsFromStore hint skipped:",
         hintErr?.message || hintErr
       );
-      aggRows = await OrderModel.aggregate(pipeline3).option({ maxTimeMS: 6e3 });
+      aggRows = await OrderModel.aggregate(pipeline2).option({ maxTimeMS: 6e3 });
     }
     const row = aggRows?.[0] || {};
     const counts = { ...empty };
@@ -82675,7 +82673,7 @@ async function aggregateFulfillmentProductsFromStore(opts) {
   if (shopFilter) Object.assign(firstMatch, shopFilter);
   if (dateRange) Object.assign(firstMatch, buildOrderCreatedAtMongoFilter(dateRange));
   Object.assign(firstMatch, fulfillmentProductsMatch());
-  const pipeline3 = [
+  const pipeline2 = [
     { $match: firstMatch },
     { $limit: 2e4 },
     {
@@ -82837,12 +82835,12 @@ async function aggregateFulfillmentProductsFromStore(opts) {
     const hint = shopTimeIndexHint(Boolean(shopFilter));
     let rows = [];
     try {
-      rows = await OrderModel.aggregate(pipeline3).option({
+      rows = await OrderModel.aggregate(pipeline2).option({
         maxTimeMS: 6e3,
         hint
       });
     } catch {
-      rows = await OrderModel.aggregate(pipeline3).option({ maxTimeMS: 6e3 });
+      rows = await OrderModel.aggregate(pipeline2).option({ maxTimeMS: 6e3 });
     }
     const out = [];
     const n = Math.min(rows.length, 2e3);
@@ -127962,11 +127960,17 @@ function getValidLabelDiskFile(filename) {
   try {
     if (!import_fs21.default.existsSync(filePath)) return null;
     const stat3 = import_fs21.default.statSync(filePath);
-    if (!stat3.isFile() || stat3.size <= 0) return null;
+    if (!stat3.isFile() || stat3.size <= 0) {
+      unlinkWaybillFileQuiet(filePath);
+      return null;
+    }
     const fd = import_fs21.default.openSync(filePath, "r");
     try {
       const magic = Buffer.allocUnsafe(4);
-      if (import_fs21.default.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") return null;
+      if (import_fs21.default.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
+        unlinkWaybillFileQuiet(filePath);
+        return null;
+      }
     } finally {
       import_fs21.default.closeSync(fd);
     }
@@ -127982,11 +127986,20 @@ async function getValidLabelDiskFileAsync(filename) {
   let handle;
   try {
     const stat3 = await import_fs21.default.promises.stat(filePath);
-    if (!stat3.isFile() || stat3.size <= 0) return null;
+    if (!stat3.isFile() || stat3.size <= 0) {
+      unlinkWaybillFileQuiet(filePath);
+      return null;
+    }
     handle = await import_fs21.default.promises.open(filePath, "r");
     const magic = Buffer.allocUnsafe(4);
     const { bytesRead } = await handle.read(magic, 0, 4, 0);
-    if (bytesRead !== 4 || magic.toString() !== "%PDF") return null;
+    if (bytesRead !== 4 || magic.toString() !== "%PDF") {
+      await handle.close().catch(() => {
+      });
+      handle = void 0;
+      unlinkWaybillFileQuiet(filePath);
+      return null;
+    }
     return { safe, filePath, size: stat3.size };
   } catch {
     return null;
@@ -127999,6 +128012,119 @@ function isPdfBuffer(buffer, contentType) {
   if (!buffer || buffer.length < 5) return false;
   if (buffer.subarray(0, 4).toString() === "%PDF") return true;
   return false;
+}
+function unlinkWaybillFileQuiet(filePath) {
+  try {
+    if (filePath && import_fs21.default.existsSync(filePath)) import_fs21.default.unlinkSync(filePath);
+  } catch {
+  }
+}
+function tryParseShopeeErrorJson(buffer) {
+  if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0 || buffer.length > 64 * 1024) {
+    return null;
+  }
+  const head = buffer.subarray(0, Math.min(buffer.length, 48)).toString("utf8").replace(/^\uFEFF/, "").trimStart();
+  if (!head.startsWith("{") && !head.startsWith("[")) return null;
+  try {
+    const parsed = JSON.parse(buffer.toString("utf8"));
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+function describeShopeeWaybillPayloadError(contentType, buffer, httpStatus) {
+  const ct = String(contentType || "").toLowerCase();
+  const json2 = tryParseShopeeErrorJson(buffer);
+  const shopeeError = String(
+    json2?.error || json2?.err_code || json2?.response?.error || json2?.fail_error || ""
+  ).trim();
+  const shopeeMessage = String(
+    json2?.message || json2?.msg || json2?.response?.message || json2?.fail_message || json2?.response?.fail_message || ""
+  ).trim();
+  const blob = `${ct} ${shopeeError} ${shopeeMessage}`.toLowerCase();
+  if (/waybill_not_ready|document_not_ready|shipping_document_not_ready|not[_.\s-]*ready/.test(blob)) {
+    return {
+      error: shopeeError || "waybill_not_ready",
+      message: "Shopee b\xE1o ch\u01B0a t\u1EA1o xong m\xE3 v\u1EADn \u0111\u01A1n, vui l\xF2ng th\u1EED l\u1EA1i sau \xEDt ph\xFAt"
+    };
+  }
+  if (/rate.?limit|too_many_requests|error_freq_limit|exceed/.test(blob)) {
+    return {
+      error: shopeeError || "rate_limit",
+      message: "Shopee \u0111ang gi\u1EDBi h\u1EA1n t\u1ED1c \u0111\u1ED9 t\u1EA3i v\u1EADn \u0111\u01A1n, vui l\xF2ng th\u1EED l\u1EA1i sau \xEDt ph\xFAt"
+    };
+  }
+  if (shopeeError || shopeeMessage) {
+    return {
+      error: shopeeError || "shopee_api_error",
+      message: `Shopee t\u1EEB ch\u1ED1i tr\u1EA3 PDF v\u1EADn \u0111\u01A1n: ${shopeeMessage || shopeeError}`
+    };
+  }
+  if (ct.includes("application/json") || ct.includes("text/")) {
+    return {
+      error: "shopee_json_payload",
+      message: "Shopee tr\u1EA3 JSON/text thay v\xEC file PDF v\u1EADn \u0111\u01A1n. Vui l\xF2ng th\u1EED l\u1EA1i sau \xEDt ph\xFAt"
+    };
+  }
+  if (!buffer?.length) {
+    return {
+      error: "empty_payload",
+      message: `Shopee kh\xF4ng tr\u1EA3 d\u1EEF li\u1EC7u PDF v\u1EADn \u0111\u01A1n (HTTP ${httpStatus || "?"}).`
+    };
+  }
+  return {
+    error: "invalid_pdf_payload",
+    message: "Shopee \u0111\xE3 tr\u1EA3 d\u1EEF li\u1EC7u nh\u01B0ng n\u1ED9i dung kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7. Vui l\xF2ng th\u1EED l\u1EA1i sau \xEDt ph\xFAt"
+  };
+}
+function persistValidatedPdfToDisk(dest, buffer) {
+  if (!isPdfBuffer(buffer) || buffer.length < 64) {
+    throw new Error("D\u1EEF li\u1EC7u v\u1EADn \u0111\u01A1n kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7 \u2014 kh\xF4ng ghi \u0111\u0129a.");
+  }
+  ensureLabelsDir();
+  const tempPath = `${dest}.${process.pid}.${Date.now()}.part`;
+  try {
+    import_fs21.default.writeFileSync(tempPath, buffer);
+    const st = import_fs21.default.statSync(tempPath);
+    if (!st.isFile() || st.size <= 0) {
+      throw new Error("File PDF t\u1EA1m r\u1ED7ng sau khi ghi.");
+    }
+    const fd = import_fs21.default.openSync(tempPath, "r");
+    try {
+      const magic = Buffer.allocUnsafe(4);
+      if (import_fs21.default.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
+        throw new Error("File PDF t\u1EA1m kh\xF4ng c\xF3 magic bytes %PDF-.");
+      }
+    } finally {
+      import_fs21.default.closeSync(fd);
+    }
+    if (import_fs21.default.existsSync(dest)) import_fs21.default.unlinkSync(dest);
+    import_fs21.default.renameSync(tempPath, dest);
+    return st.size;
+  } catch (err) {
+    unlinkWaybillFileQuiet(tempPath);
+    try {
+      if (import_fs21.default.existsSync(dest)) {
+        const st = import_fs21.default.statSync(dest);
+        if (!st.isFile() || st.size <= 0) {
+          unlinkWaybillFileQuiet(dest);
+        } else {
+          const fd = import_fs21.default.openSync(dest, "r");
+          try {
+            const magic = Buffer.allocUnsafe(4);
+            if (import_fs21.default.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
+              unlinkWaybillFileQuiet(dest);
+            }
+          } finally {
+            import_fs21.default.closeSync(fd);
+          }
+        }
+      }
+    } catch {
+      unlinkWaybillFileQuiet(dest);
+    }
+    throw err;
+  }
 }
 function getLabelMemTotalBytes() {
   let total = 0;
@@ -128077,14 +128203,8 @@ function putLabelMem(filename, buffer, contentType) {
     });
     const dest = import_path22.default.join(PDF_DIR, safe);
     console.log(`[Labels] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${dest}`);
-    setImmediate(() => {
-      ensureLabelsDir();
-      void import_fs21.default.promises.writeFile(dest, buffer).then(() => {
-        console.log(`[Labels] K\u1EBFt qu\u1EA3: OK \u2014 Disk ${safe} (${buffer.length} bytes) \u2192 ${dest}`);
-      }).catch((err) => {
-        console.warn(`[Labels] Ghi \u0111\u0129a n\u1EC1n th\u1EA5t b\u1EA1i ${safe}:`, err?.message || err);
-      });
-    });
+    persistValidatedPdfToDisk(dest, buffer);
+    console.log(`[Labels] K\u1EBFt qu\u1EA3: OK \u2014 Disk ${safe} (${buffer.length} bytes) \u2192 ${dest}`);
     console.log(`[Labels] K\u1EBFt qu\u1EA3: OK \u2014 RAM ${safe} (${buffer.length} bytes)`);
     return safe;
   } catch (err) {
@@ -128116,7 +128236,10 @@ function getLabelMem(filename) {
       return null;
     }
     const buf = import_fs21.default.readFileSync(filePath);
-    if (!buf.length || !isPdfBuffer(buf)) return null;
+    if (!buf.length || !isPdfBuffer(buf)) {
+      unlinkWaybillFileQuiet(filePath);
+      return null;
+    }
     labelMemCache.set(safe, {
       buf,
       expires: Date.now() + LABEL_RAM_TTL_MS,
@@ -135701,22 +135824,6 @@ async function shopeeDownloadShippingDocument(shopId, accessToken, orderList, fi
   }, 6e4);
   const contentType = String(res.headers.get("content-type") || "").toLowerCase();
   console.log(`[Shopee API] POST ${apiPath} n=${orderList.length} HTTP ${res.status} content-type=${contentType || "(empty)"}`);
-  if (contentType.includes("application/json") || contentType.includes("text/")) {
-    const json2 = await res.json().catch(() => ({}));
-    console.log(
-      `[Shopee API] ${apiPath} tr\u1EA3 JSON l\u1ED7i (kh\xF4ng ph\u1EA3i file): error=${json2?.error || ""} message=${String(json2?.message || "").slice(0, 200)}`
-    );
-    return {
-      error: json2.error || "download_failed",
-      message: json2.message || "Shopee kh\xF4ng tr\u1EA3 v\u1EC1 file v\u1EADn \u0111\u01A1n."
-    };
-  }
-  if (!res.ok || !res.body) {
-    return {
-      error: "download_failed",
-      message: `Shopee download_shipping_document HTTP ${res.status}.`
-    };
-  }
   const declaredLength = Number(res.headers.get("content-length") || 0);
   if (declaredLength > SHOPEE_WAYBILL_PDF_MAX_BYTES) {
     return {
@@ -135724,52 +135831,65 @@ async function shopeeDownloadShippingDocument(shopId, accessToken, orderList, fi
       message: `PDF qu\xE1 l\u1EDBn (${declaredLength} bytes).`
     };
   }
-  const tempPath = `${destination}.${process.pid}.${Date.now()}.part`;
-  let receivedBytes = 0;
-  const limiter = new import_node_stream4.Transform({
-    transform(chunk, _encoding, callback) {
-      receivedBytes += chunk.length;
-      if (receivedBytes > SHOPEE_WAYBILL_PDF_MAX_BYTES) {
-        callback(new Error(`PDF v\u01B0\u1EE3t qu\xE1 ${SHOPEE_WAYBILL_PDF_MAX_BYTES} bytes.`));
-        return;
-      }
-      callback(null, chunk);
-    }
-  });
+  let buffer;
   try {
-    await (0, import_promises3.pipeline)(
-      import_node_stream4.Readable.fromWeb(res.body),
-      limiter,
-      import_fs21.default.createWriteStream(tempPath, { flags: "wx" })
-    );
-    if (receivedBytes < 64) throw new Error(`PDF r\u1ED7ng ho\u1EB7c qu\xE1 nh\u1ECF (${receivedBytes} bytes).`);
-    const tempFd = import_fs21.default.openSync(tempPath, "r");
-    try {
-      const magic = Buffer.allocUnsafe(4);
-      if (import_fs21.default.readSync(tempFd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
-        throw new Error("D\u1EEF li\u1EC7u t\u1EA3i v\u1EC1 kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7.");
-      }
-    } finally {
-      import_fs21.default.closeSync(tempFd);
-    }
-    if (import_fs21.default.existsSync(destination)) import_fs21.default.unlinkSync(destination);
-    import_fs21.default.renameSync(tempPath, destination);
-    console.log(`[Shopee API] ${apiPath} stream OK file=${safe} size=${receivedBytes} bytes`);
+    const bytes = await res.arrayBuffer();
+    buffer = Buffer.from(bytes);
   } catch (readErr) {
-    try {
-      if (import_fs21.default.existsSync(tempPath)) import_fs21.default.unlinkSync(tempPath);
-    } catch {
-    }
-    console.error(`[Shopee API] ${apiPath} stream th\u1EA5t b\u1EA1i:`, readErr?.message || readErr);
-    return { error: "download_read_failed", message: String(readErr?.message || readErr) };
+    console.error(`[Shopee API] ${apiPath} \u0111\u1ECDc body th\u1EA5t b\u1EA1i:`, readErr?.message || readErr);
+    return {
+      error: "download_read_failed",
+      message: String(readErr?.message || "Kh\xF4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c d\u1EEF li\u1EC7u v\u1EADn \u0111\u01A1n t\u1EEB Shopee.")
+    };
   }
-  return {
-    filename: safe,
-    filePath: destination,
-    size: receivedBytes,
-    contentType: contentType || "application/pdf",
-    cached: false
-  };
+  if (buffer.length > SHOPEE_WAYBILL_PDF_MAX_BYTES) {
+    return {
+      error: "pdf_too_large",
+      message: `PDF qu\xE1 l\u1EDBn (${buffer.length} bytes).`
+    };
+  }
+  const looksLikeJsonHeader = contentType.includes("application/json") || contentType.includes("text/");
+  const jsonPayload = tryParseShopeeErrorJson(buffer);
+  const smallJson = buffer.length > 0 && buffer.length < 2048 && jsonPayload;
+  if ((looksLikeJsonHeader || smallJson || jsonPayload) && !isPdfBuffer(buffer)) {
+    const described = describeShopeeWaybillPayloadError(contentType, buffer, res.status);
+    console.log(
+      `[Shopee API] ${apiPath} KH\xD4NG l\u01B0u file \u2014 payload JSON/text error=${described.error} message=${described.message.slice(0, 200)}`
+    );
+    unlinkWaybillFileQuiet(destination);
+    return { error: described.error, message: described.message };
+  }
+  if (!res.ok || !buffer.length) {
+    const described = describeShopeeWaybillPayloadError(contentType, buffer, res.status);
+    unlinkWaybillFileQuiet(destination);
+    return { error: described.error, message: described.message };
+  }
+  if (buffer.length < 64 || !isPdfBuffer(buffer)) {
+    const described = describeShopeeWaybillPayloadError(contentType, buffer, res.status);
+    console.error(
+      `[Shopee API] ${apiPath} payload kh\xF4ng ph\u1EA3i PDF size=${buffer.length} head=${buffer.subarray(0, Math.min(24, buffer.length)).toString("hex")}`
+    );
+    unlinkWaybillFileQuiet(destination);
+    return { error: described.error, message: described.message };
+  }
+  try {
+    const size = persistValidatedPdfToDisk(destination, buffer);
+    console.log(`[Shopee API] ${apiPath} l\u01B0u PDF OK file=${safe} size=${size} bytes`);
+    return {
+      filename: safe,
+      filePath: destination,
+      size,
+      contentType: contentType.includes("pdf") ? contentType : "application/pdf",
+      cached: false
+    };
+  } catch (writeErr) {
+    unlinkWaybillFileQuiet(destination);
+    console.error(`[Shopee API] ${apiPath} ghi PDF th\u1EA5t b\u1EA1i:`, writeErr?.message || writeErr);
+    return {
+      error: "download_write_failed",
+      message: String(writeErr?.message || "Kh\xF4ng l\u01B0u \u0111\u01B0\u1EE3c file PDF v\u1EADn \u0111\u01A1n h\u1EE3p l\u1EC7.")
+    };
+  }
 }
 function shippingDocRowKey(row) {
   return `${String(row?.order_sn || "").trim()}::${String(row?.package_number || "").trim()}`;
@@ -135797,9 +135917,13 @@ async function cacheOrderWaybillPdf(orderSn, buffer) {
   const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
   if (!sn || !buffer?.length) return;
   const filename = `order_${sn}.pdf`;
+  if (!isPdfBuffer(buffer)) {
+    const dest = import_path22.default.join(PDF_DIR, filename);
+    unlinkWaybillFileQuiet(dest);
+    const described = describeShopeeWaybillPayloadError("", buffer);
+    throw new Error(described.message);
+  }
   putLabelMem(filename, buffer, "application/pdf");
-  ensureLabelsDir();
-  await import_fs21.default.promises.writeFile(import_path22.default.join(PDF_DIR, filename), buffer);
 }
 async function splitMergedWaybillPdfToOrders(mergedBuffer, orderSns) {
   const result = /* @__PURE__ */ new Map();
@@ -136088,7 +136212,16 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
                   pendingByOrder.delete(sn);
                   downloadedOk = true;
                 }
+              } else {
+                unlinkWaybillFileQuiet(downloadResult.filePath);
+                console.warn(
+                  `[Shopee Batch Waybill] BULK file kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7: ${downloadResult.filePath}`
+                );
               }
+            } else if (downloadResult?.error || downloadResult?.message) {
+              console.warn(
+                `[Shopee Batch Waybill] BULK download Shopee: ${downloadResult.error || ""} ${String(downloadResult.message || "").slice(0, 200)}`
+              );
             }
           } catch (dlErr) {
             console.warn(`[Shopee Batch Waybill] BULK download:`, dlErr?.message || dlErr);
@@ -136107,9 +136240,33 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
                   `order_${sn}.pdf`,
                   opts?.signal
                 );
-                if (!one?.filePath || !one?.filename || !one?.size) return;
+                if (!one?.filePath || !one?.filename || !one?.size) {
+                  if (one?.error || one?.message) {
+                    if (!skippedOrders.some((s2) => s2.orderSn === sn)) {
+                      skippedOrders.push({
+                        orderSn: sn,
+                        error: String(one.error || "download_failed"),
+                        message: String(
+                          one.message || "Shopee b\xE1o ch\u01B0a t\u1EA1o xong m\xE3 v\u1EADn \u0111\u01A1n, vui l\xF2ng th\u1EED l\u1EA1i sau \xEDt ph\xFAt"
+                        )
+                      });
+                    }
+                  }
+                  return;
+                }
                 const buf = await import_fs21.default.promises.readFile(one.filePath);
-                if (!buf.length || !isPdfBuffer(buf)) return;
+                if (!buf.length || !isPdfBuffer(buf)) {
+                  unlinkWaybillFileQuiet(one.filePath);
+                  const described = describeShopeeWaybillPayloadError(String(one.contentType || ""), buf);
+                  if (!skippedOrders.some((s2) => s2.orderSn === sn)) {
+                    skippedOrders.push({
+                      orderSn: sn,
+                      error: described.error,
+                      message: described.message
+                    });
+                  }
+                  return;
+                }
                 putLabelMem(one.filename, buf, "application/pdf");
                 readyOrderSns.push(sn);
                 readyOrderRows.push(...rows);
@@ -136135,7 +136292,7 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
           skippedOrders.push({
             orderSn: sn,
             error: "document_not_ready",
-            message: "Shopee ch\u01B0a t\u1EA1o xong PDF sau khi \u0111\xE3 polling ch\u1EDD READY"
+            message: "Shopee b\xE1o ch\u01B0a t\u1EA1o xong m\xE3 v\u1EADn \u0111\u01A1n, vui l\xF2ng th\u1EED l\u1EA1i sau \xEDt ph\xFAt"
           });
         }
       }
@@ -143507,6 +143664,10 @@ async function startServer() {
   function validateBatchPdfBytes(bytes) {
     const buffer = Buffer.from(bytes);
     if (buffer.length === 0 || buffer.length > BATCH_PDF_MAX_BYTES || !isPdfBuffer(buffer)) {
+      if (tryParseShopeeErrorJson(buffer)) {
+        const described = describeShopeeWaybillPayloadError("", buffer);
+        console.warn(`[Batch PDF] Shopee payload kh\xF4ng ph\u1EA3i PDF: ${described.message}`);
+      }
       return null;
     }
     return buffer;
@@ -143555,6 +143716,9 @@ async function startServer() {
               documents.push({ orderSns: [orderSn], buffer: buf });
               continue;
             }
+            unlinkWaybillFileQuiet(localLabelPath);
+          } else if (stat3.size <= 0) {
+            unlinkWaybillFileQuiet(localLabelPath);
           }
         } catch (err) {
           console.warn(`[${logPrefix}] Local read fail order_${orderSn}.pdf:`, err?.message || err);
@@ -143650,20 +143814,25 @@ async function startServer() {
               const mem = getLabelMem(filename);
               const buf = mem?.buf;
               if (!buf?.length || buf.length > BATCH_PDF_MAX_BYTES || !isPdfBuffer(buf)) {
+                const dest = import_path22.default.join(PDF_DIR, filename);
+                unlinkWaybillFileQuiet(dest);
+                const described = describeShopeeWaybillPayloadError("", buf);
                 failedBySn.set(orderSn, {
                   orderSn,
-                  error: "invalid_pdf",
-                  message: "D\u1EEF li\u1EC7u PDF kh\xF4ng h\u1EE3p l\u1EC7."
+                  error: described.error,
+                  message: described.message
                 });
                 continue;
               }
               putLabelMem(filename, buf, "application/pdf");
               documents.push({ orderSns: [orderSn], buffer: buf });
             } catch (readErr) {
+              unlinkWaybillFileQuiet(import_path22.default.join(PDF_DIR, filename));
+              const described = describeShopeeWaybillPayloadError("", null);
               failedBySn.set(orderSn, {
                 orderSn,
-                error: "invalid_pdf",
-                message: String(readErr?.message || "Kh\xF4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c PDF \u0111\xE3 t\u1EA3i.")
+                error: described.error,
+                message: String(readErr?.message || described.message)
               });
             }
           }
@@ -145631,12 +145800,26 @@ async function startServer() {
           for (const downloaded of fallback.documents) {
             for (const orderSn of downloaded.orderSns) {
               const filename = buildCachedLabelFilename([orderSn]);
-              const cached = await getValidLabelDiskFileAsync(filename);
+              const dest = import_path22.default.join(PDF_DIR, filename);
+              let cached = await getValidLabelDiskFileAsync(filename);
+              if (!cached && downloaded.buffer && isPdfBuffer(downloaded.buffer)) {
+                try {
+                  putLabelMem(filename, downloaded.buffer, "application/pdf");
+                  cached = await getValidLabelDiskFileAsync(filename);
+                } catch (persistErr) {
+                  console.warn(
+                    `[Print Local] Persist PDF ${filename} th\u1EA5t b\u1EA1i:`,
+                    persistErr?.message || persistErr
+                  );
+                }
+              }
               if (!cached) {
+                unlinkWaybillFileQuiet(dest);
+                const described = describeShopeeWaybillPayloadError("", downloaded.buffer);
                 failureBySn.set(orderSn, {
                   orderSn,
-                  error: "invalid_pdf",
-                  message: "Shopee \u0111\xE3 tr\u1EA3 d\u1EEF li\u1EC7u nh\u01B0ng file PDF l\u01B0u xu\u1ED1ng \u1ED5 c\u1EE9ng kh\xF4ng h\u1EE3p l\u1EC7."
+                  error: described.error,
+                  message: described.message
                 });
                 continue;
               }

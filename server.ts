@@ -3,8 +3,6 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import dotenv from "dotenv";
-import { Readable, Transform } from "node:stream";
-import { pipeline } from "node:stream/promises";
 import { PDFDocument } from "pdf-lib";
 import { scheduleAutoIncrementalOrdersSync, scheduleHandedOverStatusReconcile, scheduleShopeeReturnRequestsSync, scheduleReadyToShipBackfill, scheduleLabelPdfCleanup, scheduleGhnStatusSync } from "./cron/index.js";
 import {
@@ -705,11 +703,17 @@ function getValidLabelDiskFile(filename: string): { safe: string; filePath: stri
   try {
     if (!fs.existsSync(filePath)) return null;
     const stat = fs.statSync(filePath);
-    if (!stat.isFile() || stat.size <= 0) return null;
+    if (!stat.isFile() || stat.size <= 0) {
+      unlinkWaybillFileQuiet(filePath);
+      return null;
+    }
     const fd = fs.openSync(filePath, "r");
     try {
       const magic = Buffer.allocUnsafe(4);
-      if (fs.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") return null;
+      if (fs.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
+        unlinkWaybillFileQuiet(filePath);
+        return null;
+      }
     } finally {
       fs.closeSync(fd);
     }
@@ -728,11 +732,19 @@ async function getValidLabelDiskFileAsync(
   let handle: fs.promises.FileHandle | undefined;
   try {
     const stat = await fs.promises.stat(filePath);
-    if (!stat.isFile() || stat.size <= 0) return null;
+    if (!stat.isFile() || stat.size <= 0) {
+      unlinkWaybillFileQuiet(filePath);
+      return null;
+    }
     handle = await fs.promises.open(filePath, "r");
     const magic = Buffer.allocUnsafe(4);
     const { bytesRead } = await handle.read(magic, 0, 4, 0);
-    if (bytesRead !== 4 || magic.toString() !== "%PDF") return null;
+    if (bytesRead !== 4 || magic.toString() !== "%PDF") {
+      await handle.close().catch(() => {});
+      handle = undefined;
+      unlinkWaybillFileQuiet(filePath);
+      return null;
+    }
     return { safe, filePath, size: stat.size };
   } catch {
     return null;
@@ -746,6 +758,141 @@ function isPdfBuffer(buffer: Buffer, contentType?: string): boolean {
   if (buffer.subarray(0, 4).toString() === "%PDF") return true;
   // Chỉ tin contentType khi buffer đã có magic PDF — tránh chấp nhận JSON/HTML.
   return false;
+}
+
+function unlinkWaybillFileQuiet(filePath: string): void {
+  try {
+    if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Parse JSON lỗi Shopee từ payload nhỏ — không parse PDF/binary lớn. */
+function tryParseShopeeErrorJson(buffer: Buffer | null | undefined): any | null {
+  if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0 || buffer.length > 64 * 1024) {
+    return null;
+  }
+  const head = buffer
+    .subarray(0, Math.min(buffer.length, 48))
+    .toString("utf8")
+    .replace(/^\uFEFF/, "")
+    .trimStart();
+  if (!head.startsWith("{") && !head.startsWith("[")) return null;
+  try {
+    const parsed = JSON.parse(buffer.toString("utf8"));
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function describeShopeeWaybillPayloadError(
+  contentType: string,
+  buffer: Buffer | null | undefined,
+  httpStatus?: number,
+): { error: string; message: string } {
+  const ct = String(contentType || "").toLowerCase();
+  const json = tryParseShopeeErrorJson(buffer);
+  const shopeeError = String(
+    json?.error || json?.err_code || json?.response?.error || json?.fail_error || "",
+  ).trim();
+  const shopeeMessage = String(
+    json?.message ||
+      json?.msg ||
+      json?.response?.message ||
+      json?.fail_message ||
+      json?.response?.fail_message ||
+      "",
+  ).trim();
+  const blob = `${ct} ${shopeeError} ${shopeeMessage}`.toLowerCase();
+
+  if (
+    /waybill_not_ready|document_not_ready|shipping_document_not_ready|not[_.\s-]*ready/.test(blob)
+  ) {
+    return {
+      error: shopeeError || "waybill_not_ready",
+      message: "Shopee báo chưa tạo xong mã vận đơn, vui lòng thử lại sau ít phút",
+    };
+  }
+  if (/rate.?limit|too_many_requests|error_freq_limit|exceed/.test(blob)) {
+    return {
+      error: shopeeError || "rate_limit",
+      message: "Shopee đang giới hạn tốc độ tải vận đơn, vui lòng thử lại sau ít phút",
+    };
+  }
+  if (shopeeError || shopeeMessage) {
+    return {
+      error: shopeeError || "shopee_api_error",
+      message: `Shopee từ chối trả PDF vận đơn: ${shopeeMessage || shopeeError}`,
+    };
+  }
+  if (ct.includes("application/json") || ct.includes("text/")) {
+    return {
+      error: "shopee_json_payload",
+      message: "Shopee trả JSON/text thay vì file PDF vận đơn. Vui lòng thử lại sau ít phút",
+    };
+  }
+  if (!buffer?.length) {
+    return {
+      error: "empty_payload",
+      message: `Shopee không trả dữ liệu PDF vận đơn (HTTP ${httpStatus || "?"}).`,
+    };
+  }
+  return {
+    error: "invalid_pdf_payload",
+    message: "Shopee đã trả dữ liệu nhưng nội dung không phải PDF hợp lệ. Vui lòng thử lại sau ít phút",
+  };
+}
+
+function persistValidatedPdfToDisk(dest: string, buffer: Buffer): number {
+  if (!isPdfBuffer(buffer) || buffer.length < 64) {
+    throw new Error("Dữ liệu vận đơn không phải PDF hợp lệ — không ghi đĩa.");
+  }
+  ensureLabelsDir();
+  const tempPath = `${dest}.${process.pid}.${Date.now()}.part`;
+  try {
+    fs.writeFileSync(tempPath, buffer);
+    const st = fs.statSync(tempPath);
+    if (!st.isFile() || st.size <= 0) {
+      throw new Error("File PDF tạm rỗng sau khi ghi.");
+    }
+    const fd = fs.openSync(tempPath, "r");
+    try {
+      const magic = Buffer.allocUnsafe(4);
+      if (fs.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
+        throw new Error("File PDF tạm không có magic bytes %PDF-.");
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+    if (fs.existsSync(dest)) fs.unlinkSync(dest);
+    fs.renameSync(tempPath, dest);
+    return st.size;
+  } catch (err) {
+    unlinkWaybillFileQuiet(tempPath);
+    try {
+      if (fs.existsSync(dest)) {
+        const st = fs.statSync(dest);
+        if (!st.isFile() || st.size <= 0) {
+          unlinkWaybillFileQuiet(dest);
+        } else {
+          const fd = fs.openSync(dest, "r");
+          try {
+            const magic = Buffer.allocUnsafe(4);
+            if (fs.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
+              unlinkWaybillFileQuiet(dest);
+            }
+          } finally {
+            fs.closeSync(fd);
+          }
+        }
+      }
+    } catch {
+      unlinkWaybillFileQuiet(dest);
+    }
+    throw err;
+  }
 }
 
 function getLabelMemTotalBytes(): number {
@@ -848,18 +995,8 @@ function putLabelMem(filename: string, buffer: Buffer, contentType?: string): st
 
     const dest = path.join(PDF_DIR, safe);
     console.log(`[Labels] Đường dẫn lưu file dự kiến: ${dest}`);
-    setImmediate(() => {
-      ensureLabelsDir();
-      void fs.promises
-        .writeFile(dest, buffer)
-        .then(() => {
-          console.log(`[Labels] Kết quả: OK — Disk ${safe} (${buffer.length} bytes) → ${dest}`);
-        })
-        .catch((err: any) => {
-          console.warn(`[Labels] Ghi đĩa nền thất bại ${safe}:`, err?.message || err);
-        });
-    });
-
+    persistValidatedPdfToDisk(dest, buffer);
+    console.log(`[Labels] Kết quả: OK — Disk ${safe} (${buffer.length} bytes) → ${dest}`);
     console.log(`[Labels] Kết quả: OK — RAM ${safe} (${buffer.length} bytes)`);
     return safe;
   } catch (err: any) {
@@ -895,7 +1032,10 @@ function getLabelMem(filename: string): { buf: Buffer; contentType?: string } | 
       return null;
     }
     const buf = fs.readFileSync(filePath);
-    if (!buf.length || !isPdfBuffer(buf)) return null;
+    if (!buf.length || !isPdfBuffer(buf)) {
+      unlinkWaybillFileQuiet(filePath);
+      return null;
+    }
     labelMemCache.set(safe, {
       buf,
       expires: Date.now() + LABEL_RAM_TTL_MS,
@@ -10712,24 +10852,6 @@ async function shopeeDownloadShippingDocument(
   const contentType = String(res.headers.get("content-type") || "").toLowerCase();
   console.log(`[Shopee API] POST ${apiPath} n=${orderList.length} HTTP ${res.status} content-type=${contentType || "(empty)"}`);
 
-  if (contentType.includes("application/json") || contentType.includes("text/")) {
-    const json: any = await res.json().catch(() => ({}));
-    console.log(
-      `[Shopee API] ${apiPath} trả JSON lỗi (không phải file): error=${json?.error || ""} message=${String(json?.message || "").slice(0, 200)}`,
-    );
-    return {
-      error: json.error || "download_failed",
-      message: json.message || "Shopee không trả về file vận đơn.",
-    };
-  }
-
-  if (!res.ok || !res.body) {
-    return {
-      error: "download_failed",
-      message: `Shopee download_shipping_document HTTP ${res.status}.`,
-    };
-  }
-
   const declaredLength = Number(res.headers.get("content-length") || 0);
   if (declaredLength > SHOPEE_WAYBILL_PDF_MAX_BYTES) {
     return {
@@ -10738,55 +10860,72 @@ async function shopeeDownloadShippingDocument(
     };
   }
 
-  const tempPath = `${destination}.${process.pid}.${Date.now()}.part`;
-  let receivedBytes = 0;
-  const limiter = new Transform({
-    transform(chunk, _encoding, callback) {
-      receivedBytes += chunk.length;
-      if (receivedBytes > SHOPEE_WAYBILL_PDF_MAX_BYTES) {
-        callback(new Error(`PDF vượt quá ${SHOPEE_WAYBILL_PDF_MAX_BYTES} bytes.`));
-        return;
-      }
-      callback(null, chunk);
-    },
-  });
-
+  let buffer: Buffer;
   try {
-    await pipeline(
-      Readable.fromWeb(res.body as any),
-      limiter,
-      fs.createWriteStream(tempPath, { flags: "wx" }),
-    );
-    if (receivedBytes < 64) throw new Error(`PDF rỗng hoặc quá nhỏ (${receivedBytes} bytes).`);
-    const tempFd = fs.openSync(tempPath, "r");
-    try {
-      const magic = Buffer.allocUnsafe(4);
-      if (fs.readSync(tempFd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
-        throw new Error("Dữ liệu tải về không phải PDF hợp lệ.");
-      }
-    } finally {
-      fs.closeSync(tempFd);
-    }
-    if (fs.existsSync(destination)) fs.unlinkSync(destination);
-    fs.renameSync(tempPath, destination);
-    console.log(`[Shopee API] ${apiPath} stream OK file=${safe} size=${receivedBytes} bytes`);
+    const bytes = await res.arrayBuffer();
+    buffer = Buffer.from(bytes);
   } catch (readErr: any) {
-    try {
-      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
-    } catch {
-      /* ignore cleanup */
-    }
-    console.error(`[Shopee API] ${apiPath} stream thất bại:`, readErr?.message || readErr);
-    return { error: "download_read_failed", message: String(readErr?.message || readErr) };
+    console.error(`[Shopee API] ${apiPath} đọc body thất bại:`, readErr?.message || readErr);
+    return {
+      error: "download_read_failed",
+      message: String(readErr?.message || "Không đọc được dữ liệu vận đơn từ Shopee."),
+    };
   }
 
-  return {
-    filename: safe,
-    filePath: destination,
-    size: receivedBytes,
-    contentType: contentType || "application/pdf",
-    cached: false,
-  };
+  if (buffer.length > SHOPEE_WAYBILL_PDF_MAX_BYTES) {
+    return {
+      error: "pdf_too_large",
+      message: `PDF quá lớn (${buffer.length} bytes).`,
+    };
+  }
+
+  const looksLikeJsonHeader =
+    contentType.includes("application/json") || contentType.includes("text/");
+  const jsonPayload = tryParseShopeeErrorJson(buffer);
+  const smallJson = buffer.length > 0 && buffer.length < 2048 && jsonPayload;
+
+  if ((looksLikeJsonHeader || smallJson || jsonPayload) && !isPdfBuffer(buffer)) {
+    const described = describeShopeeWaybillPayloadError(contentType, buffer, res.status);
+    console.log(
+      `[Shopee API] ${apiPath} KHÔNG lưu file — payload JSON/text error=${described.error} message=${described.message.slice(0, 200)}`,
+    );
+    unlinkWaybillFileQuiet(destination);
+    return { error: described.error, message: described.message };
+  }
+
+  if (!res.ok || !buffer.length) {
+    const described = describeShopeeWaybillPayloadError(contentType, buffer, res.status);
+    unlinkWaybillFileQuiet(destination);
+    return { error: described.error, message: described.message };
+  }
+
+  if (buffer.length < 64 || !isPdfBuffer(buffer)) {
+    const described = describeShopeeWaybillPayloadError(contentType, buffer, res.status);
+    console.error(
+      `[Shopee API] ${apiPath} payload không phải PDF size=${buffer.length} head=${buffer.subarray(0, Math.min(24, buffer.length)).toString("hex")}`,
+    );
+    unlinkWaybillFileQuiet(destination);
+    return { error: described.error, message: described.message };
+  }
+
+  try {
+    const size = persistValidatedPdfToDisk(destination, buffer);
+    console.log(`[Shopee API] ${apiPath} lưu PDF OK file=${safe} size=${size} bytes`);
+    return {
+      filename: safe,
+      filePath: destination,
+      size,
+      contentType: contentType.includes("pdf") ? contentType : "application/pdf",
+      cached: false,
+    };
+  } catch (writeErr: any) {
+    unlinkWaybillFileQuiet(destination);
+    console.error(`[Shopee API] ${apiPath} ghi PDF thất bại:`, writeErr?.message || writeErr);
+    return {
+      error: "download_write_failed",
+      message: String(writeErr?.message || "Không lưu được file PDF vận đơn hợp lệ."),
+    };
+  }
 }
 
 type ShopeeWaybillOrderRow = {
@@ -10838,9 +10977,13 @@ async function cacheOrderWaybillPdf(orderSn: string, buffer: Buffer): Promise<vo
   const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
   if (!sn || !buffer?.length) return;
   const filename = `order_${sn}.pdf`;
+  if (!isPdfBuffer(buffer)) {
+    const dest = path.join(PDF_DIR, filename);
+    unlinkWaybillFileQuiet(dest);
+    const described = describeShopeeWaybillPayloadError("", buffer);
+    throw new Error(described.message);
+  }
   putLabelMem(filename, buffer, "application/pdf");
-  ensureLabelsDir();
-  await fs.promises.writeFile(path.join(PDF_DIR, filename), buffer);
 }
 
 /** Tách PDF gộp Shopee thành file từng đơn khi số trang = số đơn. */
@@ -11576,7 +11719,16 @@ async function batchDownloadShopeeWaybillPdf(
                   pendingByOrder.delete(sn);
                   downloadedOk = true;
                 }
+              } else {
+                unlinkWaybillFileQuiet(downloadResult.filePath);
+                console.warn(
+                  `[Shopee Batch Waybill] BULK file không phải PDF hợp lệ: ${downloadResult.filePath}`,
+                );
               }
+            } else if (downloadResult?.error || downloadResult?.message) {
+              console.warn(
+                `[Shopee Batch Waybill] BULK download Shopee: ${downloadResult.error || ""} ${String(downloadResult.message || "").slice(0, 200)}`,
+              );
             }
           } catch (dlErr: any) {
             console.warn(`[Shopee Batch Waybill] BULK download:`, dlErr?.message || dlErr);
@@ -11597,9 +11749,34 @@ async function batchDownloadShopeeWaybillPdf(
                   `order_${sn}.pdf`,
                   opts?.signal,
                 );
-                if (!one?.filePath || !one?.filename || !one?.size) return;
+                if (!one?.filePath || !one?.filename || !one?.size) {
+                  if (one?.error || one?.message) {
+                    if (!skippedOrders.some((s) => s.orderSn === sn)) {
+                      skippedOrders.push({
+                        orderSn: sn,
+                        error: String(one.error || "download_failed"),
+                        message: String(
+                          one.message ||
+                            "Shopee báo chưa tạo xong mã vận đơn, vui lòng thử lại sau ít phút",
+                        ),
+                      });
+                    }
+                  }
+                  return;
+                }
                 const buf = await fs.promises.readFile(one.filePath);
-                if (!buf.length || !isPdfBuffer(buf)) return;
+                if (!buf.length || !isPdfBuffer(buf)) {
+                  unlinkWaybillFileQuiet(one.filePath);
+                  const described = describeShopeeWaybillPayloadError(String(one.contentType || ""), buf);
+                  if (!skippedOrders.some((s) => s.orderSn === sn)) {
+                    skippedOrders.push({
+                      orderSn: sn,
+                      error: described.error,
+                      message: described.message,
+                    });
+                  }
+                  return;
+                }
                 putLabelMem(one.filename, buf, "application/pdf");
                 readyOrderSns.push(sn);
                 readyOrderRows.push(...rows);
@@ -11626,7 +11803,7 @@ async function batchDownloadShopeeWaybillPdf(
           skippedOrders.push({
             orderSn: sn,
             error: "document_not_ready",
-            message: "Shopee chưa tạo xong PDF sau khi đã polling chờ READY",
+            message: "Shopee báo chưa tạo xong mã vận đơn, vui lòng thử lại sau ít phút",
           });
         }
       }
@@ -22046,6 +22223,10 @@ async function startServer() {
   function validateBatchPdfBytes(bytes: ArrayBuffer): Buffer | null {
     const buffer = Buffer.from(bytes);
     if (buffer.length === 0 || buffer.length > BATCH_PDF_MAX_BYTES || !isPdfBuffer(buffer)) {
+      if (tryParseShopeeErrorJson(buffer)) {
+        const described = describeShopeeWaybillPayloadError("", buffer);
+        console.warn(`[Batch PDF] Shopee payload không phải PDF: ${described.message}`);
+      }
       return null;
     }
     return buffer;
@@ -22110,6 +22291,9 @@ async function startServer() {
               documents.push({ orderSns: [orderSn], buffer: buf });
               continue;
             }
+            unlinkWaybillFileQuiet(localLabelPath);
+          } else if (stat.size <= 0) {
+            unlinkWaybillFileQuiet(localLabelPath);
           }
         } catch (err: any) {
           console.warn(`[${logPrefix}] Local read fail order_${orderSn}.pdf:`, err?.message || err);
@@ -22216,20 +22400,25 @@ async function startServer() {
               const mem = getLabelMem(filename);
               const buf = mem?.buf;
               if (!buf?.length || buf.length > BATCH_PDF_MAX_BYTES || !isPdfBuffer(buf)) {
+                const dest = path.join(PDF_DIR, filename);
+                unlinkWaybillFileQuiet(dest);
+                const described = describeShopeeWaybillPayloadError("", buf);
                 failedBySn.set(orderSn, {
                   orderSn,
-                  error: "invalid_pdf",
-                  message: "Dữ liệu PDF không hợp lệ.",
+                  error: described.error,
+                  message: described.message,
                 });
                 continue;
               }
               putLabelMem(filename, buf, "application/pdf");
               documents.push({ orderSns: [orderSn], buffer: buf });
             } catch (readErr: any) {
+              unlinkWaybillFileQuiet(path.join(PDF_DIR, filename));
+              const described = describeShopeeWaybillPayloadError("", null);
               failedBySn.set(orderSn, {
                 orderSn,
-                error: "invalid_pdf",
-                message: String(readErr?.message || "Không đọc được PDF đã tải."),
+                error: described.error,
+                message: String(readErr?.message || described.message),
               });
             }
           }
@@ -24642,12 +24831,26 @@ async function startServer() {
           for (const downloaded of fallback.documents) {
             for (const orderSn of downloaded.orderSns) {
               const filename = buildCachedLabelFilename([orderSn]);
-              const cached = await getValidLabelDiskFileAsync(filename);
+              const dest = path.join(PDF_DIR, filename);
+              let cached = await getValidLabelDiskFileAsync(filename);
+              if (!cached && downloaded.buffer && isPdfBuffer(downloaded.buffer)) {
+                try {
+                  putLabelMem(filename, downloaded.buffer, "application/pdf");
+                  cached = await getValidLabelDiskFileAsync(filename);
+                } catch (persistErr: any) {
+                  console.warn(
+                    `[Print Local] Persist PDF ${filename} thất bại:`,
+                    persistErr?.message || persistErr,
+                  );
+                }
+              }
               if (!cached) {
+                unlinkWaybillFileQuiet(dest);
+                const described = describeShopeeWaybillPayloadError("", downloaded.buffer);
                 failureBySn.set(orderSn, {
                   orderSn,
-                  error: "invalid_pdf",
-                  message: "Shopee đã trả dữ liệu nhưng file PDF lưu xuống ổ cứng không hợp lệ.",
+                  error: described.error,
+                  message: described.message,
                 });
                 continue;
               }
