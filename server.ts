@@ -9116,6 +9116,9 @@ async function upsertChannelListingsBatch(
             stock: Math.max(0, Math.round(Number(item?.stock) || 0)),
             status: keepExistingLink ? "success" : prev?.status === "failed" ? "failed" : "unlinked",
             linkedProductId: keepExistingLink ? prev.linkedProductId : undefined,
+            // Giữ snapshot tên/SKU kho — auto-heal sẽ đồng bộ lại khi lệch master.
+            linkedProductTitle: keepExistingLink ? prev.linkedProductTitle : undefined,
+            linkedProductSku: keepExistingLink ? prev.linkedProductSku : undefined,
           }),
         );
         if (skuKey) existingSkus.add(skuKey);
@@ -18539,34 +18542,34 @@ function enrichChannelListingsWithMaster(listings: any[], products?: any[]): any
           };
         }
 
-        const title = String(master?.title || base.linkedProductTitle || "").trim();
-        const sku = String(master?.sku || base.linkedProductSku || "").trim();
-        if (base.status === "success" && !title && !sku) {
-          brokenCount++;
-          return {
-            ...base,
-            status: "unlinked",
-            linkedProductId: undefined,
-            linkedProduct: undefined,
-            linkedProductTitle: undefined,
-            linkedProductSku: undefined,
-            syncError: `Lỗi liên kết (Mất dữ liệu): SP id=${linkedId} thiếu title/sku`,
-            linkBroken: true,
-          };
-        }
+        const title = String(master?.title || "").trim();
+        const sku = String(master?.sku || "").trim();
+        const prevSnapTitle = String(base.linkedProductTitle || "").trim();
+        const prevSnapSku = String(base.linkedProductSku || "").trim();
+        // Auto-heal: snapshot lệch so với Kho gốc (đổi SKU/tên) → ghi đè theo master.
+        const snapshotNeedsHeal =
+          base.status === "success" &&
+          ((title && title !== prevSnapTitle) ||
+            (sku && normalizeSkuKey(sku) !== normalizeSkuKey(prevSnapSku)) ||
+            (!prevSnapTitle && !!title) ||
+            (!prevSnapSku && !!sku));
 
+        // Master còn sống → luôn công nhận đã liên kết (SSOT = linkedProductId).
+        // Chỉ ghost khi lookup miss (SP đã xóa khỏi kho) — xử lý ở nhánh trên.
         return {
           ...base,
+          status: base.status === "success" ? "success" : base.status,
           linkedProductId: String(linkedId),
-          linkedProductTitle: title || undefined,
-          linkedProductSku: sku || undefined,
+          linkedProductTitle: title || prevSnapTitle || undefined,
+          linkedProductSku: sku || prevSnapSku || undefined,
           linkedProduct: {
             id: String(master?.id ?? linkedId),
-            title: title || String(master?.id ?? linkedId),
-            sku: sku || "—",
+            title: title || prevSnapTitle || String(master?.id ?? linkedId),
+            sku: sku || prevSnapSku || "—",
           },
           syncError: base.status === "success" ? undefined : base.syncError,
           linkBroken: false,
+          _mappingSnapshotNeedsHeal: snapshotNeedsHeal || undefined,
         };
       } catch (rowErr: unknown) {
         console.error("[Mapping Products] enrich row skip:", rowErr);
@@ -18664,6 +18667,79 @@ async function persistHealedBrokenMappingLinks(enriched: any[]): Promise<number>
   } catch (err: unknown) {
     console.error("[Mapping Products] persistHealedBrokenMappingLinks failed:", err);
     throw err instanceof Error ? err : new Error(String(err));
+  }
+}
+
+/**
+ * Auto-heal snapshot mapping: linkedProductId còn hợp lệ nhưng linkedProductSku/Title
+ * lệch so với Kho gốc (user đổi SKU/tên) → ghi đè snapshot cho khớp master.
+ * Giới hạn batch + delay nhẹ để tránh Rate Limit / OOM cPanel.
+ * @returns số dòng đã cập nhật
+ */
+async function persistAutoHealedMappingSnapshots(enriched: any[]): Promise<number> {
+  try {
+    const HEAL_BATCH_LIMIT = 200;
+    const candidates = (Array.isArray(enriched) ? enriched : [])
+      .filter(
+        (r) =>
+          r?._mappingSnapshotNeedsHeal === true &&
+          r?.status === "success" &&
+          r?.linkedProductId != null &&
+          String(r.linkedProductId).trim() !== "" &&
+          r?.linkBroken !== true,
+      )
+      .slice(0, HEAL_BATCH_LIMIT);
+    if (candidates.length === 0) return 0;
+
+    const existing = await readChannelListingsDb();
+    const byId = new Map(
+      (Array.isArray(existing) ? existing : [])
+        .filter((r: any) => r?.id != null)
+        .map((r: any) => [String(r.id), r]),
+    );
+    let changed = 0;
+    for (const row of candidates) {
+      const id = String(row?.id || "");
+      if (!id) continue;
+      const prev = byId.get(id);
+      if (!prev) continue;
+      const nextTitle =
+        row?.linkedProductTitle != null && String(row.linkedProductTitle).trim() !== ""
+          ? String(row.linkedProductTitle).trim()
+          : undefined;
+      const nextSku =
+        row?.linkedProductSku != null && String(row.linkedProductSku).trim() !== ""
+          ? String(row.linkedProductSku).trim()
+          : undefined;
+      const prevTitle = String(prev?.linkedProductTitle || "").trim();
+      const prevSku = String(prev?.linkedProductSku || "").trim();
+      if (prevTitle === (nextTitle || "") && normalizeSkuKey(prevSku) === normalizeSkuKey(nextSku || "")) {
+        continue;
+      }
+      byId.set(
+        id,
+        sanitizeChannelListingRow({
+          ...prev,
+          status: "success",
+          linkedProductId: String(row.linkedProductId).trim(),
+          linkedProductTitle: nextTitle,
+          linkedProductSku: nextSku,
+          syncError: undefined,
+        }),
+      );
+      changed++;
+    }
+    if (changed > 0) {
+      await writeChannelListingsDb(Array.from(byId.values()));
+      await sleep(150);
+      console.log(
+        `[Mapping Products] Auto-heal snapshot: ${changed} dòng cập nhật linkedProductSku/Title theo Kho gốc`,
+      );
+    }
+    return changed;
+  } catch (err: unknown) {
+    console.error("[Mapping Products] persistAutoHealedMappingSnapshots failed:", err);
+    return 0;
   }
 }
 
@@ -18945,9 +19021,9 @@ function findMasterProductBySku(
 }
 
 /**
- * Chỉ bảo vệ (không ghi đè) khi liên kết hợp lệ:
- * status=success + linkedProductId + SKU sàn khớp SKU kho gốc.
- * failed/unlinked hoặc ghost link (có ID cũ nhưng SKU lệch) → cho phép re-map.
+ * Bảo vệ liên kết khi status=success + linkedProductId còn trỏ SP sống trong Kho gốc.
+ * linkedProductId là SSOT — KHÔNG bắt buộc SKU sàn khớp SKU kho (đổi SKU kho vẫn giữ link).
+ * Ghost link (ID trỏ SP đã xóa khỏi kho) → không bảo vệ, cho phép re-map / purge.
  */
 function isListingAlreadyLinkedProtected(listing: any, masterProducts?: any[]): boolean {
   if (!listing || typeof listing !== "object") return false;
@@ -18962,21 +19038,13 @@ function isListingAlreadyLinkedProtected(listing: any, masterProducts?: any[]): 
         : "";
   if (!linkedId) return false;
 
-  const listingSku = normalizeSkuKey(listing?.sku);
-  if (!listingSku) return false;
-
-  const snapshotSku = normalizeSkuKey(
-    listing?.linkedProductSku || listing?.linkedProduct?.sku || "",
-  );
-  if (snapshotSku && snapshotSku === listingSku) return true;
-
   if (Array.isArray(masterProducts) && masterProducts.length > 0) {
     const lookup = buildMasterProductLookupById(masterProducts);
-    const master = lookup.get(linkedId);
-    if (master && normalizeSkuKey(master?.sku) === listingSku) return true;
+    return lookup.has(linkedId);
   }
 
-  return false;
+  // Chưa có master list để verify — vẫn bảo vệ theo ID để tránh xóa nhầm khi race.
+  return true;
 }
 
 /** Ghi failed + xóa ghost link (linkedProductId cũ còn sót khi status failed/unlinked). */
@@ -19066,15 +19134,50 @@ async function autoLinkSingleListingFromDatabase(opts?: {
 
   if (isListingAlreadyLinkedProtected(current, masterProducts)) {
     const enrichedExisting = enrichChannelListingsWithMaster([current], masterProducts)[0];
+    // Auto-heal snapshot nếu SKU/tên kho đã đổi.
+    if (enrichedExisting?._mappingSnapshotNeedsHeal) {
+      await persistAutoHealedMappingSnapshots([enrichedExisting]);
+    }
     return {
       success: true,
-      listing: enrichedExisting,
+      listing: enrichedExisting
+        ? (() => {
+            const { _mappingSnapshotNeedsHeal, ...rest } = enrichedExisting;
+            return rest;
+          })()
+        : enrichedExisting,
       matchedProductId:
         current.linkedProductId != null && String(current.linkedProductId).trim() !== ""
           ? String(current.linkedProductId).trim()
           : undefined,
       message: "Sản phẩm này đã được liên kết trước đó.",
     };
+  }
+
+  // An toàn: còn linkedProductId hợp lệ trong kho → không fail/xóa link vì SKU lệch.
+  const existingLinkedId =
+    current.linkedProductId != null && String(current.linkedProductId).trim() !== ""
+      ? String(current.linkedProductId).trim()
+      : "";
+  if (existingLinkedId && String(current.status || "") === "success") {
+    const lookup = buildMasterProductLookupById(masterProducts);
+    if (lookup.has(existingLinkedId)) {
+      const enrichedExisting = enrichChannelListingsWithMaster([current], masterProducts)[0];
+      if (enrichedExisting?._mappingSnapshotNeedsHeal) {
+        await persistAutoHealedMappingSnapshots([enrichedExisting]);
+      }
+      return {
+        success: true,
+        listing: enrichedExisting
+          ? (() => {
+              const { _mappingSnapshotNeedsHeal, ...rest } = enrichedExisting;
+              return rest;
+            })()
+          : enrichedExisting,
+        matchedProductId: existingLinkedId,
+        message: "Sản phẩm này đã được liên kết trước đó (auto-heal theo linkedProductId).",
+      };
+    }
   }
 
   const normalizedSku = normalizeSkuKey(current?.sku);
@@ -19350,11 +19453,36 @@ async function bulkAutoLinkListingsByIds(rawIds: unknown[]): Promise<{
     if (isListingAlreadyLinkedProtected(current, masterProducts)) {
       skippedCount += 1;
       const enriched = enrichChannelListingsWithMaster([current], masterProducts)[0];
+      if (enriched?._mappingSnapshotNeedsHeal) {
+        await persistAutoHealedMappingSnapshots([enriched]);
+      }
+      const { _mappingSnapshotNeedsHeal, ...safeListing } = enriched || {};
       results.push({
         id,
         success: true,
-        listing: enriched,
+        listing: safeListing,
         message: "Sản phẩm này đã được liên kết trước đó.",
+      });
+      continue;
+    }
+
+    // Giữ link khi đã success + có linkedProductId (SKU kho có thể đã đổi).
+    const existingLinkedId =
+      current?.linkedProductId != null && String(current.linkedProductId).trim() !== ""
+        ? String(current.linkedProductId).trim()
+        : "";
+    if (String(current?.status || "") === "success" && existingLinkedId) {
+      skippedCount += 1;
+      const enriched = enrichChannelListingsWithMaster([current], masterProducts)[0];
+      if (enriched?._mappingSnapshotNeedsHeal) {
+        await persistAutoHealedMappingSnapshots([enriched]);
+      }
+      const { _mappingSnapshotNeedsHeal, ...safeListing } = enriched || {};
+      results.push({
+        id,
+        success: true,
+        listing: safeListing,
+        message: "Sản phẩm này đã được liên kết trước đó (giữ theo linkedProductId).",
       });
       continue;
     }
@@ -21101,6 +21229,7 @@ async function startServer() {
     sleep,
     loadProducts,
     persistHealedBrokenMappingLinks,
+    persistAutoHealedMappingSnapshots,
     readChannelListingsDb,
     batchAutoLinkFromDatabase,
     autoLinkSingleListingFromDatabase,

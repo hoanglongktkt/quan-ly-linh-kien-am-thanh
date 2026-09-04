@@ -15,6 +15,7 @@ let deps = {
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   loadProducts: async () => [],
   persistHealedBrokenMappingLinks: async () => 0,
+  persistAutoHealedMappingSnapshots: async () => 0,
   readChannelListingsDb: async () => [],
   batchAutoLinkFromDatabase: async () => ({
     linkedCount: 0,
@@ -60,7 +61,23 @@ export async function handleMappingProductsGet(_req, res) {
     // BẮT BUỘC đọc TRỰC TIẾP từ MongoDB — không dùng cache/mảng RAM sau restart.
     const cache = await deps.reloadCachesFromDb();
     const rawListings = cache.listings;
-    const listings = deps.enrichChannelListingsWithMaster(rawListings, cache.products);
+    let listings = deps.enrichChannelListingsWithMaster(rawListings, cache.products);
+    // Auto-heal snapshot SKU/tên khi linkedProductId còn hợp lệ nhưng lệch Kho gốc.
+    try {
+      const healedSnaps = await deps.persistAutoHealedMappingSnapshots(listings);
+      if (healedSnaps > 0) {
+        const refreshed = await deps.reloadCachesFromDb();
+        listings = deps.enrichChannelListingsWithMaster(refreshed.listings, refreshed.products);
+      }
+    } catch (healErr) {
+      console.warn("[Mapping Products] Auto-heal snapshot skip:", healErr?.message || healErr);
+    }
+    // Strip internal flag trước khi trả client.
+    listings = (Array.isArray(listings) ? listings : []).map((row) => {
+      if (!row || typeof row !== "object") return row;
+      const { _mappingSnapshotNeedsHeal, ...rest } = row;
+      return rest;
+    });
     const successWithProduct = listings.filter(
       (l) =>
         l?.status === "success" &&
@@ -144,15 +161,23 @@ export async function handleMappingProductsHeal(_req, res) {
       await deps.readChannelListingsDb(),
       products,
     );
-    const healed = await deps.persistHealedBrokenMappingLinks(enriched);
+    const healedBroken = await deps.persistHealedBrokenMappingLinks(enriched);
+    const healedSnaps = await deps.persistAutoHealedMappingSnapshots(enriched);
     const listings = deps.enrichChannelListingsWithMaster(
       await deps.readChannelListingsDb(),
       products,
+    ).map((row) => {
+      if (!row || typeof row !== "object") return row;
+      const { _mappingSnapshotNeedsHeal, ...rest } = row;
+      return rest;
+    });
+    console.log(
+      `[Mapping Products] HEAL xong: broken=${healedBroken}, snapshots=${healedSnaps}, total=${listings.length}`,
     );
-    console.log(`[Mapping Products] HEAL xong: healed=${healed}, total=${listings.length}`);
     return res.status(200).json({
       success: true,
-      healed,
+      healed: healedBroken,
+      healedSnapshots: healedSnaps,
       count: listings.length,
       listings,
     });

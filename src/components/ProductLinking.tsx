@@ -176,24 +176,30 @@ function resolveLinkedMasterFromData(
   let sku = fromListingSku;
 
   const safeProducts = Array.isArray(products) ? products : [];
-  if (linkedId && (!title || !sku)) {
+  // Ưu tiên Kho gốc theo linkedProductId (SSOT) — tự heal khi SKU/tên kho đã đổi.
+  if (linkedId) {
     const fromProps = safeProducts.find((p) => p && String(p?.id) === String(linkedId));
     if (fromProps) {
-      if (!title) title = String(fromProps?.title || '').trim();
-      if (!sku) sku = String(fromProps?.sku || '').trim();
+      title = String(fromProps?.title || '').trim() || title;
+      sku = String(fromProps?.sku || '').trim() || sku;
     }
   }
 
+  // Ghost chỉ khi backend đánh dấu broken, hoặc success nhưng thiếu linkedProductId.
   const isBroken =
     listing.linkBroken === true ||
-    (listing.status === 'success' && (!linkedId || (!title && !sku)));
+    (listing.status === 'success' && !linkedId);
 
   return {
     linkedId,
     title,
     sku,
     isBroken,
-    effectiveStatus: isBroken ? 'unlinked' : listing.status || 'unlinked',
+    effectiveStatus: isBroken
+      ? 'unlinked'
+      : listing.status === 'success' && linkedId
+        ? 'success'
+        : listing.status || 'unlinked',
   };
 }
 

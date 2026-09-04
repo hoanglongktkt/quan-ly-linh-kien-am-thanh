@@ -118970,6 +118970,7 @@ var deps13 = {
   sleep: (ms) => new Promise((r2) => setTimeout(r2, ms)),
   loadProducts: async () => [],
   persistHealedBrokenMappingLinks: async () => 0,
+  persistAutoHealedMappingSnapshots: async () => 0,
   readChannelListingsDb: async () => [],
   batchAutoLinkFromDatabase: async () => ({
     linkedCount: 0,
@@ -119013,7 +119014,21 @@ async function handleMappingProductsGet(_req, res) {
   try {
     const cache = await deps13.reloadCachesFromDb();
     const rawListings = cache.listings;
-    const listings = deps13.enrichChannelListingsWithMaster(rawListings, cache.products);
+    let listings = deps13.enrichChannelListingsWithMaster(rawListings, cache.products);
+    try {
+      const healedSnaps = await deps13.persistAutoHealedMappingSnapshots(listings);
+      if (healedSnaps > 0) {
+        const refreshed = await deps13.reloadCachesFromDb();
+        listings = deps13.enrichChannelListingsWithMaster(refreshed.listings, refreshed.products);
+      }
+    } catch (healErr) {
+      console.warn("[Mapping Products] Auto-heal snapshot skip:", healErr?.message || healErr);
+    }
+    listings = (Array.isArray(listings) ? listings : []).map((row) => {
+      if (!row || typeof row !== "object") return row;
+      const { _mappingSnapshotNeedsHeal, ...rest } = row;
+      return rest;
+    });
     const successWithProduct = listings.filter(
       (l) => l?.status === "success" && l?.linkedProduct && (l?.linkedProductTitle || l?.linkedProductSku || l?.linkedProduct?.title)
     ).length;
@@ -119089,15 +119104,23 @@ async function handleMappingProductsHeal(_req, res) {
       await deps13.readChannelListingsDb(),
       products
     );
-    const healed = await deps13.persistHealedBrokenMappingLinks(enriched);
+    const healedBroken = await deps13.persistHealedBrokenMappingLinks(enriched);
+    const healedSnaps = await deps13.persistAutoHealedMappingSnapshots(enriched);
     const listings = deps13.enrichChannelListingsWithMaster(
       await deps13.readChannelListingsDb(),
       products
+    ).map((row) => {
+      if (!row || typeof row !== "object") return row;
+      const { _mappingSnapshotNeedsHeal, ...rest } = row;
+      return rest;
+    });
+    console.log(
+      `[Mapping Products] HEAL xong: broken=${healedBroken}, snapshots=${healedSnaps}, total=${listings.length}`
     );
-    console.log(`[Mapping Products] HEAL xong: healed=${healed}, total=${listings.length}`);
     return res.status(200).json({
       success: true,
-      healed,
+      healed: healedBroken,
+      healedSnapshots: healedSnaps,
       count: listings.length,
       listings
     });
@@ -134821,7 +134844,10 @@ async function upsertChannelListingsBatch(batchRows, shopId, shopName, options) 
             weight: Math.max(0, Number(item?.weight) || 0),
             stock: Math.max(0, Math.round(Number(item?.stock) || 0)),
             status: keepExistingLink ? "success" : prev?.status === "failed" ? "failed" : "unlinked",
-            linkedProductId: keepExistingLink ? prev.linkedProductId : void 0
+            linkedProductId: keepExistingLink ? prev.linkedProductId : void 0,
+            // Giữ snapshot tên/SKU kho — auto-heal sẽ đồng bộ lại khi lệch master.
+            linkedProductTitle: keepExistingLink ? prev.linkedProductTitle : void 0,
+            linkedProductSku: keepExistingLink ? prev.linkedProductSku : void 0
           })
         );
         if (skuKey) existingSkus.add(skuKey);
@@ -141122,33 +141148,25 @@ function enrichChannelListingsWithMaster(listings, products) {
             linkBroken: true
           };
         }
-        const title = String(master?.title || base.linkedProductTitle || "").trim();
-        const sku = String(master?.sku || base.linkedProductSku || "").trim();
-        if (base.status === "success" && !title && !sku) {
-          brokenCount++;
-          return {
-            ...base,
-            status: "unlinked",
-            linkedProductId: void 0,
-            linkedProduct: void 0,
-            linkedProductTitle: void 0,
-            linkedProductSku: void 0,
-            syncError: `L\u1ED7i li\xEAn k\u1EBFt (M\u1EA5t d\u1EEF li\u1EC7u): SP id=${linkedId} thi\u1EBFu title/sku`,
-            linkBroken: true
-          };
-        }
+        const title = String(master?.title || "").trim();
+        const sku = String(master?.sku || "").trim();
+        const prevSnapTitle = String(base.linkedProductTitle || "").trim();
+        const prevSnapSku = String(base.linkedProductSku || "").trim();
+        const snapshotNeedsHeal = base.status === "success" && (title && title !== prevSnapTitle || sku && normalizeSkuKey(sku) !== normalizeSkuKey(prevSnapSku) || !prevSnapTitle && !!title || !prevSnapSku && !!sku);
         return {
           ...base,
+          status: base.status === "success" ? "success" : base.status,
           linkedProductId: String(linkedId),
-          linkedProductTitle: title || void 0,
-          linkedProductSku: sku || void 0,
+          linkedProductTitle: title || prevSnapTitle || void 0,
+          linkedProductSku: sku || prevSnapSku || void 0,
           linkedProduct: {
             id: String(master?.id ?? linkedId),
-            title: title || String(master?.id ?? linkedId),
-            sku: sku || "\u2014"
+            title: title || prevSnapTitle || String(master?.id ?? linkedId),
+            sku: sku || prevSnapSku || "\u2014"
           },
           syncError: base.status === "success" ? void 0 : base.syncError,
-          linkBroken: false
+          linkBroken: false,
+          _mappingSnapshotNeedsHeal: snapshotNeedsHeal || void 0
         };
       } catch (rowErr) {
         console.error("[Mapping Products] enrich row skip:", rowErr);
@@ -141238,6 +141256,56 @@ async function persistHealedBrokenMappingLinks(enriched) {
     throw err instanceof Error ? err : new Error(String(err));
   }
 }
+async function persistAutoHealedMappingSnapshots(enriched) {
+  try {
+    const HEAL_BATCH_LIMIT = 200;
+    const candidates = (Array.isArray(enriched) ? enriched : []).filter(
+      (r2) => r2?._mappingSnapshotNeedsHeal === true && r2?.status === "success" && r2?.linkedProductId != null && String(r2.linkedProductId).trim() !== "" && r2?.linkBroken !== true
+    ).slice(0, HEAL_BATCH_LIMIT);
+    if (candidates.length === 0) return 0;
+    const existing = await readChannelListingsDb();
+    const byId = new Map(
+      (Array.isArray(existing) ? existing : []).filter((r2) => r2?.id != null).map((r2) => [String(r2.id), r2])
+    );
+    let changed = 0;
+    for (const row of candidates) {
+      const id = String(row?.id || "");
+      if (!id) continue;
+      const prev = byId.get(id);
+      if (!prev) continue;
+      const nextTitle = row?.linkedProductTitle != null && String(row.linkedProductTitle).trim() !== "" ? String(row.linkedProductTitle).trim() : void 0;
+      const nextSku = row?.linkedProductSku != null && String(row.linkedProductSku).trim() !== "" ? String(row.linkedProductSku).trim() : void 0;
+      const prevTitle = String(prev?.linkedProductTitle || "").trim();
+      const prevSku = String(prev?.linkedProductSku || "").trim();
+      if (prevTitle === (nextTitle || "") && normalizeSkuKey(prevSku) === normalizeSkuKey(nextSku || "")) {
+        continue;
+      }
+      byId.set(
+        id,
+        sanitizeChannelListingRow({
+          ...prev,
+          status: "success",
+          linkedProductId: String(row.linkedProductId).trim(),
+          linkedProductTitle: nextTitle,
+          linkedProductSku: nextSku,
+          syncError: void 0
+        })
+      );
+      changed++;
+    }
+    if (changed > 0) {
+      await writeChannelListingsDb(Array.from(byId.values()));
+      await sleep4(150);
+      console.log(
+        `[Mapping Products] Auto-heal snapshot: ${changed} d\xF2ng c\u1EADp nh\u1EADt linkedProductSku/Title theo Kho g\u1ED1c`
+      );
+    }
+    return changed;
+  } catch (err) {
+    console.error("[Mapping Products] persistAutoHealedMappingSnapshots failed:", err);
+    return 0;
+  }
+}
 function normalizeSkuKey(sku) {
   return String(sku ?? "").trim().toUpperCase();
 }
@@ -141300,18 +141368,11 @@ function isListingAlreadyLinkedProtected(listing, masterProducts) {
   if (String(listing.status || "") !== "success") return false;
   const linkedId = listing.linkedProductId != null && String(listing.linkedProductId).trim() !== "" ? String(listing.linkedProductId).trim() : listing.linkedProduct?.id != null && String(listing.linkedProduct.id).trim() !== "" ? String(listing.linkedProduct.id).trim() : "";
   if (!linkedId) return false;
-  const listingSku = normalizeSkuKey(listing?.sku);
-  if (!listingSku) return false;
-  const snapshotSku = normalizeSkuKey(
-    listing?.linkedProductSku || listing?.linkedProduct?.sku || ""
-  );
-  if (snapshotSku && snapshotSku === listingSku) return true;
   if (Array.isArray(masterProducts) && masterProducts.length > 0) {
     const lookup = buildMasterProductLookupById(masterProducts);
-    const master = lookup.get(linkedId);
-    if (master && normalizeSkuKey(master?.sku) === listingSku) return true;
+    return lookup.has(linkedId);
   }
-  return false;
+  return true;
 }
 function buildAutoLinkFailedRow(current, syncError) {
   return sanitizeChannelListingRow({
@@ -141362,12 +141423,37 @@ async function autoLinkSingleListingFromDatabase(opts) {
   }
   if (isListingAlreadyLinkedProtected(current, masterProducts)) {
     const enrichedExisting = enrichChannelListingsWithMaster([current], masterProducts)[0];
+    if (enrichedExisting?._mappingSnapshotNeedsHeal) {
+      await persistAutoHealedMappingSnapshots([enrichedExisting]);
+    }
     return {
       success: true,
-      listing: enrichedExisting,
+      listing: enrichedExisting ? (() => {
+        const { _mappingSnapshotNeedsHeal, ...rest } = enrichedExisting;
+        return rest;
+      })() : enrichedExisting,
       matchedProductId: current.linkedProductId != null && String(current.linkedProductId).trim() !== "" ? String(current.linkedProductId).trim() : void 0,
       message: "S\u1EA3n ph\u1EA9m n\xE0y \u0111\xE3 \u0111\u01B0\u1EE3c li\xEAn k\u1EBFt tr\u01B0\u1EDBc \u0111\xF3."
     };
+  }
+  const existingLinkedId = current.linkedProductId != null && String(current.linkedProductId).trim() !== "" ? String(current.linkedProductId).trim() : "";
+  if (existingLinkedId && String(current.status || "") === "success") {
+    const lookup = buildMasterProductLookupById(masterProducts);
+    if (lookup.has(existingLinkedId)) {
+      const enrichedExisting = enrichChannelListingsWithMaster([current], masterProducts)[0];
+      if (enrichedExisting?._mappingSnapshotNeedsHeal) {
+        await persistAutoHealedMappingSnapshots([enrichedExisting]);
+      }
+      return {
+        success: true,
+        listing: enrichedExisting ? (() => {
+          const { _mappingSnapshotNeedsHeal, ...rest } = enrichedExisting;
+          return rest;
+        })() : enrichedExisting,
+        matchedProductId: existingLinkedId,
+        message: "S\u1EA3n ph\u1EA9m n\xE0y \u0111\xE3 \u0111\u01B0\u1EE3c li\xEAn k\u1EBFt tr\u01B0\u1EDBc \u0111\xF3 (auto-heal theo linkedProductId)."
+      };
+    }
   }
   const normalizedSku = normalizeSkuKey(current?.sku);
   if (!normalizedSku) {
@@ -141554,11 +141640,31 @@ async function bulkAutoLinkListingsByIds(rawIds) {
     if (isListingAlreadyLinkedProtected(current, masterProducts)) {
       skippedCount += 1;
       const enriched = enrichChannelListingsWithMaster([current], masterProducts)[0];
+      if (enriched?._mappingSnapshotNeedsHeal) {
+        await persistAutoHealedMappingSnapshots([enriched]);
+      }
+      const { _mappingSnapshotNeedsHeal, ...safeListing } = enriched || {};
       results.push({
         id,
         success: true,
-        listing: enriched,
+        listing: safeListing,
         message: "S\u1EA3n ph\u1EA9m n\xE0y \u0111\xE3 \u0111\u01B0\u1EE3c li\xEAn k\u1EBFt tr\u01B0\u1EDBc \u0111\xF3."
+      });
+      continue;
+    }
+    const existingLinkedId = current?.linkedProductId != null && String(current.linkedProductId).trim() !== "" ? String(current.linkedProductId).trim() : "";
+    if (String(current?.status || "") === "success" && existingLinkedId) {
+      skippedCount += 1;
+      const enriched = enrichChannelListingsWithMaster([current], masterProducts)[0];
+      if (enriched?._mappingSnapshotNeedsHeal) {
+        await persistAutoHealedMappingSnapshots([enriched]);
+      }
+      const { _mappingSnapshotNeedsHeal, ...safeListing } = enriched || {};
+      results.push({
+        id,
+        success: true,
+        listing: safeListing,
+        message: "S\u1EA3n ph\u1EA9m n\xE0y \u0111\xE3 \u0111\u01B0\u1EE3c li\xEAn k\u1EBFt tr\u01B0\u1EDBc \u0111\xF3 (gi\u1EEF theo linkedProductId)."
       });
       continue;
     }
@@ -142801,6 +142907,7 @@ async function startServer() {
     sleep: sleep4,
     loadProducts,
     persistHealedBrokenMappingLinks,
+    persistAutoHealedMappingSnapshots,
     readChannelListingsDb,
     batchAutoLinkFromDatabase,
     autoLinkSingleListingFromDatabase,

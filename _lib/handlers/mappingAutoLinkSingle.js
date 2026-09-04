@@ -54,7 +54,11 @@ function findMasterById(products, linkedId) {
   return null;
 }
 
-/** Chỉ bảo vệ khi status=success + linkedProductId + SKU khớp. */
+/**
+ * Bảo vệ khi status=success + linkedProductId còn trỏ SP sống trong Kho gốc.
+ * linkedProductId là SSOT — không bắt buộc SKU sàn khớp SKU kho.
+ * Ghost (ID trỏ SP đã xóa) → không bảo vệ.
+ */
 function isListingAlreadyLinkedProtected(listing, products) {
   if (!listing || typeof listing !== 'object') return false;
   if (listing.linkBroken === true) return false;
@@ -63,16 +67,11 @@ function isListingAlreadyLinkedProtected(listing, products) {
   const linkedId = String(listing?.linkedProductId || listing?.linkedProduct?.id || '').trim();
   if (!linkedId) return false;
 
-  const listingSku = normalizeSkuKey(listing?.sku);
-  if (!listingSku) return false;
+  if (Array.isArray(products) && products.length > 0) {
+    return !!findMasterById(products, linkedId);
+  }
 
-  const snapshotSku = normalizeSkuKey(listing?.linkedProductSku || listing?.linkedProduct?.sku || '');
-  if (snapshotSku && snapshotSku === listingSku) return true;
-
-  const master = findMasterById(products, linkedId);
-  if (master && normalizeSkuKey(master?.sku) === listingSku) return true;
-
-  return false;
+  return true;
 }
 
 function buildAutoLinkFailedRow(current, syncError) {
@@ -186,6 +185,17 @@ export async function handleMappingAutoLinkSingle(req, res) {
         listing: current,
         matchedProductId: String(current?.linkedProductId || current?.linkedProduct?.id || '').trim() || undefined,
         message: 'Sản phẩm này đã được liên kết trước đó.',
+      });
+    }
+
+    // Giữ link khi đã success + có linkedProductId (SKU kho có thể đã đổi).
+    const existingLinkedId = String(current?.linkedProductId || current?.linkedProduct?.id || '').trim();
+    if (String(current?.status || '') === 'success' && existingLinkedId) {
+      return res.status(200).json({
+        success: true,
+        listing: current,
+        matchedProductId: existingLinkedId,
+        message: 'Sản phẩm này đã được liên kết trước đó (giữ theo linkedProductId).',
       });
     }
 
