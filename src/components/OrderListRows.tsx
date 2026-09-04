@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Barcode,
   Check,
@@ -7,6 +7,7 @@ import {
   ImageIcon,
   Loader2,
   Package,
+  Pencil,
   Printer,
   RefreshCw,
   Truck,
@@ -26,7 +27,11 @@ import {
 } from '../utils/orderHandover';
 import { getCarrierWaybillDisplay } from '../utils/orderTracking';
 import { resolveOrderShopDisplayName } from '../utils/resolveOrderShopName';
-import { getOrderTotalImportCost } from '../utils/orderImportCost';
+import {
+  getOrderTotalImportCost,
+  matchCatalogProduct,
+  resolveItemImportPrice,
+} from '../utils/orderImportCost';
 import {
   getShopeeItemAmount,
   getShopeeNetRevenue,
@@ -54,6 +59,11 @@ export type OrderListRowActions = {
   onPatchStatus: (order: Order, status: Order['status'], logMessage?: string) => void;
 };
 
+type UpdateProductFn = (
+  updated: Product,
+  opts?: { save?: boolean },
+) => void | Promise<{ success?: boolean; error?: string } | unknown>;
+
 type SharedRowProps = {
   order: Order;
   isChecked: boolean;
@@ -69,6 +79,8 @@ type SharedRowProps = {
   resettingPrint: boolean;
   actions: OrderListRowActions;
   renderDetails: (order: Order) => React.ReactNode;
+  onUpdateProduct?: UpdateProductFn;
+  onPatchItemImportPrice?: (orderId: string, itemIndex: number, importPrice: number) => void;
 };
 
 function getOrderWaybillCode(order: Order): string {
@@ -271,13 +283,171 @@ function resolveWooCustomerInfo(order: Order): { name: string; phone: string; ad
   return { name, phone, address };
 }
 
-function OrderItemsCell({ order, compactTitle }: { order: Order; compactTitle?: boolean }) {
+function formatImportPriceVnd(amount: number): string {
+  return `${Math.max(0, Math.round(Number(amount) || 0)).toLocaleString('vi-VN')} đ`;
+}
+
+export function OrderItemImportPriceInline({
+  order,
+  item,
+  itemIndex,
+  products,
+  onUpdateProduct,
+  onPatchItemImportPrice,
+}: {
+  order: Order;
+  item: Order['items'][number];
+  itemIndex: number;
+  products: Product[];
+  onUpdateProduct?: UpdateProductFn;
+  onPatchItemImportPrice?: (orderId: string, itemIndex: number, importPrice: number) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const matched = matchCatalogProduct(item as Record<string, unknown>, products);
+  const sku =
+    String(item.modelSku || (item as { sku?: string }).sku || matched?.sku || '')
+      .trim() || '—';
+  const importPrice = resolveItemImportPrice(item, products);
+
+  const startEdit = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setErrorMsg(null);
+    setDraft(String(importPrice || 0));
+    setEditing(true);
+  };
+
+  const cancelEdit = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setEditing(false);
+    setErrorMsg(null);
+    setDraft('');
+  };
+
+  const saveEdit = async (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (saving) return;
+    setErrorMsg(null);
+    const newPrice = Math.max(0, Math.round(Number(draft) || 0));
+    if (!matched?.id) {
+      setErrorMsg('Không tìm thấy SP trong kho');
+      return;
+    }
+    if (!onUpdateProduct) {
+      setErrorMsg('Không thể lưu giá nhập');
+      return;
+    }
+    setSaving(true);
+    try {
+      const result = await onUpdateProduct({ ...matched, importPrice: newPrice }, { save: true });
+      const failed =
+        result &&
+        typeof result === 'object' &&
+        'success' in result &&
+        (result as { success?: boolean }).success === false;
+      if (failed) {
+        throw new Error(
+          String((result as { error?: string }).error || 'Cập nhật giá nhập thất bại'),
+        );
+      }
+      onPatchItemImportPrice?.(order.id, itemIndex, newPrice);
+      setEditing(false);
+      setDraft('');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Lưu giá nhập thất bại';
+      setErrorMsg(message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="mt-1 min-w-0">
+      <div className="text-sm text-gray-500 flex items-center gap-2 mt-1 flex-wrap">
+        <span className="font-mono text-[10px] text-gray-500 truncate max-w-[9rem]" title={sku}>
+          SKU: {sku}
+        </span>
+        <span className="text-gray-300 shrink-0">|</span>
+        {editing ? (
+          <span className="inline-flex items-center gap-1 min-w-0" onClick={(e) => e.stopPropagation()}>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={draft}
+              disabled={saving}
+              autoFocus
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void saveEdit();
+                if (e.key === 'Escape') cancelEdit();
+              }}
+              className="w-[4.5rem] h-6 px-1.5 rounded border border-blue-300 bg-white text-[11px] font-semibold text-gray-800 focus:outline-none focus:ring-1 focus:ring-blue-400"
+              aria-label="Giá nhập mới"
+            />
+            <button
+              type="button"
+              disabled={saving}
+              onClick={(e) => void saveEdit(e)}
+              className="inline-flex items-center justify-center w-5 h-5 rounded bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-200 disabled:opacity-50"
+              title="Lưu"
+            >
+              {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={cancelEdit}
+              className="inline-flex items-center justify-center w-5 h-5 rounded bg-rose-50 text-rose-500 hover:bg-rose-100 border border-rose-200 disabled:opacity-50"
+              title="Hủy"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={startEdit}
+            className="inline-flex items-center gap-1 text-[10px] text-gray-500 hover:text-blue-600 transition-colors group"
+            title="Sửa nhanh giá nhập"
+          >
+            <span>
+              Giá nhập:{' '}
+              <span className={importPrice > 0 ? 'font-semibold text-gray-600' : 'font-semibold text-amber-600'}>
+                {formatImportPriceVnd(importPrice)}
+              </span>
+            </span>
+            <Pencil className="w-3 h-3 text-gray-400 group-hover:text-blue-500 shrink-0" />
+          </button>
+        )}
+      </div>
+      {errorMsg ? <p className="text-[9px] text-rose-600 mt-0.5 leading-tight">{errorMsg}</p> : null}
+    </div>
+  );
+}
+
+function OrderItemsCell({
+  order,
+  compactTitle,
+  products = [],
+  onUpdateProduct,
+  onPatchItemImportPrice,
+}: {
+  order: Order;
+  compactTitle?: boolean;
+  products?: Product[];
+  onUpdateProduct?: UpdateProductFn;
+  onPatchItemImportPrice?: (orderId: string, itemIndex: number, importPrice: number) => void;
+}) {
   return (
     <div className="space-y-2">
       {(order.items || []).map((item, idx) => {
         const itemTitle = item.productTitle || (item as { name?: string }).name || 'Sản phẩm';
         return (
-          <div key={idx} className="flex items-center gap-2">
+          <div key={idx} className="flex items-start gap-2">
             {item.productImage ? (
               <img
                 src={item.productImage}
@@ -289,12 +459,12 @@ function OrderItemsCell({ order, compactTitle }: { order: Order; compactTitle?: 
                 <ImageIcon className="w-4 h-4 text-gray-300" />
               </div>
             )}
-            <div className={compactTitle ? 'flex-1 min-w-0 flex justify-between items-start gap-2' : 'min-w-0'}>
+            <div className={compactTitle ? 'flex-1 min-w-0' : 'min-w-0 flex-1'}>
               {compactTitle ? (
-                <>
+                <div className="flex justify-between items-start gap-2">
                   <span className="truncate text-[11px] font-medium leading-tight text-gray-700">{itemTitle}</span>
                   <span className="text-blue-600 text-xs shrink-0 font-black">x{item.quantity}</span>
-                </>
+                </div>
               ) : (
                 <>
                   <p className="text-[11px] text-gray-700 font-semibold leading-snug line-clamp-2" title={itemTitle}>
@@ -305,6 +475,14 @@ function OrderItemsCell({ order, compactTitle }: { order: Order; compactTitle?: 
                   </span>
                 </>
               )}
+              <OrderItemImportPriceInline
+                order={order}
+                item={item}
+                itemIndex={idx}
+                products={products}
+                onUpdateProduct={onUpdateProduct}
+                onPatchItemImportPrice={onPatchItemImportPrice}
+              />
             </div>
           </div>
         );
@@ -328,6 +506,8 @@ export const OrderTableRow = React.memo(function OrderTableRow({
   resettingPrint,
   actions,
   renderDetails,
+  onUpdateProduct,
+  onPatchItemImportPrice,
 }: SharedRowProps) {
   const shopName = resolveOrderShopDisplayName(order, shops);
   const waybill = getOrderWaybillCode(order);
@@ -366,7 +546,12 @@ export const OrderTableRow = React.memo(function OrderTableRow({
               <div className="font-mono font-bold text-orange-700 text-xs break-all">{order.return_sn || '—'}</div>
             </td>
             <td className="p-4 w-[260px]">
-              <OrderItemsCell order={order} />
+              <OrderItemsCell
+                order={order}
+                products={products}
+                onUpdateProduct={onUpdateProduct}
+                onPatchItemImportPrice={onPatchItemImportPrice}
+              />
             </td>
             <td className="p-4 text-right">
               <div className="font-black text-rose-700 text-sm">{refundAmt.toLocaleString('vi-VN')}đ</div>
@@ -432,7 +617,12 @@ export const OrderTableRow = React.memo(function OrderTableRow({
               </p>
             </td>
             <td className="p-4 w-[280px]">
-              <OrderItemsCell order={order} />
+              <OrderItemsCell
+                order={order}
+                products={products}
+                onUpdateProduct={onUpdateProduct}
+                onPatchItemImportPrice={onPatchItemImportPrice}
+              />
             </td>
             <td className="p-4 text-right space-y-0.5">
               <div className="font-black text-gray-950 text-sm">{order.totalAmount.toLocaleString('vi-VN')}đ</div>
@@ -656,6 +846,8 @@ export const OrderCardRow = React.memo(function OrderCardRow({
   resettingPrint,
   actions,
   renderDetails,
+  onUpdateProduct,
+  onPatchItemImportPrice,
 }: SharedRowProps) {
   const shopName = resolveOrderShopDisplayName(order, shops);
   const waybill = getOrderWaybillCode(order);
@@ -715,7 +907,13 @@ export const OrderCardRow = React.memo(function OrderCardRow({
 
         <div className="flex-1 min-w-0 bg-slate-50/80 px-2.5 py-2 rounded-xl border border-slate-100">
           <div className="text-[9px] font-bold text-gray-400 uppercase tracking-wide mb-1">Sản phẩm đặt mua</div>
-          <OrderItemsCell order={order} compactTitle />
+          <OrderItemsCell
+            order={order}
+            compactTitle
+            products={products}
+            onUpdateProduct={onUpdateProduct}
+            onPatchItemImportPrice={onPatchItemImportPrice}
+          />
         </div>
 
         <div className="flex flex-wrap items-center gap-2 md:gap-3 lg:gap-4 shrink-0 lg:ml-auto">

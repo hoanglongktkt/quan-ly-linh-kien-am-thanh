@@ -131,6 +131,7 @@ import {
   OrderCardRow,
   OrderTableRow,
   type OrderListRowActions,
+  OrderItemImportPriceInline,
 } from './OrderListRows';
 import OrderDateFilter from './OrderDateFilter';
 import {
@@ -508,10 +509,19 @@ function OrderDetailAccordionPanel({
   order,
   shops,
   systemFees,
+  products = [],
+  onUpdateProduct,
+  onPatchItemImportPrice,
 }: {
   order: Order;
   shops: ConnectedShop[];
   systemFees: SystemFee[];
+  products?: Product[];
+  onUpdateProduct?: (
+    updated: Product,
+    opts?: { save?: boolean },
+  ) => void | Promise<{ success?: boolean; error?: string } | unknown>;
+  onPatchItemImportPrice?: (orderId: string, itemIndex: number, importPrice: number) => void;
 }) {
   const wooCustomer = order.channel === 'woocommerce' ? resolveWooCustomerInfo(order) : null;
   return (
@@ -618,6 +628,14 @@ function OrderDetailAccordionPanel({
                 <div className="min-w-0">
                   <p className="font-bold text-gray-800 line-clamp-2">{item.productTitle}</p>
                   <VariationNameBadge variationName={item.modelName} />
+                  <OrderItemImportPriceInline
+                    order={order}
+                    item={item}
+                    itemIndex={index}
+                    products={products}
+                    onUpdateProduct={onUpdateProduct}
+                    onPatchItemImportPrice={onPatchItemImportPrice}
+                  />
                   <p className="text-gray-400 text-[10px] mt-0.5">Giá bán lẻ niêm yết: {item.price.toLocaleString('vi-VN')}đ</p>
                 </div>
               </div>
@@ -807,7 +825,10 @@ interface OrderManagerProps {
   systemFees?: SystemFee[];
   onAddLog: (log: SyncLog) => void;
   products?: Product[];
-  onUpdateProduct?: (updated: Product) => void;
+  onUpdateProduct?: (
+    updated: Product,
+    opts?: { save?: boolean },
+  ) => void | Promise<{ success?: boolean; error?: string } | unknown>;
   focusScanner?: boolean;
   onCloseScanner?: () => void;
   onEndScanSession?: () => void;
@@ -7303,6 +7324,35 @@ export default function OrderManager({
     [onAddLog, onUpdateOrders],
   );
 
+  /** Cập nhật giá nhập trên dòng item đơn (local) sau khi lưu kho tổng — để Tiền lãi re-render ngay. */
+  const handlePatchItemImportPrice = useCallback(
+    (orderId: string, itemIndex: number, importPrice: number) => {
+      const price = Math.max(0, Math.round(Number(importPrice) || 0));
+      const updated = ordersRef.current.map((o) => {
+        if (o.id !== orderId) return o;
+        const items = Array.isArray(o.items) ? o.items : [];
+        if (itemIndex < 0 || itemIndex >= items.length) return o;
+        return {
+          ...o,
+          items: items.map((it, idx) =>
+            idx === itemIndex
+              ? {
+                  ...it,
+                  importPrice: price,
+                  import_price: price,
+                  last_import_price: price,
+                  cost_price: price,
+                }
+              : it,
+          ),
+        };
+      });
+      ordersRef.current = updated;
+      onUpdateOrders(updated, { persist: false });
+    },
+    [onUpdateOrders],
+  );
+
   const selectedOrderIdSet = useMemo(() => new Set(selectedOrderIds), [selectedOrderIds]);
   const resettingPrintSet = useMemo(
     () => new Set(resettingPrintIds.map((id) => String(id || '').replace(/^shopee-/i, '').trim())),
@@ -7343,9 +7393,16 @@ export default function OrderManager({
 
   const renderOrderDetails = useCallback(
     (order: Order) => (
-      <OrderDetailAccordionPanel order={order} shops={shops} systemFees={systemFees} />
+      <OrderDetailAccordionPanel
+        order={order}
+        shops={shops}
+        systemFees={systemFees}
+        products={products}
+        onUpdateProduct={onUpdateProduct}
+        onPatchItemImportPrice={handlePatchItemImportPrice}
+      />
     ),
-    [shops, systemFees],
+    [shops, systemFees, products, onUpdateProduct, handlePatchItemImportPrice],
   );
 
   if (focusScanner) {
@@ -8890,6 +8947,8 @@ export default function OrderManager({
                     resettingPrint={resettingPrintSet.has(String(order.orderSn || '').replace(/^shopee-/i, '').trim())}
                     actions={orderRowActions}
                     renderDetails={renderOrderDetails}
+                    onUpdateProduct={onUpdateProduct}
+                    onPatchItemImportPrice={handlePatchItemImportPrice}
                   />
                 ))}
               </tbody>
@@ -8918,6 +8977,8 @@ export default function OrderManager({
                   resettingPrint={resettingPrintSet.has(String(order.orderSn || '').replace(/^shopee-/i, '').trim())}
                   actions={orderRowActions}
                   renderDetails={renderOrderDetails}
+                  onUpdateProduct={onUpdateProduct}
+                  onPatchItemImportPrice={handlePatchItemImportPrice}
                 />
               ))}
             </div>

@@ -75,7 +75,8 @@ function collectCatalogCandidates(item: OrderLine, catalogProducts: Product[]): 
   return out;
 }
 
-function matchCatalogProduct(item: OrderLine, catalogProducts: Product[]): Product | undefined {
+/** Khớp dòng đơn → sản phẩm/SKU con trong kho tổng (theo modelId / SKU / tên phân loại). */
+export function matchCatalogProduct(item: OrderLine, catalogProducts: Product[]): Product | undefined {
   if (!Array.isArray(catalogProducts) || catalogProducts.length === 0) return undefined;
   const candidates = collectCatalogCandidates(item, catalogProducts);
   if (candidates.length === 0) return undefined;
