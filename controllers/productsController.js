@@ -642,6 +642,74 @@ export async function patchProduct(req, res) {
   }
 }
 
+/**
+ * PATCH /api/products/import-price-by-sku
+ * Tìm SP trên TOÀN BỘ kho gốc bằng SKU (không phân trang), rồi cập nhật importPrice.
+ */
+export async function patchImportPriceBySku(req, res) {
+  try {
+    const sku = String(req.body?.sku ?? "").trim();
+    const importPrice = Math.max(0, Math.round(Number(req.body?.importPrice) || 0));
+    if (!sku) {
+      return res.status(400).json({
+        success: false,
+        error: "sku_required",
+        message: "Thiếu SKU để cập nhật giá nhập.",
+      });
+    }
+
+    const skuLower = sku.toLowerCase();
+    // loadProducts = toàn bộ Master Inventory — không limit/page.
+    const products = await deps.loadProducts();
+    const list = Array.isArray(products) ? products : [];
+
+    for (let i = 0; i < list.length; i++) {
+      const parent = list[i];
+      if (String(parent?.sku || "").trim().toLowerCase() === skuLower) {
+        const merged = deps.mergeProductPatch(parent, { importPrice });
+        list[i] = merged;
+        await deps.upsertProductsToStoreAsync([merged]);
+        return res.json({
+          ...merged,
+          success: true,
+          shopeeSynced: false,
+          shopeeMessage: "Đã lưu giá nhập theo SKU (kho nội bộ).",
+        });
+      }
+
+      const children = deps.getProductChildrenList(parent);
+      const childIdx = children.findIndex(
+        (c) => String(c?.sku || "").trim().toLowerCase() === skuLower,
+      );
+      if (childIdx === -1) continue;
+
+      const mergedChild = deps.mergeProductPatch(children[childIdx], { importPrice });
+      const nextChildren = [...children];
+      nextChildren[childIdx] = mergedChild;
+      const totalStock = nextChildren.reduce((s, c) => s + (Number(c.stock) || 0), 0);
+      const nextParent = { ...parent, children: nextChildren, stock: totalStock };
+      list[i] = nextParent;
+      await deps.upsertProductsToStoreAsync([nextParent]);
+      return res.json({
+        ...mergedChild,
+        success: true,
+        shopeeSynced: false,
+        shopeeMessage: "Đã lưu giá nhập theo SKU (kho nội bộ).",
+      });
+    }
+
+    return res.status(404).json({
+      success: false,
+      error: "product_not_found",
+      message: `Không tìm thấy SP trong kho (SKU: ${sku})`,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[Products API] PATCH /api/products/import-price-by-sku failed:", err);
+    return res.status(500).json({ success: false, error: message || "Internal Server Error" });
+  }
+}
+
 /** POST /api/products/inventory-balance */
 export async function inventoryBalance(req, res) {
   try {

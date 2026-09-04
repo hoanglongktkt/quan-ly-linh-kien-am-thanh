@@ -116269,6 +116269,63 @@ async function patchProduct(req, res) {
     return res.status(500).json({ success: false, error: message || "Internal Server Error" });
   }
 }
+async function patchImportPriceBySku(req, res) {
+  try {
+    const sku = String(req.body?.sku ?? "").trim();
+    const importPrice = Math.max(0, Math.round(Number(req.body?.importPrice) || 0));
+    if (!sku) {
+      return res.status(400).json({
+        success: false,
+        error: "sku_required",
+        message: "Thi\u1EBFu SKU \u0111\u1EC3 c\u1EADp nh\u1EADt gi\xE1 nh\u1EADp."
+      });
+    }
+    const skuLower = sku.toLowerCase();
+    const products = await deps10.loadProducts();
+    const list = Array.isArray(products) ? products : [];
+    for (let i2 = 0; i2 < list.length; i2++) {
+      const parent = list[i2];
+      if (String(parent?.sku || "").trim().toLowerCase() === skuLower) {
+        const merged = deps10.mergeProductPatch(parent, { importPrice });
+        list[i2] = merged;
+        await deps10.upsertProductsToStoreAsync([merged]);
+        return res.json({
+          ...merged,
+          success: true,
+          shopeeSynced: false,
+          shopeeMessage: "\u0110\xE3 l\u01B0u gi\xE1 nh\u1EADp theo SKU (kho n\u1ED9i b\u1ED9)."
+        });
+      }
+      const children = deps10.getProductChildrenList(parent);
+      const childIdx = children.findIndex(
+        (c) => String(c?.sku || "").trim().toLowerCase() === skuLower
+      );
+      if (childIdx === -1) continue;
+      const mergedChild = deps10.mergeProductPatch(children[childIdx], { importPrice });
+      const nextChildren = [...children];
+      nextChildren[childIdx] = mergedChild;
+      const totalStock = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
+      const nextParent = { ...parent, children: nextChildren, stock: totalStock };
+      list[i2] = nextParent;
+      await deps10.upsertProductsToStoreAsync([nextParent]);
+      return res.json({
+        ...mergedChild,
+        success: true,
+        shopeeSynced: false,
+        shopeeMessage: "\u0110\xE3 l\u01B0u gi\xE1 nh\u1EADp theo SKU (kho n\u1ED9i b\u1ED9)."
+      });
+    }
+    return res.status(404).json({
+      success: false,
+      error: "product_not_found",
+      message: `Kh\xF4ng t\xECm th\u1EA5y SP trong kho (SKU: ${sku})`
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[Products API] PATCH /api/products/import-price-by-sku failed:", err);
+    return res.status(500).json({ success: false, error: message || "Internal Server Error" });
+  }
+}
 async function inventoryBalance(req, res) {
   try {
     const items = req.body?.items;
@@ -118891,6 +118948,7 @@ router12.post("/bulk-update-prices", bulkUpdatePrices);
 router12.post("/bulk-channel-sync", bulkChannelSync);
 router12.get("/", listProducts);
 router12.post("/", createProduct);
+router12.patch("/import-price-by-sku", patchImportPriceBySku);
 router12.patch("/:id", patchProduct);
 router12.delete("/:id", deleteProduct);
 var productsRoutes_default = router12;

@@ -45,6 +45,7 @@ import {
   isShopeeCancelledStatus,
   shouldShowAwaitingShopeeTracking,
 } from '../utils/shopeeCancelReturnClassify';
+import { parseJsonResponse } from '../utils/apiClient';
 
 export type OrderListRowActions = {
   onToggleSelect: (id: string) => void;
@@ -287,6 +288,25 @@ function formatImportPriceVnd(amount: number): string {
   return `${Math.max(0, Math.round(Number(amount) || 0)).toLocaleString('vi-VN')} đ`;
 }
 
+/** UX nhập nhanh: gõ 25 / 150 → 25000 / 150000 khi > 0 và < 1000. */
+function applyFastImportPriceInput(raw: string | number): number {
+  let n = Math.max(0, Math.round(Number(raw) || 0));
+  if (n > 0 && n < 1000) n *= 1000;
+  return n;
+}
+
+function resolveOrderItemSku(
+  item: Order['items'][number],
+  matched?: Product | null,
+): string {
+  return String(
+    item.modelSku ||
+      (item as { sku?: string }).sku ||
+      matched?.sku ||
+      '',
+  ).trim();
+}
+
 export function OrderItemImportPriceInline({
   order,
   item,
@@ -308,9 +328,7 @@ export function OrderItemImportPriceInline({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const matched = matchCatalogProduct(item as Record<string, unknown>, products);
-  const sku =
-    String(item.modelSku || (item as { sku?: string }).sku || matched?.sku || '')
-      .trim() || '—';
+  const sku = resolveOrderItemSku(item, matched) || '—';
   const importPrice = resolveItemImportPrice(item, products);
 
   const startEdit = (e: React.MouseEvent) => {
@@ -327,33 +345,78 @@ export function OrderItemImportPriceInline({
     setDraft('');
   };
 
+  const applyDraftMultiplier = () => {
+    const next = applyFastImportPriceInput(draft);
+    setDraft(String(next));
+    return next;
+  };
+
   const saveEdit = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (saving) return;
     setErrorMsg(null);
-    const newPrice = Math.max(0, Math.round(Number(draft) || 0));
-    if (!matched?.id) {
-      setErrorMsg('Không tìm thấy SP trong kho');
+    const newPrice = applyFastImportPriceInput(draft);
+    setDraft(String(newPrice));
+
+    const lookupSku = resolveOrderItemSku(item, matched);
+    if (!lookupSku || lookupSku === '—') {
+      setErrorMsg('Thiếu SKU — không thể cập nhật kho');
       return;
     }
-    if (!onUpdateProduct) {
-      setErrorMsg('Không thể lưu giá nhập');
-      return;
-    }
+
     setSaving(true);
     try {
-      const result = await onUpdateProduct({ ...matched, importPrice: newPrice }, { save: true });
-      const failed =
-        result &&
-        typeof result === 'object' &&
-        'success' in result &&
-        (result as { success?: boolean }).success === false;
-      if (failed) {
+      const token = localStorage.getItem('admin_token');
+      if (!token) throw new Error('Chưa đăng nhập.');
+
+      const response = await fetch('/api/products/import-price-by-sku', {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ sku: lookupSku, importPrice: newPrice }),
+      });
+      const data = await parseJsonResponse<{
+        success?: boolean;
+        error?: string;
+        message?: string;
+        id?: string;
+        sku?: string;
+        importPrice?: number;
+        sellingPrice?: number;
+        stock?: number;
+      }>(response);
+
+      if (!response.ok || data?.success === false) {
         throw new Error(
-          String((result as { error?: string }).error || 'Cập nhật giá nhập thất bại'),
+          String(data?.message || data?.error || `Cập nhật giá nhập thất bại (HTTP ${response.status})`),
         );
       }
-      onPatchItemImportPrice?.(order.id, itemIndex, newPrice);
+
+      const savedPrice = Math.max(
+        0,
+        Math.round(Number(data?.importPrice ?? newPrice) || 0),
+      );
+
+      // Đồng bộ catalog local (đã lưu DB) → Tiền lãi re-render.
+      if (onUpdateProduct && data?.id) {
+        const base = matched && matched.id === data.id ? matched : ({ id: data.id } as Product);
+        await onUpdateProduct(
+          {
+            ...base,
+            ...data,
+            id: String(data.id),
+            sku: String(data.sku ?? lookupSku),
+            importPrice: savedPrice,
+          } as Product,
+          { save: false },
+        );
+      } else if (onUpdateProduct && matched?.id) {
+        await onUpdateProduct({ ...matched, importPrice: savedPrice }, { save: false });
+      }
+
+      onPatchItemImportPrice?.(order.id, itemIndex, savedPrice);
       setEditing(false);
       setDraft('');
     } catch (err: unknown) {
@@ -381,12 +444,16 @@ export function OrderItemImportPriceInline({
               disabled={saving}
               autoFocus
               onChange={(e) => setDraft(e.target.value)}
+              onBlur={() => {
+                if (!saving) applyDraftMultiplier();
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') void saveEdit();
                 if (e.key === 'Escape') cancelEdit();
               }}
-              className="w-[4.5rem] h-6 px-1.5 rounded border border-blue-300 bg-white text-[11px] font-semibold text-gray-800 focus:outline-none focus:ring-1 focus:ring-blue-400"
+              className="w-[5.75rem] h-6 px-1.5 rounded border border-blue-300 bg-white text-[11px] font-semibold text-gray-800 focus:outline-none focus:ring-1 focus:ring-blue-400"
               aria-label="Giá nhập mới"
+              title="Gõ 25 → 25.000đ"
             />
             <button
               type="button"

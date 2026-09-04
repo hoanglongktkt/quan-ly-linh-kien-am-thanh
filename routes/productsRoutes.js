@@ -7,6 +7,7 @@ import {
   createProduct,
   replaceProducts,
   patchProduct,
+  patchImportPriceBySku,
   inventoryBalance,
   bulkSaveProducts,
   deleteProduct,
@@ -35,6 +36,8 @@ router.post("/bulk-update-prices", bulkUpdatePrices);
 router.post("/bulk-channel-sync", bulkChannelSync);
 router.get("/", listProducts);
 router.post("/", createProduct);
+/** Phải đặt trước PATCH /:id — cập nhật giá nhập theo SKU toàn kho. */
+router.patch("/import-price-by-sku", patchImportPriceBySku);
 router.patch("/:id", patchProduct);
 router.delete("/:id", deleteProduct);
 
