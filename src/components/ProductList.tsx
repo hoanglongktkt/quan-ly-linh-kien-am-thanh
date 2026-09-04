@@ -8,6 +8,7 @@ import ProductDetailModal, {
 } from './ProductDetailModal';
 import BulkEditModal from './BulkEditModal';
 import BulkPriceEditModal from './BulkPriceEditModal';
+import ImportPriceModal from './ImportPriceModal';
 import ProductLinking from './ProductLinking';
 import InventoryAudit from './InventoryAudit';
 import { parseJsonResponse, formatShopeeSyncAlertLines } from '../utils/apiClient';
@@ -161,6 +162,7 @@ export default function ProductList({
 
   // Marketplace initialization state
   const [showInitModal, setShowInitModal] = useState(false);
+  const [showImportPriceModal, setShowImportPriceModal] = useState(false);
   const [initPlatform, setInitPlatform] = useState<'shopee' | 'tiktok'>('shopee');
   const [initShopId, setInitShopId] = useState('');
   const [isInitializing, setIsInitializing] = useState(false);
@@ -1190,6 +1192,13 @@ export default function ProductList({
               >
                 <Trash2 className={`w-3.5 h-3.5 ${isClearingInventory ? 'animate-pulse' : ''}`} />
                 <span>{isClearingInventory ? 'Đang xóa...' : 'Xóa toàn bộ Kho'}</span>
+              </button>
+              <button
+                onClick={() => setShowImportPriceModal(true)}
+                type="button"
+                className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold rounded-xl transition-all shadow-md shadow-emerald-500/10 flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <span>📥 Import Giá Nhập</span>
               </button>
               <button
                 onClick={() => setShowInitModal(true)}
@@ -2284,6 +2293,23 @@ export default function ProductList({
           />
         </div>
       )}
+
+      <ImportPriceModal
+        open={showImportPriceModal}
+        onClose={() => setShowImportPriceModal(false)}
+        onError={(message) => showActionToast(message, false)}
+        onImported={({ updatedCount, notFoundCount }) => {
+          setShowImportPriceModal(false);
+          const extra =
+            notFoundCount > 0 ? ` (${notFoundCount} SKU không tìm thấy trong kho)` : '';
+          showActionToast(
+            `Thành công: Cập nhật giá nhập cho ${updatedCount} sản phẩm.${extra}`,
+            true,
+            6000,
+          );
+          void onRefreshProducts?.({ page: 1, append: false, forceRefresh: true });
+        }}
+      />
 
       {/* ========================================================================= */}
       {/* MODAL: INITIALIZE MAIN WAREHOUSE FROM MARKETPLACE */}

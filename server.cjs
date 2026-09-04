@@ -116326,6 +116326,101 @@ async function patchImportPriceBySku(req, res) {
     return res.status(500).json({ success: false, error: message || "Internal Server Error" });
   }
 }
+async function bulkImportPrice(req, res) {
+  try {
+    const raw = Array.isArray(req.body) ? req.body : req.body?.items;
+    if (!Array.isArray(raw) || raw.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Payload ph\u1EA3i l\xE0 m\u1EA3ng [{ sku, import_price }]."
+      });
+    }
+    const MAX_ROWS = 2e4;
+    if (raw.length > MAX_ROWS) {
+      return res.status(400).json({
+        success: false,
+        message: `T\u1ED1i \u0111a ${MAX_ROWS} d\xF2ng m\u1ED7i l\u1EA7n import.`
+      });
+    }
+    const priceBySku = /* @__PURE__ */ new Map();
+    for (let i2 = 0; i2 < raw.length; i2++) {
+      const row = raw[i2];
+      if (!row || typeof row !== "object") continue;
+      const sku = String(row.sku ?? "").trim();
+      if (!sku) continue;
+      const rawPrice = row.import_price ?? row.importPrice;
+      if (rawPrice === "" || rawPrice == null) continue;
+      const parsed = Number(rawPrice);
+      if (!Number.isFinite(parsed)) continue;
+      const price = Math.max(0, Math.round(parsed));
+      const key = sku.toLowerCase();
+      priceBySku.set(key, price);
+      if (i2 > 0 && i2 % 2e3 === 0) {
+        await new Promise((r2) => setTimeout(r2, 10));
+      }
+    }
+    if (priceBySku.size === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Kh\xF4ng c\xF3 d\xF2ng h\u1EE3p l\u1EC7 (thi\u1EBFu sku ho\u1EB7c gi\xE1 nh\u1EADp)."
+      });
+    }
+    const products = await deps10.loadProducts();
+    const list = Array.isArray(products) ? products : [];
+    const matchedKeys = /* @__PURE__ */ new Set();
+    const dirty = [];
+    for (let i2 = 0; i2 < list.length; i2++) {
+      const p = list[i2];
+      const hasChildrenArr = Array.isArray(p?.children) && p.children.length > 0;
+      const hasModelsArr = Array.isArray(p?.children_models) && p.children_models.length > 0;
+      const childKey = hasChildrenArr ? "children" : hasModelsArr ? "children_models" : null;
+      const children = childKey ? p[childKey] : [];
+      if (childKey && children.length > 0) {
+        let changed = false;
+        const nextChildren = children.map((c) => {
+          const key2 = String(c?.sku || "").trim().toLowerCase();
+          if (!key2 || !priceBySku.has(key2)) return c;
+          matchedKeys.add(key2);
+          changed = true;
+          return deps10.mergeProductPatch(c, { importPrice: priceBySku.get(key2) });
+        });
+        if (!changed) continue;
+        const totalStock = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
+        dirty.push({ ...p, [childKey]: nextChildren, stock: totalStock });
+        continue;
+      }
+      const key = String(p?.sku || "").trim().toLowerCase();
+      if (!key || !priceBySku.has(key)) continue;
+      matchedKeys.add(key);
+      dirty.push(deps10.mergeProductPatch(p, { importPrice: priceBySku.get(key) }));
+      if (dirty.length > 0 && dirty.length % 500 === 0) {
+        await new Promise((r2) => setTimeout(r2, 5));
+      }
+    }
+    if (dirty.length > 0) {
+      await deps10.upsertProductsToStoreAsync(dirty);
+    }
+    const updatedCount = matchedKeys.size;
+    const notFoundCount = Math.max(0, priceBySku.size - updatedCount);
+    console.log(
+      `[Bulk Import Price] updated=${updatedCount} notFound=${notFoundCount} dirtyDocs=${dirty.length}`
+    );
+    return res.json({
+      success: true,
+      updatedCount,
+      notFoundCount
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[Products API] POST /api/products/bulk-import-price failed:", err);
+    return res.status(500).json({
+      success: false,
+      error: message || "Internal Server Error",
+      updatedCount: 0,
+      notFoundCount: 0
+    });
+  }
+}
 async function inventoryBalance(req, res) {
   try {
     const items = req.body?.items;
@@ -118941,6 +119036,7 @@ router12.get("/shopee-item-preview", previewItemVariants);
 router12.post("/:id/sync-shopee", handleProductSyncShopee);
 router12.put("/replace", replaceProducts);
 router12.post("/inventory-balance", inventoryBalance);
+router12.post("/bulk-import-price", bulkImportPrice);
 router12.post("/bulk-save", bulkSaveProducts);
 router12.post("/clear-all", clearAllProducts);
 router12.post("/bulk-update", bulkUpdateProducts);

@@ -8,6 +8,7 @@ import {
   replaceProducts,
   patchProduct,
   patchImportPriceBySku,
+  bulkImportPrice,
   inventoryBalance,
   bulkSaveProducts,
   deleteProduct,
@@ -29,6 +30,7 @@ router.get("/shopee-item-preview", previewItemVariants);
 router.post("/:id/sync-shopee", handleProductSyncShopee);
 router.put("/replace", replaceProducts);
 router.post("/inventory-balance", inventoryBalance);
+router.post("/bulk-import-price", bulkImportPrice);
 router.post("/bulk-save", bulkSaveProducts);
 router.post("/clear-all", clearAllProducts);
 router.post("/bulk-update", bulkUpdateProducts);
