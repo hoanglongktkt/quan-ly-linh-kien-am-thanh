@@ -73,6 +73,70 @@ export function initProductsController(partial) {
 
 export { PRODUCTS_PAGE_SIZE_DEFAULT, PRODUCTS_PAGE_SIZE_MAX };
 
+const SKU_DUPLICATE_MESSAGE =
+  "Mã SKU này đã tồn tại cho một sản phẩm khác trong kho!";
+
+function normalizeSkuKey(sku) {
+  return String(sku ?? "")
+    .trim()
+    .toLowerCase();
+}
+
+function getChildrenList(product) {
+  if (typeof deps.getProductChildrenList === "function") {
+    const fromDeps = deps.getProductChildrenList(product);
+    if (Array.isArray(fromDeps) && fromDeps.length) return fromDeps;
+  }
+  if (Array.isArray(product?.children) && product.children.length) return product.children;
+  if (Array.isArray(product?.children_models) && product.children_models.length) {
+    return product.children_models;
+  }
+  return [];
+}
+
+/**
+ * Kiểm tra SKU đã thuộc sản phẩm khác chưa (parent + children).
+ * @param {string} sku
+ * @param {string|null} excludeId — ID đang sửa (bỏ qua chính nó)
+ * @returns {Promise<boolean>}
+ */
+async function isSkuTakenByOtherProduct(sku, excludeId = null) {
+  const skuNorm = normalizeSkuKey(sku);
+  if (!skuNorm) return false;
+
+  let hits = [];
+  try {
+    hits = await deps.searchProductsFromStore(sku, 50);
+  } catch (searchErr) {
+    console.warn(
+      "[Products API] SKU search failed, fallback loadProducts:",
+      searchErr?.message || searchErr,
+    );
+    hits = await deps.loadProducts();
+  }
+  if (!Array.isArray(hits)) hits = [];
+
+  const exclude = excludeId != null && String(excludeId).trim() ? String(excludeId) : null;
+
+  const rowMatches = (row) => {
+    const id = String(row?.id ?? "").trim();
+    if (!id) return false;
+    if (exclude && id === exclude) return false;
+    return normalizeSkuKey(row?.sku) === skuNorm;
+  };
+
+  for (const p of hits) {
+    if (rowMatches(p)) return true;
+    const children = getChildrenList(p);
+    // Giới hạn duyệt children để tránh vòng lặp treo trên parent lỗi dữ liệu.
+    const maxChildren = Math.min(children.length, 500);
+    for (let i = 0; i < maxChildren; i++) {
+      if (rowMatches(children[i])) return true;
+    }
+  }
+  return false;
+}
+
 /** GET /api/products */
 export async function listProducts(req, res) {
   res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -482,27 +546,21 @@ export async function createProduct(req, res) {
   }
 
   try {
-    const hits = await deps.searchProductsFromStore(sku, 20);
-    const skuLower = sku.toLowerCase();
-    const skuMatch = (row) => String(row?.sku || "").trim().toLowerCase() === skuLower;
-    const duplicated = (Array.isArray(hits) ? hits : []).some((p) => {
-      if (skuMatch(p)) return true;
-      const children = Array.isArray(p?.children) && p.children.length
-        ? p.children
-        : Array.isArray(p?.children_models)
-          ? p.children_models
-          : [];
-      return children.some(skuMatch);
-    });
+    const duplicated = await isSkuTakenByOtherProduct(sku, null);
     if (duplicated) {
-      return res.status(409).json({
+      return res.status(400).json({
         success: false,
         error: "sku_duplicate",
-        message: "Mã SKU đã tồn tại.",
+        message: SKU_DUPLICATE_MESSAGE,
       });
     }
   } catch (dupErr) {
-    console.warn("[Products API] SKU duplicate check skipped:", dupErr?.message || dupErr);
+    console.error("[Products API] SKU duplicate check failed:", dupErr?.message || dupErr);
+    return res.status(500).json({
+      success: false,
+      error: "sku_check_failed",
+      message: "Không kiểm tra được trùng SKU. Vui lòng thử lại.",
+    });
   }
 
   const product = {
@@ -601,6 +659,22 @@ export async function patchProduct(req, res) {
   try {
     const products = await deps.loadProducts();
     const patch = req.body || {};
+    const currentId = String(req.params.id || "").trim();
+
+    // Chặn trùng SKU trước khi ghi DB (loại trừ chính ID đang sửa).
+    if (Object.prototype.hasOwnProperty.call(patch, "sku")) {
+      const nextSku = String(patch.sku || "").trim();
+      if (nextSku) {
+        const duplicated = await isSkuTakenByOtherProduct(nextSku, currentId);
+        if (duplicated) {
+          return res.status(400).json({
+            success: false,
+            error: "sku_duplicate",
+            message: SKU_DUPLICATE_MESSAGE,
+          });
+        }
+      }
+    }
 
     const topIndex = products.findIndex((p) => p.id === req.params.id);
     if (topIndex !== -1) {

@@ -49,8 +49,8 @@ import {
 
 interface ProductListProps {
   products: Product[];
-  onAddProduct: (product: Product) => void;
-  onUpdateProduct: (product: Product, opts?: { save?: boolean }) => void;
+  onAddProduct: (product: Product) => void | Promise<Product | void>;
+  onUpdateProduct: (product: Product, opts?: { save?: boolean }) => void | Promise<any>;
   onDeleteProduct: (id: string) => void;
   onReplaceProducts?: (products: Product[]) => void;
   onBulkSave?: (updates: BulkSaveProductUpdate[]) => Promise<boolean>;
@@ -282,7 +282,7 @@ export default function ProductList({
       const data = await parseJsonResponse(response);
       if (!response.ok || data?.success === false) {
         throw new Error(
-          data?.error || data?.message || `Cập nhật phân loại thất bại (HTTP ${response.status})`
+          data?.message || data?.error || `Cập nhật phân loại thất bại (HTTP ${response.status})`
         );
       }
       const savedPrice = Math.max(0, Math.round(Number(data?.importPrice ?? importPrice) || 0));
@@ -591,6 +591,8 @@ export default function ProductList({
   const [showAddModal, setShowAddModal] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newSku, setNewSku] = useState('');
+  const [newSkuError, setNewSkuError] = useState('');
+  const [creatingProduct, setCreatingProduct] = useState(false);
   const [newCategory, setNewCategory] = useState('Gia dụng');
   const [newStock, setNewStock] = useState(10);
   const [newImportPrice, setNewImportPrice] = useState(100000);
@@ -742,9 +744,9 @@ export default function ProductList({
     }
   };
 
-  const handleCreateProduct = (e: React.FormEvent) => {
+  const handleCreateProduct = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTitle || !newSku) return;
+    if (!newTitle || !newSku || creatingProduct) return;
 
     const prod: Product = {
       id: `prod-${Date.now()}`,
@@ -763,18 +765,40 @@ export default function ProductList({
       lastSynced: new Date().toISOString()
     };
 
-    onAddProduct(prod);
-    
-    // Reset form
-    setNewTitle('');
-    setNewSku('');
-    setNewStock(10);
-    setNewImportPrice(100000);
-    setNewSellingPrice(180000);
-    setNewDescription('');
-    setNewChannels(['shopee']);
-    setNewImageUrl('');
-    setShowAddModal(false);
+    setCreatingProduct(true);
+    setNewSkuError('');
+    setAiError('');
+    try {
+      await onAddProduct(prod);
+      // Reset form
+      setNewTitle('');
+      setNewSku('');
+      setNewSkuError('');
+      setNewStock(10);
+      setNewImportPrice(100000);
+      setNewSellingPrice(180000);
+      setNewDescription('');
+      setNewChannels(['shopee']);
+      setNewImageUrl('');
+      setShowAddModal(false);
+      showActionToast('Đã thêm sản phẩm vào kho.', true);
+    } catch (err: any) {
+      const isDup =
+        err?.code === 'sku_duplicate' ||
+        err?.status === 400 ||
+        /sku/i.test(String(err?.message || ''));
+      const warn = '⚠️ Mã SKU này đã tồn tại trong kho!';
+      if (isDup) {
+        setNewSkuError(warn);
+        showActionToast(warn, false);
+      } else {
+        const msg = err?.message || 'Tạo sản phẩm thất bại.';
+        setAiError(msg);
+        showActionToast(msg, false);
+      }
+    } finally {
+      setCreatingProduct(false);
+    }
   };
 
   const handleClearAllInventory = async () => {
@@ -2115,9 +2139,19 @@ export default function ProductList({
                     required
                     placeholder="VD: PH-NCKD-5L"
                     value={newSku}
-                    onChange={(e) => setNewSku(e.target.value)}
-                    className="w-full px-3 py-2.5 bg-gray-50/50 rounded-xl border border-gray-100 focus:border-blue-500 focus:bg-white text-sm outline-none font-mono"
+                    onChange={(e) => {
+                      setNewSku(e.target.value);
+                      if (newSkuError) setNewSkuError('');
+                    }}
+                    className={`w-full px-3 py-2.5 bg-gray-50/50 rounded-xl border text-sm outline-none font-mono focus:bg-white transition-all ${
+                      newSkuError
+                        ? 'border-red-400 focus:border-red-500'
+                        : 'border-gray-100 focus:border-blue-500'
+                    }`}
                   />
+                  {newSkuError && (
+                    <p className="text-xs text-red-600 font-medium">{newSkuError}</p>
+                  )}
                 </div>
 
                 <div className="space-y-1.5">
@@ -2255,7 +2289,7 @@ export default function ProductList({
               <button 
                 type="button"
                 onClick={handleCreateProduct}
-                disabled={!newTitle || !newSku}
+                disabled={!newTitle || !newSku || creatingProduct}
                 className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm rounded-xl transition-all shadow-sm disabled:bg-gray-300 disabled:cursor-not-allowed"
               >
                 Tạo sản phẩm

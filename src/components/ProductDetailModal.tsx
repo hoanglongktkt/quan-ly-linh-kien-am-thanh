@@ -209,6 +209,8 @@ export default function ProductDetailModal({
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [toastIsError, setToastIsError] = useState(false);
+  const [skuError, setSkuError] = useState<string | null>(null);
   const [shopeeSyncError, setShopeeSyncError] = useState<string[] | null>(null);
 
   useEffect(() => { setLocalProducts(allProducts); }, [allProducts]);
@@ -230,10 +232,34 @@ export default function ProductDetailModal({
     setEditImportPrice(active.importPrice);
     setEditUnit(active.unit || '');
     setToast(null);
+    setToastIsError(false);
+    setSkuError(null);
     setShopeeSyncError(null);
   }, [active?.id]);
 
   const itemKey = getShopeeItemKey(active);
+
+  const isSkuDuplicateError = (msg: unknown) => {
+    const text = String(msg || '');
+    return /sku_duplicate/i.test(text) || /mã sku/i.test(text) || /sku.*tồn tại/i.test(text);
+  };
+
+  const showSaveError = (raw: unknown) => {
+    if (isSkuDuplicateError(raw)) {
+      const warn = '⚠️ Mã SKU này đã tồn tại trong kho!';
+      setSkuError(warn);
+      setToastIsError(true);
+      setToast(warn);
+    } else {
+      setSkuError(null);
+      setToastIsError(true);
+      setToast(`Lỗi lưu: ${raw || 'Cập nhật sản phẩm thất bại.'}`);
+    }
+    setTimeout(() => {
+      setToast(null);
+      setToastIsError(false);
+    }, 4500);
+  };
 
   const handleSyncVariants = async () => {
     if (!onSyncItemVariants || !itemKey) return;
@@ -287,20 +313,21 @@ export default function ProductDetailModal({
     const updated = buildUpdatedProduct();
     if (!updated) return;
     setSaving(true);
+    setSkuError(null);
+    setToastIsError(false);
     setToast('Đang lưu vào kho nội bộ...');
     try {
       const result = await onUpdateProduct(updated, { save: true });
       setLocalProducts(prev => prev.map(p => (p.id === updated.id ? updated : p)));
       if (result && typeof result === 'object' && result.success === false) {
-        setToast(`Lỗi lưu: ${result.error || 'Cập nhật sản phẩm thất bại.'}`);
-        setTimeout(() => setToast(null), 4500);
+        showSaveError(result.error || result.message);
         return;
       }
+      setToastIsError(false);
       setToast('Lưu thành công');
       setTimeout(() => setToast(null), 4500);
     } catch (err: any) {
-      setToast(`Lỗi cập nhật: ${err?.message || 'Cập nhật sản phẩm thất bại.'}`);
-      setTimeout(() => setToast(null), 4500);
+      showSaveError(err?.message || 'Cập nhật sản phẩm thất bại.');
     } finally {
       setSaving(false);
     }
@@ -312,14 +339,15 @@ export default function ProductDetailModal({
     if (!updated) return;
     setSaving(true);
     setShopeeSyncError(null);
+    setSkuError(null);
+    setToastIsError(false);
     setToast('Đang lưu và đồng bộ lên Shopee...');
     try {
       // 1) Lưu form vào MongoDB trước (stock/price/sku) để sync đọc đúng từ kho.
       const result = await onUpdateProduct(updated, { save: true });
       setLocalProducts(prev => prev.map(p => (p.id === updated.id ? updated : p)));
       if (result && typeof result === 'object' && result.success === false) {
-        setToast(`Lỗi lưu: ${result.error || 'Cập nhật sản phẩm thất bại.'}`);
-        setTimeout(() => setToast(null), 4500);
+        showSaveError(result.error || result.message);
         return;
       }
 
@@ -498,7 +526,17 @@ export default function ProductDetailModal({
                     </div>
                     <div>
                       <label className={labelCls}>Mã sản phẩm / SKU</label>
-                      <input value={editSku} onChange={e => setEditSku(e.target.value)} className={`${inputCls} font-mono`} />
+                      <input
+                        value={editSku}
+                        onChange={e => {
+                          setEditSku(e.target.value);
+                          if (skuError) setSkuError(null);
+                        }}
+                        className={`${inputCls} font-mono ${skuError ? 'border-red-400' : ''}`}
+                      />
+                      {skuError && (
+                        <p className="text-[12px] text-red-600 font-medium mt-1">{skuError}</p>
+                      )}
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                       <div>
@@ -586,7 +624,13 @@ export default function ProductDetailModal({
             </div>
 
             {toast && (
-              <div className="fixed top-5 left-3 right-3 sm:left-auto sm:right-5 sm:max-w-md z-90 text-[13px] font-medium text-[#075985] bg-[#E8F4FD] border border-[#7DD3FC] rounded-[6px] px-4 py-3 shadow-xl">
+              <div
+                className={`fixed top-5 left-3 right-3 sm:left-auto sm:right-5 sm:max-w-md z-90 text-[13px] font-medium rounded-[6px] px-4 py-3 shadow-xl border ${
+                  toastIsError
+                    ? 'text-red-700 bg-red-50 border-red-200'
+                    : 'text-[#075985] bg-[#E8F4FD] border-[#7DD3FC]'
+                }`}
+              >
                 {toast}
               </div>
             )}

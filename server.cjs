@@ -115775,6 +115775,52 @@ var deps10 = {
 function initProductsController(partial) {
   deps10 = { ...deps10, ...partial };
 }
+var SKU_DUPLICATE_MESSAGE = "M\xE3 SKU n\xE0y \u0111\xE3 t\u1ED3n t\u1EA1i cho m\u1ED9t s\u1EA3n ph\u1EA9m kh\xE1c trong kho!";
+function normalizeSkuKey(sku) {
+  return String(sku ?? "").trim().toLowerCase();
+}
+function getChildrenList(product) {
+  if (typeof deps10.getProductChildrenList === "function") {
+    const fromDeps = deps10.getProductChildrenList(product);
+    if (Array.isArray(fromDeps) && fromDeps.length) return fromDeps;
+  }
+  if (Array.isArray(product?.children) && product.children.length) return product.children;
+  if (Array.isArray(product?.children_models) && product.children_models.length) {
+    return product.children_models;
+  }
+  return [];
+}
+async function isSkuTakenByOtherProduct(sku, excludeId = null) {
+  const skuNorm = normalizeSkuKey(sku);
+  if (!skuNorm) return false;
+  let hits = [];
+  try {
+    hits = await deps10.searchProductsFromStore(sku, 50);
+  } catch (searchErr) {
+    console.warn(
+      "[Products API] SKU search failed, fallback loadProducts:",
+      searchErr?.message || searchErr
+    );
+    hits = await deps10.loadProducts();
+  }
+  if (!Array.isArray(hits)) hits = [];
+  const exclude = excludeId != null && String(excludeId).trim() ? String(excludeId) : null;
+  const rowMatches = (row) => {
+    const id = String(row?.id ?? "").trim();
+    if (!id) return false;
+    if (exclude && id === exclude) return false;
+    return normalizeSkuKey(row?.sku) === skuNorm;
+  };
+  for (const p of hits) {
+    if (rowMatches(p)) return true;
+    const children = getChildrenList(p);
+    const maxChildren = Math.min(children.length, 500);
+    for (let i2 = 0; i2 < maxChildren; i2++) {
+      if (rowMatches(children[i2])) return true;
+    }
+  }
+  return false;
+}
 async function listProducts(req, res) {
   res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   try {
@@ -116132,23 +116178,21 @@ async function createProduct(req, res) {
     });
   }
   try {
-    const hits = await deps10.searchProductsFromStore(sku, 20);
-    const skuLower = sku.toLowerCase();
-    const skuMatch = (row) => String(row?.sku || "").trim().toLowerCase() === skuLower;
-    const duplicated = (Array.isArray(hits) ? hits : []).some((p) => {
-      if (skuMatch(p)) return true;
-      const children = Array.isArray(p?.children) && p.children.length ? p.children : Array.isArray(p?.children_models) ? p.children_models : [];
-      return children.some(skuMatch);
-    });
+    const duplicated = await isSkuTakenByOtherProduct(sku, null);
     if (duplicated) {
-      return res.status(409).json({
+      return res.status(400).json({
         success: false,
         error: "sku_duplicate",
-        message: "M\xE3 SKU \u0111\xE3 t\u1ED3n t\u1EA1i."
+        message: SKU_DUPLICATE_MESSAGE
       });
     }
   } catch (dupErr) {
-    console.warn("[Products API] SKU duplicate check skipped:", dupErr?.message || dupErr);
+    console.error("[Products API] SKU duplicate check failed:", dupErr?.message || dupErr);
+    return res.status(500).json({
+      success: false,
+      error: "sku_check_failed",
+      message: "Kh\xF4ng ki\u1EC3m tra \u0111\u01B0\u1EE3c tr\xF9ng SKU. Vui l\xF2ng th\u1EED l\u1EA1i."
+    });
   }
   const product = {
     id: body.id || `prod-${Date.now()}`,
@@ -116233,6 +116277,20 @@ async function patchProduct(req, res) {
   try {
     const products = await deps10.loadProducts();
     const patch = req.body || {};
+    const currentId = String(req.params.id || "").trim();
+    if (Object.prototype.hasOwnProperty.call(patch, "sku")) {
+      const nextSku = String(patch.sku || "").trim();
+      if (nextSku) {
+        const duplicated = await isSkuTakenByOtherProduct(nextSku, currentId);
+        if (duplicated) {
+          return res.status(400).json({
+            success: false,
+            error: "sku_duplicate",
+            message: SKU_DUPLICATE_MESSAGE
+          });
+        }
+      }
+    }
     const topIndex = products.findIndex((p) => p.id === req.params.id);
     if (topIndex !== -1) {
       const merged = deps10.mergeProductPatch(products[topIndex], patch);
@@ -134892,7 +134950,7 @@ async function upsertChannelListingsBatch(batchRows, shopId, shopName, options) 
       const ids = resolveUpsertItemModelFromRow(listing);
       if (!ids) continue;
       byKey.set(channelListingUpsertKey(ids.itemId, ids.modelId), listing);
-      const skuKey = normalizeSkuKey(listing?.sku);
+      const skuKey = normalizeSkuKey2(listing?.sku);
       if (skuKey) existingSkus.add(skuKey);
     }
     let flatRows = [];
@@ -134915,7 +134973,7 @@ async function upsertChannelListingsBatch(batchRows, shopId, shopName, options) 
         scanned++;
         const key = channelListingUpsertKey(ids.itemId, ids.modelId);
         const prev = byKey.get(key);
-        const skuKey = normalizeSkuKey(item?.sku);
+        const skuKey = normalizeSkuKey2(item?.sku);
         if (skipExisting && (prev || skuKey && existingSkus.has(skuKey))) {
           skipped++;
           continue;
@@ -141248,7 +141306,7 @@ function enrichChannelListingsWithMaster(listings, products) {
         const sku = String(master?.sku || "").trim();
         const prevSnapTitle = String(base.linkedProductTitle || "").trim();
         const prevSnapSku = String(base.linkedProductSku || "").trim();
-        const snapshotNeedsHeal = base.status === "success" && (title && title !== prevSnapTitle || sku && normalizeSkuKey(sku) !== normalizeSkuKey(prevSnapSku) || !prevSnapTitle && !!title || !prevSnapSku && !!sku);
+        const snapshotNeedsHeal = base.status === "success" && (title && title !== prevSnapTitle || sku && normalizeSkuKey2(sku) !== normalizeSkuKey2(prevSnapSku) || !prevSnapTitle && !!title || !prevSnapSku && !!sku);
         return {
           ...base,
           status: base.status === "success" ? "success" : base.status,
@@ -141373,7 +141431,7 @@ async function persistAutoHealedMappingSnapshots(enriched) {
       const nextSku = row?.linkedProductSku != null && String(row.linkedProductSku).trim() !== "" ? String(row.linkedProductSku).trim() : void 0;
       const prevTitle = String(prev?.linkedProductTitle || "").trim();
       const prevSku = String(prev?.linkedProductSku || "").trim();
-      if (prevTitle === (nextTitle || "") && normalizeSkuKey(prevSku) === normalizeSkuKey(nextSku || "")) {
+      if (prevTitle === (nextTitle || "") && normalizeSkuKey2(prevSku) === normalizeSkuKey2(nextSku || "")) {
         continue;
       }
       byId.set(
@@ -141402,7 +141460,7 @@ async function persistAutoHealedMappingSnapshots(enriched) {
     return 0;
   }
 }
-function normalizeSkuKey(sku) {
+function normalizeSkuKey2(sku) {
   return String(sku ?? "").trim().toUpperCase();
 }
 function buildMasterSkuIndex(masterData) {
@@ -141410,7 +141468,7 @@ function buildMasterSkuIndex(masterData) {
   if (!Array.isArray(masterData)) return index;
   const addSku = (row) => {
     if (!row || typeof row !== "object") return;
-    const key = normalizeSkuKey(row.sku);
+    const key = normalizeSkuKey2(row.sku);
     if (key && !index.has(key)) index.set(key, row);
   };
   for (const masterItem of masterData) {
@@ -141454,7 +141512,7 @@ async function getCachedMasterSkuIndex() {
   return { index, products, fromCache: false };
 }
 function findMasterProductBySku(masterSkuIndex, listingSku, _masterData) {
-  const key = normalizeSkuKey(listingSku);
+  const key = normalizeSkuKey2(listingSku);
   if (!key) return null;
   return masterSkuIndex.get(key) || null;
 }
@@ -141551,7 +141609,7 @@ async function autoLinkSingleListingFromDatabase(opts) {
       };
     }
   }
-  const normalizedSku = normalizeSkuKey(current?.sku);
+  const normalizedSku = normalizeSkuKey2(current?.sku);
   if (!normalizedSku) {
     const failedRow = persistBatchAutoLinkListingUpdate(
       dbListings,
@@ -141642,7 +141700,7 @@ async function batchAutoLinkFromDatabase(opts) {
       unlinkedTotal += 1;
       scannedCount += 1;
       nextCursor = rowIndex + 1;
-      const targetSku = normalizeSkuKey(item?.sku);
+      const targetSku = normalizeSkuKey2(item?.sku);
       if (targetSku) {
         const masterItem = findMasterProductBySku(masterSkuIndex, item?.sku, masterProducts);
         if (masterItem) {
@@ -141764,7 +141822,7 @@ async function bulkAutoLinkListingsByIds(rawIds) {
       });
       continue;
     }
-    const normalizedSku = normalizeSkuKey(current?.sku);
+    const normalizedSku = normalizeSkuKey2(current?.sku);
     if (!normalizedSku) {
       failedCount += 1;
       const failedRow = buildAutoLinkFailedRow(
@@ -143009,7 +143067,7 @@ async function startServer() {
     autoLinkSingleListingFromDatabase,
     bulkAutoLinkAllPending,
     bulkAutoLinkListingsByIds,
-    normalizeSkuKey,
+    normalizeSkuKey: normalizeSkuKey2,
     getProductChildrenList,
     isProductsDiskMode,
     loadLocalInventoryCache,

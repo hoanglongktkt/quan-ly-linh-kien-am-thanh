@@ -1569,52 +1569,58 @@ export default function App() {
   // 3. Actions handlers
   const handleAddProduct = async (prod: Product): Promise<Product> => {
     const token = localStorage.getItem('admin_token');
-    if (token) {
-      try {
-        const response = await fetch('/api/products', {
-          method: 'POST',
-          headers: apiAuthHeaders(),
-          body: JSON.stringify(prod),
-        });
-        if (response.ok) {
-          const saved = await response.json();
-          // Hiển thị ngay từ phản hồi server sau khi lưu DB.
-          if (Array.isArray(saved?.localInventory)) {
-            setProducts(saved.localInventory);
-            prod = {
-              id: saved.id,
-              title: saved.title,
-              sku: saved.sku,
-              stock: saved.stock,
-              importPrice: saved.importPrice,
-              sellingPrice: saved.sellingPrice,
-              unit: saved.unit,
-              channels: saved.channels || [],
-              category: saved.category,
-              description: saved.description,
-              imageUrl: saved.imageUrl,
-              status: saved.status,
-              shopeeId: saved.shopeeId,
-              shopeeItemId: saved.shopeeItemId,
-              shopeeModelId: saved.shopeeModelId,
-              modelName: saved.modelName,
-              weight: saved.weight,
-              tiktokId: saved.tiktokId,
-              wooId: saved.wooId,
-              lastSynced: saved.lastSynced,
-            } as Product;
-          } else {
-            setProducts((prev) => [saved, ...prev]);
-            prod = saved;
-          }
-        } else {
-          setProducts((prev) => [prod, ...prev]);
-        }
-      } catch {
-        setProducts((prev) => [prod, ...prev]);
+    if (!token) {
+      throw new Error('Chưa đăng nhập.');
+    }
+
+    try {
+      const response = await fetch('/api/products', {
+        method: 'POST',
+        headers: apiAuthHeaders(),
+        body: JSON.stringify(prod),
+      });
+      const saved = await response.json().catch(() => ({}));
+      if (!response.ok || saved?.success === false) {
+        const err: any = new Error(
+          saved?.message || saved?.error || `Tạo sản phẩm thất bại (HTTP ${response.status})`
+        );
+        err.status = response.status;
+        err.code = saved?.error || 'create_failed';
+        throw err;
       }
-    } else {
-      setProducts((prev) => [prod, ...prev]);
+
+      // Hiển thị ngay từ phản hồi server sau khi lưu DB.
+      if (Array.isArray(saved?.localInventory)) {
+        setProducts(saved.localInventory);
+        prod = {
+          id: saved.id,
+          title: saved.title,
+          sku: saved.sku,
+          stock: saved.stock,
+          importPrice: saved.importPrice,
+          sellingPrice: saved.sellingPrice,
+          unit: saved.unit,
+          channels: saved.channels || [],
+          category: saved.category,
+          description: saved.description,
+          imageUrl: saved.imageUrl,
+          status: saved.status,
+          shopeeId: saved.shopeeId,
+          shopeeItemId: saved.shopeeItemId,
+          shopeeModelId: saved.shopeeModelId,
+          modelName: saved.modelName,
+          weight: saved.weight,
+          tiktokId: saved.tiktokId,
+          wooId: saved.wooId,
+          lastSynced: saved.lastSynced,
+        } as Product;
+      } else {
+        const created = (saved?.product || saved) as Product;
+        setProducts((prev) => [created, ...prev]);
+        prod = created;
+      }
+    } catch (err) {
+      throw err;
     }
 
     const channelsLabel = prod.channels.map((c) => c.toUpperCase()).join(' & ') || 'Hệ thống nội bộ';
@@ -1672,10 +1678,11 @@ export default function App() {
       const data = await parseJsonResponse(response);
       if (!response.ok || data?.success === false) {
         const error =
-          data?.error || data?.message || `Lỗi cập nhật sản phẩm (HTTP ${response.status})`;
+          data?.message || data?.error || `Lỗi cập nhật sản phẩm (HTTP ${response.status})`;
         return {
           success: false,
           error,
+          code: data?.error,
           shopeeSynced: false,
           shopeeMessage: data?.shopeeMessage || error,
         };

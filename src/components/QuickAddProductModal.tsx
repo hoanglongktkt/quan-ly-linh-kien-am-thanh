@@ -96,8 +96,8 @@ export default function QuickAddProductModal({
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (res.status === 409 || data.error === 'sku_duplicate') {
-        setError(data.message || 'Mã SKU đã tồn tại.');
+      if (res.status === 400 || res.status === 409 || data.error === 'sku_duplicate') {
+        setError(data.message || '⚠️ Mã SKU này đã tồn tại trong kho!');
         return;
       }
       if (!res.ok || data.success === false) {
@@ -169,11 +169,23 @@ export default function QuickAddProductModal({
             <input
               type="text"
               value={sku}
-              onChange={(e) => setSku(e.target.value)}
+              onChange={(e) => {
+                setSku(e.target.value);
+                if (error) setError('');
+              }}
               onKeyDown={onEnter}
               placeholder="VD: AT-NAM-001"
-              className="w-full px-3 py-2.5 bg-gray-50 rounded-xl border border-gray-200 text-sm outline-none font-mono focus:border-emerald-400 transition-all"
+              className={`w-full px-3 py-2.5 bg-gray-50 rounded-xl border text-sm outline-none font-mono transition-all ${
+                error && /sku/i.test(error)
+                  ? 'border-red-400 focus:border-red-500'
+                  : 'border-gray-200 focus:border-emerald-400'
+              }`}
             />
+            {error && /sku/i.test(error) && (
+              <p className="text-xs text-red-600 font-medium">
+                {/đã tồn tại/i.test(error) ? '⚠️ Mã SKU này đã tồn tại trong kho!' : error}
+              </p>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -211,7 +223,7 @@ export default function QuickAddProductModal({
             />
           </div>
 
-          {error && (
+          {error && !/sku/i.test(error) && (
             <p className="text-xs text-rose-600 font-medium bg-rose-50 border border-rose-100 rounded-lg px-3 py-2">
               {error}
             </p>
