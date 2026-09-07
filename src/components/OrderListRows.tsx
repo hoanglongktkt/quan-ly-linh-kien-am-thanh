@@ -314,10 +314,18 @@ function readItemSellingPrice(item: Order['items'][number]): number {
     retail_price?: number;
     retailPrice?: number;
   };
-  const raw = row.sellingPrice ?? row.selling_price ?? row.retail_price ?? row.retailPrice;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0) return 0;
-  return Math.round(n);
+  // Ưu tiên retail_price Backend hydrate; không đọc item.price (giá dòng đơn).
+  const candidates = [
+    row.retail_price,
+    row.retailPrice,
+    row.sellingPrice,
+    row.selling_price,
+  ];
+  for (let i = 0; i < candidates.length; i++) {
+    const n = Number(candidates[i]);
+    if (Number.isFinite(n) && n > 0) return Math.round(n);
+  }
+  return 0;
 }
 
 export function OrderItemImportPriceInline({

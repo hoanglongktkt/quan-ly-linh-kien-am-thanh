@@ -186,7 +186,41 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
       return String(raw.date || '').trim();
     })(),
     items: Array.isArray(raw.items) && raw.items.length > 0
-      ? raw.items
+      ? raw.items.map((it: any) => {
+          if (!it || typeof it !== 'object') return it;
+          const importPrice = Math.max(
+            0,
+            Math.round(
+              Number(it.importPrice ?? it.import_price ?? it.last_import_price ?? it.cost_price) || 0,
+            ),
+          );
+          const retailPrice = Math.max(
+            0,
+            Math.round(
+              Number(
+                it.retail_price ?? it.retailPrice ?? it.sellingPrice ?? it.selling_price,
+              ) || 0,
+            ),
+          );
+          return {
+            ...it,
+            ...(importPrice > 0
+              ? {
+                  importPrice,
+                  import_price: importPrice,
+                  last_import_price: importPrice,
+                }
+              : {}),
+            ...(retailPrice > 0
+              ? {
+                  retail_price: retailPrice,
+                  retailPrice,
+                  sellingPrice: retailPrice,
+                  selling_price: retailPrice,
+                }
+              : {}),
+          };
+        })
       : (() => {
           const list = (raw as any).item_list;
           if (!Array.isArray(list) || list.length === 0) return [];
@@ -202,6 +236,18 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
             modelId: it?.model_id != null ? String(it.model_id) : undefined,
             modelSku: it?.model_sku != null ? String(it.model_sku) : undefined,
             modelName: it?.model_name != null ? String(it.model_name) : undefined,
+            importPrice:
+              Number(it?.importPrice ?? it?.import_price ?? it?.last_import_price) > 0
+                ? Math.round(Number(it.importPrice ?? it.import_price ?? it.last_import_price))
+                : undefined,
+            retail_price:
+              Number(it?.retail_price ?? it?.sellingPrice ?? it?.selling_price) > 0
+                ? Math.round(Number(it.retail_price ?? it.sellingPrice ?? it.selling_price))
+                : undefined,
+            sellingPrice:
+              Number(it?.sellingPrice ?? it?.retail_price ?? it?.selling_price) > 0
+                ? Math.round(Number(it.sellingPrice ?? it.retail_price ?? it.selling_price))
+                : undefined,
           }));
         })(),
     // Mã hoàn trả không phải vận đơn giao đi. Dùng nó ở đây sẽ làm đơn hoàn bị

@@ -75860,18 +75860,28 @@ function getProductChildren(p) {
 function readCatalogImportPrice(source) {
   if (!source || typeof source !== "object") return 0;
   const row = source;
-  const raw = row.importPrice ?? row.import_price ?? row.last_import_price ?? row.cost_price;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0) return 0;
-  return Math.round(n);
+  const candidates = [row.importPrice, row.import_price, row.last_import_price, row.cost_price];
+  for (let i2 = 0; i2 < candidates.length; i2++) {
+    const n = Number(candidates[i2]);
+    if (Number.isFinite(n) && n > 0) return Math.round(n);
+  }
+  return 0;
 }
-function readCatalogSellingPrice(source) {
+function readWarehouseSellingPrice(source, opts) {
   if (!source || typeof source !== "object") return 0;
   const row = source;
-  const raw = row.sellingPrice ?? row.selling_price ?? row.retail_price ?? row.retailPrice ?? row.price;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0) return 0;
-  return Math.round(n);
+  const candidates = [
+    row.sellingPrice,
+    row.selling_price,
+    row.retail_price,
+    row.retailPrice
+  ];
+  if (opts?.includeGenericPrice) candidates.push(row.price);
+  for (let i2 = 0; i2 < candidates.length; i2++) {
+    const n = Number(candidates[i2]);
+    if (Number.isFinite(n) && n > 0) return Math.round(n);
+  }
+  return 0;
 }
 function flattenCatalogPool(products) {
   const out = [];
@@ -75999,9 +76009,9 @@ function enrichOrderItemFromCatalog(item, catalogProducts = []) {
   const existingImport = readCatalogImportPrice(item);
   const catalogImport = readCatalogImportPrice(matched);
   const importPrice = existingImport > 0 ? existingImport : catalogImport;
-  const existingSelling = readCatalogSellingPrice(item);
-  const catalogSelling = readCatalogSellingPrice(matched);
-  const sellingPrice = existingSelling > 0 ? existingSelling : catalogSelling;
+  const catalogSelling = readWarehouseSellingPrice(matched, { includeGenericPrice: true });
+  const existingSelling = readWarehouseSellingPrice(item);
+  const sellingPrice = catalogSelling > 0 ? catalogSelling : existingSelling;
   const enriched = {
     ...item,
     productTitle: modelName ? `${productTitle} - ${modelName}` : productTitle,

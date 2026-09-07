@@ -15,25 +15,39 @@ export interface EnrichedOrderLine extends OrderLineItem {
   retailPrice?: number;
 }
 
-/** Giá nhập từ catalog/item — null/NaN → 0, không throw. */
+/** Giá nhập từ catalog/item — null/NaN/0 → bỏ qua alias tiếp theo. */
 function readCatalogImportPrice(source: unknown): number {
   if (!source || typeof source !== 'object') return 0;
   const row = source as Record<string, unknown>;
-  const raw = row.importPrice ?? row.import_price ?? row.last_import_price ?? row.cost_price;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0) return 0;
-  return Math.round(n);
+  const candidates = [row.importPrice, row.import_price, row.last_import_price, row.cost_price];
+  for (let i = 0; i < candidates.length; i++) {
+    const n = Number(candidates[i]);
+    if (Number.isFinite(n) && n > 0) return Math.round(n);
+  }
+  return 0;
 }
 
-/** Giá bán lẻ kho từ catalog/item — null/NaN → 0. */
-function readCatalogSellingPrice(source: unknown): number {
+/**
+ * Giá bán lẻ kho (Master Inventory).
+ * Không đọc `price` trên order line (đó là giá bán trên đơn Shopee).
+ * null / 0 / NaN → thử alias tiếp theo; không có → 0.
+ */
+function readWarehouseSellingPrice(source: unknown, opts?: { includeGenericPrice?: boolean }): number {
   if (!source || typeof source !== 'object') return 0;
   const row = source as Record<string, unknown>;
-  const raw =
-    row.sellingPrice ?? row.selling_price ?? row.retail_price ?? row.retailPrice ?? row.price;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0) return 0;
-  return Math.round(n);
+  const candidates: unknown[] = [
+    row.sellingPrice,
+    row.selling_price,
+    row.retail_price,
+    row.retailPrice,
+  ];
+  // Chỉ với document Products — một số bản ghi cũ chỉ có `price`.
+  if (opts?.includeGenericPrice) candidates.push(row.price);
+  for (let i = 0; i < candidates.length; i++) {
+    const n = Number(candidates[i]);
+    if (Number.isFinite(n) && n > 0) return Math.round(n);
+  }
+  return 0;
 }
 
 function flattenCatalogPool(products: Product[]): Product[] {
@@ -264,14 +278,16 @@ export function enrichOrderItemFromCatalog(
     productTitle = stripModelSuffix(matched.title, matched.modelName) || productTitle;
   }
 
-  // Giá nhập / giá bán kho: ưu tiên đã gắn trên item (>0), không thì stamp từ catalog.
+  // Giá nhập: ưu tiên đã gắn trên item (>0), không thì stamp từ catalog.
   const existingImport = readCatalogImportPrice(item);
   const catalogImport = readCatalogImportPrice(matched);
   const importPrice = existingImport > 0 ? existingImport : catalogImport;
 
-  const existingSelling = readCatalogSellingPrice(item);
-  const catalogSelling = readCatalogSellingPrice(matched);
-  const sellingPrice = existingSelling > 0 ? existingSelling : catalogSelling;
+  // Giá bán kho (SSOT Products.sellingPrice) — BẮT BUỘC stamp retail_price.
+  // Ưu tiên catalog khi match được; không bao giờ lấy item.price (giá dòng đơn).
+  const catalogSelling = readWarehouseSellingPrice(matched, { includeGenericPrice: true });
+  const existingSelling = readWarehouseSellingPrice(item);
+  const sellingPrice = catalogSelling > 0 ? catalogSelling : existingSelling;
 
   const enriched: EnrichedOrderLine = {
     ...item,
