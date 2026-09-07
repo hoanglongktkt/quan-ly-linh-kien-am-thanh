@@ -218,7 +218,7 @@ function buildChart(
     const bucket = buckets.get(bucketKey);
     if (bucket) {
       const amount = Number(order.totalAmount) || 0;
-      const importCost = Number(getOrderTotalImportCost(order, products)) || 0;
+      const importCost = Number(getOrderTotalImportCost(order)) || 0;
       const calculatedProfit = calculateProfitWithSystemFees(amount, importCost, systemFees);
       bucket.amount += amount;
       bucket.profit += Number(calculatedProfit) || 0;

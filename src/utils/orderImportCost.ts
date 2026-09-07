@@ -107,13 +107,14 @@ export function matchCatalogProduct(item: OrderLine, catalogProducts: Product[])
   return undefined;
 }
 
-export function resolveItemImportPrice(item: unknown, catalogProducts: Product[] = []): number {
+/**
+ * Giá nhập dòng đơn — SSOT từ payload item (Backend đã hydrate).
+ * Không map lại từ mảng products phân trang trên UI.
+ * Thiếu / null / NaN → 0.
+ */
+export function resolveItemImportPrice(item: unknown, _catalogProducts: Product[] = []): number {
   try {
-    const row = asRecord(item);
-    const fromItem = readImportPrice(row);
-    if (fromItem > 0) return fromItem;
-    const matched = matchCatalogProduct(row, catalogProducts);
-    return readImportPrice(matched);
+    return readImportPrice(asRecord(item));
   } catch {
     return 0;
   }
@@ -122,14 +123,15 @@ export function resolveItemImportPrice(item: unknown, catalogProducts: Product[]
 /**
  * Tổng giá vốn = Sum(giá_nhập × số_lượng).
  * items rỗng/undefined → 0. Thiếu giá nhập → 0. Không bao giờ NaN / throw.
+ * Chỉ đọc importPrice đã stamp trên item (không phụ thuộc cache kho FE).
  */
-export function getOrderTotalImportCost(order: Order | null | undefined, catalogProducts: Product[] = []): number {
+export function getOrderTotalImportCost(order: Order | null | undefined, _catalogProducts: Product[] = []): number {
   try {
     const items = getOrderLineItems(order);
     if (items.length === 0) return 0;
     const total = items.reduce((sum, item) => {
       const qty = Math.max(0, Number(item?.quantity ?? item?.qty) || 0);
-      const unit = resolveItemImportPrice(item, catalogProducts);
+      const unit = resolveItemImportPrice(item);
       const line = qty * unit;
       return sum + (Number.isFinite(line) ? line : 0);
     }, 0);

@@ -149,7 +149,6 @@ function calculateDynamicFeeItems(itemAmount: number, systemFees: SystemFee[]) {
 function formatOrderNetRevenueDisplay(
   order: Order,
   systemFees: SystemFee[] = [],
-  catalogProducts: Product[] = [],
 ): { text: string; pending: boolean; amount: number } {
   const pending = order.channel === 'shopee' && !isShopeeEscrowSynced(order);
   const itemAmount = getShopeeItemAmount(order);
@@ -159,7 +158,8 @@ function formatOrderNetRevenueDisplay(
         itemAmount - calculateDynamicFeeItems(itemAmount, systemFees).reduce((sum, fee) => sum + fee.amount, 0),
       )
     : getShopeeNetRevenue(order);
-  const totalImportCost = getOrderTotalImportCost(order, catalogProducts);
+  // Giá vốn chỉ từ item.importPrice đã hydrate ở Backend — không map cache kho FE.
+  const totalImportCost = getOrderTotalImportCost(order);
   const profit = (Number.isFinite(netReceived) ? netReceived : 0) - totalImportCost;
   const amount = Number.isFinite(profit) ? profit : 0;
   return { text: `${amount.toLocaleString('vi-VN')}đ`, pending, amount };
@@ -329,7 +329,8 @@ export function OrderItemImportPriceInline({
 
   const matched = matchCatalogProduct(item as Record<string, unknown>, products);
   const sku = resolveOrderItemSku(item, matched) || '—';
-  const importPrice = resolveItemImportPrice(item, products);
+  // SSOT: chỉ đọc giá nhập đã stamp trên item (Backend hydrate).
+  const importPrice = resolveItemImportPrice(item);
 
   const startEdit = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -578,7 +579,7 @@ export const OrderTableRow = React.memo(function OrderTableRow({
 }: SharedRowProps) {
   const shopName = resolveOrderShopDisplayName(order, shops);
   const waybill = getOrderWaybillCode(order);
-  const revenue = formatOrderNetRevenueDisplay(order, systemFees, products);
+  const revenue = formatOrderNetRevenueDisplay(order, systemFees);
   const refundAmt =
     Number(order.refund_amount) > 0 ? Number(order.refund_amount) : Number(order.totalAmount) || 0;
   const returnReason = String(order.text_reason || order.return_reason || '').trim() || '—';
@@ -918,7 +919,7 @@ export const OrderCardRow = React.memo(function OrderCardRow({
 }: SharedRowProps) {
   const shopName = resolveOrderShopDisplayName(order, shops);
   const waybill = getOrderWaybillCode(order);
-  const revenue = formatOrderNetRevenueDisplay(order, systemFees, products);
+  const revenue = formatOrderNetRevenueDisplay(order, systemFees);
   const wooKey = order.id || order.orderSn;
   const cust = activeSubTab === 'web_orders' || order.channel === 'woocommerce' ? resolveWooCustomerInfo(order) : null;
   const showHandover =

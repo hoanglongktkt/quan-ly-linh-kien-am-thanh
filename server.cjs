@@ -75849,7 +75849,45 @@ function createShopeeWebhookRouter(processPayload, routePath = "/shopee", option
   return router25;
 }
 
+// src/types.ts
+function getProductChildren(p) {
+  if (Array.isArray(p.children) && p.children.length > 0) return p.children;
+  if (Array.isArray(p.children_models) && p.children_models.length > 0) return p.children_models;
+  return [];
+}
+
 // src/utils/orderItemVariation.ts
+function readCatalogImportPrice(source) {
+  if (!source || typeof source !== "object") return 0;
+  const row = source;
+  const raw = row.importPrice ?? row.import_price ?? row.last_import_price ?? row.cost_price;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.round(n);
+}
+function flattenCatalogPool(products) {
+  const out = [];
+  for (const p of Array.isArray(products) ? products : []) {
+    out.push(p);
+    for (const c of getProductChildren(p)) out.push(c);
+  }
+  return out;
+}
+function matchCatalogBySkuOrModel(catalogProducts, item) {
+  const sku = String(item.modelSku || item.sku || "").trim().toLowerCase();
+  const modelId = normalizeModelId(item.modelId);
+  if (!sku && modelId === "0") return void 0;
+  const pool = flattenCatalogPool(catalogProducts);
+  if (modelId !== "0") {
+    const byModel = pool.find((p) => String(p.shopeeModelId || "").trim() === modelId);
+    if (byModel) return byModel;
+  }
+  if (sku) {
+    const bySku = pool.find((p) => String(p.sku || "").trim().toLowerCase() === sku);
+    if (bySku) return bySku;
+  }
+  return void 0;
+}
 function normalizeModelId(raw) {
   const v = String(raw ?? "").trim();
   if (!v || v === "0") return "0";
@@ -75924,7 +75962,8 @@ function enrichOrderItemFromCatalog(item, catalogProducts = []) {
   } else {
     productTitle = stripModelSuffix(productTitle, modelName);
   }
-  const variants2 = itemId ? findCatalogVariants(catalogProducts, itemId) : [];
+  const roots = itemId ? findCatalogVariants(catalogProducts, itemId) : [];
+  const variants2 = flattenCatalogPool(roots);
   let matched;
   if (modelId !== "0") {
     matched = variants2.find((p) => p.shopeeModelId === modelId);
@@ -75940,18 +75979,27 @@ function enrichOrderItemFromCatalog(item, catalogProducts = []) {
   if (!matched) {
     matched = matchVariantByImage(variants2, item.productImage);
   }
+  if (!matched && catalogProducts.length > 0) {
+    matched = matchCatalogBySkuOrModel(catalogProducts, item);
+  }
   if (matched) {
     modelId = normalizeModelId(matched.shopeeModelId);
     modelSku = modelSku || matched.sku?.trim();
     modelName = modelName || matched.modelName?.trim();
     productTitle = stripModelSuffix(matched.title, matched.modelName) || productTitle;
   }
+  const existingImport = readCatalogImportPrice(item);
+  const catalogImport = readCatalogImportPrice(matched);
+  const importPrice = existingImport > 0 ? existingImport : catalogImport;
   const enriched = {
     ...item,
     productTitle: modelName ? `${productTitle} - ${modelName}` : productTitle,
     modelId: modelId !== "0" ? modelId : item.modelId,
     modelSku: modelSku || item.modelSku,
-    modelName: modelName || item.modelName
+    modelName: modelName || item.modelName,
+    importPrice,
+    import_price: importPrice,
+    last_import_price: importPrice
   };
   return enriched;
 }
@@ -120529,8 +120577,20 @@ async function refreshOrders(req, res) {
       if (mergedOrders.length > 80) {
         await new Promise((resolve) => setTimeout(resolve, 30));
       }
+      let catalogProducts = [];
+      try {
+        catalogProducts = await deps15.loadProductsForOrders(mergedOrders);
+      } catch (catalogErr) {
+        console.warn(
+          "[GET /api/orders/refresh] catalog enrich skipped:",
+          catalogErr?.message || catalogErr
+        );
+      }
+      if (catalogProducts.length > 80) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
       const orders = deps15.enrichOrdersWithShopNames(
-        deps15.enrichOrdersFromCatalog(mergedOrders, [])
+        deps15.enrichOrdersFromCatalog(mergedOrders, catalogProducts)
       );
       const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / limit) || 1);
       const currentPage = Math.min(page, totalPages);

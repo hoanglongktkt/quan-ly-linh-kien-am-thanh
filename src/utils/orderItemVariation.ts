@@ -1,4 +1,4 @@
-import { Order, Product } from '../types';
+import { Order, Product, getProductChildren } from '../types';
 
 export type OrderLineItem = Order['items'][number];
 
@@ -6,6 +6,51 @@ export interface EnrichedOrderLine extends OrderLineItem {
   modelId?: string;
   modelSku?: string;
   modelName?: string;
+  importPrice?: number;
+  import_price?: number;
+  last_import_price?: number;
+}
+
+/** Giá nhập từ catalog/item — null/NaN → 0, không throw. */
+function readCatalogImportPrice(source: unknown): number {
+  if (!source || typeof source !== 'object') return 0;
+  const row = source as Record<string, unknown>;
+  const raw = row.importPrice ?? row.import_price ?? row.last_import_price ?? row.cost_price;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.round(n);
+}
+
+function flattenCatalogPool(products: Product[]): Product[] {
+  const out: Product[] = [];
+  for (const p of Array.isArray(products) ? products : []) {
+    out.push(p);
+    for (const c of getProductChildren(p)) out.push(c);
+  }
+  return out;
+}
+
+/** Khớp SKU / modelId trên toàn catalog (kèm children) khi match theo itemId thất bại. */
+function matchCatalogBySkuOrModel(
+  catalogProducts: Product[],
+  item: OrderLineItem,
+): Product | undefined {
+  const sku = String(item.modelSku || (item as { sku?: string }).sku || '')
+    .trim()
+    .toLowerCase();
+  const modelId = normalizeModelId(item.modelId);
+  if (!sku && modelId === '0') return undefined;
+
+  const pool = flattenCatalogPool(catalogProducts);
+  if (modelId !== '0') {
+    const byModel = pool.find((p) => String(p.shopeeModelId || '').trim() === modelId);
+    if (byModel) return byModel;
+  }
+  if (sku) {
+    const bySku = pool.find((p) => String(p.sku || '').trim().toLowerCase() === sku);
+    if (bySku) return bySku;
+  }
+  return undefined;
 }
 
 function normalizeModelId(raw?: string | null): string {
@@ -170,7 +215,8 @@ export function enrichOrderItemFromCatalog(
     productTitle = stripModelSuffix(productTitle, modelName);
   }
 
-  const variants = itemId ? findCatalogVariants(catalogProducts, itemId) : [];
+  const roots = itemId ? findCatalogVariants(catalogProducts, itemId) : [];
+  const variants = flattenCatalogPool(roots);
   let matched: Product | undefined;
 
   if (modelId !== '0') {
@@ -191,6 +237,11 @@ export function enrichOrderItemFromCatalog(
     matched = matchVariantByImage(variants, item.productImage);
   }
 
+  // Fallback: khớp SKU / modelId trên catalog đã load theo lô đơn (SSOT kho gốc).
+  if (!matched && catalogProducts.length > 0) {
+    matched = matchCatalogBySkuOrModel(catalogProducts, item);
+  }
+
   if (matched) {
     modelId = normalizeModelId(matched.shopeeModelId);
     modelSku = modelSku || matched.sku?.trim();
@@ -198,12 +249,20 @@ export function enrichOrderItemFromCatalog(
     productTitle = stripModelSuffix(matched.title, matched.modelName) || productTitle;
   }
 
+  // Giá nhập: ưu tiên đã gắn trên item (>0), không thì stamp từ catalog (null/0 → 0).
+  const existingImport = readCatalogImportPrice(item);
+  const catalogImport = readCatalogImportPrice(matched);
+  const importPrice = existingImport > 0 ? existingImport : catalogImport;
+
   const enriched: EnrichedOrderLine = {
     ...item,
     productTitle: modelName ? `${productTitle} - ${modelName}` : productTitle,
     modelId: modelId !== '0' ? modelId : item.modelId,
     modelSku: modelSku || item.modelSku,
     modelName: modelName || item.modelName,
+    importPrice,
+    import_price: importPrice,
+    last_import_price: importPrice,
   };
 
   return enriched;

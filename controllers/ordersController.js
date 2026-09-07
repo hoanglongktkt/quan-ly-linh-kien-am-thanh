@@ -549,8 +549,21 @@ export async function refreshOrders(req, res) {
       if (mergedOrders.length > 80) {
         await new Promise((resolve) => setTimeout(resolve, 30));
       }
+      // SSOT: hydrate importPrice từ Products — cấm bypass catalog rỗng.
+      let catalogProducts = [];
+      try {
+        catalogProducts = await deps.loadProductsForOrders(mergedOrders);
+      } catch (catalogErr) {
+        console.warn(
+          "[GET /api/orders/refresh] catalog enrich skipped:",
+          catalogErr?.message || catalogErr,
+        );
+      }
+      if (catalogProducts.length > 80) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
       const orders = deps.enrichOrdersWithShopNames(
-        deps.enrichOrdersFromCatalog(mergedOrders, []),
+        deps.enrichOrdersFromCatalog(mergedOrders, catalogProducts),
       );
       const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / limit) || 1);
       const currentPage = Math.min(page, totalPages);
