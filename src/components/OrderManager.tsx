@@ -512,6 +512,7 @@ function OrderDetailAccordionPanel({
   products = [],
   onUpdateProduct,
   onPatchItemImportPrice,
+  onPatchItemSellingPrice,
 }: {
   order: Order;
   shops: ConnectedShop[];
@@ -522,6 +523,7 @@ function OrderDetailAccordionPanel({
     opts?: { save?: boolean },
   ) => void | Promise<{ success?: boolean; error?: string } | unknown>;
   onPatchItemImportPrice?: (orderId: string, itemIndex: number, importPrice: number) => void;
+  onPatchItemSellingPrice?: (orderId: string, itemIndex: number, sellingPrice: number) => void;
 }) {
   const wooCustomer = order.channel === 'woocommerce' ? resolveWooCustomerInfo(order) : null;
   return (
@@ -635,8 +637,9 @@ function OrderDetailAccordionPanel({
                     products={products}
                     onUpdateProduct={onUpdateProduct}
                     onPatchItemImportPrice={onPatchItemImportPrice}
+                    onPatchItemSellingPrice={onPatchItemSellingPrice}
                   />
-                  <p className="text-gray-400 text-[10px] mt-0.5">Giá bán lẻ niêm yết: {item.price.toLocaleString('vi-VN')}đ</p>
+                  <p className="text-gray-400 text-[10px] mt-0.5">Giá bán đơn hàng: {item.price.toLocaleString('vi-VN')}đ</p>
                 </div>
               </div>
               <div className="text-right shrink-0">
@@ -7353,6 +7356,35 @@ export default function OrderManager({
     [onUpdateOrders],
   );
 
+  /** Cập nhật giá bán kho trên dòng item đơn (local) sau khi lưu + sync sàn. */
+  const handlePatchItemSellingPrice = useCallback(
+    (orderId: string, itemIndex: number, sellingPrice: number) => {
+      const price = Math.max(0, Math.round(Number(sellingPrice) || 0));
+      const updated = ordersRef.current.map((o) => {
+        if (o.id !== orderId) return o;
+        const items = Array.isArray(o.items) ? o.items : [];
+        if (itemIndex < 0 || itemIndex >= items.length) return o;
+        return {
+          ...o,
+          items: items.map((it, idx) =>
+            idx === itemIndex
+              ? {
+                  ...it,
+                  sellingPrice: price,
+                  selling_price: price,
+                  retail_price: price,
+                  retailPrice: price,
+                }
+              : it,
+          ),
+        };
+      });
+      ordersRef.current = updated;
+      onUpdateOrders(updated, { persist: false });
+    },
+    [onUpdateOrders],
+  );
+
   const selectedOrderIdSet = useMemo(() => new Set(selectedOrderIds), [selectedOrderIds]);
   const resettingPrintSet = useMemo(
     () => new Set(resettingPrintIds.map((id) => String(id || '').replace(/^shopee-/i, '').trim())),
@@ -7400,9 +7432,10 @@ export default function OrderManager({
         products={products}
         onUpdateProduct={onUpdateProduct}
         onPatchItemImportPrice={handlePatchItemImportPrice}
+        onPatchItemSellingPrice={handlePatchItemSellingPrice}
       />
     ),
-    [shops, systemFees, products, onUpdateProduct, handlePatchItemImportPrice],
+    [shops, systemFees, products, onUpdateProduct, handlePatchItemImportPrice, handlePatchItemSellingPrice],
   );
 
   if (focusScanner) {
@@ -8949,6 +8982,7 @@ export default function OrderManager({
                     renderDetails={renderOrderDetails}
                     onUpdateProduct={onUpdateProduct}
                     onPatchItemImportPrice={handlePatchItemImportPrice}
+                    onPatchItemSellingPrice={handlePatchItemSellingPrice}
                   />
                 ))}
               </tbody>
@@ -8979,6 +9013,7 @@ export default function OrderManager({
                   renderDetails={renderOrderDetails}
                   onUpdateProduct={onUpdateProduct}
                   onPatchItemImportPrice={handlePatchItemImportPrice}
+                  onPatchItemSellingPrice={handlePatchItemSellingPrice}
                 />
               ))}
             </div>

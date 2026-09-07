@@ -785,6 +785,166 @@ export async function patchImportPriceBySku(req, res) {
 }
 
 /**
+ * PATCH /api/products/selling-price-by-sku
+ * Cập nhật giá bán lẻ kho gốc theo SKU + đồng bộ giá lên Shopee/TikTok.
+ * Body: { sku, sellingPrice | retail_price }
+ */
+export async function patchSellingPriceBySku(req, res) {
+  try {
+    const sku = String(req.body?.sku ?? "").trim();
+    const sellingPrice = Math.max(
+      0,
+      Math.round(
+        Number(
+          req.body?.sellingPrice ??
+            req.body?.retail_price ??
+            req.body?.retailPrice ??
+            req.body?.selling_price ??
+            req.body?.price,
+        ) || 0,
+      ),
+    );
+    if (!sku) {
+      return res.status(400).json({
+        success: false,
+        error: "sku_required",
+        message: "Thiếu SKU để cập nhật giá bán.",
+      });
+    }
+
+    const skuLower = sku.toLowerCase();
+    const products = await deps.loadProducts();
+    const list = Array.isArray(products) ? products : [];
+
+    let savedRow = null;
+    let parentForUpsert = null;
+
+    for (let i = 0; i < list.length; i++) {
+      const parent = list[i];
+      if (String(parent?.sku || "").trim().toLowerCase() === skuLower) {
+        const merged = deps.mergeProductPatch(parent, { sellingPrice });
+        list[i] = merged;
+        savedRow = merged;
+        parentForUpsert = merged;
+        break;
+      }
+
+      const children = deps.getProductChildrenList(parent);
+      const childIdx = children.findIndex(
+        (c) => String(c?.sku || "").trim().toLowerCase() === skuLower,
+      );
+      if (childIdx === -1) continue;
+
+      const linkedChild =
+        typeof deps.inheritShopeeLinkFromParent === "function"
+          ? deps.inheritShopeeLinkFromParent(children[childIdx], parent)
+          : children[childIdx];
+      const mergedChild = deps.mergeProductPatch(linkedChild, { sellingPrice });
+      const nextChildren = [...children];
+      nextChildren[childIdx] = mergedChild;
+      const totalStock = nextChildren.reduce((s, c) => s + (Number(c.stock) || 0), 0);
+      const nextParent = { ...parent, children: nextChildren, stock: totalStock };
+      list[i] = nextParent;
+      savedRow = mergedChild;
+      parentForUpsert = nextParent;
+      break;
+    }
+
+    if (!savedRow || !parentForUpsert) {
+      return res.status(404).json({
+        success: false,
+        error: "product_not_found",
+        message: `Không tìm thấy SP trong kho (SKU: ${sku})`,
+      });
+    }
+
+    await deps.upsertProductsToStoreAsync([parentForUpsert]);
+
+    // Đồng bộ sàn — delay nhẹ chống rate limit khi gọi nhiều kênh.
+    let shopeeSynced = false;
+    let tiktokSynced = false;
+    const syncNotes = [];
+
+    if (sellingPrice > 0) {
+      try {
+        const mapped =
+          (await resolveProductWithShopeeMapping(savedRow)) || savedRow;
+        const shopee = await pushProductStockPriceToShopeeImmediate(mapped, {
+          syncStock: false,
+          syncPrice: true,
+        });
+        shopeeSynced = Boolean(shopee?.ok && !shopee?.skipped);
+        if (shopee?.skipped) {
+          syncNotes.push(shopee.message || "Shopee: bỏ qua (chưa mapping).");
+        } else if (shopee?.ok) {
+          syncNotes.push(shopee.message || "Shopee: OK");
+        } else {
+          syncNotes.push(shopee?.message || "Shopee: thất bại");
+        }
+      } catch (shopeeErr) {
+        syncNotes.push(
+          `Shopee: ${shopeeErr instanceof Error ? shopeeErr.message : String(shopeeErr)}`,
+        );
+      }
+
+      await new Promise((r) => setTimeout(r, 250));
+
+      try {
+        const tiktokLines = await deps.syncProductToTikTok(savedRow);
+        const lines = Array.isArray(tiktokLines) ? tiktokLines : [];
+        const priceLines = lines.filter(
+          (l) => !l?.action || String(l.action).includes("price") || l.action === "sync",
+        );
+        const relevant = priceLines.length > 0 ? priceLines : lines;
+        tiktokSynced = relevant.some((l) => l?.success);
+        if (relevant.length === 0) {
+          syncNotes.push("TikTok: không có kết quả đồng bộ.");
+        } else {
+          syncNotes.push(
+            ...relevant
+              .slice(0, 3)
+              .map(
+                (l) =>
+                  `TikTok: ${l?.success ? "OK" : "FAIL"}${l?.message ? ` — ${l.message}` : ""}`,
+              ),
+          );
+        }
+      } catch (tiktokErr) {
+        syncNotes.push(
+          `TikTok: ${tiktokErr instanceof Error ? tiktokErr.message : String(tiktokErr)}`,
+        );
+      }
+    } else {
+      syncNotes.push("Giá bán = 0 — đã lưu kho, bỏ qua đẩy sàn.");
+    }
+
+    const savedPrice = Math.max(
+      0,
+      Math.round(Number(savedRow?.sellingPrice ?? sellingPrice) || 0),
+    );
+
+    return res.json({
+      ...savedRow,
+      success: true,
+      id: savedRow.id,
+      sku: savedRow.sku || sku,
+      sellingPrice: savedPrice,
+      selling_price: savedPrice,
+      retail_price: savedPrice,
+      retailPrice: savedPrice,
+      shopeeSynced,
+      tiktokSynced,
+      message: "Đã cập nhật giá bán và đồng bộ lên sàn",
+      syncNotes,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[Products API] PATCH /api/products/selling-price-by-sku failed:", err);
+    return res.status(500).json({ success: false, error: message || "Internal Server Error" });
+  }
+}
+
+/**
  * POST /api/products/bulk-import-price
  * Đồng bộ giá nhập hàng loạt theo SKU — 1 lần load + 1 lần bulkWrite (upsertProducts).
  * Payload: [{ sku, import_price }] (alias importPrice).

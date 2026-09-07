@@ -330,6 +330,11 @@ export interface Order {
     import_price?: number;
     last_import_price?: number;
     cost_price?: number;
+    /** Giá bán lẻ kho gốc (hydrate từ Master Inventory) */
+    sellingPrice?: number;
+    selling_price?: number;
+    retail_price?: number;
+    retailPrice?: number;
     modelId?: string;
     modelSku?: string;
     modelName?: string;

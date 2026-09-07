@@ -8,6 +8,7 @@ import {
   replaceProducts,
   patchProduct,
   patchImportPriceBySku,
+  patchSellingPriceBySku,
   bulkImportPrice,
   inventoryBalance,
   bulkSaveProducts,
@@ -40,6 +41,8 @@ router.get("/", listProducts);
 router.post("/", createProduct);
 /** Phải đặt trước PATCH /:id — cập nhật giá nhập theo SKU toàn kho. */
 router.patch("/import-price-by-sku", patchImportPriceBySku);
+/** Cập nhật giá bán kho theo SKU + đồng bộ Shopee/TikTok. */
+router.patch("/selling-price-by-sku", patchSellingPriceBySku);
 router.patch("/:id", patchProduct);
 router.delete("/:id", deleteProduct);
 

@@ -9,6 +9,10 @@ export interface EnrichedOrderLine extends OrderLineItem {
   importPrice?: number;
   import_price?: number;
   last_import_price?: number;
+  sellingPrice?: number;
+  selling_price?: number;
+  retail_price?: number;
+  retailPrice?: number;
 }
 
 /** Giá nhập từ catalog/item — null/NaN → 0, không throw. */
@@ -16,6 +20,17 @@ function readCatalogImportPrice(source: unknown): number {
   if (!source || typeof source !== 'object') return 0;
   const row = source as Record<string, unknown>;
   const raw = row.importPrice ?? row.import_price ?? row.last_import_price ?? row.cost_price;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.round(n);
+}
+
+/** Giá bán lẻ kho từ catalog/item — null/NaN → 0. */
+function readCatalogSellingPrice(source: unknown): number {
+  if (!source || typeof source !== 'object') return 0;
+  const row = source as Record<string, unknown>;
+  const raw =
+    row.sellingPrice ?? row.selling_price ?? row.retail_price ?? row.retailPrice ?? row.price;
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 0) return 0;
   return Math.round(n);
@@ -249,10 +264,14 @@ export function enrichOrderItemFromCatalog(
     productTitle = stripModelSuffix(matched.title, matched.modelName) || productTitle;
   }
 
-  // Giá nhập: ưu tiên đã gắn trên item (>0), không thì stamp từ catalog (null/0 → 0).
+  // Giá nhập / giá bán kho: ưu tiên đã gắn trên item (>0), không thì stamp từ catalog.
   const existingImport = readCatalogImportPrice(item);
   const catalogImport = readCatalogImportPrice(matched);
   const importPrice = existingImport > 0 ? existingImport : catalogImport;
+
+  const existingSelling = readCatalogSellingPrice(item);
+  const catalogSelling = readCatalogSellingPrice(matched);
+  const sellingPrice = existingSelling > 0 ? existingSelling : catalogSelling;
 
   const enriched: EnrichedOrderLine = {
     ...item,
@@ -263,6 +282,10 @@ export function enrichOrderItemFromCatalog(
     importPrice,
     import_price: importPrice,
     last_import_price: importPrice,
+    sellingPrice,
+    selling_price: sellingPrice,
+    retail_price: sellingPrice,
+    retailPrice: sellingPrice,
   };
 
   return enriched;

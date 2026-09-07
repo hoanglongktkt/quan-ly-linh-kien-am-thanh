@@ -82,6 +82,7 @@ type SharedRowProps = {
   renderDetails: (order: Order) => React.ReactNode;
   onUpdateProduct?: UpdateProductFn;
   onPatchItemImportPrice?: (orderId: string, itemIndex: number, importPrice: number) => void;
+  onPatchItemSellingPrice?: (orderId: string, itemIndex: number, sellingPrice: number) => void;
 };
 
 function getOrderWaybillCode(order: Order): string {
@@ -289,7 +290,7 @@ function formatImportPriceVnd(amount: number): string {
 }
 
 /** UX nhập nhanh: gõ 25 / 150 → 25000 / 150000 khi > 0 và < 1000. */
-function applyFastImportPriceInput(raw: string | number): number {
+function applyFastPriceInput(raw: string | number): number {
   let n = Math.max(0, Math.round(Number(raw) || 0));
   if (n > 0 && n < 1000) n *= 1000;
   return n;
@@ -307,6 +308,18 @@ function resolveOrderItemSku(
   ).trim();
 }
 
+function readItemSellingPrice(item: Order['items'][number]): number {
+  const row = item as Order['items'][number] & {
+    selling_price?: number;
+    retail_price?: number;
+    retailPrice?: number;
+  };
+  const raw = row.sellingPrice ?? row.selling_price ?? row.retail_price ?? row.retailPrice;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.round(n);
+}
+
 export function OrderItemImportPriceInline({
   order,
   item,
@@ -314,6 +327,7 @@ export function OrderItemImportPriceInline({
   products,
   onUpdateProduct,
   onPatchItemImportPrice,
+  onPatchItemSellingPrice,
 }: {
   order: Order;
   item: Order['items'][number];
@@ -321,42 +335,46 @@ export function OrderItemImportPriceInline({
   products: Product[];
   onUpdateProduct?: UpdateProductFn;
   onPatchItemImportPrice?: (orderId: string, itemIndex: number, importPrice: number) => void;
+  onPatchItemSellingPrice?: (orderId: string, itemIndex: number, sellingPrice: number) => void;
 }) {
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState<'import' | 'selling' | null>(null);
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   const matched = matchCatalogProduct(item as Record<string, unknown>, products);
   const sku = resolveOrderItemSku(item, matched) || '—';
-  // SSOT: chỉ đọc giá nhập đã stamp trên item (Backend hydrate).
   const importPrice = resolveItemImportPrice(item);
+  const sellingPrice = readItemSellingPrice(item);
 
-  const startEdit = (e: React.MouseEvent) => {
+  const startEdit = (field: 'import' | 'selling', e: React.MouseEvent) => {
     e.stopPropagation();
     setErrorMsg(null);
-    setDraft(String(importPrice || 0));
-    setEditing(true);
+    setSuccessMsg(null);
+    setDraft(String((field === 'import' ? importPrice : sellingPrice) || 0));
+    setEditing(field);
   };
 
   const cancelEdit = (e?: React.MouseEvent) => {
     e?.stopPropagation();
-    setEditing(false);
+    setEditing(null);
     setErrorMsg(null);
     setDraft('');
   };
 
   const applyDraftMultiplier = () => {
-    const next = applyFastImportPriceInput(draft);
+    const next = applyFastPriceInput(draft);
     setDraft(String(next));
     return next;
   };
 
-  const saveEdit = async (e?: React.MouseEvent) => {
+  const saveImportEdit = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (saving) return;
     setErrorMsg(null);
-    const newPrice = applyFastImportPriceInput(draft);
+    setSuccessMsg(null);
+    const newPrice = applyFastPriceInput(draft);
     setDraft(String(newPrice));
 
     const lookupSku = resolveOrderItemSku(item, matched);
@@ -400,7 +418,6 @@ export function OrderItemImportPriceInline({
         Math.round(Number(data?.importPrice ?? newPrice) || 0),
       );
 
-      // Đồng bộ catalog local (đã lưu DB) → Tiền lãi re-render.
       if (onUpdateProduct && data?.id) {
         const base = matched && matched.id === data.id ? matched : ({ id: data.id } as Product);
         await onUpdateProduct(
@@ -418,7 +435,7 @@ export function OrderItemImportPriceInline({
       }
 
       onPatchItemImportPrice?.(order.id, itemIndex, savedPrice);
-      setEditing(false);
+      setEditing(null);
       setDraft('');
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Lưu giá nhập thất bại';
@@ -428,6 +445,154 @@ export function OrderItemImportPriceInline({
     }
   };
 
+  const saveSellingEdit = async (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (saving) return;
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    const newPrice = applyFastPriceInput(draft);
+    setDraft(String(newPrice));
+
+    const lookupSku = resolveOrderItemSku(item, matched);
+    if (!lookupSku || lookupSku === '—') {
+      setErrorMsg('Thiếu SKU — không thể cập nhật giá bán');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const token = localStorage.getItem('admin_token');
+      if (!token) throw new Error('Chưa đăng nhập.');
+
+      const response = await fetch('/api/products/selling-price-by-sku', {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ sku: lookupSku, retail_price: newPrice, sellingPrice: newPrice }),
+      });
+      const data = await parseJsonResponse<{
+        success?: boolean;
+        error?: string;
+        message?: string;
+        id?: string;
+        sku?: string;
+        sellingPrice?: number;
+        retail_price?: number;
+        importPrice?: number;
+        stock?: number;
+      }>(response);
+
+      if (!response.ok || data?.success === false) {
+        throw new Error(
+          String(data?.message || data?.error || `Cập nhật giá bán thất bại (HTTP ${response.status})`),
+        );
+      }
+
+      const savedPrice = Math.max(
+        0,
+        Math.round(Number(data?.sellingPrice ?? data?.retail_price ?? newPrice) || 0),
+      );
+
+      if (onUpdateProduct && data?.id) {
+        const base = matched && matched.id === data.id ? matched : ({ id: data.id } as Product);
+        await onUpdateProduct(
+          {
+            ...base,
+            ...data,
+            id: String(data.id),
+            sku: String(data.sku ?? lookupSku),
+            sellingPrice: savedPrice,
+          } as Product,
+          { save: false },
+        );
+      } else if (onUpdateProduct && matched?.id) {
+        await onUpdateProduct({ ...matched, sellingPrice: savedPrice }, { save: false });
+      }
+
+      onPatchItemSellingPrice?.(order.id, itemIndex, savedPrice);
+      setSuccessMsg(String(data?.message || 'Đã cập nhật giá bán và đồng bộ lên sàn'));
+      setEditing(null);
+      setDraft('');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Lưu giá bán thất bại';
+      setErrorMsg(message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const renderPriceEditor = (field: 'import' | 'selling') => {
+    const isEditing = editing === field;
+    const label = field === 'import' ? 'Giá nhập' : 'Giá bán kho';
+    const display = field === 'import' ? importPrice : sellingPrice;
+    const warnZero = display <= 0;
+    const onSave = field === 'import' ? saveImportEdit : saveSellingEdit;
+
+    if (isEditing) {
+      return (
+        <span className="inline-flex items-center gap-1 min-w-0" onClick={(e) => e.stopPropagation()}>
+          <span className="text-[10px] text-gray-500 shrink-0">{label}:</span>
+          <input
+            type="number"
+            min={0}
+            step={1}
+            value={draft}
+            disabled={saving}
+            autoFocus
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={() => {
+              if (!saving) applyDraftMultiplier();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void onSave();
+              if (e.key === 'Escape') cancelEdit();
+            }}
+            className="w-[5.75rem] h-6 px-1.5 rounded border border-blue-300 bg-white text-[11px] font-semibold text-gray-800 focus:outline-none focus:ring-1 focus:ring-blue-400"
+            aria-label={`${label} mới`}
+            title="Gõ 25 → 25.000đ"
+          />
+          <button
+            type="button"
+            disabled={saving}
+            onClick={(e) => void onSave(e)}
+            className="inline-flex items-center justify-center w-5 h-5 rounded bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-200 disabled:opacity-50"
+            title="Lưu"
+          >
+            {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={cancelEdit}
+            className="inline-flex items-center justify-center w-5 h-5 rounded bg-rose-50 text-rose-500 hover:bg-rose-100 border border-rose-200 disabled:opacity-50"
+            title="Hủy"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        </span>
+      );
+    }
+
+    return (
+      <button
+        type="button"
+        onClick={(e) => startEdit(field, e)}
+        className="inline-flex items-center gap-1 text-[10px] text-gray-500 hover:text-blue-600 transition-colors group"
+        title={`Sửa nhanh ${label.toLowerCase()}`}
+      >
+        <span>
+          {label}:{' '}
+          <span className={warnZero ? 'font-semibold text-amber-600' : 'font-semibold text-gray-600'}>
+            {formatImportPriceVnd(display)}
+          </span>
+        </span>
+        <Pencil className="w-3 h-3 text-gray-400 group-hover:text-blue-500 shrink-0" />
+      </button>
+    );
+  };
+
   return (
     <div className="mt-1 min-w-0">
       <div className="text-sm text-gray-500 flex items-center gap-2 mt-1 flex-wrap">
@@ -435,64 +600,12 @@ export function OrderItemImportPriceInline({
           SKU: {sku}
         </span>
         <span className="text-gray-300 shrink-0">|</span>
-        {editing ? (
-          <span className="inline-flex items-center gap-1 min-w-0" onClick={(e) => e.stopPropagation()}>
-            <input
-              type="number"
-              min={0}
-              step={1}
-              value={draft}
-              disabled={saving}
-              autoFocus
-              onChange={(e) => setDraft(e.target.value)}
-              onBlur={() => {
-                if (!saving) applyDraftMultiplier();
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void saveEdit();
-                if (e.key === 'Escape') cancelEdit();
-              }}
-              className="w-[5.75rem] h-6 px-1.5 rounded border border-blue-300 bg-white text-[11px] font-semibold text-gray-800 focus:outline-none focus:ring-1 focus:ring-blue-400"
-              aria-label="Giá nhập mới"
-              title="Gõ 25 → 25.000đ"
-            />
-            <button
-              type="button"
-              disabled={saving}
-              onClick={(e) => void saveEdit(e)}
-              className="inline-flex items-center justify-center w-5 h-5 rounded bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-200 disabled:opacity-50"
-              title="Lưu"
-            >
-              {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-            </button>
-            <button
-              type="button"
-              disabled={saving}
-              onClick={cancelEdit}
-              className="inline-flex items-center justify-center w-5 h-5 rounded bg-rose-50 text-rose-500 hover:bg-rose-100 border border-rose-200 disabled:opacity-50"
-              title="Hủy"
-            >
-              <X className="w-3 h-3" />
-            </button>
-          </span>
-        ) : (
-          <button
-            type="button"
-            onClick={startEdit}
-            className="inline-flex items-center gap-1 text-[10px] text-gray-500 hover:text-blue-600 transition-colors group"
-            title="Sửa nhanh giá nhập"
-          >
-            <span>
-              Giá nhập:{' '}
-              <span className={importPrice > 0 ? 'font-semibold text-gray-600' : 'font-semibold text-amber-600'}>
-                {formatImportPriceVnd(importPrice)}
-              </span>
-            </span>
-            <Pencil className="w-3 h-3 text-gray-400 group-hover:text-blue-500 shrink-0" />
-          </button>
-        )}
+        {renderPriceEditor('import')}
+        <span className="text-gray-300 shrink-0">|</span>
+        {renderPriceEditor('selling')}
       </div>
       {errorMsg ? <p className="text-[9px] text-rose-600 mt-0.5 leading-tight">{errorMsg}</p> : null}
+      {successMsg ? <p className="text-[9px] text-emerald-600 mt-0.5 leading-tight">{successMsg}</p> : null}
     </div>
   );
 }
@@ -503,12 +616,14 @@ function OrderItemsCell({
   products = [],
   onUpdateProduct,
   onPatchItemImportPrice,
+  onPatchItemSellingPrice,
 }: {
   order: Order;
   compactTitle?: boolean;
   products?: Product[];
   onUpdateProduct?: UpdateProductFn;
   onPatchItemImportPrice?: (orderId: string, itemIndex: number, importPrice: number) => void;
+  onPatchItemSellingPrice?: (orderId: string, itemIndex: number, sellingPrice: number) => void;
 }) {
   return (
     <div className="space-y-2">
@@ -550,6 +665,7 @@ function OrderItemsCell({
                 products={products}
                 onUpdateProduct={onUpdateProduct}
                 onPatchItemImportPrice={onPatchItemImportPrice}
+                onPatchItemSellingPrice={onPatchItemSellingPrice}
               />
             </div>
           </div>
@@ -576,6 +692,7 @@ export const OrderTableRow = React.memo(function OrderTableRow({
   renderDetails,
   onUpdateProduct,
   onPatchItemImportPrice,
+  onPatchItemSellingPrice,
 }: SharedRowProps) {
   const shopName = resolveOrderShopDisplayName(order, shops);
   const waybill = getOrderWaybillCode(order);
@@ -619,6 +736,7 @@ export const OrderTableRow = React.memo(function OrderTableRow({
                 products={products}
                 onUpdateProduct={onUpdateProduct}
                 onPatchItemImportPrice={onPatchItemImportPrice}
+                onPatchItemSellingPrice={onPatchItemSellingPrice}
               />
             </td>
             <td className="p-4 text-right">
@@ -690,6 +808,7 @@ export const OrderTableRow = React.memo(function OrderTableRow({
                 products={products}
                 onUpdateProduct={onUpdateProduct}
                 onPatchItemImportPrice={onPatchItemImportPrice}
+                onPatchItemSellingPrice={onPatchItemSellingPrice}
               />
             </td>
             <td className="p-4 text-right space-y-0.5">
@@ -916,6 +1035,7 @@ export const OrderCardRow = React.memo(function OrderCardRow({
   renderDetails,
   onUpdateProduct,
   onPatchItemImportPrice,
+  onPatchItemSellingPrice,
 }: SharedRowProps) {
   const shopName = resolveOrderShopDisplayName(order, shops);
   const waybill = getOrderWaybillCode(order);
@@ -981,6 +1101,7 @@ export const OrderCardRow = React.memo(function OrderCardRow({
             products={products}
             onUpdateProduct={onUpdateProduct}
             onPatchItemImportPrice={onPatchItemImportPrice}
+            onPatchItemSellingPrice={onPatchItemSellingPrice}
           />
         </div>
 

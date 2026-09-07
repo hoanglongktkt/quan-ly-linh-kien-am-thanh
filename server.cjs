@@ -75865,6 +75865,14 @@ function readCatalogImportPrice(source) {
   if (!Number.isFinite(n) || n < 0) return 0;
   return Math.round(n);
 }
+function readCatalogSellingPrice(source) {
+  if (!source || typeof source !== "object") return 0;
+  const row = source;
+  const raw = row.sellingPrice ?? row.selling_price ?? row.retail_price ?? row.retailPrice ?? row.price;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.round(n);
+}
 function flattenCatalogPool(products) {
   const out = [];
   for (const p of Array.isArray(products) ? products : []) {
@@ -75991,6 +75999,9 @@ function enrichOrderItemFromCatalog(item, catalogProducts = []) {
   const existingImport = readCatalogImportPrice(item);
   const catalogImport = readCatalogImportPrice(matched);
   const importPrice = existingImport > 0 ? existingImport : catalogImport;
+  const existingSelling = readCatalogSellingPrice(item);
+  const catalogSelling = readCatalogSellingPrice(matched);
+  const sellingPrice = existingSelling > 0 ? existingSelling : catalogSelling;
   const enriched = {
     ...item,
     productTitle: modelName ? `${productTitle} - ${modelName}` : productTitle,
@@ -75999,7 +76010,11 @@ function enrichOrderItemFromCatalog(item, catalogProducts = []) {
     modelName: modelName || item.modelName,
     importPrice,
     import_price: importPrice,
-    last_import_price: importPrice
+    last_import_price: importPrice,
+    sellingPrice,
+    selling_price: sellingPrice,
+    retail_price: sellingPrice,
+    retailPrice: sellingPrice
   };
   return enriched;
 }
@@ -116432,6 +116447,135 @@ async function patchImportPriceBySku(req, res) {
     return res.status(500).json({ success: false, error: message || "Internal Server Error" });
   }
 }
+async function patchSellingPriceBySku(req, res) {
+  try {
+    const sku = String(req.body?.sku ?? "").trim();
+    const sellingPrice = Math.max(
+      0,
+      Math.round(
+        Number(
+          req.body?.sellingPrice ?? req.body?.retail_price ?? req.body?.retailPrice ?? req.body?.selling_price ?? req.body?.price
+        ) || 0
+      )
+    );
+    if (!sku) {
+      return res.status(400).json({
+        success: false,
+        error: "sku_required",
+        message: "Thi\u1EBFu SKU \u0111\u1EC3 c\u1EADp nh\u1EADt gi\xE1 b\xE1n."
+      });
+    }
+    const skuLower = sku.toLowerCase();
+    const products = await deps10.loadProducts();
+    const list = Array.isArray(products) ? products : [];
+    let savedRow = null;
+    let parentForUpsert = null;
+    for (let i2 = 0; i2 < list.length; i2++) {
+      const parent = list[i2];
+      if (String(parent?.sku || "").trim().toLowerCase() === skuLower) {
+        const merged = deps10.mergeProductPatch(parent, { sellingPrice });
+        list[i2] = merged;
+        savedRow = merged;
+        parentForUpsert = merged;
+        break;
+      }
+      const children = deps10.getProductChildrenList(parent);
+      const childIdx = children.findIndex(
+        (c) => String(c?.sku || "").trim().toLowerCase() === skuLower
+      );
+      if (childIdx === -1) continue;
+      const linkedChild = typeof deps10.inheritShopeeLinkFromParent === "function" ? deps10.inheritShopeeLinkFromParent(children[childIdx], parent) : children[childIdx];
+      const mergedChild = deps10.mergeProductPatch(linkedChild, { sellingPrice });
+      const nextChildren = [...children];
+      nextChildren[childIdx] = mergedChild;
+      const totalStock = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
+      const nextParent = { ...parent, children: nextChildren, stock: totalStock };
+      list[i2] = nextParent;
+      savedRow = mergedChild;
+      parentForUpsert = nextParent;
+      break;
+    }
+    if (!savedRow || !parentForUpsert) {
+      return res.status(404).json({
+        success: false,
+        error: "product_not_found",
+        message: `Kh\xF4ng t\xECm th\u1EA5y SP trong kho (SKU: ${sku})`
+      });
+    }
+    await deps10.upsertProductsToStoreAsync([parentForUpsert]);
+    let shopeeSynced = false;
+    let tiktokSynced = false;
+    const syncNotes = [];
+    if (sellingPrice > 0) {
+      try {
+        const mapped = await resolveProductWithShopeeMapping(savedRow) || savedRow;
+        const shopee = await pushProductStockPriceToShopeeImmediate(mapped, {
+          syncStock: false,
+          syncPrice: true
+        });
+        shopeeSynced = Boolean(shopee?.ok && !shopee?.skipped);
+        if (shopee?.skipped) {
+          syncNotes.push(shopee.message || "Shopee: b\u1ECF qua (ch\u01B0a mapping).");
+        } else if (shopee?.ok) {
+          syncNotes.push(shopee.message || "Shopee: OK");
+        } else {
+          syncNotes.push(shopee?.message || "Shopee: th\u1EA5t b\u1EA1i");
+        }
+      } catch (shopeeErr) {
+        syncNotes.push(
+          `Shopee: ${shopeeErr instanceof Error ? shopeeErr.message : String(shopeeErr)}`
+        );
+      }
+      await new Promise((r2) => setTimeout(r2, 250));
+      try {
+        const tiktokLines = await deps10.syncProductToTikTok(savedRow);
+        const lines = Array.isArray(tiktokLines) ? tiktokLines : [];
+        const priceLines = lines.filter(
+          (l) => !l?.action || String(l.action).includes("price") || l.action === "sync"
+        );
+        const relevant = priceLines.length > 0 ? priceLines : lines;
+        tiktokSynced = relevant.some((l) => l?.success);
+        if (relevant.length === 0) {
+          syncNotes.push("TikTok: kh\xF4ng c\xF3 k\u1EBFt qu\u1EA3 \u0111\u1ED3ng b\u1ED9.");
+        } else {
+          syncNotes.push(
+            ...relevant.slice(0, 3).map(
+              (l) => `TikTok: ${l?.success ? "OK" : "FAIL"}${l?.message ? ` \u2014 ${l.message}` : ""}`
+            )
+          );
+        }
+      } catch (tiktokErr) {
+        syncNotes.push(
+          `TikTok: ${tiktokErr instanceof Error ? tiktokErr.message : String(tiktokErr)}`
+        );
+      }
+    } else {
+      syncNotes.push("Gi\xE1 b\xE1n = 0 \u2014 \u0111\xE3 l\u01B0u kho, b\u1ECF qua \u0111\u1EA9y s\xE0n.");
+    }
+    const savedPrice = Math.max(
+      0,
+      Math.round(Number(savedRow?.sellingPrice ?? sellingPrice) || 0)
+    );
+    return res.json({
+      ...savedRow,
+      success: true,
+      id: savedRow.id,
+      sku: savedRow.sku || sku,
+      sellingPrice: savedPrice,
+      selling_price: savedPrice,
+      retail_price: savedPrice,
+      retailPrice: savedPrice,
+      shopeeSynced,
+      tiktokSynced,
+      message: "\u0110\xE3 c\u1EADp nh\u1EADt gi\xE1 b\xE1n v\xE0 \u0111\u1ED3ng b\u1ED9 l\xEAn s\xE0n",
+      syncNotes
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[Products API] PATCH /api/products/selling-price-by-sku failed:", err);
+    return res.status(500).json({ success: false, error: message || "Internal Server Error" });
+  }
+}
 async function bulkImportPrice(req, res) {
   try {
     const raw = Array.isArray(req.body) ? req.body : req.body?.items;
@@ -119151,6 +119295,7 @@ router12.post("/bulk-channel-sync", bulkChannelSync);
 router12.get("/", listProducts);
 router12.post("/", createProduct);
 router12.patch("/import-price-by-sku", patchImportPriceBySku);
+router12.patch("/selling-price-by-sku", patchSellingPriceBySku);
 router12.patch("/:id", patchProduct);
 router12.delete("/:id", deleteProduct);
 var productsRoutes_default = router12;
