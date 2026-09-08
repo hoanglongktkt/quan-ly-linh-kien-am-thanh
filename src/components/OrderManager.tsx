@@ -3801,9 +3801,12 @@ export default function OrderManager({
             setScannerCameraLabel(info.cameraLabel || '');
             if (info.zoom.supported) {
               const cur = info.zoom.current;
+              // Mặc định UX = 2x: chỉ đổi highlight khi track thật sự lệch khỏi 2x.
               if (cur >= 2.5) setScannerZoomPreset(3);
               else if (cur >= 1.5) setScannerZoomPreset(2);
-              else setScannerZoomPreset(1);
+              else setScannerZoomPreset(2);
+            } else {
+              setScannerZoomPreset(2);
             }
           },
         })
@@ -7701,6 +7704,10 @@ export default function OrderManager({
                           setScannerCameraCount(handle.getCameraCount());
                           setScannerCameraLabel(handle.getCameraLabel());
                           setScannerZoomPreset(2);
+                          // Đồng bộ apply 2x sau khi đổi ống kính (localStorage đã lưu trong util).
+                          void handle.setZoom(2).then((zoomOk) => {
+                            if (zoomOk) setScannerZoomCaps(handle.getZoomCaps());
+                          });
                         }
                       })
                       .finally(() => setIsSwitchingCamera(false));

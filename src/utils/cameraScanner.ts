@@ -24,6 +24,29 @@ const DETECTOR_INTERVAL_MS = 50;
 const ZXING_INTERVAL_MS = 80;
 /** Zoom kỹ thuật số mặc định — máy cảm biến lớn đứng xa ~20cm vẫn đọc được. */
 const DEFAULT_SCAN_ZOOM = 2.0;
+/** localStorage key — nhớ ống kính user đã chọn qua "Đổi Camera". */
+export const PREFERRED_CAMERA_ID_KEY = 'preferredCameraId';
+
+function getPreferredCameraId(): string | undefined {
+  try {
+    if (typeof localStorage === 'undefined') return undefined;
+    const id = localStorage.getItem(PREFERRED_CAMERA_ID_KEY)?.trim();
+    return id || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function savePreferredCameraId(deviceId: string): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    const id = String(deviceId || '').trim();
+    if (!id) return;
+    localStorage.setItem(PREFERRED_CAMERA_ID_KEY, id);
+  } catch {
+    /* Safari private / quota — bỏ qua */
+  }
+}
 
 export type ScannerZoomCaps = {
   supported: boolean;
@@ -214,9 +237,15 @@ function buildStreamConstraints(deviceId?: string): MediaStreamConstraints {
 
 async function openCameraStream(preferredDeviceId?: string): Promise<MediaStream> {
   const devices = await listVideoInputDevices();
-  const rearId = preferredDeviceId || pickRearDeviceId(devices);
+  // Ưu tiên: caller → localStorage → ống kính sau mặc định.
+  const storedId = getPreferredCameraId();
+  const storedStillExists =
+    !!storedId && devices.some((d) => d.deviceId === storedId);
+  const requestedId = preferredDeviceId || (storedStillExists ? storedId : undefined);
+  const rearId = requestedId || pickRearDeviceId(devices);
   const attempts: MediaStreamConstraints[] = [
     buildStreamConstraints(rearId),
+    // Nếu exact deviceId fail (iOS đổi id sau reboot) — thử lại facingMode.
     buildStreamConstraints(undefined),
     {
       audio: false,
@@ -478,7 +507,8 @@ export async function startLiveQrScanner(opts: {
   video.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;background:#000;';
   container.appendChild(video);
 
-  let stream = await openCameraStream(opts.preferredDeviceId);
+  const preferredId = opts.preferredDeviceId || getPreferredCameraId();
+  let stream = await openCameraStream(preferredId);
   video.srcObject = stream;
   await video.play().catch(() => undefined);
 
@@ -496,8 +526,13 @@ export async function startLiveQrScanner(opts: {
   const notifyCaps = () => {
     try {
       const track = stream.getVideoTracks()[0];
+      const zoom = readZoomCaps(track);
+      // Nếu track chưa báo zoom hiện tại nhưng ta vừa apply 2x — UI vẫn highlight 2x.
+      if (zoom.supported && zoom.current < currentZoom * 0.9) {
+        zoom.current = clampZoom(currentZoom, zoom);
+      }
       opts.onCapabilities?.({
-        zoom: readZoomCaps(track),
+        zoom,
         cameraCount: Math.max(rearCameras.length, 1),
         cameraLabel: rearCameras[cameraIndex]?.label || track?.label || 'Camera',
       });
@@ -508,16 +543,24 @@ export async function startLiveQrScanner(opts: {
 
   const warmUpFocus = (track: MediaStreamTrack | undefined) => {
     if (!track) return;
-    void applyContinuousFocusAndExposure(track, currentZoom);
-    window.setTimeout(() => {
-      void applyContinuousFocusAndExposure(track, currentZoom);
-    }, 400);
-    window.setTimeout(() => {
-      void applyContinuousFocusAndExposure(track, currentZoom);
-    }, 1200);
+    void (async () => {
+      try {
+        await applyContinuousFocusAndExposure(track, currentZoom);
+        notifyCaps();
+      } catch {
+        notifyCaps();
+      }
+      window.setTimeout(() => {
+        void applyContinuousFocusAndExposure(track, currentZoom).then(() => notifyCaps());
+      }, 400);
+      window.setTimeout(() => {
+        void applyContinuousFocusAndExposure(track, currentZoom).then(() => notifyCaps());
+      }, 1200);
+    })();
   };
 
   warmUpFocus(stream.getVideoTracks()[0]);
+  // Caps sơ bộ ngay (camera count/label); zoom sẽ cập nhật lại sau applyConstraints.
   notifyCaps();
 
   if (opts.tapLayerId) {
@@ -731,6 +774,7 @@ export async function startLiveQrScanner(opts: {
         const nextId = cams[cameraIndex]?.deviceId;
         if (!nextId) return false;
 
+        // Đổi ống kính: mở đúng deviceId (không đọc localStorage cũ trong openCameraStream).
         const nextStream = await openCameraStream(nextId);
         const oldTracks = stream.getTracks();
         stream = nextStream;
@@ -743,6 +787,15 @@ export async function startLiveQrScanner(opts: {
             /* ignore */
           }
         });
+
+        // Lưu lựa chọn — lần mở sau (Bàn giao / Nhặt hàng) dùng lại ống kính này.
+        savePreferredCameraId(nextId);
+        const switchedId =
+          nextStream.getVideoTracks()[0]?.getSettings?.()?.deviceId || nextId;
+        if (switchedId) savePreferredCameraId(switchedId);
+
+        // Sau đổi camera: mặc định lại zoom 2x.
+        currentZoom = opts.preferredZoom ?? DEFAULT_SCAN_ZOOM;
         warmUpFocus(stream.getVideoTracks()[0]);
         notifyCaps();
         return true;

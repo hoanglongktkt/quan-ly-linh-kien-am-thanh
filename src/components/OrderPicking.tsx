@@ -5,6 +5,7 @@ import {
   PICKING_CAMERA_TAP_LAYER_ID,
   HTTPS_CAMERA_MESSAGE,
   type LiveQrScannerHandle,
+  type ScannerZoomCaps,
 } from '../utils/cameraScanner';
 import { findOrderByScanPayload, lookupOrderByScanCode, scanFeedback } from '../utils/orderScan';
 import {
@@ -14,6 +15,7 @@ import {
   ImageOff,
   Loader2,
   Package,
+  SwitchCamera,
   X,
 } from 'lucide-react';
 import { Order, SyncLog } from '../types';
@@ -54,8 +56,20 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState('');
   const [cameraRestartKey, setCameraRestartKey] = useState(0);
+  const [scannerZoomCaps, setScannerZoomCaps] = useState<ScannerZoomCaps>({
+    supported: false,
+    min: 1,
+    max: 1,
+    step: 0.1,
+    current: 1,
+  });
+  const [scannerZoomPreset, setScannerZoomPreset] = useState<1 | 2 | 3>(2);
+  const [scannerCameraCount, setScannerCameraCount] = useState(1);
+  const [scannerCameraLabel, setScannerCameraLabel] = useState('');
+  const [isSwitchingCamera, setIsSwitchingCamera] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const liveScannerRef = useRef<LiveQrScannerHandle | null>(null);
 
   const pickLines: PickLine[] = useMemo(() => {
     if (!activeOrder) return [];
@@ -193,8 +207,8 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
   useEffect(() => {
     if (!cameraOpen || activeOrder) return;
 
-    const scannerRef = { current: null as LiveQrScannerHandle | null };
     let isMounted = true;
+    liveScannerRef.current = null;
 
     const timer = setTimeout(() => {
       if (!isMounted) return;
@@ -210,14 +224,28 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
       void startLiveQrScanner({
         containerId: 'picking-camera-reader',
         tapLayerId: PICKING_CAMERA_TAP_LAYER_ID,
+        preferredZoom: 2,
         onSuccess: onScan,
+        onCapabilities: (info) => {
+          setScannerZoomCaps(info.zoom);
+          setScannerCameraCount(info.cameraCount);
+          setScannerCameraLabel(info.cameraLabel || '');
+          if (info.zoom.supported) {
+            const cur = info.zoom.current;
+            if (cur >= 2.5) setScannerZoomPreset(3);
+            else if (cur >= 1.5) setScannerZoomPreset(2);
+            else setScannerZoomPreset(2);
+          } else {
+            setScannerZoomPreset(2);
+          }
+        },
       })
         .then((handle) => {
           if (!isMounted) {
             void handle.stop();
             return;
           }
-          scannerRef.current = handle;
+          liveScannerRef.current = handle;
         })
         .catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : 'Không thể mở camera.';
@@ -233,7 +261,9 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
       isMounted = false;
       clearTimeout(timer);
       stopTapToFocusAssist(PICKING_CAMERA_TAP_LAYER_ID);
-      void scannerRef.current?.stop().catch(() => undefined);
+      const handle = liveScannerRef.current;
+      liveScannerRef.current = null;
+      void handle?.stop().catch(() => undefined);
     };
   }, [cameraOpen, activeOrder, cameraRestartKey, lookupOrder]);
 
@@ -297,8 +327,81 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
                 className="absolute inset-0 z-[5] w-full h-full cursor-pointer opacity-0"
                 aria-label="Chạm để lấy nét"
               />
+              <div className="absolute top-2 left-2 right-2 z-[12] flex items-start justify-between gap-2 pointer-events-none">
+                <div className="pointer-events-auto flex items-center gap-1 rounded-xl bg-black/55 backdrop-blur-sm border border-white/10 p-1">
+                  {([1, 2, 3] as const).map((preset) => {
+                    const disabled =
+                      !scannerZoomCaps.supported ||
+                      (preset > 1 && scannerZoomCaps.max < preset * 0.9);
+                    return (
+                      <button
+                        key={preset}
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => {
+                          const handle = liveScannerRef.current;
+                          if (!handle) return;
+                          const target =
+                            preset === 1
+                              ? scannerZoomCaps.min
+                              : Math.min(
+                                  scannerZoomCaps.max,
+                                  Math.max(scannerZoomCaps.min, preset),
+                                );
+                          setScannerZoomPreset(preset);
+                          void handle.setZoom(target).then((ok) => {
+                            if (ok) setScannerZoomCaps(handle.getZoomCaps());
+                          });
+                        }}
+                        className={`min-w-10 min-h-9 px-2 rounded-lg text-xs font-black tabular-nums transition-colors disabled:opacity-35 ${
+                          scannerZoomPreset === preset
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-transparent text-white/85 hover:bg-white/10'
+                        }`}
+                        aria-label={`Zoom ${preset}x`}
+                      >
+                        {preset}x
+                      </button>
+                    );
+                  })}
+                </div>
+                {scannerCameraCount > 1 && (
+                  <button
+                    type="button"
+                    disabled={isSwitchingCamera}
+                    onClick={() => {
+                      const handle = liveScannerRef.current;
+                      if (!handle || isSwitchingCamera) return;
+                      setIsSwitchingCamera(true);
+                      void handle
+                        .switchCamera()
+                        .then((ok) => {
+                          if (ok) {
+                            setScannerZoomCaps(handle.getZoomCaps());
+                            setScannerCameraCount(handle.getCameraCount());
+                            setScannerCameraLabel(handle.getCameraLabel());
+                            setScannerZoomPreset(2);
+                            void handle.setZoom(2).then((zoomOk) => {
+                              if (zoomOk) setScannerZoomCaps(handle.getZoomCaps());
+                            });
+                          }
+                        })
+                        .finally(() => setIsSwitchingCamera(false));
+                    }}
+                    className="pointer-events-auto inline-flex items-center gap-1.5 min-h-9 px-2.5 rounded-xl bg-black/55 backdrop-blur-sm border border-white/10 text-[11px] font-bold text-white/90 hover:bg-black/70 disabled:opacity-50"
+                    title={scannerCameraLabel || 'Đổi ống kính'}
+                  >
+                    {isSwitchingCamera ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <SwitchCamera className="w-3.5 h-3.5" />
+                    )}
+                    Đổi Camera
+                  </button>
+                )}
+              </div>
               {cameraError && (
-                <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center p-4 text-center gap-3">
+                <div className="absolute inset-0 z-20 bg-black/80 flex flex-col items-center justify-center p-4 text-center gap-3">
                   <p className="text-xs text-rose-300 font-semibold">{cameraError}</p>
                   {cameraError !== HTTPS_CAMERA_MESSAGE && (
                     <button
