@@ -836,7 +836,8 @@ export const QR_SCANNER_CONFIG = {
   fps: 24,
   qrbox: (width: number, height: number) => {
     const minEdge = Math.min(width, height);
-    const size = Math.floor(minEdge * 0.85);
+    const size = Math.min(250, Math.floor(minEdge * 0.85));
+    // Khung quét cố định hình vuông 1:1.
     return { width: size, height: size };
   },
   aspectRatio: 1.0,

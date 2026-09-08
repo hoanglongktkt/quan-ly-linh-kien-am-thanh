@@ -80572,12 +80572,50 @@ function buildExactScanOrFilter(rawCode) {
     pushScanFieldVariants($or, "return_sn", [code]);
     pushScanFieldVariants($or, "data.return_sn", [code]);
     pushScanFieldVariants($or, "data.internalTrackingCode", [code]);
+    pushScanFieldVariants($or, "internalTrackingCode", [code]);
     const orderSn = code.replace(/^SHOPEE-/, "");
     if (orderSn && orderSn !== code) {
       $or.push({ orderSn }, { "data.orderSn": orderSn }, { "data.order_sn": orderSn });
       $or.push({ _id: `shopee-${orderSn}` });
     } else {
       $or.push({ _id: `shopee-${code}` });
+    }
+  }
+  return $or.length ? { $or } : null;
+}
+var FLEXIBLE_SCAN_FIELDS = [
+  "trackingNumber",
+  "tracking_no",
+  "data.trackingNumber",
+  "data.tracking_no",
+  "returnTrackingNumber",
+  "return_tracking_no",
+  "data.returnTrackingNumber",
+  "data.return_tracking_no",
+  "packageNumber",
+  "data.packageNumber",
+  "data.package_number",
+  "orderSn",
+  "data.orderSn",
+  "data.order_sn",
+  "internalTrackingCode",
+  "data.internalTrackingCode"
+];
+function buildFlexibleScanOrFilter(rawCode) {
+  const scannedCode = normalizeScannedCode(rawCode);
+  const stripped = stripScannedSeparators(scannedCode);
+  const code = stripped || scannedCode;
+  if (!code || code.length < 8) return null;
+  const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const $or = [];
+  const endsWith2 = { $regex: `${escaped}$`, $options: "i" };
+  for (const field of FLEXIBLE_SCAN_FIELDS) {
+    $or.push({ [field]: endsWith2 });
+  }
+  if (code.length >= 10) {
+    const contains = { $regex: escaped, $options: "i" };
+    for (const field of FLEXIBLE_SCAN_FIELDS) {
+      $or.push({ [field]: contains });
     }
   }
   return $or.length ? { $or } : null;
@@ -80595,14 +80633,19 @@ var SCANNER_LOOKUP_SELECT = {
   return_tracking_no: 1,
   returnTrackingNumber: 1,
   return_sn: 1,
+  packageNumber: 1,
+  internalTrackingCode: 1,
   is_handed_over: 1,
+  isHandedOverToCarrier: 1,
   isPrepared: 1,
   is_rts: 1,
   is_return: 1,
   shopee_cancel_return_kind: 1,
   logistics_status: 1,
   sub_status: 1,
+  local_status: 1,
   "data.orderSn": 1,
+  "data.order_sn": 1,
   "data.status": 1,
   "data.shopee_order_status": 1,
   "data.tracking_no": 1,
@@ -80610,6 +80653,9 @@ var SCANNER_LOOKUP_SELECT = {
   "data.return_tracking_no": 1,
   "data.returnTrackingNumber": 1,
   "data.return_sn": 1,
+  "data.packageNumber": 1,
+  "data.package_number": 1,
+  "data.internalTrackingCode": 1,
   "data.is_handed_over": 1,
   "data.isHandedOverToCarrier": 1,
   "data.local_status": 1,
@@ -80618,7 +80664,9 @@ var SCANNER_LOOKUP_SELECT = {
   "data.shopee_cancel_return_kind": 1,
   "data.is_rts": 1,
   "data.is_return": 1,
-  "data.shopId": 1
+  "data.shopId": 1,
+  "data.logistics_status": 1,
+  "data.sub_status": 1
 };
 var SCANNER_BULK_SELECT = {
   ...SCANNER_LOOKUP_SELECT,
@@ -80848,7 +80896,15 @@ async function findOrderByScanCodeInStore(rawCode, opts) {
   try {
     let q = OrderModel.findOne(filter2).maxTimeMS(maxMs);
     if (lean) q = q.select(SCANNER_LOOKUP_SELECT);
-    const doc = await q.lean();
+    let doc = await q.lean();
+    if (!doc) {
+      const flexible = buildFlexibleScanOrFilter(scannedCode);
+      if (flexible) {
+        let fq = OrderModel.findOne(flexible).maxTimeMS(Math.min(maxMs, 600));
+        if (lean) fq = fq.select(SCANNER_LOOKUP_SELECT);
+        doc = await fq.lean();
+      }
+    }
     return hydrateOrderFromMongoDoc(doc);
   } catch (err) {
     console.warn("[MongoDB] findOrderByScanCodeInStore failed:", err?.message || err);

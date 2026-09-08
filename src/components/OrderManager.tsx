@@ -7648,6 +7648,10 @@ export default function OrderManager({
                       : 'qr-viewfinder-idle'
                 }`}
               >
+                <span className="qr-viewfinder-corner qr-viewfinder-corner--tl" aria-hidden />
+                <span className="qr-viewfinder-corner qr-viewfinder-corner--tr" aria-hidden />
+                <span className="qr-viewfinder-corner qr-viewfinder-corner--bl" aria-hidden />
+                <span className="qr-viewfinder-corner qr-viewfinder-corner--br" aria-hidden />
                 {!cameraScanSuccess && !cameraScanError && <div className="qr-scan-line" />}
               </div>
             </div>

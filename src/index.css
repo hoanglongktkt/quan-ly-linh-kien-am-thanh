@@ -497,35 +497,57 @@ body {
 
 .qr-viewfinder {
   position: relative;
-  width: min(72vw, 240px);
-  height: min(72vw, 240px);
-  border-radius: 16px;
+  width: min(70vw, 250px);
+  height: min(70vw, 250px);
+  aspect-ratio: 1 / 1;
+  flex-shrink: 0;
+  border-radius: 12px;
+  box-sizing: border-box;
   transition: border-color 0.25s ease, box-shadow 0.25s ease;
 }
 
-.qr-viewfinder::before,
-.qr-viewfinder::after {
-  content: '';
+.qr-viewfinder-corner {
   position: absolute;
   width: 28px;
   height: 28px;
   border-color: inherit;
   border-style: solid;
   pointer-events: none;
+  box-sizing: border-box;
 }
 
-.qr-viewfinder::before {
+.qr-viewfinder-corner--tl {
   top: -2px;
   left: -2px;
   border-width: 4px 0 0 4px;
-  border-radius: 12px 0 0 0;
+  border-radius: 10px 0 0 0;
 }
 
-.qr-viewfinder::after {
+.qr-viewfinder-corner--tr {
+  top: -2px;
+  right: -2px;
+  border-width: 4px 4px 0 0;
+  border-radius: 0 10px 0 0;
+}
+
+.qr-viewfinder-corner--bl {
+  bottom: -2px;
+  left: -2px;
+  border-width: 0 0 4px 4px;
+  border-radius: 0 0 0 10px;
+}
+
+.qr-viewfinder-corner--br {
   bottom: -2px;
   right: -2px;
   border-width: 0 4px 4px 0;
-  border-radius: 0 0 12px 0;
+  border-radius: 0 0 10px 0;
+}
+
+.qr-viewfinder::before,
+.qr-viewfinder::after {
+  content: none;
+  display: none;
 }
 
 .qr-viewfinder-idle {

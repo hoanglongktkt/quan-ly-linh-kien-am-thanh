@@ -25,8 +25,12 @@ export function isLikelyTrackingCode(raw: string): boolean {
 function flexibleCodeMatch(scanKey: string, fieldKey: string): boolean {
   if (!scanKey || !fieldKey) return false;
   if (scanKey === fieldKey) return true;
+  // Mã đủ dài: endsWith bắt prefix/suffix dư từ máy quét; includes bắt đoạn giữa.
+  if (scanKey.length >= 8 && fieldKey.length >= 8) {
+    if (fieldKey.endsWith(scanKey) || scanKey.endsWith(fieldKey)) return true;
+  }
   if (scanKey.length >= 10 && fieldKey.length >= 10) {
-    return fieldKey.endsWith(scanKey) || scanKey.endsWith(fieldKey);
+    if (fieldKey.includes(scanKey) || scanKey.includes(fieldKey)) return true;
   }
   return false;
 }
@@ -175,6 +179,21 @@ function lookupExactFromScanIndex(index: OrderScanIndex, scanKeys: string[]): Or
   return null;
 }
 
+/** Fallback sau exact: endsWith / includes trên toàn bộ key trong index. */
+function lookupFlexibleFromScanIndex(index: OrderScanIndex, scanKeys: string[]): Order | null {
+  const maps = [index.byTracking, index.byInternal, index.byOrderSn, index.byPackage, index.byId];
+  for (const sk of scanKeys) {
+    if (sk.length < 8) continue;
+    for (const map of maps) {
+      for (const [mapKey, order] of map) {
+        if (mapKey.length < 8) continue;
+        if (flexibleCodeMatch(sk, mapKey)) return order;
+      }
+    }
+  }
+  return null;
+}
+
 /** Find order — prioritizes tracking match when scan looks like waybill code. */
 export function findOrderByScanPayload(
   orders: Order[],
@@ -187,6 +206,9 @@ export function findOrderByScanPayload(
   const index = scanIndex || buildOrderScanIndex(orders);
   const exactHit = lookupExactFromScanIndex(index, scanKeys);
   if (exactHit) return exactHit;
+
+  const flexibleHit = lookupFlexibleFromScanIndex(index, scanKeys);
+  if (flexibleHit) return flexibleHit;
 
   const trackingLike = isLikelyTrackingCode(raw);
   const internalLike = isLikelyInternalTrackingCode(raw);
@@ -514,12 +536,12 @@ export function lookupScannerSyncMap(
     const hit = map.get(sk);
     if (hit) return hit;
   }
-  // Flexible endsWith cho mã ≥10 ký tự
+  // Flexible endsWith / includes cho mã ≥8 ký tự (máy quét dư prefix/suffix).
   for (const sk of keys) {
-    if (sk.length < 10) continue;
+    if (sk.length < 8) continue;
     for (const [mapKey, entry] of map) {
-      if (mapKey.length < 10) continue;
-      if (mapKey.endsWith(sk) || sk.endsWith(mapKey)) return entry;
+      if (mapKey.length < 8) continue;
+      if (flexibleCodeMatch(sk, mapKey)) return entry;
     }
   }
   return null;

@@ -1448,7 +1448,7 @@ export async function scannerSync(req, res) {
   }
 }
 
-/** GET /api/orders/lookup — chỉ Mongo exact. CẤM Shopee live (get_return_list / reverse). */
+/** GET /api/orders/lookup — Mongo exact rồi fallback flexible. CẤM Shopee live. */
 export async function lookupOrder(req, res) {
   const code = String(req.query.code || req.query.q || "").trim().toUpperCase();
   const leanRaw = String(req.query.lean || req.query.mode || "").trim().toLowerCase();
