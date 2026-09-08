@@ -1309,8 +1309,6 @@ export default function App() {
 
     const refreshFromLocalDb = async () => {
       if (document.visibilityState === 'hidden') return;
-      // Tab Đơn hàng: OrderManager đã có SSE + counter — tránh /refresh chồng poll.
-      if (activeTab === 'orders') return;
       const now = Date.now();
       if (now - lastFocusRefreshAtRef.current < FOCUS_REFRESH_COOLDOWN_MS) return;
       lastFocusRefreshAtRef.current = now;
@@ -1319,11 +1317,15 @@ export default function App() {
       try {
         const tab = resolveOrdersFetchTab();
         const kind = resolveOrdersFetchKind();
+        // Tab Đơn hàng: OrderManager cũng wake — dùng force/bustCache để không bị silent-guard nuốt
+        // (phòng race khi OM chưa mount / vừa remount sau ngủ đông mobile).
         await fetchOrders({
           silent: true,
           page: 1,
           limit: 50,
           merge: false,
+          force: true,
+          bustCache: true,
           ...(tab ? { tab } : {}),
           ...(kind ? { kind } : {}),
         });
@@ -1346,12 +1348,17 @@ export default function App() {
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') void refreshFromLocalDb();
     };
+    const onPageShow = (ev: PageTransitionEvent) => {
+      if (ev.persisted || document.visibilityState === 'visible') void refreshFromLocalDb();
+    };
 
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('pageshow', onPageShow);
     return () => {
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('pageshow', onPageShow);
     };
   }, [isAuthenticated, activeTab, resolveOrdersFetchTab, resolveOrdersFetchKind]);
 

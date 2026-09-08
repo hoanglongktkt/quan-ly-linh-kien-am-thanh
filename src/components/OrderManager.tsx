@@ -865,6 +865,9 @@ const SCAN_BG_STATUS_IDLE_POLL_MS = 60_000;
 const COUNTER_POLL_MS = 45_000;
 /** Cooldown wake-up sau ngủ đông — chặn spam khi user chuyển tab liên tục. */
 const WAKE_COOLDOWN_MS = 3_000;
+/** SSE heartbeat server = 15s; mất ping lâu hơn ngưỡng này → reconnect (mobile zombie). */
+const SSE_PING_WATCHDOG_MS = 45_000;
+const SSE_WATCHDOG_TICK_MS = 15_000;
 
 function cancelReturnKindParam(tab: CancelReturnTab): string | undefined {
   if (tab === 'all') return undefined;
@@ -1220,6 +1223,8 @@ export default function OrderManager({
   const [audioEnabled, setAudioEnabled] = useState(() => isAudioUnlockedState());
   const syncPollTimerRef = useRef<number | null>(null);
   const counterPollTimerRef = useRef<number | null>(null);
+  /** Wake sau ngủ đông: clear timer + poll counter ngay (không chờ 45s còn lại). */
+  const runCounterPollNowRef = useRef<(() => void) | null>(null);
   const counterAbortRef = useRef<AbortController | null>(null);
   const counterInFlightKeyRef = useRef('');
   const counterInFlightPromiseRef = useRef<Promise<Record<string, number> | null> | null>(null);
@@ -1422,11 +1427,13 @@ export default function OrderManager({
   }, []);
 
   const refetchOrdersPage = useCallback(
-    (opts?: { silent?: boolean; page?: number }) => {
+    (opts?: { silent?: boolean; page?: number; force?: boolean; bustCache?: boolean }) => {
       setHasNewOrders(false);
+      const force = opts?.force === true;
+      const bustCache = opts?.bustCache === true;
       if (activeSubTab === 'order_products') {
         void fetchFulfillmentProducts();
-        void fetchOrderCounts();
+        void fetchOrderCounts(force ? { force: true } : undefined);
         return;
       }
       const page = opts?.page && opts.page > 0 ? opts.page : currentPage;
@@ -1443,8 +1450,10 @@ export default function OrderManager({
             : activeSubTab === 'cancel_returns'
               ? cancelReturnKindParam(cancelReturnTab)
               : undefined,
+        ...(force ? { force: true } : {}),
+        ...(bustCache ? { bustCache: true } : {}),
       });
-      void fetchOrderCounts();
+      void fetchOrderCounts(force ? { force: true } : undefined);
     },
     [activeSubTab, cancelReturnTab, currentPage, fetchFulfillmentProducts, fetchOrderCounts, fetchOrdersWithShop, searchQuery],
   );
@@ -1597,9 +1606,18 @@ export default function OrderManager({
       }
       schedule(COUNTER_POLL_MS);
     };
+    runCounterPollNowRef.current = () => {
+      if (cancelled) return;
+      if (counterPollTimerRef.current != null) {
+        window.clearTimeout(counterPollTimerRef.current);
+        counterPollTimerRef.current = null;
+      }
+      void poll();
+    };
     void poll();
     return () => {
       cancelled = true;
+      runCounterPollNowRef.current = null;
       if (counterPollTimerRef.current != null) {
         window.clearTimeout(counterPollTimerRef.current);
         counterPollTimerRef.current = null;
@@ -1609,8 +1627,8 @@ export default function OrderManager({
   }, [fetchOrderCounts, maybeNotifyNewOrdersFromCounts]);
 
   /**
-   * SSE `new_order` + wake-up sau ngủ đông.
-   * Khi tab visible lại: reconnect SSE nếu đứt + silent catch-up list/counter (không sync Shopee).
+   * SSE `new_order` + wake-up sau ngủ đông (mobile).
+   * Visible/focus/pageshow: luôn reconnect SSE + force catch-up list/counter (không sync Shopee).
    */
   useEffect(() => {
     const token = localStorage.getItem('admin_token') || '';
@@ -1618,8 +1636,15 @@ export default function OrderManager({
     const url = `/api/orders/live?token=${encodeURIComponent(token)}`;
     let es: EventSource | null = null;
     let cancelled = false;
+    let lastSseActivityAt = Date.now();
+    let watchdogTimer: number | null = null;
+
+    const markSseActivity = () => {
+      lastSseActivityAt = Date.now();
+    };
 
     const onNewOrder = (ev: MessageEvent) => {
+      markSseActivity();
       let payload: {
         shopId?: string;
         shopIds?: string[];
@@ -1645,9 +1670,14 @@ export default function OrderManager({
       scheduleNewOrderListRefresh();
     };
 
+    const onPing = () => {
+      markSseActivity();
+    };
+
     const closeSse = () => {
       if (!es) return;
       es.removeEventListener('new_order', onNewOrder as EventListener);
+      es.removeEventListener('ping', onPing as EventListener);
       es.close();
       es = null;
     };
@@ -1657,37 +1687,88 @@ export default function OrderManager({
       try {
         const next = new EventSource(url);
         next.addEventListener('new_order', onNewOrder as EventListener);
+        next.addEventListener('ping', onPing as EventListener);
         next.onerror = () => {
-          /* EventSource tự reconnect; không spam log. */
+          /* EventSource tự reconnect; watchdog sẽ force open lại nếu zombie. */
         };
         es = next;
+        markSseActivity();
       } catch {
         es = null;
       }
     };
 
-    const reconnectSseIfNeeded = () => {
-      if (es && es.readyState === EventSource.OPEN) return;
+    /** Sau đóng băng mobile: readyState===OPEN có thể zombie — luôn đóng/mở lại. */
+    const forceReconnectSse = () => {
       closeSse();
       openSse();
     };
 
-    const onVisibilityChange = () => {
-      if (document.visibilityState !== 'visible') return;
+    const triggerHandedOverReconcileIfNeeded = () => {
+      if (activeSubTabRef.current !== 'handed_over_carrier') return;
+      const auth = localStorage.getItem('admin_token') || '';
+      if (!auth) return;
+      void fetch('/api/orders/reconcile-handed-over', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${auth}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          maxOrders: 80,
+          ...(shopScopeRef.current.shopIds.length
+            ? { shopIds: shopScopeRef.current.shopIds }
+            : {}),
+        }),
+      }).catch(() => {});
+    };
+
+    const wakeFromSleep = () => {
+      if (document.visibilityState === 'hidden') return;
       const now = Date.now();
       if (now - lastWakeAtRef.current < WAKE_COOLDOWN_MS) return;
       lastWakeAtRef.current = now;
 
-      reconnectSseIfNeeded();
-      void fetchOrderCounts();
-      refetchOrdersPageRef.current({ silent: true, page: 1 });
+      forceReconnectSse();
+      void fetchOrderCounts({ force: true });
+      refetchOrdersPageRef.current({
+        silent: true,
+        page: 1,
+        force: true,
+        bustCache: true,
+      });
+      runCounterPollNowRef.current?.();
+      triggerHandedOverReconcileIfNeeded();
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') wakeFromSleep();
+    };
+    const onFocus = () => {
+      wakeFromSleep();
+    };
+    const onPageShow = (ev: PageTransitionEvent) => {
+      // bfcache restore (Safari/mobile) — luôn catch-up.
+      if (ev.persisted || document.visibilityState === 'visible') wakeFromSleep();
     };
 
     openSse();
+    watchdogTimer = window.setInterval(() => {
+      if (cancelled || document.visibilityState === 'hidden') return;
+      if (Date.now() - lastSseActivityAt > SSE_PING_WATCHDOG_MS) {
+        forceReconnectSse();
+      }
+    }, SSE_WATCHDOG_TICK_MS);
+
     document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('pageshow', onPageShow);
     return () => {
       cancelled = true;
       document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('pageshow', onPageShow);
+      if (watchdogTimer != null) window.clearInterval(watchdogTimer);
       closeSse();
     };
   }, [scheduleNewOrderListRefresh, fetchOrderCounts]);
