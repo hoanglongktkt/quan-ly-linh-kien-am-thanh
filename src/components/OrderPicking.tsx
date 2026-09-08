@@ -8,6 +8,7 @@ import {
   type ScannerZoomCaps,
 } from '../utils/cameraScanner';
 import { findOrderByScanPayload, lookupOrderByScanCode, scanFeedback } from '../utils/orderScan';
+import { matchesProcessedPickupTab } from '../utils/orderHandover';
 import {
   Barcode,
   Camera,
@@ -38,8 +39,9 @@ interface PickLine {
 
 const PROCESSED_STATUS_LABEL = 'Chờ lấy hàng (Đã xử lý)';
 
+/** SSOT — cùng filter tab Đơn hàng → Chờ lấy hàng (Đã xử lý). */
 function isPickableOrder(order: Order): boolean {
-  return order.status === 'processed';
+  return matchesProcessedPickupTab(order);
 }
 
 function vibratePick() {
@@ -115,14 +117,27 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
       }
 
       const token = localStorage.getItem('admin_token');
-      let found =
-        orders.find((o) => isPickableOrder(o) && findOrderByScanPayload([o], trimmed)) || null;
+      // Chỉ pool Chờ lấy hàng (Đã xử lý) — khớp tab Đơn hàng.
+      const pickablePool = orders.filter(isPickableOrder);
+      let found = findOrderByScanPayload(pickablePool, trimmed);
 
       if (!found) {
-        const remote = await lookupOrderByScanCode(trimmed, orders, token);
-        if (remote && isPickableOrder(remote)) found = remote;
-        else if (remote) {
-          rejectWrongStatus(remote);
+        try {
+          // lean=false: cần full items để nhặt hàng (lean=scanner cố ý bỏ items).
+          const remote = await lookupOrderByScanCode(trimmed, [], token, undefined, {
+            lean: false,
+          });
+          if (remote && isPickableOrder(remote)) found = remote;
+          else if (remote) {
+            rejectWrongStatus(remote);
+            return;
+          }
+        } catch (err) {
+          console.warn('[Nhặt hàng] lookup fail:', err);
+          scanFeedback('error');
+          setScanError('Lỗi kết nối máy chủ khi tìm mã. Thử lại.');
+          setActiveOrder(null);
+          setPickedKeys(new Set());
           return;
         }
       }

@@ -23,6 +23,7 @@ import { safeGetJson, safeRemoveItem, safeSetItem } from './utils/safeStorage';
 import { parseJsonResponse } from './utils/apiClient';
 import { decodeJwtPayload, isJwtLocallyValid } from './utils/jwtClient';
 import { clearLegacyOrdersLocalStorage, loadOrdersCache, saveOrdersCache } from './utils/orderCache';
+import { matchesProcessedPickupTab } from './utils/orderHandover';
 import { 
   LayoutDashboard, 
   Package, 
@@ -1160,6 +1161,26 @@ export default function App() {
     }
   }, []);
 
+  /** Tab Nhặt hàng: khôi phục hydrate + tải pool Chờ lấy hàng (Đã xử lý). */
+  useEffect(() => {
+    if (!isAuthenticated || activeTab !== 'picking') return;
+    if (orders.length === 0) {
+      const hydrated = ordersHydrateRef.current;
+      if (Array.isArray(hydrated) && hydrated.length > 0) {
+        setOrders(hydrated.filter(matchesProcessedPickupTab));
+      }
+    }
+    void fetchOrders({
+      silent: true,
+      page: 1,
+      limit: 100,
+      merge: false,
+      tab: 'processed',
+    });
+    // Chỉ khi vào tab picking — không phụ thuộc orders.length (tránh vòng lặp fetch).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, activeTab]);
+
   useEffect(() => {
     // Chỉ dọn key legacy — không xóa persistence inventory mới.
     purgeLegacyCatalogCache();
@@ -1264,6 +1285,8 @@ export default function App() {
   };
 
   const resolveOrdersFetchTab = useCallback((): string => {
+    // Tab Nhặt hàng chỉ lấy pool Chờ lấy hàng (Đã xử lý).
+    if (activeTab === 'picking') return 'processed';
     if (activeTab !== 'orders') return '';
     const hint = String(ordersSubTabHint || '').trim().toLowerCase();
     if (!hint || hint === 'all' || hint === 'order_products') {
