@@ -547,6 +547,137 @@ export function lookupScannerSyncMap(
   return null;
 }
 
+/** TTL cache phiên FE cho pool scanner-sync (ms). */
+export const SCANNER_POOL_CACHE_TTL_MS = 60_000;
+/** Coi gần hết hạn → refresh nền (stale-while-revalidate). */
+export const SCANNER_POOL_STALE_MS = 45_000;
+/** Timeout 1 lần gọi scanner-sync — không chờ proxy 60s. */
+export const SCANNER_SYNC_FETCH_TIMEOUT_MS = 12_000;
+
+export type ScannerPoolCacheEntry = {
+  map: Map<string, ScannerSyncEntry>;
+  rows: ScannerSyncRow[];
+  codeCount: number;
+  fetchedAt: number;
+};
+
+export type ScannerPoolCache = {
+  handover: ScannerPoolCacheEntry | null;
+  return: ScannerPoolCacheEntry | null;
+};
+
+export function isScannerPoolFresh(
+  entry: ScannerPoolCacheEntry | null | undefined,
+  now = Date.now(),
+  ttlMs = SCANNER_POOL_CACHE_TTL_MS,
+): boolean {
+  if (!entry || !(entry.map instanceof Map)) return false;
+  return now - entry.fetchedAt < ttlMs;
+}
+
+export function isScannerPoolStale(
+  entry: ScannerPoolCacheEntry | null | undefined,
+  now = Date.now(),
+  staleMs = SCANNER_POOL_STALE_MS,
+): boolean {
+  if (!entry) return true;
+  return now - entry.fetchedAt >= staleMs;
+}
+
+export function countScannerSyncCodes(rows: ScannerSyncRow[]): number {
+  let n = 0;
+  for (const row of rows) {
+    if (row.tracking_code) n += 1;
+    if (row.return_waybill) n += 1;
+  }
+  return n;
+}
+
+/**
+ * Fetch lean pool cho 1 mode scanner-sync.
+ * Timeout 12s + optional AbortSignal; cache: no-store.
+ */
+export async function fetchScannerSyncPool(
+  mode: ScannerMode,
+  opts?: {
+    lookbackDays?: number;
+    token?: string;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    fresh?: boolean;
+  },
+): Promise<ScannerPoolCacheEntry> {
+  const timeoutMs = opts?.timeoutMs ?? SCANNER_SYNC_FETCH_TIMEOUT_MS;
+  const token =
+    opts?.token ??
+    (typeof localStorage !== 'undefined' ? localStorage.getItem('admin_token') || '' : '');
+  const params = new URLSearchParams();
+  params.set('mode', mode);
+  if (mode === 'return') {
+    params.set('lookbackDays', String(Math.max(1, Math.min(30, opts?.lookbackDays ?? 30))));
+  }
+  if (opts?.fresh) params.set('fresh', '1');
+
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  if (opts?.signal) {
+    if (opts.signal.aborted) controller.abort();
+    else opts.signal.addEventListener('abort', onAbort, { once: true });
+  }
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(`/api/orders/scanner-sync?${params.toString()}`, {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = (await res.json()) as {
+      orders?: ScannerSyncRow[];
+      code_count?: number;
+      success?: boolean;
+    };
+    const rows = Array.isArray(data.orders) ? data.orders : [];
+    const map = buildScannerSyncMap(rows);
+    const codeCount = Number.isFinite(Number(data.code_count))
+      ? Number(data.code_count)
+      : countScannerSyncCodes(rows);
+    return { map, rows, codeCount, fetchedAt: Date.now() };
+  } finally {
+    clearTimeout(timer);
+    if (opts?.signal) opts.signal.removeEventListener('abort', onAbort);
+  }
+}
+
+/** Prefetch song song cả 2 mode (1 retry ngắn nếu fail). */
+export async function prefetchBothScannerPools(opts?: {
+  token?: string;
+  signal?: AbortSignal;
+  fresh?: boolean;
+}): Promise<ScannerPoolCache> {
+  const loadOne = async (mode: ScannerMode): Promise<ScannerPoolCacheEntry | null> => {
+    try {
+      return await fetchScannerSyncPool(mode, opts);
+    } catch (err) {
+      console.warn(`[Scan Prefetch] ${mode} fail, retry once:`, err);
+      if (opts?.signal?.aborted) return null;
+      await new Promise((r) => setTimeout(r, 800));
+      if (opts?.signal?.aborted) return null;
+      try {
+        return await fetchScannerSyncPool(mode, opts);
+      } catch (err2) {
+        console.warn(`[Scan Prefetch] ${mode} retry fail:`, err2);
+        return null;
+      }
+    }
+  };
+  const [handover, ret] = await Promise.all([loadOne('handover'), loadOne('return')]);
+  return { handover, return: ret };
+}
+
 /** Stub Order tối thiểu từ scanner-sync — đủ phân loại + bàn giao. */
 export function scannerSyncEntryToOrder(entry: ScannerSyncEntry): Order {
   const sn = String(entry.order_id || '').replace(/^shopee-/i, '').trim();

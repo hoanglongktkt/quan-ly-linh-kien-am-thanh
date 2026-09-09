@@ -121476,6 +121476,11 @@ async function cleanupProcessedPickup(_req, res) {
     });
   }
 }
+var SCANNER_SYNC_SERVER_TTL_MS = 5e4;
+var scannerSyncServerCache = /* @__PURE__ */ new Map();
+function scannerSyncCacheKey(mode, lookbackDays) {
+  return mode === "return" ? `return:${lookbackDays || 30}` : "handover";
+}
 async function scannerSync(req, res) {
   try {
     if (!isMongoReady()) {
@@ -121498,7 +121503,28 @@ async function scannerSync(req, res) {
       });
     }
     const lookbackDays = modeRaw === "return" ? Math.max(1, Math.min(30, Number(req.query.lookbackDays) || 30)) : void 0;
+    const fresh = String(req.query.fresh || "").trim() === "1" || String(req.query.fresh || "").trim().toLowerCase() === "true";
+    const cacheKey = scannerSyncCacheKey(modeRaw, lookbackDays);
     const t0 = Date.now();
+    if (!fresh) {
+      const hit = scannerSyncServerCache.get(cacheKey);
+      if (hit && Date.now() - hit.at < SCANNER_SYNC_SERVER_TTL_MS) {
+        const ms2 = Date.now() - t0;
+        console.log(
+          `[GET /api/orders/scanner-sync] mode=${modeRaw} cache=hit rows=${hit.orders.length} codes=${hit.codeCount} ${ms2}ms`
+        );
+        return res.json({
+          success: true,
+          mode: modeRaw,
+          lookback_days: lookbackDays ?? null,
+          orders: hit.orders,
+          total: hit.orders.length,
+          code_count: hit.codeCount,
+          ms: ms2,
+          cache: "hit"
+        });
+      }
+    }
     const orders = await listScannerSyncRowsFromStore({
       mode: modeRaw,
       lookbackDays
@@ -121508,9 +121534,14 @@ async function scannerSync(req, res) {
       if (row.tracking_code) codeCount += 1;
       if (row.return_waybill) codeCount += 1;
     }
+    scannerSyncServerCache.set(cacheKey, {
+      orders,
+      codeCount,
+      at: Date.now()
+    });
     const ms = Date.now() - t0;
     console.log(
-      `[GET /api/orders/scanner-sync] mode=${modeRaw} rows=${orders.length} codes=${codeCount} ${ms}ms`
+      `[GET /api/orders/scanner-sync] mode=${modeRaw} cache=miss rows=${orders.length} codes=${codeCount} ${ms}ms`
     );
     return res.json({
       success: true,
@@ -121519,7 +121550,8 @@ async function scannerSync(req, res) {
       orders,
       total: orders.length,
       code_count: codeCount,
-      ms
+      ms,
+      cache: "miss"
     });
   } catch (err) {
     console.error("[GET /api/orders/scanner-sync] failed:", err?.message || err);

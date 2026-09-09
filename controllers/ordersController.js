@@ -1387,6 +1387,15 @@ export async function cleanupProcessedPickup(_req, res) {
   }
 }
 
+/** TTL memory cache cho scanner-sync — giảm cold Mongo khi mở Quét mã liên tục. */
+const SCANNER_SYNC_SERVER_TTL_MS = 50_000;
+/** @type {Map<string, { orders: any[], codeCount: number, at: number }>} */
+const scannerSyncServerCache = new Map();
+
+function scannerSyncCacheKey(mode, lookbackDays) {
+  return mode === "return" ? `return:${lookbackDays || 30}` : "handover";
+}
+
 /** GET /api/orders/scanner-sync — payload siêu gọn cho máy quét (O(1) local match). */
 export async function scannerSync(req, res) {
   try {
@@ -1413,7 +1422,32 @@ export async function scannerSync(req, res) {
       modeRaw === "return"
         ? Math.max(1, Math.min(30, Number(req.query.lookbackDays) || 30))
         : undefined;
+    const fresh =
+      String(req.query.fresh || "").trim() === "1" ||
+      String(req.query.fresh || "").trim().toLowerCase() === "true";
+    const cacheKey = scannerSyncCacheKey(modeRaw, lookbackDays);
     const t0 = Date.now();
+
+    if (!fresh) {
+      const hit = scannerSyncServerCache.get(cacheKey);
+      if (hit && Date.now() - hit.at < SCANNER_SYNC_SERVER_TTL_MS) {
+        const ms = Date.now() - t0;
+        console.log(
+          `[GET /api/orders/scanner-sync] mode=${modeRaw} cache=hit rows=${hit.orders.length} codes=${hit.codeCount} ${ms}ms`,
+        );
+        return res.json({
+          success: true,
+          mode: modeRaw,
+          lookback_days: lookbackDays ?? null,
+          orders: hit.orders,
+          total: hit.orders.length,
+          code_count: hit.codeCount,
+          ms,
+          cache: "hit",
+        });
+      }
+    }
+
     const orders = await listScannerSyncRowsFromStore({
       mode: modeRaw,
       lookbackDays,
@@ -1423,9 +1457,14 @@ export async function scannerSync(req, res) {
       if (row.tracking_code) codeCount += 1;
       if (row.return_waybill) codeCount += 1;
     }
+    scannerSyncServerCache.set(cacheKey, {
+      orders,
+      codeCount,
+      at: Date.now(),
+    });
     const ms = Date.now() - t0;
     console.log(
-      `[GET /api/orders/scanner-sync] mode=${modeRaw} rows=${orders.length} codes=${codeCount} ${ms}ms`,
+      `[GET /api/orders/scanner-sync] mode=${modeRaw} cache=miss rows=${orders.length} codes=${codeCount} ${ms}ms`,
     );
     return res.json({
       success: true,
@@ -1435,6 +1474,7 @@ export async function scannerSync(req, res) {
       total: orders.length,
       code_count: codeCount,
       ms,
+      cache: "miss",
     });
   } catch (err) {
     console.error("[GET /api/orders/scanner-sync] failed:", err?.message || err);
