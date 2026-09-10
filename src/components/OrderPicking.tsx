@@ -70,6 +70,7 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
   const [scannerCameraLabel, setScannerCameraLabel] = useState('');
   const [isSwitchingCamera, setIsSwitchingCamera] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [zoomedImage, setZoomedImage] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const liveScannerRef = useRef<LiveQrScannerHandle | null>(null);
 
@@ -482,8 +483,13 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
                     <img
                       src={line.productImage}
                       alt=""
-                      className="w-14 h-14 rounded-xl object-cover border border-gray-100 shrink-0"
+                      title="Nhấn để phóng to"
+                      className="w-14 h-14 rounded-xl object-cover border border-gray-100 shrink-0 cursor-pointer cursor-zoom-in"
                       referrerPolicy="no-referrer"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setZoomedImage(line.productImage || null);
+                      }}
                     />
                   ) : (
                     <div className="w-14 h-14 rounded-xl bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0">
@@ -501,7 +507,9 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
                         Phân loại: {line.variationName}
                       </p>
                     ) : null}
-                    <p className="text-xs text-gray-400 mt-0.5">SL: {line.quantity}</p>
+                    <p className="text-lg font-bold text-red-600 mt-0.5">
+                      SL: {line.quantity}
+                    </p>
                   </div>
 
                   <label className="flex flex-col items-center gap-1 shrink-0 cursor-pointer">
@@ -541,6 +549,34 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
               Tích checkbox cho tất cả {totalLines} sản phẩm để kích hoạt nút.
             </p>
           )}
+        </div>
+      )}
+
+      {zoomedImage && (
+        <div
+          className="fixed inset-0 z-[9999] bg-black/80 flex items-center justify-center p-4"
+          onClick={() => setZoomedImage(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Phóng to ảnh sản phẩm"
+        >
+          <button
+            type="button"
+            onClick={() => setZoomedImage(null)}
+            className="absolute top-4 right-4 z-[10000] w-10 h-10 flex items-center justify-center rounded-full bg-white/15 hover:bg-white/25 text-white transition-colors cursor-pointer"
+            aria-label="Đóng"
+            title="Đóng"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          <img
+            src={zoomedImage}
+            alt="Ảnh sản phẩm phóng to"
+            className="max-w-full max-h-[90vh] w-auto h-auto object-contain rounded-lg shadow-2xl"
+            style={{ objectFit: 'contain' }}
+            referrerPolicy="no-referrer"
+            onClick={(e) => e.stopPropagation()}
+          />
         </div>
       )}
     </div>
