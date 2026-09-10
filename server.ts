@@ -477,6 +477,7 @@ import {
   findCancelledEmptyItemsFromStore,
   patchOrderItemsOnlyInStore,
   loadAllHandedOverShopeeOrdersFromStore,
+  loadShippingOrphanToShipOrdersFromStore,
   loadStuckShippedOrderKeysFromStore,
   bulkHealTerminalStatusesFromShopee,
   recalculateOrderTabCountsFromStore,
@@ -3243,9 +3244,32 @@ async function reconcileHandedOverCarrierStatuses(opts?: {
   };
 
   try {
-    const candidates = await loadAllHandedOverShopeeOrdersFromStore({
+    const baseCandidates = await loadAllHandedOverShopeeOrdersFromStore({
       shopIds: Array.isArray(opts?.shopIds) ? opts.shopIds : undefined,
     });
+    // Orphan: status=shipping + raw còn PROCESSED/RTS — bị loại khỏi base vì $nin shipping.
+    let orphanCandidates: any[] = [];
+    try {
+      orphanCandidates = await loadShippingOrphanToShipOrdersFromStore({
+        shopIds: Array.isArray(opts?.shopIds) ? opts.shopIds : undefined,
+        limit: 50,
+      });
+    } catch (orphanErr: any) {
+      console.warn(
+        `[HandedOver Reconcile][${trigger}] orphan load skip:`,
+        orphanErr?.message || orphanErr,
+      );
+    }
+    const seenSn = new Set<string>();
+    const candidates: any[] = [];
+    for (const order of [...baseCandidates, ...orphanCandidates]) {
+      const sn = String(order?.orderSn || "")
+        .replace(/^shopee-/i, "")
+        .trim();
+      if (!sn || seenSn.has(sn)) continue;
+      seenSn.add(sn);
+      candidates.push(order);
+    }
     result.candidates = candidates.length;
     if (candidates.length === 0) {
       result.message = "no_to_ship_candidates";
@@ -3301,6 +3325,7 @@ async function reconcileHandedOverCarrierStatuses(opts?: {
     const workingOrders = [...candidates];
     console.log(
       `[HandedOver Reconcile][${trigger}] START candidates=${candidates.length}` +
+        ` (base=${baseCandidates.length} orphan=${orphanCandidates.length})` +
         ` shops=${byShop.size} mode=targeted_to_ship` +
         ` skippedNoShop=${skippedNoShop} skippedFilter=${skippedFilter}` +
         ` tokenShops=[${[...tokenShopIds].join(",")}]`,
@@ -16154,15 +16179,22 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
       order.isPrepared = false;
     } else if (finalRaw === "READY_TO_SHIP" || finalRaw === "RETRY_SHIP" || finalRaw === "PROCESSED") {
       // Bắt buộc lưu raw Shopee + map local: RTS/RETRY chưa mã → unprocessed; PROCESSED/có mã → processed.
+      // CẤM giữ status=shipping khi raw còn TO_SHIP mà logistics chưa handed (orphan Đang giao).
       order.shopee_order_status = finalRaw;
-      if (order.status !== "shipping" && order.status !== "completed") {
-        if (finalRaw === "PROCESSED" || hasUsableShopeeTrackingNumber(order)) {
-          order.status = "processed";
-          order.isPrepared = true;
-        } else {
-          order.status = "unprocessed";
-          order.isPrepared = false;
-        }
+      const logisticsHanded = isLogisticsHandedToCarrier(
+        order.logistics_status || logisticsStatus,
+      );
+      if (logisticsHanded) {
+        // promoteRawStatusFromLogistics lẽ ra đã set SHIPPED; nếu vẫn TO_SHIP thì ép shipping tạm.
+        order.status = "shipping";
+        order.isPrepared = true;
+        order.is_pending_shopee_check = false;
+      } else if (finalRaw === "PROCESSED" || hasUsableShopeeTrackingNumber(order)) {
+        order.status = "processed";
+        order.isPrepared = true;
+      } else {
+        order.status = "unprocessed";
+        order.isPrepared = false;
       }
     }
     // Suy luận dropoff từ logistics_status (không có pickup_time).
@@ -16460,8 +16492,19 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
         `(prev=${existingRaw || "(empty)"})`,
     );
   } else if (incomingRaw === "PROCESSED") {
-    // Drop-off/Pickup đã arrange — Đã xử lý (chỉ khi chưa SHIPPED/COMPLETED).
-    if (merged.status !== "shipping" && merged.status !== "completed") {
+    // Drop-off/Pickup đã arrange — Đã xử lý.
+    // Orphan shipping+PROCESSED (chưa logistics handed) → kéo về processed, không ghim Đang giao.
+    const logisticsHanded = isLogisticsHandedToCarrier(
+      incomingLogistics || merged.logistics_status,
+    );
+    if (merged.status === "completed") {
+      // giữ completed
+    } else if (merged.status === "shipping" && logisticsHanded) {
+      merged.shopee_order_status = "SHIPPED";
+      merged.status = "shipping";
+      merged.isPrepared = true;
+      merged.is_pending_shopee_check = false;
+    } else {
       merged.status = "processed";
       merged.isPrepared = true;
       merged.is_pending_shopee_check = false;

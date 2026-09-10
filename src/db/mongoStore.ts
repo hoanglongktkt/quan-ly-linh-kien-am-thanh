@@ -2005,7 +2005,22 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       order.status != null &&
       String(order.status).trim()
     ) {
-      const st = String(order.status).trim();
+      let st = String(order.status).trim();
+      // Chặn orphan: raw còn TO_SHIP mà status=shipping → kéo về processed/unprocessed.
+      if (
+        st === "shipping" &&
+        (rawStatus === "PROCESSED" ||
+          rawStatus === "READY_TO_SHIP" ||
+          rawStatus === "RETRY_SHIP")
+      ) {
+        st =
+          rawStatus === "PROCESSED" || usableTn
+            ? "processed"
+            : "unprocessed";
+        console.warn(
+          `[MongoDB] BLOCK orphan shipping→${st} order_sn=${orderSn || _id} raw=${rawStatus}`,
+        );
+      }
       $set.status = st;
       $set["data.status"] = st;
     }
@@ -2680,6 +2695,18 @@ export async function bulkUpdateShippedOrdersBySn(
       } else if (raw === "TO_RETURN" && String($set.status || p.status || "") !== "return_received") {
         $set.status = "return_pending";
         $set["data.status"] = "return_pending";
+      } else if (
+        (raw === "PROCESSED" || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") &&
+        String($set.status || p.status || "").toLowerCase() === "shipping"
+      ) {
+        // Chặn orphan shipping + TO_SHIP raw trên patch.
+        const patchTn = String(p.tracking_no || "").trim();
+        const fixed =
+          raw === "PROCESSED" || (patchTn && !/^0FG/i.test(patchTn))
+            ? "processed"
+            : "unprocessed";
+        $set.status = fixed;
+        $set["data.status"] = fixed;
       }
     }
     if (p.ship_method != null) $set["data.ship_method"] = p.ship_method;
@@ -6823,6 +6850,60 @@ export async function loadAllHandedOverShopeeOrdersFromStore(opts?: {
       ` (handed_over + READY_TO_SHIP/PROCESSED)` +
       `${opts?.shopIds?.length ? ` shops=${opts.shopIds.join(",")}` : ""}`,
   );
+  return orders;
+}
+
+/** Orphan Đang giao: status=shipping nhưng raw còn TO_SHIP (PROCESSED/RTS) — limit để chống spam API. */
+const SHIPPING_ORPHAN_RECONCILE_LIMIT = 50;
+
+/**
+ * Đơn status=shipping + raw READY_TO_SHIP/RETRY_SHIP/PROCESSED.
+ * Reconcile get_order_detail để heal SHIPPED hoặc kéo về processed.
+ */
+export async function loadShippingOrphanToShipOrdersFromStore(opts?: {
+  shopIds?: string[];
+  limit?: number;
+}): Promise<any[]> {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const toShipStatuses = [...ORDER_TAB_TO_SHIP_RAW];
+  const limit = Math.min(
+    SHIPPING_ORPHAN_RECONCILE_LIMIT,
+    Math.max(1, Math.floor(Number(opts?.limit) || SHIPPING_ORPHAN_RECONCILE_LIMIT)),
+  );
+  const and: Record<string, unknown>[] = [
+    {
+      $or: [{ channel: "shopee" }, { "data.channel": "shopee" }],
+    },
+    {
+      $or: [{ status: "shipping" }, { "data.status": "shipping" }],
+    },
+    {
+      $or: [
+        { shopee_order_status: { $in: toShipStatuses } },
+        { "data.shopee_order_status": { $in: toShipStatuses } },
+      ],
+    },
+  ];
+  const shopFilter = buildShopIdMongoFilter(undefined, opts?.shopIds);
+  if (shopFilter) and.push(shopFilter);
+
+  const docs = await OrderModel.find({ $and: and })
+    .sort({ last_synced_at: 1, _id: 1 })
+    .limit(limit)
+    .maxTimeMS(20_000)
+    .lean();
+  const orders: any[] = [];
+  for (const doc of docs as any[]) {
+    const order = hydrateOrderFromMongoDoc(doc);
+    if (order) orders.push(order);
+  }
+  if (orders.length > 0) {
+    console.log(
+      `[MongoDB] Shipping-orphan candidates=${orders.length} (limit=${limit}` +
+        `${opts?.shopIds?.length ? ` shops=${opts.shopIds.join(",")}` : ""})`,
+    );
+  }
   return orders;
 }
 

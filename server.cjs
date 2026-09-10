@@ -76559,7 +76559,12 @@ function isShopeeShippingStatus(order) {
   if (String(order.shopee_cancel_return_kind || "") === "failed_delivery") return false;
   const raw = getShopeeOrderRawStatus(order);
   if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") return true;
-  if (order.status === "shipping") return true;
+  if (order.status === "shipping") {
+    if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "PROCESSED") {
+      return false;
+    }
+    return true;
+  }
   return false;
 }
 function isShopeeReadyToShipStatus(order) {
@@ -78731,7 +78736,13 @@ async function bulkUpsertOrdersToStore(orders) {
       }
     }
     if (!forceShipping && !forceCompleted && !forceCancelled && !forceToReturn && order.status != null && String(order.status).trim()) {
-      const st = String(order.status).trim();
+      let st = String(order.status).trim();
+      if (st === "shipping" && (rawStatus === "PROCESSED" || rawStatus === "READY_TO_SHIP" || rawStatus === "RETRY_SHIP")) {
+        st = rawStatus === "PROCESSED" || usableTn ? "processed" : "unprocessed";
+        console.warn(
+          `[MongoDB] BLOCK orphan shipping\u2192${st} order_sn=${orderSn || _id} raw=${rawStatus}`
+        );
+      }
       $set.status = st;
       $set["data.status"] = st;
     }
@@ -79272,6 +79283,11 @@ async function bulkUpdateShippedOrdersBySn(patches) {
       } else if (raw === "TO_RETURN" && String($set.status || p.status || "") !== "return_received") {
         $set.status = "return_pending";
         $set["data.status"] = "return_pending";
+      } else if ((raw === "PROCESSED" || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") && String($set.status || p.status || "").toLowerCase() === "shipping") {
+        const patchTn = String(p.tracking_no || "").trim();
+        const fixed = raw === "PROCESSED" || patchTn && !/^0FG/i.test(patchTn) ? "processed" : "unprocessed";
+        $set.status = fixed;
+        $set["data.status"] = fixed;
       }
     }
     if (p.ship_method != null) $set["data.ship_method"] = p.ship_method;
@@ -82242,6 +82258,44 @@ async function loadAllHandedOverShopeeOrdersFromStore(opts) {
   console.log(
     `[MongoDB] Targeted Healing candidates=${orders.length} (handed_over + READY_TO_SHIP/PROCESSED)${opts?.shopIds?.length ? ` shops=${opts.shopIds.join(",")}` : ""}`
   );
+  return orders;
+}
+var SHIPPING_ORPHAN_RECONCILE_LIMIT = 50;
+async function loadShippingOrphanToShipOrdersFromStore(opts) {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const toShipStatuses = [...ORDER_TAB_TO_SHIP_RAW];
+  const limit = Math.min(
+    SHIPPING_ORPHAN_RECONCILE_LIMIT,
+    Math.max(1, Math.floor(Number(opts?.limit) || SHIPPING_ORPHAN_RECONCILE_LIMIT))
+  );
+  const and = [
+    {
+      $or: [{ channel: "shopee" }, { "data.channel": "shopee" }]
+    },
+    {
+      $or: [{ status: "shipping" }, { "data.status": "shipping" }]
+    },
+    {
+      $or: [
+        { shopee_order_status: { $in: toShipStatuses } },
+        { "data.shopee_order_status": { $in: toShipStatuses } }
+      ]
+    }
+  ];
+  const shopFilter = buildShopIdMongoFilter(void 0, opts?.shopIds);
+  if (shopFilter) and.push(shopFilter);
+  const docs = await OrderModel.find({ $and: and }).sort({ last_synced_at: 1, _id: 1 }).limit(limit).maxTimeMS(2e4).lean();
+  const orders = [];
+  for (const doc of docs) {
+    const order = hydrateOrderFromMongoDoc(doc);
+    if (order) orders.push(order);
+  }
+  if (orders.length > 0) {
+    console.log(
+      `[MongoDB] Shipping-orphan candidates=${orders.length} (limit=${limit}${opts?.shopIds?.length ? ` shops=${opts.shopIds.join(",")}` : ""})`
+    );
+  }
   return orders;
 }
 var CLEANUP_SHIPPED_QUERY_CAP = 4e3;
@@ -130553,9 +130607,29 @@ async function reconcileHandedOverCarrierStatuses(opts) {
     message: ""
   };
   try {
-    const candidates = await loadAllHandedOverShopeeOrdersFromStore({
+    const baseCandidates = await loadAllHandedOverShopeeOrdersFromStore({
       shopIds: Array.isArray(opts?.shopIds) ? opts.shopIds : void 0
     });
+    let orphanCandidates = [];
+    try {
+      orphanCandidates = await loadShippingOrphanToShipOrdersFromStore({
+        shopIds: Array.isArray(opts?.shopIds) ? opts.shopIds : void 0,
+        limit: 50
+      });
+    } catch (orphanErr) {
+      console.warn(
+        `[HandedOver Reconcile][${trigger}] orphan load skip:`,
+        orphanErr?.message || orphanErr
+      );
+    }
+    const seenSn = /* @__PURE__ */ new Set();
+    const candidates = [];
+    for (const order of [...baseCandidates, ...orphanCandidates]) {
+      const sn = String(order?.orderSn || "").replace(/^shopee-/i, "").trim();
+      if (!sn || seenSn.has(sn)) continue;
+      seenSn.add(sn);
+      candidates.push(order);
+    }
     result.candidates = candidates.length;
     if (candidates.length === 0) {
       result.message = "no_to_ship_candidates";
@@ -130597,7 +130671,7 @@ async function reconcileHandedOverCarrierStatuses(opts) {
     }
     const workingOrders = [...candidates];
     console.log(
-      `[HandedOver Reconcile][${trigger}] START candidates=${candidates.length} shops=${byShop.size} mode=targeted_to_ship skippedNoShop=${skippedNoShop} skippedFilter=${skippedFilter} tokenShops=[${[...tokenShopIds].join(",")}]`
+      `[HandedOver Reconcile][${trigger}] START candidates=${candidates.length} (base=${baseCandidates.length} orphan=${orphanCandidates.length}) shops=${byShop.size} mode=targeted_to_ship skippedNoShop=${skippedNoShop} skippedFilter=${skippedFilter} tokenShops=[${[...tokenShopIds].join(",")}]`
     );
     for (const [shopIdRaw, orderSns] of byShop) {
       const shopId = String(normalizeShopIdKey(shopIdRaw) || shopIdRaw || "").trim();
@@ -139883,14 +139957,19 @@ function normalizeShopeeOrderDetail(shopId, shopName, item) {
       order.isPrepared = false;
     } else if (finalRaw === "READY_TO_SHIP" || finalRaw === "RETRY_SHIP" || finalRaw === "PROCESSED") {
       order.shopee_order_status = finalRaw;
-      if (order.status !== "shipping" && order.status !== "completed") {
-        if (finalRaw === "PROCESSED" || hasUsableShopeeTrackingNumber(order)) {
-          order.status = "processed";
-          order.isPrepared = true;
-        } else {
-          order.status = "unprocessed";
-          order.isPrepared = false;
-        }
+      const logisticsHanded = isLogisticsHandedToCarrier(
+        order.logistics_status || logisticsStatus
+      );
+      if (logisticsHanded) {
+        order.status = "shipping";
+        order.isPrepared = true;
+        order.is_pending_shopee_check = false;
+      } else if (finalRaw === "PROCESSED" || hasUsableShopeeTrackingNumber(order)) {
+        order.status = "processed";
+        order.isPrepared = true;
+      } else {
+        order.status = "unprocessed";
+        order.isPrepared = false;
       }
     }
     const logisticsBlob = `${logisticsStatus} ${JSON.stringify(pkg || {})}`.toUpperCase();
@@ -140106,7 +140185,16 @@ function mergeShopeeOrderOnSync(existing, incoming) {
       `[StateMachine] ACCEPT SHIPPED order_sn=${merged.orderSn || "?"} raw=${merged.shopee_order_status} logistics=${incomingLogistics || "-"} (prev=${existingRaw || "(empty)"})`
     );
   } else if (incomingRaw === "PROCESSED") {
-    if (merged.status !== "shipping" && merged.status !== "completed") {
+    const logisticsHanded = isLogisticsHandedToCarrier(
+      incomingLogistics || merged.logistics_status
+    );
+    if (merged.status === "completed") {
+    } else if (merged.status === "shipping" && logisticsHanded) {
+      merged.shopee_order_status = "SHIPPED";
+      merged.status = "shipping";
+      merged.isPrepared = true;
+      merged.is_pending_shopee_check = false;
+    } else {
       merged.status = "processed";
       merged.isPrepared = true;
       merged.is_pending_shopee_check = false;

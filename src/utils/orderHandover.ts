@@ -141,7 +141,13 @@ export function isShopeeShippingStatus(
   const raw = getShopeeOrderRawStatus(order);
   // BẮT BUỘC: SHIPPED từ Shopee → tab Đang giao (bỏ qua is_handed_over).
   if (raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE') return true;
-  if (order.status === 'shipping') return true;
+  // Orphan: status=shipping nhưng raw còn TO_SHIP → KHÔNG ở Đang giao (tránh PROCESSED+shipping).
+  if (order.status === 'shipping') {
+    if (raw === 'READY_TO_SHIP' || raw === 'RETRY_SHIP' || raw === 'PROCESSED') {
+      return false;
+    }
+    return true;
+  }
   return false;
 }
 
