@@ -246,6 +246,7 @@ import {
   delay,
   yieldEventLoop,
   mapWithConcurrency,
+  mapInChunks,
   runInBatches,
   withOperationTimeout,
 } from "./utils/concurrency.js";
@@ -440,6 +441,7 @@ import {
   upsertProductsToStoreAsync,
   deleteProductsByIdsFromStore,
   loadChannelListingsFromStore,
+  loadMappingListingsForApiFromStore,
   saveChannelListingsToStoreAsync,
   upsertChannelListingToStore,
   bulkUpsertChannelListingsToStore,
@@ -3014,7 +3016,24 @@ async function reconcileActiveShopeeOrdersFromStore(
 
   let mongoOrders: any[];
   try {
-    mongoOrders = await loadOrdersFromStore();
+    mongoOrders = await loadOrdersFromStore({
+      shopIds,
+      statuses: ["unprocessed", "processed", "shipping", "return_pending"],
+      shopeeStatuses: [
+        "READY_TO_SHIP",
+        "RETRY_SHIP",
+        "PROCESSED",
+        "SHIPPED",
+        "TO_CONFIRM_RECEIVE",
+        "IN_CANCEL",
+        "TO_RETURN",
+      ],
+      lookbackDays: 60,
+      limit: Math.min(
+        500,
+        Math.max(150, SHOPEE_ACTIVE_STATUS_RECONCILE_LIMIT_PER_SHOP * Math.max(1, shopIds.length)),
+      ),
+    });
   } catch (error: any) {
     result.errors.push({
       error: "active_orders_read_failed",
@@ -4696,60 +4715,9 @@ async function pullIncrementalOrdersFromShopee(opts?: {
       };
     }
 
-    // MongoDB là SSOT: pull/merge không được lấy orders.json cũ làm base.
-    let orders: any[] = [];
-    if (isMongoReady()) {
-      try {
-        orders = await loadOrdersFromStore();
-      } catch (loadErr: any) {
-        if (isMongoConnectionError(loadErr)) {
-          console.warn(
-            "[Orders Pull] loadOrdersFromStore timeout/network — thử reconnect:",
-            loadErr?.message || loadErr,
-          );
-          const ok = await recoverMongoConnection("orders_pull_load");
-          if (ok) {
-            try {
-              orders = await loadOrdersFromStore();
-            } catch (retryErr: any) {
-              errors.push({
-                error: "mongo_load_failed",
-                message: describeMongoWriteError(retryErr),
-              });
-              return {
-                success: false,
-                pulled: 0,
-                added: 0,
-                updated: 0,
-                shops: shopIds.length,
-                errors,
-                message: describeMongoWriteError(retryErr),
-                elapsedMs: Date.now() - startedAt,
-                lookbackSec,
-                shopee_response: [],
-              };
-            }
-          } else {
-            const friendly = describeMongoWriteError(loadErr);
-            errors.push({ error: "mongo_reconnect_failed", message: friendly });
-            return {
-              success: false,
-              pulled: 0,
-              added: 0,
-              updated: 0,
-              shops: shopIds.length,
-              errors,
-              message: friendly,
-              elapsedMs: Date.now() - startedAt,
-              lookbackSec,
-              shopee_response: [],
-            };
-          }
-        } else {
-          throw loadErr;
-        }
-      }
-    }
+    // MongoDB là SSOT: merge theo SN từng lô (persistShopeeOrderChunk preload $in).
+    // CẤM loadOrdersFromStore() không filter — dump cả collection khi data lớn.
+    const orders: any[] = [];
     // Mỗi shop nhận đủ perShopBudgetMs — không chia fair-share làm shop 2 bị cắt.
     const perShopResults: Array<{
       shopId: string;
@@ -5575,19 +5543,7 @@ async function pullShopeeCancelReturnOrders(opts?: {
       };
     }
 
-    const orders = isMongoReady()
-      ? await (async () => {
-          try {
-            return await loadOrdersFromStore();
-          } catch (loadErr: any) {
-            console.error(
-              "[CancelReturn Pull] loadOrdersFromStore failed:",
-              loadErr?.message || loadErr,
-            );
-            return [];
-          }
-        })()
-      : [];
+    const orders: any[] = [];
     const perShopBudgetMs = ORDERS_PULL_PER_SHOP_MS;
 
     // Duyệt HẾT shop — CẤM break deadline toàn cục (shop 2 bị bỏ qua).
@@ -21263,6 +21219,7 @@ async function startServer() {
   // ─── Mapping products — Phase 4 MVC  // ─── Mapping products — Phase 4 MVC (ĐẶT SỚM, TRƯỚC static / SPA catch-all) ───
   initMappingController({
     reloadCachesFromDb,
+    loadMappingListingsForApiFromStore,
     enrichChannelListingsWithMaster,
     isMongoReady,
     readChannelListingsForGet,
@@ -21815,14 +21772,11 @@ async function startServer() {
       }
       if (!orders.length) {
         try {
-          const loaded = await loadOrdersForApi({ readOnly: true });
-          const idSet = new Set([...idList, ...snList, ...snList.map((s) => `shopee-${s}`)]);
-          orders = (loaded.orders || []).filter(
-            (o: any) =>
-              idSet.has(String(o.id || "")) ||
-              idSet.has(String(o.orderSn || "")) ||
-              idSet.has(`shopee-${o.orderSn}`),
-          );
+          orders = await loadOrdersFromStore({
+            orderSns: snList,
+            ids: idList,
+            limit: Math.min(500, Math.max(idList.length + snList.length, 1)),
+          });
         } catch {
           orders = [];
         }
@@ -21914,8 +21868,8 @@ async function startServer() {
         }
       };
 
-      // Chỉ Init/Arrange Shipment; không chia chunk tuần tự, không sleep/delay/poll PDF.
-      await Promise.all(toShip.map(confirmOneOrder));
+      // Confirm-ship: chia lô 10 đơn, sleep 300ms giữa các lô — cấm Promise.all trần.
+      await mapInChunks(toShip, 10, confirmOneOrder, 300);
 
       console.log(`[Confirm Only] DONE ${successSns.length}/${toShip.length} success (${Date.now() - t0}ms)`);
       const successOrders = results
@@ -21988,7 +21942,7 @@ async function startServer() {
 
   /**
    * Confirm-only async: trả 202 + jobId ngay → FE poll tiến độ real-time.
-   * Background giữ Promise.all (nhanh như batch-confirm) và cập nhật job.completed sau mỗi đơn.
+   * Background chia lô 10 đơn + sleep 300ms (không Promise.all trần).
    */
   const executeConfirmOnlyBackgroundJob = async (
     jobId: string,
@@ -22014,14 +21968,11 @@ async function startServer() {
       }
       if (!orders.length) {
         try {
-          const loaded = await loadOrdersForApi({ readOnly: true });
-          const idSet = new Set([...idList, ...snList, ...snList.map((s) => `shopee-${s}`)]);
-          orders = (loaded.orders || []).filter(
-            (o: any) =>
-              idSet.has(String(o.id || "")) ||
-              idSet.has(String(o.orderSn || "")) ||
-              idSet.has(`shopee-${o.orderSn}`),
-          );
+          orders = await loadOrdersFromStore({
+            orderSns: snList,
+            ids: idList,
+            limit: Math.min(500, Math.max(idList.length + snList.length, 1)),
+          });
         } catch {
           orders = [];
         }
@@ -22130,7 +22081,7 @@ async function startServer() {
         }
       };
 
-      await Promise.all(toShip.map(confirmOneOrder));
+      await mapInChunks(toShip, 10, confirmOneOrder, 300);
 
       const failedOrders = results
         .filter((result: any) => !result?.success)
@@ -24311,14 +24262,11 @@ async function startServer() {
       }
       if (!orders.length) {
         try {
-          const loaded = await loadOrdersForApi({ readOnly: true });
-          const idSet = new Set([...idList, ...snList, ...snList.map((s) => `shopee-${s}`)]);
-          orders = (loaded.orders || []).filter(
-            (o: any) =>
-              idSet.has(String(o.id || "")) ||
-              idSet.has(String(o.orderSn || "")) ||
-              idSet.has(`shopee-${o.orderSn}`),
-          );
+          orders = await loadOrdersFromStore({
+            orderSns: snList,
+            ids: idList,
+            limit: Math.min(500, Math.max(idList.length + snList.length, 1)),
+          });
         } catch {
           orders = [];
         }
@@ -24606,9 +24554,24 @@ async function startServer() {
       return res.status(400).json({ error: "Thi\u1EBFu danh s\xE1ch orderIds ho\u1EB7c orderSns." });
     }
 
-    // Cùng nguồn GET /api/orders (JSON ∪ Mongo) — tránh 404 lệch ID khi đơn chỉ có trên Mongo.
-    const loaded = await loadOrdersForApi();
-    const orders = loaded.orders;
+    // Cùng nguồn Mongo $in — không dump full collection.
+    let orders: any[] = [];
+    try {
+      orders = await loadOrdersForShipScoped(idList, snList);
+    } catch (loadErr: any) {
+      console.warn("[Ship Order Bulk] loadOrdersForShipScoped:", loadErr?.message || loadErr);
+    }
+    if (!orders.length) {
+      try {
+        orders = await loadOrdersFromStore({
+          orderSns: snList,
+          ids: idList,
+          limit: Math.min(500, Math.max(idList.length + snList.length, 1)),
+        });
+      } catch {
+        orders = [];
+      }
+    }
     const toShip = resolveOrdersFromRequest(orders, idList, snList);
     if (toShip.length === 0) {
       console.error(
@@ -25014,16 +24977,13 @@ async function startServer() {
       }
       if (!orders.length && isMongoReady()) {
         try {
-          const loaded = await loadOrdersForApi({ readOnly: true });
-          const idSet = new Set(idList);
-          orders = (loaded.orders || []).filter(
-            (o: any) =>
-              idSet.has(String(o.id || "")) ||
-              idSet.has(String(o.orderSn || "")) ||
-              idSet.has(`shopee-${o.orderSn}`),
-          );
+          orders = await loadOrdersFromStore({
+            orderSns: snList,
+            ids: idList,
+            limit: Math.min(500, Math.max(idList.length + snList.length, 1)),
+          });
         } catch (apiErr: any) {
-          console.warn("[Print Local] loadOrdersForApi:", apiErr?.message || apiErr);
+          console.warn("[Print Local] loadOrdersFromStore scoped:", apiErr?.message || apiErr);
         }
       }
       if (!orders.length) {

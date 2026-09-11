@@ -361,7 +361,7 @@ async function readOrdersForRefresh(limit, opts = {}) {
     return merged;
   }
   if (!ordersRefreshInFlight) {
-    ordersRefreshInFlight = loadOrdersFromStore()
+    ordersRefreshInFlight = loadOrdersFromStore({ limit: 2000, lookbackDays: 90 })
       .then((orders) => {
         const validOrders = orders.filter((order) => Boolean(order?.orderSn || order?.id));
         ordersRefreshCache = {

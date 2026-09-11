@@ -73970,6 +73970,19 @@ var init_token = __esm({
 function sleep4(ms) {
   return new Promise((r2) => setTimeout(r2, ms));
 }
+async function mapInChunks(items, chunkSize, worker, pauseMs = 300) {
+  const list = Array.isArray(items) ? items : [];
+  const size = Math.max(1, Math.floor(Number(chunkSize) || 10));
+  const gap = Math.max(0, Math.floor(Number(pauseMs) || 0));
+  const results = [];
+  for (let i2 = 0; i2 < list.length; i2 += size) {
+    const chunk = list.slice(i2, i2 + size);
+    const part = await Promise.all(chunk.map((item, j) => worker(item, i2 + j)));
+    results.push(...part);
+    if (i2 + size < list.length && gap > 0) await sleep4(gap);
+  }
+  return results;
+}
 async function mapWithConcurrency(items, concurrency, worker) {
   const n = items.length;
   if (n === 0) return [];
@@ -78353,6 +78366,125 @@ async function loadChannelListingsFromStore() {
   const docs = await ChannelListingModel.find({}).lean();
   return docsToListings(docs);
 }
+var MAPPING_LISTINGS_HARD_CAP = 5e3;
+var MAPPING_LISTING_SELECT = {
+  _id: 1,
+  channelId: 1,
+  platform: 1,
+  sku: 1,
+  status: 1,
+  linkedProductId: 1,
+  "data.id": 1,
+  "data.title": 1,
+  "data.sku": 1,
+  "data.imageUrl": 1,
+  "data.channelId": 1,
+  "data.platform": 1,
+  "data.shopName": 1,
+  "data.shopId": 1,
+  "data.status": 1,
+  "data.linkedProductId": 1,
+  "data.linkedProductTitle": 1,
+  "data.linkedProductSku": 1,
+  "data.linkedProduct": 1,
+  "data.itemId": 1,
+  "data.modelId": 1,
+  "data.price": 1,
+  "data.sellingPrice": 1,
+  "data.weight": 1,
+  "data.stock": 1,
+  "data.syncError": 1,
+  "data.updatedAt": 1,
+  "data.linkBroken": 1
+};
+var MAPPING_PRODUCT_SELECT = {
+  _id: 1,
+  sku: 1,
+  "data.id": 1,
+  "data.sku": 1,
+  "data.title": 1,
+  "data.name": 1,
+  "data.children.id": 1,
+  "data.children.sku": 1,
+  "data.children.title": 1,
+  "data.children.name": 1,
+  "data.children_models.id": 1,
+  "data.children_models.sku": 1,
+  "data.children_models.title": 1,
+  "data.children_models.modelName": 1,
+  "data.children_models.name": 1
+};
+function collectMappingLinkedProductIds(listings) {
+  const ids = /* @__PURE__ */ new Set();
+  for (const row of Array.isArray(listings) ? listings : []) {
+    const id = String(row?.linkedProductId || row?.linkedProduct?.id || "").trim();
+    if (id) ids.add(id);
+  }
+  return [...ids];
+}
+function filterProductsForMapping(products, linkedIds) {
+  if (!linkedIds.length) return [];
+  const wanted = new Set(linkedIds);
+  return (Array.isArray(products) ? products : []).filter((p) => {
+    if (!p) return false;
+    if (p.id != null && wanted.has(String(p.id))) return true;
+    const children = Array.isArray(p.children) ? p.children : Array.isArray(p.children_models) ? p.children_models : [];
+    return children.some((c) => c?.id != null && wanted.has(String(c.id)));
+  });
+}
+async function loadMappingListingsForApiFromStore(opts) {
+  const requestedSize = typeof opts?.pageSize === "number" && Number.isFinite(opts.pageSize) && opts.pageSize > 0 ? Math.floor(opts.pageSize) : 0;
+  const paged = requestedSize > 0;
+  const page = Math.max(1, Math.floor(Number(opts?.page) || 1));
+  const pageSize = paged ? Math.min(200, Math.max(1, requestedSize)) : MAPPING_LISTINGS_HARD_CAP;
+  const skip = paged ? (page - 1) * pageSize : 0;
+  if (isProductsDiskMode()) {
+    const all3 = readChannelListingsFromDisk();
+    const total2 = all3.length;
+    const listings2 = all3.slice(skip, skip + pageSize);
+    const linkedIds2 = collectMappingLinkedProductIds(listings2);
+    const products2 = filterProductsForMapping(readProductsFromDisk(), linkedIds2);
+    return {
+      listings: listings2,
+      products: products2,
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      total: total2,
+      page: paged ? page : 1,
+      pageSize: paged ? pageSize : listings2.length,
+      hasMore: skip + listings2.length < total2
+    };
+  }
+  requireMongo();
+  let total = 0;
+  try {
+    total = await ChannelListingModel.estimatedDocumentCount().maxTimeMS(5e3);
+  } catch {
+    total = 0;
+  }
+  const docs = await ChannelListingModel.find({}).select(MAPPING_LISTING_SELECT).sort({ _id: 1 }).skip(skip).limit(pageSize).maxTimeMS(15e3).lean();
+  const listings = docsToListings(docs);
+  const linkedIds = collectMappingLinkedProductIds(listings);
+  let products = [];
+  if (linkedIds.length > 0) {
+    for (let i2 = 0; i2 < linkedIds.length; i2 += 400) {
+      const ids = linkedIds.slice(i2, i2 + 400);
+      const prodDocs = await ProductModel.find({
+        $or: [{ _id: { $in: ids } }, { "data.id": { $in: ids } }]
+      }).select(MAPPING_PRODUCT_SELECT).maxTimeMS(1e4).lean();
+      products.push(...docsToProducts(prodDocs));
+    }
+  }
+  const effectiveTotal = total || skip + listings.length + (listings.length === pageSize ? 1 : 0);
+  return {
+    listings,
+    products,
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    total: total || listings.length,
+    page: paged ? page : 1,
+    pageSize: paged ? pageSize : listings.length,
+    hasMore: paged ? skip + listings.length < effectiveTotal : listings.length >= MAPPING_LISTINGS_HARD_CAP
+  };
+}
 async function countProducts() {
   if (isProductsDiskMode()) return countProductsOnDisk();
   requireMongo();
@@ -80522,36 +80654,88 @@ async function healLaggingPendingConfirmWithTrackingInStore() {
   );
   return { matched, modified };
 }
-async function mirrorTopLevelTrackingIntoData() {
-  if (!isMongoReady()) return 0;
+function usableHydrateTrackingNo(v) {
+  const tn = String(v || "").trim();
+  if (!tn || /^0FG/i.test(tn)) return "";
+  return tn;
+}
+function inferCarrierFromTrackingNo(tn) {
+  const k = String(tn || "").toUpperCase();
+  if (/^GYA/.test(k) || /^GHN/.test(k)) return "Giao H\xE0ng Nhanh";
+  if (/^SPX/.test(k)) return "SPX Express";
+  return "";
+}
+async function hydrateTrackingBulkInStore() {
+  const empty = { mirrored: 0, patched: 0, already: 0, failed: 0, scanned: 0, samples: [] };
+  if (!isMongoReady()) return empty;
   requireMongo();
   const docs = await OrderModel.find({
     tracking_no: { $exists: true, $nin: [null, ""] }
-  }).select({ _id: 1, tracking_no: 1, "data.tracking_no": 1, "data.trackingNumber": 1 }).lean();
+  }).select({
+    _id: 1,
+    orderSn: 1,
+    tracking_no: 1,
+    trackingNumber: 1,
+    shipping_carrier: 1,
+    "data.orderSn": 1,
+    "data.tracking_no": 1,
+    "data.trackingNumber": 1,
+    "data.shipping_carrier": 1
+  }).limit(2e3).maxTimeMS(15e3).lean();
   const ops = [];
+  const samples = [];
+  let already = 0;
   for (const d of docs) {
-    const tn = String(d?.tracking_no || "").trim();
-    if (!tn || /^0FG/i.test(tn)) continue;
-    const dataTn = String(d?.data?.tracking_no || d?.data?.trackingNumber || "").trim();
-    if (dataTn === tn) continue;
-    ops.push({
-      updateOne: {
-        filter: { _id: d._id },
-        update: {
-          $set: {
-            "data.tracking_no": tn,
-            "data.trackingNumber": tn
-          }
-        }
+    const tn = usableHydrateTrackingNo(d?.tracking_no || d?.trackingNumber);
+    if (!tn) continue;
+    const dataTn = usableHydrateTrackingNo(d?.data?.tracking_no || d?.data?.trackingNumber);
+    const existingCarrier = String(d?.shipping_carrier || d?.data?.shipping_carrier || "").trim();
+    const carrier = inferCarrierFromTrackingNo(tn);
+    const $set = {};
+    if (dataTn !== tn) {
+      $set["data.tracking_no"] = tn;
+      $set["data.trackingNumber"] = tn;
+      $set.trackingNumber = tn;
+      $set.tracking_no = tn;
+    }
+    if (carrier && !existingCarrier) {
+      $set.shipping_carrier = carrier;
+      $set["data.shipping_carrier"] = carrier;
+    } else if (carrier && /^GYA/i.test(tn)) {
+      const curCarrier = existingCarrier.toLowerCase();
+      if (!curCarrier || curCarrier.includes("spx")) {
+        $set.shipping_carrier = carrier;
+        $set["data.shipping_carrier"] = carrier;
       }
-    });
+    }
+    if (Object.keys($set).length === 0) {
+      already += 1;
+      continue;
+    }
+    ops.push({ updateOne: { filter: { _id: d._id }, update: { $set } } });
+    if (samples.length < 12) {
+      samples.push({
+        sn: String(d?.orderSn || d?.data?.orderSn || "").replace(/^shopee-/i, "").trim(),
+        tn
+      });
+    }
   }
-  if (ops.length === 0) return 0;
-  const result = await OrderModel.bulkWrite(ops, { ordered: false });
+  let patched = 0;
+  if (ops.length > 0) {
+    const result = await OrderModel.bulkWrite(ops, { ordered: false });
+    patched = Number(result.modifiedCount || 0) + Number(result.upsertedCount || 0);
+  }
   console.log(
-    `[MongoDB] mirrorTopLevelTrackingIntoData \u2014 modified=${result.modifiedCount || 0} ops=${ops.length}`
+    `[MongoDB] hydrateTrackingBulkInStore scanned=${docs.length} ops=${ops.length} patched=${patched} already=${already}`
   );
-  return ops.length;
+  return {
+    mirrored: patched,
+    patched,
+    already,
+    failed: 0,
+    scanned: docs.length,
+    samples
+  };
 }
 function normalizeScannedCode(raw) {
   return String(raw || "").trim().toUpperCase();
@@ -80927,55 +81111,135 @@ async function findOrderByScanCodeInStore(rawCode, opts) {
     return null;
   }
 }
-async function loadOrdersFromStore(opts) {
-  if (!isMongoReady()) return [];
-  requireMongo();
-  const limit = typeof opts?.limit === "number" && Number.isFinite(opts.limit) && opts.limit > 0 ? Math.min(Math.floor(opts.limit), 5e3) : void 0;
-  const snList = Array.isArray(opts?.orderSns) ? [
-    ...new Set(
-      opts.orderSns.map((s2) => String(s2 || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
-    )
-  ] : [];
-  const idList = Array.isArray(opts?.ids) ? [...new Set(opts.ids.map((s2) => String(s2 || "").trim()).filter(Boolean))] : [];
-  const filter2 = {};
-  if (snList.length > 0 || idList.length > 0) {
-    const or = [];
-    if (snList.length > 0) {
-      or.push({ orderSn: { $in: snList } });
-      or.push({ "data.orderSn": { $in: snList } });
-      or.push({ _id: { $in: snList.map((sn) => `shopee-${sn}`) } });
+var LOAD_ORDERS_HARD_MAX = 5e3;
+var LOAD_ORDERS_DEFAULT_LIMIT = 500;
+var LOAD_ORDERS_DEFAULT_LOOKBACK_DAYS = 90;
+var LOAD_ORDERS_IN_CHUNK = 400;
+function chunkStringList(list, size) {
+  const n = Math.max(1, size);
+  if (!list.length) return [[]];
+  const out = [];
+  for (let i2 = 0; i2 < list.length; i2 += n) out.push(list.slice(i2, i2 + n));
+  return out;
+}
+function buildLoadOrdersScopeFilter(opts) {
+  const and = [];
+  const shopFilter = buildShopIdMongoFilter(void 0, opts?.shopIds);
+  if (shopFilter) and.push(shopFilter);
+  const statuses = Array.isArray(opts?.statuses) ? [...new Set(opts.statuses.map((s2) => String(s2 || "").trim()).filter(Boolean))] : [];
+  const shopeeStatuses = Array.isArray(opts?.shopeeStatuses) ? [...new Set(opts.shopeeStatuses.map((s2) => String(s2 || "").trim()).filter(Boolean))] : [];
+  if (statuses.length || shopeeStatuses.length) {
+    const statusOr = [];
+    if (statuses.length) {
+      statusOr.push({ status: { $in: statuses } });
+      statusOr.push({ "data.status": { $in: statuses } });
     }
-    if (idList.length > 0) {
-      or.push({ _id: { $in: idList } });
-      or.push({ "data.id": { $in: idList } });
+    if (shopeeStatuses.length) {
+      statusOr.push({ shopee_order_status: { $in: shopeeStatuses } });
+      statusOr.push({ "data.shopee_order_status": { $in: shopeeStatuses } });
     }
-    filter2.$or = or;
+    and.push({ $or: statusOr });
   }
+  const lookbackDays = Number(opts?.lookbackDays);
+  if (Number.isFinite(lookbackDays) && lookbackDays > 0) {
+    const since = new Date(Date.now() - Math.floor(lookbackDays) * 24 * 60 * 60 * 1e3);
+    const sinceDay = since.toISOString().slice(0, 10);
+    and.push({
+      $or: [
+        { last_shopee_update_at: { $gte: since } },
+        { create_time: { $gte: since } },
+        { "data.date": { $gte: sinceDay } }
+      ]
+    });
+  }
+  return and;
+}
+async function findOrdersLeanCapped(filter2, limit) {
   let docs;
   try {
-    let q = OrderModel.find(filter2).sort({ "data.date": -1, _id: -1 }).maxTimeMS(15e3);
-    if (limit) q = q.limit(limit);
-    docs = await q.lean();
+    docs = await OrderModel.find(filter2).sort({ "data.date": -1, _id: -1 }).limit(limit).maxTimeMS(15e3).lean();
   } catch (err) {
     console.warn(
       "[MongoDB] loadOrdersFromStore sorted query failed, retry unsorted:",
       err?.message || err
     );
-    let q = OrderModel.find(filter2).maxTimeMS(15e3);
-    if (limit) q = q.limit(limit);
-    docs = await q.lean();
+    docs = await OrderModel.find(filter2).limit(limit).maxTimeMS(15e3).lean();
     docs.sort((a, b) => {
       const da = String(a?.data?.date || "");
       const db = String(b?.data?.date || "");
       if (da !== db) return da < db ? 1 : -1;
       return String(b?._id || "").localeCompare(String(a?._id || ""));
     });
-    if (limit) docs = docs.slice(0, limit);
+    docs = docs.slice(0, limit);
+  }
+  return docs;
+}
+async function loadOrdersFromStore(opts) {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const snList = Array.isArray(opts?.orderSns) ? [
+    ...new Set(
+      opts.orderSns.map((s2) => String(s2 || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
+    )
+  ] : [];
+  const idList = Array.isArray(opts?.ids) ? [...new Set(opts.ids.map((s2) => String(s2 || "").trim()).filter(Boolean))] : [];
+  const scopedByKey = snList.length > 0 || idList.length > 0;
+  const requestedLimit = typeof opts?.limit === "number" && Number.isFinite(opts.limit) && opts.limit > 0 ? Math.floor(opts.limit) : void 0;
+  const limit = Math.min(
+    LOAD_ORDERS_HARD_MAX,
+    Math.max(
+      1,
+      requestedLimit || (scopedByKey ? Math.min(LOAD_ORDERS_HARD_MAX, snList.length + idList.length || 1) : LOAD_ORDERS_DEFAULT_LIMIT)
+    )
+  );
+  const lookbackDays = scopedByKey ? Number.isFinite(Number(opts?.lookbackDays)) && Number(opts?.lookbackDays) > 0 ? Number(opts?.lookbackDays) : void 0 : Number.isFinite(Number(opts?.lookbackDays)) ? Number(opts?.lookbackDays) : LOAD_ORDERS_DEFAULT_LOOKBACK_DAYS;
+  const scopeAnd = buildLoadOrdersScopeFilter({
+    shopIds: opts?.shopIds,
+    statuses: opts?.statuses,
+    shopeeStatuses: opts?.shopeeStatuses,
+    lookbackDays
+  });
+  const runQuery = async (keyOr, take) => {
+    const and = [...scopeAnd];
+    if (keyOr && keyOr.length) and.push({ $or: keyOr });
+    const filter2 = and.length === 0 ? {} : and.length === 1 ? and[0] : { $and: and };
+    return findOrdersLeanCapped(filter2, take);
+  };
+  let docs = [];
+  if (!scopedByKey) {
+    docs = await runQuery(null, limit);
+  } else {
+    const snChunks = chunkStringList(snList, LOAD_ORDERS_IN_CHUNK);
+    const idChunks = chunkStringList(idList, LOAD_ORDERS_IN_CHUNK);
+    const maxChunks = Math.max(snChunks.length, idChunks.length, 1);
+    for (let i2 = 0; i2 < maxChunks && docs.length < limit; i2 += 1) {
+      const sns = snChunks[i2] || [];
+      const ids = idChunks[i2] || [];
+      const or = [];
+      if (sns.length > 0) {
+        or.push({ orderSn: { $in: sns } });
+        or.push({ "data.orderSn": { $in: sns } });
+        or.push({ _id: { $in: sns.map((sn) => `shopee-${sn}`) } });
+      }
+      if (ids.length > 0) {
+        or.push({ _id: { $in: ids } });
+        or.push({ "data.id": { $in: ids } });
+      }
+      if (!or.length) continue;
+      const part = await runQuery(or, limit - docs.length);
+      docs.push(...part);
+    }
   }
   const out = [];
+  const seen = /* @__PURE__ */ new Set();
   for (const d of docs) {
     const order = hydrateOrderFromMongoDoc(d);
-    if (order) out.push(order);
+    if (!order) continue;
+    const key = String(order.id || order.orderSn || d?._id || "");
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    out.push(order);
+    if (out.length >= limit) break;
   }
   return out;
 }
@@ -82213,9 +82477,14 @@ async function reclassifyCancelReturnsInStore(opts) {
     return empty;
   }
 }
+var HANDED_OVER_HEAL_LIMIT = 500;
 async function loadAllHandedOverShopeeOrdersFromStore(opts) {
   if (!isMongoReady()) return [];
   requireMongo();
+  const limit = Math.min(
+    HANDED_OVER_HEAL_LIMIT,
+    Math.max(1, Math.floor(Number(opts?.limit) || HANDED_OVER_HEAL_LIMIT))
+  );
   const toShipStatuses = [...ORDER_TAB_TO_SHIP_RAW];
   const leftPickup = [...ORDER_TAB_LEFT_PICKUP_RAW];
   const and = [
@@ -82249,14 +82518,14 @@ async function loadAllHandedOverShopeeOrdersFromStore(opts) {
   ];
   const shopFilter = buildShopIdMongoFilter(void 0, opts?.shopIds);
   if (shopFilter) and.push(shopFilter);
-  const docs = await OrderModel.find({ $and: and }).sort({ "data.handedOverAt": 1, "data.date": 1, _id: 1 }).maxTimeMS(3e4).lean();
+  const docs = await OrderModel.find({ $and: and }).sort({ "data.handedOverAt": 1, "data.date": 1, _id: 1 }).limit(limit).maxTimeMS(3e4).lean();
   const orders = [];
   for (const doc of docs) {
     const order = hydrateOrderFromMongoDoc(doc);
     if (order) orders.push(order);
   }
   console.log(
-    `[MongoDB] Targeted Healing candidates=${orders.length} (handed_over + READY_TO_SHIP/PROCESSED)${opts?.shopIds?.length ? ` shops=${opts.shopIds.join(",")}` : ""}`
+    `[MongoDB] Targeted Healing candidates=${orders.length} cap=${limit} (handed_over + READY_TO_SHIP/PROCESSED)${opts?.shopIds?.length ? ` shops=${opts.shopIds.join(",")}` : ""}`
   );
   return orders;
 }
@@ -119426,6 +119695,15 @@ var import_express14 = __toESM(require_express2(), 1);
 // controllers/mappingController.js
 var deps13 = {
   reloadCachesFromDb: async () => ({ listings: [], products: [], updatedAt: "" }),
+  loadMappingListingsForApiFromStore: async () => ({
+    listings: [],
+    products: [],
+    updatedAt: "",
+    total: 0,
+    page: 1,
+    pageSize: 0,
+    hasMore: false
+  }),
   enrichChannelListingsWithMaster: (listings) => listings,
   isMongoReady: () => false,
   readChannelListingsForGet: async () => [],
@@ -119477,16 +119755,22 @@ var deps13 = {
 function initMappingController(partial) {
   deps13 = { ...deps13, ...partial };
 }
-async function handleMappingProductsGet(_req, res) {
+async function handleMappingProductsGet(req, res) {
   try {
-    const cache = await deps13.reloadCachesFromDb();
-    const rawListings = cache.listings;
-    let listings = deps13.enrichChannelListingsWithMaster(rawListings, cache.products);
+    const pageRaw = Number(req?.query?.page);
+    const sizeRaw = Number(req?.query?.page_size ?? req?.query?.pageSize ?? req?.query?.limit);
+    const hasPaging = Number.isFinite(sizeRaw) && sizeRaw > 0;
+    const page = Math.max(1, Math.floor(Number.isFinite(pageRaw) ? pageRaw : 1));
+    const pageSize = hasPaging ? Math.min(200, Math.max(1, Math.floor(sizeRaw))) : void 0;
+    const payload = await deps13.loadMappingListingsForApiFromStore(
+      hasPaging ? { page, pageSize } : {}
+    );
+    const rawListings = payload.listings;
+    let listings = deps13.enrichChannelListingsWithMaster(rawListings, payload.products);
     try {
       const healedSnaps = await deps13.persistAutoHealedMappingSnapshots(listings);
       if (healedSnaps > 0) {
-        const refreshed = await deps13.reloadCachesFromDb();
-        listings = deps13.enrichChannelListingsWithMaster(refreshed.listings, refreshed.products);
+        listings = deps13.enrichChannelListingsWithMaster(rawListings, payload.products);
       }
     } catch (healErr) {
       console.warn("[Mapping Products] Auto-heal snapshot skip:", healErr?.message || healErr);
@@ -119501,15 +119785,22 @@ async function handleMappingProductsGet(_req, res) {
     ).length;
     const broken = listings.filter((l) => l?.linkBroken).length;
     console.log(
-      `[Mapping Products] GET db \u2014 ${listings.length} d\xF2ng (success+product=${successWithProduct}, broken=${broken}) mongo=${deps13.isMongoReady()}`
+      `[Mapping Products] GET lean \u2014 ${listings.length} d\xF2ng (success+product=${successWithProduct}, broken=${broken}) mongo=${deps13.isMongoReady()}`
     );
-    return res.status(200).json({
+    const body = {
       success: true,
       listings,
       count: listings.length,
-      cacheUpdatedAt: cache.updatedAt,
+      cacheUpdatedAt: payload.updatedAt,
       source: deps13.isMongoReady() ? "mongodb" : "json_fallback"
-    });
+    };
+    if (hasPaging) {
+      body.page = payload.page;
+      body.pageSize = payload.pageSize;
+      body.total = payload.total;
+      body.hasMore = payload.hasMore;
+    }
+    return res.status(200).json(body);
   } catch (error) {
     console.error("[Mapping Products] GET l\u1ED7i:", error?.message || error);
     try {
@@ -119940,7 +120231,7 @@ function queueOrdersJsonMirror(orders) {
 }
 function queueOrdersJsonMirrorFromMongo() {
   setImmediate(() => {
-    void loadOrdersFromStore().then((orders) => queueOrdersJsonMirror(orders)).catch(
+    void loadOrdersFromStore({ limit: 2e3, lookbackDays: 90 }).then((orders) => queueOrdersJsonMirror(orders)).catch(
       (err) => console.warn("[Orders JSON Mirror] Mongo snapshot skipped:", err?.message || err)
     );
   });
@@ -119992,7 +120283,10 @@ async function loadOrdersForApi(opts) {
     throw new Error("mongodb_not_ready");
   }
   try {
-    const orders = (await loadOrdersFromStore()).filter(deps14.isValidOrder).map(normalize);
+    const orders = (await loadOrdersFromStore({
+      limit: 2e3,
+      lookbackDays: 90
+    })).filter(deps14.isValidOrder).map(normalize);
     return { orders, dirty: false, handoverMongoSync: [] };
   } catch (err) {
     console.warn("[Orders] Mongo read failed:", err?.message || err);
@@ -120070,34 +120364,21 @@ async function persistChangedOrdersPatch(changedOrders) {
   return written;
 }
 async function hydrateTrackingFromMongoToJson() {
-  let mirrored = 0;
   try {
-    mirrored = await mirrorTopLevelTrackingIntoData();
+    const result = await hydrateTrackingBulkInStore();
+    return {
+      mirrored: result.mirrored,
+      filled: result.patched + result.already,
+      total: result.scanned,
+      patched: result.patched,
+      already: result.already,
+      failed: result.failed,
+      samples: result.samples
+    };
   } catch (err) {
-    console.warn("[Orders] mirrorTopLevelTrackingIntoData:", err?.message || err);
+    console.warn("[Orders] hydrateTrackingBulkInStore:", err?.message || err);
+    throw err;
   }
-  const { orders, dirty, handoverMongoSync } = await loadOrdersForApi();
-  if (dirty) {
-    saveOrders(orders);
-    try {
-      const withTn = orders.filter(
-        (o) => String(o.trackingNumber || o.tracking_no || "").trim()
-      );
-      const toUpsert = [
-        ...withTn,
-        ...handoverMongoSync.filter(
-          (o) => !withTn.some((t2) => t2.id === o.id || t2.orderSn === o.orderSn)
-        )
-      ];
-      if (toUpsert.length) await bulkUpsertOrdersToStore(toUpsert);
-    } catch (err) {
-      console.warn("[Orders] hydrate bulkUpsert:", err?.message || err);
-    }
-  }
-  const filled = orders.filter(
-    (o) => String(o.trackingNumber || o.tracking_no || "").trim()
-  ).length;
-  return { mirrored, filled, total: orders.length };
 }
 function saveOrders(orders) {
   try {
@@ -120687,7 +120968,7 @@ async function readOrdersForRefresh(limit, opts = {}) {
     return merged;
   }
   if (!ordersRefreshInFlight) {
-    ordersRefreshInFlight = loadOrdersFromStore().then((orders) => {
+    ordersRefreshInFlight = loadOrdersFromStore({ limit: 2e3, lookbackDays: 90 }).then((orders) => {
       const validOrders = orders.filter((order) => Boolean(order?.orderSn || order?.id));
       ordersRefreshCache = {
         orders: validOrders,
@@ -130431,7 +130712,24 @@ async function reconcileActiveShopeeOrdersFromStore(orders, shopIds, deadlineAt)
   }
   let mongoOrders;
   try {
-    mongoOrders = await loadOrdersFromStore();
+    mongoOrders = await loadOrdersFromStore({
+      shopIds,
+      statuses: ["unprocessed", "processed", "shipping", "return_pending"],
+      shopeeStatuses: [
+        "READY_TO_SHIP",
+        "RETRY_SHIP",
+        "PROCESSED",
+        "SHIPPED",
+        "TO_CONFIRM_RECEIVE",
+        "IN_CANCEL",
+        "TO_RETURN"
+      ],
+      lookbackDays: 60,
+      limit: Math.min(
+        500,
+        Math.max(150, SHOPEE_ACTIVE_STATUS_RECONCILE_LIMIT_PER_SHOP * Math.max(1, shopIds.length))
+      )
+    });
   } catch (error) {
     result.errors.push({
       error: "active_orders_read_failed",
@@ -131749,59 +132047,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
         shopee_response: { error: "no_oauth_shop" }
       };
     }
-    let orders = [];
-    if (isMongoReady()) {
-      try {
-        orders = await loadOrdersFromStore();
-      } catch (loadErr) {
-        if (isMongoConnectionError(loadErr)) {
-          console.warn(
-            "[Orders Pull] loadOrdersFromStore timeout/network \u2014 th\u1EED reconnect:",
-            loadErr?.message || loadErr
-          );
-          const ok = await recoverMongoConnection("orders_pull_load");
-          if (ok) {
-            try {
-              orders = await loadOrdersFromStore();
-            } catch (retryErr) {
-              errors.push({
-                error: "mongo_load_failed",
-                message: describeMongoWriteError(retryErr)
-              });
-              return {
-                success: false,
-                pulled: 0,
-                added: 0,
-                updated: 0,
-                shops: shopIds.length,
-                errors,
-                message: describeMongoWriteError(retryErr),
-                elapsedMs: Date.now() - startedAt,
-                lookbackSec,
-                shopee_response: []
-              };
-            }
-          } else {
-            const friendly = describeMongoWriteError(loadErr);
-            errors.push({ error: "mongo_reconnect_failed", message: friendly });
-            return {
-              success: false,
-              pulled: 0,
-              added: 0,
-              updated: 0,
-              shops: shopIds.length,
-              errors,
-              message: friendly,
-              elapsedMs: Date.now() - startedAt,
-              lookbackSec,
-              shopee_response: []
-            };
-          }
-        } else {
-          throw loadErr;
-        }
-      }
-    }
+    const orders = [];
     const perShopResults = [];
     syncDiag(
       "Pull START",
@@ -132507,17 +132753,7 @@ async function pullShopeeCancelReturnOrders(opts) {
         elapsedMs: Date.now() - startedAt
       };
     }
-    const orders = isMongoReady() ? await (async () => {
-      try {
-        return await loadOrdersFromStore();
-      } catch (loadErr) {
-        console.error(
-          "[CancelReturn Pull] loadOrdersFromStore failed:",
-          loadErr?.message || loadErr
-        );
-        return [];
-      }
-    })() : [];
+    const orders = [];
     const perShopBudgetMs = ORDERS_PULL_PER_SHOP_MS;
     for (const shopId of shopIds) {
       const shopDeadlineAt = Date.now() + perShopBudgetMs;
@@ -143443,6 +143679,7 @@ async function startServer() {
   app.use("/api", healthRoutes);
   initMappingController({
     reloadCachesFromDb,
+    loadMappingListingsForApiFromStore,
     enrichChannelListingsWithMaster,
     isMongoReady,
     readChannelListingsForGet,
@@ -143922,11 +144159,11 @@ async function startServer() {
       }
       if (!orders.length) {
         try {
-          const loaded = await loadOrdersForApi({ readOnly: true });
-          const idSet = /* @__PURE__ */ new Set([...idList, ...snList, ...snList.map((s2) => `shopee-${s2}`)]);
-          orders = (loaded.orders || []).filter(
-            (o) => idSet.has(String(o.id || "")) || idSet.has(String(o.orderSn || "")) || idSet.has(`shopee-${o.orderSn}`)
-          );
+          orders = await loadOrdersFromStore({
+            orderSns: snList,
+            ids: idList,
+            limit: Math.min(500, Math.max(idList.length + snList.length, 1))
+          });
         } catch {
           orders = [];
         }
@@ -144003,7 +144240,7 @@ async function startServer() {
           });
         }
       };
-      await Promise.all(toShip.map(confirmOneOrder));
+      await mapInChunks(toShip, 10, confirmOneOrder, 300);
       console.log(`[Confirm Only] DONE ${successSns.length}/${toShip.length} success (${Date.now() - t0}ms)`);
       const successOrders = results.filter((result) => result?.success).map((result) => ({
         orderId: String(result.orderId || ""),
@@ -144081,11 +144318,11 @@ async function startServer() {
       }
       if (!orders.length) {
         try {
-          const loaded = await loadOrdersForApi({ readOnly: true });
-          const idSet = /* @__PURE__ */ new Set([...idList, ...snList, ...snList.map((s2) => `shopee-${s2}`)]);
-          orders = (loaded.orders || []).filter(
-            (o) => idSet.has(String(o.id || "")) || idSet.has(String(o.orderSn || "")) || idSet.has(`shopee-${o.orderSn}`)
-          );
+          orders = await loadOrdersFromStore({
+            orderSns: snList,
+            ids: idList,
+            limit: Math.min(500, Math.max(idList.length + snList.length, 1))
+          });
         } catch {
           orders = [];
         }
@@ -144178,7 +144415,7 @@ async function startServer() {
           bumpProgress();
         }
       };
-      await Promise.all(toShip.map(confirmOneOrder));
+      await mapInChunks(toShip, 10, confirmOneOrder, 300);
       const failedOrders = results.filter((result) => !result?.success).map((result) => ({
         orderId: String(result.orderId || ""),
         orderSn: String(result.orderSn || ""),
@@ -145998,11 +146235,11 @@ async function startServer() {
       }
       if (!orders.length) {
         try {
-          const loaded = await loadOrdersForApi({ readOnly: true });
-          const idSet = /* @__PURE__ */ new Set([...idList, ...snList, ...snList.map((s2) => `shopee-${s2}`)]);
-          orders = (loaded.orders || []).filter(
-            (o) => idSet.has(String(o.id || "")) || idSet.has(String(o.orderSn || "")) || idSet.has(`shopee-${o.orderSn}`)
-          );
+          orders = await loadOrdersFromStore({
+            orderSns: snList,
+            ids: idList,
+            limit: Math.min(500, Math.max(idList.length + snList.length, 1))
+          });
         } catch {
           orders = [];
         }
@@ -146252,8 +146489,23 @@ async function startServer() {
       if (idList.length === 0 && snList.length === 0) {
         return res.status(400).json({ error: "Thi\u1EBFu danh s\xE1ch orderIds ho\u1EB7c orderSns." });
       }
-      const loaded = await loadOrdersForApi();
-      const orders = loaded.orders;
+      let orders = [];
+      try {
+        orders = await loadOrdersForShipScoped(idList, snList);
+      } catch (loadErr) {
+        console.warn("[Ship Order Bulk] loadOrdersForShipScoped:", loadErr?.message || loadErr);
+      }
+      if (!orders.length) {
+        try {
+          orders = await loadOrdersFromStore({
+            orderSns: snList,
+            ids: idList,
+            limit: Math.min(500, Math.max(idList.length + snList.length, 1))
+          });
+        } catch {
+          orders = [];
+        }
+      }
       const toShip = resolveOrdersFromRequest(orders, idList, snList);
       if (toShip.length === 0) {
         console.error(
@@ -146565,13 +146817,13 @@ async function startServer() {
       }
       if (!orders.length && isMongoReady()) {
         try {
-          const loaded = await loadOrdersForApi({ readOnly: true });
-          const idSet = new Set(idList);
-          orders = (loaded.orders || []).filter(
-            (o) => idSet.has(String(o.id || "")) || idSet.has(String(o.orderSn || "")) || idSet.has(`shopee-${o.orderSn}`)
-          );
+          orders = await loadOrdersFromStore({
+            orderSns: snList,
+            ids: idList,
+            limit: Math.min(500, Math.max(idList.length + snList.length, 1))
+          });
         } catch (apiErr) {
-          console.warn("[Print Local] loadOrdersForApi:", apiErr?.message || apiErr);
+          console.warn("[Print Local] loadOrdersFromStore scoped:", apiErr?.message || apiErr);
         }
       }
       if (!orders.length) {

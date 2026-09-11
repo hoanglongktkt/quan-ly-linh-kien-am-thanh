@@ -1,7 +1,7 @@
 /**
  * MongoDB Atlas — Single Source of Truth.
- * Mọi đọc: await Model.find({})
- * Mọi ghi: await insertMany / findOneAndUpdate / deleteMany
+ * Mọi đọc: find có filter + limit (CẤM find({}) không giới hạn).
+ * Mọi ghi: bulkWrite / insertMany / updateMany.
  * KHÔNG dùng mảng in-memory làm nguồn dữ liệu.
  */
 import mongoose, { Schema, type Model } from "mongoose";
@@ -1479,6 +1479,162 @@ export async function loadChannelListingsFromStore(): Promise<any[]> {
   requireMongo();
   const docs = await ChannelListingModel.find({}).lean();
   return docsToListings(docs);
+}
+
+const MAPPING_LISTINGS_HARD_CAP = 5000;
+const MAPPING_LISTING_SELECT = {
+  _id: 1,
+  channelId: 1,
+  platform: 1,
+  sku: 1,
+  status: 1,
+  linkedProductId: 1,
+  "data.id": 1,
+  "data.title": 1,
+  "data.sku": 1,
+  "data.imageUrl": 1,
+  "data.channelId": 1,
+  "data.platform": 1,
+  "data.shopName": 1,
+  "data.shopId": 1,
+  "data.status": 1,
+  "data.linkedProductId": 1,
+  "data.linkedProductTitle": 1,
+  "data.linkedProductSku": 1,
+  "data.linkedProduct": 1,
+  "data.itemId": 1,
+  "data.modelId": 1,
+  "data.price": 1,
+  "data.sellingPrice": 1,
+  "data.weight": 1,
+  "data.stock": 1,
+  "data.syncError": 1,
+  "data.updatedAt": 1,
+  "data.linkBroken": 1,
+};
+const MAPPING_PRODUCT_SELECT = {
+  _id: 1,
+  sku: 1,
+  "data.id": 1,
+  "data.sku": 1,
+  "data.title": 1,
+  "data.name": 1,
+  "data.children.id": 1,
+  "data.children.sku": 1,
+  "data.children.title": 1,
+  "data.children.name": 1,
+  "data.children_models.id": 1,
+  "data.children_models.sku": 1,
+  "data.children_models.title": 1,
+  "data.children_models.modelName": 1,
+  "data.children_models.name": 1,
+};
+
+function collectMappingLinkedProductIds(listings: any[]): string[] {
+  const ids = new Set<string>();
+  for (const row of Array.isArray(listings) ? listings : []) {
+    const id = String(row?.linkedProductId || row?.linkedProduct?.id || "").trim();
+    if (id) ids.add(id);
+  }
+  return [...ids];
+}
+
+function filterProductsForMapping(products: any[], linkedIds: string[]): any[] {
+  if (!linkedIds.length) return [];
+  const wanted = new Set(linkedIds);
+  return (Array.isArray(products) ? products : []).filter((p) => {
+    if (!p) return false;
+    if (p.id != null && wanted.has(String(p.id))) return true;
+    const children = Array.isArray(p.children)
+      ? p.children
+      : Array.isArray(p.children_models)
+        ? p.children_models
+        : [];
+    return children.some((c: any) => c?.id != null && wanted.has(String(c.id)));
+  });
+}
+
+/**
+ * GET mapping: projection lean + chỉ load product theo linkedProductId.
+ * Không dump 2 collection đầy đủ (ảnh/HTML/catalog thừa).
+ */
+export async function loadMappingListingsForApiFromStore(opts?: {
+  page?: number;
+  pageSize?: number;
+}): Promise<{
+  listings: any[];
+  products: any[];
+  updatedAt: string;
+  total: number;
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+}> {
+  const requestedSize =
+    typeof opts?.pageSize === "number" && Number.isFinite(opts.pageSize) && opts.pageSize > 0
+      ? Math.floor(opts.pageSize)
+      : 0;
+  const paged = requestedSize > 0;
+  const page = Math.max(1, Math.floor(Number(opts?.page) || 1));
+  const pageSize = paged ? Math.min(200, Math.max(1, requestedSize)) : MAPPING_LISTINGS_HARD_CAP;
+  const skip = paged ? (page - 1) * pageSize : 0;
+
+  if (isProductsDiskMode()) {
+    const all = readChannelListingsFromDisk();
+    const total = all.length;
+    const listings = all.slice(skip, skip + pageSize);
+    const linkedIds = collectMappingLinkedProductIds(listings);
+    const products = filterProductsForMapping(readProductsFromDisk(), linkedIds);
+    return {
+      listings,
+      products,
+      updatedAt: new Date().toISOString(),
+      total,
+      page: paged ? page : 1,
+      pageSize: paged ? pageSize : listings.length,
+      hasMore: skip + listings.length < total,
+    };
+  }
+
+  requireMongo();
+  let total = 0;
+  try {
+    total = await ChannelListingModel.estimatedDocumentCount().maxTimeMS(5_000);
+  } catch {
+    total = 0;
+  }
+  const docs = await ChannelListingModel.find({})
+    .select(MAPPING_LISTING_SELECT)
+    .sort({ _id: 1 })
+    .skip(skip)
+    .limit(pageSize)
+    .maxTimeMS(15_000)
+    .lean();
+  const listings = docsToListings(docs as any[]);
+  const linkedIds = collectMappingLinkedProductIds(listings);
+  let products: any[] = [];
+  if (linkedIds.length > 0) {
+    for (let i = 0; i < linkedIds.length; i += 400) {
+      const ids = linkedIds.slice(i, i + 400);
+      const prodDocs = await ProductModel.find({
+        $or: [{ _id: { $in: ids } }, { "data.id": { $in: ids } }],
+      })
+        .select(MAPPING_PRODUCT_SELECT)
+        .maxTimeMS(10_000)
+        .lean();
+      products.push(...docsToProducts(prodDocs as any[]));
+    }
+  }
+  const effectiveTotal = total || skip + listings.length + (listings.length === pageSize ? 1 : 0);
+  return {
+    listings,
+    products,
+    updatedAt: new Date().toISOString(),
+    total: total || listings.length,
+    page: paged ? page : 1,
+    pageSize: paged ? pageSize : listings.length,
+    hasMore: paged ? skip + listings.length < effectiveTotal : listings.length >= MAPPING_LISTINGS_HARD_CAP,
+  };
 }
 
 export async function countProducts(): Promise<number> {
@@ -4553,8 +4709,16 @@ export async function mirrorTopLevelTrackingIntoData(): Promise<number> {
   requireMongo();
   const docs = await OrderModel.find({
     tracking_no: { $exists: true, $nin: [null, ""] },
+    $or: [
+      { "data.tracking_no": { $exists: false } },
+      { "data.tracking_no": { $in: [null, ""] } },
+      { "data.trackingNumber": { $exists: false } },
+      { "data.trackingNumber": { $in: [null, ""] } },
+    ],
   })
     .select({ _id: 1, tracking_no: 1, "data.tracking_no": 1, "data.trackingNumber": 1 })
+    .limit(2000)
+    .maxTimeMS(15_000)
     .lean();
 
   const ops = [];
@@ -4581,6 +4745,107 @@ export async function mirrorTopLevelTrackingIntoData(): Promise<number> {
     `[MongoDB] mirrorTopLevelTrackingIntoData — modified=${result.modifiedCount || 0} ops=${ops.length}`,
   );
   return ops.length;
+}
+
+function usableHydrateTrackingNo(v: unknown): string {
+  const tn = String(v || "").trim();
+  if (!tn || /^0FG/i.test(tn)) return "";
+  return tn;
+}
+
+function inferCarrierFromTrackingNo(tn: string): string {
+  const k = String(tn || "").toUpperCase();
+  if (/^GYA/.test(k) || /^GHN/.test(k)) return "Giao Hàng Nhanh";
+  if (/^SPX/.test(k)) return "SPX Express";
+  return "";
+}
+
+/**
+ * Hydrate tracking: 1 lần find lean + 1 lần bulkWrite. CẤM PATCH HTTP từng đơn.
+ */
+export async function hydrateTrackingBulkInStore(): Promise<{
+  mirrored: number;
+  patched: number;
+  already: number;
+  failed: number;
+  scanned: number;
+  samples: Array<{ sn: string; tn: string }>;
+}> {
+  const empty = { mirrored: 0, patched: 0, already: 0, failed: 0, scanned: 0, samples: [] as Array<{ sn: string; tn: string }> };
+  if (!isMongoReady()) return empty;
+  requireMongo();
+  const docs = await OrderModel.find({
+    tracking_no: { $exists: true, $nin: [null, ""] },
+  })
+    .select({
+      _id: 1,
+      orderSn: 1,
+      tracking_no: 1,
+      trackingNumber: 1,
+      shipping_carrier: 1,
+      "data.orderSn": 1,
+      "data.tracking_no": 1,
+      "data.trackingNumber": 1,
+      "data.shipping_carrier": 1,
+    })
+    .limit(2000)
+    .maxTimeMS(15_000)
+    .lean();
+
+  const ops: any[] = [];
+  const samples: Array<{ sn: string; tn: string }> = [];
+  let already = 0;
+  for (const d of docs as any[]) {
+    const tn = usableHydrateTrackingNo(d?.tracking_no || d?.trackingNumber);
+    if (!tn) continue;
+    const dataTn = usableHydrateTrackingNo(d?.data?.tracking_no || d?.data?.trackingNumber);
+    const existingCarrier = String(d?.shipping_carrier || d?.data?.shipping_carrier || "").trim();
+    const carrier = inferCarrierFromTrackingNo(tn);
+    const $set: Record<string, unknown> = {};
+    if (dataTn !== tn) {
+      $set["data.tracking_no"] = tn;
+      $set["data.trackingNumber"] = tn;
+      $set.trackingNumber = tn;
+      $set.tracking_no = tn;
+    }
+    if (carrier && !existingCarrier) {
+      $set.shipping_carrier = carrier;
+      $set["data.shipping_carrier"] = carrier;
+    } else if (carrier && /^GYA/i.test(tn)) {
+      const curCarrier = existingCarrier.toLowerCase();
+      if (!curCarrier || curCarrier.includes("spx")) {
+        $set.shipping_carrier = carrier;
+        $set["data.shipping_carrier"] = carrier;
+      }
+    }
+    if (Object.keys($set).length === 0) {
+      already += 1;
+      continue;
+    }
+    ops.push({ updateOne: { filter: { _id: d._id }, update: { $set } } });
+    if (samples.length < 12) {
+      samples.push({
+        sn: String(d?.orderSn || d?.data?.orderSn || "").replace(/^shopee-/i, "").trim(),
+        tn,
+      });
+    }
+  }
+  let patched = 0;
+  if (ops.length > 0) {
+    const result = await OrderModel.bulkWrite(ops, { ordered: false });
+    patched = Number(result.modifiedCount || 0) + Number(result.upsertedCount || 0);
+  }
+  console.log(
+    `[MongoDB] hydrateTrackingBulkInStore scanned=${docs.length} ops=${ops.length} patched=${patched} already=${already}`,
+  );
+  return {
+    mirrored: patched,
+    patched,
+    already,
+    failed: 0,
+    scanned: docs.length,
+    samples,
+  };
 }
 
 /** Chuẩn hóa mã súng quét: trim + UPPER — exact $eq, không regex. */
@@ -5141,20 +5406,103 @@ export async function findOrderByScanCodeInStore(
   }
 }
 
-/** Đọc đơn từ Mongo — ưu tiên top-level shopee_order_status / tracking / carrier.
- *  `limit` (vd: 50) = shallow fetch nhanh cho FE cache merge; bỏ limit = full dump.
+/** Đọc đơn từ Mongo — luôn có limit (mặc định 500, tối đa 5000).
+ *  Không filter SN/id → thêm lookback 90 ngày. CẤM find({}) không giới hạn.
  *  `orderSns` / `ids` = chỉ lấy đơn cần thiết (ship-order scoped load). */
+const LOAD_ORDERS_HARD_MAX = 5000;
+const LOAD_ORDERS_DEFAULT_LIMIT = 500;
+const LOAD_ORDERS_DEFAULT_LOOKBACK_DAYS = 90;
+const LOAD_ORDERS_IN_CHUNK = 400;
+
+function chunkStringList(list: string[], size: number): string[][] {
+  const n = Math.max(1, size);
+  if (!list.length) return [[]];
+  const out: string[][] = [];
+  for (let i = 0; i < list.length; i += n) out.push(list.slice(i, i + n));
+  return out;
+}
+
+function buildLoadOrdersScopeFilter(opts?: {
+  shopIds?: string[];
+  statuses?: string[];
+  shopeeStatuses?: string[];
+  lookbackDays?: number;
+}): Record<string, unknown>[] {
+  const and: Record<string, unknown>[] = [];
+  const shopFilter = buildShopIdMongoFilter(undefined, opts?.shopIds);
+  if (shopFilter) and.push(shopFilter);
+  const statuses = Array.isArray(opts?.statuses)
+    ? [...new Set(opts!.statuses.map((s) => String(s || "").trim()).filter(Boolean))]
+    : [];
+  const shopeeStatuses = Array.isArray(opts?.shopeeStatuses)
+    ? [...new Set(opts!.shopeeStatuses.map((s) => String(s || "").trim()).filter(Boolean))]
+    : [];
+  if (statuses.length || shopeeStatuses.length) {
+    const statusOr: Record<string, unknown>[] = [];
+    if (statuses.length) {
+      statusOr.push({ status: { $in: statuses } });
+      statusOr.push({ "data.status": { $in: statuses } });
+    }
+    if (shopeeStatuses.length) {
+      statusOr.push({ shopee_order_status: { $in: shopeeStatuses } });
+      statusOr.push({ "data.shopee_order_status": { $in: shopeeStatuses } });
+    }
+    and.push({ $or: statusOr });
+  }
+  const lookbackDays = Number(opts?.lookbackDays);
+  if (Number.isFinite(lookbackDays) && lookbackDays > 0) {
+    const since = new Date(Date.now() - Math.floor(lookbackDays) * 24 * 60 * 60 * 1000);
+    const sinceDay = since.toISOString().slice(0, 10);
+    and.push({
+      $or: [
+        { last_shopee_update_at: { $gte: since } },
+        { create_time: { $gte: since } },
+        { "data.date": { $gte: sinceDay } },
+      ],
+    });
+  }
+  return and;
+}
+
+async function findOrdersLeanCapped(
+  filter: Record<string, unknown>,
+  limit: number,
+): Promise<any[]> {
+  let docs: any[];
+  try {
+    docs = await OrderModel.find(filter)
+      .sort({ "data.date": -1, _id: -1 })
+      .limit(limit)
+      .maxTimeMS(15_000)
+      .lean();
+  } catch (err: any) {
+    console.warn(
+      "[MongoDB] loadOrdersFromStore sorted query failed, retry unsorted:",
+      err?.message || err,
+    );
+    docs = await OrderModel.find(filter).limit(limit).maxTimeMS(15_000).lean();
+    docs.sort((a: any, b: any) => {
+      const da = String(a?.data?.date || "");
+      const db = String(b?.data?.date || "");
+      if (da !== db) return da < db ? 1 : -1;
+      return String(b?._id || "").localeCompare(String(a?._id || ""));
+    });
+    docs = docs.slice(0, limit);
+  }
+  return docs;
+}
+
 export async function loadOrdersFromStore(opts?: {
   limit?: number;
   orderSns?: string[];
   ids?: string[];
+  shopIds?: string[];
+  statuses?: string[];
+  shopeeStatuses?: string[];
+  lookbackDays?: number;
 }): Promise<any[]> {
   if (!isMongoReady()) return [];
   requireMongo();
-  const limit =
-    typeof opts?.limit === "number" && Number.isFinite(opts.limit) && opts.limit > 0
-      ? Math.min(Math.floor(opts.limit), 5000)
-      : undefined;
   const snList = Array.isArray(opts?.orderSns)
     ? [
         ...new Set(
@@ -5167,49 +5515,76 @@ export async function loadOrdersFromStore(opts?: {
   const idList = Array.isArray(opts?.ids)
     ? [...new Set(opts!.ids.map((s) => String(s || "").trim()).filter(Boolean))]
     : [];
-  const filter: Record<string, unknown> = {};
-  if (snList.length > 0 || idList.length > 0) {
-    const or: Record<string, unknown>[] = [];
-    if (snList.length > 0) {
-      or.push({ orderSn: { $in: snList } });
-      or.push({ "data.orderSn": { $in: snList } });
-      or.push({ _id: { $in: snList.map((sn) => `shopee-${sn}`) } });
+  const scopedByKey = snList.length > 0 || idList.length > 0;
+  const requestedLimit =
+    typeof opts?.limit === "number" && Number.isFinite(opts.limit) && opts.limit > 0
+      ? Math.floor(opts.limit)
+      : undefined;
+  const limit = Math.min(
+    LOAD_ORDERS_HARD_MAX,
+    Math.max(
+      1,
+      requestedLimit ||
+        (scopedByKey ? Math.min(LOAD_ORDERS_HARD_MAX, snList.length + idList.length || 1) : LOAD_ORDERS_DEFAULT_LIMIT),
+    ),
+  );
+  const lookbackDays = scopedByKey
+    ? Number.isFinite(Number(opts?.lookbackDays)) && Number(opts?.lookbackDays) > 0
+      ? Number(opts?.lookbackDays)
+      : undefined
+    : Number.isFinite(Number(opts?.lookbackDays))
+      ? Number(opts?.lookbackDays)
+      : LOAD_ORDERS_DEFAULT_LOOKBACK_DAYS;
+  const scopeAnd = buildLoadOrdersScopeFilter({
+    shopIds: opts?.shopIds,
+    statuses: opts?.statuses,
+    shopeeStatuses: opts?.shopeeStatuses,
+    lookbackDays,
+  });
+
+  const runQuery = async (keyOr: Record<string, unknown>[] | null, take: number) => {
+    const and = [...scopeAnd];
+    if (keyOr && keyOr.length) and.push({ $or: keyOr });
+    const filter = and.length === 0 ? {} : and.length === 1 ? and[0] : { $and: and };
+    return findOrdersLeanCapped(filter, take);
+  };
+
+  let docs: any[] = [];
+  if (!scopedByKey) {
+    docs = await runQuery(null, limit);
+  } else {
+    const snChunks = chunkStringList(snList, LOAD_ORDERS_IN_CHUNK);
+    const idChunks = chunkStringList(idList, LOAD_ORDERS_IN_CHUNK);
+    const maxChunks = Math.max(snChunks.length, idChunks.length, 1);
+    for (let i = 0; i < maxChunks && docs.length < limit; i += 1) {
+      const sns = snChunks[i] || [];
+      const ids = idChunks[i] || [];
+      const or: Record<string, unknown>[] = [];
+      if (sns.length > 0) {
+        or.push({ orderSn: { $in: sns } });
+        or.push({ "data.orderSn": { $in: sns } });
+        or.push({ _id: { $in: sns.map((sn) => `shopee-${sn}`) } });
+      }
+      if (ids.length > 0) {
+        or.push({ _id: { $in: ids } });
+        or.push({ "data.id": { $in: ids } });
+      }
+      if (!or.length) continue;
+      const part = await runQuery(or, limit - docs.length);
+      docs.push(...part);
     }
-    if (idList.length > 0) {
-      or.push({ _id: { $in: idList } });
-      or.push({ "data.id": { $in: idList } });
-    }
-    filter.$or = or;
   }
-  let docs: any[];
-  try {
-    let q = OrderModel.find(filter).sort({ "data.date": -1, _id: -1 }).maxTimeMS(15_000);
-    if (limit) q = q.limit(limit);
-    docs = await q.lean();
-  } catch (err: any) {
-    // Webhook 100% có thể đẩy khối lượng ghi lớn hơn trước, khiến query có sort
-    // đôi khi vượt maxTimeMS/giới hạn bộ nhớ sort. KHÔNG để cả trang Quản lý đơn
-    // hàng trắng trơn — thử lại KHÔNG sort (Mongo trả theo _id insertion order),
-    // sort lại phía Node cho phần dữ liệu vẫn lấy được.
-    console.warn(
-      "[MongoDB] loadOrdersFromStore sorted query failed, retry unsorted:",
-      err?.message || err,
-    );
-    let q = OrderModel.find(filter).maxTimeMS(15_000);
-    if (limit) q = q.limit(limit);
-    docs = await q.lean();
-    docs.sort((a: any, b: any) => {
-      const da = String(a?.data?.date || "");
-      const db = String(b?.data?.date || "");
-      if (da !== db) return da < db ? 1 : -1;
-      return String(b?._id || "").localeCompare(String(a?._id || ""));
-    });
-    if (limit) docs = docs.slice(0, limit);
-  }
+
   const out: any[] = [];
+  const seen = new Set<string>();
   for (const d of docs as any[]) {
     const order = hydrateOrderFromMongoDoc(d);
-    if (order) out.push(order);
+    if (!order) continue;
+    const key = String(order.id || order.orderSn || d?._id || "");
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    out.push(order);
+    if (out.length >= limit) break;
   }
   return out;
 }
@@ -6797,11 +7172,18 @@ export async function reclassifyCancelReturnsInStore(opts?: {
  * - HOẶC READY_TO_SHIP / RETRY_SHIP / PROCESSED (chưa quét mã, tab Đã xử lý)
  * Loại đơn đã rời pickup (SHIPPED+) — không tốn API; clearHandedOverFlags xử lý cờ thừa.
  */
+const HANDED_OVER_HEAL_LIMIT = 500;
+
 export async function loadAllHandedOverShopeeOrdersFromStore(opts?: {
   shopIds?: string[];
+  limit?: number;
 }): Promise<any[]> {
   if (!isMongoReady()) return [];
   requireMongo();
+  const limit = Math.min(
+    HANDED_OVER_HEAL_LIMIT,
+    Math.max(1, Math.floor(Number(opts?.limit) || HANDED_OVER_HEAL_LIMIT)),
+  );
   const toShipStatuses = [...ORDER_TAB_TO_SHIP_RAW];
   const leftPickup = [...ORDER_TAB_LEFT_PICKUP_RAW];
   const and: Record<string, unknown>[] = [
@@ -6838,6 +7220,7 @@ export async function loadAllHandedOverShopeeOrdersFromStore(opts?: {
 
   const docs = await OrderModel.find({ $and: and })
     .sort({ "data.handedOverAt": 1, "data.date": 1, _id: 1 })
+    .limit(limit)
     .maxTimeMS(30_000)
     .lean();
   const orders: any[] = [];
@@ -6846,7 +7229,7 @@ export async function loadAllHandedOverShopeeOrdersFromStore(opts?: {
     if (order) orders.push(order);
   }
   console.log(
-    `[MongoDB] Targeted Healing candidates=${orders.length}` +
+    `[MongoDB] Targeted Healing candidates=${orders.length} cap=${limit}` +
       ` (handed_over + READY_TO_SHIP/PROCESSED)` +
       `${opts?.shopIds?.length ? ` shops=${opts.shopIds.join(",")}` : ""}`,
   );

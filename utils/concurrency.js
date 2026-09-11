@@ -9,6 +9,24 @@ export function sleep(ms) {
 }
 
 /**
+ * Chạy worker theo lô (chunk) — mỗi lô Promise.all nội bộ, sleep giữa các lô.
+ * Dùng cho confirm-ship Shopee: không Promise.all trần cả danh sách.
+ */
+export async function mapInChunks(items, chunkSize, worker, pauseMs = 300) {
+  const list = Array.isArray(items) ? items : [];
+  const size = Math.max(1, Math.floor(Number(chunkSize) || 10));
+  const gap = Math.max(0, Math.floor(Number(pauseMs) || 0));
+  const results = [];
+  for (let i = 0; i < list.length; i += size) {
+    const chunk = list.slice(i, i + size);
+    const part = await Promise.all(chunk.map((item, j) => worker(item, i + j)));
+    results.push(...part);
+    if (i + size < list.length && gap > 0) await sleep(gap);
+  }
+  return results;
+}
+
+/**
  * Chạy async tasks song song với giới hạn concurrency (tránh rate-limit Shopee
  * khi Promise.all toàn bộ cùng lúc). Giữ thứ tự kết quả theo input.
  */

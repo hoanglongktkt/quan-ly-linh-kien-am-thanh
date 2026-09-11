@@ -13,7 +13,7 @@ import {
   deleteOrdersFromStore,
   deleteHandedOverOrdersFromStore,
   deleteClosedOrdersByRetention,
-  mirrorTopLevelTrackingIntoData,
+  hydrateTrackingBulkInStore,
   purgeMongoTempCollections,
   markOrderHandedOverInStore,
   findOrderByScanCodeInStore,
@@ -152,7 +152,7 @@ export function queueOrdersJsonMirror(orders) {
 
 export function queueOrdersJsonMirrorFromMongo() {
   setImmediate(() => {
-    void loadOrdersFromStore()
+    void loadOrdersFromStore({ limit: 2000, lookbackDays: 90 })
       .then((orders) => queueOrdersJsonMirror(orders))
       .catch((err) =>
         console.warn("[Orders JSON Mirror] Mongo snapshot skipped:", err?.message || err),
@@ -226,7 +226,14 @@ export async function loadOrdersForApi(opts) {
     throw new Error("mongodb_not_ready");
   }
   try {
-    const orders = (await loadOrdersFromStore()).filter(deps.isValidOrder).map(normalize);
+    const orders = (
+      await loadOrdersFromStore({
+        limit: 2000,
+        lookbackDays: 90,
+      })
+    )
+      .filter(deps.isValidOrder)
+      .map(normalize);
     return { orders, dirty: false, handoverMongoSync: [] };
   } catch (err) {
     console.warn("[Orders] Mongo read failed:", err?.message || err);
@@ -319,36 +326,23 @@ export async function persistChangedOrdersPatch(changedOrders) {
   return written;
 }
 
-/** API: ép đổ tracking Mongo → orders.json (cứu mã GHN sau sync script). */
+/** API: ép đổ tracking Mongo bằng 1 lần bulkWrite — không dump orders.json. */
 export async function hydrateTrackingFromMongoToJson() {
-  let mirrored = 0;
   try {
-    mirrored = await mirrorTopLevelTrackingIntoData();
+    const result = await hydrateTrackingBulkInStore();
+    return {
+      mirrored: result.mirrored,
+      filled: result.patched + result.already,
+      total: result.scanned,
+      patched: result.patched,
+      already: result.already,
+      failed: result.failed,
+      samples: result.samples,
+    };
   } catch (err) {
-    console.warn("[Orders] mirrorTopLevelTrackingIntoData:", err?.message || err);
+    console.warn("[Orders] hydrateTrackingBulkInStore:", err?.message || err);
+    throw err;
   }
-  const { orders, dirty, handoverMongoSync } = await loadOrdersForApi();
-  if (dirty) {
-    saveOrders(orders);
-    try {
-      const withTn = orders.filter(
-        (o) => String(o.trackingNumber || o.tracking_no || "").trim(),
-      );
-      const toUpsert = [
-        ...withTn,
-        ...handoverMongoSync.filter(
-          (o) => !withTn.some((t) => t.id === o.id || t.orderSn === o.orderSn),
-        ),
-      ];
-      if (toUpsert.length) await bulkUpsertOrdersToStore(toUpsert);
-    } catch (err) {
-      console.warn("[Orders] hydrate bulkUpsert:", err?.message || err);
-    }
-  }
-  const filled = orders.filter((o) =>
-    String(o.trackingNumber || o.tracking_no || "").trim(),
-  ).length;
-  return { mirrored, filled, total: orders.length };
 }
 
 export function saveOrders(orders) {

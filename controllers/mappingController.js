@@ -6,6 +6,15 @@
 /** Deps từ server.ts (Mongo/cache helpers chưa tách hết). */
 let deps = {
   reloadCachesFromDb: async () => ({ listings: [], products: [], updatedAt: "" }),
+  loadMappingListingsForApiFromStore: async () => ({
+    listings: [],
+    products: [],
+    updatedAt: "",
+    total: 0,
+    page: 1,
+    pageSize: 0,
+    hasMore: false,
+  }),
   enrichChannelListingsWithMaster: (listings) => listings,
   isMongoReady: () => false,
   readChannelListingsForGet: async () => [],
@@ -56,18 +65,23 @@ export function initMappingController(partial) {
   deps = { ...deps, ...partial };
 }
 
-export async function handleMappingProductsGet(_req, res) {
+export async function handleMappingProductsGet(req, res) {
   try {
-    // BẮT BUỘC đọc TRỰC TIẾP từ MongoDB — không dùng cache/mảng RAM sau restart.
-    const cache = await deps.reloadCachesFromDb();
-    const rawListings = cache.listings;
-    let listings = deps.enrichChannelListingsWithMaster(rawListings, cache.products);
+    const pageRaw = Number(req?.query?.page);
+    const sizeRaw = Number(req?.query?.page_size ?? req?.query?.pageSize ?? req?.query?.limit);
+    const hasPaging = Number.isFinite(sizeRaw) && sizeRaw > 0;
+    const page = Math.max(1, Math.floor(Number.isFinite(pageRaw) ? pageRaw : 1));
+    const pageSize = hasPaging ? Math.min(200, Math.max(1, Math.floor(sizeRaw))) : undefined;
+    const payload = await deps.loadMappingListingsForApiFromStore(
+      hasPaging ? { page, pageSize } : {},
+    );
+    const rawListings = payload.listings;
+    let listings = deps.enrichChannelListingsWithMaster(rawListings, payload.products);
     // Auto-heal snapshot SKU/tên khi linkedProductId còn hợp lệ nhưng lệch Kho gốc.
     try {
       const healedSnaps = await deps.persistAutoHealedMappingSnapshots(listings);
       if (healedSnaps > 0) {
-        const refreshed = await deps.reloadCachesFromDb();
-        listings = deps.enrichChannelListingsWithMaster(refreshed.listings, refreshed.products);
+        listings = deps.enrichChannelListingsWithMaster(rawListings, payload.products);
       }
     } catch (healErr) {
       console.warn("[Mapping Products] Auto-heal snapshot skip:", healErr?.message || healErr);
@@ -86,15 +100,22 @@ export async function handleMappingProductsGet(_req, res) {
     ).length;
     const broken = listings.filter((l) => l?.linkBroken).length;
     console.log(
-      `[Mapping Products] GET db — ${listings.length} dòng (success+product=${successWithProduct}, broken=${broken}) mongo=${deps.isMongoReady()}`,
+      `[Mapping Products] GET lean — ${listings.length} dòng (success+product=${successWithProduct}, broken=${broken}) mongo=${deps.isMongoReady()}`,
     );
-    return res.status(200).json({
+    const body = {
       success: true,
       listings,
       count: listings.length,
-      cacheUpdatedAt: cache.updatedAt,
+      cacheUpdatedAt: payload.updatedAt,
       source: deps.isMongoReady() ? "mongodb" : "json_fallback",
-    });
+    };
+    if (hasPaging) {
+      body.page = payload.page;
+      body.pageSize = payload.pageSize;
+      body.total = payload.total;
+      body.hasMore = payload.hasMore;
+    }
+    return res.status(200).json(body);
   } catch (error) {
     console.error("[Mapping Products] GET lỗi:", error?.message || error);
     // Thử lại truy vấn MongoDB một lần — không fallback sang mảng RAM.
