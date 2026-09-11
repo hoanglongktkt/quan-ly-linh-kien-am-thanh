@@ -291,27 +291,25 @@ export async function scanBulkUpdate(req, res) {
           });
           continue;
         }
-        if (!deps.isEligibleForHandOverShared(order)) {
-          const detail =
-            deps.getHandOverIneligibleReasonShared?.(order) ||
-            `status=${order?.status}, shopee=${order?.shopee_order_status || "-"}`;
+        // FE đã phân loại xuất kho — tin daXuatKhoCodes, không reject vì thiếu tracking/shop lệch.
+        const sn = String(order.orderSn || "").replace(/^shopee-/i, "").trim();
+        if (!sn) {
           results.push({
             code,
             action: "rejected",
             orderId: order.id,
             orderSn: order.orderSn,
-            message: detail,
+            message: "Thiếu orderSn — không ghi bàn giao ĐVVC",
             local_status: existingLocal,
           });
           failed_scans.push({
             code,
             orderId: order.id,
             orderSn: order.orderSn,
-            reason: detail,
+            reason: "Thiếu orderSn",
           });
           continue;
         }
-        const sn = String(order.orderSn || "").replace(/^shopee-/i, "").trim();
         const updated = deps.applyHandedOverWrite
           ? deps.applyHandedOverWrite({ ...order }, undefined, "qr_scan")
           : {
@@ -646,6 +644,50 @@ export async function scanBulkUpdate(req, res) {
             flagWriteError,
             flagBatchErr,
           );
+        }
+        if ((flagWriteError || flagOk === 0) && typeof deps.markOrderHandedOverInStore === "function") {
+          let recovered = 0;
+          const leftover = [];
+          for (const row of flagRows) {
+            try {
+              if (row.localStatus === "HANDED_OVER") {
+                const ok = await deps.markOrderHandedOverInStore(row.orderSn, {
+                  source: row.source || "qr_scan",
+                  handedOverAt: row.handedOverAt,
+                  shopId: row.shopId,
+                });
+                if (ok) recovered += 1;
+                else leftover.push(row.orderSn);
+              } else if (typeof deps.markOrderLocalStatusInStore === "function") {
+                const ok = await deps.markOrderLocalStatusInStore(row.orderSn, row.localStatus, {
+                  shopId: row.shopId,
+                  stockRestored: row.stockRestored,
+                  stockRestoredAt: row.stockRestoredAt,
+                });
+                if (ok) recovered += 1;
+                else leftover.push(row.orderSn);
+              } else {
+                leftover.push(row.orderSn);
+              }
+            } catch (oneErr) {
+              leftover.push(row.orderSn);
+              console.error(
+                "[Orders Scan Bulk] fallback flag write fail:",
+                row.orderSn,
+                oneErr?.message || oneErr,
+              );
+            }
+          }
+          if (recovered > 0) {
+            flagOk = recovered;
+            if (leftover.length === 0) flagWriteError = null;
+            else {
+              flagWriteError = `Một phần đơn chưa ghi được cờ: ${leftover.slice(0, 8).join(", ")}`;
+            }
+            console.warn(
+              `[Orders Scan Bulk] fallback markOrderHandedOver recovered=${recovered} leftover=${leftover.length}`,
+            );
+          }
         }
       }
       console.log(

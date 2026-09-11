@@ -3023,8 +3023,15 @@ function buildOrderCompoundFilter(
 }
 
 function isDuplicateKeyError(err: unknown): boolean {
-  const e = err as { code?: number | string; message?: string };
-  return e?.code === 11000 || /E11000|duplicate key/i.test(String(e?.message || err || ""));
+  const e = err as {
+    code?: number | string;
+    message?: string;
+    writeErrors?: Array<{ code?: number }>;
+  };
+  if (e?.code === 11000 || /E11000|duplicate key/i.test(String(e?.message || err || ""))) {
+    return true;
+  }
+  return Array.isArray(e?.writeErrors) && e.writeErrors.some((w) => w?.code === 11000);
 }
 
 /**
@@ -8953,6 +8960,8 @@ export async function upsertDonHoanHuyBatch(
 
 /**
  * Ghi cờ HANDED_OVER / CANCELLED_STORED / RETURN_RECEIVED hàng loạt — 1 bulkWrite.
+ * Filter CHỈ theo orderSn/_id — KHÔNG lọc shopId (tránh miss + upsert E11000 khi gắn nhầm shop).
+ * Không đưa `_id` vào $setOnInsert.
  */
 export async function markOrdersScanFlagsBatch(
   rows: Array<{
@@ -8967,6 +8976,16 @@ export async function markOrdersScanFlagsBatch(
 ): Promise<number> {
   if (!isMongoReady() || !Array.isArray(rows) || rows.length === 0) return 0;
   requireMongo();
+
+  const identityFilter = (sn: string, _id: string) => ({
+    $or: [{ orderSn: sn }, { _id }, { "data.orderSn": sn }],
+  });
+  const insertStub = (sn: string, _id: string) => ({
+    orderSn: sn,
+    "data.id": _id,
+    "data.orderSn": sn,
+    "data.channel": "shopee",
+  });
 
   const ops: any[] = [];
   const nowIso = new Date().toISOString();
@@ -9002,17 +9021,8 @@ export async function markOrdersScanFlagsBatch(
       }
       ops.push({
         updateOne: {
-          filter: buildOrderCompoundFilter(sn, _id, shopIdStr),
-          update: {
-            $set,
-            $setOnInsert: {
-              _id,
-              orderSn: sn,
-              "data.id": _id,
-              "data.orderSn": sn,
-              "data.channel": "shopee",
-            },
-          },
+          filter: identityFilter(sn, _id),
+          update: { $set, $setOnInsert: insertStub(sn, _id) },
           upsert: true,
         },
       });
@@ -9052,17 +9062,8 @@ export async function markOrdersScanFlagsBatch(
     }
     ops.push({
       updateOne: {
-        filter: buildOrderCompoundFilter(sn, _id, shopIdStr),
-        update: {
-          $set,
-          $setOnInsert: {
-            _id,
-            orderSn: sn,
-            "data.id": _id,
-            "data.orderSn": sn,
-            "data.channel": "shopee",
-          },
-        },
+        filter: identityFilter(sn, _id),
+        update: { $set, $setOnInsert: insertStub(sn, _id) },
         upsert: true,
       },
     });
@@ -9073,13 +9074,37 @@ export async function markOrdersScanFlagsBatch(
   const FLAG_BULK_DELAY_MS = 40;
   let modified = 0;
   let upserted = 0;
+
+  const runChunk = async (chunk: any[]) => {
+    try {
+      return await withWriteTimeout(
+        OrderModel.bulkWrite(chunk, { ordered: false }),
+        "markOrdersScanFlags_bulkWrite",
+        12_000,
+      );
+    } catch (err) {
+      if (!isDuplicateKeyError(err)) throw err;
+      const retryOps = chunk.map((op) => ({
+        updateOne: {
+          filter: op.updateOne.filter,
+          update: { $set: op.updateOne.update.$set },
+          upsert: false,
+        },
+      }));
+      console.warn(
+        `[MongoDB] markOrdersScanFlags E11000 — retry update-only ops=${retryOps.length}`,
+      );
+      return await withWriteTimeout(
+        OrderModel.bulkWrite(retryOps, { ordered: false }),
+        "markOrdersScanFlags_e11000_retry",
+        12_000,
+      );
+    }
+  };
+
   for (let i = 0; i < ops.length; i += FLAG_BULK_CHUNK) {
     const chunk = ops.slice(i, i + FLAG_BULK_CHUNK);
-    const result = await withWriteTimeout(
-      OrderModel.bulkWrite(chunk, { ordered: false }),
-      "markOrdersScanFlags_bulkWrite",
-      12_000,
-    );
+    const result = await runChunk(chunk);
     modified += result.modifiedCount || 0;
     upserted += result.upsertedCount || 0;
     if (i + FLAG_BULK_CHUNK < ops.length) {

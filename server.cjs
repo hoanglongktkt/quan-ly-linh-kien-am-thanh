@@ -79555,7 +79555,10 @@ function buildOrderCompoundFilter(sn, _id, shopId) {
 }
 function isDuplicateKeyError(err) {
   const e2 = err;
-  return e2?.code === 11e3 || /E11000|duplicate key/i.test(String(e2?.message || err || ""));
+  if (e2?.code === 11e3 || /E11000|duplicate key/i.test(String(e2?.message || err || ""))) {
+    return true;
+  }
+  return Array.isArray(e2?.writeErrors) && e2.writeErrors.some((w) => w?.code === 11e3);
 }
 async function markOrderHandedOverInStore(orderSn, meta) {
   if (!isMongoReady()) return false;
@@ -83742,6 +83745,15 @@ async function upsertDonHoanHuyBatch(rows) {
 async function markOrdersScanFlagsBatch(rows) {
   if (!isMongoReady() || !Array.isArray(rows) || rows.length === 0) return 0;
   requireMongo();
+  const identityFilter = (sn, _id) => ({
+    $or: [{ orderSn: sn }, { _id }, { "data.orderSn": sn }]
+  });
+  const insertStub = (sn, _id) => ({
+    orderSn: sn,
+    "data.id": _id,
+    "data.orderSn": sn,
+    "data.channel": "shopee"
+  });
   const ops = [];
   const nowIso = (/* @__PURE__ */ new Date()).toISOString();
   for (const row of rows) {
@@ -83774,17 +83786,8 @@ async function markOrdersScanFlagsBatch(rows) {
       }
       ops.push({
         updateOne: {
-          filter: buildOrderCompoundFilter(sn, _id, shopIdStr),
-          update: {
-            $set: $set2,
-            $setOnInsert: {
-              _id,
-              orderSn: sn,
-              "data.id": _id,
-              "data.orderSn": sn,
-              "data.channel": "shopee"
-            }
-          },
+          filter: identityFilter(sn, _id),
+          update: { $set: $set2, $setOnInsert: insertStub(sn, _id) },
           upsert: true
         }
       });
@@ -83822,17 +83825,8 @@ async function markOrdersScanFlagsBatch(rows) {
     }
     ops.push({
       updateOne: {
-        filter: buildOrderCompoundFilter(sn, _id, shopIdStr),
-        update: {
-          $set,
-          $setOnInsert: {
-            _id,
-            orderSn: sn,
-            "data.id": _id,
-            "data.orderSn": sn,
-            "data.channel": "shopee"
-          }
-        },
+        filter: identityFilter(sn, _id),
+        update: { $set, $setOnInsert: insertStub(sn, _id) },
         upsert: true
       }
     });
@@ -83842,13 +83836,35 @@ async function markOrdersScanFlagsBatch(rows) {
   const FLAG_BULK_DELAY_MS = 40;
   let modified = 0;
   let upserted = 0;
+  const runChunk = async (chunk) => {
+    try {
+      return await withWriteTimeout(
+        OrderModel.bulkWrite(chunk, { ordered: false }),
+        "markOrdersScanFlags_bulkWrite",
+        12e3
+      );
+    } catch (err) {
+      if (!isDuplicateKeyError(err)) throw err;
+      const retryOps = chunk.map((op) => ({
+        updateOne: {
+          filter: op.updateOne.filter,
+          update: { $set: op.updateOne.update.$set },
+          upsert: false
+        }
+      }));
+      console.warn(
+        `[MongoDB] markOrdersScanFlags E11000 \u2014 retry update-only ops=${retryOps.length}`
+      );
+      return await withWriteTimeout(
+        OrderModel.bulkWrite(retryOps, { ordered: false }),
+        "markOrdersScanFlags_e11000_retry",
+        12e3
+      );
+    }
+  };
   for (let i2 = 0; i2 < ops.length; i2 += FLAG_BULK_CHUNK) {
     const chunk = ops.slice(i2, i2 + FLAG_BULK_CHUNK);
-    const result = await withWriteTimeout(
-      OrderModel.bulkWrite(chunk, { ordered: false }),
-      "markOrdersScanFlags_bulkWrite",
-      12e3
-    );
+    const result = await runChunk(chunk);
     modified += result.modifiedCount || 0;
     upserted += result.upsertedCount || 0;
     if (i2 + FLAG_BULK_CHUNK < ops.length) {
@@ -114975,25 +114991,24 @@ async function scanBulkUpdate(req, res) {
           });
           continue;
         }
-        if (!deps7.isEligibleForHandOverShared(order)) {
-          const detail = deps7.getHandOverIneligibleReasonShared?.(order) || `status=${order?.status}, shopee=${order?.shopee_order_status || "-"}`;
+        const sn = String(order.orderSn || "").replace(/^shopee-/i, "").trim();
+        if (!sn) {
           results.push({
             code,
             action: "rejected",
             orderId: order.id,
             orderSn: order.orderSn,
-            message: detail,
+            message: "Thi\u1EBFu orderSn \u2014 kh\xF4ng ghi b\xE0n giao \u0110VVC",
             local_status: existingLocal
           });
           failed_scans.push({
             code,
             orderId: order.id,
             orderSn: order.orderSn,
-            reason: detail
+            reason: "Thi\u1EBFu orderSn"
           });
           continue;
         }
-        const sn = String(order.orderSn || "").replace(/^shopee-/i, "").trim();
         const updated = deps7.applyHandedOverWrite ? deps7.applyHandedOverWrite({ ...order }, void 0, "qr_scan") : {
           ...order,
           is_handed_over: true,
@@ -115289,6 +115304,50 @@ async function scanBulkUpdate(req, res) {
             flagWriteError,
             flagBatchErr
           );
+        }
+        if ((flagWriteError || flagOk === 0) && typeof deps7.markOrderHandedOverInStore === "function") {
+          let recovered = 0;
+          const leftover = [];
+          for (const row of flagRows) {
+            try {
+              if (row.localStatus === "HANDED_OVER") {
+                const ok = await deps7.markOrderHandedOverInStore(row.orderSn, {
+                  source: row.source || "qr_scan",
+                  handedOverAt: row.handedOverAt,
+                  shopId: row.shopId
+                });
+                if (ok) recovered += 1;
+                else leftover.push(row.orderSn);
+              } else if (typeof deps7.markOrderLocalStatusInStore === "function") {
+                const ok = await deps7.markOrderLocalStatusInStore(row.orderSn, row.localStatus, {
+                  shopId: row.shopId,
+                  stockRestored: row.stockRestored,
+                  stockRestoredAt: row.stockRestoredAt
+                });
+                if (ok) recovered += 1;
+                else leftover.push(row.orderSn);
+              } else {
+                leftover.push(row.orderSn);
+              }
+            } catch (oneErr) {
+              leftover.push(row.orderSn);
+              console.error(
+                "[Orders Scan Bulk] fallback flag write fail:",
+                row.orderSn,
+                oneErr?.message || oneErr
+              );
+            }
+          }
+          if (recovered > 0) {
+            flagOk = recovered;
+            if (leftover.length === 0) flagWriteError = null;
+            else {
+              flagWriteError = `M\u1ED9t ph\u1EA7n \u0111\u01A1n ch\u01B0a ghi \u0111\u01B0\u1EE3c c\u1EDD: ${leftover.slice(0, 8).join(", ")}`;
+            }
+            console.warn(
+              `[Orders Scan Bulk] fallback markOrderHandedOver recovered=${recovered} leftover=${leftover.length}`
+            );
+          }
         }
       }
       console.log(

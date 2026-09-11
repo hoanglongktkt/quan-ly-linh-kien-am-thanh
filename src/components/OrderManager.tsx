@@ -3682,6 +3682,8 @@ export default function OrderManager({
                 : `Đơn chờ lấy hàng (đã xử lý) #${order.orderSn} — đã ghi nhận xuất kho`,
               'success',
             );
+            // KHÔNG ghi DB ngay ở đây — giữ quét nhẹ (chỉ push list cục bộ).
+            // Ghi Mongo dồn 1 lần lúc bấm "Kết thúc" (handleFinishContinuousScan → scan-bulk-update).
             return;
           }
 
