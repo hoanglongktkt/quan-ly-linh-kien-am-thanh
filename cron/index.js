@@ -150,8 +150,10 @@ export function scheduleHandedOverStatusReconcile(deps = {}) {
     return;
   }
 
+  // Lệch 2 phút so với AUTO_ORDER_SYNC_CRON (*/5 * * * *) — tránh 2 job nặng cùng
+  // tranh CPU/pool Mongo đúng lúc user quét (giảm nghẽn ngẫu nhiên khi thao tác).
   const cronExpr = String(
-    deps.cronExpr || process.env.AUTO_HANDED_OVER_RECONCILE_CRON_EXPR || "*/5 * * * *",
+    deps.cronExpr || process.env.AUTO_HANDED_OVER_RECONCILE_CRON_EXPR || "2-59/5 * * * *",
   ).trim();
   const intervalMs = Math.max(
     60_000,

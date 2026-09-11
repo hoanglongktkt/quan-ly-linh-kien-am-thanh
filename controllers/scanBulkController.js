@@ -44,6 +44,11 @@ export function initScanBulkController(partial) {
 
 /** POST /api/orders/scan-bulk-update */
 export async function scanBulkUpdate(req, res) {
+  const __t0 = Date.now();
+  const __timing = {};
+  const __mark = (label) => {
+    __timing[label] = Date.now() - __t0;
+  };
   try {
     const rawCodes = Array.isArray(req.body?.codes)
       ? req.body.codes
@@ -79,6 +84,7 @@ export async function scanBulkUpdate(req, res) {
         batchLookupErr?.message || batchLookupErr,
       );
     }
+    __mark("lookup");
 
     const lookupPairs = codes.map((code) => {
       const scannedCode = String(code || "").trim().toUpperCase();
@@ -132,20 +138,42 @@ export async function scanBulkUpdate(req, res) {
 
     const norm = (c) => String(c || "").trim().toUpperCase();
 
-    // Prefetch exists don_hoan_huy — 1 query $in thay vì N findOne.
-    const snsForExists = [
-      ...new Set(
-        lookupPairs
-          .map((p) => String(p.found?.orderSn || "").replace(/^shopee-/i, "").trim())
-          .filter(Boolean),
-      ),
-    ];
+    // Chỉ cần check don_hoan_huy khi lô CÓ khả năng đụng hủy/hoàn — lô "xuất kho" thuần
+    // (chỉ daXuatKhoCodes, không có mã/order hủy-hoàn nào) bỏ hẳn round-trip này.
+    const mightHaveCancelReturn =
+      forceCancelCodes.size > 0 ||
+      forceReturnCodes.size > 0 ||
+      orders.some((o) => {
+        const status = String(o?.status || "");
+        const rawShopee = String(o?.shopee_order_status || "").toUpperCase();
+        if (status === "return_pending" || status === "return_received" || rawShopee === "TO_RETURN") {
+          return true;
+        }
+        return (
+          status === "cancelled" ||
+          rawShopee === "CANCELLED" ||
+          rawShopee === "IN_CANCEL" ||
+          Boolean(deps.isShopeeCancelOrReturnLikeOrder(o))
+        );
+      });
+
     let alreadyInDonHoanHuySet = new Set();
-    try {
-      alreadyInDonHoanHuySet = await deps.existsDonHoanHuyMany(snsForExists);
-    } catch {
-      alreadyInDonHoanHuySet = new Set();
+    if (mightHaveCancelReturn) {
+      // Prefetch exists don_hoan_huy — 1 query $in thay vì N findOne.
+      const snsForExists = [
+        ...new Set(
+          lookupPairs
+            .map((p) => String(p.found?.orderSn || "").replace(/^shopee-/i, "").trim())
+            .filter(Boolean),
+        ),
+      ];
+      try {
+        alreadyInDonHoanHuySet = await deps.existsDonHoanHuyMany(snsForExists);
+      } catch {
+        alreadyInDonHoanHuySet = new Set();
+      }
     }
+    __mark("existsCheck");
 
     /** Handover batch — gom cờ qua changedOrders → markOrdersScanFlagsBatch 1 lần. */
 
@@ -524,6 +552,7 @@ export async function scanBulkUpdate(req, res) {
         });
     };
 
+    __mark("classify");
     // Persist: hủy/hoàn → collection don_hoan_huy (SSOT tab);
     // xuất kho → markOrdersScanFlagsBatch. Không phụ thuộc order_events. Không gọi Shopee.
     const scanCodeByOrderSn = new Map();
@@ -598,6 +627,7 @@ export async function scanBulkUpdate(req, res) {
         });
       }
     }
+    __mark("donHoanHuyWrite");
 
     let flagWriteError = null;
     let flagOk = 0;
@@ -697,6 +727,7 @@ export async function scanBulkUpdate(req, res) {
       );
       deps.invalidateOrdersRefreshCache();
     }
+    __mark("flagWrite");
 
     runRestockBackground(restockJobsDeferred);
 
@@ -736,7 +767,8 @@ export async function scanBulkUpdate(req, res) {
     }
 
     console.log(
-      `[Orders Scan Bulk] PERSISTED codes=${codes.length} updated=${changedOrders.length} summary=${JSON.stringify(summary)} failed=${failed_scans.length} mongo=${deps.isMongoReady()}`,
+      `[Orders Scan Bulk] PERSISTED codes=${codes.length} updated=${changedOrders.length} summary=${JSON.stringify(summary)} failed=${failed_scans.length} mongo=${deps.isMongoReady()}` +
+        ` timing_ms=${JSON.stringify(__timing)} total=${Date.now() - __t0}ms skippedExistsCheck=${!mightHaveCancelReturn}`,
     );
 
     return res.json(responsePayload);

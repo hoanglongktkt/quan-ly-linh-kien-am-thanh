@@ -547,10 +547,13 @@ export function lookupScannerSyncMap(
   return null;
 }
 
-/** TTL cache phiên FE cho pool scanner-sync (ms). */
-export const SCANNER_POOL_CACHE_TTL_MS = 60_000;
+/**
+ * TTL cache phiên FE cho pool scanner-sync (ms) — khớp TTL cache server (240s)
+ * để tránh client coi "còn hạn" trong khi server đã âm thầm query lại.
+ */
+export const SCANNER_POOL_CACHE_TTL_MS = 240_000;
 /** Coi gần hết hạn → refresh nền (stale-while-revalidate). */
-export const SCANNER_POOL_STALE_MS = 45_000;
+export const SCANNER_POOL_STALE_MS = 180_000;
 /** Timeout 1 lần gọi scanner-sync — không chờ proxy 60s. */
 export const SCANNER_SYNC_FETCH_TIMEOUT_MS = 12_000;
 

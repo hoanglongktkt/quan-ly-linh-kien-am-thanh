@@ -9482,7 +9482,9 @@ function collectHydratedOrderScanKeys(order: any): string[] {
   return keys;
 }
 
-function buildScanCodesInFilter(chunk: string[]): Record<string, unknown> | null {
+function deriveScanCodeVariants(
+  chunk: string[],
+): { codes: string[]; snList: string[]; ids: string[] } | null {
   const variants = new Set<string>();
   const ids: string[] = [];
   const sns: string[] = [];
@@ -9500,26 +9502,47 @@ function buildScanCodesInFilter(chunk: string[]): Record<string, unknown> | null
   const codes = [...variants];
   const snList = [...new Set(sns.filter(Boolean))];
   if (codes.length === 0 && snList.length === 0) return null;
+  return { codes, snList, ids: [...new Set(ids)] };
+}
+
+/**
+ * Filter TOP-LEVEL — field canonical đã mirror 2 chiều (SSOT hiện hành).
+ * Bao phủ tuyệt đại đa số đơn (đơn mới luôn có top-level). 7 nhánh thay vì 17
+ * → giảm số IXSCAN Mongo phải hợp nhất mỗi lần quét (đo trên Atlas share tier).
+ */
+function buildScanCodesTopLevelFilter(
+  v: { codes: string[]; snList: string[]; ids: string[] },
+): Record<string, unknown> {
   return {
     $or: [
-      { orderSn: { $in: snList } },
-      { tracking_no: { $in: codes } },
-      { trackingNumber: { $in: codes } },
-      { return_tracking_no: { $in: codes } },
-      { returnTrackingNumber: { $in: codes } },
-      { packageNumber: { $in: codes } },
-      { return_sn: { $in: codes } },
-      { "data.orderSn": { $in: snList } },
-      { "data.order_sn": { $in: snList } },
-      { "data.tracking_no": { $in: codes } },
-      { "data.trackingNumber": { $in: codes } },
-      { "data.return_tracking_no": { $in: codes } },
-      { "data.returnTrackingNumber": { $in: codes } },
-      { "data.packageNumber": { $in: codes } },
-      { "data.package_number": { $in: codes } },
-      { "data.internalTrackingCode": { $in: codes } },
-      { "data.return_sn": { $in: codes } },
-      { _id: { $in: [...new Set(ids)] } },
+      { orderSn: { $in: v.snList } },
+      { tracking_no: { $in: v.codes } },
+      { trackingNumber: { $in: v.codes } },
+      { return_tracking_no: { $in: v.codes } },
+      { returnTrackingNumber: { $in: v.codes } },
+      { packageNumber: { $in: v.codes } },
+      { return_sn: { $in: v.codes } },
+      { _id: { $in: v.ids } },
+    ],
+  };
+}
+
+/** Filter FALLBACK — chỉ field lồng `data.*` (đơn cũ / merge lệch thiếu mirror top-level). */
+function buildScanCodesNestedFallbackFilter(
+  v: { codes: string[]; snList: string[] },
+): Record<string, unknown> {
+  return {
+    $or: [
+      { "data.orderSn": { $in: v.snList } },
+      { "data.order_sn": { $in: v.snList } },
+      { "data.tracking_no": { $in: v.codes } },
+      { "data.trackingNumber": { $in: v.codes } },
+      { "data.return_tracking_no": { $in: v.codes } },
+      { "data.returnTrackingNumber": { $in: v.codes } },
+      { "data.packageNumber": { $in: v.codes } },
+      { "data.package_number": { $in: v.codes } },
+      { "data.internalTrackingCode": { $in: v.codes } },
+      { "data.return_sn": { $in: v.codes } },
     ],
   };
 }
@@ -9528,7 +9551,7 @@ async function sleepMs(ms: number): Promise<void> {
   await new Promise((r) => setTimeout(r, ms));
 }
 
-/** Lookup N mã quét — ĐÚNG 1 (hoặc vài chunk) find `$in` trên index. CẤM N lần findOne. */
+/** Lookup N mã quét — ĐÚNG 1-2 (hoặc vài chunk) find `$in` trên index. CẤM N lần findOne. */
 export async function findOrdersByScanCodesInStore(
   rawCodes: string[],
 ): Promise<Map<string, any>> {
@@ -9537,6 +9560,7 @@ export async function findOrdersByScanCodesInStore(
     return result;
   }
   requireMongo();
+  const t0 = Date.now();
 
   const uniqueCodes: string[] = [];
   const seen = new Set<string>();
@@ -9558,29 +9582,64 @@ export async function findOrdersByScanCodesInStore(
       }
     }
   };
+  const isCovered = (code: string): boolean => {
+    const stripped = stripScannedSeparators(code);
+    return byScanKey.has(code) || (Boolean(stripped) && byScanKey.has(stripped));
+  };
 
+  let nestedQueries = 0;
   for (let i = 0; i < uniqueCodes.length; i += SCAN_BATCH_IN_SIZE) {
     const chunk = uniqueCodes.slice(i, i + SCAN_BATCH_IN_SIZE);
-    const filter = buildScanCodesInFilter(chunk);
-    if (!filter) continue;
+    const variants = deriveScanCodeVariants(chunk);
+    if (!variants) continue;
+
+    // Phase 1 — chỉ field top-level (7 nhánh) — bao phủ tuyệt đại đa số đơn.
     try {
       const docs = await withWriteTimeout(
-        OrderModel.find(filter)
+        OrderModel.find(buildScanCodesTopLevelFilter(variants))
           .select(SCANNER_BULK_SELECT)
           .limit(Math.min(Math.max(chunk.length * 3, 50), 2000))
           .maxTimeMS(5000)
           .lean()
           .exec(),
-        "scan_codes_in_lookup",
+        "scan_codes_in_lookup_top",
         6000,
       );
       ingestDocs(docs as any[]);
     } catch (err: any) {
       console.warn(
-        "[MongoDB] findOrdersByScanCodesInStore chunk fail:",
+        "[MongoDB] findOrdersByScanCodesInStore top-level chunk fail:",
         err?.message || err,
       );
     }
+
+    // Phase 2 — CHỈ chạy nếu còn mã chưa khớp sau phase 1 (đơn cũ thiếu mirror top-level).
+    const stillMissing = chunk.filter((c) => !isCovered(c));
+    if (stillMissing.length > 0) {
+      const missingVariants = deriveScanCodeVariants(stillMissing);
+      if (missingVariants) {
+        nestedQueries += 1;
+        try {
+          const docs = await withWriteTimeout(
+            OrderModel.find(buildScanCodesNestedFallbackFilter(missingVariants))
+              .select(SCANNER_BULK_SELECT)
+              .limit(Math.min(Math.max(stillMissing.length * 3, 50), 2000))
+              .maxTimeMS(5000)
+              .lean()
+              .exec(),
+            "scan_codes_in_lookup_nested",
+            6000,
+          );
+          ingestDocs(docs as any[]);
+        } catch (err: any) {
+          console.warn(
+            "[MongoDB] findOrdersByScanCodesInStore nested-fallback chunk fail:",
+            err?.message || err,
+          );
+        }
+      }
+    }
+
     if (i + SCAN_BATCH_IN_SIZE < uniqueCodes.length) {
       await sleepMs(SCAN_BATCH_DELAY_MS);
     }
@@ -9597,8 +9656,10 @@ export async function findOrdersByScanCodesInStore(
     }
   }
 
+  const ms = Date.now() - t0;
   console.log(
-    `[MongoDB] findOrdersByScanCodesInStore codes=${uniqueCodes.length} hits=${result.size} $in (no per-code findOne)`,
+    `[MongoDB] findOrdersByScanCodesInStore codes=${uniqueCodes.length} hits=${result.size}` +
+      ` nestedFallbackQueries=${nestedQueries} ${ms}ms (no per-code findOne)`,
   );
   return result;
 }

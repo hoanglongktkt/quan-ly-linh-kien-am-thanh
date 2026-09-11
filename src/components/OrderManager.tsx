@@ -4019,6 +4019,31 @@ export default function OrderManager({
     };
   }, [focusScanner, applyPoolEntryToActive]);
 
+  /** Làm mới thủ công cả 2 pool quét (bỏ qua cache) — dùng khi prefetch nền quá lâu/lỗi. */
+  const manualRefreshScannerPools = React.useCallback(() => {
+    scannerPrefetchAbortRef.current?.abort();
+    const controller = new AbortController();
+    scannerPrefetchAbortRef.current = controller;
+    setScannerPoolPrefetching(true);
+    void (async () => {
+      const result = await prefetchBothScannerPools({ signal: controller.signal, fresh: true });
+      if (controller.signal.aborted) return;
+      setScannerPoolCache((prev) => {
+        const next: ScannerPoolCache = {
+          handover: result.handover ?? prev.handover,
+          return: result.return ?? prev.return,
+        };
+        scannerPoolCacheRef.current = next;
+        const active = scannerModeRef.current;
+        if (active && next[active] && isScannerPoolFresh(next[active])) {
+          applyPoolEntryToActive(next[active]!, active);
+        }
+        return next;
+      });
+      setScannerPoolPrefetching(false);
+    })();
+  }, [applyPoolEntryToActive]);
+
   // Gắn cache / fetch 1 mode khi đã chọn; SWR nếu gần hết hạn.
   useEffect(() => {
     if (!focusScanner || !scannerMode) return;
@@ -7707,6 +7732,21 @@ export default function OrderManager({
                   ? 'Đang chuẩn bị pool mã nền — có thể chọn khi chế độ đã sẵn sàng'
                   : 'Mỗi chế độ chỉ tải đúng pool đơn cần thiết'}
             </p>
+            {!bothReady && (
+              <div className="flex justify-center mt-2">
+                <button
+                  type="button"
+                  onClick={manualRefreshScannerPools}
+                  disabled={scannerPoolPrefetching}
+                  className="inline-flex items-center gap-1.5 text-[11px] font-bold text-sky-400 disabled:text-zinc-600 disabled:cursor-not-allowed px-3 py-1.5 rounded-lg hover:bg-zinc-800/60 active:scale-95 transition-all"
+                >
+                  <RefreshCw
+                    className={`w-3.5 h-3.5 ${scannerPoolPrefetching ? 'animate-spin' : ''}`}
+                  />
+                  {scannerPoolPrefetching ? 'Đang tải lại...' : 'Tải lại dữ liệu'}
+                </button>
+              </div>
+            )}
           </div>
           <div className="flex-1 px-4 flex flex-col gap-4 justify-center pb-8">
             <button

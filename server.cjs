@@ -75160,7 +75160,7 @@ function scheduleHandedOverStatusReconcile(deps22 = {}) {
     return;
   }
   const cronExpr = String(
-    deps22.cronExpr || process.env.AUTO_HANDED_OVER_RECONCILE_CRON_EXPR || "*/5 * * * *"
+    deps22.cronExpr || process.env.AUTO_HANDED_OVER_RECONCILE_CRON_EXPR || "2-59/5 * * * *"
   ).trim();
   const intervalMs = Math.max(
     6e4,
@@ -84135,7 +84135,7 @@ function collectHydratedOrderScanKeys(order) {
   add(String(order?.id || "").replace(/^shopee-/i, ""));
   return keys;
 }
-function buildScanCodesInFilter(chunk) {
+function deriveScanCodeVariants(chunk) {
   const variants2 = /* @__PURE__ */ new Set();
   const ids = [];
   const sns = [];
@@ -84153,26 +84153,35 @@ function buildScanCodesInFilter(chunk) {
   const codes = [...variants2];
   const snList = [...new Set(sns.filter(Boolean))];
   if (codes.length === 0 && snList.length === 0) return null;
+  return { codes, snList, ids: [...new Set(ids)] };
+}
+function buildScanCodesTopLevelFilter(v) {
   return {
     $or: [
-      { orderSn: { $in: snList } },
-      { tracking_no: { $in: codes } },
-      { trackingNumber: { $in: codes } },
-      { return_tracking_no: { $in: codes } },
-      { returnTrackingNumber: { $in: codes } },
-      { packageNumber: { $in: codes } },
-      { return_sn: { $in: codes } },
-      { "data.orderSn": { $in: snList } },
-      { "data.order_sn": { $in: snList } },
-      { "data.tracking_no": { $in: codes } },
-      { "data.trackingNumber": { $in: codes } },
-      { "data.return_tracking_no": { $in: codes } },
-      { "data.returnTrackingNumber": { $in: codes } },
-      { "data.packageNumber": { $in: codes } },
-      { "data.package_number": { $in: codes } },
-      { "data.internalTrackingCode": { $in: codes } },
-      { "data.return_sn": { $in: codes } },
-      { _id: { $in: [...new Set(ids)] } }
+      { orderSn: { $in: v.snList } },
+      { tracking_no: { $in: v.codes } },
+      { trackingNumber: { $in: v.codes } },
+      { return_tracking_no: { $in: v.codes } },
+      { returnTrackingNumber: { $in: v.codes } },
+      { packageNumber: { $in: v.codes } },
+      { return_sn: { $in: v.codes } },
+      { _id: { $in: v.ids } }
+    ]
+  };
+}
+function buildScanCodesNestedFallbackFilter(v) {
+  return {
+    $or: [
+      { "data.orderSn": { $in: v.snList } },
+      { "data.order_sn": { $in: v.snList } },
+      { "data.tracking_no": { $in: v.codes } },
+      { "data.trackingNumber": { $in: v.codes } },
+      { "data.return_tracking_no": { $in: v.codes } },
+      { "data.returnTrackingNumber": { $in: v.codes } },
+      { "data.packageNumber": { $in: v.codes } },
+      { "data.package_number": { $in: v.codes } },
+      { "data.internalTrackingCode": { $in: v.codes } },
+      { "data.return_sn": { $in: v.codes } }
     ]
   };
 }
@@ -84185,6 +84194,7 @@ async function findOrdersByScanCodesInStore(rawCodes) {
     return result;
   }
   requireMongo();
+  const t0 = Date.now();
   const uniqueCodes = [];
   const seen = /* @__PURE__ */ new Set();
   for (const raw of rawCodes) {
@@ -84204,22 +84214,47 @@ async function findOrdersByScanCodesInStore(rawCodes) {
       }
     }
   };
+  const isCovered = (code) => {
+    const stripped = stripScannedSeparators(code);
+    return byScanKey.has(code) || Boolean(stripped) && byScanKey.has(stripped);
+  };
+  let nestedQueries = 0;
   for (let i2 = 0; i2 < uniqueCodes.length; i2 += SCAN_BATCH_IN_SIZE) {
     const chunk = uniqueCodes.slice(i2, i2 + SCAN_BATCH_IN_SIZE);
-    const filter2 = buildScanCodesInFilter(chunk);
-    if (!filter2) continue;
+    const variants2 = deriveScanCodeVariants(chunk);
+    if (!variants2) continue;
     try {
       const docs = await withWriteTimeout(
-        OrderModel.find(filter2).select(SCANNER_BULK_SELECT).limit(Math.min(Math.max(chunk.length * 3, 50), 2e3)).maxTimeMS(5e3).lean().exec(),
-        "scan_codes_in_lookup",
+        OrderModel.find(buildScanCodesTopLevelFilter(variants2)).select(SCANNER_BULK_SELECT).limit(Math.min(Math.max(chunk.length * 3, 50), 2e3)).maxTimeMS(5e3).lean().exec(),
+        "scan_codes_in_lookup_top",
         6e3
       );
       ingestDocs(docs);
     } catch (err) {
       console.warn(
-        "[MongoDB] findOrdersByScanCodesInStore chunk fail:",
+        "[MongoDB] findOrdersByScanCodesInStore top-level chunk fail:",
         err?.message || err
       );
+    }
+    const stillMissing = chunk.filter((c) => !isCovered(c));
+    if (stillMissing.length > 0) {
+      const missingVariants = deriveScanCodeVariants(stillMissing);
+      if (missingVariants) {
+        nestedQueries += 1;
+        try {
+          const docs = await withWriteTimeout(
+            OrderModel.find(buildScanCodesNestedFallbackFilter(missingVariants)).select(SCANNER_BULK_SELECT).limit(Math.min(Math.max(stillMissing.length * 3, 50), 2e3)).maxTimeMS(5e3).lean().exec(),
+            "scan_codes_in_lookup_nested",
+            6e3
+          );
+          ingestDocs(docs);
+        } catch (err) {
+          console.warn(
+            "[MongoDB] findOrdersByScanCodesInStore nested-fallback chunk fail:",
+            err?.message || err
+          );
+        }
+      }
     }
     if (i2 + SCAN_BATCH_IN_SIZE < uniqueCodes.length) {
       await sleepMs(SCAN_BATCH_DELAY_MS);
@@ -84235,8 +84270,9 @@ async function findOrdersByScanCodesInStore(rawCodes) {
       result.set(scanned, found);
     }
   }
+  const ms = Date.now() - t0;
   console.log(
-    `[MongoDB] findOrdersByScanCodesInStore codes=${uniqueCodes.length} hits=${result.size} $in (no per-code findOne)`
+    `[MongoDB] findOrdersByScanCodesInStore codes=${uniqueCodes.length} hits=${result.size} nestedFallbackQueries=${nestedQueries} ${ms}ms (no per-code findOne)`
   );
   return result;
 }
@@ -114809,6 +114845,11 @@ function initScanBulkController(partial) {
   deps7 = { ...deps7, ...partial };
 }
 async function scanBulkUpdate(req, res) {
+  const __t0 = Date.now();
+  const __timing = {};
+  const __mark = (label) => {
+    __timing[label] = Date.now() - __t0;
+  };
   try {
     const rawCodes = Array.isArray(req.body?.codes) ? req.body.codes : Array.isArray(req.body?.scannedCodes) ? req.body.scannedCodes : Array.isArray(req.body?.scanCodes) ? req.body.scanCodes : [];
     const codes = [...new Set(rawCodes.map((c) => String(c || "").trim().toUpperCase()).filter(Boolean))];
@@ -114835,6 +114876,7 @@ async function scanBulkUpdate(req, res) {
         batchLookupErr?.message || batchLookupErr
       );
     }
+    __mark("lookup");
     const lookupPairs = codes.map((code) => {
       const scannedCode = String(code || "").trim().toUpperCase();
       let found = foundByCode.get(code) || foundByCode.get(scannedCode) || null;
@@ -114879,17 +114921,28 @@ async function scanBulkUpdate(req, res) {
     const summary = { daXuatKho: 0, donHuy: 0, daNhanHoan: 0 };
     let donHoanHuyAlready = 0;
     const norm = (c) => String(c || "").trim().toUpperCase();
-    const snsForExists = [
-      ...new Set(
-        lookupPairs.map((p) => String(p.found?.orderSn || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
-      )
-    ];
+    const mightHaveCancelReturn = forceCancelCodes.size > 0 || forceReturnCodes.size > 0 || orders.some((o) => {
+      const status = String(o?.status || "");
+      const rawShopee = String(o?.shopee_order_status || "").toUpperCase();
+      if (status === "return_pending" || status === "return_received" || rawShopee === "TO_RETURN") {
+        return true;
+      }
+      return status === "cancelled" || rawShopee === "CANCELLED" || rawShopee === "IN_CANCEL" || Boolean(deps7.isShopeeCancelOrReturnLikeOrder(o));
+    });
     let alreadyInDonHoanHuySet = /* @__PURE__ */ new Set();
-    try {
-      alreadyInDonHoanHuySet = await deps7.existsDonHoanHuyMany(snsForExists);
-    } catch {
-      alreadyInDonHoanHuySet = /* @__PURE__ */ new Set();
+    if (mightHaveCancelReturn) {
+      const snsForExists = [
+        ...new Set(
+          lookupPairs.map((p) => String(p.found?.orderSn || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
+        )
+      ];
+      try {
+        alreadyInDonHoanHuySet = await deps7.existsDonHoanHuyMany(snsForExists);
+      } catch {
+        alreadyInDonHoanHuySet = /* @__PURE__ */ new Set();
+      }
     }
+    __mark("existsCheck");
     for (const { code, found } of lookupPairs) {
       const codeKey = norm(code);
       if (!found) {
@@ -115196,6 +115249,7 @@ async function scanBulkUpdate(req, res) {
         );
       });
     };
+    __mark("classify");
     const scanCodeByOrderSn = /* @__PURE__ */ new Map();
     for (const r2 of results) {
       const sn = String(r2?.orderSn || "").replace(/^shopee-/i, "").trim();
@@ -115265,6 +115319,7 @@ async function scanBulkUpdate(req, res) {
         });
       }
     }
+    __mark("donHoanHuyWrite");
     let flagWriteError = null;
     let flagOk = 0;
     if (changedOrders.length > 0) {
@@ -115355,6 +115410,7 @@ async function scanBulkUpdate(req, res) {
       );
       deps7.invalidateOrdersRefreshCache();
     }
+    __mark("flagWrite");
     runRestockBackground(restockJobsDeferred);
     const updatedList = [...updatedById.values()];
     const processedCount = summary.daXuatKho + summary.donHuy + summary.daNhanHoan;
@@ -115390,7 +115446,7 @@ async function scanBulkUpdate(req, res) {
       });
     }
     console.log(
-      `[Orders Scan Bulk] PERSISTED codes=${codes.length} updated=${changedOrders.length} summary=${JSON.stringify(summary)} failed=${failed_scans.length} mongo=${deps7.isMongoReady()}`
+      `[Orders Scan Bulk] PERSISTED codes=${codes.length} updated=${changedOrders.length} summary=${JSON.stringify(summary)} failed=${failed_scans.length} mongo=${deps7.isMongoReady()} timing_ms=${JSON.stringify(__timing)} total=${Date.now() - __t0}ms skippedExistsCheck=${!mightHaveCancelReturn}`
     );
     return res.json(responsePayload);
   } catch (error) {
@@ -121885,7 +121941,7 @@ async function cleanupProcessedPickup(_req, res) {
     });
   }
 }
-var SCANNER_SYNC_SERVER_TTL_MS = 5e4;
+var SCANNER_SYNC_SERVER_TTL_MS = 24e4;
 var scannerSyncServerCache = /* @__PURE__ */ new Map();
 function scannerSyncCacheKey(mode, lookbackDays) {
   return mode === "return" ? `return:${lookbackDays || 30}` : "handover";

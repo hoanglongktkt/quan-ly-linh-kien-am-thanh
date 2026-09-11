@@ -1399,8 +1399,13 @@ export async function cleanupProcessedPickup(_req, res) {
   }
 }
 
-/** TTL memory cache cho scanner-sync — giảm cold Mongo khi mở Quét mã liên tục. */
-const SCANNER_SYNC_SERVER_TTL_MS = 50_000;
+/**
+ * TTL memory cache cho scanner-sync — giảm cold Mongo khi mở Quét mã liên tục.
+ * 4 phút: đơn hàng ít đổi trạng thái trong vài phút; ghi thật (scan-bulk-update) luôn
+ * đọc lại Mongo tươi trước khi $set nên tăng TTL không rủi ro ghi sai — chỉ ảnh hưởng
+ * độ mới của pool hiển thị cho máy quét. FE có nút "Tải lại dữ liệu" (?fresh=1) khi cần ngay.
+ */
+const SCANNER_SYNC_SERVER_TTL_MS = 240_000;
 /** @type {Map<string, { orders: any[], codeCount: number, at: number }>} */
 const scannerSyncServerCache = new Map();
 
