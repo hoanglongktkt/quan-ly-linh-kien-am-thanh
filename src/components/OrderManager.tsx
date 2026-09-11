@@ -6619,20 +6619,27 @@ export default function OrderManager({
     return counts;
   }, [activeSubTab, cancelReturnTab, ordersPoolBeforeCarrier, ordersListReady]);
 
-  const compareSingleItemOrders = (a: Order, b: Order) => {
-    const itemA = (a.items || [])[0] as
-      | (Order['items'][number] & { name?: string; sku?: string })
-      | undefined;
-    const itemB = (b.items || [])[0] as
-      | (Order['items'][number] & { name?: string; sku?: string })
-      | undefined;
-    const nameA = String(itemA?.productTitle || itemA?.name || itemA?.modelName || '').trim();
-    const nameB = String(itemB?.productTitle || itemB?.name || itemB?.modelName || '').trim();
-    const skuA = String(itemA?.modelSku || itemA?.sku || '').trim();
-    const skuB = String(itemB?.modelSku || itemB?.sku || '').trim();
-    const nameCmp = nameA.localeCompare(nameB, 'vi', { sensitivity: 'base', numeric: true });
-    if (nameCmp !== 0) return nameCmp;
-    return skuA.localeCompare(skuB, 'vi', { sensitivity: 'base', numeric: true });
+  const compareSmartPickOrders = (a: Order, b: Order) => {
+    const aSingle = (a.items || []).length === 1;
+    const bSingle = (b.items || []).length === 1;
+    if (aSingle && !bSingle) return -1;
+    if (!aSingle && bSingle) return 1;
+    if (aSingle && bSingle) {
+      const itemA = (a.items || [])[0] as
+        | (Order['items'][number] & { name?: string; sku?: string })
+        | undefined;
+      const itemB = (b.items || [])[0] as
+        | (Order['items'][number] & { name?: string; sku?: string })
+        | undefined;
+      const nameA = String(itemA?.productTitle || itemA?.name || itemA?.modelName || '').trim();
+      const nameB = String(itemB?.productTitle || itemB?.name || itemB?.modelName || '').trim();
+      const skuA = String(itemA?.modelSku || itemA?.sku || '').trim();
+      const skuB = String(itemB?.modelSku || itemB?.sku || '').trim();
+      const nameCmp = nameA.localeCompare(nameB, 'vi', { sensitivity: 'base', numeric: true });
+      if (nameCmp !== 0) return nameCmp;
+      return skuA.localeCompare(skuB, 'vi', { sensitivity: 'base', numeric: true });
+    }
+    return 0;
   };
 
   const filteredOrdersBase = useMemo(() => {
@@ -6663,9 +6670,7 @@ export default function OrderManager({
 
   const filteredOrders = useMemo(() => {
     if (!(smartPickSort && activeSubTab === 'unprocessed')) return filteredOrdersBase;
-    return filteredOrdersBase
-      .filter((order) => (order.items || []).length === 1)
-      .sort(compareSingleItemOrders);
+    return [...filteredOrdersBase].sort(compareSmartPickOrders);
   }, [filteredOrdersBase, smartPickSort, activeSubTab]);
 
   /**
