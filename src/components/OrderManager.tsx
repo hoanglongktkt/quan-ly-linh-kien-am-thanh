@@ -867,7 +867,7 @@ function buildClientPageNumbers(current: number, totalPages: number): (number | 
 const SCAN_BG_STATUS_POLL_MS = 30_000;
 /** Không pending / unnotified — nới chu kỳ để giảm spam Network. */
 const SCAN_BG_STATUS_IDLE_POLL_MS = 60_000;
-const COUNTER_POLL_MS = 45_000;
+const COUNTER_POLL_MS = 60_000;
 /** Cooldown wake-up sau ngủ đông — chặn spam khi user chuyển tab liên tục. */
 const WAKE_COOLDOWN_MS = 3_000;
 /** SSE heartbeat server = 15s; mất ping lâu hơn ngưỡng này → reconnect (mobile zombie). */
@@ -6470,7 +6470,9 @@ export default function OrderManager({
 
   // Helper count statistics — ưu tiên tổng hợp Mongo 3 tab; fallback list đang mở.
   const aggregatedOrderProducts = useMemo(
-    () => fulfillmentProducts ?? aggregateOrderProducts(orders, products ?? []),
+    () =>
+      fulfillmentProducts ??
+      (orders.length <= 80 ? aggregateOrderProducts(orders, products ?? []) : []),
     [fulfillmentProducts, orders, products]
   );
 

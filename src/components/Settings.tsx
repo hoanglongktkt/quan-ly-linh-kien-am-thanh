@@ -725,7 +725,7 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
 
     const timer = window.setInterval(() => {
       void checkShopConnections(shops, { silent: true });
-    }, 60_000);
+    }, 120_000);
 
     return () => window.clearInterval(timer);
   }, [shops.length, settings.shops?.map((s) => `${s.id}:${s.connected}:${s.platform}:${s.shopId}`).join('|')]);

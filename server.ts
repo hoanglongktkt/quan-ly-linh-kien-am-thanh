@@ -435,6 +435,7 @@ import {
   loadProductByIdFromStore,
   loadProductsByIdsFromStore,
   searchProductsFromStore,
+  loadSkuIndexLeanFromStore,
   applyImportStockAndPriceToStore,
   applyImportStockAndPriceToMainWarehouse,
   saveProductsToStoreAsync,
@@ -21220,6 +21221,7 @@ async function startServer() {
   initMappingController({
     reloadCachesFromDb,
     loadMappingListingsForApiFromStore,
+    loadSkuIndexLeanFromStore,
     enrichChannelListingsWithMaster,
     isMongoReady,
     readChannelListingsForGet,
@@ -21300,6 +21302,7 @@ async function startServer() {
     upsertProductsToStoreAsync,
     deleteProductsByIdsFromStore,
     loadProductsPageFromStore,
+    loadProductsByIdsFromStore,
     searchProductsFromStore,
     withLocalDbTimeout,
     isProductsDiskMode,

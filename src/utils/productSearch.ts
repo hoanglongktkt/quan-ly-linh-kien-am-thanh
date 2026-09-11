@@ -29,7 +29,7 @@ export function parseProductSearchQuery(query: Record<string, unknown> | null | 
 /**
  * Regex linh hoạt dấu tiếng Việt — user gõ "mach" vẫn khớp "Mạch".
  */
-export function buildAccentFlexibleRegex(rawQuery: string): RegExp | null {
+function buildAccentFlexiblePattern(rawQuery: string): string | null {
   const folded = normalizeProductSearchText(rawQuery);
   if (!folded) return null;
 
@@ -56,11 +56,27 @@ export function buildAccentFlexibleRegex(rawQuery: string): RegExp | null {
       pattern += escapeRegexLiteral(ch);
     }
   }
+  return pattern;
+}
 
+export function buildAccentFlexibleRegex(rawQuery: string): RegExp | null {
+  const pattern = buildAccentFlexiblePattern(rawQuery);
+  if (!pattern) return null;
   try {
     return new RegExp(pattern, "i");
   } catch {
-    return new RegExp(escapeRegexLiteral(folded), "i");
+    return new RegExp(escapeRegexLiteral(normalizeProductSearchText(rawQuery)), "i");
+  }
+}
+
+/** Prefix regex (dùng index B-tree) — tránh leading-wildcard COLLSCAN. */
+export function buildAccentFlexiblePrefixRegex(rawQuery: string): RegExp | null {
+  const pattern = buildAccentFlexiblePattern(rawQuery);
+  if (!pattern) return null;
+  try {
+    return new RegExp(`^${pattern}`, "i");
+  } catch {
+    return new RegExp(`^${escapeRegexLiteral(normalizeProductSearchText(rawQuery))}`, "i");
   }
 }
 

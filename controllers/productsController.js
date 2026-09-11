@@ -16,6 +16,7 @@ const PRODUCTS_PAGE_SIZE_MAX = 50;
 /** Deps từ server.ts (Mongo/product helpers chưa tách hết). */
 let deps = {
   loadProducts: async () => [],
+  loadProductsByIdsFromStore: async () => [],
   saveProducts: async () => {},
   getProductChildrenList: () => [],
   inheritShopeeLinkFromParent: (child) => child,
@@ -109,10 +110,10 @@ async function isSkuTakenByOtherProduct(sku, excludeId = null) {
     hits = await deps.searchProductsFromStore(sku, 50);
   } catch (searchErr) {
     console.warn(
-      "[Products API] SKU search failed, fallback loadProducts:",
+      "[Products API] SKU search failed:",
       searchErr?.message || searchErr,
     );
-    hits = await deps.loadProducts();
+    hits = [];
   }
   if (!Array.isArray(hits)) hits = [];
 
@@ -228,49 +229,12 @@ export async function searchProducts(req, res) {
     try {
       raw = await deps.searchProductsFromStore(q, limit);
     } catch (mongoErr) {
-      console.warn("[Products API] searchProductsFromStore failed, fallback loadProducts:", mongoErr);
-      const all = await deps.loadProducts();
-      const qLower = q.toLowerCase();
-      const flat = [];
-      const seen = new Set();
-      const push = (row) => {
-        const id = String(row?.id || "").trim();
-        if (!id || seen.has(id)) return;
-        seen.add(id);
-        flat.push(row);
-      };
-      const match = (row, extra = "") => {
-        if (!q) return true;
-        const hay =
-          `${row?.sku || ""} ${row?.title || ""} ${row?.name || ""} ${row?.modelName || ""} ${extra}`.toLowerCase();
-        return hay.includes(qLower);
-      };
-      for (const p of Array.isArray(all) ? all : []) {
-        const children =
-          Array.isArray(p?.children) && p.children.length
-            ? p.children
-            : Array.isArray(p?.children_models)
-              ? p.children_models
-              : [];
-        if (children.length > 0) {
-          let n = 0;
-          for (const c of children) {
-            if (!match(c, `${p.title || ""} ${p.sku || ""}`)) continue;
-            push({
-              ...c,
-              title: c.title || p.title,
-              imageUrl: c.imageUrl || p.imageUrl,
-              avatarUrl: c.avatarUrl || p.avatarUrl,
-            });
-            n += 1;
-          }
-          if (n === 0 && match(p)) push(p);
-        } else if (match(p)) {
-          push(p);
-        }
-      }
-      raw = flat.slice(0, Math.min(100, Math.max(1, Math.floor(limit) || 40)));
-      source = "products_memory_fallback";
+      console.warn("[Products API] searchProductsFromStore failed:", mongoErr);
+      return res.status(503).json({
+        success: false,
+        error: "products_search_unavailable",
+        products: [],
+      });
     }
 
     const products = raw.map(mapRow);
@@ -1615,8 +1579,15 @@ export async function bulkChannelSync(req, res) {
       Array.isArray(channels) && channels.length ? channels : ["shopee"];
 
     const idSet = new Set(productIds.map(String));
+    let catalog = [];
+    try {
+      catalog = await deps.loadProductsByIdsFromStore([...idSet]);
+    } catch (idErr) {
+      console.warn("[Bulk Channel Sync] loadProductsByIdsFromStore:", idErr?.message || idErr);
+      catalog = [];
+    }
     const products = deps
-      .flattenProductsForStockSync(await deps.loadProducts())
+      .flattenProductsForStockSync(catalog)
       .filter((p) => idSet.has(p.id));
     if (products.length === 0) {
       return res.status(404).json({ error: "Không tìm thấy sản phẩm nào trong kho." });
@@ -1722,12 +1693,11 @@ export async function bulkChannelSync(req, res) {
     const syncedProductIds = new Set(logs.filter((l) => l.success).map((l) => l.productId));
 
     if (syncedProductIds.size > 0) {
-      const allProducts = await deps.loadProducts();
       const now = new Date().toISOString();
-      const next = allProducts.map((p) =>
-        syncedProductIds.has(p.id) ? { ...p, lastSynced: now } : p,
-      );
-      await deps.saveProducts(next);
+      const patched = products
+        .filter((p) => syncedProductIds.has(p.id))
+        .map((p) => ({ ...p, lastSynced: now }));
+      if (patched.length) await deps.upsertProductsToStoreAsync(patched);
     }
 
     const failMessages = logs
@@ -1750,7 +1720,7 @@ export async function bulkChannelSync(req, res) {
       successCount,
       failCount,
       total: logs.length,
-      products: await deps.loadProducts(),
+      products: products.filter((p) => syncedProductIds.has(p.id)),
     });
   } catch (error) {
     console.error("[Bulk Channel Sync]", error);

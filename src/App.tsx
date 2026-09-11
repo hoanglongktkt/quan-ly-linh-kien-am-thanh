@@ -55,7 +55,7 @@ import {
 } from './utils/scanBgQueue';
 
 /** Polling nhẹ — recursive setTimeout, không chồng request. */
-const SCAN_BG_STATUS_POLL_MS = 15_000;
+const SCAN_BG_STATUS_POLL_MS = 30_000;
 
 /** Gộp shallow fetch vào cache: cập nhật đơn cũ, prepend đơn mới.
  * - Không downgrade cờ bàn giao ĐVVC (true → false) khi fresh còn stale.

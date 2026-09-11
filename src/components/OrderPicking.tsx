@@ -172,6 +172,9 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
     [orders, rejectWrongStatus]
   );
 
+  const lookupOrderRef = useRef(lookupOrder);
+  lookupOrderRef.current = lookupOrder;
+
   const handleScanSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     lookupOrder(scanInput);
@@ -234,7 +237,7 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
       const onScan = (decodedText: string) => {
         if (!decodedText?.trim()) return;
         setScanInput(decodedText.trim());
-        lookupOrder(decodedText);
+        void lookupOrderRef.current(decodedText);
       };
 
       void startLiveQrScanner({
@@ -281,7 +284,7 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
       liveScannerRef.current = null;
       void handle?.stop().catch(() => undefined);
     };
-  }, [cameraOpen, activeOrder, cameraRestartKey, lookupOrder]);
+  }, [cameraOpen, activeOrder, cameraRestartKey]);
 
   return (
     <div className="max-md:space-y-3 space-y-5 max-w-3xl mx-auto pb-24 md:pb-6">

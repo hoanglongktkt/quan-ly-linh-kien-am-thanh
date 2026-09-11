@@ -76885,7 +76885,7 @@ function normalizeProductSearchText(input) {
 function escapeRegexLiteral(input) {
   return String(input || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
-function buildAccentFlexibleRegex(rawQuery) {
+function buildAccentFlexiblePattern(rawQuery) {
   const folded = normalizeProductSearchText(rawQuery);
   if (!folded) return null;
   const map = {
@@ -76910,10 +76910,15 @@ function buildAccentFlexibleRegex(rawQuery) {
       pattern += escapeRegexLiteral(ch);
     }
   }
+  return pattern;
+}
+function buildAccentFlexiblePrefixRegex(rawQuery) {
+  const pattern = buildAccentFlexiblePattern(rawQuery);
+  if (!pattern) return null;
   try {
-    return new RegExp(pattern, "i");
+    return new RegExp(`^${pattern}`, "i");
   } catch {
-    return new RegExp(escapeRegexLiteral(folded), "i");
+    return new RegExp(`^${escapeRegexLiteral(normalizeProductSearchText(rawQuery))}`, "i");
   }
 }
 function productRowMatchesSearch(row, rawQuery) {
@@ -77908,7 +77913,7 @@ async function loadProductsFromStore() {
   return docsToProducts(docs);
 }
 function buildProductListSearchFilter(search) {
-  const regex = buildAccentFlexibleRegex(search);
+  const regex = buildAccentFlexiblePrefixRegex(search);
   if (!regex) return {};
   return {
     $or: [
@@ -77971,6 +77976,52 @@ async function loadProductsPageFromStore(page = 1, pageSize = 50, search = "") {
     totalPages,
     hasMore: currentPage < totalPages
   };
+}
+var SKU_INDEX_SELECT = {
+  _id: 1,
+  sku: 1,
+  "data.id": 1,
+  "data.sku": 1,
+  "data.title": 1,
+  "data.name": 1,
+  "data.children.id": 1,
+  "data.children.sku": 1,
+  "data.children.title": 1,
+  "data.children.name": 1,
+  "data.children_models.id": 1,
+  "data.children_models.sku": 1,
+  "data.children_models.title": 1,
+  "data.children_models.name": 1
+};
+async function loadSkuIndexLeanFromStore() {
+  const items = [];
+  const seen = /* @__PURE__ */ new Set();
+  const addOne = (row) => {
+    if (!row || typeof row !== "object") return;
+    const rawSku = String(row.sku || "").trim();
+    const key = rawSku.toUpperCase();
+    const id = row.id != null ? String(row.id).trim() : "";
+    if (!key || !id || seen.has(key)) return;
+    seen.add(key);
+    items.push({
+      sku: rawSku,
+      id,
+      title: String(row.title || row.name || "").trim()
+    });
+  };
+  const walk = (p) => {
+    addOne(p);
+    const children = Array.isArray(p?.children) ? p.children : Array.isArray(p?.children_models) ? p.children_models : [];
+    for (const c of children) addOne(c);
+  };
+  if (isProductsDiskMode()) {
+    for (const p of readProductsFromDisk()) walk(p);
+    return items;
+  }
+  requireMongo();
+  const docs = await ProductModel.find({}).select(SKU_INDEX_SELECT).maxTimeMS(15e3).lean();
+  for (const p of docsToProducts(docs)) walk(p);
+  return items;
 }
 async function loadProductByIdFromStore(productId) {
   if (isProductsDiskMode()) return loadProductByIdFromDisk(productId);
@@ -78067,7 +78118,6 @@ async function searchProductsFromStore(query, limit = 40) {
       const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const exactSku = new RegExp(`^${escaped}$`, "i");
       const prefixSku = new RegExp(`^${escaped}`, "i");
-      const contains = { $regex: escaped, $options: "i" };
       docs = await ProductModel.find(
         {
           $or: [
@@ -78104,15 +78154,15 @@ async function searchProductsFromStore(query, limit = 40) {
         const nameFilter = buildProductListSearchFilter(q);
         const moreFilter = Object.keys(nameFilter).length > 0 ? nameFilter : {
           $or: [
-            { name: contains },
-            { title: contains },
-            { "data.name": contains },
-            { "data.title": contains },
-            { "data.modelName": contains },
-            { "data.children.name": contains },
-            { "data.children.title": contains },
-            { "data.children_models.name": contains },
-            { "data.children_models.title": contains }
+            { name: prefixSku },
+            { title: prefixSku },
+            { "data.name": prefixSku },
+            { "data.title": prefixSku },
+            { "data.modelName": prefixSku },
+            { "data.children.name": prefixSku },
+            { "data.children.title": prefixSku },
+            { "data.children_models.name": prefixSku },
+            { "data.children_models.title": prefixSku }
           ]
         };
         const more = await ProductModel.find(moreFilter, { sku: 1, data: 1 }).limit(parentFetchLimit).maxTimeMS(15e3).lean();
@@ -80808,15 +80858,9 @@ function buildFlexibleScanOrFilter(rawCode) {
   if (!code || code.length < 8) return null;
   const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const $or = [];
-  const endsWith2 = { $regex: `${escaped}$`, $options: "i" };
+  const prefix = { $regex: `^${escaped}`, $options: "i" };
   for (const field of FLEXIBLE_SCAN_FIELDS) {
-    $or.push({ [field]: endsWith2 });
-  }
-  if (code.length >= 10) {
-    const contains = { $regex: escaped, $options: "i" };
-    for (const field of FLEXIBLE_SCAN_FIELDS) {
-      $or.push({ [field]: contains });
-    }
+    $or.push({ [field]: prefix });
   }
   return $or.length ? { $or } : null;
 }
@@ -82068,7 +82112,7 @@ function parseCancelReturnKindParam(raw) {
   if (k === "cancelled" || k === "cancel") return "cancelled";
   return "";
 }
-var TAB_COUNT_CACHE_MS = 15e3;
+var TAB_COUNT_CACHE_MS = 3e4;
 var tabCountCache = null;
 function invalidateTabCountCache() {
   tabCountCache = null;
@@ -82958,6 +83002,42 @@ async function countOrdersByTabsFromStore(opts) {
     return empty;
   }
 }
+function buildOrdersListSearchFilter(search) {
+  const q = String(search || "").trim();
+  if (q.length < 2) return null;
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const prefix = { $regex: `^${escaped}`, $options: "i" };
+  const $or = [
+    { orderSn: q },
+    { orderSn: prefix },
+    { "data.orderSn": q },
+    { "data.orderSn": prefix },
+    { tracking_no: q },
+    { tracking_no: prefix },
+    { trackingNumber: q },
+    { trackingNumber: prefix },
+    { "data.tracking_no": prefix },
+    { "data.trackingNumber": prefix },
+    { packageNumber: q },
+    { packageNumber: prefix },
+    { "data.packageNumber": prefix },
+    { return_sn: prefix },
+    { return_tracking_no: prefix },
+    { returnTrackingNumber: prefix },
+    { internalTrackingCode: prefix },
+    { "data.internalTrackingCode": prefix }
+  ];
+  if (q.length >= 3) {
+    $or.push(
+      { customerPhone: prefix },
+      { customerName: prefix },
+      { "data.customerName": prefix },
+      { "data.customer_name": prefix },
+      { "data.buyer_username": prefix }
+    );
+  }
+  return { $or };
+}
 async function queryOrdersPageFromStore(opts) {
   const empty = {
     rows: [],
@@ -83014,31 +83094,7 @@ async function queryOrdersPageFromStore(opts) {
     }
     let searchFilter = null;
     if (search) {
-      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const contains = { $regex: escaped, $options: "i" };
-      searchFilter = {
-        $or: [
-          { orderSn: contains },
-          { tracking_no: contains },
-          { trackingNumber: contains },
-          { return_sn: contains },
-          { return_tracking_no: contains },
-          { returnTrackingNumber: contains },
-          { packageNumber: contains },
-          { customerName: contains },
-          { customerPhone: contains },
-          { customerEmail: contains },
-          { "data.buyer_username": contains },
-          { "data.customerName": contains },
-          { "data.customer_name": contains },
-          { "data.items.productTitle": contains },
-          { "data.items.name": contains },
-          { "data.items.modelName": contains },
-          { "data.items.modelSku": contains },
-          { "data.internalTrackingCode": contains },
-          { internalTrackingCode: contains }
-        ]
-      };
+      searchFilter = buildOrdersListSearchFilter(search);
     }
     const listFilter = mergeOrdersListFilters(
       Object.keys(firstMatch).length ? firstMatch : null,
@@ -116169,6 +116225,7 @@ var PRODUCTS_PAGE_SIZE_DEFAULT = 50;
 var PRODUCTS_PAGE_SIZE_MAX = 50;
 var deps10 = {
   loadProducts: async () => [],
+  loadProductsByIdsFromStore: async () => [],
   saveProducts: async () => {
   },
   getProductChildrenList: () => [],
@@ -116250,10 +116307,10 @@ async function isSkuTakenByOtherProduct(sku, excludeId = null) {
     hits = await deps10.searchProductsFromStore(sku, 50);
   } catch (searchErr) {
     console.warn(
-      "[Products API] SKU search failed, fallback loadProducts:",
+      "[Products API] SKU search failed:",
       searchErr?.message || searchErr
     );
-    hits = await deps10.loadProducts();
+    hits = [];
   }
   if (!Array.isArray(hits)) hits = [];
   const exclude = excludeId != null && String(excludeId).trim() ? String(excludeId) : null;
@@ -116349,43 +116406,12 @@ async function searchProducts(req, res) {
     try {
       raw = await deps10.searchProductsFromStore(q, limit);
     } catch (mongoErr) {
-      console.warn("[Products API] searchProductsFromStore failed, fallback loadProducts:", mongoErr);
-      const all3 = await deps10.loadProducts();
-      const qLower = q.toLowerCase();
-      const flat = [];
-      const seen = /* @__PURE__ */ new Set();
-      const push = (row) => {
-        const id = String(row?.id || "").trim();
-        if (!id || seen.has(id)) return;
-        seen.add(id);
-        flat.push(row);
-      };
-      const match2 = (row, extra = "") => {
-        if (!q) return true;
-        const hay = `${row?.sku || ""} ${row?.title || ""} ${row?.name || ""} ${row?.modelName || ""} ${extra}`.toLowerCase();
-        return hay.includes(qLower);
-      };
-      for (const p of Array.isArray(all3) ? all3 : []) {
-        const children = Array.isArray(p?.children) && p.children.length ? p.children : Array.isArray(p?.children_models) ? p.children_models : [];
-        if (children.length > 0) {
-          let n = 0;
-          for (const c of children) {
-            if (!match2(c, `${p.title || ""} ${p.sku || ""}`)) continue;
-            push({
-              ...c,
-              title: c.title || p.title,
-              imageUrl: c.imageUrl || p.imageUrl,
-              avatarUrl: c.avatarUrl || p.avatarUrl
-            });
-            n += 1;
-          }
-          if (n === 0 && match2(p)) push(p);
-        } else if (match2(p)) {
-          push(p);
-        }
-      }
-      raw = flat.slice(0, Math.min(100, Math.max(1, Math.floor(limit) || 40)));
-      source = "products_memory_fallback";
+      console.warn("[Products API] searchProductsFromStore failed:", mongoErr);
+      return res.status(503).json({
+        success: false,
+        error: "products_search_unavailable",
+        products: []
+      });
     }
     const products = raw.map(mapRow);
     console.log("[Products API] /api/products/search", {
@@ -117535,7 +117561,14 @@ async function bulkChannelSync(req, res) {
     }
     const channelList = Array.isArray(channels) && channels.length ? channels : ["shopee"];
     const idSet = new Set(productIds.map(String));
-    const products = deps10.flattenProductsForStockSync(await deps10.loadProducts()).filter((p) => idSet.has(p.id));
+    let catalog = [];
+    try {
+      catalog = await deps10.loadProductsByIdsFromStore([...idSet]);
+    } catch (idErr) {
+      console.warn("[Bulk Channel Sync] loadProductsByIdsFromStore:", idErr?.message || idErr);
+      catalog = [];
+    }
+    const products = deps10.flattenProductsForStockSync(catalog).filter((p) => idSet.has(p.id));
     if (products.length === 0) {
       return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y s\u1EA3n ph\u1EA9m n\xE0o trong kho." });
     }
@@ -117628,12 +117661,9 @@ async function bulkChannelSync(req, res) {
     const failCount = logs.filter((l) => !l.success).length;
     const syncedProductIds = new Set(logs.filter((l) => l.success).map((l) => l.productId));
     if (syncedProductIds.size > 0) {
-      const allProducts = await deps10.loadProducts();
       const now = (/* @__PURE__ */ new Date()).toISOString();
-      const next = allProducts.map(
-        (p) => syncedProductIds.has(p.id) ? { ...p, lastSynced: now } : p
-      );
-      await deps10.saveProducts(next);
+      const patched = products.filter((p) => syncedProductIds.has(p.id)).map((p) => ({ ...p, lastSynced: now }));
+      if (patched.length) await deps10.upsertProductsToStoreAsync(patched);
     }
     const failMessages = logs.filter((l) => !l.success).map((l) => l.message).filter(Boolean);
     const summaryError = failMessages.length > 0 ? `\u0110\u1ED3ng b\u1ED9 c\xF3 l\u1ED7i: ${failMessages.slice(0, 3).join(" | ")}${failMessages.length > 3 ? " \u2026" : ""}` : "M\u1ED9t s\u1ED1 k\xEAnh t\u1EEB ch\u1ED1i c\u1EADp nh\u1EADt gi\xE1/t\u1ED3n kho";
@@ -117645,7 +117675,7 @@ async function bulkChannelSync(req, res) {
       successCount,
       failCount,
       total: logs.length,
-      products: await deps10.loadProducts()
+      products: products.filter((p) => syncedProductIds.has(p.id))
     });
   } catch (error) {
     console.error("[Bulk Channel Sync]", error);
@@ -119714,6 +119744,7 @@ var deps13 = {
   },
   sleep: (ms) => new Promise((r2) => setTimeout(r2, ms)),
   loadProducts: async () => [],
+  loadSkuIndexLeanFromStore: async () => [],
   persistHealedBrokenMappingLinks: async () => 0,
   persistAutoHealedMappingSnapshots: async () => 0,
   readChannelListingsDb: async () => [],
@@ -119953,34 +119984,8 @@ async function handleSingleAutoLink(req, res) {
 }
 async function handleMappingSkuIndex(_req, res) {
   try {
-    const masterProducts = await deps13.loadProducts();
-    const items = [];
-    const seen = /* @__PURE__ */ new Set();
-    const addOne = (row) => {
-      if (!row || typeof row !== "object") return;
-      const rawSku = String(row.sku || "").trim();
-      const key = deps13.normalizeSkuKey(rawSku);
-      const id = row.id != null ? String(row.id).trim() : "";
-      if (!key || !id || seen.has(key)) return;
-      seen.add(key);
-      items.push({
-        sku: rawSku || key,
-        id,
-        title: String(row.title || "").trim()
-      });
-    };
-    for (const masterItem of Array.isArray(masterProducts) ? masterProducts : []) {
-      if (!masterItem) continue;
-      addOne(masterItem);
-      for (const child of deps13.getProductChildrenList(masterItem)) addOne(child);
-      if (Array.isArray(masterItem.variants)) {
-        for (const v of masterItem.variants) addOne(v);
-      }
-      if (Array.isArray(masterItem.models)) {
-        for (const m2 of masterItem.models) addOne(m2);
-      }
-    }
-    console.log(`[SKU Index] Kho g\u1ED1c products \u2192 ${items.length} SKU (Map-ready)`);
+    const items = await deps13.loadSkuIndexLeanFromStore();
+    console.log(`[SKU Index] Kho g\u1ED1c products \u2192 ${items.length} SKU (lean)`);
     return res.status(200).json({
       success: true,
       count: items.length,
@@ -120867,6 +120872,19 @@ function coalesceInFlight(map, key, factory2) {
   map.set(key, run);
   return run;
 }
+function isScannerOrdersRequest(req) {
+  const flag = String(req?.query?.scanner ?? req?.query?.scan ?? "").toLowerCase();
+  const mode = String(req?.query?.mode || "").toLowerCase();
+  return flag === "1" || flag === "true" || flag === "yes" || mode === "scanner";
+}
+function resolveOrdersListLimit(req, fallback = 50) {
+  const rawLimit = Number(req?.query?.limit ?? req?.query?.page_size ?? req?.query?.pageSize);
+  const hardMax = isScannerOrdersRequest(req) ? 5e3 : 200;
+  if (Number.isFinite(rawLimit) && rawLimit > 0) {
+    return Math.min(Math.floor(rawLimit), hardMax);
+  }
+  return fallback;
+}
 function initOrdersController(partial) {
   deps15 = { ...deps15, ...partial };
 }
@@ -120879,7 +120897,7 @@ async function readOrdersForRefresh(limit, opts = {}) {
   const shopIds = Array.isArray(opts.shopIds) ? opts.shopIds : [];
   if (tab) {
     if (tab === "received_cancel_returns" || tab === "received-cancel-returns" || tab === "da_nhan_huy_hoan") {
-      const pageSize2 = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(Math.floor(Number(limit)), 5e3) : 2e3;
+      const pageSize2 = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(Math.floor(Number(limit)), 5e3) : 50;
       const dhh = await loadDonHoanHuyAsOrders(pageSize2);
       console.log(
         `[GET /api/orders/refresh] tab=${tab} source=don_hoan_huy \u2192 ${dhh.length} \u0111\u01A1n`
@@ -120891,7 +120909,7 @@ async function readOrdersForRefresh(limit, opts = {}) {
       `[GET /api/orders/refresh] tab=${tab} shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} filter=`,
       JSON.stringify(tabFilter)
     );
-    const pageSize = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(Math.floor(Number(limit)), 5e3) : 2e3;
+    const pageSize = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(Math.floor(Number(limit)), 5e3) : 50;
     const page = await queryOrdersPageFromStore({
       page: 1,
       pageSize,
@@ -120913,7 +120931,7 @@ async function readOrdersForRefresh(limit, opts = {}) {
     if (limit && limit > 0) {
       try {
         const priority = await loadPriorityTabOrdersFromStore({
-          perTabLimit: Math.min(5e3, Math.max(2e3, limit))
+          perTabLimit: Math.min(500, Math.max(50, limit))
         });
         const byId = /* @__PURE__ */ new Map();
         for (const o of priority) {
@@ -120940,7 +120958,7 @@ async function readOrdersForRefresh(limit, opts = {}) {
     let priority = [];
     try {
       priority = await loadPriorityTabOrdersFromStore({
-        perTabLimit: Math.min(5e3, Math.max(2e3, limit)),
+        perTabLimit: Math.min(500, Math.max(50, limit)),
         shopId: shopId || void 0,
         shopIds: shopIds.length > 1 ? shopIds : void 0
       });
@@ -121020,7 +121038,7 @@ async function refreshOrders(req, res) {
     const pageRaw = Number(req.query.page);
     const rawLimit = Number(req.query.limit);
     const page = Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1;
-    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 5e3) : 2e3;
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), isScannerOrdersRequest(req) ? 5e3 : 200) : 50;
     const tab = String(req.query.tab || req.query.internal_tab || "").trim();
     const kind = parseCancelReturnKindParam(
       req.query.kind || req.query.cancel_kind || req.query.sub_tab
@@ -121360,8 +121378,7 @@ async function listOrders(req, res) {
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
   const pageRaw = Number(req.query.page);
-  const rawLimit = Number(req.query.limit ?? req.query.page_size ?? req.query.pageSize);
-  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 5e3) : 2e3;
+  const limit = resolveOrdersListLimit(req, 50);
   const usePaged = true;
   if (usePaged) {
     try {
@@ -121469,7 +121486,7 @@ async function listOrders(req, res) {
   } else if (tab === "received_cancel_returns" || tab === "received-cancel-returns" || tab === "da_nhan_huy_hoan") {
     try {
       rawOrders = await loadDonHoanHuyAsOrders(
-        Number.isFinite(Number(req.query.limit)) ? Math.min(Math.floor(Number(req.query.limit)), 5e3) : 2e3
+        Number.isFinite(Number(req.query.limit)) ? Math.min(Math.floor(Number(req.query.limit)), 5e3) : 50
       );
       console.log(
         `[GET /api/orders] query.tab=${tab} source=don_hoan_huy \u2192 ${rawOrders.length} \u0111\u01A1n`
@@ -127444,6 +127461,7 @@ async function runGhnStatusSync(opts = {}) {
     console.log(
       `[GHN Status Sync] START trigger=${trigger} candidates=${batch.length} limit=${limit} delay=${delayMs}ms`
     );
+    const toPersist = [];
     for (let i2 = 0; i2 < batch.length; i2 += 1) {
       if (Date.now() - startedAt >= maxMs) {
         stopped = "deadline";
@@ -127466,16 +127484,17 @@ async function runGhnStatusSync(opts = {}) {
         const nextGhn = String(detail.status || "").toLowerCase();
         if (mappedKey === prevKey && nextGhn === prevGhn) {
           unchanged += 1;
-          await persistChangedOrdersPatch([
-            { ...order, ghn_synced_at: (/* @__PURE__ */ new Date()).toISOString() }
-          ]);
+          toPersist.push({
+            ...order,
+            ghn_synced_at: (/* @__PURE__ */ new Date()).toISOString()
+          });
           continue;
         }
         const patched = applyMappedStatus(order, mappedKey, {
           ghn_status: detail.status,
           ghnShopId: detail.shopId || order.ghnShopId
         });
-        await persistChangedOrdersPatch([patched]);
+        toPersist.push(patched);
         updated += 1;
         console.log(
           `[GHN Status Sync] ${order.orderSn || trackingNo} ${prevKey}/${prevGhn || "-"} \u2192 ${mappedKey}/${nextGhn}`
@@ -127491,6 +127510,16 @@ async function runGhnStatusSync(opts = {}) {
           stopped = "consecutive_errors";
           break;
         }
+      }
+    }
+    if (toPersist.length) {
+      try {
+        await persistChangedOrdersPatch(toPersist);
+      } catch (persistErr) {
+        console.warn(
+          "[GHN Status Sync] bulk persist failed:",
+          persistErr?.message || persistErr
+        );
       }
     }
     if (updated > 0) {
@@ -127711,6 +127740,7 @@ function validateShopeeLeafCategoryId(categoryIdRaw, cache) {
 
 // controllers/wooCommerceOrdersController.js
 init_wooCommerce();
+init_concurrency();
 var deps20 = {
   loadChannelSettings: () => ({ shops: [] }),
   persistWooOrdersToStore: async (orders) => {
@@ -127820,6 +127850,7 @@ async function syncWooCommerceOrders(req, res) {
           }
           hasMore = page < result.totalPages && page < 10;
           page++;
+          if (hasMore) await sleep4(300);
         }
         allResults.push({
           shopId: shop.shopId,
@@ -127847,6 +127878,7 @@ async function syncWooCommerceOrders(req, res) {
           error: errMsg
         });
       }
+      await sleep4(300);
     }
     const ms = Date.now() - t0;
     const successShops = allResults.filter((r2) => r2.success).length;
@@ -143680,6 +143712,7 @@ async function startServer() {
   initMappingController({
     reloadCachesFromDb,
     loadMappingListingsForApiFromStore,
+    loadSkuIndexLeanFromStore,
     enrichChannelListingsWithMaster,
     isMongoReady,
     readChannelListingsForGet,
@@ -143755,6 +143788,7 @@ async function startServer() {
     upsertProductsToStoreAsync,
     deleteProductsByIdsFromStore,
     loadProductsPageFromStore,
+    loadProductsByIdsFromStore,
     searchProductsFromStore,
     withLocalDbTimeout,
     isProductsDiskMode,

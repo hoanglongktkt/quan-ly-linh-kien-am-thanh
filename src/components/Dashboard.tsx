@@ -179,8 +179,14 @@ export default function Dashboard({
   }, []);
 
   const applyFallback = useCallback((range: DashboardDateRange) => {
+    const pool = ordersRef.current || [];
+    if (pool.length === 0 || pool.length > 80) {
+      setError('Không lấy được thống kê từ máy chủ. Thử lại sau.');
+      setUsingFallback(false);
+      return;
+    }
     const stats = computeDashboardStats(
-      ordersRef.current,
+      pool,
       productsRef.current,
       range,
       systemFeesRef.current,
@@ -249,7 +255,7 @@ export default function Dashboard({
       console.log('[Dashboard] Response:', payload);
 
       if (!res.ok) {
-        if (ordersRef.current.length > 0 || productsRef.current.length > 0) {
+        if (ordersRef.current.length > 0 && ordersRef.current.length <= 80) {
           applyFallback(range);
           return;
         }

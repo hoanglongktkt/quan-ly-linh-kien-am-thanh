@@ -41,7 +41,7 @@ import {
   deleteAllChannelListingsFromDisk,
 } from "./channelListingsDiskStore.ts";
 import {
-  buildAccentFlexibleRegex,
+  buildAccentFlexiblePrefixRegex,
   normalizeProductSearchText,
 } from "../utils/productSearch.ts";
 import {
@@ -873,9 +873,9 @@ export async function loadProductsFromStore(): Promise<any[]> {
   return docsToProducts(docs);
 }
 
-/** Filter $regex (i) cho phân trang + count Kho Gốc theo tên/SKU (hỗ trợ bỏ dấu). */
+/** Filter prefix $regex cho phân trang + count Kho Gốc (SKU/tên, hỗ trợ bỏ dấu). */
 function buildProductListSearchFilter(search: string): Record<string, unknown> {
-  const regex = buildAccentFlexibleRegex(search);
+  const regex = buildAccentFlexiblePrefixRegex(search);
   if (!regex) return {};
   return {
     $or: [
@@ -955,6 +955,65 @@ export async function loadProductsPageFromStore(
     totalPages,
     hasMore: currentPage < totalPages,
   };
+}
+
+const SKU_INDEX_SELECT = {
+  _id: 1,
+  sku: 1,
+  "data.id": 1,
+  "data.sku": 1,
+  "data.title": 1,
+  "data.name": 1,
+  "data.children.id": 1,
+  "data.children.sku": 1,
+  "data.children.title": 1,
+  "data.children.name": 1,
+  "data.children_models.id": 1,
+  "data.children_models.sku": 1,
+  "data.children_models.title": 1,
+  "data.children_models.name": 1,
+};
+
+/** Index SKU lean — không dump description/ảnh/HTML cả catalog. */
+export async function loadSkuIndexLeanFromStore(): Promise<
+  Array<{ sku: string; id: string; title: string }>
+> {
+  const items: Array<{ sku: string; id: string; title: string }> = [];
+  const seen = new Set<string>();
+  const addOne = (row: any) => {
+    if (!row || typeof row !== "object") return;
+    const rawSku = String(row.sku || "").trim();
+    const key = rawSku.toUpperCase();
+    const id = row.id != null ? String(row.id).trim() : "";
+    if (!key || !id || seen.has(key)) return;
+    seen.add(key);
+    items.push({
+      sku: rawSku,
+      id,
+      title: String(row.title || row.name || "").trim(),
+    });
+  };
+  const walk = (p: any) => {
+    addOne(p);
+    const children = Array.isArray(p?.children)
+      ? p.children
+      : Array.isArray(p?.children_models)
+        ? p.children_models
+        : [];
+    for (const c of children) addOne(c);
+  };
+
+  if (isProductsDiskMode()) {
+    for (const p of readProductsFromDisk()) walk(p);
+    return items;
+  }
+  requireMongo();
+  const docs = await ProductModel.find({})
+    .select(SKU_INDEX_SELECT)
+    .maxTimeMS(15_000)
+    .lean();
+  for (const p of docsToProducts(docs as any[])) walk(p);
+  return items;
 }
 
 /** Đọc 1 product theo id nội bộ / shopeeItemId — không quét toàn bộ catalog (Mongo). */
@@ -1087,7 +1146,6 @@ export async function searchProductsFromStore(
     const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const exactSku = new RegExp(`^${escaped}$`, "i");
     const prefixSku = new RegExp(`^${escaped}`, "i");
-    const contains = { $regex: escaped, $options: "i" as const };
 
     // 1) Exact SKU trước (nhanh nhất, dùng index)
     docs = await ProductModel.find(
@@ -1131,7 +1189,7 @@ export async function searchProductsFromStore(
       }
     }
 
-    // 3) Tên / SKU / name trên toàn collection (không giới hạn page 1), cap limit UI
+    // 3) Prefix tên / SKU (không contains leading-wildcard)
     if (docs.length < safeLimit) {
       const nameFilter = buildProductListSearchFilter(q);
       const moreFilter =
@@ -1139,15 +1197,15 @@ export async function searchProductsFromStore(
           ? nameFilter
           : {
               $or: [
-                { name: contains },
-                { title: contains },
-                { "data.name": contains },
-                { "data.title": contains },
-                { "data.modelName": contains },
-                { "data.children.name": contains },
-                { "data.children.title": contains },
-                { "data.children_models.name": contains },
-                { "data.children_models.title": contains },
+                { name: prefixSku },
+                { title: prefixSku },
+                { "data.name": prefixSku },
+                { "data.title": prefixSku },
+                { "data.modelName": prefixSku },
+                { "data.children.name": prefixSku },
+                { "data.children.title": prefixSku },
+                { "data.children_models.name": prefixSku },
+                { "data.children_models.title": prefixSku },
               ],
             };
       const more = await ProductModel.find(moreFilter, { sku: 1, data: 1 })
@@ -4926,8 +4984,7 @@ const FLEXIBLE_SCAN_FIELDS = [
 ] as const;
 
 /**
- * Fallback khi exact miss: endsWith (mã ≥8) + contains (mã ≥10).
- * Dùng khi máy quét dư prefix/suffix — giới hạn maxTimeMS riêng, không chạm lúc mở camera.
+ * Fallback khi exact miss: prefix ^code trên field indexed (không contains/endsWith).
  */
 function buildFlexibleScanOrFilter(rawCode: string): Record<string, unknown> | null {
   const scannedCode = normalizeScannedCode(rawCode);
@@ -4936,15 +4993,9 @@ function buildFlexibleScanOrFilter(rawCode: string): Record<string, unknown> | n
   if (!code || code.length < 8) return null;
   const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const $or: Record<string, unknown>[] = [];
-  const endsWith = { $regex: `${escaped}$`, $options: "i" };
+  const prefix = { $regex: `^${escaped}`, $options: "i" };
   for (const field of FLEXIBLE_SCAN_FIELDS) {
-    $or.push({ [field]: endsWith });
-  }
-  if (code.length >= 10) {
-    const contains = { $regex: escaped, $options: "i" };
-    for (const field of FLEXIBLE_SCAN_FIELDS) {
-      $or.push({ [field]: contains });
-    }
+    $or.push({ [field]: prefix });
   }
   return $or.length ? { $or } : null;
 }
@@ -5370,7 +5421,7 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
 }
 
 /**
- * Lookup 1 đơn theo mã quét — ưu tiên exact $eq trên index; miss thì fallback endsWith/includes.
+ * Lookup 1 đơn theo mã quét — ưu tiên exact $eq trên index; miss thì fallback prefix.
  * lean=true: projection tối thiểu, không kéo full data blob.
  */
 export async function findOrderByScanCodeInStore(
@@ -6670,7 +6721,7 @@ export function parseCancelReturnKindParam(raw?: string | null): string {
   return "";
 }
 
-const TAB_COUNT_CACHE_MS = 15_000;
+const TAB_COUNT_CACHE_MS = 30_000;
 let tabCountCache: { key: string; expiresAt: number; value: Record<string, number> } | null =
   null;
 
@@ -7876,6 +7927,44 @@ export async function countOrdersByTabsFromStore(opts?: {
   }
 }
 
+/** Search list đơn: $eq + prefix trên field indexed — cấm contains 18 field. */
+function buildOrdersListSearchFilter(search: string): Record<string, unknown> | null {
+  const q = String(search || "").trim();
+  if (q.length < 2) return null;
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const prefix = { $regex: `^${escaped}`, $options: "i" as const };
+  const $or: Record<string, unknown>[] = [
+    { orderSn: q },
+    { orderSn: prefix },
+    { "data.orderSn": q },
+    { "data.orderSn": prefix },
+    { tracking_no: q },
+    { tracking_no: prefix },
+    { trackingNumber: q },
+    { trackingNumber: prefix },
+    { "data.tracking_no": prefix },
+    { "data.trackingNumber": prefix },
+    { packageNumber: q },
+    { packageNumber: prefix },
+    { "data.packageNumber": prefix },
+    { return_sn: prefix },
+    { return_tracking_no: prefix },
+    { returnTrackingNumber: prefix },
+    { internalTrackingCode: prefix },
+    { "data.internalTrackingCode": prefix },
+  ];
+  if (q.length >= 3) {
+    $or.push(
+      { customerPhone: prefix },
+      { customerName: prefix },
+      { "data.customerName": prefix },
+      { "data.customer_name": prefix },
+      { "data.buyer_username": prefix },
+    );
+  }
+  return { $or };
+}
+
 /** Danh sách đơn phân trang từ MongoDB; frontend không cần tải toàn bộ collection để lọc. */
 export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<{
   rows: any[];
@@ -7974,32 +8063,7 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
     }
     let searchFilter: Record<string, unknown> | null = null;
     if (search) {
-      // Partial match (case-insensitive contains) — khớp chuỗi con như FE `.includes()`.
-      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const contains = { $regex: escaped, $options: "i" as const };
-      searchFilter = {
-        $or: [
-          { orderSn: contains },
-          { tracking_no: contains },
-          { trackingNumber: contains },
-          { return_sn: contains },
-          { return_tracking_no: contains },
-          { returnTrackingNumber: contains },
-          { packageNumber: contains },
-          { customerName: contains },
-          { customerPhone: contains },
-          { customerEmail: contains },
-          { "data.buyer_username": contains },
-          { "data.customerName": contains },
-          { "data.customer_name": contains },
-          { "data.items.productTitle": contains },
-          { "data.items.name": contains },
-          { "data.items.modelName": contains },
-          { "data.items.modelSku": contains },
-          { "data.internalTrackingCode": contains },
-          { internalTrackingCode: contains },
-        ],
-      };
+      searchFilter = buildOrdersListSearchFilter(search);
     }
     const listFilter = mergeOrdersListFilters(
       Object.keys(firstMatch).length ? firstMatch : null,

@@ -23,6 +23,7 @@ let deps = {
   flushDbWrites: async () => {},
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   loadProducts: async () => [],
+  loadSkuIndexLeanFromStore: async () => [],
   persistHealedBrokenMappingLinks: async () => 0,
   persistAutoHealedMappingSnapshots: async () => 0,
   readChannelListingsDb: async () => [],
@@ -281,38 +282,8 @@ export async function handleSingleAutoLink(req, res) {
 /** Index SKU Kho gốc (products) — payload nhẹ cho frontend Hash Map. */
 export async function handleMappingSkuIndex(_req, res) {
   try {
-    const masterProducts = await deps.loadProducts();
-    const items = [];
-    const seen = new Set();
-
-    const addOne = (row) => {
-      if (!row || typeof row !== "object") return;
-      // Index mọi SKU trong Kho Gốc — kể cả id shopee-item-* (cần để Mapping trang 2+).
-      const rawSku = String(row.sku || "").trim();
-      const key = deps.normalizeSkuKey(rawSku);
-      const id = row.id != null ? String(row.id).trim() : "";
-      if (!key || !id || seen.has(key)) return;
-      seen.add(key);
-      items.push({
-        sku: rawSku || key,
-        id,
-        title: String(row.title || "").trim(),
-      });
-    };
-
-    for (const masterItem of Array.isArray(masterProducts) ? masterProducts : []) {
-      if (!masterItem) continue;
-      addOne(masterItem);
-      for (const child of deps.getProductChildrenList(masterItem)) addOne(child);
-      if (Array.isArray(masterItem.variants)) {
-        for (const v of masterItem.variants) addOne(v);
-      }
-      if (Array.isArray(masterItem.models)) {
-        for (const m of masterItem.models) addOne(m);
-      }
-    }
-
-    console.log(`[SKU Index] Kho gốc products → ${items.length} SKU (Map-ready)`);
+    const items = await deps.loadSkuIndexLeanFromStore();
+    console.log(`[SKU Index] Kho gốc products → ${items.length} SKU (lean)`);
     return res.status(200).json({
       success: true,
       count: items.length,

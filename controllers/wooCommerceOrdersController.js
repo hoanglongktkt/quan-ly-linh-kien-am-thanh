@@ -8,6 +8,7 @@ import {
   updateWooOrderStatus,
   mapWooOrderToInternal,
 } from "../services/wooCommerce.js";
+import { sleep } from "../utils/concurrency.js";
 
 let deps = {
   loadChannelSettings: () => ({ shops: [] }),
@@ -152,6 +153,7 @@ export async function syncWooCommerceOrders(req, res) {
 
           hasMore = page < result.totalPages && page < 10;
           page++;
+          if (hasMore) await sleep(300);
         }
 
         allResults.push({
@@ -181,6 +183,7 @@ export async function syncWooCommerceOrders(req, res) {
           error: errMsg,
         });
       }
+      await sleep(300);
     }
 
     const ms = Date.now() - t0;

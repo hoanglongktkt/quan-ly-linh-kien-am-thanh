@@ -1765,26 +1765,23 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     failed: listings.filter(l => l.status === 'failed').length,
   }), [listings]);
 
-  const filteredListings = listings.filter(item => {
-    if (!item) return false;
-    // 1. Tab Status Filter
-    if (activeSubTab === 'success' && item?.status !== 'success') return false;
-    if (activeSubTab === 'unlinked' && item?.status !== 'unlinked') return false;
-    if (activeSubTab === 'failed' && item?.status !== 'failed') return false;
-
-    // 2. Search query
+  const filteredListings = useMemo(() => {
     const q = String(searchQuery || '').toLowerCase();
-    const matchesSearch =
-      String(item?.title || '').toLowerCase().includes(q) ||
-      String(item?.sku || '').toLowerCase().includes(q) ||
-      String(item?.channelId || '').includes(searchQuery || '');
-    if (!matchesSearch) return false;
-
-    // 3. Shop filter
-    if (selectedShopFilter !== 'all' && item?.shopName !== selectedShopFilter) return false;
-
-    return true;
-  });
+    return listings.filter((item) => {
+      if (!item) return false;
+      if (activeSubTab === 'success' && item?.status !== 'success') return false;
+      if (activeSubTab === 'unlinked' && item?.status !== 'unlinked') return false;
+      if (activeSubTab === 'failed' && item?.status !== 'failed') return false;
+      const matchesSearch =
+        !q ||
+        String(item?.title || '').toLowerCase().includes(q) ||
+        String(item?.sku || '').toLowerCase().includes(q) ||
+        String(item?.channelId || '').toLowerCase().includes(q);
+      if (!matchesSearch) return false;
+      if (selectedShopFilter !== 'all' && item?.shopName !== selectedShopFilter) return false;
+      return true;
+    });
+  }, [listings, activeSubTab, searchQuery, selectedShopFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filteredListings.length / itemsPerPage));
   const safePage = Math.min(currentPage, totalPages);
@@ -1824,7 +1821,10 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   );
 
   // Get list of unique shop names in our current listings for filter dropdown
-  const uniqueShopsInListings = Array.from(new Set(listings.map(l => l.shopName)));
+  const uniqueShopsInListings = useMemo(
+    () => Array.from(new Set(listings.map((l) => l.shopName))),
+    [listings],
+  );
 
   const handleToggleSelectListing = (id: string) => {
     if (selectedListingIds.includes(id)) {

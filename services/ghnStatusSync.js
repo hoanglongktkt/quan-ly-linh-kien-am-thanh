@@ -125,6 +125,7 @@ export async function runGhnStatusSync(opts = {}) {
       `[GHN Status Sync] START trigger=${trigger} candidates=${batch.length} limit=${limit} delay=${delayMs}ms`,
     );
 
+    const toPersist = [];
     for (let i = 0; i < batch.length; i += 1) {
       if (Date.now() - startedAt >= maxMs) {
         stopped = "deadline";
@@ -149,16 +150,17 @@ export async function runGhnStatusSync(opts = {}) {
         const nextGhn = String(detail.status || "").toLowerCase();
         if (mappedKey === prevKey && nextGhn === prevGhn) {
           unchanged += 1;
-          await persistChangedOrdersPatch([
-            { ...order, ghn_synced_at: new Date().toISOString() },
-          ]);
+          toPersist.push({
+            ...order,
+            ghn_synced_at: new Date().toISOString(),
+          });
           continue;
         }
         const patched = applyMappedStatus(order, mappedKey, {
           ghn_status: detail.status,
           ghnShopId: detail.shopId || order.ghnShopId,
         });
-        await persistChangedOrdersPatch([patched]);
+        toPersist.push(patched);
         updated += 1;
         console.log(
           `[GHN Status Sync] ${order.orderSn || trackingNo} ${prevKey}/${prevGhn || "-"} → ${mappedKey}/${nextGhn}`,
@@ -174,6 +176,17 @@ export async function runGhnStatusSync(opts = {}) {
           stopped = "consecutive_errors";
           break;
         }
+      }
+    }
+
+    if (toPersist.length) {
+      try {
+        await persistChangedOrdersPatch(toPersist);
+      } catch (persistErr) {
+        console.warn(
+          "[GHN Status Sync] bulk persist failed:",
+          persistErr?.message || persistErr,
+        );
       }
     }
 
