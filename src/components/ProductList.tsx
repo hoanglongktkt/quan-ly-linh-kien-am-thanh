@@ -640,7 +640,10 @@ export default function ProductList({
   }, [products]);
 
   // Filter Categories
-  const categories = ['all', ...Array.from(new Set(products.map(p => p.category).filter(c => !isJunkCategoryLabel(c))))];
+  const categories = useMemo(
+    () => ['all', ...Array.from(new Set(products.map((p) => p.category).filter((c) => !isJunkCategoryLabel(c))))],
+    [products],
+  );
 
   const filteredGroups = useMemo(() => {
     const filtered = productGroups.filter((group) => {
@@ -677,8 +680,30 @@ export default function ProductList({
     });
   }, [productGroups, channelFilter, categoryFilter, stockFilter, sortField, sortOrder]);
 
-  const allFilteredIds = filteredGroups.flatMap((g) => g.variants.map((v) => v.id));
+  const allFilteredIds = useMemo(
+    () => filteredGroups.flatMap((g) => g.variants.map((v) => v.id)),
+    [filteredGroups],
+  );
   const allFilteredSelected = allFilteredIds.length > 0 && allFilteredIds.every((id) => selectedIds.includes(id));
+
+  const estimatedProfitById = useMemo(() => {
+    const map = new Map<string, number>();
+    const groupCap = Math.min(filteredGroups.length, 2000);
+    for (let i = 0; i < groupCap; i++) {
+      const group = filteredGroups[i];
+      const variants = group.variants || [];
+      const variantCap = Math.min(variants.length, 200);
+      for (let j = 0; j < variantCap; j++) {
+        const v = variants[j];
+        if (v?.id) map.set(v.id, calculateEstimatedProductProfit(v, systemFees));
+      }
+      const prod = group.representative;
+      if (prod?.id && !map.has(prod.id)) {
+        map.set(prod.id, calculateEstimatedProductProfit(prod, systemFees));
+      }
+    }
+    return map;
+  }, [filteredGroups, systemFees]);
 
   const handleSelectAll = () => {
     if (allFilteredSelected) {
@@ -1401,7 +1426,7 @@ export default function ProductList({
                 filteredGroups.flatMap((group) => {
                   const prod = group.representative;
                   const priceLabel = formatPriceRange(group.minSellingPrice, group.maxSellingPrice);
-                  const estimatedProfit = calculateEstimatedProductProfit(prod, systemFees);
+                  const estimatedProfit = estimatedProfitById.get(prod.id) ?? 0;
                   const isExpanded = expandedParentIds.has(group.groupId);
                   const rows: React.ReactNode[] = [];
 
@@ -1723,7 +1748,7 @@ export default function ProductList({
                           </td>
                           <td className="p-3 text-right">
                             {(() => {
-                              const childProfit = calculateEstimatedProductProfit(child, systemFees);
+                              const childProfit = estimatedProfitById.get(child.id) ?? 0;
                               return (
                                 <>
                                   <div className="flex items-center justify-end gap-1">
@@ -1848,7 +1873,7 @@ export default function ProductList({
             const isOutStock = group.totalStock === 0;
             const priceLabel = formatPriceRange(group.minSellingPrice, group.maxSellingPrice);
             const isExpanded = expandedParentIds.has(group.groupId);
-            const estimatedProfit = calculateEstimatedProductProfit(prod, systemFees);
+            const estimatedProfit = estimatedProfitById.get(prod.id) ?? 0;
 
             return (
               <div key={group.groupId} className="bg-white rounded-2xl border border-gray-150 p-4 shadow-xs space-y-3">
@@ -1926,7 +1951,7 @@ export default function ProductList({
                 {group.hasVariants && isExpanded && (
                   <div className="space-y-2 border-t border-gray-50 pt-2">
                     {group.variants.map((child) => {
-                      const childProfit = calculateEstimatedProductProfit(child, systemFees);
+                      const childProfit = estimatedProfitById.get(child.id) ?? 0;
                       return (
                       <div key={child.id} className="flex items-center gap-2 bg-slate-50 rounded-xl p-2.5">
                         <div className="flex-1 min-w-0">

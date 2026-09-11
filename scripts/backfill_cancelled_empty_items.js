@@ -212,6 +212,12 @@ async function main() {
   const startedAt = Date.now();
   let filled = 0;
   let errors = 0;
+  const pendingOps = [];
+  async function flushOps() {
+    if (!pendingOps.length) return;
+    await col.bulkWrite(pendingOps.splice(0, pendingOps.length), { ordered: false });
+    await delay(DELAY_MS);
+  }
 
   for (let i = 0; i < docs.length; i += 1) {
     if (Date.now() - startedAt >= DEADLINE_MS) {
@@ -277,23 +283,25 @@ async function main() {
       continue;
     }
     const _id = `shopee-${orderSn}`;
-    const result = await col.updateOne(
-      { $or: [{ orderSn }, { _id }, { "data.orderSn": orderSn }] },
-      {
-        $set: {
-          "data.items": items,
-          last_synced_at: new Date(),
-          "data.last_synced_at": new Date().toISOString(),
+    pendingOps.push({
+      updateOne: {
+        filter: { $or: [{ orderSn }, { _id }, { "data.orderSn": orderSn }] },
+        update: {
+          $set: {
+            "data.items": items,
+            last_synced_at: new Date(),
+            "data.last_synced_at": new Date().toISOString(),
+          },
         },
       },
-    );
-    if ((result.modifiedCount || result.matchedCount) > 0) {
-      filled += 1;
-      console.log(`[backfill] OK sn=${orderSn} items=${items.length}`);
-    }
+    });
+    filled += 1;
+    console.log(`[backfill] OK sn=${orderSn} items=${items.length}`);
+    if (pendingOps.length >= 20) await flushOps();
     await delay(DELAY_MS);
   }
 
+  await flushOps();
   console.log(`[backfill] done filled=${filled} errors=${errors} elapsed=${Date.now() - startedAt}ms`);
   await mongoose.disconnect();
 }

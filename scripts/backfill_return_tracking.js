@@ -318,7 +318,7 @@ async function fetchReturnSnMap(shopId, accessToken) {
   return map;
 }
 
-async function persistReturnTn(col, doc, rtn) {
+function persistReturnTn(col, doc, rtn, pendingOps) {
   const sn = orderSnOf(doc);
   if (!sn || !rtn) return false;
   const filter = {
@@ -335,8 +335,14 @@ async function persistReturnTn(col, doc, rtn) {
     "data.return_tracking_no": rtn,
     "data.returnTrackingNumber": rtn,
   };
-  const result = await col.updateOne(filter, { $set });
-  return result.modifiedCount > 0 || result.matchedCount > 0;
+  pendingOps.push({ updateOne: { filter, update: { $set } } });
+  return true;
+}
+
+async function flushReturnOps(col, pendingOps) {
+  if (!pendingOps.length) return;
+  await col.bulkWrite(pendingOps.splice(0, pendingOps.length), { ordered: false });
+  await delay(DELAY_MS);
 }
 
 /** Verify scan exact $eq — cùng filter findOrderByScanCodeInStore. */
@@ -433,6 +439,8 @@ async function main() {
   let errors = 0;
   let verified = 0;
   const attemptedByShop = new Map();
+  const pendingOps = [];
+  const toVerify = [];
 
   for (const doc of docs) {
     const sn = orderSnOf(doc);
@@ -497,12 +505,18 @@ async function main() {
         filled += 1;
         console.log(`[Dry] ${sn} → ${rtn}`);
       } else {
-        const ok = await persistReturnTn(col, doc, rtn);
+        const ok = persistReturnTn(col, doc, rtn, pendingOps);
         if (ok) {
           filled += 1;
-          const hit = await verifyScanEq(col, rtn, sn);
-          if (hit) verified += 1;
-          console.log(`[OK] ${sn} return_sn=${returnSn} rtn=${rtn} scanEq=${hit}`);
+          toVerify.push({ rtn, sn });
+          console.log(`[OK] ${sn} return_sn=${returnSn} rtn=${rtn} queued`);
+          if (pendingOps.length >= 25) {
+            await flushReturnOps(col, pendingOps);
+            for (const v of toVerify.splice(0, toVerify.length)) {
+              const hit = await verifyScanEq(col, v.rtn, v.sn);
+              if (hit) verified += 1;
+            }
+          }
         } else {
           errors += 1;
           console.warn(`[DB] ${sn} update failed rtn=${rtn}`);
@@ -513,6 +527,12 @@ async function main() {
       console.warn(`[Err] ${sn}:`, err?.message || err);
     }
     await delay(DELAY_MS);
+  }
+
+  await flushReturnOps(col, pendingOps);
+  for (const v of toVerify) {
+    const hit = await verifyScanEq(col, v.rtn, v.sn);
+    if (hit) verified += 1;
   }
 
   console.log(

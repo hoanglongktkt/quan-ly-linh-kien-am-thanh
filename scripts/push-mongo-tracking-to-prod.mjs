@@ -22,6 +22,22 @@ function arg(name) {
   return hit ? hit.split("=").slice(1).join("=") : "";
 }
 
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function bulkWriteChunks(col, ops, chunkSize = 200) {
+  let modified = 0;
+  for (let i = 0; i < ops.length; i += chunkSize) {
+    const chunk = ops.slice(i, i + chunkSize);
+    if (!chunk.length) break;
+    const res = await col.bulkWrite(chunk, { ordered: false });
+    modified += res.modifiedCount || 0;
+    if (i + chunkSize < ops.length) await sleep(200);
+  }
+  return modified;
+}
+
 async function main() {
   if (!URI || !BASE || !USER || !PASS) {
     console.error("Thiếu MONGODB_URI / APP_URL / ADMIN_USERNAME / ADMIN_PASSWORD");
@@ -37,24 +53,28 @@ async function main() {
   const needMirror = await col
     .find({ tracking_no: { $exists: true, $nin: [null, ""] } })
     .project({ _id: 1, tracking_no: 1, "data.tracking_no": 1, "data.trackingNumber": 1 })
+    .limit(5000)
     .toArray();
-  let mirrored = 0;
+  const mirrorOps = [];
   for (const d of needMirror) {
     const tn = String(d.tracking_no || "").trim();
     if (!tn || /^0FG/i.test(tn)) continue;
     const dataTn = String(d.data?.tracking_no || d.data?.trackingNumber || "").trim();
     if (dataTn === tn) continue;
-    await col.updateOne(
-      { _id: d._id },
-      { $set: { "data.tracking_no": tn, "data.trackingNumber": tn } },
-    );
-    mirrored++;
+    mirrorOps.push({
+      updateOne: {
+        filter: { _id: d._id },
+        update: { $set: { "data.tracking_no": tn, "data.trackingNumber": tn } },
+      },
+    });
   }
+  const mirrored = await bulkWriteChunks(col, mirrorOps);
   console.log(`[Mongo] mirrored top→data: ${mirrored}`);
 
   const docs = await col
     .find({ tracking_no: { $exists: true, $nin: [null, ""] } })
     .project({ orderSn: 1, tracking_no: 1, "data.orderSn": 1 })
+    .limit(5000)
     .toArray();
   const map = new Map();
   for (const d of docs) {

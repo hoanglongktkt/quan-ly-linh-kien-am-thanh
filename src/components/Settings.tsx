@@ -1421,7 +1421,7 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
           </div>
           <div className="font-mono text-[11px] text-emerald-400 bg-black/50 p-4 rounded-xl leading-relaxed space-y-1 max-h-[300px] overflow-y-auto">
             {terminalLogs.map((log, index) => (
-              <div key={index} className={log.includes('THẤT BẠI') || log.includes('không hợp lệ') ? 'text-red-400 font-bold' : log.includes('HOÀN TẤT') || log.includes('Thành công') ? 'text-emerald-300 font-bold' : log.includes('KẾT NỐI') ? 'text-blue-300 font-bold' : 'text-emerald-500/80'}>
+              <div key={`${index}-${log.slice(0, 24)}`} className={log.includes('THẤT BẠI') || log.includes('không hợp lệ') ? 'text-red-400 font-bold' : log.includes('HOÀN TẤT') || log.includes('Thành công') ? 'text-emerald-300 font-bold' : log.includes('KẾT NỐI') ? 'text-blue-300 font-bold' : 'text-emerald-500/80'}>
                 {log}
               </div>
             ))}

@@ -4,15 +4,15 @@ import mongoose from "mongoose";
  * SSOT duy nhất cho collection `don_hoan_huy` — đơn hủy/hoàn đã quét.
  * Mọi đọc/ghi (scanController, mongoStore upsert/load/exists, scan-bg, scan-bulk)
  * phải dùng model này — không định nghĩa schema trùng ở nơi khác.
- * TTL 14 ngày (1.209.600 giây) trên scannedAt.
- * NOTE: TTL ĐÃ BỊ VÔ HIỆU HÓA — xóa thủ công qua API /api/orders/batch-delete.
+ * TTL 14 ngày ĐÃ TẮT — không expireAfterSeconds trên scannedAt
+ * (TTL ngắn sẽ xóa tab Đã nhận hủy/hoàn). Dọn bản ghi cũ qua
+ * purgeStaleDonHoanHuyFromStore (mặc định 180 ngày, có limit).
  */
 const DonHoanHuySchema = new mongoose.Schema(
   {
     orderSn: {
       type: String,
       required: true,
-      index: true,
       trim: true,
     },
     status: {

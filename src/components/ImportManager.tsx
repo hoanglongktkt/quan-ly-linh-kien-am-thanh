@@ -201,21 +201,31 @@ export default function ImportManager({
   } | null>(null);
   const [priceHistoryOpenId, setPriceHistoryOpenId] = useState<string | null>(null);
 
+  const importCapitalTotal = useMemo(
+    () => imports.reduce((sum, item) => sum + item.totalAmount, 0),
+    [imports],
+  );
+  const supplierDebtTotal = useMemo(
+    () => suppliers.reduce((sum, item) => sum + item.totalDebt, 0),
+    [suppliers],
+  );
   const goodsTotal = useMemo(
     () => selectedProducts.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0),
     [selectedProducts],
   );
   const totalCost = goodsTotal + importCost;
 
-  const filteredImports = importRows.filter((imp) => {
+  const filteredImports = useMemo(() => {
     const q = search.toLowerCase();
-    const matchesSearch =
-      String(imp.productTitle || '').toLowerCase().includes(q) ||
-      String(imp.productSku || '').toLowerCase().includes(q) ||
-      String(imp.supplierName || '').toLowerCase().includes(q);
-    const matchesSupplier = selectedSupplierFilter === 'all' || imp.supplierId === selectedSupplierFilter;
-    return matchesSearch && matchesSupplier;
-  });
+    return importRows.filter((imp) => {
+      const matchesSearch =
+        String(imp.productTitle || '').toLowerCase().includes(q) ||
+        String(imp.productSku || '').toLowerCase().includes(q) ||
+        String(imp.supplierName || '').toLowerCase().includes(q);
+      const matchesSupplier = selectedSupplierFilter === 'all' || imp.supplierId === selectedSupplierFilter;
+      return matchesSearch && matchesSupplier;
+    });
+  }, [importRows, search, selectedSupplierFilter]);
 
   // F3 = focus tìm SP, F4 = focus NCC
   useEffect(() => {
@@ -1059,7 +1069,7 @@ export default function ImportManager({
           <div>
             <span className="text-[11px] text-gray-400 uppercase font-bold tracking-wide">Tổng vốn nhập kho sỉ</span>
             <h3 className="text-xl font-extrabold text-gray-900 mt-0.5">
-              {imports.reduce((sum, item) => sum + item.totalAmount, 0).toLocaleString('vi-VN')} đ
+              {importCapitalTotal.toLocaleString('vi-VN')} đ
             </h3>
           </div>
         </div>
@@ -1071,7 +1081,7 @@ export default function ImportManager({
           <div>
             <span className="text-[11px] text-gray-400 uppercase font-bold tracking-wide">Nợ chưa trả nhà sỉ</span>
             <h3 className="text-xl font-extrabold text-rose-600 mt-0.5">
-              {suppliers.reduce((sum, item) => sum + item.totalDebt, 0).toLocaleString('vi-VN')} đ
+              {supplierDebtTotal.toLocaleString('vi-VN')} đ
             </h3>
           </div>
         </div>

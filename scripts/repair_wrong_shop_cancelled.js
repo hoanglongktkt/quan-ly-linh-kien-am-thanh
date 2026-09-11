@@ -230,6 +230,12 @@ async function main() {
   let repaired = 0;
   let skipped = 0;
   let errors = 0;
+  const pendingOps = [];
+  async function flushOps() {
+    if (!pendingOps.length) return;
+    await col.bulkWrite(pendingOps.splice(0, pendingOps.length), { ordered: false });
+    await delay(DELAY_MS);
+  }
 
   for (let i = 0; i < docs.length; i += 1) {
     if (Date.now() - startedAt >= DEADLINE_MS) {
@@ -330,11 +336,14 @@ async function main() {
       "data.shopee_not_found_reason": 1,
     };
     try {
-      await col.updateOne(
-        { $or: [{ orderSn }, { "data.orderSn": orderSn }, { _id: `shopee-${orderSn}` }] },
-        { $set, $unset },
-      );
+      pendingOps.push({
+        updateOne: {
+          filter: { $or: [{ orderSn }, { "data.orderSn": orderSn }, { _id: `shopee-${orderSn}` }] },
+          update: { $set, $unset },
+        },
+      });
       repaired += 1;
+      if (pendingOps.length >= 20) await flushOps();
     } catch (err) {
       errors += 1;
       console.error(`[repair] update fail order_sn=${orderSn}:`, err?.message || err);
@@ -342,6 +351,7 @@ async function main() {
     await delay(DELAY_MS);
   }
 
+  await flushOps();
   console.log(`[repair] DONE repaired=${repaired} skipped=${skipped} errors=${errors}`);
   await mongoose.disconnect();
 }

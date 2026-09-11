@@ -349,7 +349,21 @@ function missingTrackingFilter() {
   };
 }
 
-async function updateTrackingInDb(col, doc, trackingNo) {
+const pendingTrackingOps = [];
+
+async function flushTrackingOps(col) {
+  if (!pendingTrackingOps.length) return true;
+  const chunk = pendingTrackingOps.splice(0, pendingTrackingOps.length);
+  try {
+    await col.bulkWrite(chunk, { ordered: false });
+    return true;
+  } catch (err) {
+    console.warn("[Mongo] bulkWrite tracking fail:", err?.message || err);
+    return false;
+  }
+}
+
+function queueTrackingUpdate(doc, trackingNo) {
   const sn = orderSnOf(doc);
   const tn = String(trackingNo).trim();
   if (!sn || !tn) return false;
@@ -368,8 +382,8 @@ async function updateTrackingInDb(col, doc, trackingNo) {
     "data.tracking_no": tn,
     "data.trackingNumber": tn,
   };
-  const result = await col.updateOne(filter, { $set });
-  return result.modifiedCount > 0 || result.matchedCount > 0;
+  pendingTrackingOps.push({ updateOne: { filter, update: { $set } } });
+  return true;
 }
 
 /** Đồng bộ mã vào data/orders.json (API/UI đọc file này). */
@@ -591,11 +605,15 @@ async function main() {
           updated++;
           console.log(`${prefix}... [DRY-RUN] Có mã: ${tn} (chưa ghi DB)`);
         } else {
-          const ok = await updateTrackingInDb(col, doc, tn);
+          const ok = queueTrackingUpdate(doc, tn);
           if (ok) {
             updateTrackingInOrdersJson(sn, tn);
             updated++;
             console.log(`${prefix}... Thành công! → ${tn}`);
+            if (pendingTrackingOps.length >= 25) {
+              const flushed = await flushTrackingOps(col);
+              if (!flushed) failed++;
+            }
           } else {
             failed++;
             console.log(`${prefix}... Thất bại: UPDATE DB không khớp document`);
@@ -609,6 +627,11 @@ async function main() {
 
     // BẮT BUỘC delay 500ms giữa mỗi lần gọi API
     if (i < total - 1) await delay(DELAY_MS);
+  }
+
+  if (pendingTrackingOps.length) {
+    const flushed = await flushTrackingOps(col);
+    if (!flushed) failed++;
   }
 
   console.log("\n========== TỔNG KẾT ==========");

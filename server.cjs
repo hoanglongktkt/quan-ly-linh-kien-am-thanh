@@ -48037,7 +48037,6 @@ var init_DonHoanHuy = __esm({
         orderSn: {
           type: String,
           required: true,
-          index: true,
           trim: true
         },
         status: {
@@ -77477,7 +77476,6 @@ OrderSchema.index({ last_shopee_update_at: -1 });
 OrderSchema.index({ shopId: 1, create_time: -1 }, { name: "shopId_1_create_time_-1" });
 OrderSchema.index({ shopId: 1, last_shopee_update_at: -1 }, { name: "shopId_1_last_shopee_update_at_-1" });
 OrderSchema.index({ orderSn: 1, shopId: 1 });
-OrderSchema.index({ packageNumber: 1 });
 OrderSchema.index({ "data.packageNumber": 1 });
 OrderSchema.index({ "data.package_number": 1 });
 OrderSchema.index({ "data.return_tracking_no": 1 });
@@ -83495,10 +83493,10 @@ function donHoanHuyDocToOrder(doc) {
     shopee_cancel_return_kind: local === "RETURN_RECEIVED" ? "refund_return" : base.shopee_cancel_return_kind || "cancelled"
   };
 }
-async function loadDonHoanHuyAsOrders(limit = 2e3) {
+async function loadDonHoanHuyAsOrders(limit = 500) {
   if (!isMongoReady()) return [];
   requireMongo();
-  const safeLimit = Math.max(1, Math.min(5e3, Math.floor(limit) || 2e3));
+  const safeLimit = Math.max(1, Math.min(5e3, Math.floor(limit) || 500));
   const docs = await DonHoanHuyModel.find({}).sort({ scannedAt: -1 }).limit(safeLimit).maxTimeMS(5e3).lean();
   return (docs || []).map(donHoanHuyDocToOrder).filter((o) => {
     const sn = String(o?.orderSn || "").trim();
@@ -85000,7 +84998,7 @@ async function listDonHoanHuy(req, res) {
       });
     }
     const limitRaw = Number(req.query.limit);
-    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(Math.floor(limitRaw), 5e3) : 2e3;
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(Math.floor(limitRaw), 5e3) : 500;
     let data = [];
     try {
       data = await loadDonHoanHuyAsOrders(limit);

@@ -310,8 +310,24 @@ export default function Financials({ expenses, onAddExpense, onDeleteExpense, se
     [timeSeries]
   );
 
-  const totalExpenses = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
-  const allTimeTotal = expenses.reduce((sum, e) => sum + e.amount, 0);
+  const totalExpenses = useMemo(
+    () => filteredExpenses.reduce((sum, e) => sum + e.amount, 0),
+    [filteredExpenses]
+  );
+  const allTimeTotal = useMemo(
+    () => expenses.reduce((sum, e) => sum + e.amount, 0),
+    [expenses]
+  );
+
+  const categoryAmounts = useMemo(() => {
+    const map = new Map<string, number>();
+    const limit = Math.min(filteredExpenses.length, 500);
+    for (let i = 0; i < limit; i++) {
+      const cat = filteredExpenses[i].category;
+      map.set(cat, (map.get(cat) || 0) + filteredExpenses[i].amount);
+    }
+    return map;
+  }, [filteredExpenses]);
 
   const chartGroups = useMemo(() => {
     const known = new Map(expenseGroups.map((g) => [g.id, g]));
@@ -594,9 +610,7 @@ export default function Financials({ expenses, onAddExpense, onDeleteExpense, se
           <div className="space-y-3 pt-1 border-t border-gray-100">
             <h4 className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Theo nhóm chi phí</h4>
             {chartGroups.map((group) => {
-              const catAmount = filteredExpenses
-                .filter((e) => e.category === group.id)
-                .reduce((sum, e) => sum + e.amount, 0);
+              const catAmount = categoryAmounts.get(group.id) || 0;
               const percent = totalExpenses > 0 ? (catAmount / totalExpenses) * 100 : 0;
               if (catAmount === 0) return null;
 

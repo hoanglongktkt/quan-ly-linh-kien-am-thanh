@@ -308,8 +308,9 @@ OrderSchema.index({ shopId: 1, create_time: -1 }, { name: "shopId_1_create_time_
 OrderSchema.index({ shopId: 1, last_shopee_update_at: -1 }, { name: "shopId_1_last_shopee_update_at_-1" });
 // Giữ compound index cho các truy vấn theo shop trong luồng reconciliation.
 OrderSchema.index({ orderSn: 1, shopId: 1 });
-// Lookup / quét theo package_number (OFG...).
-OrderSchema.index({ packageNumber: 1 });
+// packageNumber: index đơn đã khai trên field (index: true) — KHÔNG tạo thêm
+// OrderSchema.index({ packageNumber: 1 }) trùng packageNumber_1.
+// Index chồng prefix (shopId / tracking) KHÔNG drop trên Atlas nếu chưa explain().
 OrderSchema.index({ "data.packageNumber": 1 });
 OrderSchema.index({ "data.package_number": 1 });
 // Quét kiện hoàn theo return_tracking_no (barcode chiều về).
@@ -4693,9 +4694,11 @@ export async function deleteClosedOrdersByRetention(opts?: {
     if (id) toDeleteKeys.push(id);
   }
 
+  const dhhPurge = await purgeStaleDonHoanHuyFromStore({ dryRun, limit: 200 });
+
   if (dryRun || toDeleteKeys.length === 0) {
     console.log(
-      `[MongoDB] retention dryRun=${dryRun} scanned=${docs.length} cancelReturn=${cancelReturnMatched} closed=${closedMatched} wouldDelete=${sns.length}`,
+      `[MongoDB] retention dryRun=${dryRun} scanned=${docs.length} cancelReturn=${cancelReturnMatched} closed=${closedMatched} wouldDelete=${sns.length} dhhPurged=${dhhPurge.deleted} dhhMatched=${dhhPurge.matched}`,
     );
     return {
       deleted: 0,
@@ -4709,7 +4712,7 @@ export async function deleteClosedOrdersByRetention(opts?: {
 
   const deleted = await deleteOrdersFromStore(toDeleteKeys);
   console.log(
-    `[MongoDB] retention deleted=${deleted} cancelReturn=${cancelReturnMatched} closed=${closedMatched} scanned=${docs.length}`,
+    `[MongoDB] retention deleted=${deleted} cancelReturn=${cancelReturnMatched} closed=${closedMatched} scanned=${docs.length} dhhPurged=${dhhPurge.deleted}`,
   );
   return {
     deleted,
@@ -8574,11 +8577,50 @@ function donHoanHuyDocToOrder(doc: any): any {
   };
 }
 
-/** Đọc toàn bộ tab Đã nhận hủy/hoàn từ collection don_hoan_huy. */
-export async function loadDonHoanHuyAsOrders(limit = 2000): Promise<any[]> {
+/**
+ * Dọn don_hoan_huy cũ — KHÔNG bật lại TTL 14 ngày.
+ * Mặc định 180 ngày; DON_HOAN_HUY_RETENTION_DAYS=0 để tắt.
+ * Mỗi lần tối đa `limit` bản ghi (deleteMany theo _id).
+ */
+export async function purgeStaleDonHoanHuyFromStore(opts?: {
+  olderThanDays?: number;
+  limit?: number;
+  dryRun?: boolean;
+}): Promise<{ deleted: number; matched: number; skipped?: boolean; dryRun: boolean }> {
+  const dryRun = Boolean(opts?.dryRun);
+  const envDays = Number(process.env.DON_HOAN_HUY_RETENTION_DAYS);
+  const days = Math.floor(
+    opts?.olderThanDays ?? (Number.isFinite(envDays) ? envDays : 180),
+  );
+  if (days <= 0 || !isMongoReady()) {
+    return { deleted: 0, matched: 0, skipped: true, dryRun };
+  }
+  requireMongo();
+  const limit = Math.min(500, Math.max(1, Math.floor(opts?.limit ?? 200)));
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const docs = await DonHoanHuyModel.find({ scannedAt: { $lt: cutoff } })
+    .select({ _id: 1 })
+    .sort({ scannedAt: 1 })
+    .limit(limit)
+    .maxTimeMS(5000)
+    .lean();
+  const ids = (docs || []).map((d: any) => d?._id).filter(Boolean);
+  if (ids.length === 0) {
+    return { deleted: 0, matched: 0, dryRun };
+  }
+  if (dryRun) {
+    return { deleted: 0, matched: ids.length, dryRun: true };
+  }
+  const res = await DonHoanHuyModel.deleteMany({ _id: { $in: ids } }).maxTimeMS(8000);
+  await new Promise((r) => setTimeout(r, 200));
+  return { deleted: res.deletedCount || 0, matched: ids.length, dryRun: false };
+}
+
+/** Đọc tab Đã nhận hủy/hoàn — luôn sort + limit (không find({}) trần). */
+export async function loadDonHoanHuyAsOrders(limit = 500): Promise<any[]> {
   if (!isMongoReady()) return [];
   requireMongo();
-  const safeLimit = Math.max(1, Math.min(5000, Math.floor(limit) || 2000));
+  const safeLimit = Math.max(1, Math.min(5000, Math.floor(limit) || 500));
   const docs = await DonHoanHuyModel.find({})
     .sort({ scannedAt: -1 })
     .limit(safeLimit)

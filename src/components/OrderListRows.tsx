@@ -637,8 +637,14 @@ function OrderItemsCell({
     <div className="space-y-2">
       {(order.items || []).map((item, idx) => {
         const itemTitle = item.productTitle || (item as { name?: string }).name || 'Sản phẩm';
+        const itemKey = String(
+          (item as { productId?: string }).productId ||
+            (item as { item_id?: string }).item_id ||
+            (item as { sku?: string }).sku ||
+            idx,
+        );
         return (
-          <div key={idx} className="flex items-start gap-2">
+          <div key={`${itemKey}-${idx}`} className="flex items-start gap-2">
             {item.productImage ? (
               <img
                 src={item.productImage}

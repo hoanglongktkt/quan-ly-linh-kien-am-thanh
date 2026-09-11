@@ -118,6 +118,7 @@ async function main() {
   }
 
   console.log("=== HEAL 2 SHIPPING ORPHANS ===");
+  const pendingOps = [];
   for (const orderSn of SNS) {
     const json = await shopeeGet(
       "/api/v2/order/get_order_detail",
@@ -196,31 +197,28 @@ async function main() {
       if ($set[k] === undefined) delete $set[k];
     }
 
-    const result = await col.updateOne(
-      {
-        $or: [
-          { orderSn },
-          { "data.orderSn": orderSn },
-          { _id: `shopee-${orderSn}` },
-        ],
-      },
-      { $set },
-    );
-    console.log(
-      JSON.stringify(
-        {
-          orderSn,
-          shopee_raw: raw,
-          logistics,
-          localStatus,
-          matched: result.matchedCount,
-          modified: result.modifiedCount,
+    pendingOps.push({
+      updateOne: {
+        filter: {
+          $or: [
+            { orderSn },
+            { "data.orderSn": orderSn },
+            { _id: `shopee-${orderSn}` },
+          ],
         },
-        null,
-        2,
-      ),
-    );
+        update: { $set },
+      },
+    });
+    console.log(JSON.stringify({ orderSn, shopee_raw: raw, logistics, localStatus, queued: true }, null, 2));
     await sleep(500);
+  }
+
+  if (pendingOps.length) {
+    const result = await col.bulkWrite(pendingOps, { ordered: false });
+    console.log("[Mongo] bulkWrite", {
+      matched: result.matchedCount,
+      modified: result.modifiedCount,
+    });
   }
 
   // verify

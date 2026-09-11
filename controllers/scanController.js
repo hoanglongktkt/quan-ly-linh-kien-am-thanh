@@ -314,7 +314,7 @@ export async function listDonHoanHuy(req, res) {
     const limit =
       Number.isFinite(limitRaw) && limitRaw > 0
         ? Math.min(Math.floor(limitRaw), 5000)
-        : 2000;
+        : 500;
 
     let data = [];
     try {

@@ -619,7 +619,7 @@ function OrderDetailAccordionPanel({
         <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Sản phẩm khách đặt</h4>
         <div className="border border-gray-100 rounded-2xl overflow-hidden divide-y divide-gray-50 bg-white">
           {(order.items || []).map((item, index) => (
-            <div key={index} className="p-3 flex items-center justify-between text-xs gap-3">
+            <div key={`${item.productId || item.sku || 'item'}-${index}`} className="p-3 flex items-center justify-between text-xs gap-3">
               <div className="flex items-center gap-2.5 min-w-0">
                 {item.productImage ? (
                   <img
@@ -9500,7 +9500,7 @@ export default function OrderManager({
                         <div className="flex gap-1">
                           {[0, 1, 2].map((i) => (
                             <div
-                              key={i}
+                              key={`dot-${i}`}
                               className="w-2 h-2 rounded-full bg-blue-500 animate-bounce"
                               style={{ animationDelay: `${i * 0.15}s` }}
                             ></div>
@@ -9696,7 +9696,7 @@ export default function OrderManager({
                     <div className="h-10 bg-slate-150 flex items-center justify-center rounded font-mono font-bold text-xs tracking-widest text-slate-700 relative overflow-hidden border border-gray-200">
                       <div className="absolute inset-0 opacity-15 flex justify-between px-2">
                         {Array.from({ length: 30 }).map((_, i) => (
-                          <div key={i} className="bg-black" style={{ width: `${Math.floor(1 + Math.random() * 3)}px`, height: '100%' }}></div>
+                          <div key={`bar-${i}`} className="bg-black" style={{ width: `${1 + (i % 3)}px`, height: '100%' }}></div>
                         ))}
                       </div>
                       {getCarrierWaybillDisplay(order) || 'CHƯA_XÁC_ĐỊNH_VẬN_ĐƠN'}
@@ -9717,7 +9717,7 @@ export default function OrderManager({
                     <p className="font-bold text-black uppercase text-[9px]">Danh sách sản phẩm ({order.items.length} phân loại):</p>
                     <div className="divide-y divide-gray-100">
                       {(order.items || []).map((it, itemIdx) => (
-                        <div key={itemIdx} className="py-1 flex justify-between font-medium">
+                        <div key={`${it.productId || it.sku || 'it'}-${itemIdx}`} className="py-1 flex justify-between font-medium">
                           <span>{it.productTitle}</span>
                           <span className="font-extrabold text-blue-600">x{it.quantity}</span>
                         </div>
