@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Supplier } from '../types';
 import {
   Plus,
@@ -11,6 +11,8 @@ import {
   Scale,
   Coins,
   BarChart3,
+  Loader2,
+  RefreshCw,
 } from 'lucide-react';
 import {
   Bar,
@@ -23,6 +25,18 @@ import {
   YAxis,
 } from 'recharts';
 import type { TooltipProps } from 'recharts';
+import { parseJsonResponse } from '../utils/apiClient';
+import {
+  SUPPLIER_REPORT_TIME_RANGE_OPTIONS,
+  SupplierReportTimeRange,
+  SupplierReportRow,
+} from './SupplierImportReportModal';
+
+interface SupplierChartDatum {
+  name: string;
+  totalImported: number;
+  debt: number;
+}
 
 /** Cắt ngắn tên NCC dài trên trục X để không vỡ layout biểu đồ. */
 function truncateSupplierChartName(name: string, max = 12): string {
@@ -88,20 +102,52 @@ export default function SupplierManager({
   const totalPaid = supplierRows.reduce((sum, s) => sum + (Number(s.totalPaid) || 0), 0);
   const totalDebt = supplierRows.reduce((sum, s) => sum + (Number(s.totalDebt) || 0), 0);
 
-  // Top 10 NCC có giao dịch lớn nhất (theo Tổng hàng nhập) — chỉ phục vụ trực quan hóa biểu đồ,
-  // không ảnh hưởng tới bảng danh sách / dữ liệu gốc bên dưới.
-  const chartData = useMemo(
-    () =>
-      [...supplierRows]
-        .sort((a, b) => (Number(b.totalOrderValue) || 0) - (Number(a.totalOrderValue) || 0))
-        .slice(0, 10)
-        .map((s) => ({
-          name: s.name || s.supplierCode || '—',
-          totalImported: Math.max(0, Number(s.totalOrderValue) || 0),
-          debt: Math.max(0, Number(s.totalDebt) || 0),
-        })),
-    [supplierRows],
-  );
+  // --- Biểu đồ Top NCC theo khoảng thời gian — độc lập với bảng danh sách bên dưới. ---
+  // Bảng danh sách vẫn giữ nguyên dữ liệu TỔNG (toàn thời gian) từ `suppliers` prop.
+  const [chartTimeRange, setChartTimeRange] = useState<SupplierReportTimeRange>('ytd');
+  const [chartData, setChartData] = useState<SupplierChartDatum[]>([]);
+  const [chartLoading, setChartLoading] = useState(false);
+  const [chartError, setChartError] = useState<string | null>(null);
+
+  const fetchChartData = useCallback(async (range: SupplierReportTimeRange) => {
+    setChartLoading(true);
+    setChartError(null);
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await fetch(`/api/imports/supplier-report?timeRange=${encodeURIComponent(range)}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      const data = await parseJsonResponse<{ success?: boolean; error?: string; report?: SupplierReportRow[] }>(res);
+      if (data?.success === false) {
+        throw new Error(data.error || 'Không tải được dữ liệu biểu đồ.');
+      }
+      const report = Array.isArray(data.report) ? data.report : [];
+      const mapped: SupplierChartDatum[] = report
+        .map((r) => {
+          const totalImported = Math.max(0, Number(r.totalAmount) || 0);
+          const totalPaidAmount = Math.max(0, Number(r.totalPaidAmount) || 0);
+          return {
+            name: r.supplierName || '—',
+            totalImported,
+            debt: Math.max(0, totalImported - totalPaidAmount),
+          };
+        })
+        .sort((a, b) => b.totalImported - a.totalImported)
+        .slice(0, 10);
+      setChartData(mapped);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Không tải được dữ liệu biểu đồ.';
+      setChartError(message);
+      setChartData([]);
+    } finally {
+      setChartLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchChartData(chartTimeRange);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chartTimeRange]);
 
   const filteredSuppliers = supplierRows.filter((sup) => {
     const q = search.toLowerCase();
@@ -265,11 +311,50 @@ export default function SupplierManager({
         </div>
       </div>
 
-      {chartData.length > 0 ? (
-        <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-xs">
-          <h3 className="text-sm font-extrabold text-gray-900 flex items-center gap-2 mb-3">
-            <BarChart3 className="w-4 h-4 text-blue-600" /> Top {chartData.length} Nhà cung cấp giao dịch lớn nhất
+      <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+          <h3 className="text-sm font-extrabold text-gray-900 flex items-center gap-2">
+            <BarChart3 className="w-4 h-4 text-blue-600" /> Top Nhà cung cấp giao dịch lớn nhất
           </h3>
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-bold uppercase tracking-wider text-gray-400 whitespace-nowrap">
+              Khoảng thời gian
+            </label>
+            <select
+              value={chartTimeRange}
+              onChange={(e) => setChartTimeRange(e.target.value as SupplierReportTimeRange)}
+              className="pl-3 pr-8 py-2 bg-gray-50/50 hover:bg-gray-50 text-sm rounded-xl border border-gray-100 outline-none cursor-pointer appearance-none min-w-[190px] font-semibold text-gray-700"
+            >
+              {SUPPLIER_REPORT_TIME_RANGE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => void fetchChartData(chartTimeRange)}
+              disabled={chartLoading}
+              title="Tải lại"
+              className="p-2 rounded-xl border border-gray-100 bg-gray-50/50 text-gray-500 hover:text-blue-600 hover:border-blue-200 disabled:opacity-50"
+            >
+              {chartLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            </button>
+          </div>
+        </div>
+
+        {chartError ? (
+          <div className="text-center text-sm text-rose-600 font-semibold py-10">{chartError}</div>
+        ) : chartLoading ? (
+          <div className="flex flex-col items-center justify-center py-16 text-gray-400 gap-2">
+            <Loader2 className="w-6 h-6 animate-spin" />
+            <span className="text-xs">Đang tải biểu đồ...</span>
+          </div>
+        ) : chartData.length === 0 ? (
+          <div className="text-center text-sm text-gray-400 py-16">
+            Không có dữ liệu trong khoảng thời gian này.
+          </div>
+        ) : (
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={chartData} margin={{ top: 10, right: 16, left: 0, bottom: 24 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
@@ -293,12 +378,8 @@ export default function SupplierManager({
               <Bar dataKey="debt" name="Công nợ còn lại" fill="#ef4444" radius={[6, 6, 0, 0]} maxBarSize={40} />
             </BarChart>
           </ResponsiveContainer>
-        </div>
-      ) : (
-        <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-xs text-center text-sm text-gray-400">
-          Chưa có dữ liệu nhà cung cấp để hiển thị biểu đồ.
-        </div>
-      )}
+        )}
+      </div>
 
       <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex-1 flex flex-col sm:flex-row gap-3">

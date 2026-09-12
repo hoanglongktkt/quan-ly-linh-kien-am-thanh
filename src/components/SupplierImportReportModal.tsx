@@ -21,7 +21,7 @@ export type SupplierReportTimeRange =
   | 'thisMonth'
   | 'lastMonth';
 
-const TIME_RANGE_OPTIONS: { value: SupplierReportTimeRange; label: string }[] = [
+export const SUPPLIER_REPORT_TIME_RANGE_OPTIONS: { value: SupplierReportTimeRange; label: string }[] = [
   { value: 'ytd', label: 'Đầu năm đến nay' },
   { value: 'today', label: 'Hôm nay' },
   { value: 'yesterday', label: 'Hôm qua' },
@@ -31,7 +31,7 @@ const TIME_RANGE_OPTIONS: { value: SupplierReportTimeRange; label: string }[] = 
   { value: 'lastMonth', label: 'Tháng trước' },
 ];
 
-interface SupplierReportRow {
+export interface SupplierReportRow {
   supplierId: string | null;
   supplierName: string;
   totalOrders: number;
@@ -174,7 +174,7 @@ export default function SupplierImportReportModal({
               onChange={(e) => setTimeRange(e.target.value as SupplierReportTimeRange)}
               className="pl-3 pr-8 py-2 bg-white text-sm rounded-xl border border-gray-200 outline-none cursor-pointer appearance-none min-w-[200px] font-semibold text-gray-700"
             >
-              {TIME_RANGE_OPTIONS.map((opt) => (
+              {SUPPLIER_REPORT_TIME_RANGE_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>
                   {opt.label}
                 </option>
