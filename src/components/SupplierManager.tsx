@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Supplier } from '../types';
 import {
   Plus,
@@ -10,7 +10,48 @@ import {
   UserPlus,
   Scale,
   Coins,
+  BarChart3,
 } from 'lucide-react';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import type { TooltipProps } from 'recharts';
+
+/** Cắt ngắn tên NCC dài trên trục X để không vỡ layout biểu đồ. */
+function truncateSupplierChartName(name: string, max = 12): string {
+  const s = String(name || '');
+  return s.length > max ? `${s.slice(0, max)}…` : s;
+}
+
+/** Rút gọn số hiển thị trên trục Y (VD: 22.900.000 → 22,9tr). */
+function formatShortVndAxis(value: number): string {
+  const n = Number(value) || 0;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })}tr`;
+  if (n >= 1_000) return `${(n / 1_000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })}k`;
+  return n.toLocaleString('vi-VN');
+}
+
+/** Tooltip tùy chỉnh — format tiền theo chuẩn VNĐ (có dấu chấm ngăn nghìn). */
+function SupplierOverviewTooltip({ active, payload, label }: TooltipProps<number, string>) {
+  if (!active || !payload || payload.length === 0) return null;
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2 text-xs max-w-[220px]">
+      <p className="font-bold text-gray-800 mb-1.5 line-clamp-2">{label}</p>
+      {payload.map((entry) => (
+        <p key={String(entry.dataKey)} className="font-mono font-bold" style={{ color: entry.color }}>
+          {entry.name}: {(Number(entry.value) || 0).toLocaleString('vi-VN')} đ
+        </p>
+      ))}
+    </div>
+  );
+}
 
 interface SupplierManagerProps {
   suppliers: Supplier[];
@@ -46,6 +87,21 @@ export default function SupplierManager({
   const totalPurchases = supplierRows.reduce((sum, s) => sum + (Number(s.totalOrderValue) || 0), 0);
   const totalPaid = supplierRows.reduce((sum, s) => sum + (Number(s.totalPaid) || 0), 0);
   const totalDebt = supplierRows.reduce((sum, s) => sum + (Number(s.totalDebt) || 0), 0);
+
+  // Top 10 NCC có giao dịch lớn nhất (theo Tổng hàng nhập) — chỉ phục vụ trực quan hóa biểu đồ,
+  // không ảnh hưởng tới bảng danh sách / dữ liệu gốc bên dưới.
+  const chartData = useMemo(
+    () =>
+      [...supplierRows]
+        .sort((a, b) => (Number(b.totalOrderValue) || 0) - (Number(a.totalOrderValue) || 0))
+        .slice(0, 10)
+        .map((s) => ({
+          name: s.name || s.supplierCode || '—',
+          totalImported: Math.max(0, Number(s.totalOrderValue) || 0),
+          totalPaid: Math.max(0, Number(s.totalPaid) || 0),
+        })),
+    [supplierRows],
+  );
 
   const filteredSuppliers = supplierRows.filter((sup) => {
     const q = search.toLowerCase();
@@ -208,6 +264,41 @@ export default function SupplierManager({
           </div>
         </div>
       </div>
+
+      {chartData.length > 0 ? (
+        <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-xs">
+          <h3 className="text-sm font-extrabold text-gray-900 flex items-center gap-2 mb-3">
+            <BarChart3 className="w-4 h-4 text-blue-600" /> Top {chartData.length} Nhà cung cấp giao dịch lớn nhất
+          </h3>
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={chartData} margin={{ top: 10, right: 16, left: 0, bottom: 24 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+              <XAxis
+                dataKey="name"
+                tickFormatter={(value: string) => truncateSupplierChartName(value, 10)}
+                tick={{ fontSize: 11, fill: '#64748b' }}
+                interval={0}
+                angle={-20}
+                textAnchor="end"
+                height={50}
+              />
+              <YAxis
+                tickFormatter={(value: number) => formatShortVndAxis(value)}
+                tick={{ fontSize: 11, fill: '#94a3b8' }}
+                width={56}
+              />
+              <Tooltip content={<SupplierOverviewTooltip />} cursor={{ fill: '#eff6ff' }} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Bar dataKey="totalImported" name="Tổng hàng nhập" fill="#1d4ed8" radius={[6, 6, 0, 0]} maxBarSize={40} />
+              <Bar dataKey="totalPaid" name="Đã thanh toán" fill="#16a34a" radius={[6, 6, 0, 0]} maxBarSize={40} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      ) : (
+        <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-xs text-center text-sm text-gray-400">
+          Chưa có dữ liệu nhà cung cấp để hiển thị biểu đồ.
+        </div>
+      )}
 
       <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex-1 flex flex-col sm:flex-row gap-3">
