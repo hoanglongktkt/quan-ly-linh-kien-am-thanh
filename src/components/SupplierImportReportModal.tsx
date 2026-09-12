@@ -1,5 +1,15 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { BarChart3, Loader2, RefreshCw, X } from 'lucide-react';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import type { TooltipProps } from 'recharts';
 import { parseJsonResponse } from '../utils/apiClient';
 
 export type SupplierReportTimeRange =
@@ -47,6 +57,33 @@ interface SupplierImportReportModalProps {
 
 function formatVnd(amount: number): string {
   return `${Math.round(amount || 0).toLocaleString('vi-VN')} đ`;
+}
+
+/** Cắt ngắn tên NCC dài trên trục X để không vỡ layout biểu đồ. */
+function truncateSupplierName(name: string, max = 12): string {
+  const s = String(name || '');
+  return s.length > max ? `${s.slice(0, max)}…` : s;
+}
+
+/** Rút gọn số hiển thị trên trục Y (VD: 22.900.000 → 22,9tr). */
+function formatShortVnd(value: number): string {
+  const n = Number(value) || 0;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })}tr`;
+  if (n >= 1_000) return `${(n / 1_000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })}k`;
+  return n.toLocaleString('vi-VN');
+}
+
+/** Tooltip tùy chỉnh — format Tổng tiền đã thanh toán theo chuẩn VNĐ (VD: 22.974.900 đ). */
+function SupplierChartTooltip({ active, payload }: TooltipProps<number, string>) {
+  if (!active || !payload || payload.length === 0) return null;
+  const item = payload[0];
+  const row = (item?.payload || {}) as SupplierReportRow;
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2 text-xs max-w-[220px]">
+      <p className="font-bold text-gray-800 mb-1 line-clamp-2">{row.supplierName}</p>
+      <p className="font-mono font-extrabold text-blue-600">{formatVnd(Number(item?.value) || 0)}</p>
+    </div>
+  );
 }
 
 /**
@@ -170,10 +207,36 @@ export default function SupplierImportReportModal({
             </div>
           ) : rows.length === 0 ? (
             <div className="text-center text-sm text-gray-400 py-16">
-              Không có dữ liệu nhập hàng trong khoảng thời gian này.
+              Không có dữ liệu trong khoảng thời gian này.
             </div>
           ) : (
-            <div className="border border-gray-200 rounded-xl overflow-hidden">
+            <>
+              {/* Biểu đồ cột — trực quan hóa Tổng tiền đã thanh toán theo NCC */}
+              <div className="mb-5 bg-white border border-gray-100 rounded-xl p-3">
+                <ResponsiveContainer width="100%" height={260}>
+                  <BarChart data={rows} margin={{ top: 10, right: 16, left: 0, bottom: 24 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis
+                      dataKey="supplierName"
+                      tickFormatter={(value: string) => truncateSupplierName(value, 10)}
+                      tick={{ fontSize: 11, fill: '#64748b' }}
+                      interval={0}
+                      angle={-20}
+                      textAnchor="end"
+                      height={50}
+                    />
+                    <YAxis
+                      tickFormatter={(value: number) => formatShortVnd(value)}
+                      tick={{ fontSize: 11, fill: '#94a3b8' }}
+                      width={56}
+                    />
+                    <Tooltip content={<SupplierChartTooltip />} cursor={{ fill: '#eff6ff' }} />
+                    <Bar dataKey="totalPaidAmount" name="Tổng tiền đã thanh toán" fill="#3b82f6" radius={[6, 6, 0, 0]} maxBarSize={48} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="border border-gray-200 rounded-xl overflow-hidden">
               <table className="w-full text-left border-collapse min-w-[640px]">
                 <thead>
                   <tr className="bg-slate-50 border-b border-gray-200 text-[11px] font-bold text-gray-500 uppercase tracking-wider">
@@ -222,7 +285,8 @@ export default function SupplierImportReportModal({
                   </tr>
                 </tfoot>
               </table>
-            </div>
+              </div>
+            </>
           )}
         </div>
       </div>
