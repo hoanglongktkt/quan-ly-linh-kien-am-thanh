@@ -75206,6 +75206,66 @@ function scheduleHandedOverStatusReconcile(deps22 = {}) {
     `[CRON] HandedOver setInterval ON \u2014 every ${Math.round(intervalMs / 1e3)}s + boot kick 20s.`
   );
 }
+var keepAlivePingScheduled = false;
+var keepAlivePingInterval = null;
+function scheduleKeepAlivePing(deps22 = {}) {
+  if (keepAlivePingScheduled) {
+    console.log("[CRON] Keep-alive self-ping already scheduled (idempotent).");
+    return;
+  }
+  keepAlivePingScheduled = true;
+  const isCpanelRuntime = Boolean(
+    String(
+      process.env.PASSENGER_APP_ROOT || process.env.PASSENGER_APP_ENV || process.env.CPANEL_APP_NAME || process.env.CPANEL_RUNTIME || ""
+    ).trim()
+  );
+  const disabledFlag = String(process.env.KEEP_ALIVE_PING_CRON ?? "1").trim().toLowerCase();
+  const disabled = !isCpanelRuntime || disabledFlag === "0" || disabledFlag === "off" || disabledFlag === "false";
+  if (disabled) {
+    console.log(
+      `[CRON] Keep-alive self-ping OFF (isCpanelRuntime=${isCpanelRuntime}, KEEP_ALIVE_PING_CRON=${process.env.KEEP_ALIVE_PING_CRON ?? "unset"}).`
+    );
+    return;
+  }
+  const baseUrl = String(deps22.appBaseUrl || process.env.APP_URL || process.env.API_BASE_URL || "").trim().replace(/\/$/, "");
+  if (!baseUrl) {
+    console.warn("[CRON] Keep-alive self-ping NOT started \u2014 thi\u1EBFu APP_URL/API_BASE_URL.");
+    return;
+  }
+  const url2 = `${baseUrl}/api/health`;
+  const intervalMs = Math.max(
+    6e4,
+    Math.min(10 * 6e4, Number(process.env.KEEP_ALIVE_PING_MS) || 4 * 6e4)
+  );
+  const ping = async (trigger) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8e3);
+    try {
+      const res = await fetch(url2, { signal: controller.signal });
+      console.log(`[CRON] Keep-alive ping (${trigger}) ${url2} -> ${res.status}`);
+    } catch (err) {
+      console.warn(`[CRON] Keep-alive ping (${trigger}) failed:`, err?.message || err);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  if (keepAlivePingInterval) {
+    try {
+      clearInterval(keepAlivePingInterval);
+    } catch {
+    }
+  }
+  keepAlivePingInterval = setInterval(() => {
+    void ping("interval");
+  }, intervalMs);
+  if (typeof keepAlivePingInterval.unref === "function") {
+    keepAlivePingInterval.unref();
+  }
+  setTimeout(() => {
+    void ping("boot");
+  }, 15e3);
+  console.log(`[CRON] Keep-alive self-ping ON \u2014 every ${Math.round(intervalMs / 1e3)}s -> ${url2}`);
+}
 var returnRequestsScheduled = false;
 var returnRequestsTask = null;
 function scheduleShopeeReturnRequestsSync(deps22 = {}) {
@@ -148544,6 +148604,7 @@ async function startServer() {
         `[Shopee Webhook] orders write ${String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "1").trim() === "0" ? "OFF (disabled)" : "ON"}`
       );
       scheduleLabelPdfCleanup();
+      scheduleKeepAlivePing({ appBaseUrl: APP_BASE_URL4 });
     };
     if (process.env.PORT) {
       app.listen(PORT, onReady);

@@ -252,6 +252,107 @@ export function stopHandedOverStatusReconcile() {
   console.log("[CRON] HandedOver status reconcile stopped.");
 }
 
+let keepAlivePingScheduled = false;
+let keepAlivePingInterval = null;
+
+/**
+ * Self-ping GET /api/health định kỳ — chống cPanel/CloudLinux Passenger coi app "idle"
+ * rồi spin-down qua đêm (khiến request đầu ngày phải cold-start rất lâu — đúng triệu
+ * chứng "để qua đêm phải load lại lâu, như ngủ đông").
+ * CHỈ bật khi chạy thật trên Passenger (biến PASSENGER_APP_ROOT/PASSENGER_APP_ENV tồn tại)
+ * — không tự ping khi dev local. Tắt: KEEP_ALIVE_PING_CRON=0.
+ * Vòng lặp CÓ điều kiện dừng rõ ràng: setInterval cố định + timeout abort 8s mỗi lần ping
+ * (không phải while/for vô hạn, không tăng tần suất khi lỗi).
+ *
+ * @param {object} [deps]
+ * @param {string} [deps.appBaseUrl]
+ */
+export function scheduleKeepAlivePing(deps = {}) {
+  if (keepAlivePingScheduled) {
+    console.log("[CRON] Keep-alive self-ping already scheduled (idempotent).");
+    return;
+  }
+  keepAlivePingScheduled = true;
+
+  const isCpanelRuntime = Boolean(
+    String(
+      process.env.PASSENGER_APP_ROOT ||
+        process.env.PASSENGER_APP_ENV ||
+        process.env.CPANEL_APP_NAME ||
+        process.env.CPANEL_RUNTIME ||
+        "",
+    ).trim(),
+  );
+  const disabledFlag = String(process.env.KEEP_ALIVE_PING_CRON ?? "1").trim().toLowerCase();
+  const disabled = !isCpanelRuntime || disabledFlag === "0" || disabledFlag === "off" || disabledFlag === "false";
+  if (disabled) {
+    console.log(
+      `[CRON] Keep-alive self-ping OFF (isCpanelRuntime=${isCpanelRuntime}, KEEP_ALIVE_PING_CRON=${process.env.KEEP_ALIVE_PING_CRON ?? "unset"}).`,
+    );
+    return;
+  }
+
+  const baseUrl = String(deps.appBaseUrl || process.env.APP_URL || process.env.API_BASE_URL || "")
+    .trim()
+    .replace(/\/$/, "");
+  if (!baseUrl) {
+    console.warn("[CRON] Keep-alive self-ping NOT started — thiếu APP_URL/API_BASE_URL.");
+    return;
+  }
+  const url = `${baseUrl}/api/health`;
+  // Giới hạn cứng 1-10 phút — không cho env var đẩy về quá nhỏ (spam) hoặc quá lớn (mất tác dụng).
+  const intervalMs = Math.max(
+    60_000,
+    Math.min(10 * 60_000, Number(process.env.KEEP_ALIVE_PING_MS) || 4 * 60_000),
+  );
+
+  const ping = async (trigger) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8_000);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      console.log(`[CRON] Keep-alive ping (${trigger}) ${url} -> ${res.status}`);
+    } catch (err) {
+      console.warn(`[CRON] Keep-alive ping (${trigger}) failed:`, err?.message || err);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  if (keepAlivePingInterval) {
+    try {
+      clearInterval(keepAlivePingInterval);
+    } catch {
+      /* ignore */
+    }
+  }
+  keepAlivePingInterval = setInterval(() => {
+    void ping("interval");
+  }, intervalMs);
+  if (typeof keepAlivePingInterval.unref === "function") {
+    keepAlivePingInterval.unref();
+  }
+  // Boot kick nhẹ — không cần chờ chu kỳ đầu để xác nhận cơ chế hoạt động trong log.
+  setTimeout(() => {
+    void ping("boot");
+  }, 15_000);
+
+  console.log(`[CRON] Keep-alive self-ping ON — every ${Math.round(intervalMs / 1000)}s -> ${url}`);
+}
+
+export function stopKeepAlivePing() {
+  if (keepAlivePingInterval) {
+    try {
+      clearInterval(keepAlivePingInterval);
+    } catch {
+      /* ignore */
+    }
+    keepAlivePingInterval = null;
+  }
+  keepAlivePingScheduled = false;
+  console.log("[CRON] Keep-alive self-ping stopped.");
+}
+
 let returnRequestsScheduled = false;
 let returnRequestsTask = null;
 

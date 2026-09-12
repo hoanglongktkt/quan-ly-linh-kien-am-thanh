@@ -4,7 +4,7 @@ import fs from "fs";
 import crypto from "crypto";
 import dotenv from "dotenv";
 import { PDFDocument } from "pdf-lib";
-import { scheduleAutoIncrementalOrdersSync, scheduleHandedOverStatusReconcile, scheduleShopeeReturnRequestsSync, scheduleReadyToShipBackfill, scheduleLabelPdfCleanup, scheduleGhnStatusSync } from "./cron/index.js";
+import { scheduleAutoIncrementalOrdersSync, scheduleHandedOverStatusReconcile, scheduleShopeeReturnRequestsSync, scheduleReadyToShipBackfill, scheduleLabelPdfCleanup, scheduleGhnStatusSync, scheduleKeepAlivePing } from "./cron/index.js";
 import {
   initOrderSyncService,
   registerLabelPdfDownloader,
@@ -26872,6 +26872,8 @@ async function startServer() {
       );
 
       scheduleLabelPdfCleanup();
+      // Self-ping /api/health — chống Passenger/CloudLinux spin-down app qua đêm (cold-start rất lâu).
+      scheduleKeepAlivePing({ appBaseUrl: APP_BASE_URL });
     };
 
     if (process.env.PORT) {
