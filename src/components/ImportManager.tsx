@@ -10,6 +10,7 @@ import ImportProductSearchSelect, {
 } from './ImportProductSearchSelect';
 import ImportSupplierSelect, { ImportSupplierSelectHandle } from './ImportSupplierSelect';
 import CurrencyInput from './CurrencyInput';
+import SupplierImportReportModal from './SupplierImportReportModal';
 import { buildShopeeSyncPayload } from '../utils/shopeeSyncPayload';
 import { parseJsonResponse } from '../utils/apiClient';
 import {
@@ -200,6 +201,7 @@ export default function ImportManager({
     loading: boolean;
   } | null>(null);
   const [priceHistoryOpenId, setPriceHistoryOpenId] = useState<string | null>(null);
+  const [supplierReportOpen, setSupplierReportOpen] = useState(false);
 
   const importCapitalTotal = useMemo(
     () => imports.reduce((sum, item) => sum + item.totalAmount, 0),
@@ -1088,12 +1090,20 @@ export default function ImportManager({
       </div>
 
       <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <button
-          onClick={handleOpenCreate}
-          className="w-full sm:w-auto min-h-11 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2 shadow-sm shrink-0"
-        >
-          <Plus className="w-4.5 h-4.5" /> Thêm Mới
-        </button>
+        <div className="flex flex-col sm:flex-row gap-2 shrink-0">
+          <button
+            onClick={handleOpenCreate}
+            className="w-full sm:w-auto min-h-11 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2 shadow-sm shrink-0"
+          >
+            <Plus className="w-4.5 h-4.5" /> Thêm Mới
+          </button>
+          <button
+            onClick={() => setSupplierReportOpen(true)}
+            className="w-full sm:w-auto min-h-11 px-5 py-2.5 bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2 shadow-sm shrink-0"
+          >
+            📊 Báo cáo Nhà cung cấp
+          </button>
+        </div>
 
         <div className="flex-1 flex flex-col sm:flex-row gap-3">
           <div className="relative flex-1">
@@ -1251,6 +1261,10 @@ export default function ImportManager({
       </div>
 
       {historyModalEl}
+      <SupplierImportReportModal
+        open={supplierReportOpen}
+        onClose={() => setSupplierReportOpen(false)}
+      />
     </div>
   );
 }

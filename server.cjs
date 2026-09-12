@@ -86301,10 +86301,118 @@ async function clearAllImports(_req, res) {
   console.log("[Imports] \u0110\xE3 x\xF3a s\u1EA1ch to\xE0n b\u1ED9 l\u1ECBch s\u1EED nh\u1EADp h\xE0ng.");
   return res.json({ success: true, cleared: true, imports: [] });
 }
+function getSupplierReportDateRange(timeRange) {
+  const now = /* @__PURE__ */ new Date();
+  const y = now.getFullYear();
+  const m2 = now.getMonth();
+  const end = new Date(now);
+  end.setHours(23, 59, 59, 999);
+  switch (String(timeRange || "ytd").trim()) {
+    case "today": {
+      const start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      return { start, end };
+    }
+    case "yesterday": {
+      const start = new Date(now);
+      start.setDate(start.getDate() - 1);
+      start.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(start);
+      dayEnd.setHours(23, 59, 59, 999);
+      return { start, end: dayEnd };
+    }
+    case "7days":
+    case "last_7_days": {
+      const start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      start.setDate(start.getDate() - 6);
+      return { start, end };
+    }
+    case "30days":
+    case "last_30_days": {
+      const start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      start.setDate(start.getDate() - 29);
+      return { start, end };
+    }
+    case "thisMonth":
+    case "this_month":
+      return { start: new Date(y, m2, 1), end };
+    case "lastMonth":
+    case "last_month":
+      return {
+        start: new Date(y, m2 - 1, 1),
+        end: new Date(y, m2, 0, 23, 59, 59, 999)
+      };
+    case "ytd":
+    default:
+      return { start: new Date(y, 0, 1), end };
+  }
+}
+function parseImportRecordDate(imp) {
+  const raw = String(imp?.date || imp?.createdAt || "").trim();
+  if (!raw) return /* @__PURE__ */ new Date(NaN);
+  const datePart = raw.split("T")[0];
+  const parts = datePart.split("-").map(Number);
+  const yy = parts[0];
+  const mm = parts[1];
+  const dd = parts[2];
+  if (!yy || !mm || !dd) return /* @__PURE__ */ new Date(NaN);
+  return new Date(yy, mm - 1, dd);
+}
+async function getSupplierReport(req, res) {
+  try {
+    const timeRange = String(req.query?.timeRange || "ytd").trim() || "ytd";
+    const { start, end } = getSupplierReportDateRange(timeRange);
+    const imports = loadImports();
+    const inRange = imports.filter((imp) => {
+      const d = parseImportRecordDate(imp);
+      if (Number.isNaN(d.getTime())) return false;
+      return d >= start && d <= end;
+    });
+    const groups = /* @__PURE__ */ new Map();
+    for (const imp of inRange) {
+      const supplierId = String(imp?.supplierId || "").trim();
+      const supplierName = String(imp?.supplierName || "").trim() || "Kh\xF4ng x\xE1c \u0111\u1ECBnh";
+      const key = supplierId || `name:${supplierName}`;
+      if (!groups.has(key)) {
+        groups.set(key, {
+          supplierId: supplierId || null,
+          supplierName,
+          totalOrders: 0,
+          totalQuantity: 0,
+          totalPaidAmount: 0,
+          totalAmount: 0
+        });
+      }
+      const g = groups.get(key);
+      g.totalOrders += 1;
+      g.totalQuantity += Math.max(0, Math.round(Number(imp?.quantity) || 0));
+      g.totalPaidAmount += Math.max(0, Math.round(Number(imp?.paidAmount) || 0));
+      g.totalAmount += Math.max(0, Math.round(Number(imp?.totalAmount) || 0));
+    }
+    const report = Array.from(groups.values()).sort(
+      (a, b) => b.totalPaidAmount - a.totalPaidAmount
+    );
+    return res.json({
+      success: true,
+      timeRange,
+      startDate: start.toISOString().split("T")[0],
+      endDate: end.toISOString().split("T")[0],
+      totalSuppliers: report.length,
+      report
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[Imports] GET /api/imports/supplier-report failed:", err);
+    return res.status(500).json({ success: false, error: message, report: [] });
+  }
+}
 
 // routes/importsRoutes.js
 var router8 = (0, import_express9.Router)();
 router8.get("/", listImports);
+router8.get("/supplier-report", getSupplierReport);
 router8.get("/history/:productId", getImportHistory);
 router8.get("/product-context/:productId", getImportProductContext);
 router8.post("/", createImport);

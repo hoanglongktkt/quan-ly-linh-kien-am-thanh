@@ -220,3 +220,130 @@ export async function clearAllImports(_req, res) {
   console.log("[Imports] Đã xóa sạch toàn bộ lịch sử nhập hàng.");
   return res.json({ success: true, cleared: true, imports: [] });
 }
+
+/**
+ * Tính khoảng thời gian [start, end] theo timeRange cho báo cáo nhập hàng theo NCC.
+ * Mặc định: 'ytd' (đầu năm đến nay) — khớp yêu cầu báo cáo.
+ */
+function getSupplierReportDateRange(timeRange) {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const end = new Date(now);
+  end.setHours(23, 59, 59, 999);
+
+  switch (String(timeRange || "ytd").trim()) {
+    case "today": {
+      const start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      return { start, end };
+    }
+    case "yesterday": {
+      const start = new Date(now);
+      start.setDate(start.getDate() - 1);
+      start.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(start);
+      dayEnd.setHours(23, 59, 59, 999);
+      return { start, end: dayEnd };
+    }
+    case "7days":
+    case "last_7_days": {
+      const start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      start.setDate(start.getDate() - 6);
+      return { start, end };
+    }
+    case "30days":
+    case "last_30_days": {
+      const start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      start.setDate(start.getDate() - 29);
+      return { start, end };
+    }
+    case "thisMonth":
+    case "this_month":
+      return { start: new Date(y, m, 1), end };
+    case "lastMonth":
+    case "last_month":
+      return {
+        start: new Date(y, m - 1, 1),
+        end: new Date(y, m, 0, 23, 59, 59, 999),
+      };
+    case "ytd":
+    default:
+      return { start: new Date(y, 0, 1), end };
+  }
+}
+
+/** Parse ngày phiếu nhập (ưu tiên `date` YYYY-MM-DD, fallback `createdAt`). */
+function parseImportRecordDate(imp) {
+  const raw = String(imp?.date || imp?.createdAt || "").trim();
+  if (!raw) return new Date(NaN);
+  const datePart = raw.split("T")[0];
+  const parts = datePart.split("-").map(Number);
+  const yy = parts[0];
+  const mm = parts[1];
+  const dd = parts[2];
+  if (!yy || !mm || !dd) return new Date(NaN);
+  return new Date(yy, mm - 1, dd);
+}
+
+/**
+ * GET /api/imports/supplier-report?timeRange=ytd|today|yesterday|7days|30days|thisMonth|lastMonth
+ * Báo cáo tổng hợp nhập hàng gom nhóm theo Nhà cung cấp trong khoảng thời gian lọc.
+ * Tính năng đọc/thống kê độc lập — KHÔNG chỉnh sửa dữ liệu imports.json.
+ */
+export async function getSupplierReport(req, res) {
+  try {
+    const timeRange = String(req.query?.timeRange || "ytd").trim() || "ytd";
+    const { start, end } = getSupplierReportDateRange(timeRange);
+
+    const imports = loadImports();
+    const inRange = imports.filter((imp) => {
+      const d = parseImportRecordDate(imp);
+      if (Number.isNaN(d.getTime())) return false;
+      return d >= start && d <= end;
+    });
+
+    const groups = new Map();
+    for (const imp of inRange) {
+      const supplierId = String(imp?.supplierId || "").trim();
+      const supplierName = String(imp?.supplierName || "").trim() || "Không xác định";
+      const key = supplierId || `name:${supplierName}`;
+
+      if (!groups.has(key)) {
+        groups.set(key, {
+          supplierId: supplierId || null,
+          supplierName,
+          totalOrders: 0,
+          totalQuantity: 0,
+          totalPaidAmount: 0,
+          totalAmount: 0,
+        });
+      }
+      const g = groups.get(key);
+      g.totalOrders += 1;
+      g.totalQuantity += Math.max(0, Math.round(Number(imp?.quantity) || 0));
+      g.totalPaidAmount += Math.max(0, Math.round(Number(imp?.paidAmount) || 0));
+      g.totalAmount += Math.max(0, Math.round(Number(imp?.totalAmount) || 0));
+    }
+
+    const report = Array.from(groups.values()).sort(
+      (a, b) => b.totalPaidAmount - a.totalPaidAmount,
+    );
+
+    return res.json({
+      success: true,
+      timeRange,
+      startDate: start.toISOString().split("T")[0],
+      endDate: end.toISOString().split("T")[0],
+      totalSuppliers: report.length,
+      report,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[Imports] GET /api/imports/supplier-report failed:", err);
+    // Fallback an toàn — luôn trả về report rỗng thay vì crash UI.
+    return res.status(500).json({ success: false, error: message, report: [] });
+  }
+}
