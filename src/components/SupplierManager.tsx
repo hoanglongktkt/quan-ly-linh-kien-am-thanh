@@ -98,7 +98,7 @@ export default function SupplierManager({
         .map((s) => ({
           name: s.name || s.supplierCode || '—',
           totalImported: Math.max(0, Number(s.totalOrderValue) || 0),
-          totalPaid: Math.max(0, Number(s.totalPaid) || 0),
+          debt: Math.max(0, Number(s.totalDebt) || 0),
         })),
     [supplierRows],
   );
@@ -290,7 +290,7 @@ export default function SupplierManager({
               <Tooltip content={<SupplierOverviewTooltip />} cursor={{ fill: '#eff6ff' }} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               <Bar dataKey="totalImported" name="Tổng hàng nhập" fill="#1d4ed8" radius={[6, 6, 0, 0]} maxBarSize={40} />
-              <Bar dataKey="totalPaid" name="Đã thanh toán" fill="#16a34a" radius={[6, 6, 0, 0]} maxBarSize={40} />
+              <Bar dataKey="debt" name="Công nợ còn lại" fill="#ef4444" radius={[6, 6, 0, 0]} maxBarSize={40} />
             </BarChart>
           </ResponsiveContainer>
         </div>
