@@ -2532,14 +2532,20 @@ export default function OrderManager({
   };
 
   /**
-   * Chuyển sang tab "Đã bàn giao ĐVVC" SAU KHI đã optimistic-update list cục bộ
-   * (quét QR / bàn giao thủ công / bàn giao hàng loạt — xem các nơi gọi hàm này).
-   * skipNextOrdersTabFetchRef=true để tab-change effect KHÔNG xóa trắng list + fetch
-   * lại full (silent:false) — nguyên nhân chính gây cảm giác "đứng hình/rất chậm"
-   * ngay sau khi bấm Kết thúc quét, vì dữ liệu mới đã có sẵn trong state rồi.
+   * Chuyển sang tab "Đã bàn giao ĐVVC".
+   * - opts.skipFetch=true (default) — dùng cho các luồng đã optimistic-update list cục bộ
+   *   TRƯỚC KHI gọi hàm này (quét QR / bàn giao thủ công / bàn giao hàng loạt — xem các nơi
+   *   gọi hàm này). skipNextOrdersTabFetchRef=true để tab-change effect KHÔNG xóa trắng list +
+   *   fetch lại full (silent:false) — nguyên nhân chính gây cảm giác "đứng hình/rất chậm" ngay
+   *   sau khi bấm Kết thúc quét, vì dữ liệu mới đã có sẵn trong state rồi.
+   * - opts.skipFetch=false — BẮT BUỘC dùng khi user bấm tay vào nút tab (KHÔNG có
+   *   optimistic-update trước đó). Nếu vẫn skip fetch ở đây, `orders` sẽ giữ nguyên mảng của
+   *   tab trước đó → "râu ông nọ cắm cằm bà kia" (bleeding state) khi chuyển tab.
    */
-  const openHandedOverCarrierTab = React.useCallback(() => {
-    skipNextOrdersTabFetchRef.current = true;
+  const openHandedOverCarrierTab = React.useCallback((opts?: { skipFetch?: boolean }) => {
+    if (opts?.skipFetch !== false) {
+      skipNextOrdersTabFetchRef.current = true;
+    }
     setPrintStatusFilter('all');
     setSearchQuery('');
     setSelectedShopId('all');
@@ -8751,7 +8757,7 @@ export default function OrderManager({
         </button>
 
         <button
-          onClick={() => openHandedOverCarrierTab()}
+          onClick={() => openHandedOverCarrierTab({ skipFetch: false })}
           className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'handed_over_carrier' 
               ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20' 
