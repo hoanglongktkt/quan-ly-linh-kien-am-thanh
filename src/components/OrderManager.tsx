@@ -2531,7 +2531,15 @@ export default function OrderManager({
     );
   };
 
+  /**
+   * Chuyển sang tab "Đã bàn giao ĐVVC" SAU KHI đã optimistic-update list cục bộ
+   * (quét QR / bàn giao thủ công / bàn giao hàng loạt — xem các nơi gọi hàm này).
+   * skipNextOrdersTabFetchRef=true để tab-change effect KHÔNG xóa trắng list + fetch
+   * lại full (silent:false) — nguyên nhân chính gây cảm giác "đứng hình/rất chậm"
+   * ngay sau khi bấm Kết thúc quét, vì dữ liệu mới đã có sẵn trong state rồi.
+   */
   const openHandedOverCarrierTab = React.useCallback(() => {
+    skipNextOrdersTabFetchRef.current = true;
     setPrintStatusFilter('all');
     setSearchQuery('');
     setSelectedShopId('all');
