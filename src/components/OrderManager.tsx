@@ -1501,6 +1501,23 @@ export default function OrderManager({
     newOrderRefreshTimersRef.current = [t1];
   }, []);
 
+  /**
+   * SSE `order_updated` (đơn ĐÃ CÓ bị đổi trạng thái — quét xuất kho / bàn giao ĐVVC / hủy /
+   * nhận hoàn từ máy quét khác — điện thoại). Refetch NGẦM (silent): không toast, không đổi
+   * trang, không hiện loading full-page — chỉ âm thầm đè dữ liệu mới lên danh sách hiện tại.
+   */
+  const orderUpdatedRefreshTimerRef = useRef<number | null>(null);
+  const scheduleOrderUpdatedRefresh = useCallback(() => {
+    if (orderUpdatedRefreshTimerRef.current != null) {
+      window.clearTimeout(orderUpdatedRefreshTimerRef.current);
+    }
+    orderUpdatedRefreshTimerRef.current = window.setTimeout(() => {
+      orderUpdatedRefreshTimerRef.current = null;
+      refetchOrdersPageRef.current({ silent: true });
+      void fetchOrderCounts();
+    }, 350);
+  }, [fetchOrderCounts]);
+
   /** Báo đơn mới khi pending_confirm / unprocessed / all TĂNG. SSE `new_order` là đường chính. */
   const maybeNotifyNewOrdersFromCounts = useCallback(
     (counts: Record<string, number>) => {
@@ -1675,6 +1692,33 @@ export default function OrderManager({
       scheduleNewOrderListRefresh();
     };
 
+    const onOrderUpdated = (ev: MessageEvent) => {
+      markSseActivity();
+      let payload: {
+        shopId?: string;
+        shopIds?: string[];
+        orderSn?: string;
+        orderSns?: string[];
+      } = {};
+      try {
+        payload = JSON.parse(String(ev.data || '{}')) as typeof payload;
+      } catch {
+        payload = {};
+      }
+      const scoped = shopScopeRef.current.shopIds.map(String);
+      const eventShops = [
+        ...(Array.isArray(payload.shopIds) ? payload.shopIds : []),
+        payload.shopId || '',
+      ]
+        .map((s) => String(s || '').trim())
+        .filter(Boolean);
+      if (scoped.length > 0 && eventShops.length > 0) {
+        const hit = eventShops.some((id) => scoped.includes(id));
+        if (!hit) return;
+      }
+      scheduleOrderUpdatedRefresh();
+    };
+
     const onPing = () => {
       markSseActivity();
     };
@@ -1682,6 +1726,7 @@ export default function OrderManager({
     const closeSse = () => {
       if (!es) return;
       es.removeEventListener('new_order', onNewOrder as EventListener);
+      es.removeEventListener('order_updated', onOrderUpdated as EventListener);
       es.removeEventListener('ping', onPing as EventListener);
       es.close();
       es = null;
@@ -1692,6 +1737,7 @@ export default function OrderManager({
       try {
         const next = new EventSource(url);
         next.addEventListener('new_order', onNewOrder as EventListener);
+        next.addEventListener('order_updated', onOrderUpdated as EventListener);
         next.addEventListener('ping', onPing as EventListener);
         next.onerror = () => {
           /* EventSource tự reconnect; watchdog sẽ force open lại nếu zombie. */
@@ -1774,9 +1820,13 @@ export default function OrderManager({
       window.removeEventListener('focus', onFocus);
       window.removeEventListener('pageshow', onPageShow);
       if (watchdogTimer != null) window.clearInterval(watchdogTimer);
+      if (orderUpdatedRefreshTimerRef.current != null) {
+        window.clearTimeout(orderUpdatedRefreshTimerRef.current);
+        orderUpdatedRefreshTimerRef.current = null;
+      }
       closeSse();
     };
-  }, [scheduleNewOrderListRefresh, fetchOrderCounts]);
+  }, [scheduleNewOrderListRefresh, scheduleOrderUpdatedRefresh, fetchOrderCounts]);
 
   /** Tự unlock audio sau click/touch đầu tiên của user trên trang. */
   useEffect(() => {

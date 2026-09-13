@@ -19,9 +19,7 @@ function pruneDeadClients() {
 /**
  * @param {{ orderSn?: string, orderSns?: string[], shopId?: string, shopIds?: string[], status?: string, count?: number }} payload
  */
-export function emitNewOrder(payload) {
-  pruneDeadClients();
-  if (clients.size === 0) return;
+function buildEventBody(payload) {
   const body = {
     orderSn: payload?.orderSn ? String(payload.orderSn) : "",
     orderSns: Array.isArray(payload?.orderSns)
@@ -40,7 +38,13 @@ export function emitNewOrder(payload) {
     at: new Date().toISOString(),
   };
   if (!body.count) body.count = body.orderSns.length || (body.orderSn ? 1 : 0);
-  const chunk = `event: new_order\ndata: ${JSON.stringify(body)}\n\n`;
+  return body;
+}
+
+function broadcast(eventName, body) {
+  pruneDeadClients();
+  if (clients.size === 0) return;
+  const chunk = `event: ${eventName}\ndata: ${JSON.stringify(body)}\n\n`;
   for (const res of clients) {
     try {
       res.write(chunk);
@@ -48,6 +52,21 @@ export function emitNewOrder(payload) {
       clients.delete(res);
     }
   }
+}
+
+/** Emit khi có đơn MỚI (INSERT) — frontend hiện toast + refetch (không silent). */
+export function emitNewOrder(payload) {
+  broadcast("new_order", buildEventBody(payload));
+}
+
+/**
+ * Emit khi đơn ĐÃ TỒN TẠI được UPDATE trạng thái (quét xuất kho / bàn giao ĐVVC /
+ * hủy / nhận hoàn...). Frontend lắng nghe để refetch NGẦM (silent), không toast,
+ * không nháy màn hình — chỉ đồng bộ danh sách khi có thiết bị khác (điện thoại quét) ghi DB.
+ * @param {{ orderSn?: string, orderSns?: string[], shopId?: string, shopIds?: string[], status?: string, count?: number }} payload
+ */
+export function emitOrderUpdated(payload) {
+  broadcast("order_updated", buildEventBody(payload));
 }
 
 /** GET /api/orders/live — text/event-stream */

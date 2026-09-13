@@ -2,6 +2,7 @@
  * POST /api/orders/scan-bulk-update
  * Phase 3 — tách nguyên khối từ server.ts (không đổi logic).
  */
+import { emitOrderUpdated } from "../services/orderRealtime.js";
 
 /** Deps từ server.ts (order helpers / mongoStore chưa tách hết). */
 let deps = {
@@ -770,6 +771,28 @@ export async function scanBulkUpdate(req, res) {
       `[Orders Scan Bulk] PERSISTED codes=${codes.length} updated=${changedOrders.length} summary=${JSON.stringify(summary)} failed=${failed_scans.length} mongo=${deps.isMongoReady()}` +
         ` timing_ms=${JSON.stringify(__timing)} total=${Date.now() - __t0}ms skippedExistsCheck=${!mightHaveCancelReturn}`,
     );
+
+    // Realtime sync: báo các client khác (PC) refetch NGẦM sau khi quét trên máy/điện thoại khác.
+    if (updatedList.length > 0) {
+      try {
+        emitOrderUpdated({
+          orderSns: updatedList
+            .map((o) => String(o?.orderSn || "").trim())
+            .filter(Boolean),
+          shopIds: [
+            ...new Set(
+              updatedList.map((o) => String(o?.shopId || "").trim()).filter(Boolean),
+            ),
+          ],
+          count: updatedList.length,
+        });
+      } catch (emitErr) {
+        console.warn(
+          "[Orders Scan Bulk] emitOrderUpdated fail:",
+          emitErr?.message || emitErr,
+        );
+      }
+    }
 
     return res.json(responsePayload);
   } catch (error) {

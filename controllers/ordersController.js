@@ -6,6 +6,7 @@ import fs from "fs";
 import path from "path";
 import { PDF_DIR, resolveAppRoot } from "../utils/appPaths.js";
 import { attachPdfAvailability } from "../utils/orderPdfAvailability.js";
+import { emitOrderUpdated } from "../services/orderRealtime.js";
 import {
   loadOrders,
   saveOrders,
@@ -2522,6 +2523,17 @@ export async function handOverCarrierById(req, res) {
         });
     }
     invalidateOrdersRefreshCache();
+    if (result.changed !== false) {
+      try {
+        emitOrderUpdated({
+          orderSn: String(result.order?.orderSn || ""),
+          shopId: String(result.order?.shopId || ""),
+          count: 1,
+        });
+      } catch (emitErr) {
+        console.warn("[Orders Handover] emitOrderUpdated fail:", emitErr?.message || emitErr);
+      }
+    }
     return res.json({ success: true, order: result.order, changed: result.changed !== false });
   } catch (error) {
     console.error("[Orders Handover] single error:", error);
@@ -2577,6 +2589,17 @@ export async function handOverCarrierByCode(req, res) {
         });
     }
     invalidateOrdersRefreshCache();
+    if (result.changed !== false) {
+      try {
+        emitOrderUpdated({
+          orderSn: String(result.order?.orderSn || ""),
+          shopId: String(result.order?.shopId || ""),
+          count: 1,
+        });
+      } catch (emitErr) {
+        console.warn("[Orders Handover] emitOrderUpdated fail:", emitErr?.message || emitErr);
+      }
+    }
     return res.json({ success: true, order: result.order, changed: result.changed !== false });
   } catch (error) {
     console.error("[Orders Handover] by-code error:", error);
@@ -2667,6 +2690,19 @@ export async function handOverCarrierBulk(req, res) {
     }
 
     invalidateOrdersRefreshCache();
+    if (updatedOrders.length > 0) {
+      try {
+        emitOrderUpdated({
+          orderSns: updatedOrders.map((o) => String(o?.orderSn || "")).filter(Boolean),
+          shopIds: [
+            ...new Set(updatedOrders.map((o) => String(o?.shopId || "")).filter(Boolean)),
+          ],
+          count: updatedOrders.length,
+        });
+      } catch (emitErr) {
+        console.warn("[Orders Handover Bulk] emitOrderUpdated fail:", emitErr?.message || emitErr);
+      }
+    }
     return res.json({
       success: true,
       updated: updatedOrders.length,

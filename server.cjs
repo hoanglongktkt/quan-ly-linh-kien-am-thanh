@@ -114972,6 +114972,97 @@ function dbReadyMiddleware(req, res, next) {
 }
 var dbReady_default = dbReadyMiddleware;
 
+// services/orderRealtime.js
+var MAX_SSE_CLIENTS = 20;
+var HEARTBEAT_MS = 15e3;
+var clients = /* @__PURE__ */ new Set();
+function pruneDeadClients() {
+  for (const res of clients) {
+    if (res.writableEnded || res.destroyed) {
+      clients.delete(res);
+    }
+  }
+}
+function buildEventBody(payload) {
+  const body = {
+    orderSn: payload?.orderSn ? String(payload.orderSn) : "",
+    orderSns: Array.isArray(payload?.orderSns) ? payload.orderSns.map((s2) => String(s2 || "").trim()).filter(Boolean) : payload?.orderSn ? [String(payload.orderSn)] : [],
+    shopId: payload?.shopId != null ? String(payload.shopId) : "",
+    shopIds: Array.isArray(payload?.shopIds) ? payload.shopIds.map((s2) => String(s2 || "").trim()).filter(Boolean) : payload?.shopId ? [String(payload.shopId)] : [],
+    status: payload?.status ? String(payload.status) : "",
+    count: Number(payload?.count) || 0,
+    at: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  if (!body.count) body.count = body.orderSns.length || (body.orderSn ? 1 : 0);
+  return body;
+}
+function broadcast(eventName, body) {
+  pruneDeadClients();
+  if (clients.size === 0) return;
+  const chunk = `event: ${eventName}
+data: ${JSON.stringify(body)}
+
+`;
+  for (const res of clients) {
+    try {
+      res.write(chunk);
+    } catch {
+      clients.delete(res);
+    }
+  }
+}
+function emitNewOrder(payload) {
+  broadcast("new_order", buildEventBody(payload));
+}
+function emitOrderUpdated(payload) {
+  broadcast("order_updated", buildEventBody(payload));
+}
+function streamOrderLive(req, res) {
+  pruneDeadClients();
+  while (clients.size >= MAX_SSE_CLIENTS) {
+    const oldest = clients.values().next().value;
+    if (!oldest) break;
+    clients.delete(oldest);
+    try {
+      oldest.end();
+    } catch {
+    }
+  }
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  if (typeof res.flushHeaders === "function") res.flushHeaders();
+  res.write(`event: ping
+data: ${JSON.stringify({ ok: true, at: Date.now() })}
+
+`);
+  clients.add(res);
+  const heartbeat = setInterval(() => {
+    if (res.writableEnded || res.destroyed) {
+      clearInterval(heartbeat);
+      clients.delete(res);
+      return;
+    }
+    try {
+      res.write(`event: ping
+data: ${JSON.stringify({ at: Date.now() })}
+
+`);
+    } catch {
+      clearInterval(heartbeat);
+      clients.delete(res);
+    }
+  }, HEARTBEAT_MS);
+  const onClose = () => {
+    clearInterval(heartbeat);
+    clients.delete(res);
+  };
+  req.on("close", onClose);
+  req.on("aborted", onClose);
+  res.on("close", onClose);
+}
+
 // controllers/scanBulkController.js
 var deps7 = {
   findOrderByScanCodeInStore: async () => null,
@@ -115616,6 +115707,24 @@ async function scanBulkUpdate(req, res) {
     console.log(
       `[Orders Scan Bulk] PERSISTED codes=${codes.length} updated=${changedOrders.length} summary=${JSON.stringify(summary)} failed=${failed_scans.length} mongo=${deps7.isMongoReady()} timing_ms=${JSON.stringify(__timing)} total=${Date.now() - __t0}ms skippedExistsCheck=${!mightHaveCancelReturn}`
     );
+    if (updatedList.length > 0) {
+      try {
+        emitOrderUpdated({
+          orderSns: updatedList.map((o) => String(o?.orderSn || "").trim()).filter(Boolean),
+          shopIds: [
+            ...new Set(
+              updatedList.map((o) => String(o?.shopId || "").trim()).filter(Boolean)
+            )
+          ],
+          count: updatedList.length
+        });
+      } catch (emitErr) {
+        console.warn(
+          "[Orders Scan Bulk] emitOrderUpdated fail:",
+          emitErr?.message || emitErr
+        );
+      }
+    }
     return res.json(responsePayload);
   } catch (error) {
     console.error("[Orders Scan Bulk] Error:", error);
@@ -122989,6 +123098,17 @@ async function handOverCarrierById(req, res) {
       });
     }
     invalidateOrdersRefreshCache();
+    if (result.changed !== false) {
+      try {
+        emitOrderUpdated({
+          orderSn: String(result.order?.orderSn || ""),
+          shopId: String(result.order?.shopId || ""),
+          count: 1
+        });
+      } catch (emitErr) {
+        console.warn("[Orders Handover] emitOrderUpdated fail:", emitErr?.message || emitErr);
+      }
+    }
     return res.json({ success: true, order: result.order, changed: result.changed !== false });
   } catch (error) {
     console.error("[Orders Handover] single error:", error);
@@ -123035,6 +123155,17 @@ async function handOverCarrierByCode(req, res) {
       });
     }
     invalidateOrdersRefreshCache();
+    if (result.changed !== false) {
+      try {
+        emitOrderUpdated({
+          orderSn: String(result.order?.orderSn || ""),
+          shopId: String(result.order?.shopId || ""),
+          count: 1
+        });
+      } catch (emitErr) {
+        console.warn("[Orders Handover] emitOrderUpdated fail:", emitErr?.message || emitErr);
+      }
+    }
     return res.json({ success: true, order: result.order, changed: result.changed !== false });
   } catch (error) {
     console.error("[Orders Handover] by-code error:", error);
@@ -123109,6 +123240,19 @@ async function handOverCarrierBulk(req, res) {
       });
     }
     invalidateOrdersRefreshCache();
+    if (updatedOrders.length > 0) {
+      try {
+        emitOrderUpdated({
+          orderSns: updatedOrders.map((o) => String(o?.orderSn || "")).filter(Boolean),
+          shopIds: [
+            ...new Set(updatedOrders.map((o) => String(o?.shopId || "")).filter(Boolean))
+          ],
+          count: updatedOrders.length
+        });
+      } catch (emitErr) {
+        console.warn("[Orders Handover Bulk] emitOrderUpdated fail:", emitErr?.message || emitErr);
+      }
+    }
     return res.json({
       success: true,
       updated: updatedOrders.length,
@@ -126513,88 +126657,6 @@ async function parseOrderAddress(req, res) {
     console.error("=== GEMINI ERROR ===", error?.response?.data || error?.message || error);
     return sendJson2(res, 500, errorPayload(raw, AI_OVERLOAD_MESSAGE));
   }
-}
-
-// services/orderRealtime.js
-var MAX_SSE_CLIENTS = 20;
-var HEARTBEAT_MS = 15e3;
-var clients = /* @__PURE__ */ new Set();
-function pruneDeadClients() {
-  for (const res of clients) {
-    if (res.writableEnded || res.destroyed) {
-      clients.delete(res);
-    }
-  }
-}
-function emitNewOrder(payload) {
-  pruneDeadClients();
-  if (clients.size === 0) return;
-  const body = {
-    orderSn: payload?.orderSn ? String(payload.orderSn) : "",
-    orderSns: Array.isArray(payload?.orderSns) ? payload.orderSns.map((s2) => String(s2 || "").trim()).filter(Boolean) : payload?.orderSn ? [String(payload.orderSn)] : [],
-    shopId: payload?.shopId != null ? String(payload.shopId) : "",
-    shopIds: Array.isArray(payload?.shopIds) ? payload.shopIds.map((s2) => String(s2 || "").trim()).filter(Boolean) : payload?.shopId ? [String(payload.shopId)] : [],
-    status: payload?.status ? String(payload.status) : "",
-    count: Number(payload?.count) || 0,
-    at: (/* @__PURE__ */ new Date()).toISOString()
-  };
-  if (!body.count) body.count = body.orderSns.length || (body.orderSn ? 1 : 0);
-  const chunk = `event: new_order
-data: ${JSON.stringify(body)}
-
-`;
-  for (const res of clients) {
-    try {
-      res.write(chunk);
-    } catch {
-      clients.delete(res);
-    }
-  }
-}
-function streamOrderLive(req, res) {
-  pruneDeadClients();
-  while (clients.size >= MAX_SSE_CLIENTS) {
-    const oldest = clients.values().next().value;
-    if (!oldest) break;
-    clients.delete(oldest);
-    try {
-      oldest.end();
-    } catch {
-    }
-  }
-  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-  res.setHeader("Connection", "keep-alive");
-  res.setHeader("X-Accel-Buffering", "no");
-  if (typeof res.flushHeaders === "function") res.flushHeaders();
-  res.write(`event: ping
-data: ${JSON.stringify({ ok: true, at: Date.now() })}
-
-`);
-  clients.add(res);
-  const heartbeat = setInterval(() => {
-    if (res.writableEnded || res.destroyed) {
-      clearInterval(heartbeat);
-      clients.delete(res);
-      return;
-    }
-    try {
-      res.write(`event: ping
-data: ${JSON.stringify({ at: Date.now() })}
-
-`);
-    } catch {
-      clearInterval(heartbeat);
-      clients.delete(res);
-    }
-  }, HEARTBEAT_MS);
-  const onClose = () => {
-    clearInterval(heartbeat);
-    clients.delete(res);
-  };
-  req.on("close", onClose);
-  req.on("aborted", onClose);
-  res.on("close", onClose);
 }
 
 // routes/ordersRoutes.js
