@@ -868,6 +868,8 @@ const SCAN_BG_STATUS_POLL_MS = 30_000;
 /** Không pending / unnotified — nới chu kỳ để giảm spam Network. */
 const SCAN_BG_STATUS_IDLE_POLL_MS = 60_000;
 const COUNTER_POLL_MS = 60_000;
+/** Retry nhanh khi lần đầu load counter thất bại/nghẽn (trước khi có counts lần nào). */
+const FIRST_COUNTER_RETRY_MS = 5_000;
 /** Cooldown wake-up sau ngủ đông — chặn spam khi user chuyển tab liên tục. */
 const WAKE_COOLDOWN_MS = 3_000;
 /** SSE heartbeat server = 15s; mất ping lâu hơn ngưỡng này → reconnect (mobile zombie). */
@@ -1624,6 +1626,14 @@ export default function OrderManager({
         const counts = await fetchOrderCounts();
         if (!cancelled && counts) {
           maybeNotifyNewOrdersFromCounts(counts);
+        }
+        // Chưa từng có counts (F5 + nghẽn request lúc boot — nhiều fetch tranh 6 kết nối
+        // HTTP/1.1/origin trên cPanel khiến /counter bị xếp hàng lâu) → retry sớm (5s) thay vì
+        // chờ đủ COUNTER_POLL_MS (60s), tránh badge số lượng "đứng hình" cho tới khi user
+        // đổi tab / focus lại window mới có wakeFromSleep() force refresh.
+        if (!cancelled && !counts && serverOrderCountsRef.current == null) {
+          schedule(FIRST_COUNTER_RETRY_MS);
+          return;
         }
       }
       schedule(COUNTER_POLL_MS);

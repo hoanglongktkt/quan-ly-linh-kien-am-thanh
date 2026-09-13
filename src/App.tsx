@@ -2101,11 +2101,19 @@ export default function App() {
 
       // F5: ưu tiên localStorage; chỉ gọi server khi chưa có cache.
       void fetchProducts({ page: 1, append: false, pageSize: 50, forceRefresh: false });
-      fetchSuppliers();
-      fetchImports();
-      fetchExpenses();
-      fetchChannelSettings();
-      syncShopeeOAuthShopIds();
+
+      // Giãn các request phụ (không cần cho paint đầu tiên) ~1.2s để nhường băng thông
+      // HTTP/1.1 (giới hạn 6 kết nối đồng thời/origin trên cPanel) cho list đơn hàng +
+      // /api/orders/counter — tránh nghẽn cổ khiến badge số lượng "đứng hình" lúc F5.
+      // Mỗi trang đích (Nhà cung cấp / Nhập hàng / Chi phí...) vẫn tự fetch lại khi mở tab
+      // tương ứng (xem effect [activeTab, isAuthenticated] bên dưới) nên delay ở đây an toàn.
+      window.setTimeout(() => {
+        fetchSuppliers();
+        fetchImports();
+        fetchExpenses();
+        fetchChannelSettings();
+        void syncShopeeOAuthShopIds();
+      }, 1200);
     };
 
     const syncShopeeOAuthShopIds = async () => {
