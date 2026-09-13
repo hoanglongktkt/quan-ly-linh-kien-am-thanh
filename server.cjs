@@ -129536,8 +129536,9 @@ function getLabelMem(filename) {
     return null;
   }
 }
-function hasLabelMem(filename) {
-  if (getValidLabelDiskFile(filename)) return true;
+function hasLabelMem(filename, precomputedDisk) {
+  const disk = precomputedDisk !== void 0 ? precomputedDisk : getValidLabelDiskFile(filename);
+  if (disk) return true;
   const safe = safeLabelFilename(filename);
   const ram = safe ? labelMemCache.get(safe) : null;
   return Boolean(ram && ram.expires >= Date.now() && ram.buf.length > 0 && isPdfBuffer(ram.buf));
@@ -137195,7 +137196,8 @@ function isOrderLabelFileReady(orderSn) {
   if (!sn) return false;
   for (const c of /* @__PURE__ */ new Set([sn, sn.toUpperCase(), sn.toLowerCase()])) {
     const filename = `order_${c}.pdf`;
-    if (hasLabelMem(filename) || getValidLabelDiskFile(filename)) return true;
+    const diskFile = getValidLabelDiskFile(filename);
+    if (diskFile || hasLabelMem(filename, diskFile)) return true;
   }
   return false;
 }
@@ -137204,7 +137206,8 @@ function resolveReadyLabelFilename(orderSn) {
   if (!sn) return null;
   for (const c of /* @__PURE__ */ new Set([sn, sn.toUpperCase(), sn.toLowerCase()])) {
     const filename = `order_${c}.pdf`;
-    if (hasLabelMem(filename) || getValidLabelDiskFile(filename)) return filename;
+    const diskFile = getValidLabelDiskFile(filename);
+    if (diskFile || hasLabelMem(filename, diskFile)) return filename;
   }
   return null;
 }

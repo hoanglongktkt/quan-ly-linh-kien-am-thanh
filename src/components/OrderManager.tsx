@@ -1205,6 +1205,10 @@ export default function OrderManager({
   const skipNextOrdersTabFetchRef = useRef(false);
   const hasPdfPollGenRef = useRef(0);
   const hasPdfPollTimerRef = useRef<number | null>(null);
+  /** Mã đơn đang được theo dõi bởi vòng lặp silent-prefetch (prefetch-status) hiện hành.
+   *  Dùng để KHÔNG khởi động lại/gộp lồng vòng lặp khi 1 hành động UI khác (VD: đóng modal)
+   *  vô tình gọi lại luồng chờ PDF cho đúng các đơn đang được theo dõi. */
+  const activePdfPrefetchSnsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     return () => {
       if (hasPdfPollTimerRef.current != null) {
@@ -5827,6 +5831,15 @@ export default function OrderManager({
   const normalizeConfirmSn = (raw: string): string =>
     String(raw || '').replace(/^shopee-/i, '').trim().toLowerCase();
 
+  /**
+   * Backoff tăng dần cho các vòng lặp chờ PDF: phản hồi nhanh ở những giây đầu
+   * (500ms) nhưng giãn dần ra tối đa 3000ms nếu Shopee xử lý PDF lâu — tránh spam request.
+   * attempt: số lần đã chờ trước đó (0-based) → dùng để tra độ trễ kế tiếp.
+   */
+  const PDF_POLL_BACKOFF_STEPS_MS = [500, 1000, 1500, 2000, 2500, 3000];
+  const getPdfPollBackoffDelay = (attempt: number): number =>
+    PDF_POLL_BACKOFF_STEPS_MS[Math.min(Math.max(attempt, 0), PDF_POLL_BACKOFF_STEPS_MS.length - 1)];
+
   const stopHasPdfBackgroundPoll = () => {
     hasPdfPollGenRef.current += 1;
     if (hasPdfPollTimerRef.current != null) {
@@ -5835,7 +5848,7 @@ export default function OrderManager({
     }
   };
 
-  /** Poll hasPdf nhẹ — GET /api/orders/has-pdf, không reload cả tab. Tối đa 25 lần, delay 800ms. */
+  /** Poll hasPdf nhẹ — GET /api/orders/has-pdf, không reload cả tab. Tối đa 20 lần, delay backoff 500ms→3000ms. */
   const patchLocalHasPdfReady = (orderSns: string[]): void => {
     const want = new Set(orderSns.map((sn) => normalizeConfirmSn(sn)).filter(Boolean));
     if (want.size === 0) return;
@@ -5876,7 +5889,7 @@ export default function OrderManager({
     stopHasPdfBackgroundPoll();
     const gen = hasPdfPollGenRef.current;
     let attempt = 0;
-    const maxAttempts = 25;
+    const maxAttempts = 20;
     const tick = () => {
       if (gen !== hasPdfPollGenRef.current) return;
       const remaining = targets.filter((sn) => {
@@ -5888,6 +5901,7 @@ export default function OrderManager({
         return !(hit?.hasPdf || hit?.readyToPrint || hit?.labelUrl || hit?.pdfUrl || hit?.waybill_url);
       });
       if (remaining.length === 0 || attempt >= maxAttempts) return;
+      const currentAttempt = attempt;
       attempt += 1;
       void fetch(`/api/orders/has-pdf?sns=${encodeURIComponent(remaining.join(','))}`, {
         headers: authHeaders(),
@@ -5903,10 +5917,10 @@ export default function OrderManager({
         })
         .finally(() => {
           if (gen !== hasPdfPollGenRef.current) return;
-          hasPdfPollTimerRef.current = window.setTimeout(tick, 800);
+          hasPdfPollTimerRef.current = window.setTimeout(tick, getPdfPollBackoffDelay(currentAttempt));
         });
     };
-    hasPdfPollTimerRef.current = window.setTimeout(tick, 400);
+    hasPdfPollTimerRef.current = window.setTimeout(tick, getPdfPollBackoffDelay(0));
   };
 
   /**
@@ -5957,11 +5971,25 @@ export default function OrderManager({
       if (error instanceof Error && error.name === 'AbortError') return;
     });
     void fetchOrderCounts({ force: true });
-    startHasPdfBackgroundPoll(orderSns);
+    // Nguồn DUY NHẤT theo dõi trạng thái PDF là silent-prefetch + prefetch-status.
+    // Nếu các đơn này ĐANG được theo dõi rồi (vừa Confirm xong) thì KHÔNG khởi động lại
+    // hay reset bộ đếm — tránh spam request `has-pdf`/`prefetch-status` trùng lặp.
+    const pendingSns = orderSns
+      .map((sn) => String(sn || '').replace(/^shopee-/i, '').trim())
+      .filter(Boolean);
+    const alreadyTracked =
+      pendingSns.length > 0 && pendingSns.every((sn) => activePdfPrefetchSnsRef.current.has(sn));
+    if (!alreadyTracked) {
+      startSilentPdfPrefetch(orderSns);
+    }
   };
 
   /**
    * Kick silent-prefetch (không await). Spinner overlay theo has-pdf; nút In không bị khóa.
+   * Đây là NGUỒN DUY NHẤT theo dõi PDF sẵn sàng: chỉ poll /api/orders/prefetch-status,
+   * không còn chạy song song vòng lặp has-pdf riêng (tránh nhân đôi request).
+   * Delay giữa các lần poll tăng dần (backoff 500ms → 3000ms) để phản hồi nhanh những giây
+   * đầu nhưng không spam request nếu Shopee xử lý PDF lâu.
    */
   const startSilentPdfPrefetch = (orderSns: string[]): void => {
     const cleanSns = [
@@ -5975,7 +6003,10 @@ export default function OrderManager({
     }
     const gen = ++pdfPrefetchGenRef.current;
     setIsPdfReady(false);
-    startHasPdfBackgroundPoll(cleanSns);
+    for (const sn of cleanSns) activePdfPrefetchSnsRef.current.add(sn);
+    const releaseTracking = (sns: string[]) => {
+      for (const sn of sns) activePdfPrefetchSnsRef.current.delete(sn);
+    };
     void (async () => {
       try {
         const response = await fetch('/api/orders/silent-prefetch-pdfs', {
@@ -5994,7 +6025,9 @@ export default function OrderManager({
         for (let attempt = 0; attempt < maxPolls; attempt += 1) {
           if (gen !== pdfPrefetchGenRef.current) return;
           if (attempt > 0) {
-            await new Promise((resolve) => window.setTimeout(resolve, 800));
+            await new Promise((resolve) =>
+              window.setTimeout(resolve, getPdfPollBackoffDelay(attempt - 1)),
+            );
             if (gen !== pdfPrefetchGenRef.current) return;
           }
           try {
@@ -6004,7 +6037,10 @@ export default function OrderManager({
             const status = await readResponseJson<any>(statusRes);
             if (gen !== pdfPrefetchGenRef.current) return;
             const ready = Array.isArray(status?.readyOrderSns) ? status.readyOrderSns : [];
-            if (ready.length > 0) patchLocalHasPdfReady(ready);
+            if (ready.length > 0) {
+              patchLocalHasPdfReady(ready);
+              releaseTracking(ready);
+            }
             if (statusRes.ok && status?.isDone) {
               setIsPdfReady(true);
               return;
@@ -6019,6 +6055,7 @@ export default function OrderManager({
         if (gen === pdfPrefetchGenRef.current) {
           setIsPdfReady(true);
         }
+        releaseTracking(cleanSns);
       }
     })();
   };

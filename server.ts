@@ -1052,8 +1052,17 @@ function getLabelMem(filename: string): { buf: Buffer; contentType?: string } | 
   }
 }
 
-function hasLabelMem(filename: string): boolean {
-  if (getValidLabelDiskFile(filename)) return true;
+/**
+ * precomputedDisk: cho phép truyền sẵn kết quả getValidLabelDiskFile() đã đọc trước đó
+ * để tránh đọc đĩa (existsSync/statSync/openSync) 2 lần cho cùng 1 filename.
+ * Không truyền → giữ hành vi cũ (tự đọc đĩa 1 lần trong hàm này).
+ */
+function hasLabelMem(
+  filename: string,
+  precomputedDisk?: { safe: string; filePath: string; size: number } | null,
+): boolean {
+  const disk = precomputedDisk !== undefined ? precomputedDisk : getValidLabelDiskFile(filename);
+  if (disk) return true;
   const safe = safeLabelFilename(filename);
   const ram = safe ? labelMemCache.get(safe) : null;
   return Boolean(ram && ram.expires >= Date.now() && ram.buf.length > 0 && isPdfBuffer(ram.buf));
@@ -10979,7 +10988,9 @@ function isOrderLabelFileReady(orderSn: string): boolean {
   if (!sn) return false;
   for (const c of new Set([sn, sn.toUpperCase(), sn.toLowerCase()])) {
     const filename = `order_${c}.pdf`;
-    if (hasLabelMem(filename) || getValidLabelDiskFile(filename)) return true;
+    // Đọc đĩa DUY NHẤT 1 lần/filename rồi tái sử dụng cho nhánh RAM cache — giảm I/O.
+    const diskFile = getValidLabelDiskFile(filename);
+    if (diskFile || hasLabelMem(filename, diskFile)) return true;
   }
   return false;
 }
@@ -10989,7 +11000,8 @@ function resolveReadyLabelFilename(orderSn: string): string | null {
   if (!sn) return null;
   for (const c of new Set([sn, sn.toUpperCase(), sn.toLowerCase()])) {
     const filename = `order_${c}.pdf`;
-    if (hasLabelMem(filename) || getValidLabelDiskFile(filename)) return filename;
+    const diskFile = getValidLabelDiskFile(filename);
+    if (diskFile || hasLabelMem(filename, diskFile)) return filename;
   }
   return null;
 }
