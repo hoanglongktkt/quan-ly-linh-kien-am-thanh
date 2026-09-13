@@ -6704,9 +6704,16 @@ export default function OrderManager({
     return counts;
   }, [activeSubTab, cancelReturnTab, ordersPoolBeforeCarrier, ordersListReady]);
 
+  /**
+   * Đơn 1 sản phẩm = đơn chỉ có DUY NHẤT 1 dòng SKU trong `items`.
+   * BẮT BUỘC dùng `items.length === 1` — TUYỆT ĐỐI KHÔNG dùng `quantity`
+   * (khách mua số lượng 2+ của cùng 1 SKU vẫn tính là đơn 1 sản phẩm).
+   */
+  const isSingleSkuOrder = (order: Order) => (order.items || []).length === 1;
+
   const compareSmartPickOrders = (a: Order, b: Order) => {
-    const aSingle = (a.items || []).length === 1;
-    const bSingle = (b.items || []).length === 1;
+    const aSingle = isSingleSkuOrder(a);
+    const bSingle = isSingleSkuOrder(b);
     if (aSingle && !bSingle) return -1;
     if (!aSingle && bSingle) return 1;
     if (aSingle && bSingle) {
@@ -6768,6 +6775,38 @@ export default function OrderManager({
       matchesStrictDisplaySubTab(order, activeSubTab, cancelReturnTab),
     );
   }, [filteredOrders, activeSubTab, cancelReturnTab, searchQuery]);
+
+  /**
+   * TAB "CHƯA XỬ LÝ" — tự động hoá 2 thao tác tay của user:
+   * 1) Ép bật "Ưu tiên đơn 1 sản phẩm" mỗi khi vào tab này.
+   * 2) Tự động tick chọn tất cả đơn đang hiển thị (giống bấm nút "Chọn tất cả").
+   *
+   * Chống vòng lặp vô tận:
+   * - Effect (1) chỉ phụ thuộc `activeSubTab`; setSmartPickSort(true) khi đã là
+   *   `true` là no-op với React (state boolean giữ nguyên → không re-render thêm).
+   * - Effect (2) dùng `autoSelectedKeyRef` để chỉ gọi setSelectedOrderIds khi tập
+   *   ID thực sự đổi, và selectedOrderIds KHÔNG nằm trong dependency của
+   *   `displayOrders` nên việc set state này không làm effect tự kích hoạt lại.
+   */
+  useEffect(() => {
+    if (activeSubTab === 'unprocessed') {
+      setSmartPickSort(true);
+    }
+  }, [activeSubTab]);
+
+  const autoSelectedUnprocessedKeyRef = useRef<string>('');
+  useEffect(() => {
+    if (activeSubTab !== 'unprocessed') {
+      autoSelectedUnprocessedKeyRef.current = '';
+      return;
+    }
+    if (displayOrders.length === 0) return;
+    const ids = displayOrders.map((o) => o.id);
+    const key = ids.join('|');
+    if (autoSelectedUnprocessedKeyRef.current === key) return;
+    autoSelectedUnprocessedKeyRef.current = key;
+    setSelectedOrderIds(ids);
+  }, [displayOrders, activeSubTab]);
 
   const listPagingTotal = ordersListReady ? displayOrders.length : 0;
 
