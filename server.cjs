@@ -74003,6 +74003,38 @@ async function mapWithConcurrency(items, concurrency, worker) {
   await Promise.all(runners);
   return results;
 }
+async function mapByShopGroups(items, resolveShopId, worker, opts = {}) {
+  const list = Array.isArray(items) ? items : [];
+  if (list.length === 0) return;
+  const perShopChunk = Math.max(1, Math.floor(Number(opts.perShopChunk) || 4));
+  const pauseMs = Math.max(0, Math.floor(Number(opts.pauseMs) || 250));
+  const maxParallelShops = Math.max(1, Math.floor(Number(opts.maxParallelShops) || 6));
+  const groups = /* @__PURE__ */ new Map();
+  const noShopGroup = [];
+  for (const item of list) {
+    let sid = "";
+    try {
+      sid = String(resolveShopId(item) || "").trim();
+    } catch {
+      sid = "";
+    }
+    if (!sid) {
+      noShopGroup.push(item);
+      continue;
+    }
+    const arr = groups.get(sid);
+    if (arr) arr.push(item);
+    else groups.set(sid, [item]);
+  }
+  const allGroups = [...groups.values()];
+  if (noShopGroup.length) allGroups.push(noShopGroup);
+  if (allGroups.length === 0) return;
+  await mapWithConcurrency(
+    allGroups,
+    maxParallelShops,
+    (group) => mapInChunks(group, perShopChunk, worker, pauseMs)
+  );
+}
 function delay2(ms = DEFAULT_DELAY_MS) {
   return sleep4(ms);
 }
@@ -144620,7 +144652,12 @@ async function startServer() {
           });
         }
       };
-      await mapInChunks(toShip, 10, confirmOneOrder, 300);
+      await mapByShopGroups(
+        toShip,
+        ({ order }) => resolveOrderShopId(order) || order?.shopId,
+        confirmOneOrder,
+        { perShopChunk: 4, pauseMs: 250, maxParallelShops: 6 }
+      );
       console.log(`[Confirm Only] DONE ${successSns.length}/${toShip.length} success (${Date.now() - t0}ms)`);
       const successOrders = results.filter((result) => result?.success).map((result) => ({
         orderId: String(result.orderId || ""),
@@ -144795,7 +144832,12 @@ async function startServer() {
           bumpProgress();
         }
       };
-      await mapInChunks(toShip, 10, confirmOneOrder, 300);
+      await mapByShopGroups(
+        toShip,
+        ({ order }) => resolveOrderShopId(order) || order?.shopId,
+        confirmOneOrder,
+        { perShopChunk: 4, pauseMs: 250, maxParallelShops: 6 }
+      );
       const failedOrders = results.filter((result) => !result?.success).map((result) => ({
         orderId: String(result.orderId || ""),
         orderSn: String(result.orderSn || ""),
@@ -145925,7 +145967,6 @@ async function startServer() {
     }
   };
   const SILENT_PREFETCH_DEADLINE_MS = 45e3;
-  const SILENT_PREFETCH_CONCURRENCY = 5;
   const silentPdfPrefetchInFlight = /* @__PURE__ */ new Set();
   const prefetchStatus = /* @__PURE__ */ new Map();
   let prefetchBatchSequence = 0;
@@ -145951,41 +145992,25 @@ async function startServer() {
     beginLogisticsWork("silent-prefetch-pdfs");
     try {
       const publicPdfDir = import_path22.default.join(APP_ROOT12, "public", "pdfs");
-      let nextIndex = 0;
-      const workerCount = Math.min(SILENT_PREFETCH_CONCURRENCY, orderSns.length);
-      const runWorker = async () => {
-        while (nextIndex < orderSns.length) {
-          const orderSn = orderSns[nextIndex++];
-          let failure;
+      const orders = await runBeforeBatchDeadline(
+        deadlineAt,
+        "silent_prefetch_load_orders",
+        () => loadOrdersForShipScoped(orderSns.map((sn) => `shopee-${sn}`), orderSns)
+      );
+      const result = await fetchBatchPdfDocumentsByShop(
+        orders,
+        orderSns,
+        deadlineAt,
+        "Silent Prefetch"
+      );
+      for (const document2 of result.documents) {
+        for (const orderSn of document2.orderSns) {
           try {
-            const orders = await runBeforeBatchDeadline(
-              deadlineAt,
-              `silent_prefetch_load_order_${orderSn}`,
-              () => loadOrdersForShipScoped([`shopee-${orderSn}`], [orderSn])
-            );
-            const result = await fetchBatchPdfDocumentsByShop(
-              orders,
-              [orderSn],
-              deadlineAt,
-              `Silent Prefetch ${orderSn}`
-            );
-            const document2 = result.documents.find(
-              (item) => item.orderSns.includes(orderSn)
-            );
-            if (!document2) {
-              failure = result.failedOrders.find((item) => item.orderSn === orderSn) || {
-                orderSn,
-                error: "pdf_unavailable",
-                message: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c PDF tr\u01B0\u1EDBc khi h\u1EBFt th\u1EDDi gian cho ph\xE9p."
-              };
-              continue;
-            }
             const filename = buildCachedLabelFilename([orderSn]);
             const storedPdf = getValidLabelDiskFile(filename);
             if (!storedPdf) {
               throw new Error(`PDF ch\u01B0a \u0111\u01B0\u1EE3c ghi th\xE0nh c\xF4ng v\xE0o ${import_path22.default.join(PDF_DIR, filename)}`);
             }
-            void markHasPdfIfLabelFileReady([orderSn]);
             try {
               await import_fs21.default.promises.mkdir(publicPdfDir, { recursive: true });
               const publicDest = import_path22.default.join(publicPdfDir, filename);
@@ -145998,21 +146023,20 @@ async function startServer() {
                 publicCopyErr?.message || publicCopyErr
               );
             }
+            settleOrder(orderSn);
           } catch (err) {
             console.error(`[Silent Prefetch] order ${orderSn} failed:`, err?.stack || err);
-            failure = {
+            settleOrder(orderSn, {
               orderSn,
-              error: /batch_deadline|timeout/i.test(String(err?.message || "")) ? "timeout" : "prefetch_error",
+              error: "prefetch_error",
               message: String(err?.message || err || "T\u1EA3i PDF th\u1EA5t b\u1EA1i.")
-            };
-          } finally {
-            settleOrder(orderSn, failure);
-            const status = prefetchStatus.get(batchId);
-            if (status) status.isDone = status.succeeded + status.failed >= status.total;
+            });
           }
         }
-      };
-      await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+      }
+      for (const failure of result.failedOrders) {
+        settleOrder(failure.orderSn, failure);
+      }
       console.log(
         `[Silent Prefetch] DONE cached=${orderSns.length - (prefetchStatus.get(batchId)?.failed || 0)}/${orderSns.length}`
       );

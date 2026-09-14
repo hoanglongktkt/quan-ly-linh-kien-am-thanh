@@ -53,6 +53,49 @@ export async function mapWithConcurrency(items, concurrency, worker) {
   return results;
 }
 
+/**
+ * Xác nhận / tải PDF theo NHÓM shopId: các SHOP KHÁC NHAU chạy SONG SONG (mỗi
+ * shop dùng access_token Shopee riêng — không tranh rate-limit với nhau). Bên
+ * trong CÙNG 1 shop vẫn xử lý theo lô nhỏ + nghỉ giữa lô để không dội rate-limit
+ * lên 1 access_token. Nhanh hơn (đa shop chạy song song) & an toàn hơn so với
+ * chia lô cố định N đơn xuyên nhiều shop (dễ dính rate-limit khi trộn nhiều shop
+ * vào cùng 1 lô, và không tận dụng được việc các shop độc lập token với nhau).
+ * CẤM chạy quá maxParallelShops nhóm cùng lúc (chống tràn CPU/spike cPanel).
+ */
+export async function mapByShopGroups(items, resolveShopId, worker, opts = {}) {
+  const list = Array.isArray(items) ? items : [];
+  if (list.length === 0) return;
+  const perShopChunk = Math.max(1, Math.floor(Number(opts.perShopChunk) || 4));
+  const pauseMs = Math.max(0, Math.floor(Number(opts.pauseMs) || 250));
+  const maxParallelShops = Math.max(1, Math.floor(Number(opts.maxParallelShops) || 6));
+
+  const groups = new Map();
+  const noShopGroup = [];
+  for (const item of list) {
+    let sid = "";
+    try {
+      sid = String(resolveShopId(item) || "").trim();
+    } catch {
+      sid = "";
+    }
+    if (!sid) {
+      noShopGroup.push(item);
+      continue;
+    }
+    const arr = groups.get(sid);
+    if (arr) arr.push(item);
+    else groups.set(sid, [item]);
+  }
+  const allGroups = [...groups.values()];
+  if (noShopGroup.length) allGroups.push(noShopGroup);
+  if (allGroups.length === 0) return;
+
+  // Giới hạn số shop chạy đồng thời — mỗi shop bên trong vẫn chia lô nhỏ + nghỉ.
+  await mapWithConcurrency(allGroups, maxParallelShops, (group) =>
+    mapInChunks(group, perShopChunk, worker, pauseMs),
+  );
+}
+
 /** Nghỉ giữa các batch sync (mặc định 1s) — GC / chống spike process cPanel. */
 export function delay(ms = DEFAULT_DELAY_MS) {
   return sleep(ms);

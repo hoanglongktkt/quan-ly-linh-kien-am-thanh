@@ -247,6 +247,7 @@ import {
   yieldEventLoop,
   mapWithConcurrency,
   mapInChunks,
+  mapByShopGroups,
   runInBatches,
   withOperationTimeout,
 } from "./utils/concurrency.js";
@@ -21883,8 +21884,14 @@ async function startServer() {
         }
       };
 
-      // Confirm-ship: chia lô 10 đơn, sleep 300ms giữa các lô — cấm Promise.all trần.
-      await mapInChunks(toShip, 10, confirmOneOrder, 300);
+      // Confirm-ship: nhóm theo shopId — các shop chạy SONG SONG (token riêng),
+      // trong cùng 1 shop chia lô nhỏ (4) + nghỉ 250ms giữa lô để tránh rate-limit.
+      await mapByShopGroups(
+        toShip,
+        ({ order }: { order: any }) => resolveOrderShopId(order) || order?.shopId,
+        confirmOneOrder,
+        { perShopChunk: 4, pauseMs: 250, maxParallelShops: 6 },
+      );
 
       console.log(`[Confirm Only] DONE ${successSns.length}/${toShip.length} success (${Date.now() - t0}ms)`);
       const successOrders = results
@@ -22096,7 +22103,14 @@ async function startServer() {
         }
       };
 
-      await mapInChunks(toShip, 10, confirmOneOrder, 300);
+      // Confirm-ship (async job): nhóm theo shopId — các shop chạy SONG SONG
+      // (token riêng), trong cùng 1 shop chia lô nhỏ (4) + nghỉ 250ms giữa lô.
+      await mapByShopGroups(
+        toShip,
+        ({ order }: { order: any }) => resolveOrderShopId(order) || order?.shopId,
+        confirmOneOrder,
+        { perShopChunk: 4, pauseMs: 250, maxParallelShops: 6 },
+      );
 
       const failedOrders = results
         .filter((result: any) => !result?.success)
@@ -23453,7 +23467,6 @@ async function startServer() {
   };
 
   const SILENT_PREFETCH_DEADLINE_MS = 45_000;
-  const SILENT_PREFETCH_CONCURRENCY = 5;
   const silentPdfPrefetchInFlight = new Set<string>();
   const prefetchStatus = new Map<string, PrefetchStatus>();
   let prefetchBatchSequence = 0;
@@ -23480,42 +23493,32 @@ async function startServer() {
     beginLogisticsWork("silent-prefetch-pdfs");
     try {
       const publicPdfDir = path.join(APP_ROOT, "public", "pdfs");
-      let nextIndex = 0;
-      // Promise pool: tối đa 5 đơn chạy song song, không tạo request Shopee ồ ạt.
-      const workerCount = Math.min(SILENT_PREFETCH_CONCURRENCY, orderSns.length);
-      const runWorker = async () => {
-        while (nextIndex < orderSns.length) {
-          const orderSn = orderSns[nextIndex++];
-          let failure: BatchPdfFailure | undefined;
+      // Nạp TOÀN BỘ đơn 1 lần (không query Mongo riêng từng đơn) rồi gọi
+      // fetchBatchPdfDocumentsByShop 1 LẦN DUY NHẤT cho cả batch — hàm này tự
+      // nhóm theo shopId và chỉ tốn 1 create + poll + download / shop (chạy
+      // song song giữa các shop). Trước đây mỗi đơn tự load + tự gọi hàm này
+      // riêng lẻ trong 5 worker ⇒ N lần create/poll/download thay vì 1 lần/shop
+      // — chính là nguyên nhân "Chuẩn bị file in" bị chậm/kẹt khi xác nhận nhiều đơn.
+      const orders = await runBeforeBatchDeadline(
+        deadlineAt,
+        "silent_prefetch_load_orders",
+        () => loadOrdersForShipScoped(orderSns.map((sn) => `shopee-${sn}`), orderSns),
+      );
+      const result = await fetchBatchPdfDocumentsByShop(
+        orders,
+        orderSns,
+        deadlineAt,
+        "Silent Prefetch",
+      );
+
+      for (const document of result.documents) {
+        for (const orderSn of document.orderSns) {
           try {
-            const orders = await runBeforeBatchDeadline(
-              deadlineAt,
-              `silent_prefetch_load_order_${orderSn}`,
-              () => loadOrdersForShipScoped([`shopee-${orderSn}`], [orderSn]),
-            );
-            const result = await fetchBatchPdfDocumentsByShop(
-              orders,
-              [orderSn],
-              deadlineAt,
-              `Silent Prefetch ${orderSn}`,
-            );
-            const document = result.documents.find((item) =>
-              item.orderSns.includes(orderSn),
-            );
-            if (!document) {
-              failure = result.failedOrders.find((item) => item.orderSn === orderSn) || {
-                orderSn,
-                error: "pdf_unavailable",
-                message: "Không tải được PDF trước khi hết thời gian cho phép.",
-              };
-              continue;
-            }
             const filename = buildCachedLabelFilename([orderSn]);
             const storedPdf = getValidLabelDiskFile(filename);
             if (!storedPdf) {
               throw new Error(`PDF chưa được ghi thành công vào ${path.join(PDF_DIR, filename)}`);
             }
-            void markHasPdfIfLabelFileReady([orderSn]);
             try {
               await fs.promises.mkdir(publicPdfDir, { recursive: true });
               const publicDest = path.join(publicPdfDir, filename);
@@ -23528,24 +23531,20 @@ async function startServer() {
                 publicCopyErr?.message || publicCopyErr,
               );
             }
+            settleOrder(orderSn);
           } catch (err: any) {
             console.error(`[Silent Prefetch] order ${orderSn} failed:`, err?.stack || err);
-            failure = {
+            settleOrder(orderSn, {
               orderSn,
-              error: /batch_deadline|timeout/i.test(String(err?.message || ""))
-                ? "timeout"
-                : "prefetch_error",
+              error: "prefetch_error",
               message: String(err?.message || err || "Tải PDF thất bại."),
-            };
-          } finally {
-            // Mỗi đơn luôn hoàn tất riêng, kể cả lỗi, để progress không bị kẹt.
-            settleOrder(orderSn, failure);
-            const status = prefetchStatus.get(batchId);
-            if (status) status.isDone = status.succeeded + status.failed >= status.total;
+            });
           }
         }
-      };
-      await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+      }
+      for (const failure of result.failedOrders) {
+        settleOrder(failure.orderSn, failure);
+      }
       console.log(
         `[Silent Prefetch] DONE cached=${orderSns.length - (prefetchStatus.get(batchId)?.failed || 0)}/${orderSns.length}`,
       );
