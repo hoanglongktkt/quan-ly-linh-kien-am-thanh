@@ -721,13 +721,37 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
 
   useEffect(() => {
     if (!shops.length) return;
-    void checkShopConnections(shops, { silent: true });
-
-    const timer = window.setInterval(() => {
-      void checkShopConnections(shops, { silent: true });
-    }, 120_000);
-
-    return () => window.clearInterval(timer);
+    let cancelled = false;
+    let timer: number | null = null;
+    let pausedForHidden = false;
+    const tick = async () => {
+      if (cancelled) return;
+      // Dừng hẳn khi tab ẩn — không dùng setInterval thô (tránh dồn ứ khi tab ngủ lâu),
+      // resume có kiểm soát qua onVisible bên dưới.
+      if (document.visibilityState === 'hidden') {
+        pausedForHidden = true;
+        return;
+      }
+      await checkShopConnections(shops, { silent: true });
+      if (!cancelled) timer = window.setTimeout(tick, 120_000);
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && pausedForHidden) {
+        pausedForHidden = false;
+        if (timer != null) {
+          window.clearTimeout(timer);
+          timer = null;
+        }
+        void tick();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    void tick();
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisible);
+      if (timer != null) window.clearTimeout(timer);
+    };
   }, [shops.length, settings.shops?.map((s) => `${s.id}:${s.connected}:${s.platform}:${s.shopId}`).join('|')]);
 
   const renderShopConnectionStatus = (shop: ConnectedShop) => {

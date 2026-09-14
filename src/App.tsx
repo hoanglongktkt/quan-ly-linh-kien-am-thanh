@@ -22,6 +22,7 @@ import { sanitizeOrders, sortOrdersByCreatedAtDesc, orderCreatedAtMs } from './u
 import { safeGetJson, safeRemoveItem, safeSetItem } from './utils/safeStorage';
 import { parseJsonResponse } from './utils/apiClient';
 import { decodeJwtPayload, isJwtLocallyValid } from './utils/jwtClient';
+import { onTabWake } from './utils/tabWakeGate';
 import { clearLegacyOrdersLocalStorage, loadOrdersCache, saveOrdersCache } from './utils/orderCache';
 import { matchesProcessedPickupTab } from './utils/orderHandover';
 import { 
@@ -1342,24 +1343,12 @@ export default function App() {
       }
     };
 
-    const onFocus = () => {
+    // Gộp focus/visibilitychange/pageshow qua tabWakeGate — tránh bắn cùng lúc với
+    // handler wake của OrderManager (priority 10 = chạy SAU nhóm SSE/list của OrderManager).
+    const unsubscribe = onTabWake(() => {
       void refreshFromLocalDb();
-    };
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') void refreshFromLocalDb();
-    };
-    const onPageShow = (ev: PageTransitionEvent) => {
-      if (ev.persisted || document.visibilityState === 'visible') void refreshFromLocalDb();
-    };
-
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVisibilityChange);
-    window.addEventListener('pageshow', onPageShow);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-      window.removeEventListener('pageshow', onPageShow);
-    };
+    }, 10);
+    return unsubscribe;
   }, [isAuthenticated, activeTab, resolveOrdersFetchTab, resolveOrdersFetchKind]);
 
   // Poll hàng đợi dò ngầm Backend — toast toàn app kể cả khi tắt màn quét / đổi tab.
@@ -1369,6 +1358,7 @@ export default function App() {
     let timer: number | null = null;
     let abortCtrl: AbortController | null = null;
     let inFlight = false;
+    let pausedForHidden = false;
     const schedule = () => {
       if (cancelled) return;
       timer = window.setTimeout(() => {
@@ -1377,7 +1367,12 @@ export default function App() {
     };
     const poll = async () => {
       if (cancelled || inFlight) return;
-      if (document.visibilityState === 'hidden' || activeTab === 'orders') {
+      if (document.visibilityState === 'hidden') {
+        // Dừng hẳn khi tab ẩn — không tự lặp lịch tiếp, resume có kiểm soát lúc visible lại.
+        pausedForHidden = true;
+        return;
+      }
+      if (activeTab === 'orders') {
         // Tab Đơn hàng: OrderManager poll riêng — tránh 2 request song song.
         schedule();
         return;
@@ -1420,9 +1415,21 @@ export default function App() {
         schedule();
       }
     };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && pausedForHidden) {
+        pausedForHidden = false;
+        if (timer != null) {
+          window.clearTimeout(timer);
+          timer = null;
+        }
+        void poll();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
     void poll();
     return () => {
       cancelled = true;
+      document.removeEventListener('visibilitychange', onVisible);
       if (timer != null) window.clearTimeout(timer);
       abortCtrl?.abort();
     };

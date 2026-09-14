@@ -113,6 +113,7 @@ import {
 } from '../utils/shippingCarrier';
 import { resolveOrderShopDisplayName } from '../utils/resolveOrderShopName';
 import { orderCreatedAtMs } from '../utils/sanitizeOrder';
+import { onTabWake } from '../utils/tabWakeGate';
 import {
   defaultCustomDateInputs,
   resolveOrderDateRange,
@@ -1613,6 +1614,7 @@ export default function OrderManager({
   /** Polling counter — badge + toast + tự refetch list khi có đơn mới. */
   useEffect(() => {
     let cancelled = false;
+    let pausedForHidden = false;
     const schedule = (delay: number) => {
       if (cancelled) return;
       counterPollTimerRef.current = window.setTimeout(() => {
@@ -1621,38 +1623,50 @@ export default function OrderManager({
     };
     const poll = async () => {
       if (cancelled) return;
+      // Tab ẩn → dừng hẳn (không tự lặp lịch tiếp), resume có kiểm soát lúc visible lại
+      // (qua onVisible dưới hoặc wakeFromSleep) — tránh dồn tick khi tab ngủ lâu.
+      if (document.visibilityState === 'hidden') {
+        pausedForHidden = true;
+        return;
+      }
       // Sync burst đang chạy → bỏ tick counter (tránh /counter chồng).
       if (syncPollTimerRef.current != null) {
         schedule(COUNTER_POLL_MS);
         return;
       }
-      if (document.visibilityState !== 'hidden') {
-        const counts = await fetchOrderCounts();
-        if (!cancelled && counts) {
-          maybeNotifyNewOrdersFromCounts(counts);
-        }
-        // Chưa từng có counts (F5 + nghẽn request lúc boot — nhiều fetch tranh 6 kết nối
-        // HTTP/1.1/origin trên cPanel khiến /counter bị xếp hàng lâu) → retry sớm (5s) thay vì
-        // chờ đủ COUNTER_POLL_MS (60s), tránh badge số lượng "đứng hình" cho tới khi user
-        // đổi tab / focus lại window mới có wakeFromSleep() force refresh.
-        if (!cancelled && !counts && serverOrderCountsRef.current == null) {
-          schedule(FIRST_COUNTER_RETRY_MS);
-          return;
-        }
+      const counts = await fetchOrderCounts();
+      if (!cancelled && counts) {
+        maybeNotifyNewOrdersFromCounts(counts);
+      }
+      // Chưa từng có counts (F5 + nghẽn request lúc boot — nhiều fetch tranh 6 kết nối
+      // HTTP/1.1/origin trên cPanel khiến /counter bị xếp hàng lâu) → retry sớm (5s) thay vì
+      // chờ đủ COUNTER_POLL_MS (60s), tránh badge số lượng "đứng hình" cho tới khi user
+      // đổi tab / focus lại window mới có wakeFromSleep() force refresh.
+      if (!cancelled && !counts && serverOrderCountsRef.current == null) {
+        schedule(FIRST_COUNTER_RETRY_MS);
+        return;
       }
       schedule(COUNTER_POLL_MS);
     };
     runCounterPollNowRef.current = () => {
       if (cancelled) return;
+      pausedForHidden = false;
       if (counterPollTimerRef.current != null) {
         window.clearTimeout(counterPollTimerRef.current);
         counterPollTimerRef.current = null;
       }
       void poll();
     };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && pausedForHidden) {
+        runCounterPollNowRef.current?.();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
     void poll();
     return () => {
       cancelled = true;
+      document.removeEventListener('visibilitychange', onVisible);
       runCounterPollNowRef.current = null;
       if (counterPollTimerRef.current != null) {
         window.clearTimeout(counterPollTimerRef.current);
@@ -1794,27 +1808,25 @@ export default function OrderManager({
       if (now - lastWakeAtRef.current < WAKE_COOLDOWN_MS) return;
       lastWakeAtRef.current = now;
 
-      forceReconnectSse();
-      void fetchOrderCounts({ force: true });
+      // Chỉ reconnect SSE khi thực sự "chết" (null/CLOSED) — tránh đóng/mở 1 connection
+      // đang sống khỏe mỗi lần focus lại (watchdog phía dưới vẫn tự bắt zombie sau đó).
+      if (!es || es.readyState === EventSource.CLOSED) {
+        forceReconnectSse();
+      }
+      // refetchOrdersPageRef đã tự gọi kèm fetchOrderCounts({force:true}) bên trong —
+      // không gọi thêm fetchOrderCounts/runCounterPollNowRef ở đây để khỏi tạo 2-3 lệnh
+      // gọi /counter trùng nhau trong cùng 1 lượt wake.
       refetchOrdersPageRef.current({
         silent: true,
         page: 1,
         force: true,
         bustCache: true,
       });
-      runCounterPollNowRef.current?.();
-      triggerHandedOverReconcileIfNeeded();
-    };
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') wakeFromSleep();
-    };
-    const onFocus = () => {
-      wakeFromSleep();
-    };
-    const onPageShow = (ev: PageTransitionEvent) => {
-      // bfcache restore (Safari/mobile) — luôn catch-up.
-      if (ev.persisted || document.visibilityState === 'visible') wakeFromSleep();
+      // Tác vụ catch-up phụ (POST reconcile) — dời ra sau ~300ms, không dội cùng lúc
+      // với list/counter refresh phía trên để giảm tranh connection.
+      window.setTimeout(() => {
+        if (!cancelled) triggerHandedOverReconcileIfNeeded();
+      }, 300);
     };
 
     openSse();
@@ -1825,14 +1837,14 @@ export default function OrderManager({
       }
     }, SSE_WATCHDOG_TICK_MS);
 
-    document.addEventListener('visibilitychange', onVisibilityChange);
-    window.addEventListener('focus', onFocus);
-    window.addEventListener('pageshow', onPageShow);
+    // Gộp focus/visibilitychange/pageshow qua tabWakeGate (priority 0 = chạy trước,
+    // App.tsx đăng ký priority 10 chạy sau ~300ms) — tránh 2 nơi cùng bắn 1 tick.
+    const unsubscribeWake = onTabWake(() => {
+      wakeFromSleep();
+    }, 0);
     return () => {
       cancelled = true;
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-      window.removeEventListener('focus', onFocus);
-      window.removeEventListener('pageshow', onPageShow);
+      unsubscribeWake();
       if (watchdogTimer != null) window.clearInterval(watchdogTimer);
       if (orderUpdatedRefreshTimerRef.current != null) {
         window.clearTimeout(orderUpdatedRefreshTimerRef.current);
@@ -3421,6 +3433,7 @@ export default function OrderManager({
     let timer: number | null = null;
     let abortCtrl: AbortController | null = null;
     let inFlight = false;
+    let pausedForHidden = false;
     const schedule = (delayMs: number = SCAN_BG_STATUS_POLL_MS) => {
       if (cancelled) return;
       timer = window.setTimeout(() => {
@@ -3430,7 +3443,8 @@ export default function OrderManager({
     const poll = async () => {
       if (cancelled || inFlight) return;
       if (document.visibilityState === 'hidden') {
-        schedule(SCAN_BG_STATUS_IDLE_POLL_MS);
+        // Dừng hẳn khi tab ẩn — resume có kiểm soát lúc visible lại (onVisible dưới).
+        pausedForHidden = true;
         return;
       }
       inFlight = true;
@@ -3481,9 +3495,21 @@ export default function OrderManager({
         schedule(nextDelay);
       }
     };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && pausedForHidden) {
+        pausedForHidden = false;
+        if (timer != null) {
+          window.clearTimeout(timer);
+          timer = null;
+        }
+        void poll();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
     void poll();
     return () => {
       cancelled = true;
+      document.removeEventListener('visibilitychange', onVisible);
       if (timer != null) window.clearTimeout(timer);
       abortCtrl?.abort();
     };
