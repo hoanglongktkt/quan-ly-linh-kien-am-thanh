@@ -113,7 +113,7 @@ import {
 } from '../utils/shippingCarrier';
 import { resolveOrderShopDisplayName } from '../utils/resolveOrderShopName';
 import { orderCreatedAtMs } from '../utils/sanitizeOrder';
-import { onTabWake } from '../utils/tabWakeGate';
+import { onTabWake, type WakeInfo } from '../utils/tabWakeGate';
 import {
   defaultCustomDateInputs,
   resolveOrderDateRange,
@@ -875,6 +875,8 @@ const FIRST_COUNTER_RETRY_MS = 5_000;
 const WAKE_COOLDOWN_MS = 3_000;
 /** SSE heartbeat server = 15s; mất ping lâu hơn ngưỡng này → reconnect (mobile zombie). */
 const SSE_PING_WATCHDOG_MS = 45_000;
+/** Trần backoff khi reconnect liên tục fail (server cold-start) — tránh spam mỗi 45s vô hạn. */
+const SSE_PING_WATCHDOG_MAX_MS = 180_000;
 const SSE_WATCHDOG_TICK_MS = 15_000;
 
 function cancelReturnKindParam(tab: CancelReturnTab): string | undefined {
@@ -1688,9 +1690,17 @@ export default function OrderManager({
     let cancelled = false;
     let lastSseActivityAt = Date.now();
     let watchdogTimer: number | null = null;
+    // Số lần reconnect liên tiếp chưa thấy hoạt động thật (mở lại nhưng vẫn lỗi/không nhận được
+    // gì) — dùng để giãn ngưỡng watchdog ra xa hơn, tránh dội request mỗi 45s vô hạn vào server
+    // đang cold-start (Passenger/Mongo chưa kịp hồi phục).
+    let sseConsecutiveFailures = 0;
 
     const markSseActivity = () => {
       lastSseActivityAt = Date.now();
+    };
+    /** Có hoạt động THẬT (open/ping/message) — coi như server đã khỏe, reset backoff. */
+    const markSseHealthy = () => {
+      sseConsecutiveFailures = 0;
     };
 
     const onNewOrder = (ev: MessageEvent) => {
@@ -1749,6 +1759,7 @@ export default function OrderManager({
 
     const onPing = () => {
       markSseActivity();
+      markSseHealthy();
     };
 
     const closeSse = () => {
@@ -1767,8 +1778,13 @@ export default function OrderManager({
         next.addEventListener('new_order', onNewOrder as EventListener);
         next.addEventListener('order_updated', onOrderUpdated as EventListener);
         next.addEventListener('ping', onPing as EventListener);
+        next.onopen = () => {
+          markSseHealthy();
+        };
         next.onerror = () => {
-          /* EventSource tự reconnect; watchdog sẽ force open lại nếu zombie. */
+          // EventSource tự reconnect; watchdog sẽ force open lại nếu zombie.
+          // Đếm fail liên tiếp để giãn ngưỡng watchdog ra xa hơn khi server đang cold-start.
+          sseConsecutiveFailures += 1;
         };
         es = next;
         markSseActivity();
@@ -1802,11 +1818,17 @@ export default function OrderManager({
       }).catch(() => {});
     };
 
-    const wakeFromSleep = () => {
+    const wakeFromSleep = (info?: WakeInfo) => {
       if (document.visibilityState === 'hidden') return;
       const now = Date.now();
       if (now - lastWakeAtRef.current < WAKE_COOLDOWN_MS) return;
       lastWakeAtRef.current = now;
+      if (info?.isLongSleep) {
+        // tabWakeGate đã tự health-precheck + delay nhẹ trước khi gọi tới đây — chỉ cần
+        // thông báo cho user biết đang đồng bộ lại sau thời gian dài, tránh tưởng web bị treo.
+        showToast('Đang kết nối lại sau thời gian dài không mở web — vui lòng chờ vài giây...', 6000);
+        sseConsecutiveFailures = 0;
+      }
 
       // Chỉ reconnect SSE khi thực sự "chết" (null/CLOSED) — tránh đóng/mở 1 connection
       // đang sống khỏe mỗi lần focus lại (watchdog phía dưới vẫn tự bắt zombie sau đó).
@@ -1832,15 +1854,22 @@ export default function OrderManager({
     openSse();
     watchdogTimer = window.setInterval(() => {
       if (cancelled || document.visibilityState === 'hidden') return;
-      if (Date.now() - lastSseActivityAt > SSE_PING_WATCHDOG_MS) {
+      // Backoff tăng dần theo số lần fail liên tiếp (45s → 90s → 180s, cap) — nếu server đang
+      // cold-start thật (Passenger/Mongo chưa hồi phục), tránh force-reconnect dồn dập vô ích.
+      const backoffTimes = Math.min(sseConsecutiveFailures, 2);
+      const threshold = Math.min(
+        SSE_PING_WATCHDOG_MAX_MS,
+        SSE_PING_WATCHDOG_MS * 2 ** backoffTimes,
+      );
+      if (Date.now() - lastSseActivityAt > threshold) {
         forceReconnectSse();
       }
     }, SSE_WATCHDOG_TICK_MS);
 
     // Gộp focus/visibilitychange/pageshow qua tabWakeGate (priority 0 = chạy trước,
     // App.tsx đăng ký priority 10 chạy sau ~300ms) — tránh 2 nơi cùng bắn 1 tick.
-    const unsubscribeWake = onTabWake(() => {
-      wakeFromSleep();
+    const unsubscribeWake = onTabWake((info) => {
+      wakeFromSleep(info);
     }, 0);
     return () => {
       cancelled = true;

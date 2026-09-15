@@ -283,13 +283,22 @@ export function scheduleKeepAlivePing(deps = {}) {
         "",
     ).trim(),
   );
-  const disabledFlag = String(process.env.KEEP_ALIVE_PING_CRON ?? "1").trim().toLowerCase();
-  const disabled = !isCpanelRuntime || disabledFlag === "0" || disabledFlag === "off" || disabledFlag === "false";
+  const flagRaw = String(process.env.KEEP_ALIVE_PING_CRON ?? "1").trim().toLowerCase();
+  // "force"/"always" — bật self-ping BẤT KỂ có detect được biến Passenger/cPanel hay không.
+  // Dùng khi host cPanel không inject PASSENGER_APP_ROOT/... như kỳ vọng nhưng app vẫn cần
+  // chống idle-kill (đặt KEEP_ALIVE_PING_CRON=force trong .env, KHÔNG cần sửa code).
+  const forceEnabled = flagRaw === "force" || flagRaw === "always";
+  const disabledFlag = flagRaw === "0" || flagRaw === "off" || flagRaw === "false";
+  const disabled = disabledFlag || (!isCpanelRuntime && !forceEnabled);
   if (disabled) {
     console.log(
-      `[CRON] Keep-alive self-ping OFF (isCpanelRuntime=${isCpanelRuntime}, KEEP_ALIVE_PING_CRON=${process.env.KEEP_ALIVE_PING_CRON ?? "unset"}).`,
+      `[CRON] Keep-alive self-ping OFF (isCpanelRuntime=${isCpanelRuntime}, KEEP_ALIVE_PING_CRON=${process.env.KEEP_ALIVE_PING_CRON ?? "unset"}). ` +
+        `Nếu app vẫn bị cold-start dù chạy trên cPanel, đặt KEEP_ALIVE_PING_CRON=force trong .env.`,
     );
     return;
+  }
+  if (forceEnabled && !isCpanelRuntime) {
+    console.log("[CRON] Keep-alive self-ping FORCED ON (KEEP_ALIVE_PING_CRON=force, bỏ qua detect runtime).");
   }
 
   const baseUrl = String(deps.appBaseUrl || process.env.APP_URL || process.env.API_BASE_URL || "")

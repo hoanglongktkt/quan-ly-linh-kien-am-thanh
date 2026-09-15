@@ -75251,13 +75251,18 @@ function scheduleKeepAlivePing(deps22 = {}) {
       process.env.PASSENGER_APP_ROOT || process.env.PASSENGER_APP_ENV || process.env.CPANEL_APP_NAME || process.env.CPANEL_RUNTIME || ""
     ).trim()
   );
-  const disabledFlag = String(process.env.KEEP_ALIVE_PING_CRON ?? "1").trim().toLowerCase();
-  const disabled = !isCpanelRuntime || disabledFlag === "0" || disabledFlag === "off" || disabledFlag === "false";
+  const flagRaw = String(process.env.KEEP_ALIVE_PING_CRON ?? "1").trim().toLowerCase();
+  const forceEnabled = flagRaw === "force" || flagRaw === "always";
+  const disabledFlag = flagRaw === "0" || flagRaw === "off" || flagRaw === "false";
+  const disabled = disabledFlag || !isCpanelRuntime && !forceEnabled;
   if (disabled) {
     console.log(
-      `[CRON] Keep-alive self-ping OFF (isCpanelRuntime=${isCpanelRuntime}, KEEP_ALIVE_PING_CRON=${process.env.KEEP_ALIVE_PING_CRON ?? "unset"}).`
+      `[CRON] Keep-alive self-ping OFF (isCpanelRuntime=${isCpanelRuntime}, KEEP_ALIVE_PING_CRON=${process.env.KEEP_ALIVE_PING_CRON ?? "unset"}). N\u1EBFu app v\u1EABn b\u1ECB cold-start d\xF9 ch\u1EA1y tr\xEAn cPanel, \u0111\u1EB7t KEEP_ALIVE_PING_CRON=force trong .env.`
     );
     return;
+  }
+  if (forceEnabled && !isCpanelRuntime) {
+    console.log("[CRON] Keep-alive self-ping FORCED ON (KEEP_ALIVE_PING_CRON=force, b\u1ECF qua detect runtime).");
   }
   const baseUrl = String(deps22.appBaseUrl || process.env.APP_URL || process.env.API_BASE_URL || "").trim().replace(/\/$/, "");
   if (!baseUrl) {
@@ -121451,7 +121456,10 @@ async function refreshOrders(req, res) {
         success: false,
         data: [],
         total: 0,
-        error: "mongodb_not_ready"
+        error: "mongodb_not_ready",
+        // Gợi ý cho FE nên đợi bao lâu trước khi retry (cold-start Mongo sau khi Passenger
+        // vừa wake) — FE vẫn tự có backoff tăng dần riêng nếu thiếu field này.
+        retryAfterMs: 3e3
       });
     }
     if (req.query.t != null || req.query.bust != null) {
@@ -121703,7 +121711,8 @@ async function getOrderCounts(req, res) {
       return res.status(200).json({
         success: false,
         counts: {},
-        error: "mongodb_not_ready"
+        error: "mongodb_not_ready",
+        retryAfterMs: 3e3
       });
     }
     const shopIds = parseShopIdsParam(

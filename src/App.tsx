@@ -395,7 +395,24 @@ type OrdersRefreshPayload = {
   has_more?: boolean;
   hasMore?: boolean;
   counters?: { total?: number; returned?: number; cancelled?: number; rts?: number };
+  /** Backend gợi ý nên đợi bao lâu trước khi retry (cold-start Mongo) — có thể không có field này. */
+  retryAfterMs?: number;
 };
+
+/**
+ * Backoff tăng dần cho các lần retry /api/orders/refresh — tránh dồn 3-4 request cách nhau
+ * cố định 3s vào đúng lúc server cPanel đang cold-start (Passenger vừa wake + Mongo đang connect).
+ * retriesLeft mặc định bắt đầu ở 4 (xem fetchOrders) → lần retry đầu delay ~3s, sau đó tăng dần,
+ * chặn trên REFRESH_RETRY_MAX_MS để không "mất tác dụng" (chờ quá lâu) khi server đã hồi phục.
+ */
+const REFRESH_RETRY_BASE_MS = 3000;
+const REFRESH_RETRY_MAX_MS = 15000;
+function refreshRetryDelayMs(retriesLeft: number, serverHintMs?: number): number {
+  const attemptsUsed = Math.max(0, 4 - retriesLeft);
+  const backoff = Math.min(REFRESH_RETRY_MAX_MS, REFRESH_RETRY_BASE_MS * 2 ** attemptsUsed);
+  const hint = Number(serverHintMs) > 0 ? Number(serverHintMs) : 0;
+  return Math.max(backoff, hint);
+}
 
 type OrderCounters = { total: number; returned: number; cancelled: number; rts: number };
 
@@ -972,16 +989,17 @@ export default function App() {
       );
       const okPayloads = payloads.filter((p) => p && p.success !== false);
       if (okPayloads.length === 0 && retryPayload && retriesLeft > 0) {
+        const delayMs = refreshRetryDelayMs(retriesLeft, retryPayload.retryAfterMs);
         console.warn(
-          `[Fetch Orders] Refresh lỗi tạm thời (${retryPayload.error}) — thử lại sau 3s (còn ${retriesLeft} lần).`,
+          `[Fetch Orders] Refresh lỗi tạm thời (${retryPayload.error}) — thử lại sau ${delayMs}ms (còn ${retriesLeft} lần).`,
         );
-        window.setTimeout(retrySameFetch, 3000);
+        window.setTimeout(retrySameFetch, delayMs);
         return;
       }
       if (okPayloads.length === 0) {
         const httpFail = payloads.find((p) => String(p?.error || '').startsWith('http_'));
         if (httpFail && retriesLeft > 0 && requestId === fetchOrdersSeqRef.current) {
-          window.setTimeout(retrySameFetch, 3000);
+          window.setTimeout(retrySameFetch, refreshRetryDelayMs(retriesLeft));
           return;
         }
         if (opts?.throwOnError) {
@@ -1126,7 +1144,7 @@ export default function App() {
             shopIds: shopIds.length ? shopIds : undefined,
             retriesLeft: retriesLeft - 1,
           });
-        }, 3000);
+        }, refreshRetryDelayMs(retriesLeft));
       } else {
         setHasLoadedOrdersOnce(true);
       }

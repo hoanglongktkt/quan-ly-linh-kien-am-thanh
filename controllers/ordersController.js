@@ -435,6 +435,9 @@ export async function refreshOrders(req, res) {
         data: [],
         total: 0,
         error: "mongodb_not_ready",
+        // Gợi ý cho FE nên đợi bao lâu trước khi retry (cold-start Mongo sau khi Passenger
+        // vừa wake) — FE vẫn tự có backoff tăng dần riêng nếu thiếu field này.
+        retryAfterMs: 3000,
       });
     }
     // FE gửi ?t= / ?bust= → bỏ cache in-memory để luôn đọc Mongo mới
@@ -728,6 +731,7 @@ export async function getOrderCounts(req, res) {
         success: false,
         counts: {},
         error: "mongodb_not_ready",
+        retryAfterMs: 3000,
       });
     }
     const shopIds = parseShopIdsParam(
