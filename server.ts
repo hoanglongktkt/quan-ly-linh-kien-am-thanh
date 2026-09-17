@@ -21217,6 +21217,7 @@ async function startServer() {
   /** Phase 1 MVC — Auth / Health / Config / Debug (inject Shopee deps cho /api/health). */
   initHealthController({
     ensureDataDirs,
+    isDbReady: isMongoReady,
     listShopeeOAuthShopIds,
     loadLastOAuthAudit,
     tokensPath: SHOPEE_TOKENS_PATH,

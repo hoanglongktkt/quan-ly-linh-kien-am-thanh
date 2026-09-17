@@ -1328,6 +1328,9 @@ export default function App() {
 
     const refreshFromLocalDb = async () => {
       if (document.visibilityState === 'hidden') return;
+      // Khi màn Đơn hàng đang mount, OrderManager là chủ duy nhất của list/counter/SSE wake.
+      // Tránh App gọi thêm /orders/refresh ngay sau đó gây nghẽn connection lúc cold-start.
+      if (activeTab === 'orders') return;
       const now = Date.now();
       if (now - lastFocusRefreshAtRef.current < FOCUS_REFRESH_COOLDOWN_MS) return;
       lastFocusRefreshAtRef.current = now;
@@ -1336,8 +1339,6 @@ export default function App() {
       try {
         const tab = resolveOrdersFetchTab();
         const kind = resolveOrdersFetchKind();
-        // Tab Đơn hàng: OrderManager cũng wake — dùng force/bustCache để không bị silent-guard nuốt
-        // (phòng race khi OM chưa mount / vừa remount sau ngủ đông mobile).
         await fetchOrders({
           silent: true,
           page: 1,
@@ -1361,8 +1362,7 @@ export default function App() {
       }
     };
 
-    // Gộp focus/visibilitychange/pageshow qua tabWakeGate — tránh bắn cùng lúc với
-    // handler wake của OrderManager (priority 10 = chạy SAU nhóm SSE/list của OrderManager).
+    // Priority 10: các màn khác refresh sau nhóm wake chính của OrderManager.
     const unsubscribe = onTabWake(() => {
       void refreshFromLocalDb();
     }, 10);

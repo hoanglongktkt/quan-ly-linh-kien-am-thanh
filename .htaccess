@@ -29,6 +29,10 @@ SetEnv JWT_SECRET 251696
 SetEnv APP_URL https://quanly.linhkienamthanh.net
 SetEnv API_BASE_URL https://quanly.linhkienamthanh.net
 SetEnv VITE_API_BASE_URL https://quanly.linhkienamthanh.net
+SetEnv KEEP_ALIVE_PING_CRON force
+SetEnv KEEP_ALIVE_PING_MS 180000
+SetEnv KEEP_ALIVE_BASE_URL https://api.linhkienamthanh.net
+# cPanel Cron Jobs (mỗi 3 phút): /usr/bin/curl --silent --show-error --max-time 20 https://api.linhkienamthanh.net/api/health > /dev/null 2>&1
 SetEnv NODE_ENV production
 SetEnv SHOPEE_ENV live
 SetEnv SHOPEE_PARTNER_ID 2038162

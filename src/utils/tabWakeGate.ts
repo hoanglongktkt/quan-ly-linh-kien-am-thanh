@@ -44,8 +44,13 @@ const MERGE_DEBOUNCE_MS = 350;
 const STAGGER_MS = 300;
 /** Ẩn lâu hơn mốc này (30 phút) mới coi là "ngủ qua đêm" — tránh coi đổi tab thường là cold-start. */
 const LONG_SLEEP_MS = 30 * 60_000;
-/** Timeout cho GET /api/health "đánh thức" server — không chặn wake quá lâu nếu server vẫn chết. */
-const HEALTH_PRECHECK_TIMEOUT_MS = 6_000;
+/** Mỗi probe có timeout riêng; toàn bộ quá trình luôn bị chặn bởi deadline bên dưới. */
+const HEALTH_PRECHECK_REQUEST_TIMEOUT_MS = 8_000;
+/** Chờ cold-start tối đa 45 giây, sau đó vẫn phát wake để UI không bị khóa vô hạn. */
+const HEALTH_PRECHECK_TOTAL_TIMEOUT_MS = 45_000;
+/** Số probe hữu hạn + backoff để không spam Passenger/Mongo khi đang khởi động. */
+const HEALTH_PRECHECK_MAX_ATTEMPTS = 6;
+const HEALTH_PRECHECK_RETRY_DELAYS_MS = [0, 1_500, 3_000, 5_000, 8_000, 10_000] as const;
 /** Chờ thêm sau health-precheck trước khi phát wake cho subscriber — cho Mongo kịp connect. */
 const LONG_SLEEP_EXTRA_DELAY_MS = 1_200;
 
@@ -57,16 +62,39 @@ function markHiddenNow() {
   lastHiddenAt = Date.now();
 }
 
-/** Chỉ để "đánh thức" server cPanel đang cold — lỗi/timeout không chặn wake tiếp theo. */
-async function healthPrecheckOnce(): Promise<void> {
-  try {
+const delay = (ms: number): Promise<void> =>
+  new Promise((resolve) => window.setTimeout(resolve, ms));
+
+/** Đánh thức Passenger và chờ Mongo ready với số lần thử/deadline hữu hạn. */
+async function healthPrecheckUntilReady(): Promise<boolean> {
+  const deadlineAt = Date.now() + HEALTH_PRECHECK_TOTAL_TIMEOUT_MS;
+
+  for (let attempt = 0; attempt < HEALTH_PRECHECK_MAX_ATTEMPTS; attempt += 1) {
+    const retryDelay = HEALTH_PRECHECK_RETRY_DELAYS_MS[attempt] ?? 10_000;
+    if (retryDelay > 0) await delay(retryDelay);
+    if (Date.now() >= deadlineAt) break;
+
     const controller = new AbortController();
-    const timer = window.setTimeout(() => controller.abort(), HEALTH_PRECHECK_TIMEOUT_MS);
-    await fetch('/api/health', { signal: controller.signal, cache: 'no-store' });
-    window.clearTimeout(timer);
-  } catch {
-    /* ignore — mục đích chỉ là ping đánh thức, không cần biết kết quả */
+    const requestTimeoutMs = Math.max(
+      1,
+      Math.min(HEALTH_PRECHECK_REQUEST_TIMEOUT_MS, deadlineAt - Date.now()),
+    );
+    const timer = window.setTimeout(() => controller.abort(), requestTimeoutMs);
+    try {
+      const response = await fetch('/api/health', {
+        signal: controller.signal,
+        cache: 'no-store',
+      });
+      const health = await response.json().catch(() => null);
+      if (response.ok && health?.ok === true && health?.dbReady === true) return true;
+    } catch {
+      /* Passenger/Mongo còn cold — thử lại theo backoff hữu hạn. */
+    } finally {
+      window.clearTimeout(timer);
+    }
   }
+
+  return false;
 }
 
 function dispatch(info: WakeInfo) {
@@ -96,7 +124,12 @@ function fireWake() {
   console.log(
     `[tabWakeGate] Tab quay lại sau ~${Math.round(hiddenMs / 60_000)} phút ẩn — health-precheck trước khi đồng bộ (chống dội request vào server cold-start).`,
   );
-  void healthPrecheckOnce().then(() => {
+  void healthPrecheckUntilReady().then((ready) => {
+    if (!ready) {
+      console.warn(
+        '[tabWakeGate] Backend/Mongo chưa ready sau thời gian chờ tối đa — tiếp tục wake có kiểm soát.',
+      );
+    }
     window.setTimeout(() => dispatch(info), LONG_SLEEP_EXTRA_DELAY_MS);
   });
 }

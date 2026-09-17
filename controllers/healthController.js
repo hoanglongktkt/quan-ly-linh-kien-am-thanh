@@ -21,6 +21,7 @@ let deps = {
   ensureDataDirs: () => {
     fs.mkdirSync(path.join(APP_ROOT, "data"), { recursive: true });
   },
+  isDbReady: () => false,
   listShopeeOAuthShopIds: () => [],
   loadLastOAuthAudit: () => null,
   tokensPath: path.resolve(APP_ROOT, "data", "shopee_tokens.json"),
@@ -105,6 +106,7 @@ export function getClientLog(_req, res) {
  */
 export function getHealth(_req, res) {
   const shopIds = deps.listShopeeOAuthShopIds();
+  const dbReady = Boolean(deps.isDbReady());
   let dataDirWritable = false;
   try {
     deps.ensureDataDirs();
@@ -115,6 +117,8 @@ export function getHealth(_req, res) {
   }
   res.status(200).json({
     ok: true,
+    dbReady,
+    dbState: dbReady ? "ready" : "connecting",
     service: "cpanel-backend",
     host: deps.appBaseUrl,
     appRoot: deps.appRoot,

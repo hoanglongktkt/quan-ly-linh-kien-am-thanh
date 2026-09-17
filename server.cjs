@@ -75264,9 +75264,13 @@ function scheduleKeepAlivePing(deps22 = {}) {
   if (forceEnabled && !isCpanelRuntime) {
     console.log("[CRON] Keep-alive self-ping FORCED ON (KEEP_ALIVE_PING_CRON=force, b\u1ECF qua detect runtime).");
   }
-  const baseUrl = String(deps22.appBaseUrl || process.env.APP_URL || process.env.API_BASE_URL || "").trim().replace(/\/$/, "");
+  const baseUrl = String(
+    process.env.KEEP_ALIVE_BASE_URL || deps22.appBaseUrl || process.env.APP_URL || process.env.API_BASE_URL || ""
+  ).trim().replace(/\/$/, "");
   if (!baseUrl) {
-    console.warn("[CRON] Keep-alive self-ping NOT started \u2014 thi\u1EBFu APP_URL/API_BASE_URL.");
+    console.warn(
+      "[CRON] Keep-alive self-ping NOT started \u2014 thi\u1EBFu KEEP_ALIVE_BASE_URL/APP_URL/API_BASE_URL."
+    );
     return;
   }
   const url2 = `${baseUrl}/api/health`;
@@ -75279,7 +75283,17 @@ function scheduleKeepAlivePing(deps22 = {}) {
     const timer = setTimeout(() => controller.abort(), 8e3);
     try {
       const res = await fetch(url2, { signal: controller.signal });
-      console.log(`[CRON] Keep-alive ping (${trigger}) ${url2} -> ${res.status}`);
+      const health = await res.json().catch(() => null);
+      const dbState = health?.dbState || (health?.dbReady === true ? "ready" : "unknown");
+      if (!res.ok || health?.ok !== true) {
+        console.warn(
+          `[CRON] Keep-alive ping (${trigger}) ${url2} -> ${res.status}, db=${dbState}, health ch\u01B0a s\u1EB5n s\xE0ng.`
+        );
+        return;
+      }
+      console.log(
+        `[CRON] Keep-alive ping (${trigger}) ${url2} -> ${res.status}, db=${dbState}`
+      );
     } catch (err) {
       console.warn(`[CRON] Keep-alive ping (${trigger}) failed:`, err?.message || err);
     } finally {
@@ -85342,6 +85356,7 @@ var deps3 = {
   ensureDataDirs: () => {
     import_fs6.default.mkdirSync(import_path6.default.join(APP_ROOT, "data"), { recursive: true });
   },
+  isDbReady: () => false,
   listShopeeOAuthShopIds: () => [],
   loadLastOAuthAudit: () => null,
   tokensPath: import_path6.default.resolve(APP_ROOT, "data", "shopee_tokens.json"),
@@ -85405,6 +85420,7 @@ function getClientLog(_req, res) {
 }
 function getHealth(_req, res) {
   const shopIds = deps3.listShopeeOAuthShopIds();
+  const dbReady = Boolean(deps3.isDbReady());
   let dataDirWritable = false;
   try {
     deps3.ensureDataDirs();
@@ -85415,6 +85431,8 @@ function getHealth(_req, res) {
   }
   res.status(200).json({
     ok: true,
+    dbReady,
+    dbState: dbReady ? "ready" : "connecting",
     service: "cpanel-backend",
     host: deps3.appBaseUrl,
     appRoot: deps3.appRoot,
@@ -144085,6 +144103,7 @@ async function startServer() {
   app.use(dbReady_default);
   initHealthController({
     ensureDataDirs,
+    isDbReady: isMongoReady,
     listShopeeOAuthShopIds,
     loadLastOAuthAudit,
     tokensPath: SHOPEE_TOKENS_PATH,
