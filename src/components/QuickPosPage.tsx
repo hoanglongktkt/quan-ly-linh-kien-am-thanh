@@ -1,9 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
+  ChevronDown,
+  ChevronUp,
   Loader2,
   Printer,
   Save,
+  Settings2,
   Store,
   Trash2,
 } from 'lucide-react';
@@ -11,6 +14,7 @@ import { Order, Product, SyncLog } from '../types';
 import ImportProductSearchSelect, {
   ImportProductSearchSelectHandle,
 } from './ImportProductSearchSelect';
+import CurrencyInput from './CurrencyInput';
 import { AddressBookEntry, fetchAddressBook } from '../utils/addressBook';
 
 type PosLine = {
@@ -23,6 +27,46 @@ type PosLine = {
   sellingPrice: number;
   stock?: number;
 };
+
+type StoreInvoiceInfo = {
+  storeName: string;
+  storePhone: string;
+  storeAddress: string;
+  logoUrl: string;
+};
+
+const STORE_INFO_LS_KEY = 'pos_invoice_store_info';
+
+const EMPTY_STORE_INFO: StoreInvoiceInfo = {
+  storeName: '',
+  storePhone: '',
+  storeAddress: '',
+  logoUrl: '',
+};
+
+function loadStoreInfo(): StoreInvoiceInfo {
+  try {
+    const raw = localStorage.getItem(STORE_INFO_LS_KEY);
+    if (!raw) return { ...EMPTY_STORE_INFO };
+    const parsed = JSON.parse(raw) as Partial<StoreInvoiceInfo>;
+    return {
+      storeName: String(parsed.storeName || ''),
+      storePhone: String(parsed.storePhone || ''),
+      storeAddress: String(parsed.storeAddress || ''),
+      logoUrl: String(parsed.logoUrl || ''),
+    };
+  } catch {
+    return { ...EMPTY_STORE_INFO };
+  }
+}
+
+function saveStoreInfo(info: StoreInvoiceInfo) {
+  try {
+    localStorage.setItem(STORE_INFO_LS_KEY, JSON.stringify(info));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
 
 interface QuickPosPageProps {
   products: Product[];
@@ -82,6 +126,12 @@ export default function QuickPosPage({
   const [addressBook, setAddressBook] = useState<AddressBookEntry[]>([]);
   const [phoneSuggestOpen, setPhoneSuggestOpen] = useState(false);
   const [phoneQuery, setPhoneQuery] = useState('');
+  const [storeInfo, setStoreInfo] = useState<StoreInvoiceInfo>(EMPTY_STORE_INFO);
+  const [storeInfoOpen, setStoreInfoOpen] = useState(false);
+
+  useEffect(() => {
+    setStoreInfo(loadStoreInfo());
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -92,6 +142,14 @@ export default function QuickPosPage({
       cancelled = true;
     };
   }, [authHeaders]);
+
+  const patchStoreInfo = (patch: Partial<StoreInvoiceInfo>) => {
+    setStoreInfo((prev) => {
+      const next = { ...prev, ...patch };
+      saveStoreInfo(next);
+      return next;
+    });
+  };
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
@@ -301,7 +359,14 @@ export default function QuickPosPage({
             padding: 16px !important;
             background: #fff !important;
             color: #000 !important;
+            border: none !important;
+            border-radius: 0 !important;
           }
+          #pos-invoice table { width: 100% !important; border-collapse: collapse !important; }
+          #pos-invoice th,
+          #pos-invoice td { padding: 6px 8px !important; }
+          #pos-invoice th:first-child,
+          #pos-invoice td:first-child { width: 48px !important; text-align: left !important; }
           .no-print { display: none !important; }
         }
       `}</style>
@@ -322,6 +387,72 @@ export default function QuickPosPage({
 
       <div className="no-print grid grid-cols-1 lg:grid-cols-3 gap-4">
         <section className="lg:col-span-1 rounded-2xl border border-slate-200 bg-white p-4 space-y-3 shadow-sm">
+          <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setStoreInfoOpen((v) => !v)}
+              className="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-left cursor-pointer hover:bg-emerald-50"
+            >
+              <span className="text-xs font-extrabold text-emerald-800 flex items-center gap-1.5">
+                <Settings2 className="w-3.5 h-3.5" />
+                Thông tin Cửa hàng trên Hóa đơn
+              </span>
+              {storeInfoOpen ? (
+                <ChevronUp className="w-4 h-4 text-emerald-600" />
+              ) : (
+                <ChevronDown className="w-4 h-4 text-emerald-600" />
+              )}
+            </button>
+            {storeInfoOpen && (
+              <div className="px-3 pb-3 space-y-2 border-t border-emerald-100 pt-2">
+                <p className="text-[10px] text-emerald-700/80 font-medium">
+                  Lưu trên trình duyệt (localStorage) — tự hiện khi in hóa đơn.
+                </p>
+                <input
+                  type="text"
+                  value={storeInfo.storeName}
+                  onChange={(e) => patchStoreInfo({ storeName: e.target.value })}
+                  placeholder="Tên cửa hàng"
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium bg-white"
+                />
+                <input
+                  type="text"
+                  value={storeInfo.storePhone}
+                  onChange={(e) => patchStoreInfo({ storePhone: e.target.value })}
+                  placeholder="Số điện thoại cửa hàng"
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium bg-white"
+                />
+                <textarea
+                  value={storeInfo.storeAddress}
+                  onChange={(e) => patchStoreInfo({ storeAddress: e.target.value })}
+                  placeholder="Địa chỉ cửa hàng"
+                  rows={2}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium resize-y bg-white"
+                />
+                <input
+                  type="url"
+                  value={storeInfo.logoUrl}
+                  onChange={(e) => patchStoreInfo({ logoUrl: e.target.value })}
+                  placeholder="URL Logo (https://...)"
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium bg-white"
+                />
+                {storeInfo.logoUrl.trim() ? (
+                  <div className="flex items-center gap-2">
+                    <img
+                      src={storeInfo.logoUrl.trim()}
+                      alt="Logo preview"
+                      className="h-10 w-auto max-w-[120px] object-contain rounded border border-slate-200 bg-white"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                      }}
+                    />
+                    <span className="text-[10px] text-slate-500 font-medium">Xem trước logo</span>
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </div>
+
           <h2 className="text-sm font-extrabold text-slate-800 flex items-center gap-2">
             <Store className="w-4 h-4 text-emerald-600" />
             Khách hàng
@@ -480,16 +611,18 @@ export default function QuickPosPage({
                         {formatVnd(l.importPrice)}
                       </td>
                       <td className="px-2 py-2 text-right">
-                        <input
-                          type="number"
+                        <CurrencyInput
+                          smartShorthand
                           min={0}
                           value={l.sellingPrice}
-                          onChange={(e) =>
+                          onChange={(v) =>
                             updateLine(l.productId, {
-                              sellingPrice: Math.max(0, Math.round(Number(e.target.value) || 0)),
+                              sellingPrice: Math.max(0, Math.round(v) || 0),
                             })
                           }
-                          className="w-24 rounded-lg border border-slate-200 px-2 py-1 text-right font-bold"
+                          title="Gõ 60 rồi rời ô → 60.000"
+                          placeholder="0"
+                          className="w-28 rounded-lg border border-slate-200 px-2 py-1 text-right font-bold"
                         />
                       </td>
                       <td className="px-2 py-2 text-right font-extrabold text-slate-800">
@@ -577,16 +710,47 @@ export default function QuickPosPage({
       </div>
 
       <div id="pos-invoice" className="rounded-2xl border border-dashed border-slate-200 bg-white p-6">
-        <div className="text-center mb-4">
-          <div className="text-lg font-black tracking-wide">HÓA ĐƠN / BÁO GIÁ</div>
-          <div className="text-xs text-slate-500 font-semibold mt-1">
-            {lastOrder?.orderSn || '— chờ lưu đơn —'} ·{' '}
-            {lastOrder?.date
-              ? new Date(lastOrder.date).toLocaleString('vi-VN')
-              : new Date().toLocaleString('vi-VN')}
+        {/* Header: Logo + Thông tin cửa hàng */}
+        <div className="flex items-start gap-4 mb-5 pb-4 border-b border-slate-300">
+          {storeInfo.logoUrl.trim() ? (
+            <img
+              src={storeInfo.logoUrl.trim()}
+              alt="Logo cửa hàng"
+              className="h-16 w-16 object-contain flex-shrink-0"
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = 'none';
+              }}
+            />
+          ) : null}
+          <div className="min-w-0 flex-1">
+            <div className="text-base font-black tracking-wide uppercase text-slate-900">
+              {storeInfo.storeName.trim() || 'CỬA HÀNG'}
+            </div>
+            {storeInfo.storePhone.trim() ? (
+              <div className="text-xs text-slate-600 mt-0.5">
+                <span className="font-bold">ĐT:</span> {storeInfo.storePhone.trim()}
+              </div>
+            ) : null}
+            {storeInfo.storeAddress.trim() ? (
+              <div className="text-xs text-slate-600 mt-0.5">
+                <span className="font-bold">Địa chỉ:</span> {storeInfo.storeAddress.trim()}
+              </div>
+            ) : null}
+            <div className="text-sm font-extrabold text-slate-800 mt-2">HÓA ĐƠN / BÁO GIÁ</div>
+            <div className="text-[11px] text-slate-500 font-semibold mt-0.5">
+              {lastOrder?.orderSn || '— chờ lưu đơn —'} ·{' '}
+              {lastOrder?.date
+                ? new Date(lastOrder.date).toLocaleString('vi-VN')
+                : new Date().toLocaleString('vi-VN')}
+            </div>
           </div>
         </div>
-        <div className="text-xs mb-3 space-y-0.5">
+
+        {/* Thông tin khách hàng */}
+        <div className="text-xs mb-4 space-y-1 pb-3 border-b border-slate-200">
+          <div className="text-[11px] font-extrabold uppercase tracking-wide text-slate-500 mb-1">
+            Người nhận / Khách hàng
+          </div>
           <div>
             <span className="font-bold">Khách:</span>{' '}
             {lastOrder?.customerName || customerName || (walkIn ? 'Khách tại cửa hàng' : '—')}
@@ -601,52 +765,57 @@ export default function QuickPosPage({
               (walkIn ? 'Mua tại cửa hàng' : customerAddress || '—')}
           </div>
         </div>
-        <table className="w-full text-xs border-collapse">
+
+        <table className="w-full text-xs border-collapse table-fixed">
           <thead>
             <tr className="border-b-2 border-slate-800">
-              <th className="py-2 text-left">STT</th>
-              <th className="py-2 text-left">Sản phẩm</th>
-              <th className="py-2 text-right">SL</th>
-              <th className="py-2 text-right">Đơn giá</th>
-              <th className="py-2 text-right">Thành tiền</th>
+              <th className="w-12 px-2 py-2 text-left font-bold">STT</th>
+              <th className="px-2 py-2 text-left font-bold">Sản phẩm</th>
+              <th className="w-16 px-2 py-2 text-right font-bold">SL</th>
+              <th className="w-24 px-2 py-2 text-right font-bold">Đơn giá</th>
+              <th className="w-28 px-2 py-2 text-right font-bold">Thành tiền</th>
             </tr>
           </thead>
           <tbody>
             {printLines.length === 0 ? (
               <tr>
-                <td colSpan={5} className="py-4 text-center text-slate-400">
+                <td colSpan={5} className="px-2 py-4 text-center text-slate-400">
                   Chưa có dòng hàng
                 </td>
               </tr>
             ) : (
               printLines.map((l, i) => (
                 <tr key={i} className="border-b border-slate-200">
-                  <td className="py-1.5">{i + 1}</td>
-                  <td className="py-1.5">{l.productTitle}</td>
-                  <td className="py-1.5 text-right">{l.quantity}</td>
-                  <td className="py-1.5 text-right">{formatVnd(l.sellingPrice)}</td>
-                  <td className="py-1.5 text-right font-bold">{formatVnd(l.lineTotal)}</td>
+                  <td className="w-12 px-2 py-1.5 text-left align-top text-slate-600">{i + 1}</td>
+                  <td className="px-2 py-1.5 text-left align-top break-words">{l.productTitle}</td>
+                  <td className="w-16 px-2 py-1.5 text-right align-top tabular-nums">{l.quantity}</td>
+                  <td className="w-24 px-2 py-1.5 text-right align-top tabular-nums">
+                    {formatVnd(l.sellingPrice)}
+                  </td>
+                  <td className="w-28 px-2 py-1.5 text-right align-top font-bold tabular-nums">
+                    {formatVnd(l.lineTotal)}
+                  </td>
                 </tr>
               ))
             )}
           </tbody>
         </table>
         <div className="mt-4 text-xs space-y-1 max-w-xs ml-auto">
-          <div className="flex justify-between">
+          <div className="flex justify-between gap-4 px-2">
             <span>Tạm tính</span>
-            <span className="font-bold">{formatVnd(printSubtotal)}₫</span>
+            <span className="font-bold tabular-nums">{formatVnd(printSubtotal)}₫</span>
           </div>
-          <div className="flex justify-between">
+          <div className="flex justify-between gap-4 px-2">
             <span>Phí giao ước tính</span>
-            <span className="font-bold">{formatVnd(printFee)}₫</span>
+            <span className="font-bold tabular-nums">{formatVnd(printFee)}₫</span>
           </div>
-          <div className="flex justify-between">
+          <div className="flex justify-between gap-4 px-2">
             <span>Đã trả trước</span>
-            <span className="font-bold">{formatVnd(printPrepaid)}₫</span>
+            <span className="font-bold tabular-nums">{formatVnd(printPrepaid)}₫</span>
           </div>
-          <div className="flex justify-between border-t border-slate-800 pt-2 text-sm font-black">
+          <div className="flex justify-between gap-4 border-t border-slate-800 pt-2 px-2 text-sm font-black">
             <span>Tổng thanh toán</span>
-            <span>{formatVnd(Math.max(0, printTotal - printPrepaid))}₫</span>
+            <span className="tabular-nums">{formatVnd(Math.max(0, printTotal - printPrepaid))}₫</span>
           </div>
         </div>
       </div>
