@@ -49,6 +49,7 @@ import {
   CheckCircle2,
   Loader2,
   Layers,
+  Zap,
 } from 'lucide-react';
 import type { OrdersSubTabId } from './components/OrderManager';
 import {
@@ -169,6 +170,9 @@ const ORDERS_SUB_TAB_IDS = new Set<string>([
   'cancel_returns',
   'received_cancel_returns',
   'order_products',
+  'web_orders',
+  'external_orders',
+  'quick_pos',
 ]);
 
 /** Alias URL thân thiện → id tab nội bộ (vd: ?tab=da-giao-dvvc). */
@@ -183,6 +187,12 @@ const ORDERS_SUB_TAB_ALIASES: Record<string, OrdersSubTabId> = {
   'return_requests': 'all',
   'don-huy-hoan': 'cancel_returns',
   'da-nhan-huy-hoan': 'received_cancel_returns',
+  'don-ngoai-san': 'external_orders',
+  'external_orders': 'external_orders',
+  'manual-orders': 'external_orders',
+  'quick_pos': 'quick_pos',
+  'tao-don-nhanh': 'quick_pos',
+  'pos': 'quick_pos',
 };
 
 function normalizeOrdersSubTab(raw: string | null | undefined): OrdersSubTabId | null {
@@ -2534,6 +2544,29 @@ export default function App() {
               </button>
               <button onClick={() => navigateTab('orders')} className={navButtonClass('orders')}>
                 <ClipboardList className="w-4 h-4 shrink-0" /> Quản lý đơn hàng
+              </button>
+              <button
+                onClick={() => navigateTab('orders', { ordersSubTab: 'external_orders' })}
+                className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                  activeTab === 'orders' && ordersSubTabHint === 'external_orders'
+                    ? 'bg-emerald-600 text-white font-extrabold shadow-sm'
+                    : 'hover:bg-slate-800 hover:text-white text-slate-400'
+                }`}
+              >
+                <ShoppingBag className="w-4 h-4 shrink-0" /> Đơn ngoại sàn
+              </button>
+              <button
+                onClick={() => navigateTab('orders', { ordersSubTab: 'quick_pos' })}
+                className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                  activeTab === 'orders' && ordersSubTabHint === 'quick_pos'
+                    ? 'bg-blue-600 text-white font-extrabold shadow-sm'
+                    : 'text-blue-500 hover:bg-slate-800 hover:text-blue-400'
+                }`}
+              >
+                <Zap className="w-4 h-4 shrink-0 text-blue-500" />
+                <span className={activeTab === 'orders' && ordersSubTabHint === 'quick_pos' ? 'text-white' : 'text-blue-500'}>
+                  Tạo đơn nhanh
+                </span>
               </button>
               <button
                 onClick={() => navigateTab('orders', { ordersSubTab: 'received_cancel_returns' })}

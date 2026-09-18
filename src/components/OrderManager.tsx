@@ -98,6 +98,7 @@ import {
   RefreshCw,
   Trash2,
   SwitchCamera,
+  Zap,
 } from 'lucide-react';
 import { Order, ConnectedShop, SyncLog, Product, SystemFee } from '../types';
 import ManualOrderPage from './ManualOrderPage';
@@ -678,7 +679,8 @@ type OrderTab =
   | 'received_cancel_returns'
   | 'order_products'
   | 'web_orders'
-  | 'external_orders';
+  | 'external_orders'
+  | 'quick_pos';
 
 export type OrdersSubTabId = OrderTab;
 
@@ -698,6 +700,7 @@ const ORDER_TAB_SET = new Set<string>([
   'order_products',
   'web_orders',
   'external_orders',
+  'quick_pos',
 ]);
 
 const ORDER_TAB_ALIASES: Record<string, OrderTab> = {
@@ -717,6 +720,9 @@ const ORDER_TAB_ALIASES: Record<string, OrderTab> = {
   'don-ngoai-san': 'external_orders',
   'external_orders': 'external_orders',
   'manual-orders': 'external_orders',
+  'quick_pos': 'quick_pos',
+  'tao-don-nhanh': 'quick_pos',
+  'pos': 'quick_pos',
 };
 
 function normalizeOrderTab(raw: string | null | undefined): OrderTab | null {
@@ -1512,6 +1518,13 @@ export default function OrderManager({
   /** Set tab + sub-tab + page cùng 1 tick — tránh fetch 2 lần khi vào nhóm Hủy/Hoàn. */
   const selectOrdersSubTab = useCallback((tab: OrderTab, cancelReturn?: CancelReturnTab) => {
     const nextTab = tab === 'return_requests' ? 'all' : tab;
+    if (nextTab === 'quick_pos') {
+      setShowQuickPosPage(true);
+      setActiveSubTab('quick_pos');
+      setCurrentPage((p) => (p === 1 ? p : 1));
+      return;
+    }
+    setShowQuickPosPage(false);
     setActiveSubTab(nextTab);
     if (nextTab === 'cancel_returns') {
       setCancelReturnTab(cancelReturn ?? 'all');
@@ -2170,6 +2183,11 @@ export default function OrderManager({
       initialOrdersSubTab === 'pending_verification'
         ? 'pending_confirm'
         : normalizeOrderTab(initialOrdersSubTab) || initialOrdersSubTab;
+    if (next === 'quick_pos') {
+      setShowQuickPosPage(true);
+      setActiveSubTab((prev) => (prev === 'quick_pos' ? prev : 'quick_pos'));
+      return;
+    }
     setActiveSubTab((prev) => (prev === next ? prev : next));
   }, [initialOrdersSubTab]);
 
@@ -8551,7 +8569,10 @@ export default function OrderManager({
       <QuickPosPage
         products={products}
         orders={orders}
-        onBack={() => setShowQuickPosPage(false)}
+        onBack={() => {
+          setShowQuickPosPage(false);
+          selectOrdersSubTab('external_orders');
+        }}
         onUpdateOrders={onUpdateOrders}
         onUpdateProduct={onUpdateProduct}
         onAddLog={onAddLog}
@@ -8911,7 +8932,7 @@ export default function OrderManager({
           </button>
           <button
             type="button"
-            onClick={() => setShowQuickPosPage(true)}
+            onClick={() => selectOrdersSubTab('quick_pos')}
             className="om-orders-mobile-hide-primary-actions px-5 py-2 bg-sky-600 hover:bg-sky-700 text-white font-extrabold text-xs rounded-xl shadow-md shadow-sky-500/15 hover:shadow-sky-500/30 transition-all flex items-center gap-2 cursor-pointer"
           >
             <Plus className="w-4 h-4" />
@@ -9122,6 +9143,20 @@ export default function OrderManager({
           <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
             {getCount('external_orders')}
           </span>
+        </button>
+
+        {/* Mobile-only: Tạo đơn nhanh — ngay dưới Đơn ngoại sàn */}
+        <button
+          type="button"
+          onClick={() => selectOrdersSubTab('quick_pos')}
+          className={`md:hidden om-orders-mobile-show-subtab px-4 py-3.5 text-xs font-bold tracking-wider border max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 w-full ${
+            showQuickPosPage || activeSubTab === 'quick_pos'
+              ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50'
+              : 'border-blue-100 text-blue-600 hover:bg-blue-50 hover:border-blue-300'
+          }`}
+        >
+          <Zap className="w-4 h-4 shrink-0 text-blue-600" />
+          <span className="text-blue-600">Tạo đơn nhanh</span>
         </button>
 
       </div>
