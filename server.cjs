@@ -145202,6 +145202,30 @@ async function startServer() {
     }
     return buffer;
   }
+  function sortBatchPdfResultByRequestedOrder(requestedOrderSns, documents, failedOrders) {
+    const requestedRank = /* @__PURE__ */ new Map();
+    requestedOrderSns.forEach((value, index) => {
+      const sn = String(value || "").replace(/^shopee-/i, "").trim();
+      if (sn && !requestedRank.has(sn)) requestedRank.set(sn, index);
+    });
+    const documentRank = (document2) => {
+      let best = Number.MAX_SAFE_INTEGER;
+      for (const value of document2.orderSns || []) {
+        const sn = String(value || "").replace(/^shopee-/i, "").trim();
+        const rank = requestedRank.get(sn);
+        if (rank != null && rank < best) best = rank;
+      }
+      return best;
+    };
+    const failureRank = (failure) => {
+      const sn = String(failure.orderSn || "").replace(/^shopee-/i, "").trim();
+      return requestedRank.get(sn) ?? Number.MAX_SAFE_INTEGER;
+    };
+    return {
+      documents: [...documents].sort((a, b) => documentRank(a) - documentRank(b)),
+      failedOrders: [...failedOrders].sort((a, b) => failureRank(a) - failureRank(b))
+    };
+  }
   async function mergeBatchPdfBuffers(pdfBuffers, logPrefix, onInvalid) {
     const startedAt = Date.now();
     const mergedPdf = await import_pdf_lib.PDFDocument.create();
@@ -145398,10 +145422,11 @@ async function startServer() {
     console.log(
       `[${logPrefix}] timing total=${Date.now() - startedAt}ms ok=${documents.length} failed=${failedBySn.size}`
     );
-    return {
+    return sortBatchPdfResultByRequestedOrder(
+      orderSns,
       documents,
-      failedOrders: [...failedBySn.values()]
-    };
+      [...failedBySn.values()]
+    );
   }
   const batchConfirmPrintRoute = async (req, res) => {
     const t0 = Date.now();
@@ -145416,9 +145441,11 @@ async function startServer() {
           message: "Thi\u1EBFu danh s\xE1ch orderSns."
         });
       }
-      const cleanSns = orderSns.map(
-        (sn) => String(sn || "").replace(/^shopee-/i, "").trim()
-      ).filter(Boolean);
+      const cleanSns = [
+        ...new Set(
+          orderSns.map((sn) => String(sn || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
+        )
+      ];
       if (cleanSns.length === 0) {
         return res.status(400).json({
           success: false,
@@ -145462,7 +145489,7 @@ async function startServer() {
       } catch (err) {
         console.warn("[Batch Confirm Print] prewarm skipped:", err?.message || err);
       }
-      const successSns = [];
+      const successfulSnSet = /* @__PURE__ */ new Set();
       const failedResults = [];
       await mapBatchConcurrently(toShip, BATCH_PRINT_CONCURRENCY, async ({ index, order }) => {
         const orderSn = String(order.orderSn || "");
@@ -145516,7 +145543,7 @@ async function startServer() {
             shopeeSyncError: void 0
           };
           forceHealPickupOrderIfHasTracking(orders[index]);
-          successSns.push(orderSn);
+          successfulSnSet.add(orderSn.replace(/^shopee-/i, "").trim());
         } catch (orderErr) {
           console.error(`[Batch Confirm Print] L\u1ED7i \u0111\u01A1n ${orderSn}:`, orderErr?.stack || orderErr);
           failedResults.push({
@@ -145527,6 +145554,7 @@ async function startServer() {
           });
         }
       });
+      const successSns = cleanSns.filter((orderSn) => successfulSnSet.has(orderSn));
       try {
         const confirmedRows = toShip.map(({ index }) => orders[index]).filter((o) => o && o.isPrepared === true);
         await persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod);
@@ -145763,9 +145791,11 @@ async function startServer() {
           message: "Thi\u1EBFu danh s\xE1ch orderSns."
         });
       }
-      const cleanSns = orderSns.map(
-        (sn) => String(sn || "").replace(/^shopee-/i, "").trim()
-      ).filter(Boolean);
+      const cleanSns = [
+        ...new Set(
+          orderSns.map((sn) => String(sn || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
+        )
+      ];
       if (cleanSns.length === 0) {
         return res.status(400).json({
           success: false,
@@ -147479,12 +147509,17 @@ async function startServer() {
           });
         });
       }
+      const orderedUrls = [];
+      for (const document2 of documents) {
+        const url2 = String(document2.url || "").trim();
+        if (url2 && !orderedUrls.includes(url2)) orderedUrls.push(url2);
+      }
       return res.status(successCount > 0 ? 200 : 422).json({
         success: successCount > 0,
         ...successCount === 0 ? { error: topError, permanent: true } : {},
-        urls,
-        url: urls[0] || null,
-        mergedUrl: urls[0] || null,
+        urls: orderedUrls,
+        url: orderedUrls[0] || null,
+        mergedUrl: orderedUrls[0] || null,
         pdfFilename: documents.find((d) => d.pdfFilename)?.pdfFilename,
         documents,
         results,

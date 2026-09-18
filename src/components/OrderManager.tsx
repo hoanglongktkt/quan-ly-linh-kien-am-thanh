@@ -5127,19 +5127,58 @@ export default function OrderManager({
         };
       }
 
+      const normalizePrintOrderKey = (value: unknown) =>
+        String(value || '').replace(/^shopee-/i, '').trim();
+      const requestRank = new Map<string, number>();
+      uniqueIds.forEach((id, index) => {
+        const raw = String(id || '').trim();
+        const normalized = normalizePrintOrderKey(raw);
+        if (raw && !requestRank.has(raw)) requestRank.set(raw, index);
+        if (normalized && !requestRank.has(normalized)) requestRank.set(normalized, index);
+        if (normalized && !requestRank.has(`shopee-${normalized}`)) {
+          requestRank.set(`shopee-${normalized}`, index);
+        }
+      });
+      const rankDocument = (doc: (typeof allDocs)[number]) => {
+        const keys = [
+          (doc as { orderId?: string }).orderId,
+          doc.orderSn,
+          ...(Array.isArray(doc.orderSns) ? doc.orderSns : []),
+        ];
+        for (const key of keys) {
+          const raw = String(key || '').trim();
+          const normalized = normalizePrintOrderKey(raw);
+          const hit =
+            requestRank.get(raw) ??
+            requestRank.get(normalized) ??
+            requestRank.get(`shopee-${normalized}`);
+          if (hit != null) return hit;
+        }
+        return Number.MAX_SAFE_INTEGER;
+      };
+      const orderedDocs = [...allDocs].sort((a, b) => rankDocument(a) - rankDocument(b));
+      const orderedUrls: string[] = [];
+      for (const doc of orderedDocs) {
+        const url = String(doc?.url || '').trim();
+        if (url && !orderedUrls.includes(url)) orderedUrls.push(url);
+      }
+      for (const url of allUrls) {
+        if (url && !orderedUrls.includes(url)) orderedUrls.push(url);
+      }
+
       reportProgress(uniqueIds.length);
       return {
         ok: true,
         status: 200,
         data: {
           success: true,
-          url: allUrls[0],
-          mergedUrl: allUrls[0],
-          pdfFilename: allDocs.find((d) => d.pdfFilename)?.pdfFilename,
-          documents: allDocs.length ? allDocs : allUrls.map((url) => ({ url })),
+          url: orderedUrls[0],
+          mergedUrl: orderedUrls[0],
+          pdfFilename: orderedDocs.find((d) => d.pdfFilename)?.pdfFilename,
+          documents: orderedDocs.length ? orderedDocs : orderedUrls.map((url) => ({ url })),
           message:
             data.message ||
-            `Đã lấy ${allUrls.length} PDF từ kho nội bộ.`,
+            `Đã lấy ${orderedUrls.length} PDF từ kho nội bộ.`,
         },
       };
     } catch (err) {
@@ -6972,11 +7011,12 @@ export default function OrderManager({
     displayOrders.length === 0;
 
 
-  // Resolve checkbox selections to full Order rows — CHỈ lấy đơn đang hiển thị
-  // (đã lọc ĐVVC), để In/Xác nhận hàng loạt không đụng đơn bị ẩn.
+  // Nguồn thứ tự duy nhất cho mọi thao tác hàng loạt là displayOrders.
+  // selectedOrderIds chỉ là tập khóa checkbox; tuyệt đối không dùng thứ tự click.
   const getSelectedOrders = (): Order[] => {
     if (selectedOrderIds.length === 0) return [];
     const keySet = new Set(selectedOrderIds.map(k => String(k).trim()).filter(Boolean));
+    // filter duyệt từ đầu đến cuối displayOrders nên payload In/Xác nhận giữ đúng thứ tự UI.
     return displayOrders.filter(o =>
       keySet.has(o.id) ||
       keySet.has(o.orderSn) ||

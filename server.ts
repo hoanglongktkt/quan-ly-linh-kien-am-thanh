@@ -22497,6 +22497,35 @@ async function startServer() {
   type BatchPdfDocument = { orderSns: string[]; buffer: Buffer };
   type BatchPdfFailure = { orderSn: string; error: string; message: string };
 
+  function sortBatchPdfResultByRequestedOrder(
+    requestedOrderSns: string[],
+    documents: BatchPdfDocument[],
+    failedOrders: BatchPdfFailure[],
+  ): { documents: BatchPdfDocument[]; failedOrders: BatchPdfFailure[] } {
+    const requestedRank = new Map<string, number>();
+    requestedOrderSns.forEach((value, index) => {
+      const sn = String(value || "").replace(/^shopee-/i, "").trim();
+      if (sn && !requestedRank.has(sn)) requestedRank.set(sn, index);
+    });
+    const documentRank = (document: BatchPdfDocument) => {
+      let best = Number.MAX_SAFE_INTEGER;
+      for (const value of document.orderSns || []) {
+        const sn = String(value || "").replace(/^shopee-/i, "").trim();
+        const rank = requestedRank.get(sn);
+        if (rank != null && rank < best) best = rank;
+      }
+      return best;
+    };
+    const failureRank = (failure: BatchPdfFailure) => {
+      const sn = String(failure.orderSn || "").replace(/^shopee-/i, "").trim();
+      return requestedRank.get(sn) ?? Number.MAX_SAFE_INTEGER;
+    };
+    return {
+      documents: [...documents].sort((a, b) => documentRank(a) - documentRank(b)),
+      failedOrders: [...failedOrders].sort((a, b) => failureRank(a) - failureRank(b)),
+    };
+  }
+
   async function mergeBatchPdfBuffers(
     pdfBuffers: Array<{ orderSn: string; buffer: Buffer }>,
     logPrefix: string,
@@ -22728,10 +22757,11 @@ async function startServer() {
     console.log(
       `[${logPrefix}] timing total=${Date.now() - startedAt}ms ok=${documents.length} failed=${failedBySn.size}`,
     );
-    return {
+    return sortBatchPdfResultByRequestedOrder(
+      orderSns,
       documents,
-      failedOrders: [...failedBySn.values()],
-    };
+      [...failedBySn.values()],
+    );
   }
 
   // API BATCH-CONFIRM-PRINT: Xác nhận nhiều đơn + gộp PDF thành 1 file
@@ -22750,9 +22780,13 @@ async function startServer() {
         });
       }
 
-      const cleanSns = orderSns.map((sn: any) => 
-        String(sn || "").replace(/^shopee-/i, "").trim()
-      ).filter(Boolean);
+      const cleanSns = [
+        ...new Set(
+          orderSns
+            .map((sn: any) => String(sn || "").replace(/^shopee-/i, "").trim())
+            .filter(Boolean),
+        ),
+      ];
 
       if (cleanSns.length === 0) {
         return res.status(400).json({
@@ -22804,7 +22838,7 @@ async function startServer() {
         console.warn("[Batch Confirm Print] prewarm skipped:", err?.message || err);
       }
 
-      const successSns: string[] = [];
+      const successfulSnSet = new Set<string>();
       const failedResults: any[] = [];
 
       // Bước 2: Xác nhận tối đa 5 đơn song song; lỗi một đơn không dừng cả batch.
@@ -22870,7 +22904,7 @@ async function startServer() {
           };
           
           forceHealPickupOrderIfHasTracking(orders[index]);
-          successSns.push(orderSn);
+          successfulSnSet.add(orderSn.replace(/^shopee-/i, "").trim());
         } catch (orderErr: any) {
           console.error(`[Batch Confirm Print] Lỗi đơn ${orderSn}:`, orderErr?.stack || orderErr);
           failedResults.push({
@@ -22881,6 +22915,9 @@ async function startServer() {
           });
         }
       });
+
+      // Worker hoàn tất không theo thứ tự; dựng lại đúng thứ tự request/UI trước khi lấy và gộp PDF.
+      const successSns = cleanSns.filter((orderSn) => successfulSnSet.has(orderSn));
 
       // Lưu vào DB — khóa isPrepared TRƯỚC khi trả response (tab Đã xử lý).
       try {
@@ -23175,9 +23212,13 @@ async function startServer() {
         });
       }
 
-      const cleanSns = orderSns.map((sn: any) => 
-        String(sn || "").replace(/^shopee-/i, "").trim()
-      ).filter(Boolean);
+      const cleanSns = [
+        ...new Set(
+          orderSns
+            .map((sn: any) => String(sn || "").replace(/^shopee-/i, "").trim())
+            .filter(Boolean),
+        ),
+      ];
 
       if (cleanSns.length === 0) {
         return res.status(400).json({
@@ -25273,12 +25314,18 @@ async function startServer() {
         });
       }
 
+      const orderedUrls: string[] = [];
+      for (const document of documents) {
+        const url = String(document.url || "").trim();
+        if (url && !orderedUrls.includes(url)) orderedUrls.push(url);
+      }
+
       return res.status(successCount > 0 ? 200 : 422).json({
         success: successCount > 0,
         ...(successCount === 0 ? { error: topError, permanent: true } : {}),
-        urls,
-        url: urls[0] || null,
-        mergedUrl: urls[0] || null,
+        urls: orderedUrls,
+        url: orderedUrls[0] || null,
+        mergedUrl: orderedUrls[0] || null,
         pdfFilename: documents.find((d) => d.pdfFilename)?.pdfFilename,
         documents,
         results,
