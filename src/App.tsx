@@ -10,6 +10,7 @@ import Financials from './components/Financials';
 import SettingsView from './components/Settings';
 import SupplierManager from './components/SupplierManager';
 import ImportManager from './components/ImportManager';
+import MaterialImportManager from './components/MaterialImportManager';
 import OrderManager from './components/OrderManager';
 import OrderPicking from './components/OrderPicking';
 import PublishManager from './components/PublishManager';
@@ -47,6 +48,7 @@ import {
   PackageCheck,
   CheckCircle2,
   Loader2,
+  Layers,
 } from 'lucide-react';
 import type { OrdersSubTabId } from './components/OrderManager';
 import {
@@ -150,6 +152,7 @@ const MAIN_NAV_TABS = new Set([
   'picking',
   'suppliers',
   'imports',
+  'material-imports',
   'financials',
   'settings',
 ]);
@@ -2099,6 +2102,8 @@ export default function App() {
       void fetchSuppliers();
     } else if (activeTab === 'imports') {
       void fetchImports();
+    } else if (activeTab === 'material-imports') {
+      void fetchSuppliers();
     }
   }, [activeTab, isAuthenticated]);
 
@@ -2458,6 +2463,13 @@ export default function App() {
           </button>
 
           <button
+            onClick={() => navigateTab('material-imports')}
+            className={navButtonClass('material-imports')}
+          >
+            <Layers className="w-4 h-4 shrink-0" /> Nhập Vật Tư
+          </button>
+
+          <button
             onClick={() => navigateTab('financials')}
             className={navButtonClass('financials')}
           >
@@ -2547,6 +2559,9 @@ export default function App() {
               <button onClick={() => navigateTab('imports')} className={navButtonClass('imports')}>
                 <ArrowDownToLine className="w-4 h-4 shrink-0" /> Nhập Hàng
               </button>
+              <button onClick={() => navigateTab('material-imports')} className={navButtonClass('material-imports')}>
+                <Layers className="w-4 h-4 shrink-0" /> Nhập Vật Tư
+              </button>
               <button onClick={() => navigateTab('financials')} className={navButtonClass('financials')}>
                 <Coins className="w-4 h-4 shrink-0" /> Chi Phí Bán Hàng
               </button>
@@ -2596,6 +2611,7 @@ export default function App() {
                   {activeTab === 'picking' && 'Nhặt Hàng (Picking)'}
                   {activeTab === 'suppliers' && 'Quản Lý Đối Tác Nhà Cung Cấp'}
                   {activeTab === 'imports' && 'Quản Lý Nhập Hàng'}
+                  {activeTab === 'material-imports' && 'Quản Lý Nhập Vật Tư'}
                   {activeTab === 'financials' && 'Chi Phí Bán Hàng'}
                   {activeTab === 'settings' && 'Thiết Lập API Sàn Thương Mại'}
                 </h2>
@@ -2609,6 +2625,7 @@ export default function App() {
                   {activeTab === 'picking' && 'Quét mã đơn, tích sản phẩm đã nhặt và chuyển sang đóng gói.'}
                   {activeTab === 'suppliers' && 'Quản lý thông tin liên hệ, công nợ sỉ và tiền độ thanh toán cho xưởng sỉ.'}
                   {activeTab === 'imports' && 'Quản lý hóa đơn nhập đầu vào, theo dõi biến động % giá nhập hàng.'}
+                  {activeTab === 'material-imports' && 'Quản lý vật tư sản xuất (chợ, 1688…) — độc lập với kho sản phẩm bán.'}
                   {activeTab === 'financials' && 'Theo dõi chi phí hoạt động, cơ cấu quỹ và mô phỏng lợi nhuận sau phí sàn.'}
                   {activeTab === 'settings' && 'Cập nhật mã gian hàng, API key và trỏ DNS về hosting riêng.'}
                 </p>
@@ -2783,6 +2800,16 @@ export default function App() {
                     }),
                   );
                 }}
+              />
+            </ErrorBoundary>
+          )}
+
+          {activeTab === 'material-imports' && (
+            <ErrorBoundary label="Nhập vật tư">
+              <MaterialImportManager
+                suppliers={suppliers}
+                onRefreshSuppliers={fetchSuppliers}
+                onSuppliersUpdated={setSuppliers}
               />
             </ErrorBoundary>
           )}

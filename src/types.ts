@@ -424,3 +424,37 @@ export interface ImportTransaction {
   warehouseId?: string;
   createdAt?: string;
 }
+
+/** Vật tư sản xuất — tách biệt hoàn toàn với Product bán hàng */
+export interface Material {
+  id: string;
+  name: string;
+  sku?: string;
+  stock: number;
+  importPrice: number;
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  is_material?: true;
+}
+
+/** Phiếu nhập vật tư — không ảnh hưởng tồn kho Product */
+export interface MaterialImportTransaction {
+  id: string;
+  supplierId: string;
+  supplierName: string;
+  date: string;
+  materialId: string;
+  materialName: string;
+  quantity: number;
+  oldImportPrice: number;
+  newImportPrice: number;
+  unitPrice?: number;
+  importCost?: number;
+  totalAmount: number;
+  paidAmount: number;
+  status: 'fully_paid' | 'partial' | 'unpaid';
+  notes: string;
+  createdAt?: string;
+  is_material?: true;
+}

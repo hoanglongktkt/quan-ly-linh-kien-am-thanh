@@ -58,6 +58,8 @@ import suppliersRoutesImport from "./routes/suppliersRoutes.js";
 import expensesRoutesImport from "./routes/expensesRoutes.js";
 import addressBookRoutesImport from "./routes/addressBookRoutes.js";
 import importsRoutesImport from "./routes/importsRoutes.js";
+import materialsRoutesImport from "./routes/materialsRoutes.js";
+import materialImportsRoutesImport from "./routes/materialImportsRoutes.js";
 import settingsRoutesImport from "./routes/settingsRoutes.js";
 import aiRoutesImport from "./routes/aiRoutes.js";
 import dashboardRoutesImport from "./routes/dashboardRoutes.js";
@@ -413,6 +415,8 @@ const suppliersRoutes = asRouter(suppliersRoutesImport);
 const expensesRoutes = asRouter(expensesRoutesImport);
 const addressBookRoutes = asRouter(addressBookRoutesImport);
 const importsRoutes = asRouter(importsRoutesImport);
+const materialsRoutes = asRouter(materialsRoutesImport);
+const materialImportsRoutes = asRouter(materialImportsRoutesImport);
 const settingsRoutes = asRouter(settingsRoutesImport);
 const aiRoutes = asRouter(aiRoutesImport);
 const dashboardRoutes = asRouter(dashboardRoutesImport);
@@ -21361,6 +21365,10 @@ async function startServer() {
     applyImportStockAndPriceToMainWarehouse,
   });
   app.use("/api/imports", authMiddleware, importsRoutes);
+
+  // --- Materials / Material Imports API — độc lập với products & imports ---
+  app.use("/api/materials", authMiddleware, materialsRoutes);
+  app.use("/api/material-imports", authMiddleware, materialImportsRoutes);
 
   // --- Expenses API (data/expenses.json) — Phase 1 MVC ---
   app.use("/api/expenses", authMiddleware, expensesRoutes);
