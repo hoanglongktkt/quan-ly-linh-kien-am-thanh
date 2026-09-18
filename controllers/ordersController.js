@@ -47,6 +47,8 @@ import {
   markOrdersPrintedInStore,
   upsertDonHoanHuy,
   invalidateTabCountCache,
+  insertPosOrderToStore,
+  upsertPosProductsToStoreAsync,
 } from "../src/db/mongoStore.ts";
 import { saveAddressBookEntry, upsertLoyaltyFromPurchase } from "../services/addressBook.js";
 import {
@@ -3136,7 +3138,7 @@ async function deductStockForPosOrder(lineItems) {
 
   const changed = [...dirty.values()];
   if (changed.length > 0) {
-    await deps.upsertProductsToStoreAsync(changed);
+    await upsertPosProductsToStoreAsync(changed);
   }
   return { deducted, updatedProducts: changed };
 }
@@ -3147,7 +3149,10 @@ async function deductStockForPosOrder(lineItems) {
  * Trạng thái completed/delivered ngay + trừ tồn server-side.
  */
 export async function createPosOrder(req, res) {
+  const startedAt = Date.now();
+  const traceId = `POS-${startedAt.toString(36).toUpperCase()}`;
   try {
+    console.log(`POS Step 1: validate request trace=${traceId}`);
     const body = req.body || {};
     const {
       items,
@@ -3229,7 +3234,11 @@ export async function createPosOrder(req, res) {
 
     // Mọi lỗi trừ tồn phải đi qua catch ngoài cùng của endpoint. Không để
     // rejected Promise thoát khỏi request handler và làm Passenger trả 502.
+    console.log(`POS Step 2: load and deduct stock trace=${traceId}`);
     const stockResult = await deductStockForPosOrder(lineItems);
+    console.log(
+      `POS Step 3: stock persisted trace=${traceId} deducted=${stockResult.deducted} elapsed=${Date.now() - startedAt}ms`,
+    );
 
     const newOrder = {
       id: orderId,
@@ -3288,7 +3297,14 @@ export async function createPosOrder(req, res) {
       carrier_error: null,
     };
 
-    await persistExternalOrder(newOrder);
+    console.log(`POS Step 4: persist order trace=${traceId}`);
+    await insertPosOrderToStore(newOrder);
+    try {
+      invalidateTabCountCache();
+    } catch {
+      /* cache optional */
+    }
+    console.log(`POS Step 5: order persisted trace=${traceId} elapsed=${Date.now() - startedAt}ms`);
 
     // Trả 200 NGAY sau khi lưu đơn — tuyệt đối không để bước VIP/sổ địa chỉ
     // làm crash/ngắt response (FE báo mất kết nối dù đơn đã tồn tại).
@@ -3300,6 +3316,7 @@ export async function createPosOrder(req, res) {
         amountDue,
         addressBookUpdated: Boolean(phone),
       });
+      console.log(`POS Step 6: response 200 trace=${traceId} elapsed=${Date.now() - startedAt}ms`);
     }
 
     // Post-response: cộng dồn VIP — lỗi chỉ log, không ảnh hưởng client.
@@ -3317,9 +3334,13 @@ export async function createPosOrder(req, res) {
         loyaltyErr?.message || loyaltyErr,
       );
     }
+    console.log(`POS Step 7: loyalty finished trace=${traceId} elapsed=${Date.now() - startedAt}ms`);
     return;
   } catch (error) {
-    console.error("[Orders POS]", error);
+    console.error(
+      `POS FAILED trace=${traceId} elapsed=${Date.now() - startedAt}ms`,
+      error,
+    );
     if (res.headersSent) {
       return;
     }

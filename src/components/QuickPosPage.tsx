@@ -286,10 +286,13 @@ export default function QuickPosPage({
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.success === false) {
+      if (res.status !== 200 || data.success !== true) {
         throw new Error(data.error || data.message || `Lỗi HTTP ${res.status}`);
       }
       const order = data.order as Order;
+      if (!order?.id || !order?.orderSn) {
+        throw new Error('Server trả về đơn POS không hợp lệ.');
+      }
       setLastOrder(order);
       onUpdateOrders([order, ...orders.filter((o) => o.id !== order.id)]);
       applyLocalStockOptimistic(order);
@@ -302,10 +305,15 @@ export default function QuickPosPage({
         message: `[POS] Tạo đơn nhanh ${order.orderSn} — trừ tồn ${data.stockDeducted ?? 0}`,
       });
 
-      void fetchAddressBook(authHeaders).then(setAddressBook);
+      void fetchAddressBook(authHeaders)
+        .then(setAddressBook)
+        .catch((refreshErr) => {
+          console.warn('[Quick POS] Không thể làm mới sổ địa chỉ:', refreshErr);
+        });
 
+      // Chỉ in sau khi server xác nhận HTTP 200 + success=true + order hợp lệ.
       if (andPrint) {
-        setTimeout(() => window.print(), 250);
+        window.setTimeout(() => window.print(), 250);
       } else {
         setLines([]);
         setPrepaidAmount(0);
@@ -313,7 +321,18 @@ export default function QuickPosPage({
         setNote('');
       }
     } catch (err: any) {
-      setError(err?.message || 'Tạo đơn nhanh thất bại');
+      const message = err?.message || 'Tạo đơn nhanh thất bại';
+      console.error('[Quick POS] Lưu đơn thất bại:', err);
+      setError(message);
+      onAddLog({
+        id: `log-pos-error-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        channel: 'manual',
+        type: 'stock_sync',
+        status: 'failed',
+        message: `[POS] ${message}`,
+      });
+      window.alert(`Không thể lưu đơn POS: ${message}`);
     } finally {
       setSaving(false);
     }

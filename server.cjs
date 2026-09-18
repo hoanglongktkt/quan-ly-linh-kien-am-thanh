@@ -78826,6 +78826,29 @@ async function upsertProductsToStoreAsync(products) {
   });
   return docs.length;
 }
+async function upsertPosProductsToStoreAsync(products) {
+  if (isProductsDiskMode()) {
+    return await upsertProductsToDisk(products);
+  }
+  requireMongo();
+  const docs = toProductDocs(Array.isArray(products) ? products : []);
+  if (docs.length === 0) return 0;
+  await withWriteTimeout(
+    ProductModel.bulkWrite(
+      docs.map((doc) => ({
+        updateOne: {
+          filter: { _id: doc._id },
+          update: { $set: { sku: doc.sku ?? null, data: doc.data } },
+          upsert: true
+        }
+      })),
+      { ordered: false }
+    ),
+    "pos_products_bulk_write",
+    4e3
+  );
+  return docs.length;
+}
 async function deleteProductsByIdsFromStore(ids) {
   if (isProductsDiskMode()) return deleteProductsByIdsFromDisk(ids);
   requireMongo();
@@ -79012,6 +79035,48 @@ function coerceShopeeWatermarkDate(value) {
   }
   const d = new Date(raw);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+async function insertPosOrderToStore(order) {
+  requireMongo();
+  if (!order || typeof order !== "object") {
+    throw new Error("pos_order_invalid");
+  }
+  const id = String(order.id || order._id || "").trim();
+  const orderSn = String(order.orderSn || order.order_sn || "").trim();
+  if (!id || !orderSn) {
+    throw new Error("pos_order_missing_identity");
+  }
+  const safeOrder = stringifyShopeeIdsDeep({ ...order, id, _id: id, orderSn });
+  const createdAt = coerceShopeeWatermarkDate(order.create_time || order.date) || /* @__PURE__ */ new Date();
+  const result = await withWriteTimeout(
+    OrderModel.updateOne(
+      { _id: id },
+      {
+        $set: {
+          orderSn,
+          status: String(order.status || "completed"),
+          shopee_order_status: String(order.shopee_order_status || "COMPLETED"),
+          channel: "manual",
+          source: "pos",
+          customerName: String(order.customerName || ""),
+          customerPhone: String(order.customerPhone || ""),
+          customerAddress: String(order.customerAddress || ""),
+          isPrinted: Boolean(order.isPrinted),
+          isPrepared: true,
+          create_time: createdAt,
+          last_synced_at: /* @__PURE__ */ new Date(),
+          sync_state: "verified",
+          data: safeOrder
+        }
+      },
+      { upsert: true, runValidators: false, setDefaultsOnInsert: false }
+    ),
+    "pos_order_update",
+    4e3
+  );
+  if (!result.acknowledged) {
+    throw new Error("pos_order_write_not_acknowledged");
+  }
 }
 async function bulkUpsertOrdersToStore(orders) {
   requireMongo();
@@ -124382,12 +124447,15 @@ async function deductStockForPosOrder(lineItems) {
   }
   const changed = [...dirty.values()];
   if (changed.length > 0) {
-    await deps15.upsertProductsToStoreAsync(changed);
+    await upsertPosProductsToStoreAsync(changed);
   }
   return { deducted, updatedProducts: changed };
 }
 async function createPosOrder(req, res) {
+  const startedAt = Date.now();
+  const traceId = `POS-${startedAt.toString(36).toUpperCase()}`;
   try {
+    console.log(`POS Step 1: validate request trace=${traceId}`);
     const body = req.body || {};
     const {
       items,
@@ -124459,7 +124527,11 @@ async function createPosOrder(req, res) {
     const nowIso = (/* @__PURE__ */ new Date()).toISOString();
     const orderSn = `POS-${Date.now().toString(36).toUpperCase()}`;
     const orderId = `pos-${orderSn}`;
+    console.log(`POS Step 2: load and deduct stock trace=${traceId}`);
     const stockResult = await deductStockForPosOrder(lineItems);
+    console.log(
+      `POS Step 3: stock persisted trace=${traceId} deducted=${stockResult.deducted} elapsed=${Date.now() - startedAt}ms`
+    );
     const newOrder = {
       id: orderId,
       _id: orderId,
@@ -124514,7 +124586,13 @@ async function createPosOrder(req, res) {
       stock_deducted_qty: stockResult.deducted,
       carrier_error: null
     };
-    await persistExternalOrder(newOrder);
+    console.log(`POS Step 4: persist order trace=${traceId}`);
+    await insertPosOrderToStore(newOrder);
+    try {
+      invalidateTabCountCache();
+    } catch {
+    }
+    console.log(`POS Step 5: order persisted trace=${traceId} elapsed=${Date.now() - startedAt}ms`);
     if (!res.headersSent) {
       res.status(200).json({
         success: true,
@@ -124523,6 +124601,7 @@ async function createPosOrder(req, res) {
         amountDue,
         addressBookUpdated: Boolean(phone)
       });
+      console.log(`POS Step 6: response 200 trace=${traceId} elapsed=${Date.now() - startedAt}ms`);
     }
     try {
       await upsertLoyaltyFromPurchase({
@@ -124538,9 +124617,13 @@ async function createPosOrder(req, res) {
         loyaltyErr?.message || loyaltyErr
       );
     }
+    console.log(`POS Step 7: loyalty finished trace=${traceId} elapsed=${Date.now() - startedAt}ms`);
     return;
   } catch (error) {
-    console.error("[Orders POS]", error);
+    console.error(
+      `POS FAILED trace=${traceId} elapsed=${Date.now() - startedAt}ms`,
+      error
+    );
     if (res.headersSent) {
       return;
     }

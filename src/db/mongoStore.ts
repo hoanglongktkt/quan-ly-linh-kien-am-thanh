@@ -1900,6 +1900,35 @@ export async function upsertProductsToStoreAsync(products: any[]): Promise<numbe
   return docs.length;
 }
 
+/**
+ * Đường ghi ưu tiên riêng cho POS.
+ * Không xếp sau writeChain của các job đồng bộ Shopee dài, tránh Passenger timeout/502.
+ * Mọi Promise DB đều được await và có hard timeout.
+ */
+export async function upsertPosProductsToStoreAsync(products: any[]): Promise<number> {
+  if (isProductsDiskMode()) {
+    return await upsertProductsToDisk(products);
+  }
+  requireMongo();
+  const docs = toProductDocs(Array.isArray(products) ? products : []);
+  if (docs.length === 0) return 0;
+  await withWriteTimeout(
+    ProductModel.bulkWrite(
+      docs.map((doc) => ({
+        updateOne: {
+          filter: { _id: doc._id },
+          update: { $set: { sku: doc.sku ?? null, data: doc.data } },
+          upsert: true,
+        },
+      })),
+      { ordered: false },
+    ),
+    "pos_products_bulk_write",
+    4_000,
+  );
+  return docs.length;
+}
+
 /** Xóa có chủ đích theo id, không dùng để reset kho trong luồng đồng bộ. */
 export async function deleteProductsByIdsFromStore(ids: string[]): Promise<number> {
   if (isProductsDiskMode()) return deleteProductsByIdsFromDisk(ids);
@@ -2147,6 +2176,53 @@ function coerceShopeeWatermarkDate(value: unknown): Date | null {
   }
   const d = new Date(raw);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * Ghi đơn Mini POS trực tiếp, không chờ hàng đợi sync Shopee.
+ * Payload POS đã được controller chuẩn hóa; data là snapshot đầy đủ để hydrate lại.
+ */
+export async function insertPosOrderToStore(order: any): Promise<void> {
+  requireMongo();
+  if (!order || typeof order !== "object") {
+    throw new Error("pos_order_invalid");
+  }
+  const id = String(order.id || order._id || "").trim();
+  const orderSn = String(order.orderSn || order.order_sn || "").trim();
+  if (!id || !orderSn) {
+    throw new Error("pos_order_missing_identity");
+  }
+  const safeOrder = stringifyShopeeIdsDeep({ ...order, id, _id: id, orderSn });
+  const createdAt = coerceShopeeWatermarkDate(order.create_time || order.date) || new Date();
+  const result = await withWriteTimeout(
+    OrderModel.updateOne(
+      { _id: id },
+      {
+        $set: {
+          orderSn,
+          status: String(order.status || "completed"),
+          shopee_order_status: String(order.shopee_order_status || "COMPLETED"),
+          channel: "manual",
+          source: "pos",
+          customerName: String(order.customerName || ""),
+          customerPhone: String(order.customerPhone || ""),
+          customerAddress: String(order.customerAddress || ""),
+          isPrinted: Boolean(order.isPrinted),
+          isPrepared: true,
+          create_time: createdAt,
+          last_synced_at: new Date(),
+          sync_state: "verified",
+          data: safeOrder,
+        },
+      },
+      { upsert: true, runValidators: false, setDefaultsOnInsert: false },
+    ),
+    "pos_order_update",
+    4_000,
+  );
+  if (!result.acknowledged) {
+    throw new Error("pos_order_write_not_acknowledged");
+  }
 }
 
 /**
