@@ -740,6 +740,9 @@ export async function getOrderCounts(req, res) {
     );
     const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "").trim();
     const dateQ = readOrderDateQuery(req);
+    if (req.query.bust != null || String(req.query.force || "").trim() === "1") {
+      invalidateTabCountCache();
+    }
     const coalesceKey = `${shopIds.join(",") || shopId}|${dateQ.startDate || ""}|${dateQ.endDate || ""}`;
     const counts = await coalesceInFlight(ordersCounterCoalesce, coalesceKey, () =>
       deps.withLocalDbTimeout(

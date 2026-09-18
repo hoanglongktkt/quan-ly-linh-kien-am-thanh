@@ -81977,6 +81977,25 @@ var ORDER_TAB_TRACKING_PRESENT = {
 var ORDER_TAB_TRACKING_ABSENT = {
   $or: [{ tracking_no: { $exists: false } }, { tracking_no: { $in: [null, "", "0"] } }]
 };
+function trackingFieldEmptyOrInternal(field) {
+  return {
+    $or: [
+      { [field]: { $exists: false } },
+      { [field]: null },
+      { [field]: "" },
+      { [field]: "0" },
+      { [field]: { $regex: /^0FG/i } }
+    ]
+  };
+}
+function orderTabPendingConfirmNoTracking() {
+  return {
+    $and: [
+      trackingFieldEmptyOrInternal("tracking_no"),
+      trackingFieldEmptyOrInternal("trackingNumber")
+    ]
+  };
+}
 var ORDER_TAB_DROPOFF_PREPARED = {
   isPrepared: true
 };
@@ -82145,14 +82164,8 @@ function orderTabFilter(tab) {
             }
           },
           // Đã có mã VĐ outbound (không phải 0FG) → tuyệt đối không còn Chờ xác nhận.
-          {
-            $nor: [
-              { tracking_no: { $regex: /^(?!0FG).+$/i } },
-              { trackingNumber: { $regex: /^(?!0FG).+$/i } },
-              { "data.tracking_no": { $regex: /^(?!0FG).+$/i } },
-              { "data.trackingNumber": { $regex: /^(?!0FG).+$/i } }
-            ]
-          }
+          // Count và Find dùng chung helper này (DRY).
+          orderTabPendingConfirmNoTracking()
         ]
       };
     case "handed_over_carrier":
@@ -82359,7 +82372,7 @@ function tabIndexFilter(tab, kind) {
     case "pending_confirm":
     case "pending_verification":
     case "cho-xac-nhan":
-      return { shopee_order_status: { $in: [...FACET_PENDING] } };
+      return orderTabFilter("pending_confirm");
     case "order_products":
     case "products-summary":
     case "fulfillment_products":
@@ -83057,7 +83070,7 @@ async function countOrdersByTabsFromStore(opts) {
     const row = aggRows?.[0] || {};
     const counts = { ...empty };
     counts.all = facetN(row, "all");
-    counts.pending_confirm = facetN(row, "pending_confirm");
+    counts.pending_confirm = 0;
     counts.unprocessed = facetN(row, "unprocessed");
     counts.processed = facetN(row, "processed");
     counts.shipping = facetN(row, "shipping");
@@ -83097,6 +83110,9 @@ async function countOrdersByTabsFromStore(opts) {
         "[MongoDB] countOperationalTabsFromStore:",
         opErr?.message || opErr
       );
+      const pendingFilter = orderTabFilter("pending_confirm");
+      const pendingCombined = Object.keys(match2).length === 0 ? pendingFilter : { $and: [match2, pendingFilter] };
+      counts.pending_confirm = await safeCountDocuments(pendingCombined);
     }
     tabCountCache = { key: cacheKey, expiresAt: now + TAB_COUNT_CACHE_MS, value: counts };
     const dhhShop = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds) || {};
@@ -121739,6 +121755,9 @@ async function getOrderCounts(req, res) {
     );
     const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "").trim();
     const dateQ = readOrderDateQuery(req);
+    if (req.query.bust != null || String(req.query.force || "").trim() === "1") {
+      invalidateTabCountCache();
+    }
     const coalesceKey = `${shopIds.join(",") || shopId}|${dateQ.startDate || ""}|${dateQ.endDate || ""}`;
     const counts = await coalesceInFlight(
       ordersCounterCoalesce,

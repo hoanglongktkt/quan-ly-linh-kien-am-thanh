@@ -1292,6 +1292,7 @@ export default function OrderManager({
         } | null> => {
           const params = new URLSearchParams();
           params.set('t', String(Date.now()));
+          if (force) params.set('bust', '1');
           if (ids.length === 1) params.set('shop_id', ids[0]);
           else if (ids.length > 1) params.set('shop_ids', ids.join(','));
           if (range.startDate) params.set('startDate', range.startDate);
@@ -2204,6 +2205,7 @@ export default function OrderManager({
       isListFetchingRef.current = true;
       setCurrentPage((p) => (p === 1 ? p : 1));
       console.log(`[Orders Tab] activeSubTab=${activeSubTab} kind=${listFetchKind || '(none)'} shops=${shopIdsKey || '(all)'} → fetch page=1`);
+      void fetchOrderCounts({ force: true });
       void Promise.resolve(
         onFetchOrdersRef.current?.({
           silent: false,
@@ -6932,6 +6934,31 @@ export default function OrderManager({
       matchesStrictDisplaySubTab(order, activeSubTab, cancelReturnTab),
     );
   }, [filteredOrders, activeSubTab, cancelReturnTab, searchQuery]);
+
+  /** Badge > 0 nhưng list trống — fetch lại counter (bỏ cache 30s) một lần. */
+  const ghostPendingCounterKeyRef = useRef('');
+  useEffect(() => {
+    if (!ordersListReady) return;
+    if (activeSubTab !== 'pending_confirm' && activeSubTab !== 'pending_verification') return;
+    if (searchQuery.trim()) return;
+    if (selectedShippingCarrier !== 'all') return;
+    if (displayOrders.length > 0) return;
+    const badge = Number(serverOrderCounts?.pending_confirm) || 0;
+    if (badge <= 0) return;
+    const key = `${ordersFetchKey}|${badge}`;
+    if (ghostPendingCounterKeyRef.current === key) return;
+    ghostPendingCounterKeyRef.current = key;
+    void fetchOrderCounts({ force: true });
+  }, [
+    ordersListReady,
+    activeSubTab,
+    searchQuery,
+    selectedShippingCarrier,
+    displayOrders.length,
+    serverOrderCounts,
+    ordersFetchKey,
+    fetchOrderCounts,
+  ]);
 
   /**
    * TAB "CHƯA XỬ LÝ" — tự động hoá 2 thao tác tay của user:

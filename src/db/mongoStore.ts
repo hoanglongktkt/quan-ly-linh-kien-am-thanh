@@ -6392,6 +6392,32 @@ const ORDER_TAB_TRACKING_ABSENT: Record<string, unknown> = {
   $or: [{ tracking_no: { $exists: false } }, { tracking_no: { $in: [null, "", "0"] } }],
 };
 
+/** Field tracking trống / "0" / mã nội bộ 0FG — chưa phải mã vận đơn outbound thật. */
+function trackingFieldEmptyOrInternal(field: string): Record<string, unknown> {
+  return {
+    $or: [
+      { [field]: { $exists: false } },
+      { [field]: null },
+      { [field]: "" },
+      { [field]: "0" },
+      { [field]: { $regex: /^0FG/i } },
+    ],
+  };
+}
+
+/**
+ * Tab Chờ xác nhận: Count ≡ Find — chặn đơn đã có tracking_no / trackingNumber.
+ * Giữ 0FG (mã nội bộ Shopee), không $or data.* (tránh full scan).
+ */
+function orderTabPendingConfirmNoTracking(): Record<string, unknown> {
+  return {
+    $and: [
+      trackingFieldEmptyOrInternal("tracking_no"),
+      trackingFieldEmptyOrInternal("trackingNumber"),
+    ],
+  };
+}
+
 const ORDER_TAB_DROPOFF_PREPARED: Record<string, unknown> = {
   isPrepared: true,
 };
@@ -6590,14 +6616,8 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
             },
           },
           // Đã có mã VĐ outbound (không phải 0FG) → tuyệt đối không còn Chờ xác nhận.
-          {
-            $nor: [
-              { tracking_no: { $regex: /^(?!0FG).+$/i } },
-              { trackingNumber: { $regex: /^(?!0FG).+$/i } },
-              { "data.tracking_no": { $regex: /^(?!0FG).+$/i } },
-              { "data.trackingNumber": { $regex: /^(?!0FG).+$/i } },
-            ],
-          },
+          // Count và Find dùng chung helper này (DRY).
+          orderTabPendingConfirmNoTracking(),
         ],
       };
     case "handed_over_carrier":
@@ -6906,7 +6926,8 @@ function tabIndexFilter(tab?: string, kind?: string): Record<string, unknown> {
     case "pending_confirm":
     case "pending_verification":
     case "cho-xac-nhan":
-      return { shopee_order_status: { $in: [...FACET_PENDING] } };
+      // SSOT: giống hệt orderTabFilter — Count ≡ Find (chặn tracking_no).
+      return orderTabFilter("pending_confirm");
     case "order_products":
     case "products-summary":
     case "fulfillment_products":
@@ -7876,7 +7897,8 @@ export async function countOrdersByTabsFromStore(opts?: {
     const row = (aggRows?.[0] || {}) as Record<string, unknown>;
     const counts: Record<string, number> = { ...empty };
     counts.all = facetN(row, "all");
-    counts.pending_confirm = facetN(row, "pending_confirm");
+    // pending_confirm: CẤM tin $facet (chỉ UNPAID/PENDING, không chặn tracking_no).
+    counts.pending_confirm = 0;
     counts.unprocessed = facetN(row, "unprocessed");
     counts.processed = facetN(row, "processed");
     counts.shipping = facetN(row, "shipping");
@@ -7917,6 +7939,12 @@ export async function countOrdersByTabsFromStore(opts?: {
         "[MongoDB] countOperationalTabsFromStore:",
         opErr?.message || opErr,
       );
+      const pendingFilter = orderTabFilter("pending_confirm");
+      const pendingCombined =
+        Object.keys(match).length === 0
+          ? pendingFilter
+          : { $and: [match, pendingFilter] };
+      counts.pending_confirm = await safeCountDocuments(pendingCombined);
     }
     tabCountCache = { key: cacheKey, expiresAt: now + TAB_COUNT_CACHE_MS, value: counts };
     const dhhShop = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds) || {};
