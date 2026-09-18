@@ -3297,9 +3297,21 @@ export async function createPosOrder(req, res) {
 
     await persistExternalOrder(newOrder);
 
-    let loyaltyEntry = null;
+    // Trả 200 NGAY sau khi lưu đơn — tuyệt đối không để bước VIP/sổ địa chỉ
+    // làm crash/ngắt response (FE báo mất kết nối dù đơn đã tồn tại).
+    if (!res.headersSent) {
+      res.status(200).json({
+        success: true,
+        order: newOrder,
+        stockDeducted: stockResult.deducted,
+        amountDue,
+        addressBookUpdated: Boolean(phone),
+      });
+    }
+
+    // Post-response: cộng dồn VIP — lỗi chỉ log, không ảnh hưởng client.
     try {
-      loyaltyEntry = await upsertLoyaltyFromPurchase({
+      await upsertLoyaltyFromPurchase({
         name,
         phone,
         address: isWalkIn ? "" : address,
@@ -3307,18 +3319,17 @@ export async function createPosOrder(req, res) {
         totalAmount,
       });
     } catch (loyaltyErr) {
-      console.warn("[Orders POS] address book loyalty:", loyaltyErr?.message || loyaltyErr);
+      console.error(
+        "[Orders POS] address book loyalty (post-response):",
+        loyaltyErr?.message || loyaltyErr,
+      );
     }
-
-    return res.json({
-      success: true,
-      order: newOrder,
-      stockDeducted: stockResult.deducted,
-      amountDue,
-      addressBookUpdated: Boolean(loyaltyEntry),
-    });
+    return;
   } catch (error) {
     console.error("[Orders POS]", error);
+    if (res.headersSent) {
+      return;
+    }
     return res.status(500).json({
       success: false,
       error: error?.message || "Tạo đơn nhanh thất bại",

@@ -86013,8 +86013,18 @@ var AddressBookSchema = new import_mongoose4.default.Schema(
     addressMode: { type: String, default: "new2", trim: true },
     savedAt: { type: Date, default: Date.now },
     /** Loyalty — tích lũy từ Mini POS (và có thể mở rộng sau). */
-    total_orders: { type: Number, default: 0, min: 0 },
-    total_spent: { type: Number, default: 0, min: 0 },
+    total_orders: {
+      type: Number,
+      default: 0,
+      min: 0,
+      required: false
+    },
+    total_spent: {
+      type: Number,
+      default: 0,
+      min: 0,
+      required: false
+    },
     last_purchase_date: { type: Date, default: null }
   },
   {
@@ -86233,36 +86243,109 @@ async function upsertLoyaltyFromPurchase({
   fullAddress = "",
   totalAmount = 0
 } = {}) {
-  const phoneNorm = normalizePhone(phone);
-  if (!phoneNorm) return null;
-  const amount = Math.max(0, Math.round(Number(totalAmount) || 0));
-  const displayName = String(name || "").trim();
-  const street = String(address || fullAddress || "").trim();
-  const resolvedFull = String(fullAddress || address || "").trim() || street;
-  const now = /* @__PURE__ */ new Date();
-  if (mongoReady2()) {
-    const existing = await AddressBook_default.findOne({ phone: phoneNorm }).sort({ total_spent: -1, savedAt: -1 });
-    if (existing) {
-      existing.total_orders = Math.max(0, Math.round(Number(existing.total_orders) || 0)) + 1;
-      existing.total_spent = Math.max(0, Math.round(Number(existing.total_spent) || 0)) + amount;
-      existing.last_purchase_date = now;
-      existing.savedAt = now;
-      if (displayName) existing.name = displayName;
-      if (street && street !== "Mua t\u1EA1i c\u1EEDa h\xE0ng") {
-        existing.street = street;
-        existing.address = street;
-        existing.fullAddress = resolvedFull;
+  try {
+    const phoneNorm = normalizePhone(phone);
+    if (!phoneNorm) return null;
+    const amount = Math.max(0, Math.round(Number(totalAmount) || 0));
+    const displayName = String(name || "").trim();
+    const streetRaw = String(address || fullAddress || "").trim();
+    const street = streetRaw === "Mua t\u1EA1i c\u1EEDa h\xE0ng" ? "" : streetRaw;
+    const resolvedFullRaw = String(fullAddress || address || "").trim() || street;
+    const resolvedFull = resolvedFullRaw === "Mua t\u1EA1i c\u1EEDa h\xE0ng" ? "" : resolvedFullRaw;
+    const now = /* @__PURE__ */ new Date();
+    if (mongoReady2()) {
+      const $set = {
+        phone: phoneNorm,
+        savedAt: now,
+        last_purchase_date: now
+      };
+      const $setOnInsert = {
+        id: `addr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        street: street || "",
+        address: street || "",
+        fullAddress: resolvedFull || "",
+        province: "",
+        provinceName: "",
+        provinceCode: "",
+        district: "",
+        districtName: "",
+        districtCode: "",
+        ward: "",
+        wardName: "",
+        wardCode: "",
+        addressMode: "new2"
+        // Không set total_orders / total_spent ở đây — $inc xử lý cả insert & update
+      };
+      if (displayName) {
+        $set.name = displayName;
+      } else {
+        $setOnInsert.name = "Kh\xE1ch POS";
       }
-      await existing.save();
-      return toPublicEntry(existing);
+      if (street) {
+        $set.street = street;
+        $set.address = street;
+        $set.fullAddress = resolvedFull || street;
+        delete $setOnInsert.street;
+        delete $setOnInsert.address;
+        delete $setOnInsert.fullAddress;
+      }
+      const updated = await AddressBook_default.findOneAndUpdate(
+        { phone: phoneNorm },
+        {
+          $inc: {
+            total_orders: 1,
+            total_spent: amount
+          },
+          $set,
+          $setOnInsert
+        },
+        {
+          new: true,
+          upsert: true,
+          // false: tránh schema default total_orders/total_spent đụng $inc → Mongo conflict crash
+          setDefaultsOnInsert: false,
+          runValidators: false
+        }
+      );
+      try {
+        await trimMongoBook();
+      } catch (trimErr) {
+        console.warn(
+          "[AddressBook loyalty] trimMongoBook:",
+          trimErr?.message || trimErr
+        );
+      }
+      return toPublicEntry(updated);
     }
-    const created = await AddressBook_default.create({
+    const list = readBook();
+    const idx = list.findIndex((item) => normalizePhone(item.phone) === phoneNorm);
+    if (idx >= 0) {
+      const cur = list[idx];
+      const updated = {
+        ...cur,
+        name: displayName || cur.name || "Kh\xE1ch POS",
+        phone: phoneNorm,
+        total_orders: Math.max(0, Math.round(Number(cur.total_orders) || 0)) + 1,
+        total_spent: Math.max(0, Math.round(Number(cur.total_spent) || 0)) + amount,
+        last_purchase_date: now.toISOString(),
+        savedAt: now.toISOString()
+      };
+      if (street) {
+        updated.street = street;
+        updated.address = street;
+        updated.fullAddress = resolvedFull || street;
+      }
+      list[idx] = updated;
+      writeBook(list.slice(0, MAX_ENTRIES));
+      return toPublicEntry(updated);
+    }
+    const next = {
       id: `addr-${Date.now()}`,
       name: displayName || "Kh\xE1ch POS",
       phone: phoneNorm,
-      street: street === "Mua t\u1EA1i c\u1EEDa h\xE0ng" ? "" : street,
-      address: street === "Mua t\u1EA1i c\u1EEDa h\xE0ng" ? "" : street,
-      fullAddress: resolvedFull === "Mua t\u1EA1i c\u1EEDa h\xE0ng" ? "" : resolvedFull,
+      street: street || "",
+      address: street || "",
+      fullAddress: resolvedFull || "",
       province: "",
       provinceName: "",
       provinceCode: "",
@@ -86273,60 +86356,20 @@ async function upsertLoyaltyFromPurchase({
       wardName: "",
       wardCode: "",
       addressMode: "new2",
-      savedAt: now,
+      savedAt: now.toISOString(),
       total_orders: 1,
       total_spent: amount,
-      last_purchase_date: now
-    });
-    await trimMongoBook();
-    return toPublicEntry(created);
-  }
-  const list = readBook();
-  const idx = list.findIndex((item) => normalizePhone(item.phone) === phoneNorm);
-  if (idx >= 0) {
-    const cur = list[idx];
-    const updated = {
-      ...cur,
-      name: displayName || cur.name || "Kh\xE1ch POS",
-      phone: phoneNorm,
-      total_orders: Math.max(0, Math.round(Number(cur.total_orders) || 0)) + 1,
-      total_spent: Math.max(0, Math.round(Number(cur.total_spent) || 0)) + amount,
-      last_purchase_date: now.toISOString(),
-      savedAt: now.toISOString()
+      last_purchase_date: now.toISOString()
     };
-    if (street && street !== "Mua t\u1EA1i c\u1EEDa h\xE0ng") {
-      updated.street = street;
-      updated.address = street;
-      updated.fullAddress = resolvedFull;
-    }
-    list[idx] = updated;
-    writeBook(list.slice(0, MAX_ENTRIES));
-    return toPublicEntry(updated);
+    writeBook([next, ...list].slice(0, MAX_ENTRIES));
+    return toPublicEntry(next);
+  } catch (err) {
+    console.error(
+      "[AddressBook loyalty] upsertLoyaltyFromPurchase failed:",
+      err?.message || err
+    );
+    return null;
   }
-  const next = {
-    id: `addr-${Date.now()}`,
-    name: displayName || "Kh\xE1ch POS",
-    phone: phoneNorm,
-    street: street === "Mua t\u1EA1i c\u1EEDa h\xE0ng" ? "" : street,
-    address: street === "Mua t\u1EA1i c\u1EEDa h\xE0ng" ? "" : street,
-    fullAddress: resolvedFull === "Mua t\u1EA1i c\u1EEDa h\xE0ng" ? "" : resolvedFull,
-    province: "",
-    provinceName: "",
-    provinceCode: "",
-    district: "",
-    districtName: "",
-    districtCode: "",
-    ward: "",
-    wardName: "",
-    wardCode: "",
-    addressMode: "new2",
-    savedAt: now.toISOString(),
-    total_orders: 1,
-    total_spent: amount,
-    last_purchase_date: now.toISOString()
-  };
-  writeBook([next, ...list].slice(0, MAX_ENTRIES));
-  return toPublicEntry(next);
 }
 
 // controllers/addressBookController.js
@@ -124392,9 +124435,17 @@ async function createPosOrder(req, res) {
       carrier_error: null
     };
     await persistExternalOrder(newOrder);
-    let loyaltyEntry = null;
+    if (!res.headersSent) {
+      res.status(200).json({
+        success: true,
+        order: newOrder,
+        stockDeducted: stockResult.deducted,
+        amountDue,
+        addressBookUpdated: Boolean(phone)
+      });
+    }
     try {
-      loyaltyEntry = await upsertLoyaltyFromPurchase({
+      await upsertLoyaltyFromPurchase({
         name,
         phone,
         address: isWalkIn ? "" : address,
@@ -124402,17 +124453,17 @@ async function createPosOrder(req, res) {
         totalAmount
       });
     } catch (loyaltyErr) {
-      console.warn("[Orders POS] address book loyalty:", loyaltyErr?.message || loyaltyErr);
+      console.error(
+        "[Orders POS] address book loyalty (post-response):",
+        loyaltyErr?.message || loyaltyErr
+      );
     }
-    return res.json({
-      success: true,
-      order: newOrder,
-      stockDeducted: stockResult.deducted,
-      amountDue,
-      addressBookUpdated: Boolean(loyaltyEntry)
-    });
+    return;
   } catch (error) {
     console.error("[Orders POS]", error);
+    if (res.headersSent) {
+      return;
+    }
     return res.status(500).json({
       success: false,
       error: error?.message || "T\u1EA1o \u0111\u01A1n nhanh th\u1EA5t b\u1EA1i"

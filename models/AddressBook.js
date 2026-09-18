@@ -23,8 +23,18 @@ const AddressBookSchema = new mongoose.Schema(
     addressMode: { type: String, default: "new2", trim: true },
     savedAt: { type: Date, default: Date.now },
     /** Loyalty — tích lũy từ Mini POS (và có thể mở rộng sau). */
-    total_orders: { type: Number, default: 0, min: 0 },
-    total_spent: { type: Number, default: 0, min: 0 },
+    total_orders: {
+      type: Number,
+      default: 0,
+      min: 0,
+      required: false,
+    },
+    total_spent: {
+      type: Number,
+      default: 0,
+      min: 0,
+      required: false,
+    },
     last_purchase_date: { type: Date, default: null },
   },
   {
