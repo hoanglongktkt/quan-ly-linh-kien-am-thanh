@@ -13,13 +13,15 @@ try {
  * socketTimeoutMS đủ dài cho pull đơn / bulkWrite; fail-fast khi chọn server.
  */
 export const MONGO_CONNECT_OPTIONS = {
-  serverSelectionTimeoutMS: 10_000,
-  connectTimeoutMS: 10_000,
+  serverSelectionTimeoutMS: 15_000,
+  connectTimeoutMS: 15_000,
   // "connection N to host:27017 timed out" thường do socketTimeout quá ngắn khi bulkWrite.
-  socketTimeoutMS: 60_000,
-  maxPoolSize: 10,
+  socketTimeoutMS: 90_000,
+  // POS + sync Shopee song song dễ hết 10 slot → "Timed out while checking out a connection".
+  maxPoolSize: 20,
   minPoolSize: 1,
-  waitQueueTimeoutMS: 10_000,
+  // Chờ lấy connection từ pool lâu hơn (trước 10s → Lưu đơn fail khi sync đang chiếm pool).
+  waitQueueTimeoutMS: 60_000,
   maxIdleTimeMS: 60_000,
   heartbeatFrequencyMS: 10_000,
   // Ưu tiên IPv4 — tránh treo dual-stack trên một số host cPanel.
@@ -108,7 +110,7 @@ export function isDBReady() {
 export function isMongoTimeoutOrNetworkError(err) {
   const msg = String(err?.message || err || "");
   const name = String(err?.name || "");
-  return /serverSelection|ServerSelectionError|MongoServerSelectionError|MongoNetworkTimeoutError|MongoNetworkError|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ETIMEOUT|timed out|timeout|27017|topology was destroyed|connection.*closed|pool destroyed/i.test(
+  return /serverSelection|ServerSelectionError|MongoServerSelectionError|MongoNetworkTimeoutError|MongoNetworkError|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ETIMEOUT|timed out|timeout|27017|topology was destroyed|connection.*closed|pool destroyed|checking out a connection|wait queue|WaitQueueTimeout/i.test(
     `${msg} ${name}`,
   );
 }

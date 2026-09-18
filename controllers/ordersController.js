@@ -3474,8 +3474,11 @@ export async function createPosOrder(req, res) {
       error instanceof Error
         ? error.message
         : String(error || "Tạo đơn nhanh thất bại");
+    const friendly = /checking out a connection|wait queue|WaitQueueTimeout/i.test(message)
+      ? "Máy chủ đang bận (hết kết nối database). Đợi thêm vài giây rồi nhấn Lưu lại."
+      : message;
     return res.status(500).json({
-      message,
+      message: friendly,
     });
   }
 }

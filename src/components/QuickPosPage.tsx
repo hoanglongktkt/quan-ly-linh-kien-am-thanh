@@ -442,7 +442,12 @@ export default function QuickPosPage({
       setShippingFee(0);
       setNote('');
     } catch (err: any) {
-      const message = err?.message || 'Tạo đơn nhanh thất bại';
+      const raw = err?.message || 'Tạo đơn nhanh thất bại';
+      const message = /checking out a connection|wait queue|WaitQueueTimeout|pos_order_update_timeout/i.test(
+        raw,
+      )
+        ? 'Máy chủ đang bận (database chậm). Đợi 5–10 giây rồi nhấn Lưu lại.'
+        : raw;
       console.error('[Quick POS] Lưu đơn thất bại:', err);
       setError(message);
       onAddLog({

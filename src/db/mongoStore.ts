@@ -590,6 +590,33 @@ function withWriteTimeout<T>(promise: Promise<T>, label: string, timeoutMs = 10_
   });
 }
 
+function isMongoPoolCheckoutTimeout(err: unknown): boolean {
+  const msg = String((err as any)?.message || err || "");
+  return /checking out a connection|wait queue|WaitQueueTimeout|Timed out while checking out/i.test(
+    msg,
+  );
+}
+
+/** Ghi POS: chờ pool tới 60s + retry 1 lần sau reconnect khi pool kẹt. */
+async function withPosDbRetry<T>(label: string, run: () => Promise<T>): Promise<T> {
+  try {
+    return await withWriteTimeout(run(), label, 60_000);
+  } catch (err) {
+    if (
+      !isMongoPoolCheckoutTimeout(err) &&
+      !/timeout|timed out|MongoNetwork/i.test(String((err as any)?.message || err))
+    ) {
+      throw err;
+    }
+    console.warn(
+      `[POS DB] ${label} failed — recover pool & retry once:`,
+      (err as any)?.message || err,
+    );
+    await recoverMongoConnection(`pos_${label}`);
+    return await withWriteTimeout(run(), `${label}_retry`, 60_000);
+  }
+}
+
 export function isMongoReady(): boolean {
   return mongoReady && mongoose.connection.readyState === 1;
 }
@@ -1926,8 +1953,8 @@ export async function upsertPosProductsToStoreAsync(products: any[]): Promise<nu
   requireMongo();
   const docs = toProductDocs(Array.isArray(products) ? products : []);
   if (docs.length === 0) return 0;
-  // Atlas/cPanel thường 3–12s lúc tải cao — 4s gây false fail (Lưu OK / Lưu&In fail).
-  await withWriteTimeout(
+  // Chờ tới 60s + retry pool — cùng policy với insertPosOrderToStore (nút Lưu / Lưu&In).
+  await withPosDbRetry("pos_products_bulk_write", () =>
     ProductModel.bulkWrite(
       docs.map((doc) => ({
         updateOne: {
@@ -1938,8 +1965,6 @@ export async function upsertPosProductsToStoreAsync(products: any[]): Promise<nu
       })),
       { ordered: false },
     ),
-    "pos_products_bulk_write",
-    25_000,
   );
   return docs.length;
 }
@@ -2209,8 +2234,8 @@ export async function insertPosOrderToStore(order: any): Promise<void> {
   }
   const safeOrder = stringifyShopeeIdsDeep({ ...order, id, _id: id, orderSn });
   const createdAt = coerceShopeeWatermarkDate(order.create_time || order.date) || new Date();
-  // Timeout 25s — khớp latency Mongo thực tế (trước đây 4s → pos_order_update_timeout_4000ms).
-  const result = await withWriteTimeout(
+  // Chờ tới 60s (khớp waitQueueTimeoutMS) — tránh fail sớm khi pool đang bận sync.
+  const result = await withPosDbRetry("pos_order_update", () =>
     OrderModel.updateOne(
       { _id: id },
       {
@@ -2233,8 +2258,6 @@ export async function insertPosOrderToStore(order: any): Promise<void> {
       },
       { upsert: true, runValidators: false, setDefaultsOnInsert: false },
     ),
-    "pos_order_update",
-    25_000,
   );
   if (!result.acknowledged) {
     throw new Error("pos_order_write_not_acknowledged");

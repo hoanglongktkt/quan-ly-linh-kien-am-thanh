@@ -76907,13 +76907,15 @@ try {
 } catch {
 }
 var MONGO_CONNECT_OPTIONS = {
-  serverSelectionTimeoutMS: 1e4,
-  connectTimeoutMS: 1e4,
+  serverSelectionTimeoutMS: 15e3,
+  connectTimeoutMS: 15e3,
   // "connection N to host:27017 timed out" thường do socketTimeout quá ngắn khi bulkWrite.
-  socketTimeoutMS: 6e4,
-  maxPoolSize: 10,
+  socketTimeoutMS: 9e4,
+  // POS + sync Shopee song song dễ hết 10 slot → "Timed out while checking out a connection".
+  maxPoolSize: 20,
   minPoolSize: 1,
-  waitQueueTimeoutMS: 1e4,
+  // Chờ lấy connection từ pool lâu hơn (trước 10s → Lưu đơn fail khi sync đang chiếm pool).
+  waitQueueTimeoutMS: 6e4,
   maxIdleTimeMS: 6e4,
   heartbeatFrequencyMS: 1e4,
   // Ưu tiên IPv4 — tránh treo dual-stack trên một số host cPanel.
@@ -76973,7 +76975,7 @@ function isDBReady() {
 function isMongoTimeoutOrNetworkError(err) {
   const msg = String(err?.message || err || "");
   const name = String(err?.name || "");
-  return /serverSelection|ServerSelectionError|MongoServerSelectionError|MongoNetworkTimeoutError|MongoNetworkError|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ETIMEOUT|timed out|timeout|27017|topology was destroyed|connection.*closed|pool destroyed/i.test(
+  return /serverSelection|ServerSelectionError|MongoServerSelectionError|MongoNetworkTimeoutError|MongoNetworkError|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ETIMEOUT|timed out|timeout|27017|topology was destroyed|connection.*closed|pool destroyed|checking out a connection|wait queue|WaitQueueTimeout/i.test(
     `${msg} ${name}`
   );
 }
@@ -77794,6 +77796,27 @@ function withWriteTimeout(promise, label, timeoutMs = 1e4) {
   return Promise.race([promise, timeout]).finally(() => {
     if (timer) clearTimeout(timer);
   });
+}
+function isMongoPoolCheckoutTimeout(err) {
+  const msg = String(err?.message || err || "");
+  return /checking out a connection|wait queue|WaitQueueTimeout|Timed out while checking out/i.test(
+    msg
+  );
+}
+async function withPosDbRetry(label, run) {
+  try {
+    return await withWriteTimeout(run(), label, 6e4);
+  } catch (err) {
+    if (!isMongoPoolCheckoutTimeout(err) && !/timeout|timed out|MongoNetwork/i.test(String(err?.message || err))) {
+      throw err;
+    }
+    console.warn(
+      `[POS DB] ${label} failed \u2014 recover pool & retry once:`,
+      err?.message || err
+    );
+    await recoverMongoConnection(`pos_${label}`);
+    return await withWriteTimeout(run(), `${label}_retry`, 6e4);
+  }
 }
 function isMongoReady() {
   return mongoReady && import_mongoose3.default.connection.readyState === 1;
@@ -78843,8 +78866,9 @@ async function upsertPosProductsToStoreAsync(products) {
   requireMongo();
   const docs = toProductDocs(Array.isArray(products) ? products : []);
   if (docs.length === 0) return 0;
-  await withWriteTimeout(
-    ProductModel.bulkWrite(
+  await withPosDbRetry(
+    "pos_products_bulk_write",
+    () => ProductModel.bulkWrite(
       docs.map((doc) => ({
         updateOne: {
           filter: { _id: doc._id },
@@ -78853,9 +78877,7 @@ async function upsertPosProductsToStoreAsync(products) {
         }
       })),
       { ordered: false }
-    ),
-    "pos_products_bulk_write",
-    25e3
+    )
   );
   return docs.length;
 }
@@ -79058,8 +79080,9 @@ async function insertPosOrderToStore(order) {
   }
   const safeOrder = stringifyShopeeIdsDeep({ ...order, id, _id: id, orderSn });
   const createdAt = coerceShopeeWatermarkDate(order.create_time || order.date) || /* @__PURE__ */ new Date();
-  const result = await withWriteTimeout(
-    OrderModel.updateOne(
+  const result = await withPosDbRetry(
+    "pos_order_update",
+    () => OrderModel.updateOne(
       { _id: id },
       {
         $set: {
@@ -79080,9 +79103,7 @@ async function insertPosOrderToStore(order) {
         }
       },
       { upsert: true, runValidators: false, setDefaultsOnInsert: false }
-    ),
-    "pos_order_update",
-    25e3
+    )
   );
   if (!result.acknowledged) {
     throw new Error("pos_order_write_not_acknowledged");
@@ -124889,8 +124910,9 @@ async function createPosOrder(req, res) {
       return;
     }
     const message = error instanceof Error ? error.message : String(error || "T\u1EA1o \u0111\u01A1n nhanh th\u1EA5t b\u1EA1i");
+    const friendly = /checking out a connection|wait queue|WaitQueueTimeout/i.test(message) ? "M\xE1y ch\u1EE7 \u0111ang b\u1EADn (h\u1EBFt k\u1EBFt n\u1ED1i database). \u0110\u1EE3i th\xEAm v\xE0i gi\xE2y r\u1ED3i nh\u1EA5n L\u01B0u l\u1EA1i." : message;
     return res.status(500).json({
-      message
+      message: friendly
     });
   }
 }
