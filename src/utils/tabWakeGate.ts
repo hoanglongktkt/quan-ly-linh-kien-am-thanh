@@ -1,6 +1,6 @@
 /**
  * tabWakeGate — điều phối chung sự kiện "tab quay lại foreground" (focus / visibilitychange /
- * pageshow) cho TOÀN APP.
+ * pageshow / online) cho TOÀN APP.
  *
  * Vấn đề trước đây: App.tsx và OrderManager.tsx mỗi bên tự đăng ký riêng focus/visibilitychange/
  * pageshow, mỗi bên tự cooldown riêng (không chia sẻ) → mỗi lần user quay lại tab, NHIỀU listener
@@ -11,15 +11,12 @@
  * các sự kiện bắn dồn cùng lúc), rồi phát cho các subscriber theo priority — mỗi subscriber cách
  * nhau 1 khoảng nhỏ (STAGGER_MS) để không cùng lúc dội vào network.
  *
- * Các cooldown "có nên refresh không" (800ms, 3000ms...) vẫn giữ nguyên bên trong từng handler —
- * module này chỉ đảm bảo listener không bị nhân bản/không bắn cùng tick, KHÔNG thay đổi logic
- * nghiệp vụ refresh của từng nơi.
+ * Module này đảm bảo listener không bị nhân bản/không bắn cùng tick và tuần tự hóa health gate,
+ * không thay đổi logic nghiệp vụ của từng màn hình.
  *
- * Cold-start buổi sáng: nếu tab bị ẩn/máy sleep lâu hơn LONG_SLEEP_MS trước khi wake lại, server
- * cPanel/Passenger nhiều khả năng đang "ngủ đông" — bắn thẳng /refresh + /counter + SSE reconnect
- * vào lúc đó dễ bị nghẽn 10-45s (đúng triệu chứng cold-start). Nên trước khi phát wake cho các
- * subscriber, module tự "đánh thức" server bằng 1 GET /api/health nhẹ (không phải request nghiệp
- * vụ), rồi chờ thêm LONG_SLEEP_EXTRA_DELAY_MS mới phát wake — không thay đổi thứ tự/priority hiện có.
+ * Mọi lượt wake đều phải đi qua /api/health trước khi phát cho subscriber. Việc này đặc biệt quan
+ * trọng trên mobile: browser có thể báo online/visible trong khi socket cũ đã chết và Passenger/
+ * Mongo vẫn đang tỉnh lại. Sau khi health thành công, subscriber luôn được phát để tự refresh ngầm.
  */
 
 type WakeInfo = {
@@ -27,6 +24,8 @@ type WakeInfo = {
   isLongSleep: boolean;
   /** Thời gian tab đã ẩn (ms) trước khi wake — 0 nếu không xác định được. */
   hiddenMs: number;
+  /** true khi /api/health đã xác nhận backend và Mongo sẵn sàng. */
+  healthReady: boolean;
 };
 
 type WakeHandler = (info: WakeInfo) => void;
@@ -38,7 +37,7 @@ type Subscriber = {
 
 const subscribers: Subscriber[] = [];
 
-/** Gộp các sự kiện focus/visibilitychange/pageshow bắn dồn cùng lúc thành 1 wake. */
+/** Gộp các sự kiện focus/visibilitychange/pageshow/online bắn dồn cùng lúc thành 1 wake. */
 const MERGE_DEBOUNCE_MS = 350;
 /** Khoảng cách giữa 2 subscriber liên tiếp khi phát wake — tránh dội request cùng lúc. */
 const STAGGER_MS = 300;
@@ -51,10 +50,11 @@ const HEALTH_PRECHECK_TOTAL_TIMEOUT_MS = 45_000;
 /** Số probe hữu hạn + backoff để không spam Passenger/Mongo khi đang khởi động. */
 const HEALTH_PRECHECK_MAX_ATTEMPTS = 6;
 const HEALTH_PRECHECK_RETRY_DELAYS_MS = [0, 1_500, 3_000, 5_000, 8_000, 10_000] as const;
-/** Chờ thêm sau health-precheck trước khi phát wake cho subscriber — cho Mongo kịp connect. */
-const LONG_SLEEP_EXTRA_DELAY_MS = 1_200;
-
 let pendingFireTimer: number | null = null;
+/** Chặn nhiều luồng health-precheck chạy song song khi mobile bắn dồn visibility/focus/online. */
+let wakeInProgress = false;
+/** Ghi nhận có wake mới trong lúc health-precheck đang chạy để thực hiện ngay sau lượt hiện tại. */
+let wakeQueued = false;
 /** Mốc thời điểm tab chuyển sang "hidden" gần nhất — dùng để tính đã ẩn bao lâu khi wake lại. */
 let lastHiddenAt: number | null = null;
 
@@ -111,27 +111,47 @@ function dispatch(info: WakeInfo) {
   });
 }
 
-function fireWake() {
+async function fireWake() {
   pendingFireTimer = null;
+  if (wakeInProgress) {
+    wakeQueued = true;
+    return;
+  }
+  if (document.visibilityState === 'hidden') return;
+  wakeInProgress = true;
   const hiddenMs = lastHiddenAt != null ? Date.now() - lastHiddenAt : 0;
   lastHiddenAt = null;
   const isLongSleep = hiddenMs > LONG_SLEEP_MS;
-  const info: WakeInfo = { isLongSleep, hiddenMs };
-  if (!isLongSleep) {
-    dispatch(info);
-    return;
+  if (isLongSleep) {
+    console.log(
+      `[tabWakeGate] Tab quay lại sau ~${Math.round(hiddenMs / 60_000)} phút ẩn — health-precheck trước khi đồng bộ.`,
+    );
   }
-  console.log(
-    `[tabWakeGate] Tab quay lại sau ~${Math.round(hiddenMs / 60_000)} phút ẩn — health-precheck trước khi đồng bộ (chống dội request vào server cold-start).`,
-  );
-  void healthPrecheckUntilReady().then((ready) => {
-    if (!ready) {
-      console.warn(
-        '[tabWakeGate] Backend/Mongo chưa ready sau thời gian chờ tối đa — tiếp tục wake có kiểm soát.',
-      );
+
+  try {
+    const healthReady = await healthPrecheckUntilReady();
+    const info: WakeInfo = { isLongSleep, hiddenMs, healthReady };
+    if (document.hidden) {
+      wakeQueued = true;
+      return;
     }
-    window.setTimeout(() => dispatch(info), LONG_SLEEP_EXTRA_DELAY_MS);
-  });
+    if (healthReady) {
+      // Health thành công thì luôn dispatch: subscriber là nơi refresh dữ liệu tab hiện tại.
+      dispatch(info);
+      return;
+    }
+    console.warn(
+      '[tabWakeGate] Backend/Mongo chưa ready sau thời gian chờ tối đa — tiếp tục wake có kiểm soát.',
+    );
+    // Không khóa UI vô hạn nếu health hết deadline; vẫn cho subscriber thử refresh có kiểm soát.
+    dispatch(info);
+  } finally {
+    wakeInProgress = false;
+    if (wakeQueued) {
+      wakeQueued = false;
+      scheduleWake();
+    }
+  }
 }
 
 function scheduleWake() {
@@ -151,6 +171,9 @@ function installGlobalListenersOnce() {
   });
   window.addEventListener('pageshow', (ev: PageTransitionEvent) => {
     if (ev.persisted || document.visibilityState === 'visible') scheduleWake();
+  });
+  window.addEventListener('online', () => {
+    if (document.visibilityState === 'visible') scheduleWake();
   });
 }
 

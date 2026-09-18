@@ -477,7 +477,6 @@ export default function App() {
   const scanBgToastTimerRef = useRef<number | null>(null);
   /** Làm mới ngầm khi quay lại tab trình duyệt — không trigger Shopee sync. */
   const [backgroundRefreshing, setBackgroundRefreshing] = useState(false);
-  const lastFocusRefreshAtRef = useRef(0);
   /** Sequence guard — tránh race-condition khi polling 15s + click thủ công/focus refresh
    * chạy gần nhau: chỉ response của request MỚI NHẤT được ghi vào state, response của
    * request cũ hơn (dù trả về sau) sẽ bị bỏ qua thay vì ghi đè mất dữ liệu vừa cập nhật. */
@@ -1323,17 +1322,11 @@ export default function App() {
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    // Chỉ chống double-fire focus + visibilitychange cùng lúc; không chặn sau khi tab bị đóng băng.
-    const FOCUS_REFRESH_COOLDOWN_MS = 800;
-
     const refreshFromLocalDb = async () => {
       if (document.visibilityState === 'hidden') return;
       // Khi màn Đơn hàng đang mount, OrderManager là chủ duy nhất của list/counter/SSE wake.
       // Tránh App gọi thêm /orders/refresh ngay sau đó gây nghẽn connection lúc cold-start.
       if (activeTab === 'orders') return;
-      const now = Date.now();
-      if (now - lastFocusRefreshAtRef.current < FOCUS_REFRESH_COOLDOWN_MS) return;
-      lastFocusRefreshAtRef.current = now;
 
       setBackgroundRefreshing(true);
       try {

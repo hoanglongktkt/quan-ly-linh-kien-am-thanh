@@ -871,8 +871,6 @@ const SCAN_BG_STATUS_IDLE_POLL_MS = 60_000;
 const COUNTER_POLL_MS = 60_000;
 /** Retry nhanh khi lần đầu load counter thất bại/nghẽn (trước khi có counts lần nào). */
 const FIRST_COUNTER_RETRY_MS = 5_000;
-/** Cooldown wake-up sau ngủ đông — chặn spam khi user chuyển tab liên tục. */
-const WAKE_COOLDOWN_MS = 3_000;
 /** SSE heartbeat server = 15s; mất ping lâu hơn ngưỡng này → reconnect (mobile zombie). */
 const SSE_PING_WATCHDOG_MS = 45_000;
 /** Trần backoff khi reconnect liên tục fail (server cold-start) — tránh spam mỗi 45s vô hạn. */
@@ -1478,7 +1476,6 @@ export default function OrderManager({
   onFetchOrdersRef.current = fetchOrdersWithShop;
   const newOrderRefreshTimersRef = useRef<number[]>([]);
   const lastNewOrderNotifyAtRef = useRef(0);
-  const lastWakeAtRef = useRef(0);
 
   /** Set tab + sub-tab + page cùng 1 tick — tránh fetch 2 lần khi vào nhóm Hủy/Hoàn. */
   const selectOrdersSubTab = useCallback((tab: OrderTab, cancelReturn?: CancelReturnTab) => {
@@ -1820,12 +1817,9 @@ export default function OrderManager({
 
     const wakeFromSleep = (info?: WakeInfo) => {
       if (document.visibilityState === 'hidden') return;
-      const now = Date.now();
-      if (now - lastWakeAtRef.current < WAKE_COOLDOWN_MS) return;
-      lastWakeAtRef.current = now;
       if (info?.isLongSleep) {
-        // tabWakeGate đã tự health-precheck + delay nhẹ trước khi gọi tới đây — chỉ cần
-        // thông báo cho user biết đang đồng bộ lại sau thời gian dài, tránh tưởng web bị treo.
+        // tabWakeGate đã tự health-precheck trước khi gọi tới đây — chỉ cần thông báo cho user
+        // biết đang đồng bộ lại sau thời gian dài, tránh tưởng web bị treo.
         showToast('Đang kết nối lại sau thời gian dài không mở web — vui lòng chờ vài giây...', 6000);
         sseConsecutiveFailures = 0;
       }
@@ -1851,6 +1845,21 @@ export default function OrderManager({
       }, 300);
     };
 
+    // Mobile có thể giữ EventSource ở trạng thái OPEN sau khi socket thực tế đã chết.
+    // Đóng/mở đồng bộ ngay tại cạnh hidden -> visible, không chờ debounce wake hay watchdog.
+    let wasHidden = document.visibilityState === 'hidden';
+    const reconnectSseOnVisible = () => {
+      if (document.visibilityState === 'hidden') {
+        wasHidden = true;
+        return;
+      }
+      if (!wasHidden) return;
+      wasHidden = false;
+      sseConsecutiveFailures = 0;
+      forceReconnectSse();
+    };
+    document.addEventListener('visibilitychange', reconnectSseOnVisible);
+
     openSse();
     watchdogTimer = window.setInterval(() => {
       if (cancelled || document.visibilityState === 'hidden') return;
@@ -1874,6 +1883,7 @@ export default function OrderManager({
     return () => {
       cancelled = true;
       unsubscribeWake();
+      document.removeEventListener('visibilitychange', reconnectSseOnVisible);
       if (watchdogTimer != null) window.clearInterval(watchdogTimer);
       if (orderUpdatedRefreshTimerRef.current != null) {
         window.clearTimeout(orderUpdatedRefreshTimerRef.current);
