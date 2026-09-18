@@ -205,10 +205,14 @@ export async function listProducts(req, res) {
 
 /** GET /api/products/search */
 export async function searchProducts(req, res) {
-  const q = String(req.query?.q ?? req.query?.query ?? "").trim();
-  const limit = Number(req.query?.limit ?? 40);
+  const q = String(req.query?.q ?? req.query?.query ?? "")
+    .trim()
+    .slice(0, 100);
+  const requestedLimit = Number(req.query?.limit ?? 30);
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.min(30, Math.max(1, Math.floor(requestedLimit)))
+    : 30;
   const mapRow = (p) => ({
-    ...p,
     id: p.id,
     sku: p.sku || "",
     name: p.name || p.title || "",
@@ -221,6 +225,7 @@ export async function searchProducts(req, res) {
     sellingPrice: Math.max(0, Math.round(Number(p.sellingPrice ?? p.price) || 0)),
     shopeeItemId: p.shopeeItemId || p.shopeeId || undefined,
     shopeeModelId: p.shopeeModelId || undefined,
+    status: p.status || "active",
   });
 
   try {

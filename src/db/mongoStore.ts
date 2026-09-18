@@ -197,9 +197,33 @@ const ProductSchema = new Schema<ProductDoc>(
 
 // Index phục vụ search Kho Gốc (SKU / tên) — syncIndexes lúc boot
 ProductSchema.index({ "data.sku": 1 });
+ProductSchema.index({ "data.name": 1 });
 ProductSchema.index({ "data.title": 1 });
 ProductSchema.index({ "data.children.sku": 1 });
+ProductSchema.index({ "data.children.name": 1 });
+ProductSchema.index({ "data.children.title": 1 });
 ProductSchema.index({ "data.children_models.sku": 1 });
+ProductSchema.index({ "data.children_models.name": 1 });
+ProductSchema.index({ "data.children_models.title": 1 });
+ProductSchema.index(
+  {
+    sku: "text",
+    "data.sku": "text",
+    "data.name": "text",
+    "data.title": "text",
+    "data.children.sku": "text",
+    "data.children.name": "text",
+    "data.children.title": "text",
+    "data.children_models.sku": "text",
+    "data.children_models.name": "text",
+    "data.children_models.title": "text",
+  },
+  {
+    name: "products_name_sku_text",
+    default_language: "none",
+    weights: { sku: 10, "data.sku": 10, "data.name": 5, "data.title": 5 },
+  },
+);
 // Hỗ trợ Dashboard: query tồn kho thấp có $lt + sort — tránh COLLSCAN khi catalog lớn.
 ProductSchema.index({ "data.stock": 1 });
 
@@ -1087,6 +1111,61 @@ export async function loadProductsByIdsFromStore(
   return docsToProducts(docs);
 }
 
+/** Projection tối thiểu cho ô gợi ý — tuyệt đối không tải description HTML. */
+const PRODUCT_SEARCH_SELECT = {
+  _id: 1,
+  sku: 1,
+  "data.id": 1,
+  "data.sku": 1,
+  "data.name": 1,
+  "data.title": 1,
+  "data.image": 1,
+  "data.imageUrl": 1,
+  "data.avatarUrl": 1,
+  "data.stock": 1,
+  "data.current_stock": 1,
+  "data.importPrice": 1,
+  "data.last_import_price": 1,
+  "data.sellingPrice": 1,
+  "data.price": 1,
+  "data.status": 1,
+  "data.shopeeItemId": 1,
+  "data.shopeeId": 1,
+  "data.shopeeModelId": 1,
+  "data.children.id": 1,
+  "data.children.sku": 1,
+  "data.children.name": 1,
+  "data.children.title": 1,
+  "data.children.image": 1,
+  "data.children.imageUrl": 1,
+  "data.children.avatarUrl": 1,
+  "data.children.stock": 1,
+  "data.children.current_stock": 1,
+  "data.children.importPrice": 1,
+  "data.children.last_import_price": 1,
+  "data.children.sellingPrice": 1,
+  "data.children.price": 1,
+  "data.children.status": 1,
+  "data.children.shopeeItemId": 1,
+  "data.children.shopeeModelId": 1,
+  "data.children_models.id": 1,
+  "data.children_models.sku": 1,
+  "data.children_models.name": 1,
+  "data.children_models.title": 1,
+  "data.children_models.image": 1,
+  "data.children_models.imageUrl": 1,
+  "data.children_models.avatarUrl": 1,
+  "data.children_models.stock": 1,
+  "data.children_models.current_stock": 1,
+  "data.children_models.importPrice": 1,
+  "data.children_models.last_import_price": 1,
+  "data.children_models.sellingPrice": 1,
+  "data.children_models.price": 1,
+  "data.children_models.status": 1,
+  "data.children_models.shopeeItemId": 1,
+  "data.children_models.shopeeModelId": 1,
+} as const;
+
 /** Chỉ trả field nhẹ cho UI search — không kèm description HTML. */
 function toSearchLeanRow(row: any): any {
   const id = String(row?.id || "").trim();
@@ -1107,9 +1186,11 @@ function toSearchLeanRow(row: any): any {
     current_stock: stock,
     importPrice,
     last_import_price: importPrice,
-    sellingPrice: Math.max(0, Math.round(Number(row?.sellingPrice) || 0)),
+    sellingPrice: Math.max(0, Math.round(Number(row?.sellingPrice ?? row?.price) || 0)),
     modelName: row?.modelName || undefined,
     tierLabels: Array.isArray(row?.tierLabels) ? row.tierLabels : undefined,
+    shopeeItemId: row?.shopeeItemId || row?.shopeeId || undefined,
+    shopeeModelId: row?.shopeeModelId || undefined,
     status: row?.status || "active",
   };
 }
@@ -1123,8 +1204,8 @@ export async function searchProductsFromStore(
   limit = 40,
 ): Promise<any[]> {
   const q = String(query || "").trim();
-  const safeLimit = Math.min(100, Math.max(1, Math.floor(Number(limit) || 40)));
-  const parentFetchLimit = Math.min(120, Math.max(safeLimit * 2, 40));
+  const safeLimit = Math.min(30, Math.max(1, Math.floor(Number(limit) || 30)));
+  const parentFetchLimit = safeLimit;
   const qLower = normalizeProductSearchText(q);
 
   let docs: Array<{ _id?: any; data?: any; sku?: string | null }> = [];
@@ -1141,9 +1222,10 @@ export async function searchProductsFromStore(
   requireMongo();
 
   if (!q) {
-    docs = await ProductModel.find({}, { sku: 1, data: 1 })
+    docs = await ProductModel.find({}, PRODUCT_SEARCH_SELECT)
       .sort({ _id: 1 })
       .limit(parentFetchLimit)
+      .maxTimeMS(3000)
       .lean();
   } else {
     const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -1158,30 +1240,62 @@ export async function searchProductsFromStore(
           { "data.sku": exactSku },
           { "data.children.sku": exactSku },
           { "data.children_models.sku": exactSku },
-          { "data.barcode": exactSku },
         ],
       },
-      { sku: 1, data: 1 },
+      PRODUCT_SEARCH_SELECT,
     )
       .limit(parentFetchLimit)
-      .maxTimeMS(15_000)
+      .maxTimeMS(3000)
       .lean();
 
-    // 2) Prefix SKU nếu chưa đủ
+    // 2) Text index cho tên/SKU — tránh quét toàn collection khi gõ đủ từ.
+    if (docs.length < safeLimit) {
+      try {
+        const more = await ProductModel.find(
+          { $text: { $search: q, $caseSensitive: false, $diacriticSensitive: false } },
+          { ...PRODUCT_SEARCH_SELECT, searchScore: { $meta: "textScore" } },
+        )
+          .sort({ searchScore: { $meta: "textScore" } })
+          .limit(parentFetchLimit)
+          .maxTimeMS(3000)
+          .lean();
+        const seenIds = new Set(docs.map((d) => String(d._id)));
+        for (const d of more) {
+          const key = String(d._id);
+          if (seenIds.has(key)) continue;
+          seenIds.add(key);
+          docs.push(d);
+          if (docs.length >= safeLimit) break;
+        }
+      } catch (textSearchErr) {
+        console.warn(
+          "[MongoSearch] text index chưa sẵn sàng:",
+          textSearchErr instanceof Error ? textSearchErr.message : textSearchErr,
+        );
+      }
+    }
+
+    // 3) Prefix fallback phục vụ lúc đang gõ dở; chỉ tìm tên và SKU.
     if (docs.length < safeLimit) {
       const more = await ProductModel.find(
         {
           $or: [
             { sku: prefixSku },
             { "data.sku": prefixSku },
+            { "data.name": prefixSku },
+            { "data.title": prefixSku },
             { "data.children.sku": prefixSku },
+            { "data.children.name": prefixSku },
+            { "data.children.title": prefixSku },
             { "data.children_models.sku": prefixSku },
+            { "data.children_models.name": prefixSku },
+            { "data.children_models.title": prefixSku },
           ],
         },
-        { sku: 1, data: 1 },
+        PRODUCT_SEARCH_SELECT,
       )
         .limit(parentFetchLimit)
-        .maxTimeMS(15_000)
+        .maxTimeMS(3000)
         .lean();
       const seenIds = new Set(docs.map((d) => String(d._id)));
       for (const d of more) {
@@ -1189,38 +1303,7 @@ export async function searchProductsFromStore(
         if (seenIds.has(key)) continue;
         seenIds.add(key);
         docs.push(d);
-      }
-    }
-
-    // 3) Prefix tên / SKU (không contains leading-wildcard)
-    if (docs.length < safeLimit) {
-      const nameFilter = buildProductListSearchFilter(q);
-      const moreFilter =
-        Object.keys(nameFilter).length > 0
-          ? nameFilter
-          : {
-              $or: [
-                { name: prefixSku },
-                { title: prefixSku },
-                { "data.name": prefixSku },
-                { "data.title": prefixSku },
-                { "data.modelName": prefixSku },
-                { "data.children.name": prefixSku },
-                { "data.children.title": prefixSku },
-                { "data.children_models.name": prefixSku },
-                { "data.children_models.title": prefixSku },
-              ],
-            };
-      const more = await ProductModel.find(moreFilter, { sku: 1, data: 1 })
-        .limit(parentFetchLimit)
-        .maxTimeMS(15_000)
-        .lean();
-      const seenIds = new Set(docs.map((d) => String(d._id)));
-      for (const d of more) {
-        const key = String(d._id);
-        if (seenIds.has(key)) continue;
-        seenIds.add(key);
-        docs.push(d);
+        if (docs.length >= safeLimit) break;
       }
     }
 

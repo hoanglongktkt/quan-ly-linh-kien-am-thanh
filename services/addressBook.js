@@ -271,6 +271,9 @@ export async function upsertLoyaltyFromPurchase({
     const now = new Date();
 
     if (mongoReady()) {
+      if (!AddressBook || typeof AddressBook.findOneAndUpdate !== "function") {
+        throw new Error("AddressBook model chưa sẵn sàng");
+      }
       const $set = {
         phone: phoneNorm,
         savedAt: now,
@@ -326,6 +329,9 @@ export async function upsertLoyaltyFromPurchase({
           runValidators: false,
         },
       );
+      if (!updated) {
+        throw new Error("Không thể cập nhật AddressBook cho khách POS");
+      }
 
       try {
         await trimMongoBook();

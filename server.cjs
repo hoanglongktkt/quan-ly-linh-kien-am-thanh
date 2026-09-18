@@ -77487,9 +77487,33 @@ var ProductSchema = new import_mongoose3.Schema(
   { collection: "products", versionKey: false }
 );
 ProductSchema.index({ "data.sku": 1 });
+ProductSchema.index({ "data.name": 1 });
 ProductSchema.index({ "data.title": 1 });
 ProductSchema.index({ "data.children.sku": 1 });
+ProductSchema.index({ "data.children.name": 1 });
+ProductSchema.index({ "data.children.title": 1 });
 ProductSchema.index({ "data.children_models.sku": 1 });
+ProductSchema.index({ "data.children_models.name": 1 });
+ProductSchema.index({ "data.children_models.title": 1 });
+ProductSchema.index(
+  {
+    sku: "text",
+    "data.sku": "text",
+    "data.name": "text",
+    "data.title": "text",
+    "data.children.sku": "text",
+    "data.children.name": "text",
+    "data.children.title": "text",
+    "data.children_models.sku": "text",
+    "data.children_models.name": "text",
+    "data.children_models.title": "text"
+  },
+  {
+    name: "products_name_sku_text",
+    default_language: "none",
+    weights: { sku: 10, "data.sku": 10, "data.name": 5, "data.title": 5 }
+  }
+);
 ProductSchema.index({ "data.stock": 1 });
 var ChannelListingSchema = new import_mongoose3.Schema(
   {
@@ -78182,6 +78206,59 @@ async function loadProductsByIdsFromStore(productIds, shopeeItemIds = []) {
   const docs = await ProductModel.find(orClauses.length === 1 ? orClauses[0] : { $or: orClauses }).maxTimeMS(6e3).lean();
   return docsToProducts(docs);
 }
+var PRODUCT_SEARCH_SELECT = {
+  _id: 1,
+  sku: 1,
+  "data.id": 1,
+  "data.sku": 1,
+  "data.name": 1,
+  "data.title": 1,
+  "data.image": 1,
+  "data.imageUrl": 1,
+  "data.avatarUrl": 1,
+  "data.stock": 1,
+  "data.current_stock": 1,
+  "data.importPrice": 1,
+  "data.last_import_price": 1,
+  "data.sellingPrice": 1,
+  "data.price": 1,
+  "data.status": 1,
+  "data.shopeeItemId": 1,
+  "data.shopeeId": 1,
+  "data.shopeeModelId": 1,
+  "data.children.id": 1,
+  "data.children.sku": 1,
+  "data.children.name": 1,
+  "data.children.title": 1,
+  "data.children.image": 1,
+  "data.children.imageUrl": 1,
+  "data.children.avatarUrl": 1,
+  "data.children.stock": 1,
+  "data.children.current_stock": 1,
+  "data.children.importPrice": 1,
+  "data.children.last_import_price": 1,
+  "data.children.sellingPrice": 1,
+  "data.children.price": 1,
+  "data.children.status": 1,
+  "data.children.shopeeItemId": 1,
+  "data.children.shopeeModelId": 1,
+  "data.children_models.id": 1,
+  "data.children_models.sku": 1,
+  "data.children_models.name": 1,
+  "data.children_models.title": 1,
+  "data.children_models.image": 1,
+  "data.children_models.imageUrl": 1,
+  "data.children_models.avatarUrl": 1,
+  "data.children_models.stock": 1,
+  "data.children_models.current_stock": 1,
+  "data.children_models.importPrice": 1,
+  "data.children_models.last_import_price": 1,
+  "data.children_models.sellingPrice": 1,
+  "data.children_models.price": 1,
+  "data.children_models.status": 1,
+  "data.children_models.shopeeItemId": 1,
+  "data.children_models.shopeeModelId": 1
+};
 function toSearchLeanRow(row) {
   const id = String(row?.id || "").trim();
   const sku = String(row?.sku || "").trim();
@@ -78201,16 +78278,18 @@ function toSearchLeanRow(row) {
     current_stock: stock,
     importPrice,
     last_import_price: importPrice,
-    sellingPrice: Math.max(0, Math.round(Number(row?.sellingPrice) || 0)),
+    sellingPrice: Math.max(0, Math.round(Number(row?.sellingPrice ?? row?.price) || 0)),
     modelName: row?.modelName || void 0,
     tierLabels: Array.isArray(row?.tierLabels) ? row.tierLabels : void 0,
+    shopeeItemId: row?.shopeeItemId || row?.shopeeId || void 0,
+    shopeeModelId: row?.shopeeModelId || void 0,
     status: row?.status || "active"
   };
 }
 async function searchProductsFromStore(query, limit = 40) {
   const q = String(query || "").trim();
-  const safeLimit = Math.min(100, Math.max(1, Math.floor(Number(limit) || 40)));
-  const parentFetchLimit = Math.min(120, Math.max(safeLimit * 2, 40));
+  const safeLimit = Math.min(30, Math.max(1, Math.floor(Number(limit) || 30)));
+  const parentFetchLimit = safeLimit;
   const qLower = normalizeProductSearchText(q);
   let docs = [];
   if (isProductsDiskMode()) {
@@ -78224,7 +78303,7 @@ async function searchProductsFromStore(query, limit = 40) {
   } else {
     requireMongo();
     if (!q) {
-      docs = await ProductModel.find({}, { sku: 1, data: 1 }).sort({ _id: 1 }).limit(parentFetchLimit).lean();
+      docs = await ProductModel.find({}, PRODUCT_SEARCH_SELECT).sort({ _id: 1 }).limit(parentFetchLimit).maxTimeMS(3e3).lean();
     } else {
       const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const exactSku = new RegExp(`^${escaped}$`, "i");
@@ -78235,54 +78314,57 @@ async function searchProductsFromStore(query, limit = 40) {
             { sku: exactSku },
             { "data.sku": exactSku },
             { "data.children.sku": exactSku },
-            { "data.children_models.sku": exactSku },
-            { "data.barcode": exactSku }
+            { "data.children_models.sku": exactSku }
           ]
         },
-        { sku: 1, data: 1 }
-      ).limit(parentFetchLimit).maxTimeMS(15e3).lean();
+        PRODUCT_SEARCH_SELECT
+      ).limit(parentFetchLimit).maxTimeMS(3e3).lean();
+      if (docs.length < safeLimit) {
+        try {
+          const more = await ProductModel.find(
+            { $text: { $search: q, $caseSensitive: false, $diacriticSensitive: false } },
+            { ...PRODUCT_SEARCH_SELECT, searchScore: { $meta: "textScore" } }
+          ).sort({ searchScore: { $meta: "textScore" } }).limit(parentFetchLimit).maxTimeMS(3e3).lean();
+          const seenIds = new Set(docs.map((d) => String(d._id)));
+          for (const d of more) {
+            const key = String(d._id);
+            if (seenIds.has(key)) continue;
+            seenIds.add(key);
+            docs.push(d);
+            if (docs.length >= safeLimit) break;
+          }
+        } catch (textSearchErr) {
+          console.warn(
+            "[MongoSearch] text index ch\u01B0a s\u1EB5n s\xE0ng:",
+            textSearchErr instanceof Error ? textSearchErr.message : textSearchErr
+          );
+        }
+      }
       if (docs.length < safeLimit) {
         const more = await ProductModel.find(
           {
             $or: [
               { sku: prefixSku },
               { "data.sku": prefixSku },
+              { "data.name": prefixSku },
+              { "data.title": prefixSku },
               { "data.children.sku": prefixSku },
-              { "data.children_models.sku": prefixSku }
+              { "data.children.name": prefixSku },
+              { "data.children.title": prefixSku },
+              { "data.children_models.sku": prefixSku },
+              { "data.children_models.name": prefixSku },
+              { "data.children_models.title": prefixSku }
             ]
           },
-          { sku: 1, data: 1 }
-        ).limit(parentFetchLimit).maxTimeMS(15e3).lean();
+          PRODUCT_SEARCH_SELECT
+        ).limit(parentFetchLimit).maxTimeMS(3e3).lean();
         const seenIds = new Set(docs.map((d) => String(d._id)));
         for (const d of more) {
           const key = String(d._id);
           if (seenIds.has(key)) continue;
           seenIds.add(key);
           docs.push(d);
-        }
-      }
-      if (docs.length < safeLimit) {
-        const nameFilter = buildProductListSearchFilter(q);
-        const moreFilter = Object.keys(nameFilter).length > 0 ? nameFilter : {
-          $or: [
-            { name: prefixSku },
-            { title: prefixSku },
-            { "data.name": prefixSku },
-            { "data.title": prefixSku },
-            { "data.modelName": prefixSku },
-            { "data.children.name": prefixSku },
-            { "data.children.title": prefixSku },
-            { "data.children_models.name": prefixSku },
-            { "data.children_models.title": prefixSku }
-          ]
-        };
-        const more = await ProductModel.find(moreFilter, { sku: 1, data: 1 }).limit(parentFetchLimit).maxTimeMS(15e3).lean();
-        const seenIds = new Set(docs.map((d) => String(d._id)));
-        for (const d of more) {
-          const key = String(d._id);
-          if (seenIds.has(key)) continue;
-          seenIds.add(key);
-          docs.push(d);
+          if (docs.length >= safeLimit) break;
         }
       }
       console.log("[MongoSearch] KhoGoc products", {
@@ -86254,6 +86336,9 @@ async function upsertLoyaltyFromPurchase({
     const resolvedFull = resolvedFullRaw === "Mua t\u1EA1i c\u1EEDa h\xE0ng" ? "" : resolvedFullRaw;
     const now = /* @__PURE__ */ new Date();
     if (mongoReady2()) {
+      if (!AddressBook_default || typeof AddressBook_default.findOneAndUpdate !== "function") {
+        throw new Error("AddressBook model ch\u01B0a s\u1EB5n s\xE0ng");
+      }
       const $set = {
         phone: phoneNorm,
         savedAt: now,
@@ -86307,6 +86392,9 @@ async function upsertLoyaltyFromPurchase({
           runValidators: false
         }
       );
+      if (!updated) {
+        throw new Error("Kh\xF4ng th\u1EC3 c\u1EADp nh\u1EADt AddressBook cho kh\xE1ch POS");
+      }
       try {
         await trimMongoBook();
       } catch (trimErr) {
@@ -117424,10 +117512,10 @@ async function listProducts(req, res) {
   }
 }
 async function searchProducts(req, res) {
-  const q = String(req.query?.q ?? req.query?.query ?? "").trim();
-  const limit = Number(req.query?.limit ?? 40);
+  const q = String(req.query?.q ?? req.query?.query ?? "").trim().slice(0, 100);
+  const requestedLimit = Number(req.query?.limit ?? 30);
+  const limit = Number.isFinite(requestedLimit) ? Math.min(30, Math.max(1, Math.floor(requestedLimit))) : 30;
   const mapRow = (p) => ({
-    ...p,
     id: p.id,
     sku: p.sku || "",
     name: p.name || p.title || "",
@@ -117439,7 +117527,8 @@ async function searchProducts(req, res) {
     importPrice: p.importPrice ?? p.last_import_price ?? 0,
     sellingPrice: Math.max(0, Math.round(Number(p.sellingPrice ?? p.price) || 0)),
     shopeeItemId: p.shopeeItemId || p.shopeeId || void 0,
-    shopeeModelId: p.shopeeModelId || void 0
+    shopeeModelId: p.shopeeModelId || void 0,
+    status: p.status || "active"
   });
   try {
     let raw = [];
@@ -124370,16 +124459,7 @@ async function createPosOrder(req, res) {
     const nowIso = (/* @__PURE__ */ new Date()).toISOString();
     const orderSn = `POS-${Date.now().toString(36).toUpperCase()}`;
     const orderId = `pos-${orderSn}`;
-    let stockResult = { deducted: 0, updatedProducts: [] };
-    try {
-      stockResult = await deductStockForPosOrder(lineItems);
-    } catch (stockErr) {
-      console.error("[Orders POS] Tr\u1EEB t\u1ED3n th\u1EA5t b\u1EA1i:", stockErr?.message || stockErr);
-      return res.status(500).json({
-        success: false,
-        error: stockErr?.message || "Tr\u1EEB t\u1ED3n kho th\u1EA5t b\u1EA1i \u2014 \u0111\u01A1n ch\u01B0a \u0111\u01B0\u1EE3c t\u1EA1o."
-      });
-    }
+    const stockResult = await deductStockForPosOrder(lineItems);
     const newOrder = {
       id: orderId,
       _id: orderId,
@@ -124464,9 +124544,9 @@ async function createPosOrder(req, res) {
     if (res.headersSent) {
       return;
     }
+    const message = error instanceof Error ? error.message : String(error || "T\u1EA1o \u0111\u01A1n nhanh th\u1EA5t b\u1EA1i");
     return res.status(500).json({
-      success: false,
-      error: error?.message || "T\u1EA1o \u0111\u01A1n nhanh th\u1EA5t b\u1EA1i"
+      message
     });
   }
 }

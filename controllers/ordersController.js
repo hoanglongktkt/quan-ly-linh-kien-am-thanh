@@ -3227,16 +3227,9 @@ export async function createPosOrder(req, res) {
     const orderSn = `POS-${Date.now().toString(36).toUpperCase()}`;
     const orderId = `pos-${orderSn}`;
 
-    let stockResult = { deducted: 0, updatedProducts: [] };
-    try {
-      stockResult = await deductStockForPosOrder(lineItems);
-    } catch (stockErr) {
-      console.error("[Orders POS] Trừ tồn thất bại:", stockErr?.message || stockErr);
-      return res.status(500).json({
-        success: false,
-        error: stockErr?.message || "Trừ tồn kho thất bại — đơn chưa được tạo.",
-      });
-    }
+    // Mọi lỗi trừ tồn phải đi qua catch ngoài cùng của endpoint. Không để
+    // rejected Promise thoát khỏi request handler và làm Passenger trả 502.
+    const stockResult = await deductStockForPosOrder(lineItems);
 
     const newOrder = {
       id: orderId,
@@ -3330,9 +3323,12 @@ export async function createPosOrder(req, res) {
     if (res.headersSent) {
       return;
     }
+    const message =
+      error instanceof Error
+        ? error.message
+        : String(error || "Tạo đơn nhanh thất bại");
     return res.status(500).json({
-      success: false,
-      error: error?.message || "Tạo đơn nhanh thất bại",
+      message,
     });
   }
 }
