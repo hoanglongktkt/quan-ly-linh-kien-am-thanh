@@ -329,8 +329,9 @@ body {
     width: 100% !important;
     flex-shrink: 0 !important;
     white-space: normal !important;
-    justify-content: space-between !important;
-    text-align: left !important;
+    justify-content: center !important;
+    text-align: center !important;
+    text-transform: uppercase !important;
   }
 
   .om-orders-mobile-hide-subtab,
@@ -342,12 +343,13 @@ body {
   .om-orders-sub-tabs .om-orders-mobile-show-subtab {
     width: 100% !important;
     flex-shrink: 0;
-    justify-content: space-between;
+    justify-content: center;
+    text-align: center;
     border-radius: 0.75rem;
     border: 1px solid rgb(243 244 246);
     border-bottom-width: 1px !important;
-    text-transform: none;
-    letter-spacing: normal;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
     min-height: 44px;
     padding-left: 0.875rem;
     padding-right: 0.875rem;

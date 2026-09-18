@@ -9011,13 +9011,13 @@ export default function OrderManager({
 
         <button
           onClick={() => selectOrdersSubTab('unprocessed')}
-          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 max-md:w-full max-md:justify-center max-md:text-center text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'unprocessed' 
               ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20' 
               : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
           }`}
         >
-          <span>Đơn chưa xử lý</span>
+          <span className="uppercase text-center">Đơn chưa xử lý</span>
           <span className="px-1.5 py-0.2 text-[10px] font-black rounded-full bg-rose-100 text-rose-700 border border-rose-200">
             {getCount('unprocessed')}
           </span>
@@ -9025,13 +9025,13 @@ export default function OrderManager({
 
         <button
           onClick={() => selectOrdersSubTab('processed')}
-          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 max-md:w-full max-md:justify-center max-md:text-center text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'processed' 
               ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20' 
               : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
           }`}
         >
-          <span>Chờ lấy hàng (Đã xử lý)</span>
+          <span className="uppercase text-center">Chờ lấy hàng (Đã xử lý)</span>
           <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-blue-100 text-blue-700 border border-blue-200">
             {getCount('processed')}
           </span>
@@ -9039,13 +9039,13 @@ export default function OrderManager({
 
         <button
           onClick={() => openHandedOverCarrierTab({ skipFetch: false })}
-          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 max-md:w-full max-md:justify-center max-md:text-center text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'handed_over_carrier' 
               ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20' 
               : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
           }`}
         >
-          <span>Đã giao cho ĐVVC</span>
+          <span className="uppercase text-center">Đã giao cho ĐVVC</span>
           <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-violet-100 text-violet-700 border border-violet-200">
             {getCount('handed_over_carrier')}
           </span>
@@ -9067,13 +9067,13 @@ export default function OrderManager({
 
         <button
           onClick={() => selectOrdersSubTab('cancel_returns', 'all')}
-          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 max-md:w-full max-md:justify-center max-md:text-center text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'cancel_returns' 
               ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20' 
               : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
           }`}
         >
-          <span>ĐƠN HỦY, ĐƠN HOÀN</span>
+          <span className="uppercase text-center">ĐƠN HỦY, ĐƠN HOÀN</span>
           <span className="px-1.5 py-0.2 text-[10px] font-semibold rounded-full bg-orange-100 text-orange-700 border border-orange-200">
             {getCount('cancel_returns')}
           </span>
@@ -9081,13 +9081,13 @@ export default function OrderManager({
 
         <button
           onClick={() => selectOrdersSubTab('received_cancel_returns')}
-          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 max-md:w-full max-md:justify-center max-md:text-center text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'received_cancel_returns'
               ? 'border-teal-600 text-teal-700 font-extrabold bg-teal-50/40'
               : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
           }`}
         >
-          <span>Đã nhận đơn hủy, đơn hoàn</span>
+          <span className="uppercase text-center">Đã nhận đơn hủy, đơn hoàn</span>
           <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-teal-100 text-teal-800 border border-teal-200">
             {getCount('received_cancel_returns')}
           </span>
@@ -9095,13 +9095,13 @@ export default function OrderManager({
 
         <button
           onClick={() => selectOrdersSubTab('order_products')}
-          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 max-md:w-full max-md:justify-center max-md:text-center text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'order_products'
               ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20'
               : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
           }`}
         >
-          <span>Những sản phẩm có trong đơn</span>
+          <span className="uppercase text-center">Những sản phẩm có trong đơn</span>
           <span className="px-1.5 py-0.2 text-[10px] font-semibold rounded-full bg-violet-100 text-violet-700 border border-violet-200">
             {getCount('order_products')}
           </span>
@@ -9113,14 +9113,14 @@ export default function OrderManager({
             setSelectedPlatform('woocommerce');
             setSelectedShopId('all');
           }}
-          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 max-md:w-full max-md:justify-center max-md:text-center text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'web_orders'
               ? 'border-indigo-600 text-indigo-700 font-extrabold bg-indigo-50/40'
               : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
           }`}
         >
           <span className="w-4 h-4 bg-indigo-600 text-white font-extrabold text-[9px] rounded flex items-center justify-center shrink-0">W</span>
-          <span>Đơn trên web</span>
+          <span className="uppercase text-center">Đơn trên web</span>
           <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200">
             {getCount('web_orders')}
           </span>
@@ -9132,14 +9132,14 @@ export default function OrderManager({
             setSelectedPlatform('manual');
             setSelectedShopId('all');
           }}
-          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 max-md:w-full max-md:justify-center max-md:text-center text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'external_orders'
               ? 'border-emerald-600 text-emerald-700 font-extrabold bg-emerald-50/40'
               : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
           }`}
         >
           <span className="w-4 h-4 bg-emerald-600 text-white font-extrabold text-[9px] rounded flex items-center justify-center shrink-0">N</span>
-          <span>Đơn ngoại sàn</span>
+          <span className="uppercase text-center">Đơn ngoại sàn</span>
           <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
             {getCount('external_orders')}
           </span>
@@ -9149,14 +9149,14 @@ export default function OrderManager({
         <button
           type="button"
           onClick={() => selectOrdersSubTab('quick_pos')}
-          className={`md:hidden om-orders-mobile-show-subtab px-4 py-3.5 text-xs font-bold tracking-wider border max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 w-full ${
+          className={`md:hidden om-orders-mobile-show-subtab px-4 py-3.5 w-full justify-center text-center text-xs font-bold uppercase tracking-wider border max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
             showQuickPosPage || activeSubTab === 'quick_pos'
               ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50'
               : 'border-blue-100 text-blue-600 hover:bg-blue-50 hover:border-blue-300'
           }`}
         >
           <Zap className="w-4 h-4 shrink-0 text-blue-600" />
-          <span className="text-blue-600">Tạo đơn nhanh</span>
+          <span className="uppercase text-center text-blue-600">Tạo đơn nhanh</span>
         </button>
 
       </div>
