@@ -1071,6 +1071,8 @@ export async function loadProductsByIdsFromStore(
     orClauses.push({ _id: { $in: ids } });
     orClauses.push({ "data.id": { $in: ids } });
     orClauses.push({ sku: { $in: ids } });
+    orClauses.push({ "data.children.id": { $in: ids } });
+    orClauses.push({ "data.children_models.id": { $in: ids } });
   }
   if (itemIds.length > 0) {
     orClauses.push({ "data.shopeeItemId": { $in: itemIds } });

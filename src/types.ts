@@ -136,6 +136,18 @@ export interface Order {
   id: string;
   orderSn: string;
   channel: 'shopee' | 'tiktok' | 'woocommerce' | 'manual';
+  /** Nguồn đơn: external (ngoại sàn) | pos (tạo đơn nhanh) | woocommerce | … */
+  source?: 'external' | 'pos' | 'woocommerce' | string;
+  /** Đơn Mini POS / tạo đơn nhanh */
+  is_quick_order?: boolean;
+  /** Đã trừ tồn kho (POS) */
+  stock_deducted?: boolean;
+  stock_deducted_at?: string;
+  /** Mua tại cửa hàng — bỏ qua địa chỉ giao */
+  walk_in?: boolean;
+  prepaid_amount?: number;
+  prepaidAmount?: number;
+  estimated_shipping_fee?: number;
   shopId?: string; // ConnectedShop ID
   shopName?: string; // Cache shopName to display which shop
   customerName?: string;

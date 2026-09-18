@@ -1,0 +1,552 @@
+import React, { useMemo, useRef, useState } from 'react';
+import {
+  ArrowLeft,
+  Loader2,
+  Printer,
+  Save,
+  Store,
+  Trash2,
+} from 'lucide-react';
+import { Order, Product, SyncLog } from '../types';
+import ImportProductSearchSelect, {
+  ImportProductSearchSelectHandle,
+} from './ImportProductSearchSelect';
+
+type PosLine = {
+  productId: string;
+  productTitle: string;
+  productImage?: string;
+  sku: string;
+  quantity: number;
+  importPrice: number;
+  sellingPrice: number;
+  stock?: number;
+};
+
+interface QuickPosPageProps {
+  products: Product[];
+  orders: Order[];
+  onBack: () => void;
+  onUpdateOrders: (orders: Order[]) => void;
+  onUpdateProduct?: (product: Product, opts?: { save?: boolean }) => void;
+  onAddLog: (log: SyncLog) => void;
+  authHeaders: () => Record<string, string>;
+}
+
+function formatVnd(n: number): string {
+  return Math.round(n || 0).toLocaleString('vi-VN');
+}
+
+function productImage(p: Product | PosLine): string {
+  return String(
+    (p as any).productImage ||
+      (p as any).imageUrl ||
+      (p as any).avatarUrl ||
+      (p as any).image ||
+      '',
+  );
+}
+
+export default function QuickPosPage({
+  products,
+  orders,
+  onBack,
+  onUpdateOrders,
+  onUpdateProduct,
+  onAddLog,
+  authHeaders,
+}: QuickPosPageProps) {
+  const searchRef = useRef<ImportProductSearchSelectHandle>(null);
+  const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [customerAddress, setCustomerAddress] = useState('');
+  const [walkIn, setWalkIn] = useState(true);
+  const [note, setNote] = useState('');
+  const [lines, setLines] = useState<PosLine[]>([]);
+  const [shippingFee, setShippingFee] = useState(0);
+  const [prepaidAmount, setPrepaidAmount] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [lastOrder, setLastOrder] = useState<Order | null>(null);
+
+  const subtotal = useMemo(
+    () => lines.reduce((s, l) => s + l.sellingPrice * l.quantity, 0),
+    [lines],
+  );
+  const totalAmount = Math.max(0, subtotal + Math.max(0, shippingFee));
+  const amountDue = Math.max(0, totalAmount - Math.max(0, prepaidAmount));
+
+  const addProduct = (p: Product) => {
+    const id = String(p.id || '').trim();
+    if (!id) return;
+    setLines((prev) => {
+      const idx = prev.findIndex((l) => l.productId === id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = { ...next[idx], quantity: next[idx].quantity + 1 };
+        return next;
+      }
+      return [
+        ...prev,
+        {
+          productId: id,
+          productTitle: String(p.title || ''),
+          productImage: productImage(p),
+          sku: String(p.sku || ''),
+          quantity: 1,
+          importPrice: Math.max(0, Math.round(Number(p.importPrice) || 0)),
+          sellingPrice: Math.max(0, Math.round(Number(p.sellingPrice) || 0)),
+          stock: Math.max(0, Math.round(Number(p.stock) || 0)),
+        },
+      ];
+    });
+    setError(null);
+  };
+
+  const updateLine = (productId: string, patch: Partial<PosLine>) => {
+    setLines((prev) =>
+      prev.map((l) => (l.productId === productId ? { ...l, ...patch } : l)),
+    );
+  };
+
+  const removeLine = (productId: string) => {
+    setLines((prev) => prev.filter((l) => l.productId !== productId));
+  };
+
+  const applyLocalStockOptimistic = (order: Order) => {
+    if (!onUpdateProduct || !Array.isArray(order.items)) return;
+    for (const it of order.items) {
+      const pid = String(it.productId || '').trim();
+      const qty = Math.max(0, Math.round(Number(it.quantity) || 0));
+      if (!pid || qty <= 0) continue;
+      const local = products.find((p) => p.id === pid);
+      if (!local) continue;
+      onUpdateProduct(
+        { ...local, stock: Math.max(0, (Number(local.stock) || 0) - qty) },
+        { save: false },
+      );
+    }
+  };
+
+  const submitOrder = async (andPrint: boolean) => {
+    if (lines.length === 0) {
+      setError('Vui lòng thêm ít nhất 1 sản phẩm.');
+      return;
+    }
+    if (!walkIn && !customerAddress.trim()) {
+      setError('Nhập địa chỉ hoặc tích «Mua tại cửa hàng».');
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/orders/pos', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders(),
+        },
+        body: JSON.stringify({
+          customerName: customerName.trim(),
+          customerPhone: customerPhone.trim(),
+          customerAddress: customerAddress.trim(),
+          walk_in: walkIn,
+          note: note.trim(),
+          shippingFee: Math.max(0, Math.round(shippingFee) || 0),
+          prepaidAmount: Math.max(0, Math.round(prepaidAmount) || 0),
+          items: lines.map((l) => ({
+            productId: l.productId,
+            productTitle: l.productTitle,
+            productImage: l.productImage,
+            sku: l.sku,
+            quantity: l.quantity,
+            price: l.sellingPrice,
+            sellingPrice: l.sellingPrice,
+            importPrice: l.importPrice,
+          })),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error || data.message || `Lỗi HTTP ${res.status}`);
+      }
+      const order = data.order as Order;
+      setLastOrder(order);
+      onUpdateOrders([order, ...orders.filter((o) => o.id !== order.id)]);
+      applyLocalStockOptimistic(order);
+      onAddLog({
+        id: `log-pos-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        channel: 'manual',
+        type: 'stock_sync',
+        status: 'success',
+        message: `[POS] Tạo đơn nhanh ${order.orderSn} — trừ tồn ${data.stockDeducted ?? 0}`,
+      });
+
+      if (andPrint) {
+        // Đợi React render khối hóa đơn rồi in
+        setTimeout(() => window.print(), 250);
+      } else {
+        setLines([]);
+        setPrepaidAmount(0);
+        setShippingFee(0);
+        setNote('');
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Tạo đơn nhanh thất bại');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const printLines = lastOrder?.items?.length
+    ? lastOrder.items.map((it) => ({
+        productTitle: it.productTitle,
+        quantity: it.quantity,
+        sellingPrice: Number(it.price ?? it.sellingPrice) || 0,
+        lineTotal:
+          (Number(it.price ?? it.sellingPrice) || 0) * (Number(it.quantity) || 0),
+      }))
+    : lines.map((l) => ({
+        productTitle: l.productTitle,
+        quantity: l.quantity,
+        sellingPrice: l.sellingPrice,
+        lineTotal: l.sellingPrice * l.quantity,
+      }));
+
+  const printTotal = lastOrder
+    ? Number(lastOrder.totalAmount) || 0
+    : totalAmount;
+  const printFee = lastOrder
+    ? Number((lastOrder as any).estimated_shipping_fee || (lastOrder as any).shippingFee) || 0
+    : shippingFee;
+  const printPrepaid = lastOrder
+    ? Number((lastOrder as any).prepaid_amount || (lastOrder as any).prepaidAmount) || 0
+    : prepaidAmount;
+  const printSubtotal = printLines.reduce((s, l) => s + l.lineTotal, 0);
+
+  return (
+    <div className="space-y-4 max-w-6xl mx-auto pb-10">
+      <style>{`
+        @media print {
+          body * { visibility: hidden !important; }
+          #pos-invoice, #pos-invoice * { visibility: visible !important; }
+          #pos-invoice {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            padding: 16px !important;
+            background: #fff !important;
+            color: #000 !important;
+          }
+          .no-print { display: none !important; }
+        }
+      `}</style>
+
+      <div className="no-print flex items-center justify-between gap-3">
+        <button
+          type="button"
+          onClick={onBack}
+          className="inline-flex items-center gap-2 text-sm font-bold text-slate-600 hover:text-slate-900 cursor-pointer"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Quay lại đơn hàng
+        </button>
+        <div className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-1.5">
+          Mini POS — Tạo đơn nhanh
+        </div>
+      </div>
+
+      <div className="no-print grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Khách hàng */}
+        <section className="lg:col-span-1 rounded-2xl border border-slate-200 bg-white p-4 space-y-3 shadow-sm">
+          <h2 className="text-sm font-extrabold text-slate-800 flex items-center gap-2">
+            <Store className="w-4 h-4 text-emerald-600" />
+            Khách hàng
+          </h2>
+          <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={walkIn}
+              onChange={(e) => setWalkIn(e.target.checked)}
+              className="rounded border-slate-300"
+            />
+            Mua tại cửa hàng
+          </label>
+          <input
+            type="text"
+            value={customerName}
+            onChange={(e) => setCustomerName(e.target.value)}
+            placeholder="Tên khách (tuỳ chọn)"
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium"
+          />
+          <input
+            type="text"
+            value={customerPhone}
+            onChange={(e) => setCustomerPhone(e.target.value)}
+            placeholder="Số điện thoại"
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium"
+          />
+          {!walkIn && (
+            <textarea
+              value={customerAddress}
+              onChange={(e) => setCustomerAddress(e.target.value)}
+              placeholder="Địa chỉ giao hàng (text tự do)"
+              rows={3}
+              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium resize-y"
+            />
+          )}
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Ghi chú đơn"
+            rows={2}
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium resize-y"
+          />
+        </section>
+
+        {/* Sản phẩm + thanh toán */}
+        <section className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-4 space-y-4 shadow-sm">
+          <div>
+            <h2 className="text-sm font-extrabold text-slate-800 mb-2">Sản phẩm</h2>
+            <ImportProductSearchSelect
+              ref={searchRef}
+              onSelect={addProduct}
+              placeholder="Gõ tên / SKU để thêm sản phẩm…"
+              excludeIds={[]}
+            />
+          </div>
+
+          <div className="overflow-x-auto rounded-xl border border-slate-100">
+            <table className="min-w-full text-xs">
+              <thead className="bg-slate-50 text-slate-600">
+                <tr>
+                  <th className="px-2 py-2 text-left font-bold">STT</th>
+                  <th className="px-2 py-2 text-left font-bold">Ảnh</th>
+                  <th className="px-2 py-2 text-left font-bold">Tên</th>
+                  <th className="px-2 py-2 text-right font-bold">SL</th>
+                  <th className="px-2 py-2 text-right font-bold">Giá nhập</th>
+                  <th className="px-2 py-2 text-right font-bold">Giá bán</th>
+                  <th className="px-2 py-2 text-right font-bold">Thành tiền</th>
+                  <th className="px-2 py-2 no-print" />
+                </tr>
+              </thead>
+              <tbody>
+                {lines.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="px-3 py-8 text-center text-slate-400 font-semibold">
+                      Chưa có sản phẩm — tìm và chọn ở ô phía trên
+                    </td>
+                  </tr>
+                ) : (
+                  lines.map((l, i) => (
+                    <tr key={l.productId} className="border-t border-slate-100">
+                      <td className="px-2 py-2 font-bold text-slate-500">{i + 1}</td>
+                      <td className="px-2 py-2">
+                        {l.productImage ? (
+                          <img
+                            src={l.productImage}
+                            alt=""
+                            className="w-10 h-10 rounded-lg object-cover border border-slate-100"
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded-lg bg-slate-100" />
+                        )}
+                      </td>
+                      <td className="px-2 py-2">
+                        <div className="font-bold text-slate-800 line-clamp-2">{l.productTitle}</div>
+                        <div className="text-[10px] text-slate-400 font-semibold">{l.sku}</div>
+                      </td>
+                      <td className="px-2 py-2 text-right">
+                        <input
+                          type="number"
+                          min={1}
+                          value={l.quantity}
+                          onChange={(e) =>
+                            updateLine(l.productId, {
+                              quantity: Math.max(1, Math.round(Number(e.target.value) || 1)),
+                            })
+                          }
+                          className="w-16 rounded-lg border border-slate-200 px-2 py-1 text-right font-bold"
+                        />
+                      </td>
+                      <td className="px-2 py-2 text-right font-semibold text-slate-500">
+                        {formatVnd(l.importPrice)}
+                      </td>
+                      <td className="px-2 py-2 text-right">
+                        <input
+                          type="number"
+                          min={0}
+                          value={l.sellingPrice}
+                          onChange={(e) =>
+                            updateLine(l.productId, {
+                              sellingPrice: Math.max(0, Math.round(Number(e.target.value) || 0)),
+                            })
+                          }
+                          className="w-24 rounded-lg border border-slate-200 px-2 py-1 text-right font-bold"
+                        />
+                      </td>
+                      <td className="px-2 py-2 text-right font-extrabold text-slate-800">
+                        {formatVnd(l.sellingPrice * l.quantity)}
+                      </td>
+                      <td className="px-2 py-2 no-print">
+                        <button
+                          type="button"
+                          onClick={() => removeLine(l.productId)}
+                          className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 cursor-pointer"
+                          title="Xóa dòng"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 rounded-xl bg-slate-50 border border-slate-100 p-3">
+            <label className="text-xs font-bold text-slate-600 space-y-1">
+              <span>Phí giao hàng ước tính</span>
+              <input
+                type="number"
+                min={0}
+                value={shippingFee}
+                onChange={(e) => setShippingFee(Math.max(0, Math.round(Number(e.target.value) || 0)))}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold"
+              />
+            </label>
+            <label className="text-xs font-bold text-slate-600 space-y-1">
+              <span>Đã trả trước</span>
+              <input
+                type="number"
+                min={0}
+                value={prepaidAmount}
+                onChange={(e) =>
+                  setPrepaidAmount(Math.max(0, Math.round(Number(e.target.value) || 0)))
+                }
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold"
+              />
+            </label>
+            <div className="text-xs font-bold text-slate-600 space-y-1">
+              <span>Tổng thanh toán</span>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-lg font-black text-emerald-800">
+                {formatVnd(amountDue)}₫
+              </div>
+              <div className="text-[10px] font-semibold text-slate-400">
+                Tổng đơn {formatVnd(totalAmount)}₫
+                {prepaidAmount > 0 ? ` − trả trước ${formatVnd(prepaidAmount)}₫` : ''}
+              </div>
+            </div>
+          </div>
+
+          {error && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">
+              {error}
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2 justify-end">
+            <button
+              type="button"
+              disabled={saving || lines.length === 0}
+              onClick={() => void submitOrder(false)}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-extrabold disabled:opacity-50 cursor-pointer"
+            >
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              Lưu đơn
+            </button>
+            <button
+              type="button"
+              disabled={saving || lines.length === 0}
+              onClick={() => void submitOrder(true)}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold disabled:opacity-50 cursor-pointer shadow-md shadow-emerald-500/20"
+            >
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />}
+              Lưu &amp; In
+            </button>
+          </div>
+        </section>
+      </div>
+
+      {/* Khối in hóa đơn — luôn có trong DOM để window.print() */}
+      <div id="pos-invoice" className="rounded-2xl border border-dashed border-slate-200 bg-white p-6">
+        <div className="text-center mb-4">
+          <div className="text-lg font-black tracking-wide">HÓA ĐƠN / BÁO GIÁ</div>
+          <div className="text-xs text-slate-500 font-semibold mt-1">
+            {lastOrder?.orderSn || '— chờ lưu đơn —'} ·{' '}
+            {lastOrder?.date
+              ? new Date(lastOrder.date).toLocaleString('vi-VN')
+              : new Date().toLocaleString('vi-VN')}
+          </div>
+        </div>
+        <div className="text-xs mb-3 space-y-0.5">
+          <div>
+            <span className="font-bold">Khách:</span>{' '}
+            {lastOrder?.customerName || customerName || (walkIn ? 'Khách tại cửa hàng' : '—')}
+          </div>
+          <div>
+            <span className="font-bold">SĐT:</span>{' '}
+            {lastOrder?.customerPhone || customerPhone || '—'}
+          </div>
+          <div>
+            <span className="font-bold">Địa chỉ:</span>{' '}
+            {lastOrder?.customerAddress ||
+              (walkIn ? 'Mua tại cửa hàng' : customerAddress || '—')}
+          </div>
+        </div>
+        <table className="w-full text-xs border-collapse">
+          <thead>
+            <tr className="border-b-2 border-slate-800">
+              <th className="py-2 text-left">STT</th>
+              <th className="py-2 text-left">Sản phẩm</th>
+              <th className="py-2 text-right">SL</th>
+              <th className="py-2 text-right">Đơn giá</th>
+              <th className="py-2 text-right">Thành tiền</th>
+            </tr>
+          </thead>
+          <tbody>
+            {printLines.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="py-4 text-center text-slate-400">
+                  Chưa có dòng hàng
+                </td>
+              </tr>
+            ) : (
+              printLines.map((l, i) => (
+                <tr key={i} className="border-b border-slate-200">
+                  <td className="py-1.5">{i + 1}</td>
+                  <td className="py-1.5">{l.productTitle}</td>
+                  <td className="py-1.5 text-right">{l.quantity}</td>
+                  <td className="py-1.5 text-right">{formatVnd(l.sellingPrice)}</td>
+                  <td className="py-1.5 text-right font-bold">{formatVnd(l.lineTotal)}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+        <div className="mt-4 text-xs space-y-1 max-w-xs ml-auto">
+          <div className="flex justify-between">
+            <span>Tạm tính</span>
+            <span className="font-bold">{formatVnd(printSubtotal)}₫</span>
+          </div>
+          <div className="flex justify-between">
+            <span>Phí giao ước tính</span>
+            <span className="font-bold">{formatVnd(printFee)}₫</span>
+          </div>
+          <div className="flex justify-between">
+            <span>Đã trả trước</span>
+            <span className="font-bold">{formatVnd(printPrepaid)}₫</span>
+          </div>
+          <div className="flex justify-between border-t border-slate-800 pt-2 text-sm font-black">
+            <span>Tổng thanh toán</span>
+            <span>{formatVnd(Math.max(0, printTotal - printPrepaid))}₫</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

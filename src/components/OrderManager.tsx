@@ -101,6 +101,7 @@ import {
 } from 'lucide-react';
 import { Order, ConnectedShop, SyncLog, Product, SystemFee } from '../types';
 import ManualOrderPage from './ManualOrderPage';
+import QuickPosPage from './QuickPosPage';
 import { ExternalOrdersTable } from './ExternalOrdersTable';
 import { resolveLabelFetchUrl, parseJsonResponse, readResponseJson } from '../utils/apiClient';
 import { aggregateOrderProducts, type AggregatedOrderProduct } from '../utils/aggregateOrderProducts';
@@ -6645,6 +6646,7 @@ export default function OrderManager({
   };
 
   const [showCreateOrderPage, setShowCreateOrderPage] = useState(false);
+  const [showQuickPosPage, setShowQuickPosPage] = useState(false);
 
   /**
    * Tab "Đã giao cho ĐVVC": dò API Shopee ngầm (ACK) — khi đơn thật sự SHIPPED
@@ -8544,6 +8546,20 @@ export default function OrderManager({
     );
   }
 
+  if (showQuickPosPage) {
+    return (
+      <QuickPosPage
+        products={products}
+        orders={orders}
+        onBack={() => setShowQuickPosPage(false)}
+        onUpdateOrders={onUpdateOrders}
+        onUpdateProduct={onUpdateProduct}
+        onAddLog={onAddLog}
+        authHeaders={authHeaders}
+      />
+    );
+  }
+
   if (showCreateOrderPage) {
     return (
       <ManualOrderPage
@@ -8892,6 +8908,14 @@ export default function OrderManager({
           >
             <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
             <span>Cập nhật đơn hàng</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowQuickPosPage(true)}
+            className="om-orders-mobile-hide-primary-actions px-5 py-2 bg-sky-600 hover:bg-sky-700 text-white font-extrabold text-xs rounded-xl shadow-md shadow-sky-500/15 hover:shadow-sky-500/30 transition-all flex items-center gap-2 cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Tạo đơn nhanh</span>
           </button>
           <button
             onClick={() => setShowCreateOrderPage(true)}

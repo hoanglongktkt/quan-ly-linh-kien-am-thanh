@@ -91,6 +91,9 @@ function readOrderDateQuery(req) {
 let deps = {
   withLocalDbTimeout: async (p) => p,
   loadProductsForOrders: async () => [],
+  loadProductsByIdsFromStore: async () => [],
+  applyBulkProductUpdate: (p) => p,
+  upsertProductsToStoreAsync: async () => 0,
   enrichOrdersFromCatalog: (orders) => orders,
   enrichOrdersWithShopNames: (orders) => orders,
   isValidOrder: () => true,
@@ -3049,6 +3052,262 @@ export async function createManualOrder(req, res) {
     return res.status(500).json({
       success: false,
       error: error.message || "Tạo đơn thủ công thất bại",
+    });
+  }
+}
+
+/**
+ * Trừ tồn kho server-side cho đơn POS — idempotent qua stock_deducted trên order.
+ * Chỉ đụng productId trong payload (không đụng luồng đơn ngoại sàn / Shopee).
+ */
+async function deductStockForPosOrder(lineItems) {
+  const qtyById = new Map();
+  for (const it of Array.isArray(lineItems) ? lineItems : []) {
+    const id = String(it?.productId || "").trim();
+    const qty = Math.max(0, Math.round(Number(it?.quantity) || 0));
+    if (!id || qty <= 0) continue;
+    qtyById.set(id, (qtyById.get(id) || 0) + qty);
+  }
+  if (qtyById.size === 0) {
+    return { deducted: 0, updatedProducts: [] };
+  }
+
+  const ids = [...qtyById.keys()];
+  const rows = await deps.loadProductsByIdsFromStore(ids, []);
+  const productMap = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const rid = String(row?.id || row?._id || "").trim();
+    if (rid) productMap.set(rid, { ...row });
+  }
+
+  const findTarget = (productId) => {
+    if (productMap.has(productId)) {
+      return { kind: "root", product: productMap.get(productId) };
+    }
+    for (const parent of productMap.values()) {
+      const childKey =
+        Array.isArray(parent.children) && parent.children.length
+          ? "children"
+          : Array.isArray(parent.children_models) && parent.children_models.length
+            ? "children_models"
+            : null;
+      if (!childKey) continue;
+      const list = parent[childKey];
+      const cIdx = list.findIndex((c) => String(c?.id || c?._id || "").trim() === productId);
+      if (cIdx >= 0) return { kind: "child", parent, childKey, cIdx, child: list[cIdx] };
+    }
+    return null;
+  };
+
+  const dirty = new Map();
+  let deducted = 0;
+  for (const [productId, qty] of qtyById) {
+    const hit = findTarget(productId);
+    if (!hit) {
+      console.warn(`[POS] Không tìm thấy SP ${productId} để trừ tồn`);
+      continue;
+    }
+    if (hit.kind === "root") {
+      const updated = deps.applyBulkProductUpdate(hit.product, {
+        stock: { mode: "decrease", value: qty },
+      });
+      productMap.set(String(updated.id), updated);
+      dirty.set(String(updated.id), updated);
+      deducted += qty;
+    } else {
+      const parentId = String(hit.parent.id || hit.parent._id || "");
+      const parent = productMap.get(parentId) || hit.parent;
+      const childKey =
+        Array.isArray(parent.children) && parent.children.length
+          ? "children"
+          : "children_models";
+      const list = [...(parent[childKey] || [])];
+      const cIdx = list.findIndex((c) => String(c?.id || c?._id || "").trim() === productId);
+      if (cIdx < 0) continue;
+      list[cIdx] = deps.applyBulkProductUpdate(list[cIdx], {
+        stock: { mode: "decrease", value: qty },
+      });
+      const nextParent = { ...parent, [childKey]: list };
+      productMap.set(parentId, nextParent);
+      dirty.set(parentId, nextParent);
+      deducted += qty;
+    }
+  }
+
+  const changed = [...dirty.values()];
+  if (changed.length > 0) {
+    await deps.upsertProductsToStoreAsync(changed);
+  }
+  return { deducted, updatedProducts: changed };
+}
+
+/**
+ * POST /api/orders/pos — Tạo đơn nhanh (Mini POS).
+ * Độc lập hoàn toàn với createManualOrder (đơn ngoại sàn).
+ * Trạng thái completed/delivered ngay + trừ tồn server-side.
+ */
+export async function createPosOrder(req, res) {
+  try {
+    const body = req.body || {};
+    const {
+      items,
+      customerName = "",
+      customerPhone = "",
+      customerAddress = "",
+      note = "",
+      walk_in = true,
+      shippingFee = 0,
+      prepaidAmount = 0,
+      orderDiscount = 0,
+    } = body;
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "Đơn hàng cần ít nhất 1 sản phẩm.",
+      });
+    }
+
+    const isWalkIn = walk_in === true || walk_in === "true" || walk_in === 1;
+    const name = String(customerName || "").trim() || (isWalkIn ? "Khách tại cửa hàng" : "Khách lẻ");
+    const phone = String(customerPhone || "").trim() || "";
+    const address = String(customerAddress || "").trim();
+
+    if (!isWalkIn && !address) {
+      return res.status(400).json({
+        success: false,
+        error: "Vui lòng nhập địa chỉ giao hàng (hoặc tích «Mua tại cửa hàng»).",
+      });
+    }
+
+    const lineItems = items.slice(0, 80).map((it) => {
+      const qty = Math.max(1, Math.round(Number(it.quantity) || 1));
+      const sell = Math.max(0, Math.round(Number(it.price ?? it.sellingPrice) || 0));
+      const importPrice = Math.max(
+        0,
+        Math.round(Number(it.importPrice ?? it.import_price ?? it.cost_price) || 0),
+      );
+      return {
+        productId: String(it.productId || ""),
+        productTitle: String(it.productTitle || it.name || ""),
+        name: String(it.productTitle || it.name || ""),
+        productImage: it.productImage || it.imageUrl || "",
+        sku: String(it.sku || ""),
+        quantity: qty,
+        price: sell,
+        sellingPrice: sell,
+        importPrice,
+        import_price: importPrice,
+        cost_price: importPrice,
+        weightGrams: Math.max(1, Math.round(Number(it.weightGrams || it.weight) || 100)),
+      };
+    });
+
+    for (const it of lineItems) {
+      if (!String(it.productId || "").trim()) {
+        return res.status(400).json({
+          success: false,
+          error: "Mỗi dòng sản phẩm cần productId hợp lệ.",
+        });
+      }
+    }
+
+    const subtotal = lineItems.reduce(
+      (acc, it) => acc + Number(it.price || 0) * Number(it.quantity || 0),
+      0,
+    );
+    const fee = Math.max(0, Math.round(Number(shippingFee) || 0));
+    const prepaid = Math.max(0, Math.round(Number(prepaidAmount) || 0));
+    const discount = Math.max(0, Math.round(Number(orderDiscount) || 0));
+    const totalAmount = Math.max(0, subtotal + fee - discount);
+    const amountDue = Math.max(0, totalAmount - prepaid);
+
+    const mapped = mapExternalStatus("delivered");
+    const nowIso = new Date().toISOString();
+    const orderSn = `POS-${Date.now().toString(36).toUpperCase()}`;
+    const orderId = `pos-${orderSn}`;
+
+    let stockResult = { deducted: 0, updatedProducts: [] };
+    try {
+      stockResult = await deductStockForPosOrder(lineItems);
+    } catch (stockErr) {
+      console.error("[Orders POS] Trừ tồn thất bại:", stockErr?.message || stockErr);
+      return res.status(500).json({
+        success: false,
+        error: stockErr?.message || "Trừ tồn kho thất bại — đơn chưa được tạo.",
+      });
+    }
+
+    const newOrder = {
+      id: orderId,
+      _id: orderId,
+      orderSn,
+      order_sn: orderSn,
+      channel: "manual",
+      source: "pos",
+      is_quick_order: true,
+      shopId: null,
+      customerName: name,
+      customerPhone: phone,
+      customerAddress: isWalkIn ? "Mua tại cửa hàng" : address,
+      shippingAddress: isWalkIn
+        ? {
+            province: "",
+            district: "",
+            ward: "",
+            street: "Mua tại cửa hàng",
+            fullAddress: "Mua tại cửa hàng",
+          }
+        : {
+            province: "",
+            district: "",
+            ward: "",
+            street: address,
+            fullAddress: address,
+          },
+      walk_in: isWalkIn,
+      carrier: "self",
+      provider: "self",
+      shipping_carrier: isWalkIn ? "Tại cửa hàng" : "Tự giao hàng",
+      totalAmount,
+      revenue: totalAmount,
+      item_amount: subtotal,
+      cod_amount: amountDue,
+      estimated_shipping_fee: fee,
+      shippingFee: fee,
+      prepaid_amount: prepaid,
+      prepaidAmount: prepaid,
+      order_discount: discount,
+      note: String(note || "").trim(),
+      status: mapped.status,
+      shopee_order_status: mapped.shopee,
+      external_status: "delivered",
+      date: nowIso,
+      create_time: nowIso,
+      trackingNumber: null,
+      tracking_no: null,
+      isPrepared: true,
+      isPrinted: false,
+      items: lineItems,
+      stock_deducted: true,
+      stock_deducted_at: nowIso,
+      stock_deducted_qty: stockResult.deducted,
+      carrier_error: null,
+    };
+
+    await persistExternalOrder(newOrder);
+
+    return res.json({
+      success: true,
+      order: newOrder,
+      stockDeducted: stockResult.deducted,
+      amountDue,
+    });
+  } catch (error) {
+    console.error("[Orders POS]", error);
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "Tạo đơn nhanh thất bại",
     });
   }
 }

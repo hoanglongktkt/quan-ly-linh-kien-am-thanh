@@ -21476,6 +21476,9 @@ async function startServer() {
   initOrdersController({
     withLocalDbTimeout,
     loadProductsForOrders,
+    loadProductsByIdsFromStore,
+    applyBulkProductUpdate,
+    upsertProductsToStoreAsync,
     enrichOrdersFromCatalog,
     enrichOrdersWithShopNames,
     isValidOrder,

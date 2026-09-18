@@ -78170,6 +78170,8 @@ async function loadProductsByIdsFromStore(productIds, shopeeItemIds = []) {
     orClauses.push({ _id: { $in: ids } });
     orClauses.push({ "data.id": { $in: ids } });
     orClauses.push({ sku: { $in: ids } });
+    orClauses.push({ "data.children.id": { $in: ids } });
+    orClauses.push({ "data.children_models.id": { $in: ids } });
   }
   if (itemIds.length > 0) {
     orClauses.push({ "data.shopeeItemId": { $in: itemIds } });
@@ -121537,6 +121539,9 @@ function readOrderDateQuery(req) {
 var deps15 = {
   withLocalDbTimeout: async (p) => p,
   loadProductsForOrders: async () => [],
+  loadProductsByIdsFromStore: async () => [],
+  applyBulkProductUpdate: (p) => p,
+  upsertProductsToStoreAsync: async () => 0,
   enrichOrdersFromCatalog: (orders) => orders,
   enrichOrdersWithShopNames: (orders) => orders,
   isValidOrder: () => true,
@@ -123986,6 +123991,226 @@ async function createManualOrder(req, res) {
     return res.status(500).json({
       success: false,
       error: error.message || "T\u1EA1o \u0111\u01A1n th\u1EE7 c\xF4ng th\u1EA5t b\u1EA1i"
+    });
+  }
+}
+async function deductStockForPosOrder(lineItems) {
+  const qtyById = /* @__PURE__ */ new Map();
+  for (const it of Array.isArray(lineItems) ? lineItems : []) {
+    const id = String(it?.productId || "").trim();
+    const qty = Math.max(0, Math.round(Number(it?.quantity) || 0));
+    if (!id || qty <= 0) continue;
+    qtyById.set(id, (qtyById.get(id) || 0) + qty);
+  }
+  if (qtyById.size === 0) {
+    return { deducted: 0, updatedProducts: [] };
+  }
+  const ids = [...qtyById.keys()];
+  const rows = await deps15.loadProductsByIdsFromStore(ids, []);
+  const productMap = /* @__PURE__ */ new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const rid = String(row?.id || row?._id || "").trim();
+    if (rid) productMap.set(rid, { ...row });
+  }
+  const findTarget = (productId) => {
+    if (productMap.has(productId)) {
+      return { kind: "root", product: productMap.get(productId) };
+    }
+    for (const parent of productMap.values()) {
+      const childKey = Array.isArray(parent.children) && parent.children.length ? "children" : Array.isArray(parent.children_models) && parent.children_models.length ? "children_models" : null;
+      if (!childKey) continue;
+      const list = parent[childKey];
+      const cIdx = list.findIndex((c) => String(c?.id || c?._id || "").trim() === productId);
+      if (cIdx >= 0) return { kind: "child", parent, childKey, cIdx, child: list[cIdx] };
+    }
+    return null;
+  };
+  const dirty = /* @__PURE__ */ new Map();
+  let deducted = 0;
+  for (const [productId, qty] of qtyById) {
+    const hit = findTarget(productId);
+    if (!hit) {
+      console.warn(`[POS] Kh\xF4ng t\xECm th\u1EA5y SP ${productId} \u0111\u1EC3 tr\u1EEB t\u1ED3n`);
+      continue;
+    }
+    if (hit.kind === "root") {
+      const updated = deps15.applyBulkProductUpdate(hit.product, {
+        stock: { mode: "decrease", value: qty }
+      });
+      productMap.set(String(updated.id), updated);
+      dirty.set(String(updated.id), updated);
+      deducted += qty;
+    } else {
+      const parentId = String(hit.parent.id || hit.parent._id || "");
+      const parent = productMap.get(parentId) || hit.parent;
+      const childKey = Array.isArray(parent.children) && parent.children.length ? "children" : "children_models";
+      const list = [...parent[childKey] || []];
+      const cIdx = list.findIndex((c) => String(c?.id || c?._id || "").trim() === productId);
+      if (cIdx < 0) continue;
+      list[cIdx] = deps15.applyBulkProductUpdate(list[cIdx], {
+        stock: { mode: "decrease", value: qty }
+      });
+      const nextParent = { ...parent, [childKey]: list };
+      productMap.set(parentId, nextParent);
+      dirty.set(parentId, nextParent);
+      deducted += qty;
+    }
+  }
+  const changed = [...dirty.values()];
+  if (changed.length > 0) {
+    await deps15.upsertProductsToStoreAsync(changed);
+  }
+  return { deducted, updatedProducts: changed };
+}
+async function createPosOrder(req, res) {
+  try {
+    const body = req.body || {};
+    const {
+      items,
+      customerName = "",
+      customerPhone = "",
+      customerAddress = "",
+      note = "",
+      walk_in = true,
+      shippingFee = 0,
+      prepaidAmount = 0,
+      orderDiscount = 0
+    } = body;
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "\u0110\u01A1n h\xE0ng c\u1EA7n \xEDt nh\u1EA5t 1 s\u1EA3n ph\u1EA9m."
+      });
+    }
+    const isWalkIn = walk_in === true || walk_in === "true" || walk_in === 1;
+    const name = String(customerName || "").trim() || (isWalkIn ? "Kh\xE1ch t\u1EA1i c\u1EEDa h\xE0ng" : "Kh\xE1ch l\u1EBB");
+    const phone = String(customerPhone || "").trim() || "";
+    const address = String(customerAddress || "").trim();
+    if (!isWalkIn && !address) {
+      return res.status(400).json({
+        success: false,
+        error: "Vui l\xF2ng nh\u1EADp \u0111\u1ECBa ch\u1EC9 giao h\xE0ng (ho\u1EB7c t\xEDch \xABMua t\u1EA1i c\u1EEDa h\xE0ng\xBB)."
+      });
+    }
+    const lineItems = items.slice(0, 80).map((it) => {
+      const qty = Math.max(1, Math.round(Number(it.quantity) || 1));
+      const sell = Math.max(0, Math.round(Number(it.price ?? it.sellingPrice) || 0));
+      const importPrice = Math.max(
+        0,
+        Math.round(Number(it.importPrice ?? it.import_price ?? it.cost_price) || 0)
+      );
+      return {
+        productId: String(it.productId || ""),
+        productTitle: String(it.productTitle || it.name || ""),
+        name: String(it.productTitle || it.name || ""),
+        productImage: it.productImage || it.imageUrl || "",
+        sku: String(it.sku || ""),
+        quantity: qty,
+        price: sell,
+        sellingPrice: sell,
+        importPrice,
+        import_price: importPrice,
+        cost_price: importPrice,
+        weightGrams: Math.max(1, Math.round(Number(it.weightGrams || it.weight) || 100))
+      };
+    });
+    for (const it of lineItems) {
+      if (!String(it.productId || "").trim()) {
+        return res.status(400).json({
+          success: false,
+          error: "M\u1ED7i d\xF2ng s\u1EA3n ph\u1EA9m c\u1EA7n productId h\u1EE3p l\u1EC7."
+        });
+      }
+    }
+    const subtotal = lineItems.reduce(
+      (acc, it) => acc + Number(it.price || 0) * Number(it.quantity || 0),
+      0
+    );
+    const fee = Math.max(0, Math.round(Number(shippingFee) || 0));
+    const prepaid = Math.max(0, Math.round(Number(prepaidAmount) || 0));
+    const discount = Math.max(0, Math.round(Number(orderDiscount) || 0));
+    const totalAmount = Math.max(0, subtotal + fee - discount);
+    const amountDue = Math.max(0, totalAmount - prepaid);
+    const mapped = mapExternalStatus("delivered");
+    const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+    const orderSn = `POS-${Date.now().toString(36).toUpperCase()}`;
+    const orderId = `pos-${orderSn}`;
+    let stockResult = { deducted: 0, updatedProducts: [] };
+    try {
+      stockResult = await deductStockForPosOrder(lineItems);
+    } catch (stockErr) {
+      console.error("[Orders POS] Tr\u1EEB t\u1ED3n th\u1EA5t b\u1EA1i:", stockErr?.message || stockErr);
+      return res.status(500).json({
+        success: false,
+        error: stockErr?.message || "Tr\u1EEB t\u1ED3n kho th\u1EA5t b\u1EA1i \u2014 \u0111\u01A1n ch\u01B0a \u0111\u01B0\u1EE3c t\u1EA1o."
+      });
+    }
+    const newOrder = {
+      id: orderId,
+      _id: orderId,
+      orderSn,
+      order_sn: orderSn,
+      channel: "manual",
+      source: "pos",
+      is_quick_order: true,
+      shopId: null,
+      customerName: name,
+      customerPhone: phone,
+      customerAddress: isWalkIn ? "Mua t\u1EA1i c\u1EEDa h\xE0ng" : address,
+      shippingAddress: isWalkIn ? {
+        province: "",
+        district: "",
+        ward: "",
+        street: "Mua t\u1EA1i c\u1EEDa h\xE0ng",
+        fullAddress: "Mua t\u1EA1i c\u1EEDa h\xE0ng"
+      } : {
+        province: "",
+        district: "",
+        ward: "",
+        street: address,
+        fullAddress: address
+      },
+      walk_in: isWalkIn,
+      carrier: "self",
+      provider: "self",
+      shipping_carrier: isWalkIn ? "T\u1EA1i c\u1EEDa h\xE0ng" : "T\u1EF1 giao h\xE0ng",
+      totalAmount,
+      revenue: totalAmount,
+      item_amount: subtotal,
+      cod_amount: amountDue,
+      estimated_shipping_fee: fee,
+      shippingFee: fee,
+      prepaid_amount: prepaid,
+      prepaidAmount: prepaid,
+      order_discount: discount,
+      note: String(note || "").trim(),
+      status: mapped.status,
+      shopee_order_status: mapped.shopee,
+      external_status: "delivered",
+      date: nowIso,
+      create_time: nowIso,
+      trackingNumber: null,
+      tracking_no: null,
+      isPrepared: true,
+      isPrinted: false,
+      items: lineItems,
+      stock_deducted: true,
+      stock_deducted_at: nowIso,
+      stock_deducted_qty: stockResult.deducted,
+      carrier_error: null
+    };
+    await persistExternalOrder(newOrder);
+    return res.json({
+      success: true,
+      order: newOrder,
+      stockDeducted: stockResult.deducted,
+      amountDue
+    });
+  } catch (error) {
+    console.error("[Orders POS]", error);
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "T\u1EA1o \u0111\u01A1n nhanh th\u1EA5t b\u1EA1i"
     });
   }
 }
@@ -127126,6 +127351,7 @@ router16.post("/hand-over-carrier/bulk", h3(handOverCarrierBulk));
 router16.post("/hand-over-carrier", h3(handOverCarrierByCode));
 router16.post("/heal-handed-over", h3(healHandedOver));
 router16.post("/manual", h3(createManualOrder));
+router16.post("/pos", h3(createPosOrder));
 router16.post("/external/print-waybill", h3(printExternalWaybill));
 router16.get("/external/waybill-file/:orderSn", h3(streamExternalWaybillFile));
 router16.get("/don-hoan-huy", h3(listDonHoanHuy));
@@ -144684,6 +144910,9 @@ async function startServer() {
   initOrdersController({
     withLocalDbTimeout,
     loadProductsForOrders,
+    loadProductsByIdsFromStore,
+    applyBulkProductUpdate,
+    upsertProductsToStoreAsync,
     enrichOrdersFromCatalog,
     enrichOrdersWithShopNames,
     isValidOrder,
