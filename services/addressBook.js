@@ -3,6 +3,11 @@ import path from "path";
 import mongoose from "mongoose";
 import { resolveAppRoot } from "../utils/appPaths.js";
 import AddressBook from "../models/AddressBook.js";
+import {
+  mergePosSkuPrices,
+  normalizePosSkuPrices,
+  roundPosPrice,
+} from "../utils/posSellingPrice.js";
 
 const FILE_PATH = path.join(resolveAppRoot(), "data", "address_book.json");
 const MAX_ENTRIES = 200;
@@ -72,12 +77,13 @@ function normalizeEntry(entry) {
   };
 }
 
-function toPublicEntry(doc) {
+function toPublicEntry(doc, opts = {}) {
   const o = doc && typeof doc.toObject === "function" ? doc.toObject() : doc || {};
   const id = String(o.id || o._id || "");
   const street = String(o.street || o.address || "").trim();
   const lastPurchase = o.last_purchase_date ? new Date(o.last_purchase_date) : null;
-  return {
+  const includePosSkuPrices = opts.includePosSkuPrices !== false;
+  const entry = {
     id,
     name: String(o.name || "").trim(),
     phone: normalizePhone(o.phone),
@@ -101,6 +107,10 @@ function toPublicEntry(doc) {
       ? lastPurchase.toISOString()
       : null,
   };
+  if (includePosSkuPrices) {
+    entry.posSkuPrices = normalizePosSkuPrices(o.posSkuPrices);
+  }
+  return entry;
 }
 
 function matchesPurchasePeriod(entry, month, year) {
@@ -192,11 +202,11 @@ export async function listAddressBookRanking(options = {}) {
       .sort({ total_spent: -1, total_orders: -1, last_purchase_date: -1 })
       .limit(limit)
       .lean();
-    return rows.map(toPublicEntry);
+    return rows.map((row) => toPublicEntry(row, { includePosSkuPrices: false }));
   }
 
   const list = readBook()
-    .map(toPublicEntry)
+    .map((row) => toPublicEntry(row, { includePosSkuPrices: false }))
     .filter((row) => matchesPurchasePeriod(row, m, y))
     .sort((a, b) => {
       const spentDiff = (b.total_spent || 0) - (a.total_spent || 0);
@@ -395,6 +405,66 @@ export async function upsertLoyaltyFromPurchase({
   } catch (err) {
     console.error(
       "[AddressBook loyalty] upsertLoyaltyFromPurchase failed:",
+      err?.message || err,
+    );
+    return null;
+  }
+}
+
+/**
+ * Ghi giá POS theo SKU cho khách (sau khi lưu đơn Mini POS).
+ * Không tạo khách mới — chờ loyalty upsert trước. Lỗi nuốt, không fail đơn.
+ */
+export async function upsertPosCustomerPrices({ phone = "", items = [] } = {}) {
+  try {
+    const phoneNorm = normalizePhone(phone);
+    if (!phoneNorm) return null;
+    const lines = Array.isArray(items) ? items.slice(0, 80) : [];
+    if (lines.length === 0) return null;
+
+    let nextPrices = null;
+
+    const applyLines = (existing) => {
+      let prices = normalizePosSkuPrices(existing);
+      let changed = false;
+      for (let i = 0; i < lines.length; i += 1) {
+        const it = lines[i];
+        const sku = String(it?.sku || "").trim();
+        const price = roundPosPrice(it?.price ?? it?.sellingPrice);
+        if (!sku || price <= 0) continue;
+        prices = mergePosSkuPrices(prices, sku, price);
+        changed = true;
+      }
+      return changed ? prices : null;
+    };
+
+    if (mongoReady()) {
+      if (!AddressBook || typeof AddressBook.findOne !== "function") {
+        throw new Error("AddressBook model chưa sẵn sàng");
+      }
+      const doc = await AddressBook.findOne({ phone: phoneNorm }).lean();
+      if (!doc) return null;
+      nextPrices = applyLines(doc.posSkuPrices);
+      if (!nextPrices) return null;
+      const updated = await AddressBook.findOneAndUpdate(
+        { phone: phoneNorm },
+        { $set: { posSkuPrices: nextPrices } },
+        { new: true, runValidators: false },
+      );
+      return updated ? toPublicEntry(updated) : null;
+    }
+
+    const list = readBook();
+    const idx = list.findIndex((item) => normalizePhone(item.phone) === phoneNorm);
+    if (idx < 0) return null;
+    nextPrices = applyLines(list[idx].posSkuPrices);
+    if (!nextPrices) return null;
+    list[idx] = { ...list[idx], posSkuPrices: nextPrices };
+    writeBook(list.slice(0, MAX_ENTRIES));
+    return toPublicEntry(list[idx]);
+  } catch (err) {
+    console.error(
+      "[AddressBook POS prices] upsertPosCustomerPrices failed:",
       err?.message || err,
     );
     return null;

@@ -1128,6 +1128,8 @@ const PRODUCT_SEARCH_SELECT = {
   "data.last_import_price": 1,
   "data.sellingPrice": 1,
   "data.price": 1,
+  "data.posLastSellingPrice": 1,
+  "data.posPriceHistory": 1,
   "data.status": 1,
   "data.shopeeItemId": 1,
   "data.shopeeId": 1,
@@ -1145,6 +1147,8 @@ const PRODUCT_SEARCH_SELECT = {
   "data.children.last_import_price": 1,
   "data.children.sellingPrice": 1,
   "data.children.price": 1,
+  "data.children.posLastSellingPrice": 1,
+  "data.children.posPriceHistory": 1,
   "data.children.status": 1,
   "data.children.shopeeItemId": 1,
   "data.children.shopeeModelId": 1,
@@ -1161,6 +1165,8 @@ const PRODUCT_SEARCH_SELECT = {
   "data.children_models.last_import_price": 1,
   "data.children_models.sellingPrice": 1,
   "data.children_models.price": 1,
+  "data.children_models.posLastSellingPrice": 1,
+  "data.children_models.posPriceHistory": 1,
   "data.children_models.status": 1,
   "data.children_models.shopeeItemId": 1,
   "data.children_models.shopeeModelId": 1,
@@ -1187,6 +1193,14 @@ function toSearchLeanRow(row: any): any {
     importPrice,
     last_import_price: importPrice,
     sellingPrice: Math.max(0, Math.round(Number(row?.sellingPrice ?? row?.price) || 0)),
+    posLastSellingPrice: Math.max(0, Math.round(Number(row?.posLastSellingPrice) || 0)),
+    posPriceHistory: Array.isArray(row?.posPriceHistory)
+      ? [...new Set(
+          row.posPriceHistory
+            .map((n: unknown) => Math.max(0, Math.round(Number(n) || 0)))
+            .filter((n: number) => n > 0),
+        )].slice(0, 8)
+      : [],
     modelName: row?.modelName || undefined,
     tierLabels: Array.isArray(row?.tierLabels) ? row.tierLabels : undefined,
     shopeeItemId: row?.shopeeItemId || row?.shopeeId || undefined,

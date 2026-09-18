@@ -1,3 +1,5 @@
+import { PosSkuPrice, normalizePosSkuPrices } from './posSellingPrice';
+
 export type AddressBookEntry = {
   id: string;
   name: string;
@@ -15,6 +17,8 @@ export type AddressBookEntry = {
   total_orders?: number;
   total_spent?: number;
   last_purchase_date?: string | null;
+  /** Giá POS gần nhất theo SKU của khách này. */
+  posSkuPrices?: PosSkuPrice[];
 };
 
 const STORAGE_KEY = 'omni_manual_address_book';
@@ -56,6 +60,7 @@ function mapApiEntry(raw: Record<string, unknown>): AddressBookEntry | null {
     total_orders: Math.max(0, Math.round(Number(raw?.total_orders) || 0)),
     total_spent: Math.max(0, Math.round(Number(raw?.total_spent) || 0)),
     last_purchase_date: lastPurchase,
+    posSkuPrices: normalizePosSkuPrices(raw?.posSkuPrices),
   };
 }
 

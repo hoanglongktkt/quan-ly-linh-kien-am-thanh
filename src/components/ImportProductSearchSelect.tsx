@@ -150,6 +150,9 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
             sku: p.sku || '',
             stock: p.stock ?? p.current_stock ?? 0,
             importPrice: p.importPrice ?? p.last_import_price ?? 0,
+            sellingPrice: Math.max(0, Math.round(Number(p.sellingPrice ?? p.price) || 0)),
+            posLastSellingPrice: Math.max(0, Math.round(Number(p.posLastSellingPrice) || 0)),
+            posPriceHistory: Array.isArray(p.posPriceHistory) ? p.posPriceHistory : [],
             imageUrl: p.imageUrl || p.image || p.avatarUrl,
             avatarUrl: p.avatarUrl || p.image || p.imageUrl,
           }));

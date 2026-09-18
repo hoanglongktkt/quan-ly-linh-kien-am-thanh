@@ -223,6 +223,14 @@ export async function searchProducts(req, res) {
     last_import_price: p.last_import_price ?? p.importPrice ?? 0,
     importPrice: p.importPrice ?? p.last_import_price ?? 0,
     sellingPrice: Math.max(0, Math.round(Number(p.sellingPrice ?? p.price) || 0)),
+    posLastSellingPrice: Math.max(0, Math.round(Number(p.posLastSellingPrice) || 0)),
+    posPriceHistory: Array.isArray(p.posPriceHistory)
+      ? [...new Set(
+          p.posPriceHistory
+            .map((n) => Math.max(0, Math.round(Number(n) || 0)))
+            .filter((n) => n > 0),
+        )].slice(0, 8)
+      : [],
     shopeeItemId: p.shopeeItemId || p.shopeeId || undefined,
     shopeeModelId: p.shopeeModelId || undefined,
     status: p.status || "active",

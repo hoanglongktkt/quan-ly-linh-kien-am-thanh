@@ -36,6 +36,8 @@ const AddressBookSchema = new mongoose.Schema(
       required: false,
     },
     last_purchase_date: { type: Date, default: null },
+    /** Mini POS — giá bán gần nhất theo SKU của khách này. */
+    posSkuPrices: { type: Array, default: undefined, required: false },
   },
   {
     collection: "address_book",

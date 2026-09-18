@@ -16,6 +16,14 @@ import ImportProductSearchSelect, {
 } from './ImportProductSearchSelect';
 import CurrencyInput from './CurrencyInput';
 import { AddressBookEntry, fetchAddressBook } from '../utils/addressBook';
+import {
+  buildPosPriceChips,
+  lookupCustomerSkuPrice,
+  mergePosPriceHistory,
+  mergePosSkuPrices,
+  resolvePosSellingPrice,
+  roundPosPrice,
+} from '../utils/posSellingPrice';
 
 type PosLine = {
   productId: string;
@@ -26,7 +34,43 @@ type PosLine = {
   importPrice: number;
   sellingPrice: number;
   stock?: number;
+  catalogSellingPrice?: number;
+  posPriceHistory?: number[];
+  customerPrice?: number;
 };
+
+function digitsPhone(value: string): string {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function findCustomerByPhone(book: AddressBookEntry[], phone: string): AddressBookEntry | null {
+  const digits = digitsPhone(phone);
+  if (!digits) return null;
+  for (let i = 0; i < book.length; i += 1) {
+    if (book[i].phone === digits) return book[i];
+  }
+  return null;
+}
+
+function resolveLineFromProduct(
+  p: Product,
+  customer: AddressBookEntry | null,
+): Pick<PosLine, 'sellingPrice' | 'catalogSellingPrice' | 'posPriceHistory' | 'customerPrice'> {
+  const catalogSellingPrice = roundPosPrice(p.sellingPrice);
+  const posPriceHistory = mergePosPriceHistory(p.posPriceHistory, p.posLastSellingPrice);
+  const customerPrice = lookupCustomerSkuPrice(customer?.posSkuPrices, p.sku);
+  const resolved = resolvePosSellingPrice({
+    customerPrice,
+    posLastSellingPrice: p.posLastSellingPrice,
+    catalogSellingPrice,
+  });
+  return {
+    sellingPrice: resolved.price,
+    catalogSellingPrice,
+    posPriceHistory,
+    customerPrice,
+  };
+}
 
 type StoreInvoiceInfo = {
   storeName: string;
@@ -185,6 +229,15 @@ export default function QuickPosPage({
       setWalkIn(false);
     }
     setPhoneSuggestOpen(false);
+    setLines((prev) =>
+      prev.map((l) => {
+        const customerPrice = lookupCustomerSkuPrice(entry.posSkuPrices, l.sku);
+        if (customerPrice <= 0) {
+          return { ...l, customerPrice: 0 };
+        }
+        return { ...l, sellingPrice: customerPrice, customerPrice };
+      }),
+    );
   };
 
   const subtotal = useMemo(
@@ -197,6 +250,8 @@ export default function QuickPosPage({
   const addProduct = (p: Product) => {
     const id = String(p.id || '').trim();
     if (!id) return;
+    const customer = findCustomerByPhone(addressBook, customerPhone);
+    const priceFields = resolveLineFromProduct(p, customer);
     setLines((prev) => {
       const idx = prev.findIndex((l) => l.productId === id);
       if (idx >= 0) {
@@ -213,8 +268,8 @@ export default function QuickPosPage({
           sku: String(p.sku || ''),
           quantity: 1,
           importPrice: Math.max(0, Math.round(Number(p.importPrice) || 0)),
-          sellingPrice: Math.max(0, Math.round(Number(p.sellingPrice) || 0)),
           stock: Math.max(0, Math.round(Number(p.stock) || 0)),
+          ...priceFields,
         },
       ];
     });
@@ -239,11 +294,44 @@ export default function QuickPosPage({
       if (!pid || qty <= 0) continue;
       const local = products.find((p) => p.id === pid);
       if (!local) continue;
+      const sell = roundPosPrice(it.price ?? it.sellingPrice);
       onUpdateProduct(
-        { ...local, stock: Math.max(0, (Number(local.stock) || 0) - qty) },
+        {
+          ...local,
+          stock: Math.max(0, (Number(local.stock) || 0) - qty),
+          ...(sell > 0
+            ? {
+                posLastSellingPrice: sell,
+                posPriceHistory: mergePosPriceHistory(local.posPriceHistory, sell),
+              }
+            : {}),
+        },
         { save: false },
       );
     }
+  };
+
+  const rememberLocalCustomerPrices = (soldLines: PosLine[], phone: string) => {
+    const digits = digitsPhone(phone);
+    if (!digits) return;
+    setAddressBook((prev) => {
+      const idx = prev.findIndex((e) => e.phone === digits);
+      if (idx < 0) return prev;
+      let prices = prev[idx].posSkuPrices || [];
+      let changed = false;
+      for (let i = 0; i < soldLines.length && i < 80; i += 1) {
+        const l = soldLines[i];
+        const sku = String(l.sku || '').trim();
+        const price = roundPosPrice(l.sellingPrice);
+        if (!sku || price <= 0) continue;
+        prices = mergePosSkuPrices(prices, sku, price);
+        changed = true;
+      }
+      if (!changed) return prev;
+      const next = [...prev];
+      next[idx] = { ...next[idx], posSkuPrices: prices };
+      return next;
+    });
   };
 
   const submitOrder = async (andPrint: boolean) => {
@@ -295,7 +383,9 @@ export default function QuickPosPage({
       }
       setLastOrder(order);
       onUpdateOrders([order, ...orders.filter((o) => o.id !== order.id)]);
+      const soldLines = lines;
       applyLocalStockOptimistic(order);
+      rememberLocalCustomerPrices(soldLines, customerPhone);
       onAddLog({
         id: `log-pos-${Date.now()}`,
         timestamp: new Date().toISOString(),
@@ -306,7 +396,26 @@ export default function QuickPosPage({
       });
 
       void fetchAddressBook(authHeaders)
-        .then(setAddressBook)
+        .then((list) => {
+          const digits = digitsPhone(customerPhone);
+          if (!digits) {
+            setAddressBook(list);
+            return;
+          }
+          let prices = findCustomerByPhone(list, digits)?.posSkuPrices || [];
+          for (let i = 0; i < soldLines.length && i < 80; i += 1) {
+            const l = soldLines[i];
+            const sku = String(l.sku || '').trim();
+            const price = roundPosPrice(l.sellingPrice);
+            if (!sku || price <= 0) continue;
+            prices = mergePosSkuPrices(prices, sku, price);
+          }
+          setAddressBook(
+            list.map((entry) =>
+              entry.phone === digits ? { ...entry, posSkuPrices: prices } : entry,
+            ),
+          );
+        })
         .catch((refreshErr) => {
           console.warn('[Quick POS] Không thể làm mới sổ địa chỉ:', refreshErr);
         });
@@ -641,7 +750,7 @@ export default function QuickPosPage({
                       <td className="px-2 py-2 text-right font-semibold text-slate-500">
                         {formatVnd(l.importPrice)}
                       </td>
-                      <td className="px-2 py-2 text-right">
+                      <td className="px-2 py-2 text-right align-top">
                         <CurrencyInput
                           smartShorthand
                           min={0}
@@ -655,6 +764,45 @@ export default function QuickPosPage({
                           placeholder="0"
                           className="w-28 rounded-lg border border-slate-200 px-2 py-1 text-right font-bold"
                         />
+                        {(() => {
+                          const chips = buildPosPriceChips({
+                            customerPrice: l.customerPrice,
+                            posPriceHistory: l.posPriceHistory,
+                            catalogSellingPrice: l.catalogSellingPrice,
+                          });
+                          if (chips.length === 0) return null;
+                          return (
+                            <div className="mt-1 flex flex-wrap justify-end gap-1 max-w-[160px] ml-auto">
+                              {chips.map((chip) => {
+                                const active = chip.price === l.sellingPrice;
+                                const isCustomer = chip.kind === 'customer';
+                                return (
+                                  <button
+                                    key={`${chip.kind}-${chip.price}`}
+                                    type="button"
+                                    title={
+                                      isCustomer
+                                        ? 'Giá khách này từng mua'
+                                        : chip.kind === 'catalog'
+                                          ? 'Giá niêm yết kho'
+                                          : 'Giá POS đã bán'
+                                    }
+                                    onClick={() =>
+                                      updateLine(l.productId, { sellingPrice: chip.price })
+                                    }
+                                    className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold tabular-nums cursor-pointer border ${
+                                      isCustomer
+                                        ? 'border-emerald-400 text-emerald-800 bg-emerald-50'
+                                        : 'border-slate-200 text-slate-600 bg-white'
+                                    } ${active ? 'ring-1 ring-emerald-500' : 'hover:bg-slate-50'}`}
+                                  >
+                                    {formatVnd(chip.price)}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="px-2 py-2 text-right font-extrabold text-slate-800">
                         {formatVnd(l.sellingPrice * l.quantity)}

@@ -78222,6 +78222,8 @@ var PRODUCT_SEARCH_SELECT = {
   "data.last_import_price": 1,
   "data.sellingPrice": 1,
   "data.price": 1,
+  "data.posLastSellingPrice": 1,
+  "data.posPriceHistory": 1,
   "data.status": 1,
   "data.shopeeItemId": 1,
   "data.shopeeId": 1,
@@ -78239,6 +78241,8 @@ var PRODUCT_SEARCH_SELECT = {
   "data.children.last_import_price": 1,
   "data.children.sellingPrice": 1,
   "data.children.price": 1,
+  "data.children.posLastSellingPrice": 1,
+  "data.children.posPriceHistory": 1,
   "data.children.status": 1,
   "data.children.shopeeItemId": 1,
   "data.children.shopeeModelId": 1,
@@ -78255,6 +78259,8 @@ var PRODUCT_SEARCH_SELECT = {
   "data.children_models.last_import_price": 1,
   "data.children_models.sellingPrice": 1,
   "data.children_models.price": 1,
+  "data.children_models.posLastSellingPrice": 1,
+  "data.children_models.posPriceHistory": 1,
   "data.children_models.status": 1,
   "data.children_models.shopeeItemId": 1,
   "data.children_models.shopeeModelId": 1
@@ -78279,6 +78285,10 @@ function toSearchLeanRow(row) {
     importPrice,
     last_import_price: importPrice,
     sellingPrice: Math.max(0, Math.round(Number(row?.sellingPrice ?? row?.price) || 0)),
+    posLastSellingPrice: Math.max(0, Math.round(Number(row?.posLastSellingPrice) || 0)),
+    posPriceHistory: Array.isArray(row?.posPriceHistory) ? [...new Set(
+      row.posPriceHistory.map((n) => Math.max(0, Math.round(Number(n) || 0))).filter((n) => n > 0)
+    )].slice(0, 8) : [],
     modelName: row?.modelName || void 0,
     tierLabels: Array.isArray(row?.tierLabels) ? row.tierLabels : void 0,
     shopeeItemId: row?.shopeeItemId || row?.shopeeId || void 0,
@@ -86172,7 +86182,9 @@ var AddressBookSchema = new import_mongoose4.default.Schema(
       min: 0,
       required: false
     },
-    last_purchase_date: { type: Date, default: null }
+    last_purchase_date: { type: Date, default: null },
+    /** Mini POS — giá bán gần nhất theo SKU của khách này. */
+    posSkuPrices: { type: Array, default: void 0, required: false }
   },
   {
     collection: "address_book",
@@ -86186,6 +86198,88 @@ AddressBookSchema.index({ total_spent: -1 }, { name: "address_book_total_spent" 
 AddressBookSchema.index({ last_purchase_date: -1 }, { name: "address_book_last_purchase" });
 var AddressBook = import_mongoose4.default.models.AddressBook || import_mongoose4.default.model("AddressBook", AddressBookSchema);
 var AddressBook_default = AddressBook;
+
+// utils/posSellingPrice.js
+var POS_PRICE_HISTORY_CAP = 8;
+var POS_CUSTOMER_SKU_CAP = 80;
+function roundPosPrice(value) {
+  return Math.max(0, Math.round(Number(value) || 0));
+}
+function normalizePosPriceHistory(existing, cap = POS_PRICE_HISTORY_CAP) {
+  if (!Array.isArray(existing)) return [];
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  const safeCap = Math.min(
+    POS_PRICE_HISTORY_CAP,
+    Math.max(1, Math.floor(Number(cap) || POS_PRICE_HISTORY_CAP))
+  );
+  for (let i2 = 0; i2 < existing.length && out.length < safeCap; i2 += 1) {
+    const price = roundPosPrice(existing[i2]);
+    if (price <= 0 || seen.has(price)) continue;
+    seen.add(price);
+    out.push(price);
+  }
+  return out;
+}
+function mergePosPriceHistory(existing, newPrice, cap = POS_PRICE_HISTORY_CAP) {
+  const price = roundPosPrice(newPrice);
+  const safeCap = Math.min(
+    POS_PRICE_HISTORY_CAP,
+    Math.max(1, Math.floor(Number(cap) || POS_PRICE_HISTORY_CAP))
+  );
+  if (price <= 0) return normalizePosPriceHistory(existing, safeCap);
+  const next = [price];
+  const seen = /* @__PURE__ */ new Set([price]);
+  const prev = normalizePosPriceHistory(existing, safeCap);
+  for (let i2 = 0; i2 < prev.length && next.length < safeCap; i2 += 1) {
+    const p = prev[i2];
+    if (seen.has(p)) continue;
+    seen.add(p);
+    next.push(p);
+  }
+  return next;
+}
+function normalizePosSkuPrices(existing, cap = POS_CUSTOMER_SKU_CAP) {
+  if (!Array.isArray(existing)) return [];
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  const safeCap = Math.min(
+    POS_CUSTOMER_SKU_CAP,
+    Math.max(1, Math.floor(Number(cap) || POS_CUSTOMER_SKU_CAP))
+  );
+  for (let i2 = 0; i2 < existing.length && out.length < safeCap; i2 += 1) {
+    const row = existing[i2];
+    const sku = String(row?.sku || "").trim();
+    const price = roundPosPrice(row?.price);
+    if (!sku || price <= 0 || seen.has(sku)) continue;
+    seen.add(sku);
+    out.push({
+      sku,
+      price,
+      updatedAt: String(row?.updatedAt || "")
+    });
+  }
+  return out;
+}
+function mergePosSkuPrices(existing, sku, price, cap = POS_CUSTOMER_SKU_CAP) {
+  const skuNorm = String(sku || "").trim();
+  const nextPrice = roundPosPrice(price);
+  const safeCap = Math.min(
+    POS_CUSTOMER_SKU_CAP,
+    Math.max(1, Math.floor(Number(cap) || POS_CUSTOMER_SKU_CAP))
+  );
+  if (!skuNorm || nextPrice <= 0) return normalizePosSkuPrices(existing, safeCap);
+  const rest = [];
+  const prev = normalizePosSkuPrices(existing, safeCap);
+  for (let i2 = 0; i2 < prev.length; i2 += 1) {
+    if (prev[i2].sku === skuNorm) continue;
+    rest.push(prev[i2]);
+  }
+  return [{ sku: skuNorm, price: nextPrice, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, ...rest].slice(
+    0,
+    safeCap
+  );
+}
 
 // services/addressBook.js
 var FILE_PATH = import_path9.default.join(resolveAppRoot(), "data", "address_book.json");
@@ -86247,12 +86341,13 @@ function normalizeEntry(entry) {
     addressMode
   };
 }
-function toPublicEntry(doc) {
+function toPublicEntry(doc, opts = {}) {
   const o = doc && typeof doc.toObject === "function" ? doc.toObject() : doc || {};
   const id = String(o.id || o._id || "");
   const street = String(o.street || o.address || "").trim();
   const lastPurchase = o.last_purchase_date ? new Date(o.last_purchase_date) : null;
-  return {
+  const includePosSkuPrices = opts.includePosSkuPrices !== false;
+  const entry = {
     id,
     name: String(o.name || "").trim(),
     phone: normalizePhone(o.phone),
@@ -86274,6 +86369,10 @@ function toPublicEntry(doc) {
     total_spent: Math.max(0, Math.round(Number(o.total_spent) || 0)),
     last_purchase_date: lastPurchase && !Number.isNaN(lastPurchase.getTime()) ? lastPurchase.toISOString() : null
   };
+  if (includePosSkuPrices) {
+    entry.posSkuPrices = normalizePosSkuPrices(o.posSkuPrices);
+  }
+  return entry;
 }
 function matchesPurchasePeriod(entry, month, year) {
   if (!year) return true;
@@ -86342,9 +86441,9 @@ async function listAddressBookRanking(options = {}) {
       filter2.last_purchase_date = dateRange;
     }
     const rows = await AddressBook_default.find(filter2).sort({ total_spent: -1, total_orders: -1, last_purchase_date: -1 }).limit(limit).lean();
-    return rows.map(toPublicEntry);
+    return rows.map((row) => toPublicEntry(row, { includePosSkuPrices: false }));
   }
-  const list = readBook().map(toPublicEntry).filter((row) => matchesPurchasePeriod(row, m2, y)).sort((a, b) => {
+  const list = readBook().map((row) => toPublicEntry(row, { includePosSkuPrices: false })).filter((row) => matchesPurchasePeriod(row, m2, y)).sort((a, b) => {
     const spentDiff = (b.total_spent || 0) - (a.total_spent || 0);
     if (spentDiff !== 0) return spentDiff;
     return (b.total_orders || 0) - (a.total_orders || 0);
@@ -86519,6 +86618,57 @@ async function upsertLoyaltyFromPurchase({
   } catch (err) {
     console.error(
       "[AddressBook loyalty] upsertLoyaltyFromPurchase failed:",
+      err?.message || err
+    );
+    return null;
+  }
+}
+async function upsertPosCustomerPrices({ phone = "", items = [] } = {}) {
+  try {
+    const phoneNorm = normalizePhone(phone);
+    if (!phoneNorm) return null;
+    const lines = Array.isArray(items) ? items.slice(0, 80) : [];
+    if (lines.length === 0) return null;
+    let nextPrices = null;
+    const applyLines = (existing) => {
+      let prices = normalizePosSkuPrices(existing);
+      let changed = false;
+      for (let i2 = 0; i2 < lines.length; i2 += 1) {
+        const it = lines[i2];
+        const sku = String(it?.sku || "").trim();
+        const price = roundPosPrice(it?.price ?? it?.sellingPrice);
+        if (!sku || price <= 0) continue;
+        prices = mergePosSkuPrices(prices, sku, price);
+        changed = true;
+      }
+      return changed ? prices : null;
+    };
+    if (mongoReady2()) {
+      if (!AddressBook_default || typeof AddressBook_default.findOne !== "function") {
+        throw new Error("AddressBook model ch\u01B0a s\u1EB5n s\xE0ng");
+      }
+      const doc = await AddressBook_default.findOne({ phone: phoneNorm }).lean();
+      if (!doc) return null;
+      nextPrices = applyLines(doc.posSkuPrices);
+      if (!nextPrices) return null;
+      const updated = await AddressBook_default.findOneAndUpdate(
+        { phone: phoneNorm },
+        { $set: { posSkuPrices: nextPrices } },
+        { new: true, runValidators: false }
+      );
+      return updated ? toPublicEntry(updated) : null;
+    }
+    const list = readBook();
+    const idx = list.findIndex((item) => normalizePhone(item.phone) === phoneNorm);
+    if (idx < 0) return null;
+    nextPrices = applyLines(list[idx].posSkuPrices);
+    if (!nextPrices) return null;
+    list[idx] = { ...list[idx], posSkuPrices: nextPrices };
+    writeBook(list.slice(0, MAX_ENTRIES));
+    return toPublicEntry(list[idx]);
+  } catch (err) {
+    console.error(
+      "[AddressBook POS prices] upsertPosCustomerPrices failed:",
       err?.message || err
     );
     return null;
@@ -117591,6 +117741,10 @@ async function searchProducts(req, res) {
     last_import_price: p.last_import_price ?? p.importPrice ?? 0,
     importPrice: p.importPrice ?? p.last_import_price ?? 0,
     sellingPrice: Math.max(0, Math.round(Number(p.sellingPrice ?? p.price) || 0)),
+    posLastSellingPrice: Math.max(0, Math.round(Number(p.posLastSellingPrice) || 0)),
+    posPriceHistory: Array.isArray(p.posPriceHistory) ? [...new Set(
+      p.posPriceHistory.map((n) => Math.max(0, Math.round(Number(n) || 0))).filter((n) => n > 0)
+    )].slice(0, 8) : [],
     shopeeItemId: p.shopeeItemId || p.shopeeId || void 0,
     shopeeModelId: p.shopeeModelId || void 0,
     status: p.status || "active"
@@ -124451,6 +124605,75 @@ async function deductStockForPosOrder(lineItems) {
   }
   return { deducted, updatedProducts: changed };
 }
+function findPosProductTarget(productMap, productId) {
+  if (productMap.has(productId)) {
+    return { kind: "root", product: productMap.get(productId) };
+  }
+  for (const parent of productMap.values()) {
+    const childKey = Array.isArray(parent.children) && parent.children.length ? "children" : Array.isArray(parent.children_models) && parent.children_models.length ? "children_models" : null;
+    if (!childKey) continue;
+    const list = parent[childKey];
+    const cIdx = list.findIndex((c) => String(c?.id || c?._id || "").trim() === productId);
+    if (cIdx >= 0) return { kind: "child", parent, childKey, cIdx, child: list[cIdx] };
+  }
+  return null;
+}
+async function rememberPosSellingPrices(lineItems) {
+  const lines = Array.isArray(lineItems) ? lineItems.slice(0, 80) : [];
+  const priceById = /* @__PURE__ */ new Map();
+  for (let i2 = 0; i2 < lines.length; i2 += 1) {
+    const it = lines[i2];
+    const id = String(it?.productId || "").trim();
+    const sell = roundPosPrice(it?.price ?? it?.sellingPrice);
+    if (!id || sell <= 0) continue;
+    priceById.set(id, sell);
+  }
+  if (priceById.size === 0) return { updated: 0 };
+  const ids = [...priceById.keys()];
+  const rows = await deps15.loadProductsByIdsFromStore(ids, []);
+  const productMap = /* @__PURE__ */ new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const rid = String(row?.id || row?._id || "").trim();
+    if (rid) productMap.set(rid, { ...row });
+  }
+  const dirty = /* @__PURE__ */ new Map();
+  for (const [productId, sell] of priceById) {
+    const hit = findPosProductTarget(productMap, productId);
+    if (!hit) {
+      console.warn(`[POS] Kh\xF4ng t\xECm th\u1EA5y SP ${productId} \u0111\u1EC3 nh\u1EDB gi\xE1 b\xE1n`);
+      continue;
+    }
+    if (hit.kind === "root") {
+      const updated = {
+        ...hit.product,
+        posLastSellingPrice: sell,
+        posPriceHistory: mergePosPriceHistory(hit.product?.posPriceHistory, sell)
+      };
+      productMap.set(String(updated.id || productId), updated);
+      dirty.set(String(updated.id || productId), updated);
+    } else {
+      const parentId = String(hit.parent.id || hit.parent._id || "");
+      const parent = productMap.get(parentId) || hit.parent;
+      const childKey = Array.isArray(parent.children) && parent.children.length ? "children" : "children_models";
+      const list = [...parent[childKey] || []];
+      const cIdx = list.findIndex((c) => String(c?.id || c?._id || "").trim() === productId);
+      if (cIdx < 0) continue;
+      list[cIdx] = {
+        ...list[cIdx],
+        posLastSellingPrice: sell,
+        posPriceHistory: mergePosPriceHistory(list[cIdx]?.posPriceHistory, sell)
+      };
+      const nextParent = { ...parent, [childKey]: list };
+      productMap.set(parentId, nextParent);
+      dirty.set(parentId, nextParent);
+    }
+  }
+  const changed = [...dirty.values()];
+  if (changed.length > 0) {
+    await upsertPosProductsToStoreAsync(changed);
+  }
+  return { updated: changed.length };
+}
 async function createPosOrder(req, res) {
   const startedAt = Date.now();
   const traceId = `POS-${startedAt.toString(36).toUpperCase()}`;
@@ -124634,6 +124857,25 @@ async function createPosOrder(req, res) {
       console.error(
         "[Orders POS] address book loyalty (post-response):",
         loyaltyErr?.message || loyaltyErr
+      );
+    }
+    try {
+      await rememberPosSellingPrices(lineItems);
+    } catch (priceErr) {
+      console.error(
+        "[Orders POS] remember selling prices (post-response):",
+        priceErr?.message || priceErr
+      );
+    }
+    try {
+      await upsertPosCustomerPrices({
+        phone,
+        items: lineItems
+      });
+    } catch (custPriceErr) {
+      console.error(
+        "[Orders POS] customer sku prices (post-response):",
+        custPriceErr?.message || custPriceErr
       );
     }
     console.log(`POS Step 7: loyalty finished trace=${traceId} elapsed=${Date.now() - startedAt}ms`);

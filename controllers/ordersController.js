@@ -50,7 +50,8 @@ import {
   insertPosOrderToStore,
   upsertPosProductsToStoreAsync,
 } from "../src/db/mongoStore.ts";
-import { saveAddressBookEntry, upsertLoyaltyFromPurchase } from "../services/addressBook.js";
+import { saveAddressBookEntry, upsertLoyaltyFromPurchase, upsertPosCustomerPrices } from "../services/addressBook.js";
+import { mergePosPriceHistory, roundPosPrice } from "../utils/posSellingPrice.js";
 import {
   createGhnShippingOrder,
   getGhnPrintUrl,
@@ -3143,6 +3144,92 @@ async function deductStockForPosOrder(lineItems) {
   return { deducted, updatedProducts: changed };
 }
 
+function findPosProductTarget(productMap, productId) {
+  if (productMap.has(productId)) {
+    return { kind: "root", product: productMap.get(productId) };
+  }
+  for (const parent of productMap.values()) {
+    const childKey =
+      Array.isArray(parent.children) && parent.children.length
+        ? "children"
+        : Array.isArray(parent.children_models) && parent.children_models.length
+          ? "children_models"
+          : null;
+    if (!childKey) continue;
+    const list = parent[childKey];
+    const cIdx = list.findIndex((c) => String(c?.id || c?._id || "").trim() === productId);
+    if (cIdx >= 0) return { kind: "child", parent, childKey, cIdx, child: list[cIdx] };
+  }
+  return null;
+}
+
+/**
+ * Nhớ giá bán Mini POS lên kho (posLastSellingPrice + posPriceHistory).
+ * Không ghi đè sellingPrice (giá sàn).
+ */
+async function rememberPosSellingPrices(lineItems) {
+  const lines = Array.isArray(lineItems) ? lineItems.slice(0, 80) : [];
+  const priceById = new Map();
+  for (let i = 0; i < lines.length; i += 1) {
+    const it = lines[i];
+    const id = String(it?.productId || "").trim();
+    const sell = roundPosPrice(it?.price ?? it?.sellingPrice);
+    if (!id || sell <= 0) continue;
+    priceById.set(id, sell);
+  }
+  if (priceById.size === 0) return { updated: 0 };
+
+  const ids = [...priceById.keys()];
+  const rows = await deps.loadProductsByIdsFromStore(ids, []);
+  const productMap = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const rid = String(row?.id || row?._id || "").trim();
+    if (rid) productMap.set(rid, { ...row });
+  }
+
+  const dirty = new Map();
+  for (const [productId, sell] of priceById) {
+    const hit = findPosProductTarget(productMap, productId);
+    if (!hit) {
+      console.warn(`[POS] Không tìm thấy SP ${productId} để nhớ giá bán`);
+      continue;
+    }
+    if (hit.kind === "root") {
+      const updated = {
+        ...hit.product,
+        posLastSellingPrice: sell,
+        posPriceHistory: mergePosPriceHistory(hit.product?.posPriceHistory, sell),
+      };
+      productMap.set(String(updated.id || productId), updated);
+      dirty.set(String(updated.id || productId), updated);
+    } else {
+      const parentId = String(hit.parent.id || hit.parent._id || "");
+      const parent = productMap.get(parentId) || hit.parent;
+      const childKey =
+        Array.isArray(parent.children) && parent.children.length
+          ? "children"
+          : "children_models";
+      const list = [...(parent[childKey] || [])];
+      const cIdx = list.findIndex((c) => String(c?.id || c?._id || "").trim() === productId);
+      if (cIdx < 0) continue;
+      list[cIdx] = {
+        ...list[cIdx],
+        posLastSellingPrice: sell,
+        posPriceHistory: mergePosPriceHistory(list[cIdx]?.posPriceHistory, sell),
+      };
+      const nextParent = { ...parent, [childKey]: list };
+      productMap.set(parentId, nextParent);
+      dirty.set(parentId, nextParent);
+    }
+  }
+
+  const changed = [...dirty.values()];
+  if (changed.length > 0) {
+    await upsertPosProductsToStoreAsync(changed);
+  }
+  return { updated: changed.length };
+}
+
 /**
  * POST /api/orders/pos — Tạo đơn nhanh (Mini POS).
  * Độc lập hoàn toàn với createManualOrder (đơn ngoại sàn).
@@ -3350,6 +3437,27 @@ export async function createPosOrder(req, res) {
       console.error(
         "[Orders POS] address book loyalty (post-response):",
         loyaltyErr?.message || loyaltyErr,
+      );
+    }
+
+    try {
+      await rememberPosSellingPrices(lineItems);
+    } catch (priceErr) {
+      console.error(
+        "[Orders POS] remember selling prices (post-response):",
+        priceErr?.message || priceErr,
+      );
+    }
+
+    try {
+      await upsertPosCustomerPrices({
+        phone,
+        items: lineItems,
+      });
+    } catch (custPriceErr) {
+      console.error(
+        "[Orders POS] customer sku prices (post-response):",
+        custPriceErr?.message || custPriceErr,
       );
     }
     console.log(`POS Step 7: loyalty finished trace=${traceId} elapsed=${Date.now() - startedAt}ms`);

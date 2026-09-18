@@ -5,6 +5,10 @@ export interface Product {
   stock: number;
   importPrice: number;
   sellingPrice: number;
+  /** Giá Mini POS lần gần nhất — không dùng đồng bộ sàn. */
+  posLastSellingPrice?: number;
+  /** Các mức giá POS đã bán (mới nhất trước, tối đa 8). */
+  posPriceHistory?: number[];
   wholesalePrice?: number;
   weight?: number;
   brand?: string;
