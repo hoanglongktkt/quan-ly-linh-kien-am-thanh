@@ -81977,23 +81977,9 @@ var ORDER_TAB_TRACKING_PRESENT = {
 var ORDER_TAB_TRACKING_ABSENT = {
   $or: [{ tracking_no: { $exists: false } }, { tracking_no: { $in: [null, "", "0"] } }]
 };
-function trackingFieldEmptyOrInternal(field) {
-  return {
-    $or: [
-      { [field]: { $exists: false } },
-      { [field]: null },
-      { [field]: "" },
-      { [field]: "0" },
-      { [field]: { $regex: /^0FG/i } }
-    ]
-  };
-}
 function orderTabPendingConfirmNoTracking() {
   return {
-    $and: [
-      trackingFieldEmptyOrInternal("tracking_no"),
-      trackingFieldEmptyOrInternal("trackingNumber")
-    ]
+    $or: [{ tracking_no: { $exists: false } }, { tracking_no: null }, { tracking_no: "" }]
   };
 }
 var ORDER_TAB_DROPOFF_PREPARED = {
@@ -84137,6 +84123,17 @@ var SCANNER_SYNC_SELECT = {
   "data.is_rts": 1,
   return_sn: 1
 };
+async function safeScannerSyncFind(filter2, opts) {
+  try {
+    let q = OrderModel.find(filter2).select(SCANNER_SYNC_SELECT).limit(Math.max(1, Math.min(450, Number(opts?.limit) || 450))).lean().maxTimeMS(Math.max(1e3, Math.min(4e3, Number(opts?.maxTimeMS) || 4e3)));
+    if (opts?.sort) q = q.sort(opts.sort);
+    const docs = await q.exec();
+    return Array.isArray(docs) ? docs : [];
+  } catch (err) {
+    console.warn("[MongoDB] scanner-sync find failed:", err?.message || err);
+    return [];
+  }
+}
 function docsToScannerSyncRows(docs) {
   const rows = [];
   const seen = /* @__PURE__ */ new Set();
@@ -84223,11 +84220,27 @@ async function listScannerSyncRowsFromStore(opts) {
   requireMongo();
   const mode = opts?.mode === "return" ? "return" : "handover";
   if (mode === "handover") {
-    const [processedDocs, handedDocs, cancelledDocs] = await Promise.all([
-      OrderModel.find(SCANNER_HANDOVER_PROCESSED_FILTER).select(SCANNER_SYNC_SELECT).limit(450).lean().maxTimeMS(6e3),
-      OrderModel.find(buildScannerHandoverHandedFilter()).select(SCANNER_SYNC_SELECT).sort({ handedOverAt: -1, "data.handedOverAt": -1 }).limit(450).lean().maxTimeMS(6e3),
-      OrderModel.find(SCANNER_HANDOVER_CANCELLED_FILTER).select(SCANNER_SYNC_SELECT).limit(150).lean().maxTimeMS(4e3)
-    ]);
+    const processedDocs = await safeScannerSyncFind(SCANNER_HANDOVER_PROCESSED_FILTER, {
+      limit: 450,
+      maxTimeMS: 4e3
+    });
+    await new Promise((r2) => setTimeout(r2, 25));
+    const handedDocs = await safeScannerSyncFind(buildScannerHandoverHandedFilter(), {
+      limit: 450,
+      maxTimeMS: 4e3,
+      sort: { last_shopee_update_at: -1 }
+    });
+    await new Promise((r2) => setTimeout(r2, 25));
+    const sinceCancel = new Date(Date.now() - 30 * 24 * 60 * 60 * 1e3);
+    const cancelledDocs = await safeScannerSyncFind(
+      {
+        $and: [
+          SCANNER_HANDOVER_CANCELLED_FILTER,
+          { last_shopee_update_at: { $gte: sinceCancel } }
+        ]
+      },
+      { limit: 150, maxTimeMS: 3e3, sort: { last_shopee_update_at: -1 } }
+    );
     return docsToScannerSyncRows([
       ...processedDocs,
       ...handedDocs,
@@ -84235,7 +84248,11 @@ async function listScannerSyncRowsFromStore(opts) {
     ]);
   }
   const lookbackDays = Math.max(1, Math.min(30, Number(opts?.lookbackDays) || 30));
-  const docs = await OrderModel.find(buildScannerReturnFilter(lookbackDays)).select(SCANNER_SYNC_SELECT).limit(1e3).lean().maxTimeMS(8e3);
+  const docs = await safeScannerSyncFind(buildScannerReturnFilter(lookbackDays), {
+    limit: 450,
+    maxTimeMS: 4e3,
+    sort: { last_shopee_update_at: -1 }
+  });
   return docsToScannerSyncRows(docs);
 }
 var SCAN_BATCH_IN_SIZE = 300;
@@ -122345,10 +122362,20 @@ async function scannerSync(req, res) {
         });
       }
     }
-    const orders = await listScannerSyncRowsFromStore({
-      mode: modeRaw,
-      lookbackDays
-    });
+    let orders = [];
+    try {
+      orders = await listScannerSyncRowsFromStore({
+        mode: modeRaw,
+        lookbackDays
+      });
+    } catch (queryErr) {
+      console.error(
+        "[GET /api/orders/scanner-sync] query failed:",
+        queryErr?.message || queryErr
+      );
+      orders = [];
+    }
+    if (!Array.isArray(orders)) orders = [];
     let codeCount = 0;
     for (const row of orders) {
       if (row.tracking_code) codeCount += 1;
@@ -122363,7 +122390,7 @@ async function scannerSync(req, res) {
     console.log(
       `[GET /api/orders/scanner-sync] mode=${modeRaw} cache=miss rows=${orders.length} codes=${codeCount} ${ms}ms`
     );
-    return res.json({
+    return res.status(200).json({
       success: true,
       mode: modeRaw,
       lookback_days: lookbackDays ?? null,
@@ -122375,7 +122402,7 @@ async function scannerSync(req, res) {
     });
   } catch (err) {
     console.error("[GET /api/orders/scanner-sync] failed:", err?.message || err);
-    return res.status(500).json({
+    return res.status(200).json({
       success: false,
       error: err?.message || String(err),
       orders: [],

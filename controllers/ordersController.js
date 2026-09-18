@@ -1473,10 +1473,20 @@ export async function scannerSync(req, res) {
       }
     }
 
-    const orders = await listScannerSyncRowsFromStore({
-      mode: modeRaw,
-      lookbackDays,
-    });
+    let orders = [];
+    try {
+      orders = await listScannerSyncRowsFromStore({
+        mode: modeRaw,
+        lookbackDays,
+      });
+    } catch (queryErr) {
+      console.error(
+        "[GET /api/orders/scanner-sync] query failed:",
+        queryErr?.message || queryErr,
+      );
+      orders = [];
+    }
+    if (!Array.isArray(orders)) orders = [];
     let codeCount = 0;
     for (const row of orders) {
       if (row.tracking_code) codeCount += 1;
@@ -1491,7 +1501,7 @@ export async function scannerSync(req, res) {
     console.log(
       `[GET /api/orders/scanner-sync] mode=${modeRaw} cache=miss rows=${orders.length} codes=${codeCount} ${ms}ms`,
     );
-    return res.json({
+    return res.status(200).json({
       success: true,
       mode: modeRaw,
       lookback_days: lookbackDays ?? null,
@@ -1503,7 +1513,7 @@ export async function scannerSync(req, res) {
     });
   } catch (err) {
     console.error("[GET /api/orders/scanner-sync] failed:", err?.message || err);
-    return res.status(500).json({
+    return res.status(200).json({
       success: false,
       error: err?.message || String(err),
       orders: [],

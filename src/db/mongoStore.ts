@@ -6392,29 +6392,14 @@ const ORDER_TAB_TRACKING_ABSENT: Record<string, unknown> = {
   $or: [{ tracking_no: { $exists: false } }, { tracking_no: { $in: [null, "", "0"] } }],
 };
 
-/** Field tracking trống / "0" / mã nội bộ 0FG — chưa phải mã vận đơn outbound thật. */
-function trackingFieldEmptyOrInternal(field: string): Record<string, unknown> {
-  return {
-    $or: [
-      { [field]: { $exists: false } },
-      { [field]: null },
-      { [field]: "" },
-      { [field]: "0" },
-      { [field]: { $regex: /^0FG/i } },
-    ],
-  };
-}
-
 /**
- * Tab Chờ xác nhận: Count ≡ Find — chặn đơn đã có tracking_no / trackingNumber.
- * Giữ 0FG (mã nội bộ Shopee), không $or data.* (tránh full scan).
+ * Tab Chờ xác nhận: Count ≡ Find — chặn đơn đã có tracking_no.
+ * `{ tracking_no: null }` khớp cả field thiếu (Mongo equality).
+ * CẤM $exists:false + $regex trên 2 field — COLLSCAN làm scanner-sync timeout 500.
  */
 function orderTabPendingConfirmNoTracking(): Record<string, unknown> {
   return {
-    $and: [
-      trackingFieldEmptyOrInternal("tracking_no"),
-      trackingFieldEmptyOrInternal("trackingNumber"),
-    ],
+    $or: [{ tracking_no: { $exists: false } }, { tracking_no: null }, { tracking_no: "" }],
   };
 }
 
@@ -9326,6 +9311,25 @@ const SCANNER_SYNC_SELECT = {
   return_sn: 1,
 } as const;
 
+async function safeScannerSyncFind(
+  filter: Record<string, unknown>,
+  opts?: { limit?: number; maxTimeMS?: number; sort?: Record<string, 1 | -1> },
+): Promise<any[]> {
+  try {
+    let q = OrderModel.find(filter)
+      .select(SCANNER_SYNC_SELECT)
+      .limit(Math.max(1, Math.min(450, Number(opts?.limit) || 450)))
+      .lean()
+      .maxTimeMS(Math.max(1000, Math.min(4000, Number(opts?.maxTimeMS) || 4000)));
+    if (opts?.sort) q = q.sort(opts.sort);
+    const docs = await q.exec();
+    return Array.isArray(docs) ? docs : [];
+  } catch (err: any) {
+    console.warn("[MongoDB] scanner-sync find failed:", err?.message || err);
+    return [];
+  }
+}
+
 function docsToScannerSyncRows(docs: any[]): ScannerSyncRow[] {
   const rows: ScannerSyncRow[] = [];
   const seen = new Set<string>();
@@ -9450,24 +9454,27 @@ export async function listScannerSyncRowsFromStore(opts?: {
     opts?.mode === "return" ? "return" : "handover";
 
   if (mode === "handover") {
-    const [processedDocs, handedDocs, cancelledDocs] = await Promise.all([
-      OrderModel.find(SCANNER_HANDOVER_PROCESSED_FILTER)
-        .select(SCANNER_SYNC_SELECT)
-        .limit(450)
-        .lean()
-        .maxTimeMS(6_000),
-      OrderModel.find(buildScannerHandoverHandedFilter())
-        .select(SCANNER_SYNC_SELECT)
-        .sort({ handedOverAt: -1, "data.handedOverAt": -1 })
-        .limit(450)
-        .lean()
-        .maxTimeMS(6_000),
-      OrderModel.find(SCANNER_HANDOVER_CANCELLED_FILTER)
-        .select(SCANNER_SYNC_SELECT)
-        .limit(150)
-        .lean()
-        .maxTimeMS(4_000),
-    ]);
+    const processedDocs = await safeScannerSyncFind(SCANNER_HANDOVER_PROCESSED_FILTER, {
+      limit: 450,
+      maxTimeMS: 4000,
+    });
+    await new Promise((r) => setTimeout(r, 25));
+    const handedDocs = await safeScannerSyncFind(buildScannerHandoverHandedFilter(), {
+      limit: 450,
+      maxTimeMS: 4000,
+      sort: { last_shopee_update_at: -1 },
+    });
+    await new Promise((r) => setTimeout(r, 25));
+    const sinceCancel = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const cancelledDocs = await safeScannerSyncFind(
+      {
+        $and: [
+          SCANNER_HANDOVER_CANCELLED_FILTER,
+          { last_shopee_update_at: { $gte: sinceCancel } },
+        ],
+      },
+      { limit: 150, maxTimeMS: 3000, sort: { last_shopee_update_at: -1 } },
+    );
     return docsToScannerSyncRows([
       ...(processedDocs as any[]),
       ...(handedDocs as any[]),
@@ -9476,11 +9483,11 @@ export async function listScannerSyncRowsFromStore(opts?: {
   }
 
   const lookbackDays = Math.max(1, Math.min(30, Number(opts?.lookbackDays) || 30));
-  const docs = await OrderModel.find(buildScannerReturnFilter(lookbackDays))
-    .select(SCANNER_SYNC_SELECT)
-    .limit(1000)
-    .lean()
-    .maxTimeMS(8_000);
+  const docs = await safeScannerSyncFind(buildScannerReturnFilter(lookbackDays), {
+    limit: 450,
+    maxTimeMS: 4000,
+    sort: { last_shopee_update_at: -1 },
+  });
   return docsToScannerSyncRows(docs as any[]);
 }
 
