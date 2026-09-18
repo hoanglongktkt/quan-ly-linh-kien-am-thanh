@@ -48,7 +48,7 @@ import {
   upsertDonHoanHuy,
   invalidateTabCountCache,
 } from "../src/db/mongoStore.ts";
-import { saveAddressBookEntry } from "../services/addressBook.js";
+import { saveAddressBookEntry, upsertLoyaltyFromPurchase } from "../services/addressBook.js";
 import {
   createGhnShippingOrder,
   getGhnPrintUrl,
@@ -3297,11 +3297,25 @@ export async function createPosOrder(req, res) {
 
     await persistExternalOrder(newOrder);
 
+    let loyaltyEntry = null;
+    try {
+      loyaltyEntry = await upsertLoyaltyFromPurchase({
+        name,
+        phone,
+        address: isWalkIn ? "" : address,
+        fullAddress: isWalkIn ? "" : address,
+        totalAmount,
+      });
+    } catch (loyaltyErr) {
+      console.warn("[Orders POS] address book loyalty:", loyaltyErr?.message || loyaltyErr);
+    }
+
     return res.json({
       success: true,
       order: newOrder,
       stockDeducted: stockResult.deducted,
       amountDue,
+      addressBookUpdated: Boolean(loyaltyEntry),
     });
   } catch (error) {
     console.error("[Orders POS]", error);

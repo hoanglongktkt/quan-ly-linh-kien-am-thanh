@@ -14,6 +14,7 @@ import MaterialImportManager from './components/MaterialImportManager';
 import OrderManager from './components/OrderManager';
 import OrderPicking from './components/OrderPicking';
 import PublishManager from './components/PublishManager';
+import VipCustomersPage from './components/VipCustomersPage';
 import LoginPage from './components/LoginPage';
 import ErrorBoundary from './components/ErrorBoundary';
 import BrandLogo, { BrandHeader } from './components/BrandLogo';
@@ -50,6 +51,7 @@ import {
   Loader2,
   Layers,
   Zap,
+  Crown,
 } from 'lucide-react';
 import type { OrdersSubTabId } from './components/OrderManager';
 import {
@@ -152,6 +154,7 @@ const MAIN_NAV_TABS = new Set([
   'orders',
   'picking',
   'suppliers',
+  'vip-customers',
   'imports',
   'material-imports',
   'financials',
@@ -2466,6 +2469,13 @@ export default function App() {
           </button>
 
           <button
+            onClick={() => navigateTab('vip-customers')}
+            className={navButtonClass('vip-customers')}
+          >
+            <Crown className="w-4 h-4 shrink-0" /> Khách hàng VIP
+          </button>
+
+          <button
             onClick={() => navigateTab('imports')}
             className={navButtonClass('imports')}
           >
@@ -2589,6 +2599,9 @@ export default function App() {
               <button onClick={() => navigateTab('suppliers')} className={navButtonClass('suppliers')}>
                 <Users className="w-4 h-4 shrink-0" /> Nhà Cung Cấp
               </button>
+              <button onClick={() => navigateTab('vip-customers')} className={navButtonClass('vip-customers')}>
+                <Crown className="w-4 h-4 shrink-0" /> Khách hàng VIP
+              </button>
               <button onClick={() => navigateTab('imports')} className={navButtonClass('imports')}>
                 <ArrowDownToLine className="w-4 h-4 shrink-0" /> Nhập Hàng
               </button>
@@ -2643,6 +2656,7 @@ export default function App() {
                       : 'Hệ Thống Quản Lý Đơn Hàng Đa Sàn')}
                   {activeTab === 'picking' && 'Nhặt Hàng (Picking)'}
                   {activeTab === 'suppliers' && 'Quản Lý Đối Tác Nhà Cung Cấp'}
+                  {activeTab === 'vip-customers' && 'Khách Hàng VIP'}
                   {activeTab === 'imports' && 'Quản Lý Nhập Hàng'}
                   {activeTab === 'material-imports' && 'Quản Lý Nhập Vật Tư'}
                   {activeTab === 'financials' && 'Chi Phí Bán Hàng'}
@@ -2657,6 +2671,7 @@ export default function App() {
                       : 'Quản lý 8 trạng thái đơn Shopee & TikTok, chuẩn bị hàng đóng gói và in vận đơn nhiệt.')}
                   {activeTab === 'picking' && 'Quét mã đơn, tích sản phẩm đã nhặt và chuyển sang đóng gói.'}
                   {activeTab === 'suppliers' && 'Quản lý thông tin liên hệ, công nợ sỉ và tiền độ thanh toán cho xưởng sỉ.'}
+                  {activeTab === 'vip-customers' && 'Xếp hạng khách quen theo tổng chi tiêu từ Sổ địa chỉ — lọc tháng/năm để chọn khách tặng quà.'}
                   {activeTab === 'imports' && 'Quản lý hóa đơn nhập đầu vào, theo dõi biến động % giá nhập hàng.'}
                   {activeTab === 'material-imports' && 'Quản lý vật tư sản xuất (chợ, 1688…) — độc lập với kho sản phẩm bán.'}
                   {activeTab === 'financials' && 'Theo dõi chi phí hoạt động, cơ cấu quỹ và mô phỏng lợi nhuận sau phí sàn.'}
@@ -2801,6 +2816,12 @@ export default function App() {
                 onUpdateSupplier={handleUpdateSupplier}
                 onDeleteSupplier={handleDeleteSupplier}
               />
+            </ErrorBoundary>
+          )}
+
+          {activeTab === 'vip-customers' && (
+            <ErrorBoundary label="Khách hàng VIP">
+              <VipCustomersPage authHeaders={apiAuthHeaders} />
             </ErrorBoundary>
           )}
 

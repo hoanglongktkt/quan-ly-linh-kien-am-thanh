@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Loader2,
@@ -11,6 +11,7 @@ import { Order, Product, SyncLog } from '../types';
 import ImportProductSearchSelect, {
   ImportProductSearchSelectHandle,
 } from './ImportProductSearchSelect';
+import { AddressBookEntry, fetchAddressBook } from '../utils/addressBook';
 
 type PosLine = {
   productId: string;
@@ -47,6 +48,15 @@ function productImage(p: Product | PosLine): string {
   );
 }
 
+function entryDisplayAddress(entry: AddressBookEntry): string {
+  return (
+    entry.fullAddress ||
+    [entry.street, entry.wardName, entry.districtName, entry.provinceName]
+      .filter(Boolean)
+      .join(', ')
+  );
+}
+
 export default function QuickPosPage({
   products,
   orders,
@@ -57,6 +67,7 @@ export default function QuickPosPage({
   authHeaders,
 }: QuickPosPageProps) {
   const searchRef = useRef<ImportProductSearchSelectHandle>(null);
+  const phoneWrapRef = useRef<HTMLDivElement>(null);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerAddress, setCustomerAddress] = useState('');
@@ -68,6 +79,55 @@ export default function QuickPosPage({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastOrder, setLastOrder] = useState<Order | null>(null);
+  const [addressBook, setAddressBook] = useState<AddressBookEntry[]>([]);
+  const [phoneSuggestOpen, setPhoneSuggestOpen] = useState(false);
+  const [phoneQuery, setPhoneQuery] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchAddressBook(authHeaders).then((list) => {
+      if (!cancelled) setAddressBook(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [authHeaders]);
+
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (!phoneWrapRef.current?.contains(e.target as Node)) {
+        setPhoneSuggestOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  const phoneSuggestions = useMemo(() => {
+    const q = phoneQuery.trim().toLowerCase();
+    if (q.length < 1) return [];
+    const digits = q.replace(/\D/g, '');
+    const matched: AddressBookEntry[] = [];
+    for (let i = 0; i < addressBook.length && matched.length < 12; i += 1) {
+      const e = addressBook[i];
+      const nameHit = e.name.toLowerCase().includes(q);
+      const phoneHit = digits.length > 0 && e.phone.includes(digits);
+      if (nameHit || phoneHit) matched.push(e);
+    }
+    return matched;
+  }, [addressBook, phoneQuery]);
+
+  const pickAddressEntry = (entry: AddressBookEntry) => {
+    setCustomerName(entry.name || '');
+    setCustomerPhone(entry.phone || '');
+    setPhoneQuery(entry.phone || '');
+    const addr = entryDisplayAddress(entry);
+    if (addr) {
+      setCustomerAddress(addr);
+      setWalkIn(false);
+    }
+    setPhoneSuggestOpen(false);
+  };
 
   const subtotal = useMemo(
     () => lines.reduce((s, l) => s + l.sellingPrice * l.quantity, 0),
@@ -184,8 +244,9 @@ export default function QuickPosPage({
         message: `[POS] Tạo đơn nhanh ${order.orderSn} — trừ tồn ${data.stockDeducted ?? 0}`,
       });
 
+      void fetchAddressBook(authHeaders).then(setAddressBook);
+
       if (andPrint) {
-        // Đợi React render khối hóa đơn rồi in
         setTimeout(() => window.print(), 250);
       } else {
         setLines([]);
@@ -260,7 +321,6 @@ export default function QuickPosPage({
       </div>
 
       <div className="no-print grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Khách hàng */}
         <section className="lg:col-span-1 rounded-2xl border border-slate-200 bg-white p-4 space-y-3 shadow-sm">
           <h2 className="text-sm font-extrabold text-slate-800 flex items-center gap-2">
             <Store className="w-4 h-4 text-emerald-600" />
@@ -278,17 +338,62 @@ export default function QuickPosPage({
           <input
             type="text"
             value={customerName}
-            onChange={(e) => setCustomerName(e.target.value)}
+            onChange={(e) => {
+              setCustomerName(e.target.value);
+              setPhoneQuery(e.target.value);
+              setPhoneSuggestOpen(true);
+            }}
+            onFocus={() => {
+              setPhoneQuery(customerName || customerPhone);
+              setPhoneSuggestOpen(true);
+            }}
             placeholder="Tên khách (tuỳ chọn)"
             className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium"
+            autoComplete="off"
           />
-          <input
-            type="text"
-            value={customerPhone}
-            onChange={(e) => setCustomerPhone(e.target.value)}
-            placeholder="Số điện thoại"
-            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium"
-          />
+          <div className="relative" ref={phoneWrapRef}>
+            <input
+              type="text"
+              value={customerPhone}
+              onChange={(e) => {
+                const v = e.target.value;
+                setCustomerPhone(v);
+                setPhoneQuery(v);
+                setPhoneSuggestOpen(true);
+              }}
+              onFocus={() => {
+                setPhoneQuery(customerPhone || customerName);
+                setPhoneSuggestOpen(true);
+              }}
+              placeholder="Số điện thoại — gõ để tìm khách quen"
+              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium"
+              autoComplete="off"
+            />
+            {phoneSuggestOpen && phoneSuggestions.length > 0 && (
+              <ul className="absolute z-30 left-0 right-0 mt-1 max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg">
+                {phoneSuggestions.map((entry) => (
+                  <li key={entry.id}>
+                    <button
+                      type="button"
+                      className="w-full text-left px-3 py-2 hover:bg-emerald-50 cursor-pointer border-b border-slate-50 last:border-0"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => pickAddressEntry(entry)}
+                    >
+                      <div className="text-xs font-extrabold text-slate-800">
+                        {entry.name || 'Không tên'} · {entry.phone}
+                      </div>
+                      <div className="text-[10px] text-slate-500 font-medium truncate">
+                        {entryDisplayAddress(entry) || 'Chưa có địa chỉ'}
+                        {(entry.total_spent || 0) > 0
+                          ? ` · VIP ${formatVnd(entry.total_spent || 0)}₫`
+                          : ''}
+                      </div>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
           {!walkIn && (
             <textarea
               value={customerAddress}
@@ -307,7 +412,6 @@ export default function QuickPosPage({
           />
         </section>
 
-        {/* Sản phẩm + thanh toán */}
         <section className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-4 space-y-4 shadow-sm">
           <div>
             <h2 className="text-sm font-extrabold text-slate-800 mb-2">Sản phẩm</h2>
@@ -472,7 +576,6 @@ export default function QuickPosPage({
         </section>
       </div>
 
-      {/* Khối in hóa đơn — luôn có trong DOM để window.print() */}
       <div id="pos-invoice" className="rounded-2xl border border-dashed border-slate-200 bg-white p-6">
         <div className="text-center mb-4">
           <div className="text-lg font-black tracking-wide">HÓA ĐƠN / BÁO GIÁ</div>

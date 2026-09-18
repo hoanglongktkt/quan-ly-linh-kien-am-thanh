@@ -12,6 +12,9 @@ export type AddressBookEntry = {
   addressMode: 'new2' | 'old3';
   fullAddress: string;
   savedAt: string;
+  total_orders?: number;
+  total_spent?: number;
+  last_purchase_date?: string | null;
 };
 
 const STORAGE_KEY = 'omni_manual_address_book';
@@ -33,6 +36,9 @@ function mapApiEntry(raw: Record<string, unknown>): AddressBookEntry | null {
   const name = String(raw?.name || '').trim();
   if (!phone && !name) return null;
   const street = String(raw?.street || raw?.address || '').trim();
+  const lastPurchase = raw?.last_purchase_date
+    ? String(raw.last_purchase_date)
+    : null;
   return {
     id: String(raw?.id || raw?._id || `addr-${Date.now()}`),
     name,
@@ -47,6 +53,9 @@ function mapApiEntry(raw: Record<string, unknown>): AddressBookEntry | null {
     addressMode: raw?.addressMode === 'old3' ? 'old3' : 'new2',
     fullAddress: String(raw?.fullAddress || '').trim(),
     savedAt: String(raw?.savedAt || new Date().toISOString()),
+    total_orders: Math.max(0, Math.round(Number(raw?.total_orders) || 0)),
+    total_spent: Math.max(0, Math.round(Number(raw?.total_spent) || 0)),
+    last_purchase_date: lastPurchase,
   };
 }
 
@@ -108,6 +117,41 @@ export async function fetchAddressBook(
     return mapped.length ? mapped : loadAddressBook();
   } catch {
     return loadAddressBook();
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+export async function fetchAddressBookRanking(
+  authHeaders: () => Record<string, string>,
+  opts?: { month?: number | null; year?: number | null; limit?: number },
+): Promise<AddressBookEntry[]> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const params = new URLSearchParams();
+    if (opts?.month != null && opts.month >= 1 && opts.month <= 12) {
+      params.set('month', String(opts.month));
+    }
+    if (opts?.year != null && opts.year >= 2000) {
+      params.set('year', String(opts.year));
+    }
+    if (opts?.limit) params.set('limit', String(opts.limit));
+    const qs = params.toString();
+    const res = await fetch(`/api/address-book/ranking${qs ? `?${qs}` : ''}`, {
+      headers: authHeaders(),
+      signal: controller.signal,
+    });
+    const data = await res.json().catch(() => ({}));
+    const rawList = Array.isArray(data?.entries) ? data.entries : [];
+    const mapped: AddressBookEntry[] = [];
+    for (let i = 0; i < rawList.length && mapped.length < 500; i += 1) {
+      const row = mapApiEntry(rawList[i] as Record<string, unknown>);
+      if (row) mapped.push(row);
+    }
+    return mapped;
+  } catch {
+    return [];
   } finally {
     window.clearTimeout(timer);
   }

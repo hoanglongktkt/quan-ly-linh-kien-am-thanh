@@ -6,6 +6,7 @@ import AddressBook from "../models/AddressBook.js";
 
 const FILE_PATH = path.join(resolveAppRoot(), "data", "address_book.json");
 const MAX_ENTRIES = 200;
+const RANKING_MAX = 500;
 
 function readBook() {
   try {
@@ -28,9 +29,13 @@ function mongoReady() {
   return mongoose.connection?.readyState === 1;
 }
 
+function normalizePhone(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
 function normalizeEntry(entry) {
   const name = String(entry?.name || "").trim();
-  const phone = String(entry?.phone || "").replace(/\D/g, "");
+  const phone = normalizePhone(entry?.phone);
   const street = String(entry?.street || entry?.address || "").trim();
   const province = String(entry?.province || entry?.provinceName || "").trim();
   const provinceName = String(entry?.provinceName || entry?.province || "").trim();
@@ -71,10 +76,11 @@ function toPublicEntry(doc) {
   const o = doc && typeof doc.toObject === "function" ? doc.toObject() : doc || {};
   const id = String(o.id || o._id || "");
   const street = String(o.street || o.address || "").trim();
+  const lastPurchase = o.last_purchase_date ? new Date(o.last_purchase_date) : null;
   return {
     id,
     name: String(o.name || "").trim(),
-    phone: String(o.phone || "").replace(/\D/g, ""),
+    phone: normalizePhone(o.phone),
     street,
     address: street,
     province: String(o.province || o.provinceName || "").trim(),
@@ -89,7 +95,35 @@ function toPublicEntry(doc) {
     fullAddress: String(o.fullAddress || "").trim(),
     addressMode: o.addressMode === "old3" ? "old3" : "new2",
     savedAt: o.savedAt ? new Date(o.savedAt).toISOString() : new Date().toISOString(),
+    total_orders: Math.max(0, Math.round(Number(o.total_orders) || 0)),
+    total_spent: Math.max(0, Math.round(Number(o.total_spent) || 0)),
+    last_purchase_date: lastPurchase && !Number.isNaN(lastPurchase.getTime())
+      ? lastPurchase.toISOString()
+      : null,
   };
+}
+
+function matchesPurchasePeriod(entry, month, year) {
+  if (!year) return true;
+  const raw = entry?.last_purchase_date;
+  if (!raw) return false;
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return false;
+  if (d.getFullYear() !== year) return false;
+  if (month >= 1 && month <= 12 && d.getMonth() + 1 !== month) return false;
+  return true;
+}
+
+function buildPurchaseDateFilter(month, year) {
+  if (!year || !Number.isFinite(year)) return null;
+  if (month >= 1 && month <= 12) {
+    const start = new Date(year, month - 1, 1, 0, 0, 0, 0);
+    const end = new Date(year, month, 1, 0, 0, 0, 0);
+    return { $gte: start, $lt: end };
+  }
+  const start = new Date(year, 0, 1, 0, 0, 0, 0);
+  const end = new Date(year + 1, 0, 1, 0, 0, 0, 0);
+  return { $gte: start, $lt: end };
 }
 
 async function trimMongoBook() {
@@ -109,12 +143,15 @@ function saveToJsonFile(normalized) {
   const next = {
     id: `addr-${Date.now()}`,
     savedAt: new Date().toISOString(),
+    total_orders: 0,
+    total_spent: 0,
+    last_purchase_date: null,
     ...normalized,
   };
   const deduped = list.filter(
     (item) =>
       !(
-        String(item.phone || "").replace(/\D/g, "") === next.phone &&
+        normalizePhone(item.phone) === next.phone &&
         item.street === next.street &&
         String(item.wardCode || "") === next.wardCode
       ),
@@ -130,6 +167,44 @@ export async function listAddressBookEntries() {
     return rows.map(toPublicEntry);
   }
   return readBook().map(toPublicEntry);
+}
+
+/**
+ * VIP ranking — sort total_spent DESC, optional filter theo tháng/năm mua cuối.
+ */
+export async function listAddressBookRanking(options = {}) {
+  const year = options.year != null && options.year !== "" ? Number(options.year) : null;
+  const month = options.month != null && options.month !== "" ? Number(options.month) : null;
+  const limit = Math.min(
+    RANKING_MAX,
+    Math.max(1, Math.round(Number(options.limit) || RANKING_MAX)),
+  );
+  const y = Number.isFinite(year) && year >= 2000 && year <= 2100 ? year : null;
+  const m = Number.isFinite(month) && month >= 1 && month <= 12 ? month : null;
+
+  if (mongoReady()) {
+    const filter = {};
+    const dateRange = buildPurchaseDateFilter(m, y);
+    if (dateRange) {
+      filter.last_purchase_date = dateRange;
+    }
+    const rows = await AddressBook.find(filter)
+      .sort({ total_spent: -1, total_orders: -1, last_purchase_date: -1 })
+      .limit(limit)
+      .lean();
+    return rows.map(toPublicEntry);
+  }
+
+  const list = readBook()
+    .map(toPublicEntry)
+    .filter((row) => matchesPurchasePeriod(row, m, y))
+    .sort((a, b) => {
+      const spentDiff = (b.total_spent || 0) - (a.total_spent || 0);
+      if (spentDiff !== 0) return spentDiff;
+      return (b.total_orders || 0) - (a.total_orders || 0);
+    })
+    .slice(0, limit);
+  return list;
 }
 
 export async function saveAddressBookEntry(entry) {
@@ -153,6 +228,9 @@ export async function saveAddressBookEntry(entry) {
         },
         $setOnInsert: {
           id: `addr-${Date.now()}`,
+          total_orders: 0,
+          total_spent: 0,
+          last_purchase_date: null,
         },
       },
       { new: true, upsert: true },
@@ -162,4 +240,119 @@ export async function saveAddressBookEntry(entry) {
   }
 
   return saveToJsonFile(normalized);
+}
+
+/**
+ * UPSERT loyalty theo SĐT sau khi tạo đơn POS thành công.
+ * Có SĐT mới ghi sổ — bỏ qua khách không để số.
+ */
+export async function upsertLoyaltyFromPurchase({
+  name = "",
+  phone = "",
+  address = "",
+  fullAddress = "",
+  totalAmount = 0,
+} = {}) {
+  const phoneNorm = normalizePhone(phone);
+  if (!phoneNorm) return null;
+
+  const amount = Math.max(0, Math.round(Number(totalAmount) || 0));
+  const displayName = String(name || "").trim();
+  const street = String(address || fullAddress || "").trim();
+  const resolvedFull =
+    String(fullAddress || address || "").trim() || street;
+  const now = new Date();
+
+  if (mongoReady()) {
+    const existing = await AddressBook.findOne({ phone: phoneNorm })
+      .sort({ total_spent: -1, savedAt: -1 });
+
+    if (existing) {
+      existing.total_orders = Math.max(0, Math.round(Number(existing.total_orders) || 0)) + 1;
+      existing.total_spent = Math.max(0, Math.round(Number(existing.total_spent) || 0)) + amount;
+      existing.last_purchase_date = now;
+      existing.savedAt = now;
+      if (displayName) existing.name = displayName;
+      if (street && street !== "Mua tại cửa hàng") {
+        existing.street = street;
+        existing.address = street;
+        existing.fullAddress = resolvedFull;
+      }
+      await existing.save();
+      return toPublicEntry(existing);
+    }
+
+    const created = await AddressBook.create({
+      id: `addr-${Date.now()}`,
+      name: displayName || "Khách POS",
+      phone: phoneNorm,
+      street: street === "Mua tại cửa hàng" ? "" : street,
+      address: street === "Mua tại cửa hàng" ? "" : street,
+      fullAddress: resolvedFull === "Mua tại cửa hàng" ? "" : resolvedFull,
+      province: "",
+      provinceName: "",
+      provinceCode: "",
+      district: "",
+      districtName: "",
+      districtCode: "",
+      ward: "",
+      wardName: "",
+      wardCode: "",
+      addressMode: "new2",
+      savedAt: now,
+      total_orders: 1,
+      total_spent: amount,
+      last_purchase_date: now,
+    });
+    await trimMongoBook();
+    return toPublicEntry(created);
+  }
+
+  const list = readBook();
+  const idx = list.findIndex((item) => normalizePhone(item.phone) === phoneNorm);
+  if (idx >= 0) {
+    const cur = list[idx];
+    const updated = {
+      ...cur,
+      name: displayName || cur.name || "Khách POS",
+      phone: phoneNorm,
+      total_orders: Math.max(0, Math.round(Number(cur.total_orders) || 0)) + 1,
+      total_spent: Math.max(0, Math.round(Number(cur.total_spent) || 0)) + amount,
+      last_purchase_date: now.toISOString(),
+      savedAt: now.toISOString(),
+    };
+    if (street && street !== "Mua tại cửa hàng") {
+      updated.street = street;
+      updated.address = street;
+      updated.fullAddress = resolvedFull;
+    }
+    list[idx] = updated;
+    writeBook(list.slice(0, MAX_ENTRIES));
+    return toPublicEntry(updated);
+  }
+
+  const next = {
+    id: `addr-${Date.now()}`,
+    name: displayName || "Khách POS",
+    phone: phoneNorm,
+    street: street === "Mua tại cửa hàng" ? "" : street,
+    address: street === "Mua tại cửa hàng" ? "" : street,
+    fullAddress: resolvedFull === "Mua tại cửa hàng" ? "" : resolvedFull,
+    province: "",
+    provinceName: "",
+    provinceCode: "",
+    district: "",
+    districtName: "",
+    districtCode: "",
+    ward: "",
+    wardName: "",
+    wardCode: "",
+    addressMode: "new2",
+    savedAt: now.toISOString(),
+    total_orders: 1,
+    total_spent: amount,
+    last_purchase_date: now.toISOString(),
+  };
+  writeBook([next, ...list].slice(0, MAX_ENTRIES));
+  return toPublicEntry(next);
 }

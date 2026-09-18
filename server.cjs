@@ -86011,7 +86011,11 @@ var AddressBookSchema = new import_mongoose4.default.Schema(
     wardCode: { type: String, default: "", trim: true },
     fullAddress: { type: String, default: "", trim: true },
     addressMode: { type: String, default: "new2", trim: true },
-    savedAt: { type: Date, default: Date.now }
+    savedAt: { type: Date, default: Date.now },
+    /** Loyalty — tích lũy từ Mini POS (và có thể mở rộng sau). */
+    total_orders: { type: Number, default: 0, min: 0 },
+    total_spent: { type: Number, default: 0, min: 0 },
+    last_purchase_date: { type: Date, default: null }
   },
   {
     collection: "address_book",
@@ -86021,12 +86025,15 @@ var AddressBookSchema = new import_mongoose4.default.Schema(
 );
 AddressBookSchema.index({ phone: 1, street: 1, wardCode: 1 }, { name: "address_book_dedup" });
 AddressBookSchema.index({ savedAt: -1 }, { name: "address_book_savedAt" });
+AddressBookSchema.index({ total_spent: -1 }, { name: "address_book_total_spent" });
+AddressBookSchema.index({ last_purchase_date: -1 }, { name: "address_book_last_purchase" });
 var AddressBook = import_mongoose4.default.models.AddressBook || import_mongoose4.default.model("AddressBook", AddressBookSchema);
 var AddressBook_default = AddressBook;
 
 // services/addressBook.js
 var FILE_PATH = import_path9.default.join(resolveAppRoot(), "data", "address_book.json");
 var MAX_ENTRIES = 200;
+var RANKING_MAX = 500;
 function readBook() {
   try {
     if (!import_fs9.default.existsSync(FILE_PATH)) return [];
@@ -86045,9 +86052,12 @@ function writeBook(list) {
 function mongoReady2() {
   return import_mongoose5.default.connection?.readyState === 1;
 }
+function normalizePhone(value) {
+  return String(value || "").replace(/\D/g, "");
+}
 function normalizeEntry(entry) {
   const name = String(entry?.name || "").trim();
-  const phone = String(entry?.phone || "").replace(/\D/g, "");
+  const phone = normalizePhone(entry?.phone);
   const street = String(entry?.street || entry?.address || "").trim();
   const province = String(entry?.province || entry?.provinceName || "").trim();
   const provinceName = String(entry?.provinceName || entry?.province || "").trim();
@@ -86084,10 +86094,11 @@ function toPublicEntry(doc) {
   const o = doc && typeof doc.toObject === "function" ? doc.toObject() : doc || {};
   const id = String(o.id || o._id || "");
   const street = String(o.street || o.address || "").trim();
+  const lastPurchase = o.last_purchase_date ? new Date(o.last_purchase_date) : null;
   return {
     id,
     name: String(o.name || "").trim(),
-    phone: String(o.phone || "").replace(/\D/g, ""),
+    phone: normalizePhone(o.phone),
     street,
     address: street,
     province: String(o.province || o.provinceName || "").trim(),
@@ -86101,8 +86112,32 @@ function toPublicEntry(doc) {
     wardCode: String(o.wardCode || "").trim(),
     fullAddress: String(o.fullAddress || "").trim(),
     addressMode: o.addressMode === "old3" ? "old3" : "new2",
-    savedAt: o.savedAt ? new Date(o.savedAt).toISOString() : (/* @__PURE__ */ new Date()).toISOString()
+    savedAt: o.savedAt ? new Date(o.savedAt).toISOString() : (/* @__PURE__ */ new Date()).toISOString(),
+    total_orders: Math.max(0, Math.round(Number(o.total_orders) || 0)),
+    total_spent: Math.max(0, Math.round(Number(o.total_spent) || 0)),
+    last_purchase_date: lastPurchase && !Number.isNaN(lastPurchase.getTime()) ? lastPurchase.toISOString() : null
   };
+}
+function matchesPurchasePeriod(entry, month, year) {
+  if (!year) return true;
+  const raw = entry?.last_purchase_date;
+  if (!raw) return false;
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return false;
+  if (d.getFullYear() !== year) return false;
+  if (month >= 1 && month <= 12 && d.getMonth() + 1 !== month) return false;
+  return true;
+}
+function buildPurchaseDateFilter(month, year) {
+  if (!year || !Number.isFinite(year)) return null;
+  if (month >= 1 && month <= 12) {
+    const start2 = new Date(year, month - 1, 1, 0, 0, 0, 0);
+    const end2 = new Date(year, month, 1, 0, 0, 0, 0);
+    return { $gte: start2, $lt: end2 };
+  }
+  const start = new Date(year, 0, 1, 0, 0, 0, 0);
+  const end = new Date(year + 1, 0, 1, 0, 0, 0, 0);
+  return { $gte: start, $lt: end };
 }
 async function trimMongoBook() {
   const extra = await AddressBook_default.find({}).sort({ savedAt: -1 }).skip(MAX_ENTRIES).select("_id").limit(80).lean();
@@ -86115,10 +86150,13 @@ function saveToJsonFile(normalized) {
   const next = {
     id: `addr-${Date.now()}`,
     savedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    total_orders: 0,
+    total_spent: 0,
+    last_purchase_date: null,
     ...normalized
   };
   const deduped = list.filter(
-    (item) => !(String(item.phone || "").replace(/\D/g, "") === next.phone && item.street === next.street && String(item.wardCode || "") === next.wardCode)
+    (item) => !(normalizePhone(item.phone) === next.phone && item.street === next.street && String(item.wardCode || "") === next.wardCode)
   );
   const merged = [next, ...deduped].slice(0, MAX_ENTRIES);
   writeBook(merged);
@@ -86130,6 +86168,31 @@ async function listAddressBookEntries() {
     return rows.map(toPublicEntry);
   }
   return readBook().map(toPublicEntry);
+}
+async function listAddressBookRanking(options = {}) {
+  const year = options.year != null && options.year !== "" ? Number(options.year) : null;
+  const month = options.month != null && options.month !== "" ? Number(options.month) : null;
+  const limit = Math.min(
+    RANKING_MAX,
+    Math.max(1, Math.round(Number(options.limit) || RANKING_MAX))
+  );
+  const y = Number.isFinite(year) && year >= 2e3 && year <= 2100 ? year : null;
+  const m2 = Number.isFinite(month) && month >= 1 && month <= 12 ? month : null;
+  if (mongoReady2()) {
+    const filter2 = {};
+    const dateRange = buildPurchaseDateFilter(m2, y);
+    if (dateRange) {
+      filter2.last_purchase_date = dateRange;
+    }
+    const rows = await AddressBook_default.find(filter2).sort({ total_spent: -1, total_orders: -1, last_purchase_date: -1 }).limit(limit).lean();
+    return rows.map(toPublicEntry);
+  }
+  const list = readBook().map(toPublicEntry).filter((row) => matchesPurchasePeriod(row, m2, y)).sort((a, b) => {
+    const spentDiff = (b.total_spent || 0) - (a.total_spent || 0);
+    if (spentDiff !== 0) return spentDiff;
+    return (b.total_orders || 0) - (a.total_orders || 0);
+  }).slice(0, limit);
+  return list;
 }
 async function saveAddressBookEntry(entry) {
   const normalized = normalizeEntry(entry);
@@ -86150,7 +86213,10 @@ async function saveAddressBookEntry(entry) {
           savedAt: /* @__PURE__ */ new Date()
         },
         $setOnInsert: {
-          id: `addr-${Date.now()}`
+          id: `addr-${Date.now()}`,
+          total_orders: 0,
+          total_spent: 0,
+          last_purchase_date: null
         }
       },
       { new: true, upsert: true }
@@ -86159,6 +86225,108 @@ async function saveAddressBookEntry(entry) {
     return toPublicEntry(saved);
   }
   return saveToJsonFile(normalized);
+}
+async function upsertLoyaltyFromPurchase({
+  name = "",
+  phone = "",
+  address = "",
+  fullAddress = "",
+  totalAmount = 0
+} = {}) {
+  const phoneNorm = normalizePhone(phone);
+  if (!phoneNorm) return null;
+  const amount = Math.max(0, Math.round(Number(totalAmount) || 0));
+  const displayName = String(name || "").trim();
+  const street = String(address || fullAddress || "").trim();
+  const resolvedFull = String(fullAddress || address || "").trim() || street;
+  const now = /* @__PURE__ */ new Date();
+  if (mongoReady2()) {
+    const existing = await AddressBook_default.findOne({ phone: phoneNorm }).sort({ total_spent: -1, savedAt: -1 });
+    if (existing) {
+      existing.total_orders = Math.max(0, Math.round(Number(existing.total_orders) || 0)) + 1;
+      existing.total_spent = Math.max(0, Math.round(Number(existing.total_spent) || 0)) + amount;
+      existing.last_purchase_date = now;
+      existing.savedAt = now;
+      if (displayName) existing.name = displayName;
+      if (street && street !== "Mua t\u1EA1i c\u1EEDa h\xE0ng") {
+        existing.street = street;
+        existing.address = street;
+        existing.fullAddress = resolvedFull;
+      }
+      await existing.save();
+      return toPublicEntry(existing);
+    }
+    const created = await AddressBook_default.create({
+      id: `addr-${Date.now()}`,
+      name: displayName || "Kh\xE1ch POS",
+      phone: phoneNorm,
+      street: street === "Mua t\u1EA1i c\u1EEDa h\xE0ng" ? "" : street,
+      address: street === "Mua t\u1EA1i c\u1EEDa h\xE0ng" ? "" : street,
+      fullAddress: resolvedFull === "Mua t\u1EA1i c\u1EEDa h\xE0ng" ? "" : resolvedFull,
+      province: "",
+      provinceName: "",
+      provinceCode: "",
+      district: "",
+      districtName: "",
+      districtCode: "",
+      ward: "",
+      wardName: "",
+      wardCode: "",
+      addressMode: "new2",
+      savedAt: now,
+      total_orders: 1,
+      total_spent: amount,
+      last_purchase_date: now
+    });
+    await trimMongoBook();
+    return toPublicEntry(created);
+  }
+  const list = readBook();
+  const idx = list.findIndex((item) => normalizePhone(item.phone) === phoneNorm);
+  if (idx >= 0) {
+    const cur = list[idx];
+    const updated = {
+      ...cur,
+      name: displayName || cur.name || "Kh\xE1ch POS",
+      phone: phoneNorm,
+      total_orders: Math.max(0, Math.round(Number(cur.total_orders) || 0)) + 1,
+      total_spent: Math.max(0, Math.round(Number(cur.total_spent) || 0)) + amount,
+      last_purchase_date: now.toISOString(),
+      savedAt: now.toISOString()
+    };
+    if (street && street !== "Mua t\u1EA1i c\u1EEDa h\xE0ng") {
+      updated.street = street;
+      updated.address = street;
+      updated.fullAddress = resolvedFull;
+    }
+    list[idx] = updated;
+    writeBook(list.slice(0, MAX_ENTRIES));
+    return toPublicEntry(updated);
+  }
+  const next = {
+    id: `addr-${Date.now()}`,
+    name: displayName || "Kh\xE1ch POS",
+    phone: phoneNorm,
+    street: street === "Mua t\u1EA1i c\u1EEDa h\xE0ng" ? "" : street,
+    address: street === "Mua t\u1EA1i c\u1EEDa h\xE0ng" ? "" : street,
+    fullAddress: resolvedFull === "Mua t\u1EA1i c\u1EEDa h\xE0ng" ? "" : resolvedFull,
+    province: "",
+    provinceName: "",
+    provinceCode: "",
+    district: "",
+    districtName: "",
+    districtCode: "",
+    ward: "",
+    wardName: "",
+    wardCode: "",
+    addressMode: "new2",
+    savedAt: now.toISOString(),
+    total_orders: 1,
+    total_spent: amount,
+    last_purchase_date: now.toISOString()
+  };
+  writeBook([next, ...list].slice(0, MAX_ENTRIES));
+  return toPublicEntry(next);
 }
 
 // controllers/addressBookController.js
@@ -86171,6 +86339,29 @@ async function listAddressBook(_req, res) {
     return res.status(500).json({
       success: false,
       error: error?.message || "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c s\u1ED5 \u0111\u1ECBa ch\u1EC9",
+      entries: []
+    });
+  }
+}
+async function rankingAddressBook(req, res) {
+  try {
+    const month = req.query?.month;
+    const year = req.query?.year;
+    const limit = req.query?.limit;
+    const entries = await listAddressBookRanking({ month, year, limit });
+    return res.json({
+      success: true,
+      entries,
+      filter: {
+        month: month != null && month !== "" ? Number(month) : null,
+        year: year != null && year !== "" ? Number(year) : null
+      }
+    });
+  } catch (error) {
+    console.error("[AddressBook ranking]", error);
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c x\u1EBFp h\u1EA1ng VIP",
       entries: []
     });
   }
@@ -86200,6 +86391,7 @@ async function createAddressBookEntry(req, res) {
 // routes/addressBookRoutes.js
 var router7 = (0, import_express8.Router)();
 var h = asyncHandler;
+router7.get("/ranking", h(rankingAddressBook));
 router7.get("/", h(listAddressBook));
 router7.post("/", h(createAddressBookEntry));
 var addressBookRoutes_default = router7;
@@ -124200,11 +124392,24 @@ async function createPosOrder(req, res) {
       carrier_error: null
     };
     await persistExternalOrder(newOrder);
+    let loyaltyEntry = null;
+    try {
+      loyaltyEntry = await upsertLoyaltyFromPurchase({
+        name,
+        phone,
+        address: isWalkIn ? "" : address,
+        fullAddress: isWalkIn ? "" : address,
+        totalAmount
+      });
+    } catch (loyaltyErr) {
+      console.warn("[Orders POS] address book loyalty:", loyaltyErr?.message || loyaltyErr);
+    }
     return res.json({
       success: true,
       order: newOrder,
       stockDeducted: stockResult.deducted,
-      amountDue
+      amountDue,
+      addressBookUpdated: Boolean(loyaltyEntry)
     });
   } catch (error) {
     console.error("[Orders POS]", error);
@@ -126939,7 +127144,7 @@ function extractJsonObject(text) {
   if (!match2) throw new Error("GEMINI_INVALID_JSON");
   return JSON.parse(match2[0]);
 }
-function normalizePhone(raw) {
+function normalizePhone2(raw) {
   const digits = String(raw || "").replace(/\D/g, "");
   if (!digits) return "";
   if (digits.startsWith("840") && digits.length >= 12) return digits.slice(2);
@@ -126951,7 +127156,7 @@ function normalizeParsed(raw, fallbackDetail) {
   const ward = String(raw.ward || "").trim();
   const detail = String(raw.detail || raw.street || "").trim() || fallbackDetail;
   const name = String(raw.name || raw.customerName || "").trim();
-  const phone = normalizePhone(raw.phone || raw.tel || raw.mobile);
+  const phone = normalizePhone2(raw.phone || raw.tel || raw.mobile);
   return { name, phone, province, district, ward, detail };
 }
 function isModelUnavailable(err) {
