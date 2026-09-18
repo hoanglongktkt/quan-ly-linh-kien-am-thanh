@@ -3232,14 +3232,7 @@ export async function createPosOrder(req, res) {
     const orderSn = `POS-${Date.now().toString(36).toUpperCase()}`;
     const orderId = `pos-${orderSn}`;
 
-    // Mọi lỗi trừ tồn phải đi qua catch ngoài cùng của endpoint. Không để
-    // rejected Promise thoát khỏi request handler và làm Passenger trả 502.
-    console.log(`POS Step 2: load and deduct stock trace=${traceId}`);
-    const stockResult = await deductStockForPosOrder(lineItems);
-    console.log(
-      `POS Step 3: stock persisted trace=${traceId} deducted=${stockResult.deducted} elapsed=${Date.now() - startedAt}ms`,
-    );
-
+    // Lưu đơn TRƯỚC — không để trừ tồn chậm/timeout làm fail cả request (Lưu & In).
     const newOrder = {
       id: orderId,
       _id: orderId,
@@ -3291,35 +3284,60 @@ export async function createPosOrder(req, res) {
       isPrepared: true,
       isPrinted: false,
       items: lineItems,
-      stock_deducted: true,
-      stock_deducted_at: nowIso,
-      stock_deducted_qty: stockResult.deducted,
+      stock_deducted: false,
+      stock_deducted_at: null,
+      stock_deducted_qty: 0,
       carrier_error: null,
     };
 
-    console.log(`POS Step 4: persist order trace=${traceId}`);
+    console.log(`POS Step 2: persist order FIRST trace=${traceId}`);
     await insertPosOrderToStore(newOrder);
     try {
       invalidateTabCountCache();
     } catch {
       /* cache optional */
     }
-    console.log(`POS Step 5: order persisted trace=${traceId} elapsed=${Date.now() - startedAt}ms`);
+    console.log(`POS Step 3: order persisted trace=${traceId} elapsed=${Date.now() - startedAt}ms`);
 
-    // Trả 200 NGAY sau khi lưu đơn — tuyệt đối không để bước VIP/sổ địa chỉ
-    // làm crash/ngắt response (FE báo mất kết nối dù đơn đã tồn tại).
+    // Trả 200 NGAY — trừ tồn + VIP chạy sau response để Lưu & In không bị timeout DB.
     if (!res.headersSent) {
       res.status(200).json({
         success: true,
         order: newOrder,
-        stockDeducted: stockResult.deducted,
+        stockDeducted: 0,
         amountDue,
         addressBookUpdated: Boolean(phone),
+        stockPending: true,
       });
-      console.log(`POS Step 6: response 200 trace=${traceId} elapsed=${Date.now() - startedAt}ms`);
+      console.log(`POS Step 4: response 200 trace=${traceId} elapsed=${Date.now() - startedAt}ms`);
     }
 
-    // Post-response: cộng dồn VIP — lỗi chỉ log, không ảnh hưởng client.
+    // Post-response: trừ tồn kho — lỗi chỉ log, không làm hỏng response đã gửi.
+    try {
+      console.log(`POS Step 5: deduct stock (post-response) trace=${traceId}`);
+      const stockResult = await deductStockForPosOrder(lineItems);
+      newOrder.stock_deducted = true;
+      newOrder.stock_deducted_at = new Date().toISOString();
+      newOrder.stock_deducted_qty = stockResult.deducted;
+      try {
+        await insertPosOrderToStore(newOrder);
+      } catch (flagErr) {
+        console.warn(
+          `POS Step 5b: stock flags update skipped trace=${traceId}`,
+          flagErr?.message || flagErr,
+        );
+      }
+      console.log(
+        `POS Step 6: stock ok trace=${traceId} deducted=${stockResult.deducted} elapsed=${Date.now() - startedAt}ms`,
+      );
+    } catch (stockErr) {
+      console.error(
+        `POS Step 6: stock FAILED (order already saved) trace=${traceId}`,
+        stockErr?.message || stockErr,
+      );
+    }
+
+    // Post-response: cộng dồn VIP — lỗi chỉ log.
     try {
       await upsertLoyaltyFromPurchase({
         name,

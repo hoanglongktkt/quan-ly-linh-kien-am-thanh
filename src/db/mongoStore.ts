@@ -1912,6 +1912,7 @@ export async function upsertPosProductsToStoreAsync(products: any[]): Promise<nu
   requireMongo();
   const docs = toProductDocs(Array.isArray(products) ? products : []);
   if (docs.length === 0) return 0;
+  // Atlas/cPanel thường 3–12s lúc tải cao — 4s gây false fail (Lưu OK / Lưu&In fail).
   await withWriteTimeout(
     ProductModel.bulkWrite(
       docs.map((doc) => ({
@@ -1924,7 +1925,7 @@ export async function upsertPosProductsToStoreAsync(products: any[]): Promise<nu
       { ordered: false },
     ),
     "pos_products_bulk_write",
-    4_000,
+    25_000,
   );
   return docs.length;
 }
@@ -2194,6 +2195,7 @@ export async function insertPosOrderToStore(order: any): Promise<void> {
   }
   const safeOrder = stringifyShopeeIdsDeep({ ...order, id, _id: id, orderSn });
   const createdAt = coerceShopeeWatermarkDate(order.create_time || order.date) || new Date();
+  // Timeout 25s — khớp latency Mongo thực tế (trước đây 4s → pos_order_update_timeout_4000ms).
   const result = await withWriteTimeout(
     OrderModel.updateOne(
       { _id: id },
@@ -2218,7 +2220,7 @@ export async function insertPosOrderToStore(order: any): Promise<void> {
       { upsert: true, runValidators: false, setDefaultsOnInsert: false },
     ),
     "pos_order_update",
-    4_000,
+    25_000,
   );
   if (!result.acknowledged) {
     throw new Error("pos_order_write_not_acknowledged");

@@ -64,6 +64,7 @@ const LONG_RUNNING_PREFIXES = [
   'trigger-fix-stuck-orders',
   'orders/lookup',
   'orders/cleanup-closed-retention',
+  'orders/pos',
 ];
 
 const RETRYABLE_ERROR_CODES = new Set([

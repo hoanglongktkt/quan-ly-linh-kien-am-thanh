@@ -312,14 +312,26 @@ export default function QuickPosPage({
         });
 
       // Chỉ in sau khi server xác nhận HTTP 200 + success=true + order hợp lệ.
+      // Chờ React paint #pos-invoice với lastOrder rồi mới print — tránh in hóa đơn trống.
       if (andPrint) {
-        window.setTimeout(() => window.print(), 250);
-      } else {
-        setLines([]);
-        setPrepaidAmount(0);
-        setShippingFee(0);
-        setNote('');
+        await new Promise<void>((resolve) => {
+          window.requestAnimationFrame(() => {
+            window.setTimeout(() => {
+              try {
+                window.print();
+              } catch (printErr) {
+                console.error('[Quick POS] window.print failed:', printErr);
+                window.alert('Đơn đã lưu thành công nhưng không mở được hộp thoại in. Hãy dùng Ctrl+P.');
+              }
+              resolve();
+            }, 400);
+          });
+        });
       }
+      setLines([]);
+      setPrepaidAmount(0);
+      setShippingFee(0);
+      setNote('');
     } catch (err: any) {
       const message = err?.message || 'Tạo đơn nhanh thất bại';
       console.error('[Quick POS] Lưu đơn thất bại:', err);

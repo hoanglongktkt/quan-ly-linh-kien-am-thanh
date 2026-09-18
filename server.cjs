@@ -78845,7 +78845,7 @@ async function upsertPosProductsToStoreAsync(products) {
       { ordered: false }
     ),
     "pos_products_bulk_write",
-    4e3
+    25e3
   );
   return docs.length;
 }
@@ -79072,7 +79072,7 @@ async function insertPosOrderToStore(order) {
       { upsert: true, runValidators: false, setDefaultsOnInsert: false }
     ),
     "pos_order_update",
-    4e3
+    25e3
   );
   if (!result.acknowledged) {
     throw new Error("pos_order_write_not_acknowledged");
@@ -124527,11 +124527,6 @@ async function createPosOrder(req, res) {
     const nowIso = (/* @__PURE__ */ new Date()).toISOString();
     const orderSn = `POS-${Date.now().toString(36).toUpperCase()}`;
     const orderId = `pos-${orderSn}`;
-    console.log(`POS Step 2: load and deduct stock trace=${traceId}`);
-    const stockResult = await deductStockForPosOrder(lineItems);
-    console.log(
-      `POS Step 3: stock persisted trace=${traceId} deducted=${stockResult.deducted} elapsed=${Date.now() - startedAt}ms`
-    );
     const newOrder = {
       id: orderId,
       _id: orderId,
@@ -124581,27 +124576,51 @@ async function createPosOrder(req, res) {
       isPrepared: true,
       isPrinted: false,
       items: lineItems,
-      stock_deducted: true,
-      stock_deducted_at: nowIso,
-      stock_deducted_qty: stockResult.deducted,
+      stock_deducted: false,
+      stock_deducted_at: null,
+      stock_deducted_qty: 0,
       carrier_error: null
     };
-    console.log(`POS Step 4: persist order trace=${traceId}`);
+    console.log(`POS Step 2: persist order FIRST trace=${traceId}`);
     await insertPosOrderToStore(newOrder);
     try {
       invalidateTabCountCache();
     } catch {
     }
-    console.log(`POS Step 5: order persisted trace=${traceId} elapsed=${Date.now() - startedAt}ms`);
+    console.log(`POS Step 3: order persisted trace=${traceId} elapsed=${Date.now() - startedAt}ms`);
     if (!res.headersSent) {
       res.status(200).json({
         success: true,
         order: newOrder,
-        stockDeducted: stockResult.deducted,
+        stockDeducted: 0,
         amountDue,
-        addressBookUpdated: Boolean(phone)
+        addressBookUpdated: Boolean(phone),
+        stockPending: true
       });
-      console.log(`POS Step 6: response 200 trace=${traceId} elapsed=${Date.now() - startedAt}ms`);
+      console.log(`POS Step 4: response 200 trace=${traceId} elapsed=${Date.now() - startedAt}ms`);
+    }
+    try {
+      console.log(`POS Step 5: deduct stock (post-response) trace=${traceId}`);
+      const stockResult = await deductStockForPosOrder(lineItems);
+      newOrder.stock_deducted = true;
+      newOrder.stock_deducted_at = (/* @__PURE__ */ new Date()).toISOString();
+      newOrder.stock_deducted_qty = stockResult.deducted;
+      try {
+        await insertPosOrderToStore(newOrder);
+      } catch (flagErr) {
+        console.warn(
+          `POS Step 5b: stock flags update skipped trace=${traceId}`,
+          flagErr?.message || flagErr
+        );
+      }
+      console.log(
+        `POS Step 6: stock ok trace=${traceId} deducted=${stockResult.deducted} elapsed=${Date.now() - startedAt}ms`
+      );
+    } catch (stockErr) {
+      console.error(
+        `POS Step 6: stock FAILED (order already saved) trace=${traceId}`,
+        stockErr?.message || stockErr
+      );
     }
     try {
       await upsertLoyaltyFromPurchase({
