@@ -470,6 +470,9 @@ export default function App() {
    * kịp chạy xong (silent fetch không set ordersLoading nên trước đây dễ lộ
    * trạng thái rỗng giả trong lúc chờ token verify + bootstrap chạy). */
   const [hasLoadedOrdersOnce, setHasLoadedOrdersOnce] = useState<boolean>(false);
+  /** Waterfall P3: products/suppliers/... chỉ boot 1 lần sau list+counter (tab orders) hoặc ngay (tab khác). */
+  const secondaryBootDoneRef = useRef(false);
+  const [ordersNetworkBootReady, setOrdersNetworkBootReady] = useState(false);
   const [productsLoading, setProductsLoading] = useState<boolean>(false);
   /** Toast kết quả dò ngầm Backend (sống sót khi rời tab Đơn hàng). */
   const [scanBgToast, setScanBgToast] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
@@ -2101,12 +2104,14 @@ export default function App() {
 
   useEffect(() => {
     if (!isAuthenticated) return;
+    let cancelled = false;
 
     const bootstrapCatalog = async () => {
       purgeLegacyCatalogCache();
 
       // IndexedDB chỉ hydrate ref (scanner fallback) — KHÔNG đổ mixed cache vào list tab cụ thể.
       const cached = await loadOrdersCache();
+      if (cancelled) return;
       ordersHydrateRef.current = cached;
       if (cached.length > 0 && activeTabRef.current !== 'orders') {
         setOrders(cached);
@@ -2116,64 +2121,72 @@ export default function App() {
       if (activeTabRef.current !== 'orders') {
         void fetchOrders({ silent: true, limit: 50, page: 1, merge: false });
       }
-
-      // F5: ưu tiên localStorage; chỉ gọi server khi chưa có cache.
-      void fetchProducts({ page: 1, append: false, pageSize: 50, forceRefresh: false });
-
-      // Giãn các request phụ (không cần cho paint đầu tiên) ~1.2s để nhường băng thông
-      // HTTP/1.1 (giới hạn 6 kết nối đồng thời/origin trên cPanel) cho list đơn hàng +
-      // /api/orders/counter — tránh nghẽn cổ khiến badge số lượng "đứng hình" lúc F5.
-      // Mỗi trang đích (Nhà cung cấp / Nhập hàng / Chi phí...) vẫn tự fetch lại khi mở tab
-      // tương ứng (xem effect [activeTab, isAuthenticated] bên dưới) nên delay ở đây an toàn.
-      window.setTimeout(() => {
-        fetchSuppliers();
-        fetchImports();
-        fetchExpenses();
-        fetchChannelSettings();
-        void syncShopeeOAuthShopIds();
-      }, 1200);
-    };
-
-    const syncShopeeOAuthShopIds = async () => {
-      const token = localStorage.getItem('admin_token');
-      if (!token) return;
-      try {
-        const res = await fetch('/api/shopee/oauth-shops', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        const shopIds: string[] = Array.isArray(data.shopIds) ? data.shopIds.map(String) : [];
-        if (!shopIds.length) return;
-
-        setSettings((prev) => {
-          const shops = [...(prev.shops || [])];
-          const shopeeShops = shops.filter((s) => s.platform === 'shopee');
-          const unmatchedTokens = shopIds.filter(
-            (id) => !shopeeShops.some((s) => String(s.shopId) === id),
-          );
-          // KHÔNG remap shopId 1↔1 (tránh ghi đè AuDIO 831052930 → shop khác).
-          // Chỉ THÊM shop OAuth còn thiếu vào danh sách kết nối.
-          if (unmatchedTokens.length === 0) return prev;
-          const now = new Date().toISOString();
-          const additions = unmatchedTokens.map((id) => ({
-            id: `shop-shopee-${id}`,
-            platform: 'shopee' as const,
-            shopId: id,
-            shopName: id === '831052930' ? 'AuDIO' : `Shopee ${id}`,
-            apiKey: 'oauth',
-            connected: true,
-            lastSynced: now,
-          }));
-          return { ...prev, shops: [...shops, ...additions] };
-        });
-      } catch {
-        /* ignore */
-      }
     };
 
     void bootstrapCatalog();
+    return () => {
+      cancelled = true;
+    };
   }, [isAuthenticated]);
+
+  /** Waterfall P3: products + tab phụ — sau refresh+counter (F5 tab orders) hoặc ngay nếu không ở Đơn hàng. */
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (secondaryBootDoneRef.current) return;
+    if (activeTab === 'orders' && !ordersNetworkBootReady) return;
+
+    let cancelled = false;
+    secondaryBootDoneRef.current = true;
+    void fetchProducts({ page: 1, append: false, pageSize: 50, forceRefresh: false });
+
+    const secondaryTimer = window.setTimeout(() => {
+      if (cancelled) return;
+      const syncShopeeOAuthShopIds = async () => {
+        const token = localStorage.getItem('admin_token');
+        if (!token) return;
+        try {
+          const res = await fetch('/api/shopee/oauth-shops', {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!res.ok) return;
+          const data = await res.json();
+          const shopIds: string[] = Array.isArray(data.shopIds) ? data.shopIds.map(String) : [];
+          if (!shopIds.length) return;
+          setSettings((prev) => {
+            const shops = [...(prev.shops || [])];
+            const shopeeShops = shops.filter((s) => s.platform === 'shopee');
+            const unmatchedTokens = shopIds.filter(
+              (id) => !shopeeShops.some((s) => String(s.shopId) === id),
+            );
+            if (unmatchedTokens.length === 0) return prev;
+            const now = new Date().toISOString();
+            const additions = unmatchedTokens.map((id) => ({
+              id: `shop-shopee-${id}`,
+              platform: 'shopee' as const,
+              shopId: id,
+              shopName: id === '831052930' ? 'AuDIO' : `Shopee ${id}`,
+              apiKey: 'oauth',
+              connected: true,
+              lastSynced: now,
+            }));
+            return { ...prev, shops: [...shops, ...additions] };
+          });
+        } catch {
+          /* ignore */
+        }
+      };
+      fetchSuppliers();
+      fetchImports();
+      fetchExpenses();
+      fetchChannelSettings();
+      void syncShopeeOAuthShopIds();
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(secondaryTimer);
+    };
+  }, [isAuthenticated, ordersNetworkBootReady, activeTab]);
 
   const handleAddImport = async (transaction: ImportTransaction) => {
     const token = localStorage.getItem('admin_token');
@@ -2709,6 +2722,9 @@ export default function App() {
               onOrdersSubTabChange={(tab) => {
                 setOrdersSubTabHint((prev) => (prev === tab ? prev : tab));
                 writeSessionTab('omni_orders_subtab', tab);
+              }}
+              onOrdersBootReady={() => {
+                setOrdersNetworkBootReady((prev) => (prev ? prev : true));
               }}
               onCloseScanner={() => {
                 // Chỉ đóng UI quét — giữ nguyên tab Quản lý đơn, không về trang chủ.

@@ -845,6 +845,8 @@ interface OrderManagerProps {
   initialOrdersSubTab?: OrderTab | null;
   /** Báo App khi user đổi sub-tab (để giữ hint/menu + URL đồng bộ) */
   onOrdersSubTabChange?: (tab: OrderTab) => void;
+  /** Waterfall F5: báo App sau khi refresh + counter boot xong — mới load products/tab phụ. */
+  onOrdersBootReady?: () => void;
 }
 
 const ORDERS_PAGE_SIZE = 50;
@@ -1109,6 +1111,7 @@ export default function OrderManager({
   onEndScanSession,
   initialOrdersSubTab = null,
   onOrdersSubTabChange,
+  onOrdersBootReady,
 }: OrderManagerProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const [activeSubTab, setActiveSubTab] = useState<OrderTab>(() => {
@@ -1160,6 +1163,19 @@ export default function OrderManager({
   const ordersFetchKey = [shopIdsKey, dateRangeKey, activeSubTab, listFetchKind].join('::');
   const shopsBootRef = useRef(false);
   const [shopsBootReady, setShopsBootReady] = useState(false);
+  /**
+   * Waterfall F5: list refresh xong → counter 1 lần → mới mở SSE + bắt đầu poll counter.
+   * Tránh poll/force counter song song với /refresh lúc cold-start.
+   */
+  const [counterBootReady, setCounterBootReady] = useState(false);
+  const counterBootReadyRef = useRef(false);
+  const listBootAbortRef = useRef<AbortController | null>(null);
+  const onOrdersBootReadyRef = useRef(onOrdersBootReady);
+  onOrdersBootReadyRef.current = onOrdersBootReady;
+  useEffect(() => {
+    if (!counterBootReady) return;
+    onOrdersBootReadyRef.current?.();
+  }, [counterBootReady]);
   useEffect(() => {
     if (shopsBootRef.current) return;
     const timer = window.setTimeout(() => {
@@ -1259,9 +1275,13 @@ export default function OrderManager({
     setTimeout(() => setToastMessage(null), durationMs);
   };
 
-  const fetchOrderCounts = useCallback(async (opts?: { force?: boolean }): Promise<Record<string, number> | null> => {
+  const fetchOrderCounts = useCallback(async (opts?: {
+    force?: boolean;
+    signal?: AbortSignal;
+  }): Promise<Record<string, number> | null> => {
     const token = localStorage.getItem('admin_token') || '';
     if (!token) return null;
+    if (opts?.signal?.aborted) return null;
     const shopIds = shopScopeRef.current.shopIds;
     const range = dateRangeRef.current;
     const flightKey = `${shopIds.join(',')}|${range.startDate}|${range.endDate}`;
@@ -1282,6 +1302,13 @@ export default function OrderManager({
     }
     lastCounterCallAtRef.current = now;
     const controller = new AbortController();
+    const onCallerAbort = () => controller.abort();
+    if (opts?.signal) {
+      if (opts.signal.aborted) {
+        return null;
+      }
+      opts.signal.addEventListener('abort', onCallerAbort, { once: true });
+    }
     counterAbortRef.current = controller;
     counterInFlightKeyRef.current = flightKey;
     const run = (async (): Promise<Record<string, number> | null> => {
@@ -1359,6 +1386,9 @@ export default function OrderManager({
           (typeof err === 'object' && err !== null && (err as { name?: string }).name === 'AbortError');
         if (!aborted) console.warn('[OrderCounts] fetch failed:', err);
       } finally {
+        if (opts?.signal) {
+          opts.signal.removeEventListener('abort', onCallerAbort);
+        }
         if (counterAbortRef.current === controller) counterAbortRef.current = null;
         if (counterInFlightKeyRef.current === flightKey) {
           counterInFlightPromiseRef.current = null;
@@ -1611,8 +1641,10 @@ export default function OrderManager({
     };
   }, []);
 
-  /** Polling counter — badge + toast + tự refetch list khi có đơn mới. */
+  /** Polling counter — badge + toast + tự refetch list khi có đơn mới.
+   *  Waterfall: chỉ chạy SAU khi boot counter (sau refresh) xong — không poll ngay lúc mount. */
   useEffect(() => {
+    if (!counterBootReady) return;
     let cancelled = false;
     let pausedForHidden = false;
     const schedule = (delay: number) => {
@@ -1663,7 +1695,8 @@ export default function OrderManager({
       }
     };
     document.addEventListener('visibilitychange', onVisible);
-    void poll();
+    // Boot vừa gọi counter xong — lịch poll kế tiếp, không bắn lại ngay (tránh trùng).
+    schedule(COUNTER_POLL_MS);
     return () => {
       cancelled = true;
       document.removeEventListener('visibilitychange', onVisible);
@@ -1674,13 +1707,15 @@ export default function OrderManager({
       }
       counterAbortRef.current?.abort();
     };
-  }, [fetchOrderCounts, maybeNotifyNewOrdersFromCounts]);
+  }, [counterBootReady, fetchOrderCounts, maybeNotifyNewOrdersFromCounts]);
 
   /**
    * SSE `new_order` + wake-up sau ngủ đông (mobile).
+   * Waterfall: mở SAU counter boot — tránh tranh connection với /refresh lúc F5.
    * Visible/focus/pageshow: luôn reconnect SSE + force catch-up list/counter (không sync Shopee).
    */
   useEffect(() => {
+    if (!counterBootReady) return;
     const token = localStorage.getItem('admin_token') || '';
     if (!token || typeof EventSource === 'undefined') return;
     const url = `/api/orders/live?token=${encodeURIComponent(token)}`;
@@ -1892,7 +1927,7 @@ export default function OrderManager({
       }
       closeSse();
     };
-  }, [scheduleNewOrderListRefresh, scheduleOrderUpdatedRefresh, fetchOrderCounts]);
+  }, [counterBootReady, scheduleNewOrderListRefresh, scheduleOrderUpdatedRefresh, fetchOrderCounts]);
 
   /** Tự unlock audio sau click/touch đầu tiên của user trên trang. */
   useEffect(() => {
@@ -2167,6 +2202,7 @@ export default function OrderManager({
 
   // Chỉ fetch khi tab / kind / shop IDs / dateRange thật sự đổi (chuỗi primitive).
   // Đang mở Quét mã: CẤM fetch list (tránh đè orders=[], abort Mongo, xung đột scanner-sync).
+  // Waterfall F5: refresh trước → rồi mới 1 lần counter (không force song song).
   useEffect(() => {
     if (!shopsBootReady) return;
     if (focusScanner) return;
@@ -2200,12 +2236,15 @@ export default function OrderManager({
           ? cancelReturnKindParam(cancelReturnTab)
           : undefined;
     const delay = datePreset === 'custom' ? 280 : 120;
-    // Chỉ clearTimeout khi đổi deps — KHÔNG abort HTTP (abort storm → CPU 100% cPanel).
+    listBootAbortRef.current?.abort();
+    const controller = new AbortController();
+    listBootAbortRef.current = controller;
+    // Chỉ clearTimeout khi đổi deps — KHÔNG abort HTTP refresh (abort storm → CPU 100% cPanel).
+    // AbortSignal chỉ chặn bước counter/apply sau nếu user đổi tab quá nhanh.
     const timer = window.setTimeout(() => {
       isListFetchingRef.current = true;
       setCurrentPage((p) => (p === 1 ? p : 1));
       console.log(`[Orders Tab] activeSubTab=${activeSubTab} kind=${listFetchKind || '(none)'} shops=${shopIdsKey || '(all)'} → fetch page=1`);
-      void fetchOrderCounts({ force: true });
       void Promise.resolve(
         onFetchOrdersRef.current?.({
           silent: false,
@@ -2215,6 +2254,7 @@ export default function OrderManager({
           tab: expectedTab,
           q: searchQuery.trim() || undefined,
           kind: expectedKind,
+          signal: controller.signal,
         }),
       )
         .catch((error: unknown) => {
@@ -2227,6 +2267,18 @@ export default function OrderManager({
           if (name === 'AbortError') return;
           console.warn('[Orders Tab] fetchOrders failed:', error);
         })
+        .then(async () => {
+          if (controller.signal.aborted) return;
+          // P1: 1 counter sau refresh (kể cả khi refresh lỗi) — không force abort lẫn nhau.
+          if (!counterBootReadyRef.current) {
+            if (serverOrderCountsRef.current == null) {
+              await fetchOrderCounts({ signal: controller.signal });
+            }
+            if (controller.signal.aborted) return;
+            counterBootReadyRef.current = true;
+            setCounterBootReady(true);
+          }
+        })
         .finally(() => {
           isListFetchingRef.current = false;
         });
@@ -2234,10 +2286,44 @@ export default function OrderManager({
 
     return () => {
       window.clearTimeout(timer);
+      controller.abort();
+      if (listBootAbortRef.current === controller) listBootAbortRef.current = null;
     };
     // Primitive key only — shopIds.join + dateRange + filters. CẤM object selectedShops.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ordersFetchKey, shopsBootReady, focusScanner]);
+  }, [ordersFetchKey, shopsBootReady, focusScanner, fetchOrderCounts]);
+
+  // Tab không thuộc list-fetch (vd: order_products): vẫn boot counter → SSE (không chờ refresh list).
+  useEffect(() => {
+    if (!shopsBootReady || counterBootReadyRef.current) return;
+    if (focusScanner) return;
+    const listFetchTabs = new Set([
+      'all',
+      'unprocessed',
+      'processed',
+      'pending_confirm',
+      'shipping',
+      'handed_over_carrier',
+      'return_requests',
+      'cancel_returns',
+      'received_cancel_returns',
+      'web_orders',
+      'external_orders',
+    ]);
+    if (listFetchTabs.has(activeSubTab)) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void fetchOrderCounts({ signal: controller.signal }).finally(() => {
+        if (controller.signal.aborted) return;
+        counterBootReadyRef.current = true;
+        setCounterBootReady(true);
+      });
+    }, 80);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [shopsBootReady, focusScanner, activeSubTab, fetchOrderCounts]);
 
   // Tab sản phẩm trong đơn: Backend tự gộp 3 tab kho — KHÔNG gửi 1 status cứng.
   useEffect(() => {
@@ -2351,7 +2437,6 @@ export default function OrderManager({
   });
   const scannerPoolCacheRef = React.useRef(scannerPoolCache);
   const [scannerPoolPrefetching, setScannerPoolPrefetching] = useState(false);
-  const scannerIdleWarmDoneRef = React.useRef(false);
   const scannerModeRef = React.useRef<ScannerMode | null>(null);
 
   const ordersRef = React.useRef(orders);
@@ -4160,7 +4245,11 @@ export default function OrderManager({
     })();
     return () => {
       cancelled = true;
-      // Không abort khi chỉ re-run deps nội bộ — abort khi focusScanner=false ở đầu effect.
+      // Abort prefetch khi unmount / đóng scanner / re-run deps.
+      controller.abort();
+      if (scannerPrefetchAbortRef.current === controller) {
+        scannerPrefetchAbortRef.current = null;
+      }
     };
   }, [focusScanner, applyPoolEntryToActive]);
 
@@ -4270,43 +4359,12 @@ export default function OrderManager({
     return () => {
       cancelled = true;
       controller.abort();
+      // Đóng scanner / đổi deps → hủy scanner-sync còn treo.
+      if (scannerPrefetchAbortRef.current === controller) {
+        scannerPrefetchAbortRef.current = null;
+      }
     };
   }, [focusScanner, scannerMode, applyPoolEntryToActive]);
-
-  // Warm nhẹ 1 lần khi vào tab Đơn hàng (không tranh CPU list đầu trang).
-  useEffect(() => {
-    if (focusScanner || scannerIdleWarmDoneRef.current) return;
-    const token = localStorage.getItem('admin_token') || '';
-    if (!token) return;
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      if (cancelled || scannerIdleWarmDoneRef.current) return;
-      const now = Date.now();
-      if (
-        isScannerPoolFresh(scannerPoolCacheRef.current.handover, now) &&
-        isScannerPoolFresh(scannerPoolCacheRef.current.return, now)
-      ) {
-        scannerIdleWarmDoneRef.current = true;
-        return;
-      }
-      scannerIdleWarmDoneRef.current = true;
-      void prefetchBothScannerPools({ token }).then((result) => {
-        if (cancelled) return;
-        setScannerPoolCache((prev) => {
-          const next: ScannerPoolCache = {
-            handover: result.handover ?? prev.handover,
-            return: result.return ?? prev.return,
-          };
-          scannerPoolCacheRef.current = next;
-          return next;
-        });
-      });
-    }, 4_000);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [focusScanner]);
 
   // Search / sort
   const [selectedSort] = useState<'newest' | 'oldest' | 'highest_value'>('newest');
@@ -7794,7 +7852,6 @@ export default function OrderManager({
       // Pool đã cũ sau ghi DB — invalidate mode vừa quét để lần sau prefetch fresh.
       const finishedMode = scannerModeRef.current;
       if (finishedMode) invalidateScannerPoolMode(finishedMode);
-      scannerIdleWarmDoneRef.current = false;
 
       shouldCloseScanner = true;
     } catch (err: unknown) {
