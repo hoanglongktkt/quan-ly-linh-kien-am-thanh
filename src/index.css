@@ -182,7 +182,7 @@ body {
   button,
   input[type='button'],
   input[type='submit'],
-  input[type='checkbox'],
+  input[type='checkbox']:not(.pos-compact-checkbox),
   input[type='radio'],
   select,
   textarea,
@@ -190,10 +190,22 @@ body {
     min-height: 44px;
   }
 
-  input[type='checkbox'],
+  input[type='checkbox']:not(.pos-compact-checkbox),
   input[type='radio'] {
     min-width: 44px;
     min-height: 44px;
+  }
+
+  input[type='checkbox'].pos-compact-checkbox {
+    width: 8px;
+    height: 8px;
+    min-width: 8px;
+    min-height: 8px;
+    max-width: 8px;
+    max-height: 8px;
+    margin: 0;
+    flex-shrink: 0;
+    accent-color: #2563eb;
   }
 
   input[type='text'],

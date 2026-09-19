@@ -309,7 +309,7 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
                                 toggleChecked(p);
                               }}
                               onClick={(e) => e.stopPropagation()}
-                              className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+                              className="pos-compact-checkbox h-2 w-2 !h-2 !w-2 !min-h-2 !min-w-2 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
                               aria-label={`Chọn ${p.sku || p.title}`}
                             />
                           </label>
