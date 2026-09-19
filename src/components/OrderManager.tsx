@@ -9755,6 +9755,7 @@ export default function OrderManager({
                     isChecked={selectedOrderIdSet.has(order.id)}
                     isExpanded={expandedOrderId === order.id}
                     activeSubTab={activeSubTab}
+                    searchQuery={searchQuery}
                     shops={shops}
                     products={products}
                     systemFees={systemFees}
@@ -9786,6 +9787,7 @@ export default function OrderManager({
                   isChecked={selectedOrderIdSet.has(order.id)}
                   isExpanded={expandedOrderId === order.id}
                   activeSubTab={activeSubTab}
+                  searchQuery={searchQuery}
                   shops={shops}
                   products={products}
                   systemFees={systemFees}

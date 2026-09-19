@@ -46,6 +46,7 @@ import {
   shouldShowAwaitingShopeeTracking,
 } from '../utils/shopeeCancelReturnClassify';
 import { parseJsonResponse } from '../utils/apiClient';
+import { HighlightedText } from './HighlightedText';
 
 export type OrderListRowActions = {
   onToggleSelect: (id: string) => void;
@@ -70,6 +71,8 @@ type SharedRowProps = {
   isChecked: boolean;
   isExpanded: boolean;
   activeSubTab: string;
+  /** Từ khóa ô tìm kiếm — dùng highlight substring trên mã VĐ / mã đơn / khách. */
+  searchQuery?: string;
   shops: ConnectedShop[];
   products?: Product[];
   systemFees: SystemFee[];
@@ -201,12 +204,12 @@ function getDistinctReturnTrackingNo(order: Order): string {
   return rtn;
 }
 
-function ReturnTrackingLine({ order }: { order: Order }) {
+function ReturnTrackingLine({ order, searchQuery }: { order: Order; searchQuery?: string }) {
   const rtn = getDistinctReturnTrackingNo(order);
   if (!rtn) return null;
   return (
     <div className="text-blue-600 font-bold font-mono text-xs mt-0.5 select-text cursor-text break-all">
-      Mã chiều hoàn: {rtn}
+      Mã chiều hoàn: <HighlightedText text={rtn} highlight={searchQuery} />
     </div>
   );
 }
@@ -694,6 +697,7 @@ export const OrderTableRow = React.memo(function OrderTableRow({
   isChecked,
   isExpanded,
   activeSubTab,
+  searchQuery = '',
   shops,
   products = [],
   systemFees,
@@ -737,12 +741,16 @@ export const OrderTableRow = React.memo(function OrderTableRow({
         {activeSubTab === 'return_requests' ? (
           <>
             <td className="p-4">
-              <div className="font-mono font-extrabold text-gray-900 text-sm">#{order.orderSn}</div>
-              <ReturnTrackingLine order={order} />
+              <div className="font-mono font-extrabold text-gray-900 text-sm">
+                #<HighlightedText text={order.orderSn} highlight={searchQuery} />
+              </div>
+              <ReturnTrackingLine order={order} searchQuery={searchQuery} />
               <div className="text-[10px] text-gray-400 mt-0.5">{shopName}</div>
             </td>
             <td className="p-4">
-              <div className="font-mono font-bold text-orange-700 text-xs break-all">{order.return_sn || '—'}</div>
+              <div className="font-mono font-bold text-orange-700 text-xs break-all">
+                <HighlightedText text={order.return_sn || '—'} highlight={searchQuery} />
+              </div>
             </td>
             <td className="p-4 w-[260px]">
               <OrderItemsCell
@@ -776,7 +784,10 @@ export const OrderTableRow = React.memo(function OrderTableRow({
                 >
                   <Barcode className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                   <span className="truncate max-w-[180px]">
-                    {order.return_tracking_no || order.returnTrackingNumber}
+                    <HighlightedText
+                      text={order.return_tracking_no || order.returnTrackingNumber}
+                      highlight={searchQuery}
+                    />
                   </span>
                 </div>
               ) : (
@@ -802,13 +813,17 @@ export const OrderTableRow = React.memo(function OrderTableRow({
                   title={waybill}
                 >
                   <Barcode className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                  <span className="truncate max-w-[160px]">{waybill}</span>
+                  <span className="truncate max-w-[160px]">
+                    <HighlightedText text={waybill} highlight={searchQuery} />
+                  </span>
                 </div>
               ) : (
                 renderMissingTrackingBadge(order)
               )}
-              <div className="text-[10px] text-gray-400 font-mono">#{order.orderSn}</div>
-              <ReturnTrackingLine order={order} />
+              <div className="text-[10px] text-gray-400 font-mono">
+                #<HighlightedText text={order.orderSn} highlight={searchQuery} />
+              </div>
+              <ReturnTrackingLine order={order} searchQuery={searchQuery} />
             </td>
             <td className="p-4 text-gray-500 font-medium">
               {new Date(order.date).toLocaleDateString('vi-VN')}
@@ -874,9 +889,11 @@ export const OrderTableRow = React.memo(function OrderTableRow({
                   <>
                     <div className="w-full text-left mb-1.5 space-y-0.5 px-1">
                       <p className="text-[11px] font-extrabold text-slate-800 truncate" title={cust.name}>
-                        {cust.name}
+                        <HighlightedText text={cust.name} highlight={searchQuery} />
                       </p>
-                      <p className="text-[10px] font-mono text-slate-600">{cust.phone || '—'}</p>
+                      <p className="text-[10px] font-mono text-slate-600">
+                        <HighlightedText text={cust.phone || '—'} highlight={searchQuery} />
+                      </p>
                       <p className="text-[9px] text-slate-500 line-clamp-2 leading-snug" title={cust.address}>
                         {cust.address || '—'}
                       </p>
@@ -1037,6 +1054,7 @@ export const OrderCardRow = React.memo(function OrderCardRow({
   isChecked,
   isExpanded,
   activeSubTab,
+  searchQuery = '',
   shops,
   products = [],
   systemFees,
@@ -1085,13 +1103,17 @@ export const OrderCardRow = React.memo(function OrderCardRow({
             {waybill ? (
               <p className="font-mono font-extrabold text-gray-900 text-sm truncate mt-0.5 flex items-center gap-1" title={waybill}>
                 <Barcode className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                <span className="truncate">{waybill}</span>
+                <span className="truncate">
+                  <HighlightedText text={waybill} highlight={searchQuery} />
+                </span>
               </p>
             ) : (
               <p className="mt-0.5">{renderMissingTrackingBadge(order)}</p>
             )}
-            <p className="text-[10px] text-gray-400 font-mono mt-0.5">#{order.orderSn}</p>
-            <ReturnTrackingLine order={order} />
+            <p className="text-[10px] text-gray-400 font-mono mt-0.5">
+              #<HighlightedText text={order.orderSn} highlight={searchQuery} />
+            </p>
+            <ReturnTrackingLine order={order} searchQuery={searchQuery} />
             <p className="text-[11px] text-gray-500 font-medium mt-0.5">
               {new Date(order.date).toLocaleDateString('vi-VN')}
             </p>
@@ -1176,8 +1198,12 @@ export const OrderCardRow = React.memo(function OrderCardRow({
             {cust && (
               <>
                 <div className="w-full text-left mb-1.5 px-1 space-y-0.5">
-                  <p className="text-[11px] font-extrabold text-slate-800 truncate">{cust.name}</p>
-                  <p className="text-[10px] font-mono text-slate-600">{cust.phone || '—'}</p>
+                  <p className="text-[11px] font-extrabold text-slate-800 truncate">
+                    <HighlightedText text={cust.name} highlight={searchQuery} />
+                  </p>
+                  <p className="text-[10px] font-mono text-slate-600">
+                    <HighlightedText text={cust.phone || '—'} highlight={searchQuery} />
+                  </p>
                   <p className="text-[9px] text-slate-500 line-clamp-2 leading-snug">{cust.address || '—'}</p>
                 </div>
                 <button
