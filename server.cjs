@@ -117699,6 +117699,100 @@ async function isSkuTakenByOtherProduct(sku, excludeId = null) {
   }
   return false;
 }
+var MAX_VARIANT_ROWS = 50;
+var SKU_CHECK_BATCH_SIZE = 5;
+var SKU_CHECK_BATCH_DELAY_MS = 60;
+function sleep5(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+async function findFirstTakenSku(skus, excludeId = null) {
+  const pending = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const raw of Array.isArray(skus) ? skus : []) {
+    const key = normalizeSkuKey(raw);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    pending.push(String(raw).trim());
+    if (pending.length >= MAX_VARIANT_ROWS + 1) break;
+  }
+  for (let i2 = 0; i2 < pending.length; i2 += SKU_CHECK_BATCH_SIZE) {
+    const batch = pending.slice(i2, i2 + SKU_CHECK_BATCH_SIZE);
+    const results = await Promise.all(
+      batch.map((sku) => isSkuTakenByOtherProduct(sku, excludeId))
+    );
+    const hit = results.findIndex(Boolean);
+    if (hit >= 0) return batch[hit];
+    if (i2 + SKU_CHECK_BATCH_SIZE < pending.length) {
+      await sleep5(SKU_CHECK_BATCH_DELAY_MS);
+    }
+  }
+  return null;
+}
+function toNonNegativeInt(value) {
+  return Math.max(0, Math.round(Number(value) || 0));
+}
+function pickVariantRowsFromBody(body) {
+  for (const key of ["children", "variations", "variants"]) {
+    if (Array.isArray(body?.[key]) && body[key].length > 0) return body[key];
+  }
+  return [];
+}
+function normalizeVariantRows(rawRows, parent) {
+  if (rawRows.length > MAX_VARIANT_ROWS) {
+    return {
+      error: "variant_limit_exceeded",
+      message: `T\u1ED1i \u0111a ${MAX_VARIANT_ROWS} ph\xE2n lo\u1EA1i cho m\u1ED7i s\u1EA3n ph\u1EA9m.`
+    };
+  }
+  const rows = [];
+  const seen = /* @__PURE__ */ new Set();
+  const parentSkuKey = normalizeSkuKey(parent.sku);
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  for (let i2 = 0; i2 < rawRows.length; i2++) {
+    const raw = rawRows[i2] || {};
+    const modelName = String(raw.modelName ?? raw.name ?? raw.title ?? "").trim();
+    const sku = String(raw.sku ?? "").trim();
+    if (!modelName || !sku) {
+      return {
+        error: "variant_row_invalid",
+        message: `Ph\xE2n lo\u1EA1i d\xF2ng ${i2 + 1}: thi\u1EBFu T\xEAn ph\xE2n lo\u1EA1i ho\u1EB7c M\xE3 SKU.`
+      };
+    }
+    const skuKey = normalizeSkuKey(sku);
+    if (skuKey === parentSkuKey) {
+      return {
+        error: "variant_sku_duplicate",
+        message: `M\xE3 SKU "${sku}" tr\xF9ng v\u1EDBi SKU c\u1EE7a s\u1EA3n ph\u1EA9m cha.`
+      };
+    }
+    if (seen.has(skuKey)) {
+      return {
+        error: "variant_sku_duplicate",
+        message: `M\xE3 SKU "${sku}" b\u1ECB l\u1EB7p gi\u1EEFa c\xE1c ph\xE2n lo\u1EA1i.`
+      };
+    }
+    seen.add(skuKey);
+    rows.push({
+      id: `${parent.id}-v${i2 + 1}`,
+      title: `${parent.title} - ${modelName}`,
+      modelName,
+      parentSku: parent.sku,
+      sku,
+      barcode: sku,
+      stock: toNonNegativeInt(raw.stock),
+      importPrice: toNonNegativeInt(raw.importPrice),
+      sellingPrice: toNonNegativeInt(raw.sellingPrice),
+      unit: parent.unit,
+      category: parent.category,
+      channels: parent.channels,
+      status: parent.status,
+      description: "",
+      imageUrl: parent.imageUrl,
+      lastSynced: now
+    });
+  }
+  return { rows };
+}
 async function listProducts(req, res) {
   res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   try {
@@ -118029,13 +118123,44 @@ async function createProduct(req, res) {
       message: "Vui l\xF2ng nh\u1EADp t\xEAn s\u1EA3n ph\u1EA9m v\xE0 m\xE3 SKU."
     });
   }
+  const productId = body.id || `prod-${Date.now()}`;
+  const unit = String(body.unit || "").trim() || "c\xE1i";
+  const channels = Array.isArray(body.channels) ? body.channels : ["shopee"];
+  const category = body.category || "Ch\u01B0a ph\xE2n lo\u1EA1i";
+  const status = body.status || "active";
+  const imageUrl = body.imageUrl || void 0;
+  const rawVariants = pickVariantRowsFromBody(body);
+  let variants2 = [];
+  if (rawVariants.length > 0) {
+    const normalized = normalizeVariantRows(rawVariants, {
+      id: productId,
+      title,
+      sku,
+      unit,
+      channels,
+      category,
+      status,
+      imageUrl
+    });
+    if (normalized.error) {
+      return res.status(400).json({
+        success: false,
+        error: normalized.error,
+        message: normalized.message
+      });
+    }
+    variants2 = normalized.rows;
+  }
   try {
-    const duplicated = await isSkuTakenByOtherProduct(sku, null);
-    if (duplicated) {
+    const takenSku = await findFirstTakenSku(
+      [sku, ...variants2.map((v) => v.sku)],
+      null
+    );
+    if (takenSku) {
       return res.status(400).json({
         success: false,
         error: "sku_duplicate",
-        message: SKU_DUPLICATE_MESSAGE
+        message: normalizeSkuKey(takenSku) === normalizeSkuKey(sku) ? SKU_DUPLICATE_MESSAGE : `M\xE3 SKU "${takenSku}" \u0111\xE3 t\u1ED3n t\u1EA1i cho m\u1ED9t s\u1EA3n ph\u1EA9m kh\xE1c trong kho!`
       });
     }
   } catch (dupErr) {
@@ -118046,19 +118171,21 @@ async function createProduct(req, res) {
       message: "Kh\xF4ng ki\u1EC3m tra \u0111\u01B0\u1EE3c tr\xF9ng SKU. Vui l\xF2ng th\u1EED l\u1EA1i."
     });
   }
+  const hasVariants = variants2.length > 0;
   const product = {
-    id: body.id || `prod-${Date.now()}`,
+    id: productId,
     title,
     sku,
-    stock: Math.max(0, Math.round(Number(body.stock) || 0)),
-    importPrice: Math.max(0, Math.round(Number(body.importPrice) || 0)),
-    sellingPrice: Math.max(0, Math.round(Number(body.sellingPrice) || 0)),
-    unit: String(body.unit || "").trim() || "c\xE1i",
-    channels: Array.isArray(body.channels) ? body.channels : ["shopee"],
-    category: body.category || "Ch\u01B0a ph\xE2n lo\u1EA1i",
+    // Có phân loại: giá/tồn cha chỉ để hiển thị, nguồn thật nằm ở `children`.
+    stock: hasVariants ? variants2.reduce((sum, v) => sum + (Number(v.stock) || 0), 0) : toNonNegativeInt(body.stock),
+    importPrice: hasVariants ? Number(variants2[0].importPrice) || 0 : toNonNegativeInt(body.importPrice),
+    sellingPrice: hasVariants ? Number(variants2[0].sellingPrice) || 0 : toNonNegativeInt(body.sellingPrice),
+    unit,
+    channels,
+    category,
     description: body.description || "",
-    imageUrl: body.imageUrl || void 0,
-    status: body.status || "active",
+    imageUrl,
+    status,
     shopeeId: body.shopeeId,
     shopeeItemId: body.shopeeItemId,
     shopeeModelId: body.shopeeModelId,
@@ -118069,6 +118196,7 @@ async function createProduct(req, res) {
     wooId: body.wooId,
     lastSynced: (/* @__PURE__ */ new Date()).toISOString()
   };
+  if (hasVariants) product.children = variants2;
   await deps10.upsertProductsToStoreAsync([product]);
   const cache = await deps10.loadLocalInventoryCache();
   return res.status(201).json({
@@ -124562,6 +124690,12 @@ async function createManualOrder(req, res) {
     });
   }
 }
+function sumChildrenStock(children) {
+  return (Array.isArray(children) ? children : []).reduce(
+    (sum, c) => sum + Math.max(0, Math.round(Number(c?.stock) || 0)),
+    0
+  );
+}
 async function deductStockForPosOrder(lineItems) {
   const qtyById = /* @__PURE__ */ new Map();
   for (const it of Array.isArray(lineItems) ? lineItems : []) {
@@ -124618,7 +124752,11 @@ async function deductStockForPosOrder(lineItems) {
       list[cIdx] = deps15.applyBulkProductUpdate(list[cIdx], {
         stock: { mode: "decrease", value: qty }
       });
-      const nextParent = { ...parent, [childKey]: list };
+      const nextParent = {
+        ...parent,
+        [childKey]: list,
+        stock: sumChildrenStock(list)
+      };
       productMap.set(parentId, nextParent);
       dirty.set(parentId, nextParent);
       deducted += qty;
@@ -127625,7 +127763,7 @@ var genAIKey = "";
 function readGeminiApiKey() {
   return String(process.env.GEMINI_API_KEY || "").trim();
 }
-function sleep5(ms) {
+function sleep6(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 function getClient() {
@@ -127721,7 +127859,7 @@ async function parseAddressWithGemini(rawAddress) {
     } catch (err) {
       lastError = wrapGeminiError(err);
       if (!isModelUnavailable(err) || i2 >= models.length - 1) break;
-      await sleep5(200);
+      await sleep6(200);
     }
   }
   throw wrapGeminiError(lastError);
@@ -139564,6 +139702,40 @@ function findLinkedProductIdForShopeeLine(listings, shopId, productId, modelId) 
   });
   return hit?.linkedProductId ? String(hit.linkedProductId) : void 0;
 }
+function sumChildrenStockList(children) {
+  return (Array.isArray(children) ? children : []).reduce(
+    (sum, c) => sum + Math.max(0, Math.round(Number(c?.stock) || 0)),
+    0
+  );
+}
+function applyStockRestoreToProductTree(parent, targetId, qty) {
+  if (!parent || !targetId || qty <= 0) return null;
+  if (String(parent?.id ?? "") === targetId) {
+    return applyBulkProductUpdate(parent, { stock: { mode: "increase", value: qty } });
+  }
+  const childKey = Array.isArray(parent?.children) && parent.children.length ? "children" : Array.isArray(parent?.children_models) && parent.children_models.length ? "children_models" : null;
+  if (!childKey) return null;
+  const list = [...parent[childKey]];
+  const idx = list.findIndex((c) => String(c?.id ?? "") === targetId);
+  if (idx < 0) return null;
+  list[idx] = applyBulkProductUpdate(list[idx], { stock: { mode: "increase", value: qty } });
+  return { ...parent, [childKey]: list, stock: sumChildrenStockList(list) };
+}
+function buildOwnerDocIdIndex(products) {
+  const index = /* @__PURE__ */ new Map();
+  for (const p of Array.isArray(products) ? products : []) {
+    const parentId = String(p?.id ?? "");
+    if (!parentId) continue;
+    index.set(parentId, parentId);
+    const children = getProductChildrenList(p);
+    const max = Math.min(children.length, 500);
+    for (let i2 = 0; i2 < max; i2++) {
+      const childId = String(children[i2]?.id ?? "");
+      if (childId && !index.has(childId)) index.set(childId, parentId);
+    }
+  }
+  return index;
+}
 async function restoreLocalStockForPartialCancel(shopId, existing, incoming) {
   if (!incoming?.partialCancel) return;
   const prevItems = Array.isArray(existing?.items) ? existing.items : [];
@@ -139618,10 +139790,15 @@ async function restoreLocalStockForPartialCancel(shopId, existing, incoming) {
     if (!linkedId) continue;
     restoreByProduct.set(linkedId, (restoreByProduct.get(linkedId) || 0) + prevActiveQty);
   }
+  const ownerByIdPartial = buildOwnerDocIdIndex(products);
   for (const [linkedId, restoreQty] of restoreByProduct) {
-    const idx = products.findIndex((p) => String(p?.id) === linkedId);
+    const ownerId = ownerByIdPartial.get(linkedId);
+    if (!ownerId) continue;
+    const idx = products.findIndex((p) => String(p?.id) === ownerId);
     if (idx < 0) continue;
-    products[idx] = applyBulkProductUpdate(products[idx], { stock: { mode: "increase", value: restoreQty } });
+    const updated = applyStockRestoreToProductTree(products[idx], linkedId, restoreQty);
+    if (!updated) continue;
+    products[idx] = updated;
     changed = true;
     console.log(
       `[Shopee Partial Cancel] Ho\xE0n ${restoreQty} t\u1ED3n kho cho ${linkedId} (order ${incoming.orderSn}).`
@@ -139686,19 +139863,23 @@ async function restoreLocalStockOnCancelReturnScanBatch(jobs) {
     return { restored: 0, qty: 0 };
   }
   const byId = new Map(products.map((p) => [String(p?.id), p]));
-  const changed = [];
+  const ownerById = buildOwnerDocIdIndex(products);
+  const dirtyByOwner = /* @__PURE__ */ new Map();
   const changedIds = /* @__PURE__ */ new Set();
   let totalQty = 0;
   for (const [linkedId, restoreQty] of restoreByProduct) {
-    const p = byId.get(linkedId);
-    if (!p) continue;
-    const updated = applyBulkProductUpdate(p, { stock: { mode: "increase", value: restoreQty } });
-    byId.set(linkedId, updated);
-    changed.push(updated);
+    const ownerId = ownerById.get(linkedId);
+    if (!ownerId) continue;
+    const current = dirtyByOwner.get(ownerId) || byId.get(ownerId);
+    if (!current) continue;
+    const updated = applyStockRestoreToProductTree(current, linkedId, restoreQty);
+    if (!updated) continue;
+    dirtyByOwner.set(ownerId, updated);
     changedIds.add(linkedId);
     totalQty += restoreQty;
     console.log(`[Scan Restock] +${restoreQty} t\u1ED3n cho ${linkedId}`);
   }
+  const changed = [...dirtyByOwner.values()];
   if (!changed.length) return { restored: 0, qty: 0 };
   try {
     await upsertProductsToStoreAsync(changed);

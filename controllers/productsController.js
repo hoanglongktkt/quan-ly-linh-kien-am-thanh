@@ -138,6 +138,124 @@ async function isSkuTakenByOtherProduct(sku, excludeId = null) {
   return false;
 }
 
+/** Số dòng phân loại tối đa cho 1 sản phẩm — chặn payload rác. */
+const MAX_VARIANT_ROWS = 50;
+/** Số SKU kiểm tra trùng song song mỗi lượt + nghỉ giữa các lượt (chống rate limit DB). */
+const SKU_CHECK_BATCH_SIZE = 5;
+const SKU_CHECK_BATCH_DELAY_MS = 60;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Kiểm tra trùng SKU theo lô cho cả sản phẩm cha lẫn các phân loại.
+ * @returns {Promise<string|null>} SKU đầu tiên bị trùng, hoặc null.
+ */
+async function findFirstTakenSku(skus, excludeId = null) {
+  const pending = [];
+  const seen = new Set();
+  for (const raw of Array.isArray(skus) ? skus : []) {
+    const key = normalizeSkuKey(raw);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    pending.push(String(raw).trim());
+    if (pending.length >= MAX_VARIANT_ROWS + 1) break;
+  }
+
+  for (let i = 0; i < pending.length; i += SKU_CHECK_BATCH_SIZE) {
+    const batch = pending.slice(i, i + SKU_CHECK_BATCH_SIZE);
+    const results = await Promise.all(
+      batch.map((sku) => isSkuTakenByOtherProduct(sku, excludeId)),
+    );
+    const hit = results.findIndex(Boolean);
+    if (hit >= 0) return batch[hit];
+    if (i + SKU_CHECK_BATCH_SIZE < pending.length) {
+      await sleep(SKU_CHECK_BATCH_DELAY_MS);
+    }
+  }
+  return null;
+}
+
+function toNonNegativeInt(value) {
+  return Math.max(0, Math.round(Number(value) || 0));
+}
+
+/** Lấy mảng phân loại từ body — chấp nhận `children`, `variations`, `variants`. */
+function pickVariantRowsFromBody(body) {
+  for (const key of ["children", "variations", "variants"]) {
+    if (Array.isArray(body?.[key]) && body[key].length > 0) return body[key];
+  }
+  return [];
+}
+
+/**
+ * Chuẩn hoá dòng phân loại về đúng shape `children` mà Shopee sync đang dùng
+ * (title "Tên cha - Tên phân loại", modelName, parentSku) để Search/POS nhận dạng được.
+ * @returns {{ rows: any[] } | { error: string, message: string }}
+ */
+function normalizeVariantRows(rawRows, parent) {
+  if (rawRows.length > MAX_VARIANT_ROWS) {
+    return {
+      error: "variant_limit_exceeded",
+      message: `Tối đa ${MAX_VARIANT_ROWS} phân loại cho mỗi sản phẩm.`,
+    };
+  }
+
+  const rows = [];
+  const seen = new Set();
+  const parentSkuKey = normalizeSkuKey(parent.sku);
+  const now = new Date().toISOString();
+
+  for (let i = 0; i < rawRows.length; i++) {
+    const raw = rawRows[i] || {};
+    const modelName = String(raw.modelName ?? raw.name ?? raw.title ?? "").trim();
+    const sku = String(raw.sku ?? "").trim();
+    if (!modelName || !sku) {
+      return {
+        error: "variant_row_invalid",
+        message: `Phân loại dòng ${i + 1}: thiếu Tên phân loại hoặc Mã SKU.`,
+      };
+    }
+
+    const skuKey = normalizeSkuKey(sku);
+    if (skuKey === parentSkuKey) {
+      return {
+        error: "variant_sku_duplicate",
+        message: `Mã SKU "${sku}" trùng với SKU của sản phẩm cha.`,
+      };
+    }
+    if (seen.has(skuKey)) {
+      return {
+        error: "variant_sku_duplicate",
+        message: `Mã SKU "${sku}" bị lặp giữa các phân loại.`,
+      };
+    }
+    seen.add(skuKey);
+
+    rows.push({
+      id: `${parent.id}-v${i + 1}`,
+      title: `${parent.title} - ${modelName}`,
+      modelName,
+      parentSku: parent.sku,
+      sku,
+      barcode: sku,
+      stock: toNonNegativeInt(raw.stock),
+      importPrice: toNonNegativeInt(raw.importPrice),
+      sellingPrice: toNonNegativeInt(raw.sellingPrice),
+      unit: parent.unit,
+      category: parent.category,
+      channels: parent.channels,
+      status: parent.status,
+      description: "",
+      imageUrl: parent.imageUrl,
+      lastSynced: now,
+    });
+  }
+
+  return { rows };
+}
+
 /** GET /api/products */
 export async function listProducts(req, res) {
   res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -522,13 +640,49 @@ export async function createProduct(req, res) {
     });
   }
 
+  const productId = body.id || `prod-${Date.now()}`;
+  const unit = String(body.unit || "").trim() || "cái";
+  const channels = Array.isArray(body.channels) ? body.channels : ["shopee"];
+  const category = body.category || "Chưa phân loại";
+  const status = body.status || "active";
+  const imageUrl = body.imageUrl || undefined;
+
+  const rawVariants = pickVariantRowsFromBody(body);
+  let variants = [];
+  if (rawVariants.length > 0) {
+    const normalized = normalizeVariantRows(rawVariants, {
+      id: productId,
+      title,
+      sku,
+      unit,
+      channels,
+      category,
+      status,
+      imageUrl,
+    });
+    if (normalized.error) {
+      return res.status(400).json({
+        success: false,
+        error: normalized.error,
+        message: normalized.message,
+      });
+    }
+    variants = normalized.rows;
+  }
+
   try {
-    const duplicated = await isSkuTakenByOtherProduct(sku, null);
-    if (duplicated) {
+    const takenSku = await findFirstTakenSku(
+      [sku, ...variants.map((v) => v.sku)],
+      null,
+    );
+    if (takenSku) {
       return res.status(400).json({
         success: false,
         error: "sku_duplicate",
-        message: SKU_DUPLICATE_MESSAGE,
+        message:
+          normalizeSkuKey(takenSku) === normalizeSkuKey(sku)
+            ? SKU_DUPLICATE_MESSAGE
+            : `Mã SKU "${takenSku}" đã tồn tại cho một sản phẩm khác trong kho!`,
       });
     }
   } catch (dupErr) {
@@ -540,19 +694,27 @@ export async function createProduct(req, res) {
     });
   }
 
+  const hasVariants = variants.length > 0;
   const product = {
-    id: body.id || `prod-${Date.now()}`,
+    id: productId,
     title,
     sku,
-    stock: Math.max(0, Math.round(Number(body.stock) || 0)),
-    importPrice: Math.max(0, Math.round(Number(body.importPrice) || 0)),
-    sellingPrice: Math.max(0, Math.round(Number(body.sellingPrice) || 0)),
-    unit: String(body.unit || "").trim() || "cái",
-    channels: Array.isArray(body.channels) ? body.channels : ["shopee"],
-    category: body.category || "Chưa phân loại",
+    // Có phân loại: giá/tồn cha chỉ để hiển thị, nguồn thật nằm ở `children`.
+    stock: hasVariants
+      ? variants.reduce((sum, v) => sum + (Number(v.stock) || 0), 0)
+      : toNonNegativeInt(body.stock),
+    importPrice: hasVariants
+      ? Number(variants[0].importPrice) || 0
+      : toNonNegativeInt(body.importPrice),
+    sellingPrice: hasVariants
+      ? Number(variants[0].sellingPrice) || 0
+      : toNonNegativeInt(body.sellingPrice),
+    unit,
+    channels,
+    category,
     description: body.description || "",
-    imageUrl: body.imageUrl || undefined,
-    status: body.status || "active",
+    imageUrl,
+    status,
     shopeeId: body.shopeeId,
     shopeeItemId: body.shopeeItemId,
     shopeeModelId: body.shopeeModelId,
@@ -566,6 +728,7 @@ export async function createProduct(req, res) {
     wooId: body.wooId,
     lastSynced: new Date().toISOString(),
   };
+  if (hasVariants) product.children = variants;
   // Thêm một dòng bằng upsert, không đọc-rồi-ghi đè toàn bộ Kho gốc.
   await deps.upsertProductsToStoreAsync([product]);
   const cache = await deps.loadLocalInventoryCache();

@@ -3059,6 +3059,14 @@ export async function createManualOrder(req, res) {
   }
 }
 
+/** Tổng tồn kho của các phân loại con — dùng để roll-up lên sản phẩm cha. */
+function sumChildrenStock(children) {
+  return (Array.isArray(children) ? children : []).reduce(
+    (sum, c) => sum + Math.max(0, Math.round(Number(c?.stock) || 0)),
+    0,
+  );
+}
+
 /**
  * Trừ tồn kho server-side cho đơn POS — idempotent qua stock_deducted trên order.
  * Chỉ đụng productId trong payload (không đụng luồng đơn ngoại sàn / Shopee).
@@ -3130,7 +3138,12 @@ async function deductStockForPosOrder(lineItems) {
       list[cIdx] = deps.applyBulkProductUpdate(list[cIdx], {
         stock: { mode: "decrease", value: qty },
       });
-      const nextParent = { ...parent, [childKey]: list };
+      // Tồn kho cha phải là tổng tồn các phân loại — đồng bộ với luồng Nhập hàng/Kiểm kho.
+      const nextParent = {
+        ...parent,
+        [childKey]: list,
+        stock: sumChildrenStock(list),
+      };
       productMap.set(parentId, nextParent);
       dirty.set(parentId, nextParent);
       deducted += qty;

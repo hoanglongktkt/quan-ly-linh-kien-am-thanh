@@ -12701,6 +12701,54 @@ function findLinkedProductIdForShopeeLine(
   return hit?.linkedProductId ? String(hit.linkedProductId) : undefined;
 }
 
+/** Tổng tồn các phân loại con — tồn kho cha luôn là tổng của con. */
+function sumChildrenStockList(children: any[]): number {
+  return (Array.isArray(children) ? children : []).reduce(
+    (sum, c) => sum + Math.max(0, Math.round(Number(c?.stock) || 0)),
+    0,
+  );
+}
+
+/**
+ * Cộng tồn vào đúng dòng (sản phẩm cha HOẶC phân loại con nằm trong doc cha) và roll-up tồn cha.
+ * @returns doc cha đã cập nhật, hoặc null nếu targetId không thuộc doc này.
+ */
+function applyStockRestoreToProductTree(parent: any, targetId: string, qty: number): any | null {
+  if (!parent || !targetId || qty <= 0) return null;
+  if (String(parent?.id ?? "") === targetId) {
+    return applyBulkProductUpdate(parent, { stock: { mode: "increase", value: qty } });
+  }
+  const childKey =
+    Array.isArray(parent?.children) && parent.children.length
+      ? "children"
+      : Array.isArray(parent?.children_models) && parent.children_models.length
+        ? "children_models"
+        : null;
+  if (!childKey) return null;
+  const list = [...parent[childKey]];
+  const idx = list.findIndex((c: any) => String(c?.id ?? "") === targetId);
+  if (idx < 0) return null;
+  list[idx] = applyBulkProductUpdate(list[idx], { stock: { mode: "increase", value: qty } });
+  return { ...parent, [childKey]: list, stock: sumChildrenStockList(list) };
+}
+
+/** Map id (cha hoặc con) → id doc cha, để tìm doc cần ghi khi hoàn tồn. */
+function buildOwnerDocIdIndex(products: any[]): Map<string, string> {
+  const index = new Map<string, string>();
+  for (const p of Array.isArray(products) ? products : []) {
+    const parentId = String(p?.id ?? "");
+    if (!parentId) continue;
+    index.set(parentId, parentId);
+    const children = getProductChildrenList(p);
+    const max = Math.min(children.length, 500);
+    for (let i = 0; i < max; i++) {
+      const childId = String(children[i]?.id ?? "");
+      if (childId && !index.has(childId)) index.set(childId, parentId);
+    }
+  }
+  return index;
+}
+
 async function restoreLocalStockForPartialCancel(
   shopId: string | undefined,
   existing: any | undefined,
@@ -12770,10 +12818,15 @@ async function restoreLocalStockForPartialCancel(
     restoreByProduct.set(linkedId, (restoreByProduct.get(linkedId) || 0) + prevActiveQty);
   }
 
+  const ownerByIdPartial = buildOwnerDocIdIndex(products);
   for (const [linkedId, restoreQty] of restoreByProduct) {
-    const idx = products.findIndex((p) => String(p?.id) === linkedId);
+    const ownerId = ownerByIdPartial.get(linkedId);
+    if (!ownerId) continue;
+    const idx = products.findIndex((p) => String(p?.id) === ownerId);
     if (idx < 0) continue;
-    products[idx] = applyBulkProductUpdate(products[idx], { stock: { mode: "increase", value: restoreQty } });
+    const updated = applyStockRestoreToProductTree(products[idx], linkedId, restoreQty);
+    if (!updated) continue;
+    products[idx] = updated;
     changed = true;
     console.log(
       `[Shopee Partial Cancel] Hoàn ${restoreQty} tồn kho cho ${linkedId} (order ${incoming.orderSn}).`,
@@ -12864,20 +12917,25 @@ async function restoreLocalStockOnCancelReturnScanBatch(
     return { restored: 0, qty: 0 };
   }
 
+  // linkedId có thể là id phân loại con — ghi vào doc cha rồi roll-up tồn cha.
   const byId = new Map(products.map((p) => [String(p?.id), p]));
-  const changed: any[] = [];
+  const ownerById = buildOwnerDocIdIndex(products);
+  const dirtyByOwner = new Map<string, any>();
   const changedIds = new Set<string>();
   let totalQty = 0;
   for (const [linkedId, restoreQty] of restoreByProduct) {
-    const p = byId.get(linkedId);
-    if (!p) continue;
-    const updated = applyBulkProductUpdate(p, { stock: { mode: "increase", value: restoreQty } });
-    byId.set(linkedId, updated);
-    changed.push(updated);
+    const ownerId = ownerById.get(linkedId);
+    if (!ownerId) continue;
+    const current = dirtyByOwner.get(ownerId) || byId.get(ownerId);
+    if (!current) continue;
+    const updated = applyStockRestoreToProductTree(current, linkedId, restoreQty);
+    if (!updated) continue;
+    dirtyByOwner.set(ownerId, updated);
     changedIds.add(linkedId);
     totalQty += restoreQty;
     console.log(`[Scan Restock] +${restoreQty} tồn cho ${linkedId}`);
   }
+  const changed: any[] = [...dirtyByOwner.values()];
 
   if (!changed.length) return { restored: 0, qty: 0 };
 

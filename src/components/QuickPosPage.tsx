@@ -10,7 +10,7 @@ import {
   Store,
   Trash2,
 } from 'lucide-react';
-import { Order, Product, SyncLog } from '../types';
+import { Order, Product, SyncLog, getProductChildren } from '../types';
 import ImportProductSearchSelect, {
   ImportProductSearchSelectHandle,
 } from './ImportProductSearchSelect';
@@ -292,7 +292,10 @@ export default function QuickPosPage({
       const pid = String(it.productId || '').trim();
       const qty = Math.max(0, Math.round(Number(it.quantity) || 0));
       if (!pid || qty <= 0) continue;
-      const local = products.find((p) => p.id === pid);
+      // pid có thể là id phân loại con — dò cả trong children của sản phẩm cha.
+      const local =
+        products.find((p) => p.id === pid) ||
+        products.flatMap((p) => getProductChildren(p)).find((c) => c.id === pid);
       if (!local) continue;
       const sell = roundPosPrice(it.price ?? it.sellingPrice);
       onUpdateProduct(

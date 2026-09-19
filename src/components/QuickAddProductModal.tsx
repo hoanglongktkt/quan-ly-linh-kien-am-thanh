@@ -1,8 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Loader2, Plus, X } from 'lucide-react';
+import { Layers, Loader2, Plus, X } from 'lucide-react';
 import { Product } from '../types';
 import CurrencyInput from './CurrencyInput';
+import VariantRowsEditor, {
+  VariantRow,
+  createVariantRow,
+  suggestVariantSku,
+  toVariantPayload,
+  validateVariantRows,
+} from './VariantRowsEditor';
 
 interface QuickAddProductModalProps {
   open: boolean;
@@ -31,6 +38,12 @@ function mapCreatedProduct(data: any): Product {
   };
 }
 
+/** Sản phẩm có phân loại: trả phân loại đầu tiên để POS chọn đúng SKU ngay. */
+function pickSelectableRow(saved: any): any {
+  const children = Array.isArray(saved?.children) ? saved.children : [];
+  return children.length > 0 ? { ...children[0], unit: children[0].unit || saved.unit } : saved;
+}
+
 export default function QuickAddProductModal({
   open,
   onClose,
@@ -43,6 +56,8 @@ export default function QuickAddProductModal({
   const [sellingPrice, setSellingPrice] = useState(0);
   const [importPrice, setImportPrice] = useState(0);
   const [unit, setUnit] = useState('cái');
+  const [hasVariants, setHasVariants] = useState(false);
+  const [variantRows, setVariantRows] = useState<VariantRow[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -53,10 +68,19 @@ export default function QuickAddProductModal({
     setSellingPrice(0);
     setImportPrice(0);
     setUnit('cái');
+    setHasVariants(false);
+    setVariantRows([]);
     setError('');
   }, [open, initialName, initialSku]);
 
   if (!open) return null;
+
+  const toggleVariants = (enabled: boolean) => {
+    setHasVariants(enabled);
+    setError('');
+    // Tắt toggle phải dọn sạch mảng để không gửi nhầm phân loại lên server.
+    setVariantRows(enabled ? [createVariantRow({ sku: suggestVariantSku(sku, 0) })] : []);
+  };
 
   const handleSave = async () => {
     const name = title.trim();
@@ -64,6 +88,16 @@ export default function QuickAddProductModal({
     if (!name || !code) {
       setError('Vui lòng nhập Tên sản phẩm và Mã SKU.');
       return;
+    }
+
+    let variantPayload: ReturnType<typeof toVariantPayload> = [];
+    if (hasVariants) {
+      const invalid = validateVariantRows(variantRows, code);
+      if (invalid) {
+        setError(invalid);
+        return;
+      }
+      variantPayload = toVariantPayload(variantRows);
     }
 
     const token = localStorage.getItem('admin_token');
@@ -93,6 +127,7 @@ export default function QuickAddProductModal({
           category: 'Chưa phân loại',
           status: 'active',
           description: '',
+          ...(hasVariants ? { children: variantPayload } : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -104,7 +139,7 @@ export default function QuickAddProductModal({
         setError(data.message || data.error || 'Tạo sản phẩm thất bại. Vui lòng thử lại.');
         return;
       }
-      const created = mapCreatedProduct(data.product || data);
+      const created = mapCreatedProduct(pickSelectableRow(data.product || data));
       if (!created.id) {
         setError('Máy chủ không trả về ID sản phẩm.');
         return;
@@ -126,12 +161,19 @@ export default function QuickAddProductModal({
     }
   };
 
+  // Lỗi của bảng phân loại hiển thị ở cuối form, không gắn vào ô SKU cha.
+  const skuFieldError = Boolean(error) && /sku/i.test(error) && !/phân loại/i.test(error);
+
   return createPortal(
     <div
       className="fixed inset-0 bg-gray-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-60"
       onMouseDown={(e) => e.stopPropagation()}
     >
-      <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden">
+      <div
+        className={`bg-white rounded-2xl w-full shadow-2xl overflow-hidden max-h-[90vh] flex flex-col ${
+          hasVariants ? 'max-w-lg' : 'max-w-md'
+        }`}
+      >
         <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
           <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
             <Plus className="w-5 h-5 text-emerald-600" />
@@ -146,7 +188,7 @@ export default function QuickAddProductModal({
           </button>
         </div>
 
-        <div className="p-5 space-y-3.5">
+        <div className="p-5 space-y-3.5 overflow-y-auto">
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-gray-700">
               Tên sản phẩm <span className="text-rose-500">*</span>
@@ -176,40 +218,62 @@ export default function QuickAddProductModal({
               onKeyDown={onEnter}
               placeholder="VD: AT-NAM-001"
               className={`w-full px-3 py-2.5 bg-gray-50 rounded-xl border text-sm outline-none font-mono transition-all ${
-                error && /sku/i.test(error)
+                skuFieldError
                   ? 'border-red-400 focus:border-red-500'
                   : 'border-gray-200 focus:border-emerald-400'
               }`}
             />
-            {error && /sku/i.test(error) && (
+            {skuFieldError && (
               <p className="text-xs text-red-600 font-medium">
                 {/đã tồn tại/i.test(error) ? '⚠️ Mã SKU này đã tồn tại trong kho!' : error}
               </p>
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-gray-700">Giá bán</label>
-              <CurrencyInput
-                value={sellingPrice}
-                onChange={setSellingPrice}
-                smartShorthand
-                placeholder="0"
-                className="w-full px-3 py-2.5 bg-gray-50 rounded-xl border border-gray-200 text-sm outline-none font-mono focus:border-emerald-400 transition-all"
-              />
+          <label className="flex items-center gap-2.5 p-2.5 bg-indigo-50/60 border border-indigo-100 rounded-xl cursor-pointer">
+            <input
+              type="checkbox"
+              checked={hasVariants}
+              onChange={(e) => toggleVariants(e.target.checked)}
+              className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-400 w-4 h-4 cursor-pointer"
+            />
+            <span className="flex items-center gap-1.5 text-xs font-bold text-indigo-900">
+              <Layers className="w-4 h-4" /> Sản phẩm có nhiều phân loại?
+            </span>
+          </label>
+
+          {hasVariants ? (
+            <VariantRowsEditor
+              rows={variantRows}
+              onChange={setVariantRows}
+              parentSku={sku}
+              layout="card"
+              disabled={saving}
+            />
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-gray-700">Giá bán</label>
+                <CurrencyInput
+                  value={sellingPrice}
+                  onChange={setSellingPrice}
+                  smartShorthand
+                  placeholder="0"
+                  className="w-full px-3 py-2.5 bg-gray-50 rounded-xl border border-gray-200 text-sm outline-none font-mono focus:border-emerald-400 transition-all"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-gray-700">Giá nhập</label>
+                <CurrencyInput
+                  value={importPrice}
+                  onChange={setImportPrice}
+                  smartShorthand
+                  placeholder="0"
+                  className="w-full px-3 py-2.5 bg-gray-50 rounded-xl border border-gray-200 text-sm outline-none font-mono focus:border-emerald-400 transition-all"
+                />
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-gray-700">Giá nhập</label>
-              <CurrencyInput
-                value={importPrice}
-                onChange={setImportPrice}
-                smartShorthand
-                placeholder="0"
-                className="w-full px-3 py-2.5 bg-gray-50 rounded-xl border border-gray-200 text-sm outline-none font-mono focus:border-emerald-400 transition-all"
-              />
-            </div>
-          </div>
+          )}
 
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-gray-700">Đơn vị tính</label>
@@ -223,7 +287,7 @@ export default function QuickAddProductModal({
             />
           </div>
 
-          {error && !/sku/i.test(error) && (
+          {error && !skuFieldError && (
             <p className="text-xs text-rose-600 font-medium bg-rose-50 border border-rose-100 rounded-lg px-3 py-2">
               {error}
             </p>
