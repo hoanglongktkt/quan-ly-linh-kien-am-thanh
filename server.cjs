@@ -83300,36 +83300,40 @@ function buildOrdersListSearchFilter(search) {
   const q = String(search || "").trim();
   if (q.length < 2) return null;
   const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const prefix = { $regex: `^${escaped}`, $options: "i" };
+  const contains = { $regex: escaped, $options: "i" };
   const $or = [
+    // Exact — nhanh qua index khi nhập đủ mã đơn / vận đơn
     { orderSn: q },
-    { orderSn: prefix },
     { "data.orderSn": q },
-    { "data.orderSn": prefix },
     { tracking_no: q },
-    { tracking_no: prefix },
     { trackingNumber: q },
-    { trackingNumber: prefix },
-    { "data.tracking_no": prefix },
-    { "data.trackingNumber": prefix },
     { packageNumber: q },
-    { packageNumber: prefix },
-    { "data.packageNumber": prefix },
-    { return_sn: prefix },
-    { return_tracking_no: prefix },
-    { returnTrackingNumber: prefix },
-    { internalTrackingCode: prefix },
-    { "data.internalTrackingCode": prefix }
+    { return_tracking_no: q },
+    { returnTrackingNumber: q },
+    // Substring — mã đơn, mã vận đơn (đi/hoàn), bưu cục, khách, SĐT
+    { orderSn: contains },
+    { "data.orderSn": contains },
+    { tracking_no: contains },
+    { trackingNumber: contains },
+    { "data.tracking_no": contains },
+    { "data.trackingNumber": contains },
+    { packageNumber: contains },
+    { "data.packageNumber": contains },
+    { return_sn: contains },
+    { "data.return_sn": contains },
+    { return_tracking_no: contains },
+    { returnTrackingNumber: contains },
+    { "data.return_tracking_no": contains },
+    { internalTrackingCode: contains },
+    { "data.internalTrackingCode": contains },
+    { customerName: contains },
+    { customerPhone: contains },
+    { "data.customerName": contains },
+    { "data.customer_name": contains },
+    { "data.customerPhone": contains },
+    { "data.customer_phone": contains },
+    { "data.buyer_username": contains }
   ];
-  if (q.length >= 3) {
-    $or.push(
-      { customerPhone: prefix },
-      { customerName: prefix },
-      { "data.customerName": prefix },
-      { "data.customer_name": prefix },
-      { "data.buyer_username": prefix }
-    );
-  }
   return { $or };
 }
 async function queryOrdersPageFromStore(opts) {
