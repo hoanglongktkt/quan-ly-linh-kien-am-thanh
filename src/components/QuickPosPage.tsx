@@ -607,7 +607,7 @@ export default function QuickPosPage({
               type="checkbox"
               checked={walkIn}
               onChange={(e) => setWalkIn(e.target.checked)}
-              className="rounded border-slate-300"
+              className="h-4 w-4 !min-h-4 !min-w-4 rounded border-slate-300 text-blue-600 accent-blue-600 focus:ring-blue-500"
             />
             Mua tại cửa hàng
           </label>
