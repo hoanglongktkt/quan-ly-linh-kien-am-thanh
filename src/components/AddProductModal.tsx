@@ -4,7 +4,6 @@ import { Product } from '../types';
 import VariantRowsEditor, {
   VariantRow,
   createVariantRow,
-  suggestVariantSku,
   toVariantPayload,
   validateVariantRows,
 } from './VariantRowsEditor';
@@ -71,7 +70,7 @@ export default function AddProductModal({
     setHasVariants(enabled);
     setAiError('');
     // Tắt toggle phải dọn sạch mảng để không gửi nhầm phân loại lên server.
-    setVariantRows(enabled ? [createVariantRow({ sku: suggestVariantSku(newSku, 0) })] : []);
+    setVariantRows(enabled ? [createVariantRow()] : []);
   };
 
   // Smart AI Generation of Product Content
