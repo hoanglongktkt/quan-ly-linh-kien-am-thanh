@@ -153,35 +153,45 @@ export function PosInvoiceTemplate({
       id="pos-invoice"
       className={`print-invoice-container rounded-2xl border border-dashed border-slate-200 bg-white p-6 ${className || ''}`}
     >
-      <div className="flex items-start gap-4 mb-5 pb-4 border-b border-slate-300">
-        {storeInfo.logoUrl.trim() ? (
-          <img
-            src={storeInfo.logoUrl.trim()}
-            alt="Logo cửa hàng"
-            className="h-16 w-16 object-contain flex-shrink-0"
-            onError={(e) => {
-              (e.target as HTMLImageElement).style.display = 'none';
-            }}
-          />
-        ) : null}
-        <div className="min-w-0 flex-1">
-          <div className="text-base font-black tracking-wide uppercase text-slate-900">
-            {storeInfo.storeName.trim() || 'CỬA HÀNG'}
-          </div>
-          {storeInfo.storePhone.trim() ? (
-            <div className="text-xs text-slate-600 mt-0.5">
-              <span className="font-bold">ĐT:</span> {storeInfo.storePhone.trim()}
+      <div className="relative mb-5 pb-4 border-b border-slate-300">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-4 min-w-0 flex-1">
+            {storeInfo.logoUrl.trim() ? (
+              <img
+                src={storeInfo.logoUrl.trim()}
+                alt="Logo cửa hàng"
+                className="h-16 w-16 object-contain flex-shrink-0"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = 'none';
+                }}
+              />
+            ) : null}
+            <div className="min-w-0">
+              <div className="text-base font-black tracking-wide uppercase text-slate-900">
+                {storeInfo.storeName.trim() || 'CỬA HÀNG'}
+              </div>
+              {storeInfo.storePhone.trim() ? (
+                <div className="text-xs text-slate-600 mt-0.5">
+                  <span className="font-bold">ĐT:</span> {storeInfo.storePhone.trim()}
+                </div>
+              ) : null}
+              {storeInfo.storeAddress.trim() ? (
+                <div className="text-xs text-slate-600 mt-0.5">
+                  <span className="font-bold">Địa chỉ:</span> {storeInfo.storeAddress.trim()}
+                </div>
+              ) : null}
             </div>
-          ) : null}
-          {storeInfo.storeAddress.trim() ? (
-            <div className="text-xs text-slate-600 mt-0.5">
-              <span className="font-bold">Địa chỉ:</span> {storeInfo.storeAddress.trim()}
-            </div>
-          ) : null}
-          <div className="text-sm font-extrabold text-slate-800 mt-2">HÓA ĐƠN / BÁO GIÁ</div>
-          <div className="text-[11px] text-slate-500 font-semibold mt-0.5">
-            {orderSn} · {dateText}
           </div>
+          <div className="text-right text-[11px] text-slate-600 font-semibold flex-shrink-0 leading-snug">
+            <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+              Thời gian tạo đơn
+            </div>
+            <div>{dateText}</div>
+            <div className="mt-0.5">{orderSn}</div>
+          </div>
+        </div>
+        <div className="text-center font-bold text-xl uppercase tracking-wide text-slate-900 mt-3">
+          HÓA ĐƠN BÁN HÀNG
         </div>
       </div>
 
@@ -200,33 +210,35 @@ export function PosInvoiceTemplate({
         </div>
       </div>
 
+      <div className="text-center font-bold uppercase mt-4 mb-2">DANH SÁCH ĐƠN HÀNG</div>
+
       <table className="w-full text-xs border-collapse table-fixed">
         <thead>
           <tr className="border-b-2 border-slate-800">
-            <th className="col-stt w-12 px-2 py-2 text-left font-bold">STT</th>
-            <th className="col-name px-2 py-2 text-left font-bold">Sản phẩm</th>
-            <th className="col-qty w-16 px-2 py-2 text-right font-bold">SL</th>
-            <th className="col-price w-24 px-2 py-2 text-right font-bold">Đơn giá</th>
-            <th className="col-total w-28 px-2 py-2 text-right font-bold">Thành tiền</th>
+            <th className="col-stt w-12 px-2 py-2 text-left font-bold border-x border-gray-400">STT</th>
+            <th className="col-name px-2 py-2 text-left font-bold border-x border-gray-400">Sản phẩm</th>
+            <th className="col-qty w-16 px-2 py-2 text-right font-bold border-x border-gray-400">SL</th>
+            <th className="col-price w-24 px-2 py-2 text-right font-bold border-x border-gray-400">Đơn giá</th>
+            <th className="col-total w-28 px-2 py-2 text-right font-bold border-x border-gray-400">Thành tiền</th>
           </tr>
         </thead>
         <tbody>
           {lines.length === 0 ? (
             <tr>
-              <td colSpan={5} className="px-2 py-4 text-center text-slate-400">
+              <td colSpan={5} className="px-2 py-4 text-center text-slate-400 border-x border-gray-400">
                 Chưa có dòng hàng
               </td>
             </tr>
           ) : (
             lines.map((l, i) => (
               <tr key={i} className="border-b border-slate-200">
-                <td className="col-stt w-12 px-2 py-1.5 text-left align-top text-slate-600">{i + 1}</td>
-                <td className="col-name px-2 py-1.5 text-left align-top break-words">{l.productTitle}</td>
-                <td className="col-qty w-16 px-2 py-1.5 text-right align-top tabular-nums">{l.quantity}</td>
-                <td className="col-price w-24 px-2 py-1.5 text-right align-top tabular-nums">
+                <td className="col-stt w-12 px-2 py-1.5 text-left align-top text-slate-600 border-x border-gray-400">{i + 1}</td>
+                <td className="col-name px-2 py-1.5 text-left align-top break-words border-x border-gray-400">{l.productTitle}</td>
+                <td className="col-qty w-16 px-2 py-1.5 text-right align-top tabular-nums border-x border-gray-400">{l.quantity}</td>
+                <td className="col-price w-24 px-2 py-1.5 text-right align-top tabular-nums border-x border-gray-400">
                   {formatVnd(l.sellingPrice)}
                 </td>
-                <td className="col-total w-28 px-2 py-1.5 text-right align-top font-bold tabular-nums">
+                <td className="col-total w-28 px-2 py-1.5 text-right align-top font-bold tabular-nums border-x border-gray-400">
                   {formatVnd(l.lineTotal)}
                 </td>
               </tr>

@@ -499,10 +499,15 @@ export default function QuickPosPage({
           #pos-invoice table {
             width: 100% !important;
             table-layout: auto !important;
+            border-collapse: collapse !important;
           }
           #pos-invoice th, #pos-invoice td {
             font-size: 13px !important;
             padding: 8px !important;
+            border-left: 1px solid #ccc !important;
+            border-right: 1px solid #ccc !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
           .no-print,
           aside,
