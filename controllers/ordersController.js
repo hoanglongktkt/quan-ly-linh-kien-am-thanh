@@ -255,6 +255,29 @@ function isScannerOrdersRequest(req) {
   return flag === "1" || flag === "true" || flag === "yes" || mode === "scanner";
 }
 
+/**
+ * Checkbox "Ưu tiên đơn 1 sản phẩm (Gom nhóm nhặt hàng)" — chỉ bật cho tab Chờ lấy hàng
+ * chưa xử lý; các tab khác giữ nguyên sort mặc định.
+ */
+function parseGroupPickingParam(req, tab) {
+  const raw = String(
+    req?.query?.group_picking ??
+      req?.query?.groupPicking ??
+      req?.query?.sortBySingleItem ??
+      "",
+  )
+    .trim()
+    .toLowerCase();
+  if (raw !== "1" && raw !== "true" && raw !== "yes") return false;
+  const t = String(tab || "").trim().toLowerCase();
+  return (
+    t === "unprocessed" ||
+    t === "chua-xu-ly" ||
+    t === "ready_to_ship" ||
+    t === "cho-lay-hang"
+  );
+}
+
 /** Mặc định 50/trang. Max 5000 chỉ khi scanner=1; caller thường không gửi limit thì không dump 2000. */
 function resolveOrdersListLimit(req, fallback = 50) {
   const rawLimit = Number(req?.query?.limit ?? req?.query?.page_size ?? req?.query?.pageSize);
@@ -470,6 +493,7 @@ export async function refreshOrders(req, res) {
     );
     const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "").trim();
     const printStatus = String(req.query.print_status || req.query.printStatus || "").trim();
+    const groupPicking = !searchQ && parseGroupPickingParam(req, tab);
     const coalesceKey = [
       page,
       limit,
@@ -478,6 +502,7 @@ export async function refreshOrders(req, res) {
       searchQ,
       shopIds.join(",") || shopId,
       printStatus,
+      groupPicking ? "pick" : "",
       req.query.startDate || req.query.start_date || "",
       req.query.endDate || req.query.end_date || "",
     ].join("|");
@@ -486,7 +511,8 @@ export async function refreshOrders(req, res) {
         ` kind=${kind || "(all)"}` +
         ` q=${searchQ || "(none)"}` +
         ` shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"}` +
-        ` print_status=${printStatus || "(all)"}`,
+        ` print_status=${printStatus || "(all)"}` +
+        ` group_picking=${groupPicking ? "1" : "0"}`,
     );
     const tabLc = tab.toLowerCase();
     const payload = await coalesceInFlight(ordersRefreshCoalesce, coalesceKey, async () => {
@@ -539,6 +565,7 @@ export async function refreshOrders(req, res) {
             query: searchQ,
             printStatus,
             skipCounts: true,
+            groupPicking,
             ...readOrderDateQuery(req),
           }),
           10000,
@@ -870,17 +897,20 @@ export async function listOrders(req, res) {
           : String(req.query.shop_id ?? req.query.shopId ?? "");
       const currentPageReq =
         Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1;
+      const listTab = String(req.query.tab || req.query.internal_tab || "");
+      const listQueryText = String(req.query.q ?? req.query.query ?? "");
       const page = await queryOrdersPageFromStore({
         page: currentPageReq,
         pageSize: limit,
-        tab: String(req.query.tab || req.query.internal_tab || ""),
+        tab: listTab,
         kind: parseCancelReturnKindParam(req.query.kind || req.query.cancel_kind),
         shopId,
         shopIds: shopIds.length > 1 ? shopIds : undefined,
         carrier: String(req.query.carrier || ""),
-        query: String(req.query.q ?? req.query.query ?? ""),
+        query: listQueryText,
         printStatus: String(req.query.print_status ?? req.query.printStatus ?? ""),
         skipCounts: true,
+        groupPicking: !listQueryText.trim() && parseGroupPickingParam(req, listTab),
         ...readOrderDateQuery(req),
       });
       let products = [];

@@ -775,6 +775,8 @@ export default function App() {
     kind?: string;
     startDate?: string;
     endDate?: string;
+    /** Gom nhóm nhặt hàng — server sort đơn 1 SP + cùng SKU liền kề (xuyên trang). */
+    groupPicking?: boolean;
     /** Bỏ qua dedupe in-flight (vd: tab vừa visible lại sau đóng băng). */
     force?: boolean;
     /** Trả lỗi về caller thay vì giữ im lặng và chỉ retry nền. */
@@ -810,8 +812,10 @@ export default function App() {
     const shopIds = normalizeShopIdsParam(opts?.shopIds, opts?.shopId);
     const shopKey = shopIds.join(',') || 'all';
     const force = Boolean(opts?.force);
-    const flightKey = `page:${page}|limit:${limit}|print:${printStatus || 'all'}|tab:${tab || 'all'}|q:${q || ''}|kind:${kind || 'all'}|shops:${shopKey}|from:${startDate || ''}|to:${endDate || ''}`;
-    const tabCacheKey = `tab:${tab || 'all'}|kind:${kind || 'all'}|q:${q || ''}|shops:${shopKey}|from:${startDate || ''}|to:${endDate || ''}|page:${page}|limit:${limit}`;
+    const groupPicking = Boolean(opts?.groupPicking) && !q;
+    const pickKey = groupPicking ? '|pick:1' : '';
+    const flightKey = `page:${page}|limit:${limit}|print:${printStatus || 'all'}|tab:${tab || 'all'}|q:${q || ''}|kind:${kind || 'all'}|shops:${shopKey}|from:${startDate || ''}|to:${endDate || ''}${pickKey}`;
+    const tabCacheKey = `tab:${tab || 'all'}|kind:${kind || 'all'}|q:${q || ''}|shops:${shopKey}|from:${startDate || ''}|to:${endDate || ''}|page:${page}|limit:${limit}${pickKey}`;
 
     /** SWR sớm: đổi sub-tab hiện cache ngay (kể cả khi fetch đang xếp hàng) — không spinner trắng. */
     let usedTabCache = false;
@@ -947,6 +951,7 @@ export default function App() {
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           shopIds: shopIds.length ? shopIds : undefined,
+          groupPicking,
           retriesLeft: retriesLeft - 1,
         });
       };
@@ -969,6 +974,7 @@ export default function App() {
         }
         if (startDate) params.set('startDate', startDate);
         if (endDate) params.set('endDate', endDate);
+        if (groupPicking) params.set('group_picking', '1');
         const path = `/api/orders/refresh?${params.toString()}`;
         console.log(
           `[FRONTEND FETCHED] GET ${path} (silent=${silent} merge=${merge} tab=${tab || '(none)'} shops=${ids.join(',') || '(all)'})`,

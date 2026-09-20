@@ -83336,6 +83336,78 @@ function buildOrdersListSearchFilter(search) {
   ];
   return { $or };
 }
+var GROUP_PICKING_SCAN_CAP = 3e3;
+var GROUP_PICKING_LINES_EXPR = {
+  $cond: [
+    { $isArray: "$data.items" },
+    "$data.items",
+    { $cond: [{ $isArray: "$data.item_list" }, "$data.item_list", []] }
+  ]
+};
+function groupPickingTextExpr(paths) {
+  const chain = paths.reduceRight(
+    (fallback, path25) => ({ $ifNull: [`$_firstLine.${path25}`, fallback] }),
+    ""
+  );
+  return {
+    $toUpper: {
+      $trim: {
+        input: { $convert: { input: chain, to: "string", onError: "", onNull: "" } }
+      }
+    }
+  };
+}
+async function queryGroupPickingOrderIds(listFilter, page, pageSize) {
+  const skip = (page - 1) * pageSize;
+  if (skip >= GROUP_PICKING_SCAN_CAP) return [];
+  try {
+    const rows = await OrderModel.aggregate([
+      { $match: listFilter },
+      // Lấy trước N đơn mới nhất bằng index (rẻ), rồi mới sort gom nhóm trong bộ nhớ.
+      { $sort: { last_shopee_update_at: -1, _id: -1 } },
+      { $limit: GROUP_PICKING_SCAN_CAP },
+      // Chỉ giữ khóa sort — document nhẹ, tránh chạm trần 32MB của $sort.
+      {
+        $project: {
+          _id: 1,
+          _lineCount: { $size: GROUP_PICKING_LINES_EXPR },
+          _firstLine: { $arrayElemAt: [GROUP_PICKING_LINES_EXPR, 0] },
+          _recent: { $ifNull: ["$last_shopee_update_at", "$create_time"] }
+        }
+      },
+      {
+        $project: {
+          _id: 1,
+          _recent: 1,
+          _single: { $cond: [{ $eq: ["$_lineCount", 1] }, 0, 1] },
+          _sku: groupPickingTextExpr(["modelSku", "model_sku", "item_sku", "sku"]),
+          _name: groupPickingTextExpr(["productTitle", "item_name", "name", "modelName"])
+        }
+      },
+      // SKU rỗng → đẩy xuống cuối nhóm, vẫn gom theo tên sản phẩm.
+      {
+        $project: {
+          _id: 1,
+          _recent: 1,
+          _single: 1,
+          _name: 1,
+          _skuKey: { $cond: [{ $eq: ["$_sku", ""] }, "\uFFFF", "$_sku"] }
+        }
+      },
+      { $sort: { _single: 1, _skuKey: 1, _name: 1, _recent: -1, _id: -1 } },
+      { $skip: skip },
+      { $limit: pageSize },
+      { $project: { _id: 1 } }
+    ]).allowDiskUse(true).option({ maxTimeMS: 6e3 }).exec();
+    return rows.map((r2) => String(r2?._id || "")).filter(Boolean);
+  } catch (aggErr) {
+    console.warn(
+      "[MongoDB] group-picking sort fallback (aggregate failed):",
+      aggErr?.message || aggErr
+    );
+    return null;
+  }
+}
 async function queryOrdersPageFromStore(opts) {
   const empty = {
     rows: [],
@@ -83402,13 +83474,26 @@ async function queryOrdersPageFromStore(opts) {
       searchFilter
     );
     let docs = [];
+    const groupPickingIds = opts?.groupPicking ? await queryGroupPickingOrderIds(listFilter, page, pageSize) : null;
     try {
-      const skipListHint = isCancelReturnsTab || isReturnRequestsTab;
-      let listQuery = OrderModel.find(listFilter).sort({ last_shopee_update_at: -1 }).skip((page - 1) * pageSize).limit(pageSize).select(ORDER_LIST_UI_PROJECTION).lean().maxTimeMS(4e3);
-      if (!skipListHint && !search) {
-        listQuery = listQuery.hint(shopTimeIndexHint(Boolean(shopFilter)));
+      if (groupPickingIds) {
+        if (groupPickingIds.length === 0) {
+          docs = [];
+        } else {
+          const picked = await OrderModel.find({ _id: { $in: groupPickingIds } }).select(ORDER_LIST_UI_PROJECTION).lean().maxTimeMS(4e3).exec();
+          const byId = new Map(
+            picked.map((doc) => [String(doc?._id || ""), doc])
+          );
+          docs = groupPickingIds.map((id) => byId.get(id)).filter(Boolean);
+        }
+      } else {
+        const skipListHint = isCancelReturnsTab || isReturnRequestsTab;
+        let listQuery = OrderModel.find(listFilter).sort({ last_shopee_update_at: -1 }).skip((page - 1) * pageSize).limit(pageSize).select(ORDER_LIST_UI_PROJECTION).lean().maxTimeMS(4e3);
+        if (!skipListHint && !search) {
+          listQuery = listQuery.hint(shopTimeIndexHint(Boolean(shopFilter)));
+        }
+        docs = await listQuery.exec();
       }
-      docs = await listQuery.exec();
     } catch (findErr) {
       console.error(
         "[MongoDB] queryOrdersPageFromStore find failed:",
@@ -122382,6 +122467,14 @@ function isScannerOrdersRequest(req) {
   const mode = String(req?.query?.mode || "").toLowerCase();
   return flag === "1" || flag === "true" || flag === "yes" || mode === "scanner";
 }
+function parseGroupPickingParam(req, tab) {
+  const raw = String(
+    req?.query?.group_picking ?? req?.query?.groupPicking ?? req?.query?.sortBySingleItem ?? ""
+  ).trim().toLowerCase();
+  if (raw !== "1" && raw !== "true" && raw !== "yes") return false;
+  const t2 = String(tab || "").trim().toLowerCase();
+  return t2 === "unprocessed" || t2 === "chua-xu-ly" || t2 === "ready_to_ship" || t2 === "cho-lay-hang";
+}
 function resolveOrdersListLimit(req, fallback = 50) {
   const rawLimit = Number(req?.query?.limit ?? req?.query?.page_size ?? req?.query?.pageSize);
   const hardMax = isScannerOrdersRequest(req) ? 5e3 : 200;
@@ -122558,6 +122651,7 @@ async function refreshOrders(req, res) {
     );
     const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "").trim();
     const printStatus = String(req.query.print_status || req.query.printStatus || "").trim();
+    const groupPicking = !searchQ && parseGroupPickingParam(req, tab);
     const coalesceKey = [
       page,
       limit,
@@ -122566,11 +122660,12 @@ async function refreshOrders(req, res) {
       searchQ,
       shopIds.join(",") || shopId,
       printStatus,
+      groupPicking ? "pick" : "",
       req.query.startDate || req.query.start_date || "",
       req.query.endDate || req.query.end_date || ""
     ].join("|");
     console.log(
-      `[GET /api/orders/refresh] params page=${page} limit=${limit} tab=${tab || "(none)"} kind=${kind || "(all)"} q=${searchQ || "(none)"} shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} print_status=${printStatus || "(all)"}`
+      `[GET /api/orders/refresh] params page=${page} limit=${limit} tab=${tab || "(none)"} kind=${kind || "(all)"} q=${searchQ || "(none)"} shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} print_status=${printStatus || "(all)"} group_picking=${groupPicking ? "1" : "0"}`
     );
     const tabLc = tab.toLowerCase();
     const payload = await coalesceInFlight(ordersRefreshCoalesce, coalesceKey, async () => {
@@ -122614,6 +122709,7 @@ async function refreshOrders(req, res) {
             query: searchQ,
             printStatus,
             skipCounts: true,
+            groupPicking,
             ...readOrderDateQuery(req)
           }),
           1e4,
@@ -122910,17 +123006,20 @@ async function listOrders(req, res) {
       );
       const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "");
       const currentPageReq = Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1;
+      const listTab = String(req.query.tab || req.query.internal_tab || "");
+      const listQueryText = String(req.query.q ?? req.query.query ?? "");
       const page = await queryOrdersPageFromStore({
         page: currentPageReq,
         pageSize: limit,
-        tab: String(req.query.tab || req.query.internal_tab || ""),
+        tab: listTab,
         kind: parseCancelReturnKindParam(req.query.kind || req.query.cancel_kind),
         shopId,
         shopIds: shopIds.length > 1 ? shopIds : void 0,
         carrier: String(req.query.carrier || ""),
-        query: String(req.query.q ?? req.query.query ?? ""),
+        query: listQueryText,
         printStatus: String(req.query.print_status ?? req.query.printStatus ?? ""),
         skipCounts: true,
+        groupPicking: !listQueryText.trim() && parseGroupPickingParam(req, listTab),
         ...readOrderDateQuery(req)
       });
       let products2 = [];

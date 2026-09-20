@@ -6476,6 +6476,11 @@ export type OrdersPageQuery = {
   /** Lọc theo thời gian tạo đơn (ISO / YYYY-MM-DD). */
   startDate?: string;
   endDate?: string;
+  /**
+   * Gom nhóm nhặt hàng: đơn 1 sản phẩm lên trước, rồi xếp liền kề theo SKU →
+   * tên sản phẩm của dòng hàng đầu tiên (sort xuyên trang, không chỉ trang hiện tại).
+   */
+  groupPicking?: boolean;
 };
 
 const DEFAULT_ORDER_DATE_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
@@ -8195,6 +8200,103 @@ function buildOrdersListSearchFilter(search: string): Record<string, unknown> | 
   return { $or };
 }
 
+/**
+ * Trần số đơn đưa vào sort gom nhóm. Sort theo SKU không có index → phải chặn
+ * cứng số document quét để không thổi CPU/RAM Mongo trên cPanel.
+ */
+const GROUP_PICKING_SCAN_CAP = 3000;
+
+/** `data.items` (SSOT UI) → fallback `data.item_list` (raw Shopee) → mảng rỗng. */
+const GROUP_PICKING_LINES_EXPR: Record<string, unknown> = {
+  $cond: [
+    { $isArray: "$data.items" },
+    "$data.items",
+    { $cond: [{ $isArray: "$data.item_list" }, "$data.item_list", []] },
+  ],
+};
+
+/** Chuỗi chuẩn hóa (trim + UPPER) từ nhiều tên field khác nhau của 1 dòng hàng. */
+function groupPickingTextExpr(paths: string[]): Record<string, unknown> {
+  const chain = paths.reduceRight<unknown>(
+    (fallback, path) => ({ $ifNull: [`$_firstLine.${path}`, fallback] }),
+    "",
+  );
+  return {
+    $toUpper: {
+      $trim: {
+        input: { $convert: { input: chain, to: "string", onError: "", onNull: "" } },
+      },
+    },
+  };
+}
+
+/**
+ * Thứ tự `_id` cho chế độ gom nhóm nhặt hàng:
+ *   1. Đơn chỉ 1 dòng SKU lên trước.
+ *   2. Cùng SKU dòng đầu nằm liền kề (A-Z).
+ *   3. Cùng tên sản phẩm (backup khi SKU rỗng).
+ * Trả `null` khi aggregate lỗi → caller tự quay về sort mặc định.
+ */
+async function queryGroupPickingOrderIds(
+  listFilter: Record<string, unknown>,
+  page: number,
+  pageSize: number,
+): Promise<string[] | null> {
+  const skip = (page - 1) * pageSize;
+  // Vượt trần quét → không còn dữ liệu để gom nhóm, trả rỗng thay vì scan tiếp.
+  if (skip >= GROUP_PICKING_SCAN_CAP) return [];
+  try {
+    const rows = await OrderModel.aggregate([
+      { $match: listFilter },
+      // Lấy trước N đơn mới nhất bằng index (rẻ), rồi mới sort gom nhóm trong bộ nhớ.
+      { $sort: { last_shopee_update_at: -1, _id: -1 } },
+      { $limit: GROUP_PICKING_SCAN_CAP },
+      // Chỉ giữ khóa sort — document nhẹ, tránh chạm trần 32MB của $sort.
+      {
+        $project: {
+          _id: 1,
+          _lineCount: { $size: GROUP_PICKING_LINES_EXPR },
+          _firstLine: { $arrayElemAt: [GROUP_PICKING_LINES_EXPR, 0] },
+          _recent: { $ifNull: ["$last_shopee_update_at", "$create_time"] },
+        },
+      },
+      {
+        $project: {
+          _id: 1,
+          _recent: 1,
+          _single: { $cond: [{ $eq: ["$_lineCount", 1] }, 0, 1] },
+          _sku: groupPickingTextExpr(["modelSku", "model_sku", "item_sku", "sku"]),
+          _name: groupPickingTextExpr(["productTitle", "item_name", "name", "modelName"]),
+        },
+      },
+      // SKU rỗng → đẩy xuống cuối nhóm, vẫn gom theo tên sản phẩm.
+      {
+        $project: {
+          _id: 1,
+          _recent: 1,
+          _single: 1,
+          _name: 1,
+          _skuKey: { $cond: [{ $eq: ["$_sku", ""] }, "\uffff", "$_sku"] },
+        },
+      },
+      { $sort: { _single: 1, _skuKey: 1, _name: 1, _recent: -1, _id: -1 } },
+      { $skip: skip },
+      { $limit: pageSize },
+      { $project: { _id: 1 } },
+    ])
+      .allowDiskUse(true)
+      .option({ maxTimeMS: 6000 })
+      .exec();
+    return (rows as { _id: unknown }[]).map((r) => String(r?._id || "")).filter(Boolean);
+  } catch (aggErr: any) {
+    console.warn(
+      "[MongoDB] group-picking sort fallback (aggregate failed):",
+      aggErr?.message || aggErr,
+    );
+    return null;
+  }
+}
+
 /** Danh sách đơn phân trang từ MongoDB; frontend không cần tải toàn bộ collection để lọc. */
 export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<{
   rows: any[];
@@ -8304,19 +8406,39 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
     );
 
     let docs: any[] = [];
+    // Gom nhóm nhặt hàng: lấy thứ tự _id qua aggregate rồi hydrate đúng thứ tự đó.
+    const groupPickingIds = opts?.groupPicking
+      ? await queryGroupPickingOrderIds(listFilter, page, pageSize)
+      : null;
     try {
-      const skipListHint = isCancelReturnsTab || isReturnRequestsTab;
-      let listQuery = OrderModel.find(listFilter)
-        .sort({ last_shopee_update_at: -1 })
-        .skip((page - 1) * pageSize)
-        .limit(pageSize)
-        .select(ORDER_LIST_UI_PROJECTION)
-        .lean()
-        .maxTimeMS(4000);
-      if (!skipListHint && !search) {
-        listQuery = listQuery.hint(shopTimeIndexHint(Boolean(shopFilter)));
+      if (groupPickingIds) {
+        if (groupPickingIds.length === 0) {
+          docs = [];
+        } else {
+          const picked = await OrderModel.find({ _id: { $in: groupPickingIds } })
+            .select(ORDER_LIST_UI_PROJECTION)
+            .lean()
+            .maxTimeMS(4000)
+            .exec();
+          const byId = new Map(
+            (picked as any[]).map((doc) => [String(doc?._id || ""), doc]),
+          );
+          docs = groupPickingIds.map((id) => byId.get(id)).filter(Boolean);
+        }
+      } else {
+        const skipListHint = isCancelReturnsTab || isReturnRequestsTab;
+        let listQuery = OrderModel.find(listFilter)
+          .sort({ last_shopee_update_at: -1 })
+          .skip((page - 1) * pageSize)
+          .limit(pageSize)
+          .select(ORDER_LIST_UI_PROJECTION)
+          .lean()
+          .maxTimeMS(4000);
+        if (!skipListHint && !search) {
+          listQuery = listQuery.hint(shopTimeIndexHint(Boolean(shopFilter)));
+        }
+        docs = await listQuery.exec();
       }
-      docs = await listQuery.exec();
     } catch (findErr: any) {
       console.error(
         "[MongoDB] queryOrdersPageFromStore find failed:",

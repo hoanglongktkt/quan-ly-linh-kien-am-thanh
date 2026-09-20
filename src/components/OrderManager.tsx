@@ -824,6 +824,8 @@ interface OrderManagerProps {
     kind?: string;
     startDate?: string;
     endDate?: string;
+    /** Gom nhóm nhặt hàng — server sort đơn 1 SP + cùng SKU liền kề (xuyên trang). */
+    groupPicking?: boolean;
     force?: boolean;
     retriesLeft?: number;
     throwOnError?: boolean;
@@ -1191,15 +1193,21 @@ export default function OrderManager({
     }, 350);
     return () => window.clearTimeout(timer);
   }, [shopsKey]);
+  /** Checkbox gom nhóm nhặt hàng — đọc trong callback fetch (ref: không tái tạo callback). */
+  const smartPickSortRef = useRef(false);
   const fetchOrdersWithShop = useCallback(
     (opts?: Parameters<NonNullable<OrderManagerProps['onFetchOrders']>>[0]) => {
       const shopIds = shopScopeRef.current.shopIds;
       const range = dateRangeRef.current;
+      // Chỉ tab Chờ lấy hàng chưa xử lý mới xin server sort gom nhóm.
+      const groupPicking =
+        smartPickSortRef.current && String(opts?.tab || '') === 'unprocessed';
       return onFetchOrdersPropRef.current?.({
         ...opts,
         ...(shopIds.length > 0 ? { shopIds } : {}),
         startDate: opts?.startDate || range.startDate,
         endDate: opts?.endDate || range.endDate,
+        groupPicking,
       });
     },
     [],
@@ -4406,8 +4414,29 @@ export default function OrderManager({
 
   // Search / sort
   const [selectedSort] = useState<'newest' | 'oldest' | 'highest_value'>('newest');
-  /** Client-side: ưu tiên + gom nhóm đơn 1 SP (tab Chờ lấy hàng chưa xử lý). */
+  /** Ưu tiên + gom nhóm đơn 1 SP (tab Chờ lấy hàng chưa xử lý) — server sort xuyên trang. */
   const [smartPickSort, setSmartPickSort] = useState(false);
+  smartPickSortRef.current = smartPickSort;
+
+  /** Bật/tắt gom nhóm → server sort lại từ trang 1 (gom nhóm phải xuyên trang, không chỉ trang hiện tại). */
+  const smartPickBootRef = useRef(true);
+  useEffect(() => {
+    if (smartPickBootRef.current) {
+      smartPickBootRef.current = false;
+      return;
+    }
+    if (activeSubTab !== 'unprocessed' || focusScanner) return;
+    setCurrentPage(1);
+    void onFetchOrdersRef.current?.({
+      silent: false,
+      page: 1,
+      limit: ORDERS_PAGE_SIZE,
+      merge: false,
+      tab: 'unprocessed',
+      force: true,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [smartPickSort]);
 
   // Multi-select bulk state
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
@@ -6995,27 +7024,43 @@ export default function OrderManager({
    */
   const isSingleSkuOrder = (order: Order) => (order.items || []).length === 1;
 
+  /** SKU rỗng → xuống cuối nhóm (khớp `\uffff` của aggregate gom nhóm bên Mongo). */
+  const smartPickSkuKey = (order: Order) => {
+    const item = (order.items || [])[0] as
+      | (Order['items'][number] & { sku?: string; item_sku?: string })
+      | undefined;
+    const sku = String(item?.modelSku || item?.sku || item?.item_sku || '')
+      .trim()
+      .toUpperCase();
+    return sku || '\uffff';
+  };
+
+  const smartPickNameKey = (order: Order) => {
+    const item = (order.items || [])[0] as
+      | (Order['items'][number] & { name?: string })
+      | undefined;
+    return String(item?.productTitle || item?.name || item?.modelName || '')
+      .trim()
+      .toUpperCase();
+  };
+
+  /**
+   * Mirror đúng sort của backend (`groupPicking`): đơn 1 SP → SKU dòng đầu → tên SP.
+   * Giữ client sort làm lưới an toàn khi API trả thứ tự mặc định (aggregate fallback).
+   */
   const compareSmartPickOrders = (a: Order, b: Order) => {
     const aSingle = isSingleSkuOrder(a);
     const bSingle = isSingleSkuOrder(b);
-    if (aSingle && !bSingle) return -1;
-    if (!aSingle && bSingle) return 1;
-    if (aSingle && bSingle) {
-      const itemA = (a.items || [])[0] as
-        | (Order['items'][number] & { name?: string; sku?: string })
-        | undefined;
-      const itemB = (b.items || [])[0] as
-        | (Order['items'][number] & { name?: string; sku?: string })
-        | undefined;
-      const nameA = String(itemA?.productTitle || itemA?.name || itemA?.modelName || '').trim();
-      const nameB = String(itemB?.productTitle || itemB?.name || itemB?.modelName || '').trim();
-      const skuA = String(itemA?.modelSku || itemA?.sku || '').trim();
-      const skuB = String(itemB?.modelSku || itemB?.sku || '').trim();
-      const nameCmp = nameA.localeCompare(nameB, 'vi', { sensitivity: 'base', numeric: true });
-      if (nameCmp !== 0) return nameCmp;
-      return skuA.localeCompare(skuB, 'vi', { sensitivity: 'base', numeric: true });
-    }
-    return 0;
+    if (aSingle !== bSingle) return aSingle ? -1 : 1;
+    const skuCmp = smartPickSkuKey(a).localeCompare(smartPickSkuKey(b), 'vi', {
+      sensitivity: 'base',
+      numeric: true,
+    });
+    if (skuCmp !== 0) return skuCmp;
+    return smartPickNameKey(a).localeCompare(smartPickNameKey(b), 'vi', {
+      sensitivity: 'base',
+      numeric: true,
+    });
   };
 
   const filteredOrdersBase = useMemo(() => {
