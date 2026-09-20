@@ -1,5 +1,6 @@
 import React from 'react';
 import type { Order } from '../types';
+import { LOGO_PUBLIC } from '../config/brand';
 
 export type StoreInvoiceInfo = {
   storeName: string;
@@ -21,7 +22,7 @@ export const EMPTY_STORE_INFO: StoreInvoiceInfo = {
   storeName: '',
   storePhone: '',
   storeAddress: '',
-  logoUrl: '',
+  logoUrl: LOGO_PUBLIC,
 };
 
 export function loadStoreInfo(): StoreInvoiceInfo {
@@ -33,7 +34,7 @@ export function loadStoreInfo(): StoreInvoiceInfo {
       storeName: String(parsed.storeName || ''),
       storePhone: String(parsed.storePhone || ''),
       storeAddress: String(parsed.storeAddress || ''),
-      logoUrl: String(parsed.logoUrl || ''),
+      logoUrl: String(parsed.logoUrl || LOGO_PUBLIC),
     };
   } catch {
     return { ...EMPTY_STORE_INFO };

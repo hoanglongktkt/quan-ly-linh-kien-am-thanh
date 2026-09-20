@@ -577,10 +577,10 @@ export default function QuickPosPage({
                   className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium resize-y bg-white"
                 />
                 <input
-                  type="url"
+                  type="text"
                   value={storeInfo.logoUrl}
                   onChange={(e) => patchStoreInfo({ logoUrl: e.target.value })}
-                  placeholder="URL Logo (https://...)"
+                  placeholder="URL Logo (/logo.png hoặc https://...)"
                   className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium bg-white"
                 />
                 {storeInfo.logoUrl.trim() ? (
