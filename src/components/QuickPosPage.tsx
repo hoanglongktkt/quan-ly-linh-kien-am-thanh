@@ -498,81 +498,41 @@ export default function QuickPosPage({
       <style>{`
         @media print {
           @page {
-            size: 105mm 148mm; /* Chuẩn A6 Portrait */
-            margin: 2mm;
+            size: A4 portrait;
+            margin: 10mm;
           }
-          html, body {
-            width: 105mm !important;
-            max-width: 105mm !important;
-            min-width: 0 !important;
+          body {
             margin: 0 !important;
             padding: 0 !important;
-            background: #fff !important;
+            background-color: white;
           }
           body * {
-            visibility: hidden !important;
+            visibility: hidden;
           }
           #pos-invoice, #pos-invoice * {
-            visibility: visible !important;
+            visibility: visible;
           }
           #pos-invoice {
-            position: absolute !important;
-            left: 0 !important;
-            top: 0 !important;
-            right: auto !important;
-            width: 100mm !important;
-            max-width: 100mm !important;
-            min-width: 0 !important;
-            margin: 0 !important;
-            padding: 2mm !important;
-            font-size: 12px !important;
-            line-height: 1.35 !important;
-            background-color: white !important;
-            color: #000 !important;
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100% !important;
+            max-width: 210mm !important;
+            margin: 0;
+            padding: 10px !important;
+            font-size: 14px !important;
+            background-color: white;
+            color: #000;
             border: none !important;
             border-radius: 0 !important;
-            box-sizing: border-box !important;
-            overflow-x: hidden !important;
-            overflow-y: visible !important;
-            transform: none !important;
-          }
-          #pos-invoice *,
-          #pos-invoice *::before,
-          #pos-invoice *::after {
-            box-sizing: border-box !important;
-            max-width: 100% !important;
-          }
-          #pos-invoice img {
-            height: 12mm !important;
-            width: 12mm !important;
-            max-height: 12mm !important;
-            max-width: 12mm !important;
           }
           #pos-invoice table {
             width: 100% !important;
-            max-width: 100% !important;
-            table-layout: fixed !important;
-            border-collapse: collapse !important;
+            table-layout: auto !important;
           }
-          #pos-invoice th,
-          #pos-invoice td {
-            word-wrap: break-word !important;
-            overflow-wrap: anywhere !important;
-            white-space: normal !important;
-            font-size: 11px !important;
-            padding: 2px !important;
-            vertical-align: top !important;
-          }
-          #pos-invoice .col-stt { width: 10% !important; text-align: left !important; }
-          #pos-invoice .col-name { width: 45% !important; text-align: left !important; }
-          #pos-invoice .col-qty { width: 10% !important; text-align: center !important; }
-          #pos-invoice .col-price { width: 15% !important; text-align: right !important; }
-          #pos-invoice .col-total { width: 20% !important; text-align: right !important; }
-          #pos-invoice .invoice-totals {
-            max-width: 100% !important;
-            width: 100% !important;
-            margin-left: 0 !important;
-            margin-top: 2mm !important;
+          #pos-invoice th, #pos-invoice td {
+            font-size: 13px !important;
+            padding: 8px !important;
           }
           .no-print { display: none !important; }
         }
