@@ -497,24 +497,83 @@ export default function QuickPosPage({
     <div className="space-y-4 max-w-6xl mx-auto pb-10">
       <style>{`
         @media print {
-          body * { visibility: hidden !important; }
-          #pos-invoice, #pos-invoice * { visibility: visible !important; }
+          @page {
+            size: 105mm 148mm; /* Chuẩn A6 Portrait */
+            margin: 2mm;
+          }
+          html, body {
+            width: 105mm !important;
+            max-width: 105mm !important;
+            min-width: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            background: #fff !important;
+          }
+          body * {
+            visibility: hidden !important;
+          }
+          #pos-invoice, #pos-invoice * {
+            visibility: visible !important;
+          }
           #pos-invoice {
             position: absolute !important;
             left: 0 !important;
             top: 0 !important;
-            width: 100% !important;
-            padding: 16px !important;
-            background: #fff !important;
+            right: auto !important;
+            width: 100mm !important;
+            max-width: 100mm !important;
+            min-width: 0 !important;
+            margin: 0 !important;
+            padding: 2mm !important;
+            font-size: 12px !important;
+            line-height: 1.35 !important;
+            background-color: white !important;
             color: #000 !important;
             border: none !important;
             border-radius: 0 !important;
+            box-sizing: border-box !important;
+            overflow-x: hidden !important;
+            overflow-y: visible !important;
+            transform: none !important;
           }
-          #pos-invoice table { width: 100% !important; border-collapse: collapse !important; }
+          #pos-invoice *,
+          #pos-invoice *::before,
+          #pos-invoice *::after {
+            box-sizing: border-box !important;
+            max-width: 100% !important;
+          }
+          #pos-invoice img {
+            height: 12mm !important;
+            width: 12mm !important;
+            max-height: 12mm !important;
+            max-width: 12mm !important;
+          }
+          #pos-invoice table {
+            width: 100% !important;
+            max-width: 100% !important;
+            table-layout: fixed !important;
+            border-collapse: collapse !important;
+          }
           #pos-invoice th,
-          #pos-invoice td { padding: 6px 8px !important; }
-          #pos-invoice th:first-child,
-          #pos-invoice td:first-child { width: 48px !important; text-align: left !important; }
+          #pos-invoice td {
+            word-wrap: break-word !important;
+            overflow-wrap: anywhere !important;
+            white-space: normal !important;
+            font-size: 11px !important;
+            padding: 2px !important;
+            vertical-align: top !important;
+          }
+          #pos-invoice .col-stt { width: 10% !important; text-align: left !important; }
+          #pos-invoice .col-name { width: 45% !important; text-align: left !important; }
+          #pos-invoice .col-qty { width: 10% !important; text-align: center !important; }
+          #pos-invoice .col-price { width: 15% !important; text-align: right !important; }
+          #pos-invoice .col-total { width: 20% !important; text-align: right !important; }
+          #pos-invoice .invoice-totals {
+            max-width: 100% !important;
+            width: 100% !important;
+            margin-left: 0 !important;
+            margin-top: 2mm !important;
+          }
           .no-print { display: none !important; }
         }
       `}</style>
@@ -956,11 +1015,11 @@ export default function QuickPosPage({
         <table className="w-full text-xs border-collapse table-fixed">
           <thead>
             <tr className="border-b-2 border-slate-800">
-              <th className="w-12 px-2 py-2 text-left font-bold">STT</th>
-              <th className="px-2 py-2 text-left font-bold">Sản phẩm</th>
-              <th className="w-16 px-2 py-2 text-right font-bold">SL</th>
-              <th className="w-24 px-2 py-2 text-right font-bold">Đơn giá</th>
-              <th className="w-28 px-2 py-2 text-right font-bold">Thành tiền</th>
+              <th className="col-stt w-12 px-2 py-2 text-left font-bold">STT</th>
+              <th className="col-name px-2 py-2 text-left font-bold">Sản phẩm</th>
+              <th className="col-qty w-16 px-2 py-2 text-right font-bold">SL</th>
+              <th className="col-price w-24 px-2 py-2 text-right font-bold">Đơn giá</th>
+              <th className="col-total w-28 px-2 py-2 text-right font-bold">Thành tiền</th>
             </tr>
           </thead>
           <tbody>
@@ -973,13 +1032,13 @@ export default function QuickPosPage({
             ) : (
               printLines.map((l, i) => (
                 <tr key={i} className="border-b border-slate-200">
-                  <td className="w-12 px-2 py-1.5 text-left align-top text-slate-600">{i + 1}</td>
-                  <td className="px-2 py-1.5 text-left align-top break-words">{l.productTitle}</td>
-                  <td className="w-16 px-2 py-1.5 text-right align-top tabular-nums">{l.quantity}</td>
-                  <td className="w-24 px-2 py-1.5 text-right align-top tabular-nums">
+                  <td className="col-stt w-12 px-2 py-1.5 text-left align-top text-slate-600">{i + 1}</td>
+                  <td className="col-name px-2 py-1.5 text-left align-top break-words">{l.productTitle}</td>
+                  <td className="col-qty w-16 px-2 py-1.5 text-right align-top tabular-nums">{l.quantity}</td>
+                  <td className="col-price w-24 px-2 py-1.5 text-right align-top tabular-nums">
                     {formatVnd(l.sellingPrice)}
                   </td>
-                  <td className="w-28 px-2 py-1.5 text-right align-top font-bold tabular-nums">
+                  <td className="col-total w-28 px-2 py-1.5 text-right align-top font-bold tabular-nums">
                     {formatVnd(l.lineTotal)}
                   </td>
                 </tr>
@@ -987,7 +1046,7 @@ export default function QuickPosPage({
             )}
           </tbody>
         </table>
-        <div className="mt-4 text-xs space-y-1 max-w-xs ml-auto">
+        <div className="invoice-totals mt-4 text-xs space-y-1 max-w-xs ml-auto">
           <div className="flex justify-between gap-4 px-2">
             <span>Tạm tính</span>
             <span className="font-bold tabular-nums">{formatVnd(printSubtotal)}₫</span>
