@@ -294,20 +294,34 @@ export async function loadOrdersForShipScoped(orderIds, orderSns) {
     }
   }
 
+  const requestedSns = [];
+  const seenReq = new Set();
+  const pushReq = (raw) => {
+    const sn = String(raw || "")
+      .replace(/^shopee-/i, "")
+      .trim();
+    if (!sn || seenReq.has(sn)) return;
+    seenReq.add(sn);
+    requestedSns.push(sn);
+  };
+  for (const s of orderSns || []) pushReq(s);
+  for (const s of orderIds || []) pushReq(s);
+
   const out = [];
   const seen = new Set();
-  for (const o of bySn.values()) {
+  const push = (o) => {
+    if (!o) return;
     const k = String(o.orderSn || o.id || "");
-    if (k && seen.has(k)) continue;
+    if (k && seen.has(k)) return;
     if (k) seen.add(k);
     out.push(o);
+  };
+  // Trả đúng thứ tự payload (màn hình / in hàng loạt), không theo $in Mongo.
+  for (const sn of requestedSns) {
+    push(bySn.get(sn) || byId.get(sn) || byId.get(`shopee-${sn}`));
   }
-  for (const o of byId.values()) {
-    const k = String(o.orderSn || o.id || "");
-    if (k && seen.has(k)) continue;
-    if (k) seen.add(k);
-    out.push(o);
-  }
+  for (const o of bySn.values()) push(o);
+  for (const o of byId.values()) push(o);
   return out;
 }
 

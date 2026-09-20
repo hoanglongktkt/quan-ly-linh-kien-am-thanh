@@ -14,6 +14,11 @@ import { createShopeeWebhookRouter } from "./src/webhooks/shopeeWebhookHandler.t
 import { enrichOrdersFromCatalog } from "./src/utils/orderItemVariation.ts";
 import { inferShippingCarrierLabel } from "./src/utils/shippingCarrier.ts";
 import {
+  normalizePrintOrderSn,
+  sortSnsByGroupPicking,
+  uniquePreserveOrder,
+} from "./src/utils/groupPickingSort.ts";
+import {
   advanceShopeeOrderListCursor,
   extractShopeeOrderListRows,
   parseShopeeOrderListPagination,
@@ -11771,7 +11776,9 @@ async function batchDownloadShopeeWaybillPdf(
                 putLabelMem(downloadResult.filename, mergedBuf, "application/pdf");
                 const splitMap = await splitMergedWaybillPdfToOrders(mergedBuf, uniquePendingSns);
                 if (splitMap.size === uniquePendingSns.length) {
-                  for (const [sn, buf] of splitMap) {
+                  for (const sn of uniquePendingSns) {
+                    const buf = splitMap.get(sn);
+                    if (!buf) continue;
                     await cacheOrderWaybillPdf(sn, buf);
                     readyOrderSns.push(sn);
                     readyOrderRows.push(...(pendingByOrder.get(sn) || []));
@@ -22566,33 +22573,108 @@ async function startServer() {
   type BatchPdfDocument = { orderSns: string[]; buffer: Buffer };
   type BatchPdfFailure = { orderSn: string; error: string; message: string };
 
+  function parseBatchGroupPickingFlag(body: any): boolean {
+    const raw = body?.groupPicking ?? body?.group_picking ?? body?.sortBySingleItem;
+    if (raw === true || raw === 1) return true;
+    const text = String(raw ?? "").trim().toLowerCase();
+    return text === "1" || text === "true" || text === "yes";
+  }
+
+  function reorderOrdersByRequestedSns(orders: any[], requestedSns: string[]): any[] {
+    const bySn = new Map<string, any>();
+    for (const order of Array.isArray(orders) ? orders : []) {
+      const sn = normalizePrintOrderSn(order?.orderSn || order?.order_sn);
+      if (sn && !bySn.has(sn)) bySn.set(sn, order);
+    }
+    const ordered: any[] = [];
+    const seen = new Set<string>();
+    for (const sn of uniquePreserveOrder(
+      (requestedSns || []).map(normalizePrintOrderSn).filter(Boolean),
+    )) {
+      const order = bySn.get(sn);
+      if (!order) continue;
+      ordered.push(order);
+      seen.add(sn);
+    }
+    for (const order of Array.isArray(orders) ? orders : []) {
+      const sn = normalizePrintOrderSn(order?.orderSn || order?.order_sn);
+      if (sn && seen.has(sn)) continue;
+      if (sn) seen.add(sn);
+      ordered.push(order);
+    }
+    return ordered;
+  }
+
+  function alignBatchPdfDocumentsToRequestedOrder(
+    requestedOrderSns: string[],
+    documents: BatchPdfDocument[],
+    failedOrders: BatchPdfFailure[],
+  ): { documents: BatchPdfDocument[]; failedOrders: BatchPdfFailure[] } {
+    const requested = uniquePreserveOrder(
+      (requestedOrderSns || []).map(normalizePrintOrderSn).filter(Boolean),
+    );
+    const requestedRank = new Map<string, number>();
+    requested.forEach((sn, index) => requestedRank.set(sn, index));
+    const bufBySn = new Map<string, Buffer>();
+    for (const document of documents || []) {
+      const sns = uniquePreserveOrder(
+        (document.orderSns || []).map(normalizePrintOrderSn).filter(Boolean),
+      );
+      if (!document?.buffer || sns.length === 0) continue;
+      if (sns.length === 1) {
+        bufBySn.set(sns[0], document.buffer);
+        continue;
+      }
+      // PDF gộp nhiều đơn: không nhân bản toàn bộ file cho từng SN.
+      const firstMissing = sns.find((sn) => !bufBySn.has(sn));
+      if (firstMissing) bufBySn.set(firstMissing, document.buffer);
+    }
+    const orderedDocs: BatchPdfDocument[] = [];
+    const used = new Set<string>();
+    for (const sn of requested) {
+      const buffer = bufBySn.get(sn);
+      if (!buffer) continue;
+      orderedDocs.push({ orderSns: [sn], buffer });
+      used.add(sn);
+    }
+    for (const [sn, buffer] of bufBySn) {
+      if (used.has(sn)) continue;
+      orderedDocs.push({ orderSns: [sn], buffer });
+    }
+    const failureRank = (failure: BatchPdfFailure) => {
+      const sn = normalizePrintOrderSn(failure.orderSn);
+      return requestedRank.get(sn) ?? Number.MAX_SAFE_INTEGER;
+    };
+    return {
+      documents: orderedDocs,
+      failedOrders: [...(failedOrders || [])].sort((a, b) => failureRank(a) - failureRank(b)),
+    };
+  }
+
   function sortBatchPdfResultByRequestedOrder(
     requestedOrderSns: string[],
     documents: BatchPdfDocument[],
     failedOrders: BatchPdfFailure[],
   ): { documents: BatchPdfDocument[]; failedOrders: BatchPdfFailure[] } {
-    const requestedRank = new Map<string, number>();
-    requestedOrderSns.forEach((value, index) => {
-      const sn = String(value || "").replace(/^shopee-/i, "").trim();
-      if (sn && !requestedRank.has(sn)) requestedRank.set(sn, index);
-    });
-    const documentRank = (document: BatchPdfDocument) => {
-      let best = Number.MAX_SAFE_INTEGER;
-      for (const value of document.orderSns || []) {
-        const sn = String(value || "").replace(/^shopee-/i, "").trim();
-        const rank = requestedRank.get(sn);
-        if (rank != null && rank < best) best = rank;
-      }
-      return best;
-    };
-    const failureRank = (failure: BatchPdfFailure) => {
-      const sn = String(failure.orderSn || "").replace(/^shopee-/i, "").trim();
-      return requestedRank.get(sn) ?? Number.MAX_SAFE_INTEGER;
-    };
-    return {
-      documents: [...documents].sort((a, b) => documentRank(a) - documentRank(b)),
-      failedOrders: [...failedOrders].sort((a, b) => failureRank(a) - failureRank(b)),
-    };
+    return alignBatchPdfDocumentsToRequestedOrder(
+      requestedOrderSns,
+      documents,
+      failedOrders,
+    );
+  }
+
+  function buildPdfBuffersInRequestedOrder(
+    requestedOrderSns: string[],
+    documents: BatchPdfDocument[],
+  ): Array<{ orderSn: string; buffer: Buffer }> {
+    return alignBatchPdfDocumentsToRequestedOrder(
+      requestedOrderSns,
+      documents,
+      [],
+    ).documents.map((document) => ({
+      orderSn: document.orderSns[0] || document.orderSns.join(","),
+      buffer: document.buffer,
+    }));
   }
 
   async function mergeBatchPdfBuffers(
@@ -22849,13 +22931,12 @@ async function startServer() {
         });
       }
 
-      const cleanSns = [
-        ...new Set(
-          orderSns
-            .map((sn: any) => String(sn || "").replace(/^shopee-/i, "").trim())
-            .filter(Boolean),
-        ),
-      ];
+      const cleanSns = uniquePreserveOrder(
+        orderSns
+          .map((sn: any) => String(sn || "").replace(/^shopee-/i, "").trim())
+          .filter(Boolean),
+      );
+      const groupPicking = parseBatchGroupPickingFlag(req.body);
 
       if (cleanSns.length === 0) {
         return res.status(400).json({
@@ -22864,7 +22945,9 @@ async function startServer() {
         });
       }
 
-      console.log(`[Batch Confirm Print] Bắt đầu xử lý ${cleanSns.length} đơn: ${cleanSns.join(", ")}`);
+      console.log(
+        `[Batch Confirm Print] Bắt đầu xử lý ${cleanSns.length} đơn groupPicking=${groupPicking ? "1" : "0"}: ${cleanSns.join(", ")}`,
+      );
 
       // Bước 1: Load orders
       let orders: any[] = [];
@@ -22888,7 +22971,10 @@ async function startServer() {
         });
       }
 
-      const toShip = resolveOrdersFromRequest(orders, [], cleanSns);
+      const orderedSns = groupPicking ? sortSnsByGroupPicking(cleanSns, orders) : cleanSns;
+      orders = reorderOrdersByRequestedSns(orders, orderedSns);
+
+      const toShip = resolveOrdersFromRequest(orders, [], orderedSns);
       if (toShip.length === 0) {
         return res.status(404).json({
           success: false,
@@ -22986,7 +23072,7 @@ async function startServer() {
       });
 
       // Worker hoàn tất không theo thứ tự; dựng lại đúng thứ tự request/UI trước khi lấy và gộp PDF.
-      const successSns = cleanSns.filter((orderSn) => successfulSnSet.has(orderSn));
+      const successSns = orderedSns.filter((orderSn) => successfulSnSet.has(orderSn));
 
       // Lưu vào DB — khóa isPrepared TRƯỚC khi trả response (tab Đã xử lý).
       try {
@@ -23178,13 +23264,9 @@ async function startServer() {
         deadlineAt,
         "Batch Confirm Print",
       );
-      const printedFromBatch = batchPdfResult.documents.flatMap((item) => item.orderSns);
-      pdfBuffers.push(
-        ...batchPdfResult.documents.map((item) => ({
-          orderSn: item.orderSns.join(","),
-          buffer: item.buffer,
-        })),
-      );
+      const alignedPrintDocs = buildPdfBuffersInRequestedOrder(successSns, batchPdfResult.documents);
+      const printedFromBatch = alignedPrintDocs.map((item) => item.orderSn);
+      pdfBuffers.push(...alignedPrintDocs);
       for (const failure of batchPdfResult.failedOrders) {
         pdfFailures.set(failure.orderSn, failure);
       }
@@ -23281,13 +23363,12 @@ async function startServer() {
         });
       }
 
-      const cleanSns = [
-        ...new Set(
-          orderSns
-            .map((sn: any) => String(sn || "").replace(/^shopee-/i, "").trim())
-            .filter(Boolean),
-        ),
-      ];
+      const cleanSns = uniquePreserveOrder(
+        orderSns
+          .map((sn: any) => String(sn || "").replace(/^shopee-/i, "").trim())
+          .filter(Boolean),
+      );
+      const groupPicking = parseBatchGroupPickingFlag(req.body);
 
       if (cleanSns.length === 0) {
         return res.status(400).json({
@@ -23296,7 +23377,9 @@ async function startServer() {
         });
       }
 
-      console.log(`[Batch Print Only] In lại ${cleanSns.length} đơn: ${cleanSns.join(", ")}`);
+      console.log(
+        `[Batch Print Only] In lại ${cleanSns.length} đơn groupPicking=${groupPicking ? "1" : "0"}: ${cleanSns.join(", ")}`,
+      );
 
       // Load orders từ DB
       let orders: any[] = [];
@@ -23319,6 +23402,9 @@ async function startServer() {
           message: "Không tìm thấy đơn nào trong database.",
         });
       }
+
+      const mergeSns = groupPicking ? sortSnsByGroupPicking(cleanSns, orders) : cleanSns;
+      orders = reorderOrdersByRequestedSns(orders, mergeSns);
 
       // Lấy PDF tối đa 5 đơn song song; lỗi cục bộ được trả riêng cho frontend.
       const pdfBuffers: { orderSn: string; buffer: Buffer }[] = [];
@@ -23473,22 +23559,19 @@ async function startServer() {
       };
 
       // Luồng tuyến tính từng đơn: Cache → Enrich → Create → Poll → Download (đã có recovery Create 1 lần).
-      const pendingSns = new Set(cleanSns);
+      const pendingSns = new Set(mergeSns);
       const printedFromBatch: string[] = [];
       const batchPdfResult = await fetchBatchPdfDocumentsByShop(
         orders,
-        [...pendingSns],
+        mergeSns,
         deadlineAt,
         "Batch Print Only",
         {
           signal: requestAbortController.signal,
         },
       );
+      pdfBuffers.push(...buildPdfBuffersInRequestedOrder(mergeSns, batchPdfResult.documents));
       for (const document of batchPdfResult.documents) {
-        pdfBuffers.push({
-          orderSn: document.orderSns.join(","),
-          buffer: document.buffer,
-        });
         for (const orderSn of document.orderSns) {
           pendingSns.delete(orderSn);
           pdfFailures.delete(orderSn);

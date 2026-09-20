@@ -53543,12 +53543,12 @@ var require_parse_proxy_response = __commonJS({
             return;
           }
           const headerParts = buffered.slice(0, endOfHeaders).toString("ascii").split("\r\n");
-          const firstLine = headerParts.shift();
-          if (!firstLine) {
+          const firstLine2 = headerParts.shift();
+          if (!firstLine2) {
             socket.destroy();
             return reject(new Error("No header received from proxy CONNECT response"));
           }
-          const firstLineParts = firstLine.split(" ");
+          const firstLineParts = firstLine2.split(" ");
           const statusCode = +firstLineParts[1];
           const statusText = firstLineParts.slice(2).join(" ");
           const headers = {};
@@ -53571,7 +53571,7 @@ var require_parse_proxy_response = __commonJS({
               headers[key] = value;
             }
           }
-          debug("got proxy server response: %o %o", firstLine, headers);
+          debug("got proxy server response: %o %o", firstLine2, headers);
           cleanup();
           resolve({
             connect: {
@@ -72673,9 +72673,9 @@ var require_parse_proxy_response2 = __commonJS({
             read();
             return;
           }
-          const firstLine = buffered.toString("ascii", 0, buffered.indexOf("\r\n"));
-          const statusCode = +firstLine.split(" ")[1];
-          debug("got proxy server response: %o", firstLine);
+          const firstLine2 = buffered.toString("ascii", 0, buffered.indexOf("\r\n"));
+          const statusCode = +firstLine2.split(" ")[1];
+          debug("got proxy server response: %o", firstLine2);
           resolve({
             statusCode,
             buffered
@@ -76279,6 +76279,78 @@ function inferShippingCarrierLabel(order) {
     return "SPX Instant";
   }
   return void 0;
+}
+
+// src/utils/groupPickingSort.ts
+function uniquePreserveOrder(values) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const value of values) {
+    const key = String(value || "").trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+  }
+  return out;
+}
+function normalizePrintOrderSn(value) {
+  return String(value || "").replace(/^shopee-/i, "").trim();
+}
+function orderLines(order) {
+  const data = order?.data && typeof order.data === "object" ? order.data : null;
+  const items = order?.items || data?.items;
+  if (Array.isArray(items) && items.length > 0) return items;
+  const list = order?.item_list || data?.item_list;
+  return Array.isArray(list) ? list : [];
+}
+function firstLine(order) {
+  return orderLines(order)[0] || {};
+}
+function groupPickingSkuKey(order) {
+  const item = firstLine(order);
+  const sku = String(
+    item?.modelSku || item?.model_sku || item?.sku || item?.item_sku || ""
+  ).trim().toUpperCase();
+  return sku || "\uFFFF";
+}
+function groupPickingNameKey(order) {
+  const item = firstLine(order);
+  return String(
+    item?.productTitle || item?.item_name || item?.name || item?.modelName || ""
+  ).trim().toUpperCase();
+}
+function compareGroupPickingOrders(a, b) {
+  const aSingle = orderLines(a).length === 1;
+  const bSingle = orderLines(b).length === 1;
+  if (aSingle !== bSingle) return aSingle ? -1 : 1;
+  const skuCmp = groupPickingSkuKey(a).localeCompare(groupPickingSkuKey(b), "vi", {
+    sensitivity: "base",
+    numeric: true
+  });
+  if (skuCmp !== 0) return skuCmp;
+  return groupPickingNameKey(a).localeCompare(groupPickingNameKey(b), "vi", {
+    sensitivity: "base",
+    numeric: true
+  });
+}
+function sortSnsByGroupPicking(sns, orders) {
+  const bySn = /* @__PURE__ */ new Map();
+  for (const order of Array.isArray(orders) ? orders : []) {
+    const sn = normalizePrintOrderSn(order?.orderSn || order?.order_sn);
+    if (sn && !bySn.has(sn)) bySn.set(sn, order);
+  }
+  const requested = uniquePreserveOrder(
+    (Array.isArray(sns) ? sns : []).map(normalizePrintOrderSn).filter(Boolean)
+  );
+  const sortable = [];
+  const missing = [];
+  for (const sn of requested) {
+    const order = bySn.get(sn);
+    if (order) sortable.push({ sn, order });
+    else missing.push(sn);
+  }
+  sortable.sort((a, b) => compareGroupPickingOrders(a.order, b.order));
+  return [...sortable.map((row) => row.sn), ...missing];
 }
 
 // src/utils/shopeeOrderListPagination.ts
@@ -121927,20 +121999,30 @@ async function loadOrdersForShipScoped(orderIds, orderSns) {
       console.warn("[Orders] loadOrdersForShipScoped mongo skip:", err?.message || err);
     }
   }
+  const requestedSns = [];
+  const seenReq = /* @__PURE__ */ new Set();
+  const pushReq = (raw) => {
+    const sn = String(raw || "").replace(/^shopee-/i, "").trim();
+    if (!sn || seenReq.has(sn)) return;
+    seenReq.add(sn);
+    requestedSns.push(sn);
+  };
+  for (const s2 of orderSns || []) pushReq(s2);
+  for (const s2 of orderIds || []) pushReq(s2);
   const out = [];
   const seen = /* @__PURE__ */ new Set();
-  for (const o of bySn.values()) {
+  const push = (o) => {
+    if (!o) return;
     const k = String(o.orderSn || o.id || "");
-    if (k && seen.has(k)) continue;
+    if (k && seen.has(k)) return;
     if (k) seen.add(k);
     out.push(o);
+  };
+  for (const sn of requestedSns) {
+    push(bySn.get(sn) || byId.get(sn) || byId.get(`shopee-${sn}`));
   }
-  for (const o of byId.values()) {
-    const k = String(o.orderSn || o.id || "");
-    if (k && seen.has(k)) continue;
-    if (k) seen.add(k);
-    out.push(o);
-  }
+  for (const o of bySn.values()) push(o);
+  for (const o of byId.values()) push(o);
   return out;
 }
 async function persistChangedOrdersPatch(changedOrders) {
@@ -139117,7 +139199,9 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
                 putLabelMem(downloadResult.filename, mergedBuf, "application/pdf");
                 const splitMap = await splitMergedWaybillPdfToOrders(mergedBuf, uniquePendingSns);
                 if (splitMap.size === uniquePendingSns.length) {
-                  for (const [sn, buf] of splitMap) {
+                  for (const sn of uniquePendingSns) {
+                    const buf = splitMap.get(sn);
+                    if (!buf) continue;
                     await cacheOrderWaybillPdf(sn, buf);
                     readyOrderSns.push(sn);
                     readyOrderRows.push(...pendingByOrder.get(sn) || []);
@@ -146793,29 +146877,92 @@ async function startServer() {
     }
     return buffer;
   }
-  function sortBatchPdfResultByRequestedOrder(requestedOrderSns, documents, failedOrders) {
+  function parseBatchGroupPickingFlag(body) {
+    const raw = body?.groupPicking ?? body?.group_picking ?? body?.sortBySingleItem;
+    if (raw === true || raw === 1) return true;
+    const text = String(raw ?? "").trim().toLowerCase();
+    return text === "1" || text === "true" || text === "yes";
+  }
+  function reorderOrdersByRequestedSns(orders, requestedSns) {
+    const bySn = /* @__PURE__ */ new Map();
+    for (const order of Array.isArray(orders) ? orders : []) {
+      const sn = normalizePrintOrderSn(order?.orderSn || order?.order_sn);
+      if (sn && !bySn.has(sn)) bySn.set(sn, order);
+    }
+    const ordered = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const sn of uniquePreserveOrder(
+      (requestedSns || []).map(normalizePrintOrderSn).filter(Boolean)
+    )) {
+      const order = bySn.get(sn);
+      if (!order) continue;
+      ordered.push(order);
+      seen.add(sn);
+    }
+    for (const order of Array.isArray(orders) ? orders : []) {
+      const sn = normalizePrintOrderSn(order?.orderSn || order?.order_sn);
+      if (sn && seen.has(sn)) continue;
+      if (sn) seen.add(sn);
+      ordered.push(order);
+    }
+    return ordered;
+  }
+  function alignBatchPdfDocumentsToRequestedOrder(requestedOrderSns, documents, failedOrders) {
+    const requested = uniquePreserveOrder(
+      (requestedOrderSns || []).map(normalizePrintOrderSn).filter(Boolean)
+    );
     const requestedRank = /* @__PURE__ */ new Map();
-    requestedOrderSns.forEach((value, index) => {
-      const sn = String(value || "").replace(/^shopee-/i, "").trim();
-      if (sn && !requestedRank.has(sn)) requestedRank.set(sn, index);
-    });
-    const documentRank = (document2) => {
-      let best = Number.MAX_SAFE_INTEGER;
-      for (const value of document2.orderSns || []) {
-        const sn = String(value || "").replace(/^shopee-/i, "").trim();
-        const rank = requestedRank.get(sn);
-        if (rank != null && rank < best) best = rank;
+    requested.forEach((sn, index) => requestedRank.set(sn, index));
+    const bufBySn = /* @__PURE__ */ new Map();
+    for (const document2 of documents || []) {
+      const sns = uniquePreserveOrder(
+        (document2.orderSns || []).map(normalizePrintOrderSn).filter(Boolean)
+      );
+      if (!document2?.buffer || sns.length === 0) continue;
+      if (sns.length === 1) {
+        bufBySn.set(sns[0], document2.buffer);
+        continue;
       }
-      return best;
-    };
+      const firstMissing = sns.find((sn) => !bufBySn.has(sn));
+      if (firstMissing) bufBySn.set(firstMissing, document2.buffer);
+    }
+    const orderedDocs = [];
+    const used = /* @__PURE__ */ new Set();
+    for (const sn of requested) {
+      const buffer = bufBySn.get(sn);
+      if (!buffer) continue;
+      orderedDocs.push({ orderSns: [sn], buffer });
+      used.add(sn);
+    }
+    for (const [sn, buffer] of bufBySn) {
+      if (used.has(sn)) continue;
+      orderedDocs.push({ orderSns: [sn], buffer });
+    }
     const failureRank = (failure) => {
-      const sn = String(failure.orderSn || "").replace(/^shopee-/i, "").trim();
+      const sn = normalizePrintOrderSn(failure.orderSn);
       return requestedRank.get(sn) ?? Number.MAX_SAFE_INTEGER;
     };
     return {
-      documents: [...documents].sort((a, b) => documentRank(a) - documentRank(b)),
-      failedOrders: [...failedOrders].sort((a, b) => failureRank(a) - failureRank(b))
+      documents: orderedDocs,
+      failedOrders: [...failedOrders || []].sort((a, b) => failureRank(a) - failureRank(b))
     };
+  }
+  function sortBatchPdfResultByRequestedOrder(requestedOrderSns, documents, failedOrders) {
+    return alignBatchPdfDocumentsToRequestedOrder(
+      requestedOrderSns,
+      documents,
+      failedOrders
+    );
+  }
+  function buildPdfBuffersInRequestedOrder(requestedOrderSns, documents) {
+    return alignBatchPdfDocumentsToRequestedOrder(
+      requestedOrderSns,
+      documents,
+      []
+    ).documents.map((document2) => ({
+      orderSn: document2.orderSns[0] || document2.orderSns.join(","),
+      buffer: document2.buffer
+    }));
   }
   async function mergeBatchPdfBuffers(pdfBuffers, logPrefix, onInvalid) {
     const startedAt = Date.now();
@@ -147032,18 +147179,19 @@ async function startServer() {
           message: "Thi\u1EBFu danh s\xE1ch orderSns."
         });
       }
-      const cleanSns = [
-        ...new Set(
-          orderSns.map((sn) => String(sn || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
-        )
-      ];
+      const cleanSns = uniquePreserveOrder(
+        orderSns.map((sn) => String(sn || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
+      );
+      const groupPicking = parseBatchGroupPickingFlag(req.body);
       if (cleanSns.length === 0) {
         return res.status(400).json({
           success: false,
           message: "Danh s\xE1ch orderSns kh\xF4ng h\u1EE3p l\u1EC7."
         });
       }
-      console.log(`[Batch Confirm Print] B\u1EAFt \u0111\u1EA7u x\u1EED l\xFD ${cleanSns.length} \u0111\u01A1n: ${cleanSns.join(", ")}`);
+      console.log(
+        `[Batch Confirm Print] B\u1EAFt \u0111\u1EA7u x\u1EED l\xFD ${cleanSns.length} \u0111\u01A1n groupPicking=${groupPicking ? "1" : "0"}: ${cleanSns.join(", ")}`
+      );
       let orders = [];
       try {
         orders = await runBeforeBatchDeadline(
@@ -147063,7 +147211,9 @@ async function startServer() {
           message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n n\xE0o trong database."
         });
       }
-      const toShip = resolveOrdersFromRequest(orders, [], cleanSns);
+      const orderedSns = groupPicking ? sortSnsByGroupPicking(cleanSns, orders) : cleanSns;
+      orders = reorderOrdersByRequestedSns(orders, orderedSns);
+      const toShip = resolveOrdersFromRequest(orders, [], orderedSns);
       if (toShip.length === 0) {
         return res.status(404).json({
           success: false,
@@ -147145,7 +147295,7 @@ async function startServer() {
           });
         }
       });
-      const successSns = cleanSns.filter((orderSn) => successfulSnSet.has(orderSn));
+      const successSns = orderedSns.filter((orderSn) => successfulSnSet.has(orderSn));
       try {
         const confirmedRows = toShip.map(({ index }) => orders[index]).filter((o) => o && o.isPrepared === true);
         await persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod);
@@ -147295,13 +147445,9 @@ async function startServer() {
         deadlineAt,
         "Batch Confirm Print"
       );
-      const printedFromBatch = batchPdfResult.documents.flatMap((item) => item.orderSns);
-      pdfBuffers.push(
-        ...batchPdfResult.documents.map((item) => ({
-          orderSn: item.orderSns.join(","),
-          buffer: item.buffer
-        }))
-      );
+      const alignedPrintDocs = buildPdfBuffersInRequestedOrder(successSns, batchPdfResult.documents);
+      const printedFromBatch = alignedPrintDocs.map((item) => item.orderSn);
+      pdfBuffers.push(...alignedPrintDocs);
       for (const failure of batchPdfResult.failedOrders) {
         pdfFailures.set(failure.orderSn, failure);
       }
@@ -147382,18 +147528,19 @@ async function startServer() {
           message: "Thi\u1EBFu danh s\xE1ch orderSns."
         });
       }
-      const cleanSns = [
-        ...new Set(
-          orderSns.map((sn) => String(sn || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
-        )
-      ];
+      const cleanSns = uniquePreserveOrder(
+        orderSns.map((sn) => String(sn || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
+      );
+      const groupPicking = parseBatchGroupPickingFlag(req.body);
       if (cleanSns.length === 0) {
         return res.status(400).json({
           success: false,
           message: "Danh s\xE1ch orderSns kh\xF4ng h\u1EE3p l\u1EC7."
         });
       }
-      console.log(`[Batch Print Only] In l\u1EA1i ${cleanSns.length} \u0111\u01A1n: ${cleanSns.join(", ")}`);
+      console.log(
+        `[Batch Print Only] In l\u1EA1i ${cleanSns.length} \u0111\u01A1n groupPicking=${groupPicking ? "1" : "0"}: ${cleanSns.join(", ")}`
+      );
       let orders = [];
       try {
         orders = await runBeforeBatchDeadline(
@@ -147413,6 +147560,8 @@ async function startServer() {
           message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n n\xE0o trong database."
         });
       }
+      const mergeSns = groupPicking ? sortSnsByGroupPicking(cleanSns, orders) : cleanSns;
+      orders = reorderOrdersByRequestedSns(orders, mergeSns);
       const pdfBuffers = [];
       const pdfFailures = /* @__PURE__ */ new Map();
       const processSingleOrder = async (orderSn) => {
@@ -147531,22 +147680,19 @@ async function startServer() {
           return null;
         }
       };
-      const pendingSns = new Set(cleanSns);
+      const pendingSns = new Set(mergeSns);
       const printedFromBatch = [];
       const batchPdfResult = await fetchBatchPdfDocumentsByShop(
         orders,
-        [...pendingSns],
+        mergeSns,
         deadlineAt,
         "Batch Print Only",
         {
           signal: requestAbortController.signal
         }
       );
+      pdfBuffers.push(...buildPdfBuffersInRequestedOrder(mergeSns, batchPdfResult.documents));
       for (const document2 of batchPdfResult.documents) {
-        pdfBuffers.push({
-          orderSn: document2.orderSns.join(","),
-          buffer: document2.buffer
-        });
         for (const orderSn of document2.orderSns) {
           pendingSns.delete(orderSn);
           pdfFailures.delete(orderSn);

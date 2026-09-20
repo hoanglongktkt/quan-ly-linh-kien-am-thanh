@@ -115,6 +115,10 @@ import {
 } from '../utils/shippingCarrier';
 import { resolveOrderShopDisplayName } from '../utils/resolveOrderShopName';
 import { orderCreatedAtMs } from '../utils/sanitizeOrder';
+import {
+  compareGroupPickingOrders,
+  uniquePreserveOrder,
+} from '../utils/groupPickingSort';
 import { onTabWake, type WakeInfo } from '../utils/tabWakeGate';
 import {
   defaultCustomDateInputs,
@@ -6412,6 +6416,7 @@ export default function OrderManager({
             body: JSON.stringify({
               orderSns,
               method: shipMethod,
+              groupPicking: smartPickSort && activeSubTab === 'unprocessed',
             }),
             signal: controller.signal,
           });
@@ -6586,19 +6591,19 @@ export default function OrderManager({
    */
   const runBatchPrintOnly = async (
     orderSnsInput: string[],
-    opts?: { logTag?: string },
+    opts?: { logTag?: string; groupPicking?: boolean },
   ): Promise<boolean> => {
-    const orderSns = [
-      ...new Set(
-        orderSnsInput.map((sn) => String(sn || '').replace(/^shopee-/i, '').trim()).filter(Boolean),
-      ),
-    ];
+    const orderSns = uniquePreserveOrder(
+      orderSnsInput.map((sn) => String(sn || '').replace(/^shopee-/i, '').trim()).filter(Boolean),
+    );
     if (!orderSns.length) {
       showToast('Không tìm thấy mã đơn hợp lệ.');
       return false;
     }
 
     const logTag = opts?.logTag || 'IN LẠI';
+    const groupPicking =
+      opts?.groupPicking ?? (smartPickSort && activeSubTab === 'unprocessed');
     beginPrintProgressSession(orderSns.length, `Đang gộp PDF ${orderSns.length} đơn...`);
     const reservedPrintWindow = openReservedPrintPlaceholder();
 
@@ -6612,7 +6617,7 @@ export default function OrderManager({
         const response = await fetch('/api/orders/batch-print-only', {
           method: 'POST',
           headers: authHeaders(),
-          body: JSON.stringify({ orderSns }),
+          body: JSON.stringify({ orderSns, groupPicking }),
           signal: controller.signal,
         });
 
@@ -6678,13 +6683,24 @@ export default function OrderManager({
   };
 
   const handlePrintFromShipSummary = async () => {
-    const orderSns = [
-      ...new Set(
-        (shipConfirmSummary?.successfulOrderIds || [])
-          .map((id) => String(id || '').replace(/^shopee-/i, '').trim())
-          .filter(Boolean),
-      ),
-    ];
+    const rawSns = uniquePreserveOrder(
+      (shipConfirmSummary?.successfulOrderIds || [])
+        .map((id) => String(id || '').replace(/^shopee-/i, '').trim())
+        .filter(Boolean),
+    );
+    const rawSet = new Set(rawSns);
+    const orderedFromDisplay = uniquePreserveOrder(
+      displayOrders
+        .filter((order) => {
+          const sn = String(order.orderSn || '').replace(/^shopee-/i, '').trim();
+          const id = String(order.id || '').trim();
+          return rawSet.has(sn) || rawSet.has(id) || rawSet.has(`shopee-${sn}`);
+        })
+        .map((order) => String(order.orderSn || '').replace(/^shopee-/i, '').trim())
+        .filter(Boolean),
+    );
+    const leftover = rawSns.filter((sn) => !orderedFromDisplay.includes(sn));
+    const orderSns = [...orderedFromDisplay, ...leftover];
     if (!orderSns.length || isPrintingFromSummary) return;
 
     setIsPrintingFromSummary(true);
@@ -7018,50 +7034,10 @@ export default function OrderManager({
   }, [activeSubTab, cancelReturnTab, ordersPoolBeforeCarrier, ordersListReady]);
 
   /**
-   * Đơn 1 sản phẩm = đơn chỉ có DUY NHẤT 1 dòng SKU trong `items`.
-   * BẮT BUỘC dùng `items.length === 1` — TUYỆT ĐỐI KHÔNG dùng `quantity`
-   * (khách mua số lượng 2+ của cùng 1 SKU vẫn tính là đơn 1 sản phẩm).
-   */
-  const isSingleSkuOrder = (order: Order) => (order.items || []).length === 1;
-
-  /** SKU rỗng → xuống cuối nhóm (khớp `\uffff` của aggregate gom nhóm bên Mongo). */
-  const smartPickSkuKey = (order: Order) => {
-    const item = (order.items || [])[0] as
-      | (Order['items'][number] & { sku?: string; item_sku?: string })
-      | undefined;
-    const sku = String(item?.modelSku || item?.sku || item?.item_sku || '')
-      .trim()
-      .toUpperCase();
-    return sku || '\uffff';
-  };
-
-  const smartPickNameKey = (order: Order) => {
-    const item = (order.items || [])[0] as
-      | (Order['items'][number] & { name?: string })
-      | undefined;
-    return String(item?.productTitle || item?.name || item?.modelName || '')
-      .trim()
-      .toUpperCase();
-  };
-
-  /**
    * Mirror đúng sort của backend (`groupPicking`): đơn 1 SP → SKU dòng đầu → tên SP.
-   * Giữ client sort làm lưới an toàn khi API trả thứ tự mặc định (aggregate fallback).
+   * Dùng chung comparator với API in hàng loạt để giấy in khớp bảng.
    */
-  const compareSmartPickOrders = (a: Order, b: Order) => {
-    const aSingle = isSingleSkuOrder(a);
-    const bSingle = isSingleSkuOrder(b);
-    if (aSingle !== bSingle) return aSingle ? -1 : 1;
-    const skuCmp = smartPickSkuKey(a).localeCompare(smartPickSkuKey(b), 'vi', {
-      sensitivity: 'base',
-      numeric: true,
-    });
-    if (skuCmp !== 0) return skuCmp;
-    return smartPickNameKey(a).localeCompare(smartPickNameKey(b), 'vi', {
-      sensitivity: 'base',
-      numeric: true,
-    });
-  };
+  const compareSmartPickOrders = (a: Order, b: Order) => compareGroupPickingOrders(a, b);
 
   const filteredOrdersBase = useMemo(() => {
     return ordersPoolBeforeCarrier
@@ -7390,28 +7366,47 @@ export default function OrderManager({
 
   /** In lại đơn đã chọn (không xác nhận lại, chỉ lấy PDF và gộp thành 1 file) */
   const handleReprintSelected = async () => {
-    const selected = getSelectedOrders();
-    if (selected.length === 0) {
+    if (selectedOrderIds.length === 0) {
       showToast('Vui lòng chọn ít nhất 1 đơn để in!');
       return;
     }
     setShowBulkActionsDropdown(false);
 
-    const shopeeOrders = selected.filter((o) => o.channel === 'shopee');
+    // Map theo đúng thứ tự `displayOrders` đang render trên bảng — không dùng thứ tự click/Set.
+    const selectedKeySet = new Set(
+      selectedOrderIds.map((key) => String(key || '').trim()).filter(Boolean),
+    );
+    const selectedInDisplayOrder = displayOrders.filter(
+      (order) =>
+        selectedKeySet.has(order.id) ||
+        selectedKeySet.has(order.orderSn) ||
+        selectedKeySet.has(`shopee-${order.orderSn}`),
+    );
+    if (selectedInDisplayOrder.length === 0) {
+      showToast('Vui lòng chọn ít nhất 1 đơn để in!');
+      return;
+    }
+
+    const shopeeOrders = selectedInDisplayOrder.filter((o) => o.channel === 'shopee');
     if (shopeeOrders.length === 0) {
       showToast('Chỉ hỗ trợ in lại đơn Shopee.');
       return;
     }
 
-    const orderSns = shopeeOrders
-      .map((o) => String(o.orderSn || '').replace(/^shopee-/i, '').trim())
-      .filter(Boolean);
+    const orderSns = uniquePreserveOrder(
+      shopeeOrders
+        .map((o) => String(o.orderSn || '').replace(/^shopee-/i, '').trim())
+        .filter(Boolean),
+    );
     if (orderSns.length === 0) {
       showToast('Không tìm thấy mã đơn hợp lệ.');
       return;
     }
 
-    await runBatchPrintOnly(orderSns, { logTag: 'IN LẠI' });
+    await runBatchPrintOnly(orderSns, {
+      logTag: 'IN LẠI',
+      groupPicking: smartPickSort && activeSubTab === 'unprocessed',
+    });
   };
 
   /** Giao cho ĐVVC hàng loạt — đơn đã chọn (đã có mã vận đơn, chưa bàn giao). */

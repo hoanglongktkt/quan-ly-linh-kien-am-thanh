@@ -1040,7 +1040,11 @@ export default function App() {
         const data = Array.isArray(res.data) ? res.data : [];
         mergedData = [...mergedData, ...data];
       });
-      const sanitized = mergeOrderBatchesNewestFirst([sanitizeOrders(mergedData)]);
+      const sanitizedRaw = sanitizeOrders(mergedData);
+      // Gom nhóm nhặt hàng: giữ nguyên thứ tự server (SKU), không sort newest-first.
+      const sanitized = groupPicking
+        ? sanitizedRaw
+        : mergeOrderBatchesNewestFirst([sanitizedRaw]);
       const total = okPayloads.reduce((sum, p) => sum + (Number(p.total) || 0), 0);
       const pageSize = Number(okPayloads[0]?.page_size ?? okPayloads[0]?.limit) || limit;
       const totalPages = Math.max(
@@ -1104,7 +1108,9 @@ export default function App() {
       if (merge) {
         setOrders((prev) => {
           const base = prev.length > 0 ? prev : ordersHydrateRef.current;
-          const merged = mergeOrderBatchesNewestFirst([mergeShallowOrders(base, sanitized)]);
+          const merged = groupPicking
+            ? sanitized
+            : mergeOrderBatchesNewestFirst([mergeShallowOrders(base, sanitized)]);
           ordersHydrateRef.current = merged;
           void saveOrdersCache(merged);
           return merged;
