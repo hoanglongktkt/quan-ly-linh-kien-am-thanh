@@ -24,6 +24,14 @@ import {
   resolvePosSellingPrice,
   roundPosPrice,
 } from '../utils/posSellingPrice';
+import {
+  EMPTY_STORE_INFO,
+  PosInvoiceTemplate,
+  formatVnd,
+  loadStoreInfo,
+  saveStoreInfo,
+  type StoreInvoiceInfo,
+} from './PosInvoiceTemplate';
 
 type PosLine = {
   productId: string;
@@ -72,46 +80,6 @@ function resolveLineFromProduct(
   };
 }
 
-type StoreInvoiceInfo = {
-  storeName: string;
-  storePhone: string;
-  storeAddress: string;
-  logoUrl: string;
-};
-
-const STORE_INFO_LS_KEY = 'pos_invoice_store_info';
-
-const EMPTY_STORE_INFO: StoreInvoiceInfo = {
-  storeName: '',
-  storePhone: '',
-  storeAddress: '',
-  logoUrl: '',
-};
-
-function loadStoreInfo(): StoreInvoiceInfo {
-  try {
-    const raw = localStorage.getItem(STORE_INFO_LS_KEY);
-    if (!raw) return { ...EMPTY_STORE_INFO };
-    const parsed = JSON.parse(raw) as Partial<StoreInvoiceInfo>;
-    return {
-      storeName: String(parsed.storeName || ''),
-      storePhone: String(parsed.storePhone || ''),
-      storeAddress: String(parsed.storeAddress || ''),
-      logoUrl: String(parsed.logoUrl || ''),
-    };
-  } catch {
-    return { ...EMPTY_STORE_INFO };
-  }
-}
-
-function saveStoreInfo(info: StoreInvoiceInfo) {
-  try {
-    localStorage.setItem(STORE_INFO_LS_KEY, JSON.stringify(info));
-  } catch {
-    /* ignore quota / private mode */
-  }
-}
-
 interface QuickPosPageProps {
   products: Product[];
   orders: Order[];
@@ -120,10 +88,6 @@ interface QuickPosPageProps {
   onUpdateProduct?: (product: Product, opts?: { save?: boolean }) => void;
   onAddLog: (log: SyncLog) => void;
   authHeaders: () => Record<string, string>;
-}
-
-function formatVnd(n: number): string {
-  return Math.round(n || 0).toLocaleString('vi-VN');
 }
 
 function productImage(p: Product | PosLine): string {
@@ -926,116 +890,28 @@ export default function QuickPosPage({
         </section>
       </div>
 
-      <div id="pos-invoice" className="print-invoice-container rounded-2xl border border-dashed border-slate-200 bg-white p-6">
-        {/* Header: Logo + Thông tin cửa hàng */}
-        <div className="flex items-start gap-4 mb-5 pb-4 border-b border-slate-300">
-          {storeInfo.logoUrl.trim() ? (
-            <img
-              src={storeInfo.logoUrl.trim()}
-              alt="Logo cửa hàng"
-              className="h-16 w-16 object-contain flex-shrink-0"
-              onError={(e) => {
-                (e.target as HTMLImageElement).style.display = 'none';
-              }}
-            />
-          ) : null}
-          <div className="min-w-0 flex-1">
-            <div className="text-base font-black tracking-wide uppercase text-slate-900">
-              {storeInfo.storeName.trim() || 'CỬA HÀNG'}
-            </div>
-            {storeInfo.storePhone.trim() ? (
-              <div className="text-xs text-slate-600 mt-0.5">
-                <span className="font-bold">ĐT:</span> {storeInfo.storePhone.trim()}
-              </div>
-            ) : null}
-            {storeInfo.storeAddress.trim() ? (
-              <div className="text-xs text-slate-600 mt-0.5">
-                <span className="font-bold">Địa chỉ:</span> {storeInfo.storeAddress.trim()}
-              </div>
-            ) : null}
-            <div className="text-sm font-extrabold text-slate-800 mt-2">HÓA ĐƠN / BÁO GIÁ</div>
-            <div className="text-[11px] text-slate-500 font-semibold mt-0.5">
-              {lastOrder?.orderSn || '— chờ lưu đơn —'} ·{' '}
-              {lastOrder?.date
-                ? new Date(lastOrder.date).toLocaleString('vi-VN')
-                : new Date().toLocaleString('vi-VN')}
-            </div>
-          </div>
-        </div>
-
-        {/* Thông tin khách hàng */}
-        <div className="text-xs mb-4 space-y-1 pb-3 border-b border-slate-200">
-          <div className="text-[11px] font-extrabold uppercase tracking-wide text-slate-500 mb-1">
-            Người nhận / Khách hàng
-          </div>
-          <div>
-            <span className="font-bold">Khách:</span>{' '}
-            {lastOrder?.customerName || customerName || (walkIn ? 'Khách tại cửa hàng' : '—')}
-          </div>
-          <div>
-            <span className="font-bold">SĐT:</span>{' '}
-            {lastOrder?.customerPhone || customerPhone || '—'}
-          </div>
-          <div>
-            <span className="font-bold">Địa chỉ:</span>{' '}
-            {lastOrder?.customerAddress ||
-              (walkIn ? 'Mua tại cửa hàng' : customerAddress || '—')}
-          </div>
-        </div>
-
-        <table className="w-full text-xs border-collapse table-fixed">
-          <thead>
-            <tr className="border-b-2 border-slate-800">
-              <th className="col-stt w-12 px-2 py-2 text-left font-bold">STT</th>
-              <th className="col-name px-2 py-2 text-left font-bold">Sản phẩm</th>
-              <th className="col-qty w-16 px-2 py-2 text-right font-bold">SL</th>
-              <th className="col-price w-24 px-2 py-2 text-right font-bold">Đơn giá</th>
-              <th className="col-total w-28 px-2 py-2 text-right font-bold">Thành tiền</th>
-            </tr>
-          </thead>
-          <tbody>
-            {printLines.length === 0 ? (
-              <tr>
-                <td colSpan={5} className="px-2 py-4 text-center text-slate-400">
-                  Chưa có dòng hàng
-                </td>
-              </tr>
-            ) : (
-              printLines.map((l, i) => (
-                <tr key={i} className="border-b border-slate-200">
-                  <td className="col-stt w-12 px-2 py-1.5 text-left align-top text-slate-600">{i + 1}</td>
-                  <td className="col-name px-2 py-1.5 text-left align-top break-words">{l.productTitle}</td>
-                  <td className="col-qty w-16 px-2 py-1.5 text-right align-top tabular-nums">{l.quantity}</td>
-                  <td className="col-price w-24 px-2 py-1.5 text-right align-top tabular-nums">
-                    {formatVnd(l.sellingPrice)}
-                  </td>
-                  <td className="col-total w-28 px-2 py-1.5 text-right align-top font-bold tabular-nums">
-                    {formatVnd(l.lineTotal)}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-        <div className="invoice-totals mt-4 text-xs space-y-1 max-w-xs ml-auto">
-          <div className="flex justify-between gap-4 px-2">
-            <span>Tạm tính</span>
-            <span className="font-bold tabular-nums">{formatVnd(printSubtotal)}₫</span>
-          </div>
-          <div className="flex justify-between gap-4 px-2">
-            <span>Phí giao ước tính</span>
-            <span className="font-bold tabular-nums">{formatVnd(printFee)}₫</span>
-          </div>
-          <div className="flex justify-between gap-4 px-2">
-            <span>Đã trả trước</span>
-            <span className="font-bold tabular-nums">{formatVnd(printPrepaid)}₫</span>
-          </div>
-          <div className="flex justify-between gap-4 border-t border-slate-800 pt-2 px-2 text-sm font-black">
-            <span>Tổng thanh toán</span>
-            <span className="tabular-nums">{formatVnd(Math.max(0, printTotal - printPrepaid))}₫</span>
-          </div>
-        </div>
-      </div>
+      <PosInvoiceTemplate
+        storeInfo={storeInfo}
+        orderSn={lastOrder?.orderSn || '— chờ lưu đơn —'}
+        dateText={
+          lastOrder?.date
+            ? new Date(lastOrder.date).toLocaleString('vi-VN')
+            : new Date().toLocaleString('vi-VN')
+        }
+        customerName={
+          lastOrder?.customerName || customerName || (walkIn ? 'Khách tại cửa hàng' : '—')
+        }
+        customerPhone={lastOrder?.customerPhone || customerPhone || '—'}
+        customerAddress={
+          lastOrder?.customerAddress ||
+          (walkIn ? 'Mua tại cửa hàng' : customerAddress || '—')
+        }
+        lines={printLines}
+        subtotal={printSubtotal}
+        shippingFee={printFee}
+        prepaid={printPrepaid}
+        amountDue={Math.max(0, printTotal - printPrepaid)}
+      />
     </div>
   );
 }

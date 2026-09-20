@@ -1,7 +1,12 @@
-import React, { useState } from 'react';
-import { Loader2, Printer, RefreshCw, Ban } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Loader2, Printer, RefreshCw, Ban, Receipt } from 'lucide-react';
 import type { Order } from '../types';
 import { orderCreatedAtMs, parseOrderTimeMs } from '../utils/sanitizeOrder';
+import {
+  PosInvoiceTemplate,
+  buildPosInvoiceFromOrder,
+  loadStoreInfo,
+} from './PosInvoiceTemplate';
 
 type ExternalStatusKey = 'created' | 'shipping' | 'delivered' | 'rts' | 'cancelled';
 
@@ -204,12 +209,14 @@ function GhnActionButtons({
   order,
   busyKind,
   onPrintWaybill,
+  onPrintInvoice,
   onSyncGhn,
   onCancelGhn,
 }: {
   order: Order;
-  busyKind: 'print' | 'sync' | 'cancel' | null;
+  busyKind: 'print' | 'invoice' | 'sync' | 'cancel' | null;
   onPrintWaybill: (order: Order) => void;
+  onPrintInvoice: (order: Order) => void;
   onSyncGhn: (order: Order) => void;
   onCancelGhn: (order: Order) => void;
 }) {
@@ -217,6 +224,7 @@ function GhnActionButtons({
   const tn = trackingOf(order);
   const st = resolveExternalStatus(order);
   const printBusy = busyKind === 'print';
+  const invoiceBusy = busyKind === 'invoice';
   const syncBusy = busyKind === 'sync';
   const cancelBusy = busyKind === 'cancel';
   const anyBusy = Boolean(busyKind);
@@ -225,6 +233,20 @@ function GhnActionButtons({
 
   return (
     <div className="inline-flex flex-col items-stretch gap-1 min-w-[8.5rem]">
+      <button
+        type="button"
+        disabled={anyBusy}
+        onClick={() => onPrintInvoice(order)}
+        className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold text-[10px] rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+        title="In lại hóa đơn bán lẻ (POS) cho khách"
+      >
+        {invoiceBusy ? (
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        ) : (
+          <Receipt className="w-3.5 h-3.5" />
+        )}
+        In hóa đơn
+      </button>
       <button
         type="button"
         disabled={anyBusy || provider === 'self' || !tn}
@@ -291,7 +313,55 @@ export function ExternalOrdersTable({
   onOrderUpdated?: (order: Order) => void;
 }) {
   const [actionKey, setActionKey] = useState<string | null>(null);
-  const [actionKind, setActionKind] = useState<'print' | 'sync' | 'cancel' | null>(null);
+  const [actionKind, setActionKind] = useState<'print' | 'invoice' | 'sync' | 'cancel' | null>(null);
+  const [printOrder, setPrintOrder] = useState<Order | null>(null);
+
+  const handlePrintInvoice = (order: Order) => {
+    if (actionKey || printingOrderId) return;
+    setPrintOrder(order);
+  };
+
+  useEffect(() => {
+    if (!printOrder) return;
+    let cancelled = false;
+    const key = orderKeyOf(printOrder);
+    setActionKey(key);
+    setActionKind('invoice');
+
+    const onAfterPrint = () => {
+      if (cancelled) return;
+      setPrintOrder(null);
+      setActionKey(null);
+      setActionKind(null);
+    };
+    window.addEventListener('afterprint', onAfterPrint);
+
+    const printTimer = window.setTimeout(() => {
+      window.requestAnimationFrame(() => {
+        window.setTimeout(() => {
+          if (cancelled) return;
+          try {
+            window.print();
+          } catch (err) {
+            console.error('[POS Invoice] window.print failed:', err);
+            window.alert('Không mở được hộp thoại in. Hãy dùng Ctrl+P.');
+            onAfterPrint();
+          }
+        }, 150);
+      });
+    }, 200);
+
+    const fallbackClear = window.setTimeout(() => {
+      if (!cancelled) onAfterPrint();
+    }, 120000);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(printTimer);
+      window.clearTimeout(fallbackClear);
+      window.removeEventListener('afterprint', onAfterPrint);
+    };
+  }, [printOrder]);
 
   const runGhnAction = async (order: Order, kind: 'sync' | 'cancel') => {
     const key = orderKeyOf(order);
@@ -352,7 +422,11 @@ export function ExternalOrdersTable({
               const key = orderKeyOf(order);
               const printBusy = printingOrderId === order.id || printingOrderId === order.orderSn;
               const rowBusy = actionKey === key;
-              const busyKind = printBusy ? 'print' : rowBusy ? actionKind : null;
+              const busyKind = printBusy
+                ? 'print'
+                : rowBusy
+                  ? actionKind
+                  : null;
               return (
                 <tr key={order.id || order.orderSn} className="hover:bg-slate-50/40">
                   <td className="p-4">
@@ -402,6 +476,7 @@ export function ExternalOrdersTable({
                       order={order}
                       busyKind={busyKind}
                       onPrintWaybill={onPrintWaybill}
+                      onPrintInvoice={handlePrintInvoice}
                       onSyncGhn={(o) => void runGhnAction(o, 'sync')}
                       onCancelGhn={(o) => void runGhnAction(o, 'cancel')}
                     />
@@ -445,6 +520,7 @@ export function ExternalOrdersTable({
                   order={order}
                   busyKind={busyKind}
                   onPrintWaybill={onPrintWaybill}
+                  onPrintInvoice={handlePrintInvoice}
                   onSyncGhn={(o) => void runGhnAction(o, 'sync')}
                   onCancelGhn={(o) => void runGhnAction(o, 'cancel')}
                 />
@@ -453,6 +529,15 @@ export function ExternalOrdersTable({
           );
         })}
       </div>
+
+      {printOrder ? (
+        <div className="pos-invoice-reprint-host" aria-hidden="true">
+          <PosInvoiceTemplate
+            storeInfo={loadStoreInfo()}
+            {...buildPosInvoiceFromOrder(printOrder)}
+          />
+        </div>
+      ) : null}
     </>
   );
 }
