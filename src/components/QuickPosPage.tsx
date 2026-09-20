@@ -499,27 +499,33 @@ export default function QuickPosPage({
         @media print {
           @page {
             size: A4 portrait;
-            margin: 10mm;
+            margin: 15mm; /* Lề an toàn 1.5cm — chống cắt mép máy in mobile */
           }
-          body {
+          html, body {
             margin: 0 !important;
             padding: 0 !important;
-            background-color: white;
+            height: auto !important;
+            overflow: visible !important;
+            background-color: white !important;
           }
           body * {
             visibility: hidden;
           }
-          #pos-invoice, #pos-invoice * {
-            visibility: visible;
+          #pos-invoice, #pos-invoice *,
+          .print-invoice-container, .print-invoice-container * {
+            visibility: visible !important;
           }
-          #pos-invoice {
-            position: absolute;
-            left: 0;
-            top: 0;
+          #pos-invoice,
+          .print-invoice-container {
+            position: relative !important;
+            left: auto !important;
+            top: auto !important;
             width: 100% !important;
-            max-width: 210mm !important;
-            margin: 0;
-            padding: 10px !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
+            padding-left: 5mm !important;
+            padding-right: 5mm !important;
+            margin: 0 auto !important;
             font-size: 14px !important;
             background-color: white;
             color: #000;
@@ -534,7 +540,12 @@ export default function QuickPosPage({
             font-size: 13px !important;
             padding: 8px !important;
           }
-          .no-print { display: none !important; }
+          .no-print,
+          aside,
+          nav,
+          header {
+            display: none !important;
+          }
         }
       `}</style>
 
@@ -915,7 +926,7 @@ export default function QuickPosPage({
         </section>
       </div>
 
-      <div id="pos-invoice" className="rounded-2xl border border-dashed border-slate-200 bg-white p-6">
+      <div id="pos-invoice" className="print-invoice-container rounded-2xl border border-dashed border-slate-200 bg-white p-6">
         {/* Header: Logo + Thông tin cửa hàng */}
         <div className="flex items-start gap-4 mb-5 pb-4 border-b border-slate-300">
           {storeInfo.logoUrl.trim() ? (

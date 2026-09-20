@@ -243,8 +243,8 @@ body {
 /* Used by the manual/off-platform packing-slip print preview (window.print()) */
 @media print {
   @page {
-    margin: 6mm;
-    size: auto;
+    size: A4 portrait;
+    margin: 15mm; /* Lề an toàn 1.5cm cho tất cả các mặt — chống cắt chữ sát mép */
   }
 
   html,
@@ -266,22 +266,30 @@ body {
   }
 
   #bulk-print-area,
-  #bulk-print-area * {
+  #bulk-print-area *,
+  #pos-invoice,
+  #pos-invoice *,
+  .print-invoice-container,
+  .print-invoice-container * {
     visibility: visible !important;
   }
 
-  #bulk-print-area {
-    position: fixed !important;
-    inset: 0 !important;
-    left: 0 !important;
-    top: 0 !important;
+  #bulk-print-area,
+  #pos-invoice,
+  .print-invoice-container {
+    position: relative !important;
+    left: auto !important;
+    top: auto !important;
+    inset: auto !important;
     width: 100% !important;
-    max-width: none !important;
+    max-width: 100% !important;
     max-height: none !important;
     height: auto !important;
     overflow: visible !important;
-    padding: 0 !important;
-    margin: 0 !important;
+    box-sizing: border-box !important;
+    padding-left: 5mm !important;
+    padding-right: 5mm !important;
+    margin: 0 auto !important;
     background: white !important;
     z-index: 2147483647 !important;
     display: block !important;
@@ -291,10 +299,15 @@ body {
 
   #bulk-print-area .print-slip-page {
     position: relative !important;
+    left: auto !important;
+    top: auto !important;
     overflow: visible !important;
-    max-width: none !important;
+    box-sizing: border-box !important;
+    max-width: 100% !important;
     width: 100% !important;
     margin: 0 auto 8mm !important;
+    padding-left: 2mm !important;
+    padding-right: 2mm !important;
     page-break-after: always;
     break-after: page;
     box-shadow: none !important;
