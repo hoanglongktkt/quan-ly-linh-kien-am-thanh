@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Loader2, Printer, RefreshCw, Ban, Receipt } from 'lucide-react';
 import type { Order } from '../types';
 import { orderCreatedAtMs, parseOrderTimeMs } from '../utils/sanitizeOrder';
@@ -314,45 +315,46 @@ export function ExternalOrdersTable({
 }) {
   const [actionKey, setActionKey] = useState<string | null>(null);
   const [actionKind, setActionKind] = useState<'print' | 'invoice' | 'sync' | 'cancel' | null>(null);
-  const [printOrder, setPrintOrder] = useState<Order | null>(null);
+  const [singlePrintOrder, setSinglePrintOrder] = useState<Order | null>(null);
 
-  const handlePrintInvoice = (order: Order) => {
+  const handlePrintSingleInvoice = (order: Order) => {
     if (actionKey || printingOrderId) return;
-    setPrintOrder(order);
+    setActionKey(orderKeyOf(order));
+    setActionKind('invoice');
+    setSinglePrintOrder(order);
   };
 
   useEffect(() => {
-    if (!printOrder) return;
+    if (!singlePrintOrder) return;
     let cancelled = false;
-    const key = orderKeyOf(printOrder);
-    setActionKey(key);
-    setActionKind('invoice');
+    document.body.classList.add('pos-invoice-printing');
+
+    const clearSinglePrint = () => {
+      document.body.classList.remove('pos-invoice-printing');
+      setSinglePrintOrder(null);
+      setActionKey(null);
+      setActionKind(null);
+    };
 
     const onAfterPrint = () => {
       if (cancelled) return;
-      setPrintOrder(null);
-      setActionKey(null);
-      setActionKind(null);
+      clearSinglePrint();
     };
     window.addEventListener('afterprint', onAfterPrint);
 
     const printTimer = window.setTimeout(() => {
-      window.requestAnimationFrame(() => {
-        window.setTimeout(() => {
-          if (cancelled) return;
-          try {
-            window.print();
-          } catch (err) {
-            console.error('[POS Invoice] window.print failed:', err);
-            window.alert('Không mở được hộp thoại in. Hãy dùng Ctrl+P.');
-            onAfterPrint();
-          }
-        }, 150);
-      });
-    }, 200);
+      if (cancelled) return;
+      try {
+        window.print();
+      } catch (err) {
+        console.error('[POS Invoice] window.print failed:', err);
+        window.alert('Không mở được hộp thoại in. Hãy dùng Ctrl+P.');
+        onAfterPrint();
+      }
+    }, 300);
 
     const fallbackClear = window.setTimeout(() => {
-      if (!cancelled) onAfterPrint();
+      if (!cancelled) clearSinglePrint();
     }, 120000);
 
     return () => {
@@ -360,8 +362,9 @@ export function ExternalOrdersTable({
       window.clearTimeout(printTimer);
       window.clearTimeout(fallbackClear);
       window.removeEventListener('afterprint', onAfterPrint);
+      document.body.classList.remove('pos-invoice-printing');
     };
-  }, [printOrder]);
+  }, [singlePrintOrder]);
 
   const runGhnAction = async (order: Order, kind: 'sync' | 'cancel') => {
     const key = orderKeyOf(order);
@@ -400,6 +403,7 @@ export function ExternalOrdersTable({
 
   return (
     <>
+      <div className="om-no-print">
       <div className="overflow-x-auto om-orders-table-view max-md:hidden bg-white rounded-2xl border border-gray-100">
         <table className="w-full text-left border-collapse text-xs">
           <thead>
@@ -476,7 +480,7 @@ export function ExternalOrdersTable({
                       order={order}
                       busyKind={busyKind}
                       onPrintWaybill={onPrintWaybill}
-                      onPrintInvoice={handlePrintInvoice}
+                      onPrintInvoice={handlePrintSingleInvoice}
                       onSyncGhn={(o) => void runGhnAction(o, 'sync')}
                       onCancelGhn={(o) => void runGhnAction(o, 'cancel')}
                     />
@@ -520,7 +524,7 @@ export function ExternalOrdersTable({
                   order={order}
                   busyKind={busyKind}
                   onPrintWaybill={onPrintWaybill}
-                  onPrintInvoice={handlePrintInvoice}
+                  onPrintInvoice={handlePrintSingleInvoice}
                   onSyncGhn={(o) => void runGhnAction(o, 'sync')}
                   onCancelGhn={(o) => void runGhnAction(o, 'cancel')}
                 />
@@ -529,15 +533,19 @@ export function ExternalOrdersTable({
           );
         })}
       </div>
+      </div>
 
-      {printOrder ? (
-        <div className="pos-invoice-reprint-host" aria-hidden="true">
-          <PosInvoiceTemplate
-            storeInfo={loadStoreInfo()}
-            {...buildPosInvoiceFromOrder(printOrder)}
-          />
-        </div>
-      ) : null}
+      {singlePrintOrder && typeof document !== 'undefined'
+        ? createPortal(
+            <div id="print-section" className="pos-invoice-reprint-host" aria-hidden="true">
+              <PosInvoiceTemplate
+                storeInfo={loadStoreInfo()}
+                {...buildPosInvoiceFromOrder(singlePrintOrder)}
+              />
+            </div>,
+            document.body,
+          )
+        : null}
     </>
   );
 }

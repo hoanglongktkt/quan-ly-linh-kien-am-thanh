@@ -269,6 +269,8 @@ body {
   #bulk-print-area *,
   #pos-invoice,
   #pos-invoice *,
+  #print-section,
+  #print-section *,
   .print-invoice-container,
   .print-invoice-container * {
     visibility: visible !important;
@@ -343,10 +345,11 @@ body {
     visibility: visible !important;
   }
 
-  .pos-invoice-reprint-host {
-    position: fixed !important;
-    left: 0 !important;
-    top: 0 !important;
+  .pos-invoice-reprint-host,
+  #print-section {
+    position: relative !important;
+    left: auto !important;
+    top: auto !important;
     width: 100% !important;
     max-width: 100% !important;
     height: auto !important;
@@ -357,10 +360,42 @@ body {
     overflow: visible !important;
     z-index: 2147483647 !important;
   }
+
+  /* In hóa đơn đơn lẻ: ẩn toàn bộ app (#root) — chỉ còn #print-section trên body */
+  body.pos-invoice-printing > *:not(#print-section) {
+    display: none !important;
+  }
+
+  body.pos-invoice-printing #print-section,
+  body.pos-invoice-printing #print-section * {
+    visibility: visible !important;
+  }
+
+  body.pos-invoice-printing #print-section {
+    position: relative !important;
+    left: auto !important;
+    top: auto !important;
+    width: 100% !important;
+    display: block !important;
+  }
+
+  body.pos-invoice-printing #print-section table {
+    display: table !important;
+  }
+
+  body.pos-invoice-printing #print-section tr {
+    display: table-row !important;
+  }
+
+  body.pos-invoice-printing #print-section th,
+  body.pos-invoice-printing #print-section td {
+    display: table-cell !important;
+  }
 }
 
 @media screen {
-  .pos-invoice-reprint-host {
+  .pos-invoice-reprint-host,
+  #print-section {
     position: absolute !important;
     left: -10000px !important;
     top: 0 !important;
