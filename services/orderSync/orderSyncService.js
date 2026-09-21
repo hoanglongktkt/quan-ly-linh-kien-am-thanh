@@ -56,6 +56,7 @@ export function isOrderSyncBackgroundBusy() {
  * @param {string} [opts.username]
  * @param {string} [opts.trigger] cron | api | webhook
  * @param {boolean} [opts.reconcileActive]
+ * @param {boolean} [opts.fastLane] chỉ kéo đơn mới, bỏ các lượt heal lịch sử
  */
 export async function runBackgroundOrderSync(opts = {}) {
   const lookbackSec = Math.max(
@@ -113,6 +114,7 @@ export async function runBackgroundOrderSync(opts = {}) {
       allowShortLookback: opts.allowShortLookback !== false,
       reconcileActive: opts.reconcileActive === true,
       enrichTracking: opts.enrichTracking === true,
+      fastLane: opts.fastLane === true,
     });
 
     const pulled = result?.pulled || 0;

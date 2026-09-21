@@ -6941,7 +6941,7 @@ export function parseCancelReturnKindParam(raw?: string | null): string {
   return "";
 }
 
-const TAB_COUNT_CACHE_MS = 30_000;
+const TAB_COUNT_CACHE_MS = 5_000;
 let tabCountCache: { key: string; expiresAt: number; value: Record<string, number> } | null =
   null;
 

@@ -1241,7 +1241,7 @@ var require_node = __commonJS({
       util4.deprecate(function() {
       }, "except for stderr(2) and stdout(1), any other usage of DEBUG_FD is deprecated. Override debug.log if you want to use a different log function (https://git.io/debug_fd)")();
     }
-    var stream4 = 1 === fd ? process.stdout : 2 === fd ? process.stderr : createWritableStdioStream(fd);
+    var stream5 = 1 === fd ? process.stdout : 2 === fd ? process.stderr : createWritableStdioStream(fd);
     function useColors() {
       return "colors" in exports2.inspectOpts ? Boolean(exports2.inspectOpts.colors) : tty.isatty(fd);
     }
@@ -1268,7 +1268,7 @@ var require_node = __commonJS({
       }
     }
     function log() {
-      return stream4.write(util4.format.apply(util4, arguments) + "\n");
+      return stream5.write(util4.format.apply(util4, arguments) + "\n");
     }
     function save(namespaces) {
       if (null == namespaces) {
@@ -1281,42 +1281,42 @@ var require_node = __commonJS({
       return process.env.DEBUG;
     }
     function createWritableStdioStream(fd2) {
-      var stream5;
+      var stream6;
       var tty_wrap = process.binding("tty_wrap");
       switch (tty_wrap.guessHandleType(fd2)) {
         case "TTY":
-          stream5 = new tty.WriteStream(fd2);
-          stream5._type = "tty";
-          if (stream5._handle && stream5._handle.unref) {
-            stream5._handle.unref();
+          stream6 = new tty.WriteStream(fd2);
+          stream6._type = "tty";
+          if (stream6._handle && stream6._handle.unref) {
+            stream6._handle.unref();
           }
           break;
         case "FILE":
           var fs25 = require("fs");
-          stream5 = new fs25.SyncWriteStream(fd2, { autoClose: false });
-          stream5._type = "fs";
+          stream6 = new fs25.SyncWriteStream(fd2, { autoClose: false });
+          stream6._type = "fs";
           break;
         case "PIPE":
         case "TCP":
           var net = require("net");
-          stream5 = new net.Socket({
+          stream6 = new net.Socket({
             fd: fd2,
             readable: false,
             writable: true
           });
-          stream5.readable = false;
-          stream5.read = null;
-          stream5._type = "pipe";
-          if (stream5._handle && stream5._handle.unref) {
-            stream5._handle.unref();
+          stream6.readable = false;
+          stream6.read = null;
+          stream6._type = "pipe";
+          if (stream6._handle && stream6._handle.unref) {
+            stream6._handle.unref();
           }
           break;
         default:
           throw new Error("Implement me. Unknown stream file type!");
       }
-      stream5.fd = fd2;
-      stream5._isStdio = true;
-      return stream5;
+      stream6.fd = fd2;
+      stream6._isStdio = true;
+      return stream6;
     }
     function init(debug) {
       debug.inspectOpts = {};
@@ -1349,70 +1349,70 @@ var require_destroy = __commonJS({
     var Stream4 = require("stream");
     var Zlib = require("zlib");
     module2.exports = destroy;
-    function destroy(stream4, suppress) {
-      if (isFsReadStream(stream4)) {
-        destroyReadStream(stream4);
-      } else if (isZlibStream(stream4)) {
-        destroyZlibStream(stream4);
-      } else if (hasDestroy(stream4)) {
-        stream4.destroy();
+    function destroy(stream5, suppress) {
+      if (isFsReadStream(stream5)) {
+        destroyReadStream(stream5);
+      } else if (isZlibStream(stream5)) {
+        destroyZlibStream(stream5);
+      } else if (hasDestroy(stream5)) {
+        stream5.destroy();
       }
-      if (isEventEmitter(stream4) && suppress) {
-        stream4.removeAllListeners("error");
-        stream4.addListener("error", noop3);
+      if (isEventEmitter(stream5) && suppress) {
+        stream5.removeAllListeners("error");
+        stream5.addListener("error", noop3);
       }
-      return stream4;
+      return stream5;
     }
-    function destroyReadStream(stream4) {
-      stream4.destroy();
-      if (typeof stream4.close === "function") {
-        stream4.on("open", onOpenClose);
+    function destroyReadStream(stream5) {
+      stream5.destroy();
+      if (typeof stream5.close === "function") {
+        stream5.on("open", onOpenClose);
       }
     }
-    function closeZlibStream(stream4) {
-      if (stream4._hadError === true) {
-        var prop = stream4._binding === null ? "_binding" : "_handle";
-        stream4[prop] = {
+    function closeZlibStream(stream5) {
+      if (stream5._hadError === true) {
+        var prop = stream5._binding === null ? "_binding" : "_handle";
+        stream5[prop] = {
           close: function() {
             this[prop] = null;
           }
         };
       }
-      stream4.close();
+      stream5.close();
     }
-    function destroyZlibStream(stream4) {
-      if (typeof stream4.destroy === "function") {
-        if (stream4._binding) {
-          stream4.destroy();
-          if (stream4._processing) {
-            stream4._needDrain = true;
-            stream4.once("drain", onDrainClearBinding);
+    function destroyZlibStream(stream5) {
+      if (typeof stream5.destroy === "function") {
+        if (stream5._binding) {
+          stream5.destroy();
+          if (stream5._processing) {
+            stream5._needDrain = true;
+            stream5.once("drain", onDrainClearBinding);
           } else {
-            stream4._binding.clear();
+            stream5._binding.clear();
           }
-        } else if (stream4._destroy && stream4._destroy !== Stream4.Transform.prototype._destroy) {
-          stream4.destroy();
-        } else if (stream4._destroy && typeof stream4.close === "function") {
-          stream4.destroyed = true;
-          stream4.close();
+        } else if (stream5._destroy && stream5._destroy !== Stream4.Transform.prototype._destroy) {
+          stream5.destroy();
+        } else if (stream5._destroy && typeof stream5.close === "function") {
+          stream5.destroyed = true;
+          stream5.close();
         } else {
-          stream4.destroy();
+          stream5.destroy();
         }
-      } else if (typeof stream4.close === "function") {
-        closeZlibStream(stream4);
+      } else if (typeof stream5.close === "function") {
+        closeZlibStream(stream5);
       }
     }
-    function hasDestroy(stream4) {
-      return stream4 instanceof Stream4 && typeof stream4.destroy === "function";
+    function hasDestroy(stream5) {
+      return stream5 instanceof Stream4 && typeof stream5.destroy === "function";
     }
     function isEventEmitter(val) {
       return val instanceof EventEmitter2;
     }
-    function isFsReadStream(stream4) {
-      return stream4 instanceof ReadStream;
+    function isFsReadStream(stream5) {
+      return stream5 instanceof ReadStream;
     }
-    function isZlibStream(stream4) {
-      return stream4 instanceof Zlib.Gzip || stream4 instanceof Zlib.Gunzip || stream4 instanceof Zlib.Deflate || stream4 instanceof Zlib.DeflateRaw || stream4 instanceof Zlib.Inflate || stream4 instanceof Zlib.InflateRaw || stream4 instanceof Zlib.Unzip;
+    function isZlibStream(stream5) {
+      return stream5 instanceof Zlib.Gzip || stream5 instanceof Zlib.Gunzip || stream5 instanceof Zlib.Deflate || stream5 instanceof Zlib.DeflateRaw || stream5 instanceof Zlib.Inflate || stream5 instanceof Zlib.InflateRaw || stream5 instanceof Zlib.Unzip;
     }
     function noop3() {
     }
@@ -4860,8 +4860,8 @@ var require_unpipe = __commonJS({
   "node_modules/unpipe/index.js"(exports2, module2) {
     "use strict";
     module2.exports = unpipe;
-    function hasPipeDataListeners(stream4) {
-      var listeners = stream4.listeners("data");
+    function hasPipeDataListeners(stream5) {
+      var listeners = stream5.listeners("data");
       for (var i2 = 0; i2 < listeners.length; i2++) {
         if (listeners[i2].name === "ondata") {
           return true;
@@ -4869,25 +4869,25 @@ var require_unpipe = __commonJS({
       }
       return false;
     }
-    function unpipe(stream4) {
-      if (!stream4) {
+    function unpipe(stream5) {
+      if (!stream5) {
         throw new TypeError("argument stream is required");
       }
-      if (typeof stream4.unpipe === "function") {
-        stream4.unpipe();
+      if (typeof stream5.unpipe === "function") {
+        stream5.unpipe();
         return;
       }
-      if (!hasPipeDataListeners(stream4)) {
+      if (!hasPipeDataListeners(stream5)) {
         return;
       }
       var listener;
-      var listeners = stream4.listeners("close");
+      var listeners = stream5.listeners("close");
       for (var i2 = 0; i2 < listeners.length; i2++) {
         listener = listeners[i2];
         if (listener.name !== "cleanup" && listener.name !== "onclose") {
           continue;
         }
-        listener.call(stream4);
+        listener.call(stream5);
       }
     }
   }
@@ -4916,12 +4916,12 @@ var require_raw_body = __commonJS({
         });
       }
     }
-    function getRawBody(stream4, options, callback) {
+    function getRawBody(stream5, options, callback) {
       var done = callback;
       var opts = options || {};
-      if (stream4 === void 0) {
+      if (stream5 === void 0) {
         throw new TypeError("argument stream is required");
-      } else if (typeof stream4 !== "object" || stream4 === null || typeof stream4.on !== "function") {
+      } else if (typeof stream5 !== "object" || stream5 === null || typeof stream5.on !== "function") {
         throw new TypeError("argument stream must be a stream");
       }
       if (options === true || typeof options === "string") {
@@ -4943,22 +4943,22 @@ var require_raw_body = __commonJS({
       var limit = bytes.parse(opts.limit);
       var length = opts.length != null && !isNaN(opts.length) ? parseInt(opts.length, 10) : null;
       if (done) {
-        return readStream2(stream4, encoding, length, limit, wrap(done));
+        return readStream2(stream5, encoding, length, limit, wrap(done));
       }
       return new Promise(function executor(resolve, reject) {
-        readStream2(stream4, encoding, length, limit, function onRead(err, buf) {
+        readStream2(stream5, encoding, length, limit, function onRead(err, buf) {
           if (err) return reject(err);
           resolve(buf);
         });
       });
     }
-    function halt(stream4) {
-      unpipe(stream4);
-      if (typeof stream4.pause === "function") {
-        stream4.pause();
+    function halt(stream5) {
+      unpipe(stream5);
+      if (typeof stream5.pause === "function") {
+        stream5.pause();
       }
     }
-    function readStream2(stream4, encoding, length, limit, callback) {
+    function readStream2(stream5, encoding, length, limit, callback) {
       var complete = false;
       var sync = true;
       if (limit !== null && length !== null && length > limit) {
@@ -4969,13 +4969,13 @@ var require_raw_body = __commonJS({
           type: "entity.too.large"
         }));
       }
-      var state = stream4._readableState;
-      if (stream4._decoder || state && (state.encoding || state.decoder)) {
+      var state = stream5._readableState;
+      if (stream5._decoder || state && (state.encoding || state.decoder)) {
         return done(createError(500, "stream encoding should not be set", {
           type: "stream.encoding.set"
         }));
       }
-      if (typeof stream4.readable !== "undefined" && !stream4.readable) {
+      if (typeof stream5.readable !== "undefined" && !stream5.readable) {
         return done(createError(500, "stream is not readable", {
           type: "stream.not.readable"
         }));
@@ -4988,11 +4988,11 @@ var require_raw_body = __commonJS({
         return done(err);
       }
       var buffer = decoder ? "" : [];
-      stream4.on("aborted", onAborted);
-      stream4.on("close", cleanup);
-      stream4.on("data", onData);
-      stream4.on("end", onEnd);
-      stream4.on("error", onEnd);
+      stream5.on("aborted", onAborted);
+      stream5.on("close", cleanup);
+      stream5.on("data", onData);
+      stream5.on("end", onEnd);
+      stream5.on("error", onEnd);
       sync = false;
       function done() {
         var args = new Array(arguments.length);
@@ -5008,7 +5008,7 @@ var require_raw_body = __commonJS({
         function invokeCallback() {
           cleanup();
           if (args[0]) {
-            halt(stream4);
+            halt(stream5);
           }
           callback.apply(null, args);
         }
@@ -5055,11 +5055,11 @@ var require_raw_body = __commonJS({
       }
       function cleanup() {
         buffer = null;
-        stream4.removeListener("aborted", onAborted);
-        stream4.removeListener("data", onData);
-        stream4.removeListener("end", onEnd);
-        stream4.removeListener("error", onEnd);
-        stream4.removeListener("close", cleanup);
+        stream5.removeListener("aborted", onAborted);
+        stream5.removeListener("data", onData);
+        stream5.removeListener("end", onEnd);
+        stream5.removeListener("error", onEnd);
+        stream5.removeListener("close", cleanup);
       }
     }
     function tryRequireAsyncHooks() {
@@ -5257,14 +5257,14 @@ var require_read = __commonJS({
     function read(req, res, next, parse, debug, options) {
       var length;
       var opts = options;
-      var stream4;
+      var stream5;
       req._body = true;
       var encoding = opts.encoding !== null ? opts.encoding : null;
       var verify = opts.verify;
       try {
-        stream4 = contentstream(req, debug, opts.inflate);
-        length = stream4.length;
-        stream4.length = void 0;
+        stream5 = contentstream(req, debug, opts.inflate);
+        length = stream5.length;
+        stream5.length = void 0;
       } catch (err) {
         return next(err);
       }
@@ -5277,7 +5277,7 @@ var require_read = __commonJS({
         }));
       }
       debug("read body");
-      getBody(stream4, opts, function(error, body) {
+      getBody(stream5, opts, function(error, body) {
         if (error) {
           var _error;
           if (error.type === "encoding.unsupported") {
@@ -5288,9 +5288,9 @@ var require_read = __commonJS({
           } else {
             _error = createError(400, error);
           }
-          if (stream4 !== req) {
+          if (stream5 !== req) {
             unpipe(req);
-            destroy(stream4, true);
+            destroy(stream5, true);
           }
           dump(req, function onfinished() {
             next(createError(400, _error));
@@ -5327,7 +5327,7 @@ var require_read = __commonJS({
     function contentstream(req, debug, inflate) {
       var encoding = (req.headers["content-encoding"] || "identity").toLowerCase();
       var length = req.headers["content-length"];
-      var stream4;
+      var stream5;
       debug('content-encoding "%s"', encoding);
       if (inflate === false && encoding !== "identity") {
         throw createError(415, "content encoding unsupported", {
@@ -5337,18 +5337,18 @@ var require_read = __commonJS({
       }
       switch (encoding) {
         case "deflate":
-          stream4 = zlib3.createInflate();
+          stream5 = zlib3.createInflate();
           debug("inflate body");
-          req.pipe(stream4);
+          req.pipe(stream5);
           break;
         case "gzip":
-          stream4 = zlib3.createGunzip();
+          stream5 = zlib3.createGunzip();
           debug("gunzip body");
-          req.pipe(stream4);
+          req.pipe(stream5);
           break;
         case "identity":
-          stream4 = req;
-          stream4.length = length;
+          stream5 = req;
+          stream5.length = length;
           break;
         default:
           throw createError(415, 'unsupported content encoding "' + encoding + '"', {
@@ -5356,7 +5356,7 @@ var require_read = __commonJS({
             type: "encoding.unsupported"
           });
       }
-      return stream4;
+      return stream5;
     }
     function dump(req, callback) {
       if (onFinished.isFinished(req)) {
@@ -17662,7 +17662,7 @@ var require_node2 = __commonJS({
       util4.deprecate(function() {
       }, "except for stderr(2) and stdout(1), any other usage of DEBUG_FD is deprecated. Override debug.log if you want to use a different log function (https://git.io/debug_fd)")();
     }
-    var stream4 = 1 === fd ? process.stdout : 2 === fd ? process.stderr : createWritableStdioStream(fd);
+    var stream5 = 1 === fd ? process.stdout : 2 === fd ? process.stderr : createWritableStdioStream(fd);
     function useColors() {
       return "colors" in exports2.inspectOpts ? Boolean(exports2.inspectOpts.colors) : tty.isatty(fd);
     }
@@ -17689,7 +17689,7 @@ var require_node2 = __commonJS({
       }
     }
     function log() {
-      return stream4.write(util4.format.apply(util4, arguments) + "\n");
+      return stream5.write(util4.format.apply(util4, arguments) + "\n");
     }
     function save(namespaces) {
       if (null == namespaces) {
@@ -17702,42 +17702,42 @@ var require_node2 = __commonJS({
       return process.env.DEBUG;
     }
     function createWritableStdioStream(fd2) {
-      var stream5;
+      var stream6;
       var tty_wrap = process.binding("tty_wrap");
       switch (tty_wrap.guessHandleType(fd2)) {
         case "TTY":
-          stream5 = new tty.WriteStream(fd2);
-          stream5._type = "tty";
-          if (stream5._handle && stream5._handle.unref) {
-            stream5._handle.unref();
+          stream6 = new tty.WriteStream(fd2);
+          stream6._type = "tty";
+          if (stream6._handle && stream6._handle.unref) {
+            stream6._handle.unref();
           }
           break;
         case "FILE":
           var fs25 = require("fs");
-          stream5 = new fs25.SyncWriteStream(fd2, { autoClose: false });
-          stream5._type = "fs";
+          stream6 = new fs25.SyncWriteStream(fd2, { autoClose: false });
+          stream6._type = "fs";
           break;
         case "PIPE":
         case "TCP":
           var net = require("net");
-          stream5 = new net.Socket({
+          stream6 = new net.Socket({
             fd: fd2,
             readable: false,
             writable: true
           });
-          stream5.readable = false;
-          stream5.read = null;
-          stream5._type = "pipe";
-          if (stream5._handle && stream5._handle.unref) {
-            stream5._handle.unref();
+          stream6.readable = false;
+          stream6.read = null;
+          stream6._type = "pipe";
+          if (stream6._handle && stream6._handle.unref) {
+            stream6._handle.unref();
           }
           break;
         default:
           throw new Error("Implement me. Unknown stream file type!");
       }
-      stream5.fd = fd2;
-      stream5._isStdio = true;
-      return stream5;
+      stream6.fd = fd2;
+      stream6._isStdio = true;
+      return stream6;
     }
     function init(debug) {
       debug.inspectOpts = {};
@@ -18381,7 +18381,7 @@ var require_node3 = __commonJS({
       util4.deprecate(function() {
       }, "except for stderr(2) and stdout(1), any other usage of DEBUG_FD is deprecated. Override debug.log if you want to use a different log function (https://git.io/debug_fd)")();
     }
-    var stream4 = 1 === fd ? process.stdout : 2 === fd ? process.stderr : createWritableStdioStream(fd);
+    var stream5 = 1 === fd ? process.stdout : 2 === fd ? process.stderr : createWritableStdioStream(fd);
     function useColors() {
       return "colors" in exports2.inspectOpts ? Boolean(exports2.inspectOpts.colors) : tty.isatty(fd);
     }
@@ -18408,7 +18408,7 @@ var require_node3 = __commonJS({
       }
     }
     function log() {
-      return stream4.write(util4.format.apply(util4, arguments) + "\n");
+      return stream5.write(util4.format.apply(util4, arguments) + "\n");
     }
     function save(namespaces) {
       if (null == namespaces) {
@@ -18421,42 +18421,42 @@ var require_node3 = __commonJS({
       return process.env.DEBUG;
     }
     function createWritableStdioStream(fd2) {
-      var stream5;
+      var stream6;
       var tty_wrap = process.binding("tty_wrap");
       switch (tty_wrap.guessHandleType(fd2)) {
         case "TTY":
-          stream5 = new tty.WriteStream(fd2);
-          stream5._type = "tty";
-          if (stream5._handle && stream5._handle.unref) {
-            stream5._handle.unref();
+          stream6 = new tty.WriteStream(fd2);
+          stream6._type = "tty";
+          if (stream6._handle && stream6._handle.unref) {
+            stream6._handle.unref();
           }
           break;
         case "FILE":
           var fs25 = require("fs");
-          stream5 = new fs25.SyncWriteStream(fd2, { autoClose: false });
-          stream5._type = "fs";
+          stream6 = new fs25.SyncWriteStream(fd2, { autoClose: false });
+          stream6._type = "fs";
           break;
         case "PIPE":
         case "TCP":
           var net = require("net");
-          stream5 = new net.Socket({
+          stream6 = new net.Socket({
             fd: fd2,
             readable: false,
             writable: true
           });
-          stream5.readable = false;
-          stream5.read = null;
-          stream5._type = "pipe";
-          if (stream5._handle && stream5._handle.unref) {
-            stream5._handle.unref();
+          stream6.readable = false;
+          stream6.read = null;
+          stream6._type = "pipe";
+          if (stream6._handle && stream6._handle.unref) {
+            stream6._handle.unref();
           }
           break;
         default:
           throw new Error("Implement me. Unknown stream file type!");
       }
-      stream5.fd = fd2;
-      stream5._isStdio = true;
-      return stream5;
+      stream6.fd = fd2;
+      stream6._isStdio = true;
+      return stream6;
     }
     function init(debug) {
       debug.inspectOpts = {};
@@ -19947,7 +19947,7 @@ var require_node4 = __commonJS({
       util4.deprecate(function() {
       }, "except for stderr(2) and stdout(1), any other usage of DEBUG_FD is deprecated. Override debug.log if you want to use a different log function (https://git.io/debug_fd)")();
     }
-    var stream4 = 1 === fd ? process.stdout : 2 === fd ? process.stderr : createWritableStdioStream(fd);
+    var stream5 = 1 === fd ? process.stdout : 2 === fd ? process.stderr : createWritableStdioStream(fd);
     function useColors() {
       return "colors" in exports2.inspectOpts ? Boolean(exports2.inspectOpts.colors) : tty.isatty(fd);
     }
@@ -19974,7 +19974,7 @@ var require_node4 = __commonJS({
       }
     }
     function log() {
-      return stream4.write(util4.format.apply(util4, arguments) + "\n");
+      return stream5.write(util4.format.apply(util4, arguments) + "\n");
     }
     function save(namespaces) {
       if (null == namespaces) {
@@ -19987,42 +19987,42 @@ var require_node4 = __commonJS({
       return process.env.DEBUG;
     }
     function createWritableStdioStream(fd2) {
-      var stream5;
+      var stream6;
       var tty_wrap = process.binding("tty_wrap");
       switch (tty_wrap.guessHandleType(fd2)) {
         case "TTY":
-          stream5 = new tty.WriteStream(fd2);
-          stream5._type = "tty";
-          if (stream5._handle && stream5._handle.unref) {
-            stream5._handle.unref();
+          stream6 = new tty.WriteStream(fd2);
+          stream6._type = "tty";
+          if (stream6._handle && stream6._handle.unref) {
+            stream6._handle.unref();
           }
           break;
         case "FILE":
           var fs25 = require("fs");
-          stream5 = new fs25.SyncWriteStream(fd2, { autoClose: false });
-          stream5._type = "fs";
+          stream6 = new fs25.SyncWriteStream(fd2, { autoClose: false });
+          stream6._type = "fs";
           break;
         case "PIPE":
         case "TCP":
           var net = require("net");
-          stream5 = new net.Socket({
+          stream6 = new net.Socket({
             fd: fd2,
             readable: false,
             writable: true
           });
-          stream5.readable = false;
-          stream5.read = null;
-          stream5._type = "pipe";
-          if (stream5._handle && stream5._handle.unref) {
-            stream5._handle.unref();
+          stream6.readable = false;
+          stream6.read = null;
+          stream6._type = "pipe";
+          if (stream6._handle && stream6._handle.unref) {
+            stream6._handle.unref();
           }
           break;
         default:
           throw new Error("Implement me. Unknown stream file type!");
       }
-      stream5.fd = fd2;
-      stream5._isStdio = true;
-      return stream5;
+      stream6.fd = fd2;
+      stream6._isStdio = true;
+      return stream6;
     }
     function init(debug) {
       debug.inspectOpts = {};
@@ -20806,21 +20806,21 @@ var require_send = __commonJS({
       }
       next();
     };
-    SendStream.prototype.stream = function stream4(path26, options) {
+    SendStream.prototype.stream = function stream5(path26, options) {
       var self2 = this;
       var res = this.res;
-      var stream5 = fs25.createReadStream(path26, options);
-      this.emit("stream", stream5);
-      stream5.pipe(res);
+      var stream6 = fs25.createReadStream(path26, options);
+      this.emit("stream", stream6);
+      stream6.pipe(res);
       function cleanup() {
-        destroy(stream5, true);
+        destroy(stream6, true);
       }
       onFinished(res, cleanup);
-      stream5.on("error", function onerror(err) {
+      stream6.on("error", function onerror(err) {
         cleanup();
         self2.onStatError(err);
       });
-      stream5.on("end", function onend() {
+      stream6.on("end", function onend() {
         self2.emit("end");
       });
     };
@@ -23796,24 +23796,24 @@ var require_serve_static = __commonJS({
         if (path25 === "/" && originalUrl.pathname.substr(-1) !== "/") {
           path25 = "";
         }
-        var stream4 = send(req, path25, opts);
-        stream4.on("directory", onDirectory);
+        var stream5 = send(req, path25, opts);
+        stream5.on("directory", onDirectory);
         if (setHeaders) {
-          stream4.on("headers", setHeaders);
+          stream5.on("headers", setHeaders);
         }
         if (fallthrough) {
-          stream4.on("file", function onFile() {
+          stream5.on("file", function onFile() {
             forwardError = true;
           });
         }
-        stream4.on("error", function error(err) {
+        stream5.on("error", function error(err) {
           if (forwardError || !(err.statusCode < 500)) {
             next(err);
             return;
           }
           next();
         });
-        stream4.pipe(res);
+        stream5.pipe(res);
       };
     }
     function collapseLeadingSlashes(str) {
@@ -30131,10 +30131,10 @@ var require_errors2 = __commonJS({
       /** @class */
       (function(_super) {
         tslib_1.__extends(UnrecognizedStreamTypeError2, _super);
-        function UnrecognizedStreamTypeError2(stream4) {
+        function UnrecognizedStreamTypeError2(stream5) {
           var _a2, _b, _c;
           var _this = this;
-          var streamType = (_c = (_b = (_a2 = stream4 === null || stream4 === void 0 ? void 0 : stream4.contructor) === null || _a2 === void 0 ? void 0 : _a2.name) !== null && _b !== void 0 ? _b : stream4 === null || stream4 === void 0 ? void 0 : stream4.name) !== null && _c !== void 0 ? _c : stream4;
+          var streamType = (_c = (_b = (_a2 = stream5 === null || stream5 === void 0 ? void 0 : stream5.contructor) === null || _a2 === void 0 ? void 0 : _a2.name) !== null && _b !== void 0 ? _b : stream5 === null || stream5 === void 0 ? void 0 : stream5.name) !== null && _c !== void 0 ? _c : stream5;
           var msg = "Unrecognized stream type: " + streamType;
           _this = _super.call(this, msg) || this;
           return _this;
@@ -31831,8 +31831,8 @@ var require_PDFContext = __commonJS({
           }
           var dict = this.obj({});
           var op = PDFOperator_1.default.of(PDFOperatorNames_1.default.PushGraphicsState);
-          var stream4 = PDFContentStream_1.default.of(dict, [op]);
-          this.pushGraphicsStateContentStreamRef = this.register(stream4);
+          var stream5 = PDFContentStream_1.default.of(dict, [op]);
+          this.pushGraphicsStateContentStreamRef = this.register(stream5);
           return this.pushGraphicsStateContentStreamRef;
         };
         PDFContext2.prototype.getPopGraphicsStateContentStream = function() {
@@ -31841,8 +31841,8 @@ var require_PDFContext = __commonJS({
           }
           var dict = this.obj({});
           var op = PDFOperator_1.default.of(PDFOperatorNames_1.default.PopGraphicsState);
-          var stream4 = PDFContentStream_1.default.of(dict, [op]);
-          this.popGraphicsStateContentStreamRef = this.register(stream4);
+          var stream5 = PDFContentStream_1.default.of(dict, [op]);
+          this.popGraphicsStateContentStreamRef = this.register(stream5);
           return this.popGraphicsStateContentStreamRef;
         };
         PDFContext2.prototype.addRandomSuffix = function(prefix, suffixLength) {
@@ -32850,9 +32850,9 @@ var require_PDFCrossRefStream = __commonJS({
           if (encode3 === void 0) {
             encode3 = true;
           }
-          var stream4 = new PDFCrossRefStream2(dict, [], encode3);
-          stream4.addDeletedEntry(PDFRef_1.default.of(0, 65535), 0);
-          return stream4;
+          var stream5 = new PDFCrossRefStream2(dict, [], encode3);
+          stream5.addDeletedEntry(PDFRef_1.default.of(0, 65535), 0);
+          return stream5;
         };
         PDFCrossRefStream2.of = function(dict, entries, encode3) {
           if (encode3 === void 0) {
@@ -35785,9 +35785,9 @@ var require_Ascii85Stream = __commonJS({
       /** @class */
       (function(_super) {
         tslib_1.__extends(Ascii85Stream2, _super);
-        function Ascii85Stream2(stream4, maybeLength) {
+        function Ascii85Stream2(stream5, maybeLength) {
           var _this = _super.call(this, maybeLength) || this;
-          _this.stream = stream4;
+          _this.stream = stream5;
           _this.input = new Uint8Array(5);
           if (maybeLength) {
             maybeLength = 0.8 * maybeLength;
@@ -35798,10 +35798,10 @@ var require_Ascii85Stream = __commonJS({
           var TILDA_CHAR = 126;
           var Z_LOWER_CHAR = 122;
           var EOF = -1;
-          var stream4 = this.stream;
-          var c = stream4.getByte();
+          var stream5 = this.stream;
+          var c = stream5.getByte();
           while (isSpace(c)) {
-            c = stream4.getByte();
+            c = stream5.getByte();
           }
           if (c === EOF || c === TILDA_CHAR) {
             this.eof = true;
@@ -35820,9 +35820,9 @@ var require_Ascii85Stream = __commonJS({
             var input = this.input;
             input[0] = c;
             for (i2 = 1; i2 < 5; ++i2) {
-              c = stream4.getByte();
+              c = stream5.getByte();
               while (isSpace(c)) {
-                c = stream4.getByte();
+                c = stream5.getByte();
               }
               input[i2] = c;
               if (c === EOF || c === TILDA_CHAR) {
@@ -35865,9 +35865,9 @@ var require_AsciiHexStream = __commonJS({
       /** @class */
       (function(_super) {
         tslib_1.__extends(AsciiHexStream2, _super);
-        function AsciiHexStream2(stream4, maybeLength) {
+        function AsciiHexStream2(stream5, maybeLength) {
           var _this = _super.call(this, maybeLength) || this;
-          _this.stream = stream4;
+          _this.stream = stream5;
           _this.firstDigit = -1;
           if (maybeLength) {
             maybeLength = 0.5 * maybeLength;
@@ -36564,11 +36564,11 @@ var require_FlateStream = __commonJS({
       /** @class */
       (function(_super) {
         tslib_1.__extends(FlateStream2, _super);
-        function FlateStream2(stream4, maybeLength) {
+        function FlateStream2(stream5, maybeLength) {
           var _this = _super.call(this, maybeLength) || this;
-          _this.stream = stream4;
-          var cmf = stream4.getByte();
-          var flg = stream4.getByte();
+          _this.stream = stream5;
+          var cmf = stream5.getByte();
+          var flg = stream5.getByte();
           if (cmf === -1 || flg === -1) {
             throw new Error("Invalid header in flate stream: " + cmf + ", " + flg);
           }
@@ -36817,9 +36817,9 @@ var require_LZWStream = __commonJS({
       /** @class */
       (function(_super) {
         tslib_1.__extends(LZWStream2, _super);
-        function LZWStream2(stream4, maybeLength, earlyChange) {
+        function LZWStream2(stream5, maybeLength, earlyChange) {
           var _this = _super.call(this, maybeLength) || this;
-          _this.stream = stream4;
+          _this.stream = stream5;
           _this.cachedData = 0;
           _this.bitsCached = 0;
           var maxLzwDictionarySize = 4096;
@@ -36948,9 +36948,9 @@ var require_RunLengthStream = __commonJS({
       /** @class */
       (function(_super) {
         tslib_1.__extends(RunLengthStream2, _super);
-        function RunLengthStream2(stream4, maybeLength) {
+        function RunLengthStream2(stream5, maybeLength) {
           var _this = _super.call(this, maybeLength) || this;
-          _this.stream = stream4;
+          _this.stream = stream5;
           return _this;
         }
         RunLengthStream2.prototype.readBlock = function() {
@@ -37005,9 +37005,9 @@ var require_decode = __commonJS({
     var LZWStream_1 = tslib_1.__importDefault(require_LZWStream());
     var RunLengthStream_1 = tslib_1.__importDefault(require_RunLengthStream());
     var Stream_1 = tslib_1.__importDefault(require_Stream());
-    var decodeStream = function(stream4, encoding, params) {
+    var decodeStream = function(stream5, encoding, params) {
       if (encoding === PDFName_1.default.of("FlateDecode")) {
-        return new FlateStream_1.default(stream4);
+        return new FlateStream_1.default(stream5);
       }
       if (encoding === PDFName_1.default.of("LZWDecode")) {
         var earlyChange = 1;
@@ -37017,34 +37017,34 @@ var require_decode = __commonJS({
             earlyChange = EarlyChange.asNumber();
           }
         }
-        return new LZWStream_1.default(stream4, void 0, earlyChange);
+        return new LZWStream_1.default(stream5, void 0, earlyChange);
       }
       if (encoding === PDFName_1.default.of("ASCII85Decode")) {
-        return new Ascii85Stream_1.default(stream4);
+        return new Ascii85Stream_1.default(stream5);
       }
       if (encoding === PDFName_1.default.of("ASCIIHexDecode")) {
-        return new AsciiHexStream_1.default(stream4);
+        return new AsciiHexStream_1.default(stream5);
       }
       if (encoding === PDFName_1.default.of("RunLengthDecode")) {
-        return new RunLengthStream_1.default(stream4);
+        return new RunLengthStream_1.default(stream5);
       }
       throw new errors_1.UnsupportedEncodingError(encoding.asString());
     };
     exports2.decodePDFRawStream = function(_a2) {
       var dict = _a2.dict, contents = _a2.contents;
-      var stream4 = new Stream_1.default(contents);
+      var stream5 = new Stream_1.default(contents);
       var Filter = dict.lookup(PDFName_1.default.of("Filter"));
       var DecodeParms = dict.lookup(PDFName_1.default.of("DecodeParms"));
       if (Filter instanceof PDFName_1.default) {
-        stream4 = decodeStream(stream4, Filter, DecodeParms);
+        stream5 = decodeStream(stream5, Filter, DecodeParms);
       } else if (Filter instanceof PDFArray_1.default) {
         for (var idx = 0, len = Filter.size(); idx < len; idx++) {
-          stream4 = decodeStream(stream4, Filter.lookup(idx, PDFName_1.default), DecodeParms && DecodeParms.lookupMaybe(idx, PDFDict_1.default));
+          stream5 = decodeStream(stream5, Filter.lookup(idx, PDFName_1.default), DecodeParms && DecodeParms.lookupMaybe(idx, PDFDict_1.default));
         }
       } else if (!!Filter) {
         throw new errors_1.UnexpectedObjectTypeError([PDFName_1.default, PDFArray_1.default], Filter);
       }
-      return stream4;
+      return stream5;
     };
   }
 });
@@ -37124,14 +37124,14 @@ var require_PDFPageEmbedder = __commonJS({
           var newline = Uint8Array.of(CharCodes_1.default.Newline);
           var decodedContents = [];
           for (var idx = 0, len = contents.size(); idx < len; idx++) {
-            var stream4 = contents.lookup(idx, PDFStream_1.default);
+            var stream5 = contents.lookup(idx, PDFStream_1.default);
             var content = void 0;
-            if (stream4 instanceof PDFRawStream_1.default) {
-              content = decode_1.decodePDFRawStream(stream4).decode();
-            } else if (stream4 instanceof PDFContentStream_1.default) {
-              content = stream4.getUnencodedContents();
+            if (stream5 instanceof PDFRawStream_1.default) {
+              content = decode_1.decodePDFRawStream(stream5).decode();
+            } else if (stream5 instanceof PDFContentStream_1.default) {
+              content = stream5.getUnencodedContents();
             } else {
-              throw new errors_1.UnrecognizedStreamTypeError(stream4);
+              throw new errors_1.UnrecognizedStreamTypeError(stream5);
             }
             decodedContents.push(content, newline);
           }
@@ -39385,7 +39385,7 @@ var require_Keywords = __commonJS({
     var Space = CharCodes_1.default.Space;
     var CarriageReturn = CharCodes_1.default.CarriageReturn;
     var Newline = CharCodes_1.default.Newline;
-    var stream4 = [
+    var stream5 = [
       CharCodes_1.default.s,
       CharCodes_1.default.t,
       CharCodes_1.default.r,
@@ -39452,11 +39452,11 @@ var require_Keywords = __commonJS({
       true: [CharCodes_1.default.t, CharCodes_1.default.r, CharCodes_1.default.u, CharCodes_1.default.e],
       false: [CharCodes_1.default.f, CharCodes_1.default.a, CharCodes_1.default.l, CharCodes_1.default.s, CharCodes_1.default.e],
       null: [CharCodes_1.default.n, CharCodes_1.default.u, CharCodes_1.default.l, CharCodes_1.default.l],
-      stream: stream4,
-      streamEOF1: tslib_1.__spreadArrays(stream4, [Space, CarriageReturn, Newline]),
-      streamEOF2: tslib_1.__spreadArrays(stream4, [CarriageReturn, Newline]),
-      streamEOF3: tslib_1.__spreadArrays(stream4, [CarriageReturn]),
-      streamEOF4: tslib_1.__spreadArrays(stream4, [Newline]),
+      stream: stream5,
+      streamEOF1: tslib_1.__spreadArrays(stream5, [Space, CarriageReturn, Newline]),
+      streamEOF2: tslib_1.__spreadArrays(stream5, [CarriageReturn, Newline]),
+      streamEOF3: tslib_1.__spreadArrays(stream5, [CarriageReturn]),
+      streamEOF4: tslib_1.__spreadArrays(stream5, [Newline]),
       endstream,
       EOF1endstream: tslib_1.__spreadArrays([CarriageReturn, Newline], endstream),
       EOF2endstream: tslib_1.__spreadArrays([CarriageReturn], endstream),
@@ -42905,12 +42905,12 @@ var require_PDFField = __commonJS({
           var context = this.acroField.dict.context;
           var _b = widget.getRectangle(), width = _b.width, height = _b.height;
           var Resources = font && { Font: (_a2 = {}, _a2[font.name] = font.ref, _a2) };
-          var stream4 = context.formXObject(appearance, {
+          var stream5 = context.formXObject(appearance, {
             Resources,
             BBox: context.obj([0, 0, width, height]),
             Matrix: context.obj([1, 0, 0, 1, 0, 0])
           });
-          var streamRef = context.register(stream4);
+          var streamRef = context.register(stream5);
           return streamRef;
         };
         PDFField2.prototype.createImageAppearanceStream = function(widget, image, alignment) {
@@ -42945,12 +42945,12 @@ var require_PDFField = __commonJS({
           var imageName = this.doc.context.addRandomSuffix("Image", 10);
           var appearance = tslib_1.__spreadArrays(rotate, operations_1.drawImage(imageName, options));
           var Resources = { XObject: (_a2 = {}, _a2[imageName] = image.ref, _a2) };
-          var stream4 = context.formXObject(appearance, {
+          var stream5 = context.formXObject(appearance, {
             Resources,
             BBox: context.obj([0, 0, rectangle.width, rectangle.height]),
             Matrix: context.obj([1, 0, 0, 1, 0, 0])
           });
-          return context.register(stream4);
+          return context.register(stream5);
         };
         PDFField2.prototype.createAppearanceDict = function(widget, appearance, onValue) {
           var context = this.acroField.dict.context;
@@ -53304,18 +53304,18 @@ var require_helpers = __commonJS({
     exports2.req = exports2.json = exports2.toBuffer = void 0;
     var http4 = __importStar2(require("http"));
     var https3 = __importStar2(require("https"));
-    async function toBuffer(stream4) {
+    async function toBuffer(stream5) {
       let length = 0;
       const chunks = [];
-      for await (const chunk of stream4) {
+      for await (const chunk of stream5) {
         length += chunk.length;
         chunks.push(chunk);
       }
       return Buffer.concat(chunks, length);
     }
     exports2.toBuffer = toBuffer;
-    async function json2(stream4) {
-      const buf = await toBuffer(stream4);
+    async function json2(stream5) {
+      const buf = await toBuffer(stream5);
       const str = buf.toString("utf8");
       try {
         return JSON.parse(str);
@@ -53955,30 +53955,30 @@ var require_ponyfill_es2018 = __commonJS({
       const CancelSteps = Symbol("[[CancelSteps]]");
       const PullSteps = Symbol("[[PullSteps]]");
       const ReleaseSteps = Symbol("[[ReleaseSteps]]");
-      function ReadableStreamReaderGenericInitialize(reader, stream4) {
-        reader._ownerReadableStream = stream4;
-        stream4._reader = reader;
-        if (stream4._state === "readable") {
+      function ReadableStreamReaderGenericInitialize(reader, stream5) {
+        reader._ownerReadableStream = stream5;
+        stream5._reader = reader;
+        if (stream5._state === "readable") {
           defaultReaderClosedPromiseInitialize(reader);
-        } else if (stream4._state === "closed") {
+        } else if (stream5._state === "closed") {
           defaultReaderClosedPromiseInitializeAsResolved(reader);
         } else {
-          defaultReaderClosedPromiseInitializeAsRejected(reader, stream4._storedError);
+          defaultReaderClosedPromiseInitializeAsRejected(reader, stream5._storedError);
         }
       }
       function ReadableStreamReaderGenericCancel(reader, reason) {
-        const stream4 = reader._ownerReadableStream;
-        return ReadableStreamCancel(stream4, reason);
+        const stream5 = reader._ownerReadableStream;
+        return ReadableStreamCancel(stream5, reason);
       }
       function ReadableStreamReaderGenericRelease(reader) {
-        const stream4 = reader._ownerReadableStream;
-        if (stream4._state === "readable") {
+        const stream5 = reader._ownerReadableStream;
+        if (stream5._state === "readable") {
           defaultReaderClosedPromiseReject(reader, new TypeError(`Reader was released and can no longer be used to monitor the stream's closedness`));
         } else {
           defaultReaderClosedPromiseResetToRejected(reader, new TypeError(`Reader was released and can no longer be used to monitor the stream's closedness`));
         }
-        stream4._readableStreamController[ReleaseSteps]();
-        stream4._reader = void 0;
+        stream5._readableStreamController[ReleaseSteps]();
+        stream5._reader = void 0;
         reader._ownerReadableStream = void 0;
       }
       function readerLockException(name) {
@@ -54086,14 +54086,14 @@ var require_ponyfill_es2018 = __commonJS({
           throw new TypeError(`${context} is not a ReadableStream.`);
         }
       }
-      function AcquireReadableStreamDefaultReader(stream4) {
-        return new ReadableStreamDefaultReader(stream4);
+      function AcquireReadableStreamDefaultReader(stream5) {
+        return new ReadableStreamDefaultReader(stream5);
       }
-      function ReadableStreamAddReadRequest(stream4, readRequest) {
-        stream4._reader._readRequests.push(readRequest);
+      function ReadableStreamAddReadRequest(stream5, readRequest) {
+        stream5._reader._readRequests.push(readRequest);
       }
-      function ReadableStreamFulfillReadRequest(stream4, chunk, done) {
-        const reader = stream4._reader;
+      function ReadableStreamFulfillReadRequest(stream5, chunk, done) {
+        const reader = stream5._reader;
         const readRequest = reader._readRequests.shift();
         if (done) {
           readRequest._closeSteps();
@@ -54101,11 +54101,11 @@ var require_ponyfill_es2018 = __commonJS({
           readRequest._chunkSteps(chunk);
         }
       }
-      function ReadableStreamGetNumReadRequests(stream4) {
-        return stream4._reader._readRequests.length;
+      function ReadableStreamGetNumReadRequests(stream5) {
+        return stream5._reader._readRequests.length;
       }
-      function ReadableStreamHasDefaultReader(stream4) {
-        const reader = stream4._reader;
+      function ReadableStreamHasDefaultReader(stream5) {
+        const reader = stream5._reader;
         if (reader === void 0) {
           return false;
         }
@@ -54115,13 +54115,13 @@ var require_ponyfill_es2018 = __commonJS({
         return true;
       }
       class ReadableStreamDefaultReader {
-        constructor(stream4) {
-          assertRequiredArgument(stream4, 1, "ReadableStreamDefaultReader");
-          assertReadableStream(stream4, "First parameter");
-          if (IsReadableStreamLocked(stream4)) {
+        constructor(stream5) {
+          assertRequiredArgument(stream5, 1, "ReadableStreamDefaultReader");
+          assertReadableStream(stream5, "First parameter");
+          if (IsReadableStreamLocked(stream5)) {
             throw new TypeError("This stream has already been locked for exclusive reading by another reader");
           }
-          ReadableStreamReaderGenericInitialize(this, stream4);
+          ReadableStreamReaderGenericInitialize(this, stream5);
           this._readRequests = new SimpleQueue();
         }
         /**
@@ -54216,14 +54216,14 @@ var require_ponyfill_es2018 = __commonJS({
         return x2 instanceof ReadableStreamDefaultReader;
       }
       function ReadableStreamDefaultReaderRead(reader, readRequest) {
-        const stream4 = reader._ownerReadableStream;
-        stream4._disturbed = true;
-        if (stream4._state === "closed") {
+        const stream5 = reader._ownerReadableStream;
+        stream5._disturbed = true;
+        if (stream5._state === "closed") {
           readRequest._closeSteps();
-        } else if (stream4._state === "errored") {
-          readRequest._errorSteps(stream4._storedError);
+        } else if (stream5._state === "errored") {
+          readRequest._errorSteps(stream5._storedError);
         } else {
-          stream4._readableStreamController[PullSteps](readRequest);
+          stream5._readableStreamController[PullSteps](readRequest);
         }
       }
       function ReadableStreamDefaultReaderRelease(reader) {
@@ -54321,8 +54321,8 @@ var require_ponyfill_es2018 = __commonJS({
         }
       };
       Object.setPrototypeOf(ReadableStreamAsyncIteratorPrototype, AsyncIteratorPrototype);
-      function AcquireReadableStreamAsyncIterator(stream4, preventCancel) {
-        const reader = AcquireReadableStreamDefaultReader(stream4);
+      function AcquireReadableStreamAsyncIterator(stream5, preventCancel) {
+        const reader = AcquireReadableStreamDefaultReader(stream5);
         const impl = new ReadableStreamAsyncIteratorImpl(reader, preventCancel);
         const iterator2 = Object.create(ReadableStreamAsyncIteratorPrototype);
         iterator2._asyncIteratorImpl = impl;
@@ -54628,7 +54628,7 @@ var require_ponyfill_es2018 = __commonJS({
         }
         /** @internal */
         [PullSteps](readRequest) {
-          const stream4 = this._controlledReadableByteStream;
+          const stream5 = this._controlledReadableByteStream;
           if (this._queueTotalSize > 0) {
             ReadableByteStreamControllerFillReadRequestFromQueue(this, readRequest);
             return;
@@ -54655,7 +54655,7 @@ var require_ponyfill_es2018 = __commonJS({
             };
             this._pendingPullIntos.push(pullIntoDescriptor);
           }
-          ReadableStreamAddReadRequest(stream4, readRequest);
+          ReadableStreamAddReadRequest(stream5, readRequest);
           ReadableByteStreamControllerCallPullIfNeeded(this);
         }
         /** @internal */
@@ -54729,16 +54729,16 @@ var require_ponyfill_es2018 = __commonJS({
         ReadableByteStreamControllerInvalidateBYOBRequest(controller);
         controller._pendingPullIntos = new SimpleQueue();
       }
-      function ReadableByteStreamControllerCommitPullIntoDescriptor(stream4, pullIntoDescriptor) {
+      function ReadableByteStreamControllerCommitPullIntoDescriptor(stream5, pullIntoDescriptor) {
         let done = false;
-        if (stream4._state === "closed") {
+        if (stream5._state === "closed") {
           done = true;
         }
         const filledView = ReadableByteStreamControllerConvertPullIntoDescriptor(pullIntoDescriptor);
         if (pullIntoDescriptor.readerType === "default") {
-          ReadableStreamFulfillReadRequest(stream4, filledView, done);
+          ReadableStreamFulfillReadRequest(stream5, filledView, done);
         } else {
-          ReadableStreamFulfillReadIntoRequest(stream4, filledView, done);
+          ReadableStreamFulfillReadIntoRequest(stream5, filledView, done);
         }
       }
       function ReadableByteStreamControllerConvertPullIntoDescriptor(pullIntoDescriptor) {
@@ -54837,7 +54837,7 @@ var require_ponyfill_es2018 = __commonJS({
         }
       }
       function ReadableByteStreamControllerPullInto(controller, view, min, readIntoRequest) {
-        const stream4 = controller._controlledReadableByteStream;
+        const stream5 = controller._controlledReadableByteStream;
         const ctor = view.constructor;
         const elementSize = arrayBufferViewElementSize(ctor);
         const { byteOffset, byteLength } = view;
@@ -54862,10 +54862,10 @@ var require_ponyfill_es2018 = __commonJS({
         };
         if (controller._pendingPullIntos.length > 0) {
           controller._pendingPullIntos.push(pullIntoDescriptor);
-          ReadableStreamAddReadIntoRequest(stream4, readIntoRequest);
+          ReadableStreamAddReadIntoRequest(stream5, readIntoRequest);
           return;
         }
-        if (stream4._state === "closed") {
+        if (stream5._state === "closed") {
           const emptyView = new ctor(pullIntoDescriptor.buffer, pullIntoDescriptor.byteOffset, 0);
           readIntoRequest._closeSteps(emptyView);
           return;
@@ -54885,18 +54885,18 @@ var require_ponyfill_es2018 = __commonJS({
           }
         }
         controller._pendingPullIntos.push(pullIntoDescriptor);
-        ReadableStreamAddReadIntoRequest(stream4, readIntoRequest);
+        ReadableStreamAddReadIntoRequest(stream5, readIntoRequest);
         ReadableByteStreamControllerCallPullIfNeeded(controller);
       }
       function ReadableByteStreamControllerRespondInClosedState(controller, firstDescriptor) {
         if (firstDescriptor.readerType === "none") {
           ReadableByteStreamControllerShiftPendingPullInto(controller);
         }
-        const stream4 = controller._controlledReadableByteStream;
-        if (ReadableStreamHasBYOBReader(stream4)) {
-          while (ReadableStreamGetNumReadIntoRequests(stream4) > 0) {
+        const stream5 = controller._controlledReadableByteStream;
+        if (ReadableStreamHasBYOBReader(stream5)) {
+          while (ReadableStreamGetNumReadIntoRequests(stream5) > 0) {
             const pullIntoDescriptor = ReadableByteStreamControllerShiftPendingPullInto(controller);
-            ReadableByteStreamControllerCommitPullIntoDescriptor(stream4, pullIntoDescriptor);
+            ReadableByteStreamControllerCommitPullIntoDescriptor(stream5, pullIntoDescriptor);
           }
         }
       }
@@ -54936,8 +54936,8 @@ var require_ponyfill_es2018 = __commonJS({
         return descriptor;
       }
       function ReadableByteStreamControllerShouldCallPull(controller) {
-        const stream4 = controller._controlledReadableByteStream;
-        if (stream4._state !== "readable") {
+        const stream5 = controller._controlledReadableByteStream;
+        if (stream5._state !== "readable") {
           return false;
         }
         if (controller._closeRequested) {
@@ -54946,10 +54946,10 @@ var require_ponyfill_es2018 = __commonJS({
         if (!controller._started) {
           return false;
         }
-        if (ReadableStreamHasDefaultReader(stream4) && ReadableStreamGetNumReadRequests(stream4) > 0) {
+        if (ReadableStreamHasDefaultReader(stream5) && ReadableStreamGetNumReadRequests(stream5) > 0) {
           return true;
         }
-        if (ReadableStreamHasBYOBReader(stream4) && ReadableStreamGetNumReadIntoRequests(stream4) > 0) {
+        if (ReadableStreamHasBYOBReader(stream5) && ReadableStreamGetNumReadIntoRequests(stream5) > 0) {
           return true;
         }
         const desiredSize = ReadableByteStreamControllerGetDesiredSize(controller);
@@ -54963,8 +54963,8 @@ var require_ponyfill_es2018 = __commonJS({
         controller._cancelAlgorithm = void 0;
       }
       function ReadableByteStreamControllerClose(controller) {
-        const stream4 = controller._controlledReadableByteStream;
-        if (controller._closeRequested || stream4._state !== "readable") {
+        const stream5 = controller._controlledReadableByteStream;
+        if (controller._closeRequested || stream5._state !== "readable") {
           return;
         }
         if (controller._queueTotalSize > 0) {
@@ -54980,11 +54980,11 @@ var require_ponyfill_es2018 = __commonJS({
           }
         }
         ReadableByteStreamControllerClearAlgorithms(controller);
-        ReadableStreamClose(stream4);
+        ReadableStreamClose(stream5);
       }
       function ReadableByteStreamControllerEnqueue(controller, chunk) {
-        const stream4 = controller._controlledReadableByteStream;
-        if (controller._closeRequested || stream4._state !== "readable") {
+        const stream5 = controller._controlledReadableByteStream;
+        if (controller._closeRequested || stream5._state !== "readable") {
           return;
         }
         const { buffer, byteOffset, byteLength } = chunk;
@@ -55003,18 +55003,18 @@ var require_ponyfill_es2018 = __commonJS({
             ReadableByteStreamControllerEnqueueDetachedPullIntoToQueue(controller, firstPendingPullInto);
           }
         }
-        if (ReadableStreamHasDefaultReader(stream4)) {
+        if (ReadableStreamHasDefaultReader(stream5)) {
           ReadableByteStreamControllerProcessReadRequestsUsingQueue(controller);
-          if (ReadableStreamGetNumReadRequests(stream4) === 0) {
+          if (ReadableStreamGetNumReadRequests(stream5) === 0) {
             ReadableByteStreamControllerEnqueueChunkToQueue(controller, transferredBuffer, byteOffset, byteLength);
           } else {
             if (controller._pendingPullIntos.length > 0) {
               ReadableByteStreamControllerShiftPendingPullInto(controller);
             }
             const transferredView = new Uint8Array(transferredBuffer, byteOffset, byteLength);
-            ReadableStreamFulfillReadRequest(stream4, transferredView, false);
+            ReadableStreamFulfillReadRequest(stream5, transferredView, false);
           }
-        } else if (ReadableStreamHasBYOBReader(stream4)) {
+        } else if (ReadableStreamHasBYOBReader(stream5)) {
           ReadableByteStreamControllerEnqueueChunkToQueue(controller, transferredBuffer, byteOffset, byteLength);
           ReadableByteStreamControllerProcessPullIntoDescriptorsUsingQueue(controller);
         } else {
@@ -55023,14 +55023,14 @@ var require_ponyfill_es2018 = __commonJS({
         ReadableByteStreamControllerCallPullIfNeeded(controller);
       }
       function ReadableByteStreamControllerError(controller, e2) {
-        const stream4 = controller._controlledReadableByteStream;
-        if (stream4._state !== "readable") {
+        const stream5 = controller._controlledReadableByteStream;
+        if (stream5._state !== "readable") {
           return;
         }
         ReadableByteStreamControllerClearPendingPullIntos(controller);
         ResetQueue(controller);
         ReadableByteStreamControllerClearAlgorithms(controller);
-        ReadableStreamError(stream4, e2);
+        ReadableStreamError(stream5, e2);
       }
       function ReadableByteStreamControllerFillReadRequestFromQueue(controller, readRequest) {
         const entry = controller._queue.shift();
@@ -55102,8 +55102,8 @@ var require_ponyfill_es2018 = __commonJS({
         firstDescriptor.buffer = TransferArrayBuffer(view.buffer);
         ReadableByteStreamControllerRespondInternal(controller, viewByteLength);
       }
-      function SetUpReadableByteStreamController(stream4, controller, startAlgorithm, pullAlgorithm, cancelAlgorithm, highWaterMark, autoAllocateChunkSize) {
-        controller._controlledReadableByteStream = stream4;
+      function SetUpReadableByteStreamController(stream5, controller, startAlgorithm, pullAlgorithm, cancelAlgorithm, highWaterMark, autoAllocateChunkSize) {
+        controller._controlledReadableByteStream = stream5;
         controller._pullAgain = false;
         controller._pulling = false;
         controller._byobRequest = null;
@@ -55116,7 +55116,7 @@ var require_ponyfill_es2018 = __commonJS({
         controller._cancelAlgorithm = cancelAlgorithm;
         controller._autoAllocateChunkSize = autoAllocateChunkSize;
         controller._pendingPullIntos = new SimpleQueue();
-        stream4._readableStreamController = controller;
+        stream5._readableStreamController = controller;
         const startResult = startAlgorithm();
         uponPromise(promiseResolvedWith(startResult), () => {
           controller._started = true;
@@ -55127,7 +55127,7 @@ var require_ponyfill_es2018 = __commonJS({
           return null;
         });
       }
-      function SetUpReadableByteStreamControllerFromUnderlyingSource(stream4, underlyingByteSource, highWaterMark) {
+      function SetUpReadableByteStreamControllerFromUnderlyingSource(stream5, underlyingByteSource, highWaterMark) {
         const controller = Object.create(ReadableByteStreamController.prototype);
         let startAlgorithm;
         let pullAlgorithm;
@@ -55151,7 +55151,7 @@ var require_ponyfill_es2018 = __commonJS({
         if (autoAllocateChunkSize === 0) {
           throw new TypeError("autoAllocateChunkSize must be greater than 0");
         }
-        SetUpReadableByteStreamController(stream4, controller, startAlgorithm, pullAlgorithm, cancelAlgorithm, highWaterMark, autoAllocateChunkSize);
+        SetUpReadableByteStreamController(stream5, controller, startAlgorithm, pullAlgorithm, cancelAlgorithm, highWaterMark, autoAllocateChunkSize);
       }
       function SetUpReadableStreamBYOBRequest(request, controller, view) {
         request._associatedReadableByteStreamController = controller;
@@ -55185,14 +55185,14 @@ var require_ponyfill_es2018 = __commonJS({
           min: convertUnsignedLongLongWithEnforceRange(min, `${context} has member 'min' that`)
         };
       }
-      function AcquireReadableStreamBYOBReader(stream4) {
-        return new ReadableStreamBYOBReader(stream4);
+      function AcquireReadableStreamBYOBReader(stream5) {
+        return new ReadableStreamBYOBReader(stream5);
       }
-      function ReadableStreamAddReadIntoRequest(stream4, readIntoRequest) {
-        stream4._reader._readIntoRequests.push(readIntoRequest);
+      function ReadableStreamAddReadIntoRequest(stream5, readIntoRequest) {
+        stream5._reader._readIntoRequests.push(readIntoRequest);
       }
-      function ReadableStreamFulfillReadIntoRequest(stream4, chunk, done) {
-        const reader = stream4._reader;
+      function ReadableStreamFulfillReadIntoRequest(stream5, chunk, done) {
+        const reader = stream5._reader;
         const readIntoRequest = reader._readIntoRequests.shift();
         if (done) {
           readIntoRequest._closeSteps(chunk);
@@ -55200,11 +55200,11 @@ var require_ponyfill_es2018 = __commonJS({
           readIntoRequest._chunkSteps(chunk);
         }
       }
-      function ReadableStreamGetNumReadIntoRequests(stream4) {
-        return stream4._reader._readIntoRequests.length;
+      function ReadableStreamGetNumReadIntoRequests(stream5) {
+        return stream5._reader._readIntoRequests.length;
       }
-      function ReadableStreamHasBYOBReader(stream4) {
-        const reader = stream4._reader;
+      function ReadableStreamHasBYOBReader(stream5) {
+        const reader = stream5._reader;
         if (reader === void 0) {
           return false;
         }
@@ -55214,16 +55214,16 @@ var require_ponyfill_es2018 = __commonJS({
         return true;
       }
       class ReadableStreamBYOBReader {
-        constructor(stream4) {
-          assertRequiredArgument(stream4, 1, "ReadableStreamBYOBReader");
-          assertReadableStream(stream4, "First parameter");
-          if (IsReadableStreamLocked(stream4)) {
+        constructor(stream5) {
+          assertRequiredArgument(stream5, 1, "ReadableStreamBYOBReader");
+          assertReadableStream(stream5, "First parameter");
+          if (IsReadableStreamLocked(stream5)) {
             throw new TypeError("This stream has already been locked for exclusive reading by another reader");
           }
-          if (!IsReadableByteStreamController(stream4._readableStreamController)) {
+          if (!IsReadableByteStreamController(stream5._readableStreamController)) {
             throw new TypeError("Cannot construct a ReadableStreamBYOBReader for a stream not constructed with a byte source");
           }
-          ReadableStreamReaderGenericInitialize(this, stream4);
+          ReadableStreamReaderGenericInitialize(this, stream5);
           this._readIntoRequests = new SimpleQueue();
         }
         /**
@@ -55342,12 +55342,12 @@ var require_ponyfill_es2018 = __commonJS({
         return x2 instanceof ReadableStreamBYOBReader;
       }
       function ReadableStreamBYOBReaderRead(reader, view, min, readIntoRequest) {
-        const stream4 = reader._ownerReadableStream;
-        stream4._disturbed = true;
-        if (stream4._state === "errored") {
-          readIntoRequest._errorSteps(stream4._storedError);
+        const stream5 = reader._ownerReadableStream;
+        stream5._disturbed = true;
+        if (stream5._state === "errored") {
+          readIntoRequest._errorSteps(stream5._storedError);
         } else {
-          ReadableByteStreamControllerPullInto(stream4._readableStreamController, view, min, readIntoRequest);
+          ReadableByteStreamControllerPullInto(stream5._readableStreamController, view, min, readIntoRequest);
         }
       }
       function ReadableStreamBYOBReaderRelease(reader) {
@@ -55543,27 +55543,27 @@ var require_ponyfill_es2018 = __commonJS({
           configurable: true
         });
       }
-      function AcquireWritableStreamDefaultWriter(stream4) {
-        return new WritableStreamDefaultWriter(stream4);
+      function AcquireWritableStreamDefaultWriter(stream5) {
+        return new WritableStreamDefaultWriter(stream5);
       }
       function CreateWritableStream(startAlgorithm, writeAlgorithm, closeAlgorithm, abortAlgorithm, highWaterMark = 1, sizeAlgorithm = () => 1) {
-        const stream4 = Object.create(WritableStream.prototype);
-        InitializeWritableStream(stream4);
+        const stream5 = Object.create(WritableStream.prototype);
+        InitializeWritableStream(stream5);
         const controller = Object.create(WritableStreamDefaultController.prototype);
-        SetUpWritableStreamDefaultController(stream4, controller, startAlgorithm, writeAlgorithm, closeAlgorithm, abortAlgorithm, highWaterMark, sizeAlgorithm);
-        return stream4;
+        SetUpWritableStreamDefaultController(stream5, controller, startAlgorithm, writeAlgorithm, closeAlgorithm, abortAlgorithm, highWaterMark, sizeAlgorithm);
+        return stream5;
       }
-      function InitializeWritableStream(stream4) {
-        stream4._state = "writable";
-        stream4._storedError = void 0;
-        stream4._writer = void 0;
-        stream4._writableStreamController = void 0;
-        stream4._writeRequests = new SimpleQueue();
-        stream4._inFlightWriteRequest = void 0;
-        stream4._closeRequest = void 0;
-        stream4._inFlightCloseRequest = void 0;
-        stream4._pendingAbortRequest = void 0;
-        stream4._backpressure = false;
+      function InitializeWritableStream(stream5) {
+        stream5._state = "writable";
+        stream5._storedError = void 0;
+        stream5._writer = void 0;
+        stream5._writableStreamController = void 0;
+        stream5._writeRequests = new SimpleQueue();
+        stream5._inFlightWriteRequest = void 0;
+        stream5._closeRequest = void 0;
+        stream5._inFlightCloseRequest = void 0;
+        stream5._pendingAbortRequest = void 0;
+        stream5._backpressure = false;
       }
       function IsWritableStream(x2) {
         if (!typeIsObject(x2)) {
@@ -55574,25 +55574,25 @@ var require_ponyfill_es2018 = __commonJS({
         }
         return x2 instanceof WritableStream;
       }
-      function IsWritableStreamLocked(stream4) {
-        if (stream4._writer === void 0) {
+      function IsWritableStreamLocked(stream5) {
+        if (stream5._writer === void 0) {
           return false;
         }
         return true;
       }
-      function WritableStreamAbort(stream4, reason) {
+      function WritableStreamAbort(stream5, reason) {
         var _a3;
-        if (stream4._state === "closed" || stream4._state === "errored") {
+        if (stream5._state === "closed" || stream5._state === "errored") {
           return promiseResolvedWith(void 0);
         }
-        stream4._writableStreamController._abortReason = reason;
-        (_a3 = stream4._writableStreamController._abortController) === null || _a3 === void 0 ? void 0 : _a3.abort(reason);
-        const state = stream4._state;
+        stream5._writableStreamController._abortReason = reason;
+        (_a3 = stream5._writableStreamController._abortController) === null || _a3 === void 0 ? void 0 : _a3.abort(reason);
+        const state = stream5._state;
         if (state === "closed" || state === "errored") {
           return promiseResolvedWith(void 0);
         }
-        if (stream4._pendingAbortRequest !== void 0) {
-          return stream4._pendingAbortRequest._promise;
+        if (stream5._pendingAbortRequest !== void 0) {
+          return stream5._pendingAbortRequest._promise;
         }
         let wasAlreadyErroring = false;
         if (state === "erroring") {
@@ -55600,7 +55600,7 @@ var require_ponyfill_es2018 = __commonJS({
           reason = void 0;
         }
         const promise = newPromise((resolve, reject) => {
-          stream4._pendingAbortRequest = {
+          stream5._pendingAbortRequest = {
             _promise: void 0,
             _resolve: resolve,
             _reject: reject,
@@ -55608,14 +55608,14 @@ var require_ponyfill_es2018 = __commonJS({
             _wasAlreadyErroring: wasAlreadyErroring
           };
         });
-        stream4._pendingAbortRequest._promise = promise;
+        stream5._pendingAbortRequest._promise = promise;
         if (!wasAlreadyErroring) {
-          WritableStreamStartErroring(stream4, reason);
+          WritableStreamStartErroring(stream5, reason);
         }
         return promise;
       }
-      function WritableStreamClose(stream4) {
-        const state = stream4._state;
+      function WritableStreamClose(stream5) {
+        const state = stream5._state;
         if (state === "closed" || state === "errored") {
           return promiseRejectedWith(new TypeError(`The stream (in ${state} state) is not in the writable state and cannot be closed`));
         }
@@ -55624,175 +55624,175 @@ var require_ponyfill_es2018 = __commonJS({
             _resolve: resolve,
             _reject: reject
           };
-          stream4._closeRequest = closeRequest;
+          stream5._closeRequest = closeRequest;
         });
-        const writer = stream4._writer;
-        if (writer !== void 0 && stream4._backpressure && state === "writable") {
+        const writer = stream5._writer;
+        if (writer !== void 0 && stream5._backpressure && state === "writable") {
           defaultWriterReadyPromiseResolve(writer);
         }
-        WritableStreamDefaultControllerClose(stream4._writableStreamController);
+        WritableStreamDefaultControllerClose(stream5._writableStreamController);
         return promise;
       }
-      function WritableStreamAddWriteRequest(stream4) {
+      function WritableStreamAddWriteRequest(stream5) {
         const promise = newPromise((resolve, reject) => {
           const writeRequest = {
             _resolve: resolve,
             _reject: reject
           };
-          stream4._writeRequests.push(writeRequest);
+          stream5._writeRequests.push(writeRequest);
         });
         return promise;
       }
-      function WritableStreamDealWithRejection(stream4, error) {
-        const state = stream4._state;
+      function WritableStreamDealWithRejection(stream5, error) {
+        const state = stream5._state;
         if (state === "writable") {
-          WritableStreamStartErroring(stream4, error);
+          WritableStreamStartErroring(stream5, error);
           return;
         }
-        WritableStreamFinishErroring(stream4);
+        WritableStreamFinishErroring(stream5);
       }
-      function WritableStreamStartErroring(stream4, reason) {
-        const controller = stream4._writableStreamController;
-        stream4._state = "erroring";
-        stream4._storedError = reason;
-        const writer = stream4._writer;
+      function WritableStreamStartErroring(stream5, reason) {
+        const controller = stream5._writableStreamController;
+        stream5._state = "erroring";
+        stream5._storedError = reason;
+        const writer = stream5._writer;
         if (writer !== void 0) {
           WritableStreamDefaultWriterEnsureReadyPromiseRejected(writer, reason);
         }
-        if (!WritableStreamHasOperationMarkedInFlight(stream4) && controller._started) {
-          WritableStreamFinishErroring(stream4);
+        if (!WritableStreamHasOperationMarkedInFlight(stream5) && controller._started) {
+          WritableStreamFinishErroring(stream5);
         }
       }
-      function WritableStreamFinishErroring(stream4) {
-        stream4._state = "errored";
-        stream4._writableStreamController[ErrorSteps]();
-        const storedError = stream4._storedError;
-        stream4._writeRequests.forEach((writeRequest) => {
+      function WritableStreamFinishErroring(stream5) {
+        stream5._state = "errored";
+        stream5._writableStreamController[ErrorSteps]();
+        const storedError = stream5._storedError;
+        stream5._writeRequests.forEach((writeRequest) => {
           writeRequest._reject(storedError);
         });
-        stream4._writeRequests = new SimpleQueue();
-        if (stream4._pendingAbortRequest === void 0) {
-          WritableStreamRejectCloseAndClosedPromiseIfNeeded(stream4);
+        stream5._writeRequests = new SimpleQueue();
+        if (stream5._pendingAbortRequest === void 0) {
+          WritableStreamRejectCloseAndClosedPromiseIfNeeded(stream5);
           return;
         }
-        const abortRequest = stream4._pendingAbortRequest;
-        stream4._pendingAbortRequest = void 0;
+        const abortRequest = stream5._pendingAbortRequest;
+        stream5._pendingAbortRequest = void 0;
         if (abortRequest._wasAlreadyErroring) {
           abortRequest._reject(storedError);
-          WritableStreamRejectCloseAndClosedPromiseIfNeeded(stream4);
+          WritableStreamRejectCloseAndClosedPromiseIfNeeded(stream5);
           return;
         }
-        const promise = stream4._writableStreamController[AbortSteps](abortRequest._reason);
+        const promise = stream5._writableStreamController[AbortSteps](abortRequest._reason);
         uponPromise(promise, () => {
           abortRequest._resolve();
-          WritableStreamRejectCloseAndClosedPromiseIfNeeded(stream4);
+          WritableStreamRejectCloseAndClosedPromiseIfNeeded(stream5);
           return null;
         }, (reason) => {
           abortRequest._reject(reason);
-          WritableStreamRejectCloseAndClosedPromiseIfNeeded(stream4);
+          WritableStreamRejectCloseAndClosedPromiseIfNeeded(stream5);
           return null;
         });
       }
-      function WritableStreamFinishInFlightWrite(stream4) {
-        stream4._inFlightWriteRequest._resolve(void 0);
-        stream4._inFlightWriteRequest = void 0;
+      function WritableStreamFinishInFlightWrite(stream5) {
+        stream5._inFlightWriteRequest._resolve(void 0);
+        stream5._inFlightWriteRequest = void 0;
       }
-      function WritableStreamFinishInFlightWriteWithError(stream4, error) {
-        stream4._inFlightWriteRequest._reject(error);
-        stream4._inFlightWriteRequest = void 0;
-        WritableStreamDealWithRejection(stream4, error);
+      function WritableStreamFinishInFlightWriteWithError(stream5, error) {
+        stream5._inFlightWriteRequest._reject(error);
+        stream5._inFlightWriteRequest = void 0;
+        WritableStreamDealWithRejection(stream5, error);
       }
-      function WritableStreamFinishInFlightClose(stream4) {
-        stream4._inFlightCloseRequest._resolve(void 0);
-        stream4._inFlightCloseRequest = void 0;
-        const state = stream4._state;
+      function WritableStreamFinishInFlightClose(stream5) {
+        stream5._inFlightCloseRequest._resolve(void 0);
+        stream5._inFlightCloseRequest = void 0;
+        const state = stream5._state;
         if (state === "erroring") {
-          stream4._storedError = void 0;
-          if (stream4._pendingAbortRequest !== void 0) {
-            stream4._pendingAbortRequest._resolve();
-            stream4._pendingAbortRequest = void 0;
+          stream5._storedError = void 0;
+          if (stream5._pendingAbortRequest !== void 0) {
+            stream5._pendingAbortRequest._resolve();
+            stream5._pendingAbortRequest = void 0;
           }
         }
-        stream4._state = "closed";
-        const writer = stream4._writer;
+        stream5._state = "closed";
+        const writer = stream5._writer;
         if (writer !== void 0) {
           defaultWriterClosedPromiseResolve(writer);
         }
       }
-      function WritableStreamFinishInFlightCloseWithError(stream4, error) {
-        stream4._inFlightCloseRequest._reject(error);
-        stream4._inFlightCloseRequest = void 0;
-        if (stream4._pendingAbortRequest !== void 0) {
-          stream4._pendingAbortRequest._reject(error);
-          stream4._pendingAbortRequest = void 0;
+      function WritableStreamFinishInFlightCloseWithError(stream5, error) {
+        stream5._inFlightCloseRequest._reject(error);
+        stream5._inFlightCloseRequest = void 0;
+        if (stream5._pendingAbortRequest !== void 0) {
+          stream5._pendingAbortRequest._reject(error);
+          stream5._pendingAbortRequest = void 0;
         }
-        WritableStreamDealWithRejection(stream4, error);
+        WritableStreamDealWithRejection(stream5, error);
       }
-      function WritableStreamCloseQueuedOrInFlight(stream4) {
-        if (stream4._closeRequest === void 0 && stream4._inFlightCloseRequest === void 0) {
+      function WritableStreamCloseQueuedOrInFlight(stream5) {
+        if (stream5._closeRequest === void 0 && stream5._inFlightCloseRequest === void 0) {
           return false;
         }
         return true;
       }
-      function WritableStreamHasOperationMarkedInFlight(stream4) {
-        if (stream4._inFlightWriteRequest === void 0 && stream4._inFlightCloseRequest === void 0) {
+      function WritableStreamHasOperationMarkedInFlight(stream5) {
+        if (stream5._inFlightWriteRequest === void 0 && stream5._inFlightCloseRequest === void 0) {
           return false;
         }
         return true;
       }
-      function WritableStreamMarkCloseRequestInFlight(stream4) {
-        stream4._inFlightCloseRequest = stream4._closeRequest;
-        stream4._closeRequest = void 0;
+      function WritableStreamMarkCloseRequestInFlight(stream5) {
+        stream5._inFlightCloseRequest = stream5._closeRequest;
+        stream5._closeRequest = void 0;
       }
-      function WritableStreamMarkFirstWriteRequestInFlight(stream4) {
-        stream4._inFlightWriteRequest = stream4._writeRequests.shift();
+      function WritableStreamMarkFirstWriteRequestInFlight(stream5) {
+        stream5._inFlightWriteRequest = stream5._writeRequests.shift();
       }
-      function WritableStreamRejectCloseAndClosedPromiseIfNeeded(stream4) {
-        if (stream4._closeRequest !== void 0) {
-          stream4._closeRequest._reject(stream4._storedError);
-          stream4._closeRequest = void 0;
+      function WritableStreamRejectCloseAndClosedPromiseIfNeeded(stream5) {
+        if (stream5._closeRequest !== void 0) {
+          stream5._closeRequest._reject(stream5._storedError);
+          stream5._closeRequest = void 0;
         }
-        const writer = stream4._writer;
+        const writer = stream5._writer;
         if (writer !== void 0) {
-          defaultWriterClosedPromiseReject(writer, stream4._storedError);
+          defaultWriterClosedPromiseReject(writer, stream5._storedError);
         }
       }
-      function WritableStreamUpdateBackpressure(stream4, backpressure) {
-        const writer = stream4._writer;
-        if (writer !== void 0 && backpressure !== stream4._backpressure) {
+      function WritableStreamUpdateBackpressure(stream5, backpressure) {
+        const writer = stream5._writer;
+        if (writer !== void 0 && backpressure !== stream5._backpressure) {
           if (backpressure) {
             defaultWriterReadyPromiseReset(writer);
           } else {
             defaultWriterReadyPromiseResolve(writer);
           }
         }
-        stream4._backpressure = backpressure;
+        stream5._backpressure = backpressure;
       }
       class WritableStreamDefaultWriter {
-        constructor(stream4) {
-          assertRequiredArgument(stream4, 1, "WritableStreamDefaultWriter");
-          assertWritableStream(stream4, "First parameter");
-          if (IsWritableStreamLocked(stream4)) {
+        constructor(stream5) {
+          assertRequiredArgument(stream5, 1, "WritableStreamDefaultWriter");
+          assertWritableStream(stream5, "First parameter");
+          if (IsWritableStreamLocked(stream5)) {
             throw new TypeError("This stream has already been locked for exclusive writing by another writer");
           }
-          this._ownerWritableStream = stream4;
-          stream4._writer = this;
-          const state = stream4._state;
+          this._ownerWritableStream = stream5;
+          stream5._writer = this;
+          const state = stream5._state;
           if (state === "writable") {
-            if (!WritableStreamCloseQueuedOrInFlight(stream4) && stream4._backpressure) {
+            if (!WritableStreamCloseQueuedOrInFlight(stream5) && stream5._backpressure) {
               defaultWriterReadyPromiseInitialize(this);
             } else {
               defaultWriterReadyPromiseInitializeAsResolved(this);
             }
             defaultWriterClosedPromiseInitialize(this);
           } else if (state === "erroring") {
-            defaultWriterReadyPromiseInitializeAsRejected(this, stream4._storedError);
+            defaultWriterReadyPromiseInitializeAsRejected(this, stream5._storedError);
             defaultWriterClosedPromiseInitialize(this);
           } else if (state === "closed") {
             defaultWriterReadyPromiseInitializeAsResolved(this);
             defaultWriterClosedPromiseInitializeAsResolved(this);
           } else {
-            const storedError = stream4._storedError;
+            const storedError = stream5._storedError;
             defaultWriterReadyPromiseInitializeAsRejected(this, storedError);
             defaultWriterClosedPromiseInitializeAsRejected(this, storedError);
           }
@@ -55857,11 +55857,11 @@ var require_ponyfill_es2018 = __commonJS({
           if (!IsWritableStreamDefaultWriter(this)) {
             return promiseRejectedWith(defaultWriterBrandCheckException("close"));
           }
-          const stream4 = this._ownerWritableStream;
-          if (stream4 === void 0) {
+          const stream5 = this._ownerWritableStream;
+          if (stream5 === void 0) {
             return promiseRejectedWith(defaultWriterLockException("close"));
           }
-          if (WritableStreamCloseQueuedOrInFlight(stream4)) {
+          if (WritableStreamCloseQueuedOrInFlight(stream5)) {
             return promiseRejectedWith(new TypeError("Cannot close an already-closing stream"));
           }
           return WritableStreamDefaultWriterClose(this);
@@ -55880,8 +55880,8 @@ var require_ponyfill_es2018 = __commonJS({
           if (!IsWritableStreamDefaultWriter(this)) {
             throw defaultWriterBrandCheckException("releaseLock");
           }
-          const stream4 = this._ownerWritableStream;
-          if (stream4 === void 0) {
+          const stream5 = this._ownerWritableStream;
+          if (stream5 === void 0) {
             return;
           }
           WritableStreamDefaultWriterRelease(this);
@@ -55925,21 +55925,21 @@ var require_ponyfill_es2018 = __commonJS({
         return x2 instanceof WritableStreamDefaultWriter;
       }
       function WritableStreamDefaultWriterAbort(writer, reason) {
-        const stream4 = writer._ownerWritableStream;
-        return WritableStreamAbort(stream4, reason);
+        const stream5 = writer._ownerWritableStream;
+        return WritableStreamAbort(stream5, reason);
       }
       function WritableStreamDefaultWriterClose(writer) {
-        const stream4 = writer._ownerWritableStream;
-        return WritableStreamClose(stream4);
+        const stream5 = writer._ownerWritableStream;
+        return WritableStreamClose(stream5);
       }
       function WritableStreamDefaultWriterCloseWithErrorPropagation(writer) {
-        const stream4 = writer._ownerWritableStream;
-        const state = stream4._state;
-        if (WritableStreamCloseQueuedOrInFlight(stream4) || state === "closed") {
+        const stream5 = writer._ownerWritableStream;
+        const state = stream5._state;
+        if (WritableStreamCloseQueuedOrInFlight(stream5) || state === "closed") {
           return promiseResolvedWith(void 0);
         }
         if (state === "errored") {
-          return promiseRejectedWith(stream4._storedError);
+          return promiseRejectedWith(stream5._storedError);
         }
         return WritableStreamDefaultWriterClose(writer);
       }
@@ -55958,42 +55958,42 @@ var require_ponyfill_es2018 = __commonJS({
         }
       }
       function WritableStreamDefaultWriterGetDesiredSize(writer) {
-        const stream4 = writer._ownerWritableStream;
-        const state = stream4._state;
+        const stream5 = writer._ownerWritableStream;
+        const state = stream5._state;
         if (state === "errored" || state === "erroring") {
           return null;
         }
         if (state === "closed") {
           return 0;
         }
-        return WritableStreamDefaultControllerGetDesiredSize(stream4._writableStreamController);
+        return WritableStreamDefaultControllerGetDesiredSize(stream5._writableStreamController);
       }
       function WritableStreamDefaultWriterRelease(writer) {
-        const stream4 = writer._ownerWritableStream;
+        const stream5 = writer._ownerWritableStream;
         const releasedError = new TypeError(`Writer was released and can no longer be used to monitor the stream's closedness`);
         WritableStreamDefaultWriterEnsureReadyPromiseRejected(writer, releasedError);
         WritableStreamDefaultWriterEnsureClosedPromiseRejected(writer, releasedError);
-        stream4._writer = void 0;
+        stream5._writer = void 0;
         writer._ownerWritableStream = void 0;
       }
       function WritableStreamDefaultWriterWrite(writer, chunk) {
-        const stream4 = writer._ownerWritableStream;
-        const controller = stream4._writableStreamController;
+        const stream5 = writer._ownerWritableStream;
+        const controller = stream5._writableStreamController;
         const chunkSize = WritableStreamDefaultControllerGetChunkSize(controller, chunk);
-        if (stream4 !== writer._ownerWritableStream) {
+        if (stream5 !== writer._ownerWritableStream) {
           return promiseRejectedWith(defaultWriterLockException("write to"));
         }
-        const state = stream4._state;
+        const state = stream5._state;
         if (state === "errored") {
-          return promiseRejectedWith(stream4._storedError);
+          return promiseRejectedWith(stream5._storedError);
         }
-        if (WritableStreamCloseQueuedOrInFlight(stream4) || state === "closed") {
+        if (WritableStreamCloseQueuedOrInFlight(stream5) || state === "closed") {
           return promiseRejectedWith(new TypeError("The stream is closing or closed and cannot be written to"));
         }
         if (state === "erroring") {
-          return promiseRejectedWith(stream4._storedError);
+          return promiseRejectedWith(stream5._storedError);
         }
-        const promise = WritableStreamAddWriteRequest(stream4);
+        const promise = WritableStreamAddWriteRequest(stream5);
         WritableStreamDefaultControllerWrite(controller, chunk, chunkSize);
         return promise;
       }
@@ -56075,9 +56075,9 @@ var require_ponyfill_es2018 = __commonJS({
         }
         return x2 instanceof WritableStreamDefaultController;
       }
-      function SetUpWritableStreamDefaultController(stream4, controller, startAlgorithm, writeAlgorithm, closeAlgorithm, abortAlgorithm, highWaterMark, sizeAlgorithm) {
-        controller._controlledWritableStream = stream4;
-        stream4._writableStreamController = controller;
+      function SetUpWritableStreamDefaultController(stream5, controller, startAlgorithm, writeAlgorithm, closeAlgorithm, abortAlgorithm, highWaterMark, sizeAlgorithm) {
+        controller._controlledWritableStream = stream5;
+        stream5._writableStreamController = controller;
         controller._queue = void 0;
         controller._queueTotalSize = void 0;
         ResetQueue(controller);
@@ -56090,7 +56090,7 @@ var require_ponyfill_es2018 = __commonJS({
         controller._closeAlgorithm = closeAlgorithm;
         controller._abortAlgorithm = abortAlgorithm;
         const backpressure = WritableStreamDefaultControllerGetBackpressure(controller);
-        WritableStreamUpdateBackpressure(stream4, backpressure);
+        WritableStreamUpdateBackpressure(stream5, backpressure);
         const startResult = startAlgorithm();
         const startPromise = promiseResolvedWith(startResult);
         uponPromise(startPromise, () => {
@@ -56099,11 +56099,11 @@ var require_ponyfill_es2018 = __commonJS({
           return null;
         }, (r2) => {
           controller._started = true;
-          WritableStreamDealWithRejection(stream4, r2);
+          WritableStreamDealWithRejection(stream5, r2);
           return null;
         });
       }
-      function SetUpWritableStreamDefaultControllerFromUnderlyingSink(stream4, underlyingSink, highWaterMark, sizeAlgorithm) {
+      function SetUpWritableStreamDefaultControllerFromUnderlyingSink(stream5, underlyingSink, highWaterMark, sizeAlgorithm) {
         const controller = Object.create(WritableStreamDefaultController.prototype);
         let startAlgorithm;
         let writeAlgorithm;
@@ -56129,7 +56129,7 @@ var require_ponyfill_es2018 = __commonJS({
         } else {
           abortAlgorithm = () => promiseResolvedWith(void 0);
         }
-        SetUpWritableStreamDefaultController(stream4, controller, startAlgorithm, writeAlgorithm, closeAlgorithm, abortAlgorithm, highWaterMark, sizeAlgorithm);
+        SetUpWritableStreamDefaultController(stream5, controller, startAlgorithm, writeAlgorithm, closeAlgorithm, abortAlgorithm, highWaterMark, sizeAlgorithm);
       }
       function WritableStreamDefaultControllerClearAlgorithms(controller) {
         controller._writeAlgorithm = void 0;
@@ -56159,24 +56159,24 @@ var require_ponyfill_es2018 = __commonJS({
           WritableStreamDefaultControllerErrorIfNeeded(controller, enqueueE);
           return;
         }
-        const stream4 = controller._controlledWritableStream;
-        if (!WritableStreamCloseQueuedOrInFlight(stream4) && stream4._state === "writable") {
+        const stream5 = controller._controlledWritableStream;
+        if (!WritableStreamCloseQueuedOrInFlight(stream5) && stream5._state === "writable") {
           const backpressure = WritableStreamDefaultControllerGetBackpressure(controller);
-          WritableStreamUpdateBackpressure(stream4, backpressure);
+          WritableStreamUpdateBackpressure(stream5, backpressure);
         }
         WritableStreamDefaultControllerAdvanceQueueIfNeeded(controller);
       }
       function WritableStreamDefaultControllerAdvanceQueueIfNeeded(controller) {
-        const stream4 = controller._controlledWritableStream;
+        const stream5 = controller._controlledWritableStream;
         if (!controller._started) {
           return;
         }
-        if (stream4._inFlightWriteRequest !== void 0) {
+        if (stream5._inFlightWriteRequest !== void 0) {
           return;
         }
-        const state = stream4._state;
+        const state = stream5._state;
         if (state === "erroring") {
-          WritableStreamFinishErroring(stream4);
+          WritableStreamFinishErroring(stream5);
           return;
         }
         if (controller._queue.length === 0) {
@@ -56195,38 +56195,38 @@ var require_ponyfill_es2018 = __commonJS({
         }
       }
       function WritableStreamDefaultControllerProcessClose(controller) {
-        const stream4 = controller._controlledWritableStream;
-        WritableStreamMarkCloseRequestInFlight(stream4);
+        const stream5 = controller._controlledWritableStream;
+        WritableStreamMarkCloseRequestInFlight(stream5);
         DequeueValue(controller);
         const sinkClosePromise = controller._closeAlgorithm();
         WritableStreamDefaultControllerClearAlgorithms(controller);
         uponPromise(sinkClosePromise, () => {
-          WritableStreamFinishInFlightClose(stream4);
+          WritableStreamFinishInFlightClose(stream5);
           return null;
         }, (reason) => {
-          WritableStreamFinishInFlightCloseWithError(stream4, reason);
+          WritableStreamFinishInFlightCloseWithError(stream5, reason);
           return null;
         });
       }
       function WritableStreamDefaultControllerProcessWrite(controller, chunk) {
-        const stream4 = controller._controlledWritableStream;
-        WritableStreamMarkFirstWriteRequestInFlight(stream4);
+        const stream5 = controller._controlledWritableStream;
+        WritableStreamMarkFirstWriteRequestInFlight(stream5);
         const sinkWritePromise = controller._writeAlgorithm(chunk);
         uponPromise(sinkWritePromise, () => {
-          WritableStreamFinishInFlightWrite(stream4);
-          const state = stream4._state;
+          WritableStreamFinishInFlightWrite(stream5);
+          const state = stream5._state;
           DequeueValue(controller);
-          if (!WritableStreamCloseQueuedOrInFlight(stream4) && state === "writable") {
+          if (!WritableStreamCloseQueuedOrInFlight(stream5) && state === "writable") {
             const backpressure = WritableStreamDefaultControllerGetBackpressure(controller);
-            WritableStreamUpdateBackpressure(stream4, backpressure);
+            WritableStreamUpdateBackpressure(stream5, backpressure);
           }
           WritableStreamDefaultControllerAdvanceQueueIfNeeded(controller);
           return null;
         }, (reason) => {
-          if (stream4._state === "writable") {
+          if (stream5._state === "writable") {
             WritableStreamDefaultControllerClearAlgorithms(controller);
           }
-          WritableStreamFinishInFlightWriteWithError(stream4, reason);
+          WritableStreamFinishInFlightWriteWithError(stream5, reason);
           return null;
         });
       }
@@ -56235,9 +56235,9 @@ var require_ponyfill_es2018 = __commonJS({
         return desiredSize <= 0;
       }
       function WritableStreamDefaultControllerError(controller, error) {
-        const stream4 = controller._controlledWritableStream;
+        const stream5 = controller._controlledWritableStream;
         WritableStreamDefaultControllerClearAlgorithms(controller);
-        WritableStreamStartErroring(stream4, error);
+        WritableStreamStartErroring(stream5, error);
       }
       function streamBrandCheckException$2(name) {
         return new TypeError(`WritableStream.prototype.${name} can only be used on a WritableStream`);
@@ -56473,15 +56473,15 @@ var require_ponyfill_es2018 = __commonJS({
             const oldCurrentWrite = currentWrite;
             return PerformPromiseThen(currentWrite, () => oldCurrentWrite !== currentWrite ? waitForWritesToFinish() : void 0);
           }
-          function isOrBecomesErrored(stream4, promise, action) {
-            if (stream4._state === "errored") {
-              action(stream4._storedError);
+          function isOrBecomesErrored(stream5, promise, action) {
+            if (stream5._state === "errored") {
+              action(stream5._storedError);
             } else {
               uponRejection(promise, action);
             }
           }
-          function isOrBecomesClosed(stream4, promise, action) {
-            if (stream4._state === "closed") {
+          function isOrBecomesClosed(stream5, promise, action) {
+            if (stream5._state === "closed") {
               action();
             } else {
               uponFulfillment(promise, action);
@@ -56582,18 +56582,18 @@ var require_ponyfill_es2018 = __commonJS({
         }
         /** @internal */
         [PullSteps](readRequest) {
-          const stream4 = this._controlledReadableStream;
+          const stream5 = this._controlledReadableStream;
           if (this._queue.length > 0) {
             const chunk = DequeueValue(this);
             if (this._closeRequested && this._queue.length === 0) {
               ReadableStreamDefaultControllerClearAlgorithms(this);
-              ReadableStreamClose(stream4);
+              ReadableStreamClose(stream5);
             } else {
               ReadableStreamDefaultControllerCallPullIfNeeded(this);
             }
             readRequest._chunkSteps(chunk);
           } else {
-            ReadableStreamAddReadRequest(stream4, readRequest);
+            ReadableStreamAddReadRequest(stream5, readRequest);
             ReadableStreamDefaultControllerCallPullIfNeeded(this);
           }
         }
@@ -56649,14 +56649,14 @@ var require_ponyfill_es2018 = __commonJS({
         });
       }
       function ReadableStreamDefaultControllerShouldCallPull(controller) {
-        const stream4 = controller._controlledReadableStream;
+        const stream5 = controller._controlledReadableStream;
         if (!ReadableStreamDefaultControllerCanCloseOrEnqueue(controller)) {
           return false;
         }
         if (!controller._started) {
           return false;
         }
-        if (IsReadableStreamLocked(stream4) && ReadableStreamGetNumReadRequests(stream4) > 0) {
+        if (IsReadableStreamLocked(stream5) && ReadableStreamGetNumReadRequests(stream5) > 0) {
           return true;
         }
         const desiredSize = ReadableStreamDefaultControllerGetDesiredSize(controller);
@@ -56674,20 +56674,20 @@ var require_ponyfill_es2018 = __commonJS({
         if (!ReadableStreamDefaultControllerCanCloseOrEnqueue(controller)) {
           return;
         }
-        const stream4 = controller._controlledReadableStream;
+        const stream5 = controller._controlledReadableStream;
         controller._closeRequested = true;
         if (controller._queue.length === 0) {
           ReadableStreamDefaultControllerClearAlgorithms(controller);
-          ReadableStreamClose(stream4);
+          ReadableStreamClose(stream5);
         }
       }
       function ReadableStreamDefaultControllerEnqueue(controller, chunk) {
         if (!ReadableStreamDefaultControllerCanCloseOrEnqueue(controller)) {
           return;
         }
-        const stream4 = controller._controlledReadableStream;
-        if (IsReadableStreamLocked(stream4) && ReadableStreamGetNumReadRequests(stream4) > 0) {
-          ReadableStreamFulfillReadRequest(stream4, chunk, false);
+        const stream5 = controller._controlledReadableStream;
+        if (IsReadableStreamLocked(stream5) && ReadableStreamGetNumReadRequests(stream5) > 0) {
+          ReadableStreamFulfillReadRequest(stream5, chunk, false);
         } else {
           let chunkSize;
           try {
@@ -56706,13 +56706,13 @@ var require_ponyfill_es2018 = __commonJS({
         ReadableStreamDefaultControllerCallPullIfNeeded(controller);
       }
       function ReadableStreamDefaultControllerError(controller, e2) {
-        const stream4 = controller._controlledReadableStream;
-        if (stream4._state !== "readable") {
+        const stream5 = controller._controlledReadableStream;
+        if (stream5._state !== "readable") {
           return;
         }
         ResetQueue(controller);
         ReadableStreamDefaultControllerClearAlgorithms(controller);
-        ReadableStreamError(stream4, e2);
+        ReadableStreamError(stream5, e2);
       }
       function ReadableStreamDefaultControllerGetDesiredSize(controller) {
         const state = controller._controlledReadableStream._state;
@@ -56737,8 +56737,8 @@ var require_ponyfill_es2018 = __commonJS({
         }
         return false;
       }
-      function SetUpReadableStreamDefaultController(stream4, controller, startAlgorithm, pullAlgorithm, cancelAlgorithm, highWaterMark, sizeAlgorithm) {
-        controller._controlledReadableStream = stream4;
+      function SetUpReadableStreamDefaultController(stream5, controller, startAlgorithm, pullAlgorithm, cancelAlgorithm, highWaterMark, sizeAlgorithm) {
+        controller._controlledReadableStream = stream5;
         controller._queue = void 0;
         controller._queueTotalSize = void 0;
         ResetQueue(controller);
@@ -56750,7 +56750,7 @@ var require_ponyfill_es2018 = __commonJS({
         controller._strategyHWM = highWaterMark;
         controller._pullAlgorithm = pullAlgorithm;
         controller._cancelAlgorithm = cancelAlgorithm;
-        stream4._readableStreamController = controller;
+        stream5._readableStreamController = controller;
         const startResult = startAlgorithm();
         uponPromise(promiseResolvedWith(startResult), () => {
           controller._started = true;
@@ -56761,7 +56761,7 @@ var require_ponyfill_es2018 = __commonJS({
           return null;
         });
       }
-      function SetUpReadableStreamDefaultControllerFromUnderlyingSource(stream4, underlyingSource, highWaterMark, sizeAlgorithm) {
+      function SetUpReadableStreamDefaultControllerFromUnderlyingSource(stream5, underlyingSource, highWaterMark, sizeAlgorithm) {
         const controller = Object.create(ReadableStreamDefaultController.prototype);
         let startAlgorithm;
         let pullAlgorithm;
@@ -56781,19 +56781,19 @@ var require_ponyfill_es2018 = __commonJS({
         } else {
           cancelAlgorithm = () => promiseResolvedWith(void 0);
         }
-        SetUpReadableStreamDefaultController(stream4, controller, startAlgorithm, pullAlgorithm, cancelAlgorithm, highWaterMark, sizeAlgorithm);
+        SetUpReadableStreamDefaultController(stream5, controller, startAlgorithm, pullAlgorithm, cancelAlgorithm, highWaterMark, sizeAlgorithm);
       }
       function defaultControllerBrandCheckException$1(name) {
         return new TypeError(`ReadableStreamDefaultController.prototype.${name} can only be used on a ReadableStreamDefaultController`);
       }
-      function ReadableStreamTee(stream4, cloneForBranch2) {
-        if (IsReadableByteStreamController(stream4._readableStreamController)) {
-          return ReadableByteStreamTee(stream4);
+      function ReadableStreamTee(stream5, cloneForBranch2) {
+        if (IsReadableByteStreamController(stream5._readableStreamController)) {
+          return ReadableByteStreamTee(stream5);
         }
-        return ReadableStreamDefaultTee(stream4);
+        return ReadableStreamDefaultTee(stream5);
       }
-      function ReadableStreamDefaultTee(stream4, cloneForBranch2) {
-        const reader = AcquireReadableStreamDefaultReader(stream4);
+      function ReadableStreamDefaultTee(stream5, cloneForBranch2) {
+        const reader = AcquireReadableStreamDefaultReader(stream5);
         let reading = false;
         let readAgain = false;
         let canceled1 = false;
@@ -56854,7 +56854,7 @@ var require_ponyfill_es2018 = __commonJS({
           reason1 = reason;
           if (canceled2) {
             const compositeReason = CreateArrayFromList([reason1, reason2]);
-            const cancelResult = ReadableStreamCancel(stream4, compositeReason);
+            const cancelResult = ReadableStreamCancel(stream5, compositeReason);
             resolveCancelPromise(cancelResult);
           }
           return cancelPromise;
@@ -56864,7 +56864,7 @@ var require_ponyfill_es2018 = __commonJS({
           reason2 = reason;
           if (canceled1) {
             const compositeReason = CreateArrayFromList([reason1, reason2]);
-            const cancelResult = ReadableStreamCancel(stream4, compositeReason);
+            const cancelResult = ReadableStreamCancel(stream5, compositeReason);
             resolveCancelPromise(cancelResult);
           }
           return cancelPromise;
@@ -56883,8 +56883,8 @@ var require_ponyfill_es2018 = __commonJS({
         });
         return [branch1, branch2];
       }
-      function ReadableByteStreamTee(stream4) {
-        let reader = AcquireReadableStreamDefaultReader(stream4);
+      function ReadableByteStreamTee(stream5) {
+        let reader = AcquireReadableStreamDefaultReader(stream5);
         let reading = false;
         let readAgainForBranch1 = false;
         let readAgainForBranch2 = false;
@@ -56914,7 +56914,7 @@ var require_ponyfill_es2018 = __commonJS({
         function pullWithDefaultReader() {
           if (IsReadableStreamBYOBReader(reader)) {
             ReadableStreamReaderGenericRelease(reader);
-            reader = AcquireReadableStreamDefaultReader(stream4);
+            reader = AcquireReadableStreamDefaultReader(stream5);
             forwardReaderError(reader);
           }
           const readRequest = {
@@ -56930,7 +56930,7 @@ var require_ponyfill_es2018 = __commonJS({
                   } catch (cloneE) {
                     ReadableByteStreamControllerError(branch1._readableStreamController, cloneE);
                     ReadableByteStreamControllerError(branch2._readableStreamController, cloneE);
-                    resolveCancelPromise(ReadableStreamCancel(stream4, cloneE));
+                    resolveCancelPromise(ReadableStreamCancel(stream5, cloneE));
                     return;
                   }
                 }
@@ -56975,7 +56975,7 @@ var require_ponyfill_es2018 = __commonJS({
         function pullWithBYOBReader(view, forBranch2) {
           if (IsReadableStreamDefaultReader(reader)) {
             ReadableStreamReaderGenericRelease(reader);
-            reader = AcquireReadableStreamBYOBReader(stream4);
+            reader = AcquireReadableStreamBYOBReader(stream5);
             forwardReaderError(reader);
           }
           const byobBranch = forBranch2 ? branch2 : branch1;
@@ -56994,7 +56994,7 @@ var require_ponyfill_es2018 = __commonJS({
                   } catch (cloneE) {
                     ReadableByteStreamControllerError(byobBranch._readableStreamController, cloneE);
                     ReadableByteStreamControllerError(otherBranch._readableStreamController, cloneE);
-                    resolveCancelPromise(ReadableStreamCancel(stream4, cloneE));
+                    resolveCancelPromise(ReadableStreamCancel(stream5, cloneE));
                     return;
                   }
                   if (!byobCanceled) {
@@ -57073,7 +57073,7 @@ var require_ponyfill_es2018 = __commonJS({
           reason1 = reason;
           if (canceled2) {
             const compositeReason = CreateArrayFromList([reason1, reason2]);
-            const cancelResult = ReadableStreamCancel(stream4, compositeReason);
+            const cancelResult = ReadableStreamCancel(stream5, compositeReason);
             resolveCancelPromise(cancelResult);
           }
           return cancelPromise;
@@ -57083,7 +57083,7 @@ var require_ponyfill_es2018 = __commonJS({
           reason2 = reason;
           if (canceled1) {
             const compositeReason = CreateArrayFromList([reason1, reason2]);
-            const cancelResult = ReadableStreamCancel(stream4, compositeReason);
+            const cancelResult = ReadableStreamCancel(stream5, compositeReason);
             resolveCancelPromise(cancelResult);
           }
           return cancelPromise;
@@ -57096,8 +57096,8 @@ var require_ponyfill_es2018 = __commonJS({
         forwardReaderError(reader);
         return [branch1, branch2];
       }
-      function isReadableStreamLike(stream4) {
-        return typeIsObject(stream4) && typeof stream4.getReader !== "undefined";
+      function isReadableStreamLike(stream5) {
+        return typeIsObject(stream5) && typeof stream5.getReader !== "undefined";
       }
       function ReadableStreamFrom(source) {
         if (isReadableStreamLike(source)) {
@@ -57106,7 +57106,7 @@ var require_ponyfill_es2018 = __commonJS({
         return ReadableStreamFromIterable(source);
       }
       function ReadableStreamFromIterable(asyncIterable) {
-        let stream4;
+        let stream5;
         const iteratorRecord = GetIterator(asyncIterable, "async");
         const startAlgorithm = noop3;
         function pullAlgorithm() {
@@ -57123,10 +57123,10 @@ var require_ponyfill_es2018 = __commonJS({
             }
             const done = IteratorComplete(iterResult);
             if (done) {
-              ReadableStreamDefaultControllerClose(stream4._readableStreamController);
+              ReadableStreamDefaultControllerClose(stream5._readableStreamController);
             } else {
               const value = IteratorValue(iterResult);
-              ReadableStreamDefaultControllerEnqueue(stream4._readableStreamController, value);
+              ReadableStreamDefaultControllerEnqueue(stream5._readableStreamController, value);
             }
           });
         }
@@ -57155,11 +57155,11 @@ var require_ponyfill_es2018 = __commonJS({
             return void 0;
           });
         }
-        stream4 = CreateReadableStream(startAlgorithm, pullAlgorithm, cancelAlgorithm, 0);
-        return stream4;
+        stream5 = CreateReadableStream(startAlgorithm, pullAlgorithm, cancelAlgorithm, 0);
+        return stream5;
       }
       function ReadableStreamFromDefaultReader(reader) {
-        let stream4;
+        let stream5;
         const startAlgorithm = noop3;
         function pullAlgorithm() {
           let readPromise;
@@ -57173,10 +57173,10 @@ var require_ponyfill_es2018 = __commonJS({
               throw new TypeError("The promise returned by the reader.read() method must fulfill with an object");
             }
             if (readResult.done) {
-              ReadableStreamDefaultControllerClose(stream4._readableStreamController);
+              ReadableStreamDefaultControllerClose(stream5._readableStreamController);
             } else {
               const value = readResult.value;
-              ReadableStreamDefaultControllerEnqueue(stream4._readableStreamController, value);
+              ReadableStreamDefaultControllerEnqueue(stream5._readableStreamController, value);
             }
           });
         }
@@ -57187,8 +57187,8 @@ var require_ponyfill_es2018 = __commonJS({
             return promiseRejectedWith(e2);
           }
         }
-        stream4 = CreateReadableStream(startAlgorithm, pullAlgorithm, cancelAlgorithm, 0);
-        return stream4;
+        stream5 = CreateReadableStream(startAlgorithm, pullAlgorithm, cancelAlgorithm, 0);
+        return stream5;
       }
       function convertUnderlyingDefaultOrByteSource(source, context) {
         assertDictionary(source, context);
@@ -57427,24 +57427,24 @@ var require_ponyfill_es2018 = __commonJS({
         configurable: true
       });
       function CreateReadableStream(startAlgorithm, pullAlgorithm, cancelAlgorithm, highWaterMark = 1, sizeAlgorithm = () => 1) {
-        const stream4 = Object.create(ReadableStream2.prototype);
-        InitializeReadableStream(stream4);
+        const stream5 = Object.create(ReadableStream2.prototype);
+        InitializeReadableStream(stream5);
         const controller = Object.create(ReadableStreamDefaultController.prototype);
-        SetUpReadableStreamDefaultController(stream4, controller, startAlgorithm, pullAlgorithm, cancelAlgorithm, highWaterMark, sizeAlgorithm);
-        return stream4;
+        SetUpReadableStreamDefaultController(stream5, controller, startAlgorithm, pullAlgorithm, cancelAlgorithm, highWaterMark, sizeAlgorithm);
+        return stream5;
       }
       function CreateReadableByteStream(startAlgorithm, pullAlgorithm, cancelAlgorithm) {
-        const stream4 = Object.create(ReadableStream2.prototype);
-        InitializeReadableStream(stream4);
+        const stream5 = Object.create(ReadableStream2.prototype);
+        InitializeReadableStream(stream5);
         const controller = Object.create(ReadableByteStreamController.prototype);
-        SetUpReadableByteStreamController(stream4, controller, startAlgorithm, pullAlgorithm, cancelAlgorithm, 0, void 0);
-        return stream4;
+        SetUpReadableByteStreamController(stream5, controller, startAlgorithm, pullAlgorithm, cancelAlgorithm, 0, void 0);
+        return stream5;
       }
-      function InitializeReadableStream(stream4) {
-        stream4._state = "readable";
-        stream4._reader = void 0;
-        stream4._storedError = void 0;
-        stream4._disturbed = false;
+      function InitializeReadableStream(stream5) {
+        stream5._state = "readable";
+        stream5._reader = void 0;
+        stream5._storedError = void 0;
+        stream5._disturbed = false;
       }
       function IsReadableStream(x2) {
         if (!typeIsObject(x2)) {
@@ -57455,22 +57455,22 @@ var require_ponyfill_es2018 = __commonJS({
         }
         return x2 instanceof ReadableStream2;
       }
-      function IsReadableStreamLocked(stream4) {
-        if (stream4._reader === void 0) {
+      function IsReadableStreamLocked(stream5) {
+        if (stream5._reader === void 0) {
           return false;
         }
         return true;
       }
-      function ReadableStreamCancel(stream4, reason) {
-        stream4._disturbed = true;
-        if (stream4._state === "closed") {
+      function ReadableStreamCancel(stream5, reason) {
+        stream5._disturbed = true;
+        if (stream5._state === "closed") {
           return promiseResolvedWith(void 0);
         }
-        if (stream4._state === "errored") {
-          return promiseRejectedWith(stream4._storedError);
+        if (stream5._state === "errored") {
+          return promiseRejectedWith(stream5._storedError);
         }
-        ReadableStreamClose(stream4);
-        const reader = stream4._reader;
+        ReadableStreamClose(stream5);
+        const reader = stream5._reader;
         if (reader !== void 0 && IsReadableStreamBYOBReader(reader)) {
           const readIntoRequests = reader._readIntoRequests;
           reader._readIntoRequests = new SimpleQueue();
@@ -57478,12 +57478,12 @@ var require_ponyfill_es2018 = __commonJS({
             readIntoRequest._closeSteps(void 0);
           });
         }
-        const sourceCancelPromise = stream4._readableStreamController[CancelSteps](reason);
+        const sourceCancelPromise = stream5._readableStreamController[CancelSteps](reason);
         return transformPromiseWith(sourceCancelPromise, noop3);
       }
-      function ReadableStreamClose(stream4) {
-        stream4._state = "closed";
-        const reader = stream4._reader;
+      function ReadableStreamClose(stream5) {
+        stream5._state = "closed";
+        const reader = stream5._reader;
         if (reader === void 0) {
           return;
         }
@@ -57496,10 +57496,10 @@ var require_ponyfill_es2018 = __commonJS({
           });
         }
       }
-      function ReadableStreamError(stream4, e2) {
-        stream4._state = "errored";
-        stream4._storedError = e2;
-        const reader = stream4._reader;
+      function ReadableStreamError(stream5, e2) {
+        stream5._state = "errored";
+        stream5._storedError = e2;
+        const reader = stream5._reader;
         if (reader === void 0) {
           return;
         }
@@ -57716,32 +57716,32 @@ var require_ponyfill_es2018 = __commonJS({
           configurable: true
         });
       }
-      function InitializeTransformStream(stream4, startPromise, writableHighWaterMark, writableSizeAlgorithm, readableHighWaterMark, readableSizeAlgorithm) {
+      function InitializeTransformStream(stream5, startPromise, writableHighWaterMark, writableSizeAlgorithm, readableHighWaterMark, readableSizeAlgorithm) {
         function startAlgorithm() {
           return startPromise;
         }
         function writeAlgorithm(chunk) {
-          return TransformStreamDefaultSinkWriteAlgorithm(stream4, chunk);
+          return TransformStreamDefaultSinkWriteAlgorithm(stream5, chunk);
         }
         function abortAlgorithm(reason) {
-          return TransformStreamDefaultSinkAbortAlgorithm(stream4, reason);
+          return TransformStreamDefaultSinkAbortAlgorithm(stream5, reason);
         }
         function closeAlgorithm() {
-          return TransformStreamDefaultSinkCloseAlgorithm(stream4);
+          return TransformStreamDefaultSinkCloseAlgorithm(stream5);
         }
-        stream4._writable = CreateWritableStream(startAlgorithm, writeAlgorithm, closeAlgorithm, abortAlgorithm, writableHighWaterMark, writableSizeAlgorithm);
+        stream5._writable = CreateWritableStream(startAlgorithm, writeAlgorithm, closeAlgorithm, abortAlgorithm, writableHighWaterMark, writableSizeAlgorithm);
         function pullAlgorithm() {
-          return TransformStreamDefaultSourcePullAlgorithm(stream4);
+          return TransformStreamDefaultSourcePullAlgorithm(stream5);
         }
         function cancelAlgorithm(reason) {
-          return TransformStreamDefaultSourceCancelAlgorithm(stream4, reason);
+          return TransformStreamDefaultSourceCancelAlgorithm(stream5, reason);
         }
-        stream4._readable = CreateReadableStream(startAlgorithm, pullAlgorithm, cancelAlgorithm, readableHighWaterMark, readableSizeAlgorithm);
-        stream4._backpressure = void 0;
-        stream4._backpressureChangePromise = void 0;
-        stream4._backpressureChangePromise_resolve = void 0;
-        TransformStreamSetBackpressure(stream4, true);
-        stream4._transformStreamController = void 0;
+        stream5._readable = CreateReadableStream(startAlgorithm, pullAlgorithm, cancelAlgorithm, readableHighWaterMark, readableSizeAlgorithm);
+        stream5._backpressure = void 0;
+        stream5._backpressureChangePromise = void 0;
+        stream5._backpressureChangePromise_resolve = void 0;
+        TransformStreamSetBackpressure(stream5, true);
+        stream5._transformStreamController = void 0;
       }
       function IsTransformStream(x2) {
         if (!typeIsObject(x2)) {
@@ -57752,28 +57752,28 @@ var require_ponyfill_es2018 = __commonJS({
         }
         return x2 instanceof TransformStream;
       }
-      function TransformStreamError(stream4, e2) {
-        ReadableStreamDefaultControllerError(stream4._readable._readableStreamController, e2);
-        TransformStreamErrorWritableAndUnblockWrite(stream4, e2);
+      function TransformStreamError(stream5, e2) {
+        ReadableStreamDefaultControllerError(stream5._readable._readableStreamController, e2);
+        TransformStreamErrorWritableAndUnblockWrite(stream5, e2);
       }
-      function TransformStreamErrorWritableAndUnblockWrite(stream4, e2) {
-        TransformStreamDefaultControllerClearAlgorithms(stream4._transformStreamController);
-        WritableStreamDefaultControllerErrorIfNeeded(stream4._writable._writableStreamController, e2);
-        TransformStreamUnblockWrite(stream4);
+      function TransformStreamErrorWritableAndUnblockWrite(stream5, e2) {
+        TransformStreamDefaultControllerClearAlgorithms(stream5._transformStreamController);
+        WritableStreamDefaultControllerErrorIfNeeded(stream5._writable._writableStreamController, e2);
+        TransformStreamUnblockWrite(stream5);
       }
-      function TransformStreamUnblockWrite(stream4) {
-        if (stream4._backpressure) {
-          TransformStreamSetBackpressure(stream4, false);
+      function TransformStreamUnblockWrite(stream5) {
+        if (stream5._backpressure) {
+          TransformStreamSetBackpressure(stream5, false);
         }
       }
-      function TransformStreamSetBackpressure(stream4, backpressure) {
-        if (stream4._backpressureChangePromise !== void 0) {
-          stream4._backpressureChangePromise_resolve();
+      function TransformStreamSetBackpressure(stream5, backpressure) {
+        if (stream5._backpressureChangePromise !== void 0) {
+          stream5._backpressureChangePromise_resolve();
         }
-        stream4._backpressureChangePromise = newPromise((resolve) => {
-          stream4._backpressureChangePromise_resolve = resolve;
+        stream5._backpressureChangePromise = newPromise((resolve) => {
+          stream5._backpressureChangePromise_resolve = resolve;
         });
-        stream4._backpressure = backpressure;
+        stream5._backpressure = backpressure;
       }
       class TransformStreamDefaultController {
         constructor() {
@@ -57840,9 +57840,9 @@ var require_ponyfill_es2018 = __commonJS({
         }
         return x2 instanceof TransformStreamDefaultController;
       }
-      function SetUpTransformStreamDefaultController(stream4, controller, transformAlgorithm, flushAlgorithm, cancelAlgorithm) {
-        controller._controlledTransformStream = stream4;
-        stream4._transformStreamController = controller;
+      function SetUpTransformStreamDefaultController(stream5, controller, transformAlgorithm, flushAlgorithm, cancelAlgorithm) {
+        controller._controlledTransformStream = stream5;
+        stream5._transformStreamController = controller;
         controller._transformAlgorithm = transformAlgorithm;
         controller._flushAlgorithm = flushAlgorithm;
         controller._cancelAlgorithm = cancelAlgorithm;
@@ -57850,7 +57850,7 @@ var require_ponyfill_es2018 = __commonJS({
         controller._finishPromise_resolve = void 0;
         controller._finishPromise_reject = void 0;
       }
-      function SetUpTransformStreamDefaultControllerFromTransformer(stream4, transformer) {
+      function SetUpTransformStreamDefaultControllerFromTransformer(stream5, transformer) {
         const controller = Object.create(TransformStreamDefaultController.prototype);
         let transformAlgorithm;
         let flushAlgorithm;
@@ -57877,7 +57877,7 @@ var require_ponyfill_es2018 = __commonJS({
         } else {
           cancelAlgorithm = () => promiseResolvedWith(void 0);
         }
-        SetUpTransformStreamDefaultController(stream4, controller, transformAlgorithm, flushAlgorithm, cancelAlgorithm);
+        SetUpTransformStreamDefaultController(stream5, controller, transformAlgorithm, flushAlgorithm, cancelAlgorithm);
       }
       function TransformStreamDefaultControllerClearAlgorithms(controller) {
         controller._transformAlgorithm = void 0;
@@ -57885,20 +57885,20 @@ var require_ponyfill_es2018 = __commonJS({
         controller._cancelAlgorithm = void 0;
       }
       function TransformStreamDefaultControllerEnqueue(controller, chunk) {
-        const stream4 = controller._controlledTransformStream;
-        const readableController = stream4._readable._readableStreamController;
+        const stream5 = controller._controlledTransformStream;
+        const readableController = stream5._readable._readableStreamController;
         if (!ReadableStreamDefaultControllerCanCloseOrEnqueue(readableController)) {
           throw new TypeError("Readable side is not in a state that permits enqueue");
         }
         try {
           ReadableStreamDefaultControllerEnqueue(readableController, chunk);
         } catch (e2) {
-          TransformStreamErrorWritableAndUnblockWrite(stream4, e2);
-          throw stream4._readable._storedError;
+          TransformStreamErrorWritableAndUnblockWrite(stream5, e2);
+          throw stream5._readable._storedError;
         }
         const backpressure = ReadableStreamDefaultControllerHasBackpressure(readableController);
-        if (backpressure !== stream4._backpressure) {
-          TransformStreamSetBackpressure(stream4, true);
+        if (backpressure !== stream5._backpressure) {
+          TransformStreamSetBackpressure(stream5, true);
         }
       }
       function TransformStreamDefaultControllerError(controller, e2) {
@@ -57912,18 +57912,18 @@ var require_ponyfill_es2018 = __commonJS({
         });
       }
       function TransformStreamDefaultControllerTerminate(controller) {
-        const stream4 = controller._controlledTransformStream;
-        const readableController = stream4._readable._readableStreamController;
+        const stream5 = controller._controlledTransformStream;
+        const readableController = stream5._readable._readableStreamController;
         ReadableStreamDefaultControllerClose(readableController);
         const error = new TypeError("TransformStream terminated");
-        TransformStreamErrorWritableAndUnblockWrite(stream4, error);
+        TransformStreamErrorWritableAndUnblockWrite(stream5, error);
       }
-      function TransformStreamDefaultSinkWriteAlgorithm(stream4, chunk) {
-        const controller = stream4._transformStreamController;
-        if (stream4._backpressure) {
-          const backpressureChangePromise = stream4._backpressureChangePromise;
+      function TransformStreamDefaultSinkWriteAlgorithm(stream5, chunk) {
+        const controller = stream5._transformStreamController;
+        if (stream5._backpressure) {
+          const backpressureChangePromise = stream5._backpressureChangePromise;
           return transformPromiseWith(backpressureChangePromise, () => {
-            const writable = stream4._writable;
+            const writable = stream5._writable;
             const state = writable._state;
             if (state === "erroring") {
               throw writable._storedError;
@@ -57933,12 +57933,12 @@ var require_ponyfill_es2018 = __commonJS({
         }
         return TransformStreamDefaultControllerPerformTransform(controller, chunk);
       }
-      function TransformStreamDefaultSinkAbortAlgorithm(stream4, reason) {
-        const controller = stream4._transformStreamController;
+      function TransformStreamDefaultSinkAbortAlgorithm(stream5, reason) {
+        const controller = stream5._transformStreamController;
         if (controller._finishPromise !== void 0) {
           return controller._finishPromise;
         }
-        const readable = stream4._readable;
+        const readable = stream5._readable;
         controller._finishPromise = newPromise((resolve, reject) => {
           controller._finishPromise_resolve = resolve;
           controller._finishPromise_reject = reject;
@@ -57960,12 +57960,12 @@ var require_ponyfill_es2018 = __commonJS({
         });
         return controller._finishPromise;
       }
-      function TransformStreamDefaultSinkCloseAlgorithm(stream4) {
-        const controller = stream4._transformStreamController;
+      function TransformStreamDefaultSinkCloseAlgorithm(stream5) {
+        const controller = stream5._transformStreamController;
         if (controller._finishPromise !== void 0) {
           return controller._finishPromise;
         }
-        const readable = stream4._readable;
+        const readable = stream5._readable;
         controller._finishPromise = newPromise((resolve, reject) => {
           controller._finishPromise_resolve = resolve;
           controller._finishPromise_reject = reject;
@@ -57987,16 +57987,16 @@ var require_ponyfill_es2018 = __commonJS({
         });
         return controller._finishPromise;
       }
-      function TransformStreamDefaultSourcePullAlgorithm(stream4) {
-        TransformStreamSetBackpressure(stream4, false);
-        return stream4._backpressureChangePromise;
+      function TransformStreamDefaultSourcePullAlgorithm(stream5) {
+        TransformStreamSetBackpressure(stream5, false);
+        return stream5._backpressureChangePromise;
       }
-      function TransformStreamDefaultSourceCancelAlgorithm(stream4, reason) {
-        const controller = stream4._transformStreamController;
+      function TransformStreamDefaultSourceCancelAlgorithm(stream5, reason) {
+        const controller = stream5._transformStreamController;
         if (controller._finishPromise !== void 0) {
           return controller._finishPromise;
         }
-        const writable = stream4._writable;
+        const writable = stream5._writable;
         controller._finishPromise = newPromise((resolve, reject) => {
           controller._finishPromise_resolve = resolve;
           controller._finishPromise_reject = reject;
@@ -58008,13 +58008,13 @@ var require_ponyfill_es2018 = __commonJS({
             defaultControllerFinishPromiseReject(controller, writable._storedError);
           } else {
             WritableStreamDefaultControllerErrorIfNeeded(writable._writableStreamController, reason);
-            TransformStreamUnblockWrite(stream4);
+            TransformStreamUnblockWrite(stream5);
             defaultControllerFinishPromiseResolve(controller);
           }
           return null;
         }, (r2) => {
           WritableStreamDefaultControllerErrorIfNeeded(writable._writableStreamController, r2);
-          TransformStreamUnblockWrite(stream4);
+          TransformStreamUnblockWrite(stream5);
           defaultControllerFinishPromiseReject(controller, r2);
           return null;
         });
@@ -59041,15 +59041,15 @@ var init_body = __esm({
         } else {
           body = import_node_buffer.Buffer.from(String(body));
         }
-        let stream4 = body;
+        let stream5 = body;
         if (import_node_buffer.Buffer.isBuffer(body)) {
-          stream4 = import_node_stream.default.Readable.from(body);
+          stream5 = import_node_stream.default.Readable.from(body);
         } else if (isBlob(body)) {
-          stream4 = import_node_stream.default.Readable.from(body.stream());
+          stream5 = import_node_stream.default.Readable.from(body.stream());
         }
         this[INTERNALS] = {
           body,
-          stream: stream4,
+          stream: stream5,
           boundary,
           disturbed: false,
           error: null
@@ -60807,9 +60807,9 @@ var require_colours = __commonJS({
        * @param stream The stream (e.g. process.stderr)
        * @returns true if the stream should have colourization enabled
        */
-      static isEnabled(stream4) {
-        return stream4 && // May happen in browsers.
-        stream4.isTTY && (typeof stream4.getColorDepth === "function" ? stream4.getColorDepth() > 2 : true);
+      static isEnabled(stream5) {
+        return stream5 && // May happen in browsers.
+        stream5.isTTY && (typeof stream5.getColorDepth === "function" ? stream5.getColorDepth() > 2 : true);
       }
       static refresh() {
         _Colours.enabled = _Colours.isEnabled(process === null || process === void 0 ? void 0 : process.stderr);
@@ -62267,7 +62267,7 @@ var require_oauth2client = __commonJS({
     exports2.OAuth2Client = exports2.ClientAuthentication = exports2.CertificateFormat = exports2.CodeChallengeMethod = void 0;
     var gaxios_1 = require_src6();
     var querystring = require("querystring");
-    var stream4 = require("stream");
+    var stream5 = require("stream");
     var formatEcdsa = require_ecdsa_sig_formatter();
     var util_1 = require_util2();
     var crypto_1 = require_crypto3();
@@ -62662,7 +62662,7 @@ var require_oauth2client = __commonJS({
             const statusCode = res.status;
             const mayRequireRefresh = this.credentials && this.credentials.access_token && this.credentials.refresh_token && (!this.credentials.expiry_date || this.forceRefreshOnFailure);
             const mayRequireRefreshWithNoRefreshToken = this.credentials && this.credentials.access_token && !this.credentials.refresh_token && (!this.credentials.expiry_date || this.forceRefreshOnFailure) && this.refreshHandler;
-            const isReadableStream2 = res.config.data instanceof stream4.Readable;
+            const isReadableStream2 = res.config.data instanceof stream5.Readable;
             const isAuthErr = statusCode === 401 || statusCode === 403;
             if (!reAuthRetried && isAuthErr && !isReadableStream2 && mayRequireRefresh) {
               await this.refreshAccessTokenAsync();
@@ -64558,7 +64558,7 @@ var require_baseexternalclient = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.BaseExternalAccountClient = exports2.CLOUD_RESOURCE_MANAGER = exports2.EXTERNAL_ACCOUNT_TYPE = exports2.EXPIRATION_TIME_OFFSET = void 0;
     var gaxios_1 = require_src6();
-    var stream4 = require("stream");
+    var stream5 = require("stream");
     var authclient_1 = require_authclient();
     var sts = require_stscredentials();
     var util_1 = require_util2();
@@ -64772,7 +64772,7 @@ var require_baseexternalclient = __commonJS({
           const res = e2.response;
           if (res) {
             const statusCode = res.status;
-            const isReadableStream2 = res.config.data instanceof stream4.Readable;
+            const isReadableStream2 = res.config.data instanceof stream5.Readable;
             const isAuthErr = statusCode === 401 || statusCode === 403;
             if (!reAuthRetried && isAuthErr && !isReadableStream2 && this.forceRefreshOnFailure) {
               await this.refreshAccessTokenAsync();
@@ -66225,7 +66225,7 @@ var require_externalAccountAuthorizedUserClient = __commonJS({
     var authclient_1 = require_authclient();
     var oauth2common_1 = require_oauth2common();
     var gaxios_1 = require_src6();
-    var stream4 = require("stream");
+    var stream5 = require("stream");
     var baseexternalclient_1 = require_baseexternalclient();
     exports2.EXTERNAL_ACCOUNT_AUTHORIZED_USER_TYPE = "external_account_authorized_user";
     var DEFAULT_TOKEN_URL = "https://sts.{universeDomain}/v1/oauthtoken";
@@ -66361,7 +66361,7 @@ var require_externalAccountAuthorizedUserClient = __commonJS({
           const res = e2.response;
           if (res) {
             const statusCode = res.status;
-            const isReadableStream2 = res.config.data instanceof stream4.Readable;
+            const isReadableStream2 = res.config.data instanceof stream5.Readable;
             const isAuthErr = statusCode === 401 || statusCode === 403;
             if (!reAuthRetried && isAuthErr && !isReadableStream2 && this.forceRefreshOnFailure) {
               await this.refreshAccessTokenAsync();
@@ -67348,8 +67348,8 @@ var require_googleauth = __commonJS({
           return this._cacheClientFromJSON(this.jsonContent, this.clientOptions);
         } else if (this.keyFilename) {
           const filePath = path25.resolve(this.keyFilename);
-          const stream4 = fs25.createReadStream(filePath);
-          return await this.fromStreamAsync(stream4, this.clientOptions);
+          const stream5 = fs25.createReadStream(filePath);
+          return await this.fromStreamAsync(stream5, this.clientOptions);
         } else if (this.apiKey) {
           const client = await this.fromAPIKey(this.apiKey, this.clientOptions);
           client.scopes = this.scopes;
@@ -67535,7 +67535,7 @@ var require_downscopedclient = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.DownscopedClient = exports2.EXPIRATION_TIME_OFFSET = exports2.MAX_ACCESS_BOUNDARY_RULES_COUNT = void 0;
     var gaxios_1 = require_src6();
-    var stream4 = require("stream");
+    var stream5 = require("stream");
     var authclient_1 = require_authclient();
     var sts = require_stscredentials();
     var STS_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:token-exchange";
@@ -67652,7 +67652,7 @@ var require_downscopedclient = __commonJS({
           const res = e2.response;
           if (res) {
             const statusCode = res.status;
-            const isReadableStream2 = res.config.data instanceof stream4.Readable;
+            const isReadableStream2 = res.config.data instanceof stream5.Readable;
             const isAuthErr = statusCode === 401 || statusCode === 403;
             if (!reAuthRetried && isAuthErr && !isReadableStream2 && this.forceRefreshOnFailure) {
               await this.refreshAccessTokenAsync();
@@ -70893,21 +70893,21 @@ var require_websocket = __commonJS({
       }
       return tls.connect(options);
     }
-    function abortHandshake(websocket, stream4, message) {
+    function abortHandshake(websocket, stream5, message) {
       websocket._readyState = WebSocket2.CLOSING;
       const err = new Error(message);
       Error.captureStackTrace(err, abortHandshake);
-      if (stream4.setHeader) {
-        stream4[kAborted] = true;
-        stream4.abort();
-        if (stream4.socket && !stream4.socket.destroyed) {
-          stream4.socket.destroy();
+      if (stream5.setHeader) {
+        stream5[kAborted] = true;
+        stream5.abort();
+        if (stream5.socket && !stream5.socket.destroyed) {
+          stream5.socket.destroy();
         }
         process.nextTick(emitErrorAndClose, websocket, err);
       } else {
-        stream4.destroy(err);
-        stream4.once("error", websocket.emit.bind(websocket, "error"));
-        stream4.once("close", websocket.emitClose.bind(websocket));
+        stream5.destroy(err);
+        stream5.once("error", websocket.emit.bind(websocket, "error"));
+        stream5.once("close", websocket.emitClose.bind(websocket));
       }
     }
     function sendAfterClose(websocket, data, cb) {
@@ -70964,8 +70964,8 @@ var require_websocket = __commonJS({
     function receiverOnPong(data) {
       this[kWebSocket].emit("pong", data);
     }
-    function resume(stream4) {
-      stream4.resume();
+    function resume(stream5) {
+      stream5.resume();
     }
     function senderOnError(err) {
       const websocket = this[kWebSocket];
@@ -71035,8 +71035,8 @@ var require_stream = __commonJS({
     "use strict";
     var WebSocket2 = require_websocket();
     var { Duplex } = require("stream");
-    function emitClose(stream4) {
-      stream4.emit("close");
+    function emitClose(stream5) {
+      stream5.emit("close");
     }
     function duplexOnEnd() {
       if (!this.destroyed && this._writableState.finished) {
@@ -71692,26 +71692,26 @@ var require_combined_stream = __commonJS({
       }
       return combinedStream;
     };
-    CombinedStream.isStreamLike = function(stream4) {
-      return typeof stream4 !== "function" && typeof stream4 !== "string" && typeof stream4 !== "boolean" && typeof stream4 !== "number" && !Buffer.isBuffer(stream4);
+    CombinedStream.isStreamLike = function(stream5) {
+      return typeof stream5 !== "function" && typeof stream5 !== "string" && typeof stream5 !== "boolean" && typeof stream5 !== "number" && !Buffer.isBuffer(stream5);
     };
-    CombinedStream.prototype.append = function(stream4) {
-      var isStreamLike = CombinedStream.isStreamLike(stream4);
+    CombinedStream.prototype.append = function(stream5) {
+      var isStreamLike = CombinedStream.isStreamLike(stream5);
       if (isStreamLike) {
-        if (!(stream4 instanceof DelayedStream)) {
-          var newStream = DelayedStream.create(stream4, {
+        if (!(stream5 instanceof DelayedStream)) {
+          var newStream = DelayedStream.create(stream5, {
             maxDataSize: Infinity,
             pauseStream: this.pauseStreams
           });
-          stream4.on("data", this._checkDataSize.bind(this));
-          stream4 = newStream;
+          stream5.on("data", this._checkDataSize.bind(this));
+          stream5 = newStream;
         }
-        this._handleErrors(stream4);
+        this._handleErrors(stream5);
         if (this.pauseStreams) {
-          stream4.pause();
+          stream5.pause();
         }
       }
-      this._streams.push(stream4);
+      this._streams.push(stream5);
       return this;
     };
     CombinedStream.prototype.pipe = function(dest, options) {
@@ -71736,40 +71736,40 @@ var require_combined_stream = __commonJS({
       }
     };
     CombinedStream.prototype._realGetNext = function() {
-      var stream4 = this._streams.shift();
-      if (typeof stream4 == "undefined") {
+      var stream5 = this._streams.shift();
+      if (typeof stream5 == "undefined") {
         this.end();
         return;
       }
-      if (typeof stream4 !== "function") {
-        this._pipeNext(stream4);
+      if (typeof stream5 !== "function") {
+        this._pipeNext(stream5);
         return;
       }
-      var getStream = stream4;
-      getStream(function(stream5) {
-        var isStreamLike = CombinedStream.isStreamLike(stream5);
+      var getStream = stream5;
+      getStream(function(stream6) {
+        var isStreamLike = CombinedStream.isStreamLike(stream6);
         if (isStreamLike) {
-          stream5.on("data", this._checkDataSize.bind(this));
-          this._handleErrors(stream5);
+          stream6.on("data", this._checkDataSize.bind(this));
+          this._handleErrors(stream6);
         }
-        this._pipeNext(stream5);
+        this._pipeNext(stream6);
       }.bind(this));
     };
-    CombinedStream.prototype._pipeNext = function(stream4) {
-      this._currentStream = stream4;
-      var isStreamLike = CombinedStream.isStreamLike(stream4);
+    CombinedStream.prototype._pipeNext = function(stream5) {
+      this._currentStream = stream5;
+      var isStreamLike = CombinedStream.isStreamLike(stream5);
       if (isStreamLike) {
-        stream4.on("end", this._getNext.bind(this));
-        stream4.pipe(this, { end: false });
+        stream5.on("end", this._getNext.bind(this));
+        stream5.pipe(this, { end: false });
         return;
       }
-      var value = stream4;
+      var value = stream5;
       this.write(value);
       this._getNext();
     };
-    CombinedStream.prototype._handleErrors = function(stream4) {
+    CombinedStream.prototype._handleErrors = function(stream5) {
       var self2 = this;
-      stream4.on("error", function(err) {
+      stream5.on("error", function(err) {
         self2._emitError(err);
       });
     };
@@ -71816,11 +71816,11 @@ var require_combined_stream = __commonJS({
     CombinedStream.prototype._updateDataSize = function() {
       this.dataSize = 0;
       var self2 = this;
-      this._streams.forEach(function(stream4) {
-        if (!stream4.dataSize) {
+      this._streams.forEach(function(stream5) {
+        if (!stream5.dataSize) {
           return;
         }
-        self2.dataSize += stream4.dataSize;
+        self2.dataSize += stream5.dataSize;
       });
       if (this._currentStream && this._currentStream.dataSize) {
         this.dataSize += this._currentStream.dataSize;
@@ -74957,7 +74957,8 @@ async function runBackgroundOrderSync(opts = {}) {
       shopIds: opts.shopIds?.length ? opts.shopIds : void 0,
       allowShortLookback: opts.allowShortLookback !== false,
       reconcileActive: opts.reconcileActive === true,
-      enrichTracking: opts.enrichTracking === true
+      enrichTracking: opts.enrichTracking === true,
+      fastLane: opts.fastLane === true
     });
     const pulled = result?.pulled || 0;
     const added = result?.added || 0;
@@ -75096,11 +75097,14 @@ function triggerWebhookRescuePull(opts = {}) {
 }
 
 // cron/index.js
+var FAST_LANE_LOOKBACK_SEC = 15 * 60;
 var autoIncrementalScheduled = false;
 var cronTask = null;
+var ordersHealScheduled = false;
+var ordersHealTask = null;
 var handedOverReconcileScheduled = false;
 var handedOverReconcileTask = null;
-function scheduleAutoIncrementalOrdersSync(deps22 = {}) {
+function scheduleAutoIncrementalOrdersSync(deps23 = {}) {
   if (autoIncrementalScheduled) {
     console.log("[CRON] Auto Incremental Sync already scheduled (idempotent).");
     return;
@@ -75115,50 +75119,95 @@ function scheduleAutoIncrementalOrdersSync(deps22 = {}) {
   }
   const lookbackSec = Math.max(
     60,
-    Number(deps22.lookbackSec) || Number(process.env.AUTO_ORDER_SYNC_LOOKBACK_SEC) || DEFAULT_INCREMENTAL_LOOKBACK_SEC
+    Number(deps23.lookbackSec) || Number(process.env.AUTO_ORDER_SYNC_LOOKBACK_SEC) || FAST_LANE_LOOKBACK_SEC
   );
   const cronExpr = String(
-    deps22.cronExpr || process.env.AUTO_ORDER_SYNC_CRON_EXPR || "*/5 * * * *"
+    deps23.cronExpr || process.env.AUTO_ORDER_SYNC_CRON_EXPR || "*/1 * * * *"
   ).trim();
   if (!import_node_cron.default.validate(cronExpr)) {
     console.error(`[CRON] Invalid cron expr="${cronExpr}" \u2014 sync cron NOT started`);
     return;
   }
   cronTask = import_node_cron.default.schedule(cronExpr, () => {
-    console.log(
-      `[CRON] Tick Incremental Sync \u2014 lookbackSec=${lookbackSec} (${Math.round(lookbackSec / 3600)}h)`
-    );
+    console.log(`[CRON] Tick Fast Lane Sync \u2014 lookbackSec=${lookbackSec}`);
     try {
-      if (typeof deps22.runSync === "function") {
-        void deps22.runSync({ lookbackSec, trigger: "cron" });
+      if (typeof deps23.runSync === "function") {
+        void deps23.runSync({ lookbackSec, trigger: "cron_fast" });
         return;
       }
       const ack = triggerBackgroundOrderSync({
         lookbackSec,
-        trigger: "cron",
+        trigger: "cron_fast",
         allowShortLookback: true,
-        // Đối soát PROCESSED/Đã giao ĐVVC còn kẹt — bắt SHIPPED khi bưu tá đã lấy hàng.
-        reconcileActive: true,
-        jobType: "shopee_orders_cron_sync"
+        // Làn nhanh chỉ lo đơn mới — heal trạng thái là việc của cron 30 phút.
+        fastLane: true,
+        reconcileActive: false,
+        jobType: "shopee_orders_fast_sync"
       });
       console.log(
-        `[CRON] trigger \u2192 accepted=${ack.accepted} busy=${ack.busy} msg=${ack.message}`
+        `[CRON] fast trigger \u2192 accepted=${ack.accepted} busy=${ack.busy} msg=${ack.message}`
       );
     } catch (err) {
-      console.error("[CRON] Incremental Sync tick failed:", err?.message || err);
+      console.error("[CRON] Fast Lane Sync tick failed:", err?.message || err);
     }
   });
   console.log(
-    `[CRON] Auto Incremental Sync ON \u2014 expr="${cronExpr}" lookbackSec=${lookbackSec} (~${Math.round(lookbackSec / 3600)}h). Mutex b\u1EA3o v\u1EC7 ch\u1ED3ng job.`
+    `[CRON] Fast Lane Sync ON \u2014 expr="${cronExpr}" lookbackSec=${lookbackSec} (${Math.round(lookbackSec / 60)} ph\xFAt). Mutex b\u1EA3o v\u1EC7 ch\u1ED3ng job.`
+  );
+}
+function scheduleOrdersHealSync(deps23 = {}) {
+  if (ordersHealScheduled) {
+    console.log("[CRON] Orders Heal Sync already scheduled (idempotent).");
+    return;
+  }
+  ordersHealScheduled = true;
+  const raw = String(process.env.AUTO_ORDER_HEAL_CRON || "1").trim().toLowerCase();
+  if (raw === "0" || raw === "off" || raw === "false") {
+    console.log("[CRON] Orders Heal Sync DISABLED (AUTO_ORDER_HEAL_CRON=0).");
+    return;
+  }
+  const lookbackSec = Math.max(
+    60,
+    Number(deps23.lookbackSec) || Number(process.env.AUTO_ORDER_HEAL_LOOKBACK_SEC) || DEFAULT_INCREMENTAL_LOOKBACK_SEC
+  );
+  const cronExpr = String(
+    deps23.cronExpr || process.env.AUTO_ORDER_HEAL_CRON_EXPR || "*/30 * * * *"
+  ).trim();
+  if (!import_node_cron.default.validate(cronExpr)) {
+    console.error(`[CRON] Invalid heal cron expr="${cronExpr}" \u2014 heal cron NOT started`);
+    return;
+  }
+  ordersHealTask = import_node_cron.default.schedule(cronExpr, () => {
+    console.log(
+      `[CRON] Tick Orders Heal Sync \u2014 lookbackSec=${lookbackSec} (${Math.round(lookbackSec / 3600)}h)`
+    );
+    try {
+      const ack = triggerBackgroundOrderSync({
+        lookbackSec,
+        trigger: "cron_heal",
+        allowShortLookback: true,
+        // Đối soát PROCESSED/Đã giao ĐVVC còn kẹt — bắt SHIPPED khi bưu tá đã lấy hàng.
+        reconcileActive: true,
+        jobType: "shopee_orders_heal_sync"
+      });
+      console.log(
+        `[CRON] heal trigger \u2192 accepted=${ack.accepted} busy=${ack.busy} msg=${ack.message}`
+      );
+    } catch (err) {
+      console.error("[CRON] Orders Heal Sync tick failed:", err?.message || err);
+    }
+  });
+  console.log(
+    `[CRON] Orders Heal Sync ON \u2014 expr="${cronExpr}" lookbackSec=${lookbackSec} (~${Math.round(lookbackSec / 3600)}h).`
   );
 }
 var handedOverReconcileInterval = null;
 var handedOverReconcileBootTimer = null;
-function runHandedOverReconcileTick(deps22, trigger) {
+function runHandedOverReconcileTick(deps23, trigger) {
   console.log(`[CRON] Tick HandedOver status reconcile (\u0110VVC \u2192 SHIPPED) trigger=${trigger}`);
   try {
     void Promise.resolve(
-      deps22.reconcileHandedOverCarrierStatuses({ trigger })
+      deps23.reconcileHandedOverCarrierStatuses({ trigger })
     ).then((r2) => {
       if (r2?.skipped) {
         console.log(`[CRON] HandedOver reconcile skipped: ${r2.message || "busy"}`);
@@ -75172,7 +75221,7 @@ function runHandedOverReconcileTick(deps22, trigger) {
     console.error("[CRON] HandedOver reconcile tick failed:", err?.message || err);
   }
 }
-function scheduleHandedOverStatusReconcile(deps22 = {}) {
+function scheduleHandedOverStatusReconcile(deps23 = {}) {
   if (handedOverReconcileScheduled) {
     console.log("[CRON] HandedOver status reconcile already scheduled (idempotent).");
     return;
@@ -75185,22 +75234,22 @@ function scheduleHandedOverStatusReconcile(deps22 = {}) {
     );
     return;
   }
-  if (typeof deps22.reconcileHandedOverCarrierStatuses !== "function") {
+  if (typeof deps23.reconcileHandedOverCarrierStatuses !== "function") {
     console.warn(
       "[CRON] HandedOver status reconcile NOT started \u2014 thi\u1EBFu deps.reconcileHandedOverCarrierStatuses"
     );
     return;
   }
   const cronExpr = String(
-    deps22.cronExpr || process.env.AUTO_HANDED_OVER_RECONCILE_CRON_EXPR || "2-59/5 * * * *"
+    deps23.cronExpr || process.env.AUTO_HANDED_OVER_RECONCILE_CRON_EXPR || "2-59/5 * * * *"
   ).trim();
   const intervalMs = Math.max(
     6e4,
-    Number(deps22.intervalMs) || Number(process.env.AUTO_HANDED_OVER_RECONCILE_MS) || 5 * 60 * 1e3
+    Number(deps23.intervalMs) || Number(process.env.AUTO_HANDED_OVER_RECONCILE_MS) || 5 * 60 * 1e3
   );
   if (import_node_cron.default.validate(cronExpr)) {
     handedOverReconcileTask = import_node_cron.default.schedule(cronExpr, () => {
-      runHandedOverReconcileTick(deps22, "cron");
+      runHandedOverReconcileTick(deps23, "cron");
     });
     console.log(
       `[CRON] HandedOver status reconcile ON \u2014 expr="${cronExpr}" (\u0110VVC + READY_TO_SHIP/PROCESSED).`
@@ -75217,7 +75266,7 @@ function scheduleHandedOverStatusReconcile(deps22 = {}) {
     }
   }
   handedOverReconcileInterval = setInterval(() => {
-    runHandedOverReconcileTick(deps22, "interval");
+    runHandedOverReconcileTick(deps23, "interval");
   }, intervalMs);
   if (typeof handedOverReconcileInterval.unref === "function") {
     handedOverReconcileInterval.unref();
@@ -75229,7 +75278,7 @@ function scheduleHandedOverStatusReconcile(deps22 = {}) {
     }
   }
   handedOverReconcileBootTimer = setTimeout(() => {
-    runHandedOverReconcileTick(deps22, "boot");
+    runHandedOverReconcileTick(deps23, "boot");
   }, 2e4);
   if (typeof handedOverReconcileBootTimer.unref === "function") {
     handedOverReconcileBootTimer.unref();
@@ -75240,7 +75289,7 @@ function scheduleHandedOverStatusReconcile(deps22 = {}) {
 }
 var keepAlivePingScheduled = false;
 var keepAlivePingInterval = null;
-function scheduleKeepAlivePing(deps22 = {}) {
+function scheduleKeepAlivePing(deps23 = {}) {
   if (keepAlivePingScheduled) {
     console.log("[CRON] Keep-alive self-ping already scheduled (idempotent).");
     return;
@@ -75265,7 +75314,7 @@ function scheduleKeepAlivePing(deps22 = {}) {
     console.log("[CRON] Keep-alive self-ping FORCED ON (KEEP_ALIVE_PING_CRON=force, b\u1ECF qua detect runtime).");
   }
   const baseUrl = String(
-    process.env.KEEP_ALIVE_BASE_URL || deps22.appBaseUrl || process.env.APP_URL || process.env.API_BASE_URL || ""
+    process.env.KEEP_ALIVE_BASE_URL || deps23.appBaseUrl || process.env.APP_URL || process.env.API_BASE_URL || ""
   ).trim().replace(/\/$/, "");
   if (!baseUrl) {
     console.warn(
@@ -75319,7 +75368,7 @@ function scheduleKeepAlivePing(deps22 = {}) {
 }
 var returnRequestsScheduled = false;
 var returnRequestsTask = null;
-function scheduleShopeeReturnRequestsSync(deps22 = {}) {
+function scheduleShopeeReturnRequestsSync(deps23 = {}) {
   if (returnRequestsScheduled) {
     console.log("[CRON] Return Requests Sync already scheduled (idempotent).");
     return;
@@ -75332,12 +75381,12 @@ function scheduleShopeeReturnRequestsSync(deps22 = {}) {
     );
     return;
   }
-  if (typeof deps22.runSync !== "function") {
+  if (typeof deps23.runSync !== "function") {
     console.warn("[CRON] Return Requests Sync NOT started \u2014 thi\u1EBFu deps.runSync");
     return;
   }
   const cronExpr = String(
-    deps22.cronExpr || process.env.AUTO_RETURN_REQUESTS_CRON_EXPR || "*/30 * * * *"
+    deps23.cronExpr || process.env.AUTO_RETURN_REQUESTS_CRON_EXPR || "*/30 * * * *"
   ).trim();
   if (!import_node_cron.default.validate(cronExpr)) {
     console.error(`[CRON] Invalid return-requests cron expr="${cronExpr}"`);
@@ -75352,7 +75401,7 @@ function scheduleShopeeReturnRequestsSync(deps22 = {}) {
     returnRequestsInFlight = true;
     console.log("[CRON] Tick Return Requests Sync (get_return_list \u2192 detail \u2192 reverse TN)");
     try {
-      void Promise.resolve(deps22.runSync({ mode: "incremental", trigger: "cron" })).then((r2) => {
+      void Promise.resolve(deps23.runSync({ mode: "incremental", trigger: "cron" })).then((r2) => {
         if (r2?.skipped) {
           console.log(`[CRON] Return Requests skipped: ${r2.message || "busy"}`);
           return;
@@ -75374,7 +75423,7 @@ function scheduleShopeeReturnRequestsSync(deps22 = {}) {
     if (returnRequestsInFlight) return;
     returnRequestsInFlight = true;
     try {
-      void Promise.resolve(deps22.runSync({ mode: "incremental", trigger: "boot" })).catch(() => {
+      void Promise.resolve(deps23.runSync({ mode: "incremental", trigger: "boot" })).catch(() => {
       }).finally(() => {
         returnRequestsInFlight = false;
       });
@@ -75386,7 +75435,7 @@ function scheduleShopeeReturnRequestsSync(deps22 = {}) {
 }
 var rtsBackfillScheduled = false;
 var rtsBackfillTask = null;
-function scheduleReadyToShipBackfill(deps22 = {}) {
+function scheduleReadyToShipBackfill(deps23 = {}) {
   if (rtsBackfillScheduled) {
     console.log("[CRON] READY_TO_SHIP backfill already scheduled (idempotent).");
     return;
@@ -75397,16 +75446,16 @@ function scheduleReadyToShipBackfill(deps22 = {}) {
     console.log("[CRON] READY_TO_SHIP backfill DISABLED (AUTO_RTS_BACKFILL_CRON=0).");
     return;
   }
-  if (typeof deps22.runSync !== "function") {
+  if (typeof deps23.runSync !== "function") {
     console.warn("[CRON] READY_TO_SHIP backfill NOT started \u2014 thi\u1EBFu deps.runSync");
     return;
   }
   const lookbackSec = Math.max(
     7 * 24 * 60 * 60,
-    Number(deps22.lookbackSec) || 7 * 24 * 60 * 60
+    Number(deps23.lookbackSec) || 7 * 24 * 60 * 60
   );
   const cronExpr = String(
-    deps22.cronExpr || process.env.AUTO_RTS_BACKFILL_CRON_EXPR || "*/10 * * * *"
+    deps23.cronExpr || process.env.AUTO_RTS_BACKFILL_CRON_EXPR || "*/10 * * * *"
   ).trim();
   if (!import_node_cron.default.validate(cronExpr)) {
     console.error(`[CRON] Invalid RTS backfill cron expr="${cronExpr}"`);
@@ -75418,7 +75467,7 @@ function scheduleReadyToShipBackfill(deps22 = {}) {
     );
     try {
       void Promise.resolve(
-        deps22.runSync({ lookbackSec, trigger: "cron" })
+        deps23.runSync({ lookbackSec, trigger: "cron" })
       ).then((r2) => {
         if (r2?.skipped) {
           console.log(`[CRON] RTS backfill skipped: ${r2.message || "busy"}`);
@@ -75434,7 +75483,7 @@ function scheduleReadyToShipBackfill(deps22 = {}) {
   });
   setTimeout(() => {
     try {
-      void Promise.resolve(deps22.runSync({ lookbackSec, trigger: "boot" }));
+      void Promise.resolve(deps23.runSync({ lookbackSec, trigger: "boot" }));
     } catch {
     }
   }, 28e3);
@@ -75517,11 +75566,11 @@ var ghnStatusSyncScheduled = false;
 var ghnStatusSyncTask = null;
 var ghnStatusSyncInterval = null;
 var ghnStatusSyncBootTimer = null;
-function runGhnStatusSyncTick(deps22, trigger) {
-  if (typeof deps22.runSync !== "function") return;
+function runGhnStatusSyncTick(deps23, trigger) {
+  if (typeof deps23.runSync !== "function") return;
   console.log(`[CRON] Tick GHN status sync (\u0111\u01A1n ngo\u1EA1i s\xE0n c\xF2n m\u1EDF) trigger=${trigger}`);
   try {
-    void Promise.resolve(deps22.runSync({ trigger })).then((r2) => {
+    void Promise.resolve(deps23.runSync({ trigger })).then((r2) => {
       if (r2?.skipped) {
         console.log(`[CRON] GHN status sync skipped: ${r2.message || "busy"}`);
         return;
@@ -75536,7 +75585,7 @@ function runGhnStatusSyncTick(deps22, trigger) {
     console.error("[CRON] GHN status sync tick failed:", err?.message || err);
   }
 }
-function scheduleGhnStatusSync(deps22 = {}) {
+function scheduleGhnStatusSync(deps23 = {}) {
   if (ghnStatusSyncScheduled) {
     console.log("[CRON] GHN status sync already scheduled (idempotent).");
     return;
@@ -75547,20 +75596,20 @@ function scheduleGhnStatusSync(deps22 = {}) {
     console.log("[CRON] GHN status sync DISABLED (AUTO_GHN_STATUS_SYNC_CRON=0).");
     return;
   }
-  if (typeof deps22.runSync !== "function") {
+  if (typeof deps23.runSync !== "function") {
     console.warn("[CRON] GHN status sync NOT started \u2014 thi\u1EBFu deps.runSync");
     return;
   }
   const cronExpr = String(
-    deps22.cronExpr || process.env.AUTO_GHN_STATUS_SYNC_CRON_EXPR || "*/30 * * * *"
+    deps23.cronExpr || process.env.AUTO_GHN_STATUS_SYNC_CRON_EXPR || "*/30 * * * *"
   ).trim();
   const intervalMs = Math.max(
     10 * 60 * 1e3,
-    Number(deps22.intervalMs) || Number(process.env.AUTO_GHN_STATUS_SYNC_MS) || 30 * 60 * 1e3
+    Number(deps23.intervalMs) || Number(process.env.AUTO_GHN_STATUS_SYNC_MS) || 30 * 60 * 1e3
   );
   if (import_node_cron.default.validate(cronExpr)) {
     ghnStatusSyncTask = import_node_cron.default.schedule(cronExpr, () => {
-      runGhnStatusSyncTick(deps22, "cron");
+      runGhnStatusSyncTick(deps23, "cron");
     });
     console.log(`[CRON] GHN status sync ON \u2014 expr="${cronExpr}" (\u0111\u01A1n ngo\u1EA1i s\xE0n GHN c\xF2n m\u1EDF).`);
   } else {
@@ -75575,7 +75624,7 @@ function scheduleGhnStatusSync(deps22 = {}) {
     }
   }
   ghnStatusSyncInterval = setInterval(() => {
-    runGhnStatusSyncTick(deps22, "interval");
+    runGhnStatusSyncTick(deps23, "interval");
   }, intervalMs);
   if (typeof ghnStatusSyncInterval.unref === "function") {
     ghnStatusSyncInterval.unref();
@@ -75587,7 +75636,7 @@ function scheduleGhnStatusSync(deps22 = {}) {
     }
   }
   ghnStatusSyncBootTimer = setTimeout(() => {
-    runGhnStatusSyncTick(deps22, "boot");
+    runGhnStatusSyncTick(deps23, "boot");
   }, 75e3);
   if (typeof ghnStatusSyncBootTimer.unref === "function") {
     ghnStatusSyncBootTimer.unref();
@@ -75733,6 +75782,16 @@ var MAX_CONCURRENT_JOBS = Math.max(
   Math.min(8, Number(process.env.SHOPEE_WEBHOOK_MAX_CONCURRENT) || 4)
 );
 var WEBHOOK_JOB_TIMEOUT_MS = 45e3;
+var lastWebhookAt = 0;
+function markWebhookReceived() {
+  lastWebhookAt = Date.now();
+}
+function getShopeeWebhookStats() {
+  return {
+    pid: process.pid,
+    lastWebhookAt: lastWebhookAt ? new Date(lastWebhookAt).toISOString() : null
+  };
+}
 var queueMetrics = {
   overflowCount: 0,
   completedJobs: 0,
@@ -75915,7 +75974,8 @@ function queueAfterAck(queue, req, routeLabel) {
     try {
       const rawBody = Buffer.isBuffer(req.body) ? req.body : null;
       const bodyText = rawBody ? rawBody.toString("utf8") : typeof req.body === "string" ? req.body : JSON.stringify(req.body ?? {});
-      console.log(`[WEBHOOK RECEIVED] ${routeLabel} \u2014 ACK 200 sent; headers:`, {
+      markWebhookReceived();
+      console.log(`[WEBHOOK RECEIVED] pid=${process.pid} ${routeLabel} \u2014 ACK 200 sent; headers:`, {
         authorization: req.get("authorization") ? "(present)" : "(missing)",
         contentLength: req.get("content-length") || "0",
         contentType: req.get("content-type") || "",
@@ -82475,7 +82535,7 @@ function parseCancelReturnKindParam(raw) {
   if (k === "cancelled" || k === "cancel") return "cancelled";
   return "";
 }
-var TAB_COUNT_CACHE_MS = 3e4;
+var TAB_COUNT_CACHE_MS = 5e3;
 var tabCountCache = null;
 function invalidateTabCountCache() {
   tabCountCache = null;
@@ -85737,7 +85797,9 @@ var deps3 = {
   appRoot: APP_ROOT,
   appBaseUrl: APP_BASE_URL,
   shopeeCallbackUrl: SHOPEE_CALLBACK_URL,
-  shopeeWebhookUrl: SHOPEE_WEBHOOK_URL
+  shopeeWebhookUrl: SHOPEE_WEBHOOK_URL,
+  /** Chẩn đoán độ trễ đơn mới — webhook / cron / change stream / SSE. */
+  getOrderSyncDiagnostics: () => null
 };
 function initHealthController(partial) {
   deps3 = { ...deps3, ...partial };
@@ -85819,8 +85881,17 @@ function getHealth(_req, res) {
     checkedAt: (/* @__PURE__ */ new Date()).toISOString(),
     routes: {
       mappingProducts: true
-    }
+    },
+    // Mỗi Passenger process trả số của CHÍNH nó — gọi vài lần sẽ thấy nhiều pid khác nhau.
+    orderSync: safeOrderSyncDiagnostics()
   });
+}
+function safeOrderSyncDiagnostics() {
+  try {
+    return deps3.getOrderSyncDiagnostics() || null;
+  } catch (err) {
+    return { error: err?.message || String(err) };
+  }
 }
 
 // routes/healthRoutes.js
@@ -105128,14 +105199,14 @@ async function $do$8(client, id, api_version, options) {
   }
   return [result, { status: "complete", request: req, response }];
 }
-function interactionsGet(client, id, stream4, last_event_id, include_input, api_version, options) {
-  return new APIPromise($do$7(client, id, stream4, last_event_id, include_input, api_version, options));
+function interactionsGet(client, id, stream5, last_event_id, include_input, api_version, options) {
+  return new APIPromise($do$7(client, id, stream5, last_event_id, include_input, api_version, options));
 }
-async function $do$7(client, id, stream4, last_event_id, include_input, api_version, options) {
+async function $do$7(client, id, stream5, last_event_id, include_input, api_version, options) {
   var _a2, _b, _c;
   const input = {
     id,
-    stream: stream4,
+    stream: stream5,
     last_event_id,
     include_input,
     api_version
@@ -105875,12 +105946,12 @@ var GeminiNextGenInteractions = class {
     return addOutputPropertiesIfInteraction(response);
   }
   async get(id, params = {}, options) {
-    const { api_version, stream: stream4 = false, last_event_id, include_input } = params !== null && params !== void 0 ? params : {};
-    if (stream4 === true) {
-      const response2 = await wrapSDKCall(() => this.getClient(api_version).interactions.get(id, { stream: stream4, last_event_id, include_input, api_version }, toGoogleGenAIRequestOptions(options, true)));
+    const { api_version, stream: stream5 = false, last_event_id, include_input } = params !== null && params !== void 0 ? params : {};
+    if (stream5 === true) {
+      const response2 = await wrapSDKCall(() => this.getClient(api_version).interactions.get(id, { stream: stream5, last_event_id, include_input, api_version }, toGoogleGenAIRequestOptions(options, true)));
       return wrapStreamErrors(response2);
     }
-    const response = await unwrapWithSdkHttpResponse(interactionsGet(this.getClient(api_version), id, stream4, last_event_id, include_input, api_version, toGoogleGenAIRequestOptions(options)));
+    const response = await unwrapWithSdkHttpResponse(interactionsGet(this.getClient(api_version), id, stream5, last_event_id, include_input, api_version, toGoogleGenAIRequestOptions(options)));
     return addOutputPropertiesIfInteraction(response);
   }
   async delete(id, params = {}, options) {
@@ -106030,9 +106101,9 @@ async function wrapSDKCall(operation) {
     throw wrapSDKError(error);
   }
 }
-function wrapStreamErrors(stream4) {
-  const asyncIterable = stream4;
-  return new Proxy(stream4, {
+function wrapStreamErrors(stream5) {
+  const asyncIterable = stream5;
+  return new Proxy(stream5, {
     get(target, property) {
       if (property !== Symbol.asyncIterator) {
         const value = Reflect.get(target, property, target);
@@ -111000,13 +111071,13 @@ var Http2Sessions = class {
     if (sessionTimeout != null) {
       let streamsCount = 0;
       session.request = function() {
-        const stream4 = originalRequestFn.apply(this, arguments);
+        const stream5 = originalRequestFn.apply(this, arguments);
         streamsCount++;
         if (timer) {
           clearTimeout(timer);
           timer = null;
         }
-        stream4.once("close", () => {
+        stream5.once("close", () => {
           if (!--streamsCount) {
             timer = setTimeout(() => {
               timer = null;
@@ -111014,7 +111085,7 @@ var Http2Sessions = class {
             }, sessionTimeout);
           }
         });
-        return stream4;
+        return stream5;
       };
     }
     session.once("close", removeSession);
@@ -111541,8 +111612,8 @@ var decodeURIComponentSafe = (value) => {
     return value;
   }
 };
-var flushOnFinish = (stream4, [throttled, flush]) => {
-  stream4.on("end", flush).on("error", flush);
+var flushOnFinish = (stream5, [throttled, flush]) => {
+  stream5.on("end", flush).on("error", flush);
   return throttled;
 };
 var http2Sessions = new Http2Sessions_default();
@@ -112886,12 +112957,12 @@ var readBytes = async function* (iterable, chunkSize) {
     yield* streamChunk(chunk, chunkSize);
   }
 };
-var readStream = async function* (stream4) {
-  if (stream4[Symbol.asyncIterator]) {
-    yield* stream4;
+var readStream = async function* (stream5) {
+  if (stream5[Symbol.asyncIterator]) {
+    yield* stream5;
     return;
   }
-  const reader = stream4.getReader();
+  const reader = stream5.getReader();
   try {
     for (; ; ) {
       const { done, value } = await reader.read();
@@ -112904,8 +112975,8 @@ var readStream = async function* (stream4) {
     await reader.cancel();
   }
 };
-var trackStream = (stream4, chunkSize, onProgress, onFinish) => {
-  const iterator2 = readBytes(stream4, chunkSize);
+var trackStream = (stream5, chunkSize, onProgress, onFinish) => {
+  const iterator2 = readBytes(stream5, chunkSize);
   let bytes = 0;
   let done;
   let _onFinish = (e2) => {
@@ -113156,8 +113227,8 @@ var factory = (env2) => {
         }
       }
       const mustEnforceStreamBody = hasMaxBodyLength && (utils_default.isReadableStream(data) || utils_default.isStream(data));
-      const trackRequestStream = (stream4, onProgress, flush) => trackStream(
-        stream4,
+      const trackRequestStream = (stream5, onProgress, flush) => trackStream(
+        stream5,
         DEFAULT_CHUNK_SIZE,
         (loadedBytes) => {
           if (hasMaxBodyLength && loadedBytes > maxBodyLength) {
@@ -116112,6 +116183,15 @@ var dbReady_default = dbReadyMiddleware;
 var MAX_SSE_CLIENTS = 20;
 var HEARTBEAT_MS = 15e3;
 var clients = /* @__PURE__ */ new Set();
+var lastNewOrderAt = 0;
+function getOrderRealtimeStats() {
+  pruneDeadClients();
+  return {
+    pid: process.pid,
+    sseClients: clients.size,
+    lastNewOrderAt: lastNewOrderAt ? new Date(lastNewOrderAt).toISOString() : null
+  };
+}
 function pruneDeadClients() {
   for (const res of clients) {
     if (res.writableEnded || res.destroyed) {
@@ -116134,20 +116214,31 @@ function buildEventBody(payload) {
 }
 function broadcast(eventName, body) {
   pruneDeadClients();
-  if (clients.size === 0) return;
+  if (clients.size === 0) {
+    console.log(
+      `[SSE] pid=${process.pid} ${eventName} DROPPED \u2014 0 client tr\xEAn process n\xE0y sns=${(body?.orderSns || []).slice(0, 5).join(",") || "-"}`
+    );
+    return;
+  }
   const chunk = `event: ${eventName}
 data: ${JSON.stringify(body)}
 
 `;
+  let sent = 0;
   for (const res of clients) {
     try {
       res.write(chunk);
+      sent += 1;
     } catch {
       clients.delete(res);
     }
   }
+  console.log(
+    `[SSE] pid=${process.pid} ${eventName} \u2192 ${sent} client sns=${(body?.orderSns || []).slice(0, 5).join(",") || "-"}`
+  );
 }
 function emitNewOrder(payload) {
+  lastNewOrderAt = Date.now();
   broadcast("new_order", buildEventBody(payload));
 }
 function emitOrderUpdated(payload) {
@@ -116174,6 +116265,7 @@ data: ${JSON.stringify({ ok: true, at: Date.now() })}
 
 `);
   clients.add(res);
+  console.log(`[SSE] pid=${process.pid} client CONNECTED \u2014 t\u1ED5ng=${clients.size}`);
   const heartbeat = setInterval(() => {
     if (res.writableEnded || res.destroyed) {
       clearInterval(heartbeat);
@@ -127038,11 +127130,11 @@ var Task;
   Task2["BATCH_EMBED_CONTENTS"] = "batchEmbedContents";
 })(Task || (Task = {}));
 var RequestUrl = class {
-  constructor(model, task, apiKey, stream4, requestOptions) {
+  constructor(model, task, apiKey, stream5, requestOptions) {
     this.model = model;
     this.task = task;
     this.apiKey = apiKey;
-    this.stream = stream4;
+    this.stream = stream5;
     this.requestOptions = requestOptions;
   }
   toString() {
@@ -127090,15 +127182,15 @@ async function getHeaders(url2) {
   }
   return headers;
 }
-async function constructModelRequest(model, task, apiKey, stream4, body, requestOptions) {
-  const url2 = new RequestUrl(model, task, apiKey, stream4, requestOptions);
+async function constructModelRequest(model, task, apiKey, stream5, body, requestOptions) {
+  const url2 = new RequestUrl(model, task, apiKey, stream5, requestOptions);
   return {
     url: url2.toString(),
     fetchOptions: Object.assign(Object.assign({}, buildFetchOptions(requestOptions)), { method: "POST", headers: await getHeaders(url2), body })
   };
 }
-async function makeModelRequest(model, task, apiKey, stream4, body, requestOptions = {}, fetchFn = fetch) {
-  const { url: url2, fetchOptions } = await constructModelRequest(model, task, apiKey, stream4, body, requestOptions);
+async function makeModelRequest(model, task, apiKey, stream5, body, requestOptions = {}, fetchFn = fetch) {
+  const { url: url2, fetchOptions } = await constructModelRequest(model, task, apiKey, stream5, body, requestOptions);
   return makeRequest(url2, fetchOptions, fetchFn);
 }
 async function makeRequest(url2, fetchOptions, fetchFn = fetch) {
@@ -127314,9 +127406,9 @@ function processStream(response) {
     response: getResponsePromise(stream22)
   };
 }
-async function getResponsePromise(stream4) {
+async function getResponsePromise(stream5) {
   const allResponses = [];
-  const reader = stream4.getReader();
+  const reader = stream5.getReader();
   while (true) {
     const { done, value } = await reader.read();
     if (done) {
@@ -127325,9 +127417,9 @@ async function getResponsePromise(stream4) {
     allResponses.push(value);
   }
 }
-function generateResponseSequence(stream4) {
+function generateResponseSequence(stream5) {
   return __asyncGenerator3(this, arguments, function* generateResponseSequence_1() {
-    const reader = stream4.getReader();
+    const reader = stream5.getReader();
     while (true) {
       const { value, done } = yield __await3(reader.read());
       if (done) {
@@ -127339,7 +127431,7 @@ function generateResponseSequence(stream4) {
 }
 function getResponseStream(inputStream) {
   const reader = inputStream.getReader();
-  const stream4 = new ReadableStream({
+  const stream5 = new ReadableStream({
     start(controller) {
       let currentText = "";
       return pump2();
@@ -127381,7 +127473,7 @@ function getResponseStream(inputStream) {
       }
     }
   });
-  return stream4;
+  return stream5;
 }
 function aggregateResponses(responses) {
   const lastResponse = responses[responses.length - 1];
@@ -129479,7 +129571,7 @@ async function runGhnStatusSync(opts = {}) {
   let unchanged = 0;
   let errors = 0;
   let consecutiveErrors = 0;
-  let stopped = "";
+  let stopped2 = "";
   try {
     const candidates = await findOpenGhnExternalOrdersFromStore({ limit, lookbackDays });
     const batch = Array.isArray(candidates) ? candidates.slice(0, limit) : [];
@@ -129489,7 +129581,7 @@ async function runGhnStatusSync(opts = {}) {
     const toPersist = [];
     for (let i2 = 0; i2 < batch.length; i2 += 1) {
       if (Date.now() - startedAt >= maxMs) {
-        stopped = "deadline";
+        stopped2 = "deadline";
         break;
       }
       if (i2 > 0) await sleep3(delayMs);
@@ -129532,7 +129624,7 @@ async function runGhnStatusSync(opts = {}) {
           err?.message || err
         );
         if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-          stopped = "consecutive_errors";
+          stopped2 = "consecutive_errors";
           break;
         }
       }
@@ -129555,7 +129647,7 @@ async function runGhnStatusSync(opts = {}) {
     }
     const elapsed = Date.now() - startedAt;
     console.log(
-      `[GHN Status Sync] DONE trigger=${trigger} scanned=${scanned} updated=${updated} unchanged=${unchanged} errors=${errors} stopped=${stopped || "ok"} ${elapsed}ms`
+      `[GHN Status Sync] DONE trigger=${trigger} scanned=${scanned} updated=${updated} unchanged=${unchanged} errors=${errors} stopped=${stopped2 || "ok"} ${elapsed}ms`
     );
     return {
       skipped: false,
@@ -129564,7 +129656,7 @@ async function runGhnStatusSync(opts = {}) {
       updated,
       unchanged,
       errors,
-      stopped: stopped || null,
+      stopped: stopped2 || null,
       elapsedMs: elapsed,
       message: `scanned=${scanned} updated=${updated} unchanged=${unchanged} errors=${errors}`
     };
@@ -129712,14 +129804,14 @@ function isShopeeCategoryCacheFresh(cache, ttlMs = CACHE_TTL_MS) {
   if (!Number.isFinite(t2)) return false;
   return Date.now() - t2 < ttlMs;
 }
-async function syncShopeeCategories(appRoot, deps22) {
-  const list = await deps22.fetchCategoryList(deps22.shopId, deps22.accessToken);
+async function syncShopeeCategories(appRoot, deps23) {
+  const list = await deps23.fetchCategoryList(deps23.shopId, deps23.accessToken);
   const category_list = Array.isArray(list) ? list : [];
   const tree = buildShopeeCategoryTree(category_list);
   const leaf_ids = [...collectShopeeLeafIds(category_list)];
   const payload = {
     synced_at: (/* @__PURE__ */ new Date()).toISOString(),
-    shop_id: String(deps22.shopId || ""),
+    shop_id: String(deps23.shopId || ""),
     category_count: category_list.length,
     leaf_count: leaf_ids.length,
     category_list,
@@ -129729,13 +129821,13 @@ async function syncShopeeCategories(appRoot, deps22) {
   writeShopeeCategoryCache(appRoot, payload);
   return payload;
 }
-async function getOrSyncShopeeCategories(appRoot, deps22, opts = {}) {
+async function getOrSyncShopeeCategories(appRoot, deps23, opts = {}) {
   const force = Boolean(opts.force);
   const cache = readShopeeCategoryCache(appRoot);
   if (!force && cache && isShopeeCategoryCacheFresh(cache) && Array.isArray(cache.tree)) {
     return { ...cache, from_cache: true };
   }
-  const fresh = await syncShopeeCategories(appRoot, deps22);
+  const fresh = await syncShopeeCategories(appRoot, deps23);
   return { ...fresh, from_cache: false };
 }
 function validateShopeeLeafCategoryId(categoryIdRaw, cache) {
@@ -130749,6 +130841,295 @@ async function processShopeeWebhookPayload(body) {
 
 // server.ts
 init_appPaths();
+
+// services/orderChangeStream.js
+var import_mongoose7 = __toESM(require("mongoose"), 1);
+var NEW_ORDER_FLUSH_MS = 300;
+var UPDATED_FLUSH_MS = 3e3;
+var UPDATED_FLUSH_MAX_MS = 3e4;
+var UPDATED_BURST_RESET_MS = 3e4;
+var MAX_BUFFERED_SNS = 500;
+var MAX_RECONNECT_ATTEMPTS = 5;
+var RECONNECT_BASE_MS = 2e3;
+var HEALTHY_RUN_MS = 6e4;
+var deps22 = {
+  /** @type {() => void} */
+  invalidateTabCountCache: () => {
+  },
+  /** @type {() => void} */
+  invalidateOrdersRefreshCache: () => {
+  }
+};
+var stream4 = null;
+var started = false;
+var stopped = false;
+var unsupported = false;
+var reconnectAttempts = 0;
+var reconnectTimer = null;
+var healthyTimer = null;
+var resumeToken = null;
+var lastEventAt = 0;
+var totalNew = 0;
+var totalUpdated = 0;
+var pendingNew = /* @__PURE__ */ new Set();
+var pendingUpdated = /* @__PURE__ */ new Set();
+var newFlushTimer = null;
+var updatedFlushTimer = null;
+var updatedFlushWindowMs = UPDATED_FLUSH_MS;
+var lastUpdatedFlushAt = 0;
+function initOrderChangeStream(partial) {
+  deps22 = { ...deps22, ...partial };
+}
+function orderSnFromDocumentKey(documentKey) {
+  const raw = String(documentKey?._id ?? "").trim();
+  if (!raw) return "";
+  return raw.replace(/^shopee-/i, "").trim();
+}
+function invalidateLocalCaches() {
+  try {
+    deps22.invalidateTabCountCache?.();
+  } catch {
+  }
+  try {
+    deps22.invalidateOrdersRefreshCache?.();
+  } catch {
+  }
+}
+function flushNew() {
+  newFlushTimer = null;
+  if (pendingNew.size === 0) return;
+  const orderSns = [...pendingNew];
+  pendingNew.clear();
+  totalNew += orderSns.length;
+  invalidateLocalCaches();
+  emitNewOrder({ orderSns, count: orderSns.length });
+  console.log(
+    `[OrderChangeStream] pid=${process.pid} new_order n=${orderSns.length} sns=${orderSns.slice(0, 5).join(",")}`
+  );
+}
+function flushUpdated() {
+  updatedFlushTimer = null;
+  if (pendingUpdated.size === 0) return;
+  const orderSns = [...pendingUpdated];
+  pendingUpdated.clear();
+  totalUpdated += orderSns.length;
+  const now = Date.now();
+  if (lastUpdatedFlushAt && now - lastUpdatedFlushAt <= updatedFlushWindowMs * 2) {
+    updatedFlushWindowMs = Math.min(UPDATED_FLUSH_MAX_MS, updatedFlushWindowMs * 2);
+  } else {
+    updatedFlushWindowMs = UPDATED_FLUSH_MS;
+  }
+  lastUpdatedFlushAt = now;
+  invalidateLocalCaches();
+  emitOrderUpdated({ orderSns, count: orderSns.length });
+  console.log(
+    `[OrderChangeStream] pid=${process.pid} order_updated n=${orderSns.length} window=${updatedFlushWindowMs}ms`
+  );
+}
+function scheduleNewFlush() {
+  if (pendingNew.size >= MAX_BUFFERED_SNS) {
+    if (newFlushTimer) {
+      clearTimeout(newFlushTimer);
+      newFlushTimer = null;
+    }
+    flushNew();
+    return;
+  }
+  if (newFlushTimer) return;
+  newFlushTimer = setTimeout(flushNew, NEW_ORDER_FLUSH_MS);
+  if (typeof newFlushTimer.unref === "function") newFlushTimer.unref();
+}
+function scheduleUpdatedFlush() {
+  if (pendingUpdated.size >= MAX_BUFFERED_SNS) {
+    if (updatedFlushTimer) {
+      clearTimeout(updatedFlushTimer);
+      updatedFlushTimer = null;
+    }
+    flushUpdated();
+    return;
+  }
+  if (updatedFlushTimer) return;
+  if (lastUpdatedFlushAt && Date.now() - lastUpdatedFlushAt > UPDATED_BURST_RESET_MS) {
+    updatedFlushWindowMs = UPDATED_FLUSH_MS;
+  }
+  updatedFlushTimer = setTimeout(flushUpdated, updatedFlushWindowMs);
+  if (typeof updatedFlushTimer.unref === "function") updatedFlushTimer.unref();
+}
+function handleChange(change) {
+  lastEventAt = Date.now();
+  if (change?._id) resumeToken = change._id;
+  const orderSn = orderSnFromDocumentKey(change?.documentKey);
+  if (!orderSn) return;
+  if (change.operationType === "insert") {
+    pendingNew.add(orderSn);
+    pendingUpdated.delete(orderSn);
+    scheduleNewFlush();
+    return;
+  }
+  if (pendingNew.has(orderSn)) return;
+  pendingUpdated.add(orderSn);
+  scheduleUpdatedFlush();
+}
+function isUnsupportedError(err) {
+  const code = Number(err?.code);
+  const msg = String(err?.message || err || "").toLowerCase();
+  return code === 40573 || code === 40574 || msg.includes("only supported on replica sets") || msg.includes("changestream") && msg.includes("not supported");
+}
+function scheduleReconnect(reason) {
+  if (stopped || unsupported) return;
+  if (reconnectTimer) return;
+  if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+    console.error(
+      `[OrderChangeStream] pid=${process.pid} D\u1EEANG sau ${MAX_RECONNECT_ATTEMPTS} l\u1EA7n reconnect (${reason}). Realtime l\xF9i v\u1EC1 polling counter c\u1EE7a frontend.`
+    );
+    return;
+  }
+  reconnectAttempts += 1;
+  const delay3 = RECONNECT_BASE_MS * 2 ** (reconnectAttempts - 1);
+  console.warn(
+    `[OrderChangeStream] pid=${process.pid} reconnect #${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} sau ${delay3}ms (${reason})`
+  );
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    openStream();
+  }, delay3);
+  if (typeof reconnectTimer.unref === "function") reconnectTimer.unref();
+}
+function closeCurrentStream() {
+  if (healthyTimer) {
+    clearTimeout(healthyTimer);
+    healthyTimer = null;
+  }
+  if (!stream4) return;
+  const old = stream4;
+  stream4 = null;
+  try {
+    old.removeAllListeners();
+  } catch {
+  }
+  try {
+    void Promise.resolve(old.close()).catch(() => {
+    });
+  } catch {
+  }
+}
+function openStream() {
+  if (stopped || unsupported) return;
+  const db = import_mongoose7.default.connection?.db;
+  if (import_mongoose7.default.connection?.readyState !== 1 || !db) {
+    scheduleReconnect("mongo ch\u01B0a s\u1EB5n s\xE0ng");
+    return;
+  }
+  try {
+    closeCurrentStream();
+    const options = { batchSize: 200, maxAwaitTimeMS: 1e3 };
+    if (resumeToken) options.resumeAfter = resumeToken;
+    stream4 = db.collection("orders").watch(
+      [{ $match: { operationType: { $in: ["insert", "update", "replace"] } } }],
+      options
+    );
+    const opened = stream4;
+    healthyTimer = setTimeout(() => {
+      healthyTimer = null;
+      if (stream4 === opened) reconnectAttempts = 0;
+    }, HEALTHY_RUN_MS);
+    if (typeof healthyTimer.unref === "function") healthyTimer.unref();
+    stream4.on("change", (change) => {
+      try {
+        handleChange(change);
+      } catch (err) {
+        console.warn(
+          "[OrderChangeStream] handleChange l\u1ED7i:",
+          err?.message || err
+        );
+      }
+    });
+    stream4.on("error", (err) => {
+      if (isUnsupportedError(err)) {
+        unsupported = true;
+        console.error(
+          "[OrderChangeStream] MongoDB kh\xF4ng h\u1ED7 tr\u1EE3 change stream (c\u1EA7n replica set/Atlas). T\u1EAFt bridge, realtime d\u1EF1a v\xE0o emit tr\u1EF1c ti\u1EBFp + polling counter."
+        );
+        closeCurrentStream();
+        return;
+      }
+      console.error(
+        `[OrderChangeStream] pid=${process.pid} stream error:`,
+        err?.message || err
+      );
+      if (Number(err?.code) === 286) resumeToken = null;
+      closeCurrentStream();
+      scheduleReconnect("stream error");
+    });
+    stream4.on("close", () => {
+      if (stopped || unsupported) return;
+      scheduleReconnect("stream closed");
+    });
+    console.log(
+      `[OrderChangeStream] pid=${process.pid} \u0110ANG NGHE collection orders (resume=${resumeToken ? "yes" : "no"})`
+    );
+  } catch (err) {
+    if (isUnsupportedError(err)) {
+      unsupported = true;
+      console.error(
+        "[OrderChangeStream] MongoDB kh\xF4ng h\u1ED7 tr\u1EE3 change stream (c\u1EA7n replica set/Atlas). T\u1EAFt bridge."
+      );
+      return;
+    }
+    console.error(
+      `[OrderChangeStream] pid=${process.pid} watch() th\u1EA5t b\u1EA1i:`,
+      err?.message || err
+    );
+    scheduleReconnect("watch exception");
+  }
+}
+function startOrderChangeStream() {
+  if (String(process.env.ORDER_CHANGE_STREAM || "1").trim() === "0") {
+    console.log("[OrderChangeStream] DISABLED (ORDER_CHANGE_STREAM=0)");
+    return;
+  }
+  if (started) {
+    console.log("[OrderChangeStream] already started (idempotent).");
+    return;
+  }
+  started = true;
+  stopped = false;
+  openStream();
+}
+function stopOrderChangeStream() {
+  stopped = true;
+  started = false;
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  if (newFlushTimer) {
+    clearTimeout(newFlushTimer);
+    newFlushTimer = null;
+  }
+  if (updatedFlushTimer) {
+    clearTimeout(updatedFlushTimer);
+    updatedFlushTimer = null;
+  }
+  pendingNew.clear();
+  pendingUpdated.clear();
+  updatedFlushWindowMs = UPDATED_FLUSH_MS;
+  lastUpdatedFlushAt = 0;
+  closeCurrentStream();
+  console.log(`[OrderChangeStream] pid=${process.pid} stopped.`);
+}
+function getOrderChangeStreamStats() {
+  return {
+    alive: Boolean(stream4) && !stopped && !unsupported,
+    unsupported,
+    reconnectAttempts,
+    lastEventAt: lastEventAt ? new Date(lastEventAt).toISOString() : null,
+    emittedNew: totalNew,
+    emittedUpdated: totalUpdated
+  };
+}
+
+// server.ts
 function asRouter(mod) {
   if (mod && typeof mod.use === "function") return mod;
   if (mod?.default && typeof mod.default.use === "function") return mod.default;
@@ -131325,13 +131706,13 @@ function serveLabelPdfFromMem(filename, res) {
       res.setHeader("Content-Length", String(disk.size));
       res.setHeader("Cache-Control", "private, max-age=300");
       res.setHeader("X-Content-Type-Options", "nosniff");
-      const stream4 = import_fs23.default.createReadStream(disk.filePath);
-      stream4.on("error", (err) => {
+      const stream5 = import_fs23.default.createReadStream(disk.filePath);
+      stream5.on("error", (err) => {
         console.error(`[Labels] Stream disk l\u1ED7i ${safe}:`, err);
         if (!res.headersSent) res.status(500).end();
         else res.destroy(err);
       });
-      stream4.pipe(res);
+      stream5.pipe(res);
       console.log(`[Labels] Streamed PDF ${safe} (${disk.size} bytes)`);
       return "sent";
     }
@@ -131429,6 +131810,7 @@ var SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC = 3 * 24 * 60 * 60;
 var SHOPEE_ORDER_LIST_MAX_WINDOW_SEC = 15 * 24 * 60 * 60;
 var ORDERS_PULL_PER_SHOP_MS = 18e4;
 var ORDERS_PULL_PER_SHOP_LONG_MS = 3e5;
+var ORDERS_PULL_FAST_LANE_PER_SHOP_MS = 3e4;
 var ORDERS_PULL_HARD_DEADLINE_MS = 18e4;
 var READY_TO_SHIP_BACKFILL_LOOKBACK_SEC = 7 * 24 * 60 * 60;
 var SHOPEE_SHIPPED_LOOKBACK_SEC = 3 * 24 * 60 * 60;
@@ -131437,6 +131819,7 @@ var FORCE_RESCUE_SHOPEE_ORDER_SNS = ["26081391A7VTJ7", "26081391Q3V4JV"];
 var ORDERS_PULL_LOCK_TIMEOUT_MS = 15 * 60 * 1e3;
 var ordersPullInFlight = false;
 var ordersPullStartedAt = 0;
+var lastFastPullAt = 0;
 function buildShopeeOrderListTimeChunks(timeFromSec, timeToSec, maxWindowSec = SHOPEE_ORDER_LIST_MAX_WINDOW_SEC) {
   const to = toShopeeUnixSeconds(timeToSec);
   let from = toShopeeUnixSeconds(timeFromSec);
@@ -133741,8 +134124,8 @@ async function debugForceSyncHandedOverOrders(opts) {
     }));
     if (candidates.length === 0) {
       try {
-        const { default: mongoose7 } = await import("mongoose");
-        const col = mongoose7.connection?.db?.collection("orders");
+        const { default: mongoose8 } = await import("mongoose");
+        const col = mongoose8.connection?.db?.collection("orders");
         if (col) {
           const rawHanded = await col.countDocuments({
             $or: [
@@ -134055,6 +134438,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
   }
   const startedAt = Date.now();
   const enrichTracking3 = opts?.enrichTracking === true;
+  const fastLane = opts?.fastLane === true;
   const errors = [];
   const shopeeResponsePages = [];
   const failedOrdersSet = /* @__PURE__ */ new Set();
@@ -134091,7 +134475,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
     const shortLookback = opts?.allowShortLookback === true;
     lookbackSec = clampShopeeHistoryLookbackSec(rawLookback, shortLookback);
     longLookback = lookbackSec >= 168 * 3600;
-    perShopBudgetMs = shortLookback ? ORDERS_PULL_PER_SHOP_MS : longLookback ? ORDERS_PULL_PER_SHOP_LONG_MS : ORDERS_PULL_PER_SHOP_MS;
+    perShopBudgetMs = fastLane ? ORDERS_PULL_FAST_LANE_PER_SHOP_MS : shortLookback ? ORDERS_PULL_PER_SHOP_MS : longLookback ? ORDERS_PULL_PER_SHOP_LONG_MS : ORDERS_PULL_PER_SHOP_MS;
     pullDeadlineMs = perShopBudgetMs * Math.max(1, shopIds.length);
     deadlineAt = startedAt + pullDeadlineMs;
     if (shopIds.length === 0) {
@@ -134109,9 +134493,10 @@ async function pullIncrementalOrdersFromShopee(opts) {
     }
     const orders = [];
     const perShopResults = [];
+    if (fastLane) lastFastPullAt = Date.now();
     syncDiag(
       "Pull START",
-      `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${lookbackSec}s short=${shortLookback} deadline=${pullDeadlineMs}ms perShop=${perShopBudgetMs}ms enrichTracking=${enrichTracking3} longLookback=${longLookback}`
+      `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${lookbackSec}s short=${shortLookback} deadline=${pullDeadlineMs}ms perShop=${perShopBudgetMs}ms enrichTracking=${enrichTracking3} longLookback=${longLookback} fastLane=${fastLane}`
     );
     console.log(
       `[Orders Pull] B\u1EAFt \u0111\u1EA7u ch\u1EA1y ti\u1EBFn tr\xECnh ng\u1EA7m \u2014 shops=${shopIds.length} ids=[${shopIds.join(",")}] lookbackSec=${lookbackSec}`
@@ -134251,7 +134636,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
               }
             }
           }
-          if (Date.now() < shopDeadlineAt) {
+          if (!fastLane && Date.now() < shopDeadlineAt) {
             try {
               const shippedLookbackSec = Math.max(
                 24 * 60 * 60,
@@ -134316,7 +134701,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
               );
             }
           }
-          if (Date.now() < shopDeadlineAt) {
+          if (!fastLane && Date.now() < shopDeadlineAt) {
             try {
               const completedLookbackSec = Math.max(
                 24 * 60 * 60,
@@ -134380,7 +134765,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
               );
             }
           }
-          if (!shortLookback && Date.now() < shopDeadlineAt) {
+          if (!fastLane && !shortLookback && Date.now() < shopDeadlineAt) {
             try {
               const cancelLookbackSec = SHOPEE_HISTORY_LOOKBACK_SEC;
               const cancelStatuses = ["CANCELLED", "IN_CANCEL"];
@@ -134414,7 +134799,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
               );
             }
           }
-          if (Date.now() < shopDeadlineAt) {
+          if (!fastLane && Date.now() < shopDeadlineAt) {
             try {
               const returnRows = await shopeeFetchAllReturnSns(shopIdStr, accessToken, {
                 mode: "full",
@@ -134658,7 +135043,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
       `[Orders Pull] perShop summary:`,
       JSON.stringify(perShopResults)
     );
-    if (Date.now() <= deadlineAt) {
+    if (!fastLane && Date.now() <= deadlineAt) {
       try {
         const repaired = await repairWrongShopCancelledOrders({ limit: 12 });
         if (repaired.checked > 0) {
@@ -134676,7 +135061,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
         );
       }
     }
-    if (opts?.reconcileActive === true && Date.now() <= deadlineAt) {
+    if (!fastLane && opts?.reconcileActive === true && Date.now() <= deadlineAt) {
       try {
         const reconciled = await reconcileActiveShopeeOrdersFromStore(orders, shopIds, deadlineAt);
         pulled += reconciled.pulled;
@@ -141955,7 +142340,12 @@ function scheduleShopeeCancelReturnReconcile() {
 }
 function scheduleAutoIncrementalOrdersSyncSafe() {
   scheduleAutoIncrementalOrdersSync({
-    lookbackSec: Number(process.env.AUTO_ORDER_SYNC_LOOKBACK_SEC) || 2 * 60 * 60
+    lookbackSec: Number(process.env.AUTO_ORDER_SYNC_LOOKBACK_SEC) || 15 * 60
+  });
+}
+function scheduleOrdersHealSyncSafe() {
+  scheduleOrdersHealSync({
+    lookbackSec: Number(process.env.AUTO_ORDER_HEAL_LOOKBACK_SEC) || 2 * 60 * 60
   });
 }
 function scheduleReadyToShipBackfillSafe() {
@@ -145780,7 +146170,14 @@ async function startServer() {
     appRoot: APP_ROOT14,
     appBaseUrl: APP_BASE_URL4,
     shopeeCallbackUrl: SHOPEE_CALLBACK_URL2,
-    shopeeWebhookUrl: SHOPEE_WEBHOOK_URL2
+    shopeeWebhookUrl: SHOPEE_WEBHOOK_URL2,
+    getOrderSyncDiagnostics: () => ({
+      ...getOrderRealtimeStats(),
+      ...getShopeeWebhookStats(),
+      changeStream: getOrderChangeStreamStats(),
+      lastFastPullAt: lastFastPullAt ? new Date(lastFastPullAt).toISOString() : null,
+      ordersPullInFlight
+    })
   });
   app.use("/api", authRoutes);
   app.use("/api/scan", authMiddleware, scanRoutes);
@@ -150527,9 +150924,15 @@ async function startServer() {
             err instanceof Error ? err.message : err
           );
         });
+        initOrderChangeStream({
+          invalidateTabCountCache,
+          invalidateOrdersRefreshCache
+        });
+        startOrderChangeStream();
         scheduleMissingShopeeTrackingEnrichment();
         scheduleShopeeCancelReturnReconcile();
         scheduleAutoIncrementalOrdersSyncSafe();
+        scheduleOrdersHealSyncSafe();
         scheduleReadyToShipBackfillSafe();
         scheduleShopeeReturnRequestsSyncSafe();
         scheduleHandedOverStatusReconcileSafe();
@@ -150602,6 +151005,14 @@ async function startServer() {
       );
       scheduleLabelPdfCleanup();
       scheduleKeepAlivePing({ appBaseUrl: APP_BASE_URL4 });
+      for (const sig of ["SIGTERM", "SIGINT"]) {
+        process.once(sig, () => {
+          try {
+            stopOrderChangeStream();
+          } catch {
+          }
+        });
+      }
     };
     if (process.env.PORT) {
       app.listen(PORT, onReady);

@@ -1,6 +1,10 @@
 /**
  * Cron — Background Incremental Order Sync (node-cron).
- * Mặc định: mỗi 5 phút kéo đơn update_time trong ~2 giờ gần nhất.
+ *
+ * Hai làn tách biệt để đơn mới không phải xếp hàng sau việc heal lịch sử:
+ * - Làn nhanh (mỗi phút, cửa sổ 15 phút): CHỈ get_order_list + get_order_detail.
+ * - Làn heal (mỗi 30 phút): thêm SHIPPED 3 ngày / COMPLETED 15 ngày / CANCELLED
+ *   30 ngày / get_return_list — chính mấy lượt này từng ngốn hết 5 phút/tick.
  *
  * Tắt: AUTO_ORDER_SYNC_CRON=0
  * Dò SHIPPED cho đơn ĐVVC + READY_TO_SHIP/PROCESSED chưa quét mã — mỗi 5 phút.
@@ -15,16 +19,23 @@ import {
   DEFAULT_INCREMENTAL_LOOKBACK_SEC,
 } from "../services/orderSync/orderSyncService.js";
 
+/** Làn nhanh: cửa sổ 15 phút là đủ phủ 1 tick/phút kể cả khi lỡ vài nhịp. */
+const FAST_LANE_LOOKBACK_SEC = 15 * 60;
+
 let autoIncrementalScheduled = false;
 let cronTask = null;
+let ordersHealScheduled = false;
+let ordersHealTask = null;
 let handedOverReconcileScheduled = false;
 let handedOverReconcileTask = null;
 
 /**
+ * Làn nhanh — mỗi phút, chỉ kéo đơn mới (không heal lịch sử).
+ *
  * @param {object} [deps]
  * @param {() => Promise<any>} [deps.runSync] — optional override
  * @param {number} [deps.lookbackSec]
- * @param {string} [deps.cronExpr] — mặc định mỗi 5 phút
+ * @param {string} [deps.cronExpr] — mặc định mỗi phút
  */
 export function scheduleAutoIncrementalOrdersSync(deps = {}) {
   if (autoIncrementalScheduled) {
@@ -49,10 +60,10 @@ export function scheduleAutoIncrementalOrdersSync(deps = {}) {
     60,
     Number(deps.lookbackSec) ||
       Number(process.env.AUTO_ORDER_SYNC_LOOKBACK_SEC) ||
-      DEFAULT_INCREMENTAL_LOOKBACK_SEC,
+      FAST_LANE_LOOKBACK_SEC,
   );
   const cronExpr = String(
-    deps.cronExpr || process.env.AUTO_ORDER_SYNC_CRON_EXPR || "*/5 * * * *",
+    deps.cronExpr || process.env.AUTO_ORDER_SYNC_CRON_EXPR || "*/1 * * * *",
   ).trim();
 
   if (!cron.validate(cronExpr)) {
@@ -61,33 +72,97 @@ export function scheduleAutoIncrementalOrdersSync(deps = {}) {
   }
 
   cronTask = cron.schedule(cronExpr, () => {
-    console.log(
-      `[CRON] Tick Incremental Sync — lookbackSec=${lookbackSec} (${Math.round(lookbackSec / 3600)}h)`,
-    );
+    console.log(`[CRON] Tick Fast Lane Sync — lookbackSec=${lookbackSec}`);
     try {
       if (typeof deps.runSync === "function") {
-        void deps.runSync({ lookbackSec, trigger: "cron" });
+        void deps.runSync({ lookbackSec, trigger: "cron_fast" });
         return;
       }
       const ack = triggerBackgroundOrderSync({
         lookbackSec,
-        trigger: "cron",
+        trigger: "cron_fast",
         allowShortLookback: true,
-        // Đối soát PROCESSED/Đã giao ĐVVC còn kẹt — bắt SHIPPED khi bưu tá đã lấy hàng.
-        reconcileActive: true,
-        jobType: "shopee_orders_cron_sync",
+        // Làn nhanh chỉ lo đơn mới — heal trạng thái là việc của cron 30 phút.
+        fastLane: true,
+        reconcileActive: false,
+        jobType: "shopee_orders_fast_sync",
       });
       console.log(
-        `[CRON] trigger → accepted=${ack.accepted} busy=${ack.busy} msg=${ack.message}`,
+        `[CRON] fast trigger → accepted=${ack.accepted} busy=${ack.busy} msg=${ack.message}`,
       );
     } catch (err) {
-      console.error("[CRON] Incremental Sync tick failed:", err?.message || err);
+      console.error("[CRON] Fast Lane Sync tick failed:", err?.message || err);
     }
   });
 
   console.log(
-    `[CRON] Auto Incremental Sync ON — expr="${cronExpr}" lookbackSec=${lookbackSec}` +
-      ` (~${Math.round(lookbackSec / 3600)}h). Mutex bảo vệ chồng job.`,
+    `[CRON] Fast Lane Sync ON — expr="${cronExpr}" lookbackSec=${lookbackSec}` +
+      ` (${Math.round(lookbackSec / 60)} phút). Mutex bảo vệ chồng job.`,
+  );
+}
+
+/**
+ * Làn heal — mỗi 30 phút, pull đầy đủ (SHIPPED / COMPLETED / CANCELLED / returns).
+ * Tách khỏi làn nhanh để đơn mới không bị kẹt sau hàng chục trang get_order_list.
+ *
+ * Tắt: AUTO_ORDER_HEAL_CRON=0
+ *
+ * @param {object} [deps]
+ * @param {number} [deps.lookbackSec]
+ * @param {string} [deps.cronExpr] — mặc định mỗi 30 phút
+ */
+export function scheduleOrdersHealSync(deps = {}) {
+  if (ordersHealScheduled) {
+    console.log("[CRON] Orders Heal Sync already scheduled (idempotent).");
+    return;
+  }
+  ordersHealScheduled = true;
+
+  const raw = String(process.env.AUTO_ORDER_HEAL_CRON || "1").trim().toLowerCase();
+  if (raw === "0" || raw === "off" || raw === "false") {
+    console.log("[CRON] Orders Heal Sync DISABLED (AUTO_ORDER_HEAL_CRON=0).");
+    return;
+  }
+
+  const lookbackSec = Math.max(
+    60,
+    Number(deps.lookbackSec) ||
+      Number(process.env.AUTO_ORDER_HEAL_LOOKBACK_SEC) ||
+      DEFAULT_INCREMENTAL_LOOKBACK_SEC,
+  );
+  const cronExpr = String(
+    deps.cronExpr || process.env.AUTO_ORDER_HEAL_CRON_EXPR || "*/30 * * * *",
+  ).trim();
+
+  if (!cron.validate(cronExpr)) {
+    console.error(`[CRON] Invalid heal cron expr="${cronExpr}" — heal cron NOT started`);
+    return;
+  }
+
+  ordersHealTask = cron.schedule(cronExpr, () => {
+    console.log(
+      `[CRON] Tick Orders Heal Sync — lookbackSec=${lookbackSec} (${Math.round(lookbackSec / 3600)}h)`,
+    );
+    try {
+      const ack = triggerBackgroundOrderSync({
+        lookbackSec,
+        trigger: "cron_heal",
+        allowShortLookback: true,
+        // Đối soát PROCESSED/Đã giao ĐVVC còn kẹt — bắt SHIPPED khi bưu tá đã lấy hàng.
+        reconcileActive: true,
+        jobType: "shopee_orders_heal_sync",
+      });
+      console.log(
+        `[CRON] heal trigger → accepted=${ack.accepted} busy=${ack.busy} msg=${ack.message}`,
+      );
+    } catch (err) {
+      console.error("[CRON] Orders Heal Sync tick failed:", err?.message || err);
+    }
+  });
+
+  console.log(
+    `[CRON] Orders Heal Sync ON — expr="${cronExpr}" lookbackSec=${lookbackSec}` +
+      ` (~${Math.round(lookbackSec / 3600)}h).`,
   );
 }
 
@@ -220,7 +295,20 @@ export function stopAutoIncrementalOrdersSync() {
     cronTask = null;
   }
   autoIncrementalScheduled = false;
-  console.log("[CRON] Auto Incremental Sync stopped.");
+  console.log("[CRON] Fast Lane Sync stopped.");
+}
+
+export function stopOrdersHealSync() {
+  if (ordersHealTask) {
+    try {
+      ordersHealTask.stop();
+    } catch {
+      /* ignore */
+    }
+    ordersHealTask = null;
+  }
+  ordersHealScheduled = false;
+  console.log("[CRON] Orders Heal Sync stopped.");
 }
 
 export function stopHandedOverStatusReconcile() {

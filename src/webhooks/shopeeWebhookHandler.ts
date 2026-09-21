@@ -15,6 +15,23 @@ const MAX_CONCURRENT_JOBS = Math.max(
 /** Hard cap mỗi job nền — quá hạn thì nhả slot (tránh hang → process leak cPanel). */
 const WEBHOOK_JOB_TIMEOUT_MS = 45_000;
 
+/** Mốc push cuối cùng — /api/health dùng để biết webhook còn sống hay đã chết. */
+let lastWebhookAt = 0;
+
+function markWebhookReceived(): void {
+  lastWebhookAt = Date.now();
+}
+
+export function getShopeeWebhookStats(): {
+  pid: number;
+  lastWebhookAt: string | null;
+} {
+  return {
+    pid: process.pid,
+    lastWebhookAt: lastWebhookAt ? new Date(lastWebhookAt).toISOString() : null,
+  };
+}
+
 /** Metric in-process — log trên cPanel, không cần DB. */
 const queueMetrics = {
   overflowCount: 0,
@@ -247,7 +264,8 @@ function queueAfterAck(
           ? req.body
           : JSON.stringify(req.body ?? {});
 
-      console.log(`[WEBHOOK RECEIVED] ${routeLabel} — ACK 200 sent; headers:`, {
+      markWebhookReceived();
+      console.log(`[WEBHOOK RECEIVED] pid=${process.pid} ${routeLabel} — ACK 200 sent; headers:`, {
         authorization: req.get("authorization") ? "(present)" : "(missing)",
         contentLength: req.get("content-length") || "0",
         contentType: req.get("content-type") || "",

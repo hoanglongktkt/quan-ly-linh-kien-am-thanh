@@ -29,6 +29,8 @@ let deps = {
   appBaseUrl: APP_BASE_URL,
   shopeeCallbackUrl: SHOPEE_CALLBACK_URL,
   shopeeWebhookUrl: SHOPEE_WEBHOOK_URL,
+  /** Chẩn đoán độ trễ đơn mới — webhook / cron / change stream / SSE. */
+  getOrderSyncDiagnostics: () => null,
 };
 
 export function initHealthController(partial) {
@@ -135,5 +137,15 @@ export function getHealth(_req, res) {
     routes: {
       mappingProducts: true,
     },
+    // Mỗi Passenger process trả số của CHÍNH nó — gọi vài lần sẽ thấy nhiều pid khác nhau.
+    orderSync: safeOrderSyncDiagnostics(),
   });
+}
+
+function safeOrderSyncDiagnostics() {
+  try {
+    return deps.getOrderSyncDiagnostics() || null;
+  } catch (err) {
+    return { error: err?.message || String(err) };
+  }
 }

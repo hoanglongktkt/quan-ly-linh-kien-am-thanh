@@ -4,13 +4,16 @@ import fs from "fs";
 import crypto from "crypto";
 import dotenv from "dotenv";
 import { PDFDocument } from "pdf-lib";
-import { scheduleAutoIncrementalOrdersSync, scheduleHandedOverStatusReconcile, scheduleShopeeReturnRequestsSync, scheduleReadyToShipBackfill, scheduleLabelPdfCleanup, scheduleGhnStatusSync, scheduleKeepAlivePing } from "./cron/index.js";
+import { scheduleAutoIncrementalOrdersSync, scheduleOrdersHealSync, scheduleHandedOverStatusReconcile, scheduleShopeeReturnRequestsSync, scheduleReadyToShipBackfill, scheduleLabelPdfCleanup, scheduleGhnStatusSync, scheduleKeepAlivePing } from "./cron/index.js";
 import {
   initOrderSyncService,
   registerLabelPdfDownloader,
   enqueueLabelPdfDownload,
 } from "./services/orderSync/index.js";
-import { createShopeeWebhookRouter } from "./src/webhooks/shopeeWebhookHandler.ts";
+import {
+  createShopeeWebhookRouter,
+  getShopeeWebhookStats,
+} from "./src/webhooks/shopeeWebhookHandler.ts";
 import { enrichOrdersFromCatalog } from "./src/utils/orderItemVariation.ts";
 import { inferShippingCarrierLabel } from "./src/utils/shippingCarrier.ts";
 import {
@@ -529,7 +532,13 @@ import {
   invalidateTabCountCache,
   type LocalInventoryCache,
 } from "./src/db/mongoStore.ts";
-import { emitNewOrder } from "./services/orderRealtime.js";
+import { emitNewOrder, getOrderRealtimeStats } from "./services/orderRealtime.js";
+import {
+  initOrderChangeStream,
+  startOrderChangeStream,
+  stopOrderChangeStream,
+  getOrderChangeStreamStats,
+} from "./services/orderChangeStream.js";
 import { pushReturnAlert } from "./services/returnAlertQueue.js";
 import {
   getReturnAlerts,
@@ -1345,6 +1354,8 @@ const SHOPEE_ORDER_LIST_MAX_TOTAL_LOOKBACK_SEC = SHOPEE_HISTORY_LOOKBACK_SEC;
 /** Deadline mỗi shop (list + detail) — đủ vét more=false, không để shop 2 bị SKIP. */
 const ORDERS_PULL_PER_SHOP_MS = 180_000;
 const ORDERS_PULL_PER_SHOP_LONG_MS = 300_000;
+/** Làn nhanh (cron mỗi phút): chốt 30s/shop để nhả mutex trước tick kế tiếp. */
+const ORDERS_PULL_FAST_LANE_PER_SHOP_MS = 30_000;
 /** Deadline tường toàn phiên — fallback khi chưa biết số shop. */
 const ORDERS_PULL_HARD_DEADLINE_MS = 180_000;
 /** Vét đơn READY_TO_SHIP bị miss webhook — tối thiểu 7 ngày. */
@@ -1359,6 +1370,8 @@ const FORCE_RESCUE_SHOPEE_ORDER_SNS = ["26081391A7VTJ7", "26081391Q3V4JV"];
 const ORDERS_PULL_LOCK_TIMEOUT_MS = 15 * 60 * 1000;
 let ordersPullInFlight = false;
 let ordersPullStartedAt = 0;
+/** Mốc lần chạy làn nhanh gần nhất — /api/health dùng để biết cron còn tick hay đã chết. */
+let lastFastPullAt = 0;
 
 /**
  * Chia [timeFrom, timeTo] (Unix SECONDS) thành các cửa sổ ≤ 15 ngày.
@@ -4631,6 +4644,13 @@ async function pullIncrementalOrdersFromShopee(opts?: {
    * tránh mỗi 30 phút kéo 5 ngày → chồng job / process spike cPanel.
    */
   allowShortLookback?: boolean;
+  /**
+   * Làn nhanh (cron mỗi phút): CHỈ get_order_list cửa sổ ngắn + get_order_detail.
+   * Bỏ hết các lượt heal lịch sử (SHIPPED 3 ngày / COMPLETED 15 ngày / CANCELLED
+   * 30 ngày / get_return_list) vì chúng ngốn hàng chục trang trước khi kịp chạm
+   * đơn mới. Các lượt đó chuyển sang cron heal 30 phút.
+   */
+  fastLane?: boolean;
 }): Promise<{
   success: boolean;
   pulled: number;
@@ -4674,6 +4694,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
 
   const startedAt = Date.now();
   const enrichTracking = opts?.enrichTracking === true;
+  const fastLane = opts?.fastLane === true;
   const errors: any[] = [];
   const shopeeResponsePages: any[] = [];
   const failedOrdersSet = new Set<string>();
@@ -4713,11 +4734,14 @@ async function pullIncrementalOrdersFromShopee(opts?: {
     lookbackSec = clampShopeeHistoryLookbackSec(rawLookback, shortLookback);
     longLookback = lookbackSec >= 168 * 3600;
     // Mỗi shop có ngân sách riêng — shop 2 không bị SKIP vì shop 1 đã dùng hết 90s chung.
-    perShopBudgetMs = shortLookback
-      ? ORDERS_PULL_PER_SHOP_MS
-      : longLookback
-        ? ORDERS_PULL_PER_SHOP_LONG_MS
-        : ORDERS_PULL_PER_SHOP_MS;
+    // Làn nhanh chốt 30s/shop: xong sớm để nhả mutex cho tick phút kế tiếp.
+    perShopBudgetMs = fastLane
+      ? ORDERS_PULL_FAST_LANE_PER_SHOP_MS
+      : shortLookback
+        ? ORDERS_PULL_PER_SHOP_MS
+        : longLookback
+          ? ORDERS_PULL_PER_SHOP_LONG_MS
+          : ORDERS_PULL_PER_SHOP_MS;
     pullDeadlineMs = perShopBudgetMs * Math.max(1, shopIds.length);
     deadlineAt = startedAt + pullDeadlineMs;
 
@@ -4748,11 +4772,12 @@ async function pullIncrementalOrdersFromShopee(opts?: {
       updated: number;
       error?: string;
     }> = [];
+    if (fastLane) lastFastPullAt = Date.now();
     syncDiag(
       "Pull START",
       `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${lookbackSec}s` +
         ` short=${shortLookback} deadline=${pullDeadlineMs}ms perShop=${perShopBudgetMs}ms` +
-        ` enrichTracking=${enrichTracking} longLookback=${longLookback}`,
+        ` enrichTracking=${enrichTracking} longLookback=${longLookback} fastLane=${fastLane}`,
     );
     console.log(
       `[Orders Pull] Bắt đầu chạy tiến trình ngầm — shops=${shopIds.length} ids=[${shopIds.join(",")}] lookbackSec=${lookbackSec}`,
@@ -4915,7 +4940,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
 
           // KHÔNG lọc theo order_status — kéo ALL từ get_order_list.
           // Lookback SHIPPED 1–3 ngày: bắt đơn Shopee đã SHIPPED nhưng Mongo còn READY_TO_SHIP/PROCESSED.
-          if (Date.now() < shopDeadlineAt) {
+          if (!fastLane && Date.now() < shopDeadlineAt) {
             try {
               const shippedLookbackSec = Math.max(
                 24 * 60 * 60,
@@ -4989,7 +5014,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
           }
 
           // Lookback COMPLETED: heal đơn Mongo còn SHIPPED/shipping dù Shopee đã giao xong.
-          if (Date.now() < shopDeadlineAt) {
+          if (!fastLane && Date.now() < shopDeadlineAt) {
             try {
               const completedLookbackSec = Math.max(
                 24 * 60 * 60,
@@ -5057,7 +5082,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
           }
 
           // Lịch sử Hủy/RTS: get_order_list status=CANCELLED|IN_CANCEL — cửa sổ cứng 30 ngày.
-          if (!shortLookback && Date.now() < shopDeadlineAt) {
+          if (!fastLane && !shortLookback && Date.now() < shopDeadlineAt) {
             try {
               const cancelLookbackSec = SHOPEE_HISTORY_LOOKBACK_SEC;
               const cancelStatuses = ["CANCELLED", "IN_CANCEL"];
@@ -5092,8 +5117,9 @@ async function pullIncrementalOrdersFromShopee(opts?: {
             }
           }
 
-          // MỌI pull (kể cả cron/Quick): bổ sung order_sn từ get_return_list (TO_RETURN).
-          if (Date.now() < shopDeadlineAt) {
+          // Mọi pull heal: bổ sung order_sn từ get_return_list (TO_RETURN).
+          // Làn nhanh bỏ qua — tab Yêu cầu trả hàng đã có cron riêng mỗi 30 phút.
+          if (!fastLane && Date.now() < shopDeadlineAt) {
             try {
               const returnRows = await shopeeFetchAllReturnSns(shopIdStr, accessToken, {
                 mode: "full",
@@ -5351,7 +5377,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
       JSON.stringify(perShopResults),
     );
 
-    if (Date.now() <= deadlineAt) {
+    if (!fastLane && Date.now() <= deadlineAt) {
       try {
         const repaired = await repairWrongShopCancelledOrders({ limit: 12 });
         if (repaired.checked > 0) {
@@ -5371,7 +5397,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
     }
 
     // Nút "Làm mới" phải đối soát cả các đơn cũ đang PROCESSED/READY_TO_SHIP.
-    if (opts?.reconcileActive === true && Date.now() <= deadlineAt) {
+    if (!fastLane && opts?.reconcileActive === true && Date.now() <= deadlineAt) {
       try {
         const reconciled = await reconcileActiveShopeeOrdersFromStore(orders, shopIds, deadlineAt);
         pulled += reconciled.pulled;
@@ -15478,10 +15504,17 @@ function scheduleShopeeCancelReturnReconcile(): void {
   console.log("[CancelReturn Cron] Scheduler OFF — chỉ webhook + nút Làm mới.");
 }
 
-/** Auto incremental cron — node-cron mỗi 5 phút (lookback ~2h). Tắt: AUTO_ORDER_SYNC_CRON=0 */
+/** Làn nhanh — node-cron mỗi phút (lookback 15 phút). Tắt: AUTO_ORDER_SYNC_CRON=0 */
 function scheduleAutoIncrementalOrdersSyncSafe(): void {
   scheduleAutoIncrementalOrdersSync({
-    lookbackSec: Number(process.env.AUTO_ORDER_SYNC_LOOKBACK_SEC) || 2 * 60 * 60,
+    lookbackSec: Number(process.env.AUTO_ORDER_SYNC_LOOKBACK_SEC) || 15 * 60,
+  });
+}
+
+/** Làn heal — node-cron mỗi 30 phút (lookback ~2h + các lượt lịch sử). Tắt: AUTO_ORDER_HEAL_CRON=0 */
+function scheduleOrdersHealSyncSafe(): void {
+  scheduleOrdersHealSync({
+    lookbackSec: Number(process.env.AUTO_ORDER_HEAL_LOOKBACK_SEC) || 2 * 60 * 60,
   });
 }
 
@@ -21294,6 +21327,13 @@ async function startServer() {
     appBaseUrl: APP_BASE_URL,
     shopeeCallbackUrl: SHOPEE_CALLBACK_URL,
     shopeeWebhookUrl: SHOPEE_WEBHOOK_URL,
+    getOrderSyncDiagnostics: () => ({
+      ...getOrderRealtimeStats(),
+      ...getShopeeWebhookStats(),
+      changeStream: getOrderChangeStreamStats(),
+      lastFastPullAt: lastFastPullAt ? new Date(lastFastPullAt).toISOString() : null,
+      ordersPullInFlight,
+    }),
   });
 
   app.use("/api", authRoutes);
@@ -26989,11 +27029,19 @@ async function startServer() {
               err instanceof Error ? err.message : err,
             );
           });
+        // Change stream → SSE: mọi Passenger process đều nghe được đơn mới,
+        // kể cả khi process khác là bên ghi (webhook/cron).
+        initOrderChangeStream({
+          invalidateTabCountCache,
+          invalidateOrdersRefreshCache,
+        });
+        startOrderChangeStream();
         // GHN tracking backfill ON (setInterval 10 phút + boot kick). Cancel cron OFF.
         // Handed-over status reconcile ON (cron 5 phút + setInterval + boot kick) — dò SHIPPED → Đang giao.
         scheduleMissingShopeeTrackingEnrichment(); // GHN bù mã RTS/PROCESSED
         scheduleShopeeCancelReturnReconcile(); // no-op OFF
-        scheduleAutoIncrementalOrdersSyncSafe(); // node-cron incremental ~2h / 5 phút
+        scheduleAutoIncrementalOrdersSyncSafe(); // làn nhanh: đơn mới, 15 phút / mỗi phút
+        scheduleOrdersHealSyncSafe(); // làn heal: SHIPPED/COMPLETED/CANCELLED/returns mỗi 30 phút
         scheduleReadyToShipBackfillSafe(); // READY_TO_SHIP lookback 7 ngày
         scheduleShopeeReturnRequestsSyncSafe(); // Return APIs → tab Yêu cầu trả hàng
         scheduleHandedOverStatusReconcileSafe(); // dò ĐVVC → SHIPPED (cron + interval)
@@ -27085,6 +27133,17 @@ async function startServer() {
       scheduleLabelPdfCleanup();
       // Self-ping /api/health — chống Passenger/CloudLinux spin-down app qua đêm (cold-start rất lâu).
       scheduleKeepAlivePing({ appBaseUrl: APP_BASE_URL });
+
+      // Passenger recycle process liên tục — đóng change stream để không rò cursor trên Atlas.
+      for (const sig of ["SIGTERM", "SIGINT"] as const) {
+        process.once(sig, () => {
+          try {
+            stopOrderChangeStream();
+          } catch {
+            /* ignore */
+          }
+        });
+      }
     };
 
     if (process.env.PORT) {

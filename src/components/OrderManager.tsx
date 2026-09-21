@@ -883,7 +883,8 @@ function buildClientPageNumbers(current: number, totalPages: number): (number | 
 const SCAN_BG_STATUS_POLL_MS = 30_000;
 /** Không pending / unnotified — nới chu kỳ để giảm spam Network. */
 const SCAN_BG_STATUS_IDLE_POLL_MS = 60_000;
-const COUNTER_POLL_MS = 60_000;
+/** Lưới an toàn khi SSE không tới (Passenger đa process) — trần độ trễ hiển thị đơn mới. */
+const COUNTER_POLL_MS = 12_000;
 /** Retry nhanh khi lần đầu load counter thất bại/nghẽn (trước khi có counts lần nào). */
 const FIRST_COUNTER_RETRY_MS = 5_000;
 /** SSE heartbeat server = 15s; mất ping lâu hơn ngưỡng này → reconnect (mobile zombie). */

@@ -8,6 +8,19 @@ const HEARTBEAT_MS = 15_000;
 /** @type {Set<import("express").Response>} */
 const clients = new Set();
 
+/** Metric chẩn đoán độ trễ — đọc qua /api/health. */
+let lastNewOrderAt = 0;
+
+/** @returns {{ pid: number, sseClients: number, lastNewOrderAt: string | null }} */
+export function getOrderRealtimeStats() {
+  pruneDeadClients();
+  return {
+    pid: process.pid,
+    sseClients: clients.size,
+    lastNewOrderAt: lastNewOrderAt ? new Date(lastNewOrderAt).toISOString() : null,
+  };
+}
+
 function pruneDeadClients() {
   for (const res of clients) {
     if (res.writableEnded || res.destroyed) {
@@ -43,19 +56,33 @@ function buildEventBody(payload) {
 
 function broadcast(eventName, body) {
   pruneDeadClients();
-  if (clients.size === 0) return;
+  if (clients.size === 0) {
+    // Passenger chạy nhiều process: emit ở process này nhưng EventSource bám process khác.
+    console.log(
+      `[SSE] pid=${process.pid} ${eventName} DROPPED — 0 client trên process này` +
+        ` sns=${(body?.orderSns || []).slice(0, 5).join(",") || "-"}`,
+    );
+    return;
+  }
   const chunk = `event: ${eventName}\ndata: ${JSON.stringify(body)}\n\n`;
+  let sent = 0;
   for (const res of clients) {
     try {
       res.write(chunk);
+      sent += 1;
     } catch {
       clients.delete(res);
     }
   }
+  console.log(
+    `[SSE] pid=${process.pid} ${eventName} → ${sent} client` +
+      ` sns=${(body?.orderSns || []).slice(0, 5).join(",") || "-"}`,
+  );
 }
 
 /** Emit khi có đơn MỚI (INSERT) — frontend hiện toast + refetch (không silent). */
 export function emitNewOrder(payload) {
+  lastNewOrderAt = Date.now();
   broadcast("new_order", buildEventBody(payload));
 }
 
@@ -91,6 +118,7 @@ export function streamOrderLive(req, res) {
 
   res.write(`event: ping\ndata: ${JSON.stringify({ ok: true, at: Date.now() })}\n\n`);
   clients.add(res);
+  console.log(`[SSE] pid=${process.pid} client CONNECTED — tổng=${clients.size}`);
 
   const heartbeat = setInterval(() => {
     if (res.writableEnded || res.destroyed) {
