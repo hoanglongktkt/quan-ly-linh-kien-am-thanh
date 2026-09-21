@@ -74957,8 +74957,7 @@ async function runBackgroundOrderSync(opts = {}) {
       shopIds: opts.shopIds?.length ? opts.shopIds : void 0,
       allowShortLookback: opts.allowShortLookback !== false,
       reconcileActive: opts.reconcileActive === true,
-      enrichTracking: opts.enrichTracking === true,
-      fastLane: opts.fastLane === true
+      enrichTracking: opts.enrichTracking === true
     });
     const pulled = result?.pulled || 0;
     const added = result?.added || 0;
@@ -75097,11 +75096,8 @@ function triggerWebhookRescuePull(opts = {}) {
 }
 
 // cron/index.js
-var FAST_LANE_LOOKBACK_SEC = 15 * 60;
 var autoIncrementalScheduled = false;
 var cronTask = null;
-var ordersHealScheduled = false;
-var ordersHealTask = null;
 var handedOverReconcileScheduled = false;
 var handedOverReconcileTask = null;
 function scheduleAutoIncrementalOrdersSync(deps23 = {}) {
@@ -75119,86 +75115,41 @@ function scheduleAutoIncrementalOrdersSync(deps23 = {}) {
   }
   const lookbackSec = Math.max(
     60,
-    Number(deps23.lookbackSec) || Number(process.env.AUTO_ORDER_SYNC_LOOKBACK_SEC) || FAST_LANE_LOOKBACK_SEC
+    Number(deps23.lookbackSec) || Number(process.env.AUTO_ORDER_SYNC_LOOKBACK_SEC) || DEFAULT_INCREMENTAL_LOOKBACK_SEC
   );
   const cronExpr = String(
-    deps23.cronExpr || process.env.AUTO_ORDER_SYNC_CRON_EXPR || "*/1 * * * *"
+    deps23.cronExpr || process.env.AUTO_ORDER_SYNC_CRON_EXPR || "*/5 * * * *"
   ).trim();
   if (!import_node_cron.default.validate(cronExpr)) {
     console.error(`[CRON] Invalid cron expr="${cronExpr}" \u2014 sync cron NOT started`);
     return;
   }
   cronTask = import_node_cron.default.schedule(cronExpr, () => {
-    console.log(`[CRON] Tick Fast Lane Sync \u2014 lookbackSec=${lookbackSec}`);
+    console.log(
+      `[CRON] Tick Incremental Sync \u2014 lookbackSec=${lookbackSec} (${Math.round(lookbackSec / 3600)}h)`
+    );
     try {
       if (typeof deps23.runSync === "function") {
-        void deps23.runSync({ lookbackSec, trigger: "cron_fast" });
+        void deps23.runSync({ lookbackSec, trigger: "cron" });
         return;
       }
       const ack = triggerBackgroundOrderSync({
         lookbackSec,
-        trigger: "cron_fast",
-        allowShortLookback: true,
-        // Làn nhanh chỉ lo đơn mới — heal trạng thái là việc của cron 30 phút.
-        fastLane: true,
-        reconcileActive: false,
-        jobType: "shopee_orders_fast_sync"
-      });
-      console.log(
-        `[CRON] fast trigger \u2192 accepted=${ack.accepted} busy=${ack.busy} msg=${ack.message}`
-      );
-    } catch (err) {
-      console.error("[CRON] Fast Lane Sync tick failed:", err?.message || err);
-    }
-  });
-  console.log(
-    `[CRON] Fast Lane Sync ON \u2014 expr="${cronExpr}" lookbackSec=${lookbackSec} (${Math.round(lookbackSec / 60)} ph\xFAt). Mutex b\u1EA3o v\u1EC7 ch\u1ED3ng job.`
-  );
-}
-function scheduleOrdersHealSync(deps23 = {}) {
-  if (ordersHealScheduled) {
-    console.log("[CRON] Orders Heal Sync already scheduled (idempotent).");
-    return;
-  }
-  ordersHealScheduled = true;
-  const raw = String(process.env.AUTO_ORDER_HEAL_CRON || "1").trim().toLowerCase();
-  if (raw === "0" || raw === "off" || raw === "false") {
-    console.log("[CRON] Orders Heal Sync DISABLED (AUTO_ORDER_HEAL_CRON=0).");
-    return;
-  }
-  const lookbackSec = Math.max(
-    60,
-    Number(deps23.lookbackSec) || Number(process.env.AUTO_ORDER_HEAL_LOOKBACK_SEC) || DEFAULT_INCREMENTAL_LOOKBACK_SEC
-  );
-  const cronExpr = String(
-    deps23.cronExpr || process.env.AUTO_ORDER_HEAL_CRON_EXPR || "*/30 * * * *"
-  ).trim();
-  if (!import_node_cron.default.validate(cronExpr)) {
-    console.error(`[CRON] Invalid heal cron expr="${cronExpr}" \u2014 heal cron NOT started`);
-    return;
-  }
-  ordersHealTask = import_node_cron.default.schedule(cronExpr, () => {
-    console.log(
-      `[CRON] Tick Orders Heal Sync \u2014 lookbackSec=${lookbackSec} (${Math.round(lookbackSec / 3600)}h)`
-    );
-    try {
-      const ack = triggerBackgroundOrderSync({
-        lookbackSec,
-        trigger: "cron_heal",
+        trigger: "cron",
         allowShortLookback: true,
         // Đối soát PROCESSED/Đã giao ĐVVC còn kẹt — bắt SHIPPED khi bưu tá đã lấy hàng.
         reconcileActive: true,
-        jobType: "shopee_orders_heal_sync"
+        jobType: "shopee_orders_cron_sync"
       });
       console.log(
-        `[CRON] heal trigger \u2192 accepted=${ack.accepted} busy=${ack.busy} msg=${ack.message}`
+        `[CRON] trigger \u2192 accepted=${ack.accepted} busy=${ack.busy} msg=${ack.message}`
       );
     } catch (err) {
-      console.error("[CRON] Orders Heal Sync tick failed:", err?.message || err);
+      console.error("[CRON] Incremental Sync tick failed:", err?.message || err);
     }
   });
   console.log(
-    `[CRON] Orders Heal Sync ON \u2014 expr="${cronExpr}" lookbackSec=${lookbackSec} (~${Math.round(lookbackSec / 3600)}h).`
+    `[CRON] Auto Incremental Sync ON \u2014 expr="${cronExpr}" lookbackSec=${lookbackSec} (~${Math.round(lookbackSec / 3600)}h). Mutex b\u1EA3o v\u1EC7 ch\u1ED3ng job.`
   );
 }
 var handedOverReconcileInterval = null;
@@ -131810,7 +131761,6 @@ var SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC = 3 * 24 * 60 * 60;
 var SHOPEE_ORDER_LIST_MAX_WINDOW_SEC = 15 * 24 * 60 * 60;
 var ORDERS_PULL_PER_SHOP_MS = 18e4;
 var ORDERS_PULL_PER_SHOP_LONG_MS = 3e5;
-var ORDERS_PULL_FAST_LANE_PER_SHOP_MS = 3e4;
 var ORDERS_PULL_HARD_DEADLINE_MS = 18e4;
 var READY_TO_SHIP_BACKFILL_LOOKBACK_SEC = 7 * 24 * 60 * 60;
 var SHOPEE_SHIPPED_LOOKBACK_SEC = 3 * 24 * 60 * 60;
@@ -131819,7 +131769,7 @@ var FORCE_RESCUE_SHOPEE_ORDER_SNS = ["26081391A7VTJ7", "26081391Q3V4JV"];
 var ORDERS_PULL_LOCK_TIMEOUT_MS = 15 * 60 * 1e3;
 var ordersPullInFlight = false;
 var ordersPullStartedAt = 0;
-var lastFastPullAt = 0;
+var lastPullAt = 0;
 function buildShopeeOrderListTimeChunks(timeFromSec, timeToSec, maxWindowSec = SHOPEE_ORDER_LIST_MAX_WINDOW_SEC) {
   const to = toShopeeUnixSeconds(timeToSec);
   let from = toShopeeUnixSeconds(timeFromSec);
@@ -134438,7 +134388,6 @@ async function pullIncrementalOrdersFromShopee(opts) {
   }
   const startedAt = Date.now();
   const enrichTracking3 = opts?.enrichTracking === true;
-  const fastLane = opts?.fastLane === true;
   const errors = [];
   const shopeeResponsePages = [];
   const failedOrdersSet = /* @__PURE__ */ new Set();
@@ -134475,7 +134424,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
     const shortLookback = opts?.allowShortLookback === true;
     lookbackSec = clampShopeeHistoryLookbackSec(rawLookback, shortLookback);
     longLookback = lookbackSec >= 168 * 3600;
-    perShopBudgetMs = fastLane ? ORDERS_PULL_FAST_LANE_PER_SHOP_MS : shortLookback ? ORDERS_PULL_PER_SHOP_MS : longLookback ? ORDERS_PULL_PER_SHOP_LONG_MS : ORDERS_PULL_PER_SHOP_MS;
+    perShopBudgetMs = shortLookback ? ORDERS_PULL_PER_SHOP_MS : longLookback ? ORDERS_PULL_PER_SHOP_LONG_MS : ORDERS_PULL_PER_SHOP_MS;
     pullDeadlineMs = perShopBudgetMs * Math.max(1, shopIds.length);
     deadlineAt = startedAt + pullDeadlineMs;
     if (shopIds.length === 0) {
@@ -134493,10 +134442,10 @@ async function pullIncrementalOrdersFromShopee(opts) {
     }
     const orders = [];
     const perShopResults = [];
-    if (fastLane) lastFastPullAt = Date.now();
+    lastPullAt = Date.now();
     syncDiag(
       "Pull START",
-      `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${lookbackSec}s short=${shortLookback} deadline=${pullDeadlineMs}ms perShop=${perShopBudgetMs}ms enrichTracking=${enrichTracking3} longLookback=${longLookback} fastLane=${fastLane}`
+      `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${lookbackSec}s short=${shortLookback} deadline=${pullDeadlineMs}ms perShop=${perShopBudgetMs}ms enrichTracking=${enrichTracking3} longLookback=${longLookback}`
     );
     console.log(
       `[Orders Pull] B\u1EAFt \u0111\u1EA7u ch\u1EA1y ti\u1EBFn tr\xECnh ng\u1EA7m \u2014 shops=${shopIds.length} ids=[${shopIds.join(",")}] lookbackSec=${lookbackSec}`
@@ -134636,7 +134585,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
               }
             }
           }
-          if (!fastLane && Date.now() < shopDeadlineAt) {
+          if (Date.now() < shopDeadlineAt) {
             try {
               const shippedLookbackSec = Math.max(
                 24 * 60 * 60,
@@ -134701,7 +134650,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
               );
             }
           }
-          if (!fastLane && Date.now() < shopDeadlineAt) {
+          if (Date.now() < shopDeadlineAt) {
             try {
               const completedLookbackSec = Math.max(
                 24 * 60 * 60,
@@ -134765,7 +134714,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
               );
             }
           }
-          if (!fastLane && !shortLookback && Date.now() < shopDeadlineAt) {
+          if (!shortLookback && Date.now() < shopDeadlineAt) {
             try {
               const cancelLookbackSec = SHOPEE_HISTORY_LOOKBACK_SEC;
               const cancelStatuses = ["CANCELLED", "IN_CANCEL"];
@@ -134799,7 +134748,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
               );
             }
           }
-          if (!fastLane && Date.now() < shopDeadlineAt) {
+          if (Date.now() < shopDeadlineAt) {
             try {
               const returnRows = await shopeeFetchAllReturnSns(shopIdStr, accessToken, {
                 mode: "full",
@@ -135043,7 +134992,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
       `[Orders Pull] perShop summary:`,
       JSON.stringify(perShopResults)
     );
-    if (!fastLane && Date.now() <= deadlineAt) {
+    if (Date.now() <= deadlineAt) {
       try {
         const repaired = await repairWrongShopCancelledOrders({ limit: 12 });
         if (repaired.checked > 0) {
@@ -135061,7 +135010,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
         );
       }
     }
-    if (!fastLane && opts?.reconcileActive === true && Date.now() <= deadlineAt) {
+    if (opts?.reconcileActive === true && Date.now() <= deadlineAt) {
       try {
         const reconciled = await reconcileActiveShopeeOrdersFromStore(orders, shopIds, deadlineAt);
         pulled += reconciled.pulled;
@@ -142340,12 +142289,7 @@ function scheduleShopeeCancelReturnReconcile() {
 }
 function scheduleAutoIncrementalOrdersSyncSafe() {
   scheduleAutoIncrementalOrdersSync({
-    lookbackSec: Number(process.env.AUTO_ORDER_SYNC_LOOKBACK_SEC) || 15 * 60
-  });
-}
-function scheduleOrdersHealSyncSafe() {
-  scheduleOrdersHealSync({
-    lookbackSec: Number(process.env.AUTO_ORDER_HEAL_LOOKBACK_SEC) || 2 * 60 * 60
+    lookbackSec: Number(process.env.AUTO_ORDER_SYNC_LOOKBACK_SEC) || 2 * 60 * 60
   });
 }
 function scheduleReadyToShipBackfillSafe() {
@@ -146175,8 +146119,9 @@ async function startServer() {
       ...getOrderRealtimeStats(),
       ...getShopeeWebhookStats(),
       changeStream: getOrderChangeStreamStats(),
-      lastFastPullAt: lastFastPullAt ? new Date(lastFastPullAt).toISOString() : null,
-      ordersPullInFlight
+      lastPullAt: lastPullAt ? new Date(lastPullAt).toISOString() : null,
+      ordersPullInFlight,
+      ordersPullElapsedMs: ordersPullInFlight && ordersPullStartedAt ? Date.now() - ordersPullStartedAt : 0
     })
   });
   app.use("/api", authRoutes);
@@ -150932,7 +150877,6 @@ async function startServer() {
         scheduleMissingShopeeTrackingEnrichment();
         scheduleShopeeCancelReturnReconcile();
         scheduleAutoIncrementalOrdersSyncSafe();
-        scheduleOrdersHealSyncSafe();
         scheduleReadyToShipBackfillSafe();
         scheduleShopeeReturnRequestsSyncSafe();
         scheduleHandedOverStatusReconcileSafe();
