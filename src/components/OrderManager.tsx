@@ -90,7 +90,6 @@ import {
   Package,
   Layers,
   Sparkle,
-  Plus,
   ImageIcon,
   Loader2,
   X,
@@ -684,7 +683,8 @@ type OrderTab =
   | 'order_products'
   | 'web_orders'
   | 'external_orders'
-  | 'quick_pos';
+  | 'quick_pos'
+  | 'create_external';
 
 export type OrdersSubTabId = OrderTab;
 
@@ -705,6 +705,7 @@ const ORDER_TAB_SET = new Set<string>([
   'web_orders',
   'external_orders',
   'quick_pos',
+  'create_external',
 ]);
 
 const ORDER_TAB_ALIASES: Record<string, OrderTab> = {
@@ -727,6 +728,9 @@ const ORDER_TAB_ALIASES: Record<string, OrderTab> = {
   'quick_pos': 'quick_pos',
   'tao-don-nhanh': 'quick_pos',
   'pos': 'quick_pos',
+  'create_external': 'create_external',
+  'tao-don-ngoai-san': 'create_external',
+  'create-external': 'create_external',
 };
 
 function normalizeOrderTab(raw: string | null | undefined): OrderTab | null {
@@ -1552,11 +1556,20 @@ export default function OrderManager({
     const nextTab = tab === 'return_requests' ? 'all' : tab;
     if (nextTab === 'quick_pos') {
       setShowQuickPosPage(true);
+      setShowCreateOrderPage(false);
       setActiveSubTab('quick_pos');
       setCurrentPage((p) => (p === 1 ? p : 1));
       return;
     }
+    if (nextTab === 'create_external') {
+      setShowCreateOrderPage(true);
+      setShowQuickPosPage(false);
+      setActiveSubTab('create_external');
+      setCurrentPage((p) => (p === 1 ? p : 1));
+      return;
+    }
     setShowQuickPosPage(false);
+    setShowCreateOrderPage(false);
     setActiveSubTab(nextTab);
     if (nextTab === 'cancel_returns') {
       setCancelReturnTab(cancelReturn ?? 'all');
@@ -2217,9 +2230,18 @@ export default function OrderManager({
         : normalizeOrderTab(initialOrdersSubTab) || initialOrdersSubTab;
     if (next === 'quick_pos') {
       setShowQuickPosPage(true);
+      setShowCreateOrderPage(false);
       setActiveSubTab((prev) => (prev === 'quick_pos' ? prev : 'quick_pos'));
       return;
     }
+    if (next === 'create_external') {
+      setShowCreateOrderPage(true);
+      setShowQuickPosPage(false);
+      setActiveSubTab((prev) => (prev === 'create_external' ? prev : 'create_external'));
+      return;
+    }
+    setShowQuickPosPage(false);
+    setShowCreateOrderPage(false);
     setActiveSubTab((prev) => (prev === next ? prev : next));
   }, [initialOrdersSubTab]);
 
@@ -6728,8 +6750,12 @@ export default function OrderManager({
     }
   };
 
-  const [showCreateOrderPage, setShowCreateOrderPage] = useState(false);
-  const [showQuickPosPage, setShowQuickPosPage] = useState(false);
+  const [showCreateOrderPage, setShowCreateOrderPage] = useState(
+    () => activeSubTab === 'create_external',
+  );
+  const [showQuickPosPage, setShowQuickPosPage] = useState(
+    () => activeSubTab === 'quick_pos',
+  );
 
   /**
    * Tab "Đã giao cho ĐVVC": dò API Shopee ngầm (ACK) — khi đơn thật sự SHIPPED
@@ -6944,6 +6970,8 @@ export default function OrderManager({
         return { label: 'Đơn ngoại sàn', count: getCount('external_orders'), tone: 'emerald' as const, icon: 'N' as const };
       case 'quick_pos':
         return { label: 'Tạo đơn nhanh', count: null as number | null, tone: 'blue' as const, icon: 'zap' as const };
+      case 'create_external':
+        return { label: 'Tạo đơn ngoại sàn', count: null as number | null, tone: 'emerald' as const, icon: 'N' as const };
       default:
         return null;
     }
@@ -8674,7 +8702,10 @@ export default function OrderManager({
       <ManualOrderPage
         products={products}
         orders={orders}
-        onBack={() => setShowCreateOrderPage(false)}
+        onBack={() => {
+          setShowCreateOrderPage(false);
+          selectOrdersSubTab('external_orders');
+        }}
         onUpdateOrders={onUpdateOrders}
         onUpdateProduct={onUpdateProduct}
         onAddLog={onAddLog}
@@ -9017,21 +9048,6 @@ export default function OrderManager({
           >
             <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
             <span>Cập nhật đơn hàng</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => selectOrdersSubTab('quick_pos')}
-            className="om-orders-mobile-hide-primary-actions px-5 py-2 bg-sky-600 hover:bg-sky-700 text-white font-extrabold text-xs rounded-xl shadow-md shadow-sky-500/15 hover:shadow-sky-500/30 transition-all flex items-center gap-2 cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Tạo đơn nhanh</span>
-          </button>
-          <button
-            onClick={() => setShowCreateOrderPage(true)}
-            className="om-orders-mobile-hide-primary-actions px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-md shadow-emerald-500/15 hover:shadow-emerald-500/30 transition-all flex items-center gap-2 cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Tạo đơn hàng ngoài sàn</span>
           </button>
         </div>
       </div>

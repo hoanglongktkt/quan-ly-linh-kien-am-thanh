@@ -52,6 +52,7 @@ import {
   Layers,
   Zap,
   Crown,
+  PlusSquare,
 } from 'lucide-react';
 import type { OrdersSubTabId } from './components/OrderManager';
 import {
@@ -176,6 +177,7 @@ const ORDERS_SUB_TAB_IDS = new Set<string>([
   'web_orders',
   'external_orders',
   'quick_pos',
+  'create_external',
 ]);
 
 /** Alias URL thân thiện → id tab nội bộ (vd: ?tab=da-giao-dvvc). */
@@ -196,6 +198,9 @@ const ORDERS_SUB_TAB_ALIASES: Record<string, OrdersSubTabId> = {
   'quick_pos': 'quick_pos',
   'tao-don-nhanh': 'quick_pos',
   'pos': 'quick_pos',
+  'create_external': 'create_external',
+  'tao-don-ngoai-san': 'create_external',
+  'create-external': 'create_external',
 };
 
 function normalizeOrdersSubTab(raw: string | null | undefined): OrdersSubTabId | null {
@@ -1338,7 +1343,13 @@ export default function App() {
     if (activeTab === 'picking') return 'processed';
     if (activeTab !== 'orders') return '';
     const hint = String(ordersSubTabHint || '').trim().toLowerCase();
-    if (!hint || hint === 'all' || hint === 'order_products') {
+    if (
+      !hint ||
+      hint === 'all' ||
+      hint === 'order_products' ||
+      hint === 'quick_pos' ||
+      hint === 'create_external'
+    ) {
       return '';
     }
     return hint;
@@ -2367,6 +2378,28 @@ export default function App() {
         : 'hover:bg-slate-800 hover:text-white text-slate-400'
     }`;
 
+  const isOrdersCreateNav = (id: 'quick_pos' | 'create_external') =>
+    activeTab === 'orders' && ordersSubTabHint === id;
+
+  const ordersCreateNavClass = (id: 'quick_pos' | 'create_external', activeBg: string) =>
+    `w-full flex items-center gap-2.5 pl-8 pr-3 py-2 min-h-9 rounded-lg text-[11px] font-semibold tracking-wide transition-all cursor-pointer ${
+      isOrdersCreateNav(id)
+        ? `${activeBg} text-white font-bold shadow-sm`
+        : 'hover:bg-slate-800 hover:text-slate-200 text-slate-500'
+    }`;
+
+  const goOrdersTab = (ordersSubTab?: OrdersSubTabId | null) => {
+    if (ordersSubTab) {
+      navigateTab('orders', { ordersSubTab });
+      return;
+    }
+    if (ordersSubTabHint === 'quick_pos' || ordersSubTabHint === 'create_external') {
+      navigateTab('orders', { ordersSubTab: 'all' });
+      return;
+    }
+    navigateTab('orders');
+  };
+
   if (authChecking) {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4">
@@ -2444,10 +2477,30 @@ export default function App() {
           </button>
 
           <button
-            onClick={() => navigateTab('orders')}
-            className={navButtonClass('orders')}
+            onClick={() => goOrdersTab()}
+            className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
+              activeTab === 'orders' && ordersSubTabHint !== 'quick_pos' && ordersSubTabHint !== 'create_external'
+                ? 'bg-blue-600 text-white font-extrabold shadow-sm'
+                : 'hover:bg-slate-800 hover:text-white text-slate-400'
+            }`}
           >
             <ClipboardList className="w-4 h-4 shrink-0" /> Quản lý đơn hàng
+          </button>
+
+          <button
+            type="button"
+            onClick={() => goOrdersTab('quick_pos')}
+            className={ordersCreateNavClass('quick_pos', 'bg-sky-600')}
+          >
+            <Zap className="w-3.5 h-3.5 shrink-0" /> Tạo đơn nhanh
+          </button>
+
+          <button
+            type="button"
+            onClick={() => goOrdersTab('create_external')}
+            className={ordersCreateNavClass('create_external', 'bg-emerald-600')}
+          >
+            <PlusSquare className="w-3.5 h-3.5 shrink-0" /> Tạo đơn ngoại sàn
           </button>
 
           <button
@@ -2564,8 +2617,29 @@ export default function App() {
               <button onClick={() => navigateTab('publish')} className={navButtonClass('publish')}>
                 <Globe className="w-4 h-4 shrink-0" /> Đăng bán sỉ đa sàn
               </button>
-              <button onClick={() => navigateTab('orders')} className={navButtonClass('orders')}>
+              <button
+                onClick={() => goOrdersTab()}
+                className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                  activeTab === 'orders' && ordersSubTabHint !== 'quick_pos' && ordersSubTabHint !== 'create_external'
+                    ? 'bg-blue-600 text-white font-extrabold shadow-sm'
+                    : 'hover:bg-slate-800 hover:text-white text-slate-400'
+                }`}
+              >
                 <ClipboardList className="w-4 h-4 shrink-0" /> Quản lý đơn hàng
+              </button>
+              <button
+                type="button"
+                onClick={() => goOrdersTab('quick_pos')}
+                className={ordersCreateNavClass('quick_pos', 'bg-sky-600')}
+              >
+                <Zap className="w-3.5 h-3.5 shrink-0" /> Tạo đơn nhanh
+              </button>
+              <button
+                type="button"
+                onClick={() => goOrdersTab('create_external')}
+                className={ordersCreateNavClass('create_external', 'bg-emerald-600')}
+              >
+                <PlusSquare className="w-3.5 h-3.5 shrink-0" /> Tạo đơn ngoại sàn
               </button>
               <button
                 onClick={() => navigateTab('orders', { ordersSubTab: 'external_orders' })}
@@ -2576,19 +2650,6 @@ export default function App() {
                 }`}
               >
                 <ShoppingBag className="w-4 h-4 shrink-0" /> Đơn ngoại sàn
-              </button>
-              <button
-                onClick={() => navigateTab('orders', { ordersSubTab: 'quick_pos' })}
-                className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
-                  activeTab === 'orders' && ordersSubTabHint === 'quick_pos'
-                    ? 'bg-blue-600 text-white font-extrabold shadow-sm'
-                    : 'text-blue-500 hover:bg-slate-800 hover:text-blue-400'
-                }`}
-              >
-                <Zap className="w-4 h-4 shrink-0 text-blue-500" />
-                <span className={activeTab === 'orders' && ordersSubTabHint === 'quick_pos' ? 'text-white' : 'text-blue-500'}>
-                  Tạo đơn nhanh
-                </span>
               </button>
               <button
                 onClick={() => navigateTab('orders', { ordersSubTab: 'received_cancel_returns' })}
