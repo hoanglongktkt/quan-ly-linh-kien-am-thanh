@@ -86,7 +86,7 @@ async function ensureConnected(client: Redis): Promise<boolean> {
         }, 3_000);
       });
     }
-    return client.status === "ready";
+    return String(client.status) === "ready";
   } catch (err) {
     warnRedis("connect failed", err);
     return false;

@@ -721,7 +721,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, onP
     const t2 = tierAttrs[1]?.values?.filter(Boolean) || [];
     if (t1.length === 0 && t2.length === 0) return;
 
-    const newVariants: ListingVariant[] = [];
+    const newVariants: Array<Pick<ListingVariant, 'name' | 'tierIndices'>> = [];
     for (let i = 0; i < t1.length; i++) {
       for (let j = 0; j < (t2.length === 0 ? 1 : t2.length); j++) {
         const name = t2.length === 0 ? t1[i] : `${t1[i]} - ${t2[j]}`;
@@ -1060,7 +1060,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, onP
 
   const isChannelEnabledForShop = (shopKey: string, logisticId: number): boolean => {
     const ids = perShopLogistics[shopKey];
-    if (ids) return ids.includes(logisticId);
+    if (ids) return ids.includes(String(logisticId));
     return logisticChannels.find((c) => c.logistic_id === logisticId)?.enabled ?? false;
   };
 

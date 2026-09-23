@@ -280,9 +280,9 @@ export default function ProductList({
       });
       const data = await parseJsonResponse(response);
       if (!response.ok || data?.success === false) {
-        throw new Error(
+        throw new Error(String(
           data?.message || data?.error || `Cập nhật phân loại thất bại (HTTP ${response.status})`
-        );
+        ));
       }
       const savedPrice = Math.max(0, Math.round(Number(data?.importPrice ?? importPrice) || 0));
       const savedSelling = Math.max(0, Math.round(Number(data?.sellingPrice ?? sellingPrice) || 0));
@@ -364,9 +364,9 @@ export default function ProductList({
               });
               const data = await parseJsonResponse(response);
               if (!response.ok || data?.success === false) {
-                throw new Error(
+                throw new Error(String(
                   data?.error || data?.message || `Lưu thất bại: ${product.sku || product.id}`
-                );
+                ));
               }
               onUpdateProduct({
                 ...product,
@@ -440,16 +440,17 @@ export default function ProductList({
       });
       const data = await parseJsonResponse(response);
       if (!response.ok || data?.success === false) {
-        throw new Error(data?.error || data?.message || data?.shopeeMessage || `Đồng bộ Shopee thất bại (HTTP ${response.status})`);
+        throw new Error(String(data?.error || data?.message || data?.shopeeMessage || `Đồng bộ Shopee thất bại (HTTP ${response.status})`));
       }
-      showActionToast(formatShopeeSyncSuccessToast(data?.shopeeMessage), true, 3000);
+      const shopeeMessage = data?.shopeeMessage == null ? undefined : String(data.shopeeMessage);
+      showActionToast(formatShopeeSyncSuccessToast(shopeeMessage), true, 3000);
       onAddLog({
         id: `sync-${Date.now()}`,
         timestamp: new Date().toISOString(),
         channel: 'shopee',
         type: 'stock_sync',
         status: 'success',
-        message: data?.shopeeMessage || `Đồng bộ nhanh sản phẩm ${productId} lên Shopee thành công.`,
+        message: shopeeMessage || `Đồng bộ nhanh sản phẩm ${productId} lên Shopee thành công.`,
       });
     } catch (err: any) {
       const msg = err?.message || 'Đồng bộ Shopee thất bại.';
@@ -811,6 +812,7 @@ export default function ProductList({
           shopId?: string;
           message?: string;
           error?: string;
+          snippet?: string;
           forceRefresh?: boolean;
           refresh?: { forceRefresh?: boolean };
           nextOffset?: number;
@@ -1917,10 +1919,10 @@ export default function ProductList({
                         {group.totalStock}
                       </span>
                       {isOutStock && (
-                        <AlertCircle className="w-3.5 h-3.5 text-rose-500 shrink-0" title="Hết hàng" />
+                        <span title="Hết hàng"><AlertCircle className="w-3.5 h-3.5 text-rose-500 shrink-0" /></span>
                       )}
                       {isLowStock && (
-                        <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" title="Sắp hết hàng" />
+                        <span title="Sắp hết hàng"><AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" /></span>
                       )}
                     </div>
                   </div>

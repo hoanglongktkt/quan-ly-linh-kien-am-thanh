@@ -191,7 +191,6 @@ import {
   cleanupShipped,
   getCleanupShippedStatus,
   recalculateOrderCounts,
-  cleanupClosedRetention,
   cleanupMongoTemp,
   ensureMongoTtl,
   cleanupLabelPdfs,
@@ -3248,6 +3247,7 @@ async function reconcileHandedOverCarrierStatuses(opts?: {
   shipped: number;
   candidates: number;
   errors: any[];
+  perShop?: Array<Record<string, unknown>>;
   message: string;
 }> {
   const trigger = String(opts?.trigger || "manual");
@@ -4651,6 +4651,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
   updated: number;
   shops: number;
   errors: any[];
+  perShop?: Array<Record<string, unknown>>;
   message: string;
   skipped?: boolean;
   elapsedMs?: number;
@@ -7087,12 +7088,12 @@ async function resolveShopeePublishCategoryId(
   // Luôn đảm bảo có cache mới (hoặc sync nếu hết hạn)
   let cache = await getOrSyncShopeeCategories(APP_ROOT, catDeps, { force: false });
   let validated = validateShopeeLeafCategoryId(asInt, cache);
-  if (!validated.ok) {
+  if (validated.ok === false) {
     // Force sync một lần rồi validate lại
     cache = await getOrSyncShopeeCategories(APP_ROOT, catDeps, { force: true });
     validated = validateShopeeLeafCategoryId(asInt, cache);
   }
-  if (!validated.ok) {
+  if (validated.ok === false) {
     const err: any = new Error(validated.error || SHOPEE_INVALID_CATEGORY_USER_MSG);
     err.code = validated.code || SHOPEE_INVALID_CATEGORY_CODE;
     throw err;
@@ -7532,7 +7533,10 @@ function packageWeightToKg(payload: any): number {
   return raw > 30 ? raw / 1000 : raw;
 }
 
-async function publishOneItemToShopee(shopId: string, payload: any): Promise<string> {
+async function publishOneItemToShopee(
+  shopId: string,
+  payload: any,
+): Promise<{ itemId: string; modelIds: string[] }> {
   const accessToken = await getValidShopeeAccessToken(shopId);
   if (!accessToken) {
     const fail = describeShopeeTokenFailure(shopId);
@@ -7608,6 +7612,12 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<str
   }
 
   const variants = Array.isArray(payload?.variants) ? payload.variants : [];
+  const tierAttrs: Array<{ name: string; values: string[] }> = Array.isArray(payload?.tierVariations)
+    ? payload.tierVariations.map((tier: any) => ({
+        name: String(tier?.name || "Phân loại"),
+        values: Array.isArray(tier?.options) ? tier.options.map(String) : [],
+      }))
+    : [];
   const hasVariants =
     variants.length > 1 ||
     (variants.length === 1 &&
@@ -7680,7 +7690,10 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<str
 
   let itemId: string | null = existingItemId;
   if (existingItemId) {
-    const updateBody = { ...itemBody, item_id: toShopeeIdNumber(existingItemId) ?? Number(existingItemId) };
+    const updateBody: Record<string, unknown> = {
+      ...itemBody,
+      item_id: toShopeeIdNumber(existingItemId) ?? Number(existingItemId),
+    };
     // update_item không nhận original_price / seller_stock giống add_item — giữ field Shopee chấp nhận
     delete updateBody.original_price;
     delete updateBody.seller_stock;
@@ -12458,12 +12471,18 @@ function getActiveSystemFees(): Array<{
 }> {
   const settings = loadChannelSettings();
   const configured = settings?.systemFees;
-  const normalized = Array.isArray(configured)
+  const normalized: Array<{
+    id: string;
+    name: string;
+    calculationType: "percentage" | "fixed";
+    value: number;
+    active: boolean;
+  }> = Array.isArray(configured)
     ? configured
     .map((fee: any, index: number) => ({
       id: String(fee?.id || `system-fee-${index}`),
       name: String(fee?.name || "").trim(),
-      calculationType: fee?.calculationType === "percentage" ? "percentage" : "fixed",
+      calculationType: fee?.calculationType === "percentage" ? "percentage" as const : "fixed" as const,
       value: Math.max(0, Number(fee?.value) || 0),
       active: fee?.active !== false,
     }))
@@ -19086,7 +19105,7 @@ async function upsertChannelListingsFromShopeeFetch(
 /**
  * Đọc Local Cache Master từ MongoDB (`products` + `channel_listings`).
  */
-async function readLocalInventoryFileSync(): LocalInventoryCache {
+async function readLocalInventoryFileSync(): Promise<LocalInventoryCache> {
   const cache = await loadLocalInventoryCache();
   if (!Array.isArray(cache.products) || cache.products.length === 0) {
     throw new Error(
@@ -19866,7 +19885,7 @@ function resolveConnectedShopDisplayName(
 }
 
 /** Chỉ ĐỌC mapping từ MongoDB — tuyệt đối không ghi / không rebuild / không auto-link. */
-async function readChannelListingsForGet(): any[] {
+async function readChannelListingsForGet(): Promise<any[]> {
   const existing = await readChannelListingsDb();
   console.log(
     `[Mapping GET] Đọc DB (read-only): ${existing.length} dòng từ MongoDB @ ${getMongoUriMasked()}`
@@ -26120,7 +26139,11 @@ async function startServer() {
             message: "Token TikTok hợp lệ nhưng đồng bộ đang tắt (Sync OFF)",
           };
         }
-        return ping;
+        return {
+          online: Boolean(ping.online),
+          connection_status: ping.online ? "online" : "expired",
+          message: String(ping.message || (ping.online ? "TikTok OpenAPI phản hồi OK" : "Token TikTok không hợp lệ")),
+        };
       } catch (error: any) {
         return {
           online: false,
@@ -26555,6 +26578,9 @@ async function startServer() {
               payload?.perShopVariants?.[shopKey] ||
               payload?.perShopVariants?.[clientShopId] ||
               null;
+            const effectiveVariants = Array.isArray(perShopVars) && perShopVars.length
+              ? perShopVars
+              : (Array.isArray(payload?.variants) ? payload.variants : []);
             const perShopLogsRaw =
               payload?.perShopLogistics?.[shopKey] ||
               payload?.perShopLogistics?.[clientShopId] ||
@@ -26565,7 +26591,7 @@ async function startServer() {
               medicine_id: medicineId || payload?.medicine_id,
               shopeeItemId: existingListing?.platform_product_id || product?.shopeeItemId,
               platform_product_id: existingListing?.platform_product_id,
-              variants: Array.isArray(perShopVars) && perShopVars.length ? perShopVars : payload.variants,
+              variants: effectiveVariants,
               // Ưu tiên perShopLogistics: gửi mảng để hàm nội bộ resolve theo shop
               perShopLogistics: perShopLogsRaw,
               enabledLogistics: Array.isArray(perShopLogsRaw)
@@ -26589,15 +26615,15 @@ async function startServer() {
                 sku: product?.sku || `SKU-${itemId}`,
                 imageUrl: images[0] || product?.imageUrl || product?.avatarUrl,
                 description: payload.descriptionHtml || payload.description || title || "",
-                price: Math.max(0, Math.round(Number(variants[0]?.priceShopee ?? payload.price ?? 0))),
-                stock: Math.max(0, Math.round(Number(variants[0]?.stock ?? 0))),
+                price: Math.max(0, Math.round(Number(effectiveVariants[0]?.priceShopee ?? payload.price ?? 0))),
+                stock: Math.max(0, Math.round(Number(effectiveVariants[0]?.stock ?? 0))),
                 weight: Number(payload.packageWeight || 0),
                 shopeeItemId: String(itemId),
                 shopId: String(shopKey),
                 channels: ["shopee"],
                 children: modelIds.length > 0
                   ? modelIds.map((mid: string, idx: number) => {
-                      const v = (Array.isArray(perShopVars) && perShopVars.length ? perShopVars : payload.variants)[idx];
+                      const v = effectiveVariants[idx];
                       return {
                         id: `child-${itemId}-${mid || idx}`,
                         sku: mid && mid.startsWith("SKU") ? mid : (v?.sku || `SKU-${itemId}-${mid || idx}`),
@@ -26634,7 +26660,7 @@ async function startServer() {
                 const allProducts = await loadProducts();
                 const parentSku = product?.sku || `SKU-${itemId}`;
                 modelIds.forEach((mid: string, idx: number) => {
-                  const v = (Array.isArray(perShopVars) && perShopVars.length ? perShopVars : payload.variants)[idx];
+                  const v = effectiveVariants[idx];
                   channelRows.push({
                     id: `cl-shopee-${itemId}-${mid || idx}`,
                     title: title || product?.title || "",
@@ -26663,8 +26689,8 @@ async function startServer() {
                   shopId: String(shopKey),
                   status: "success",
                   linkedProductId: productId !== "unknown" ? productId : undefined,
-                  price: Math.max(0, Math.round(Number(variants[0]?.priceShopee ?? payload.price ?? 0))),
-                  stock: Math.max(0, Math.round(Number(variants[0]?.stock ?? 0))),
+                  price: Math.max(0, Math.round(Number(effectiveVariants[0]?.priceShopee ?? payload.price ?? 0))),
+                  stock: Math.max(0, Math.round(Number(effectiveVariants[0]?.stock ?? 0))),
                   weight: Number(payload.packageWeight || 0),
                 });
               }

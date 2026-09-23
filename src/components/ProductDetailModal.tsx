@@ -176,7 +176,7 @@ interface ProductDetailModalProps {
   onUpdateProduct: (
     product: Product,
     opts?: { save?: boolean }
-  ) => void | Promise<void | { success?: boolean; error?: string; shopeeSynced?: boolean; shopeeMessage?: string }>;
+  ) => void | Promise<void | { success?: boolean; error?: string; message?: string; shopeeSynced?: boolean; shopeeMessage?: string }>;
   onSyncItemVariants?: (itemId: string) => Promise<Product[] | null>;
   onProductsRefresh?: (products: Product[]) => void;
   systemFees?: SystemFee[];
@@ -372,12 +372,12 @@ export default function ProductDetailModal({
       });
       const syncData = await parseJsonResponse(syncResponse);
       if (!syncResponse.ok || syncData?.success === false) {
-        throw new Error(
+        throw new Error(String(
           syncData?.error ||
             syncData?.message ||
             syncData?.shopeeMessage ||
             `Đồng bộ Shopee thất bại (HTTP ${syncResponse.status})`
-        );
+        ));
       }
 
       setToast('Cập nhật & Đồng bộ thành công');

@@ -9,7 +9,6 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import type { TooltipProps } from 'recharts';
 import { parseJsonResponse } from '../utils/apiClient';
 
 export type SupplierReportTimeRange =
@@ -73,8 +72,16 @@ function formatShortVnd(value: number): string {
   return n.toLocaleString('vi-VN');
 }
 
+interface SupplierChartTooltipProps {
+  active?: boolean;
+  payload?: Array<{
+    value?: number | string;
+    payload?: SupplierReportRow;
+  }>;
+}
+
 /** Tooltip tùy chỉnh — format Tổng tiền đã thanh toán theo chuẩn VNĐ (VD: 22.974.900 đ). */
-function SupplierChartTooltip({ active, payload }: TooltipProps<number, string>) {
+function SupplierChartTooltip({ active, payload }: SupplierChartTooltipProps) {
   if (!active || !payload || payload.length === 0) return null;
   const item = payload[0];
   const row = (item?.payload || {}) as SupplierReportRow;

@@ -24,7 +24,6 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import type { TooltipProps } from 'recharts';
 import { parseJsonResponse } from '../utils/apiClient';
 import {
   SUPPLIER_REPORT_TIME_RANGE_OPTIONS,
@@ -36,6 +35,17 @@ interface SupplierChartDatum {
   name: string;
   totalImported: number;
   debt: number;
+}
+
+interface SupplierTooltipProps {
+  active?: boolean;
+  label?: string | number;
+  payload?: Array<{
+    dataKey?: string | number;
+    name?: string | number;
+    value?: number | string;
+    color?: string;
+  }>;
 }
 
 /** Cắt ngắn tên NCC dài trên trục X để không vỡ layout biểu đồ. */
@@ -53,7 +63,7 @@ function formatShortVndAxis(value: number): string {
 }
 
 /** Tooltip tùy chỉnh — format tiền theo chuẩn VNĐ (có dấu chấm ngăn nghìn). */
-function SupplierOverviewTooltip({ active, payload, label }: TooltipProps<number, string>) {
+function SupplierOverviewTooltip({ active, payload, label }: SupplierTooltipProps) {
   if (!active || !payload || payload.length === 0) return null;
   return (
     <div className="bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2 text-xs max-w-[220px]">

@@ -76211,22 +76211,22 @@ function parseModelNameFromTitle(title) {
   if (maybeModel && maybeBase) return { baseTitle: maybeBase, modelName: maybeModel };
   return { baseTitle: title };
 }
-function matchVariantsByName(variants2, modelName) {
+function matchVariantsByName(variants, modelName) {
   const lower2 = modelName.toLowerCase();
-  return variants2.filter(
+  return variants.filter(
     (p) => p.modelName?.toLowerCase() === lower2 || p.title.toLowerCase().endsWith(` - ${lower2}`)
   );
 }
-function matchVariantsByPrice(variants2, orderPrice) {
-  if (!orderPrice || variants2.length === 0) return [];
-  return variants2.filter(
+function matchVariantsByPrice(variants, orderPrice) {
+  if (!orderPrice || variants.length === 0) return [];
+  return variants.filter(
     (p) => p.shopeeModelId && priceMatches(Number(p.sellingPrice) || 0, orderPrice)
   );
 }
-function matchVariantByImage(variants2, orderImage) {
+function matchVariantByImage(variants, orderImage) {
   const orderKey = normalizeImageKey(orderImage);
   if (!orderKey) return void 0;
-  const matches = variants2.filter((v) => {
+  const matches = variants.filter((v) => {
     const variantKey = normalizeImageKey(v.avatarUrl || v.imageUrl);
     if (!variantKey) return false;
     if (orderKey === variantKey) return true;
@@ -76251,21 +76251,21 @@ function enrichOrderItemFromCatalog(item, catalogProducts = []) {
     productTitle = stripModelSuffix(productTitle, modelName);
   }
   const roots = itemId ? findCatalogVariants(catalogProducts, itemId) : [];
-  const variants2 = flattenCatalogPool(roots);
+  const variants = flattenCatalogPool(roots);
   let matched;
   if (modelId !== "0") {
-    matched = variants2.find((p) => p.shopeeModelId === modelId);
+    matched = variants.find((p) => p.shopeeModelId === modelId);
   }
   if (!matched && modelName) {
-    const byName = matchVariantsByName(variants2, modelName);
+    const byName = matchVariantsByName(variants, modelName);
     if (byName.length === 1) matched = byName[0];
   }
   if (!matched && orderPrice > 0) {
-    const byPrice = matchVariantsByPrice(variants2, orderPrice);
+    const byPrice = matchVariantsByPrice(variants, orderPrice);
     if (byPrice.length === 1) matched = byPrice[0];
   }
   if (!matched) {
-    matched = matchVariantByImage(variants2, item.productImage);
+    matched = matchVariantByImage(variants, item.productImage);
   }
   if (!matched && catalogProducts.length > 0) {
     matched = matchCatalogBySkuOrModel(catalogProducts, item);
@@ -77054,7 +77054,7 @@ async function ensureConnected(client) {
         }, 3e3);
       });
     }
-    return client.status === "ready";
+    return String(client.status) === "ready";
   } catch (err) {
     warnRedis("connect failed", err);
     return false;
@@ -80040,10 +80040,10 @@ async function bulkUpdateShippedOrdersBySn(patches) {
 }
 function shopIdTypeVariants(shopId) {
   const shopKey = String(shopId || "").trim();
-  const variants2 = [shopKey];
+  const variants = [shopKey];
   const asNum = Number(shopKey);
-  if (Number.isFinite(asNum) && String(asNum) === shopKey) variants2.push(asNum);
-  return variants2;
+  if (Number.isFinite(asNum) && String(asNum) === shopKey) variants.push(asNum);
+  return variants;
 }
 function buildOrderCompoundFilter(sn, _id, shopId) {
   const identity = { $or: [{ orderSn: sn }, { _id }, { "data.orderSn": sn }] };
@@ -81377,8 +81377,8 @@ function normalizeScannedCode(raw) {
 function stripScannedSeparators(code) {
   return String(code || "").replace(/[\s\-_#./\\|:;,]+/g, "");
 }
-function pushScanFieldVariants($or, field, variants2) {
-  for (const v of variants2) {
+function pushScanFieldVariants($or, field, variants) {
+  for (const v of variants) {
     if (v) $or.push({ [field]: v });
   }
 }
@@ -81386,9 +81386,9 @@ function buildExactScanOrFilter(rawCode) {
   const scannedCode = normalizeScannedCode(rawCode);
   if (!scannedCode) return null;
   const stripped = stripScannedSeparators(scannedCode);
-  const variants2 = [...new Set([scannedCode, stripped].filter(Boolean))];
+  const variants = [...new Set([scannedCode, stripped].filter(Boolean))];
   const $or = [];
-  for (const code of variants2) {
+  for (const code of variants) {
     pushScanFieldVariants($or, "trackingNumber", [code]);
     pushScanFieldVariants($or, "tracking_no", [code]);
     pushScanFieldVariants($or, "data.trackingNumber", [code]);
@@ -84841,21 +84841,21 @@ function collectHydratedOrderScanKeys(order) {
   return keys;
 }
 function deriveScanCodeVariants(chunk) {
-  const variants2 = /* @__PURE__ */ new Set();
+  const variants = /* @__PURE__ */ new Set();
   const ids = [];
   const sns = [];
   for (const code of chunk) {
     const scanned = normalizeScannedCode(code);
     if (!scanned) continue;
-    variants2.add(scanned);
+    variants.add(scanned);
     const stripped = stripScannedSeparators(scanned);
-    if (stripped) variants2.add(stripped);
+    if (stripped) variants.add(stripped);
     const sn = scanned.replace(/^SHOPEE-/, "");
     if (sn) sns.push(sn);
     ids.push(scanned.startsWith("SHOPEE-") ? `shopee-${sn}` : `shopee-${scanned}`);
     ids.push(scanned);
   }
-  const codes = [...variants2];
+  const codes = [...variants];
   const snList = [...new Set(sns.filter(Boolean))];
   if (codes.length === 0 && snList.length === 0) return null;
   return { codes, snList, ids: [...new Set(ids)] };
@@ -84926,11 +84926,11 @@ async function findOrdersByScanCodesInStore(rawCodes) {
   let nestedQueries = 0;
   for (let i2 = 0; i2 < uniqueCodes.length; i2 += SCAN_BATCH_IN_SIZE) {
     const chunk = uniqueCodes.slice(i2, i2 + SCAN_BATCH_IN_SIZE);
-    const variants2 = deriveScanCodeVariants(chunk);
-    if (!variants2) continue;
+    const variants = deriveScanCodeVariants(chunk);
+    if (!variants) continue;
     try {
       const docs = await withWriteTimeout(
-        OrderModel.find(buildScanCodesTopLevelFilter(variants2)).select(SCANNER_BULK_SELECT).limit(Math.min(Math.max(chunk.length * 3, 50), 2e3)).maxTimeMS(5e3).lean().exec(),
+        OrderModel.find(buildScanCodesTopLevelFilter(variants)).select(SCANNER_BULK_SELECT).limit(Math.min(Math.max(chunk.length * 3, 50), 2e3)).maxTimeMS(5e3).lean().exec(),
         "scan_codes_in_lookup_top",
         6e3
       );
@@ -118577,7 +118577,7 @@ async function createProduct(req, res) {
   const status = body.status || "active";
   const imageUrl = body.imageUrl || void 0;
   const rawVariants = pickVariantRowsFromBody(body);
-  let variants2 = [];
+  let variants = [];
   if (rawVariants.length > 0) {
     const normalized = normalizeVariantRows(rawVariants, {
       id: productId,
@@ -118596,11 +118596,11 @@ async function createProduct(req, res) {
         message: normalized.message
       });
     }
-    variants2 = normalized.rows;
+    variants = normalized.rows;
   }
   try {
     const takenSku = await findFirstTakenSku(
-      [sku, ...variants2.map((v) => v.sku)],
+      [sku, ...variants.map((v) => v.sku)],
       null
     );
     if (takenSku) {
@@ -118618,15 +118618,15 @@ async function createProduct(req, res) {
       message: "Kh\xF4ng ki\u1EC3m tra \u0111\u01B0\u1EE3c tr\xF9ng SKU. Vui l\xF2ng th\u1EED l\u1EA1i."
     });
   }
-  const hasVariants = variants2.length > 0;
+  const hasVariants = variants.length > 0;
   const product = {
     id: productId,
     title,
     sku,
     // Có phân loại: giá/tồn cha chỉ để hiển thị, nguồn thật nằm ở `children`.
-    stock: hasVariants ? variants2.reduce((sum, v) => sum + (Number(v.stock) || 0), 0) : toNonNegativeInt(body.stock),
-    importPrice: hasVariants ? Number(variants2[0].importPrice) || 0 : toNonNegativeInt(body.importPrice),
-    sellingPrice: hasVariants ? Number(variants2[0].sellingPrice) || 0 : toNonNegativeInt(body.sellingPrice),
+    stock: hasVariants ? variants.reduce((sum, v) => sum + (Number(v.stock) || 0), 0) : toNonNegativeInt(body.stock),
+    importPrice: hasVariants ? Number(variants[0].importPrice) || 0 : toNonNegativeInt(body.importPrice),
+    sellingPrice: hasVariants ? Number(variants[0].sellingPrice) || 0 : toNonNegativeInt(body.sellingPrice),
     unit,
     channels,
     category,
@@ -118643,7 +118643,7 @@ async function createProduct(req, res) {
     wooId: body.wooId,
     lastSynced: (/* @__PURE__ */ new Date()).toISOString()
   };
-  if (hasVariants) product.children = variants2;
+  if (hasVariants) product.children = variants;
   await deps10.upsertProductsToStoreAsync([product]);
   const cache = await deps10.loadLocalInventoryCache();
   return res.status(201).json({
@@ -121337,7 +121337,7 @@ var deps12 = {
   SHOPEE_ITEM_LIST_PAGE_SIZE: 10,
   fetchShopeeItemVariants: async () => ({ variantProducts: [], error: "not_initialized", modelCount: 0 }),
   loadProducts: async () => [],
-  replaceProductsForShopeeItem: (all3, _itemId, variants2) => variants2,
+  replaceProductsForShopeeItem: (all3, _itemId, variants) => variants,
   getProductChildrenList: (p) => Array.isArray(p?.children) && p.children.length ? p.children : Array.isArray(p?.children_models) ? p.children_models : [],
   extractHttpClientError: (err) => ({
     message: err?.message || String(err),
@@ -121630,13 +121630,13 @@ async function previewItemVariants(req, res) {
     if (error && (!Array.isArray(variantProducts) || variantProducts.length === 0)) {
       return res.status(400).json({ success: false, error, message: error });
     }
-    const variants2 = flattenShopeeRowsForInitForm(variantProducts);
+    const variants = flattenShopeeRowsForInitForm(variantProducts);
     return res.json({
       success: true,
       itemId: String(itemId),
       title: String(item?.item_name || variantProducts?.[0]?.title || ""),
       modelCount,
-      variants: variants2
+      variants
     });
   } catch (err) {
     console.error("[Shopee Item Preview] Exception:", err);
@@ -136659,11 +136659,11 @@ async function resolveShopeePublishCategoryId(shopId, accessToken, payload) {
   };
   let cache = await getOrSyncShopeeCategories(APP_ROOT14, catDeps, { force: false });
   let validated = validateShopeeLeafCategoryId(asInt, cache);
-  if (!validated.ok) {
+  if (validated.ok === false) {
     cache = await getOrSyncShopeeCategories(APP_ROOT14, catDeps, { force: true });
     validated = validateShopeeLeafCategoryId(asInt, cache);
   }
-  if (!validated.ok) {
+  if (validated.ok === false) {
     const err = new Error(validated.error || SHOPEE_INVALID_CATEGORY_USER_MSG);
     err.code = validated.code || SHOPEE_INVALID_CATEGORY_CODE;
     throw err;
@@ -137054,13 +137054,17 @@ async function publishOneItemToShopee(shopId, payload) {
       `[Shopee Publish] Kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c attribute_tree v\xE0 FE kh\xF4ng g\u1EEDi attributes \u2014 add_item c\xF3 th\u1EC3 b\u1ECB Shopee t\u1EEB ch\u1ED1i. ${attributeTreeError}`
     );
   }
-  const variants2 = Array.isArray(payload?.variants) ? payload.variants : [];
-  const hasVariants = variants2.length > 1 || variants2.length === 1 && String(variants2[0]?.name || "").trim() && !/^mặc định$/i.test(String(variants2[0]?.name || "").trim());
+  const variants = Array.isArray(payload?.variants) ? payload.variants : [];
+  const tierAttrs = Array.isArray(payload?.tierVariations) ? payload.tierVariations.map((tier) => ({
+    name: String(tier?.name || "Ph\xE2n lo\u1EA1i"),
+    values: Array.isArray(tier?.options) ? tier.options.map(String) : []
+  })) : [];
+  const hasVariants = variants.length > 1 || variants.length === 1 && String(variants[0]?.name || "").trim() && !/^mặc định$/i.test(String(variants[0]?.name || "").trim());
   const basePrice = Math.max(
     0,
-    Math.round(Number(variants2[0]?.priceShopee ?? payload?.price ?? 0))
+    Math.round(Number(variants[0]?.priceShopee ?? payload?.price ?? 0))
   );
-  const baseStock = Math.max(0, Math.round(Number(variants2[0]?.stock ?? 0)));
+  const baseStock = Math.max(0, Math.round(Number(variants[0]?.stock ?? 0)));
   if (basePrice <= 0) throw new Error("Gi\xE1 Shopee ph\u1EA3i > 0");
   const itemName = String(
     payload?.shopTitles && payload.shopTitles[shopId] || payload?.title || "S\u1EA3n ph\u1EA9m"
@@ -137107,7 +137111,10 @@ async function publishOneItemToShopee(shopId, payload) {
   }
   let itemId = existingItemId;
   if (existingItemId) {
-    const updateBody = { ...itemBody, item_id: toShopeeIdNumber(existingItemId) ?? Number(existingItemId) };
+    const updateBody = {
+      ...itemBody,
+      item_id: toShopeeIdNumber(existingItemId) ?? Number(existingItemId)
+    };
     delete updateBody.original_price;
     delete updateBody.seller_stock;
     await shopeeProductPost(
@@ -137142,7 +137149,7 @@ async function publishOneItemToShopee(shopId, payload) {
       option_list: a.values.map((v) => String(v).trim()).filter(Boolean)
     }));
     const tierName = tierVariations[0]?.name || "Ph\xE2n lo\u1EA1i";
-    const modelListWithWeight = variants2.map((v, idx) => {
+    const modelListWithWeight = variants.map((v, idx) => {
       const price = Math.max(
         0,
         Math.round(Number(v.priceShopee ?? v.pricePromo ?? v.original_price ?? 0))
@@ -137219,7 +137226,7 @@ async function publishOneItemToShopee(shopId, payload) {
       }
     } catch (modelErr) {
       console.warn(`[Shopee Publish] get_model_list th\u1EA5t b\u1EA1i item_id=${itemId}:`, modelErr);
-      modelIds = variants2.filter((v) => v?.sku).map((v) => v.sku);
+      modelIds = variants.filter((v) => v?.sku).map((v) => v.sku);
     }
   }
   return { itemId, modelIds };
@@ -150351,7 +150358,11 @@ async function startServer() {
             message: "Token TikTok h\u1EE3p l\u1EC7 nh\u01B0ng \u0111\u1ED3ng b\u1ED9 \u0111ang t\u1EAFt (Sync OFF)"
           };
         }
-        return ping;
+        return {
+          online: Boolean(ping.online),
+          connection_status: ping.online ? "online" : "expired",
+          message: String(ping.message || (ping.online ? "TikTok OpenAPI ph\u1EA3n h\u1ED3i OK" : "Token TikTok kh\xF4ng h\u1EE3p l\u1EC7"))
+        };
       } catch (error) {
         return {
           online: false,
@@ -150720,13 +150731,14 @@ async function startServer() {
             );
             const medicineId = resolveShopeeMedicineId(payload) || (product?.medicine_id != null ? String(product.medicine_id) : null);
             const perShopVars = payload?.perShopVariants?.[shopKey] || payload?.perShopVariants?.[clientShopId] || null;
+            const effectiveVariants = Array.isArray(perShopVars) && perShopVars.length ? perShopVars : Array.isArray(payload?.variants) ? payload.variants : [];
             const perShopLogsRaw = payload?.perShopLogistics?.[shopKey] || payload?.perShopLogistics?.[clientShopId] || null;
             const publishResult = await publishOneItemToShopee(shopKey, {
               ...payload,
               medicine_id: medicineId || payload?.medicine_id,
               shopeeItemId: existingListing?.platform_product_id || product?.shopeeItemId,
               platform_product_id: existingListing?.platform_product_id,
-              variants: Array.isArray(perShopVars) && perShopVars.length ? perShopVars : payload.variants,
+              variants: effectiveVariants,
               // Ưu tiên perShopLogistics: gửi mảng để hàm nội bộ resolve theo shop
               perShopLogistics: perShopLogsRaw,
               enabledLogistics: Array.isArray(perShopLogsRaw) ? perShopLogsRaw.map(Number).filter((n) => n > 0) : payload.enabledLogistics || [],
@@ -150744,14 +150756,14 @@ async function startServer() {
                 sku: product?.sku || `SKU-${itemId}`,
                 imageUrl: images[0] || product?.imageUrl || product?.avatarUrl,
                 description: payload.descriptionHtml || payload.description || title || "",
-                price: Math.max(0, Math.round(Number(variants[0]?.priceShopee ?? payload.price ?? 0))),
-                stock: Math.max(0, Math.round(Number(variants[0]?.stock ?? 0))),
+                price: Math.max(0, Math.round(Number(effectiveVariants[0]?.priceShopee ?? payload.price ?? 0))),
+                stock: Math.max(0, Math.round(Number(effectiveVariants[0]?.stock ?? 0))),
                 weight: Number(payload.packageWeight || 0),
                 shopeeItemId: String(itemId),
                 shopId: String(shopKey),
                 channels: ["shopee"],
                 children: modelIds.length > 0 ? modelIds.map((mid, idx) => {
-                  const v = (Array.isArray(perShopVars) && perShopVars.length ? perShopVars : payload.variants)[idx];
+                  const v = effectiveVariants[idx];
                   return {
                     id: `child-${itemId}-${mid || idx}`,
                     sku: mid && mid.startsWith("SKU") ? mid : v?.sku || `SKU-${itemId}-${mid || idx}`,
@@ -150784,7 +150796,7 @@ async function startServer() {
                 const allProducts = await loadProducts();
                 const parentSku = product?.sku || `SKU-${itemId}`;
                 modelIds.forEach((mid, idx) => {
-                  const v = (Array.isArray(perShopVars) && perShopVars.length ? perShopVars : payload.variants)[idx];
+                  const v = effectiveVariants[idx];
                   channelRows.push({
                     id: `cl-shopee-${itemId}-${mid || idx}`,
                     title: title || product?.title || "",
@@ -150813,8 +150825,8 @@ async function startServer() {
                   shopId: String(shopKey),
                   status: "success",
                   linkedProductId: productId !== "unknown" ? productId : void 0,
-                  price: Math.max(0, Math.round(Number(variants[0]?.priceShopee ?? payload.price ?? 0))),
-                  stock: Math.max(0, Math.round(Number(variants[0]?.stock ?? 0))),
+                  price: Math.max(0, Math.round(Number(effectiveVariants[0]?.priceShopee ?? payload.price ?? 0))),
+                  stock: Math.max(0, Math.round(Number(effectiveVariants[0]?.stock ?? 0))),
                   weight: Number(payload.packageWeight || 0)
                 });
               }

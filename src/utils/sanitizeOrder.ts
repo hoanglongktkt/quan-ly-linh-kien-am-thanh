@@ -74,17 +74,17 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     raw = {
       ...nestedData,
       ...raw,
-      tracking_no: raw.tracking_no || raw.trackingNumber || nestedData.tracking_no || nestedData.trackingNumber,
-      trackingNumber: raw.trackingNumber || raw.tracking_no || nestedData.trackingNumber || nestedData.tracking_no,
-      hasPdf: raw.hasPdf ?? nestedData.hasPdf,
-      readyToPrint: raw.readyToPrint ?? nestedData.readyToPrint,
-      isPrinted: raw.isPrinted ?? nestedData.isPrinted,
-      isPrepared: raw.isPrepared ?? nestedData.isPrepared,
-      barcode: raw.barcode || nestedData.barcode,
-      waybill_url: (raw as { waybill_url?: unknown }).waybill_url || nestedData.waybill_url,
-      labelUrl: raw.labelUrl || nestedData.labelUrl,
-      pdfUrl: raw.pdfUrl || nestedData.pdfUrl,
-      pdfFilename: raw.pdfFilename || nestedData.pdfFilename,
+      tracking_no: String(raw.tracking_no || raw.trackingNumber || nestedData.tracking_no || nestedData.trackingNumber || ''),
+      trackingNumber: String(raw.trackingNumber || raw.tracking_no || nestedData.trackingNumber || nestedData.tracking_no || ''),
+      hasPdf: isTruthyFlag(raw.hasPdf ?? nestedData.hasPdf),
+      readyToPrint: isTruthyFlag(raw.readyToPrint ?? nestedData.readyToPrint),
+      isPrinted: isTruthyFlag(raw.isPrinted ?? nestedData.isPrinted),
+      isPrepared: isTruthyFlag(raw.isPrepared ?? nestedData.isPrepared),
+      barcode: String(raw.barcode || nestedData.barcode || ''),
+      waybill_url: String((raw as { waybill_url?: unknown }).waybill_url || nestedData.waybill_url || ''),
+      labelUrl: String(raw.labelUrl || nestedData.labelUrl || ''),
+      pdfUrl: String(raw.pdfUrl || nestedData.pdfUrl || ''),
+      pdfFilename: String(raw.pdfFilename || nestedData.pdfFilename || ''),
     };
   }
   const orderSn = String(raw.orderSn || raw.order_sn || raw.id || '')

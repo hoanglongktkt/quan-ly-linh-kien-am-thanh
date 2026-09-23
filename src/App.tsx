@@ -1767,14 +1767,15 @@ export default function App() {
       });
       const data = await parseJsonResponse(response);
       if (!response.ok || data?.success === false) {
-        const error =
-          data?.message || data?.error || `Lỗi cập nhật sản phẩm (HTTP ${response.status})`;
+        const error = String(
+          data?.message || data?.error || `Lỗi cập nhật sản phẩm (HTTP ${response.status})`,
+        );
         return {
           success: false,
           error,
-          code: data?.error,
+          code: data?.error == null ? undefined : String(data.error),
           shopeeSynced: false,
-          shopeeMessage: data?.shopeeMessage || error,
+          shopeeMessage: String(data?.shopeeMessage || error),
         };
       }
 

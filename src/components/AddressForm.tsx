@@ -60,7 +60,7 @@ function unitKey(item: { id?: string | number; code?: string | number } | null |
 
 function fetchWithTimeout(url: string, init: RequestInit, ms: number): Promise<Response> {
   const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timer: number | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = window.setTimeout(() => {
       controller.abort();
@@ -109,7 +109,7 @@ export default function AddressForm({ value, onChange, authHeaders }: AddressFor
   const [bookOpen, setBookOpen] = useState(false);
   const [addressBook, setAddressBook] = useState<AddressBookEntry[]>([]);
   const bookRef = useRef<HTMLDivElement>(null);
-  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
   const authHeadersRef = useRef(authHeaders);
   authHeadersRef.current = authHeaders;
 

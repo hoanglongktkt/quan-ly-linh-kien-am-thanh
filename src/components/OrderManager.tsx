@@ -996,10 +996,6 @@ function matchesStrictDisplaySubTab(
   cancelTab: CancelReturnTab,
 ): boolean {
   if (subTab === 'return_requests') return hasOrderReturnSn(order);
-  if (subTab === 'cancelled') {
-    return isOrderCancelledStatus(order) && !hasOrderReturnSn(order) && !order.is_rts;
-  }
-  if (subTab === 'failed_delivery') return order.is_rts === true;
   if (subTab !== 'cancel_returns') return true;
   if (cancelTab === 'refund_return') return hasOrderReturnSn(order);
   if (cancelTab === 'cancelled') {
@@ -4602,10 +4598,10 @@ export default function OrderManager({
   const progressCloseTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Khóa click In đơn — chặn double-fire / bubbling / 2 view cùng lúc (≥1440px). */
   const isPrintingRef = React.useRef(false);
-  const isPrintingUnlockTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isPrintingUnlockTimerRef = React.useRef<number | null>(null);
   /** Khóa mở PDF toàn cục — chỉ 1 tab mỗi phiên in (kể cả await fetch). */
   const pdfOpenSessionRef = React.useRef(false);
-  const pdfOpenUnlockTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pdfOpenUnlockTimerRef = React.useRef<number | null>(null);
   const lastOpenedPdfKeyRef = React.useRef('');
 
   // Auto-hiding toast — replaces blocking alert() in bulk ship/print flows.

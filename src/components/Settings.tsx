@@ -154,6 +154,9 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
       shopId1: '',
       shopId2: '',
       shopId3: '',
+      ghnShopId1: '',
+      ghnShopId2: '',
+      ghnShopId3: '',
       service: 'standard',
     });
     const id1 = String(saved.shopId1 || saved.ghnShopId1 || saved.shopId || '').trim();

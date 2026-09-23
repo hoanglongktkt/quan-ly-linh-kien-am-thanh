@@ -637,7 +637,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   }, [mappingListing, mappingSearch, searchMasterViaApi]);
 
   /** Chỉ dùng sku-index / search API — tuyệt đối không fallback sang products trang 1 của App. */
-  const flattenedMasterProducts = useMemo(() => {
+  const flattenedMasterProducts = useMemo<Product[]>(() => {
     return masterCatalog.map(
       (r) =>
         ({
@@ -645,10 +645,13 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
           sku: r.sku,
           title: r.title || r.sku,
           stock: 0,
-          price: 0,
+          importPrice: 0,
+          sellingPrice: 0,
+          channels: [],
+          category: 'Chưa phân loại',
           status: 'active',
-          createdAt: 0,
-        }) as Product
+          description: '',
+        }) satisfies Product
     );
   }, [masterCatalog]);
 
@@ -1047,7 +1050,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     onAddLog({
       id: `log-${Date.now()}`,
       timestamp: new Date().toISOString(),
-      channel: listing.platform,
+      channel: listing.platform === 'lazada' ? 'shopee' : listing.platform,
       type: 'product_sync',
       status: 'success',
       message: `Hủy liên kết thành công sản phẩm sàn [ID: ${listing.channelId}] khỏi Kho chính`
@@ -1106,11 +1109,13 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
               title: displayProd.title,
               sku: displayProd.sku,
               stock: 0,
-              price: 0,
+              importPrice: 0,
+              sellingPrice: 0,
               status: 'active',
-              createdAt: 0,
               channels: [],
-            } as Product,
+              category: 'Chưa phân loại',
+              description: '',
+            } satisfies Product,
             listing
           );
           await apiFetch(`/api/products/${encodeURIComponent(String(displayProd.id))}`, {
@@ -1140,7 +1145,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     onAddLog({
       id: `log-${Date.now()}`,
       timestamp: new Date().toISOString(),
-      channel: listing.platform,
+      channel: listing.platform === 'lazada' ? 'shopee' : listing.platform,
       type: 'product_sync',
       status: 'success',
       message: `Liên kết thủ công sản phẩm sàn [ID: ${listing.channelId}] sang Kho chính sản phẩm [${displayProd.sku}]`,
@@ -1335,7 +1340,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     setInitSubmitProgress(null);
     try {
       const validPlatforms = ['shopee', 'tiktok', 'woocommerce'];
-      const channelList = validPlatforms.includes(initListing.platform)
+      const channelList: Product['channels'] = validPlatforms.includes(initListing.platform)
         ? [initListing.platform as 'shopee' | 'tiktok' | 'woocommerce']
         : ['shopee'];
 
@@ -1390,7 +1395,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         try {
           if (onAddProduct) {
             const saved = await onAddProduct(p);
-            savedProducts.push(saved?.id ? saved : p);
+            savedProducts.push(saved && saved.id ? saved : p);
           } else {
             savedProducts.push(p);
           }

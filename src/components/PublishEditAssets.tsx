@@ -400,7 +400,7 @@ export default function PublishEditAssets({
           </p>
           <button
             type="button"
-            onClick={handleBatchAiTitles}
+            onClick={() => void handleBatchAiTitles()}
             disabled={aiRunning}
             className="w-full py-2.5 bg-linear-to-r from-purple-600 to-indigo-600 text-white font-extrabold text-xs rounded-xl disabled:opacity-50 flex items-center justify-center gap-2"
           >

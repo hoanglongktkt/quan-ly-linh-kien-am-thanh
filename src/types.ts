@@ -137,6 +137,11 @@ export interface OrderCustomCostItem {
 }
 
 export interface Order {
+  /**
+   * Dữ liệu đơn từ các kênh bán có thể kèm trường mở rộng chưa chuẩn hóa.
+   * Giữ kiểu `unknown` để buộc nơi sử dụng phải kiểm tra kiểu trước khi đọc.
+   */
+  [key: string]: unknown;
   id: string;
   orderSn: string;
   channel: 'shopee' | 'tiktok' | 'woocommerce' | 'manual';
@@ -327,11 +332,15 @@ export interface Order {
   handedOverAt?: string;
   handed_over_source?: 'qr_scan' | 'manual_button' | string | null;
   handedOverSource?: 'qr_scan' | 'manual_button' | string | null;
+  notes?: string;
   /** Mã giảm giá Shop (voucher_from_seller) — KHÔNG gồm Shopee Voucher */
   seller_voucher?: number;
   items: {
     productId: string;
     productTitle: string;
+    /** Alias từ một số nguồn đơn ngoài sàn. */
+    name?: string;
+    sku?: string;
     productImage?: string;
     quantity: number;
     originalQuantity?: number;
