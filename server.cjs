@@ -80153,8 +80153,8 @@ async function markOrdersPrintedInStore(orderSns, isPrinted, meta) {
   const result = await OrderModel.updateMany(filter2, { $set }, {
     maxTimeMS: 4e3
   });
-  const matched = Number(result?.matchedCount || result?.n || 0);
-  const modified = Number(result?.modifiedCount || result?.nModified || 0);
+  const matched = Number(result?.matchedCount || 0);
+  const modified = Number(result?.modifiedCount || 0);
   console.log(
     `[MongoDB] markOrdersPrintedInStore isPrinted=${printed} sns=${sns.length} matched=${matched} modified=${modified}`
   );
@@ -84233,7 +84233,7 @@ async function upsertDonHoanHuy(order, opts) {
     return { ok: false, orderSn: "", error: "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB" };
   }
   const built = buildDonHoanHuyUpsertPayload(order, opts);
-  if (!built.ok) {
+  if (built.ok === false) {
     return { ok: false, orderSn: built.orderSn, error: built.error };
   }
   const { sn, $set, scannedAt } = built.payload;
@@ -84295,7 +84295,7 @@ async function upsertDonHoanHuyBatch(rows) {
       scanCode: row.scanCode,
       source: row.source
     });
-    if (!built.ok) {
+    if (built.ok === false) {
       failed += 1;
       if (built.error) errors.push(`#${built.orderSn || "?"}: ${built.error}`);
       continue;

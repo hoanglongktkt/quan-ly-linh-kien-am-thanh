@@ -123,6 +123,8 @@ type OrderDoc = {
    */
   is_handed_over?: boolean;
   isPrinted?: boolean;
+  /** Thời điểm user in đơn thành công; null khi reset trạng thái in. */
+  printedAt?: Date | string | null;
   /** PDF đã lưu sẵn (BG) — khác isPrinted (user đã in ra giấy). */
   hasPdf?: boolean;
   /** URL PDF vận đơn nội bộ đã cache (ERP) */
@@ -1872,7 +1874,7 @@ export async function loadLogisticsSettingsFromStore(): Promise<Record<string, a
   if (raw == null || raw === "") {
     try {
       const native = await mongoose.connection.db
-        ?.collection("meta")
+        ?.collection<MetaDoc>("meta")
         .findOne({ _id: LOGISTICS_CONFIG_META_KEY });
       if (native && typeof native === "object") {
         raw = (native as { value?: unknown }).value ?? native;
@@ -3417,8 +3419,8 @@ export async function markOrdersPrintedInStore(
   const result = await OrderModel.updateMany(filter, { $set }, {
     maxTimeMS: 4_000,
   } as any);
-  const matched = Number(result?.matchedCount || result?.n || 0);
-  const modified = Number(result?.modifiedCount || result?.nModified || 0);
+  const matched = Number(result?.matchedCount || 0);
+  const modified = Number(result?.modifiedCount || 0);
   console.log(
     `[MongoDB] markOrdersPrintedInStore isPrinted=${printed} sns=${sns.length}` +
       ` matched=${matched} modified=${modified}`,
@@ -9237,7 +9239,7 @@ export async function upsertDonHoanHuy(
   }
 
   const built = buildDonHoanHuyUpsertPayload(order, opts);
-  if (!built.ok) {
+  if (built.ok === false) {
     return { ok: false, orderSn: built.orderSn, error: built.error };
   }
 
@@ -9311,7 +9313,7 @@ export async function upsertDonHoanHuyBatch(
       scanCode: row.scanCode,
       source: row.source,
     });
-    if (!built.ok) {
+    if (built.ok === false) {
       failed += 1;
       if (built.error) errors.push(`#${built.orderSn || "?"}: ${built.error}`);
       continue;
@@ -9795,7 +9797,7 @@ const SCANNER_COMPOUND_INDEX_NAMES = [
  */
 export async function ensureScannerIndexesInStore(): Promise<{
   success: boolean;
-  syncResult: Record<string, string>;
+  syncResult: string[];
   scannerIndexes: Array<{ name: string; present: boolean; key?: Record<string, unknown> }>;
   lookupIndexes: Array<{ name: string; present: boolean; key?: Record<string, unknown> }>;
   totalIndexes: number;
@@ -9806,7 +9808,7 @@ export async function ensureScannerIndexesInStore(): Promise<{
   }
   requireMongo();
 
-  const syncResult = (await OrderModel.syncIndexes()) as Record<string, string>;
+  const syncResult = await OrderModel.syncIndexes();
   const indexes = (await OrderModel.collection.indexes()) as Array<{
     name?: string;
     key?: Record<string, unknown>;
