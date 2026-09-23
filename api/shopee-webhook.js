@@ -25,7 +25,8 @@ function readRawBody(req) {
 
 export default async function handler(req, res) {
   if (req.method === 'GET' || req.method === 'OPTIONS') {
-    return res.status(200).type('text/plain; charset=utf-8').send('OK');
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    return res.status(200).send('success');
   }
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'GET, POST, OPTIONS');
@@ -69,10 +70,8 @@ export default async function handler(req, res) {
   }
 
   const responseBody = await result.upstream.text();
-  return res
-    .status(result.upstream.status)
-    .type('text/plain; charset=utf-8')
-    .send(responseBody);
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  return res.status(result.upstream.status).send(responseBody);
 }
 
 export const config = {
