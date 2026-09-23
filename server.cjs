@@ -76023,49 +76023,71 @@ function readRawWebhookBody(req) {
   });
 }
 async function processShopeeWebhookAsync(queue, snapshot, rawBodyPromise) {
-  const rawBody = await rawBodyPromise;
-  if (!rawBody) {
-    console.log("[Shopee Webhook] Empty/oversized body after ACK \u2014 nothing to process.");
-    return;
-  }
-  const isValid = verifyShopeeWebhookSignature(
-    rawBody,
-    snapshot.authorization,
-    snapshot.requestUrls
-  );
-  if (!isValid) {
-    console.warn("[Shopee Webhook] Invalid Authorization after ACK \u2014 payload ignored.");
-    return;
-  }
-  markWebhookReceived();
-  console.log(
-    `[WEBHOOK RECEIVED] pid=${process.pid} ${snapshot.routeLabel} \u2014 ACK 200 sent; headers:`,
-    {
-      authorization: "(verified)",
-      contentLength: snapshot.contentLength,
-      contentType: snapshot.contentType,
-      host: snapshot.host
+  try {
+    const rawBody = await rawBodyPromise;
+    if (!rawBody) {
+      console.log("[Shopee Webhook] Empty/oversized body after ACK \u2014 nothing to process.");
+      return;
     }
-  );
-  console.log("[WEBHOOK RECEIVED] req.body (full):", rawBody.toString("utf8"));
-  const payload = parseWebhookBody(rawBody);
-  if (!payload) {
-    console.log("[Shopee Webhook] Invalid JSON after ACK \u2014 nothing to process.");
-    return;
+    const isValid = verifyShopeeWebhookSignature(
+      rawBody,
+      snapshot.authorization,
+      snapshot.requestUrls
+    );
+    if (!isValid) {
+      console.warn("[Shopee Webhook] Invalid Authorization after ACK \u2014 payload ignored.");
+      return;
+    }
+    markWebhookReceived();
+    console.log(
+      `[WEBHOOK RECEIVED] pid=${process.pid} ${snapshot.routeLabel} \u2014 ACK 200 sent; headers:`,
+      {
+        authorization: "(verified)",
+        contentLength: snapshot.contentLength,
+        contentType: snapshot.contentType,
+        host: snapshot.host
+      }
+    );
+    console.log("[WEBHOOK RECEIVED] req.body (full):", rawBody.toString("utf8"));
+    const payload = parseWebhookBody(rawBody);
+    if (!payload) {
+      console.log("[Shopee Webhook] Invalid JSON after ACK \u2014 nothing to process.");
+      return;
+    }
+    console.log("[WEBHOOK RECEIVED] req.body (parsed object):", JSON.stringify(payload));
+    const data = payload.data && typeof payload.data === "object" && !Array.isArray(payload.data) ? payload.data : payload;
+    const code = Number(payload.code ?? data.code);
+    const orderSn = String(
+      data.ordersn ?? data.order_sn ?? data.orderSn ?? payload.ordersn ?? payload.order_sn ?? payload.orderSn ?? ""
+    ).trim();
+    const status = String(
+      data.status ?? data.order_status ?? data.orderStatus ?? payload.status ?? payload.order_status ?? ""
+    ).trim().toUpperCase();
+    const isOrderStatusPush = code === 3 || Boolean(status);
+    if (!orderSn) {
+      console.log(
+        `[Shopee Webhook] Non-order push skipped code=${Number.isFinite(code) ? code : "?"} status=${status || "?"} \u2014 missing order_sn`
+      );
+      return;
+    }
+    const queued = queue.enqueue(payload);
+    if (!queued) return;
+    console.log(
+      "[WEBHOOK RECEIVED] order payload queued after ACK \u2014 will get_order_detail + UPSERT:",
+      JSON.stringify({
+        code: Number.isFinite(code) ? code : null,
+        shop_id: payload.shop_id ?? data.shop_id ?? null,
+        order_sn: orderSn,
+        status: status || null,
+        event_type: status === "UNPAID" || status === "READY_TO_SHIP" ? "new_order" : isOrderStatusPush ? "status_change" : "order_related"
+      })
+    );
+  } catch (error) {
+    console.error(
+      "[Shopee Webhook] processShopeeWebhookAsync failed after ACK:",
+      error instanceof Error ? error.stack || error.message : error
+    );
   }
-  console.log("[WEBHOOK RECEIVED] req.body (parsed object):", JSON.stringify(payload));
-  const queued = queue.enqueue(payload);
-  if (!queued) return;
-  const data = payload.data && typeof payload.data === "object" && !Array.isArray(payload.data) ? payload.data : {};
-  console.log(
-    "[WEBHOOK RECEIVED] payload queued after ACK \u2014 will get_order_detail + UPSERT:",
-    JSON.stringify({
-      code: payload.code ?? null,
-      shop_id: payload.shop_id ?? data.shop_id ?? null,
-      order_sn: data.ordersn ?? data.order_sn ?? data.orderSn ?? null,
-      status: data.status ?? data.order_status ?? null
-    })
-  );
 }
 function createShopeeWebhookRouter(processPayload, routePath = "/shopee", options = {}) {
   const queue = createBoundedQueue(processPayload, options.onQueueOverflow);
