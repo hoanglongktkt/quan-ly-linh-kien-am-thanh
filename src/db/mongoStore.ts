@@ -24,6 +24,7 @@ import {
   deleteProductsByIdsFromDisk,
   countProductsOnDisk,
   loadProductsPageFromDisk,
+  type InventoryListSort,
   loadProductByIdFromDisk,
   loadProductsByIdsFromDisk,
   searchProductsFromDisk,
@@ -953,19 +954,128 @@ function buildProductListSearchFilter(search: string): Record<string, unknown> {
   };
 }
 
+function toSortNumber(expr: string) {
+  return { $convert: { input: expr, to: "double", onError: 0, onNull: 0 } };
+}
+
+/** Biến thể con — cùng thứ tự ưu tiên với getProductChildren (children rồi children_models). */
+function inventoryChildListExpr() {
+  const children = { $cond: [{ $isArray: "$data.children" }, "$data.children", []] };
+  const models = { $cond: [{ $isArray: "$data.children_models" }, "$data.children_models", []] };
+  return {
+    $cond: [{ $gt: [{ $size: children }, 0] }, children, models],
+  };
+}
+
+/**
+ * Khóa sort khớp cột bảng Kho: tổng tồn các phân loại, hoặc trung bình (min+max)/2 giá bán.
+ * Tính trên toàn collection rồi mới skip/limit — không sort trang hiện tại.
+ */
+function inventorySortKeyExpr(sortBy: "stock" | "sellingPrice") {
+  const children = inventoryChildListExpr();
+  if (sortBy === "stock") {
+    return {
+      $let: {
+        vars: { children },
+        in: {
+          $cond: [
+            { $gt: [{ $size: "$$children" }, 0] },
+            {
+              $sum: {
+                $map: {
+                  input: "$$children",
+                  as: "c",
+                  in: toSortNumber("$$c.stock"),
+                },
+              },
+            },
+            toSortNumber("$data.stock"),
+          ],
+        },
+      },
+    };
+  }
+  return {
+    $let: {
+      vars: { children },
+      in: {
+        $cond: [
+          { $gt: [{ $size: "$$children" }, 0] },
+          {
+            $let: {
+              vars: {
+                range: {
+                  $reduce: {
+                    input: "$$children",
+                    initialValue: { min: null, max: null },
+                    in: {
+                      $let: {
+                        vars: { price: toSortNumber("$$this.sellingPrice") },
+                        in: {
+                          min: {
+                            $cond: [
+                              {
+                                $or: [
+                                  { $eq: ["$$value.min", null] },
+                                  { $lt: ["$$price", "$$value.min"] },
+                                ],
+                              },
+                              "$$price",
+                              "$$value.min",
+                            ],
+                          },
+                          max: {
+                            $cond: [
+                              {
+                                $or: [
+                                  { $eq: ["$$value.max", null] },
+                                  { $gt: ["$$price", "$$value.max"] },
+                                ],
+                              },
+                              "$$price",
+                              "$$value.max",
+                            ],
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              in: { $divide: [{ $add: ["$$range.min", "$$range.max"] }, 2] },
+            },
+          },
+          toSortNumber("$data.sellingPrice"),
+        ],
+      },
+    },
+  };
+}
+
+function normalizeStoreInventorySort(
+  sort?: InventoryListSort | null,
+): { sortBy: "stock" | "sellingPrice"; order: "asc" | "desc" } | null {
+  const sortBy = sort?.sortBy === "stock" || sort?.sortBy === "sellingPrice" ? sort.sortBy : "";
+  const order = sort?.order === "asc" || sort?.order === "desc" ? sort.order : "";
+  if (!sortBy || !order) return null;
+  return { sortBy, order };
+}
+
 /** Phân trang kho gốc — luôn skip/limit, cấm find({}) toàn catalog khi dùng Mongo. */
 export async function loadProductsPageFromStore(
   page = 1,
   pageSize = 50,
   search = "",
+  sort?: InventoryListSort | null,
 ): Promise<{ products: any[]; total: number; page: number; pageSize: number; totalPages: number; hasMore: boolean }> {
-  if (isProductsDiskMode()) return loadProductsPageFromDisk(page, pageSize, search);
+  if (isProductsDiskMode()) return loadProductsPageFromDisk(page, pageSize, search, sort);
   requireMongo();
   const safePage = Math.max(1, Math.floor(Number(page) || 1));
   const safeSize = Math.min(50, Math.max(1, Math.floor(Number(pageSize) || 50)));
   const q = normalizeProductSearchText(search);
   const filter = buildProductListSearchFilter(search);
   const hasSearch = !!q && Object.keys(filter).length > 0;
+  const listSort = normalizeStoreInventorySort(sort);
   // cPanel/Mongo chậm: cho đến 30s mỗi query trang; không bao giờ fallback load hết kho.
   const COUNT_MAX_MS = 15_000;
   const PAGE_MAX_MS = 30_000;
@@ -985,12 +1095,28 @@ export async function loadProductsPageFromStore(
 
   const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / safeSize) || 1);
   const currentPage = Math.min(safePage, totalPages);
-  const docs = await ProductModel.find(filter)
-    .sort({ _id: 1 })
-    .skip((currentPage - 1) * safeSize)
-    .limit(safeSize)
-    .maxTimeMS(PAGE_MAX_MS)
-    .lean();
+  const skip = (currentPage - 1) * safeSize;
+  let docs: Array<{ _id?: any; data?: any; sku?: string | null; medicine_id?: string | null }>;
+  if (listSort) {
+    // Sort toàn bộ kết quả khớp filter, rồi mới skip/limit.
+    docs = await ProductModel.aggregate([
+      { $match: filter },
+      { $addFields: { _inventorySortKey: inventorySortKeyExpr(listSort.sortBy) } },
+      { $sort: { _inventorySortKey: listSort.order === "asc" ? 1 : -1, _id: 1 } },
+      { $skip: skip },
+      { $limit: safeSize },
+      { $project: { _inventorySortKey: 0 } },
+    ])
+      .allowDiskUse(true)
+      .option({ maxTimeMS: PAGE_MAX_MS });
+  } else {
+    docs = await ProductModel.find(filter)
+      .sort({ _id: 1 })
+      .skip(skip)
+      .limit(safeSize)
+      .maxTimeMS(PAGE_MAX_MS)
+      .lean();
+  }
 
   if (hasSearch) {
     console.log("[MongoSearch] loadProductsPageFromStore", {

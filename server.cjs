@@ -77384,18 +77384,65 @@ async function deleteProductsByIdsFromDisk(ids) {
 function countProductsOnDisk() {
   return readProductsFromDisk().length;
 }
-function loadProductsPageFromDisk(page = 1, pageSize = 50, search = "") {
+function inventorySortValue(product, sortBy) {
+  const children = Array.isArray(product?.children) && product.children.length > 0 ? product.children : Array.isArray(product?.children_models) && product.children_models.length > 0 ? product.children_models : [];
+  if (sortBy === "stock") {
+    if (children.length > 0) {
+      let sum = 0;
+      for (let i2 = 0; i2 < children.length; i2++) {
+        const n3 = Number(children[i2]?.stock);
+        if (Number.isFinite(n3)) sum += n3;
+      }
+      return sum;
+    }
+    const n2 = Number(product?.stock);
+    return Number.isFinite(n2) ? n2 : 0;
+  }
+  if (children.length > 0) {
+    let min = Infinity;
+    let max = -Infinity;
+    for (let i2 = 0; i2 < children.length; i2++) {
+      const n2 = Number(children[i2]?.sellingPrice);
+      const price = Number.isFinite(n2) ? n2 : 0;
+      if (price < min) min = price;
+      if (price > max) max = price;
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return 0;
+    return (min + max) / 2;
+  }
+  const n = Number(product?.sellingPrice);
+  return Number.isFinite(n) ? n : 0;
+}
+function normalizeInventoryListSort(sort) {
+  const sortBy = sort?.sortBy === "stock" || sort?.sortBy === "sellingPrice" ? sort.sortBy : "";
+  const order = sort?.order === "asc" || sort?.order === "desc" ? sort.order : "";
+  if (!sortBy || !order) return null;
+  return { sortBy, order };
+}
+function sortInventoryRows(rows, sort) {
+  const spec = normalizeInventoryListSort(sort);
+  if (!spec) return rows;
+  const dir = spec.order === "asc" ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    const va = inventorySortValue(a, spec.sortBy);
+    const vb = inventorySortValue(b, spec.sortBy);
+    if (va !== vb) return (va - vb) * dir;
+    return String(a?.id ?? "").localeCompare(String(b?.id ?? ""));
+  });
+}
+function loadProductsPageFromDisk(page = 1, pageSize = 50, search = "", sort) {
   const all3 = readProductsFromDisk();
   const q = normalizeProductSearchText(search);
   const filtered = q ? all3.filter((p) => productRowMatchesSearch(p, search)) : all3;
+  const sorted = sortInventoryRows(filtered, sort);
   const safePage = Math.max(1, Math.floor(Number(page) || 1));
   const safeSize = Math.min(50, Math.max(1, Math.floor(Number(pageSize) || 50)));
-  const total = filtered.length;
+  const total = sorted.length;
   const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / safeSize) || 1);
   const currentPage = Math.min(safePage, totalPages);
   const start = (currentPage - 1) * safeSize;
   return {
-    products: filtered.slice(start, start + safeSize),
+    products: sorted.slice(start, start + safeSize),
     total,
     page: currentPage,
     pageSize: safeSize,
@@ -78311,14 +78358,111 @@ function buildProductListSearchFilter(search) {
     ]
   };
 }
-async function loadProductsPageFromStore(page = 1, pageSize = 50, search = "") {
-  if (isProductsDiskMode()) return loadProductsPageFromDisk(page, pageSize, search);
+function toSortNumber(expr) {
+  return { $convert: { input: expr, to: "double", onError: 0, onNull: 0 } };
+}
+function inventoryChildListExpr() {
+  const children = { $cond: [{ $isArray: "$data.children" }, "$data.children", []] };
+  const models = { $cond: [{ $isArray: "$data.children_models" }, "$data.children_models", []] };
+  return {
+    $cond: [{ $gt: [{ $size: children }, 0] }, children, models]
+  };
+}
+function inventorySortKeyExpr(sortBy) {
+  const children = inventoryChildListExpr();
+  if (sortBy === "stock") {
+    return {
+      $let: {
+        vars: { children },
+        in: {
+          $cond: [
+            { $gt: [{ $size: "$$children" }, 0] },
+            {
+              $sum: {
+                $map: {
+                  input: "$$children",
+                  as: "c",
+                  in: toSortNumber("$$c.stock")
+                }
+              }
+            },
+            toSortNumber("$data.stock")
+          ]
+        }
+      }
+    };
+  }
+  return {
+    $let: {
+      vars: { children },
+      in: {
+        $cond: [
+          { $gt: [{ $size: "$$children" }, 0] },
+          {
+            $let: {
+              vars: {
+                range: {
+                  $reduce: {
+                    input: "$$children",
+                    initialValue: { min: null, max: null },
+                    in: {
+                      $let: {
+                        vars: { price: toSortNumber("$$this.sellingPrice") },
+                        in: {
+                          min: {
+                            $cond: [
+                              {
+                                $or: [
+                                  { $eq: ["$$value.min", null] },
+                                  { $lt: ["$$price", "$$value.min"] }
+                                ]
+                              },
+                              "$$price",
+                              "$$value.min"
+                            ]
+                          },
+                          max: {
+                            $cond: [
+                              {
+                                $or: [
+                                  { $eq: ["$$value.max", null] },
+                                  { $gt: ["$$price", "$$value.max"] }
+                                ]
+                              },
+                              "$$price",
+                              "$$value.max"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              in: { $divide: [{ $add: ["$$range.min", "$$range.max"] }, 2] }
+            }
+          },
+          toSortNumber("$data.sellingPrice")
+        ]
+      }
+    }
+  };
+}
+function normalizeStoreInventorySort(sort) {
+  const sortBy = sort?.sortBy === "stock" || sort?.sortBy === "sellingPrice" ? sort.sortBy : "";
+  const order = sort?.order === "asc" || sort?.order === "desc" ? sort.order : "";
+  if (!sortBy || !order) return null;
+  return { sortBy, order };
+}
+async function loadProductsPageFromStore(page = 1, pageSize = 50, search = "", sort) {
+  if (isProductsDiskMode()) return loadProductsPageFromDisk(page, pageSize, search, sort);
   requireMongo();
   const safePage = Math.max(1, Math.floor(Number(page) || 1));
   const safeSize = Math.min(50, Math.max(1, Math.floor(Number(pageSize) || 50)));
   const q = normalizeProductSearchText(search);
   const filter2 = buildProductListSearchFilter(search);
   const hasSearch = !!q && Object.keys(filter2).length > 0;
+  const listSort = normalizeStoreInventorySort(sort);
   const COUNT_MAX_MS = 15e3;
   const PAGE_MAX_MS = 3e4;
   let total = 0;
@@ -78334,7 +78478,20 @@ async function loadProductsPageFromStore(page = 1, pageSize = 50, search = "") {
   }
   const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / safeSize) || 1);
   const currentPage = Math.min(safePage, totalPages);
-  const docs = await ProductModel.find(filter2).sort({ _id: 1 }).skip((currentPage - 1) * safeSize).limit(safeSize).maxTimeMS(PAGE_MAX_MS).lean();
+  const skip = (currentPage - 1) * safeSize;
+  let docs;
+  if (listSort) {
+    docs = await ProductModel.aggregate([
+      { $match: filter2 },
+      { $addFields: { _inventorySortKey: inventorySortKeyExpr(listSort.sortBy) } },
+      { $sort: { _inventorySortKey: listSort.order === "asc" ? 1 : -1, _id: 1 } },
+      { $skip: skip },
+      { $limit: safeSize },
+      { $project: { _inventorySortKey: 0 } }
+    ]).allowDiskUse(true).option({ maxTimeMS: PAGE_MAX_MS });
+  } else {
+    docs = await ProductModel.find(filter2).sort({ _id: 1 }).skip(skip).limit(safeSize).maxTimeMS(PAGE_MAX_MS).lean();
+  }
   if (hasSearch) {
     console.log("[MongoSearch] loadProductsPageFromStore", {
       q,
@@ -118258,8 +118415,17 @@ async function listProducts(req, res) {
     const pageSize = Number.isFinite(rawSize) && rawSize > 0 ? Math.min(PRODUCTS_PAGE_SIZE_MAX, Math.floor(rawSize)) : PRODUCTS_PAGE_SIZE_DEFAULT;
     const rawSearch = req.query?.search ?? req.query?.keyword ?? "";
     const search = String(Array.isArray(rawSearch) ? rawSearch[0] : rawSearch).replace(/\s+/g, " ").trim();
+    const sortByRaw = String(
+      Array.isArray(req.query?.sortBy) ? req.query.sortBy[0] : req.query?.sortBy ?? ""
+    ).trim();
+    const orderRaw = String(
+      Array.isArray(req.query?.order) ? req.query.order[0] : req.query?.order ?? ""
+    ).trim().toLowerCase();
+    const sortBy = sortByRaw === "stock" || sortByRaw === "sellingPrice" ? sortByRaw : "";
+    const order = orderRaw === "asc" || orderRaw === "desc" ? orderRaw : "";
+    const listSort = sortBy && order ? { sortBy, order } : null;
     const paged = await deps10.withLocalDbTimeout(
-      deps10.loadProductsPageFromStore(page, pageSize, search),
+      deps10.loadProductsPageFromStore(page, pageSize, search, listSort),
       diskMode ? 15e3 : 3e4,
       "products_page_load"
     );

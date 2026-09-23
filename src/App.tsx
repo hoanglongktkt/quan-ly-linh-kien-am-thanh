@@ -558,6 +558,11 @@ export default function App() {
   }, []);
   /** Từ khóa search Kho SP chính — giữ qua phân trang / focus refresh. */
   const productsSearchRef = useRef('');
+  /** Sort Tồn kho / Giá bán — giữ qua phân trang. Rỗng = thứ tự mặc định. */
+  const productsSortRef = useRef<{ sortBy: '' | 'stock' | 'sellingPrice'; order: '' | 'asc' | 'desc' }>({
+    sortBy: '',
+    order: '',
+  });
   /** Sequence guard — tránh response search cũ ghi đè kết quả mới hơn. */
   const fetchProductsSeqRef = useRef(0);
   const fetchProductsAbortRef = useRef<AbortController | null>(null);
@@ -1247,6 +1252,8 @@ export default function App() {
     forceRefresh?: boolean;
     silent?: boolean;
     search?: string;
+    sortBy?: 'stock' | 'sellingPrice' | '';
+    order?: 'asc' | 'desc' | '';
   }) => {
     const token = localStorage.getItem('admin_token');
     if (!token) return;
@@ -1259,7 +1266,17 @@ export default function App() {
     if (opts && Object.prototype.hasOwnProperty.call(opts, 'search')) {
       productsSearchRef.current = String(opts.search ?? '').replace(/\s+/g, ' ').trim();
     }
+    if (
+      opts &&
+      (Object.prototype.hasOwnProperty.call(opts, 'sortBy') ||
+        Object.prototype.hasOwnProperty.call(opts, 'order'))
+    ) {
+      const sortBy = opts.sortBy === 'stock' || opts.sortBy === 'sellingPrice' ? opts.sortBy : '';
+      const order = opts.order === 'asc' || opts.order === 'desc' ? opts.order : '';
+      productsSortRef.current = sortBy && order ? { sortBy, order } : { sortBy: '', order: '' };
+    }
     const searchQ = productsSearchRef.current;
+    const sortQ = productsSortRef.current;
 
     const seq = ++fetchProductsSeqRef.current;
     fetchProductsAbortRef.current?.abort();
@@ -1283,6 +1300,10 @@ export default function App() {
           });
           // Luôn gửi search (kể cả rỗng) để backend và FE đồng bộ tham số.
           params.set('search', searchQ);
+          if (sortQ.sortBy && sortQ.order) {
+            params.set('sortBy', sortQ.sortBy);
+            params.set('order', sortQ.order);
+          }
           const response = await fetch(`/api/products?${params.toString()}`, {
             method: 'GET',
             cache: 'no-store',

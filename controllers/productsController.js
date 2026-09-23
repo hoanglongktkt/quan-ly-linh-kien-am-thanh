@@ -284,8 +284,19 @@ export async function listProducts(req, res) {
       .trim();
 
     // Có search: $regex trên toàn collection (name/title/sku), rồi mới limit 50 — không lọc local page 1.
+    const sortByRaw = String(
+      Array.isArray(req.query?.sortBy) ? req.query.sortBy[0] : (req.query?.sortBy ?? ""),
+    ).trim();
+    const orderRaw = String(
+      Array.isArray(req.query?.order) ? req.query.order[0] : (req.query?.order ?? ""),
+    )
+      .trim()
+      .toLowerCase();
+    const sortBy = sortByRaw === "stock" || sortByRaw === "sellingPrice" ? sortByRaw : "";
+    const order = orderRaw === "asc" || orderRaw === "desc" ? orderRaw : "";
+    const listSort = sortBy && order ? { sortBy, order } : null;
     const paged = await deps.withLocalDbTimeout(
-      deps.loadProductsPageFromStore(page, pageSize, search),
+      deps.loadProductsPageFromStore(page, pageSize, search, listSort),
       diskMode ? 15_000 : 30_000,
       "products_page_load",
     );

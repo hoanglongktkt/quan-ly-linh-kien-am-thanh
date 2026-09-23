@@ -60,6 +60,8 @@ interface ProductListProps {
     pageSize?: number;
     forceRefresh?: boolean;
     search?: string;
+    sortBy?: 'stock' | 'sellingPrice' | '';
+    order?: 'asc' | 'desc' | '';
   }) => Promise<void>;
   onProductsUpdated?: (products: Product[]) => void;
   onBulkSelect: (selectedIds: string[]) => void;
@@ -155,22 +157,6 @@ function collectDuplicateSnapshotIds(groups: ProductGroupRow[]): string[] {
     for (const variant of group.variants) push(variant?.id);
   }
   return snapshot;
-}
-
-function snapshotSortedGroupIds(
-  groups: ProductGroupRow[],
-  field: 'stock' | 'sellingPrice',
-  order: 'asc' | 'desc',
-): string[] {
-  const dir = order === 'asc' ? 1 : -1;
-  return [...groups]
-    .sort((a, b) => {
-      if (field === 'stock') return (a.totalStock - b.totalStock) * dir;
-      const priceA = (a.minSellingPrice + a.maxSellingPrice) / 2;
-      const priceB = (b.minSellingPrice + b.maxSellingPrice) / 2;
-      return (priceA - priceB) * dir;
-    })
-    .map((group) => group.groupId);
 }
 
 /** Đổi `[831052930] ...` thành toast thân thiện với tên shop. */
@@ -743,36 +729,49 @@ export default function ProductList({
     return filtered;
   }, [productGroups, channelFilter, categoryFilter, stockFilter, duplicateIds, duplicateIdSet]);
 
-  const [sortedIds, setSortedIds] = useState<string[]>([]);
-
   const displayGroups = useMemo(() => {
-    if (sortedIds.length === 0) return filteredGroups;
-    const rank = new Map(sortedIds.map((id, index) => [id, index]));
-    const known: ProductGroupRow[] = [];
-    const rest: ProductGroupRow[] = [];
-    for (const group of filteredGroups) {
-      if (rank.has(group.groupId)) known.push(group);
-      else rest.push(group);
+    if (!sortField || !sortOrder) return filteredGroups;
+    // Thứ tự đã sort trên toàn kho từ server. Không sort lại theo số đang gõ.
+    const rank = new Map<string, number>();
+    for (let i = 0; i < products.length; i++) {
+      const id = products[i]?.id;
+      if (id) rank.set(String(id), i);
     }
-    known.sort((a, b) => (rank.get(a.groupId) ?? 0) - (rank.get(b.groupId) ?? 0));
-    return known.concat(rest);
-  }, [filteredGroups, sortedIds]);
+    const rankOf = (group: ProductGroupRow) => {
+      let best = Number.MAX_SAFE_INTEGER;
+      const ids = [group.groupId, group.representative?.id, ...group.variants.map((v) => v.id)];
+      for (const id of ids) {
+        if (!id) continue;
+        const idx = rank.get(String(id));
+        if (idx != null && idx < best) best = idx;
+      }
+      return best;
+    };
+    return [...filteredGroups].sort((a, b) => rankOf(a) - rankOf(b));
+  }, [filteredGroups, products, sortField, sortOrder]);
 
   const handleToggleSort = (field: 'stock' | 'sellingPrice') => {
+    let nextField: 'stock' | 'sellingPrice' | null = field;
+    let nextOrder: 'asc' | 'desc' | null = 'asc';
     if (sortField !== field) {
-      setSortField(field);
-      setSortOrder('asc');
-      setSortedIds(snapshotSortedGroupIds(filteredGroups, field, 'asc'));
-      return;
+      nextField = field;
+      nextOrder = 'asc';
+    } else if (sortOrder === 'asc') {
+      nextField = field;
+      nextOrder = 'desc';
+    } else {
+      nextField = null;
+      nextOrder = null;
     }
-    if (sortOrder === 'asc') {
-      setSortOrder('desc');
-      setSortedIds(snapshotSortedGroupIds(filteredGroups, field, 'desc'));
-      return;
-    }
-    setSortField(null);
-    setSortOrder(null);
-    setSortedIds([]);
+    setSortField(nextField);
+    setSortOrder(nextOrder);
+    void onRefreshProducts?.({
+      page: 1,
+      append: false,
+      search: serverSearch,
+      sortBy: nextField ?? '',
+      order: nextOrder ?? '',
+    });
   };
 
   const allFilteredIds = useMemo(
@@ -1841,7 +1840,7 @@ export default function ProductList({
               <button
                 type="button"
                 disabled={productsLoading || productsMeta.page <= 1}
-                onClick={() => onRefreshProducts?.({ page: productsMeta.page - 1, append: false, search: serverSearch })}
+                onClick={() => onRefreshProducts?.({ page: productsMeta.page - 1, append: false, search: serverSearch, sortBy: sortField ?? '', order: sortOrder ?? '' })}
                 className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 font-semibold"
               >
                 Trang trước
@@ -1849,7 +1848,7 @@ export default function ProductList({
               <button
                 type="button"
                 disabled={productsLoading || !productsMeta.hasMore}
-                onClick={() => onRefreshProducts?.({ page: productsMeta.page + 1, append: false, search: serverSearch })}
+                onClick={() => onRefreshProducts?.({ page: productsMeta.page + 1, append: false, search: serverSearch, sortBy: sortField ?? '', order: sortOrder ?? '' })}
                 className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 font-semibold"
               >
                 Trang sau
@@ -1858,7 +1857,7 @@ export default function ProductList({
                 <button
                   type="button"
                   disabled={productsLoading}
-                  onClick={() => onRefreshProducts?.({ page: productsMeta.page + 1, append: true, search: serverSearch })}
+                  onClick={() => onRefreshProducts?.({ page: productsMeta.page + 1, append: true, search: serverSearch, sortBy: sortField ?? '', order: sortOrder ?? '' })}
                   className="px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-100 font-semibold"
                 >
                   Tải thêm

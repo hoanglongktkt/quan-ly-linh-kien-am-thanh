@@ -148,10 +148,74 @@ export function countProductsOnDisk(): number {
   return readProductsFromDisk().length;
 }
 
+export type InventoryListSort = {
+  sortBy?: string;
+  order?: string;
+};
+
+/** Khớp cột Tồn kho / Giá bán trên bảng: tổng tồn con, hoặc trung bình min–max giá bán. */
+export function inventorySortValue(product: any, sortBy: "stock" | "sellingPrice"): number {
+  const children =
+    Array.isArray(product?.children) && product.children.length > 0
+      ? product.children
+      : Array.isArray(product?.children_models) && product.children_models.length > 0
+        ? product.children_models
+        : [];
+  if (sortBy === "stock") {
+    if (children.length > 0) {
+      let sum = 0;
+      for (let i = 0; i < children.length; i++) {
+        const n = Number(children[i]?.stock);
+        if (Number.isFinite(n)) sum += n;
+      }
+      return sum;
+    }
+    const n = Number(product?.stock);
+    return Number.isFinite(n) ? n : 0;
+  }
+  if (children.length > 0) {
+    let min = Infinity;
+    let max = -Infinity;
+    for (let i = 0; i < children.length; i++) {
+      const n = Number(children[i]?.sellingPrice);
+      const price = Number.isFinite(n) ? n : 0;
+      if (price < min) min = price;
+      if (price > max) max = price;
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return 0;
+    return (min + max) / 2;
+  }
+  const n = Number(product?.sellingPrice);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function normalizeInventoryListSort(
+  sort?: InventoryListSort | null,
+): { sortBy: "stock" | "sellingPrice"; order: "asc" | "desc" } | null {
+  const sortBy = sort?.sortBy === "stock" || sort?.sortBy === "sellingPrice" ? sort.sortBy : "";
+  const order = sort?.order === "asc" || sort?.order === "desc" ? sort.order : "";
+  if (!sortBy || !order) return null;
+  return { sortBy, order };
+}
+
+/** Sort bản sao — không đụng mảng cache products.json. */
+function sortInventoryRows(rows: any[], sort?: InventoryListSort | null): any[] {
+  const spec = normalizeInventoryListSort(sort);
+  if (!spec) return rows;
+  const dir = spec.order === "asc" ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    const va = inventorySortValue(a, spec.sortBy);
+    const vb = inventorySortValue(b, spec.sortBy);
+    if (va !== vb) return (va - vb) * dir;
+    return String(a?.id ?? "").localeCompare(String(b?.id ?? ""));
+  });
+}
+
 export function loadProductsPageFromDisk(
   page = 1,
   pageSize = 50,
   search = "",
+  sort?: InventoryListSort | null,
 ): {
   products: any[];
   total: number;
@@ -163,14 +227,15 @@ export function loadProductsPageFromDisk(
   const all = readProductsFromDisk();
   const q = normalizeProductSearchText(search);
   const filtered = q ? all.filter((p) => productRowMatchesSearch(p, search)) : all;
+  const sorted = sortInventoryRows(filtered, sort);
   const safePage = Math.max(1, Math.floor(Number(page) || 1));
   const safeSize = Math.min(50, Math.max(1, Math.floor(Number(pageSize) || 50)));
-  const total = filtered.length;
+  const total = sorted.length;
   const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / safeSize) || 1);
   const currentPage = Math.min(safePage, totalPages);
   const start = (currentPage - 1) * safeSize;
   return {
-    products: filtered.slice(start, start + safeSize),
+    products: sorted.slice(start, start + safeSize),
     total,
     page: currentPage,
     pageSize: safeSize,
