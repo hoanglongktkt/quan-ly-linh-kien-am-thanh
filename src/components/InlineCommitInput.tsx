@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { formatVndInput, parseVndInput } from '../utils/currencyFormat';
+import { applySmartShorthand, formatVndInput } from '../utils/currencyFormat';
 
 type InlineCommitInputProps = {
   value: number;
@@ -43,8 +43,14 @@ export default function InlineCommitInput({
   const commit = () => {
     const raw = draftRef.current;
     if (raw === null) return;
-    const parsed = kind === 'vnd' ? parseVndInput(raw) : Number(raw);
-    const next = normalizeCommitted(Number.isFinite(parsed) ? parsed : 0);
+    let next: number;
+    if (kind === 'vnd') {
+      // 25 → 25000, 2.5 → 2500; số ≥ 1000 giữ nguyên.
+      next = applySmartShorthand(raw);
+    } else {
+      const parsed = Number(raw);
+      next = normalizeCommitted(Number.isFinite(parsed) ? parsed : 0);
+    }
     setDraftValue(null);
     if (next === committed) return;
     onCommit(next);

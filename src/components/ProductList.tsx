@@ -1569,11 +1569,12 @@ export default function ProductList({
                           <>
                             <div className="flex items-center justify-end gap-1.5">
                               <InlineCommitInput
-                                kind="integer"
+                                kind="vnd"
                                 value={prod.sellingPrice}
                                 onClick={(e) => e.stopPropagation()}
                                 onCommit={(sellingPrice) => commitInlineField(prod, { sellingPrice })}
-                                className="w-24 px-1.5 py-1 text-right bg-gray-50 hover:bg-gray-100 focus:bg-white rounded border border-gray-100 outline-none text-xs focus:border-blue-500 font-bold font-mono"
+                                className="w-28 px-1.5 py-1 text-right bg-gray-50 hover:bg-gray-100 focus:bg-white rounded border border-gray-100 outline-none text-xs focus:border-blue-500 font-bold font-mono"
+                                title="Giá bán"
                               />
                               <span className="text-[10px] text-gray-400">đ</span>
                             </div>
@@ -1763,10 +1764,11 @@ export default function ProductList({
                                 <>
                                   <div className="flex items-center justify-end gap-1">
                                     <InlineCommitInput
-                                      kind="integer"
+                                      kind="vnd"
                                       value={child.sellingPrice}
                                       onCommit={(sellingPrice) => commitInlineField(child, { sellingPrice })}
-                                      className="w-24 px-1.5 py-1 text-right bg-white rounded border border-gray-200 outline-none text-xs focus:border-blue-500 font-bold font-mono"
+                                      className="w-28 px-1.5 py-1 text-right bg-white rounded border border-gray-200 outline-none text-xs focus:border-blue-500 font-bold font-mono"
+                                      title="Giá bán"
                                     />
                                     <span className="text-[10px] text-gray-400">đ</span>
                                   </div>
