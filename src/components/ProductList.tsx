@@ -16,7 +16,7 @@ import { parseJsonResponse, formatShopeeSyncAlertLines } from '../utils/apiClien
 import { calculateProfitWithSystemFees } from '../utils/profitCalculator';
 import { buildShopeeSyncPayload } from '../utils/shopeeSyncPayload';
 import { clearInventoryBrowserCache } from '../utils/catalogStorage';
-import CurrencyInput from './CurrencyInput';
+import InlineCommitInput from './InlineCommitInput';
 import { 
   Plus, 
   Search, 
@@ -155,6 +155,22 @@ function collectDuplicateSnapshotIds(groups: ProductGroupRow[]): string[] {
     for (const variant of group.variants) push(variant?.id);
   }
   return snapshot;
+}
+
+function snapshotSortedGroupIds(
+  groups: ProductGroupRow[],
+  field: 'stock' | 'sellingPrice',
+  order: 'asc' | 'desc',
+): string[] {
+  const dir = order === 'asc' ? 1 : -1;
+  return [...groups]
+    .sort((a, b) => {
+      if (field === 'stock') return (a.totalStock - b.totalStock) * dir;
+      const priceA = (a.minSellingPrice + a.maxSellingPrice) / 2;
+      const priceB = (b.minSellingPrice + b.maxSellingPrice) / 2;
+      return (priceA - priceB) * dir;
+    })
+    .map((group) => group.groupId);
 }
 
 /** Đổi `[831052930] ...` thành toast thân thiện với tên shop. */
@@ -316,7 +332,15 @@ export default function ProductList({
     }, durationMs);
   };
 
-  const handleSaveImportPrice = async (product: Product) => {
+  const handleSaveImportPrice = async (productInput: Product) => {
+    const product = (() => {
+      for (const item of productsRef.current) {
+        if (item.id === productInput.id) return item;
+        const child = getProductChildren(item).find((entry) => entry.id === productInput.id);
+        if (child) return child;
+      }
+      return productInput;
+    })();
     const token = localStorage.getItem('admin_token');
     if (!token) {
       showActionToast('Chưa đăng nhập.');
@@ -462,22 +486,24 @@ export default function ProductList({
     }
   };
 
-  const handleToggleSort = (field: 'stock' | 'sellingPrice') => {
-    if (sortField !== field) {
-      setSortField(field);
-      setSortOrder('asc');
-      return;
-    }
-    if (sortOrder === 'asc') {
-      setSortOrder('desc');
-      return;
-    }
-    if (sortOrder === 'desc') {
-      setSortField(null);
-      setSortOrder(null);
-      return;
-    }
-    setSortOrder('asc');
+  const productsRef = useRef(products);
+  productsRef.current = products;
+
+  const commitInlineField = (
+    product: Product,
+    patch: Partial<Pick<Product, 'stock' | 'importPrice' | 'sellingPrice'>>,
+  ) => {
+    const next: Product = { ...product, ...patch };
+    productsRef.current = productsRef.current.map((item) => {
+      if (item.id === next.id) return next;
+      const children = getProductChildren(item);
+      if (!children.some((child) => child.id === next.id)) return item;
+      return {
+        ...item,
+        children: children.map((child) => (child.id === next.id ? next : child)),
+      };
+    });
+    void onUpdateProduct(next, { save: true });
   };
 
   const handleQuickSyncShopee = async (productId: string) => {
@@ -640,20 +666,6 @@ export default function ProductList({
     onRefreshProducts?.();
   };
 
-  const persistInlineProduct = (id: string) => {
-    for (const p of products) {
-      if (p.id === id) {
-        onUpdateProduct(p, { save: true });
-        return;
-      }
-      const child = getProductChildren(p).find((c) => c.id === id);
-      if (child) {
-        onUpdateProduct(child, { save: true });
-        return;
-      }
-    }
-  };
-
   // Add Product Modal — form nằm trong AddProductModal.tsx
   const [showAddModal, setShowAddModal] = useState(false);
 
@@ -728,18 +740,40 @@ export default function ProductList({
       return matchesChannel && matchesCategory && matchesStock && matchesDuplicate;
     });
 
-    if (!sortField || !sortOrder) return filtered;
+    return filtered;
+  }, [productGroups, channelFilter, categoryFilter, stockFilter, duplicateIds, duplicateIdSet]);
 
-    const dir = sortOrder === 'asc' ? 1 : -1;
-    return [...filtered].sort((a, b) => {
-      if (sortField === 'stock') {
-        return (a.totalStock - b.totalStock) * dir;
-      }
-      const priceA = (a.minSellingPrice + a.maxSellingPrice) / 2;
-      const priceB = (b.minSellingPrice + b.maxSellingPrice) / 2;
-      return (priceA - priceB) * dir;
-    });
-  }, [productGroups, channelFilter, categoryFilter, stockFilter, sortField, sortOrder, duplicateIds, duplicateIdSet]);
+  const [sortedIds, setSortedIds] = useState<string[]>([]);
+
+  const displayGroups = useMemo(() => {
+    if (sortedIds.length === 0) return filteredGroups;
+    const rank = new Map(sortedIds.map((id, index) => [id, index]));
+    const known: ProductGroupRow[] = [];
+    const rest: ProductGroupRow[] = [];
+    for (const group of filteredGroups) {
+      if (rank.has(group.groupId)) known.push(group);
+      else rest.push(group);
+    }
+    known.sort((a, b) => (rank.get(a.groupId) ?? 0) - (rank.get(b.groupId) ?? 0));
+    return known.concat(rest);
+  }, [filteredGroups, sortedIds]);
+
+  const handleToggleSort = (field: 'stock' | 'sellingPrice') => {
+    if (sortField !== field) {
+      setSortField(field);
+      setSortOrder('asc');
+      setSortedIds(snapshotSortedGroupIds(filteredGroups, field, 'asc'));
+      return;
+    }
+    if (sortOrder === 'asc') {
+      setSortOrder('desc');
+      setSortedIds(snapshotSortedGroupIds(filteredGroups, field, 'desc'));
+      return;
+    }
+    setSortField(null);
+    setSortOrder(null);
+    setSortedIds([]);
+  };
 
   const allFilteredIds = useMemo(
     () => filteredGroups.flatMap((g) => g.variants.map((v) => v.id)),
@@ -1387,7 +1421,7 @@ export default function ProductList({
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50 text-sm">
-              {filteredGroups.length === 0 ? (
+              {displayGroups.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="p-16 text-center">
                     <p className="text-sm font-semibold text-gray-400 tracking-wide">
@@ -1400,7 +1434,7 @@ export default function ProductList({
                   </td>
                 </tr>
               ) : (
-                filteredGroups.flatMap((group) => {
+                displayGroups.flatMap((group) => {
                   const prod = group.representative;
                   const priceLabel = formatPriceRange(group.minSellingPrice, group.maxSellingPrice);
                   const estimatedProfit = estimatedProfitById.get(prod.id) ?? 0;
@@ -1492,12 +1526,11 @@ export default function ProductList({
                               {group.totalStock}
                             </span>
                           ) : (
-                            <input
-                              type="number"
+                            <InlineCommitInput
+                              kind="integer"
                               value={prod.stock}
                               onClick={(e) => e.stopPropagation()}
-                              onChange={(e) => onUpdateProduct({ ...prod, stock: Math.max(0, Number(e.target.value)) })}
-                              onBlur={() => persistInlineProduct(prod.id)}
+                              onCommit={(stock) => commitInlineField(prod, { stock })}
                               className="w-16 px-1.5 py-1 text-center bg-gray-50 hover:bg-gray-100 focus:bg-white rounded border border-gray-100 outline-none text-xs focus:border-blue-500 font-mono"
                             />
                           )}
@@ -1512,9 +1545,10 @@ export default function ProductList({
                           </span>
                         ) : (
                           <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-                            <CurrencyInput
+                            <InlineCommitInput
+                              kind="vnd"
                               value={Math.max(0, Number(prod.importPrice) || 0)}
-                              onChange={(v) => onUpdateProduct({ ...prod, importPrice: v })}
+                              onCommit={(importPrice) => commitInlineField(prod, { importPrice })}
                               onClick={(e) => e.stopPropagation()}
                               className="w-28 px-1.5 py-1 text-right bg-gray-50 hover:bg-gray-100 focus:bg-white rounded border border-gray-100 outline-none text-xs focus:border-blue-500 font-mono"
                               title="Giá nhập"
@@ -1534,12 +1568,11 @@ export default function ProductList({
                         ) : (
                           <>
                             <div className="flex items-center justify-end gap-1.5">
-                              <input
-                                type="number"
+                              <InlineCommitInput
+                                kind="integer"
                                 value={prod.sellingPrice}
                                 onClick={(e) => e.stopPropagation()}
-                                onChange={(e) => onUpdateProduct({ ...prod, sellingPrice: Math.max(0, Number(e.target.value)) })}
-                                onBlur={() => persistInlineProduct(prod.id)}
+                                onCommit={(sellingPrice) => commitInlineField(prod, { sellingPrice })}
                                 className="w-24 px-1.5 py-1 text-right bg-gray-50 hover:bg-gray-100 focus:bg-white rounded border border-gray-100 outline-none text-xs focus:border-blue-500 font-bold font-mono"
                               />
                               <span className="text-[10px] text-gray-400">đ</span>
@@ -1704,19 +1737,19 @@ export default function ProductList({
                             </div>
                           </td>
                           <td className="p-3">
-                            <input
-                              type="number"
+                            <InlineCommitInput
+                              kind="integer"
                               value={child.stock}
-                              onChange={(e) => onUpdateProduct({ ...child, stock: Math.max(0, Number(e.target.value)) })}
-                              onBlur={() => persistInlineProduct(child.id)}
+                              onCommit={(stock) => commitInlineField(child, { stock })}
                               className="w-16 px-1.5 py-1 text-center bg-white hover:bg-gray-50 focus:bg-white rounded border border-gray-200 outline-none text-xs focus:border-blue-500 font-mono"
                             />
                           </td>
                           <td className="p-3 text-right">
                             <div className="flex items-center justify-end gap-1">
-                              <CurrencyInput
+                              <InlineCommitInput
+                                kind="vnd"
                                 value={Math.max(0, Number(child.importPrice) || 0)}
-                                onChange={(v) => onUpdateProduct({ ...child, importPrice: v })}
+                                onCommit={(importPrice) => commitInlineField(child, { importPrice })}
                                 className="w-28 px-1.5 py-1 text-right bg-white hover:bg-gray-50 focus:bg-white rounded border border-gray-200 outline-none text-xs focus:border-blue-500 font-mono"
                                 title="Giá nhập"
                               />
@@ -1729,11 +1762,10 @@ export default function ProductList({
                               return (
                                 <>
                                   <div className="flex items-center justify-end gap-1">
-                                    <input
-                                      type="number"
+                                    <InlineCommitInput
+                                      kind="integer"
                                       value={child.sellingPrice}
-                                      onChange={(e) => onUpdateProduct({ ...child, sellingPrice: Math.max(0, Number(e.target.value)) })}
-                                      onBlur={() => persistInlineProduct(child.id)}
+                                      onCommit={(sellingPrice) => commitInlineField(child, { sellingPrice })}
                                       className="w-24 px-1.5 py-1 text-right bg-white rounded border border-gray-200 outline-none text-xs focus:border-blue-500 font-bold font-mono"
                                     />
                                     <span className="text-[10px] text-gray-400">đ</span>
@@ -1837,7 +1869,7 @@ export default function ProductList({
 
       {/* Products Card List - Mobile-First */}
       <div className="max-md:block md:hidden space-y-4">
-        {filteredGroups.length === 0 ? (
+        {displayGroups.length === 0 ? (
           <div className="bg-white rounded-2xl border border-gray-150 p-16 text-center">
             <p className="text-sm font-semibold text-gray-400 tracking-wide">
               {productsLoading
@@ -1848,7 +1880,7 @@ export default function ProductList({
             </p>
           </div>
         ) : (
-          filteredGroups.map((group) => {
+          displayGroups.map((group) => {
             const prod = group.representative;
             const isLowStock = group.totalStock > 0 && group.totalStock <= 10;
             const isOutStock = group.totalStock === 0;
@@ -1951,9 +1983,10 @@ export default function ProductList({
                             Lãi: {childProfit.toLocaleString('vi-VN')}đ
                           </p>
                           <div className="flex items-center gap-1 mt-1">
-                            <CurrencyInput
+                            <InlineCommitInput
+                              kind="vnd"
                               value={Math.max(0, Number(child.importPrice) || 0)}
-                              onChange={(v) => onUpdateProduct({ ...child, importPrice: v })}
+                              onCommit={(importPrice) => commitInlineField(child, { importPrice })}
                               className="w-24 px-1 py-0.5 text-right bg-white rounded border border-gray-200 outline-none text-[10px] focus:border-blue-500 font-mono"
                             />
                             <span className="text-[9px] text-gray-400">đ</span>
@@ -1994,9 +2027,10 @@ export default function ProductList({
                       </span>
                     ) : (
                       <div className="flex items-center gap-1 mt-0.5">
-                        <CurrencyInput
+                        <InlineCommitInput
+                          kind="vnd"
                           value={Math.max(0, Number(prod.importPrice) || 0)}
-                          onChange={(v) => onUpdateProduct({ ...prod, importPrice: v })}
+                          onCommit={(importPrice) => commitInlineField(prod, { importPrice })}
                           className="w-full px-1.5 py-1 text-right bg-gray-50 rounded border border-gray-100 outline-none text-[11px] focus:border-blue-500 font-mono"
                         />
                         <button
