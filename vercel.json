@@ -45,6 +45,10 @@
       "destination": "/api?path=labels/:path*"
     },
     {
+      "source": "/api/webhooks/shopee",
+      "destination": "/api/shopee-webhook"
+    },
+    {
       "source": "/api/(.*)",
       "destination": "/api?path=$1"
     },

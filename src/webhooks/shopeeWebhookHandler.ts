@@ -1,7 +1,7 @@
 import express, { type Router } from "express";
 import { parseShopeeJson } from "../../services/shopee/jsonBig.js";
-// Signature check tạm tắt — không import verify để tránh từ chối / lỗi HMAC.
-// import { verifyShopeeWebhookSignature } from "./shopeeSignature.ts";
+import { resolveAppBaseUrl } from "../../utils/appPaths.js";
+import { verifyShopeeWebhookSignature } from "./shopeeSignature.ts";
 
 type WebhookProcessor = (payload: Record<string, unknown>) => Promise<void>;
 type QueueOverflowHandler = (payload: Record<string, unknown>) => void | Promise<void>;
@@ -220,6 +220,31 @@ function ackShopeeOk(res: express.Response): void {
   }
 }
 
+function buildWebhookUrlCandidates(req: express.Request): string[] {
+  const path = String(req.originalUrl || req.url || "")
+    .split("?")[0]
+    .trim();
+  if (!path.startsWith("/")) return [];
+
+  const candidates = new Set<string>();
+  candidates.add(`${resolveAppBaseUrl().replace(/\/$/, "")}${path}`);
+
+  const forwardedProto = String(req.get("x-forwarded-proto") || "")
+    .split(",")[0]
+    .trim();
+  const forwardedHost = String(req.get("x-forwarded-host") || "")
+    .split(",")[0]
+    .trim();
+  if (forwardedProto && forwardedHost) {
+    candidates.add(`${forwardedProto}://${forwardedHost}${path}`);
+  }
+
+  const host = String(req.get("host") || "").trim();
+  if (host) candidates.add(`${req.protocol}://${host}${path}`);
+
+  return [...candidates];
+}
+
 /** Parse body Buffer | object | string → object payload (Shopee v2 Push). uint64 → string. */
 function parseWebhookBody(reqBody: unknown): Record<string, unknown> | null {
   try {
@@ -266,23 +291,12 @@ function queueAfterAck(
 
       markWebhookReceived();
       console.log(`[WEBHOOK RECEIVED] pid=${process.pid} ${routeLabel} — ACK 200 sent; headers:`, {
-        authorization: req.get("authorization") ? "(present)" : "(missing)",
+        authorization: "(verified)",
         contentLength: req.get("content-length") || "0",
         contentType: req.get("content-type") || "",
         host: req.get("host") || "",
       });
       console.log("[WEBHOOK RECEIVED] req.body (full):", bodyText);
-
-      const authHeader = req.get("authorization");
-      if (authHeader) {
-        console.log(
-          "[Shopee Webhook] Signature check SKIPPED (permissive mode). authPresent=true",
-        );
-      } else {
-        console.log(
-          "[Shopee Webhook] Signature check SKIPPED (permissive mode). authPresent=false",
-        );
-      }
 
       const payload = parseWebhookBody(req.body);
       if (!payload) {
@@ -320,33 +334,52 @@ export type ShopeeWebhookRouterOptions = {
 };
 
 /**
- * Tạo endpoint webhook Shopee (canonical hoặc legacy).
- * SIÊU DỄ DÃI: LUÔN trả 200 OK ngay — không HMAC, không validate chặn request.
- * Xử lý payload chạy ngầm: parse → get_order_detail → UPSERT DB.
+ * Tạo endpoint webhook Shopee public (canonical + legacy).
+ * Verify HMAC đồng bộ trên raw body; request hợp lệ được ACK 200 ngay rồi mới
+ * chạy ngầm parse → get_order_detail → UPSERT DB.
  */
 export function createShopeeWebhookRouter(
   processPayload: WebhookProcessor,
-  routePath: string = "/shopee",
+  routePath: string | string[] = "/shopee",
   options: ShopeeWebhookRouterOptions = {},
 ): Router {
   const queue = createBoundedQueue(processPayload, options.onQueueOverflow);
   const router = express.Router();
-  const path = routePath.startsWith("/") ? routePath : `/${routePath}`;
+  const paths = (Array.isArray(routePath) ? routePath : [routePath]).map((path) =>
+    path.startsWith("/") ? path : `/${path}`,
+  );
 
   console.log(
     `[Shopee Webhook] Queue config maxConcurrent=${MAX_CONCURRENT_JOBS} maxPending=${MAX_PENDING_JOBS} jobTimeoutMs=${WEBHOOK_JOB_TIMEOUT_MS}`,
   );
 
   // GET probe cho Shopee verification.
-  router.get(path, (_req, res) => {
+  router.get(paths, (_req, res) => {
     ackShopeeOk(res);
   });
 
-  router.post(path, express.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
-    // 1) ACK 200 NGAY — trước mọi validate / parse / queue / DB.
+  router.post(paths, express.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
+    const rawBody = Buffer.isBuffer(req.body) ? req.body : null;
+    if (!rawBody) {
+      console.warn("[Shopee Webhook] Reject: request body is not raw bytes.");
+      return res.status(400).end();
+    }
+
+    const requestUrls = buildWebhookUrlCandidates(req);
+    const isValid = verifyShopeeWebhookSignature(
+      rawBody,
+      req.get("authorization"),
+      requestUrls,
+    );
+    if (!isValid) {
+      console.warn("[Shopee Webhook] Reject: invalid Authorization signature.");
+      return res.status(401).end();
+    }
+
+    // 1) ACK 200 NGAY sau HMAC — không chờ parse / queue / DB.
     ackShopeeOk(res);
     // 2) Xử lý ngầm sau khi socket ACK đã gửi.
-    queueAfterAck(queue, req, `POST ${path}`);
+    queueAfterAck(queue, req, `POST ${req.originalUrl || req.url}`);
   });
 
   return router;

@@ -25,19 +25,23 @@ function timingSafeEqualHex(a: string, b: string): boolean {
  * Authorization = HMAC-SHA256(partner_key, base_string).hexdigest()
  *
  * Phải dùng đúng bytes raw body (trước JSON.parse) và URL Push đã đăng ký trên Console.
+ * partner_id dùng để xác định App trên Shopee; Push HMAC chỉ dùng partner_key làm secret.
  */
 export function verifyShopeeWebhookSignature(
   rawBody: Buffer,
   authorization: unknown,
   requestUrls: string | string[] = [],
 ): boolean {
+  const partnerId = String(process.env.SHOPEE_PARTNER_ID || "").trim();
   const secret = String(
-    process.env.SHOPEE_PARTNER_KEY || process.env.SHOPEE_WEBHOOK_TOKEN || "",
+    process.env.SHOPEE_PARTNER_KEY || "",
   ).trim();
   const supplied = typeof authorization === "string" ? normalizeSignature(authorization) : "";
 
-  if (!secret) {
-    console.error("[Shopee Webhook] SHOPEE_PARTNER_KEY is not configured; rejecting webhook.");
+  if (!/^\d+$/.test(partnerId) || !secret) {
+    console.error(
+      "[Shopee Webhook] SHOPEE_PARTNER_ID/SHOPEE_PARTNER_KEY is not configured; rejecting webhook.",
+    );
     return false;
   }
 

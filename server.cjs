@@ -20051,14 +20051,14 @@ var require_etag = __commonJS({
   "node_modules/etag/index.js"(exports2, module2) {
     "use strict";
     module2.exports = etag;
-    var crypto7 = require("crypto");
+    var crypto8 = require("crypto");
     var Stats = require("fs").Stats;
     var toString3 = Object.prototype.toString;
     function entitytag(entity) {
       if (entity.length === 0) {
         return '"0-2jmj7l5rSw0yVb/vlWAYkK/YBwk"';
       }
-      var hash = crypto7.createHash("sha1").update(entity, "utf8").digest("base64").substring(0, 27);
+      var hash = crypto8.createHash("sha1").update(entity, "utf8").digest("base64").substring(0, 27);
       var len = typeof entity === "string" ? Buffer.byteLength(entity, "utf8") : entity.length;
       return '"' + len.toString(16) + "-" + hash + '"';
     }
@@ -22951,11 +22951,11 @@ var require_request = __commonJS({
 // node_modules/cookie-signature/index.js
 var require_cookie_signature = __commonJS({
   "node_modules/cookie-signature/index.js"(exports2) {
-    var crypto7 = require("crypto");
+    var crypto8 = require("crypto");
     exports2.sign = function(val, secret) {
       if ("string" !== typeof val) throw new TypeError("Cookie value must be provided as a string.");
       if (null == secret) throw new TypeError("Secret key must be provided.");
-      return val + "." + crypto7.createHmac("sha256", secret).update(val).digest("base64").replace(/\=+$/, "");
+      return val + "." + crypto8.createHmac("sha256", secret).update(val).digest("base64").replace(/\=+$/, "");
     };
     exports2.unsign = function(val, secret) {
       if ("string" !== typeof val) throw new TypeError("Signed cookie string must be provided.");
@@ -22964,7 +22964,7 @@ var require_cookie_signature = __commonJS({
       return sha1(mac) == sha1(val) ? str : false;
     };
     function sha1(str) {
-      return crypto7.createHash("sha1").update(str).digest("hex");
+      return crypto8.createHash("sha1").update(str).digest("hex");
     }
   }
 });
@@ -23938,7 +23938,7 @@ var require_main = __commonJS({
     var fs25 = require("fs");
     var path25 = require("path");
     var os = require("os");
-    var crypto7 = require("crypto");
+    var crypto8 = require("crypto");
     var TIPS = [
       "\u25C8 encrypted .env [www.dotenvx.com]",
       "\u25C8 secrets for agents [www.dotenvx.com]",
@@ -24182,7 +24182,7 @@ var require_main = __commonJS({
       const authTag = ciphertext.subarray(-16);
       ciphertext = ciphertext.subarray(12, -16);
       try {
-        const aesgcm = crypto7.createDecipheriv("aes-256-gcm", key, nonce);
+        const aesgcm = crypto8.createDecipheriv("aes-256-gcm", key, nonce);
         aesgcm.setAuthTag(authTag);
         return `${aesgcm.update(ciphertext)}${aesgcm.final()}`;
       } catch (error) {
@@ -48355,14 +48355,14 @@ var require_buffer_equal_constant_time = __commonJS({
 var require_jwa = __commonJS({
   "node_modules/jwa/index.js"(exports2, module2) {
     var Buffer4 = require_safe_buffer().Buffer;
-    var crypto7 = require("crypto");
+    var crypto8 = require("crypto");
     var formatEcdsa = require_ecdsa_sig_formatter();
     var util4 = require("util");
     var MSG_INVALID_ALGORITHM = '"%s" is not a valid algorithm.\n  Supported algorithms are:\n  "HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512" and "none".';
     var MSG_INVALID_SECRET = "secret must be a string or buffer";
     var MSG_INVALID_VERIFIER_KEY = "key must be a string or a buffer";
     var MSG_INVALID_SIGNER_KEY = "key must be a string, a buffer or an object";
-    var supportsKeyObjects = typeof crypto7.createPublicKey === "function";
+    var supportsKeyObjects = typeof crypto8.createPublicKey === "function";
     if (supportsKeyObjects) {
       MSG_INVALID_VERIFIER_KEY += " or a KeyObject";
       MSG_INVALID_SECRET += "or a KeyObject";
@@ -48452,17 +48452,17 @@ var require_jwa = __commonJS({
       return function sign(thing, secret) {
         checkIsSecretKey(secret);
         thing = normalizeInput(thing);
-        var hmac = crypto7.createHmac("sha" + bits, secret);
+        var hmac = crypto8.createHmac("sha" + bits, secret);
         var sig = (hmac.update(thing), hmac.digest("base64"));
         return fromBase64(sig);
       };
     }
     var bufferEqual;
-    var timingSafeEqual = "timingSafeEqual" in crypto7 ? function timingSafeEqual2(a, b) {
+    var timingSafeEqual = "timingSafeEqual" in crypto8 ? function timingSafeEqual2(a, b) {
       if (a.byteLength !== b.byteLength) {
         return false;
       }
-      return crypto7.timingSafeEqual(a, b);
+      return crypto8.timingSafeEqual(a, b);
     } : function timingSafeEqual2(a, b) {
       if (!bufferEqual) {
         bufferEqual = require_buffer_equal_constant_time();
@@ -48479,7 +48479,7 @@ var require_jwa = __commonJS({
       return function sign(thing, privateKey) {
         checkIsPrivateKey(privateKey);
         thing = normalizeInput(thing);
-        var signer = crypto7.createSign("RSA-SHA" + bits);
+        var signer = crypto8.createSign("RSA-SHA" + bits);
         var sig = (signer.update(thing), signer.sign(privateKey, "base64"));
         return fromBase64(sig);
       };
@@ -48489,7 +48489,7 @@ var require_jwa = __commonJS({
         checkIsPublicKey(publicKey);
         thing = normalizeInput(thing);
         signature = toBase64(signature);
-        var verifier = crypto7.createVerify("RSA-SHA" + bits);
+        var verifier = crypto8.createVerify("RSA-SHA" + bits);
         verifier.update(thing);
         return verifier.verify(publicKey, signature, "base64");
       };
@@ -48498,11 +48498,11 @@ var require_jwa = __commonJS({
       return function sign(thing, privateKey) {
         checkIsPrivateKey(privateKey);
         thing = normalizeInput(thing);
-        var signer = crypto7.createSign("RSA-SHA" + bits);
+        var signer = crypto8.createSign("RSA-SHA" + bits);
         var sig = (signer.update(thing), signer.sign({
           key: privateKey,
-          padding: crypto7.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto7.constants.RSA_PSS_SALTLEN_DIGEST
+          padding: crypto8.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto8.constants.RSA_PSS_SALTLEN_DIGEST
         }, "base64"));
         return fromBase64(sig);
       };
@@ -48512,12 +48512,12 @@ var require_jwa = __commonJS({
         checkIsPublicKey(publicKey);
         thing = normalizeInput(thing);
         signature = toBase64(signature);
-        var verifier = crypto7.createVerify("RSA-SHA" + bits);
+        var verifier = crypto8.createVerify("RSA-SHA" + bits);
         verifier.update(thing);
         return verifier.verify({
           key: publicKey,
-          padding: crypto7.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto7.constants.RSA_PSS_SALTLEN_DIGEST
+          padding: crypto8.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto8.constants.RSA_PSS_SALTLEN_DIGEST
         }, signature, "base64");
       };
     }
@@ -61645,22 +61645,22 @@ var require_crypto2 = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.NodeCrypto = void 0;
-    var crypto7 = require("crypto");
+    var crypto8 = require("crypto");
     var NodeCrypto = class {
       async sha256DigestBase64(str) {
-        return crypto7.createHash("sha256").update(str).digest("base64");
+        return crypto8.createHash("sha256").update(str).digest("base64");
       }
       randomBytesBase64(count) {
-        return crypto7.randomBytes(count).toString("base64");
+        return crypto8.randomBytes(count).toString("base64");
       }
       async verify(pubkey, data, signature) {
-        const verifier = crypto7.createVerify("RSA-SHA256");
+        const verifier = crypto8.createVerify("RSA-SHA256");
         verifier.update(data);
         verifier.end();
         return verifier.verify(pubkey, signature, "base64");
       }
       async sign(privateKey, data) {
-        const signer = crypto7.createSign("RSA-SHA256");
+        const signer = crypto8.createSign("RSA-SHA256");
         signer.update(data);
         signer.end();
         return signer.sign(privateKey, "base64");
@@ -61678,7 +61678,7 @@ var require_crypto2 = __commonJS({
        *   string in hexadecimal encoding.
        */
       async sha256DigestHex(str) {
-        return crypto7.createHash("sha256").update(str).digest("hex");
+        return crypto8.createHash("sha256").update(str).digest("hex");
       }
       /**
        * Computes the HMAC hash of a message using the provided crypto key and the
@@ -61690,7 +61690,7 @@ var require_crypto2 = __commonJS({
        */
       async signWithHmacSha256(key, msg) {
         const cryptoKey = typeof key === "string" ? key : toBuffer(key);
-        return toArrayBuffer(crypto7.createHmac("sha256", cryptoKey).update(msg).digest());
+        return toArrayBuffer(crypto8.createHmac("sha256", cryptoKey).update(msg).digest());
       }
     };
     exports2.NodeCrypto = NodeCrypto;
@@ -62381,10 +62381,10 @@ var require_oauth2client = __commonJS({
        * https://github.com/googleapis/google-auth-library-nodejs/blob/main/samples/oauth2-codeVerifier.js
        */
       async generateCodeVerifierAsync() {
-        const crypto7 = (0, crypto_1.createCrypto)();
-        const randomString = crypto7.randomBytesBase64(96);
+        const crypto8 = (0, crypto_1.createCrypto)();
+        const randomString = crypto8.randomBytesBase64(96);
         const codeVerifier = randomString.replace(/\+/g, "~").replace(/=/g, "_").replace(/\//g, "-");
-        const unencodedCodeChallenge = await crypto7.sha256DigestBase64(codeVerifier);
+        const unencodedCodeChallenge = await crypto8.sha256DigestBase64(codeVerifier);
         const codeChallenge = unencodedCodeChallenge.split("=")[0].replace(/\+/g, "-").replace(/\//g, "_");
         return { codeVerifier, codeChallenge };
       }
@@ -62825,7 +62825,7 @@ var require_oauth2client = __commonJS({
        * @return Returns a promise resolving to LoginTicket on verification.
        */
       async verifySignedJwtWithCertsAsync(jwt2, certs, requiredAudience, issuers, maxExpiry) {
-        const crypto7 = (0, crypto_1.createCrypto)();
+        const crypto8 = (0, crypto_1.createCrypto)();
         if (!maxExpiry) {
           maxExpiry = _OAuth2Client.DEFAULT_MAX_TOKEN_LIFETIME_SECS_;
         }
@@ -62838,7 +62838,7 @@ var require_oauth2client = __commonJS({
         let envelope;
         let payload;
         try {
-          envelope = JSON.parse(crypto7.decodeBase64StringUtf8(segments[0]));
+          envelope = JSON.parse(crypto8.decodeBase64StringUtf8(segments[0]));
         } catch (err) {
           if (err instanceof Error) {
             err.message = `Can't parse token envelope: ${segments[0]}': ${err.message}`;
@@ -62849,7 +62849,7 @@ var require_oauth2client = __commonJS({
           throw new Error("Can't parse token envelope: " + segments[0]);
         }
         try {
-          payload = JSON.parse(crypto7.decodeBase64StringUtf8(segments[1]));
+          payload = JSON.parse(crypto8.decodeBase64StringUtf8(segments[1]));
         } catch (err) {
           if (err instanceof Error) {
             err.message = `Can't parse token payload '${segments[0]}`;
@@ -62866,7 +62866,7 @@ var require_oauth2client = __commonJS({
         if (envelope.alg === "ES256") {
           signature = formatEcdsa.joseToDer(signature, "ES256").toString("base64");
         }
-        const verified = await crypto7.verify(cert, signed, signature);
+        const verified = await crypto8.verify(cert, signed, signature);
         if (!verified) {
           throw new Error("Invalid token signature: " + jwt2);
         }
@@ -65436,14 +65436,14 @@ var require_awsrequestsigner = __commonJS({
       }
     };
     exports2.AwsRequestSigner = AwsRequestSigner;
-    async function sign(crypto7, key, msg) {
-      return await crypto7.signWithHmacSha256(key, msg);
+    async function sign(crypto8, key, msg) {
+      return await crypto8.signWithHmacSha256(key, msg);
     }
-    async function getSigningKey(crypto7, key, dateStamp, region, serviceName) {
-      const kDate = await sign(crypto7, `AWS4${key}`, dateStamp);
-      const kRegion = await sign(crypto7, kDate, region);
-      const kService = await sign(crypto7, kRegion, serviceName);
-      const kSigning = await sign(crypto7, kService, "aws4_request");
+    async function getSigningKey(crypto8, key, dateStamp, region, serviceName) {
+      const kDate = await sign(crypto8, `AWS4${key}`, dateStamp);
+      const kRegion = await sign(crypto8, kDate, region);
+      const kService = await sign(crypto8, kRegion, serviceName);
+      const kSigning = await sign(crypto8, kService, "aws4_request");
       return kSigning;
     }
     async function generateAuthenticationHeaderMap(options) {
@@ -66409,7 +66409,7 @@ var require_gdchclient = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GdchClient = exports2.GDCH_SERVICE_ACCOUNT_TYPE = void 0;
-    var crypto7 = require("crypto");
+    var crypto8 = require("crypto");
     var fs25 = require("fs");
     var https3 = require("https");
     var oauth2client_1 = require_oauth2client();
@@ -66600,7 +66600,7 @@ var require_gdchclient = __commonJS({
         const encodedHeader = this.base64UrlEncode(JSON.stringify(header));
         const encodedPayload = this.base64UrlEncode(JSON.stringify(payload));
         const signingInput = `${encodedHeader}.${encodedPayload}`;
-        const signature = crypto7.sign("sha256", Buffer.from(signingInput), {
+        const signature = crypto8.sign("sha256", Buffer.from(signingInput), {
           key: this.privateKey,
           dsaEncoding: "ieee-p1363"
         });
@@ -67461,24 +67461,24 @@ var require_googleauth = __commonJS({
           const signed = await client.sign(data);
           return signed.signedBlob;
         }
-        const crypto7 = (0, crypto_1.createCrypto)();
+        const crypto8 = (0, crypto_1.createCrypto)();
         if (client instanceof jwtclient_1.JWT && client.key) {
-          const sign = await crypto7.sign(client.key, data);
+          const sign = await crypto8.sign(client.key, data);
           return sign;
         }
         const creds = await this.getCredentials();
         if (!creds.client_email) {
           throw new Error("Cannot sign data without `client_email`.");
         }
-        return this.signBlob(crypto7, creds.client_email, data, endpoint);
+        return this.signBlob(crypto8, creds.client_email, data, endpoint);
       }
-      async signBlob(crypto7, emailOrUniqueId, data, endpoint) {
+      async signBlob(crypto8, emailOrUniqueId, data, endpoint) {
         const url2 = new URL(endpoint + `${emailOrUniqueId}:signBlob`);
         const res = await this.request({
           method: "POST",
           url: url2.href,
           data: {
-            payload: crypto7.encodeBase64StringUtf8(data)
+            payload: crypto8.encodeBase64StringUtf8(data)
           },
           retry: true,
           retryConfig: {
@@ -72110,7 +72110,7 @@ var require_form_data = __commonJS({
     var parseUrl2 = require("url").parse;
     var fs25 = require("fs");
     var Stream4 = require("stream").Stream;
-    var crypto7 = require("crypto");
+    var crypto8 = require("crypto");
     var mime = require_mime_types();
     var asynckit = require_asynckit();
     var setToStringTag = require_es_set_tostringtag();
@@ -72319,7 +72319,7 @@ var require_form_data = __commonJS({
       return Buffer.concat([dataBuffer, Buffer.from(this._lastBoundary())]);
     };
     FormData5.prototype._generateBoundary = function() {
-      this._boundary = "--------------------------" + crypto7.randomBytes(12).toString("hex");
+      this._boundary = "--------------------------" + crypto8.randomBytes(12).toString("hex");
     };
     FormData5.prototype.getLengthSync = function() {
       var knownLength = this._overheadLength + this._valueLength;
@@ -75727,6 +75727,68 @@ function normalizeShopeeProductIds(payload) {
 }
 
 // src/webhooks/shopeeWebhookHandler.ts
+init_appPaths();
+
+// src/webhooks/shopeeSignature.ts
+var import_node_crypto = __toESM(require("node:crypto"), 1);
+function normalizeSignature(value) {
+  return value.trim().replace(/^(?:Bearer|HMAC)\s+/i, "").replace(/^sha256=/i, "").trim().toLowerCase();
+}
+function timingSafeEqualHex(a, b) {
+  try {
+    const aBuf = Buffer.from(a, "hex");
+    const bBuf = Buffer.from(b, "hex");
+    return aBuf.length === bBuf.length && import_node_crypto.default.timingSafeEqual(aBuf, bBuf);
+  } catch {
+    return false;
+  }
+}
+function verifyShopeeWebhookSignature(rawBody, authorization, requestUrls = []) {
+  const partnerId = String(process.env.SHOPEE_PARTNER_ID || "").trim();
+  const secret = String(
+    process.env.SHOPEE_PARTNER_KEY || ""
+  ).trim();
+  const supplied = typeof authorization === "string" ? normalizeSignature(authorization) : "";
+  if (!/^\d+$/.test(partnerId) || !secret) {
+    console.error(
+      "[Shopee Webhook] SHOPEE_PARTNER_ID/SHOPEE_PARTNER_KEY is not configured; rejecting webhook."
+    );
+    return false;
+  }
+  if (!supplied || !/^[a-f0-9]{64}$/.test(supplied)) {
+    console.warn("[Shopee Webhook] Authorization missing or not a 64-char hex HMAC.");
+    return false;
+  }
+  const bodyStr = Buffer.isBuffer(rawBody) ? rawBody.toString("utf8") : "";
+  const urlList = (Array.isArray(requestUrls) ? requestUrls : [requestUrls]).map((u) => String(u || "").trim()).filter(Boolean);
+  const seen = /* @__PURE__ */ new Set();
+  const candidates = [];
+  for (const url2 of urlList) {
+    if (seen.has(url2)) continue;
+    seen.add(url2);
+    candidates.push(url2);
+  }
+  if (candidates.length === 0) {
+    console.error("[Shopee Webhook] No webhook URL candidates for HMAC base string.");
+    return false;
+  }
+  for (const url2 of candidates) {
+    const baseString = `${url2}|${bodyStr}`;
+    const expected = import_node_crypto.default.createHmac("sha256", secret).update(baseString).digest("hex");
+    if (timingSafeEqualHex(expected, supplied)) {
+      console.log(`[Shopee Webhook] HMAC OK (url=${url2})`);
+      return true;
+    }
+  }
+  console.warn("[Shopee Webhook] HMAC mismatch", {
+    bodyBytes: Buffer.byteLength(bodyStr, "utf8"),
+    urlCandidates: candidates,
+    suppliedPrefix: supplied.slice(0, 12)
+  });
+  return false;
+}
+
+// src/webhooks/shopeeWebhookHandler.ts
 var MAX_PENDING_JOBS = 200;
 var MAX_CONCURRENT_JOBS = Math.max(
   2,
@@ -75892,6 +75954,20 @@ function ackShopeeOk(res) {
     }
   }
 }
+function buildWebhookUrlCandidates(req) {
+  const path25 = String(req.originalUrl || req.url || "").split("?")[0].trim();
+  if (!path25.startsWith("/")) return [];
+  const candidates = /* @__PURE__ */ new Set();
+  candidates.add(`${resolveAppBaseUrl().replace(/\/$/, "")}${path25}`);
+  const forwardedProto = String(req.get("x-forwarded-proto") || "").split(",")[0].trim();
+  const forwardedHost = String(req.get("x-forwarded-host") || "").split(",")[0].trim();
+  if (forwardedProto && forwardedHost) {
+    candidates.add(`${forwardedProto}://${forwardedHost}${path25}`);
+  }
+  const host = String(req.get("host") || "").trim();
+  if (host) candidates.add(`${req.protocol}://${host}${path25}`);
+  return [...candidates];
+}
 function parseWebhookBody(reqBody) {
   try {
     if (Buffer.isBuffer(reqBody)) {
@@ -75927,22 +76003,12 @@ function queueAfterAck(queue, req, routeLabel) {
       const bodyText = rawBody ? rawBody.toString("utf8") : typeof req.body === "string" ? req.body : JSON.stringify(req.body ?? {});
       markWebhookReceived();
       console.log(`[WEBHOOK RECEIVED] pid=${process.pid} ${routeLabel} \u2014 ACK 200 sent; headers:`, {
-        authorization: req.get("authorization") ? "(present)" : "(missing)",
+        authorization: "(verified)",
         contentLength: req.get("content-length") || "0",
         contentType: req.get("content-type") || "",
         host: req.get("host") || ""
       });
       console.log("[WEBHOOK RECEIVED] req.body (full):", bodyText);
-      const authHeader = req.get("authorization");
-      if (authHeader) {
-        console.log(
-          "[Shopee Webhook] Signature check SKIPPED (permissive mode). authPresent=true"
-        );
-      } else {
-        console.log(
-          "[Shopee Webhook] Signature check SKIPPED (permissive mode). authPresent=false"
-        );
-      }
       const payload = parseWebhookBody(req.body);
       if (!payload) {
         console.log("[Shopee Webhook] Empty/invalid body after ACK \u2014 nothing to process.");
@@ -75969,16 +76035,33 @@ function queueAfterAck(queue, req, routeLabel) {
 function createShopeeWebhookRouter(processPayload, routePath = "/shopee", options = {}) {
   const queue = createBoundedQueue(processPayload, options.onQueueOverflow);
   const router27 = import_express.default.Router();
-  const path25 = routePath.startsWith("/") ? routePath : `/${routePath}`;
+  const paths = (Array.isArray(routePath) ? routePath : [routePath]).map(
+    (path25) => path25.startsWith("/") ? path25 : `/${path25}`
+  );
   console.log(
     `[Shopee Webhook] Queue config maxConcurrent=${MAX_CONCURRENT_JOBS} maxPending=${MAX_PENDING_JOBS} jobTimeoutMs=${WEBHOOK_JOB_TIMEOUT_MS}`
   );
-  router27.get(path25, (_req, res) => {
+  router27.get(paths, (_req, res) => {
     ackShopeeOk(res);
   });
-  router27.post(path25, import_express.default.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
+  router27.post(paths, import_express.default.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
+    const rawBody = Buffer.isBuffer(req.body) ? req.body : null;
+    if (!rawBody) {
+      console.warn("[Shopee Webhook] Reject: request body is not raw bytes.");
+      return res.status(400).end();
+    }
+    const requestUrls = buildWebhookUrlCandidates(req);
+    const isValid = verifyShopeeWebhookSignature(
+      rawBody,
+      req.get("authorization"),
+      requestUrls
+    );
+    if (!isValid) {
+      console.warn("[Shopee Webhook] Reject: invalid Authorization signature.");
+      return res.status(401).end();
+    }
     ackShopeeOk(res);
-    queueAfterAck(queue, req, `POST ${path25}`);
+    queueAfterAck(queue, req, `POST ${req.originalUrl || req.url}`);
   });
   return router27;
 }
@@ -85809,7 +85892,7 @@ function resolveShopeeCallbackUrl() {
   return `${APP_BASE_URL}/api/shopee/callback`;
 }
 var SHOPEE_CALLBACK_URL = resolveShopeeCallbackUrl();
-var SHOPEE_WEBHOOK_URL = `${APP_BASE_URL}/api/shopee/webhook`;
+var SHOPEE_WEBHOOK_URL = `${APP_BASE_URL}/api/webhooks/shopee`;
 var deps3 = {
   ensureDataDirs: () => {
     import_fs6.default.mkdirSync(import_path6.default.join(APP_ROOT, "data"), { recursive: true });
@@ -119928,7 +120011,7 @@ function resolveShopeeCallbackUrl2() {
   return `${APP_BASE_URL3}/api/shopee/callback`;
 }
 var SHOPEE_CALLBACK_URL2 = resolveShopeeCallbackUrl2();
-var SHOPEE_WEBHOOK_URL2 = `${APP_BASE_URL3}/api/shopee/webhook`;
+var SHOPEE_WEBHOOK_URL2 = `${APP_BASE_URL3}/api/webhooks/shopee`;
 var SHOPEE_CALLBACK_IDLE_MSG = "Callback route is active. Waiting for Shopee parameters (code, shop_id)...";
 var SHOPEE_ENV = (process.env.SHOPEE_ENV || "live").toLowerCase();
 var SHOPEE_HOST = "https://partner.shopeemobile.com";
@@ -146261,8 +146344,11 @@ async function startServer() {
     listShopeeOAuthShopIds
   });
   app.use(
-    "/api/shopee",
-    createShopeeWebhookRouter(processShopeeWebhookPayload, "/webhook", {
+    "/api",
+    createShopeeWebhookRouter(processShopeeWebhookPayload, [
+      "/webhooks/shopee",
+      "/shopee/webhook"
+    ], {
       onQueueOverflow: handleWebhookQueueOverflow
     })
   );

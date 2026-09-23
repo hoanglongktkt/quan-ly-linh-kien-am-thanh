@@ -23,7 +23,7 @@ function resolveShopeeCallbackUrl() {
 
 export const SHOPEE_CALLBACK_URL = resolveShopeeCallbackUrl();
 /** Canonical Push URL — khớp giao diện Cài đặt. */
-export const SHOPEE_WEBHOOK_URL = `${APP_BASE_URL}/api/shopee/webhook`;
+export const SHOPEE_WEBHOOK_URL = `${APP_BASE_URL}/api/webhooks/shopee`;
 export const SHOPEE_CALLBACK_IDLE_MSG =
   "Callback route is active. Waiting for Shopee parameters (code, shop_id)...";
 
