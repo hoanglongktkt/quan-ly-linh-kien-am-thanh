@@ -9,6 +9,7 @@ type Props = {
   onClose: () => void;
   onImported: (result: { updatedCount: number; notFoundCount: number }) => void;
   onError: (message: string) => void;
+  onBusyChange?: (busy: boolean) => void;
 };
 
 function normalizeHeader(h: string): string {
@@ -117,80 +118,101 @@ function downloadTemplate() {
   URL.revokeObjectURL(url);
 }
 
-export default function ImportPriceModal({ open, onClose, onImported, onError }: Props) {
+function formatImportError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : 'sai định dạng file';
+  const message = String(raw || 'sai định dạng file').trim();
+  return message.toLowerCase().startsWith('lỗi import') ? message : `Lỗi import: ${message}`;
+}
+
+export default function ImportPriceModal({ open, onClose, onImported, onError, onBusyChange }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState('');
   const [previewCount, setPreviewCount] = useState(0);
   const [rows, setRows] = useState<ImportPriceRow[]>([]);
-  const [parsing, setParsing] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
 
   if (!open) return null;
+
+  const resetFileInput = () => {
+    if (inputRef.current) inputRef.current.value = '';
+  };
 
   const resetLocal = () => {
     setFileName('');
     setPreviewCount(0);
     setRows([]);
-    if (inputRef.current) inputRef.current.value = '';
+    resetFileInput();
+  };
+
+  const setBusy = (busy: boolean) => {
+    setIsImporting(busy);
+    onBusyChange?.(busy);
   };
 
   const handleClose = () => {
-    if (submitting || parsing) return;
+    if (isImporting) return;
     resetLocal();
     onClose();
   };
 
+  const submitRows = async (parsed: ImportPriceRow[]) => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) throw new Error('Chưa đăng nhập.');
+    const res = await fetch('/api/products/bulk-import-price', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(parsed),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data?.success === false) {
+      throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
+    }
+    resetLocal();
+    onImported({
+      updatedCount: Number(data.updatedCount) || 0,
+      notFoundCount: Number(data.notFoundCount) || 0,
+    });
+  };
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setParsing(true);
+    const input = e.target;
+    const file = input.files?.[0];
+    if (!file || isImporting) {
+      input.value = '';
+      return;
+    }
+    setBusy(true);
     setFileName(file.name);
     try {
       const parsed = await readFileToRows(file);
       setRows(parsed);
       setPreviewCount(parsed.length);
       if (parsed.length === 0) {
-        onError('File không có dòng hợp lệ (cần cột sku và import_price).');
+        throw new Error('sai định dạng file (cần cột sku và import_price).');
       }
-    } catch (err: any) {
-      setRows([]);
-      setPreviewCount(0);
-      onError(err?.message || 'Không đọc được file Excel/CSV.');
+      await submitRows(parsed);
+    } catch (err: unknown) {
+      onError(formatImportError(err));
     } finally {
-      setParsing(false);
+      setBusy(false);
+      input.value = '';
+      resetFileInput();
     }
   };
 
   const handleSubmit = async () => {
-    if (rows.length === 0 || submitting) return;
-    const token = localStorage.getItem('admin_token');
-    if (!token) {
-      onError('Chưa đăng nhập.');
-      return;
-    }
-    setSubmitting(true);
+    if (rows.length === 0 || isImporting) return;
+    setBusy(true);
     try {
-      const res = await fetch('/api/products/bulk-import-price', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(rows),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.success === false) {
-        throw new Error(data?.message || data?.error || `Lỗi HTTP ${res.status}`);
-      }
-      resetLocal();
-      onImported({
-        updatedCount: Number(data.updatedCount) || 0,
-        notFoundCount: Number(data.notFoundCount) || 0,
-      });
-    } catch (err: any) {
-      onError(err?.message || 'Import giá nhập thất bại.');
+      await submitRows(rows);
+    } catch (err: unknown) {
+      onError(formatImportError(err));
     } finally {
-      setSubmitting(false);
+      setBusy(false);
+      resetFileInput();
     }
   };
 
@@ -205,7 +227,7 @@ export default function ImportPriceModal({ open, onClose, onImported, onError }:
           <button
             type="button"
             onClick={handleClose}
-            disabled={submitting || parsing}
+            disabled={isImporting}
             className="p-1 hover:bg-emerald-100 rounded-full transition-all text-emerald-600 hover:text-emerald-900 cursor-pointer disabled:opacity-50"
           >
             <X className="w-5 h-5" />
@@ -235,12 +257,18 @@ export default function ImportPriceModal({ open, onClose, onImported, onError }:
               type="file"
               accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
               onChange={(e) => void handleFileChange(e)}
-              disabled={parsing || submitting}
-              className="block w-full text-xs text-gray-600 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 file:cursor-pointer cursor-pointer"
+              disabled={isImporting}
+              className="block w-full text-xs text-gray-600 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 file:cursor-pointer cursor-pointer disabled:opacity-60"
             />
-            {fileName && (
+            {isImporting && (
+              <p className="text-xs font-extrabold text-emerald-700 flex items-center gap-2">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Đang xử lý...
+              </p>
+            )}
+            {fileName && !isImporting && (
               <p className="text-[11px] text-gray-500 font-semibold">
-                {parsing ? 'Đang đọc file...' : `${fileName} — ${previewCount} dòng hợp lệ`}
+                {`${fileName} — ${previewCount} dòng hợp lệ`}
               </p>
             )}
           </div>
@@ -250,7 +278,7 @@ export default function ImportPriceModal({ open, onClose, onImported, onError }:
           <button
             type="button"
             onClick={handleClose}
-            disabled={submitting || parsing}
+            disabled={isImporting}
             className="px-4 py-2.5 text-xs font-bold text-gray-600 hover:bg-gray-100 rounded-xl transition-all cursor-pointer disabled:opacity-50"
           >
             Hủy
@@ -258,15 +286,15 @@ export default function ImportPriceModal({ open, onClose, onImported, onError }:
           <button
             type="button"
             onClick={() => void handleSubmit()}
-            disabled={rows.length === 0 || submitting || parsing}
+            disabled={rows.length === 0 || isImporting}
             className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white text-xs font-extrabold rounded-xl transition-all flex items-center gap-2 cursor-pointer shadow-md shadow-emerald-500/20"
           >
-            {submitting ? (
+            {isImporting ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
             ) : (
               <Upload className="w-3.5 h-3.5" />
             )}
-            {submitting ? 'Đang cập nhật...' : `Import ${rows.length || ''} SKU`}
+            {isImporting ? 'Đang xử lý...' : `Import ${rows.length || ''} SKU`}
           </button>
         </div>
       </div>

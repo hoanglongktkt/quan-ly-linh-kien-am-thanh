@@ -97,6 +97,47 @@ function resolveShopeeSyncShopName(shopId: string): string {
   return SHOPEE_SYNC_SUCCESS_SHOP_NAMES[shopId] || `Shop ${shopId}`;
 }
 
+function normalizeDuplicateKey(value: unknown): string {
+  return String(value ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/** Nhóm có SKU hoặc tên sản phẩm xuất hiện từ 2 lần trở lên trong danh sách đang tải. */
+function collectDuplicateGroupIds(groups: ProductGroupRow[]): Set<string> {
+  const skuHits = new Map<string, string[]>();
+  const titleHits = new Map<string, string[]>();
+
+  for (const group of groups) {
+    const title = normalizeDuplicateKey(group.displayTitle || group.representative?.title);
+    if (title) {
+      const bucket = titleHits.get(title);
+      if (bucket) bucket.push(group.groupId);
+      else titleHits.set(title, [group.groupId]);
+    }
+
+    const records = group.variants.length > 0 ? group.variants : [group.representative];
+    for (const record of records) {
+      const sku = normalizeDuplicateKey(record?.sku);
+      if (!sku) continue;
+      const bucket = skuHits.get(sku);
+      if (bucket) bucket.push(group.groupId);
+      else skuHits.set(sku, [group.groupId]);
+    }
+  }
+
+  const ids = new Set<string>();
+  for (const owners of titleHits.values()) {
+    if (owners.length > 1) {
+      for (const id of owners) ids.add(id);
+    }
+  }
+  for (const owners of skuHits.values()) {
+    if (owners.length > 1) {
+      for (const id of owners) ids.add(id);
+    }
+  }
+  return ids;
+}
+
 /** Đổi `[831052930] ...` thành toast thân thiện với tên shop. */
 function formatShopeeSyncSuccessToast(shopeeMessage?: string | null): string {
   const raw = String(shopeeMessage ?? '');
@@ -168,6 +209,8 @@ export default function ProductList({
   const [initProgress, setInitProgress] = useState<string[]>([]);
   const [initToast, setInitToast] = useState<string | null>(null);
   const [isClearingInventory, setIsClearingInventory] = useState(false);
+  const [isImportingPrice, setIsImportingPrice] = useState(false);
+  const [duplicateFilterOn, setDuplicateFilterOn] = useState(false);
 
   const initPlatformShops = useMemo(
     () => shops.filter((s) => s.platform === initPlatform),
@@ -630,6 +673,11 @@ export default function ProductList({
     [products],
   );
 
+  const duplicateGroupIds = useMemo(
+    () => collectDuplicateGroupIds(productGroups),
+    [productGroups],
+  );
+
   const filteredGroups = useMemo(() => {
     const filtered = productGroups.filter((group) => {
       const rep = group.representative;
@@ -649,7 +697,9 @@ export default function ProductList({
         stockFilter === 'low' ? group.totalStock > 0 && group.totalStock <= 10 :
         group.totalStock === 0;
 
-      return matchesChannel && matchesCategory && matchesStock;
+      const matchesDuplicate = !duplicateFilterOn || duplicateGroupIds.has(group.groupId);
+
+      return matchesChannel && matchesCategory && matchesStock && matchesDuplicate;
     });
 
     if (!sortField || !sortOrder) return filtered;
@@ -663,7 +713,7 @@ export default function ProductList({
       const priceB = (b.minSellingPrice + b.maxSellingPrice) / 2;
       return (priceA - priceB) * dir;
     });
-  }, [productGroups, channelFilter, categoryFilter, stockFilter, sortField, sortOrder]);
+  }, [productGroups, channelFilter, categoryFilter, stockFilter, sortField, sortOrder, duplicateFilterOn, duplicateGroupIds]);
 
   const allFilteredIds = useMemo(
     () => filteredGroups.flatMap((g) => g.variants.map((v) => v.id)),
@@ -983,7 +1033,7 @@ export default function ProductList({
       )}
       {actionToast && (
         <div
-          className={`fixed top-5 right-5 z-50 text-white font-bold text-xs px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-2 max-w-sm ${
+          className={`fixed top-5 right-5 z-[80] text-white font-bold text-xs px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-2 max-w-sm ${
             actionToastOk
               ? 'bg-blue-600 border border-blue-500'
               : 'bg-slate-900 border border-slate-700'
@@ -1105,22 +1155,40 @@ export default function ProductList({
               </p>
             </div>
             
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-2 shrink-0 flex-nowrap">
               <button
                 onClick={() => void handleClearAllInventory()}
                 type="button"
                 disabled={isClearingInventory}
-                className="px-4 py-2.5 bg-red-600 hover:bg-red-700 disabled:bg-red-300 text-white text-xs font-extrabold rounded-xl transition-all shadow-md shadow-red-500/10 flex items-center justify-center gap-1.5 cursor-pointer"
+                className="px-4 py-2.5 bg-red-600 hover:bg-red-700 disabled:bg-red-300 text-white text-xs font-extrabold rounded-xl transition-all shadow-md shadow-red-500/10 flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
               >
                 <Trash2 className={`w-3.5 h-3.5 ${isClearingInventory ? 'animate-pulse' : ''}`} />
                 <span>{isClearingInventory ? 'Đang xóa...' : 'Xóa toàn bộ Kho'}</span>
               </button>
               <button
-                onClick={() => setShowImportPriceModal(true)}
                 type="button"
-                className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold rounded-xl transition-all shadow-md shadow-emerald-500/10 flex items-center justify-center gap-1.5 cursor-pointer"
+                onClick={() => setDuplicateFilterOn((on) => !on)}
+                className={`px-4 py-2.5 text-xs font-extrabold rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                  duplicateFilterOn
+                    ? 'bg-slate-800 hover:bg-slate-900 text-white shadow-slate-500/10'
+                    : 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/10'
+                }`}
               >
-                <span>📥 Import Giá Nhập</span>
+                <Filter className="w-3.5 h-3.5" />
+                <span>{duplicateFilterOn ? 'Hủy lọc (Hiện tất cả)' : 'Lọc sản phẩm trùng'}</span>
+              </button>
+              <button
+                onClick={() => {
+                  if (!isImportingPrice) setShowImportPriceModal(true);
+                }}
+                type="button"
+                disabled={isImportingPrice}
+                className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white text-xs font-extrabold rounded-xl transition-all shadow-md shadow-emerald-500/10 flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap disabled:cursor-not-allowed"
+              >
+                {isImportingPrice ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : null}
+                <span>{isImportingPrice ? 'Đang xử lý...' : '📥 Import Giá Nhập'}</span>
               </button>
               <button
                 onClick={() => setShowInitModal(true)}
@@ -1291,7 +1359,11 @@ export default function ProductList({
                 <tr>
                   <td colSpan={8} className="p-16 text-center">
                     <p className="text-sm font-semibold text-gray-400 tracking-wide">
-                      {productsLoading ? 'Đang tải...' : 'Không tìm thấy sản phẩm'}
+                      {productsLoading
+                        ? 'Đang tải...'
+                        : duplicateFilterOn
+                          ? 'Không có sản phẩm trùng SKU hoặc tên'
+                          : 'Không tìm thấy sản phẩm'}
                     </p>
                   </td>
                 </tr>
@@ -1736,7 +1808,11 @@ export default function ProductList({
         {filteredGroups.length === 0 ? (
           <div className="bg-white rounded-2xl border border-gray-150 p-16 text-center">
             <p className="text-sm font-semibold text-gray-400 tracking-wide">
-              {productsLoading ? 'Đang tải...' : 'Không tìm thấy sản phẩm'}
+              {productsLoading
+                ? 'Đang tải...'
+                : duplicateFilterOn
+                  ? 'Không có sản phẩm trùng SKU hoặc tên'
+                  : 'Không tìm thấy sản phẩm'}
             </p>
           </div>
         ) : (
@@ -2015,13 +2091,14 @@ export default function ProductList({
       <ImportPriceModal
         open={showImportPriceModal}
         onClose={() => setShowImportPriceModal(false)}
-        onError={(message) => showActionToast(message, false)}
+        onBusyChange={setIsImportingPrice}
+        onError={(message) => showActionToast(message, false, 6000)}
         onImported={({ updatedCount, notFoundCount }) => {
           setShowImportPriceModal(false);
           const extra =
             notFoundCount > 0 ? ` (${notFoundCount} SKU không tìm thấy trong kho)` : '';
           showActionToast(
-            `Thành công: Cập nhật giá nhập cho ${updatedCount} sản phẩm.${extra}`,
+            `Import giá nhập thành công ${updatedCount} sản phẩm${extra}`,
             true,
             6000,
           );
