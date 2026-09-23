@@ -208,8 +208,8 @@ function ackShopeeOk(res: express.Response): void {
   if (res.headersSent || res.writableEnded) return;
   try {
     // Shopee Live Push: HTTP 200 = push thành công.
-    // User yêu cầu body "OK" — kết thúc response ngay, không giữ socket chờ xử lý nền.
-    res.status(200).send("OK");
+    // Kết thúc response ngay, không giữ socket chờ parse / API Shopee / MongoDB.
+    res.status(200).send("success");
   } catch (ackErr) {
     console.warn("[Shopee Webhook] ACK send failed:", ackErr);
     try {

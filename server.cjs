@@ -75945,7 +75945,7 @@ function createBoundedQueue(processPayload, onQueueOverflow) {
 function ackShopeeOk(res) {
   if (res.headersSent || res.writableEnded) return;
   try {
-    res.status(200).send("OK");
+    res.status(200).send("success");
   } catch (ackErr) {
     console.warn("[Shopee Webhook] ACK send failed:", ackErr);
     try {
@@ -85892,7 +85892,7 @@ function resolveShopeeCallbackUrl() {
   return `${APP_BASE_URL}/api/shopee/callback`;
 }
 var SHOPEE_CALLBACK_URL = resolveShopeeCallbackUrl();
-var SHOPEE_WEBHOOK_URL = `${APP_BASE_URL}/api/webhooks/shopee`;
+var SHOPEE_WEBHOOK_URL = `${APP_BASE_URL}/api/shopee/webhook`;
 var deps3 = {
   ensureDataDirs: () => {
     import_fs6.default.mkdirSync(import_path6.default.join(APP_ROOT, "data"), { recursive: true });
@@ -120011,7 +120011,7 @@ function resolveShopeeCallbackUrl2() {
   return `${APP_BASE_URL3}/api/shopee/callback`;
 }
 var SHOPEE_CALLBACK_URL2 = resolveShopeeCallbackUrl2();
-var SHOPEE_WEBHOOK_URL2 = `${APP_BASE_URL3}/api/webhooks/shopee`;
+var SHOPEE_WEBHOOK_URL2 = `${APP_BASE_URL3}/api/shopee/webhook`;
 var SHOPEE_CALLBACK_IDLE_MSG = "Callback route is active. Waiting for Shopee parameters (code, shop_id)...";
 var SHOPEE_ENV = (process.env.SHOPEE_ENV || "live").toLowerCase();
 var SHOPEE_HOST = "https://partner.shopeemobile.com";
@@ -146344,11 +146344,8 @@ async function startServer() {
     listShopeeOAuthShopIds
   });
   app.use(
-    "/api",
-    createShopeeWebhookRouter(processShopeeWebhookPayload, [
-      "/webhooks/shopee",
-      "/shopee/webhook"
-    ], {
+    "/api/shopee",
+    createShopeeWebhookRouter(processShopeeWebhookPayload, "/webhook", {
       onQueueOverflow: handleWebhookQueueOverflow
     })
   );

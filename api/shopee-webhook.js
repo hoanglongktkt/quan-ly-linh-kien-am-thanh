@@ -46,7 +46,7 @@ export default async function handler(req, res) {
     return res.status(413).end();
   }
 
-  const target = `${backend.url}/api/webhooks/shopee`;
+  const target = `${backend.url}/api/shopee/webhook`;
   const result = await fetchWithDiagnostics(
     LOG,
     target,

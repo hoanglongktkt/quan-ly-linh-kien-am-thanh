@@ -21356,14 +21356,11 @@ async function startServer() {
     applyWebhookReturnFallback,
     listShopeeOAuthShopIds,
   });
-  // Canonical: /api/webhooks/shopee. Giữ /api/shopee/webhook làm alias tương thích.
+  // Canonical Push URL duy nhất: POST/GET /api/shopee/webhook.
   // PHẢI mount TRƯỚC express.json (dùng express.raw để giữ raw body).
   app.use(
-    "/api",
-    createShopeeWebhookRouter(processShopeeWebhookPayload, [
-      "/webhooks/shopee",
-      "/shopee/webhook",
-    ], {
+    "/api/shopee",
+    createShopeeWebhookRouter(processShopeeWebhookPayload, "/webhook", {
       onQueueOverflow: handleWebhookQueueOverflow,
     }),
   );
