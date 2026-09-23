@@ -75996,41 +75996,76 @@ function parseWebhookBody(reqBody) {
   }
   return null;
 }
-function queueAfterAck(queue, req, routeLabel) {
-  setImmediate(() => {
-    try {
-      const rawBody = Buffer.isBuffer(req.body) ? req.body : null;
-      const bodyText = rawBody ? rawBody.toString("utf8") : typeof req.body === "string" ? req.body : JSON.stringify(req.body ?? {});
-      markWebhookReceived();
-      console.log(`[WEBHOOK RECEIVED] pid=${process.pid} ${routeLabel} \u2014 ACK 200 sent; headers:`, {
-        authorization: "(verified)",
-        contentLength: req.get("content-length") || "0",
-        contentType: req.get("content-type") || "",
-        host: req.get("host") || ""
-      });
-      console.log("[WEBHOOK RECEIVED] req.body (full):", bodyText);
-      const payload = parseWebhookBody(req.body);
-      if (!payload) {
-        console.log("[Shopee Webhook] Empty/invalid body after ACK \u2014 nothing to process.");
+function readRawWebhookBody(req) {
+  const maxBytes = 1024 * 1024;
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let totalBytes = 0;
+    let overflow = false;
+    req.on("data", (chunk) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += buffer.length;
+      if (totalBytes > maxBytes) {
+        overflow = true;
         return;
       }
-      console.log("[WEBHOOK RECEIVED] req.body (parsed object):", JSON.stringify(payload));
-      const queued = queue.enqueue(payload);
-      if (!queued) return;
-      const data = payload.data && typeof payload.data === "object" && !Array.isArray(payload.data) ? payload.data : {};
-      console.log(
-        "[WEBHOOK RECEIVED] payload queued after ACK \u2014 will get_order_detail + UPSERT:",
-        JSON.stringify({
-          code: payload.code ?? null,
-          shop_id: payload.shop_id ?? data.shop_id ?? null,
-          order_sn: data.ordersn ?? data.order_sn ?? data.orderSn ?? null,
-          status: data.status ?? data.order_status ?? null
-        })
-      );
-    } catch (error) {
-      console.error("[Shopee Webhook] Background handler failed (after ACK 200):", error);
-    }
+      chunks.push(buffer);
+    });
+    req.on("end", () => {
+      if (overflow) {
+        console.warn(`[Shopee Webhook] Body v\u01B0\u1EE3t gi\u1EDBi h\u1EA1n ${maxBytes} bytes \u2014 b\u1ECF x\u1EED l\xFD sau ACK.`);
+        resolve(null);
+        return;
+      }
+      resolve(Buffer.concat(chunks));
+    });
+    req.on("error", reject);
   });
+}
+async function processShopeeWebhookAsync(queue, snapshot, rawBodyPromise) {
+  const rawBody = await rawBodyPromise;
+  if (!rawBody) {
+    console.log("[Shopee Webhook] Empty/oversized body after ACK \u2014 nothing to process.");
+    return;
+  }
+  const isValid = verifyShopeeWebhookSignature(
+    rawBody,
+    snapshot.authorization,
+    snapshot.requestUrls
+  );
+  if (!isValid) {
+    console.warn("[Shopee Webhook] Invalid Authorization after ACK \u2014 payload ignored.");
+    return;
+  }
+  markWebhookReceived();
+  console.log(
+    `[WEBHOOK RECEIVED] pid=${process.pid} ${snapshot.routeLabel} \u2014 ACK 200 sent; headers:`,
+    {
+      authorization: "(verified)",
+      contentLength: snapshot.contentLength,
+      contentType: snapshot.contentType,
+      host: snapshot.host
+    }
+  );
+  console.log("[WEBHOOK RECEIVED] req.body (full):", rawBody.toString("utf8"));
+  const payload = parseWebhookBody(rawBody);
+  if (!payload) {
+    console.log("[Shopee Webhook] Invalid JSON after ACK \u2014 nothing to process.");
+    return;
+  }
+  console.log("[WEBHOOK RECEIVED] req.body (parsed object):", JSON.stringify(payload));
+  const queued = queue.enqueue(payload);
+  if (!queued) return;
+  const data = payload.data && typeof payload.data === "object" && !Array.isArray(payload.data) ? payload.data : {};
+  console.log(
+    "[WEBHOOK RECEIVED] payload queued after ACK \u2014 will get_order_detail + UPSERT:",
+    JSON.stringify({
+      code: payload.code ?? null,
+      shop_id: payload.shop_id ?? data.shop_id ?? null,
+      order_sn: data.ordersn ?? data.order_sn ?? data.orderSn ?? null,
+      status: data.status ?? data.order_status ?? null
+    })
+  );
 }
 function createShopeeWebhookRouter(processPayload, routePath = "/shopee", options = {}) {
   const queue = createBoundedQueue(processPayload, options.onQueueOverflow);
@@ -76044,24 +76079,20 @@ function createShopeeWebhookRouter(processPayload, routePath = "/shopee", option
   router27.get(paths, (_req, res) => {
     ackShopeeOk(res);
   });
-  router27.post(paths, import_express.default.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
-    const rawBody = Buffer.isBuffer(req.body) ? req.body : null;
-    if (!rawBody) {
-      console.warn("[Shopee Webhook] Reject: request body is not raw bytes.");
-      return res.status(400).end();
-    }
-    const requestUrls = buildWebhookUrlCandidates(req);
-    const isValid = verifyShopeeWebhookSignature(
-      rawBody,
-      req.get("authorization"),
-      requestUrls
-    );
-    if (!isValid) {
-      console.warn("[Shopee Webhook] Reject: invalid Authorization signature.");
-      return res.status(401).end();
-    }
+  router27.post(paths, (req, res) => {
     ackShopeeOk(res);
-    queueAfterAck(queue, req, `POST ${req.originalUrl || req.url}`);
+    const snapshot = {
+      routeLabel: `POST ${req.originalUrl || req.url}`,
+      authorization: req.get("authorization") || "",
+      requestUrls: buildWebhookUrlCandidates(req),
+      contentLength: req.get("content-length") || "0",
+      contentType: req.get("content-type") || "",
+      host: req.get("host") || ""
+    };
+    const rawBodyPromise = readRawWebhookBody(req);
+    void processShopeeWebhookAsync(queue, snapshot, rawBodyPromise).catch((error) => {
+      console.error("L\u1ED7i x\u1EED l\xFD ng\u1EA7m Webhook Shopee:", error);
+    });
   });
   return router27;
 }

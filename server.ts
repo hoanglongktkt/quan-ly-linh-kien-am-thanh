@@ -21332,9 +21332,8 @@ async function startServer() {
   app.use(corsMiddleware);
 
   /**
-   * Dùng express.raw CHỈ cho webhook để HMAC đúng bytes Shopee gửi.
-   * Route này phải nằm trước express.json; nếu parse JSON trước, payload gốc mất đi
-   * và chữ ký không thể được xác thực tin cậy.
+   * Webhook tự đọc raw stream sau khi ACK để HMAC đúng bytes Shopee gửi.
+   * Route phải nằm trước express.json để ACK không bị body parser/validation chặn.
    */
   initShopeeWebhookController({
     parseShopeePushEvent,
@@ -21357,7 +21356,7 @@ async function startServer() {
     listShopeeOAuthShopIds,
   });
   // Canonical Push URL duy nhất: POST/GET /api/shopee/webhook.
-  // PHẢI mount TRƯỚC express.json (dùng express.raw để giữ raw body).
+  // PHẢI mount TRƯỚC express.json để handler ACK vô điều kiện trước mọi xử lý.
   app.use(
     "/api/shopee",
     createShopeeWebhookRouter(processShopeeWebhookPayload, "/webhook", {
