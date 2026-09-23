@@ -138,6 +138,25 @@ function collectDuplicateGroupIds(groups: ProductGroupRow[]): Set<string> {
   return ids;
 }
 
+/** ID chụp tại thời điểm bấm lọc — không tính lại khi user sửa SKU. */
+function collectDuplicateSnapshotIds(groups: ProductGroupRow[]): string[] {
+  const groupIds = collectDuplicateGroupIds(groups);
+  const seen = new Set<string>();
+  const snapshot: string[] = [];
+  const push = (id: string | undefined) => {
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    snapshot.push(id);
+  };
+  for (const group of groups) {
+    if (!groupIds.has(group.groupId)) continue;
+    push(group.groupId);
+    push(group.representative?.id);
+    for (const variant of group.variants) push(variant?.id);
+  }
+  return snapshot;
+}
+
 /** Đổi `[831052930] ...` thành toast thân thiện với tên shop. */
 function formatShopeeSyncSuccessToast(shopeeMessage?: string | null): string {
   const raw = String(shopeeMessage ?? '');
@@ -210,7 +229,12 @@ export default function ProductList({
   const [initToast, setInitToast] = useState<string | null>(null);
   const [isClearingInventory, setIsClearingInventory] = useState(false);
   const [isImportingPrice, setIsImportingPrice] = useState(false);
-  const [duplicateFilterOn, setDuplicateFilterOn] = useState(false);
+  const [duplicateIds, setDuplicateIds] = useState<string[]>([]);
+  const [importResult, setImportResult] = useState<{
+    isOpen: boolean;
+    message: string;
+    type: 'success' | 'error' | '';
+  }>({ isOpen: false, message: '', type: '' });
 
   const initPlatformShops = useMemo(
     () => shops.filter((s) => s.platform === initPlatform),
@@ -673,10 +697,7 @@ export default function ProductList({
     [products],
   );
 
-  const duplicateGroupIds = useMemo(
-    () => collectDuplicateGroupIds(productGroups),
-    [productGroups],
-  );
+  const duplicateIdSet = useMemo(() => new Set(duplicateIds), [duplicateIds]);
 
   const filteredGroups = useMemo(() => {
     const filtered = productGroups.filter((group) => {
@@ -697,7 +718,12 @@ export default function ProductList({
         stockFilter === 'low' ? group.totalStock > 0 && group.totalStock <= 10 :
         group.totalStock === 0;
 
-      const matchesDuplicate = !duplicateFilterOn || duplicateGroupIds.has(group.groupId);
+      const repId = group.representative?.id;
+      const matchesDuplicate =
+        duplicateIds.length === 0 ||
+        duplicateIdSet.has(group.groupId) ||
+        (repId ? duplicateIdSet.has(repId) : false) ||
+        group.variants.some((variant) => duplicateIdSet.has(variant.id));
 
       return matchesChannel && matchesCategory && matchesStock && matchesDuplicate;
     });
@@ -713,7 +739,7 @@ export default function ProductList({
       const priceB = (b.minSellingPrice + b.maxSellingPrice) / 2;
       return (priceA - priceB) * dir;
     });
-  }, [productGroups, channelFilter, categoryFilter, stockFilter, sortField, sortOrder, duplicateFilterOn, duplicateGroupIds]);
+  }, [productGroups, channelFilter, categoryFilter, stockFilter, sortField, sortOrder, duplicateIds, duplicateIdSet]);
 
   const allFilteredIds = useMemo(
     () => filteredGroups.flatMap((g) => g.variants.map((v) => v.id)),
@@ -1167,15 +1193,21 @@ export default function ProductList({
               </button>
               <button
                 type="button"
-                onClick={() => setDuplicateFilterOn((on) => !on)}
+                onClick={() => {
+                  if (duplicateIds.length > 0) {
+                    setDuplicateIds([]);
+                    return;
+                  }
+                  setDuplicateIds(collectDuplicateSnapshotIds(productGroups));
+                }}
                 className={`px-4 py-2.5 text-xs font-extrabold rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
-                  duplicateFilterOn
+                  duplicateIds.length > 0
                     ? 'bg-slate-800 hover:bg-slate-900 text-white shadow-slate-500/10'
                     : 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/10'
                 }`}
               >
                 <Filter className="w-3.5 h-3.5" />
-                <span>{duplicateFilterOn ? 'Hủy lọc (Hiện tất cả)' : 'Lọc sản phẩm trùng'}</span>
+                <span>{duplicateIds.length > 0 ? 'Hủy lọc (Hiện tất cả)' : 'Lọc sản phẩm trùng'}</span>
               </button>
               <button
                 onClick={() => {
@@ -1361,7 +1393,7 @@ export default function ProductList({
                     <p className="text-sm font-semibold text-gray-400 tracking-wide">
                       {productsLoading
                         ? 'Đang tải...'
-                        : duplicateFilterOn
+                        : duplicateIds.length > 0
                           ? 'Không có sản phẩm trùng SKU hoặc tên'
                           : 'Không tìm thấy sản phẩm'}
                     </p>
@@ -1810,7 +1842,7 @@ export default function ProductList({
             <p className="text-sm font-semibold text-gray-400 tracking-wide">
               {productsLoading
                 ? 'Đang tải...'
-                : duplicateFilterOn
+                : duplicateIds.length > 0
                   ? 'Không có sản phẩm trùng SKU hoặc tên'
                   : 'Không tìm thấy sản phẩm'}
             </p>
@@ -2092,19 +2124,75 @@ export default function ProductList({
         open={showImportPriceModal}
         onClose={() => setShowImportPriceModal(false)}
         onBusyChange={setIsImportingPrice}
-        onError={(message) => showActionToast(message, false, 6000)}
+        onError={(message) => {
+          setShowImportPriceModal(false);
+          setImportResult({ isOpen: true, type: 'error', message });
+        }}
         onImported={({ updatedCount, notFoundCount }) => {
           setShowImportPriceModal(false);
-          const extra =
-            notFoundCount > 0 ? ` (${notFoundCount} SKU không tìm thấy trong kho)` : '';
-          showActionToast(
-            `Import giá nhập thành công ${updatedCount} sản phẩm${extra}`,
-            true,
-            6000,
-          );
+          const message = [
+            `Đã cập nhật giá nhập cho ${updatedCount} sản phẩm.`,
+            notFoundCount > 0
+              ? `${notFoundCount} SKU không tìm thấy trong kho và không được cập nhật.`
+              : 'Không có SKU lỗi.',
+          ].join('\n');
+          setImportResult({ isOpen: true, type: 'success', message });
           void onRefreshProducts?.({ page: 1, append: false, forceRefresh: true });
         }}
       />
+
+      {importResult.isOpen && (
+        <div
+          className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="import-result-title"
+        >
+          <div className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl border border-gray-100 overflow-hidden">
+            <div
+              className={`p-5 border-b flex items-center justify-between gap-4 ${
+                importResult.type === 'error' ? 'bg-red-50 border-red-100' : 'bg-emerald-50 border-emerald-100'
+              }`}
+            >
+              <h3
+                id="import-result-title"
+                className={`text-base font-black uppercase tracking-wider flex items-center gap-2 ${
+                  importResult.type === 'error' ? 'text-red-800' : 'text-emerald-800'
+                }`}
+              >
+                {importResult.type === 'error' ? (
+                  <AlertTriangle className="w-5 h-5 shrink-0" />
+                ) : (
+                  <CheckCircle2 className="w-5 h-5 shrink-0" />
+                )}
+                {importResult.type === 'error' ? 'Import giá nhập thất bại' : 'Kết quả import giá nhập'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setImportResult({ isOpen: false, message: '', type: '' })}
+                className="w-11 h-11 flex items-center justify-center rounded-full bg-white border border-gray-200 hover:bg-gray-100 text-gray-700 cursor-pointer shrink-0"
+                aria-label="Đóng"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            <div className="p-8">
+              <p className="text-lg font-semibold text-gray-800 whitespace-pre-line leading-relaxed">
+                {importResult.message}
+              </p>
+            </div>
+            <div className="p-5 border-t border-gray-100 bg-slate-50 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setImportResult({ isOpen: false, message: '', type: '' })}
+                className="px-8 py-3 bg-slate-900 hover:bg-slate-800 text-white text-sm font-extrabold rounded-xl cursor-pointer"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ========================================================================= */}
       {/* MODAL: INITIALIZE MAIN WAREHOUSE FROM MARKETPLACE */}
