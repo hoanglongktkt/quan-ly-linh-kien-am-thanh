@@ -80273,6 +80273,79 @@ async function markOrderLocalStatusInStore(orderSn, localStatus, meta) {
   );
   return Boolean(result);
 }
+async function claimOrderStockRestoreInStore(orderSn) {
+  if (!isMongoReady()) return false;
+  requireMongo();
+  const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
+  if (!sn) return false;
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const result = await OrderModel.findOneAndUpdate(
+    {
+      $and: [
+        {
+          $or: [
+            { orderSn: sn },
+            { _id: `shopee-${sn}` },
+            { "data.orderSn": sn },
+            { "data.order_sn": sn }
+          ]
+        },
+        { "data.stock_restored": { $ne: true } },
+        {
+          $or: [
+            { "data.stock_restore_state": { $exists: false } },
+            { "data.stock_restore_state": { $ne: "restoring" } }
+          ]
+        }
+      ]
+    },
+    {
+      $set: {
+        "data.stock_restore_state": "restoring",
+        "data.stock_restore_claimed_at": now
+      }
+    },
+    { new: true, runValidators: false }
+  ).lean();
+  return Boolean(result);
+}
+async function finishOrderStockRestoreInStore(orderSn, restored) {
+  if (!isMongoReady()) return false;
+  requireMongo();
+  const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
+  if (!sn) return false;
+  const filter2 = {
+    $and: [
+      {
+        $or: [
+          { orderSn: sn },
+          { _id: `shopee-${sn}` },
+          { "data.orderSn": sn },
+          { "data.order_sn": sn }
+        ]
+      },
+      { "data.stock_restore_state": "restoring" }
+    ]
+  };
+  const update = restored ? {
+    $set: {
+      "data.stock_restored": true,
+      "data.stock_restored_at": (/* @__PURE__ */ new Date()).toISOString(),
+      "data.stock_restore_state": "restored"
+    },
+    $unset: { "data.stock_restore_claimed_at": 1 }
+  } : {
+    $unset: {
+      "data.stock_restore_state": 1,
+      "data.stock_restore_claimed_at": 1
+    }
+  };
+  const result = await OrderModel.findOneAndUpdate(filter2, update, {
+    new: true,
+    runValidators: false
+  }).lean();
+  return Boolean(result);
+}
 async function listPendingReturnAlertsFromStore() {
   if (!isMongoReady()) return [];
   requireMongo();
@@ -134625,6 +134698,45 @@ async function pullIncrementalOrdersFromShopee(opts) {
           }
           if (Date.now() < shopDeadlineAt) {
             try {
+              const cancelLookbackSec = shortLookback ? Math.max(3 * 24 * 60 * 60, lookbackSec) : SHOPEE_HISTORY_LOOKBACK_SEC;
+              const cancelStatuses = ["CANCELLED", "IN_CANCEL"];
+              const snSet = new Set(orderSnList);
+              let addedCancel = 0;
+              for (let statusIdx = 0; statusIdx < cancelStatuses.length; statusIdx++) {
+                if (Date.now() >= shopDeadlineAt) break;
+                const st = cancelStatuses[statusIdx];
+                const sns = await collectShopeeOrderSnsByStatus(shopIdStr, accessToken, st, {
+                  lookbackSec: cancelLookbackSec,
+                  deadlineAt: shopDeadlineAt,
+                  timeRangeField: "update_time",
+                  allowShortLookback: shortLookback
+                });
+                for (const sn of sns) {
+                  if (!sn || snSet.has(sn)) continue;
+                  snSet.add(sn);
+                  addedCancel += 1;
+                }
+                if (statusIdx + 1 < cancelStatuses.length && Date.now() < shopDeadlineAt) {
+                  await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+                }
+              }
+              if (addedCancel > 0) {
+                orderSnList = [...snSet];
+                shopSn = orderSnList.length;
+                syncDiag(
+                  "CANCELLED merged",
+                  `shop=${shopIdStr} +${addedCancel} sn lookback=${cancelLookbackSec}s total=${orderSnList.length}`
+                );
+              }
+            } catch (cancelErr) {
+              console.warn(
+                `[Sync Shop ${shopIdStr}] CANCELLED lookback skip:`,
+                cancelErr?.message || cancelErr
+              );
+            }
+          }
+          if (Date.now() < shopDeadlineAt) {
+            try {
               const shippedLookbackSec = Math.max(
                 24 * 60 * 60,
                 Math.min(
@@ -134749,40 +134861,6 @@ async function pullIncrementalOrdersFromShopee(opts) {
               console.warn(
                 `[Sync Shop ${shopIdStr}] COMPLETED lookback skip:`,
                 completedErr?.message || completedErr
-              );
-            }
-          }
-          if (!shortLookback && Date.now() < shopDeadlineAt) {
-            try {
-              const cancelLookbackSec = SHOPEE_HISTORY_LOOKBACK_SEC;
-              const cancelStatuses = ["CANCELLED", "IN_CANCEL"];
-              const snSet = new Set(orderSnList);
-              let addedCancel = 0;
-              for (const st of cancelStatuses) {
-                if (Date.now() >= shopDeadlineAt) break;
-                const sns = await collectShopeeOrderSnsByStatus(shopIdStr, accessToken, st, {
-                  lookbackSec: cancelLookbackSec,
-                  deadlineAt: shopDeadlineAt,
-                  timeRangeField: "update_time"
-                });
-                for (const sn of sns) {
-                  if (!sn || snSet.has(sn)) continue;
-                  snSet.add(sn);
-                  addedCancel += 1;
-                }
-              }
-              if (addedCancel > 0) {
-                orderSnList = [...snSet];
-                shopSn = orderSnList.length;
-                syncDiag(
-                  "CANCELLED 30d merged",
-                  `shop=${shopIdStr} +${addedCancel} sn lookback=${cancelLookbackSec}s total=${orderSnList.length}`
-                );
-              }
-            } catch (cancelErr) {
-              console.warn(
-                `[Sync Shop ${shopIdStr}] CANCELLED 30d lookback skip:`,
-                cancelErr?.message || cancelErr
               );
             }
           }
@@ -140379,6 +140457,15 @@ async function restoreLocalStockOnCancelReturnScanBatch(jobs) {
   }
   const restoreByProduct = /* @__PURE__ */ new Map();
   const orderLinkedIds = /* @__PURE__ */ new Map();
+  const claimedOrders = /* @__PURE__ */ new Set();
+  const releaseClaims = async () => {
+    const claimed = [...claimedOrders];
+    for (let i2 = 0; i2 < claimed.length; i2++) {
+      const sn = String(claimed[i2]?.orderSn || "").trim();
+      if (sn) await finishOrderStockRestoreInStore(sn, false);
+      if (i2 + 1 < claimed.length) await shopeeSyncDelay(20);
+    }
+  };
   for (const job of list) {
     const order = job.order;
     if (!order?.orderSn) continue;
@@ -140392,6 +140479,9 @@ async function restoreLocalStockOnCancelReturnScanBatch(jobs) {
     if (!hasTn && !wasHandedOver) continue;
     const items = Array.isArray(order.items) ? order.items : [];
     if (!items.length) continue;
+    const claimed = await claimOrderStockRestoreInStore(String(order.orderSn));
+    if (!claimed) continue;
+    claimedOrders.add(order);
     const shopId = order.shopId ? String(order.shopId) : void 0;
     const linkedForOrder = /* @__PURE__ */ new Set();
     for (const item of items) {
@@ -140409,12 +140499,21 @@ async function restoreLocalStockOnCancelReturnScanBatch(jobs) {
       linkedForOrder.add(linkedId);
     }
     if (linkedForOrder.size > 0) orderLinkedIds.set(order, linkedForOrder);
+    if (linkedForOrder.size === 0) {
+      await finishOrderStockRestoreInStore(String(order.orderSn), false);
+      claimedOrders.delete(order);
+    }
+    await shopeeSyncDelay(20);
   }
-  if (restoreByProduct.size === 0) return { restored: 0, qty: 0 };
+  if (restoreByProduct.size === 0) {
+    await releaseClaims();
+    return { restored: 0, qty: 0 };
+  }
   let products = [];
   try {
     products = await loadProductsByIdsFromStore([...restoreByProduct.keys()]);
   } catch {
+    await releaseClaims();
     return { restored: 0, qty: 0 };
   }
   const byId = new Map(products.map((p) => [String(p?.id), p]));
@@ -140435,12 +140534,16 @@ async function restoreLocalStockOnCancelReturnScanBatch(jobs) {
     console.log(`[Scan Restock] +${restoreQty} t\u1ED3n cho ${linkedId}`);
   }
   const changed = [...dirtyByOwner.values()];
-  if (!changed.length) return { restored: 0, qty: 0 };
+  if (!changed.length) {
+    await releaseClaims();
+    return { restored: 0, qty: 0 };
+  }
   try {
     await upsertProductsToStoreAsync(changed);
     invalidateMasterSkuIndexCache("scan_cancel_return_restock");
   } catch (err) {
     console.warn("[Scan Restock] batch upsert fail:", err);
+    await releaseClaims();
     return { restored: 0, qty: 0 };
   }
   const now = (/* @__PURE__ */ new Date()).toISOString();
@@ -140456,8 +140559,15 @@ async function restoreLocalStockOnCancelReturnScanBatch(jobs) {
     if (!hit) continue;
     order.stock_restored = true;
     order.stock_restored_at = now;
-    restoredOrders += 1;
+    const finalized = await finishOrderStockRestoreInStore(
+      String(order.orderSn),
+      true
+    );
+    if (finalized) restoredOrders += 1;
+    claimedOrders.delete(order);
+    await shopeeSyncDelay(20);
   }
+  await releaseClaims();
   console.log(
     `[Scan Restock] BATCH +${totalQty} t\u1ED3n cho ${changed.length} SP / ${restoredOrders} \u0111\u01A1n (upsertProducts bulkWrite)`
   );
@@ -143472,6 +143582,7 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
   }
   const touched = [];
   const newlyInsertedSns = [];
+  const cancelRestockJobs = [];
   if (isMongoReady()) {
     try {
       const snNeed = batchNormalized.map((o) => String(o?.orderSn || "").trim()).filter(Boolean).filter((sn) => !orders.some((o) => String(o?.orderSn || "") === sn));
@@ -143514,6 +143625,13 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
       const existing = orders.find(
         (o) => String(o.orderSn || "") === String(normalized.orderSn || "")
       );
+      const incomingRaw = String(normalized.shopee_order_status || "").toUpperCase();
+      const existingRaw = String(existing?.shopee_order_status || "").toUpperCase();
+      const existingLocalStatus = String(
+        existing?.local_status || existing?.localStatus || existing?.internal_status || ""
+      ).toUpperCase();
+      const wasStockDeducted = existing?.status === "shipping" || existingRaw === "SHIPPED" || existingRaw === "TO_CONFIRM_RECEIVE" || existing?.is_handed_over === true || existing?.isHandedOverToCarrier === true || existingLocalStatus === "HANDED_OVER";
+      const shouldRestoreCancelledStock = Boolean(existing) && incomingRaw === "CANCELLED" && existingRaw !== "CANCELLED" && existing?.stock_restored !== true && !existing?.stock_restored_at && wasStockDeducted;
       if (existing) {
         preserveExistingTrackingIfIncomingEmpty(normalized, existing);
       }
@@ -143586,6 +143704,9 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
         action: existingIndex >= 0 ? "update" : "insert",
         note: "ROLLBACK: raw Shopee $set only"
       });
+      if (shouldRestoreCancelledStock) {
+        cancelRestockJobs.push({ order: row, wasHandedOver: true });
+      }
       touched.push(row);
     } catch (e2) {
       console.error(
@@ -143600,6 +143721,12 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
   const newlyAddedForPdf = [];
   if (touched.length > 0) {
     if (!isMongoReady()) throw new Error("mongodb_not_ready");
+    if (cancelRestockJobs.length > 0) {
+      const restock = await restoreLocalStockOnCancelReturnScanBatch(cancelRestockJobs);
+      console.log(
+        `[Shopee CANCELLED Restock] restored=${restock.restored} qty=${restock.qty} orders=${cancelRestockJobs.map((job) => job.order.orderSn).join(",")}`
+      );
+    }
     console.log(`[Orders Sync] Tr\u1EA1ng th\xE1i ch\u1EA1y BulkWrite \u2014 ops=${touched.length}`);
     const mongoN = await bulkUpsertOrdersToStore(touched);
     try {

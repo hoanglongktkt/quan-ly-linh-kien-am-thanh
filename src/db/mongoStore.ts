@@ -3665,6 +3665,91 @@ export async function markOrderLocalStatusInStore(
   return Boolean(result);
 }
 
+/**
+ * Giành quyền hoàn tồn cho một đơn bằng findOneAndUpdate atomic.
+ * Chỉ một worker được chuyển state sang `restoring`; sync lặp/concurrent sẽ bị chặn.
+ */
+export async function claimOrderStockRestoreInStore(orderSn: string): Promise<boolean> {
+  if (!isMongoReady()) return false;
+  requireMongo();
+  const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
+  if (!sn) return false;
+  const now = new Date().toISOString();
+  const result = await OrderModel.findOneAndUpdate(
+    {
+      $and: [
+        {
+          $or: [
+            { orderSn: sn },
+            { _id: `shopee-${sn}` },
+            { "data.orderSn": sn },
+            { "data.order_sn": sn },
+          ],
+        },
+        { "data.stock_restored": { $ne: true } },
+        {
+          $or: [
+            { "data.stock_restore_state": { $exists: false } },
+            { "data.stock_restore_state": { $ne: "restoring" } },
+          ],
+        },
+      ],
+    },
+    {
+      $set: {
+        "data.stock_restore_state": "restoring",
+        "data.stock_restore_claimed_at": now,
+      },
+    },
+    { new: true, runValidators: false },
+  ).lean();
+  return Boolean(result);
+}
+
+/** Chốt hoặc nhả khóa hoàn tồn sau khi cập nhật kho. */
+export async function finishOrderStockRestoreInStore(
+  orderSn: string,
+  restored: boolean,
+): Promise<boolean> {
+  if (!isMongoReady()) return false;
+  requireMongo();
+  const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
+  if (!sn) return false;
+  const filter = {
+    $and: [
+      {
+        $or: [
+          { orderSn: sn },
+          { _id: `shopee-${sn}` },
+          { "data.orderSn": sn },
+          { "data.order_sn": sn },
+        ],
+      },
+      { "data.stock_restore_state": "restoring" },
+    ],
+  };
+  const update = restored
+    ? {
+        $set: {
+          "data.stock_restored": true,
+          "data.stock_restored_at": new Date().toISOString(),
+          "data.stock_restore_state": "restored",
+        },
+        $unset: { "data.stock_restore_claimed_at": 1 },
+      }
+    : {
+        $unset: {
+          "data.stock_restore_state": 1,
+          "data.stock_restore_claimed_at": 1,
+        },
+      };
+  const result = await OrderModel.findOneAndUpdate(filter, update, {
+    new: true,
+    runValidators: false,
+  }).lean();
+  return Boolean(result);
+}
+
 /** YCTH mới chưa ACK — phục vụ poll toast khi RAM queue trống (restart). */
 export async function listPendingReturnAlertsFromStore(): Promise<
   Array<{
