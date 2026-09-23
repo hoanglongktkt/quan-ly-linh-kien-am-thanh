@@ -29,7 +29,7 @@ export async function enqueueScanBg(req, res) {
         message: "Thiếu mã quét (codes).",
       });
     }
-    const result = enqueueScanBgCodes(codes);
+    const result = await enqueueScanBgCodes(codes);
     console.log(
       `[Scan BG] enqueue queued=${result.queued} pending=${result.pending} codes=${codes.length}`,
     );

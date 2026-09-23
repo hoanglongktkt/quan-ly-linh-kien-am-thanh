@@ -1,4 +1,5 @@
 import fs from "fs";
+import { promises as fsp } from "fs";
 import path from "path";
 import { resolveAppRoot } from "../utils/appPaths.js";
 
@@ -6,10 +7,12 @@ const APP_ROOT = resolveAppRoot();
 const EXPENSES_DB_PATH = path.join(APP_ROOT, "data", "expenses.json");
 const EXPENSES_CLEAR_MARKER = path.join(APP_ROOT, "data", ".expenses-cleared-v2");
 
-function loadExpenses() {
+async function loadExpenses() {
   try {
-    if (!fs.existsSync(EXPENSES_DB_PATH)) return [];
-    const raw = fs.readFileSync(EXPENSES_DB_PATH, "utf-8");
+    const raw = await fsp.readFile(EXPENSES_DB_PATH, "utf-8").catch((error) => {
+      if (error?.code === "ENOENT") return "";
+      throw error;
+    });
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
@@ -18,10 +21,10 @@ function loadExpenses() {
   }
 }
 
-function saveExpenses(expenses) {
+async function saveExpenses(expenses) {
   try {
-    fs.mkdirSync(path.dirname(EXPENSES_DB_PATH), { recursive: true });
-    fs.writeFileSync(EXPENSES_DB_PATH, JSON.stringify(expenses, null, 2), "utf-8");
+    await fsp.mkdir(path.dirname(EXPENSES_DB_PATH), { recursive: true });
+    await fsp.writeFile(EXPENSES_DB_PATH, JSON.stringify(expenses, null, 2), "utf-8");
   } catch (error) {
     console.error("[Expenses DB] Failed to write expenses.json:", error);
   }
@@ -29,8 +32,9 @@ function saveExpenses(expenses) {
 
 function migrateExpensesStorageOnce() {
   if (fs.existsSync(EXPENSES_CLEAR_MARKER)) return;
-  saveExpenses([]);
   try {
+    fs.mkdirSync(path.dirname(EXPENSES_DB_PATH), { recursive: true });
+    fs.writeFileSync(EXPENSES_DB_PATH, "[]", "utf-8");
     fs.mkdirSync(path.dirname(EXPENSES_CLEAR_MARKER), { recursive: true });
     fs.writeFileSync(EXPENSES_CLEAR_MARKER, new Date().toISOString(), "utf-8");
     console.log("[Expenses] Đã xóa sạch dữ liệu chi phí cũ (migration một lần).");
@@ -43,7 +47,7 @@ migrateExpensesStorageOnce();
 
 /** GET /api/expenses */
 export async function listExpenses(_req, res) {
-  return res.json(loadExpenses());
+  return res.json(await loadExpenses());
 }
 
 /** POST /api/expenses */
@@ -52,7 +56,7 @@ export async function createExpense(req, res) {
   if (!body.title?.trim() || !body.amount || !body.category || !body.date) {
     return res.status(400).json({ error: "expense_fields_required" });
   }
-  const expenses = loadExpenses();
+  const expenses = await loadExpenses();
   const entry = {
     id: body.id || `exp-${Date.now()}`,
     title: String(body.title).trim(),
@@ -62,24 +66,24 @@ export async function createExpense(req, res) {
     notes: body.notes ? String(body.notes) : undefined,
   };
   expenses.unshift(entry);
-  saveExpenses(expenses);
+  await saveExpenses(expenses);
   return res.status(201).json({ expense: entry, expenses });
 }
 
 /** DELETE /api/expenses/:id */
 export async function deleteExpense(req, res) {
-  const expenses = loadExpenses();
+  const expenses = await loadExpenses();
   const next = expenses.filter((e) => e.id !== req.params.id);
   if (next.length === expenses.length) {
     return res.status(404).json({ error: "expense_not_found" });
   }
-  saveExpenses(next);
+  await saveExpenses(next);
   return res.json({ deleted: req.params.id, expenses: next });
 }
 
 /** POST /api/expenses/clear-all */
 export async function clearAllExpenses(_req, res) {
-  saveExpenses([]);
+  await saveExpenses([]);
   console.log("[Expenses] Đã xóa sạch toàn bộ chi phí doanh nghiệp.");
   return res.json({ success: true, cleared: true, expenses: [] });
 }

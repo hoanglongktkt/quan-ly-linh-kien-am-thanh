@@ -5,9 +5,14 @@
 import fs from "fs";
 import path from "path";
 import { resolveAppRoot } from "../utils/appPaths.js";
+import { sleep } from "../utils/concurrency.js";
 
 const APP_ROOT = resolveAppRoot();
 const SCAN_BG_QUEUE_PATH = path.join(APP_ROOT, "data", "scan-bg-queue.json");
+const SCAN_BG_ENQUEUE_CHUNK_SIZE = 50;
+const SCAN_BG_ENQUEUE_PAUSE_MS = 20;
+const SCAN_BG_DRAIN_PASS_LIMIT = 50;
+const SCAN_BG_DRAIN_RESTART_MS = 200;
 
 const scanBgJobs = [];
 const scanBgJobKeys = new Set();
@@ -111,17 +116,21 @@ function loadScanBgQueueFromDisk() {
 
 function persistScanBgQueueSoon() {
   if (scanBgPersistTimer) return;
-  scanBgPersistTimer = setTimeout(() => {
+  scanBgPersistTimer = setTimeout(async () => {
     scanBgPersistTimer = null;
     try {
-      fs.mkdirSync(path.dirname(SCAN_BG_QUEUE_PATH), { recursive: true });
+      await fs.promises.mkdir(path.dirname(SCAN_BG_QUEUE_PATH), { recursive: true });
       // Giữ pending + 80 kết quả gần nhất.
       const pending = scanBgJobs.filter((j) => j.status === "pending" || j.status === "running");
       const recent = scanBgJobs
         .filter((j) => j.status !== "pending" && j.status !== "running")
         .slice(-80);
       const jobs = [...pending, ...recent];
-      fs.writeFileSync(SCAN_BG_QUEUE_PATH, JSON.stringify({ jobs }, null, 0), "utf-8");
+      await fs.promises.writeFile(
+        SCAN_BG_QUEUE_PATH,
+        JSON.stringify({ jobs }, null, 0),
+        "utf-8",
+      );
     } catch (err) {
       console.warn("[Scan BG] persist failed:", err?.message || err);
     }
@@ -152,33 +161,43 @@ function classifyScanBgCancelReturn(order) {
   return { isReturn, isCancel };
 }
 
-export function enqueueScanBgCodes(codes) {
+export async function enqueueScanBgCodes(codes) {
+  const list = Array.isArray(codes) ? codes : [];
   const added = [];
-  for (const raw of codes) {
-    const code = String(raw || "").trim();
-    const codeKey = normalizeScanBgKey(code);
-    if (!code || !codeKey) continue;
-    if (scanBgJobKeys.has(codeKey)) continue;
-    // Đã có job pending/running cùng key?
-    const existing = scanBgJobs.find(
-      (j) => j.codeKey === codeKey && (j.status === "pending" || j.status === "running"),
-    );
-    if (existing) continue;
-    const job = {
-      id: `sbg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      code,
-      codeKey,
-      status: "pending",
-      enqueuedAt: new Date().toISOString(),
-      notified: false,
-    };
-    scanBgJobs.push(job);
-    scanBgJobKeys.add(codeKey);
-    added.push(job);
+  const failedCodes = [];
+  for (let offset = 0; offset < list.length; offset += SCAN_BG_ENQUEUE_CHUNK_SIZE) {
+    const chunk = list.slice(offset, offset + SCAN_BG_ENQUEUE_CHUNK_SIZE);
+    for (const raw of chunk) {
+      try {
+        const code = String(raw || "").trim();
+        const codeKey = normalizeScanBgKey(code);
+        if (!code || !codeKey || scanBgJobKeys.has(codeKey)) continue;
+        const job = {
+          id: `sbg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          code,
+          codeKey,
+          status: "pending",
+          enqueuedAt: new Date().toISOString(),
+          notified: false,
+        };
+        scanBgJobs.push(job);
+        scanBgJobKeys.add(codeKey);
+        added.push(job);
+      } catch (itemErr) {
+        failedCodes.push(String(raw || ""));
+        console.error("[Scan BG] enqueue item failed:", itemErr);
+      }
+    }
+    if (offset + SCAN_BG_ENQUEUE_CHUNK_SIZE < list.length) {
+      await sleep(SCAN_BG_ENQUEUE_PAUSE_MS);
+    }
   }
   if (added.length) {
     persistScanBgQueueSoon();
     void drainScanBgQueue();
+  }
+  if (failedCodes.length > 0) {
+    throw new Error(`Không thể xếp ${failedCodes.length} mã vào hàng đợi; vui lòng thử lại.`);
   }
   const pending = scanBgJobs.filter((j) => j.status === "pending" || j.status === "running").length;
   return { queued: added.length, pending, jobs: added };
@@ -333,31 +352,43 @@ async function processOneScanBgJob(job) {
 export async function drainScanBgQueue() {
   if (scanBgWorkerRunning) return;
   scanBgWorkerRunning = true;
+  let processedInPass = 0;
   try {
-    while (true) {
+    while (processedInPass < SCAN_BG_DRAIN_PASS_LIMIT) {
       const next = scanBgJobs.find((j) => j.status === "pending");
       if (!next) break;
-      await processOneScanBgJob(next);
+      try {
+        await processOneScanBgJob(next);
+      } catch (jobErr) {
+        console.error(`[Scan BG] unhandled job error code=${next?.code || ""}:`, jobErr);
+      }
+      processedInPass += 1;
       // Nghỉ ngắn giữa các mã — tránh rate-limit Shopee.
-      await new Promise((r) => setTimeout(r, 400));
+      await sleep(400);
     }
   } finally {
     scanBgWorkerRunning = false;
     const stillPending = scanBgJobs.some((j) => j.status === "pending");
     if (stillPending) {
-      queueMicrotask(() => {
+      setTimeout(() => {
         void drainScanBgQueue();
-      });
+      }, SCAN_BG_DRAIN_RESTART_MS);
     }
   }
 }
 
 export function getScanBgStatusSnapshot() {
-  const pending = scanBgJobs.filter((j) => j.status === "pending");
-  const running = scanBgJobs.filter((j) => j.status === "running");
-  const recent = scanBgJobs
-    .filter((j) => j.status === "done" || j.status === "failed" || j.status === "skipped")
-    .slice(-40);
+  const pending = [];
+  const running = [];
+  const completed = [];
+  for (const job of scanBgJobs) {
+    if (job.status === "pending") pending.push(job);
+    else if (job.status === "running") running.push(job);
+    else if (job.status === "done" || job.status === "failed" || job.status === "skipped") {
+      completed.push(job);
+    }
+  }
+  const recent = completed.slice(-40);
   const unnotified = recent.filter((j) => !j.notified);
   const summary = { cancelled: 0, returnReceived: 0, notFound: 0, failed: 0 };
   for (const j of unnotified) {

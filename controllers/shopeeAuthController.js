@@ -250,10 +250,12 @@ export function webhookProbe(req, res) {
 export async function listOauthShops(_req, res) {
   ensureShopeeLinkedShopTokenKeys();
   const tokens = loadShopeeTokens();
-  const shopIds = listShopeeSyncShopIds();
+  // Tái sử dụng một snapshot token cho toàn bộ response, tránh đọc đồng bộ
+  // shopee_tokens.json lặp lại N lần theo số shop.
+  const shopIds = listShopeeSyncShopIds(tokens);
   const details = shopIds.map((id) => {
     const record = getShopeeTokenRecord(tokens, id);
-    const tokenStatus = resolveShopeeTokenConnectionStatus(id);
+    const tokenStatus = resolveShopeeTokenConnectionStatus(id, tokens);
     return {
       shop_id: id,
       obtained_at: record?.obtained_at ?? null,

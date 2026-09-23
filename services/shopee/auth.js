@@ -351,12 +351,15 @@ export function getShopeeTokenRecord(tokens, shopId) {
  * Trạng thái kết nối token thật (không phụ thuộc shop.connected trong DB).
  * @returns {{ status: 'missing'|'expired'|'online', message: string, expires_at: number|null }}
  */
-export function resolveShopeeTokenConnectionStatus(shopId) {
+export function resolveShopeeTokenConnectionStatus(shopId, preloadedTokens) {
   const key = normalizeShopIdKey(shopId);
   if (!key) {
     return { status: "missing", message: "Thiếu Shop ID", expires_at: null };
   }
-  const tokens = loadShopeeTokens();
+  const tokens =
+    preloadedTokens && typeof preloadedTokens === "object"
+      ? preloadedTokens
+      : loadShopeeTokens();
   const record = getShopeeTokenRecord(tokens, key);
   if (!record?.access_token) {
     return {
@@ -629,8 +632,11 @@ export function listShopeeOAuthShopIds() {
   return listShopeeSyncShopIds();
 }
 
-export function listShopeeSyncShopIds() {
-  const tokens = loadShopeeTokens();
+export function listShopeeSyncShopIds(preloadedTokens) {
+  const tokens =
+    preloadedTokens && typeof preloadedTokens === "object"
+      ? preloadedTokens
+      : loadShopeeTokens();
   const ids = new Set();
   for (const id of CANONICAL_SHOPEE_SHOP_IDS) {
     const key = normalizeShopIdKey(id);

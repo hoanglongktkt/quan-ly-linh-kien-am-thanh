@@ -73442,15 +73442,15 @@ function buildOAuthFrontendRedirectUrl(req, result) {
 }
 function ensureTokensFile() {
   const dir = import_path16.default.dirname(TIKTOK_TOKENS_PATH);
-  if (!import_fs16.default.existsSync(dir)) import_fs16.default.mkdirSync(dir, { recursive: true });
-  if (!import_fs16.default.existsSync(TIKTOK_TOKENS_PATH)) {
-    import_fs16.default.writeFileSync(TIKTOK_TOKENS_PATH, "{}\n", "utf-8");
+  if (!import_fs17.default.existsSync(dir)) import_fs17.default.mkdirSync(dir, { recursive: true });
+  if (!import_fs17.default.existsSync(TIKTOK_TOKENS_PATH)) {
+    import_fs17.default.writeFileSync(TIKTOK_TOKENS_PATH, "{}\n", "utf-8");
   }
 }
 function loadTiktokTokens() {
   try {
     ensureTokensFile();
-    const raw = import_fs16.default.readFileSync(TIKTOK_TOKENS_PATH, "utf-8");
+    const raw = import_fs17.default.readFileSync(TIKTOK_TOKENS_PATH, "utf-8");
     const parsed = JSON.parse(raw || "{}");
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
   } catch {
@@ -73459,7 +73459,7 @@ function loadTiktokTokens() {
 }
 function saveTiktokTokens(tokens) {
   ensureTokensFile();
-  import_fs16.default.writeFileSync(TIKTOK_TOKENS_PATH, `${JSON.stringify(tokens || {}, null, 2)}
+  import_fs17.default.writeFileSync(TIKTOK_TOKENS_PATH, `${JSON.stringify(tokens || {}, null, 2)}
 `, "utf-8");
   return true;
 }
@@ -73532,8 +73532,8 @@ function extractTiktokFieldsFromShop(shop) {
 }
 function loadTiktokShopFromChannelSettings(shopId) {
   try {
-    if (!import_fs16.default.existsSync(CHANNEL_SETTINGS_PATH)) return null;
-    const raw = import_fs16.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
+    if (!import_fs17.default.existsSync(CHANNEL_SETTINGS_PATH)) return null;
+    const raw = import_fs17.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
     const parsed = JSON.parse(raw || "{}");
     const shops = Array.isArray(parsed?.shops) ? parsed.shops : [];
     const want = String(shopId || "").trim();
@@ -73605,10 +73605,10 @@ function listTiktokCredentialSummaries() {
   const tokens = loadTiktokTokens();
   return Object.keys(tokens).map((id) => sanitizeCredentialRecord(tokens[id]));
 }
-var import_fs16, import_path16, APP_ROOT8, APP_BASE_URL2, TIKTOK_TOKENS_PATH, CHANNEL_SETTINGS_PATH, TIKTOK_CALLBACK_URL, TIKTOK_CALLBACK_IDLE_MSG, TIKTOK_API_HOST, TIKTOK_APP_KEY, TIKTOK_APP_SECRET, TIKTOK_ACCESS_TOKEN, TIKTOK_SHOP_ID, TIKTOK_SHOP_CIPHER;
+var import_fs17, import_path16, APP_ROOT8, APP_BASE_URL2, TIKTOK_TOKENS_PATH, CHANNEL_SETTINGS_PATH, TIKTOK_CALLBACK_URL, TIKTOK_CALLBACK_IDLE_MSG, TIKTOK_API_HOST, TIKTOK_APP_KEY, TIKTOK_APP_SECRET, TIKTOK_ACCESS_TOKEN, TIKTOK_SHOP_ID, TIKTOK_SHOP_CIPHER;
 var init_auth = __esm({
   "services/tiktok/auth.js"() {
-    import_fs16 = __toESM(require("fs"), 1);
+    import_fs17 = __toESM(require("fs"), 1);
     import_path16 = __toESM(require("path"), 1);
     init_appPaths();
     APP_ROOT8 = resolveAppRoot();
@@ -74792,7 +74792,7 @@ var init_ping = __esm({
 // server.ts
 var import_express28 = __toESM(require_express2(), 1);
 var import_path24 = __toESM(require("path"), 1);
-var import_fs23 = __toESM(require("fs"), 1);
+var import_fs24 = __toESM(require("fs"), 1);
 var import_crypto5 = __toESM(require("crypto"), 1);
 var import_dotenv2 = __toESM(require_main(), 1);
 var import_pdf_lib = __toESM(require_cjs(), 1);
@@ -86263,15 +86263,18 @@ var import_express7 = __toESM(require_express2(), 1);
 
 // controllers/expensesController.js
 var import_fs8 = __toESM(require("fs"), 1);
+var import_fs9 = require("fs");
 var import_path8 = __toESM(require("path"), 1);
 init_appPaths();
 var APP_ROOT3 = resolveAppRoot();
 var EXPENSES_DB_PATH = import_path8.default.join(APP_ROOT3, "data", "expenses.json");
 var EXPENSES_CLEAR_MARKER = import_path8.default.join(APP_ROOT3, "data", ".expenses-cleared-v2");
-function loadExpenses() {
+async function loadExpenses() {
   try {
-    if (!import_fs8.default.existsSync(EXPENSES_DB_PATH)) return [];
-    const raw = import_fs8.default.readFileSync(EXPENSES_DB_PATH, "utf-8");
+    const raw = await import_fs9.promises.readFile(EXPENSES_DB_PATH, "utf-8").catch((error) => {
+      if (error?.code === "ENOENT") return "";
+      throw error;
+    });
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
@@ -86279,18 +86282,19 @@ function loadExpenses() {
     return [];
   }
 }
-function saveExpenses(expenses) {
+async function saveExpenses(expenses) {
   try {
-    import_fs8.default.mkdirSync(import_path8.default.dirname(EXPENSES_DB_PATH), { recursive: true });
-    import_fs8.default.writeFileSync(EXPENSES_DB_PATH, JSON.stringify(expenses, null, 2), "utf-8");
+    await import_fs9.promises.mkdir(import_path8.default.dirname(EXPENSES_DB_PATH), { recursive: true });
+    await import_fs9.promises.writeFile(EXPENSES_DB_PATH, JSON.stringify(expenses, null, 2), "utf-8");
   } catch (error) {
     console.error("[Expenses DB] Failed to write expenses.json:", error);
   }
 }
 function migrateExpensesStorageOnce() {
   if (import_fs8.default.existsSync(EXPENSES_CLEAR_MARKER)) return;
-  saveExpenses([]);
   try {
+    import_fs8.default.mkdirSync(import_path8.default.dirname(EXPENSES_DB_PATH), { recursive: true });
+    import_fs8.default.writeFileSync(EXPENSES_DB_PATH, "[]", "utf-8");
     import_fs8.default.mkdirSync(import_path8.default.dirname(EXPENSES_CLEAR_MARKER), { recursive: true });
     import_fs8.default.writeFileSync(EXPENSES_CLEAR_MARKER, (/* @__PURE__ */ new Date()).toISOString(), "utf-8");
     console.log("[Expenses] \u0110\xE3 x\xF3a s\u1EA1ch d\u1EEF li\u1EC7u chi ph\xED c\u0169 (migration m\u1ED9t l\u1EA7n).");
@@ -86300,14 +86304,14 @@ function migrateExpensesStorageOnce() {
 }
 migrateExpensesStorageOnce();
 async function listExpenses(_req, res) {
-  return res.json(loadExpenses());
+  return res.json(await loadExpenses());
 }
 async function createExpense(req, res) {
   const body = req.body || {};
   if (!body.title?.trim() || !body.amount || !body.category || !body.date) {
     return res.status(400).json({ error: "expense_fields_required" });
   }
-  const expenses = loadExpenses();
+  const expenses = await loadExpenses();
   const entry = {
     id: body.id || `exp-${Date.now()}`,
     title: String(body.title).trim(),
@@ -86317,20 +86321,20 @@ async function createExpense(req, res) {
     notes: body.notes ? String(body.notes) : void 0
   };
   expenses.unshift(entry);
-  saveExpenses(expenses);
+  await saveExpenses(expenses);
   return res.status(201).json({ expense: entry, expenses });
 }
 async function deleteExpense(req, res) {
-  const expenses = loadExpenses();
+  const expenses = await loadExpenses();
   const next = expenses.filter((e2) => e2.id !== req.params.id);
   if (next.length === expenses.length) {
     return res.status(404).json({ error: "expense_not_found" });
   }
-  saveExpenses(next);
+  await saveExpenses(next);
   return res.json({ deleted: req.params.id, expenses: next });
 }
 async function clearAllExpenses(_req, res) {
-  saveExpenses([]);
+  await saveExpenses([]);
   console.log("[Expenses] \u0110\xE3 x\xF3a s\u1EA1ch to\xE0n b\u1ED9 chi ph\xED doanh nghi\u1EC7p.");
   return res.json({ success: true, cleared: true, expenses: [] });
 }
@@ -86347,7 +86351,7 @@ var expensesRoutes_default = router6;
 var import_express8 = __toESM(require_express2(), 1);
 
 // services/addressBook.js
-var import_fs9 = __toESM(require("fs"), 1);
+var import_fs10 = __toESM(require("fs"), 1);
 var import_path9 = __toESM(require("path"), 1);
 var import_mongoose5 = __toESM(require("mongoose"), 1);
 init_appPaths();
@@ -86491,8 +86495,8 @@ var MAX_ENTRIES = 200;
 var RANKING_MAX = 500;
 function readBook() {
   try {
-    if (!import_fs9.default.existsSync(FILE_PATH)) return [];
-    const raw = import_fs9.default.readFileSync(FILE_PATH, "utf-8");
+    if (!import_fs10.default.existsSync(FILE_PATH)) return [];
+    const raw = import_fs10.default.readFileSync(FILE_PATH, "utf-8");
     const data = JSON.parse(raw);
     return Array.isArray(data) ? data : [];
   } catch {
@@ -86501,8 +86505,8 @@ function readBook() {
 }
 function writeBook(list) {
   const dir = import_path9.default.dirname(FILE_PATH);
-  if (!import_fs9.default.existsSync(dir)) import_fs9.default.mkdirSync(dir, { recursive: true });
-  import_fs9.default.writeFileSync(FILE_PATH, JSON.stringify(list, null, 2), "utf-8");
+  if (!import_fs10.default.existsSync(dir)) import_fs10.default.mkdirSync(dir, { recursive: true });
+  import_fs10.default.writeFileSync(FILE_PATH, JSON.stringify(list, null, 2), "utf-8");
 }
 function mongoReady2() {
   return import_mongoose5.default.connection?.readyState === 1;
@@ -86950,7 +86954,7 @@ var addressBookRoutes_default = router7;
 var import_express9 = __toESM(require_express2(), 1);
 
 // controllers/importsController.js
-var import_fs10 = __toESM(require("fs"), 1);
+var import_fs11 = __toESM(require("fs"), 1);
 var import_path10 = __toESM(require("path"), 1);
 init_appPaths();
 var APP_ROOT4 = resolveAppRoot();
@@ -86967,8 +86971,8 @@ function initImportsController(partial) {
 }
 function loadImports() {
   try {
-    if (!import_fs10.default.existsSync(IMPORTS_DB_PATH)) return [];
-    const raw = import_fs10.default.readFileSync(IMPORTS_DB_PATH, "utf-8");
+    if (!import_fs11.default.existsSync(IMPORTS_DB_PATH)) return [];
+    const raw = import_fs11.default.readFileSync(IMPORTS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
@@ -86978,8 +86982,8 @@ function loadImports() {
 }
 function saveImports(imports) {
   try {
-    import_fs10.default.mkdirSync(import_path10.default.dirname(IMPORTS_DB_PATH), { recursive: true });
-    import_fs10.default.writeFileSync(IMPORTS_DB_PATH, JSON.stringify(imports, null, 2), "utf-8");
+    import_fs11.default.mkdirSync(import_path10.default.dirname(IMPORTS_DB_PATH), { recursive: true });
+    import_fs11.default.writeFileSync(IMPORTS_DB_PATH, JSON.stringify(imports, null, 2), "utf-8");
   } catch (error) {
     console.error("[Imports DB] Failed to write imports.json:", error);
   }
@@ -87255,15 +87259,15 @@ var importsRoutes_default = router8;
 var import_express10 = __toESM(require_express2(), 1);
 
 // controllers/materialsController.js
-var import_fs11 = __toESM(require("fs"), 1);
+var import_fs12 = __toESM(require("fs"), 1);
 var import_path11 = __toESM(require("path"), 1);
 init_appPaths();
 var APP_ROOT5 = resolveAppRoot();
 var MATERIALS_DB_PATH = import_path11.default.join(APP_ROOT5, "data", "materials.json");
 function loadMaterials() {
   try {
-    if (!import_fs11.default.existsSync(MATERIALS_DB_PATH)) return [];
-    const raw = import_fs11.default.readFileSync(MATERIALS_DB_PATH, "utf-8");
+    if (!import_fs12.default.existsSync(MATERIALS_DB_PATH)) return [];
+    const raw = import_fs12.default.readFileSync(MATERIALS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
@@ -87273,8 +87277,8 @@ function loadMaterials() {
 }
 function saveMaterials(materials) {
   try {
-    import_fs11.default.mkdirSync(import_path11.default.dirname(MATERIALS_DB_PATH), { recursive: true });
-    import_fs11.default.writeFileSync(MATERIALS_DB_PATH, JSON.stringify(materials, null, 2), "utf-8");
+    import_fs12.default.mkdirSync(import_path11.default.dirname(MATERIALS_DB_PATH), { recursive: true });
+    import_fs12.default.writeFileSync(MATERIALS_DB_PATH, JSON.stringify(materials, null, 2), "utf-8");
   } catch (error) {
     console.error("[Materials DB] Failed to write materials.json:", error);
     throw error;
@@ -87412,15 +87416,15 @@ var materialsRoutes_default = router9;
 var import_express11 = __toESM(require_express2(), 1);
 
 // controllers/materialImportsController.js
-var import_fs12 = __toESM(require("fs"), 1);
+var import_fs13 = __toESM(require("fs"), 1);
 var import_path12 = __toESM(require("path"), 1);
 init_appPaths();
 var APP_ROOT6 = resolveAppRoot();
 var MATERIAL_IMPORTS_DB_PATH = import_path12.default.join(APP_ROOT6, "data", "material_imports.json");
 function loadMaterialImports() {
   try {
-    if (!import_fs12.default.existsSync(MATERIAL_IMPORTS_DB_PATH)) return [];
-    const raw = import_fs12.default.readFileSync(MATERIAL_IMPORTS_DB_PATH, "utf-8");
+    if (!import_fs13.default.existsSync(MATERIAL_IMPORTS_DB_PATH)) return [];
+    const raw = import_fs13.default.readFileSync(MATERIAL_IMPORTS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
@@ -87430,8 +87434,8 @@ function loadMaterialImports() {
 }
 function saveMaterialImports(imports) {
   try {
-    import_fs12.default.mkdirSync(import_path12.default.dirname(MATERIAL_IMPORTS_DB_PATH), { recursive: true });
-    import_fs12.default.writeFileSync(MATERIAL_IMPORTS_DB_PATH, JSON.stringify(imports, null, 2), "utf-8");
+    import_fs13.default.mkdirSync(import_path12.default.dirname(MATERIAL_IMPORTS_DB_PATH), { recursive: true });
+    import_fs13.default.writeFileSync(MATERIAL_IMPORTS_DB_PATH, JSON.stringify(imports, null, 2), "utf-8");
   } catch (error) {
     console.error("[MaterialImports DB] Failed to write material_imports.json:", error);
     throw error;
@@ -87583,7 +87587,7 @@ var import_express12 = __toESM(require_express2(), 1);
 // node_modules/@google/genai/dist/node/index.mjs
 var import_p_retry = __toESM(require_p_retry(), 1);
 var import_google_auth_library = __toESM(require_src9(), 1);
-var import_fs13 = require("fs");
+var import_fs14 = require("fs");
 var fs14 = __toESM(require("fs/promises"), 1);
 var import_promises = require("fs/promises");
 var import_node_stream3 = require("node:stream");
@@ -106271,7 +106275,7 @@ var NodeDownloader = class {
     if (params.downloadPath) {
       const response = await downloadFile(params, apiClient);
       if (response instanceof HttpResponse) {
-        const writer = (0, import_fs13.createWriteStream)(params.downloadPath);
+        const writer = (0, import_fs14.createWriteStream)(params.downloadPath);
         const body = import_node_stream3.Readable.fromWeb(response.responseInternal.body);
         body.pipe(writer);
         await (0, import_promises2.finished)(writer);
@@ -108525,15 +108529,15 @@ function getApiKeyFromEnv() {
 }
 
 // utils/env.js
-var import_fs14 = __toESM(require("fs"), 1);
+var import_fs15 = __toESM(require("fs"), 1);
 var import_path13 = __toESM(require("path"), 1);
 init_appPaths();
 var APP_ROOT7 = resolveAppRoot();
 var ENV_PATH = import_path13.default.join(APP_ROOT7, ".env");
 function updateEnvVar(key, value) {
   let content = "";
-  if (import_fs14.default.existsSync(ENV_PATH)) {
-    content = import_fs14.default.readFileSync(ENV_PATH, "utf-8");
+  if (import_fs15.default.existsSync(ENV_PATH)) {
+    content = import_fs15.default.readFileSync(ENV_PATH, "utf-8");
   }
   const regex = new RegExp(`^${key}\\s*=.*$`, "m");
   const line = `${key}=${value}`;
@@ -108542,7 +108546,7 @@ function updateEnvVar(key, value) {
   } else {
     content = (content.trimEnd() ? content.trimEnd() + "\n" : "") + line + "\n";
   }
-  import_fs14.default.writeFileSync(ENV_PATH, content, "utf-8");
+  import_fs15.default.writeFileSync(ENV_PATH, content, "utf-8");
   process.env[key] = value;
 }
 function maskApiKey(key) {
@@ -108551,14 +108555,14 @@ function maskApiKey(key) {
 }
 
 // services/logisticsConfig.js
-var import_fs15 = __toESM(require("fs"), 1);
+var import_fs16 = __toESM(require("fs"), 1);
 var import_path14 = __toESM(require("path"), 1);
 init_appPaths();
 var CONFIG_PATH = import_path14.default.join(resolveAppRoot(), "data", "logistics_config.json");
 function readJsonFile() {
   try {
-    if (!import_fs15.default.existsSync(CONFIG_PATH)) return {};
-    const raw = import_fs15.default.readFileSync(CONFIG_PATH, "utf-8");
+    if (!import_fs16.default.existsSync(CONFIG_PATH)) return {};
+    const raw = import_fs16.default.readFileSync(CONFIG_PATH, "utf-8");
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch (err) {
@@ -108798,8 +108802,8 @@ async function saveLogisticsConfig(partial) {
   }
   await saveLogisticsSettingsToStore(next);
   try {
-    import_fs15.default.mkdirSync(import_path14.default.dirname(CONFIG_PATH), { recursive: true });
-    import_fs15.default.writeFileSync(CONFIG_PATH, JSON.stringify(next, null, 2), "utf-8");
+    import_fs16.default.mkdirSync(import_path14.default.dirname(CONFIG_PATH), { recursive: true });
+    import_fs16.default.writeFileSync(CONFIG_PATH, JSON.stringify(next, null, 2), "utf-8");
   } catch (err) {
     console.warn("[Logistics config] JSON backup write failed:", err?.message || err);
   }
@@ -116918,11 +116922,16 @@ async function scanBulkUpdate(req, res) {
 }
 
 // services/scanBgQueue.js
-var import_fs17 = __toESM(require("fs"), 1);
+var import_fs18 = __toESM(require("fs"), 1);
 var import_path17 = __toESM(require("path"), 1);
 init_appPaths();
+init_concurrency();
 var APP_ROOT9 = resolveAppRoot();
 var SCAN_BG_QUEUE_PATH = import_path17.default.join(APP_ROOT9, "data", "scan-bg-queue.json");
+var SCAN_BG_ENQUEUE_CHUNK_SIZE = 50;
+var SCAN_BG_ENQUEUE_PAUSE_MS = 20;
+var SCAN_BG_DRAIN_PASS_LIMIT = 50;
+var SCAN_BG_DRAIN_RESTART_MS = 200;
 var scanBgJobs = [];
 var scanBgJobKeys = /* @__PURE__ */ new Set();
 var scanBgWorkerRunning = false;
@@ -116966,8 +116975,8 @@ function normalizeScanBgKey(code) {
 }
 function loadScanBgQueueFromDisk() {
   try {
-    if (!import_fs17.default.existsSync(SCAN_BG_QUEUE_PATH)) return;
-    const raw = JSON.parse(import_fs17.default.readFileSync(SCAN_BG_QUEUE_PATH, "utf-8"));
+    if (!import_fs18.default.existsSync(SCAN_BG_QUEUE_PATH)) return;
+    const raw = JSON.parse(import_fs18.default.readFileSync(SCAN_BG_QUEUE_PATH, "utf-8"));
     const list = Array.isArray(raw?.jobs) ? raw.jobs : Array.isArray(raw) ? raw : [];
     for (const j of list) {
       const code = String(j?.code || "").trim();
@@ -117007,14 +117016,18 @@ function loadScanBgQueueFromDisk() {
 }
 function persistScanBgQueueSoon() {
   if (scanBgPersistTimer) return;
-  scanBgPersistTimer = setTimeout(() => {
+  scanBgPersistTimer = setTimeout(async () => {
     scanBgPersistTimer = null;
     try {
-      import_fs17.default.mkdirSync(import_path17.default.dirname(SCAN_BG_QUEUE_PATH), { recursive: true });
+      await import_fs18.default.promises.mkdir(import_path17.default.dirname(SCAN_BG_QUEUE_PATH), { recursive: true });
       const pending = scanBgJobs.filter((j) => j.status === "pending" || j.status === "running");
       const recent = scanBgJobs.filter((j) => j.status !== "pending" && j.status !== "running").slice(-80);
       const jobs = [...pending, ...recent];
-      import_fs17.default.writeFileSync(SCAN_BG_QUEUE_PATH, JSON.stringify({ jobs }, null, 0), "utf-8");
+      await import_fs18.default.promises.writeFile(
+        SCAN_BG_QUEUE_PATH,
+        JSON.stringify({ jobs }, null, 0),
+        "utf-8"
+      );
     } catch (err) {
       console.warn("[Scan BG] persist failed:", err?.message || err);
     }
@@ -117031,32 +117044,43 @@ function classifyScanBgCancelReturn(order) {
   const isCancel3 = !isReturn && (kind === "cancelled" || kind === "failed_delivery" || status === "cancelled" || raw === "CANCELLED" || raw === "IN_CANCEL" || deps8.isShopeeCancelOrReturnLikeOrder(order));
   return { isReturn, isCancel: isCancel3 };
 }
-function enqueueScanBgCodes(codes) {
+async function enqueueScanBgCodes(codes) {
+  const list = Array.isArray(codes) ? codes : [];
   const added = [];
-  for (const raw of codes) {
-    const code = String(raw || "").trim();
-    const codeKey = normalizeScanBgKey(code);
-    if (!code || !codeKey) continue;
-    if (scanBgJobKeys.has(codeKey)) continue;
-    const existing = scanBgJobs.find(
-      (j) => j.codeKey === codeKey && (j.status === "pending" || j.status === "running")
-    );
-    if (existing) continue;
-    const job = {
-      id: `sbg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      code,
-      codeKey,
-      status: "pending",
-      enqueuedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      notified: false
-    };
-    scanBgJobs.push(job);
-    scanBgJobKeys.add(codeKey);
-    added.push(job);
+  const failedCodes = [];
+  for (let offset = 0; offset < list.length; offset += SCAN_BG_ENQUEUE_CHUNK_SIZE) {
+    const chunk = list.slice(offset, offset + SCAN_BG_ENQUEUE_CHUNK_SIZE);
+    for (const raw of chunk) {
+      try {
+        const code = String(raw || "").trim();
+        const codeKey = normalizeScanBgKey(code);
+        if (!code || !codeKey || scanBgJobKeys.has(codeKey)) continue;
+        const job = {
+          id: `sbg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          code,
+          codeKey,
+          status: "pending",
+          enqueuedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          notified: false
+        };
+        scanBgJobs.push(job);
+        scanBgJobKeys.add(codeKey);
+        added.push(job);
+      } catch (itemErr) {
+        failedCodes.push(String(raw || ""));
+        console.error("[Scan BG] enqueue item failed:", itemErr);
+      }
+    }
+    if (offset + SCAN_BG_ENQUEUE_CHUNK_SIZE < list.length) {
+      await sleep4(SCAN_BG_ENQUEUE_PAUSE_MS);
+    }
   }
   if (added.length) {
     persistScanBgQueueSoon();
     void drainScanBgQueue();
+  }
+  if (failedCodes.length > 0) {
+    throw new Error(`Kh\xF4ng th\u1EC3 x\u1EBFp ${failedCodes.length} m\xE3 v\xE0o h\xE0ng \u0111\u1EE3i; vui l\xF2ng th\u1EED l\u1EA1i.`);
   }
   const pending = scanBgJobs.filter((j) => j.status === "pending" || j.status === "running").length;
   return { queued: added.length, pending, jobs: added };
@@ -117185,27 +117209,41 @@ async function processOneScanBgJob(job) {
 async function drainScanBgQueue() {
   if (scanBgWorkerRunning) return;
   scanBgWorkerRunning = true;
+  let processedInPass = 0;
   try {
-    while (true) {
+    while (processedInPass < SCAN_BG_DRAIN_PASS_LIMIT) {
       const next = scanBgJobs.find((j) => j.status === "pending");
       if (!next) break;
-      await processOneScanBgJob(next);
-      await new Promise((r2) => setTimeout(r2, 400));
+      try {
+        await processOneScanBgJob(next);
+      } catch (jobErr) {
+        console.error(`[Scan BG] unhandled job error code=${next?.code || ""}:`, jobErr);
+      }
+      processedInPass += 1;
+      await sleep4(400);
     }
   } finally {
     scanBgWorkerRunning = false;
     const stillPending = scanBgJobs.some((j) => j.status === "pending");
     if (stillPending) {
-      queueMicrotask(() => {
+      setTimeout(() => {
         void drainScanBgQueue();
-      });
+      }, SCAN_BG_DRAIN_RESTART_MS);
     }
   }
 }
 function getScanBgStatusSnapshot() {
-  const pending = scanBgJobs.filter((j) => j.status === "pending");
-  const running = scanBgJobs.filter((j) => j.status === "running");
-  const recent = scanBgJobs.filter((j) => j.status === "done" || j.status === "failed" || j.status === "skipped").slice(-40);
+  const pending = [];
+  const running = [];
+  const completed = [];
+  for (const job of scanBgJobs) {
+    if (job.status === "pending") pending.push(job);
+    else if (job.status === "running") running.push(job);
+    else if (job.status === "done" || job.status === "failed" || job.status === "skipped") {
+      completed.push(job);
+    }
+  }
+  const recent = completed.slice(-40);
   const unnotified = recent.filter((j) => !j.notified);
   const summary = { cancelled: 0, returnReceived: 0, notFound: 0, failed: 0 };
   for (const j of unnotified) {
@@ -119389,7 +119427,7 @@ async function bulkChannelSync(req, res) {
 }
 
 // services/shopee/auth.js
-var import_fs18 = __toESM(require("fs"), 1);
+var import_fs19 = __toESM(require("fs"), 1);
 var import_path19 = __toESM(require("path"), 1);
 var import_crypto3 = __toESM(require("crypto"), 1);
 init_appPaths();
@@ -119850,15 +119888,15 @@ function initShopeeAuth(partial) {
 }
 function ensureDataDirs() {
   const dataDir = import_path19.default.join(APP_ROOT10, "data");
-  import_fs18.default.mkdirSync(dataDir, { recursive: true });
-  if (!import_fs18.default.existsSync(SHOPEE_TOKENS_PATH)) {
-    import_fs18.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
+  import_fs19.default.mkdirSync(dataDir, { recursive: true });
+  if (!import_fs19.default.existsSync(SHOPEE_TOKENS_PATH)) {
+    import_fs19.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
   }
 }
 function saveOAuthAudit(entry) {
   try {
     ensureDataDirs();
-    import_fs18.default.writeFileSync(
+    import_fs19.default.writeFileSync(
       SHOPEE_OAUTH_LAST_PATH,
       JSON.stringify({ ...entry, at: (/* @__PURE__ */ new Date()).toISOString() }, null, 2),
       "utf-8"
@@ -119869,8 +119907,8 @@ function saveOAuthAudit(entry) {
 }
 function loadLastOAuthAudit() {
   try {
-    if (!import_fs18.default.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
-    return JSON.parse(import_fs18.default.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
+    if (!import_fs19.default.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
+    return JSON.parse(import_fs19.default.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
   } catch {
     return null;
   }
@@ -119887,13 +119925,13 @@ function bootShopeeAuth() {
     console.error("[Boot] Failed to normalize shopee_tokens.json:", error);
   }
   console.log(
-    `[Boot] APP_ROOT=${APP_ROOT10} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs18.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL2}`
+    `[Boot] APP_ROOT=${APP_ROOT10} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs19.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL2}`
   );
 }
 function loadShopeeTokens() {
   try {
-    if (!import_fs18.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
-    const raw = import_fs18.default.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
+    if (!import_fs19.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
+    const raw = import_fs19.default.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
     if (!raw.trim()) return {};
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
@@ -119964,10 +120002,10 @@ function saveShopeeTokens(tokensToWrite) {
         byteLength: Buffer.byteLength(payload, "utf-8")
       })
     );
-    import_fs18.default.writeFileSync(absPath, payload, "utf-8");
+    import_fs19.default.writeFileSync(absPath, payload, "utf-8");
     console.log(
       "[Shopee Tokens] fs.writeFileSync \u2014 GHI TH\xC0NH C\xD4NG",
-      JSON.stringify({ absPath, keys: keysAfter, fileSize: import_fs18.default.statSync(absPath).size })
+      JSON.stringify({ absPath, keys: keysAfter, fileSize: import_fs19.default.statSync(absPath).size })
     );
     return true;
   } catch (error) {
@@ -120071,12 +120109,12 @@ function getShopeeTokenRecord(tokens, shopId) {
   }
   return null;
 }
-function resolveShopeeTokenConnectionStatus(shopId) {
+function resolveShopeeTokenConnectionStatus(shopId, preloadedTokens) {
   const key = normalizeShopIdKey(shopId);
   if (!key) {
     return { status: "missing", message: "Thi\u1EBFu Shop ID", expires_at: null };
   }
-  const tokens = loadShopeeTokens();
+  const tokens = preloadedTokens && typeof preloadedTokens === "object" ? preloadedTokens : loadShopeeTokens();
   const record = getShopeeTokenRecord(tokens, key);
   if (!record?.access_token) {
     return {
@@ -120275,8 +120313,8 @@ function saveShopeeTokenForShop(shopId, record) {
 }
 function listChannelSettingsShopIds() {
   try {
-    if (!import_fs18.default.existsSync(CHANNEL_SETTINGS_PATH2)) return [];
-    const raw = import_fs18.default.readFileSync(CHANNEL_SETTINGS_PATH2, "utf-8");
+    if (!import_fs19.default.existsSync(CHANNEL_SETTINGS_PATH2)) return [];
+    const raw = import_fs19.default.readFileSync(CHANNEL_SETTINGS_PATH2, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : {};
     const shops = Array.isArray(parsed?.shops) ? parsed.shops : [];
     const ids = [];
@@ -120300,8 +120338,8 @@ function shopHasOwnToken(tokens, shopId) {
 function listShopeeOAuthShopIds() {
   return listShopeeSyncShopIds();
 }
-function listShopeeSyncShopIds() {
-  const tokens = loadShopeeTokens();
+function listShopeeSyncShopIds(preloadedTokens) {
+  const tokens = preloadedTokens && typeof preloadedTokens === "object" ? preloadedTokens : loadShopeeTokens();
   const ids = /* @__PURE__ */ new Set();
   for (const id of CANONICAL_SHOPEE_SHOP_IDS) {
     const key = normalizeShopIdKey(id);
@@ -120401,7 +120439,7 @@ function ensureShopeeLinkedShopTokenKeys() {
       delete next[id];
     }
     Object.assign(next, updates);
-    import_fs18.default.writeFileSync(SHOPEE_TOKENS_PATH, JSON.stringify(next, null, 2), "utf8");
+    import_fs19.default.writeFileSync(SHOPEE_TOKENS_PATH, JSON.stringify(next, null, 2), "utf8");
     console.log(
       `[Shopee Tokens] ensureLinkedShopTokenKeys \u2014 upsert=[${Object.keys(updates).join(", ")}] deleted=[${deleteKeys.map((k) => k.replace(/^__delete__/, "")).join(", ")}] pruned=${pruned}`
     );
@@ -121783,12 +121821,12 @@ var mappingRoutes_default = router15;
 var import_express17 = __toESM(require_express2(), 1);
 
 // controllers/ordersController.js
-var import_fs21 = __toESM(require("fs"), 1);
+var import_fs22 = __toESM(require("fs"), 1);
 var import_path22 = __toESM(require("path"), 1);
 init_appPaths();
 
 // utils/orderPdfAvailability.js
-var import_fs19 = __toESM(require("fs"), 1);
+var import_fs20 = __toESM(require("fs"), 1);
 var import_path20 = __toESM(require("path"), 1);
 init_appPaths();
 function hasOrderPdfOnDisk(order) {
@@ -121818,7 +121856,7 @@ function hasOrderPdfOnDisk(order) {
     filenames.add(`${orderSn}.pdf`);
   }
   for (const filename of filenames) {
-    if (import_fs19.default.existsSync(import_path20.default.join(PDF_DIR, filename))) return true;
+    if (import_fs20.default.existsSync(import_path20.default.join(PDF_DIR, filename))) return true;
   }
   return false;
 }
@@ -121831,7 +121869,7 @@ function attachPdfAvailability(orders) {
 }
 
 // services/orders.js
-var import_fs20 = __toESM(require("fs"), 1);
+var import_fs21 = __toESM(require("fs"), 1);
 var import_path21 = __toESM(require("path"), 1);
 init_appPaths();
 var APP_ROOT11 = resolveAppRoot();
@@ -121892,11 +121930,11 @@ function rebuildOrderLookupIndex(orders) {
 }
 function loadOrders() {
   try {
-    if (!import_fs20.default.existsSync(ORDERS_DB_PATH)) {
+    if (!import_fs21.default.existsSync(ORDERS_DB_PATH)) {
       orderLookupIndex = rebuildOrderLookupIndex([]);
       return [];
     }
-    const raw = import_fs20.default.readFileSync(ORDERS_DB_PATH, "utf-8");
+    const raw = import_fs21.default.readFileSync(ORDERS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     const orders = Array.isArray(parsed) ? parsed.map(deps14.repairMisassignedTracking) : [];
     orderLookupIndex = rebuildOrderLookupIndex(orders);
@@ -122105,8 +122143,8 @@ function saveOrders(orders) {
         (err) => console.warn("[Orders JSON Mirror] Mongo sync failed:", err?.message || err)
       );
     }
-    import_fs20.default.mkdirSync(import_path21.default.dirname(ORDERS_DB_PATH), { recursive: true });
-    import_fs20.default.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
+    import_fs21.default.mkdirSync(import_path21.default.dirname(ORDERS_DB_PATH), { recursive: true });
+    import_fs21.default.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
     orderLookupIndex = rebuildOrderLookupIndex(sanitized);
     console.log(
       `[Orders DB] WRITE OK \u2014 path=${ORDERS_DB_PATH} count=${sanitized.length}`
@@ -122128,7 +122166,7 @@ async function purgeHandedOverGarbageOrdersOnce(opts) {
   const force = Boolean(opts?.force);
   const orders = loadOrders();
   const garbage = orders.filter(isHandedOverGarbageOrder);
-  if (!force && garbage.length === 0 && import_fs20.default.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
+  if (!force && garbage.length === 0 && import_fs21.default.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
     return { removed: 0, sns: [], skipped: true };
   }
   const sns = garbage.map((o) => String(o.orderSn || o.id || "").trim()).filter(Boolean);
@@ -122159,9 +122197,9 @@ async function purgeHandedOverGarbageOrdersOnce(opts) {
   if (stillLeft === 0) {
     try {
       const v1 = import_path21.default.join(APP_ROOT11, "data", ".cleanup-handed-over-v1");
-      if (import_fs20.default.existsSync(v1)) import_fs20.default.unlinkSync(v1);
-      import_fs20.default.mkdirSync(import_path21.default.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
-      import_fs20.default.writeFileSync(
+      if (import_fs21.default.existsSync(v1)) import_fs21.default.unlinkSync(v1);
+      import_fs21.default.mkdirSync(import_path21.default.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
+      import_fs21.default.writeFileSync(
         HANDED_OVER_CLEANUP_MARKER,
         JSON.stringify(
           {
@@ -123266,7 +123304,7 @@ async function cleanupHandedOver(req, res) {
     for (const name of [".cleanup-handed-over-v1", ".cleanup-handed-over-v2"]) {
       try {
         const p = import_path22.default.join(APP_ROOT12, "data", name);
-        if (import_fs21.default.existsSync(p)) import_fs21.default.unlinkSync(p);
+        if (import_fs22.default.existsSync(p)) import_fs22.default.unlinkSync(p);
       } catch {
       }
     }
@@ -125377,12 +125415,12 @@ async function streamExternalWaybillFile(req, res) {
     const orderSn = String(req.params.orderSn || "").trim();
     if (!orderSn) return res.status(400).json({ error: "Thi\u1EBFu m\xE3 \u0111\u01A1n" });
     const filePath = import_path22.default.join(PDF_DIR, `external-${orderSn}.pdf`);
-    if (!import_fs21.default.existsSync(filePath)) {
+    if (!import_fs22.default.existsSync(filePath)) {
       return res.status(404).json({ error: "Ch\u01B0a c\xF3 file PDF waybill. B\u1EA5m In v\u1EADn \u0111\u01A1n l\u1EA1i." });
     }
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="${orderSn}.pdf"`);
-    return import_fs21.default.createReadStream(filePath).pipe(res);
+    return import_fs22.default.createReadStream(filePath).pipe(res);
   } catch (error) {
     return res.status(500).json({ error: error.message || "Kh\xF4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c PDF" });
   }
@@ -126769,7 +126807,7 @@ async function enqueueScanBg(req, res) {
         message: "Thi\u1EBFu m\xE3 qu\xE9t (codes)."
       });
     }
-    const result = enqueueScanBgCodes(codes);
+    const result = await enqueueScanBgCodes(codes);
     console.log(
       `[Scan BG] enqueue queued=${result.queued} pending=${result.pending} codes=${codes.length}`
     );
@@ -128646,10 +128684,10 @@ function webhookProbe(req, res) {
 async function listOauthShops(_req, res) {
   ensureShopeeLinkedShopTokenKeys();
   const tokens = loadShopeeTokens();
-  const shopIds = listShopeeSyncShopIds();
+  const shopIds = listShopeeSyncShopIds(tokens);
   const details = shopIds.map((id) => {
     const record = getShopeeTokenRecord(tokens, id);
-    const tokenStatus = resolveShopeeTokenConnectionStatus(id);
+    const tokenStatus = resolveShopeeTokenConnectionStatus(id, tokens);
     return {
       shop_id: id,
       obtained_at: record?.obtained_at ?? null,
@@ -129671,7 +129709,7 @@ async function shopeeAxiosPost(url2, body, context = "shopee_post") {
 }
 
 // services/shopee/categories.js
-var import_fs22 = __toESM(require("fs"), 1);
+var import_fs23 = __toESM(require("fs"), 1);
 var import_path23 = __toESM(require("path"), 1);
 var CACHE_TTL_MS = 12 * 60 * 60 * 1e3;
 var INVALID_CATEGORY_MSG = "Danh m\u1EE5c c\u0169 c\u1EE7a s\u1EA3n ph\u1EA9m \u0111\xE3 b\u1ECB Shopee thay \u0111\u1ED5i. Vui l\xF2ng ch\u1ECDn l\u1EA1i danh m\u1EE5c m\u1EDBi tr\u01B0\u1EDBc khi \u0111\u0103ng b\xE1n!";
@@ -129735,8 +129773,8 @@ function collectShopeeLeafIds(categoryList) {
 function readShopeeCategoryCache(appRoot) {
   const file = resolveCachePath(appRoot);
   try {
-    if (!import_fs22.default.existsSync(file)) return null;
-    const parsed = JSON.parse(import_fs22.default.readFileSync(file, "utf-8"));
+    if (!import_fs23.default.existsSync(file)) return null;
+    const parsed = JSON.parse(import_fs23.default.readFileSync(file, "utf-8"));
     if (!parsed || !Array.isArray(parsed.category_list)) return null;
     return parsed;
   } catch {
@@ -129746,8 +129784,8 @@ function readShopeeCategoryCache(appRoot) {
 function writeShopeeCategoryCache(appRoot, payload) {
   const file = resolveCachePath(appRoot);
   const dir = import_path23.default.dirname(file);
-  if (!import_fs22.default.existsSync(dir)) import_fs22.default.mkdirSync(dir, { recursive: true });
-  import_fs22.default.writeFileSync(file, JSON.stringify(payload, null, 2), "utf-8");
+  if (!import_fs23.default.existsSync(dir)) import_fs23.default.mkdirSync(dir, { recursive: true });
+  import_fs23.default.writeFileSync(file, JSON.stringify(payload, null, 2), "utf-8");
 }
 function isShopeeCategoryCacheFresh(cache, ttlMs = CACHE_TTL_MS) {
   if (!cache?.synced_at) return false;
@@ -131129,7 +131167,7 @@ ${(/* @__PURE__ */ new Date()).toISOString()}
     ].filter(Boolean);
     for (const file of targets) {
       try {
-        import_fs23.default.writeFileSync(file, line);
+        import_fs24.default.writeFileSync(file, line);
       } catch {
       }
     }
@@ -131168,7 +131206,7 @@ var dotenvCandidates = [
   import_path24.default.resolve(".env")
 ];
 for (const envPath of dotenvCandidates) {
-  if (import_fs23.default.existsSync(envPath)) {
+  if (import_fs24.default.existsSync(envPath)) {
     const loaded = import_dotenv2.default.config({ path: envPath });
     if (loaded.error) {
       console.error(`[Config] dotenv l\u1ED7i khi \u0111\u1ECDc ${envPath}:`, loaded.error.message);
@@ -131193,7 +131231,7 @@ console.log(
 function writeCpanelCrashLogToAppRoot(kind, err) {
   try {
     const stack = err instanceof Error ? err.stack || err.message : typeof err === "string" ? err : JSON.stringify(err);
-    import_fs23.default.writeFileSync(
+    import_fs24.default.writeFileSync(
       import_path24.default.join(APP_ROOT14, "cpanel_error_log.txt"),
       `${kind}: ${stack}
 ---
@@ -131227,7 +131265,7 @@ var LABEL_MEM_MAX_ENTRIES = 48;
 var LABEL_MEM_MAX_BYTES = 96 * 1024 * 1024;
 function ensureLabelsDir() {
   try {
-    if (!import_fs23.default.existsSync(PDF_DIR)) import_fs23.default.mkdirSync(PDF_DIR, { recursive: true });
+    if (!import_fs24.default.existsSync(PDF_DIR)) import_fs24.default.mkdirSync(PDF_DIR, { recursive: true });
   } catch (err) {
     console.error("[Labels] Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c storage/labels:", err);
   }
@@ -131236,8 +131274,8 @@ function assertLabelsDirWritable() {
   ensureLabelsDir();
   const probe = import_path24.default.join(PDF_DIR, `.write_probe_${process.pid}`);
   try {
-    import_fs23.default.writeFileSync(probe, "ok");
-    import_fs23.default.unlinkSync(probe);
+    import_fs24.default.writeFileSync(probe, "ok");
+    import_fs24.default.unlinkSync(probe);
   } catch (err) {
     console.error("[Labels] Kh\xF4ng ghi \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c storage/labels:", err);
     throw err instanceof Error ? err : new Error(String(err));
@@ -131259,21 +131297,21 @@ function getValidLabelDiskFile(filename) {
   if (!safe) return null;
   const filePath = import_path24.default.join(PDF_DIR, safe);
   try {
-    if (!import_fs23.default.existsSync(filePath)) return null;
-    const stat3 = import_fs23.default.statSync(filePath);
+    if (!import_fs24.default.existsSync(filePath)) return null;
+    const stat3 = import_fs24.default.statSync(filePath);
     if (!stat3.isFile() || stat3.size <= 0) {
       unlinkWaybillFileQuiet(filePath);
       return null;
     }
-    const fd = import_fs23.default.openSync(filePath, "r");
+    const fd = import_fs24.default.openSync(filePath, "r");
     try {
       const magic = Buffer.allocUnsafe(4);
-      if (import_fs23.default.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
+      if (import_fs24.default.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
         unlinkWaybillFileQuiet(filePath);
         return null;
       }
     } finally {
-      import_fs23.default.closeSync(fd);
+      import_fs24.default.closeSync(fd);
     }
     return { safe, filePath, size: stat3.size };
   } catch {
@@ -131286,12 +131324,12 @@ async function getValidLabelDiskFileAsync(filename) {
   const filePath = import_path24.default.join(PDF_DIR, safe);
   let handle;
   try {
-    const stat3 = await import_fs23.default.promises.stat(filePath);
+    const stat3 = await import_fs24.default.promises.stat(filePath);
     if (!stat3.isFile() || stat3.size <= 0) {
       unlinkWaybillFileQuiet(filePath);
       return null;
     }
-    handle = await import_fs23.default.promises.open(filePath, "r");
+    handle = await import_fs24.default.promises.open(filePath, "r");
     const magic = Buffer.allocUnsafe(4);
     const { bytesRead } = await handle.read(magic, 0, 4, 0);
     if (bytesRead !== 4 || magic.toString() !== "%PDF") {
@@ -131316,7 +131354,7 @@ function isPdfBuffer(buffer, contentType) {
 }
 function unlinkWaybillFileQuiet(filePath) {
   try {
-    if (filePath && import_fs23.default.existsSync(filePath)) import_fs23.default.unlinkSync(filePath);
+    if (filePath && import_fs24.default.existsSync(filePath)) import_fs24.default.unlinkSync(filePath);
   } catch {
   }
 }
@@ -131385,39 +131423,39 @@ function persistValidatedPdfToDisk(dest, buffer) {
   ensureLabelsDir();
   const tempPath = `${dest}.${process.pid}.${Date.now()}.part`;
   try {
-    import_fs23.default.writeFileSync(tempPath, buffer);
-    const st = import_fs23.default.statSync(tempPath);
+    import_fs24.default.writeFileSync(tempPath, buffer);
+    const st = import_fs24.default.statSync(tempPath);
     if (!st.isFile() || st.size <= 0) {
       throw new Error("File PDF t\u1EA1m r\u1ED7ng sau khi ghi.");
     }
-    const fd = import_fs23.default.openSync(tempPath, "r");
+    const fd = import_fs24.default.openSync(tempPath, "r");
     try {
       const magic = Buffer.allocUnsafe(4);
-      if (import_fs23.default.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
+      if (import_fs24.default.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
         throw new Error("File PDF t\u1EA1m kh\xF4ng c\xF3 magic bytes %PDF-.");
       }
     } finally {
-      import_fs23.default.closeSync(fd);
+      import_fs24.default.closeSync(fd);
     }
-    if (import_fs23.default.existsSync(dest)) import_fs23.default.unlinkSync(dest);
-    import_fs23.default.renameSync(tempPath, dest);
+    if (import_fs24.default.existsSync(dest)) import_fs24.default.unlinkSync(dest);
+    import_fs24.default.renameSync(tempPath, dest);
     return st.size;
   } catch (err) {
     unlinkWaybillFileQuiet(tempPath);
     try {
-      if (import_fs23.default.existsSync(dest)) {
-        const st = import_fs23.default.statSync(dest);
+      if (import_fs24.default.existsSync(dest)) {
+        const st = import_fs24.default.statSync(dest);
         if (!st.isFile() || st.size <= 0) {
           unlinkWaybillFileQuiet(dest);
         } else {
-          const fd = import_fs23.default.openSync(dest, "r");
+          const fd = import_fs24.default.openSync(dest, "r");
           try {
             const magic = Buffer.allocUnsafe(4);
-            if (import_fs23.default.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
+            if (import_fs24.default.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
               unlinkWaybillFileQuiet(dest);
             }
           } finally {
-            import_fs23.default.closeSync(fd);
+            import_fs24.default.closeSync(fd);
           }
         }
       }
@@ -131455,14 +131493,14 @@ function removeExistingLabelFilesForOrderSns(orderSns) {
   if (sns.length === 0) return 0;
   let deleted = 0;
   try {
-    for (const name of import_fs23.default.readdirSync(PDF_DIR)) {
+    for (const name of import_fs24.default.readdirSync(PDF_DIR)) {
       if (!/\.pdf$/i.test(name)) continue;
       const hit = sns.some(
         (sn) => name === `${sn}.pdf` || name === `order_${sn}.pdf` || name.startsWith(`${sn}_`) || name.startsWith(`order_${sn}_`)
       );
       if (!hit) continue;
       try {
-        import_fs23.default.unlinkSync(import_path24.default.join(PDF_DIR, name));
+        import_fs24.default.unlinkSync(import_path24.default.join(PDF_DIR, name));
         labelMemCache.delete(name);
         deleted += 1;
       } catch {
@@ -131526,17 +131564,17 @@ function getLabelMem(filename) {
   }
   const filePath = import_path24.default.join(PDF_DIR, safe);
   try {
-    if (!import_fs23.default.existsSync(filePath)) return null;
-    const st = import_fs23.default.statSync(filePath);
+    if (!import_fs24.default.existsSync(filePath)) return null;
+    const st = import_fs24.default.statSync(filePath);
     if (!st.isFile() || st.size <= 0) {
       console.warn(`[Labels] B\u1ECF qua file r\u1ED7ng tr\xEAn \u0111\u0129a: ${filePath}`);
       try {
-        import_fs23.default.unlinkSync(filePath);
+        import_fs24.default.unlinkSync(filePath);
       } catch {
       }
       return null;
     }
-    const buf = import_fs23.default.readFileSync(filePath);
+    const buf = import_fs24.default.readFileSync(filePath);
     if (!buf.length || !isPdfBuffer(buf)) {
       unlinkWaybillFileQuiet(filePath);
       return null;
@@ -131572,8 +131610,8 @@ function assertLabelFileReady(filename) {
     throw new Error(`File v\u1EADn \u0111\u01A1n kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7: ${safe}`);
   }
   const diskPath = import_path24.default.join(PDF_DIR, safe);
-  if (import_fs23.default.existsSync(diskPath)) {
-    const st = import_fs23.default.statSync(diskPath);
+  if (import_fs24.default.existsSync(diskPath)) {
+    const st = import_fs24.default.statSync(diskPath);
     if (st.size <= 0) {
       throw new Error(`File v\u1EADn \u0111\u01A1n tr\xEAn \u0111\u0129a r\u1ED7ng (0 bytes): ${diskPath}`);
     }
@@ -131592,13 +131630,13 @@ function cleanupExpiredLabelFiles() {
   try {
     ensureLabelsDir();
     const cutoff = now - LABEL_DISK_TTL_MS;
-    for (const name of import_fs23.default.readdirSync(PDF_DIR)) {
+    for (const name of import_fs24.default.readdirSync(PDF_DIR)) {
       if (!WAYBILL_FILE_RE.test(name)) continue;
       const full = import_path24.default.join(PDF_DIR, name);
       try {
-        const st = import_fs23.default.statSync(full);
+        const st = import_fs24.default.statSync(full);
         if (st.size <= 0 || st.mtimeMs < cutoff) {
-          import_fs23.default.unlinkSync(full);
+          import_fs24.default.unlinkSync(full);
           labelMemCache.delete(name);
           deleted += 1;
         }
@@ -131617,11 +131655,11 @@ function wipeLegacyPublicPrints() {
   let deleted = 0;
   for (const dir of [LEGACY_PUBLIC_PRINTS_DIR, WAYBILLS_DIR]) {
     try {
-      if (!import_fs23.default.existsSync(dir)) continue;
-      for (const name of import_fs23.default.readdirSync(dir)) {
+      if (!import_fs24.default.existsSync(dir)) continue;
+      for (const name of import_fs24.default.readdirSync(dir)) {
         if (!WAYBILL_FILE_RE.test(name)) continue;
         try {
-          import_fs23.default.unlinkSync(import_path24.default.join(dir, name));
+          import_fs24.default.unlinkSync(import_path24.default.join(dir, name));
           deleted += 1;
         } catch {
         }
@@ -131657,7 +131695,7 @@ function serveLabelPdfFromMem(filename, res) {
       res.setHeader("Content-Length", String(disk.size));
       res.setHeader("Cache-Control", "private, max-age=300");
       res.setHeader("X-Content-Type-Options", "nosniff");
-      const stream5 = import_fs23.default.createReadStream(disk.filePath);
+      const stream5 = import_fs24.default.createReadStream(disk.filePath);
       stream5.on("error", (err) => {
         console.error(`[Labels] Stream disk l\u1ED7i ${safe}:`, err);
         if (!res.headersSent) res.status(500).end();
@@ -136445,8 +136483,8 @@ async function resolvePublishImageBuffer(src) {
   const framedMatch = raw.match(/\/api\/framed-images\/([^/?#]+)/i);
   if (framedMatch) {
     const filePath = import_path24.default.join(APP_ROOT14, "data", "framed_images", `${decodeURIComponent(framedMatch[1])}.jpg`);
-    if (import_fs23.default.existsSync(filePath)) {
-      return { buf: import_fs23.default.readFileSync(filePath), filename: "item.jpg", mime: "image/jpeg" };
+    if (import_fs24.default.existsSync(filePath)) {
+      return { buf: import_fs24.default.readFileSync(filePath), filename: "item.jpg", mime: "image/jpeg" };
     }
   }
   let fetchUrl = raw;
@@ -139409,7 +139447,7 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
     const pendingByOrder = /* @__PURE__ */ new Map();
     for (const [sn, rows] of byOrder) {
       const filename = `order_${sn}.pdf`;
-      if (import_fs23.default.existsSync(import_path24.default.join(PDF_DIR, filename))) {
+      if (import_fs24.default.existsSync(import_path24.default.join(PDF_DIR, filename))) {
         const cached = getValidLabelDiskFile(filename);
         if (cached) {
           console.log(`[Shopee Batch Waybill] CACHE HIT ${filename} (${cached.size} bytes)`);
@@ -139528,7 +139566,7 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
               opts?.signal
             );
             if (downloadResult?.filePath && downloadResult?.filename && downloadResult?.size) {
-              const mergedBuf = await import_fs23.default.promises.readFile(downloadResult.filePath);
+              const mergedBuf = await import_fs24.default.promises.readFile(downloadResult.filePath);
               if (mergedBuf.length && isPdfBuffer(mergedBuf)) {
                 putLabelMem(downloadResult.filename, mergedBuf, "application/pdf");
                 const splitMap = await splitMergedWaybillPdfToOrders(mergedBuf, uniquePendingSns);
@@ -139610,7 +139648,7 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
                   }
                   return;
                 }
-                const buf = await import_fs23.default.promises.readFile(one.filePath);
+                const buf = await import_fs24.default.promises.readFile(one.filePath);
                 if (!buf.length || !isPdfBuffer(buf)) {
                   unlinkWaybillFileQuiet(one.filePath);
                   const described = describeShopeeWaybillPayloadError(String(one.contentType || ""), buf);
@@ -144037,12 +144075,12 @@ function writeInventoryAudit(event, details = {}) {
   try {
     ensureDataDirs();
     let existing = [];
-    if (import_fs23.default.existsSync(INVENTORY_AUDIT_PATH)) {
-      const parsed = JSON.parse(import_fs23.default.readFileSync(INVENTORY_AUDIT_PATH, "utf-8"));
+    if (import_fs24.default.existsSync(INVENTORY_AUDIT_PATH)) {
+      const parsed = JSON.parse(import_fs24.default.readFileSync(INVENTORY_AUDIT_PATH, "utf-8"));
       if (Array.isArray(parsed)) existing = parsed;
     }
     const entry = { id: `inventory-audit-${Date.now()}`, event, at: (/* @__PURE__ */ new Date()).toISOString(), ...details };
-    import_fs23.default.writeFileSync(INVENTORY_AUDIT_PATH, JSON.stringify([...existing.slice(-199), entry], null, 2), "utf-8");
+    import_fs24.default.writeFileSync(INVENTORY_AUDIT_PATH, JSON.stringify([...existing.slice(-199), entry], null, 2), "utf-8");
     console.warn(`[Inventory Audit] ${event}`, details);
   } catch (error) {
     console.error("[Inventory Audit] Kh\xF4ng th\u1EC3 ghi audit:", error);
@@ -144050,11 +144088,11 @@ function writeInventoryAudit(event, details = {}) {
 }
 async function backupInventoryBeforeDestructiveAction(reason) {
   ensureDataDirs();
-  import_fs23.default.mkdirSync(INVENTORY_BACKUP_DIR, { recursive: true });
+  import_fs24.default.mkdirSync(INVENTORY_BACKUP_DIR, { recursive: true });
   const [products, listings] = await Promise.all([loadProducts(), readChannelListingsDb()]);
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const fileName = `inventory-${reason}-${stamp}.json`;
-  import_fs23.default.writeFileSync(
+  import_fs24.default.writeFileSync(
     import_path24.default.join(INVENTORY_BACKUP_DIR, fileName),
     JSON.stringify({ createdAt: (/* @__PURE__ */ new Date()).toISOString(), reason, products, listings }, null, 2),
     "utf-8"
@@ -144066,11 +144104,11 @@ var CHANNEL_LISTINGS_DB_PATH = import_path24.default.join(APP_ROOT14, "data", "c
 var SHOPEE_SYNC_ERRORS_DB_PATH = import_path24.default.join(APP_ROOT14, "data", "shopee_sync_errors.json");
 var SHOPEE_SYNC_ERRORS_MAX_ROWS = 500;
 function renameLegacyJsonIfExists(filePath) {
-  if (!import_fs23.default.existsSync(filePath)) return;
+  if (!import_fs24.default.existsSync(filePath)) return;
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const dest = `${filePath}.migrated.${stamp}`;
   try {
-    import_fs23.default.renameSync(filePath, dest);
+    import_fs24.default.renameSync(filePath, dest);
     console.log(`[Mongo Migrate] Renamed ${import_path24.default.basename(filePath)} \u2192 ${import_path24.default.basename(dest)}`);
   } catch (err) {
     console.warn(`[Mongo Migrate] Kh\xF4ng rename \u0111\u01B0\u1EE3c ${filePath}:`, err);
@@ -144078,8 +144116,8 @@ function renameLegacyJsonIfExists(filePath) {
 }
 function readLegacyJsonArray(filePath) {
   try {
-    if (!import_fs23.default.existsSync(filePath)) return [];
-    const raw = import_fs23.default.readFileSync(filePath, "utf-8");
+    if (!import_fs24.default.existsSync(filePath)) return [];
+    const raw = import_fs24.default.readFileSync(filePath, "utf-8");
     if (!raw || !raw.trim()) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -144089,25 +144127,25 @@ function readLegacyJsonArray(filePath) {
 }
 function findLatestMigratedJson(baseName) {
   const dataDir = import_path24.default.join(APP_ROOT14, "data");
-  if (!import_fs23.default.existsSync(dataDir)) return null;
+  if (!import_fs24.default.existsSync(dataDir)) return null;
   const prefix = `${baseName}.migrated.`;
-  const matches = import_fs23.default.readdirSync(dataDir).filter((f3) => f3.startsWith(prefix)).sort();
+  const matches = import_fs24.default.readdirSync(dataDir).filter((f3) => f3.startsWith(prefix)).sort();
   if (matches.length === 0) return null;
   return import_path24.default.join(dataDir, matches[matches.length - 1]);
 }
 async function maybeMigrateJsonToMongoOnBoot() {
   if (isProductsDiskMode()) {
     try {
-      const existing = import_fs23.default.existsSync(getProductsDiskPath()) ? JSON.parse(import_fs23.default.readFileSync(getProductsDiskPath(), "utf-8") || "[]") : [];
+      const existing = import_fs24.default.existsSync(getProductsDiskPath()) ? JSON.parse(import_fs24.default.readFileSync(getProductsDiskPath(), "utf-8") || "[]") : [];
       if (!Array.isArray(existing) || existing.length === 0) {
         const dataDir = import_path24.default.join(APP_ROOT14, "data");
-        if (import_fs23.default.existsSync(dataDir)) {
-          const migrated = import_fs23.default.readdirSync(dataDir).filter((n) => /^products\.json\.migrated\./i.test(n)).sort();
+        if (import_fs24.default.existsSync(dataDir)) {
+          const migrated = import_fs24.default.readdirSync(dataDir).filter((n) => /^products\.json\.migrated\./i.test(n)).sort();
           const latest = migrated[migrated.length - 1];
           if (latest) {
             const src = import_path24.default.join(dataDir, latest);
             const dest = getProductsDiskPath();
-            import_fs23.default.copyFileSync(src, dest);
+            import_fs24.default.copyFileSync(src, dest);
             console.log(`[Products Disk] Kh\xF4i ph\u1EE5c Kho G\u1ED1c t\u1EEB ${latest} \u2192 products.json`);
           }
         }
@@ -144124,9 +144162,9 @@ async function maybeMigrateJsonToMongoOnBoot() {
   try {
     const productCount = await countProducts();
     const listingCount = await countChannelListings();
-    const legacyProducts = PRODUCTS_DB_PATH && import_fs23.default.existsSync(PRODUCTS_DB_PATH) ? PRODUCTS_DB_PATH : findLatestMigratedJson("products.json");
-    const legacyListings = import_fs23.default.existsSync(CHANNEL_LISTINGS_DB_PATH) ? CHANNEL_LISTINGS_DB_PATH : findLatestMigratedJson("channel_listings.json");
-    const hasLegacy = !!legacyProducts || !!legacyListings || import_fs23.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) || !!findLatestMigratedJson("local_inventory.json");
+    const legacyProducts = PRODUCTS_DB_PATH && import_fs24.default.existsSync(PRODUCTS_DB_PATH) ? PRODUCTS_DB_PATH : findLatestMigratedJson("products.json");
+    const legacyListings = import_fs24.default.existsSync(CHANNEL_LISTINGS_DB_PATH) ? CHANNEL_LISTINGS_DB_PATH : findLatestMigratedJson("channel_listings.json");
+    const hasLegacy = !!legacyProducts || !!legacyListings || import_fs24.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) || !!findLatestMigratedJson("local_inventory.json");
     if (!hasLegacy) {
       console.log(
         `[MongoDB] Ready \u2014 products=${productCount}, listings=${listingCount} @ ${getMongoUriMasked()} (ready=${isMongoReady()})`
@@ -144145,10 +144183,10 @@ async function maybeMigrateJsonToMongoOnBoot() {
     console.log("[Mongo Migrate] Mongo tr\u1ED1ng + c\xF2n JSON legacy \u2014 b\u1EAFt \u0111\u1EA7u migrate...");
     let products = legacyProducts ? readLegacyJsonArray(legacyProducts) : [];
     let listings = legacyListings ? readLegacyJsonArray(legacyListings) : [];
-    const invPath = import_fs23.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) ? LOCAL_INVENTORY_CACHE_PATH : findLatestMigratedJson("local_inventory.json");
+    const invPath = import_fs24.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) ? LOCAL_INVENTORY_CACHE_PATH : findLatestMigratedJson("local_inventory.json");
     if (invPath) {
       try {
-        const inv = JSON.parse(import_fs23.default.readFileSync(invPath, "utf-8"));
+        const inv = JSON.parse(import_fs24.default.readFileSync(invPath, "utf-8"));
         const invProducts = Array.isArray(inv?.products) ? inv.products : [];
         const invListings = Array.isArray(inv?.listings) ? inv.listings : [];
         const byId = /* @__PURE__ */ new Map();
@@ -144174,10 +144212,10 @@ async function maybeMigrateJsonToMongoOnBoot() {
     renameLegacyJsonIfExists(PRODUCTS_DB_PATH);
     renameLegacyJsonIfExists(CHANNEL_LISTINGS_DB_PATH);
     renameLegacyJsonIfExists(LOCAL_INVENTORY_CACHE_PATH);
-    if (import_fs23.default.existsSync(SQLITE_LEGACY_PATH)) {
+    if (import_fs24.default.existsSync(SQLITE_LEGACY_PATH)) {
       try {
         const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-        import_fs23.default.renameSync(SQLITE_LEGACY_PATH, `${SQLITE_LEGACY_PATH}.legacy.${stamp}`);
+        import_fs24.default.renameSync(SQLITE_LEGACY_PATH, `${SQLITE_LEGACY_PATH}.legacy.${stamp}`);
         console.log("[Mongo Migrate] Archived database.sqlite (kh\xF4ng c\xF2n d\xF9ng)");
       } catch {
       }
@@ -144188,8 +144226,8 @@ async function maybeMigrateJsonToMongoOnBoot() {
 }
 function readShopeeSyncErrorsDb() {
   try {
-    if (!import_fs23.default.existsSync(SHOPEE_SYNC_ERRORS_DB_PATH)) return [];
-    const raw = import_fs23.default.readFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, "utf-8");
+    if (!import_fs24.default.existsSync(SHOPEE_SYNC_ERRORS_DB_PATH)) return [];
+    const raw = import_fs24.default.readFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, "utf-8");
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
   } catch (err) {
@@ -144213,8 +144251,8 @@ async function appendShopeeSyncErrorToDb(entry) {
   try {
     const prev = readShopeeSyncErrorsDb();
     const next = [row, ...prev].slice(0, SHOPEE_SYNC_ERRORS_MAX_ROWS);
-    import_fs23.default.mkdirSync(import_path24.default.dirname(SHOPEE_SYNC_ERRORS_DB_PATH), { recursive: true });
-    import_fs23.default.writeFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, JSON.stringify(next, null, 2), "utf-8");
+    import_fs24.default.mkdirSync(import_path24.default.dirname(SHOPEE_SYNC_ERRORS_DB_PATH), { recursive: true });
+    import_fs24.default.writeFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, JSON.stringify(next, null, 2), "utf-8");
   } catch (err) {
     console.error("[Shopee Sync Errors DB] Failed to write:", err);
   }
@@ -145184,8 +145222,8 @@ function dedupeShopsByPlatformId(shops) {
 }
 function loadChannelSettings() {
   try {
-    if (!import_fs23.default.existsSync(CHANNEL_SETTINGS_PATH3)) return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
-    const raw = import_fs23.default.readFileSync(CHANNEL_SETTINGS_PATH3, "utf-8");
+    if (!import_fs24.default.existsSync(CHANNEL_SETTINGS_PATH3)) return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
+    const raw = import_fs24.default.readFileSync(CHANNEL_SETTINGS_PATH3, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : {};
     const rawShops = Array.isArray(parsed?.shops) ? parsed.shops : [];
     const shops = upsertShopsInChannelSettings([], rawShops);
@@ -145207,7 +145245,7 @@ function saveChannelSettings(settings) {
     const incoming = Array.isArray(settings?.shops) ? settings.shops : [];
     const shops = upsertShopsInChannelSettings(onDisk.shops || [], incoming);
     const payload = { ...DEFAULT_CHANNEL_SETTINGS, ...onDisk, ...settings, shops };
-    import_fs23.default.writeFileSync(CHANNEL_SETTINGS_PATH3, JSON.stringify(payload, null, 2), "utf-8");
+    import_fs24.default.writeFileSync(CHANNEL_SETTINGS_PATH3, JSON.stringify(payload, null, 2), "utf-8");
     console.log(
       `[Channel Settings] UPSERT ${shops.length} shop(s) \u2192 ${CHANNEL_SETTINGS_PATH3}`,
       shops.map((s2) => s2.shopId).join(", ")
@@ -145495,6 +145533,10 @@ function buildShipConfirmSummaryPayload(total, batch) {
 }
 var shipOrderJobs = /* @__PURE__ */ new Map();
 var SHIP_JOB_TTL_MS = 30 * 60 * 1e3;
+var CONFIRM_ASYNC_BATCH_SIZE = 20;
+var CONFIRM_ASYNC_BATCH_PAUSE_MS = 300;
+var CONFIRM_ASYNC_DB_TIMEOUT_MS = 15e3;
+var confirmOnlyAsyncJobChain = Promise.resolve();
 function createShipOrderJobId() {
   return `ship-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -146222,8 +146264,8 @@ async function startServer() {
     writeProductListingsDb: (rows) => {
       const dest = import_path24.default.join(APP_ROOT14, "data", "product_listings.json");
       const dir = import_path24.default.dirname(dest);
-      if (!import_fs23.default.existsSync(dir)) import_fs23.default.mkdirSync(dir, { recursive: true });
-      import_fs23.default.writeFileSync(dest, JSON.stringify(rows, null, 2), "utf-8");
+      if (!import_fs24.default.existsSync(dir)) import_fs24.default.mkdirSync(dir, { recursive: true });
+      import_fs24.default.writeFileSync(dest, JSON.stringify(rows, null, 2), "utf-8");
     },
     pushStockUpdatesToShopee,
     resolveShopeeTokenShopId,
@@ -146474,7 +146516,7 @@ async function startServer() {
     res.setHeader("Content-Length", String(valid.size));
     res.setHeader("Cache-Control", "private, max-age=300");
     res.setHeader("X-Content-Type-Options", "nosniff");
-    import_fs23.default.createReadStream(valid.filePath).pipe(res);
+    import_fs24.default.createReadStream(valid.filePath).pipe(res);
     return true;
   };
   const downloadPdfRoute = async (req, res) => {
@@ -146484,8 +146526,8 @@ async function startServer() {
     const failDownload = (error, fallbackMessage) => {
       console.error("DEBUG DOWNLOAD PDF FAIL for order:", orderSn, error);
       try {
-        if (import_fs23.default.existsSync(expectedPath) && !getValidLabelDiskFile(expectedFilename)) {
-          import_fs23.default.unlinkSync(expectedPath);
+        if (import_fs24.default.existsSync(expectedPath) && !getValidLabelDiskFile(expectedFilename)) {
+          import_fs24.default.unlinkSync(expectedPath);
         }
       } catch (cleanupError) {
         console.error("DEBUG DOWNLOAD PDF FAIL for order:", orderSn, cleanupError);
@@ -146501,7 +146543,7 @@ async function startServer() {
     if (!/^[A-Za-z0-9_-]+$/.test(orderSn)) {
       return failDownload(new Error("M\xE3 \u0111\u01A1n kh\xF4ng h\u1EE3p l\u1EC7."), "M\xE3 \u0111\u01A1n kh\xF4ng h\u1EE3p l\u1EC7.");
     }
-    if (import_fs23.default.existsSync(expectedPath) && streamDelegatedPdf(res, expectedPath, expectedFilename)) {
+    if (import_fs24.default.existsSync(expectedPath) && streamDelegatedPdf(res, expectedPath, expectedFilename)) {
       console.log(`[Delegated PDF] LOCAL HIT ${expectedFilename} \u2014 b\u1ECF qua Shopee API`);
       return;
     }
@@ -146774,18 +146816,27 @@ async function startServer() {
       job.updatedAt = Date.now();
       let orders = [];
       try {
-        orders = await loadOrdersForShipScoped(idList, snList);
+        orders = await withOperationTimeout(
+          () => loadOrdersForShipScoped(idList, snList),
+          CONFIRM_ASYNC_DB_TIMEOUT_MS,
+          "Load orders for confirm async"
+        );
       } catch (loadErr) {
         console.warn("[Confirm Async] loadOrdersForShipScoped:", loadErr?.message || loadErr);
       }
       if (!orders.length) {
         try {
-          orders = await loadOrdersFromStore({
-            orderSns: snList,
-            ids: idList,
-            limit: Math.min(500, Math.max(idList.length + snList.length, 1))
-          });
-        } catch {
+          orders = await withOperationTimeout(
+            () => loadOrdersFromStore({
+              orderSns: snList,
+              ids: idList,
+              limit: Math.min(500, Math.max(idList.length + snList.length, 1))
+            }),
+            CONFIRM_ASYNC_DB_TIMEOUT_MS,
+            "Fallback load orders for confirm async"
+          );
+        } catch (fallbackErr) {
+          console.warn("[Confirm Async] loadOrdersFromStore:", fallbackErr?.message || fallbackErr);
           orders = [];
         }
       }
@@ -146877,12 +146928,30 @@ async function startServer() {
           bumpProgress();
         }
       };
-      await mapByShopGroups(
-        toShip,
-        ({ order }) => resolveOrderShopId(order) || order?.shopId,
-        confirmOneOrder,
-        { perShopChunk: 4, pauseMs: 250, maxParallelShops: 6 }
-      );
+      for (let offset = 0; offset < toShip.length; offset += CONFIRM_ASYNC_BATCH_SIZE) {
+        const batch = toShip.slice(offset, offset + CONFIRM_ASYNC_BATCH_SIZE);
+        try {
+          await mapByShopGroups(
+            batch,
+            ({ order }) => resolveOrderShopId(order) || order?.shopId,
+            confirmOneOrder,
+            { perShopChunk: 2, pauseMs: 250, maxParallelShops: 2 }
+          );
+        } catch (batchErr) {
+          console.error(
+            `[Confirm Async ${jobId}] L\u1ED7i l\xF4 ${offset / CONFIRM_ASYNC_BATCH_SIZE + 1}:`,
+            batchErr?.stack || batchErr
+          );
+          for (const item of batch) {
+            if (!results.some((row) => String(row.orderId) === String(item?.order?.id))) {
+              await confirmOneOrder(item);
+            }
+          }
+        }
+        if (offset + CONFIRM_ASYNC_BATCH_SIZE < toShip.length) {
+          await sleep4(CONFIRM_ASYNC_BATCH_PAUSE_MS);
+        }
+      }
       const failedOrders = results.filter((result) => !result?.success).map((result) => ({
         orderId: String(result.orderId || ""),
         orderSn: String(result.orderSn || ""),
@@ -146891,7 +146960,11 @@ async function startServer() {
       }));
       const confirmedRows = toShip.map(({ index }) => orders[index]).filter((o) => o && o.isPrepared === true);
       try {
-        await persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod);
+        await withOperationTimeout(
+          () => persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod),
+          CONFIRM_ASYNC_DB_TIMEOUT_MS,
+          "Persist confirmed async orders"
+        );
       } catch (persistErr) {
         console.warn("[Confirm Async] persistConfirmedShipOrdersToMongo:", persistErr?.message || persistErr);
       }
@@ -146919,24 +146992,38 @@ async function startServer() {
         `[Confirm Async ${jobId}] DONE ${summary.successCount}/${toShip.length} success (${Date.now() - t0}ms)`
       );
       setImmediate(() => {
-        try {
-          fireCreateShippingDocumentsForOrders(
-            confirmedRows.map((o) => ({
-              order: o,
-              shopId: String(o?.shopId || resolveOrderShopId(o) || ""),
-              orderSn: String(o?.orderSn || "").replace(/^shopee-/i, "").trim(),
-              packageNumber: String(o?.packageNumber || o?.package_number || "").trim() || void 0,
-              trackingNumber: trackingForShopeeShippingDoc(o) || void 0
-            }))
-          );
-        } catch (primeErr) {
-          console.warn("[Confirm Async] BG PDF kick:", primeErr?.message || primeErr);
-        }
-        void persistOrdersToDatabase(orders, confirmedRows).catch((err) => {
-          console.warn("[Confirm Async] background persist failed:", err?.message || err);
-        });
-        void syncConfirmedOrdersFromShopee(confirmedRows, shipMethod).catch((err) => {
-          console.warn("[Confirm Async] background sync failed:", err?.message || err);
+        void (async () => {
+          try {
+            fireCreateShippingDocumentsForOrders(
+              confirmedRows.map((o) => ({
+                order: o,
+                shopId: String(o?.shopId || resolveOrderShopId(o) || ""),
+                orderSn: String(o?.orderSn || "").replace(/^shopee-/i, "").trim(),
+                packageNumber: String(o?.packageNumber || o?.package_number || "").trim() || void 0,
+                trackingNumber: trackingForShopeeShippingDoc(o) || void 0
+              }))
+            );
+          } catch (primeErr) {
+            console.warn("[Confirm Async] BG PDF kick:", primeErr?.message || primeErr);
+          }
+          await sleep4(200);
+          try {
+            await withOperationTimeout(
+              () => persistOrdersToDatabase(orders, confirmedRows),
+              CONFIRM_ASYNC_DB_TIMEOUT_MS,
+              "Persist async order snapshot"
+            );
+          } catch (persistErr) {
+            console.warn("[Confirm Async] background persist failed:", persistErr?.message || persistErr);
+          }
+          await sleep4(200);
+          try {
+            await syncConfirmedOrdersFromShopee(confirmedRows, shipMethod);
+          } catch (syncErr) {
+            console.warn("[Confirm Async] background sync failed:", syncErr?.message || syncErr);
+          }
+        })().catch((postErr) => {
+          console.warn("[Confirm Async] background post-process failed:", postErr?.message || postErr);
         });
       });
     } catch (err) {
@@ -146992,7 +147079,9 @@ async function startServer() {
       });
       res.once("finish", () => {
         setImmediate(() => {
-          void executeConfirmOnlyBackgroundJob(jobId, shipMethod, idList, snList);
+          confirmOnlyAsyncJobChain = confirmOnlyAsyncJobChain.catch((chainErr) => {
+            console.error("[Confirm Async] previous queue job failed:", chainErr?.stack || chainErr);
+          }).then(() => executeConfirmOnlyBackgroundJob(jobId, shipMethod, idList, snList));
         });
       });
       return res.status(202).json({ accepted: true, jobId, total: estimatedTotal });
@@ -147339,11 +147428,11 @@ async function startServer() {
     const pendingSns = [];
     for (const orderSn of orderSns) {
       const localLabelPath = import_path24.default.join(PDF_DIR, `order_${orderSn}.pdf`);
-      if (import_fs23.default.existsSync(localLabelPath)) {
+      if (import_fs24.default.existsSync(localLabelPath)) {
         try {
-          const stat3 = import_fs23.default.statSync(localLabelPath);
+          const stat3 = import_fs24.default.statSync(localLabelPath);
           if (stat3.isFile() && stat3.size > 0) {
-            const buf = await import_fs23.default.promises.readFile(localLabelPath);
+            const buf = await import_fs24.default.promises.readFile(localLabelPath);
             if (isPdfBuffer(buf)) {
               console.log(`[${logPrefix}] B1 CACHE HIT order_${orderSn}.pdf (${buf.length} bytes)`);
               putLabelMem(`order_${orderSn}.pdf`, buf, "application/pdf");
@@ -148149,11 +148238,11 @@ async function startServer() {
               throw new Error(`PDF ch\u01B0a \u0111\u01B0\u1EE3c ghi th\xE0nh c\xF4ng v\xE0o ${import_path24.default.join(PDF_DIR, filename)}`);
             }
             try {
-              await import_fs23.default.promises.mkdir(publicPdfDir, { recursive: true });
+              await import_fs24.default.promises.mkdir(publicPdfDir, { recursive: true });
               const publicDest = import_path24.default.join(publicPdfDir, filename);
               const publicTmp = `${publicDest}.${process.pid}.${Date.now()}.part`;
-              await import_fs23.default.promises.writeFile(publicTmp, document2.buffer);
-              await import_fs23.default.promises.rename(publicTmp, publicDest);
+              await import_fs24.default.promises.writeFile(publicTmp, document2.buffer);
+              await import_fs24.default.promises.rename(publicTmp, publicDest);
             } catch (publicCopyErr) {
               console.warn(
                 `[Silent Prefetch] Kh\xF4ng th\u1EC3 ghi b\u1EA3n ph\u1EE5 public/pdfs cho ${orderSn}:`,
@@ -149158,9 +149247,9 @@ async function startServer() {
     }
     try {
       ensureLabelsDir();
-      const matches = import_fs23.default.readdirSync(PDF_DIR).filter((name) => nameMatches(name)).map((name) => {
+      const matches = import_fs24.default.readdirSync(PDF_DIR).filter((name) => nameMatches(name)).map((name) => {
         const full = import_path24.default.join(PDF_DIR, name);
-        const stat3 = import_fs23.default.statSync(full);
+        const stat3 = import_fs24.default.statSync(full);
         return { name, mtime: stat3.mtimeMs, size: stat3.size };
       }).filter((x2) => x2.size > 0).sort((a, b) => b.mtime - a.mtime);
       const newest = matches[0]?.name;
@@ -149647,9 +149736,12 @@ async function startServer() {
           queue.push({ ...o, shopId: it.shopId || o?.shopId, orderSn: sn });
         }
         if (localReady.length > 0) {
-          void Promise.all(
-            localReady.map((row) => markHasPdfIfLabelFileReady([row.sn], row.shopId))
-          ).catch(() => {
+          void mapWithConcurrency(localReady, 3, async (row) => {
+            try {
+              await markHasPdfIfLabelFileReady([row.sn], row.shopId);
+            } catch (markErr) {
+              console.warn(`[Label Prepare BG] mark local ${row.sn}:`, markErr?.message || markErr);
+            }
           });
         }
         if (queue.length === 0) return;
@@ -150055,8 +150147,8 @@ async function startServer() {
   const LISTINGS_DB_PATH = import_path24.default.join(APP_ROOT14, "data", "multi_channel_listings.json");
   const readListingsDb = () => {
     try {
-      if (!import_fs23.default.existsSync(LISTINGS_DB_PATH)) return [];
-      const raw = import_fs23.default.readFileSync(LISTINGS_DB_PATH, "utf-8");
+      if (!import_fs24.default.existsSync(LISTINGS_DB_PATH)) return [];
+      const raw = import_fs24.default.readFileSync(LISTINGS_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
@@ -150065,8 +150157,8 @@ async function startServer() {
   };
   const writeListingsDb = (listings) => {
     const dir = import_path24.default.dirname(LISTINGS_DB_PATH);
-    if (!import_fs23.default.existsSync(dir)) import_fs23.default.mkdirSync(dir, { recursive: true });
-    import_fs23.default.writeFileSync(LISTINGS_DB_PATH, JSON.stringify(listings, null, 2), "utf-8");
+    if (!import_fs24.default.existsSync(dir)) import_fs24.default.mkdirSync(dir, { recursive: true });
+    import_fs24.default.writeFileSync(LISTINGS_DB_PATH, JSON.stringify(listings, null, 2), "utf-8");
   };
   app.use("/api", aiRoutes);
   app.get("/api/multi-channel/listing", authMiddleware, async (_req, res) => {
@@ -150091,8 +150183,8 @@ async function startServer() {
   const PRODUCT_LISTINGS_DB_PATH = import_path24.default.join(APP_ROOT14, "data", "product_listings.json");
   const readProductListingsDb = () => {
     try {
-      if (!import_fs23.default.existsSync(PRODUCT_LISTINGS_DB_PATH)) return [];
-      const raw = import_fs23.default.readFileSync(PRODUCT_LISTINGS_DB_PATH, "utf-8");
+      if (!import_fs24.default.existsSync(PRODUCT_LISTINGS_DB_PATH)) return [];
+      const raw = import_fs24.default.readFileSync(PRODUCT_LISTINGS_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
@@ -150101,8 +150193,8 @@ async function startServer() {
   };
   const writeProductListingsDb = (rows) => {
     const dir = import_path24.default.dirname(PRODUCT_LISTINGS_DB_PATH);
-    if (!import_fs23.default.existsSync(dir)) import_fs23.default.mkdirSync(dir, { recursive: true });
-    import_fs23.default.writeFileSync(PRODUCT_LISTINGS_DB_PATH, JSON.stringify(rows, null, 2), "utf-8");
+    if (!import_fs24.default.existsSync(dir)) import_fs24.default.mkdirSync(dir, { recursive: true });
+    import_fs24.default.writeFileSync(PRODUCT_LISTINGS_DB_PATH, JSON.stringify(rows, null, 2), "utf-8");
   };
   const computeOverallListingStatus = (statuses) => {
     if (!statuses.length) return "pending";
@@ -150687,8 +150779,8 @@ async function startServer() {
   const FRAMED_IMAGES_DIR = import_path24.default.join(APP_ROOT14, "data", "framed_images");
   const readPublishEditDb = () => {
     try {
-      if (!import_fs23.default.existsSync(PUBLISH_EDIT_DB_PATH)) return { config: {}, meta: {} };
-      const raw = import_fs23.default.readFileSync(PUBLISH_EDIT_DB_PATH, "utf-8");
+      if (!import_fs24.default.existsSync(PUBLISH_EDIT_DB_PATH)) return { config: {}, meta: {} };
+      const raw = import_fs24.default.readFileSync(PUBLISH_EDIT_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return { config: parsed.config || {}, meta: parsed.meta || {} };
     } catch {
@@ -150697,8 +150789,8 @@ async function startServer() {
   };
   const writePublishEditDb = (data) => {
     const dir = import_path24.default.dirname(PUBLISH_EDIT_DB_PATH);
-    if (!import_fs23.default.existsSync(dir)) import_fs23.default.mkdirSync(dir, { recursive: true });
-    import_fs23.default.writeFileSync(PUBLISH_EDIT_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
+    if (!import_fs24.default.existsSync(dir)) import_fs24.default.mkdirSync(dir, { recursive: true });
+    import_fs24.default.writeFileSync(PUBLISH_EDIT_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
   };
   app.get("/api/publish-edit", authMiddleware, async (_req, res) => {
     const db = readPublishEditDb();
@@ -150739,11 +150831,11 @@ async function startServer() {
       if (!productId || !imageDataUrl) {
         return res.status(400).json({ success: false, error: "Thi\u1EBFu productId ho\u1EB7c \u1EA3nh" });
       }
-      if (!import_fs23.default.existsSync(FRAMED_IMAGES_DIR)) import_fs23.default.mkdirSync(FRAMED_IMAGES_DIR, { recursive: true });
+      if (!import_fs24.default.existsSync(FRAMED_IMAGES_DIR)) import_fs24.default.mkdirSync(FRAMED_IMAGES_DIR, { recursive: true });
       const base64 = String(imageDataUrl).replace(/^data:image\/\w+;base64,/, "");
       const buf = Buffer.from(base64, "base64");
       const filename = `${productId}.jpg`;
-      import_fs23.default.writeFileSync(import_path24.default.join(FRAMED_IMAGES_DIR, filename), buf);
+      import_fs24.default.writeFileSync(import_path24.default.join(FRAMED_IMAGES_DIR, filename), buf);
       const imageUrl = `/api/framed-images/${productId}`;
       const products = await loadProducts();
       const idx = products.findIndex((p) => p.id === productId);
@@ -150766,11 +150858,11 @@ async function startServer() {
   });
   app.get("/api/framed-images/:productId", (req, res) => {
     const filePath = import_path24.default.join(FRAMED_IMAGES_DIR, `${req.params.productId}.jpg`);
-    if (!import_fs23.default.existsSync(filePath)) {
+    if (!import_fs24.default.existsSync(filePath)) {
       return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y \u1EA3nh" });
     }
     res.setHeader("Content-Type", "image/jpeg");
-    return res.send(import_fs23.default.readFileSync(filePath));
+    return res.send(import_fs24.default.readFileSync(filePath));
   });
   app.use("/api", (req, res) => {
     res.status(404).json({
@@ -150789,7 +150881,7 @@ async function startServer() {
         import_path24.default.join(APP_ROOT14, "..", devServerFile),
         import_path24.default.join(process.cwd(), devServerFile)
       ];
-      const found = candidates.find((p) => import_fs23.default.existsSync(p));
+      const found = candidates.find((p) => import_fs24.default.existsSync(p));
       if (!found) {
         console.warn("[Boot] devServer.ts not found \u2014 skipping Vite middleware");
       } else {

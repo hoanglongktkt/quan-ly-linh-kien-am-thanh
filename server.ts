@@ -20434,6 +20434,10 @@ function buildShipConfirmSummaryPayload(
 
 const shipOrderJobs = new Map<string, ShipOrderJob>();
 const SHIP_JOB_TTL_MS = 30 * 60 * 1000;
+const CONFIRM_ASYNC_BATCH_SIZE = 20;
+const CONFIRM_ASYNC_BATCH_PAUSE_MS = 300;
+const CONFIRM_ASYNC_DB_TIMEOUT_MS = 15_000;
+let confirmOnlyAsyncJobChain: Promise<void> = Promise.resolve();
 
 function createShipOrderJobId(): string {
   return `ship-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -22063,7 +22067,7 @@ async function startServer() {
 
   /**
    * Confirm-only async: trả 202 + jobId ngay → FE poll tiến độ real-time.
-   * Background chia lô 10 đơn + sleep 300ms (không Promise.all trần).
+   * Background chia lô 20 đơn + sleep 300ms (không Promise.all trần).
    */
   const executeConfirmOnlyBackgroundJob = async (
     jobId: string,
@@ -22083,18 +22087,28 @@ async function startServer() {
 
       let orders: any[] = [];
       try {
-        orders = await loadOrdersForShipScoped(idList, snList);
+        orders = await withOperationTimeout(
+          () => loadOrdersForShipScoped(idList, snList),
+          CONFIRM_ASYNC_DB_TIMEOUT_MS,
+          "Load orders for confirm async",
+        );
       } catch (loadErr: any) {
         console.warn("[Confirm Async] loadOrdersForShipScoped:", loadErr?.message || loadErr);
       }
       if (!orders.length) {
         try {
-          orders = await loadOrdersFromStore({
-            orderSns: snList,
-            ids: idList,
-            limit: Math.min(500, Math.max(idList.length + snList.length, 1)),
-          });
-        } catch {
+          orders = await withOperationTimeout(
+            () =>
+              loadOrdersFromStore({
+                orderSns: snList,
+                ids: idList,
+                limit: Math.min(500, Math.max(idList.length + snList.length, 1)),
+              }),
+            CONFIRM_ASYNC_DB_TIMEOUT_MS,
+            "Fallback load orders for confirm async",
+          );
+        } catch (fallbackErr: any) {
+          console.warn("[Confirm Async] loadOrdersFromStore:", fallbackErr?.message || fallbackErr);
           orders = [];
         }
       }
@@ -22202,14 +22216,32 @@ async function startServer() {
         }
       };
 
-      // Confirm-ship (async job): nhóm theo shopId — các shop chạy SONG SONG
-      // (token riêng), trong cùng 1 shop chia lô nhỏ (4) + nghỉ 250ms giữa lô.
-      await mapByShopGroups(
-        toShip,
-        ({ order }: { order: any }) => resolveOrderShopId(order) || order?.shopId,
-        confirmOneOrder,
-        { perShopChunk: 4, pauseMs: 250, maxParallelShops: 6 },
-      );
+      // Chia lô toàn cục để không dội hàng trăm Promise/API call cùng lúc.
+      // Mỗi lô vẫn nhóm theo shop nhưng giới hạn tối đa 4 request Shopee đồng thời.
+      for (let offset = 0; offset < toShip.length; offset += CONFIRM_ASYNC_BATCH_SIZE) {
+        const batch = toShip.slice(offset, offset + CONFIRM_ASYNC_BATCH_SIZE);
+        try {
+          await mapByShopGroups(
+            batch,
+            ({ order }: { order: any }) => resolveOrderShopId(order) || order?.shopId,
+            confirmOneOrder,
+            { perShopChunk: 2, pauseMs: 250, maxParallelShops: 2 },
+          );
+        } catch (batchErr: any) {
+          console.error(
+            `[Confirm Async ${jobId}] Lỗi lô ${offset / CONFIRM_ASYNC_BATCH_SIZE + 1}:`,
+            batchErr?.stack || batchErr,
+          );
+          for (const item of batch) {
+            if (!results.some((row: any) => String(row.orderId) === String(item?.order?.id))) {
+              await confirmOneOrder(item);
+            }
+          }
+        }
+        if (offset + CONFIRM_ASYNC_BATCH_SIZE < toShip.length) {
+          await sleep(CONFIRM_ASYNC_BATCH_PAUSE_MS);
+        }
+      }
 
       const failedOrders = results
         .filter((result: any) => !result?.success)
@@ -22224,7 +22256,11 @@ async function startServer() {
         .map(({ index }) => orders[index])
         .filter((o: any) => o && o.isPrepared === true);
       try {
-        await persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod);
+        await withOperationTimeout(
+          () => persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod),
+          CONFIRM_ASYNC_DB_TIMEOUT_MS,
+          "Persist confirmed async orders",
+        );
       } catch (persistErr: any) {
         console.warn("[Confirm Async] persistConfirmedShipOrdersToMongo:", persistErr?.message || persistErr);
       }
@@ -22255,24 +22291,38 @@ async function startServer() {
       );
 
       setImmediate(() => {
-        try {
-          fireCreateShippingDocumentsForOrders(
-            confirmedRows.map((o: any) => ({
-              order: o,
-              shopId: String(o?.shopId || resolveOrderShopId(o) || ""),
-              orderSn: String(o?.orderSn || "").replace(/^shopee-/i, "").trim(),
-              packageNumber: String(o?.packageNumber || o?.package_number || "").trim() || undefined,
-              trackingNumber: trackingForShopeeShippingDoc(o) || undefined,
-            })),
-          );
-        } catch (primeErr: any) {
-          console.warn("[Confirm Async] BG PDF kick:", primeErr?.message || primeErr);
-        }
-        void persistOrdersToDatabase(orders, confirmedRows).catch((err: any) => {
-          console.warn("[Confirm Async] background persist failed:", err?.message || err);
-        });
-        void syncConfirmedOrdersFromShopee(confirmedRows, shipMethod).catch((err: any) => {
-          console.warn("[Confirm Async] background sync failed:", err?.message || err);
+        void (async () => {
+          try {
+            fireCreateShippingDocumentsForOrders(
+              confirmedRows.map((o: any) => ({
+                order: o,
+                shopId: String(o?.shopId || resolveOrderShopId(o) || ""),
+                orderSn: String(o?.orderSn || "").replace(/^shopee-/i, "").trim(),
+                packageNumber: String(o?.packageNumber || o?.package_number || "").trim() || undefined,
+                trackingNumber: trackingForShopeeShippingDoc(o) || undefined,
+              })),
+            );
+          } catch (primeErr: any) {
+            console.warn("[Confirm Async] BG PDF kick:", primeErr?.message || primeErr);
+          }
+          await sleep(200);
+          try {
+            await withOperationTimeout(
+              () => persistOrdersToDatabase(orders, confirmedRows),
+              CONFIRM_ASYNC_DB_TIMEOUT_MS,
+              "Persist async order snapshot",
+            );
+          } catch (persistErr: any) {
+            console.warn("[Confirm Async] background persist failed:", persistErr?.message || persistErr);
+          }
+          await sleep(200);
+          try {
+            await syncConfirmedOrdersFromShopee(confirmedRows, shipMethod);
+          } catch (syncErr: any) {
+            console.warn("[Confirm Async] background sync failed:", syncErr?.message || syncErr);
+          }
+        })().catch((postErr: any) => {
+          console.warn("[Confirm Async] background post-process failed:", postErr?.message || postErr);
         });
       });
     } catch (err: any) {
@@ -22335,7 +22385,13 @@ async function startServer() {
 
       res.once("finish", () => {
         setImmediate(() => {
-          void executeConfirmOnlyBackgroundJob(jobId, shipMethod, idList, snList);
+          // Xếp tuần tự các job batch-confirm để nhiều thao tác người dùng không
+          // cộng dồn concurrency và làm nghẽn toàn bộ Event Loop/cPanel.
+          confirmOnlyAsyncJobChain = confirmOnlyAsyncJobChain
+            .catch((chainErr: any) => {
+              console.error("[Confirm Async] previous queue job failed:", chainErr?.stack || chainErr);
+            })
+            .then(() => executeConfirmOnlyBackgroundJob(jobId, shipMethod, idList, snList));
         });
       });
       return res.status(202).json({ accepted: true, jobId, total: estimatedTotal });
@@ -25567,9 +25623,13 @@ async function startServer() {
           queue.push({ ...o, shopId: it.shopId || o?.shopId, orderSn: sn });
         }
         if (localReady.length > 0) {
-          void Promise.all(
-            localReady.map((row) => markHasPdfIfLabelFileReady([row.sn], row.shopId)),
-          ).catch(() => {});
+          void mapWithConcurrency(localReady, 3, async (row) => {
+            try {
+              await markHasPdfIfLabelFileReady([row.sn], row.shopId);
+            } catch (markErr: any) {
+              console.warn(`[Label Prepare BG] mark local ${row.sn}:`, markErr?.message || markErr);
+            }
+          });
         }
         if (queue.length === 0) return;
 
