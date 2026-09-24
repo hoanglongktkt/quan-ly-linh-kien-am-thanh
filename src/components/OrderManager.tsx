@@ -887,15 +887,8 @@ function buildClientPageNumbers(current: number, totalPages: number): (number | 
 const SCAN_BG_STATUS_POLL_MS = 30_000;
 /** Không pending / unnotified — nới chu kỳ để giảm spam Network. */
 const SCAN_BG_STATUS_IDLE_POLL_MS = 60_000;
-/** Lưới an toàn khi SSE không tới (Passenger đa process) — trần độ trễ hiển thị đơn mới. */
-const COUNTER_POLL_MS = 12_000;
-/** Retry nhanh khi lần đầu load counter thất bại/nghẽn (trước khi có counts lần nào). */
-const FIRST_COUNTER_RETRY_MS = 5_000;
-/** SSE heartbeat server = 15s; mất ping lâu hơn ngưỡng này → reconnect (mobile zombie). */
-const SSE_PING_WATCHDOG_MS = 45_000;
-/** Trần backoff khi reconnect liên tục fail (server cold-start) — tránh spam mỗi 45s vô hạn. */
-const SSE_PING_WATCHDOG_MAX_MS = 180_000;
-const SSE_WATCHDOG_TICK_MS = 15_000;
+/** Short polling counter + list (cPanel cắt kết nối dài 45s — không dùng SSE). */
+const ORDERS_POLL_MS = 10_000;
 
 function cancelReturnKindParam(tab: CancelReturnTab): string | undefined {
   if (tab === 'all') return undefined;
@@ -1200,7 +1193,7 @@ export default function OrderManager({
   const shopsBootRef = useRef(false);
   const [shopsBootReady, setShopsBootReady] = useState(false);
   /**
-   * Waterfall F5: list refresh xong → counter 1 lần → mới mở SSE + bắt đầu poll counter.
+   * Waterfall F5: list refresh xong → counter 1 lần → mới bắt đầu short polling.
    * Tránh poll/force counter song song với /refresh lúc cold-start.
    */
   const [counterBootReady, setCounterBootReady] = useState(false);
@@ -1312,7 +1305,7 @@ export default function OrderManager({
   const [audioEnabled, setAudioEnabled] = useState(() => isAudioUnlockedState());
   const syncPollTimerRef = useRef<number | null>(null);
   const counterPollTimerRef = useRef<number | null>(null);
-  /** Wake sau ngủ đông: clear timer + poll counter ngay (không chờ 45s còn lại). */
+  /** Wake sau ngủ đông: poll counter ngay, không chờ tick 10s còn lại. */
   const runCounterPollNowRef = useRef<(() => void) | null>(null);
   const counterAbortRef = useRef<AbortController | null>(null);
   const counterInFlightKeyRef = useRef('');
@@ -1615,26 +1608,9 @@ export default function OrderManager({
     newOrderRefreshTimersRef.current = [t1];
   }, []);
 
-  /**
-   * SSE `order_updated` (đơn ĐÃ CÓ bị đổi trạng thái — quét xuất kho / bàn giao ĐVVC / hủy /
-   * nhận hoàn từ máy quét khác — điện thoại). Refetch NGẦM (silent): không toast, không đổi
-   * trang, không hiện loading full-page — chỉ âm thầm đè dữ liệu mới lên danh sách hiện tại.
-   */
-  const orderUpdatedRefreshTimerRef = useRef<number | null>(null);
-  const scheduleOrderUpdatedRefresh = useCallback(() => {
-    if (orderUpdatedRefreshTimerRef.current != null) {
-      window.clearTimeout(orderUpdatedRefreshTimerRef.current);
-    }
-    orderUpdatedRefreshTimerRef.current = window.setTimeout(() => {
-      orderUpdatedRefreshTimerRef.current = null;
-      refetchOrdersPageRef.current({ silent: true });
-      void fetchOrderCounts();
-    }, 350);
-  }, [fetchOrderCounts]);
-
-  /** Báo đơn mới khi pending_confirm / unprocessed / all TĂNG. SSE `new_order` là đường chính. */
+  /** Báo đơn mới khi pending_confirm / unprocessed / all TĂNG. Trả true nếu đã lên lịch refetch list. */
   const maybeNotifyNewOrdersFromCounts = useCallback(
-    (counts: Record<string, number>) => {
+    (counts: Record<string, number>): boolean => {
       const nextPending = Number(counts.pending_confirm) || 0;
       const nextAll = Number(counts.all) || 0;
       const nextUnprocessed = Number(counts.unprocessed) || 0;
@@ -1645,24 +1621,25 @@ export default function OrderManager({
         prevCounterScopeRef.current = scopeKey;
         prevCounters.current = { pending_confirm: nextPending, all: nextAll, unprocessed: nextUnprocessed };
         prevCountersReadyRef.current = true;
-        return;
+        return false;
       }
       if (!prevCountersReadyRef.current) {
         prevCounters.current = { pending_confirm: nextPending, all: nextAll, unprocessed: nextUnprocessed };
         prevCountersReadyRef.current = true;
-        return;
+        return false;
       }
       const prevPending = Number(prevCounters.current.pending_confirm) || 0;
       const prevAll = Number(prevCounters.current.all) || 0;
       const prevUnprocessed = Number(prevCounters.current.unprocessed) || 0;
       // Timeout lag countDocuments → 0: giữ baseline, chỉ badge (đã set trong fetchOrderCounts).
       if ((nextPending === 0 && prevPending > 0 && nextAll === 0) || (nextAll === 0 && prevAll > 0)) {
-        return;
+        return false;
       }
-      if (nextPending > prevPending || nextAll > prevAll || nextUnprocessed > prevUnprocessed) {
-        scheduleNewOrderListRefresh();
-      }
+      const hasNew =
+        nextPending > prevPending || nextAll > prevAll || nextUnprocessed > prevUnprocessed;
+      if (hasNew) scheduleNewOrderListRefresh();
       prevCounters.current = { pending_confirm: nextPending, all: nextAll, unprocessed: nextUnprocessed };
+      return hasNew;
     },
     [scheduleNewOrderListRefresh],
   );
@@ -1708,7 +1685,7 @@ export default function OrderManager({
         window.clearTimeout(syncPollTimerRef.current);
       }
       if (counterPollTimerRef.current != null) {
-        window.clearTimeout(counterPollTimerRef.current);
+        window.clearInterval(counterPollTimerRef.current);
       }
       counterAbortRef.current?.abort();
       for (const id of newOrderRefreshTimersRef.current) {
@@ -1718,196 +1695,68 @@ export default function OrderManager({
     };
   }, []);
 
-  /** Polling counter — badge + toast + tự refetch list khi có đơn mới.
-   *  Waterfall: chỉ chạy SAU khi boot counter (sau refresh) xong — không poll ngay lúc mount. */
+  /**
+   * Short polling 10s (thay SSE — cPanel/LiteSpeed cắt kết nối dài ở 45s).
+   * Mỗi tick: counter → badge/toast; đứng ở tab Chờ xác nhận / Chưa xử lý thì refetch ngầm list.
+   * Waterfall: chỉ chạy SAU khi boot counter (sau refresh) xong — không poll ngay lúc mount.
+   */
   useEffect(() => {
     if (!counterBootReady) return;
     let cancelled = false;
-    let pausedForHidden = false;
-    const schedule = (delay: number) => {
-      if (cancelled) return;
-      counterPollTimerRef.current = window.setTimeout(() => {
-        void poll();
-      }, delay);
-    };
-    const poll = async () => {
-      if (cancelled) return;
-      // Tab ẩn → dừng hẳn (không tự lặp lịch tiếp), resume có kiểm soát lúc visible lại
-      // (qua onVisible dưới hoặc wakeFromSleep) — tránh dồn tick khi tab ngủ lâu.
-      if (document.visibilityState === 'hidden') {
-        pausedForHidden = true;
-        return;
+    let inFlight = false;
+    const tick = async () => {
+      if (cancelled || inFlight) return;
+      if (document.visibilityState === 'hidden') return;
+      // Sync burst đang chạy → startSyncPolling đã tự poll counter, bỏ tick tránh /counter chồng.
+      if (syncPollTimerRef.current != null) return;
+      inFlight = true;
+      try {
+        const counts = await fetchOrderCounts();
+        if (cancelled || !counts) return;
+        const notified = maybeNotifyNewOrdersFromCounts(counts);
+        const tab = activeSubTabRef.current;
+        if (
+          !notified &&
+          (tab === 'pending_confirm' || tab === 'unprocessed') &&
+          !searchQueryRef.current.trim() &&
+          !isListFetchingRef.current
+        ) {
+          void fetchOrdersWithShop({
+            silent: true,
+            page: currentPageRef.current,
+            limit: ORDERS_PAGE_SIZE,
+            merge: false,
+            tab,
+          });
+        }
+      } finally {
+        inFlight = false;
       }
-      // Sync burst đang chạy → bỏ tick counter (tránh /counter chồng).
-      if (syncPollTimerRef.current != null) {
-        schedule(COUNTER_POLL_MS);
-        return;
-      }
-      const counts = await fetchOrderCounts();
-      if (!cancelled && counts) {
-        maybeNotifyNewOrdersFromCounts(counts);
-      }
-      // Chưa từng có counts (F5 + nghẽn request lúc boot — nhiều fetch tranh 6 kết nối
-      // HTTP/1.1/origin trên cPanel khiến /counter bị xếp hàng lâu) → retry sớm (5s) thay vì
-      // chờ đủ COUNTER_POLL_MS (60s), tránh badge số lượng "đứng hình" cho tới khi user
-      // đổi tab / focus lại window mới có wakeFromSleep() force refresh.
-      if (!cancelled && !counts && serverOrderCountsRef.current == null) {
-        schedule(FIRST_COUNTER_RETRY_MS);
-        return;
-      }
-      schedule(COUNTER_POLL_MS);
     };
     runCounterPollNowRef.current = () => {
-      if (cancelled) return;
-      pausedForHidden = false;
-      if (counterPollTimerRef.current != null) {
-        window.clearTimeout(counterPollTimerRef.current);
-        counterPollTimerRef.current = null;
-      }
-      void poll();
+      void tick();
     };
-    const onVisible = () => {
-      if (document.visibilityState === 'visible' && pausedForHidden) {
-        runCounterPollNowRef.current?.();
-      }
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    // Boot vừa gọi counter xong — lịch poll kế tiếp, không bắn lại ngay (tránh trùng).
-    schedule(COUNTER_POLL_MS);
+    counterPollTimerRef.current = window.setInterval(() => {
+      void tick();
+    }, ORDERS_POLL_MS);
     return () => {
       cancelled = true;
-      document.removeEventListener('visibilitychange', onVisible);
       runCounterPollNowRef.current = null;
       if (counterPollTimerRef.current != null) {
-        window.clearTimeout(counterPollTimerRef.current);
+        window.clearInterval(counterPollTimerRef.current);
         counterPollTimerRef.current = null;
       }
       counterAbortRef.current?.abort();
     };
-  }, [counterBootReady, fetchOrderCounts, maybeNotifyNewOrdersFromCounts]);
+  }, [counterBootReady, fetchOrderCounts, fetchOrdersWithShop, maybeNotifyNewOrdersFromCounts]);
 
   /**
-   * SSE `new_order` + wake-up sau ngủ đông (mobile).
-   * Waterfall: mở SAU counter boot — tránh tranh connection với /refresh lúc F5.
-   * Visible/focus/pageshow: luôn reconnect SSE + force catch-up list/counter (không sync Shopee).
+   * Wake-up sau ngủ đông (mobile) / quay lại tab: force catch-up list + counter ngay,
+   * không chờ tick polling kế tiếp (không sync Shopee).
    */
   useEffect(() => {
     if (!counterBootReady) return;
-    const token = localStorage.getItem('admin_token') || '';
-    if (!token || typeof EventSource === 'undefined') return;
-    const url = `/api/orders/live?token=${encodeURIComponent(token)}`;
-    let es: EventSource | null = null;
     let cancelled = false;
-    let lastSseActivityAt = Date.now();
-    let watchdogTimer: number | null = null;
-    // Số lần reconnect liên tiếp chưa thấy hoạt động thật (mở lại nhưng vẫn lỗi/không nhận được
-    // gì) — dùng để giãn ngưỡng watchdog ra xa hơn, tránh dội request mỗi 45s vô hạn vào server
-    // đang cold-start (Passenger/Mongo chưa kịp hồi phục).
-    let sseConsecutiveFailures = 0;
-
-    const markSseActivity = () => {
-      lastSseActivityAt = Date.now();
-    };
-    /** Có hoạt động THẬT (open/ping/message) — coi như server đã khỏe, reset backoff. */
-    const markSseHealthy = () => {
-      sseConsecutiveFailures = 0;
-    };
-
-    const onNewOrder = (ev: MessageEvent) => {
-      markSseActivity();
-      let payload: {
-        shopId?: string;
-        shopIds?: string[];
-        orderSn?: string;
-        orderSns?: string[];
-      } = {};
-      try {
-        payload = JSON.parse(String(ev.data || '{}')) as typeof payload;
-      } catch {
-        payload = {};
-      }
-      const scoped = shopScopeRef.current.shopIds.map(String);
-      const eventShops = [
-        ...(Array.isArray(payload.shopIds) ? payload.shopIds : []),
-        payload.shopId || '',
-      ]
-        .map((s) => String(s || '').trim())
-        .filter(Boolean);
-      if (scoped.length > 0 && eventShops.length > 0) {
-        const hit = eventShops.some((id) => scoped.includes(id));
-        if (!hit) return;
-      }
-      scheduleNewOrderListRefresh();
-    };
-
-    const onOrderUpdated = (ev: MessageEvent) => {
-      markSseActivity();
-      let payload: {
-        shopId?: string;
-        shopIds?: string[];
-        orderSn?: string;
-        orderSns?: string[];
-      } = {};
-      try {
-        payload = JSON.parse(String(ev.data || '{}')) as typeof payload;
-      } catch {
-        payload = {};
-      }
-      const scoped = shopScopeRef.current.shopIds.map(String);
-      const eventShops = [
-        ...(Array.isArray(payload.shopIds) ? payload.shopIds : []),
-        payload.shopId || '',
-      ]
-        .map((s) => String(s || '').trim())
-        .filter(Boolean);
-      if (scoped.length > 0 && eventShops.length > 0) {
-        const hit = eventShops.some((id) => scoped.includes(id));
-        if (!hit) return;
-      }
-      scheduleOrderUpdatedRefresh();
-    };
-
-    const onPing = () => {
-      markSseActivity();
-      markSseHealthy();
-    };
-
-    const closeSse = () => {
-      if (!es) return;
-      es.removeEventListener('new_order', onNewOrder as EventListener);
-      es.removeEventListener('order_updated', onOrderUpdated as EventListener);
-      es.removeEventListener('ping', onPing as EventListener);
-      es.close();
-      es = null;
-    };
-
-    const openSse = () => {
-      if (cancelled) return;
-      try {
-        const next = new EventSource(url);
-        next.addEventListener('new_order', onNewOrder as EventListener);
-        next.addEventListener('order_updated', onOrderUpdated as EventListener);
-        next.addEventListener('ping', onPing as EventListener);
-        next.onopen = () => {
-          markSseHealthy();
-        };
-        next.onerror = () => {
-          // EventSource tự reconnect; watchdog sẽ force open lại nếu zombie.
-          // Đếm fail liên tiếp để giãn ngưỡng watchdog ra xa hơn khi server đang cold-start.
-          sseConsecutiveFailures += 1;
-        };
-        es = next;
-        markSseActivity();
-      } catch {
-        es = null;
-      }
-    };
-
-    /** Sau đóng băng mobile: readyState===OPEN có thể zombie — luôn đóng/mở lại. */
-    const forceReconnectSse = () => {
-      closeSse();
-      openSse();
-    };
 
     const triggerHandedOverReconcileIfNeeded = () => {
       if (activeSubTabRef.current !== 'handed_over_carrier') return;
@@ -1934,14 +1783,8 @@ export default function OrderManager({
         // tabWakeGate đã tự health-precheck trước khi gọi tới đây — chỉ cần thông báo cho user
         // biết đang đồng bộ lại sau thời gian dài, tránh tưởng web bị treo.
         showToast('Đang kết nối lại sau thời gian dài không mở web — vui lòng chờ vài giây...', 6000);
-        sseConsecutiveFailures = 0;
       }
 
-      // Chỉ reconnect SSE khi thực sự "chết" (null/CLOSED) — tránh đóng/mở 1 connection
-      // đang sống khỏe mỗi lần focus lại (watchdog phía dưới vẫn tự bắt zombie sau đó).
-      if (!es || es.readyState === EventSource.CLOSED) {
-        forceReconnectSse();
-      }
       // refetchOrdersPageRef đã tự gọi kèm fetchOrderCounts({force:true}) bên trong —
       // không gọi thêm fetchOrderCounts/runCounterPollNowRef ở đây để khỏi tạo 2-3 lệnh
       // gọi /counter trùng nhau trong cùng 1 lượt wake.
@@ -1958,36 +1801,6 @@ export default function OrderManager({
       }, 300);
     };
 
-    // Mobile có thể giữ EventSource ở trạng thái OPEN sau khi socket thực tế đã chết.
-    // Đóng/mở đồng bộ ngay tại cạnh hidden -> visible, không chờ debounce wake hay watchdog.
-    let wasHidden = document.visibilityState === 'hidden';
-    const reconnectSseOnVisible = () => {
-      if (document.visibilityState === 'hidden') {
-        wasHidden = true;
-        return;
-      }
-      if (!wasHidden) return;
-      wasHidden = false;
-      sseConsecutiveFailures = 0;
-      forceReconnectSse();
-    };
-    document.addEventListener('visibilitychange', reconnectSseOnVisible);
-
-    openSse();
-    watchdogTimer = window.setInterval(() => {
-      if (cancelled || document.visibilityState === 'hidden') return;
-      // Backoff tăng dần theo số lần fail liên tiếp (45s → 90s → 180s, cap) — nếu server đang
-      // cold-start thật (Passenger/Mongo chưa hồi phục), tránh force-reconnect dồn dập vô ích.
-      const backoffTimes = Math.min(sseConsecutiveFailures, 2);
-      const threshold = Math.min(
-        SSE_PING_WATCHDOG_MAX_MS,
-        SSE_PING_WATCHDOG_MS * 2 ** backoffTimes,
-      );
-      if (Date.now() - lastSseActivityAt > threshold) {
-        forceReconnectSse();
-      }
-    }, SSE_WATCHDOG_TICK_MS);
-
     // Gộp focus/visibilitychange/pageshow qua tabWakeGate (priority 0 = chạy trước,
     // App.tsx đăng ký priority 10 chạy sau ~300ms) — tránh 2 nơi cùng bắn 1 tick.
     const unsubscribeWake = onTabWake((info) => {
@@ -1996,15 +1809,8 @@ export default function OrderManager({
     return () => {
       cancelled = true;
       unsubscribeWake();
-      document.removeEventListener('visibilitychange', reconnectSseOnVisible);
-      if (watchdogTimer != null) window.clearInterval(watchdogTimer);
-      if (orderUpdatedRefreshTimerRef.current != null) {
-        window.clearTimeout(orderUpdatedRefreshTimerRef.current);
-        orderUpdatedRefreshTimerRef.current = null;
-      }
-      closeSse();
     };
-  }, [counterBootReady, scheduleNewOrderListRefresh, scheduleOrderUpdatedRefresh, fetchOrderCounts]);
+  }, [counterBootReady]);
 
   /** Tự unlock audio sau click/touch đầu tiên của user trên trang. */
   useEffect(() => {
@@ -2384,7 +2190,7 @@ export default function OrderManager({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ordersFetchKey, shopsBootReady, focusScanner, fetchOrderCounts]);
 
-  // Tab không thuộc list-fetch (vd: order_products): vẫn boot counter → SSE (không chờ refresh list).
+  // Tab không thuộc list-fetch (vd: order_products): vẫn boot counter → polling (không chờ refresh list).
   useEffect(() => {
     if (!shopsBootReady || counterBootReadyRef.current) return;
     if (focusScanner) return;

@@ -7193,7 +7193,8 @@ export function parseCancelReturnKindParam(raw?: string | null): string {
   return "";
 }
 
-const TAB_COUNT_CACHE_MS = 5_000;
+/** Poll 10s từ nhiều máy dùng chung kết quả; change stream xóa cache ngay khi orders đổi nên không sợ số cũ. */
+const TAB_COUNT_CACHE_MS = 8_000;
 let tabCountCache: { key: string; expiresAt: number; value: Record<string, number> } | null =
   null;
 
@@ -8227,11 +8228,27 @@ export async function loadPriorityTabOrdersFromStore(opts?: {
 /** Đếm 1 filter — fail-soft (0) để 1 tab lỗi không kéo sập CageFS. */
 async function safeCountDocuments(
   filter: Record<string, unknown>,
-  maxTimeMS = 6000,
+  maxTimeMS = 4000,
+  hint?: Record<string, 1 | -1>,
 ): Promise<number> {
   try {
-    return Number(await OrderModel.countDocuments(filter).maxTimeMS(maxTimeMS)) || 0;
+    let q = OrderModel.countDocuments(filter).maxTimeMS(maxTimeMS);
+    if (hint) {
+      try {
+        q = q.hint(hint);
+      } catch {
+        /* hint optional */
+      }
+    }
+    return Number(await q) || 0;
   } catch (err: any) {
+    if (hint && /hint|index/i.test(String(err?.message || ""))) {
+      try {
+        return Number(await OrderModel.countDocuments(filter).maxTimeMS(maxTimeMS)) || 0;
+      } catch {
+        /* fall through */
+      }
+    }
     console.warn(
       "[MongoDB] safeCountDocuments failed:",
       err?.message || err,
@@ -8240,9 +8257,10 @@ async function safeCountDocuments(
   }
 }
 
-/** Badge ≡ GET /api/orders?tab= — dùng orderTabFilter, không dùng $facet rút gọn. */
+/** Badge ≡ GET /api/orders?tab= — dùng orderTabFilter; song song + hint index shop+time. */
 async function countOperationalTabsFromStore(
   match: Record<string, unknown>,
+  hasShop = false,
 ): Promise<Partial<Record<string, number>>> {
   const tabs = [
     "pending_confirm",
@@ -8251,18 +8269,17 @@ async function countOperationalTabsFromStore(
     "handed_over_carrier",
     "shipping",
   ] as const;
-  const out: Partial<Record<string, number>> = {};
-  for (let i = 0; i < tabs.length; i++) {
-    const tab = tabs[i];
-    const tabFilter = orderTabFilter(tab);
-    const combined =
-      Object.keys(match).length === 0 ? tabFilter : { $and: [match, tabFilter] };
-    out[tab] = await safeCountDocuments(combined);
-    if (i < tabs.length - 1) {
-      await new Promise((r) => setTimeout(r, 25));
-    }
-  }
-  return out;
+  const hint = shopTimeIndexHint(hasShop);
+  const rows = await Promise.all(
+    tabs.map(async (tab) => {
+      const tabFilter = orderTabFilter(tab);
+      const combined =
+        Object.keys(match).length === 0 ? tabFilter : { $and: [match, tabFilter] };
+      const n = await safeCountDocuments(combined, 4000, hint);
+      return [tab, n] as const;
+    }),
+  );
+  return Object.fromEntries(rows);
 }
 
 /** Đếm số đơn theo tab — MỘT aggregate: $match ngày → $project cờ → $facet. */
@@ -8349,21 +8366,6 @@ export async function countOrdersByTabsFromStore(opts?: {
     counts.return_requests = facetN(row, "return_requests");
     counts.web_orders = facetN(row, "web_orders");
     counts.external_orders = facetN(row, "external_orders");
-    try {
-      const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
-      if (shopFilter) {
-        const dateRange = parseOrderListDateRange({
-          startDate: opts?.startDate,
-          endDate: opts?.endDate,
-          forceDefault: true,
-        });
-        const extMatch: Record<string, unknown> = { channel: "manual" };
-        if (dateRange) Object.assign(extMatch, buildOrderCreatedAtMongoFilter(dateRange));
-        counts.external_orders = await OrderModel.countDocuments(extMatch).maxTimeMS(3000);
-      }
-    } catch (extErr: any) {
-      console.warn("[MongoDB] external_orders count:", extErr?.message || extErr);
-    }
     counts.cancel_returns = facetN(row, "cancel_returns");
     counts.cancel_returns_returned = facetN(row, "cancel_returns_returned");
     counts.cancel_returns_cancelled = facetN(row, "cancel_returns_cancelled");
@@ -8373,9 +8375,33 @@ export async function countOrdersByTabsFromStore(opts?: {
     counts.failed_delivery = counts.cancel_returns_rts;
     counts.received_cancel_returns =
       dhhCountCache.key === cacheKey ? dhhCountCache.n : dhhCountCache.n;
+    const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
     try {
-      const opCounts = await countOperationalTabsFromStore(match);
-      Object.assign(counts, opCounts);
+      const extraJobs: Promise<void>[] = [
+        countOperationalTabsFromStore(match, hasShop).then((opCounts) => {
+          Object.assign(counts, opCounts);
+        }),
+      ];
+      if (shopFilter) {
+        extraJobs.push(
+          (async () => {
+            try {
+              const dateRange = parseOrderListDateRange({
+                startDate: opts?.startDate,
+                endDate: opts?.endDate,
+                forceDefault: true,
+              });
+              const extMatch: Record<string, unknown> = { channel: "manual" };
+              if (dateRange) Object.assign(extMatch, buildOrderCreatedAtMongoFilter(dateRange));
+              counts.external_orders =
+                Number(await OrderModel.countDocuments(extMatch).maxTimeMS(3000)) || 0;
+            } catch (extErr: any) {
+              console.warn("[MongoDB] external_orders count:", extErr?.message || extErr);
+            }
+          })(),
+        );
+      }
+      await Promise.all(extraJobs);
     } catch (opErr: any) {
       console.warn(
         "[MongoDB] countOperationalTabsFromStore:",

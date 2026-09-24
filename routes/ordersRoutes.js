@@ -56,8 +56,6 @@ import {
 import { scanBulkUpdate } from "../controllers/scanBulkController.js";
 import { parseOrderAddress } from "../controllers/parseAddressController.js";
 import { asyncHandler } from "../middlewares/errorHandler.js";
-import { streamOrderLive } from "../services/orderRealtime.js";
-
 const router = Router();
 const h = asyncHandler;
 
@@ -67,8 +65,8 @@ router.get("/query", h(queryOrders));
 router.get("/counts", h(getOrderCounts));
 /** Badge count nhanh — chỉ countDocuments Mongo, không gọi Shopee / không trả list. */
 router.get("/counter", h(getOrderCounts));
-/** SSE đơn mới — EventSource (query token vì EventSource không gửi Bearer). */
-router.get("/live", streamOrderLive);
+/** SSE đã gỡ (cPanel cắt kết nối 45s) — 204 để EventSource của bundle cũ dừng hẳn, không retry. */
+router.get("/live", (_req, res) => res.status(204).end());
 router.get("/products-summary", h(getFulfillmentProductsSummary));
 router.get("/lookup", h(lookupOrder));
 /** Sync siêu tốc máy quét — chỉ order_id / tracking_code / return_waybill / status. */

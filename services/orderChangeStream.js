@@ -1,11 +1,10 @@
 /**
- * MongoDB Change Stream → SSE bridge.
+ * MongoDB Change Stream → xóa cache counter/list ở MỌI process.
  *
- * Passenger (cPanel) chạy NHIỀU process cho cùng 1 app. Hub SSE trong
- * `orderRealtime.js` chỉ là Set trong RAM của 1 process, nên `emitNewOrder`
- * gọi ở process nhận webhook KHÔNG tới được EventSource đang bám process khác.
- * Change stream chạy trong MỌI process → process nào cũng nghe được thay đổi
- * của collection `orders`, bất kể process nào đã ghi.
+ * Passenger (cPanel) chạy NHIỀU process cho cùng 1 app; cache `/counter` và list
+ * nằm trong RAM từng process. Webhook ghi ở process A thì process B (đang phục vụ
+ * short polling của trình duyệt) vẫn giữ cache cũ — change stream chạy trong mọi
+ * process nên process nào cũng xóa cache ngay khi collection `orders` đổi.
  *
  * Không dùng `fullDocument: updateLookup` — mỗi event sẽ tốn thêm 1 lượt đọc,
  * bulkWrite 20 đơn sẽ thành 20 query thừa trên Atlas Free. `documentKey._id`

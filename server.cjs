@@ -82890,7 +82890,7 @@ function parseCancelReturnKindParam(raw) {
   if (k === "cancelled" || k === "cancel") return "cancelled";
   return "";
 }
-var TAB_COUNT_CACHE_MS = 5e3;
+var TAB_COUNT_CACHE_MS = 8e3;
 var tabCountCache = null;
 function invalidateTabCountCache() {
   tabCountCache = null;
@@ -83624,10 +83624,23 @@ async function loadPriorityTabOrdersFromStore(opts) {
     return [];
   }
 }
-async function safeCountDocuments(filter2, maxTimeMS = 6e3) {
+async function safeCountDocuments(filter2, maxTimeMS = 4e3, hint) {
   try {
-    return Number(await OrderModel.countDocuments(filter2).maxTimeMS(maxTimeMS)) || 0;
+    let q = OrderModel.countDocuments(filter2).maxTimeMS(maxTimeMS);
+    if (hint) {
+      try {
+        q = q.hint(hint);
+      } catch {
+      }
+    }
+    return Number(await q) || 0;
   } catch (err) {
+    if (hint && /hint|index/i.test(String(err?.message || ""))) {
+      try {
+        return Number(await OrderModel.countDocuments(filter2).maxTimeMS(maxTimeMS)) || 0;
+      } catch {
+      }
+    }
     console.warn(
       "[MongoDB] safeCountDocuments failed:",
       err?.message || err
@@ -83635,7 +83648,7 @@ async function safeCountDocuments(filter2, maxTimeMS = 6e3) {
     return 0;
   }
 }
-async function countOperationalTabsFromStore(match2) {
+async function countOperationalTabsFromStore(match2, hasShop = false) {
   const tabs = [
     "pending_confirm",
     "unprocessed",
@@ -83643,17 +83656,16 @@ async function countOperationalTabsFromStore(match2) {
     "handed_over_carrier",
     "shipping"
   ];
-  const out = {};
-  for (let i2 = 0; i2 < tabs.length; i2++) {
-    const tab = tabs[i2];
-    const tabFilter = orderTabFilter(tab);
-    const combined = Object.keys(match2).length === 0 ? tabFilter : { $and: [match2, tabFilter] };
-    out[tab] = await safeCountDocuments(combined);
-    if (i2 < tabs.length - 1) {
-      await new Promise((r2) => setTimeout(r2, 25));
-    }
-  }
-  return out;
+  const hint = shopTimeIndexHint(hasShop);
+  const rows = await Promise.all(
+    tabs.map(async (tab) => {
+      const tabFilter = orderTabFilter(tab);
+      const combined = Object.keys(match2).length === 0 ? tabFilter : { $and: [match2, tabFilter] };
+      const n = await safeCountDocuments(combined, 4e3, hint);
+      return [tab, n];
+    })
+  );
+  return Object.fromEntries(rows);
 }
 async function countOrdersByTabsFromStore(opts) {
   const empty = {
@@ -83732,21 +83744,6 @@ async function countOrdersByTabsFromStore(opts) {
     counts.return_requests = facetN(row, "return_requests");
     counts.web_orders = facetN(row, "web_orders");
     counts.external_orders = facetN(row, "external_orders");
-    try {
-      const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
-      if (shopFilter) {
-        const dateRange = parseOrderListDateRange({
-          startDate: opts?.startDate,
-          endDate: opts?.endDate,
-          forceDefault: true
-        });
-        const extMatch = { channel: "manual" };
-        if (dateRange) Object.assign(extMatch, buildOrderCreatedAtMongoFilter(dateRange));
-        counts.external_orders = await OrderModel.countDocuments(extMatch).maxTimeMS(3e3);
-      }
-    } catch (extErr) {
-      console.warn("[MongoDB] external_orders count:", extErr?.message || extErr);
-    }
     counts.cancel_returns = facetN(row, "cancel_returns");
     counts.cancel_returns_returned = facetN(row, "cancel_returns_returned");
     counts.cancel_returns_cancelled = facetN(row, "cancel_returns_cancelled");
@@ -83755,9 +83752,32 @@ async function countOrdersByTabsFromStore(opts) {
     counts.cancelled = counts.cancel_returns_cancelled;
     counts.failed_delivery = counts.cancel_returns_rts;
     counts.received_cancel_returns = dhhCountCache.key === cacheKey ? dhhCountCache.n : dhhCountCache.n;
+    const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
     try {
-      const opCounts = await countOperationalTabsFromStore(match2);
-      Object.assign(counts, opCounts);
+      const extraJobs = [
+        countOperationalTabsFromStore(match2, hasShop).then((opCounts) => {
+          Object.assign(counts, opCounts);
+        })
+      ];
+      if (shopFilter) {
+        extraJobs.push(
+          (async () => {
+            try {
+              const dateRange = parseOrderListDateRange({
+                startDate: opts?.startDate,
+                endDate: opts?.endDate,
+                forceDefault: true
+              });
+              const extMatch = { channel: "manual" };
+              if (dateRange) Object.assign(extMatch, buildOrderCreatedAtMongoFilter(dateRange));
+              counts.external_orders = Number(await OrderModel.countDocuments(extMatch).maxTimeMS(3e3)) || 0;
+            } catch (extErr) {
+              console.warn("[MongoDB] external_orders count:", extErr?.message || extErr);
+            }
+          })()
+        );
+      }
+      await Promise.all(extraJobs);
     } catch (opErr) {
       console.warn(
         "[MongoDB] countOperationalTabsFromStore:",
@@ -86078,10 +86098,6 @@ function authMiddleware(req, res, next) {
   let token = "";
   if (authHeader && authHeader.startsWith("Bearer ")) {
     token = authHeader.slice(7);
-  } else {
-    const pathOnly = String(req.originalUrl || req.path || "").split("?")[0];
-    const isLiveSse = req.method === "GET" && pathOnly.endsWith("/orders/live");
-    if (isLiveSse) token = String(req.query?.token || "").trim();
   }
   if (!token) {
     return res.status(401).json({ error: "Kh\xF4ng c\xF3 token x\xE1c th\u1EF1c." });
@@ -116539,130 +116555,21 @@ function dbReadyMiddleware(req, res, next) {
 var dbReady_default = dbReadyMiddleware;
 
 // services/orderRealtime.js
-var MAX_SSE_CLIENTS = 20;
-var HEARTBEAT_MS = 1e4;
-var SSE_PADDING = `:${" ".repeat(2048)}
-
-`;
-var clients = /* @__PURE__ */ new Set();
 var lastNewOrderAt = 0;
+var lastOrderUpdatedAt = 0;
 function getOrderRealtimeStats() {
-  pruneDeadClients();
   return {
     pid: process.pid,
-    sseClients: clients.size,
-    lastNewOrderAt: lastNewOrderAt ? new Date(lastNewOrderAt).toISOString() : null
+    sseClients: 0,
+    lastNewOrderAt: lastNewOrderAt ? new Date(lastNewOrderAt).toISOString() : null,
+    lastOrderUpdatedAt: lastOrderUpdatedAt ? new Date(lastOrderUpdatedAt).toISOString() : null
   };
 }
-function pruneDeadClients() {
-  for (const res of clients) {
-    if (res.writableEnded || res.destroyed) {
-      clients.delete(res);
-    }
-  }
-}
-function buildEventBody(payload) {
-  const body = {
-    orderSn: payload?.orderSn ? String(payload.orderSn) : "",
-    orderSns: Array.isArray(payload?.orderSns) ? payload.orderSns.map((s2) => String(s2 || "").trim()).filter(Boolean) : payload?.orderSn ? [String(payload.orderSn)] : [],
-    shopId: payload?.shopId != null ? String(payload.shopId) : "",
-    shopIds: Array.isArray(payload?.shopIds) ? payload.shopIds.map((s2) => String(s2 || "").trim()).filter(Boolean) : payload?.shopId ? [String(payload.shopId)] : [],
-    status: payload?.status ? String(payload.status) : "",
-    count: Number(payload?.count) || 0,
-    at: (/* @__PURE__ */ new Date()).toISOString()
-  };
-  if (!body.count) body.count = body.orderSns.length || (body.orderSn ? 1 : 0);
-  return body;
-}
-function broadcast(eventName, body) {
-  pruneDeadClients();
-  if (clients.size === 0) {
-    console.log(
-      `[SSE] pid=${process.pid} ${eventName} DROPPED \u2014 0 client tr\xEAn process n\xE0y sns=${(body?.orderSns || []).slice(0, 5).join(",") || "-"}`
-    );
-    return;
-  }
-  const chunk = `event: ${eventName}
-data: ${JSON.stringify(body)}
-
-`;
-  let sent = 0;
-  for (const res of clients) {
-    try {
-      res.write(chunk);
-      sent += 1;
-    } catch {
-      clients.delete(res);
-    }
-  }
-  console.log(
-    `[SSE] pid=${process.pid} ${eventName} \u2192 ${sent} client sns=${(body?.orderSns || []).slice(0, 5).join(",") || "-"}`
-  );
-}
-function emitNewOrder(payload) {
+function emitNewOrder(_payload) {
   lastNewOrderAt = Date.now();
-  broadcast("new_order", buildEventBody(payload));
 }
-function emitOrderUpdated(payload) {
-  broadcast("order_updated", buildEventBody(payload));
-}
-function streamOrderLive(req, res) {
-  pruneDeadClients();
-  while (clients.size >= MAX_SSE_CLIENTS) {
-    const oldest = clients.values().next().value;
-    if (!oldest) break;
-    clients.delete(oldest);
-    try {
-      oldest.end();
-    } catch {
-    }
-  }
-  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate, no-transform");
-  res.setHeader("Content-Encoding", "identity");
-  res.setHeader("Connection", "keep-alive");
-  res.setHeader("X-Accel-Buffering", "no");
-  const socket = req.socket;
-  if (socket) {
-    try {
-      socket.setTimeout(0);
-      socket.setNoDelay(true);
-      socket.setKeepAlive(true);
-    } catch {
-    }
-  }
-  if (typeof res.flushHeaders === "function") res.flushHeaders();
-  res.write(`retry: 3000
-${SSE_PADDING}`);
-  res.write(`event: ping
-data: ${JSON.stringify({ ok: true, at: Date.now() })}
-
-`);
-  clients.add(res);
-  console.log(`[SSE] pid=${process.pid} client CONNECTED \u2014 t\u1ED5ng=${clients.size}`);
-  const heartbeat = setInterval(() => {
-    if (res.writableEnded || res.destroyed) {
-      clearInterval(heartbeat);
-      clients.delete(res);
-      return;
-    }
-    try {
-      res.write(`event: ping
-data: ${JSON.stringify({ at: Date.now() })}
-
-`);
-    } catch {
-      clearInterval(heartbeat);
-      clients.delete(res);
-    }
-  }, HEARTBEAT_MS);
-  const onClose = () => {
-    clearInterval(heartbeat);
-    clients.delete(res);
-  };
-  req.on("close", onClose);
-  req.on("aborted", onClose);
-  res.on("close", onClose);
+function emitOrderUpdated(_payload) {
+  lastOrderUpdatedAt = Date.now();
 }
 
 // controllers/scanBulkController.js
@@ -123509,12 +123416,6 @@ async function getOrderCounts(req, res) {
       cancelled: Number(counts.cancel_returns_cancelled ?? counts.cancelled) || 0,
       rts: Number(counts.cancel_returns_rts ?? counts.failed_delivery) || 0
     };
-    console.log(
-      `[GET /api/orders/counter] shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} counts=`,
-      counts,
-      "counters=",
-      counters
-    );
     return res.status(200).json({ success: true, counts, counters });
   } catch (error) {
     console.error(
@@ -128856,7 +128757,7 @@ router16.get("/refresh", h3(refreshOrders));
 router16.get("/query", h3(queryOrders));
 router16.get("/counts", h3(getOrderCounts));
 router16.get("/counter", h3(getOrderCounts));
-router16.get("/live", streamOrderLive);
+router16.get("/live", (_req, res) => res.status(204).end());
 router16.get("/products-summary", h3(getFulfillmentProductsSummary));
 router16.get("/lookup", h3(lookupOrder));
 router16.get("/scanner-sync", h3(scannerSync));
@@ -148928,6 +148829,11 @@ async function startServer() {
   app.post("/api/cleanup-shipped", authMiddleware, cleanupShipped);
   app.get("/api/cleanup-shipped", authMiddleware, getCleanupShippedStatus);
   app.post("/api/orders/recalculate-counts", authMiddleware, recalculateOrderCounts);
+  app.get("/api/orders/live", (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Connection", "close");
+    return res.status(204).end();
+  });
   app.use("/api/orders", authMiddleware, ordersRoutes);
   app.post("/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrders);
   app.post("/api/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrders);

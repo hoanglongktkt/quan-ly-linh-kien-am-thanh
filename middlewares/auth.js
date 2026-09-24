@@ -11,10 +11,6 @@ export function authMiddleware(req, res, next) {
   let token = "";
   if (authHeader && authHeader.startsWith('Bearer ')) {
     token = authHeader.slice(7);
-  } else {
-    const pathOnly = String(req.originalUrl || req.path || "").split("?")[0];
-    const isLiveSse = req.method === "GET" && pathOnly.endsWith("/orders/live");
-    if (isLiveSse) token = String(req.query?.token || "").trim();
   }
   if (!token) {
     return res.status(401).json({ error: 'Không có token xác thực.' });

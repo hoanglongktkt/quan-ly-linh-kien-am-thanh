@@ -1387,7 +1387,7 @@ export default function App() {
 
     const refreshFromLocalDb = async () => {
       if (document.visibilityState === 'hidden') return;
-      // Khi màn Đơn hàng đang mount, OrderManager là chủ duy nhất của list/counter/SSE wake.
+      // Khi màn Đơn hàng đang mount, OrderManager là chủ duy nhất của list/counter polling.
       // Tránh App gọi thêm /orders/refresh ngay sau đó gây nghẽn connection lúc cold-start.
       if (activeTab === 'orders') return;
 

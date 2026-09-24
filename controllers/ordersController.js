@@ -794,13 +794,6 @@ export async function getOrderCounts(req, res) {
       cancelled: Number(counts.cancel_returns_cancelled ?? counts.cancelled) || 0,
       rts: Number(counts.cancel_returns_rts ?? counts.failed_delivery) || 0,
     };
-    console.log(
-      `[GET /api/orders/counter] shopId=${shopId || "(all)"}` +
-        ` shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} counts=`,
-      counts,
-      "counters=",
-      counters,
-    );
     return res.status(200).json({ success: true, counts, counters });
   } catch (error) {
     console.error(

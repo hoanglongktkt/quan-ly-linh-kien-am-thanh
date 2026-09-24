@@ -24050,6 +24050,12 @@ async function startServer() {
   app.post("/api/cleanup-shipped", authMiddleware, cleanupShipped);
   app.get("/api/cleanup-shipped", authMiddleware, getCleanupShippedStatus);
   app.post("/api/orders/recalculate-counts", authMiddleware, recalculateOrderCounts);
+  // Bundle cũ còn EventSource /live — trả 204 ngay, không JWT, không giữ socket 45s.
+  app.get("/api/orders/live", (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Connection", "close");
+    return res.status(204).end();
+  });
   app.use("/api/orders", authMiddleware, ordersRoutes);
   // Endpoint tạm: quét đơn thiếu mã VĐ / kẹt unprocessed → get_order_detail
   app.post("/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrdersRoute);
