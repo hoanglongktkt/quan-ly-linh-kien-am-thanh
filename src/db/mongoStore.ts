@@ -24,6 +24,7 @@ import {
   deleteProductsByIdsFromDisk,
   countProductsOnDisk,
   loadProductsPageFromDisk,
+  stampInventorySortFields,
   type InventoryListSort,
   loadProductByIdFromDisk,
   loadProductsByIdsFromDisk,
@@ -504,7 +505,7 @@ function toProductDocs(products: any[]): ProductDoc[] {
     if (!p || typeof p !== "object") continue;
     const id = String(p.id || "").trim();
     if (!id) continue;
-    const data = stringifyShopeeIdsDeep(p);
+    const data = stampInventorySortFields(stringifyShopeeIdsDeep(p));
     // Ép tường minh các field ID Shopee sang String trước khi ghi Mongo.
     if (data.shopeeItemId != null) data.shopeeItemId = toShopeeId(data.shopeeItemId) || String(data.shopeeItemId);
     if (data.shopeeModelId != null) data.shopeeModelId = toShopeeId(data.shopeeModelId) || String(data.shopeeModelId);
@@ -954,22 +955,55 @@ function buildProductListSearchFilter(search: string): Record<string, unknown> {
   };
 }
 
-function toSortNumber(expr: string) {
+function toSortNumber(expr: unknown) {
   return { $convert: { input: expr, to: "double", onError: 0, onNull: 0 } };
 }
 
-/** Biến thể con — cùng thứ tự ưu tiên với getProductChildren (children rồi children_models). */
+function arrayOrEmpty(path: string) {
+  return { $cond: [{ $isArray: path }, path, []] };
+}
+
+/** Phân loại: children, children_models, models, variations — mảng nào có phần tử thì dùng. */
 function inventoryChildListExpr() {
-  const children = { $cond: [{ $isArray: "$data.children" }, "$data.children", []] };
-  const models = { $cond: [{ $isArray: "$data.children_models" }, "$data.children_models", []] };
+  const children = arrayOrEmpty("$data.children");
+  const childModels = arrayOrEmpty("$data.children_models");
+  const models = arrayOrEmpty("$data.models");
+  const variations = arrayOrEmpty("$data.variations");
   return {
-    $cond: [{ $gt: [{ $size: children }, 0] }, children, models],
+    $switch: {
+      branches: [
+        { case: { $gt: [{ $size: children }, 0] }, then: children },
+        { case: { $gt: [{ $size: childModels }, 0] }, then: childModels },
+        { case: { $gt: [{ $size: models }, 0] }, then: models },
+        { case: { $gt: [{ $size: variations }, 0] }, then: variations },
+      ],
+      default: [],
+    },
   };
 }
 
+function variationPriceExpr(prefix: string) {
+  return toSortNumber({
+    $ifNull: [
+      `${prefix}.sellingPrice`,
+      { $ifNull: [`${prefix}.price`, `${prefix}.original_price`] },
+    ],
+  });
+}
+
+function variationStockExpr(prefix: string) {
+  return toSortNumber({
+    $ifNull: [
+      `${prefix}.stock`,
+      { $ifNull: [`${prefix}.current_stock`, `${prefix}.normal_stock`] },
+    ],
+  });
+}
+
 /**
- * Khóa sort khớp cột bảng Kho: tổng tồn các phân loại, hoặc trung bình (min+max)/2 giá bán.
- * Tính trên toàn collection rồi mới skip/limit — không sort trang hiện tại.
+ * sortPrice = giá thấp nhất của phân loại (hoặc giá root nếu sản phẩm đơn).
+ * sortStock = tổng tồn các phân loại (hoặc tồn root).
+ * Tính trên toàn collection, rồi mới skip/limit.
  */
 function inventorySortKeyExpr(sortBy: "stock" | "sellingPrice") {
   const children = inventoryChildListExpr();
@@ -980,16 +1014,8 @@ function inventorySortKeyExpr(sortBy: "stock" | "sellingPrice") {
         in: {
           $cond: [
             { $gt: [{ $size: "$$children" }, 0] },
-            {
-              $sum: {
-                $map: {
-                  input: "$$children",
-                  as: "c",
-                  in: toSortNumber("$$c.stock"),
-                },
-              },
-            },
-            toSortNumber("$data.stock"),
+            { $sum: { $map: { input: "$$children", as: "c", in: variationStockExpr("$$c") } } },
+            variationStockExpr("$data"),
           ],
         },
       },
@@ -1002,50 +1028,24 @@ function inventorySortKeyExpr(sortBy: "stock" | "sellingPrice") {
         $cond: [
           { $gt: [{ $size: "$$children" }, 0] },
           {
-            $let: {
-              vars: {
-                range: {
-                  $reduce: {
-                    input: "$$children",
-                    initialValue: { min: null, max: null },
-                    in: {
-                      $let: {
-                        vars: { price: toSortNumber("$$this.sellingPrice") },
-                        in: {
-                          min: {
-                            $cond: [
-                              {
-                                $or: [
-                                  { $eq: ["$$value.min", null] },
-                                  { $lt: ["$$price", "$$value.min"] },
-                                ],
-                              },
-                              "$$price",
-                              "$$value.min",
-                            ],
-                          },
-                          max: {
-                            $cond: [
-                              {
-                                $or: [
-                                  { $eq: ["$$value.max", null] },
-                                  { $gt: ["$$price", "$$value.max"] },
-                                ],
-                              },
-                              "$$price",
-                              "$$value.max",
-                            ],
-                          },
-                        },
-                      },
-                    },
+            $reduce: {
+              input: "$$children",
+              initialValue: null,
+              in: {
+                $let: {
+                  vars: { price: variationPriceExpr("$$this") },
+                  in: {
+                    $cond: [
+                      { $or: [{ $eq: ["$$value", null] }, { $lt: ["$$price", "$$value"] }] },
+                      "$$price",
+                      "$$value",
+                    ],
                   },
                 },
               },
-              in: { $divide: [{ $add: ["$$range.min", "$$range.max"] }, 2] },
             },
           },
-          toSortNumber("$data.sellingPrice"),
+          variationPriceExpr("$data"),
         ],
       },
     },
@@ -1101,11 +1101,21 @@ export async function loadProductsPageFromStore(
     // Sort toàn bộ kết quả khớp filter, rồi mới skip/limit.
     docs = await ProductModel.aggregate([
       { $match: filter },
-      { $addFields: { _inventorySortKey: inventorySortKeyExpr(listSort.sortBy) } },
-      { $sort: { _inventorySortKey: listSort.order === "asc" ? 1 : -1, _id: 1 } },
+      {
+        $addFields: {
+          sortPrice: inventorySortKeyExpr("sellingPrice"),
+          sortStock: inventorySortKeyExpr("stock"),
+        },
+      },
+      {
+        $sort:
+          listSort.sortBy === "stock"
+            ? { sortStock: listSort.order === "asc" ? 1 : -1, _id: 1 }
+            : { sortPrice: listSort.order === "asc" ? 1 : -1, _id: 1 },
+      },
       { $skip: skip },
       { $limit: safeSize },
-      { $project: { _inventorySortKey: 0 } },
+      { $project: { sortPrice: 0, sortStock: 0 } },
     ])
       .allowDiskUse(true)
       .option({ maxTimeMS: PAGE_MAX_MS });

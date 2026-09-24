@@ -77344,7 +77344,7 @@ function readProductsFromDisk() {
 function writeProductsToDiskSync(products) {
   ensureDataDir();
   const file = getProductsDiskPath();
-  const list = (Array.isArray(products) ? products : []).map(normalizeProduct).filter(Boolean);
+  const list = (Array.isArray(products) ? products : []).map(normalizeProduct).filter(Boolean).map((p) => stampInventorySortFields(p));
   const tmp = `${file}.tmp.${process.pid}`;
   import_fs3.default.writeFileSync(tmp, JSON.stringify(list), "utf-8");
   import_fs3.default.renameSync(tmp, file);
@@ -77384,34 +77384,45 @@ async function deleteProductsByIdsFromDisk(ids) {
 function countProductsOnDisk() {
   return readProductsFromDisk().length;
 }
-function inventorySortValue(product, sortBy) {
-  const children = Array.isArray(product?.children) && product.children.length > 0 ? product.children : Array.isArray(product?.children_models) && product.children_models.length > 0 ? product.children_models : [];
-  if (sortBy === "stock") {
-    if (children.length > 0) {
-      let sum = 0;
-      for (let i2 = 0; i2 < children.length; i2++) {
-        const n3 = Number(children[i2]?.stock);
-        if (Number.isFinite(n3)) sum += n3;
-      }
-      return sum;
-    }
-    const n2 = Number(product?.stock);
-    return Number.isFinite(n2) ? n2 : 0;
+function variationRows(product) {
+  for (const key of ["children", "children_models", "models", "variations"]) {
+    const list = product?.[key];
+    if (Array.isArray(list) && list.length > 0) return list;
   }
-  if (children.length > 0) {
-    let min = Infinity;
-    let max = -Infinity;
-    for (let i2 = 0; i2 < children.length; i2++) {
-      const n2 = Number(children[i2]?.sellingPrice);
-      const price = Number.isFinite(n2) ? n2 : 0;
-      if (price < min) min = price;
-      if (price > max) max = price;
-    }
-    if (!Number.isFinite(min) || !Number.isFinite(max)) return 0;
-    return (min + max) / 2;
-  }
-  const n = Number(product?.sellingPrice);
+  return [];
+}
+function readPrice(row) {
+  const n = Number(row?.sellingPrice ?? row?.price ?? row?.original_price);
   return Number.isFinite(n) ? n : 0;
+}
+function readStock(row) {
+  const n = Number(row?.stock ?? row?.current_stock ?? row?.normal_stock);
+  return Number.isFinite(n) ? n : 0;
+}
+function inventorySortMetrics(product) {
+  const rows = variationRows(product);
+  if (rows.length === 0) {
+    return { min_price: readPrice(product), total_stock: readStock(product) };
+  }
+  let min = Infinity;
+  let stock = 0;
+  for (let i2 = 0; i2 < rows.length; i2++) {
+    const price = readPrice(rows[i2]);
+    if (price < min) min = price;
+    stock += readStock(rows[i2]);
+  }
+  return { min_price: Number.isFinite(min) ? min : 0, total_stock: stock };
+}
+function stampInventorySortFields(product) {
+  if (!product || typeof product !== "object") return product;
+  const metrics = inventorySortMetrics(product);
+  product.min_price = metrics.min_price;
+  product.total_stock = metrics.total_stock;
+  return product;
+}
+function inventorySortValue(product, sortBy) {
+  const metrics = inventorySortMetrics(product);
+  return sortBy === "stock" ? metrics.total_stock : metrics.min_price;
 }
 function normalizeInventoryListSort(sort) {
   const sortBy = sort?.sortBy === "stock" || sort?.sortBy === "sellingPrice" ? sort.sortBy : "";
@@ -77991,7 +78002,7 @@ function toProductDocs(products) {
     if (!p || typeof p !== "object") continue;
     const id = String(p.id || "").trim();
     if (!id) continue;
-    const data = stringifyShopeeIdsDeep(p);
+    const data = stampInventorySortFields(stringifyShopeeIdsDeep(p));
     if (data.shopeeItemId != null) data.shopeeItemId = toShopeeId(data.shopeeItemId) || String(data.shopeeItemId);
     if (data.shopeeModelId != null) data.shopeeModelId = toShopeeId(data.shopeeModelId) || String(data.shopeeModelId);
     if (data.shopeeId != null) data.shopeeId = String(data.shopeeId);
@@ -78361,12 +78372,41 @@ function buildProductListSearchFilter(search) {
 function toSortNumber(expr) {
   return { $convert: { input: expr, to: "double", onError: 0, onNull: 0 } };
 }
+function arrayOrEmpty(path25) {
+  return { $cond: [{ $isArray: path25 }, path25, []] };
+}
 function inventoryChildListExpr() {
-  const children = { $cond: [{ $isArray: "$data.children" }, "$data.children", []] };
-  const models = { $cond: [{ $isArray: "$data.children_models" }, "$data.children_models", []] };
+  const children = arrayOrEmpty("$data.children");
+  const childModels = arrayOrEmpty("$data.children_models");
+  const models = arrayOrEmpty("$data.models");
+  const variations = arrayOrEmpty("$data.variations");
   return {
-    $cond: [{ $gt: [{ $size: children }, 0] }, children, models]
+    $switch: {
+      branches: [
+        { case: { $gt: [{ $size: children }, 0] }, then: children },
+        { case: { $gt: [{ $size: childModels }, 0] }, then: childModels },
+        { case: { $gt: [{ $size: models }, 0] }, then: models },
+        { case: { $gt: [{ $size: variations }, 0] }, then: variations }
+      ],
+      default: []
+    }
   };
+}
+function variationPriceExpr(prefix) {
+  return toSortNumber({
+    $ifNull: [
+      `${prefix}.sellingPrice`,
+      { $ifNull: [`${prefix}.price`, `${prefix}.original_price`] }
+    ]
+  });
+}
+function variationStockExpr(prefix) {
+  return toSortNumber({
+    $ifNull: [
+      `${prefix}.stock`,
+      { $ifNull: [`${prefix}.current_stock`, `${prefix}.normal_stock`] }
+    ]
+  });
 }
 function inventorySortKeyExpr(sortBy) {
   const children = inventoryChildListExpr();
@@ -78377,16 +78417,8 @@ function inventorySortKeyExpr(sortBy) {
         in: {
           $cond: [
             { $gt: [{ $size: "$$children" }, 0] },
-            {
-              $sum: {
-                $map: {
-                  input: "$$children",
-                  as: "c",
-                  in: toSortNumber("$$c.stock")
-                }
-              }
-            },
-            toSortNumber("$data.stock")
+            { $sum: { $map: { input: "$$children", as: "c", in: variationStockExpr("$$c") } } },
+            variationStockExpr("$data")
           ]
         }
       }
@@ -78399,50 +78431,24 @@ function inventorySortKeyExpr(sortBy) {
         $cond: [
           { $gt: [{ $size: "$$children" }, 0] },
           {
-            $let: {
-              vars: {
-                range: {
-                  $reduce: {
-                    input: "$$children",
-                    initialValue: { min: null, max: null },
-                    in: {
-                      $let: {
-                        vars: { price: toSortNumber("$$this.sellingPrice") },
-                        in: {
-                          min: {
-                            $cond: [
-                              {
-                                $or: [
-                                  { $eq: ["$$value.min", null] },
-                                  { $lt: ["$$price", "$$value.min"] }
-                                ]
-                              },
-                              "$$price",
-                              "$$value.min"
-                            ]
-                          },
-                          max: {
-                            $cond: [
-                              {
-                                $or: [
-                                  { $eq: ["$$value.max", null] },
-                                  { $gt: ["$$price", "$$value.max"] }
-                                ]
-                              },
-                              "$$price",
-                              "$$value.max"
-                            ]
-                          }
-                        }
-                      }
-                    }
+            $reduce: {
+              input: "$$children",
+              initialValue: null,
+              in: {
+                $let: {
+                  vars: { price: variationPriceExpr("$$this") },
+                  in: {
+                    $cond: [
+                      { $or: [{ $eq: ["$$value", null] }, { $lt: ["$$price", "$$value"] }] },
+                      "$$price",
+                      "$$value"
+                    ]
                   }
                 }
-              },
-              in: { $divide: [{ $add: ["$$range.min", "$$range.max"] }, 2] }
+              }
             }
           },
-          toSortNumber("$data.sellingPrice")
+          variationPriceExpr("$data")
         ]
       }
     }
@@ -78483,11 +78489,18 @@ async function loadProductsPageFromStore(page = 1, pageSize = 50, search = "", s
   if (listSort) {
     docs = await ProductModel.aggregate([
       { $match: filter2 },
-      { $addFields: { _inventorySortKey: inventorySortKeyExpr(listSort.sortBy) } },
-      { $sort: { _inventorySortKey: listSort.order === "asc" ? 1 : -1, _id: 1 } },
+      {
+        $addFields: {
+          sortPrice: inventorySortKeyExpr("sellingPrice"),
+          sortStock: inventorySortKeyExpr("stock")
+        }
+      },
+      {
+        $sort: listSort.sortBy === "stock" ? { sortStock: listSort.order === "asc" ? 1 : -1, _id: 1 } : { sortPrice: listSort.order === "asc" ? 1 : -1, _id: 1 }
+      },
       { $skip: skip },
       { $limit: safeSize },
-      { $project: { _inventorySortKey: 0 } }
+      { $project: { sortPrice: 0, sortStock: 0 } }
     ]).allowDiskUse(true).option({ maxTimeMS: PAGE_MAX_MS });
   } else {
     docs = await ProductModel.find(filter2).sort({ _id: 1 }).skip(skip).limit(safeSize).maxTimeMS(PAGE_MAX_MS).lean();

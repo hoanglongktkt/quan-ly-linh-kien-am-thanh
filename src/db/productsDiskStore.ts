@@ -101,7 +101,8 @@ function writeProductsToDiskSync(products: any[]): void {
   const file = getProductsDiskPath();
   const list = (Array.isArray(products) ? products : [])
     .map(normalizeProduct)
-    .filter(Boolean) as any[];
+    .filter(Boolean)
+    .map((p) => stampInventorySortFields(p)) as any[];
   const tmp = `${file}.tmp.${process.pid}`;
   fs.writeFileSync(tmp, JSON.stringify(list), "utf-8");
   fs.renameSync(tmp, file);
@@ -153,40 +154,53 @@ export type InventoryListSort = {
   order?: string;
 };
 
-/** Khớp cột Tồn kho / Giá bán trên bảng: tổng tồn con, hoặc trung bình min–max giá bán. */
-export function inventorySortValue(product: any, sortBy: "stock" | "sellingPrice"): number {
-  const children =
-    Array.isArray(product?.children) && product.children.length > 0
-      ? product.children
-      : Array.isArray(product?.children_models) && product.children_models.length > 0
-        ? product.children_models
-        : [];
-  if (sortBy === "stock") {
-    if (children.length > 0) {
-      let sum = 0;
-      for (let i = 0; i < children.length; i++) {
-        const n = Number(children[i]?.stock);
-        if (Number.isFinite(n)) sum += n;
-      }
-      return sum;
-    }
-    const n = Number(product?.stock);
-    return Number.isFinite(n) ? n : 0;
+function variationRows(product: any): any[] {
+  for (const key of ["children", "children_models", "models", "variations"] as const) {
+    const list = product?.[key];
+    if (Array.isArray(list) && list.length > 0) return list;
   }
-  if (children.length > 0) {
-    let min = Infinity;
-    let max = -Infinity;
-    for (let i = 0; i < children.length; i++) {
-      const n = Number(children[i]?.sellingPrice);
-      const price = Number.isFinite(n) ? n : 0;
-      if (price < min) min = price;
-      if (price > max) max = price;
-    }
-    if (!Number.isFinite(min) || !Number.isFinite(max)) return 0;
-    return (min + max) / 2;
-  }
-  const n = Number(product?.sellingPrice);
+  return [];
+}
+
+function readPrice(row: any): number {
+  const n = Number(row?.sellingPrice ?? row?.price ?? row?.original_price);
   return Number.isFinite(n) ? n : 0;
+}
+
+function readStock(row: any): number {
+  const n = Number(row?.stock ?? row?.current_stock ?? row?.normal_stock);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** Giá thấp nhất và tổng tồn — sản phẩm đơn lấy root, có phân loại lấy trong mảng biến thể. */
+export function inventorySortMetrics(product: any): { min_price: number; total_stock: number } {
+  const rows = variationRows(product);
+  if (rows.length === 0) {
+    return { min_price: readPrice(product), total_stock: readStock(product) };
+  }
+  let min = Infinity;
+  let stock = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const price = readPrice(rows[i]);
+    if (price < min) min = price;
+    stock += readStock(rows[i]);
+  }
+  return { min_price: Number.isFinite(min) ? min : 0, total_stock: stock };
+}
+
+/** Ghi min_price / total_stock lên root trước khi lưu, để sort không phụ thuộc cấu trúc phân loại. */
+export function stampInventorySortFields(product: any): any {
+  if (!product || typeof product !== "object") return product;
+  const metrics = inventorySortMetrics(product);
+  product.min_price = metrics.min_price;
+  product.total_stock = metrics.total_stock;
+  return product;
+}
+
+/** Khớp cột Tồn kho / Giá bán: tổng tồn phân loại, hoặc giá bán thấp nhất. */
+export function inventorySortValue(product: any, sortBy: "stock" | "sellingPrice"): number {
+  const metrics = inventorySortMetrics(product);
+  return sortBy === "stock" ? metrics.total_stock : metrics.min_price;
 }
 
 function normalizeInventoryListSort(
