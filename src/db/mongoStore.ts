@@ -959,26 +959,41 @@ function toSortNumber(expr: unknown) {
   return { $convert: { input: expr, to: "double", onError: 0, onNull: 0 } };
 }
 
-function arrayOrEmpty(path: string) {
-  return { $cond: [{ $isArray: path }, path, []] };
+/** Chỉ coi là mảng khi $isArray đúng — $size trên object/missing làm Mongo hủy query. */
+function safeArrayExpr(path: string) {
+  return { $cond: [{ $eq: [{ $type: path }, "array"] }, path, []] };
+}
+
+function arrayLengthExpr(path: string) {
+  return { $size: safeArrayExpr(path) };
 }
 
 /** Phân loại: children, children_models, models, variations — mảng nào có phần tử thì dùng. */
 function inventoryChildListExpr() {
-  const children = arrayOrEmpty("$data.children");
-  const childModels = arrayOrEmpty("$data.children_models");
-  const models = arrayOrEmpty("$data.models");
-  const variations = arrayOrEmpty("$data.variations");
+  const children = safeArrayExpr("$data.children");
+  const childModels = safeArrayExpr("$data.children_models");
+  const models = safeArrayExpr("$data.models");
+  const variations = safeArrayExpr("$data.variations");
   return {
-    $switch: {
-      branches: [
-        { case: { $gt: [{ $size: children }, 0] }, then: children },
-        { case: { $gt: [{ $size: childModels }, 0] }, then: childModels },
-        { case: { $gt: [{ $size: models }, 0] }, then: models },
-        { case: { $gt: [{ $size: variations }, 0] }, then: variations },
-      ],
-      default: [],
-    },
+    $cond: [
+      { $gt: [arrayLengthExpr("$data.children"), 0] },
+      children,
+      {
+        $cond: [
+          { $gt: [arrayLengthExpr("$data.children_models"), 0] },
+          childModels,
+          {
+            $cond: [
+              { $gt: [arrayLengthExpr("$data.models"), 0] },
+              models,
+              {
+                $cond: [{ $gt: [arrayLengthExpr("$data.variations"), 0] }, variations, []],
+              },
+            ],
+          },
+        ],
+      },
+    ],
   };
 }
 
@@ -1099,26 +1114,40 @@ export async function loadProductsPageFromStore(
   let docs: Array<{ _id?: any; data?: any; sku?: string | null; medicine_id?: string | null }>;
   if (listSort) {
     // Sort toàn bộ kết quả khớp filter, rồi mới skip/limit.
-    docs = await ProductModel.aggregate([
-      { $match: filter },
-      {
-        $addFields: {
-          sortPrice: inventorySortKeyExpr("sellingPrice"),
-          sortStock: inventorySortKeyExpr("stock"),
+    // Pipeline lỗi không được làm 503 cả app — fallback trang không sort.
+    try {
+      docs = await ProductModel.aggregate([
+        { $match: filter },
+        {
+          $addFields: {
+            sortPrice: inventorySortKeyExpr("sellingPrice"),
+            sortStock: inventorySortKeyExpr("stock"),
+          },
         },
-      },
-      {
-        $sort:
-          listSort.sortBy === "stock"
-            ? { sortStock: listSort.order === "asc" ? 1 : -1, _id: 1 }
-            : { sortPrice: listSort.order === "asc" ? 1 : -1, _id: 1 },
-      },
-      { $skip: skip },
-      { $limit: safeSize },
-      { $project: { sortPrice: 0, sortStock: 0 } },
-    ])
-      .allowDiskUse(true)
-      .option({ maxTimeMS: PAGE_MAX_MS });
+        {
+          $sort:
+            listSort.sortBy === "stock"
+              ? { sortStock: listSort.order === "asc" ? 1 : -1, _id: 1 }
+              : { sortPrice: listSort.order === "asc" ? 1 : -1, _id: 1 },
+        },
+        { $skip: skip },
+        { $limit: safeSize },
+        { $project: { sortPrice: 0, sortStock: 0 } },
+      ])
+        .allowDiskUse(true)
+        .option({ maxTimeMS: PAGE_MAX_MS });
+    } catch (sortErr) {
+      console.warn(
+        "[MongoDB] inventory sort fallback:",
+        sortErr instanceof Error ? sortErr.message : sortErr,
+      );
+      docs = await ProductModel.find(filter)
+        .sort({ _id: 1 })
+        .skip(skip)
+        .limit(safeSize)
+        .maxTimeMS(PAGE_MAX_MS)
+        .lean();
+    }
   } else {
     docs = await ProductModel.find(filter)
       .sort({ _id: 1 })

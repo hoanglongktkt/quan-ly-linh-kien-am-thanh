@@ -77415,9 +77415,13 @@ function inventorySortMetrics(product) {
 }
 function stampInventorySortFields(product) {
   if (!product || typeof product !== "object") return product;
-  const metrics = inventorySortMetrics(product);
-  product.min_price = metrics.min_price;
-  product.total_stock = metrics.total_stock;
+  try {
+    const metrics = inventorySortMetrics(product);
+    product.min_price = metrics.min_price;
+    product.total_stock = metrics.total_stock;
+  } catch (err) {
+    console.warn("[Inventory Sort] stamp failed:", err instanceof Error ? err.message : err);
+  }
   return product;
 }
 function inventorySortValue(product, sortBy) {
@@ -78372,24 +78376,37 @@ function buildProductListSearchFilter(search) {
 function toSortNumber(expr) {
   return { $convert: { input: expr, to: "double", onError: 0, onNull: 0 } };
 }
-function arrayOrEmpty(path25) {
-  return { $cond: [{ $isArray: path25 }, path25, []] };
+function safeArrayExpr(path25) {
+  return { $cond: [{ $eq: [{ $type: path25 }, "array"] }, path25, []] };
+}
+function arrayLengthExpr(path25) {
+  return { $size: safeArrayExpr(path25) };
 }
 function inventoryChildListExpr() {
-  const children = arrayOrEmpty("$data.children");
-  const childModels = arrayOrEmpty("$data.children_models");
-  const models = arrayOrEmpty("$data.models");
-  const variations = arrayOrEmpty("$data.variations");
+  const children = safeArrayExpr("$data.children");
+  const childModels = safeArrayExpr("$data.children_models");
+  const models = safeArrayExpr("$data.models");
+  const variations = safeArrayExpr("$data.variations");
   return {
-    $switch: {
-      branches: [
-        { case: { $gt: [{ $size: children }, 0] }, then: children },
-        { case: { $gt: [{ $size: childModels }, 0] }, then: childModels },
-        { case: { $gt: [{ $size: models }, 0] }, then: models },
-        { case: { $gt: [{ $size: variations }, 0] }, then: variations }
-      ],
-      default: []
-    }
+    $cond: [
+      { $gt: [arrayLengthExpr("$data.children"), 0] },
+      children,
+      {
+        $cond: [
+          { $gt: [arrayLengthExpr("$data.children_models"), 0] },
+          childModels,
+          {
+            $cond: [
+              { $gt: [arrayLengthExpr("$data.models"), 0] },
+              models,
+              {
+                $cond: [{ $gt: [arrayLengthExpr("$data.variations"), 0] }, variations, []]
+              }
+            ]
+          }
+        ]
+      }
+    ]
   };
 }
 function variationPriceExpr(prefix) {
@@ -78487,21 +78504,29 @@ async function loadProductsPageFromStore(page = 1, pageSize = 50, search = "", s
   const skip = (currentPage - 1) * safeSize;
   let docs;
   if (listSort) {
-    docs = await ProductModel.aggregate([
-      { $match: filter2 },
-      {
-        $addFields: {
-          sortPrice: inventorySortKeyExpr("sellingPrice"),
-          sortStock: inventorySortKeyExpr("stock")
-        }
-      },
-      {
-        $sort: listSort.sortBy === "stock" ? { sortStock: listSort.order === "asc" ? 1 : -1, _id: 1 } : { sortPrice: listSort.order === "asc" ? 1 : -1, _id: 1 }
-      },
-      { $skip: skip },
-      { $limit: safeSize },
-      { $project: { sortPrice: 0, sortStock: 0 } }
-    ]).allowDiskUse(true).option({ maxTimeMS: PAGE_MAX_MS });
+    try {
+      docs = await ProductModel.aggregate([
+        { $match: filter2 },
+        {
+          $addFields: {
+            sortPrice: inventorySortKeyExpr("sellingPrice"),
+            sortStock: inventorySortKeyExpr("stock")
+          }
+        },
+        {
+          $sort: listSort.sortBy === "stock" ? { sortStock: listSort.order === "asc" ? 1 : -1, _id: 1 } : { sortPrice: listSort.order === "asc" ? 1 : -1, _id: 1 }
+        },
+        { $skip: skip },
+        { $limit: safeSize },
+        { $project: { sortPrice: 0, sortStock: 0 } }
+      ]).allowDiskUse(true).option({ maxTimeMS: PAGE_MAX_MS });
+    } catch (sortErr) {
+      console.warn(
+        "[MongoDB] inventory sort fallback:",
+        sortErr instanceof Error ? sortErr.message : sortErr
+      );
+      docs = await ProductModel.find(filter2).sort({ _id: 1 }).skip(skip).limit(safeSize).maxTimeMS(PAGE_MAX_MS).lean();
+    }
   } else {
     docs = await ProductModel.find(filter2).sort({ _id: 1 }).skip(skip).limit(safeSize).maxTimeMS(PAGE_MAX_MS).lean();
   }

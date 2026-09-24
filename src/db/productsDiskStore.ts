@@ -191,9 +191,13 @@ export function inventorySortMetrics(product: any): { min_price: number; total_s
 /** Ghi min_price / total_stock lên root trước khi lưu, để sort không phụ thuộc cấu trúc phân loại. */
 export function stampInventorySortFields(product: any): any {
   if (!product || typeof product !== "object") return product;
-  const metrics = inventorySortMetrics(product);
-  product.min_price = metrics.min_price;
-  product.total_stock = metrics.total_stock;
+  try {
+    const metrics = inventorySortMetrics(product);
+    product.min_price = metrics.min_price;
+    product.total_stock = metrics.total_stock;
+  } catch (err) {
+    console.warn("[Inventory Sort] stamp failed:", err instanceof Error ? err.message : err);
+  }
   return product;
 }
 
