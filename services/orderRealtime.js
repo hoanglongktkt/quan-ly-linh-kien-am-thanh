@@ -3,7 +3,9 @@
  * Emit sau khi Mongo upsert thành công; frontend EventSource lắng nghe `new_order`.
  */
 const MAX_SSE_CLIENTS = 20;
-const HEARTBEAT_MS = 15_000;
+const HEARTBEAT_MS = 10_000;
+/** LiteSpeed/proxy giữ chunk nhỏ trong buffer — đệm ~2KB lúc mở để đẩy header + ping đầu tiên ra ngay. */
+const SSE_PADDING = `:${" ".repeat(2048)}\n\n`;
 
 /** @type {Set<import("express").Response>} */
 const clients = new Set();
@@ -111,11 +113,23 @@ export function streamOrderLive(req, res) {
   }
 
   res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate, no-transform");
+  res.setHeader("Content-Encoding", "identity");
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
+  const socket = req.socket;
+  if (socket) {
+    try {
+      socket.setTimeout(0);
+      socket.setNoDelay(true);
+      socket.setKeepAlive(true);
+    } catch {
+      /* ignore */
+    }
+  }
   if (typeof res.flushHeaders === "function") res.flushHeaders();
 
+  res.write(`retry: 3000\n${SSE_PADDING}`);
   res.write(`event: ping\ndata: ${JSON.stringify({ ok: true, at: Date.now() })}\n\n`);
   clients.add(res);
   console.log(`[SSE] pid=${process.pid} client CONNECTED — tổng=${clients.size}`);

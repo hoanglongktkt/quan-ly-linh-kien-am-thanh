@@ -18,6 +18,15 @@ import { emitNewOrder, emitOrderUpdated } from "./orderRealtime.js";
 const NEW_ORDER_FLUSH_MS = 300;
 /** Update chỉ cần refetch ngầm — gom 3s để sync lớn không spam SSE. */
 const UPDATED_FLUSH_MS = 3_000;
+/** Đổi trạng thái (UNPAID → READY_TO_SHIP...) làm đơn nhảy tab — bắn nhanh như đơn mới. */
+const STATUS_FLUSH_MS = 300;
+/** Mongo không ghi field $set trùng giá trị vào updatedFields → có key = trạng thái thật sự đổi. */
+const STATUS_FIELDS = new Set([
+  "status",
+  "shopee_order_status",
+  "data.status",
+  "data.shopee_order_status",
+]);
 /**
  * Cron heal bulkWrite hàng trăm đơn → hàng trăm event update liên tiếp. Nếu giữ
  * nguyên cửa sổ 3s thì mỗi client phải refetch 20 lần/phút suốt phiên heal. Khi
@@ -56,7 +65,10 @@ let totalUpdated = 0;
 const pendingNew = new Set();
 /** @type {Set<string>} */
 const pendingUpdated = new Set();
+/** @type {Set<string>} */
+const pendingStatus = new Set();
 let newFlushTimer = null;
+let statusFlushTimer = null;
 let updatedFlushTimer = null;
 let updatedFlushWindowMs = UPDATED_FLUSH_MS;
 let lastUpdatedFlushAt = 0;
@@ -124,6 +136,43 @@ function flushUpdated() {
   );
 }
 
+function flushStatus() {
+  statusFlushTimer = null;
+  if (pendingStatus.size === 0) return;
+  const orderSns = [...pendingStatus];
+  pendingStatus.clear();
+  totalUpdated += orderSns.length;
+  invalidateLocalCaches();
+  emitOrderUpdated({ orderSns, count: orderSns.length });
+  console.log(
+    `[OrderChangeStream] pid=${process.pid} order_updated(status) n=${orderSns.length}` +
+      ` sns=${orderSns.slice(0, 5).join(",")}`,
+  );
+}
+
+function scheduleStatusFlush() {
+  if (pendingStatus.size >= MAX_BUFFERED_SNS) {
+    if (statusFlushTimer) {
+      clearTimeout(statusFlushTimer);
+      statusFlushTimer = null;
+    }
+    flushStatus();
+    return;
+  }
+  if (statusFlushTimer) return;
+  statusFlushTimer = setTimeout(flushStatus, STATUS_FLUSH_MS);
+  if (typeof statusFlushTimer.unref === "function") statusFlushTimer.unref();
+}
+
+function hasStatusChange(change) {
+  const fields = change?.updateDescription?.updatedFields;
+  if (!fields || typeof fields !== "object") return false;
+  for (const key of Object.keys(fields)) {
+    if (STATUS_FIELDS.has(key)) return true;
+  }
+  return false;
+}
+
 function scheduleNewFlush() {
   if (pendingNew.size >= MAX_BUFFERED_SNS) {
     if (newFlushTimer) {
@@ -168,10 +217,18 @@ function handleChange(change) {
     pendingNew.add(orderSn);
     // Đơn vừa insert không cần bắn thêm order_updated.
     pendingUpdated.delete(orderSn);
+    pendingStatus.delete(orderSn);
     scheduleNewFlush();
     return;
   }
   if (pendingNew.has(orderSn)) return;
+  if (change.operationType === "update" && hasStatusChange(change)) {
+    pendingStatus.add(orderSn);
+    pendingUpdated.delete(orderSn);
+    scheduleStatusFlush();
+    return;
+  }
+  if (pendingStatus.has(orderSn)) return;
   pendingUpdated.add(orderSn);
   scheduleUpdatedFlush();
 }
@@ -345,8 +402,13 @@ export function stopOrderChangeStream() {
     clearTimeout(updatedFlushTimer);
     updatedFlushTimer = null;
   }
+  if (statusFlushTimer) {
+    clearTimeout(statusFlushTimer);
+    statusFlushTimer = null;
+  }
   pendingNew.clear();
   pendingUpdated.clear();
+  pendingStatus.clear();
   updatedFlushWindowMs = UPDATED_FLUSH_MS;
   lastUpdatedFlushAt = 0;
   closeCurrentStream();

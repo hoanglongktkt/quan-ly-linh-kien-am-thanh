@@ -50,6 +50,11 @@ SetEnv SHOPEE_PARTNER_KEY shpk446c744962586c74506e486e7a4d4c676d527671496e447747
   Header always set Access-Control-Allow-Credentials "true" env=CORS
 </IfModule>
 
+# SSE đơn mới — cấm nén/buffer, nếu không event bị giữ lại không tới trình duyệt
+<IfModule mod_setenvif.c>
+  SetEnvIf Request_URI "^/api/orders/live" no-gzip=1 dont-vary=1
+</IfModule>
+
 # React SPA — F5 / deep link (bổ sung khi Apache phục vụ static từ dist/)
 # PDF vận đơn: KHÔNG phục vụ static từ public/prints (dễ 0 bytes / màn trắng).
 # Mọi /prints|/labels|/api/*/labels do Node (Passenger) xử lý với Content-Type application/pdf.

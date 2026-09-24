@@ -1166,13 +1166,35 @@ export default function OrderManager({
   const [datePreset, setDatePreset] = useState<OrderDatePreset>('30d');
   const [customStartDate, setCustomStartDate] = useState(() => defaultCustomDateInputs().start);
   const [customEndDate, setCustomEndDate] = useState(() => defaultCustomDateInputs().end);
+  /** Tab mở qua 0h: preset tương đối (30d/7d/tháng) phải trượt endDate sang hôm nay, không thì lọc mất đơn mới. */
+  const [dayKey, setDayKey] = useState(() => new Date().toDateString());
+  useEffect(() => {
+    const checkDay = () => {
+      const next = new Date().toDateString();
+      setDayKey((prev) => (prev === next ? prev : next));
+    };
+    const timer = window.setInterval(checkDay, 60_000);
+    document.addEventListener('visibilitychange', checkDay);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', checkDay);
+    };
+  }, []);
   const orderDateRange = useMemo(
     () => resolveOrderDateRange(datePreset, customStartDate, customEndDate),
-    [datePreset, customStartDate, customEndDate],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [datePreset, customStartDate, customEndDate, dayKey],
   );
   const dateRangeKey = `${orderDateRange.startDate}|${orderDateRange.endDate}`;
   const dateRangeRef = useRef(orderDateRange);
   dateRangeRef.current = orderDateRange;
+  const datePresetRef = useRef(datePreset);
+  datePresetRef.current = datePreset;
+  /** Range tại thời điểm gọi API — không chờ re-render khi vừa qua 0h. */
+  const getLiveDateRange = useCallback(() => {
+    if (datePresetRef.current === 'custom') return dateRangeRef.current;
+    return resolveOrderDateRange(datePresetRef.current);
+  }, []);
   /** Primitive SSOT cho useEffect fetch — không đưa object shops/filters/dateRange vào deps. */
   const ordersFetchKey = [shopIdsKey, dateRangeKey, activeSubTab, listFetchKind].join('::');
   const shopsBootRef = useRef(false);
@@ -1203,7 +1225,7 @@ export default function OrderManager({
   const fetchOrdersWithShop = useCallback(
     (opts?: Parameters<NonNullable<OrderManagerProps['onFetchOrders']>>[0]) => {
       const shopIds = shopScopeRef.current.shopIds;
-      const range = dateRangeRef.current;
+      const range = getLiveDateRange();
       // Chỉ tab Chờ lấy hàng chưa xử lý mới xin server sort gom nhóm.
       const groupPicking =
         smartPickSortRef.current && String(opts?.tab || '') === 'unprocessed';
@@ -1322,7 +1344,7 @@ export default function OrderManager({
     if (!token) return null;
     if (opts?.signal?.aborted) return null;
     const shopIds = shopScopeRef.current.shopIds;
-    const range = dateRangeRef.current;
+    const range = getLiveDateRange();
     const flightKey = `${shopIds.join(',')}|${range.startDate}|${range.endDate}`;
     const now = Date.now();
     const force = opts?.force === true;
@@ -1471,7 +1493,7 @@ export default function OrderManager({
     setFulfillmentProductsLoading(true);
     try {
       const shopIds = shopScopeRef.current.shopIds;
-      const range = dateRangeRef.current;
+      const range = getLiveDateRange();
       const params = new URLSearchParams();
       params.set('t', String(Date.now()));
       if (shopIds.length === 1) params.set('shop_id', shopIds[0]);
@@ -1617,7 +1639,7 @@ export default function OrderManager({
       const nextAll = Number(counts.all) || 0;
       const nextUnprocessed = Number(counts.unprocessed) || 0;
       const shopIds = shopScopeRef.current.shopIds;
-      const range = dateRangeRef.current;
+      const range = getLiveDateRange();
       const scopeKey = `${shopIds.join(',')}|${range.startDate || ''}|${range.endDate || ''}`;
       if (prevCounterScopeRef.current !== scopeKey) {
         prevCounterScopeRef.current = scopeKey;

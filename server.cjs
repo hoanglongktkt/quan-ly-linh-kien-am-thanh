@@ -116540,7 +116540,10 @@ var dbReady_default = dbReadyMiddleware;
 
 // services/orderRealtime.js
 var MAX_SSE_CLIENTS = 20;
-var HEARTBEAT_MS = 15e3;
+var HEARTBEAT_MS = 1e4;
+var SSE_PADDING = `:${" ".repeat(2048)}
+
+`;
 var clients = /* @__PURE__ */ new Set();
 var lastNewOrderAt = 0;
 function getOrderRealtimeStats() {
@@ -116615,10 +116618,22 @@ function streamOrderLive(req, res) {
     }
   }
   res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate, no-transform");
+  res.setHeader("Content-Encoding", "identity");
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
+  const socket = req.socket;
+  if (socket) {
+    try {
+      socket.setTimeout(0);
+      socket.setNoDelay(true);
+      socket.setKeepAlive(true);
+    } catch {
+    }
+  }
   if (typeof res.flushHeaders === "function") res.flushHeaders();
+  res.write(`retry: 3000
+${SSE_PADDING}`);
   res.write(`event: ping
 data: ${JSON.stringify({ ok: true, at: Date.now() })}
 
@@ -131248,6 +131263,13 @@ init_appPaths();
 var import_mongoose7 = __toESM(require("mongoose"), 1);
 var NEW_ORDER_FLUSH_MS = 300;
 var UPDATED_FLUSH_MS = 3e3;
+var STATUS_FLUSH_MS = 300;
+var STATUS_FIELDS = /* @__PURE__ */ new Set([
+  "status",
+  "shopee_order_status",
+  "data.status",
+  "data.shopee_order_status"
+]);
 var UPDATED_FLUSH_MAX_MS = 3e4;
 var UPDATED_BURST_RESET_MS = 3e4;
 var MAX_BUFFERED_SNS = 500;
@@ -131275,7 +131297,9 @@ var totalNew = 0;
 var totalUpdated = 0;
 var pendingNew = /* @__PURE__ */ new Set();
 var pendingUpdated = /* @__PURE__ */ new Set();
+var pendingStatus = /* @__PURE__ */ new Set();
 var newFlushTimer = null;
+var statusFlushTimer = null;
 var updatedFlushTimer = null;
 var updatedFlushWindowMs = UPDATED_FLUSH_MS;
 var lastUpdatedFlushAt = 0;
@@ -131328,6 +131352,39 @@ function flushUpdated() {
     `[OrderChangeStream] pid=${process.pid} order_updated n=${orderSns.length} window=${updatedFlushWindowMs}ms`
   );
 }
+function flushStatus() {
+  statusFlushTimer = null;
+  if (pendingStatus.size === 0) return;
+  const orderSns = [...pendingStatus];
+  pendingStatus.clear();
+  totalUpdated += orderSns.length;
+  invalidateLocalCaches();
+  emitOrderUpdated({ orderSns, count: orderSns.length });
+  console.log(
+    `[OrderChangeStream] pid=${process.pid} order_updated(status) n=${orderSns.length} sns=${orderSns.slice(0, 5).join(",")}`
+  );
+}
+function scheduleStatusFlush() {
+  if (pendingStatus.size >= MAX_BUFFERED_SNS) {
+    if (statusFlushTimer) {
+      clearTimeout(statusFlushTimer);
+      statusFlushTimer = null;
+    }
+    flushStatus();
+    return;
+  }
+  if (statusFlushTimer) return;
+  statusFlushTimer = setTimeout(flushStatus, STATUS_FLUSH_MS);
+  if (typeof statusFlushTimer.unref === "function") statusFlushTimer.unref();
+}
+function hasStatusChange(change) {
+  const fields = change?.updateDescription?.updatedFields;
+  if (!fields || typeof fields !== "object") return false;
+  for (const key of Object.keys(fields)) {
+    if (STATUS_FIELDS.has(key)) return true;
+  }
+  return false;
+}
 function scheduleNewFlush() {
   if (pendingNew.size >= MAX_BUFFERED_SNS) {
     if (newFlushTimer) {
@@ -131365,10 +131422,18 @@ function handleChange(change) {
   if (change.operationType === "insert") {
     pendingNew.add(orderSn);
     pendingUpdated.delete(orderSn);
+    pendingStatus.delete(orderSn);
     scheduleNewFlush();
     return;
   }
   if (pendingNew.has(orderSn)) return;
+  if (change.operationType === "update" && hasStatusChange(change)) {
+    pendingStatus.add(orderSn);
+    pendingUpdated.delete(orderSn);
+    scheduleStatusFlush();
+    return;
+  }
+  if (pendingStatus.has(orderSn)) return;
   pendingUpdated.add(orderSn);
   scheduleUpdatedFlush();
 }
@@ -131513,8 +131578,13 @@ function stopOrderChangeStream() {
     clearTimeout(updatedFlushTimer);
     updatedFlushTimer = null;
   }
+  if (statusFlushTimer) {
+    clearTimeout(statusFlushTimer);
+    statusFlushTimer = null;
+  }
   pendingNew.clear();
   pendingUpdated.clear();
+  pendingStatus.clear();
   updatedFlushWindowMs = UPDATED_FLUSH_MS;
   lastUpdatedFlushAt = 0;
   closeCurrentStream();
