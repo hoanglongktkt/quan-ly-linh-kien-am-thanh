@@ -20744,7 +20744,20 @@ function parseShopeePushEvent(body: any): {
   code: string | number;
   logisticsStatus: string;
 } {
-  const data = body?.data || body || {};
+  let data = body?.data ?? body ?? {};
+  if (typeof data === "string" && data.trim()) {
+    try {
+      const parsedData = parseShopeeJson(data);
+      if (parsedData && typeof parsedData === "object" && !Array.isArray(parsedData)) {
+        data = parsedData;
+      } else {
+        data = {};
+      }
+    } catch {
+      data = {};
+    }
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) data = body || {};
   const code = body?.code ?? body?.msg_id ?? data?.code ?? "";
   const action = String(body?.action || body?.msg || data?.action || data?.msg || "").toLowerCase();
   const codeNum = Number(code);
@@ -21371,6 +21384,7 @@ async function startServer() {
     isMongoReady,
     bulkUpsertOrdersToStore,
     invalidateOrdersRefreshCache,
+    invalidateTabCountCache,
     applyWebhookReturnFallback,
     listShopeeOAuthShopIds,
   });

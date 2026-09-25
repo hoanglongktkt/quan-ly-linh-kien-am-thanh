@@ -75743,6 +75743,22 @@ function timingSafeEqualHex(a, b) {
     return false;
   }
 }
+function expandUrlVariants(url2) {
+  const raw = String(url2 || "").trim();
+  if (!raw) return [];
+  const noSlash = raw.replace(/\/$/, "");
+  const withSlash = `${noSlash}/`;
+  const out = [];
+  const push = (u) => {
+    if (u && !out.includes(u)) out.push(u);
+  };
+  for (const u of [noSlash, withSlash]) {
+    push(u);
+    if (u.startsWith("https://")) push(`http://${u.slice("https://".length)}`);
+    else if (u.startsWith("http://")) push(`https://${u.slice("http://".length)}`);
+  }
+  return out;
+}
 function verifyShopeeWebhookSignature(rawBody, authorization, requestUrls = []) {
   const partnerId = String(process.env.SHOPEE_PARTNER_ID || "").trim();
   const secret = String(
@@ -75764,9 +75780,11 @@ function verifyShopeeWebhookSignature(rawBody, authorization, requestUrls = []) 
   const seen = /* @__PURE__ */ new Set();
   const candidates = [];
   for (const url2 of urlList) {
-    if (seen.has(url2)) continue;
-    seen.add(url2);
-    candidates.push(url2);
+    for (const variant of expandUrlVariants(url2)) {
+      if (seen.has(variant)) continue;
+      seen.add(variant);
+      candidates.push(variant);
+    }
   }
   if (candidates.length === 0) {
     console.error("[Shopee Webhook] No webhook URL candidates for HMAC base string.");
@@ -75819,8 +75837,32 @@ function logQueueMetrics(context, pending, running) {
     `[Shopee Webhook][Queue] ${context} depth=${pending} running=${running}/${MAX_CONCURRENT_JOBS} overflowCount=${queueMetrics.overflowCount} completed=${queueMetrics.completedJobs} failed=${queueMetrics.failedJobs} lastJobMs=${queueMetrics.lastJobDurationMs} avgJobMs=${avgMs} maxJobMs=${queueMetrics.maxJobDurationMs}`
   );
 }
+function unwrapWebhookData(payload) {
+  const raw = payload.data;
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      const parsed = parseShopeeJson(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+    }
+  }
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    return raw;
+  }
+  return payload;
+}
+function coerceWebhookPayload(payload) {
+  const data = unwrapWebhookData(payload);
+  if (data === payload) return payload;
+  if (payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)) {
+    return payload;
+  }
+  return { ...payload, data };
+}
 function webhookOrderKey(payload) {
-  const data = payload.data && typeof payload.data === "object" && !Array.isArray(payload.data) ? payload.data : payload;
+  const data = unwrapWebhookData(payload);
   const shopId = String(payload.shop_id ?? data.shop_id ?? "").trim();
   const orderSn = String(
     data.ordersn ?? data.order_sn ?? data.orderSn ?? payload.ordersn ?? payload.order_sn ?? ""
@@ -75954,18 +75996,33 @@ function ackShopeeOk(res) {
     }
   }
 }
+function readAuthorizationHeader(req) {
+  const headers = req.headers;
+  return String(
+    req.get("authorization") || req.get("Authorization") || headers.authorization || headers.Authorization || headers.http_authorization || process.env.HTTP_AUTHORIZATION || ""
+  ).trim();
+}
 function buildWebhookUrlCandidates(req) {
   const path25 = String(req.originalUrl || req.url || "").split("?")[0].trim();
-  if (!path25.startsWith("/")) return [];
   const candidates = /* @__PURE__ */ new Set();
-  candidates.add(`${resolveAppBaseUrl().replace(/\/$/, "")}${path25}`);
-  const forwardedProto = String(req.get("x-forwarded-proto") || "").split(",")[0].trim();
-  const forwardedHost = String(req.get("x-forwarded-host") || "").split(",")[0].trim();
-  if (forwardedProto && forwardedHost) {
-    candidates.add(`${forwardedProto}://${forwardedHost}${path25}`);
+  const base = resolveAppBaseUrl().replace(/\/$/, "");
+  const configured = String(process.env.SHOPEE_WEBHOOK_URL || "").trim();
+  if (configured) candidates.add(configured.replace(/\/$/, ""));
+  candidates.add(`${base}/api/shopee/webhook`);
+  if (path25.startsWith("/")) {
+    candidates.add(`${base}${path25}`);
+    const forwardedProto = String(req.get("x-forwarded-proto") || "").split(",")[0].trim();
+    const forwardedHost = String(req.get("x-forwarded-host") || "").split(",")[0].trim();
+    if (forwardedProto && forwardedHost) {
+      candidates.add(`${forwardedProto}://${forwardedHost}${path25}`);
+    }
+    const host = String(req.get("host") || "").trim();
+    if (host) {
+      candidates.add(`${req.protocol}://${host}${path25}`);
+      candidates.add(`https://${host}${path25}`);
+      candidates.add(`http://${host}${path25}`);
+    }
   }
-  const host = String(req.get("host") || "").trim();
-  if (host) candidates.add(`${req.protocol}://${host}${path25}`);
   return [...candidates];
 }
 function parseWebhookBody(reqBody) {
@@ -75975,7 +76032,7 @@ function parseWebhookBody(reqBody) {
       if (!text.trim()) return null;
       const parsed = parseShopeeJson(text);
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return parsed;
+        return coerceWebhookPayload(parsed);
       }
       return null;
     }
@@ -75984,12 +76041,12 @@ function parseWebhookBody(reqBody) {
       if (!text) return null;
       const parsed = parseShopeeJson(text);
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return parsed;
+        return coerceWebhookPayload(parsed);
       }
       return null;
     }
     if (reqBody && typeof reqBody === "object" && !Array.isArray(reqBody)) {
-      return reqBody;
+      return coerceWebhookPayload(reqBody);
     }
   } catch (err) {
     console.error("[Shopee Webhook] JSON parse failed:", err);
@@ -76025,7 +76082,9 @@ function readRawWebhookBody(req) {
 async function processShopeeWebhookAsync(queue, snapshot, rawBodyPromise) {
   try {
     const rawBody = await rawBodyPromise;
-    if (!rawBody) {
+    const bodyBytes = rawBody?.length ?? 0;
+    console.log(`[Shopee Webhook] raw bodyBytes=${bodyBytes} after ACK`);
+    if (!rawBody || bodyBytes === 0) {
       console.log("[Shopee Webhook] Empty/oversized body after ACK \u2014 nothing to process.");
       return;
     }
@@ -76035,17 +76094,19 @@ async function processShopeeWebhookAsync(queue, snapshot, rawBodyPromise) {
       snapshot.requestUrls
     );
     if (!isValid) {
-      console.warn("[Shopee Webhook] Invalid Authorization after ACK \u2014 payload ignored.");
-      return;
+      console.warn(
+        "[Shopee Webhook] HMAC unverified after ACK \u2014 v\u1EABn parse + get_order_detail (Shopee API l\xE0 ngu\u1ED3n ch\xE2n l\xFD)."
+      );
     }
     markWebhookReceived();
     console.log(
       `[WEBHOOK RECEIVED] pid=${process.pid} ${snapshot.routeLabel} \u2014 ACK 200 sent; headers:`,
       {
-        authorization: "(verified)",
+        authorization: isValid ? "(verified)" : "(unverified \u2014 continue)",
         contentLength: snapshot.contentLength,
         contentType: snapshot.contentType,
-        host: snapshot.host
+        host: snapshot.host,
+        bodyBytes
       }
     );
     console.log("[WEBHOOK RECEIVED] req.body (full):", rawBody.toString("utf8"));
@@ -76055,7 +76116,7 @@ async function processShopeeWebhookAsync(queue, snapshot, rawBodyPromise) {
       return;
     }
     console.log("[WEBHOOK RECEIVED] req.body (parsed object):", JSON.stringify(payload));
-    const data = payload.data && typeof payload.data === "object" && !Array.isArray(payload.data) ? payload.data : payload;
+    const data = unwrapWebhookData(payload);
     const code = Number(payload.code ?? data.code);
     const orderSn = String(
       data.ordersn ?? data.order_sn ?? data.orderSn ?? payload.ordersn ?? payload.order_sn ?? payload.orderSn ?? ""
@@ -76102,16 +76163,16 @@ function createShopeeWebhookRouter(processPayload, routePath = "/shopee", option
     ackShopeeOk(res);
   });
   router27.post(paths, (req, res) => {
+    const rawBodyPromise = readRawWebhookBody(req);
     ackShopeeOk(res);
     const snapshot = {
       routeLabel: `POST ${req.originalUrl || req.url}`,
-      authorization: req.get("authorization") || "",
+      authorization: readAuthorizationHeader(req),
       requestUrls: buildWebhookUrlCandidates(req),
       contentLength: req.get("content-length") || "0",
       contentType: req.get("content-type") || "",
       host: req.get("host") || ""
     };
-    const rawBodyPromise = readRawWebhookBody(req);
     void processShopeeWebhookAsync(queue, snapshot, rawBodyPromise).catch((error) => {
       console.error("L\u1ED7i x\u1EED l\xFD ng\u1EA7m Webhook Shopee:", error);
     });
@@ -130454,6 +130515,8 @@ var deps21 = {
   },
   invalidateOrdersRefreshCache: () => {
   },
+  invalidateTabCountCache: () => {
+  },
   applyWebhookReturnFallback: async () => {
   },
   listShopeeOAuthShopIds: () => []
@@ -130533,6 +130596,10 @@ async function upsertOrderToDb(order, label = "") {
       deps21.invalidateOrdersRefreshCache?.();
     } catch {
     }
+    try {
+      deps21.invalidateTabCountCache?.();
+    } catch {
+    }
     console.log(
       `[DB UPDATED] ${label ? `(${label}) ` : ""}order_sn=${order.orderSn} shop_id=${order.shopId || "?"} status=${order.shopee_order_status || order.status || "?"} \u2014 upsert OK`
     );
@@ -130558,8 +130625,20 @@ async function upsertOrderToDb(order, label = "") {
     return false;
   }
 }
+function unwrapPushData(body) {
+  const raw = body?.data;
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      const parsed = parseShopeeJson(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    } catch {
+    }
+  }
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw;
+  return body || {};
+}
 function extractOrderSnAndShopId(body, parsed) {
-  const data = body?.data && typeof body.data === "object" && !Array.isArray(body.data) ? body.data : body || {};
+  const data = unwrapPushData(body);
   const pkg0 = Array.isArray(data.package_list) ? data.package_list[0] : void 0;
   const orderSn = String(
     parsed?.orderSn || data.ordersn || data.order_sn || data.orderSn || body?.ordersn || body?.order_sn || body?.orderSn || pkg0?.ordersn || pkg0?.order_sn || ""
@@ -146069,7 +146148,20 @@ function normalizeShopeeOrder(payload) {
   return order;
 }
 function parseShopeePushEvent(body) {
-  const data = body?.data || body || {};
+  let data = body?.data ?? body ?? {};
+  if (typeof data === "string" && data.trim()) {
+    try {
+      const parsedData = parseShopeeJson(data);
+      if (parsedData && typeof parsedData === "object" && !Array.isArray(parsedData)) {
+        data = parsedData;
+      } else {
+        data = {};
+      }
+    } catch {
+      data = {};
+    }
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) data = body || {};
   const code = body?.code ?? body?.msg_id ?? data?.code ?? "";
   const action = String(body?.action || body?.msg || data?.action || data?.msg || "").toLowerCase();
   const codeNum = Number(code);
@@ -146575,6 +146667,7 @@ async function startServer() {
     isMongoReady,
     bulkUpsertOrdersToStore,
     invalidateOrdersRefreshCache,
+    invalidateTabCountCache,
     applyWebhookReturnFallback,
     listShopeeOAuthShopIds
   });

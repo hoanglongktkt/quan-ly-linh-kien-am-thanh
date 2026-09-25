@@ -56,11 +56,35 @@ function logQueueMetrics(context: string, pending: number, running: number): voi
   );
 }
 
+function unwrapWebhookData(payload: Record<string, unknown>): Record<string, unknown> {
+  const raw = payload.data;
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      const parsed: unknown = parseShopeeJson(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      /* giữ envelope */
+    }
+  }
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+  return payload;
+}
+
+function coerceWebhookPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const data = unwrapWebhookData(payload);
+  if (data === payload) return payload;
+  if (payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)) {
+    return payload;
+  }
+  return { ...payload, data };
+}
+
 export function webhookOrderKey(payload: Record<string, unknown>): string {
-  const data =
-    payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
-      ? (payload.data as Record<string, unknown>)
-      : payload;
+  const data = unwrapWebhookData(payload);
   const shopId = String(payload.shop_id ?? data.shop_id ?? "").trim();
   const orderSn = String(
     data.ordersn ?? data.order_sn ?? data.orderSn ?? payload.ordersn ?? payload.order_sn ?? "",
@@ -220,27 +244,49 @@ function ackShopeeOk(res: express.Response): void {
   }
 }
 
+function readAuthorizationHeader(req: express.Request): string {
+  const headers = req.headers as Record<string, unknown>;
+  return String(
+    req.get("authorization") ||
+      req.get("Authorization") ||
+      headers.authorization ||
+      headers.Authorization ||
+      headers.http_authorization ||
+      process.env.HTTP_AUTHORIZATION ||
+      "",
+  ).trim();
+}
+
 function buildWebhookUrlCandidates(req: express.Request): string[] {
   const path = String(req.originalUrl || req.url || "")
     .split("?")[0]
     .trim();
-  if (!path.startsWith("/")) return [];
-
   const candidates = new Set<string>();
-  candidates.add(`${resolveAppBaseUrl().replace(/\/$/, "")}${path}`);
+  const base = resolveAppBaseUrl().replace(/\/$/, "");
+  const configured = String(process.env.SHOPEE_WEBHOOK_URL || "").trim();
+  if (configured) candidates.add(configured.replace(/\/$/, ""));
+  candidates.add(`${base}/api/shopee/webhook`);
 
-  const forwardedProto = String(req.get("x-forwarded-proto") || "")
-    .split(",")[0]
-    .trim();
-  const forwardedHost = String(req.get("x-forwarded-host") || "")
-    .split(",")[0]
-    .trim();
-  if (forwardedProto && forwardedHost) {
-    candidates.add(`${forwardedProto}://${forwardedHost}${path}`);
+  if (path.startsWith("/")) {
+    candidates.add(`${base}${path}`);
+
+    const forwardedProto = String(req.get("x-forwarded-proto") || "")
+      .split(",")[0]
+      .trim();
+    const forwardedHost = String(req.get("x-forwarded-host") || "")
+      .split(",")[0]
+      .trim();
+    if (forwardedProto && forwardedHost) {
+      candidates.add(`${forwardedProto}://${forwardedHost}${path}`);
+    }
+
+    const host = String(req.get("host") || "").trim();
+    if (host) {
+      candidates.add(`${req.protocol}://${host}${path}`);
+      candidates.add(`https://${host}${path}`);
+      candidates.add(`http://${host}${path}`);
+    }
   }
-
-  const host = String(req.get("host") || "").trim();
-  if (host) candidates.add(`${req.protocol}://${host}${path}`);
 
   return [...candidates];
 }
@@ -253,7 +299,7 @@ function parseWebhookBody(reqBody: unknown): Record<string, unknown> | null {
       if (!text.trim()) return null;
       const parsed: unknown = parseShopeeJson(text);
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>;
+        return coerceWebhookPayload(parsed as Record<string, unknown>);
       }
       return null;
     }
@@ -262,12 +308,12 @@ function parseWebhookBody(reqBody: unknown): Record<string, unknown> | null {
       if (!text) return null;
       const parsed: unknown = parseShopeeJson(text);
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>;
+        return coerceWebhookPayload(parsed as Record<string, unknown>);
       }
       return null;
     }
     if (reqBody && typeof reqBody === "object" && !Array.isArray(reqBody)) {
-      return reqBody as Record<string, unknown>;
+      return coerceWebhookPayload(reqBody as Record<string, unknown>);
     }
   } catch (err) {
     console.error("[Shopee Webhook] JSON parse failed:", err);
@@ -319,7 +365,9 @@ async function processShopeeWebhookAsync(
 ): Promise<void> {
   try {
     const rawBody = await rawBodyPromise;
-    if (!rawBody) {
+    const bodyBytes = rawBody?.length ?? 0;
+    console.log(`[Shopee Webhook] raw bodyBytes=${bodyBytes} after ACK`);
+    if (!rawBody || bodyBytes === 0) {
       console.log("[Shopee Webhook] Empty/oversized body after ACK — nothing to process.");
       return;
     }
@@ -330,18 +378,20 @@ async function processShopeeWebhookAsync(
       snapshot.requestUrls,
     );
     if (!isValid) {
-      console.warn("[Shopee Webhook] Invalid Authorization after ACK — payload ignored.");
-      return;
+      console.warn(
+        "[Shopee Webhook] HMAC unverified after ACK — vẫn parse + get_order_detail (Shopee API là nguồn chân lý).",
+      );
     }
 
     markWebhookReceived();
     console.log(
       `[WEBHOOK RECEIVED] pid=${process.pid} ${snapshot.routeLabel} — ACK 200 sent; headers:`,
       {
-        authorization: "(verified)",
+        authorization: isValid ? "(verified)" : "(unverified — continue)",
         contentLength: snapshot.contentLength,
         contentType: snapshot.contentType,
         host: snapshot.host,
+        bodyBytes,
       },
     );
     console.log("[WEBHOOK RECEIVED] req.body (full):", rawBody.toString("utf8"));
@@ -354,10 +404,7 @@ async function processShopeeWebhookAsync(
 
     console.log("[WEBHOOK RECEIVED] req.body (parsed object):", JSON.stringify(payload));
 
-    const data =
-      payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
-        ? (payload.data as Record<string, unknown>)
-        : payload;
+    const data = unwrapWebhookData(payload);
     const code = Number(payload.code ?? data.code);
     const orderSn = String(
       data.ordersn ??
@@ -446,21 +493,23 @@ export function createShopeeWebhookRouter(
   });
 
   router.post(paths, (req, res) => {
-    // 1) ACK vô điều kiện — không body parser / HMAC / DB nào được chặn phía trước.
+    // 1) Gắn listener đọc raw body TRƯỚC ACK — tránh Node _dump() nuốt stream.
+    const rawBodyPromise = readRawWebhookBody(req);
+
+    // 2) ACK 200 ngay — không chờ HMAC / API Shopee / MongoDB.
     ackShopeeOk(res);
 
-    // 2) Snapshot dữ liệu cần thiết; tuyệt đối không truyền `res` vào tiến trình nền.
+    // 3) Snapshot; tuyệt đối không truyền `res` vào tiến trình nền.
     const snapshot: WebhookRequestSnapshot = {
       routeLabel: `POST ${req.originalUrl || req.url}`,
-      authorization: req.get("authorization") || "",
+      authorization: readAuthorizationHeader(req),
       requestUrls: buildWebhookUrlCandidates(req),
       contentLength: req.get("content-length") || "0",
       contentType: req.get("content-type") || "",
       host: req.get("host") || "",
     };
-    const rawBodyPromise = readRawWebhookBody(req);
 
-    // 3) HMAC → parse → queue → Shopee API/MongoDB, hoàn toàn sau response.
+    // 4) HMAC → parse → queue → Shopee API/MongoDB, hoàn toàn sau response.
     void processShopeeWebhookAsync(queue, snapshot, rawBodyPromise).catch((error) => {
       console.error("Lỗi xử lý ngầm Webhook Shopee:", error);
     });

@@ -22,6 +22,7 @@ import {
   ShopeeRefreshTokenExpiredError,
 } from "../services/shopee/auth.js";
 import { triggerWebhookRescuePull } from "../services/orderSync/orderSyncService.js";
+import { parseShopeeJson } from "../services/shopee/jsonBig.js";
 
 let deps = {
   parseShopeePushEvent: () => ({}),
@@ -40,6 +41,7 @@ let deps = {
   isMongoReady: () => false,
   bulkUpsertOrdersToStore: async () => {},
   invalidateOrdersRefreshCache: () => {},
+  invalidateTabCountCache: () => {},
   applyWebhookReturnFallback: async () => {},
   listShopeeOAuthShopIds: () => [],
 };
@@ -131,6 +133,11 @@ async function upsertOrderToDb(order, label = "") {
     } catch {
       /* ignore */
     }
+    try {
+      deps.invalidateTabCountCache?.();
+    } catch {
+      /* ignore */
+    }
     console.log(
       `[DB UPDATED] ${label ? `(${label}) ` : ""}order_sn=${order.orderSn}` +
         ` shop_id=${order.shopId || "?"} status=${order.shopee_order_status || order.status || "?"} — upsert OK`,
@@ -159,12 +166,23 @@ async function upsertOrderToDb(order, label = "") {
   }
 }
 
+function unwrapPushData(body) {
+  const raw = body?.data;
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      const parsed = parseShopeeJson(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    } catch {
+      /* giữ envelope */
+    }
+  }
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw;
+  return body || {};
+}
+
 /** Bóc order_sn / shop_id từ envelope Shopee v2 (kể cả khi parseShopeePushEvent thiếu). */
 function extractOrderSnAndShopId(body, parsed) {
-  const data =
-    body?.data && typeof body.data === "object" && !Array.isArray(body.data)
-      ? body.data
-      : body || {};
+  const data = unwrapPushData(body);
   const pkg0 = Array.isArray(data.package_list) ? data.package_list[0] : undefined;
 
   const orderSn = String(

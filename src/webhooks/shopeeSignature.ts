@@ -19,6 +19,24 @@ function timingSafeEqualHex(a: string, b: string): boolean {
   }
 }
 
+/** http/https + có/không trailing slash — URL Push Console có thể lệch 1 biến thể. */
+function expandUrlVariants(url: string): string[] {
+  const raw = String(url || "").trim();
+  if (!raw) return [];
+  const noSlash = raw.replace(/\/$/, "");
+  const withSlash = `${noSlash}/`;
+  const out: string[] = [];
+  const push = (u: string) => {
+    if (u && !out.includes(u)) out.push(u);
+  };
+  for (const u of [noSlash, withSlash]) {
+    push(u);
+    if (u.startsWith("https://")) push(`http://${u.slice("https://".length)}`);
+    else if (u.startsWith("http://")) push(`https://${u.slice("http://".length)}`);
+  }
+  return out;
+}
+
 /**
  * Xác thực Push Shopee theo docs Open Platform:
  * base_string = URL + "|" + request_body
@@ -55,13 +73,14 @@ export function verifyShopeeWebhookSignature(
     .map((u) => String(u || "").trim())
     .filter(Boolean);
 
-  // Deduplicate while preserving order.
   const seen = new Set<string>();
   const candidates: string[] = [];
   for (const url of urlList) {
-    if (seen.has(url)) continue;
-    seen.add(url);
-    candidates.push(url);
+    for (const variant of expandUrlVariants(url)) {
+      if (seen.has(variant)) continue;
+      seen.add(variant);
+      candidates.push(variant);
+    }
   }
 
   if (candidates.length === 0) {

@@ -1,4 +1,6 @@
 RewriteEngine On
+RewriteCond %{HTTP:Authorization} .
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 RewriteCond %{HTTPS} off
 RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 # DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION BEGIN
@@ -7,6 +9,7 @@ PassengerBaseURI "/"
 PassengerNodejs "/home/yrkrhmtl/nodevenv/quanly.linhkienamthanh.net/20/bin/node"
 PassengerAppType node
 PassengerStartupFile server.cjs
+PassengerPassHeader Authorization
 # DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION END
 # BEGIN cPanel-generated php ini directives, do not edit
 # Manual editing of this file may result in unexpected behavior.
@@ -60,6 +63,8 @@ SetEnv SHOPEE_PARTNER_KEY shpk446c744962586c74506e486e7a4d4c676d527671496e447747
 # Mọi /prints|/labels|/api/*/labels do Node (Passenger) xử lý với Content-Type application/pdf.
 <IfModule mod_rewrite.c>
   RewriteEngine On
+  RewriteCond %{HTTP:Authorization} .
+  RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 
   RewriteCond %{REQUEST_URI} !^/api/ [NC]
   RewriteCond %{REQUEST_URI} !^/labels/ [NC]
