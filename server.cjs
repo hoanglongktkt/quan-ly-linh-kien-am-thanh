@@ -81008,6 +81008,153 @@ async function updateOrderTrackingInStore(orderSn, trackingNo, extra) {
   );
   return Boolean(result);
 }
+async function bulkUpdateTrackingBySn(patches) {
+  if (!isMongoReady()) return 0;
+  requireMongo();
+  const list = Array.isArray(patches) ? patches.filter((p) => p && String(p.orderSn || "").trim()) : [];
+  if (list.length === 0) return 0;
+  const ops = list.map((p) => {
+    const sn = String(p.orderSn || "").replace(/^shopee-/i, "").trim();
+    if (!sn) return null;
+    const _id = `shopee-${sn}`;
+    const shopIdStr = p.shopId != null ? String(p.shopId).trim() : "";
+    const tn = String(p.tracking_no || "").trim();
+    const pkg = String(p.packageNumber || "").trim();
+    const rtnRaw = String(p.return_tracking_no || "").trim().toUpperCase();
+    const rtn = rtnRaw && rtnRaw.length >= 4 && !/^0FG/i.test(rtnRaw) ? rtnRaw : "";
+    const hasOutboundTn = Boolean(tn && !/^0FG/i.test(tn));
+    if (!hasOutboundTn && !pkg && !rtn) return null;
+    const $set = {};
+    if (hasOutboundTn) {
+      $set.tracking_no = tn;
+      $set.trackingNumber = tn;
+      $set["data.tracking_no"] = tn;
+      $set["data.trackingNumber"] = tn;
+    }
+    if (pkg) {
+      $set.packageNumber = pkg;
+      $set["data.packageNumber"] = pkg;
+      $set["data.package_number"] = pkg;
+    }
+    if (shopIdStr) {
+      $set.shopId = shopIdStr;
+      $set["data.shopId"] = shopIdStr;
+    }
+    if (p.internalTrackingCode) {
+      $set["data.internalTrackingCode"] = p.internalTrackingCode;
+    }
+    if (rtn && rtn !== String(tn || "").trim().toUpperCase()) {
+      $set.return_tracking_no = rtn;
+      $set.returnTrackingNumber = rtn;
+      $set["data.return_tracking_no"] = rtn;
+      $set["data.returnTrackingNumber"] = rtn;
+    }
+    if (p.status != null) {
+      $set.status = String(p.status);
+      $set["data.status"] = String(p.status);
+    }
+    if (p.isPrepared != null) {
+      $set.isPrepared = p.isPrepared;
+      $set["data.isPrepared"] = p.isPrepared;
+    }
+    if (p.shopee_order_status != null) {
+      const rawIn = String(p.shopee_order_status).toUpperCase();
+      $set.shopee_order_status = rawIn;
+      $set["data.shopee_order_status"] = rawIn;
+    }
+    if (p.is_pending_shopee_check != null) {
+      $set.is_pending_shopee_check = p.is_pending_shopee_check;
+      $set["data.is_pending_shopee_check"] = p.is_pending_shopee_check;
+    }
+    if (hasOutboundTn) {
+      applyLaggingPendingPromotionToSet($set, p);
+    }
+    if (Object.keys($set).length === 0) return null;
+    return {
+      updateOne: {
+        filter: buildOrderCompoundFilter(sn, _id, shopIdStr || null),
+        update: { $set },
+        upsert: false
+      }
+    };
+  }).filter(Boolean);
+  if (ops.length === 0) return 0;
+  await withWriteTimeout(
+    enqueueWrite(async () => {
+      const result = await OrderModel.bulkWrite(ops, {
+        ordered: false,
+        maxTimeMS: 8e3
+      });
+      console.log(
+        `[Ship Persist] tracking bulkWrite ONE shot \u2014 ops=${ops.length} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0}`
+      );
+    }),
+    "tracking_persist"
+  );
+  invalidateTabCountCache();
+  return ops.length;
+}
+async function markOrdersHasPdfRows(rows) {
+  if (!isMongoReady()) return 0;
+  requireMongo();
+  const list = (Array.isArray(rows) ? rows : []).map((r2) => ({
+    sn: String(r2?.orderSn || "").replace(/^shopee-/i, "").trim(),
+    shopId: r2?.shopId != null ? String(r2.shopId).trim() : "",
+    labelUrl: String(r2?.labelUrl || r2?.waybill_url || "").trim(),
+    pdfFilename: String(r2?.pdfFilename || "").trim()
+  })).filter((r2) => r2.sn);
+  if (list.length === 0) return 0;
+  const ops = list.map((r2) => {
+    const _id = `shopee-${r2.sn}`;
+    const $set = {
+      hasPdf: true,
+      "data.hasPdf": true,
+      "data.readyToPrint": true
+    };
+    if (r2.labelUrl) {
+      $set.waybill_url = r2.labelUrl;
+      $set["data.waybill_url"] = r2.labelUrl;
+      $set["data.labelUrl"] = r2.labelUrl;
+      $set["data.pdfUrl"] = r2.labelUrl;
+    }
+    if (r2.pdfFilename) $set["data.pdfFilename"] = r2.pdfFilename;
+    if (r2.shopId) {
+      $set.shopId = r2.shopId;
+      $set["data.shopId"] = r2.shopId;
+    }
+    return {
+      updateOne: {
+        filter: buildOrderCompoundFilter(r2.sn, _id, r2.shopId || null),
+        update: {
+          $set,
+          $setOnInsert: {
+            _id,
+            orderSn: r2.sn,
+            isPrinted: false,
+            "data.isPrinted": false,
+            "data.id": _id,
+            "data.orderSn": r2.sn,
+            "data.channel": "shopee"
+          }
+        },
+        upsert: true
+      }
+    };
+  });
+  await withWriteTimeout(
+    enqueueWrite(async () => {
+      const result = await OrderModel.bulkWrite(ops, {
+        ordered: false,
+        maxTimeMS: 8e3
+      });
+      console.log(
+        `[MongoDB] markOrdersHasPdfRows n=${ops.length} modified=${result.modifiedCount || 0}`
+      );
+    }),
+    "mark_has_pdf_rows"
+  );
+  return ops.length;
+}
 async function updateReturnTrackingOnlyInStore(orderSn, returnTrackingNo, extra) {
   if (!isMongoReady()) return false;
   requireMongo();
@@ -139002,36 +139149,67 @@ async function getShopeeAddressListCached(shopId, accessToken, _signal) {
   shopeeAddressListInflight.set(sid, run);
   return run;
 }
+function isShopeeLogisticsRetriable(response, json2, error) {
+  const status = Number(response?.status || 0);
+  if (status === 429 || status === 500 || status === 502 || status === 503 || status === 504) return true;
+  const blob = `${json2?.error || ""} ${json2?.message || ""} ${error?.message || ""}`.toLowerCase();
+  return /\brate\b|too many|busy|try again|econnreset|etimedout|socket|network|fetch failed/.test(blob);
+}
 async function fetchShopeeLogisticsJson(url2, init, context, opts) {
   const timeoutMs = opts?.timeoutMs ?? SHOPEE_LOGISTICS_TIMEOUT_MS;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const onParentAbort = () => controller.abort();
-  if (opts?.signal) {
-    if (opts.signal.aborted) controller.abort();
-    else opts.signal.addEventListener("abort", onParentAbort, { once: true });
-  }
-  try {
-    const response = await fetch(url2, { ...init, signal: controller.signal });
-    const raw = await response.text();
-    let json2;
-    try {
-      json2 = raw ? JSON.parse(raw) : {};
-    } catch {
-      throw new Error(
-        `Shopee ${context} tr\u1EA3 v\u1EC1 d\u1EEF li\u1EC7u kh\xF4ng ph\u1EA3i JSON (HTTP ${response.status}): ${raw.slice(0, 300)}`
-      );
-    }
-    return { response, json: json2 };
-  } catch (error) {
-    if (error?.name === "AbortError" || opts?.signal?.aborted) {
+  const maxAttempts = 3;
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (opts?.signal?.aborted) {
       throw new Error(`Shopee ${context} timeout sau ${timeoutMs / 1e3} gi\xE2y.`);
     }
-    throw error;
-  } finally {
-    clearTimeout(timer);
-    opts?.signal?.removeEventListener("abort", onParentAbort);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const onParentAbort = () => controller.abort();
+    if (opts?.signal) {
+      if (opts.signal.aborted) controller.abort();
+      else opts.signal.addEventListener("abort", onParentAbort, { once: true });
+    }
+    try {
+      const response = await fetch(url2, { ...init, signal: controller.signal });
+      const raw = await response.text();
+      let json2;
+      try {
+        json2 = raw ? JSON.parse(raw) : {};
+      } catch {
+        throw new Error(
+          `Shopee ${context} tr\u1EA3 v\u1EC1 d\u1EEF li\u1EC7u kh\xF4ng ph\u1EA3i JSON (HTTP ${response.status}): ${raw.slice(0, 300)}`
+        );
+      }
+      if (isShopeeLogisticsRetriable(response, json2) && attempt < maxAttempts) {
+        const waitMs = Math.min(400 * attempt, 1200);
+        console.warn(
+          `[Shopee Logistics] ${context} HTTP ${response.status} \u2014 retry ${attempt + 1}/${maxAttempts} sau ${waitMs}ms`
+        );
+        await sleep4(waitMs);
+        continue;
+      }
+      return { response, json: json2 };
+    } catch (error) {
+      lastError = error;
+      if (error?.name === "AbortError" || opts?.signal?.aborted) {
+        throw new Error(`Shopee ${context} timeout sau ${timeoutMs / 1e3} gi\xE2y.`);
+      }
+      if (attempt < maxAttempts && isShopeeLogisticsRetriable(void 0, null, error)) {
+        const waitMs = Math.min(400 * attempt, 1200);
+        console.warn(
+          `[Shopee Logistics] ${context} l\u1ED7i m\u1EA1ng \u2014 retry ${attempt + 1}/${maxAttempts} sau ${waitMs}ms`
+        );
+        await sleep4(waitMs);
+        continue;
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      opts?.signal?.removeEventListener("abort", onParentAbort);
+    }
   }
+  throw lastError || new Error(`Shopee ${context} h\u1EBFt l\u1EA7n th\u1EED.`);
 }
 async function shopeeGetShippingParameter(shopId, accessToken, orderSn, packageNumber, signal) {
   const apiPath = "/api/v2/logistics/get_shipping_parameter";
@@ -139748,20 +139926,24 @@ async function markHasPdfIfLabelFileReady(orderSns, shopId) {
       (Array.isArray(orderSns) ? orderSns : []).map((s2) => String(s2 || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
     )
   ];
+  const rows = [];
   for (const sn of sns) {
     const filename = resolveReadyLabelFilename(sn);
     if (!filename) continue;
     const url2 = absoluteLabelUrl(`/api/public/labels/${filename}`) || "";
-    try {
-      await markOrdersHasPdfInStore([sn], {
-        shopId,
-        labelUrl: url2,
-        waybill_url: url2,
-        pdfFilename: filename
-      });
-    } catch (err) {
-      console.warn(`[hasPdf] persist ${sn}:`, err?.message || err);
-    }
+    rows.push({
+      orderSn: sn,
+      shopId,
+      labelUrl: url2,
+      waybill_url: url2,
+      pdfFilename: filename
+    });
+  }
+  if (rows.length === 0) return;
+  try {
+    await markOrdersHasPdfRows(rows);
+  } catch (err) {
+    console.warn(`[hasPdf] persist rows=${rows.length}:`, err?.message || err);
   }
 }
 async function retryFillPackageNumberForPrint(shopId, accessToken, order) {
@@ -142209,7 +142391,9 @@ async function fetchAndForceSaveTrackingNumber(apiShopId, accessToken, order, op
     promoteOrderStatusWhenTrackingReady(order);
     enforceShopeeTerminalLocalStatus(order);
     if (hasUsableShopeeTrackingNumber(order)) {
-      await persistOrderTrackingToDb(order);
+      if (opts?.skipPersist !== true) {
+        await persistOrderTrackingToDb(order);
+      }
       return true;
     }
     return false;
@@ -143096,6 +143280,74 @@ async function healCancelledReturnTrackingOrders(opts) {
     healCancelledReturnTrackingInFlight = false;
   }
 }
+function buildTrackingMongoPatchFromOrder(order) {
+  const sn = String(order?.orderSn || "").replace(/^shopee-/i, "").trim();
+  if (!sn) return null;
+  const tn = String(order?.trackingNumber || order?.tracking_no || "").trim();
+  const pkg = String(order?.packageNumber || order?.package_number || "").trim();
+  const rtn = String(order?.return_tracking_no || order?.returnTrackingNumber || "").trim();
+  if ((!tn || isShopeeInternalTrackingCode2(tn)) && !pkg && !rtn) return null;
+  return {
+    orderSn: sn,
+    tracking_no: tn && !isShopeeInternalTrackingCode2(tn) ? tn : void 0,
+    packageNumber: pkg || void 0,
+    shopId: order?.shopId != null ? String(order.shopId) : void 0,
+    status: order?.status != null ? String(order.status) : void 0,
+    isPrepared: order?.isPrepared === true,
+    shopee_order_status: order?.shopee_order_status != null ? String(order.shopee_order_status) : void 0,
+    internalTrackingCode: order?.internalTrackingCode,
+    is_pending_shopee_check: order?.is_pending_shopee_check === true,
+    return_tracking_no: rtn || void 0
+  };
+}
+async function ensureShopeeTrackingForBatch(apiShopId, accessToken, batch) {
+  let fetched = 0;
+  const needFetch = [];
+  for (const order of batch) {
+    if (String(order?.channel) !== "shopee") continue;
+    if (!needsShopeeTrackingEnrichment(order)) continue;
+    needFetch.push(order);
+  }
+  if (needFetch.length === 0) return 0;
+  const chunkSize = 10;
+  const concurrency = 5;
+  const pauseMs = 200;
+  console.log(
+    `[Shopee Tracking] ensureShopeeTrackingForBatch: ${needFetch.length}/${batch.length} \u0111\u01A1n thi\u1EBFu tracking_no \u2192 chunk ${chunkSize} concurrency=${concurrency} pause=${pauseMs}ms`
+  );
+  for (let i2 = 0; i2 < needFetch.length; i2 += chunkSize) {
+    const chunk = needFetch.slice(i2, i2 + chunkSize);
+    await mapWithConcurrency(chunk, concurrency, async (order) => {
+      try {
+        const ok = await fetchAndForceSaveTrackingNumber(apiShopId, accessToken, order, {
+          retries: 2,
+          skipPersist: true
+        });
+        if (ok) fetched += 1;
+      } catch (error) {
+        console.error(
+          `[Shopee Tracking] L\u1ED7i 1 \u0111\u01A1n (tracking skip) order_sn=${order?.orderSn}:`,
+          error
+        );
+      }
+    });
+    if (i2 + chunkSize < needFetch.length) await sleep4(pauseMs);
+  }
+  const patches = needFetch.map((order) => buildTrackingMongoPatchFromOrder(order)).filter(Boolean);
+  if (patches.length > 0) {
+    try {
+      await bulkUpdateTrackingBySn(patches);
+    } catch (err) {
+      console.warn("[Shopee Tracking] bulkUpdateTrackingBySn:", err?.message || err);
+    }
+  }
+  if (fetched > 0) {
+    console.log(
+      `[Shopee Tracking] ensureShopeeTrackingForBatch: \u0111\xE3 l\u1EA5y ${fetched}/${needFetch.length} \u0111\u01A1n (shop=${apiShopId}).`
+    );
+  }
+  return fetched;
+}
 function normalizeShopeeOrderDetail(shopId, shopName, item) {
   if (!item || !item.order_sn) {
     console.warn("[Shopee Sync] B\u1ECF qua order detail thi\u1EBFu order_sn:", item);
@@ -143923,18 +144175,17 @@ function scheduleDeferredTrackingEnrich(apiShopId, accessToken, orders) {
   if (!list.length || !apiShopId || !accessToken) return;
   setImmediate(() => {
     void (async () => {
-      for (const row of list) {
-        try {
-          await fetchAndForceSaveTrackingNumber(apiShopId, accessToken, row, { retries: 1 });
+      try {
+        await ensureShopeeTrackingForBatch(apiShopId, accessToken, list);
+        for (const row of list) {
           promoteOrderStatusWhenTrackingReady(row);
           enforceShopeeTerminalLocalStatus(row);
-        } catch (error) {
-          console.error(
-            `[Shopee Tracking] Deferred 1 \u0111\u01A1n (kh\xF4ng d\u1EEBng) order_sn=${row?.orderSn}:`,
-            error?.message || error
-          );
         }
-        await sleep4(SHOPEE_TRACKING_FETCH_DELAY_MS);
+      } catch (error) {
+        console.error(
+          `[Shopee Tracking] Deferred batch (kh\xF4ng d\u1EEBng):`,
+          error?.message || error
+        );
       }
       try {
         queueOrdersJsonMirrorFromMongo();
@@ -147057,6 +147308,20 @@ async function startServer() {
     import_fs24.default.createReadStream(valid.filePath).pipe(res);
     return true;
   };
+  const silentPdfPrefetchInFlight = /* @__PURE__ */ new Set();
+  const labelPrepareInFlight = /* @__PURE__ */ new Set();
+  async function waitForInFlightLabelFile(orderSn, filename, maxMs = 8e3) {
+    const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
+    const deadline = Date.now() + Math.max(400, maxMs);
+    while (Date.now() < deadline) {
+      if (getValidLabelDiskFile(filename)) return true;
+      if (!silentPdfPrefetchInFlight.has(sn) && !labelPrepareInFlight.has(sn)) {
+        return Boolean(getValidLabelDiskFile(filename));
+      }
+      await sleep4(400);
+    }
+    return Boolean(getValidLabelDiskFile(filename));
+  }
   const downloadPdfRoute = async (req, res) => {
     const orderSn = String(req.params.orderSn || "").replace(/^shopee-/i, "").trim();
     const expectedFilename = buildCachedLabelFilename([orderSn]);
@@ -147084,6 +147349,13 @@ async function startServer() {
     if (import_fs24.default.existsSync(expectedPath) && streamDelegatedPdf(res, expectedPath, expectedFilename)) {
       console.log(`[Delegated PDF] LOCAL HIT ${expectedFilename} \u2014 b\u1ECF qua Shopee API`);
       return;
+    }
+    if (silentPdfPrefetchInFlight.has(orderSn) || labelPrepareInFlight.has(orderSn)) {
+      const waited = await waitForInFlightLabelFile(orderSn, expectedFilename, 8e3);
+      if (waited && streamDelegatedPdf(res, expectedPath, expectedFilename)) {
+        console.log(`[Delegated PDF] IN-FLIGHT HIT ${expectedFilename} \u2014 b\u1ECF qua Shopee API`);
+        return;
+      }
     }
     try {
       const rows = await loadOrdersForShipScoped([`shopee-${orderSn}`, orderSn], [orderSn]);
@@ -147167,7 +147439,7 @@ async function startServer() {
       );
     }
   };
-  const BATCH_CONFIRM_OPERATION_TIMEOUT_MS = 4e3;
+  const BATCH_CONFIRM_OPERATION_TIMEOUT_MS = 8e3;
   const confirmOnlyRoute = async (req, res) => {
     const t0 = Date.now();
     beginLogisticsWork("confirm-only");
@@ -147311,19 +147583,9 @@ async function startServer() {
         message: `\u0110\xE3 x\xE1c nh\u1EADn ${successSns.length}/${toShip.length} \u0111\u01A1n`
       });
       setImmediate(() => {
-        try {
-          fireCreateShippingDocumentsForOrders(
-            confirmedRows.map((o) => ({
-              order: o,
-              shopId: String(o?.shopId || resolveOrderShopId(o) || ""),
-              orderSn: String(o?.orderSn || "").replace(/^shopee-/i, "").trim(),
-              packageNumber: String(o?.packageNumber || o?.package_number || "").trim() || void 0,
-              trackingNumber: trackingForShopeeShippingDoc(o) || void 0
-            }))
-          );
-        } catch (primeErr) {
-          console.warn("[Confirm Only] BG PDF kick:", primeErr?.message || primeErr);
-        }
+        void prefetchTrackingAndLabelsAfterConfirm(confirmedRows).catch((primeErr) => {
+          console.warn("[Confirm Only] BG tracking+PDF prefetch:", primeErr?.message || primeErr);
+        });
         void persistOrdersToDatabase(orders, confirmedRows).catch((err) => {
           console.warn("[Confirm Only] background persist failed:", err?.message || err);
         });
@@ -147473,7 +147735,7 @@ async function startServer() {
             batch,
             ({ order }) => resolveOrderShopId(order) || order?.shopId,
             confirmOneOrder,
-            { perShopChunk: 2, pauseMs: 250, maxParallelShops: 2 }
+            { perShopChunk: 5, pauseMs: 150, maxParallelShops: 3 }
           );
         } catch (batchErr) {
           console.error(
@@ -147531,19 +147793,9 @@ async function startServer() {
       );
       setImmediate(() => {
         void (async () => {
-          try {
-            fireCreateShippingDocumentsForOrders(
-              confirmedRows.map((o) => ({
-                order: o,
-                shopId: String(o?.shopId || resolveOrderShopId(o) || ""),
-                orderSn: String(o?.orderSn || "").replace(/^shopee-/i, "").trim(),
-                packageNumber: String(o?.packageNumber || o?.package_number || "").trim() || void 0,
-                trackingNumber: trackingForShopeeShippingDoc(o) || void 0
-              }))
-            );
-          } catch (primeErr) {
-            console.warn("[Confirm Async] BG PDF kick:", primeErr?.message || primeErr);
-          }
+          void prefetchTrackingAndLabelsAfterConfirm(confirmedRows).catch((primeErr) => {
+            console.warn("[Confirm Async] BG tracking+PDF prefetch:", primeErr?.message || primeErr);
+          });
           await sleep4(200);
           try {
             await withOperationTimeout(
@@ -148731,7 +148983,6 @@ async function startServer() {
     }
   };
   const SILENT_PREFETCH_DEADLINE_MS = 45e3;
-  const silentPdfPrefetchInFlight = /* @__PURE__ */ new Set();
   const prefetchStatus = /* @__PURE__ */ new Map();
   let prefetchBatchSequence = 0;
   const runSilentPdfPrefetch = async (batchId, orderSns) => {
@@ -150077,6 +150328,49 @@ async function startServer() {
         });
       }
       if (missingOrders.length > 0) {
+        const inflightMissing = missingOrders.filter((order) => {
+          const sn = String(order?.orderSn || order?.order_sn || "").replace(/^shopee-/i, "").trim();
+          return silentPdfPrefetchInFlight.has(sn) || labelPrepareInFlight.has(sn);
+        });
+        if (inflightMissing.length > 0) {
+          await Promise.all(
+            inflightMissing.map(async (order) => {
+              const sn = String(order?.orderSn || "").replace(/^shopee-/i, "").trim();
+              await waitForInFlightLabelFile(sn, buildCachedLabelFilename([sn]), 8e3);
+            })
+          );
+          for (let mi = missingOrders.length - 1; mi >= 0; mi--) {
+            const order = missingOrders[mi];
+            const recovered = resolveLocalLabelForOrder(order);
+            if (!recovered) continue;
+            const orderSn = recovered.orderSn;
+            const orderId = recovered.orderId;
+            if (!urls.includes(recovered.url)) urls.push(recovered.url);
+            const docIdx = documents.findIndex((d) => String(d.orderSn) === orderSn);
+            if (docIdx >= 0) {
+              documents[docIdx] = {
+                url: recovered.url,
+                pdfFilename: recovered.pdfFilename,
+                orderSn,
+                orderId,
+                orderSns: [orderSn]
+              };
+            }
+            const resIdx = results.findIndex((r2) => String(r2.orderSn) === orderSn);
+            if (resIdx >= 0) {
+              results[resIdx] = {
+                orderId,
+                orderSn,
+                success: true,
+                url: recovered.url,
+                pdfFilename: recovered.pdfFilename
+              };
+            }
+            missingOrders.splice(mi, 1);
+          }
+        }
+      }
+      if (missingOrders.length > 0) {
         try {
           const missingSns = missingOrders.map((order) => String(order?.orderSn || order?.order_sn || "").replace(/^shopee-/i, "").trim()).filter(Boolean);
           const fallbackDeadlineAt = Date.now() + PRINT_CHUNK_FALLBACK_DEADLINE_MS;
@@ -150259,7 +150553,6 @@ async function startServer() {
   async function printDocumentHandler(req, res) {
     return printChunkHandler(req, res);
   }
-  const labelPrepareInFlight = /* @__PURE__ */ new Set();
   function firePrepareShippingLabelsForOrders(items) {
     if (!Array.isArray(items) || items.length === 0) return;
     setImmediate(() => {
@@ -150279,7 +150572,7 @@ async function startServer() {
           queue.push({ ...o, shopId: it.shopId || o?.shopId, orderSn: sn });
         }
         if (localReady.length > 0) {
-          void mapWithConcurrency(localReady, 3, async (row) => {
+          void mapWithConcurrency(localReady, 5, async (row) => {
             try {
               await markHasPdfIfLabelFileReady([row.sn], row.shopId);
             } catch (markErr) {
@@ -150289,7 +150582,7 @@ async function startServer() {
         }
         if (queue.length === 0) return;
         console.log(`[Label Prepare BG] START n=${queue.length}`);
-        await mapBatchConcurrently(queue, 3, async (order) => {
+        await mapBatchConcurrently(queue, 5, async (order) => {
           const sn = String(order.orderSn || "").trim();
           try {
             const shopId = String(order.shopId || resolveOrderShopId(order) || "").trim();
@@ -150360,6 +150653,71 @@ async function startServer() {
   }
   function fireCreateShippingDocumentsForOrders(items) {
     firePrepareShippingLabelsForOrders(items);
+  }
+  async function prefetchTrackingAndLabelsAfterConfirm(orders) {
+    const list = (Array.isArray(orders) ? orders : []).filter(
+      (o) => o && String(o.orderSn || o.order_sn || "").trim()
+    );
+    if (list.length === 0) return;
+    await sleep4(1200);
+    const started2 = Date.now();
+    const deadlineMs = 2e4;
+    const backoffMs = [1e3, 1500, 2e3, 2500, 3e3];
+    const maxAttempts = 5;
+    const pending = [...list];
+    const kickReadyPdf = (ready) => {
+      if (ready.length === 0) return;
+      fireCreateShippingDocumentsForOrders(
+        ready.map((o) => ({
+          order: o,
+          shopId: String(o?.shopId || resolveOrderShopId(o) || ""),
+          orderSn: String(o?.orderSn || "").replace(/^shopee-/i, "").trim(),
+          packageNumber: String(o?.packageNumber || o?.package_number || "").trim() || void 0,
+          trackingNumber: trackingForShopeeShippingDoc(o) || void 0
+        }))
+      );
+    };
+    for (let attempt = 1; attempt <= maxAttempts && pending.length > 0; attempt++) {
+      if (Date.now() - started2 >= deadlineMs) break;
+      if (attempt > 1) {
+        const wait = backoffMs[Math.min(attempt - 2, backoffMs.length - 1)];
+        await sleep4(wait);
+      }
+      const byShop = /* @__PURE__ */ new Map();
+      for (const o of pending) {
+        const shopId = String(o.shopId || resolveOrderShopId(o) || "").trim();
+        if (!shopId) continue;
+        const bucket = byShop.get(shopId) || [];
+        bucket.push(o);
+        byShop.set(shopId, bucket);
+      }
+      for (const [shopId, shopOrders] of byShop) {
+        if (Date.now() - started2 >= deadlineMs) break;
+        try {
+          const token = await getValidShopeeAccessToken(shopId);
+          if (!token) continue;
+          await ensureShopeeTrackingForBatch(shopId, token, shopOrders);
+        } catch (err) {
+          console.warn(`[Confirm Prefetch] tracking shop=${shopId}:`, err?.message || err);
+        }
+      }
+      const ready = [];
+      const still = [];
+      for (const o of pending) {
+        const hasTn = hasUsableShopeeTrackingNumber(o);
+        const hasPkg = Boolean(String(o.packageNumber || o.package_number || "").trim());
+        if (hasTn && hasPkg) ready.push(o);
+        else still.push(o);
+      }
+      kickReadyPdf(ready);
+      pending.length = 0;
+      pending.push(...still);
+    }
+    if (pending.length > 0) {
+      console.warn(
+        `[Confirm Prefetch] c\xF2n ${pending.length} \u0111\u01A1n ch\u01B0a c\xF3 m\xE3 V\u0110 sau ${Math.min(maxAttempts, 5)} v\xF2ng \u2014 webhook/in sau s\u1EBD b\xF9`
+      );
+    }
   }
   registerLabelPdfDownloader(firePrepareShippingLabelsForOrders);
   async function executeShipOrderBackgroundJob(jobId, shipMethod, idList, snList) {

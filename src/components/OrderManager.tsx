@@ -5818,7 +5818,7 @@ export default function OrderManager({
     return finalJob;
   };
 
-  /** Kết thúc xác nhận — Result Summary modal (theo dõi tiến độ thật). */
+  /** Kết thúc xác nhận — toast + giữ optimistic, không khóa màn hình. */
   const finishShipJobResult = async (finalJob: any | null, total: number) => {
     const results = finalJob?.results || [];
     const summary = buildShipConfirmSummary(finalJob || {}, total);
@@ -5836,10 +5836,8 @@ export default function OrderManager({
     setProgressCompleted(summary.successCount);
     setProgressTotal(Math.max(total, summary.total, summary.successCount + summary.failCount));
     setProgressDone(true);
-    setProgressMessage('Kết quả xác nhận hàng loạt');
-    // Chặn nút In đơn đến khi silent-prefetch PDF hoàn tất (hoặc không có đơn success).
     setIsPdfReady(summary.successCount <= 0);
-    setShipConfirmSummary(summary);
+    setShipConfirmSummary(null);
 
     const confirmed = results.filter((r: any) => r?.success);
     if (confirmed.length > 0) {
@@ -6156,8 +6154,36 @@ export default function OrderManager({
       return;
     }
 
+    const snapshot = new Map<string, Order>();
+    for (const o of validQueued) {
+      const copy = { ...o };
+      const id = String(o.id || '').trim();
+      const sn = String(o.orderSn || '').replace(/^shopee-/i, '').trim();
+      if (id) snapshot.set(id, copy);
+      if (sn) {
+        snapshot.set(sn, copy);
+        snapshot.set(`shopee-${sn}`, copy);
+      }
+    }
+
     setShipConfirmOrders(null);
     setIsShipping(true);
+    const queuedKeys = new Set<string>();
+    for (const o of validQueued) {
+      if (o.id) queuedKeys.add(o.id);
+      if (o.orderSn) {
+        queuedKeys.add(o.orderSn);
+        queuedKeys.add(`shopee-${o.orderSn}`);
+      }
+    }
+    const optimistic = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys, {
+      markPrinted: false,
+      shipMethod,
+    });
+    ordersRef.current = optimistic;
+    onUpdateOrders(optimistic, { persist: false });
+    revealProcessedUnprintedTab(orderSns);
+    showToast(`Đang xác nhận ${orderSns.length} đơn...`);
     setProgressMessage(`Đang xác nhận ${orderSns.length} đơn lên Shopee...`);
     setProgressDone(false);
     setProgressCompleted(0);
@@ -6192,13 +6218,39 @@ export default function OrderManager({
             .filter(Boolean),
         ),
       ];
+      const failedDetails = summary.failedOrderDetails || [];
+      if (failedDetails.length > 0) {
+        const failedKeys = new Set<string>();
+        for (const f of failedDetails) {
+          const id = String(f.orderId || '').trim();
+          const sn = String(f.orderSn || '').replace(/^shopee-/i, '').trim();
+          if (id) failedKeys.add(id);
+          if (sn) {
+            failedKeys.add(sn);
+            failedKeys.add(`shopee-${sn}`);
+          }
+        }
+        const rolled = ordersRef.current.map((o) => {
+          const id = String(o.id || '').trim();
+          const sn = String(o.orderSn || '').replace(/^shopee-/i, '').trim();
+          if (!failedKeys.has(id) && !failedKeys.has(sn) && !failedKeys.has(`shopee-${sn}`)) {
+            return o;
+          }
+          return snapshot.get(id) || snapshot.get(sn) || snapshot.get(`shopee-${sn}`) || {
+            ...o,
+            isPrepared: false,
+            status: 'unprocessed' as const,
+          };
+        });
+        ordersRef.current = rolled;
+        onUpdateOrders(rolled, { persist: false });
+      }
 
       if (successfulSns.length > 0) {
         const optimisticTargets = applyPrintedLocalOptimistic(successfulSns, false, 'processed');
         if (optimisticTargets.length > 0) {
           void updatePrintStatusForOrders(optimisticTargets, false, { silent: true }).catch(() => {});
         }
-        // Auto-tick các đơn Confirm thành công — sẵn sàng In đơn, không cần chọn lại.
         const autoSelectIds = resolveSelectableOrderIds(
           summary.successfulOrderIds?.length ? summary.successfulOrderIds : successfulSns,
         );
@@ -6213,7 +6265,18 @@ export default function OrderManager({
           ? `Thành công ${summary.successCount} đơn, thất bại ${summary.failCount} đơn.`
           : `Đã xác nhận ${summary.successCount} đơn — PDF đang được tải ngầm.`,
       );
+      scheduleCloseProgressOverlay(1200);
     } catch (err) {
+      const rolled = ordersRef.current.map((o) => {
+        const id = String(o.id || '').trim();
+        const sn = String(o.orderSn || '').replace(/^shopee-/i, '').trim();
+        return snapshot.get(id) || snapshot.get(sn) || snapshot.get(`shopee-${sn}`) || o;
+      });
+      const changed = rolled.some((o, i) => o !== ordersRef.current[i]);
+      if (changed) {
+        ordersRef.current = rolled;
+        onUpdateOrders(rolled, { persist: false });
+      }
       clearShipProgressOverlay();
       showToast(`Xác nhận thất bại: ${err instanceof Error ? err.message : 'Lỗi không xác định'}`);
     } finally {
@@ -6451,11 +6514,10 @@ export default function OrderManager({
     const logTag = opts?.logTag || 'IN LẠI';
     const groupPicking =
       opts?.groupPicking ?? (smartPickSort && activeSubTab === 'unprocessed');
-    beginPrintProgressSession(orderSns.length, `Đang gộp PDF ${orderSns.length} đơn...`);
+    showToast(`Đang lấy tem ${orderSns.length} đơn...`);
     const reservedPrintWindow = openReservedPrintPlaceholder();
 
     try {
-      setProgressMessage('Đang gọi API gộp PDF...');
 
       const controller = new AbortController();
       const timeoutId = window.setTimeout(() => controller.abort(), 35_000);
@@ -6472,7 +6534,6 @@ export default function OrderManager({
         const data = await readResponseJson<any>(response);
 
         if (response.ok && data.success && data.url) {
-          setProgressMessage('Đang mở PDF...');
           if (!navigateReservedPrintWindow(reservedPrintWindow, data.url)) {
             const printWindow = window.open(data.url, '_blank');
             if (!printWindow) {
@@ -6490,7 +6551,6 @@ export default function OrderManager({
             void updatePrintStatusForOrders(optimisticTargets, true, { silent: true }).catch(() => {});
           }
           refetchOrdersPage({ silent: true });
-          markProgressComplete(completionMessage);
           showToast(completionMessage);
           setSelectedOrderIds([]);
 
@@ -7111,11 +7171,10 @@ export default function OrderManager({
 
     setIsBulkPrinting(true);
     if (shopeeAll.length > 0) {
-      beginPrintProgressSession(
-        shopeeAll.length,
+      showToast(
         shopeeAll.length === 1
-          ? 'Đang in 1 đơn — xử lý ngay...'
-          : `Đang in hàng loạt ${shopeeAll.length} đơn...`,
+          ? 'Đang lấy tem vận đơn...'
+          : `Đang lấy tem ${shopeeAll.length} đơn...`,
       );
     }
     try {
@@ -7129,18 +7188,8 @@ export default function OrderManager({
           message: `[SHOPEE PRINT] ${shopeeAll.length === 1 ? 'fast-path 1 đơn' : `batch×${shopeeAll.length}`} — đọc PDF kho nội bộ (Mongo waybill_url).`,
         });
         const result = await printShopeeDocuments(shopeeAll, {
-          onProgress: (completed, total) => {
-            setProgressCompleted(completed);
-            setProgressTotal(total);
-            setProgressMessage(
-              completed >= total
-                ? 'Hoàn tất — đang mở PDF vận đơn...'
-                : total === 1
-                  ? 'Đang lấy PDF từ kho nội bộ...'
-                  : `Đang lấy PDF nội bộ: ${completed}/${total} đơn...`
-            );
-          },
-          onStatus: (message) => setProgressMessage(message),
+          onProgress: () => undefined,
+          onStatus: () => undefined,
         });
         if (!result.success) {
           showToast(`In vận đơn Shopee thất bại: ${result.message}`);
@@ -7152,7 +7201,6 @@ export default function OrderManager({
           }
           refetchOrdersPage({ silent: true });
           setSelectedOrderIds([]);
-          markProgressComplete('In vận đơn thành công!');
         }
       }
       // Non-Shopee (manual/tiktok) orders don't have a real Shopee AWB — show the mock preview instead.
@@ -7440,16 +7488,27 @@ export default function OrderManager({
     // in the alert below) explains why — no more local pre-check blocking the request.
     setPrintingOrderId(order.id);
     const sn = String(order.orderSn || '').replace(/^shopee-/i, '').trim();
+    if (order.hasPdf && sn) {
+      const cached = tryOpenCachedLabelUrls([order.id || `shopee-${sn}`]);
+      if (cached.opened) {
+        applyPrintedLocalOptimistic(
+          [String(order.id || ''), String(order.orderSn || '')],
+          true,
+        );
+        void updatePrintStatusForOrders([order], true, { silent: true }).catch(() => {});
+        setPrintingOrderId(null);
+        return;
+      }
+    }
     if (!order.hasPdf && sn) {
-      beginPrintProgressSession(1, 'Đang lấy PDF vận đơn...');
+      showToast('Đang lấy tem vận đơn...');
       const pdfUrl = `/api/orders/download-pdf/${encodeURIComponent(sn)}`;
       window.open(pdfUrl, '_blank', 'noopener,noreferrer');
       startHasPdfBackgroundPoll([sn]);
       setPrintingOrderId(null);
-      scheduleCloseProgressOverlay(400);
       return;
     }
-    beginPrintProgressSession(1, 'Đang in 1 đơn — xử lý ngay...');
+    showToast('Đang lấy tem vận đơn...');
     onAddLog({
       id: `log-${Date.now()}`,
       timestamp: new Date().toISOString(),
@@ -7460,17 +7519,11 @@ export default function OrderManager({
     });
     try {
       const result = await printShopeeDocuments([order.id], {
-        onProgress: (completed, total) => {
-          setProgressCompleted(completed);
-          setProgressTotal(total);
-          setProgressMessage(
-            completed >= total ? 'Hoàn tất — đang mở PDF...' : 'Đang lấy PDF từ kho nội bộ...'
-          );
-        },
-        onStatus: (message) => setProgressMessage(message),
+        onProgress: () => undefined,
+        onStatus: () => undefined,
       });
       if (!result.success) {
-        alert(`In vận đơn thất bại cho đơn ${order.orderSn}: ${result.message}`);
+        showToast(`In vận đơn thất bại cho đơn ${order.orderSn}: ${result.message}`);
       } else {
         applyPrintedLocalOptimistic(
           [String(order.id || ''), String(order.orderSn || '')],
@@ -7478,13 +7531,11 @@ export default function OrderManager({
         );
         void updatePrintStatusForOrders([order], true, { silent: true }).catch(() => {});
         refetchOrdersPage({ silent: true });
-        markProgressComplete('In vận đơn thành công!');
       }
     } catch (err) {
-      alert('Không thể kết nối API in vận đơn Shopee. Vui lòng thử lại.');
+      showToast('Không thể kết nối API in vận đơn Shopee. Vui lòng thử lại.');
     } finally {
       setPrintingOrderId(null);
-      clearShipProgressOverlay();
     }
   };
 
@@ -9758,214 +9809,43 @@ export default function OrderManager({
     </div>
       )}
 
-      {/* Sync/tab loading: KHÔNG dùng blocking modal — chỉ toast (xem toastMessage).
-          Overlay dưới đây chỉ cho ship_order / in vận đơn (progressMessage). */}
+      {/* Thanh tiến độ nhỏ — không khóa danh sách khi xác nhận nền. */}
       {progressMessage && (
-        <div className="fixed inset-0 bg-gray-900/70 backdrop-blur-sm flex items-center justify-center p-4 z-100 animate-in fade-in duration-300">
-          <div className="bg-white rounded-3xl max-w-md w-full p-8 shadow-2xl flex flex-col items-center gap-5 text-center relative overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-br from-blue-50 via-white to-blue-50 opacity-50 animate-pulse"></div>
-
-            <div className="relative z-10 flex flex-col items-center gap-5 w-full">
-              {shipConfirmSummary ? (
-                <>
-                  <div className="relative">
-                    <CheckCircle2 className="w-16 h-16 text-emerald-600 animate-in zoom-in duration-500" />
-                  </div>
-                  <h3 className="text-lg font-black text-gray-900">
-                    {shipConfirmSummary.successCount > 0 ? 'Xác nhận thành công' : 'Kết quả xác nhận'}
-                  </h3>
-                  <div className="w-full space-y-3 text-left">
-                    <div className="rounded-2xl bg-emerald-50 border border-emerald-100 px-4 py-3">
-                      <p className="text-base font-bold text-emerald-700">
-                        Thành công: {shipConfirmSummary.successCount} đơn
-                      </p>
-                    </div>
-                    <div className="rounded-2xl bg-rose-50 border border-rose-100 px-4 py-3">
-                      <p className="text-base font-bold text-rose-700">
-                        Thất bại: {shipConfirmSummary.failCount} đơn
-                      </p>
-                      {shipConfirmSummary.failedOrderDetails.length > 0 && (
-                        <ul className="mt-2 space-y-1 max-h-28 overflow-y-auto">
-                          {shipConfirmSummary.failedOrderDetails.slice(0, 8).map((f, idx) => (
-                            <li key={`${f.orderSn || f.orderId || idx}-${idx}`} className="text-[11px] text-rose-600 font-medium leading-snug">
-                              {f.orderSn || f.orderId || '—'}
-                              {f.message ? `: ${f.message}` : f.error ? `: ${f.error}` : ''}
-                            </li>
-                          ))}
-                          {shipConfirmSummary.failedOrderDetails.length > 8 && (
-                            <li className="text-[11px] text-rose-500">
-                              …và {shipConfirmSummary.failedOrderDetails.length - 8} đơn khác
-                            </li>
-                          )}
-                        </ul>
-                      )}
-                    </div>
-                  </div>
-                  {shipJobResults.length > 0 && (
-                    <ul className="w-full max-h-36 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50 text-left divide-y divide-slate-100">
-                      {shipJobResults.map((result, index) => (
-                        <li key={`${result.orderSn || result.orderId || index}-${index}`} className="px-3 py-2 text-xs">
-                          <span className={result.success ? 'font-bold text-emerald-700' : 'font-bold text-rose-700'}>
-                            {result.orderSn || result.orderId || '—'}: {result.success ? 'Thành công' : 'Thất bại'}
-                          </span>
-                          {!result.success && (result.message || result.error) && (
-                            <span className="text-rose-600"> — {result.message || result.error}</span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  <div className="flex w-full gap-3 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const sns = shipConfirmSummary.successfulOrderIds || [];
-                        if (sns.length > 0) {
-                          revealProcessedUnprintedTab(sns);
-                        }
-                        clearShipProgressOverlay();
-                      }}
-                      className="flex-1 py-3 rounded-2xl border border-gray-200 bg-white text-gray-700 text-sm font-bold hover:bg-gray-50 transition-colors"
-                    >
-                      Đóng
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handlePrintFromShipSummary()}
-                      disabled={
-                        isPrintingFromSummary ||
-                        isFetchingPdf ||
-                        !shipConfirmSummary.successfulOrderIds.length
-                      }
-                      className={`flex-1 py-3 rounded-2xl text-sm font-bold transition-colors inline-flex items-center justify-center gap-2 disabled:cursor-not-allowed ${
-                        !isPrintingFromSummary &&
-                        !isFetchingPdf &&
-                        shipConfirmSummary.successfulOrderIds.length > 0
-                          ? 'bg-blue-600 text-white hover:bg-blue-700'
-                          : 'bg-gray-300 text-gray-600 opacity-80'
-                      }`}
-                    >
-                      {!isPdfReady ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          Đang chuẩn bị in...
-                        </>
-                      ) : isPrintingFromSummary ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          Đang in...
-                        </>
-                      ) : (
-                        <>
-                          <Printer className="w-4 h-4" />
-                          In đơn
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="relative">
-                    {progressDone ? (
-                      <div className="relative">
-                        <CheckCircle2 className="w-16 h-16 text-emerald-600 animate-in zoom-in duration-500" />
-                        <div className="absolute inset-0 rounded-full border-4 border-emerald-200 animate-ping"></div>
-                      </div>
-                    ) : (
-                      <div className="relative">
-                        <div className="absolute inset-0 rounded-full border-4 border-blue-200 animate-pulse"></div>
-                        <Loader2 className="w-16 h-16 text-blue-600 animate-spin relative z-10" />
-                      </div>
-                    )}
-                  </div>
-
-                  {progressTotal > 0 && (
-                    <div className="flex flex-col items-center gap-2 w-full">
-                      <div className={`text-4xl font-black tabular-nums ${progressDone ? 'text-emerald-700' : 'text-blue-700'} transition-all duration-300`}>
-                        {progressCompleted}<span className="text-2xl text-gray-400 mx-1">/</span>{progressTotal}
-                      </div>
-                      <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full transition-all duration-500 ease-out ${progressDone ? 'bg-emerald-600' : 'bg-gradient-to-r from-blue-500 to-blue-600'}`}
-                          style={{ width: `${Math.min(100, (progressCompleted / Math.max(1, progressTotal)) * 100)}%` }}
-                        >
-                          {!progressDone && (
-                            <div className="h-full w-full bg-gradient-to-r from-transparent via-white to-transparent opacity-30 animate-[shimmer_1.5s_infinite]"></div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex flex-col gap-2 w-full">
-                    <p className="text-base font-bold text-gray-800 leading-relaxed">
-                      {progressMessage}
-                    </p>
-
-                    {!progressDone && progressMessage.includes('chờ') && (
-                      <div className="flex items-center justify-center gap-2 mt-2">
-                        <div className="flex gap-1">
-                          {[0, 1, 2].map((i) => (
-                            <div
-                              key={`dot-${i}`}
-                              className="w-2 h-2 rounded-full bg-blue-500 animate-bounce"
-                              style={{ animationDelay: `${i * 0.15}s` }}
-                            ></div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {shipJobResults.length > 0 && (
-                    <ul className="w-full max-h-32 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50 text-left divide-y divide-slate-100">
-                      {shipJobResults.map((result, index) => (
-                        <li key={`${result.orderSn || result.orderId || index}-${index}`} className="px-3 py-2 text-xs">
-                          <span className={result.success ? 'font-bold text-emerald-700' : 'font-bold text-rose-700'}>
-                            {result.orderSn || result.orderId || '—'}: {result.success ? 'Thành công' : 'Thất bại'}
-                          </span>
-                          {!result.success && (result.message || result.error) && (
-                            <span className="text-rose-600"> — {result.message || result.error}</span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-
-                  <div className={`flex items-center gap-2 text-xs ${progressDone ? 'text-emerald-600' : 'text-gray-500'} font-semibold px-4 py-2 rounded-full ${progressDone ? 'bg-emerald-50' : 'bg-gray-50'} transition-all duration-300`}>
-                    {progressDone ? (
-                      <>
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>Hoàn tất</span>
-                      </>
-                    ) : progressMessage.includes('PDF') || progressMessage.includes('vận đơn') ? (
-                      <>
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        <span>PDF sẽ tự mở khi sẵn sàng — vui lòng không đóng tab</span>
-                      </>
-                    ) : (
-                      <>
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        <span>Vui lòng không bấm liên tục — hệ thống đang xử lý</span>
-                      </>
-                    )}
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => clearShipProgressOverlay()}
-                    className="w-full mt-1 py-2.5 rounded-2xl border border-gray-200 bg-white text-gray-700 text-sm font-bold hover:bg-gray-50 transition-colors"
-                  >
-                    Đóng
-                  </button>
-                </>
-              )}
+        <div className="fixed bottom-4 right-4 z-100 w-[min(22rem,calc(100vw-2rem))] pointer-events-auto animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 p-4 flex flex-col gap-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2 min-w-0">
+                {progressDone ? (
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                ) : (
+                  <Loader2 className="w-5 h-5 text-blue-600 animate-spin shrink-0" />
+                )}
+                <p className="text-sm font-bold text-gray-800 leading-snug truncate">
+                  {progressMessage}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => clearShipProgressOverlay()}
+                className="text-xs font-bold text-gray-500 hover:text-gray-800 shrink-0"
+              >
+                Đóng
+              </button>
             </div>
+            {progressTotal > 0 && (
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center justify-between text-xs font-semibold text-slate-600">
+                  <span>{progressCompleted}/{progressTotal}</span>
+                  <span>{Math.min(100, Math.round((progressCompleted / Math.max(1, progressTotal)) * 100))}%</span>
+                </div>
+                <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full transition-all duration-500 ${progressDone ? 'bg-emerald-600' : 'bg-blue-600'}`}
+                    style={{ width: `${Math.min(100, (progressCompleted / Math.max(1, progressTotal)) * 100)}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -4256,6 +4256,191 @@ export async function updateOrderTrackingInStore(
 }
 
 /**
+ * Ghi tracking/package cho N đơn — ĐÚNG 1 bulkWrite (không findOneAndUpdate từng SN).
+ */
+export async function bulkUpdateTrackingBySn(
+  patches: Array<{
+    orderSn: string;
+    tracking_no?: string;
+    packageNumber?: string;
+    shopId?: string;
+    status?: string;
+    isPrepared?: boolean;
+    shopee_order_status?: string;
+    internalTrackingCode?: string;
+    is_pending_shopee_check?: boolean;
+    return_tracking_no?: string;
+  }>,
+): Promise<number> {
+  if (!isMongoReady()) return 0;
+  requireMongo();
+  const list = Array.isArray(patches) ? patches.filter((p) => p && String(p.orderSn || "").trim()) : [];
+  if (list.length === 0) return 0;
+
+  const ops = list
+    .map((p) => {
+      const sn = String(p.orderSn || "").replace(/^shopee-/i, "").trim();
+      if (!sn) return null;
+      const _id = `shopee-${sn}`;
+      const shopIdStr = p.shopId != null ? String(p.shopId).trim() : "";
+      const tn = String(p.tracking_no || "").trim();
+      const pkg = String(p.packageNumber || "").trim();
+      const rtnRaw = String(p.return_tracking_no || "").trim().toUpperCase();
+      const rtn = rtnRaw && rtnRaw.length >= 4 && !/^0FG/i.test(rtnRaw) ? rtnRaw : "";
+      const hasOutboundTn = Boolean(tn && !/^0FG/i.test(tn));
+      if (!hasOutboundTn && !pkg && !rtn) return null;
+
+      const $set: Record<string, unknown> = {};
+      if (hasOutboundTn) {
+        $set.tracking_no = tn;
+        $set.trackingNumber = tn;
+        $set["data.tracking_no"] = tn;
+        $set["data.trackingNumber"] = tn;
+      }
+      if (pkg) {
+        $set.packageNumber = pkg;
+        $set["data.packageNumber"] = pkg;
+        $set["data.package_number"] = pkg;
+      }
+      if (shopIdStr) {
+        $set.shopId = shopIdStr;
+        $set["data.shopId"] = shopIdStr;
+      }
+      if (p.internalTrackingCode) {
+        $set["data.internalTrackingCode"] = p.internalTrackingCode;
+      }
+      if (rtn && rtn !== String(tn || "").trim().toUpperCase()) {
+        $set.return_tracking_no = rtn;
+        $set.returnTrackingNumber = rtn;
+        $set["data.return_tracking_no"] = rtn;
+        $set["data.returnTrackingNumber"] = rtn;
+      }
+      if (p.status != null) {
+        $set.status = String(p.status);
+        $set["data.status"] = String(p.status);
+      }
+      if (p.isPrepared != null) {
+        $set.isPrepared = p.isPrepared;
+        $set["data.isPrepared"] = p.isPrepared;
+      }
+      if (p.shopee_order_status != null) {
+        const rawIn = String(p.shopee_order_status).toUpperCase();
+        $set.shopee_order_status = rawIn;
+        $set["data.shopee_order_status"] = rawIn;
+      }
+      if (p.is_pending_shopee_check != null) {
+        $set.is_pending_shopee_check = p.is_pending_shopee_check;
+        $set["data.is_pending_shopee_check"] = p.is_pending_shopee_check;
+      }
+      if (hasOutboundTn) {
+        applyLaggingPendingPromotionToSet($set, p);
+      }
+      if (Object.keys($set).length === 0) return null;
+      return {
+        updateOne: {
+          filter: buildOrderCompoundFilter(sn, _id, shopIdStr || null),
+          update: { $set },
+          upsert: false,
+        },
+      };
+    })
+    .filter(Boolean);
+
+  if (ops.length === 0) return 0;
+  await withWriteTimeout(
+    enqueueWrite(async () => {
+      const result = await OrderModel.bulkWrite(ops as any, {
+        ordered: false,
+        maxTimeMS: 8_000,
+      });
+      console.log(
+        `[Ship Persist] tracking bulkWrite ONE shot — ops=${ops.length} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0}`,
+      );
+    }),
+    "tracking_persist",
+  );
+  invalidateTabCountCache();
+  return ops.length;
+}
+
+/**
+ * Ghi hasPdf theo từng SN (filename/url khác nhau) — ĐÚNG 1 bulkWrite.
+ */
+export async function markOrdersHasPdfRows(
+  rows: Array<{
+    orderSn: string;
+    shopId?: string;
+    labelUrl?: string;
+    waybill_url?: string;
+    pdfFilename?: string;
+  }>,
+): Promise<number> {
+  if (!isMongoReady()) return 0;
+  requireMongo();
+  const list = (Array.isArray(rows) ? rows : [])
+    .map((r) => ({
+      sn: String(r?.orderSn || "").replace(/^shopee-/i, "").trim(),
+      shopId: r?.shopId != null ? String(r.shopId).trim() : "",
+      labelUrl: String(r?.labelUrl || r?.waybill_url || "").trim(),
+      pdfFilename: String(r?.pdfFilename || "").trim(),
+    }))
+    .filter((r) => r.sn);
+  if (list.length === 0) return 0;
+
+  const ops = list.map((r) => {
+    const _id = `shopee-${r.sn}`;
+    const $set: Record<string, unknown> = {
+      hasPdf: true,
+      "data.hasPdf": true,
+      "data.readyToPrint": true,
+    };
+    if (r.labelUrl) {
+      $set.waybill_url = r.labelUrl;
+      $set["data.waybill_url"] = r.labelUrl;
+      $set["data.labelUrl"] = r.labelUrl;
+      $set["data.pdfUrl"] = r.labelUrl;
+    }
+    if (r.pdfFilename) $set["data.pdfFilename"] = r.pdfFilename;
+    if (r.shopId) {
+      $set.shopId = r.shopId;
+      $set["data.shopId"] = r.shopId;
+    }
+    return {
+      updateOne: {
+        filter: buildOrderCompoundFilter(r.sn, _id, r.shopId || null),
+        update: {
+          $set,
+          $setOnInsert: {
+            _id,
+            orderSn: r.sn,
+            isPrinted: false,
+            "data.isPrinted": false,
+            "data.id": _id,
+            "data.orderSn": r.sn,
+            "data.channel": "shopee",
+          },
+        },
+        upsert: true,
+      },
+    };
+  });
+
+  await withWriteTimeout(
+    enqueueWrite(async () => {
+      const result = await OrderModel.bulkWrite(ops as any, {
+        ordered: false,
+        maxTimeMS: 8_000,
+      });
+      console.log(
+        `[MongoDB] markOrdersHasPdfRows n=${ops.length} modified=${result.modifiedCount || 0}`,
+      );
+    }),
+    "mark_has_pdf_rows",
+  );
+  return ops.length;
+}
+
+/**
  * Chỉ $set mã chiều hoàn (+ return_sn/return_status logistics).
  * CẤM đụng is_return_received / local_return_status / cờ kho.
  */
