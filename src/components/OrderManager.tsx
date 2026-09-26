@@ -4403,6 +4403,18 @@ export default function OrderManager({
   const [pendingAutoPrint, setPendingAutoPrint] = useState<PendingAutoPrint | null>(null);
   const [silentPrintSrc, setSilentPrintSrc] = useState<string | null>(null);
 
+  type BatchPrintModalState = {
+    phase: 'loading' | 'success' | 'error';
+    total: number;
+    printedCount: number;
+    failedOrderIds: string[];
+    fileUrl: string | null;
+    message: string;
+  };
+  const [batchPrintModal, setBatchPrintModal] = useState<BatchPrintModalState | null>(null);
+  const batchPrintIframeRef = useRef<HTMLIFrameElement | null>(null);
+  const batchPrintFileUrlRef = useRef<string | null>(null);
+
   // Floating "processing..." overlay shown during any real Shopee API call
   // (ship_order / create+download shipping document), single or bulk — gives
   // the seller immediate visual feedback instead of just a disabled button.
@@ -6684,53 +6696,54 @@ export default function OrderManager({
   /**
    * In gộp 1 PDF qua /api/orders/batch-print (blob) — dùng chung cho
    * "In đơn đã chọn" và nút "In đơn" trong Modal xác nhận thành công.
+   * Không dùng window.open (bị chặn popup sau await). In ngầm qua iframe ẩn.
    */
-  const openMergedPdfBlob = (blob: Blob, reservedWindow: Window | null | undefined): boolean => {
-    const fileURL = URL.createObjectURL(blob);
-    const revokeLater = () => {
-      window.setTimeout(() => {
-        try {
-          URL.revokeObjectURL(fileURL);
-        } catch {
-          /* ignore */
-        }
-      }, 5 * 60_000);
-    };
-    const kickPrint = (win: Window) => {
+  const closeBatchPrintModal = () => {
+    if (batchPrintIframeRef.current) {
       try {
-        win.focus();
-        win.print();
-      } catch {
-        /* PDF viewer có thể chặn print() — user vẫn thấy file */
-      }
-    };
-    const attachPrint = (win: Window | null): boolean => {
-      if (!win || win.closed) return false;
-      try {
-        win.addEventListener('load', () => window.setTimeout(() => kickPrint(win), 400), { once: true });
+        batchPrintIframeRef.current.remove();
       } catch {
         /* ignore */
       }
-      window.setTimeout(() => kickPrint(win), 800);
-      revokeLater();
-      return true;
-    };
-
-    if (reservedWindow && !reservedWindow.closed) {
-      try {
-        reservedWindow.location.href = fileURL;
-        return attachPrint(reservedWindow);
-      } catch {
-        /* fall through */
-      }
+      batchPrintIframeRef.current = null;
     }
+    if (batchPrintFileUrlRef.current) {
+      try {
+        URL.revokeObjectURL(batchPrintFileUrlRef.current);
+      } catch {
+        /* ignore */
+      }
+      batchPrintFileUrlRef.current = null;
+    }
+    setBatchPrintModal(null);
+  };
 
-    const printWindow = window.open(fileURL, '_blank');
-    if (printWindow) return attachPrint(printWindow);
-
-    printPdfViaHiddenIframe(fileURL);
-    revokeLater();
-    return true;
+  const printMergedPdfViaHiddenIframe = (fileURL: string) => {
+    if (batchPrintIframeRef.current) {
+      try {
+        batchPrintIframeRef.current.remove();
+      } catch {
+        /* ignore */
+      }
+      batchPrintIframeRef.current = null;
+    }
+    const iframe = document.createElement('iframe');
+    iframe.setAttribute('title', 'batch-print-iframe');
+    iframe.setAttribute(
+      'style',
+      'display:none;width:0;height:0;border:0;position:absolute;left:-9999px;',
+    );
+    iframe.onload = () => {
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } catch (err) {
+        console.error('[BatchPrint] iframe.print() lỗi:', err);
+      }
+    };
+    iframe.src = fileURL;
+    document.body.appendChild(iframe);
+    batchPrintIframeRef.current = iframe;
   };
 
   const runBatchPrintOnly = async (
@@ -6741,15 +6754,28 @@ export default function OrderManager({
       orderSnsInput.map((sn) => String(sn || '').replace(/^shopee-/i, '').trim()).filter(Boolean),
     );
     if (!orderSns.length) {
-      showToast('Không tìm thấy mã đơn hợp lệ.');
+      setBatchPrintModal({
+        phase: 'error',
+        total: 0,
+        printedCount: 0,
+        failedOrderIds: [],
+        fileUrl: null,
+        message: 'Không tìm thấy mã đơn hợp lệ.',
+      });
       return false;
     }
 
     const logTag = opts?.logTag || 'IN LẠI';
     const groupPicking =
       opts?.groupPicking ?? (smartPickSort && activeSubTab === 'unprocessed');
-    showToast(`Đang gộp ${orderSns.length} đơn hàng để in...`, 30_000);
-    const reservedPrintWindow = openReservedPrintPlaceholder();
+    setBatchPrintModal({
+      phase: 'loading',
+      total: orderSns.length,
+      printedCount: 0,
+      failedOrderIds: [],
+      fileUrl: null,
+      message: `Đang gộp file PDF cho ${orderSns.length} đơn hàng...`,
+    });
 
     try {
       const controller = new AbortController();
@@ -6776,18 +6802,30 @@ export default function OrderManager({
           } catch {
             /* ignore */
           }
-          closeReservedPrintWindow(reservedPrintWindow);
-          showToast(`In gộp thất bại: ${data.message || 'Lỗi không xác định'}`);
+          setBatchPrintModal({
+            phase: 'error',
+            total: orderSns.length,
+            printedCount: 0,
+            failedOrderIds: [],
+            fileUrl: null,
+            message: data.message || 'In gộp thất bại. Vui lòng thử lại.',
+          });
           clearShipProgressOverlay();
           return false;
         }
 
         const pdfBuffer = await response.arrayBuffer();
         const file = new Blob([pdfBuffer], { type: 'application/pdf' });
-        if (!openMergedPdfBlob(file, reservedPrintWindow)) {
-          closeReservedPrintWindow(reservedPrintWindow);
-          throw new Error('Trình duyệt đã chặn cửa sổ PDF. Vui lòng cho phép popup và thử lại.');
+        if (batchPrintFileUrlRef.current) {
+          try {
+            URL.revokeObjectURL(batchPrintFileUrlRef.current);
+          } catch {
+            /* ignore */
+          }
         }
+        const fileURL = URL.createObjectURL(file);
+        batchPrintFileUrlRef.current = fileURL;
+        printMergedPdfViaHiddenIframe(fileURL);
 
         const successCount = Number(response.headers.get('X-Print-Success-Count') || 0);
         const totalCount = Number(response.headers.get('X-Print-Total') || orderSns.length);
@@ -6814,8 +6852,15 @@ export default function OrderManager({
           void updatePrintStatusForOrders(optimisticTargets, true, { silent: true }).catch(() => {});
         }
         refetchOrdersPage({ silent: true });
-        showToast(completionMessage);
         setSelectedOrderIds([]);
+        setBatchPrintModal({
+          phase: 'success',
+          total: totalCount,
+          printedCount,
+          failedOrderIds,
+          fileUrl: fileURL,
+          message: completionMessage,
+        });
 
         onAddLog({
           id: `log-${Date.now()}`,
@@ -6828,19 +6873,30 @@ export default function OrderManager({
         return true;
       } catch (fetchErr: any) {
         window.clearTimeout(timeoutId);
-        closeReservedPrintWindow(reservedPrintWindow);
-        if (fetchErr?.name === 'AbortError') {
-          showToast('Shopee chưa tạo xong PDF sau thời gian chờ. Vui lòng thử lại sau ít phút.');
-        } else {
-          throw fetchErr;
-        }
+        const timeout = fetchErr?.name === 'AbortError';
+        setBatchPrintModal({
+          phase: 'error',
+          total: orderSns.length,
+          printedCount: 0,
+          failedOrderIds: [],
+          fileUrl: null,
+          message: timeout
+            ? 'Shopee chưa tạo xong PDF sau thời gian chờ. Vui lòng thử lại sau ít phút.'
+            : (fetchErr instanceof Error ? fetchErr.message : 'Không thể kết nối API in gộp. Vui lòng thử lại.'),
+        });
         clearShipProgressOverlay();
         return false;
       }
     } catch (err) {
-      closeReservedPrintWindow(reservedPrintWindow);
       console.error('[BatchPrint] Error:', err);
-      showToast('Không thể kết nối API in gộp. Vui lòng thử lại.');
+      setBatchPrintModal({
+        phase: 'error',
+        total: orderSns.length,
+        printedCount: 0,
+        failedOrderIds: [],
+        fileUrl: null,
+        message: 'Không thể kết nối API in gộp. Vui lòng thử lại.',
+      });
       clearShipProgressOverlay();
       return false;
     }
@@ -8920,6 +8976,98 @@ export default function OrderManager({
           onLoad={handleSilentPrintIframeLoad}
           style={{ display: 'none', width: 0, height: 0, border: 0 }}
         />
+      )}
+
+      {batchPrintModal && (
+        <div
+          className="fixed inset-0 z-[140] bg-black/70 backdrop-blur-sm animate-in fade-in"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="batch-print-modal-title"
+        >
+          <div
+            className="fixed left-1/2 top-1/2 z-[141] w-[min(92vw,440px)] -translate-x-1/2 -translate-y-1/2 rounded-3xl bg-white shadow-2xl overflow-hidden"
+          >
+            <div className="px-6 pt-8 pb-6 text-center">
+              {batchPrintModal.phase === 'loading' && (
+                <>
+                  <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center">
+                    <Loader2 className="h-16 w-16 animate-spin text-blue-600" />
+                  </div>
+                  <h3 id="batch-print-modal-title" className="text-lg font-extrabold text-slate-900">
+                    Đang gộp file PDF
+                  </h3>
+                  <p className="mt-2 text-sm font-semibold text-slate-600">
+                    {batchPrintModal.message || `Đang gộp file PDF cho ${batchPrintModal.total} đơn hàng...`}
+                  </p>
+                  <p className="mt-3 text-xs font-medium text-slate-400">
+                    Vui lòng giữ nguyên cửa sổ — hộp thoại in sẽ hiện khi file sẵn sàng.
+                  </p>
+                </>
+              )}
+
+              {batchPrintModal.phase === 'success' && (
+                <>
+                  <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-full bg-emerald-50">
+                    <CheckCircle2 className="h-14 w-14 text-emerald-500" />
+                  </div>
+                  <h3 id="batch-print-modal-title" className="text-lg font-extrabold text-slate-900">
+                    Sẵn sàng in
+                  </h3>
+                  <p className="mt-2 text-sm font-semibold text-slate-600">
+                    {batchPrintModal.message}
+                  </p>
+                  {batchPrintModal.failedOrderIds.length > 0 && (
+                    <p className="mt-2 text-xs font-medium text-amber-600">
+                      Bỏ qua {batchPrintModal.failedOrderIds.length} đơn chưa có mã / PDF lỗi.
+                    </p>
+                  )}
+                  <div className="mt-6 flex flex-col gap-2.5">
+                    {batchPrintModal.fileUrl && (
+                      <a
+                        href={batchPrintModal.fileUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3.5 text-sm font-extrabold text-white shadow-md hover:bg-blue-700"
+                      >
+                        <Printer className="h-4 w-4" />
+                        Mở file PDF
+                      </a>
+                    )}
+                    <button
+                      type="button"
+                      onClick={closeBatchPrintModal}
+                      className="inline-flex w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                    >
+                      Đóng
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {batchPrintModal.phase === 'error' && (
+                <>
+                  <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-full bg-rose-50">
+                    <XCircle className="h-14 w-14 text-rose-500" />
+                  </div>
+                  <h3 id="batch-print-modal-title" className="text-lg font-extrabold text-slate-900">
+                    Không gộp được file in
+                  </h3>
+                  <p className="mt-2 text-sm font-semibold text-slate-600">
+                    {batchPrintModal.message}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={closeBatchPrintModal}
+                    className="mt-6 inline-flex w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                  >
+                    Đóng
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Modal user-gesture: Tiếp tục In Đơn khi trình duyệt chặn popup sau await. */}
