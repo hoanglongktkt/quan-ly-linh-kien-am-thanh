@@ -5573,31 +5573,36 @@ export default function OrderManager({
 
   // Called from the "Xác nhận đơn hàng" modal — arranges shipment (pickup/dropoff,
   // per the seller's choice) for every order currently queued in `shipConfirmOrders`.
-  const clearShipProgressOverlay = () => {
+  /** Chỉ đóng banner tiến độ — KHÔNG hủy silent-prefetch PDF (không ++ pdfPrefetchGenRef). */
+  const closeConfirmProgressBanner = () => {
     if (progressCloseTimerRef.current) {
       clearTimeout(progressCloseTimerRef.current);
       progressCloseTimerRef.current = null;
     }
-    pdfPrefetchGenRef.current += 1;
-    setIsShipping(false);
     setProgressMessage(null);
     setProgressCompleted(0);
     setProgressTotal(0);
     setProgressDone(false);
     setShipConfirmSummary(null);
     setShipJobResults([]);
+  };
+
+  const clearShipProgressOverlay = () => {
+    closeConfirmProgressBanner();
+    setIsShipping(false);
     setIsPrintingFromSummary(false);
+    setPrintingOrderId(null);
     setIsPdfReady(true);
   };
 
   const scheduleCloseProgressOverlay = (delayMs = 0) => {
     if (progressCloseTimerRef.current) clearTimeout(progressCloseTimerRef.current);
     if (delayMs <= 0) {
-      clearShipProgressOverlay();
+      closeConfirmProgressBanner();
       return;
     }
     progressCloseTimerRef.current = setTimeout(() => {
-      clearShipProgressOverlay();
+      closeConfirmProgressBanner();
     }, delayMs);
   };
 
@@ -5803,12 +5808,18 @@ export default function OrderManager({
         if (!response.ok) throw new Error('Không thể đọc tiến độ xác nhận.');
         const job = await parseJsonResponse<any>(response);
         finalJob = job;
-        setProgressCompleted(Number(job.completed) || 0);
-        setProgressTotal(Number(job.total) || total);
+        const completed = Number(job.completed) || 0;
+        const tot = Number(job.total) || total;
+        setProgressCompleted(completed);
+        setProgressTotal(tot);
         setShipJobResults(Array.isArray(job.results) ? job.results : []);
         if (job.status === 'done' || job.status === 'failed') return job;
+        // Đủ kết quả từng đơn → đóng poll, không chờ persist Mongo (tránh kẹt 100%).
+        if (tot > 0 && completed >= tot && Array.isArray(job.results) && job.results.length > 0) {
+          return { ...job, status: 'done' };
+        }
         setProgressMessage(
-          job.message || `Đang xác nhận ${Number(job.completed) || 0}/${Number(job.total) || total} đơn...`,
+          job.message || `Đang xác nhận ${completed}/${tot} đơn...`,
         );
       } catch (error) {
         setProgressMessage(error instanceof Error ? error.message : 'Không thể đọc tiến độ xác nhận.');
@@ -5980,7 +5991,26 @@ export default function OrderManager({
         });
         return !(hit?.hasPdf || hit?.readyToPrint || hit?.labelUrl || hit?.pdfUrl || hit?.waybill_url);
       });
-      if (remaining.length === 0 || attempt >= maxAttempts) return;
+      if (remaining.length === 0) {
+        void fetchOrdersWithShop({
+          silent: true,
+          page: 1,
+          limit: ORDERS_PAGE_SIZE,
+          merge: true,
+          tab: 'processed',
+          force: true,
+        }).catch((error: unknown) => {
+          if (error instanceof Error && error.name === 'AbortError') return;
+        });
+        return;
+      }
+      if (attempt >= maxAttempts) {
+        showToast(
+          'Đơn đã xác nhận, Shopee đang tạo mã. Vui lòng in lại sau ít phút',
+          6000,
+        );
+        return;
+      }
       const currentAttempt = attempt;
       attempt += 1;
       void fetch(`/api/orders/has-pdf?sns=${encodeURIComponent(remaining.join(','))}`, {
@@ -6134,6 +6164,30 @@ export default function OrderManager({
       } finally {
         if (gen === pdfPrefetchGenRef.current) {
           setIsPdfReady(true);
+          const stillWaiting = cleanSns.filter((sn) => {
+            const key = normalizeConfirmSn(sn);
+            const hit = ordersRef.current.find((o) => {
+              const oKey = normalizeConfirmSn(o.orderSn || o.id || '');
+              return oKey === key;
+            });
+            return !(hit?.hasPdf || hit?.readyToPrint || hit?.labelUrl || hit?.pdfUrl);
+          });
+          if (stillWaiting.length > 0) {
+            showToast(
+              'Đơn đã xác nhận, Shopee đang tạo mã. Vui lòng in lại sau ít phút',
+              6000,
+            );
+          }
+          void fetchOrdersWithShop({
+            silent: true,
+            page: 1,
+            limit: ORDERS_PAGE_SIZE,
+            merge: true,
+            tab: 'processed',
+            force: true,
+          }).catch((error: unknown) => {
+            if (error instanceof Error && error.name === 'AbortError') return;
+          });
         }
         releaseTracking(cleanSns);
       }
@@ -6265,7 +6319,6 @@ export default function OrderManager({
           ? `Thành công ${summary.successCount} đơn, thất bại ${summary.failCount} đơn.`
           : `Đã xác nhận ${summary.successCount} đơn — PDF đang được tải ngầm.`,
       );
-      scheduleCloseProgressOverlay(1200);
     } catch (err) {
       const rolled = ordersRef.current.map((o) => {
         const id = String(o.id || '').trim();
@@ -6277,10 +6330,11 @@ export default function OrderManager({
         ordersRef.current = rolled;
         onUpdateOrders(rolled, { persist: false });
       }
-      clearShipProgressOverlay();
       showToast(`Xác nhận thất bại: ${err instanceof Error ? err.message : 'Lỗi không xác định'}`);
     } finally {
       setIsShipping(false);
+      closeConfirmProgressBanner();
+      setPrintingOrderId(null);
     }
   };
 
@@ -6492,6 +6546,8 @@ export default function OrderManager({
       showToast(`Xác nhận thất bại: ${message}`);
     } finally {
       setIsShipping(false);
+      closeConfirmProgressBanner();
+      setPrintingOrderId(null);
     }
   };
 
@@ -7488,36 +7544,34 @@ export default function OrderManager({
     // in the alert below) explains why — no more local pre-check blocking the request.
     setPrintingOrderId(order.id);
     const sn = String(order.orderSn || '').replace(/^shopee-/i, '').trim();
-    if (order.hasPdf && sn) {
-      const cached = tryOpenCachedLabelUrls([order.id || `shopee-${sn}`]);
-      if (cached.opened) {
-        applyPrintedLocalOptimistic(
-          [String(order.id || ''), String(order.orderSn || '')],
-          true,
-        );
-        void updatePrintStatusForOrders([order], true, { silent: true }).catch(() => {});
-        setPrintingOrderId(null);
+    try {
+      if (order.hasPdf && sn) {
+        const cached = tryOpenCachedLabelUrls([order.id || `shopee-${sn}`]);
+        if (cached.opened) {
+          applyPrintedLocalOptimistic(
+            [String(order.id || ''), String(order.orderSn || '')],
+            true,
+          );
+          void updatePrintStatusForOrders([order], true, { silent: true }).catch(() => {});
+          return;
+        }
+      }
+      if (!order.hasPdf && sn) {
+        showToast('Đang lấy tem vận đơn...');
+        const pdfUrl = `/api/orders/download-pdf/${encodeURIComponent(sn)}`;
+        window.open(pdfUrl, '_blank', 'noopener,noreferrer');
+        startHasPdfBackgroundPoll([sn]);
         return;
       }
-    }
-    if (!order.hasPdf && sn) {
       showToast('Đang lấy tem vận đơn...');
-      const pdfUrl = `/api/orders/download-pdf/${encodeURIComponent(sn)}`;
-      window.open(pdfUrl, '_blank', 'noopener,noreferrer');
-      startHasPdfBackgroundPoll([sn]);
-      setPrintingOrderId(null);
-      return;
-    }
-    showToast('Đang lấy tem vận đơn...');
-    onAddLog({
-      id: `log-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      channel: 'shopee',
-      type: 'stock_sync',
-      status: 'success',
-      message: `[SHOPEE PRINT] fast-path 1 đơn ${order.orderSn} — đọc PDF kho nội bộ.`,
-    });
-    try {
+      onAddLog({
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        channel: 'shopee',
+        type: 'stock_sync',
+        status: 'success',
+        message: `[SHOPEE PRINT] fast-path 1 đơn ${order.orderSn} — đọc PDF kho nội bộ.`,
+      });
       const result = await printShopeeDocuments([order.id], {
         onProgress: () => undefined,
         onStatus: () => undefined,
