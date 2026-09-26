@@ -5634,28 +5634,24 @@ export default function OrderManager({
   }) => {
     if (!confirmProgressActiveRef.current) return;
     const total = Math.max(opts?.total ?? confirmWaitSnsRef.current.length, 1);
+    // Confirm bar chỉ tiến tới, không bao giờ reset về 0 khi PDF poll.
+    setProgressTotal((t) => Math.max(t, total));
     if (opts?.done) {
       setProgressMessage('Đã xác nhận và lấy mã in thành công.');
       setProgressDone(true);
-      setProgressCompleted(total);
-      setProgressTotal(total);
+      setProgressCompleted((c) => Math.max(c, total));
       return;
     }
     if (opts?.retry) {
       setProgressMessage(
         'Đã xác nhận. Shopee chưa tạo xong mã in. Bấm «Thử lấy lại mã» trên từng đơn.',
       );
-      setProgressDone(false);
+      setProgressDone(true);
       return;
     }
-    const readyCount = Math.max(0, opts?.readyCount ?? 0);
-    setProgressDone(false);
-    setProgressCompleted(readyCount);
-    setProgressTotal(total);
+    setProgressDone(true);
     setProgressMessage(
-      readyCount > 0
-        ? `Đã xác nhận. Đang chờ Shopee tạo mã in... (${readyCount}/${total})`
-        : 'Đã xác nhận. Đang chờ Shopee tạo mã in...',
+      `Đã xác nhận ${total} đơn. Hệ thống đang lấy mã in ngầm...`,
     );
   };
 
@@ -5950,9 +5946,10 @@ export default function OrderManager({
       message: `${report} (${shipMethod === 'pickup' ? 'Lấy hàng' : 'Tự mang ra bưu cục'})`,
     });
 
-    setProgressCompleted(summary.successCount);
-    setProgressTotal(Math.max(total, summary.total, summary.successCount + summary.failCount));
-    setProgressDone(false);
+    const confirmTotal = Math.max(total, summary.total, summary.successCount + summary.failCount);
+    setProgressCompleted(confirmTotal);
+    setProgressTotal(confirmTotal);
+    setProgressDone(true);
     setIsPdfReady(summary.successCount <= 0);
     setShipConfirmSummary(null);
 
@@ -6085,11 +6082,6 @@ export default function OrderManager({
       });
       if (remaining.length === 0) {
         updateConfirmWaitProgress({ done: true, total: targets.length });
-      } else {
-        updateConfirmWaitProgress({
-          readyCount: targets.length - remaining.length,
-          total: targets.length,
-        });
       }
     }
   };
@@ -6192,30 +6184,6 @@ export default function OrderManager({
       setPrintStatusFilter('unprinted');
       setCurrentPage(1);
     });
-    void Promise.resolve(
-      fetchOrdersWithShop({
-        silent: true,
-        page: 1,
-        limit: ORDERS_PAGE_SIZE,
-        merge: optimistic.length > 0,
-        tab: 'processed',
-        force: true,
-      }),
-    ).catch((error: unknown) => {
-      if (error instanceof Error && error.name === 'AbortError') return;
-    });
-    void fetchOrderCounts({ force: true });
-    // Nguồn DUY NHẤT theo dõi trạng thái PDF là silent-prefetch + prefetch-status.
-    // Nếu các đơn này ĐANG được theo dõi rồi (vừa Confirm xong) thì KHÔNG khởi động lại
-    // hay reset bộ đếm — tránh spam request `has-pdf`/`prefetch-status` trùng lặp.
-    const pendingSns = orderSns
-      .map((sn) => String(sn || '').replace(/^shopee-/i, '').trim())
-      .filter(Boolean);
-    const alreadyTracked =
-      pendingSns.length > 0 && pendingSns.every((sn) => activePdfPrefetchSnsRef.current.has(sn));
-    if (!alreadyTracked) {
-      startSilentPdfPrefetch(orderSns);
-    }
   };
 
   /**
@@ -6258,7 +6226,7 @@ export default function OrderManager({
           updateConfirmWaitProgress({ retry: true });
           return;
         }
-        const maxPolls = 20;
+        const maxPolls = 10;
         for (let attempt = 0; attempt < maxPolls; attempt += 1) {
           if (gen !== pdfPrefetchGenRef.current) return;
           if (attempt > 0) {
@@ -6446,8 +6414,29 @@ export default function OrderManager({
         );
         setSelectedOrderIds(autoSelectIds);
         confirmProgressActiveRef.current = true;
-        updateConfirmWaitProgress({ readyCount: 0, total: successfulSns.length });
+        const confirmTotal = Math.max(
+          summary.successCount + summary.failCount,
+          summary.total,
+          orderSns.length,
+        );
+        setProgressCompleted(confirmTotal);
+        setProgressTotal(confirmTotal);
+        setProgressDone(true);
+        setProgressMessage(
+          `Đã xác nhận ${summary.successCount} đơn. Hệ thống đang lấy mã in ngầm...`,
+        );
         void startSilentPdfPrefetch(successfulSns);
+        void fetchOrdersWithShop({
+          silent: true,
+          page: 1,
+          limit: ORDERS_PAGE_SIZE,
+          merge: true,
+          tab: 'processed',
+          force: true,
+        }).catch((error: unknown) => {
+          if (error instanceof Error && error.name === 'AbortError') return;
+        });
+        void fetchOrderCounts({ force: true }).catch(() => {});
       } else {
         setIsPdfReady(true);
         confirmProgressActiveRef.current = true;

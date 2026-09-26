@@ -147661,6 +147661,8 @@ async function startServer() {
         completedCount += 1;
         job.completed = completedCount;
         job.total = toShip.length;
+        job.results = results.slice();
+        job.successCount = successSns.length;
         job.message = `\u0110ang x\xE1c nh\u1EADn ${completedCount}/${toShip.length} \u0111\u01A1n l\xEAn s\xE0n...`;
         job.updatedAt = Date.now();
       };
@@ -147759,15 +147761,6 @@ async function startServer() {
         message: String(result.message || result.error || "X\xE1c nh\u1EADn th\u1EA5t b\u1EA1i")
       }));
       const confirmedRows = toShip.map(({ index }) => orders[index]).filter((o) => o && o.isPrepared === true);
-      try {
-        await withOperationTimeout(
-          () => persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod),
-          CONFIRM_ASYNC_DB_TIMEOUT_MS,
-          "Persist confirmed async orders"
-        );
-      } catch (persistErr) {
-        console.warn("[Confirm Async] persistConfirmedShipOrdersToMongo:", persistErr?.message || persistErr);
-      }
       const summary = buildShipConfirmSummaryPayload(toShip.length, {
         successCount: successSns.length,
         failedCount: failedOrders.length,
@@ -147793,8 +147786,21 @@ async function startServer() {
       );
       setImmediate(() => {
         void (async () => {
+          try {
+            await withOperationTimeout(
+              () => persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod),
+              CONFIRM_ASYNC_DB_TIMEOUT_MS,
+              "Persist confirmed async orders"
+            );
+          } catch (persistErr) {
+            console.error(
+              "[Confirm Async] persistConfirmedShipOrdersToMongo:",
+              persistErr?.stack || persistErr
+            );
+          }
+          await sleep4(200);
           void prefetchTrackingAndLabelsAfterConfirm(confirmedRows).catch((primeErr) => {
-            console.warn("[Confirm Async] BG tracking+PDF prefetch:", primeErr?.message || primeErr);
+            console.error("[Confirm Async] BG tracking+PDF prefetch:", primeErr?.stack || primeErr);
           });
           await sleep4(200);
           try {
@@ -147804,16 +147810,16 @@ async function startServer() {
               "Persist async order snapshot"
             );
           } catch (persistErr) {
-            console.warn("[Confirm Async] background persist failed:", persistErr?.message || persistErr);
+            console.error("[Confirm Async] background persist failed:", persistErr?.stack || persistErr);
           }
           await sleep4(200);
           try {
             await syncConfirmedOrdersFromShopee(confirmedRows, shipMethod);
           } catch (syncErr) {
-            console.warn("[Confirm Async] background sync failed:", syncErr?.message || syncErr);
+            console.error("[Confirm Async] background sync failed:", syncErr?.stack || syncErr);
           }
         })().catch((postErr) => {
-          console.warn("[Confirm Async] background post-process failed:", postErr?.message || postErr);
+          console.error("[Confirm Async] background post-process failed:", postErr?.stack || postErr);
         });
       });
     } catch (err) {

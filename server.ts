@@ -22367,6 +22367,8 @@ async function startServer() {
         completedCount += 1;
         job.completed = completedCount;
         job.total = toShip.length;
+        job.results = results.slice();
+        job.successCount = successSns.length;
         job.message = `Đang xác nhận ${completedCount}/${toShip.length} đơn lên sàn...`;
         job.updatedAt = Date.now();
       };
@@ -22485,15 +22487,6 @@ async function startServer() {
       const confirmedRows = toShip
         .map(({ index }) => orders[index])
         .filter((o: any) => o && o.isPrepared === true);
-      try {
-        await withOperationTimeout(
-          () => persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod),
-          CONFIRM_ASYNC_DB_TIMEOUT_MS,
-          "Persist confirmed async orders",
-        );
-      } catch (persistErr: any) {
-        console.warn("[Confirm Async] persistConfirmedShipOrdersToMongo:", persistErr?.message || persistErr);
-      }
 
       const summary = buildShipConfirmSummaryPayload(toShip.length, {
         successCount: successSns.length,
@@ -22522,8 +22515,21 @@ async function startServer() {
 
       setImmediate(() => {
         void (async () => {
+          try {
+            await withOperationTimeout(
+              () => persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod),
+              CONFIRM_ASYNC_DB_TIMEOUT_MS,
+              "Persist confirmed async orders",
+            );
+          } catch (persistErr: any) {
+            console.error(
+              "[Confirm Async] persistConfirmedShipOrdersToMongo:",
+              persistErr?.stack || persistErr,
+            );
+          }
+          await sleep(200);
           void prefetchTrackingAndLabelsAfterConfirm(confirmedRows).catch((primeErr: any) => {
-            console.warn("[Confirm Async] BG tracking+PDF prefetch:", primeErr?.message || primeErr);
+            console.error("[Confirm Async] BG tracking+PDF prefetch:", primeErr?.stack || primeErr);
           });
           await sleep(200);
           try {
@@ -22533,16 +22539,16 @@ async function startServer() {
               "Persist async order snapshot",
             );
           } catch (persistErr: any) {
-            console.warn("[Confirm Async] background persist failed:", persistErr?.message || persistErr);
+            console.error("[Confirm Async] background persist failed:", persistErr?.stack || persistErr);
           }
           await sleep(200);
           try {
             await syncConfirmedOrdersFromShopee(confirmedRows, shipMethod);
           } catch (syncErr: any) {
-            console.warn("[Confirm Async] background sync failed:", syncErr?.message || syncErr);
+            console.error("[Confirm Async] background sync failed:", syncErr?.stack || syncErr);
           }
         })().catch((postErr: any) => {
-          console.warn("[Confirm Async] background post-process failed:", postErr?.message || postErr);
+          console.error("[Confirm Async] background post-process failed:", postErr?.stack || postErr);
         });
       });
     } catch (err: any) {
