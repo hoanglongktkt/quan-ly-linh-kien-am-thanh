@@ -4410,6 +4410,10 @@ export default function OrderManager({
   const [progressCompleted, setProgressCompleted] = useState(0);
   const [progressTotal, setProgressTotal] = useState(0);
   const [progressDone, setProgressDone] = useState(false);
+  /** Nút In nhanh: waiting (đang poll mã) | retry (timeout). Không auto-clear khi đóng toast. */
+  const [labelWaitState, setLabelWaitState] = useState<Record<string, 'waiting' | 'retry'>>({});
+  const confirmProgressActiveRef = React.useRef(false);
+  const confirmWaitSnsRef = React.useRef<string[]>([]);
   const [shipJobResults, setShipJobResults] = useState<any[]>([]);
   const [shipConfirmSummary, setShipConfirmSummary] = useState<{
     total: number;
@@ -5579,6 +5583,7 @@ export default function OrderManager({
       clearTimeout(progressCloseTimerRef.current);
       progressCloseTimerRef.current = null;
     }
+    confirmProgressActiveRef.current = false;
     setProgressMessage(null);
     setProgressCompleted(0);
     setProgressTotal(0);
@@ -5586,6 +5591,107 @@ export default function OrderManager({
     setShipConfirmSummary(null);
     setShipJobResults([]);
   };
+
+  const normalizeLabelWaitKey = (raw: string): string =>
+    String(raw || '').replace(/^shopee-/i, '').trim();
+
+  const keysForLabelWait = (raw: string): string[] => {
+    const clean = normalizeLabelWaitKey(raw);
+    return clean ? [clean, `shopee-${clean}`] : [];
+  };
+
+  const patchLabelWaitState = (sns: string[], next: 'waiting' | 'retry' | null) => {
+    const targets = sns.map((sn) => normalizeLabelWaitKey(sn)).filter(Boolean);
+    if (targets.length === 0) return;
+    setLabelWaitState((prev) => {
+      let changed = false;
+      const copy = { ...prev };
+      for (const sn of targets) {
+        for (const key of keysForLabelWait(sn)) {
+          if (next == null) {
+            if (key in copy) {
+              delete copy[key];
+              changed = true;
+            }
+          } else if (copy[key] !== next) {
+            copy[key] = next;
+            changed = true;
+          }
+        }
+      }
+      return changed ? copy : prev;
+    });
+  };
+
+  const orderHasPrintFile = (order: Order): boolean =>
+    Boolean(order.hasPdf || order.readyToPrint || order.labelUrl || order.pdfUrl || order.waybill_url);
+
+  const updateConfirmWaitProgress = (opts?: {
+    done?: boolean;
+    retry?: boolean;
+    readyCount?: number;
+    total?: number;
+  }) => {
+    if (!confirmProgressActiveRef.current) return;
+    const total = Math.max(opts?.total ?? confirmWaitSnsRef.current.length, 1);
+    if (opts?.done) {
+      setProgressMessage('Đã xác nhận và lấy mã in thành công.');
+      setProgressDone(true);
+      setProgressCompleted(total);
+      setProgressTotal(total);
+      return;
+    }
+    if (opts?.retry) {
+      setProgressMessage(
+        'Đã xác nhận. Shopee chưa tạo xong mã in. Bấm «Thử lấy lại mã» trên từng đơn.',
+      );
+      setProgressDone(false);
+      return;
+    }
+    const readyCount = Math.max(0, opts?.readyCount ?? 0);
+    setProgressDone(false);
+    setProgressCompleted(readyCount);
+    setProgressTotal(total);
+    setProgressMessage(
+      readyCount > 0
+        ? `Đã xác nhận. Đang chờ Shopee tạo mã in... (${readyCount}/${total})`
+        : 'Đã xác nhận. Đang chờ Shopee tạo mã in...',
+    );
+  };
+
+  useEffect(() => {
+    setLabelWaitState((prev) => {
+      if (Object.keys(prev).length === 0) return prev;
+      let changed = false;
+      const next = { ...prev };
+      for (const o of orders) {
+        const hasFile = Boolean(o.hasPdf || o.readyToPrint || o.labelUrl || o.pdfUrl || o.waybill_url);
+        if (!hasFile) continue;
+        const sn = String(o.orderSn || '').replace(/^shopee-/i, '').trim();
+        const id = String(o.id || '').replace(/^shopee-/i, '').trim();
+        for (const key of [sn, id, sn ? `shopee-${sn}` : ''].filter(Boolean)) {
+          if (next[key]) {
+            delete next[key];
+            changed = true;
+          }
+        }
+      }
+      return changed ? next : prev;
+    });
+    const targets = confirmWaitSnsRef.current;
+    if (!confirmProgressActiveRef.current || targets.length === 0) return;
+    const remaining = targets.filter((sn) => {
+      const key = String(sn || '').replace(/^shopee-/i, '').trim().toLowerCase();
+      const hit = orders.find((o) => {
+        const oKey = String(o.orderSn || o.id || '').replace(/^shopee-/i, '').trim().toLowerCase();
+        return oKey === key;
+      });
+      return !hit || !Boolean(hit.hasPdf || hit.readyToPrint || hit.labelUrl || hit.pdfUrl || hit.waybill_url);
+    });
+    if (remaining.length === 0) {
+      updateConfirmWaitProgress({ done: true, total: targets.length });
+    }
+  }, [orders]);
 
   const clearShipProgressOverlay = () => {
     closeConfirmProgressBanner();
@@ -5614,7 +5720,7 @@ export default function OrderManager({
       if (t > 0) setProgressCompleted(t);
       return t;
     });
-    if (options?.autoClose !== false) {
+    if (options?.autoClose === true) {
       scheduleCloseProgressOverlay(0);
     }
   };
@@ -5846,7 +5952,7 @@ export default function OrderManager({
 
     setProgressCompleted(summary.successCount);
     setProgressTotal(Math.max(total, summary.total, summary.successCount + summary.failCount));
-    setProgressDone(true);
+    setProgressDone(false);
     setIsPdfReady(summary.successCount <= 0);
     setShipConfirmSummary(null);
 
@@ -5966,6 +6072,26 @@ export default function OrderManager({
     if (!changed) return;
     ordersRef.current = patched;
     onUpdateOrders(patched, { persist: false });
+    patchLabelWaitState(orderSns, null);
+    const targets = confirmWaitSnsRef.current;
+    if (confirmProgressActiveRef.current && targets.length > 0) {
+      const remaining = targets.filter((sn) => {
+        const key = normalizeConfirmSn(sn);
+        const hit = ordersRef.current.find((o) => {
+          const oKey = normalizeConfirmSn(o.orderSn || o.id || '');
+          return oKey === key;
+        });
+        return !hit || !orderHasPrintFile(hit);
+      });
+      if (remaining.length === 0) {
+        updateConfirmWaitProgress({ done: true, total: targets.length });
+      } else {
+        updateConfirmWaitProgress({
+          readyCount: targets.length - remaining.length,
+          total: targets.length,
+        });
+      }
+    }
   };
 
   const startHasPdfBackgroundPoll = (orderSns: string[]): void => {
@@ -6005,10 +6131,8 @@ export default function OrderManager({
         return;
       }
       if (attempt >= maxAttempts) {
-        showToast(
-          'Đơn đã xác nhận, Shopee đang tạo mã. Vui lòng in lại sau ít phút',
-          6000,
-        );
+        patchLabelWaitState(remaining, 'retry');
+        updateConfirmWaitProgress({ retry: true });
         return;
       }
       const currentAttempt = attempt;
@@ -6113,6 +6237,7 @@ export default function OrderManager({
     }
     const gen = ++pdfPrefetchGenRef.current;
     setIsPdfReady(false);
+    patchLabelWaitState(cleanSns, 'waiting');
     for (const sn of cleanSns) activePdfPrefetchSnsRef.current.add(sn);
     const releaseTracking = (sns: string[]) => {
       for (const sn of sns) activePdfPrefetchSnsRef.current.delete(sn);
@@ -6129,6 +6254,8 @@ export default function OrderManager({
         const batchId = String(data?.batchId || '').trim();
         if (!response.ok || !data?.success || !batchId) {
           setIsPdfReady(true);
+          patchLabelWaitState(cleanSns, 'retry');
+          updateConfirmWaitProgress({ retry: true });
           return;
         }
         const maxPolls = 20;
@@ -6173,10 +6300,11 @@ export default function OrderManager({
             return !(hit?.hasPdf || hit?.readyToPrint || hit?.labelUrl || hit?.pdfUrl);
           });
           if (stillWaiting.length > 0) {
-            showToast(
-              'Đơn đã xác nhận, Shopee đang tạo mã. Vui lòng in lại sau ít phút',
-              6000,
-            );
+            patchLabelWaitState(stillWaiting, 'retry');
+            updateConfirmWaitProgress({ retry: true });
+          } else {
+            patchLabelWaitState(cleanSns, null);
+            updateConfirmWaitProgress({ done: true, total: cleanSns.length });
           }
           void fetchOrdersWithShop({
             silent: true,
@@ -6230,6 +6358,9 @@ export default function OrderManager({
         queuedKeys.add(`shopee-${o.orderSn}`);
       }
     }
+    confirmProgressActiveRef.current = true;
+    confirmWaitSnsRef.current = orderSns;
+    patchLabelWaitState(orderSns, 'waiting');
     const optimistic = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys, {
       markPrinted: false,
       shipMethod,
@@ -6237,7 +6368,6 @@ export default function OrderManager({
     ordersRef.current = optimistic;
     onUpdateOrders(optimistic, { persist: false });
     revealProcessedUnprintedTab(orderSns);
-    showToast(`Đang xác nhận ${orderSns.length} đơn...`);
     setProgressMessage(`Đang xác nhận ${orderSns.length} đơn lên Shopee...`);
     setProgressDone(false);
     setProgressCompleted(0);
@@ -6298,9 +6428,15 @@ export default function OrderManager({
         });
         ordersRef.current = rolled;
         onUpdateOrders(rolled, { persist: false });
+        const failedSns = failedDetails
+          .map((f) => String(f.orderSn || f.orderId || '').replace(/^shopee-/i, '').trim())
+          .filter(Boolean);
+        patchLabelWaitState(failedSns, null);
       }
 
       if (successfulSns.length > 0) {
+        confirmWaitSnsRef.current = successfulSns;
+        patchLabelWaitState(successfulSns, 'waiting');
         const optimisticTargets = applyPrintedLocalOptimistic(successfulSns, false, 'processed');
         if (optimisticTargets.length > 0) {
           void updatePrintStatusForOrders(optimisticTargets, false, { silent: true }).catch(() => {});
@@ -6309,16 +6445,19 @@ export default function OrderManager({
           summary.successfulOrderIds?.length ? summary.successfulOrderIds : successfulSns,
         );
         setSelectedOrderIds(autoSelectIds);
+        confirmProgressActiveRef.current = true;
+        updateConfirmWaitProgress({ readyCount: 0, total: successfulSns.length });
         void startSilentPdfPrefetch(successfulSns);
       } else {
         setIsPdfReady(true);
+        confirmProgressActiveRef.current = true;
+        setProgressDone(true);
+        setProgressMessage(
+          summary.failCount > 0
+            ? `Xác nhận thất bại ${summary.failCount} đơn.`
+            : 'Không có đơn nào được xác nhận.',
+        );
       }
-
-      showToast(
-        summary.failCount > 0
-          ? `Thành công ${summary.successCount} đơn, thất bại ${summary.failCount} đơn.`
-          : `Đã xác nhận ${summary.successCount} đơn — PDF đang được tải ngầm.`,
-      );
     } catch (err) {
       const rolled = ordersRef.current.map((o) => {
         const id = String(o.id || '').trim();
@@ -6330,10 +6469,12 @@ export default function OrderManager({
         ordersRef.current = rolled;
         onUpdateOrders(rolled, { persist: false });
       }
-      showToast(`Xác nhận thất bại: ${err instanceof Error ? err.message : 'Lỗi không xác định'}`);
+      patchLabelWaitState(orderSns, null);
+      confirmProgressActiveRef.current = true;
+      setProgressDone(true);
+      setProgressMessage(`Xác nhận thất bại: ${err instanceof Error ? err.message : 'Lỗi không xác định'}`);
     } finally {
       setIsShipping(false);
-      closeConfirmProgressBanner();
       setPrintingOrderId(null);
     }
   };
@@ -7557,7 +7698,17 @@ export default function OrderManager({
         }
       }
       if (!order.hasPdf && sn) {
-        showToast('Đang lấy tem vận đơn...');
+        if (!confirmProgressActiveRef.current) {
+          confirmProgressActiveRef.current = true;
+          confirmWaitSnsRef.current = [sn];
+        } else if (!confirmWaitSnsRef.current.includes(sn)) {
+          confirmWaitSnsRef.current = [...confirmWaitSnsRef.current, sn];
+        }
+        patchLabelWaitState([sn], 'waiting');
+        setProgressMessage('Đang chờ Shopee tạo mã in...');
+        setProgressDone(false);
+        setProgressCompleted(0);
+        setProgressTotal(Math.max(confirmWaitSnsRef.current.length, 1));
         const pdfUrl = `/api/orders/download-pdf/${encodeURIComponent(sn)}`;
         window.open(pdfUrl, '_blank', 'noopener,noreferrer');
         startHasPdfBackgroundPoll([sn]);
@@ -9746,6 +9897,7 @@ export default function OrderManager({
                     products={products}
                     systemFees={systemFees}
                     printingOrderId={printingOrderId}
+                    labelWaitState={labelWaitState}
                     handingOverOrderId={handingOverOrderId}
                     wooActionLoadingId={wooActionLoadingId}
                     confirmingReturn={
@@ -9778,6 +9930,7 @@ export default function OrderManager({
                   products={products}
                   systemFees={systemFees}
                   printingOrderId={printingOrderId}
+                  labelWaitState={labelWaitState}
                   handingOverOrderId={handingOverOrderId}
                   wooActionLoadingId={wooActionLoadingId}
                   confirmingReturn={
@@ -9874,17 +10027,28 @@ export default function OrderManager({
                 ) : (
                   <Loader2 className="w-5 h-5 text-blue-600 animate-spin shrink-0" />
                 )}
-                <p className="text-sm font-bold text-gray-800 leading-snug truncate">
+                <p className="text-sm font-bold text-gray-800 leading-snug line-clamp-3">
                   {progressMessage}
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => clearShipProgressOverlay()}
-                className="text-xs font-bold text-gray-500 hover:text-gray-800 shrink-0"
-              >
-                Đóng
-              </button>
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => closeConfirmProgressBanner()}
+                  className="text-xs font-bold text-gray-500 hover:text-gray-800 px-1.5 py-0.5"
+                >
+                  Đóng
+                </button>
+                <button
+                  type="button"
+                  onClick={() => closeConfirmProgressBanner()}
+                  className="text-gray-400 hover:text-gray-800 p-0.5"
+                  title="Đóng thông báo"
+                  aria-label="Đóng"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
             {progressTotal > 0 && (
               <div className="flex flex-col gap-1">

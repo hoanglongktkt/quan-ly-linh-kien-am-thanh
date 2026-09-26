@@ -66,6 +66,8 @@ type UpdateProductFn = (
   opts?: { save?: boolean },
 ) => void | Promise<{ success?: boolean; error?: string } | unknown>;
 
+export type LabelWaitState = 'waiting' | 'retry';
+
 type SharedRowProps = {
   order: Order;
   isChecked: boolean;
@@ -77,6 +79,8 @@ type SharedRowProps = {
   products?: Product[];
   systemFees: SystemFee[];
   printingOrderId: string | null;
+  /** State machine nút In nhanh: waiting (polling) | retry (timeout). */
+  labelWaitState?: Record<string, LabelWaitState>;
   handingOverOrderId: string | null;
   wooActionLoadingId: string | null;
   confirmingReturn: boolean;
@@ -87,6 +91,103 @@ type SharedRowProps = {
   onPatchItemImportPrice?: (orderId: string, itemIndex: number, importPrice: number) => void;
   onPatchItemSellingPrice?: (orderId: string, itemIndex: number, sellingPrice: number) => void;
 };
+
+function orderLabelKeys(order: Order): string[] {
+  const sn = String(order.orderSn || '').replace(/^shopee-/i, '').trim();
+  const id = String(order.id || '').trim();
+  const rawId = id.replace(/^shopee-/i, '').trim();
+  return [...new Set([sn, id, rawId, sn ? `shopee-${sn}` : ''].filter(Boolean))];
+}
+
+function orderHasPrintFile(order: Order): boolean {
+  return Boolean(order.hasPdf || order.readyToPrint || order.labelUrl || order.pdfUrl || order.waybill_url);
+}
+
+function resolveLabelWait(
+  order: Order,
+  labelWaitState?: Record<string, LabelWaitState>,
+): LabelWaitState | undefined {
+  if (!labelWaitState) return undefined;
+  for (const key of orderLabelKeys(order)) {
+    if (labelWaitState[key]) return labelWaitState[key];
+  }
+  return undefined;
+}
+
+function QuickPrintButton({
+  order,
+  printingOrderId,
+  labelWaitState,
+  onPrint,
+  className = '',
+}: {
+  order: Order;
+  printingOrderId: string | null;
+  labelWaitState?: Record<string, LabelWaitState>;
+  onPrint: (e: React.MouseEvent, order: Order) => void;
+  className?: string;
+}) {
+  const isPrinting = printingOrderId === order.id || printingOrderId === order.orderSn;
+  const hasFile = orderHasPrintFile(order);
+  const wait = resolveLabelWait(order, labelWaitState);
+  const kind = isPrinting
+    ? 'printing'
+    : !hasFile && wait === 'waiting'
+      ? 'waiting'
+      : hasFile
+        ? 'ready'
+        : wait === 'retry'
+          ? 'retry'
+          : 'idle';
+  const disabled = kind === 'printing' || kind === 'waiting';
+  const styles =
+    kind === 'printing' || kind === 'waiting'
+      ? 'bg-gray-300 text-gray-600 border-gray-400 cursor-wait'
+      : kind === 'ready'
+        ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700'
+        : kind === 'retry'
+          ? 'bg-orange-100 text-orange-800 border-orange-300 hover:bg-orange-200'
+          : 'bg-slate-200 text-slate-700 border-slate-300 hover:bg-slate-300';
+  const label =
+    kind === 'printing'
+      ? 'Đang in...'
+      : kind === 'waiting'
+        ? 'Đang chờ mã...'
+        : kind === 'ready'
+          ? 'Sẵn sàng in'
+          : kind === 'retry'
+            ? 'Thử lấy lại mã'
+            : 'In nhanh';
+  const title =
+    kind === 'printing'
+      ? 'Đang in...'
+      : kind === 'waiting'
+        ? 'Đang chờ Shopee cấp mã in'
+        : kind === 'ready'
+          ? 'Đã có file in — bấm để in nhanh'
+          : kind === 'retry'
+            ? 'Shopee chưa tạo xong mã — bấm để thử lại'
+            : 'Shopee chưa có file in — bấm để thử lấy tem';
+
+  return (
+    <button
+      type="button"
+      onClick={(e) => onPrint(e, order)}
+      disabled={disabled}
+      className={`${className || 'inline-flex'} items-center gap-1.5 px-3 py-1.5 font-bold text-[10px] rounded-lg transition-all border ${styles}`}
+      title={title}
+    >
+      {kind === 'printing' || kind === 'waiting' ? (
+        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+      ) : kind === 'retry' ? (
+        <RefreshCw className="w-3.5 h-3.5" />
+      ) : (
+        <Printer className="w-3.5 h-3.5" />
+      )}
+      {label}
+    </button>
+  );
+}
 
 function getOrderWaybillCode(order: Order): string {
   const fromHelper = getCarrierWaybillDisplay(order);
@@ -702,6 +803,7 @@ export const OrderTableRow = React.memo(function OrderTableRow({
   products = [],
   systemFees,
   printingOrderId,
+  labelWaitState,
   handingOverOrderId,
   wooActionLoadingId,
   confirmingReturn,
@@ -856,32 +958,12 @@ export const OrderTableRow = React.memo(function OrderTableRow({
             </td>
             <td className="p-4 text-center">
               {activeSubTab === 'processed' ? (
-                <button
-                  type="button"
-                  onClick={(e) => actions.onPrint(e, order)}
-                  disabled={printingOrderId === order.id}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 font-bold text-[10px] rounded-lg transition-all border ${
-                    printingOrderId === order.id
-                      ? 'bg-gray-300 text-gray-600 border-gray-400'
-                      : order.hasPdf
-                        ? 'bg-blue-600 hover:bg-blue-700 text-white border-blue-700 disabled:opacity-60'
-                        : 'bg-slate-200 text-slate-700 border-slate-300 hover:bg-slate-300'
-                  }`}
-                  title={
-                    printingOrderId === order.id
-                      ? 'Đang in...'
-                      : !order.hasPdf
-                        ? 'Shopee chưa có file in — bấm để thử lấy tem'
-                        : 'In đơn này'
-                  }
-                >
-                  {printingOrderId === order.id ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Printer className="w-3.5 h-3.5" />
-                  )}
-                  In nhanh
-                </button>
+                <QuickPrintButton
+                  order={order}
+                  printingOrderId={printingOrderId}
+                  labelWaitState={labelWaitState}
+                  onPrint={actions.onPrint}
+                />
               ) : isCancelReturnGroupTab(activeSubTab) || shouldShowCancelReturnStatus(order) ? (
                 <ReturnWarehouseStatusBlock
                   order={order}
@@ -1068,6 +1150,7 @@ export const OrderCardRow = React.memo(function OrderCardRow({
   products = [],
   systemFees,
   printingOrderId,
+  labelWaitState,
   handingOverOrderId,
   wooActionLoadingId,
   confirmingReturn,
@@ -1182,32 +1265,13 @@ export const OrderCardRow = React.memo(function OrderCardRow({
           </div>
 
           {activeSubTab === 'processed' ? (
-            <button
-              type="button"
-              onClick={(e) => actions.onPrint(e, order)}
-              disabled={printingOrderId === order.id}
-              className={`hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 font-bold text-[10px] rounded-lg transition-all border shrink-0 ${
-                printingOrderId === order.id
-                  ? 'bg-gray-300 text-gray-600 border-gray-400'
-                  : order.hasPdf
-                    ? 'bg-blue-600 hover:bg-blue-700 text-white border-blue-700 disabled:opacity-60'
-                    : 'bg-slate-200 text-slate-700 border-slate-300 hover:bg-slate-300'
-              }`}
-              title={
-                printingOrderId === order.id
-                  ? 'Đang in...'
-                  : !order.hasPdf
-                    ? 'Shopee chưa có file in — bấm để thử lấy tem'
-                    : 'In đơn này'
-              }
-            >
-              {printingOrderId === order.id ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Printer className="w-3.5 h-3.5" />
-              )}
-              In nhanh
-            </button>
+            <QuickPrintButton
+              order={order}
+              printingOrderId={printingOrderId}
+              labelWaitState={labelWaitState}
+              onPrint={actions.onPrint}
+              className="inline-flex shrink-0"
+            />
           ) : activeSubTab === 'return_requests' ||
             isCancelReturnGroupTab(activeSubTab) ||
             shouldShowCancelReturnStatus(order) ? null : (
