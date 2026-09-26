@@ -22981,6 +22981,59 @@ async function startServer() {
     }));
   }
 
+  function sendMergedPdfBinary(
+    res: any,
+    mergedBytes: Uint8Array | Buffer,
+    meta: {
+      filename: string;
+      printedOrders: string[];
+      failedOrders: Array<{ orderSn: string }>;
+      total: number;
+      pageCount: number;
+    },
+  ) {
+    const printedCount = meta.printedOrders.length;
+    const failedSns = meta.failedOrders.map((item) => String(item.orderSn || "").trim()).filter(Boolean);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${meta.filename}"`);
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Print-Success-Count", String(printedCount));
+    res.setHeader("X-Print-Failed-Count", String(failedSns.length));
+    res.setHeader("X-Print-Total", String(meta.total));
+    res.setHeader("X-Print-Page-Count", String(meta.pageCount));
+    res.setHeader("X-Print-Filename", meta.filename);
+    res.setHeader("X-Print-Printed-Orders", meta.printedOrders.join(","));
+    res.setHeader("X-Print-Failed-Orders", failedSns.join(","));
+    res.setHeader(
+      "Access-Control-Expose-Headers",
+      [
+        "X-Print-Success-Count",
+        "X-Print-Failed-Count",
+        "X-Print-Total",
+        "X-Print-Page-Count",
+        "X-Print-Filename",
+        "X-Print-Printed-Orders",
+        "X-Print-Failed-Orders",
+      ].join(", "),
+    );
+    return res.status(200).end(Buffer.from(mergedBytes));
+  }
+
+  function isBatchPrintBinaryRoute(req: any): boolean {
+    const routePath = String(req.path || req.url || "").split("?")[0].replace(/\/+$/, "");
+    return routePath.endsWith("/orders/batch-print");
+  }
+
+  function parseBatchPrintOrderSns(body: any): string[] {
+    const raw = body?.ordersn ?? body?.orderSns ?? body?.order_sns ?? body?.order_sn ?? [];
+    const list = Array.isArray(raw) ? raw : raw != null && raw !== "" ? [raw] : [];
+    return uniquePreserveOrder(
+      list
+        .map((sn: any) => String(sn || "").replace(/^shopee-/i, "").trim())
+        .filter(Boolean),
+    );
+  }
+
   async function mergeBatchPdfBuffers(
     pdfBuffers: Array<{ orderSn: string; buffer: Buffer }>,
     logPrefix: string,
@@ -23658,28 +23711,17 @@ async function startServer() {
     beginLogisticsWork("batch-print-only");
     
     try {
-      const { orderSns } = req.body || {};
+      const wantBinary = isBatchPrintBinaryRoute(req);
+      const cleanSns = parseBatchPrintOrderSns(req.body);
       
-      if (!Array.isArray(orderSns) || orderSns.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: "Thiếu danh sách orderSns.",
-        });
-      }
-
-      const cleanSns = uniquePreserveOrder(
-        orderSns
-          .map((sn: any) => String(sn || "").replace(/^shopee-/i, "").trim())
-          .filter(Boolean),
-      );
-      const groupPicking = parseBatchGroupPickingFlag(req.body);
-
       if (cleanSns.length === 0) {
         return res.status(400).json({
           success: false,
-          message: "Danh sách orderSns không hợp lệ.",
+          message: "Thiếu danh sách ordersn.",
         });
       }
+
+      const groupPicking = parseBatchGroupPickingFlag(req.body);
 
       console.log(
         `[Batch Print Only] In lại ${cleanSns.length} đơn groupPicking=${groupPicking ? "1" : "0"}: ${cleanSns.join(", ")}`,
@@ -23931,6 +23973,16 @@ async function startServer() {
       const printedCount = printedOrders.length;
       console.log(`[Batch Print Only] DONE ${printedCount}/${cleanSns.length} đơn → ${batchUrl} (${Date.now() - t0}ms)`);
 
+      if (wantBinary) {
+        return sendMergedPdfBinary(res, mergedBytes, {
+          filename: batchFilename,
+          printedOrders,
+          failedOrders,
+          total: cleanSns.length,
+          pageCount: mergedPdf.getPageCount(),
+        });
+      }
+
       return res.json({
         success: true,
         url: batchUrl,
@@ -24162,6 +24214,7 @@ async function startServer() {
   app.post("/api/orders/batch-confirm-async", authMiddleware, confirmOnlyAsyncRoute);
   app.post("/api/orders/get-pdf", authMiddleware, getPdfRoute);
   app.post("/api/orders/batch-confirm-print", authMiddleware, batchConfirmPrintRoute);
+  app.post("/api/orders/batch-print", authMiddleware, batchPrintOnlyRoute);
   app.post("/api/orders/batch-print-only", authMiddleware, batchPrintOnlyRoute);
   app.post("/api/orders/silent-prefetch-pdfs", authMiddleware, silentPrefetchPdfsRoute);
   app.get("/api/orders/prefetch-status/:batchId", authMiddleware, prefetchStatusRoute);

@@ -6682,9 +6682,57 @@ export default function OrderManager({
   };
 
   /**
-   * In gộp 1 PDF qua /api/orders/batch-print-only — dùng chung cho
+   * In gộp 1 PDF qua /api/orders/batch-print (blob) — dùng chung cho
    * "In đơn đã chọn" và nút "In đơn" trong Modal xác nhận thành công.
    */
+  const openMergedPdfBlob = (blob: Blob, reservedWindow: Window | null | undefined): boolean => {
+    const fileURL = URL.createObjectURL(blob);
+    const revokeLater = () => {
+      window.setTimeout(() => {
+        try {
+          URL.revokeObjectURL(fileURL);
+        } catch {
+          /* ignore */
+        }
+      }, 5 * 60_000);
+    };
+    const kickPrint = (win: Window) => {
+      try {
+        win.focus();
+        win.print();
+      } catch {
+        /* PDF viewer có thể chặn print() — user vẫn thấy file */
+      }
+    };
+    const attachPrint = (win: Window | null): boolean => {
+      if (!win || win.closed) return false;
+      try {
+        win.addEventListener('load', () => window.setTimeout(() => kickPrint(win), 400), { once: true });
+      } catch {
+        /* ignore */
+      }
+      window.setTimeout(() => kickPrint(win), 800);
+      revokeLater();
+      return true;
+    };
+
+    if (reservedWindow && !reservedWindow.closed) {
+      try {
+        reservedWindow.location.href = fileURL;
+        return attachPrint(reservedWindow);
+      } catch {
+        /* fall through */
+      }
+    }
+
+    const printWindow = window.open(fileURL, '_blank');
+    if (printWindow) return attachPrint(printWindow);
+
+    printPdfViaHiddenIframe(fileURL);
+    revokeLater();
+    return true;
+  };
+
   const runBatchPrintOnly = async (
     orderSnsInput: string[],
     opts?: { logTag?: string; groupPicking?: boolean },
@@ -6700,61 +6748,84 @@ export default function OrderManager({
     const logTag = opts?.logTag || 'IN LẠI';
     const groupPicking =
       opts?.groupPicking ?? (smartPickSort && activeSubTab === 'unprocessed');
-    showToast(`Đang lấy tem ${orderSns.length} đơn...`);
+    showToast(`Đang gộp ${orderSns.length} đơn hàng để in...`, 30_000);
     const reservedPrintWindow = openReservedPrintPlaceholder();
 
     try {
-
       const controller = new AbortController();
       const timeoutId = window.setTimeout(() => controller.abort(), 35_000);
 
       try {
-        const response = await fetch('/api/orders/batch-print-only', {
+        const response = await fetch('/api/orders/batch-print', {
           method: 'POST',
-          headers: authHeaders(),
-          body: JSON.stringify({ orderSns, groupPicking }),
+          headers: {
+            ...authHeaders(),
+            Accept: 'application/pdf',
+          },
+          body: JSON.stringify({ ordersn: orderSns, orderSns, groupPicking }),
           signal: controller.signal,
         });
 
         window.clearTimeout(timeoutId);
-        const data = await readResponseJson<any>(response);
+        const contentType = String(response.headers.get('content-type') || '').toLowerCase();
 
-        if (response.ok && data.success && data.url) {
-          if (!navigateReservedPrintWindow(reservedPrintWindow, data.url)) {
-            const printWindow = window.open(data.url, '_blank');
-            if (!printWindow) {
-              throw new Error('Trình duyệt đã chặn cửa sổ PDF. Vui lòng cho phép popup và thử lại.');
-            }
+        if (!response.ok || !contentType.includes('application/pdf')) {
+          let data: { message?: string } = {};
+          try {
+            data = JSON.parse(await response.text());
+          } catch {
+            /* ignore */
           }
-          const failedOrderIds = getBatchFailedOrderIds(data);
-          const completionMessage =
-            failedOrderIds.length > 0
-              ? `Đã in gộp ${data.pdfCount} đơn. Các đơn lỗi: ${failedOrderIds.join(', ')}`
-              : `Đã in gộp ${data.pdfCount} đơn.`;
-          const printedSns = Array.isArray(data.printedOrders) ? data.printedOrders : orderSns;
-          const optimisticTargets = applyPrintedLocalOptimistic(printedSns, true);
-          if (optimisticTargets.length > 0) {
-            void updatePrintStatusForOrders(optimisticTargets, true, { silent: true }).catch(() => {});
-          }
-          refetchOrdersPage({ silent: true });
-          showToast(completionMessage);
-          setSelectedOrderIds([]);
-
-          onAddLog({
-            id: `log-${Date.now()}`,
-            timestamp: new Date().toISOString(),
-            channel: 'shopee',
-            type: 'stock_sync',
-            status: 'success',
-            message: `[${logTag}] ${data.pdfCount} đơn → ${data.filename}`,
-          });
-          return true;
-        } else {
           closeReservedPrintWindow(reservedPrintWindow);
           showToast(`In gộp thất bại: ${data.message || 'Lỗi không xác định'}`);
           clearShipProgressOverlay();
           return false;
         }
+
+        const pdfBuffer = await response.arrayBuffer();
+        const file = new Blob([pdfBuffer], { type: 'application/pdf' });
+        if (!openMergedPdfBlob(file, reservedPrintWindow)) {
+          closeReservedPrintWindow(reservedPrintWindow);
+          throw new Error('Trình duyệt đã chặn cửa sổ PDF. Vui lòng cho phép popup và thử lại.');
+        }
+
+        const successCount = Number(response.headers.get('X-Print-Success-Count') || 0);
+        const totalCount = Number(response.headers.get('X-Print-Total') || orderSns.length);
+        const filename = String(response.headers.get('X-Print-Filename') || 'batch-print.pdf').trim();
+        const printedSns = String(response.headers.get('X-Print-Printed-Orders') || '')
+          .split(',')
+          .map((sn) => sn.trim())
+          .filter(Boolean);
+        const failedOrderIds = String(response.headers.get('X-Print-Failed-Orders') || '')
+          .split(',')
+          .map((sn) => sn.trim())
+          .filter(Boolean);
+        const printedCount = successCount || printedSns.length || orderSns.length;
+        const completionMessage =
+          failedOrderIds.length > 0
+            ? `Đã tạo file in cho ${printedCount}/${totalCount} đơn. Các đơn lỗi: ${failedOrderIds.join(', ')}`
+            : `Đã tạo file in cho ${printedCount}/${totalCount} đơn`;
+
+        const optimisticTargets = applyPrintedLocalOptimistic(
+          printedSns.length ? printedSns : orderSns,
+          true,
+        );
+        if (optimisticTargets.length > 0) {
+          void updatePrintStatusForOrders(optimisticTargets, true, { silent: true }).catch(() => {});
+        }
+        refetchOrdersPage({ silent: true });
+        showToast(completionMessage);
+        setSelectedOrderIds([]);
+
+        onAddLog({
+          id: `log-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          channel: 'shopee',
+          type: 'stock_sync',
+          status: 'success',
+          message: `[${logTag}] ${printedCount}/${totalCount} đơn → ${filename || 'merged.pdf'}`,
+        });
+        return true;
       } catch (fetchErr: any) {
         window.clearTimeout(timeoutId);
         closeReservedPrintWindow(reservedPrintWindow);
@@ -6768,7 +6839,7 @@ export default function OrderManager({
       }
     } catch (err) {
       closeReservedPrintWindow(reservedPrintWindow);
-      console.error('[BatchPrintOnly] Error:', err);
+      console.error('[BatchPrint] Error:', err);
       showToast('Không thể kết nối API in gộp. Vui lòng thử lại.');
       clearShipProgressOverlay();
       return false;

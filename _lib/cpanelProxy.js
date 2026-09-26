@@ -44,6 +44,7 @@ const LONG_RUNNING_PREFIXES = [
   'orders/silent-prefetch-pdfs',
   'orders/has-pdf',
   'orders/batch-confirm-print',
+  'orders/batch-print',
   'orders/batch-print-only',
   'shopee/orders/fast-process',
   'orders/scan-bulk-update',
@@ -80,7 +81,7 @@ const RETRYABLE_ERROR_CODES = new Set([
 
 export function resolveProxyTimeoutMs(pathPart) {
   const p = String(pathPart || '').replace(/^\/+/, '');
-  if (p === 'orders/batch-print-only') {
+  if (p === 'orders/batch-print' || p === 'orders/batch-print-only') {
     return 230_000;
   }
   if (p === 'orders/batch-confirm-print') {
@@ -171,6 +172,18 @@ export async function proxyRequestToCpanel(req, res, pathPart, opts = {}) {
 
   if (result.ok) {
     const upstream = result.upstream;
+    const contentType = String(upstream.headers.get('content-type') || '').toLowerCase();
+    const isPdf = contentType.includes('application/pdf') || contentType.includes('octet-stream');
+
+    if (isPdf) {
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      res.status(upstream.status);
+      upstream.headers.forEach((value, key) => {
+        if (!HOP_HEADERS.has(key.toLowerCase())) res.setHeader(key, value);
+      });
+      return res.end(buf);
+    }
+
     const text = await upstream.text();
     const trimmed = String(text || '').trimStart();
     const isHtml =
