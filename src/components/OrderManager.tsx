@@ -5661,6 +5661,31 @@ export default function OrderManager({
   const orderHasPrintFile = (order: Order): boolean =>
     Boolean(order.hasPdf || order.readyToPrint || order.labelUrl || order.pdfUrl || order.waybill_url);
 
+  const CONFIRM_AUTO_PRINT_WAIT_MESSAGE =
+    'Đang đợi Shopee tạo mã và gộp file in (có thể mất 15-30s)...';
+
+  /** Xác nhận xong 100% → lập tức sang pha gộp PDF. Không dừng modal để user tự bấm in. */
+  const beginConfirmAutoPrint = (orderSns: string[]) => {
+    if (!confirmProgressActiveRef.current || autoMergeTriggeredRef.current) return;
+    const sns = [
+      ...new Set(
+        orderSns.map((sn) => String(sn || '').replace(/^shopee-/i, '').trim()).filter(Boolean),
+      ),
+    ];
+    if (!sns.length || !confirmAutoPrintPendingRef.current) return;
+    autoMergeTriggeredRef.current = true;
+    confirmAutoPrintPendingRef.current = false;
+    const flowGen = confirmFlowGenRef.current;
+    setConfirmMergeBusy(true);
+    setConfirmPrintFileUrl(null);
+    setProgressDone(false);
+    setProgressMessage(CONFIRM_AUTO_PRINT_WAIT_MESSAGE);
+    queueMicrotask(() => {
+      if (flowGen !== confirmFlowGenRef.current) return;
+      void autoMergeAfterConfirmRef.current(sns, flowGen);
+    });
+  };
+
   const updateConfirmWaitProgress = (opts?: {
     done?: boolean;
     retry?: boolean;
@@ -5674,26 +5699,8 @@ export default function OrderManager({
     if (opts?.done) {
       if (autoMergeTriggeredRef.current) return;
       setProgressCompleted((c) => Math.max(c, total));
-      const sns = [
-        ...new Set(
-          confirmWaitSnsRef.current
-            .map((sn) => String(sn || '').replace(/^shopee-/i, '').trim())
-            .filter(Boolean),
-        ),
-      ];
-      if (confirmAutoPrintPendingRef.current && sns.length > 0) {
-        autoMergeTriggeredRef.current = true;
-        confirmAutoPrintPendingRef.current = false;
-        const flowGen = confirmFlowGenRef.current;
-        const snapshot = sns.slice();
-        setConfirmMergeBusy(true);
-        setConfirmPrintFileUrl(null);
-        setProgressDone(false);
-        setProgressMessage('Đang tự động gộp file PDF để in...');
-        queueMicrotask(() => {
-          if (flowGen !== confirmFlowGenRef.current) return;
-          void autoMergeAfterConfirmRef.current(snapshot, flowGen);
-        });
+      if (confirmAutoPrintPendingRef.current) {
+        beginConfirmAutoPrint(confirmWaitSnsRef.current);
         return;
       }
       setProgressMessage('Đã xác nhận và lấy mã in thành công.');
@@ -5702,6 +5709,11 @@ export default function OrderManager({
     }
     if (opts?.retry) {
       if (autoMergeTriggeredRef.current) return;
+      // Không bỏ cuộc giữa pha chờ PDF — xác nhận xong thì cứ gộp, API in tự chờ mã.
+      if (confirmAutoPrintPendingRef.current) {
+        beginConfirmAutoPrint(confirmWaitSnsRef.current);
+        return;
+      }
       setProgressMessage(
         'Đã xác nhận. Shopee chưa tạo xong mã in. Bấm «Thử lấy lại mã» trên từng đơn.',
       );
@@ -6411,10 +6423,7 @@ export default function OrderManager({
         setProgressCompleted(confirmTotal);
         setProgressTotal(confirmTotal);
         setProgressDone(false);
-        setConfirmMergeBusy(false);
-        setProgressMessage(
-          `Đã xác nhận ${summary.successCount} đơn. Hệ thống đang lấy mã in ngầm...`,
-        );
+        beginConfirmAutoPrint(successfulSns);
         void startSilentPdfPrefetch(successfulSns);
         refreshOrdersStayOnCurrentTab();
       } else {
@@ -6760,7 +6769,7 @@ export default function OrderManager({
         setProgressDone(false);
         setProgressCompleted(orderSns.length);
         setProgressTotal(orderSns.length);
-        setProgressMessage('Đang tự động gộp file PDF để in...');
+        setProgressMessage(CONFIRM_AUTO_PRINT_WAIT_MESSAGE);
       }
     } else {
       setBatchPrintModal({
@@ -6830,7 +6839,8 @@ export default function OrderManager({
           return false;
         }
         batchPrintFileUrlRef.current = fileURL;
-        printMergedPdfViaHiddenIframe(fileURL);
+        const printTab = window.open(fileURL, '_blank');
+        if (!printTab) printMergedPdfViaHiddenIframe(fileURL);
 
         const successCount = Number(response.headers.get('X-Print-Success-Count') || 0);
         const totalCount = Number(response.headers.get('X-Print-Total') || orderSns.length);
@@ -10333,37 +10343,36 @@ export default function OrderManager({
               </div>
             )}
 
-            {progressDone || confirmMergeBusy ? (
-              <div className="mt-1 w-full flex flex-col gap-2.5">
-                {confirmPrintFileUrl && progressDone && !confirmMergeBusy && (
-                  <a
-                    href={confirmPrintFileUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-full inline-flex items-center justify-center gap-2 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-extrabold text-blue-700 hover:bg-blue-100"
-                  >
-                    <Printer className="h-4 w-4" />
-                    Mở lại file PDF
-                  </a>
-                )}
-                <button
-                  type="button"
-                  disabled={confirmMergeBusy}
-                  onClick={() => closeConfirmProgressBanner()}
-                  className={`w-full inline-flex items-center justify-center rounded-2xl px-4 py-3.5 text-sm font-extrabold text-white shadow-md ${
-                    confirmMergeBusy
-                      ? 'bg-slate-300 cursor-not-allowed'
-                      : 'bg-blue-600 hover:bg-blue-700'
-                  }`}
+            <div className="mt-1 w-full flex flex-col gap-2.5">
+              {confirmPrintFileUrl && progressDone && !confirmMergeBusy && (
+                <a
+                  href={confirmPrintFileUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full inline-flex items-center justify-center gap-2 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-extrabold text-blue-700 hover:bg-blue-100"
                 >
-                  Đóng
-                </button>
-              </div>
-            ) : (
-              <p className="text-xs font-medium text-slate-400">
-                Vui lòng giữ nguyên cửa sổ — đang xử lý...
-              </p>
-            )}
+                  <Printer className="h-4 w-4" />
+                  Mở lại file PDF
+                </a>
+              )}
+              <button
+                type="button"
+                disabled={!progressDone || confirmMergeBusy}
+                onClick={() => closeConfirmProgressBanner()}
+                className={`w-full inline-flex items-center justify-center rounded-2xl px-4 py-3.5 text-sm font-extrabold text-white shadow-md ${
+                  !progressDone || confirmMergeBusy
+                    ? 'bg-slate-300 cursor-not-allowed'
+                    : 'bg-blue-600 hover:bg-blue-700'
+                }`}
+              >
+                Đóng
+              </button>
+              {!progressDone && (
+                <p className="text-xs font-medium text-slate-400">
+                  Vui lòng giữ nguyên cửa sổ — đang xử lý...
+                </p>
+              )}
+            </div>
           </div>
         </div>
       )}
