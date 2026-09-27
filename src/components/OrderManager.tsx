@@ -4415,13 +4415,12 @@ export default function OrderManager({
   const batchPrintIframeRef = useRef<HTMLIFrameElement | null>(null);
   const batchPrintFileUrlRef = useRef<string | null>(null);
 
-  // Floating "processing..." overlay shown during any real Shopee API call
-  // (ship_order / create+download shipping document), single or bulk — gives
-  // the seller immediate visual feedback instead of just a disabled button.
+  // Modal tiến trình chính giữa (batch confirm / in) — không dùng toast góc.
   const [progressMessage, setProgressMessage] = useState<string | null>(null);
   const [progressCompleted, setProgressCompleted] = useState(0);
   const [progressTotal, setProgressTotal] = useState(0);
   const [progressDone, setProgressDone] = useState(false);
+  const isConfirmModalOpen = Boolean(progressMessage);
   /** Nút In nhanh: waiting (đang poll mã) | retry (timeout). Không auto-clear khi đóng toast. */
   const [labelWaitState, setLabelWaitState] = useState<Record<string, 'waiting' | 'retry'>>({});
   const confirmProgressActiveRef = React.useRef(false);
@@ -5589,7 +5588,7 @@ export default function OrderManager({
 
   // Called from the "Xác nhận đơn hàng" modal — arranges shipment (pickup/dropoff,
   // per the seller's choice) for every order currently queued in `shipConfirmOrders`.
-  /** Chỉ đóng banner tiến độ — KHÔNG hủy silent-prefetch PDF (không ++ pdfPrefetchGenRef). */
+  /** Chỉ đóng modal tiến độ — user bấm Đóng; không tự tắt. Không hủy silent-prefetch PDF. */
   const closeConfirmProgressBanner = () => {
     if (progressCloseTimerRef.current) {
       clearTimeout(progressCloseTimerRef.current);
@@ -5709,18 +5708,16 @@ export default function OrderManager({
     setIsPdfReady(true);
   };
 
-  const scheduleCloseProgressOverlay = (delayMs = 0) => {
-    if (progressCloseTimerRef.current) clearTimeout(progressCloseTimerRef.current);
-    if (delayMs <= 0) {
-      closeConfirmProgressBanner();
-      return;
+  const scheduleCloseProgressOverlay = (_delayMs = 0) => {
+    if (progressCloseTimerRef.current) {
+      clearTimeout(progressCloseTimerRef.current);
+      progressCloseTimerRef.current = null;
     }
-    progressCloseTimerRef.current = setTimeout(() => {
-      closeConfirmProgressBanner();
-    }, delayMs);
+    // Không tự đóng modal — user phải bấm Đóng khi tiến trình xong hoặc lỗi.
+    setProgressDone(true);
   };
 
-  const markProgressComplete = (message?: string, options?: { autoClose?: boolean }) => {
+  const markProgressComplete = (message?: string, _options?: { autoClose?: boolean }) => {
     setProgressDone(true);
     if (message) setProgressMessage(message);
     // Functional update — tránh stale closure (progressTotal = 0 lúc bấm In → kẹt 0/N).
@@ -5728,9 +5725,6 @@ export default function OrderManager({
       if (t > 0) setProgressCompleted(t);
       return t;
     });
-    if (options?.autoClose === true) {
-      scheduleCloseProgressOverlay(0);
-    }
   };
 
   /** Reset overlay trước phiên in mới — xóa shipJobResults tồn đọng (nhãn "Thành công" giả). */
@@ -5943,7 +5937,7 @@ export default function OrderManager({
     return finalJob;
   };
 
-  /** Kết thúc xác nhận — toast + giữ optimistic, không khóa màn hình. */
+  /** Kết thúc xác nhận — giữ optimistic; modal tiến trình chờ user bấm Đóng. */
   const finishShipJobResult = async (finalJob: any | null, total: number) => {
     const results = finalJob?.results || [];
     const summary = buildShipConfirmSummary(finalJob || {}, total);
@@ -8910,6 +8904,14 @@ export default function OrderManager({
     );
   }
 
+  const progressPercent = Math.min(
+    100,
+    Math.round((progressCompleted / Math.max(1, progressTotal)) * 100),
+  );
+  const progressIsError =
+    progressDone &&
+    /thất bại|lỗi|không có đơn|không thể|hết thời gian/i.test(progressMessage || '');
+
   return (
     <div
       className="space-y-6 max-md:space-y-2 om-orders-page relative"
@@ -10224,53 +10226,73 @@ export default function OrderManager({
     </div>
       )}
 
-      {/* Thanh tiến độ nhỏ — không khóa danh sách khi xác nhận nền. */}
-      {progressMessage && (
-        <div className="fixed bottom-4 right-4 z-100 w-[min(22rem,calc(100vw-2rem))] pointer-events-auto animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 p-4 flex flex-col gap-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-2 min-w-0">
-                {progressDone ? (
-                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                ) : (
-                  <Loader2 className="w-5 h-5 text-blue-600 animate-spin shrink-0" />
-                )}
-                <p className="text-sm font-bold text-gray-800 leading-snug line-clamp-3">
-                  {progressMessage}
-                </p>
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => closeConfirmProgressBanner()}
-                  className="text-xs font-bold text-gray-500 hover:text-gray-800 px-1.5 py-0.5"
-                >
-                  Đóng
-                </button>
-                <button
-                  type="button"
-                  onClick={() => closeConfirmProgressBanner()}
-                  className="text-gray-400 hover:text-gray-800 p-0.5"
-                  title="Đóng thông báo"
-                  aria-label="Đóng"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-            {progressTotal > 0 && (
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center justify-between text-xs font-semibold text-slate-600">
-                  <span>{progressCompleted}/{progressTotal}</span>
-                  <span>{Math.min(100, Math.round((progressCompleted / Math.max(1, progressTotal)) * 100))}%</span>
+      {/* Modal tiến trình batch — chính giữa màn hình, làm mờ nền. Không dùng toast góc. */}
+      {isConfirmModalOpen && progressMessage && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="batch-progress-modal-title"
+        >
+          <div className="w-[min(92vw,420px)] bg-white rounded-3xl shadow-2xl border border-slate-100 px-6 py-8 flex flex-col items-center text-center gap-5">
+            {progressDone ? (
+              progressIsError ? (
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-rose-50">
+                  <XCircle className="h-10 w-10 text-rose-500" />
                 </div>
-                <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+              ) : (
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50">
+                  <CheckCircle2 className="h-10 w-10 text-emerald-600" />
+                </div>
+              )
+            ) : (
+              <Loader2 className="h-14 w-14 text-blue-600 animate-spin" />
+            )}
+
+            <div className="space-y-2">
+              <h3 id="batch-progress-modal-title" className="text-lg font-extrabold text-slate-900">
+                Xác nhận đơn hàng
+              </h3>
+              <p className="text-sm font-semibold text-slate-600 leading-snug">
+                {progressMessage}
+              </p>
+            </div>
+
+            {progressTotal > 0 && (
+              <div className="w-full flex flex-col gap-2">
+                <div className="flex items-center justify-between text-sm font-bold text-slate-700">
+                  <span>
+                    {progressCompleted}/{progressTotal} đơn
+                  </span>
+                  <span>{progressPercent}%</span>
+                </div>
+                <div className="w-full h-2.5 bg-gray-100 rounded-full overflow-hidden">
                   <div
-                    className={`h-full transition-all duration-500 ${progressDone ? 'bg-emerald-600' : 'bg-blue-600'}`}
-                    style={{ width: `${Math.min(100, (progressCompleted / Math.max(1, progressTotal)) * 100)}%` }}
+                    className={`h-full rounded-full transition-all duration-500 ${
+                      progressIsError
+                        ? 'bg-rose-500'
+                        : progressDone
+                          ? 'bg-emerald-600'
+                          : 'bg-blue-600'
+                    }`}
+                    style={{ width: `${progressPercent}%` }}
                   />
                 </div>
               </div>
+            )}
+
+            {progressDone ? (
+              <button
+                type="button"
+                onClick={() => closeConfirmProgressBanner()}
+                className="mt-1 w-full inline-flex items-center justify-center rounded-2xl bg-blue-600 hover:bg-blue-700 px-4 py-3.5 text-sm font-extrabold text-white shadow-md"
+              >
+                Đóng
+              </button>
+            ) : (
+              <p className="text-xs font-medium text-slate-400">
+                Vui lòng giữ nguyên cửa sổ — đang xử lý...
+              </p>
             )}
           </div>
         </div>
