@@ -6839,8 +6839,8 @@ export default function OrderManager({
     }
 
     const logTag = opts?.logTag || 'IN LẠI';
-    const groupPicking =
-      opts?.groupPicking ?? (smartPickSort && activeSubTab === 'unprocessed');
+    // Mảng orderSns đã đúng thứ tự màn hình. Không xin server sắp lại.
+    const groupPicking = opts?.groupPicking === true;
     if (onConfirmModal) {
       if (!confirmUiStale()) {
         setConfirmMergeBusy(true);
@@ -7384,8 +7384,8 @@ export default function OrderManager({
   }, [activeSubTab, cancelReturnTab, ordersPoolBeforeCarrier, ordersListReady]);
 
   /**
-   * Mirror đúng sort của backend (`groupPicking`): đơn 1 SP → SKU dòng đầu → tên SP.
-   * Dùng chung comparator với API in hàng loạt để giấy in khớp bảng.
+   * Gom nhóm nhặt hàng trên đúng mảng đang render: đơn 1 dòng → tên SP dòng đầu (A-Z) → SKU.
+   * Chạy lại mỗi lần `orders` đổi (kể cả poll 10s) nên thứ tự không bị sort newest ghi đè.
    */
   const compareSmartPickOrders = (a: Order, b: Order) => compareGroupPickingOrders(a, b);
 
@@ -7710,7 +7710,7 @@ export default function OrderManager({
     }
     setShowBulkActionsDropdown(false);
 
-    // Map theo đúng thứ tự `displayOrders` đang render trên bảng — không dùng thứ tự click/Set.
+    // Từ trên xuống dưới đúng thứ tự đang hiển thị — không dùng thứ tự tick checkbox.
     const selectedKeySet = new Set(
       selectedOrderIds.map((key) => String(key || '').trim()).filter(Boolean),
     );
@@ -7743,7 +7743,7 @@ export default function OrderManager({
 
     await runBatchPrintOnly(orderSns, {
       logTag: 'IN LẠI',
-      groupPicking: smartPickSort && activeSubTab === 'unprocessed',
+      groupPicking: false,
     });
   };
 

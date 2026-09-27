@@ -1,6 +1,7 @@
 /**
  * Sort gom nhóm nhặt hàng — dùng chung cho danh sách đơn và in hàng loạt.
- * Thứ tự: đơn 1 SKU → SKU dòng đầu (A-Z) → tên sản phẩm. SKU rỗng xuống cuối.
+ * Thứ tự: đơn 1 dòng lên trước → tên sản phẩm dòng đầu (A-Z) → SKU.
+ * Không có tên thì gom theo SKU. Cùng tên sản phẩm luôn nằm liền nhau.
  */
 
 export function uniquePreserveOrder(values: unknown[]): string[] {
@@ -33,38 +34,55 @@ function firstLine(order: any): any {
   return orderLines(order)[0] || {};
 }
 
-export function groupPickingSkuKey(order: any): string {
-  const item = firstLine(order);
-  const sku = String(
-    item?.modelSku || item?.model_sku || item?.sku || item?.item_sku || "",
-  )
+function normalizeGroupText(value: unknown): string {
+  return String(value || "")
+    .replace(/\s+/g, " ")
     .trim()
     .toUpperCase();
+}
+
+export function groupPickingSkuKey(order: any): string {
+  const item = firstLine(order);
+  const sku = normalizeGroupText(
+    item?.sku || item?.modelSku || item?.model_sku || item?.item_sku || item?.itemSku || "",
+  );
   return sku || "\uffff";
 }
 
 export function groupPickingNameKey(order: any): string {
   const item = firstLine(order);
-  return String(
-    item?.productTitle || item?.item_name || item?.name || item?.modelName || "",
-  )
-    .trim()
-    .toUpperCase();
+  return normalizeGroupText(
+    item?.product_name ||
+      item?.productName ||
+      item?.productTitle ||
+      item?.item_name ||
+      item?.name ||
+      item?.modelName ||
+      item?.model_name ||
+      "",
+  );
 }
+
+/** Tên sản phẩm dòng đầu; không có tên thì dùng SKU để vẫn gom được cụm. */
+export function groupPickingClusterKey(order: any): string {
+  const name = groupPickingNameKey(order);
+  if (name) return name;
+  return groupPickingSkuKey(order);
+}
+
+const GROUP_PICKING_LOCALE = { sensitivity: "base" as const, numeric: true };
 
 export function compareGroupPickingOrders(a: any, b: any): number {
   const aSingle = orderLines(a).length === 1;
   const bSingle = orderLines(b).length === 1;
   if (aSingle !== bSingle) return aSingle ? -1 : 1;
-  const skuCmp = groupPickingSkuKey(a).localeCompare(groupPickingSkuKey(b), "vi", {
-    sensitivity: "base",
-    numeric: true,
-  });
-  if (skuCmp !== 0) return skuCmp;
-  return groupPickingNameKey(a).localeCompare(groupPickingNameKey(b), "vi", {
-    sensitivity: "base",
-    numeric: true,
-  });
+  const nameCmp = groupPickingClusterKey(a).localeCompare(
+    groupPickingClusterKey(b),
+    "vi",
+    GROUP_PICKING_LOCALE,
+  );
+  if (nameCmp !== 0) return nameCmp;
+  return groupPickingSkuKey(a).localeCompare(groupPickingSkuKey(b), "vi", GROUP_PICKING_LOCALE);
 }
 
 /** Sắp mã đơn theo đúng comparator gom nhóm; mã không tìm thấy giữ cuối, đúng thứ tự gốc. */

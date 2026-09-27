@@ -76514,32 +76514,39 @@ function orderLines(order) {
 function firstLine(order) {
   return orderLines(order)[0] || {};
 }
+function normalizeGroupText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim().toUpperCase();
+}
 function groupPickingSkuKey(order) {
   const item = firstLine(order);
-  const sku = String(
-    item?.modelSku || item?.model_sku || item?.sku || item?.item_sku || ""
-  ).trim().toUpperCase();
+  const sku = normalizeGroupText(
+    item?.sku || item?.modelSku || item?.model_sku || item?.item_sku || item?.itemSku || ""
+  );
   return sku || "\uFFFF";
 }
 function groupPickingNameKey(order) {
   const item = firstLine(order);
-  return String(
-    item?.productTitle || item?.item_name || item?.name || item?.modelName || ""
-  ).trim().toUpperCase();
+  return normalizeGroupText(
+    item?.product_name || item?.productName || item?.productTitle || item?.item_name || item?.name || item?.modelName || item?.model_name || ""
+  );
 }
+function groupPickingClusterKey(order) {
+  const name = groupPickingNameKey(order);
+  if (name) return name;
+  return groupPickingSkuKey(order);
+}
+var GROUP_PICKING_LOCALE = { sensitivity: "base", numeric: true };
 function compareGroupPickingOrders(a, b) {
   const aSingle = orderLines(a).length === 1;
   const bSingle = orderLines(b).length === 1;
   if (aSingle !== bSingle) return aSingle ? -1 : 1;
-  const skuCmp = groupPickingSkuKey(a).localeCompare(groupPickingSkuKey(b), "vi", {
-    sensitivity: "base",
-    numeric: true
-  });
-  if (skuCmp !== 0) return skuCmp;
-  return groupPickingNameKey(a).localeCompare(groupPickingNameKey(b), "vi", {
-    sensitivity: "base",
-    numeric: true
-  });
+  const nameCmp = groupPickingClusterKey(a).localeCompare(
+    groupPickingClusterKey(b),
+    "vi",
+    GROUP_PICKING_LOCALE
+  );
+  if (nameCmp !== 0) return nameCmp;
+  return groupPickingSkuKey(a).localeCompare(groupPickingSkuKey(b), "vi", GROUP_PICKING_LOCALE);
 }
 function sortSnsByGroupPicking(sns, orders) {
   const bySn = /* @__PURE__ */ new Map();
@@ -84095,21 +84102,35 @@ async function queryGroupPickingOrderIds(listFilter, page, pageSize) {
           _id: 1,
           _recent: 1,
           _single: { $cond: [{ $eq: ["$_lineCount", 1] }, 0, 1] },
-          _sku: groupPickingTextExpr(["modelSku", "model_sku", "item_sku", "sku"]),
-          _name: groupPickingTextExpr(["productTitle", "item_name", "name", "modelName"])
+          _sku: groupPickingTextExpr(["sku", "modelSku", "model_sku", "item_sku"]),
+          _name: groupPickingTextExpr([
+            "product_name",
+            "productName",
+            "productTitle",
+            "item_name",
+            "name",
+            "modelName",
+            "model_name"
+          ])
         }
       },
-      // SKU rỗng → đẩy xuống cuối nhóm, vẫn gom theo tên sản phẩm.
+      // Không có tên → gom theo SKU. SKU rỗng xuống cuối cụm.
       {
         $project: {
           _id: 1,
           _recent: 1,
           _single: 1,
-          _name: 1,
-          _skuKey: { $cond: [{ $eq: ["$_sku", ""] }, "\uFFFF", "$_sku"] }
+          _skuKey: { $cond: [{ $eq: ["$_sku", ""] }, "\uFFFF", "$_sku"] },
+          _nameKey: {
+            $cond: [
+              { $eq: ["$_name", ""] },
+              { $cond: [{ $eq: ["$_sku", ""] }, "\uFFFF", "$_sku"] },
+              "$_name"
+            ]
+          }
         }
       },
-      { $sort: { _single: 1, _skuKey: 1, _name: 1, _recent: -1, _id: -1 } },
+      { $sort: { _single: 1, _nameKey: 1, _skuKey: 1, _recent: -1, _id: -1 } },
       { $skip: skip },
       { $limit: pageSize },
       { $project: { _id: 1 } }
@@ -148794,9 +148815,9 @@ async function startServer() {
           message: "Thi\u1EBFu danh s\xE1ch ordersn."
         });
       }
-      const groupPicking = parseBatchGroupPickingFlag(req.body);
+      const payloadOrderSns = cleanSns;
       console.log(
-        `[Batch Print Only] In l\u1EA1i ${cleanSns.length} \u0111\u01A1n groupPicking=${groupPicking ? "1" : "0"}: ${cleanSns.join(", ")}`
+        `[Batch Print Only] In l\u1EA1i ${payloadOrderSns.length} \u0111\u01A1n theo th\u1EE9 t\u1EF1 payload: ${payloadOrderSns.join(", ")}`
       );
       let orders = [];
       try {
@@ -148817,7 +148838,7 @@ async function startServer() {
           message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n n\xE0o trong database."
         });
       }
-      const mergeSns = groupPicking ? sortSnsByGroupPicking(cleanSns, orders) : cleanSns;
+      const mergeSns = payloadOrderSns;
       orders = reorderOrdersByRequestedSns(orders, mergeSns);
       const pdfBuffers = [];
       const pdfFailures = /* @__PURE__ */ new Map();
@@ -148948,13 +148969,18 @@ async function startServer() {
           signal: requestAbortController.signal
         }
       );
-      pdfBuffers.push(...buildPdfBuffersInRequestedOrder(mergeSns, batchPdfResult.documents));
-      for (const document2 of batchPdfResult.documents) {
-        for (const orderSn of document2.orderSns) {
-          pendingSns.delete(orderSn);
-          pdfFailures.delete(orderSn);
-          printedFromBatch.push(orderSn);
-        }
+      const pdfBySn = /* @__PURE__ */ new Map();
+      for (const row of buildPdfBuffersInRequestedOrder(payloadOrderSns, batchPdfResult.documents)) {
+        const sn = normalizePrintOrderSn(row.orderSn);
+        if (sn && row.buffer?.length && !pdfBySn.has(sn)) pdfBySn.set(sn, row.buffer);
+      }
+      for (const sn of payloadOrderSns) {
+        const pdfData = pdfBySn.get(sn);
+        if (!pdfData) continue;
+        pdfBuffers.push({ orderSn: sn, buffer: pdfData });
+        pendingSns.delete(sn);
+        pdfFailures.delete(sn);
+        printedFromBatch.push(sn);
       }
       for (const failure of batchPdfResult.failedOrders) {
         if (pendingSns.has(failure.orderSn)) pdfFailures.set(failure.orderSn, failure);
@@ -148994,7 +149020,7 @@ async function startServer() {
       if (!batchUrl) throw new Error("Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c URL PDF g\u1ED9p sau khi l\u01B0u file.");
       const failedOrders = [...pdfFailures.values()];
       const failedPdfSns = new Set(failedOrders.map((item) => item.orderSn));
-      const printedOrders = printedFromBatch.filter((orderSn) => !failedPdfSns.has(orderSn));
+      const printedOrders = payloadOrderSns.filter((orderSn) => !failedPdfSns.has(orderSn) && printedFromBatch.includes(orderSn));
       const printedCount = printedOrders.length;
       console.log(`[Batch Print Only] DONE ${printedCount}/${cleanSns.length} \u0111\u01A1n \u2192 ${batchUrl} (${Date.now() - t0}ms)`);
       if (wantBinary) {

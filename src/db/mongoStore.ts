@@ -8695,9 +8695,9 @@ function groupPickingTextExpr(paths: string[]): Record<string, unknown> {
 
 /**
  * Thứ tự `_id` cho chế độ gom nhóm nhặt hàng:
- *   1. Đơn chỉ 1 dòng SKU lên trước.
- *   2. Cùng SKU dòng đầu nằm liền kề (A-Z).
- *   3. Cùng tên sản phẩm (backup khi SKU rỗng).
+ *   1. Đơn chỉ 1 dòng hàng lên trước.
+ *   2. Cùng tên sản phẩm dòng đầu nằm liền kề (A-Z). Không có tên thì gom theo SKU.
+ *   3. Cùng tên thì xếp tiếp theo SKU.
  * Trả `null` khi aggregate lỗi → caller tự quay về sort mặc định.
  */
 async function queryGroupPickingOrderIds(
@@ -8728,21 +8728,35 @@ async function queryGroupPickingOrderIds(
           _id: 1,
           _recent: 1,
           _single: { $cond: [{ $eq: ["$_lineCount", 1] }, 0, 1] },
-          _sku: groupPickingTextExpr(["modelSku", "model_sku", "item_sku", "sku"]),
-          _name: groupPickingTextExpr(["productTitle", "item_name", "name", "modelName"]),
+          _sku: groupPickingTextExpr(["sku", "modelSku", "model_sku", "item_sku"]),
+          _name: groupPickingTextExpr([
+            "product_name",
+            "productName",
+            "productTitle",
+            "item_name",
+            "name",
+            "modelName",
+            "model_name",
+          ]),
         },
       },
-      // SKU rỗng → đẩy xuống cuối nhóm, vẫn gom theo tên sản phẩm.
+      // Không có tên → gom theo SKU. SKU rỗng xuống cuối cụm.
       {
         $project: {
           _id: 1,
           _recent: 1,
           _single: 1,
-          _name: 1,
           _skuKey: { $cond: [{ $eq: ["$_sku", ""] }, "\uffff", "$_sku"] },
+          _nameKey: {
+            $cond: [
+              { $eq: ["$_name", ""] },
+              { $cond: [{ $eq: ["$_sku", ""] }, "\uffff", "$_sku"] },
+              "$_name",
+            ],
+          },
         },
       },
-      { $sort: { _single: 1, _skuKey: 1, _name: 1, _recent: -1, _id: -1 } },
+      { $sort: { _single: 1, _nameKey: 1, _skuKey: 1, _recent: -1, _id: -1 } },
       { $skip: skip },
       { $limit: pageSize },
       { $project: { _id: 1 } },

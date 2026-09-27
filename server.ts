@@ -23721,10 +23721,12 @@ async function startServer() {
         });
       }
 
-      const groupPicking = parseBatchGroupPickingFlag(req.body);
+      // Thứ tự PDF = đúng mảng orderSns frontend gửi (thứ tự đang hiện trên màn hình).
+      // Cấm sort lại theo thứ tự MongoDB trả về.
+      const payloadOrderSns = cleanSns;
 
       console.log(
-        `[Batch Print Only] In lại ${cleanSns.length} đơn groupPicking=${groupPicking ? "1" : "0"}: ${cleanSns.join(", ")}`,
+        `[Batch Print Only] In lại ${payloadOrderSns.length} đơn theo thứ tự payload: ${payloadOrderSns.join(", ")}`,
       );
 
       // Load orders từ DB
@@ -23749,7 +23751,7 @@ async function startServer() {
         });
       }
 
-      const mergeSns = groupPicking ? sortSnsByGroupPicking(cleanSns, orders) : cleanSns;
+      const mergeSns = payloadOrderSns;
       orders = reorderOrdersByRequestedSns(orders, mergeSns);
 
       // Lấy PDF tối đa 5 đơn song song; lỗi cục bộ được trả riêng cho frontend.
@@ -23916,13 +23918,19 @@ async function startServer() {
           signal: requestAbortController.signal,
         },
       );
-      pdfBuffers.push(...buildPdfBuffersInRequestedOrder(mergeSns, batchPdfResult.documents));
-      for (const document of batchPdfResult.documents) {
-        for (const orderSn of document.orderSns) {
-          pendingSns.delete(orderSn);
-          pdfFailures.delete(orderSn);
-          printedFromBatch.push(orderSn);
-        }
+      const pdfBySn = new Map<string, Buffer>();
+      for (const row of buildPdfBuffersInRequestedOrder(payloadOrderSns, batchPdfResult.documents)) {
+        const sn = normalizePrintOrderSn(row.orderSn);
+        if (sn && row.buffer?.length && !pdfBySn.has(sn)) pdfBySn.set(sn, row.buffer);
+      }
+      // Gộp trang đúng thứ tự mảng frontend gửi — không theo thứ tự query Mongo.
+      for (const sn of payloadOrderSns) {
+        const pdfData = pdfBySn.get(sn);
+        if (!pdfData) continue;
+        pdfBuffers.push({ orderSn: sn, buffer: pdfData });
+        pendingSns.delete(sn);
+        pdfFailures.delete(sn);
+        printedFromBatch.push(sn);
       }
       for (const failure of batchPdfResult.failedOrders) {
         if (pendingSns.has(failure.orderSn)) pdfFailures.set(failure.orderSn, failure);
@@ -23969,7 +23977,7 @@ async function startServer() {
 
       const failedOrders = [...pdfFailures.values()];
       const failedPdfSns = new Set(failedOrders.map((item) => item.orderSn));
-      const printedOrders = printedFromBatch.filter((orderSn) => !failedPdfSns.has(orderSn));
+      const printedOrders = payloadOrderSns.filter((orderSn) => !failedPdfSns.has(orderSn) && printedFromBatch.includes(orderSn));
       const printedCount = printedOrders.length;
       console.log(`[Batch Print Only] DONE ${printedCount}/${cleanSns.length} đơn → ${batchUrl} (${Date.now() - t0}ms)`);
 
