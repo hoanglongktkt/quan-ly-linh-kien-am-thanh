@@ -4291,46 +4291,6 @@ export default function OrderManager({
 
   // Multi-select bulk state
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
-  /**
-   * Map orderSn / orderId từ kết quả Confirm → `order.id` để checkbox tick đúng.
-   * Fallback: `shopee-{sn}` nếu đơn chưa có trong list (sau khi chuyển tab vẫn match được).
-   */
-  const resolveSelectableOrderIds = (keys: Array<string | number | undefined | null>): string[] => {
-    const want = new Set<string>();
-    for (const raw of keys || []) {
-      const s = String(raw || '').trim();
-      if (!s) continue;
-      const sn = s.replace(/^shopee-/i, '');
-      want.add(s);
-      if (sn) {
-        want.add(sn);
-        want.add(`shopee-${sn}`);
-      }
-    }
-    if (want.size === 0) return [];
-    const fromList = (ordersRef.current || [])
-      .filter((o) => {
-        const id = String(o?.id || '').trim();
-        const sn = String(o?.orderSn || '').trim();
-        return (
-          (id && want.has(id)) ||
-          (sn && (want.has(sn) || want.has(`shopee-${sn}`)))
-        );
-      })
-      .map((o) => String(o.id || '').trim())
-      .filter(Boolean);
-    if (fromList.length > 0) return [...new Set(fromList)];
-    return [
-      ...new Set(
-        [...want]
-          .map((k) => {
-            const sn = String(k || '').replace(/^shopee-/i, '').trim();
-            return sn ? `shopee-${sn}` : '';
-          })
-          .filter(Boolean),
-      ),
-    ];
-  };
   const [showBulkActionsDropdown, setShowBulkActionsDropdown] = useState(false);
   /** Lọc ĐVVC: all | spx | ghn | instant | other — mặc định luôn `'all'`. */
   const [selectedShippingCarrier, setSelectedShippingCarrier] =
@@ -4435,6 +4395,8 @@ export default function OrderManager({
   const [labelWaitState, setLabelWaitState] = useState<Record<string, 'waiting' | 'retry'>>({});
   const confirmProgressActiveRef = React.useRef(false);
   const confirmWaitSnsRef = React.useRef<string[]>([]);
+  /** Sau khi đóng modal xác nhận: không tự tick lại đơn trên tab Chưa xử lý. */
+  const suppressUnprocessedAutoSelectRef = useRef(false);
   const [shipJobResults, setShipJobResults] = useState<any[]>([]);
   const [shipConfirmSummary, setShipConfirmSummary] = useState<{
     total: number;
@@ -5611,7 +5573,22 @@ export default function OrderManager({
 
   // Called from the "Xác nhận đơn hàng" modal — arranges shipment (pickup/dropoff,
   // per the seller's choice) for every order currently queued in `shipConfirmOrders`.
-  /** Chỉ đóng modal tiến độ — user bấm Đóng; không tự tắt. Không hủy silent-prefetch PDF. */
+  /** Đóng modal tiến độ: ẩn modal, bỏ tick, tải lại đúng tab đang đứng. Không đổi tab/lọc. Không hủy silent-prefetch PDF. */
+  const refreshOrdersStayOnCurrentTab = () => {
+    const tab = activeSubTabRef.current;
+    void fetchOrdersWithShop({
+      silent: true,
+      page: 1,
+      limit: ORDERS_PAGE_SIZE,
+      merge: false,
+      tab: tab === 'all' ? '' : tab,
+      force: true,
+    }).catch((error: unknown) => {
+      if (error instanceof Error && error.name === 'AbortError') return;
+    });
+    void fetchOrderCounts({ force: true }).catch(() => {});
+  };
+
   const closeConfirmProgressBanner = () => {
     if (progressCloseTimerRef.current) {
       clearTimeout(progressCloseTimerRef.current);
@@ -5629,6 +5606,9 @@ export default function OrderManager({
     setProgressDone(false);
     setShipConfirmSummary(null);
     setShipJobResults([]);
+    suppressUnprocessedAutoSelectRef.current = true;
+    setSelectedOrderIds([]);
+    refreshOrdersStayOnCurrentTab();
     if (batchPrintIframeRef.current) {
       try {
         batchPrintIframeRef.current.remove();
@@ -5871,27 +5851,7 @@ export default function OrderManager({
         processed: movedFromUnprocessed,
       });
     }
-    if (opts?.deferTabSwitch) {
-      void fetchOrdersWithShop({
-        silent: true,
-        page: 1,
-        limit: ORDERS_PAGE_SIZE,
-        merge: false,
-        tab: activeSubTab === 'all' ? '' : activeSubTab,
-        force: true,
-      });
-      void fetchOrderCounts({ force: true });
-      return;
-    }
-    setActiveSubTab('processed');
-    void fetchOrdersWithShop({
-      silent: true,
-      page: 1,
-      limit: ORDERS_PAGE_SIZE,
-      merge: false,
-      tab: 'processed',
-    });
-    void fetchOrderCounts({ force: true });
+    refreshOrdersStayOnCurrentTab();
   };
 
   /**
@@ -6225,43 +6185,6 @@ export default function OrderManager({
   };
 
   /**
-   * Đóng modal → hiện tab Đã xử lý + lọc Chưa in ngay (nút xám).
-   * Gộp state 1 tick, bỏ fetch blocking; PDF poll chạy ngầm.
-   */
-  const revealProcessedUnprintedTab = (orderSns: string[]): void => {
-    const want = new Set(orderSns.map((sn) => normalizeConfirmSn(sn)).filter(Boolean));
-    const optimistic = ordersRef.current
-      .filter((o) => {
-        const sn = normalizeConfirmSn(o.orderSn || '');
-        const id = normalizeConfirmSn(o.id || '');
-        return want.has(sn) || want.has(id);
-      })
-      .map((o) => ({
-        ...o,
-        status: 'processed' as const,
-        isPrepared: true,
-        isPrinted: false,
-        hasPdf: Boolean(o.hasPdf || o.readyToPrint || o.labelUrl || o.pdfUrl || o.waybill_url),
-        readyToPrint: Boolean(o.readyToPrint || o.hasPdf || o.labelUrl || o.pdfUrl || o.waybill_url),
-      }));
-    if (optimistic.length > 0) {
-      ordersRef.current = optimistic;
-      onUpdateOrders(optimistic, { persist: false });
-    }
-    // Giữ tick chọn các đơn vừa Confirm khi sang tab Đã xử lý / Chưa in.
-    const autoSelectIds = resolveSelectableOrderIds(orderSns);
-    if (autoSelectIds.length > 0) {
-      setSelectedOrderIds(autoSelectIds);
-    }
-    skipNextOrdersTabFetchRef.current = true;
-    React.startTransition(() => {
-      setActiveSubTab('processed');
-      setPrintStatusFilter('unprinted');
-      setCurrentPage(1);
-    });
-  };
-
-  /**
    * Kick silent-prefetch (không await). Spinner overlay theo has-pdf; nút In không bị khóa.
    * Đây là NGUỒN DUY NHẤT theo dõi PDF sẵn sàng: chỉ poll /api/orders/prefetch-status,
    * không còn chạy song song vòng lặp has-pdf riêng (tránh nhân đôi request).
@@ -6349,16 +6272,7 @@ export default function OrderManager({
             patchLabelWaitState(cleanSns, null);
             updateConfirmWaitProgress({ done: true, total: cleanSns.length });
           }
-          void fetchOrdersWithShop({
-            silent: true,
-            page: 1,
-            limit: ORDERS_PAGE_SIZE,
-            merge: true,
-            tab: 'processed',
-            force: true,
-          }).catch((error: unknown) => {
-            if (error instanceof Error && error.name === 'AbortError') return;
-          });
+          refreshOrdersStayOnCurrentTab();
         }
         releaseTracking(cleanSns);
       }
@@ -6415,7 +6329,6 @@ export default function OrderManager({
     });
     ordersRef.current = optimistic;
     onUpdateOrders(optimistic, { persist: false });
-    revealProcessedUnprintedTab(orderSns);
     setProgressMessage(`Đang xác nhận ${orderSns.length} đơn lên Shopee...`);
     setProgressDone(false);
     setProgressCompleted(0);
@@ -6489,10 +6402,6 @@ export default function OrderManager({
         if (optimisticTargets.length > 0) {
           void updatePrintStatusForOrders(optimisticTargets, false, { silent: true }).catch(() => {});
         }
-        const autoSelectIds = resolveSelectableOrderIds(
-          summary.successfulOrderIds?.length ? summary.successfulOrderIds : successfulSns,
-        );
-        setSelectedOrderIds(autoSelectIds);
         confirmProgressActiveRef.current = true;
         const confirmTotal = Math.max(
           summary.successCount + summary.failCount,
@@ -6507,17 +6416,7 @@ export default function OrderManager({
           `Đã xác nhận ${summary.successCount} đơn. Hệ thống đang lấy mã in ngầm...`,
         );
         void startSilentPdfPrefetch(successfulSns);
-        void fetchOrdersWithShop({
-          silent: true,
-          page: 1,
-          limit: ORDERS_PAGE_SIZE,
-          merge: true,
-          tab: 'processed',
-          force: true,
-        }).catch((error: unknown) => {
-          if (error instanceof Error && error.name === 'AbortError') return;
-        });
-        void fetchOrderCounts({ force: true }).catch(() => {});
+        refreshOrdersStayOnCurrentTab();
       } else {
         confirmAutoPrintPendingRef.current = false;
         setIsPdfReady(true);
@@ -7491,11 +7390,16 @@ export default function OrderManager({
   useEffect(() => {
     if (activeSubTab !== 'unprocessed') {
       autoSelectedUnprocessedKeyRef.current = '';
+      suppressUnprocessedAutoSelectRef.current = false;
       return;
     }
     if (displayOrders.length === 0) return;
     const ids = displayOrders.map((o) => o.id);
     const key = ids.join('|');
+    if (suppressUnprocessedAutoSelectRef.current) {
+      autoSelectedUnprocessedKeyRef.current = key;
+      return;
+    }
     if (autoSelectedUnprocessedKeyRef.current === key) return;
     autoSelectedUnprocessedKeyRef.current = key;
     setSelectedOrderIds(ids);
