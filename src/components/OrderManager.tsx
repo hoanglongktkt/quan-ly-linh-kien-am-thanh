@@ -4916,13 +4916,23 @@ export default function OrderManager({
     try {
       const { PDFDocument } = await import('pdf-lib');
       const merged = await PDFDocument.create();
+      const failedUrls: string[] = [];
       for (const url of uniqueUrls) {
-        const res = await fetch(url, { credentials: 'same-origin' });
-        if (!res.ok) throw new Error(`HTTP ${res.status} khi tải ${url}`);
-        const bytes = await res.arrayBuffer();
-        const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
-        const pages = await merged.copyPages(src, src.getPageIndices());
-        for (const page of pages) merged.addPage(page);
+        try {
+          const res = await fetch(url, { credentials: 'same-origin' });
+          if (!res.ok) throw new Error(`HTTP ${res.status} khi tải ${url}`);
+          const bytes = await res.arrayBuffer();
+          if (!bytes.byteLength) throw new Error(`PDF rỗng: ${url}`);
+          const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
+          const pages = await merged.copyPages(src, src.getPageIndices());
+          for (const page of pages) merged.addPage(page);
+        } catch (fileErr) {
+          console.warn('[Print Merge] bỏ qua file lỗi:', url, fileErr);
+          failedUrls.push(url);
+        }
+      }
+      if (merged.getPageCount() === 0) {
+        throw new Error('Không có PDF hợp lệ để gộp');
       }
       const out = await merged.save();
       const blob = new Blob([new Uint8Array(out)], { type: 'application/pdf' });
@@ -4935,6 +4945,9 @@ export default function OrderManager({
       a.click();
       a.remove();
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+      if (failedUrls.length > 0) {
+        console.warn(`[Print Merge] đã gộp, bỏ qua ${failedUrls.length} file lỗi`);
+      }
       return { ok: true, filename };
     } catch (err) {
       console.warn('[Print Merge] pdf-lib merge failed, fallback tải từng file:', err);
@@ -5057,11 +5070,11 @@ export default function OrderManager({
         : `Đang lấy ${uniqueIds.length} PDF từ kho nội bộ...`,
     );
     reportProgress(0);
-    // Chặn treo vô hạn nếu mạng/proxy im lặng không trả response — khớp trần chờ Backend (~25s) + đệm.
+    // Chặn treo vô hạn nếu mạng/proxy im lặng không trả response — khớp trần chờ Backend (~100s) + đệm.
     const printChunkController = new AbortController();
     const printChunkTimeoutId = window.setTimeout(
       () => printChunkController.abort(),
-      35_000,
+      120_000,
     );
     try {
       const res = await fetch('/api/shopee/print-document/chunk', {
@@ -6571,7 +6584,7 @@ export default function OrderManager({
         reservedBatchWindow = openReservedPrintPlaceholder();
 
         const controller = new AbortController();
-        const timeoutId = window.setTimeout(() => controller.abort(), 38_000);
+        const timeoutId = window.setTimeout(() => controller.abort(), 120_000);
         let batchResponse: Response;
         try {
           batchResponse = await fetch('/api/orders/batch-confirm-print', {
@@ -6738,7 +6751,7 @@ export default function OrderManager({
     } catch (err) {
       closeReservedPrintWindow(reservedBatchWindow);
       const message = err instanceof DOMException && err.name === 'AbortError'
-        ? 'Quá thời gian 38 giây. Vui lòng thử lại hoặc chọn ít đơn hơn.'
+        ? 'Quá thời gian 120 giây. Vui lòng thử lại hoặc chọn ít đơn hơn.'
         : err instanceof Error
           ? err.message
           : 'Lỗi không xác định';
@@ -6863,7 +6876,7 @@ export default function OrderManager({
 
     try {
       const controller = new AbortController();
-      const timeoutId = window.setTimeout(() => controller.abort(), 35_000);
+      const timeoutId = window.setTimeout(() => controller.abort(), 120_000);
 
       try {
         const response = await fetch('/api/orders/batch-print', {

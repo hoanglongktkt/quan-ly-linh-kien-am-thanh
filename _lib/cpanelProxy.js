@@ -85,7 +85,7 @@ export function resolveProxyTimeoutMs(pathPart) {
     return 230_000;
   }
   if (p === 'orders/batch-confirm-print') {
-    return 35_000;
+    return 120_000;
   }
   if (p === 'orders/batch-confirm') {
     return 90_000;

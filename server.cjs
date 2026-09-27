@@ -120076,6 +120076,8 @@ async function fetchWithTimeout(url2, init = {}, timeoutMs = SHOPEE_HTTP_TIMEOUT
     };
     if (shopeeHttpDispatcher) fetchInit.dispatcher = shopeeHttpDispatcher;
     const fetchPromise = fetch(url2, fetchInit);
+    fetchPromise.catch(() => {
+    });
     const hardTimeoutPromise = new Promise((_, reject) => {
       hardTimer = setTimeout(() => {
         try {
@@ -139133,6 +139135,9 @@ function dedupeShopeeParentVariantRows(products) {
   return [...byItem.values(), ...others];
 }
 var SHOPEE_LOGISTICS_TIMEOUT_MS = 5e3;
+var PRINT_WAYBILL_POLL_HTTP_TIMEOUT_MS = 8e3;
+var PRINT_WAYBILL_DOWNLOAD_TIMEOUT_CAP_MS = 2e4;
+var WAYBILL_BATCH_DEADLINE_MS = 1e5;
 var SHIP_ORDER_OPERATION_TIMEOUT_MS = 8e3;
 var SHIP_ORDER_CHUNK_PAUSE_MS = 200;
 var SHOPEE_WAYBILL_PDF_MAX_BYTES = 25 * 1024 * 1024;
@@ -139773,7 +139778,7 @@ async function shopeeGetShippingDocumentResult(shopId, accessToken, orderList, s
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ order_list: pollOrderList }),
     signal
-  });
+  }, PRINT_WAYBILL_POLL_HTTP_TIMEOUT_MS);
   const json2 = await res.json().catch(() => ({}));
   console.log(
     `[Shopee API] POST ${apiPath} FULL RESPONSE shop=${shopId} n=${pollOrderList.length} HTTP=${res.status}:`,
@@ -139781,7 +139786,7 @@ async function shopeeGetShippingDocumentResult(shopId, accessToken, orderList, s
   );
   return json2;
 }
-async function shopeeDownloadShippingDocument(shopId, accessToken, orderList, filename, signal) {
+async function shopeeDownloadShippingDocument(shopId, accessToken, orderList, filename, signal, timeoutMs) {
   if (orderList.some((row) => !String(row?.package_number || "").trim())) {
     throw new Error("missing_package_number: download_shipping_document b\u1ECB ch\u1EB7n");
   }
@@ -139810,12 +139815,20 @@ async function shopeeDownloadShippingDocument(shopId, accessToken, orderList, fi
     shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
   }));
   console.log(`[Shopee API] B\u1EAFt \u0111\u1EA7u t\u1EA3i PDF batch n=${downloadOrderList.length} shop=${shopId}`);
+  const requestedBudget = Number(timeoutMs);
+  const downloadBudgetMs = Math.max(
+    1e3,
+    Math.min(
+      Number.isFinite(requestedBudget) && requestedBudget > 0 ? requestedBudget : PRINT_WAYBILL_DOWNLOAD_TIMEOUT_CAP_MS,
+      PRINT_WAYBILL_DOWNLOAD_TIMEOUT_CAP_MS
+    )
+  );
   const res = await fetchWithTimeout(url2, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ order_list: downloadOrderList }),
     signal
-  }, 6e4);
+  }, downloadBudgetMs);
   const contentType = String(res.headers.get("content-type") || "").toLowerCase();
   console.log(`[Shopee API] POST ${apiPath} n=${orderList.length} HTTP ${res.status} content-type=${contentType || "(empty)"}`);
   const declaredLength = Number(res.headers.get("content-length") || 0);
@@ -139889,8 +139902,52 @@ function shippingDocRowKey(row) {
   return `${String(row?.order_sn || "").trim()}::${String(row?.package_number || "").trim()}`;
 }
 var sleepMs2 = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-var PRINT_WAYBILL_POLL_INTERVAL_MS = 500;
-var PRINT_WAYBILL_POLL_MAX_ATTEMPTS = 10;
+function waybillDownloadBudgetMs(deadlineAt) {
+  const remaining = deadlineAt ? deadlineAt - Date.now() : PRINT_WAYBILL_DOWNLOAD_TIMEOUT_CAP_MS;
+  return Math.max(1e3, Math.min(remaining, PRINT_WAYBILL_DOWNLOAD_TIMEOUT_CAP_MS));
+}
+async function mapWaybillSettled(items, concurrency, pauseMs, fn) {
+  const results = new Array(items.length);
+  if (items.length === 0) return results;
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, concurrency), items.length);
+  async function worker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      if (index >= items.length) return;
+      if (index > 0 && pauseMs > 0) await sleepMs2(pauseMs);
+      try {
+        results[index] = { status: "fulfilled", value: await fn(items[index], index) };
+      } catch (reason) {
+        results[index] = { status: "rejected", reason };
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
+}
+async function readCachedOrderWaybillPdf(orderSn) {
+  const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
+  if (!sn) return null;
+  const filename = `order_${sn}.pdf`;
+  const mem = getLabelMem(filename);
+  if (mem?.buf?.length && isPdfBuffer(mem.buf) && mem.buf.length <= SHOPEE_WAYBILL_PDF_MAX_BYTES) {
+    return mem.buf;
+  }
+  const disk = getValidLabelDiskFile(filename);
+  if (!disk || disk.size <= 0 || disk.size > SHOPEE_WAYBILL_PDF_MAX_BYTES) return null;
+  try {
+    const buf = await import_fs24.default.promises.readFile(disk.filePath);
+    if (buf.length && isPdfBuffer(buf)) return buf;
+  } catch (err) {
+    console.warn(`[Shopee Print] \u0111\u1ECDc cache ${filename}:`, err?.message || err);
+  }
+  return null;
+}
+var PRINT_WAYBILL_POLL_INTERVAL_MS = 1500;
+var PRINT_WAYBILL_POLL_MAX_ATTEMPTS = 15;
+var PRINT_WAYBILL_DOWNLOAD_CONCURRENCY = 3;
+var PRINT_WAYBILL_DOWNLOAD_PAUSE_MS = 200;
 var SHOPEE_SHIPPING_DOC_BULK_MAX = 50;
 function toShippingDocApiItems(rows) {
   return rows.map((r2) => {
@@ -139997,7 +140054,9 @@ async function retryFillPackageNumberForPrint(shopId, accessToken, order) {
 }
 async function splitMergedWaybillPdfToOrders(mergedBuffer, orderSns) {
   const result = /* @__PURE__ */ new Map();
-  const sns = [...new Set(orderSns.map((sn) => String(sn || "").replace(/^shopee-/i, "").trim()).filter(Boolean))];
+  const sns = uniquePreserveOrder(
+    orderSns.map((sn) => String(sn || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
+  );
   if (sns.length === 0 || !mergedBuffer?.length) return result;
   if (sns.length === 1) {
     result.set(sns[0], mergedBuffer);
@@ -140005,7 +140064,12 @@ async function splitMergedWaybillPdfToOrders(mergedBuffer, orderSns) {
   }
   try {
     const src = await import_pdf_lib.PDFDocument.load(mergedBuffer, { ignoreEncryption: true });
-    if (src.getPageCount() !== sns.length) return result;
+    if (src.getPageCount() !== sns.length) {
+      console.warn(
+        `[Shopee Print] split b\u1ECF qua: ${src.getPageCount()} trang \u2260 ${sns.length} \u0111\u01A1n \u2014 t\u1EA3i t\u1EEBng \u0111\u01A1n`
+      );
+      return result;
+    }
     for (let i2 = 0; i2 < sns.length; i2++) {
       const out = await import_pdf_lib.PDFDocument.create();
       const [page] = await out.copyPages(src, [i2]);
@@ -140186,14 +140250,15 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
           }
         }
         if (i2 + SHOPEE_SHIPPING_DOC_BULK_MAX < pendingRows.length) {
-          await sleepMs2(PRINT_WAYBILL_POLL_INTERVAL_MS);
+          await sleepMs2(PRINT_WAYBILL_DOWNLOAD_PAUSE_MS);
         }
       }
       let pollRows = [...pendingByOrder.values()].flat();
+      const readyRowKeys = /* @__PURE__ */ new Set();
       if (pollRows.length > 0) {
-        let allReady = false;
         for (let attempt = 1; attempt <= PRINT_WAYBILL_POLL_MAX_ATTEMPTS; attempt++) {
           if (opts?.deadlineAt && Date.now() >= opts.deadlineAt) break;
+          if (opts?.signal?.aborted) break;
           try {
             const pollResult = await shopeeGetShippingDocumentResult(
               shopId,
@@ -140203,86 +140268,112 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
             );
             const items = pollResult?.response?.result_list || pollResult?.result_list || [];
             const byKey = new Map(items.map((it) => [shippingDocRowKey(it), it]));
-            let attemptReady = true;
+            const stillPending = [];
             for (const row of pollRows) {
               const sameOrderItems = items.filter(
                 (item) => String(item?.order_sn || "").trim() === row.order_sn
               );
               const it = byKey.get(shippingDocRowKey(row)) || (sameOrderItems.length === 1 ? sameOrderItems[0] : void 0);
               const st = String(it?.status || "").toUpperCase();
-              if (st !== "READY") {
-                attemptReady = false;
-                break;
-              }
+              if (st === "READY") readyRowKeys.add(shippingDocRowKey(row));
+              else stillPending.push(row);
             }
-            if (attemptReady) {
-              allReady = true;
-              console.log(`[Shopee Batch Waybill] BULK POLL READY l\u1EA7n ${attempt} n=${pollRows.length}`);
+            pollRows = stillPending;
+            if (pollRows.length === 0) {
+              console.log(`[Shopee Batch Waybill] BULK POLL READY l\u1EA7n ${attempt}`);
               break;
             }
             console.log(
-              `[Shopee Batch Waybill] BULK POLL ch\u01B0a READY l\u1EA7n ${attempt}/${PRINT_WAYBILL_POLL_MAX_ATTEMPTS}`
+              `[Shopee Batch Waybill] BULK POLL c\xF2n ${pollRows.length} ki\u1EC7n ch\u01B0a READY, l\u1EA7n ${attempt}/${PRINT_WAYBILL_POLL_MAX_ATTEMPTS}`
             );
           } catch (pollErr) {
             console.warn(`[Shopee Batch Waybill] BULK POLL:`, pollErr?.message || pollErr);
           }
+          if (pollRows.length === 0) break;
           if (attempt < PRINT_WAYBILL_POLL_MAX_ATTEMPTS) {
-            await sleepMs2(PRINT_WAYBILL_POLL_INTERVAL_MS);
+            const remaining = opts?.deadlineAt ? opts.deadlineAt - Date.now() : PRINT_WAYBILL_POLL_INTERVAL_MS;
+            if (remaining <= 0) break;
+            await sleepMs2(Math.min(PRINT_WAYBILL_POLL_INTERVAL_MS, remaining));
           }
         }
-        const downloadRows = allReady ? pollRows : pollRows.filter((row) => !skippedOrders.some((s2) => s2.orderSn === row.order_sn));
-        const uniquePendingSns = [...pendingByOrder.keys()];
-        const downloadFilename = uniquePendingSns.length === 1 ? `order_${uniquePendingSns[0]}.pdf` : buildCachedLabelFilename(uniquePendingSns);
-        let downloadedOk = false;
-        if (allReady && downloadRows.length > 0) {
+        const orderedPendingSns = [...pendingByOrder.keys()];
+        const readySns = [];
+        for (const sn of orderedPendingSns) {
+          const rows = pendingByOrder.get(sn) || [];
+          const fullyReady = rows.length > 0 && rows.every((row) => readyRowKeys.has(shippingDocRowKey(row)));
+          if (fullyReady) {
+            readySns.push(sn);
+            continue;
+          }
+          if (!skippedOrders.some((s2) => s2.orderSn === sn)) {
+            skippedOrders.push({
+              orderSn: sn,
+              error: "document_not_ready",
+              message: "Shopee b\xE1o ch\u01B0a t\u1EA1o xong m\xE3 v\u1EADn \u0111\u01A1n, vui l\xF2ng th\u1EED l\u1EA1i sau \xEDt ph\xFAt"
+            });
+          }
+          pendingByOrder.delete(sn);
+        }
+        const commitReady = (sn, meta) => {
+          readyOrderSns.push(sn);
+          readyOrderRows.push(...pendingByOrder.get(sn) || []);
+          lastOk = {
+            success: true,
+            orderSn: sn,
+            filename: meta.filename,
+            filePath: meta.filePath,
+            size: meta.size,
+            contentType: meta.contentType || "application/pdf",
+            cached: false
+          };
+          pendingByOrder.delete(sn);
+        };
+        const readyRows = readySns.flatMap((sn) => pendingByOrder.get(sn) || []);
+        const downloadFilename = readySns.length === 1 ? `order_${readySns[0]}.pdf` : buildCachedLabelFilename(readySns);
+        if (readySns.length > 0 && readyRows.length > 0) {
           try {
             const downloadResult = await shopeeDownloadShippingDocument(
               shopId,
               accessToken,
-              toShippingDocApiItems(downloadRows),
+              toShippingDocApiItems(readyRows),
               downloadFilename,
-              opts?.signal
+              opts?.signal,
+              waybillDownloadBudgetMs(opts?.deadlineAt)
             );
             if (downloadResult?.filePath && downloadResult?.filename && downloadResult?.size) {
               const mergedBuf = await import_fs24.default.promises.readFile(downloadResult.filePath);
               if (mergedBuf.length && isPdfBuffer(mergedBuf)) {
                 putLabelMem(downloadResult.filename, mergedBuf, "application/pdf");
-                const splitMap = await splitMergedWaybillPdfToOrders(mergedBuf, uniquePendingSns);
-                if (splitMap.size === uniquePendingSns.length) {
-                  for (const sn of uniquePendingSns) {
+                const splitMap = await splitMergedWaybillPdfToOrders(mergedBuf, readySns);
+                if (splitMap.size === readySns.length) {
+                  for (const sn of readySns) {
                     const buf = splitMap.get(sn);
                     if (!buf) continue;
-                    await cacheOrderWaybillPdf(sn, buf);
-                    readyOrderSns.push(sn);
-                    readyOrderRows.push(...pendingByOrder.get(sn) || []);
-                    lastOk = {
-                      success: true,
-                      orderSn: sn,
+                    try {
+                      await cacheOrderWaybillPdf(sn, buf);
+                    } catch (cacheErr) {
+                      console.warn(`[Shopee Batch Waybill] cache ${sn}:`, cacheErr?.message || cacheErr);
+                      continue;
+                    }
+                    commitReady(sn, {
                       filename: `order_${sn}.pdf`,
                       filePath: import_path24.default.join(PDF_DIR, `order_${sn}.pdf`),
-                      size: buf.length,
-                      contentType: "application/pdf",
-                      cached: false
-                    };
-                    pendingByOrder.delete(sn);
+                      size: buf.length
+                    });
                   }
-                  downloadedOk = true;
-                } else if (uniquePendingSns.length === 1) {
-                  const sn = uniquePendingSns[0];
-                  await cacheOrderWaybillPdf(sn, mergedBuf);
-                  readyOrderSns.push(sn);
-                  readyOrderRows.push(...pendingByOrder.get(sn) || []);
-                  lastOk = {
-                    success: true,
-                    orderSn: sn,
-                    filename: downloadResult.filename,
-                    filePath: downloadResult.filePath,
-                    size: downloadResult.size,
-                    contentType: downloadResult.contentType || "application/pdf",
-                    cached: false
-                  };
-                  pendingByOrder.delete(sn);
-                  downloadedOk = true;
+                } else if (readySns.length === 1) {
+                  const sn = readySns[0];
+                  try {
+                    await cacheOrderWaybillPdf(sn, mergedBuf);
+                    commitReady(sn, {
+                      filename: downloadResult.filename,
+                      filePath: downloadResult.filePath,
+                      size: downloadResult.size,
+                      contentType: downloadResult.contentType
+                    });
+                  } catch (cacheErr) {
+                    console.warn(`[Shopee Batch Waybill] cache ${sn}:`, cacheErr?.message || cacheErr);
+                  }
                 }
               } else {
                 unlinkWaybillFileQuiet(downloadResult.filePath);
@@ -140299,65 +140390,97 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
             console.warn(`[Shopee Batch Waybill] BULK download:`, dlErr?.message || dlErr);
           }
         }
-        if (!downloadedOk && uniquePendingSns.length > 0 && uniquePendingSns.length <= 10) {
-          const parallel = await Promise.all(
-            uniquePendingSns.map(async (sn) => {
-              const rows = pendingByOrder.get(sn);
-              if (!rows?.length) return;
-              try {
-                const one = await shopeeDownloadShippingDocument(
-                  shopId,
-                  accessToken,
-                  toShippingDocApiItems(rows),
-                  `order_${sn}.pdf`,
-                  opts?.signal
-                );
-                if (!one?.filePath || !one?.filename || !one?.size) {
-                  if (one?.error || one?.message) {
-                    if (!skippedOrders.some((s2) => s2.orderSn === sn)) {
-                      skippedOrders.push({
-                        orderSn: sn,
-                        error: String(one.error || "download_failed"),
-                        message: String(
-                          one.message || "Shopee b\xE1o ch\u01B0a t\u1EA1o xong m\xE3 v\u1EADn \u0111\u01A1n, vui l\xF2ng th\u1EED l\u1EA1i sau \xEDt ph\xFAt"
-                        )
-                      });
-                    }
-                  }
-                  return;
-                }
-                const buf = await import_fs24.default.promises.readFile(one.filePath);
-                if (!buf.length || !isPdfBuffer(buf)) {
-                  unlinkWaybillFileQuiet(one.filePath);
-                  const described = describeShopeeWaybillPayloadError(String(one.contentType || ""), buf);
-                  if (!skippedOrders.some((s2) => s2.orderSn === sn)) {
-                    skippedOrders.push({
-                      orderSn: sn,
-                      error: described.error,
-                      message: described.message
-                    });
-                  }
-                  return;
-                }
-                putLabelMem(one.filename, buf, "application/pdf");
-                readyOrderSns.push(sn);
-                readyOrderRows.push(...rows);
-                lastOk = {
-                  success: true,
+        const stillNeed = readySns.filter((sn) => pendingByOrder.has(sn));
+        if (stillNeed.length > 0) {
+          const settled = await mapWaybillSettled(
+            stillNeed,
+            PRINT_WAYBILL_DOWNLOAD_CONCURRENCY,
+            PRINT_WAYBILL_DOWNLOAD_PAUSE_MS,
+            async (sn) => {
+              if (opts?.signal?.aborted || opts?.deadlineAt && Date.now() >= opts.deadlineAt) {
+                return {
                   orderSn: sn,
-                  filename: one.filename,
-                  filePath: one.filePath,
-                  size: one.size,
-                  contentType: one.contentType || "application/pdf",
-                  cached: false
+                  ok: false,
+                  error: "document_not_ready",
+                  message: "Shopee b\xE1o ch\u01B0a t\u1EA1o xong m\xE3 v\u1EADn \u0111\u01A1n, vui l\xF2ng th\u1EED l\u1EA1i sau \xEDt ph\xFAt"
                 };
-                pendingByOrder.delete(sn);
-              } catch (oneErr) {
-                console.warn(`[Shopee Batch Waybill] parallel download ${sn}:`, oneErr?.message || oneErr);
               }
-            })
+              const rows = pendingByOrder.get(sn);
+              if (!rows?.length) {
+                return { orderSn: sn, ok: false, error: "download_failed", message: "Thi\u1EBFu ki\u1EC7n h\xE0ng" };
+              }
+              const one = await shopeeDownloadShippingDocument(
+                shopId,
+                accessToken,
+                toShippingDocApiItems(rows),
+                `order_${sn}.pdf`,
+                opts?.signal,
+                waybillDownloadBudgetMs(opts?.deadlineAt)
+              );
+              if (!one?.filePath || !one?.filename || !one?.size) {
+                return {
+                  orderSn: sn,
+                  ok: false,
+                  error: String(one?.error || "download_failed"),
+                  message: String(
+                    one?.message || "Shopee b\xE1o ch\u01B0a t\u1EA1o xong m\xE3 v\u1EADn \u0111\u01A1n, vui l\xF2ng th\u1EED l\u1EA1i sau \xEDt ph\xFAt"
+                  )
+                };
+              }
+              const buf = await import_fs24.default.promises.readFile(one.filePath);
+              if (!buf.length || !isPdfBuffer(buf)) {
+                unlinkWaybillFileQuiet(one.filePath);
+                const described = describeShopeeWaybillPayloadError(String(one.contentType || ""), buf);
+                return { orderSn: sn, ok: false, error: described.error, message: described.message };
+              }
+              putLabelMem(one.filename, buf, "application/pdf");
+              return {
+                orderSn: sn,
+                ok: true,
+                filename: one.filename,
+                filePath: one.filePath,
+                size: one.size,
+                contentType: one.contentType || "application/pdf"
+              };
+            }
           );
-          void parallel;
+          for (let i2 = 0; i2 < stillNeed.length; i2++) {
+            const sn = stillNeed[i2];
+            const slot = settled[i2];
+            if (!slot || slot.status === "rejected") {
+              console.warn(
+                `[Shopee Batch Waybill] download ${sn}:`,
+                slot && slot.status === "rejected" ? slot.reason : "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c PDF."
+              );
+              if (!skippedOrders.some((s2) => s2.orderSn === sn)) {
+                skippedOrders.push({
+                  orderSn: sn,
+                  error: "download_failed",
+                  message: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c PDF."
+                });
+              }
+              pendingByOrder.delete(sn);
+              continue;
+            }
+            const value = slot.value;
+            if (!value.ok || !value.filename || !value.filePath || !value.size) {
+              if (!skippedOrders.some((s2) => s2.orderSn === sn)) {
+                skippedOrders.push({
+                  orderSn: sn,
+                  error: value.error || "download_failed",
+                  message: value.message || "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c PDF."
+                });
+              }
+              pendingByOrder.delete(sn);
+              continue;
+            }
+            commitReady(sn, {
+              filename: value.filename,
+              filePath: value.filePath,
+              size: value.size,
+              contentType: value.contentType
+            });
+          }
         }
         for (const [sn] of pendingByOrder) {
           if (skippedOrders.some((s2) => s2.orderSn === sn)) continue;
@@ -148022,7 +148145,7 @@ async function startServer() {
             if (shippingRows.length === 0) return;
             console.log(`[Get PDF] BULK shop=${shopId} n=${shopOrders.length} \u2014 kh\xF4ng sleep 3s/\u0111\u01A1n`);
             const batch = await batchDownloadShopeeWaybillPdf(shopId, shippingRows, {
-              deadlineAt: Date.now() + 2e4
+              deadlineAt: Date.now() + WAYBILL_BATCH_DEADLINE_MS
             });
             const readySet = new Set(batch.readyOrderSns || []);
             for (const order of shopOrders) {
@@ -148081,9 +148204,9 @@ async function startServer() {
     }
   };
   const BATCH_PRINT_CONCURRENCY = 5;
-  const BATCH_PRINT_DEADLINE_MS = 27e3;
-  const BATCH_PRINT_ONLY_DEADLINE_MS = 25e3;
-  const PRINT_CHUNK_FALLBACK_DEADLINE_MS = 25e3;
+  const BATCH_PRINT_DEADLINE_MS = WAYBILL_BATCH_DEADLINE_MS;
+  const BATCH_PRINT_ONLY_DEADLINE_MS = WAYBILL_BATCH_DEADLINE_MS;
+  const PRINT_CHUNK_FALLBACK_DEADLINE_MS = WAYBILL_BATCH_DEADLINE_MS;
   const BATCH_PDF_MAX_BYTES = 25 * 1024 * 1024;
   async function mapBatchConcurrently(items, concurrency, processFn) {
     const results = new Array(items.length);
@@ -148103,9 +148226,12 @@ async function startServer() {
     const remainingMs = deadlineAt - Date.now();
     if (remainingMs <= 0) throw new Error(`batch_deadline:${label}`);
     let timer;
+    const operationPromise = operation();
+    operationPromise.catch(() => {
+    });
     try {
       return await Promise.race([
-        operation(),
+        operationPromise,
         new Promise((_, reject) => {
           timer = setTimeout(() => reject(new Error(`batch_deadline:${label}`)), remainingMs);
         })
@@ -148429,13 +148555,21 @@ async function startServer() {
           }
         } catch (err) {
           const msg = String(err?.message || err);
+          const deadlineHit = /batch_deadline/i.test(msg);
           console.error(`[${logPrefix}] HARD STOP shop=${storedShopId}:`, msg);
           for (const orderSn of group.sns) {
             if (failedBySn.has(orderSn) || documents.some((d) => d.orderSns.includes(orderSn))) continue;
+            if (deadlineHit) {
+              const cached = await readCachedOrderWaybillPdf(orderSn);
+              if (cached && cached.length <= BATCH_PDF_MAX_BYTES) {
+                documents.push({ orderSns: [orderSn], buffer: cached });
+                continue;
+              }
+            }
             failedBySn.set(orderSn, {
               orderSn,
-              error: "fatal_error",
-              message: "Shopee t\u1EEB ch\u1ED1i t\u1EA1o file. Vui l\xF2ng ki\u1EC3m tra l\u1EA1i tr\u1EA1ng th\xE1i \u0111\u01A1n tr\xEAn Shopee."
+              error: deadlineHit ? "document_not_ready" : "fatal_error",
+              message: deadlineHit ? "Shopee ch\u01B0a t\u1EA1o xong PDF trong th\u1EDDi gian ch\u1EDD." : "Shopee t\u1EEB ch\u1ED1i t\u1EA1o file. Vui l\xF2ng ki\u1EC3m tra l\u1EA1i tr\u1EA1ng th\xE1i \u0111\u01A1n tr\xEAn Shopee."
             });
           }
         } finally {
@@ -148609,122 +148743,6 @@ async function startServer() {
       console.log(`[Batch Confirm Print] \u0110\xE3 x\xE1c nh\u1EADn ${successSns.length}/${toShip.length} \u0111\u01A1n - b\u1EAFt \u0111\u1EA7u l\u1EA5y PDF...`);
       const pdfBuffers = [];
       const pdfFailures = /* @__PURE__ */ new Map();
-      const processSingleOrder = async (orderSn) => {
-        try {
-          const order = orders.find(
-            (item) => String(item?.orderSn || item?.order_sn || "").replace(/^shopee-/i, "").trim() === orderSn
-          );
-          if (!order) {
-            console.warn(`[Batch Confirm Print] Kh\xF4ng t\xECm th\u1EA5y order ${orderSn} trong danh s\xE1ch`);
-            return null;
-          }
-          const storedShopId = String(
-            order.shopId || order.shop_id || order.accountId || order.account_id || ""
-          ).trim();
-          if (!storedShopId) {
-            console.warn(`[Batch Confirm Print] \u0110\u01A1n ${orderSn} thi\u1EBFu shopId`);
-            return null;
-          }
-          const auth = await getShopeeAccessTokenForApi(storedShopId);
-          const accessToken = String(auth?.token || "").trim();
-          const shopId = String(auth?.apiShopId || "").trim();
-          if (!accessToken || !shopId) {
-            console.warn(`[Batch Confirm Print] Kh\xF4ng c\xF3 token cho ${orderSn}`);
-            return null;
-          }
-          try {
-            await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, [order]);
-          } catch (err) {
-            console.warn(`[Batch Confirm Print] enrich ${orderSn}:`, err?.message || err);
-          }
-          const shippingRows = buildShopeeShippingDocOrderRows(order);
-          if (shippingRows.length === 0) {
-            console.warn(`[Batch Confirm Print] \u0110\u01A1n ${orderSn} thi\u1EBFu package_number`);
-            return null;
-          }
-          const createResult = await runBeforeBatchDeadline(
-            deadlineAt,
-            `create_document:${orderSn}`,
-            () => shopeeCreateShippingDocument(shopId, accessToken, shippingRows)
-          );
-          const createItems = createResult?.response?.result_list || createResult?.result_list || [];
-          const createFailure = createItems.find(
-            (item) => String(item?.fail_error || "").trim()
-          );
-          if (createResult?.error || createFailure || createItems.length < shippingRows.length) {
-            console.warn(
-              `[Batch Confirm Print] Create doc ${orderSn} failed:`,
-              createFailure?.fail_error || createResult?.error || "create_not_acknowledged"
-            );
-            return null;
-          }
-          let pdfReady = false;
-          for (let attempt = 1; attempt <= 10 && Date.now() < deadlineAt; attempt++) {
-            try {
-              const poll = await runBeforeBatchDeadline(
-                deadlineAt,
-                `poll_document:${orderSn}`,
-                () => shopeeGetShippingDocumentResult(shopId, accessToken, shippingRows)
-              );
-              if (poll?.error) continue;
-              const items = poll?.response?.result_list || poll?.result_list || [];
-              const allReady = shippingRows.every((row) => {
-                const result = items.find(
-                  (item) => String(item?.order_sn || "") === orderSn && (!item?.package_number || String(item.package_number) === row.package_number)
-                );
-                return String(result?.status || "").toUpperCase() === "READY";
-              });
-              if (allReady) {
-                pdfReady = true;
-                break;
-              }
-            } catch (err) {
-              console.warn(`[Batch Confirm Print] Poll ${orderSn} attempt ${attempt}:`, err?.message || err);
-            }
-            if (attempt < 10 && Date.now() < deadlineAt) {
-              await sleep4(Math.min(PRINT_WAYBILL_POLL_INTERVAL_MS, Math.max(0, deadlineAt - Date.now())));
-            }
-          }
-          if (!pdfReady) {
-            console.warn(`[Batch Confirm Print] PDF ${orderSn} ch\u01B0a READY tr\u01B0\u1EDBc deadline`);
-            return null;
-          }
-          const apiPath = "/api/v2/logistics/download_shipping_document";
-          const timestamp = Math.floor(Date.now() / 1e3);
-          const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
-          const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
-          const downloadRes = await runBeforeBatchDeadline(
-            deadlineAt,
-            `download_document:${orderSn}`,
-            () => fetchWithTimeout(url2, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                order_list: shippingRows.map((row) => ({
-                  order_sn: row.order_sn,
-                  package_number: row.package_number,
-                  shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
-                }))
-              })
-            }, Math.min(8e3, Math.max(1e3, deadlineAt - Date.now())))
-          );
-          const contentType = String(downloadRes.headers.get("content-type") || "").toLowerCase();
-          if (contentType.includes("application/json") || !downloadRes.ok || !downloadRes.body) {
-            console.warn(`[Batch Confirm Print] Download ${orderSn} failed`);
-            return null;
-          }
-          const buffer = validateBatchPdfBytes(await downloadRes.arrayBuffer());
-          if (!buffer) {
-            console.warn(`[Batch Confirm Print] Download ${orderSn} kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7`);
-            return null;
-          }
-          console.log(`[Batch Confirm Print] Downloaded PDF ${orderSn} (${buffer.length} bytes)`);
-          return { orderSn, buffer };
-        } catch (err) {
-          console.error(`[Batch Confirm Print] L\u1ED7i PDF ${orderSn}:`, err?.stack || err);
-          return null;
-        }
-      };
       const batchPdfResult = await fetchBatchPdfDocumentsByShop(
         orders,
         successSns,
@@ -148842,122 +148860,6 @@ async function startServer() {
       orders = reorderOrdersByRequestedSns(orders, mergeSns);
       const pdfBuffers = [];
       const pdfFailures = /* @__PURE__ */ new Map();
-      const processSingleOrder = async (orderSn) => {
-        try {
-          const order = orders.find(
-            (item) => String(item?.orderSn || item?.order_sn || "").replace(/^shopee-/i, "").trim() === orderSn
-          );
-          if (!order) {
-            console.warn(`[Batch Print Only] Kh\xF4ng t\xECm th\u1EA5y order ${orderSn}`);
-            return null;
-          }
-          const storedShopId = String(
-            order.shopId || order.shop_id || order.accountId || order.account_id || ""
-          ).trim();
-          if (!storedShopId) {
-            console.warn(`[Batch Print Only] \u0110\u01A1n ${orderSn} thi\u1EBFu shopId`);
-            return null;
-          }
-          const auth = await getShopeeAccessTokenForApi(storedShopId);
-          const accessToken = String(auth?.token || "").trim();
-          const shopId = String(auth?.apiShopId || "").trim();
-          if (!accessToken || !shopId) {
-            console.warn(`[Batch Print Only] Kh\xF4ng c\xF3 token cho ${orderSn}`);
-            return null;
-          }
-          try {
-            await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, [order]);
-          } catch (err) {
-            console.warn(`[Batch Print Only] enrich ${orderSn}:`, err?.message || err);
-          }
-          const shippingRows = buildShopeeShippingDocOrderRows(order);
-          if (shippingRows.length === 0) {
-            console.warn(`[Batch Print Only] \u0110\u01A1n ${orderSn} thi\u1EBFu package_number`);
-            return null;
-          }
-          const createResult = await runBeforeBatchDeadline(
-            deadlineAt,
-            `create_document:${orderSn}`,
-            () => shopeeCreateShippingDocument(shopId, accessToken, shippingRows)
-          );
-          const createItems = createResult?.response?.result_list || createResult?.result_list || [];
-          const createFailure = createItems.find(
-            (item) => String(item?.fail_error || "").trim()
-          );
-          if (createResult?.error || createFailure || createItems.length < shippingRows.length) {
-            console.warn(
-              `[Batch Print Only] Create doc ${orderSn} failed:`,
-              createFailure?.fail_error || createResult?.error || "create_not_acknowledged"
-            );
-            return null;
-          }
-          let pdfReady = false;
-          for (let attempt = 1; attempt <= 10 && Date.now() < deadlineAt; attempt++) {
-            try {
-              const poll = await runBeforeBatchDeadline(
-                deadlineAt,
-                `poll_document:${orderSn}`,
-                () => shopeeGetShippingDocumentResult(shopId, accessToken, shippingRows)
-              );
-              if (poll?.error) continue;
-              const items = poll?.response?.result_list || poll?.result_list || [];
-              const allReady = shippingRows.every((row) => {
-                const result = items.find(
-                  (item) => String(item?.order_sn || "") === orderSn && (!item?.package_number || String(item.package_number) === row.package_number)
-                );
-                return String(result?.status || "").toUpperCase() === "READY";
-              });
-              if (allReady) {
-                pdfReady = true;
-                break;
-              }
-            } catch (err) {
-              console.warn(`[Batch Print Only] Poll ${orderSn} attempt ${attempt}:`, err?.message || err);
-            }
-            if (attempt < 10 && Date.now() < deadlineAt) {
-              await sleep4(Math.min(PRINT_WAYBILL_POLL_INTERVAL_MS, Math.max(0, deadlineAt - Date.now())));
-            }
-          }
-          if (!pdfReady) {
-            console.warn(`[Batch Print Only] PDF ${orderSn} ch\u01B0a READY tr\u01B0\u1EDBc deadline`);
-            return null;
-          }
-          const apiPath = "/api/v2/logistics/download_shipping_document";
-          const timestamp = Math.floor(Date.now() / 1e3);
-          const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
-          const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
-          const downloadRes = await runBeforeBatchDeadline(
-            deadlineAt,
-            `download_document:${orderSn}`,
-            () => fetchWithTimeout(url2, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                order_list: shippingRows.map((row) => ({
-                  order_sn: row.order_sn,
-                  package_number: row.package_number,
-                  shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
-                }))
-              })
-            }, Math.min(8e3, Math.max(1e3, deadlineAt - Date.now())))
-          );
-          const contentType = String(downloadRes.headers.get("content-type") || "").toLowerCase();
-          if (contentType.includes("application/json") || !downloadRes.ok || !downloadRes.body) {
-            console.warn(`[Batch Print Only] Download ${orderSn} failed`);
-            return null;
-          }
-          const buffer = validateBatchPdfBytes(await downloadRes.arrayBuffer());
-          if (!buffer) {
-            console.warn(`[Batch Print Only] Download ${orderSn} kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7`);
-            return null;
-          }
-          console.log(`[Batch Print Only] Downloaded PDF ${orderSn} (${buffer.length} bytes)`);
-          return { orderSn, buffer };
-        } catch (err) {
-          console.error(`[Batch Print Only] L\u1ED7i PDF ${orderSn}:`, err?.stack || err);
-          return null;
-        }
-      };
       const pendingSns = new Set(mergeSns);
       const printedFromBatch = [];
       const batchPdfResult = await fetchBatchPdfDocumentsByShop(
@@ -150084,9 +149986,16 @@ async function startServer() {
     if (valid.length === 1) return valid[0];
     const merged = await import_pdf_lib.PDFDocument.create();
     for (const buf of valid) {
-      const src = await import_pdf_lib.PDFDocument.load(buf, { ignoreEncryption: true });
-      const pages = await merged.copyPages(src, src.getPageIndices());
-      for (const page of pages) merged.addPage(page);
+      try {
+        const src = await import_pdf_lib.PDFDocument.load(buf, { ignoreEncryption: true });
+        const pages = await merged.copyPages(src, src.getPageIndices());
+        for (const page of pages) merged.addPage(page);
+      } catch (err) {
+        console.warn("[Shopee Print] b\u1ECF qua PDF h\u1ECFng khi g\u1ED9p:", err?.message || err);
+      }
+    }
+    if (merged.getPageCount() === 0) {
+      throw new Error("Kh\xF4ng c\xF3 buffer PDF h\u1EE3p l\u1EC7 \u0111\u1EC3 gh\xE9p.");
     }
     const bytes = await merged.save();
     return Buffer.from(bytes);

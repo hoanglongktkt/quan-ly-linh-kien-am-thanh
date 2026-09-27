@@ -103,6 +103,8 @@ export async function fetchWithTimeout(url, init = {}, timeoutMs = SHOPEE_HTTP_T
     };
     if (shopeeHttpDispatcher) fetchInit.dispatcher = shopeeHttpDispatcher;
     const fetchPromise = fetch(url, fetchInit);
+    // Promise.race bỏ promise thua cuộc — gắn catch để timeout không thành unhandledRejection.
+    fetchPromise.catch(() => {});
     const hardTimeoutPromise = new Promise((_, reject) => {
       hardTimer = setTimeout(() => {
         try {
