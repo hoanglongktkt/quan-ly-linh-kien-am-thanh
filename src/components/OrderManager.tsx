@@ -4420,7 +4420,17 @@ export default function OrderManager({
   const [progressCompleted, setProgressCompleted] = useState(0);
   const [progressTotal, setProgressTotal] = useState(0);
   const [progressDone, setProgressDone] = useState(false);
+  /** Đang gộp PDF sau xác nhận — khóa nút Đóng trên cùng modal. */
+  const [confirmMergeBusy, setConfirmMergeBusy] = useState(false);
+  /** Blob URL file in đã gộp — nút «Mở lại file PDF». */
+  const [confirmPrintFileUrl, setConfirmPrintFileUrl] = useState<string | null>(null);
   const isConfirmModalOpen = Boolean(progressMessage);
+  const autoMergeTriggeredRef = useRef(false);
+  const confirmAutoPrintPendingRef = useRef(false);
+  const confirmFlowGenRef = useRef(0);
+  const autoMergeAfterConfirmRef = useRef<
+    (sns: string[], flowGen: number) => Promise<void>
+  >(async () => {});
   /** Nút In nhanh: waiting (đang poll mã) | retry (timeout). Không auto-clear khi đóng toast. */
   const [labelWaitState, setLabelWaitState] = useState<Record<string, 'waiting' | 'retry'>>({});
   const confirmProgressActiveRef = React.useRef(false);
@@ -5594,13 +5604,34 @@ export default function OrderManager({
       clearTimeout(progressCloseTimerRef.current);
       progressCloseTimerRef.current = null;
     }
+    confirmFlowGenRef.current += 1;
     confirmProgressActiveRef.current = false;
+    autoMergeTriggeredRef.current = false;
+    confirmAutoPrintPendingRef.current = false;
+    setConfirmMergeBusy(false);
+    setConfirmPrintFileUrl(null);
     setProgressMessage(null);
     setProgressCompleted(0);
     setProgressTotal(0);
     setProgressDone(false);
     setShipConfirmSummary(null);
     setShipJobResults([]);
+    if (batchPrintIframeRef.current) {
+      try {
+        batchPrintIframeRef.current.remove();
+      } catch {
+        /* ignore */
+      }
+      batchPrintIframeRef.current = null;
+    }
+    if (batchPrintFileUrlRef.current) {
+      try {
+        URL.revokeObjectURL(batchPrintFileUrlRef.current);
+      } catch {
+        /* ignore */
+      }
+      batchPrintFileUrlRef.current = null;
+    }
   };
 
   const normalizeLabelWaitKey = (raw: string): string =>
@@ -5648,19 +5679,44 @@ export default function OrderManager({
     // Confirm bar chỉ tiến tới, không bao giờ reset về 0 khi PDF poll.
     setProgressTotal((t) => Math.max(t, total));
     if (opts?.done) {
+      if (autoMergeTriggeredRef.current) return;
+      setProgressCompleted((c) => Math.max(c, total));
+      const sns = [
+        ...new Set(
+          confirmWaitSnsRef.current
+            .map((sn) => String(sn || '').replace(/^shopee-/i, '').trim())
+            .filter(Boolean),
+        ),
+      ];
+      if (confirmAutoPrintPendingRef.current && sns.length > 0) {
+        autoMergeTriggeredRef.current = true;
+        confirmAutoPrintPendingRef.current = false;
+        const flowGen = confirmFlowGenRef.current;
+        const snapshot = sns.slice();
+        setConfirmMergeBusy(true);
+        setConfirmPrintFileUrl(null);
+        setProgressDone(false);
+        setProgressMessage('Đang tự động gộp file PDF để in...');
+        queueMicrotask(() => {
+          if (flowGen !== confirmFlowGenRef.current) return;
+          void autoMergeAfterConfirmRef.current(snapshot, flowGen);
+        });
+        return;
+      }
       setProgressMessage('Đã xác nhận và lấy mã in thành công.');
       setProgressDone(true);
-      setProgressCompleted((c) => Math.max(c, total));
       return;
     }
     if (opts?.retry) {
+      if (autoMergeTriggeredRef.current) return;
       setProgressMessage(
         'Đã xác nhận. Shopee chưa tạo xong mã in. Bấm «Thử lấy lại mã» trên từng đơn.',
       );
       setProgressDone(true);
       return;
     }
-    setProgressDone(true);
+    if (autoMergeTriggeredRef.current) return;
+    setProgressDone(false);
     setProgressMessage(
       `Đã xác nhận ${total} đơn. Hệ thống đang lấy mã in ngầm...`,
     );
@@ -5955,7 +6011,7 @@ export default function OrderManager({
     const confirmTotal = Math.max(total, summary.total, summary.successCount + summary.failCount);
     setProgressCompleted(confirmTotal);
     setProgressTotal(confirmTotal);
-    setProgressDone(true);
+    setProgressDone(summary.successCount <= 0);
     setIsPdfReady(summary.successCount <= 0);
     setShipConfirmSummary(null);
 
@@ -6332,6 +6388,11 @@ export default function OrderManager({
         queuedKeys.add(`shopee-${o.orderSn}`);
       }
     }
+    confirmFlowGenRef.current += 1;
+    autoMergeTriggeredRef.current = false;
+    confirmAutoPrintPendingRef.current = true;
+    setConfirmMergeBusy(false);
+    setConfirmPrintFileUrl(null);
     confirmProgressActiveRef.current = true;
     confirmWaitSnsRef.current = orderSns;
     patchLabelWaitState(orderSns, 'waiting');
@@ -6427,7 +6488,8 @@ export default function OrderManager({
         );
         setProgressCompleted(confirmTotal);
         setProgressTotal(confirmTotal);
-        setProgressDone(true);
+        setProgressDone(false);
+        setConfirmMergeBusy(false);
         setProgressMessage(
           `Đã xác nhận ${summary.successCount} đơn. Hệ thống đang lấy mã in ngầm...`,
         );
@@ -6444,6 +6506,7 @@ export default function OrderManager({
         });
         void fetchOrderCounts({ force: true }).catch(() => {});
       } else {
+        confirmAutoPrintPendingRef.current = false;
         setIsPdfReady(true);
         confirmProgressActiveRef.current = true;
         setProgressDone(true);
@@ -6465,6 +6528,7 @@ export default function OrderManager({
         onUpdateOrders(rolled, { persist: false });
       }
       patchLabelWaitState(orderSns, null);
+      confirmAutoPrintPendingRef.current = false;
       confirmProgressActiveRef.current = true;
       setProgressDone(true);
       setProgressMessage(`Xác nhận thất bại: ${err instanceof Error ? err.message : 'Lỗi không xác định'}`);
@@ -6742,12 +6806,27 @@ export default function OrderManager({
 
   const runBatchPrintOnly = async (
     orderSnsInput: string[],
-    opts?: { logTag?: string; groupPicking?: boolean },
+    opts?: { logTag?: string; groupPicking?: boolean; onConfirmModal?: boolean; flowGen?: number },
   ): Promise<boolean> => {
+    const onConfirmModal = opts?.onConfirmModal === true;
+    const flowGen = opts?.flowGen;
+    const confirmUiStale = () =>
+      onConfirmModal && flowGen != null && flowGen !== confirmFlowGenRef.current;
+    const showConfirmPrintError = (message: string) => {
+      if (confirmUiStale()) return;
+      setConfirmMergeBusy(false);
+      setProgressDone(true);
+      setConfirmPrintFileUrl(null);
+      setProgressMessage(message);
+    };
     const orderSns = uniquePreserveOrder(
       orderSnsInput.map((sn) => String(sn || '').replace(/^shopee-/i, '').trim()).filter(Boolean),
     );
     if (!orderSns.length) {
+      if (onConfirmModal) {
+        showConfirmPrintError('Gộp file thất bại: Không tìm thấy mã đơn hợp lệ.');
+        return false;
+      }
       setBatchPrintModal({
         phase: 'error',
         total: 0,
@@ -6762,14 +6841,25 @@ export default function OrderManager({
     const logTag = opts?.logTag || 'IN LẠI';
     const groupPicking =
       opts?.groupPicking ?? (smartPickSort && activeSubTab === 'unprocessed');
-    setBatchPrintModal({
-      phase: 'loading',
-      total: orderSns.length,
-      printedCount: 0,
-      failedOrderIds: [],
-      fileUrl: null,
-      message: `Đang gộp file PDF cho ${orderSns.length} đơn hàng...`,
-    });
+    if (onConfirmModal) {
+      if (!confirmUiStale()) {
+        setConfirmMergeBusy(true);
+        setConfirmPrintFileUrl(null);
+        setProgressDone(false);
+        setProgressCompleted(orderSns.length);
+        setProgressTotal(orderSns.length);
+        setProgressMessage('Đang tự động gộp file PDF để in...');
+      }
+    } else {
+      setBatchPrintModal({
+        phase: 'loading',
+        total: orderSns.length,
+        printedCount: 0,
+        failedOrderIds: [],
+        fileUrl: null,
+        message: `Đang gộp file PDF cho ${orderSns.length} đơn hàng...`,
+      });
+    }
 
     try {
       const controller = new AbortController();
@@ -6796,13 +6886,18 @@ export default function OrderManager({
           } catch {
             /* ignore */
           }
+          const failMessage = data.message || 'In gộp thất bại. Vui lòng thử lại.';
+          if (onConfirmModal) {
+            showConfirmPrintError(`Gộp file thất bại: ${failMessage}`);
+            return false;
+          }
           setBatchPrintModal({
             phase: 'error',
             total: orderSns.length,
             printedCount: 0,
             failedOrderIds: [],
             fileUrl: null,
-            message: data.message || 'In gộp thất bại. Vui lòng thử lại.',
+            message: failMessage,
           });
           clearShipProgressOverlay();
           return false;
@@ -6818,6 +6913,10 @@ export default function OrderManager({
           }
         }
         const fileURL = URL.createObjectURL(file);
+        if (confirmUiStale()) {
+          URL.revokeObjectURL(fileURL);
+          return false;
+        }
         batchPrintFileUrlRef.current = fileURL;
         printMergedPdfViaHiddenIframe(fileURL);
 
@@ -6833,10 +6932,13 @@ export default function OrderManager({
           .map((sn) => sn.trim())
           .filter(Boolean);
         const printedCount = successCount || printedSns.length || orderSns.length;
-        const completionMessage =
-          failedOrderIds.length > 0
-            ? `Đã tạo file in cho ${printedCount}/${totalCount} đơn. Các đơn lỗi: ${failedOrderIds.join(', ')}`
-            : `Đã tạo file in cho ${printedCount}/${totalCount} đơn`;
+        const completionMessage = onConfirmModal
+          ? (failedOrderIds.length > 0
+              ? `Đã tạo và mở file in thành công! Bỏ qua ${failedOrderIds.length} đơn chưa có file.`
+              : 'Đã tạo và mở file in thành công!')
+          : (failedOrderIds.length > 0
+              ? `Đã tạo file in cho ${printedCount}/${totalCount} đơn. Các đơn lỗi: ${failedOrderIds.join(', ')}`
+              : `Đã tạo file in cho ${printedCount}/${totalCount} đơn`);
 
         const optimisticTargets = applyPrintedLocalOptimistic(
           printedSns.length ? printedSns : orderSns,
@@ -6847,14 +6949,24 @@ export default function OrderManager({
         }
         refetchOrdersPage({ silent: true });
         setSelectedOrderIds([]);
-        setBatchPrintModal({
-          phase: 'success',
-          total: totalCount,
-          printedCount,
-          failedOrderIds,
-          fileUrl: fileURL,
-          message: completionMessage,
-        });
+        if (onConfirmModal) {
+          if (confirmUiStale()) return false;
+          setConfirmPrintFileUrl(fileURL);
+          setConfirmMergeBusy(false);
+          setProgressDone(true);
+          setProgressCompleted(totalCount || orderSns.length);
+          setProgressTotal(totalCount || orderSns.length);
+          setProgressMessage(completionMessage);
+        } else {
+          setBatchPrintModal({
+            phase: 'success',
+            total: totalCount,
+            printedCount,
+            failedOrderIds,
+            fileUrl: fileURL,
+            message: completionMessage,
+          });
+        }
 
         onAddLog({
           id: `log-${Date.now()}`,
@@ -6868,21 +6980,30 @@ export default function OrderManager({
       } catch (fetchErr: any) {
         window.clearTimeout(timeoutId);
         const timeout = fetchErr?.name === 'AbortError';
+        const failMessage = timeout
+          ? 'Shopee chưa tạo xong PDF sau thời gian chờ. Vui lòng thử lại sau ít phút.'
+          : (fetchErr instanceof Error ? fetchErr.message : 'Không thể kết nối API in gộp. Vui lòng thử lại.');
+        if (onConfirmModal) {
+          showConfirmPrintError(`Gộp file thất bại: ${failMessage}`);
+          return false;
+        }
         setBatchPrintModal({
           phase: 'error',
           total: orderSns.length,
           printedCount: 0,
           failedOrderIds: [],
           fileUrl: null,
-          message: timeout
-            ? 'Shopee chưa tạo xong PDF sau thời gian chờ. Vui lòng thử lại sau ít phút.'
-            : (fetchErr instanceof Error ? fetchErr.message : 'Không thể kết nối API in gộp. Vui lòng thử lại.'),
+          message: failMessage,
         });
         clearShipProgressOverlay();
         return false;
       }
     } catch (err) {
       console.error('[BatchPrint] Error:', err);
+      if (onConfirmModal) {
+        showConfirmPrintError('Gộp file thất bại: Không thể kết nối API in gộp. Vui lòng thử lại.');
+        return false;
+      }
       setBatchPrintModal({
         phase: 'error',
         total: orderSns.length,
@@ -6894,6 +7015,15 @@ export default function OrderManager({
       clearShipProgressOverlay();
       return false;
     }
+  };
+
+  autoMergeAfterConfirmRef.current = async (sns, flowGen) => {
+    await runBatchPrintOnly(sns, {
+      logTag: 'AUTO IN SAU XÁC NHẬN',
+      groupPicking: false,
+      onConfirmModal: true,
+      flowGen,
+    });
   };
 
   const handlePrintFromShipSummary = async () => {
@@ -10235,7 +10365,7 @@ export default function OrderManager({
           aria-labelledby="batch-progress-modal-title"
         >
           <div className="w-[min(92vw,420px)] bg-white rounded-3xl shadow-2xl border border-slate-100 px-6 py-8 flex flex-col items-center text-center gap-5">
-            {progressDone ? (
+            {progressDone && !confirmMergeBusy ? (
               progressIsError ? (
                 <div className="flex h-16 w-16 items-center justify-center rounded-full bg-rose-50">
                   <XCircle className="h-10 w-10 text-rose-500" />
@@ -10264,31 +10394,54 @@ export default function OrderManager({
                   <span>
                     {progressCompleted}/{progressTotal} đơn
                   </span>
-                  <span>{progressPercent}%</span>
+                  <span className="inline-flex items-center gap-1.5">
+                    {confirmMergeBusy && <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600" />}
+                    {progressPercent}%
+                  </span>
                 </div>
                 <div className="w-full h-2.5 bg-gray-100 rounded-full overflow-hidden">
                   <div
                     className={`h-full rounded-full transition-all duration-500 ${
+                      confirmMergeBusy ? 'animate-pulse ' : ''
+                    }${
                       progressIsError
                         ? 'bg-rose-500'
-                        : progressDone
+                        : progressDone && !confirmMergeBusy
                           ? 'bg-emerald-600'
                           : 'bg-blue-600'
                     }`}
-                    style={{ width: `${progressPercent}%` }}
+                    style={{ width: `${confirmMergeBusy ? 100 : progressPercent}%` }}
                   />
                 </div>
               </div>
             )}
 
-            {progressDone ? (
-              <button
-                type="button"
-                onClick={() => closeConfirmProgressBanner()}
-                className="mt-1 w-full inline-flex items-center justify-center rounded-2xl bg-blue-600 hover:bg-blue-700 px-4 py-3.5 text-sm font-extrabold text-white shadow-md"
-              >
-                Đóng
-              </button>
+            {progressDone || confirmMergeBusy ? (
+              <div className="mt-1 w-full flex flex-col gap-2.5">
+                {confirmPrintFileUrl && progressDone && !confirmMergeBusy && (
+                  <a
+                    href={confirmPrintFileUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full inline-flex items-center justify-center gap-2 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-extrabold text-blue-700 hover:bg-blue-100"
+                  >
+                    <Printer className="h-4 w-4" />
+                    Mở lại file PDF
+                  </a>
+                )}
+                <button
+                  type="button"
+                  disabled={confirmMergeBusy}
+                  onClick={() => closeConfirmProgressBanner()}
+                  className={`w-full inline-flex items-center justify-center rounded-2xl px-4 py-3.5 text-sm font-extrabold text-white shadow-md ${
+                    confirmMergeBusy
+                      ? 'bg-slate-300 cursor-not-allowed'
+                      : 'bg-blue-600 hover:bg-blue-700'
+                  }`}
+                >
+                  Đóng
+                </button>
+              </div>
             ) : (
               <p className="text-xs font-medium text-slate-400">
                 Vui lòng giữ nguyên cửa sổ — đang xử lý...
