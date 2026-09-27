@@ -7,6 +7,7 @@ import Dashboard from './components/Dashboard';
 import ProductList from './components/ProductList';
 import InventoryAudit from './components/InventoryAudit';
 import Financials from './components/Financials';
+import FinancialReconciliation from './components/FinancialReconciliation';
 import SettingsView from './components/Settings';
 import SupplierManager from './components/SupplierManager';
 import ImportManager from './components/ImportManager';
@@ -31,6 +32,7 @@ import {
   LayoutDashboard, 
   Package, 
   Coins, 
+  Wallet,
   Settings, 
   HelpCircle,
   RefreshCw,
@@ -159,6 +161,7 @@ const MAIN_NAV_TABS = new Set([
   'imports',
   'material-imports',
   'financials',
+  'reconciliation',
   'settings',
 ]);
 
@@ -2584,6 +2587,13 @@ export default function App() {
           </button>
 
           <button
+            onClick={() => navigateTab('reconciliation')}
+            className={navButtonClass('reconciliation')}
+          >
+            <Wallet className="w-4 h-4 shrink-0" /> Đối soát tiền
+          </button>
+
+          <button
             onClick={() => navigateTab('settings')}
             className={navButtonClass('settings')}
           >
@@ -2706,6 +2716,9 @@ export default function App() {
               <button onClick={() => navigateTab('financials')} className={navButtonClass('financials')}>
                 <Coins className="w-4 h-4 shrink-0" /> Chi Phí Bán Hàng
               </button>
+              <button onClick={() => navigateTab('reconciliation')} className={navButtonClass('reconciliation')}>
+                <Wallet className="w-4 h-4 shrink-0" /> Đối soát tiền
+              </button>
               <button onClick={() => navigateTab('settings')} className={navButtonClass('settings')}>
                 <Settings className="w-4 h-4 shrink-0" /> Cấu hình & Kết nối
               </button>
@@ -2755,6 +2768,7 @@ export default function App() {
                   {activeTab === 'imports' && 'Quản Lý Nhập Hàng'}
                   {activeTab === 'material-imports' && 'Quản Lý Nhập Vật Tư'}
                   {activeTab === 'financials' && 'Chi Phí Bán Hàng'}
+                  {activeTab === 'reconciliation' && 'Đối soát tiền'}
                   {activeTab === 'settings' && 'Thiết Lập API Sàn Thương Mại'}
                 </h2>
                 <p className={`text-xs text-gray-400 ${activeTab === 'orders' ? 'om-orders-mobile-hide-page-desc' : ''}`}>
@@ -2770,6 +2784,7 @@ export default function App() {
                   {activeTab === 'imports' && 'Quản lý hóa đơn nhập đầu vào, theo dõi biến động % giá nhập hàng.'}
                   {activeTab === 'material-imports' && 'Quản lý vật tư sản xuất (chợ, 1688…) — độc lập với kho sản phẩm bán.'}
                   {activeTab === 'financials' && 'Theo dõi chi phí hoạt động, cơ cấu quỹ và mô phỏng lợi nhuận sau phí sàn.'}
+                  {activeTab === 'reconciliation' && 'Đối soát tiền thực nhận từ ví Shopee với giá vốn và doanh thu đơn đã hoàn thành.'}
                   {activeTab === 'settings' && 'Cập nhật mã gian hàng, API key và trỏ DNS về hosting riêng.'}
                 </p>
               </>
@@ -2973,6 +2988,15 @@ export default function App() {
               settings={settings}
               onUpdateSettings={persistChannelSettings}
             />
+          )}
+
+          {activeTab === 'reconciliation' && (
+            <ErrorBoundary label="Đối soát tiền">
+              <FinancialReconciliation
+                authHeaders={apiAuthHeaders}
+                shops={settings.shops || []}
+              />
+            </ErrorBoundary>
           )}
 
           {activeTab === 'settings' && (

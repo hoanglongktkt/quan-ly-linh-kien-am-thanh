@@ -1292,8 +1292,8 @@ var require_node = __commonJS({
           }
           break;
         case "FILE":
-          var fs25 = require("fs");
-          stream6 = new fs25.SyncWriteStream(fd2, { autoClose: false });
+          var fs26 = require("fs");
+          stream6 = new fs26.SyncWriteStream(fd2, { autoClose: false });
           stream6._type = "fs";
           break;
         case "PIPE":
@@ -14080,11 +14080,11 @@ var require_mime_types = __commonJS({
       }
       return exts[0];
     }
-    function lookup(path25) {
-      if (!path25 || typeof path25 !== "string") {
+    function lookup(path26) {
+      if (!path26 || typeof path26 !== "string") {
         return false;
       }
-      var extension3 = extname("x." + path25).toLowerCase().substr(1);
+      var extension3 = extname("x." + path26).toLowerCase().substr(1);
       if (!extension3) {
         return false;
       }
@@ -17713,8 +17713,8 @@ var require_node2 = __commonJS({
           }
           break;
         case "FILE":
-          var fs25 = require("fs");
-          stream6 = new fs25.SyncWriteStream(fd2, { autoClose: false });
+          var fs26 = require("fs");
+          stream6 = new fs26.SyncWriteStream(fd2, { autoClose: false });
           stream6._type = "fs";
           break;
         case "PIPE":
@@ -18432,8 +18432,8 @@ var require_node3 = __commonJS({
           }
           break;
         case "FILE":
-          var fs25 = require("fs");
-          stream6 = new fs25.SyncWriteStream(fd2, { autoClose: false });
+          var fs26 = require("fs");
+          stream6 = new fs26.SyncWriteStream(fd2, { autoClose: false });
           stream6._type = "fs";
           break;
         case "PIPE":
@@ -18521,7 +18521,7 @@ var require_path_to_regexp = __commonJS({
   "node_modules/path-to-regexp/index.js"(exports2, module2) {
     module2.exports = pathToRegexp;
     var MATCHING_GROUP_REGEXP = /\\.|\((?:\?<(.*?)>)?(?!\?)/g;
-    function pathToRegexp(path25, keys, options) {
+    function pathToRegexp(path26, keys, options) {
       options = options || {};
       keys = keys || [];
       var strict = options.strict;
@@ -18535,8 +18535,8 @@ var require_path_to_regexp = __commonJS({
       var pos = 0;
       var backtrack = "";
       var m2;
-      if (path25 instanceof RegExp) {
-        while (m2 = MATCHING_GROUP_REGEXP.exec(path25.source)) {
+      if (path26 instanceof RegExp) {
+        while (m2 = MATCHING_GROUP_REGEXP.exec(path26.source)) {
           if (m2[0][0] === "\\") continue;
           keys.push({
             name: m2[1] || name++,
@@ -18544,18 +18544,18 @@ var require_path_to_regexp = __commonJS({
             offset: m2.index
           });
         }
-        return path25;
+        return path26;
       }
-      if (Array.isArray(path25)) {
-        path25 = path25.map(function(value) {
+      if (Array.isArray(path26)) {
+        path26 = path26.map(function(value) {
           return pathToRegexp(value, keys, options).source;
         });
-        return new RegExp(path25.join("|"), flags);
+        return new RegExp(path26.join("|"), flags);
       }
-      if (typeof path25 !== "string") {
+      if (typeof path26 !== "string") {
         throw new TypeError("path must be a string, array of strings, or regular expression");
       }
-      path25 = path25.replace(
+      path26 = path26.replace(
         /\\.|(\/)?(\.)?:(\w+)(\(.*?\))?(\*)?(\?)?|[.*]|\/\(/g,
         function(match2, slash, format, key, capture, star, optional, offset) {
           if (match2[0] === "\\") {
@@ -18572,7 +18572,7 @@ var require_path_to_regexp = __commonJS({
           if (slash || format) {
             backtrack = "";
           } else {
-            backtrack += path25.slice(pos, offset);
+            backtrack += path26.slice(pos, offset);
           }
           pos = offset + match2.length;
           if (match2 === "*") {
@@ -18602,7 +18602,7 @@ var require_path_to_regexp = __commonJS({
           return result;
         }
       );
-      while (m2 = MATCHING_GROUP_REGEXP.exec(path25)) {
+      while (m2 = MATCHING_GROUP_REGEXP.exec(path26)) {
         if (m2[0][0] === "\\") continue;
         if (keysOffset + i2 === keys.length || keys[keysOffset + i2].offset > m2.index) {
           keys.splice(keysOffset + i2, 0, {
@@ -18614,13 +18614,13 @@ var require_path_to_regexp = __commonJS({
         }
         i2++;
       }
-      path25 += strict ? "" : path25[path25.length - 1] === "/" ? "?" : "/?";
+      path26 += strict ? "" : path26[path26.length - 1] === "/" ? "?" : "/?";
       if (end) {
-        path25 += "$";
-      } else if (path25[path25.length - 1] !== "/") {
-        path25 += lookahead ? "(?=/|$)" : "(?:/|$)";
+        path26 += "$";
+      } else if (path26[path26.length - 1] !== "/") {
+        path26 += lookahead ? "(?=/|$)" : "(?:/|$)";
       }
-      return new RegExp("^" + path25, flags);
+      return new RegExp("^" + path26, flags);
     }
   }
 });
@@ -18633,19 +18633,19 @@ var require_layer = __commonJS({
     var debug = require_src3()("express:router:layer");
     var hasOwnProperty2 = Object.prototype.hasOwnProperty;
     module2.exports = Layer;
-    function Layer(path25, options, fn) {
+    function Layer(path26, options, fn) {
       if (!(this instanceof Layer)) {
-        return new Layer(path25, options, fn);
+        return new Layer(path26, options, fn);
       }
-      debug("new %o", path25);
+      debug("new %o", path26);
       var opts = options || {};
       this.handle = fn;
       this.name = fn.name || "<anonymous>";
       this.params = void 0;
       this.path = void 0;
-      this.regexp = pathRegexp(path25, this.keys = [], opts);
-      this.regexp.fast_star = path25 === "*";
-      this.regexp.fast_slash = path25 === "/" && opts.end === false;
+      this.regexp = pathRegexp(path26, this.keys = [], opts);
+      this.regexp.fast_star = path26 === "*";
+      this.regexp.fast_slash = path26 === "/" && opts.end === false;
     }
     Layer.prototype.handle_error = function handle_error(error, req, res, next) {
       var fn = this.handle;
@@ -18669,20 +18669,20 @@ var require_layer = __commonJS({
         next(err);
       }
     };
-    Layer.prototype.match = function match2(path25) {
+    Layer.prototype.match = function match2(path26) {
       var match3;
-      if (path25 != null) {
+      if (path26 != null) {
         if (this.regexp.fast_slash) {
           this.params = {};
           this.path = "";
           return true;
         }
         if (this.regexp.fast_star) {
-          this.params = { "0": decode_param(path25) };
-          this.path = path25;
+          this.params = { "0": decode_param(path26) };
+          this.path = path26;
           return true;
         }
-        match3 = this.regexp.exec(path25);
+        match3 = this.regexp.exec(path26);
       }
       if (!match3) {
         this.params = void 0;
@@ -18775,10 +18775,10 @@ var require_route = __commonJS({
     var slice = Array.prototype.slice;
     var toString3 = Object.prototype.toString;
     module2.exports = Route;
-    function Route(path25) {
-      this.path = path25;
+    function Route(path26) {
+      this.path = path26;
       this.stack = [];
-      debug("new %o", path25);
+      debug("new %o", path26);
       this.methods = {};
     }
     Route.prototype._handles_method = function _handles_method(method) {
@@ -18908,17 +18908,17 @@ var require_router = __commonJS({
     var toString3 = Object.prototype.toString;
     var proto = module2.exports = function(options) {
       var opts = options || {};
-      function router27(req, res, next) {
-        router27.handle(req, res, next);
+      function router28(req, res, next) {
+        router28.handle(req, res, next);
       }
-      setPrototypeOf(router27, proto);
-      router27.params = {};
-      router27._params = [];
-      router27.caseSensitive = opts.caseSensitive;
-      router27.mergeParams = opts.mergeParams;
-      router27.strict = opts.strict;
-      router27.stack = [];
-      return router27;
+      setPrototypeOf(router28, proto);
+      router28.params = {};
+      router28._params = [];
+      router28.caseSensitive = opts.caseSensitive;
+      router28.mergeParams = opts.mergeParams;
+      router28.strict = opts.strict;
+      router28.stack = [];
+      return router28;
     };
     proto.param = function param(name, fn) {
       if (typeof name === "function") {
@@ -18990,8 +18990,8 @@ var require_router = __commonJS({
         if (++sync > 100) {
           return setImmediate(next, err);
         }
-        var path25 = getPathname(req);
-        if (path25 == null) {
+        var path26 = getPathname(req);
+        if (path26 == null) {
           return done(layerError);
         }
         var layer;
@@ -18999,7 +18999,7 @@ var require_router = __commonJS({
         var route;
         while (match2 !== true && idx < stack.length) {
           layer = stack[idx++];
-          match2 = matchLayer(layer, path25);
+          match2 = matchLayer(layer, path26);
           route = layer.route;
           if (typeof match2 !== "boolean") {
             layerError = layerError || match2;
@@ -19037,18 +19037,18 @@ var require_router = __commonJS({
           } else if (route) {
             layer.handle_request(req, res, next);
           } else {
-            trim_prefix(layer, layerError, layerPath, path25);
+            trim_prefix(layer, layerError, layerPath, path26);
           }
           sync = 0;
         });
       }
-      function trim_prefix(layer, layerError, layerPath, path25) {
+      function trim_prefix(layer, layerError, layerPath, path26) {
         if (layerPath.length !== 0) {
-          if (layerPath !== path25.slice(0, layerPath.length)) {
+          if (layerPath !== path26.slice(0, layerPath.length)) {
             next(layerError);
             return;
           }
-          var c = path25[layerPath.length];
+          var c = path26[layerPath.length];
           if (c && c !== "/" && c !== ".") return next(layerError);
           debug("trim prefix (%s) from url %s", layerPath, req.url);
           removed = layerPath;
@@ -19126,7 +19126,7 @@ var require_router = __commonJS({
     };
     proto.use = function use(fn) {
       var offset = 0;
-      var path25 = "/";
+      var path26 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -19134,7 +19134,7 @@ var require_router = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path25 = fn;
+          path26 = fn;
         }
       }
       var callbacks = flatten(slice.call(arguments, offset));
@@ -19146,8 +19146,8 @@ var require_router = __commonJS({
         if (typeof fn !== "function") {
           throw new TypeError("Router.use() requires a middleware function but got a " + gettype(fn));
         }
-        debug("use %o %s", path25, fn.name || "<anonymous>");
-        var layer = new Layer(path25, {
+        debug("use %o %s", path26, fn.name || "<anonymous>");
+        var layer = new Layer(path26, {
           sensitive: this.caseSensitive,
           strict: false,
           end: false
@@ -19157,9 +19157,9 @@ var require_router = __commonJS({
       }
       return this;
     };
-    proto.route = function route(path25) {
-      var route2 = new Route(path25);
-      var layer = new Layer(path25, {
+    proto.route = function route(path26) {
+      var route2 = new Route(path26);
+      var layer = new Layer(path26, {
         sensitive: this.caseSensitive,
         strict: this.strict,
         end: true
@@ -19169,8 +19169,8 @@ var require_router = __commonJS({
       return route2;
     };
     methods.concat("all").forEach(function(method) {
-      proto[method] = function(path25) {
-        var route = this.route(path25);
+      proto[method] = function(path26) {
+        var route = this.route(path26);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
@@ -19206,9 +19206,9 @@ var require_router = __commonJS({
       }
       return toString3.call(obj).replace(objectRegExp, "$1");
     }
-    function matchLayer(layer, path25) {
+    function matchLayer(layer, path26) {
       try {
-        return layer.match(path25);
+        return layer.match(path26);
       } catch (err) {
         return err;
       }
@@ -19326,13 +19326,13 @@ var require_view = __commonJS({
   "node_modules/express/lib/view.js"(exports2, module2) {
     "use strict";
     var debug = require_src3()("express:view");
-    var path25 = require("path");
-    var fs25 = require("fs");
-    var dirname = path25.dirname;
-    var basename3 = path25.basename;
-    var extname = path25.extname;
-    var join = path25.join;
-    var resolve = path25.resolve;
+    var path26 = require("path");
+    var fs26 = require("fs");
+    var dirname = path26.dirname;
+    var basename3 = path26.basename;
+    var extname = path26.extname;
+    var join = path26.join;
+    var resolve = path26.resolve;
     module2.exports = View;
     function View(name, options) {
       var opts = options || {};
@@ -19361,17 +19361,17 @@ var require_view = __commonJS({
       this.path = this.lookup(fileName);
     }
     View.prototype.lookup = function lookup(name) {
-      var path26;
+      var path27;
       var roots = [].concat(this.root);
       debug('lookup "%s"', name);
-      for (var i2 = 0; i2 < roots.length && !path26; i2++) {
+      for (var i2 = 0; i2 < roots.length && !path27; i2++) {
         var root = roots[i2];
         var loc = resolve(root, name);
         var dir = dirname(loc);
         var file = basename3(loc);
-        path26 = this.resolve(dir, file);
+        path27 = this.resolve(dir, file);
       }
-      return path26;
+      return path27;
     };
     View.prototype.render = function render(options, callback) {
       debug('render "%s"', this.path);
@@ -19379,21 +19379,21 @@ var require_view = __commonJS({
     };
     View.prototype.resolve = function resolve2(dir, file) {
       var ext = this.ext;
-      var path26 = join(dir, file);
-      var stat3 = tryStat(path26);
+      var path27 = join(dir, file);
+      var stat3 = tryStat(path27);
       if (stat3 && stat3.isFile()) {
-        return path26;
+        return path27;
       }
-      path26 = join(dir, basename3(file, ext), "index" + ext);
-      stat3 = tryStat(path26);
+      path27 = join(dir, basename3(file, ext), "index" + ext);
+      stat3 = tryStat(path27);
       if (stat3 && stat3.isFile()) {
-        return path26;
+        return path27;
       }
     };
-    function tryStat(path26) {
-      debug('stat "%s"', path26);
+    function tryStat(path27) {
+      debug('stat "%s"', path27);
       try {
-        return fs25.statSync(path26);
+        return fs26.statSync(path27);
       } catch (e2) {
         return void 0;
       }
@@ -19998,8 +19998,8 @@ var require_node4 = __commonJS({
           }
           break;
         case "FILE":
-          var fs25 = require("fs");
-          stream6 = new fs25.SyncWriteStream(fd2, { autoClose: false });
+          var fs26 = require("fs");
+          stream6 = new fs26.SyncWriteStream(fd2, { autoClose: false });
           stream6._type = "fs";
           break;
         case "PIPE":
@@ -20171,8 +20171,8 @@ var require_types = __commonJS({
 // node_modules/mime/mime.js
 var require_mime = __commonJS({
   "node_modules/mime/mime.js"(exports2, module2) {
-    var path25 = require("path");
-    var fs25 = require("fs");
+    var path26 = require("path");
+    var fs26 = require("fs");
     function Mime() {
       this.types = /* @__PURE__ */ Object.create(null);
       this.extensions = /* @__PURE__ */ Object.create(null);
@@ -20193,7 +20193,7 @@ var require_mime = __commonJS({
     };
     Mime.prototype.load = function(file) {
       this._loading = file;
-      var map = {}, content = fs25.readFileSync(file, "ascii"), lines = content.split(/[\r\n]+/);
+      var map = {}, content = fs26.readFileSync(file, "ascii"), lines = content.split(/[\r\n]+/);
       lines.forEach(function(line) {
         var fields = line.replace(/\s*#.*|^\s*|\s*$/g, "").split(/\s+/);
         map[fields.shift()] = fields;
@@ -20201,8 +20201,8 @@ var require_mime = __commonJS({
       this.define(map);
       this._loading = null;
     };
-    Mime.prototype.lookup = function(path26, fallback) {
-      var ext = path26.replace(/^.*[\.\/\\]/, "").toLowerCase();
+    Mime.prototype.lookup = function(path27, fallback) {
+      var ext = path27.replace(/^.*[\.\/\\]/, "").toLowerCase();
       return this.types[ext] || fallback || this.default_type;
     };
     Mime.prototype.extension = function(mimeType) {
@@ -20431,33 +20431,33 @@ var require_send = __commonJS({
     var escapeHtml3 = require_escape_html();
     var etag = require_etag();
     var fresh = require_fresh();
-    var fs25 = require("fs");
+    var fs26 = require("fs");
     var mime = require_mime();
     var ms = require_ms5();
     var onFinished = require_on_finished();
     var parseRange = require_range_parser();
-    var path25 = require("path");
+    var path26 = require("path");
     var statuses = require_statuses();
     var Stream4 = require("stream");
     var util4 = require("util");
-    var extname = path25.extname;
-    var join = path25.join;
-    var normalize = path25.normalize;
-    var resolve = path25.resolve;
-    var sep = path25.sep;
+    var extname = path26.extname;
+    var join = path26.join;
+    var normalize = path26.normalize;
+    var resolve = path26.resolve;
+    var sep = path26.sep;
     var BYTES_RANGE_REGEXP = /^ *bytes=/;
     var MAX_MAXAGE = 60 * 60 * 24 * 365 * 1e3;
     var UP_PATH_REGEXP = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
     module2.exports = send;
     module2.exports.mime = mime;
-    function send(req, path26, options) {
-      return new SendStream(req, path26, options);
+    function send(req, path27, options) {
+      return new SendStream(req, path27, options);
     }
-    function SendStream(req, path26, options) {
+    function SendStream(req, path27, options) {
       Stream4.call(this);
       var opts = options || {};
       this.options = opts;
-      this.path = path26;
+      this.path = path27;
       this.req = req;
       this._acceptRanges = opts.acceptRanges !== void 0 ? Boolean(opts.acceptRanges) : true;
       this._cacheControl = opts.cacheControl !== void 0 ? Boolean(opts.cacheControl) : true;
@@ -20503,8 +20503,8 @@ var require_send = __commonJS({
       this._index = index2;
       return this;
     }, "send.index: pass index as option");
-    SendStream.prototype.root = function root(path26) {
-      this._root = resolve(String(path26));
+    SendStream.prototype.root = function root(path27) {
+      this._root = resolve(String(path27));
       debug("root %s", this._root);
       return this;
     };
@@ -20617,10 +20617,10 @@ var require_send = __commonJS({
       var lastModified = this.res.getHeader("Last-Modified");
       return parseHttpDate(lastModified) <= parseHttpDate(ifRange);
     };
-    SendStream.prototype.redirect = function redirect(path26) {
+    SendStream.prototype.redirect = function redirect(path27) {
       var res = this.res;
       if (hasListeners(this, "directory")) {
-        this.emit("directory", res, path26);
+        this.emit("directory", res, path27);
         return;
       }
       if (this.hasTrailingSlash()) {
@@ -20640,42 +20640,42 @@ var require_send = __commonJS({
     SendStream.prototype.pipe = function pipe(res) {
       var root = this._root;
       this.res = res;
-      var path26 = decode(this.path);
-      if (path26 === -1) {
+      var path27 = decode(this.path);
+      if (path27 === -1) {
         this.error(400);
         return res;
       }
-      if (~path26.indexOf("\0")) {
+      if (~path27.indexOf("\0")) {
         this.error(400);
         return res;
       }
       var parts;
       if (root !== null) {
-        if (path26) {
-          path26 = normalize("." + sep + path26);
+        if (path27) {
+          path27 = normalize("." + sep + path27);
         }
-        if (UP_PATH_REGEXP.test(path26)) {
-          debug('malicious path "%s"', path26);
+        if (UP_PATH_REGEXP.test(path27)) {
+          debug('malicious path "%s"', path27);
           this.error(403);
           return res;
         }
-        parts = path26.split(sep);
-        path26 = normalize(join(root, path26));
+        parts = path27.split(sep);
+        path27 = normalize(join(root, path27));
       } else {
-        if (UP_PATH_REGEXP.test(path26)) {
-          debug('malicious path "%s"', path26);
+        if (UP_PATH_REGEXP.test(path27)) {
+          debug('malicious path "%s"', path27);
           this.error(403);
           return res;
         }
-        parts = normalize(path26).split(sep);
-        path26 = resolve(path26);
+        parts = normalize(path27).split(sep);
+        path27 = resolve(path27);
       }
       if (containsDotFile(parts)) {
         var access = this._dotfiles;
         if (access === void 0) {
           access = parts[parts.length - 1][0] === "." ? this._hidden ? "allow" : "ignore" : "allow";
         }
-        debug('%s dotfile "%s"', access, path26);
+        debug('%s dotfile "%s"', access, path27);
         switch (access) {
           case "allow":
             break;
@@ -20689,13 +20689,13 @@ var require_send = __commonJS({
         }
       }
       if (this._index.length && this.hasTrailingSlash()) {
-        this.sendIndex(path26);
+        this.sendIndex(path27);
         return res;
       }
-      this.sendFile(path26);
+      this.sendFile(path27);
       return res;
     };
-    SendStream.prototype.send = function send2(path26, stat3) {
+    SendStream.prototype.send = function send2(path27, stat3) {
       var len = stat3.size;
       var options = this.options;
       var opts = {};
@@ -20707,9 +20707,9 @@ var require_send = __commonJS({
         this.headersAlreadySent();
         return;
       }
-      debug('pipe "%s"', path26);
-      this.setHeader(path26, stat3);
-      this.type(path26);
+      debug('pipe "%s"', path27);
+      this.setHeader(path27, stat3);
+      this.type(path27);
       if (this.isConditionalGET()) {
         if (this.isPreconditionFailure()) {
           this.error(412);
@@ -20758,28 +20758,28 @@ var require_send = __commonJS({
         res.end();
         return;
       }
-      this.stream(path26, opts);
+      this.stream(path27, opts);
     };
-    SendStream.prototype.sendFile = function sendFile(path26) {
+    SendStream.prototype.sendFile = function sendFile(path27) {
       var i2 = 0;
       var self2 = this;
-      debug('stat "%s"', path26);
-      fs25.stat(path26, function onstat(err, stat3) {
-        if (err && err.code === "ENOENT" && !extname(path26) && path26[path26.length - 1] !== sep) {
+      debug('stat "%s"', path27);
+      fs26.stat(path27, function onstat(err, stat3) {
+        if (err && err.code === "ENOENT" && !extname(path27) && path27[path27.length - 1] !== sep) {
           return next(err);
         }
         if (err) return self2.onStatError(err);
-        if (stat3.isDirectory()) return self2.redirect(path26);
-        self2.emit("file", path26, stat3);
-        self2.send(path26, stat3);
+        if (stat3.isDirectory()) return self2.redirect(path27);
+        self2.emit("file", path27, stat3);
+        self2.send(path27, stat3);
       });
       function next(err) {
         if (self2._extensions.length <= i2) {
           return err ? self2.onStatError(err) : self2.error(404);
         }
-        var p = path26 + "." + self2._extensions[i2++];
+        var p = path27 + "." + self2._extensions[i2++];
         debug('stat "%s"', p);
-        fs25.stat(p, function(err2, stat3) {
+        fs26.stat(p, function(err2, stat3) {
           if (err2) return next(err2);
           if (stat3.isDirectory()) return next();
           self2.emit("file", p, stat3);
@@ -20787,7 +20787,7 @@ var require_send = __commonJS({
         });
       }
     };
-    SendStream.prototype.sendIndex = function sendIndex(path26) {
+    SendStream.prototype.sendIndex = function sendIndex(path27) {
       var i2 = -1;
       var self2 = this;
       function next(err) {
@@ -20795,9 +20795,9 @@ var require_send = __commonJS({
           if (err) return self2.onStatError(err);
           return self2.error(404);
         }
-        var p = join(path26, self2._index[i2]);
+        var p = join(path27, self2._index[i2]);
         debug('stat "%s"', p);
-        fs25.stat(p, function(err2, stat3) {
+        fs26.stat(p, function(err2, stat3) {
           if (err2) return next(err2);
           if (stat3.isDirectory()) return next();
           self2.emit("file", p, stat3);
@@ -20806,10 +20806,10 @@ var require_send = __commonJS({
       }
       next();
     };
-    SendStream.prototype.stream = function stream5(path26, options) {
+    SendStream.prototype.stream = function stream5(path27, options) {
       var self2 = this;
       var res = this.res;
-      var stream6 = fs25.createReadStream(path26, options);
+      var stream6 = fs26.createReadStream(path27, options);
       this.emit("stream", stream6);
       stream6.pipe(res);
       function cleanup() {
@@ -20824,10 +20824,10 @@ var require_send = __commonJS({
         self2.emit("end");
       });
     };
-    SendStream.prototype.type = function type(path26) {
+    SendStream.prototype.type = function type(path27) {
       var res = this.res;
       if (res.getHeader("Content-Type")) return;
-      var type2 = mime.lookup(path26);
+      var type2 = mime.lookup(path27);
       if (!type2) {
         debug("no content-type");
         return;
@@ -20836,9 +20836,9 @@ var require_send = __commonJS({
       debug("content-type %s", type2);
       res.setHeader("Content-Type", type2 + (charset ? "; charset=" + charset : ""));
     };
-    SendStream.prototype.setHeader = function setHeader(path26, stat3) {
+    SendStream.prototype.setHeader = function setHeader(path27, stat3) {
       var res = this.res;
-      this.emit("headers", res, path26, stat3);
+      this.emit("headers", res, path27, stat3);
       if (this._acceptRanges && !res.getHeader("Accept-Ranges")) {
         debug("accept ranges");
         res.setHeader("Accept-Ranges", "bytes");
@@ -20897,9 +20897,9 @@ var require_send = __commonJS({
       }
       return err instanceof Error ? createError(status, err, { expose: false }) : createError(status, err);
     }
-    function decode(path26) {
+    function decode(path27) {
       try {
-        return decodeURIComponent(path26);
+        return decodeURIComponent(path27);
       } catch (err) {
         return -1;
       }
@@ -21808,10 +21808,10 @@ var require_utils2 = __commonJS({
     var querystring = require("querystring");
     exports2.etag = createETagGenerator({ weak: false });
     exports2.wetag = createETagGenerator({ weak: true });
-    exports2.isAbsolute = function(path25) {
-      if ("/" === path25[0]) return true;
-      if (":" === path25[1] && ("\\" === path25[2] || "/" === path25[2])) return true;
-      if ("\\\\" === path25.substring(0, 2)) return true;
+    exports2.isAbsolute = function(path26) {
+      if ("/" === path26[0]) return true;
+      if (":" === path26[1] && ("\\" === path26[2] || "/" === path26[2])) return true;
+      if ("\\\\" === path26.substring(0, 2)) return true;
     };
     exports2.flatten = deprecate3.function(
       flatten,
@@ -21935,7 +21935,7 @@ var require_application = __commonJS({
   "node_modules/express/lib/application.js"(exports2, module2) {
     "use strict";
     var finalhandler = require_finalhandler();
-    var Router27 = require_router();
+    var Router28 = require_router();
     var methods = require_methods();
     var middleware = require_init();
     var query = require_query();
@@ -22000,7 +22000,7 @@ var require_application = __commonJS({
     };
     app.lazyrouter = function lazyrouter() {
       if (!this._router) {
-        this._router = new Router27({
+        this._router = new Router28({
           caseSensitive: this.enabled("case sensitive routing"),
           strict: this.enabled("strict routing")
         });
@@ -22009,21 +22009,21 @@ var require_application = __commonJS({
       }
     };
     app.handle = function handle(req, res, callback) {
-      var router27 = this._router;
+      var router28 = this._router;
       var done = callback || finalhandler(req, res, {
         env: this.get("env"),
         onerror: logerror.bind(this)
       });
-      if (!router27) {
+      if (!router28) {
         debug("no routes defined on app");
         done();
         return;
       }
-      router27.handle(req, res, done);
+      router28.handle(req, res, done);
     };
     app.use = function use(fn) {
       var offset = 0;
-      var path25 = "/";
+      var path26 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -22031,7 +22031,7 @@ var require_application = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path25 = fn;
+          path26 = fn;
         }
       }
       var fns = flatten(slice.call(arguments, offset));
@@ -22039,15 +22039,15 @@ var require_application = __commonJS({
         throw new TypeError("app.use() requires a middleware function");
       }
       this.lazyrouter();
-      var router27 = this._router;
+      var router28 = this._router;
       fns.forEach(function(fn2) {
         if (!fn2 || !fn2.handle || !fn2.set) {
-          return router27.use(path25, fn2);
+          return router28.use(path26, fn2);
         }
-        debug(".use app under %s", path25);
-        fn2.mountpath = path25;
+        debug(".use app under %s", path26);
+        fn2.mountpath = path26;
         fn2.parent = this;
-        router27.use(path25, function mounted_app(req, res, next) {
+        router28.use(path26, function mounted_app(req, res, next) {
           var orig = req.app;
           fn2.handle(req, res, function(err) {
             setPrototypeOf(req, orig.request);
@@ -22059,9 +22059,9 @@ var require_application = __commonJS({
       }, this);
       return this;
     };
-    app.route = function route(path25) {
+    app.route = function route(path26) {
       this.lazyrouter();
-      return this._router.route(path25);
+      return this._router.route(path26);
     };
     app.engine = function engine(ext, fn) {
       if (typeof fn !== "function") {
@@ -22112,7 +22112,7 @@ var require_application = __commonJS({
       }
       return this;
     };
-    app.path = function path25() {
+    app.path = function path26() {
       return this.parent ? this.parent.path() + this.mountpath : "";
     };
     app.enabled = function enabled(setting) {
@@ -22128,19 +22128,19 @@ var require_application = __commonJS({
       return this.set(setting, false);
     };
     methods.forEach(function(method) {
-      app[method] = function(path25) {
+      app[method] = function(path26) {
         if (method === "get" && arguments.length === 1) {
-          return this.set(path25);
+          return this.set(path26);
         }
         this.lazyrouter();
-        var route = this._router.route(path25);
+        var route = this._router.route(path26);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
     });
-    app.all = function all3(path25) {
+    app.all = function all3(path26) {
       this.lazyrouter();
-      var route = this._router.route(path25);
+      var route = this._router.route(path26);
       var args = slice.call(arguments, 1);
       for (var i2 = 0; i2 < methods.length; i2++) {
         route[methods[i2]].apply(route, args);
@@ -22899,7 +22899,7 @@ var require_request = __commonJS({
       var subdomains2 = !isIP2(hostname) ? hostname.split(".").reverse() : [hostname];
       return subdomains2.slice(offset);
     });
-    defineGetter(req, "path", function path25() {
+    defineGetter(req, "path", function path26() {
       return parse(this).pathname;
     });
     defineGetter(req, "hostname", function hostname() {
@@ -23221,7 +23221,7 @@ var require_response = __commonJS({
     var http4 = require("http");
     var isAbsolute = require_utils2().isAbsolute;
     var onFinished = require_on_finished();
-    var path25 = require("path");
+    var path26 = require("path");
     var statuses = require_statuses();
     var merge2 = require_utils_merge();
     var sign = require_cookie_signature().sign;
@@ -23230,9 +23230,9 @@ var require_response = __commonJS({
     var setCharset = require_utils2().setCharset;
     var cookie = require_cookie();
     var send = require_send();
-    var extname = path25.extname;
+    var extname = path26.extname;
     var mime = send.mime;
-    var resolve = path25.resolve;
+    var resolve = path26.resolve;
     var vary = require_vary();
     var res = Object.create(http4.ServerResponse.prototype);
     module2.exports = res;
@@ -23409,26 +23409,26 @@ var require_response = __commonJS({
       this.type("txt");
       return this.send(body);
     };
-    res.sendFile = function sendFile(path26, options, callback) {
+    res.sendFile = function sendFile(path27, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
       var next = req.next;
       var opts = options || {};
-      if (!path26) {
+      if (!path27) {
         throw new TypeError("path argument is required to res.sendFile");
       }
-      if (typeof path26 !== "string") {
+      if (typeof path27 !== "string") {
         throw new TypeError("path must be a string to res.sendFile");
       }
       if (typeof options === "function") {
         done = options;
         opts = {};
       }
-      if (!opts.root && !isAbsolute(path26)) {
+      if (!opts.root && !isAbsolute(path27)) {
         throw new TypeError("path must be absolute or specify root to res.sendFile");
       }
-      var pathname = encodeURI(path26);
+      var pathname = encodeURI(path27);
       var file = send(req, pathname, opts);
       sendfile(res2, file, opts, function(err) {
         if (done) return done(err);
@@ -23438,7 +23438,7 @@ var require_response = __commonJS({
         }
       });
     };
-    res.sendfile = function(path26, options, callback) {
+    res.sendfile = function(path27, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
@@ -23448,7 +23448,7 @@ var require_response = __commonJS({
         done = options;
         opts = {};
       }
-      var file = send(req, path26, opts);
+      var file = send(req, path27, opts);
       sendfile(res2, file, opts, function(err) {
         if (done) return done(err);
         if (err && err.code === "EISDIR") return next();
@@ -23461,7 +23461,7 @@ var require_response = __commonJS({
       res.sendfile,
       "res.sendfile: Use res.sendFile instead"
     );
-    res.download = function download(path26, filename, options, callback) {
+    res.download = function download(path27, filename, options, callback) {
       var done = callback;
       var name = filename;
       var opts = options || null;
@@ -23478,7 +23478,7 @@ var require_response = __commonJS({
         opts = filename;
       }
       var headers = {
-        "Content-Disposition": contentDisposition(name || path26)
+        "Content-Disposition": contentDisposition(name || path27)
       };
       if (opts && opts.headers) {
         var keys = Object.keys(opts.headers);
@@ -23491,7 +23491,7 @@ var require_response = __commonJS({
       }
       opts = Object.create(opts);
       opts.headers = headers;
-      var fullPath = !opts.root ? resolve(path26) : path26;
+      var fullPath = !opts.root ? resolve(path27) : path27;
       return this.sendFile(fullPath, opts, done);
     };
     res.contentType = res.type = function contentType(type) {
@@ -23792,11 +23792,11 @@ var require_serve_static = __commonJS({
         }
         var forwardError = !fallthrough;
         var originalUrl = parseUrl2.original(req);
-        var path25 = parseUrl2(req).pathname;
-        if (path25 === "/" && originalUrl.pathname.substr(-1) !== "/") {
-          path25 = "";
+        var path26 = parseUrl2(req).pathname;
+        if (path26 === "/" && originalUrl.pathname.substr(-1) !== "/") {
+          path26 = "";
         }
-        var stream5 = send(req, path25, opts);
+        var stream5 = send(req, path26, opts);
         stream5.on("directory", onDirectory);
         if (setHeaders) {
           stream5.on("headers", setHeaders);
@@ -23864,7 +23864,7 @@ var require_express = __commonJS({
     var mixin = require_merge_descriptors();
     var proto = require_application();
     var Route = require_route();
-    var Router27 = require_router();
+    var Router28 = require_router();
     var req = require_request();
     var res = require_response();
     exports2 = module2.exports = createApplication;
@@ -23887,7 +23887,7 @@ var require_express = __commonJS({
     exports2.request = req;
     exports2.response = res;
     exports2.Route = Route;
-    exports2.Router = Router27;
+    exports2.Router = Router28;
     exports2.json = bodyParser.json;
     exports2.query = require_query();
     exports2.raw = bodyParser.raw;
@@ -23935,8 +23935,8 @@ var require_express2 = __commonJS({
 // node_modules/dotenv/lib/main.js
 var require_main = __commonJS({
   "node_modules/dotenv/lib/main.js"(exports2, module2) {
-    var fs25 = require("fs");
-    var path25 = require("path");
+    var fs26 = require("fs");
+    var path26 = require("path");
     var os = require("os");
     var crypto8 = require("crypto");
     var TIPS = [
@@ -24067,7 +24067,7 @@ var require_main = __commonJS({
       if (options && options.path && options.path.length > 0) {
         if (Array.isArray(options.path)) {
           for (const filepath of options.path) {
-            if (fs25.existsSync(filepath)) {
+            if (fs26.existsSync(filepath)) {
               possibleVaultPath = filepath.endsWith(".vault") ? filepath : `${filepath}.vault`;
             }
           }
@@ -24075,15 +24075,15 @@ var require_main = __commonJS({
           possibleVaultPath = options.path.endsWith(".vault") ? options.path : `${options.path}.vault`;
         }
       } else {
-        possibleVaultPath = path25.resolve(process.cwd(), ".env.vault");
+        possibleVaultPath = path26.resolve(process.cwd(), ".env.vault");
       }
-      if (fs25.existsSync(possibleVaultPath)) {
+      if (fs26.existsSync(possibleVaultPath)) {
         return possibleVaultPath;
       }
       return null;
     }
     function _resolveHome(envPath) {
-      return envPath[0] === "~" ? path25.join(os.homedir(), envPath.slice(1)) : envPath;
+      return envPath[0] === "~" ? path26.join(os.homedir(), envPath.slice(1)) : envPath;
     }
     function _configVault(options) {
       const debug = parseBoolean(process.env.DOTENV_CONFIG_DEBUG || options && options.debug);
@@ -24100,7 +24100,7 @@ var require_main = __commonJS({
       return { parsed };
     }
     function configDotenv(options) {
-      const dotenvPath = path25.resolve(process.cwd(), ".env");
+      const dotenvPath = path26.resolve(process.cwd(), ".env");
       let encoding = "utf8";
       let processEnv = process.env;
       if (options && options.processEnv != null) {
@@ -24128,13 +24128,13 @@ var require_main = __commonJS({
       }
       let lastError;
       const parsedAll = {};
-      for (const path26 of optionPaths) {
+      for (const path27 of optionPaths) {
         try {
-          const parsed = DotenvModule.parse(fs25.readFileSync(path26, { encoding }));
+          const parsed = DotenvModule.parse(fs26.readFileSync(path27, { encoding }));
           DotenvModule.populate(parsedAll, parsed, options);
         } catch (e2) {
           if (debug) {
-            _debug(`failed to load ${path26} ${e2.message}`);
+            _debug(`failed to load ${path27} ${e2.message}`);
           }
           lastError = e2;
         }
@@ -24147,7 +24147,7 @@ var require_main = __commonJS({
         const shortPaths = [];
         for (const filePath of optionPaths) {
           try {
-            const relative = path25.relative(process.cwd(), filePath);
+            const relative = path26.relative(process.cwd(), filePath);
             shortPaths.push(relative);
           } catch (e2) {
             if (debug) {
@@ -40888,14 +40888,14 @@ var require_svgPath = __commonJS({
       ["Z", 0],
       ["z", 0]
     ]);
-    var parse = function(path25) {
+    var parse = function(path26) {
       var cmd;
       var ret = [];
       var args = [];
       var curArg = "";
       var foundDecimal = false;
       var params = 0;
-      for (var _i = 0, path_1 = path25; _i < path_1.length; _i++) {
+      for (var _i = 0, path_1 = path26; _i < path_1.length; _i++) {
         var c = path_1[_i];
         if (parameters.has(c)) {
           params = parameters.get(c);
@@ -41209,8 +41209,8 @@ var require_svgPath = __commonJS({
       ];
       return result;
     };
-    exports2.svgPathToOperators = function(path25) {
-      return apply(parse(path25));
+    exports2.svgPathToOperators = function(path26) {
+      return apply(parse(path26));
     };
   }
 });
@@ -41393,7 +41393,7 @@ var require_operations = __commonJS({
         operators_1.popGraphicsState()
       ]).filter(Boolean);
     };
-    exports2.drawSvgPath = function(path25, options) {
+    exports2.drawSvgPath = function(path26, options) {
       var _a2, _b, _c;
       return tslib_1.__spreadArrays([
         operators_1.pushGraphicsState(),
@@ -41407,7 +41407,7 @@ var require_operations = __commonJS({
         options.borderWidth && operators_1.setLineWidth(options.borderWidth),
         options.borderLineCap && operators_1.setLineCap(options.borderLineCap),
         operators_1.setDashPattern((_b = options.borderDashArray) !== null && _b !== void 0 ? _b : [], (_c = options.borderDashPhase) !== null && _c !== void 0 ? _c : 0)
-      ], svgPath_1.svgPathToOperators(path25), [
+      ], svgPath_1.svgPathToOperators(path26), [
         // prettier-ignore
         options.color && options.borderWidth ? operators_1.fillAndStroke() : options.color ? operators_1.fill() : options.borderColor ? operators_1.stroke() : operators_1.closePath(),
         operators_1.popGraphicsState()
@@ -45705,12 +45705,12 @@ var require_PDFPage = __commonJS({
             graphicsState: graphicsStateKey
           }));
         };
-        PDFPage2.prototype.drawSvgPath = function(path25, options) {
+        PDFPage2.prototype.drawSvgPath = function(path26, options) {
           var _a2, _b, _c, _d, _e, _f, _g, _h, _j;
           if (options === void 0) {
             options = {};
           }
-          utils_1.assertIs(path25, "path", ["string"]);
+          utils_1.assertIs(path26, "path", ["string"]);
           utils_1.assertOrUndefined(options.x, "options.x", ["number"]);
           utils_1.assertOrUndefined(options.y, "options.y", ["number"]);
           utils_1.assertOrUndefined(options.scale, "options.scale", ["number"]);
@@ -45739,7 +45739,7 @@ var require_PDFPage = __commonJS({
             options.borderColor = colors_1.rgb(0, 0, 0);
           }
           var contentStream = this.getContentStream();
-          contentStream.push.apply(contentStream, operations_1.drawSvgPath(path25, {
+          contentStream.push.apply(contentStream, operations_1.drawSvgPath(path26, {
             x: (_a2 = options.x) !== null && _a2 !== void 0 ? _a2 : this.x,
             y: (_b = options.y) !== null && _b !== void 0 ? _b : this.y,
             scale: options.scale,
@@ -51857,6 +51857,108 @@ var require_jsonwebtoken = __commonJS({
       NotBeforeError: require_NotBeforeError(),
       TokenExpiredError: require_TokenExpiredError()
     };
+  }
+});
+
+// utils/concurrency.js
+function sleep2(ms) {
+  return new Promise((r2) => setTimeout(r2, ms));
+}
+async function mapInChunks(items, chunkSize, worker, pauseMs = 300) {
+  const list = Array.isArray(items) ? items : [];
+  const size = Math.max(1, Math.floor(Number(chunkSize) || 10));
+  const gap = Math.max(0, Math.floor(Number(pauseMs) || 0));
+  const results = [];
+  for (let i2 = 0; i2 < list.length; i2 += size) {
+    const chunk = list.slice(i2, i2 + size);
+    const part = await Promise.all(chunk.map((item, j) => worker(item, i2 + j)));
+    results.push(...part);
+    if (i2 + size < list.length && gap > 0) await sleep2(gap);
+  }
+  return results;
+}
+async function mapWithConcurrency(items, concurrency, worker) {
+  const n = items.length;
+  if (n === 0) return [];
+  const limit = Math.max(1, Math.min(concurrency, n));
+  const results = new Array(n);
+  let next = 0;
+  const runners = Array.from({ length: limit }, async () => {
+    while (true) {
+      const i2 = next++;
+      if (i2 >= n) return;
+      try {
+        results[i2] = await worker(items[i2], i2);
+      } catch (err) {
+        results[i2] = void 0;
+        console.error("[mapWithConcurrency] worker error at index", i2, err);
+      }
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+async function mapByShopGroups(items, resolveShopId, worker, opts = {}) {
+  const list = Array.isArray(items) ? items : [];
+  if (list.length === 0) return;
+  const perShopChunk = Math.max(1, Math.floor(Number(opts.perShopChunk) || 4));
+  const pauseMs = Math.max(0, Math.floor(Number(opts.pauseMs) || 250));
+  const maxParallelShops = Math.max(1, Math.floor(Number(opts.maxParallelShops) || 6));
+  const groups = /* @__PURE__ */ new Map();
+  const noShopGroup = [];
+  for (const item of list) {
+    let sid = "";
+    try {
+      sid = String(resolveShopId(item) || "").trim();
+    } catch {
+      sid = "";
+    }
+    if (!sid) {
+      noShopGroup.push(item);
+      continue;
+    }
+    const arr = groups.get(sid);
+    if (arr) arr.push(item);
+    else groups.set(sid, [item]);
+  }
+  const allGroups = [...groups.values()];
+  if (noShopGroup.length) allGroups.push(noShopGroup);
+  if (allGroups.length === 0) return;
+  await mapWithConcurrency(
+    allGroups,
+    maxParallelShops,
+    (group) => mapInChunks(group, perShopChunk, worker, pauseMs)
+  );
+}
+function delay(ms = DEFAULT_DELAY_MS) {
+  return sleep2(ms);
+}
+async function yieldEventLoop(ms = DEFAULT_YIELD_MS) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+async function withOperationTimeout(work, ms, label) {
+  const controller = new AbortController();
+  let timer;
+  const promise = typeof work === "function" ? work(controller.signal) : work;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new Error(`${label} timeout sau ${ms / 1e3} gi\xE2y.`));
+        }, ms);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+var DEFAULT_DELAY_MS, DEFAULT_YIELD_MS;
+var init_concurrency = __esm({
+  "utils/concurrency.js"() {
+    DEFAULT_DELAY_MS = 1e3;
+    DEFAULT_YIELD_MS = 50;
   }
 });
 
@@ -58545,22 +58647,22 @@ var init_from = __esm({
     init_file();
     init_fetch_blob();
     ({ stat } = import_node_fs.promises);
-    blobFromSync = (path25, type) => fromBlob((0, import_node_fs.statSync)(path25), path25, type);
-    blobFrom = (path25, type) => stat(path25).then((stat3) => fromBlob(stat3, path25, type));
-    fileFrom = (path25, type) => stat(path25).then((stat3) => fromFile(stat3, path25, type));
-    fileFromSync = (path25, type) => fromFile((0, import_node_fs.statSync)(path25), path25, type);
-    fromBlob = (stat3, path25, type = "") => new fetch_blob_default([new BlobDataItem({
-      path: path25,
+    blobFromSync = (path26, type) => fromBlob((0, import_node_fs.statSync)(path26), path26, type);
+    blobFrom = (path26, type) => stat(path26).then((stat3) => fromBlob(stat3, path26, type));
+    fileFrom = (path26, type) => stat(path26).then((stat3) => fromFile(stat3, path26, type));
+    fileFromSync = (path26, type) => fromFile((0, import_node_fs.statSync)(path26), path26, type);
+    fromBlob = (stat3, path26, type = "") => new fetch_blob_default([new BlobDataItem({
+      path: path26,
       size: stat3.size,
       lastModified: stat3.mtimeMs,
       start: 0
     })], { type });
-    fromFile = (stat3, path25, type = "") => new file_default([new BlobDataItem({
-      path: path25,
+    fromFile = (stat3, path26, type = "") => new file_default([new BlobDataItem({
+      path: path26,
       size: stat3.size,
       lastModified: stat3.mtimeMs,
       start: 0
-    })], (0, import_node_path.basename)(path25), { type, lastModified: stat3.mtimeMs });
+    })], (0, import_node_path.basename)(path26), { type, lastModified: stat3.mtimeMs });
     BlobDataItem = class _BlobDataItem {
       #path;
       #start;
@@ -61757,9 +61859,9 @@ var require_util2 = __commonJS({
     exports2.removeUndefinedValuesInObject = removeUndefinedValuesInObject;
     exports2.isValidFile = isValidFile;
     exports2.getWellKnownCertificateConfigFileLocation = getWellKnownCertificateConfigFileLocation;
-    var fs25 = require("fs");
+    var fs26 = require("fs");
     var os = require("os");
-    var path25 = require("path");
+    var path26 = require("path");
     var WELL_KNOWN_CERTIFICATE_CONFIG_FILE = "certificate_config.json";
     var CLOUDSDK_CONFIG_DIRECTORY = "gcloud";
     function snakeToCamel(str) {
@@ -61845,15 +61947,15 @@ var require_util2 = __commonJS({
     }
     async function isValidFile(filePath) {
       try {
-        const stats = await fs25.promises.lstat(filePath);
+        const stats = await fs26.promises.lstat(filePath);
         return stats.isFile();
       } catch (e2) {
         return false;
       }
     }
     function getWellKnownCertificateConfigFileLocation() {
-      const configDir = process.env.CLOUDSDK_CONFIG || (_isWindows() ? path25.join(process.env.APPDATA || "", CLOUDSDK_CONFIG_DIRECTORY) : path25.join(process.env.HOME || "", ".config", CLOUDSDK_CONFIG_DIRECTORY));
-      return path25.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
+      const configDir = process.env.CLOUDSDK_CONFIG || (_isWindows() ? path26.join(process.env.APPDATA || "", CLOUDSDK_CONFIG_DIRECTORY) : path26.join(process.env.HOME || "", ".config", CLOUDSDK_CONFIG_DIRECTORY));
+      return path26.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
     }
     function _isWindows() {
       return os.platform().startsWith("win");
@@ -63256,11 +63358,11 @@ var require_getCredentials = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.getCredentials = getCredentials;
-    var path25 = require("path");
-    var fs25 = require("fs");
+    var path26 = require("path");
+    var fs26 = require("fs");
     var util_1 = require("util");
     var errorWithCode_1 = require_errorWithCode();
-    var readFile = fs25.readFile ? (0, util_1.promisify)(fs25.readFile) : async () => {
+    var readFile = fs26.readFile ? (0, util_1.promisify)(fs26.readFile) : async () => {
       throw new errorWithCode_1.ErrorWithCode("use key rather than keyFile.", "MISSING_CREDENTIALS");
     };
     var ExtensionFiles;
@@ -63328,7 +63430,7 @@ var require_getCredentials = __commonJS({
        * @returns An instance of a class that implements ICredentialsProvider.
        */
       static create(keyFilePath) {
-        const keyFileExtension = path25.extname(keyFilePath);
+        const keyFileExtension = path26.extname(keyFilePath);
         switch (keyFileExtension) {
           case ExtensionFiles.JSON:
             return new JsonCredentialsProvider(keyFilePath);
@@ -64937,12 +65039,12 @@ var require_filesubjecttokensupplier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FileSubjectTokenSupplier = void 0;
     var util_1 = require("util");
-    var fs25 = require("fs");
-    var readFile = (0, util_1.promisify)(fs25.readFile ?? (() => {
+    var fs26 = require("fs");
+    var readFile = (0, util_1.promisify)(fs26.readFile ?? (() => {
     }));
-    var realpath = (0, util_1.promisify)(fs25.realpath ?? (() => {
+    var realpath = (0, util_1.promisify)(fs26.realpath ?? (() => {
     }));
-    var lstat = (0, util_1.promisify)(fs25.lstat ?? (() => {
+    var lstat = (0, util_1.promisify)(fs26.lstat ?? (() => {
     }));
     var FileSubjectTokenSupplier = class {
       filePath;
@@ -65060,7 +65162,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CertificateSubjectTokenSupplier = exports2.InvalidConfigurationError = exports2.CertificateSourceUnavailableError = exports2.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = void 0;
     var util_1 = require_util2();
-    var fs25 = require("fs");
+    var fs26 = require("fs");
     var crypto_1 = require("crypto");
     var https3 = require("https");
     exports2.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = "GOOGLE_API_CERTIFICATE_CONFIG";
@@ -65154,7 +65256,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
         const configPath = this.certificateConfigPath;
         let fileContents;
         try {
-          fileContents = await fs25.promises.readFile(configPath, "utf8");
+          fileContents = await fs26.promises.readFile(configPath, "utf8");
         } catch (err) {
           throw new CertificateSourceUnavailableError(`Failed to read certificate config file at: ${configPath}`);
         }
@@ -65179,14 +65281,14 @@ var require_certificatesubjecttokensupplier = __commonJS({
       async #getKeyAndCert(certPath, keyPath) {
         let cert, key;
         try {
-          cert = await fs25.promises.readFile(certPath);
+          cert = await fs26.promises.readFile(certPath);
           new crypto_1.X509Certificate(cert);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           throw new CertificateSourceUnavailableError(`Failed to read certificate file at ${certPath}: ${message}`);
         }
         try {
-          key = await fs25.promises.readFile(keyPath);
+          key = await fs26.promises.readFile(keyPath);
           (0, crypto_1.createPrivateKey)(key);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -65205,7 +65307,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
           return JSON.stringify([leafCert.raw.toString("base64")]);
         }
         try {
-          const chainPems = await fs25.promises.readFile(this.trustChainPath, "utf8");
+          const chainPems = await fs26.promises.readFile(this.trustChainPath, "utf8");
           const pemBlocks = chainPems.match(/-----BEGIN CERTIFICATE-----[^-]+-----END CERTIFICATE-----/g) ?? [];
           const chainCerts = pemBlocks.map((pem, index) => {
             try {
@@ -65907,7 +66009,7 @@ var require_pluggable_auth_handler = __commonJS({
     exports2.PluggableAuthHandler = exports2.ExecutableError = void 0;
     var executable_response_1 = require_executable_response();
     var childProcess = require("child_process");
-    var fs25 = require("fs");
+    var fs26 = require("fs");
     var ExecutableError = class extends Error {
       /**
        * The exit code returned by the executable.
@@ -65992,14 +66094,14 @@ var require_pluggable_auth_handler = __commonJS({
         }
         let filePath;
         try {
-          filePath = await fs25.promises.realpath(this.outputFile);
+          filePath = await fs26.promises.realpath(this.outputFile);
         } catch {
           return void 0;
         }
-        if (!(await fs25.promises.lstat(filePath)).isFile()) {
+        if (!(await fs26.promises.lstat(filePath)).isFile()) {
           return void 0;
         }
-        const responseString = await fs25.promises.readFile(filePath, {
+        const responseString = await fs26.promises.readFile(filePath, {
           encoding: "utf8"
         });
         if (responseString === "") {
@@ -66410,7 +66512,7 @@ var require_gdchclient = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GdchClient = exports2.GDCH_SERVICE_ACCOUNT_TYPE = void 0;
     var crypto8 = require("crypto");
-    var fs25 = require("fs");
+    var fs26 = require("fs");
     var https3 = require("https");
     var oauth2client_1 = require_oauth2client();
     var DEFAULT_LIFETIME_IN_SECONDS = 3600;
@@ -66633,7 +66735,7 @@ var require_gdchclient = __commonJS({
         const currentPath = this.caCertPath;
         this.caAgentPromise = (async () => {
           try {
-            const ca = await fs25.promises.readFile(currentPath);
+            const ca = await fs26.promises.readFile(currentPath);
             return new https3.Agent({ ca });
           } catch (err) {
             if (this.cachedCaCertPath === currentPath) {
@@ -66693,11 +66795,11 @@ var require_googleauth = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GoogleAuth = exports2.GoogleAuthExceptionMessages = void 0;
     var child_process_1 = require("child_process");
-    var fs25 = require("fs");
+    var fs26 = require("fs");
     var gaxios_1 = require_src6();
     var gcpMetadata = require_src8();
     var os = require("os");
-    var path25 = require("path");
+    var path26 = require("path");
     var crypto_1 = require_crypto3();
     var computeclient_1 = require_computeclient();
     var idtokenclient_1 = require_idtokenclient();
@@ -66984,12 +67086,12 @@ var require_googleauth = __commonJS({
         } else {
           const home = process.env["HOME"];
           if (home) {
-            location = path25.join(home, ".config");
+            location = path26.join(home, ".config");
           }
         }
         if (location) {
-          location = path25.join(location, "gcloud", "application_default_credentials.json");
-          if (!fs25.existsSync(location)) {
+          location = path26.join(location, "gcloud", "application_default_credentials.json");
+          if (!fs26.existsSync(location)) {
             location = null;
           }
         }
@@ -67010,8 +67112,8 @@ var require_googleauth = __commonJS({
           throw new Error("The file path is invalid.");
         }
         try {
-          filePath = fs25.realpathSync(filePath);
-          if (!fs25.lstatSync(filePath).isFile()) {
+          filePath = fs26.realpathSync(filePath);
+          if (!fs26.lstatSync(filePath).isFile()) {
             throw new Error();
           }
         } catch (err) {
@@ -67020,7 +67122,7 @@ var require_googleauth = __commonJS({
           }
           throw err;
         }
-        const readStream2 = fs25.createReadStream(filePath);
+        const readStream2 = fs26.createReadStream(filePath);
         return this.fromStream(readStream2, options);
       }
       /**
@@ -67347,8 +67449,8 @@ var require_googleauth = __commonJS({
         if (this.jsonContent) {
           return this._cacheClientFromJSON(this.jsonContent, this.clientOptions);
         } else if (this.keyFilename) {
-          const filePath = path25.resolve(this.keyFilename);
-          const stream5 = fs25.createReadStream(filePath);
+          const filePath = path26.resolve(this.keyFilename);
+          const stream5 = fs26.createReadStream(filePath);
           return await this.fromStreamAsync(stream5, this.clientOptions);
         } else if (this.apiKey) {
           const client = await this.fromAPIKey(this.apiKey, this.clientOptions);
@@ -72104,11 +72206,11 @@ var require_form_data = __commonJS({
     "use strict";
     var CombinedStream = require_combined_stream();
     var util4 = require("util");
-    var path25 = require("path");
+    var path26 = require("path");
     var http4 = require("http");
     var https3 = require("https");
     var parseUrl2 = require("url").parse;
-    var fs25 = require("fs");
+    var fs26 = require("fs");
     var Stream4 = require("stream").Stream;
     var crypto8 = require("crypto");
     var mime = require_mime_types();
@@ -72178,7 +72280,7 @@ var require_form_data = __commonJS({
         if (value.end != void 0 && value.end != Infinity && value.start != void 0) {
           callback(null, value.end + 1 - (value.start ? value.start : 0));
         } else {
-          fs25.stat(value.path, function(err, stat3) {
+          fs26.stat(value.path, function(err, stat3) {
             if (err) {
               callback(err);
               return;
@@ -72235,11 +72337,11 @@ var require_form_data = __commonJS({
     FormData5.prototype._getContentDisposition = function(value, options) {
       var filename;
       if (typeof options.filepath === "string") {
-        filename = path25.normalize(options.filepath).replace(/\\/g, "/");
+        filename = path26.normalize(options.filepath).replace(/\\/g, "/");
       } else if (options.filename || value && (value.name || value.path)) {
-        filename = path25.basename(options.filename || value && (value.name || value.path));
+        filename = path26.basename(options.filename || value && (value.name || value.path));
       } else if (value && value.readable && hasOwn2(value, "httpVersion")) {
-        filename = path25.basename(value.client._httpMessage.path || "");
+        filename = path26.basename(value.client._httpMessage.path || "");
       }
       if (filename) {
         return 'filename="' + escapeHeaderParam(filename) + '"';
@@ -73420,18 +73522,18 @@ function envTiktokShopId() {
 function envTiktokShopCipher() {
   return String(process.env.TIKTOK_SHOP_CIPHER || "").trim();
 }
-function queryParamOne(value) {
+function queryParamOne2(value) {
   if (Array.isArray(value)) return String(value[0] ?? "").trim();
   return String(value ?? "").trim();
 }
-function shouldOAuthRedirectToFrontend(req) {
-  if (queryParamOne(req.query?.format) === "json") return false;
-  if (queryParamOne(req.query?.redirect) === "0") return false;
+function shouldOAuthRedirectToFrontend2(req) {
+  if (queryParamOne2(req.query?.format) === "json") return false;
+  if (queryParamOne2(req.query?.redirect) === "0") return false;
   return true;
 }
-function buildOAuthFrontendRedirectUrl(req, result) {
-  const shopId = String(result.shop_id || queryParamOne(req.query?.shop_id) || "");
-  const base = `${APP_BASE_URL2}/?tab=settings`;
+function buildOAuthFrontendRedirectUrl2(req, result) {
+  const shopId = String(result.shop_id || queryParamOne2(req.query?.shop_id) || "");
+  const base = `${APP_BASE_URL3}/?tab=settings`;
   if (result.success) {
     const shopQ2 = shopId ? `&shop_id=${encodeURIComponent(shopId)}` : "";
     return `${base}&tiktok_linked=1${shopQ2}`;
@@ -73441,16 +73543,16 @@ function buildOAuthFrontendRedirectUrl(req, result) {
   return `${base}&tiktok_linked=0${shopQ}&error=${encodeURIComponent(errMsg)}`;
 }
 function ensureTokensFile() {
-  const dir = import_path16.default.dirname(TIKTOK_TOKENS_PATH);
-  if (!import_fs17.default.existsSync(dir)) import_fs17.default.mkdirSync(dir, { recursive: true });
-  if (!import_fs17.default.existsSync(TIKTOK_TOKENS_PATH)) {
-    import_fs17.default.writeFileSync(TIKTOK_TOKENS_PATH, "{}\n", "utf-8");
+  const dir = import_path19.default.dirname(TIKTOK_TOKENS_PATH);
+  if (!import_fs19.default.existsSync(dir)) import_fs19.default.mkdirSync(dir, { recursive: true });
+  if (!import_fs19.default.existsSync(TIKTOK_TOKENS_PATH)) {
+    import_fs19.default.writeFileSync(TIKTOK_TOKENS_PATH, "{}\n", "utf-8");
   }
 }
 function loadTiktokTokens() {
   try {
     ensureTokensFile();
-    const raw = import_fs17.default.readFileSync(TIKTOK_TOKENS_PATH, "utf-8");
+    const raw = import_fs19.default.readFileSync(TIKTOK_TOKENS_PATH, "utf-8");
     const parsed = JSON.parse(raw || "{}");
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
   } catch {
@@ -73459,7 +73561,7 @@ function loadTiktokTokens() {
 }
 function saveTiktokTokens(tokens) {
   ensureTokensFile();
-  import_fs17.default.writeFileSync(TIKTOK_TOKENS_PATH, `${JSON.stringify(tokens || {}, null, 2)}
+  import_fs19.default.writeFileSync(TIKTOK_TOKENS_PATH, `${JSON.stringify(tokens || {}, null, 2)}
 `, "utf-8");
   return true;
 }
@@ -73532,8 +73634,8 @@ function extractTiktokFieldsFromShop(shop) {
 }
 function loadTiktokShopFromChannelSettings(shopId) {
   try {
-    if (!import_fs17.default.existsSync(CHANNEL_SETTINGS_PATH)) return null;
-    const raw = import_fs17.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
+    if (!import_fs19.default.existsSync(CHANNEL_SETTINGS_PATH2)) return null;
+    const raw = import_fs19.default.readFileSync(CHANNEL_SETTINGS_PATH2, "utf-8");
     const parsed = JSON.parse(raw || "{}");
     const shops = Array.isArray(parsed?.shops) ? parsed.shops : [];
     const want = String(shopId || "").trim();
@@ -73605,17 +73707,17 @@ function listTiktokCredentialSummaries() {
   const tokens = loadTiktokTokens();
   return Object.keys(tokens).map((id) => sanitizeCredentialRecord(tokens[id]));
 }
-var import_fs17, import_path16, APP_ROOT8, APP_BASE_URL2, TIKTOK_TOKENS_PATH, CHANNEL_SETTINGS_PATH, TIKTOK_CALLBACK_URL, TIKTOK_CALLBACK_IDLE_MSG, TIKTOK_API_HOST, TIKTOK_APP_KEY, TIKTOK_APP_SECRET, TIKTOK_ACCESS_TOKEN, TIKTOK_SHOP_ID, TIKTOK_SHOP_CIPHER;
+var import_fs19, import_path19, APP_ROOT9, APP_BASE_URL3, TIKTOK_TOKENS_PATH, CHANNEL_SETTINGS_PATH2, TIKTOK_CALLBACK_URL, TIKTOK_CALLBACK_IDLE_MSG, TIKTOK_API_HOST, TIKTOK_APP_KEY, TIKTOK_APP_SECRET, TIKTOK_ACCESS_TOKEN, TIKTOK_SHOP_ID, TIKTOK_SHOP_CIPHER;
 var init_auth = __esm({
   "services/tiktok/auth.js"() {
-    import_fs17 = __toESM(require("fs"), 1);
-    import_path16 = __toESM(require("path"), 1);
+    import_fs19 = __toESM(require("fs"), 1);
+    import_path19 = __toESM(require("path"), 1);
     init_appPaths();
-    APP_ROOT8 = resolveAppRoot();
-    APP_BASE_URL2 = resolveAppBaseUrl();
-    TIKTOK_TOKENS_PATH = import_path16.default.resolve(APP_ROOT8, "data", "tiktok_tokens.json");
-    CHANNEL_SETTINGS_PATH = import_path16.default.resolve(APP_ROOT8, "data", "channel_settings.json");
-    TIKTOK_CALLBACK_URL = String(process.env.TIKTOK_CALLBACK_URL || "").trim().replace(/\/$/, "") || `${APP_BASE_URL2}/api/tiktok/callback`;
+    APP_ROOT9 = resolveAppRoot();
+    APP_BASE_URL3 = resolveAppBaseUrl();
+    TIKTOK_TOKENS_PATH = import_path19.default.resolve(APP_ROOT9, "data", "tiktok_tokens.json");
+    CHANNEL_SETTINGS_PATH2 = import_path19.default.resolve(APP_ROOT9, "data", "channel_settings.json");
+    TIKTOK_CALLBACK_URL = String(process.env.TIKTOK_CALLBACK_URL || "").trim().replace(/\/$/, "") || `${APP_BASE_URL3}/api/tiktok/callback`;
     TIKTOK_CALLBACK_IDLE_MSG = "Callback route is active. Waiting for TikTok Shop parameters (code, shop_id)...";
     TIKTOK_API_HOST = getTiktokApiHost();
     TIKTOK_APP_KEY = envTiktokAppKey();
@@ -73661,12 +73763,12 @@ function classifyTiktokCredentialInput(raw, appKeyHint = "") {
   }
   return { kind: "access_token", value };
 }
-async function callTiktokAuthApi(path25, query) {
+async function callTiktokAuthApi(path26, query) {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(query || {})) {
     if (v != null && v !== "") qs.set(k, String(v));
   }
-  const url2 = `${AUTH_HOST()}${path25}?${qs.toString()}`;
+  const url2 = `${AUTH_HOST()}${path26}?${qs.toString()}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TOKEN_HTTP_TIMEOUT_MS);
   try {
@@ -73965,108 +74067,6 @@ var init_token = __esm({
   }
 });
 
-// utils/concurrency.js
-function sleep4(ms) {
-  return new Promise((r2) => setTimeout(r2, ms));
-}
-async function mapInChunks(items, chunkSize, worker, pauseMs = 300) {
-  const list = Array.isArray(items) ? items : [];
-  const size = Math.max(1, Math.floor(Number(chunkSize) || 10));
-  const gap = Math.max(0, Math.floor(Number(pauseMs) || 0));
-  const results = [];
-  for (let i2 = 0; i2 < list.length; i2 += size) {
-    const chunk = list.slice(i2, i2 + size);
-    const part = await Promise.all(chunk.map((item, j) => worker(item, i2 + j)));
-    results.push(...part);
-    if (i2 + size < list.length && gap > 0) await sleep4(gap);
-  }
-  return results;
-}
-async function mapWithConcurrency(items, concurrency, worker) {
-  const n = items.length;
-  if (n === 0) return [];
-  const limit = Math.max(1, Math.min(concurrency, n));
-  const results = new Array(n);
-  let next = 0;
-  const runners = Array.from({ length: limit }, async () => {
-    while (true) {
-      const i2 = next++;
-      if (i2 >= n) return;
-      try {
-        results[i2] = await worker(items[i2], i2);
-      } catch (err) {
-        results[i2] = void 0;
-        console.error("[mapWithConcurrency] worker error at index", i2, err);
-      }
-    }
-  });
-  await Promise.all(runners);
-  return results;
-}
-async function mapByShopGroups(items, resolveShopId, worker, opts = {}) {
-  const list = Array.isArray(items) ? items : [];
-  if (list.length === 0) return;
-  const perShopChunk = Math.max(1, Math.floor(Number(opts.perShopChunk) || 4));
-  const pauseMs = Math.max(0, Math.floor(Number(opts.pauseMs) || 250));
-  const maxParallelShops = Math.max(1, Math.floor(Number(opts.maxParallelShops) || 6));
-  const groups = /* @__PURE__ */ new Map();
-  const noShopGroup = [];
-  for (const item of list) {
-    let sid = "";
-    try {
-      sid = String(resolveShopId(item) || "").trim();
-    } catch {
-      sid = "";
-    }
-    if (!sid) {
-      noShopGroup.push(item);
-      continue;
-    }
-    const arr = groups.get(sid);
-    if (arr) arr.push(item);
-    else groups.set(sid, [item]);
-  }
-  const allGroups = [...groups.values()];
-  if (noShopGroup.length) allGroups.push(noShopGroup);
-  if (allGroups.length === 0) return;
-  await mapWithConcurrency(
-    allGroups,
-    maxParallelShops,
-    (group) => mapInChunks(group, perShopChunk, worker, pauseMs)
-  );
-}
-function delay2(ms = DEFAULT_DELAY_MS) {
-  return sleep4(ms);
-}
-async function yieldEventLoop(ms = DEFAULT_YIELD_MS) {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
-async function withOperationTimeout(work, ms, label) {
-  const controller = new AbortController();
-  let timer;
-  const promise = typeof work === "function" ? work(controller.signal) : work;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise((_, reject) => {
-        timer = setTimeout(() => {
-          controller.abort();
-          reject(new Error(`${label} timeout sau ${ms / 1e3} gi\xE2y.`));
-        }, ms);
-      })
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-var DEFAULT_DELAY_MS, DEFAULT_YIELD_MS;
-var init_concurrency = __esm({
-  "utils/concurrency.js"() {
-    DEFAULT_DELAY_MS = 1e3;
-    DEFAULT_YIELD_MS = 50;
-  }
-});
-
 // services/tiktok/client.js
 function signTiktokRequest(appSecret, apiPath, queryParams, bodyString = "") {
   const secret = String(appSecret || "");
@@ -74197,11 +74197,11 @@ async function tiktokApiRequest(method, apiPath, opts = {}) {
       data: null
     };
   }
-  await sleep4(200);
+  await sleep2(200);
   return tiktokApiRequestOnce(method, apiPath, { ...opts, _retried: true }, creds);
 }
 async function tiktokApiDelay(ms = TIKTOK_API_DELAY_MS) {
-  await sleep4(Math.max(0, Number(ms) || 0));
+  await sleep2(Math.max(0, Number(ms) || 0));
 }
 var import_crypto4, TIKTOK_HTTP_TIMEOUT_MS, TIKTOK_API_DELAY_MS, TIKTOK_PAGE_LIMIT, TIKTOK_MAX_PAGES;
 var init_client = __esm({
@@ -74790,9 +74790,9 @@ var init_ping = __esm({
 });
 
 // server.ts
-var import_express28 = __toESM(require_express2(), 1);
-var import_path24 = __toESM(require("path"), 1);
-var import_fs24 = __toESM(require("fs"), 1);
+var import_express29 = __toESM(require_express2(), 1);
+var import_path25 = __toESM(require("path"), 1);
+var import_fs25 = __toESM(require("fs"), 1);
 var import_crypto5 = __toESM(require("crypto"), 1);
 var import_dotenv2 = __toESM(require_main(), 1);
 var import_pdf_lib = __toESM(require_cjs(), 1);
@@ -76003,24 +76003,24 @@ function readAuthorizationHeader(req) {
   ).trim();
 }
 function buildWebhookUrlCandidates(req) {
-  const path25 = String(req.originalUrl || req.url || "").split("?")[0].trim();
+  const path26 = String(req.originalUrl || req.url || "").split("?")[0].trim();
   const candidates = /* @__PURE__ */ new Set();
   const base = resolveAppBaseUrl().replace(/\/$/, "");
   const configured = String(process.env.SHOPEE_WEBHOOK_URL || "").trim();
   if (configured) candidates.add(configured.replace(/\/$/, ""));
   candidates.add(`${base}/api/shopee/webhook`);
-  if (path25.startsWith("/")) {
-    candidates.add(`${base}${path25}`);
+  if (path26.startsWith("/")) {
+    candidates.add(`${base}${path26}`);
     const forwardedProto = String(req.get("x-forwarded-proto") || "").split(",")[0].trim();
     const forwardedHost = String(req.get("x-forwarded-host") || "").split(",")[0].trim();
     if (forwardedProto && forwardedHost) {
-      candidates.add(`${forwardedProto}://${forwardedHost}${path25}`);
+      candidates.add(`${forwardedProto}://${forwardedHost}${path26}`);
     }
     const host = String(req.get("host") || "").trim();
     if (host) {
-      candidates.add(`${req.protocol}://${host}${path25}`);
-      candidates.add(`https://${host}${path25}`);
-      candidates.add(`http://${host}${path25}`);
+      candidates.add(`${req.protocol}://${host}${path26}`);
+      candidates.add(`https://${host}${path26}`);
+      candidates.add(`http://${host}${path26}`);
     }
   }
   return [...candidates];
@@ -76152,17 +76152,17 @@ async function processShopeeWebhookAsync(queue, snapshot, rawBodyPromise) {
 }
 function createShopeeWebhookRouter(processPayload, routePath = "/shopee", options = {}) {
   const queue = createBoundedQueue(processPayload, options.onQueueOverflow);
-  const router27 = import_express.default.Router();
+  const router28 = import_express.default.Router();
   const paths = (Array.isArray(routePath) ? routePath : [routePath]).map(
-    (path25) => path25.startsWith("/") ? path25 : `/${path25}`
+    (path26) => path26.startsWith("/") ? path26 : `/${path26}`
   );
   console.log(
     `[Shopee Webhook] Queue config maxConcurrent=${MAX_CONCURRENT_JOBS} maxPending=${MAX_PENDING_JOBS} jobTimeoutMs=${WEBHOOK_JOB_TIMEOUT_MS}`
   );
-  router27.get(paths, (_req, res) => {
+  router28.get(paths, (_req, res) => {
     ackShopeeOk(res);
   });
-  router27.post(paths, (req, res) => {
+  router28.post(paths, (req, res) => {
     const rawBodyPromise = readRawWebhookBody(req);
     ackShopeeOk(res);
     const snapshot = {
@@ -76177,7 +76177,7 @@ function createShopeeWebhookRouter(processPayload, routePath = "/shopee", option
       console.error("L\u1ED7i x\u1EED l\xFD ng\u1EA7m Webhook Shopee:", error);
     });
   });
-  return router27;
+  return router28;
 }
 
 // src/types.ts
@@ -78444,11 +78444,11 @@ function buildProductListSearchFilter(search) {
 function toSortNumber(expr) {
   return { $convert: { input: expr, to: "double", onError: 0, onNull: 0 } };
 }
-function safeArrayExpr(path25) {
-  return { $cond: [{ $eq: [{ $type: path25 }, "array"] }, path25, []] };
+function safeArrayExpr(path26) {
+  return { $cond: [{ $eq: [{ $type: path26 }, "array"] }, path26, []] };
 }
-function arrayLengthExpr(path25) {
-  return { $size: safeArrayExpr(path25) };
+function arrayLengthExpr(path26) {
+  return { $size: safeArrayExpr(path26) };
 }
 function inventoryChildListExpr() {
   const children = safeArrayExpr("$data.children");
@@ -84068,7 +84068,7 @@ var GROUP_PICKING_LINES_EXPR = {
 };
 function groupPickingTextExpr(paths) {
   const chain = paths.reduceRight(
-    (fallback, path25) => ({ $ifNull: [`$_firstLine.${path25}`, fallback] }),
+    (fallback, path26) => ({ $ifNull: [`$_firstLine.${path26}`, fallback] }),
     ""
   );
   return {
@@ -86586,10 +86586,10 @@ async function fetchFirstList(urls) {
 function readGhnToken() {
   return String(process.env.GHN_TOKEN || process.env.GHN_API_TOKEN || "").trim();
 }
-async function ghnFetch(path25, query) {
+async function ghnFetch(path26, query) {
   const token = readGhnToken();
   if (!token) return null;
-  const url2 = new URL(`${GHN_BASE}${path25}`);
+  const url2 = new URL(`${GHN_BASE}${path26}`);
   if (query) {
     for (const [key, value] of Object.entries(query)) {
       if (value !== void 0 && value !== "") url2.searchParams.set(key, String(value));
@@ -86603,7 +86603,7 @@ async function ghnFetch(path25, query) {
     );
     return unwrapList(json2);
   } catch (error) {
-    console.warn("[GHN Master]", path25, error?.message || error);
+    console.warn("[GHN Master]", path26, error?.message || error);
     return null;
   }
 }
@@ -86996,18 +86996,2209 @@ router6.post("/clear-all", clearAllExpenses);
 router6.delete("/:id", deleteExpense);
 var expensesRoutes_default = router6;
 
-// routes/addressBookRoutes.js
+// routes/financeRoutes.js
 var import_express8 = __toESM(require_express2(), 1);
 
-// services/addressBook.js
-var import_fs10 = __toESM(require("fs"), 1);
-var import_path9 = __toESM(require("path"), 1);
+// controllers/financeController.js
+var import_fs11 = __toESM(require("fs"), 1);
+var import_path11 = __toESM(require("path"), 1);
 var import_mongoose5 = __toESM(require("mongoose"), 1);
+
+// models/Escrow.js
+var import_mongoose4 = __toESM(require("mongoose"), 1);
+var EscrowSchema = new import_mongoose4.default.Schema(
+  {
+    ordersn: { type: String, required: true, trim: true },
+    shop_id: { type: String, required: true, trim: true },
+    shop_name: { type: String, default: "", trim: true },
+    order_date: { type: Date, default: null },
+    total_amount: { type: Number, default: 0 },
+    shopee_commission: { type: Number, default: 0 },
+    service_fee: { type: Number, default: 0 },
+    shipping_fee: { type: Number, default: 0 },
+    withholding_tax: { type: Number, default: 0 },
+    payout_amount: { type: Number, default: 0 },
+    expected_payout: { type: Number, default: 0 },
+    delta: { type: Number, default: 0 },
+    actual_cost: { type: Number, default: 0 },
+    net_profit: { type: Number, default: 0 },
+    status: {
+      type: String,
+      enum: ["\u0110\xE3 \u0111\u1ED1i so\xE1t", "L\u1EC7ch ti\u1EC1n", "Ch\u01B0a v\u1EC1 v\xED"],
+      default: "Ch\u01B0a v\u1EC1 v\xED"
+    },
+    is_disputed: { type: Boolean, default: false },
+    dispute_reason: { type: String, default: "" },
+    synced_at: { type: Date, default: Date.now }
+  },
+  {
+    collection: "escrows",
+    versionKey: false,
+    timestamps: true
+  }
+);
+EscrowSchema.index({ ordersn: 1, shop_id: 1 }, { unique: true, name: "escrow_ordersn_shop" });
+EscrowSchema.index({ shop_id: 1, order_date: -1 }, { name: "escrow_shop_date" });
+EscrowSchema.index({ is_disputed: 1, order_date: -1 }, { name: "escrow_disputed_date" });
+EscrowSchema.index({ status: 1, order_date: -1 }, { name: "escrow_status_date" });
+EscrowSchema.index({ order_date: -1 }, { name: "escrow_order_date" });
+var Escrow = import_mongoose4.default.models.Escrow || import_mongoose4.default.model("Escrow", EscrowSchema);
+var Escrow_default = Escrow;
+
+// controllers/financeController.js
+init_appPaths();
+
+// services/shopee/auth.js
+var import_fs10 = __toESM(require("fs"), 1);
+var import_path10 = __toESM(require("path"), 1);
+var import_crypto = __toESM(require("crypto"), 1);
+init_appPaths();
+
+// services/shopee/client.js
+var import_path9 = __toESM(require("path"), 1);
+var import_node_module = require("node:module");
+init_concurrency();
+var import_meta = {};
+var SHOPEE_API_MAX_RETRY = 3;
+var SHOPEE_API_RETRY_BASE_MS = 1500;
+var SHOPEE_HTTP_TIMEOUT_MS = 3e4;
+var SHOPEE_TLS_MIN_VERSION = String(process.env.SHOPEE_TLS_MIN_VERSION || "TLSv1.2").trim();
+var SHOPEE_TLS_MAX_VERSION = String(process.env.SHOPEE_TLS_MAX_VERSION || "TLSv1.3").trim();
+var SHOPEE_PRODUCT_BATCH_SIZE = 10;
+var SHOPEE_PRODUCT_API_DELAY_MS = 1e3;
+var SHOPEE_PRODUCT_BATCH_PAUSE_MS = 2500;
+var SHOPEE_SYNC_BATCH_DELAY_MS = 1e3;
+var SHOPEE_REAUTH_REQUIRED_MESSAGE = "Vui l\xF2ng v\xE0o m\u1EE5c C\u1EA5u h\xECnh \u0111\u1EC3 li\xEAn k\u1EBFt l\u1EA1i gian h\xE0ng Shopee (Token \u0111\xE3 h\u1EBFt h\u1EA1n ho\xE0n to\xE0n)";
+function resolveCreateRequireFilename() {
+  try {
+    if (typeof __filename === "string" && __filename.length > 0) {
+      return __filename;
+    }
+  } catch {
+  }
+  try {
+    const metaUrl = typeof import_meta !== "undefined" ? String(import_meta?.url || "") : "";
+    if (metaUrl && metaUrl !== "undefined") return metaUrl;
+  } catch {
+  }
+  return import_path9.default.resolve(process.cwd(), "server.cjs");
+}
+var shopeeHttpDispatcher = void 0;
+try {
+  const nodeRequire = (0, import_node_module.createRequire)(resolveCreateRequireFilename());
+  let undiciMod;
+  try {
+    undiciMod = nodeRequire("node:undici");
+  } catch {
+    undiciMod = nodeRequire("undici");
+  }
+  const ShopeeUndiciAgent = undiciMod?.Agent;
+  if (typeof ShopeeUndiciAgent !== "function") {
+    throw new Error("undici.Agent kh\xF4ng kh\u1EA3 d\u1EE5ng");
+  }
+  shopeeHttpDispatcher = new ShopeeUndiciAgent({
+    connect: {
+      rejectUnauthorized: true,
+      minVersion: SHOPEE_TLS_MIN_VERSION,
+      maxVersion: SHOPEE_TLS_MAX_VERSION
+    },
+    connections: 3,
+    pipelining: 0,
+    keepAliveTimeout: 1e4,
+    keepAliveMaxTimeout: 15e3,
+    // Chặn socket treo vô hạn khi Shopee không trả headers/body.
+    headersTimeout: SHOPEE_HTTP_TIMEOUT_MS + 2e3,
+    bodyTimeout: SHOPEE_HTTP_TIMEOUT_MS + 2e3,
+    connectTimeout: 8e3
+  });
+  console.log("[Shopee HTTP] undici Agent OK \u2014 TLS dispatcher s\u1EB5n s\xE0ng cho sync Shopee.");
+} catch (undiciErr) {
+  console.info(
+    "[Shopee HTTP] D\xF9ng fetch t\xEDch h\u1EE3p c\u1EE7a Node (kh\xF4ng d\xF9ng undici dispatcher):",
+    undiciErr?.message || undiciErr
+  );
+  shopeeHttpDispatcher = void 0;
+}
+async function fetchWithTimeout(url2, init = {}, timeoutMs = SHOPEE_HTTP_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const externalSignal = init?.signal;
+  const abortFromExternal = () => controller.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) abortFromExternal();
+  else externalSignal?.addEventListener?.("abort", abortFromExternal, { once: true });
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let hardTimer;
+  try {
+    const fetchInit = {
+      ...init,
+      signal: controller.signal
+    };
+    if (shopeeHttpDispatcher) fetchInit.dispatcher = shopeeHttpDispatcher;
+    const fetchPromise = fetch(url2, fetchInit);
+    fetchPromise.catch(() => {
+    });
+    const hardTimeoutPromise = new Promise((_, reject) => {
+      hardTimer = setTimeout(() => {
+        try {
+          controller.abort();
+        } catch {
+        }
+        reject(new Error(`Shopee API timeout sau ${timeoutMs / 1e3}s`));
+      }, timeoutMs + 1e3);
+    });
+    return await Promise.race([fetchPromise, hardTimeoutPromise]);
+  } catch (error) {
+    if (error?.name === "AbortError" || /timeout/i.test(String(error?.message || ""))) {
+      console.error(`[Shopee HTTP] TIMEOUT ${timeoutMs}ms \u2014 ${String(url2).slice(0, 180)}`);
+      throw new Error(`Shopee API timeout sau ${timeoutMs / 1e3}s`);
+    }
+    console.error(
+      `[Shopee HTTP] FETCH L\u1ED6I \u2014 ${String(url2).slice(0, 120)}:`,
+      error?.message || error
+    );
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    if (hardTimer) clearTimeout(hardTimer);
+    externalSignal?.removeEventListener?.("abort", abortFromExternal);
+  }
+}
+function shopeeExponentialBackoffMs(attempt, baseMs = SHOPEE_API_RETRY_BASE_MS) {
+  return Math.min(3e4, baseMs * Math.pow(2, attempt));
+}
+var shopeeRetryTelemetry = { retries: 0, rateLimits: 0, exhausted: 0 };
+function snapshotShopeeRetryTelemetry() {
+  return { ...shopeeRetryTelemetry };
+}
+function diffShopeeRetryTelemetry(before) {
+  return {
+    retries: shopeeRetryTelemetry.retries - before.retries,
+    rate_limits: shopeeRetryTelemetry.rateLimits - before.rateLimits,
+    exhausted_retries: shopeeRetryTelemetry.exhausted - before.exhausted,
+    max_retries: SHOPEE_API_MAX_RETRY
+  };
+}
+function isShopeeRetryableNetworkError(err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /timeout|timed out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|AbortError|fetch failed|network|socket/i.test(msg);
+}
+function isShopeeRetryableHttpStatus(status) {
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+async function runInShopeeBatches(items, processor, opts) {
+  if (items.length === 0) return;
+  const batchSize = opts?.batchSize ?? SHOPEE_PRODUCT_BATCH_SIZE;
+  const itemDelayMs = opts?.itemDelayMs ?? SHOPEE_PRODUCT_API_DELAY_MS;
+  const batchPauseMs = opts?.batchPauseMs ?? SHOPEE_PRODUCT_BATCH_PAUSE_MS;
+  for (let batchStart = 0; batchStart < items.length; batchStart += batchSize) {
+    const batch = items.slice(batchStart, batchStart + batchSize);
+    const batchNo = Math.floor(batchStart / batchSize) + 1;
+    const totalBatches = Math.ceil(items.length / batchSize);
+    console.log(`[Shopee Throttle] Batch ${batchNo}/${totalBatches} (${batch.length} item)...`);
+    for (let j = 0; j < batch.length; j++) {
+      await processor(batch[j], batchStart + j);
+      if (j < batch.length - 1) await sleep2(itemDelayMs);
+    }
+    if (batchStart + batchSize < items.length) {
+      console.log(`[Shopee Throttle] Ngh\u1EC9 ${batchPauseMs}ms tr\u01B0\u1EDBc batch k\u1EBF...`);
+      await sleep2(batchPauseMs);
+    }
+  }
+}
+function shopeeSyncDelay(ms = SHOPEE_SYNC_BATCH_DELAY_MS) {
+  return sleep2(ms);
+}
+function shopeeApiErrorResult(err, context, httpStatus) {
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(`[Shopee API] ${context}:`, message);
+  const status = httpStatus || (/HTTP\s*401|\b401\b|invalid_access_token|unauthorized|auth/i.test(message) ? 401 : /HTTP\s*429|\b429\b|rate.?limit|too many/i.test(message) ? 429 : /HTTP\s*504|\b504\b|timeout|timed out|AbortError/i.test(message) ? 504 : void 0);
+  return {
+    error: status === 401 ? "unauthorized" : status === 429 ? "rate_limit_exceeded" : status === 504 ? "gateway_timeout" : "shopee_api_error",
+    message: formatShopeeApiError({ error: "shopee_api_error", message: `${context}: ${message}` }, status),
+    httpStatus: status
+  };
+}
+var SHOP_MAP = {
+  "831052930": "LK audio",
+  "4127421": "LK AT"
+};
+function translateShopeeErrorCodes(text) {
+  let out = String(text || "");
+  if (/error_update_price_fail/i.test(out)) {
+    out = out.replace(/Update price failed(?:,?\s*please try later\.?)?/gi, "").replace(
+      /(?:product\.)?error_update_price_fail/gi,
+      "Kh\xF4ng th\u1EC3 c\u1EADp nh\u1EADt gi\xE1 do s\u1EA3n ph\u1EA9m \u0111ang tham gia CTKM"
+    );
+  }
+  if (/error_item_not_found/i.test(out)) {
+    out = out.replace(/Item[_ ]?id is not found\.?/gi, "").replace(/(?:product\.)?error_item_not_found/gi, "Kh\xF4ng t\xECm th\u1EA5y s\u1EA3n ph\u1EA9m t\u1EA1i shop");
+  }
+  if (/error_invalid_logistic_channel|invalid logistic|logistic_channel.*invalid/i.test(out)) {
+    out = out.replace(/(?:product\.)?error_invalid_logistic_channel/gi, "").replace(/invalid logistic.*channel/gi, "").replace("K\xEAnh v\u1EADn chuy\u1EC3n kh\xF4ng h\u1EE3p l\u1EC7: k\xEAnh 50051 ho\u1EB7c 50041 \u0111\xE3 b\u1ECB Shopee ng\u1EEBng h\u1ED7 tr\u1EE3 ho\u1EB7c kh\xF4ng t\u1ED3n t\u1EA1i trong danh s\xE1ch k\xEAnh c\u1EE7a shop. Vui l\xF2ng ch\u1ECDn l\u1EA1i k\xEAnh v\u1EADn chuy\u1EC3n trong ph\u1EA7n C\u1EA5u h\xECnh s\u1EA3n ph\u1EA9m.", "").trim();
+    if (/kênh.*50051|50051.*kênh/i.test(out)) {
+      out = out.replace(/50051/g, "").trim();
+      if (!out) out = "K\xEAnh v\u1EADn chuy\u1EC3n 50051 kh\xF4ng h\u1EE3p l\u1EC7 \u2014 Shopee kh\xF4ng c\xF2n h\u1ED7 tr\u1EE3. Vui l\xF2ng ch\u1ECDn k\xEAnh kh\xE1c.";
+    }
+    if (/kênh.*50041|50041.*kênh/i.test(out)) {
+      out = out.replace(/50041/g, "").trim();
+      if (!out) out = "K\xEAnh v\u1EADn chuy\u1EC3n 50041 kh\xF4ng h\u1EE3p l\u1EC7 \u2014 Shopee kh\xF4ng c\xF2n h\u1ED7 tr\u1EE3. Vui l\xF2ng ch\u1ECDn k\xEAnh kh\xE1c.";
+    }
+    if (/invalid.*channel|logistic.*invalid/i.test(out)) {
+      out = "K\xEAnh v\u1EADn chuy\u1EC3n kh\xF4ng h\u1EE3p l\u1EC7 \u2014 vui l\xF2ng ch\u1ECDn l\u1EA1i k\xEAnh trong C\u1EA5u h\xECnh s\u1EA3n ph\u1EA9m.";
+    }
+  }
+  if (/50051|50041/i.test(out) && /logistic|channel|vận chuyển|invalid/i.test(out)) {
+    out = "K\xEAnh v\u1EADn chuy\u1EC3n 50051/50041 \u0111\xE3 b\u1ECB Shopee ng\u1EEBng h\u1ED7 tr\u1EE3. Vui l\xF2ng ch\u1ECDn k\xEAnh v\u1EADn chuy\u1EC3n kh\xE1c trong C\u1EA5u h\xECnh s\u1EA3n ph\u1EA9m.";
+  }
+  if (/error_init_tier_variation|tier_variation.*invalid|cannot unmarshal.*string/i.test(out)) {
+    out = out.replace(/(?:product\.)?error_init_tier_variation/gi, "").replace(/cannot unmarshal.*string/gi, "").replace(/tier_variation.*invalid/gi, "").trim();
+    if (!out || /tier|phân loại/i.test(out)) {
+      out = "L\u1ED7i kh\u1EDFi t\u1EA1o ph\xE2n lo\u1EA1i (tier_variation) \u2014 ki\u1EC3m tra l\u1EA1i d\u1EEF li\u1EC7u bi\u1EBFn th\u1EC3 v\xE0 brand_id.";
+    }
+  }
+  if (/brand.*id.*invalid|invalid.*brand|error.*brand_id/i.test(out)) {
+    out = "Brand_id kh\xF4ng h\u1EE3p l\u1EC7 \u2014 n\u1EBFu s\u1EA3n ph\u1EA9m kh\xF4ng c\xF3 th\u01B0\u01A1ng hi\u1EC7u, truy\u1EC1n brand_id = 0.";
+  }
+  return out.replace(/\s*[—\-–]\s*(?=[—\-–|]|$)/g, "").replace(/[ \t]{2,}/g, " ").trim();
+}
+function formatShopeeSyncAlertLines(raw) {
+  const text = translateShopeeErrorCodes(String(raw ?? ""));
+  if (!text) return [];
+  const re = /\[(\d+)\]([^\[\]—]+)/g;
+  const lines = [];
+  let match2;
+  while ((match2 = re.exec(text)) !== null) {
+    const shopId = match2[1];
+    const shopName = SHOP_MAP[shopId] || `Shop ${shopId}`;
+    let body = String(match2[2] || "").replace(/^\s*[|:]\s*/, "").replace(/\s*[|:]\s*$/, "").replace(/\s+tại\s+shop\s*$/i, "").replace(/\s+trên\s+shop\s+\S.*$/i, "").replace(/[ \t]{2,}/g, " ").trim();
+    if (!body) continue;
+    lines.push(`${body} tr\xEAn shop ${shopName}`);
+  }
+  return [...new Set(lines)];
+}
+function humanizeShopeeErrorMessage(raw) {
+  const lines = formatShopeeSyncAlertLines(raw);
+  if (lines.length > 0) return lines.join(" | ");
+  return translateShopeeErrorCodes(String(raw ?? "")) || String(raw ?? "").trim();
+}
+function formatShopeeApiError(json2, httpStatus) {
+  const parts = [json2?.message, json2?.error, json2?.msg].map((v) => String(v ?? "").trim()).filter((v) => v && !/^HTTP\s+\d+$/i.test(v));
+  const status = typeof httpStatus === "number" && httpStatus > 0 ? httpStatus : typeof json2?.httpStatus === "number" && json2.httpStatus > 0 ? json2.httpStatus : void 0;
+  let out;
+  if (status === 401) {
+    out = parts[0] || SHOPEE_REAUTH_REQUIRED_MESSAGE;
+  } else if (status === 429) {
+    out = parts[0] || "Shopee gi\u1EDBi h\u1EA1n t\u1EA7n su\u1EA5t (HTTP 429 Too Many Requests) \u2014 vui l\xF2ng th\u1EED l\u1EA1i sau 1\u20132 ph\xFAt.";
+  } else if (status === 504) {
+    out = parts[0] || "Timeout khi g\u1ECDi Shopee API (HTTP 504) \u2014 c\u1EEDa s\u1ED5 \u0111\u1ED3ng b\u1ED9 qu\xE1 r\u1ED9ng ho\u1EB7c Shopee ph\u1EA3n h\u1ED3i ch\u1EADm. Th\u1EED l\u1EA1i v\u1EDBi \u0110\u1ED3ng b\u1ED9 nhanh 3h.";
+  } else if (/timeout|timed out|AbortError/i.test(parts.join(" "))) {
+    out = parts[0] || "Timeout khi g\u1ECDi Shopee API \u2014 th\u1EED \u0110\u1ED3ng b\u1ED9 nhanh 3h ho\u1EB7c gi\u1EA3m ph\u1EA1m vi th\u1EDDi gian \u0111\u1ED3ng b\u1ED9.";
+  } else if (parts.length > 0) {
+    out = parts.join(" \u2014 ");
+  } else if (status && status >= 400) {
+    out = `Shopee API l\u1ED7i HTTP ${status}`;
+  } else {
+    out = "L\u1ED7i Shopee API kh\xF4ng x\xE1c \u0111\u1ECBnh";
+  }
+  return humanizeShopeeErrorMessage(out);
+}
+function isShopeeRateLimited(httpStatus, json2) {
+  if (httpStatus === 429) return true;
+  const text = `${json2?.error || ""} ${json2?.message || ""}`.toLowerCase();
+  return /rate.?limit|too many request|api_call_limit|exceed/.test(text);
+}
+function warnShopeeUint64Sample(json2, context) {
+  try {
+    const body = json2?.response ?? json2 ?? {};
+    const sampleItem = body?.order_list?.[0]?.item_list?.[0] || body?.item_list?.[0] || (Array.isArray(body?.item) ? body.item[0] : null) || (Array.isArray(body?.activity) ? body.activity[0] : null) || null;
+    const keys = ["item_id", "model_id", "promotion_id", "activity_id", "return_id"];
+    const check = (obj, prefix = "") => {
+      if (!obj || typeof obj !== "object") return;
+      for (const k of keys) {
+        const v = obj[k];
+        if (typeof v === "number" && !Number.isSafeInteger(v)) {
+          console.warn(
+            `[Shopee uint64] ${context} field ${prefix}${k}=${v} v\u01B0\u1EE3t Safe Integer \u2014 ki\u1EC3m tra json-bigint`
+          );
+        }
+      }
+    };
+    check(sampleItem);
+    check(body);
+  } catch {
+  }
+}
+function maybeNormalizeReturnJson(json2, context) {
+  const ctx = String(context || "");
+  try {
+    if (/get_return_detail|get_return_list|get_reverse_tracking|returns\./i.test(ctx)) {
+      return normalizeShopeeReturnDetail(json2);
+    }
+    if (/product\.|\/product\/|promotion|activity|add_item|update_item|get_attribute|get_item|get_model|discount|flash_sale|voucher/i.test(
+      ctx
+    )) {
+      return normalizeShopeeProductIds(json2);
+    }
+  } catch {
+    return json2;
+  }
+  return json2;
+}
+async function shopeeFetchJsonWithRetry(url2, context, opts) {
+  const maxAttempts = opts?.maxAttempts ?? SHOPEE_API_MAX_RETRY;
+  const baseDelayMs = opts?.baseDelayMs ?? SHOPEE_API_RETRY_BASE_MS;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    let res;
+    let rawText = "";
+    try {
+      res = await fetchWithTimeout(url2);
+      rawText = await res.text();
+    } catch (err) {
+      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
+      if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
+        shopeeRetryTelemetry.retries++;
+        console.warn(`[Shopee API] ${context} l\u1ED7i m\u1EA1ng, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`);
+        await sleep2(waitMs);
+        continue;
+      }
+      const netMsg = err instanceof Error ? err.message : String(err);
+      throw new Error(`${context}: Kh\xF4ng k\u1EBFt n\u1ED1i \u0111\u01B0\u1EE3c Shopee API \u2014 ${netMsg}`);
+    }
+    let json2;
+    try {
+      json2 = rawText ? parseShopeeJson(rawText) : {};
+      json2 = maybeNormalizeReturnJson(json2, context);
+      warnShopeeUint64Sample(json2, context);
+    } catch (parseErr) {
+      const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+      return {
+        httpStatus: res.status,
+        json: {
+          error: "json_parse_error",
+          message: `${context}: ph\u1EA3n h\u1ED3i kh\xF4ng ph\u1EA3i JSON h\u1EE3p l\u1EC7 (HTTP ${res.status}): ${parseMsg}`
+        }
+      };
+    }
+    if ((isShopeeRateLimited(res.status, json2) || isShopeeRetryableHttpStatus(res.status)) && attempt < maxAttempts - 1) {
+      shopeeRetryTelemetry.retries++;
+      if (isShopeeRateLimited(res.status, json2)) shopeeRetryTelemetry.rateLimits++;
+      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
+      console.warn(
+        `[Shopee API] ${context} HTTP ${res.status}, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`
+      );
+      await sleep2(waitMs);
+      continue;
+    }
+    if (res.status === 401 || res.status === 429 || res.status === 504 || res.status >= 400 && json2?.error) {
+      json2.message = formatShopeeApiError(json2, res.status);
+      json2.httpStatus = res.status;
+    }
+    return { json: json2, httpStatus: res.status };
+  }
+  shopeeRetryTelemetry.exhausted++;
+  return {
+    httpStatus: 429,
+    json: {
+      error: "rate_limit_exceeded",
+      message: formatShopeeApiError({ error: "rate_limit_exceeded" }, 429),
+      httpStatus: 429
+    }
+  };
+}
+async function shopeePostJsonWithRetry(url2, body, context, opts) {
+  const maxAttempts = opts?.maxAttempts ?? SHOPEE_API_MAX_RETRY;
+  const baseDelayMs = opts?.baseDelayMs ?? SHOPEE_API_RETRY_BASE_MS;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    let res;
+    let rawText = "";
+    try {
+      res = await fetchWithTimeout(url2, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // JSON.stringify chuẩn: giữ Number cho item_id/model_id (Shopee Go uint64).
+        // Không dùng stringifyShopeeJson (storeAsString) — sẽ biến ID thành string và bị Shopee từ chối.
+        body: JSON.stringify(body)
+      });
+      rawText = await res.text();
+    } catch (err) {
+      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
+      if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
+        shopeeRetryTelemetry.retries++;
+        console.warn(`[Shopee API] ${context} l\u1ED7i m\u1EA1ng, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`);
+        await sleep2(waitMs);
+        continue;
+      }
+      const netMsg = err instanceof Error ? err.message : String(err);
+      throw new Error(`${context}: Kh\xF4ng k\u1EBFt n\u1ED1i \u0111\u01B0\u1EE3c Shopee API \u2014 ${netMsg}`);
+    }
+    let json2;
+    try {
+      json2 = rawText ? parseShopeeJson(rawText) : {};
+      json2 = maybeNormalizeReturnJson(json2, context);
+      warnShopeeUint64Sample(json2, context);
+    } catch (parseErr) {
+      const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+      return {
+        httpStatus: res.status,
+        json: {
+          error: "json_parse_error",
+          message: `${context}: ph\u1EA3n h\u1ED3i kh\xF4ng ph\u1EA3i JSON h\u1EE3p l\u1EC7 (HTTP ${res.status}): ${parseMsg}`
+        }
+      };
+    }
+    if ((isShopeeRateLimited(res.status, json2) || isShopeeRetryableHttpStatus(res.status)) && attempt < maxAttempts - 1) {
+      shopeeRetryTelemetry.retries++;
+      if (isShopeeRateLimited(res.status, json2)) shopeeRetryTelemetry.rateLimits++;
+      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
+      console.warn(
+        `[Shopee API] ${context} HTTP ${res.status}, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`
+      );
+      await sleep2(waitMs);
+      continue;
+    }
+    if (json2?.error && !json2.message) {
+      json2.message = formatShopeeApiError(json2, res.status);
+    }
+    return { json: json2, httpStatus: res.status };
+  }
+  shopeeRetryTelemetry.exhausted++;
+  return {
+    httpStatus: 429,
+    json: {
+      error: "rate_limit_exceeded",
+      message: formatShopeeApiError({ error: "rate_limit_exceeded" }, 429)
+    }
+  };
+}
+
+// services/shopee/auth.js
+var APP_ROOT4 = resolveAppRoot();
+var APP_BASE_URL2 = resolveAppBaseUrl();
+function resolveShopeeCallbackUrl2() {
+  const explicit = String(process.env.SHOPEE_CALLBACK_URL || "").trim().replace(/\/$/, "");
+  if (explicit) return explicit;
+  return `${APP_BASE_URL2}/api/shopee/callback`;
+}
+var SHOPEE_CALLBACK_URL2 = resolveShopeeCallbackUrl2();
+var SHOPEE_WEBHOOK_URL2 = `${APP_BASE_URL2}/api/shopee/webhook`;
+var SHOPEE_CALLBACK_IDLE_MSG = "Callback route is active. Waiting for Shopee parameters (code, shop_id)...";
+var SHOPEE_ENV = (process.env.SHOPEE_ENV || "live").toLowerCase();
+var SHOPEE_HOST = "https://partner.shopeemobile.com";
+if (SHOPEE_ENV !== "live") {
+  console.warn(`[Shopee API] SHOPEE_ENV=${SHOPEE_ENV} \u2014 ch\u1EC9 d\xF9ng host Live: ${SHOPEE_HOST}`);
+}
+var SHOPEE_PARTNER_ID = process.env.SHOPEE_PARTNER_ID || "";
+var SHOPEE_PARTNER_KEY = process.env.SHOPEE_PARTNER_KEY || "";
+function isShopeeConfigValid() {
+  return /^\d+$/.test(SHOPEE_PARTNER_ID) && SHOPEE_PARTNER_KEY.length > 0 && !/CHUA_CO|YOUR_LIVE/i.test(SHOPEE_PARTNER_KEY);
+}
+if (!isShopeeConfigValid()) {
+  console.warn(
+    `[Shopee API] \u26A0\uFE0F SHOPEE_PARTNER_ID (hi\u1EC7n t\u1EA1i: "${SHOPEE_PARTNER_ID || "(r\u1ED7ng)"}") ho\u1EB7c SHOPEE_PARTNER_KEY ch\u01B0a \u0111\u01B0\u1EE3c \u0111i\u1EC1n \u0111\xFAng trong .env. Partner_id ph\u1EA3i l\xE0 m\u1ED9t s\u1ED1 nguy\xEAn (v\xED d\u1EE5: 2001234), l\u1EA5y t\u1EEB App PRODUCTION (Live) tr\xEAn open.shopee.com, KH\xD4NG d\xF9ng Sandbox. M\u1ECDi l\u1EA7n g\u1ECDi API Shopee s\u1EBD b\u1EC3 tr\u1EA3 l\u1ED7i error_param cho \u0111\u1EBFn khi s\u1EEDa \u0111\xFAng gi\xE1 tr\u1ECB n\xE0y.`
+  );
+}
+var SHOPEE_TOKENS_PATH = import_path10.default.resolve(APP_ROOT4, "data", "shopee_tokens.json");
+var SHOPEE_OAUTH_LAST_PATH = import_path10.default.resolve(APP_ROOT4, "data", "shopee_oauth_last.json");
+var CHANNEL_SETTINGS_PATH = import_path10.default.resolve(APP_ROOT4, "data", "channel_settings.json");
+var CANONICAL_SHOPEE_SHOP_IDS = ["4127421", "831052930"];
+var INDEPENDENT_SHOPEE_SHOP_IDS = new Set(CANONICAL_SHOPEE_SHOP_IDS);
+var deps4 = {
+  syncOAuthShopsToChannelSettings: () => {
+  },
+  logOAuthSaveError: () => {
+  }
+};
+function initShopeeAuth(partial) {
+  deps4 = { ...deps4, ...partial };
+}
+function ensureDataDirs() {
+  const dataDir = import_path10.default.join(APP_ROOT4, "data");
+  import_fs10.default.mkdirSync(dataDir, { recursive: true });
+  if (!import_fs10.default.existsSync(SHOPEE_TOKENS_PATH)) {
+    import_fs10.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
+  }
+}
+function saveOAuthAudit(entry) {
+  try {
+    ensureDataDirs();
+    import_fs10.default.writeFileSync(
+      SHOPEE_OAUTH_LAST_PATH,
+      JSON.stringify({ ...entry, at: (/* @__PURE__ */ new Date()).toISOString() }, null, 2),
+      "utf-8"
+    );
+  } catch (error) {
+    console.error("[Shopee OAuth] Failed to write shopee_oauth_last.json:", error);
+  }
+}
+function loadLastOAuthAudit() {
+  try {
+    if (!import_fs10.default.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
+    return JSON.parse(import_fs10.default.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+function bootShopeeAuth() {
+  ensureDataDirs();
+  try {
+    const normalized = normalizeTokenStore(loadShopeeTokens());
+    if (Object.keys(normalized).length > 0) {
+      saveShopeeTokens(normalized);
+      console.log(`[Boot] Normalized shopee_tokens.json keys: [${Object.keys(normalized).join(", ")}]`);
+    }
+  } catch (error) {
+    console.error("[Boot] Failed to normalize shopee_tokens.json:", error);
+  }
+  console.log(
+    `[Boot] APP_ROOT=${APP_ROOT4} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs10.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL2}`
+  );
+}
+function loadShopeeTokens() {
+  try {
+    if (!import_fs10.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
+    const raw = import_fs10.default.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
+    if (!raw.trim()) return {};
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      const map = {};
+      for (const row of parsed) {
+        const k = normalizeShopIdKey(row?.shop_id ?? row?.shopId);
+        if (k) map[k] = row;
+      }
+      return map;
+    }
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (error) {
+    console.error("[Shopee Tokens] Failed to read shopee_tokens.json:", error);
+    return {};
+  }
+}
+function maskTokenStoreForLog(tokens) {
+  const masked = {};
+  for (const [key, record] of Object.entries(tokens || {})) {
+    masked[key] = {
+      shop_id: record?.shop_id ?? key,
+      oauth_shop_id: record?.oauth_shop_id ?? null,
+      shop_id_list: record?.shop_id_list ?? [],
+      merchant_id_list: record?.merchant_id_list ?? [],
+      expire_in: record?.expire_in ?? null,
+      obtained_at: record?.obtained_at ?? null,
+      access_token: record?.access_token ? `${String(record.access_token).slice(0, 16)}\u2026` : null,
+      refresh_token: record?.refresh_token ? `${String(record.refresh_token).slice(0, 16)}\u2026` : null
+    };
+  }
+  return masked;
+}
+function saveShopeeTokens(tokensToWrite) {
+  const absPath = import_path10.default.resolve(SHOPEE_TOKENS_PATH);
+  try {
+    ensureDataDirs();
+    const onDisk = normalizeTokenStore(loadShopeeTokens());
+    const tokensData = { ...onDisk };
+    const keysBefore = Object.keys(tokensData);
+    for (const [rawKey, record] of Object.entries(tokensToWrite || {})) {
+      const shop_id = normalizeShopIdKey(record?.shop_id ?? rawKey);
+      if (!shop_id || !record) continue;
+      tokensData[shop_id] = {
+        ...tokensData[shop_id],
+        ...record,
+        shop_id
+      };
+      console.log(`[Shopee Tokens] UPSERT shop_id=${shop_id}`);
+    }
+    const keysAfter = Object.keys(tokensData);
+    console.log(
+      "DEBUG SAVE: Merge keys",
+      JSON.stringify({ keysBefore, keysAfter, addedOrUpdated: keysAfter.filter((k) => !keysBefore.includes(k) || tokensToWrite[k]) })
+    );
+    console.log("DEBUG SAVE: Full tokensData file keys:", keysAfter);
+    console.log(
+      "DEBUG SAVE: Full tokensData (masked):",
+      JSON.stringify(maskTokenStoreForLog(tokensData))
+    );
+    const payload = JSON.stringify(tokensData, null, 2);
+    console.log(
+      "[Shopee Tokens] fs.writeFileSync \u2014 TR\u01AF\u1EDAC KHI GHI",
+      JSON.stringify({
+        absPath,
+        SHOPEE_TOKENS_PATH,
+        APP_ROOT: APP_ROOT4,
+        keys: keysAfter,
+        byteLength: Buffer.byteLength(payload, "utf-8")
+      })
+    );
+    import_fs10.default.writeFileSync(absPath, payload, "utf-8");
+    console.log(
+      "[Shopee Tokens] fs.writeFileSync \u2014 GHI TH\xC0NH C\xD4NG",
+      JSON.stringify({ absPath, keys: keysAfter, fileSize: import_fs10.default.statSync(absPath).size })
+    );
+    return true;
+  } catch (error) {
+    deps4.logOAuthSaveError("saveShopeeTokens", error);
+    console.error(
+      "[Shopee Tokens] fs.writeFileSync \u2014 L\u1ED6I GHI FILE",
+      JSON.stringify({
+        absPath,
+        SHOPEE_TOKENS_PATH,
+        errorMessage: error?.message || String(error),
+        errorCode: error?.code || null
+      })
+    );
+    return false;
+  }
+}
+function normalizeShopIdKey(shopId) {
+  const key = String(shopId ?? "").trim();
+  return /^\d+$/.test(key) ? key : "";
+}
+function queryParamOne(value) {
+  if (Array.isArray(value)) return String(value[0] ?? "").trim();
+  return String(value ?? "").trim();
+}
+function shouldOAuthRedirectToFrontend(req) {
+  if (queryParamOne(req.query?.format) === "json") return false;
+  if (queryParamOne(req.query?.redirect) === "0") return false;
+  return true;
+}
+function buildOAuthFrontendRedirectUrl(req, result) {
+  const oauthShopId = String(result.oauth_shop_id || queryParamOne(req.query.shop_id) || "");
+  const expectedShop = queryParamOne(req.query?.expected_shop) || String(result.expected_shop_id || "");
+  if (result.success) {
+    const savedQuery = encodeURIComponent((result.saved_shop_ids || []).join(","));
+    const expectedQuery = expectedShop ? `&expected_shop=${encodeURIComponent(expectedShop)}` : "";
+    return `${APP_BASE_URL2}/?shopee_linked=1&shop_id=${encodeURIComponent(oauthShopId)}&saved_shops=${savedQuery}${expectedQuery}`;
+  }
+  const errMsg = result.message || result.error || "token_exchange_failed";
+  return `${APP_BASE_URL2}/?shopee_linked=0&shop_id=${encodeURIComponent(oauthShopId)}&error=${encodeURIComponent(errMsg)}`;
+}
+function normalizeShopeeTokenResponse(raw) {
+  const inner = raw?.response && typeof raw.response === "object" && !Array.isArray(raw.response) ? raw.response : raw?.data && typeof raw.data === "object" ? raw.data : raw;
+  const access_token = inner?.access_token ?? inner?.accessToken ?? raw?.access_token ?? raw?.accessToken ?? "";
+  const refresh_token = inner?.refresh_token ?? inner?.refreshToken ?? raw?.refresh_token ?? raw?.refreshToken ?? "";
+  const expire_in = Number(
+    inner?.expire_in ?? inner?.expire_time ?? inner?.expires_in ?? raw?.expire_in ?? raw?.expire_time ?? 0
+  );
+  const shop_id_list = inner?.shop_id_list ?? raw?.shop_id_list ?? inner?.shop_ids ?? [];
+  const merchant_id_list = inner?.merchant_id_list ?? raw?.merchant_id_list ?? [];
+  return {
+    ...raw,
+    access_token: access_token || void 0,
+    refresh_token: refresh_token || void 0,
+    expire_in: expire_in > 0 ? expire_in : void 0,
+    shop_id_list: Array.isArray(shop_id_list) ? shop_id_list : [],
+    merchant_id_list: Array.isArray(merchant_id_list) ? merchant_id_list : [],
+    shop_id: inner?.shop_id ?? raw?.shop_id,
+    error: raw?.error ?? inner?.error,
+    message: raw?.message ?? inner?.message,
+    _raw: raw
+  };
+}
+function buildShopeeTokenRecord(shopKey, authJson, oauthShopId, existing) {
+  const key = normalizeShopIdKey(shopKey);
+  const oauth = normalizeShopIdKey(oauthShopId) || key;
+  const authHasShopList = Array.isArray(authJson?.shop_id_list);
+  const fromAuthList = authHasShopList ? authJson.shop_id_list.map((x2) => normalizeShopIdKey(x2)).filter(Boolean) : [];
+  const fromExistingList = Array.isArray(existing?.shop_id_list) ? existing.shop_id_list.map((x2) => normalizeShopIdKey(x2)).filter(Boolean) : [];
+  const shopIdList = authHasShopList ? [...new Set([...fromAuthList, key].filter(Boolean))] : [...new Set([...fromExistingList, key].filter(Boolean))];
+  const fromAuthMerchants = Array.isArray(authJson?.merchant_id_list) ? authJson.merchant_id_list.map((x2) => String(x2)).filter(Boolean) : [];
+  const fromExistingMerchants = Array.isArray(existing?.merchant_id_list) ? existing.merchant_id_list.map((x2) => String(x2)).filter(Boolean) : [];
+  const merchantIdList = [.../* @__PURE__ */ new Set([...fromAuthMerchants, ...fromExistingMerchants])];
+  return {
+    shop_id: key,
+    access_token: String(authJson?.access_token ?? existing?.access_token ?? ""),
+    refresh_token: String(authJson?.refresh_token ?? existing?.refresh_token ?? ""),
+    expire_in: Number(authJson?.expire_in ?? existing?.expire_in ?? 14400),
+    obtained_at: Number(authJson?.obtained_at ?? Math.floor(Date.now() / 1e3)),
+    oauth_shop_id: existing?.oauth_shop_id || oauth,
+    shop_id_list: shopIdList,
+    merchant_id_list: merchantIdList
+  };
+}
+function normalizeTokenStore(tokens) {
+  const out = {};
+  for (const [rawKey, record] of Object.entries(tokens || {})) {
+    if (!record || typeof record !== "object") continue;
+    const key = normalizeShopIdKey(record.shop_id ?? rawKey);
+    if (!key || !record.access_token) continue;
+    const oauthShopId = normalizeShopIdKey(record.oauth_shop_id) || key;
+    out[key] = buildShopeeTokenRecord(key, record, oauthShopId, record);
+  }
+  return out;
+}
+function getShopeeTokenRecord(tokens, shopId) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) return null;
+  if (tokens[key]?.access_token || tokens[key]?.refresh_token) return tokens[key];
+  for (const [k, v] of Object.entries(tokens)) {
+    if (normalizeShopIdKey(k) === key) return v;
+  }
+  return null;
+}
+function resolveShopeeTokenConnectionStatus(shopId, preloadedTokens) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) {
+    return { status: "missing", message: "Thi\u1EBFu Shop ID", expires_at: null };
+  }
+  const tokens = preloadedTokens && typeof preloadedTokens === "object" ? preloadedTokens : loadShopeeTokens();
+  const record = getShopeeTokenRecord(tokens, key);
+  if (!record?.access_token) {
+    return {
+      status: "missing",
+      message: "Ch\u01B0a k\u1EBFt n\u1ED1i OAuth \u2014 kh\xF4ng c\xF3 access_token",
+      expires_at: null
+    };
+  }
+  const now = Math.floor(Date.now() / 1e3);
+  const obtainedAt = Number(record.obtained_at) || 0;
+  const expireIn = Number(record.expire_in) || 0;
+  const expiresAt = obtainedAt > 0 && expireIn > 0 ? obtainedAt + expireIn : null;
+  if (expiresAt != null && now > expiresAt) {
+    return {
+      status: "expired",
+      message: `Token h\u1EBFt h\u1EA1n l\xFAc ${new Date(expiresAt * 1e3).toLocaleString("vi-VN")} \u2014 c\u1EA7n OAuth l\u1EA1i ho\u1EB7c refresh`,
+      expires_at: expiresAt
+    };
+  }
+  return {
+    status: "online",
+    message: expiresAt != null ? `Token h\u1EE3p l\u1EC7 \u0111\u1EBFn ${new Date(expiresAt * 1e3).toLocaleString("vi-VN")}` : "Token h\u1EE3p l\u1EC7",
+    expires_at: expiresAt
+  };
+}
+function collectShopIdsForTokenSave(requestShopId, authJson, expectedShopId) {
+  const ids = /* @__PURE__ */ new Set();
+  const primary = normalizeShopIdKey(requestShopId);
+  if (primary) ids.add(primary);
+  const expected = normalizeShopIdKey(expectedShopId);
+  if (expected) ids.add(expected);
+  for (const raw of authJson?.shop_id_list || []) {
+    const k = normalizeShopIdKey(raw);
+    if (k) ids.add(k);
+  }
+  const fromBody = normalizeShopIdKey(authJson?.shop_id);
+  if (fromBody) ids.add(fromBody);
+  return [...ids];
+}
+function persistOAuthTokens(authJson, opts) {
+  if (!authJson?.access_token) return [];
+  const oauthShopId = normalizeShopIdKey(opts.oauthShopId);
+  const mainAccountId = normalizeShopIdKey(opts.mainAccountId);
+  const expected = normalizeShopIdKey(opts.expectedShopId);
+  const shopIds = new Set(collectShopIdsForTokenSave(oauthShopId || mainAccountId, authJson, expected));
+  if (mainAccountId && Array.isArray(authJson?.shop_id_list)) {
+    for (const raw of authJson.shop_id_list) {
+      const k = normalizeShopIdKey(raw);
+      if (k) shopIds.add(k);
+    }
+  }
+  const shopMismatch = Boolean(expected && oauthShopId && expected !== oauthShopId);
+  if (shopMismatch && !shopIds.has(expected)) {
+    console.warn(
+      `[Shopee OAuth] Shop mismatch: expected=${expected}, oauth=${oauthShopId}, shop_id_list=[${(authJson?.shop_id_list || []).join(", ")}] \u2014 kh\xF4ng l\u01B0u alias token sai shop.`
+    );
+    shopIds.delete(expected);
+  }
+  if (shopIds.size === 0 && oauthShopId) shopIds.add(oauthShopId);
+  const keysBeforeMerge = Object.keys(normalizeTokenStore(loadShopeeTokens()));
+  const tokenOwner = oauthShopId || mainAccountId || "";
+  const updates = {};
+  for (const id of shopIds) {
+    updates[id] = buildShopeeTokenRecord(id, authJson, tokenOwner || id, loadShopeeTokens()[id]);
+    console.log("DEBUG SAVE: Saving data for shop:", id, "Full Data:", JSON.stringify(updates[id]));
+  }
+  saveShopeeTokens(updates);
+  for (const id of shopIds) {
+    console.log("L\u01B0u token th\xE0nh c\xF4ng cho shop: ", id);
+  }
+  const saved = [...shopIds];
+  const tokensData = normalizeTokenStore(loadShopeeTokens());
+  console.log(
+    "[Shopee Tokens] persistOAuthTokens \u2014 SAU MERGE",
+    JSON.stringify({
+      oauthShopId,
+      mainAccountId: mainAccountId || null,
+      expectedShopId: expected || null,
+      shopMismatch,
+      keysBefore: keysBeforeMerge,
+      keysAfter: Object.keys(tokensData),
+      shopIdsSaved: saved,
+      shopee_shop_id_list: authJson?.shop_id_list || [],
+      tokensPath: SHOPEE_TOKENS_PATH
+    })
+  );
+  return saved;
+}
+function verifyTokenSaved(shopId) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) return false;
+  const tokens = loadShopeeTokens();
+  return Boolean(getShopeeTokenRecord(tokens, key)?.access_token);
+}
+async function completeShopeeOAuthFlow(code, params) {
+  const oauthShopId = normalizeShopIdKey(params.shopIdRaw);
+  const mainAccountId = normalizeShopIdKey(params.mainAccountIdRaw);
+  const expected = normalizeShopIdKey(params.expectedShopId);
+  if (!oauthShopId && !mainAccountId) {
+    return {
+      success: false,
+      oauth_shop_id: "",
+      saved_shop_ids: [],
+      verified_in_file: false,
+      error: "invalid_shop_id",
+      message: `Thi\u1EBFu shop_id ho\u1EB7c main_account_id h\u1EE3p l\u1EC7 trong callback (shop_id=${params.shopIdRaw || ""}, main_account_id=${params.mainAccountIdRaw || ""})`
+    };
+  }
+  console.log(
+    "[Shopee OAuth] completeShopeeOAuthFlow B\u1EAET \u0110\u1EA6U",
+    JSON.stringify({
+      oauthShopId: oauthShopId || null,
+      mainAccountId: mainAccountId || null,
+      expectedShopId: expected || null,
+      shop_mismatch: expected && oauthShopId ? expected !== oauthShopId : false,
+      code_preview: `${code.slice(0, 8)}\u2026`,
+      tokensPath: SHOPEE_TOKENS_PATH
+    })
+  );
+  const tokenResult = await exchangeShopeeCodeForToken(code, {
+    shopId: oauthShopId || void 0,
+    mainAccountId: mainAccountId || void 0
+  });
+  let savedIds = [];
+  if (tokenResult.access_token) {
+    savedIds = persistOAuthTokens(tokenResult, {
+      oauthShopId: oauthShopId || void 0,
+      mainAccountId: mainAccountId || void 0,
+      expectedShopId: expected || void 0
+    });
+    tokenResult.saved_shop_ids = savedIds;
+    if (savedIds.length > 0) {
+      deps4.syncOAuthShopsToChannelSettings(savedIds, { expectedShopId: expected || void 0 });
+    }
+  }
+  const shopMismatch = Boolean(
+    expected && oauthShopId && expected !== oauthShopId && !savedIds.includes(expected)
+  );
+  const verified = expected ? savedIds.includes(expected) && verifyTokenSaved(expected) : oauthShopId ? verifyTokenSaved(oauthShopId) : savedIds.length > 0;
+  saveOAuthAudit({
+    callback_shop_id: oauthShopId || null,
+    main_account_id: mainAccountId || null,
+    expected_shop_id: expected || null,
+    shop_mismatch: shopMismatch,
+    callback_code_present: Boolean(code),
+    success: Boolean(tokenResult.access_token) && verified && !shopMismatch,
+    verified_in_file: verified,
+    error: tokenResult.error || null,
+    message: tokenResult.message || null,
+    saved_shop_ids: savedIds,
+    shopee_shop_id_list: tokenResult.shop_id_list || [],
+    file_keys_after: Object.keys(loadShopeeTokens()),
+    tokens_path: SHOPEE_TOKENS_PATH,
+    app_root: APP_ROOT4
+  });
+  return {
+    success: Boolean(tokenResult.access_token) && verified && !shopMismatch,
+    oauth_shop_id: oauthShopId || savedIds[0] || "",
+    expected_shop_id: expected || null,
+    shop_mismatch: shopMismatch,
+    saved_shop_ids: savedIds,
+    verified_in_file: verified,
+    error: tokenResult.error || (shopMismatch ? "shop_mismatch" : verified ? null : "token_not_persisted"),
+    message: shopMismatch ? `Shopee tr\u1EA3 v\u1EC1 shop ${oauthShopId}, KH\xD4NG ph\u1EA3i shop b\u1EA1n y\xEAu c\u1EA7u ${expected}. Token KH\xD4NG th\u1EC3 d\xF9ng cho shop kh\xE1c \u2014 h\xE3y \u0111\u0103ng xu\u1EA5t Shopee Seller Center, \u0111\u0103ng nh\u1EADp \u0111\xFAng shop ${expected}, r\u1ED3i b\u1EA5m OAuth l\u1EA1i.` : tokenResult.message || (verified ? `OAuth th\xE0nh c\xF4ng. Token \u0111\xE3 l\u01B0u cho: [${savedIds.join(", ")}].` : "Token kh\xF4ng ghi \u0111\u01B0\u1EE3c v\xE0o shopee_tokens.json"),
+    shopee_response: tokenResult.access_token ? { shop_id_list: tokenResult.shop_id_list || [], expire_in: tokenResult.expire_in } : tokenResult
+  };
+}
+function buildShopeeAuthPartnerUrl(shopId) {
+  const apiPath = "/api/v2/shop/auth_partner";
+  const timestamp = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp);
+  const sid = normalizeShopIdKey(shopId);
+  const redirectTarget = sid ? `${SHOPEE_CALLBACK_URL2}?redirect=1&expected_shop=${sid}` : `${SHOPEE_CALLBACK_URL2}?redirect=1`;
+  const redirect = encodeURIComponent(redirectTarget);
+  let url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&sign=${sign}&redirect=${redirect}`;
+  if (sid) url2 += `&shop_id=${sid}`;
+  console.log(`[Shopee OAuth] auth_partner URL cho shop_id=${sid || "(none)"}: ${url2.replace(/sign=[^&]+/, "sign=***")}`);
+  return url2;
+}
+function saveShopeeTokenForShop(shopId, record) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) return;
+  const tokens = normalizeTokenStore(loadShopeeTokens());
+  const existing = tokens[key];
+  tokens[key] = buildShopeeTokenRecord(
+    key,
+    { ...existing, ...record, obtained_at: record.obtained_at ?? Math.floor(Date.now() / 1e3) },
+    existing?.oauth_shop_id || key,
+    existing
+  );
+  saveShopeeTokens(tokens);
+  if (tokens[key]?.access_token) {
+    tokenCacheSet(key, tokens[key].access_token, tokens[key].expire_in);
+  }
+  console.log(`[Shopee Tokens] Saved token for shop_id=${key}. All shops: [${Object.keys(tokens).join(", ")}]`);
+}
+function listChannelSettingsShopIds() {
+  try {
+    if (!import_fs10.default.existsSync(CHANNEL_SETTINGS_PATH)) return [];
+    const raw = import_fs10.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
+    const parsed = raw.trim() ? JSON.parse(raw) : {};
+    const shops = Array.isArray(parsed?.shops) ? parsed.shops : [];
+    const ids = [];
+    for (const shop of shops) {
+      const platform = String(shop?.platform || "").toLowerCase();
+      if (platform && platform !== "shopee") continue;
+      const id = normalizeShopIdKey(shop?.shopId || shop?.id);
+      if (id) ids.push(id);
+    }
+    return ids;
+  } catch {
+    return [];
+  }
+}
+function shopHasOwnToken(tokens, shopId) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) return false;
+  const rec = tokens[key];
+  return Boolean(rec?.access_token || rec?.refresh_token);
+}
+function listShopeeOAuthShopIds() {
+  return listShopeeSyncShopIds();
+}
+function listShopeeSyncShopIds(preloadedTokens) {
+  const tokens = preloadedTokens && typeof preloadedTokens === "object" ? preloadedTokens : loadShopeeTokens();
+  const ids = /* @__PURE__ */ new Set();
+  for (const id of CANONICAL_SHOPEE_SHOP_IDS) {
+    const key = normalizeShopIdKey(id);
+    if (key) ids.add(key);
+  }
+  for (const id of listChannelSettingsShopIds()) ids.add(id);
+  for (const [rawKey, record] of Object.entries(tokens)) {
+    const key = normalizeShopIdKey(rawKey);
+    if (key) ids.add(key);
+    const recordShopId = normalizeShopIdKey(record?.shop_id);
+    if (recordShopId) ids.add(recordShopId);
+  }
+  const list = [...ids].sort();
+  for (const id of list) {
+    if (!shopHasOwnToken(tokens, id)) {
+      console.error(
+        `[Shopee Tokens] THI\u1EBEU token ri\xEAng shop_id=${id}. C\u1EA4M d\xF9ng token shop kh\xE1c. V\xE0o C\xE0i \u0111\u1EB7t \u2192 \u1EE6y quy\u1EC1n l\u1EA1i Shop ${id}.`
+      );
+    }
+  }
+  return list;
+}
+function ensureShopeeLinkedShopTokenKeys() {
+  const tokens = normalizeTokenStore(loadShopeeTokens());
+  const updates = {};
+  let pruned = 0;
+  for (const [rawKey, record] of Object.entries(tokens)) {
+    if (!record?.access_token && !record?.refresh_token) continue;
+    const owner = normalizeShopIdKey(rawKey) || normalizeShopIdKey(record?.shop_id);
+    if (!owner) continue;
+    const list = Array.isArray(record?.shop_id_list) ? record.shop_id_list.map((x2) => normalizeShopIdKey(x2)).filter(Boolean) : [];
+    if (list.length <= 1) {
+      if (list.length !== 1 || list[0] !== owner) {
+        updates[owner] = {
+          ...record,
+          shop_id: owner,
+          shop_id_list: [owner]
+        };
+        pruned += 1;
+      }
+      continue;
+    }
+    const oauth = normalizeShopIdKey(record?.oauth_shop_id) || owner;
+    for (const id of list) {
+      if (id === owner) continue;
+      const existing = tokens[id] || updates[id];
+      const foreignIndependent = INDEPENDENT_SHOPEE_SHOP_IDS.has(owner) && INDEPENDENT_SHOPEE_SHOP_IDS.has(id);
+      if (foreignIndependent || !existing?.access_token || !existing?.refresh_token) {
+        console.error(
+          `[Shopee Tokens] C\u1EA4M clone token shop_id=${owner} \u2192 ${id}. Shop ${id} c\u1EA7n OAuth ri\xEAng (C\xE0i \u0111\u1EB7t \u2192 \u1EE6y quy\u1EC1n l\u1EA1i).`
+        );
+        continue;
+      }
+      if (existing.refresh_token && record.refresh_token && String(existing.refresh_token) !== String(record.refresh_token)) {
+        continue;
+      }
+      const mergedList = [...new Set([...(existing.shop_id_list || []).map(normalizeShopIdKey), ...list].filter(Boolean))];
+      if (mergedList.join(",") !== (existing.shop_id_list || []).map(normalizeShopIdKey).join(",")) {
+        updates[id] = {
+          ...existing,
+          shop_id: id,
+          oauth_shop_id: existing.oauth_shop_id || oauth,
+          shop_id_list: mergedList
+        };
+      }
+    }
+  }
+  for (const [rawKey, record] of Object.entries({ ...tokens, ...updates })) {
+    const key = normalizeShopIdKey(rawKey);
+    if (!key || !record) continue;
+    const oauth = normalizeShopIdKey(record.oauth_shop_id);
+    if (!oauth || oauth === key) continue;
+    const ownerRec = updates[oauth] || tokens[oauth];
+    if (!ownerRec) continue;
+    const ownerList = Array.isArray(ownerRec.shop_id_list) ? ownerRec.shop_id_list.map(normalizeShopIdKey).filter(Boolean) : [oauth];
+    const sameRefresh = record.refresh_token && ownerRec.refresh_token && String(record.refresh_token) === String(ownerRec.refresh_token);
+    const foreignIndependent = INDEPENDENT_SHOPEE_SHOP_IDS.has(key) && INDEPENDENT_SHOPEE_SHOP_IDS.has(oauth);
+    if (sameRefresh && (!ownerList.includes(key) || foreignIndependent)) {
+      console.error(
+        `[Shopee Tokens] G\u1EE1 shop clone gi\u1EA3 shop_id=${key} (token thu\u1ED9c ${oauth}, kh\xF4ng c\xF3 trong shop_id_list). C\u1EA7n OAuth ri\xEAng shop ${key}.`
+      );
+      delete updates[key];
+      if (tokens[key]) {
+        updates[`__delete__${key}`] = true;
+      }
+      pruned += 1;
+    }
+  }
+  const deleteKeys = Object.keys(updates).filter((k) => k.startsWith("__delete__"));
+  for (const dk of deleteKeys) {
+    delete updates[dk];
+  }
+  if (Object.keys(updates).length > 0 || deleteKeys.length > 0) {
+    const next = normalizeTokenStore(loadShopeeTokens());
+    for (const dk of deleteKeys) {
+      const id = dk.replace(/^__delete__/, "");
+      delete next[id];
+    }
+    Object.assign(next, updates);
+    import_fs10.default.writeFileSync(SHOPEE_TOKENS_PATH, JSON.stringify(next, null, 2), "utf8");
+    console.log(
+      `[Shopee Tokens] ensureLinkedShopTokenKeys \u2014 upsert=[${Object.keys(updates).join(", ")}] deleted=[${deleteKeys.map((k) => k.replace(/^__delete__/, "")).join(", ")}] pruned=${pruned}`
+    );
+  }
+  return listShopeeSyncShopIds();
+}
+function propagateShopeeTokenToLinkedShops(sourceShopId, patch, opts) {
+  const key = normalizeShopIdKey(sourceShopId);
+  if (!key || !patch?.access_token) return;
+  const tokens = normalizeTokenStore(loadShopeeTokens());
+  const record = getShopeeTokenRecord(tokens, key) || tokens[key];
+  if (!record) {
+    saveShopeeTokenForShop(key, patch);
+    tokenCacheSet(key, patch.access_token, patch.expire_in);
+    return;
+  }
+  const fromPatch = Array.isArray(patch.shop_id_list) ? patch.shop_id_list.map((x2) => normalizeShopIdKey(x2)).filter(Boolean) : [];
+  const linked = new Set(fromPatch.length ? fromPatch : [key]);
+  linked.add(key);
+  const oauth = normalizeShopIdKey(record.oauth_shop_id);
+  const onlyMatchingRefresh = opts?.onlyMatchingRefreshToken ? String(opts.onlyMatchingRefreshToken) : "";
+  const updates = {};
+  for (const id of linked) {
+    if (id !== key && INDEPENDENT_SHOPEE_SHOP_IDS.has(key) && INDEPENDENT_SHOPEE_SHOP_IDS.has(id)) {
+      console.error(
+        `[Shopee Tokens] C\u1EA4M propagate token shop_id=${key} \u2192 ${id}. Shop ${id} c\u1EA7n OAuth ri\xEAng.`
+      );
+      continue;
+    }
+    const existing = tokens[id] || (id === key ? record : null);
+    if (onlyMatchingRefresh && existing?.refresh_token && String(existing.refresh_token) !== onlyMatchingRefresh && id !== key) {
+      continue;
+    }
+    if (id !== key && existing?.refresh_token && onlyMatchingRefresh && String(existing.refresh_token) !== onlyMatchingRefresh) {
+      continue;
+    }
+    updates[id] = buildShopeeTokenRecord(
+      id,
+      {
+        access_token: patch.access_token,
+        refresh_token: patch.refresh_token,
+        expire_in: patch.expire_in,
+        obtained_at: patch.obtained_at,
+        shop_id_list: [...linked]
+      },
+      normalizeShopIdKey(existing?.oauth_shop_id) || oauth || key,
+      existing || record
+    );
+    tokenCacheSet(id, patch.access_token, patch.expire_in);
+  }
+  saveShopeeTokens(updates);
+  console.log(
+    `[Shopee Tokens] propagate from=${key} \u2192 [${Object.keys(updates).join(", ")}] list=[${[...linked].join(",")}]`
+  );
+}
+function shopeeSign(apiPath, timestamp, accessToken, shopId) {
+  const baseString = accessToken && shopId ? `${SHOPEE_PARTNER_ID}${apiPath}${timestamp}${accessToken}${shopId}` : `${SHOPEE_PARTNER_ID}${apiPath}${timestamp}`;
+  return import_crypto.default.createHmac("sha256", SHOPEE_PARTNER_KEY).update(baseString).digest("hex");
+}
+async function exchangeShopeeCodeForToken(code, opts) {
+  const shopId = normalizeShopIdKey(opts.shopId);
+  const mainAccountId = normalizeShopIdKey(opts.mainAccountId);
+  if (!isShopeeConfigValid()) {
+    const error = {
+      error: "invalid_partner_config",
+      message: `SHOPEE_PARTNER_ID/"${SHOPEE_PARTNER_ID}" ho\u1EB7c SHOPEE_PARTNER_KEY trong .env ch\u01B0a ph\u1EA3i gi\xE1 tr\u1ECB Live th\u1EF1c. Vui l\xF2ng \u0111i\u1EC1n \u0111\xFAng Partner ID (s\u1ED1 nguy\xEAn) v\xE0 Partner Key t\u1EEB App PRODUCTION tr\xEAn open.shopee.com r\u1ED3i th\u1EED l\u1EA1i.`
+    };
+    console.error(`[Shopee OAuth] \u274C Kh\xF4ng th\u1EC3 \u0111\u1ED5i code: ${error.message}`);
+    return error;
+  }
+  if (!shopId && !mainAccountId) {
+    return {
+      error: "missing_shop_or_main_account",
+      message: "Shopee token/get c\u1EA7n shop_id HO\u1EB6C main_account_id (kh\xF4ng \u0111\u01B0\u1EE3c thi\u1EBFu c\u1EA3 hai)."
+    };
+  }
+  const apiPath = "/api/v2/auth/token/get";
+  const timestamp = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp);
+  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&sign=${sign}`;
+  const body = {
+    code,
+    partner_id: Number(SHOPEE_PARTNER_ID)
+  };
+  if (mainAccountId) {
+    body.main_account_id = Number(mainAccountId);
+  } else if (shopId) {
+    body.shop_id = Number(shopId);
+  }
+  console.log(
+    "[Shopee OAuth] token/get request",
+    JSON.stringify({
+      shop_id: shopId || null,
+      main_account_id: mainAccountId || null,
+      partner_id: SHOPEE_PARTNER_ID,
+      url_host: SHOPEE_HOST
+    })
+  );
+  let res;
+  let rawText;
+  try {
+    res = await fetchWithTimeout(url2, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    rawText = await res.text();
+  } catch (error) {
+    deps4.logOAuthSaveError("exchangeShopeeCodeForToken fetch", error);
+    return {
+      error: "network_error",
+      message: error?.message || "Kh\xF4ng g\u1ECDi \u0111\u01B0\u1EE3c Shopee token/get"
+    };
+  }
+  console.log("DEBUG RAW RESPONSE:", rawText);
+  let json2;
+  try {
+    json2 = rawText ? parseShopeeJson(rawText) : {};
+  } catch (parseErr) {
+    console.error("[Shopee OAuth] Kh\xF4ng parse \u0111\u01B0\u1EE3c JSON t\u1EEB Shopee:", parseErr);
+    return { error: "invalid_json", message: rawText.slice(0, 500) };
+  }
+  json2 = normalizeShopeeTokenResponse(json2);
+  console.log("DEBUG NORMALIZED RESPONSE:", JSON.stringify(json2));
+  console.log(`[Shopee API] POST ${apiPath} (env=${SHOPEE_ENV}) -> HTTP ${res.status}`);
+  if (json2.access_token && json2.refresh_token) {
+    console.log(
+      "[Shopee OAuth] \u0110\xC3 L\u1EA4Y TOKEN T\u1EEA SHOPEE",
+      JSON.stringify({
+        shop_id: shopId || null,
+        main_account_id: mainAccountId || null,
+        access_token: `${String(json2.access_token).slice(0, 16)}\u2026`,
+        refresh_token: `${String(json2.refresh_token).slice(0, 16)}\u2026`,
+        expire_in: json2.expire_in,
+        shop_id_list: json2.shop_id_list || []
+      })
+    );
+  } else {
+    console.error(
+      "[Shopee OAuth] SHOPEE KH\xD4NG TR\u1EA2 \u0111\u1EE7 access_token/refresh_token",
+      JSON.stringify({
+        shop_id: shopId || null,
+        main_account_id: mainAccountId || null,
+        httpStatus: res.status,
+        error: json2.error || null,
+        message: json2.message || null,
+        keys: Object.keys(json2)
+      })
+    );
+  }
+  return json2;
+}
+async function refreshShopeeToken(shopId, refreshToken) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key || !refreshToken) {
+    return { error: "invalid_refresh_params", message: `Thi\u1EBFu shop_id ho\u1EB7c refresh_token (shop_id=${shopId})` };
+  }
+  const apiPath = "/api/v2/auth/access_token/get";
+  const timestamp = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp);
+  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&sign=${sign}`;
+  try {
+    const res = await fetchWithTimeout(url2, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        refresh_token: String(refreshToken),
+        shop_id: Number(key),
+        partner_id: Number(SHOPEE_PARTNER_ID)
+      })
+    });
+    const rawText = await res.text();
+    const json2 = rawText ? parseShopeeJson(rawText) : {};
+    console.log(
+      `[Shopee API] POST ${apiPath} (refresh shop_id=${key}) -> HTTP ${res.status}:`,
+      JSON.stringify(json2)
+    );
+    const normalized = normalizeShopeeTokenResponse(json2);
+    if (normalized.access_token) {
+      const apiList = Array.isArray(normalized.shop_id_list) ? normalized.shop_id_list : Array.isArray(json2?.shop_id_list) ? json2.shop_id_list : [];
+      const shopIdListForSave = apiList.length ? apiList.map((x2) => normalizeShopIdKey(x2)).filter(Boolean) : [key];
+      saveShopeeTokenForShop(key, {
+        access_token: normalized.access_token,
+        refresh_token: normalized.refresh_token || refreshToken,
+        expire_in: normalized.expire_in,
+        obtained_at: Math.floor(Date.now() / 1e3),
+        shop_id_list: shopIdListForSave
+      });
+      tokenCacheSet(key, normalized.access_token, normalized.expire_in);
+      return {
+        ...normalized,
+        shop_id: key,
+        shop_id_list: shopIdListForSave
+      };
+    }
+    console.error(
+      `[Shopee API] Refresh token th\u1EA5t b\u1EA1i shop_id=${key}:`,
+      normalized.error || json2.error,
+      normalized.message || json2.message
+    );
+    return { ...normalized, shop_id: key };
+  } catch (error) {
+    deps4.logOAuthSaveError(`refreshShopeeToken shop_id=${key}`, error);
+    return { error: "refresh_failed", message: error?.message || String(error), shop_id: key };
+  }
+}
+var ShopeeRefreshTokenExpiredError = class extends Error {
+  constructor(shopId) {
+    super(SHOPEE_REAUTH_REQUIRED_MESSAGE);
+    this.name = "ShopeeRefreshTokenExpiredError";
+    this.shopId = shopId;
+    this.code = "shopee_reauth_required";
+  }
+};
+function isShopeeInvalidTokenError(error, message) {
+  const text = `${error || ""} ${message || ""}`.toLowerCase();
+  return /invalid_acceess_token|invalid_access_token|error_auth|invalid_token|access_token.*expire|token.*expire|token.*invalid|unauthorized|hết hạn|không hợp lệ/.test(
+    text
+  );
+}
+var shopeeTokenRefreshLocks = /* @__PURE__ */ new Map();
+var shopeeAccessTokenCache = /* @__PURE__ */ new Map();
+function tokenCacheGet(shopId) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) return null;
+  const entry = shopeeAccessTokenCache.get(key);
+  if (!entry?.token) return null;
+  if (Math.floor(Date.now() / 1e3) >= Number(entry.expiresAt || 0)) {
+    shopeeAccessTokenCache.delete(key);
+    return null;
+  }
+  return String(entry.token);
+}
+function tokenCacheSet(shopId, token, expireIn) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key || !token) return;
+  const ttl = Math.max(60, Number(expireIn) || 14400) - 60;
+  shopeeAccessTokenCache.set(key, {
+    token: String(token),
+    expiresAt: Math.floor(Date.now() / 1e3) + ttl
+  });
+}
+function tokenCacheClear(shopId) {
+  const key = normalizeShopIdKey(shopId);
+  if (key) {
+    shopeeAccessTokenCache.delete(key);
+    shopeeShopTokenVerifyCache.delete(key);
+  }
+}
+var shopeeShopTokenVerifyCache = /* @__PURE__ */ new Map();
+function shopTokenVerifyCacheOk(shopId, token) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key || !token) return false;
+  const entry = shopeeShopTokenVerifyCache.get(key);
+  if (!entry?.tokenTail) return false;
+  if (Math.floor(Date.now() / 1e3) >= Number(entry.expiresAt || 0)) {
+    shopeeShopTokenVerifyCache.delete(key);
+    return false;
+  }
+  return entry.tokenTail === String(token).slice(-8);
+}
+function shopTokenVerifyCacheSet(shopId, token) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key || !token) return;
+  shopeeShopTokenVerifyCache.set(key, {
+    tokenTail: String(token).slice(-8),
+    expiresAt: Math.floor(Date.now() / 1e3) + 10 * 60
+  });
+}
+function resolveRefreshLockKey(shopId, record) {
+  const key = normalizeShopIdKey(shopId);
+  const oauth = normalizeShopIdKey(record?.oauth_shop_id);
+  if (oauth) return `oauth:${oauth}`;
+  const rt = record?.refresh_token ? String(record.refresh_token) : "";
+  if (rt) return `rt:${rt.slice(0, 32)}`;
+  return `shop:${key}`;
+}
+function readShopeeAccessTokenIfFresh(shopId) {
+  const key = normalizeShopIdKey(shopId);
+  const cached = tokenCacheGet(key);
+  if (cached) return cached;
+  const tokens = loadShopeeTokens();
+  const record = getShopeeTokenRecord(tokens, key);
+  if (!record?.access_token) return null;
+  const now = Math.floor(Date.now() / 1e3);
+  const obtainedAt = Number(record.obtained_at) || 0;
+  const expireIn = Number(record.expire_in) || 14400;
+  if (obtainedAt > 0 && now - obtainedAt >= expireIn - 60) return null;
+  tokenCacheSet(key, record.access_token, expireIn - (now - obtainedAt));
+  return String(record.access_token);
+}
+async function refreshShopeeAccessTokenLocked(shopId, opts) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) throw new ShopeeRefreshTokenExpiredError(String(shopId || "?"));
+  const tokensPeek = loadShopeeTokens();
+  const recordPeek = getShopeeTokenRecord(tokensPeek, key);
+  const lockKey = resolveRefreshLockKey(key, recordPeek);
+  const inflight = shopeeTokenRefreshLocks.get(lockKey);
+  if (inflight) {
+    console.log(`[Shopee Token] Mutex: ch\u1EDD refresh lock=${lockKey} (shop_id=${key})`);
+    await inflight;
+    const afterWait = readShopeeAccessTokenIfFresh(key);
+    if (afterWait) return afterWait;
+    const tokensAfter = loadShopeeTokens();
+    const recAfter = getShopeeTokenRecord(tokensAfter, key);
+    if (recAfter?.access_token) {
+      tokenCacheSet(key, recAfter.access_token, recAfter.expire_in);
+      return String(recAfter.access_token);
+    }
+    throw new ShopeeRefreshTokenExpiredError(key);
+  }
+  const run = (async () => {
+    const tokens = loadShopeeTokens();
+    const record = getShopeeTokenRecord(tokens, key);
+    if (!record) {
+      throw new ShopeeRefreshTokenExpiredError(key);
+    }
+    if (!record.refresh_token) {
+      throw new ShopeeRefreshTokenExpiredError(key);
+    }
+    if (!opts?.force) {
+      const fresh = readShopeeAccessTokenIfFresh(key);
+      if (fresh) return fresh;
+    } else {
+      const now = Math.floor(Date.now() / 1e3);
+      const obtainedAt = Number(record.obtained_at) || 0;
+      if (obtainedAt > 0 && now - obtainedAt < 15 && record.access_token) {
+        console.log(`[Shopee Token] B\u1ECF qua force refresh \u2014 token v\u1EEBa m\u1EDBi (${now - obtainedAt}s) shop_id=${key}`);
+        tokenCacheSet(key, record.access_token, record.expire_in);
+        return String(record.access_token);
+      }
+    }
+    const oldRefresh = String(record.refresh_token);
+    const oauthOwner = normalizeShopIdKey(record.oauth_shop_id);
+    console.log(
+      `[Shopee Token] Refresh access_token shop_id=${key} force=${Boolean(opts?.force)} lock=${lockKey}...`
+    );
+    let refreshed = await refreshShopeeToken(key, oldRefresh);
+    let refreshVia = key;
+    if (!refreshed.access_token && oauthOwner && oauthOwner !== key) {
+      console.warn(
+        `[Shopee Token] Refresh shop_id=${key} fail \u2014 retry oauth_shop_id=${oauthOwner}`
+      );
+      refreshed = await refreshShopeeToken(oauthOwner, oldRefresh);
+      refreshVia = oauthOwner;
+    }
+    if (refreshed.access_token) {
+      if (refreshVia !== key) {
+        const verified = await verifyShopeeShopToken(key, refreshed.access_token);
+        if (!verified.ok) {
+          console.error(
+            `[Shopee Token] Token t\u1EEB shop=${refreshVia} KH\xD4NG d\xF9ng \u0111\u01B0\u1EE3c cho shop_id=${key} (error=${verified.error}). C\u1EA7n OAuth ri\xEAng shop ${key}.`
+          );
+          tokenCacheClear(key);
+          throw new ShopeeRefreshTokenExpiredError(key);
+        }
+      }
+      const obtainedAt = Math.floor(Date.now() / 1e3);
+      const apiList = Array.isArray(refreshed.shop_id_list) ? refreshed.shop_id_list.map((x2) => normalizeShopIdKey(x2)).filter(Boolean) : [];
+      const propagateList = apiList.length ? apiList : [refreshVia];
+      if (!propagateList.includes(key) && refreshVia === key) {
+      } else if (!propagateList.includes(key) && refreshVia !== key) {
+        propagateList.push(key);
+      }
+      propagateShopeeTokenToLinkedShops(
+        refreshVia,
+        {
+          access_token: refreshed.access_token,
+          refresh_token: refreshed.refresh_token || oldRefresh,
+          expire_in: refreshed.expire_in,
+          obtained_at: obtainedAt,
+          shop_id_list: propagateList
+        },
+        { onlyMatchingRefreshToken: oldRefresh }
+      );
+      tokenCacheSet(key, refreshed.access_token, refreshed.expire_in);
+      if (refreshVia !== key) {
+        tokenCacheSet(refreshVia, refreshed.access_token, refreshed.expire_in);
+      }
+      console.log(
+        `[Shopee Token] Refresh OK shop_id=${key} via=${refreshVia} list=[${propagateList.join(",")}]`
+      );
+      return String(refreshed.access_token);
+    }
+    tokenCacheClear(key);
+    console.error(
+      `[Shopee Token] Refresh TH\u1EA4T B\u1EA0I shop_id=${key}:`,
+      refreshed.error || refreshed.message
+    );
+    throw new ShopeeRefreshTokenExpiredError(key);
+  })().finally(() => {
+    shopeeTokenRefreshLocks.delete(lockKey);
+  });
+  shopeeTokenRefreshLocks.set(lockKey, run);
+  return run;
+}
+async function getShopeeAccessTokenForApi(shopKey, opts) {
+  const fileKey = normalizeShopIdKey(shopKey);
+  if (!fileKey) return null;
+  const tokens = loadShopeeTokens();
+  const record = getShopeeTokenRecord(tokens, fileKey);
+  if (!record?.refresh_token && !record?.access_token) return null;
+  const apiShopId = fileKey;
+  try {
+    if (opts?.forceRefresh) {
+      const token2 = await refreshShopeeAccessTokenLocked(fileKey, { force: true });
+      return { token: token2, apiShopId, fileKey };
+    }
+    const token = await getValidShopeeAccessToken(fileKey);
+    if (!token) return null;
+    return { token, apiShopId, fileKey };
+  } catch (err) {
+    if (err instanceof ShopeeRefreshTokenExpiredError) {
+      console.error(`[Shopee Token] ${err.message} shop_id=${err.shopId}`);
+      return null;
+    }
+    throw err;
+  }
+}
+async function verifyShopeeShopToken(shopId, accessToken) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key || !accessToken) return { ok: false, error: "missing_shop_or_token" };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12e3);
+  try {
+    const apiPath = "/api/v2/shop/get_shop_info";
+    const timestamp = Math.floor(Date.now() / 1e3);
+    const sign = shopeeSign(apiPath, timestamp, accessToken, key);
+    const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${key}&sign=${sign}`;
+    const res = await fetch(url2, { signal: controller.signal });
+    const rawText = await res.text();
+    const json2 = rawText ? parseShopeeJson(rawText) : {};
+    const err = String(json2?.error || "").trim();
+    if (err) return { ok: false, error: err };
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error?.message || String(error) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function resolveShopeeApiShopId(record, configuredShopId) {
+  const configured = normalizeShopIdKey(configuredShopId);
+  if (configured) return configured;
+  const recordKey = normalizeShopIdKey(record?.shop_id);
+  if (recordKey) return recordKey;
+  return normalizeShopIdKey(record?.oauth_shop_id) || "";
+}
+async function getValidShopeeAccessToken(shopId) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) {
+    console.error(
+      "[Shopee API] getValidShopeeAccessToken: THI\u1EBEU shop_id \u2014 t\u1EEB ch\u1ED1i g\u1ECDi (h\u1EC7 th\u1ED1ng \u0111a shop b\u1EAFt bu\u1ED9c truy\u1EC1n shop_id)."
+    );
+    return null;
+  }
+  const tokens = loadShopeeTokens();
+  const record = getShopeeTokenRecord(tokens, key);
+  if (!record) {
+    const available = listAuthorizedShopeeShopIds();
+    console.warn(
+      `[Shopee API] Ch\u01B0a c\xF3 token record cho shop_id=${key}. Shop \u0111\xE3 \u1EE7y quy\u1EC1n: [${available.join(", ") || "kh\xF4ng c\xF3"}]`
+    );
+    return null;
+  }
+  const oauth = normalizeShopIdKey(record.oauth_shop_id);
+  const recordOwner = normalizeShopIdKey(record.shop_id);
+  const needsVerify = Boolean(oauth && oauth !== key || recordOwner && recordOwner !== key);
+  const cacheHit = Boolean(tokenCacheGet(key));
+  const rejectForeignToken = (reason) => {
+    console.error(
+      `[Shopee API] shop_id=${key} token kh\xF4ng thu\u1ED9c shop n\xE0y (oauth=${oauth || "-"} owner=${recordOwner || "-"} error=${reason}). C\u1EA7n OAuth ri\xEAng shop ${key} \u2014 kh\xF4ng d\xF9ng token shop kh\xE1c.`
+    );
+    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=${cacheHit ? "hit" : "miss"} verified=no`);
+    tokenCacheClear(key);
+    return null;
+  };
+  const fresh = readShopeeAccessTokenIfFresh(key);
+  if (fresh) {
+    if (needsVerify) {
+      if (shopTokenVerifyCacheOk(key, fresh)) {
+        console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=${cacheHit ? "hit" : "miss"} verified=yes`);
+        return fresh;
+      }
+      const verified = await verifyShopeeShopToken(key, fresh);
+      if (!verified.ok) return rejectForeignToken(verified.error);
+      shopTokenVerifyCacheSet(key, fresh);
+      console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=${cacheHit ? "hit" : "miss"} verified=yes`);
+      return fresh;
+    }
+    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=${cacheHit ? "hit" : "miss"} verified=n/a`);
+    return fresh;
+  }
+  if (!record.refresh_token) {
+    console.error(`[Shopee API] Shop ${key} thi\u1EBFu refresh_token \u2014 c\u1EA7n OAuth l\u1EA1i.`);
+    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
+    return null;
+  }
+  try {
+    console.log(
+      `[Shopee API] access_token shop_id=${key} H\u1EBET H\u1EA0N (expired) \u2014 g\u1ECDi Refresh Token \u2192 l\u01B0u DB...`
+    );
+    const refreshed = await refreshShopeeAccessTokenLocked(key, { force: false });
+    if (!refreshed) {
+      console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
+      return null;
+    }
+    if (needsVerify) {
+      const verified = await verifyShopeeShopToken(key, refreshed);
+      if (!verified.ok) return rejectForeignToken(verified.error);
+      shopTokenVerifyCacheSet(key, refreshed);
+      console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=yes`);
+      return refreshed;
+    }
+    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=n/a`);
+    return refreshed;
+  } catch (err) {
+    if (err instanceof ShopeeRefreshTokenExpiredError) {
+      console.error(`[Shopee API] ${err.message}`);
+      console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
+      return null;
+    }
+    console.error(`[Shopee API] Refresh token th\u1EA5t b\u1EA1i shop_id=${key}:`, err);
+    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
+    return null;
+  }
+}
+async function withShopeeAccessTokenRetry(shopId, runner, isAuthFailure) {
+  const key = normalizeShopIdKey(shopId);
+  let token = await getValidShopeeAccessToken(key);
+  if (!token) {
+    throw new ShopeeRefreshTokenExpiredError(key || String(shopId || "?"));
+  }
+  let result = await runner(token);
+  const failed = isAuthFailure && isAuthFailure(result) || result && typeof result === "object" && (Number(result.httpStatus) === 401 || Number(result.httpStatus) === 403 || isShopeeInvalidTokenError(result.error, result.message));
+  if (!failed) return result;
+  console.warn(`[Shopee Token] API b\xE1o token h\u1EBFt h\u1EA1n shop_id=${key} \u2014 force refresh + retry 1 l\u1EA7n`);
+  tokenCacheClear(key);
+  token = await refreshShopeeAccessTokenLocked(key, { force: true });
+  return runner(token);
+}
+function listAuthorizedShopeeShopIds() {
+  const tokens = loadShopeeTokens();
+  const ids = /* @__PURE__ */ new Set();
+  for (const [rawKey, record] of Object.entries(tokens || {})) {
+    if (!record?.access_token && !record?.refresh_token) continue;
+    const key = normalizeShopIdKey(rawKey) || normalizeShopIdKey(record?.shop_id);
+    if (key) ids.add(key);
+  }
+  return [...ids].sort();
+}
+function resolveShopeeTokenShopId(requested) {
+  const authorized = listAuthorizedShopeeShopIds();
+  if (!authorized.length) {
+    console.warn(
+      "[Shopee Auth] resolveShopeeTokenShopId: DB kh\xF4ng c\xF3 shop n\xE0o \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n (shopee_tokens tr\u1ED1ng)."
+    );
+    return null;
+  }
+  const req = String(requested || "").trim();
+  if (!req) {
+    if (authorized.length === 1) return authorized[0];
+    console.warn(
+      `[Shopee Auth] resolveShopeeTokenShopId: \u0110A SHOP (${authorized.length} shop: [${authorized.join(", ")}]) \u2014 thi\u1EBFu shop_id. T\u1EA1m fallback v\u1EC1 ${authorized[0]} \u0111\u1EC3 tr\xE1nh crash.`
+    );
+    return authorized[0];
+  }
+  const tokens = loadShopeeTokens();
+  if (tokens[req]) return req;
+  const digits = normalizeShopIdKey(req) || req.match(/(\d{5,})/)?.[1] || "";
+  if (digits && tokens[digits]) return digits;
+  if (digits) {
+    const linked = getShopeeTokenRecord(tokens, digits);
+    if (linked) {
+      console.log(
+        `[Shopee Auth] resolveShopeeTokenShopId: shop_id=${digits} t\xECm th\u1EA5y qua linked/oauth record.`
+      );
+      return digits;
+    }
+    console.warn(
+      `[Shopee Auth] resolveShopeeTokenShopId: y\xEAu c\u1EA7u shop_id=${digits} nh\u01B0ng kh\xF4ng c\xF3 token. Shops: [${authorized.join(", ")}]`
+    );
+    return digits;
+  }
+  return null;
+}
+function resolveShopeeShopIdsForSync(requested) {
+  const req = String(requested || "").trim();
+  if (req) {
+    const one = resolveShopeeTokenShopId(req);
+    return one ? [one] : [];
+  }
+  const all3 = listAuthorizedShopeeShopIds();
+  console.log(
+    `[Shopee Auth] resolveShopeeShopIdsForSync: kh\xF4ng truy\u1EC1n shop_id \u2014 d\xF9ng T\u1EA4T C\u1EA2 ${all3.length} shop: [${all3.join(", ")}]`
+  );
+  return all3;
+}
+function getShopeeUnauthorizedShopMessage() {
+  const keys = listAuthorizedShopeeShopIds();
+  if (!keys.length) {
+    return "Ch\u01B0a c\xF3 shop Shopee \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n trong h\u1EC7 th\u1ED1ng. V\xE0o m\u1EE5c C\xE0i \u0111\u1EB7t \u2192 \u1EE6y quy\u1EC1n l\u1EA1i Shop Shopee r\u1ED3i th\u1EED \u0111\u1ED3ng b\u1ED9 l\u1EA1i.";
+  }
+  return `H\u1EC7 th\u1ED1ng c\xF3 ${keys.length} shop Shopee \u0111\xE3 \u1EE7y quy\u1EC1n ([${keys.join(", ")}]) nh\u01B0ng thi\u1EBFu shop_id c\u1EE5 th\u1EC3 ho\u1EB7c token shop y\xEAu c\u1EA7u kh\xF4ng h\u1EE3p l\u1EC7. V\xE0o m\u1EE5c C\xE0i \u0111\u1EB7t ki\u1EC3m tra \u1EE7y quy\u1EC1n.`;
+}
+function describeShopeeTokenFailure(shopKey) {
+  const tokens = loadShopeeTokens();
+  const key = normalizeShopIdKey(shopKey);
+  const record = getShopeeTokenRecord(tokens, key);
+  if (!record) {
+    return {
+      error: "shopee_reauth_required",
+      message: SHOPEE_REAUTH_REQUIRED_MESSAGE
+    };
+  }
+  if (!record.refresh_token) {
+    return {
+      error: "shopee_reauth_required",
+      message: SHOPEE_REAUTH_REQUIRED_MESSAGE
+    };
+  }
+  const now = Math.floor(Date.now() / 1e3);
+  const obtainedAt = Number(record.obtained_at) || 0;
+  const expireIn = Number(record.expire_in) || 14400;
+  const isExpired = obtainedAt > 0 && now - obtainedAt >= expireIn - 60;
+  if (isExpired) {
+    return {
+      error: "shopee_reauth_required",
+      message: SHOPEE_REAUTH_REQUIRED_MESSAGE
+    };
+  }
+  return {
+    error: "shopee_reauth_required",
+    message: SHOPEE_REAUTH_REQUIRED_MESSAGE
+  };
+}
+
+// controllers/financeController.js
+var SYNC_API_MAX = 25;
+var SYNC_CANDIDATE_LIMIT = 200;
+var SYNC_DELAY_MS = 450;
+var SYNC_TIME_BUDGET_MS = 5e4;
+var DISPUTE_MIN_VND = 2e3;
+var FRESH_SYNC_MS = 6 * 60 * 60 * 1e3;
+var syncInFlight = false;
+function sleep3(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+function roundVnd(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n);
+}
+function posVnd(raw) {
+  return Math.max(0, roundVnd(raw));
+}
+function mongoReady2() {
+  return import_mongoose5.default.connection.readyState === 1 && Boolean(import_mongoose5.default.connection.db);
+}
+function parseVnDayStart(ymd) {
+  const s2 = String(ymd || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s2)) return null;
+  const d = /* @__PURE__ */ new Date(`${s2}T00:00:00+07:00`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+function parseVnDayEnd(ymd) {
+  const s2 = String(ymd || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s2)) return null;
+  const d = /* @__PURE__ */ new Date(`${s2}T23:59:59.999+07:00`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+function loadShopNameMap() {
+  const map = /* @__PURE__ */ new Map();
+  try {
+    const file = import_path11.default.join(resolveAppRoot(), "data", "channel_settings.json");
+    if (!import_fs11.default.existsSync(file)) return map;
+    const parsed = JSON.parse(import_fs11.default.readFileSync(file, "utf-8"));
+    const shops = Array.isArray(parsed?.shops) ? parsed.shops : [];
+    for (const shop of shops) {
+      const id = String(shop?.shopId || "").trim();
+      if (!id) continue;
+      map.set(id, String(shop?.shopName || "").trim());
+    }
+  } catch (err) {
+    console.warn("[Finance] Kh\xF4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c t\xEAn shop:", err?.message || err);
+  }
+  return map;
+}
+function readImportPrice(row) {
+  if (!row || typeof row !== "object") return 0;
+  const candidates = [row.importPrice, row.import_price, row.last_import_price, row.cost_price];
+  for (const raw of candidates) {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return Math.round(n);
+  }
+  return 0;
+}
+function indexCatalog(products) {
+  const bySku = /* @__PURE__ */ new Map();
+  const byModel = /* @__PURE__ */ new Map();
+  const byItem = /* @__PURE__ */ new Map();
+  const visit = (row) => {
+    if (!row || typeof row !== "object") return;
+    const price = readImportPrice(row);
+    const sku = String(row.sku || row.modelSku || "").trim().toLowerCase();
+    const modelId = String(row.shopeeModelId || row.modelId || "").trim();
+    const itemId = String(row.shopeeItemId || row.productId || row.id || "").trim();
+    if (sku && price > 0 && !bySku.has(sku)) bySku.set(sku, price);
+    if (modelId && modelId !== "0" && price > 0 && !byModel.has(modelId)) byModel.set(modelId, price);
+    if (itemId && price > 0 && !byItem.has(itemId)) byItem.set(itemId, price);
+    const children = [].concat(Array.isArray(row.children) ? row.children : []).concat(Array.isArray(row.children_models) ? row.children_models : []);
+    for (let i2 = 0; i2 < children.length; i2 += 1) visit(children[i2]);
+  };
+  const list = Array.isArray(products) ? products : [];
+  for (let i2 = 0; i2 < list.length; i2 += 1) visit(list[i2]);
+  return { bySku, byModel, byItem };
+}
+function lineActualCost(item, catalog) {
+  const qty = Math.max(0, Number(item?.quantity ?? item?.qty) || 0);
+  if (qty <= 0) return 0;
+  let unit = readImportPrice(item);
+  if (unit <= 0 && catalog) {
+    const sku = String(item?.modelSku || item?.sku || "").trim().toLowerCase();
+    const modelId = String(item?.modelId || "").trim();
+    const itemId = String(item?.productId || item?.item_id || "").trim();
+    if (sku && catalog.bySku.has(sku)) unit = catalog.bySku.get(sku);
+    else if (modelId && modelId !== "0" && catalog.byModel.has(modelId)) unit = catalog.byModel.get(modelId);
+    else if (itemId && catalog.byItem.has(itemId)) unit = catalog.byItem.get(itemId);
+  }
+  const line = qty * Math.max(0, unit || 0);
+  return Number.isFinite(line) ? Math.round(line) : 0;
+}
+function orderActualCost(data, catalog) {
+  const items = Array.isArray(data?.items) ? data.items : [];
+  let total = 0;
+  for (let i2 = 0; i2 < items.length; i2 += 1) {
+    total += lineActualCost(items[i2], catalog);
+  }
+  return total;
+}
+function incomeOf(payload) {
+  const root = payload?.response ?? payload ?? {};
+  return root?.order_income || root?.orderIncome || root?.income_details || {};
+}
+function sellerShippingCost(income) {
+  const finalShip = roundVnd(income?.final_shipping_fee);
+  if (finalShip < 0) return Math.abs(finalShip);
+  const actual = posVnd(income?.actual_shipping_fee);
+  const buyerPaid = posVnd(income?.buyer_paid_shipping_fee);
+  const rebate = posVnd(income?.shopee_shipping_rebate);
+  const discount3pl = posVnd(income?.shipping_fee_discount_from_3pl);
+  const sellerDiscount = posVnd(income?.seller_shipping_discount);
+  return Math.max(0, actual - buyerPaid - rebate - discount3pl + sellerDiscount);
+}
+function taxTotal(income) {
+  return posVnd(income?.commission_fee_tax) + posVnd(income?.service_fee_tax) + posVnd(income?.transaction_fee_tax) + posVnd(income?.withholding_vat_tax) + posVnd(income?.withholding_pit_tax) + posVnd(income?.withholding_cit_tax) + posVnd(income?.escrow_tax) + posVnd(income?.withholding_tax);
+}
+function buildFinanceRow(income, fallbackTotal) {
+  const commission = posVnd(income?.commission_fee) + posVnd(income?.seller_transaction_fee || income?.credit_card_transaction_fee) + posVnd(income?.order_ams_commission_fee);
+  const serviceFee = posVnd(income?.service_fee);
+  const shippingFee = sellerShippingCost(income);
+  const tax = taxTotal(income);
+  const original = posVnd(
+    income?.original_cost_of_goods_sold || income?.cost_of_goods_sold || income?.original_price || income?.order_original_price
+  );
+  const sellerDiscount = posVnd(income?.seller_discount || income?.order_seller_discount);
+  const voucherSeller = posVnd(income?.voucher_from_seller);
+  const coin = posVnd(income?.seller_coin_cash_back);
+  const buyerTotal = posVnd(income?.buyer_total_amount || income?.buyer_paid_amount);
+  const totalAmount = buyerTotal || posVnd(fallbackTotal) || Math.max(0, original - sellerDiscount);
+  const goodsBase = original > 0 ? Math.max(0, original - sellerDiscount) : totalAmount;
+  const expected = Math.round(goodsBase - voucherSeller - commission - serviceFee - shippingFee - tax - coin);
+  const payout = roundVnd(income?.escrow_amount ?? income?.escrow_amount_after_adjustment);
+  const delta = payout - expected;
+  const tolerance = Math.max(DISPUTE_MIN_VND, Math.round(Math.abs(expected) * 0.015));
+  let status = "\u0110\xE3 \u0111\u1ED1i so\xE1t";
+  let isDisputed = false;
+  let reason = "";
+  if (!(payout > 0)) {
+    status = "Ch\u01B0a v\u1EC1 v\xED";
+    isDisputed = true;
+    reason = "\u0110\u01A1n ho\xE0n th\xE0nh nh\u01B0ng ch\u01B0a c\xF3 ti\u1EC1n escrow v\u1EC1 v\xED Shopee";
+  } else if (Math.abs(delta) > tolerance) {
+    status = "L\u1EC7ch ti\u1EC1n";
+    isDisputed = true;
+    const gap = Math.abs(delta).toLocaleString("vi-VN");
+    reason = delta < 0 ? `Thi\u1EBFu kho\u1EA3ng ${gap} \u0111 so v\u1EDBi d\xF2ng ti\u1EC1n d\u1EF1 ki\u1EBFn` : `Th\u1EEBa kho\u1EA3ng ${gap} \u0111 so v\u1EDBi d\xF2ng ti\u1EC1n d\u1EF1 ki\u1EBFn`;
+  }
+  return {
+    total_amount: totalAmount,
+    shopee_commission: commission,
+    service_fee: serviceFee,
+    shipping_fee: shippingFee,
+    withholding_tax: tax,
+    payout_amount: Math.max(0, payout),
+    expected_payout: expected,
+    delta,
+    status,
+    is_disputed: isDisputed,
+    dispute_reason: reason
+  };
+}
+function orderDateOf(doc, data) {
+  const raw = doc?.create_time || data?.date || data?.createdAt || null;
+  if (!raw) return null;
+  const d = raw instanceof Date ? raw : new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+async function fetchEscrowDetail(shopId, accessToken, orderSn) {
+  const apiPath = "/api/v2/payment/get_escrow_detail";
+  const timestamp = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const params = new URLSearchParams({
+    partner_id: SHOPEE_PARTNER_ID,
+    timestamp: String(timestamp),
+    access_token: accessToken,
+    shop_id: String(shopId),
+    sign,
+    order_sn: String(orderSn)
+  });
+  const url2 = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
+  const { json: json2 } = await shopeeFetchJsonWithRetry(
+    url2,
+    `finance get_escrow_detail shop_id=${shopId} order_sn=${orderSn}`
+  );
+  return json2;
+}
+function buildListFilter(query) {
+  const filter2 = {};
+  const shopId = String(query.shop_id || query.shopId || "").trim();
+  if (shopId) filter2.shop_id = shopId;
+  const from = parseVnDayStart(query.from);
+  const to = parseVnDayEnd(query.to);
+  if (from || to) {
+    filter2.order_date = {};
+    if (from) filter2.order_date.$gte = from;
+    if (to) filter2.order_date.$lte = to;
+  }
+  const status = String(query.status || "").trim();
+  const disputed = String(query.disputed || "").trim();
+  if (disputed === "1" || disputed === "true") {
+    filter2.$or = [
+      { is_disputed: true },
+      { status: { $in: ["L\u1EC7ch ti\u1EC1n", "Ch\u01B0a v\u1EC1 v\xED"] } }
+    ];
+  } else if (status === "\u0110\xE3 \u0111\u1ED1i so\xE1t" || status === "L\u1EC7ch ti\u1EC1n" || status === "Ch\u01B0a v\u1EC1 v\xED") {
+    filter2.status = status;
+  }
+  return filter2;
+}
+async function listReconciliation(req, res) {
+  try {
+    if (!mongoReady2()) {
+      return res.status(503).json({ error: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng" });
+    }
+    const filter2 = buildListFilter(req.query || {});
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100));
+    const skip = Math.max(0, Number(req.query.skip) || 0);
+    const [summaryRows, rows] = await Promise.all([
+      Escrow_default.aggregate([
+        { $match: filter2 },
+        {
+          $group: {
+            _id: null,
+            total_amount: { $sum: "$total_amount" },
+            shopee_commission: { $sum: "$shopee_commission" },
+            service_fee: { $sum: "$service_fee" },
+            shipping_fee: { $sum: "$shipping_fee" },
+            withholding_tax: { $sum: "$withholding_tax" },
+            payout_amount: { $sum: "$payout_amount" },
+            actual_cost: { $sum: "$actual_cost" },
+            net_profit: { $sum: "$net_profit" },
+            order_count: { $sum: 1 },
+            disputed_count: {
+              $sum: { $cond: ["$is_disputed", 1, 0] }
+            }
+          }
+        }
+      ]).option({ maxTimeMS: 12e3 }),
+      Escrow_default.find(filter2).sort({ order_date: -1, ordersn: -1 }).skip(skip).limit(limit).lean().maxTimeMS(12e3)
+    ]);
+    const summary = summaryRows[0] || {
+      total_amount: 0,
+      shopee_commission: 0,
+      service_fee: 0,
+      shipping_fee: 0,
+      withholding_tax: 0,
+      payout_amount: 0,
+      actual_cost: 0,
+      net_profit: 0,
+      order_count: 0,
+      disputed_count: 0
+    };
+    delete summary._id;
+    summary.shopee_fees = roundVnd(
+      Number(summary.shopee_commission || 0) + Number(summary.service_fee || 0) + Number(summary.shipping_fee || 0) + Number(summary.withholding_tax || 0)
+    );
+    return res.json({
+      summary,
+      rows,
+      limit,
+      skip
+    });
+  } catch (err) {
+    console.error("[Finance] list reconciliation:", err?.message || err);
+    return res.status(500).json({ error: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c d\u1EEF li\u1EC7u \u0111\u1ED1i so\xE1t" });
+  }
+}
+async function syncEscrow(req, res) {
+  if (syncInFlight) {
+    return res.status(409).json({ error: "\u0110ang \u0111\u1ED3ng b\u1ED9 \u0111\u1ED1i so\xE1t, vui l\xF2ng \u0111\u1EE3i l\u1EA7n ch\u1EA1y hi\u1EC7n t\u1EA1i xong." });
+  }
+  syncInFlight = true;
+  const started2 = Date.now();
+  try {
+    if (!mongoReady2()) {
+      return res.status(503).json({ error: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng" });
+    }
+    if (!SHOPEE_PARTNER_ID) {
+      return res.status(400).json({ error: "Thi\u1EBFu SHOPEE_PARTNER_ID \u2014 kh\xF4ng g\u1ECDi \u0111\u01B0\u1EE3c Shopee." });
+    }
+    const body = req.body || {};
+    const shopId = String(body.shop_id || body.shopId || "").trim();
+    const force = body.force === true || body.force === "1" || body.force === 1;
+    const from = parseVnDayStart(body.from);
+    const to = parseVnDayEnd(body.to);
+    const and = [
+      {
+        $or: [
+          { shopee_order_status: "COMPLETED" },
+          { "data.shopee_order_status": "COMPLETED" }
+        ]
+      }
+    ];
+    if (shopId) and.push({ shopId });
+    if (from || to) {
+      const dateRange = {};
+      const strRange = {};
+      if (from) {
+        dateRange.$gte = from;
+        strRange.$gte = from.toISOString();
+      }
+      if (to) {
+        dateRange.$lte = to;
+        strRange.$lte = to.toISOString();
+      }
+      and.push({ $or: [{ create_time: dateRange }, { "data.date": strRange }] });
+    }
+    const ordersCol = import_mongoose5.default.connection.db.collection("orders");
+    const candidates = await ordersCol.find({ $and: and }).project({
+      orderSn: 1,
+      shopId: 1,
+      create_time: 1,
+      "data.orderSn": 1,
+      "data.order_sn": 1,
+      "data.shopId": 1,
+      "data.shopName": 1,
+      "data.totalAmount": 1,
+      "data.date": 1,
+      "data.items": 1
+    }).sort({ create_time: -1 }).limit(SYNC_CANDIDATE_LIMIT).maxTimeMS(12e3).toArray();
+    const shopNames = loadShopNameMap();
+    let catalog = indexCatalog([]);
+    try {
+      const products = await loadProductsFromStore();
+      catalog = indexCatalog(products);
+    } catch (err) {
+      console.warn("[Finance] Kh\xF4ng \u0111\u1ECDc kho \u0111\u1EC3 t\xEDnh gi\xE1 v\u1ED1n:", err?.message || err);
+    }
+    const sns = [];
+    for (let i2 = 0; i2 < candidates.length; i2 += 1) {
+      const data = candidates[i2]?.data || {};
+      const sn = String(candidates[i2]?.orderSn || data.orderSn || data.order_sn || "").trim();
+      if (sn) sns.push(sn);
+      if (sns.length >= SYNC_CANDIDATE_LIMIT) break;
+    }
+    const freshKeys = /* @__PURE__ */ new Set();
+    if (!force && sns.length > 0) {
+      const existing = await Escrow_default.find({
+        ordersn: { $in: sns },
+        status: "\u0110\xE3 \u0111\u1ED1i so\xE1t",
+        is_disputed: false,
+        payout_amount: { $gt: 0 },
+        synced_at: { $gte: new Date(Date.now() - FRESH_SYNC_MS) }
+      }).select("ordersn shop_id").limit(SYNC_CANDIDATE_LIMIT).lean();
+      for (const row of existing) {
+        freshKeys.add(`${row.shop_id}:${row.ordersn}`);
+      }
+    }
+    const tokenByShop = /* @__PURE__ */ new Map();
+    let synced = 0;
+    let skipped = 0;
+    let failed = 0;
+    let disputed = 0;
+    let stoppedReason = "";
+    const errors = [];
+    for (let i2 = 0; i2 < candidates.length; i2 += 1) {
+      if (synced >= SYNC_API_MAX) {
+        stoppedReason = `\u0110\xE3 g\u1ECDi Shopee \u0111\u1EE7 ${SYNC_API_MAX} \u0111\u01A1n trong m\u1ED9t l\u01B0\u1EE3t. B\u1EA5m \u0111\u1ED3ng b\u1ED9 ti\u1EBFp \u0111\u1EC3 l\u1EA5y \u0111\u01A1n c\xF2n l\u1EA1i.`;
+        break;
+      }
+      if (Date.now() - started2 > SYNC_TIME_BUDGET_MS) {
+        stoppedReason = "H\u1EBFt th\u1EDDi gian m\u1ED9t l\u01B0\u1EE3t \u0111\u1ED3ng b\u1ED9 \u0111\u1EC3 tr\xE1nh treo server. B\u1EA5m \u0111\u1ED3ng b\u1ED9 ti\u1EBFp.";
+        break;
+      }
+      const doc = candidates[i2];
+      const data = doc?.data || {};
+      const ordersn = String(doc?.orderSn || data.orderSn || data.order_sn || "").trim();
+      const rowShop = String(doc?.shopId || data.shopId || "").trim();
+      if (!ordersn || !rowShop) {
+        skipped += 1;
+        continue;
+      }
+      if (freshKeys.has(`${rowShop}:${ordersn}`)) {
+        skipped += 1;
+        continue;
+      }
+      let tokenPack = tokenByShop.get(rowShop);
+      if (tokenPack === void 0) {
+        try {
+          tokenPack = await getShopeeAccessTokenForApi(rowShop);
+        } catch (err) {
+          tokenPack = null;
+          console.warn(`[Finance] token shop ${rowShop}:`, err?.message || err);
+        }
+        tokenByShop.set(rowShop, tokenPack || null);
+      }
+      if (!tokenPack?.token) {
+        if (!tokenByShop.get(`miss:${rowShop}`)) {
+          tokenByShop.set(`miss:${rowShop}`, true);
+          failed += 1;
+          if (errors.length < 8) errors.push(`Shop ${rowShop}: ch\u01B0a c\xF3 access token`);
+        }
+        continue;
+      }
+      try {
+        const json2 = await fetchEscrowDetail(rowShop, tokenPack.token, ordersn);
+        const errText = `${json2?.error || ""} ${json2?.message || ""}`;
+        if (/rate|limit|too many|request_frequency/i.test(errText)) {
+          stoppedReason = "Shopee gi\u1EDBi h\u1EA1n t\u1EA7n su\u1EA5t. \u0110\xE3 d\u1EEBng l\u01B0\u1EE3t n\xE0y, th\u1EED l\u1EA1i sau \xEDt ph\xFAt.";
+          break;
+        }
+        const fallbackTotal = Number(data.totalAmount || 0);
+        const finance = json2?.error ? {
+          total_amount: posVnd(fallbackTotal),
+          shopee_commission: 0,
+          service_fee: 0,
+          shipping_fee: 0,
+          withholding_tax: 0,
+          payout_amount: 0,
+          expected_payout: 0,
+          delta: 0,
+          status: "Ch\u01B0a v\u1EC1 v\xED",
+          is_disputed: true,
+          dispute_reason: String(json2.message || json2.error || "Shopee ch\u01B0a tr\u1EA3 escrow")
+        } : buildFinanceRow(incomeOf(json2), fallbackTotal);
+        const actualCost = orderActualCost(data, catalog);
+        const payout = Math.max(0, roundVnd(finance.payout_amount));
+        const netProfit = payout - actualCost;
+        const shopName = String(data.shopName || shopNames.get(rowShop) || `Shop ${rowShop}`);
+        await Escrow_default.updateOne(
+          { ordersn, shop_id: rowShop },
+          {
+            $set: {
+              ordersn,
+              shop_id: rowShop,
+              shop_name: shopName,
+              order_date: orderDateOf(doc, data),
+              total_amount: finance.total_amount,
+              shopee_commission: finance.shopee_commission,
+              service_fee: finance.service_fee,
+              shipping_fee: finance.shipping_fee,
+              withholding_tax: finance.withholding_tax,
+              payout_amount: payout,
+              expected_payout: finance.expected_payout,
+              delta: finance.delta,
+              actual_cost: actualCost,
+              net_profit: netProfit,
+              status: finance.status,
+              is_disputed: Boolean(finance.is_disputed),
+              dispute_reason: finance.dispute_reason || "",
+              synced_at: /* @__PURE__ */ new Date()
+            }
+          },
+          { upsert: true }
+        );
+        synced += 1;
+        if (finance.is_disputed) disputed += 1;
+      } catch (err) {
+        failed += 1;
+        if (errors.length < 8) errors.push(`${ordersn}: ${err?.message || "l\u1ED7i escrow"}`);
+        console.warn(`[Finance] escrow ${ordersn}:`, err?.message || err);
+      }
+      if (synced < SYNC_API_MAX && Date.now() - started2 < SYNC_TIME_BUDGET_MS) {
+        await sleep3(SYNC_DELAY_MS);
+      }
+    }
+    const baseMessage = stoppedReason || (synced === 0 && skipped > 0 ? `Kh\xF4ng c\xF3 \u0111\u01A1n m\u1EDBi c\u1EA7n g\u1ECDi Shopee (${skipped} \u0111\u01A1n \u0111\xE3 \u0111\u1ED1i so\xE1t g\u1EA7n \u0111\xE2y ho\u1EB7c thi\u1EBFu m\xE3).` : `\u0110\xE3 \u0111\u1ED1i so\xE1t ${synced} \u0111\u01A1n ho\xE0n th\xE0nh.`);
+    const message = errors.length ? `${baseMessage} ${errors.slice(0, 3).join(" \xB7 ")}` : baseMessage;
+    return res.json({
+      ok: true,
+      scanned: candidates.length,
+      synced,
+      skipped,
+      failed,
+      disputed,
+      message,
+      errors
+    });
+  } catch (err) {
+    console.error("[Finance] sync escrow:", err?.message || err);
+    return res.status(500).json({ error: "\u0110\u1ED3ng b\u1ED9 \u0111\u1ED1i so\xE1t th\u1EA5t b\u1EA1i" });
+  } finally {
+    syncInFlight = false;
+  }
+}
+
+// routes/financeRoutes.js
+var router7 = (0, import_express8.Router)();
+router7.get("/reconciliation", listReconciliation);
+router7.post("/sync-escrow", syncEscrow);
+var financeRoutes_default = router7;
+
+// routes/addressBookRoutes.js
+var import_express9 = __toESM(require_express2(), 1);
+
+// services/addressBook.js
+var import_fs12 = __toESM(require("fs"), 1);
+var import_path12 = __toESM(require("path"), 1);
+var import_mongoose7 = __toESM(require("mongoose"), 1);
 init_appPaths();
 
 // models/AddressBook.js
-var import_mongoose4 = __toESM(require("mongoose"), 1);
-var AddressBookSchema = new import_mongoose4.default.Schema(
+var import_mongoose6 = __toESM(require("mongoose"), 1);
+var AddressBookSchema = new import_mongoose6.default.Schema(
   {
     id: { type: String, trim: true, index: true },
     name: { type: String, default: "", trim: true },
@@ -87053,7 +89244,7 @@ AddressBookSchema.index({ phone: 1, street: 1, wardCode: 1 }, { name: "address_b
 AddressBookSchema.index({ savedAt: -1 }, { name: "address_book_savedAt" });
 AddressBookSchema.index({ total_spent: -1 }, { name: "address_book_total_spent" });
 AddressBookSchema.index({ last_purchase_date: -1 }, { name: "address_book_last_purchase" });
-var AddressBook = import_mongoose4.default.models.AddressBook || import_mongoose4.default.model("AddressBook", AddressBookSchema);
+var AddressBook = import_mongoose6.default.models.AddressBook || import_mongoose6.default.model("AddressBook", AddressBookSchema);
 var AddressBook_default = AddressBook;
 
 // utils/posSellingPrice.js
@@ -87139,13 +89330,13 @@ function mergePosSkuPrices(existing, sku, price, cap = POS_CUSTOMER_SKU_CAP) {
 }
 
 // services/addressBook.js
-var FILE_PATH = import_path9.default.join(resolveAppRoot(), "data", "address_book.json");
+var FILE_PATH = import_path12.default.join(resolveAppRoot(), "data", "address_book.json");
 var MAX_ENTRIES = 200;
 var RANKING_MAX = 500;
 function readBook() {
   try {
-    if (!import_fs10.default.existsSync(FILE_PATH)) return [];
-    const raw = import_fs10.default.readFileSync(FILE_PATH, "utf-8");
+    if (!import_fs12.default.existsSync(FILE_PATH)) return [];
+    const raw = import_fs12.default.readFileSync(FILE_PATH, "utf-8");
     const data = JSON.parse(raw);
     return Array.isArray(data) ? data : [];
   } catch {
@@ -87153,12 +89344,12 @@ function readBook() {
   }
 }
 function writeBook(list) {
-  const dir = import_path9.default.dirname(FILE_PATH);
-  if (!import_fs10.default.existsSync(dir)) import_fs10.default.mkdirSync(dir, { recursive: true });
-  import_fs10.default.writeFileSync(FILE_PATH, JSON.stringify(list, null, 2), "utf-8");
+  const dir = import_path12.default.dirname(FILE_PATH);
+  if (!import_fs12.default.existsSync(dir)) import_fs12.default.mkdirSync(dir, { recursive: true });
+  import_fs12.default.writeFileSync(FILE_PATH, JSON.stringify(list, null, 2), "utf-8");
 }
-function mongoReady2() {
-  return import_mongoose5.default.connection?.readyState === 1;
+function mongoReady3() {
+  return import_mongoose7.default.connection?.readyState === 1;
 }
 function normalizePhone(value) {
   return String(value || "").replace(/\D/g, "");
@@ -87276,7 +89467,7 @@ function saveToJsonFile(normalized) {
   return next;
 }
 async function listAddressBookEntries() {
-  if (mongoReady2()) {
+  if (mongoReady3()) {
     const rows = await AddressBook_default.find({}).sort({ savedAt: -1 }).limit(MAX_ENTRIES).lean();
     return rows.map(toPublicEntry);
   }
@@ -87291,7 +89482,7 @@ async function listAddressBookRanking(options = {}) {
   );
   const y = Number.isFinite(year) && year >= 2e3 && year <= 2100 ? year : null;
   const m2 = Number.isFinite(month) && month >= 1 && month <= 12 ? month : null;
-  if (mongoReady2()) {
+  if (mongoReady3()) {
     const filter2 = {};
     const dateRange = buildPurchaseDateFilter(m2, y);
     if (dateRange) {
@@ -87312,7 +89503,7 @@ async function saveAddressBookEntry(entry) {
   if (!normalized.phone && !normalized.name) {
     throw new Error("Thi\u1EBFu t\xEAn ho\u1EB7c s\u1ED1 \u0111i\u1EC7n tho\u1EA1i \u0111\u1EC3 l\u01B0u s\u1ED5 \u0111\u1ECBa ch\u1EC9.");
   }
-  if (mongoReady2()) {
+  if (mongoReady3()) {
     const filter2 = {
       phone: normalized.phone,
       street: normalized.street,
@@ -87356,7 +89547,7 @@ async function upsertLoyaltyFromPurchase({
     const resolvedFullRaw = String(fullAddress || address || "").trim() || street;
     const resolvedFull = resolvedFullRaw === "Mua t\u1EA1i c\u1EEDa h\xE0ng" ? "" : resolvedFullRaw;
     const now = /* @__PURE__ */ new Date();
-    if (mongoReady2()) {
+    if (mongoReady3()) {
       if (!AddressBook_default || typeof AddressBook_default.findOneAndUpdate !== "function") {
         throw new Error("AddressBook model ch\u01B0a s\u1EB5n s\xE0ng");
       }
@@ -87500,7 +89691,7 @@ async function upsertPosCustomerPrices({ phone = "", items = [] } = {}) {
       }
       return changed ? prices : null;
     };
-    if (mongoReady2()) {
+    if (mongoReady3()) {
       if (!AddressBook_default || typeof AddressBook_default.findOne !== "function") {
         throw new Error("AddressBook model ch\u01B0a s\u1EB5n s\xE0ng");
       }
@@ -87592,23 +89783,23 @@ async function createAddressBookEntry(req, res) {
 }
 
 // routes/addressBookRoutes.js
-var router7 = (0, import_express8.Router)();
+var router8 = (0, import_express9.Router)();
 var h = asyncHandler;
-router7.get("/ranking", h(rankingAddressBook));
-router7.get("/", h(listAddressBook));
-router7.post("/", h(createAddressBookEntry));
-var addressBookRoutes_default = router7;
+router8.get("/ranking", h(rankingAddressBook));
+router8.get("/", h(listAddressBook));
+router8.post("/", h(createAddressBookEntry));
+var addressBookRoutes_default = router8;
 
 // routes/importsRoutes.js
-var import_express9 = __toESM(require_express2(), 1);
+var import_express10 = __toESM(require_express2(), 1);
 
 // controllers/importsController.js
-var import_fs11 = __toESM(require("fs"), 1);
-var import_path10 = __toESM(require("path"), 1);
+var import_fs13 = __toESM(require("fs"), 1);
+var import_path13 = __toESM(require("path"), 1);
 init_appPaths();
-var APP_ROOT4 = resolveAppRoot();
-var IMPORTS_DB_PATH = import_path10.default.join(APP_ROOT4, "data", "imports.json");
-var deps4 = {
+var APP_ROOT5 = resolveAppRoot();
+var IMPORTS_DB_PATH = import_path13.default.join(APP_ROOT5, "data", "imports.json");
+var deps5 = {
   loadProductById: async () => null,
   loadProducts: async () => [],
   applyImportStockAndPriceToMainWarehouse: async () => {
@@ -87616,12 +89807,12 @@ var deps4 = {
   }
 };
 function initImportsController(partial) {
-  deps4 = { ...deps4, ...partial };
+  deps5 = { ...deps5, ...partial };
 }
 function loadImports() {
   try {
-    if (!import_fs11.default.existsSync(IMPORTS_DB_PATH)) return [];
-    const raw = import_fs11.default.readFileSync(IMPORTS_DB_PATH, "utf-8");
+    if (!import_fs13.default.existsSync(IMPORTS_DB_PATH)) return [];
+    const raw = import_fs13.default.readFileSync(IMPORTS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
@@ -87631,8 +89822,8 @@ function loadImports() {
 }
 function saveImports(imports) {
   try {
-    import_fs11.default.mkdirSync(import_path10.default.dirname(IMPORTS_DB_PATH), { recursive: true });
-    import_fs11.default.writeFileSync(IMPORTS_DB_PATH, JSON.stringify(imports, null, 2), "utf-8");
+    import_fs13.default.mkdirSync(import_path13.default.dirname(IMPORTS_DB_PATH), { recursive: true });
+    import_fs13.default.writeFileSync(IMPORTS_DB_PATH, JSON.stringify(imports, null, 2), "utf-8");
   } catch (error) {
     console.error("[Imports DB] Failed to write imports.json:", error);
   }
@@ -87644,7 +89835,7 @@ async function getImportHistory(req, res) {
   try {
     const productId = String(req.params.productId || "").trim();
     if (!productId) return res.status(400).json({ success: false, error: "missing_product_id" });
-    const product = await deps4.loadProductById(productId);
+    const product = await deps5.loadProductById(productId);
     const sku = String(product?.sku || "").trim();
     const imports = loadImports();
     const history = imports.filter(
@@ -87669,7 +89860,7 @@ async function getImportHistory(req, res) {
 }
 async function getImportProductContext(req, res) {
   const productId = String(req.params.productId);
-  const product = await deps4.loadProductById(productId) || (await deps4.loadProducts()).find((p) => p.id === productId);
+  const product = await deps5.loadProductById(productId) || (await deps5.loadProducts()).find((p) => p.id === productId);
   if (!product) {
     return res.status(404).json({ error: "product_not_found" });
   }
@@ -87716,7 +89907,7 @@ async function createImport(req, res) {
   const computedTotal = qty * unitPrice + importCost;
   const warehouseId = "KhoGoc";
   try {
-    const applied = await deps4.applyImportStockAndPriceToMainWarehouse(productId, qty, unitPrice, {
+    const applied = await deps5.applyImportStockAndPriceToMainWarehouse(productId, qty, unitPrice, {
       skuHint: productSku
     });
     const updatedProduct = applied.product;
@@ -87747,7 +89938,7 @@ async function createImport(req, res) {
       saveImports(imports);
     } catch (logErr) {
       console.error("[Imports] Ghi log th\u1EA5t b\u1EA1i \u2014 rollback t\u1ED3n/gi\xE1 Kho G\u1ED1c:", logErr);
-      await deps4.applyImportStockAndPriceToMainWarehouse(productId, -qty, applied.oldImportPrice, {
+      await deps5.applyImportStockAndPriceToMainWarehouse(productId, -qty, applied.oldImportPrice, {
         skuHint: productSku
       }).catch((rb) => console.error("[Imports] Rollback Kho G\u1ED1c failed:", rb));
       throw logErr;
@@ -87895,28 +90086,28 @@ async function getSupplierReport(req, res) {
 }
 
 // routes/importsRoutes.js
-var router8 = (0, import_express9.Router)();
-router8.get("/", listImports);
-router8.get("/supplier-report", getSupplierReport);
-router8.get("/history/:productId", getImportHistory);
-router8.get("/product-context/:productId", getImportProductContext);
-router8.post("/", createImport);
-router8.post("/clear-all", clearAllImports);
-var importsRoutes_default = router8;
+var router9 = (0, import_express10.Router)();
+router9.get("/", listImports);
+router9.get("/supplier-report", getSupplierReport);
+router9.get("/history/:productId", getImportHistory);
+router9.get("/product-context/:productId", getImportProductContext);
+router9.post("/", createImport);
+router9.post("/clear-all", clearAllImports);
+var importsRoutes_default = router9;
 
 // routes/materialsRoutes.js
-var import_express10 = __toESM(require_express2(), 1);
+var import_express11 = __toESM(require_express2(), 1);
 
 // controllers/materialsController.js
-var import_fs12 = __toESM(require("fs"), 1);
-var import_path11 = __toESM(require("path"), 1);
+var import_fs14 = __toESM(require("fs"), 1);
+var import_path14 = __toESM(require("path"), 1);
 init_appPaths();
-var APP_ROOT5 = resolveAppRoot();
-var MATERIALS_DB_PATH = import_path11.default.join(APP_ROOT5, "data", "materials.json");
+var APP_ROOT6 = resolveAppRoot();
+var MATERIALS_DB_PATH = import_path14.default.join(APP_ROOT6, "data", "materials.json");
 function loadMaterials() {
   try {
-    if (!import_fs12.default.existsSync(MATERIALS_DB_PATH)) return [];
-    const raw = import_fs12.default.readFileSync(MATERIALS_DB_PATH, "utf-8");
+    if (!import_fs14.default.existsSync(MATERIALS_DB_PATH)) return [];
+    const raw = import_fs14.default.readFileSync(MATERIALS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
@@ -87926,8 +90117,8 @@ function loadMaterials() {
 }
 function saveMaterials(materials) {
   try {
-    import_fs12.default.mkdirSync(import_path11.default.dirname(MATERIALS_DB_PATH), { recursive: true });
-    import_fs12.default.writeFileSync(MATERIALS_DB_PATH, JSON.stringify(materials, null, 2), "utf-8");
+    import_fs14.default.mkdirSync(import_path14.default.dirname(MATERIALS_DB_PATH), { recursive: true });
+    import_fs14.default.writeFileSync(MATERIALS_DB_PATH, JSON.stringify(materials, null, 2), "utf-8");
   } catch (error) {
     console.error("[Materials DB] Failed to write materials.json:", error);
     throw error;
@@ -88055,25 +90246,25 @@ function applyMaterialStockAndPrice(materialId, qtyDelta, unitPrice, opts = {}) 
 }
 
 // routes/materialsRoutes.js
-var router9 = (0, import_express10.Router)();
-router9.get("/", listMaterials);
-router9.post("/", createMaterial);
-router9.put("/:id", updateMaterial);
-var materialsRoutes_default = router9;
+var router10 = (0, import_express11.Router)();
+router10.get("/", listMaterials);
+router10.post("/", createMaterial);
+router10.put("/:id", updateMaterial);
+var materialsRoutes_default = router10;
 
 // routes/materialImportsRoutes.js
-var import_express11 = __toESM(require_express2(), 1);
+var import_express12 = __toESM(require_express2(), 1);
 
 // controllers/materialImportsController.js
-var import_fs13 = __toESM(require("fs"), 1);
-var import_path12 = __toESM(require("path"), 1);
+var import_fs15 = __toESM(require("fs"), 1);
+var import_path15 = __toESM(require("path"), 1);
 init_appPaths();
-var APP_ROOT6 = resolveAppRoot();
-var MATERIAL_IMPORTS_DB_PATH = import_path12.default.join(APP_ROOT6, "data", "material_imports.json");
+var APP_ROOT7 = resolveAppRoot();
+var MATERIAL_IMPORTS_DB_PATH = import_path15.default.join(APP_ROOT7, "data", "material_imports.json");
 function loadMaterialImports() {
   try {
-    if (!import_fs13.default.existsSync(MATERIAL_IMPORTS_DB_PATH)) return [];
-    const raw = import_fs13.default.readFileSync(MATERIAL_IMPORTS_DB_PATH, "utf-8");
+    if (!import_fs15.default.existsSync(MATERIAL_IMPORTS_DB_PATH)) return [];
+    const raw = import_fs15.default.readFileSync(MATERIAL_IMPORTS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
@@ -88083,8 +90274,8 @@ function loadMaterialImports() {
 }
 function saveMaterialImports(imports) {
   try {
-    import_fs13.default.mkdirSync(import_path12.default.dirname(MATERIAL_IMPORTS_DB_PATH), { recursive: true });
-    import_fs13.default.writeFileSync(MATERIAL_IMPORTS_DB_PATH, JSON.stringify(imports, null, 2), "utf-8");
+    import_fs15.default.mkdirSync(import_path15.default.dirname(MATERIAL_IMPORTS_DB_PATH), { recursive: true });
+    import_fs15.default.writeFileSync(MATERIAL_IMPORTS_DB_PATH, JSON.stringify(imports, null, 2), "utf-8");
   } catch (error) {
     console.error("[MaterialImports DB] Failed to write material_imports.json:", error);
     throw error;
@@ -88224,20 +90415,20 @@ async function clearAllMaterialImports(_req, res) {
 }
 
 // routes/materialImportsRoutes.js
-var router10 = (0, import_express11.Router)();
-router10.get("/", listMaterialImports);
-router10.post("/", createMaterialImport);
-router10.post("/clear-all", clearAllMaterialImports);
-var materialImportsRoutes_default = router10;
+var router11 = (0, import_express12.Router)();
+router11.get("/", listMaterialImports);
+router11.post("/", createMaterialImport);
+router11.post("/clear-all", clearAllMaterialImports);
+var materialImportsRoutes_default = router11;
 
 // routes/settingsRoutes.js
-var import_express12 = __toESM(require_express2(), 1);
+var import_express13 = __toESM(require_express2(), 1);
 
 // node_modules/@google/genai/dist/node/index.mjs
 var import_p_retry = __toESM(require_p_retry(), 1);
 var import_google_auth_library = __toESM(require_src9(), 1);
-var import_fs14 = require("fs");
-var fs14 = __toESM(require("fs/promises"), 1);
+var import_fs16 = require("fs");
+var fs16 = __toESM(require("fs/promises"), 1);
 var import_promises = require("fs/promises");
 var import_node_stream3 = require("node:stream");
 var import_promises2 = require("node:stream/promises");
@@ -88253,7 +90444,7 @@ var import_websocket = __toESM(require_websocket(), 1);
 var import_websocket_server = __toESM(require_websocket_server(), 1);
 
 // node_modules/@google/genai/dist/node/index.mjs
-var path13 = __toESM(require("path"), 1);
+var path16 = __toESM(require("path"), 1);
 var _defaultBaseGeminiUrl = void 0;
 var _defaultBaseVertexUrl = void 0;
 function getDefaultBaseUrls() {
@@ -91843,7 +94034,7 @@ var Batches = class extends BaseModule {
       params
     );
     const urlParams = body["_url"];
-    const path25 = formatMap("{model}:batchGenerateContent", urlParams);
+    const path26 = formatMap("{model}:batchGenerateContent", urlParams);
     const batch = body["batch"];
     const inputConfig = batch["inputConfig"];
     const requestsWrapper = inputConfig["requests"];
@@ -91864,7 +94055,7 @@ var Batches = class extends BaseModule {
     delete body["config"];
     delete body["_url"];
     delete body["_query"];
-    return { path: path25, body };
+    return { path: path26, body };
   }
   // Helper function to get the first GCS URI
   getGcsUri(src) {
@@ -91920,16 +94111,16 @@ var Batches = class extends BaseModule {
   async createInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createBatchJobParametersToVertex(this.apiClient, params);
-      path25 = formatMap("batchPredictionJobs", body["_url"]);
+      path26 = formatMap("batchPredictionJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -91944,12 +94135,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = createBatchJobParametersToMldev(this.apiClient, params);
-      path25 = formatMap("{model}:batchGenerateContent", body["_url"]);
+      path26 = formatMap("{model}:batchGenerateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -91974,18 +94165,18 @@ var Batches = class extends BaseModule {
   async createEmbeddingsInternal(params) {
     var _a2, _b;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createEmbeddingsBatchJobParametersToMldev(this.apiClient, params);
-      path25 = formatMap("{model}:asyncBatchEmbedContent", body["_url"]);
+      path26 = formatMap("{model}:asyncBatchEmbedContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -92014,16 +94205,16 @@ var Batches = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getBatchJobParametersToVertex(this.apiClient, params);
-      path25 = formatMap("batchPredictionJobs/{name}", body["_url"]);
+      path26 = formatMap("batchPredictionJobs/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -92038,12 +94229,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = getBatchJobParametersToMldev(this.apiClient, params);
-      path25 = formatMap("batches/{name}", body["_url"]);
+      path26 = formatMap("batches/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -92071,16 +94262,16 @@ var Batches = class extends BaseModule {
    */
   async cancel(params) {
     var _a2, _b, _c, _d;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = cancelBatchJobParametersToVertex(this.apiClient, params);
-      path25 = formatMap("batchPredictionJobs/{name}:cancel", body["_url"]);
+      path26 = formatMap("batchPredictionJobs/{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -92089,12 +94280,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = cancelBatchJobParametersToMldev(this.apiClient, params);
-      path25 = formatMap("batches/{name}:cancel", body["_url"]);
+      path26 = formatMap("batches/{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -92106,16 +94297,16 @@ var Batches = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listBatchJobsParametersToVertex(params);
-      path25 = formatMap("batchPredictionJobs", body["_url"]);
+      path26 = formatMap("batchPredictionJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -92138,12 +94329,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = listBatchJobsParametersToMldev(params);
-      path25 = formatMap("batches", body["_url"]);
+      path26 = formatMap("batches", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -92180,16 +94371,16 @@ var Batches = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteBatchJobParametersToVertex(this.apiClient, params);
-      path25 = formatMap("batchPredictionJobs/{name}", body["_url"]);
+      path26 = formatMap("batchPredictionJobs/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -92210,12 +94401,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = deleteBatchJobParametersToMldev(this.apiClient, params);
-      path25 = formatMap("batches/{name}", body["_url"]);
+      path26 = formatMap("batches/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -93139,16 +95330,16 @@ var Caches = class extends BaseModule {
   async create(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createCachedContentParametersToVertex(this.apiClient, params);
-      path25 = formatMap("cachedContents", body["_url"]);
+      path26 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -93162,12 +95353,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = createCachedContentParametersToMldev(this.apiClient, params);
-      path25 = formatMap("cachedContents", body["_url"]);
+      path26 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -93195,16 +95386,16 @@ var Caches = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getCachedContentParametersToVertex(this.apiClient, params);
-      path25 = formatMap("{name}", body["_url"]);
+      path26 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -93218,12 +95409,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = getCachedContentParametersToMldev(this.apiClient, params);
-      path25 = formatMap("{name}", body["_url"]);
+      path26 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -93251,16 +95442,16 @@ var Caches = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteCachedContentParametersToVertex(this.apiClient, params);
-      path25 = formatMap("{name}", body["_url"]);
+      path26 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -93283,12 +95474,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = deleteCachedContentParametersToMldev(this.apiClient, params);
-      path25 = formatMap("{name}", body["_url"]);
+      path26 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -93328,16 +95519,16 @@ var Caches = class extends BaseModule {
   async update(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = updateCachedContentParametersToVertex(this.apiClient, params);
-      path25 = formatMap("{name}", body["_url"]);
+      path26 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -93351,12 +95542,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = updateCachedContentParametersToMldev(this.apiClient, params);
-      path25 = formatMap("{name}", body["_url"]);
+      path26 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -93373,16 +95564,16 @@ var Caches = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listCachedContentsParametersToVertex(params);
-      path25 = formatMap("cachedContents", body["_url"]);
+      path26 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -93405,12 +95596,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = listCachedContentsParametersToMldev(params);
-      path25 = formatMap("cachedContents", body["_url"]);
+      path26 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -94006,18 +96197,18 @@ var Files = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listFilesParametersToMldev(params);
-      path25 = formatMap("files", body["_url"]);
+      path26 = formatMap("files", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -94043,18 +96234,18 @@ var Files = class extends BaseModule {
   async createInternal(params) {
     var _a2, _b;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createFileParametersToMldev(params);
-      path25 = formatMap("upload/v1beta/files", body["_url"]);
+      path26 = formatMap("upload/v1beta/files", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -94089,18 +96280,18 @@ var Files = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getFileParametersToMldev(params);
-      path25 = formatMap("files/{file}", body["_url"]);
+      path26 = formatMap("files/{file}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -94130,18 +96321,18 @@ var Files = class extends BaseModule {
   async delete(params) {
     var _a2, _b;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteFileParametersToMldev(params);
-      path25 = formatMap("files/{file}", body["_url"]);
+      path26 = formatMap("files/{file}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -94167,18 +96358,18 @@ var Files = class extends BaseModule {
   async registerFilesInternal(params) {
     var _a2, _b;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = internalRegisterFilesParametersToMldev(params);
-      path25 = formatMap("files:register", body["_url"]);
+      path26 = formatMap("files:register", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -99432,13 +101623,13 @@ var ApiClient = class {
       throw new Error("HTTP options are not correctly set.");
     }
   }
-  constructUrl(path25, httpOptions, prependProjectLocation) {
+  constructUrl(path26, httpOptions, prependProjectLocation) {
     const urlElement = [this.getRequestUrlInternal(httpOptions)];
     if (prependProjectLocation) {
       urlElement.push(this.getBaseResourcePath());
     }
-    if (path25 !== "") {
-      urlElement.push(path25);
+    if (path26 !== "") {
+      urlElement.push(path26);
     }
     const url2 = new URL(`${urlElement.join("/")}`);
     return url2;
@@ -99737,8 +101928,8 @@ var ApiClient = class {
       file: fileToUpload
     };
     const fileName = this.getFileName(file);
-    const path25 = formatMap("upload/v1beta/files", body["_url"]);
-    const uploadUrl = await this.fetchUploadUrl(path25, fileToUpload.sizeBytes, fileToUpload.mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
+    const path26 = formatMap("upload/v1beta/files", body["_url"]);
+    const uploadUrl = await this.fetchUploadUrl(path26, fileToUpload.sizeBytes, fileToUpload.mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
     return uploader.upload(file, uploadUrl, this);
   }
   /**
@@ -99762,13 +101953,13 @@ var ApiClient = class {
     if (mimeType === void 0 || mimeType === "") {
       throw new Error("Can not determine mimeType. Please provide mimeType in the config.");
     }
-    const path25 = `upload/v1beta/${fileSearchStoreName}:uploadToFileSearchStore`;
+    const path26 = `upload/v1beta/${fileSearchStoreName}:uploadToFileSearchStore`;
     const fileName = this.getFileName(file);
     const body = {};
     if (config != null) {
       uploadToFileSearchStoreConfigToMldev(config, body);
     }
-    const uploadUrl = await this.fetchUploadUrl(path25, sizeBytes, mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
+    const uploadUrl = await this.fetchUploadUrl(path26, sizeBytes, mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
     return uploader.uploadToFileSearchStore(file, uploadUrl, this);
   }
   /**
@@ -99781,7 +101972,7 @@ var ApiClient = class {
     const downloader = this.clientOptions.downloader;
     await downloader.download(params, this);
   }
-  async fetchUploadUrl(path25, sizeBytes, mimeType, fileName, body, configHttpOptions) {
+  async fetchUploadUrl(path26, sizeBytes, mimeType, fileName, body, configHttpOptions) {
     var _a2;
     let httpOptions = {};
     if (configHttpOptions) {
@@ -99794,7 +101985,7 @@ var ApiClient = class {
       };
     }
     const httpResponse = await this.request({
-      path: path25,
+      path: path26,
       body: JSON.stringify(body),
       httpMethod: "POST",
       httpOptions
@@ -100990,16 +103181,16 @@ var Models = class extends BaseModule {
   async generateContentInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateContentParametersToVertex(this.apiClient, params);
-      path25 = formatMap("{model}:generateContent", body["_url"]);
+      path26 = formatMap("{model}:generateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -101022,12 +103213,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateContentParametersToMldev(this.apiClient, params);
-      path25 = formatMap("{model}:generateContent", body["_url"]);
+      path26 = formatMap("{model}:generateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -101053,17 +103244,17 @@ var Models = class extends BaseModule {
   async generateContentStreamInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateContentParametersToVertex(this.apiClient, params);
-      path25 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
+      path26 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       const apiClient = this.apiClient;
       response = apiClient.requestStream({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -101099,13 +103290,13 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateContentParametersToMldev(this.apiClient, params);
-      path25 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
+      path26 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       const apiClient = this.apiClient;
       response = apiClient.requestStream({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -101165,17 +103356,17 @@ var Models = class extends BaseModule {
   async embedContentInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = embedContentParametersPrivateToVertex(this.apiClient, params, params);
       const endpointUrl = tIsVertexEmbedContentModel(params.model) ? "{model}:embedContent" : "{model}:predict";
-      path25 = formatMap(endpointUrl, body["_url"]);
+      path26 = formatMap(endpointUrl, body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -101198,12 +103389,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = embedContentParametersPrivateToMldev(this.apiClient, params);
-      path25 = formatMap("{model}:batchEmbedContents", body["_url"]);
+      path26 = formatMap("{model}:batchEmbedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -101232,16 +103423,16 @@ var Models = class extends BaseModule {
   async generateImagesInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateImagesParametersToVertex(this.apiClient, params);
-      path25 = formatMap("{model}:predict", body["_url"]);
+      path26 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -101264,12 +103455,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateImagesParametersToMldev(this.apiClient, params);
-      path25 = formatMap("{model}:predict", body["_url"]);
+      path26 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -101298,16 +103489,16 @@ var Models = class extends BaseModule {
   async editImageInternal(params) {
     var _a2, _b;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = editImageParametersInternalToVertex(this.apiClient, params);
-      path25 = formatMap("{model}:predict", body["_url"]);
+      path26 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -101338,16 +103529,16 @@ var Models = class extends BaseModule {
   async upscaleImageInternal(params) {
     var _a2, _b;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = upscaleImageAPIParametersInternalToVertex(this.apiClient, params);
-      path25 = formatMap("{model}:predict", body["_url"]);
+      path26 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -101399,16 +103590,16 @@ var Models = class extends BaseModule {
   async recontextImage(params) {
     var _a2, _b;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = recontextImageParametersToVertex(this.apiClient, params);
-      path25 = formatMap("{model}:predict", body["_url"]);
+      path26 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -101450,16 +103641,16 @@ var Models = class extends BaseModule {
   async segmentImage(params) {
     var _a2, _b;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = segmentImageParametersToVertex(this.apiClient, params);
-      path25 = formatMap("{model}:predict", body["_url"]);
+      path26 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -101489,16 +103680,16 @@ var Models = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getModelParametersToVertex(this.apiClient, params);
-      path25 = formatMap("{name}", body["_url"]);
+      path26 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -101513,12 +103704,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = getModelParametersToMldev(this.apiClient, params);
-      path25 = formatMap("{name}", body["_url"]);
+      path26 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -101536,16 +103727,16 @@ var Models = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listModelsParametersToVertex(this.apiClient, params);
-      path25 = formatMap("{models_url}", body["_url"]);
+      path26 = formatMap("{models_url}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -101568,12 +103759,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = listModelsParametersToMldev(this.apiClient, params);
-      path25 = formatMap("{models_url}", body["_url"]);
+      path26 = formatMap("{models_url}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -101616,16 +103807,16 @@ var Models = class extends BaseModule {
   async update(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = updateModelParametersToVertex(this.apiClient, params);
-      path25 = formatMap("{model}", body["_url"]);
+      path26 = formatMap("{model}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -101640,12 +103831,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = updateModelParametersToMldev(this.apiClient, params);
-      path25 = formatMap("{name}", body["_url"]);
+      path26 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -101674,16 +103865,16 @@ var Models = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteModelParametersToVertex(this.apiClient, params);
-      path25 = formatMap("{name}", body["_url"]);
+      path26 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -101706,12 +103897,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = deleteModelParametersToMldev(this.apiClient, params);
-      path25 = formatMap("{name}", body["_url"]);
+      path26 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -101753,16 +103944,16 @@ var Models = class extends BaseModule {
   async countTokens(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = countTokensParametersToVertex(this.apiClient, params);
-      path25 = formatMap("{model}:countTokens", body["_url"]);
+      path26 = formatMap("{model}:countTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -101785,12 +103976,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = countTokensParametersToMldev(this.apiClient, params);
-      path25 = formatMap("{model}:countTokens", body["_url"]);
+      path26 = formatMap("{model}:countTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -101834,16 +104025,16 @@ var Models = class extends BaseModule {
   async computeTokens(params) {
     var _a2, _b;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = computeTokensParametersToVertex(this.apiClient, params);
-      path25 = formatMap("{model}:computeTokens", body["_url"]);
+      path26 = formatMap("{model}:computeTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -101874,16 +104065,16 @@ var Models = class extends BaseModule {
   async generateVideosInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateVideosParametersToVertex(this.apiClient, params);
-      path25 = formatMap("{model}:predictLongRunning", body["_url"]);
+      path26 = formatMap("{model}:predictLongRunning", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -101900,12 +104091,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateVideosParametersToMldev(this.apiClient, params);
-      path25 = formatMap("{model}:predictLongRunning", body["_url"]);
+      path26 = formatMap("{model}:predictLongRunning", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -102007,16 +104198,16 @@ var Operations = class extends BaseModule {
   async getVideosOperationInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getOperationParametersToVertex(params);
-      path25 = formatMap("{operationName}", body["_url"]);
+      path26 = formatMap("{operationName}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -102028,12 +104219,12 @@ var Operations = class extends BaseModule {
       return response;
     } else {
       const body = getOperationParametersToMldev(params);
-      path25 = formatMap("{operationName}", body["_url"]);
+      path26 = formatMap("{operationName}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -102048,16 +104239,16 @@ var Operations = class extends BaseModule {
   async fetchPredictVideosOperationInternal(params) {
     var _a2, _b;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = fetchPredictOperationParametersToVertex(params);
-      path25 = formatMap("{resourceName}:fetchPredictOperation", body["_url"]);
+      path26 = formatMap("{resourceName}:fetchPredictOperation", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -102745,20 +104936,20 @@ var Tokens = class extends BaseModule {
   async create(params) {
     var _a2, _b;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("The client.tokens.create method is only supported by the Gemini Developer API.");
     } else {
       const body = createAuthTokenParametersToMldev(this.apiClient, params);
-      path25 = formatMap("auth_tokens", body["_url"]);
+      path26 = formatMap("auth_tokens", body["_url"]);
       queryParams = body["_query"];
       delete body["config"];
       delete body["_url"];
       delete body["_query"];
       const transformedBody = convertBidiSetupToTokenSetup(body, params.config);
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(transformedBody),
         httpMethod: "POST",
@@ -102868,18 +105059,18 @@ var Documents = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getDocumentParametersToMldev(params);
-      path25 = formatMap("{name}", body["_url"]);
+      path26 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -102900,18 +105091,18 @@ var Documents = class extends BaseModule {
    */
   async delete(params) {
     var _a2, _b;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteDocumentParametersToMldev(params);
-      path25 = formatMap("{name}", body["_url"]);
+      path26 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -102923,18 +105114,18 @@ var Documents = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listDocumentsParametersToMldev(params);
-      path25 = formatMap("{parent}/documents", body["_url"]);
+      path26 = formatMap("{parent}/documents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -103051,18 +105242,18 @@ var FileSearchStores = class extends BaseModule {
   async create(params) {
     var _a2, _b;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createFileSearchStoreParametersToMldev(this.apiClient, params);
-      path25 = formatMap("fileSearchStores", body["_url"]);
+      path26 = formatMap("fileSearchStores", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -103085,18 +105276,18 @@ var FileSearchStores = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getFileSearchStoreParametersToMldev(params);
-      path25 = formatMap("{name}", body["_url"]);
+      path26 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -103117,18 +105308,18 @@ var FileSearchStores = class extends BaseModule {
    */
   async delete(params) {
     var _a2, _b;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteFileSearchStoreParametersToMldev(params);
-      path25 = formatMap("{name}", body["_url"]);
+      path26 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -103140,18 +105331,18 @@ var FileSearchStores = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listFileSearchStoresParametersToMldev(params);
-      path25 = formatMap("fileSearchStores", body["_url"]);
+      path26 = formatMap("fileSearchStores", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -103171,18 +105362,18 @@ var FileSearchStores = class extends BaseModule {
   async uploadToFileSearchStoreInternal(params) {
     var _a2, _b;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = uploadToFileSearchStoreParametersToMldev(params);
-      path25 = formatMap("upload/v1beta/{file_search_store_name}:uploadToFileSearchStore", body["_url"]);
+      path26 = formatMap("upload/v1beta/{file_search_store_name}:uploadToFileSearchStore", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -103210,18 +105401,18 @@ var FileSearchStores = class extends BaseModule {
   async importFile(params) {
     var _a2, _b;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = importFileParametersToMldev(params);
-      path25 = formatMap("{file_search_store_name}:importFile", body["_url"]);
+      path26 = formatMap("{file_search_store_name}:importFile", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -104270,7 +106461,7 @@ async function retryBackoff(fn, strategy) {
         retryInterval = initialInterval * Math.pow(x2, exponent) + Math.random() * 1e3;
       }
       const d = Math.min(retryInterval, maxInterval);
-      await delay(d);
+      await delay2(d);
       x2++;
     }
   }
@@ -104298,7 +106489,7 @@ async function retryAttemptCountBackoff(fn, strategy, config) {
         retryInterval = strategy.initialInterval * Math.pow(strategy.exponent, attempt) * (1 - Math.random() * 0.25);
       }
       const d = Math.min(retryInterval, strategy.maxInterval);
-      await delay(d);
+      await delay2(d);
       attempt++;
     }
   }
@@ -104326,7 +106517,7 @@ function retryIntervalFromResponse(res) {
   }
   return 0;
 }
-async function delay(delay3) {
+async function delay2(delay3) {
   return new Promise((resolve) => setTimeout(resolve, delay3));
 }
 var gt = typeof globalThis === "undefined" ? null : globalThis;
@@ -104357,16 +106548,16 @@ var ClientSDK = class {
   }
   _createRequest(context, conf, options) {
     var _a2, _b, _c, _d, _e;
-    const { method, path: path25, query, headers: opHeaders, security } = conf;
+    const { method, path: path26, query, headers: opHeaders, security } = conf;
     const base = (_a2 = conf.baseURL) !== null && _a2 !== void 0 ? _a2 : this._baseURL;
     if (!base) {
       return ERR(new InvalidRequestError("No base URL provided for operation"));
     }
     const baseURL = new URL(base);
     let reqURL;
-    if (path25) {
+    if (path26) {
       baseURL.pathname = baseURL.pathname.replace(/\/+$/, "") + "/";
-      reqURL = new URL(path25, baseURL);
+      reqURL = new URL(path26, baseURL);
       if (!reqURL.search && baseURL.search) {
         reqURL.search = baseURL.search;
       }
@@ -105182,7 +107373,7 @@ async function $do$e(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path25 = pathToFunc("/{api_version}/agents")(pathParams);
+  const path26 = pathToFunc("/{api_version}/agents")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -105213,7 +107404,7 @@ async function $do$e(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path25,
+    path: path26,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -105257,7 +107448,7 @@ async function $do$d(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path25 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
+  const path26 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -105287,7 +107478,7 @@ async function $do$d(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path25,
+    path: path26,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -105331,7 +107522,7 @@ async function $do$c(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path25 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
+  const path26 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -105361,7 +107552,7 @@ async function $do$c(client, id, api_version, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path25,
+    path: path26,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -105403,7 +107594,7 @@ async function $do$b(client, api_version, page_size, page_token, parent, options
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload === null || payload === void 0 ? void 0 : payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path25 = pathToFunc("/{api_version}/agents")(pathParams);
+  const path26 = pathToFunc("/{api_version}/agents")(pathParams);
   const query = encodeFormQuery({
     "page_size": payload === null || payload === void 0 ? void 0 : payload.page_size,
     "page_token": payload === null || payload === void 0 ? void 0 : payload.page_token,
@@ -105438,7 +107629,7 @@ async function $do$b(client, api_version, page_size, page_token, parent, options
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path25,
+    path: path26,
     headers,
     query,
     body,
@@ -105590,7 +107781,7 @@ async function $do$a(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path25 = pathToFunc("/{api_version}/interactions/{id}/cancel")(pathParams);
+  const path26 = pathToFunc("/{api_version}/interactions/{id}/cancel")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -105620,7 +107811,7 @@ async function $do$a(client, id, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path25,
+    path: path26,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -105663,7 +107854,7 @@ async function $do$9(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path25 = pathToFunc("/{api_version}/interactions")(pathParams);
+  const path26 = pathToFunc("/{api_version}/interactions")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: ((_b = input === null || input === void 0 ? void 0 : input.body) === null || _b === void 0 ? void 0 : _b.stream) ? "text/event-stream" : "application/json"
@@ -105694,7 +107885,7 @@ async function $do$9(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path25,
+    path: path26,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -105744,7 +107935,7 @@ async function $do$8(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path25 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
+  const path26 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -105774,7 +107965,7 @@ async function $do$8(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path25,
+    path: path26,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -105824,7 +108015,7 @@ async function $do$7(client, id, stream5, last_event_id, include_input, api_vers
       charEncoding: "percent"
     })
   };
-  const path25 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
+  const path26 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
   const query = encodeFormQuery({
     "include_input": payload.include_input,
     "last_event_id": payload.last_event_id,
@@ -105859,7 +108050,7 @@ async function $do$7(client, id, stream5, last_event_id, include_input, api_vers
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path25,
+    path: path26,
     headers,
     query,
     body,
@@ -105933,7 +108124,7 @@ async function $do$6(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path25 = pathToFunc("/{api_version}/webhooks")(pathParams);
+  const path26 = pathToFunc("/{api_version}/webhooks")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -105964,7 +108155,7 @@ async function $do$6(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path25,
+    path: path26,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -106008,7 +108199,7 @@ async function $do$5(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path25 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path26 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -106038,7 +108229,7 @@ async function $do$5(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path25,
+    path: path26,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -106082,7 +108273,7 @@ async function $do$4(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path25 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path26 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -106112,7 +108303,7 @@ async function $do$4(client, id, api_version, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path25,
+    path: path26,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -106153,7 +108344,7 @@ async function $do$3(client, api_version, page_size, page_token, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload === null || payload === void 0 ? void 0 : payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path25 = pathToFunc("/{api_version}/webhooks")(pathParams);
+  const path26 = pathToFunc("/{api_version}/webhooks")(pathParams);
   const query = encodeFormQuery({
     "page_size": payload === null || payload === void 0 ? void 0 : payload.page_size,
     "page_token": payload === null || payload === void 0 ? void 0 : payload.page_token
@@ -106187,7 +108378,7 @@ async function $do$3(client, api_version, page_size, page_token, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path25,
+    path: path26,
     headers,
     query,
     body,
@@ -106233,7 +108424,7 @@ async function $do$2(client, id, api_version, body, options) {
       charEncoding: "percent"
     })
   };
-  const path25 = pathToFunc("/{api_version}/webhooks/{id}:ping")(pathParams);
+  const path26 = pathToFunc("/{api_version}/webhooks/{id}:ping")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -106264,7 +108455,7 @@ async function $do$2(client, id, api_version, body, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path25,
+    path: path26,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -106309,7 +108500,7 @@ async function $do$1(client, id, api_version, body, options) {
       charEncoding: "percent"
     })
   };
-  const path25 = pathToFunc("/{api_version}/webhooks/{id}:rotateSigningSecret")(pathParams);
+  const path26 = pathToFunc("/{api_version}/webhooks/{id}:rotateSigningSecret")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -106340,7 +108531,7 @@ async function $do$1(client, id, api_version, body, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path25,
+    path: path26,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -106386,7 +108577,7 @@ async function $do(client, id, api_version, update_mask, body, options) {
       charEncoding: "percent"
     })
   };
-  const path25 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path26 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const query = encodeFormQuery({
     "update_mask": payload.update_mask
   });
@@ -106420,7 +108611,7 @@ async function $do(client, id, api_version, update_mask, body, options) {
     security: requestSecurity,
     method: "PATCH",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path25,
+    path: path26,
     headers,
     query,
     body: body$,
@@ -106924,7 +109115,7 @@ var NodeDownloader = class {
     if (params.downloadPath) {
       const response = await downloadFile(params, apiClient);
       if (response instanceof HttpResponse) {
-        const writer = (0, import_fs14.createWriteStream)(params.downloadPath);
+        const writer = (0, import_fs16.createWriteStream)(params.downloadPath);
         const body = import_node_stream3.Readable.fromWeb(response.responseInternal.body);
         body.pipe(writer);
         await (0, import_promises2.finished)(writer);
@@ -108436,16 +110627,16 @@ var Tunings = class extends BaseModule {
   async getInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getTuningJobParametersToVertex(params);
-      path25 = formatMap("{name}", body["_url"]);
+      path26 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -108466,12 +110657,12 @@ var Tunings = class extends BaseModule {
       });
     } else {
       const body = getTuningJobParametersToMldev(params);
-      path25 = formatMap("{name}", body["_url"]);
+      path26 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -108495,16 +110686,16 @@ var Tunings = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listTuningJobsParametersToVertex(params);
-      path25 = formatMap("tuningJobs", body["_url"]);
+      path26 = formatMap("tuningJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -108543,16 +110734,16 @@ var Tunings = class extends BaseModule {
   async cancel(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = cancelTuningJobParametersToVertex(params);
-      path25 = formatMap("{name}:cancel", body["_url"]);
+      path26 = formatMap("{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -108575,12 +110766,12 @@ var Tunings = class extends BaseModule {
       });
     } else {
       const body = cancelTuningJobParametersToMldev(params);
-      path25 = formatMap("{name}:cancel", body["_url"]);
+      path26 = formatMap("{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -108606,16 +110797,16 @@ var Tunings = class extends BaseModule {
   async tuneInternal(params) {
     var _a2, _b;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createTuningJobParametersPrivateToVertex(params, params);
-      path25 = formatMap("tuningJobs", body["_url"]);
+      path26 = formatMap("tuningJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -108641,18 +110832,18 @@ var Tunings = class extends BaseModule {
   async tuneMldevInternal(params) {
     var _a2, _b;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createTuningJobParametersPrivateToMldev(params);
-      path25 = formatMap("tunedModels", body["_url"]);
+      path26 = formatMap("tunedModels", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -108676,16 +110867,16 @@ var Tunings = class extends BaseModule {
   async validateReward(params) {
     var _a2, _b;
     let response;
-    let path25 = "";
+    let path26 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = validateRewardParametersToVertex(params);
-      path25 = formatMap("{parent}/tuningJobs:validateReinforcementTuningReward", body["_url"]);
+      path26 = formatMap("{parent}/tuningJobs:validateReinforcementTuningReward", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path25,
+        path: path26,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -108774,7 +110965,7 @@ async function uploadBlobInternal(file, uploadUrl, apiClient, httpOptions) {
         break;
       }
       retryCount++;
-      await sleep2(currentDelayMs);
+      await sleep4(currentDelayMs);
       currentDelayMs = currentDelayMs * DELAY_MULTIPLIER;
     }
     offset += chunkSize;
@@ -108791,14 +110982,14 @@ async function getBlobStat(file) {
   const fileStat = { size: file.size, type: file.type };
   return fileStat;
 }
-function sleep2(ms) {
+function sleep4(ms) {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 }
 var NodeUploader = class {
   async stat(file) {
     const fileStat = { size: 0, type: void 0 };
     if (typeof file === "string") {
-      const originalStat = await fs14.stat(file);
+      const originalStat = await fs16.stat(file);
       fileStat.size = originalStat.size;
       fileStat.type = this.inferMimeType(file);
       return fileStat;
@@ -108944,9 +111135,9 @@ var NodeUploader = class {
     let response = new HttpResponse(new Response());
     let uploadCommand = "upload";
     let fileHandle;
-    const fileName = path13.basename(file);
+    const fileName = path16.basename(file);
     try {
-      fileHandle = await fs14.open(file, "r");
+      fileHandle = await fs16.open(file, "r");
       if (!fileHandle) {
         throw new Error(`Failed to open file`);
       }
@@ -108976,7 +111167,7 @@ var NodeUploader = class {
             break;
           }
           retryCount++;
-          await sleep2(currentDelayMs);
+          await sleep4(currentDelayMs);
           currentDelayMs = currentDelayMs * DELAY_MULTIPLIER;
         }
         offset += bytesRead;
@@ -109178,15 +111369,15 @@ function getApiKeyFromEnv() {
 }
 
 // utils/env.js
-var import_fs15 = __toESM(require("fs"), 1);
-var import_path13 = __toESM(require("path"), 1);
+var import_fs17 = __toESM(require("fs"), 1);
+var import_path16 = __toESM(require("path"), 1);
 init_appPaths();
-var APP_ROOT7 = resolveAppRoot();
-var ENV_PATH = import_path13.default.join(APP_ROOT7, ".env");
+var APP_ROOT8 = resolveAppRoot();
+var ENV_PATH = import_path16.default.join(APP_ROOT8, ".env");
 function updateEnvVar(key, value) {
   let content = "";
-  if (import_fs15.default.existsSync(ENV_PATH)) {
-    content = import_fs15.default.readFileSync(ENV_PATH, "utf-8");
+  if (import_fs17.default.existsSync(ENV_PATH)) {
+    content = import_fs17.default.readFileSync(ENV_PATH, "utf-8");
   }
   const regex = new RegExp(`^${key}\\s*=.*$`, "m");
   const line = `${key}=${value}`;
@@ -109195,7 +111386,7 @@ function updateEnvVar(key, value) {
   } else {
     content = (content.trimEnd() ? content.trimEnd() + "\n" : "") + line + "\n";
   }
-  import_fs15.default.writeFileSync(ENV_PATH, content, "utf-8");
+  import_fs17.default.writeFileSync(ENV_PATH, content, "utf-8");
   process.env[key] = value;
 }
 function maskApiKey(key) {
@@ -109204,14 +111395,14 @@ function maskApiKey(key) {
 }
 
 // services/logisticsConfig.js
-var import_fs16 = __toESM(require("fs"), 1);
-var import_path14 = __toESM(require("path"), 1);
+var import_fs18 = __toESM(require("fs"), 1);
+var import_path17 = __toESM(require("path"), 1);
 init_appPaths();
-var CONFIG_PATH = import_path14.default.join(resolveAppRoot(), "data", "logistics_config.json");
+var CONFIG_PATH = import_path17.default.join(resolveAppRoot(), "data", "logistics_config.json");
 function readJsonFile() {
   try {
-    if (!import_fs16.default.existsSync(CONFIG_PATH)) return {};
-    const raw = import_fs16.default.readFileSync(CONFIG_PATH, "utf-8");
+    if (!import_fs18.default.existsSync(CONFIG_PATH)) return {};
+    const raw = import_fs18.default.readFileSync(CONFIG_PATH, "utf-8");
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch (err) {
@@ -109451,8 +111642,8 @@ async function saveLogisticsConfig(partial) {
   }
   await saveLogisticsSettingsToStore(next);
   try {
-    import_fs16.default.mkdirSync(import_path14.default.dirname(CONFIG_PATH), { recursive: true });
-    import_fs16.default.writeFileSync(CONFIG_PATH, JSON.stringify(next, null, 2), "utf-8");
+    import_fs18.default.mkdirSync(import_path17.default.dirname(CONFIG_PATH), { recursive: true });
+    import_fs18.default.writeFileSync(CONFIG_PATH, JSON.stringify(next, null, 2), "utf-8");
   } catch (err) {
     console.warn("[Logistics config] JSON backup write failed:", err?.message || err);
   }
@@ -110560,9 +112751,9 @@ function isVisitable(thing) {
 function removeBrackets(key) {
   return utils_default.endsWith(key, "[]") ? key.slice(0, -2) : key;
 }
-function renderKey(path25, key, dots) {
-  if (!path25) return key;
-  return path25.concat(key).map(function each(token, i2) {
+function renderKey(path26, key, dots) {
+  if (!path26) return key;
+  return path26.concat(key).map(function each(token, i2) {
     token = removeBrackets(token);
     return !dots && i2 ? "[" + token + "]" : token;
   }).join(dots ? "." : "");
@@ -110648,13 +112839,13 @@ function toFormData2(obj, formData, options) {
       return currentValue;
     });
   }
-  function defaultVisitor(value, key, path25) {
+  function defaultVisitor(value, key, path26) {
     let arr = value;
     if (utils_default.isReactNative(formData) && utils_default.isReactNativeBlob(value)) {
-      formData.append(renderKey(path25, key, dots), convertValue(value));
+      formData.append(renderKey(path26, key, dots), convertValue(value));
       return false;
     }
-    if (value && !path25 && typeof value === "object") {
+    if (value && !path26 && typeof value === "object") {
       if (utils_default.endsWith(key, "{}")) {
         key = metaTokens ? key : key.slice(0, -2);
         value = stringifyWithDepthLimit(value, 1);
@@ -110673,7 +112864,7 @@ function toFormData2(obj, formData, options) {
     if (isVisitable(value)) {
       return true;
     }
-    formData.append(renderKey(path25, key, dots), convertValue(value));
+    formData.append(renderKey(path26, key, dots), convertValue(value));
     return false;
   }
   const exposedHelpers = Object.assign(predicates, {
@@ -110681,17 +112872,17 @@ function toFormData2(obj, formData, options) {
     convertValue,
     isVisitable
   });
-  function build(value, path25, depth = 0) {
+  function build(value, path26, depth = 0) {
     if (utils_default.isUndefined(value)) return;
     throwIfMaxDepthExceeded(depth);
     if (stack.indexOf(value) !== -1) {
-      throw new Error("Circular reference detected in " + path25.join("."));
+      throw new Error("Circular reference detected in " + path26.join("."));
     }
     stack.push(value);
     utils_default.forEach(value, function each(el, key) {
-      const result = !(utils_default.isUndefined(el) || el === null) && visitor.call(formData, el, utils_default.isString(key) ? key.trim() : key, path25, exposedHelpers);
+      const result = !(utils_default.isUndefined(el) || el === null) && visitor.call(formData, el, utils_default.isString(key) ? key.trim() : key, path26, exposedHelpers);
       if (result === true) {
-        build(el, path25 ? path25.concat(key) : [key], depth + 1);
+        build(el, path26 ? path26.concat(key) : [key], depth + 1);
       }
     });
     stack.pop();
@@ -110840,7 +113031,7 @@ var transitional_default = {
 };
 
 // node_modules/axios/lib/platform/node/index.js
-var import_crypto = __toESM(require("crypto"), 1);
+var import_crypto2 = __toESM(require("crypto"), 1);
 
 // node_modules/axios/lib/platform/node/classes/URLSearchParams.js
 var import_url = __toESM(require("url"), 1);
@@ -110858,7 +113049,7 @@ var generateString = (size = 16, alphabet = ALPHABET.ALPHA_DIGIT) => {
   let str = "";
   const { length } = alphabet;
   const randomValues = new Uint32Array(size);
-  import_crypto.default.randomFillSync(randomValues);
+  import_crypto2.default.randomFillSync(randomValues);
   for (let i2 = 0; i2 < size; i2++) {
     str += alphabet[randomValues[i2] % length];
   }
@@ -110903,7 +113094,7 @@ var platform_default = {
 // node_modules/axios/lib/helpers/toURLEncodedForm.js
 function toURLEncodedForm(data, options) {
   return toFormData_default(data, new platform_default.classes.URLSearchParams(), {
-    visitor: function(value, key, path25, helpers) {
+    visitor: function(value, key, path26, helpers) {
       if (platform_default.isNode && utils_default.isBuffer(value)) {
         this.append(key, value.toString("base64"));
         return false;
@@ -110925,14 +113116,14 @@ function throwIfDepthExceeded(index) {
   }
 }
 function parsePropPath(name) {
-  const path25 = [];
+  const path26 = [];
   const pattern = /[^.[\]]+|\[([^.[\]]*)]/g;
   let match2;
   while ((match2 = pattern.exec(name)) !== null) {
-    throwIfDepthExceeded(path25.length);
-    path25.push(match2[0] === "[]" ? "" : match2[1] || match2[0]);
+    throwIfDepthExceeded(path26.length);
+    path26.push(match2[0] === "[]" ? "" : match2[1] || match2[0]);
   }
-  return path25;
+  return path26;
 }
 function arrayToObject(arr) {
   const obj = {};
@@ -110947,12 +113138,12 @@ function arrayToObject(arr) {
   return obj;
 }
 function formDataToJSON(formData) {
-  function buildPath(path25, value, target, index) {
+  function buildPath(path26, value, target, index) {
     throwIfDepthExceeded(index);
-    let name = path25[index++];
+    let name = path26[index++];
     if (name === "__proto__") return true;
     const isNumericKey = Number.isFinite(+name);
-    const isLast = index >= path25.length;
+    const isLast = index >= path26.length;
     name = !name && utils_default.isArray(target) ? target.length : name;
     if (isLast) {
       if (utils_default.hasOwnProp(target, name)) {
@@ -110965,7 +113156,7 @@ function formDataToJSON(formData) {
     if (!utils_default.hasOwnProp(target, name) || !utils_default.isObject(target[name])) {
       target[name] = [];
     }
-    const result = buildPath(path25, value, target[name], index);
+    const result = buildPath(path26, value, target[name], index);
     if (result && utils_default.isArray(target[name])) {
       target[name] = arrayToObject(target[name]);
     }
@@ -111301,7 +113492,7 @@ var import_http = __toESM(require("http"), 1);
 var import_https = __toESM(require("https"), 1);
 var import_http22 = __toESM(require("http2"), 1);
 var import_util3 = __toESM(require("util"), 1);
-var import_path15 = require("path");
+var import_path18 = require("path");
 var import_follow_redirects = __toESM(require_follow_redirects(), 1);
 var import_zlib = __toESM(require("zlib"), 1);
 
@@ -112683,9 +114874,9 @@ var http_default = isHttpAdapterSupported && function httpAdapter(config) {
       auth = urlUsername + ":" + urlPassword;
     }
     auth && headers.delete("authorization");
-    let path25;
+    let path26;
     try {
-      path25 = buildURL(
+      path26 = buildURL(
         parsed.pathname + parsed.search,
         own2("params"),
         own2("paramsSerializer")
@@ -112704,7 +114895,7 @@ var http_default = isHttpAdapterSupported && function httpAdapter(config) {
       false
     );
     const options = Object.assign(/* @__PURE__ */ Object.create(null), {
-      path: path25,
+      path: path26,
       method,
       headers: toByteStringHeaderObject(headers),
       agents: { http: httpAgent, https: httpsAgent },
@@ -112725,9 +114916,9 @@ var http_default = isHttpAdapterSupported && function httpAdapter(config) {
       const allowedSocketPaths = own2("allowedSocketPaths");
       if (allowedSocketPaths != null) {
         const allowed = Array.isArray(allowedSocketPaths) ? allowedSocketPaths : [allowedSocketPaths];
-        const resolvedSocket = (0, import_path15.resolve)(socketPath);
+        const resolvedSocket = (0, import_path18.resolve)(socketPath);
         const isAllowed = allowed.some(
-          (entry) => typeof entry === "string" && (0, import_path15.resolve)(entry) === resolvedSocket
+          (entry) => typeof entry === "string" && (0, import_path18.resolve)(entry) === resolvedSocket
         );
         if (!isAllowed) {
           return reject(
@@ -113106,14 +115297,14 @@ var isURLSameOrigin_default = platform_default.hasStandardBrowserEnv ? /* @__PUR
 var cookies_default = platform_default.hasStandardBrowserEnv ? (
   // Standard browser envs support document.cookie
   {
-    write(name, value, expires, path25, domain, secure, sameSite) {
+    write(name, value, expires, path26, domain, secure, sameSite) {
       if (typeof document === "undefined") return;
       const cookie = [`${name}=${encodeURIComponent(value)}`];
       if (utils_default.isNumber(expires)) {
         cookie.push(`expires=${new Date(expires).toUTCString()}`);
       }
-      if (utils_default.isString(path25)) {
-        cookie.push(`path=${path25}`);
+      if (utils_default.isString(path26)) {
+        cookie.push(`path=${path26}`);
       }
       if (utils_default.isString(domain)) {
         cookie.push(`domain=${domain}`);
@@ -114710,7 +116901,7 @@ var ghnMasterCache = {
   districts: /* @__PURE__ */ new Map(),
   wards: /* @__PURE__ */ new Map()
 };
-function sleep3(ms) {
+function sleep5(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 }
 async function ghnCreds() {
@@ -114765,7 +116956,7 @@ function getMasterCache(token) {
   }
   return ghnMasterCache;
 }
-async function ghnFetch2(apiUrl, path25, { method = "POST", token, shopId, body } = {}) {
+async function ghnFetch2(apiUrl, path26, { method = "POST", token, shopId, body } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   const headers = {
@@ -114774,7 +116965,7 @@ async function ghnFetch2(apiUrl, path25, { method = "POST", token, shopId, body 
   };
   if (shopId) headers.ShopId = String(shopId).trim();
   try {
-    const res = await fetch(`${apiUrl}${path25}`, {
+    const res = await fetch(`${apiUrl}${path26}`, {
       method,
       headers,
       body: body != null ? JSON.stringify(body) : void 0,
@@ -114790,15 +116981,15 @@ async function ghnFetch2(apiUrl, path25, { method = "POST", token, shopId, body 
     return { ok: res.ok, status: res.status, json: json2 };
   } catch (err) {
     if (err?.name === "AbortError") {
-      throw new Error(`GHN API timeout (>${TIMEOUT_MS}ms) ${path25}`);
+      throw new Error(`GHN API timeout (>${TIMEOUT_MS}ms) ${path26}`);
     }
     throw err;
   } finally {
     clearTimeout(timer);
   }
 }
-async function ghnMasterList(creds, path25, body) {
-  const result = await ghnFetch2(creds.apiUrl, path25, {
+async function ghnMasterList(creds, path26, body) {
+  const result = await ghnFetch2(creds.apiUrl, path26, {
     method: "POST",
     token: creds.token,
     shopId: creds.shopId || void 0,
@@ -114865,7 +117056,7 @@ async function resolveGhnAddress(address, credsIn) {
   if (!Number.isFinite(provinceId) || provinceId <= 0) {
     throw new Error(`GHN kh\xF4ng tr\u1EA3 ProvinceID cho "${provinceName}".`);
   }
-  await sleep3(80);
+  await sleep5(80);
   const districts = await loadGhnDistricts(creds, provinceId);
   let district = districtName ? matchNamedUnit(districts, districtName) : null;
   if (!district && wardName && districts.length) {
@@ -114874,7 +117065,7 @@ async function resolveGhnAddress(address, credsIn) {
       const d = districts[i2];
       const did = pickDistrictId(d);
       if (!did) continue;
-      if (i2 > 0) await sleep3(120);
+      if (i2 > 0) await sleep5(120);
       const wards2 = await loadGhnWards(creds, did);
       const w = matchNamedUnit(wards2, wardName);
       if (w && pickWardCode(w)) {
@@ -114897,7 +117088,7 @@ async function resolveGhnAddress(address, credsIn) {
   if (!districtId) {
     throw new Error(`GHN kh\xF4ng tr\u1EA3 DistrictID cho "${districtName || unitName(district)}".`);
   }
-  await sleep3(80);
+  await sleep5(80);
   const wards = await loadGhnWards(creds, districtId);
   const ward = matchNamedUnit(wards, wardName);
   const wardCode = ward ? pickWardCode(ward) : "";
@@ -115049,7 +117240,7 @@ async function getGhnPrintUrl(orderCode, format = "a5", shopIdOverride) {
     const msg = result.json?.message || result.json?.code_message || `GHN gen-token th\u1EA5t b\u1EA1i (HTTP ${result.status})`;
     throw new Error(String(msg));
   }
-  await sleep3(80);
+  await sleep5(80);
   const url2 = `${creds.printHost}/a5/public-api/${printPath}?token=${encodeURIComponent(token)}`;
   return { url: url2, token, format: printPath, expiresInSec: 1800 };
 }
@@ -115218,7 +117409,7 @@ async function cancelGhnShippingOrder(orderCode, shopIdOverride) {
   let lastMsg = "";
   try {
     for (let i2 = 0; i2 < shopIds.length; i2 += 1) {
-      if (i2 > 0) await sleep3(120);
+      if (i2 > 0) await sleep5(120);
       const result = await ghnFetch2(creds.apiUrl, "/v2/switch-status/cancel", {
         token: creds.token,
         shopId: shopIds[i2],
@@ -115287,7 +117478,7 @@ async function getGhnOrderDetail(orderCode, shopIdOverride) {
   let lastMsg = "";
   try {
     for (let i2 = 0; i2 < shopIds.length; i2 += 1) {
-      if (i2 > 0) await sleep3(120);
+      if (i2 > 0) await sleep5(120);
       const result = await ghnFetch2(creds.apiUrl, "/v2/shipping-order/detail", {
         token: creds.token,
         shopId: shopIds[i2],
@@ -115336,21 +117527,21 @@ async function getGhnOrderDetail(orderCode, shopIdOverride) {
 }
 
 // services/spxLogistics.js
-var import_crypto2 = __toESM(require("crypto"), 1);
+var import_crypto3 = __toESM(require("crypto"), 1);
 var TIMEOUT_MS2 = 15e3;
 var SPX_DEFAULT_HOST = "https://spx.vn";
 var SPX_CREATE_ORDER_PATH = "/open/api/v1/order/batch_create_order";
 var SPX_FORBIDDEN_CREATE_PATH = "/open/api/v1/order/create_order";
 function resolveSpxGateway({ apiUrl, createPath } = {}) {
   let host = String(apiUrl || "").trim();
-  let path25 = String(createPath || "").trim();
+  let path26 = String(createPath || "").trim();
   if (/^https?:\/\//i.test(host)) {
     try {
       const parsed = new URL(host);
       const pathname = String(parsed.pathname || "").replace(/\/$/, "");
       host = `${parsed.protocol}//${parsed.host}`.replace(/\/$/, "");
-      if (!path25 && pathname && pathname !== "/") {
-        path25 = pathname;
+      if (!path26 && pathname && pathname !== "/") {
+        path26 = pathname;
       }
     } catch {
       host = host.replace(/\/$/, "");
@@ -115359,15 +117550,15 @@ function resolveSpxGateway({ apiUrl, createPath } = {}) {
     host = host.replace(/\/$/, "");
   }
   if (!host) host = SPX_DEFAULT_HOST;
-  if (!path25 || path25 === SPX_FORBIDDEN_CREATE_PATH || /\/order\/create_order\/?$/i.test(path25)) {
-    path25 = SPX_CREATE_ORDER_PATH;
+  if (!path26 || path26 === SPX_FORBIDDEN_CREATE_PATH || /\/order\/create_order\/?$/i.test(path26)) {
+    path26 = SPX_CREATE_ORDER_PATH;
   }
-  if (!path25.startsWith("/")) path25 = `/${path25}`;
-  return { host, path: path25, url: `${host}${path25}` };
+  if (!path26.startsWith("/")) path26 = `/${path26}`;
+  return { host, path: path26, url: `${host}${path26}` };
 }
 function signBody(appId, secret, timestamp, rawBody) {
   const raw = `${String(appId)}${String(timestamp)}${String(rawBody ?? "")}`;
-  return import_crypto2.default.createHmac("sha256", String(secret)).update(raw, "utf8").digest("hex");
+  return import_crypto3.default.createHmac("sha256", String(secret)).update(raw, "utf8").digest("hex");
 }
 function stringifySpxBody(bodyObj) {
   return JSON.stringify(bodyObj ?? {});
@@ -115397,7 +117588,7 @@ function pickSpxMerchantId(creds) {
 function pickSpxSecret(creds) {
   return String(creds?.clientSecret || creds?.secret || "").trim();
 }
-async function spxFetch(apiUrl, path25, bodyObj, creds) {
+async function spxFetch(apiUrl, path26, bodyObj, creds) {
   const appId = pickSpxAppId(creds);
   const secret = pickSpxSecret(creds);
   if (!appId || !secret) {
@@ -115410,7 +117601,7 @@ async function spxFetch(apiUrl, path25, bodyObj, creds) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS2);
   try {
-    const res = await fetch(`${apiUrl}${path25}`, {
+    const res = await fetch(`${apiUrl}${path26}`, {
       method: "POST",
       headers,
       body: rawBody,
@@ -115426,7 +117617,7 @@ async function spxFetch(apiUrl, path25, bodyObj, creds) {
     return { ok: res.ok, status: res.status, json: json2 };
   } catch (err) {
     if (err?.name === "AbortError") {
-      throw new Error(`SPX API timeout (>${TIMEOUT_MS2}ms) ${path25}`);
+      throw new Error(`SPX API timeout (>${TIMEOUT_MS2}ms) ${path26}`);
     }
     throw err;
   } finally {
@@ -115824,7 +118015,7 @@ function ensureGeminiClientFromEnv() {
   }
   return ai;
 }
-var deps5 = {
+var deps6 = {
   CHANNEL_SETTINGS_PATH: "",
   DEFAULT_CHANNEL_SETTINGS: {},
   loadChannelSettings: () => ({ shops: [] }),
@@ -115839,20 +118030,20 @@ var deps5 = {
   enrichShopsWithConnectionStatus: (shops) => Array.isArray(shops) ? shops : []
 };
 function initSettingsController(partial) {
-  deps5 = { ...deps5, ...partial };
+  deps6 = { ...deps6, ...partial };
 }
 async function getChannelSettings(_req, res) {
   try {
-    const settings = deps5.loadChannelSettings();
-    const shops = deps5.enrichShopsWithConnectionStatus(settings.shops || []);
+    const settings = deps6.loadChannelSettings();
+    const shops = deps6.enrichShopsWithConnectionStatus(settings.shops || []);
     return res.json({
       success: true,
       settings: { ...settings, shops },
-      path: deps5.CHANNEL_SETTINGS_PATH,
+      path: deps6.CHANNEL_SETTINGS_PATH,
       shopCount: shops.length
     });
   } catch (error) {
-    deps5.logOAuthSaveError("GET /api/settings/channels", error);
+    deps6.logOAuthSaveError("GET /api/settings/channels", error);
     return res.status(500).json({
       success: false,
       error: error?.message || "load_failed",
@@ -115870,9 +118061,9 @@ async function putChannelSettings(req, res) {
         message: "Thi\u1EBFu tr\u01B0\u1EDDng settings trong body"
       });
     }
-    const onDisk = deps5.loadChannelSettings();
+    const onDisk = deps6.loadChannelSettings();
     const incomingShops = Array.isArray(incoming.shops) ? incoming.shops : [];
-    const mergedShops = deps5.upsertShopsInChannelSettings(onDisk.shops || [], incomingShops);
+    const mergedShops = deps6.upsertShopsInChannelSettings(onDisk.shops || [], incomingShops);
     if (incomingShops.length > 0 && mergedShops.length === 0) {
       return res.status(400).json({
         success: false,
@@ -115880,8 +118071,8 @@ async function putChannelSettings(req, res) {
         message: "D\u1EEF li\u1EC7u shop thi\u1EBFu tr\u01B0\u1EDDng b\u1EAFt bu\u1ED9c (platform, shopId, shopName, apiKey)"
       });
     }
-    const payload = { ...deps5.DEFAULT_CHANNEL_SETTINGS, ...onDisk, ...incoming, shops: mergedShops };
-    if (!deps5.saveChannelSettings(payload)) {
+    const payload = { ...deps6.DEFAULT_CHANNEL_SETTINGS, ...onDisk, ...incoming, shops: mergedShops };
+    if (!deps6.saveChannelSettings(payload)) {
       return res.status(500).json({
         success: false,
         error: "save_failed",
@@ -115900,12 +118091,12 @@ async function putChannelSettings(req, res) {
         console.warn("[Channel Settings] TikTok token exchange issues:", JSON.stringify(failed));
       }
       const payload2 = { ...payload, shops: shopsAfterToken };
-      deps5.saveChannelSettings(payload2);
+      deps6.saveChannelSettings(payload2);
     } catch (syncErr) {
       console.warn("[Channel Settings] TikTok token exchange skipped:", syncErr?.message || syncErr);
     }
-    const saved = deps5.loadChannelSettings();
-    const shops = deps5.enrichShopsWithConnectionStatus(saved.shops || []);
+    const saved = deps6.loadChannelSettings();
+    const shops = deps6.enrichShopsWithConnectionStatus(saved.shops || []);
     console.log(
       "[Channel Settings] PUT OK \u2014 shop_ids:",
       shops.map((s2) => s2.shopId).join(", ") || "(tr\u1ED1ng)"
@@ -115917,7 +118108,7 @@ async function putChannelSettings(req, res) {
       tiktokTokenReports
     });
   } catch (error) {
-    deps5.logOAuthSaveError("PUT /api/settings/channels", error);
+    deps6.logOAuthSaveError("PUT /api/settings/channels", error);
     return res.status(500).json({
       success: false,
       error: error?.message || "save_failed",
@@ -115978,7 +118169,7 @@ async function postShopConnectionStatus(req, res) {
               () => reject(new Error("Timeout ki\u1EC3m tra k\u1EBFt n\u1ED1i (15s)")),
               15e3
             );
-            Promise.resolve(deps5.checkShopConnectionStatus(shop)).then(
+            Promise.resolve(deps6.checkShopConnectionStatus(shop)).then(
               (v) => {
                 clearTimeout(timer);
                 resolve(v);
@@ -116237,21 +118428,21 @@ async function testSpxSettings(req, res) {
 }
 
 // routes/settingsRoutes.js
-var router11 = (0, import_express12.Router)();
-router11.get("/channels", getChannelSettings);
-router11.put("/channels", putChannelSettings);
-router11.get("/gemini-status", getGeminiStatus);
-router11.post("/update-gemini-key", updateGeminiKey);
-router11.post("/test-gemini-key", testGeminiKey);
-router11.post("/shop-connection-status", postShopConnectionStatus);
-router11.get("/logistics", getLogisticsSettings);
-router11.post("/logistics", saveLogisticsSettings);
-router11.post("/test-ghn", testGhnSettings);
-router11.post("/test-spx", testSpxSettings);
-var settingsRoutes_default = router11;
+var router12 = (0, import_express13.Router)();
+router12.get("/channels", getChannelSettings);
+router12.put("/channels", putChannelSettings);
+router12.get("/gemini-status", getGeminiStatus);
+router12.post("/update-gemini-key", updateGeminiKey);
+router12.post("/test-gemini-key", testGeminiKey);
+router12.post("/shop-connection-status", postShopConnectionStatus);
+router12.get("/logistics", getLogisticsSettings);
+router12.post("/logistics", saveLogisticsSettings);
+router12.post("/test-ghn", testGhnSettings);
+router12.post("/test-spx", testSpxSettings);
+var settingsRoutes_default = router12;
 
 // routes/aiRoutes.js
-var import_express13 = __toESM(require_express2(), 1);
+var import_express14 = __toESM(require_express2(), 1);
 
 // controllers/aiController.js
 function markdownToHtml(text) {
@@ -116496,14 +118687,14 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
 }
 
 // routes/aiRoutes.js
-var router12 = (0, import_express13.Router)();
-router12.post("/gemini/optimize", authMiddleware, geminiOptimize);
-router12.post("/ai/parse-address", authMiddleware, parseAddress);
-router12.post("/ai/generate-description", authMiddleware, generateDescription);
-var aiRoutes_default = router12;
+var router13 = (0, import_express14.Router)();
+router13.post("/gemini/optimize", authMiddleware, geminiOptimize);
+router13.post("/ai/parse-address", authMiddleware, parseAddress);
+router13.post("/ai/generate-description", authMiddleware, generateDescription);
+var aiRoutes_default = router13;
 
 // routes/dashboardRoutes.js
-var import_express14 = __toESM(require_express2(), 1);
+var import_express15 = __toESM(require_express2(), 1);
 
 // utils/dashboard.js
 function toDateKey(d) {
@@ -116603,7 +118794,7 @@ function buildDashboardChart(dailyRevenue, range) {
 }
 
 // controllers/dashboardController.js
-var deps6 = {
+var deps7 = {
   isMongoReady: () => false,
   withLocalDbTimeout: async (promise) => promise,
   getDashboardStatsFromStore: async () => ({
@@ -116624,7 +118815,7 @@ var deps6 = {
   loadChannelSettings: () => ({ systemFees: [] })
 };
 function initDashboardController(partial) {
-  deps6 = { ...deps6, ...partial };
+  deps7 = { ...deps7, ...partial };
 }
 async function getDashboard(req, res) {
   try {
@@ -116634,11 +118825,11 @@ async function getDashboard(req, res) {
     const startKey = toDateKey(range.start);
     const endKey = toDateKey(range.end);
     const LOW_STOCK_THRESHOLD = 5;
-    if (!deps6.isMongoReady()) {
+    if (!deps7.isMongoReady()) {
       let lowStockProducts2 = [];
       try {
-        const lowStockRows2 = await deps6.withLocalDbTimeout(
-          deps6.getLowStockProductsFromStore(LOW_STOCK_THRESHOLD, 50),
+        const lowStockRows2 = await deps7.withLocalDbTimeout(
+          deps7.getLowStockProductsFromStore(LOW_STOCK_THRESHOLD, 50),
           8e3,
           "dashboard_low_stock"
         );
@@ -116673,19 +118864,19 @@ async function getDashboard(req, res) {
         message: "mongodb_not_ready"
       });
     }
-    const channelSettings = deps6.loadChannelSettings() || {};
+    const channelSettings = deps7.loadChannelSettings() || {};
     const systemFees = Array.isArray(channelSettings.systemFees) ? channelSettings.systemFees : [];
     const [stats, lowStockRows] = await Promise.all([
-      deps6.withLocalDbTimeout(deps6.getDashboardStatsFromStore(startKey, endKey, systemFees), 8e3, "dashboard_stats"),
-      deps6.withLocalDbTimeout(
-        deps6.getLowStockProductsFromStore(LOW_STOCK_THRESHOLD, 50),
+      deps7.withLocalDbTimeout(deps7.getDashboardStatsFromStore(startKey, endKey, systemFees), 8e3, "dashboard_stats"),
+      deps7.withLocalDbTimeout(
+        deps7.getLowStockProductsFromStore(LOW_STOCK_THRESHOLD, 50),
         8e3,
         "dashboard_low_stock"
       )
     ]);
     const wantedProductIds = stats.topProducts.map((p) => p.productId).filter(Boolean);
-    const topProductDocs = wantedProductIds.length ? await deps6.withLocalDbTimeout(
-      deps6.loadProductsByIdsFromStore(wantedProductIds, []),
+    const topProductDocs = wantedProductIds.length ? await deps7.withLocalDbTimeout(
+      deps7.loadProductsByIdsFromStore(wantedProductIds, []),
       8e3,
       "dashboard_top_products"
     ) : [];
@@ -116743,9 +118934,9 @@ async function getDashboard(req, res) {
 }
 
 // routes/dashboardRoutes.js
-var router13 = (0, import_express14.Router)();
-router13.get("/", getDashboard);
-var dashboardRoutes_default = router13;
+var router14 = (0, import_express15.Router)();
+router14.get("/", getDashboard);
+var dashboardRoutes_default = router14;
 
 // middlewares/cors.js
 function corsMiddleware(req, res, next) {
@@ -116765,18 +118956,18 @@ function corsMiddleware(req, res, next) {
 var cors_default = corsMiddleware;
 
 // middlewares/dbReady.js
-var import_mongoose6 = __toESM(require("mongoose"), 1);
+var import_mongoose8 = __toESM(require("mongoose"), 1);
 function dbReadyMiddleware(req, res, next) {
   const pathName = String(req.path || req.originalUrl || "").split("?")[0];
   if (!pathName.startsWith("/api/")) return next();
   const allowWithoutDb = pathName === "/api/login" || pathName.startsWith("/api/health") || pathName.startsWith("/api/auth/") || pathName === "/api/shopee/callback" || pathName === "/api/shopee/oauth/complete" || pathName === "/api/shopee/webhook" || pathName === "/api/tiktok/callback" || pathName.startsWith("/api/public/") || pathName.startsWith("/api/shopee/ship-order") || pathName === "/api/shopee/print-document";
   if (allowWithoutDb) return next();
-  if (import_mongoose6.default.connection.readyState !== 1) {
+  if (import_mongoose8.default.connection.readyState !== 1) {
     return res.status(503).json({
       success: false,
       message: "Database \u0111ang k\u1EBFt n\u1ED1i, vui l\xF2ng th\u1EED l\u1EA1i sau",
       error: "database_connecting",
-      readyState: import_mongoose6.default.connection.readyState
+      readyState: import_mongoose8.default.connection.readyState
     });
   }
   return next();
@@ -116802,7 +118993,7 @@ function emitOrderUpdated(_payload) {
 }
 
 // controllers/scanBulkController.js
-var deps7 = {
+var deps8 = {
   findOrderByScanCodeInStore: async () => null,
   findOrdersByScanCodesInStore: async () => /* @__PURE__ */ new Map(),
   resolveOrderFromShopeeByScanCode: async () => null,
@@ -116839,7 +119030,7 @@ var deps7 = {
   getHandOverIneligibleReasonShared: () => ""
 };
 function initScanBulkController(partial) {
-  deps7 = { ...deps7, ...partial };
+  deps8 = { ...deps8, ...partial };
 }
 async function scanBulkUpdate(req, res) {
   const __t0 = Date.now();
@@ -116866,7 +119057,7 @@ async function scanBulkUpdate(req, res) {
     const forceReturnCodes = toCodeSet(req.body?.daNhanHoanCodes);
     let foundByCode = /* @__PURE__ */ new Map();
     try {
-      foundByCode = await deps7.findOrdersByScanCodesInStore(codes);
+      foundByCode = await deps8.findOrdersByScanCodesInStore(codes);
     } catch (batchLookupErr) {
       console.warn(
         "[Orders Scan Bulk] batch lookup fail:",
@@ -116878,8 +119069,8 @@ async function scanBulkUpdate(req, res) {
       const scannedCode = String(code || "").trim().toUpperCase();
       let found = foundByCode.get(code) || foundByCode.get(scannedCode) || null;
       try {
-        if (found && !deps7.isValidOrder(found)) found = null;
-        if (found) found = deps7.mirrorTrackingFieldsForRead(found);
+        if (found && !deps8.isValidOrder(found)) found = null;
+        if (found) found = deps8.mirrorTrackingFieldsForRead(found);
       } catch (lookupErr) {
         console.warn(
           `[Orders Scan Bulk] hydrate miss code=${scannedCode}:`,
@@ -116924,7 +119115,7 @@ async function scanBulkUpdate(req, res) {
       if (status === "return_pending" || status === "return_received" || rawShopee === "TO_RETURN") {
         return true;
       }
-      return status === "cancelled" || rawShopee === "CANCELLED" || rawShopee === "IN_CANCEL" || Boolean(deps7.isShopeeCancelOrReturnLikeOrder(o));
+      return status === "cancelled" || rawShopee === "CANCELLED" || rawShopee === "IN_CANCEL" || Boolean(deps8.isShopeeCancelOrReturnLikeOrder(o));
     });
     let alreadyInDonHoanHuySet = /* @__PURE__ */ new Set();
     if (mightHaveCancelReturn) {
@@ -116934,7 +119125,7 @@ async function scanBulkUpdate(req, res) {
         )
       ];
       try {
-        alreadyInDonHoanHuySet = await deps7.existsDonHoanHuyMany(snsForExists);
+        alreadyInDonHoanHuySet = await deps8.existsDonHoanHuyMany(snsForExists);
       } catch {
         alreadyInDonHoanHuySet = /* @__PURE__ */ new Set();
       }
@@ -116974,14 +119165,14 @@ async function scanBulkUpdate(req, res) {
       const order = orders[index];
       const status = String(order.status || "");
       const rawShopee = String(order.shopee_order_status || "").toUpperCase();
-      const existingLocal = deps7.resolveOrderLocalStatus(order);
+      const existingLocal = deps8.resolveOrderLocalStatus(order);
       const orderSnNorm = String(order.orderSn || "").replace(/^shopee-/i, "").trim();
       const alreadyInDonHoanHuy = alreadyInDonHoanHuySet.has(orderSnNorm);
       const forceHandOver = forceHandOverCodes.has(codeKey) || forceHandOverCodes.has(norm(String(order.orderSn || ""))) || forceHandOverCodes.has(norm(String(order.trackingNumber || order.tracking_no || "")));
       const forceCancel = forceCancelCodes.has(codeKey) || forceCancelCodes.has(norm(String(order.orderSn || ""))) || forceCancelCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) || forceCancelCodes.has(norm(String(order.return_tracking_no || order.returnTrackingNumber || "")));
       const forceReturn = forceReturnCodes.has(codeKey) || forceReturnCodes.has(norm(String(order.orderSn || ""))) || forceReturnCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) || forceReturnCodes.has(norm(String(order.return_tracking_no || order.returnTrackingNumber || "")));
       const isReturnLike = status === "return_pending" || status === "return_received" || rawShopee === "TO_RETURN";
-      const isCancelLike = !isReturnLike && (status === "cancelled" || rawShopee === "CANCELLED" || rawShopee === "IN_CANCEL" || deps7.isShopeeCancelOrReturnLikeOrder(order));
+      const isCancelLike = !isReturnLike && (status === "cancelled" || rawShopee === "CANCELLED" || rawShopee === "IN_CANCEL" || deps8.isShopeeCancelOrReturnLikeOrder(order));
       if (forceCancel && alreadyInDonHoanHuy) {
         summary.donHuy += 1;
         donHoanHuyAlready += 1;
@@ -117009,8 +119200,8 @@ async function scanBulkUpdate(req, res) {
         continue;
       }
       const allowForceCancelReturnOverride = (forceCancel || forceReturn) && (existingLocal === "HANDED_OVER" || existingLocal === "CANCELLED_STORED" || existingLocal === "RETURN_RECEIVED" || isCancelLike || isReturnLike);
-      if (deps7.isOrderAlreadyScanProcessed(order) && !allowForceCancelReturnOverride && !forceCancel && !forceReturn) {
-        const reason = deps7.getScanProcessedReason(order);
+      if (deps8.isOrderAlreadyScanProcessed(order) && !allowForceCancelReturnOverride && !forceCancel && !forceReturn) {
+        const reason = deps8.getScanProcessedReason(order);
         results.push({
           code,
           action: "duplicate",
@@ -117037,7 +119228,7 @@ async function scanBulkUpdate(req, res) {
             orderId: order.id,
             orderSn: order.orderSn,
             message: `\u0110\u01A1n #${order.orderSn} \u0111\xE3 c\xF3 c\u1EDD \u0110VVC`,
-            local_status: deps7.ORDER_LOCAL_STATUS.HANDED_OVER
+            local_status: deps8.ORDER_LOCAL_STATUS.HANDED_OVER
           });
           continue;
         }
@@ -117059,7 +119250,7 @@ async function scanBulkUpdate(req, res) {
           });
           continue;
         }
-        const updated = deps7.applyHandedOverWrite ? deps7.applyHandedOverWrite({ ...order }, void 0, "qr_scan") : {
+        const updated = deps8.applyHandedOverWrite ? deps8.applyHandedOverWrite({ ...order }, void 0, "qr_scan") : {
           ...order,
           is_handed_over: true,
           isHandedOverToCarrier: true,
@@ -117076,7 +119267,7 @@ async function scanBulkUpdate(req, res) {
           orderId: updated.id,
           orderSn: updated.orderSn,
           message: `\u0110\xE3 b\xE0n giao \u0110VVC \u2014 \u0111\u01A1n #${updated.orderSn}`,
-          local_status: deps7.ORDER_LOCAL_STATUS.HANDED_OVER
+          local_status: deps8.ORDER_LOCAL_STATUS.HANDED_OVER
         });
         continue;
       }
@@ -117111,8 +119302,8 @@ async function scanBulkUpdate(req, res) {
         }
         const wasHandedOver = existingLocal === "HANDED_OVER" || order.is_handed_over === true || order.isHandedOverToCarrier === true;
         const updated = { ...order };
-        deps7.clearHandedOverLocalForCancelReturn(updated);
-        deps7.setOrderLocalStatus(updated, "RETURN_RECEIVED");
+        deps8.clearHandedOverLocalForCancelReturn(updated);
+        deps8.setOrderLocalStatus(updated, "RETURN_RECEIVED");
         restockJobsDeferred.push({ order: updated, wasHandedOver });
         orders[index] = updated;
         changedOrders.push(updated);
@@ -117161,8 +119352,8 @@ async function scanBulkUpdate(req, res) {
         const wasHandedOver = existingLocal === "HANDED_OVER" || order.is_handed_over === true || order.isHandedOverToCarrier === true;
         const updated = { ...order };
         if (updated.status !== "cancelled") updated.status = "cancelled";
-        deps7.clearHandedOverLocalForCancelReturn(updated);
-        deps7.setOrderLocalStatus(updated, "CANCELLED_STORED");
+        deps8.clearHandedOverLocalForCancelReturn(updated);
+        deps8.setOrderLocalStatus(updated, "CANCELLED_STORED");
         restockJobsDeferred.push({ order: updated, wasHandedOver });
         orders[index] = updated;
         changedOrders.push(updated);
@@ -117179,8 +119370,8 @@ async function scanBulkUpdate(req, res) {
         });
         continue;
       }
-      if (deps7.isEligibleForHandOverShared(order)) {
-        const result = await deps7.handOverOrderToCarrierByIndex(orders, index, {
+      if (deps8.isEligibleForHandOverShared(order)) {
+        const result = await deps8.handOverOrderToCarrierByIndex(orders, index, {
           persist: false,
           source: "qr_scan"
         });
@@ -117212,7 +119403,7 @@ async function scanBulkUpdate(req, res) {
           orderId: result.order.id,
           orderSn: result.order.orderSn,
           message: `\u0110\xE3 b\xE0n giao \u0110VVC \u2014 \u0111\u01A1n #${result.order.orderSn}`,
-          local_status: deps7.ORDER_LOCAL_STATUS.HANDED_OVER
+          local_status: deps8.ORDER_LOCAL_STATUS.HANDED_OVER
         });
         continue;
       }
@@ -117232,8 +119423,8 @@ async function scanBulkUpdate(req, res) {
     }
     const runRestockBackground = (jobs) => {
       if (!jobs.length) return;
-      if (typeof deps7.restoreLocalStockOnCancelReturnScanBatch !== "function") return;
-      void deps7.restoreLocalStockOnCancelReturnScanBatch(jobs).then((restock) => {
+      if (typeof deps8.restoreLocalStockOnCancelReturnScanBatch !== "function") return;
+      void deps8.restoreLocalStockOnCancelReturnScanBatch(jobs).then((restock) => {
         if (restock?.restored) {
           console.log(
             `[Orders Scan Bulk] Restock BG +${restock.qty || 0} t\u1ED3n / ${restock.restored} \u0111\u01A1n`
@@ -117278,7 +119469,7 @@ async function scanBulkUpdate(req, res) {
       errors: []
     };
     if (cancelReturnRows.length > 0) {
-      if (!deps7.isMongoReady()) {
+      if (!deps8.isMongoReady()) {
         console.error("[Orders Scan Bulk] Mongo not ready \u2014 kh\xF4ng ghi \u0111\u01B0\u1EE3c don_hoan_huy");
         return res.status(500).json({
           success: false,
@@ -117287,7 +119478,7 @@ async function scanBulkUpdate(req, res) {
         });
       }
       try {
-        donHoanHuyWrite = await deps7.upsertDonHoanHuyBatch(
+        donHoanHuyWrite = await deps8.upsertDonHoanHuyBatch(
           cancelReturnRows.map((r2) => ({
             order: r2.order,
             type: r2.type,
@@ -117297,10 +119488,10 @@ async function scanBulkUpdate(req, res) {
         );
       } catch (dhhErr) {
         console.error("[Orders Scan Bulk] don_hoan_huy batch FAIL:", dhhErr);
-        const detail = deps7.describeMongoWriteError(dhhErr);
+        const detail = deps8.describeMongoWriteError(dhhErr);
         return res.status(500).json({
           success: false,
-          message: deps7.isMongoConnectionError(dhhErr) ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB" : detail,
+          message: deps8.isMongoConnectionError(dhhErr) ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB" : detail,
           error: "don_hoan_huy_write_failed"
         });
       }
@@ -117348,30 +119539,30 @@ async function scanBulkUpdate(req, res) {
       }
       if (flagRows.length > 0) {
         try {
-          flagOk = await deps7.markOrdersScanFlagsBatch(flagRows);
+          flagOk = await deps8.markOrdersScanFlagsBatch(flagRows);
         } catch (flagBatchErr) {
-          flagWriteError = deps7.describeMongoWriteError(flagBatchErr);
+          flagWriteError = deps8.describeMongoWriteError(flagBatchErr);
           console.error(
             "[Orders Scan Bulk] markOrdersScanFlagsBatch FAIL:",
             flagWriteError,
             flagBatchErr
           );
         }
-        if ((flagWriteError || flagOk === 0) && typeof deps7.markOrderHandedOverInStore === "function") {
+        if ((flagWriteError || flagOk === 0) && typeof deps8.markOrderHandedOverInStore === "function") {
           let recovered = 0;
           const leftover = [];
           for (const row of flagRows) {
             try {
               if (row.localStatus === "HANDED_OVER") {
-                const ok = await deps7.markOrderHandedOverInStore(row.orderSn, {
+                const ok = await deps8.markOrderHandedOverInStore(row.orderSn, {
                   source: row.source || "qr_scan",
                   handedOverAt: row.handedOverAt,
                   shopId: row.shopId
                 });
                 if (ok) recovered += 1;
                 else leftover.push(row.orderSn);
-              } else if (typeof deps7.markOrderLocalStatusInStore === "function") {
-                const ok = await deps7.markOrderLocalStatusInStore(row.orderSn, row.localStatus, {
+              } else if (typeof deps8.markOrderLocalStatusInStore === "function") {
+                const ok = await deps8.markOrderLocalStatusInStore(row.orderSn, row.localStatus, {
                   shopId: row.shopId,
                   stockRestored: row.stockRestored,
                   stockRestoredAt: row.stockRestoredAt
@@ -117405,7 +119596,7 @@ async function scanBulkUpdate(req, res) {
       console.log(
         `[Orders Scan Bulk] don_hoan_huy ok=${donHoanHuyWrite.ok} fail=${donHoanHuyWrite.failed} handoverFlags=${flagOk} changed=${changedOrders.length}` + (flagWriteError ? ` flagError=${flagWriteError}` : "")
       );
-      deps7.invalidateOrdersRefreshCache();
+      deps8.invalidateOrdersRefreshCache();
     }
     __mark("flagWrite");
     runRestockBackground(restockJobsDeferred);
@@ -117443,7 +119634,7 @@ async function scanBulkUpdate(req, res) {
       });
     }
     console.log(
-      `[Orders Scan Bulk] PERSISTED codes=${codes.length} updated=${changedOrders.length} summary=${JSON.stringify(summary)} failed=${failed_scans.length} mongo=${deps7.isMongoReady()} timing_ms=${JSON.stringify(__timing)} total=${Date.now() - __t0}ms skippedExistsCheck=${!mightHaveCancelReturn}`
+      `[Orders Scan Bulk] PERSISTED codes=${codes.length} updated=${changedOrders.length} summary=${JSON.stringify(summary)} failed=${failed_scans.length} mongo=${deps8.isMongoReady()} timing_ms=${JSON.stringify(__timing)} total=${Date.now() - __t0}ms skippedExistsCheck=${!mightHaveCancelReturn}`
     );
     if (updatedList.length > 0) {
       try {
@@ -117466,23 +119657,23 @@ async function scanBulkUpdate(req, res) {
     return res.json(responsePayload);
   } catch (error) {
     console.error("[Orders Scan Bulk] Error:", error);
-    const detail = deps7.describeMongoWriteError(error);
+    const detail = deps8.describeMongoWriteError(error);
     return res.status(500).json({
       success: false,
       partialFailure: false,
-      message: deps7.isMongoConnectionError(error) ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB" : detail || "Kh\xF4ng th\u1EC3 c\u1EADp nh\u1EADt h\xE0ng lo\u1EA1t \u0111\u01A1n \u0111\xE3 qu\xE9t.",
+      message: deps8.isMongoConnectionError(error) ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB" : detail || "Kh\xF4ng th\u1EC3 c\u1EADp nh\u1EADt h\xE0ng lo\u1EA1t \u0111\u01A1n \u0111\xE3 qu\xE9t.",
       error: error?.message || "scan_bulk_update_failed"
     });
   }
 }
 
 // services/scanBgQueue.js
-var import_fs18 = __toESM(require("fs"), 1);
-var import_path17 = __toESM(require("path"), 1);
+var import_fs20 = __toESM(require("fs"), 1);
+var import_path20 = __toESM(require("path"), 1);
 init_appPaths();
 init_concurrency();
-var APP_ROOT9 = resolveAppRoot();
-var SCAN_BG_QUEUE_PATH = import_path17.default.join(APP_ROOT9, "data", "scan-bg-queue.json");
+var APP_ROOT10 = resolveAppRoot();
+var SCAN_BG_QUEUE_PATH = import_path20.default.join(APP_ROOT10, "data", "scan-bg-queue.json");
 var SCAN_BG_ENQUEUE_CHUNK_SIZE = 50;
 var SCAN_BG_ENQUEUE_PAUSE_MS = 20;
 var SCAN_BG_DRAIN_PASS_LIMIT = 50;
@@ -117492,7 +119683,7 @@ var scanBgJobKeys = /* @__PURE__ */ new Set();
 var scanBgWorkerRunning = false;
 var scanBgPersistTimer = null;
 var scanBgDrainKickTimer = null;
-var deps8 = {
+var deps9 = {
   findOrderByScanCodeInStore: async () => null,
   isValidOrder: () => false,
   mirrorTrackingFieldsForRead: (o) => o,
@@ -117511,7 +119702,7 @@ var deps8 = {
   markOrderLocalStatusInStore: async () => false
 };
 function initScanBgQueue(partial) {
-  deps8 = { ...deps8, ...partial };
+  deps9 = { ...deps9, ...partial };
   if (!scanBgJobs.some((j) => j.status === "pending")) return;
   if (scanBgDrainKickTimer || scanBgWorkerRunning) return;
   scanBgDrainKickTimer = setTimeout(() => {
@@ -117530,8 +119721,8 @@ function normalizeScanBgKey(code) {
 }
 function loadScanBgQueueFromDisk() {
   try {
-    if (!import_fs18.default.existsSync(SCAN_BG_QUEUE_PATH)) return;
-    const raw = JSON.parse(import_fs18.default.readFileSync(SCAN_BG_QUEUE_PATH, "utf-8"));
+    if (!import_fs20.default.existsSync(SCAN_BG_QUEUE_PATH)) return;
+    const raw = JSON.parse(import_fs20.default.readFileSync(SCAN_BG_QUEUE_PATH, "utf-8"));
     const list = Array.isArray(raw?.jobs) ? raw.jobs : Array.isArray(raw) ? raw : [];
     for (const j of list) {
       const code = String(j?.code || "").trim();
@@ -117574,11 +119765,11 @@ function persistScanBgQueueSoon() {
   scanBgPersistTimer = setTimeout(async () => {
     scanBgPersistTimer = null;
     try {
-      await import_fs18.default.promises.mkdir(import_path17.default.dirname(SCAN_BG_QUEUE_PATH), { recursive: true });
+      await import_fs20.default.promises.mkdir(import_path20.default.dirname(SCAN_BG_QUEUE_PATH), { recursive: true });
       const pending = scanBgJobs.filter((j) => j.status === "pending" || j.status === "running");
       const recent = scanBgJobs.filter((j) => j.status !== "pending" && j.status !== "running").slice(-80);
       const jobs = [...pending, ...recent];
-      await import_fs18.default.promises.writeFile(
+      await import_fs20.default.promises.writeFile(
         SCAN_BG_QUEUE_PATH,
         JSON.stringify({ jobs }, null, 0),
         "utf-8"
@@ -117596,7 +119787,7 @@ function classifyScanBgCancelReturn(order) {
   const raw = String(order?.shopee_order_status || "").toUpperCase();
   const kind = String(order?.shopee_cancel_return_kind || "");
   const isReturn = kind === "refund_return" || status === "return_pending" || status === "return_received" || raw === "TO_RETURN" || Boolean(order?.return_sn);
-  const isCancel3 = !isReturn && (kind === "cancelled" || kind === "failed_delivery" || status === "cancelled" || raw === "CANCELLED" || raw === "IN_CANCEL" || deps8.isShopeeCancelOrReturnLikeOrder(order));
+  const isCancel3 = !isReturn && (kind === "cancelled" || kind === "failed_delivery" || status === "cancelled" || raw === "CANCELLED" || raw === "IN_CANCEL" || deps9.isShopeeCancelOrReturnLikeOrder(order));
   return { isReturn, isCancel: isCancel3 };
 }
 async function enqueueScanBgCodes(codes) {
@@ -117627,7 +119818,7 @@ async function enqueueScanBgCodes(codes) {
       }
     }
     if (offset + SCAN_BG_ENQUEUE_CHUNK_SIZE < list.length) {
-      await sleep4(SCAN_BG_ENQUEUE_PAUSE_MS);
+      await sleep2(SCAN_BG_ENQUEUE_PAUSE_MS);
     }
   }
   if (added.length) {
@@ -117647,9 +119838,9 @@ async function processOneScanBgJob(job) {
   try {
     let found = null;
     try {
-      found = await deps8.findOrderByScanCodeInStore(String(job.code || "").trim().toUpperCase());
-      if (found && !deps8.isValidOrder(found)) found = null;
-      if (found) found = deps8.mirrorTrackingFieldsForRead(found);
+      found = await deps9.findOrderByScanCodeInStore(String(job.code || "").trim().toUpperCase());
+      if (found && !deps9.isValidOrder(found)) found = null;
+      if (found) found = deps9.mirrorTrackingFieldsForRead(found);
     } catch {
       found = null;
     }
@@ -117671,10 +119862,10 @@ async function processOneScanBgJob(job) {
     }
     job.orderId = found.id ? String(found.id) : void 0;
     job.orderSn = found.orderSn ? String(found.orderSn) : void 0;
-    const existingLocal = deps8.resolveOrderLocalStatusShared(found);
+    const existingLocal = deps9.resolveOrderLocalStatusShared(found);
     let alreadyDhh = false;
     try {
-      alreadyDhh = await deps8.existsDonHoanHuy(String(found.orderSn || ""));
+      alreadyDhh = await deps9.existsDonHoanHuy(String(found.orderSn || ""));
     } catch {
       alreadyDhh = false;
     }
@@ -117713,19 +119904,19 @@ async function processOneScanBgJob(job) {
       scanBgJobKeys.delete(job.codeKey);
       return;
     }
-    const target = isReturn ? deps8.ORDER_LOCAL_STATUS.RETURN_RECEIVED : deps8.ORDER_LOCAL_STATUS.CANCELLED_STORED;
+    const target = isReturn ? deps9.ORDER_LOCAL_STATUS.RETURN_RECEIVED : deps9.ORDER_LOCAL_STATUS.CANCELLED_STORED;
     const wasHandedOver = existingLocal === "HANDED_OVER" || found.is_handed_over === true || found.isHandedOverToCarrier === true;
-    deps8.clearHandedOverLocalForCancelReturn(found);
-    deps8.setOrderLocalStatus(found, target);
+    deps9.clearHandedOverLocalForCancelReturn(found);
+    deps9.setOrderLocalStatus(found, target);
     try {
-      const restock = await deps8.restoreLocalStockOnCancelReturnScan(found, { wasHandedOver });
+      const restock = await deps9.restoreLocalStockOnCancelReturnScan(found, { wasHandedOver });
       if (restock?.restored) {
         console.log(`[Scan BG] Restock +${restock.qty || 0} order_sn=${found.orderSn}`);
       }
     } catch (restockErr) {
       console.warn(`[Scan BG] Restock fail order_sn=${found.orderSn}:`, restockErr?.message || restockErr);
     }
-    const dhh = await deps8.upsertDonHoanHuy(found, {
+    const dhh = await deps9.upsertDonHoanHuy(found, {
       type: isReturn ? "return" : "cancelled",
       scanCode: job.code,
       source: "scan_bg"
@@ -117734,7 +119925,7 @@ async function processOneScanBgJob(job) {
       throw new Error(dhh.error || "Ghi don_hoan_huy th\u1EA5t b\u1EA1i");
     }
     try {
-      await deps8.markOrderLocalStatusInStore(String(found.orderSn || ""), target, {
+      await deps9.markOrderLocalStatusInStore(String(found.orderSn || ""), target, {
         shopId: found.shopId != null ? String(found.shopId) : void 0,
         clearHandedOver: true,
         status: isReturn ? "return_received" : "cancelled",
@@ -117753,7 +119944,7 @@ async function processOneScanBgJob(job) {
   } catch (err) {
     job.status = "failed";
     job.action = "error";
-    job.message = deps8.describeMongoWriteError(err);
+    job.message = deps9.describeMongoWriteError(err);
     job.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
     scanBgJobKeys.delete(job.codeKey);
     console.error(`[Scan BG] job fail code=${job.code}:`, err);
@@ -117775,7 +119966,7 @@ async function drainScanBgQueue() {
         console.error(`[Scan BG] unhandled job error code=${next?.code || ""}:`, jobErr);
       }
       processedInPass += 1;
-      await sleep4(400);
+      await sleep2(400);
     }
   } finally {
     scanBgWorkerRunning = false;
@@ -117835,7 +120026,7 @@ try {
 }
 
 // routes/productsRoutes.js
-var import_express15 = __toESM(require_express2(), 1);
+var import_express16 = __toESM(require_express2(), 1);
 
 // services/stockSyncQueue.js
 init_concurrency();
@@ -117844,7 +120035,7 @@ var SHOPEE_SYNC_QUEUE_MAX_RETRY = 3;
 var shopeeSyncQueue = [];
 var shopeeSyncQueueKeys = /* @__PURE__ */ new Set();
 var shopeeSyncQueueRunning = false;
-var deps9 = {
+var deps10 = {
   getProductChildrenList: () => [],
   inheritShopeeLinkFromParent: (child) => child,
   getShopeeItemIdForStockPush: () => null,
@@ -117875,7 +120066,7 @@ var deps9 = {
   loadProductById: async () => null
 };
 function initStockSyncQueue(partial) {
-  deps9 = { ...deps9, ...partial };
+  deps10 = { ...deps10, ...partial };
 }
 function detectStockPriceChanges(before, after) {
   const stockBefore = Math.max(0, Math.round(Number(before?.stock) || 0));
@@ -117892,9 +120083,9 @@ function findProductRowById(products, productId) {
   if (!id) return null;
   for (const p of Array.isArray(products) ? products : []) {
     if (String(p?.id || "").trim() === id) return p;
-    for (const child of deps9.getProductChildrenList(p)) {
+    for (const child of deps10.getProductChildrenList(p)) {
       if (String(child?.id || "").trim() === id) {
-        return deps9.inheritShopeeLinkFromParent(child, p);
+        return deps10.inheritShopeeLinkFromParent(child, p);
       }
     }
   }
@@ -117903,12 +120094,12 @@ function findProductRowById(products, productId) {
 async function resolveProductWithShopeeMapping(product) {
   if (!product || typeof product !== "object") return null;
   let current = product;
-  const hasItemId = () => deps9.getShopeeItemIdForStockPush(current) != null;
-  const hasModelId = () => deps9.resolveShopeeModelIdForStockPush(current) != null;
+  const hasItemId = () => deps10.getShopeeItemIdForStockPush(current) != null;
+  const hasModelId = () => deps10.resolveShopeeModelIdForStockPush(current) != null;
   if (!hasItemId() || !hasModelId()) {
     let listings = [];
     try {
-      listings = await deps9.readChannelListingsDb();
+      listings = await deps10.readChannelListingsDb();
     } catch (err) {
       console.error("[Shopee Sync Queue] Kh\xF4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c channel_listings:", err);
       if (!hasItemId()) return null;
@@ -117927,9 +120118,9 @@ async function resolveProductWithShopeeMapping(product) {
       if (match2) {
         const channelId = String(match2.channelId || match2.itemId || "").trim();
         if (channelId || match2.itemId != null) {
-          current = deps9.applyShopeeLinkFieldsToProduct(current, channelId || String(match2.itemId), {
+          current = deps10.applyShopeeLinkFieldsToProduct(current, channelId || String(match2.itemId), {
             modelId: match2.modelId ?? match2.shopeeModelId ?? current.shopeeModelId,
-            itemId: match2.itemId ?? deps9.getShopeeItemIdForStockPush(current)
+            itemId: match2.itemId ?? deps10.getShopeeItemIdForStockPush(current)
           });
           const listingShop = match2.shopId ?? match2.shop_id ?? match2.channelShopId ?? null;
           if (listingShop != null && String(listingShop).trim()) {
@@ -117939,11 +120130,11 @@ async function resolveProductWithShopeeMapping(product) {
       }
     }
   }
-  if (deps9.getShopeeItemIdForStockPush(current) == null) return null;
+  if (deps10.getShopeeItemIdForStockPush(current) == null) return null;
   return current;
 }
 async function resolveShopAuthForStockSync(mapped, opts) {
-  const itemId = deps9.getShopeeItemIdForStockPush(mapped);
+  const itemId = deps10.getShopeeItemIdForStockPush(mapped);
   const shopId = String(
     opts?.shopId || mapped?.shopeeShopId || mapped?.shopId || mapped?.shop_id || ""
   ).trim();
@@ -117960,7 +120151,7 @@ async function resolveShopAuthForStockSync(mapped, opts) {
     console.log(
       `[Shopee Sync] getValidShopeeAccessToken shop_id=${shopId} (refresh n\u1EBFu h\u1EBFt h\u1EA1n)...`
     );
-    const accessToken = await deps9.getValidShopeeAccessToken(shopId);
+    const accessToken = await deps10.getValidShopeeAccessToken(shopId);
     if (!accessToken) {
       const msg = `Kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c access_token h\u1EE3p l\u1EC7 cho shop_id=${shopId} (token h\u1EBFt h\u1EA1n v\xE0 refresh th\u1EA5t b\u1EA1i). V\xE0o m\u1EE5c C\xE0i \u0111\u1EB7t \u2192 \u1EE6y quy\u1EC1n l\u1EA1i Shop Shopee.`;
       console.error(`[Shopee Sync] ${msg}`);
@@ -117977,7 +120168,7 @@ async function resolveShopAuthForStockSync(mapped, opts) {
 function isAuthFailResult(result) {
   if (!result || typeof result !== "object") return false;
   if (Number(result.httpStatus) === 401 || Number(result.httpStatus) === 403) return true;
-  return deps9.isShopeeInvalidTokenError(result.error, result.message);
+  return deps10.isShopeeInvalidTokenError(result.error, result.message);
 }
 async function executeShopeeStockPriceSyncJob(product, opts) {
   try {
@@ -117990,15 +120181,15 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
       return { ok: false, message: auth.message };
     }
     let { shopId, accessToken } = auth;
-    const itemId = deps9.getShopeeItemIdForStockPush(mapped);
-    let modelId = deps9.resolveShopeeModelIdForStockPush(mapped);
+    const itemId = deps10.getShopeeItemIdForStockPush(mapped);
+    let modelId = deps10.resolveShopeeModelIdForStockPush(mapped);
     if (itemId == null) {
       return { ok: false, message: "Thi\u1EBFu Shopee item_id sau khi resolve Mapping." };
     }
-    let itemHasModel = deps9.productRequiresShopeeModelId(mapped, 1);
+    let itemHasModel = deps10.productRequiresShopeeModelId(mapped, 1);
     if (modelId == null) {
       try {
-        const fromApi = await deps9.resolveShopeeModelIdFromApi(shopId, accessToken, itemId, mapped);
+        const fromApi = await deps10.resolveShopeeModelIdFromApi(shopId, accessToken, itemId, mapped);
         if (fromApi.hasModel) itemHasModel = true;
         if (fromApi.modelId != null) {
           modelId = fromApi.modelId;
@@ -118013,7 +120204,7 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
     }
     if (itemHasModel && modelId == null) {
       const msg = "Ph\xE2n lo\u1EA1i (variant) thi\u1EBFu model_id \u2014 b\u1EAFt bu\u1ED9c truy\u1EC1n item_id + model_id khi update_stock";
-      await deps9.appendShopeeSyncErrorToDb({
+      await deps10.appendShopeeSyncErrorToDb({
         itemId,
         modelId: void 0,
         sku: mapped.sku,
@@ -118027,7 +120218,7 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
     let locationId = null;
     if (opts.syncStock) {
       try {
-        locationId = await deps9.resolveShopeeStockLocationId(shopId, accessToken);
+        locationId = await deps10.resolveShopeeStockLocationId(shopId, accessToken);
       } catch (err) {
         console.warn(
           `[Shopee Sync] resolveShopeeStockLocationId shop=${shopId}:`,
@@ -118037,24 +120228,24 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
     }
     const lines = [];
     if (opts.syncStock) {
-      const stockEntry = deps9.buildShopeeUpdateStockEntry(mapped.stock, modelId, locationId);
+      const stockEntry = deps10.buildShopeeUpdateStockEntry(mapped.stock, modelId, locationId);
       try {
         console.log(
           `[Shopee Sync] UpdateStock shop_id=${shopId} item_id=${itemId} model_id=${modelId ?? "n/a"} stock=${mapped.stock}`
         );
-        const stockResult = await deps9.withShopeeAccessTokenRetry(
+        const stockResult = await deps10.withShopeeAccessTokenRetry(
           shopId,
           async (token) => {
             accessToken = token || accessToken;
-            return deps9.shopeeUpdateStock(shopId, accessToken, itemId, [stockEntry]);
+            return deps10.shopeeUpdateStock(shopId, accessToken, itemId, [stockEntry]);
           },
           isAuthFailResult
         );
-        const parsed = deps9.parseShopeeApiResult(stockResult, mapped, "update_stock");
+        const parsed = deps10.parseShopeeApiResult(stockResult, mapped, "update_stock");
         lines.push(parsed.message);
         if (!parsed.success) {
           console.error(`[Shopee Sync] UpdateStock FAIL:`, parsed.message);
-          await deps9.appendShopeeSyncErrorToDb({
+          await deps10.appendShopeeSyncErrorToDb({
             itemId,
             modelId: modelId ?? mapped.shopeeModelId,
             sku: mapped.sku,
@@ -118067,12 +120258,12 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
         }
         console.log(`[Shopee Sync] UpdateStock OK item_id=${itemId}`);
       } catch (err) {
-        const msg = deps9.extractShopeeStockPushErrorMessage(
+        const msg = deps10.extractShopeeStockPushErrorMessage(
           err,
           err instanceof Error ? err.message : String(err)
         );
         console.error(`[Shopee Sync] UpdateStock exception shop=${shopId} item=${itemId}:`, err);
-        await deps9.appendShopeeSyncErrorToDb({
+        await deps10.appendShopeeSyncErrorToDb({
           itemId,
           modelId: modelId ?? mapped.shopeeModelId,
           sku: mapped.sku,
@@ -118085,25 +120276,25 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
       }
     }
     if (opts.syncPrice) {
-      await sleep4(SHOPEE_SYNC_QUEUE_GAP_MS);
-      const priceEntry = deps9.buildShopeeUpdatePriceEntry(mapped.sellingPrice, modelId);
+      await sleep2(SHOPEE_SYNC_QUEUE_GAP_MS);
+      const priceEntry = deps10.buildShopeeUpdatePriceEntry(mapped.sellingPrice, modelId);
       try {
         console.log(
           `[Shopee Sync] UpdatePrice shop_id=${shopId} item_id=${itemId} model_id=${modelId ?? "n/a"} price=${mapped.sellingPrice} sku=${mapped.sku || ""}`
         );
-        const priceResult = await deps9.withShopeeAccessTokenRetry(
+        const priceResult = await deps10.withShopeeAccessTokenRetry(
           shopId,
           async (token) => {
             accessToken = token || accessToken;
-            return deps9.shopeeUpdatePrice(shopId, accessToken, itemId, [priceEntry]);
+            return deps10.shopeeUpdatePrice(shopId, accessToken, itemId, [priceEntry]);
           },
           isAuthFailResult
         );
-        const parsed = deps9.parseShopeeApiResult(priceResult, mapped, "update_price");
+        const parsed = deps10.parseShopeeApiResult(priceResult, mapped, "update_price");
         lines.push(parsed.message);
         if (!parsed.success) {
           console.error(`[Shopee Sync] UpdatePrice FAIL:`, parsed.message);
-          await deps9.appendShopeeSyncErrorToDb({
+          await deps10.appendShopeeSyncErrorToDb({
             itemId,
             modelId: modelId ?? mapped.shopeeModelId,
             sku: mapped.sku,
@@ -118116,12 +120307,12 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
         }
         console.log(`[Shopee Sync] UpdatePrice OK item_id=${itemId}`);
       } catch (err) {
-        const msg = deps9.extractShopeeStockPushErrorMessage(
+        const msg = deps10.extractShopeeStockPushErrorMessage(
           err,
           err instanceof Error ? err.message : String(err)
         );
         console.error(`[Shopee Sync] UpdatePrice exception shop=${shopId} item=${itemId}:`, err);
-        await deps9.appendShopeeSyncErrorToDb({
+        await deps10.appendShopeeSyncErrorToDb({
           itemId,
           modelId: modelId ?? mapped.shopeeModelId,
           sku: mapped.sku,
@@ -118133,26 +120324,26 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
         return { ok: false, message: msg };
       }
     }
-    if (opts.syncSku && modelId != null && typeof deps9.shopeeUpdateModelSku === "function") {
-      await sleep4(SHOPEE_SYNC_QUEUE_GAP_MS);
+    if (opts.syncSku && modelId != null && typeof deps10.shopeeUpdateModelSku === "function") {
+      await sleep2(SHOPEE_SYNC_QUEUE_GAP_MS);
       const modelSku = String(mapped.sku || "").trim();
       try {
         console.log(
           `[Shopee Sync] UpdateModelSku shop_id=${shopId} item_id=${itemId} model_id=${modelId} sku=${modelSku}`
         );
-        const skuResult = await deps9.withShopeeAccessTokenRetry(
+        const skuResult = await deps10.withShopeeAccessTokenRetry(
           shopId,
           async (token) => {
             accessToken = token || accessToken;
-            return deps9.shopeeUpdateModelSku(shopId, accessToken, itemId, modelId, modelSku);
+            return deps10.shopeeUpdateModelSku(shopId, accessToken, itemId, modelId, modelSku);
           },
           isAuthFailResult
         );
-        const parsed = deps9.parseShopeeApiResult(skuResult, mapped, "update_model");
+        const parsed = deps10.parseShopeeApiResult(skuResult, mapped, "update_model");
         lines.push(parsed.message || `update_model sku=${modelSku}`);
         if (!parsed.success) {
           console.error(`[Shopee Sync] UpdateModelSku FAIL:`, parsed.message);
-          await deps9.appendShopeeSyncErrorToDb({
+          await deps10.appendShopeeSyncErrorToDb({
             itemId,
             modelId: modelId ?? mapped.shopeeModelId,
             sku: mapped.sku,
@@ -118165,12 +120356,12 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
         }
         console.log(`[Shopee Sync] UpdateModelSku OK item_id=${itemId} model_id=${modelId}`);
       } catch (err) {
-        const msg = deps9.extractShopeeStockPushErrorMessage(
+        const msg = deps10.extractShopeeStockPushErrorMessage(
           err,
           err instanceof Error ? err.message : String(err)
         );
         console.error(`[Shopee Sync] UpdateModelSku exception shop=${shopId} item=${itemId}:`, err);
-        await deps9.appendShopeeSyncErrorToDb({
+        await deps10.appendShopeeSyncErrorToDb({
           itemId,
           modelId: modelId ?? mapped.shopeeModelId,
           sku: mapped.sku,
@@ -118205,17 +120396,17 @@ async function pushProductStockPriceToShopeeImmediate(product, opts) {
       };
     }
     const requestedShop = opts.shopId || mapped.shopeeShopId || mapped.shopId || mapped.shop_id || "";
-    const shopIds = typeof deps9.resolveShopeeShopIdsForSync === "function" ? deps9.resolveShopeeShopIdsForSync(requestedShop) : (() => {
-      const one = deps9.resolveShopeeTokenShopId(requestedShop);
-      return one ? [one] : deps9.listAuthorizedShopeeShopIds?.() || [];
+    const shopIds = typeof deps10.resolveShopeeShopIdsForSync === "function" ? deps10.resolveShopeeShopIdsForSync(requestedShop) : (() => {
+      const one = deps10.resolveShopeeTokenShopId(requestedShop);
+      return one ? [one] : deps10.listAuthorizedShopeeShopIds?.() || [];
     })();
     if (!shopIds.length) {
-      const msg = deps9.getShopeeUnauthorizedShopMessage();
+      const msg = deps10.getShopeeUnauthorizedShopMessage();
       console.error(`[Shopee Sync] ${msg}`);
       return { ok: false, message: msg };
     }
     console.log(
-      `[Shopee Sync] Manual sync product=${mapped.id || mapped.sku} item=${deps9.getShopeeItemIdForStockPush(mapped) ?? "?"} model=${deps9.resolveShopeeModelIdForStockPush(mapped) ?? "?"} sku=${mapped.sku || ""} shops=[${shopIds.join(", ")}] stock=${!!opts.syncStock} price=${!!opts.syncPrice} skuSync=${!!opts.syncSku}`
+      `[Shopee Sync] Manual sync product=${mapped.id || mapped.sku} item=${deps10.getShopeeItemIdForStockPush(mapped) ?? "?"} model=${deps10.resolveShopeeModelIdForStockPush(mapped) ?? "?"} sku=${mapped.sku || ""} shops=[${shopIds.join(", ")}] stock=${!!opts.syncStock} price=${!!opts.syncPrice} skuSync=${!!opts.syncSku}`
     );
     const shopResults = [];
     for (const shopId of shopIds) {
@@ -118260,10 +120451,10 @@ async function processShopeeSyncQueue() {
       const job = shopeeSyncQueue.shift();
       shopeeSyncQueueKeys.delete(job.key);
       try {
-        const row = await deps9.loadProductById(job.productId);
+        const row = await deps10.loadProductById(job.productId);
         if (!row) {
           console.warn(`[Shopee Sync Queue] B\u1ECF qua \u2014 kh\xF4ng th\u1EA5y productId=${job.productId}`);
-          await sleep4(SHOPEE_SYNC_QUEUE_GAP_MS);
+          await sleep2(SHOPEE_SYNC_QUEUE_GAP_MS);
           continue;
         }
         const mapped = await resolveProductWithShopeeMapping(row);
@@ -118271,10 +120462,10 @@ async function processShopeeSyncQueue() {
           console.log(
             `[Shopee Sync Queue] Skip SKU=${row.sku || job.productId} \u2014 ch\u01B0a Mapping Shopee`
           );
-          await sleep4(SHOPEE_SYNC_QUEUE_GAP_MS);
+          await sleep2(SHOPEE_SYNC_QUEUE_GAP_MS);
           continue;
         }
-        const shopIds = job.shopId ? [String(job.shopId)] : typeof deps9.resolveShopeeShopIdsForSync === "function" ? deps9.resolveShopeeShopIdsForSync("") : deps9.listAuthorizedShopeeShopIds?.() || [];
+        const shopIds = job.shopId ? [String(job.shopId)] : typeof deps10.resolveShopeeShopIdsForSync === "function" ? deps10.resolveShopeeShopIdsForSync("") : deps10.listAuthorizedShopeeShopIds?.() || [];
         if (!shopIds.length) {
           console.error(
             `[Shopee Sync Queue] Kh\xF4ng c\xF3 shop \u1EE7y quy\u1EC1n \u2014 productId=${job.productId}`
@@ -118333,7 +120524,7 @@ async function processShopeeSyncQueue() {
           console.error(`[Shopee Sync Queue] DROPPED exception \u2014 ${job.productId}: ${msg}`);
         }
       }
-      await sleep4(SHOPEE_SYNC_QUEUE_GAP_MS);
+      await sleep2(SHOPEE_SYNC_QUEUE_GAP_MS);
     }
   } finally {
     shopeeSyncQueueRunning = false;
@@ -118385,7 +120576,7 @@ async function enqueueShopeeStockPriceSync(products, opts) {
 // controllers/productsController.js
 var PRODUCTS_PAGE_SIZE_DEFAULT = 50;
 var PRODUCTS_PAGE_SIZE_MAX = 50;
-var deps10 = {
+var deps11 = {
   loadProducts: async () => [],
   loadProductsByIdsFromStore: async () => [],
   saveProducts: async () => {
@@ -118444,15 +120635,15 @@ var deps10 = {
   syncProductToTikTok: async () => []
 };
 function initProductsController(partial) {
-  deps10 = { ...deps10, ...partial };
+  deps11 = { ...deps11, ...partial };
 }
 var SKU_DUPLICATE_MESSAGE = "M\xE3 SKU n\xE0y \u0111\xE3 t\u1ED3n t\u1EA1i cho m\u1ED9t s\u1EA3n ph\u1EA9m kh\xE1c trong kho!";
 function normalizeSkuKey(sku) {
   return String(sku ?? "").trim().toLowerCase();
 }
 function getChildrenList(product) {
-  if (typeof deps10.getProductChildrenList === "function") {
-    const fromDeps = deps10.getProductChildrenList(product);
+  if (typeof deps11.getProductChildrenList === "function") {
+    const fromDeps = deps11.getProductChildrenList(product);
     if (Array.isArray(fromDeps) && fromDeps.length) return fromDeps;
   }
   if (Array.isArray(product?.children) && product.children.length) return product.children;
@@ -118466,7 +120657,7 @@ async function isSkuTakenByOtherProduct(sku, excludeId = null) {
   if (!skuNorm) return false;
   let hits = [];
   try {
-    hits = await deps10.searchProductsFromStore(sku, 50);
+    hits = await deps11.searchProductsFromStore(sku, 50);
   } catch (searchErr) {
     console.warn(
       "[Products API] SKU search failed:",
@@ -118495,7 +120686,7 @@ async function isSkuTakenByOtherProduct(sku, excludeId = null) {
 var MAX_VARIANT_ROWS = 50;
 var SKU_CHECK_BATCH_SIZE = 5;
 var SKU_CHECK_BATCH_DELAY_MS = 60;
-function sleep5(ms) {
+function sleep6(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 async function findFirstTakenSku(skus, excludeId = null) {
@@ -118516,7 +120707,7 @@ async function findFirstTakenSku(skus, excludeId = null) {
     const hit = results.findIndex(Boolean);
     if (hit >= 0) return batch[hit];
     if (i2 + SKU_CHECK_BATCH_SIZE < pending.length) {
-      await sleep5(SKU_CHECK_BATCH_DELAY_MS);
+      await sleep6(SKU_CHECK_BATCH_DELAY_MS);
     }
   }
   return null;
@@ -118589,8 +120780,8 @@ function normalizeVariantRows(rawRows, parent) {
 async function listProducts(req, res) {
   res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   try {
-    const diskMode = deps10.isProductsDiskMode();
-    if (!diskMode && !deps10.isMongoReady()) {
+    const diskMode = deps11.isProductsDiskMode();
+    if (!diskMode && !deps11.isMongoReady()) {
       return res.status(503).json({
         success: false,
         products: [],
@@ -118613,8 +120804,8 @@ async function listProducts(req, res) {
     const sortBy = sortByRaw === "stock" || sortByRaw === "sellingPrice" ? sortByRaw : "";
     const order = orderRaw === "asc" || orderRaw === "desc" ? orderRaw : "";
     const listSort = sortBy && order ? { sortBy, order } : null;
-    const paged = await deps10.withLocalDbTimeout(
-      deps10.loadProductsPageFromStore(page, pageSize, search, listSort),
+    const paged = await deps11.withLocalDbTimeout(
+      deps11.loadProductsPageFromStore(page, pageSize, search, listSort),
       diskMode ? 15e3 : 3e4,
       "products_page_load"
     );
@@ -118636,7 +120827,7 @@ async function listProducts(req, res) {
       hasMore: paged.hasMore,
       grouped: false,
       source: diskMode ? "disk" : "mongodb",
-      storage: diskMode ? deps10.getProductsDiskPath() : "mongodb.products"
+      storage: diskMode ? deps11.getProductsDiskPath() : "mongodb.products"
     });
   } catch (err) {
     console.error("[Products API] GET /api/products failed:", err);
@@ -118674,7 +120865,7 @@ async function searchProducts(req, res) {
     let raw = [];
     let source = "mongodb";
     try {
-      raw = await deps10.searchProductsFromStore(q, limit);
+      raw = await deps11.searchProductsFromStore(q, limit);
     } catch (mongoErr) {
       console.warn("[Products API] searchProductsFromStore failed:", mongoErr);
       return res.status(503).json({
@@ -118722,7 +120913,7 @@ async function handleProductSyncShopee(req, res) {
         error: "Thi\u1EBFu product id. G\u1EEDi body { id }, { productId } ho\u1EB7c { productIds: [...] }."
       });
     }
-    const products = await deps10.loadProducts();
+    const products = await deps11.loadProducts();
     const results = [];
     for (const productId of productIds) {
       const row = findProductRowById(products, productId);
@@ -118756,7 +120947,7 @@ async function handleProductSyncShopee(req, res) {
     }
     const succeeded = results.filter((result) => result.success);
     if (succeeded.length > 0) {
-      await deps10.saveProducts(products);
+      await deps11.saveProducts(products);
     }
     const failed = results.filter((result) => !result.success);
     if (failed.length > 0) {
@@ -118813,7 +121004,7 @@ async function updateProductPrice(req, res) {
         error: "invalid_selling_price"
       });
     }
-    const products = await deps10.loadProducts();
+    const products = await deps11.loadProducts();
     const found = findProductRowById(products, productId);
     if (!found) {
       return res.status(404).json({
@@ -118867,23 +121058,23 @@ async function updateProductPrice(req, res) {
     const topIndex = products.findIndex((p) => String(p?.id || "").trim() === productId);
     let savedRow = null;
     if (topIndex !== -1) {
-      const merged = deps10.mergeProductPatch(products[topIndex], { sellingPrice });
+      const merged = deps11.mergeProductPatch(products[topIndex], { sellingPrice });
       products[topIndex] = merged;
       savedRow = merged;
-      await deps10.upsertProductsToStoreAsync([merged]);
+      await deps11.upsertProductsToStoreAsync([merged]);
     } else {
       let persisted = false;
       for (let i2 = 0; i2 < products.length; i2++) {
-        const children = deps10.getProductChildrenList(products[i2]);
+        const children = deps11.getProductChildrenList(products[i2]);
         const childIdx = children.findIndex((c) => String(c?.id || "").trim() === productId);
         if (childIdx === -1) continue;
-        const mergedChild = deps10.mergeProductPatch(children[childIdx], { sellingPrice });
+        const mergedChild = deps11.mergeProductPatch(children[childIdx], { sellingPrice });
         const nextChildren = [...children];
         nextChildren[childIdx] = mergedChild;
         const nextParent = { ...products[i2], children: nextChildren };
         products[i2] = nextParent;
         savedRow = mergedChild;
-        await deps10.upsertProductsToStoreAsync([nextParent]);
+        await deps11.upsertProductsToStoreAsync([nextParent]);
         persisted = true;
         break;
       }
@@ -118999,8 +121190,8 @@ async function createProduct(req, res) {
     lastSynced: (/* @__PURE__ */ new Date()).toISOString()
   };
   if (hasVariants) product.children = variants;
-  await deps10.upsertProductsToStoreAsync([product]);
-  const cache = await deps10.loadLocalInventoryCache();
+  await deps11.upsertProductsToStoreAsync([product]);
+  const cache = await deps11.loadLocalInventoryCache();
   return res.status(201).json({
     success: true,
     ...product,
@@ -119011,18 +121202,18 @@ async function createProduct(req, res) {
 }
 async function getLocalInventory(_req, res) {
   try {
-    await deps10.reloadCachesFromDb();
-    const cache = await deps10.loadLocalInventoryCache();
+    await deps11.reloadCachesFromDb();
+    const cache = await deps11.loadLocalInventoryCache();
     return res.status(200).json({
       success: true,
       updatedAt: cache.updatedAt,
       products: cache.products,
-      listings: deps10.enrichChannelListingsWithMaster(cache.listings, cache.products),
+      listings: deps11.enrichChannelListingsWithMaster(cache.listings, cache.products),
       count: {
         products: cache.products.length,
         listings: cache.listings.length
       },
-      source: deps10.isMongoReady() ? "mongodb" : "json_fallback"
+      source: deps11.isMongoReady() ? "mongodb" : "json_fallback"
     });
   } catch (error) {
     return res.status(500).json({
@@ -119033,7 +121224,7 @@ async function getLocalInventory(_req, res) {
 }
 async function refreshLocalInventory(_req, res) {
   try {
-    const cache = await deps10.refreshCache();
+    const cache = await deps11.refreshCache();
     return res.status(200).json({
       success: true,
       updatedAt: cache.updatedAt,
@@ -119052,12 +121243,12 @@ async function replaceProducts(req, res) {
   if (!Array.isArray(incoming)) {
     return res.status(400).json({ error: "products_array_required" });
   }
-  await deps10.saveProducts(incoming);
+  await deps11.saveProducts(incoming);
   return res.json({ count: incoming.length, products: incoming });
 }
 async function patchProduct(req, res) {
   try {
-    const products = await deps10.loadProducts();
+    const products = await deps11.loadProducts();
     const patch = req.body || {};
     const currentId = String(req.params.id || "").trim();
     if (Object.prototype.hasOwnProperty.call(patch, "sku")) {
@@ -119075,9 +121266,9 @@ async function patchProduct(req, res) {
     }
     const topIndex = products.findIndex((p) => p.id === req.params.id);
     if (topIndex !== -1) {
-      const merged = deps10.mergeProductPatch(products[topIndex], patch);
+      const merged = deps11.mergeProductPatch(products[topIndex], patch);
       products[topIndex] = merged;
-      await deps10.upsertProductsToStoreAsync([merged]);
+      await deps11.upsertProductsToStoreAsync([merged]);
       return res.json({
         ...merged,
         success: true,
@@ -119086,15 +121277,15 @@ async function patchProduct(req, res) {
       });
     }
     for (let i2 = 0; i2 < products.length; i2++) {
-      const children = deps10.getProductChildrenList(products[i2]);
+      const children = deps11.getProductChildrenList(products[i2]);
       const childIdx = children.findIndex((c) => c.id === req.params.id);
       if (childIdx === -1) continue;
-      const mergedChild = deps10.mergeProductPatch(children[childIdx], patch);
+      const mergedChild = deps11.mergeProductPatch(children[childIdx], patch);
       const nextChildren = [...children];
       nextChildren[childIdx] = mergedChild;
       const totalStock = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
       products[i2] = { ...products[i2], children: nextChildren, stock: totalStock };
-      await deps10.upsertProductsToStoreAsync([products[i2]]);
+      await deps11.upsertProductsToStoreAsync([products[i2]]);
       return res.json({
         ...mergedChild,
         success: true,
@@ -119121,14 +121312,14 @@ async function patchImportPriceBySku(req, res) {
       });
     }
     const skuLower = sku.toLowerCase();
-    const products = await deps10.loadProducts();
+    const products = await deps11.loadProducts();
     const list = Array.isArray(products) ? products : [];
     for (let i2 = 0; i2 < list.length; i2++) {
       const parent = list[i2];
       if (String(parent?.sku || "").trim().toLowerCase() === skuLower) {
-        const merged = deps10.mergeProductPatch(parent, { importPrice });
+        const merged = deps11.mergeProductPatch(parent, { importPrice });
         list[i2] = merged;
-        await deps10.upsertProductsToStoreAsync([merged]);
+        await deps11.upsertProductsToStoreAsync([merged]);
         return res.json({
           ...merged,
           success: true,
@@ -119136,18 +121327,18 @@ async function patchImportPriceBySku(req, res) {
           shopeeMessage: "\u0110\xE3 l\u01B0u gi\xE1 nh\u1EADp theo SKU (kho n\u1ED9i b\u1ED9)."
         });
       }
-      const children = deps10.getProductChildrenList(parent);
+      const children = deps11.getProductChildrenList(parent);
       const childIdx = children.findIndex(
         (c) => String(c?.sku || "").trim().toLowerCase() === skuLower
       );
       if (childIdx === -1) continue;
-      const mergedChild = deps10.mergeProductPatch(children[childIdx], { importPrice });
+      const mergedChild = deps11.mergeProductPatch(children[childIdx], { importPrice });
       const nextChildren = [...children];
       nextChildren[childIdx] = mergedChild;
       const totalStock = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
       const nextParent = { ...parent, children: nextChildren, stock: totalStock };
       list[i2] = nextParent;
-      await deps10.upsertProductsToStoreAsync([nextParent]);
+      await deps11.upsertProductsToStoreAsync([nextParent]);
       return res.json({
         ...mergedChild,
         success: true,
@@ -119185,26 +121376,26 @@ async function patchSellingPriceBySku(req, res) {
       });
     }
     const skuLower = sku.toLowerCase();
-    const products = await deps10.loadProducts();
+    const products = await deps11.loadProducts();
     const list = Array.isArray(products) ? products : [];
     let savedRow = null;
     let parentForUpsert = null;
     for (let i2 = 0; i2 < list.length; i2++) {
       const parent = list[i2];
       if (String(parent?.sku || "").trim().toLowerCase() === skuLower) {
-        const merged = deps10.mergeProductPatch(parent, { sellingPrice });
+        const merged = deps11.mergeProductPatch(parent, { sellingPrice });
         list[i2] = merged;
         savedRow = merged;
         parentForUpsert = merged;
         break;
       }
-      const children = deps10.getProductChildrenList(parent);
+      const children = deps11.getProductChildrenList(parent);
       const childIdx = children.findIndex(
         (c) => String(c?.sku || "").trim().toLowerCase() === skuLower
       );
       if (childIdx === -1) continue;
-      const linkedChild = typeof deps10.inheritShopeeLinkFromParent === "function" ? deps10.inheritShopeeLinkFromParent(children[childIdx], parent) : children[childIdx];
-      const mergedChild = deps10.mergeProductPatch(linkedChild, { sellingPrice });
+      const linkedChild = typeof deps11.inheritShopeeLinkFromParent === "function" ? deps11.inheritShopeeLinkFromParent(children[childIdx], parent) : children[childIdx];
+      const mergedChild = deps11.mergeProductPatch(linkedChild, { sellingPrice });
       const nextChildren = [...children];
       nextChildren[childIdx] = mergedChild;
       const totalStock = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
@@ -119221,7 +121412,7 @@ async function patchSellingPriceBySku(req, res) {
         message: `Kh\xF4ng t\xECm th\u1EA5y SP trong kho (SKU: ${sku})`
       });
     }
-    await deps10.upsertProductsToStoreAsync([parentForUpsert]);
+    await deps11.upsertProductsToStoreAsync([parentForUpsert]);
     let shopeeSynced = false;
     let tiktokSynced = false;
     const syncNotes = [];
@@ -119247,7 +121438,7 @@ async function patchSellingPriceBySku(req, res) {
       }
       await new Promise((r2) => setTimeout(r2, 250));
       try {
-        const tiktokLines = await deps10.syncProductToTikTok(savedRow);
+        const tiktokLines = await deps11.syncProductToTikTok(savedRow);
         const lines = Array.isArray(tiktokLines) ? tiktokLines : [];
         const priceLines = lines.filter(
           (l) => !l?.action || String(l.action).includes("price") || l.action === "sync"
@@ -119334,7 +121525,7 @@ async function bulkImportPrice(req, res) {
         message: "Kh\xF4ng c\xF3 d\xF2ng h\u1EE3p l\u1EC7 (thi\u1EBFu sku ho\u1EB7c gi\xE1 nh\u1EADp)."
       });
     }
-    const products = await deps10.loadProducts();
+    const products = await deps11.loadProducts();
     const list = Array.isArray(products) ? products : [];
     const matchedKeys = /* @__PURE__ */ new Set();
     const dirty = [];
@@ -119351,7 +121542,7 @@ async function bulkImportPrice(req, res) {
           if (!key2 || !priceBySku.has(key2)) return c;
           matchedKeys.add(key2);
           changed = true;
-          return deps10.mergeProductPatch(c, { importPrice: priceBySku.get(key2) });
+          return deps11.mergeProductPatch(c, { importPrice: priceBySku.get(key2) });
         });
         if (!changed) continue;
         const totalStock = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
@@ -119361,13 +121552,13 @@ async function bulkImportPrice(req, res) {
       const key = String(p?.sku || "").trim().toLowerCase();
       if (!key || !priceBySku.has(key)) continue;
       matchedKeys.add(key);
-      dirty.push(deps10.mergeProductPatch(p, { importPrice: priceBySku.get(key) }));
+      dirty.push(deps11.mergeProductPatch(p, { importPrice: priceBySku.get(key) }));
       if (dirty.length > 0 && dirty.length % 500 === 0) {
         await new Promise((r2) => setTimeout(r2, 5));
       }
     }
     if (dirty.length > 0) {
-      await deps10.upsertProductsToStoreAsync(dirty);
+      await deps11.upsertProductsToStoreAsync(dirty);
     }
     const updatedCount = matchedKeys.size;
     const notFoundCount = Math.max(0, priceBySku.size - updatedCount);
@@ -119411,10 +121602,10 @@ async function inventoryBalance(req, res) {
     if (skuStockMap.size === 0) {
       return res.status(400).json({ success: false, message: "D\u1EEF li\u1EC7u c\xE2n b\u1EB1ng kho kh\xF4ng h\u1EE3p l\u1EC7." });
     }
-    const products = await deps10.loadProducts();
+    const products = await deps11.loadProducts();
     let updatedCount = 0;
     const next = products.map((p) => {
-      const children = deps10.getProductChildrenList(p);
+      const children = deps11.getProductChildrenList(p);
       if (children.length > 0) {
         let changed = false;
         const nextChildren = children.map((c) => {
@@ -119422,7 +121613,7 @@ async function inventoryBalance(req, res) {
           if (!skuStockMap.has(sku2)) return c;
           updatedCount++;
           changed = true;
-          return deps10.mergeProductPatch(c, { stock: skuStockMap.get(sku2) });
+          return deps11.mergeProductPatch(c, { stock: skuStockMap.get(sku2) });
         });
         if (!changed) return p;
         const totalStock = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
@@ -119431,17 +121622,17 @@ async function inventoryBalance(req, res) {
       const sku = String(p.sku || "").trim();
       if (!skuStockMap.has(sku)) return p;
       updatedCount++;
-      return deps10.mergeProductPatch(p, { stock: skuStockMap.get(sku) });
+      return deps11.mergeProductPatch(p, { stock: skuStockMap.get(sku) });
     });
     if (updatedCount === 0) {
       return res.status(404).json({ success: false, message: "Kh\xF4ng t\xECm th\u1EA5y SKU n\xE0o trong kho g\u1ED1c \u0111\u1EC3 c\u1EADp nh\u1EADt." });
     }
-    const updatedProducts = deps10.flattenProductsForStockSync(next).filter((p) => skuStockMap.has(String(p.sku || "").trim()));
-    await deps10.upsertProductsToStoreAsync(
+    const updatedProducts = deps11.flattenProductsForStockSync(next).filter((p) => skuStockMap.has(String(p.sku || "").trim()));
+    await deps11.upsertProductsToStoreAsync(
       next.filter((product, index) => product !== products[index])
     );
     console.log(`[Inventory Balance] C\u1EADp nh\u1EADt kho g\u1ED1c ${updatedCount} SKU`);
-    const pushResult = await deps10.pushStockUpdatesToShopee(updatedProducts, preferredShopId);
+    const pushResult = await deps11.pushStockUpdatesToShopee(updatedProducts, preferredShopId);
     const parts = [];
     parts.push("kho g\u1ED1c \u0111\xE3 c\u1EADp nh\u1EADt");
     if (pushResult.pushed > 0) {
@@ -119473,26 +121664,26 @@ async function inventoryBalance(req, res) {
     });
   } catch (err) {
     console.error("[Inventory Balance] Exception:", err);
-    return deps10.sendApiErrorJson(res, err, 500);
+    return deps11.sendApiErrorJson(res, err, 500);
   }
 }
 async function syncStock(req, res) {
   try {
-    const products = await deps10.loadProducts();
+    const products = await deps11.loadProducts();
     const requestedShopId = req.body?.shopId;
-    const shopIds = typeof deps10.resolveShopeeShopIdsForSync === "function" ? deps10.resolveShopeeShopIdsForSync(requestedShopId) : (() => {
-      const one = deps10.resolveShopeeTokenShopId(requestedShopId);
+    const shopIds = typeof deps11.resolveShopeeShopIdsForSync === "function" ? deps11.resolveShopeeShopIdsForSync(requestedShopId) : (() => {
+      const one = deps11.resolveShopeeTokenShopId(requestedShopId);
       return one ? [one] : [];
     })();
     const warnings = [];
-    if (!deps10.isShopeeConfigValid()) {
+    if (!deps11.isShopeeConfigValid()) {
       return res.status(400).json({
         success: false,
         message: "Shopee: c\u1EA5u h\xECnh Partner ch\u01B0a h\u1EE3p l\u1EC7."
       });
     }
     if (!shopIds.length) {
-      const msg = deps10.getShopeeUnauthorizedShopMessage();
+      const msg = deps11.getShopeeUnauthorizedShopMessage();
       console.error(`[Sync Stock] ${msg}`);
       return res.status(400).json({
         success: false,
@@ -119501,13 +121692,13 @@ async function syncStock(req, res) {
       });
     }
     console.log(`[Sync Stock] Multi-shop \u0111\u1EA9y t\u1ED3n shops=[${shopIds.join(", ")}]`);
-    const shopeeResult = await deps10.pushStockUpdatesToShopee(
+    const shopeeResult = await deps11.pushStockUpdatesToShopee(
       products,
       requestedShopId || void 0
     );
     if (shopeeResult.warnings?.length) warnings.push(...shopeeResult.warnings);
     if (!shopeeResult.ok && shopeeResult.errors.length > 0) {
-      const onlyStale = shopeeResult.errors.every((e2) => deps10.isStaleShopeeItemErrorText(e2));
+      const onlyStale = shopeeResult.errors.every((e2) => deps11.isStaleShopeeItemErrorText(e2));
       if (!onlyStale) {
         const detailMsg = shopeeResult.errors.join(" | ");
         return res.status(400).json({
@@ -119532,11 +121723,11 @@ async function syncStock(req, res) {
       },
       tiktok: { updated: 0, message: "TikTok Shop API ch\u01B0a \u0111\u01B0\u1EE3c t\xEDch h\u1EE3p tr\xEAn server." },
       warnings,
-      products: await deps10.loadProducts()
+      products: await deps11.loadProducts()
     });
   } catch (err) {
     console.error("[Sync Stock]", err);
-    return deps10.sendApiErrorJson(res, err, 500);
+    return deps11.sendApiErrorJson(res, err, 500);
   }
 }
 async function bulkSaveProducts(req, res) {
@@ -119548,8 +121739,8 @@ async function bulkSaveProducts(req, res) {
   for (const u of updates) {
     if (u?.id) patchMap.set(String(u.id), u);
   }
-  const products = await deps10.loadProducts();
-  const beforeFlat = deps10.flattenProductsForStockSync(products);
+  const products = await deps11.loadProducts();
+  const beforeFlat = deps11.flattenProductsForStockSync(products);
   let updatedCount = 0;
   const changedRows = [];
   const next = products.map((p) => {
@@ -119557,13 +121748,13 @@ async function bulkSaveProducts(req, res) {
     if (patch) {
       updatedCount++;
       patchMap.delete(String(p.id));
-      const merged = deps10.mergeProductPatch(p, patch);
+      const merged = deps11.mergeProductPatch(p, patch);
       const before = beforeFlat.find((b) => String(b.id) === String(p.id));
       const changes = detectStockPriceChanges(before || p, merged);
       if (changes.stock || changes.price) changedRows.push(merged);
       return merged;
     }
-    const children = deps10.getProductChildrenList(p);
+    const children = deps11.getProductChildrenList(p);
     if (children.length === 0) return p;
     let childChanged = false;
     const nextChildren = children.map((c) => {
@@ -119572,7 +121763,7 @@ async function bulkSaveProducts(req, res) {
       updatedCount++;
       patchMap.delete(String(c.id));
       childChanged = true;
-      const mergedChild = deps10.mergeProductPatch(c, childPatch);
+      const mergedChild = deps11.mergeProductPatch(c, childPatch);
       const beforeChild = beforeFlat.find((b) => String(b.id) === String(c.id));
       const changes = detectStockPriceChanges(beforeChild || c, mergedChild);
       if (changes.stock || changes.price) changedRows.push(mergedChild);
@@ -119582,7 +121773,7 @@ async function bulkSaveProducts(req, res) {
     const totalStock = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
     return { ...p, children: nextChildren, stock: totalStock };
   });
-  await deps10.upsertProductsToStoreAsync(
+  await deps11.upsertProductsToStoreAsync(
     next.filter((product, index) => product !== products[index])
   );
   if (changedRows.length > 0) {
@@ -119601,7 +121792,7 @@ async function bulkSaveProducts(req, res) {
 async function deleteProduct(req, res) {
   try {
     const id = String(req.params.id);
-    const products = await deps10.loadProducts();
+    const products = await deps11.loadProducts();
     let found = false;
     const next = [];
     for (const p of products) {
@@ -119609,7 +121800,7 @@ async function deleteProduct(req, res) {
         found = true;
         continue;
       }
-      const children = deps10.getProductChildrenList(p);
+      const children = deps11.getProductChildrenList(p);
       if (children.length > 0) {
         const filteredChildren = children.filter((c) => c.id !== id);
         if (filteredChildren.length !== children.length) {
@@ -119629,10 +121820,10 @@ async function deleteProduct(req, res) {
       return res.status(404).json({ error: "product_not_found" });
     }
     const nextIds = new Set(next.map((product) => String(product.id)));
-    await deps10.deleteProductsByIdsFromStore(
+    await deps11.deleteProductsByIdsFromStore(
       products.filter((product) => !nextIds.has(String(product.id))).map((product) => String(product.id))
     );
-    await deps10.upsertProductsToStoreAsync(
+    await deps11.upsertProductsToStoreAsync(
       next.filter(
         (product) => products.find((before) => before.id === product.id) !== product
       )
@@ -119650,9 +121841,9 @@ async function clearAllProducts(req, res) {
   if (req.body?.confirmation !== "CLEAR_INVENTORY") {
     return res.status(400).json({ success: false, error: "explicit_confirmation_required" });
   }
-  const backupFile = await deps10.backupInventoryBeforeDestructiveAction("products-clear");
-  await deps10.saveProducts([]);
-  deps10.writeInventoryAudit("products_cleared", {
+  const backupFile = await deps11.backupInventoryBeforeDestructiveAction("products-clear");
+  await deps11.saveProducts([]);
+  deps11.writeInventoryAudit("products_cleared", {
     requestedBy: req.user?.username || null,
     backupFile
   });
@@ -119667,36 +121858,36 @@ async function handleInventoryClearAll(req, res) {
         message: "X\xF3a kho y\xEAu c\u1EA7u confirmation: CLEAR_INVENTORY."
       });
     }
-    const backupFile = await deps10.backupInventoryBeforeDestructiveAction("inventory-clear");
-    await deps10.saveProducts([]);
+    const backupFile = await deps11.backupInventoryBeforeDestructiveAction("inventory-clear");
+    await deps11.saveProducts([]);
     let listingsCleared = false;
     let listingsError = null;
     try {
-      await deps10.writeChannelListingsDb([]);
+      await deps11.writeChannelListingsDb([]);
       listingsCleared = true;
     } catch (listErr) {
       listingsError = listErr?.message || String(listErr);
       console.warn("[Inventory] clear listings failed (Atlas?):", listingsError);
     }
     try {
-      deps10.writeProductListingsDb([]);
+      deps11.writeProductListingsDb([]);
     } catch {
     }
     try {
-      await deps10.refreshCache();
+      await deps11.refreshCache();
     } catch (cacheErr) {
       console.warn("[Inventory] refreshCache after clear:", cacheErr?.message || cacheErr);
     }
-    deps10.writeInventoryAudit("inventory_cleared", {
+    deps11.writeInventoryAudit("inventory_cleared", {
       requestedBy: req.user?.username || null,
       backupFile,
       productsCleared: true,
       listingsCleared,
       listingsError,
-      storage: deps10.isProductsDiskMode() ? "disk" : "mongo"
+      storage: deps11.isProductsDiskMode() ? "disk" : "mongo"
     });
     console.log(
-      `[Inventory] \u0110\xE3 x\xF3a Kho g\u1ED1c (products=${deps10.isProductsDiskMode() ? "disk" : "mongo"}) listingsCleared=${listingsCleared}.`
+      `[Inventory] \u0110\xE3 x\xF3a Kho g\u1ED1c (products=${deps11.isProductsDiskMode() ? "disk" : "mongo"}) listingsCleared=${listingsCleared}.`
     );
     return res.status(200).json({
       success: true,
@@ -119748,8 +121939,8 @@ async function bulkUpdatePrices(req, res) {
         message: "Kh\xF4ng c\xF3 b\u1EA3n ghi gi\xE1 h\u1EE3p l\u1EC7 trong payload."
       });
     }
-    const products = await deps10.loadProducts();
-    const beforeFlat = deps10.flattenProductsForStockSync(products);
+    const products = await deps11.loadProducts();
+    const beforeFlat = deps11.flattenProductsForStockSync(products);
     let updatedCount = 0;
     const changedRows = [];
     const patchMap = new Map(priceUpdates.map((u) => [u.id, u.sellingPrice]));
@@ -119758,13 +121949,13 @@ async function bulkUpdatePrices(req, res) {
       if (directPrice !== void 0) {
         updatedCount++;
         patchMap.delete(String(p.id));
-        const merged = deps10.mergeProductPatch(p, { sellingPrice: directPrice });
+        const merged = deps11.mergeProductPatch(p, { sellingPrice: directPrice });
         const before = beforeFlat.find((b) => String(b.id) === String(p.id));
         const changes = detectStockPriceChanges(before || p, merged);
         if (changes.price) changedRows.push(merged);
         return merged;
       }
-      const children = deps10.getProductChildrenList(p);
+      const children = deps11.getProductChildrenList(p);
       if (children.length === 0) return p;
       let childChanged = false;
       const nextChildren = children.map((c) => {
@@ -119773,7 +121964,7 @@ async function bulkUpdatePrices(req, res) {
         updatedCount++;
         patchMap.delete(String(c.id));
         childChanged = true;
-        const mergedChild = deps10.mergeProductPatch(c, { sellingPrice: childPrice });
+        const mergedChild = deps11.mergeProductPatch(c, { sellingPrice: childPrice });
         const beforeChild = beforeFlat.find((b) => String(b.id) === String(c.id));
         const changes = detectStockPriceChanges(beforeChild || c, mergedChild);
         if (changes.price) changedRows.push(mergedChild);
@@ -119785,7 +121976,7 @@ async function bulkUpdatePrices(req, res) {
     });
     const parentsToUpsert = next.filter((product, index) => product !== products[index]);
     for (const parent of parentsToUpsert) {
-      await deps10.upsertProductsToStoreAsync([parent]);
+      await deps11.upsertProductsToStoreAsync([parent]);
       await new Promise((r2) => setTimeout(r2, 30));
     }
     if (changedRows.length > 0) {
@@ -119816,25 +122007,25 @@ async function bulkUpdateProducts(req, res) {
     return res.status(400).json({ error: "stock_or_price_required" });
   }
   const idSet = new Set(productIds.map(String));
-  const products = await deps10.loadProducts();
+  const products = await deps11.loadProducts();
   let updatedCount = 0;
   const changedRows = [];
   const next = products.map((p) => {
-    const children = deps10.getProductChildrenList(p);
+    const children = deps11.getProductChildrenList(p);
     if (children.length > 0) {
       let changed = false;
       const nextChildren = children.map((c) => {
         if (!idSet.has(c.id)) return c;
         updatedCount++;
         changed = true;
-        const merged2 = deps10.applyBulkProductUpdate(c, { stock, price });
+        const merged2 = deps11.applyBulkProductUpdate(c, { stock, price });
         changedRows.push(merged2);
         return merged2;
       });
       if (!changed && !idSet.has(p.id)) return p;
       if (idSet.has(p.id)) {
         updatedCount++;
-        const parentPatched = deps10.applyBulkProductUpdate(p, { stock, price });
+        const parentPatched = deps11.applyBulkProductUpdate(p, { stock, price });
         changedRows.push(parentPatched);
         const totalStock2 = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
         return { ...parentPatched, children: nextChildren, stock: totalStock2 };
@@ -119844,11 +122035,11 @@ async function bulkUpdateProducts(req, res) {
     }
     if (!idSet.has(p.id)) return p;
     updatedCount++;
-    const merged = deps10.applyBulkProductUpdate(p, { stock, price });
+    const merged = deps11.applyBulkProductUpdate(p, { stock, price });
     changedRows.push(merged);
     return merged;
   });
-  await deps10.saveProducts(next);
+  await deps11.saveProducts(next);
   if (changedRows.length > 0) {
     await enqueueShopeeStockPriceSync(changedRows, {
       syncStock: !!stock,
@@ -119867,12 +122058,12 @@ async function bulkChannelSync(req, res) {
     const idSet = new Set(productIds.map(String));
     let catalog = [];
     try {
-      catalog = await deps10.loadProductsByIdsFromStore([...idSet]);
+      catalog = await deps11.loadProductsByIdsFromStore([...idSet]);
     } catch (idErr) {
       console.warn("[Bulk Channel Sync] loadProductsByIdsFromStore:", idErr?.message || idErr);
       catalog = [];
     }
-    const products = deps10.flattenProductsForStockSync(catalog).filter((p) => idSet.has(p.id));
+    const products = deps11.flattenProductsForStockSync(catalog).filter((p) => idSet.has(p.id));
     if (products.length === 0) {
       return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y s\u1EA3n ph\u1EA9m n\xE0o trong kho." });
     }
@@ -119880,14 +122071,14 @@ async function bulkChannelSync(req, res) {
     const wooShop = shopList.find((s2) => s2.platform === "woocommerce" && s2.connected !== false);
     const tiktokShop = shopList.find((s2) => s2.platform === "tiktok" && s2.connected !== false);
     const requestedShopeeShop = shopId || shopList.find((s2) => s2.platform === "shopee")?.shopId || "";
-    const shopeeShopIds = typeof deps10.resolveShopeeShopIdsForSync === "function" ? deps10.resolveShopeeShopIdsForSync(requestedShopeeShop) : (() => {
-      const one = deps10.resolveShopeeTokenShopId(requestedShopeeShop);
+    const shopeeShopIds = typeof deps11.resolveShopeeShopIdsForSync === "function" ? deps11.resolveShopeeShopIdsForSync(requestedShopeeShop) : (() => {
+      const one = deps11.resolveShopeeTokenShopId(requestedShopeeShop);
       return one ? [one] : [];
     })();
     const shopeeTokensByShop = /* @__PURE__ */ new Map();
     if (channelList.includes("shopee")) {
       if (!shopeeShopIds.length) {
-        const authMsg = deps10.getShopeeUnauthorizedShopMessage();
+        const authMsg = deps11.getShopeeUnauthorizedShopMessage();
         console.error(`[Bulk Channel Sync] ${authMsg}`);
         return res.status(400).json({
           error: authMsg,
@@ -119904,7 +122095,7 @@ async function bulkChannelSync(req, res) {
         });
       }
       for (const sid of shopeeShopIds) {
-        const token = await deps10.getValidShopeeAccessToken(sid);
+        const token = await deps11.getValidShopeeAccessToken(sid);
         if (token) {
           shopeeTokensByShop.set(sid, token);
           console.log(`[Bulk Channel Sync] Token OK shop_id=${sid}`);
@@ -119935,16 +122126,16 @@ async function bulkChannelSync(req, res) {
         try {
           if (channel === "shopee" && shopeeTokensByShop.size > 0) {
             for (const [sid, token] of shopeeTokensByShop.entries()) {
-              const lines = await deps10.syncProductToShopee(product, sid, token);
+              const lines = await deps11.syncProductToShopee(product, sid, token);
               logs.push(...lines);
               await new Promise((r2) => setTimeout(r2, SKU_SYNC_DELAY_MS));
             }
           } else if (channel === "woocommerce") {
-            const lines = await deps10.syncProductToWoo(product, wooShop);
+            const lines = await deps11.syncProductToWoo(product, wooShop);
             logs.push(...lines);
             await new Promise((r2) => setTimeout(r2, SKU_SYNC_DELAY_MS));
           } else if (channel === "tiktok") {
-            const lines = await deps10.syncProductToTikTok(product, tiktokShop);
+            const lines = await deps11.syncProductToTikTok(product, tiktokShop);
             logs.push(...lines);
             await new Promise((r2) => setTimeout(r2, SKU_SYNC_DELAY_MS));
           }
@@ -119967,7 +122158,7 @@ async function bulkChannelSync(req, res) {
     if (syncedProductIds.size > 0) {
       const now = (/* @__PURE__ */ new Date()).toISOString();
       const patched = products.filter((p) => syncedProductIds.has(p.id)).map((p) => ({ ...p, lastSynced: now }));
-      if (patched.length) await deps10.upsertProductsToStoreAsync(patched);
+      if (patched.length) await deps11.upsertProductsToStoreAsync(patched);
     }
     const failMessages = logs.filter((l) => !l.success).map((l) => l.message).filter(Boolean);
     const summaryError = failMessages.length > 0 ? `\u0110\u1ED3ng b\u1ED9 c\xF3 l\u1ED7i: ${failMessages.slice(0, 3).join(" | ")}${failMessages.length > 3 ? " \u2026" : ""}` : "M\u1ED9t s\u1ED1 k\xEAnh t\u1EEB ch\u1ED1i c\u1EADp nh\u1EADt gi\xE1/t\u1ED3n kho";
@@ -119988,1659 +122179,6 @@ async function bulkChannelSync(req, res) {
       logs: []
     });
   }
-}
-
-// services/shopee/auth.js
-var import_fs19 = __toESM(require("fs"), 1);
-var import_path19 = __toESM(require("path"), 1);
-var import_crypto3 = __toESM(require("crypto"), 1);
-init_appPaths();
-
-// services/shopee/client.js
-var import_path18 = __toESM(require("path"), 1);
-var import_node_module = require("node:module");
-init_concurrency();
-var import_meta = {};
-var SHOPEE_API_MAX_RETRY = 3;
-var SHOPEE_API_RETRY_BASE_MS = 1500;
-var SHOPEE_HTTP_TIMEOUT_MS = 3e4;
-var SHOPEE_TLS_MIN_VERSION = String(process.env.SHOPEE_TLS_MIN_VERSION || "TLSv1.2").trim();
-var SHOPEE_TLS_MAX_VERSION = String(process.env.SHOPEE_TLS_MAX_VERSION || "TLSv1.3").trim();
-var SHOPEE_PRODUCT_BATCH_SIZE = 10;
-var SHOPEE_PRODUCT_API_DELAY_MS = 1e3;
-var SHOPEE_PRODUCT_BATCH_PAUSE_MS = 2500;
-var SHOPEE_SYNC_BATCH_DELAY_MS = 1e3;
-var SHOPEE_REAUTH_REQUIRED_MESSAGE = "Vui l\xF2ng v\xE0o m\u1EE5c C\u1EA5u h\xECnh \u0111\u1EC3 li\xEAn k\u1EBFt l\u1EA1i gian h\xE0ng Shopee (Token \u0111\xE3 h\u1EBFt h\u1EA1n ho\xE0n to\xE0n)";
-function resolveCreateRequireFilename() {
-  try {
-    if (typeof __filename === "string" && __filename.length > 0) {
-      return __filename;
-    }
-  } catch {
-  }
-  try {
-    const metaUrl = typeof import_meta !== "undefined" ? String(import_meta?.url || "") : "";
-    if (metaUrl && metaUrl !== "undefined") return metaUrl;
-  } catch {
-  }
-  return import_path18.default.resolve(process.cwd(), "server.cjs");
-}
-var shopeeHttpDispatcher = void 0;
-try {
-  const nodeRequire = (0, import_node_module.createRequire)(resolveCreateRequireFilename());
-  let undiciMod;
-  try {
-    undiciMod = nodeRequire("node:undici");
-  } catch {
-    undiciMod = nodeRequire("undici");
-  }
-  const ShopeeUndiciAgent = undiciMod?.Agent;
-  if (typeof ShopeeUndiciAgent !== "function") {
-    throw new Error("undici.Agent kh\xF4ng kh\u1EA3 d\u1EE5ng");
-  }
-  shopeeHttpDispatcher = new ShopeeUndiciAgent({
-    connect: {
-      rejectUnauthorized: true,
-      minVersion: SHOPEE_TLS_MIN_VERSION,
-      maxVersion: SHOPEE_TLS_MAX_VERSION
-    },
-    connections: 3,
-    pipelining: 0,
-    keepAliveTimeout: 1e4,
-    keepAliveMaxTimeout: 15e3,
-    // Chặn socket treo vô hạn khi Shopee không trả headers/body.
-    headersTimeout: SHOPEE_HTTP_TIMEOUT_MS + 2e3,
-    bodyTimeout: SHOPEE_HTTP_TIMEOUT_MS + 2e3,
-    connectTimeout: 8e3
-  });
-  console.log("[Shopee HTTP] undici Agent OK \u2014 TLS dispatcher s\u1EB5n s\xE0ng cho sync Shopee.");
-} catch (undiciErr) {
-  console.info(
-    "[Shopee HTTP] D\xF9ng fetch t\xEDch h\u1EE3p c\u1EE7a Node (kh\xF4ng d\xF9ng undici dispatcher):",
-    undiciErr?.message || undiciErr
-  );
-  shopeeHttpDispatcher = void 0;
-}
-async function fetchWithTimeout(url2, init = {}, timeoutMs = SHOPEE_HTTP_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const externalSignal = init?.signal;
-  const abortFromExternal = () => controller.abort(externalSignal?.reason);
-  if (externalSignal?.aborted) abortFromExternal();
-  else externalSignal?.addEventListener?.("abort", abortFromExternal, { once: true });
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let hardTimer;
-  try {
-    const fetchInit = {
-      ...init,
-      signal: controller.signal
-    };
-    if (shopeeHttpDispatcher) fetchInit.dispatcher = shopeeHttpDispatcher;
-    const fetchPromise = fetch(url2, fetchInit);
-    fetchPromise.catch(() => {
-    });
-    const hardTimeoutPromise = new Promise((_, reject) => {
-      hardTimer = setTimeout(() => {
-        try {
-          controller.abort();
-        } catch {
-        }
-        reject(new Error(`Shopee API timeout sau ${timeoutMs / 1e3}s`));
-      }, timeoutMs + 1e3);
-    });
-    return await Promise.race([fetchPromise, hardTimeoutPromise]);
-  } catch (error) {
-    if (error?.name === "AbortError" || /timeout/i.test(String(error?.message || ""))) {
-      console.error(`[Shopee HTTP] TIMEOUT ${timeoutMs}ms \u2014 ${String(url2).slice(0, 180)}`);
-      throw new Error(`Shopee API timeout sau ${timeoutMs / 1e3}s`);
-    }
-    console.error(
-      `[Shopee HTTP] FETCH L\u1ED6I \u2014 ${String(url2).slice(0, 120)}:`,
-      error?.message || error
-    );
-    throw error;
-  } finally {
-    clearTimeout(timer);
-    if (hardTimer) clearTimeout(hardTimer);
-    externalSignal?.removeEventListener?.("abort", abortFromExternal);
-  }
-}
-function shopeeExponentialBackoffMs(attempt, baseMs = SHOPEE_API_RETRY_BASE_MS) {
-  return Math.min(3e4, baseMs * Math.pow(2, attempt));
-}
-var shopeeRetryTelemetry = { retries: 0, rateLimits: 0, exhausted: 0 };
-function snapshotShopeeRetryTelemetry() {
-  return { ...shopeeRetryTelemetry };
-}
-function diffShopeeRetryTelemetry(before) {
-  return {
-    retries: shopeeRetryTelemetry.retries - before.retries,
-    rate_limits: shopeeRetryTelemetry.rateLimits - before.rateLimits,
-    exhausted_retries: shopeeRetryTelemetry.exhausted - before.exhausted,
-    max_retries: SHOPEE_API_MAX_RETRY
-  };
-}
-function isShopeeRetryableNetworkError(err) {
-  const msg = err instanceof Error ? err.message : String(err);
-  return /timeout|timed out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|AbortError|fetch failed|network|socket/i.test(msg);
-}
-function isShopeeRetryableHttpStatus(status) {
-  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
-}
-async function runInShopeeBatches(items, processor, opts) {
-  if (items.length === 0) return;
-  const batchSize = opts?.batchSize ?? SHOPEE_PRODUCT_BATCH_SIZE;
-  const itemDelayMs = opts?.itemDelayMs ?? SHOPEE_PRODUCT_API_DELAY_MS;
-  const batchPauseMs = opts?.batchPauseMs ?? SHOPEE_PRODUCT_BATCH_PAUSE_MS;
-  for (let batchStart = 0; batchStart < items.length; batchStart += batchSize) {
-    const batch = items.slice(batchStart, batchStart + batchSize);
-    const batchNo = Math.floor(batchStart / batchSize) + 1;
-    const totalBatches = Math.ceil(items.length / batchSize);
-    console.log(`[Shopee Throttle] Batch ${batchNo}/${totalBatches} (${batch.length} item)...`);
-    for (let j = 0; j < batch.length; j++) {
-      await processor(batch[j], batchStart + j);
-      if (j < batch.length - 1) await sleep4(itemDelayMs);
-    }
-    if (batchStart + batchSize < items.length) {
-      console.log(`[Shopee Throttle] Ngh\u1EC9 ${batchPauseMs}ms tr\u01B0\u1EDBc batch k\u1EBF...`);
-      await sleep4(batchPauseMs);
-    }
-  }
-}
-function shopeeSyncDelay(ms = SHOPEE_SYNC_BATCH_DELAY_MS) {
-  return sleep4(ms);
-}
-function shopeeApiErrorResult(err, context, httpStatus) {
-  const message = err instanceof Error ? err.message : String(err);
-  console.error(`[Shopee API] ${context}:`, message);
-  const status = httpStatus || (/HTTP\s*401|\b401\b|invalid_access_token|unauthorized|auth/i.test(message) ? 401 : /HTTP\s*429|\b429\b|rate.?limit|too many/i.test(message) ? 429 : /HTTP\s*504|\b504\b|timeout|timed out|AbortError/i.test(message) ? 504 : void 0);
-  return {
-    error: status === 401 ? "unauthorized" : status === 429 ? "rate_limit_exceeded" : status === 504 ? "gateway_timeout" : "shopee_api_error",
-    message: formatShopeeApiError({ error: "shopee_api_error", message: `${context}: ${message}` }, status),
-    httpStatus: status
-  };
-}
-var SHOP_MAP = {
-  "831052930": "LK audio",
-  "4127421": "LK AT"
-};
-function translateShopeeErrorCodes(text) {
-  let out = String(text || "");
-  if (/error_update_price_fail/i.test(out)) {
-    out = out.replace(/Update price failed(?:,?\s*please try later\.?)?/gi, "").replace(
-      /(?:product\.)?error_update_price_fail/gi,
-      "Kh\xF4ng th\u1EC3 c\u1EADp nh\u1EADt gi\xE1 do s\u1EA3n ph\u1EA9m \u0111ang tham gia CTKM"
-    );
-  }
-  if (/error_item_not_found/i.test(out)) {
-    out = out.replace(/Item[_ ]?id is not found\.?/gi, "").replace(/(?:product\.)?error_item_not_found/gi, "Kh\xF4ng t\xECm th\u1EA5y s\u1EA3n ph\u1EA9m t\u1EA1i shop");
-  }
-  if (/error_invalid_logistic_channel|invalid logistic|logistic_channel.*invalid/i.test(out)) {
-    out = out.replace(/(?:product\.)?error_invalid_logistic_channel/gi, "").replace(/invalid logistic.*channel/gi, "").replace("K\xEAnh v\u1EADn chuy\u1EC3n kh\xF4ng h\u1EE3p l\u1EC7: k\xEAnh 50051 ho\u1EB7c 50041 \u0111\xE3 b\u1ECB Shopee ng\u1EEBng h\u1ED7 tr\u1EE3 ho\u1EB7c kh\xF4ng t\u1ED3n t\u1EA1i trong danh s\xE1ch k\xEAnh c\u1EE7a shop. Vui l\xF2ng ch\u1ECDn l\u1EA1i k\xEAnh v\u1EADn chuy\u1EC3n trong ph\u1EA7n C\u1EA5u h\xECnh s\u1EA3n ph\u1EA9m.", "").trim();
-    if (/kênh.*50051|50051.*kênh/i.test(out)) {
-      out = out.replace(/50051/g, "").trim();
-      if (!out) out = "K\xEAnh v\u1EADn chuy\u1EC3n 50051 kh\xF4ng h\u1EE3p l\u1EC7 \u2014 Shopee kh\xF4ng c\xF2n h\u1ED7 tr\u1EE3. Vui l\xF2ng ch\u1ECDn k\xEAnh kh\xE1c.";
-    }
-    if (/kênh.*50041|50041.*kênh/i.test(out)) {
-      out = out.replace(/50041/g, "").trim();
-      if (!out) out = "K\xEAnh v\u1EADn chuy\u1EC3n 50041 kh\xF4ng h\u1EE3p l\u1EC7 \u2014 Shopee kh\xF4ng c\xF2n h\u1ED7 tr\u1EE3. Vui l\xF2ng ch\u1ECDn k\xEAnh kh\xE1c.";
-    }
-    if (/invalid.*channel|logistic.*invalid/i.test(out)) {
-      out = "K\xEAnh v\u1EADn chuy\u1EC3n kh\xF4ng h\u1EE3p l\u1EC7 \u2014 vui l\xF2ng ch\u1ECDn l\u1EA1i k\xEAnh trong C\u1EA5u h\xECnh s\u1EA3n ph\u1EA9m.";
-    }
-  }
-  if (/50051|50041/i.test(out) && /logistic|channel|vận chuyển|invalid/i.test(out)) {
-    out = "K\xEAnh v\u1EADn chuy\u1EC3n 50051/50041 \u0111\xE3 b\u1ECB Shopee ng\u1EEBng h\u1ED7 tr\u1EE3. Vui l\xF2ng ch\u1ECDn k\xEAnh v\u1EADn chuy\u1EC3n kh\xE1c trong C\u1EA5u h\xECnh s\u1EA3n ph\u1EA9m.";
-  }
-  if (/error_init_tier_variation|tier_variation.*invalid|cannot unmarshal.*string/i.test(out)) {
-    out = out.replace(/(?:product\.)?error_init_tier_variation/gi, "").replace(/cannot unmarshal.*string/gi, "").replace(/tier_variation.*invalid/gi, "").trim();
-    if (!out || /tier|phân loại/i.test(out)) {
-      out = "L\u1ED7i kh\u1EDFi t\u1EA1o ph\xE2n lo\u1EA1i (tier_variation) \u2014 ki\u1EC3m tra l\u1EA1i d\u1EEF li\u1EC7u bi\u1EBFn th\u1EC3 v\xE0 brand_id.";
-    }
-  }
-  if (/brand.*id.*invalid|invalid.*brand|error.*brand_id/i.test(out)) {
-    out = "Brand_id kh\xF4ng h\u1EE3p l\u1EC7 \u2014 n\u1EBFu s\u1EA3n ph\u1EA9m kh\xF4ng c\xF3 th\u01B0\u01A1ng hi\u1EC7u, truy\u1EC1n brand_id = 0.";
-  }
-  return out.replace(/\s*[—\-–]\s*(?=[—\-–|]|$)/g, "").replace(/[ \t]{2,}/g, " ").trim();
-}
-function formatShopeeSyncAlertLines(raw) {
-  const text = translateShopeeErrorCodes(String(raw ?? ""));
-  if (!text) return [];
-  const re = /\[(\d+)\]([^\[\]—]+)/g;
-  const lines = [];
-  let match2;
-  while ((match2 = re.exec(text)) !== null) {
-    const shopId = match2[1];
-    const shopName = SHOP_MAP[shopId] || `Shop ${shopId}`;
-    let body = String(match2[2] || "").replace(/^\s*[|:]\s*/, "").replace(/\s*[|:]\s*$/, "").replace(/\s+tại\s+shop\s*$/i, "").replace(/\s+trên\s+shop\s+\S.*$/i, "").replace(/[ \t]{2,}/g, " ").trim();
-    if (!body) continue;
-    lines.push(`${body} tr\xEAn shop ${shopName}`);
-  }
-  return [...new Set(lines)];
-}
-function humanizeShopeeErrorMessage(raw) {
-  const lines = formatShopeeSyncAlertLines(raw);
-  if (lines.length > 0) return lines.join(" | ");
-  return translateShopeeErrorCodes(String(raw ?? "")) || String(raw ?? "").trim();
-}
-function formatShopeeApiError(json2, httpStatus) {
-  const parts = [json2?.message, json2?.error, json2?.msg].map((v) => String(v ?? "").trim()).filter((v) => v && !/^HTTP\s+\d+$/i.test(v));
-  const status = typeof httpStatus === "number" && httpStatus > 0 ? httpStatus : typeof json2?.httpStatus === "number" && json2.httpStatus > 0 ? json2.httpStatus : void 0;
-  let out;
-  if (status === 401) {
-    out = parts[0] || SHOPEE_REAUTH_REQUIRED_MESSAGE;
-  } else if (status === 429) {
-    out = parts[0] || "Shopee gi\u1EDBi h\u1EA1n t\u1EA7n su\u1EA5t (HTTP 429 Too Many Requests) \u2014 vui l\xF2ng th\u1EED l\u1EA1i sau 1\u20132 ph\xFAt.";
-  } else if (status === 504) {
-    out = parts[0] || "Timeout khi g\u1ECDi Shopee API (HTTP 504) \u2014 c\u1EEDa s\u1ED5 \u0111\u1ED3ng b\u1ED9 qu\xE1 r\u1ED9ng ho\u1EB7c Shopee ph\u1EA3n h\u1ED3i ch\u1EADm. Th\u1EED l\u1EA1i v\u1EDBi \u0110\u1ED3ng b\u1ED9 nhanh 3h.";
-  } else if (/timeout|timed out|AbortError/i.test(parts.join(" "))) {
-    out = parts[0] || "Timeout khi g\u1ECDi Shopee API \u2014 th\u1EED \u0110\u1ED3ng b\u1ED9 nhanh 3h ho\u1EB7c gi\u1EA3m ph\u1EA1m vi th\u1EDDi gian \u0111\u1ED3ng b\u1ED9.";
-  } else if (parts.length > 0) {
-    out = parts.join(" \u2014 ");
-  } else if (status && status >= 400) {
-    out = `Shopee API l\u1ED7i HTTP ${status}`;
-  } else {
-    out = "L\u1ED7i Shopee API kh\xF4ng x\xE1c \u0111\u1ECBnh";
-  }
-  return humanizeShopeeErrorMessage(out);
-}
-function isShopeeRateLimited(httpStatus, json2) {
-  if (httpStatus === 429) return true;
-  const text = `${json2?.error || ""} ${json2?.message || ""}`.toLowerCase();
-  return /rate.?limit|too many request|api_call_limit|exceed/.test(text);
-}
-function warnShopeeUint64Sample(json2, context) {
-  try {
-    const body = json2?.response ?? json2 ?? {};
-    const sampleItem = body?.order_list?.[0]?.item_list?.[0] || body?.item_list?.[0] || (Array.isArray(body?.item) ? body.item[0] : null) || (Array.isArray(body?.activity) ? body.activity[0] : null) || null;
-    const keys = ["item_id", "model_id", "promotion_id", "activity_id", "return_id"];
-    const check = (obj, prefix = "") => {
-      if (!obj || typeof obj !== "object") return;
-      for (const k of keys) {
-        const v = obj[k];
-        if (typeof v === "number" && !Number.isSafeInteger(v)) {
-          console.warn(
-            `[Shopee uint64] ${context} field ${prefix}${k}=${v} v\u01B0\u1EE3t Safe Integer \u2014 ki\u1EC3m tra json-bigint`
-          );
-        }
-      }
-    };
-    check(sampleItem);
-    check(body);
-  } catch {
-  }
-}
-function maybeNormalizeReturnJson(json2, context) {
-  const ctx = String(context || "");
-  try {
-    if (/get_return_detail|get_return_list|get_reverse_tracking|returns\./i.test(ctx)) {
-      return normalizeShopeeReturnDetail(json2);
-    }
-    if (/product\.|\/product\/|promotion|activity|add_item|update_item|get_attribute|get_item|get_model|discount|flash_sale|voucher/i.test(
-      ctx
-    )) {
-      return normalizeShopeeProductIds(json2);
-    }
-  } catch {
-    return json2;
-  }
-  return json2;
-}
-async function shopeeFetchJsonWithRetry(url2, context, opts) {
-  const maxAttempts = opts?.maxAttempts ?? SHOPEE_API_MAX_RETRY;
-  const baseDelayMs = opts?.baseDelayMs ?? SHOPEE_API_RETRY_BASE_MS;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    let res;
-    let rawText = "";
-    try {
-      res = await fetchWithTimeout(url2);
-      rawText = await res.text();
-    } catch (err) {
-      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
-      if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
-        shopeeRetryTelemetry.retries++;
-        console.warn(`[Shopee API] ${context} l\u1ED7i m\u1EA1ng, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`);
-        await sleep4(waitMs);
-        continue;
-      }
-      const netMsg = err instanceof Error ? err.message : String(err);
-      throw new Error(`${context}: Kh\xF4ng k\u1EBFt n\u1ED1i \u0111\u01B0\u1EE3c Shopee API \u2014 ${netMsg}`);
-    }
-    let json2;
-    try {
-      json2 = rawText ? parseShopeeJson(rawText) : {};
-      json2 = maybeNormalizeReturnJson(json2, context);
-      warnShopeeUint64Sample(json2, context);
-    } catch (parseErr) {
-      const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
-      return {
-        httpStatus: res.status,
-        json: {
-          error: "json_parse_error",
-          message: `${context}: ph\u1EA3n h\u1ED3i kh\xF4ng ph\u1EA3i JSON h\u1EE3p l\u1EC7 (HTTP ${res.status}): ${parseMsg}`
-        }
-      };
-    }
-    if ((isShopeeRateLimited(res.status, json2) || isShopeeRetryableHttpStatus(res.status)) && attempt < maxAttempts - 1) {
-      shopeeRetryTelemetry.retries++;
-      if (isShopeeRateLimited(res.status, json2)) shopeeRetryTelemetry.rateLimits++;
-      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
-      console.warn(
-        `[Shopee API] ${context} HTTP ${res.status}, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`
-      );
-      await sleep4(waitMs);
-      continue;
-    }
-    if (res.status === 401 || res.status === 429 || res.status === 504 || res.status >= 400 && json2?.error) {
-      json2.message = formatShopeeApiError(json2, res.status);
-      json2.httpStatus = res.status;
-    }
-    return { json: json2, httpStatus: res.status };
-  }
-  shopeeRetryTelemetry.exhausted++;
-  return {
-    httpStatus: 429,
-    json: {
-      error: "rate_limit_exceeded",
-      message: formatShopeeApiError({ error: "rate_limit_exceeded" }, 429),
-      httpStatus: 429
-    }
-  };
-}
-async function shopeePostJsonWithRetry(url2, body, context, opts) {
-  const maxAttempts = opts?.maxAttempts ?? SHOPEE_API_MAX_RETRY;
-  const baseDelayMs = opts?.baseDelayMs ?? SHOPEE_API_RETRY_BASE_MS;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    let res;
-    let rawText = "";
-    try {
-      res = await fetchWithTimeout(url2, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        // JSON.stringify chuẩn: giữ Number cho item_id/model_id (Shopee Go uint64).
-        // Không dùng stringifyShopeeJson (storeAsString) — sẽ biến ID thành string và bị Shopee từ chối.
-        body: JSON.stringify(body)
-      });
-      rawText = await res.text();
-    } catch (err) {
-      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
-      if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
-        shopeeRetryTelemetry.retries++;
-        console.warn(`[Shopee API] ${context} l\u1ED7i m\u1EA1ng, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`);
-        await sleep4(waitMs);
-        continue;
-      }
-      const netMsg = err instanceof Error ? err.message : String(err);
-      throw new Error(`${context}: Kh\xF4ng k\u1EBFt n\u1ED1i \u0111\u01B0\u1EE3c Shopee API \u2014 ${netMsg}`);
-    }
-    let json2;
-    try {
-      json2 = rawText ? parseShopeeJson(rawText) : {};
-      json2 = maybeNormalizeReturnJson(json2, context);
-      warnShopeeUint64Sample(json2, context);
-    } catch (parseErr) {
-      const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
-      return {
-        httpStatus: res.status,
-        json: {
-          error: "json_parse_error",
-          message: `${context}: ph\u1EA3n h\u1ED3i kh\xF4ng ph\u1EA3i JSON h\u1EE3p l\u1EC7 (HTTP ${res.status}): ${parseMsg}`
-        }
-      };
-    }
-    if ((isShopeeRateLimited(res.status, json2) || isShopeeRetryableHttpStatus(res.status)) && attempt < maxAttempts - 1) {
-      shopeeRetryTelemetry.retries++;
-      if (isShopeeRateLimited(res.status, json2)) shopeeRetryTelemetry.rateLimits++;
-      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
-      console.warn(
-        `[Shopee API] ${context} HTTP ${res.status}, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`
-      );
-      await sleep4(waitMs);
-      continue;
-    }
-    if (json2?.error && !json2.message) {
-      json2.message = formatShopeeApiError(json2, res.status);
-    }
-    return { json: json2, httpStatus: res.status };
-  }
-  shopeeRetryTelemetry.exhausted++;
-  return {
-    httpStatus: 429,
-    json: {
-      error: "rate_limit_exceeded",
-      message: formatShopeeApiError({ error: "rate_limit_exceeded" }, 429)
-    }
-  };
-}
-
-// services/shopee/auth.js
-var APP_ROOT10 = resolveAppRoot();
-var APP_BASE_URL3 = resolveAppBaseUrl();
-function resolveShopeeCallbackUrl2() {
-  const explicit = String(process.env.SHOPEE_CALLBACK_URL || "").trim().replace(/\/$/, "");
-  if (explicit) return explicit;
-  return `${APP_BASE_URL3}/api/shopee/callback`;
-}
-var SHOPEE_CALLBACK_URL2 = resolveShopeeCallbackUrl2();
-var SHOPEE_WEBHOOK_URL2 = `${APP_BASE_URL3}/api/shopee/webhook`;
-var SHOPEE_CALLBACK_IDLE_MSG = "Callback route is active. Waiting for Shopee parameters (code, shop_id)...";
-var SHOPEE_ENV = (process.env.SHOPEE_ENV || "live").toLowerCase();
-var SHOPEE_HOST = "https://partner.shopeemobile.com";
-if (SHOPEE_ENV !== "live") {
-  console.warn(`[Shopee API] SHOPEE_ENV=${SHOPEE_ENV} \u2014 ch\u1EC9 d\xF9ng host Live: ${SHOPEE_HOST}`);
-}
-var SHOPEE_PARTNER_ID = process.env.SHOPEE_PARTNER_ID || "";
-var SHOPEE_PARTNER_KEY = process.env.SHOPEE_PARTNER_KEY || "";
-function isShopeeConfigValid() {
-  return /^\d+$/.test(SHOPEE_PARTNER_ID) && SHOPEE_PARTNER_KEY.length > 0 && !/CHUA_CO|YOUR_LIVE/i.test(SHOPEE_PARTNER_KEY);
-}
-if (!isShopeeConfigValid()) {
-  console.warn(
-    `[Shopee API] \u26A0\uFE0F SHOPEE_PARTNER_ID (hi\u1EC7n t\u1EA1i: "${SHOPEE_PARTNER_ID || "(r\u1ED7ng)"}") ho\u1EB7c SHOPEE_PARTNER_KEY ch\u01B0a \u0111\u01B0\u1EE3c \u0111i\u1EC1n \u0111\xFAng trong .env. Partner_id ph\u1EA3i l\xE0 m\u1ED9t s\u1ED1 nguy\xEAn (v\xED d\u1EE5: 2001234), l\u1EA5y t\u1EEB App PRODUCTION (Live) tr\xEAn open.shopee.com, KH\xD4NG d\xF9ng Sandbox. M\u1ECDi l\u1EA7n g\u1ECDi API Shopee s\u1EBD b\u1EC3 tr\u1EA3 l\u1ED7i error_param cho \u0111\u1EBFn khi s\u1EEDa \u0111\xFAng gi\xE1 tr\u1ECB n\xE0y.`
-  );
-}
-var SHOPEE_TOKENS_PATH = import_path19.default.resolve(APP_ROOT10, "data", "shopee_tokens.json");
-var SHOPEE_OAUTH_LAST_PATH = import_path19.default.resolve(APP_ROOT10, "data", "shopee_oauth_last.json");
-var CHANNEL_SETTINGS_PATH2 = import_path19.default.resolve(APP_ROOT10, "data", "channel_settings.json");
-var CANONICAL_SHOPEE_SHOP_IDS = ["4127421", "831052930"];
-var INDEPENDENT_SHOPEE_SHOP_IDS = new Set(CANONICAL_SHOPEE_SHOP_IDS);
-var deps11 = {
-  syncOAuthShopsToChannelSettings: () => {
-  },
-  logOAuthSaveError: () => {
-  }
-};
-function initShopeeAuth(partial) {
-  deps11 = { ...deps11, ...partial };
-}
-function ensureDataDirs() {
-  const dataDir = import_path19.default.join(APP_ROOT10, "data");
-  import_fs19.default.mkdirSync(dataDir, { recursive: true });
-  if (!import_fs19.default.existsSync(SHOPEE_TOKENS_PATH)) {
-    import_fs19.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
-  }
-}
-function saveOAuthAudit(entry) {
-  try {
-    ensureDataDirs();
-    import_fs19.default.writeFileSync(
-      SHOPEE_OAUTH_LAST_PATH,
-      JSON.stringify({ ...entry, at: (/* @__PURE__ */ new Date()).toISOString() }, null, 2),
-      "utf-8"
-    );
-  } catch (error) {
-    console.error("[Shopee OAuth] Failed to write shopee_oauth_last.json:", error);
-  }
-}
-function loadLastOAuthAudit() {
-  try {
-    if (!import_fs19.default.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
-    return JSON.parse(import_fs19.default.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
-  } catch {
-    return null;
-  }
-}
-function bootShopeeAuth() {
-  ensureDataDirs();
-  try {
-    const normalized = normalizeTokenStore(loadShopeeTokens());
-    if (Object.keys(normalized).length > 0) {
-      saveShopeeTokens(normalized);
-      console.log(`[Boot] Normalized shopee_tokens.json keys: [${Object.keys(normalized).join(", ")}]`);
-    }
-  } catch (error) {
-    console.error("[Boot] Failed to normalize shopee_tokens.json:", error);
-  }
-  console.log(
-    `[Boot] APP_ROOT=${APP_ROOT10} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs19.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL2}`
-  );
-}
-function loadShopeeTokens() {
-  try {
-    if (!import_fs19.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
-    const raw = import_fs19.default.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
-    if (!raw.trim()) return {};
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      const map = {};
-      for (const row of parsed) {
-        const k = normalizeShopIdKey(row?.shop_id ?? row?.shopId);
-        if (k) map[k] = row;
-      }
-      return map;
-    }
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch (error) {
-    console.error("[Shopee Tokens] Failed to read shopee_tokens.json:", error);
-    return {};
-  }
-}
-function maskTokenStoreForLog(tokens) {
-  const masked = {};
-  for (const [key, record] of Object.entries(tokens || {})) {
-    masked[key] = {
-      shop_id: record?.shop_id ?? key,
-      oauth_shop_id: record?.oauth_shop_id ?? null,
-      shop_id_list: record?.shop_id_list ?? [],
-      merchant_id_list: record?.merchant_id_list ?? [],
-      expire_in: record?.expire_in ?? null,
-      obtained_at: record?.obtained_at ?? null,
-      access_token: record?.access_token ? `${String(record.access_token).slice(0, 16)}\u2026` : null,
-      refresh_token: record?.refresh_token ? `${String(record.refresh_token).slice(0, 16)}\u2026` : null
-    };
-  }
-  return masked;
-}
-function saveShopeeTokens(tokensToWrite) {
-  const absPath = import_path19.default.resolve(SHOPEE_TOKENS_PATH);
-  try {
-    ensureDataDirs();
-    const onDisk = normalizeTokenStore(loadShopeeTokens());
-    const tokensData = { ...onDisk };
-    const keysBefore = Object.keys(tokensData);
-    for (const [rawKey, record] of Object.entries(tokensToWrite || {})) {
-      const shop_id = normalizeShopIdKey(record?.shop_id ?? rawKey);
-      if (!shop_id || !record) continue;
-      tokensData[shop_id] = {
-        ...tokensData[shop_id],
-        ...record,
-        shop_id
-      };
-      console.log(`[Shopee Tokens] UPSERT shop_id=${shop_id}`);
-    }
-    const keysAfter = Object.keys(tokensData);
-    console.log(
-      "DEBUG SAVE: Merge keys",
-      JSON.stringify({ keysBefore, keysAfter, addedOrUpdated: keysAfter.filter((k) => !keysBefore.includes(k) || tokensToWrite[k]) })
-    );
-    console.log("DEBUG SAVE: Full tokensData file keys:", keysAfter);
-    console.log(
-      "DEBUG SAVE: Full tokensData (masked):",
-      JSON.stringify(maskTokenStoreForLog(tokensData))
-    );
-    const payload = JSON.stringify(tokensData, null, 2);
-    console.log(
-      "[Shopee Tokens] fs.writeFileSync \u2014 TR\u01AF\u1EDAC KHI GHI",
-      JSON.stringify({
-        absPath,
-        SHOPEE_TOKENS_PATH,
-        APP_ROOT: APP_ROOT10,
-        keys: keysAfter,
-        byteLength: Buffer.byteLength(payload, "utf-8")
-      })
-    );
-    import_fs19.default.writeFileSync(absPath, payload, "utf-8");
-    console.log(
-      "[Shopee Tokens] fs.writeFileSync \u2014 GHI TH\xC0NH C\xD4NG",
-      JSON.stringify({ absPath, keys: keysAfter, fileSize: import_fs19.default.statSync(absPath).size })
-    );
-    return true;
-  } catch (error) {
-    deps11.logOAuthSaveError("saveShopeeTokens", error);
-    console.error(
-      "[Shopee Tokens] fs.writeFileSync \u2014 L\u1ED6I GHI FILE",
-      JSON.stringify({
-        absPath,
-        SHOPEE_TOKENS_PATH,
-        errorMessage: error?.message || String(error),
-        errorCode: error?.code || null
-      })
-    );
-    return false;
-  }
-}
-function normalizeShopIdKey(shopId) {
-  const key = String(shopId ?? "").trim();
-  return /^\d+$/.test(key) ? key : "";
-}
-function queryParamOne2(value) {
-  if (Array.isArray(value)) return String(value[0] ?? "").trim();
-  return String(value ?? "").trim();
-}
-function shouldOAuthRedirectToFrontend2(req) {
-  if (queryParamOne2(req.query?.format) === "json") return false;
-  if (queryParamOne2(req.query?.redirect) === "0") return false;
-  return true;
-}
-function buildOAuthFrontendRedirectUrl2(req, result) {
-  const oauthShopId = String(result.oauth_shop_id || queryParamOne2(req.query.shop_id) || "");
-  const expectedShop = queryParamOne2(req.query?.expected_shop) || String(result.expected_shop_id || "");
-  if (result.success) {
-    const savedQuery = encodeURIComponent((result.saved_shop_ids || []).join(","));
-    const expectedQuery = expectedShop ? `&expected_shop=${encodeURIComponent(expectedShop)}` : "";
-    return `${APP_BASE_URL3}/?shopee_linked=1&shop_id=${encodeURIComponent(oauthShopId)}&saved_shops=${savedQuery}${expectedQuery}`;
-  }
-  const errMsg = result.message || result.error || "token_exchange_failed";
-  return `${APP_BASE_URL3}/?shopee_linked=0&shop_id=${encodeURIComponent(oauthShopId)}&error=${encodeURIComponent(errMsg)}`;
-}
-function normalizeShopeeTokenResponse(raw) {
-  const inner = raw?.response && typeof raw.response === "object" && !Array.isArray(raw.response) ? raw.response : raw?.data && typeof raw.data === "object" ? raw.data : raw;
-  const access_token = inner?.access_token ?? inner?.accessToken ?? raw?.access_token ?? raw?.accessToken ?? "";
-  const refresh_token = inner?.refresh_token ?? inner?.refreshToken ?? raw?.refresh_token ?? raw?.refreshToken ?? "";
-  const expire_in = Number(
-    inner?.expire_in ?? inner?.expire_time ?? inner?.expires_in ?? raw?.expire_in ?? raw?.expire_time ?? 0
-  );
-  const shop_id_list = inner?.shop_id_list ?? raw?.shop_id_list ?? inner?.shop_ids ?? [];
-  const merchant_id_list = inner?.merchant_id_list ?? raw?.merchant_id_list ?? [];
-  return {
-    ...raw,
-    access_token: access_token || void 0,
-    refresh_token: refresh_token || void 0,
-    expire_in: expire_in > 0 ? expire_in : void 0,
-    shop_id_list: Array.isArray(shop_id_list) ? shop_id_list : [],
-    merchant_id_list: Array.isArray(merchant_id_list) ? merchant_id_list : [],
-    shop_id: inner?.shop_id ?? raw?.shop_id,
-    error: raw?.error ?? inner?.error,
-    message: raw?.message ?? inner?.message,
-    _raw: raw
-  };
-}
-function buildShopeeTokenRecord(shopKey, authJson, oauthShopId, existing) {
-  const key = normalizeShopIdKey(shopKey);
-  const oauth = normalizeShopIdKey(oauthShopId) || key;
-  const authHasShopList = Array.isArray(authJson?.shop_id_list);
-  const fromAuthList = authHasShopList ? authJson.shop_id_list.map((x2) => normalizeShopIdKey(x2)).filter(Boolean) : [];
-  const fromExistingList = Array.isArray(existing?.shop_id_list) ? existing.shop_id_list.map((x2) => normalizeShopIdKey(x2)).filter(Boolean) : [];
-  const shopIdList = authHasShopList ? [...new Set([...fromAuthList, key].filter(Boolean))] : [...new Set([...fromExistingList, key].filter(Boolean))];
-  const fromAuthMerchants = Array.isArray(authJson?.merchant_id_list) ? authJson.merchant_id_list.map((x2) => String(x2)).filter(Boolean) : [];
-  const fromExistingMerchants = Array.isArray(existing?.merchant_id_list) ? existing.merchant_id_list.map((x2) => String(x2)).filter(Boolean) : [];
-  const merchantIdList = [.../* @__PURE__ */ new Set([...fromAuthMerchants, ...fromExistingMerchants])];
-  return {
-    shop_id: key,
-    access_token: String(authJson?.access_token ?? existing?.access_token ?? ""),
-    refresh_token: String(authJson?.refresh_token ?? existing?.refresh_token ?? ""),
-    expire_in: Number(authJson?.expire_in ?? existing?.expire_in ?? 14400),
-    obtained_at: Number(authJson?.obtained_at ?? Math.floor(Date.now() / 1e3)),
-    oauth_shop_id: existing?.oauth_shop_id || oauth,
-    shop_id_list: shopIdList,
-    merchant_id_list: merchantIdList
-  };
-}
-function normalizeTokenStore(tokens) {
-  const out = {};
-  for (const [rawKey, record] of Object.entries(tokens || {})) {
-    if (!record || typeof record !== "object") continue;
-    const key = normalizeShopIdKey(record.shop_id ?? rawKey);
-    if (!key || !record.access_token) continue;
-    const oauthShopId = normalizeShopIdKey(record.oauth_shop_id) || key;
-    out[key] = buildShopeeTokenRecord(key, record, oauthShopId, record);
-  }
-  return out;
-}
-function getShopeeTokenRecord(tokens, shopId) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key) return null;
-  if (tokens[key]?.access_token || tokens[key]?.refresh_token) return tokens[key];
-  for (const [k, v] of Object.entries(tokens)) {
-    if (normalizeShopIdKey(k) === key) return v;
-  }
-  return null;
-}
-function resolveShopeeTokenConnectionStatus(shopId, preloadedTokens) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key) {
-    return { status: "missing", message: "Thi\u1EBFu Shop ID", expires_at: null };
-  }
-  const tokens = preloadedTokens && typeof preloadedTokens === "object" ? preloadedTokens : loadShopeeTokens();
-  const record = getShopeeTokenRecord(tokens, key);
-  if (!record?.access_token) {
-    return {
-      status: "missing",
-      message: "Ch\u01B0a k\u1EBFt n\u1ED1i OAuth \u2014 kh\xF4ng c\xF3 access_token",
-      expires_at: null
-    };
-  }
-  const now = Math.floor(Date.now() / 1e3);
-  const obtainedAt = Number(record.obtained_at) || 0;
-  const expireIn = Number(record.expire_in) || 0;
-  const expiresAt = obtainedAt > 0 && expireIn > 0 ? obtainedAt + expireIn : null;
-  if (expiresAt != null && now > expiresAt) {
-    return {
-      status: "expired",
-      message: `Token h\u1EBFt h\u1EA1n l\xFAc ${new Date(expiresAt * 1e3).toLocaleString("vi-VN")} \u2014 c\u1EA7n OAuth l\u1EA1i ho\u1EB7c refresh`,
-      expires_at: expiresAt
-    };
-  }
-  return {
-    status: "online",
-    message: expiresAt != null ? `Token h\u1EE3p l\u1EC7 \u0111\u1EBFn ${new Date(expiresAt * 1e3).toLocaleString("vi-VN")}` : "Token h\u1EE3p l\u1EC7",
-    expires_at: expiresAt
-  };
-}
-function collectShopIdsForTokenSave(requestShopId, authJson, expectedShopId) {
-  const ids = /* @__PURE__ */ new Set();
-  const primary = normalizeShopIdKey(requestShopId);
-  if (primary) ids.add(primary);
-  const expected = normalizeShopIdKey(expectedShopId);
-  if (expected) ids.add(expected);
-  for (const raw of authJson?.shop_id_list || []) {
-    const k = normalizeShopIdKey(raw);
-    if (k) ids.add(k);
-  }
-  const fromBody = normalizeShopIdKey(authJson?.shop_id);
-  if (fromBody) ids.add(fromBody);
-  return [...ids];
-}
-function persistOAuthTokens(authJson, opts) {
-  if (!authJson?.access_token) return [];
-  const oauthShopId = normalizeShopIdKey(opts.oauthShopId);
-  const mainAccountId = normalizeShopIdKey(opts.mainAccountId);
-  const expected = normalizeShopIdKey(opts.expectedShopId);
-  const shopIds = new Set(collectShopIdsForTokenSave(oauthShopId || mainAccountId, authJson, expected));
-  if (mainAccountId && Array.isArray(authJson?.shop_id_list)) {
-    for (const raw of authJson.shop_id_list) {
-      const k = normalizeShopIdKey(raw);
-      if (k) shopIds.add(k);
-    }
-  }
-  const shopMismatch = Boolean(expected && oauthShopId && expected !== oauthShopId);
-  if (shopMismatch && !shopIds.has(expected)) {
-    console.warn(
-      `[Shopee OAuth] Shop mismatch: expected=${expected}, oauth=${oauthShopId}, shop_id_list=[${(authJson?.shop_id_list || []).join(", ")}] \u2014 kh\xF4ng l\u01B0u alias token sai shop.`
-    );
-    shopIds.delete(expected);
-  }
-  if (shopIds.size === 0 && oauthShopId) shopIds.add(oauthShopId);
-  const keysBeforeMerge = Object.keys(normalizeTokenStore(loadShopeeTokens()));
-  const tokenOwner = oauthShopId || mainAccountId || "";
-  const updates = {};
-  for (const id of shopIds) {
-    updates[id] = buildShopeeTokenRecord(id, authJson, tokenOwner || id, loadShopeeTokens()[id]);
-    console.log("DEBUG SAVE: Saving data for shop:", id, "Full Data:", JSON.stringify(updates[id]));
-  }
-  saveShopeeTokens(updates);
-  for (const id of shopIds) {
-    console.log("L\u01B0u token th\xE0nh c\xF4ng cho shop: ", id);
-  }
-  const saved = [...shopIds];
-  const tokensData = normalizeTokenStore(loadShopeeTokens());
-  console.log(
-    "[Shopee Tokens] persistOAuthTokens \u2014 SAU MERGE",
-    JSON.stringify({
-      oauthShopId,
-      mainAccountId: mainAccountId || null,
-      expectedShopId: expected || null,
-      shopMismatch,
-      keysBefore: keysBeforeMerge,
-      keysAfter: Object.keys(tokensData),
-      shopIdsSaved: saved,
-      shopee_shop_id_list: authJson?.shop_id_list || [],
-      tokensPath: SHOPEE_TOKENS_PATH
-    })
-  );
-  return saved;
-}
-function verifyTokenSaved(shopId) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key) return false;
-  const tokens = loadShopeeTokens();
-  return Boolean(getShopeeTokenRecord(tokens, key)?.access_token);
-}
-async function completeShopeeOAuthFlow(code, params) {
-  const oauthShopId = normalizeShopIdKey(params.shopIdRaw);
-  const mainAccountId = normalizeShopIdKey(params.mainAccountIdRaw);
-  const expected = normalizeShopIdKey(params.expectedShopId);
-  if (!oauthShopId && !mainAccountId) {
-    return {
-      success: false,
-      oauth_shop_id: "",
-      saved_shop_ids: [],
-      verified_in_file: false,
-      error: "invalid_shop_id",
-      message: `Thi\u1EBFu shop_id ho\u1EB7c main_account_id h\u1EE3p l\u1EC7 trong callback (shop_id=${params.shopIdRaw || ""}, main_account_id=${params.mainAccountIdRaw || ""})`
-    };
-  }
-  console.log(
-    "[Shopee OAuth] completeShopeeOAuthFlow B\u1EAET \u0110\u1EA6U",
-    JSON.stringify({
-      oauthShopId: oauthShopId || null,
-      mainAccountId: mainAccountId || null,
-      expectedShopId: expected || null,
-      shop_mismatch: expected && oauthShopId ? expected !== oauthShopId : false,
-      code_preview: `${code.slice(0, 8)}\u2026`,
-      tokensPath: SHOPEE_TOKENS_PATH
-    })
-  );
-  const tokenResult = await exchangeShopeeCodeForToken(code, {
-    shopId: oauthShopId || void 0,
-    mainAccountId: mainAccountId || void 0
-  });
-  let savedIds = [];
-  if (tokenResult.access_token) {
-    savedIds = persistOAuthTokens(tokenResult, {
-      oauthShopId: oauthShopId || void 0,
-      mainAccountId: mainAccountId || void 0,
-      expectedShopId: expected || void 0
-    });
-    tokenResult.saved_shop_ids = savedIds;
-    if (savedIds.length > 0) {
-      deps11.syncOAuthShopsToChannelSettings(savedIds, { expectedShopId: expected || void 0 });
-    }
-  }
-  const shopMismatch = Boolean(
-    expected && oauthShopId && expected !== oauthShopId && !savedIds.includes(expected)
-  );
-  const verified = expected ? savedIds.includes(expected) && verifyTokenSaved(expected) : oauthShopId ? verifyTokenSaved(oauthShopId) : savedIds.length > 0;
-  saveOAuthAudit({
-    callback_shop_id: oauthShopId || null,
-    main_account_id: mainAccountId || null,
-    expected_shop_id: expected || null,
-    shop_mismatch: shopMismatch,
-    callback_code_present: Boolean(code),
-    success: Boolean(tokenResult.access_token) && verified && !shopMismatch,
-    verified_in_file: verified,
-    error: tokenResult.error || null,
-    message: tokenResult.message || null,
-    saved_shop_ids: savedIds,
-    shopee_shop_id_list: tokenResult.shop_id_list || [],
-    file_keys_after: Object.keys(loadShopeeTokens()),
-    tokens_path: SHOPEE_TOKENS_PATH,
-    app_root: APP_ROOT10
-  });
-  return {
-    success: Boolean(tokenResult.access_token) && verified && !shopMismatch,
-    oauth_shop_id: oauthShopId || savedIds[0] || "",
-    expected_shop_id: expected || null,
-    shop_mismatch: shopMismatch,
-    saved_shop_ids: savedIds,
-    verified_in_file: verified,
-    error: tokenResult.error || (shopMismatch ? "shop_mismatch" : verified ? null : "token_not_persisted"),
-    message: shopMismatch ? `Shopee tr\u1EA3 v\u1EC1 shop ${oauthShopId}, KH\xD4NG ph\u1EA3i shop b\u1EA1n y\xEAu c\u1EA7u ${expected}. Token KH\xD4NG th\u1EC3 d\xF9ng cho shop kh\xE1c \u2014 h\xE3y \u0111\u0103ng xu\u1EA5t Shopee Seller Center, \u0111\u0103ng nh\u1EADp \u0111\xFAng shop ${expected}, r\u1ED3i b\u1EA5m OAuth l\u1EA1i.` : tokenResult.message || (verified ? `OAuth th\xE0nh c\xF4ng. Token \u0111\xE3 l\u01B0u cho: [${savedIds.join(", ")}].` : "Token kh\xF4ng ghi \u0111\u01B0\u1EE3c v\xE0o shopee_tokens.json"),
-    shopee_response: tokenResult.access_token ? { shop_id_list: tokenResult.shop_id_list || [], expire_in: tokenResult.expire_in } : tokenResult
-  };
-}
-function buildShopeeAuthPartnerUrl(shopId) {
-  const apiPath = "/api/v2/shop/auth_partner";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp);
-  const sid = normalizeShopIdKey(shopId);
-  const redirectTarget = sid ? `${SHOPEE_CALLBACK_URL2}?redirect=1&expected_shop=${sid}` : `${SHOPEE_CALLBACK_URL2}?redirect=1`;
-  const redirect = encodeURIComponent(redirectTarget);
-  let url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&sign=${sign}&redirect=${redirect}`;
-  if (sid) url2 += `&shop_id=${sid}`;
-  console.log(`[Shopee OAuth] auth_partner URL cho shop_id=${sid || "(none)"}: ${url2.replace(/sign=[^&]+/, "sign=***")}`);
-  return url2;
-}
-function saveShopeeTokenForShop(shopId, record) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key) return;
-  const tokens = normalizeTokenStore(loadShopeeTokens());
-  const existing = tokens[key];
-  tokens[key] = buildShopeeTokenRecord(
-    key,
-    { ...existing, ...record, obtained_at: record.obtained_at ?? Math.floor(Date.now() / 1e3) },
-    existing?.oauth_shop_id || key,
-    existing
-  );
-  saveShopeeTokens(tokens);
-  if (tokens[key]?.access_token) {
-    tokenCacheSet(key, tokens[key].access_token, tokens[key].expire_in);
-  }
-  console.log(`[Shopee Tokens] Saved token for shop_id=${key}. All shops: [${Object.keys(tokens).join(", ")}]`);
-}
-function listChannelSettingsShopIds() {
-  try {
-    if (!import_fs19.default.existsSync(CHANNEL_SETTINGS_PATH2)) return [];
-    const raw = import_fs19.default.readFileSync(CHANNEL_SETTINGS_PATH2, "utf-8");
-    const parsed = raw.trim() ? JSON.parse(raw) : {};
-    const shops = Array.isArray(parsed?.shops) ? parsed.shops : [];
-    const ids = [];
-    for (const shop of shops) {
-      const platform = String(shop?.platform || "").toLowerCase();
-      if (platform && platform !== "shopee") continue;
-      const id = normalizeShopIdKey(shop?.shopId || shop?.id);
-      if (id) ids.push(id);
-    }
-    return ids;
-  } catch {
-    return [];
-  }
-}
-function shopHasOwnToken(tokens, shopId) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key) return false;
-  const rec = tokens[key];
-  return Boolean(rec?.access_token || rec?.refresh_token);
-}
-function listShopeeOAuthShopIds() {
-  return listShopeeSyncShopIds();
-}
-function listShopeeSyncShopIds(preloadedTokens) {
-  const tokens = preloadedTokens && typeof preloadedTokens === "object" ? preloadedTokens : loadShopeeTokens();
-  const ids = /* @__PURE__ */ new Set();
-  for (const id of CANONICAL_SHOPEE_SHOP_IDS) {
-    const key = normalizeShopIdKey(id);
-    if (key) ids.add(key);
-  }
-  for (const id of listChannelSettingsShopIds()) ids.add(id);
-  for (const [rawKey, record] of Object.entries(tokens)) {
-    const key = normalizeShopIdKey(rawKey);
-    if (key) ids.add(key);
-    const recordShopId = normalizeShopIdKey(record?.shop_id);
-    if (recordShopId) ids.add(recordShopId);
-  }
-  const list = [...ids].sort();
-  for (const id of list) {
-    if (!shopHasOwnToken(tokens, id)) {
-      console.error(
-        `[Shopee Tokens] THI\u1EBEU token ri\xEAng shop_id=${id}. C\u1EA4M d\xF9ng token shop kh\xE1c. V\xE0o C\xE0i \u0111\u1EB7t \u2192 \u1EE6y quy\u1EC1n l\u1EA1i Shop ${id}.`
-      );
-    }
-  }
-  return list;
-}
-function ensureShopeeLinkedShopTokenKeys() {
-  const tokens = normalizeTokenStore(loadShopeeTokens());
-  const updates = {};
-  let pruned = 0;
-  for (const [rawKey, record] of Object.entries(tokens)) {
-    if (!record?.access_token && !record?.refresh_token) continue;
-    const owner = normalizeShopIdKey(rawKey) || normalizeShopIdKey(record?.shop_id);
-    if (!owner) continue;
-    const list = Array.isArray(record?.shop_id_list) ? record.shop_id_list.map((x2) => normalizeShopIdKey(x2)).filter(Boolean) : [];
-    if (list.length <= 1) {
-      if (list.length !== 1 || list[0] !== owner) {
-        updates[owner] = {
-          ...record,
-          shop_id: owner,
-          shop_id_list: [owner]
-        };
-        pruned += 1;
-      }
-      continue;
-    }
-    const oauth = normalizeShopIdKey(record?.oauth_shop_id) || owner;
-    for (const id of list) {
-      if (id === owner) continue;
-      const existing = tokens[id] || updates[id];
-      const foreignIndependent = INDEPENDENT_SHOPEE_SHOP_IDS.has(owner) && INDEPENDENT_SHOPEE_SHOP_IDS.has(id);
-      if (foreignIndependent || !existing?.access_token || !existing?.refresh_token) {
-        console.error(
-          `[Shopee Tokens] C\u1EA4M clone token shop_id=${owner} \u2192 ${id}. Shop ${id} c\u1EA7n OAuth ri\xEAng (C\xE0i \u0111\u1EB7t \u2192 \u1EE6y quy\u1EC1n l\u1EA1i).`
-        );
-        continue;
-      }
-      if (existing.refresh_token && record.refresh_token && String(existing.refresh_token) !== String(record.refresh_token)) {
-        continue;
-      }
-      const mergedList = [...new Set([...(existing.shop_id_list || []).map(normalizeShopIdKey), ...list].filter(Boolean))];
-      if (mergedList.join(",") !== (existing.shop_id_list || []).map(normalizeShopIdKey).join(",")) {
-        updates[id] = {
-          ...existing,
-          shop_id: id,
-          oauth_shop_id: existing.oauth_shop_id || oauth,
-          shop_id_list: mergedList
-        };
-      }
-    }
-  }
-  for (const [rawKey, record] of Object.entries({ ...tokens, ...updates })) {
-    const key = normalizeShopIdKey(rawKey);
-    if (!key || !record) continue;
-    const oauth = normalizeShopIdKey(record.oauth_shop_id);
-    if (!oauth || oauth === key) continue;
-    const ownerRec = updates[oauth] || tokens[oauth];
-    if (!ownerRec) continue;
-    const ownerList = Array.isArray(ownerRec.shop_id_list) ? ownerRec.shop_id_list.map(normalizeShopIdKey).filter(Boolean) : [oauth];
-    const sameRefresh = record.refresh_token && ownerRec.refresh_token && String(record.refresh_token) === String(ownerRec.refresh_token);
-    const foreignIndependent = INDEPENDENT_SHOPEE_SHOP_IDS.has(key) && INDEPENDENT_SHOPEE_SHOP_IDS.has(oauth);
-    if (sameRefresh && (!ownerList.includes(key) || foreignIndependent)) {
-      console.error(
-        `[Shopee Tokens] G\u1EE1 shop clone gi\u1EA3 shop_id=${key} (token thu\u1ED9c ${oauth}, kh\xF4ng c\xF3 trong shop_id_list). C\u1EA7n OAuth ri\xEAng shop ${key}.`
-      );
-      delete updates[key];
-      if (tokens[key]) {
-        updates[`__delete__${key}`] = true;
-      }
-      pruned += 1;
-    }
-  }
-  const deleteKeys = Object.keys(updates).filter((k) => k.startsWith("__delete__"));
-  for (const dk of deleteKeys) {
-    delete updates[dk];
-  }
-  if (Object.keys(updates).length > 0 || deleteKeys.length > 0) {
-    const next = normalizeTokenStore(loadShopeeTokens());
-    for (const dk of deleteKeys) {
-      const id = dk.replace(/^__delete__/, "");
-      delete next[id];
-    }
-    Object.assign(next, updates);
-    import_fs19.default.writeFileSync(SHOPEE_TOKENS_PATH, JSON.stringify(next, null, 2), "utf8");
-    console.log(
-      `[Shopee Tokens] ensureLinkedShopTokenKeys \u2014 upsert=[${Object.keys(updates).join(", ")}] deleted=[${deleteKeys.map((k) => k.replace(/^__delete__/, "")).join(", ")}] pruned=${pruned}`
-    );
-  }
-  return listShopeeSyncShopIds();
-}
-function propagateShopeeTokenToLinkedShops(sourceShopId, patch, opts) {
-  const key = normalizeShopIdKey(sourceShopId);
-  if (!key || !patch?.access_token) return;
-  const tokens = normalizeTokenStore(loadShopeeTokens());
-  const record = getShopeeTokenRecord(tokens, key) || tokens[key];
-  if (!record) {
-    saveShopeeTokenForShop(key, patch);
-    tokenCacheSet(key, patch.access_token, patch.expire_in);
-    return;
-  }
-  const fromPatch = Array.isArray(patch.shop_id_list) ? patch.shop_id_list.map((x2) => normalizeShopIdKey(x2)).filter(Boolean) : [];
-  const linked = new Set(fromPatch.length ? fromPatch : [key]);
-  linked.add(key);
-  const oauth = normalizeShopIdKey(record.oauth_shop_id);
-  const onlyMatchingRefresh = opts?.onlyMatchingRefreshToken ? String(opts.onlyMatchingRefreshToken) : "";
-  const updates = {};
-  for (const id of linked) {
-    if (id !== key && INDEPENDENT_SHOPEE_SHOP_IDS.has(key) && INDEPENDENT_SHOPEE_SHOP_IDS.has(id)) {
-      console.error(
-        `[Shopee Tokens] C\u1EA4M propagate token shop_id=${key} \u2192 ${id}. Shop ${id} c\u1EA7n OAuth ri\xEAng.`
-      );
-      continue;
-    }
-    const existing = tokens[id] || (id === key ? record : null);
-    if (onlyMatchingRefresh && existing?.refresh_token && String(existing.refresh_token) !== onlyMatchingRefresh && id !== key) {
-      continue;
-    }
-    if (id !== key && existing?.refresh_token && onlyMatchingRefresh && String(existing.refresh_token) !== onlyMatchingRefresh) {
-      continue;
-    }
-    updates[id] = buildShopeeTokenRecord(
-      id,
-      {
-        access_token: patch.access_token,
-        refresh_token: patch.refresh_token,
-        expire_in: patch.expire_in,
-        obtained_at: patch.obtained_at,
-        shop_id_list: [...linked]
-      },
-      normalizeShopIdKey(existing?.oauth_shop_id) || oauth || key,
-      existing || record
-    );
-    tokenCacheSet(id, patch.access_token, patch.expire_in);
-  }
-  saveShopeeTokens(updates);
-  console.log(
-    `[Shopee Tokens] propagate from=${key} \u2192 [${Object.keys(updates).join(", ")}] list=[${[...linked].join(",")}]`
-  );
-}
-function shopeeSign(apiPath, timestamp, accessToken, shopId) {
-  const baseString = accessToken && shopId ? `${SHOPEE_PARTNER_ID}${apiPath}${timestamp}${accessToken}${shopId}` : `${SHOPEE_PARTNER_ID}${apiPath}${timestamp}`;
-  return import_crypto3.default.createHmac("sha256", SHOPEE_PARTNER_KEY).update(baseString).digest("hex");
-}
-async function exchangeShopeeCodeForToken(code, opts) {
-  const shopId = normalizeShopIdKey(opts.shopId);
-  const mainAccountId = normalizeShopIdKey(opts.mainAccountId);
-  if (!isShopeeConfigValid()) {
-    const error = {
-      error: "invalid_partner_config",
-      message: `SHOPEE_PARTNER_ID/"${SHOPEE_PARTNER_ID}" ho\u1EB7c SHOPEE_PARTNER_KEY trong .env ch\u01B0a ph\u1EA3i gi\xE1 tr\u1ECB Live th\u1EF1c. Vui l\xF2ng \u0111i\u1EC1n \u0111\xFAng Partner ID (s\u1ED1 nguy\xEAn) v\xE0 Partner Key t\u1EEB App PRODUCTION tr\xEAn open.shopee.com r\u1ED3i th\u1EED l\u1EA1i.`
-    };
-    console.error(`[Shopee OAuth] \u274C Kh\xF4ng th\u1EC3 \u0111\u1ED5i code: ${error.message}`);
-    return error;
-  }
-  if (!shopId && !mainAccountId) {
-    return {
-      error: "missing_shop_or_main_account",
-      message: "Shopee token/get c\u1EA7n shop_id HO\u1EB6C main_account_id (kh\xF4ng \u0111\u01B0\u1EE3c thi\u1EBFu c\u1EA3 hai)."
-    };
-  }
-  const apiPath = "/api/v2/auth/token/get";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp);
-  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&sign=${sign}`;
-  const body = {
-    code,
-    partner_id: Number(SHOPEE_PARTNER_ID)
-  };
-  if (mainAccountId) {
-    body.main_account_id = Number(mainAccountId);
-  } else if (shopId) {
-    body.shop_id = Number(shopId);
-  }
-  console.log(
-    "[Shopee OAuth] token/get request",
-    JSON.stringify({
-      shop_id: shopId || null,
-      main_account_id: mainAccountId || null,
-      partner_id: SHOPEE_PARTNER_ID,
-      url_host: SHOPEE_HOST
-    })
-  );
-  let res;
-  let rawText;
-  try {
-    res = await fetchWithTimeout(url2, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    });
-    rawText = await res.text();
-  } catch (error) {
-    deps11.logOAuthSaveError("exchangeShopeeCodeForToken fetch", error);
-    return {
-      error: "network_error",
-      message: error?.message || "Kh\xF4ng g\u1ECDi \u0111\u01B0\u1EE3c Shopee token/get"
-    };
-  }
-  console.log("DEBUG RAW RESPONSE:", rawText);
-  let json2;
-  try {
-    json2 = rawText ? parseShopeeJson(rawText) : {};
-  } catch (parseErr) {
-    console.error("[Shopee OAuth] Kh\xF4ng parse \u0111\u01B0\u1EE3c JSON t\u1EEB Shopee:", parseErr);
-    return { error: "invalid_json", message: rawText.slice(0, 500) };
-  }
-  json2 = normalizeShopeeTokenResponse(json2);
-  console.log("DEBUG NORMALIZED RESPONSE:", JSON.stringify(json2));
-  console.log(`[Shopee API] POST ${apiPath} (env=${SHOPEE_ENV}) -> HTTP ${res.status}`);
-  if (json2.access_token && json2.refresh_token) {
-    console.log(
-      "[Shopee OAuth] \u0110\xC3 L\u1EA4Y TOKEN T\u1EEA SHOPEE",
-      JSON.stringify({
-        shop_id: shopId || null,
-        main_account_id: mainAccountId || null,
-        access_token: `${String(json2.access_token).slice(0, 16)}\u2026`,
-        refresh_token: `${String(json2.refresh_token).slice(0, 16)}\u2026`,
-        expire_in: json2.expire_in,
-        shop_id_list: json2.shop_id_list || []
-      })
-    );
-  } else {
-    console.error(
-      "[Shopee OAuth] SHOPEE KH\xD4NG TR\u1EA2 \u0111\u1EE7 access_token/refresh_token",
-      JSON.stringify({
-        shop_id: shopId || null,
-        main_account_id: mainAccountId || null,
-        httpStatus: res.status,
-        error: json2.error || null,
-        message: json2.message || null,
-        keys: Object.keys(json2)
-      })
-    );
-  }
-  return json2;
-}
-async function refreshShopeeToken(shopId, refreshToken) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key || !refreshToken) {
-    return { error: "invalid_refresh_params", message: `Thi\u1EBFu shop_id ho\u1EB7c refresh_token (shop_id=${shopId})` };
-  }
-  const apiPath = "/api/v2/auth/access_token/get";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp);
-  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&sign=${sign}`;
-  try {
-    const res = await fetchWithTimeout(url2, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        refresh_token: String(refreshToken),
-        shop_id: Number(key),
-        partner_id: Number(SHOPEE_PARTNER_ID)
-      })
-    });
-    const rawText = await res.text();
-    const json2 = rawText ? parseShopeeJson(rawText) : {};
-    console.log(
-      `[Shopee API] POST ${apiPath} (refresh shop_id=${key}) -> HTTP ${res.status}:`,
-      JSON.stringify(json2)
-    );
-    const normalized = normalizeShopeeTokenResponse(json2);
-    if (normalized.access_token) {
-      const apiList = Array.isArray(normalized.shop_id_list) ? normalized.shop_id_list : Array.isArray(json2?.shop_id_list) ? json2.shop_id_list : [];
-      const shopIdListForSave = apiList.length ? apiList.map((x2) => normalizeShopIdKey(x2)).filter(Boolean) : [key];
-      saveShopeeTokenForShop(key, {
-        access_token: normalized.access_token,
-        refresh_token: normalized.refresh_token || refreshToken,
-        expire_in: normalized.expire_in,
-        obtained_at: Math.floor(Date.now() / 1e3),
-        shop_id_list: shopIdListForSave
-      });
-      tokenCacheSet(key, normalized.access_token, normalized.expire_in);
-      return {
-        ...normalized,
-        shop_id: key,
-        shop_id_list: shopIdListForSave
-      };
-    }
-    console.error(
-      `[Shopee API] Refresh token th\u1EA5t b\u1EA1i shop_id=${key}:`,
-      normalized.error || json2.error,
-      normalized.message || json2.message
-    );
-    return { ...normalized, shop_id: key };
-  } catch (error) {
-    deps11.logOAuthSaveError(`refreshShopeeToken shop_id=${key}`, error);
-    return { error: "refresh_failed", message: error?.message || String(error), shop_id: key };
-  }
-}
-var ShopeeRefreshTokenExpiredError = class extends Error {
-  constructor(shopId) {
-    super(SHOPEE_REAUTH_REQUIRED_MESSAGE);
-    this.name = "ShopeeRefreshTokenExpiredError";
-    this.shopId = shopId;
-    this.code = "shopee_reauth_required";
-  }
-};
-function isShopeeInvalidTokenError(error, message) {
-  const text = `${error || ""} ${message || ""}`.toLowerCase();
-  return /invalid_acceess_token|invalid_access_token|error_auth|invalid_token|access_token.*expire|token.*expire|token.*invalid|unauthorized|hết hạn|không hợp lệ/.test(
-    text
-  );
-}
-var shopeeTokenRefreshLocks = /* @__PURE__ */ new Map();
-var shopeeAccessTokenCache = /* @__PURE__ */ new Map();
-function tokenCacheGet(shopId) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key) return null;
-  const entry = shopeeAccessTokenCache.get(key);
-  if (!entry?.token) return null;
-  if (Math.floor(Date.now() / 1e3) >= Number(entry.expiresAt || 0)) {
-    shopeeAccessTokenCache.delete(key);
-    return null;
-  }
-  return String(entry.token);
-}
-function tokenCacheSet(shopId, token, expireIn) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key || !token) return;
-  const ttl = Math.max(60, Number(expireIn) || 14400) - 60;
-  shopeeAccessTokenCache.set(key, {
-    token: String(token),
-    expiresAt: Math.floor(Date.now() / 1e3) + ttl
-  });
-}
-function tokenCacheClear(shopId) {
-  const key = normalizeShopIdKey(shopId);
-  if (key) {
-    shopeeAccessTokenCache.delete(key);
-    shopeeShopTokenVerifyCache.delete(key);
-  }
-}
-var shopeeShopTokenVerifyCache = /* @__PURE__ */ new Map();
-function shopTokenVerifyCacheOk(shopId, token) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key || !token) return false;
-  const entry = shopeeShopTokenVerifyCache.get(key);
-  if (!entry?.tokenTail) return false;
-  if (Math.floor(Date.now() / 1e3) >= Number(entry.expiresAt || 0)) {
-    shopeeShopTokenVerifyCache.delete(key);
-    return false;
-  }
-  return entry.tokenTail === String(token).slice(-8);
-}
-function shopTokenVerifyCacheSet(shopId, token) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key || !token) return;
-  shopeeShopTokenVerifyCache.set(key, {
-    tokenTail: String(token).slice(-8),
-    expiresAt: Math.floor(Date.now() / 1e3) + 10 * 60
-  });
-}
-function resolveRefreshLockKey(shopId, record) {
-  const key = normalizeShopIdKey(shopId);
-  const oauth = normalizeShopIdKey(record?.oauth_shop_id);
-  if (oauth) return `oauth:${oauth}`;
-  const rt = record?.refresh_token ? String(record.refresh_token) : "";
-  if (rt) return `rt:${rt.slice(0, 32)}`;
-  return `shop:${key}`;
-}
-function readShopeeAccessTokenIfFresh(shopId) {
-  const key = normalizeShopIdKey(shopId);
-  const cached = tokenCacheGet(key);
-  if (cached) return cached;
-  const tokens = loadShopeeTokens();
-  const record = getShopeeTokenRecord(tokens, key);
-  if (!record?.access_token) return null;
-  const now = Math.floor(Date.now() / 1e3);
-  const obtainedAt = Number(record.obtained_at) || 0;
-  const expireIn = Number(record.expire_in) || 14400;
-  if (obtainedAt > 0 && now - obtainedAt >= expireIn - 60) return null;
-  tokenCacheSet(key, record.access_token, expireIn - (now - obtainedAt));
-  return String(record.access_token);
-}
-async function refreshShopeeAccessTokenLocked(shopId, opts) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key) throw new ShopeeRefreshTokenExpiredError(String(shopId || "?"));
-  const tokensPeek = loadShopeeTokens();
-  const recordPeek = getShopeeTokenRecord(tokensPeek, key);
-  const lockKey = resolveRefreshLockKey(key, recordPeek);
-  const inflight = shopeeTokenRefreshLocks.get(lockKey);
-  if (inflight) {
-    console.log(`[Shopee Token] Mutex: ch\u1EDD refresh lock=${lockKey} (shop_id=${key})`);
-    await inflight;
-    const afterWait = readShopeeAccessTokenIfFresh(key);
-    if (afterWait) return afterWait;
-    const tokensAfter = loadShopeeTokens();
-    const recAfter = getShopeeTokenRecord(tokensAfter, key);
-    if (recAfter?.access_token) {
-      tokenCacheSet(key, recAfter.access_token, recAfter.expire_in);
-      return String(recAfter.access_token);
-    }
-    throw new ShopeeRefreshTokenExpiredError(key);
-  }
-  const run = (async () => {
-    const tokens = loadShopeeTokens();
-    const record = getShopeeTokenRecord(tokens, key);
-    if (!record) {
-      throw new ShopeeRefreshTokenExpiredError(key);
-    }
-    if (!record.refresh_token) {
-      throw new ShopeeRefreshTokenExpiredError(key);
-    }
-    if (!opts?.force) {
-      const fresh = readShopeeAccessTokenIfFresh(key);
-      if (fresh) return fresh;
-    } else {
-      const now = Math.floor(Date.now() / 1e3);
-      const obtainedAt = Number(record.obtained_at) || 0;
-      if (obtainedAt > 0 && now - obtainedAt < 15 && record.access_token) {
-        console.log(`[Shopee Token] B\u1ECF qua force refresh \u2014 token v\u1EEBa m\u1EDBi (${now - obtainedAt}s) shop_id=${key}`);
-        tokenCacheSet(key, record.access_token, record.expire_in);
-        return String(record.access_token);
-      }
-    }
-    const oldRefresh = String(record.refresh_token);
-    const oauthOwner = normalizeShopIdKey(record.oauth_shop_id);
-    console.log(
-      `[Shopee Token] Refresh access_token shop_id=${key} force=${Boolean(opts?.force)} lock=${lockKey}...`
-    );
-    let refreshed = await refreshShopeeToken(key, oldRefresh);
-    let refreshVia = key;
-    if (!refreshed.access_token && oauthOwner && oauthOwner !== key) {
-      console.warn(
-        `[Shopee Token] Refresh shop_id=${key} fail \u2014 retry oauth_shop_id=${oauthOwner}`
-      );
-      refreshed = await refreshShopeeToken(oauthOwner, oldRefresh);
-      refreshVia = oauthOwner;
-    }
-    if (refreshed.access_token) {
-      if (refreshVia !== key) {
-        const verified = await verifyShopeeShopToken(key, refreshed.access_token);
-        if (!verified.ok) {
-          console.error(
-            `[Shopee Token] Token t\u1EEB shop=${refreshVia} KH\xD4NG d\xF9ng \u0111\u01B0\u1EE3c cho shop_id=${key} (error=${verified.error}). C\u1EA7n OAuth ri\xEAng shop ${key}.`
-          );
-          tokenCacheClear(key);
-          throw new ShopeeRefreshTokenExpiredError(key);
-        }
-      }
-      const obtainedAt = Math.floor(Date.now() / 1e3);
-      const apiList = Array.isArray(refreshed.shop_id_list) ? refreshed.shop_id_list.map((x2) => normalizeShopIdKey(x2)).filter(Boolean) : [];
-      const propagateList = apiList.length ? apiList : [refreshVia];
-      if (!propagateList.includes(key) && refreshVia === key) {
-      } else if (!propagateList.includes(key) && refreshVia !== key) {
-        propagateList.push(key);
-      }
-      propagateShopeeTokenToLinkedShops(
-        refreshVia,
-        {
-          access_token: refreshed.access_token,
-          refresh_token: refreshed.refresh_token || oldRefresh,
-          expire_in: refreshed.expire_in,
-          obtained_at: obtainedAt,
-          shop_id_list: propagateList
-        },
-        { onlyMatchingRefreshToken: oldRefresh }
-      );
-      tokenCacheSet(key, refreshed.access_token, refreshed.expire_in);
-      if (refreshVia !== key) {
-        tokenCacheSet(refreshVia, refreshed.access_token, refreshed.expire_in);
-      }
-      console.log(
-        `[Shopee Token] Refresh OK shop_id=${key} via=${refreshVia} list=[${propagateList.join(",")}]`
-      );
-      return String(refreshed.access_token);
-    }
-    tokenCacheClear(key);
-    console.error(
-      `[Shopee Token] Refresh TH\u1EA4T B\u1EA0I shop_id=${key}:`,
-      refreshed.error || refreshed.message
-    );
-    throw new ShopeeRefreshTokenExpiredError(key);
-  })().finally(() => {
-    shopeeTokenRefreshLocks.delete(lockKey);
-  });
-  shopeeTokenRefreshLocks.set(lockKey, run);
-  return run;
-}
-async function getShopeeAccessTokenForApi(shopKey, opts) {
-  const fileKey = normalizeShopIdKey(shopKey);
-  if (!fileKey) return null;
-  const tokens = loadShopeeTokens();
-  const record = getShopeeTokenRecord(tokens, fileKey);
-  if (!record?.refresh_token && !record?.access_token) return null;
-  const apiShopId = fileKey;
-  try {
-    if (opts?.forceRefresh) {
-      const token2 = await refreshShopeeAccessTokenLocked(fileKey, { force: true });
-      return { token: token2, apiShopId, fileKey };
-    }
-    const token = await getValidShopeeAccessToken(fileKey);
-    if (!token) return null;
-    return { token, apiShopId, fileKey };
-  } catch (err) {
-    if (err instanceof ShopeeRefreshTokenExpiredError) {
-      console.error(`[Shopee Token] ${err.message} shop_id=${err.shopId}`);
-      return null;
-    }
-    throw err;
-  }
-}
-async function verifyShopeeShopToken(shopId, accessToken) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key || !accessToken) return { ok: false, error: "missing_shop_or_token" };
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12e3);
-  try {
-    const apiPath = "/api/v2/shop/get_shop_info";
-    const timestamp = Math.floor(Date.now() / 1e3);
-    const sign = shopeeSign(apiPath, timestamp, accessToken, key);
-    const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${key}&sign=${sign}`;
-    const res = await fetch(url2, { signal: controller.signal });
-    const rawText = await res.text();
-    const json2 = rawText ? parseShopeeJson(rawText) : {};
-    const err = String(json2?.error || "").trim();
-    if (err) return { ok: false, error: err };
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, error: error?.message || String(error) };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-function resolveShopeeApiShopId(record, configuredShopId) {
-  const configured = normalizeShopIdKey(configuredShopId);
-  if (configured) return configured;
-  const recordKey = normalizeShopIdKey(record?.shop_id);
-  if (recordKey) return recordKey;
-  return normalizeShopIdKey(record?.oauth_shop_id) || "";
-}
-async function getValidShopeeAccessToken(shopId) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key) {
-    console.error(
-      "[Shopee API] getValidShopeeAccessToken: THI\u1EBEU shop_id \u2014 t\u1EEB ch\u1ED1i g\u1ECDi (h\u1EC7 th\u1ED1ng \u0111a shop b\u1EAFt bu\u1ED9c truy\u1EC1n shop_id)."
-    );
-    return null;
-  }
-  const tokens = loadShopeeTokens();
-  const record = getShopeeTokenRecord(tokens, key);
-  if (!record) {
-    const available = listAuthorizedShopeeShopIds();
-    console.warn(
-      `[Shopee API] Ch\u01B0a c\xF3 token record cho shop_id=${key}. Shop \u0111\xE3 \u1EE7y quy\u1EC1n: [${available.join(", ") || "kh\xF4ng c\xF3"}]`
-    );
-    return null;
-  }
-  const oauth = normalizeShopIdKey(record.oauth_shop_id);
-  const recordOwner = normalizeShopIdKey(record.shop_id);
-  const needsVerify = Boolean(oauth && oauth !== key || recordOwner && recordOwner !== key);
-  const cacheHit = Boolean(tokenCacheGet(key));
-  const rejectForeignToken = (reason) => {
-    console.error(
-      `[Shopee API] shop_id=${key} token kh\xF4ng thu\u1ED9c shop n\xE0y (oauth=${oauth || "-"} owner=${recordOwner || "-"} error=${reason}). C\u1EA7n OAuth ri\xEAng shop ${key} \u2014 kh\xF4ng d\xF9ng token shop kh\xE1c.`
-    );
-    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=${cacheHit ? "hit" : "miss"} verified=no`);
-    tokenCacheClear(key);
-    return null;
-  };
-  const fresh = readShopeeAccessTokenIfFresh(key);
-  if (fresh) {
-    if (needsVerify) {
-      if (shopTokenVerifyCacheOk(key, fresh)) {
-        console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=${cacheHit ? "hit" : "miss"} verified=yes`);
-        return fresh;
-      }
-      const verified = await verifyShopeeShopToken(key, fresh);
-      if (!verified.ok) return rejectForeignToken(verified.error);
-      shopTokenVerifyCacheSet(key, fresh);
-      console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=${cacheHit ? "hit" : "miss"} verified=yes`);
-      return fresh;
-    }
-    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=${cacheHit ? "hit" : "miss"} verified=n/a`);
-    return fresh;
-  }
-  if (!record.refresh_token) {
-    console.error(`[Shopee API] Shop ${key} thi\u1EBFu refresh_token \u2014 c\u1EA7n OAuth l\u1EA1i.`);
-    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
-    return null;
-  }
-  try {
-    console.log(
-      `[Shopee API] access_token shop_id=${key} H\u1EBET H\u1EA0N (expired) \u2014 g\u1ECDi Refresh Token \u2192 l\u01B0u DB...`
-    );
-    const refreshed = await refreshShopeeAccessTokenLocked(key, { force: false });
-    if (!refreshed) {
-      console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
-      return null;
-    }
-    if (needsVerify) {
-      const verified = await verifyShopeeShopToken(key, refreshed);
-      if (!verified.ok) return rejectForeignToken(verified.error);
-      shopTokenVerifyCacheSet(key, refreshed);
-      console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=yes`);
-      return refreshed;
-    }
-    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=n/a`);
-    return refreshed;
-  } catch (err) {
-    if (err instanceof ShopeeRefreshTokenExpiredError) {
-      console.error(`[Shopee API] ${err.message}`);
-      console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
-      return null;
-    }
-    console.error(`[Shopee API] Refresh token th\u1EA5t b\u1EA1i shop_id=${key}:`, err);
-    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
-    return null;
-  }
-}
-async function withShopeeAccessTokenRetry(shopId, runner, isAuthFailure) {
-  const key = normalizeShopIdKey(shopId);
-  let token = await getValidShopeeAccessToken(key);
-  if (!token) {
-    throw new ShopeeRefreshTokenExpiredError(key || String(shopId || "?"));
-  }
-  let result = await runner(token);
-  const failed = isAuthFailure && isAuthFailure(result) || result && typeof result === "object" && (Number(result.httpStatus) === 401 || Number(result.httpStatus) === 403 || isShopeeInvalidTokenError(result.error, result.message));
-  if (!failed) return result;
-  console.warn(`[Shopee Token] API b\xE1o token h\u1EBFt h\u1EA1n shop_id=${key} \u2014 force refresh + retry 1 l\u1EA7n`);
-  tokenCacheClear(key);
-  token = await refreshShopeeAccessTokenLocked(key, { force: true });
-  return runner(token);
-}
-function listAuthorizedShopeeShopIds() {
-  const tokens = loadShopeeTokens();
-  const ids = /* @__PURE__ */ new Set();
-  for (const [rawKey, record] of Object.entries(tokens || {})) {
-    if (!record?.access_token && !record?.refresh_token) continue;
-    const key = normalizeShopIdKey(rawKey) || normalizeShopIdKey(record?.shop_id);
-    if (key) ids.add(key);
-  }
-  return [...ids].sort();
-}
-function resolveShopeeTokenShopId(requested) {
-  const authorized = listAuthorizedShopeeShopIds();
-  if (!authorized.length) {
-    console.warn(
-      "[Shopee Auth] resolveShopeeTokenShopId: DB kh\xF4ng c\xF3 shop n\xE0o \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n (shopee_tokens tr\u1ED1ng)."
-    );
-    return null;
-  }
-  const req = String(requested || "").trim();
-  if (!req) {
-    if (authorized.length === 1) return authorized[0];
-    console.warn(
-      `[Shopee Auth] resolveShopeeTokenShopId: \u0110A SHOP (${authorized.length} shop: [${authorized.join(", ")}]) \u2014 thi\u1EBFu shop_id. T\u1EA1m fallback v\u1EC1 ${authorized[0]} \u0111\u1EC3 tr\xE1nh crash.`
-    );
-    return authorized[0];
-  }
-  const tokens = loadShopeeTokens();
-  if (tokens[req]) return req;
-  const digits = normalizeShopIdKey(req) || req.match(/(\d{5,})/)?.[1] || "";
-  if (digits && tokens[digits]) return digits;
-  if (digits) {
-    const linked = getShopeeTokenRecord(tokens, digits);
-    if (linked) {
-      console.log(
-        `[Shopee Auth] resolveShopeeTokenShopId: shop_id=${digits} t\xECm th\u1EA5y qua linked/oauth record.`
-      );
-      return digits;
-    }
-    console.warn(
-      `[Shopee Auth] resolveShopeeTokenShopId: y\xEAu c\u1EA7u shop_id=${digits} nh\u01B0ng kh\xF4ng c\xF3 token. Shops: [${authorized.join(", ")}]`
-    );
-    return digits;
-  }
-  return null;
-}
-function resolveShopeeShopIdsForSync(requested) {
-  const req = String(requested || "").trim();
-  if (req) {
-    const one = resolveShopeeTokenShopId(req);
-    return one ? [one] : [];
-  }
-  const all3 = listAuthorizedShopeeShopIds();
-  console.log(
-    `[Shopee Auth] resolveShopeeShopIdsForSync: kh\xF4ng truy\u1EC1n shop_id \u2014 d\xF9ng T\u1EA4T C\u1EA2 ${all3.length} shop: [${all3.join(", ")}]`
-  );
-  return all3;
-}
-function getShopeeUnauthorizedShopMessage() {
-  const keys = listAuthorizedShopeeShopIds();
-  if (!keys.length) {
-    return "Ch\u01B0a c\xF3 shop Shopee \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n trong h\u1EC7 th\u1ED1ng. V\xE0o m\u1EE5c C\xE0i \u0111\u1EB7t \u2192 \u1EE6y quy\u1EC1n l\u1EA1i Shop Shopee r\u1ED3i th\u1EED \u0111\u1ED3ng b\u1ED9 l\u1EA1i.";
-  }
-  return `H\u1EC7 th\u1ED1ng c\xF3 ${keys.length} shop Shopee \u0111\xE3 \u1EE7y quy\u1EC1n ([${keys.join(", ")}]) nh\u01B0ng thi\u1EBFu shop_id c\u1EE5 th\u1EC3 ho\u1EB7c token shop y\xEAu c\u1EA7u kh\xF4ng h\u1EE3p l\u1EC7. V\xE0o m\u1EE5c C\xE0i \u0111\u1EB7t ki\u1EC3m tra \u1EE7y quy\u1EC1n.`;
-}
-function describeShopeeTokenFailure(shopKey) {
-  const tokens = loadShopeeTokens();
-  const key = normalizeShopIdKey(shopKey);
-  const record = getShopeeTokenRecord(tokens, key);
-  if (!record) {
-    return {
-      error: "shopee_reauth_required",
-      message: SHOPEE_REAUTH_REQUIRED_MESSAGE
-    };
-  }
-  if (!record.refresh_token) {
-    return {
-      error: "shopee_reauth_required",
-      message: SHOPEE_REAUTH_REQUIRED_MESSAGE
-    };
-  }
-  const now = Math.floor(Date.now() / 1e3);
-  const obtainedAt = Number(record.obtained_at) || 0;
-  const expireIn = Number(record.expire_in) || 14400;
-  const isExpired = obtainedAt > 0 && now - obtainedAt >= expireIn - 60;
-  if (isExpired) {
-    return {
-      error: "shopee_reauth_required",
-      message: SHOPEE_REAUTH_REQUIRED_MESSAGE
-    };
-  }
-  return {
-    error: "shopee_reauth_required",
-    message: SHOPEE_REAUTH_REQUIRED_MESSAGE
-  };
 }
 
 // utils/apiError.js
@@ -122002,31 +122540,31 @@ async function previewItemVariants(req, res) {
 }
 
 // routes/productsRoutes.js
-var router14 = (0, import_express15.Router)();
-router14.get("/search", searchProducts);
-router14.post("/sync-shopee", handleProductSyncShopee);
-router14.post("/update-price", updateProductPrice);
-router14.post("/shopee-item-preview", previewItemVariants);
-router14.get("/shopee-item-preview", previewItemVariants);
-router14.post("/:id/sync-shopee", handleProductSyncShopee);
-router14.put("/replace", replaceProducts);
-router14.post("/inventory-balance", inventoryBalance);
-router14.post("/bulk-import-price", bulkImportPrice);
-router14.post("/bulk-save", bulkSaveProducts);
-router14.post("/clear-all", clearAllProducts);
-router14.post("/bulk-update", bulkUpdateProducts);
-router14.post("/bulk-update-prices", bulkUpdatePrices);
-router14.post("/bulk-channel-sync", bulkChannelSync);
-router14.get("/", listProducts);
-router14.post("/", createProduct);
-router14.patch("/import-price-by-sku", patchImportPriceBySku);
-router14.patch("/selling-price-by-sku", patchSellingPriceBySku);
-router14.patch("/:id", patchProduct);
-router14.delete("/:id", deleteProduct);
-var productsRoutes_default = router14;
+var router15 = (0, import_express16.Router)();
+router15.get("/search", searchProducts);
+router15.post("/sync-shopee", handleProductSyncShopee);
+router15.post("/update-price", updateProductPrice);
+router15.post("/shopee-item-preview", previewItemVariants);
+router15.get("/shopee-item-preview", previewItemVariants);
+router15.post("/:id/sync-shopee", handleProductSyncShopee);
+router15.put("/replace", replaceProducts);
+router15.post("/inventory-balance", inventoryBalance);
+router15.post("/bulk-import-price", bulkImportPrice);
+router15.post("/bulk-save", bulkSaveProducts);
+router15.post("/clear-all", clearAllProducts);
+router15.post("/bulk-update", bulkUpdateProducts);
+router15.post("/bulk-update-prices", bulkUpdatePrices);
+router15.post("/bulk-channel-sync", bulkChannelSync);
+router15.get("/", listProducts);
+router15.post("/", createProduct);
+router15.patch("/import-price-by-sku", patchImportPriceBySku);
+router15.patch("/selling-price-by-sku", patchSellingPriceBySku);
+router15.patch("/:id", patchProduct);
+router15.delete("/:id", deleteProduct);
+var productsRoutes_default = router15;
 
 // routes/mappingRoutes.js
-var import_express16 = __toESM(require_express2(), 1);
+var import_express17 = __toESM(require_express2(), 1);
 
 // controllers/mappingController.js
 var deps13 = {
@@ -122371,29 +122909,29 @@ async function handleMappingPurgeBroken(_req, res) {
 }
 
 // routes/mappingRoutes.js
-var router15 = (0, import_express16.Router)();
-router15.get("/sku-index", handleMappingSkuIndex);
-router15.post("/auto-link-single", handleSingleAutoLink);
-router15.post("/batch-auto-link", handleBatchAutoLink);
-router15.post("/bulk-auto-link", handleBulkAutoLinkByIds);
-router15.post("/purge-broken", handleMappingPurgeBroken);
-router15.post("/heal", handleMappingProductsHeal);
-router15.get("/", handleMappingProductsGet);
-router15.put("/", handleMappingProductsUpsert);
-router15.post("/", handleMappingProductsUpsert);
-var mappingRoutes_default = router15;
+var router16 = (0, import_express17.Router)();
+router16.get("/sku-index", handleMappingSkuIndex);
+router16.post("/auto-link-single", handleSingleAutoLink);
+router16.post("/batch-auto-link", handleBatchAutoLink);
+router16.post("/bulk-auto-link", handleBulkAutoLinkByIds);
+router16.post("/purge-broken", handleMappingPurgeBroken);
+router16.post("/heal", handleMappingProductsHeal);
+router16.get("/", handleMappingProductsGet);
+router16.put("/", handleMappingProductsUpsert);
+router16.post("/", handleMappingProductsUpsert);
+var mappingRoutes_default = router16;
 
 // routes/ordersRoutes.js
-var import_express17 = __toESM(require_express2(), 1);
+var import_express18 = __toESM(require_express2(), 1);
 
 // controllers/ordersController.js
-var import_fs22 = __toESM(require("fs"), 1);
-var import_path22 = __toESM(require("path"), 1);
+var import_fs23 = __toESM(require("fs"), 1);
+var import_path23 = __toESM(require("path"), 1);
 init_appPaths();
 
 // utils/orderPdfAvailability.js
-var import_fs20 = __toESM(require("fs"), 1);
-var import_path20 = __toESM(require("path"), 1);
+var import_fs21 = __toESM(require("fs"), 1);
+var import_path21 = __toESM(require("path"), 1);
 init_appPaths();
 function hasOrderPdfOnDisk(order) {
   const filenames = /* @__PURE__ */ new Set();
@@ -122405,7 +122943,7 @@ function hasOrderPdfOnDisk(order) {
     } catch {
     }
     const fromUrl = value.match(/\/api\/public\/labels\/([^/?#]+)/i)?.[1];
-    const filename = import_path20.default.basename(fromUrl || value);
+    const filename = import_path21.default.basename(fromUrl || value);
     if (/\.pdf$/i.test(filename)) filenames.add(filename);
   };
   addFilename(order?.pdfFilename);
@@ -122422,7 +122960,7 @@ function hasOrderPdfOnDisk(order) {
     filenames.add(`${orderSn}.pdf`);
   }
   for (const filename of filenames) {
-    if (import_fs20.default.existsSync(import_path20.default.join(PDF_DIR, filename))) return true;
+    if (import_fs21.default.existsSync(import_path21.default.join(PDF_DIR, filename))) return true;
   }
   return false;
 }
@@ -122435,12 +122973,12 @@ function attachPdfAvailability(orders) {
 }
 
 // services/orders.js
-var import_fs21 = __toESM(require("fs"), 1);
-var import_path21 = __toESM(require("path"), 1);
+var import_fs22 = __toESM(require("fs"), 1);
+var import_path22 = __toESM(require("path"), 1);
 init_appPaths();
 var APP_ROOT11 = resolveAppRoot();
-var ORDERS_DB_PATH = import_path21.default.join(APP_ROOT11, "data", "orders.json");
-var HANDED_OVER_CLEANUP_MARKER = import_path21.default.join(APP_ROOT11, "data", ".cleanup-handed-over-v2");
+var ORDERS_DB_PATH = import_path22.default.join(APP_ROOT11, "data", "orders.json");
+var HANDED_OVER_CLEANUP_MARKER = import_path22.default.join(APP_ROOT11, "data", ".cleanup-handed-over-v2");
 var deps14 = {
   repairMisassignedTracking: (o) => o,
   repairFalseProcessedReadyToShip: (o) => o,
@@ -122496,11 +123034,11 @@ function rebuildOrderLookupIndex(orders) {
 }
 function loadOrders() {
   try {
-    if (!import_fs21.default.existsSync(ORDERS_DB_PATH)) {
+    if (!import_fs22.default.existsSync(ORDERS_DB_PATH)) {
       orderLookupIndex = rebuildOrderLookupIndex([]);
       return [];
     }
-    const raw = import_fs21.default.readFileSync(ORDERS_DB_PATH, "utf-8");
+    const raw = import_fs22.default.readFileSync(ORDERS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     const orders = Array.isArray(parsed) ? parsed.map(deps14.repairMisassignedTracking) : [];
     orderLookupIndex = rebuildOrderLookupIndex(orders);
@@ -122709,8 +123247,8 @@ function saveOrders(orders) {
         (err) => console.warn("[Orders JSON Mirror] Mongo sync failed:", err?.message || err)
       );
     }
-    import_fs21.default.mkdirSync(import_path21.default.dirname(ORDERS_DB_PATH), { recursive: true });
-    import_fs21.default.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
+    import_fs22.default.mkdirSync(import_path22.default.dirname(ORDERS_DB_PATH), { recursive: true });
+    import_fs22.default.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
     orderLookupIndex = rebuildOrderLookupIndex(sanitized);
     console.log(
       `[Orders DB] WRITE OK \u2014 path=${ORDERS_DB_PATH} count=${sanitized.length}`
@@ -122732,7 +123270,7 @@ async function purgeHandedOverGarbageOrdersOnce(opts) {
   const force = Boolean(opts?.force);
   const orders = loadOrders();
   const garbage = orders.filter(isHandedOverGarbageOrder);
-  if (!force && garbage.length === 0 && import_fs21.default.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
+  if (!force && garbage.length === 0 && import_fs22.default.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
     return { removed: 0, sns: [], skipped: true };
   }
   const sns = garbage.map((o) => String(o.orderSn || o.id || "").trim()).filter(Boolean);
@@ -122762,10 +123300,10 @@ async function purgeHandedOverGarbageOrdersOnce(opts) {
   const stillLeft = loadOrders().filter(isHandedOverGarbageOrder).length;
   if (stillLeft === 0) {
     try {
-      const v1 = import_path21.default.join(APP_ROOT11, "data", ".cleanup-handed-over-v1");
-      if (import_fs21.default.existsSync(v1)) import_fs21.default.unlinkSync(v1);
-      import_fs21.default.mkdirSync(import_path21.default.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
-      import_fs21.default.writeFileSync(
+      const v1 = import_path22.default.join(APP_ROOT11, "data", ".cleanup-handed-over-v1");
+      if (import_fs22.default.existsSync(v1)) import_fs22.default.unlinkSync(v1);
+      import_fs22.default.mkdirSync(import_path22.default.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
+      import_fs22.default.writeFileSync(
         HANDED_OVER_CLEANUP_MARKER,
         JSON.stringify(
           {
@@ -123863,8 +124401,8 @@ async function cleanupHandedOver(req, res) {
   try {
     for (const name of [".cleanup-handed-over-v1", ".cleanup-handed-over-v2"]) {
       try {
-        const p = import_path22.default.join(APP_ROOT12, "data", name);
-        if (import_fs22.default.existsSync(p)) import_fs22.default.unlinkSync(p);
+        const p = import_path23.default.join(APP_ROOT12, "data", name);
+        if (import_fs23.default.existsSync(p)) import_fs23.default.unlinkSync(p);
       } catch {
       }
     }
@@ -125936,13 +126474,13 @@ async function printExternalWaybill(req, res) {
         });
       }
       if (waybill.base64) {
-        const fs25 = await import("fs");
-        const path25 = await import("path");
+        const fs26 = await import("fs");
+        const path26 = await import("path");
         const fileName = `external-${orderSn}.pdf`;
-        const filePath = path25.join(PDF_DIR, fileName);
-        fs25.mkdirSync(PDF_DIR, { recursive: true });
+        const filePath = path26.join(PDF_DIR, fileName);
+        fs26.mkdirSync(PDF_DIR, { recursive: true });
         const buf = Buffer.from(waybill.base64.replace(/^data:application\/pdf;base64,/i, ""), "base64");
-        fs25.writeFileSync(filePath, buf);
+        fs26.writeFileSync(filePath, buf);
         const base = `${req.protocol}://${req.get("host") || ""}`.replace(/\/$/, "");
         const url2 = `${base}/api/orders/external/waybill-file/${encodeURIComponent(orderSn)}`;
         return res.json({
@@ -125974,13 +126512,13 @@ async function streamExternalWaybillFile(req, res) {
   try {
     const orderSn = String(req.params.orderSn || "").trim();
     if (!orderSn) return res.status(400).json({ error: "Thi\u1EBFu m\xE3 \u0111\u01A1n" });
-    const filePath = import_path22.default.join(PDF_DIR, `external-${orderSn}.pdf`);
-    if (!import_fs22.default.existsSync(filePath)) {
+    const filePath = import_path23.default.join(PDF_DIR, `external-${orderSn}.pdf`);
+    if (!import_fs23.default.existsSync(filePath)) {
       return res.status(404).json({ error: "Ch\u01B0a c\xF3 file PDF waybill. B\u1EA5m In v\u1EADn \u0111\u01A1n l\u1EA1i." });
     }
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="${orderSn}.pdf"`);
-    return import_fs22.default.createReadStream(filePath).pipe(res);
+    return import_fs23.default.createReadStream(filePath).pipe(res);
   } catch (error) {
     return res.status(500).json({ error: error.message || "Kh\xF4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c PDF" });
   }
@@ -126948,10 +127486,10 @@ async function debugReturnByOrder(req, res) {
           if (!deps16.parseShopeeReturnListMore(listResult) && rows.length < 100) break;
           if (rows.length === 0) break;
           pageNo++;
-          await sleep4(400);
+          await sleep2(400);
         }
         if (matchedReturnSn) break;
-        await sleep4(300);
+        await sleep2(300);
       }
       if (matchedReturnSn) break;
     }
@@ -128585,7 +129123,7 @@ var genAIKey = "";
 function readGeminiApiKey() {
   return String(process.env.GEMINI_API_KEY || "").trim();
 }
-function sleep6(ms) {
+function sleep7(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 function getClient() {
@@ -128681,7 +129219,7 @@ async function parseAddressWithGemini(rawAddress) {
     } catch (err) {
       lastError = wrapGeminiError(err);
       if (!isModelUnavailable(err) || i2 >= models.length - 1) break;
-      await sleep6(200);
+      await sleep7(200);
     }
   }
   throw wrapGeminiError(lastError);
@@ -128758,10 +129296,10 @@ function getGhnCache() {
   }
   return ghnCache;
 }
-async function ghnFetch3(path25, query) {
+async function ghnFetch3(path26, query) {
   const token = readGhnToken2();
   if (!token) return null;
-  const url2 = new URL(`${GHN_BASE2}${path25}`);
+  const url2 = new URL(`${GHN_BASE2}${path26}`);
   if (query) {
     for (const [key, value] of Object.entries(query)) {
       if (value !== void 0 && value !== "") url2.searchParams.set(key, String(value));
@@ -128779,7 +129317,7 @@ async function ghnFetch3(path25, query) {
       signal: controller.signal
     });
     if (!res.ok) {
-      console.warn(`[GHN Master] ${path25} HTTP ${res.status}`);
+      console.warn(`[GHN Master] ${path26} HTTP ${res.status}`);
       return null;
     }
     const json2 = await res.json();
@@ -128787,9 +129325,9 @@ async function ghnFetch3(path25, query) {
     return Array.isArray(data) ? data : null;
   } catch (err) {
     if (err?.name === "AbortError") {
-      console.warn(`[GHN Master] ${path25} timeout`);
+      console.warn(`[GHN Master] ${path26} timeout`);
     } else {
-      console.warn(`[GHN Master] ${path25}:`, err?.message || err);
+      console.warn(`[GHN Master] ${path26}:`, err?.message || err);
     }
     return null;
   } finally {
@@ -128982,70 +129520,70 @@ async function parseOrderAddress(req, res) {
 }
 
 // routes/ordersRoutes.js
-var router16 = (0, import_express17.Router)();
+var router17 = (0, import_express18.Router)();
 var h3 = asyncHandler;
-router16.get("/refresh", h3(refreshOrders));
-router16.get("/query", h3(queryOrders));
-router16.get("/counts", h3(getOrderCounts));
-router16.get("/counter", h3(getOrderCounts));
-router16.get("/live", (_req, res) => res.status(204).end());
-router16.get("/products-summary", h3(getFulfillmentProductsSummary));
-router16.get("/lookup", h3(lookupOrder));
-router16.get("/scanner-sync", h3(scannerSync));
-router16.post("/sync", syncOrders);
-router16.post("/pull", pullOrders);
-router16.post("/quick-sync", quickSyncOrders);
-router16.post("/fast-process", fastProcessOrders);
-router16.post("/cleanup-handed-over", h3(cleanupHandedOver));
-router16.post("/cleanup-shipped", h3(cleanupShipped));
-router16.get("/cleanup-shipped", h3(getCleanupShippedStatus));
-router16.post("/recalculate-counts", h3(recalculateOrderCounts));
-router16.post("/batch-delete", h3(batchDeleteOrders));
-router16.post("/cleanup-label-pdfs", h3(cleanupLabelPdfs));
-router16.post("/cleanup-processed-pickup", h3(cleanupProcessedPickup));
-router16.post("/cleanup-mock", h3(cleanupMockOrders));
-router16.post("/hydrate-tracking", h3(hydrateTracking));
-router16.post("/enrich-tracking", h3(enrichTracking));
-router16.get("/heal-tracking-cancelled", h3(healTrackingCancelled));
-router16.post("/heal-tracking-cancelled", h3(healTrackingCancelled));
-router16.post("/reclassify-cancel-returns", h3(reclassifyCancelReturns));
-router16.get("/reclassify-cancel-returns", h3(reclassifyCancelReturns));
-router16.post("/force-resync-stuck", h3(forceResyncStuck));
-router16.post("/trigger-fix-stuck-orders", h3(triggerFixStuckOrders));
-router16.post("/reconcile-handed-over", h3(reconcileHandedOver));
-router16.post("/hand-over-carrier/bulk", h3(handOverCarrierBulk));
-router16.post("/hand-over-carrier", h3(handOverCarrierByCode));
-router16.post("/heal-handed-over", h3(healHandedOver));
-router16.post("/manual", h3(createManualOrder));
-router16.post("/pos", h3(createPosOrder));
-router16.post("/external/print-waybill", h3(printExternalWaybill));
-router16.get("/external/waybill-file/:orderSn", h3(streamExternalWaybillFile));
-router16.get("/don-hoan-huy", h3(listDonHoanHuy));
-router16.post("/don-hoan-huy", h3(saveScanOrders));
-router16.post("/scan-bg-enqueue", h3(enqueueScanBg));
-router16.get("/scan-bg-status", h3(getScanBgStatus));
-router16.post("/scan-bg-ack", h3(ackScanBg));
-router16.get("/return-alerts", h3(getReturnAlerts));
-router16.post("/return-alerts-ack", h3(ackReturnAlertsApi));
-router16.post("/scan-bulk-update", h3(scanBulkUpdate));
-router16.post("/parse-address", h3(parseOrderAddress));
-router16.post("/confirm-return-received", h3(confirmReturnReceived));
-router16.post("/reset-print-status", h3(resetPrintStatus));
-router16.post("/update-print-status", h3(updatePrintStatus));
-router16.post("/check-pdf-on-disk", h3(checkPdfOnDisk));
-router16.post("/mark-printed", h3(markPrinted));
-router16.get("/:orderSn/events", h3(getOrderEvents));
-router16.post("/:id/hand-over-carrier", h3(handOverCarrierById));
-router16.post("/:id/confirm-return-received", h3(confirmReturnReceived));
-router16.post("/:id/sync-ghn", h3(syncGhnOrderStatus));
-router16.post("/:id/cancel-ghn", h3(cancelGhnOrder));
-router16.get("/", h3(listOrders));
-router16.patch("/:id", h3(patchOrder));
-router16.delete("/:id", h3(deleteOrder));
-var ordersRoutes_default = router16;
+router17.get("/refresh", h3(refreshOrders));
+router17.get("/query", h3(queryOrders));
+router17.get("/counts", h3(getOrderCounts));
+router17.get("/counter", h3(getOrderCounts));
+router17.get("/live", (_req, res) => res.status(204).end());
+router17.get("/products-summary", h3(getFulfillmentProductsSummary));
+router17.get("/lookup", h3(lookupOrder));
+router17.get("/scanner-sync", h3(scannerSync));
+router17.post("/sync", syncOrders);
+router17.post("/pull", pullOrders);
+router17.post("/quick-sync", quickSyncOrders);
+router17.post("/fast-process", fastProcessOrders);
+router17.post("/cleanup-handed-over", h3(cleanupHandedOver));
+router17.post("/cleanup-shipped", h3(cleanupShipped));
+router17.get("/cleanup-shipped", h3(getCleanupShippedStatus));
+router17.post("/recalculate-counts", h3(recalculateOrderCounts));
+router17.post("/batch-delete", h3(batchDeleteOrders));
+router17.post("/cleanup-label-pdfs", h3(cleanupLabelPdfs));
+router17.post("/cleanup-processed-pickup", h3(cleanupProcessedPickup));
+router17.post("/cleanup-mock", h3(cleanupMockOrders));
+router17.post("/hydrate-tracking", h3(hydrateTracking));
+router17.post("/enrich-tracking", h3(enrichTracking));
+router17.get("/heal-tracking-cancelled", h3(healTrackingCancelled));
+router17.post("/heal-tracking-cancelled", h3(healTrackingCancelled));
+router17.post("/reclassify-cancel-returns", h3(reclassifyCancelReturns));
+router17.get("/reclassify-cancel-returns", h3(reclassifyCancelReturns));
+router17.post("/force-resync-stuck", h3(forceResyncStuck));
+router17.post("/trigger-fix-stuck-orders", h3(triggerFixStuckOrders));
+router17.post("/reconcile-handed-over", h3(reconcileHandedOver));
+router17.post("/hand-over-carrier/bulk", h3(handOverCarrierBulk));
+router17.post("/hand-over-carrier", h3(handOverCarrierByCode));
+router17.post("/heal-handed-over", h3(healHandedOver));
+router17.post("/manual", h3(createManualOrder));
+router17.post("/pos", h3(createPosOrder));
+router17.post("/external/print-waybill", h3(printExternalWaybill));
+router17.get("/external/waybill-file/:orderSn", h3(streamExternalWaybillFile));
+router17.get("/don-hoan-huy", h3(listDonHoanHuy));
+router17.post("/don-hoan-huy", h3(saveScanOrders));
+router17.post("/scan-bg-enqueue", h3(enqueueScanBg));
+router17.get("/scan-bg-status", h3(getScanBgStatus));
+router17.post("/scan-bg-ack", h3(ackScanBg));
+router17.get("/return-alerts", h3(getReturnAlerts));
+router17.post("/return-alerts-ack", h3(ackReturnAlertsApi));
+router17.post("/scan-bulk-update", h3(scanBulkUpdate));
+router17.post("/parse-address", h3(parseOrderAddress));
+router17.post("/confirm-return-received", h3(confirmReturnReceived));
+router17.post("/reset-print-status", h3(resetPrintStatus));
+router17.post("/update-print-status", h3(updatePrintStatus));
+router17.post("/check-pdf-on-disk", h3(checkPdfOnDisk));
+router17.post("/mark-printed", h3(markPrinted));
+router17.get("/:orderSn/events", h3(getOrderEvents));
+router17.post("/:id/hand-over-carrier", h3(handOverCarrierById));
+router17.post("/:id/confirm-return-received", h3(confirmReturnReceived));
+router17.post("/:id/sync-ghn", h3(syncGhnOrderStatus));
+router17.post("/:id/cancel-ghn", h3(cancelGhnOrder));
+router17.get("/", h3(listOrders));
+router17.patch("/:id", h3(patchOrder));
+router17.delete("/:id", h3(deleteOrder));
+var ordersRoutes_default = router17;
 
 // routes/shopeeAuthRoutes.js
-var import_express18 = __toESM(require_express2(), 1);
+var import_express19 = __toESM(require_express2(), 1);
 
 // controllers/shopeeAuthController.js
 init_appPaths();
@@ -129072,10 +129610,10 @@ function logShopeeIngress(prefix, req) {
 async function oauthComplete(req, res) {
   console.log("DEBUG RAW RESPONSE:", JSON.stringify(req.query));
   logShopeeIngress("[Shopee OAuth Complete]", req);
-  const code = queryParamOne2(req.query.code);
-  const shopIdRaw = queryParamOne2(req.query.shop_id);
-  const mainAccountIdRaw = queryParamOne2(req.query.main_account_id);
-  const expectedShop = queryParamOne2(req.query.expected_shop);
+  const code = queryParamOne(req.query.code);
+  const shopIdRaw = queryParamOne(req.query.shop_id);
+  const mainAccountIdRaw = queryParamOne(req.query.main_account_id);
+  const expectedShop = queryParamOne(req.query.expected_shop);
   console.log(
     "[Shopee OAuth Complete] REQUEST (Vercel proxy JSON)",
     JSON.stringify({
@@ -129117,10 +129655,10 @@ async function oauthComplete(req, res) {
 async function oauthCallback(req, res) {
   console.log("DEBUG RAW RESPONSE:", JSON.stringify(req.query));
   logShopeeIngress("[Shopee Callback]", req);
-  const code = queryParamOne2(req.query.code);
-  const shopIdRaw = queryParamOne2(req.query.shop_id);
-  const mainAccountIdRaw = queryParamOne2(req.query.main_account_id);
-  const expectedShop = queryParamOne2(req.query.expected_shop);
+  const code = queryParamOne(req.query.code);
+  const shopIdRaw = queryParamOne(req.query.shop_id);
+  const mainAccountIdRaw = queryParamOne(req.query.main_account_id);
+  const expectedShop = queryParamOne(req.query.expected_shop);
   console.log(
     "[Shopee Callback] REQUEST NH\u1EACN \u0110\u01AF\u1EE2C",
     JSON.stringify({
@@ -129161,15 +129699,15 @@ async function oauthCallback(req, res) {
     });
     if (!result.success) {
       console.error(`[Shopee Callback] \u0110\u1ED5i code th\u1EA5t b\u1EA1i:`, result.error, result.message);
-      if (queryParamOne2(req.query.format) === "json") {
+      if (queryParamOne(req.query.format) === "json") {
         return res.status(400).json({
           ...result,
           message: result.message || result.error || "token_exchange_failed",
           tokens_path: SHOPEE_TOKENS_PATH
         });
       }
-      if (shouldOAuthRedirectToFrontend2(req)) {
-        return res.redirect(302, buildOAuthFrontendRedirectUrl2(req, result));
+      if (shouldOAuthRedirectToFrontend(req)) {
+        return res.redirect(302, buildOAuthFrontendRedirectUrl(req, result));
       }
       const errMsg = result.message || result.error || "token_exchange_failed";
       return res.status(400).type("text/html; charset=utf-8").send(
@@ -129183,7 +129721,7 @@ async function oauthCallback(req, res) {
     console.log(
       `[Shopee Callback] OAuth OK. Token \u0111\xE3 l\u01B0u cho: [${savedIds.join(", ")}]. verified=${result.verified_in_file} File: ${SHOPEE_TOKENS_PATH}`
     );
-    if (queryParamOne2(req.query.format) === "json") {
+    if (queryParamOne(req.query.format) === "json") {
       return res.status(200).json({
         ...result,
         message: result.message || `\u1EE6y quy\u1EC1n th\xE0nh c\xF4ng. Token \u0111\xE3 l\u01B0u cho: [${savedIds.join(", ")}].`,
@@ -129191,7 +129729,7 @@ async function oauthCallback(req, res) {
         callback_url: SHOPEE_CALLBACK_URL2
       });
     }
-    const frontendUrl = buildOAuthFrontendRedirectUrl2(req, result);
+    const frontendUrl = buildOAuthFrontendRedirectUrl(req, result);
     const shopLabel = savedIds.join(", ") || result.oauth_shop_id || oauthShopId || mainAccountId || "";
     return res.status(200).type("text/html; charset=utf-8").send(
       `<!doctype html><html><head><meta charset="utf-8"><title>\u1EE6y quy\u1EC1n th\xE0nh c\xF4ng</title>
@@ -129219,14 +129757,14 @@ async function oauthCallback(req, res) {
       message: error?.message || "L\u1ED7i x\u1EED l\xFD OAuth callback",
       oauth_shop_id: oauthShopId
     };
-    if (queryParamOne2(req.query.format) === "json") {
+    if (queryParamOne(req.query.format) === "json") {
       return res.status(500).json({
         ...failResult,
         tokens_path: SHOPEE_TOKENS_PATH
       });
     }
-    if (shouldOAuthRedirectToFrontend2(req)) {
-      return res.redirect(302, buildOAuthFrontendRedirectUrl2(req, failResult));
+    if (shouldOAuthRedirectToFrontend(req)) {
+      return res.redirect(302, buildOAuthFrontendRedirectUrl(req, failResult));
     }
     return res.status(500).type("text/html; charset=utf-8").send(
       `<!doctype html><html><body><h2>\u1EE6y quy\u1EC1n th\u1EA5t b\u1EA1i</h2><p>${escapeHtml(failResult.message)}</p></body></html>`
@@ -129296,16 +129834,16 @@ async function getAuthUrl(req, res) {
 }
 
 // routes/shopeeAuthRoutes.js
-var router17 = (0, import_express18.Router)();
-router17.get("/oauth/complete", oauthComplete);
-router17.get("/callback", oauthCallback);
-router17.get("/webhook", webhookProbe);
-router17.get("/oauth-shops", authMiddleware, listOauthShops);
-router17.get("/auth-url", authMiddleware, getAuthUrl);
-var shopeeAuthRoutes_default = router17;
+var router18 = (0, import_express19.Router)();
+router18.get("/oauth/complete", oauthComplete);
+router18.get("/callback", oauthCallback);
+router18.get("/webhook", webhookProbe);
+router18.get("/oauth-shops", authMiddleware, listOauthShops);
+router18.get("/auth-url", authMiddleware, getAuthUrl);
+var shopeeAuthRoutes_default = router18;
 
 // routes/tiktokAuthRoutes.js
-var import_express19 = __toESM(require_express2(), 1);
+var import_express20 = __toESM(require_express2(), 1);
 
 // controllers/tiktokAuthController.js
 init_auth();
@@ -129322,9 +129860,9 @@ function logTiktokIngress(prefix, req) {
 }
 async function oauthCallback2(req, res) {
   logTiktokIngress("[TikTok Callback]", req);
-  const code = queryParamOne(req.query.code);
-  const shopId = queryParamOne(req.query.shop_id) || queryParamOne(req.query.open_id);
-  const state = queryParamOne(req.query.state);
+  const code = queryParamOne2(req.query.code);
+  const shopId = queryParamOne2(req.query.shop_id) || queryParamOne2(req.query.open_id);
+  const state = queryParamOne2(req.query.state);
   console.log(
     "[TikTok Callback] REQUEST",
     JSON.stringify({
@@ -129341,14 +129879,14 @@ async function oauthCallback2(req, res) {
   }
   try {
     const result = await exchangeTiktokAuthCode(code, { shopId: shopId || void 0 });
-    if (queryParamOne(req.query.format) === "json") {
+    if (queryParamOne2(req.query.format) === "json") {
       return res.status(result.success ? 200 : 400).json({
         ...result,
         callback_url: TIKTOK_CALLBACK_URL
       });
     }
-    if (shouldOAuthRedirectToFrontend(req)) {
-      return res.redirect(302, buildOAuthFrontendRedirectUrl(req, result));
+    if (shouldOAuthRedirectToFrontend2(req)) {
+      return res.redirect(302, buildOAuthFrontendRedirectUrl2(req, result));
     }
     if (result.success) {
       return res.status(200).type("text/html; charset=utf-8").send(
@@ -129366,11 +129904,11 @@ async function oauthCallback2(req, res) {
       error: error?.message || "unknown_error",
       message: error?.message || "L\u1ED7i x\u1EED l\xFD OAuth callback TikTok"
     };
-    if (queryParamOne(req.query.format) === "json") {
+    if (queryParamOne2(req.query.format) === "json") {
       return res.status(500).json(failResult);
     }
-    if (shouldOAuthRedirectToFrontend(req)) {
-      return res.redirect(302, buildOAuthFrontendRedirectUrl(req, failResult));
+    if (shouldOAuthRedirectToFrontend2(req)) {
+      return res.redirect(302, buildOAuthFrontendRedirectUrl2(req, failResult));
     }
     return res.status(500).type("text/html; charset=utf-8").send(
       `<!doctype html><html><body><h2>\u1EE6y quy\u1EC1n th\u1EA5t b\u1EA1i</h2><p>${escapeHtml2(failResult.message)}</p></body></html>`
@@ -129714,7 +130252,7 @@ async function saveCustomAppCredentials(req, res) {
 }
 async function getCustomAppStatus(req, res) {
   try {
-    const shopId = queryParamOne(req.query.shop_id) || queryParamOne(req.query.shopId);
+    const shopId = queryParamOne2(req.query.shop_id) || queryParamOne2(req.query.shopId);
     const creds = resolveTiktokCustomAppCredentials(shopId);
     return res.json({
       success: true,
@@ -129773,7 +130311,7 @@ async function syncOrders2(req, res) {
 }
 async function previewOrders(req, res) {
   try {
-    const shopId = queryParamOne(req.query.shop_id);
+    const shopId = queryParamOne2(req.query.shop_id);
     const page_size = Math.min(20, Math.max(1, Number(req.query.page_size) || 10));
     const result = await fetchTiktokOrderListPage({ shopId: shopId || void 0, page_size });
     return res.status(result.success ? 200 : 400).json({
@@ -129791,7 +130329,7 @@ async function previewOrders(req, res) {
 async function getOrderDetail(req, res) {
   try {
     const orderId = String(req.params.orderId || "").trim();
-    const shopId = queryParamOne(req.query.shop_id);
+    const shopId = queryParamOne2(req.query.shop_id);
     const result = await fetchTiktokOrderDetails([orderId], { shopId: shopId || void 0 });
     return res.status(result.success ? 200 : 400).json({
       mode: "custom_app",
@@ -129808,7 +130346,7 @@ async function getOrderDetail(req, res) {
 async function getProductDetail(req, res) {
   try {
     const productId = String(req.params.productId || "").trim();
-    const shopId = queryParamOne(req.query.shop_id);
+    const shopId = queryParamOne2(req.query.shop_id);
     const result = await fetchTiktokProductDetail(productId, { shopId: shopId || void 0 });
     return res.status(result.success ? 200 : 400).json({
       mode: "custom_app",
@@ -129824,7 +130362,7 @@ async function getProductDetail(req, res) {
 }
 async function previewProducts(req, res) {
   try {
-    const shopId = queryParamOne(req.query.shop_id);
+    const shopId = queryParamOne2(req.query.shop_id);
     const page_size = Math.min(20, Math.max(1, Number(req.query.page_size) || 10));
     const result = await fetchTiktokProductListPage({
       shopId: shopId || void 0,
@@ -129844,48 +130382,48 @@ async function previewProducts(req, res) {
 }
 
 // routes/tiktokAuthRoutes.js
-var router18 = (0, import_express19.Router)();
-router18.get("/callback", oauthCallback2);
-router18.post("/custom-app/credentials", authMiddleware, saveCustomAppCredentials);
-router18.get("/custom-app/status", authMiddleware, getCustomAppStatus);
-router18.post("/orders/sync", authMiddleware, syncOrders2);
-router18.get("/orders/preview", authMiddleware, previewOrders);
-router18.get("/orders/:orderId", authMiddleware, getOrderDetail);
-router18.get("/products/preview", authMiddleware, previewProducts);
-router18.get("/products/:productId", authMiddleware, getProductDetail);
-var tiktokAuthRoutes_default = router18;
+var router19 = (0, import_express20.Router)();
+router19.get("/callback", oauthCallback2);
+router19.post("/custom-app/credentials", authMiddleware, saveCustomAppCredentials);
+router19.get("/custom-app/status", authMiddleware, getCustomAppStatus);
+router19.post("/orders/sync", authMiddleware, syncOrders2);
+router19.get("/orders/preview", authMiddleware, previewOrders);
+router19.get("/orders/:orderId", authMiddleware, getOrderDetail);
+router19.get("/products/preview", authMiddleware, previewProducts);
+router19.get("/products/:productId", authMiddleware, getProductDetail);
+var tiktokAuthRoutes_default = router19;
 
 // routes/shopeeOrdersRoutes.js
-var import_express20 = __toESM(require_express2(), 1);
-var router19 = (0, import_express20.Router)();
-router19.post("/orders/sync", syncOrders);
-router19.post("/orders/pull", pullOrders);
-router19.post("/orders/quick-sync", quickSyncOrders);
-router19.get("/diagnostics", getDiagnostics);
-router19.get("/debug/return-by-order", debugReturnByOrder);
-var shopeeOrdersRoutes_default = router19;
-
-// routes/shopeeProductsRoutes.js
 var import_express21 = __toESM(require_express2(), 1);
 var router20 = (0, import_express21.Router)();
-router20.post("/products/sync", syncProducts);
-router20.post("/products/sync-item-variants", syncItemVariants);
-router20.post("/products/item-preview", previewItemVariants);
-router20.get("/products/item-preview", previewItemVariants);
-var shopeeProductsRoutes_default = router20;
+router20.post("/orders/sync", syncOrders);
+router20.post("/orders/pull", pullOrders);
+router20.post("/orders/quick-sync", quickSyncOrders);
+router20.get("/diagnostics", getDiagnostics);
+router20.get("/debug/return-by-order", debugReturnByOrder);
+var shopeeOrdersRoutes_default = router20;
 
-// routes/shopeeShipRoutes.js
+// routes/shopeeProductsRoutes.js
 var import_express22 = __toESM(require_express2(), 1);
 var router21 = (0, import_express22.Router)();
-router21.post("/ship-order", shipOrder);
-router21.post("/ship-order/bulk", shipOrderBulk);
-router21.post("/ship-order/bulk-async", shipOrderBulkAsync);
-router21.get("/ship-order/job/:jobId", getShipOrderJob);
-router21.post("/orders/fast-process", fastProcessOrders);
-var shopeeShipRoutes_default = router21;
+router21.post("/products/sync", syncProducts);
+router21.post("/products/sync-item-variants", syncItemVariants);
+router21.post("/products/item-preview", previewItemVariants);
+router21.get("/products/item-preview", previewItemVariants);
+var shopeeProductsRoutes_default = router21;
+
+// routes/shopeeShipRoutes.js
+var import_express23 = __toESM(require_express2(), 1);
+var router22 = (0, import_express23.Router)();
+router22.post("/ship-order", shipOrder);
+router22.post("/ship-order/bulk", shipOrderBulk);
+router22.post("/ship-order/bulk-async", shipOrderBulkAsync);
+router22.get("/ship-order/job/:jobId", getShipOrderJob);
+router22.post("/orders/fast-process", fastProcessOrders);
+var shopeeShipRoutes_default = router22;
 
 // routes/shopeePrintRoutes.js
-var import_express23 = __toESM(require_express2(), 1);
+var import_express24 = __toESM(require_express2(), 1);
 
 // controllers/shopeePrintController.js
 var deps19 = {
@@ -129972,61 +130510,61 @@ async function getPrintDocumentJob(req, res) {
 }
 
 // routes/shopeePrintRoutes.js
-var router22 = (0, import_express23.Router)();
-router22.post("/print-document", printDocument);
-router22.post("/print-document/async", printDocumentAsync);
-router22.get("/print-document/job/:jobId", getPrintDocumentJob);
-var shopeePrintRoutes_default = router22;
+var router23 = (0, import_express24.Router)();
+router23.post("/print-document", printDocument);
+router23.post("/print-document/async", printDocumentAsync);
+router23.get("/print-document/job/:jobId", getPrintDocumentJob);
+var shopeePrintRoutes_default = router23;
 
 // routes/inventoryRoutes.js
-var import_express24 = __toESM(require_express2(), 1);
-var router23 = (0, import_express24.Router)();
-router23.get("/local-inventory", authMiddleware, getLocalInventory);
-router23.post("/local-inventory/refresh", authMiddleware, refreshLocalInventory);
-router23.post("/sync-stock", authMiddleware, syncStock);
-router23.delete("/inventory/clear-all", authMiddleware, handleInventoryClearAll);
-router23.post("/inventory/clear-all", authMiddleware, handleInventoryClearAll);
-var inventoryRoutes_default = router23;
-
-// routes/autoLinkRoutes.js
 var import_express25 = __toESM(require_express2(), 1);
 var router24 = (0, import_express25.Router)();
-router24.post("/mapping/bulk-update", authMiddleware, handleBulkAutoLinkByIds);
-router24.post("/shopee/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
-router24.post("/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
-router24.post("/auto-link", authMiddleware, handleBatchAutoLink);
-var autoLinkRoutes_default = router24;
+router24.get("/local-inventory", authMiddleware, getLocalInventory);
+router24.post("/local-inventory/refresh", authMiddleware, refreshLocalInventory);
+router24.post("/sync-stock", authMiddleware, syncStock);
+router24.delete("/inventory/clear-all", authMiddleware, handleInventoryClearAll);
+router24.post("/inventory/clear-all", authMiddleware, handleInventoryClearAll);
+var inventoryRoutes_default = router24;
 
-// routes/apiSystemRoutes.js
+// routes/autoLinkRoutes.js
 var import_express26 = __toESM(require_express2(), 1);
 var router25 = (0, import_express26.Router)();
-router25.get("/sync-jobs/:jobId", authMiddleware, getSyncJobById);
-router25.get("/order-counts", authMiddleware, getOrderCounts);
-router25.post("/sync-shopee", authMiddleware, syncShopee);
-router25.post("/mongo/cleanup-temp", authMiddleware, cleanupMongoTemp);
-router25.post("/mongo/ensure-ttl", authMiddleware, ensureMongoTtl);
-router25.post("/orders/pull", authMiddleware, pullOrders);
-router25.post("/sync-from-shop", authMiddleware, syncFromShop);
-var apiSystemRoutes_default = router25;
+router25.post("/mapping/bulk-update", authMiddleware, handleBulkAutoLinkByIds);
+router25.post("/shopee/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
+router25.post("/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
+router25.post("/auto-link", authMiddleware, handleBatchAutoLink);
+var autoLinkRoutes_default = router25;
+
+// routes/apiSystemRoutes.js
+var import_express27 = __toESM(require_express2(), 1);
+var router26 = (0, import_express27.Router)();
+router26.get("/sync-jobs/:jobId", authMiddleware, getSyncJobById);
+router26.get("/order-counts", authMiddleware, getOrderCounts);
+router26.post("/sync-shopee", authMiddleware, syncShopee);
+router26.post("/mongo/cleanup-temp", authMiddleware, cleanupMongoTemp);
+router26.post("/mongo/ensure-ttl", authMiddleware, ensureMongoTtl);
+router26.post("/orders/pull", authMiddleware, pullOrders);
+router26.post("/sync-from-shop", authMiddleware, syncFromShop);
+var apiSystemRoutes_default = router26;
 
 // routes/labelsRoutes.js
-var import_express27 = __toESM(require_express2(), 1);
+var import_express28 = __toESM(require_express2(), 1);
 var serveHandler = null;
 function initLabelsRoutes(handler) {
   serveHandler = handler;
 }
-var router26 = (0, import_express27.Router)();
+var router27 = (0, import_express28.Router)();
 function handlePublicLabelGet(req, res) {
   if (typeof serveHandler !== "function") {
     return res.status(503).type("text/plain").send("Label service ch\u01B0a s\u1EB5n s\xE0ng.");
   }
   return serveHandler(req, res);
 }
-router26.get("/api/public/labels/:filename", handlePublicLabelGet);
-router26.get("/api/labels/:filename", handlePublicLabelGet);
-router26.get("/labels/:filename", handlePublicLabelGet);
-router26.get("/prints/:filename", handlePublicLabelGet);
-var labelsRoutes_default = router26;
+router27.get("/api/public/labels/:filename", handlePublicLabelGet);
+router27.get("/api/labels/:filename", handlePublicLabelGet);
+router27.get("/labels/:filename", handlePublicLabelGet);
+router27.get("/prints/:filename", handlePublicLabelGet);
+var labelsRoutes_default = router27;
 
 // services/ghnStatusSync.js
 var EXTERNAL_STATUS_MAP2 = {
@@ -130133,7 +130671,7 @@ async function runGhnStatusSync(opts = {}) {
         stopped2 = "deadline";
         break;
       }
-      if (i2 > 0) await sleep3(delayMs);
+      if (i2 > 0) await sleep5(delayMs);
       const order = batch[i2];
       const trackingNo = String(order?.tracking_no || order?.trackingNumber || "").trim();
       if (!trackingNo) continue;
@@ -130269,14 +130807,14 @@ async function shopeeAxiosPost(url2, body, context = "shopee_post") {
 }
 
 // services/shopee/categories.js
-var import_fs23 = __toESM(require("fs"), 1);
-var import_path23 = __toESM(require("path"), 1);
+var import_fs24 = __toESM(require("fs"), 1);
+var import_path24 = __toESM(require("path"), 1);
 var CACHE_TTL_MS = 12 * 60 * 60 * 1e3;
 var INVALID_CATEGORY_MSG = "Danh m\u1EE5c c\u0169 c\u1EE7a s\u1EA3n ph\u1EA9m \u0111\xE3 b\u1ECB Shopee thay \u0111\u1ED5i. Vui l\xF2ng ch\u1ECDn l\u1EA1i danh m\u1EE5c m\u1EDBi tr\u01B0\u1EDBc khi \u0111\u0103ng b\xE1n!";
 var SHOPEE_INVALID_CATEGORY_CODE = "product.error_invalid_category";
 var SHOPEE_INVALID_CATEGORY_USER_MSG = INVALID_CATEGORY_MSG;
 function resolveCachePath(appRoot) {
-  return import_path23.default.join(appRoot || process.cwd(), "data", "shopee_categories.json");
+  return import_path24.default.join(appRoot || process.cwd(), "data", "shopee_categories.json");
 }
 function isShopeeInvalidCategoryError(errOrText) {
   const text = String(
@@ -130333,8 +130871,8 @@ function collectShopeeLeafIds(categoryList) {
 function readShopeeCategoryCache(appRoot) {
   const file = resolveCachePath(appRoot);
   try {
-    if (!import_fs23.default.existsSync(file)) return null;
-    const parsed = JSON.parse(import_fs23.default.readFileSync(file, "utf-8"));
+    if (!import_fs24.default.existsSync(file)) return null;
+    const parsed = JSON.parse(import_fs24.default.readFileSync(file, "utf-8"));
     if (!parsed || !Array.isArray(parsed.category_list)) return null;
     return parsed;
   } catch {
@@ -130343,9 +130881,9 @@ function readShopeeCategoryCache(appRoot) {
 }
 function writeShopeeCategoryCache(appRoot, payload) {
   const file = resolveCachePath(appRoot);
-  const dir = import_path23.default.dirname(file);
-  if (!import_fs23.default.existsSync(dir)) import_fs23.default.mkdirSync(dir, { recursive: true });
-  import_fs23.default.writeFileSync(file, JSON.stringify(payload, null, 2), "utf-8");
+  const dir = import_path24.default.dirname(file);
+  if (!import_fs24.default.existsSync(dir)) import_fs24.default.mkdirSync(dir, { recursive: true });
+  import_fs24.default.writeFileSync(file, JSON.stringify(payload, null, 2), "utf-8");
 }
 function isShopeeCategoryCacheFresh(cache, ttlMs = CACHE_TTL_MS) {
   if (!cache?.synced_at) return false;
@@ -130516,7 +131054,7 @@ async function syncWooCommerceOrders(req, res) {
           }
           hasMore = page < result.totalPages && page < 10;
           page++;
-          if (hasMore) await sleep4(300);
+          if (hasMore) await sleep2(300);
         }
         allResults.push({
           shopId: shop.shopId,
@@ -130544,7 +131082,7 @@ async function syncWooCommerceOrders(req, res) {
           error: errMsg
         });
       }
-      await sleep4(300);
+      await sleep2(300);
     }
     const ms = Date.now() - t0;
     const successShops = allResults.filter((r2) => r2.success).length;
@@ -131410,7 +131948,7 @@ async function processShopeeWebhookPayload(body) {
 init_appPaths();
 
 // services/orderChangeStream.js
-var import_mongoose7 = __toESM(require("mongoose"), 1);
+var import_mongoose9 = __toESM(require("mongoose"), 1);
 var NEW_ORDER_FLUSH_MS = 300;
 var UPDATED_FLUSH_MS = 3e3;
 var STATUS_FLUSH_MS = 300;
@@ -131632,8 +132170,8 @@ function closeCurrentStream() {
 }
 function openStream() {
   if (stopped || unsupported) return;
-  const db = import_mongoose7.default.connection?.db;
-  if (import_mongoose7.default.connection?.readyState !== 1 || !db) {
+  const db = import_mongoose9.default.connection?.db;
+  if (import_mongoose9.default.connection?.readyState !== 1 || !db) {
     scheduleReconnect("mongo ch\u01B0a s\u1EB5n s\xE0ng");
     return;
   }
@@ -131767,6 +132305,7 @@ var healthRoutes = asRouter(healthRoutes_default);
 var vietnamAddressRoutes = asRouter(vietnamAddressRoutes_default);
 var suppliersRoutes = asRouter(suppliersRoutes_default);
 var expensesRoutes = asRouter(expensesRoutes_default);
+var financeRoutes = asRouter(financeRoutes_default);
 var addressBookRoutes = asRouter(addressBookRoutes_default);
 var importsRoutes = asRouter(importsRoutes_default);
 var materialsRoutes = asRouter(materialsRoutes_default);
@@ -131795,12 +132334,12 @@ function writeCpanelCrashLog(kind, err) {
 ${(/* @__PURE__ */ new Date()).toISOString()}
 `;
     const targets = [
-      import_path24.default.join(process.cwd(), "cpanel_error_log.txt"),
-      typeof __dirname !== "undefined" ? import_path24.default.join(__dirname, "cpanel_error_log.txt") : ""
+      import_path25.default.join(process.cwd(), "cpanel_error_log.txt"),
+      typeof __dirname !== "undefined" ? import_path25.default.join(__dirname, "cpanel_error_log.txt") : ""
     ].filter(Boolean);
     for (const file of targets) {
       try {
-        import_fs24.default.writeFileSync(file, line);
+        import_fs25.default.writeFileSync(file, line);
       } catch {
       }
     }
@@ -131834,12 +132373,12 @@ if (isCpanelPassengerRuntime) {
   console.log(`[Boot] runtime=cpanel-production pid=${process.pid}; static dist only, dev middleware disabled.`);
 }
 var dotenvCandidates = [
-  import_path24.default.join(APP_ROOT14, ".env"),
-  import_path24.default.join(process.cwd(), ".env"),
-  import_path24.default.resolve(".env")
+  import_path25.default.join(APP_ROOT14, ".env"),
+  import_path25.default.join(process.cwd(), ".env"),
+  import_path25.default.resolve(".env")
 ];
 for (const envPath of dotenvCandidates) {
-  if (import_fs24.default.existsSync(envPath)) {
+  if (import_fs25.default.existsSync(envPath)) {
     const loaded = import_dotenv2.default.config({ path: envPath });
     if (loaded.error) {
       console.error(`[Config] dotenv l\u1ED7i khi \u0111\u1ECDc ${envPath}:`, loaded.error.message);
@@ -131864,8 +132403,8 @@ console.log(
 function writeCpanelCrashLogToAppRoot(kind, err) {
   try {
     const stack = err instanceof Error ? err.stack || err.message : typeof err === "string" ? err : JSON.stringify(err);
-    import_fs24.default.writeFileSync(
-      import_path24.default.join(APP_ROOT14, "cpanel_error_log.txt"),
+    import_fs25.default.writeFileSync(
+      import_path25.default.join(APP_ROOT14, "cpanel_error_log.txt"),
       `${kind}: ${stack}
 ---
 ${(/* @__PURE__ */ new Date()).toISOString()}
@@ -131888,8 +132427,8 @@ process.on("unhandledRejection", (err) => {
   } catch {
   }
 });
-var WAYBILLS_DIR = import_path24.default.join(APP_ROOT14, "storage", "waybills");
-var LEGACY_PUBLIC_PRINTS_DIR = import_path24.default.join(APP_ROOT14, "public", "prints");
+var WAYBILLS_DIR = import_path25.default.join(APP_ROOT14, "storage", "waybills");
+var LEGACY_PUBLIC_PRINTS_DIR = import_path25.default.join(APP_ROOT14, "public", "prints");
 var WAYBILL_FILE_RE = /\.(pdf|zip|html)$/i;
 var LABEL_DISK_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
 var LABEL_RAM_TTL_MS = 60 * 60 * 1e3;
@@ -131898,24 +132437,24 @@ var LABEL_MEM_MAX_ENTRIES = 48;
 var LABEL_MEM_MAX_BYTES = 96 * 1024 * 1024;
 function ensureLabelsDir() {
   try {
-    if (!import_fs24.default.existsSync(PDF_DIR)) import_fs24.default.mkdirSync(PDF_DIR, { recursive: true });
+    if (!import_fs25.default.existsSync(PDF_DIR)) import_fs25.default.mkdirSync(PDF_DIR, { recursive: true });
   } catch (err) {
     console.error("[Labels] Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c storage/labels:", err);
   }
 }
 function assertLabelsDirWritable() {
   ensureLabelsDir();
-  const probe = import_path24.default.join(PDF_DIR, `.write_probe_${process.pid}`);
+  const probe = import_path25.default.join(PDF_DIR, `.write_probe_${process.pid}`);
   try {
-    import_fs24.default.writeFileSync(probe, "ok");
-    import_fs24.default.unlinkSync(probe);
+    import_fs25.default.writeFileSync(probe, "ok");
+    import_fs25.default.unlinkSync(probe);
   } catch (err) {
     console.error("[Labels] Kh\xF4ng ghi \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c storage/labels:", err);
     throw err instanceof Error ? err : new Error(String(err));
   }
 }
 function safeLabelFilename(raw) {
-  const base = import_path24.default.basename(String(raw || "").trim());
+  const base = import_path25.default.basename(String(raw || "").trim());
   if (!base || base.includes("..") || !/\.pdf$/i.test(base)) return null;
   return base;
 }
@@ -131928,23 +132467,23 @@ function buildCachedLabelFilename(orderSns) {
 function getValidLabelDiskFile(filename) {
   const safe = safeLabelFilename(filename);
   if (!safe) return null;
-  const filePath = import_path24.default.join(PDF_DIR, safe);
+  const filePath = import_path25.default.join(PDF_DIR, safe);
   try {
-    if (!import_fs24.default.existsSync(filePath)) return null;
-    const stat3 = import_fs24.default.statSync(filePath);
+    if (!import_fs25.default.existsSync(filePath)) return null;
+    const stat3 = import_fs25.default.statSync(filePath);
     if (!stat3.isFile() || stat3.size <= 0) {
       unlinkWaybillFileQuiet(filePath);
       return null;
     }
-    const fd = import_fs24.default.openSync(filePath, "r");
+    const fd = import_fs25.default.openSync(filePath, "r");
     try {
       const magic = Buffer.allocUnsafe(4);
-      if (import_fs24.default.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
+      if (import_fs25.default.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
         unlinkWaybillFileQuiet(filePath);
         return null;
       }
     } finally {
-      import_fs24.default.closeSync(fd);
+      import_fs25.default.closeSync(fd);
     }
     return { safe, filePath, size: stat3.size };
   } catch {
@@ -131954,15 +132493,15 @@ function getValidLabelDiskFile(filename) {
 async function getValidLabelDiskFileAsync(filename) {
   const safe = safeLabelFilename(filename);
   if (!safe) return null;
-  const filePath = import_path24.default.join(PDF_DIR, safe);
+  const filePath = import_path25.default.join(PDF_DIR, safe);
   let handle;
   try {
-    const stat3 = await import_fs24.default.promises.stat(filePath);
+    const stat3 = await import_fs25.default.promises.stat(filePath);
     if (!stat3.isFile() || stat3.size <= 0) {
       unlinkWaybillFileQuiet(filePath);
       return null;
     }
-    handle = await import_fs24.default.promises.open(filePath, "r");
+    handle = await import_fs25.default.promises.open(filePath, "r");
     const magic = Buffer.allocUnsafe(4);
     const { bytesRead } = await handle.read(magic, 0, 4, 0);
     if (bytesRead !== 4 || magic.toString() !== "%PDF") {
@@ -131987,7 +132526,7 @@ function isPdfBuffer(buffer, contentType) {
 }
 function unlinkWaybillFileQuiet(filePath) {
   try {
-    if (filePath && import_fs24.default.existsSync(filePath)) import_fs24.default.unlinkSync(filePath);
+    if (filePath && import_fs25.default.existsSync(filePath)) import_fs25.default.unlinkSync(filePath);
   } catch {
   }
 }
@@ -132056,39 +132595,39 @@ function persistValidatedPdfToDisk(dest, buffer) {
   ensureLabelsDir();
   const tempPath = `${dest}.${process.pid}.${Date.now()}.part`;
   try {
-    import_fs24.default.writeFileSync(tempPath, buffer);
-    const st = import_fs24.default.statSync(tempPath);
+    import_fs25.default.writeFileSync(tempPath, buffer);
+    const st = import_fs25.default.statSync(tempPath);
     if (!st.isFile() || st.size <= 0) {
       throw new Error("File PDF t\u1EA1m r\u1ED7ng sau khi ghi.");
     }
-    const fd = import_fs24.default.openSync(tempPath, "r");
+    const fd = import_fs25.default.openSync(tempPath, "r");
     try {
       const magic = Buffer.allocUnsafe(4);
-      if (import_fs24.default.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
+      if (import_fs25.default.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
         throw new Error("File PDF t\u1EA1m kh\xF4ng c\xF3 magic bytes %PDF-.");
       }
     } finally {
-      import_fs24.default.closeSync(fd);
+      import_fs25.default.closeSync(fd);
     }
-    if (import_fs24.default.existsSync(dest)) import_fs24.default.unlinkSync(dest);
-    import_fs24.default.renameSync(tempPath, dest);
+    if (import_fs25.default.existsSync(dest)) import_fs25.default.unlinkSync(dest);
+    import_fs25.default.renameSync(tempPath, dest);
     return st.size;
   } catch (err) {
     unlinkWaybillFileQuiet(tempPath);
     try {
-      if (import_fs24.default.existsSync(dest)) {
-        const st = import_fs24.default.statSync(dest);
+      if (import_fs25.default.existsSync(dest)) {
+        const st = import_fs25.default.statSync(dest);
         if (!st.isFile() || st.size <= 0) {
           unlinkWaybillFileQuiet(dest);
         } else {
-          const fd = import_fs24.default.openSync(dest, "r");
+          const fd = import_fs25.default.openSync(dest, "r");
           try {
             const magic = Buffer.allocUnsafe(4);
-            if (import_fs24.default.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
+            if (import_fs25.default.readSync(fd, magic, 0, 4, 0) !== 4 || magic.toString() !== "%PDF") {
               unlinkWaybillFileQuiet(dest);
             }
           } finally {
-            import_fs24.default.closeSync(fd);
+            import_fs25.default.closeSync(fd);
           }
         }
       }
@@ -132126,14 +132665,14 @@ function removeExistingLabelFilesForOrderSns(orderSns) {
   if (sns.length === 0) return 0;
   let deleted = 0;
   try {
-    for (const name of import_fs24.default.readdirSync(PDF_DIR)) {
+    for (const name of import_fs25.default.readdirSync(PDF_DIR)) {
       if (!/\.pdf$/i.test(name)) continue;
       const hit = sns.some(
         (sn) => name === `${sn}.pdf` || name === `order_${sn}.pdf` || name.startsWith(`${sn}_`) || name.startsWith(`order_${sn}_`)
       );
       if (!hit) continue;
       try {
-        import_fs24.default.unlinkSync(import_path24.default.join(PDF_DIR, name));
+        import_fs25.default.unlinkSync(import_path25.default.join(PDF_DIR, name));
         labelMemCache.delete(name);
         deleted += 1;
       } catch {
@@ -132173,7 +132712,7 @@ function putLabelMem(filename, buffer, contentType) {
       expires: Date.now() + LABEL_RAM_TTL_MS,
       contentType: "application/pdf"
     });
-    const dest = import_path24.default.join(PDF_DIR, safe);
+    const dest = import_path25.default.join(PDF_DIR, safe);
     console.log(`[Labels] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${dest}`);
     persistValidatedPdfToDisk(dest, buffer);
     console.log(`[Labels] K\u1EBFt qu\u1EA3: OK \u2014 Disk ${safe} (${buffer.length} bytes) \u2192 ${dest}`);
@@ -132195,19 +132734,19 @@ function getLabelMem(filename) {
       return { buf: ram.buf, contentType: ram.contentType || "application/pdf" };
     }
   }
-  const filePath = import_path24.default.join(PDF_DIR, safe);
+  const filePath = import_path25.default.join(PDF_DIR, safe);
   try {
-    if (!import_fs24.default.existsSync(filePath)) return null;
-    const st = import_fs24.default.statSync(filePath);
+    if (!import_fs25.default.existsSync(filePath)) return null;
+    const st = import_fs25.default.statSync(filePath);
     if (!st.isFile() || st.size <= 0) {
       console.warn(`[Labels] B\u1ECF qua file r\u1ED7ng tr\xEAn \u0111\u0129a: ${filePath}`);
       try {
-        import_fs24.default.unlinkSync(filePath);
+        import_fs25.default.unlinkSync(filePath);
       } catch {
       }
       return null;
     }
-    const buf = import_fs24.default.readFileSync(filePath);
+    const buf = import_fs25.default.readFileSync(filePath);
     if (!buf.length || !isPdfBuffer(buf)) {
       unlinkWaybillFileQuiet(filePath);
       return null;
@@ -132242,9 +132781,9 @@ function assertLabelFileReady(filename) {
   if (!isPdfBuffer(hit.buf)) {
     throw new Error(`File v\u1EADn \u0111\u01A1n kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7: ${safe}`);
   }
-  const diskPath = import_path24.default.join(PDF_DIR, safe);
-  if (import_fs24.default.existsSync(diskPath)) {
-    const st = import_fs24.default.statSync(diskPath);
+  const diskPath = import_path25.default.join(PDF_DIR, safe);
+  if (import_fs25.default.existsSync(diskPath)) {
+    const st = import_fs25.default.statSync(diskPath);
     if (st.size <= 0) {
       throw new Error(`File v\u1EADn \u0111\u01A1n tr\xEAn \u0111\u0129a r\u1ED7ng (0 bytes): ${diskPath}`);
     }
@@ -132263,13 +132802,13 @@ function cleanupExpiredLabelFiles() {
   try {
     ensureLabelsDir();
     const cutoff = now - LABEL_DISK_TTL_MS;
-    for (const name of import_fs24.default.readdirSync(PDF_DIR)) {
+    for (const name of import_fs25.default.readdirSync(PDF_DIR)) {
       if (!WAYBILL_FILE_RE.test(name)) continue;
-      const full = import_path24.default.join(PDF_DIR, name);
+      const full = import_path25.default.join(PDF_DIR, name);
       try {
-        const st = import_fs24.default.statSync(full);
+        const st = import_fs25.default.statSync(full);
         if (st.size <= 0 || st.mtimeMs < cutoff) {
-          import_fs24.default.unlinkSync(full);
+          import_fs25.default.unlinkSync(full);
           labelMemCache.delete(name);
           deleted += 1;
         }
@@ -132288,11 +132827,11 @@ function wipeLegacyPublicPrints() {
   let deleted = 0;
   for (const dir of [LEGACY_PUBLIC_PRINTS_DIR, WAYBILLS_DIR]) {
     try {
-      if (!import_fs24.default.existsSync(dir)) continue;
-      for (const name of import_fs24.default.readdirSync(dir)) {
+      if (!import_fs25.default.existsSync(dir)) continue;
+      for (const name of import_fs25.default.readdirSync(dir)) {
         if (!WAYBILL_FILE_RE.test(name)) continue;
         try {
-          import_fs24.default.unlinkSync(import_path24.default.join(dir, name));
+          import_fs25.default.unlinkSync(import_path25.default.join(dir, name));
           deleted += 1;
         } catch {
         }
@@ -132328,7 +132867,7 @@ function serveLabelPdfFromMem(filename, res) {
       res.setHeader("Content-Length", String(disk.size));
       res.setHeader("Cache-Control", "private, max-age=300");
       res.setHeader("X-Content-Type-Options", "nosniff");
-      const stream5 = import_fs24.default.createReadStream(disk.filePath);
+      const stream5 = import_fs25.default.createReadStream(disk.filePath);
       stream5.on("error", (err) => {
         console.error(`[Labels] Stream disk l\u1ED7i ${safe}:`, err);
         if (!res.headersSent) res.status(500).end();
@@ -132387,7 +132926,7 @@ function absoluteLabelUrl(relativePath) {
   } else {
     const p = relativePath.startsWith("/") ? relativePath : `/${relativePath}`;
     const fnMatch = p.match(/\/(?:api\/(?:public\/)?labels|labels|prints)\/([^/?#]+)$/i);
-    fn = decodeURIComponent(fnMatch?.[1] || import_path24.default.basename(p));
+    fn = decodeURIComponent(fnMatch?.[1] || import_path25.default.basename(p));
   }
   if (!safeLabelFilename(fn)) return null;
   try {
@@ -132536,7 +133075,7 @@ async function yieldToLogisticsIfBusy(maxWaitMs = 15e3) {
   if (!isLogisticsBusy()) return;
   const t0 = Date.now();
   while (isLogisticsBusy() && Date.now() - t0 < maxWaitMs) {
-    await sleep4(200);
+    await sleep2(200);
   }
 }
 function releaseOrdersPullLock(reason = "finally") {
@@ -134681,13 +135220,13 @@ async function debugForceSyncHandedOverOrders(opts) {
     Math.max(Number(opts?.maxOrders) || 150, 1),
     200
   );
-  const mongoReady3 = isMongoReady();
+  const mongoReady4 = isMongoReady();
   const tokenShops = listShopeeSyncShopIds();
   const tabFilter = orderTabFilter("handed_over_carrier");
   const out = {
     success: false,
     endpoint: "GET /api/test-sync-shopee",
-    mongoReady: mongoReady3,
+    mongoReady: mongoReady4,
     tokenShops,
     shopNameCanonical: {
       "4127421": "LKAT",
@@ -134715,7 +135254,7 @@ async function debugForceSyncHandedOverOrders(opts) {
     elapsedMs: 0,
     message: ""
   };
-  if (!mongoReady3) {
+  if (!mongoReady4) {
     out.message = "MongoDB ch\u01B0a s\u1EB5n s\xE0ng \u2014 kh\xF4ng th\u1EC3 d\xF2/c\u1EADp nh\u1EADt.";
     out.elapsedMs = Date.now() - startedAt;
     return out;
@@ -134745,8 +135284,8 @@ async function debugForceSyncHandedOverOrders(opts) {
     }));
     if (candidates.length === 0) {
       try {
-        const { default: mongoose8 } = await import("mongoose");
-        const col = mongoose8.connection?.db?.collection("orders");
+        const { default: mongoose10 } = await import("mongoose");
+        const col = mongoose10.connection?.db?.collection("orders");
         if (col) {
           const rawHanded = await col.countDocuments({
             $or: [
@@ -136800,10 +137339,10 @@ async function shopeeGetModelList(shopId, accessToken, itemId) {
 async function shopeeGetModelListWithRetry(shopId, accessToken, itemId, retries = 3) {
   let last = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
-    if (attempt > 0) await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2 * attempt);
+    if (attempt > 0) await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2 * attempt);
     last = await shopeeGetModelList(shopId, accessToken, itemId);
     if (!last?.error) return last;
-    if (isShopeeRateLimited(0, last)) await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2 * 2);
+    if (isShopeeRateLimited(0, last)) await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2 * 2);
   }
   return last;
 }
@@ -137120,9 +137659,9 @@ async function resolvePublishImageBuffer(src) {
   }
   const framedMatch = raw.match(/\/api\/framed-images\/([^/?#]+)/i);
   if (framedMatch) {
-    const filePath = import_path24.default.join(APP_ROOT14, "data", "framed_images", `${decodeURIComponent(framedMatch[1])}.jpg`);
-    if (import_fs24.default.existsSync(filePath)) {
-      return { buf: import_fs24.default.readFileSync(filePath), filename: "item.jpg", mime: "image/jpeg" };
+    const filePath = import_path25.default.join(APP_ROOT14, "data", "framed_images", `${decodeURIComponent(framedMatch[1])}.jpg`);
+    if (import_fs25.default.existsSync(filePath)) {
+      return { buf: import_fs25.default.readFileSync(filePath), filename: "item.jpg", mime: "image/jpeg" };
     }
   }
   let fetchUrl = raw;
@@ -137439,7 +137978,7 @@ async function publishOneItemToShopee(shopId, payload) {
     const { buf, filename, mime } = await resolvePublishImageBuffer(src);
     if (buf.length > 10 * 1024 * 1024) throw new Error(`\u1EA2nh v\u01B0\u1EE3t 10MB: ${filename}`);
     imageIds.push(await shopeeUploadImage(shopId, accessToken, buf, filename, mime));
-    await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
+    await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
   }
   const fullChannels = await shopeeGetChannelList(shopId, accessToken);
   let enabledLogistics = Array.isArray(payload?.enabledLogistics) ? payload.enabledLogistics.map(Number).filter((n) => n > 0) : [];
@@ -137454,7 +137993,7 @@ async function publishOneItemToShopee(shopId, payload) {
   if (!logisticInfo.length) {
     throw new Error("Shop ch\u01B0a c\xF3 k\xEAnh v\u1EADn chuy\u1EC3n enabled (get_channel_list) ho\u1EB7c k\xEDch th\u01B0\u1EDBc g\xF3i h\xE0ng kh\xF4ng ph\xF9 h\u1EE3p v\u1EDBi b\u1EA5t k\u1EF3 k\xEAnh n\xE0o");
   }
-  await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
+  await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
   let mandatoryAttrs = [];
   let attributeTreeError = null;
   try {
@@ -137464,7 +138003,7 @@ async function publishOneItemToShopee(shopId, payload) {
     attributeTreeError = err?.message || String(err);
     console.log("[SHOPEE UPLOAD ERROR]:", JSON.stringify({ step: "get_attribute_tree", error: attributeTreeError }, null, 2));
   }
-  await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
+  await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
   const attributeList = buildShopeeAttributeListFromPayload(payload, mandatoryAttrs);
   const missingMandatory = mandatoryAttrs.filter(
     (a) => !attributeList.some((x2) => Number(x2.attribute_id) === Number(a.attribute_id))
@@ -137562,7 +138101,7 @@ async function publishOneItemToShopee(shopId, payload) {
       throw new Error("add_item kh\xF4ng tr\u1EA3 v\u1EC1 item_id h\u1EE3p l\u1EC7 (Shopee kh\xF4ng t\u1EA1o s\u1EA3n ph\u1EA9m)");
     }
   }
-  await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
+  await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
   if (hasVariants && !existingItemId) {
     const itemIdNum = toShopeeIdNumber(itemId) ?? Number(itemId);
     if (!Number.isFinite(itemIdNum) || itemIdNum <= 0) {
@@ -137621,7 +138160,7 @@ async function publishOneItemToShopee(shopId, payload) {
           },
           "init_tier_variation"
         );
-        await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
+        await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
         await shopeeProductPost(
           "/api/v2/product/add_model",
           shopId,
@@ -137642,7 +138181,7 @@ async function publishOneItemToShopee(shopId, payload) {
   let modelIds = [];
   if (hasVariants && !existingItemId) {
     try {
-      await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
+      await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
       const modelListResp = await shopeeGetModelListWithRetry(shopId, accessToken, itemId, 2);
       if (modelListResp && !modelListResp.error) {
         const rawModels = modelListResp.response?.model || modelListResp.response?.model_list || [];
@@ -137814,7 +138353,7 @@ async function syncProductToShopee(product, shopId, accessToken) {
       { ...base, action: "update_price" }
     ];
   }
-  await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
+  await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
   const priceResult = await shopeeUpdatePrice(shopId, accessToken, itemId, [priceEntry]);
   if (isShopeeItemNotFoundError(priceResult)) {
     await markShopeeItemsInvalidInDb([itemId], priceResult?.error || "product.error_item_not_found");
@@ -138189,7 +138728,7 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
       }
       continue;
     }
-    await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
+    await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
     const locationId = await resolveShopeeStockLocationId(resolved.shopId, resolved.accessToken);
     const stockList = [];
     for (const p of rows) {
@@ -138227,7 +138766,7 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
     }
     if (stockList.length === 0) {
       processedInBatch++;
-      await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
+      await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
       continue;
     }
     let result;
@@ -138249,10 +138788,10 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
         });
       }
       processedInBatch++;
-      await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
+      await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
       if (processedInBatch % SHOPEE_PRODUCT_BATCH_SIZE2 === 0 && processedInBatch < itemEntries.length) {
         console.log(`[Shopee Push Stock] Ngh\u1EC9 ${SHOPEE_PRODUCT_BATCH_PAUSE_MS2}ms sau ${processedInBatch}/${itemEntries.length} item...`);
-        await sleep4(SHOPEE_PRODUCT_BATCH_PAUSE_MS2);
+        await sleep2(SHOPEE_PRODUCT_BATCH_PAUSE_MS2);
       }
       continue;
     }
@@ -138300,10 +138839,10 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
       pushed += rows.length;
     }
     processedInBatch++;
-    await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
+    await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
     if (processedInBatch % SHOPEE_PRODUCT_BATCH_SIZE2 === 0 && processedInBatch < itemEntries.length) {
       console.log(`[Shopee Push Stock] Ngh\u1EC9 ${SHOPEE_PRODUCT_BATCH_PAUSE_MS2}ms sau ${processedInBatch}/${itemEntries.length} item...`);
-      await sleep4(SHOPEE_PRODUCT_BATCH_PAUSE_MS2);
+      await sleep2(SHOPEE_PRODUCT_BATCH_PAUSE_MS2);
     }
   }
   if (invalidItemIds.size > 0) {
@@ -139026,7 +139565,7 @@ async function fetchAllShopeeItemIds(shopId, accessToken) {
     hasNext = !!listResult.response?.has_next_page && items.length > 0;
     offset = listResult.response?.next_offset ?? offset + items.length;
     pageGuard++;
-    if (hasNext) await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
+    if (hasNext) await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
   }
   return allItemIds;
 }
@@ -139052,7 +139591,7 @@ async function fetchShopeeBaseItemsByIds(shopId, accessToken, itemIds) {
       console.error(`[Shopee Sync] get_item_base_info batch ${batchIdx} exception: ${msg}`);
     }
     if (batchIdx < batches.length - 1) {
-      await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2);
+      await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
     }
   }
   return allItems;
@@ -139212,7 +139751,7 @@ async function fetchShopeeLogisticsJson(url2, init, context, opts) {
         console.warn(
           `[Shopee Logistics] ${context} HTTP ${response.status} \u2014 retry ${attempt + 1}/${maxAttempts} sau ${waitMs}ms`
         );
-        await sleep4(waitMs);
+        await sleep2(waitMs);
         continue;
       }
       return { response, json: json2 };
@@ -139226,7 +139765,7 @@ async function fetchShopeeLogisticsJson(url2, init, context, opts) {
         console.warn(
           `[Shopee Logistics] ${context} l\u1ED7i m\u1EA1ng \u2014 retry ${attempt + 1}/${maxAttempts} sau ${waitMs}ms`
         );
-        await sleep4(waitMs);
+        await sleep2(waitMs);
         continue;
       }
       throw error;
@@ -139793,7 +140332,7 @@ async function shopeeDownloadShippingDocument(shopId, accessToken, orderList, fi
   ensureLabelsDir();
   const safe = safeLabelFilename(filename);
   if (!safe) return { error: "invalid_filename", message: "T\xEAn file PDF cache kh\xF4ng h\u1EE3p l\u1EC7." };
-  const destination = import_path24.default.join(PDF_DIR, safe);
+  const destination = import_path25.default.join(PDF_DIR, safe);
   const cached = getValidLabelDiskFile(safe);
   if (cached) {
     console.log(`[Shopee API] PDF cache HIT ${safe} (${cached.size} bytes) \u2014 b\u1ECF qua download`);
@@ -139937,7 +140476,7 @@ async function readCachedOrderWaybillPdf(orderSn) {
   const disk = getValidLabelDiskFile(filename);
   if (!disk || disk.size <= 0 || disk.size > SHOPEE_WAYBILL_PDF_MAX_BYTES) return null;
   try {
-    const buf = await import_fs24.default.promises.readFile(disk.filePath);
+    const buf = await import_fs25.default.promises.readFile(disk.filePath);
     if (buf.length && isPdfBuffer(buf)) return buf;
   } catch (err) {
     console.warn(`[Shopee Print] \u0111\u1ECDc cache ${filename}:`, err?.message || err);
@@ -139969,7 +140508,7 @@ async function cacheOrderWaybillPdf(orderSn, buffer) {
   if (!sn || !buffer?.length) return;
   const filename = `order_${sn}.pdf`;
   if (!isPdfBuffer(buffer)) {
-    const dest = import_path24.default.join(PDF_DIR, filename);
+    const dest = import_path25.default.join(PDF_DIR, filename);
     unlinkWaybillFileQuiet(dest);
     const described = describeShopeeWaybillPayloadError("", buffer);
     throw new Error(described.message);
@@ -140189,7 +140728,7 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
     const pendingByOrder = /* @__PURE__ */ new Map();
     for (const [sn, rows] of byOrder) {
       const filename = `order_${sn}.pdf`;
-      if (import_fs24.default.existsSync(import_path24.default.join(PDF_DIR, filename))) {
+      if (import_fs25.default.existsSync(import_path25.default.join(PDF_DIR, filename))) {
         const cached = getValidLabelDiskFile(filename);
         if (cached) {
           console.log(`[Shopee Batch Waybill] CACHE HIT ${filename} (${cached.size} bytes)`);
@@ -140341,7 +140880,7 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
               waybillDownloadBudgetMs(opts?.deadlineAt)
             );
             if (downloadResult?.filePath && downloadResult?.filename && downloadResult?.size) {
-              const mergedBuf = await import_fs24.default.promises.readFile(downloadResult.filePath);
+              const mergedBuf = await import_fs25.default.promises.readFile(downloadResult.filePath);
               if (mergedBuf.length && isPdfBuffer(mergedBuf)) {
                 putLabelMem(downloadResult.filename, mergedBuf, "application/pdf");
                 const splitMap = await splitMergedWaybillPdfToOrders(mergedBuf, readySns);
@@ -140357,7 +140896,7 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
                     }
                     commitReady(sn, {
                       filename: `order_${sn}.pdf`,
-                      filePath: import_path24.default.join(PDF_DIR, `order_${sn}.pdf`),
+                      filePath: import_path25.default.join(PDF_DIR, `order_${sn}.pdf`),
                       size: buf.length
                     });
                   }
@@ -140427,7 +140966,7 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
                   )
                 };
               }
-              const buf = await import_fs24.default.promises.readFile(one.filePath);
+              const buf = await import_fs25.default.promises.readFile(one.filePath);
               if (!buf.length || !isPdfBuffer(buf)) {
                 unlinkWaybillFileQuiet(one.filePath);
                 const described = describeShopeeWaybillPayloadError(String(one.contentType || ""), buf);
@@ -141042,7 +141581,7 @@ async function enrichShopeeOrdersEscrowFinance(shopId, accessToken, orders) {
       });
       console.warn(`[Shopee Finance] escrow ${order.orderSn} failed:`, err);
     }
-    if (i2 < targets.length - 1) await delay2(ORDER_SYNC_SAVE_DELAY_MS);
+    if (i2 < targets.length - 1) await delay(ORDER_SYNC_SAVE_DELAY_MS);
   }
 }
 function findLinkedProductIdForShopeeLine(listings, shopId, productId, modelId) {
@@ -141408,7 +141947,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
   const sources = [];
   let carrier;
   let internal;
-  const consider = (key, value, path25) => {
+  const consider = (key, value, path26) => {
     if (!SHOPEE_TRACKING_KEY_RE.test(key) && key.toLowerCase() !== "tracking_number" && key.toLowerCase() !== "tracking_no") {
       if (!/tracking/i.test(key) || /time|date|url|info|hint|status|type/i.test(key)) return;
     }
@@ -141418,22 +141957,22 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
     if (isShopeeInternalTrackingCode2(s2)) {
       if (!internal) {
         internal = s2;
-        sources.push(`${path25}=${s2}(internal)`);
+        sources.push(`${path26}=${s2}(internal)`);
       }
       return;
     }
     if (!carrier) {
       carrier = s2;
-      sources.push(`${path25}=${s2}`);
+      sources.push(`${path26}=${s2}`);
     } else if (isCarrierTrackingCode3(s2) && !isCarrierTrackingCode3(carrier)) {
       carrier = s2;
-      sources.push(`${path25}=${s2}`);
+      sources.push(`${path26}=${s2}`);
     }
   };
-  const walk = (node, path25, depth) => {
+  const walk = (node, path26, depth) => {
     if (node == null || depth > 8) return;
     if (Array.isArray(node)) {
-      node.forEach((item, i2) => walk(item, `${path25}[${i2}]`, depth + 1));
+      node.forEach((item, i2) => walk(item, `${path26}[${i2}]`, depth + 1));
       return;
     }
     if (typeof node !== "object") return;
@@ -141442,7 +141981,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
       if (nodeSn && nodeSn !== wantSn) return;
     }
     for (const [k, v] of Object.entries(node)) {
-      const childPath = path25 ? `${path25}.${k}` : k;
+      const childPath = path26 ? `${path26}.${k}` : k;
       if (v != null && (typeof v === "string" || typeof v === "number")) {
         consider(k, v, childPath);
       } else {
@@ -142092,7 +142631,7 @@ async function forceResyncStuckOrdersWithoutTracking(opts) {
       console.error(`[Force Resync] ${orderSn} FAILED:`, err?.stack || err);
     }
     results.push(item);
-    await sleep4(SHOPEE_TRACKING_FETCH_DELAY_MS);
+    await sleep2(SHOPEE_TRACKING_FETCH_DELAY_MS);
   }
   console.log(
     `[Force Resync] DONE attempted=${results.length} healed=${healed} ok=${results.filter((r2) => r2.ok).length}`
@@ -142341,7 +142880,7 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
           );
         }
       }
-      if (i2 + SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS < sns.length) await sleep4(PRINT_API_DELAY_MS);
+      if (i2 + SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS < sns.length) await sleep2(PRINT_API_DELAY_MS);
     }
   }
   let nextOrderIndex = 0;
@@ -142579,7 +143118,7 @@ async function shopeeGetTrackingNumberWithRetry(shopId, accessToken, orderSn, pa
       last = { error: "exception", message: err?.message || String(err) };
       if (attempt >= maxAttempts) return last;
     }
-    await sleep4(300);
+    await sleep2(300);
   }
   return last;
 }
@@ -142825,7 +143364,7 @@ async function backfillMissingGhnTrackingNumbers() {
               apiErr?.message || apiErr
             );
             errors += 1;
-            await sleep4(SHOPEE_TRACKING_FETCH_DELAY_MS);
+            await sleep2(SHOPEE_TRACKING_FETCH_DELAY_MS);
             continue;
           }
           let tn = extractRawGhnTrackingNumber(result);
@@ -142872,7 +143411,7 @@ async function backfillMissingGhnTrackingNumbers() {
             orderErr?.message || orderErr
           );
         }
-        await sleep4(SHOPEE_TRACKING_FETCH_DELAY_MS);
+        await sleep2(SHOPEE_TRACKING_FETCH_DELAY_MS);
       }
     }
     if (pendingWrites.length > 0) {
@@ -143272,7 +143811,7 @@ async function repairMissingShopeeTrackingInOrders(orders, opts) {
       attempted++;
       continue;
     } finally {
-      await sleep4(SHOPEE_TRACKING_FETCH_DELAY_MS);
+      await sleep2(SHOPEE_TRACKING_FETCH_DELAY_MS);
     }
   }
   if (attempted > 0) {
@@ -143401,7 +143940,7 @@ async function healCancelledReturnTrackingOrders(opts) {
           err?.message || err
         );
       } finally {
-        await sleep4(HEAL_ITEM_DELAY_MS);
+        await sleep2(HEAL_ITEM_DELAY_MS);
       }
     }
     try {
@@ -143475,7 +144014,7 @@ async function ensureShopeeTrackingForBatch(apiShopId, accessToken, batch) {
         );
       }
     });
-    if (i2 + chunkSize < needFetch.length) await sleep4(pauseMs);
+    if (i2 + chunkSize < needFetch.length) await sleep2(pauseMs);
   }
   const patches = needFetch.map((order) => buildTrackingMongoPatchFromOrder(order)).filter(Boolean);
   if (patches.length > 0) {
@@ -144112,11 +144651,11 @@ async function fetchNormalizeShopeeOrderChunk(apiShopId, accessToken, fileKey, o
               `[Sync Shop ${shopFileKey}] L\u1ED7i: token_refresh order=${orderSn}:`,
               refreshErr?.message || refreshErr
             );
-            await delay2(1e3);
+            await delay(1e3);
           }
         }
         if (isShopeeRateLimited(detailResult?.httpStatus, detailResult)) {
-          await delay2(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+          await delay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
           detailResult = await shopeeGetOrderDetail(shopApiId, tok, [orderSn]);
         }
         if (detailResult?.error) {
@@ -144179,14 +144718,14 @@ async function fetchNormalizeShopeeOrderChunk(apiShopId, accessToken, fileKey, o
             `[Sync Shop ${shopFileKey}] L\u1ED7i: Token refresh sau GetOrderDetail:`,
             refreshErr?.message || refreshErr
           );
-          await delay2(1e3);
+          await delay(1e3);
         }
       }
       if (isShopeeRateLimited(detailResult?.httpStatus, detailResult)) {
         console.warn(
           `[Sync Shop ${shopFileKey}] L\u1ED7i: get_order_detail RATE LIMIT \u2014 ch\u1EDD ${ORDER_DETAIL_BATCH_DELAY_MS * 2}ms r\u1ED3i retry`
         );
-        await delay2(ORDER_DETAIL_BATCH_DELAY_MS * 2);
+        await delay(ORDER_DETAIL_BATCH_DELAY_MS * 2);
         try {
           detailResult = await shopeeGetOrderDetail(shopApiId, accessToken, batch);
         } catch (rlErr) {
@@ -144254,7 +144793,7 @@ async function fetchNormalizeShopeeOrderChunk(apiShopId, accessToken, fileKey, o
       await fetchBatchIndividually(batch, accessToken);
     }
     if (i2 + batchSize < snList.length) {
-      await delay2(ORDER_DETAIL_BATCH_DELAY_MS);
+      await delay(ORDER_DETAIL_BATCH_DELAY_MS);
     }
   }
   if (normalized.length > 0 && !skipEscrow) {
@@ -144623,7 +145162,7 @@ async function syncConfirmedOrdersFromShopee(orders, shipMethod) {
     (o) => o && String(o.orderSn || o.order_sn || "").trim()
   );
   if (!list.length) return;
-  await delay2(CONFIRM_SYNC_SHOP_DELAY_MS);
+  await delay(CONFIRM_SYNC_SHOP_DELAY_MS);
   const byShop = /* @__PURE__ */ new Map();
   for (const o of list) {
     const shopId = String(o.shopId || o.shop_id || "").trim();
@@ -144634,7 +145173,7 @@ async function syncConfirmedOrdersFromShopee(orders, shipMethod) {
   }
   let shopIdx = 0;
   for (const [shopId, shopOrders] of byShop) {
-    if (shopIdx > 0) await delay2(CONFIRM_SYNC_SHOP_DELAY_MS);
+    if (shopIdx > 0) await delay(CONFIRM_SYNC_SHOP_DELAY_MS);
     shopIdx += 1;
     const sns = [
       ...new Set(
@@ -144890,9 +145429,9 @@ function withLocalDbTimeout(promise, timeoutMs, label) {
   return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
 }
 var MONGO_ORDER_RECONCILE_COOLDOWN_MS = 5 * 60 * 1e3;
-var PRODUCTS_DB_PATH = import_path24.default.join(APP_ROOT14, "data", "products.json");
-var LOCAL_INVENTORY_CACHE_PATH = import_path24.default.join(APP_ROOT14, "data", "local_inventory.json");
-var SQLITE_LEGACY_PATH = import_path24.default.join(APP_ROOT14, "database.sqlite");
+var PRODUCTS_DB_PATH = import_path25.default.join(APP_ROOT14, "data", "products.json");
+var LOCAL_INVENTORY_CACHE_PATH = import_path25.default.join(APP_ROOT14, "data", "local_inventory.json");
+var SQLITE_LEGACY_PATH = import_path25.default.join(APP_ROOT14, "database.sqlite");
 function getProductChildrenList(p) {
   try {
     if (Array.isArray(p?.children) && p.children.length > 0) return p.children;
@@ -144988,18 +145527,18 @@ async function saveProducts(products) {
     throw error instanceof Error ? error : new Error(String(error));
   }
 }
-var INVENTORY_AUDIT_PATH = import_path24.default.join(APP_ROOT14, "data", "inventory_audit.json");
-var INVENTORY_BACKUP_DIR = import_path24.default.join(APP_ROOT14, "data", "inventory_backups");
+var INVENTORY_AUDIT_PATH = import_path25.default.join(APP_ROOT14, "data", "inventory_audit.json");
+var INVENTORY_BACKUP_DIR = import_path25.default.join(APP_ROOT14, "data", "inventory_backups");
 function writeInventoryAudit(event, details = {}) {
   try {
     ensureDataDirs();
     let existing = [];
-    if (import_fs24.default.existsSync(INVENTORY_AUDIT_PATH)) {
-      const parsed = JSON.parse(import_fs24.default.readFileSync(INVENTORY_AUDIT_PATH, "utf-8"));
+    if (import_fs25.default.existsSync(INVENTORY_AUDIT_PATH)) {
+      const parsed = JSON.parse(import_fs25.default.readFileSync(INVENTORY_AUDIT_PATH, "utf-8"));
       if (Array.isArray(parsed)) existing = parsed;
     }
     const entry = { id: `inventory-audit-${Date.now()}`, event, at: (/* @__PURE__ */ new Date()).toISOString(), ...details };
-    import_fs24.default.writeFileSync(INVENTORY_AUDIT_PATH, JSON.stringify([...existing.slice(-199), entry], null, 2), "utf-8");
+    import_fs25.default.writeFileSync(INVENTORY_AUDIT_PATH, JSON.stringify([...existing.slice(-199), entry], null, 2), "utf-8");
     console.warn(`[Inventory Audit] ${event}`, details);
   } catch (error) {
     console.error("[Inventory Audit] Kh\xF4ng th\u1EC3 ghi audit:", error);
@@ -145007,36 +145546,36 @@ function writeInventoryAudit(event, details = {}) {
 }
 async function backupInventoryBeforeDestructiveAction(reason) {
   ensureDataDirs();
-  import_fs24.default.mkdirSync(INVENTORY_BACKUP_DIR, { recursive: true });
+  import_fs25.default.mkdirSync(INVENTORY_BACKUP_DIR, { recursive: true });
   const [products, listings] = await Promise.all([loadProducts(), readChannelListingsDb()]);
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const fileName = `inventory-${reason}-${stamp}.json`;
-  import_fs24.default.writeFileSync(
-    import_path24.default.join(INVENTORY_BACKUP_DIR, fileName),
+  import_fs25.default.writeFileSync(
+    import_path25.default.join(INVENTORY_BACKUP_DIR, fileName),
     JSON.stringify({ createdAt: (/* @__PURE__ */ new Date()).toISOString(), reason, products, listings }, null, 2),
     "utf-8"
   );
   writeInventoryAudit("backup_created", { reason, fileName, productCount: products.length, listingCount: listings.length });
   return fileName;
 }
-var CHANNEL_LISTINGS_DB_PATH = import_path24.default.join(APP_ROOT14, "data", "channel_listings.json");
-var SHOPEE_SYNC_ERRORS_DB_PATH = import_path24.default.join(APP_ROOT14, "data", "shopee_sync_errors.json");
+var CHANNEL_LISTINGS_DB_PATH = import_path25.default.join(APP_ROOT14, "data", "channel_listings.json");
+var SHOPEE_SYNC_ERRORS_DB_PATH = import_path25.default.join(APP_ROOT14, "data", "shopee_sync_errors.json");
 var SHOPEE_SYNC_ERRORS_MAX_ROWS = 500;
 function renameLegacyJsonIfExists(filePath) {
-  if (!import_fs24.default.existsSync(filePath)) return;
+  if (!import_fs25.default.existsSync(filePath)) return;
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const dest = `${filePath}.migrated.${stamp}`;
   try {
-    import_fs24.default.renameSync(filePath, dest);
-    console.log(`[Mongo Migrate] Renamed ${import_path24.default.basename(filePath)} \u2192 ${import_path24.default.basename(dest)}`);
+    import_fs25.default.renameSync(filePath, dest);
+    console.log(`[Mongo Migrate] Renamed ${import_path25.default.basename(filePath)} \u2192 ${import_path25.default.basename(dest)}`);
   } catch (err) {
     console.warn(`[Mongo Migrate] Kh\xF4ng rename \u0111\u01B0\u1EE3c ${filePath}:`, err);
   }
 }
 function readLegacyJsonArray(filePath) {
   try {
-    if (!import_fs24.default.existsSync(filePath)) return [];
-    const raw = import_fs24.default.readFileSync(filePath, "utf-8");
+    if (!import_fs25.default.existsSync(filePath)) return [];
+    const raw = import_fs25.default.readFileSync(filePath, "utf-8");
     if (!raw || !raw.trim()) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -145045,26 +145584,26 @@ function readLegacyJsonArray(filePath) {
   }
 }
 function findLatestMigratedJson(baseName) {
-  const dataDir = import_path24.default.join(APP_ROOT14, "data");
-  if (!import_fs24.default.existsSync(dataDir)) return null;
+  const dataDir = import_path25.default.join(APP_ROOT14, "data");
+  if (!import_fs25.default.existsSync(dataDir)) return null;
   const prefix = `${baseName}.migrated.`;
-  const matches = import_fs24.default.readdirSync(dataDir).filter((f3) => f3.startsWith(prefix)).sort();
+  const matches = import_fs25.default.readdirSync(dataDir).filter((f3) => f3.startsWith(prefix)).sort();
   if (matches.length === 0) return null;
-  return import_path24.default.join(dataDir, matches[matches.length - 1]);
+  return import_path25.default.join(dataDir, matches[matches.length - 1]);
 }
 async function maybeMigrateJsonToMongoOnBoot() {
   if (isProductsDiskMode()) {
     try {
-      const existing = import_fs24.default.existsSync(getProductsDiskPath()) ? JSON.parse(import_fs24.default.readFileSync(getProductsDiskPath(), "utf-8") || "[]") : [];
+      const existing = import_fs25.default.existsSync(getProductsDiskPath()) ? JSON.parse(import_fs25.default.readFileSync(getProductsDiskPath(), "utf-8") || "[]") : [];
       if (!Array.isArray(existing) || existing.length === 0) {
-        const dataDir = import_path24.default.join(APP_ROOT14, "data");
-        if (import_fs24.default.existsSync(dataDir)) {
-          const migrated = import_fs24.default.readdirSync(dataDir).filter((n) => /^products\.json\.migrated\./i.test(n)).sort();
+        const dataDir = import_path25.default.join(APP_ROOT14, "data");
+        if (import_fs25.default.existsSync(dataDir)) {
+          const migrated = import_fs25.default.readdirSync(dataDir).filter((n) => /^products\.json\.migrated\./i.test(n)).sort();
           const latest = migrated[migrated.length - 1];
           if (latest) {
-            const src = import_path24.default.join(dataDir, latest);
+            const src = import_path25.default.join(dataDir, latest);
             const dest = getProductsDiskPath();
-            import_fs24.default.copyFileSync(src, dest);
+            import_fs25.default.copyFileSync(src, dest);
             console.log(`[Products Disk] Kh\xF4i ph\u1EE5c Kho G\u1ED1c t\u1EEB ${latest} \u2192 products.json`);
           }
         }
@@ -145081,9 +145620,9 @@ async function maybeMigrateJsonToMongoOnBoot() {
   try {
     const productCount = await countProducts();
     const listingCount = await countChannelListings();
-    const legacyProducts = PRODUCTS_DB_PATH && import_fs24.default.existsSync(PRODUCTS_DB_PATH) ? PRODUCTS_DB_PATH : findLatestMigratedJson("products.json");
-    const legacyListings = import_fs24.default.existsSync(CHANNEL_LISTINGS_DB_PATH) ? CHANNEL_LISTINGS_DB_PATH : findLatestMigratedJson("channel_listings.json");
-    const hasLegacy = !!legacyProducts || !!legacyListings || import_fs24.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) || !!findLatestMigratedJson("local_inventory.json");
+    const legacyProducts = PRODUCTS_DB_PATH && import_fs25.default.existsSync(PRODUCTS_DB_PATH) ? PRODUCTS_DB_PATH : findLatestMigratedJson("products.json");
+    const legacyListings = import_fs25.default.existsSync(CHANNEL_LISTINGS_DB_PATH) ? CHANNEL_LISTINGS_DB_PATH : findLatestMigratedJson("channel_listings.json");
+    const hasLegacy = !!legacyProducts || !!legacyListings || import_fs25.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) || !!findLatestMigratedJson("local_inventory.json");
     if (!hasLegacy) {
       console.log(
         `[MongoDB] Ready \u2014 products=${productCount}, listings=${listingCount} @ ${getMongoUriMasked()} (ready=${isMongoReady()})`
@@ -145102,10 +145641,10 @@ async function maybeMigrateJsonToMongoOnBoot() {
     console.log("[Mongo Migrate] Mongo tr\u1ED1ng + c\xF2n JSON legacy \u2014 b\u1EAFt \u0111\u1EA7u migrate...");
     let products = legacyProducts ? readLegacyJsonArray(legacyProducts) : [];
     let listings = legacyListings ? readLegacyJsonArray(legacyListings) : [];
-    const invPath = import_fs24.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) ? LOCAL_INVENTORY_CACHE_PATH : findLatestMigratedJson("local_inventory.json");
+    const invPath = import_fs25.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) ? LOCAL_INVENTORY_CACHE_PATH : findLatestMigratedJson("local_inventory.json");
     if (invPath) {
       try {
-        const inv = JSON.parse(import_fs24.default.readFileSync(invPath, "utf-8"));
+        const inv = JSON.parse(import_fs25.default.readFileSync(invPath, "utf-8"));
         const invProducts = Array.isArray(inv?.products) ? inv.products : [];
         const invListings = Array.isArray(inv?.listings) ? inv.listings : [];
         const byId = /* @__PURE__ */ new Map();
@@ -145131,10 +145670,10 @@ async function maybeMigrateJsonToMongoOnBoot() {
     renameLegacyJsonIfExists(PRODUCTS_DB_PATH);
     renameLegacyJsonIfExists(CHANNEL_LISTINGS_DB_PATH);
     renameLegacyJsonIfExists(LOCAL_INVENTORY_CACHE_PATH);
-    if (import_fs24.default.existsSync(SQLITE_LEGACY_PATH)) {
+    if (import_fs25.default.existsSync(SQLITE_LEGACY_PATH)) {
       try {
         const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-        import_fs24.default.renameSync(SQLITE_LEGACY_PATH, `${SQLITE_LEGACY_PATH}.legacy.${stamp}`);
+        import_fs25.default.renameSync(SQLITE_LEGACY_PATH, `${SQLITE_LEGACY_PATH}.legacy.${stamp}`);
         console.log("[Mongo Migrate] Archived database.sqlite (kh\xF4ng c\xF2n d\xF9ng)");
       } catch {
       }
@@ -145145,8 +145684,8 @@ async function maybeMigrateJsonToMongoOnBoot() {
 }
 function readShopeeSyncErrorsDb() {
   try {
-    if (!import_fs24.default.existsSync(SHOPEE_SYNC_ERRORS_DB_PATH)) return [];
-    const raw = import_fs24.default.readFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, "utf-8");
+    if (!import_fs25.default.existsSync(SHOPEE_SYNC_ERRORS_DB_PATH)) return [];
+    const raw = import_fs25.default.readFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, "utf-8");
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
   } catch (err) {
@@ -145170,8 +145709,8 @@ async function appendShopeeSyncErrorToDb(entry) {
   try {
     const prev = readShopeeSyncErrorsDb();
     const next = [row, ...prev].slice(0, SHOPEE_SYNC_ERRORS_MAX_ROWS);
-    import_fs24.default.mkdirSync(import_path24.default.dirname(SHOPEE_SYNC_ERRORS_DB_PATH), { recursive: true });
-    import_fs24.default.writeFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, JSON.stringify(next, null, 2), "utf-8");
+    import_fs25.default.mkdirSync(import_path25.default.dirname(SHOPEE_SYNC_ERRORS_DB_PATH), { recursive: true });
+    import_fs25.default.writeFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, JSON.stringify(next, null, 2), "utf-8");
   } catch (err) {
     console.error("[Shopee Sync Errors DB] Failed to write:", err);
   }
@@ -145474,7 +146013,7 @@ async function persistAutoHealedMappingSnapshots(enriched) {
     }
     if (changed > 0) {
       await writeChannelListingsDb(Array.from(byId.values()));
-      await sleep4(150);
+      await sleep2(150);
       console.log(
         `[Mapping Products] Auto-heal snapshot: ${changed} d\xF2ng c\u1EADp nh\u1EADt linkedProductSku/Title theo Kho g\u1ED1c`
       );
@@ -145750,7 +146289,7 @@ async function batchAutoLinkFromDatabase(opts) {
     if (wroteChanges) {
       await bulkUpsertChannelListingsToStore(newlyLinkedRows);
       await flushDbWrites();
-      await sleep4(200);
+      await sleep2(200);
     }
     const unlinkedRemaining = dbListings.filter((row) => {
       const safeRow = sanitizeChannelListingRow(row);
@@ -145969,7 +146508,7 @@ async function bulkAutoLinkAllPending(opts) {
     masterProductCount
   };
 }
-var CHANNEL_SETTINGS_PATH3 = import_path24.default.join(APP_ROOT14, "data", "channel_settings.json");
+var CHANNEL_SETTINGS_PATH3 = import_path25.default.join(APP_ROOT14, "data", "channel_settings.json");
 var DEFAULT_CHANNEL_SETTINGS = {
   shopeeConnected: false,
   shopeeShopId: "",
@@ -146141,8 +146680,8 @@ function dedupeShopsByPlatformId(shops) {
 }
 function loadChannelSettings() {
   try {
-    if (!import_fs24.default.existsSync(CHANNEL_SETTINGS_PATH3)) return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
-    const raw = import_fs24.default.readFileSync(CHANNEL_SETTINGS_PATH3, "utf-8");
+    if (!import_fs25.default.existsSync(CHANNEL_SETTINGS_PATH3)) return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
+    const raw = import_fs25.default.readFileSync(CHANNEL_SETTINGS_PATH3, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : {};
     const rawShops = Array.isArray(parsed?.shops) ? parsed.shops : [];
     const shops = upsertShopsInChannelSettings([], rawShops);
@@ -146164,7 +146703,7 @@ function saveChannelSettings(settings) {
     const incoming = Array.isArray(settings?.shops) ? settings.shops : [];
     const shops = upsertShopsInChannelSettings(onDisk.shops || [], incoming);
     const payload = { ...DEFAULT_CHANNEL_SETTINGS, ...onDisk, ...settings, shops };
-    import_fs24.default.writeFileSync(CHANNEL_SETTINGS_PATH3, JSON.stringify(payload, null, 2), "utf-8");
+    import_fs25.default.writeFileSync(CHANNEL_SETTINGS_PATH3, JSON.stringify(payload, null, 2), "utf-8");
     console.log(
       `[Channel Settings] UPSERT ${shops.length} shop(s) \u2192 ${CHANNEL_SETTINGS_PATH3}`,
       shops.map((s2) => s2.shopId).join(", ")
@@ -146747,7 +147286,7 @@ async function findReturnSnForOrderWebhook(shopId, accessToken, orderSn) {
     }
     if (!parseShopeeReturnListMore(listResult) || rows.length === 0) break;
     pageNo += 1;
-    await sleep4(150);
+    await sleep2(150);
   }
   return "";
 }
@@ -147016,7 +147555,7 @@ async function upsertShopeeWebhookShallow(body, orders) {
   return String(merged.orderSn);
 }
 async function startServer() {
-  const app = (0, import_express28.default)();
+  const app = (0, import_express29.default)();
   const PORT = process.env.PORT || 3e3;
   const appWithRouteMethods = app;
   for (const method of ["get", "post", "put", "patch", "delete"]) {
@@ -147072,8 +147611,8 @@ async function startServer() {
       onQueueOverflow: handleWebhookQueueOverflow
     })
   );
-  app.use(import_express28.default.json({ limit: "50mb" }));
-  app.use(import_express28.default.urlencoded({ limit: "50mb", extended: true }));
+  app.use(import_express29.default.json({ limit: "50mb" }));
+  app.use(import_express29.default.urlencoded({ limit: "50mb", extended: true }));
   try {
     ensureLabelsDir();
   } catch (err) {
@@ -147112,7 +147651,7 @@ async function startServer() {
     sanitizeChannelListingRow,
     bulkUpsertChannelListingsToStore,
     flushDbWrites,
-    sleep: sleep4,
+    sleep: sleep2,
     loadProducts,
     persistHealedBrokenMappingLinks,
     persistAutoHealedMappingSnapshots,
@@ -147195,10 +147734,10 @@ async function startServer() {
     writeInventoryAudit,
     writeChannelListingsDb,
     writeProductListingsDb: (rows) => {
-      const dest = import_path24.default.join(APP_ROOT14, "data", "product_listings.json");
-      const dir = import_path24.default.dirname(dest);
-      if (!import_fs24.default.existsSync(dir)) import_fs24.default.mkdirSync(dir, { recursive: true });
-      import_fs24.default.writeFileSync(dest, JSON.stringify(rows, null, 2), "utf-8");
+      const dest = import_path25.default.join(APP_ROOT14, "data", "product_listings.json");
+      const dir = import_path25.default.dirname(dest);
+      if (!import_fs25.default.existsSync(dir)) import_fs25.default.mkdirSync(dir, { recursive: true });
+      import_fs25.default.writeFileSync(dest, JSON.stringify(rows, null, 2), "utf-8");
     },
     pushStockUpdatesToShopee,
     resolveShopeeTokenShopId,
@@ -147225,6 +147764,7 @@ async function startServer() {
   app.use("/api/materials", authMiddleware, materialsRoutes);
   app.use("/api/material-imports", authMiddleware, materialImportsRoutes);
   app.use("/api/expenses", authMiddleware, expensesRoutes);
+  app.use("/api/finance", authMiddleware, financeRoutes);
   app.use("/api/address-book", authMiddleware, addressBookRoutes);
   initDashboardController({
     isMongoReady,
@@ -147442,14 +147982,14 @@ async function startServer() {
   };
   const streamDelegatedPdf = (res, filePath, filename) => {
     const valid = getValidLabelDiskFile(filename);
-    if (!valid || import_path24.default.resolve(valid.filePath) !== import_path24.default.resolve(filePath)) return false;
+    if (!valid || import_path25.default.resolve(valid.filePath) !== import_path25.default.resolve(filePath)) return false;
     res.status(200);
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
     res.setHeader("Content-Length", String(valid.size));
     res.setHeader("Cache-Control", "private, max-age=300");
     res.setHeader("X-Content-Type-Options", "nosniff");
-    import_fs24.default.createReadStream(valid.filePath).pipe(res);
+    import_fs25.default.createReadStream(valid.filePath).pipe(res);
     return true;
   };
   const silentPdfPrefetchInFlight = /* @__PURE__ */ new Set();
@@ -147462,19 +148002,19 @@ async function startServer() {
       if (!silentPdfPrefetchInFlight.has(sn) && !labelPrepareInFlight.has(sn)) {
         return Boolean(getValidLabelDiskFile(filename));
       }
-      await sleep4(400);
+      await sleep2(400);
     }
     return Boolean(getValidLabelDiskFile(filename));
   }
   const downloadPdfRoute = async (req, res) => {
     const orderSn = String(req.params.orderSn || "").replace(/^shopee-/i, "").trim();
     const expectedFilename = buildCachedLabelFilename([orderSn]);
-    const expectedPath = import_path24.default.join(PDF_DIR, expectedFilename);
+    const expectedPath = import_path25.default.join(PDF_DIR, expectedFilename);
     const failDownload = (error, fallbackMessage) => {
       console.error("DEBUG DOWNLOAD PDF FAIL for order:", orderSn, error);
       try {
-        if (import_fs24.default.existsSync(expectedPath) && !getValidLabelDiskFile(expectedFilename)) {
-          import_fs24.default.unlinkSync(expectedPath);
+        if (import_fs25.default.existsSync(expectedPath) && !getValidLabelDiskFile(expectedFilename)) {
+          import_fs25.default.unlinkSync(expectedPath);
         }
       } catch (cleanupError) {
         console.error("DEBUG DOWNLOAD PDF FAIL for order:", orderSn, cleanupError);
@@ -147490,7 +148030,7 @@ async function startServer() {
     if (!/^[A-Za-z0-9_-]+$/.test(orderSn)) {
       return failDownload(new Error("M\xE3 \u0111\u01A1n kh\xF4ng h\u1EE3p l\u1EC7."), "M\xE3 \u0111\u01A1n kh\xF4ng h\u1EE3p l\u1EC7.");
     }
-    if (import_fs24.default.existsSync(expectedPath) && streamDelegatedPdf(res, expectedPath, expectedFilename)) {
+    if (import_fs25.default.existsSync(expectedPath) && streamDelegatedPdf(res, expectedPath, expectedFilename)) {
       console.log(`[Delegated PDF] LOCAL HIT ${expectedFilename} \u2014 b\u1ECF qua Shopee API`);
       return;
     }
@@ -147895,7 +148435,7 @@ async function startServer() {
           }
         }
         if (offset + CONFIRM_ASYNC_BATCH_SIZE < toShip.length) {
-          await sleep4(CONFIRM_ASYNC_BATCH_PAUSE_MS);
+          await sleep2(CONFIRM_ASYNC_BATCH_PAUSE_MS);
         }
       }
       const failedOrders = results.filter((result) => !result?.success).map((result) => ({
@@ -147942,11 +148482,11 @@ async function startServer() {
               persistErr?.stack || persistErr
             );
           }
-          await sleep4(200);
+          await sleep2(200);
           void prefetchTrackingAndLabelsAfterConfirm(confirmedRows).catch((primeErr) => {
             console.error("[Confirm Async] BG tracking+PDF prefetch:", primeErr?.stack || primeErr);
           });
-          await sleep4(200);
+          await sleep2(200);
           try {
             await withOperationTimeout(
               () => persistOrdersToDatabase(orders, confirmedRows),
@@ -147956,7 +148496,7 @@ async function startServer() {
           } catch (persistErr) {
             console.error("[Confirm Async] background persist failed:", persistErr?.stack || persistErr);
           }
-          await sleep4(200);
+          await sleep2(200);
           try {
             await syncConfirmedOrdersFromShopee(confirmedRows, shipMethod);
           } catch (syncErr) {
@@ -148408,12 +148948,12 @@ async function startServer() {
     );
     const pendingSns = [];
     for (const orderSn of orderSns) {
-      const localLabelPath = import_path24.default.join(PDF_DIR, `order_${orderSn}.pdf`);
-      if (import_fs24.default.existsSync(localLabelPath)) {
+      const localLabelPath = import_path25.default.join(PDF_DIR, `order_${orderSn}.pdf`);
+      if (import_fs25.default.existsSync(localLabelPath)) {
         try {
-          const stat3 = import_fs24.default.statSync(localLabelPath);
+          const stat3 = import_fs25.default.statSync(localLabelPath);
           if (stat3.isFile() && stat3.size > 0) {
-            const buf = await import_fs24.default.promises.readFile(localLabelPath);
+            const buf = await import_fs25.default.promises.readFile(localLabelPath);
             if (isPdfBuffer(buf)) {
               console.log(`[${logPrefix}] B1 CACHE HIT order_${orderSn}.pdf (${buf.length} bytes)`);
               putLabelMem(`order_${orderSn}.pdf`, buf, "application/pdf");
@@ -148519,7 +149059,7 @@ async function startServer() {
               const mem = getLabelMem(filename);
               const buf = mem?.buf;
               if (!buf?.length || buf.length > BATCH_PDF_MAX_BYTES || !isPdfBuffer(buf)) {
-                const dest = import_path24.default.join(PDF_DIR, filename);
+                const dest = import_path25.default.join(PDF_DIR, filename);
                 unlinkWaybillFileQuiet(dest);
                 const described = describeShopeeWaybillPayloadError("", buf);
                 failedBySn.set(orderSn, {
@@ -148533,7 +149073,7 @@ async function startServer() {
               documents.push({ orderSns: [orderSn], buffer: buf });
               void markHasPdfIfLabelFileReady([orderSn], shopId);
             } catch (readErr) {
-              unlinkWaybillFileQuiet(import_path24.default.join(PDF_DIR, filename));
+              unlinkWaybillFileQuiet(import_path25.default.join(PDF_DIR, filename));
               const described = describeShopeeWaybillPayloadError("", null);
               failedBySn.set(orderSn, {
                 orderSn,
@@ -148979,7 +149519,7 @@ async function startServer() {
     };
     beginLogisticsWork("silent-prefetch-pdfs");
     try {
-      const publicPdfDir = import_path24.default.join(APP_ROOT14, "public", "pdfs");
+      const publicPdfDir = import_path25.default.join(APP_ROOT14, "public", "pdfs");
       const orders = await runBeforeBatchDeadline(
         deadlineAt,
         "silent_prefetch_load_orders",
@@ -148997,14 +149537,14 @@ async function startServer() {
             const filename = buildCachedLabelFilename([orderSn]);
             const storedPdf = getValidLabelDiskFile(filename);
             if (!storedPdf) {
-              throw new Error(`PDF ch\u01B0a \u0111\u01B0\u1EE3c ghi th\xE0nh c\xF4ng v\xE0o ${import_path24.default.join(PDF_DIR, filename)}`);
+              throw new Error(`PDF ch\u01B0a \u0111\u01B0\u1EE3c ghi th\xE0nh c\xF4ng v\xE0o ${import_path25.default.join(PDF_DIR, filename)}`);
             }
             try {
-              await import_fs24.default.promises.mkdir(publicPdfDir, { recursive: true });
-              const publicDest = import_path24.default.join(publicPdfDir, filename);
+              await import_fs25.default.promises.mkdir(publicPdfDir, { recursive: true });
+              const publicDest = import_path25.default.join(publicPdfDir, filename);
               const publicTmp = `${publicDest}.${process.pid}.${Date.now()}.part`;
-              await import_fs24.default.promises.writeFile(publicTmp, document2.buffer);
-              await import_fs24.default.promises.rename(publicTmp, publicDest);
+              await import_fs25.default.promises.writeFile(publicTmp, document2.buffer);
+              await import_fs25.default.promises.rename(publicTmp, publicDest);
             } catch (publicCopyErr) {
               console.warn(
                 `[Silent Prefetch] Kh\xF4ng th\u1EC3 ghi b\u1EA3n ph\u1EE5 public/pdfs cho ${orderSn}:`,
@@ -149569,7 +150109,7 @@ async function startServer() {
         console.error("L\u1ED7i 1 \u0111\u01A1n (ship batch):", error);
       }
       if (k < runIndices.length - 1 && SHIP_ORDER_CHUNK_PAUSE_MS > 0) {
-        await sleep4(SHIP_ORDER_CHUNK_PAUSE_MS);
+        await sleep2(SHIP_ORDER_CHUNK_PAUSE_MS);
       }
     }
     const compactResults = results.filter(Boolean);
@@ -149768,7 +150308,7 @@ async function startServer() {
           });
         }
         if (SHIP_ORDER_CHUNK_PAUSE_MS > 0) {
-          await sleep4(SHIP_ORDER_CHUNK_PAUSE_MS);
+          await sleep2(SHIP_ORDER_CHUNK_PAUSE_MS);
         }
       }
       const mongoPatchesShip = toShip.map(({ index, order }) => {
@@ -150022,9 +150562,9 @@ async function startServer() {
     }
     try {
       ensureLabelsDir();
-      const matches = import_fs24.default.readdirSync(PDF_DIR).filter((name) => nameMatches(name)).map((name) => {
-        const full = import_path24.default.join(PDF_DIR, name);
-        const stat3 = import_fs24.default.statSync(full);
+      const matches = import_fs25.default.readdirSync(PDF_DIR).filter((name) => nameMatches(name)).map((name) => {
+        const full = import_path25.default.join(PDF_DIR, name);
+        const stat3 = import_fs25.default.statSync(full);
         return { name, mtime: stat3.mtimeMs, size: stat3.size };
       }).filter((x2) => x2.size > 0).sort((a, b) => b.mtime - a.mtime);
       const newest = matches[0]?.name;
@@ -150369,7 +150909,7 @@ async function startServer() {
           for (const downloaded of fallback.documents) {
             for (const orderSn of downloaded.orderSns) {
               const filename = buildCachedLabelFilename([orderSn]);
-              const dest = import_path24.default.join(PDF_DIR, filename);
+              const dest = import_path25.default.join(PDF_DIR, filename);
               let cached = await getValidLabelDiskFileAsync(filename);
               if (!cached && downloaded.buffer && isPdfBuffer(downloaded.buffer)) {
                 try {
@@ -150640,7 +151180,7 @@ async function startServer() {
       (o) => o && String(o.orderSn || o.order_sn || "").trim()
     );
     if (list.length === 0) return;
-    await sleep4(1200);
+    await sleep2(1200);
     const started2 = Date.now();
     const deadlineMs = 2e4;
     const backoffMs = [1e3, 1500, 2e3, 2500, 3e3];
@@ -150662,7 +151202,7 @@ async function startServer() {
       if (Date.now() - started2 >= deadlineMs) break;
       if (attempt > 1) {
         const wait = backoffMs[Math.min(attempt - 2, backoffMs.length - 1)];
-        await sleep4(wait);
+        await sleep2(wait);
       }
       const byShop = /* @__PURE__ */ new Map();
       for (const o of pending) {
@@ -151030,11 +151570,11 @@ async function startServer() {
     enrichShopsWithConnectionStatus
   });
   app.use("/api/settings", authMiddleware, settingsRoutes);
-  const LISTINGS_DB_PATH = import_path24.default.join(APP_ROOT14, "data", "multi_channel_listings.json");
+  const LISTINGS_DB_PATH = import_path25.default.join(APP_ROOT14, "data", "multi_channel_listings.json");
   const readListingsDb = () => {
     try {
-      if (!import_fs24.default.existsSync(LISTINGS_DB_PATH)) return [];
-      const raw = import_fs24.default.readFileSync(LISTINGS_DB_PATH, "utf-8");
+      if (!import_fs25.default.existsSync(LISTINGS_DB_PATH)) return [];
+      const raw = import_fs25.default.readFileSync(LISTINGS_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
@@ -151042,9 +151582,9 @@ async function startServer() {
     }
   };
   const writeListingsDb = (listings) => {
-    const dir = import_path24.default.dirname(LISTINGS_DB_PATH);
-    if (!import_fs24.default.existsSync(dir)) import_fs24.default.mkdirSync(dir, { recursive: true });
-    import_fs24.default.writeFileSync(LISTINGS_DB_PATH, JSON.stringify(listings, null, 2), "utf-8");
+    const dir = import_path25.default.dirname(LISTINGS_DB_PATH);
+    if (!import_fs25.default.existsSync(dir)) import_fs25.default.mkdirSync(dir, { recursive: true });
+    import_fs25.default.writeFileSync(LISTINGS_DB_PATH, JSON.stringify(listings, null, 2), "utf-8");
   };
   app.use("/api", aiRoutes);
   app.get("/api/multi-channel/listing", authMiddleware, async (_req, res) => {
@@ -151066,11 +151606,11 @@ async function startServer() {
       return res.status(500).json({ success: false, error: error.message || "L\u01B0u th\u1EA5t b\u1EA1i" });
     }
   });
-  const PRODUCT_LISTINGS_DB_PATH = import_path24.default.join(APP_ROOT14, "data", "product_listings.json");
+  const PRODUCT_LISTINGS_DB_PATH = import_path25.default.join(APP_ROOT14, "data", "product_listings.json");
   const readProductListingsDb = () => {
     try {
-      if (!import_fs24.default.existsSync(PRODUCT_LISTINGS_DB_PATH)) return [];
-      const raw = import_fs24.default.readFileSync(PRODUCT_LISTINGS_DB_PATH, "utf-8");
+      if (!import_fs25.default.existsSync(PRODUCT_LISTINGS_DB_PATH)) return [];
+      const raw = import_fs25.default.readFileSync(PRODUCT_LISTINGS_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
@@ -151078,9 +151618,9 @@ async function startServer() {
     }
   };
   const writeProductListingsDb = (rows) => {
-    const dir = import_path24.default.dirname(PRODUCT_LISTINGS_DB_PATH);
-    if (!import_fs24.default.existsSync(dir)) import_fs24.default.mkdirSync(dir, { recursive: true });
-    import_fs24.default.writeFileSync(PRODUCT_LISTINGS_DB_PATH, JSON.stringify(rows, null, 2), "utf-8");
+    const dir = import_path25.default.dirname(PRODUCT_LISTINGS_DB_PATH);
+    if (!import_fs25.default.existsSync(dir)) import_fs25.default.mkdirSync(dir, { recursive: true });
+    import_fs25.default.writeFileSync(PRODUCT_LISTINGS_DB_PATH, JSON.stringify(rows, null, 2), "utf-8");
   };
   const computeOverallListingStatus = (statuses) => {
     if (!statuses.length) return "pending";
@@ -151336,7 +151876,7 @@ async function startServer() {
         let error_message;
         if (platform === "shopee") {
           try {
-            if (i2 > 0) await sleep4(SHOPEE_PRODUCT_API_DELAY_MS2 * 2);
+            if (i2 > 0) await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2 * 2);
             if (!shopKey) throw new Error("Thi\u1EBFu Shopee shop_id (OAuth)");
             const existingListing = allRows.find(
               (r2) => r2.product_id === productId && String(r2.shop_id) === shopKey && r2.platform === "shopee" && r2.status === "success" && r2.platform_product_id
@@ -151662,12 +152202,12 @@ async function startServer() {
       });
     }
   });
-  const PUBLISH_EDIT_DB_PATH = import_path24.default.join(APP_ROOT14, "data", "publish_edit.json");
-  const FRAMED_IMAGES_DIR = import_path24.default.join(APP_ROOT14, "data", "framed_images");
+  const PUBLISH_EDIT_DB_PATH = import_path25.default.join(APP_ROOT14, "data", "publish_edit.json");
+  const FRAMED_IMAGES_DIR = import_path25.default.join(APP_ROOT14, "data", "framed_images");
   const readPublishEditDb = () => {
     try {
-      if (!import_fs24.default.existsSync(PUBLISH_EDIT_DB_PATH)) return { config: {}, meta: {} };
-      const raw = import_fs24.default.readFileSync(PUBLISH_EDIT_DB_PATH, "utf-8");
+      if (!import_fs25.default.existsSync(PUBLISH_EDIT_DB_PATH)) return { config: {}, meta: {} };
+      const raw = import_fs25.default.readFileSync(PUBLISH_EDIT_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return { config: parsed.config || {}, meta: parsed.meta || {} };
     } catch {
@@ -151675,9 +152215,9 @@ async function startServer() {
     }
   };
   const writePublishEditDb = (data) => {
-    const dir = import_path24.default.dirname(PUBLISH_EDIT_DB_PATH);
-    if (!import_fs24.default.existsSync(dir)) import_fs24.default.mkdirSync(dir, { recursive: true });
-    import_fs24.default.writeFileSync(PUBLISH_EDIT_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
+    const dir = import_path25.default.dirname(PUBLISH_EDIT_DB_PATH);
+    if (!import_fs25.default.existsSync(dir)) import_fs25.default.mkdirSync(dir, { recursive: true });
+    import_fs25.default.writeFileSync(PUBLISH_EDIT_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
   };
   app.get("/api/publish-edit", authMiddleware, async (_req, res) => {
     const db = readPublishEditDb();
@@ -151718,11 +152258,11 @@ async function startServer() {
       if (!productId || !imageDataUrl) {
         return res.status(400).json({ success: false, error: "Thi\u1EBFu productId ho\u1EB7c \u1EA3nh" });
       }
-      if (!import_fs24.default.existsSync(FRAMED_IMAGES_DIR)) import_fs24.default.mkdirSync(FRAMED_IMAGES_DIR, { recursive: true });
+      if (!import_fs25.default.existsSync(FRAMED_IMAGES_DIR)) import_fs25.default.mkdirSync(FRAMED_IMAGES_DIR, { recursive: true });
       const base64 = String(imageDataUrl).replace(/^data:image\/\w+;base64,/, "");
       const buf = Buffer.from(base64, "base64");
       const filename = `${productId}.jpg`;
-      import_fs24.default.writeFileSync(import_path24.default.join(FRAMED_IMAGES_DIR, filename), buf);
+      import_fs25.default.writeFileSync(import_path25.default.join(FRAMED_IMAGES_DIR, filename), buf);
       const imageUrl = `/api/framed-images/${productId}`;
       const products = await loadProducts();
       const idx = products.findIndex((p) => p.id === productId);
@@ -151744,12 +152284,12 @@ async function startServer() {
     }
   });
   app.get("/api/framed-images/:productId", (req, res) => {
-    const filePath = import_path24.default.join(FRAMED_IMAGES_DIR, `${req.params.productId}.jpg`);
-    if (!import_fs24.default.existsSync(filePath)) {
+    const filePath = import_path25.default.join(FRAMED_IMAGES_DIR, `${req.params.productId}.jpg`);
+    if (!import_fs25.default.existsSync(filePath)) {
       return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y \u1EA3nh" });
     }
     res.setHeader("Content-Type", "image/jpeg");
-    return res.send(import_fs24.default.readFileSync(filePath));
+    return res.send(import_fs25.default.readFileSync(filePath));
   });
   app.use("/api", (req, res) => {
     res.status(404).json({
@@ -151764,11 +152304,11 @@ async function startServer() {
       const { pathToFileURL } = await import("node:url");
       const devServerFile = ["dev", "Server.ts"].join("");
       const candidates = [
-        import_path24.default.join(APP_ROOT14, devServerFile),
-        import_path24.default.join(APP_ROOT14, "..", devServerFile),
-        import_path24.default.join(process.cwd(), devServerFile)
+        import_path25.default.join(APP_ROOT14, devServerFile),
+        import_path25.default.join(APP_ROOT14, "..", devServerFile),
+        import_path25.default.join(process.cwd(), devServerFile)
       ];
-      const found = candidates.find((p) => import_fs24.default.existsSync(p));
+      const found = candidates.find((p) => import_fs25.default.existsSync(p));
       if (!found) {
         console.warn("[Boot] devServer.ts not found \u2014 skipping Vite middleware");
       } else {
@@ -151783,15 +152323,15 @@ async function startServer() {
     if (isCpanelPassengerRuntime && process.env.NODE_ENV !== "production") {
       console.warn("[Boot] Passenger/cPanel detected without NODE_ENV=production; forcing static production runtime.");
     }
-    const publicPdfDir = import_path24.default.join(APP_ROOT14, "public", "pdfs");
-    app.use("/pdfs", import_express28.default.static(publicPdfDir, {
+    const publicPdfDir = import_path25.default.join(APP_ROOT14, "public", "pdfs");
+    app.use("/pdfs", import_express29.default.static(publicPdfDir, {
       setHeaders(res) {
         res.setHeader("Content-Type", "application/pdf");
         res.setHeader("Cache-Control", "public, max-age=300");
       }
     }));
-    const distPath = import_path24.default.join(APP_ROOT14, "dist");
-    app.use(import_express28.default.static(distPath, {
+    const distPath = import_path25.default.join(APP_ROOT14, "dist");
+    app.use(import_express29.default.static(distPath, {
       setHeaders(res, filePath) {
         if (filePath.endsWith("index.html")) {
           res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -151816,7 +152356,7 @@ async function startServer() {
       }
       res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
       res.setHeader("Content-Type", "text/html; charset=utf-8");
-      return res.sendFile(import_path24.default.join(distPath, "index.html"));
+      return res.sendFile(import_path25.default.join(distPath, "index.html"));
     });
   }
   async function connectDB2() {
