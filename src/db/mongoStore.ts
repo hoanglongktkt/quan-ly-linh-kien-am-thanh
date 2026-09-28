@@ -31,6 +31,7 @@ import {
   searchProductsFromDisk,
   applyImportStockAndPriceOnDisk,
   inheritShopeeLinkFromParent,
+  updateProductSkuOnDisk,
 } from "./productsDiskStore.ts";
 import {
   setChannelListingsDiskAppRoot,
@@ -2106,6 +2107,59 @@ export async function upsertProductsToStoreAsync(products: any[]): Promise<numbe
     await setMeta("products_updated_at", new Date().toISOString());
   });
   return docs.length;
+}
+
+/**
+ * Chỉ $set field SKU. Không đụng shopeeItemId, shopeeModelId, shopeeId, medicine_id, channels.
+ * Cha: sku + data.sku. Phân loại: data.children / children_models.$[elem].sku.
+ */
+export async function updateProductSkuFieldOnly(
+  productId: string,
+  newSku: string,
+): Promise<{ found: boolean; sku: string; target: "parent" | "child" | null }> {
+  const id = String(productId || "").trim();
+  const sku = String(newSku || "").trim();
+  if (!id || !sku) return { found: false, sku, target: null };
+  if (isProductsDiskMode()) return updateProductSkuOnDisk(id, sku);
+
+  requireMongo();
+  let found = false;
+  let target: "parent" | "child" | null = null;
+
+  await enqueueWrite(async () => {
+    const parentRes = await ProductModel.updateOne(
+      { _id: id },
+      { $set: { sku, "data.sku": sku } },
+    );
+    if ((parentRes.matchedCount || 0) > 0) {
+      found = true;
+      target = "parent";
+      return;
+    }
+
+    const childRes = await ProductModel.collection.updateOne(
+      { "data.children.id": id },
+      { $set: { "data.children.$[elem].sku": sku } },
+      { arrayFilters: [{ "elem.id": id }] },
+    );
+    if ((childRes.matchedCount || 0) > 0) {
+      found = true;
+      target = "child";
+      return;
+    }
+
+    const modelRes = await ProductModel.collection.updateOne(
+      { "data.children_models.id": id },
+      { $set: { "data.children_models.$[elem].sku": sku } },
+      { arrayFilters: [{ "elem.id": id }] },
+    );
+    if ((modelRes.matchedCount || 0) > 0) {
+      found = true;
+      target = "child";
+    }
+  });
+
+  return { found, sku, target };
 }
 
 /**

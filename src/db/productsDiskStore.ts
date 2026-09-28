@@ -135,6 +135,66 @@ export async function upsertProductsToDisk(products: any[]): Promise<number> {
   return incoming.length;
 }
 
+const SKU_CHILD_KEYS = ["children", "children_models"] as const;
+
+/**
+ * Chỉ đổi field `sku` của đúng sản phẩm (cha hoặc phân loại).
+ * Không ghi đè shopeeItemId / shopeeModelId / mapping sàn.
+ */
+export async function updateProductSkuOnDisk(
+  productId: string,
+  newSku: string,
+): Promise<{ found: boolean; sku: string; target: "parent" | "child" | null }> {
+  const id = String(productId || "").trim();
+  const sku = String(newSku || "").trim();
+  if (!id || !sku) return { found: false, sku, target: null };
+
+  const current = readProductsFromDisk();
+  let found = false;
+  let target: "parent" | "child" | null = null;
+  const next: any[] = [];
+
+  for (const product of current) {
+    if (found) {
+      next.push(product);
+      continue;
+    }
+    if (String(product?.id || "").trim() === id) {
+      found = true;
+      target = "parent";
+      next.push({ ...product, sku });
+      continue;
+    }
+    let childKey: (typeof SKU_CHILD_KEYS)[number] | null = null;
+    let childIdx = -1;
+    for (const key of SKU_CHILD_KEYS) {
+      const list = product?.[key];
+      if (!Array.isArray(list)) continue;
+      const idx = list.findIndex((child: any) => String(child?.id || "").trim() === id);
+      if (idx >= 0) {
+        childKey = key;
+        childIdx = idx;
+        break;
+      }
+    }
+    if (childKey && childIdx >= 0) {
+      found = true;
+      target = "child";
+      const list = product[childKey] as any[];
+      const children = list.map((child, index) =>
+        index === childIdx ? { ...child, sku } : child,
+      );
+      next.push({ ...product, [childKey]: children });
+      continue;
+    }
+    next.push(product);
+  }
+
+  if (!found) return { found: false, sku, target: null };
+  await saveProductsToDisk(next);
+  return { found: true, sku, target };
+}
+
 export async function deleteProductsByIdsFromDisk(ids: string[]): Promise<number> {
   const safe = new Set(ids.map((id) => String(id || "").trim()).filter(Boolean));
   if (safe.size === 0) return 0;

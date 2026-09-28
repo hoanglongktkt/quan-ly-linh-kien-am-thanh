@@ -24,6 +24,7 @@ let deps = {
   applyBulkProductUpdate: (p, opts) => p,
   flattenProductsForStockSync: (products) => products,
   upsertProductsToStoreAsync: async () => {},
+  updateProductSkuFieldOnly: async () => ({ found: false, sku: "", target: null }),
   deleteProductsByIdsFromStore: async () => {},
   loadProductsPageFromStore: async () => ({
     products: [],
@@ -863,6 +864,67 @@ export async function patchProduct(req, res) {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[Products API] PATCH /api/products/:id failed:", err);
+    return res.status(500).json({ success: false, error: message || "Internal Server Error" });
+  }
+}
+
+/**
+ * PATCH /api/products/:id/sku
+ * CHỈ ghi field sku (và data.sku / sku phân loại). Không đụng ID liên kết Shopee.
+ */
+export async function patchProductSku(req, res) {
+  try {
+    const id = String(req.params.id || "").trim();
+    const nextSku = String(req.body?.sku ?? "").trim();
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: "id_required",
+        message: "Thiếu mã sản phẩm.",
+      });
+    }
+    if (!nextSku) {
+      return res.status(400).json({
+        success: false,
+        error: "sku_required",
+        message: "SKU không được để trống.",
+      });
+    }
+    if (nextSku.length > 100) {
+      return res.status(400).json({
+        success: false,
+        error: "sku_too_long",
+        message: "SKU tối đa 100 ký tự.",
+      });
+    }
+
+    const duplicated = await isSkuTakenByOtherProduct(nextSku, id);
+    if (duplicated) {
+      return res.status(400).json({
+        success: false,
+        error: "sku_duplicate",
+        message: SKU_DUPLICATE_MESSAGE,
+      });
+    }
+
+    const result = await deps.updateProductSkuFieldOnly(id, nextSku);
+    if (!result?.found) {
+      return res.status(404).json({
+        success: false,
+        error: "product_not_found",
+        message: "Không tìm thấy sản phẩm.",
+      });
+    }
+
+    return res.json({
+      success: true,
+      id,
+      sku: String(result.sku || nextSku),
+      target: result.target || null,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[Products API] PATCH /api/products/:id/sku failed:", err);
     return res.status(500).json({ success: false, error: message || "Internal Server Error" });
   }
 }

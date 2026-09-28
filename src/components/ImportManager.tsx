@@ -34,6 +34,7 @@ import {
   CircleDollarSign,
   Loader2,
   RefreshCw,
+  Pencil,
 } from 'lucide-react';
 
 const ImportEstProfitCell = React.memo(function ImportEstProfitCell({
@@ -94,6 +95,111 @@ function PriceChangeBadge({
     <span className={`inline-flex items-center ${cls} bg-gray-50 text-gray-400 border border-gray-100 font-semibold`}>
       Bằng giá cũ
     </span>
+  );
+}
+
+function InlineSkuEditor({
+  sku,
+  saving,
+  onSave,
+}: {
+  sku: string;
+  saving: boolean;
+  onSave: (nextSku: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(sku);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const busyRef = useRef(false);
+  const cancelRef = useRef(false);
+  const savedRef = useRef(false);
+
+  useEffect(() => {
+    if (!editing) setDraft(sku);
+  }, [sku, editing]);
+
+  useEffect(() => {
+    if (!editing) return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [editing]);
+
+  const commit = async () => {
+    if (busyRef.current || cancelRef.current || savedRef.current) return;
+    const next = draft.trim();
+    const current = String(sku || '').trim();
+    if (!next || next === current) {
+      setDraft(sku);
+      setEditing(false);
+      return;
+    }
+    busyRef.current = true;
+    try {
+      await onSave(next);
+      savedRef.current = true;
+      setEditing(false);
+    } catch {
+      setDraft(next);
+      setEditing(true);
+    } finally {
+      busyRef.current = false;
+    }
+  };
+
+  if (editing) {
+    return (
+      <span className="mt-0.5 inline-flex items-center gap-1">
+        <input
+          ref={inputRef}
+          type="text"
+          value={draft}
+          aria-label="Sửa SKU"
+          onChange={(e) => setDraft(e.target.value)}
+          onClick={(e) => e.stopPropagation()}
+          onBlur={() => {
+            if (cancelRef.current) {
+              cancelRef.current = false;
+              return;
+            }
+            void commit();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              e.stopPropagation();
+              void commit();
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              e.stopPropagation();
+              cancelRef.current = true;
+              setDraft(sku);
+              setEditing(false);
+            }
+          }}
+          disabled={saving}
+          className="h-7 w-full max-w-[220px] px-1.5 text-[11px] font-mono text-gray-700 rounded border border-indigo-300 outline-none focus:border-indigo-500 disabled:bg-gray-50"
+        />
+        {saving ? <Loader2 className="w-3 h-3 animate-spin text-gray-400 shrink-0" /> : null}
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      title="Sửa SKU"
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        savedRef.current = false;
+        cancelRef.current = false;
+        setEditing(true);
+      }}
+      className="mt-0.5 inline-flex items-center gap-1 text-left text-[11px] font-mono text-gray-400 hover:text-indigo-600"
+    >
+      <span>{sku || '—'}</span>
+      <Pencil className="w-3 h-3 shrink-0" />
+    </button>
   );
 }
 
@@ -184,6 +290,8 @@ export default function ImportManager({
   const [toast, setToast] = useState<{ text: string; ok: boolean } | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [updatingPriceId, setUpdatingPriceId] = useState<string | null>(null);
+  const [savingSkuId, setSavingSkuId] = useState<string | null>(null);
+  const skuOverrideRef = useRef<Map<string, string>>(new Map());
 
   const showToast = useCallback((text: string, ok = true, durationMs = 3500) => {
     setToast({ text, ok });
@@ -311,6 +419,7 @@ export default function ImportManager({
             const ctxSell = Math.max(0, Math.round(Number(data.sellingPrice) || 0));
             const ctxItemId = String(data.shopeeItemId || '').trim();
             const ctxModelId = String(data.shopeeModelId || '').trim();
+            const overriddenSku = skuOverrideRef.current.get(productId);
             return {
               ...line,
               currentStock: data.stock != null ? Number(data.stock) || 0 : line.currentStock,
@@ -320,7 +429,7 @@ export default function ImportManager({
               shopeeItemId: line.shopeeItemId || ctxItemId || undefined,
               shopeeModelId: line.shopeeModelId || ctxModelId || undefined,
               title: data.title || line.title,
-              sku: data.sku || line.sku,
+              sku: overriddenSku != null ? overriddenSku : data.sku || line.sku,
             };
           });
           const goods = next.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
@@ -371,6 +480,52 @@ export default function ImportManager({
       syncPaidToTotal(goods + importCost);
       return next;
     });
+  };
+
+  const handleSaveLineSku = async (productId: string, nextSku: string) => {
+    const id = String(productId || '').trim();
+    const sku = String(nextSku || '').trim();
+    if (!id || !sku) {
+      showToast('SKU không được để trống.', false);
+      throw new Error('sku_required');
+    }
+    const token = localStorage.getItem('admin_token');
+    if (!token) {
+      showToast('Chưa đăng nhập.', false);
+      throw new Error('auth');
+    }
+    setSavingSkuId(id);
+    try {
+      const res = await fetch(`/api/products/${encodeURIComponent(id)}/sku`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ sku }),
+      });
+      const data = await parseJsonResponse<{
+        success?: boolean;
+        sku?: string;
+        message?: string;
+        error?: string;
+      }>(res);
+      if (data?.success === false) {
+        throw new Error(data.message || data.error || 'Lưu SKU thất bại.');
+      }
+      const saved = String(data?.sku || sku).trim();
+      skuOverrideRef.current.set(id, saved);
+      setSelectedProducts((prev) =>
+        prev.map((line) => (line.productId === id ? { ...line, sku: saved } : line)),
+      );
+      showToast('Đã cập nhật SKU');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Lưu SKU thất bại.';
+      showToast(message, false);
+      throw err instanceof Error ? err : new Error(message);
+    } finally {
+      setSavingSkuId(null);
+    }
   };
 
   const handleUpdateShopeePrice = async (line: SelectedImportLine) => {
@@ -834,7 +989,11 @@ export default function ImportManager({
                               </td>
                               <td className="px-3 py-2.5 min-w-0 align-middle">
                                 <p className="font-semibold text-gray-900 line-clamp-2 leading-snug">{line.title || '—'}</p>
-                                <p className="text-[11px] font-mono text-gray-400 mt-0.5">{line.sku || '—'}</p>
+                                <InlineSkuEditor
+                                  sku={line.sku}
+                                  saving={savingSkuId === line.productId}
+                                  onSave={(nextSku) => handleSaveLineSku(line.productId, nextSku)}
+                                />
                               </td>
                               <td className="px-3 py-2.5 text-center font-mono text-xs text-gray-500 align-middle">{line.currentStock}</td>
                               <td className="px-3 py-2.5 align-middle">

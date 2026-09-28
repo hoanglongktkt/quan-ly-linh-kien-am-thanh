@@ -77440,6 +77440,54 @@ async function upsertProductsToDisk(products) {
   await saveProductsToDisk([...byId.values()]);
   return incoming.length;
 }
+var SKU_CHILD_KEYS = ["children", "children_models"];
+async function updateProductSkuOnDisk(productId, newSku) {
+  const id = String(productId || "").trim();
+  const sku = String(newSku || "").trim();
+  if (!id || !sku) return { found: false, sku, target: null };
+  const current = readProductsFromDisk();
+  let found = false;
+  let target = null;
+  const next = [];
+  for (const product of current) {
+    if (found) {
+      next.push(product);
+      continue;
+    }
+    if (String(product?.id || "").trim() === id) {
+      found = true;
+      target = "parent";
+      next.push({ ...product, sku });
+      continue;
+    }
+    let childKey = null;
+    let childIdx = -1;
+    for (const key of SKU_CHILD_KEYS) {
+      const list = product?.[key];
+      if (!Array.isArray(list)) continue;
+      const idx = list.findIndex((child) => String(child?.id || "").trim() === id);
+      if (idx >= 0) {
+        childKey = key;
+        childIdx = idx;
+        break;
+      }
+    }
+    if (childKey && childIdx >= 0) {
+      found = true;
+      target = "child";
+      const list = product[childKey];
+      const children = list.map(
+        (child, index) => index === childIdx ? { ...child, sku } : child
+      );
+      next.push({ ...product, [childKey]: children });
+      continue;
+    }
+    next.push(product);
+  }
+  if (!found) return { found: false, sku, target: null };
+  await saveProductsToDisk(next);
+  return { found: true, sku, target };
+}
 async function deleteProductsByIdsFromDisk(ids) {
   const safe = new Set(ids.map((id) => String(id || "").trim()).filter(Boolean));
   if (safe.size === 0) return 0;
@@ -79340,6 +79388,46 @@ async function upsertProductsToStoreAsync(products) {
     await setMeta("products_updated_at", (/* @__PURE__ */ new Date()).toISOString());
   });
   return docs.length;
+}
+async function updateProductSkuFieldOnly(productId, newSku) {
+  const id = String(productId || "").trim();
+  const sku = String(newSku || "").trim();
+  if (!id || !sku) return { found: false, sku, target: null };
+  if (isProductsDiskMode()) return updateProductSkuOnDisk(id, sku);
+  requireMongo();
+  let found = false;
+  let target = null;
+  await enqueueWrite(async () => {
+    const parentRes = await ProductModel.updateOne(
+      { _id: id },
+      { $set: { sku, "data.sku": sku } }
+    );
+    if ((parentRes.matchedCount || 0) > 0) {
+      found = true;
+      target = "parent";
+      return;
+    }
+    const childRes = await ProductModel.collection.updateOne(
+      { "data.children.id": id },
+      { $set: { "data.children.$[elem].sku": sku } },
+      { arrayFilters: [{ "elem.id": id }] }
+    );
+    if ((childRes.matchedCount || 0) > 0) {
+      found = true;
+      target = "child";
+      return;
+    }
+    const modelRes = await ProductModel.collection.updateOne(
+      { "data.children_models.id": id },
+      { $set: { "data.children_models.$[elem].sku": sku } },
+      { arrayFilters: [{ "elem.id": id }] }
+    );
+    if ((modelRes.matchedCount || 0) > 0) {
+      found = true;
+      target = "child";
+    }
+  });
+  return { found, sku, target };
 }
 async function upsertPosProductsToStoreAsync(products) {
   if (isProductsDiskMode()) {
@@ -120588,6 +120676,7 @@ var deps11 = {
   flattenProductsForStockSync: (products) => products,
   upsertProductsToStoreAsync: async () => {
   },
+  updateProductSkuFieldOnly: async () => ({ found: false, sku: "", target: null }),
   deleteProductsByIdsFromStore: async () => {
   },
   loadProductsPageFromStore: async () => ({
@@ -121297,6 +121386,59 @@ async function patchProduct(req, res) {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[Products API] PATCH /api/products/:id failed:", err);
+    return res.status(500).json({ success: false, error: message || "Internal Server Error" });
+  }
+}
+async function patchProductSku(req, res) {
+  try {
+    const id = String(req.params.id || "").trim();
+    const nextSku = String(req.body?.sku ?? "").trim();
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: "id_required",
+        message: "Thi\u1EBFu m\xE3 s\u1EA3n ph\u1EA9m."
+      });
+    }
+    if (!nextSku) {
+      return res.status(400).json({
+        success: false,
+        error: "sku_required",
+        message: "SKU kh\xF4ng \u0111\u01B0\u1EE3c \u0111\u1EC3 tr\u1ED1ng."
+      });
+    }
+    if (nextSku.length > 100) {
+      return res.status(400).json({
+        success: false,
+        error: "sku_too_long",
+        message: "SKU t\u1ED1i \u0111a 100 k\xFD t\u1EF1."
+      });
+    }
+    const duplicated = await isSkuTakenByOtherProduct(nextSku, id);
+    if (duplicated) {
+      return res.status(400).json({
+        success: false,
+        error: "sku_duplicate",
+        message: SKU_DUPLICATE_MESSAGE
+      });
+    }
+    const result = await deps11.updateProductSkuFieldOnly(id, nextSku);
+    if (!result?.found) {
+      return res.status(404).json({
+        success: false,
+        error: "product_not_found",
+        message: "Kh\xF4ng t\xECm th\u1EA5y s\u1EA3n ph\u1EA9m."
+      });
+    }
+    return res.json({
+      success: true,
+      id,
+      sku: String(result.sku || nextSku),
+      target: result.target || null
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[Products API] PATCH /api/products/:id/sku failed:", err);
     return res.status(500).json({ success: false, error: message || "Internal Server Error" });
   }
 }
@@ -122559,6 +122701,7 @@ router15.get("/", listProducts);
 router15.post("/", createProduct);
 router15.patch("/import-price-by-sku", patchImportPriceBySku);
 router15.patch("/selling-price-by-sku", patchSellingPriceBySku);
+router15.patch("/:id/sku", patchProductSku);
 router15.patch("/:id", patchProduct);
 router15.delete("/:id", deleteProduct);
 var productsRoutes_default = router15;
@@ -147719,6 +147862,7 @@ async function startServer() {
     applyBulkProductUpdate,
     flattenProductsForStockSync,
     upsertProductsToStoreAsync,
+    updateProductSkuFieldOnly,
     deleteProductsByIdsFromStore,
     loadProductsPageFromStore,
     loadProductsByIdsFromStore,
