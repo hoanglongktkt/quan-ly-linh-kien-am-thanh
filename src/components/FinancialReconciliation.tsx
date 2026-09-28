@@ -305,7 +305,7 @@ export default function FinancialReconciliation({ authHeaders, shops }: Financia
                       <a
                         href={`https://banhang.shopee.vn/portal/sale/order?type=all&search=search&keyword=${row.ordersn}`}
                         target="_blank"
-                        rel="noopener noreferrer"
+                        rel="noopener"
                         className="text-blue-600 font-semibold hover:underline cursor-pointer"
                       >
                         {row.ordersn}
