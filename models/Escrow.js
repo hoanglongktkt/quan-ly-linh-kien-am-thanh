@@ -27,6 +27,7 @@ const EscrowSchema = new mongoose.Schema(
     },
     is_disputed: { type: Boolean, default: false },
     dispute_reason: { type: String, default: "" },
+    manual_verified: { type: Boolean, default: false },
     synced_at: { type: Date, default: Date.now },
   },
   {

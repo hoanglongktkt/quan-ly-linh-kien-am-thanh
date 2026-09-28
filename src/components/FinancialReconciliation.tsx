@@ -24,6 +24,7 @@ interface EscrowRow {
   status: string;
   is_disputed?: boolean;
   dispute_reason?: string;
+  manual_verified?: boolean;
 }
 
 interface Summary {
@@ -98,6 +99,8 @@ export default function FinancialReconciliation({ authHeaders, shops }: Financia
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [copyToast, setCopyToast] = useState<string | null>(null);
+  const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
+  const [verifying, setVerifying] = useState(false);
   const copyToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const shopeeShops = useMemo(
@@ -147,17 +150,63 @@ export default function FinancialReconciliation({ authHeaders, shops }: Financia
     };
   }, []);
 
-  const handleClick = useCallback((ordersn: string) => {
-    const sn = ordersn;
-    void navigator.clipboard.writeText(sn);
-    window.open('https://banhang.shopee.vn/portal/sale/order?type=all', '_blank');
+  const showToast = useCallback((text: string) => {
     if (copyToastTimerRef.current) clearTimeout(copyToastTimerRef.current);
-    setCopyToast('Đã copy mã đơn. Hãy ấn Ctrl+V trên Shopee!');
+    setCopyToast(text);
     copyToastTimerRef.current = setTimeout(() => {
       setCopyToast(null);
       copyToastTimerRef.current = null;
     }, 3500);
   }, []);
+
+  const handleClick = useCallback((ordersn: string) => {
+    const sn = ordersn;
+    void navigator.clipboard.writeText(sn);
+    window.open('https://banhang.shopee.vn/portal/sale/order?type=all', '_blank');
+    showToast('Đã copy mã đơn. Hãy ấn Ctrl+V trên Shopee!');
+  }, [showToast]);
+
+  useEffect(() => {
+    setSelectedOrders([]);
+  }, [from, to, shopId, disputedOnly]);
+
+  const visibleSns = useMemo(() => rows.map((row) => row.ordersn).filter(Boolean), [rows]);
+  const allSelected = visibleSns.length > 0 && visibleSns.every((sn) => selectedOrders.includes(sn));
+
+  const toggleOne = (ordersn: string) => {
+    setSelectedOrders((prev) => (
+      prev.includes(ordersn) ? prev.filter((sn) => sn !== ordersn) : [...prev, ordersn]
+    ));
+  };
+
+  const toggleAll = () => {
+    setSelectedOrders(allSelected ? [] : [...visibleSns]);
+  };
+
+  const verifySelected = async () => {
+    if (selectedOrders.length === 0 || verifying) return;
+    setVerifying(true);
+    setError(null);
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/api/finance/reconciliation/verify`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify({ orderSns: selectedOrders }),
+      });
+      const data = await parseJsonResponse<{ ok?: boolean; error?: string; modified?: number }>(response);
+      if (!response.ok) {
+        throw new Error(data?.error || 'Không xác nhận được đơn đã kiểm tra');
+      }
+      const count = selectedOrders.length;
+      setSelectedOrders([]);
+      showToast(`Đã xác nhận kiểm tra ${count} đơn hàng.`);
+      await load();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Không xác nhận được đơn đã kiểm tra');
+    } finally {
+      setVerifying(false);
+    }
+  };
 
   const syncNow = async () => {
     setSyncing(true);
@@ -290,15 +339,40 @@ export default function FinancialReconciliation({ authHeaders, shops }: Financia
       </div>
 
       <div className="bg-white border border-gray-100 rounded-2xl shadow-xs overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
-          <Wallet className="w-4 h-4 text-blue-600" />
-          <h3 className="text-sm font-extrabold text-gray-900">Đơn đã đối soát</h3>
-          {loading && <Loader2 className="w-4 h-4 animate-spin text-gray-400" />}
-        </div>
+        {selectedOrders.length > 0 ? (
+          <div className="px-4 py-3 border-b border-emerald-100 bg-emerald-50 flex flex-wrap items-center justify-between gap-3">
+            <span className="text-sm font-bold text-emerald-900">Đã chọn {selectedOrders.length} đơn hàng</span>
+            <button
+              type="button"
+              onClick={() => void verifySelected()}
+              disabled={verifying}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold disabled:opacity-60"
+            >
+              {verifying && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              {verifying ? 'Đang xử lý...' : 'Xác nhận đã kiểm tra'}
+            </button>
+          </div>
+        ) : (
+          <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
+            <Wallet className="w-4 h-4 text-blue-600" />
+            <h3 className="text-sm font-extrabold text-gray-900">Đơn đã đối soát</h3>
+            {loading && <Loader2 className="w-4 h-4 animate-spin text-gray-400" />}
+          </div>
+        )}
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[860px] text-xs">
+          <table className="w-full min-w-[900px] text-xs">
             <thead className="bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500">
               <tr>
+                <th className="p-3 w-10">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={toggleAll}
+                    disabled={visibleSns.length === 0}
+                    aria-label="Chọn tất cả"
+                    className="w-4 h-4 accent-emerald-600 cursor-pointer disabled:cursor-not-allowed"
+                  />
+                </th>
                 <th className="text-left font-bold p-3">Mã đơn</th>
                 <th className="text-left font-bold p-3">Shop</th>
                 <th className="text-right font-bold p-3">Tiền khách trả</th>
@@ -312,15 +386,29 @@ export default function FinancialReconciliation({ authHeaders, shops }: Financia
             <tbody>
               {rows.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={8} className="p-8 text-center text-gray-400">
+                  <td colSpan={9} className="p-8 text-center text-gray-400">
                     Chưa có dữ liệu trong khoảng này. Bấm «Đồng bộ ví Shopee» để lấy đơn đã hoàn thành.
                   </td>
                 </tr>
               )}
               {rows.map((row) => {
-                const warn = Boolean(row.is_disputed) || row.status === 'Lệch tiền' || row.status === 'Chưa về ví';
+                const verified = Boolean(row.manual_verified);
+                const warn = !verified && (Boolean(row.is_disputed) || row.status === 'Lệch tiền' || row.status === 'Chưa về ví');
+                const badgeText = verified ? 'Đã kiểm tra' : row.status;
+                const badgeClass = verified
+                  ? 'bg-slate-100 text-slate-600 border-slate-200'
+                  : statusClass(row.status);
                 return (
                   <tr key={`${row.shop_id}-${row.ordersn}`} className={warn ? 'bg-rose-50/60' : 'border-t border-gray-50'}>
+                    <td className="p-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedOrders.includes(row.ordersn)}
+                        onChange={() => toggleOne(row.ordersn)}
+                        aria-label={`Chọn đơn ${row.ordersn}`}
+                        className="w-4 h-4 accent-emerald-600 cursor-pointer"
+                      />
+                    </td>
                     <td className="p-3 font-mono">
                       <span
                         onClick={() => handleClick(row.ordersn)}
@@ -339,10 +427,10 @@ export default function FinancialReconciliation({ authHeaders, shops }: Financia
                       {vnd(row.net_profit)}
                     </td>
                     <td className="p-3">
-                      <span className={`inline-flex px-2 py-0.5 rounded-full border text-[10px] font-bold ${statusClass(row.status)}`}>
-                        {row.status}
+                      <span className={`inline-flex px-2 py-0.5 rounded-full border text-[10px] font-bold ${badgeClass}`}>
+                        {badgeText}
                       </span>
-                      {row.dispute_reason && (
+                      {!verified && row.dispute_reason && (
                         <span className="block mt-1 text-[10px] text-rose-700 max-w-48">{row.dispute_reason}</span>
                       )}
                     </td>

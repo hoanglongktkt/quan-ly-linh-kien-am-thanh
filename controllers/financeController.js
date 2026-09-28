@@ -262,6 +262,7 @@ function buildListFilter(query) {
   const status = String(query.status || "").trim();
   const disputed = String(query.disputed || "").trim();
   if (disputed === "1" || disputed === "true") {
+    filter.manual_verified = { $ne: true };
     filter.$or = [
       { is_disputed: true },
       { status: { $in: ["Lệch tiền", "Chưa về ví"] } },
@@ -298,7 +299,18 @@ export async function listReconciliation(req, res) {
             net_profit: { $sum: "$net_profit" },
             order_count: { $sum: 1 },
             disputed_count: {
-              $sum: { $cond: ["$is_disputed", 1, 0] },
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ["$is_disputed", true] },
+                      { $ne: ["$manual_verified", true] },
+                    ],
+                  },
+                  1,
+                  0,
+                ],
+              },
             },
           },
         },
@@ -340,6 +352,48 @@ export async function listReconciliation(req, res) {
   } catch (err) {
     console.error("[Finance] list reconciliation:", err?.message || err);
     return res.status(500).json({ error: "Không tải được dữ liệu đối soát" });
+  }
+}
+
+const VERIFY_MAX = 200;
+
+/** PATCH /api/finance/reconciliation/verify — ghi nhận đã kiểm tra tay, không gọi Shopee. */
+export async function verifyReconciliation(req, res) {
+  try {
+    if (!mongoReady()) {
+      return res.status(503).json({ error: "MongoDB chưa sẵn sàng" });
+    }
+    const raw = req.body?.orderSns ?? req.body?.ordersns ?? [];
+    if (!Array.isArray(raw)) {
+      return res.status(400).json({ error: "orderSns phải là mảng mã đơn." });
+    }
+
+    const orderSns = [];
+    const seen = new Set();
+    for (let i = 0; i < raw.length; i += 1) {
+      if (orderSns.length >= VERIFY_MAX) break;
+      const sn = String(raw[i] || "").trim();
+      if (!sn || sn.length > 64 || seen.has(sn)) continue;
+      seen.add(sn);
+      orderSns.push(sn);
+    }
+    if (orderSns.length === 0) {
+      return res.status(400).json({ error: "Thiếu danh sách mã đơn." });
+    }
+
+    const result = await Escrow.updateMany(
+      { ordersn: { $in: orderSns } },
+      { $set: { manual_verified: true } },
+    ).maxTimeMS(12000);
+
+    return res.json({
+      ok: true,
+      matched: result.matchedCount || 0,
+      modified: result.modifiedCount || 0,
+    });
+  } catch (err) {
+    console.error("[Finance] verify reconciliation:", err?.message || err);
+    return res.status(500).json({ error: "Không xác nhận được đơn đã kiểm tra" });
   }
 }
 

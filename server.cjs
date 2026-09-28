@@ -87117,6 +87117,7 @@ var EscrowSchema = new import_mongoose4.default.Schema(
     },
     is_disputed: { type: Boolean, default: false },
     dispute_reason: { type: String, default: "" },
+    manual_verified: { type: Boolean, default: false },
     synced_at: { type: Date, default: Date.now }
   },
   {
@@ -88993,6 +88994,7 @@ function buildListFilter(query) {
   const status = String(query.status || "").trim();
   const disputed = String(query.disputed || "").trim();
   if (disputed === "1" || disputed === "true") {
+    filter2.manual_verified = { $ne: true };
     filter2.$or = [
       { is_disputed: true },
       { status: { $in: ["L\u1EC7ch ti\u1EC1n", "Ch\u01B0a v\u1EC1 v\xED"] } }
@@ -89026,7 +89028,18 @@ async function listReconciliation(req, res) {
             net_profit: { $sum: "$net_profit" },
             order_count: { $sum: 1 },
             disputed_count: {
-              $sum: { $cond: ["$is_disputed", 1, 0] }
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ["$is_disputed", true] },
+                      { $ne: ["$manual_verified", true] }
+                    ]
+                  },
+                  1,
+                  0
+                ]
+              }
             }
           }
         }
@@ -89058,6 +89071,42 @@ async function listReconciliation(req, res) {
   } catch (err) {
     console.error("[Finance] list reconciliation:", err?.message || err);
     return res.status(500).json({ error: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c d\u1EEF li\u1EC7u \u0111\u1ED1i so\xE1t" });
+  }
+}
+var VERIFY_MAX = 200;
+async function verifyReconciliation(req, res) {
+  try {
+    if (!mongoReady2()) {
+      return res.status(503).json({ error: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng" });
+    }
+    const raw = req.body?.orderSns ?? req.body?.ordersns ?? [];
+    if (!Array.isArray(raw)) {
+      return res.status(400).json({ error: "orderSns ph\u1EA3i l\xE0 m\u1EA3ng m\xE3 \u0111\u01A1n." });
+    }
+    const orderSns = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (let i2 = 0; i2 < raw.length; i2 += 1) {
+      if (orderSns.length >= VERIFY_MAX) break;
+      const sn = String(raw[i2] || "").trim();
+      if (!sn || sn.length > 64 || seen.has(sn)) continue;
+      seen.add(sn);
+      orderSns.push(sn);
+    }
+    if (orderSns.length === 0) {
+      return res.status(400).json({ error: "Thi\u1EBFu danh s\xE1ch m\xE3 \u0111\u01A1n." });
+    }
+    const result = await Escrow_default.updateMany(
+      { ordersn: { $in: orderSns } },
+      { $set: { manual_verified: true } }
+    ).maxTimeMS(12e3);
+    return res.json({
+      ok: true,
+      matched: result.matchedCount || 0,
+      modified: result.modifiedCount || 0
+    });
+  } catch (err) {
+    console.error("[Finance] verify reconciliation:", err?.message || err);
+    return res.status(500).json({ error: "Kh\xF4ng x\xE1c nh\u1EADn \u0111\u01B0\u1EE3c \u0111\u01A1n \u0111\xE3 ki\u1EC3m tra" });
   }
 }
 async function syncEscrow(req, res) {
@@ -89272,6 +89321,7 @@ async function syncEscrow(req, res) {
 // routes/financeRoutes.js
 var router7 = (0, import_express8.Router)();
 router7.get("/reconciliation", listReconciliation);
+router7.patch("/reconciliation/verify", verifyReconciliation);
 router7.post("/sync-escrow", syncEscrow);
 var financeRoutes_default = router7;
 
