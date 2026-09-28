@@ -5669,8 +5669,8 @@ export default function OrderManager({
 
   const CONFIRM_AUTO_PRINT_WAIT_MESSAGE =
     'Đang đợi Shopee tạo mã và gộp file in (lô lớn có thể mất 1–2 phút)...';
-  /** 4 giây nằm trong khoảng 3–5s: không gọi API gộp ngay khi vừa RTS xong. */
-  const CONFIRM_AUTO_PRINT_BUFFER_MS = 4000;
+  /** 2 giây: không gọi API gộp ngay khi vừa RTS xong. */
+  const CONFIRM_AUTO_PRINT_BUFFER_MS = 2000;
 
   /** Xác nhận xong 100% → nghỉ buffer rồi mới gộp PDF. Không dừng modal để user tự bấm in. */
   const beginConfirmAutoPrint = (orderSns: string[]) => {
