@@ -4391,6 +4391,8 @@ export default function OrderManager({
   const autoMergeAfterConfirmRef = useRef<
     (sns: string[], flowGen: number) => Promise<void>
   >(async () => {});
+  /** Nhịp đệm sau RTS, trước khi gọi API gộp PDF — Shopee kịp xử lý hàng đợi. */
+  const confirmAutoPrintBufferTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Nút In nhanh: waiting (đang poll mã) | retry (timeout). Không auto-clear khi đóng toast. */
   const [labelWaitState, setLabelWaitState] = useState<Record<string, 'waiting' | 'retry'>>({});
   const confirmProgressActiveRef = React.useRef(false);
@@ -5595,6 +5597,10 @@ export default function OrderManager({
       progressCloseTimerRef.current = null;
     }
     confirmFlowGenRef.current += 1;
+    if (confirmAutoPrintBufferTimerRef.current) {
+      clearTimeout(confirmAutoPrintBufferTimerRef.current);
+      confirmAutoPrintBufferTimerRef.current = null;
+    }
     confirmProgressActiveRef.current = false;
     autoMergeTriggeredRef.current = false;
     confirmAutoPrintPendingRef.current = false;
@@ -5662,9 +5668,11 @@ export default function OrderManager({
     Boolean(order.hasPdf || order.readyToPrint || order.labelUrl || order.pdfUrl || order.waybill_url);
 
   const CONFIRM_AUTO_PRINT_WAIT_MESSAGE =
-    'Đang đợi Shopee tạo mã và gộp file in (có thể mất 15-30s)...';
+    'Đang đợi Shopee tạo mã và gộp file in (lô lớn có thể mất 1–2 phút)...';
+  /** 4 giây nằm trong khoảng 3–5s: không gọi API gộp ngay khi vừa RTS xong. */
+  const CONFIRM_AUTO_PRINT_BUFFER_MS = 4000;
 
-  /** Xác nhận xong 100% → lập tức sang pha gộp PDF. Không dừng modal để user tự bấm in. */
+  /** Xác nhận xong 100% → nghỉ buffer rồi mới gộp PDF. Không dừng modal để user tự bấm in. */
   const beginConfirmAutoPrint = (orderSns: string[]) => {
     if (!confirmProgressActiveRef.current || autoMergeTriggeredRef.current) return;
     const sns = [
@@ -5679,11 +5687,16 @@ export default function OrderManager({
     setConfirmMergeBusy(true);
     setConfirmPrintFileUrl(null);
     setProgressDone(false);
-    setProgressMessage(CONFIRM_AUTO_PRINT_WAIT_MESSAGE);
-    queueMicrotask(() => {
+    setProgressMessage('Đã xác nhận xong. Đang chờ Shopee xử lý hàng đợi trước khi gộp file in...');
+    if (confirmAutoPrintBufferTimerRef.current) {
+      clearTimeout(confirmAutoPrintBufferTimerRef.current);
+    }
+    confirmAutoPrintBufferTimerRef.current = window.setTimeout(() => {
+      confirmAutoPrintBufferTimerRef.current = null;
       if (flowGen !== confirmFlowGenRef.current) return;
+      if (!confirmProgressActiveRef.current) return;
       void autoMergeAfterConfirmRef.current(sns, flowGen);
-    });
+    }, CONFIRM_AUTO_PRINT_BUFFER_MS);
   };
 
   const updateConfirmWaitProgress = (opts?: {
@@ -6784,7 +6797,7 @@ export default function OrderManager({
 
     try {
       const controller = new AbortController();
-      const timeoutId = window.setTimeout(() => controller.abort(), 120_000);
+      const timeoutId = window.setTimeout(() => controller.abort(), 150000);
 
       try {
         const response = await fetch('/api/orders/batch-print', {

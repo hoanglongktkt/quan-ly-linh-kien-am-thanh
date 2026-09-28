@@ -10015,8 +10015,8 @@ const SHOPEE_LOGISTICS_TIMEOUT_MS = 5_000;
 const PRINT_WAYBILL_POLL_HTTP_TIMEOUT_MS = 8_000;
 /** Trần một lần download PDF — phần thời gian còn lại, không cố định 60s. */
 const PRINT_WAYBILL_DOWNLOAD_TIMEOUT_CAP_MS = 20_000;
-/** Trần chờ create/poll/download của một request in (để dưới timeout FE 120s). */
-const WAYBILL_BATCH_DEADLINE_MS = 100_000;
+/** Trần chờ create/poll/download (dưới timeout FE 150s: ~100s poll + 20s download). */
+const WAYBILL_BATCH_DEADLINE_MS = 120_000;
 // Mỗi đơn xác nhận tối đa 8s (chỉ get_shipping_parameter + ship_order, KHÔNG recover/enrich).
 const SHIP_ORDER_OPERATION_TIMEOUT_MS = 8_000;
 /** FE gửi tối đa ~5 đơn/request — BE xử lý tuần tự trong 1 process. */
@@ -11095,9 +11095,12 @@ async function readCachedOrderWaybillPdf(orderSn: string): Promise<Buffer | null
   return null;
 }
 
-/** Poll READY: 15 vòng × 1,5s, dừng sớm khi hết deadline hoặc mọi đơn đã READY. */
+/** Poll READY đơn lẻ: 15 vòng × 1,5s, dừng sớm khi hết deadline hoặc mọi đơn đã READY. */
 const PRINT_WAYBILL_POLL_INTERVAL_MS = 1500;
 const PRINT_WAYBILL_POLL_MAX_ATTEMPTS = 15;
+/** Batch 15+ đơn: 40 vòng × 2,5s. Dừng sớm khi READY hoặc còn cửa sổ download. Ngân sách poll ~90–100s. */
+const PRINT_WAYBILL_BATCH_POLL_INTERVAL_MS = 2_500;
+const PRINT_WAYBILL_BATCH_POLL_MAX_ATTEMPTS = 40;
 const PRINT_WAYBILL_DOWNLOAD_CONCURRENCY = 3;
 const PRINT_WAYBILL_DOWNLOAD_PAUSE_MS = 200;
 /** Shopee create/download_shipping_document nhận tối đa 50 order_sn / request. */
@@ -11701,8 +11704,8 @@ async function fetchSingleOrderWaybillFromRows(
 }
 
 /**
- * Batch waybill — 1× create_shipping_document + poll READY (≤500ms) + 1× download_shipping_document.
- * Không for...of từng đơn, không sleep 2s/1.5s/3s giữa các lần gọi.
+ * Batch waybill — 1× create_shipping_document + poll READY (40 vòng × 2,5s, dừng sớm) + 1× download.
+ * Không for...of từng đơn. Một file hỏng không làm sập cả batch (try/catch từng bước).
  */
 async function batchDownloadShopeeWaybillPdf(
   shopId: string,
@@ -11831,7 +11834,7 @@ async function batchDownloadShopeeWaybillPdf(
     const pendingRows = [...pendingByOrder.values()].flat();
     if (pendingRows.length > 0) {
       console.log(
-        `[Shopee Batch Waybill] BULK n=${pendingByOrder.size} đơn / ${pendingRows.length} package — 1 create + poll ≤${PRINT_WAYBILL_POLL_INTERVAL_MS}ms + 1 download`,
+        `[Shopee Batch Waybill] BULK n=${pendingByOrder.size} đơn / ${pendingRows.length} package — 1 create + poll ≤${PRINT_WAYBILL_BATCH_POLL_MAX_ATTEMPTS}×${PRINT_WAYBILL_BATCH_POLL_INTERVAL_MS}ms + 1 download`,
       );
 
       for (let i = 0; i < pendingRows.length; i += SHOPEE_SHIPPING_DOC_BULK_MAX) {
@@ -11879,8 +11882,12 @@ async function batchDownloadShopeeWaybillPdf(
       let pollRows = [...pendingByOrder.values()].flat();
       const readyRowKeys = new Set<string>();
       if (pollRows.length > 0) {
-        for (let attempt = 1; attempt <= PRINT_WAYBILL_POLL_MAX_ATTEMPTS; attempt++) {
-          if (opts?.deadlineAt && Date.now() >= opts.deadlineAt) break;
+        // Giữ 20s cuối của deadline cho download. Poll chịu được ~90–100s với batch lớn.
+        const pollStopAt = opts?.deadlineAt
+          ? opts.deadlineAt - PRINT_WAYBILL_DOWNLOAD_TIMEOUT_CAP_MS
+          : 0;
+        for (let attempt = 1; attempt <= PRINT_WAYBILL_BATCH_POLL_MAX_ATTEMPTS; attempt++) {
+          if (pollStopAt && Date.now() >= pollStopAt) break;
           if (opts?.signal?.aborted) break;
           try {
             const pollResult = await shopeeGetShippingDocumentResult(
@@ -11909,18 +11916,18 @@ async function batchDownloadShopeeWaybillPdf(
               break;
             }
             console.log(
-              `[Shopee Batch Waybill] BULK POLL còn ${pollRows.length} kiện chưa READY, lần ${attempt}/${PRINT_WAYBILL_POLL_MAX_ATTEMPTS}`,
+              `[Shopee Batch Waybill] BULK POLL còn ${pollRows.length} kiện chưa READY, lần ${attempt}/${PRINT_WAYBILL_BATCH_POLL_MAX_ATTEMPTS}`,
             );
           } catch (pollErr: any) {
             console.warn(`[Shopee Batch Waybill] BULK POLL:`, pollErr?.message || pollErr);
           }
           if (pollRows.length === 0) break;
-          if (attempt < PRINT_WAYBILL_POLL_MAX_ATTEMPTS) {
-            const remaining = opts?.deadlineAt
-              ? opts.deadlineAt - Date.now()
-              : PRINT_WAYBILL_POLL_INTERVAL_MS;
+          if (attempt < PRINT_WAYBILL_BATCH_POLL_MAX_ATTEMPTS) {
+            const remaining = pollStopAt
+              ? pollStopAt - Date.now()
+              : PRINT_WAYBILL_BATCH_POLL_INTERVAL_MS;
             if (remaining <= 0) break;
-            await sleepMs(Math.min(PRINT_WAYBILL_POLL_INTERVAL_MS, remaining));
+            await sleepMs(Math.min(PRINT_WAYBILL_BATCH_POLL_INTERVAL_MS, remaining));
           }
         }
 

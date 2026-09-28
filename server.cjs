@@ -139676,7 +139676,7 @@ function dedupeShopeeParentVariantRows(products) {
 var SHOPEE_LOGISTICS_TIMEOUT_MS = 5e3;
 var PRINT_WAYBILL_POLL_HTTP_TIMEOUT_MS = 8e3;
 var PRINT_WAYBILL_DOWNLOAD_TIMEOUT_CAP_MS = 2e4;
-var WAYBILL_BATCH_DEADLINE_MS = 1e5;
+var WAYBILL_BATCH_DEADLINE_MS = 12e4;
 var SHIP_ORDER_OPERATION_TIMEOUT_MS = 8e3;
 var SHIP_ORDER_CHUNK_PAUSE_MS = 200;
 var SHOPEE_WAYBILL_PDF_MAX_BYTES = 25 * 1024 * 1024;
@@ -140483,8 +140483,8 @@ async function readCachedOrderWaybillPdf(orderSn) {
   }
   return null;
 }
-var PRINT_WAYBILL_POLL_INTERVAL_MS = 1500;
-var PRINT_WAYBILL_POLL_MAX_ATTEMPTS = 15;
+var PRINT_WAYBILL_BATCH_POLL_INTERVAL_MS = 2500;
+var PRINT_WAYBILL_BATCH_POLL_MAX_ATTEMPTS = 40;
 var PRINT_WAYBILL_DOWNLOAD_CONCURRENCY = 3;
 var PRINT_WAYBILL_DOWNLOAD_PAUSE_MS = 200;
 var SHOPEE_SHIPPING_DOC_BULK_MAX = 50;
@@ -140751,7 +140751,7 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
     const pendingRows = [...pendingByOrder.values()].flat();
     if (pendingRows.length > 0) {
       console.log(
-        `[Shopee Batch Waybill] BULK n=${pendingByOrder.size} \u0111\u01A1n / ${pendingRows.length} package \u2014 1 create + poll \u2264${PRINT_WAYBILL_POLL_INTERVAL_MS}ms + 1 download`
+        `[Shopee Batch Waybill] BULK n=${pendingByOrder.size} \u0111\u01A1n / ${pendingRows.length} package \u2014 1 create + poll \u2264${PRINT_WAYBILL_BATCH_POLL_MAX_ATTEMPTS}\xD7${PRINT_WAYBILL_BATCH_POLL_INTERVAL_MS}ms + 1 download`
       );
       for (let i2 = 0; i2 < pendingRows.length; i2 += SHOPEE_SHIPPING_DOC_BULK_MAX) {
         const chunk = pendingRows.slice(i2, i2 + SHOPEE_SHIPPING_DOC_BULK_MAX);
@@ -140795,8 +140795,9 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
       let pollRows = [...pendingByOrder.values()].flat();
       const readyRowKeys = /* @__PURE__ */ new Set();
       if (pollRows.length > 0) {
-        for (let attempt = 1; attempt <= PRINT_WAYBILL_POLL_MAX_ATTEMPTS; attempt++) {
-          if (opts?.deadlineAt && Date.now() >= opts.deadlineAt) break;
+        const pollStopAt = opts?.deadlineAt ? opts.deadlineAt - PRINT_WAYBILL_DOWNLOAD_TIMEOUT_CAP_MS : 0;
+        for (let attempt = 1; attempt <= PRINT_WAYBILL_BATCH_POLL_MAX_ATTEMPTS; attempt++) {
+          if (pollStopAt && Date.now() >= pollStopAt) break;
           if (opts?.signal?.aborted) break;
           try {
             const pollResult = await shopeeGetShippingDocumentResult(
@@ -140823,16 +140824,16 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
               break;
             }
             console.log(
-              `[Shopee Batch Waybill] BULK POLL c\xF2n ${pollRows.length} ki\u1EC7n ch\u01B0a READY, l\u1EA7n ${attempt}/${PRINT_WAYBILL_POLL_MAX_ATTEMPTS}`
+              `[Shopee Batch Waybill] BULK POLL c\xF2n ${pollRows.length} ki\u1EC7n ch\u01B0a READY, l\u1EA7n ${attempt}/${PRINT_WAYBILL_BATCH_POLL_MAX_ATTEMPTS}`
             );
           } catch (pollErr) {
             console.warn(`[Shopee Batch Waybill] BULK POLL:`, pollErr?.message || pollErr);
           }
           if (pollRows.length === 0) break;
-          if (attempt < PRINT_WAYBILL_POLL_MAX_ATTEMPTS) {
-            const remaining = opts?.deadlineAt ? opts.deadlineAt - Date.now() : PRINT_WAYBILL_POLL_INTERVAL_MS;
+          if (attempt < PRINT_WAYBILL_BATCH_POLL_MAX_ATTEMPTS) {
+            const remaining = pollStopAt ? pollStopAt - Date.now() : PRINT_WAYBILL_BATCH_POLL_INTERVAL_MS;
             if (remaining <= 0) break;
-            await sleepMs2(Math.min(PRINT_WAYBILL_POLL_INTERVAL_MS, remaining));
+            await sleepMs2(Math.min(PRINT_WAYBILL_BATCH_POLL_INTERVAL_MS, remaining));
           }
         }
         const orderedPendingSns = [...pendingByOrder.keys()];
