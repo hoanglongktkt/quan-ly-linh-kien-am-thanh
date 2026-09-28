@@ -301,8 +301,15 @@ export default function FinancialReconciliation({ authHeaders, shops }: Financia
                 const warn = Boolean(row.is_disputed) || row.status === 'Lệch tiền' || row.status === 'Chưa về ví';
                 return (
                   <tr key={`${row.shop_id}-${row.ordersn}`} className={warn ? 'bg-rose-50/60' : 'border-t border-gray-50'}>
-                    <td className="p-3 font-mono font-bold text-gray-900">
-                      {row.ordersn}
+                    <td className="p-3 font-mono">
+                      <a
+                        href={`https://banhang.shopee.vn/portal/sale/order/${row.ordersn}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 font-semibold hover:underline cursor-pointer"
+                      >
+                        {row.ordersn}
+                      </a>
                       <span className="block text-[10px] font-sans font-medium text-gray-400">{formatDate(row.order_date)}</span>
                     </td>
                     <td className="p-3 text-gray-700">{row.shop_name || row.shop_id}</td>
