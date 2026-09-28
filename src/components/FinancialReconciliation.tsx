@@ -303,7 +303,7 @@ export default function FinancialReconciliation({ authHeaders, shops }: Financia
                   <tr key={`${row.shop_id}-${row.ordersn}`} className={warn ? 'bg-rose-50/60' : 'border-t border-gray-50'}>
                     <td className="p-3 font-mono">
                       <a
-                        href={`https://banhang.shopee.vn/portal/sale/order/${row.ordersn}`}
+                        href={`https://banhang.shopee.vn/portal/sale/order?type=all&search=search&keyword=${row.ordersn}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-blue-600 font-semibold hover:underline cursor-pointer"
