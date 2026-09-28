@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Loader2, RefreshCw, Wallet } from 'lucide-react';
 import type { ConnectedShop } from '../types';
 import { getApiBaseUrl, parseJsonResponse } from '../utils/apiClient';
@@ -97,6 +97,8 @@ export default function FinancialReconciliation({ authHeaders, shops }: Financia
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [copyToast, setCopyToast] = useState<string | null>(null);
+  const copyToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const shopeeShops = useMemo(
     () => (shops || []).filter((s) => s.platform === 'shopee' && s.shopId),
@@ -138,6 +140,24 @@ export default function FinancialReconciliation({ authHeaders, shops }: Financia
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    return () => {
+      if (copyToastTimerRef.current) clearTimeout(copyToastTimerRef.current);
+    };
+  }, []);
+
+  const handleClick = useCallback((ordersn: string) => {
+    const sn = ordersn;
+    void navigator.clipboard.writeText(sn);
+    window.open('https://banhang.shopee.vn/portal/sale/order?type=all', '_blank');
+    if (copyToastTimerRef.current) clearTimeout(copyToastTimerRef.current);
+    setCopyToast('Đã copy mã đơn. Hãy ấn Ctrl+V trên Shopee!');
+    copyToastTimerRef.current = setTimeout(() => {
+      setCopyToast(null);
+      copyToastTimerRef.current = null;
+    }, 3500);
+  }, []);
 
   const syncNow = async () => {
     setSyncing(true);
@@ -302,14 +322,12 @@ export default function FinancialReconciliation({ authHeaders, shops }: Financia
                 return (
                   <tr key={`${row.shop_id}-${row.ordersn}`} className={warn ? 'bg-rose-50/60' : 'border-t border-gray-50'}>
                     <td className="p-3 font-mono">
-                      <a
-                        href={`https://banhang.shopee.vn/portal/sale/order?type=all&search=search&keyword=${row.ordersn}`}
-                        target="_blank"
-                        rel="noopener"
+                      <span
+                        onClick={() => handleClick(row.ordersn)}
                         className="text-blue-600 font-semibold hover:underline cursor-pointer"
                       >
                         {row.ordersn}
-                      </a>
+                      </span>
                       <span className="block text-[10px] font-sans font-medium text-gray-400">{formatDate(row.order_date)}</span>
                     </td>
                     <td className="p-3 text-gray-700">{row.shop_name || row.shop_id}</td>
@@ -335,6 +353,11 @@ export default function FinancialReconciliation({ authHeaders, shops }: Financia
           </table>
         </div>
       </div>
+      {copyToast && (
+        <div className="fixed bottom-5 right-5 z-70 max-w-sm px-5 py-3 rounded-xl shadow-lg bg-emerald-600 text-white text-sm font-semibold">
+          {copyToast}
+        </div>
+      )}
     </div>
   );
 }
