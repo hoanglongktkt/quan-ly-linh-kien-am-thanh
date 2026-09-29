@@ -27,6 +27,13 @@ import { parseJsonResponse } from './utils/apiClient';
 import { decodeJwtPayload, isJwtLocallyValid } from './utils/jwtClient';
 import { onTabWake } from './utils/tabWakeGate';
 import { clearLegacyOrdersLocalStorage, loadOrdersCache, saveOrdersCache } from './utils/orderCache';
+import {
+  EMPTY_PRODUCTS_META,
+  loadCachedProductsIdb,
+  loadCachedProductsSync,
+  saveCachedProducts,
+  type CachedProductsSnapshot,
+} from './utils/productCache';
 import { matchesProcessedPickupTab } from './utils/orderHandover';
 import { 
   LayoutDashboard, 
@@ -461,15 +468,17 @@ export default function App() {
   const [adminUser, setAdminUser] = useState<string>('');
   const [authChecking, setAuthChecking] = useState<boolean>(true);
 
-  // 1. Initialize State — chỉ lấy live data từ Database.
-  const [products, setProducts] = useState<Product[]>([]);
-  const [productsMeta, setProductsMeta] = useState({
-    page: 1,
-    pageSize: 50,
-    total: 0,
-    totalPages: 1,
-    hasMore: false,
-  });
+  // SWR: đọc localStorage đồng bộ trước paint — mở lại app là có hàng, API cập nhật ngầm.
+  const bootProductCacheRef = useRef<CachedProductsSnapshot | null>(null);
+  const bootProductCacheReadyRef = useRef(false);
+  if (!bootProductCacheReadyRef.current) {
+    bootProductCacheReadyRef.current = true;
+    bootProductCacheRef.current = loadCachedProductsSync();
+  }
+  const productsServerAppliedRef = useRef(false);
+
+  const [products, setProducts] = useState<Product[]>(() => bootProductCacheRef.current?.products ?? []);
+  const [productsMeta, setProductsMeta] = useState(() => bootProductCacheRef.current?.meta ?? { ...EMPTY_PRODUCTS_META });
 
   const [expenses, setExpenses] = useState<Expense[]>([]);
 
@@ -497,7 +506,9 @@ export default function App() {
   /** Waterfall P3: products/suppliers/... chỉ boot 1 lần sau list+counter (tab orders) hoặc ngay (tab khác). */
   const secondaryBootDoneRef = useRef(false);
   const [ordersNetworkBootReady, setOrdersNetworkBootReady] = useState(false);
-  const [productsLoading, setProductsLoading] = useState<boolean>(false);
+  const [productsLoading, setProductsLoading] = useState<boolean>(
+    () => (bootProductCacheRef.current?.products.length ?? 0) === 0,
+  );
   /** Toast kết quả dò ngầm Backend (sống sót khi rời tab Đơn hàng). */
   const [scanBgToast, setScanBgToast] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [scanBgPendingCount, setScanBgPendingCount] = useState(0);
@@ -561,6 +572,17 @@ export default function App() {
   }, []);
   /** Từ khóa search Kho SP chính — giữ qua phân trang / focus refresh. */
   const productsSearchRef = useRef('');
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (products.length === 0) return;
+    if (productsSearchRef.current) return;
+    const timer = window.setTimeout(() => {
+      if (productsSearchRef.current) return;
+      saveCachedProducts(products, productsMeta);
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [isAuthenticated, products, productsMeta]);
   /** Sort Tồn kho / Giá bán — giữ qua phân trang. Rỗng = thứ tự mặc định. */
   const productsSortRef = useRef<{ sortBy: '' | 'stock' | 'sellingPrice'; order: '' | 'asc' | 'desc' }>({
     sortBy: '',
@@ -1324,6 +1346,7 @@ export default function App() {
           const data = await response.json();
           if (seq !== fetchProductsSeqRef.current) return;
           if (Array.isArray(data)) {
+            productsServerAppliedRef.current = true;
             setProducts(data);
             setProductsMeta({ page: 1, pageSize: data.length, total: data.length, totalPages: 1, hasMore: false });
             return;
@@ -1332,6 +1355,7 @@ export default function App() {
             throw new Error(data?.message || data?.error || 'products_unavailable');
           }
           const list: Product[] = Array.isArray(data.products) ? data.products : [];
+          productsServerAppliedRef.current = true;
           setProducts((prev) => (append ? [...prev, ...list] : list));
           setProductsMeta({
             page: Number(data.page) || page,
@@ -2203,7 +2227,27 @@ export default function App() {
 
     let cancelled = false;
     secondaryBootDoneRef.current = true;
-    void fetchProducts({ page: 1, append: false, pageSize: 50, forceRefresh: false });
+    void (async () => {
+      let hadCache = (bootProductCacheRef.current?.products.length ?? 0) > 0;
+      if (!hadCache) {
+        const idb = await loadCachedProductsIdb();
+        if (cancelled) return;
+        if (!productsServerAppliedRef.current && idb && idb.products.length > 0) {
+          setProducts(idb.products);
+          setProductsMeta(idb.meta);
+          setProductsLoading(false);
+          hadCache = true;
+        }
+      }
+      if (cancelled) return;
+      void fetchProducts({
+        page: 1,
+        append: false,
+        pageSize: 50,
+        forceRefresh: false,
+        silent: hadCache,
+      });
+    })();
 
     const secondaryTimer = window.setTimeout(() => {
       if (cancelled) return;

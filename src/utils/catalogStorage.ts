@@ -1,4 +1,5 @@
 import { Product } from '../types';
+import { clearCachedProducts } from './productCache';
 import { safeGetItem, safeGetJson, safeRemoveItem, safeSetItem } from './safeStorage';
 
 /** Cache catalog cũ — chỉ dọn các key legacy, không đụng persistence mới. */
@@ -98,6 +99,7 @@ export function saveInventoryMeta(meta: InventoryMeta): void {
 export function clearInventoryBrowserCache(): void {
   clearPersistedProducts();
   clearPersistedListings();
+  clearCachedProducts();
   saveInventoryMeta({
     updatedAt: new Date().toISOString(),
     source: 'empty',

@@ -99,7 +99,7 @@ interface InventoryAuditProps {
 }
 
 const PAGE_SIZES = [20, 50, 100];
-const SEARCH_DEBOUNCE_MS = 350;
+const SEARCH_DEBOUNCE_MS = 300;
 const SEARCH_RESULT_LIMIT = 50;
 
 function normalizeSearchProduct(row: Product): Product {

@@ -16,6 +16,7 @@ import { parseJsonResponse, formatShopeeSyncAlertLines } from '../utils/apiClien
 import { calculateProfitWithSystemFees } from '../utils/profitCalculator';
 import { buildShopeeSyncPayload } from '../utils/shopeeSyncPayload';
 import { clearInventoryBrowserCache } from '../utils/catalogStorage';
+import { useWindowVirtualRange } from '../hooks/useWindowVirtualRange';
 import InlineCommitInput from './InlineCommitInput';
 import { 
   Plus, 
@@ -280,7 +281,7 @@ export default function ProductList({
     runProductSearch(search);
   };
 
-  // Server-side search: debounce 400ms, luôn reset page về 1 khi đổi từ khóa.
+  // Server-side search: debounce 300ms, luôn reset page về 1 khi đổi từ khóa.
   useEffect(() => {
     if (searchInitRef.current) {
       searchInitRef.current = false;
@@ -289,7 +290,7 @@ export default function ProductList({
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
     searchDebounceRef.current = setTimeout(() => {
       runProductSearch(search);
-    }, 400);
+    }, 300);
     return () => {
       if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
     };
@@ -749,6 +750,45 @@ export default function ProductList({
     };
     return [...filteredGroups].sort((a, b) => rankOf(a) - rankOf(b));
   }, [filteredGroups, products, sortField, sortOrder]);
+
+  const [narrow, setNarrow] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 767px)');
+    const apply = () => setNarrow(mq.matches);
+    apply();
+    mq.addEventListener('change', apply);
+    return () => mq.removeEventListener('change', apply);
+  }, []);
+
+  const expandedKey = [...expandedParentIds].join('|');
+  const mobileRange = useWindowVirtualRange({
+    count: displayGroups.length,
+    enabled: narrow,
+    revision: expandedKey,
+    overscan: 3,
+    getSize: (index) => {
+      const group = displayGroups[index];
+      if (!group) return 248;
+      const open = expandedParentIds.has(group.groupId) && group.hasVariants;
+      return 248 + (open ? group.variants.length * 84 : 0);
+    },
+  });
+  const desktopRange = useWindowVirtualRange({
+    count: displayGroups.length,
+    enabled: !narrow,
+    revision: expandedKey,
+    overscan: 4,
+    getSize: (index) => {
+      const group = displayGroups[index];
+      if (!group) return 76;
+      const open = expandedParentIds.has(group.groupId) && group.hasVariants;
+      return 76 + (open ? group.variants.length * 56 : 0);
+    },
+  });
+  const mobileGroups = narrow ? displayGroups.slice(mobileRange.start, mobileRange.end) : [];
+  const desktopGroups = narrow ? [] : displayGroups.slice(desktopRange.start, desktopRange.end);
 
   const handleToggleSort = (field: 'stock' | 'sellingPrice') => {
     let nextField: 'stock' | 'sellingPrice' | null = field;
@@ -1419,7 +1459,7 @@ export default function ProductList({
                 <th className="p-4 text-center">Thao tác</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-50 text-sm">
+            <tbody ref={desktopRange.anchorRef as React.Ref<HTMLTableSectionElement>} className="divide-y divide-gray-50 text-sm">
               {displayGroups.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="p-16 text-center">
@@ -1433,7 +1473,13 @@ export default function ProductList({
                   </td>
                 </tr>
               ) : (
-                displayGroups.flatMap((group) => {
+                <>
+                {desktopRange.top > 0 && (
+                  <tr aria-hidden="true">
+                    <td colSpan={8} style={{ height: desktopRange.top, padding: 0, border: 0, lineHeight: 0 }} />
+                  </tr>
+                )}
+                {desktopGroups.flatMap((group) => {
                   const prod = group.representative;
                   const priceLabel = formatPriceRange(group.minSellingPrice, group.maxSellingPrice);
                   const estimatedProfit = estimatedProfitById.get(prod.id) ?? 0;
@@ -1826,7 +1872,13 @@ export default function ProductList({
                   }
 
                   return rows;
-                })
+                })}
+                {desktopRange.bottom > 0 && (
+                  <tr aria-hidden="true">
+                    <td colSpan={8} style={{ height: desktopRange.bottom, padding: 0, border: 0, lineHeight: 0 }} />
+                  </tr>
+                )}
+                </>
               )}
             </tbody>
           </table>
@@ -1869,7 +1921,7 @@ export default function ProductList({
       </div>
 
       {/* Products Card List - Mobile-First */}
-      <div className="max-md:block md:hidden space-y-4">
+      <div ref={mobileRange.anchorRef as React.Ref<HTMLDivElement>} className="max-md:block md:hidden">
         {displayGroups.length === 0 ? (
           <div className="bg-white rounded-2xl border border-gray-150 p-16 text-center">
             <p className="text-sm font-semibold text-gray-400 tracking-wide">
@@ -1881,7 +1933,9 @@ export default function ProductList({
             </p>
           </div>
         ) : (
-          displayGroups.map((group) => {
+          <>
+          {mobileRange.top > 0 && <div aria-hidden="true" style={{ height: mobileRange.top }} />}
+          {mobileGroups.map((group) => {
             const prod = group.representative;
             const isLowStock = group.totalStock > 0 && group.totalStock <= 10;
             const isOutStock = group.totalStock === 0;
@@ -1890,7 +1944,7 @@ export default function ProductList({
             const estimatedProfit = estimatedProfitById.get(prod.id) ?? 0;
 
             return (
-              <div key={group.groupId} className="bg-white rounded-2xl border border-gray-150 p-4 shadow-xs space-y-3">
+              <div key={group.groupId} className="bg-white rounded-2xl border border-gray-150 p-4 shadow-xs space-y-3 mb-4">
                 <div className="flex items-center gap-3">
                   {group.hasVariants && (
                     <button
@@ -2082,7 +2136,9 @@ export default function ProductList({
                 </div>
               </div>
             );
-          })
+          })}
+          {mobileRange.bottom > 0 && <div aria-hidden="true" style={{ height: mobileRange.bottom }} />}
+          </>
         )}
       </div>
 
