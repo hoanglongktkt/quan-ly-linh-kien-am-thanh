@@ -3,6 +3,7 @@ import { Product, ConnectedShop, SyncLog, Supplier, BulkSaveProductUpdate, Syste
 import ProductDetailModal, {
   buildProductGroups,
   formatPriceRange,
+  getShopeeItemKey,
   isJunkCategoryLabel,
   type ProductGroupRow,
 } from './ProductDetailModal';
@@ -170,6 +171,35 @@ function formatShopeeSyncSuccessToast(shopeeMessage?: string | null): string {
   }
   const names = uniqueIds.map(resolveShopeeSyncShopName).join(', ');
   return `Đồng bộ Shopee (${names}) thành công! Đã cập nhật giá và tồn kho.`;
+}
+
+/** Item ID trên Shopee Seller — parent hoặc biến thể cùng item. */
+function resolveShopeeItemId(product: Product, extras: Product[] = []): string {
+  for (const row of [product, ...extras]) {
+    if (!row) continue;
+    const fromKey = String(getShopeeItemKey(row) || '').trim();
+    if (/^\d+$/.test(fromKey)) return fromKey;
+    const rawId = String(row.shopeeId || '').trim();
+    const itemPart = rawId.includes(':') ? rawId.split(':')[0].trim() : rawId;
+    if (/^\d+$/.test(itemPart)) return itemPart;
+  }
+  return '';
+}
+
+function ShopeeSellerEditLink({ itemId, iconClassName }: { itemId: string; iconClassName: string }) {
+  if (!itemId) return null;
+  return (
+    <a
+      href={`https://banhang.shopee.vn/portal/product/${itemId}`}
+      target="_blank"
+      rel="noopener"
+      onClick={(e) => e.stopPropagation()}
+      className="p-1.5 text-orange-500 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-all shrink-0"
+      title="Sửa trên Shopee"
+    >
+      <ExternalLink className={iconClassName} />
+    </a>
+  );
 }
 
 export default function ProductList({ 
@@ -1481,6 +1511,7 @@ export default function ProductList({
                 )}
                 {desktopGroups.flatMap((group) => {
                   const prod = group.representative;
+                  const parentShopeeItemId = resolveShopeeItemId(prod, group.variants);
                   const priceLabel = formatPriceRange(group.minSellingPrice, group.maxSellingPrice);
                   const estimatedProfit = estimatedProfitById.get(prod.id) ?? 0;
                   const isExpanded = expandedParentIds.has(group.groupId);
@@ -1492,7 +1523,7 @@ export default function ProductList({
                       className="hover:bg-gray-50/50 transition-colors cursor-pointer"
                       onClick={(e) => {
                         const tag = (e.target as HTMLElement).tagName;
-                        if (tag === 'INPUT' || tag === 'BUTTON' || (e.target as HTMLElement).closest('button, input')) return;
+                        if (tag === 'INPUT' || tag === 'BUTTON' || tag === 'A' || (e.target as HTMLElement).closest('button, input, a')) return;
                         if (group.hasVariants) {
                           toggleParentExpand(group.groupId);
                           return;
@@ -1643,11 +1674,12 @@ export default function ProductList({
                           </span>
                         </div>
                       </td>
-                      <td className="p-4 text-center">
-                        <div className="flex items-center justify-center gap-1">
+                      <td className="p-4 text-center whitespace-nowrap">
+                        <div className="flex items-center justify-center gap-1 flex-nowrap">
+                          <ShopeeSellerEditLink itemId={parentShopeeItemId} iconClassName="w-4 h-4" />
                           <button
                             onClick={(e) => { e.stopPropagation(); openProductDetail(prod); }}
-                            className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                            className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all shrink-0"
                             title="Sửa sản phẩm"
                           >
                             <Edit3 className="w-4 h-4" />
@@ -1829,11 +1861,12 @@ export default function ProductList({
                               Shopee
                             </span>
                           </td>
-                          <td className="p-3 text-center">
-                            <div className="flex items-center justify-center gap-1">
+                          <td className="p-3 text-center whitespace-nowrap">
+                            <div className="flex items-center justify-center gap-1 flex-nowrap">
+                              <ShopeeSellerEditLink itemId={resolveShopeeItemId(child, [prod])} iconClassName="w-3.5 h-3.5" />
                               <button
                                 onClick={() => openProductDetail(child)}
-                                className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                                className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all shrink-0"
                                 title="Sửa phân loại"
                               >
                                 <Edit3 className="w-3.5 h-3.5" />
