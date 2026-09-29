@@ -440,20 +440,27 @@ async function processShopeeWebhookAsync(
       return;
     }
 
-    // HMAC đã chạy ở trên (không đổi hàm verify). Ghi nông TRƯỚC hàng đợi detail
-    // để counter thấy đơn ngay. Lỗi stub không được nuốt job get_order_detail.
-    if (eagerStubOrder) {
-      try {
-        await eagerStubOrder(payload);
-      } catch (stubErr) {
-        console.error(
-          "[Shopee Webhook] Eager stub upsert failed — vẫn enqueue get_order_detail:",
-          stubErr instanceof Error ? stubErr.message : stubErr,
-        );
-      }
+    console.log("[WEBHOOK] Nhận event mới:", orderSn, status || "");
+
+    // Queue lấy chi tiết là việc bắt buộc. Ghi nông là phụ — không được đứng trước enqueue.
+    let queued = false;
+    try {
+      queued = queue.enqueue(payload);
+    } catch (queueErr) {
+      console.error(
+        "[WEBHOOK] enqueue get_order_detail failed:",
+        queueErr instanceof Error ? queueErr.message : queueErr,
+      );
     }
 
-    const queued = queue.enqueue(payload);
+    if (eagerStubOrder) {
+      void Promise.resolve()
+        .then(() => eagerStubOrder(payload))
+        .catch((err) => {
+          console.error("Stub order error:", err);
+        });
+    }
+
     if (!queued) return;
 
     console.log(

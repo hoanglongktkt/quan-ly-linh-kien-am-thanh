@@ -21513,39 +21513,55 @@ async function applyWebhookReturnFallback(
  * Chỉ order_sn, shop_id, status (đã map), update_time. Không gọi tracking/escrow.
  */
 async function eagerUpsertWebhookStub(body: any): Promise<void> {
-  const normalized = normalizeShopeeOrder(body);
-  if (!normalized?.orderSn) return;
-  if (!isMongoReady()) {
-    console.warn(
-      `[Shopee Webhook] eager stub skip — Mongo chưa sẵn sàng order_sn=${normalized.orderSn}`,
+  try {
+    const normalized = normalizeShopeeOrder(body);
+    if (!normalized?.orderSn) return;
+    if (!isMongoReady()) {
+      console.warn(
+        `[Shopee Webhook] eager stub skip — Mongo chưa sẵn sàng order_sn=${normalized.orderSn}`,
+      );
+      return;
+    }
+    normalized._force_shop_id = true;
+    if (!normalized.data || typeof normalized.data !== "object") {
+      normalized.data = {
+        id: normalized.id,
+        orderSn: normalized.orderSn,
+        order_sn: normalized.orderSn,
+        channel: "shopee",
+        shopId: normalized.shopId || null,
+        status: normalized.status || null,
+        shopee_order_status: normalized.shopee_order_status || null,
+        items: Array.isArray(normalized.items) ? normalized.items : [],
+      };
+    }
+    await bulkUpsertOrdersToStore([normalized]);
+    try {
+      invalidateOrdersRefreshCache();
+    } catch {
+      /* ignore */
+    }
+    try {
+      invalidateTabCountCache();
+    } catch {
+      /* ignore */
+    }
+    emitNewOrder({
+      orderSn: String(normalized.orderSn),
+      orderSns: [String(normalized.orderSn)],
+      shopId: String(normalized.shopId || ""),
+      status: String(normalized.status || ""),
+      count: 1,
+    });
+    console.log(
+      `[Shopee Webhook] eager stub OK order_sn=${normalized.orderSn}` +
+        ` shop_id=${normalized.shopId || "—"}` +
+        ` status=${normalized.status || "—"}` +
+        ` raw=${normalized.shopee_order_status || "—"}`,
     );
-    return;
+  } catch (err) {
+    console.error("Stub order error:", err);
   }
-  normalized._force_shop_id = true;
-  await bulkUpsertOrdersToStore([normalized]);
-  try {
-    invalidateOrdersRefreshCache();
-  } catch {
-    /* ignore */
-  }
-  try {
-    invalidateTabCountCache();
-  } catch {
-    /* ignore */
-  }
-  emitNewOrder({
-    orderSn: String(normalized.orderSn),
-    orderSns: [String(normalized.orderSn)],
-    shopId: String(normalized.shopId || ""),
-    status: String(normalized.status || ""),
-    count: 1,
-  });
-  console.log(
-    `[Shopee Webhook] eager stub OK order_sn=${normalized.orderSn}` +
-      ` shop_id=${normalized.shopId || "—"}` +
-      ` status=${normalized.status || "—"}` +
-      ` raw=${normalized.shopee_order_status || "—"}`,
-  );
 }
 
 /** Fallback cũ: normalize payload push thô khi chưa gọi được get_order_detail. */

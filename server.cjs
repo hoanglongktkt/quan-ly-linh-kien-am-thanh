@@ -75124,13 +75124,23 @@ function scheduleAutoIncrementalOrdersSync(deps23 = {}) {
     console.error(`[CRON] Invalid cron expr="${cronExpr}" \u2014 sync cron NOT started`);
     return;
   }
+  let isIncrementalPullInFlight = false;
   cronTask = import_node_cron.default.schedule(cronExpr, () => {
+    if (isIncrementalPullInFlight) {
+      console.log("[CRON] Incremental Sync skipped \u2014 isIncrementalPullInFlight");
+      return;
+    }
+    isIncrementalPullInFlight = true;
     console.log(
       `[CRON] Tick Incremental Sync \u2014 lookbackSec=${lookbackSec} (${Math.round(lookbackSec / 3600)}h)`
     );
     try {
       if (typeof deps23.runSync === "function") {
-        void deps23.runSync({ lookbackSec, trigger: "cron" });
+        void Promise.resolve(deps23.runSync({ lookbackSec, trigger: "cron" })).catch((err) => {
+          console.error("[CRON] Incremental Sync tick failed:", err?.message || err);
+        }).finally(() => {
+          isIncrementalPullInFlight = false;
+        });
         return;
       }
       const ack = triggerBackgroundOrderSync({
@@ -75146,6 +75156,8 @@ function scheduleAutoIncrementalOrdersSync(deps23 = {}) {
       );
     } catch (err) {
       console.error("[CRON] Incremental Sync tick failed:", err?.message || err);
+    } finally {
+      isIncrementalPullInFlight = false;
     }
   });
   console.log(
@@ -75412,14 +75424,26 @@ function scheduleReadyToShipBackfill(deps23 = {}) {
     console.error(`[CRON] Invalid RTS backfill cron expr="${cronExpr}"`);
     return;
   }
+  let isDeepPullInFlight = false;
   rtsBackfillTask = import_node_cron.default.schedule(cronExpr, () => {
+    if (isDeepPullInFlight) {
+      console.log("[CRON] READY_TO_SHIP backfill skipped \u2014 isDeepPullInFlight");
+      return;
+    }
+    isDeepPullInFlight = true;
+    const releaseDeepPull = () => {
+      isDeepPullInFlight = false;
+    };
+    const deepPullStaleTimer = setTimeout(() => {
+      if (!isDeepPullInFlight) return;
+      console.warn("[CRON] isDeepPullInFlight stale \u2014 force release");
+      releaseDeepPull();
+    }, 16 * 60 * 1e3);
     console.log(
       `[CRON] Tick READY_TO_SHIP backfill \u2014 lookbackSec=${lookbackSec} (~${Math.round(lookbackSec / 86400)}d)`
     );
     try {
-      void Promise.resolve(
-        deps23.runSync({ lookbackSec, trigger: "cron" })
-      ).then((r2) => {
+      void Promise.resolve(deps23.runSync({ lookbackSec, trigger: "cron" })).then((r2) => {
         if (r2?.skipped) {
           console.log(`[CRON] RTS backfill skipped: ${r2.message || "busy"}`);
           return;
@@ -75427,8 +75451,15 @@ function scheduleReadyToShipBackfill(deps23 = {}) {
         console.log(
           `[CRON] RTS backfill done pulled=${r2?.pulled || 0} +${r2?.added || 0}/~${r2?.updated || 0}`
         );
+      }).catch((err) => {
+        console.error("[CRON] RTS backfill tick failed:", err?.message || err);
+      }).finally(() => {
+        clearTimeout(deepPullStaleTimer);
+        releaseDeepPull();
       });
     } catch (err) {
+      clearTimeout(deepPullStaleTimer);
+      releaseDeepPull();
       console.error("[CRON] RTS backfill tick failed:", err?.message || err);
     }
   });
@@ -76131,17 +76162,21 @@ async function processShopeeWebhookAsync(queue, snapshot, rawBodyPromise, eagerS
       );
       return;
     }
-    if (eagerStubOrder) {
-      try {
-        await eagerStubOrder(payload);
-      } catch (stubErr) {
-        console.error(
-          "[Shopee Webhook] Eager stub upsert failed \u2014 v\u1EABn enqueue get_order_detail:",
-          stubErr instanceof Error ? stubErr.message : stubErr
-        );
-      }
+    console.log("[WEBHOOK] Nh\u1EADn event m\u1EDBi:", orderSn, status || "");
+    let queued = false;
+    try {
+      queued = queue.enqueue(payload);
+    } catch (queueErr) {
+      console.error(
+        "[WEBHOOK] enqueue get_order_detail failed:",
+        queueErr instanceof Error ? queueErr.message : queueErr
+      );
     }
-    const queued = queue.enqueue(payload);
+    if (eagerStubOrder) {
+      void Promise.resolve().then(() => eagerStubOrder(payload)).catch((err) => {
+        console.error("Stub order error:", err);
+      });
+    }
     if (!queued) return;
     console.log(
       "[WEBHOOK RECEIVED] order payload queued after ACK \u2014 will get_order_detail + UPSERT:",
@@ -147668,34 +147703,50 @@ async function applyWebhookReturnFallback(shopId, accessToken, orderSn, orders, 
   );
 }
 async function eagerUpsertWebhookStub(body) {
-  const normalized = normalizeShopeeOrder(body);
-  if (!normalized?.orderSn) return;
-  if (!isMongoReady()) {
-    console.warn(
-      `[Shopee Webhook] eager stub skip \u2014 Mongo ch\u01B0a s\u1EB5n s\xE0ng order_sn=${normalized.orderSn}`
+  try {
+    const normalized = normalizeShopeeOrder(body);
+    if (!normalized?.orderSn) return;
+    if (!isMongoReady()) {
+      console.warn(
+        `[Shopee Webhook] eager stub skip \u2014 Mongo ch\u01B0a s\u1EB5n s\xE0ng order_sn=${normalized.orderSn}`
+      );
+      return;
+    }
+    normalized._force_shop_id = true;
+    if (!normalized.data || typeof normalized.data !== "object") {
+      normalized.data = {
+        id: normalized.id,
+        orderSn: normalized.orderSn,
+        order_sn: normalized.orderSn,
+        channel: "shopee",
+        shopId: normalized.shopId || null,
+        status: normalized.status || null,
+        shopee_order_status: normalized.shopee_order_status || null,
+        items: Array.isArray(normalized.items) ? normalized.items : []
+      };
+    }
+    await bulkUpsertOrdersToStore([normalized]);
+    try {
+      invalidateOrdersRefreshCache();
+    } catch {
+    }
+    try {
+      invalidateTabCountCache();
+    } catch {
+    }
+    emitNewOrder({
+      orderSn: String(normalized.orderSn),
+      orderSns: [String(normalized.orderSn)],
+      shopId: String(normalized.shopId || ""),
+      status: String(normalized.status || ""),
+      count: 1
+    });
+    console.log(
+      `[Shopee Webhook] eager stub OK order_sn=${normalized.orderSn} shop_id=${normalized.shopId || "\u2014"} status=${normalized.status || "\u2014"} raw=${normalized.shopee_order_status || "\u2014"}`
     );
-    return;
+  } catch (err) {
+    console.error("Stub order error:", err);
   }
-  normalized._force_shop_id = true;
-  await bulkUpsertOrdersToStore([normalized]);
-  try {
-    invalidateOrdersRefreshCache();
-  } catch {
-  }
-  try {
-    invalidateTabCountCache();
-  } catch {
-  }
-  emitNewOrder({
-    orderSn: String(normalized.orderSn),
-    orderSns: [String(normalized.orderSn)],
-    shopId: String(normalized.shopId || ""),
-    status: String(normalized.status || ""),
-    count: 1
-  });
-  console.log(
-    `[Shopee Webhook] eager stub OK order_sn=${normalized.orderSn} shop_id=${normalized.shopId || "\u2014"} status=${normalized.status || "\u2014"} raw=${normalized.shopee_order_status || "\u2014"}`
-  );
 }
 async function upsertShopeeWebhookShallow(body, orders) {
   const normalized = normalizeShopeeOrder(body);

@@ -60,13 +60,25 @@ export function scheduleAutoIncrementalOrdersSync(deps = {}) {
     return;
   }
 
+  let isIncrementalPullInFlight = false;
   cronTask = cron.schedule(cronExpr, () => {
+    if (isIncrementalPullInFlight) {
+      console.log("[CRON] Incremental Sync skipped — isIncrementalPullInFlight");
+      return;
+    }
+    isIncrementalPullInFlight = true;
     console.log(
       `[CRON] Tick Incremental Sync — lookbackSec=${lookbackSec} (${Math.round(lookbackSec / 3600)}h)`,
     );
     try {
       if (typeof deps.runSync === "function") {
-        void deps.runSync({ lookbackSec, trigger: "cron" });
+        void Promise.resolve(deps.runSync({ lookbackSec, trigger: "cron" }))
+          .catch((err) => {
+            console.error("[CRON] Incremental Sync tick failed:", err?.message || err);
+          })
+          .finally(() => {
+            isIncrementalPullInFlight = false;
+          });
         return;
       }
       const ack = triggerBackgroundOrderSync({
@@ -82,6 +94,8 @@ export function scheduleAutoIncrementalOrdersSync(deps = {}) {
       );
     } catch (err) {
       console.error("[CRON] Incremental Sync tick failed:", err?.message || err);
+    } finally {
+      isIncrementalPullInFlight = false;
     }
   });
 
@@ -533,23 +547,45 @@ export function scheduleReadyToShipBackfill(deps = {}) {
     return;
   }
 
+  let isDeepPullInFlight = false;
   rtsBackfillTask = cron.schedule(cronExpr, () => {
+    if (isDeepPullInFlight) {
+      console.log("[CRON] READY_TO_SHIP backfill skipped — isDeepPullInFlight");
+      return;
+    }
+    isDeepPullInFlight = true;
+    const releaseDeepPull = () => {
+      isDeepPullInFlight = false;
+    };
+    const deepPullStaleTimer = setTimeout(() => {
+      if (!isDeepPullInFlight) return;
+      console.warn("[CRON] isDeepPullInFlight stale — force release");
+      releaseDeepPull();
+    }, 16 * 60 * 1000);
     console.log(
       `[CRON] Tick READY_TO_SHIP backfill — lookbackSec=${lookbackSec} (~${Math.round(lookbackSec / 86400)}d)`,
     );
     try {
-      void Promise.resolve(
-        deps.runSync({ lookbackSec, trigger: "cron" }),
-      ).then((r) => {
-        if (r?.skipped) {
-          console.log(`[CRON] RTS backfill skipped: ${r.message || "busy"}`);
-          return;
-        }
-        console.log(
-          `[CRON] RTS backfill done pulled=${r?.pulled || 0} +${r?.added || 0}/~${r?.updated || 0}`,
-        );
-      });
+      void Promise.resolve(deps.runSync({ lookbackSec, trigger: "cron" }))
+        .then((r) => {
+          if (r?.skipped) {
+            console.log(`[CRON] RTS backfill skipped: ${r.message || "busy"}`);
+            return;
+          }
+          console.log(
+            `[CRON] RTS backfill done pulled=${r?.pulled || 0} +${r?.added || 0}/~${r?.updated || 0}`,
+          );
+        })
+        .catch((err) => {
+          console.error("[CRON] RTS backfill tick failed:", err?.message || err);
+        })
+        .finally(() => {
+          clearTimeout(deepPullStaleTimer);
+          releaseDeepPull();
+        });
     } catch (err) {
+      clearTimeout(deepPullStaleTimer);
+      releaseDeepPull();
       console.error("[CRON] RTS backfill tick failed:", err?.message || err);
     }
   });
