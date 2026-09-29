@@ -136,6 +136,7 @@ export default function QuickPosPage({
   const [phoneQuery, setPhoneQuery] = useState('');
   const [storeInfo, setStoreInfo] = useState<StoreInvoiceInfo>(EMPTY_STORE_INFO);
   const [storeInfoOpen, setStoreInfoOpen] = useState(false);
+  const [qtyDrafts, setQtyDrafts] = useState<Record<string, string>>({});
 
   useEffect(() => {
     setStoreInfo(loadStoreInfo());
@@ -237,6 +238,12 @@ export default function QuickPosPage({
         },
       ];
     });
+    setQtyDrafts((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
     setError(null);
   };
 
@@ -246,8 +253,44 @@ export default function QuickPosPage({
     );
   };
 
+  const clearQtyDraft = (productId: string) => {
+    setQtyDrafts((prev) => {
+      if (!(productId in prev)) return prev;
+      const next = { ...prev };
+      delete next[productId];
+      return next;
+    });
+  };
+
+  const handleQtyChange = (productId: string, raw: string) => {
+    const cleaned = raw.replace(/\D/g, '');
+    setQtyDrafts((prev) => ({ ...prev, [productId]: cleaned }));
+    if (cleaned === '') return;
+    const n = Math.round(Number(cleaned));
+    if (n >= 1) updateLine(productId, { quantity: n });
+  };
+
+  const commitQty = (productId: string) => {
+    const raw = qtyDrafts[productId];
+    if (raw == null) return;
+    const n = Math.round(Number(raw));
+    updateLine(productId, { quantity: Number.isFinite(n) && n >= 1 ? n : 1 });
+    clearQtyDraft(productId);
+  };
+
+  const handleIncrease = (productId: string, current: number) => {
+    updateLine(productId, { quantity: Math.max(1, Math.round(current) || 1) + 1 });
+    clearQtyDraft(productId);
+  };
+
+  const handleDecrease = (productId: string, current: number) => {
+    updateLine(productId, { quantity: Math.max(1, (Math.round(current) || 1) - 1) });
+    clearQtyDraft(productId);
+  };
+
   const removeLine = (productId: string) => {
     setLines((prev) => prev.filter((l) => l.productId !== productId));
+    clearQtyDraft(productId);
   };
 
   const applyLocalStockOptimistic = (order: Order) => {
@@ -705,10 +748,10 @@ export default function QuickPosPage({
             <table className="min-w-full text-xs">
               <thead className="bg-slate-50 text-slate-600">
                 <tr>
-                  <th className="px-2 py-2 text-left font-bold">STT</th>
+                  <th className="px-2 py-2 text-left font-bold hidden md:table-cell">STT</th>
                   <th className="px-2 py-2 text-left font-bold">Ảnh</th>
                   <th className="px-2 py-2 text-left font-bold">Tên</th>
-                  <th className="px-2 py-2 text-right font-bold">SL</th>
+                  <th className="px-2 py-2 text-center font-bold whitespace-nowrap">SL</th>
                   <th className="px-2 py-2 text-right font-bold">Giá nhập</th>
                   <th className="px-2 py-2 text-right font-bold">Giá bán</th>
                   <th className="px-2 py-2 text-right font-bold">Thành tiền</th>
@@ -725,7 +768,7 @@ export default function QuickPosPage({
                 ) : (
                   lines.map((l, i) => (
                     <tr key={l.productId} className="border-t border-slate-100">
-                      <td className="px-2 py-2 font-bold text-slate-500">{i + 1}</td>
+                      <td className="px-2 py-2 font-bold text-slate-500 hidden md:table-cell">{i + 1}</td>
                       <td className="px-2 py-2">
                         {l.productImage ? (
                           <img
@@ -737,22 +780,41 @@ export default function QuickPosPage({
                           <div className="w-10 h-10 rounded-lg bg-slate-100" />
                         )}
                       </td>
-                      <td className="px-2 py-2">
-                        <div className="font-bold text-slate-800 line-clamp-2">{l.productTitle}</div>
-                        <div className="text-[10px] text-slate-400 font-semibold">{l.sku}</div>
+                      <td className="px-2 py-2 min-w-0 max-w-[42vw] md:max-w-none">
+                        <div className="font-bold text-slate-800 line-clamp-2 break-words">{l.productTitle}</div>
+                        <div className="text-[10px] text-slate-400 font-semibold truncate">{l.sku}</div>
                       </td>
-                      <td className="px-2 py-2 text-right">
-                        <input
-                          type="number"
-                          min={1}
-                          value={l.quantity}
-                          onChange={(e) =>
-                            updateLine(l.productId, {
-                              quantity: Math.max(1, Math.round(Number(e.target.value) || 1)),
-                            })
-                          }
-                          className="w-16 rounded-lg border border-slate-200 px-2 py-1 text-right font-bold"
-                        />
+                      <td className="px-1 py-2 whitespace-nowrap w-px align-middle">
+                        <div className="inline-flex items-center gap-0.5 shrink-0">
+                          <button
+                            type="button"
+                            aria-label="Giảm số lượng"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => handleDecrease(l.productId, l.quantity)}
+                            className="w-8 h-8 flex items-center justify-center bg-gray-100 rounded-md active:bg-gray-200 shrink-0 text-base font-bold text-slate-700 cursor-pointer"
+                          >
+                            −
+                          </button>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            aria-label="Số lượng"
+                            value={qtyDrafts[l.productId] ?? String(l.quantity)}
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e) => handleQtyChange(l.productId, e.target.value)}
+                            onBlur={() => commitQty(l.productId)}
+                            className="w-10 h-8 text-center border-none focus:ring-0 focus:outline-none p-0 bg-transparent font-bold tabular-nums"
+                          />
+                          <button
+                            type="button"
+                            aria-label="Tăng số lượng"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => handleIncrease(l.productId, l.quantity)}
+                            className="w-8 h-8 flex items-center justify-center bg-gray-100 rounded-md active:bg-gray-200 shrink-0 text-base font-bold text-slate-700 cursor-pointer"
+                          >
+                            +
+                          </button>
+                        </div>
                       </td>
                       <td className="px-2 py-2 text-right font-semibold text-slate-500">
                         {formatVnd(l.importPrice)}
