@@ -76079,7 +76079,7 @@ function readRawWebhookBody(req) {
     req.on("error", reject);
   });
 }
-async function processShopeeWebhookAsync(queue, snapshot, rawBodyPromise) {
+async function processShopeeWebhookAsync(queue, snapshot, rawBodyPromise, eagerStubOrder) {
   try {
     const rawBody = await rawBodyPromise;
     const bodyBytes = rawBody?.length ?? 0;
@@ -76131,6 +76131,16 @@ async function processShopeeWebhookAsync(queue, snapshot, rawBodyPromise) {
       );
       return;
     }
+    if (eagerStubOrder) {
+      try {
+        await eagerStubOrder(payload);
+      } catch (stubErr) {
+        console.error(
+          "[Shopee Webhook] Eager stub upsert failed \u2014 v\u1EABn enqueue get_order_detail:",
+          stubErr instanceof Error ? stubErr.message : stubErr
+        );
+      }
+    }
     const queued = queue.enqueue(payload);
     if (!queued) return;
     console.log(
@@ -76173,7 +76183,12 @@ function createShopeeWebhookRouter(processPayload, routePath = "/shopee", option
       contentType: req.get("content-type") || "",
       host: req.get("host") || ""
     };
-    void processShopeeWebhookAsync(queue, snapshot, rawBodyPromise).catch((error) => {
+    void processShopeeWebhookAsync(
+      queue,
+      snapshot,
+      rawBodyPromise,
+      options.eagerStubOrder
+    ).catch((error) => {
       console.error("L\u1ED7i x\u1EED l\xFD ng\u1EA7m Webhook Shopee:", error);
     });
   });
@@ -131759,7 +131774,7 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
         accessToken,
         fileKey,
         [orderSn],
-        { enrichTracking: true, skipEscrow: true }
+        { enrichTracking: false, skipEscrow: true }
       );
       normalized = chunk.normalized || [];
       errors = chunk.errors || [];
@@ -131779,7 +131794,7 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
               accessToken,
               fileKey,
               [orderSn],
-              { enrichTracking: true, skipEscrow: true }
+              { enrichTracking: false, skipEscrow: true }
             );
             normalized = retry2.normalized || [];
             errors = retry2.errors || [];
@@ -132014,26 +132029,9 @@ async function processShopeeWebhookPayloadInner(body) {
           applyErr?.message || applyErr
         );
       }
-      if (shopId && accessToken && (parsed.eventKind === "tracking_no_update" || parsed.eventKind === "shipping_document" || parsed.eventKind === "package_update" || !deps21.hasUsableShopeeTrackingNumber(orders[idx]))) {
-        try {
-          const row = orders[idx];
-          const cancelReturn = String(row?.status || "").toLowerCase() === "cancelled" || String(row?.status || "").toLowerCase() === "return_pending" || String(row?.status || "").toLowerCase() === "return_received" || ["CANCELLED", "IN_CANCEL", "TO_RETURN"].includes(
-            String(row?.shopee_order_status || "").toUpperCase()
-          ) || Boolean(row?.return_sn) || parsed.eventKind === "return_refund" || Boolean(parsed.returnSn);
-          await deps21.enrichShopeeOrderTrackingFromApi(
-            shopId,
-            accessToken,
-            orders[idx],
-            { retries: cancelReturn ? 2 : 1, light: !cancelReturn }
-          );
-          deps21.applyShopeePushFieldsToOrder(orders[idx], parsed);
-        } catch (trackErr) {
-          console.warn(
-            `[Shopee Webhook] Force get_tracking_number ${orderSn}:`,
-            trackErr?.message || trackErr
-          );
-        }
-      }
+      console.log(
+        `[Shopee Webhook] skip sync tracking order_sn=${orderSn} event=${parsed.eventKind || "webhook"}`
+      );
       const afterTn = String(
         orders[idx].trackingNumber || orders[idx].tracking_no || ""
       );
@@ -147669,6 +147667,36 @@ async function applyWebhookReturnFallback(shopId, accessToken, orderSn, orders, 
     `[Shopee Webhook] Return fallback OK order_sn=${orderSn} return_sn=${mappedReturnSn} tn=${returnTn || "(empty)"} kind=${kind}`
   );
 }
+async function eagerUpsertWebhookStub(body) {
+  const normalized = normalizeShopeeOrder(body);
+  if (!normalized?.orderSn) return;
+  if (!isMongoReady()) {
+    console.warn(
+      `[Shopee Webhook] eager stub skip \u2014 Mongo ch\u01B0a s\u1EB5n s\xE0ng order_sn=${normalized.orderSn}`
+    );
+    return;
+  }
+  normalized._force_shop_id = true;
+  await bulkUpsertOrdersToStore([normalized]);
+  try {
+    invalidateOrdersRefreshCache();
+  } catch {
+  }
+  try {
+    invalidateTabCountCache();
+  } catch {
+  }
+  emitNewOrder({
+    orderSn: String(normalized.orderSn),
+    orderSns: [String(normalized.orderSn)],
+    shopId: String(normalized.shopId || ""),
+    status: String(normalized.status || ""),
+    count: 1
+  });
+  console.log(
+    `[Shopee Webhook] eager stub OK order_sn=${normalized.orderSn} shop_id=${normalized.shopId || "\u2014"} status=${normalized.status || "\u2014"} raw=${normalized.shopee_order_status || "\u2014"}`
+  );
+}
 async function upsertShopeeWebhookShallow(body, orders) {
   const normalized = normalizeShopeeOrder(body);
   if (!normalized) return null;
@@ -147802,7 +147830,8 @@ async function startServer() {
   app.use(
     "/api/shopee",
     createShopeeWebhookRouter(processShopeeWebhookPayload, "/webhook", {
-      onQueueOverflow: handleWebhookQueueOverflow
+      onQueueOverflow: handleWebhookQueueOverflow,
+      eagerStubOrder: eagerUpsertWebhookStub
     })
   );
   app.use(import_express29.default.json({ limit: "50mb" }));

@@ -887,8 +887,9 @@ function buildClientPageNumbers(current: number, totalPages: number): (number | 
 const SCAN_BG_STATUS_POLL_MS = 30_000;
 /** Không pending / unnotified — nới chu kỳ để giảm spam Network. */
 const SCAN_BG_STATUS_IDLE_POLL_MS = 60_000;
-/** Short polling counter + list (cPanel cắt kết nối dài 45s — không dùng SSE). */
-const ORDERS_POLL_MS = 10_000;
+/** Tab đang mở: poll 3s để đơn stub hiện gần real-time. Tab ẩn: 10s (tick tự bỏ qua). */
+const ORDERS_POLL_VISIBLE_MS = 3_000;
+const ORDERS_POLL_HIDDEN_MS = 10_000;
 
 function cancelReturnKindParam(tab: CancelReturnTab): string | undefined {
   if (tab === 'all') return undefined;
@@ -1696,7 +1697,8 @@ export default function OrderManager({
   }, []);
 
   /**
-   * Short polling 10s (thay SSE — cPanel/LiteSpeed cắt kết nối dài ở 45s).
+   * Short polling (thay SSE — cPanel/LiteSpeed cắt kết nối dài ở 45s).
+   * Tab visible: 3s. Tab hidden: 10s và tick bỏ qua để đỡ tải.
    * Mỗi tick: counter → badge/toast; đứng ở tab Chờ xác nhận / Chưa xử lý thì refetch ngầm list.
    * Waterfall: chỉ chạy SAU khi boot counter (sau refresh) xong — không poll ngay lúc mount.
    */
@@ -1733,15 +1735,30 @@ export default function OrderManager({
         inFlight = false;
       }
     };
+    const armPoll = () => {
+      if (counterPollTimerRef.current != null) {
+        window.clearInterval(counterPollTimerRef.current);
+        counterPollTimerRef.current = null;
+      }
+      const ms =
+        document.visibilityState === 'visible' ? ORDERS_POLL_VISIBLE_MS : ORDERS_POLL_HIDDEN_MS;
+      counterPollTimerRef.current = window.setInterval(() => {
+        void tick();
+      }, ms);
+    };
+    const onVisibility = () => {
+      armPoll();
+      if (document.visibilityState === 'visible') void tick();
+    };
     runCounterPollNowRef.current = () => {
       void tick();
     };
-    counterPollTimerRef.current = window.setInterval(() => {
-      void tick();
-    }, ORDERS_POLL_MS);
+    armPoll();
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
       cancelled = true;
       runCounterPollNowRef.current = null;
+      document.removeEventListener('visibilitychange', onVisibility);
       if (counterPollTimerRef.current != null) {
         window.clearInterval(counterPollTimerRef.current);
         counterPollTimerRef.current = null;

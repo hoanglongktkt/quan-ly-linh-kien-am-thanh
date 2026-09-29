@@ -458,7 +458,7 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
         accessToken,
         fileKey,
         [orderSn],
-        { enrichTracking: true, skipEscrow: true },
+        { enrichTracking: false, skipEscrow: true },
       );
       normalized = chunk.normalized || [];
       errors = chunk.errors || [];
@@ -482,7 +482,7 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
               accessToken,
               fileKey,
               [orderSn],
-              { enrichTracking: true, skipEscrow: true },
+              { enrichTracking: false, skipEscrow: true },
             );
             normalized = retry.normalized || [];
             errors = retry.errors || [];
@@ -763,40 +763,11 @@ async function processShopeeWebhookPayloadInner(body) {
         );
       }
 
-      if (
-        shopId &&
-        accessToken &&
-        (parsed.eventKind === "tracking_no_update" ||
-          parsed.eventKind === "shipping_document" ||
-          parsed.eventKind === "package_update" ||
-          !deps.hasUsableShopeeTrackingNumber(orders[idx]))
-      ) {
-        try {
-          const row = orders[idx];
-          const cancelReturn =
-            String(row?.status || "").toLowerCase() === "cancelled" ||
-            String(row?.status || "").toLowerCase() === "return_pending" ||
-            String(row?.status || "").toLowerCase() === "return_received" ||
-            ["CANCELLED", "IN_CANCEL", "TO_RETURN"].includes(
-              String(row?.shopee_order_status || "").toUpperCase(),
-            ) ||
-            Boolean(row?.return_sn) ||
-            parsed.eventKind === "return_refund" ||
-            Boolean(parsed.returnSn);
-          await deps.enrichShopeeOrderTrackingFromApi(
-            shopId,
-            accessToken,
-            orders[idx],
-            { retries: cancelReturn ? 2 : 1, light: !cancelReturn },
-          );
-          deps.applyShopeePushFieldsToOrder(orders[idx], parsed);
-        } catch (trackErr) {
-          console.warn(
-            `[Shopee Webhook] Force get_tracking_number ${orderSn}:`,
-            trackErr?.message || trackErr,
-          );
-        }
-      }
+      // Mã vận đơn không kéo đồng bộ trong job webhook (enrichTracking: false ở get_order_detail).
+      // Payload đã có tracking_no thì applyShopeePushFieldsToOrder đã gắn. Phần còn lại để cron bù.
+      console.log(
+        `[Shopee Webhook] skip sync tracking order_sn=${orderSn} event=${parsed.eventKind || "webhook"}`,
+      );
 
       const afterTn = String(
         orders[idx].trackingNumber || orders[idx].tracking_no || "",

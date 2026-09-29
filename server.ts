@@ -21508,6 +21508,46 @@ async function applyWebhookReturnFallback(
   );
 }
 
+/**
+ * Ghi nông NGAY khi webhook đã qua bước HMAC — trước hàng đợi get_order_detail.
+ * Chỉ order_sn, shop_id, status (đã map), update_time. Không gọi tracking/escrow.
+ */
+async function eagerUpsertWebhookStub(body: any): Promise<void> {
+  const normalized = normalizeShopeeOrder(body);
+  if (!normalized?.orderSn) return;
+  if (!isMongoReady()) {
+    console.warn(
+      `[Shopee Webhook] eager stub skip — Mongo chưa sẵn sàng order_sn=${normalized.orderSn}`,
+    );
+    return;
+  }
+  normalized._force_shop_id = true;
+  await bulkUpsertOrdersToStore([normalized]);
+  try {
+    invalidateOrdersRefreshCache();
+  } catch {
+    /* ignore */
+  }
+  try {
+    invalidateTabCountCache();
+  } catch {
+    /* ignore */
+  }
+  emitNewOrder({
+    orderSn: String(normalized.orderSn),
+    orderSns: [String(normalized.orderSn)],
+    shopId: String(normalized.shopId || ""),
+    status: String(normalized.status || ""),
+    count: 1,
+  });
+  console.log(
+    `[Shopee Webhook] eager stub OK order_sn=${normalized.orderSn}` +
+      ` shop_id=${normalized.shopId || "—"}` +
+      ` status=${normalized.status || "—"}` +
+      ` raw=${normalized.shopee_order_status || "—"}`,
+  );
+}
+
 /** Fallback cũ: normalize payload push thô khi chưa gọi được get_order_detail. */
 async function upsertShopeeWebhookShallow(body: any, orders: any[]): Promise<string | null> {
   const normalized = normalizeShopeeOrder(body);
@@ -21664,6 +21704,7 @@ async function startServer() {
     "/api/shopee",
     createShopeeWebhookRouter(processShopeeWebhookPayload, "/webhook", {
       onQueueOverflow: handleWebhookQueueOverflow,
+      eagerStubOrder: eagerUpsertWebhookStub,
     }),
   );
 

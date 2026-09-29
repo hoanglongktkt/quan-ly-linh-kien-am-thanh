@@ -5,6 +5,8 @@ import { verifyShopeeWebhookSignature } from "./shopeeSignature.ts";
 
 type WebhookProcessor = (payload: Record<string, unknown>) => Promise<void>;
 type QueueOverflowHandler = (payload: Record<string, unknown>) => void | Promise<void>;
+/** Ghi nông order_sn/shop/status trước khi xếp hàng get_order_detail. Lỗi không được chặn enqueue. */
+type EagerStubHandler = (payload: Record<string, unknown>) => void | Promise<void>;
 
 const MAX_PENDING_JOBS = 200;
 // Song song nhiều đơn khác nhau; cùng order_sn vẫn tuần tự. Mặc định 4 (env override).
@@ -362,6 +364,7 @@ async function processShopeeWebhookAsync(
   queue: ReturnType<typeof createBoundedQueue>,
   snapshot: WebhookRequestSnapshot,
   rawBodyPromise: Promise<Buffer | null>,
+  eagerStubOrder?: EagerStubHandler,
 ): Promise<void> {
   try {
     const rawBody = await rawBodyPromise;
@@ -437,6 +440,19 @@ async function processShopeeWebhookAsync(
       return;
     }
 
+    // HMAC đã chạy ở trên (không đổi hàm verify). Ghi nông TRƯỚC hàng đợi detail
+    // để counter thấy đơn ngay. Lỗi stub không được nuốt job get_order_detail.
+    if (eagerStubOrder) {
+      try {
+        await eagerStubOrder(payload);
+      } catch (stubErr) {
+        console.error(
+          "[Shopee Webhook] Eager stub upsert failed — vẫn enqueue get_order_detail:",
+          stubErr instanceof Error ? stubErr.message : stubErr,
+        );
+      }
+    }
+
     const queued = queue.enqueue(payload);
     if (!queued) return;
 
@@ -466,6 +482,8 @@ async function processShopeeWebhookAsync(
 export type ShopeeWebhookRouterOptions = {
   /** Khi queue đầy: persist tối thiểu thay vì drop im lặng. */
   onQueueOverflow?: QueueOverflowHandler;
+  /** Upsert stub (order_sn, shop_id, status, update_time) trước khi enqueue detail. */
+  eagerStubOrder?: EagerStubHandler;
 };
 
 /**
@@ -510,7 +528,12 @@ export function createShopeeWebhookRouter(
     };
 
     // 4) HMAC → parse → queue → Shopee API/MongoDB, hoàn toàn sau response.
-    void processShopeeWebhookAsync(queue, snapshot, rawBodyPromise).catch((error) => {
+    void processShopeeWebhookAsync(
+      queue,
+      snapshot,
+      rawBodyPromise,
+      options.eagerStubOrder,
+    ).catch((error) => {
       console.error("Lỗi xử lý ngầm Webhook Shopee:", error);
     });
   });
