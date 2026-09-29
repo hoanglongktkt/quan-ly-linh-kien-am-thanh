@@ -60,30 +60,20 @@ export function scheduleAutoIncrementalOrdersSync(deps = {}) {
     return;
   }
 
-  let isIncrementalPullInFlight = false;
-  cronTask = cron.schedule(cronExpr, () => {
-    if (isIncrementalPullInFlight) {
-      console.log("[CRON] Incremental Sync skipped — isIncrementalPullInFlight");
-      return;
-    }
-    isIncrementalPullInFlight = true;
+  const runIncrementalTick = (trigger) => {
     console.log(
-      `[CRON] Tick Incremental Sync — lookbackSec=${lookbackSec} (${Math.round(lookbackSec / 3600)}h)`,
+      `[CRON] Tick Incremental Sync trigger=${trigger} — lookbackSec=${lookbackSec} (${Math.round(lookbackSec / 3600)}h)`,
     );
     try {
       if (typeof deps.runSync === "function") {
-        void Promise.resolve(deps.runSync({ lookbackSec, trigger: "cron" }))
-          .catch((err) => {
-            console.error("[CRON] Incremental Sync tick failed:", err?.message || err);
-          })
-          .finally(() => {
-            isIncrementalPullInFlight = false;
-          });
+        void Promise.resolve(deps.runSync({ lookbackSec, trigger })).catch((err) => {
+          console.error("[CRON] Incremental Sync tick failed:", err?.message || err);
+        });
         return;
       }
       const ack = triggerBackgroundOrderSync({
         lookbackSec,
-        trigger: "cron",
+        trigger,
         allowShortLookback: true,
         // Đối soát PROCESSED/Đã giao ĐVVC còn kẹt — bắt SHIPPED khi bưu tá đã lấy hàng.
         reconcileActive: true,
@@ -94,14 +84,31 @@ export function scheduleAutoIncrementalOrdersSync(deps = {}) {
       );
     } catch (err) {
       console.error("[CRON] Incremental Sync tick failed:", err?.message || err);
-    } finally {
-      isIncrementalPullInFlight = false;
     }
+  };
+
+  cronTask = cron.schedule(cronExpr, () => {
+    runIncrementalTick("cron");
   });
 
+  // Passenger làm node-cron không tick khi process idle. setInterval vẫn chạy nếu process sống.
+  const intervalMs = Math.max(
+    60_000,
+    Number(process.env.AUTO_ORDER_SYNC_INTERVAL_MS) || 2 * 60 * 1000,
+  );
+  const incrementalInterval = setInterval(() => {
+    runIncrementalTick("interval");
+  }, intervalMs);
+  if (typeof incrementalInterval.unref === "function") {
+    incrementalInterval.unref();
+  }
+  setTimeout(() => {
+    runIncrementalTick("boot");
+  }, 20_000);
+
   console.log(
-    `[CRON] Auto Incremental Sync ON — expr="${cronExpr}" lookbackSec=${lookbackSec}` +
-      ` (~${Math.round(lookbackSec / 3600)}h). Mutex bảo vệ chồng job.`,
+    `[CRON] Auto Incremental Sync ON — expr="${cronExpr}" intervalMs=${intervalMs}` +
+      ` lookbackSec=${lookbackSec} (~${Math.round(lookbackSec / 3600)}h). Boot kick 20s.`,
   );
 }
 

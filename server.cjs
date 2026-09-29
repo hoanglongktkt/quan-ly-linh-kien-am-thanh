@@ -75124,28 +75124,20 @@ function scheduleAutoIncrementalOrdersSync(deps23 = {}) {
     console.error(`[CRON] Invalid cron expr="${cronExpr}" \u2014 sync cron NOT started`);
     return;
   }
-  let isIncrementalPullInFlight = false;
-  cronTask = import_node_cron.default.schedule(cronExpr, () => {
-    if (isIncrementalPullInFlight) {
-      console.log("[CRON] Incremental Sync skipped \u2014 isIncrementalPullInFlight");
-      return;
-    }
-    isIncrementalPullInFlight = true;
+  const runIncrementalTick = (trigger) => {
     console.log(
-      `[CRON] Tick Incremental Sync \u2014 lookbackSec=${lookbackSec} (${Math.round(lookbackSec / 3600)}h)`
+      `[CRON] Tick Incremental Sync trigger=${trigger} \u2014 lookbackSec=${lookbackSec} (${Math.round(lookbackSec / 3600)}h)`
     );
     try {
       if (typeof deps23.runSync === "function") {
-        void Promise.resolve(deps23.runSync({ lookbackSec, trigger: "cron" })).catch((err) => {
+        void Promise.resolve(deps23.runSync({ lookbackSec, trigger })).catch((err) => {
           console.error("[CRON] Incremental Sync tick failed:", err?.message || err);
-        }).finally(() => {
-          isIncrementalPullInFlight = false;
         });
         return;
       }
       const ack = triggerBackgroundOrderSync({
         lookbackSec,
-        trigger: "cron",
+        trigger,
         allowShortLookback: true,
         // Đối soát PROCESSED/Đã giao ĐVVC còn kẹt — bắt SHIPPED khi bưu tá đã lấy hàng.
         reconcileActive: true,
@@ -75156,12 +75148,26 @@ function scheduleAutoIncrementalOrdersSync(deps23 = {}) {
       );
     } catch (err) {
       console.error("[CRON] Incremental Sync tick failed:", err?.message || err);
-    } finally {
-      isIncrementalPullInFlight = false;
     }
+  };
+  cronTask = import_node_cron.default.schedule(cronExpr, () => {
+    runIncrementalTick("cron");
   });
+  const intervalMs = Math.max(
+    6e4,
+    Number(process.env.AUTO_ORDER_SYNC_INTERVAL_MS) || 2 * 60 * 1e3
+  );
+  const incrementalInterval = setInterval(() => {
+    runIncrementalTick("interval");
+  }, intervalMs);
+  if (typeof incrementalInterval.unref === "function") {
+    incrementalInterval.unref();
+  }
+  setTimeout(() => {
+    runIncrementalTick("boot");
+  }, 2e4);
   console.log(
-    `[CRON] Auto Incremental Sync ON \u2014 expr="${cronExpr}" lookbackSec=${lookbackSec} (~${Math.round(lookbackSec / 3600)}h). Mutex b\u1EA3o v\u1EC7 ch\u1ED3ng job.`
+    `[CRON] Auto Incremental Sync ON \u2014 expr="${cronExpr}" intervalMs=${intervalMs} lookbackSec=${lookbackSec} (~${Math.round(lookbackSec / 3600)}h). Boot kick 20s.`
   );
 }
 var handedOverReconcileInterval = null;
@@ -134030,6 +134036,7 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
   const lookback = clampShopeeHistoryLookbackSec(rawLookback, opts?.allowShortLookback === true);
   const timeFrom = Math.max(toShopeeUnixSeconds(shopeeHistoryTimeFromMs()), timeTo - lookback);
   const allowShort = opts?.allowShortLookback === true;
+  const timeRangeField = opts?.timeRangeField === "create_time" ? "create_time" : "update_time";
   const orderSnSet = /* @__PURE__ */ new Set();
   const shopeeResponses = [];
   const deadlineAt = opts?.deadlineAt ?? Date.now() + ORDERS_PULL_PER_SHOP_MS;
@@ -134041,7 +134048,7 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
   const timeChunks = buildShopeeOrderListTimeChunks(timeFrom, timeTo);
   syncDiag(
     "Fetching order list...",
-    `shop=${shopId} field=update_time lookback=${lookback}s (~${(lookback / 86400).toFixed(1)}d) from=${timeFrom} to=${timeTo} chunks=${timeChunks.length} safetyCap=${pageSafetyCap}`
+    `shop=${shopId} field=${timeRangeField} lookback=${lookback}s (~${(lookback / 86400).toFixed(1)}d) from=${timeFrom} to=${timeTo} chunks=${timeChunks.length} safetyCap=${pageSafetyCap}`
   );
   let page = 0;
   let shopListCalls = 0;
@@ -134072,7 +134079,7 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
         shopListCalls += 1;
         page += 1;
         let listResult = await shopeeGetOrderList(shopId, accessToken, {
-          timeRangeField: "update_time",
+          timeRangeField,
           timeFrom: chunkTimeFrom,
           timeTo: chunkTimeTo,
           cursor,
@@ -134086,7 +134093,7 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
             if (refreshed) {
               accessToken = refreshed;
               listResult = await shopeeGetOrderList(shopId, accessToken, {
-                timeRangeField: "update_time",
+                timeRangeField,
                 timeFrom: chunkTimeFrom,
                 timeTo: chunkTimeTo,
                 cursor,
@@ -136001,6 +136008,36 @@ async function pullIncrementalOrdersFromShopee(opts) {
             allowShortLookback: shortLookback
           });
           let orderSnList = Array.isArray(listCollect?.orderSns) ? listCollect.orderSns : [];
+          if (shortLookback && Date.now() < shopDeadlineAt) {
+            try {
+              const createdCollect = await collectShopeeOrderSnsIncremental(shopIdStr, accessToken, {
+                lookbackSec,
+                deadlineAt: shopDeadlineAt,
+                allowShortLookback: true,
+                timeRangeField: "create_time"
+              });
+              const merged = new Set(orderSnList);
+              let addedCreate = 0;
+              for (const sn of createdCollect?.orderSns || []) {
+                if (!sn || merged.has(sn)) continue;
+                merged.add(sn);
+                addedCreate += 1;
+              }
+              if (addedCreate > 0) {
+                orderSnList = [...merged];
+                syncDiag(
+                  "create_time merged",
+                  `shop=${shopIdStr} +${addedCreate} sn lookback=${lookbackSec}s total=${orderSnList.length}`
+                );
+              }
+              if (createdCollect?.truncated) truncatedShops += 1;
+            } catch (createErr) {
+              console.warn(
+                `[Sync Shop ${shopIdStr}] create_time lookback skip:`,
+                createErr?.message || createErr
+              );
+            }
+          }
           shopSn = orderSnList.length;
           if (listCollect?.truncated) truncatedShops += 1;
           if (Array.isArray(listCollect?.shopeeResponses) && listCollect.shopeeResponses.length) {

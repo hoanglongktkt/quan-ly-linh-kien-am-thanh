@@ -2433,6 +2433,8 @@ async function collectShopeeOrderSnsIncremental(
     pageHardCap?: number;
     /** Quick Sync: cho phép lookback < 3 ngày. */
     allowShortLookback?: boolean;
+    /** Mặc định update_time. create_time bắt đơn mới vừa đặt (UNPAID) mà update_time bỏ sót. */
+    timeRangeField?: "create_time" | "update_time";
   },
 ): Promise<{ orderSns: string[]; shopeeResponses: any[]; truncated: boolean }> {
   const timeTo = Math.floor(Date.now() / 1000);
@@ -2443,6 +2445,7 @@ async function collectShopeeOrderSnsIncremental(
   const lookback = clampShopeeHistoryLookbackSec(rawLookback, opts?.allowShortLookback === true);
   const timeFrom = Math.max(toShopeeUnixSeconds(shopeeHistoryTimeFromMs()), timeTo - lookback);
   const allowShort = opts?.allowShortLookback === true;
+  const timeRangeField = opts?.timeRangeField === "create_time" ? "create_time" : "update_time";
   const orderSnSet = new Set<string>();
   const shopeeResponses: any[] = [];
   const deadlineAt = opts?.deadlineAt ?? Date.now() + ORDERS_PULL_PER_SHOP_MS;
@@ -2455,7 +2458,7 @@ async function collectShopeeOrderSnsIncremental(
   const timeChunks = buildShopeeOrderListTimeChunks(timeFrom, timeTo);
   syncDiag(
     "Fetching order list...",
-    `shop=${shopId} field=update_time lookback=${lookback}s (~${(lookback / 86400).toFixed(1)}d)` +
+    `shop=${shopId} field=${timeRangeField} lookback=${lookback}s (~${(lookback / 86400).toFixed(1)}d)` +
       ` from=${timeFrom} to=${timeTo} chunks=${timeChunks.length} safetyCap=${pageSafetyCap}`,
   );
 
@@ -2495,7 +2498,7 @@ async function collectShopeeOrderSnsIncremental(
         page += 1;
 
         let listResult = await shopeeGetOrderList(shopId, accessToken, {
-          timeRangeField: "update_time",
+          timeRangeField,
           timeFrom: chunkTimeFrom,
           timeTo: chunkTimeTo,
           cursor,
@@ -2515,7 +2518,7 @@ async function collectShopeeOrderSnsIncremental(
             if (refreshed) {
               accessToken = refreshed;
               listResult = await shopeeGetOrderList(shopId, accessToken, {
-                timeRangeField: "update_time",
+                timeRangeField,
                 timeFrom: chunkTimeFrom,
                 timeTo: chunkTimeTo,
                 cursor,
@@ -4908,6 +4911,36 @@ async function pullIncrementalOrdersFromShopee(opts?: {
             allowShortLookback: shortLookback,
           });
           let orderSnList = Array.isArray(listCollect?.orderSns) ? listCollect.orderSns : [];
+          if (shortLookback && Date.now() < shopDeadlineAt) {
+            try {
+              const createdCollect = await collectShopeeOrderSnsIncremental(shopIdStr, accessToken, {
+                lookbackSec,
+                deadlineAt: shopDeadlineAt,
+                allowShortLookback: true,
+                timeRangeField: "create_time",
+              });
+              const merged = new Set(orderSnList);
+              let addedCreate = 0;
+              for (const sn of createdCollect?.orderSns || []) {
+                if (!sn || merged.has(sn)) continue;
+                merged.add(sn);
+                addedCreate += 1;
+              }
+              if (addedCreate > 0) {
+                orderSnList = [...merged];
+                syncDiag(
+                  "create_time merged",
+                  `shop=${shopIdStr} +${addedCreate} sn lookback=${lookbackSec}s total=${orderSnList.length}`,
+                );
+              }
+              if (createdCollect?.truncated) truncatedShops += 1;
+            } catch (createErr: any) {
+              console.warn(
+                `[Sync Shop ${shopIdStr}] create_time lookback skip:`,
+                createErr?.message || createErr,
+              );
+            }
+          }
           shopSn = orderSnList.length;
           if (listCollect?.truncated) truncatedShops += 1;
           if (Array.isArray(listCollect?.shopeeResponses) && listCollect.shopeeResponses.length) {
