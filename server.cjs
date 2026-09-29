@@ -74915,6 +74915,10 @@ async function runBackgroundOrderSync(opts = {}) {
   const trigger = String(opts.trigger || "manual");
   const logTag = `OrderSync[${trigger}]`;
   if (bgRunning) {
+    console.error(
+      "[SHOPEE API CRON ERROR]:",
+      { skipped: true, reason: "bgRunning", trigger, note: "Kh\xF4ng g\u1ECDi get_order_list." }
+    );
     console.log(`[${logTag}] SKIP \u2014 background sync \u0111ang ch\u1EA1y`);
     return {
       success: true,
@@ -75125,6 +75129,9 @@ function scheduleAutoIncrementalOrdersSync(deps23 = {}) {
     return;
   }
   const runIncrementalTick = (trigger) => {
+    if (trigger === "interval") {
+      console.log("\n--- [CRON INTERVAL START] --- Fetching Shopee orders...");
+    }
     console.log(
       `[CRON] Tick Incremental Sync trigger=${trigger} \u2014 lookbackSec=${lookbackSec} (${Math.round(lookbackSec / 3600)}h)`
     );
@@ -75146,6 +75153,18 @@ function scheduleAutoIncrementalOrdersSync(deps23 = {}) {
       console.log(
         `[CRON] trigger \u2192 accepted=${ack.accepted} busy=${ack.busy} msg=${ack.message}`
       );
+      if (!ack.accepted) {
+        console.error(
+          "[SHOPEE API CRON ERROR]:",
+          {
+            skipped: true,
+            reason: ack.busy ? "pull_already_in_flight" : "trigger_rejected",
+            trigger,
+            message: ack.message,
+            note: "Interval \u0111\xE3 tick nh\u01B0ng KH\xD4NG g\u1ECDi get_order_list."
+          }
+        );
+      }
     } catch (err) {
       console.error("[CRON] Incremental Sync tick failed:", err?.message || err);
     }
@@ -76130,7 +76149,9 @@ async function processShopeeWebhookAsync(queue, snapshot, rawBodyPromise, eagerS
       snapshot.authorization,
       snapshot.requestUrls
     );
-    if (!isValid) {
+    const isVerified = isValid;
+    console.log("[WEBHOOK] HMAC valid:", isVerified);
+    if (!isVerified) {
       console.warn(
         "[Shopee Webhook] HMAC unverified after ACK \u2014 v\u1EABn parse + get_order_detail (Shopee API l\xE0 ngu\u1ED3n ch\xE2n l\xFD)."
       );
@@ -76180,6 +76201,7 @@ async function processShopeeWebhookAsync(queue, snapshot, rawBodyPromise, eagerS
     }
     if (eagerStubOrder) {
       void Promise.resolve().then(() => eagerStubOrder(payload)).catch((err) => {
+        console.error("[WEBHOOK DB ERROR]:", err);
         console.error("Stub order error:", err);
       });
     }
@@ -76214,7 +76236,24 @@ function createShopeeWebhookRouter(processPayload, routePath = "/shopee", option
     ackShopeeOk(res);
   });
   router28.post(paths, (req, res) => {
+    console.log("\n--- [WEBHOOK TRIGGERED] ---", JSON.stringify(req.body));
+    console.log(
+      "[WEBHOOK TRIGGERED] meta",
+      JSON.stringify({
+        url: req.originalUrl || req.url,
+        contentType: req.get("content-type") || "",
+        contentLength: req.get("content-length") || "0",
+        authorizationPresent: Boolean(readAuthorizationHeader(req)),
+        bodyAlreadyParsed: req.body != null
+      })
+    );
     const rawBodyPromise = readRawWebhookBody(req);
+    const rawBodyWatch = setTimeout(() => {
+      console.error(
+        "[WEBHOOK] SILENT? raw body ch\u01B0a emit end sau 8s \u2014 listener c\xF3 th\u1EC3 g\u1EAFn sau khi stream \u0111\xE3 b\u1ECB consume. ACK \u0111\xE3 g\u1EEDi n\xEAn Shopee kh\xF4ng retry."
+      );
+    }, 8e3);
+    void rawBodyPromise.finally(() => clearTimeout(rawBodyWatch));
     ackShopeeOk(res);
     const snapshot = {
       routeLabel: `POST ${req.originalUrl || req.url}`,
@@ -132054,7 +132093,8 @@ async function processShopeeWebhookPayloadInner(body) {
     if (idx < 0 && (parsed.trackingNo || parsed.status || orderSn)) {
       try {
         await deps21.upsertShopeeWebhookShallow(body, orders);
-      } catch {
+      } catch (err) {
+        console.error("[WEBHOOK DB ERROR]:", err);
       }
       idx = orders.findIndex((o) => String(o.orderSn) === orderSn);
     }
@@ -133979,6 +134019,25 @@ async function shopeeGetOrderList(shopId, accessToken, opts) {
   if (statusFilter) params.set("order_status", statusFilter);
   if (opts?.cursor !== void 0 && opts.cursor !== "") params.set("cursor", opts.cursor);
   const url2 = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
+  const requestParams = {
+    api: "v2.order.get_order_list",
+    shop_id: shopId,
+    time_range_field: timeRangeField,
+    create_time_sent: timeRangeField === "create_time",
+    update_time_sent: timeRangeField === "update_time",
+    time_from: timeFrom,
+    time_to: timeTo,
+    window_sec: timeTo - timeFrom,
+    page_size: SHOPEE_ORDER_LIST_PAGE_SIZE,
+    cursor: opts?.cursor || "",
+    order_status: statusFilter || null,
+    response_optional_fields: "order_status",
+    request_order_status_pending: true
+  };
+  console.log(
+    "\n--- [SHOPEE API get_order_list PARAMS] ---",
+    JSON.stringify(requestParams)
+  );
   console.log(
     `[Shopee API] GetOrderList REQUEST shop=${shopId} field=${timeRangeField} time_from=${timeFrom} (${String(timeFrom).length} digits) time_to=${timeTo} (${String(timeTo).length} digits) window_days=${((timeTo - timeFrom) / 86400).toFixed(2)} cursor=${opts?.cursor || ""} status=${statusFilter || "ALL(no filter)"}`
   );
@@ -133999,6 +134058,9 @@ async function shopeeGetOrderList(shopId, accessToken, opts) {
         json2?.message
       );
     }
+    if (httpStatus >= 400 || json2?.error) {
+      console.error("[SHOPEE API CRON ERROR]:", json2?.response?.data || json2 || { httpStatus });
+    }
     if (json2.error) {
       const errMsg = formatShopeeApiError(json2, httpStatus);
       logShopeeSyncApiError(
@@ -134006,11 +134068,13 @@ async function shopeeGetOrderList(shopId, accessToken, opts) {
         `get_order_list shop_id=${shopId}`
       );
       console.error(`[Shopee API] GetOrderList l\u1ED7i: ${errMsg}`);
+      console.error("[SHOPEE API CRON ERROR]:", { httpStatus, error: json2.error, message: json2.message || errMsg, requestParams });
       return { ...json2, message: json2.message || errMsg, httpStatus };
     }
     return { ...json2, httpStatus };
   } catch (err) {
     logShopeeSyncApiError(err, `get_order_list shop_id=${shopId}`);
+    console.error("[SHOPEE API CRON ERROR]:", err?.response?.data || err);
     console.error(
       "[Shopee API] GetOrderList EXCEPTION:",
       `shop_id=${shopId}`,
@@ -136031,7 +136095,16 @@ async function pullIncrementalOrdersFromShopee(opts) {
                 );
               }
               if (createdCollect?.truncated) truncatedShops += 1;
+              for (const page of createdCollect?.shopeeResponses || []) {
+                const rawErr = page?.raw?.error || page?.error;
+                if (!rawErr) continue;
+                console.error(
+                  "[SHOPEE API CRON ERROR]:",
+                  page?.raw || page?.detail || { error: rawErr, field: "create_time", shop_id: shopIdStr }
+                );
+              }
             } catch (createErr) {
+              console.error("[SHOPEE API CRON ERROR]:", createErr?.response?.data || createErr);
               console.warn(
                 `[Sync Shop ${shopIdStr}] create_time lookback skip:`,
                 createErr?.message || createErr
@@ -147782,6 +147855,7 @@ async function eagerUpsertWebhookStub(body) {
       `[Shopee Webhook] eager stub OK order_sn=${normalized.orderSn} shop_id=${normalized.shopId || "\u2014"} status=${normalized.status || "\u2014"} raw=${normalized.shopee_order_status || "\u2014"}`
     );
   } catch (err) {
+    console.error("[WEBHOOK DB ERROR]:", err);
     console.error("Stub order error:", err);
   }
 }

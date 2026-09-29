@@ -2353,6 +2353,25 @@ async function shopeeGetOrderList(
   if (opts?.cursor !== undefined && opts.cursor !== "") params.set("cursor", opts.cursor);
 
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
+  const requestParams = {
+    api: "v2.order.get_order_list",
+    shop_id: shopId,
+    time_range_field: timeRangeField,
+    create_time_sent: timeRangeField === "create_time",
+    update_time_sent: timeRangeField === "update_time",
+    time_from: timeFrom,
+    time_to: timeTo,
+    window_sec: timeTo - timeFrom,
+    page_size: SHOPEE_ORDER_LIST_PAGE_SIZE,
+    cursor: opts?.cursor || "",
+    order_status: statusFilter || null,
+    response_optional_fields: "order_status",
+    request_order_status_pending: true,
+  };
+  console.log(
+    "\n--- [SHOPEE API get_order_list PARAMS] ---",
+    JSON.stringify(requestParams),
+  );
   console.log(
     `[Shopee API] GetOrderList REQUEST shop=${shopId}` +
       ` field=${timeRangeField}` +
@@ -2386,6 +2405,10 @@ async function shopeeGetOrderList(
       );
     }
 
+    if (httpStatus >= 400 || json?.error) {
+      console.error("[SHOPEE API CRON ERROR]:", json?.response?.data || json || { httpStatus });
+    }
+
     if (json.error) {
       const errMsg = formatShopeeApiError(json, httpStatus);
       logShopeeSyncApiError(
@@ -2393,11 +2416,13 @@ async function shopeeGetOrderList(
         `get_order_list shop_id=${shopId}`,
       );
       console.error(`[Shopee API] GetOrderList lỗi: ${errMsg}`);
+      console.error("[SHOPEE API CRON ERROR]:", { httpStatus, error: json.error, message: json.message || errMsg, requestParams });
       return { ...json, message: json.message || errMsg, httpStatus };
     }
     return { ...json, httpStatus };
   } catch (err: any) {
     logShopeeSyncApiError(err, `get_order_list shop_id=${shopId}`);
+    console.error("[SHOPEE API CRON ERROR]:", err?.response?.data || err);
     console.error(
       "[Shopee API] GetOrderList EXCEPTION:",
       `shop_id=${shopId}`,
@@ -4934,7 +4959,16 @@ async function pullIncrementalOrdersFromShopee(opts?: {
                 );
               }
               if (createdCollect?.truncated) truncatedShops += 1;
+              for (const page of createdCollect?.shopeeResponses || []) {
+                const rawErr = page?.raw?.error || page?.error;
+                if (!rawErr) continue;
+                console.error(
+                  "[SHOPEE API CRON ERROR]:",
+                  page?.raw || page?.detail || { error: rawErr, field: "create_time", shop_id: shopIdStr },
+                );
+              }
             } catch (createErr: any) {
+              console.error("[SHOPEE API CRON ERROR]:", createErr?.response?.data || createErr);
               console.warn(
                 `[Sync Shop ${shopIdStr}] create_time lookback skip:`,
                 createErr?.message || createErr,
@@ -21593,6 +21627,7 @@ async function eagerUpsertWebhookStub(body: any): Promise<void> {
         ` raw=${normalized.shopee_order_status || "—"}`,
     );
   } catch (err) {
+    console.error("[WEBHOOK DB ERROR]:", err);
     console.error("Stub order error:", err);
   }
 }

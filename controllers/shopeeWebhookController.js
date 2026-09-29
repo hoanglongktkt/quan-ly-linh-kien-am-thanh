@@ -744,8 +744,8 @@ async function processShopeeWebhookPayloadInner(body) {
     if (idx < 0 && (parsed.trackingNo || parsed.status || orderSn)) {
       try {
         await deps.upsertShopeeWebhookShallow(body, orders);
-      } catch {
-        /* ignore */
+      } catch (err) {
+        console.error("[WEBHOOK DB ERROR]:", err);
       }
       idx = orders.findIndex((o) => String(o.orderSn) === orderSn);
     }

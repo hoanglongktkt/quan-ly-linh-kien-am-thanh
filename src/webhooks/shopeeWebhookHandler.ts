@@ -380,7 +380,9 @@ async function processShopeeWebhookAsync(
       snapshot.authorization,
       snapshot.requestUrls,
     );
-    if (!isValid) {
+    const isVerified = isValid;
+    console.log("[WEBHOOK] HMAC valid:", isVerified);
+    if (!isVerified) {
       console.warn(
         "[Shopee Webhook] HMAC unverified after ACK — vẫn parse + get_order_detail (Shopee API là nguồn chân lý).",
       );
@@ -457,6 +459,7 @@ async function processShopeeWebhookAsync(
       void Promise.resolve()
         .then(() => eagerStubOrder(payload))
         .catch((err) => {
+          console.error("[WEBHOOK DB ERROR]:", err);
           console.error("Stub order error:", err);
         });
     }
@@ -518,8 +521,26 @@ export function createShopeeWebhookRouter(
   });
 
   router.post(paths, (req, res) => {
+    console.log("\n--- [WEBHOOK TRIGGERED] ---", JSON.stringify(req.body));
+    console.log(
+      "[WEBHOOK TRIGGERED] meta",
+      JSON.stringify({
+        url: req.originalUrl || req.url,
+        contentType: req.get("content-type") || "",
+        contentLength: req.get("content-length") || "0",
+        authorizationPresent: Boolean(readAuthorizationHeader(req)),
+        bodyAlreadyParsed: req.body != null,
+      }),
+    );
+
     // 1) Gắn listener đọc raw body TRƯỚC ACK — tránh Node _dump() nuốt stream.
     const rawBodyPromise = readRawWebhookBody(req);
+    const rawBodyWatch = setTimeout(() => {
+      console.error(
+        "[WEBHOOK] SILENT? raw body chưa emit end sau 8s — listener có thể gắn sau khi stream đã bị consume. ACK đã gửi nên Shopee không retry.",
+      );
+    }, 8_000);
+    void rawBodyPromise.finally(() => clearTimeout(rawBodyWatch));
 
     // 2) ACK 200 ngay — không chờ HMAC / API Shopee / MongoDB.
     ackShopeeOk(res);

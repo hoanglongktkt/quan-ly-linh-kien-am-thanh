@@ -66,6 +66,10 @@ export async function runBackgroundOrderSync(opts = {}) {
   const logTag = `OrderSync[${trigger}]`;
 
   if (bgRunning) {
+    console.error(
+      "[SHOPEE API CRON ERROR]:",
+      { skipped: true, reason: "bgRunning", trigger, note: "Không gọi get_order_list." },
+    );
     console.log(`[${logTag}] SKIP — background sync đang chạy`);
     return {
       success: true,

@@ -61,6 +61,9 @@ export function scheduleAutoIncrementalOrdersSync(deps = {}) {
   }
 
   const runIncrementalTick = (trigger) => {
+    if (trigger === "interval") {
+      console.log("\n--- [CRON INTERVAL START] --- Fetching Shopee orders...");
+    }
     console.log(
       `[CRON] Tick Incremental Sync trigger=${trigger} — lookbackSec=${lookbackSec} (${Math.round(lookbackSec / 3600)}h)`,
     );
@@ -82,6 +85,18 @@ export function scheduleAutoIncrementalOrdersSync(deps = {}) {
       console.log(
         `[CRON] trigger → accepted=${ack.accepted} busy=${ack.busy} msg=${ack.message}`,
       );
+      if (!ack.accepted) {
+        console.error(
+          "[SHOPEE API CRON ERROR]:",
+          {
+            skipped: true,
+            reason: ack.busy ? "pull_already_in_flight" : "trigger_rejected",
+            trigger,
+            message: ack.message,
+            note: "Interval đã tick nhưng KHÔNG gọi get_order_list.",
+          },
+        );
+      }
     } catch (err) {
       console.error("[CRON] Incremental Sync tick failed:", err?.message || err);
     }
