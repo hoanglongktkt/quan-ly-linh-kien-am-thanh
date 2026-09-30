@@ -2412,16 +2412,29 @@ export async function updatePrintStatus(req, res) {
     }
 
     const shopIdHint = String(body.shopId || body.shop_id || "").trim();
-    const mongoUpdated = await markOrdersPrintedInStore(sns, isPrinted, {
-      ...(shopIdHint ? { shopId: shopIdHint } : {}),
-    });
+    const matchedCount = Number(
+      await markOrdersPrintedInStore(sns, isPrinted, {
+        ...(shopIdHint ? { shopId: shopIdHint } : {}),
+      }),
+    ) || 0;
+    if (matchedCount === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "print_status_not_matched",
+        message: "Không tìm thấy đơn hàng để cập nhật trạng thái in.",
+        matchedCount: 0,
+        isPrinted,
+        orderSns: sns,
+      });
+    }
     invalidateOrdersRefreshCache();
 
     return res.json({
       success: true,
       isPrinted,
-      updatedCount: Math.max(mongoUpdated, sns.length),
-      resetCount: isPrinted ? 0 : Math.max(mongoUpdated, sns.length),
+      matchedCount,
+      updatedCount: matchedCount,
+      resetCount: isPrinted ? 0 : matchedCount,
       orderSns: sns,
     });
   } catch (error) {

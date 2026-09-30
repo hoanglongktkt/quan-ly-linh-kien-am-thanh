@@ -25026,7 +25026,6 @@ async function startServer() {
             fulfillment_type: p.fulfillment_type || shipMethod,
             tracking_no: String(p.tracking_no || p.trackingNumber || "").trim() || undefined,
             isPrepared: Boolean(p.isPrepared),
-            isPrinted: Boolean(p.isPrinted),
             labelUrl: p.labelUrl || undefined,
             pdfFilename: p.pdfFilename || undefined,
             shopeeSyncPending: Boolean(p.shopeeSyncPending),

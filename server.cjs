@@ -80432,10 +80432,6 @@ async function bulkUpdateShippedOrdersBySn(patches) {
       $set.isPrepared = Boolean(p.isPrepared);
       $set["data.isPrepared"] = Boolean(p.isPrepared);
     }
-    if (p.isPrinted != null) {
-      $set.isPrinted = Boolean(p.isPrinted);
-      $set["data.isPrinted"] = Boolean(p.isPrinted);
-    }
     if (p.hasPdf != null) {
       const ready = Boolean(p.hasPdf);
       $set.hasPdf = ready;
@@ -80647,7 +80643,12 @@ async function markOrdersPrintedInStore(orderSns, isPrinted, meta) {
     $set["data.shopId"] = shopIdStr;
   }
   const filter2 = {
-    $or: [{ orderSn: { $in: sns } }, { _id: { $in: ids } }]
+    $or: [
+      { orderSn: { $in: sns } },
+      { _id: { $in: ids } },
+      { "data.orderSn": { $in: sns } },
+      { "data.order_sn": { $in: sns } }
+    ]
   };
   const result = await OrderModel.updateMany(filter2, { $set }, {
     maxTimeMS: 4e3
@@ -80657,7 +80658,7 @@ async function markOrdersPrintedInStore(orderSns, isPrinted, meta) {
   console.log(
     `[MongoDB] markOrdersPrintedInStore isPrinted=${printed} sns=${sns.length} matched=${matched} modified=${modified}`
   );
-  if (matched < sns.length) {
+  if (matched > 0 && matched < sns.length) {
     const missingFilter = filter2;
     const missingSet = $set;
     setImmediate(() => {
@@ -80704,7 +80705,7 @@ async function markOrdersPrintedInStore(orderSns, isPrinted, meta) {
       })();
     });
   }
-  return matched || sns.length;
+  return matched;
 }
 async function markOrdersHasPdfInStore(orderSns, meta) {
   if (!isMongoReady()) return 0;
@@ -125751,15 +125752,28 @@ async function updatePrintStatus(req, res) {
       });
     }
     const shopIdHint = String(body.shopId || body.shop_id || "").trim();
-    const mongoUpdated = await markOrdersPrintedInStore(sns, isPrinted, {
-      ...shopIdHint ? { shopId: shopIdHint } : {}
-    });
+    const matchedCount = Number(
+      await markOrdersPrintedInStore(sns, isPrinted, {
+        ...shopIdHint ? { shopId: shopIdHint } : {}
+      })
+    ) || 0;
+    if (matchedCount === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "print_status_not_matched",
+        message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng \u0111\u1EC3 c\u1EADp nh\u1EADt tr\u1EA1ng th\xE1i in.",
+        matchedCount: 0,
+        isPrinted,
+        orderSns: sns
+      });
+    }
     invalidateOrdersRefreshCache();
     return res.json({
       success: true,
       isPrinted,
-      updatedCount: Math.max(mongoUpdated, sns.length),
-      resetCount: isPrinted ? 0 : Math.max(mongoUpdated, sns.length),
+      matchedCount,
+      updatedCount: matchedCount,
+      resetCount: isPrinted ? 0 : matchedCount,
       orderSns: sns
     });
   } catch (error) {
@@ -150708,7 +150722,6 @@ async function startServer() {
           fulfillment_type: p.fulfillment_type || shipMethod,
           tracking_no: String(p.tracking_no || p.trackingNumber || "").trim() || void 0,
           isPrepared: Boolean(p.isPrepared),
-          isPrinted: Boolean(p.isPrinted),
           labelUrl: p.labelUrl || void 0,
           pdfFilename: p.pdfFilename || void 0,
           shopeeSyncPending: Boolean(p.shopeeSyncPending),

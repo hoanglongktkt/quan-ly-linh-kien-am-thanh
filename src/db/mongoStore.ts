@@ -3271,7 +3271,6 @@ export async function bulkUpdateShippedOrdersBySn(
     fulfillment_type?: string;
     tracking_no?: string;
     isPrepared?: boolean;
-    isPrinted?: boolean;
     hasPdf?: boolean;
     shopeeSyncPending?: boolean;
     shopeeSyncError?: string | null;
@@ -3351,10 +3350,7 @@ export async function bulkUpdateShippedOrdersBySn(
       $set.isPrepared = Boolean(p.isPrepared);
       $set["data.isPrepared"] = Boolean(p.isPrepared);
     }
-    if (p.isPrinted != null) {
-      $set.isPrinted = Boolean(p.isPrinted);
-      $set["data.isPrinted"] = Boolean(p.isPrinted);
-    }
+    // Cờ in chỉ do markOrdersPrintedInStore đổi. Ship/tracking không được $set isPrinted.
     if (p.hasPdf != null) {
       const ready = Boolean(p.hasPdf);
       $set.hasPdf = ready;
@@ -3630,9 +3626,13 @@ export async function markOrdersPrintedInStore(
     $set["data.shopId"] = shopIdStr;
   }
 
-  // Chỉ field có index (orderSn_unique + _id) — tránh $or data.orderSn scan collection.
   const filter: Record<string, unknown> = {
-    $or: [{ orderSn: { $in: sns } }, { _id: { $in: ids } }],
+    $or: [
+      { orderSn: { $in: sns } },
+      { _id: { $in: ids } },
+      { "data.orderSn": { $in: sns } },
+      { "data.order_sn": { $in: sns } },
+    ],
   };
 
   const result = await OrderModel.updateMany(filter, { $set }, {
@@ -3646,7 +3646,8 @@ export async function markOrdersPrintedInStore(
   );
 
   // Upsert đơn thiếu — chạy ngầm, không chặn API.
-  if (matched < sns.length) {
+  // matched = 0: không tạo document mới (API sẽ trả 400, UI hoàn tác).
+  if (matched > 0 && matched < sns.length) {
     const missingFilter = filter;
     const missingSet = $set;
     setImmediate(() => {
@@ -3697,7 +3698,7 @@ export async function markOrdersPrintedInStore(
       })();
     });
   }
-  return matched || sns.length;
+  return matched;
 }
 
 /**
