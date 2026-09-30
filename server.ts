@@ -1365,9 +1365,11 @@ const SHOPEE_COMPLETED_LOOKBACK_SEC = 15 * 24 * 60 * 60;
 /** 2 order_sn GHN chưa Arrange — ép get_order_detail + upsert 1 lần khi boot. */
 const FORCE_RESCUE_SHOPEE_ORDER_SNS = ["26081391A7VTJ7", "26081391Q3V4JV"];
 /** Mutex in-process: chặn boot pull + manual pull chạy chồng lên nhau. */
-const ORDERS_PULL_LOCK_TIMEOUT_MS = 15 * 60 * 1000;
+const ORDERS_PULL_LOCK_TIMEOUT_MS = 90_000;
 let ordersPullInFlight = false;
 let ordersPullStartedAt = 0;
+/** Tăng mỗi lần acquire — finally của phiên cũ không được xóa khóa phiên mới. */
+let ordersPullLockToken = 0;
 /** Mốc lần pull gần nhất — /api/health dùng để biết cron còn tick hay đã chết. */
 let lastPullAt = 0;
 
@@ -1498,7 +1500,13 @@ async function yieldToLogisticsIfBusy(maxWaitMs = 15_000): Promise<void> {
   }
 }
 
-function releaseOrdersPullLock(reason = "finally"): void {
+function releaseOrdersPullLock(reason = "finally", token?: number): void {
+  if (typeof token === "number" && token !== ordersPullLockToken) {
+    console.log(
+      `[Orders Pull] Lock release ignored (${reason}) — token ${token} đã stale, giữ khóa phiên ${ordersPullLockToken}`,
+    );
+    return;
+  }
   if (ordersPullInFlight) {
     const elapsed = ordersPullStartedAt > 0 ? Date.now() - ordersPullStartedAt : 0;
     console.log(`[Orders Pull] Lock RELEASED (${reason}) after ${elapsed}ms`);
@@ -1507,26 +1515,29 @@ function releaseOrdersPullLock(reason = "finally"): void {
   ordersPullStartedAt = 0;
 }
 
-/** true = đang khóa thật; false = rảnh (kèm auto-unlock nếu khóa quá 15 phút). */
+/**
+ * true = đang khóa và chưa quá 90s.
+ * Quá 90s (hoặc cờ true mà không có mốc thời gian) → phá khóa, cho pull tiếp.
+ */
 function isOrdersPullLocked(): boolean {
   if (!ordersPullInFlight) return false;
-  const elapsed = ordersPullStartedAt > 0 ? Date.now() - ordersPullStartedAt : 0;
-  if (ordersPullStartedAt > 0 && elapsed >= ORDERS_PULL_LOCK_TIMEOUT_MS) {
-    console.warn(
-      `[Orders Pull] Lock STALE (${elapsed}ms >= ${ORDERS_PULL_LOCK_TIMEOUT_MS}ms) — force unlock failsafe`,
-    );
-    releaseOrdersPullLock("stale_timeout");
-    return false;
-  }
-  return true;
+  const elapsed =
+    ordersPullStartedAt > 0 ? Date.now() - ordersPullStartedAt : Number.POSITIVE_INFINITY;
+  if (elapsed < ORDERS_PULL_LOCK_TIMEOUT_MS) return true;
+  console.warn(
+    `[Orders Pull] Lock STALE (elapsed=${Number.isFinite(elapsed) ? elapsed : "no_timestamp"}ms >= ${ORDERS_PULL_LOCK_TIMEOUT_MS}ms) — force unlock failsafe`,
+  );
+  releaseOrdersPullLock("stale_timeout");
+  return false;
 }
 
 /** @returns true nếu chiếm được khóa */
 function tryAcquireOrdersPullLock(): boolean {
   if (isOrdersPullLocked()) return false;
+  ordersPullLockToken += 1;
   ordersPullInFlight = true;
   ordersPullStartedAt = Date.now();
-  console.log("[Orders Pull] Lock ACQUIRED");
+  console.log(`[Orders Pull] Lock ACQUIRED token=${ordersPullLockToken}`);
   return true;
 }
 
@@ -4713,6 +4724,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
       shopee_response: { skipped: true, reason: "pull_in_flight" },
     };
   }
+  const pullLockToken = ordersPullLockToken;
 
   const startedAt = Date.now();
   const enrichTracking = opts?.enrichTracking === true;
@@ -5588,7 +5600,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
       failed_orders: [...failedOrdersSet],
     };
   } finally {
-    releaseOrdersPullLock("pullIncremental_finally");
+    releaseOrdersPullLock("pullIncremental_finally", pullLockToken);
   }
 }
 
@@ -5623,6 +5635,7 @@ async function pullShopeeCancelReturnOrders(opts?: {
       elapsedMs: 0,
     };
   }
+  const pullLockToken = ordersPullLockToken;
 
   const startedAt = Date.now();
   const errors: any[] = [];
@@ -5793,7 +5806,7 @@ async function pullShopeeCancelReturnOrders(opts?: {
       elapsedMs,
     };
   } finally {
-    releaseOrdersPullLock("pullCancelReturn_finally");
+    releaseOrdersPullLock("pullCancelReturn_finally", pullLockToken);
   }
 }
 
@@ -20991,9 +21004,44 @@ function isValidOrder(order: any): boolean {
 //
 // Push Code 4 (Order TrackingNo) thường CHỈ có ordersn + tracking_no — KHÔNG có status.
 // Tuyệt đối KHÔNG default status = PENDING (sẽ kéo đơn GHN đã có mã về "Chưa xử lý").
+// Có tracking thì PROCESSED; không có status lẫn tracking thì UNPAID — không để undefined.
+function readShopeePushData(payload: any): any {
+  const envelope =
+    payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+  let data = envelope.data;
+  if (typeof data === "string" && data.trim()) {
+    try {
+      const parsed = parseShopeeJson(data);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) data = parsed;
+    } catch {
+      data = undefined;
+    }
+  }
+  if (data && typeof data === "object" && !Array.isArray(data)) return data;
+  return envelope;
+}
+
+/** body.data.status | body.data.order_status | body.status | body.order_status */
+function extractShopeeWebhookRawStatus(payload: any): string {
+  const envelope =
+    payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+  const data = readShopeePushData(payload);
+  return String(
+    data?.status || data?.order_status || envelope.status || envelope.order_status || "",
+  )
+    .trim()
+    .toUpperCase();
+}
+
 function normalizeShopeeOrder(payload: any): any | null {
-  const data = payload?.data || payload || {};
-  const orderSn = data.ordersn || data.order_sn || data.orderSn;
+  const data = readShopeePushData(payload);
+  const orderSn =
+    data.ordersn ||
+    data.order_sn ||
+    data.orderSn ||
+    payload?.ordersn ||
+    payload?.order_sn ||
+    payload?.orderSn;
   if (!orderSn) return null;
   const shopId = payload?.shop_id ?? data.shop_id;
 
@@ -21003,13 +21051,14 @@ function normalizeShopeeOrder(payload: any): any | null {
     data.last_mile_tracking_number,
     data.forder_id,
   );
-  const hasExplicitStatus = Boolean(data.status || data.order_status);
+  const explicitStatus = extractShopeeWebhookRawStatus(payload);
+  const hasExplicitStatus = Boolean(explicitStatus);
   // Code 4 TrackingNo: có mã vận đơn (GHN/SPX/...) → coi như PROCESSED (Chờ lấy hàng).
   const rawStatus = hasExplicitStatus
-    ? String(data.status || data.order_status).toUpperCase()
+    ? explicitStatus
     : webhookTracking
       ? "PROCESSED"
-      : "";
+      : "UNPAID";
   const itemList = Array.isArray(data.item_list) ? data.item_list : [];
   const mappedItems = itemList.length
     ? itemList.map((it: any) => mapShopeeOrderLineItem(it, { orderStatus: rawStatus })).filter(Boolean)
@@ -21035,7 +21084,7 @@ function normalizeShopeeOrder(payload: any): any | null {
     withholdingCitTax: 0,
     withholding_cit_tax: 0,
     revenue: 0,
-    shopee_order_status: rawStatus || (webhookTracking ? "PROCESSED" : undefined),
+    shopee_order_status: rawStatus,
     status: mappedStatus,
     date: data.create_time ? new Date(data.create_time * 1000).toISOString() : new Date().toISOString(),
     last_shopee_update_at: lastShopeeUpdateAt,
@@ -21586,6 +21635,18 @@ async function eagerUpsertWebhookStub(body: any): Promise<void> {
       );
       return;
     }
+    const extractedStatus = extractShopeeWebhookRawStatus(body);
+    const stubStatus =
+      extractedStatus ||
+      String(normalized.shopee_order_status || "").trim().toUpperCase() ||
+      "UNPAID";
+    normalized.shopee_order_status = stubStatus;
+    normalized.order_status = stubStatus;
+    if (extractedStatus || !normalized.status) {
+      normalized.status = mapShopeeStatusToLocal(stubStatus, {
+        hasTracking: Boolean(normalized.trackingNumber || normalized.tracking_no),
+      });
+    }
     normalized._force_shop_id = true;
     if (!normalized.data || typeof normalized.data !== "object") {
       normalized.data = {
@@ -21594,10 +21655,13 @@ async function eagerUpsertWebhookStub(body: any): Promise<void> {
         order_sn: normalized.orderSn,
         channel: "shopee",
         shopId: normalized.shopId || null,
-        status: normalized.status || null,
-        shopee_order_status: normalized.shopee_order_status || null,
+        status: normalized.status || stubStatus,
+        shopee_order_status: stubStatus,
         items: Array.isArray(normalized.items) ? normalized.items : [],
       };
+    } else {
+      normalized.data.shopee_order_status = stubStatus;
+      normalized.data.status = normalized.status || stubStatus;
     }
     await bulkUpsertOrdersToStore([normalized]);
     try {

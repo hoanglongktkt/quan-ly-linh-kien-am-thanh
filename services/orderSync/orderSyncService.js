@@ -37,15 +37,33 @@ let deps = {
   isOrdersPullLocked: () => false,
 };
 
+const PULL_LOCK_TIMEOUT_MS = 90_000;
 let bgRunning = false;
+/** Mốc bắt đầu phiên pull — cờ khóa hết hạn sau 90s thì tự phá. */
+let lastPullStart = 0;
 
 export function initOrderSyncService(partial) {
   deps = { ...deps, ...partial };
   console.log("[OrderSyncService] initialized");
 }
 
+/** true = bgRunning còn trong 90s. Quá hạn hoặc không có timestamp → reset false. */
+function isBgPullLocked() {
+  if (!bgRunning) return false;
+  const elapsed = lastPullStart > 0 ? Date.now() - lastPullStart : Number.POSITIVE_INFINITY;
+  if (elapsed < PULL_LOCK_TIMEOUT_MS) return true;
+  console.warn(
+    `[OrderSyncService] AUTO-UNLOCK pull sau ${Number.isFinite(elapsed) ? elapsed : "no_timestamp"}ms` +
+      ` >= ${PULL_LOCK_TIMEOUT_MS}ms — nhả pull_already_in_flight`,
+  );
+  bgRunning = false;
+  lastPullStart = 0;
+  return false;
+}
+
 export function isOrderSyncBackgroundBusy() {
-  return bgRunning || (typeof deps.isOrdersPullLocked === "function" && deps.isOrdersPullLocked());
+  if (isBgPullLocked()) return true;
+  return typeof deps.isOrdersPullLocked === "function" && deps.isOrdersPullLocked();
 }
 
 /**
@@ -65,7 +83,7 @@ export async function runBackgroundOrderSync(opts = {}) {
   const trigger = String(opts.trigger || "manual");
   const logTag = `OrderSync[${trigger}]`;
 
-  if (bgRunning) {
+  if (isBgPullLocked()) {
     console.error(
       "[SHOPEE API CRON ERROR]:",
       { skipped: true, reason: "bgRunning", trigger, note: "Không gọi get_order_list." },
@@ -93,6 +111,8 @@ export async function runBackgroundOrderSync(opts = {}) {
   }
 
   bgRunning = true;
+  lastPullStart = Date.now();
+  const myPullStart = lastPullStart;
   let jobId = "";
   const startedAt = Date.now();
   console.log(
@@ -199,7 +219,10 @@ export async function runBackgroundOrderSync(opts = {}) {
       jobId,
     };
   } finally {
-    bgRunning = false;
+    if (lastPullStart === myPullStart) {
+      bgRunning = false;
+      lastPullStart = 0;
+    }
   }
 }
 

@@ -74899,13 +74899,27 @@ var deps = {
   },
   isOrdersPullLocked: () => false
 };
+var PULL_LOCK_TIMEOUT_MS = 9e4;
 var bgRunning = false;
+var lastPullStart = 0;
 function initOrderSyncService(partial) {
   deps = { ...deps, ...partial };
   console.log("[OrderSyncService] initialized");
 }
+function isBgPullLocked() {
+  if (!bgRunning) return false;
+  const elapsed = lastPullStart > 0 ? Date.now() - lastPullStart : Number.POSITIVE_INFINITY;
+  if (elapsed < PULL_LOCK_TIMEOUT_MS) return true;
+  console.warn(
+    `[OrderSyncService] AUTO-UNLOCK pull sau ${Number.isFinite(elapsed) ? elapsed : "no_timestamp"}ms >= ${PULL_LOCK_TIMEOUT_MS}ms \u2014 nh\u1EA3 pull_already_in_flight`
+  );
+  bgRunning = false;
+  lastPullStart = 0;
+  return false;
+}
 function isOrderSyncBackgroundBusy() {
-  return bgRunning || typeof deps.isOrdersPullLocked === "function" && deps.isOrdersPullLocked();
+  if (isBgPullLocked()) return true;
+  return typeof deps.isOrdersPullLocked === "function" && deps.isOrdersPullLocked();
 }
 async function runBackgroundOrderSync(opts = {}) {
   const lookbackSec = Math.max(
@@ -74914,7 +74928,7 @@ async function runBackgroundOrderSync(opts = {}) {
   );
   const trigger = String(opts.trigger || "manual");
   const logTag = `OrderSync[${trigger}]`;
-  if (bgRunning) {
+  if (isBgPullLocked()) {
     console.error(
       "[SHOPEE API CRON ERROR]:",
       { skipped: true, reason: "bgRunning", trigger, note: "Kh\xF4ng g\u1ECDi get_order_list." }
@@ -74941,6 +74955,8 @@ async function runBackgroundOrderSync(opts = {}) {
     };
   }
   bgRunning = true;
+  lastPullStart = Date.now();
+  const myPullStart = lastPullStart;
   let jobId = "";
   const startedAt = Date.now();
   console.log(
@@ -75027,7 +75043,10 @@ async function runBackgroundOrderSync(opts = {}) {
       jobId
     };
   } finally {
-    bgRunning = false;
+    if (lastPullStart === myPullStart) {
+      bgRunning = false;
+      lastPullStart = 0;
+    }
   }
 }
 function triggerBackgroundOrderSync(opts = {}) {
@@ -133318,9 +133337,10 @@ var READY_TO_SHIP_BACKFILL_LOOKBACK_SEC = 7 * 24 * 60 * 60;
 var SHOPEE_SHIPPED_LOOKBACK_SEC = 3 * 24 * 60 * 60;
 var SHOPEE_COMPLETED_LOOKBACK_SEC = 15 * 24 * 60 * 60;
 var FORCE_RESCUE_SHOPEE_ORDER_SNS = ["26081391A7VTJ7", "26081391Q3V4JV"];
-var ORDERS_PULL_LOCK_TIMEOUT_MS = 15 * 60 * 1e3;
+var ORDERS_PULL_LOCK_TIMEOUT_MS = 9e4;
 var ordersPullInFlight = false;
 var ordersPullStartedAt = 0;
+var ordersPullLockToken = 0;
 var lastPullAt = 0;
 function buildShopeeOrderListTimeChunks(timeFromSec, timeToSec, maxWindowSec = SHOPEE_ORDER_LIST_MAX_WINDOW_SEC) {
   const to = toShopeeUnixSeconds(timeToSec);
@@ -133420,7 +133440,13 @@ async function yieldToLogisticsIfBusy(maxWaitMs = 15e3) {
     await sleep2(200);
   }
 }
-function releaseOrdersPullLock(reason = "finally") {
+function releaseOrdersPullLock(reason = "finally", token) {
+  if (typeof token === "number" && token !== ordersPullLockToken) {
+    console.log(
+      `[Orders Pull] Lock release ignored (${reason}) \u2014 token ${token} \u0111\xE3 stale, gi\u1EEF kh\xF3a phi\xEAn ${ordersPullLockToken}`
+    );
+    return;
+  }
   if (ordersPullInFlight) {
     const elapsed = ordersPullStartedAt > 0 ? Date.now() - ordersPullStartedAt : 0;
     console.log(`[Orders Pull] Lock RELEASED (${reason}) after ${elapsed}ms`);
@@ -133430,21 +133456,20 @@ function releaseOrdersPullLock(reason = "finally") {
 }
 function isOrdersPullLocked() {
   if (!ordersPullInFlight) return false;
-  const elapsed = ordersPullStartedAt > 0 ? Date.now() - ordersPullStartedAt : 0;
-  if (ordersPullStartedAt > 0 && elapsed >= ORDERS_PULL_LOCK_TIMEOUT_MS) {
-    console.warn(
-      `[Orders Pull] Lock STALE (${elapsed}ms >= ${ORDERS_PULL_LOCK_TIMEOUT_MS}ms) \u2014 force unlock failsafe`
-    );
-    releaseOrdersPullLock("stale_timeout");
-    return false;
-  }
-  return true;
+  const elapsed = ordersPullStartedAt > 0 ? Date.now() - ordersPullStartedAt : Number.POSITIVE_INFINITY;
+  if (elapsed < ORDERS_PULL_LOCK_TIMEOUT_MS) return true;
+  console.warn(
+    `[Orders Pull] Lock STALE (elapsed=${Number.isFinite(elapsed) ? elapsed : "no_timestamp"}ms >= ${ORDERS_PULL_LOCK_TIMEOUT_MS}ms) \u2014 force unlock failsafe`
+  );
+  releaseOrdersPullLock("stale_timeout");
+  return false;
 }
 function tryAcquireOrdersPullLock() {
   if (isOrdersPullLocked()) return false;
+  ordersPullLockToken += 1;
   ordersPullInFlight = true;
   ordersPullStartedAt = Date.now();
-  console.log("[Orders Pull] Lock ACQUIRED");
+  console.log(`[Orders Pull] Lock ACQUIRED token=${ordersPullLockToken}`);
   return true;
 }
 var ORDERS_PULL_IN_FLIGHT_SOFT_MESSAGE = "H\u1EC7 th\u1ED1ng \u0111ang trong qu\xE1 tr\xECnh \u0111\u1ED3ng b\u1ED9 ng\u1EA7m. Vui l\xF2ng \u0111\u1EE3i trong gi\xE2y l\xE1t";
@@ -135964,6 +135989,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
       shopee_response: { skipped: true, reason: "pull_in_flight" }
     };
   }
+  const pullLockToken = ordersPullLockToken;
   const startedAt = Date.now();
   const enrichTracking3 = opts?.enrichTracking === true;
   const errors = [];
@@ -136725,7 +136751,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
       failed_orders: [...failedOrdersSet]
     };
   } finally {
-    releaseOrdersPullLock("pullIncremental_finally");
+    releaseOrdersPullLock("pullIncremental_finally", pullLockToken);
   }
 }
 async function pullShopeeCancelReturnOrders(opts) {
@@ -136742,6 +136768,7 @@ async function pullShopeeCancelReturnOrders(opts) {
       elapsedMs: 0
     };
   }
+  const pullLockToken = ordersPullLockToken;
   const startedAt = Date.now();
   const errors = [];
   let pulled = 0;
@@ -136892,7 +136919,7 @@ async function pullShopeeCancelReturnOrders(opts) {
       elapsedMs
     };
   } finally {
-    releaseOrdersPullLock("pullCancelReturn_finally");
+    releaseOrdersPullLock("pullCancelReturn_finally", pullLockToken);
   }
 }
 var RETURN_REQUESTS_PER_SHOP_MS = 9e4;
@@ -147443,9 +147470,30 @@ function isValidOrder(order) {
   if (sn.startsWith("260709") && !hasItems && Number(order?.totalAmount) === 0) return false;
   return true;
 }
+function readShopeePushData(payload) {
+  const envelope = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+  let data = envelope.data;
+  if (typeof data === "string" && data.trim()) {
+    try {
+      const parsed = parseShopeeJson(data);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) data = parsed;
+    } catch {
+      data = void 0;
+    }
+  }
+  if (data && typeof data === "object" && !Array.isArray(data)) return data;
+  return envelope;
+}
+function extractShopeeWebhookRawStatus(payload) {
+  const envelope = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+  const data = readShopeePushData(payload);
+  return String(
+    data?.status || data?.order_status || envelope.status || envelope.order_status || ""
+  ).trim().toUpperCase();
+}
 function normalizeShopeeOrder(payload) {
-  const data = payload?.data || payload || {};
-  const orderSn = data.ordersn || data.order_sn || data.orderSn;
+  const data = readShopeePushData(payload);
+  const orderSn = data.ordersn || data.order_sn || data.orderSn || payload?.ordersn || payload?.order_sn || payload?.orderSn;
   if (!orderSn) return null;
   const shopId = payload?.shop_id ?? data.shop_id;
   const webhookTracking = pickBestTrackingNumber(
@@ -147454,8 +147502,9 @@ function normalizeShopeeOrder(payload) {
     data.last_mile_tracking_number,
     data.forder_id
   );
-  const hasExplicitStatus = Boolean(data.status || data.order_status);
-  const rawStatus = hasExplicitStatus ? String(data.status || data.order_status).toUpperCase() : webhookTracking ? "PROCESSED" : "";
+  const explicitStatus = extractShopeeWebhookRawStatus(payload);
+  const hasExplicitStatus = Boolean(explicitStatus);
+  const rawStatus = hasExplicitStatus ? explicitStatus : webhookTracking ? "PROCESSED" : "UNPAID";
   const itemList = Array.isArray(data.item_list) ? data.item_list : [];
   const mappedItems = itemList.length ? itemList.map((it) => mapShopeeOrderLineItem(it, { orderStatus: rawStatus })).filter(Boolean) : [];
   const mappedStatus = rawStatus ? mapShopeeStatusToLocal(rawStatus, { hasTracking: Boolean(webhookTracking) }) : webhookTracking ? "processed" : "unprocessed";
@@ -147471,7 +147520,7 @@ function normalizeShopeeOrder(payload) {
     withholdingCitTax: 0,
     withholding_cit_tax: 0,
     revenue: 0,
-    shopee_order_status: rawStatus || (webhookTracking ? "PROCESSED" : void 0),
+    shopee_order_status: rawStatus,
     status: mappedStatus,
     date: data.create_time ? new Date(data.create_time * 1e3).toISOString() : (/* @__PURE__ */ new Date()).toISOString(),
     last_shopee_update_at: lastShopeeUpdateAt,
@@ -147895,6 +147944,15 @@ async function eagerUpsertWebhookStub(body) {
       );
       return;
     }
+    const extractedStatus = extractShopeeWebhookRawStatus(body);
+    const stubStatus = extractedStatus || String(normalized.shopee_order_status || "").trim().toUpperCase() || "UNPAID";
+    normalized.shopee_order_status = stubStatus;
+    normalized.order_status = stubStatus;
+    if (extractedStatus || !normalized.status) {
+      normalized.status = mapShopeeStatusToLocal(stubStatus, {
+        hasTracking: Boolean(normalized.trackingNumber || normalized.tracking_no)
+      });
+    }
     normalized._force_shop_id = true;
     if (!normalized.data || typeof normalized.data !== "object") {
       normalized.data = {
@@ -147903,10 +147961,13 @@ async function eagerUpsertWebhookStub(body) {
         order_sn: normalized.orderSn,
         channel: "shopee",
         shopId: normalized.shopId || null,
-        status: normalized.status || null,
-        shopee_order_status: normalized.shopee_order_status || null,
+        status: normalized.status || stubStatus,
+        shopee_order_status: stubStatus,
         items: Array.isArray(normalized.items) ? normalized.items : []
       };
+    } else {
+      normalized.data.shopee_order_status = stubStatus;
+      normalized.data.status = normalized.status || stubStatus;
     }
     await bulkUpsertOrdersToStore([normalized]);
     try {
