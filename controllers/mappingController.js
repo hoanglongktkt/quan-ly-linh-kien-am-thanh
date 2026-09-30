@@ -346,25 +346,71 @@ export async function handleBatchAutoLink(req, res) {
 }
 
 export async function handleSingleAutoLink(req, res) {
+  let settled = false;
+  const reply = (status, body) => {
+    if (settled || res.headersSent) return;
+    settled = true;
+    try {
+      res.status(status).json(body);
+    } catch (sendErr) {
+      console.error("[Auto-link Single] gửi response lỗi:", sendErr?.message || sendErr);
+    }
+  };
+  const timer = setTimeout(() => {
+    console.error("[Auto-link Single] quá thời gian — trả lỗi, không giữ request.");
+    reply(500, { success: false, message: "Lỗi server" });
+  }, 15000);
+
   try {
     const body = req?.body && typeof req.body === "object" ? req.body : {};
-    const result = await deps.autoLinkSingleListingFromDatabase({
-      id: body.id,
-      listingId: body.listingId,
-      channelId: body.channelId,
-      platform: body.platform,
-    });
+    const rows = Array.isArray(body.listings)
+      ? body.listings
+      : Array.isArray(body.items)
+        ? body.items
+        : [body];
+    const targets = rows
+      .map((row) => (row && typeof row === "object" ? row : { id: row }))
+      .filter((row) => String(row.id || row.listingId || row.channelId || "").trim() !== "")
+      .slice(0, 50);
 
-    return res.status(200).json({
-      success: result.success,
-      listing: result.listing,
-      matchedProductId: result.matchedProductId,
-      message: result.message,
+    if (targets.length === 0) {
+      reply(400, { success: false, message: "Thiếu id sản phẩm cần liên kết tự động." });
+      return;
+    }
+
+    const results = [];
+    for (const row of targets) {
+      if (settled) break;
+      const result = await deps.autoLinkSingleListingFromDatabase({
+        id: row.id,
+        listingId: row.listingId,
+        channelId: row.channelId,
+        platform: row.platform,
+      });
+      results.push(result);
+      if (targets.length > 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+
+    const linkedCount = results.filter((row) => row?.success).length;
+    const first = results[0] || { success: false, message: "Không có kết quả.", listing: null };
+    reply(200, {
+      success: targets.length === 1 ? first.success === true : linkedCount > 0,
+      listing: first.listing,
+      matchedProductId: first.matchedProductId,
+      message: targets.length === 1
+        ? first.message
+        : `Đã liên kết ${linkedCount}/${targets.length} sản phẩm`,
+      linkedCount,
+      processed: targets.length,
+      results,
     });
   } catch (error) {
     console.error("[Auto-link Single] Exception:", error);
-    const message = error instanceof Error ? error.message : String(error);
-    return res.status(500).json({ success: false, error: message });
+    reply(500, { success: false, message: "Lỗi server" });
+  } finally {
+    clearTimeout(timer);
   }
 }
 

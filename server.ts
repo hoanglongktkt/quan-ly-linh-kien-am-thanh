@@ -20182,7 +20182,9 @@ async function autoLinkSingleListingFromDatabase(opts?: {
       buildAutoLinkFailedRow(current, "SKU sản phẩm sàn đang trống hoặc không hợp lệ."),
     );
     await upsertChannelListingToStore(failedRow);
-    await flushDbWrites();
+    void flushDbWrites().catch((flushErr) => {
+      console.error("[Auto-link Single] flush bỏ qua:", flushErr?.message || flushErr);
+    });
     return {
       success: false,
       listing: enrichChannelListingsWithMaster([failedRow], masterProducts)[0],
@@ -20201,7 +20203,9 @@ async function autoLinkSingleListingFromDatabase(opts?: {
       ),
     );
     await upsertChannelListingToStore(failedRow);
-    await flushDbWrites();
+    void flushDbWrites().catch((flushErr) => {
+      console.error("[Auto-link Single] flush bỏ qua:", flushErr?.message || flushErr);
+    });
     return {
       success: false,
       listing: enrichChannelListingsWithMaster([failedRow], masterProducts)[0],
@@ -20231,9 +20235,11 @@ async function autoLinkSingleListingFromDatabase(opts?: {
     linkBroken: false,
   });
 
-  // Ghi DB ngay — không refreshCache toàn bộ (tránh nghẽn khi gọi hàng loạt).
+  // Ghi DB ngay — không chờ hàng đợi ghi khác (tránh request treo, nút tự động bị kẹt).
   await upsertChannelListingToStore(patched);
-  await flushDbWrites();
+  void flushDbWrites().catch((flushErr) => {
+    console.error("[Auto-link Single] flush bỏ qua:", flushErr?.message || flushErr);
+  });
 
   const verifiedListing = enrichChannelListingsWithMaster([patched], masterProducts)[0];
 

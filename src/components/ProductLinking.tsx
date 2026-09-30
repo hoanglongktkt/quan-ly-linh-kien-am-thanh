@@ -427,7 +427,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     [mergeListingIntoState, persistListings]
   );
 
-  const requestSingleAutoLink = useCallback(async (item: ChannelListing): Promise<{
+  const requestSingleAutoLink = useCallback(async (item: ChannelListing, signal?: AbortSignal): Promise<{
     success: boolean;
     listing: ChannelListing | null;
     message: string;
@@ -443,6 +443,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
+      signal,
       body: JSON.stringify({
         id: item.id,
       }),
@@ -529,6 +530,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
 
   // Manual Mapping Modal state
   const [manualLinkingId, setManualLinkingId] = useState<string | null>(null);
+  const [autoLinkingId, setAutoLinkingId] = useState<string | null>(null);
   const [mappingListing, setMappingListing] = useState<ChannelListing | null>(null);
   const [mappingSearch, setMappingSearch] = useState('');
   /** Toàn bộ SKU kho gốc — không phụ thuộc phân trang trang Kho sản phẩm. */
@@ -1242,12 +1244,32 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     opts?: { silent?: boolean }
   ): Promise<boolean> => {
     const silent = opts?.silent === true;
+    const rowKey = String(item?.id || '');
+    if (!rowKey) return false;
+
+    const payload = {
+      id: item.id,
+      sku: item.sku,
+      channelId: item.channelId,
+      platform: item.platform,
+    };
+    console.log("Bắt đầu Auto Mapping với data:", payload);
+
+    setAutoLinkingId(rowKey);
+    const abortCtrl = new AbortController();
+    const abortTimer = window.setTimeout(() => abortCtrl.abort(), 20000);
     try {
-      const result = await requestSingleAutoLink(item);
+      const result = await requestSingleAutoLink(item, abortCtrl.signal);
       if (result.success && result.listing) {
         const linkedOk = result.listing.status === 'success' && !!result.listing.linkedProductId;
         if (linkedOk) {
-          const saved = await commitAutoLinkedListing(result.listing);
+          mergeListingIntoState(result.listing);
+          const saved = await Promise.race([
+            commitAutoLinkedListing(result.listing),
+            new Promise<ChannelListing>((resolve) => {
+              window.setTimeout(() => resolve(result.listing as ChannelListing), 8000);
+            }),
+          ]);
           if (!silent) {
             const isAlreadyLinked = /đã được liên kết trước đó/i.test(result.message);
             showToast(
@@ -1277,10 +1299,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       // Fallback: khớp local từ sku-index toàn kho nếu API trả không khớp (không phải lỗi quota)
       const localMatch = findMasterProductLikeSearch(item?.sku, flattenedMasterProducts);
       if (localMatch?.id) {
-        handleMapProduct(String(item.id), String(localMatch.id));
-        if (!silent) {
-          showToast(`⚡ Liên kết tự động thành công với Kho chính [${localMatch.sku}]`);
-        }
+        await handleMapProduct(String(item.id), String(localMatch.id));
         return true;
       }
 
@@ -1289,18 +1308,19 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       }
       return false;
     } catch (err) {
+      console.error("Lỗi API Mapping:", err);
       const message = err instanceof Error ? err.message : String(err);
+      const aborted = err instanceof DOMException && err.name === 'AbortError';
       // Fallback local khi API lỗi (vd. trước đây Atlas đầy) — vẫn thử map từ catalog disk
-      const localMatch = findMasterProductLikeSearch(item?.sku, flattenedMasterProducts);
-      if (localMatch?.id) {
-        handleMapProduct(String(item.id), String(localMatch.id));
-        if (!silent) {
-          showToast(`⚡ Liên kết tự động thành công với Kho chính [${localMatch.sku}]`);
+      if (!aborted) {
+        const localMatch = findMasterProductLikeSearch(item?.sku, flattenedMasterProducts);
+        if (localMatch?.id) {
+          await handleMapProduct(String(item.id), String(localMatch.id));
+          return true;
         }
-        return true;
       }
       if (!silent) {
-        showToast(`Liên kết thất bại: ${message}`);
+        showToast(aborted ? 'Liên kết tự động quá lâu. Nút đã được mở lại, hãy thử lần nữa.' : `Liên kết thất bại: ${message}`);
         onAddLog({
           id: `log-${Date.now()}`,
           timestamp: new Date().toISOString(),
@@ -1311,6 +1331,9 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         });
       }
       return false;
+    } finally {
+      window.clearTimeout(abortTimer);
+      setAutoLinkingId((current) => (current === rowKey ? null : current));
     }
   };
 
@@ -2356,10 +2379,15 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                             <div className="relative group">
                               <button
                                 onClick={() => void handleAutoLinkIndividual(item)}
-                                className="p-1.5 border border-blue-200 hover:border-blue-500 rounded-lg text-blue-600 hover:bg-blue-50 transition-all cursor-pointer flex items-center justify-center bg-white"
+                                disabled={autoLinkingId === String(item?.id || '')}
+                                className="p-1.5 border border-blue-200 hover:border-blue-500 rounded-lg text-blue-600 hover:bg-blue-50 transition-all cursor-pointer flex items-center justify-center bg-white disabled:opacity-60 disabled:cursor-not-allowed"
                                 type="button"
                               >
-                                <Sparkles className="w-3.5 h-3.5 animate-pulse text-blue-500" />
+                                {autoLinkingId === String(item?.id || '') ? (
+                                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-500" />
+                                ) : (
+                                  <Sparkles className="w-3.5 h-3.5 animate-pulse text-blue-500" />
+                                )}
                               </button>
                               <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 scale-0 group-hover:scale-100 transition-all bg-slate-900 text-white text-[10px] font-bold px-2 py-1 rounded shadow-lg whitespace-nowrap z-50 pointer-events-none origin-bottom">
                                 Liên kết tự động
