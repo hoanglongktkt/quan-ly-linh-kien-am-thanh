@@ -2783,7 +2783,7 @@ export default function OrderManager({
         console.warn('[Print Status] lưu trạng thái in thất bại:', err?.message || err);
         if (isPrinted) {
           applyPrintedLocalOptimistic(ids, false);
-          showToast('Lỗi lưu trạng thái in. Hệ thống đã hoàn tác, vui lòng thử lại!');
+          showToast('Lỗi lưu trạng thái in. Đã hoàn tác!');
         } else {
           rollbackPrintedLocalOptimistic(previous);
           if (!opts?.silent) {
