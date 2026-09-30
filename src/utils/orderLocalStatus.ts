@@ -106,6 +106,32 @@ export function isWarehouseReturnReceived(
   return flag === ORDER_LOCAL_STATUS.RETURN_RECEIVED;
 }
 
+/** Thông báo chặn quét trùng đơn hủy/hoàn đã xác nhận thu hồi. */
+export const RETURN_SCAN_DUPLICATE_ERROR =
+  'Đơn hàng này ĐÃ ĐƯỢC QUÉT XÁC NHẬN thu hồi trước đó!';
+
+/**
+ * Đơn hủy/hoàn đã được kho quét nhận. Không dùng cho luồng bàn giao ĐVVC.
+ * Cờ `isReturnReceived` sống ở root hoặc `internal_flags` để webhook Shopee không ghi đè.
+ */
+export function isReturnScanLocked(
+  order: Partial<Order> & Record<string, unknown>,
+): boolean {
+  const nested = order.internal_flags as { isReturnReceived?: boolean } | undefined;
+  if (order.isReturnReceived === true || nested?.isReturnReceived === true) return true;
+  const local = String(
+    order.scanFlag ||
+      order.local_status ||
+      order.localStatus ||
+      order.internal_status ||
+      '',
+  ).toUpperCase();
+  return (
+    local === ORDER_LOCAL_STATUS.RETURN_RECEIVED ||
+    local === ORDER_LOCAL_STATUS.CANCELLED_STORED
+  );
+}
+
 export function getScanProcessedReason(
   order: Partial<Order> & Record<string, unknown>,
 ): string {

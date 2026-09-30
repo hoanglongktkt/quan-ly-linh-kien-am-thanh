@@ -2349,6 +2349,9 @@ const INTERNAL_FLAG_KEYS = new Set([
   "return_received_at",
   "warehouse_return_received",
   "isWarehouseReturnReceived",
+  "isReturnReceived",
+  "returnReceivedAt",
+  "internal_flags",
   "stock_restored",
   "stock_restored_at",
   "labelUrl",
@@ -2383,9 +2386,34 @@ const WAREHOUSE_PROTECTED_SET_KEYS = [
   "data.warehouse_return_received",
   "isWarehouseReturnReceived",
   "data.isWarehouseReturnReceived",
+  "isReturnReceived",
+  "data.isReturnReceived",
+  "returnReceivedAt",
+  "data.returnReceivedAt",
+  "internal_flags",
+  "data.internal_flags",
+  "internal_flags.isReturnReceived",
+  "internal_flags.returnReceivedAt",
+  "data.internal_flags.isReturnReceived",
+  "data.internal_flags.returnReceivedAt",
   "is_local_return_archived",
   "data.is_local_return_archived",
 ] as const;
+
+/** Gắn cờ thu hồi hủy/hoàn — root + internal_flags, webhook không được $set đè. */
+function applyReturnReceivedFlagSet(
+  $set: Record<string, unknown>,
+  at: Date = new Date(),
+): void {
+  $set.isReturnReceived = true;
+  $set.returnReceivedAt = at;
+  $set["internal_flags.isReturnReceived"] = true;
+  $set["internal_flags.returnReceivedAt"] = at;
+  $set["data.isReturnReceived"] = true;
+  $set["data.returnReceivedAt"] = at;
+  $set["data.internal_flags.isReturnReceived"] = true;
+  $set["data.internal_flags.returnReceivedAt"] = at;
+}
 
 function stripWarehouseProtectedKeysFromSet($set: Record<string, unknown>): void {
   for (const key of WAREHOUSE_PROTECTED_SET_KEYS) {
@@ -2398,6 +2426,10 @@ function readExistingWarehouseLock(doc: any): {
   local: string;
 } {
   const data = doc?.data && typeof doc.data === "object" ? doc.data : {};
+  const nestedFlags =
+    data.internal_flags && typeof data.internal_flags === "object" ? data.internal_flags : {};
+  const rootFlags =
+    doc?.internal_flags && typeof doc.internal_flags === "object" ? doc.internal_flags : {};
   const local = String(
     data.local_status ||
       data.localStatus ||
@@ -2406,13 +2438,28 @@ function readExistingWarehouseLock(doc: any): {
       data.local_return_status ||
       "",
   ).toUpperCase();
+  const returnFlag =
+    doc?.isReturnReceived === true ||
+    data.isReturnReceived === true ||
+    nestedFlags.isReturnReceived === true ||
+    rootFlags.isReturnReceived === true;
   const flag =
     data.is_return_received === true ||
     data.warehouse_return_received === true ||
     data.isWarehouseReturnReceived === true ||
+    returnFlag ||
     local === "RETURN_RECEIVED" ||
     local === "CANCELLED_STORED";
-  return { locked: flag, local };
+  let resolvedLocal = local;
+  if (
+    returnFlag &&
+    resolvedLocal !== "RETURN_RECEIVED" &&
+    resolvedLocal !== "CANCELLED_STORED"
+  ) {
+    const st = String(doc?.status || data.status || "").toLowerCase();
+    resolvedLocal = st === "cancelled" ? "CANCELLED_STORED" : "RETURN_RECEIVED";
+  }
+  return { locked: flag, local: resolvedLocal };
 }
 
 /** Parse Shopee unix (giây/ms) hoặc ISO/Date → Date hợp lệ. */
@@ -3173,6 +3220,35 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
               $set["data.is_return_received"] = true;
               $set["data.local_return_status"] = "RETURN_RECEIVED";
             }
+            if (
+              current.isReturnReceived === true ||
+              current.data?.isReturnReceived === true ||
+              current.data?.internal_flags?.isReturnReceived === true ||
+              current.internal_flags?.isReturnReceived === true
+            ) {
+              const keptAt =
+                current.returnReceivedAt ||
+                current.data?.returnReceivedAt ||
+                current.data?.internal_flags?.returnReceivedAt ||
+                current.internal_flags?.returnReceivedAt;
+              applyReturnReceivedFlagSet(
+                $set,
+                keptAt instanceof Date ? keptAt : keptAt ? new Date(keptAt) : new Date(),
+              );
+              const unsetBag = item.op?.updateOne?.update?.$unset;
+              if (unsetBag && typeof unsetBag === "object") {
+                delete unsetBag.isReturnReceived;
+                delete unsetBag["data.isReturnReceived"];
+                delete unsetBag.returnReceivedAt;
+                delete unsetBag["data.returnReceivedAt"];
+                delete unsetBag.internal_flags;
+                delete unsetBag["data.internal_flags"];
+                delete unsetBag["internal_flags.isReturnReceived"];
+                delete unsetBag["internal_flags.returnReceivedAt"];
+                delete unsetBag["data.internal_flags.isReturnReceived"];
+                delete unsetBag["data.internal_flags.returnReceivedAt"];
+              }
+            }
             if ($setOnInsert) {
               for (const key of WAREHOUSE_PROTECTED_SET_KEYS) delete $setOnInsert[key];
             }
@@ -3860,6 +3936,9 @@ export async function markOrderLocalStatusInStore(
   } else if (meta?.status) {
     $set.status = String(meta.status);
     $set["data.status"] = String(meta.status);
+  }
+  if (status === "CANCELLED_STORED" || status === "RETURN_RECEIVED") {
+    applyReturnReceivedFlagSet($set, new Date());
   }
   if (shopIdStr) {
     $set.shopId = shopIdStr;
@@ -6030,6 +6109,34 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
         ? Boolean(d.is_pending_shopee_check)
         : Boolean(data.is_pending_shopee_check),
     is_handed_over: handed,
+    isReturnReceived:
+      d?.isReturnReceived === true ||
+      data.isReturnReceived === true ||
+      data.internal_flags?.isReturnReceived === true ||
+      d?.internal_flags?.isReturnReceived === true,
+    returnReceivedAt:
+      d?.returnReceivedAt ||
+      data.returnReceivedAt ||
+      data.internal_flags?.returnReceivedAt ||
+      d?.internal_flags?.returnReceivedAt ||
+      undefined,
+    internal_flags: {
+      ...(data.internal_flags && typeof data.internal_flags === "object"
+        ? data.internal_flags
+        : {}),
+      ...(d?.internal_flags && typeof d.internal_flags === "object" ? d.internal_flags : {}),
+      isReturnReceived:
+        d?.isReturnReceived === true ||
+        data.isReturnReceived === true ||
+        data.internal_flags?.isReturnReceived === true ||
+        d?.internal_flags?.isReturnReceived === true,
+      returnReceivedAt:
+        d?.returnReceivedAt ||
+        data.returnReceivedAt ||
+        data.internal_flags?.returnReceivedAt ||
+        d?.internal_flags?.returnReceivedAt ||
+        undefined,
+    },
     isHandedOverToCarrier: handed,
     is_handed_over_to_carrier: handed,
     is_handed_over_to_courier: handed,
@@ -9934,6 +10041,7 @@ export async function markOrdersScanFlagsBatch(
       $set.shopId = shopIdStr;
       $set["data.shopId"] = shopIdStr;
     }
+    applyReturnReceivedFlagSet($set, new Date());
     ops.push({
       updateOne: {
         filter: identityFilter(sn, _id),
@@ -10000,6 +10108,9 @@ export type ScannerSyncRow = {
   logistics_status?: string;
   shopee_cancel_return_kind?: string;
   is_rts?: boolean;
+  /** Cờ kho đã quét thu hồi hủy/hoàn — không phải status sàn. */
+  isReturnReceived?: boolean;
+  returnReceivedAt?: string;
 };
 
 /** Derive status gọn cho máy quét. */
@@ -10169,6 +10280,16 @@ const SCANNER_SYNC_SELECT = {
   "data.logistics_status": 1,
   "data.shopee_cancel_return_kind": 1,
   "data.is_rts": 1,
+  "data.local_status": 1,
+  "data.localStatus": 1,
+  "data.scanFlag": 1,
+  "data.internal_status": 1,
+  isReturnReceived: 1,
+  returnReceivedAt: 1,
+  "data.isReturnReceived": 1,
+  "data.returnReceivedAt": 1,
+  "data.internal_flags.isReturnReceived": 1,
+  "data.internal_flags.returnReceivedAt": 1,
   return_sn: 1,
 } as const;
 
@@ -10211,11 +10332,29 @@ function docsToScannerSyncRows(docs: any[]): ScannerSyncRow[] {
         data.returnTrackingNumber ||
         "",
     ).trim();
+    const nestedFlags =
+      data.internal_flags && typeof data.internal_flags === "object" ? data.internal_flags : {};
+    const localScan = String(
+      data.local_status || data.localStatus || data.scanFlag || data.internal_status || "",
+    ).toUpperCase();
+    const isReturnReceived =
+      d?.isReturnReceived === true ||
+      data.isReturnReceived === true ||
+      nestedFlags.isReturnReceived === true ||
+      localScan === "RETURN_RECEIVED" ||
+      localScan === "CANCELLED_STORED";
+    const receivedAtRaw =
+      d?.returnReceivedAt ||
+      data.returnReceivedAt ||
+      nestedFlags.returnReceivedAt ||
+      null;
     rows.push({
       order_id: orderId,
       tracking_code: tracking,
       return_waybill: returnWb,
       status: deriveScannerSyncStatus(d),
+      isReturnReceived: isReturnReceived || undefined,
+      returnReceivedAt: receivedAtRaw ? String(receivedAtRaw) : undefined,
       logistics_status: String(
         d?.logistics_status || data.logistics_status || "",
       ).trim() || undefined,

@@ -60,6 +60,8 @@ import {
   getScanProcessedReason,
   matchesReceivedCancelReturnTab,
   isWarehouseReturnReceived,
+  isReturnScanLocked,
+  RETURN_SCAN_DUPLICATE_ERROR,
 } from '../utils/orderLocalStatus';
 import {
   enqueueScanBgCodes,
@@ -3845,6 +3847,15 @@ export default function OrderManager({
         }
 
         if (activeMode === 'return') {
+          if (isReturnScanLocked(order)) {
+            playScanSound('error');
+            vibrateScan('warning');
+            flashViewfinder('error', 500);
+            setCameraScanResult(RETURN_SCAN_DUPLICATE_ERROR);
+            showScanToast(RETURN_SCAN_DUPLICATE_ERROR, 'error');
+            return;
+          }
+
           if (
             isEligibleForHandOverToCarrier(order) &&
             !isReturnBucket &&
@@ -3911,15 +3922,6 @@ export default function OrderManager({
               );
               return;
             }
-          }
-
-          if (isWarehouseReturnReceived(order)) {
-            playScanSound('warning');
-            vibrateScan('warning');
-            flashViewfinder('error', 500);
-            setCameraScanResult(`Đơn #${order.orderSn} đã nhận hoàn trước đó`);
-            showScanToast(`Đơn #${order.orderSn} đã nhận hoàn trước đó`, 'error');
-            return;
           }
 
           playScanSound('error');
@@ -8081,8 +8083,8 @@ export default function OrderManager({
         if (!res.ok || bulkData?.success === false || bulkData?.partialFailure === true) {
           throw new Error(
             String(
-              bulkData?.message ||
-                bulkData?.error ||
+              bulkData?.error ||
+                bulkData?.message ||
                 `HTTP ${res.status} — lưu đơn đã quét thất bại`,
             ),
           );
@@ -8217,8 +8219,20 @@ export default function OrderManager({
         `✓ Đã lưu DB: Xuất kho ${safeXuat} · Hủy ${safeHuy} · Nhận hoàn ${safeHoan}`,
       );
       if (failedScans.length > 0) {
+        const dup = failedScans.find((f) =>
+          String(f.reason || '').includes('ĐÃ ĐƯỢC QUÉT XÁC NHẬN'),
+        );
         window.setTimeout(() => {
-          showToast(`Bỏ qua ${failedScans.length} mã (trùng/không hợp lệ)`, 4500);
+          if (dup?.reason) {
+            playScanSound('error');
+            showScanToast(String(dup.reason), 'error');
+          }
+          showToast(
+            dup?.reason
+              ? String(dup.reason)
+              : `Bỏ qua ${failedScans.length} mã (trùng/không hợp lệ)`,
+            4500,
+          );
         }, 1600);
       }
 
@@ -8232,6 +8246,10 @@ export default function OrderManager({
       const msg = err instanceof Error ? err.message : String(err);
       const failMsg =
         msg?.trim() || 'Lưu thất bại — không rõ nguyên nhân. Xem log server.';
+      if (failMsg.includes('ĐÃ ĐƯỢC QUÉT XÁC NHẬN')) {
+        playScanSound('error');
+        vibrateScan('error');
+      }
       showToast(failMsg, 7000);
       showScanToast(failMsg, 'error');
       setCameraScanResult(`${failMsg} — còn ${codes.length} mã. Bấm Kết thúc để thử lại`);

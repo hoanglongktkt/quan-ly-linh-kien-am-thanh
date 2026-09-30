@@ -79729,6 +79729,9 @@ var INTERNAL_FLAG_KEYS = /* @__PURE__ */ new Set([
   "return_received_at",
   "warehouse_return_received",
   "isWarehouseReturnReceived",
+  "isReturnReceived",
+  "returnReceivedAt",
+  "internal_flags",
   "stock_restored",
   "stock_restored_at",
   "labelUrl",
@@ -79761,9 +79764,29 @@ var WAREHOUSE_PROTECTED_SET_KEYS = [
   "data.warehouse_return_received",
   "isWarehouseReturnReceived",
   "data.isWarehouseReturnReceived",
+  "isReturnReceived",
+  "data.isReturnReceived",
+  "returnReceivedAt",
+  "data.returnReceivedAt",
+  "internal_flags",
+  "data.internal_flags",
+  "internal_flags.isReturnReceived",
+  "internal_flags.returnReceivedAt",
+  "data.internal_flags.isReturnReceived",
+  "data.internal_flags.returnReceivedAt",
   "is_local_return_archived",
   "data.is_local_return_archived"
 ];
+function applyReturnReceivedFlagSet($set, at = /* @__PURE__ */ new Date()) {
+  $set.isReturnReceived = true;
+  $set.returnReceivedAt = at;
+  $set["internal_flags.isReturnReceived"] = true;
+  $set["internal_flags.returnReceivedAt"] = at;
+  $set["data.isReturnReceived"] = true;
+  $set["data.returnReceivedAt"] = at;
+  $set["data.internal_flags.isReturnReceived"] = true;
+  $set["data.internal_flags.returnReceivedAt"] = at;
+}
 function stripWarehouseProtectedKeysFromSet($set) {
   for (const key of WAREHOUSE_PROTECTED_SET_KEYS) {
     delete $set[key];
@@ -79771,11 +79794,19 @@ function stripWarehouseProtectedKeysFromSet($set) {
 }
 function readExistingWarehouseLock(doc) {
   const data = doc?.data && typeof doc.data === "object" ? doc.data : {};
+  const nestedFlags = data.internal_flags && typeof data.internal_flags === "object" ? data.internal_flags : {};
+  const rootFlags = doc?.internal_flags && typeof doc.internal_flags === "object" ? doc.internal_flags : {};
   const local = String(
     data.local_status || data.localStatus || data.internal_status || data.scanFlag || data.local_return_status || ""
   ).toUpperCase();
-  const flag = data.is_return_received === true || data.warehouse_return_received === true || data.isWarehouseReturnReceived === true || local === "RETURN_RECEIVED" || local === "CANCELLED_STORED";
-  return { locked: flag, local };
+  const returnFlag = doc?.isReturnReceived === true || data.isReturnReceived === true || nestedFlags.isReturnReceived === true || rootFlags.isReturnReceived === true;
+  const flag = data.is_return_received === true || data.warehouse_return_received === true || data.isWarehouseReturnReceived === true || returnFlag || local === "RETURN_RECEIVED" || local === "CANCELLED_STORED";
+  let resolvedLocal = local;
+  if (returnFlag && resolvedLocal !== "RETURN_RECEIVED" && resolvedLocal !== "CANCELLED_STORED") {
+    const st = String(doc?.status || data.status || "").toLowerCase();
+    resolvedLocal = st === "cancelled" ? "CANCELLED_STORED" : "RETURN_RECEIVED";
+  }
+  return { locked: flag, local: resolvedLocal };
 }
 function coerceShopeeWatermarkDate(value) {
   if (value == null || value === "") return null;
@@ -80367,6 +80398,26 @@ async function bulkUpsertOrdersToStore(orders) {
               $set["data.is_return_received"] = true;
               $set["data.local_return_status"] = "RETURN_RECEIVED";
             }
+            if (current.isReturnReceived === true || current.data?.isReturnReceived === true || current.data?.internal_flags?.isReturnReceived === true || current.internal_flags?.isReturnReceived === true) {
+              const keptAt = current.returnReceivedAt || current.data?.returnReceivedAt || current.data?.internal_flags?.returnReceivedAt || current.internal_flags?.returnReceivedAt;
+              applyReturnReceivedFlagSet(
+                $set,
+                keptAt instanceof Date ? keptAt : keptAt ? new Date(keptAt) : /* @__PURE__ */ new Date()
+              );
+              const unsetBag = item.op?.updateOne?.update?.$unset;
+              if (unsetBag && typeof unsetBag === "object") {
+                delete unsetBag.isReturnReceived;
+                delete unsetBag["data.isReturnReceived"];
+                delete unsetBag.returnReceivedAt;
+                delete unsetBag["data.returnReceivedAt"];
+                delete unsetBag.internal_flags;
+                delete unsetBag["data.internal_flags"];
+                delete unsetBag["internal_flags.isReturnReceived"];
+                delete unsetBag["internal_flags.returnReceivedAt"];
+                delete unsetBag["data.internal_flags.isReturnReceived"];
+                delete unsetBag["data.internal_flags.returnReceivedAt"];
+              }
+            }
             if ($setOnInsert) {
               for (const key of WAREHOUSE_PROTECTED_SET_KEYS) delete $setOnInsert[key];
             }
@@ -80897,6 +80948,9 @@ async function markOrderLocalStatusInStore(orderSn, localStatus, meta) {
   } else if (meta?.status) {
     $set.status = String(meta.status);
     $set["data.status"] = String(meta.status);
+  }
+  if (status === "CANCELLED_STORED" || status === "RETURN_RECEIVED") {
+    applyReturnReceivedFlagSet($set, /* @__PURE__ */ new Date());
   }
   if (shopIdStr) {
     $set.shopId = shopIdStr;
@@ -82319,6 +82373,14 @@ function hydrateOrderFromMongoDoc(d) {
     checkout_shipping_carrier: d?.checkout_shipping_carrier || data.checkout_shipping_carrier || void 0,
     is_pending_shopee_check: d?.is_pending_shopee_check != null ? Boolean(d.is_pending_shopee_check) : Boolean(data.is_pending_shopee_check),
     is_handed_over: handed,
+    isReturnReceived: d?.isReturnReceived === true || data.isReturnReceived === true || data.internal_flags?.isReturnReceived === true || d?.internal_flags?.isReturnReceived === true,
+    returnReceivedAt: d?.returnReceivedAt || data.returnReceivedAt || data.internal_flags?.returnReceivedAt || d?.internal_flags?.returnReceivedAt || void 0,
+    internal_flags: {
+      ...data.internal_flags && typeof data.internal_flags === "object" ? data.internal_flags : {},
+      ...d?.internal_flags && typeof d.internal_flags === "object" ? d.internal_flags : {},
+      isReturnReceived: d?.isReturnReceived === true || data.isReturnReceived === true || data.internal_flags?.isReturnReceived === true || d?.internal_flags?.isReturnReceived === true,
+      returnReceivedAt: d?.returnReceivedAt || data.returnReceivedAt || data.internal_flags?.returnReceivedAt || d?.internal_flags?.returnReceivedAt || void 0
+    },
     isHandedOverToCarrier: handed,
     is_handed_over_to_carrier: handed,
     is_handed_over_to_courier: handed,
@@ -85191,6 +85253,7 @@ async function markOrdersScanFlagsBatch(rows) {
       $set.shopId = shopIdStr;
       $set["data.shopId"] = shopIdStr;
     }
+    applyReturnReceivedFlagSet($set, /* @__PURE__ */ new Date());
     ops.push({
       updateOne: {
         filter: identityFilter(sn, _id),
@@ -85376,6 +85439,16 @@ var SCANNER_SYNC_SELECT = {
   "data.logistics_status": 1,
   "data.shopee_cancel_return_kind": 1,
   "data.is_rts": 1,
+  "data.local_status": 1,
+  "data.localStatus": 1,
+  "data.scanFlag": 1,
+  "data.internal_status": 1,
+  isReturnReceived: 1,
+  returnReceivedAt: 1,
+  "data.isReturnReceived": 1,
+  "data.returnReceivedAt": 1,
+  "data.internal_flags.isReturnReceived": 1,
+  "data.internal_flags.returnReceivedAt": 1,
   return_sn: 1
 };
 async function safeScannerSyncFind(filter2, opts) {
@@ -85405,11 +85478,19 @@ function docsToScannerSyncRows(docs) {
     const returnWb = String(
       d?.return_tracking_no || d?.returnTrackingNumber || data.return_tracking_no || data.returnTrackingNumber || ""
     ).trim();
+    const nestedFlags = data.internal_flags && typeof data.internal_flags === "object" ? data.internal_flags : {};
+    const localScan = String(
+      data.local_status || data.localStatus || data.scanFlag || data.internal_status || ""
+    ).toUpperCase();
+    const isReturnReceived = d?.isReturnReceived === true || data.isReturnReceived === true || nestedFlags.isReturnReceived === true || localScan === "RETURN_RECEIVED" || localScan === "CANCELLED_STORED";
+    const receivedAtRaw = d?.returnReceivedAt || data.returnReceivedAt || nestedFlags.returnReceivedAt || null;
     rows.push({
       order_id: orderId,
       tracking_code: tracking,
       return_waybill: returnWb,
       status: deriveScannerSyncStatus(d),
+      isReturnReceived: isReturnReceived || void 0,
+      returnReceivedAt: receivedAtRaw ? String(receivedAtRaw) : void 0,
       logistics_status: String(
         d?.logistics_status || data.logistics_status || ""
       ).trim() || void 0,
@@ -119301,6 +119382,27 @@ function emitOrderUpdated(_payload) {
 }
 
 // controllers/scanBulkController.js
+var RETURN_SCAN_DUPLICATE_ERROR = "\u0110\u01A1n h\xE0ng n\xE0y \u0110\xC3 \u0110\u01AF\u1EE2C QU\xC9T X\xC1C NH\u1EACN thu h\u1ED3i tr\u01B0\u1EDBc \u0111\xF3!";
+function readReturnReceivedFlag(order) {
+  if (!order || typeof order !== "object") return { locked: false, receivedAt: null };
+  const nested = order.internal_flags && typeof order.internal_flags === "object" ? order.internal_flags : null;
+  const data = order.data && typeof order.data === "object" ? order.data : null;
+  const dataNested = data?.internal_flags && typeof data.internal_flags === "object" ? data.internal_flags : null;
+  const locked = order.isReturnReceived === true || nested?.isReturnReceived === true || data?.isReturnReceived === true || dataNested?.isReturnReceived === true;
+  const receivedAt = order.returnReceivedAt || nested?.returnReceivedAt || data?.returnReceivedAt || dataNested?.returnReceivedAt || null;
+  return { locked, receivedAt };
+}
+function stampReturnReceived(order, at) {
+  const receivedAt = at || /* @__PURE__ */ new Date();
+  order.isReturnReceived = true;
+  order.returnReceivedAt = receivedAt;
+  order.internal_flags = {
+    ...order.internal_flags && typeof order.internal_flags === "object" ? order.internal_flags : {},
+    isReturnReceived: true,
+    returnReceivedAt: receivedAt
+  };
+  return order;
+}
 var deps8 = {
   findOrderByScanCodeInStore: async () => null,
   findOrdersByScanCodesInStore: async () => /* @__PURE__ */ new Map(),
@@ -119416,6 +119518,8 @@ async function scanBulkUpdate(req, res) {
     const restockJobsDeferred = [];
     const summary = { daXuatKho: 0, donHuy: 0, daNhanHoan: 0 };
     let donHoanHuyAlready = 0;
+    const returnScanSeen = /* @__PURE__ */ new Set();
+    const returnFlagBackfill = [];
     const norm = (c) => String(c || "").trim().toUpperCase();
     const mightHaveCancelReturn = forceCancelCodes.size > 0 || forceReturnCodes.size > 0 || orders.some((o) => {
       const status = String(o?.status || "");
@@ -119481,31 +119585,44 @@ async function scanBulkUpdate(req, res) {
       const forceReturn = forceReturnCodes.has(codeKey) || forceReturnCodes.has(norm(String(order.orderSn || ""))) || forceReturnCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) || forceReturnCodes.has(norm(String(order.return_tracking_no || order.returnTrackingNumber || "")));
       const isReturnLike = status === "return_pending" || status === "return_received" || rawShopee === "TO_RETURN";
       const isCancelLike = !isReturnLike && (status === "cancelled" || rawShopee === "CANCELLED" || rawShopee === "IN_CANCEL" || deps8.isShopeeCancelOrReturnLikeOrder(order));
-      if (forceCancel && alreadyInDonHoanHuy) {
-        summary.donHuy += 1;
-        donHoanHuyAlready += 1;
-        results.push({
-          code,
-          action: "cancelled",
-          orderId: order.id,
-          orderSn: order.orderSn,
-          message: `\u0110\u01A1n h\u1EE7y #${order.orderSn} \u0111\xE3 c\xF3 trong don_hoan_huy`,
-          local_status: "CANCELLED_STORED"
-        });
-        continue;
-      }
-      if (forceReturn && alreadyInDonHoanHuy) {
-        summary.daNhanHoan += 1;
-        donHoanHuyAlready += 1;
-        results.push({
-          code,
-          action: "return_received",
-          orderId: order.id,
-          orderSn: order.orderSn,
-          message: `\u0110\u01A1n #${order.orderSn} \u0111\xE3 c\xF3 trong don_hoan_huy`,
-          local_status: "RETURN_RECEIVED"
-        });
-        continue;
+      const isCancelReturnConfirm = (forceCancel || forceReturn) && !forceHandOver;
+      if (isCancelReturnConfirm) {
+        const receivedFlag = readReturnReceivedFlag(order);
+        const seenKey = orderSnNorm || codeKey;
+        if (receivedFlag.locked || alreadyInDonHoanHuy || returnScanSeen.has(seenKey)) {
+          if (!returnScanSeen.has(seenKey)) {
+            returnScanSeen.add(seenKey);
+            if (!receivedFlag.locked && orderSnNorm) {
+              returnFlagBackfill.push({
+                orderSn: orderSnNorm,
+                localStatus: forceReturn ? "RETURN_RECEIVED" : "CANCELLED_STORED",
+                shopId: order?.shopId != null ? String(order.shopId) : void 0
+              });
+              donHoanHuyAlready += 1;
+            }
+            results.push({
+              code,
+              action: "duplicate",
+              orderId: order.id,
+              orderSn: order.orderSn,
+              message: RETURN_SCAN_DUPLICATE_ERROR,
+              error: RETURN_SCAN_DUPLICATE_ERROR,
+              receivedAt: receivedFlag.receivedAt,
+              local_status: existingLocal || (forceReturn ? "RETURN_RECEIVED" : "CANCELLED_STORED")
+            });
+            failed_scans.push({
+              code,
+              orderId: order.id,
+              orderSn: order.orderSn,
+              reason: RETURN_SCAN_DUPLICATE_ERROR,
+              error: RETURN_SCAN_DUPLICATE_ERROR,
+              receivedAt: receivedFlag.receivedAt,
+              duplicateReturn: true
+            });
+          }
+          continue;
+        }
+        returnScanSeen.add(seenKey);
       }
       const allowForceCancelReturnOverride = (forceCancel || forceReturn) && (existingLocal === "HANDED_OVER" || existingLocal === "CANCELLED_STORED" || existingLocal === "RETURN_RECEIVED" || isCancelLike || isReturnLike);
       if (deps8.isOrderAlreadyScanProcessed(order) && !allowForceCancelReturnOverride && !forceCancel && !forceReturn) {
@@ -119612,6 +119729,7 @@ async function scanBulkUpdate(req, res) {
         const updated = { ...order };
         deps8.clearHandedOverLocalForCancelReturn(updated);
         deps8.setOrderLocalStatus(updated, "RETURN_RECEIVED");
+        stampReturnReceived(updated);
         restockJobsDeferred.push({ order: updated, wasHandedOver });
         orders[index] = updated;
         changedOrders.push(updated);
@@ -119662,6 +119780,7 @@ async function scanBulkUpdate(req, res) {
         if (updated.status !== "cancelled") updated.status = "cancelled";
         deps8.clearHandedOverLocalForCancelReturn(updated);
         deps8.setOrderLocalStatus(updated, "CANCELLED_STORED");
+        stampReturnReceived(updated);
         restockJobsDeferred.push({ order: updated, wasHandedOver });
         orders[index] = updated;
         changedOrders.push(updated);
@@ -119818,8 +119937,8 @@ async function scanBulkUpdate(req, res) {
     __mark("donHoanHuyWrite");
     let flagWriteError = null;
     let flagOk = 0;
+    const flagRows = [];
     if (changedOrders.length > 0) {
-      const flagRows = [];
       for (const o of changedOrders) {
         const sn = String(o?.orderSn || "").replace(/^shopee-/i, "").trim();
         if (!sn) continue;
@@ -119845,6 +119964,16 @@ async function scanBulkUpdate(req, res) {
           });
         }
       }
+    }
+    for (const row of returnFlagBackfill) {
+      if (!row?.orderSn) continue;
+      flagRows.push({
+        orderSn: row.orderSn,
+        localStatus: row.localStatus,
+        shopId: row.shopId
+      });
+    }
+    if (flagRows.length > 0 || changedOrders.length > 0) {
       if (flagRows.length > 0) {
         try {
           flagOk = await deps8.markOrdersScanFlagsBatch(flagRows);
@@ -119934,6 +120063,18 @@ async function scanBulkUpdate(req, res) {
       failed_scans,
       orders: updatedList
     };
+    const duplicateReturns = failed_scans.filter((f3) => f3.duplicateReturn);
+    const duplicateOnly = processedCount === 0 && duplicateReturns.length > 0 && changedOrders.length === 0;
+    if (duplicateOnly) {
+      return res.status(400).json({
+        ...responsePayload,
+        success: false,
+        partialFailure: false,
+        error: RETURN_SCAN_DUPLICATE_ERROR,
+        message: RETURN_SCAN_DUPLICATE_ERROR,
+        receivedAt: duplicateReturns[0]?.receivedAt || null
+      });
+    }
     if (partialFailure) {
       return res.status(500).json({
         ...responsePayload,
@@ -125724,7 +125865,15 @@ async function confirmReturnReceived(req, res) {
     orders[index].local_status || orders[index].localStatus || orders[index].internal_status || orders[index].scanFlag || ""
   ).toUpperCase();
   const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+  const receivedAt = /* @__PURE__ */ new Date();
   const already = existingLocal === "RETURN_RECEIVED";
+  orders[index].isReturnReceived = true;
+  orders[index].returnReceivedAt = orders[index].returnReceivedAt || receivedAt;
+  orders[index].internal_flags = {
+    ...orders[index].internal_flags && typeof orders[index].internal_flags === "object" ? orders[index].internal_flags : {},
+    isReturnReceived: true,
+    returnReceivedAt: orders[index].returnReceivedAt
+  };
   if (!already) {
     Object.assign(orders[index], deps15.buildClearHandedOverPatch(nowIso) || {});
     orders[index].local_status = "RETURN_RECEIVED";

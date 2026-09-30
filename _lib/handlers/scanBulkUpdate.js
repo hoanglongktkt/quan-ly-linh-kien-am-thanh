@@ -71,6 +71,18 @@ async function fetchJson(backendUrl, req, pathPart, init = {}, timeoutMs) {
   return { ok: result.upstream.ok, status: result.upstream.status, data };
 }
 
+const RETURN_SCAN_DUPLICATE_ERROR =
+  'Đơn hàng này ĐÃ ĐƯỢC QUÉT XÁC NHẬN thu hồi trước đó!';
+
+function orderIsReturnReceived(order) {
+  return (
+    order?.isReturnReceived === true ||
+    order?.internal_flags?.isReturnReceived === true ||
+    order?.data?.isReturnReceived === true ||
+    order?.data?.internal_flags?.isReturnReceived === true
+  );
+}
+
 function buildLocalPatch(targetStatus) {
   const now = new Date().toISOString();
   if (targetStatus === 'HANDED_OVER') {
@@ -99,6 +111,9 @@ function buildLocalPatch(targetStatus) {
       isHandedOverToCarrier: false,
       is_handed_over_to_carrier: false,
       is_handed_over_to_courier: false,
+      isReturnReceived: true,
+      returnReceivedAt: new Date().toISOString(),
+      internal_flags: { isReturnReceived: true, returnReceivedAt: new Date().toISOString() },
     };
   }
   return {
@@ -113,6 +128,9 @@ function buildLocalPatch(targetStatus) {
     is_handed_over_to_carrier: false,
     is_handed_over_to_courier: false,
     status: 'return_received',
+    isReturnReceived: true,
+    returnReceivedAt: new Date().toISOString(),
+    internal_flags: { isReturnReceived: true, returnReceivedAt: new Date().toISOString() },
   };
 }
 
@@ -175,7 +193,10 @@ export async function handleScanBulkUpdate(req, res) {
       if (direct.status !== 404 && !msg.includes('API không tồn tại')) {
         return res.status(direct.status || 500).json({
           success: false,
-          message: msg || 'scan_bulk_update_failed',
+          error: direct.data?.error || msg || 'scan_bulk_update_failed',
+          message: msg || direct.data?.error || 'scan_bulk_update_failed',
+          receivedAt: direct.data?.receivedAt || null,
+          failed_scans: direct.data?.failed_scans,
         });
       }
       console.warn('[Scan Bulk Update] cPanel chưa có route — fallback PATCH + don_hoan_huy');
@@ -276,6 +297,37 @@ export async function handleScanBulkUpdate(req, res) {
           orderId: order.id,
           orderSn: order.orderSn,
           reason: `Trạng thái "${status}" không thuộc quy tắc phân loại`,
+        });
+        continue;
+      }
+
+      const localNow = resolveLocalStatus(order);
+      if (
+        !forcedHand &&
+        (target === 'CANCELLED_STORED' || target === 'RETURN_RECEIVED') &&
+        (orderIsReturnReceived(order) ||
+          localNow === 'CANCELLED_STORED' ||
+          localNow === 'RETURN_RECEIVED')
+      ) {
+        const receivedAt =
+          order.returnReceivedAt || order.internal_flags?.returnReceivedAt || null;
+        results.push({
+          code,
+          action: 'duplicate',
+          orderId: order.id,
+          orderSn: order.orderSn,
+          message: RETURN_SCAN_DUPLICATE_ERROR,
+          error: RETURN_SCAN_DUPLICATE_ERROR,
+          receivedAt,
+        });
+        failed_scans.push({
+          code,
+          orderId: order.id,
+          orderSn: order.orderSn,
+          reason: RETURN_SCAN_DUPLICATE_ERROR,
+          error: RETURN_SCAN_DUPLICATE_ERROR,
+          receivedAt,
+          duplicateReturn: true,
         });
         continue;
       }
@@ -386,6 +438,19 @@ export async function handleScanBulkUpdate(req, res) {
     }
 
     const processedCount = summary.daXuatKho + summary.donHuy + summary.daNhanHoan;
+    const duplicateReturns = failed_scans.filter((f) => f.duplicateReturn);
+    if (processedCount === 0 && duplicateReturns.length > 0 && updatedOrders.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: RETURN_SCAN_DUPLICATE_ERROR,
+        message: RETURN_SCAN_DUPLICATE_ERROR,
+        receivedAt: duplicateReturns[0]?.receivedAt || null,
+        failed_scans,
+        results,
+        summary,
+        processedCount: 0,
+      });
+    }
     console.log('[Scan Bulk Update] fallback persisted summary=', summary, 'dhh=', donHoanHuy);
 
     return res.status(200).json({

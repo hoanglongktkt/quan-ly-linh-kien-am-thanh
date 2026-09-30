@@ -4,6 +4,48 @@
  */
 import { emitOrderUpdated } from "../services/orderRealtime.js";
 
+const RETURN_SCAN_DUPLICATE_ERROR =
+  "Đơn hàng này ĐÃ ĐƯỢC QUÉT XÁC NHẬN thu hồi trước đó!";
+
+function readReturnReceivedFlag(order) {
+  if (!order || typeof order !== "object") return { locked: false, receivedAt: null };
+  const nested =
+    order.internal_flags && typeof order.internal_flags === "object"
+      ? order.internal_flags
+      : null;
+  const data = order.data && typeof order.data === "object" ? order.data : null;
+  const dataNested =
+    data?.internal_flags && typeof data.internal_flags === "object"
+      ? data.internal_flags
+      : null;
+  const locked =
+    order.isReturnReceived === true ||
+    nested?.isReturnReceived === true ||
+    data?.isReturnReceived === true ||
+    dataNested?.isReturnReceived === true;
+  const receivedAt =
+    order.returnReceivedAt ||
+    nested?.returnReceivedAt ||
+    data?.returnReceivedAt ||
+    dataNested?.returnReceivedAt ||
+    null;
+  return { locked, receivedAt };
+}
+
+function stampReturnReceived(order, at) {
+  const receivedAt = at || new Date();
+  order.isReturnReceived = true;
+  order.returnReceivedAt = receivedAt;
+  order.internal_flags = {
+    ...(order.internal_flags && typeof order.internal_flags === "object"
+      ? order.internal_flags
+      : {}),
+    isReturnReceived: true,
+    returnReceivedAt: receivedAt,
+  };
+  return order;
+}
+
 /** Deps từ server.ts (order helpers / mongoStore chưa tách hết). */
 let deps = {
   findOrderByScanCodeInStore: async () => null,
@@ -136,6 +178,10 @@ export async function scanBulkUpdate(req, res) {
     const summary = { daXuatKho: 0, donHuy: 0, daNhanHoan: 0 };
     /** Số đơn hủy/hoàn đã có sẵn trong don_hoan_huy (idempotent). */
     let donHoanHuyAlready = 0;
+    /** orderSn hủy/hoàn đã chốt trong request — chặn quét trùng cùng lô. */
+    const returnScanSeen = new Set();
+    /** Đơn đã nằm don_hoan_huy nhưng thiếu cờ — chỉ backfill cờ, không restock. */
+    const returnFlagBackfill = [];
 
     const norm = (c) => String(c || "").trim().toUpperCase();
 
@@ -242,33 +288,45 @@ export async function scanBulkUpdate(req, res) {
           rawShopee === "IN_CANCEL" ||
           deps.isShopeeCancelOrReturnLikeOrder(order));
 
-      // Idempotent CHỈ khi đã có bản ghi thật trong don_hoan_huy.
-      // KHÔNG dùng existingLocal (status cancelled/return_received trên sàn) — gây bỏ qua ghi DB.
-      if (forceCancel && alreadyInDonHoanHuy) {
-        summary.donHuy += 1;
-        donHoanHuyAlready += 1;
-        results.push({
-          code,
-          action: "cancelled",
-          orderId: order.id,
-          orderSn: order.orderSn,
-          message: `Đơn hủy #${order.orderSn} đã có trong don_hoan_huy`,
-          local_status: "CANCELLED_STORED",
-        });
-        continue;
-      }
-      if (forceReturn && alreadyInDonHoanHuy) {
-        summary.daNhanHoan += 1;
-        donHoanHuyAlready += 1;
-        results.push({
-          code,
-          action: "return_received",
-          orderId: order.id,
-          orderSn: order.orderSn,
-          message: `Đơn #${order.orderSn} đã có trong don_hoan_huy`,
-          local_status: "RETURN_RECEIVED",
-        });
-        continue;
+      // Chốt chặn quét trùng CHỈ luồng xác nhận hủy/hoàn. Bàn giao ĐVVC không đi vào nhánh này.
+      const isCancelReturnConfirm = (forceCancel || forceReturn) && !forceHandOver;
+      if (isCancelReturnConfirm) {
+        const receivedFlag = readReturnReceivedFlag(order);
+        const seenKey = orderSnNorm || codeKey;
+        if (receivedFlag.locked || alreadyInDonHoanHuy || returnScanSeen.has(seenKey)) {
+          if (!returnScanSeen.has(seenKey)) {
+            returnScanSeen.add(seenKey);
+            if (!receivedFlag.locked && orderSnNorm) {
+              returnFlagBackfill.push({
+                orderSn: orderSnNorm,
+                localStatus: forceReturn ? "RETURN_RECEIVED" : "CANCELLED_STORED",
+                shopId: order?.shopId != null ? String(order.shopId) : undefined,
+              });
+              donHoanHuyAlready += 1;
+            }
+            results.push({
+              code,
+              action: "duplicate",
+              orderId: order.id,
+              orderSn: order.orderSn,
+              message: RETURN_SCAN_DUPLICATE_ERROR,
+              error: RETURN_SCAN_DUPLICATE_ERROR,
+              receivedAt: receivedFlag.receivedAt,
+              local_status: existingLocal || (forceReturn ? "RETURN_RECEIVED" : "CANCELLED_STORED"),
+            });
+            failed_scans.push({
+              code,
+              orderId: order.id,
+              orderSn: order.orderSn,
+              reason: RETURN_SCAN_DUPLICATE_ERROR,
+              error: RETURN_SCAN_DUPLICATE_ERROR,
+              receivedAt: receivedFlag.receivedAt,
+              duplicateReturn: true,
+            });
+          }
+          continue;
+        }
+        returnScanSeen.add(seenKey);
       }
       const allowForceCancelReturnOverride =
         (forceCancel || forceReturn) &&
@@ -403,6 +461,7 @@ export async function scanBulkUpdate(req, res) {
         const updated = { ...order };
         deps.clearHandedOverLocalForCancelReturn(updated);
         deps.setOrderLocalStatus(updated, "RETURN_RECEIVED");
+        stampReturnReceived(updated);
         restockJobsDeferred.push({ order: updated, wasHandedOver });
         orders[index] = updated;
         changedOrders.push(updated);
@@ -461,6 +520,7 @@ export async function scanBulkUpdate(req, res) {
         if (updated.status !== "cancelled") updated.status = "cancelled";
         deps.clearHandedOverLocalForCancelReturn(updated);
         deps.setOrderLocalStatus(updated, "CANCELLED_STORED");
+        stampReturnReceived(updated);
         restockJobsDeferred.push({ order: updated, wasHandedOver });
         orders[index] = updated;
         changedOrders.push(updated);
@@ -632,8 +692,8 @@ export async function scanBulkUpdate(req, res) {
 
     let flagWriteError = null;
     let flagOk = 0;
+    const flagRows = [];
     if (changedOrders.length > 0) {
-      const flagRows = [];
       for (const o of changedOrders) {
         const sn = String(o?.orderSn || "").replace(/^shopee-/i, "").trim();
         if (!sn) continue;
@@ -665,6 +725,16 @@ export async function scanBulkUpdate(req, res) {
           });
         }
       }
+    }
+    for (const row of returnFlagBackfill) {
+      if (!row?.orderSn) continue;
+      flagRows.push({
+        orderSn: row.orderSn,
+        localStatus: row.localStatus,
+        shopId: row.shopId,
+      });
+    }
+    if (flagRows.length > 0 || changedOrders.length > 0) {
       if (flagRows.length > 0) {
         try {
           flagOk = await deps.markOrdersScanFlagsBatch(flagRows);
@@ -758,6 +828,20 @@ export async function scanBulkUpdate(req, res) {
       failed_scans,
       orders: updatedList,
     };
+
+    const duplicateReturns = failed_scans.filter((f) => f.duplicateReturn);
+    const duplicateOnly =
+      processedCount === 0 && duplicateReturns.length > 0 && changedOrders.length === 0;
+    if (duplicateOnly) {
+      return res.status(400).json({
+        ...responsePayload,
+        success: false,
+        partialFailure: false,
+        error: RETURN_SCAN_DUPLICATE_ERROR,
+        message: RETURN_SCAN_DUPLICATE_ERROR,
+        receivedAt: duplicateReturns[0]?.receivedAt || null,
+      });
+    }
 
     if (partialFailure) {
       return res.status(500).json({

@@ -1,5 +1,6 @@
 import type { Order } from '../types';
 import { isShopeeInternalTrackingCode } from './orderTracking';
+import { isReturnScanLocked } from './orderLocalStatus';
 
 export type ScannerMode = 'handover' | 'return';
 
@@ -343,6 +344,10 @@ export function putOrderIntoScannerSyncMap(
     logistics_status: order.logistics_status,
     shopee_cancel_return_kind: order.shopee_cancel_return_kind,
     is_rts: order.is_rts,
+    isReturnReceived: isReturnScanLocked(order),
+    returnReceivedAt: order.returnReceivedAt
+      ? String(order.returnReceivedAt)
+      : undefined,
     matchedReturn: scannedIsReturn,
   };
   const put = (raw: string, matchedReturn = false) => {
@@ -493,6 +498,8 @@ export type ScannerSyncRow = {
   logistics_status?: string;
   shopee_cancel_return_kind?: string;
   is_rts?: boolean;
+  isReturnReceived?: boolean;
+  returnReceivedAt?: string;
 };
 
 export type ScannerSyncEntry = ScannerSyncRow & {
@@ -512,6 +519,8 @@ export function buildScannerSyncMap(rows: ScannerSyncRow[]): Map<string, Scanner
       logistics_status: row.logistics_status,
       shopee_cancel_return_kind: row.shopee_cancel_return_kind,
       is_rts: row.is_rts,
+      isReturnReceived: row.isReturnReceived === true,
+      returnReceivedAt: row.returnReceivedAt,
     };
     if (!base.order_id) continue;
     const put = (raw: string, matchedReturn = false) => {
@@ -751,11 +760,20 @@ export function scannerSyncEntryToOrder(entry: ScannerSyncEntry): Order {
     return_tracking_no: returnWb,
     return_sn,
     is_handed_over,
-    local_status,
     is_rts,
     shopee_cancel_return_kind,
     logistics_status,
     isPrinted: true,
+    isReturnReceived: entry.isReturnReceived === true,
+    returnReceivedAt: entry.returnReceivedAt,
+    internal_flags: entry.isReturnReceived
+      ? { isReturnReceived: true, returnReceivedAt: entry.returnReceivedAt }
+      : undefined,
+    local_status: entry.isReturnReceived
+      ? status === 'cancelled'
+        ? 'CANCELLED_STORED'
+        : 'RETURN_RECEIVED'
+      : local_status,
     channel: 'shopee',
     date: new Date().toISOString(),
     items: [],

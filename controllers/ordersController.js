@@ -2280,7 +2280,17 @@ export async function confirmReturnReceived(req, res) {
       "",
   ).toUpperCase();
   const nowIso = new Date().toISOString();
+  const receivedAt = new Date();
   const already = existingLocal === "RETURN_RECEIVED";
+  orders[index].isReturnReceived = true;
+  orders[index].returnReceivedAt = orders[index].returnReceivedAt || receivedAt;
+  orders[index].internal_flags = {
+    ...(orders[index].internal_flags && typeof orders[index].internal_flags === "object"
+      ? orders[index].internal_flags
+      : {}),
+    isReturnReceived: true,
+    returnReceivedAt: orders[index].returnReceivedAt,
+  };
   if (!already) {
     Object.assign(orders[index], deps.buildClearHandedOverPatch(nowIso) || {});
     orders[index].local_status = "RETURN_RECEIVED";
