@@ -1544,6 +1544,360 @@ function tryAcquireOrdersPullLock(): boolean {
 const ORDERS_PULL_IN_FLIGHT_SOFT_MESSAGE =
   "Hệ thống đang trong quá trình đồng bộ ngầm. Vui lòng đợi trong giây lát";
 
+/**
+ * Khóa riêng cho nút Đồng bộ nhanh 3h.
+ * Không dùng ordersPullInFlight — cron đang kéo vẫn không được chặn user bấm tay.
+ */
+const MANUAL_QUICK_SYNC_LOOKBACK_SEC = 3 * 60 * 60;
+const MANUAL_SYNC_LOCK_TIMEOUT_MS = 180_000;
+const MANUAL_SYNC_SHOP_DEADLINE_MS = 120_000;
+let manualSyncInFlight = false;
+let manualSyncStartedAt = 0;
+let manualSyncLockToken = 0;
+
+function releaseManualSyncLock(reason = "finally", token?: number): void {
+  if (typeof token === "number" && token !== manualSyncLockToken) {
+    console.log(
+      `[Manual Sync 3h] Lock release ignored (${reason}) — token ${token} stale, giữ phiên ${manualSyncLockToken}`,
+    );
+    return;
+  }
+  if (manualSyncInFlight) {
+    const elapsed = manualSyncStartedAt > 0 ? Date.now() - manualSyncStartedAt : 0;
+    console.log(`[Manual Sync 3h] Lock RELEASED (${reason}) after ${elapsed}ms`);
+  }
+  manualSyncInFlight = false;
+  manualSyncStartedAt = 0;
+}
+
+function isManualSyncLocked(): boolean {
+  if (!manualSyncInFlight) return false;
+  const elapsed =
+    manualSyncStartedAt > 0 ? Date.now() - manualSyncStartedAt : Number.POSITIVE_INFINITY;
+  if (elapsed < MANUAL_SYNC_LOCK_TIMEOUT_MS) return true;
+  console.warn(
+    `[Manual Sync 3h] Lock STALE (elapsed=${Number.isFinite(elapsed) ? elapsed : "no_timestamp"}ms) — force unlock`,
+  );
+  releaseManualSyncLock("stale_timeout");
+  return false;
+}
+
+function tryAcquireManualSyncLock(): boolean {
+  if (isManualSyncLocked()) return false;
+  manualSyncLockToken += 1;
+  manualSyncInFlight = true;
+  manualSyncStartedAt = Date.now();
+  console.log(`[Manual Sync 3h] Lock ACQUIRED token=${manualSyncLockToken} (độc lập với cron)`);
+  return true;
+}
+
+/**
+ * Đồng bộ nhanh 3h — quét kép độc lập, không đụng webhook và không chiếm khóa cron.
+ * Nhịp 1 create_time xong mới nhịp 2 update_time. Không lọc order_status.
+ * Lỗi 1 nhịp không hủy nhịp kia.
+ */
+async function runManualQuickSync3h(opts?: {
+  shopIds?: string[];
+  lookbackSec?: number;
+}): Promise<{
+  success: boolean;
+  skipped?: boolean;
+  reason?: string;
+  scanned: number;
+  pulled: number;
+  added: number;
+  updated: number;
+  shops: number;
+  errors: any[];
+  sweeps: any[];
+  message: string;
+  timeFrom?: number;
+  timeTo?: number;
+  lookbackSec?: number;
+  elapsedMs?: number;
+}> {
+  const empty = {
+    success: false,
+    scanned: 0,
+    pulled: 0,
+    added: 0,
+    updated: 0,
+    shops: 0,
+    errors: [] as any[],
+    sweeps: [] as any[],
+    message: "",
+    lookbackSec: MANUAL_QUICK_SYNC_LOOKBACK_SEC,
+  };
+  if (!tryAcquireManualSyncLock()) {
+    return {
+      ...empty,
+      success: true,
+      skipped: true,
+      reason: "manual_sync_in_flight",
+      message: "Đồng bộ nhanh 3h đang chạy. Vui lòng đợi kết quả lượt hiện tại.",
+    };
+  }
+  const lockToken = manualSyncLockToken;
+  const startedAt = Date.now();
+  const lookbackSec = MANUAL_QUICK_SYNC_LOOKBACK_SEC;
+  const timeTo = Math.floor(Date.now() / 1000);
+  const timeFrom = timeTo - lookbackSec;
+  void opts?.lookbackSec;
+
+  try {
+    ensureShopeeLinkedShopTokenKeys();
+    const rawShopIds = opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds();
+    const shopIds: string[] = [];
+    const seenShop = new Set<string>();
+    for (const raw of rawShopIds || []) {
+      try {
+        const resolved = resolveShopeeTokenShopId(raw) || normalizeShopIdKey(raw);
+        if (resolved && !seenShop.has(resolved)) {
+          seenShop.add(resolved);
+          shopIds.push(resolved);
+        }
+      } catch (resolveErr: any) {
+        console.warn(
+          `[Manual Sync 3h] resolve shop skip ${raw}:`,
+          resolveErr?.message || resolveErr,
+        );
+      }
+    }
+
+    if (shopIds.length === 0) {
+      return {
+        ...empty,
+        success: false,
+        message: "Chưa có shop Shopee OAuth — cần ủy quyền lại.",
+        timeFrom,
+        timeTo,
+        lookbackSec,
+        elapsedMs: Date.now() - startedAt,
+        errors: [{ error: "no_oauth_shop", message: "Chưa có shop Shopee OAuth." }],
+      };
+    }
+
+    if (!isMongoReady()) {
+      return {
+        ...empty,
+        success: false,
+        message: "MongoDB chưa sẵn sàng — không ghi được đơn.",
+        timeFrom,
+        timeTo,
+        lookbackSec,
+        shops: shopIds.length,
+        elapsedMs: Date.now() - startedAt,
+        errors: [{ error: "mongodb_not_ready", message: "MongoDB chưa sẵn sàng." }],
+      };
+    }
+
+    console.log(
+      `[Manual Sync 3h] START shops=${shopIds.length} ids=[${shopIds.join(",")}]` +
+        ` time_from=${timeFrom} time_to=${timeTo} lookbackSec=${lookbackSec}` +
+        ` sweeps=create_time,update_time status=(none)`,
+    );
+
+    const orders: any[] = [];
+    const errors: any[] = [];
+    const sweeps: any[] = [];
+    let scanned = 0;
+    let pulled = 0;
+    let added = 0;
+    let updated = 0;
+
+    for (let shopIdx = 0; shopIdx < shopIds.length; shopIdx++) {
+      const shopId = shopIds[shopIdx];
+      const shopIdStr = String(normalizeShopIdKey(shopId) || shopId || "").trim();
+      const shopDeadlineAt = Date.now() + MANUAL_SYNC_SHOP_DEADLINE_MS;
+      try {
+        let accessToken: string | null = null;
+        try {
+          accessToken = await getValidShopeeAccessToken(shopIdStr);
+        } catch (tokenErr: any) {
+          console.error(
+            `[Manual Sync 3h] token shop=${shopIdStr}:`,
+            tokenErr?.message || tokenErr,
+          );
+          errors.push({
+            shopId: shopIdStr,
+            error: "token_exception",
+            message: tokenErr?.message || String(tokenErr),
+          });
+          continue;
+        }
+        if (!accessToken) {
+          const fail = describeShopeeTokenFailure(shopIdStr);
+          const msg = `Shop ${shopIdStr}: không lấy được access_token (${fail?.error || "no_token"}).`;
+          console.error(`[Manual Sync 3h] ${msg}`);
+          errors.push({ shopId: shopIdStr, error: "no_valid_access_token", message: msg });
+          continue;
+        }
+
+        const snSet = new Set<string>();
+        const fields: Array<"create_time" | "update_time"> = ["create_time", "update_time"];
+        for (let fieldIdx = 0; fieldIdx < fields.length; fieldIdx++) {
+          const field = fields[fieldIdx];
+          if (fieldIdx > 0) {
+            await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+          }
+          let sweepSns: string[] = [];
+          let sweepError = "";
+          try {
+            const collect = await collectShopeeOrderSnsIncremental(shopIdStr, accessToken, {
+              lookbackSec,
+              deadlineAt: shopDeadlineAt,
+              allowShortLookback: true,
+              timeRangeField: field,
+            });
+            sweepSns = Array.isArray(collect?.orderSns) ? collect.orderSns : [];
+            if (sweepSns.length === 0 && Array.isArray(collect?.shopeeResponses)) {
+              for (const page of collect.shopeeResponses) {
+                const rawErr = page?.raw?.error || page?.error;
+                if (!rawErr) continue;
+                sweepError = String(page?.raw?.message || page?.detail || rawErr);
+                logShopeeSyncApiError(page?.raw || page, `manual-sync ${field} shop=${shopIdStr}`);
+                break;
+              }
+            }
+          } catch (sweepErr: any) {
+            sweepError = sweepErr?.message || String(sweepErr);
+            console.error(
+              `[Manual Sync 3h] nhịp ${field} shop=${shopIdStr} lỗi — nhịp còn lại vẫn chạy:`,
+              sweepError,
+            );
+          }
+          for (const sn of sweepSns) {
+            const key = String(sn || "").trim();
+            if (key) snSet.add(key);
+          }
+          sweeps.push({
+            shopId: shopIdStr,
+            time_range_field: field,
+            time_from: timeFrom,
+            time_to: timeTo,
+            count: sweepSns.length,
+            ok: !sweepError,
+            error: sweepError || undefined,
+          });
+          console.log(
+            `[Manual Sync 3h] shop=${shopIdStr} nhịp=${field} sn=${sweepSns.length}` +
+              (sweepError ? ` err=${sweepError}` : ""),
+          );
+        }
+
+        const orderSnList = [...snSet];
+        scanned += orderSnList.length;
+        if (orderSnList.length === 0) {
+          console.log(`[Manual Sync 3h] shop=${shopIdStr} không có đơn trong 3h`);
+          if (shopIdx + 1 < shopIds.length) {
+            await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+          }
+          continue;
+        }
+
+        for (let i = 0; i < orderSnList.length; i += SHOPEE_SYNC_CHUNK_SIZE) {
+          const chunkSns = orderSnList.slice(i, i + SHOPEE_SYNC_CHUNK_SIZE);
+          const chunkNo = Math.floor(i / SHOPEE_SYNC_CHUNK_SIZE) + 1;
+          try {
+            const fresh = await getValidShopeeAccessToken(shopIdStr);
+            if (fresh) accessToken = fresh;
+            const { normalized, errors: chunkErrors } = await fetchNormalizeShopeeOrderChunk(
+              shopIdStr,
+              accessToken,
+              shopIdStr,
+              chunkSns,
+              { enrichTracking: false, skipEscrow: true },
+            );
+            if (Array.isArray(chunkErrors) && chunkErrors.length) errors.push(...chunkErrors);
+            if (!Array.isArray(normalized) || normalized.length === 0) {
+              console.warn(
+                `[Manual Sync 3h] shop=${shopIdStr} chunk=${chunkNo} get_order_detail rỗng (${chunkSns.length} sn)`,
+              );
+            } else {
+              const upsert = await persistShopeeOrderChunk(orders, normalized, {
+                apiShopId: shopIdStr,
+                accessToken,
+                skipTracking: true,
+              });
+              added += upsert.added;
+              updated += upsert.updated;
+              pulled += normalized.length;
+              console.log(
+                `[Manual Sync 3h] Mongo upsert shop=${shopIdStr} chunk=${chunkNo}` +
+                  ` docs=${normalized.length} +${upsert.added}/~${upsert.updated}`,
+              );
+            }
+          } catch (chunkErr: any) {
+            console.error(
+              `[Manual Sync 3h] shop=${shopIdStr} chunk=${chunkNo} lỗi — shop/chunk khác vẫn chạy:`,
+              chunkErr?.message || chunkErr,
+            );
+            errors.push({
+              shopId: shopIdStr,
+              error: "chunk_failed",
+              message: chunkErr?.message || String(chunkErr),
+              orderSns: chunkSns,
+            });
+          }
+          if (i + SHOPEE_SYNC_CHUNK_SIZE < orderSnList.length) {
+            await shopeeSyncDelay(SHOPEE_SYNC_CHUNK_DELAY_MS);
+          }
+        }
+      } catch (shopErr: any) {
+        console.error(
+          `[Manual Sync 3h] shop=${shopIdStr} lỗi — shop khác vẫn chạy:`,
+          shopErr?.message || shopErr,
+        );
+        errors.push({
+          shopId: shopIdStr,
+          error: "shop_failed",
+          message: shopErr?.message || String(shopErr),
+        });
+      }
+      if (shopIdx + 1 < shopIds.length) {
+        await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+      }
+    }
+
+    const message =
+      `Đã quét ${scanned} đơn trong 3 giờ (create_time + update_time).` +
+      ` Ghi mới ${added}, cập nhật ${updated}.`;
+    console.log(
+      `[Manual Sync 3h] DONE scanned=${scanned} pulled=${pulled} +${added}/~${updated}` +
+        ` shops=${shopIds.length} errors=${errors.length} elapsed=${Date.now() - startedAt}ms`,
+    );
+    return {
+      success: true,
+      scanned,
+      pulled,
+      added,
+      updated,
+      shops: shopIds.length,
+      errors,
+      sweeps,
+      message,
+      timeFrom,
+      timeTo,
+      lookbackSec,
+      elapsedMs: Date.now() - startedAt,
+    };
+  } catch (err: any) {
+    console.error("[Manual Sync 3h] FATAL:", err?.stack || err?.message || err);
+    return {
+      ...empty,
+      success: false,
+      message: err?.message || "Đồng bộ nhanh 3h thất bại",
+      timeFrom,
+      timeTo,
+      lookbackSec,
+      elapsedMs: Date.now() - startedAt,
+      errors: [{ error: "manual_sync_failed", message: err?.message || String(err) }],
+    };
+  } finally {
+    releaseManualSyncLock("finally", lockToken);
+  }
+}
+
 /** Delay tối thiểu giữa mỗi lần gọi API sản phẩm Shopee */
 const SHOPEE_PRODUCT_API_DELAY_MS = 1000;
 /** Hàng đợi sync stock/price → Shopee (tránh 429). */
@@ -22192,6 +22546,7 @@ async function startServer() {
     refreshCache,
     isMongoReady,
     isOrdersPullLocked,
+    runManualQuickSync3h,
     SHOPEE_ITEM_LIST_PAGE_SIZE,
   });
 

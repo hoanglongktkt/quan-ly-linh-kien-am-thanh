@@ -84,6 +84,17 @@ let deps = {
   refreshCache: async () => {},
   isMongoReady: () => false,
   isOrdersPullLocked: () => false,
+  runManualQuickSync3h: async () => ({
+    success: false,
+    scanned: 0,
+    pulled: 0,
+    added: 0,
+    updated: 0,
+    shops: 0,
+    errors: [],
+    sweeps: [],
+    message: "not_initialized",
+  }),
   SHOPEE_ITEM_LIST_PAGE_SIZE: 10,
 };
 
@@ -589,7 +600,67 @@ export async function syncOrders(req, res) {
 const QUICK_SYNC_LOOKBACK_SEC = 3 * 60 * 60;
 
 /**
- * POST /api/sync-shopee — ACK ngay (status 200), kéo đơn Shopee chạy nền.
+ * Đồng bộ nhanh 3h — chờ quét kép xong rồi trả số đơn đã quét / ghi DB.
+ * Không kiểm tra khóa cron (ordersPullInFlight).
+ */
+async function respondManualQuickSync3h(req, res, ctx) {
+  const lookbackSec = QUICK_SYNC_LOOKBACK_SEC;
+  const shopIds = ctx?.shopIds;
+  const username = String(ctx?.username || req.user?.username || "");
+  console.log(
+    `[Manual Sync 3h] API start user=${username || "(anon)"}` +
+      ` shop_id${shopIds?.length ? `: [${shopIds.join(",")}]` : ": all"}` +
+      ` lookbackSec=${lookbackSec}`,
+  );
+  try {
+    const result = await deps.runManualQuickSync3h({
+      lookbackSec,
+      shopIds: shopIds?.length ? shopIds : undefined,
+    });
+    const skipped = result?.skipped === true;
+    sendJson(res, result?.success === false ? 500 : 200, {
+      status: result?.success === false ? 500 : 200,
+      success: result?.success !== false,
+      warning: skipped,
+      background: false,
+      mode: "quick_sync",
+      lookbackSec: result?.lookbackSec || lookbackSec,
+      time_from: result?.timeFrom,
+      time_to: result?.timeTo,
+      scanned: result?.scanned || 0,
+      pulled: result?.pulled || 0,
+      added: result?.added || 0,
+      updated: result?.updated || 0,
+      shops: result?.shops || 0,
+      sweeps: result?.sweeps || [],
+      errors: result?.errors || [],
+      elapsedMs: result?.elapsedMs || 0,
+      message:
+        result?.message ||
+        `Đã quét ${result?.scanned || 0} đơn, thêm ${result?.added || 0}, cập nhật ${result?.updated || 0}.`,
+      shopee_response: skipped
+        ? { skipped: true, reason: result?.reason || "manual_sync_in_flight" }
+        : { sweeps: result?.sweeps || [] },
+    });
+  } catch (err) {
+    console.error("[API_SYNC_ERROR] Manual Sync 3h:", err?.stack || err);
+    if (!res.headersSent) {
+      sendJson(res, 500, {
+        success: false,
+        background: false,
+        mode: "quick_sync",
+        scanned: 0,
+        pulled: 0,
+        added: 0,
+        updated: 0,
+        message: friendlyPullError(err),
+      });
+    }
+  }
+}
+
+/**
+ * POST /api/sync-shopee — full: ACK nền. quick (Đồng bộ nhanh 3h): quét kép, trả số đơn.
  * Body: { lookback_hours?, shop_ids?, mode?: "full"|"quick" }
  */
 export async function syncShopee(req, res) {
@@ -607,6 +678,11 @@ export async function syncShopee(req, res) {
     const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
     const shopIds = resolvePullShopIds(shopIdsRaw);
     const username = String(req.user?.username || "");
+
+    if (isQuick) {
+      await respondManualQuickSync3h(req, res, { shopIds, username, lookbackSec });
+      return;
+    }
 
     if (typeof deps.isOrdersPullLocked === "function" && deps.isOrdersPullLocked()) {
       sendJson(res, 200, {
@@ -671,44 +747,15 @@ export async function syncShopee(req, res) {
   }
 }
 
-/** POST /api/orders/quick-sync — ACK ngay, kéo đơn 3h chạy nền. */
+/** POST /api/orders/quick-sync — quét kép 3h, không dùng khóa cron. */
 export async function quickSyncOrders(req, res) {
-  console.log("=== BẮT ĐẦU QUICK SYNC ORDERS (3h BG) ===");
+  console.log("=== BẮT ĐẦU QUICK SYNC ORDERS (3h double sweep) ===");
   try {
     const lookbackSec = QUICK_SYNC_LOOKBACK_SEC;
     const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
     const shopIds = resolvePullShopIds(shopIdsRaw);
     const username = String(req.user?.username || "");
-    console.log(
-      `Quick Sync trigger shop_id${shopIds?.length ? `: [${shopIds.join(",")}]` : ": all"}` +
-        ` lookbackSec=${lookbackSec} (3h)`,
-    );
-
-    if (typeof deps.isOrdersPullLocked === "function" && deps.isOrdersPullLocked()) {
-      sendJson(res, 200, {
-        status: 200,
-        success: true,
-        warning: true,
-        background: true,
-        message: "Hệ thống đang trong quá trình đồng bộ ngầm. Vui lòng đợi trong giây lát",
-        shopee_response: { skipped: true, reason: "pull_in_flight" },
-        lookbackSec,
-        mode: "quick_sync",
-      });
-      return;
-    }
-
-    ackBackgroundPull(res, { lookbackSec, mode: "quick_sync" });
-    fireOrdersPullInBackground({
-      lookbackSec,
-      shopIds,
-      username,
-      jobType: "shopee_orders_quick_sync",
-      logTag: "Orders Quick Sync BG",
-      allowShortLookback: true,
-      reconcileActive: true,
-      skipCancelReturn: false,
-    });
+    await respondManualQuickSync3h(req, res, { shopIds, username, lookbackSec });
     return;
   } catch (err) {
     console.error("[API_SYNC_ERROR] Quick Sync:", err?.stack || err);
@@ -718,6 +765,10 @@ export async function quickSyncOrders(req, res) {
         message: friendlyPullError(err),
         mode: "quick_sync",
         background: false,
+        scanned: 0,
+        pulled: 0,
+        added: 0,
+        updated: 0,
       });
     }
     return;

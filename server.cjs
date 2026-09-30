@@ -127258,6 +127258,17 @@ var deps16 = {
   },
   isMongoReady: () => false,
   isOrdersPullLocked: () => false,
+  runManualQuickSync3h: async () => ({
+    success: false,
+    scanned: 0,
+    pulled: 0,
+    added: 0,
+    updated: 0,
+    shops: 0,
+    errors: [],
+    sweeps: [],
+    message: "not_initialized"
+  }),
   SHOPEE_ITEM_LIST_PAGE_SIZE: 10
 };
 function initShopeeOrdersController(partial) {
@@ -127668,6 +127679,55 @@ async function syncOrders(req, res) {
   }
 }
 var QUICK_SYNC_LOOKBACK_SEC = 3 * 60 * 60;
+async function respondManualQuickSync3h(req, res, ctx) {
+  const lookbackSec = QUICK_SYNC_LOOKBACK_SEC;
+  const shopIds = ctx?.shopIds;
+  const username = String(ctx?.username || req.user?.username || "");
+  console.log(
+    `[Manual Sync 3h] API start user=${username || "(anon)"} shop_id${shopIds?.length ? `: [${shopIds.join(",")}]` : ": all"} lookbackSec=${lookbackSec}`
+  );
+  try {
+    const result = await deps16.runManualQuickSync3h({
+      lookbackSec,
+      shopIds: shopIds?.length ? shopIds : void 0
+    });
+    const skipped = result?.skipped === true;
+    sendJson(res, result?.success === false ? 500 : 200, {
+      status: result?.success === false ? 500 : 200,
+      success: result?.success !== false,
+      warning: skipped,
+      background: false,
+      mode: "quick_sync",
+      lookbackSec: result?.lookbackSec || lookbackSec,
+      time_from: result?.timeFrom,
+      time_to: result?.timeTo,
+      scanned: result?.scanned || 0,
+      pulled: result?.pulled || 0,
+      added: result?.added || 0,
+      updated: result?.updated || 0,
+      shops: result?.shops || 0,
+      sweeps: result?.sweeps || [],
+      errors: result?.errors || [],
+      elapsedMs: result?.elapsedMs || 0,
+      message: result?.message || `\u0110\xE3 qu\xE9t ${result?.scanned || 0} \u0111\u01A1n, th\xEAm ${result?.added || 0}, c\u1EADp nh\u1EADt ${result?.updated || 0}.`,
+      shopee_response: skipped ? { skipped: true, reason: result?.reason || "manual_sync_in_flight" } : { sweeps: result?.sweeps || [] }
+    });
+  } catch (err) {
+    console.error("[API_SYNC_ERROR] Manual Sync 3h:", err?.stack || err);
+    if (!res.headersSent) {
+      sendJson(res, 500, {
+        success: false,
+        background: false,
+        mode: "quick_sync",
+        scanned: 0,
+        pulled: 0,
+        added: 0,
+        updated: 0,
+        message: friendlyPullError(err)
+      });
+    }
+  }
+}
 async function syncShopee(req, res) {
   try {
     const mode = String(req.body?.mode || req.query?.mode || "full").trim().toLowerCase();
@@ -127677,6 +127737,10 @@ async function syncShopee(req, res) {
     const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
     const shopIds = resolvePullShopIds(shopIdsRaw);
     const username = String(req.user?.username || "");
+    if (isQuick) {
+      await respondManualQuickSync3h(req, res, { shopIds, username, lookbackSec });
+      return;
+    }
     if (typeof deps16.isOrdersPullLocked === "function" && deps16.isOrdersPullLocked()) {
       sendJson(res, 200, {
         status: 200,
@@ -127735,39 +127799,13 @@ async function syncShopee(req, res) {
   }
 }
 async function quickSyncOrders(req, res) {
-  console.log("=== B\u1EAET \u0110\u1EA6U QUICK SYNC ORDERS (3h BG) ===");
+  console.log("=== B\u1EAET \u0110\u1EA6U QUICK SYNC ORDERS (3h double sweep) ===");
   try {
     const lookbackSec = QUICK_SYNC_LOOKBACK_SEC;
     const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
     const shopIds = resolvePullShopIds(shopIdsRaw);
     const username = String(req.user?.username || "");
-    console.log(
-      `Quick Sync trigger shop_id${shopIds?.length ? `: [${shopIds.join(",")}]` : ": all"} lookbackSec=${lookbackSec} (3h)`
-    );
-    if (typeof deps16.isOrdersPullLocked === "function" && deps16.isOrdersPullLocked()) {
-      sendJson(res, 200, {
-        status: 200,
-        success: true,
-        warning: true,
-        background: true,
-        message: "H\u1EC7 th\u1ED1ng \u0111ang trong qu\xE1 tr\xECnh \u0111\u1ED3ng b\u1ED9 ng\u1EA7m. Vui l\xF2ng \u0111\u1EE3i trong gi\xE2y l\xE1t",
-        shopee_response: { skipped: true, reason: "pull_in_flight" },
-        lookbackSec,
-        mode: "quick_sync"
-      });
-      return;
-    }
-    ackBackgroundPull(res, { lookbackSec, mode: "quick_sync" });
-    fireOrdersPullInBackground({
-      lookbackSec,
-      shopIds,
-      username,
-      jobType: "shopee_orders_quick_sync",
-      logTag: "Orders Quick Sync BG",
-      allowShortLookback: true,
-      reconcileActive: true,
-      skipCancelReturn: false
-    });
+    await respondManualQuickSync3h(req, res, { shopIds, username, lookbackSec });
     return;
   } catch (err) {
     console.error("[API_SYNC_ERROR] Quick Sync:", err?.stack || err);
@@ -127776,7 +127814,11 @@ async function quickSyncOrders(req, res) {
         success: false,
         message: friendlyPullError(err),
         mode: "quick_sync",
-        background: false
+        background: false,
+        scanned: 0,
+        pulled: 0,
+        added: 0,
+        updated: 0
       });
     }
     return;
@@ -133473,6 +133515,309 @@ function tryAcquireOrdersPullLock() {
   return true;
 }
 var ORDERS_PULL_IN_FLIGHT_SOFT_MESSAGE = "H\u1EC7 th\u1ED1ng \u0111ang trong qu\xE1 tr\xECnh \u0111\u1ED3ng b\u1ED9 ng\u1EA7m. Vui l\xF2ng \u0111\u1EE3i trong gi\xE2y l\xE1t";
+var MANUAL_QUICK_SYNC_LOOKBACK_SEC = 3 * 60 * 60;
+var MANUAL_SYNC_LOCK_TIMEOUT_MS = 18e4;
+var MANUAL_SYNC_SHOP_DEADLINE_MS = 12e4;
+var manualSyncInFlight = false;
+var manualSyncStartedAt = 0;
+var manualSyncLockToken = 0;
+function releaseManualSyncLock(reason = "finally", token) {
+  if (typeof token === "number" && token !== manualSyncLockToken) {
+    console.log(
+      `[Manual Sync 3h] Lock release ignored (${reason}) \u2014 token ${token} stale, gi\u1EEF phi\xEAn ${manualSyncLockToken}`
+    );
+    return;
+  }
+  if (manualSyncInFlight) {
+    const elapsed = manualSyncStartedAt > 0 ? Date.now() - manualSyncStartedAt : 0;
+    console.log(`[Manual Sync 3h] Lock RELEASED (${reason}) after ${elapsed}ms`);
+  }
+  manualSyncInFlight = false;
+  manualSyncStartedAt = 0;
+}
+function isManualSyncLocked() {
+  if (!manualSyncInFlight) return false;
+  const elapsed = manualSyncStartedAt > 0 ? Date.now() - manualSyncStartedAt : Number.POSITIVE_INFINITY;
+  if (elapsed < MANUAL_SYNC_LOCK_TIMEOUT_MS) return true;
+  console.warn(
+    `[Manual Sync 3h] Lock STALE (elapsed=${Number.isFinite(elapsed) ? elapsed : "no_timestamp"}ms) \u2014 force unlock`
+  );
+  releaseManualSyncLock("stale_timeout");
+  return false;
+}
+function tryAcquireManualSyncLock() {
+  if (isManualSyncLocked()) return false;
+  manualSyncLockToken += 1;
+  manualSyncInFlight = true;
+  manualSyncStartedAt = Date.now();
+  console.log(`[Manual Sync 3h] Lock ACQUIRED token=${manualSyncLockToken} (\u0111\u1ED9c l\u1EADp v\u1EDBi cron)`);
+  return true;
+}
+async function runManualQuickSync3h(opts) {
+  const empty = {
+    success: false,
+    scanned: 0,
+    pulled: 0,
+    added: 0,
+    updated: 0,
+    shops: 0,
+    errors: [],
+    sweeps: [],
+    message: "",
+    lookbackSec: MANUAL_QUICK_SYNC_LOOKBACK_SEC
+  };
+  if (!tryAcquireManualSyncLock()) {
+    return {
+      ...empty,
+      success: true,
+      skipped: true,
+      reason: "manual_sync_in_flight",
+      message: "\u0110\u1ED3ng b\u1ED9 nhanh 3h \u0111ang ch\u1EA1y. Vui l\xF2ng \u0111\u1EE3i k\u1EBFt qu\u1EA3 l\u01B0\u1EE3t hi\u1EC7n t\u1EA1i."
+    };
+  }
+  const lockToken = manualSyncLockToken;
+  const startedAt = Date.now();
+  const lookbackSec = MANUAL_QUICK_SYNC_LOOKBACK_SEC;
+  const timeTo = Math.floor(Date.now() / 1e3);
+  const timeFrom = timeTo - lookbackSec;
+  void opts?.lookbackSec;
+  try {
+    ensureShopeeLinkedShopTokenKeys();
+    const rawShopIds = opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds();
+    const shopIds = [];
+    const seenShop = /* @__PURE__ */ new Set();
+    for (const raw of rawShopIds || []) {
+      try {
+        const resolved = resolveShopeeTokenShopId(raw) || normalizeShopIdKey(raw);
+        if (resolved && !seenShop.has(resolved)) {
+          seenShop.add(resolved);
+          shopIds.push(resolved);
+        }
+      } catch (resolveErr) {
+        console.warn(
+          `[Manual Sync 3h] resolve shop skip ${raw}:`,
+          resolveErr?.message || resolveErr
+        );
+      }
+    }
+    if (shopIds.length === 0) {
+      return {
+        ...empty,
+        success: false,
+        message: "Ch\u01B0a c\xF3 shop Shopee OAuth \u2014 c\u1EA7n \u1EE7y quy\u1EC1n l\u1EA1i.",
+        timeFrom,
+        timeTo,
+        lookbackSec,
+        elapsedMs: Date.now() - startedAt,
+        errors: [{ error: "no_oauth_shop", message: "Ch\u01B0a c\xF3 shop Shopee OAuth." }]
+      };
+    }
+    if (!isMongoReady()) {
+      return {
+        ...empty,
+        success: false,
+        message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng \u2014 kh\xF4ng ghi \u0111\u01B0\u1EE3c \u0111\u01A1n.",
+        timeFrom,
+        timeTo,
+        lookbackSec,
+        shops: shopIds.length,
+        elapsedMs: Date.now() - startedAt,
+        errors: [{ error: "mongodb_not_ready", message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng." }]
+      };
+    }
+    console.log(
+      `[Manual Sync 3h] START shops=${shopIds.length} ids=[${shopIds.join(",")}] time_from=${timeFrom} time_to=${timeTo} lookbackSec=${lookbackSec} sweeps=create_time,update_time status=(none)`
+    );
+    const orders = [];
+    const errors = [];
+    const sweeps = [];
+    let scanned = 0;
+    let pulled = 0;
+    let added = 0;
+    let updated = 0;
+    for (let shopIdx = 0; shopIdx < shopIds.length; shopIdx++) {
+      const shopId = shopIds[shopIdx];
+      const shopIdStr = String(normalizeShopIdKey(shopId) || shopId || "").trim();
+      const shopDeadlineAt = Date.now() + MANUAL_SYNC_SHOP_DEADLINE_MS;
+      try {
+        let accessToken = null;
+        try {
+          accessToken = await getValidShopeeAccessToken(shopIdStr);
+        } catch (tokenErr) {
+          console.error(
+            `[Manual Sync 3h] token shop=${shopIdStr}:`,
+            tokenErr?.message || tokenErr
+          );
+          errors.push({
+            shopId: shopIdStr,
+            error: "token_exception",
+            message: tokenErr?.message || String(tokenErr)
+          });
+          continue;
+        }
+        if (!accessToken) {
+          const fail2 = describeShopeeTokenFailure(shopIdStr);
+          const msg = `Shop ${shopIdStr}: kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c access_token (${fail2?.error || "no_token"}).`;
+          console.error(`[Manual Sync 3h] ${msg}`);
+          errors.push({ shopId: shopIdStr, error: "no_valid_access_token", message: msg });
+          continue;
+        }
+        const snSet = /* @__PURE__ */ new Set();
+        const fields = ["create_time", "update_time"];
+        for (let fieldIdx = 0; fieldIdx < fields.length; fieldIdx++) {
+          const field = fields[fieldIdx];
+          if (fieldIdx > 0) {
+            await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+          }
+          let sweepSns = [];
+          let sweepError = "";
+          try {
+            const collect = await collectShopeeOrderSnsIncremental(shopIdStr, accessToken, {
+              lookbackSec,
+              deadlineAt: shopDeadlineAt,
+              allowShortLookback: true,
+              timeRangeField: field
+            });
+            sweepSns = Array.isArray(collect?.orderSns) ? collect.orderSns : [];
+            if (sweepSns.length === 0 && Array.isArray(collect?.shopeeResponses)) {
+              for (const page of collect.shopeeResponses) {
+                const rawErr = page?.raw?.error || page?.error;
+                if (!rawErr) continue;
+                sweepError = String(page?.raw?.message || page?.detail || rawErr);
+                logShopeeSyncApiError(page?.raw || page, `manual-sync ${field} shop=${shopIdStr}`);
+                break;
+              }
+            }
+          } catch (sweepErr) {
+            sweepError = sweepErr?.message || String(sweepErr);
+            console.error(
+              `[Manual Sync 3h] nh\u1ECBp ${field} shop=${shopIdStr} l\u1ED7i \u2014 nh\u1ECBp c\xF2n l\u1EA1i v\u1EABn ch\u1EA1y:`,
+              sweepError
+            );
+          }
+          for (const sn of sweepSns) {
+            const key = String(sn || "").trim();
+            if (key) snSet.add(key);
+          }
+          sweeps.push({
+            shopId: shopIdStr,
+            time_range_field: field,
+            time_from: timeFrom,
+            time_to: timeTo,
+            count: sweepSns.length,
+            ok: !sweepError,
+            error: sweepError || void 0
+          });
+          console.log(
+            `[Manual Sync 3h] shop=${shopIdStr} nh\u1ECBp=${field} sn=${sweepSns.length}` + (sweepError ? ` err=${sweepError}` : "")
+          );
+        }
+        const orderSnList = [...snSet];
+        scanned += orderSnList.length;
+        if (orderSnList.length === 0) {
+          console.log(`[Manual Sync 3h] shop=${shopIdStr} kh\xF4ng c\xF3 \u0111\u01A1n trong 3h`);
+          if (shopIdx + 1 < shopIds.length) {
+            await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+          }
+          continue;
+        }
+        for (let i2 = 0; i2 < orderSnList.length; i2 += SHOPEE_SYNC_CHUNK_SIZE) {
+          const chunkSns = orderSnList.slice(i2, i2 + SHOPEE_SYNC_CHUNK_SIZE);
+          const chunkNo = Math.floor(i2 / SHOPEE_SYNC_CHUNK_SIZE) + 1;
+          try {
+            const fresh = await getValidShopeeAccessToken(shopIdStr);
+            if (fresh) accessToken = fresh;
+            const { normalized, errors: chunkErrors } = await fetchNormalizeShopeeOrderChunk(
+              shopIdStr,
+              accessToken,
+              shopIdStr,
+              chunkSns,
+              { enrichTracking: false, skipEscrow: true }
+            );
+            if (Array.isArray(chunkErrors) && chunkErrors.length) errors.push(...chunkErrors);
+            if (!Array.isArray(normalized) || normalized.length === 0) {
+              console.warn(
+                `[Manual Sync 3h] shop=${shopIdStr} chunk=${chunkNo} get_order_detail r\u1ED7ng (${chunkSns.length} sn)`
+              );
+            } else {
+              const upsert = await persistShopeeOrderChunk(orders, normalized, {
+                apiShopId: shopIdStr,
+                accessToken,
+                skipTracking: true
+              });
+              added += upsert.added;
+              updated += upsert.updated;
+              pulled += normalized.length;
+              console.log(
+                `[Manual Sync 3h] Mongo upsert shop=${shopIdStr} chunk=${chunkNo} docs=${normalized.length} +${upsert.added}/~${upsert.updated}`
+              );
+            }
+          } catch (chunkErr) {
+            console.error(
+              `[Manual Sync 3h] shop=${shopIdStr} chunk=${chunkNo} l\u1ED7i \u2014 shop/chunk kh\xE1c v\u1EABn ch\u1EA1y:`,
+              chunkErr?.message || chunkErr
+            );
+            errors.push({
+              shopId: shopIdStr,
+              error: "chunk_failed",
+              message: chunkErr?.message || String(chunkErr),
+              orderSns: chunkSns
+            });
+          }
+          if (i2 + SHOPEE_SYNC_CHUNK_SIZE < orderSnList.length) {
+            await shopeeSyncDelay(SHOPEE_SYNC_CHUNK_DELAY_MS);
+          }
+        }
+      } catch (shopErr) {
+        console.error(
+          `[Manual Sync 3h] shop=${shopIdStr} l\u1ED7i \u2014 shop kh\xE1c v\u1EABn ch\u1EA1y:`,
+          shopErr?.message || shopErr
+        );
+        errors.push({
+          shopId: shopIdStr,
+          error: "shop_failed",
+          message: shopErr?.message || String(shopErr)
+        });
+      }
+      if (shopIdx + 1 < shopIds.length) {
+        await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+      }
+    }
+    const message = `\u0110\xE3 qu\xE9t ${scanned} \u0111\u01A1n trong 3 gi\u1EDD (create_time + update_time). Ghi m\u1EDBi ${added}, c\u1EADp nh\u1EADt ${updated}.`;
+    console.log(
+      `[Manual Sync 3h] DONE scanned=${scanned} pulled=${pulled} +${added}/~${updated} shops=${shopIds.length} errors=${errors.length} elapsed=${Date.now() - startedAt}ms`
+    );
+    return {
+      success: true,
+      scanned,
+      pulled,
+      added,
+      updated,
+      shops: shopIds.length,
+      errors,
+      sweeps,
+      message,
+      timeFrom,
+      timeTo,
+      lookbackSec,
+      elapsedMs: Date.now() - startedAt
+    };
+  } catch (err) {
+    console.error("[Manual Sync 3h] FATAL:", err?.stack || err?.message || err);
+    return {
+      ...empty,
+      success: false,
+      message: err?.message || "\u0110\u1ED3ng b\u1ED9 nhanh 3h th\u1EA5t b\u1EA1i",
+      timeFrom,
+      timeTo,
+      lookbackSec,
+      elapsedMs: Date.now() - startedAt,
+      errors: [{ error: "manual_sync_failed", message: err?.message || String(err) }]
+    };
+  } finally {
+    releaseManualSyncLock("finally", lockToken);
+  }
+}
 var SHOPEE_PRODUCT_API_DELAY_MS2 = 1e3;
 var SHOPEE_SYNC_QUEUE_MAX_RETRY2 = 3;
 var SHOPEE_ITEM_LIST_PAGE_SIZE = 10;
@@ -148412,6 +148757,7 @@ async function startServer() {
     refreshCache,
     isMongoReady,
     isOrdersPullLocked,
+    runManualQuickSync3h,
     SHOPEE_ITEM_LIST_PAGE_SIZE
   });
   initOrderSyncService({
