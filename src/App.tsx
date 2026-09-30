@@ -16,6 +16,7 @@ import OrderManager from './components/OrderManager';
 import OrderPicking from './components/OrderPicking';
 import PublishManager from './components/PublishManager';
 import VipCustomersPage from './components/VipCustomersPage';
+import ChatManager from './pages/ChatManager/ChatManager';
 import LoginPage from './components/LoginPage';
 import ErrorBoundary from './components/ErrorBoundary';
 import BrandLogo, { BrandHeader } from './components/BrandLogo';
@@ -62,6 +63,7 @@ import {
   Zap,
   Crown,
   PlusSquare,
+  MessageSquare,
 } from 'lucide-react';
 import type { OrdersSubTabId } from './components/OrderManager';
 import {
@@ -161,6 +163,7 @@ const MAIN_NAV_TABS = new Set([
   'dashboard',
   'products',
   'publish',
+  'chat',
   'orders',
   'picking',
   'suppliers',
@@ -621,6 +624,7 @@ export default function App() {
 
   // Active navigation tab — khôi phục từ URL (?tab=) hoặc sessionStorage khi F5
   const [activeTab, setActiveTab] = useState(() => resolveTabFromPath());
+  const [unreadCount] = useState(5);
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
@@ -2545,6 +2549,22 @@ export default function App() {
             <Globe className="w-4 h-4 shrink-0" /> Đăng bán sỉ đa sàn
           </button>
 
+          {console.log("Render Menu Chat")}
+          <button
+            type="button"
+            onClick={() => navigateTab('chat')}
+            className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
+              activeTab === 'chat'
+                ? 'bg-blue-600 text-white font-extrabold shadow-sm'
+                : 'hover:bg-slate-800 hover:text-white text-slate-400'
+            }`}
+          >
+            <MessageSquare className="w-4 h-4 shrink-0" /> Trả Lời Tin Nhắn Khách
+            <span className="ml-auto shrink-0 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-black leading-none text-white tabular-nums">
+              {unreadCount}
+            </span>
+          </button>
+
           <button
             onClick={() => goOrdersTab()}
             className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
@@ -2693,6 +2713,21 @@ export default function App() {
               <button onClick={() => navigateTab('publish')} className={navButtonClass('publish')}>
                 <Globe className="w-4 h-4 shrink-0" /> Đăng bán sỉ đa sàn
               </button>
+              {console.log("Render Menu Chat")}
+              <button
+                type="button"
+                onClick={() => navigateTab('chat')}
+                className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                  activeTab === 'chat'
+                    ? 'bg-blue-600 text-white font-extrabold shadow-sm'
+                    : 'hover:bg-slate-800 hover:text-white text-slate-400'
+                }`}
+              >
+                <MessageSquare className="w-4 h-4 shrink-0" /> Trả Lời Tin Nhắn Khách
+                <span className="ml-auto shrink-0 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-black leading-none text-white tabular-nums">
+                  {unreadCount}
+                </span>
+              </button>
               <button
                 onClick={() => goOrdersTab()}
                 className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
@@ -2802,6 +2837,7 @@ export default function App() {
                 <h2 className={`text-lg font-extrabold text-gray-900 tracking-tight ${activeTab === 'orders' ? 'om-orders-mobile-hide-page-title' : ''}`}>
                   {activeTab === 'products' && 'Quản Lý Danh Sách Sản Phẩm'}
                   {activeTab === 'publish' && 'Hệ Thống Đăng Bán Sản Phẩm Đa Kênh'}
+                  {activeTab === 'chat' && 'Trả Lời Tin Nhắn Khách'}
                   {activeTab === 'orders' &&
                     (ordersSubTabHint === 'received_cancel_returns'
                       ? 'Đã nhận đơn hủy, đơn hoàn'
@@ -2818,6 +2854,7 @@ export default function App() {
                 <p className={`text-xs text-gray-400 ${activeTab === 'orders' ? 'om-orders-mobile-hide-page-desc' : ''}`}>
                   {activeTab === 'products' && 'Quản lý giá nhập, giá bán lẻ, tồn kho và xuất bản kênh.'}
                   {activeTab === 'publish' && 'Đăng bán sản phẩm lên nhiều gian hàng đồng thời, lồng khung hình sỉ hàng loạt và tối ưu tiêu đề chống spam bằng AI.'}
+                  {activeTab === 'chat' && 'Hộp thư hội thoại khách hàng — giao diện mẫu, chưa kết nối API.'}
                   {activeTab === 'orders' &&
                     (ordersSubTabHint === 'received_cancel_returns'
                       ? 'Đối soát kiện hủy/hoàn đã nhận về kho — dữ liệu lưu vĩnh viễn.'
@@ -2910,6 +2947,12 @@ export default function App() {
               onAddLog={handleAddLog}
               shops={settings.shops || []}
             />
+          )}
+
+          {activeTab === 'chat' && (
+            <ErrorBoundary label="Trả lời tin nhắn khách">
+              <ChatManager />
+            </ErrorBoundary>
           )}
 
           {activeTab === 'picking' && (

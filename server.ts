@@ -66,6 +66,7 @@ import suppliersRoutesImport from "./routes/suppliersRoutes.js";
 import expensesRoutesImport from "./routes/expensesRoutes.js";
 import financeRoutesImport from "./routes/financeRoutes.js";
 import addressBookRoutesImport from "./routes/addressBookRoutes.js";
+import chatRoutesImport from "./routes/chatRoutes.js";
 import importsRoutesImport from "./routes/importsRoutes.js";
 import materialsRoutesImport from "./routes/materialsRoutes.js";
 import materialImportsRoutesImport from "./routes/materialImportsRoutes.js";
@@ -423,6 +424,7 @@ const suppliersRoutes = asRouter(suppliersRoutesImport);
 const expensesRoutes = asRouter(expensesRoutesImport);
 const financeRoutes = asRouter(financeRoutesImport);
 const addressBookRoutes = asRouter(addressBookRoutesImport);
+const chatRoutes = asRouter(chatRoutesImport);
 const importsRoutes = asRouter(importsRoutesImport);
 const materialsRoutes = asRouter(materialsRoutesImport);
 const materialImportsRoutes = asRouter(materialImportsRoutesImport);
@@ -22387,6 +22389,7 @@ async function startServer() {
   app.use("/api/expenses", authMiddleware, expensesRoutes);
   app.use("/api/finance", authMiddleware, financeRoutes);
   app.use("/api/address-book", authMiddleware, addressBookRoutes);
+  app.use("/api/chat", authMiddleware, chatRoutes);
 
   // --- Dashboard API — Phase 2 MVC ---
   // CHỈ đọc MongoDB — không gọi Shopee API.
