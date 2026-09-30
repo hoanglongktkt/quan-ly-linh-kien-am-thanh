@@ -125758,6 +125758,11 @@ async function updatePrintStatus(req, res) {
       })
     ) || 0;
     if (matchedCount === 0) {
+      if (isPrinted) {
+        return res.status(400).json({
+          error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng \u0111\u1EC3 \u0111\xE1nh d\u1EA5u in"
+        });
+      }
       return res.status(400).json({
         success: false,
         error: "print_status_not_matched",

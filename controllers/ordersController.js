@@ -2418,6 +2418,11 @@ export async function updatePrintStatus(req, res) {
       }),
     ) || 0;
     if (matchedCount === 0) {
+      if (isPrinted) {
+        return res.status(400).json({
+          error: "Không tìm thấy đơn hàng để đánh dấu in",
+        });
+      }
       return res.status(400).json({
         success: false,
         error: "print_status_not_matched",
