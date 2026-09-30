@@ -127738,7 +127738,30 @@ async function syncShopee(req, res) {
     const shopIds = resolvePullShopIds(shopIdsRaw);
     const username = String(req.user?.username || "");
     if (isQuick) {
-      await respondManualQuickSync3h(req, res, { shopIds, username, lookbackSec });
+      if (!res.headersSent) {
+        res.status(200).json({
+          success: true,
+          message: "H\u1EC7 th\u1ED1ng \u0111ang ti\u1EBFn h\xE0nh c\xE0o d\u1EEF li\u1EC7u ng\u1EA7m. Vui l\xF2ng t\u1EA3i l\u1EA1i trang sau 1-2 ph\xFAt."
+        });
+      }
+      const bgShopIds = shopIds;
+      const bgUsername = username;
+      Promise.resolve().then(async () => {
+        try {
+          console.log(
+            `[MANUAL SYNC BACKGROUND] start user=${bgUsername || "(anon)"} shop_id${bgShopIds?.length ? `: [${bgShopIds.join(",")}]` : ": all"} lookbackSec=${QUICK_SYNC_LOOKBACK_SEC}`
+          );
+          const result = await deps16.runManualQuickSync3h({
+            lookbackSec: QUICK_SYNC_LOOKBACK_SEC,
+            shopIds: bgShopIds?.length ? bgShopIds : void 0
+          });
+          console.log(
+            `[MANUAL SYNC BACKGROUND] done scanned=${result?.scanned || 0} pulled=${result?.pulled || 0} +${result?.added || 0}/~${result?.updated || 0} msg=${result?.message || ""}`
+          );
+        } catch (err) {
+          console.error("[MANUAL SYNC BACKGROUND ERROR]", err?.stack || err);
+        }
+      });
       return;
     }
     if (typeof deps16.isOrdersPullLocked === "function" && deps16.isOrdersPullLocked()) {

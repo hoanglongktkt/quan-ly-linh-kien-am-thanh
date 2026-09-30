@@ -660,7 +660,7 @@ async function respondManualQuickSync3h(req, res, ctx) {
 }
 
 /**
- * POST /api/sync-shopee — full: ACK nền. quick (Đồng bộ nhanh 3h): quét kép, trả số đơn.
+ * POST /api/sync-shopee — full và quick đều ACK ngay; quick chạy quét kép ở nền.
  * Body: { lookback_hours?, shop_ids?, mode?: "full"|"quick" }
  */
 export async function syncShopee(req, res) {
@@ -680,7 +680,36 @@ export async function syncShopee(req, res) {
     const username = String(req.user?.username || "");
 
     if (isQuick) {
-      await respondManualQuickSync3h(req, res, { shopIds, username, lookbackSec });
+      // ACK ngay — không await quét kép (tránh Frontend/proxy abort).
+      if (!res.headersSent) {
+        res.status(200).json({
+          success: true,
+          message:
+            "Hệ thống đang tiến hành cào dữ liệu ngầm. Vui lòng tải lại trang sau 1-2 phút.",
+        });
+      }
+      const bgShopIds = shopIds;
+      const bgUsername = username;
+      Promise.resolve().then(async () => {
+        try {
+          console.log(
+            `[MANUAL SYNC BACKGROUND] start user=${bgUsername || "(anon)"}` +
+              ` shop_id${bgShopIds?.length ? `: [${bgShopIds.join(",")}]` : ": all"}` +
+              ` lookbackSec=${QUICK_SYNC_LOOKBACK_SEC}`,
+          );
+          const result = await deps.runManualQuickSync3h({
+            lookbackSec: QUICK_SYNC_LOOKBACK_SEC,
+            shopIds: bgShopIds?.length ? bgShopIds : undefined,
+          });
+          console.log(
+            `[MANUAL SYNC BACKGROUND] done scanned=${result?.scanned || 0}` +
+              ` pulled=${result?.pulled || 0} +${result?.added || 0}/~${result?.updated || 0}` +
+              ` msg=${result?.message || ""}`,
+          );
+        } catch (err) {
+          console.error("[MANUAL SYNC BACKGROUND ERROR]", err?.stack || err);
+        }
+      });
       return;
     }
 
