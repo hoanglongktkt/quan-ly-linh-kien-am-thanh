@@ -2416,6 +2416,7 @@ async function shopeeGetOrderList(
     return { ...json, httpStatus };
   } catch (err: any) {
     logShopeeSyncApiError(err, `get_order_list shop_id=${shopId}`);
+    console.error('\n--- [SHOPEE API FAILURE] ---', '\nURL:', url, '\nPARAMS:', requestParams, '\nRESPONSE:', err.response?.data || err.message);
     console.error("[SHOPEE API CRON ERROR]:", err?.response?.data || err);
     console.error(
       "[Shopee API] GetOrderList EXCEPTION:",
@@ -6658,6 +6659,8 @@ async function shopeeGetOrderDetail(shopId: string, accessToken: string, orderSn
     return { ...json, httpStatus };
   } catch (err: any) {
     logShopeeSyncApiError(err, `get_order_detail shop_id=${apiShopId}`);
+    console.error('\n--- [SHOPEE API FAILURE] ---', '\nURL:', url, '\nPARAMS:', params, '\nRESPONSE:', err.response?.data || err.message);
+    console.error('[GET DETAIL ERROR] cho mã:', orderSnList.join(","), err);
     console.error(
       `[Sync Shop ${apiShopId}] Lỗi: GetOrderDetail EXCEPTION:`,
       err?.message || err,

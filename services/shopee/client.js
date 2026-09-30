@@ -406,6 +406,7 @@ export async function shopeeFetchJsonWithRetry(url, context, opts) {
       res = await fetchWithTimeout(url);
       rawText = await res.text();
     } catch (err) {
+      console.error('\n--- [SHOPEE API FAILURE] ---', '\nURL:', url, '\nPARAMS:', context, '\nRESPONSE:', err.response?.data || err.message);
       const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
       if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
         shopeeRetryTelemetry.retries++;
@@ -449,6 +450,10 @@ export async function shopeeFetchJsonWithRetry(url, context, opts) {
       json.httpStatus = res.status;
     }
 
+    if (res.status >= 400 || json?.error) {
+      console.error('\n--- [SHOPEE API FAILURE] ---', '\nURL:', url, '\nPARAMS:', context, '\nRESPONSE:', json || rawText);
+    }
+
     return { json, httpStatus: res.status };
   }
 
@@ -480,6 +485,7 @@ export async function shopeePostJsonWithRetry(url, body, context, opts) {
       });
       rawText = await res.text();
     } catch (err) {
+      console.error('\n--- [SHOPEE API FAILURE] ---', '\nURL:', url, '\nPARAMS:', context, '\nRESPONSE:', err.response?.data || err.message);
       const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
       if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
         shopeeRetryTelemetry.retries++;
@@ -520,6 +526,10 @@ export async function shopeePostJsonWithRetry(url, body, context, opts) {
 
     if (json?.error && !json.message) {
       json.message = formatShopeeApiError(json, res.status);
+    }
+
+    if (res.status >= 400 || json?.error) {
+      console.error('\n--- [SHOPEE API FAILURE] ---', '\nURL:', url, '\nPARAMS:', body, '\nRESPONSE:', json || rawText);
     }
 
     return { json, httpStatus: res.status };

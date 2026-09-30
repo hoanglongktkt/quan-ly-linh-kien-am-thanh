@@ -75204,6 +75204,8 @@ function runHandedOverReconcileTick(deps23, trigger) {
       console.log(
         `[CRON] HandedOver reconcile done candidates=${r2?.candidates || 0} pulled=${r2?.pulled || 0} shipped\u2248${r2?.shipped || 0}`
       );
+    }).catch((err) => {
+      console.error("[CRON HANDED OVER ERROR]:", err);
     });
   } catch (err) {
     console.error("[CRON] HandedOver reconcile tick failed:", err?.message || err);
@@ -87583,6 +87585,7 @@ async function shopeeFetchJsonWithRetry(url2, context, opts) {
       res = await fetchWithTimeout(url2);
       rawText = await res.text();
     } catch (err) {
+      console.error("\n--- [SHOPEE API FAILURE] ---", "\nURL:", url2, "\nPARAMS:", context, "\nRESPONSE:", err.response?.data || err.message);
       const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
       if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
         shopeeRetryTelemetry.retries++;
@@ -87622,6 +87625,9 @@ async function shopeeFetchJsonWithRetry(url2, context, opts) {
       json2.message = formatShopeeApiError(json2, res.status);
       json2.httpStatus = res.status;
     }
+    if (res.status >= 400 || json2?.error) {
+      console.error("\n--- [SHOPEE API FAILURE] ---", "\nURL:", url2, "\nPARAMS:", context, "\nRESPONSE:", json2 || rawText);
+    }
     return { json: json2, httpStatus: res.status };
   }
   shopeeRetryTelemetry.exhausted++;
@@ -87650,6 +87656,7 @@ async function shopeePostJsonWithRetry(url2, body, context, opts) {
       });
       rawText = await res.text();
     } catch (err) {
+      console.error("\n--- [SHOPEE API FAILURE] ---", "\nURL:", url2, "\nPARAMS:", context, "\nRESPONSE:", err.response?.data || err.message);
       const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
       if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
         shopeeRetryTelemetry.retries++;
@@ -87687,6 +87694,9 @@ async function shopeePostJsonWithRetry(url2, body, context, opts) {
     }
     if (json2?.error && !json2.message) {
       json2.message = formatShopeeApiError(json2, res.status);
+    }
+    if (res.status >= 400 || json2?.error) {
+      console.error("\n--- [SHOPEE API FAILURE] ---", "\nURL:", url2, "\nPARAMS:", body, "\nRESPONSE:", json2 || rawText);
     }
     return { json: json2, httpStatus: res.status };
   }
@@ -131951,6 +131961,7 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
         }
       }
     } catch (detailErr) {
+      console.error("[GET DETAIL ERROR] cho m\xE3:", orderSn, detailErr);
       console.error(
         `[Shopee Webhook] get_order_detail EXCEPTION order_sn=${orderSn} shop=${shopId}:`,
         detailErr?.message || detailErr,
@@ -131964,6 +131975,7 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
     }
     if (!normalized?.length) {
       const errMsg = errors?.[0] ? `${errors[0].error || ""} ${errors[0].message || ""}`.trim() : "response r\u1ED7ng";
+      console.error("[GET DETAIL ERROR] cho m\xE3:", orderSn, errors?.[0] || errMsg);
       console.warn(
         `[Shopee Webhook] get_order_detail r\u1ED7ng order_sn=${orderSn} shop=${shopId}`,
         errMsg
@@ -134132,6 +134144,7 @@ async function shopeeGetOrderList(shopId, accessToken, opts) {
     return { ...json2, httpStatus };
   } catch (err) {
     logShopeeSyncApiError(err, `get_order_list shop_id=${shopId}`);
+    console.error("\n--- [SHOPEE API FAILURE] ---", "\nURL:", url2, "\nPARAMS:", requestParams, "\nRESPONSE:", err.response?.data || err.message);
     console.error("[SHOPEE API CRON ERROR]:", err?.response?.data || err);
     console.error(
       "[Shopee API] GetOrderList EXCEPTION:",
@@ -137614,6 +137627,8 @@ async function shopeeGetOrderDetail(shopId, accessToken, orderSnList) {
     return { ...json2, httpStatus };
   } catch (err) {
     logShopeeSyncApiError(err, `get_order_detail shop_id=${apiShopId}`);
+    console.error("\n--- [SHOPEE API FAILURE] ---", "\nURL:", url2, "\nPARAMS:", params, "\nRESPONSE:", err.response?.data || err.message);
+    console.error("[GET DETAIL ERROR] cho m\xE3:", orderSnList.join(","), err);
     console.error(
       `[Sync Shop ${apiShopId}] L\u1ED7i: GetOrderDetail EXCEPTION:`,
       err?.message || err,

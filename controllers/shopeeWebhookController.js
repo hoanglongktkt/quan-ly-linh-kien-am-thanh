@@ -495,6 +495,7 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
         }
       }
     } catch (detailErr) {
+      console.error('[GET DETAIL ERROR] cho mã:', orderSn, detailErr);
       console.error(
         `[Shopee Webhook] get_order_detail EXCEPTION order_sn=${orderSn} shop=${shopId}:`,
         detailErr?.message || detailErr,
@@ -511,6 +512,7 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
       const errMsg = errors?.[0]
         ? `${errors[0].error || ""} ${errors[0].message || ""}`.trim()
         : "response rỗng";
+      console.error('[GET DETAIL ERROR] cho mã:', orderSn, errors?.[0] || errMsg);
       console.warn(
         `[Shopee Webhook] get_order_detail rỗng order_sn=${orderSn} shop=${shopId}`,
         errMsg,

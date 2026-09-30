@@ -154,7 +154,7 @@ function runHandedOverReconcileTick(deps, trigger) {
         `[CRON] HandedOver reconcile done candidates=${r?.candidates || 0}` +
           ` pulled=${r?.pulled || 0} shipped≈${r?.shipped || 0}`,
       );
-    });
+    }).catch((err) => { console.error('[CRON HANDED OVER ERROR]:', err); });
   } catch (err) {
     console.error("[CRON] HandedOver reconcile tick failed:", err?.message || err);
   }
