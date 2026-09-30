@@ -53,6 +53,22 @@ interface ChannelListing {
   stock?: number;
 }
 
+/** Item ID Shopee Seller (số) — không dùng id nội bộ của dòng mapping. */
+function resolveShopeeSellerItemId(item: ChannelListing | null | undefined): string {
+  if (!item || item.platform !== 'shopee') return '';
+  const candidates = [
+    item.itemId,
+    String(item.channelId || '').split(':')[0],
+    (String(item.channelId || '').match(/(\d{6,})/) || [])[1],
+    (String(item.id || '').match(/shopee::(\d+)/) || [])[1],
+  ];
+  for (const raw of candidates) {
+    const id = String(raw || '').trim();
+    if (/^\d+$/.test(id)) return id;
+  }
+  return '';
+}
+
 /** Chuẩn hóa SKU — trim + toUpperCase để so khớp chính xác. */
 function normalizeSKU(sku: unknown): string {
   return String(sku ?? '').trim().toUpperCase();
@@ -2187,6 +2203,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                   const rowId = item?.id || '';
                   const rowTitle = item?.title || '';
                   const rowSku = item?.sku || '';
+                  const shopeeSellerItemId = resolveShopeeSellerItemId(item);
                   return (
                     <tr
                       key={rowId || `row-${Math.random()}`}
@@ -2211,7 +2228,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
 
                       {/* Tên sản phẩm — ID giữ trong data-*, không render ra UI */}
                       <td className="p-4">
-                        <div className="flex items-start gap-3">
+                        <div className="flex items-start gap-3 min-w-0">
                           {item?.imageUrl ? (
                             <img
                               src={item.imageUrl}
@@ -2224,10 +2241,23 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                               NO IMG
                             </div>
                           )}
-                          <div className="space-y-1">
-                            <p className="font-bold text-gray-900 line-clamp-2 max-w-[320px] hover:text-blue-600 leading-tight">
-                              {rowTitle || '—'}
-                            </p>
+                          <div className="space-y-1 min-w-0">
+                            {shopeeSellerItemId ? (
+                              <a
+                                href={`https://banhang.shopee.vn/portal/product/${shopeeSellerItemId}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title="Sửa sản phẩm trên Shopee Kênh Người Bán"
+                                className="inline-flex items-start gap-1 max-w-full min-w-0 font-bold text-gray-900 leading-tight hover:text-blue-500 hover:underline cursor-pointer transition-colors"
+                              >
+                                <span className="line-clamp-2 break-words min-w-0">{rowTitle || '—'}</span>
+                                <ExternalLink className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                              </a>
+                            ) : (
+                              <p className="font-bold text-gray-900 line-clamp-2 max-w-full break-words leading-tight">
+                                {rowTitle || '—'}
+                              </p>
+                            )}
                             
                             {/* SKU under title */}
                             <p className="text-[10px] font-mono text-gray-400 font-bold flex items-center gap-1">
