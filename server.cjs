@@ -90545,6 +90545,19 @@ function normalizeContent(raw) {
 function localMessageId() {
   return `local-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
+function recipientId(raw) {
+  if (raw == null || raw === "") return "";
+  if (typeof raw === "number") {
+    if (!Number.isFinite(raw) || raw <= 0) return "";
+    return String(Math.trunc(raw));
+  }
+  if (typeof raw === "object") {
+    return recipientId(raw.id) || recipientId(raw.user_id) || recipientId(raw.buyer_id) || recipientId(raw.to_id) || recipientId(raw.customer_id) || "";
+  }
+  const text = String(raw).trim();
+  if (!text || text === "[object Object]" || text === "0") return "";
+  return text;
+}
 async function getConversations(req, res) {
   try {
     const shopRaw = req.query?.shop_id;
@@ -90622,9 +90635,10 @@ async function sendMessage(req, res) {
         error: "Kh\xF4ng t\xECm th\u1EA5y h\u1ED9i tho\u1EA1i."
       });
     }
+    const toId = recipientId(req.body?.to_id) || recipientId(conversation.customer_id);
     const sent = await sendShopeeChatText({
       shopId,
-      toId: conversation.customer_id,
+      toId,
       text
     });
     if (!sent.ok) {
@@ -128406,6 +128420,7 @@ async function respondManualQuickSync3h(req, res, ctx) {
       shopee_response: skipped ? { skipped: true, reason: result?.reason || "manual_sync_in_flight" } : { sweeps: result?.sweeps || [] }
     });
   } catch (err) {
+    console.error("[MANUAL SYNC ERROR DETAIL]:", err.response?.data || err.message);
     console.error("[API_SYNC_ERROR] Manual Sync 3h:", err?.stack || err);
     if (!res.headersSent) {
       sendJson(res, 500, {
@@ -128452,6 +128467,7 @@ async function syncShopee(req, res) {
             `[MANUAL SYNC BACKGROUND] done scanned=${result?.scanned || 0} pulled=${result?.pulled || 0} +${result?.added || 0}/~${result?.updated || 0} msg=${result?.message || ""}`
           );
         } catch (err) {
+          console.error("[MANUAL SYNC ERROR DETAIL]:", err.response?.data || err.message);
           console.error("[MANUAL SYNC BACKGROUND ERROR]", err?.stack || err);
         }
       });
@@ -134389,11 +134405,32 @@ async function runManualQuickSync3h(opts) {
           let sweepSns = [];
           let sweepError = "";
           try {
+            console.log("[MANUAL SYNC REQUEST] shop_id:", shopIdStr);
+            console.log(
+              "[MANUAL SYNC REQUEST] time_from:",
+              timeFrom,
+              "|",
+              new Date(timeFrom * 1e3).toString()
+            );
+            console.log(
+              "[MANUAL SYNC REQUEST] time_to:",
+              timeTo,
+              "|",
+              new Date(timeTo * 1e3).toString()
+            );
+            console.log(
+              "[MANUAL SYNC REQUEST] order_status: (kh\xF4ng l\u1ECDc \u2014 ALL)",
+              "| time_range_field:",
+              field,
+              "| lookbackSec:",
+              lookbackSec
+            );
             const collect = await collectShopeeOrderSnsIncremental(shopIdStr, accessToken, {
               lookbackSec,
               deadlineAt: shopDeadlineAt,
               allowShortLookback: true,
-              timeRangeField: field
+              timeRangeField: field,
+              manualSyncLog: true
             });
             sweepSns = Array.isArray(collect?.orderSns) ? collect.orderSns : [];
             if (sweepSns.length === 0 && Array.isArray(collect?.shopeeResponses)) {
@@ -134407,6 +134444,7 @@ async function runManualQuickSync3h(opts) {
             }
           } catch (sweepErr) {
             sweepError = sweepErr?.message || String(sweepErr);
+            console.error("[MANUAL SYNC ERROR DETAIL]:", sweepErr.response?.data || sweepErr.message);
             console.error(
               `[Manual Sync 3h] nh\u1ECBp ${field} shop=${shopIdStr} l\u1ED7i \u2014 nh\u1ECBp c\xF2n l\u1EA1i v\u1EABn ch\u1EA1y:`,
               sweepError
@@ -134460,7 +134498,8 @@ async function runManualQuickSync3h(opts) {
               const upsert = await persistShopeeOrderChunk(orders, normalized, {
                 apiShopId: shopIdStr,
                 accessToken,
-                skipTracking: true
+                skipTracking: true,
+                manualSyncLog: true
               });
               added += upsert.added;
               updated += upsert.updated;
@@ -134470,6 +134509,7 @@ async function runManualQuickSync3h(opts) {
               );
             }
           } catch (chunkErr) {
+            console.error("[MANUAL SYNC ERROR DETAIL]:", chunkErr.response?.data || chunkErr.message);
             console.error(
               `[Manual Sync 3h] shop=${shopIdStr} chunk=${chunkNo} l\u1ED7i \u2014 shop/chunk kh\xE1c v\u1EABn ch\u1EA1y:`,
               chunkErr?.message || chunkErr
@@ -134520,6 +134560,7 @@ async function runManualQuickSync3h(opts) {
       elapsedMs: Date.now() - startedAt
     };
   } catch (err) {
+    console.error("[MANUAL SYNC ERROR DETAIL]:", err.response?.data || err.message);
     console.error("[Manual Sync 3h] FATAL:", err?.stack || err?.message || err);
     return {
       ...empty,
@@ -135198,6 +135239,31 @@ async function shopeeGetOrderList(shopId, accessToken, opts) {
   console.log(
     `[Shopee API] GetOrderList REQUEST shop=${shopId} field=${timeRangeField} time_from=${timeFrom} (${String(timeFrom).length} digits) time_to=${timeTo} (${String(timeTo).length} digits) window_days=${((timeTo - timeFrom) / 86400).toFixed(2)} cursor=${opts?.cursor || ""} status=${statusFilter || "ALL(no filter)"}`
   );
+  if (opts?.manualSyncLog) {
+    console.log("[MANUAL SYNC REQUEST] shop_id:", shopId);
+    console.log(
+      "[MANUAL SYNC REQUEST] time_from:",
+      timeFrom,
+      "|",
+      new Date(timeFrom * 1e3).toString()
+    );
+    console.log(
+      "[MANUAL SYNC REQUEST] time_to:",
+      timeTo,
+      "|",
+      new Date(timeTo * 1e3).toString()
+    );
+    console.log(
+      "[MANUAL SYNC REQUEST] order_status:",
+      statusFilter || "(kh\xF4ng l\u1ECDc \u2014 ALL)",
+      "| time_range_field:",
+      timeRangeField,
+      "| page_size:",
+      SHOPEE_ORDER_LIST_PAGE_SIZE,
+      "| cursor:",
+      opts?.cursor || "(trang \u0111\u1EA7u)"
+    );
+  }
   try {
     const { json: json2, httpStatus } = await shopeeFetchJsonWithRetry(
       url2,
@@ -135208,6 +135274,16 @@ async function shopeeGetOrderList(shopId, accessToken, opts) {
       `[Shopee API] GetOrderList RESPONSE shop=${shopId} HTTP=${httpStatus} error=${json2?.error || "none"} rows=${rowCount} more=${json2?.response?.more ?? json2?.more}`,
       JSON.stringify(json2).slice(0, 500)
     );
+    if (opts?.manualSyncLog) {
+      const response = { data: json2 };
+      console.log(
+        "[MANUAL SYNC RESPONSE] S\u1ED1 \u0111\u01A1n Shopee tr\u1EA3 v\u1EC1:",
+        response?.data?.response?.order_list?.length || 0
+      );
+      if (json2?.error) {
+        console.error("[MANUAL SYNC ERROR DETAIL]:", json2);
+      }
+    }
     if (httpStatus === 401 || httpStatus === 403 || isShopeeInvalidTokenError(json2?.error, json2?.message)) {
       console.error(
         `[Shopee API] GetOrderList AUTH FAIL shop=${shopId} HTTP=${httpStatus}`,
@@ -135230,6 +135306,9 @@ async function shopeeGetOrderList(shopId, accessToken, opts) {
     }
     return { ...json2, httpStatus };
   } catch (err) {
+    if (opts?.manualSyncLog) {
+      console.error("[MANUAL SYNC ERROR DETAIL]:", err.response?.data || err.message);
+    }
     logShopeeSyncApiError(err, `get_order_list shop_id=${shopId}`);
     console.error("\n--- [SHOPEE API FAILURE] ---", "\nURL:", url2, "\nPARAMS:", requestParams, "\nRESPONSE:", err.response?.data || err.message);
     console.error("[SHOPEE API CRON ERROR]:", err?.response?.data || err);
@@ -135305,7 +135384,8 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
           timeFrom: chunkTimeFrom,
           timeTo: chunkTimeTo,
           cursor,
-          allowShortLookback: allowShort
+          allowShortLookback: allowShort,
+          manualSyncLog: opts?.manualSyncLog === true
           // Không truyền orderStatus — kéo toàn bộ trạng thái.
         });
         if (listResult?.httpStatus === 401 || listResult?.httpStatus === 403 || isShopeeInvalidTokenError(listResult?.error, listResult?.message)) {
@@ -135319,7 +135399,8 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
                 timeFrom: chunkTimeFrom,
                 timeTo: chunkTimeTo,
                 cursor,
-                allowShortLookback: allowShort
+                allowShortLookback: allowShort,
+                manualSyncLog: opts?.manualSyncLog === true
               });
             }
           } catch (refreshErr) {
@@ -135402,6 +135483,9 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
         if (String(pageErr?.message || "").includes("ORDERS_PULL_DEADLINE")) {
           truncated = true;
           throw pageErr;
+        }
+        if (opts?.manualSyncLog) {
+          console.error("[MANUAL SYNC ERROR DETAIL]:", pageErr.response?.data || pageErr.message);
         }
         logShopeeSyncApiError(pageErr, `get_order_list page shop_id=${shopId}`);
         console.error(
@@ -146558,7 +146642,27 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
       );
     }
     console.log(`[Orders Sync] Tr\u1EA1ng th\xE1i ch\u1EA1y BulkWrite \u2014 ops=${touched.length}`);
-    const mongoN = await bulkUpsertOrdersToStore(touched);
+    let mongoN = 0;
+    try {
+      mongoN = await bulkUpsertOrdersToStore(touched);
+    } catch (upsertErr) {
+      if (syncCtx?.manualSyncLog) {
+        console.error(
+          "[MANUAL SYNC ERROR DETAIL]:",
+          upsertErr?.response?.data || upsertErr?.message || upsertErr
+        );
+        console.error(
+          `[MANUAL SYNC] bulkUpsertOrdersToStore FAILED shop=${syncCtx.apiShopId} batch=${touched.length} \u2014 Shopee \u0111\xE3 c\xF3 \u0111\u01A1n nh\u01B0ng Mongo kh\xF4ng ghi \u0111\u01B0\u1EE3c`
+        );
+      }
+      throw upsertErr;
+    }
+    if (syncCtx?.manualSyncLog && touched.length > 0 && !(mongoN > 0)) {
+      console.error(
+        "[MANUAL SYNC ERROR DETAIL]:",
+        `bulkUpsertOrdersToStore kh\xF4ng x\u1EBFp \u0111\u01B0\u1EE3c \u0111\u01A1n n\xE0o v\xE0o Mongo (batch=${touched.length}, written=${mongoN})`
+      );
+    }
     try {
       invalidateOrdersRefreshCache();
     } catch {

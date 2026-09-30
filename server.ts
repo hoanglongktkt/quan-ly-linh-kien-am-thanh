@@ -1745,11 +1745,32 @@ async function runManualQuickSync3h(opts?: {
           let sweepSns: string[] = [];
           let sweepError = "";
           try {
+            console.log("[MANUAL SYNC REQUEST] shop_id:", shopIdStr);
+            console.log(
+              "[MANUAL SYNC REQUEST] time_from:",
+              timeFrom,
+              "|",
+              new Date(timeFrom * 1000).toString(),
+            );
+            console.log(
+              "[MANUAL SYNC REQUEST] time_to:",
+              timeTo,
+              "|",
+              new Date(timeTo * 1000).toString(),
+            );
+            console.log(
+              "[MANUAL SYNC REQUEST] order_status: (không lọc — ALL)",
+              "| time_range_field:",
+              field,
+              "| lookbackSec:",
+              lookbackSec,
+            );
             const collect = await collectShopeeOrderSnsIncremental(shopIdStr, accessToken, {
               lookbackSec,
               deadlineAt: shopDeadlineAt,
               allowShortLookback: true,
               timeRangeField: field,
+              manualSyncLog: true,
             });
             sweepSns = Array.isArray(collect?.orderSns) ? collect.orderSns : [];
             if (sweepSns.length === 0 && Array.isArray(collect?.shopeeResponses)) {
@@ -1763,6 +1784,7 @@ async function runManualQuickSync3h(opts?: {
             }
           } catch (sweepErr: any) {
             sweepError = sweepErr?.message || String(sweepErr);
+            console.error("[MANUAL SYNC ERROR DETAIL]:", sweepErr.response?.data || sweepErr.message);
             console.error(
               `[Manual Sync 3h] nhịp ${field} shop=${shopIdStr} lỗi — nhịp còn lại vẫn chạy:`,
               sweepError,
@@ -1820,6 +1842,7 @@ async function runManualQuickSync3h(opts?: {
                 apiShopId: shopIdStr,
                 accessToken,
                 skipTracking: true,
+                manualSyncLog: true,
               });
               added += upsert.added;
               updated += upsert.updated;
@@ -1830,6 +1853,7 @@ async function runManualQuickSync3h(opts?: {
               );
             }
           } catch (chunkErr: any) {
+            console.error("[MANUAL SYNC ERROR DETAIL]:", chunkErr.response?.data || chunkErr.message);
             console.error(
               `[Manual Sync 3h] shop=${shopIdStr} chunk=${chunkNo} lỗi — shop/chunk khác vẫn chạy:`,
               chunkErr?.message || chunkErr,
@@ -1884,6 +1908,7 @@ async function runManualQuickSync3h(opts?: {
       elapsedMs: Date.now() - startedAt,
     };
   } catch (err: any) {
+    console.error("[MANUAL SYNC ERROR DETAIL]:", err.response?.data || err.message);
     console.error("[Manual Sync 3h] FATAL:", err?.stack || err?.message || err);
     return {
       ...empty,
@@ -2659,6 +2684,8 @@ async function shopeeGetOrderList(
     timeTo?: number;
     /** Quick Sync / cron: cho phép cửa sổ < 3 ngày (không ép MIN_LOOKBACK). */
     allowShortLookback?: boolean;
+    /** Chỉ nút Đồng bộ nhanh 3h — bơm log [MANUAL SYNC] quanh get_order_list. */
+    manualSyncLog?: boolean;
   },
 ) {
   const apiPath = "/api/v2/order/get_order_list";
@@ -2742,6 +2769,31 @@ async function shopeeGetOrderList(
       ` cursor=${opts?.cursor || ""}` +
       ` status=${statusFilter || "ALL(no filter)"}`,
   );
+  if (opts?.manualSyncLog) {
+    console.log("[MANUAL SYNC REQUEST] shop_id:", shopId);
+    console.log(
+      "[MANUAL SYNC REQUEST] time_from:",
+      timeFrom,
+      "|",
+      new Date(timeFrom * 1000).toString(),
+    );
+    console.log(
+      "[MANUAL SYNC REQUEST] time_to:",
+      timeTo,
+      "|",
+      new Date(timeTo * 1000).toString(),
+    );
+    console.log(
+      "[MANUAL SYNC REQUEST] order_status:",
+      statusFilter || "(không lọc — ALL)",
+      "| time_range_field:",
+      timeRangeField,
+      "| page_size:",
+      SHOPEE_ORDER_LIST_PAGE_SIZE,
+      "| cursor:",
+      opts?.cursor || "(trang đầu)",
+    );
+  }
   try {
     const { json, httpStatus } = await shopeeFetchJsonWithRetry(
       url,
@@ -2757,6 +2809,16 @@ async function shopeeGetOrderList(
         ` error=${json?.error || "none"} rows=${rowCount} more=${json?.response?.more ?? json?.more}`,
       JSON.stringify(json).slice(0, 500),
     );
+    if (opts?.manualSyncLog) {
+      const response = { data: json };
+      console.log(
+        "[MANUAL SYNC RESPONSE] Số đơn Shopee trả về:",
+        response?.data?.response?.order_list?.length || 0,
+      );
+      if (json?.error) {
+        console.error("[MANUAL SYNC ERROR DETAIL]:", json);
+      }
+    }
 
     if (httpStatus === 401 || httpStatus === 403 || isShopeeInvalidTokenError(json?.error, json?.message)) {
       console.error(
@@ -2782,6 +2844,9 @@ async function shopeeGetOrderList(
     }
     return { ...json, httpStatus };
   } catch (err: any) {
+    if (opts?.manualSyncLog) {
+      console.error("[MANUAL SYNC ERROR DETAIL]:", err.response?.data || err.message);
+    }
     logShopeeSyncApiError(err, `get_order_list shop_id=${shopId}`);
     console.error('\n--- [SHOPEE API FAILURE] ---', '\nURL:', url, '\nPARAMS:', requestParams, '\nRESPONSE:', err.response?.data || err.message);
     console.error("[SHOPEE API CRON ERROR]:", err?.response?.data || err);
@@ -2822,6 +2887,8 @@ async function collectShopeeOrderSnsIncremental(
     allowShortLookback?: boolean;
     /** Mặc định update_time. create_time bắt đơn mới vừa đặt (UNPAID) mà update_time bỏ sót. */
     timeRangeField?: "create_time" | "update_time";
+    /** Đồng bộ nhanh 3h — log tham số thật gửi get_order_list. */
+    manualSyncLog?: boolean;
   },
 ): Promise<{ orderSns: string[]; shopeeResponses: any[]; truncated: boolean }> {
   const timeTo = Math.floor(Date.now() / 1000);
@@ -2890,6 +2957,7 @@ async function collectShopeeOrderSnsIncremental(
           timeTo: chunkTimeTo,
           cursor,
           allowShortLookback: allowShort,
+          manualSyncLog: opts?.manualSyncLog === true,
           // Không truyền orderStatus — kéo toàn bộ trạng thái.
         });
 
@@ -2910,6 +2978,7 @@ async function collectShopeeOrderSnsIncremental(
                 timeTo: chunkTimeTo,
                 cursor,
                 allowShortLookback: allowShort,
+                manualSyncLog: opts?.manualSyncLog === true,
               });
             }
           } catch (refreshErr: any) {
@@ -2998,6 +3067,9 @@ async function collectShopeeOrderSnsIncremental(
         if (String(pageErr?.message || "").includes("ORDERS_PULL_DEADLINE")) {
           truncated = true;
           throw pageErr;
+        }
+        if (opts?.manualSyncLog) {
+          console.error("[MANUAL SYNC ERROR DETAIL]:", pageErr.response?.data || pageErr.message);
         }
         logShopeeSyncApiError(pageErr, `get_order_list page shop_id=${shopId}`);
         console.error(
@@ -18107,7 +18179,12 @@ function kickMissingShopeeTrackingEnrichment(reason: string): void {
 async function persistShopeeOrderChunk(
   orders: any[],
   batchNormalized: any[],
-  syncCtx?: { apiShopId: string; accessToken: string; skipTracking?: boolean },
+  syncCtx?: {
+    apiShopId: string;
+    accessToken: string;
+    skipTracking?: boolean;
+    manualSyncLog?: boolean;
+  },
 ): Promise<{ added: number; updated: number }> {
   let added = 0;
   let updated = 0;
@@ -18338,7 +18415,27 @@ async function persistShopeeOrderChunk(
       );
     }
     console.log(`[Orders Sync] Trạng thái chạy BulkWrite — ops=${touched.length}`);
-    const mongoN = await bulkUpsertOrdersToStore(touched);
+    let mongoN = 0;
+    try {
+      mongoN = await bulkUpsertOrdersToStore(touched);
+    } catch (upsertErr: any) {
+      if (syncCtx?.manualSyncLog) {
+        console.error(
+          "[MANUAL SYNC ERROR DETAIL]:",
+          upsertErr?.response?.data || upsertErr?.message || upsertErr,
+        );
+        console.error(
+          `[MANUAL SYNC] bulkUpsertOrdersToStore FAILED shop=${syncCtx.apiShopId} batch=${touched.length} — Shopee đã có đơn nhưng Mongo không ghi được`,
+        );
+      }
+      throw upsertErr;
+    }
+    if (syncCtx?.manualSyncLog && touched.length > 0 && !(mongoN > 0)) {
+      console.error(
+        "[MANUAL SYNC ERROR DETAIL]:",
+        `bulkUpsertOrdersToStore không xếp được đơn nào vào Mongo (batch=${touched.length}, written=${mongoN})`,
+      );
+    }
     try {
       invalidateOrdersRefreshCache();
     } catch {

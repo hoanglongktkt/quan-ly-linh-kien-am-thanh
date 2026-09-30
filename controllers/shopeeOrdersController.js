@@ -643,6 +643,7 @@ async function respondManualQuickSync3h(req, res, ctx) {
         : { sweeps: result?.sweeps || [] },
     });
   } catch (err) {
+    console.error("[MANUAL SYNC ERROR DETAIL]:", err.response?.data || err.message);
     console.error("[API_SYNC_ERROR] Manual Sync 3h:", err?.stack || err);
     if (!res.headersSent) {
       sendJson(res, 500, {
@@ -707,6 +708,7 @@ export async function syncShopee(req, res) {
               ` msg=${result?.message || ""}`,
           );
         } catch (err) {
+          console.error("[MANUAL SYNC ERROR DETAIL]:", err.response?.data || err.message);
           console.error("[MANUAL SYNC BACKGROUND ERROR]", err?.stack || err);
         }
       });
