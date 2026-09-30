@@ -15,8 +15,6 @@ const MAX_CONCURRENT_JOBS = Math.max(
   2,
   Math.min(8, Number(process.env.SHOPEE_WEBHOOK_MAX_CONCURRENT) || 4),
 );
-/** Hard cap mỗi job nền — đủ cho get_order_detail + upsert, rồi nhả slot. */
-const WEBHOOK_JOB_TIMEOUT_MS = 180_000;
 
 /** Mốc push cuối cùng — /api/health dùng để biết webhook còn sống hay đã chết. */
 let lastWebhookAt = 0;
@@ -95,25 +93,10 @@ export function webhookOrderKey(payload: Record<string, unknown>): string {
   return orderSn ? `${shopId}:${orderSn}` : "";
 }
 
-function withJobTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  return Promise.race([
-    work,
-    new Promise<T>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error(`${label} timeout sau ${Math.round(ms / 1000)}s`)),
-        ms,
-      );
-    }),
-  ]).finally(() => {
-    if (timer) clearTimeout(timer);
-  });
-}
-
 /**
  * Hàng đợi in-process có giới hạn để một đợt retry bất thường không giữ vô hạn
  * payload/promise trong RAM. Không spawn process/worker nên không tạo zombie process.
- * Mỗi job có hard timeout — slot luôn được giải phóng.
+ * Job get_order_detail chạy nền, không Promise.race / không cắt theo đồng hồ.
  */
 function createBoundedQueue(
   processPayload: WebhookProcessor,
@@ -174,7 +157,8 @@ function createBoundedQueue(
     void Promise.allSettled(
       batch.map(({ payload, orderKey }) => {
         const startedAt = Date.now();
-        return withJobTimeout(processPayload(payload), WEBHOOK_JOB_TIMEOUT_MS, "webhook_job")
+        return Promise.resolve()
+          .then(() => processPayload(payload))
           .then(() => {
             const durationMs = Date.now() - startedAt;
             queueMetrics.completedJobs += 1;
@@ -577,7 +561,7 @@ export function createShopeeWebhookRouter(
   );
 
   console.log(
-    `[Shopee Webhook] Queue config maxConcurrent=${MAX_CONCURRENT_JOBS} maxPending=${MAX_PENDING_JOBS} jobTimeoutMs=${WEBHOOK_JOB_TIMEOUT_MS}`,
+    `[Shopee Webhook] Queue config maxConcurrent=${MAX_CONCURRENT_JOBS} maxPending=${MAX_PENDING_JOBS} jobTimeoutMs=none`,
   );
 
   // GET probe cho Shopee verification.

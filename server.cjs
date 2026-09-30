@@ -77867,7 +77867,6 @@ var MAX_CONCURRENT_JOBS = Math.max(
   2,
   Math.min(8, Number(process.env.SHOPEE_WEBHOOK_MAX_CONCURRENT) || 4)
 );
-var WEBHOOK_JOB_TIMEOUT_MS = 18e4;
 var lastWebhookAt = 0;
 function markWebhookReceived() {
   lastWebhookAt = Date.now();
@@ -77924,20 +77923,6 @@ function webhookOrderKey(payload) {
   ).trim();
   return orderSn ? `${shopId}:${orderSn}` : "";
 }
-function withJobTimeout(work, ms, label) {
-  let timer;
-  return Promise.race([
-    work,
-    new Promise((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error(`${label} timeout sau ${Math.round(ms / 1e3)}s`)),
-        ms
-      );
-    })
-  ]).finally(() => {
-    if (timer) clearTimeout(timer);
-  });
-}
 function createBoundedQueue(processPayload, onQueueOverflow) {
   const pending = [];
   let running = 0;
@@ -77989,7 +77974,7 @@ function createBoundedQueue(processPayload, onQueueOverflow) {
     void Promise.allSettled(
       batch.map(({ payload, orderKey }) => {
         const startedAt = Date.now();
-        return withJobTimeout(processPayload(payload), WEBHOOK_JOB_TIMEOUT_MS, "webhook_job").then(() => {
+        return Promise.resolve().then(() => processPayload(payload)).then(() => {
           const durationMs = Date.now() - startedAt;
           queueMetrics.completedJobs += 1;
           queueMetrics.lastJobDurationMs = durationMs;
@@ -78291,7 +78276,7 @@ function createShopeeWebhookRouter(processPayload, routePath = "/shopee", option
     (path26) => path26.startsWith("/") ? path26 : `/${path26}`
   );
   console.log(
-    `[Shopee Webhook] Queue config maxConcurrent=${MAX_CONCURRENT_JOBS} maxPending=${MAX_PENDING_JOBS} jobTimeoutMs=${WEBHOOK_JOB_TIMEOUT_MS}`
+    `[Shopee Webhook] Queue config maxConcurrent=${MAX_CONCURRENT_JOBS} maxPending=${MAX_PENDING_JOBS} jobTimeoutMs=none`
   );
   router29.get(paths, (_req, res) => {
     ackShopeeOk(res);
