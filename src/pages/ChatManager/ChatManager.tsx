@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, MessageSquare, Plus, Send, X, Zap } from 'lucide-react';
+import { ArrowLeft, Loader2, MessageSquare, Plus, Send, X, Zap } from 'lucide-react';
 import { apiFetch, parseJsonResponse } from '../../utils/apiClient';
 
 type ChatFilter = 'all' | 'unread';
@@ -11,13 +11,15 @@ interface ShopOption {
 }
 
 interface ConversationRow {
-  shop_id: number;
+  shop_id: number | string;
   conversation_id: string;
-  customer_id?: string | number;
-  customer_name?: string;
+  customer_id?: unknown;
+  to_id?: unknown;
+  customer_name?: unknown;
+  customerName?: unknown;
   customer_avatar?: string;
   unread_count?: number;
-  latest_message_snippet?: string;
+  latest_message_snippet?: unknown;
   last_updated_at?: string;
 }
 
@@ -49,18 +51,196 @@ function authHeaders(): Record<string, string> {
   };
 }
 
-function messageText(content: unknown): string {
-  if (content == null) return '';
-  if (typeof content === 'string') return content;
-  if (typeof content === 'object') {
-    const row = content as Record<string, unknown>;
-    const text = row.text || row.content || row.caption;
-    if (text) return String(text);
-    if (row.image_url || row.imageUrl || row.url || row.image) return '[Hình ảnh]';
-    if (row.sticker || row.sticker_id) return '[Sticker]';
-    if (row.order_sn || row.ordersn) return '[Đơn hàng]';
+function readableString(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === '[object Object]') return '';
+  return trimmed;
+}
+
+function scalarId(value: unknown): string {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value <= 0) return '';
+    return String(Math.trunc(value));
+  }
+  const asText = readableString(value);
+  if (asText && asText !== '0') return asText;
+  if (value && typeof value === 'object') {
+    const row = value as Record<string, unknown>;
+    return (
+      scalarId(row.id) ||
+      scalarId(row.user_id) ||
+      scalarId(row.buyer_id) ||
+      scalarId(row.to_id) ||
+      scalarId(row.customer_id) ||
+      scalarId(row.shop_id) ||
+      scalarId(row.shopId) ||
+      ''
+    );
   }
   return '';
+}
+
+function customerNameOf(row?: { customer_name?: unknown; customerName?: unknown } | null): string {
+  const raw = row?.customer_name ?? row?.customerName;
+  const direct = readableString(raw);
+  if (direct) return direct;
+  if (raw && typeof raw === 'object') {
+    const record = raw as Record<string, unknown>;
+    const nested =
+      record.name ??
+      record.username ??
+      record.user_name ??
+      record.buyer_name ??
+      record.display_name ??
+      record.nickname;
+    const extracted = readableString(nested) || (nested && typeof nested === 'object' ? customerNameOf({ customer_name: nested }) : '');
+    if (extracted && extracted !== 'Khách hàng') return extracted;
+  }
+  return 'Khách hàng';
+}
+
+type ParsedChat = {
+  kind: 'text' | 'order' | 'product' | 'image' | 'sticker' | 'empty';
+  text: string;
+  orderSn?: string;
+  itemName?: string;
+  imageUrl?: string;
+};
+
+function safeHttpUrl(value: unknown): string {
+  const text = readableString(value);
+  if (!text) return '';
+  try {
+    const url = new URL(text);
+    if (url.protocol === 'https:' || url.protocol === 'http:') return url.toString();
+  } catch {
+    return '';
+  }
+  return '';
+}
+
+function collectNodes(raw: unknown, depth: number, out: unknown[]): void {
+  if (raw == null || depth > 4) return;
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if ((trimmed.startsWith('{') || trimmed.startsWith('[')) && trimmed.length <= 8000) {
+      try {
+        collectNodes(JSON.parse(trimmed) as unknown, depth + 1, out);
+        return;
+      } catch {
+        /* chuỗi thường */
+      }
+    }
+    out.push(raw);
+    return;
+  }
+  if (typeof raw !== 'object') return;
+  out.push(raw);
+  const record = raw as Record<string, unknown>;
+  const keys = ['content', 'text', 'data', 'order', 'order_info', 'source_content', 'message'] as const;
+  for (let i = 0; i < keys.length; i += 1) {
+    const nested = record[keys[i]];
+    if (nested && typeof nested === 'object') collectNodes(nested, depth + 1, out);
+  }
+}
+
+function parseMessageContent(content: unknown): ParsedChat {
+  try {
+    const nodes: unknown[] = [];
+    collectNodes(content, 0, nodes);
+    let orderSn = '';
+    let itemName = '';
+    let hasItem = false;
+    let imageUrl = '';
+    let hasImage = false;
+    let hasSticker = false;
+    let text = '';
+    let type = '';
+    for (let i = 0; i < nodes.length; i += 1) {
+      const node = nodes[i];
+      if (typeof node === 'string') {
+        const plain = readableString(node);
+        if (plain && !text) text = plain;
+        continue;
+      }
+      if (!node || typeof node !== 'object') continue;
+      const row = node as Record<string, unknown>;
+      const nodeType = readableString(row.message_type || row.type).toLowerCase();
+      if (nodeType && !type) type = nodeType;
+      const sn = readableString(row.order_sn) || readableString(row.ordersn) || readableString(row.orderSn);
+      if (sn && !orderSn) orderSn = sn;
+      const name = readableString(row.item_name) || readableString(row.itemName);
+      if (name && !itemName) itemName = name;
+      if (row.item_id || row.itemId || name) hasItem = true;
+      const picture =
+        safeHttpUrl(row.image_url) ||
+        safeHttpUrl(row.imageUrl) ||
+        safeHttpUrl(row.thumb_url) ||
+        (nodeType === 'image' ? safeHttpUrl(row.url) : '') ||
+        safeHttpUrl(row.image);
+      if (picture && !imageUrl) imageUrl = picture;
+      if (nodeType === 'image' || row.image_url || row.imageUrl || row.thumb_url || row.image) hasImage = true;
+      if (row.sticker || row.sticker_id || row.sticker_package_id) hasSticker = true;
+      const nodeText = readableString(row.text) || readableString(row.caption);
+      if (nodeText && !text) text = nodeText;
+    }
+    if (orderSn) return { kind: 'order', text: `📦 [Đơn hàng] ${orderSn}`, orderSn };
+    if (type === 'order' || type === 'order_card') return { kind: 'order', text: '📦 [Đơn hàng]' };
+    if (hasItem || type === 'item' || type === 'product') {
+      return { kind: 'product', text: '🛍️ [Sản phẩm]', itemName };
+    }
+    if (hasImage || type === 'image') return { kind: 'image', text: '🖼️ [Hình ảnh]', imageUrl };
+    if (text) return { kind: 'text', text };
+    if (hasSticker || type === 'sticker') return { kind: 'sticker', text: '[Sticker]' };
+    return { kind: 'empty', text: '' };
+  } catch {
+    return { kind: 'empty', text: '' };
+  }
+}
+
+function previewSnippet(value: unknown): string {
+  try {
+    if (value && typeof value === 'object') {
+      const parsed = parseMessageContent(value).text;
+      if (parsed) return parsed;
+      return JSON.stringify(value);
+    }
+    const text = typeof value === 'string' ? value.trim() : '';
+    if (!text || text === '[object Object]') return '';
+    return text;
+  } catch {
+    return '';
+  }
+}
+
+function ChatBubble({ mine, content, createdAt }: { mine: boolean; content: unknown; createdAt?: string }) {
+  const parsed = parseMessageContent(content);
+  const shell = mine
+    ? 'rounded-br-md bg-blue-600 text-white'
+    : 'rounded-bl-md border border-gray-100 bg-white text-slate-800';
+  return (
+    <div className={`max-w-[75%] rounded-2xl px-3 py-2 text-sm leading-relaxed shadow-sm ${shell}`}>
+      {parsed.kind === 'order' ? (
+        <div className={`rounded-xl px-2.5 py-2 ${mine ? 'bg-white/15' : 'bg-orange-50'}`}>
+          <p className={`text-[11px] font-extrabold ${mine ? 'text-white' : 'text-orange-700'}`}>📦 Đơn hàng</p>
+          <p className="mt-1 break-all font-mono text-[13px] font-bold">{parsed.orderSn || 'Không có mã đơn'}</p>
+        </div>
+      ) : parsed.kind === 'product' ? (
+        <div>
+          <p className="text-[11px] font-extrabold">🛍️ Sản phẩm</p>
+          {parsed.itemName ? <p className="mt-1 whitespace-pre-wrap">{parsed.itemName}</p> : null}
+        </div>
+      ) : parsed.kind === 'image' && parsed.imageUrl ? (
+        <img src={parsed.imageUrl} alt="Hình ảnh" className="max-h-48 rounded-lg object-cover" />
+      ) : (
+        <p className="whitespace-pre-wrap">{parsed.text || '…'}</p>
+      )}
+      <p className={`mt-1 text-[10px] font-semibold ${mine ? 'text-blue-100' : 'text-slate-400'}`}>
+        {formatTime(createdAt)}
+      </p>
+    </div>
+  );
 }
 
 function formatTime(value?: string): string {
@@ -91,6 +271,7 @@ export default function ChatManager({ shops = [] }: ChatManagerProps) {
   const [filter, setFilter] = useState<ChatFilter>('all');
   const [conversations, setConversations] = useState<ConversationRow[]>([]);
   const [selectedId, setSelectedId] = useState('');
+  const [activeConversation, setActiveConversation] = useState<string | null>(null);
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [quickReplies, setQuickReplies] = useState<QuickReplyRow[]>([]);
   const [draft, setDraft] = useState('');
@@ -106,9 +287,10 @@ export default function ChatManager({ shops = [] }: ChatManagerProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const listFlight = useRef(false);
+  const readClearUntil = useRef<Map<string, number>>(new Map());
 
   const shopNameOf = useCallback(
-    (id: number) => shopeeShops.find((shop) => String(shop.shopId) === String(id))?.shopName || `Shop ${id}`,
+    (id: number | string) => shopeeShops.find((shop) => String(shop.shopId) === String(id))?.shopName || `Shop ${id}`,
     [shopeeShops],
   );
 
@@ -134,7 +316,14 @@ export default function ChatManager({ shops = [] }: ChatManagerProps) {
       if (!response.ok || data.success === false) {
         throw new Error(data.error || 'Không tải được hội thoại');
       }
-      const rows = Array.isArray(data.conversations) ? data.conversations : [];
+      const now = Date.now();
+      const rows = (Array.isArray(data.conversations) ? data.conversations : []).map((row) => {
+        const key = `${String(row.shop_id ?? '')}:${String(row.conversation_id || '')}`;
+        const until = readClearUntil.current.get(key) || 0;
+        if (until > now) return { ...row, unread_count: 0 };
+        if (until) readClearUntil.current.delete(key);
+        return row;
+      });
       setConversations(rows);
       setSelectedId((current) => {
         if (current && rows.some((row) => row.conversation_id === current)) return current;
@@ -219,6 +408,13 @@ export default function ChatManager({ shops = [] }: ChatManagerProps) {
   const sendText = async (raw: string) => {
     const text = raw.trim();
     if (!text || !active || sending) return;
+    const conversationId = String(active.conversation_id || selectedId || '').trim();
+    const resolvedShopId = scalarId(active.shop_id) || scalarId(shopId);
+    const toId = scalarId(active.customer_id) || scalarId(active.to_id);
+    if (!resolvedShopId || !conversationId || !toId) {
+      setError('Thiếu shop_id, người nhận hoặc nội dung.');
+      return;
+    }
     setSending(true);
     setError('');
     try {
@@ -226,8 +422,9 @@ export default function ChatManager({ shops = [] }: ChatManagerProps) {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({
-          conversation_id: active.conversation_id,
-          shop_id: active.shop_id,
+          shop_id: Number(resolvedShopId),
+          conversation_id: conversationId,
+          to_id: toId,
           content: text,
           sender_type: 'shop',
         }),
@@ -289,11 +486,42 @@ export default function ChatManager({ shops = [] }: ChatManagerProps) {
     }
   };
 
-  const customerLabel = active?.customer_name?.trim() || 'Khách hàng';
+  const handleSelectConversation = (item: ConversationRow) => {
+    setSelectedId(item.conversation_id);
+    setActiveConversation(item.conversation_id);
+    void (async () => {
+      try {
+        const response = await apiFetch(
+          `/api/chat/conversations/${encodeURIComponent(item.conversation_id)}/read`,
+          {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({ shop_id: item.shop_id }),
+          },
+        );
+        const data = await parseJsonResponse<{ success?: boolean; error?: string }>(response);
+        if (!response.ok || data.success === false) {
+          throw new Error(data.error || 'Không đánh dấu đã đọc');
+        }
+        readClearUntil.current.set(`${String(item.shop_id ?? '')}:${item.conversation_id}`, Date.now() + 25_000);
+        setConversations((prev) =>
+          prev.map((row) =>
+            row.conversation_id === item.conversation_id && String(row.shop_id) === String(item.shop_id)
+              ? { ...row, unread_count: 0 }
+              : row,
+          ),
+        );
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Không đánh dấu đã đọc');
+      }
+    })();
+  };
+
+  const customerLabel = customerNameOf(active);
 
   return (
-    <div className="flex h-[calc(100dvh-13.5rem)] min-h-[520px] md:h-[calc(100dvh-11rem)] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-      <aside className="flex w-[30%] min-w-0 flex-col border-r border-gray-200 bg-slate-50/80">
+    <div className="flex h-[calc(100dvh-13.5rem)] min-h-[520px] w-full min-w-0 max-w-full md:h-[calc(100dvh-11rem)] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+      <aside className={`${activeConversation ? 'hidden' : 'flex'} w-full min-w-0 flex-col bg-slate-50/80 md:flex md:w-[35%] md:border-r md:border-gray-200`}>
         <div className="shrink-0 border-b border-gray-200 bg-white p-3">
           <div className="mb-2 flex items-center gap-2 text-slate-800">
             <MessageSquare className="h-4 w-4 shrink-0 text-blue-600" />
@@ -316,11 +544,11 @@ export default function ChatManager({ shops = [] }: ChatManagerProps) {
               ))}
             </select>
           )}
-          <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1">
+          <div className="flex gap-1 overflow-x-auto rounded-xl bg-slate-100 p-1">
             <button
               type="button"
               onClick={() => setFilter('all')}
-              className={`rounded-lg px-2 py-2 text-[11px] font-bold leading-tight transition-all ${
+              className={`min-w-0 flex-1 basis-0 whitespace-normal break-words rounded-lg px-2 py-2 text-center text-[11px] font-bold leading-snug transition-all ${
                 filter === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
               }`}
             >
@@ -329,13 +557,13 @@ export default function ChatManager({ shops = [] }: ChatManagerProps) {
             <button
               type="button"
               onClick={() => setFilter('unread')}
-              className={`rounded-lg px-2 py-2 text-[11px] font-bold leading-tight transition-all ${
+              className={`inline-flex min-w-0 flex-1 basis-0 flex-wrap items-center justify-center gap-1 whitespace-normal break-words rounded-lg px-2 py-2 text-center text-[11px] font-bold leading-snug transition-all ${
                 filter === 'unread' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
               }`}
             >
-              Chưa trả lời
+              <span>Chưa trả lời</span>
               {unreadTotal > 0 && (
-                <span className="ml-1 inline-flex min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-black text-white">
+                <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-black text-white">
                   {unreadTotal}
                 </span>
               )}
@@ -355,14 +583,14 @@ export default function ChatManager({ shops = [] }: ChatManagerProps) {
           ) : (
             conversations.map((item) => {
               const selected = active?.conversation_id === item.conversation_id;
-              const name = item.customer_name?.trim() || 'Khách hàng';
+              const name = customerNameOf(item);
               const unread = Number(item.unread_count) > 0;
               return (
                 <button
                   key={`${item.shop_id}-${item.conversation_id}`}
                   type="button"
-                  onClick={() => setSelectedId(item.conversation_id)}
-                  className={`flex w-full items-start gap-2.5 border-b border-gray-100 px-3 py-3 text-left transition-colors ${
+                  onClick={() => handleSelectConversation(item)}
+                  className={`flex w-full min-w-0 items-start gap-2.5 overflow-hidden border-b border-gray-100 px-3 py-3 text-left transition-colors ${
                     selected ? 'bg-blue-50' : 'bg-white hover:bg-slate-50'
                   }`}
                 >
@@ -373,24 +601,24 @@ export default function ChatManager({ shops = [] }: ChatManagerProps) {
                       {initials(name)}
                     </span>
                   )}
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-1.5">
-                      <span className={`truncate text-xs ${unread ? 'font-extrabold text-slate-900' : 'font-semibold text-slate-700'}`}>
+                  <span className="min-w-0 flex-1 overflow-hidden">
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <span className={`min-w-0 flex-1 truncate text-xs ${unread ? 'font-extrabold text-slate-900' : 'font-semibold text-slate-700'}`}>
                         {name}
                       </span>
                       {unread && (
-                        <span className="inline-flex min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-black text-white">
+                        <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-black text-white">
                           {item.unread_count}
                         </span>
                       )}
                     </span>
                     <span className="mt-0.5 block truncate text-[11px] text-slate-500">
-                      {item.latest_message_snippet || 'Chưa có tin nhắn'}
+                      {previewSnippet(item.latest_message_snippet) || 'Chưa có tin nhắn'}
                     </span>
-                    <span className="mt-1 flex items-center gap-1.5 text-[10px] font-semibold text-slate-400">
-                      <span className="text-orange-600">{shopNameOf(item.shop_id)}</span>
-                      <span>·</span>
-                      <span>{formatTime(item.last_updated_at)}</span>
+                    <span className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden text-[10px] font-semibold text-slate-400">
+                      <span className="min-w-0 truncate text-orange-600">{shopNameOf(item.shop_id)}</span>
+                      <span className="shrink-0">·</span>
+                      <span className="shrink-0">{formatTime(item.last_updated_at)}</span>
                     </span>
                   </span>
                 </button>
@@ -400,21 +628,29 @@ export default function ChatManager({ shops = [] }: ChatManagerProps) {
         </div>
       </aside>
 
-      <section className="flex w-[70%] min-w-0 flex-col bg-white">
+      <section className={`${activeConversation ? 'flex' : 'hidden'} w-full min-w-0 flex-col bg-white md:flex md:w-[65%]`}>
         {active ? (
           <>
-            <header className="flex shrink-0 items-center gap-3 border-b border-gray-100 px-4 py-3">
+            <header className="flex shrink-0 items-center gap-2 overflow-hidden border-b border-gray-100 px-3 py-3 md:gap-3 md:px-4">
+              <button
+                type="button"
+                onClick={() => setActiveConversation(null)}
+                className="inline-flex shrink-0 items-center gap-1 rounded-lg px-1 py-1 text-xs font-bold text-slate-700 hover:bg-slate-100 md:hidden"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Quay lại
+              </button>
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-orange-500 text-xs font-extrabold text-white">
                 {initials(customerLabel)}
               </span>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <h3 className="truncate text-sm font-extrabold text-slate-900">{customerLabel}</h3>
                 <p className="truncate text-[11px] font-semibold text-slate-400">
                   Shopee · {shopNameOf(active.shop_id)}
                 </p>
               </div>
               {Number(active.unread_count) > 0 && (
-                <span className="ml-auto rounded-full bg-red-500 px-2 py-1 text-[10px] font-black text-white">
+                <span className="ml-auto shrink-0 rounded-full bg-red-500 px-2 py-1 text-[10px] font-black text-white">
                   {active.unread_count} chưa trả lời
                 </span>
               )}
@@ -432,21 +668,9 @@ export default function ChatManager({ shops = [] }: ChatManagerProps) {
               ) : (
                 messages.map((msg, index) => {
                   const mine = msg.sender_type === 'shop';
-                  const text = messageText(msg.content) || '…';
                   return (
                     <div key={msg.message_id || `${msg.created_at}-${index}`} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
-                      <div
-                        className={`max-w-[75%] rounded-2xl px-3 py-2 text-sm leading-relaxed shadow-sm ${
-                          mine
-                            ? 'rounded-br-md bg-blue-600 text-white'
-                            : 'rounded-bl-md border border-gray-100 bg-white text-slate-800'
-                        }`}
-                      >
-                        <p className="whitespace-pre-wrap">{text}</p>
-                        <p className={`mt-1 text-[10px] font-semibold ${mine ? 'text-blue-100' : 'text-slate-400'}`}>
-                          {formatTime(msg.created_at)}
-                        </p>
-                      </div>
+                      <ChatBubble mine={mine} content={msg.content} createdAt={msg.created_at} />
                     </div>
                   );
                 })
@@ -454,7 +678,7 @@ export default function ChatManager({ shops = [] }: ChatManagerProps) {
             </div>
 
             <footer className="relative shrink-0 border-t border-gray-100 bg-white p-3">
-              <div className="mb-2 flex items-center gap-2">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setQuickOpen((open) => !open)}
@@ -534,6 +758,14 @@ export default function ChatManager({ shops = [] }: ChatManagerProps) {
           </>
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center text-slate-400">
+            <button
+              type="button"
+              onClick={() => setActiveConversation(null)}
+              className="mb-2 inline-flex items-center gap-1 self-start rounded-lg px-1 py-1 text-xs font-bold text-slate-700 hover:bg-slate-100 md:hidden"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Quay lại
+            </button>
             <MessageSquare className="h-8 w-8" />
             <p className="text-sm font-semibold">
               {error || 'Chọn một hội thoại để xem nội dung.'}

@@ -45,18 +45,101 @@ function pickMessageNode(data) {
   return data;
 }
 
-function snippetFromContent(content) {
-  if (content == null) return "";
-  if (typeof content === "string") return content.trim().slice(0, 300);
-  if (typeof content === "object") {
-    const text = content.text || content.content || content.caption || "";
-    if (String(text).trim()) return String(text).trim().slice(0, 300);
-    if (content.image_url || content.imageUrl || content.url || content.image) return "[Hình ảnh]";
-    if (content.sticker_id || content.sticker || content.sticker_package_id) return "[Sticker]";
-    if (content.order_sn || content.ordersn) return "[Đơn hàng]";
-    if (content.item_id) return "[Sản phẩm]";
+function plainText(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return String(Math.trunc(value));
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "[object Object]") return "";
+  return trimmed;
+}
+
+function collectContentNodes(raw, depth, out) {
+  if (raw == null || depth > 4) return out;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if ((trimmed.startsWith("{") || trimmed.startsWith("[")) && trimmed.length <= 8000) {
+      try {
+        collectContentNodes(JSON.parse(trimmed), depth + 1, out);
+        return out;
+      } catch {
+        /* chuỗi thường */
+      }
+    }
+    out.push(raw);
+    return out;
   }
-  return String(content).slice(0, 300);
+  const record = asRecord(raw);
+  if (!record) return out;
+  out.push(record);
+  const nestedKeys = ["content", "text", "data", "order", "order_info", "source_content", "message"];
+  for (let i = 0; i < nestedKeys.length; i += 1) {
+    const nested = record[nestedKeys[i]];
+    if (nested && typeof nested === "object") collectContentNodes(nested, depth + 1, out);
+  }
+  return out;
+}
+
+/** Luôn trả về chuỗi. Không bao giờ String(object) → "[object Object]". */
+export function snippetFromContent(content, messageType) {
+  try {
+    const nodes = collectContentNodes(content, 0, []);
+    const typeHint = String(messageType || "").trim().toLowerCase();
+    let orderSn = "";
+    let hasItem = false;
+    let hasImage = false;
+    let hasSticker = false;
+    let text = "";
+    let type = typeHint;
+    for (let i = 0; i < nodes.length; i += 1) {
+      const node = nodes[i];
+      if (typeof node === "string") {
+        if (!text) text = plainText(node);
+        continue;
+      }
+      const nodeType = String(node.message_type || node.type || "").trim().toLowerCase();
+      if (nodeType) type = type || nodeType;
+      const sn = plainText(node.order_sn) || plainText(node.ordersn) || plainText(node.orderSn);
+      if (sn && !orderSn) orderSn = sn;
+      if (node.item_id || node.itemId || plainText(node.item_name) || plainText(node.itemName)) {
+        hasItem = true;
+      }
+      if (
+        nodeType === "image" ||
+        node.image_url ||
+        node.imageUrl ||
+        node.thumb_url ||
+        node.image
+      ) {
+        hasImage = true;
+      }
+      if (node.sticker_id || node.sticker || node.sticker_package_id) hasSticker = true;
+      const nodeText = plainText(node.text) || plainText(node.caption);
+      if (nodeText && !text) text = nodeText;
+    }
+    if (orderSn) return `📦 [Đơn hàng] ${orderSn}`.slice(0, 300);
+    if (type === "order" || type === "order_card") return "📦 [Đơn hàng]";
+    if (hasItem || type === "item" || type === "product") return "🛍️ [Sản phẩm]";
+    if (hasImage || type === "image") return "🖼️ [Hình ảnh]";
+    if (text) return text.slice(0, 300);
+    if (hasSticker || type === "sticker") return "[Sticker]";
+    return "";
+  } catch (error) {
+    logChatError("[Shopee Chat] snippetFromContent", error);
+    return "";
+  }
+}
+
+function forceSnippet(value, content, messageType) {
+  try {
+    const direct = plainText(value);
+    if (direct && !direct.includes("[object Object]")) return direct.slice(0, 300);
+    const built = snippetFromContent(content, messageType);
+    if (typeof built !== "string" || built.includes("[object Object]")) return "";
+    return built.slice(0, 300);
+  } catch (error) {
+    logChatError("[Shopee Chat] forceSnippet", error);
+    return "";
+  }
 }
 
 function normalizeStoredContent(raw, messageType) {
@@ -118,7 +201,7 @@ export async function recordChatMessage(input) {
   const senderType = input?.senderType === "shop" ? "shop" : "customer";
   const customerId = String(input?.customerId || "").trim() || "0";
   const content = normalizeStoredContent(input?.content, input?.messageType);
-  const snippet = String(input?.snippet || snippetFromContent(content) || "").slice(0, 300);
+  const snippet = forceSnippet(input?.snippet, content, input?.messageType);
   const createdAt = input?.createdAt instanceof Date ? input.createdAt : new Date();
 
   if (!Number.isFinite(shopId) || !conversationId || !messageId) {
@@ -146,9 +229,9 @@ export async function recordChatMessage(input) {
     latest_message_snippet: snippet,
     last_updated_at: createdAt,
   };
-  const customerName = String(input?.customerName || "").trim();
-  const customerAvatar = String(input?.customerAvatar || "").trim();
-  if (customerName) set.customer_name = customerName;
+  const customerName = plainText(input?.customerName);
+  const customerAvatar = plainText(input?.customerAvatar);
+  if (customerName && customerName !== "[object Object]") set.customer_name = customerName;
   if (customerAvatar) set.customer_avatar = customerAvatar;
   if (senderType === "shop") set.unread_count = 0;
 
@@ -157,11 +240,16 @@ export async function recordChatMessage(input) {
     update.$inc = { unread_count: 1 };
   }
 
-  await Conversation.findOneAndUpdate(
-    { shop_id: shopId, conversation_id: conversationId },
-    update,
-    { upsert: true, new: true, setDefaultsOnInsert: true },
-  );
+  try {
+    await Conversation.findOneAndUpdate(
+      { shop_id: shopId, conversation_id: conversationId },
+      update,
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+  } catch (error) {
+    logChatError("[Shopee Chat] record conversation", error);
+    return { ok: false, error: "save_failed", created };
+  }
 
   return { ok: true, created, duplicate: !created };
 }
@@ -212,7 +300,7 @@ export async function ingestShopeeChatPush(payload) {
       senderType,
       messageType,
       content,
-      snippet: snippetFromContent(content),
+      snippet: snippetFromContent(content, messageType),
       createdAt: resolveCreatedAt(msg, envelope),
     });
 

@@ -1,5 +1,5 @@
 import { Conversation, ChatMessage, QuickReply } from "../models/Chat.js";
-import { recordChatMessage, sendShopeeChatText } from "../services/shopee/chat.js";
+import { recordChatMessage, sendShopeeChatText, snippetFromContent } from "../services/shopee/chat.js";
 
 const LIST_LIMIT = 100;
 const MESSAGE_CAP = 1000;
@@ -24,18 +24,6 @@ function parseShopId(raw) {
   return shopId;
 }
 
-function snippetFromContent(content) {
-  if (content == null) return "";
-  if (typeof content === "string") return content.trim().slice(0, 300);
-  if (typeof content === "object") {
-    const text = content.text || content.content || content.caption || "";
-    if (String(text).trim()) return String(text).trim().slice(0, 300);
-    if (content.image_url || content.imageUrl || content.image) return "[Hình ảnh]";
-    if (content.sticker || content.sticker_id) return "[Sticker]";
-  }
-  return String(content).slice(0, 300);
-}
-
 function normalizeContent(raw) {
   if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw;
   return { type: "text", text: String(raw ?? "").trim() };
@@ -43,6 +31,27 @@ function normalizeContent(raw) {
 
 function localMessageId() {
   return `local-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function recipientId(raw) {
+  if (raw == null || raw === "") return "";
+  if (typeof raw === "number") {
+    if (!Number.isFinite(raw) || raw <= 0) return "";
+    return String(Math.trunc(raw));
+  }
+  if (typeof raw === "object") {
+    return (
+      recipientId(raw.id) ||
+      recipientId(raw.user_id) ||
+      recipientId(raw.buyer_id) ||
+      recipientId(raw.to_id) ||
+      recipientId(raw.customer_id) ||
+      ""
+    );
+  }
+  const text = String(raw).trim();
+  if (!text || text === "[object Object]" || text === "0") return "";
+  return text;
 }
 
 /** GET /api/chat/conversations?shop_id=&filter=all|unread */
@@ -69,6 +78,8 @@ export async function getConversations(req, res) {
       .limit(LIST_LIMIT)
       .lean();
 
+    await healBrokenSnippets(conversations);
+
     return res.json({ success: true, conversations });
   } catch (error) {
     logChatError("[Chat getConversations]", error);
@@ -76,6 +87,91 @@ export async function getConversations(req, res) {
       success: false,
       error: "Không tải được danh sách hội thoại",
       conversations: [],
+    });
+  }
+}
+
+function isBrokenSnippet(value) {
+  if (value == null || value === "") return false;
+  if (typeof value !== "string") return true;
+  return value.includes("[object Object]");
+}
+
+/** Sửa snippet cũ đã lưu nhầm object. Một query, tối đa LIST_LIMIT hội thoại. */
+async function healBrokenSnippets(conversations) {
+  try {
+    if (!Array.isArray(conversations) || conversations.length === 0) return;
+    const broken = conversations.filter((row) => isBrokenSnippet(row?.latest_message_snippet));
+    if (broken.length === 0) return;
+
+    const ids = [];
+    for (let i = 0; i < broken.length && ids.length < LIST_LIMIT; i += 1) {
+      const id = String(broken[i]?.conversation_id || "").trim();
+      if (id && !ids.includes(id)) ids.push(id);
+    }
+    if (ids.length === 0) return;
+
+    const latest = await ChatMessage.aggregate([
+      { $match: { conversation_id: { $in: ids } } },
+      { $sort: { created_at: -1 } },
+      {
+        $group: {
+          _id: "$conversation_id",
+          content: { $first: "$content" },
+        },
+      },
+    ]);
+    const byId = new Map(latest.map((row) => [String(row._id), row.content]));
+
+    for (let i = 0; i < broken.length; i += 1) {
+      const row = broken[i];
+      try {
+        const snippet = snippetFromContent(byId.get(String(row.conversation_id)));
+        const safe = typeof snippet === "string" && !snippet.includes("[object Object]") ? snippet : "";
+        row.latest_message_snippet = safe;
+        await Conversation.updateOne(
+          { shop_id: row.shop_id, conversation_id: row.conversation_id },
+          { $set: { latest_message_snippet: safe } },
+        );
+      } catch (error) {
+        logChatError("[Chat heal snippet]", error);
+        row.latest_message_snippet = "";
+      }
+    }
+  } catch (error) {
+    logChatError("[Chat healBrokenSnippets]", error);
+    for (let i = 0; i < conversations.length; i += 1) {
+      if (isBrokenSnippet(conversations[i]?.latest_message_snippet)) {
+        conversations[i].latest_message_snippet = "";
+      }
+    }
+  }
+}
+
+/** POST /api/chat/conversations/:id/read — unread_count = 0 */
+export async function markConversationRead(req, res) {
+  try {
+    const conversationId = String(req.params?.id || req.params?.conversation_id || "").trim();
+    if (!conversationId) {
+      return res.status(400).json({ success: false, error: "Thiếu conversation_id." });
+    }
+
+    const shopId = parseShopId(req.body?.shop_id ?? req.query?.shop_id);
+    const filter = { conversation_id: conversationId };
+    if (shopId != null) filter.shop_id = shopId;
+
+    const updated = await Conversation.updateMany(filter, { $set: { unread_count: 0 } });
+    return res.json({
+      success: true,
+      conversation_id: conversationId,
+      unread_count: 0,
+      matched: updated?.matchedCount ?? updated?.n ?? 0,
+    });
+  } catch (error) {
+    logChatError("[Chat markConversationRead]", error);
+    return res.status(500).json({
+      success: false,
+      error: "Không cập nhật được trạng thái đã đọc",
     });
   }
 }
@@ -142,9 +238,10 @@ export async function sendMessage(req, res) {
       });
     }
 
+    const toId = recipientId(req.body?.to_id) || recipientId(conversation.customer_id);
     const sent = await sendShopeeChatText({
       shopId,
-      toId: conversation.customer_id,
+      toId,
       text,
     });
     if (!sent.ok) {
