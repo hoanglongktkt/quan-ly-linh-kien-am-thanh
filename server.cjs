@@ -132630,25 +132630,21 @@ ${(/* @__PURE__ */ new Date()).toISOString()}
     ].filter(Boolean);
     for (const file of targets) {
       try {
-        import_fs25.default.writeFileSync(file, line);
+        import_fs25.default.appendFileSync(file, line);
       } catch {
       }
     }
-    console.error(line);
   } catch {
   }
 }
 process.on("uncaughtException", (err) => {
   try {
-    console.error("[Background Sync Error]:", err instanceof Error ? err.message : String(err));
     writeCpanelCrashLog("Exception", err);
   } catch {
   }
 });
 process.on("unhandledRejection", (err) => {
   try {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("[Background Sync Error]:", msg);
     writeCpanelCrashLog("Rejection", err);
   } catch {
   }
@@ -132694,7 +132690,7 @@ console.log(
 function writeCpanelCrashLogToAppRoot(kind, err) {
   try {
     const stack = err instanceof Error ? err.stack || err.message : typeof err === "string" ? err : JSON.stringify(err);
-    import_fs25.default.writeFileSync(
+    import_fs25.default.appendFileSync(
       import_path25.default.join(APP_ROOT14, "cpanel_error_log.txt"),
       `${kind}: ${stack}
 ---
@@ -132706,14 +132702,12 @@ ${(/* @__PURE__ */ new Date()).toISOString()}
 }
 process.on("uncaughtException", (err) => {
   try {
-    console.error("[Background Sync Error]:", err instanceof Error ? err.message : String(err));
     writeCpanelCrashLogToAppRoot("Exception", err);
   } catch {
   }
 });
 process.on("unhandledRejection", (err) => {
   try {
-    console.error("[Background Sync Error]:", err instanceof Error ? err.message : String(err));
     writeCpanelCrashLogToAppRoot("Rejection", err);
   } catch {
   }

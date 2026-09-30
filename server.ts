@@ -567,19 +567,17 @@ function writeCpanelCrashLog(kind: string, err: unknown): void {
     ].filter(Boolean);
     for (const file of targets) {
       try {
-        fs.writeFileSync(file, line);
+        fs.appendFileSync(file, line);
       } catch {
         /* ignore */
       }
     }
-    console.error(line);
   } catch {
     /* ignore */
   }
 }
 process.on("uncaughtException", (err) => {
   try {
-    console.error("[Background Sync Error]:", err instanceof Error ? err.message : String(err));
     writeCpanelCrashLog("Exception", err);
   } catch {
     /* never rethrow */
@@ -587,8 +585,6 @@ process.on("uncaughtException", (err) => {
 });
 process.on("unhandledRejection", (err) => {
   try {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("[Background Sync Error]:", msg);
     writeCpanelCrashLog("Rejection", err);
   } catch {
     /* never rethrow — Unhandled Rejection không được làm sập process */
@@ -650,7 +646,7 @@ function writeCpanelCrashLogToAppRoot(kind: string, err: unknown): void {
         : typeof err === "string"
           ? err
           : JSON.stringify(err);
-    fs.writeFileSync(
+    fs.appendFileSync(
       path.join(APP_ROOT, "cpanel_error_log.txt"),
       `${kind}: ${stack}\n---\n${new Date().toISOString()}\n`
     );
@@ -660,7 +656,6 @@ function writeCpanelCrashLogToAppRoot(kind: string, err: unknown): void {
 }
 process.on("uncaughtException", (err) => {
   try {
-    console.error("[Background Sync Error]:", err instanceof Error ? err.message : String(err));
     writeCpanelCrashLogToAppRoot("Exception", err);
   } catch {
     /* never rethrow */
@@ -668,7 +663,6 @@ process.on("uncaughtException", (err) => {
 });
 process.on("unhandledRejection", (err) => {
   try {
-    console.error("[Background Sync Error]:", err instanceof Error ? err.message : String(err));
     writeCpanelCrashLogToAppRoot("Rejection", err);
   } catch {
     /* never rethrow */
