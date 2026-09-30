@@ -84188,7 +84188,16 @@ var SCANNER_LOOKUP_SELECT = {
   "data.is_return": 1,
   "data.shopId": 1,
   "data.logistics_status": 1,
-  "data.sub_status": 1
+  "data.sub_status": 1,
+  isReturnReceived: 1,
+  returnReceivedAt: 1,
+  "internal_flags.isReturnReceived": 1,
+  "internal_flags.returnReceivedAt": 1,
+  "data.isReturnReceived": 1,
+  "data.returnReceivedAt": 1,
+  "data.internal_flags.isReturnReceived": 1,
+  "data.internal_flags.returnReceivedAt": 1,
+  "data.scanFlag": 1
 };
 var SCANNER_BULK_SELECT = {
   ...SCANNER_LOOKUP_SELECT,
@@ -87646,6 +87655,86 @@ function buildScanCodesNestedFallbackFilter(v) {
 async function sleepMs(ms) {
   await new Promise((r2) => setTimeout(r2, ms));
 }
+async function findReturnScanOrdersByBarcodes(rawCodes) {
+  const result = /* @__PURE__ */ new Map();
+  if (!isMongoReady() || !Array.isArray(rawCodes) || rawCodes.length === 0) return result;
+  requireMongo();
+  const codes = [
+    ...new Set(
+      rawCodes.map((c) => normalizeScannedCode(c)).filter((c) => Boolean(c))
+    )
+  ];
+  if (codes.length === 0) return result;
+  const ids = codes.map((c) => `shopee-${c.replace(/^SHOPEE-/, "")}`);
+  const filter2 = {
+    $or: [
+      { orderSn: { $in: codes } },
+      { order_sn: { $in: codes } },
+      { "data.orderSn": { $in: codes } },
+      { "data.order_sn": { $in: codes } },
+      { tracking_no: { $in: codes } },
+      { trackingNumber: { $in: codes } },
+      { "data.tracking_no": { $in: codes } },
+      { "data.trackingNumber": { $in: codes } },
+      { return_tracking_no: { $in: codes } },
+      { returnTrackingNumber: { $in: codes } },
+      { "data.return_tracking_no": { $in: codes } },
+      { "data.returnTrackingNumber": { $in: codes } },
+      { _id: { $in: ids } }
+    ]
+  };
+  const docs = await OrderModel.find(filter2).select({
+    _id: 1,
+    orderSn: 1,
+    order_sn: 1,
+    shopId: 1,
+    status: 1,
+    shopee_order_status: 1,
+    tracking_no: 1,
+    trackingNumber: 1,
+    return_tracking_no: 1,
+    returnTrackingNumber: 1,
+    isReturnReceived: 1,
+    returnReceivedAt: 1,
+    "internal_flags.isReturnReceived": 1,
+    "internal_flags.returnReceivedAt": 1,
+    "data.orderSn": 1,
+    "data.order_sn": 1,
+    "data.shopId": 1,
+    "data.status": 1,
+    "data.shopee_order_status": 1,
+    "data.tracking_no": 1,
+    "data.trackingNumber": 1,
+    "data.return_tracking_no": 1,
+    "data.returnTrackingNumber": 1,
+    "data.isReturnReceived": 1,
+    "data.returnReceivedAt": 1,
+    "data.internal_flags.isReturnReceived": 1,
+    "data.internal_flags.returnReceivedAt": 1,
+    "data.local_status": 1,
+    "data.localStatus": 1,
+    "data.scanFlag": 1,
+    "data.internal_status": 1,
+    "data.items": 1,
+    "data.item_list": 1
+  }).limit(Math.min(Math.max(codes.length * 3, 20), 500)).maxTimeMS(5e3).lean();
+  const byKey = /* @__PURE__ */ new Map();
+  for (const doc of docs || []) {
+    const order = hydrateOrderFromMongoDoc(doc);
+    if (!order) continue;
+    for (const key of collectHydratedOrderScanKeys(order)) {
+      if (key && !byKey.has(key)) byKey.set(key, order);
+    }
+  }
+  for (const code of codes) {
+    const stripped = stripScannedSeparators(code);
+    const hit = byKey.get(code) || (stripped ? byKey.get(stripped) : void 0);
+    if (!hit) continue;
+    result.set(code, hit);
+    if (stripped) result.set(stripped, hit);
+  }
+  return result;
+}
 async function findOrdersByScanCodesInStore(rawCodes) {
   const result = /* @__PURE__ */ new Map();
   if (!isMongoReady() || !Array.isArray(rawCodes) || rawCodes.length === 0) {
@@ -90532,19 +90621,6 @@ function normalizeContent(raw) {
 function localMessageId() {
   return `local-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
-function recipientId(raw) {
-  if (raw == null || raw === "") return "";
-  if (typeof raw === "number") {
-    if (!Number.isFinite(raw) || raw <= 0) return "";
-    return String(Math.trunc(raw));
-  }
-  if (typeof raw === "object") {
-    return recipientId(raw.id) || recipientId(raw.user_id) || recipientId(raw.buyer_id) || recipientId(raw.to_id) || recipientId(raw.customer_id) || "";
-  }
-  const text = String(raw).trim();
-  if (!text || text === "[object Object]" || text === "0") return "";
-  return text;
-}
 async function getConversations(req, res) {
   try {
     const shopRaw = req.query?.shop_id;
@@ -90622,10 +90698,9 @@ async function sendMessage(req, res) {
         error: "Kh\xF4ng t\xECm th\u1EA5y h\u1ED9i tho\u1EA1i."
       });
     }
-    const toId = recipientId(req.body?.to_id) || recipientId(conversation.customer_id);
     const sent = await sendShopeeChatText({
       shopId,
-      toId,
+      toId: conversation.customer_id,
       text
     });
     if (!sent.ok) {
@@ -119927,7 +120002,11 @@ function emitOrderUpdated(_payload) {
 }
 
 // controllers/scanBulkController.js
-var RETURN_SCAN_DUPLICATE_ERROR = "\u0110\u01A1n h\xE0ng n\xE0y \u0110\xC3 \u0110\u01AF\u1EE2C QU\xC9T X\xC1C NH\u1EACN thu h\u1ED3i tr\u01B0\u1EDBc \u0111\xF3!";
+function returnScanDuplicateError(order) {
+  const sn = String(order?.orderSn || order?.order_sn || "").replace(/^shopee-/i, "").trim();
+  return `\u0110\u01A1n h\xE0ng ${sn || "n\xE0y"} \u0110\xC3 \u0110\u01AF\u1EE2C QU\xC9T NH\u1EACN V\xC0O KHO tr\u01B0\u1EDBc \u0111\xF3! Kh\xF4ng th\u1EC3 qu\xE9t l\u1EA1i.`;
+}
+var RETURN_SCAN_NOT_FOUND_ERROR = "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng n\xE0y trong h\u1EC7 th\u1ED1ng!";
 function readReturnReceivedFlag(order) {
   if (!order || typeof order !== "object") return { locked: false, receivedAt: null };
   const nested = order.internal_flags && typeof order.internal_flags === "object" ? order.internal_flags : null;
@@ -120035,12 +120114,67 @@ async function scanBulkUpdate(req, res) {
       }
       return { code: scannedCode, found };
     });
+    const returnConfirmCodes = codes.filter(
+      (c) => (forceCancelCodes.has(c) || forceReturnCodes.has(c)) && !forceHandOverCodes.has(c)
+    );
+    if (returnConfirmCodes.length > 0) {
+      let flaggedByCode = /* @__PURE__ */ new Map();
+      try {
+        flaggedByCode = await findReturnScanOrdersByBarcodes(returnConfirmCodes);
+      } catch (flagLookupErr) {
+        console.warn(
+          "[Orders Scan Bulk] return-scan barcode lookup fail:",
+          flagLookupErr?.message || flagLookupErr
+        );
+      }
+      for (const pair of lookupPairs) {
+        const hit = flaggedByCode.get(pair.code) || null;
+        if (!hit) continue;
+        if (!pair.found) {
+          pair.found = hit;
+          continue;
+        }
+        if (hit.isReturnReceived === true) pair.found.isReturnReceived = true;
+        if (hit.returnReceivedAt) pair.found.returnReceivedAt = hit.returnReceivedAt;
+        if (hit.internal_flags && typeof hit.internal_flags === "object") {
+          pair.found.internal_flags = {
+            ...pair.found.internal_flags && typeof pair.found.internal_flags === "object" ? pair.found.internal_flags : {},
+            ...hit.internal_flags
+          };
+        }
+      }
+    }
+    const returnOnlyRequest = returnConfirmCodes.length > 0 && forceHandOverCodes.size === 0;
     if (lookupPairs.every((p) => !p.found)) {
+      if (returnOnlyRequest) {
+        return res.status(404).json({
+          success: false,
+          error: RETURN_SCAN_NOT_FOUND_ERROR,
+          message: RETURN_SCAN_NOT_FOUND_ERROR,
+          notFound: true
+        });
+      }
       return res.status(404).json({
         success: false,
         message: "Kh\xF4ng t\xECm th\u1EA5y m\xE3 tr\xEAn h\u1EC7 th\u1ED1ng",
         notFound: true
       });
+    }
+    if (returnOnlyRequest) {
+      const foundReturnPairs = lookupPairs.filter((p) => p.found);
+      const duplicated = foundReturnPairs.filter(
+        (p) => readReturnReceivedFlag(p.found).locked
+      );
+      if (foundReturnPairs.length > 0 && duplicated.length === foundReturnPairs.length) {
+        const lockedOrder = duplicated[0].found;
+        const error = returnScanDuplicateError(lockedOrder);
+        return res.status(400).json({
+          success: false,
+          error,
+          message: error,
+          receivedAt: readReturnReceivedFlag(lockedOrder).receivedAt
+        });
+      }
     }
     const orders = [];
     const orderIndexById = /* @__PURE__ */ new Map();
@@ -120145,13 +120279,14 @@ async function scanBulkUpdate(req, res) {
               });
               donHoanHuyAlready += 1;
             }
+            const dupError = returnScanDuplicateError(order);
             results.push({
               code,
               action: "duplicate",
               orderId: order.id,
               orderSn: order.orderSn,
-              message: RETURN_SCAN_DUPLICATE_ERROR,
-              error: RETURN_SCAN_DUPLICATE_ERROR,
+              message: dupError,
+              error: dupError,
               receivedAt: receivedFlag.receivedAt,
               local_status: existingLocal || (forceReturn ? "RETURN_RECEIVED" : "CANCELLED_STORED")
             });
@@ -120159,8 +120294,8 @@ async function scanBulkUpdate(req, res) {
               code,
               orderId: order.id,
               orderSn: order.orderSn,
-              reason: RETURN_SCAN_DUPLICATE_ERROR,
-              error: RETURN_SCAN_DUPLICATE_ERROR,
+              reason: dupError,
+              error: dupError,
               receivedAt: receivedFlag.receivedAt,
               duplicateReturn: true
             });
@@ -120611,12 +120746,15 @@ async function scanBulkUpdate(req, res) {
     const duplicateReturns = failed_scans.filter((f3) => f3.duplicateReturn);
     const duplicateOnly = processedCount === 0 && duplicateReturns.length > 0 && changedOrders.length === 0;
     if (duplicateOnly) {
+      const dupError = String(
+        duplicateReturns[0]?.error || duplicateReturns[0]?.reason || returnScanDuplicateError(null)
+      );
       return res.status(400).json({
         ...responsePayload,
         success: false,
         partialFailure: false,
-        error: RETURN_SCAN_DUPLICATE_ERROR,
-        message: RETURN_SCAN_DUPLICATE_ERROR,
+        error: dupError,
+        message: dupError,
         receivedAt: duplicateReturns[0]?.receivedAt || null
       });
     }

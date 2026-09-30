@@ -3,9 +3,16 @@
  * Phase 3 — tách nguyên khối từ server.ts (không đổi logic).
  */
 import { emitOrderUpdated } from "../services/orderRealtime.js";
+import { findReturnScanOrdersByBarcodes } from "../src/db/mongoStore.ts";
 
-const RETURN_SCAN_DUPLICATE_ERROR =
-  "Đơn hàng này ĐÃ ĐƯỢC QUÉT XÁC NHẬN thu hồi trước đó!";
+function returnScanDuplicateError(order) {
+  const sn = String(order?.orderSn || order?.order_sn || "")
+    .replace(/^shopee-/i, "")
+    .trim();
+  return `Đơn hàng ${sn || "này"} ĐÃ ĐƯỢC QUÉT NHẬN VÀO KHO trước đó! Không thể quét lại.`;
+}
+
+const RETURN_SCAN_NOT_FOUND_ERROR = "Không tìm thấy đơn hàng này trong hệ thống!";
 
 function readReturnReceivedFlag(order) {
   if (!order || typeof order !== "object") return { locked: false, receivedAt: null };
@@ -145,12 +152,75 @@ export async function scanBulkUpdate(req, res) {
       return { code: scannedCode, found };
     });
 
+    // Quét hủy/hoàn: tìm lại CHỈ theo mã vạch, không lọc status/tab,
+    // để đơn đã chuyển sang "Đã nhận đơn hoàn" vẫn mang cờ isReturnReceived.
+    const returnConfirmCodes = codes.filter(
+      (c) =>
+        (forceCancelCodes.has(c) || forceReturnCodes.has(c)) && !forceHandOverCodes.has(c),
+    );
+    if (returnConfirmCodes.length > 0) {
+      let flaggedByCode = new Map();
+      try {
+        flaggedByCode = await findReturnScanOrdersByBarcodes(returnConfirmCodes);
+      } catch (flagLookupErr) {
+        console.warn(
+          "[Orders Scan Bulk] return-scan barcode lookup fail:",
+          flagLookupErr?.message || flagLookupErr,
+        );
+      }
+      for (const pair of lookupPairs) {
+        const hit = flaggedByCode.get(pair.code) || null;
+        if (!hit) continue;
+        if (!pair.found) {
+          pair.found = hit;
+          continue;
+        }
+        if (hit.isReturnReceived === true) pair.found.isReturnReceived = true;
+        if (hit.returnReceivedAt) pair.found.returnReceivedAt = hit.returnReceivedAt;
+        if (hit.internal_flags && typeof hit.internal_flags === "object") {
+          pair.found.internal_flags = {
+            ...(pair.found.internal_flags && typeof pair.found.internal_flags === "object"
+              ? pair.found.internal_flags
+              : {}),
+            ...hit.internal_flags,
+          };
+        }
+      }
+    }
+
+    const returnOnlyRequest =
+      returnConfirmCodes.length > 0 && forceHandOverCodes.size === 0;
     if (lookupPairs.every((p) => !p.found)) {
+      if (returnOnlyRequest) {
+        return res.status(404).json({
+          success: false,
+          error: RETURN_SCAN_NOT_FOUND_ERROR,
+          message: RETURN_SCAN_NOT_FOUND_ERROR,
+          notFound: true,
+        });
+      }
       return res.status(404).json({
         success: false,
         message: "Không tìm thấy mã trên hệ thống",
         notFound: true,
       });
+    }
+
+    if (returnOnlyRequest) {
+      const foundReturnPairs = lookupPairs.filter((p) => p.found);
+      const duplicated = foundReturnPairs.filter(
+        (p) => readReturnReceivedFlag(p.found).locked,
+      );
+      if (foundReturnPairs.length > 0 && duplicated.length === foundReturnPairs.length) {
+        const lockedOrder = duplicated[0].found;
+        const error = returnScanDuplicateError(lockedOrder);
+        return res.status(400).json({
+          success: false,
+          error,
+          message: error,
+          receivedAt: readReturnReceivedFlag(lockedOrder).receivedAt,
+        });
+      }
     }
 
     const orders = [];
@@ -304,13 +374,14 @@ export async function scanBulkUpdate(req, res) {
               });
               donHoanHuyAlready += 1;
             }
+            const dupError = returnScanDuplicateError(order);
             results.push({
               code,
               action: "duplicate",
               orderId: order.id,
               orderSn: order.orderSn,
-              message: RETURN_SCAN_DUPLICATE_ERROR,
-              error: RETURN_SCAN_DUPLICATE_ERROR,
+              message: dupError,
+              error: dupError,
               receivedAt: receivedFlag.receivedAt,
               local_status: existingLocal || (forceReturn ? "RETURN_RECEIVED" : "CANCELLED_STORED"),
             });
@@ -318,8 +389,8 @@ export async function scanBulkUpdate(req, res) {
               code,
               orderId: order.id,
               orderSn: order.orderSn,
-              reason: RETURN_SCAN_DUPLICATE_ERROR,
-              error: RETURN_SCAN_DUPLICATE_ERROR,
+              reason: dupError,
+              error: dupError,
               receivedAt: receivedFlag.receivedAt,
               duplicateReturn: true,
             });
@@ -833,12 +904,15 @@ export async function scanBulkUpdate(req, res) {
     const duplicateOnly =
       processedCount === 0 && duplicateReturns.length > 0 && changedOrders.length === 0;
     if (duplicateOnly) {
+      const dupError = String(
+        duplicateReturns[0]?.error || duplicateReturns[0]?.reason || returnScanDuplicateError(null),
+      );
       return res.status(400).json({
         ...responsePayload,
         success: false,
         partialFailure: false,
-        error: RETURN_SCAN_DUPLICATE_ERROR,
-        message: RETURN_SCAN_DUPLICATE_ERROR,
+        error: dupError,
+        message: dupError,
         receivedAt: duplicateReturns[0]?.receivedAt || null,
       });
     }

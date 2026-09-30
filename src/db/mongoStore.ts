@@ -5830,6 +5830,15 @@ const SCANNER_LOOKUP_SELECT = {
   "data.shopId": 1,
   "data.logistics_status": 1,
   "data.sub_status": 1,
+  isReturnReceived: 1,
+  returnReceivedAt: 1,
+  "internal_flags.isReturnReceived": 1,
+  "internal_flags.returnReceivedAt": 1,
+  "data.isReturnReceived": 1,
+  "data.returnReceivedAt": 1,
+  "data.internal_flags.isReturnReceived": 1,
+  "data.internal_flags.returnReceivedAt": 1,
+  "data.scanFlag": 1,
 } as const;
 
 /** Projection scan-bulk — thêm items cho restock nền. */
@@ -10583,6 +10592,98 @@ function buildScanCodesNestedFallbackFilter(
 
 async function sleepMs(ms: number): Promise<void> {
   await new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Tìm đơn cho luồng quét hủy/hoàn — CHỈ theo mã vạch.
+ * Không lọc status, shopee_order_status, local_status hay tab.
+ * Projection bắt buộc có isReturnReceived để pre-check không bị bỏ qua.
+ */
+export async function findReturnScanOrdersByBarcodes(
+  rawCodes: string[],
+): Promise<Map<string, any>> {
+  const result = new Map<string, any>();
+  if (!isMongoReady() || !Array.isArray(rawCodes) || rawCodes.length === 0) return result;
+  requireMongo();
+  const codes = [
+    ...new Set(
+      rawCodes.map((c) => normalizeScannedCode(c)).filter((c) => Boolean(c)),
+    ),
+  ];
+  if (codes.length === 0) return result;
+  const ids = codes.map((c) => `shopee-${c.replace(/^SHOPEE-/, "")}`);
+  const filter = {
+    $or: [
+      { orderSn: { $in: codes } },
+      { order_sn: { $in: codes } },
+      { "data.orderSn": { $in: codes } },
+      { "data.order_sn": { $in: codes } },
+      { tracking_no: { $in: codes } },
+      { trackingNumber: { $in: codes } },
+      { "data.tracking_no": { $in: codes } },
+      { "data.trackingNumber": { $in: codes } },
+      { return_tracking_no: { $in: codes } },
+      { returnTrackingNumber: { $in: codes } },
+      { "data.return_tracking_no": { $in: codes } },
+      { "data.returnTrackingNumber": { $in: codes } },
+      { _id: { $in: ids } },
+    ],
+  };
+  const docs = await OrderModel.find(filter)
+    .select({
+      _id: 1,
+      orderSn: 1,
+      order_sn: 1,
+      shopId: 1,
+      status: 1,
+      shopee_order_status: 1,
+      tracking_no: 1,
+      trackingNumber: 1,
+      return_tracking_no: 1,
+      returnTrackingNumber: 1,
+      isReturnReceived: 1,
+      returnReceivedAt: 1,
+      "internal_flags.isReturnReceived": 1,
+      "internal_flags.returnReceivedAt": 1,
+      "data.orderSn": 1,
+      "data.order_sn": 1,
+      "data.shopId": 1,
+      "data.status": 1,
+      "data.shopee_order_status": 1,
+      "data.tracking_no": 1,
+      "data.trackingNumber": 1,
+      "data.return_tracking_no": 1,
+      "data.returnTrackingNumber": 1,
+      "data.isReturnReceived": 1,
+      "data.returnReceivedAt": 1,
+      "data.internal_flags.isReturnReceived": 1,
+      "data.internal_flags.returnReceivedAt": 1,
+      "data.local_status": 1,
+      "data.localStatus": 1,
+      "data.scanFlag": 1,
+      "data.internal_status": 1,
+      "data.items": 1,
+      "data.item_list": 1,
+    })
+    .limit(Math.min(Math.max(codes.length * 3, 20), 500))
+    .maxTimeMS(5000)
+    .lean();
+  const byKey = new Map<string, any>();
+  for (const doc of docs || []) {
+    const order = hydrateOrderFromMongoDoc(doc);
+    if (!order) continue;
+    for (const key of collectHydratedOrderScanKeys(order)) {
+      if (key && !byKey.has(key)) byKey.set(key, order);
+    }
+  }
+  for (const code of codes) {
+    const stripped = stripScannedSeparators(code);
+    const hit = byKey.get(code) || (stripped ? byKey.get(stripped) : undefined);
+    if (!hit) continue;
+    result.set(code, hit);
+    if (stripped) result.set(stripped, hit);
+  }
+  return result;
 }
 
 /** Lookup N mã quét — ĐÚNG 1-2 (hoặc vài chunk) find `$in` trên index. CẤM N lần findOne. */
