@@ -364,7 +364,8 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       const data = await parseJsonResponse<{ success?: boolean; listings?: ChannelListing[]; message?: string; error?: string }>(res);
       if (!res.ok || !data.success) {
         const msg = data?.message || data?.error || 'Lỗi lưu mapping vào máy chủ.';
-        console.error('[ProductLinking] Lưu mapping thất bại:', data);
+        const errObj = { response: { data } };
+        console.error("Lỗi API Mapping:", errObj.response?.data || data);
         showToast(msg);
         return null;
       }
@@ -375,7 +376,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         : payload;
       return savedRows;
     } catch (err) {
-      console.error('[ProductLinking] Lưu mapping thất bại:', err);
+      console.error("Lỗi API Mapping:", (err as { response?: { data?: unknown } })?.response?.data || err);
       showToast('Không thể lưu dữ liệu mapping. Vui lòng kiểm tra kết nối máy chủ.');
       return null;
     }
@@ -511,6 +512,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   const isMappingCancelledRef = useRef(false);
 
   // Manual Mapping Modal state
+  const manualLinkLock = useRef(false);
   const [mappingListing, setMappingListing] = useState<ChannelListing | null>(null);
   const [mappingSearch, setMappingSearch] = useState('');
   /** Toàn bộ SKU kho gốc — không phụ thuộc phân trang trang Kho sản phẩm. */
@@ -1066,8 +1068,9 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     void searchMasterViaApi(titleKeyword);
   };
 
-  // 3. Confirm Manual Mapping — dùng listingId + masterProductId từ DATA (state), không lấy từ UI text.
-  const handleMapProduct = (listingId: string, masterProductId: string) => {
+  // 3. Confirm Manual Mapping — POST 1 dòng, không PUT cả danh sách mapping.
+  const handleMapProduct = async (listingId: string, masterProductId: string) => {
+    if (manualLinkLock.current) return;
     const catalogHit = flattenedMasterProducts.find((p) => String(p.id) === String(masterProductId));
     const listing = listings.find((l) => String(l.id) === String(listingId));
     // Ưu tiên SP đầy đủ từ trang Kho đang load; catalog chỉ có id/sku/title (không được PATCH stock=0).
@@ -1078,78 +1081,133 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       return;
     }
 
-    saveListings((prev) =>
-      prev.map((item) => {
-        if (String(item.id) !== String(listingId)) return item;
-        return {
-          ...item,
-          status: 'success',
-          linkedProductId: String(displayProd.id),
-          linkedProductTitle: displayProd.title,
-          linkedProductSku: displayProd.sku,
-          linkedProduct: { id: String(displayProd.id), title: displayProd.title, sku: displayProd.sku },
-          sku: item.sku || displayProd.sku,
-          syncError: undefined,
-          linkBroken: false,
-        };
-      })
-    );
-
-    if (warehouseProd) {
-      onUpdateProduct(applyProductChannelLink(warehouseProd, listing), { save: true });
-    } else {
-      // SP ở trang 2+ Kho Gốc — chỉ PATCH field liên kết kênh, không ghi đè tồn/giá.
-      void (async () => {
-        try {
-          const token = localStorage.getItem('admin_token');
-          if (!token) return;
-          const patched = applyProductChannelLink(
-            {
-              id: displayProd.id,
-              title: displayProd.title,
-              sku: displayProd.sku,
-              stock: 0,
-              importPrice: 0,
-              sellingPrice: 0,
-              status: 'active',
-              channels: [],
-              category: 'Chưa phân loại',
-              description: '',
-            } satisfies Product,
-            listing
-          );
-          await apiFetch(`/api/products/${encodeURIComponent(String(displayProd.id))}`, {
-            method: 'PATCH',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-              channels: patched.channels,
-              shopeeId: patched.shopeeId,
-              shopeeItemId: patched.shopeeItemId,
-              shopeeModelId: patched.shopeeModelId,
-              tiktokId: patched.tiktokId,
-              wooId: patched.wooId,
-            }),
-          });
-        } catch (err) {
-          console.warn('[ProductLinking] patch channel link (off-page) failed', err);
-        }
-      })();
+    const token = localStorage.getItem('admin_token');
+    if (!token) {
+      showToast('Phiên đăng nhập hết hạn. Vui lòng đăng nhập lại.');
+      return;
     }
 
-    setMappingListing(null);
-    showToast(`Liên kết thành công sàn [${listing.shopName}] với kho sản phẩm chính!`);
-
-    onAddLog({
-      id: `log-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      channel: listing.platform === 'lazada' ? 'shopee' : listing.platform,
-      type: 'product_sync',
+    const nextListing: ChannelListing = {
+      ...listing,
       status: 'success',
-      message: `Liên kết thủ công sản phẩm sàn [ID: ${listing.channelId}] sang Kho chính sản phẩm [${displayProd.sku}]`,
-    });
+      linkedProductId: String(displayProd.id),
+      linkedProductTitle: displayProd.title,
+      linkedProductSku: displayProd.sku,
+      linkedProduct: { id: String(displayProd.id), title: displayProd.title, sku: displayProd.sku },
+      sku: listing.sku || displayProd.sku,
+      syncError: undefined,
+      linkBroken: false,
+    };
+
+    manualLinkLock.current = true;
+    try {
+      const res = await apiFetch('/api/mapping-products/manual-link', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          listingId: String(listing.id),
+          masterProductId: String(displayProd.id),
+          channelId: String(listing.channelId || listing.itemId || ''),
+          linkedProductTitle: displayProd.title,
+          linkedProductSku: displayProd.sku,
+        }),
+      });
+
+      let data: { success?: boolean; message?: string; error?: string; listing?: ChannelListing } = {};
+      try {
+        const text = await res.text();
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = {};
+      }
+
+      if (!res.ok || data?.success === false) {
+        const err = new Error(data?.message || data?.error || `HTTP ${res.status}`) as Error & {
+          response?: { data?: unknown };
+        };
+        err.response = { data: data && typeof data === 'object' ? data : { status: res.status } };
+        throw err;
+      }
+
+      const saved = normalizeListingRecord(data.listing) ?? nextListing;
+      mergeListingIntoState({
+        ...nextListing,
+        ...saved,
+        status: 'success',
+        linkedProductId: String(displayProd.id),
+        linkedProductTitle: saved.linkedProductTitle || displayProd.title,
+        linkedProductSku: saved.linkedProductSku || displayProd.sku,
+        linkedProduct: saved.linkedProduct || nextListing.linkedProduct,
+        linkBroken: false,
+      });
+
+      if (warehouseProd) {
+        onUpdateProduct(applyProductChannelLink(warehouseProd, listing), { save: true });
+      } else {
+        // SP ở trang 2+ Kho Gốc — chỉ PATCH field liên kết kênh, không ghi đè tồn/giá.
+        void (async () => {
+          try {
+            const patched = applyProductChannelLink(
+              {
+                id: displayProd.id,
+                title: displayProd.title,
+                sku: displayProd.sku,
+                stock: 0,
+                importPrice: 0,
+                sellingPrice: 0,
+                status: 'active',
+                channels: [],
+                category: 'Chưa phân loại',
+                description: '',
+              } satisfies Product,
+              listing
+            );
+            await apiFetch(`/api/products/${encodeURIComponent(String(displayProd.id))}`, {
+              method: 'PATCH',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                channels: patched.channels,
+                shopeeId: patched.shopeeId,
+                shopeeItemId: patched.shopeeItemId,
+                shopeeModelId: patched.shopeeModelId,
+                tiktokId: patched.tiktokId,
+                wooId: patched.wooId,
+              }),
+            });
+          } catch (err) {
+            console.warn('[ProductLinking] patch channel link (off-page) failed', err);
+          }
+        })();
+      }
+
+      setMappingListing(null);
+      showToast(
+        data?.message && /đã được mapping/i.test(data.message)
+          ? data.message
+          : `Liên kết thành công sàn [${listing.shopName}] với kho sản phẩm chính!`
+      );
+
+      onAddLog({
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        channel: listing.platform === 'lazada' ? 'shopee' : listing.platform,
+        type: 'product_sync',
+        status: 'success',
+        message: `Liên kết thủ công sản phẩm sàn [ID: ${listing.channelId}] sang Kho chính sản phẩm [${displayProd.sku}]`,
+      });
+    } catch (error) {
+      console.error("Lỗi API Mapping:", (error as { response?: { data?: unknown } })?.response?.data || error);
+      const serverMsg = (error as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      showToast(serverMsg || 'Không thể lưu dữ liệu mapping. Vui lòng kiểm tra kết nối máy chủ.');
+    } finally {
+      manualLinkLock.current = false;
+    }
   };
 
   // Handler to auto link a single channel product

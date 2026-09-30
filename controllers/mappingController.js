@@ -20,6 +20,12 @@ let deps = {
   readChannelListingsForGet: async () => [],
   sanitizeChannelListingRow: (row) => row,
   bulkUpsertChannelListingsToStore: async () => {},
+  applyManualChannelListingLink: async () => ({
+    success: false,
+    alreadyMapped: false,
+    listing: null,
+    message: "Mapping store chưa sẵn sàng.",
+  }),
   flushDbWrites: async () => {},
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   loadProducts: async () => [],
@@ -172,6 +178,70 @@ export async function handleMappingProductsUpsert(req, res) {
       message: `Lỗi lưu Database: ${errMsg}`,
       error: errMsg,
     });
+  }
+}
+
+/** POST /api/mapping-products/manual-link — liên kết 1 sản phẩm, có xét cờ trước khi $set. */
+export async function handleManualMappingLink(req, res) {
+  try {
+    const body = req?.body && typeof req.body === "object" ? req.body : {};
+    const listingId = String(body.listingId || body.id || "").trim();
+    const masterProductId = String(body.masterProductId || body.linkedProductId || "").trim();
+    const channelId = String(body.channelId || body.itemId || body.shopeeItemId || "").trim();
+
+    if (!listingId || !masterProductId) {
+      return res.status(400).json({
+        success: false,
+        message: "Thiếu id sản phẩm kho hoặc id sản phẩm Shopee.",
+      });
+    }
+
+    const result = await deps.applyManualChannelListingLink({
+      listingId,
+      masterProductId,
+      channelId,
+      linkedProductTitle: body.linkedProductTitle || body.title,
+      linkedProductSku: body.linkedProductSku || body.sku,
+    });
+
+    if (!result?.success) {
+      return res.status(200).json({
+        success: false,
+        alreadyMapped: result?.alreadyMapped === true,
+        message: result?.message || "Không thể cập nhật mapping.",
+        listing: result?.listing || null,
+      });
+    }
+
+    try {
+      await deps.flushDbWrites();
+    } catch (flushErr) {
+      console.error("[Mapping Manual] flush bỏ qua:", flushErr?.message || flushErr);
+    }
+
+    const listing = result.listing ? deps.sanitizeChannelListingRow(result.listing) : null;
+    const safeListing = listing
+      ? {
+          ...listing,
+          linkedProductTitle: result.listing?.linkedProductTitle || listing.linkedProductTitle,
+          linkedProductSku: result.listing?.linkedProductSku || listing.linkedProductSku,
+          linkedProduct: result.listing?.linkedProduct || undefined,
+          linkBroken: false,
+        }
+      : result.listing;
+
+    console.log(
+      `Đã lưu DB thành công — manual-link listing=${listingId} master=${masterProductId} already=${result.alreadyMapped === true}`,
+    );
+    return res.status(200).json({
+      success: true,
+      alreadyMapped: result.alreadyMapped === true,
+      listing: safeListing,
+      message: result.message || "Đã lưu mapping.",
+    });
+  } catch (error) {
+    console.error("[Mapping Manual] lỗi:", error?.message || error);
+    return res.status(500).json({ success: false, message: "Lỗi server" });
   }
 }
 

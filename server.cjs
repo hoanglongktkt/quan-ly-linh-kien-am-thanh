@@ -81760,6 +81760,177 @@ async function bulkUpsertChannelListingsToStore(rows) {
   });
   return ops.length;
 }
+async function applyManualChannelListingLink(input) {
+  const listingId = String(input?.listingId || "").trim();
+  const masterProductId = String(input?.masterProductId || "").trim();
+  const channelId = String(input?.channelId || "").trim();
+  const linkedTitle = String(input?.linkedProductTitle || "").trim();
+  const linkedSku = String(input?.linkedProductSku || "").trim();
+  if (!listingId || !masterProductId) {
+    return {
+      success: false,
+      alreadyMapped: false,
+      listing: null,
+      message: "Thi\u1EBFu id s\u1EA3n ph\u1EA9m kho ho\u1EB7c id s\u1EA3n ph\u1EA9m s\xE0n."
+    };
+  }
+  const decide = (row) => {
+    const currentLink = String(row?.linkedProductId || row?.linkedProduct?.id || "").trim();
+    const currentStatus = String(row?.status || "");
+    const isMapped = currentStatus === "success" && currentLink !== "";
+    return { currentLink, isMapped };
+  };
+  const buildNext = (row) => {
+    const next = {
+      ...row,
+      id: String(row?.id || listingId),
+      status: "success",
+      linkedProductId: masterProductId,
+      linkedProductTitle: linkedTitle || row?.linkedProductTitle || "",
+      linkedProductSku: linkedSku || row?.linkedProductSku || "",
+      linkedProduct: {
+        id: masterProductId,
+        title: linkedTitle || row?.linkedProductTitle || row?.linkedProduct?.title || "",
+        sku: linkedSku || row?.linkedProductSku || row?.linkedProduct?.sku || ""
+      },
+      sku: String(row?.sku || "").trim() || linkedSku || row?.sku,
+      linkBroken: false,
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    delete next.syncError;
+    return next;
+  };
+  if (isProductsDiskMode()) {
+    const current = readChannelListingsFromDisk();
+    let idx = current.findIndex((row) => String(row?.id || "") === listingId);
+    if (idx < 0 && channelId) {
+      idx = current.findIndex(
+        (row) => String(row?.channelId || row?.itemId || "") === channelId
+      );
+    }
+    if (idx < 0) {
+      return {
+        success: false,
+        alreadyMapped: false,
+        listing: null,
+        message: "Kh\xF4ng t\xECm th\u1EA5y s\u1EA3n ph\u1EA9m s\xE0n \u0111\u1EC3 mapping."
+      };
+    }
+    const existing = current[idx];
+    const { currentLink, isMapped } = decide(existing);
+    if (isMapped && currentLink === masterProductId) {
+      return {
+        success: true,
+        alreadyMapped: true,
+        listing: existing,
+        message: "S\u1EA3n ph\u1EA9m \u0111\xE3 \u0111\u01B0\u1EE3c mapping."
+      };
+    }
+    if (isMapped && currentLink !== masterProductId) {
+      return {
+        success: false,
+        alreadyMapped: true,
+        listing: existing,
+        message: "S\u1EA3n ph\u1EA9m \u0111\xE3 \u0111\u01B0\u1EE3c mapping v\u1EDBi kho kh\xE1c. Kh\xF4ng ghi \u0111\xE8."
+      };
+    }
+    const nextRow = buildNext(existing);
+    const nextList = current.slice();
+    nextList[idx] = nextRow;
+    await saveChannelListingsToDisk(nextList);
+    console.log(`[Listings Disk] manual-link id=${nextRow.id} \u2192 ${masterProductId}`);
+    return {
+      success: true,
+      alreadyMapped: false,
+      listing: nextRow,
+      message: "\u0110\xE3 l\u01B0u mapping."
+    };
+  }
+  requireMongo();
+  let outcome = {
+    success: false,
+    alreadyMapped: false,
+    listing: null,
+    message: "Kh\xF4ng th\u1EC3 c\u1EADp nh\u1EADt mapping."
+  };
+  await enqueueWrite(async () => {
+    const or = [{ _id: listingId }];
+    if (channelId) or.push({ channelId });
+    const doc = await ChannelListingModel.findOne({ $or: or }).maxTimeMS(8e3).lean();
+    if (!doc) {
+      outcome = {
+        success: false,
+        alreadyMapped: false,
+        listing: null,
+        message: "Kh\xF4ng t\xECm th\u1EA5y s\u1EA3n ph\u1EA9m s\xE0n \u0111\u1EC3 mapping."
+      };
+      return;
+    }
+    const row = doc.data && typeof doc.data === "object" ? { ...doc.data, id: String(doc._id || doc.data.id || listingId) } : { id: String(doc._id || listingId) };
+    if (!row.linkedProductId && doc.linkedProductId) row.linkedProductId = String(doc.linkedProductId);
+    if (!row.status && doc.status) row.status = String(doc.status);
+    const { currentLink, isMapped } = decide(row);
+    if (isMapped && currentLink === masterProductId) {
+      outcome = {
+        success: true,
+        alreadyMapped: true,
+        listing: row,
+        message: "S\u1EA3n ph\u1EA9m \u0111\xE3 \u0111\u01B0\u1EE3c mapping."
+      };
+      return;
+    }
+    if (isMapped && currentLink !== masterProductId) {
+      outcome = {
+        success: false,
+        alreadyMapped: true,
+        listing: row,
+        message: "S\u1EA3n ph\u1EA9m \u0111\xE3 \u0111\u01B0\u1EE3c mapping v\u1EDBi kho kh\xE1c. Kh\xF4ng ghi \u0111\xE8."
+      };
+      return;
+    }
+    const nextRow = buildNext(row);
+    const updated = await ChannelListingModel.updateOne(
+      {
+        _id: doc._id,
+        $or: [
+          { status: { $ne: "success" } },
+          { linkedProductId: null },
+          { linkedProductId: "" },
+          { linkedProductId: { $exists: false } },
+          { linkedProductId: masterProductId }
+        ]
+      },
+      {
+        $set: {
+          status: "success",
+          linkedProductId: masterProductId,
+          sku: nextRow.sku != null ? String(nextRow.sku) : doc.sku ?? null,
+          channelId: nextRow.channelId != null ? String(nextRow.channelId) : doc.channelId ?? null,
+          platform: nextRow.platform != null ? String(nextRow.platform) : doc.platform ?? null,
+          data: nextRow
+        }
+      }
+    ).maxTimeMS(8e3);
+    if (!updated.matchedCount) {
+      outcome = {
+        success: false,
+        alreadyMapped: true,
+        listing: row,
+        message: "S\u1EA3n ph\u1EA9m \u0111\xE3 \u0111\u01B0\u1EE3c mapping. Kh\xF4ng ghi \u0111\xE8."
+      };
+      return;
+    }
+    await setMeta("listings_updated_at", (/* @__PURE__ */ new Date()).toISOString());
+    console.log(`[MongoDB] manual-link $set id=${String(doc._id)} \u2192 ${masterProductId}`);
+    outcome = {
+      success: true,
+      alreadyMapped: false,
+      listing: nextRow,
+      message: "\u0110\xE3 l\u01B0u mapping."
+    };
+  });
+  return outcome;
+}
 var INTERNAL_FLAG_KEYS = /* @__PURE__ */ new Set([
   "is_handed_over",
   "isPrinted",
@@ -123936,6 +124107,12 @@ var deps13 = {
   sanitizeChannelListingRow: (row) => row,
   bulkUpsertChannelListingsToStore: async () => {
   },
+  applyManualChannelListingLink: async () => ({
+    success: false,
+    alreadyMapped: false,
+    listing: null,
+    message: "Mapping store ch\u01B0a s\u1EB5n s\xE0ng."
+  }),
   flushDbWrites: async () => {
   },
   sleep: (ms) => new Promise((r2) => setTimeout(r2, ms)),
@@ -124080,6 +124257,60 @@ async function handleMappingProductsUpsert(req, res) {
       message: `L\u1ED7i l\u01B0u Database: ${errMsg}`,
       error: errMsg
     });
+  }
+}
+async function handleManualMappingLink(req, res) {
+  try {
+    const body = req?.body && typeof req.body === "object" ? req.body : {};
+    const listingId = String(body.listingId || body.id || "").trim();
+    const masterProductId = String(body.masterProductId || body.linkedProductId || "").trim();
+    const channelId = String(body.channelId || body.itemId || body.shopeeItemId || "").trim();
+    if (!listingId || !masterProductId) {
+      return res.status(400).json({
+        success: false,
+        message: "Thi\u1EBFu id s\u1EA3n ph\u1EA9m kho ho\u1EB7c id s\u1EA3n ph\u1EA9m Shopee."
+      });
+    }
+    const result = await deps13.applyManualChannelListingLink({
+      listingId,
+      masterProductId,
+      channelId,
+      linkedProductTitle: body.linkedProductTitle || body.title,
+      linkedProductSku: body.linkedProductSku || body.sku
+    });
+    if (!result?.success) {
+      return res.status(200).json({
+        success: false,
+        alreadyMapped: result?.alreadyMapped === true,
+        message: result?.message || "Kh\xF4ng th\u1EC3 c\u1EADp nh\u1EADt mapping.",
+        listing: result?.listing || null
+      });
+    }
+    try {
+      await deps13.flushDbWrites();
+    } catch (flushErr) {
+      console.error("[Mapping Manual] flush b\u1ECF qua:", flushErr?.message || flushErr);
+    }
+    const listing = result.listing ? deps13.sanitizeChannelListingRow(result.listing) : null;
+    const safeListing = listing ? {
+      ...listing,
+      linkedProductTitle: result.listing?.linkedProductTitle || listing.linkedProductTitle,
+      linkedProductSku: result.listing?.linkedProductSku || listing.linkedProductSku,
+      linkedProduct: result.listing?.linkedProduct || void 0,
+      linkBroken: false
+    } : result.listing;
+    console.log(
+      `\u0110\xE3 l\u01B0u DB th\xE0nh c\xF4ng \u2014 manual-link listing=${listingId} master=${masterProductId} already=${result.alreadyMapped === true}`
+    );
+    return res.status(200).json({
+      success: true,
+      alreadyMapped: result.alreadyMapped === true,
+      listing: safeListing,
+      message: result.message || "\u0110\xE3 l\u01B0u mapping."
+    });
+  } catch (error) {
+    console.error("[Mapping Manual] l\u1ED7i:", error?.message || error);
+    return res.status(500).json({ success: false, message: "L\u1ED7i server" });
   }
 }
 async function handleMappingProductsHeal(_req, res) {
@@ -124268,6 +124499,7 @@ router17.post("/batch-auto-link", handleBatchAutoLink);
 router17.post("/bulk-auto-link", handleBulkAutoLinkByIds);
 router17.post("/purge-broken", handleMappingPurgeBroken);
 router17.post("/heal", handleMappingProductsHeal);
+router17.post("/manual-link", handleManualMappingLink);
 router17.get("/", handleMappingProductsGet);
 router17.put("/", handleMappingProductsUpsert);
 router17.post("/", handleMappingProductsUpsert);
@@ -149661,6 +149893,7 @@ async function startServer() {
     readChannelListingsForGet,
     sanitizeChannelListingRow,
     bulkUpsertChannelListingsToStore,
+    applyManualChannelListingLink,
     flushDbWrites,
     sleep,
     loadProducts,

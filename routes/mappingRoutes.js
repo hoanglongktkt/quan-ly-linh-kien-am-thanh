@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   handleMappingProductsGet,
   handleMappingProductsUpsert,
+  handleManualMappingLink,
   handleMappingProductsHeal,
   handleBatchAutoLink,
   handleSingleAutoLink,
@@ -18,6 +19,7 @@ router.post("/batch-auto-link", handleBatchAutoLink);
 router.post("/bulk-auto-link", handleBulkAutoLinkByIds);
 router.post("/purge-broken", handleMappingPurgeBroken);
 router.post("/heal", handleMappingProductsHeal);
+router.post("/manual-link", handleManualMappingLink);
 router.get("/", handleMappingProductsGet);
 router.put("/", handleMappingProductsUpsert);
 router.post("/", handleMappingProductsUpsert);

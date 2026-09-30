@@ -2299,6 +2299,214 @@ export async function bulkUpsertChannelListingsToStore(rows: any[]): Promise<num
   return ops.length;
 }
 
+/**
+ * Liên kết thủ công 1 listing.
+ * Query cờ mapping trước — đã success cùng kho thì không ghi;
+ * đã success sang kho khác thì không ghi đè. Chỉ $set khi chưa mapping hợp lệ.
+ */
+export async function applyManualChannelListingLink(input: {
+  listingId?: string;
+  masterProductId?: string;
+  channelId?: string;
+  linkedProductTitle?: string;
+  linkedProductSku?: string;
+}): Promise<{
+  success: boolean;
+  alreadyMapped: boolean;
+  listing: any | null;
+  message: string;
+}> {
+  const listingId = String(input?.listingId || "").trim();
+  const masterProductId = String(input?.masterProductId || "").trim();
+  const channelId = String(input?.channelId || "").trim();
+  const linkedTitle = String(input?.linkedProductTitle || "").trim();
+  const linkedSku = String(input?.linkedProductSku || "").trim();
+
+  if (!listingId || !masterProductId) {
+    return {
+      success: false,
+      alreadyMapped: false,
+      listing: null,
+      message: "Thiếu id sản phẩm kho hoặc id sản phẩm sàn.",
+    };
+  }
+
+  const decide = (row: any) => {
+    const currentLink = String(row?.linkedProductId || row?.linkedProduct?.id || "").trim();
+    const currentStatus = String(row?.status || "");
+    const isMapped = currentStatus === "success" && currentLink !== "";
+    return { currentLink, isMapped };
+  };
+
+  const buildNext = (row: any) => {
+    const next = {
+      ...row,
+      id: String(row?.id || listingId),
+      status: "success",
+      linkedProductId: masterProductId,
+      linkedProductTitle: linkedTitle || row?.linkedProductTitle || "",
+      linkedProductSku: linkedSku || row?.linkedProductSku || "",
+      linkedProduct: {
+        id: masterProductId,
+        title: linkedTitle || row?.linkedProductTitle || row?.linkedProduct?.title || "",
+        sku: linkedSku || row?.linkedProductSku || row?.linkedProduct?.sku || "",
+      },
+      sku: String(row?.sku || "").trim() || linkedSku || row?.sku,
+      linkBroken: false,
+      updatedAt: new Date().toISOString(),
+    };
+    delete next.syncError;
+    return next;
+  };
+
+  if (isProductsDiskMode()) {
+    const current = readChannelListingsFromDisk();
+    let idx = current.findIndex((row) => String(row?.id || "") === listingId);
+    if (idx < 0 && channelId) {
+      idx = current.findIndex(
+        (row) => String(row?.channelId || row?.itemId || "") === channelId,
+      );
+    }
+    if (idx < 0) {
+      return {
+        success: false,
+        alreadyMapped: false,
+        listing: null,
+        message: "Không tìm thấy sản phẩm sàn để mapping.",
+      };
+    }
+    const existing = current[idx];
+    const { currentLink, isMapped } = decide(existing);
+    if (isMapped && currentLink === masterProductId) {
+      return {
+        success: true,
+        alreadyMapped: true,
+        listing: existing,
+        message: "Sản phẩm đã được mapping.",
+      };
+    }
+    if (isMapped && currentLink !== masterProductId) {
+      return {
+        success: false,
+        alreadyMapped: true,
+        listing: existing,
+        message: "Sản phẩm đã được mapping với kho khác. Không ghi đè.",
+      };
+    }
+    const nextRow = buildNext(existing);
+    const nextList = current.slice();
+    nextList[idx] = nextRow;
+    await saveChannelListingsToDisk(nextList);
+    console.log(`[Listings Disk] manual-link id=${nextRow.id} → ${masterProductId}`);
+    return {
+      success: true,
+      alreadyMapped: false,
+      listing: nextRow,
+      message: "Đã lưu mapping.",
+    };
+  }
+
+  requireMongo();
+  let outcome: {
+    success: boolean;
+    alreadyMapped: boolean;
+    listing: any | null;
+    message: string;
+  } = {
+    success: false,
+    alreadyMapped: false,
+    listing: null,
+    message: "Không thể cập nhật mapping.",
+  };
+
+  await enqueueWrite(async () => {
+    const or: Record<string, string>[] = [{ _id: listingId }];
+    if (channelId) or.push({ channelId });
+    const doc = await ChannelListingModel.findOne({ $or: or }).maxTimeMS(8_000).lean();
+    if (!doc) {
+      outcome = {
+        success: false,
+        alreadyMapped: false,
+        listing: null,
+        message: "Không tìm thấy sản phẩm sàn để mapping.",
+      };
+      return;
+    }
+
+    const row =
+      doc.data && typeof doc.data === "object"
+        ? { ...doc.data, id: String(doc._id || doc.data.id || listingId) }
+        : { id: String(doc._id || listingId) };
+    if (!row.linkedProductId && doc.linkedProductId) row.linkedProductId = String(doc.linkedProductId);
+    if (!row.status && doc.status) row.status = String(doc.status);
+
+    const { currentLink, isMapped } = decide(row);
+    if (isMapped && currentLink === masterProductId) {
+      outcome = {
+        success: true,
+        alreadyMapped: true,
+        listing: row,
+        message: "Sản phẩm đã được mapping.",
+      };
+      return;
+    }
+    if (isMapped && currentLink !== masterProductId) {
+      outcome = {
+        success: false,
+        alreadyMapped: true,
+        listing: row,
+        message: "Sản phẩm đã được mapping với kho khác. Không ghi đè.",
+      };
+      return;
+    }
+
+    const nextRow = buildNext(row);
+    const updated = await ChannelListingModel.updateOne(
+      {
+        _id: doc._id,
+        $or: [
+          { status: { $ne: "success" } },
+          { linkedProductId: null },
+          { linkedProductId: "" },
+          { linkedProductId: { $exists: false } },
+          { linkedProductId: masterProductId },
+        ],
+      },
+      {
+        $set: {
+          status: "success",
+          linkedProductId: masterProductId,
+          sku: nextRow.sku != null ? String(nextRow.sku) : doc.sku ?? null,
+          channelId: nextRow.channelId != null ? String(nextRow.channelId) : doc.channelId ?? null,
+          platform: nextRow.platform != null ? String(nextRow.platform) : doc.platform ?? null,
+          data: nextRow,
+        },
+      },
+    ).maxTimeMS(8_000);
+
+    if (!updated.matchedCount) {
+      outcome = {
+        success: false,
+        alreadyMapped: true,
+        listing: row,
+        message: "Sản phẩm đã được mapping. Không ghi đè.",
+      };
+      return;
+    }
+
+    await setMeta("listings_updated_at", new Date().toISOString());
+    console.log(`[MongoDB] manual-link $set id=${String(doc._id)} → ${masterProductId}`);
+    outcome = {
+      success: true,
+      alreadyMapped: false,
+      listing: nextRow,
+      message: "Đã lưu mapping.",
+    };
+  });
+
+  return outcome;
+}
+
 export async function deleteAllProductsFromStore(): Promise<void> {
   if (isProductsDiskMode()) {
     await saveProductsToDisk([]);
