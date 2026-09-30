@@ -75943,68 +75943,87 @@ function createBoundedQueue(processPayload, onQueueOverflow) {
   const pending = [];
   let running = 0;
   let scheduled = false;
+  let drainAgain = false;
   const activeOrderKeys = /* @__PURE__ */ new Set();
   const scheduleDrain = () => {
-    if (scheduled) return;
+    if (scheduled) {
+      drainAgain = true;
+      return;
+    }
     scheduled = true;
     setImmediate(() => {
       scheduled = false;
-      const capacity = MAX_CONCURRENT_JOBS - running;
-      if (capacity <= 0 || pending.length === 0) return;
-      const batch = [];
-      for (let i2 = 0; i2 < pending.length && batch.length < capacity; ) {
-        const payload = pending[i2];
-        const orderKey = webhookOrderKey(payload);
-        if (orderKey && activeOrderKeys.has(orderKey)) {
-          i2 += 1;
-          continue;
+      try {
+        drainPending();
+      } finally {
+        if (drainAgain) {
+          drainAgain = false;
+          scheduleDrain();
         }
-        pending.splice(i2, 1);
-        if (orderKey) activeOrderKeys.add(orderKey);
-        batch.push({ payload, orderKey });
       }
-      if (batch.length === 0) return;
-      running += batch.length;
-      logQueueMetrics("job_batch_start", pending.length, running);
-      void Promise.allSettled(
-        batch.map(({ payload, orderKey }) => {
-          const startedAt = Date.now();
-          return withJobTimeout(processPayload(payload), WEBHOOK_JOB_TIMEOUT_MS, "webhook_job").then(() => {
-            const durationMs = Date.now() - startedAt;
-            queueMetrics.completedJobs += 1;
-            queueMetrics.lastJobDurationMs = durationMs;
-            queueMetrics.totalJobDurationMs += durationMs;
-            if (durationMs > queueMetrics.maxJobDurationMs) {
-              queueMetrics.maxJobDurationMs = durationMs;
-            }
-            console.log(
-              `[Shopee Webhook][Queue] job_done orderKey=${orderKey || "?"} durationMs=${durationMs}`
-            );
-          }).catch((err) => {
-            queueMetrics.failedJobs += 1;
-            const durationMs = Date.now() - startedAt;
-            queueMetrics.lastJobDurationMs = durationMs;
-            console.error(
-              `[Shopee Webhook][Queue] job_failed orderKey=${orderKey || "?"} durationMs=${durationMs}:`,
-              err
-            );
-            throw err;
-          });
-        })
-      ).then((results) => {
-        for (const result of results) {
-          if (result.status === "rejected") {
-            console.error("[Shopee Webhook] Background processing failed:", result.reason);
-          }
-        }
-      }).finally(() => {
-        running -= batch.length;
-        for (const { orderKey } of batch) {
-          if (orderKey) activeOrderKeys.delete(orderKey);
-        }
-        logQueueMetrics("job_batch_end", pending.length, running);
+    });
+  };
+  const drainPending = () => {
+    const capacity = MAX_CONCURRENT_JOBS - running;
+    if (capacity <= 0 || pending.length === 0) return;
+    const batch = [];
+    for (let i2 = 0; i2 < pending.length && batch.length < capacity; ) {
+      const payload = pending[i2];
+      const orderKey = webhookOrderKey(payload);
+      if (orderKey && activeOrderKeys.has(orderKey)) {
+        i2 += 1;
+        continue;
+      }
+      pending.splice(i2, 1);
+      if (orderKey) activeOrderKeys.add(orderKey);
+      batch.push({ payload, orderKey });
+    }
+    if (batch.length === 0) {
+      if (pending.length > 0 && running === 0) {
+        activeOrderKeys.clear();
         scheduleDrain();
-      });
+      }
+      return;
+    }
+    running += batch.length;
+    logQueueMetrics("job_batch_start", pending.length, running);
+    void Promise.allSettled(
+      batch.map(({ payload, orderKey }) => {
+        const startedAt = Date.now();
+        return withJobTimeout(processPayload(payload), WEBHOOK_JOB_TIMEOUT_MS, "webhook_job").then(() => {
+          const durationMs = Date.now() - startedAt;
+          queueMetrics.completedJobs += 1;
+          queueMetrics.lastJobDurationMs = durationMs;
+          queueMetrics.totalJobDurationMs += durationMs;
+          if (durationMs > queueMetrics.maxJobDurationMs) {
+            queueMetrics.maxJobDurationMs = durationMs;
+          }
+          console.log(
+            `[Shopee Webhook][Queue] job_done orderKey=${orderKey || "?"} durationMs=${durationMs}`
+          );
+        }).catch((err) => {
+          queueMetrics.failedJobs += 1;
+          const durationMs = Date.now() - startedAt;
+          queueMetrics.lastJobDurationMs = durationMs;
+          console.error(
+            `[Shopee Webhook][Queue] job_failed orderKey=${orderKey || "?"} durationMs=${durationMs}:`,
+            err
+          );
+          throw err;
+        }).finally(() => {
+          running = Math.max(0, running - 1);
+          if (orderKey) activeOrderKeys.delete(orderKey);
+          scheduleDrain();
+        });
+      })
+    ).then((results) => {
+      for (const result of results) {
+        if (result.status === "rejected") {
+          console.error("[Shopee Webhook] Background processing failed:", result.reason);
+        }
+      }
+    }).finally(() => {
+      logQueueMetrics("job_batch_end", pending.length, running);
     });
   };
   return {
@@ -76115,7 +76134,22 @@ function readRawWebhookBody(req) {
     const chunks = [];
     let totalBytes = 0;
     let overflow = false;
-    req.on("data", (chunk) => {
+    let settled = false;
+    let timer;
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      req.removeListener("data", onData);
+      req.removeListener("end", onEnd);
+      req.removeListener("error", onError);
+    };
+    timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error("Webhook body stream timeout"));
+    }, 1e4);
+    const onData = (chunk) => {
+      if (settled) return;
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       totalBytes += buffer.length;
       if (totalBytes > maxBytes) {
@@ -76123,16 +76157,27 @@ function readRawWebhookBody(req) {
         return;
       }
       chunks.push(buffer);
-    });
-    req.on("end", () => {
+    };
+    const onEnd = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
       if (overflow) {
         console.warn(`[Shopee Webhook] Body v\u01B0\u1EE3t gi\u1EDBi h\u1EA1n ${maxBytes} bytes \u2014 b\u1ECF x\u1EED l\xFD sau ACK.`);
         resolve(null);
         return;
       }
       resolve(Buffer.concat(chunks));
-    });
-    req.on("error", reject);
+    };
+    const onError = (err) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    };
+    req.on("data", onData);
+    req.on("end", onEnd);
+    req.on("error", onError);
   });
 }
 async function processShopeeWebhookAsync(queue, snapshot, rawBodyPromise, eagerStubOrder) {
