@@ -1,6 +1,7 @@
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
+import { ChatUnreadProvider } from './context/ChatUnreadContext.tsx';
 import DevicePreviewShell from './components/DevicePreviewShell.tsx';
 import { installApiFetchInterceptor } from './utils/apiClient.ts';
 import ErrorBoundary from './components/ErrorBoundary.tsx';
@@ -15,10 +16,14 @@ createRoot(document.getElementById('root')!).render(
     <ErrorBoundary label="Ứng dụng">
       {import.meta.env.DEV ? (
         <DevicePreviewShell>
-          <App />
+          <ChatUnreadProvider>
+            <App />
+          </ChatUnreadProvider>
         </DevicePreviewShell>
       ) : (
-        <App />
+        <ChatUnreadProvider>
+          <App />
+        </ChatUnreadProvider>
       )}
     </ErrorBoundary>
   </StrictMode>,

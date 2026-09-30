@@ -77651,18 +77651,90 @@ function pickMessageNode(data) {
   }
   return data;
 }
-function snippetFromContent(content) {
-  if (content == null) return "";
-  if (typeof content === "string") return content.trim().slice(0, 300);
-  if (typeof content === "object") {
-    const text = content.text || content.content || content.caption || "";
-    if (String(text).trim()) return String(text).trim().slice(0, 300);
-    if (content.image_url || content.imageUrl || content.url || content.image) return "[H\xECnh \u1EA3nh]";
-    if (content.sticker_id || content.sticker || content.sticker_package_id) return "[Sticker]";
-    if (content.order_sn || content.ordersn) return "[\u0110\u01A1n h\xE0ng]";
-    if (content.item_id) return "[S\u1EA3n ph\u1EA9m]";
+function plainText(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return String(Math.trunc(value));
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "[object Object]") return "";
+  return trimmed;
+}
+function collectContentNodes(raw, depth, out) {
+  if (raw == null || depth > 4) return out;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if ((trimmed.startsWith("{") || trimmed.startsWith("[")) && trimmed.length <= 8e3) {
+      try {
+        collectContentNodes(JSON.parse(trimmed), depth + 1, out);
+        return out;
+      } catch {
+      }
+    }
+    out.push(raw);
+    return out;
   }
-  return String(content).slice(0, 300);
+  const record = asRecord(raw);
+  if (!record) return out;
+  out.push(record);
+  const nestedKeys = ["content", "text", "data", "order", "order_info", "source_content", "message"];
+  for (let i2 = 0; i2 < nestedKeys.length; i2 += 1) {
+    const nested = record[nestedKeys[i2]];
+    if (nested && typeof nested === "object") collectContentNodes(nested, depth + 1, out);
+  }
+  return out;
+}
+function snippetFromContent(content, messageType) {
+  try {
+    const nodes = collectContentNodes(content, 0, []);
+    const typeHint = String(messageType || "").trim().toLowerCase();
+    let orderSn = "";
+    let hasItem = false;
+    let hasImage = false;
+    let hasSticker = false;
+    let text = "";
+    let type = typeHint;
+    for (let i2 = 0; i2 < nodes.length; i2 += 1) {
+      const node = nodes[i2];
+      if (typeof node === "string") {
+        if (!text) text = plainText(node);
+        continue;
+      }
+      const nodeType = String(node.message_type || node.type || "").trim().toLowerCase();
+      if (nodeType) type = type || nodeType;
+      const sn = plainText(node.order_sn) || plainText(node.ordersn) || plainText(node.orderSn);
+      if (sn && !orderSn) orderSn = sn;
+      if (node.item_id || node.itemId || plainText(node.item_name) || plainText(node.itemName)) {
+        hasItem = true;
+      }
+      if (nodeType === "image" || node.image_url || node.imageUrl || node.thumb_url || node.image) {
+        hasImage = true;
+      }
+      if (node.sticker_id || node.sticker || node.sticker_package_id) hasSticker = true;
+      const nodeText = plainText(node.text) || plainText(node.caption);
+      if (nodeText && !text) text = nodeText;
+    }
+    if (orderSn) return `\u{1F4E6} [\u0110\u01A1n h\xE0ng] ${orderSn}`.slice(0, 300);
+    if (type === "order" || type === "order_card") return "\u{1F4E6} [\u0110\u01A1n h\xE0ng]";
+    if (hasItem || type === "item" || type === "product") return "\u{1F6CD}\uFE0F [S\u1EA3n ph\u1EA9m]";
+    if (hasImage || type === "image") return "\u{1F5BC}\uFE0F [H\xECnh \u1EA3nh]";
+    if (text) return text.slice(0, 300);
+    if (hasSticker || type === "sticker") return "[Sticker]";
+    return "";
+  } catch (error) {
+    logChatError("[Shopee Chat] snippetFromContent", error);
+    return "";
+  }
+}
+function forceSnippet(value, content, messageType) {
+  try {
+    const direct = plainText(value);
+    if (direct && !direct.includes("[object Object]")) return direct.slice(0, 300);
+    const built = snippetFromContent(content, messageType);
+    if (typeof built !== "string" || built.includes("[object Object]")) return "";
+    return built.slice(0, 300);
+  } catch (error) {
+    logChatError("[Shopee Chat] forceSnippet", error);
+    return "";
+  }
 }
 function normalizeStoredContent(raw, messageType) {
   if (raw && typeof raw === "object" && !Array.isArray(raw)) {
@@ -77709,7 +77781,7 @@ async function recordChatMessage(input) {
   const senderType = input?.senderType === "shop" ? "shop" : "customer";
   const customerId = String(input?.customerId || "").trim() || "0";
   const content = normalizeStoredContent(input?.content, input?.messageType);
-  const snippet = String(input?.snippet || snippetFromContent(content) || "").slice(0, 300);
+  const snippet = forceSnippet(input?.snippet, content, input?.messageType);
   const createdAt = input?.createdAt instanceof Date ? input.createdAt : /* @__PURE__ */ new Date();
   if (!Number.isFinite(shopId) || !conversationId || !messageId) {
     return { ok: false, error: "missing_fields" };
@@ -77734,20 +77806,25 @@ async function recordChatMessage(input) {
     latest_message_snippet: snippet,
     last_updated_at: createdAt
   };
-  const customerName = String(input?.customerName || "").trim();
-  const customerAvatar = String(input?.customerAvatar || "").trim();
-  if (customerName) set.customer_name = customerName;
+  const customerName = plainText(input?.customerName);
+  const customerAvatar = plainText(input?.customerAvatar);
+  if (customerName && customerName !== "[object Object]") set.customer_name = customerName;
   if (customerAvatar) set.customer_avatar = customerAvatar;
   if (senderType === "shop") set.unread_count = 0;
   const update = { $set: set };
   if (senderType === "customer" && created) {
     update.$inc = { unread_count: 1 };
   }
-  await Conversation.findOneAndUpdate(
-    { shop_id: shopId, conversation_id: conversationId },
-    update,
-    { upsert: true, new: true, setDefaultsOnInsert: true }
-  );
+  try {
+    await Conversation.findOneAndUpdate(
+      { shop_id: shopId, conversation_id: conversationId },
+      update,
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+  } catch (error) {
+    logChatError("[Shopee Chat] record conversation", error);
+    return { ok: false, error: "save_failed", created };
+  }
   return { ok: true, created, duplicate: !created };
 }
 async function ingestShopeeChatPush(payload) {
@@ -77787,7 +77864,7 @@ async function ingestShopeeChatPush(payload) {
       senderType,
       messageType,
       content,
-      snippet: snippetFromContent(content),
+      snippet: snippetFromContent(content, messageType),
       createdAt: resolveCreatedAt(msg, envelope)
     });
     try {
@@ -90603,23 +90680,25 @@ function parseShopId(raw) {
   if (!Number.isFinite(shopId)) return null;
   return shopId;
 }
-function snippetFromContent2(content) {
-  if (content == null) return "";
-  if (typeof content === "string") return content.trim().slice(0, 300);
-  if (typeof content === "object") {
-    const text = content.text || content.content || content.caption || "";
-    if (String(text).trim()) return String(text).trim().slice(0, 300);
-    if (content.image_url || content.imageUrl || content.image) return "[H\xECnh \u1EA3nh]";
-    if (content.sticker || content.sticker_id) return "[Sticker]";
-  }
-  return String(content).slice(0, 300);
-}
 function normalizeContent(raw) {
   if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw;
   return { type: "text", text: String(raw ?? "").trim() };
 }
 function localMessageId() {
   return `local-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+function recipientId(raw) {
+  if (raw == null || raw === "") return "";
+  if (typeof raw === "number") {
+    if (!Number.isFinite(raw) || raw <= 0) return "";
+    return String(Math.trunc(raw));
+  }
+  if (typeof raw === "object") {
+    return recipientId(raw.id) || recipientId(raw.user_id) || recipientId(raw.buyer_id) || recipientId(raw.to_id) || recipientId(raw.customer_id) || "";
+  }
+  const text = String(raw).trim();
+  if (!text || text === "[object Object]" || text === "0") return "";
+  return text;
 }
 async function getConversations(req, res) {
   try {
@@ -90637,6 +90716,7 @@ async function getConversations(req, res) {
     if (shopId != null) query.shop_id = shopId;
     if (filterName === "unread") query.unread_count = { $gt: 0 };
     const conversations = await Conversation.find(query).sort({ last_updated_at: -1 }).limit(LIST_LIMIT).lean();
+    await healBrokenSnippets(conversations);
     return res.json({ success: true, conversations });
   } catch (error) {
     logChatError2("[Chat getConversations]", error);
@@ -90644,6 +90724,89 @@ async function getConversations(req, res) {
       success: false,
       error: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c danh s\xE1ch h\u1ED9i tho\u1EA1i",
       conversations: []
+    });
+  }
+}
+function isBrokenSnippet(value) {
+  if (value == null || value === "") return false;
+  if (typeof value !== "string") return true;
+  return value.includes("[object Object]");
+}
+async function healBrokenSnippets(conversations) {
+  try {
+    if (!Array.isArray(conversations) || conversations.length === 0) return;
+    const broken = conversations.filter((row) => isBrokenSnippet(row?.latest_message_snippet));
+    if (broken.length === 0) return;
+    const ids = [];
+    for (let i2 = 0; i2 < broken.length && ids.length < LIST_LIMIT; i2 += 1) {
+      const id = String(broken[i2]?.conversation_id || "").trim();
+      if (id && !ids.includes(id)) ids.push(id);
+    }
+    if (ids.length === 0) return;
+    const latest = await ChatMessage.aggregate([
+      { $match: { conversation_id: { $in: ids } } },
+      { $sort: { created_at: -1 } },
+      {
+        $group: {
+          _id: "$conversation_id",
+          content: { $first: "$content" }
+        }
+      }
+    ]);
+    const byId = new Map(latest.map((row) => [String(row._id), row.content]));
+    for (let i2 = 0; i2 < broken.length; i2 += 1) {
+      const row = broken[i2];
+      try {
+        const snippet = snippetFromContent(byId.get(String(row.conversation_id)));
+        const safe = typeof snippet === "string" && !snippet.includes("[object Object]") ? snippet : "";
+        row.latest_message_snippet = safe;
+        await Conversation.updateOne(
+          { shop_id: row.shop_id, conversation_id: row.conversation_id },
+          { $set: { latest_message_snippet: safe } }
+        );
+      } catch (error) {
+        logChatError2("[Chat heal snippet]", error);
+        row.latest_message_snippet = "";
+      }
+    }
+  } catch (error) {
+    logChatError2("[Chat healBrokenSnippets]", error);
+    for (let i2 = 0; i2 < conversations.length; i2 += 1) {
+      if (isBrokenSnippet(conversations[i2]?.latest_message_snippet)) {
+        conversations[i2].latest_message_snippet = "";
+      }
+    }
+  }
+}
+async function markConversationRead(req, res) {
+  let conversationId = "";
+  try {
+    conversationId = String(
+      req.params?.id || req.params?.conversation_id || req.body?.conversation_id || ""
+    ).trim();
+    try {
+      conversationId = decodeURIComponent(conversationId);
+    } catch {
+    }
+    if (!conversationId) {
+      return res.json({ success: true, unread_count: 0, conversation_id: "" });
+    }
+    const shopId = parseShopId(req.body?.shop_id ?? req.query?.shop_id);
+    const filter2 = { conversation_id: conversationId };
+    if (shopId != null) filter2.shop_id = shopId;
+    await Conversation.updateMany(filter2, { $set: { unread_count: 0 } });
+    return res.json({
+      success: true,
+      conversation_id: conversationId,
+      unread_count: 0
+    });
+  } catch (error) {
+    console.error("[Chat markConversationRead]", error);
+    if (res.headersSent) return;
+    return res.json({
+      success: true,
+      conversation_id: conversationId,
+      unread_count: 0
     });
   }
 }
@@ -90672,7 +90835,7 @@ async function sendMessage(req, res) {
     const shopId = parseShopId(req.body?.shop_id);
     const senderType = String(req.body?.sender_type || "shop").trim();
     const content = normalizeContent(req.body?.content);
-    const text = snippetFromContent2(content);
+    const text = snippetFromContent(content);
     if (!conversationId || shopId == null) {
       return res.status(400).json({
         success: false,
@@ -90698,9 +90861,10 @@ async function sendMessage(req, res) {
         error: "Kh\xF4ng t\xECm th\u1EA5y h\u1ED9i tho\u1EA1i."
       });
     }
+    const toId = recipientId(req.body?.to_id) || recipientId(conversation.customer_id);
     const sent = await sendShopeeChatText({
       shopId,
-      toId: conversation.customer_id,
+      toId,
       text
     });
     if (!sent.ok) {
@@ -90793,6 +90957,7 @@ async function createQuickReply(req, res) {
 var router9 = (0, import_express10.Router)();
 var h2 = asyncHandler;
 router9.get("/conversations", h2(getConversations));
+router9.post("/conversations/:id/read", h2(markConversationRead));
 router9.get("/messages/:conversation_id", h2(getMessages));
 router9.post("/send", h2(sendMessage));
 router9.get("/quick-replies", h2(getQuickReplies));
@@ -149613,6 +149778,17 @@ async function startServer() {
   app.use("/api/expenses", authMiddleware, expensesRoutes);
   app.use("/api/finance", authMiddleware, financeRoutes);
   app.use("/api/address-book", authMiddleware, addressBookRoutes);
+  app.post("/api/chat/conversations/:id/read", authMiddleware, (req, res) => {
+    try {
+      Promise.resolve(markConversationRead(req, res)).catch((error) => {
+        console.error("[Chat read]", error);
+        if (!res.headersSent) res.json({ success: true, unread_count: 0 });
+      });
+    } catch (error) {
+      console.error("[Chat read]", error);
+      if (!res.headersSent) res.json({ success: true, unread_count: 0 });
+    }
+  });
   app.use("/api/chat", authMiddleware, chatRoutes);
   initDashboardController({
     isMongoReady,

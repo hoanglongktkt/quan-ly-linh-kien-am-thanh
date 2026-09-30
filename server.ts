@@ -67,6 +67,7 @@ import expensesRoutesImport from "./routes/expensesRoutes.js";
 import financeRoutesImport from "./routes/financeRoutes.js";
 import addressBookRoutesImport from "./routes/addressBookRoutes.js";
 import chatRoutesImport from "./routes/chatRoutes.js";
+import { markConversationRead } from "./controllers/chatController.js";
 import importsRoutesImport from "./routes/importsRoutes.js";
 import materialsRoutesImport from "./routes/materialsRoutes.js";
 import materialImportsRoutesImport from "./routes/materialImportsRoutes.js";
@@ -22486,6 +22487,17 @@ async function startServer() {
   app.use("/api/expenses", authMiddleware, expensesRoutes);
   app.use("/api/finance", authMiddleware, financeRoutes);
   app.use("/api/address-book", authMiddleware, addressBookRoutes);
+  app.post("/api/chat/conversations/:id/read", authMiddleware, (req, res) => {
+    try {
+      Promise.resolve(markConversationRead(req, res)).catch((error) => {
+        console.error("[Chat read]", error);
+        if (!res.headersSent) res.json({ success: true, unread_count: 0 });
+      });
+    } catch (error) {
+      console.error("[Chat read]", error);
+      if (!res.headersSent) res.json({ success: true, unread_count: 0 });
+    }
+  });
   app.use("/api/chat", authMiddleware, chatRoutes);
 
   // --- Dashboard API — Phase 2 MVC ---

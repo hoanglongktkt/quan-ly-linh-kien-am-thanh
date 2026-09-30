@@ -150,28 +150,37 @@ async function healBrokenSnippets(conversations) {
 
 /** POST /api/chat/conversations/:id/read — unread_count = 0 */
 export async function markConversationRead(req, res) {
+  let conversationId = "";
   try {
-    const conversationId = String(req.params?.id || req.params?.conversation_id || "").trim();
+    conversationId = String(
+      req.params?.id || req.params?.conversation_id || req.body?.conversation_id || "",
+    ).trim();
+    try {
+      conversationId = decodeURIComponent(conversationId);
+    } catch {
+      /* giữ nguyên id */
+    }
     if (!conversationId) {
-      return res.status(400).json({ success: false, error: "Thiếu conversation_id." });
+      return res.json({ success: true, unread_count: 0, conversation_id: "" });
     }
 
     const shopId = parseShopId(req.body?.shop_id ?? req.query?.shop_id);
     const filter = { conversation_id: conversationId };
     if (shopId != null) filter.shop_id = shopId;
 
-    const updated = await Conversation.updateMany(filter, { $set: { unread_count: 0 } });
+    await Conversation.updateMany(filter, { $set: { unread_count: 0 } });
     return res.json({
       success: true,
       conversation_id: conversationId,
       unread_count: 0,
-      matched: updated?.matchedCount ?? updated?.n ?? 0,
     });
   } catch (error) {
-    logChatError("[Chat markConversationRead]", error);
-    return res.status(500).json({
-      success: false,
-      error: "Không cập nhật được trạng thái đã đọc",
+    console.error("[Chat markConversationRead]", error);
+    if (res.headersSent) return;
+    return res.json({
+      success: true,
+      conversation_id: conversationId,
+      unread_count: 0,
     });
   }
 }

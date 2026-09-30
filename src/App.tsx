@@ -17,6 +17,7 @@ import OrderPicking from './components/OrderPicking';
 import PublishManager from './components/PublishManager';
 import VipCustomersPage from './components/VipCustomersPage';
 import ChatManager from './pages/ChatManager/ChatManager';
+import { useChatUnread } from './context/ChatUnreadContext';
 import LoginPage from './components/LoginPage';
 import ErrorBoundary from './components/ErrorBoundary';
 import BrandLogo, { BrandHeader } from './components/BrandLogo';
@@ -624,7 +625,7 @@ export default function App() {
 
   // Active navigation tab — khôi phục từ URL (?tab=) hoặc sessionStorage khi F5
   const [activeTab, setActiveTab] = useState(() => resolveTabFromPath());
-  const [unreadCount] = useState(5);
+  const { totalUnreadCount } = useChatUnread();
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
@@ -2549,19 +2550,19 @@ export default function App() {
             <Globe className="w-4 h-4 shrink-0" /> Đăng bán sỉ đa sàn
           </button>
 
-          {console.log("Render Menu Chat")}
           <button
             type="button"
             onClick={() => navigateTab('chat')}
-            className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
+            className={`w-full flex items-center gap-2 px-3 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
               activeTab === 'chat'
                 ? 'bg-blue-600 text-white font-extrabold shadow-sm'
                 : 'hover:bg-slate-800 hover:text-white text-slate-400'
             }`}
           >
-            <MessageSquare className="w-4 h-4 shrink-0" /> Trả Lời Tin Nhắn Khách
-            <span className="ml-auto shrink-0 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-black leading-none text-white tabular-nums">
-              {unreadCount}
+            <MessageSquare className="w-4 h-4 shrink-0" />
+            <span className="min-w-0 flex-1 truncate text-left">Trả Lời Tin Nhắn Khách</span>
+            <span className="ml-auto inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-black leading-none text-white tabular-nums">
+              {totalUnreadCount}
             </span>
           </button>
 
@@ -2713,19 +2714,19 @@ export default function App() {
               <button onClick={() => navigateTab('publish')} className={navButtonClass('publish')}>
                 <Globe className="w-4 h-4 shrink-0" /> Đăng bán sỉ đa sàn
               </button>
-              {console.log("Render Menu Chat")}
               <button
                 type="button"
                 onClick={() => navigateTab('chat')}
-                className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                className={`w-full flex items-center gap-2 px-3 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
                   activeTab === 'chat'
                     ? 'bg-blue-600 text-white font-extrabold shadow-sm'
                     : 'hover:bg-slate-800 hover:text-white text-slate-400'
                 }`}
               >
-                <MessageSquare className="w-4 h-4 shrink-0" /> Trả Lời Tin Nhắn Khách
-                <span className="ml-auto shrink-0 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-black leading-none text-white tabular-nums">
-                  {unreadCount}
+                <MessageSquare className="w-4 h-4 shrink-0" />
+                <span className="min-w-0 flex-1 truncate text-left">Trả Lời Tin Nhắn Khách</span>
+                <span className="ml-auto inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-black leading-none text-white tabular-nums">
+                  {totalUnreadCount}
                 </span>
               </button>
               <button

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Loader2, MessageSquare, Plus, Send, X, Zap } from 'lucide-react';
 import { apiFetch, parseJsonResponse } from '../../utils/apiClient';
+import { useChatUnread } from '../../context/ChatUnreadContext';
 
 type ChatFilter = 'all' | 'unread';
 
@@ -294,10 +295,15 @@ export default function ChatManager({ shops = [] }: ChatManagerProps) {
     [shopeeShops],
   );
 
+  const { setTotalUnreadCount } = useChatUnread();
   const unreadTotal = useMemo(
     () => conversations.reduce((sum, row) => sum + Math.max(0, Number(row.unread_count) || 0), 0),
     [conversations],
   );
+
+  useEffect(() => {
+    setTotalUnreadCount(unreadTotal);
+  }, [unreadTotal, setTotalUnreadCount]);
 
   const active = conversations.find((row) => row.conversation_id === selectedId) ?? null;
 
@@ -489,6 +495,14 @@ export default function ChatManager({ shops = [] }: ChatManagerProps) {
   const handleSelectConversation = (item: ConversationRow) => {
     setSelectedId(item.conversation_id);
     setActiveConversation(item.conversation_id);
+    readClearUntil.current.set(`${String(item.shop_id ?? '')}:${item.conversation_id}`, Date.now() + 25_000);
+    setConversations((prev) =>
+      prev.map((row) =>
+        row.conversation_id === item.conversation_id && String(row.shop_id) === String(item.shop_id)
+          ? { ...row, unread_count: 0 }
+          : row,
+      ),
+    );
     void (async () => {
       try {
         const response = await apiFetch(
@@ -496,23 +510,14 @@ export default function ChatManager({ shops = [] }: ChatManagerProps) {
           {
             method: 'POST',
             headers: authHeaders(),
-            body: JSON.stringify({ shop_id: item.shop_id }),
+            body: JSON.stringify({ shop_id: item.shop_id, conversation_id: item.conversation_id }),
           },
         );
-        const data = await parseJsonResponse<{ success?: boolean; error?: string }>(response);
-        if (!response.ok || data.success === false) {
-          throw new Error(data.error || 'Không đánh dấu đã đọc');
+        if (!response.ok) {
+          console.log('[chat] POST /read', response.status);
         }
-        readClearUntil.current.set(`${String(item.shop_id ?? '')}:${item.conversation_id}`, Date.now() + 25_000);
-        setConversations((prev) =>
-          prev.map((row) =>
-            row.conversation_id === item.conversation_id && String(row.shop_id) === String(item.shop_id)
-              ? { ...row, unread_count: 0 }
-              : row,
-          ),
-        );
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Không đánh dấu đã đọc');
+        console.log('[chat] POST /read', err);
       }
     })();
   };
