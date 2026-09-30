@@ -15,8 +15,8 @@ const MAX_CONCURRENT_JOBS = Math.max(
   2,
   Math.min(8, Number(process.env.SHOPEE_WEBHOOK_MAX_CONCURRENT) || 4),
 );
-/** Hard cap mỗi job nền — quá hạn thì nhả slot (tránh hang → process leak cPanel). */
-const WEBHOOK_JOB_TIMEOUT_MS = 45_000;
+/** Hard cap mỗi job nền — đủ cho get_order_detail + upsert, rồi nhả slot. */
+const WEBHOOK_JOB_TIMEOUT_MS = 180_000;
 
 /** Mốc push cuối cùng — /api/health dùng để biết webhook còn sống hay đã chết. */
 let lastWebhookAt = 0;
@@ -257,7 +257,7 @@ function ackShopeeOk(res: express.Response): void {
   try {
     // Shopee Live Push: HTTP 200 = push thành công.
     // Kết thúc response ngay, không giữ socket chờ parse / API Shopee / MongoDB.
-    res.status(200).send("success");
+    res.status(200).send("OK");
   } catch (ackErr) {
     console.warn("[Shopee Webhook] ACK send failed:", ackErr);
     try {
@@ -510,43 +510,42 @@ async function processShopeeWebhookAsync(
 
     console.log("[WEBHOOK] Nhận event mới:", orderSn, status || "");
 
-    // Queue lấy chi tiết là việc bắt buộc. Ghi nông là phụ — không được đứng trước enqueue.
-    let queued = false;
-    try {
-      queued = queue.enqueue(payload);
-    } catch (queueErr) {
-      console.error(
-        "[WEBHOOK] enqueue get_order_detail failed:",
-        queueErr instanceof Error ? queueErr.message : queueErr,
-      );
-    }
-
     if (eagerStubOrder) {
-      void Promise.resolve()
-        .then(() => eagerStubOrder(payload))
-        .catch((err) => {
-          console.error("[WEBHOOK DB ERROR]:", err);
-          console.error("Stub order error:", err);
-        });
+      try {
+        await eagerStubOrder(payload);
+      } catch (stubErr) {
+        console.error("[WEBHOOK DB ERROR]:", stubErr);
+        console.error("Stub order error:", stubErr);
+      }
     }
 
-    if (!queued) return;
-
-    console.log(
-      "[WEBHOOK RECEIVED] order payload queued after ACK — will get_order_detail + UPSERT:",
-      JSON.stringify({
-        code: Number.isFinite(code) ? code : null,
-        shop_id: payload.shop_id ?? data.shop_id ?? null,
-        order_sn: orderSn,
-        status: status || null,
-        event_type:
-          status === "UNPAID" || status === "READY_TO_SHIP"
-            ? "new_order"
-            : isOrderStatusPush
-              ? "status_change"
-              : "order_related",
-      }),
-    );
+    const queuedMeta = {
+      code: Number.isFinite(code) ? code : null,
+      shop_id: payload.shop_id ?? data.shop_id ?? null,
+      order_sn: orderSn,
+      status: status || null,
+      event_type:
+        status === "UNPAID" || status === "READY_TO_SHIP"
+          ? "new_order"
+          : isOrderStatusPush
+            ? "status_change"
+            : "order_related",
+    };
+    setImmediate(() => {
+      try {
+        const queued = queue.enqueue(payload);
+        if (!queued) return;
+        console.log(
+          "[WEBHOOK RECEIVED] order payload queued after ACK — will get_order_detail + UPSERT:",
+          JSON.stringify(queuedMeta),
+        );
+      } catch (queueErr) {
+        console.error(
+          "[WEBHOOK] enqueue get_order_detail failed:",
+          queueErr instanceof Error ? queueErr.message : queueErr,
+        );
+      }
+    });
   } catch (error) {
     console.error(
       "[Shopee Webhook] processShopeeWebhookAsync failed after ACK:",

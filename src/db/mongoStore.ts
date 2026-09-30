@@ -8687,19 +8687,46 @@ export async function countOrdersByTabsFromStore(opts?: {
         },
       },
     ];
-    let aggRows: any[] = [];
-    try {
-      aggRows = await OrderModel.aggregate(pipeline as any[]).option({
-        maxTimeMS: 4000,
-        hint: shopTimeIndexHint(hasShop),
-      });
-    } catch (hintErr: any) {
+    const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
+    const aggTask = (async () => {
+      try {
+        return await OrderModel.aggregate(pipeline as any[]).option({
+          maxTimeMS: 4000,
+          hint: shopTimeIndexHint(hasShop),
+        });
+      } catch (hintErr: any) {
+        console.warn(
+          "[MongoDB] countOrdersByTabsFromStore hint skipped:",
+          hintErr?.message || hintErr,
+        );
+        return OrderModel.aggregate(pipeline as any[]).option({ maxTimeMS: 6000 });
+      }
+    })();
+    const opTask = countOperationalTabsFromStore(match, hasShop).catch((opErr: any) => {
       console.warn(
-        "[MongoDB] countOrdersByTabsFromStore hint skipped:",
-        hintErr?.message || hintErr,
+        "[MongoDB] countOperationalTabsFromStore:",
+        opErr?.message || opErr,
       );
-      aggRows = await OrderModel.aggregate(pipeline as any[]).option({ maxTimeMS: 6000 });
-    }
+      return null;
+    });
+    const extTask = shopFilter
+      ? (async () => {
+          try {
+            const dateRange = parseOrderListDateRange({
+              startDate: opts?.startDate,
+              endDate: opts?.endDate,
+              forceDefault: true,
+            });
+            const extMatch: Record<string, unknown> = { channel: "manual" };
+            if (dateRange) Object.assign(extMatch, buildOrderCreatedAtMongoFilter(dateRange));
+            return Number(await OrderModel.countDocuments(extMatch).maxTimeMS(3000)) || 0;
+          } catch (extErr: any) {
+            console.warn("[MongoDB] external_orders count:", extErr?.message || extErr);
+            return null;
+          }
+        })()
+      : Promise.resolve(null);
+    const [aggRows, opCounts, extN] = await Promise.all([aggTask, opTask, extTask]);
     const row = (aggRows?.[0] || {}) as Record<string, unknown>;
     const counts: Record<string, number> = { ...empty };
     counts.all = facetN(row, "all");
@@ -8722,38 +8749,9 @@ export async function countOrdersByTabsFromStore(opts?: {
     counts.failed_delivery = counts.cancel_returns_rts;
     counts.received_cancel_returns =
       dhhCountCache.key === cacheKey ? dhhCountCache.n : dhhCountCache.n;
-    const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
-    try {
-      const extraJobs: Promise<void>[] = [
-        countOperationalTabsFromStore(match, hasShop).then((opCounts) => {
-          Object.assign(counts, opCounts);
-        }),
-      ];
-      if (shopFilter) {
-        extraJobs.push(
-          (async () => {
-            try {
-              const dateRange = parseOrderListDateRange({
-                startDate: opts?.startDate,
-                endDate: opts?.endDate,
-                forceDefault: true,
-              });
-              const extMatch: Record<string, unknown> = { channel: "manual" };
-              if (dateRange) Object.assign(extMatch, buildOrderCreatedAtMongoFilter(dateRange));
-              counts.external_orders =
-                Number(await OrderModel.countDocuments(extMatch).maxTimeMS(3000)) || 0;
-            } catch (extErr: any) {
-              console.warn("[MongoDB] external_orders count:", extErr?.message || extErr);
-            }
-          })(),
-        );
-      }
-      await Promise.all(extraJobs);
-    } catch (opErr: any) {
-      console.warn(
-        "[MongoDB] countOperationalTabsFromStore:",
-        opErr?.message || opErr,
-      );
+    if (opCounts) {
+      Object.assign(counts, opCounts);
+    } else {
       const pendingFilter = orderTabFilter("pending_confirm");
       const pendingCombined =
         Object.keys(match).length === 0
@@ -8761,6 +8759,7 @@ export async function countOrdersByTabsFromStore(opts?: {
           : { $and: [match, pendingFilter] };
       counts.pending_confirm = await safeCountDocuments(pendingCombined);
     }
+    if (extN != null) counts.external_orders = extN;
     tabCountCache = { key: cacheKey, expiresAt: now + TAB_COUNT_CACHE_MS, value: counts };
     const dhhShop = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds) || {};
     void DonHoanHuyModel.countDocuments(dhhShop)

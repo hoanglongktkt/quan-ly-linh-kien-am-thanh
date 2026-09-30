@@ -72,9 +72,6 @@ export function initShopeeWebhookController(partial) {
   deps = { ...deps, ...partial };
 }
 
-/** Hard cap xử lý 1 webhook — tránh hang vô hạn giữ slot queue / socket nội bộ. */
-const WEBHOOK_PROCESS_TIMEOUT_MS = 40_000;
-
 /** Load working set cho 1 order_sn: ưu tiên Mongo theo order_sn (KHÔNG full-scan orders.json). */
 async function loadWorkingOrdersForWebhook(orderSn) {
   const sn = String(orderSn || "").trim();
@@ -875,32 +872,17 @@ export async function handleWebhookQueueOverflow(body) {
 
 /**
  * Xử lý ngầm sau ACK 200 — không throw ra ngoài HTTP.
- * Hard timeout: quá hạn thì dừng (slot queue được giải phóng ở router).
+ * Không cắt ở 40s: get_order_detail được xếp bằng setImmediate ở router,
+ * hàm này chỉ chạy khi queue đã nhận job (Shopee không còn chờ response).
  */
 export async function processShopeeWebhookPayload(body) {
-  let timer;
   try {
-    await Promise.race([
-      processShopeeWebhookPayloadInner(body),
-      new Promise((_, reject) => {
-        timer = setTimeout(
-          () =>
-            reject(
-              new Error(
-                `webhook_process timeout sau ${WEBHOOK_PROCESS_TIMEOUT_MS / 1000}s`,
-              ),
-            ),
-          WEBHOOK_PROCESS_TIMEOUT_MS,
-        );
-      }),
-    ]);
+    await processShopeeWebhookPayloadInner(body);
   } catch (error) {
     console.error(
       "[Shopee Webhook] Async processing error:",
       error?.message || error,
       error?.stack || "",
     );
-  } finally {
-    if (timer) clearTimeout(timer);
   }
 }

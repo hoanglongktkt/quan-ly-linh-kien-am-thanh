@@ -236,6 +236,9 @@ let ordersRefreshInFlight = null;
 let ordersRefreshCache = null;
 const ordersRefreshCoalesce = new Map();
 const ordersCounterCoalesce = new Map();
+/** Badge poll 10s — trả số cũ trong 8s, refresh nền, không chờ Mongo trên request. */
+const ORDER_COUNTER_CACHE_MS = 8_000;
+const orderCounterMemCache = new Map();
 
 function coalesceInFlight(map, key, factory) {
   const existing = map.get(key);
@@ -754,6 +757,50 @@ export async function getSyncJobById(req, res) {
   return res.json({ success: true, data: job });
 }
 
+function orderCounterPayload(counts) {
+  const safe = counts && typeof counts === "object" ? counts : {};
+  return {
+    counts: safe,
+    counters: {
+      total: Number(safe.cancel_returns) || 0,
+      returned: Number(safe.cancel_returns_returned ?? safe.refund_return) || 0,
+      cancelled: Number(safe.cancel_returns_cancelled ?? safe.cancelled) || 0,
+      rts: Number(safe.cancel_returns_rts ?? safe.failed_delivery) || 0,
+    },
+  };
+}
+
+function rememberOrderCounter(key, payload) {
+  orderCounterMemCache.set(key, { at: Date.now(), ...payload });
+  if (orderCounterMemCache.size > 40) {
+    const oldest = orderCounterMemCache.keys().next().value;
+    if (oldest) orderCounterMemCache.delete(oldest);
+  }
+}
+
+function refreshOrderCounter(key, shopId, shopIds, dateQ) {
+  return coalesceInFlight(ordersCounterCoalesce, key, async () => {
+    try {
+      const counts = await countOrdersByTabsFromStore({
+        shopId: shopId || undefined,
+        shopIds: shopIds.length > 1 ? shopIds : undefined,
+        ...dateQ,
+      });
+      const payload = orderCounterPayload(counts);
+      rememberOrderCounter(key, payload);
+      return payload;
+    } catch (err) {
+      console.error(
+        "[GET /api/orders/counter] refresh failed:",
+        err?.message || err,
+      );
+      const cached = orderCounterMemCache.get(key);
+      if (cached) return { counts: cached.counts, counters: cached.counters };
+      throw err;
+    }
+  });
+}
+
 /** GET /api/order-counts — chỉ đếm từ MongoDB (badge/tab), không gọi Shopee. */
 /** GET /api/orders/counter | /api/orders/counts | /api/order-counts — chỉ countDocuments theo tab. */
 export async function getOrderCounts(req, res) {
@@ -773,28 +820,40 @@ export async function getOrderCounts(req, res) {
     );
     const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "").trim();
     const dateQ = readOrderDateQuery(req);
-    if (req.query.bust != null || String(req.query.force || "").trim() === "1") {
-      invalidateTabCountCache();
-    }
+    const force = req.query.bust != null || String(req.query.force || "").trim() === "1";
     const coalesceKey = `${shopIds.join(",") || shopId}|${dateQ.startDate || ""}|${dateQ.endDate || ""}`;
-    const counts = await coalesceInFlight(ordersCounterCoalesce, coalesceKey, () =>
-      deps.withLocalDbTimeout(
-        countOrdersByTabsFromStore({
-          shopId: shopId || undefined,
-          shopIds: shopIds.length > 1 ? shopIds : undefined,
-          ...dateQ,
-        }),
-        5000,
-        "orders_counter",
-      ),
-    );
-    const counters = {
-      total: Number(counts.cancel_returns) || 0,
-      returned: Number(counts.cancel_returns_returned ?? counts.refund_return) || 0,
-      cancelled: Number(counts.cancel_returns_cancelled ?? counts.cancelled) || 0,
-      rts: Number(counts.cancel_returns_rts ?? counts.failed_delivery) || 0,
-    };
-    return res.status(200).json({ success: true, counts, counters });
+    if (force) {
+      try {
+        invalidateTabCountCache();
+      } catch {
+        /* cache optional */
+      }
+      orderCounterMemCache.delete(coalesceKey);
+    }
+    const cached = orderCounterMemCache.get(coalesceKey);
+    const age = cached ? Date.now() - cached.at : Number.POSITIVE_INFINITY;
+    if (!force && cached && age < ORDER_COUNTER_CACHE_MS) {
+      return res.status(200).json({
+        success: true,
+        counts: cached.counts,
+        counters: cached.counters,
+      });
+    }
+    if (!force && cached) {
+      void refreshOrderCounter(coalesceKey, shopId, shopIds, dateQ).catch((err) => {
+        console.error(
+          "[GET /api/orders/counter] background refresh failed:",
+          err?.message || err,
+        );
+      });
+      return res.status(200).json({
+        success: true,
+        counts: cached.counts,
+        counters: cached.counters,
+      });
+    }
+    const payload = await refreshOrderCounter(coalesceKey, shopId, shopIds, dateQ);
+    return res.status(200).json({ success: true, ...payload });
   } catch (error) {
     console.error(
       "[GET /api/orders/counter] failed:",

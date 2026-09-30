@@ -77867,7 +77867,7 @@ var MAX_CONCURRENT_JOBS = Math.max(
   2,
   Math.min(8, Number(process.env.SHOPEE_WEBHOOK_MAX_CONCURRENT) || 4)
 );
-var WEBHOOK_JOB_TIMEOUT_MS = 45e3;
+var WEBHOOK_JOB_TIMEOUT_MS = 18e4;
 var lastWebhookAt = 0;
 function markWebhookReceived() {
   lastWebhookAt = Date.now();
@@ -78061,7 +78061,7 @@ function createBoundedQueue(processPayload, onQueueOverflow) {
 function ackShopeeOk(res) {
   if (res.headersSent || res.writableEnded) return;
   try {
-    res.status(200).send("success");
+    res.status(200).send("OK");
   } catch (ackErr) {
     console.warn("[Shopee Webhook] ACK send failed:", ackErr);
     try {
@@ -78247,32 +78247,36 @@ async function processShopeeWebhookAsync(queue, snapshot, rawBodyPromise, eagerS
       return;
     }
     console.log("[WEBHOOK] Nh\u1EADn event m\u1EDBi:", orderSn, status || "");
-    let queued = false;
-    try {
-      queued = queue.enqueue(payload);
-    } catch (queueErr) {
-      console.error(
-        "[WEBHOOK] enqueue get_order_detail failed:",
-        queueErr instanceof Error ? queueErr.message : queueErr
-      );
-    }
     if (eagerStubOrder) {
-      void Promise.resolve().then(() => eagerStubOrder(payload)).catch((err) => {
-        console.error("[WEBHOOK DB ERROR]:", err);
-        console.error("Stub order error:", err);
-      });
+      try {
+        await eagerStubOrder(payload);
+      } catch (stubErr) {
+        console.error("[WEBHOOK DB ERROR]:", stubErr);
+        console.error("Stub order error:", stubErr);
+      }
     }
-    if (!queued) return;
-    console.log(
-      "[WEBHOOK RECEIVED] order payload queued after ACK \u2014 will get_order_detail + UPSERT:",
-      JSON.stringify({
-        code: Number.isFinite(code) ? code : null,
-        shop_id: payload.shop_id ?? data.shop_id ?? null,
-        order_sn: orderSn,
-        status: status || null,
-        event_type: status === "UNPAID" || status === "READY_TO_SHIP" ? "new_order" : isOrderStatusPush ? "status_change" : "order_related"
-      })
-    );
+    const queuedMeta = {
+      code: Number.isFinite(code) ? code : null,
+      shop_id: payload.shop_id ?? data.shop_id ?? null,
+      order_sn: orderSn,
+      status: status || null,
+      event_type: status === "UNPAID" || status === "READY_TO_SHIP" ? "new_order" : isOrderStatusPush ? "status_change" : "order_related"
+    };
+    setImmediate(() => {
+      try {
+        const queued = queue.enqueue(payload);
+        if (!queued) return;
+        console.log(
+          "[WEBHOOK RECEIVED] order payload queued after ACK \u2014 will get_order_detail + UPSERT:",
+          JSON.stringify(queuedMeta)
+        );
+      } catch (queueErr) {
+        console.error(
+          "[WEBHOOK] enqueue get_order_detail failed:",
+          queueErr instanceof Error ? queueErr.message : queueErr
+        );
+      }
+    });
   } catch (error) {
     console.error(
       "[Shopee Webhook] processShopeeWebhookAsync failed after ACK:",
@@ -86237,19 +86241,44 @@ async function countOrdersByTabsFromStore(opts) {
         }
       }
     ];
-    let aggRows = [];
-    try {
-      aggRows = await OrderModel.aggregate(pipeline2).option({
-        maxTimeMS: 4e3,
-        hint: shopTimeIndexHint(hasShop)
-      });
-    } catch (hintErr) {
+    const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
+    const aggTask = (async () => {
+      try {
+        return await OrderModel.aggregate(pipeline2).option({
+          maxTimeMS: 4e3,
+          hint: shopTimeIndexHint(hasShop)
+        });
+      } catch (hintErr) {
+        console.warn(
+          "[MongoDB] countOrdersByTabsFromStore hint skipped:",
+          hintErr?.message || hintErr
+        );
+        return OrderModel.aggregate(pipeline2).option({ maxTimeMS: 6e3 });
+      }
+    })();
+    const opTask = countOperationalTabsFromStore(match2, hasShop).catch((opErr) => {
       console.warn(
-        "[MongoDB] countOrdersByTabsFromStore hint skipped:",
-        hintErr?.message || hintErr
+        "[MongoDB] countOperationalTabsFromStore:",
+        opErr?.message || opErr
       );
-      aggRows = await OrderModel.aggregate(pipeline2).option({ maxTimeMS: 6e3 });
-    }
+      return null;
+    });
+    const extTask = shopFilter ? (async () => {
+      try {
+        const dateRange = parseOrderListDateRange({
+          startDate: opts?.startDate,
+          endDate: opts?.endDate,
+          forceDefault: true
+        });
+        const extMatch = { channel: "manual" };
+        if (dateRange) Object.assign(extMatch, buildOrderCreatedAtMongoFilter(dateRange));
+        return Number(await OrderModel.countDocuments(extMatch).maxTimeMS(3e3)) || 0;
+      } catch (extErr) {
+        console.warn("[MongoDB] external_orders count:", extErr?.message || extErr);
+        return null;
+      }
+    })() : Promise.resolve(null);
+    const [aggRows, opCounts, extN] = await Promise.all([aggTask, opTask, extTask]);
     const row = aggRows?.[0] || {};
     const counts = { ...empty };
     counts.all = facetN(row, "all");
@@ -86270,41 +86299,14 @@ async function countOrdersByTabsFromStore(opts) {
     counts.cancelled = counts.cancel_returns_cancelled;
     counts.failed_delivery = counts.cancel_returns_rts;
     counts.received_cancel_returns = dhhCountCache.key === cacheKey ? dhhCountCache.n : dhhCountCache.n;
-    const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
-    try {
-      const extraJobs = [
-        countOperationalTabsFromStore(match2, hasShop).then((opCounts) => {
-          Object.assign(counts, opCounts);
-        })
-      ];
-      if (shopFilter) {
-        extraJobs.push(
-          (async () => {
-            try {
-              const dateRange = parseOrderListDateRange({
-                startDate: opts?.startDate,
-                endDate: opts?.endDate,
-                forceDefault: true
-              });
-              const extMatch = { channel: "manual" };
-              if (dateRange) Object.assign(extMatch, buildOrderCreatedAtMongoFilter(dateRange));
-              counts.external_orders = Number(await OrderModel.countDocuments(extMatch).maxTimeMS(3e3)) || 0;
-            } catch (extErr) {
-              console.warn("[MongoDB] external_orders count:", extErr?.message || extErr);
-            }
-          })()
-        );
-      }
-      await Promise.all(extraJobs);
-    } catch (opErr) {
-      console.warn(
-        "[MongoDB] countOperationalTabsFromStore:",
-        opErr?.message || opErr
-      );
+    if (opCounts) {
+      Object.assign(counts, opCounts);
+    } else {
       const pendingFilter = orderTabFilter("pending_confirm");
       const pendingCombined = Object.keys(match2).length === 0 ? pendingFilter : { $and: [match2, pendingFilter] };
       counts.pending_confirm = await safeCountDocuments(pendingCombined);
     }
+    if (extN != null) counts.external_orders = extN;
     tabCountCache = { key: cacheKey, expiresAt: now + TAB_COUNT_CACHE_MS, value: counts };
     const dhhShop = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds) || {};
     void DonHoanHuyModel.countDocuments(dhhShop).maxTimeMS(2e3).then((n) => {
@@ -124782,6 +124784,8 @@ var ordersRefreshInFlight = null;
 var ordersRefreshCache = null;
 var ordersRefreshCoalesce = /* @__PURE__ */ new Map();
 var ordersCounterCoalesce = /* @__PURE__ */ new Map();
+var ORDER_COUNTER_CACHE_MS = 8e3;
+var orderCounterMemCache = /* @__PURE__ */ new Map();
 function coalesceInFlight(map, key, factory2) {
   const existing = map.get(key);
   if (existing) return existing;
@@ -125207,6 +125211,47 @@ async function getSyncJobById(req, res) {
   if (!job) return res.status(404).json({ success: false, error: "sync_job_not_found" });
   return res.json({ success: true, data: job });
 }
+function orderCounterPayload(counts) {
+  const safe = counts && typeof counts === "object" ? counts : {};
+  return {
+    counts: safe,
+    counters: {
+      total: Number(safe.cancel_returns) || 0,
+      returned: Number(safe.cancel_returns_returned ?? safe.refund_return) || 0,
+      cancelled: Number(safe.cancel_returns_cancelled ?? safe.cancelled) || 0,
+      rts: Number(safe.cancel_returns_rts ?? safe.failed_delivery) || 0
+    }
+  };
+}
+function rememberOrderCounter(key, payload) {
+  orderCounterMemCache.set(key, { at: Date.now(), ...payload });
+  if (orderCounterMemCache.size > 40) {
+    const oldest = orderCounterMemCache.keys().next().value;
+    if (oldest) orderCounterMemCache.delete(oldest);
+  }
+}
+function refreshOrderCounter(key, shopId, shopIds, dateQ) {
+  return coalesceInFlight(ordersCounterCoalesce, key, async () => {
+    try {
+      const counts = await countOrdersByTabsFromStore({
+        shopId: shopId || void 0,
+        shopIds: shopIds.length > 1 ? shopIds : void 0,
+        ...dateQ
+      });
+      const payload = orderCounterPayload(counts);
+      rememberOrderCounter(key, payload);
+      return payload;
+    } catch (err) {
+      console.error(
+        "[GET /api/orders/counter] refresh failed:",
+        err?.message || err
+      );
+      const cached = orderCounterMemCache.get(key);
+      if (cached) return { counts: cached.counts, counters: cached.counters };
+      throw err;
+    }
+  });
+}
 async function getOrderCounts(req, res) {
   res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   try {
@@ -125224,30 +125269,39 @@ async function getOrderCounts(req, res) {
     );
     const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "").trim();
     const dateQ = readOrderDateQuery(req);
-    if (req.query.bust != null || String(req.query.force || "").trim() === "1") {
-      invalidateTabCountCache();
-    }
+    const force = req.query.bust != null || String(req.query.force || "").trim() === "1";
     const coalesceKey = `${shopIds.join(",") || shopId}|${dateQ.startDate || ""}|${dateQ.endDate || ""}`;
-    const counts = await coalesceInFlight(
-      ordersCounterCoalesce,
-      coalesceKey,
-      () => deps15.withLocalDbTimeout(
-        countOrdersByTabsFromStore({
-          shopId: shopId || void 0,
-          shopIds: shopIds.length > 1 ? shopIds : void 0,
-          ...dateQ
-        }),
-        5e3,
-        "orders_counter"
-      )
-    );
-    const counters = {
-      total: Number(counts.cancel_returns) || 0,
-      returned: Number(counts.cancel_returns_returned ?? counts.refund_return) || 0,
-      cancelled: Number(counts.cancel_returns_cancelled ?? counts.cancelled) || 0,
-      rts: Number(counts.cancel_returns_rts ?? counts.failed_delivery) || 0
-    };
-    return res.status(200).json({ success: true, counts, counters });
+    if (force) {
+      try {
+        invalidateTabCountCache();
+      } catch {
+      }
+      orderCounterMemCache.delete(coalesceKey);
+    }
+    const cached = orderCounterMemCache.get(coalesceKey);
+    const age = cached ? Date.now() - cached.at : Number.POSITIVE_INFINITY;
+    if (!force && cached && age < ORDER_COUNTER_CACHE_MS) {
+      return res.status(200).json({
+        success: true,
+        counts: cached.counts,
+        counters: cached.counters
+      });
+    }
+    if (!force && cached) {
+      void refreshOrderCounter(coalesceKey, shopId, shopIds, dateQ).catch((err) => {
+        console.error(
+          "[GET /api/orders/counter] background refresh failed:",
+          err?.message || err
+        );
+      });
+      return res.status(200).json({
+        success: true,
+        counts: cached.counts,
+        counters: cached.counters
+      });
+    }
+    const payload = await refreshOrderCounter(coalesceKey, shopId, shopIds, dateQ);
+    return res.status(200).json({ success: true, ...payload });
   } catch (error) {
     console.error(
       "[GET /api/orders/counter] failed:",
@@ -132407,7 +132461,6 @@ function scheduleWebhookRescuePull(orderSn, shopId, reason = "webhook_detail_fai
 function initShopeeWebhookController(partial) {
   deps21 = { ...deps21, ...partial };
 }
-var WEBHOOK_PROCESS_TIMEOUT_MS = 4e4;
 async function loadWorkingOrdersForWebhook(orderSn) {
   const sn = String(orderSn || "").trim();
   const orders = [];
@@ -133059,29 +133112,14 @@ async function handleWebhookQueueOverflow(body) {
   scheduleWebhookRescuePull(orderSn, shopId, "webhook_queue_overflow");
 }
 async function processShopeeWebhookPayload(body) {
-  let timer;
   try {
-    await Promise.race([
-      processShopeeWebhookPayloadInner(body),
-      new Promise((_, reject) => {
-        timer = setTimeout(
-          () => reject(
-            new Error(
-              `webhook_process timeout sau ${WEBHOOK_PROCESS_TIMEOUT_MS / 1e3}s`
-            )
-          ),
-          WEBHOOK_PROCESS_TIMEOUT_MS
-        );
-      })
-    ]);
+    await processShopeeWebhookPayloadInner(body);
   } catch (error) {
     console.error(
       "[Shopee Webhook] Async processing error:",
       error?.message || error,
       error?.stack || ""
     );
-  } finally {
-    if (timer) clearTimeout(timer);
   }
 }
 
