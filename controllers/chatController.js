@@ -1,87 +1,197 @@
 import { Conversation, ChatMessage, QuickReply } from "../models/Chat.js";
+import { recordChatMessage, sendShopeeChatText } from "../services/shopee/chat.js";
 
-const LIST_LIMIT = 50;
-const MESSAGE_LIMIT = 100;
+const LIST_LIMIT = 100;
+const MESSAGE_CAP = 1000;
 const QUICK_REPLY_LIMIT = 200;
 
+function logChatError(label, error) {
+  try {
+    const message =
+      error && typeof error === "object" && error.message
+        ? error.message
+        : String(error || "unknown");
+    console.error(label, message);
+  } catch {
+    /* EPIPE — không để log làm sập process */
+  }
+}
+
 function parseShopId(raw) {
+  if (raw == null || String(raw).trim() === "") return null;
   const shopId = Number(raw);
   if (!Number.isFinite(shopId)) return null;
   return shopId;
 }
 
-function parseLimit(raw, fallback, max) {
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) return fallback;
-  return Math.min(Math.floor(n), max);
+function snippetFromContent(content) {
+  if (content == null) return "";
+  if (typeof content === "string") return content.trim().slice(0, 300);
+  if (typeof content === "object") {
+    const text = content.text || content.content || content.caption || "";
+    if (String(text).trim()) return String(text).trim().slice(0, 300);
+    if (content.image_url || content.imageUrl || content.image) return "[Hình ảnh]";
+    if (content.sticker || content.sticker_id) return "[Sticker]";
+  }
+  return String(content).slice(0, 300);
 }
 
-function wantsUnreadOnly(query) {
-  const unread = String(query?.unread ?? "").trim().toLowerCase();
-  const status = String(query?.status ?? "").trim().toLowerCase();
-  return unread === "1" || unread === "true" || status === "unread";
+function normalizeContent(raw) {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw;
+  return { type: "text", text: String(raw ?? "").trim() };
 }
 
-/** GET /api/chat/conversations?shop_id=&unread=1 */
+function localMessageId() {
+  return `local-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** GET /api/chat/conversations?shop_id=&filter=all|unread */
 export async function getConversations(req, res) {
   try {
-    const shopId = parseShopId(req.query?.shop_id);
-    if (shopId == null) {
-      return res.status(400).json({ success: false, error: "Thiếu shop_id hợp lệ." });
+    const shopRaw = req.query?.shop_id;
+    const hasShop = shopRaw != null && String(shopRaw).trim() !== "";
+    const shopId = parseShopId(shopRaw);
+    if (hasShop && shopId == null) {
+      return res.status(400).json({ success: false, error: "shop_id không hợp lệ." });
     }
 
-    const filter = { shop_id: shopId };
-    if (wantsUnreadOnly(req.query)) {
-      filter.unread_count = { $gt: 0 };
+    const filterName = String(req.query?.filter || "all").trim().toLowerCase();
+    if (filterName !== "all" && filterName !== "unread") {
+      return res.status(400).json({ success: false, error: "filter phải là all hoặc unread." });
     }
 
-    const limit = parseLimit(req.query?.limit, LIST_LIMIT, 100);
-    const conversations = await Conversation.find(filter)
+    const query = {};
+    if (shopId != null) query.shop_id = shopId;
+    if (filterName === "unread") query.unread_count = { $gt: 0 };
+
+    const conversations = await Conversation.find(query)
       .sort({ last_updated_at: -1 })
-      .limit(limit)
+      .limit(LIST_LIMIT)
       .lean();
 
     return res.json({ success: true, conversations });
   } catch (error) {
-    console.error("[Chat getConversations]", error);
+    logChatError("[Chat getConversations]", error);
     return res.status(500).json({
       success: false,
-      error: error?.message || "Không tải được danh sách hội thoại",
+      error: "Không tải được danh sách hội thoại",
       conversations: [],
     });
   }
 }
 
-/** GET /api/chat/conversations/:conversationId/messages?shop_id= */
+/** GET /api/chat/messages/:conversation_id */
 export async function getMessages(req, res) {
   try {
-    const conversationId = String(req.params?.conversationId || "").trim();
+    const conversationId = String(
+      req.params?.conversation_id || req.params?.conversationId || "",
+    ).trim();
     if (!conversationId) {
       return res.status(400).json({ success: false, error: "Thiếu conversation_id." });
     }
 
-    const shopId = parseShopId(req.query?.shop_id);
-    const convFilter = { conversation_id: conversationId };
-    if (shopId != null) convFilter.shop_id = shopId;
-
-    const conversation = await Conversation.findOne(convFilter).select("conversation_id shop_id").lean();
-    if (!conversation) {
-      return res.json({ success: true, messages: [] });
-    }
-
-    const limit = parseLimit(req.query?.limit, MESSAGE_LIMIT, 200);
-    const messages = await ChatMessage.find({ conversation_id: conversation.conversation_id })
+    const messages = await ChatMessage.find({ conversation_id: conversationId })
       .sort({ created_at: 1 })
-      .limit(limit)
+      .limit(MESSAGE_CAP)
       .lean();
 
     return res.json({ success: true, messages });
   } catch (error) {
-    console.error("[Chat getMessages]", error);
+    logChatError("[Chat getMessages]", error);
     return res.status(500).json({
       success: false,
-      error: error?.message || "Không tải được tin nhắn",
+      error: "Không tải được tin nhắn",
       messages: [],
+    });
+  }
+}
+
+/** POST /api/chat/send  body: { conversation_id, shop_id, content, sender_type: 'shop' } */
+export async function sendMessage(req, res) {
+  try {
+    const conversationId = String(req.body?.conversation_id || "").trim();
+    const shopId = parseShopId(req.body?.shop_id);
+    const senderType = String(req.body?.sender_type || "shop").trim();
+    const content = normalizeContent(req.body?.content);
+    const text = snippetFromContent(content);
+
+    if (!conversationId || shopId == null) {
+      return res.status(400).json({
+        success: false,
+        error: "Cần conversation_id và shop_id.",
+      });
+    }
+    if (senderType !== "shop") {
+      return res.status(400).json({
+        success: false,
+        error: "sender_type phải là shop.",
+      });
+    }
+    if (!text) {
+      return res.status(400).json({ success: false, error: "Nội dung tin nhắn trống." });
+    }
+
+    const conversation = await Conversation.findOne({
+      conversation_id: conversationId,
+      shop_id: shopId,
+    }).lean();
+    if (!conversation) {
+      return res.status(404).json({
+        success: false,
+        error: "Không tìm thấy hội thoại.",
+      });
+    }
+
+    const sent = await sendShopeeChatText({
+      shopId,
+      toId: conversation.customer_id,
+      text,
+    });
+    if (!sent.ok) {
+      return res.status(502).json({
+        success: false,
+        error: sent.error || "Shopee không gửi được tin nhắn.",
+      });
+    }
+
+    const messageId = sent.messageId || localMessageId();
+    const now = new Date();
+    await recordChatMessage({
+      shopId,
+      conversationId,
+      customerId: conversation.customer_id,
+      customerName: conversation.customer_name,
+      customerAvatar: conversation.customer_avatar,
+      messageId,
+      senderType: "shop",
+      messageType: "text",
+      content,
+      snippet: text,
+      createdAt: now,
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: {
+        conversation_id: conversationId,
+        message_id: messageId,
+        sender_type: "shop",
+        content,
+        created_at: now,
+      },
+      conversation: {
+        conversation_id: conversationId,
+        shop_id: shopId,
+        latest_message_snippet: text,
+        last_updated_at: now,
+        unread_count: 0,
+      },
+    });
+  } catch (error) {
+    logChatError("[Chat sendMessage]", error);
+    return res.status(500).json({
+      success: false,
+      error: "Không gửi được tin nhắn",
     });
   }
 }
@@ -95,17 +205,17 @@ export async function getQuickReplies(_req, res) {
       .lean();
     return res.json({ success: true, quickReplies });
   } catch (error) {
-    console.error("[Chat getQuickReplies]", error);
+    logChatError("[Chat getQuickReplies]", error);
     return res.status(500).json({
       success: false,
-      error: error?.message || "Không tải được tin nhắn nhanh",
+      error: "Không tải được tin nhắn nhanh",
       quickReplies: [],
     });
   }
 }
 
 /** POST /api/chat/quick-replies  body: { shortcut, content } */
-export async function addQuickReply(req, res) {
+export async function createQuickReply(req, res) {
   try {
     const shortcut = String(req.body?.shortcut || "").trim();
     const content = String(req.body?.content || "").trim();
@@ -119,16 +229,16 @@ export async function addQuickReply(req, res) {
     const quickReply = await QuickReply.create({ shortcut, content });
     return res.status(201).json({ success: true, quickReply });
   } catch (error) {
-    if (error?.code === 11000) {
+    if (error && error.code === 11000) {
       return res.status(409).json({
         success: false,
         error: "Shortcut đã tồn tại.",
       });
     }
-    console.error("[Chat addQuickReply]", error);
+    logChatError("[Chat createQuickReply]", error);
     return res.status(500).json({
       success: false,
-      error: error?.message || "Không lưu được tin nhắn nhanh",
+      error: "Không lưu được tin nhắn nhanh",
     });
   }
 }

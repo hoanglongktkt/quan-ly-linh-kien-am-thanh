@@ -2,6 +2,7 @@ import express, { type Router } from "express";
 import { parseShopeeJson } from "../../services/shopee/jsonBig.js";
 import { resolveAppBaseUrl } from "../../utils/appPaths.js";
 import { verifyShopeeWebhookSignature } from "./shopeeSignature.ts";
+import { ingestShopeeChatPush } from "../../services/shopee/chat.js";
 
 type WebhookProcessor = (payload: Record<string, unknown>) => Promise<void>;
 type QueueOverflowHandler = (payload: Record<string, unknown>) => void | Promise<void>;
@@ -463,6 +464,19 @@ async function processShopeeWebhookAsync(
 
     const data = unwrapWebhookData(payload);
     const code = Number(payload.code ?? data.code);
+    const routeLabel = String(snapshot.routeLabel || "");
+    const isChatPush = code === 10 || routeLabel.includes("/chat-webhook");
+    if (isChatPush) {
+      try {
+        await ingestShopeeChatPush(payload);
+      } catch (chatErr) {
+        console.error(
+          "[Shopee Chat Webhook] ingest failed:",
+          chatErr instanceof Error ? chatErr.message : chatErr,
+        );
+      }
+      return;
+    }
     const orderSn = String(
       data.ordersn ??
         data.order_sn ??

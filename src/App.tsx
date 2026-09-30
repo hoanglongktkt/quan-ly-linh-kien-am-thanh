@@ -2951,7 +2951,7 @@ export default function App() {
 
           {activeTab === 'chat' && (
             <ErrorBoundary label="Trả lời tin nhắn khách">
-              <ChatManager />
+              <ChatManager shops={settings.shops || []} />
             </ErrorBoundary>
           )}
 

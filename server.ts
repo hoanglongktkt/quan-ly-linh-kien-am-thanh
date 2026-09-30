@@ -22203,7 +22203,7 @@ async function startServer() {
   // PHẢI mount TRƯỚC express.json để handler ACK vô điều kiện trước mọi xử lý.
   app.use(
     "/api/shopee",
-    createShopeeWebhookRouter(processShopeeWebhookPayload, "/webhook", {
+    createShopeeWebhookRouter(processShopeeWebhookPayload, ["/webhook", "/chat-webhook"], {
       onQueueOverflow: handleWebhookQueueOverflow,
       eagerStubOrder: eagerUpsertWebhookStub,
     }),
