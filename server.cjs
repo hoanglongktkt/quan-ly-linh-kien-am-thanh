@@ -81847,46 +81847,37 @@ async function applyManualChannelListingLink(input) {
     };
   }
   requireMongo();
-  let outcome = {
-    success: false,
-    alreadyMapped: false,
-    listing: null,
-    message: "Kh\xF4ng th\u1EC3 c\u1EADp nh\u1EADt mapping."
-  };
-  await enqueueWrite(async () => {
+  try {
     const or = [{ _id: listingId }];
     if (channelId) or.push({ channelId });
     const doc = await ChannelListingModel.findOne({ $or: or }).maxTimeMS(8e3).lean();
     if (!doc) {
-      outcome = {
+      return {
         success: false,
         alreadyMapped: false,
         listing: null,
         message: "Kh\xF4ng t\xECm th\u1EA5y s\u1EA3n ph\u1EA9m s\xE0n \u0111\u1EC3 mapping."
       };
-      return;
     }
     const row = doc.data && typeof doc.data === "object" ? { ...doc.data, id: String(doc._id || doc.data.id || listingId) } : { id: String(doc._id || listingId) };
     if (!row.linkedProductId && doc.linkedProductId) row.linkedProductId = String(doc.linkedProductId);
     if (!row.status && doc.status) row.status = String(doc.status);
     const { currentLink, isMapped } = decide(row);
     if (isMapped && currentLink === masterProductId) {
-      outcome = {
+      return {
         success: true,
         alreadyMapped: true,
         listing: row,
         message: "S\u1EA3n ph\u1EA9m \u0111\xE3 \u0111\u01B0\u1EE3c mapping."
       };
-      return;
     }
     if (isMapped && currentLink !== masterProductId) {
-      outcome = {
+      return {
         success: false,
         alreadyMapped: true,
         listing: row,
         message: "S\u1EA3n ph\u1EA9m \u0111\xE3 \u0111\u01B0\u1EE3c mapping v\u1EDBi kho kh\xE1c. Kh\xF4ng ghi \u0111\xE8."
       };
-      return;
     }
     const nextRow = buildNext(row);
     const updated = await ChannelListingModel.updateOne(
@@ -81912,24 +81903,34 @@ async function applyManualChannelListingLink(input) {
       }
     ).maxTimeMS(8e3);
     if (!updated.matchedCount) {
-      outcome = {
+      return {
         success: false,
         alreadyMapped: true,
         listing: row,
         message: "S\u1EA3n ph\u1EA9m \u0111\xE3 \u0111\u01B0\u1EE3c mapping. Kh\xF4ng ghi \u0111\xE8."
       };
-      return;
     }
-    await setMeta("listings_updated_at", (/* @__PURE__ */ new Date()).toISOString());
+    try {
+      await setMeta("listings_updated_at", (/* @__PURE__ */ new Date()).toISOString());
+    } catch (metaErr) {
+      console.error("[MongoDB] manual-link setMeta b\u1ECF qua:", metaErr?.message || metaErr);
+    }
     console.log(`[MongoDB] manual-link $set id=${String(doc._id)} \u2192 ${masterProductId}`);
-    outcome = {
+    return {
       success: true,
       alreadyMapped: false,
       listing: nextRow,
       message: "\u0110\xE3 l\u01B0u mapping."
     };
-  });
-  return outcome;
+  } catch (err) {
+    console.error("[MongoDB] manual-link l\u1ED7i:", err?.message || err);
+    return {
+      success: false,
+      alreadyMapped: false,
+      listing: null,
+      message: "L\u1ED7i server"
+    };
+  }
 }
 var INTERNAL_FLAG_KEYS = /* @__PURE__ */ new Set([
   "is_handed_over",
@@ -124260,16 +124261,31 @@ async function handleMappingProductsUpsert(req, res) {
   }
 }
 async function handleManualMappingLink(req, res) {
+  let settled = false;
+  const reply = (status, body) => {
+    if (settled || res.headersSent) return;
+    settled = true;
+    try {
+      res.status(status).json(body);
+    } catch (sendErr) {
+      console.error("[Mapping Manual] g\u1EEDi response l\u1ED7i:", sendErr?.message || sendErr);
+    }
+  };
+  const timer = setTimeout(() => {
+    console.error("[Mapping Manual] qu\xE1 th\u1EDDi gian \u2014 tr\u1EA3 l\u1ED7i, kh\xF4ng gi\u1EEF request.");
+    reply(500, { success: false, message: "L\u1ED7i server" });
+  }, 15e3);
   try {
     const body = req?.body && typeof req.body === "object" ? req.body : {};
     const listingId = String(body.listingId || body.id || "").trim();
     const masterProductId = String(body.masterProductId || body.linkedProductId || "").trim();
     const channelId = String(body.channelId || body.itemId || body.shopeeItemId || "").trim();
     if (!listingId || !masterProductId) {
-      return res.status(400).json({
+      reply(400, {
         success: false,
         message: "Thi\u1EBFu id s\u1EA3n ph\u1EA9m kho ho\u1EB7c id s\u1EA3n ph\u1EA9m Shopee."
       });
+      return;
     }
     const result = await deps13.applyManualChannelListingLink({
       listingId,
@@ -124279,18 +124295,17 @@ async function handleManualMappingLink(req, res) {
       linkedProductSku: body.linkedProductSku || body.sku
     });
     if (!result?.success) {
-      return res.status(200).json({
+      reply(200, {
         success: false,
         alreadyMapped: result?.alreadyMapped === true,
         message: result?.message || "Kh\xF4ng th\u1EC3 c\u1EADp nh\u1EADt mapping.",
         listing: result?.listing || null
       });
+      return;
     }
-    try {
-      await deps13.flushDbWrites();
-    } catch (flushErr) {
+    void Promise.resolve().then(() => deps13.flushDbWrites()).catch((flushErr) => {
       console.error("[Mapping Manual] flush b\u1ECF qua:", flushErr?.message || flushErr);
-    }
+    });
     const listing = result.listing ? deps13.sanitizeChannelListingRow(result.listing) : null;
     const safeListing = listing ? {
       ...listing,
@@ -124302,7 +124317,7 @@ async function handleManualMappingLink(req, res) {
     console.log(
       `\u0110\xE3 l\u01B0u DB th\xE0nh c\xF4ng \u2014 manual-link listing=${listingId} master=${masterProductId} already=${result.alreadyMapped === true}`
     );
-    return res.status(200).json({
+    reply(200, {
       success: true,
       alreadyMapped: result.alreadyMapped === true,
       listing: safeListing,
@@ -124310,7 +124325,9 @@ async function handleManualMappingLink(req, res) {
     });
   } catch (error) {
     console.error("[Mapping Manual] l\u1ED7i:", error?.message || error);
-    return res.status(500).json({ success: false, message: "L\u1ED7i server" });
+    reply(500, { success: false, message: "L\u1ED7i server" });
+  } finally {
+    clearTimeout(timer);
   }
 }
 async function handleMappingProductsHeal(_req, res) {

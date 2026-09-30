@@ -2407,30 +2407,17 @@ export async function applyManualChannelListingLink(input: {
   }
 
   requireMongo();
-  let outcome: {
-    success: boolean;
-    alreadyMapped: boolean;
-    listing: any | null;
-    message: string;
-  } = {
-    success: false,
-    alreadyMapped: false,
-    listing: null,
-    message: "Không thể cập nhật mapping.",
-  };
-
-  await enqueueWrite(async () => {
+  try {
     const or: Record<string, string>[] = [{ _id: listingId }];
     if (channelId) or.push({ channelId });
     const doc = await ChannelListingModel.findOne({ $or: or }).maxTimeMS(8_000).lean();
     if (!doc) {
-      outcome = {
+      return {
         success: false,
         alreadyMapped: false,
         listing: null,
         message: "Không tìm thấy sản phẩm sàn để mapping.",
       };
-      return;
     }
 
     const row =
@@ -2442,22 +2429,20 @@ export async function applyManualChannelListingLink(input: {
 
     const { currentLink, isMapped } = decide(row);
     if (isMapped && currentLink === masterProductId) {
-      outcome = {
+      return {
         success: true,
         alreadyMapped: true,
         listing: row,
         message: "Sản phẩm đã được mapping.",
       };
-      return;
     }
     if (isMapped && currentLink !== masterProductId) {
-      outcome = {
+      return {
         success: false,
         alreadyMapped: true,
         listing: row,
         message: "Sản phẩm đã được mapping với kho khác. Không ghi đè.",
       };
-      return;
     }
 
     const nextRow = buildNext(row);
@@ -2485,26 +2470,35 @@ export async function applyManualChannelListingLink(input: {
     ).maxTimeMS(8_000);
 
     if (!updated.matchedCount) {
-      outcome = {
+      return {
         success: false,
         alreadyMapped: true,
         listing: row,
         message: "Sản phẩm đã được mapping. Không ghi đè.",
       };
-      return;
     }
 
-    await setMeta("listings_updated_at", new Date().toISOString());
+    try {
+      await setMeta("listings_updated_at", new Date().toISOString());
+    } catch (metaErr) {
+      console.error("[MongoDB] manual-link setMeta bỏ qua:", (metaErr as any)?.message || metaErr);
+    }
     console.log(`[MongoDB] manual-link $set id=${String(doc._id)} → ${masterProductId}`);
-    outcome = {
+    return {
       success: true,
       alreadyMapped: false,
       listing: nextRow,
       message: "Đã lưu mapping.",
     };
-  });
-
-  return outcome;
+  } catch (err) {
+    console.error("[MongoDB] manual-link lỗi:", (err as any)?.message || err);
+    return {
+      success: false,
+      alreadyMapped: false,
+      listing: null,
+      message: "Lỗi server",
+    };
+  }
 }
 
 export async function deleteAllProductsFromStore(): Promise<void> {

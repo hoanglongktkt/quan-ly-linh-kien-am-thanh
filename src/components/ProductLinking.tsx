@@ -528,7 +528,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   const isMappingCancelledRef = useRef(false);
 
   // Manual Mapping Modal state
-  const manualLinkLock = useRef(false);
+  const [manualLinkingId, setManualLinkingId] = useState<string | null>(null);
   const [mappingListing, setMappingListing] = useState<ChannelListing | null>(null);
   const [mappingSearch, setMappingSearch] = useState('');
   /** Toàn bộ SKU kho gốc — không phụ thuộc phân trang trang Kho sản phẩm. */
@@ -1086,7 +1086,6 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
 
   // 3. Confirm Manual Mapping — POST 1 dòng, không PUT cả danh sách mapping.
   const handleMapProduct = async (listingId: string, masterProductId: string) => {
-    if (manualLinkLock.current) return;
     const catalogHit = flattenedMasterProducts.find((p) => String(p.id) === String(masterProductId));
     const listing = listings.find((l) => String(l.id) === String(listingId));
     // Ưu tiên SP đầy đủ từ trang Kho đang load; catalog chỉ có id/sku/title (không được PATCH stock=0).
@@ -1115,7 +1114,10 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       linkBroken: false,
     };
 
-    manualLinkLock.current = true;
+    const linkKey = `${listing.id}:${displayProd.id}`;
+    setManualLinkingId(linkKey);
+    const abortCtrl = new AbortController();
+    const abortTimer = window.setTimeout(() => abortCtrl.abort(), 20000);
     try {
       const res = await apiFetch('/api/mapping-products/manual-link', {
         method: 'POST',
@@ -1123,6 +1125,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
+        signal: abortCtrl.signal,
         body: JSON.stringify({
           listingId: String(listing.id),
           masterProductId: String(displayProd.id),
@@ -1219,10 +1222,16 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       });
     } catch (error) {
       console.error("Lỗi API Mapping:", (error as { response?: { data?: unknown } })?.response?.data || error);
+      const aborted = error instanceof DOMException && error.name === 'AbortError';
       const serverMsg = (error as { response?: { data?: { message?: string } } })?.response?.data?.message;
-      showToast(serverMsg || 'Không thể lưu dữ liệu mapping. Vui lòng kiểm tra kết nối máy chủ.');
+      showToast(
+        aborted
+          ? 'Máy chủ phản hồi quá lâu. Nút Liên kết đã được mở lại, hãy thử lần nữa.'
+          : serverMsg || 'Không thể lưu dữ liệu mapping. Vui lòng kiểm tra kết nối máy chủ.'
+      );
     } finally {
-      manualLinkLock.current = false;
+      window.clearTimeout(abortTimer);
+      setManualLinkingId(null);
     }
   };
 
@@ -2866,11 +2875,14 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
 
                         <button
                           type="button"
+                          disabled={manualLinkingId !== null}
                           onClick={() => handleMapProduct(mappingListing.id, masterProd.id)}
-                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-[11px] rounded-lg transition-all cursor-pointer flex items-center gap-1"
+                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-[11px] rounded-lg transition-all cursor-pointer flex items-center gap-1 shrink-0 disabled:opacity-60 disabled:cursor-not-allowed"
                         >
                           <Link2 className="w-3.5 h-3.5" />
-                          <span>Liên kết</span>
+                          <span>
+                            {manualLinkingId === `${mappingListing.id}:${masterProd.id}` ? 'Đang lưu' : 'Liên kết'}
+                          </span>
                         </button>
                       </div>
                     ))}

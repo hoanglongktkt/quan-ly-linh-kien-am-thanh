@@ -183,6 +183,21 @@ export async function handleMappingProductsUpsert(req, res) {
 
 /** POST /api/mapping-products/manual-link — liên kết 1 sản phẩm, có xét cờ trước khi $set. */
 export async function handleManualMappingLink(req, res) {
+  let settled = false;
+  const reply = (status, body) => {
+    if (settled || res.headersSent) return;
+    settled = true;
+    try {
+      res.status(status).json(body);
+    } catch (sendErr) {
+      console.error("[Mapping Manual] gửi response lỗi:", sendErr?.message || sendErr);
+    }
+  };
+  const timer = setTimeout(() => {
+    console.error("[Mapping Manual] quá thời gian — trả lỗi, không giữ request.");
+    reply(500, { success: false, message: "Lỗi server" });
+  }, 15000);
+
   try {
     const body = req?.body && typeof req.body === "object" ? req.body : {};
     const listingId = String(body.listingId || body.id || "").trim();
@@ -190,10 +205,11 @@ export async function handleManualMappingLink(req, res) {
     const channelId = String(body.channelId || body.itemId || body.shopeeItemId || "").trim();
 
     if (!listingId || !masterProductId) {
-      return res.status(400).json({
+      reply(400, {
         success: false,
         message: "Thiếu id sản phẩm kho hoặc id sản phẩm Shopee.",
       });
+      return;
     }
 
     const result = await deps.applyManualChannelListingLink({
@@ -205,19 +221,20 @@ export async function handleManualMappingLink(req, res) {
     });
 
     if (!result?.success) {
-      return res.status(200).json({
+      reply(200, {
         success: false,
         alreadyMapped: result?.alreadyMapped === true,
         message: result?.message || "Không thể cập nhật mapping.",
         listing: result?.listing || null,
       });
+      return;
     }
 
-    try {
-      await deps.flushDbWrites();
-    } catch (flushErr) {
-      console.error("[Mapping Manual] flush bỏ qua:", flushErr?.message || flushErr);
-    }
+    void Promise.resolve()
+      .then(() => deps.flushDbWrites())
+      .catch((flushErr) => {
+        console.error("[Mapping Manual] flush bỏ qua:", flushErr?.message || flushErr);
+      });
 
     const listing = result.listing ? deps.sanitizeChannelListingRow(result.listing) : null;
     const safeListing = listing
@@ -233,7 +250,7 @@ export async function handleManualMappingLink(req, res) {
     console.log(
       `Đã lưu DB thành công — manual-link listing=${listingId} master=${masterProductId} already=${result.alreadyMapped === true}`,
     );
-    return res.status(200).json({
+    reply(200, {
       success: true,
       alreadyMapped: result.alreadyMapped === true,
       listing: safeListing,
@@ -241,7 +258,9 @@ export async function handleManualMappingLink(req, res) {
     });
   } catch (error) {
     console.error("[Mapping Manual] lỗi:", error?.message || error);
-    return res.status(500).json({ success: false, message: "Lỗi server" });
+    reply(500, { success: false, message: "Lỗi server" });
+  } finally {
+    clearTimeout(timer);
   }
 }
 
