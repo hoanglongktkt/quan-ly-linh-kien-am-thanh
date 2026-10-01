@@ -479,6 +479,7 @@ import {
   setProductsDiskAppRoot,
   inheritShopeeLinkFromParent,
   bulkUpsertOrdersToStore,
+  isValidTrackingNo,
   bulkUpdateShippedOrdersBySn,
   bulkUpdateTrackingBySn,
   markOrdersHasPdfRows,
@@ -2895,8 +2896,9 @@ function rememberShopeeListUpdateTime(
 }
 
 /**
- * Chỉ gọi get_order_detail khi đơn chưa có trong DB, hoặc update_time list mới hơn
- * last_shopee_update_at. Lỗi DB → trả full list (không bỏ sót đơn).
+ * Chỉ gọi get_order_detail khi đơn chưa có trong DB, chưa có last_shopee_update_at,
+ * hoặc update_time list mới hơn watermark. Thiếu watermark = bắt buộc lấy detail.
+ * Lỗi DB → trả full list (không bỏ sót đơn).
  */
 async function selectOrderSnsNeedingDetail(
   orderSns: string[],
@@ -2933,7 +2935,8 @@ async function selectOrderSnsNeedingDetail(
       continue;
     }
     const storedAt = stored.get(sn);
-    if (!storedAt || Number.isNaN(storedAt.getTime())) {
+    // Document có nhưng chưa có last_shopee_update_at (đơn mới / stub webhook) — không được bỏ.
+    if (storedAt == null || Number.isNaN(storedAt.getTime())) {
       keep.push(sn);
       continue;
     }
@@ -22226,6 +22229,8 @@ async function eagerUpsertWebhookStub(body: any): Promise<void> {
       });
     }
     normalized._force_shop_id = true;
+    normalized.has_tracking =
+      isValidTrackingNo(normalized.tracking_no) || isValidTrackingNo(normalized.trackingNumber);
     if (!normalized.data || typeof normalized.data !== "object") {
       normalized.data = {
         id: normalized.id,

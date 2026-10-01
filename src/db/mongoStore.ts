@@ -3264,9 +3264,15 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       "data.local_status": "NONE",
       "data.localStatus": "NONE",
       "data.internal_status": "NONE",
-      // Đơn mới chưa có mã. Update không $set false — tracking_no cũ được giữ, không ghi đè cờ.
-      has_tracking: false,
+      // INSERT luôn gán cờ. Có mã → true (nếu $set đã ghi thì key này bị gỡ để khỏi xung đột).
+      // Chưa có mã → false. Update không $set false — tracking_no cũ được giữ.
+      has_tracking: Boolean(usableTn),
     };
+    if (!incomingUpdateAt) {
+      // Không bịa last_shopee_update_at bằng giờ server. Field trống → pull bắt buộc get_order_detail.
+      delete $setOnInsertRaw.last_shopee_update_at;
+      delete $setOnInsertRaw["data.last_shopee_update_at"];
+    }
     const $setOnInsert: Record<string, unknown> = {};
     for (const [k, v] of Object.entries($setOnInsertRaw)) {
       if (Object.prototype.hasOwnProperty.call($set, k)) continue;
@@ -3401,10 +3407,9 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
             | undefined;
           if (!$set) continue;
           stripWarehouseProtectedKeysFromSet($set);
-          if (current && $set.last_shopee_update_at == null && !current.last_shopee_update_at) {
-            const backfillAt = item.updateAt || new Date();
-            $set.last_shopee_update_at = backfillAt;
-            $set["data.last_shopee_update_at"] = backfillAt.toISOString();
+          if (current && item.updateAt && $set.last_shopee_update_at == null && !current.last_shopee_update_at) {
+            $set.last_shopee_update_at = item.updateAt;
+            $set["data.last_shopee_update_at"] = item.updateAt.toISOString();
           }
           if (current) {
             const existingShop = String(current.shopId || current.data?.shopId || "").trim();
@@ -7428,14 +7433,17 @@ const ORDER_TAB_TRACKING_PRESENT: Record<string, unknown> = {
   tracking_no: { $exists: true, $nin: [null, "", "0"] },
 };
 
-/** Chưa có mã VĐ — index has_tracking, không $exists/$or trên tracking_no. */
+/**
+ * Chưa có mã VĐ. `$ne: true` khớp cả `false` lẫn document thiếu field
+ * (đơn webhook mới chưa gán cờ). `$eq: false` bỏ sót những đơn đó.
+ */
 const ORDER_TAB_TRACKING_ABSENT: Record<string, unknown> = {
-  has_tracking: false,
+  has_tracking: { $ne: true },
 };
 
 /** Tab Chờ xác nhận: Count ≡ Find — loại đơn đã có mã vận đơn. */
 function orderTabPendingConfirmNoTracking(): Record<string, unknown> {
-  return { has_tracking: false };
+  return { has_tracking: { $ne: true } };
 }
 
 const ORDER_TAB_DROPOFF_PREPARED: Record<string, unknown> = {
@@ -7922,7 +7930,7 @@ function tabIndexFilter(tab?: string, kind?: string): Record<string, unknown> {
         is_handed_over: { $ne: true },
         isPrepared: { $ne: true },
         channel: { $nin: ["woocommerce", "manual"] },
-        has_tracking: false,
+        has_tracking: { $ne: true },
       };
     case "processed":
     case "da-xu-ly":

@@ -82484,9 +82484,14 @@ async function bulkUpsertOrdersToStore(orders) {
       "data.local_status": "NONE",
       "data.localStatus": "NONE",
       "data.internal_status": "NONE",
-      // Đơn mới chưa có mã. Update không $set false — tracking_no cũ được giữ, không ghi đè cờ.
-      has_tracking: false
+      // INSERT luôn gán cờ. Có mã → true (nếu $set đã ghi thì key này bị gỡ để khỏi xung đột).
+      // Chưa có mã → false. Update không $set false — tracking_no cũ được giữ.
+      has_tracking: Boolean(usableTn)
     };
+    if (!incomingUpdateAt) {
+      delete $setOnInsertRaw.last_shopee_update_at;
+      delete $setOnInsertRaw["data.last_shopee_update_at"];
+    }
     const $setOnInsert = {};
     for (const [k, v] of Object.entries($setOnInsertRaw)) {
       if (Object.prototype.hasOwnProperty.call($set, k)) continue;
@@ -82601,10 +82606,9 @@ async function bulkUpsertOrdersToStore(orders) {
           const $setOnInsert = item.op?.updateOne?.update?.$setOnInsert;
           if (!$set) continue;
           stripWarehouseProtectedKeysFromSet($set);
-          if (current && $set.last_shopee_update_at == null && !current.last_shopee_update_at) {
-            const backfillAt = item.updateAt || /* @__PURE__ */ new Date();
-            $set.last_shopee_update_at = backfillAt;
-            $set["data.last_shopee_update_at"] = backfillAt.toISOString();
+          if (current && item.updateAt && $set.last_shopee_update_at == null && !current.last_shopee_update_at) {
+            $set.last_shopee_update_at = item.updateAt;
+            $set["data.last_shopee_update_at"] = item.updateAt.toISOString();
           }
           if (current) {
             const existingShop = String(current.shopId || current.data?.shopId || "").trim();
@@ -85425,10 +85429,10 @@ var ORDER_TAB_TRACKING_PRESENT = {
   tracking_no: { $exists: true, $nin: [null, "", "0"] }
 };
 var ORDER_TAB_TRACKING_ABSENT = {
-  has_tracking: false
+  has_tracking: { $ne: true }
 };
 function orderTabPendingConfirmNoTracking() {
-  return { has_tracking: false };
+  return { has_tracking: { $ne: true } };
 }
 var ORDER_TAB_DROPOFF_PREPARED = {
   isPrepared: true
@@ -85783,7 +85787,7 @@ function tabIndexFilter(tab, kind) {
         is_handed_over: { $ne: true },
         isPrepared: { $ne: true },
         channel: { $nin: ["woocommerce", "manual"] },
-        has_tracking: false
+        has_tracking: { $ne: true }
       };
     case "processed":
     case "da-xu-ly":
@@ -136125,7 +136129,7 @@ async function selectOrderSnsNeedingDetail(orderSns, updateTimeBySn) {
       continue;
     }
     const storedAt = stored.get(sn);
-    if (!storedAt || Number.isNaN(storedAt.getTime())) {
+    if (storedAt == null || Number.isNaN(storedAt.getTime())) {
       keep.push(sn);
       continue;
     }
@@ -149972,6 +149976,7 @@ async function eagerUpsertWebhookStub(body) {
       });
     }
     normalized._force_shop_id = true;
+    normalized.has_tracking = isValidTrackingNo(normalized.tracking_no) || isValidTrackingNo(normalized.trackingNumber);
     if (!normalized.data || typeof normalized.data !== "object") {
       normalized.data = {
         id: normalized.id,
