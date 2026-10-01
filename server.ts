@@ -2896,14 +2896,15 @@ function rememberShopeeListUpdateTime(
 }
 
 /**
- * Chỉ gọi get_order_detail khi đơn chưa có trong DB, chưa có last_shopee_update_at,
- * hoặc update_time list mới hơn watermark. Thiếu watermark = bắt buộc lấy detail.
+ * Gọi get_order_detail khi: đơn chưa có trong DB, update_time list mới hơn watermark,
+ * chưa có last_shopee_update_at, HOẶC document chưa có danh sách sản phẩm.
+ * Vỏ webhook (có watermark, item_list rỗng) vẫn phải lấy detail — update_time không đổi không được bỏ.
  * Lỗi DB → trả full list (không bỏ sót đơn).
  */
 async function selectOrderSnsNeedingDetail(
   orderSns: string[],
   updateTimeBySn: Map<string, number>,
-): Promise<{ keep: string[]; skipped: number }> {
+): Promise<{ keep: string[]; skipped: number; missingItems: number }> {
   const unique: string[] = [];
   const seen = new Set<string>();
   for (const raw of orderSns) {
@@ -2912,8 +2913,8 @@ async function selectOrderSnsNeedingDetail(
     seen.add(sn);
     unique.push(sn);
   }
-  if (unique.length === 0) return { keep: [], skipped: 0 };
-  let stored: Map<string, Date | null>;
+  if (unique.length === 0) return { keep: [], skipped: 0, missingItems: 0 };
+  let stored: Map<string, { at: Date | null; missingItems: boolean }>;
   try {
     stored = await loadLastShopeeUpdateAtByOrderSns(unique);
   } catch (err: any) {
@@ -2921,12 +2922,20 @@ async function selectOrderSnsNeedingDetail(
       "[Orders Pull] lọc detail theo last_shopee_update_at lỗi — gọi detail đầy đủ:",
       err?.message || err,
     );
-    return { keep: unique, skipped: 0 };
+    return { keep: unique, skipped: 0, missingItems: 0 };
   }
   const keep: string[] = [];
+  let missingItems = 0;
   for (const sn of unique) {
     if (!stored.has(sn)) {
       keep.push(sn);
+      continue;
+    }
+    const row = stored.get(sn);
+    // Chống mất dữ liệu: data.items và data.item_list đều trống → ép get_order_detail.
+    if (!row || row.missingItems) {
+      keep.push(sn);
+      missingItems += 1;
       continue;
     }
     const listSec = updateTimeBySn.get(sn);
@@ -2934,7 +2943,7 @@ async function selectOrderSnsNeedingDetail(
       keep.push(sn);
       continue;
     }
-    const storedAt = stored.get(sn);
+    const storedAt = row.at;
     // Document có nhưng chưa có last_shopee_update_at (đơn mới / stub webhook) — không được bỏ.
     if (storedAt == null || Number.isNaN(storedAt.getTime())) {
       keep.push(sn);
@@ -2942,7 +2951,7 @@ async function selectOrderSnsNeedingDetail(
     }
     if (listSec > Math.floor(storedAt.getTime() / 1000)) keep.push(sn);
   }
-  return { keep, skipped: unique.length - keep.length };
+  return { keep, skipped: unique.length - keep.length, missingItems };
 }
 
 /** Thu thập order_sn từ get_order_list — chia chunk ≤15 ngày + cursor pagination đến more=false. */
@@ -5778,9 +5787,12 @@ async function pullIncrementalOrdersFromShopee(opts?: {
           try {
             const filtered = await selectOrderSnsNeedingDetail(orderSnList, updateTimeBySn);
             detailSnList = filtered.keep;
-            if (filtered.skipped > 0) {
+            if (filtered.skipped > 0 || filtered.missingItems > 0) {
               console.log(
-                `[Orders Pull] shopId=${shopId} bỏ qua ${filtered.skipped} đơn không đổi update_time — detail=${detailSnList.length}/${orderSnList.length}`,
+                `[Orders Pull] shopId=${shopId} bỏ qua ${filtered.skipped} đơn không đổi update_time — detail=${detailSnList.length}/${orderSnList.length}` +
+                  (filtered.missingItems > 0
+                    ? ` ép detail vì thiếu sản phẩm=${filtered.missingItems}`
+                    : ""),
               );
             }
           } catch (filterErr: any) {

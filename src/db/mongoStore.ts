@@ -8844,13 +8844,16 @@ async function safeCountDocuments(
 }
 
 /**
- * orderSn → last_shopee_update_at. SN không có trong map = chưa có document.
- * Value null = document có nhưng chưa có watermark.
+ * orderSn → watermark + cờ thiếu sản phẩm.
+ * SN không có trong map = chưa có document.
+ * `at` null = document có nhưng chưa có last_shopee_update_at.
+ * `missingItems` = data.items và data.item_list đều null / không phải mảng / length 0.
+ * Chỉ $project độ dài — không kéo full item_list về Node.
  */
 export async function loadLastShopeeUpdateAtByOrderSns(
   orderSns: string[],
-): Promise<Map<string, Date | null>> {
-  const out = new Map<string, Date | null>();
+): Promise<Map<string, { at: Date | null; missingItems: boolean }>> {
+  const out = new Map<string, { at: Date | null; missingItems: boolean }>();
   if (!isMongoReady()) return out;
   const sns: string[] = [];
   const seen = new Set<string>();
@@ -8869,16 +8872,34 @@ export async function loadLastShopeeUpdateAtByOrderSns(
     const chunk = sns.slice(i, i + BATCH);
     batches += 1;
     try {
-      const docs = await OrderModel.find({ orderSn: { $in: chunk } })
-        .select({ orderSn: 1, last_shopee_update_at: 1 })
-        .lean()
-        .maxTimeMS(12_000);
+      const docs = await OrderModel.aggregate([
+        { $match: { orderSn: { $in: chunk } } },
+        {
+          $project: {
+            orderSn: 1,
+            last_shopee_update_at: 1,
+            itemsLen: {
+              $cond: [{ $isArray: "$data.items" }, { $size: "$data.items" }, 0],
+            },
+            itemListLen: {
+              $cond: [{ $isArray: "$data.item_list" }, { $size: "$data.item_list" }, 0],
+            },
+          },
+        },
+      ]).option({ maxTimeMS: 12_000 });
       for (const d of docs as any[]) {
         const sn = String(d?.orderSn || "").replace(/^shopee-/i, "").trim();
         if (!sn) continue;
         const rawAt = d?.last_shopee_update_at;
         const at = rawAt ? new Date(rawAt) : null;
-        out.set(sn, at && !Number.isNaN(at.getTime()) ? at : null);
+        const itemsLen = Number(d?.itemsLen);
+        const itemListLen = Number(d?.itemListLen);
+        const hasItems = Number.isFinite(itemsLen) && itemsLen > 0;
+        const hasItemList = Number.isFinite(itemListLen) && itemListLen > 0;
+        out.set(sn, {
+          at: at && !Number.isNaN(at.getTime()) ? at : null,
+          missingItems: !hasItems && !hasItemList,
+        });
       }
     } catch (err: any) {
       console.error(

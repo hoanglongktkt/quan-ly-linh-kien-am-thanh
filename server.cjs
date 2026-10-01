@@ -86453,13 +86453,34 @@ async function loadLastShopeeUpdateAtByOrderSns(orderSns) {
     const chunk = sns.slice(i2, i2 + BATCH);
     batches += 1;
     try {
-      const docs = await OrderModel.find({ orderSn: { $in: chunk } }).select({ orderSn: 1, last_shopee_update_at: 1 }).lean().maxTimeMS(12e3);
+      const docs = await OrderModel.aggregate([
+        { $match: { orderSn: { $in: chunk } } },
+        {
+          $project: {
+            orderSn: 1,
+            last_shopee_update_at: 1,
+            itemsLen: {
+              $cond: [{ $isArray: "$data.items" }, { $size: "$data.items" }, 0]
+            },
+            itemListLen: {
+              $cond: [{ $isArray: "$data.item_list" }, { $size: "$data.item_list" }, 0]
+            }
+          }
+        }
+      ]).option({ maxTimeMS: 12e3 });
       for (const d of docs) {
         const sn = String(d?.orderSn || "").replace(/^shopee-/i, "").trim();
         if (!sn) continue;
         const rawAt = d?.last_shopee_update_at;
         const at = rawAt ? new Date(rawAt) : null;
-        out.set(sn, at && !Number.isNaN(at.getTime()) ? at : null);
+        const itemsLen = Number(d?.itemsLen);
+        const itemListLen = Number(d?.itemListLen);
+        const hasItems = Number.isFinite(itemsLen) && itemsLen > 0;
+        const hasItemList = Number.isFinite(itemListLen) && itemListLen > 0;
+        out.set(sn, {
+          at: at && !Number.isNaN(at.getTime()) ? at : null,
+          missingItems: !hasItems && !hasItemList
+        });
       }
     } catch (err) {
       console.error(
@@ -136106,7 +136127,7 @@ async function selectOrderSnsNeedingDetail(orderSns, updateTimeBySn) {
     seen.add(sn);
     unique.push(sn);
   }
-  if (unique.length === 0) return { keep: [], skipped: 0 };
+  if (unique.length === 0) return { keep: [], skipped: 0, missingItems: 0 };
   let stored;
   try {
     stored = await loadLastShopeeUpdateAtByOrderSns(unique);
@@ -136115,12 +136136,19 @@ async function selectOrderSnsNeedingDetail(orderSns, updateTimeBySn) {
       "[Orders Pull] l\u1ECDc detail theo last_shopee_update_at l\u1ED7i \u2014 g\u1ECDi detail \u0111\u1EA7y \u0111\u1EE7:",
       err?.message || err
     );
-    return { keep: unique, skipped: 0 };
+    return { keep: unique, skipped: 0, missingItems: 0 };
   }
   const keep = [];
+  let missingItems = 0;
   for (const sn of unique) {
     if (!stored.has(sn)) {
       keep.push(sn);
+      continue;
+    }
+    const row = stored.get(sn);
+    if (!row || row.missingItems) {
+      keep.push(sn);
+      missingItems += 1;
       continue;
     }
     const listSec = updateTimeBySn.get(sn);
@@ -136128,14 +136156,14 @@ async function selectOrderSnsNeedingDetail(orderSns, updateTimeBySn) {
       keep.push(sn);
       continue;
     }
-    const storedAt = stored.get(sn);
+    const storedAt = row.at;
     if (storedAt == null || Number.isNaN(storedAt.getTime())) {
       keep.push(sn);
       continue;
     }
     if (listSec > Math.floor(storedAt.getTime() / 1e3)) keep.push(sn);
   }
-  return { keep, skipped: unique.length - keep.length };
+  return { keep, skipped: unique.length - keep.length, missingItems };
 }
 async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
   const timeTo = Math.floor(Date.now() / 1e3);
@@ -138419,9 +138447,9 @@ async function pullIncrementalOrdersFromShopee(opts) {
           try {
             const filtered = await selectOrderSnsNeedingDetail(orderSnList, updateTimeBySn);
             detailSnList = filtered.keep;
-            if (filtered.skipped > 0) {
+            if (filtered.skipped > 0 || filtered.missingItems > 0) {
               console.log(
-                `[Orders Pull] shopId=${shopId} b\u1ECF qua ${filtered.skipped} \u0111\u01A1n kh\xF4ng \u0111\u1ED5i update_time \u2014 detail=${detailSnList.length}/${orderSnList.length}`
+                `[Orders Pull] shopId=${shopId} b\u1ECF qua ${filtered.skipped} \u0111\u01A1n kh\xF4ng \u0111\u1ED5i update_time \u2014 detail=${detailSnList.length}/${orderSnList.length}` + (filtered.missingItems > 0 ? ` \xE9p detail v\xEC thi\u1EBFu s\u1EA3n ph\u1EA9m=${filtered.missingItems}` : "")
               );
             }
           } catch (filterErr) {
