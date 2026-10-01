@@ -4,6 +4,7 @@
  */
 import fs from "fs";
 import path from "path";
+import mongoose from "mongoose";
 import { PDF_DIR, resolveAppRoot } from "../utils/appPaths.js";
 import { attachPdfAvailability } from "../utils/orderPdfAvailability.js";
 import { emitOrderUpdated } from "../services/orderRealtime.js";
@@ -25,6 +26,7 @@ import {
 } from "../services/orders.js";
 import {
   isMongoReady,
+  isValidTrackingNo,
   loadOrdersFromStore,
   findOrderByScanCodeInStore,
   listScannerSyncRowsFromStore,
@@ -1997,6 +1999,114 @@ export async function reclassifyCancelReturns(req, res) {
       return res.status(500).json({
         success: false,
         error: err?.message || String(err),
+      });
+    }
+  }
+}
+
+const MIGRATE_TRACKING_BATCH = 500;
+const MIGRATE_TRACKING_MAX_BATCHES = 5000;
+
+function docHasValidTracking(doc) {
+  return (
+    isValidTrackingNo(doc?.tracking_no) ||
+    isValidTrackingNo(doc?.trackingNumber) ||
+    isValidTrackingNo(doc?.data?.tracking_no) ||
+    isValidTrackingNo(doc?.data?.trackingNumber)
+  );
+}
+
+/**
+ * GET /api/orders/system/migrate-tracking-flag
+ * Gán has_tracking cho mọi đơn chưa có field. Batch 500 + nghỉ giữa batch.
+ * Gọi lại an toàn: filter { has_tracking: { $exists: false } }.
+ */
+export async function migrateTrackingFlag(_req, res) {
+  const stats = {
+    success: true,
+    scanned: 0,
+    updated: 0,
+    withTracking: 0,
+    withoutTracking: 0,
+    batches: 0,
+  };
+  try {
+    if (!isMongoReady() || mongoose.connection.readyState !== 1 || !mongoose.connection.db) {
+      return res.status(503).json({
+        success: false,
+        error: "mongodb_not_ready",
+        message: "MongoDB chưa sẵn sàng.",
+      });
+    }
+    const col = mongoose.connection.db.collection("orders");
+
+    while (stats.batches < MIGRATE_TRACKING_MAX_BATCHES) {
+      const docs = await col
+        .find({ has_tracking: { $exists: false } })
+        .project({
+          _id: 1,
+          tracking_no: 1,
+          trackingNumber: 1,
+          "data.tracking_no": 1,
+          "data.trackingNumber": 1,
+        })
+        .limit(MIGRATE_TRACKING_BATCH)
+        .maxTimeMS(20_000)
+        .toArray();
+
+      if (!Array.isArray(docs) || docs.length === 0) break;
+
+      stats.batches += 1;
+      stats.scanned += docs.length;
+
+      const ops = [];
+      for (const doc of docs) {
+        const hasTracking = docHasValidTracking(doc);
+        if (hasTracking) stats.withTracking += 1;
+        else stats.withoutTracking += 1;
+        ops.push({
+          updateOne: {
+            filter: { _id: doc._id, has_tracking: { $exists: false } },
+            update: { $set: { has_tracking: hasTracking } },
+          },
+        });
+      }
+
+      const result = await col.bulkWrite(ops, { ordered: false });
+      const modified = Number(result?.modifiedCount ?? result?.nModified ?? 0);
+      stats.updated += modified;
+
+      if (docs.length < MIGRATE_TRACKING_BATCH) break;
+      if (modified === 0) {
+        console.error(
+          "[Orders] migrate-tracking-flag dừng — batch không ghi được has_tracking",
+        );
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    }
+
+    if (stats.batches >= MIGRATE_TRACKING_MAX_BATCHES) {
+      console.warn(
+        `[Orders] migrate-tracking-flag chạm trần ${MIGRATE_TRACKING_MAX_BATCHES} batch — gọi lại route để chạy tiếp`,
+      );
+    }
+    console.log(
+      `[Orders] migrate-tracking-flag DONE scanned=${stats.scanned} updated=${stats.updated}` +
+        ` with=${stats.withTracking} without=${stats.withoutTracking} batches=${stats.batches}`,
+    );
+    return res.json({
+      ...stats,
+      message: `Đã migrate ${stats.updated} đơn (quét ${stats.scanned}).`,
+    });
+  } catch (err) {
+    console.error("[Orders] migrate-tracking-flag failed:", err?.message || err);
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        error: err?.message || String(err),
+        ...stats,
+        message: "Migrate has_tracking thất bại.",
       });
     }
   }

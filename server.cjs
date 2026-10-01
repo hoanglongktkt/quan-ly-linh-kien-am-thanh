@@ -80164,6 +80164,8 @@ var OrderSchema = new import_mongoose4.Schema(
     tracking_no: { type: String, default: null, index: true },
     /** Alias camelCase — lookup scan exact $eq (cùng giá trị tracking_no) */
     trackingNumber: { type: String, default: null, index: true },
+    /** Cờ đã có mã vận đơn thật. Index để tab chưa xử lý khỏi $exists/$or. */
+    has_tracking: { type: Boolean, default: false, index: true },
     /** Mã vận đơn chiều hoàn — quét barcode return */
     return_tracking_no: { type: String, default: null, index: true },
     /** Alias camelCase — lookup scan exact $eq (cùng giá trị return_tracking_no) */
@@ -82059,6 +82061,12 @@ function coerceShopeeWatermarkDate(value) {
   const d = new Date(raw);
   return Number.isNaN(d.getTime()) ? null : d;
 }
+function isValidTrackingNo(value) {
+  if (value === void 0 || value === null) return false;
+  const s2 = String(value).trim();
+  if (!s2 || /^0FG/i.test(s2)) return false;
+  return true;
+}
 async function insertPosOrderToStore(order) {
   requireMongo();
   if (!order || typeof order !== "object") {
@@ -82090,6 +82098,7 @@ async function insertPosOrderToStore(order) {
           create_time: createdAt,
           last_synced_at: /* @__PURE__ */ new Date(),
           sync_state: "verified",
+          has_tracking: isValidTrackingNo(order.tracking_no) || isValidTrackingNo(order.trackingNumber),
           data: safeOrder
         }
       },
@@ -82214,6 +82223,7 @@ async function bulkUpsertOrdersToStore(orders) {
       $set.trackingNumber = usableTn;
       $set["data.tracking_no"] = usableTn;
       $set["data.trackingNumber"] = usableTn;
+      $set.has_tracking = true;
     }
     if (carrier) {
       $set.shipping_carrier = carrier;
@@ -82473,7 +82483,9 @@ async function bulkUpsertOrdersToStore(orders) {
       "data.is_handed_over_to_courier": false,
       "data.local_status": "NONE",
       "data.localStatus": "NONE",
-      "data.internal_status": "NONE"
+      "data.internal_status": "NONE",
+      // Đơn mới chưa có mã. Update không $set false — tracking_no cũ được giữ, không ghi đè cờ.
+      has_tracking: false
     };
     const $setOnInsert = {};
     for (const [k, v] of Object.entries($setOnInsertRaw)) {
@@ -82486,6 +82498,7 @@ async function bulkUpsertOrdersToStore(orders) {
       shopee_order_status: rawStatus || null,
       status_local: order.status || null,
       tracking_no: usableTn,
+      has_tracking: Boolean(usableTn),
       packageNumber: pkgNum || null,
       shipping_carrier: carrier || null,
       forceShipping,
@@ -82793,6 +82806,7 @@ async function bulkUpdateShippedOrdersBySn(patches) {
       $set.tracking_no = tn;
       $set["data.tracking_no"] = tn;
       $set["data.trackingNumber"] = tn;
+      $set.has_tracking = true;
     }
     if (p.labelUrl) {
       $set["data.labelUrl"] = String(p.labelUrl);
@@ -83474,6 +83488,7 @@ async function updateOrderTrackingInStore(orderSn, trackingNo, extra) {
     $set.trackingNumber = tn;
     $set["data.tracking_no"] = tn;
     $set["data.trackingNumber"] = tn;
+    $set.has_tracking = true;
   }
   if (shopIdStr) {
     $set.shopId = shopIdStr;
@@ -83570,6 +83585,7 @@ async function bulkUpdateTrackingBySn(patches) {
       $set.trackingNumber = tn;
       $set["data.tracking_no"] = tn;
       $set["data.trackingNumber"] = tn;
+      $set.has_tracking = true;
     }
     if (pkg) {
       $set.packageNumber = pkg;
@@ -83787,7 +83803,8 @@ async function bulkSetTrackingNumbersInStore(items) {
       tracking_no: tn,
       trackingNumber: tn,
       "data.tracking_no": tn,
-      "data.trackingNumber": tn
+      "data.trackingNumber": tn,
+      has_tracking: true
     };
     const pkg = String(item?.packageNumber || "").trim();
     if (pkg) {
@@ -83935,6 +83952,7 @@ async function updateOrderPackageNumberInStore(orderSn, packageNumber, extra) {
     $set.tracking_no = tn;
     $set["data.tracking_no"] = tn;
     $set["data.trackingNumber"] = tn;
+    $set.has_tracking = true;
   }
   if (extra?.internalTrackingCode) {
     $set["data.internalTrackingCode"] = extra.internalTrackingCode;
@@ -124562,6 +124580,7 @@ var import_express19 = __toESM(require_express2(), 1);
 // controllers/ordersController.js
 var import_fs23 = __toESM(require("fs"), 1);
 var import_path23 = __toESM(require("path"), 1);
+var import_mongoose10 = __toESM(require("mongoose"), 1);
 init_appPaths();
 
 // utils/orderPdfAvailability.js
@@ -126780,6 +126799,88 @@ async function reclassifyCancelReturns(req, res) {
       return res.status(500).json({
         success: false,
         error: err?.message || String(err)
+      });
+    }
+  }
+}
+var MIGRATE_TRACKING_BATCH = 500;
+var MIGRATE_TRACKING_MAX_BATCHES = 5e3;
+function docHasValidTracking(doc) {
+  return isValidTrackingNo(doc?.tracking_no) || isValidTrackingNo(doc?.trackingNumber) || isValidTrackingNo(doc?.data?.tracking_no) || isValidTrackingNo(doc?.data?.trackingNumber);
+}
+async function migrateTrackingFlag(_req, res) {
+  const stats = {
+    success: true,
+    scanned: 0,
+    updated: 0,
+    withTracking: 0,
+    withoutTracking: 0,
+    batches: 0
+  };
+  try {
+    if (!isMongoReady() || import_mongoose10.default.connection.readyState !== 1 || !import_mongoose10.default.connection.db) {
+      return res.status(503).json({
+        success: false,
+        error: "mongodb_not_ready",
+        message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng."
+      });
+    }
+    const col = import_mongoose10.default.connection.db.collection("orders");
+    while (stats.batches < MIGRATE_TRACKING_MAX_BATCHES) {
+      const docs = await col.find({ has_tracking: { $exists: false } }).project({
+        _id: 1,
+        tracking_no: 1,
+        trackingNumber: 1,
+        "data.tracking_no": 1,
+        "data.trackingNumber": 1
+      }).limit(MIGRATE_TRACKING_BATCH).maxTimeMS(2e4).toArray();
+      if (!Array.isArray(docs) || docs.length === 0) break;
+      stats.batches += 1;
+      stats.scanned += docs.length;
+      const ops = [];
+      for (const doc of docs) {
+        const hasTracking = docHasValidTracking(doc);
+        if (hasTracking) stats.withTracking += 1;
+        else stats.withoutTracking += 1;
+        ops.push({
+          updateOne: {
+            filter: { _id: doc._id, has_tracking: { $exists: false } },
+            update: { $set: { has_tracking: hasTracking } }
+          }
+        });
+      }
+      const result = await col.bulkWrite(ops, { ordered: false });
+      const modified = Number(result?.modifiedCount ?? result?.nModified ?? 0);
+      stats.updated += modified;
+      if (docs.length < MIGRATE_TRACKING_BATCH) break;
+      if (modified === 0) {
+        console.error(
+          "[Orders] migrate-tracking-flag d\u1EEBng \u2014 batch kh\xF4ng ghi \u0111\u01B0\u1EE3c has_tracking"
+        );
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    }
+    if (stats.batches >= MIGRATE_TRACKING_MAX_BATCHES) {
+      console.warn(
+        `[Orders] migrate-tracking-flag ch\u1EA1m tr\u1EA7n ${MIGRATE_TRACKING_MAX_BATCHES} batch \u2014 g\u1ECDi l\u1EA1i route \u0111\u1EC3 ch\u1EA1y ti\u1EBFp`
+      );
+    }
+    console.log(
+      `[Orders] migrate-tracking-flag DONE scanned=${stats.scanned} updated=${stats.updated} with=${stats.withTracking} without=${stats.withoutTracking} batches=${stats.batches}`
+    );
+    return res.json({
+      ...stats,
+      message: `\u0110\xE3 migrate ${stats.updated} \u0111\u01A1n (qu\xE9t ${stats.scanned}).`
+    });
+  } catch (err) {
+    console.error("[Orders] migrate-tracking-flag failed:", err?.message || err);
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        error: err?.message || String(err),
+        ...stats,
+        message: "Migrate has_tracking th\u1EA5t b\u1EA1i."
       });
     }
   }
@@ -131326,6 +131427,7 @@ router18.post("/hydrate-tracking", h4(hydrateTracking));
 router18.post("/enrich-tracking", h4(enrichTracking));
 router18.get("/heal-tracking-cancelled", h4(healTrackingCancelled));
 router18.post("/heal-tracking-cancelled", h4(healTrackingCancelled));
+router18.get("/system/migrate-tracking-flag", h4(migrateTrackingFlag));
 router18.post("/reclassify-cancel-returns", h4(reclassifyCancelReturns));
 router18.get("/reclassify-cancel-returns", h4(reclassifyCancelReturns));
 router18.post("/force-resync-stuck", h4(forceResyncStuck));
@@ -133698,7 +133800,7 @@ async function processShopeeWebhookPayload(body) {
 init_appPaths();
 
 // services/orderChangeStream.js
-var import_mongoose10 = __toESM(require("mongoose"), 1);
+var import_mongoose11 = __toESM(require("mongoose"), 1);
 var NEW_ORDER_FLUSH_MS = 300;
 var UPDATED_FLUSH_MS = 3e3;
 var STATUS_FLUSH_MS = 300;
@@ -133920,8 +134022,8 @@ function closeCurrentStream() {
 }
 function openStream() {
   if (stopped || unsupported) return;
-  const db = import_mongoose10.default.connection?.db;
-  if (import_mongoose10.default.connection?.readyState !== 1 || !db) {
+  const db = import_mongoose11.default.connection?.db;
+  if (import_mongoose11.default.connection?.readyState !== 1 || !db) {
     scheduleReconnect("mongo ch\u01B0a s\u1EB5n s\xE0ng");
     return;
   }
@@ -137432,8 +137534,8 @@ async function debugForceSyncHandedOverOrders(opts) {
     }));
     if (candidates.length === 0) {
       try {
-        const { default: mongoose11 } = await import("mongoose");
-        const col = mongoose11.connection?.db?.collection("orders");
+        const { default: mongoose12 } = await import("mongoose");
+        const col = mongoose12.connection?.db?.collection("orders");
         if (col) {
           const rawHanded = await col.countDocuments({
             $or: [

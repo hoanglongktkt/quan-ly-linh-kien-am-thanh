@@ -103,6 +103,8 @@ type OrderDoc = {
   /** Mã vận đơn (SPXVN / GHN / ...) — top-level để query & force update */
   tracking_no?: string | null;
   trackingNumber?: string | null;
+  /** true khi tracking_no hợp lệ — thay $exists/$or lúc lọc đơn chưa có mã VĐ */
+  has_tracking?: boolean;
   /** Mã vận đơn chiều hoàn */
   return_tracking_no?: string | null;
   returnTrackingNumber?: string | null;
@@ -266,6 +268,8 @@ const OrderSchema = new Schema<OrderDoc>(
     tracking_no: { type: String, default: null, index: true },
     /** Alias camelCase — lookup scan exact $eq (cùng giá trị tracking_no) */
     trackingNumber: { type: String, default: null, index: true },
+    /** Cờ đã có mã vận đơn thật. Index để tab chưa xử lý khỏi $exists/$or. */
+    has_tracking: { type: Boolean, default: false, index: true },
     /** Mã vận đơn chiều hoàn — quét barcode return */
     return_tracking_no: { type: String, default: null, index: true },
     /** Alias camelCase — lookup scan exact $eq (cùng giá trị return_tracking_no) */
@@ -2689,6 +2693,17 @@ function coerceShopeeWatermarkDate(value: unknown): Date | null {
 }
 
 /**
+ * Mã vận đơn hợp lệ: khác undefined, null và chuỗi rỗng (sau trim).
+ * Mã nội bộ Shopee 0FG không phải vận đơn — không tính là đã có mã.
+ */
+export function isValidTrackingNo(value: unknown): boolean {
+  if (value === undefined || value === null) return false;
+  const s = String(value).trim();
+  if (!s || /^0FG/i.test(s)) return false;
+  return true;
+}
+
+/**
  * Ghi đơn Mini POS trực tiếp, không chờ hàng đợi sync Shopee.
  * Payload POS đã được controller chuẩn hóa; data là snapshot đầy đủ để hydrate lại.
  */
@@ -2723,6 +2738,8 @@ export async function insertPosOrderToStore(order: any): Promise<void> {
           create_time: createdAt,
           last_synced_at: new Date(),
           sync_state: "verified",
+          has_tracking:
+            isValidTrackingNo(order.tracking_no) || isValidTrackingNo(order.trackingNumber),
           data: safeOrder,
         },
       },
@@ -2919,6 +2936,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       $set.trackingNumber = usableTn;
       $set["data.tracking_no"] = usableTn;
       $set["data.trackingNumber"] = usableTn;
+      $set.has_tracking = true;
     }
 
     if (carrier) {
@@ -3246,6 +3264,8 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       "data.local_status": "NONE",
       "data.localStatus": "NONE",
       "data.internal_status": "NONE",
+      // Đơn mới chưa có mã. Update không $set false — tracking_no cũ được giữ, không ghi đè cờ.
+      has_tracking: false,
     };
     const $setOnInsert: Record<string, unknown> = {};
     for (const [k, v] of Object.entries($setOnInsertRaw)) {
@@ -3259,6 +3279,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       shopee_order_status: rawStatus || null,
       status_local: order.status || null,
       tracking_no: usableTn,
+      has_tracking: Boolean(usableTn),
       packageNumber: pkgNum || null,
       shipping_carrier: carrier || null,
       forceShipping,
@@ -3644,6 +3665,7 @@ export async function bulkUpdateShippedOrdersBySn(
       $set.tracking_no = tn;
       $set["data.tracking_no"] = tn;
       $set["data.trackingNumber"] = tn;
+      $set.has_tracking = true;
     }
     if (p.labelUrl) {
       $set["data.labelUrl"] = String(p.labelUrl);
@@ -4514,6 +4536,7 @@ export async function updateOrderTrackingInStore(
     $set.trackingNumber = tn;
     $set["data.tracking_no"] = tn;
     $set["data.trackingNumber"] = tn;
+    $set.has_tracking = true;
   }
   if (shopIdStr) {
     $set.shopId = shopIdStr;
@@ -4632,6 +4655,7 @@ export async function bulkUpdateTrackingBySn(
         $set.trackingNumber = tn;
         $set["data.tracking_no"] = tn;
         $set["data.trackingNumber"] = tn;
+        $set.has_tracking = true;
       }
       if (pkg) {
         $set.packageNumber = pkg;
@@ -4901,6 +4925,7 @@ export async function bulkSetTrackingNumbersInStore(
       trackingNumber: tn,
       "data.tracking_no": tn,
       "data.trackingNumber": tn,
+      has_tracking: true,
     };
     const pkg = String(item?.packageNumber || "").trim();
     if (pkg) {
@@ -5089,6 +5114,7 @@ export async function updateOrderPackageNumberInStore(
     $set.tracking_no = tn;
     $set["data.tracking_no"] = tn;
     $set["data.trackingNumber"] = tn;
+    $set.has_tracking = true;
   }
   if (extra?.internalTrackingCode) {
     $set["data.internalTrackingCode"] = extra.internalTrackingCode;
