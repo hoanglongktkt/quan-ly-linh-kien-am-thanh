@@ -56,7 +56,6 @@ import {
   X,
   ScanLine,
   ShoppingBasket,
-  Scale,
   PackageCheck,
   CheckCircle2,
   Loader2,
@@ -3217,68 +3216,76 @@ export default function App() {
       {/* Mobile Bottom Navigation Bar */}
       <div className={`fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 z-50 max-md:flex md:hidden items-stretch justify-between py-1.5 px-1 shadow-xl safe-area-pb ${focusScanner ? 'max-md:hidden' : ''}`}>
         <button
-          onClick={() => { setMobileProductsView('audit'); navigateTab('products'); }}
+          onClick={() => navigateTab('chat')}
           type="button"
-          className={`flex flex-1 flex-col items-center justify-center gap-0.5 min-h-12 px-1 py-2 app-touch-target cursor-pointer transition-all ${
-            activeTab === 'products' && mobileProductsView === 'audit'
+          aria-label={totalUnreadCount > 0 ? `Chat, ${totalUnreadCount} tin chưa đọc` : 'Chat'}
+          className={`flex flex-1 min-w-0 flex-col items-center justify-center gap-0.5 min-h-12 px-0.5 py-2 app-touch-target cursor-pointer transition-all ${
+            activeTab === 'chat'
               ? 'text-blue-500 font-extrabold'
               : 'text-slate-400 hover:text-white font-medium'
           }`}
         >
-          <Scale className="w-5 h-5" />
-          <span className="text-[9px] uppercase tracking-wide font-extrabold">Kiểm hàng</span>
+          <span className="relative inline-flex shrink-0">
+            <MessageSquare className="w-5 h-5" />
+            {totalUnreadCount > 0 && (
+              <span className="absolute -top-1.5 -right-2 inline-flex h-4 min-w-4 max-w-7 items-center justify-center rounded-full bg-red-500 px-0.5 text-[8px] font-black leading-none text-white tabular-nums">
+                {totalUnreadCount > 99 ? '99+' : totalUnreadCount}
+              </span>
+            )}
+          </span>
+          <span className="max-w-full truncate text-[9px] uppercase tracking-wide font-extrabold whitespace-nowrap leading-none">Chat</span>
         </button>
 
         <button
           onClick={() => { setMobileProductsView('list'); navigateTab('products'); }}
           type="button"
-          className={`flex flex-1 flex-col items-center justify-center gap-0.5 min-h-12 px-1 py-2 app-touch-target cursor-pointer transition-all ${
+          className={`flex flex-1 min-w-0 flex-col items-center justify-center gap-0.5 min-h-12 px-0.5 py-2 app-touch-target cursor-pointer transition-all ${
             activeTab === 'products' && mobileProductsView === 'list'
               ? 'text-blue-500 font-extrabold'
               : 'text-slate-400 hover:text-white font-medium'
           }`}
         >
           <Package className="w-5 h-5" />
-          <span className="text-[9px] uppercase tracking-wide font-extrabold">Sản Phẩm</span>
+          <span className="max-w-full truncate text-[9px] uppercase tracking-wide font-extrabold whitespace-nowrap leading-none">Sản Phẩm</span>
         </button>
 
         <button
           onClick={() => navigateTab('orders')}
           type="button"
-          className={`flex flex-1 flex-col items-center justify-center gap-0.5 min-h-12 px-1 py-2 app-touch-target cursor-pointer transition-all ${
+          className={`flex flex-1 min-w-0 flex-col items-center justify-center gap-0.5 min-h-12 px-0.5 py-2 app-touch-target cursor-pointer transition-all ${
             activeTab === 'orders' && !focusScanner
               ? 'text-blue-500 font-extrabold'
               : 'text-slate-400 hover:text-white font-medium'
           }`}
         >
           <ClipboardList className="w-5 h-5" />
-          <span className="text-[9px] uppercase tracking-wide font-extrabold">Đơn hàng</span>
+          <span className="max-w-full truncate text-[9px] uppercase tracking-wide font-extrabold whitespace-nowrap leading-none">Đơn hàng</span>
         </button>
 
         <button
           onClick={() => navigateTab('picking')}
           type="button"
-          className={`flex flex-1 flex-col items-center justify-center gap-0.5 min-h-12 px-1 py-2 app-touch-target cursor-pointer transition-all ${
+          className={`flex flex-1 min-w-0 flex-col items-center justify-center gap-0.5 min-h-12 px-0.5 py-2 app-touch-target cursor-pointer transition-all ${
             activeTab === 'picking'
               ? 'text-emerald-400 font-extrabold'
               : 'text-slate-400 hover:text-white font-medium'
           }`}
         >
           <ShoppingBasket className="w-5 h-5" />
-          <span className="text-[9px] uppercase tracking-wide font-extrabold">Nhặt hàng</span>
+          <span className="max-w-full truncate text-[9px] uppercase tracking-wide font-extrabold whitespace-nowrap leading-none">Nhặt hàng</span>
         </button>
 
         <button
           onClick={() => navigateTab('orders', { openScanner: true })}
           type="button"
-          className={`flex flex-1 flex-col items-center justify-center gap-0.5 min-h-12 px-1 py-2 app-touch-target cursor-pointer transition-all ${
+          className={`flex flex-1 min-w-0 flex-col items-center justify-center gap-0.5 min-h-12 px-0.5 py-2 app-touch-target cursor-pointer transition-all ${
             activeTab === 'orders' && focusScanner
               ? 'text-blue-500 font-extrabold'
               : 'text-slate-400 hover:text-white font-medium'
           }`}
         >
           <Barcode className="w-5 h-5" />
-          <span className="text-[9px] uppercase tracking-wide font-extrabold">Quét mã</span>
+          <span className="max-w-full truncate text-[9px] uppercase tracking-wide font-extrabold whitespace-nowrap leading-none">Quét mã</span>
         </button>
       </div>
     </div>
