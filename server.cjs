@@ -131427,7 +131427,6 @@ router18.post("/hydrate-tracking", h4(hydrateTracking));
 router18.post("/enrich-tracking", h4(enrichTracking));
 router18.get("/heal-tracking-cancelled", h4(healTrackingCancelled));
 router18.post("/heal-tracking-cancelled", h4(healTrackingCancelled));
-router18.get("/system/migrate-tracking-flag", h4(migrateTrackingFlag));
 router18.post("/reclassify-cancel-returns", h4(reclassifyCancelReturns));
 router18.get("/reclassify-cancel-returns", h4(reclassifyCancelReturns));
 router18.post("/force-resync-stuck", h4(forceResyncStuck));
@@ -152109,6 +152108,7 @@ async function startServer() {
     res.setHeader("Connection", "close");
     return res.status(204).end();
   });
+  app.get("/api/orders/system/migrate-tracking-flag", migrateTrackingFlag);
   app.use("/api/orders", authMiddleware, ordersRoutes);
   app.post("/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrders);
   app.post("/api/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrders);

@@ -19,7 +19,6 @@ import {
   hydrateTracking,
   enrichTracking,
   healTrackingCancelled,
-  migrateTrackingFlag,
   reclassifyCancelReturns,
   forceResyncStuck,
   triggerFixStuckOrders,
@@ -90,8 +89,6 @@ router.post("/enrich-tracking", h(enrichTracking));
 /** Heal data cũ: đơn hủy/hoàn thiếu mã — GET hoặc POST đều được. */
 router.get("/heal-tracking-cancelled", h(healTrackingCancelled));
 router.post("/heal-tracking-cancelled", h(healTrackingCancelled));
-/** Ẩn — backfill cờ has_tracking cho đơn cũ. Gọi lại được: chỉ đụng doc chưa có field. */
-router.get("/system/migrate-tracking-flag", h(migrateTrackingFlag));
 router.post("/reclassify-cancel-returns", h(reclassifyCancelReturns));
 router.get("/reclassify-cancel-returns", h(reclassifyCancelReturns));
 router.post("/force-resync-stuck", h(forceResyncStuck));
