@@ -85425,12 +85425,10 @@ var ORDER_TAB_TRACKING_PRESENT = {
   tracking_no: { $exists: true, $nin: [null, "", "0"] }
 };
 var ORDER_TAB_TRACKING_ABSENT = {
-  $or: [{ tracking_no: { $exists: false } }, { tracking_no: { $in: [null, "", "0"] } }]
+  has_tracking: false
 };
 function orderTabPendingConfirmNoTracking() {
-  return {
-    $or: [{ tracking_no: { $exists: false } }, { tracking_no: null }, { tracking_no: "" }]
-  };
+  return { has_tracking: false };
 }
 var ORDER_TAB_DROPOFF_PREPARED = {
   isPrepared: true
@@ -85785,7 +85783,7 @@ function tabIndexFilter(tab, kind) {
         is_handed_over: { $ne: true },
         isPrepared: { $ne: true },
         channel: { $nin: ["woocommerce", "manual"] },
-        $or: [{ tracking_no: { $exists: false } }, { tracking_no: { $in: [null, "", "0"] } }]
+        has_tracking: false
       };
     case "processed":
     case "da-xu-ly":
@@ -86430,6 +86428,48 @@ async function safeCountDocuments(filter2, maxTimeMS = 4e3, hint) {
     );
     return 0;
   }
+}
+async function loadLastShopeeUpdateAtByOrderSns(orderSns) {
+  const out = /* @__PURE__ */ new Map();
+  if (!isMongoReady()) return out;
+  const sns = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const raw of orderSns) {
+    const sn = String(raw || "").replace(/^shopee-/i, "").trim();
+    if (!sn || seen.has(sn)) continue;
+    seen.add(sn);
+    sns.push(sn);
+  }
+  if (sns.length === 0) return out;
+  requireMongo();
+  const BATCH = 500;
+  const MAX_BATCHES = 40;
+  let batches = 0;
+  for (let i2 = 0; i2 < sns.length && batches < MAX_BATCHES; i2 += BATCH) {
+    const chunk = sns.slice(i2, i2 + BATCH);
+    batches += 1;
+    try {
+      const docs = await OrderModel.find({ orderSn: { $in: chunk } }).select({ orderSn: 1, last_shopee_update_at: 1 }).lean().maxTimeMS(12e3);
+      for (const d of docs) {
+        const sn = String(d?.orderSn || "").replace(/^shopee-/i, "").trim();
+        if (!sn) continue;
+        const rawAt = d?.last_shopee_update_at;
+        const at = rawAt ? new Date(rawAt) : null;
+        out.set(sn, at && !Number.isNaN(at.getTime()) ? at : null);
+      }
+    } catch (err) {
+      console.error(
+        "[MongoDB] loadLastShopeeUpdateAtByOrderSns FAILED:",
+        err?.message || err
+      );
+      throw err;
+    }
+    if (chunk.length < BATCH) break;
+    if (i2 + BATCH < sns.length) {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+  }
+  return out;
 }
 async function countOperationalTabsFromStore(match2, hasShop = false) {
   const tabs = [
@@ -136041,6 +136081,58 @@ function assertOrdersPullDeadline(deadlineAt, label) {
     `ORDERS_PULL_DEADLINE \u2014 qu\xE1 ${ORDERS_PULL_HARD_DEADLINE_MS}ms t\u1EA1i: ${label}`
   );
 }
+function rememberShopeeListUpdateTime(map, sn, row) {
+  if (!map || !sn) return;
+  try {
+    const n = Number(row?.update_time ?? row?.updateTime);
+    if (!Number.isFinite(n) || n <= 0) return;
+    const sec = n >= 1e12 ? Math.floor(n / 1e3) : Math.floor(n);
+    const prev = map.get(sn) || 0;
+    if (sec > prev) map.set(sn, sec);
+  } catch (err) {
+    console.warn("[Orders Pull] b\u1ECF qua update_time list:", err?.message || err);
+  }
+}
+async function selectOrderSnsNeedingDetail(orderSns, updateTimeBySn) {
+  const unique = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const raw of orderSns) {
+    const sn = String(raw || "").trim();
+    if (!sn || seen.has(sn)) continue;
+    seen.add(sn);
+    unique.push(sn);
+  }
+  if (unique.length === 0) return { keep: [], skipped: 0 };
+  let stored;
+  try {
+    stored = await loadLastShopeeUpdateAtByOrderSns(unique);
+  } catch (err) {
+    console.error(
+      "[Orders Pull] l\u1ECDc detail theo last_shopee_update_at l\u1ED7i \u2014 g\u1ECDi detail \u0111\u1EA7y \u0111\u1EE7:",
+      err?.message || err
+    );
+    return { keep: unique, skipped: 0 };
+  }
+  const keep = [];
+  for (const sn of unique) {
+    if (!stored.has(sn)) {
+      keep.push(sn);
+      continue;
+    }
+    const listSec = updateTimeBySn.get(sn);
+    if (listSec == null || !Number.isFinite(listSec) || listSec <= 0) {
+      keep.push(sn);
+      continue;
+    }
+    const storedAt = stored.get(sn);
+    if (!storedAt || Number.isNaN(storedAt.getTime())) {
+      keep.push(sn);
+      continue;
+    }
+    if (listSec > Math.floor(storedAt.getTime() / 1e3)) keep.push(sn);
+  }
+  return { keep, skipped: unique.length - keep.length };
+}
 async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
   const timeTo = Math.floor(Date.now() / 1e3);
   const rawLookback = Number(opts?.lookbackSec) > 0 ? Number(opts.lookbackSec) : SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
@@ -136154,7 +136246,10 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
         for (const row of rows) {
           try {
             const sn = String(row?.order_sn || row?.ordersn || "").trim();
-            if (sn) orderSnSet.add(sn);
+            if (sn) {
+              orderSnSet.add(sn);
+              rememberShopeeListUpdateTime(opts?.updateTimeBySn, sn, row);
+            }
           } catch (rowErr) {
             console.error(
               `[Orders Pull] B\u1ECF qua 1 \u0111\u01A1n l\u1ED7i shop=${shopId}:`,
@@ -136292,7 +136387,10 @@ async function collectShopeeOrderSnsByStatus(shopId, accessToken, orderStatus, o
         const rows = extractShopeeOrderListRows(listResult);
         for (const row of rows) {
           const sn = String(row?.order_sn || row?.ordersn || "").trim();
-          if (sn) orderSnSet.add(sn);
+          if (sn) {
+            orderSnSet.add(sn);
+            rememberShopeeListUpdateTime(opts?.updateTimeBySn, sn, row);
+          }
         }
         const adv = advanceShopeeOrderListCursor({
           listResult,
@@ -138019,10 +138117,12 @@ async function pullIncrementalOrdersFromShopee(opts) {
               verifyErr?.message || verifyErr
             );
           }
+          const updateTimeBySn = /* @__PURE__ */ new Map();
           const listCollect = await collectShopeeOrderSnsIncremental(shopIdStr, accessToken, {
             lookbackSec,
             deadlineAt: shopDeadlineAt,
-            allowShortLookback: shortLookback
+            allowShortLookback: shortLookback,
+            updateTimeBySn
           });
           let orderSnList = Array.isArray(listCollect?.orderSns) ? listCollect.orderSns : [];
           if (shortLookback && Date.now() < shopDeadlineAt) {
@@ -138031,7 +138131,8 @@ async function pullIncrementalOrdersFromShopee(opts) {
                 lookbackSec,
                 deadlineAt: shopDeadlineAt,
                 allowShortLookback: true,
-                timeRangeField: "create_time"
+                timeRangeField: "create_time",
+                updateTimeBySn
               });
               const merged = new Set(orderSnList);
               let addedCreate = 0;
@@ -138097,7 +138198,8 @@ async function pullIncrementalOrdersFromShopee(opts) {
                   lookbackSec: cancelLookbackSec,
                   deadlineAt: shopDeadlineAt,
                   timeRangeField: "update_time",
-                  allowShortLookback: shortLookback
+                  allowShortLookback: shortLookback,
+                  updateTimeBySn
                 });
                 for (const sn of sns) {
                   if (!sn || snSet.has(sn)) continue;
@@ -138140,7 +138242,8 @@ async function pullIncrementalOrdersFromShopee(opts) {
                   lookbackSec: shippedLookbackSec,
                   deadlineAt: shopDeadlineAt,
                   timeRangeField: "update_time",
-                  allowShortLookback: true
+                  allowShortLookback: true,
+                  updateTimeBySn
                 }
               );
               if (shippedSns.length) {
@@ -138205,7 +138308,8 @@ async function pullIncrementalOrdersFromShopee(opts) {
                   lookbackSec: completedLookbackSec,
                   deadlineAt: shopDeadlineAt,
                   timeRangeField: "update_time",
-                  allowShortLookback: true
+                  allowShortLookback: true,
+                  updateTimeBySn
                 }
               );
               if (completedSns.length) {
@@ -138307,10 +138411,42 @@ async function pullIncrementalOrdersFromShopee(opts) {
             });
             continue;
           }
-          for (let i2 = 0; i2 < orderSnList.length; i2 += SHOPEE_SYNC_CHUNK_SIZE) {
+          let detailSnList = orderSnList;
+          try {
+            const filtered = await selectOrderSnsNeedingDetail(orderSnList, updateTimeBySn);
+            detailSnList = filtered.keep;
+            if (filtered.skipped > 0) {
+              console.log(
+                `[Orders Pull] shopId=${shopId} b\u1ECF qua ${filtered.skipped} \u0111\u01A1n kh\xF4ng \u0111\u1ED5i update_time \u2014 detail=${detailSnList.length}/${orderSnList.length}`
+              );
+            }
+          } catch (filterErr) {
+            console.error(
+              `[Orders Pull] shopId=${shopId} l\u1ECDc detail l\u1ED7i \u2014 g\u1ECDi detail to\xE0n b\u1ED9 list:`,
+              filterErr?.message || filterErr
+            );
+            detailSnList = orderSnList;
+          }
+          if (detailSnList.length === 0) {
+            shopStatus = shopErrorMsg ? "ERROR" : "DONE";
+            console.log(
+              `[Orders Pull] shopId=${shopId} DONE sn=${orderSnList.length} pulled=0 (kh\xF4ng c\xF3 \u0111\u01A1n m\u1EDBi/\u0111\u1ED5i update_time)`
+            );
+            perShopResults.push({
+              shopId,
+              status: shopStatus,
+              sn: orderSnList.length,
+              pulled: 0,
+              added: 0,
+              updated: 0,
+              error: shopErrorMsg || void 0
+            });
+            continue;
+          }
+          for (let i2 = 0; i2 < detailSnList.length; i2 += SHOPEE_SYNC_CHUNK_SIZE) {
             try {
               assertOrdersPullDeadline(shopDeadlineAt, `detail chunk shop=${shopId} offset=${i2}`);
-              const chunkSns = orderSnList.slice(i2, i2 + SHOPEE_SYNC_CHUNK_SIZE);
+              const chunkSns = detailSnList.slice(i2, i2 + SHOPEE_SYNC_CHUNK_SIZE);
               const chunkNo = Math.floor(i2 / SHOPEE_SYNC_CHUNK_SIZE) + 1;
               try {
                 const fresh = await getValidShopeeAccessToken(shopIdStr);
@@ -138393,7 +138529,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
                 });
                 shopErrorMsg = chunkErr?.message || "chunk_failed";
               }
-              if (i2 + SHOPEE_SYNC_CHUNK_SIZE < orderSnList.length) {
+              if (i2 + SHOPEE_SYNC_CHUNK_SIZE < detailSnList.length) {
                 await yieldToLogisticsIfBusy(8e3);
                 await shopeeSyncDelay(
                   isLogisticsBusy() ? Math.max(SHOPEE_SYNC_CHUNK_DELAY_MS, 600) : SHOPEE_SYNC_CHUNK_DELAY_MS

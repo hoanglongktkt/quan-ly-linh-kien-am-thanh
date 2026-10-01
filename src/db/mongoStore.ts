@@ -7428,20 +7428,14 @@ const ORDER_TAB_TRACKING_PRESENT: Record<string, unknown> = {
   tracking_no: { $exists: true, $nin: [null, "", "0"] },
 };
 
-/** Chưa có mã VĐ (thiếu field / null / rỗng / "0") — đơn đã thanh toán lọt tab Chưa xử lý. */
+/** Chưa có mã VĐ — index has_tracking, không $exists/$or trên tracking_no. */
 const ORDER_TAB_TRACKING_ABSENT: Record<string, unknown> = {
-  $or: [{ tracking_no: { $exists: false } }, { tracking_no: { $in: [null, "", "0"] } }],
+  has_tracking: false,
 };
 
-/**
- * Tab Chờ xác nhận: Count ≡ Find — chặn đơn đã có tracking_no.
- * `{ tracking_no: null }` khớp cả field thiếu (Mongo equality).
- * CẤM $exists:false + $regex trên 2 field — COLLSCAN làm scanner-sync timeout 500.
- */
+/** Tab Chờ xác nhận: Count ≡ Find — loại đơn đã có mã vận đơn. */
 function orderTabPendingConfirmNoTracking(): Record<string, unknown> {
-  return {
-    $or: [{ tracking_no: { $exists: false } }, { tracking_no: null }, { tracking_no: "" }],
-  };
+  return { has_tracking: false };
 }
 
 const ORDER_TAB_DROPOFF_PREPARED: Record<string, unknown> = {
@@ -7928,7 +7922,7 @@ function tabIndexFilter(tab?: string, kind?: string): Record<string, unknown> {
         is_handed_over: { $ne: true },
         isPrepared: { $ne: true },
         channel: { $nin: ["woocommerce", "manual"] },
-        $or: [{ tracking_no: { $exists: false } }, { tracking_no: { $in: [null, "", "0"] } }],
+        has_tracking: false,
       };
     case "processed":
     case "da-xu-ly":
@@ -8839,6 +8833,58 @@ async function safeCountDocuments(
     );
     return 0;
   }
+}
+
+/**
+ * orderSn → last_shopee_update_at. SN không có trong map = chưa có document.
+ * Value null = document có nhưng chưa có watermark.
+ */
+export async function loadLastShopeeUpdateAtByOrderSns(
+  orderSns: string[],
+): Promise<Map<string, Date | null>> {
+  const out = new Map<string, Date | null>();
+  if (!isMongoReady()) return out;
+  const sns: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of orderSns) {
+    const sn = String(raw || "").replace(/^shopee-/i, "").trim();
+    if (!sn || seen.has(sn)) continue;
+    seen.add(sn);
+    sns.push(sn);
+  }
+  if (sns.length === 0) return out;
+  requireMongo();
+  const BATCH = 500;
+  const MAX_BATCHES = 40;
+  let batches = 0;
+  for (let i = 0; i < sns.length && batches < MAX_BATCHES; i += BATCH) {
+    const chunk = sns.slice(i, i + BATCH);
+    batches += 1;
+    try {
+      const docs = await OrderModel.find({ orderSn: { $in: chunk } })
+        .select({ orderSn: 1, last_shopee_update_at: 1 })
+        .lean()
+        .maxTimeMS(12_000);
+      for (const d of docs as any[]) {
+        const sn = String(d?.orderSn || "").replace(/^shopee-/i, "").trim();
+        if (!sn) continue;
+        const rawAt = d?.last_shopee_update_at;
+        const at = rawAt ? new Date(rawAt) : null;
+        out.set(sn, at && !Number.isNaN(at.getTime()) ? at : null);
+      }
+    } catch (err: any) {
+      console.error(
+        "[MongoDB] loadLastShopeeUpdateAtByOrderSns FAILED:",
+        err?.message || err,
+      );
+      throw err;
+    }
+    if (chunk.length < BATCH) break;
+    if (i + BATCH < sns.length) {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+  }
+  return out;
 }
 
 /** Badge ≡ GET /api/orders?tab= — dùng orderTabFilter; song song + hint index shop+time. */
