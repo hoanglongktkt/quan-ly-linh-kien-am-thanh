@@ -466,6 +466,102 @@ function sumOrderCounters(list: Array<OrderCounters | undefined | null>): OrderC
   return out;
 }
 
+function orderSnKey(order: Order): string {
+  return String(order.orderSn || order.order_sn || order.id || '')
+    .replace(/^shopee-/i, '')
+    .trim();
+}
+
+function orderUpdateStamp(order: Order): string {
+  const raw = order.update_time ?? order.updateTime ?? order.return_update_time ?? '';
+  return raw == null ? '' : String(raw);
+}
+
+/** Mảng trang nhỏ thì stringify từng đơn; lớn hơn thì khóa order_sn + update_time. */
+const ORDER_LIST_STRINGIFY_MAX = 80;
+
+function orderPayloadEqual(prev: Order, next: Order, useStringify: boolean): boolean {
+  const prevSn = orderSnKey(prev);
+  const nextSn = orderSnKey(next);
+  if (!prevSn || prevSn !== nextSn) return false;
+  const prevStamp = orderUpdateStamp(prev);
+  const nextStamp = orderUpdateStamp(next);
+  if (prevStamp && nextStamp && prevStamp !== nextStamp) return false;
+  if (useStringify || !prevStamp || !nextStamp) {
+    try {
+      return JSON.stringify(prev) === JSON.stringify(next);
+    } catch {
+      return prevStamp === nextStamp;
+    }
+  }
+  return prevStamp === nextStamp;
+}
+
+/**
+ * null = payload không đổi, caller không được setOrders.
+ * Mảng trả về giữ reference các đơn không đổi để React.memo bỏ qua re-render.
+ */
+function stabilizeOrdersForMemo(prev: Order[], next: Order[]): Order[] | null {
+  if (prev.length === 0 && next.length === 0) return null;
+  if (prev.length === 0) return next;
+  const useStringify = prev.length <= ORDER_LIST_STRINGIFY_MAX && next.length <= ORDER_LIST_STRINGIFY_MAX;
+  const prevBySn = new Map<string, Order>();
+  for (let i = 0; i < prev.length; i += 1) {
+    const sn = orderSnKey(prev[i]);
+    if (sn && !prevBySn.has(sn)) prevBySn.set(sn, prev[i]);
+  }
+  let changed = prev.length !== next.length;
+  const merged = next.map((incoming) => {
+    const sn = orderSnKey(incoming);
+    const old = sn ? prevBySn.get(sn) : undefined;
+    if (!old || !orderPayloadEqual(old, incoming, useStringify)) {
+      changed = true;
+      return incoming;
+    }
+    return old;
+  });
+  if (!changed) {
+    for (let i = 0; i < prev.length; i += 1) {
+      if (prev[i] !== merged[i]) {
+        changed = true;
+        break;
+      }
+    }
+  }
+  return changed ? merged : null;
+}
+
+function sameOrdersMeta(
+  prev: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+    hasMore: boolean;
+    counters: OrderCounters;
+  },
+  next: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+    hasMore: boolean;
+    counters: OrderCounters;
+  },
+): boolean {
+  return (
+    prev.page === next.page &&
+    prev.pageSize === next.pageSize &&
+    prev.total === next.total &&
+    prev.totalPages === next.totalPages &&
+    prev.hasMore === next.hasMore &&
+    prev.counters.total === next.counters.total &&
+    prev.counters.returned === next.counters.returned &&
+    prev.counters.cancelled === next.counters.cancelled &&
+    prev.counters.rts === next.counters.rts
+  );
+}
+
 export default function App() {
   // Authentication States
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
@@ -550,6 +646,9 @@ export default function App() {
   const fetchOrdersNonSilentInFlightRef = useRef(0);
   /** Snapshot cache hydrate — tránh merge shallow đè mất cache khi setState chưa flush. */
   const ordersHydrateRef = useRef<Order[]>([]);
+  /** List đang hiển thị — so sánh trước setOrders, không dùng hydrate (hydrate có thể đầy khi state còn rỗng). */
+  const ordersStateRef = useRef<Order[]>([]);
+  ordersStateRef.current = orders;
   /** Cache tạm theo tab (SWR): chuyển lại tab cũ → hiện data cũ, không màn hình trắng. */
   type OrdersTabCacheEntry = {
     orders: Order[];
@@ -1143,29 +1242,45 @@ export default function App() {
           rts: counters.rts,
         },
       };
-      setOrdersMeta(nextMeta);
+      setOrdersMeta((prev) => (sameOrdersMeta(prev, nextMeta) ? prev : nextMeta));
       // Thành công: setOrders ĐÚNG 1 LẦN sau khi gộp + sort — không đè từng shop.
+      // Đơn không đổi giữ nguyên reference để React.memo (OrderTableRow / OrderCardRow) bỏ qua.
       if (merge) {
         setOrders((prev) => {
           const base = prev.length > 0 ? prev : ordersHydrateRef.current;
           const merged = groupPicking
             ? sanitized
             : mergeOrderBatchesNewestFirst([mergeShallowOrders(base, sanitized)]);
-          ordersHydrateRef.current = merged;
-          void saveOrdersCache(merged);
-          return merged;
+          const stable = stabilizeOrdersForMemo(base, merged);
+          if (!stable) {
+            const kept = prev.length > 0 ? prev : base;
+            ordersStateRef.current = kept;
+            return kept;
+          }
+          ordersStateRef.current = stable;
+          ordersHydrateRef.current = stable;
+          void saveOrdersCache(stable);
+          return stable;
         });
       } else {
         const isRealEmpty = sanitized.length === 0 && Number(total) === 0;
         const cacheMap = ordersTabCacheRef.current;
         if (sanitized.length > 0) {
-          setOrders(sanitized);
-          ordersHydrateRef.current = sanitized;
-          void saveOrdersCache(sanitized);
-          cacheMap.set(tabCacheKey, { orders: sanitized, meta: nextMeta, at: Date.now() });
+          const prevList = ordersStateRef.current;
+          const stable = stabilizeOrdersForMemo(prevList, sanitized);
+          if (stable) {
+            ordersStateRef.current = stable;
+            setOrders(stable);
+            ordersHydrateRef.current = stable;
+            void saveOrdersCache(stable);
+            cacheMap.set(tabCacheKey, { orders: stable, meta: nextMeta, at: Date.now() });
+          } else if (prevList.length > 0) {
+            cacheMap.set(tabCacheKey, { orders: prevList, meta: nextMeta, at: Date.now() });
+          }
         } else if (isRealEmpty) {
           // Tab list thật sự rỗng — chỉ clear UI list, KHÔNG phá hydrate (scanner/picking fallback).
-          setOrders([]);
+          ordersStateRef.current = [];
+          setOrders((prev) => (prev.length === 0 ? prev : []));
           cacheMap.set(tabCacheKey, { orders: [], meta: nextMeta, at: Date.now() });
         }
         // sanitized=[] nhưng total>0 (race/lỗi trang): không đè list/cache.
@@ -1654,6 +1769,7 @@ export default function App() {
   const handleUpdateOrders = (updatedOrders: Order[], opts?: { persist?: boolean }) => {
     const sanitized = sanitizeOrders(updatedOrders);
     const previousById = new Map(orders.map(o => [o.id, o]));
+    ordersStateRef.current = sanitized;
     setOrders(sanitized);
     ordersHydrateRef.current = sanitized;
     void saveOrdersCache(sanitized);

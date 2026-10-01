@@ -893,6 +893,52 @@ const SCAN_BG_STATUS_IDLE_POLL_MS = 60_000;
 const ORDERS_POLL_VISIBLE_MS = 3_000;
 const ORDERS_POLL_HIDDEN_MS = 10_000;
 
+/** Tab không có list đơn — poll counter vẫn chạy, không gọi /orders/refresh. */
+const ORDER_POLL_LISTLESS_TABS = new Set([
+  'order_products',
+  'quick_pos',
+  'create_external',
+]);
+
+function sameCountMap(
+  prev: Record<string, number> | null | undefined,
+  next: Record<string, number>,
+): boolean {
+  if (!prev) return false;
+  const prevKeys = Object.keys(prev);
+  const nextKeys = Object.keys(next);
+  if (prevKeys.length !== nextKeys.length) return false;
+  for (let i = 0; i < nextKeys.length; i += 1) {
+    const key = nextKeys[i];
+    if ((Number(prev[key]) || 0) !== (Number(next[key]) || 0)) return false;
+  }
+  return true;
+}
+
+/** Badge tab đang mở — cùng khóa với `getCount` / sub-tab Hủy-Hoàn. */
+function readActiveTabBadge(
+  counts: Record<string, number>,
+  tab: string,
+  cancelKind: string,
+): number | null {
+  if (ORDER_POLL_LISTLESS_TABS.has(tab)) return null;
+  if (tab === 'cancel_returns') {
+    if (cancelKind === 'refund_return') {
+      return Number(counts.cancel_returns_returned ?? counts.refund_return) || 0;
+    }
+    if (cancelKind === 'cancelled') {
+      return Number(counts.cancel_returns_cancelled ?? counts.cancelled) || 0;
+    }
+    if (cancelKind === 'failed_delivery') {
+      return Number(counts.cancel_returns_rts ?? counts.failed_delivery) || 0;
+    }
+    return Number(counts.cancel_returns) || 0;
+  }
+  const countTabKey = tab === 'pending_verification' ? 'pending_confirm' : tab;
+  const serverN = Number(counts[countTabKey]);
+  return Number.isFinite(serverN) ? serverN : 0;
+}
+
 function cancelReturnKindParam(tab: CancelReturnTab): string | undefined {
   if (tab === 'all') return undefined;
   return tab;
@@ -1317,6 +1363,8 @@ export default function OrderManager({
   const prevCounters = useRef({ pending_confirm: 0, all: 0, unprocessed: 0 });
   const prevCountersReadyRef = useRef(false);
   const prevCounterScopeRef = useRef('');
+  /** Badge tab đang mở ở lần poll trước — chỉ refresh list khi số này đổi. */
+  const prevTabBadgeRef = useRef<{ key: string; count: number } | null>(null);
   const isSyncingRef = useRef(false);
   /** Pull-to-refresh (mobile): vuốt từ trên xuống để fetch lại đơn. */
   const [pullDistance, setPullDistance] = useState(0);
@@ -1434,9 +1482,11 @@ export default function OrderManager({
           mergedCounts.cancelled = mergedCounters.cancelled;
           mergedCounts.failed_delivery = mergedCounters.rts;
         }
-        setServerOrderCounts(mergedCounts);
-        serverOrderCountsRef.current = mergedCounts;
-        return mergedCounts;
+        if (!sameCountMap(serverOrderCountsRef.current, mergedCounts)) {
+          setServerOrderCounts(mergedCounts);
+          serverOrderCountsRef.current = mergedCounts;
+        }
+        return serverOrderCountsRef.current;
       } catch (err) {
         const aborted =
           (err instanceof DOMException && err.name === 'AbortError') ||
@@ -1701,13 +1751,25 @@ export default function OrderManager({
   /**
    * Short polling (thay SSE — cPanel/LiteSpeed cắt kết nối dài ở 45s).
    * Tab visible: 3s. Tab hidden: 10s và tick bỏ qua để đỡ tải.
-   * Mỗi tick: counter → badge/toast; đứng ở tab Chờ xác nhận / Chưa xử lý thì refetch ngầm list.
+   * Mỗi tick chỉ gọi /api/orders/counter. /api/orders/refresh chỉ chạy khi badge
+   * của tab đang mở tăng hoặc giảm so với lần poll trước.
    * Waterfall: chỉ chạy SAU khi boot counter (sau refresh) xong — không poll ngay lúc mount.
    */
   useEffect(() => {
     if (!counterBootReady) return;
     let cancelled = false;
     let inFlight = false;
+    if (!prevTabBadgeRef.current && serverOrderCountsRef.current) {
+      const tab = activeSubTabRef.current;
+      const kind =
+        tab === 'cancel_returns' ? cancelReturnKindParam(cancelReturnTabRef.current) || '' : '';
+      const shopKey = shopScopeRef.current.shopIds.join(',');
+      const badge = readActiveTabBadge(serverOrderCountsRef.current, tab, kind);
+      prevTabBadgeRef.current = {
+        key: `${tab}|${kind}|${shopKey}`,
+        count: badge ?? 0,
+      };
+    }
     const tick = async () => {
       if (cancelled || inFlight) return;
       if (document.visibilityState === 'hidden') return;
@@ -1719,20 +1781,47 @@ export default function OrderManager({
         if (cancelled || !counts) return;
         const notified = maybeNotifyNewOrdersFromCounts(counts);
         const tab = activeSubTabRef.current;
-        if (
-          !notified &&
-          (tab === 'pending_confirm' || tab === 'unprocessed') &&
-          !searchQueryRef.current.trim() &&
-          !isListFetchingRef.current
-        ) {
-          void fetchOrdersWithShop({
-            silent: true,
-            page: currentPageRef.current,
-            limit: ORDERS_PAGE_SIZE,
-            merge: false,
-            tab,
-          });
+        const kind =
+          tab === 'cancel_returns' ? cancelReturnKindParam(cancelReturnTabRef.current) || '' : '';
+        const shopKey = shopScopeRef.current.shopIds.join(',');
+        const badgeKey = `${tab}|${kind}|${shopKey}`;
+        const nextBadge = readActiveTabBadge(counts, tab, kind);
+        if (nextBadge == null) {
+          prevTabBadgeRef.current = { key: badgeKey, count: 0 };
+          return;
         }
+        const prev = prevTabBadgeRef.current;
+        if (!prev || prev.key !== badgeKey) {
+          prevTabBadgeRef.current = { key: badgeKey, count: nextBadge };
+          return;
+        }
+        if (prev.count === nextBadge) return;
+        // Timeout lag countDocuments → 0: giữ list, không refresh giả.
+        if (
+          nextBadge === 0 &&
+          prev.count > 0 &&
+          (Number(counts.all) || 0) === 0 &&
+          (Number(prevCounters.current.all) || 0) > 0
+        ) {
+          return;
+        }
+        prevTabBadgeRef.current = { key: badgeKey, count: nextBadge };
+        // Tăng badge đã được scheduleNewOrderListRefresh xử lý — không gọi refresh lần 2.
+        if (notified) return;
+        if (searchQueryRef.current.trim() || isListFetchingRef.current) {
+          prevTabBadgeRef.current = prev;
+          return;
+        }
+        void fetchOrdersWithShop({
+          silent: true,
+          page: currentPageRef.current,
+          limit: ORDERS_PAGE_SIZE,
+          merge: false,
+          tab: tab === 'all' ? '' : tab,
+          ...(tab === 'cancel_returns'
+            ? { kind: cancelReturnKindParam(cancelReturnTabRef.current) }
+            : {}),
+        });
       } finally {
         inFlight = false;
       }
