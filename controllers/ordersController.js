@@ -2016,6 +2016,44 @@ function docHasValidTracking(doc) {
   );
 }
 
+const GHOST_ORDER_SNS = ["261001FRS927QE", "261001F7MD71RC", "261001F4MQ09N9"];
+
+/**
+ * GET /api/orders/system/delete-ghost-orders
+ * Xóa đúng 3 đơn ảo (không sản phẩm). Public — đăng ký trước authMiddleware.
+ */
+export async function deleteGhostOrders(_req, res) {
+  try {
+    const Order = mongoose.models.Order;
+    if (!isMongoReady() || !Order) {
+      return res.status(503).json({
+        success: false,
+        error: "mongodb_not_ready",
+        message: "MongoDB chưa sẵn sàng.",
+      });
+    }
+    const result = await Order.deleteMany({
+      $or: [
+        { orderSn: { $in: GHOST_ORDER_SNS } },
+        { "data.orderSn": { $in: GHOST_ORDER_SNS } },
+        { "data.order_sn": { $in: GHOST_ORDER_SNS } },
+      ],
+    });
+    try {
+      invalidateTabCountCache();
+    } catch {
+      /* cache tab không chặn kết quả xóa */
+    }
+    return res.json({ success: true, deletedCount: result.deletedCount });
+  } catch (err) {
+    console.error("[Orders] delete-ghost-orders:", err?.message || err);
+    return res.status(500).json({
+      success: false,
+      error: err?.message || String(err),
+    });
+  }
+}
+
 /**
  * GET /api/orders/system/migrate-tracking-flag
  * Gán has_tracking cho mọi đơn chưa có field. Batch 500 + nghỉ giữa batch.

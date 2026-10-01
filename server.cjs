@@ -126873,6 +126873,37 @@ var MIGRATE_TRACKING_MAX_BATCHES = 5e3;
 function docHasValidTracking(doc) {
   return isValidTrackingNo(doc?.tracking_no) || isValidTrackingNo(doc?.trackingNumber) || isValidTrackingNo(doc?.data?.tracking_no) || isValidTrackingNo(doc?.data?.trackingNumber);
 }
+var GHOST_ORDER_SNS = ["261001FRS927QE", "261001F7MD71RC", "261001F4MQ09N9"];
+async function deleteGhostOrders(_req, res) {
+  try {
+    const Order2 = import_mongoose10.default.models.Order;
+    if (!isMongoReady() || !Order2) {
+      return res.status(503).json({
+        success: false,
+        error: "mongodb_not_ready",
+        message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng."
+      });
+    }
+    const result = await Order2.deleteMany({
+      $or: [
+        { orderSn: { $in: GHOST_ORDER_SNS } },
+        { "data.orderSn": { $in: GHOST_ORDER_SNS } },
+        { "data.order_sn": { $in: GHOST_ORDER_SNS } }
+      ]
+    });
+    try {
+      invalidateTabCountCache();
+    } catch {
+    }
+    return res.json({ success: true, deletedCount: result.deletedCount });
+  } catch (err) {
+    console.error("[Orders] delete-ghost-orders:", err?.message || err);
+    return res.status(500).json({
+      success: false,
+      error: err?.message || String(err)
+    });
+  }
+}
 async function migrateTrackingFlag(_req, res) {
   const stats = {
     success: true,
@@ -131468,6 +131499,7 @@ async function parseOrderAddress(req, res) {
 // routes/ordersRoutes.js
 var router18 = (0, import_express19.Router)();
 var h4 = asyncHandler;
+router18.get("/system/delete-ghost-orders", h4(deleteGhostOrders));
 router18.get("/refresh", h4(refreshOrders));
 router18.get("/query", h4(queryOrders));
 router18.get("/counts", h4(getOrderCounts));
@@ -152278,6 +152310,7 @@ async function startServer() {
     return res.status(204).end();
   });
   app.get("/api/orders/system/migrate-tracking-flag", migrateTrackingFlag);
+  app.get("/api/orders/system/delete-ghost-orders", deleteGhostOrders);
   app.use("/api/orders", authMiddleware, ordersRoutes);
   app.post("/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrders);
   app.post("/api/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrders);

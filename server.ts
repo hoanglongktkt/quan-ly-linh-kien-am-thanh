@@ -209,6 +209,7 @@ import {
   handOverCarrierByCode,
   handOverCarrierBulk,
   healHandedOver,
+  deleteGhostOrders,
   migrateTrackingFlag,
   createManualOrder,
   resetPrintStatus,
@@ -24932,6 +24933,8 @@ async function startServer() {
   });
   // Migrate một lần — mở trên browser, không JWT (giống /api/orders/live).
   app.get("/api/orders/system/migrate-tracking-flag", migrateTrackingFlag);
+  // Tạm: xóa 3 đơn ảo — đăng ký TRƯỚC authMiddleware để gọi thẳng từ trình duyệt.
+  app.get("/api/orders/system/delete-ghost-orders", deleteGhostOrders);
   app.use("/api/orders", authMiddleware, ordersRoutes);
   // Endpoint tạm: quét đơn thiếu mã VĐ / kẹt unprocessed → get_order_detail
   app.post("/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrdersRoute);

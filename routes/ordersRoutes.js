@@ -16,6 +16,7 @@ import {
   lookupOrder,
   scannerSync,
   cleanupMockOrders,
+  deleteGhostOrders,
   hydrateTracking,
   enrichTracking,
   healTrackingCancelled,
@@ -60,6 +61,8 @@ const router = Router();
 const h = asyncHandler;
 
 // Static paths trước :id / :orderSn
+/** Tạm: xóa 3 đơn ảo. Bản public nằm trước auth ở server.ts. */
+router.get("/system/delete-ghost-orders", h(deleteGhostOrders));
 router.get("/refresh", h(refreshOrders));
 router.get("/query", h(queryOrders));
 router.get("/counts", h(getOrderCounts));
