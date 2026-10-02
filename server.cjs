@@ -921,8 +921,8 @@ var require_ms = __commonJS({
   "node_modules/body-parser/node_modules/ms/index.js"(exports2, module2) {
     var s2 = 1e3;
     var m2 = s2 * 60;
-    var h5 = m2 * 60;
-    var d = h5 * 24;
+    var h6 = m2 * 60;
+    var d = h6 * 24;
     var y = d * 365.25;
     module2.exports = function(val, options) {
       options = options || {};
@@ -965,7 +965,7 @@ var require_ms = __commonJS({
         case "hrs":
         case "hr":
         case "h":
-          return n * h5;
+          return n * h6;
         case "minutes":
         case "minute":
         case "mins":
@@ -992,8 +992,8 @@ var require_ms = __commonJS({
       if (ms >= d) {
         return Math.round(ms / d) + "d";
       }
-      if (ms >= h5) {
-        return Math.round(ms / h5) + "h";
+      if (ms >= h6) {
+        return Math.round(ms / h6) + "h";
       }
       if (ms >= m2) {
         return Math.round(ms / m2) + "m";
@@ -1004,7 +1004,7 @@ var require_ms = __commonJS({
       return ms + "ms";
     }
     function fmtLong(ms) {
-      return plural(ms, d, "day") || plural(ms, h5, "hour") || plural(ms, m2, "minute") || plural(ms, s2, "second") || ms + " ms";
+      return plural(ms, d, "day") || plural(ms, h6, "hour") || plural(ms, m2, "minute") || plural(ms, s2, "second") || ms + " ms";
     }
     function plural(ms, n, name) {
       if (ms < n) {
@@ -17342,8 +17342,8 @@ var require_ms2 = __commonJS({
   "node_modules/finalhandler/node_modules/ms/index.js"(exports2, module2) {
     var s2 = 1e3;
     var m2 = s2 * 60;
-    var h5 = m2 * 60;
-    var d = h5 * 24;
+    var h6 = m2 * 60;
+    var d = h6 * 24;
     var y = d * 365.25;
     module2.exports = function(val, options) {
       options = options || {};
@@ -17386,7 +17386,7 @@ var require_ms2 = __commonJS({
         case "hrs":
         case "hr":
         case "h":
-          return n * h5;
+          return n * h6;
         case "minutes":
         case "minute":
         case "mins":
@@ -17413,8 +17413,8 @@ var require_ms2 = __commonJS({
       if (ms >= d) {
         return Math.round(ms / d) + "d";
       }
-      if (ms >= h5) {
-        return Math.round(ms / h5) + "h";
+      if (ms >= h6) {
+        return Math.round(ms / h6) + "h";
       }
       if (ms >= m2) {
         return Math.round(ms / m2) + "m";
@@ -17425,7 +17425,7 @@ var require_ms2 = __commonJS({
       return ms + "ms";
     }
     function fmtLong(ms) {
-      return plural(ms, d, "day") || plural(ms, h5, "hour") || plural(ms, m2, "minute") || plural(ms, s2, "second") || ms + " ms";
+      return plural(ms, d, "day") || plural(ms, h6, "hour") || plural(ms, m2, "minute") || plural(ms, s2, "second") || ms + " ms";
     }
     function plural(ms, n, name) {
       if (ms < n) {
@@ -18061,8 +18061,8 @@ var require_ms3 = __commonJS({
   "node_modules/express/node_modules/ms/index.js"(exports2, module2) {
     var s2 = 1e3;
     var m2 = s2 * 60;
-    var h5 = m2 * 60;
-    var d = h5 * 24;
+    var h6 = m2 * 60;
+    var d = h6 * 24;
     var y = d * 365.25;
     module2.exports = function(val, options) {
       options = options || {};
@@ -18105,7 +18105,7 @@ var require_ms3 = __commonJS({
         case "hrs":
         case "hr":
         case "h":
-          return n * h5;
+          return n * h6;
         case "minutes":
         case "minute":
         case "mins":
@@ -18132,8 +18132,8 @@ var require_ms3 = __commonJS({
       if (ms >= d) {
         return Math.round(ms / d) + "d";
       }
-      if (ms >= h5) {
-        return Math.round(ms / h5) + "h";
+      if (ms >= h6) {
+        return Math.round(ms / h6) + "h";
       }
       if (ms >= m2) {
         return Math.round(ms / m2) + "m";
@@ -18144,7 +18144,7 @@ var require_ms3 = __commonJS({
       return ms + "ms";
     }
     function fmtLong(ms) {
-      return plural(ms, d, "day") || plural(ms, h5, "hour") || plural(ms, m2, "minute") || plural(ms, s2, "second") || ms + " ms";
+      return plural(ms, d, "day") || plural(ms, h6, "hour") || plural(ms, m2, "minute") || plural(ms, s2, "second") || ms + " ms";
     }
     function plural(ms, n, name) {
       if (ms < n) {
@@ -18908,17 +18908,17 @@ var require_router = __commonJS({
     var toString3 = Object.prototype.toString;
     var proto = module2.exports = function(options) {
       var opts = options || {};
-      function router29(req, res, next) {
-        router29.handle(req, res, next);
+      function router30(req, res, next) {
+        router30.handle(req, res, next);
       }
-      setPrototypeOf(router29, proto);
-      router29.params = {};
-      router29._params = [];
-      router29.caseSensitive = opts.caseSensitive;
-      router29.mergeParams = opts.mergeParams;
-      router29.strict = opts.strict;
-      router29.stack = [];
-      return router29;
+      setPrototypeOf(router30, proto);
+      router30.params = {};
+      router30._params = [];
+      router30.caseSensitive = opts.caseSensitive;
+      router30.mergeParams = opts.mergeParams;
+      router30.strict = opts.strict;
+      router30.stack = [];
+      return router30;
     };
     proto.param = function param(name, fn) {
       if (typeof name === "function") {
@@ -19627,8 +19627,8 @@ var require_ms4 = __commonJS({
   "node_modules/send/node_modules/debug/node_modules/ms/index.js"(exports2, module2) {
     var s2 = 1e3;
     var m2 = s2 * 60;
-    var h5 = m2 * 60;
-    var d = h5 * 24;
+    var h6 = m2 * 60;
+    var d = h6 * 24;
     var y = d * 365.25;
     module2.exports = function(val, options) {
       options = options || {};
@@ -19671,7 +19671,7 @@ var require_ms4 = __commonJS({
         case "hrs":
         case "hr":
         case "h":
-          return n * h5;
+          return n * h6;
         case "minutes":
         case "minute":
         case "mins":
@@ -19698,8 +19698,8 @@ var require_ms4 = __commonJS({
       if (ms >= d) {
         return Math.round(ms / d) + "d";
       }
-      if (ms >= h5) {
-        return Math.round(ms / h5) + "h";
+      if (ms >= h6) {
+        return Math.round(ms / h6) + "h";
       }
       if (ms >= m2) {
         return Math.round(ms / m2) + "m";
@@ -19710,7 +19710,7 @@ var require_ms4 = __commonJS({
       return ms + "ms";
     }
     function fmtLong(ms) {
-      return plural(ms, d, "day") || plural(ms, h5, "hour") || plural(ms, m2, "minute") || plural(ms, s2, "second") || ms + " ms";
+      return plural(ms, d, "day") || plural(ms, h6, "hour") || plural(ms, m2, "minute") || plural(ms, s2, "second") || ms + " ms";
     }
     function plural(ms, n, name) {
       if (ms < n) {
@@ -20227,8 +20227,8 @@ var require_ms5 = __commonJS({
   "node_modules/ms/index.js"(exports2, module2) {
     var s2 = 1e3;
     var m2 = s2 * 60;
-    var h5 = m2 * 60;
-    var d = h5 * 24;
+    var h6 = m2 * 60;
+    var d = h6 * 24;
     var w = d * 7;
     var y = d * 365.25;
     module2.exports = function(val, options) {
@@ -20276,7 +20276,7 @@ var require_ms5 = __commonJS({
         case "hrs":
         case "hr":
         case "h":
-          return n * h5;
+          return n * h6;
         case "minutes":
         case "minute":
         case "mins":
@@ -20304,8 +20304,8 @@ var require_ms5 = __commonJS({
       if (msAbs >= d) {
         return Math.round(ms / d) + "d";
       }
-      if (msAbs >= h5) {
-        return Math.round(ms / h5) + "h";
+      if (msAbs >= h6) {
+        return Math.round(ms / h6) + "h";
       }
       if (msAbs >= m2) {
         return Math.round(ms / m2) + "m";
@@ -20320,8 +20320,8 @@ var require_ms5 = __commonJS({
       if (msAbs >= d) {
         return plural(ms, msAbs, d, "day");
       }
-      if (msAbs >= h5) {
-        return plural(ms, msAbs, h5, "hour");
+      if (msAbs >= h6) {
+        return plural(ms, msAbs, h6, "hour");
       }
       if (msAbs >= m2) {
         return plural(ms, msAbs, m2, "minute");
@@ -21935,7 +21935,7 @@ var require_application = __commonJS({
   "node_modules/express/lib/application.js"(exports2, module2) {
     "use strict";
     var finalhandler = require_finalhandler();
-    var Router29 = require_router();
+    var Router30 = require_router();
     var methods = require_methods();
     var middleware = require_init();
     var query = require_query();
@@ -22000,7 +22000,7 @@ var require_application = __commonJS({
     };
     app.lazyrouter = function lazyrouter() {
       if (!this._router) {
-        this._router = new Router29({
+        this._router = new Router30({
           caseSensitive: this.enabled("case sensitive routing"),
           strict: this.enabled("strict routing")
         });
@@ -22009,17 +22009,17 @@ var require_application = __commonJS({
       }
     };
     app.handle = function handle(req, res, callback) {
-      var router29 = this._router;
+      var router30 = this._router;
       var done = callback || finalhandler(req, res, {
         env: this.get("env"),
         onerror: logerror.bind(this)
       });
-      if (!router29) {
+      if (!router30) {
         debug("no routes defined on app");
         done();
         return;
       }
-      router29.handle(req, res, done);
+      router30.handle(req, res, done);
     };
     app.use = function use(fn) {
       var offset = 0;
@@ -22039,15 +22039,15 @@ var require_application = __commonJS({
         throw new TypeError("app.use() requires a middleware function");
       }
       this.lazyrouter();
-      var router29 = this._router;
+      var router30 = this._router;
       fns.forEach(function(fn2) {
         if (!fn2 || !fn2.handle || !fn2.set) {
-          return router29.use(path26, fn2);
+          return router30.use(path26, fn2);
         }
         debug(".use app under %s", path26);
         fn2.mountpath = path26;
         fn2.parent = this;
-        router29.use(path26, function mounted_app(req, res, next) {
+        router30.use(path26, function mounted_app(req, res, next) {
           var orig = req.app;
           fn2.handle(req, res, function(err) {
             setPrototypeOf(req, orig.request);
@@ -23864,7 +23864,7 @@ var require_express = __commonJS({
     var mixin = require_merge_descriptors();
     var proto = require_application();
     var Route = require_route();
-    var Router29 = require_router();
+    var Router30 = require_router();
     var req = require_request();
     var res = require_response();
     exports2 = module2.exports = createApplication;
@@ -23887,7 +23887,7 @@ var require_express = __commonJS({
     exports2.request = req;
     exports2.response = res;
     exports2.Route = Route;
-    exports2.Router = Router29;
+    exports2.Router = Router30;
     exports2.json = bodyParser.json;
     exports2.query = require_query();
     exports2.raw = bodyParser.raw;
@@ -25361,7 +25361,7 @@ var require_trees = __commonJS({
       var extra = desc.stat_desc.extra_bits;
       var base = desc.stat_desc.extra_base;
       var max_length = desc.stat_desc.max_length;
-      var h5;
+      var h6;
       var n, m2;
       var bits;
       var xbits;
@@ -25371,8 +25371,8 @@ var require_trees = __commonJS({
         s2.bl_count[bits] = 0;
       }
       tree[s2.heap[s2.heap_max] * 2 + 1] = 0;
-      for (h5 = s2.heap_max + 1; h5 < HEAP_SIZE; h5++) {
-        n = s2.heap[h5];
+      for (h6 = s2.heap_max + 1; h6 < HEAP_SIZE; h6++) {
+        n = s2.heap[h6];
         bits = tree[tree[n * 2 + 1] * 2 + 1] + 1;
         if (bits > max_length) {
           bits = max_length;
@@ -25409,7 +25409,7 @@ var require_trees = __commonJS({
       for (bits = max_length; bits !== 0; bits--) {
         n = s2.bl_count[bits];
         while (n !== 0) {
-          m2 = s2.heap[--h5];
+          m2 = s2.heap[--h6];
           if (m2 > max_code) {
             continue;
           }
@@ -33912,27 +33912,27 @@ var require_UPNG = __commonJS({
     }
     var UPNG = {};
     UPNG.toRGBA8 = function(out) {
-      var w = out.width, h5 = out.height;
-      if (out.tabs.acTL == null) return [UPNG.toRGBA8.decodeImage(out.data, w, h5, out).buffer];
+      var w = out.width, h6 = out.height;
+      if (out.tabs.acTL == null) return [UPNG.toRGBA8.decodeImage(out.data, w, h6, out).buffer];
       var frms = [];
       if (out.frames[0].data == null) out.frames[0].data = out.data;
-      var len = w * h5 * 4, img = new Uint8Array(len), empty = new Uint8Array(len), prev = new Uint8Array(len);
+      var len = w * h6 * 4, img = new Uint8Array(len), empty = new Uint8Array(len), prev = new Uint8Array(len);
       for (var i2 = 0; i2 < out.frames.length; i2++) {
         var frm = out.frames[i2];
         var fx = frm.rect.x, fy = frm.rect.y, fw = frm.rect.width, fh = frm.rect.height;
         var fdata = UPNG.toRGBA8.decodeImage(frm.data, fw, fh, out);
         if (i2 != 0) for (var j = 0; j < len; j++) prev[j] = img[j];
-        if (frm.blend == 0) UPNG._copyTile(fdata, fw, fh, img, w, h5, fx, fy, 0);
-        else if (frm.blend == 1) UPNG._copyTile(fdata, fw, fh, img, w, h5, fx, fy, 1);
+        if (frm.blend == 0) UPNG._copyTile(fdata, fw, fh, img, w, h6, fx, fy, 0);
+        else if (frm.blend == 1) UPNG._copyTile(fdata, fw, fh, img, w, h6, fx, fy, 1);
         frms.push(img.buffer.slice(0));
         if (frm.dispose == 0) {
-        } else if (frm.dispose == 1) UPNG._copyTile(empty, fw, fh, img, w, h5, fx, fy, 0);
+        } else if (frm.dispose == 1) UPNG._copyTile(empty, fw, fh, img, w, h6, fx, fy, 0);
         else if (frm.dispose == 2) for (var j = 0; j < len; j++) img[j] = prev[j];
       }
       return frms;
     };
-    UPNG.toRGBA8.decodeImage = function(data, w, h5, out) {
-      var area = w * h5, bpp = UPNG.decode._getBPP(out);
+    UPNG.toRGBA8.decodeImage = function(data, w, h6, out) {
+      var area = w * h6, bpp = UPNG.decode._getBPP(out);
       var bpl = Math.ceil(w * bpp / 8);
       var bf = new Uint8Array(area * 4), bf32 = new Uint32Array(bf.buffer);
       var ctype = out.ctype, depth = out.depth;
@@ -33975,7 +33975,7 @@ var require_UPNG = __commonJS({
         }
       } else if (ctype == 3) {
         var p = out.tabs["PLTE"], ap = out.tabs["tRNS"], tl = ap ? ap.length : 0;
-        if (depth == 1) for (var y = 0; y < h5; y++) {
+        if (depth == 1) for (var y = 0; y < h6; y++) {
           var s0 = y * bpl, t0 = y * w;
           for (var i2 = 0; i2 < w; i2++) {
             var qi = t0 + i2 << 2, j = data[s0 + (i2 >> 3)] >> 7 - ((i2 & 7) << 0) & 1, cj = 3 * j;
@@ -33985,7 +33985,7 @@ var require_UPNG = __commonJS({
             bf[qi + 3] = j < tl ? ap[j] : 255;
           }
         }
-        if (depth == 2) for (var y = 0; y < h5; y++) {
+        if (depth == 2) for (var y = 0; y < h6; y++) {
           var s0 = y * bpl, t0 = y * w;
           for (var i2 = 0; i2 < w; i2++) {
             var qi = t0 + i2 << 2, j = data[s0 + (i2 >> 2)] >> 6 - ((i2 & 3) << 1) & 3, cj = 3 * j;
@@ -33995,7 +33995,7 @@ var require_UPNG = __commonJS({
             bf[qi + 3] = j < tl ? ap[j] : 255;
           }
         }
-        if (depth == 4) for (var y = 0; y < h5; y++) {
+        if (depth == 4) for (var y = 0; y < h6; y++) {
           var s0 = y * bpl, t0 = y * w;
           for (var i2 = 0; i2 < w; i2++) {
             var qi = t0 + i2 << 2, j = data[s0 + (i2 >> 1)] >> 4 - ((i2 & 1) << 2) & 15, cj = 3 * j;
@@ -34029,7 +34029,7 @@ var require_UPNG = __commonJS({
         }
       } else if (ctype == 0) {
         var tr = out.tabs["tRNS"] ? out.tabs["tRNS"] : -1;
-        for (var y = 0; y < h5; y++) {
+        for (var y = 0; y < h6; y++) {
           var off = y * bpl, to = y * w;
           if (depth == 1) for (var x2 = 0; x2 < w; x2++) {
             var gr = 255 * (data[off + (x2 >>> 3)] >>> 7 - (x2 & 7) & 1), al = gr == tr * 255 ? 0 : 255;
@@ -34166,12 +34166,12 @@ var require_UPNG = __commonJS({
       delete out.filter;
       return out;
     };
-    UPNG.decode._decompress = function(out, dd, w, h5) {
+    UPNG.decode._decompress = function(out, dd, w, h6) {
       var time = Date.now();
-      var bpp = UPNG.decode._getBPP(out), bpl = Math.ceil(w * bpp / 8), buff = new Uint8Array((bpl + 1 + out.interlace) * h5);
+      var bpp = UPNG.decode._getBPP(out), bpl = Math.ceil(w * bpp / 8), buff = new Uint8Array((bpl + 1 + out.interlace) * h6);
       dd = UPNG.decode._inflate(dd, buff);
       var time = Date.now();
-      if (out.interlace == 0) dd = UPNG.decode._filterZero(dd, out, 0, w, h5);
+      if (out.interlace == 0) dd = UPNG.decode._filterZero(dd, out, 0, w, h6);
       else if (out.interlace == 1) dd = UPNG.decode._readInterlace(dd, out);
       return dd;
     };
@@ -34183,7 +34183,7 @@ var require_UPNG = __commonJS({
       var H = {};
       H.H = {};
       H.H.N = function(N, W) {
-        var R = Uint8Array, i2 = 0, m2 = 0, J = 0, h5 = 0, Q = 0, X = 0, u = 0, w = 0, d = 0, v, C;
+        var R = Uint8Array, i2 = 0, m2 = 0, J = 0, h6 = 0, Q = 0, X = 0, u = 0, w = 0, d = 0, v, C;
         if (N[0] == 3 && N[1] == 0) return W ? W : new R(0);
         var V = H.H, n = V.b, A2 = V.e, l = V.R, M = V.n, I = V.A, e2 = V.Z, b = V.m, Z2 = W == null;
         if (Z2) W = new R(N.length >>> 2 << 3);
@@ -34209,7 +34209,7 @@ var require_UPNG = __commonJS({
           }
           if (m2 == 2) {
             J = A2(N, d, 5) + 257;
-            h5 = A2(N, d + 5, 5) + 1;
+            h6 = A2(N, d + 5, 5) + 1;
             Q = A2(N, d + 10, 4) + 4;
             d += 14;
             var E = d, j = 1;
@@ -34227,10 +34227,10 @@ var require_UPNG = __commonJS({
             I(b.Q, j, b.u);
             v = b.w;
             C = b.d;
-            d = l(b.u, (1 << j) - 1, J + h5, N, d, b.v);
+            d = l(b.u, (1 << j) - 1, J + h6, N, d, b.v);
             var r2 = V.V(b.v, 0, J, b.C);
             X = (1 << r2) - 1;
-            var S2 = V.V(b.v, J, h5, b.D);
+            var S2 = V.V(b.v, J, h6, b.D);
             u = (1 << S2) - 1;
             M(b.C, r2);
             I(b.C, r2, v);
@@ -34452,9 +34452,9 @@ var require_UPNG = __commonJS({
       return H.H.N;
     })();
     UPNG.decode._readInterlace = function(data, out) {
-      var w = out.width, h5 = out.height;
+      var w = out.width, h6 = out.height;
       var bpp = UPNG.decode._getBPP(out), cbpp = bpp >> 3, bpl = Math.ceil(w * bpp / 8);
-      var img = new Uint8Array(h5 * bpl);
+      var img = new Uint8Array(h6 * bpl);
       var di = 0;
       var starting_row = [0, 0, 4, 0, 2, 0, 1];
       var starting_col = [0, 4, 0, 2, 0, 1, 0];
@@ -34465,7 +34465,7 @@ var require_UPNG = __commonJS({
         var ri = row_increment[pass], ci = col_increment[pass];
         var sw = 0, sh = 0;
         var cr = starting_row[pass];
-        while (cr < h5) {
+        while (cr < h6) {
           cr += ri;
           sh++;
         }
@@ -34477,7 +34477,7 @@ var require_UPNG = __commonJS({
         var bpll = Math.ceil(sw * bpp / 8);
         UPNG.decode._filterZero(data, out, di, sw, sh);
         var y = 0, row = starting_row[pass];
-        while (row < h5) {
+        while (row < h6) {
           var col = starting_col[pass];
           var cdi = di + y * bpll << 3;
           while (col < w) {
@@ -34515,13 +34515,13 @@ var require_UPNG = __commonJS({
       var noc = [1, null, 3, 1, 2, null, 4][out.ctype];
       return noc * out.depth;
     };
-    UPNG.decode._filterZero = function(data, out, off, w, h5) {
+    UPNG.decode._filterZero = function(data, out, off, w, h6) {
       var bpp = UPNG.decode._getBPP(out), bpl = Math.ceil(w * bpp / 8), paeth = UPNG.decode._paeth;
       bpp = Math.ceil(bpp / 8);
       var i2 = 0, di = 1, type = data[off], x2 = 0;
       if (type > 1) data[off] = [0, 0, 1][type - 2];
       if (type == 3) for (x2 = bpp; x2 < bpl; x2++) data[x2 + 1] = data[x2 + 1] + (data[x2 + 1 - bpp] >>> 1) & 255;
-      for (var y = 0; y < h5; y++) {
+      for (var y = 0; y < h6; y++) {
         i2 = off + y * bpl;
         di = i2 + y + 1;
         type = data[di - 1];
@@ -34614,9 +34614,9 @@ var require_UPNG = __commonJS({
       }
     };
     UPNG._copyTile = function(sb, sw, sh, tb, tw, th, xoff, yoff, mode) {
-      var w = Math.min(sw, tw), h5 = Math.min(sh, th);
+      var w = Math.min(sw, tw), h6 = Math.min(sh, th);
       var si = 0, ti = 0;
-      for (var y = 0; y < h5; y++) for (var x2 = 0; x2 < w; x2++) {
+      for (var y = 0; y < h6; y++) for (var x2 = 0; x2 < w; x2++) {
         if (xoff >= 0 && yoff >= 0) {
           si = y * sw + x2 << 2;
           ti = (yoff + y) * tw + xoff + x2 << 2;
@@ -34660,14 +34660,14 @@ var require_UPNG = __commonJS({
       }
       return true;
     };
-    UPNG.encode = function(bufs, w, h5, ps, dels, tabs, forbidPlte) {
+    UPNG.encode = function(bufs, w, h6, ps, dels, tabs, forbidPlte) {
       if (ps == null) ps = 0;
       if (forbidPlte == null) forbidPlte = false;
-      var nimg = UPNG.encode.compress(bufs, w, h5, ps, [false, false, false, 0, forbidPlte]);
+      var nimg = UPNG.encode.compress(bufs, w, h6, ps, [false, false, false, 0, forbidPlte]);
       UPNG.encode.compressPNG(nimg, -1);
-      return UPNG.encode._main(nimg, w, h5, dels, tabs);
+      return UPNG.encode._main(nimg, w, h6, dels, tabs);
     };
-    UPNG.encodeLL = function(bufs, w, h5, cc, ac, depth, dels, tabs) {
+    UPNG.encodeLL = function(bufs, w, h6, cc, ac, depth, dels, tabs) {
       var nimg = {
         ctype: 0 + (cc == 1 ? 0 : 2) + (ac == 0 ? 0 : 4),
         depth,
@@ -34680,7 +34680,7 @@ var require_UPNG = __commonJS({
           x: 0,
           y: 0,
           width: w,
-          height: h5
+          height: h6
         },
         img: new Uint8Array(bufs[i2]),
         blend: 0,
@@ -34689,10 +34689,10 @@ var require_UPNG = __commonJS({
         bpl: Math.ceil(bipl / 8)
       });
       UPNG.encode.compressPNG(nimg, 0, true);
-      var out = UPNG.encode._main(nimg, w, h5, dels, tabs);
+      var out = UPNG.encode._main(nimg, w, h6, dels, tabs);
       return out;
     };
-    UPNG.encode._main = function(nimg, w, h5, dels, tabs) {
+    UPNG.encode._main = function(nimg, w, h6, dels, tabs) {
       if (tabs == null) tabs = {};
       var crc = UPNG.crc.crc, wUi = UPNG._bin.writeUint, wUs = UPNG._bin.writeUshort, wAs = UPNG._bin.writeASCII;
       var offset = 8, anim = nimg.frames.length > 1, pltAlpha = false;
@@ -34720,7 +34720,7 @@ var require_UPNG = __commonJS({
       offset += 4;
       wUi(data, offset, w);
       offset += 4;
-      wUi(data, offset, h5);
+      wUi(data, offset, h6);
       offset += 4;
       data[offset] = nimg.depth;
       offset++;
@@ -34855,7 +34855,7 @@ var require_UPNG = __commonJS({
         frm.cimg = UPNG.encode._filterZero(frm.img, nh, frm.bpp, frm.bpl, fdata, filter2, levelZero);
       }
     };
-    UPNG.encode.compress = function(bufs, w, h5, ps, prms) {
+    UPNG.encode.compress = function(bufs, w, h6, ps, prms) {
       var onlyBlend = prms[0], evenCrd = prms[1], forbidPrev = prms[2], minBits = prms[3], forbidPlte = prms[4];
       var ctype = 6, depth = 8, alphaAnd = 255;
       for (var j = 0; j < bufs.length; j++) {
@@ -34863,7 +34863,7 @@ var require_UPNG = __commonJS({
         for (var i2 = 0; i2 < ilen; i2 += 4) alphaAnd &= img[i2 + 3];
       }
       var gotAlpha = alphaAnd != 255;
-      var frms = UPNG.encode.framize(bufs, w, h5, onlyBlend, evenCrd, forbidPrev);
+      var frms = UPNG.encode.framize(bufs, w, h6, onlyBlend, evenCrd, forbidPrev);
       var cmap = {}, plte = [], inds = [];
       if (ps != 0) {
         var nbufs = [];
@@ -34953,18 +34953,18 @@ var require_UPNG = __commonJS({
         frames: frms
       };
     };
-    UPNG.encode.framize = function(bufs, w, h5, alwaysBlend, evenCrd, forbidPrev) {
+    UPNG.encode.framize = function(bufs, w, h6, alwaysBlend, evenCrd, forbidPrev) {
       var frms = [];
       for (var j = 0; j < bufs.length; j++) {
         var cimg = new Uint8Array(bufs[j]), cimg32 = new Uint32Array(cimg.buffer);
         var nimg;
-        var nx = 0, ny = 0, nw = w, nh = h5, blend = alwaysBlend ? 1 : 0;
+        var nx = 0, ny = 0, nw = w, nh = h6, blend = alwaysBlend ? 1 : 0;
         if (j != 0) {
           var tlim = forbidPrev || alwaysBlend || j == 1 || frms[j - 2].dispose != 0 ? 1 : 2, tstp = 0, tarea = 1e9;
           for (var it = 0; it < tlim; it++) {
             var pimg = new Uint8Array(bufs[j - 1 - it]), p32 = new Uint32Array(bufs[j - 1 - it]);
-            var mix = w, miy = h5, max = -1, may = -1;
-            for (var y = 0; y < h5; y++) for (var x2 = 0; x2 < w; x2++) {
+            var mix = w, miy = h6, max = -1, may = -1;
+            for (var y = 0; y < h6; y++) for (var x2 = 0; x2 < w; x2++) {
               var i2 = y * w + x2;
               if (cimg32[i2] != p32[i2]) {
                 if (x2 < mix) mix = x2;
@@ -34991,15 +34991,15 @@ var require_UPNG = __commonJS({
           var pimg = new Uint8Array(bufs[j - 1 - tstp]);
           if (tstp == 1) frms[j - 1].dispose = 2;
           nimg = new Uint8Array(nw * nh * 4);
-          UPNG._copyTile(pimg, w, h5, nimg, nw, nh, -nx, -ny, 0);
-          blend = UPNG._copyTile(cimg, w, h5, nimg, nw, nh, -nx, -ny, 3) ? 1 : 0;
-          if (blend == 1) UPNG.encode._prepareDiff(cimg, w, h5, nimg, {
+          UPNG._copyTile(pimg, w, h6, nimg, nw, nh, -nx, -ny, 0);
+          blend = UPNG._copyTile(cimg, w, h6, nimg, nw, nh, -nx, -ny, 3) ? 1 : 0;
+          if (blend == 1) UPNG.encode._prepareDiff(cimg, w, h6, nimg, {
             x: nx,
             y: ny,
             width: nw,
             height: nh
           });
-          else UPNG._copyTile(cimg, w, h5, nimg, nw, nh, -nx, -ny, 0);
+          else UPNG._copyTile(cimg, w, h6, nimg, nw, nh, -nx, -ny, 0);
         } else nimg = cimg.slice(0);
         frms.push({
           rect: {
@@ -35026,8 +35026,8 @@ var require_UPNG = __commonJS({
           height: maY - miY
         };
         frms[j - 1].dispose = 1;
-        if (j - 1 != 0) UPNG.encode._updateFrame(bufs, w, h5, frms, j - 1, r2, evenCrd);
-        UPNG.encode._updateFrame(bufs, w, h5, frms, j, r2, evenCrd);
+        if (j - 1 != 0) UPNG.encode._updateFrame(bufs, w, h6, frms, j - 1, r2, evenCrd);
+        UPNG.encode._updateFrame(bufs, w, h6, frms, j, r2, evenCrd);
       }
       var area = 0;
       if (bufs.length != 1) for (var i2 = 0; i2 < frms.length; i2++) {
@@ -35036,11 +35036,11 @@ var require_UPNG = __commonJS({
       }
       return frms;
     };
-    UPNG.encode._updateFrame = function(bufs, w, h5, frms, i2, r2, evenCrd) {
+    UPNG.encode._updateFrame = function(bufs, w, h6, frms, i2, r2, evenCrd) {
       var U8 = Uint8Array, U32 = Uint32Array;
       var pimg = new U8(bufs[i2 - 1]), pimg32 = new U32(bufs[i2 - 1]), nimg = i2 + 1 < bufs.length ? new U8(bufs[i2 + 1]) : null;
       var cimg = new U8(bufs[i2]), cimg32 = new U32(cimg.buffer);
-      var mix = w, miy = h5, max = -1, may = -1;
+      var mix = w, miy = h6, max = -1, may = -1;
       for (var y = 0; y < r2.height; y++) for (var x2 = 0; x2 < r2.width; x2++) {
         var cx = r2.x + x2, cy = r2.y + y;
         var j = cy * w + cx, cc = cimg32[j];
@@ -35068,24 +35068,24 @@ var require_UPNG = __commonJS({
       fr.blend = 1;
       fr.img = new Uint8Array(r2.width * r2.height * 4);
       if (frms[i2 - 1].dispose == 0) {
-        UPNG._copyTile(pimg, w, h5, fr.img, r2.width, r2.height, -r2.x, -r2.y, 0);
-        UPNG.encode._prepareDiff(cimg, w, h5, fr.img, r2);
-      } else UPNG._copyTile(cimg, w, h5, fr.img, r2.width, r2.height, -r2.x, -r2.y, 0);
+        UPNG._copyTile(pimg, w, h6, fr.img, r2.width, r2.height, -r2.x, -r2.y, 0);
+        UPNG.encode._prepareDiff(cimg, w, h6, fr.img, r2);
+      } else UPNG._copyTile(cimg, w, h6, fr.img, r2.width, r2.height, -r2.x, -r2.y, 0);
     };
-    UPNG.encode._prepareDiff = function(cimg, w, h5, nimg, rec) {
-      UPNG._copyTile(cimg, w, h5, nimg, rec.width, rec.height, -rec.x, -rec.y, 2);
+    UPNG.encode._prepareDiff = function(cimg, w, h6, nimg, rec) {
+      UPNG._copyTile(cimg, w, h6, nimg, rec.width, rec.height, -rec.x, -rec.y, 2);
     };
-    UPNG.encode._filterZero = function(img, h5, bpp, bpl, data, filter2, levelZero) {
+    UPNG.encode._filterZero = function(img, h6, bpp, bpl, data, filter2, levelZero) {
       var fls = [], ftry = [0, 1, 2, 3, 4];
       if (filter2 != -1) ftry = [filter2];
-      else if (h5 * bpl > 5e5 || bpp == 1) ftry = [0];
+      else if (h6 * bpl > 5e5 || bpp == 1) ftry = [0];
       var opts;
       if (levelZero) opts = {
         level: 0
       };
       var CMPR = levelZero && UZIP != null ? UZIP : _pako.default;
       for (var i2 = 0; i2 < ftry.length; i2++) {
-        for (var y = 0; y < h5; y++) UPNG.encode._filterLine(data, img, y, bpl, bpp, ftry[i2]);
+        for (var y = 0; y < h6; y++) UPNG.encode._filterLine(data, img, y, bpl, bpp, ftry[i2]);
         fls.push(CMPR["deflate"](data, opts));
       }
       var ti, tsize = 1e9;
@@ -40538,19 +40538,19 @@ var require_rotations = __commonJS({
       if (degreeAngle === void 0) {
         degreeAngle = 0;
       }
-      var x2 = rectangle.x, y = rectangle.y, w = rectangle.width, h5 = rectangle.height;
+      var x2 = rectangle.x, y = rectangle.y, w = rectangle.width, h6 = rectangle.height;
       var r2 = exports2.reduceRotation(degreeAngle);
       var b = borderWidth / 2;
       if (r2 === 0)
-        return { x: x2 - b, y: y - b, width: w, height: h5 };
+        return { x: x2 - b, y: y - b, width: w, height: h6 };
       else if (r2 === 90)
-        return { x: x2 - h5 + b, y: y - b, width: h5, height: w };
+        return { x: x2 - h6 + b, y: y - b, width: h6, height: w };
       else if (r2 === 180)
-        return { x: x2 - w + b, y: y - h5 + b, width: w, height: h5 };
+        return { x: x2 - w + b, y: y - h6 + b, width: w, height: h6 };
       else if (r2 === 270)
-        return { x: x2 - b, y: y - w + b, width: h5, height: w };
+        return { x: x2 - b, y: y - w + b, width: h6, height: w };
       else
-        return { x: x2 - b, y: y - b, width: w, height: h5 };
+        return { x: x2 - b, y: y - b, width: w, height: h6 };
     };
   }
 });
@@ -58470,12 +58470,12 @@ Content-Type: ${v.type || "application/octet-stream"}\r
   c.push(`--${b}--`);
   return new B(c, { type: "multipart/form-data; boundary=" + b });
 }
-var t, i, h3, r, m, f, e, x, FormData2;
+var t, i, h4, r, m, f, e, x, FormData2;
 var init_esm_min = __esm({
   "node_modules/formdata-polyfill/esm.min.js"() {
     init_fetch_blob();
     init_file();
-    ({ toStringTag: t, iterator: i, hasInstance: h3 } = Symbol);
+    ({ toStringTag: t, iterator: i, hasInstance: h4 } = Symbol);
     r = Math.random;
     m = "append,set,get,getAll,delete,keys,values,entries,forEach,constructor".split(",");
     f = (a, b, c) => (a += "", /^(Blob|File)$/.test(b && b[t]) ? [(c = c !== void 0 ? c + "" : b[t] == "File" ? b.name : "blob", a), b.name !== c || b[t] == "blob" ? new file_default([b], c, b) : b] : [a, b + ""]);
@@ -58496,7 +58496,7 @@ var init_esm_min = __esm({
       [i]() {
         return this.entries();
       }
-      static [h3](o) {
+      static [h4](o) {
         return o && typeof o === "object" && o[t] === "FormData" && !m.some((m2) => typeof o[m2] != "function");
       }
       append(...a) {
@@ -71660,7 +71660,7 @@ var require_websocket_server = __commonJS({
       socket.once("finish", socket.destroy);
       socket.end(
         `HTTP/1.1 ${code} ${http4.STATUS_CODES[code]}\r
-` + Object.keys(headers).map((h5) => `${h5}: ${headers[h5]}`).join("\r\n") + "\r\n\r\n" + message
+` + Object.keys(headers).map((h6) => `${h6}: ${headers[h6]}`).join("\r\n") + "\r\n\r\n" + message
       );
     }
     function abortHandshakeOrEmitwsClientError(server, req, socket, code, message, headers) {
@@ -74790,7 +74790,7 @@ var init_ping = __esm({
 });
 
 // server.ts
-var import_express30 = __toESM(require_express2(), 1);
+var import_express31 = __toESM(require_express2(), 1);
 var import_path25 = __toESM(require("path"), 1);
 var import_fs25 = __toESM(require("fs"), 1);
 var import_crypto5 = __toESM(require("crypto"), 1);
@@ -78348,17 +78348,17 @@ async function processShopeeWebhookAsync(queue, snapshot, rawBodyPromise, eagerS
 }
 function createShopeeWebhookRouter(processPayload, routePath = "/shopee", options = {}) {
   const queue = createBoundedQueue(processPayload, options.onQueueOverflow);
-  const router29 = import_express.default.Router();
+  const router30 = import_express.default.Router();
   const paths = (Array.isArray(routePath) ? routePath : [routePath]).map(
     (path26) => path26.startsWith("/") ? path26 : `/${path26}`
   );
   console.log(
     `[Shopee Webhook] Queue config maxConcurrent=${MAX_CONCURRENT_JOBS} maxPending=${MAX_PENDING_JOBS} jobTimeoutMs=none`
   );
-  router29.get(paths, (_req, res) => {
+  router30.get(paths, (_req, res) => {
     ackShopeeOk(res);
   });
-  router29.post(paths, (req, res) => {
+  router30.post(paths, (req, res) => {
     console.log("\n--- [WEBHOOK TRIGGERED] ---", JSON.stringify(req.body));
     console.log(
       "[WEBHOOK TRIGGERED] meta",
@@ -78395,7 +78395,7 @@ function createShopeeWebhookRouter(processPayload, routePath = "/shopee", option
       console.error("L\u1ED7i x\u1EED l\xFD ng\u1EA7m Webhook Shopee:", error);
     });
   });
-  return router29;
+  return router30;
 }
 
 // src/types.ts
@@ -82167,7 +82167,7 @@ async function bulkUpsertOrdersToStore(orders) {
       $set.shopee_order_status = rawStatus;
       $set["data.shopee_order_status"] = rawStatus;
     }
-    const leftPickupPhase = rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE" || rawStatus === "COMPLETED" || rawStatus === "CANCELLED" || rawStatus === "IN_CANCEL" || rawStatus === "TO_RETURN";
+    const leftPickupPhase = rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE" || rawStatus === "COMPLETED" || rawStatus === "CANCELLED" || rawStatus === "IN_CANCEL" || rawStatus === "TO_RETURN" || rawStatus === "RETURN";
     if (leftPickupPhase) {
       $set.is_handed_over = false;
       $set["data.is_handed_over"] = false;
@@ -82180,7 +82180,7 @@ async function bulkUpsertOrdersToStore(orders) {
     const forceShipping = rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE";
     const forceCompleted = rawStatus === "COMPLETED";
     const forceCancelled = rawStatus === "CANCELLED" || rawStatus === "IN_CANCEL";
-    const forceToReturn = rawStatus === "TO_RETURN";
+    const forceToReturn = rawStatus === "TO_RETURN" || rawStatus === "RETURN";
     if (forceShipping) {
       $set.status = "shipping";
       $set["data.status"] = "shipping";
@@ -82198,6 +82198,8 @@ async function bulkUpsertOrdersToStore(orders) {
       $set["data.status"] = "cancelled";
     } else if (forceToReturn) {
       const incomingLocal = String(order.status || "").trim();
+      $set.shopee_order_status = "TO_RETURN";
+      $set["data.shopee_order_status"] = "TO_RETURN";
       if (incomingLocal === "return_received") {
         $set.status = "return_received";
         $set["data.status"] = "return_received";
@@ -82218,12 +82220,14 @@ async function bulkUpsertOrdersToStore(orders) {
       $set["data.status"] = st;
     }
     if (order.shopName != null) $set["data.shopName"] = String(order.shopName);
+    const hasTrackingFlag = Boolean(usableTn);
+    $set.has_tracking = hasTrackingFlag;
+    $set["data.has_tracking"] = hasTrackingFlag;
     if (usableTn) {
       $set.tracking_no = usableTn;
       $set.trackingNumber = usableTn;
       $set["data.tracking_no"] = usableTn;
       $set["data.trackingNumber"] = usableTn;
-      $set.has_tracking = true;
     }
     if (carrier) {
       $set.shipping_carrier = carrier;
@@ -82245,6 +82249,10 @@ async function bulkUpsertOrdersToStore(orders) {
       order.return_tracking_no || order.returnTrackingNumber || ""
     ).trim().toUpperCase();
     const returnStatusUp = String(order.return_status || "").trim().toUpperCase();
+    if (returnStatusUp && order._clear_cancelled_return !== true) {
+      $set.return_status = returnStatusUp;
+      $set["data.return_status"] = returnStatusUp;
+    }
     if (returnTn && !/^0FG/i.test(returnTn) && returnTn !== outboundTn && returnStatusUp !== "CANCELLED" && order._clear_cancelled_return !== true) {
       $set.return_tracking_no = returnTn;
       $set.returnTrackingNumber = returnTn;
@@ -82483,10 +82491,7 @@ async function bulkUpsertOrdersToStore(orders) {
       "data.is_handed_over_to_courier": false,
       "data.local_status": "NONE",
       "data.localStatus": "NONE",
-      "data.internal_status": "NONE",
-      // INSERT luôn gán cờ. Có mã → true (nếu $set đã ghi thì key này bị gỡ để khỏi xung đột).
-      // Chưa có mã → false. Update không $set false — tracking_no cũ được giữ.
-      has_tracking: Boolean(usableTn)
+      "data.internal_status": "NONE"
     };
     if (!incomingUpdateAt) {
       delete $setOnInsertRaw.last_shopee_update_at;
@@ -85423,8 +85428,10 @@ var ORDER_TAB_LEFT_PICKUP_RAW = [
   "COMPLETED",
   "CANCELLED",
   "IN_CANCEL",
-  "TO_RETURN"
+  "TO_RETURN",
+  "RETURN"
 ];
+var ORDER_TAB_CANCEL_RETURN_RAW = ["CANCELLED", "IN_CANCEL", "TO_RETURN", "RETURN"];
 var ORDER_TAB_TRACKING_PRESENT = {
   tracking_no: { $exists: true, $nin: [null, "", "0"] }
 };
@@ -85560,7 +85567,10 @@ function orderTabFilter(tab) {
                 shopee_order_status: { $in: [null, ""] }
               }
             ]
-          }
+          },
+          { shopee_order_status: { $nin: [...ORDER_TAB_CANCEL_RETURN_RAW] } },
+          { is_return: { $ne: true } },
+          { shopee_cancel_return_kind: { $nin: ["refund_return", "cancelled", "failed_delivery"] } }
         ]
       };
     case "pending_confirm":
@@ -85636,7 +85646,7 @@ function orderTabFilter(tab) {
       return {
         $or: [
           { status: { $in: ["cancelled", "return_pending", "return_received"] } },
-          { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"] } },
+          { shopee_order_status: { $in: [...ORDER_TAB_CANCEL_RETURN_RAW] } },
           { shopee_cancel_return_kind: { $in: ["cancelled", "refund_return", "failed_delivery"] } },
           { sub_status: "RTS" },
           { is_rts: true },
@@ -85718,7 +85728,7 @@ function mergeOrdersListFilters(...parts) {
 var FACET_TO_SHIP = ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"];
 var FACET_SHIPPED = ["SHIPPED", "TO_CONFIRM_RECEIVE"];
 var FACET_PENDING = ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"];
-var FACET_CANCEL = ["CANCELLED", "IN_CANCEL", "TO_RETURN"];
+var FACET_CANCEL = ["CANCELLED", "IN_CANCEL", "TO_RETURN", "RETURN"];
 var FULFILLMENT_LOCAL_STATUSES = [
   "pending_confirm",
   "pending_verification",
@@ -85787,7 +85797,10 @@ function tabIndexFilter(tab, kind) {
         is_handed_over: { $ne: true },
         isPrepared: { $ne: true },
         channel: { $nin: ["woocommerce", "manual"] },
-        has_tracking: { $ne: true }
+        has_tracking: { $ne: true },
+        status: { $nin: ["cancelled", "return_pending", "return_received"] },
+        is_return: { $ne: true },
+        shopee_cancel_return_kind: { $nin: ["refund_return", "cancelled", "failed_delivery"] }
       };
     case "processed":
     case "da-xu-ly":
@@ -85908,6 +85921,7 @@ var ORDER_LIST_UI_PROJECTION = {
   shopee_cancel_return_kind: 1,
   is_rts: 1,
   sub_status: 1,
+  return_status: 1,
   last_shopee_update_at: 1,
   last_synced_at: 1,
   create_time: 1,
@@ -86459,6 +86473,11 @@ async function loadLastShopeeUpdateAtByOrderSns(orderSns) {
           $project: {
             orderSn: 1,
             last_shopee_update_at: 1,
+            has_tracking: 1,
+            tracking_no: 1,
+            trackingNumber: 1,
+            dataTrackingNo: "$data.tracking_no",
+            dataTrackingNumber: "$data.trackingNumber",
             itemsLen: {
               $cond: [{ $isArray: "$data.items" }, { $size: "$data.items" }, 0]
             },
@@ -86477,9 +86496,16 @@ async function loadLastShopeeUpdateAtByOrderSns(orderSns) {
         const itemListLen = Number(d?.itemListLen);
         const hasItems = Number.isFinite(itemsLen) && itemsLen > 0;
         const hasItemList = Number.isFinite(itemListLen) && itemListLen > 0;
+        const hasValidTracking = [
+          d?.tracking_no,
+          d?.trackingNumber,
+          d?.dataTrackingNo,
+          d?.dataTrackingNumber
+        ].some((value) => isValidTrackingNo(value));
         out.set(sn, {
           at: at && !Number.isNaN(at.getTime()) ? at : null,
-          missingItems: !hasItems && !hasItemList
+          missingItems: !hasItems && !hasItemList,
+          missingTracking: d?.has_tracking === false || !hasValidTracking
         });
       }
     } catch (err) {
@@ -86548,7 +86574,10 @@ async function countOrdersByTabsFromStore(opts) {
           pending_confirm: facetStatusIn([...FACET_PENDING]),
           unprocessed: facetAnd({
             s: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] },
-            ho: { $ne: true }
+            ho: { $ne: true },
+            st: { $nin: ["cancelled", "return_pending", "return_received"] },
+            ret: { $ne: true },
+            kind: { $nin: ["refund_return", "cancelled", "failed_delivery"] }
           }),
           processed: facetAnd({ s: "PROCESSED", ho: { $ne: true } }),
           shipping: facetStatusIn([...FACET_SHIPPED]),
@@ -90623,6 +90652,97 @@ async function listAddressBookRanking(options = {}) {
   }).slice(0, limit);
   return list;
 }
+async function updateCustomerAddressByKey({ id = "", phone = "", address = "" } = {}) {
+  const cleanAddress = String(address || "").trim();
+  if (!cleanAddress) {
+    const err = new Error("Thi\u1EBFu \u0111\u1ECBa ch\u1EC9.");
+    err.status = 400;
+    throw err;
+  }
+  const cleanId = String(id || "").trim();
+  const cleanPhone = normalizePhone(phone);
+  if (!cleanId && !cleanPhone) {
+    const err = new Error("Thi\u1EBFu m\xE3 kh\xE1ch ho\u1EB7c s\u1ED1 \u0111i\u1EC7n tho\u1EA1i.");
+    err.status = 400;
+    throw err;
+  }
+  const patch = {
+    street: cleanAddress,
+    address: cleanAddress,
+    fullAddress: cleanAddress
+  };
+  if (!mongoReady3()) {
+    const entry = updateJsonCustomerAddress(cleanId, cleanPhone, patch);
+    if (!entry) {
+      const err = new Error("Kh\xF4ng t\xECm th\u1EA5y kh\xE1ch h\xE0ng.");
+      err.status = 404;
+      throw err;
+    }
+    return entry;
+  }
+  let updated = null;
+  if (cleanId) {
+    const idOr = [{ id: cleanId }];
+    if (import_mongoose8.default.isValidObjectId(cleanId)) {
+      idOr.push({ _id: new import_mongoose8.default.Types.ObjectId(cleanId) });
+    }
+    updated = await AddressBook_default.findOneAndUpdate(
+      { $or: idOr },
+      { $set: patch },
+      { new: true }
+    ).lean();
+  }
+  if (!updated && cleanPhone) {
+    updated = await AddressBook_default.findOneAndUpdate(
+      { phone: cleanPhone },
+      { $set: patch },
+      { new: true }
+    ).lean();
+  }
+  try {
+    const custOr = [];
+    if (cleanId) {
+      custOr.push({ id: cleanId });
+      if (import_mongoose8.default.isValidObjectId(cleanId)) {
+        custOr.push({ _id: new import_mongoose8.default.Types.ObjectId(cleanId) });
+      }
+    }
+    if (cleanPhone) {
+      custOr.push({ phone: cleanPhone });
+      custOr.push({ phone_number: cleanPhone });
+    }
+    if (custOr.length) {
+      await import_mongoose8.default.connection.collection("customers").updateMany(
+        { $or: custOr },
+        { $set: { ...patch, updatedAt: /* @__PURE__ */ new Date() } }
+      );
+    }
+  } catch (err) {
+    console.error("[customers collection]", err?.message || err);
+  }
+  if (!updated) {
+    const err = new Error("Kh\xF4ng t\xECm th\u1EA5y kh\xE1ch h\xE0ng.");
+    err.status = 404;
+    throw err;
+  }
+  return toPublicEntry(updated);
+}
+function updateJsonCustomerAddress(cleanId, cleanPhone, patch) {
+  const list = readBook();
+  let found = null;
+  const apply = (source, predicate) => source.map((item) => {
+    if (found || !predicate(item)) return item;
+    found = { ...item, ...patch };
+    return found;
+  });
+  let next = cleanId ? apply(list, (item) => String(item?.id || "") === cleanId) : list;
+  if (!found && cleanPhone) {
+    next = apply(list, (item) => normalizePhone(item?.phone) === cleanPhone);
+  }
+  if (!found) return null;
+  writeBook(next);
+  return toPublicEntry(found);
+}
 async function saveAddressBookEntry(entry) {
   const normalized = normalizeEntry(entry);
   if (!normalized.phone && !normalized.name) {
@@ -90915,8 +91035,173 @@ router8.get("/", h(listAddressBook));
 router8.post("/", h(createAddressBookEntry));
 var addressBookRoutes_default = router8;
 
-// routes/chatRoutes.js
+// routes/customerRoutes.js
 var import_express10 = __toESM(require_express2(), 1);
+
+// controllers/customerController.js
+var import_mongoose9 = __toESM(require("mongoose"), 1);
+var ORDER_LIMIT = 40;
+var PHONE_FIELDS = [
+  "customerPhone",
+  "data.customerPhone",
+  "data.customer_phone",
+  "data.recipient_address.phone",
+  "data.recipient_address.phone_number",
+  "data.billing.phone",
+  "data.shipping.phone"
+];
+function phoneMatch(raw) {
+  const digits = String(raw || "").replace(/\D/g, "");
+  if (digits.length < 8) return null;
+  const tail = digits.slice(-9);
+  const exact = /* @__PURE__ */ new Set([digits]);
+  if (digits.startsWith("84") && digits.length >= 11) exact.add(`0${digits.slice(2)}`);
+  if (digits.startsWith("0") && digits.length >= 10) exact.add(`84${digits.slice(1)}`);
+  return { tail, exact: [...exact] };
+}
+function orderDateIso(doc) {
+  const data = doc?.data && typeof doc.data === "object" ? doc.data : {};
+  const raw = doc?.create_time || doc?.createdAt || data.create_time || data.date || null;
+  if (raw == null || raw === "") return null;
+  if (raw instanceof Date) return Number.isNaN(raw.getTime()) ? null : raw.toISOString();
+  if (typeof raw === "number") {
+    const ms = raw < 1e12 ? raw * 1e3 : raw;
+    const d2 = new Date(ms);
+    return Number.isNaN(d2.getTime()) ? null : d2.toISOString();
+  }
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+function productSummary(data) {
+  const items = Array.isArray(data?.items) && data.items.length ? data.items : Array.isArray(data?.item_list) ? data.item_list : [];
+  const names = [];
+  const cap = Math.min(items.length, 8);
+  for (let i2 = 0; i2 < cap; i2 += 1) {
+    const row = items[i2] || {};
+    const name = String(
+      row.item_name || row.productTitle || row.name || row.model_name || "S\u1EA3n ph\u1EA9m"
+    ).trim();
+    const qty = Math.max(
+      1,
+      Math.round(Number(row.model_quantity_purchased ?? row.quantity ?? row.qty ?? 1) || 1)
+    );
+    names.push(qty > 1 ? `${name} x${qty}` : name);
+  }
+  return names.join(", ") || "\u2014";
+}
+function orderTotal(doc) {
+  const data = doc?.data && typeof doc.data === "object" ? doc.data : {};
+  const n = Number(
+    data.total_amount ?? data.totalAmount ?? data.revenue ?? data.total ?? data.cod_amount ?? doc?.cod_amount ?? 0
+  );
+  return Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0;
+}
+async function updateCustomerAddress(req, res) {
+  try {
+    const entry = await updateCustomerAddressByKey({
+      id: req.params?.id,
+      phone: req.body?.phone,
+      address: req.body?.address
+    });
+    return res.json({ success: true, entry, message: "\u0110\xE3 c\u1EADp nh\u1EADt \u0111\u1ECBa ch\u1EC9" });
+  } catch (error) {
+    console.error("[customers update]", error);
+    const status = Number(error?.status) || 500;
+    return res.status(status).json({
+      success: false,
+      error: error?.message || "C\u1EADp nh\u1EADt \u0111\u1ECBa ch\u1EC9 th\u1EA5t b\u1EA1i"
+    });
+  }
+}
+async function getCustomerOrderHistory(req, res) {
+  try {
+    if (import_mongoose9.default.connection?.readyState !== 1) {
+      return res.status(503).json({
+        success: false,
+        error: "C\u01A1 s\u1EDF d\u1EEF li\u1EC7u ch\u01B0a s\u1EB5n s\xE0ng",
+        orders: []
+      });
+    }
+    const match2 = phoneMatch(req.params?.phone || req.query?.phone);
+    if (!match2) {
+      return res.status(400).json({
+        success: false,
+        error: "S\u1ED1 \u0111i\u1EC7n tho\u1EA1i kh\xF4ng h\u1EE3p l\u1EC7",
+        orders: []
+      });
+    }
+    const safeTail = match2.tail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const suffix = { $regex: `${safeTail}$` };
+    const or = [];
+    for (let i2 = 0; i2 < PHONE_FIELDS.length; i2 += 1) {
+      const field = PHONE_FIELDS[i2];
+      or.push({ [field]: { $in: match2.exact } });
+      or.push({ [field]: suffix });
+    }
+    const rows = await import_mongoose9.default.connection.collection("orders").find(
+      { $or: or },
+      {
+        projection: {
+          orderSn: 1,
+          create_time: 1,
+          createdAt: 1,
+          status: 1,
+          shopee_order_status: 1,
+          cod_amount: 1,
+          "data.order_sn": 1,
+          "data.orderSn": 1,
+          "data.create_time": 1,
+          "data.date": 1,
+          "data.status": 1,
+          "data.total_amount": 1,
+          "data.totalAmount": 1,
+          "data.revenue": 1,
+          "data.total": 1,
+          "data.cod_amount": 1,
+          "data.items.item_name": 1,
+          "data.items.productTitle": 1,
+          "data.items.name": 1,
+          "data.items.model_name": 1,
+          "data.items.quantity": 1,
+          "data.items.qty": 1,
+          "data.item_list.item_name": 1,
+          "data.item_list.model_name": 1,
+          "data.item_list.model_quantity_purchased": 1
+        }
+      }
+    ).sort({ create_time: -1, createdAt: -1 }).limit(ORDER_LIMIT).maxTimeMS(8e3).toArray();
+    const orders = [];
+    for (let i2 = 0; i2 < rows.length; i2 += 1) {
+      const doc = rows[i2];
+      const data = doc?.data && typeof doc.data === "object" ? doc.data : {};
+      orders.push({
+        orderSn: String(doc.orderSn || data.order_sn || data.orderSn || "").trim() || "\u2014",
+        date: orderDateIso(doc),
+        products: productSummary(data),
+        total: orderTotal(doc),
+        status: String(doc.shopee_order_status || doc.status || data.status || "").trim() || "\u2014"
+      });
+    }
+    return res.json({ success: true, orders });
+  } catch (error) {
+    console.error("[customers orders]", error);
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c l\u1ECBch s\u1EED \u0111\u01A1n h\xE0ng",
+      orders: []
+    });
+  }
+}
+
+// routes/customerRoutes.js
+var router9 = (0, import_express10.Router)();
+var h2 = asyncHandler;
+router9.get("/:phone/orders", h2(getCustomerOrderHistory));
+router9.put("/:id", h2(updateCustomerAddress));
+var customerRoutes_default = router9;
+
+// routes/chatRoutes.js
+var import_express11 = __toESM(require_express2(), 1);
 
 // controllers/chatController.js
 var LIST_LIMIT = 100;
@@ -91209,18 +91494,18 @@ async function createQuickReply(req, res) {
 }
 
 // routes/chatRoutes.js
-var router9 = (0, import_express10.Router)();
-var h2 = asyncHandler;
-router9.get("/conversations", h2(getConversations));
-router9.post("/conversations/:id/read", h2(markConversationRead));
-router9.get("/messages/:conversation_id", h2(getMessages));
-router9.post("/send", h2(sendMessage));
-router9.get("/quick-replies", h2(getQuickReplies));
-router9.post("/quick-replies", h2(createQuickReply));
-var chatRoutes_default = router9;
+var router10 = (0, import_express11.Router)();
+var h3 = asyncHandler;
+router10.get("/conversations", h3(getConversations));
+router10.post("/conversations/:id/read", h3(markConversationRead));
+router10.get("/messages/:conversation_id", h3(getMessages));
+router10.post("/send", h3(sendMessage));
+router10.get("/quick-replies", h3(getQuickReplies));
+router10.post("/quick-replies", h3(createQuickReply));
+var chatRoutes_default = router10;
 
 // routes/importsRoutes.js
-var import_express11 = __toESM(require_express2(), 1);
+var import_express12 = __toESM(require_express2(), 1);
 
 // controllers/importsController.js
 var import_fs13 = __toESM(require("fs"), 1);
@@ -91515,17 +91800,17 @@ async function getSupplierReport(req, res) {
 }
 
 // routes/importsRoutes.js
-var router10 = (0, import_express11.Router)();
-router10.get("/", listImports);
-router10.get("/supplier-report", getSupplierReport);
-router10.get("/history/:productId", getImportHistory);
-router10.get("/product-context/:productId", getImportProductContext);
-router10.post("/", createImport);
-router10.post("/clear-all", clearAllImports);
-var importsRoutes_default = router10;
+var router11 = (0, import_express12.Router)();
+router11.get("/", listImports);
+router11.get("/supplier-report", getSupplierReport);
+router11.get("/history/:productId", getImportHistory);
+router11.get("/product-context/:productId", getImportProductContext);
+router11.post("/", createImport);
+router11.post("/clear-all", clearAllImports);
+var importsRoutes_default = router11;
 
 // routes/materialsRoutes.js
-var import_express12 = __toESM(require_express2(), 1);
+var import_express13 = __toESM(require_express2(), 1);
 
 // controllers/materialsController.js
 var import_fs14 = __toESM(require("fs"), 1);
@@ -91675,14 +91960,14 @@ function applyMaterialStockAndPrice(materialId, qtyDelta, unitPrice, opts = {}) 
 }
 
 // routes/materialsRoutes.js
-var router11 = (0, import_express12.Router)();
-router11.get("/", listMaterials);
-router11.post("/", createMaterial);
-router11.put("/:id", updateMaterial);
-var materialsRoutes_default = router11;
+var router12 = (0, import_express13.Router)();
+router12.get("/", listMaterials);
+router12.post("/", createMaterial);
+router12.put("/:id", updateMaterial);
+var materialsRoutes_default = router12;
 
 // routes/materialImportsRoutes.js
-var import_express13 = __toESM(require_express2(), 1);
+var import_express14 = __toESM(require_express2(), 1);
 
 // controllers/materialImportsController.js
 var import_fs15 = __toESM(require("fs"), 1);
@@ -91844,14 +92129,14 @@ async function clearAllMaterialImports(_req, res) {
 }
 
 // routes/materialImportsRoutes.js
-var router12 = (0, import_express13.Router)();
-router12.get("/", listMaterialImports);
-router12.post("/", createMaterialImport);
-router12.post("/clear-all", clearAllMaterialImports);
-var materialImportsRoutes_default = router12;
+var router13 = (0, import_express14.Router)();
+router13.get("/", listMaterialImports);
+router13.post("/", createMaterialImport);
+router13.post("/clear-all", clearAllMaterialImports);
+var materialImportsRoutes_default = router13;
 
 // routes/settingsRoutes.js
-var import_express14 = __toESM(require_express2(), 1);
+var import_express15 = __toESM(require_express2(), 1);
 
 // node_modules/@google/genai/dist/node/index.mjs
 var import_p_retry = __toESM(require_p_retry(), 1);
@@ -114440,9 +114725,9 @@ var InterceptorManager = class {
    * @returns {void}
    */
   forEach(fn) {
-    utils_default.forEach(this.handlers, function forEachHandler(h5) {
-      if (h5 !== null) {
-        fn(h5);
+    utils_default.forEach(this.handlers, function forEachHandler(h6) {
+      if (h6 !== null) {
+        fn(h6);
       }
     });
   }
@@ -115365,13 +115650,13 @@ var normalizeIPAddress = (host) => {
   if (typeof host !== "string" || !host || host.indexOf(":") !== -1) {
     return host;
   }
-  let h5 = host;
-  if (h5.charAt(0) === "[" && h5.charAt(h5.length - 1) === "]") {
-    h5 = h5.slice(1, -1);
+  let h6 = host;
+  if (h6.charAt(0) === "[" && h6.charAt(h6.length - 1) === "]") {
+    h6 = h6.slice(1, -1);
   }
-  h5 = h5.replace(/\.+$/, "");
-  if (!/^[0-9.xXa-fA-F]+$/.test(h5)) return host;
-  const parts = h5.split(".");
+  h6 = h6.replace(/\.+$/, "");
+  if (!/^[0-9.xXa-fA-F]+$/.test(h6)) return host;
+  const parts = h6.split(".");
   if (parts.some((p) => p === "")) return host;
   if (parts.length === 4) {
     const octets = parts.map(parseIPv4Octet);
@@ -119857,21 +120142,21 @@ async function testSpxSettings(req, res) {
 }
 
 // routes/settingsRoutes.js
-var router13 = (0, import_express14.Router)();
-router13.get("/channels", getChannelSettings);
-router13.put("/channels", putChannelSettings);
-router13.get("/gemini-status", getGeminiStatus);
-router13.post("/update-gemini-key", updateGeminiKey);
-router13.post("/test-gemini-key", testGeminiKey);
-router13.post("/shop-connection-status", postShopConnectionStatus);
-router13.get("/logistics", getLogisticsSettings);
-router13.post("/logistics", saveLogisticsSettings);
-router13.post("/test-ghn", testGhnSettings);
-router13.post("/test-spx", testSpxSettings);
-var settingsRoutes_default = router13;
+var router14 = (0, import_express15.Router)();
+router14.get("/channels", getChannelSettings);
+router14.put("/channels", putChannelSettings);
+router14.get("/gemini-status", getGeminiStatus);
+router14.post("/update-gemini-key", updateGeminiKey);
+router14.post("/test-gemini-key", testGeminiKey);
+router14.post("/shop-connection-status", postShopConnectionStatus);
+router14.get("/logistics", getLogisticsSettings);
+router14.post("/logistics", saveLogisticsSettings);
+router14.post("/test-ghn", testGhnSettings);
+router14.post("/test-spx", testSpxSettings);
+var settingsRoutes_default = router14;
 
 // routes/aiRoutes.js
-var import_express15 = __toESM(require_express2(), 1);
+var import_express16 = __toESM(require_express2(), 1);
 
 // controllers/aiController.js
 function markdownToHtml(text) {
@@ -120116,14 +120401,14 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
 }
 
 // routes/aiRoutes.js
-var router14 = (0, import_express15.Router)();
-router14.post("/gemini/optimize", authMiddleware, geminiOptimize);
-router14.post("/ai/parse-address", authMiddleware, parseAddress);
-router14.post("/ai/generate-description", authMiddleware, generateDescription);
-var aiRoutes_default = router14;
+var router15 = (0, import_express16.Router)();
+router15.post("/gemini/optimize", authMiddleware, geminiOptimize);
+router15.post("/ai/parse-address", authMiddleware, parseAddress);
+router15.post("/ai/generate-description", authMiddleware, generateDescription);
+var aiRoutes_default = router15;
 
 // routes/dashboardRoutes.js
-var import_express16 = __toESM(require_express2(), 1);
+var import_express17 = __toESM(require_express2(), 1);
 
 // utils/dashboard.js
 function toDateKey(d) {
@@ -120363,9 +120648,9 @@ async function getDashboard(req, res) {
 }
 
 // routes/dashboardRoutes.js
-var router15 = (0, import_express16.Router)();
-router15.get("/", getDashboard);
-var dashboardRoutes_default = router15;
+var router16 = (0, import_express17.Router)();
+router16.get("/", getDashboard);
+var dashboardRoutes_default = router16;
 
 // middlewares/cors.js
 function corsMiddleware(req, res, next) {
@@ -120385,18 +120670,18 @@ function corsMiddleware(req, res, next) {
 var cors_default = corsMiddleware;
 
 // middlewares/dbReady.js
-var import_mongoose9 = __toESM(require("mongoose"), 1);
+var import_mongoose10 = __toESM(require("mongoose"), 1);
 function dbReadyMiddleware(req, res, next) {
   const pathName = String(req.path || req.originalUrl || "").split("?")[0];
   if (!pathName.startsWith("/api/")) return next();
   const allowWithoutDb = pathName === "/api/login" || pathName.startsWith("/api/health") || pathName.startsWith("/api/auth/") || pathName === "/api/shopee/callback" || pathName === "/api/shopee/oauth/complete" || pathName === "/api/shopee/webhook" || pathName === "/api/tiktok/callback" || pathName.startsWith("/api/public/") || pathName.startsWith("/api/shopee/ship-order") || pathName === "/api/shopee/print-document";
   if (allowWithoutDb) return next();
-  if (import_mongoose9.default.connection.readyState !== 1) {
+  if (import_mongoose10.default.connection.readyState !== 1) {
     return res.status(503).json({
       success: false,
       message: "Database \u0111ang k\u1EBFt n\u1ED1i, vui l\xF2ng th\u1EED l\u1EA1i sau",
       error: "database_connecting",
-      readyState: import_mongoose9.default.connection.readyState
+      readyState: import_mongoose10.default.connection.readyState
     });
   }
   return next();
@@ -121578,7 +121863,7 @@ try {
 }
 
 // routes/productsRoutes.js
-var import_express17 = __toESM(require_express2(), 1);
+var import_express18 = __toESM(require_express2(), 1);
 
 // services/stockSyncQueue.js
 init_concurrency();
@@ -124146,32 +124431,32 @@ async function previewItemVariants(req, res) {
 }
 
 // routes/productsRoutes.js
-var router16 = (0, import_express17.Router)();
-router16.get("/search", searchProducts);
-router16.post("/sync-shopee", handleProductSyncShopee);
-router16.post("/update-price", updateProductPrice);
-router16.post("/shopee-item-preview", previewItemVariants);
-router16.get("/shopee-item-preview", previewItemVariants);
-router16.post("/:id/sync-shopee", handleProductSyncShopee);
-router16.put("/replace", replaceProducts);
-router16.post("/inventory-balance", inventoryBalance);
-router16.post("/bulk-import-price", bulkImportPrice);
-router16.post("/bulk-save", bulkSaveProducts);
-router16.post("/clear-all", clearAllProducts);
-router16.post("/bulk-update", bulkUpdateProducts);
-router16.post("/bulk-update-prices", bulkUpdatePrices);
-router16.post("/bulk-channel-sync", bulkChannelSync);
-router16.get("/", listProducts);
-router16.post("/", createProduct);
-router16.patch("/import-price-by-sku", patchImportPriceBySku);
-router16.patch("/selling-price-by-sku", patchSellingPriceBySku);
-router16.patch("/:id/sku", patchProductSku);
-router16.patch("/:id", patchProduct);
-router16.delete("/:id", deleteProduct);
-var productsRoutes_default = router16;
+var router17 = (0, import_express18.Router)();
+router17.get("/search", searchProducts);
+router17.post("/sync-shopee", handleProductSyncShopee);
+router17.post("/update-price", updateProductPrice);
+router17.post("/shopee-item-preview", previewItemVariants);
+router17.get("/shopee-item-preview", previewItemVariants);
+router17.post("/:id/sync-shopee", handleProductSyncShopee);
+router17.put("/replace", replaceProducts);
+router17.post("/inventory-balance", inventoryBalance);
+router17.post("/bulk-import-price", bulkImportPrice);
+router17.post("/bulk-save", bulkSaveProducts);
+router17.post("/clear-all", clearAllProducts);
+router17.post("/bulk-update", bulkUpdateProducts);
+router17.post("/bulk-update-prices", bulkUpdatePrices);
+router17.post("/bulk-channel-sync", bulkChannelSync);
+router17.get("/", listProducts);
+router17.post("/", createProduct);
+router17.patch("/import-price-by-sku", patchImportPriceBySku);
+router17.patch("/selling-price-by-sku", patchSellingPriceBySku);
+router17.patch("/:id/sku", patchProductSku);
+router17.patch("/:id", patchProduct);
+router17.delete("/:id", deleteProduct);
+var productsRoutes_default = router17;
 
 // routes/mappingRoutes.js
-var import_express18 = __toESM(require_express2(), 1);
+var import_express19 = __toESM(require_express2(), 1);
 
 // controllers/mappingController.js
 var deps13 = {
@@ -124626,26 +124911,26 @@ async function handleMappingPurgeBroken(_req, res) {
 }
 
 // routes/mappingRoutes.js
-var router17 = (0, import_express18.Router)();
-router17.get("/sku-index", handleMappingSkuIndex);
-router17.post("/auto-link-single", handleSingleAutoLink);
-router17.post("/batch-auto-link", handleBatchAutoLink);
-router17.post("/bulk-auto-link", handleBulkAutoLinkByIds);
-router17.post("/purge-broken", handleMappingPurgeBroken);
-router17.post("/heal", handleMappingProductsHeal);
-router17.post("/manual-link", handleManualMappingLink);
-router17.get("/", handleMappingProductsGet);
-router17.put("/", handleMappingProductsUpsert);
-router17.post("/", handleMappingProductsUpsert);
-var mappingRoutes_default = router17;
+var router18 = (0, import_express19.Router)();
+router18.get("/sku-index", handleMappingSkuIndex);
+router18.post("/auto-link-single", handleSingleAutoLink);
+router18.post("/batch-auto-link", handleBatchAutoLink);
+router18.post("/bulk-auto-link", handleBulkAutoLinkByIds);
+router18.post("/purge-broken", handleMappingPurgeBroken);
+router18.post("/heal", handleMappingProductsHeal);
+router18.post("/manual-link", handleManualMappingLink);
+router18.get("/", handleMappingProductsGet);
+router18.put("/", handleMappingProductsUpsert);
+router18.post("/", handleMappingProductsUpsert);
+var mappingRoutes_default = router18;
 
 // routes/ordersRoutes.js
-var import_express19 = __toESM(require_express2(), 1);
+var import_express20 = __toESM(require_express2(), 1);
 
 // controllers/ordersController.js
 var import_fs23 = __toESM(require("fs"), 1);
 var import_path23 = __toESM(require("path"), 1);
-var import_mongoose10 = __toESM(require("mongoose"), 1);
+var import_mongoose11 = __toESM(require("mongoose"), 1);
 init_appPaths();
 
 // utils/orderPdfAvailability.js
@@ -126876,7 +127161,7 @@ function docHasValidTracking(doc) {
 var GHOST_ORDER_SNS = ["261001FRS927QE", "261001F7MD71RC", "261001F4MQ09N9"];
 async function deleteGhostOrders(_req, res) {
   try {
-    const Order2 = import_mongoose10.default.models.Order;
+    const Order2 = import_mongoose11.default.models.Order;
     if (!isMongoReady() || !Order2) {
       return res.status(503).json({
         success: false,
@@ -126914,14 +127199,14 @@ async function migrateTrackingFlag(_req, res) {
     batches: 0
   };
   try {
-    if (!isMongoReady() || import_mongoose10.default.connection.readyState !== 1 || !import_mongoose10.default.connection.db) {
+    if (!isMongoReady() || import_mongoose11.default.connection.readyState !== 1 || !import_mongoose11.default.connection.db) {
       return res.status(503).json({
         success: false,
         error: "mongodb_not_ready",
         message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng."
       });
     }
-    const col = import_mongoose10.default.connection.db.collection("orders");
+    const col = import_mongoose11.default.connection.db.collection("orders");
     while (stats.batches < MIGRATE_TRACKING_MAX_BATCHES) {
       const docs = await col.find({ has_tracking: { $exists: false } }).project({
         _id: 1,
@@ -131497,71 +131782,71 @@ async function parseOrderAddress(req, res) {
 }
 
 // routes/ordersRoutes.js
-var router18 = (0, import_express19.Router)();
-var h4 = asyncHandler;
-router18.get("/system/delete-ghost-orders", h4(deleteGhostOrders));
-router18.get("/refresh", h4(refreshOrders));
-router18.get("/query", h4(queryOrders));
-router18.get("/counts", h4(getOrderCounts));
-router18.get("/counter", h4(getOrderCounts));
-router18.get("/live", (_req, res) => res.status(204).end());
-router18.get("/products-summary", h4(getFulfillmentProductsSummary));
-router18.get("/lookup", h4(lookupOrder));
-router18.get("/scanner-sync", h4(scannerSync));
-router18.post("/sync", syncOrders);
-router18.post("/pull", pullOrders);
-router18.post("/quick-sync", quickSyncOrders);
-router18.post("/fast-process", fastProcessOrders);
-router18.post("/cleanup-handed-over", h4(cleanupHandedOver));
-router18.post("/cleanup-shipped", h4(cleanupShipped));
-router18.get("/cleanup-shipped", h4(getCleanupShippedStatus));
-router18.post("/recalculate-counts", h4(recalculateOrderCounts));
-router18.post("/batch-delete", h4(batchDeleteOrders));
-router18.post("/cleanup-label-pdfs", h4(cleanupLabelPdfs));
-router18.post("/cleanup-processed-pickup", h4(cleanupProcessedPickup));
-router18.post("/cleanup-mock", h4(cleanupMockOrders));
-router18.post("/hydrate-tracking", h4(hydrateTracking));
-router18.post("/enrich-tracking", h4(enrichTracking));
-router18.get("/heal-tracking-cancelled", h4(healTrackingCancelled));
-router18.post("/heal-tracking-cancelled", h4(healTrackingCancelled));
-router18.post("/reclassify-cancel-returns", h4(reclassifyCancelReturns));
-router18.get("/reclassify-cancel-returns", h4(reclassifyCancelReturns));
-router18.post("/force-resync-stuck", h4(forceResyncStuck));
-router18.post("/trigger-fix-stuck-orders", h4(triggerFixStuckOrders));
-router18.post("/reconcile-handed-over", h4(reconcileHandedOver));
-router18.post("/hand-over-carrier/bulk", h4(handOverCarrierBulk));
-router18.post("/hand-over-carrier", h4(handOverCarrierByCode));
-router18.post("/heal-handed-over", h4(healHandedOver));
-router18.post("/manual", h4(createManualOrder));
-router18.post("/pos", h4(createPosOrder));
-router18.post("/external/print-waybill", h4(printExternalWaybill));
-router18.get("/external/waybill-file/:orderSn", h4(streamExternalWaybillFile));
-router18.get("/don-hoan-huy", h4(listDonHoanHuy));
-router18.post("/don-hoan-huy", h4(saveScanOrders));
-router18.post("/scan-bg-enqueue", h4(enqueueScanBg));
-router18.get("/scan-bg-status", h4(getScanBgStatus));
-router18.post("/scan-bg-ack", h4(ackScanBg));
-router18.get("/return-alerts", h4(getReturnAlerts));
-router18.post("/return-alerts-ack", h4(ackReturnAlertsApi));
-router18.post("/scan-bulk-update", h4(scanBulkUpdate));
-router18.post("/parse-address", h4(parseOrderAddress));
-router18.post("/confirm-return-received", h4(confirmReturnReceived));
-router18.post("/reset-print-status", h4(resetPrintStatus));
-router18.post("/update-print-status", h4(updatePrintStatus));
-router18.post("/check-pdf-on-disk", h4(checkPdfOnDisk));
-router18.post("/mark-printed", h4(markPrinted));
-router18.get("/:orderSn/events", h4(getOrderEvents));
-router18.post("/:id/hand-over-carrier", h4(handOverCarrierById));
-router18.post("/:id/confirm-return-received", h4(confirmReturnReceived));
-router18.post("/:id/sync-ghn", h4(syncGhnOrderStatus));
-router18.post("/:id/cancel-ghn", h4(cancelGhnOrder));
-router18.get("/", h4(listOrders));
-router18.patch("/:id", h4(patchOrder));
-router18.delete("/:id", h4(deleteOrder));
-var ordersRoutes_default = router18;
+var router19 = (0, import_express20.Router)();
+var h5 = asyncHandler;
+router19.get("/system/delete-ghost-orders", h5(deleteGhostOrders));
+router19.get("/refresh", h5(refreshOrders));
+router19.get("/query", h5(queryOrders));
+router19.get("/counts", h5(getOrderCounts));
+router19.get("/counter", h5(getOrderCounts));
+router19.get("/live", (_req, res) => res.status(204).end());
+router19.get("/products-summary", h5(getFulfillmentProductsSummary));
+router19.get("/lookup", h5(lookupOrder));
+router19.get("/scanner-sync", h5(scannerSync));
+router19.post("/sync", syncOrders);
+router19.post("/pull", pullOrders);
+router19.post("/quick-sync", quickSyncOrders);
+router19.post("/fast-process", fastProcessOrders);
+router19.post("/cleanup-handed-over", h5(cleanupHandedOver));
+router19.post("/cleanup-shipped", h5(cleanupShipped));
+router19.get("/cleanup-shipped", h5(getCleanupShippedStatus));
+router19.post("/recalculate-counts", h5(recalculateOrderCounts));
+router19.post("/batch-delete", h5(batchDeleteOrders));
+router19.post("/cleanup-label-pdfs", h5(cleanupLabelPdfs));
+router19.post("/cleanup-processed-pickup", h5(cleanupProcessedPickup));
+router19.post("/cleanup-mock", h5(cleanupMockOrders));
+router19.post("/hydrate-tracking", h5(hydrateTracking));
+router19.post("/enrich-tracking", h5(enrichTracking));
+router19.get("/heal-tracking-cancelled", h5(healTrackingCancelled));
+router19.post("/heal-tracking-cancelled", h5(healTrackingCancelled));
+router19.post("/reclassify-cancel-returns", h5(reclassifyCancelReturns));
+router19.get("/reclassify-cancel-returns", h5(reclassifyCancelReturns));
+router19.post("/force-resync-stuck", h5(forceResyncStuck));
+router19.post("/trigger-fix-stuck-orders", h5(triggerFixStuckOrders));
+router19.post("/reconcile-handed-over", h5(reconcileHandedOver));
+router19.post("/hand-over-carrier/bulk", h5(handOverCarrierBulk));
+router19.post("/hand-over-carrier", h5(handOverCarrierByCode));
+router19.post("/heal-handed-over", h5(healHandedOver));
+router19.post("/manual", h5(createManualOrder));
+router19.post("/pos", h5(createPosOrder));
+router19.post("/external/print-waybill", h5(printExternalWaybill));
+router19.get("/external/waybill-file/:orderSn", h5(streamExternalWaybillFile));
+router19.get("/don-hoan-huy", h5(listDonHoanHuy));
+router19.post("/don-hoan-huy", h5(saveScanOrders));
+router19.post("/scan-bg-enqueue", h5(enqueueScanBg));
+router19.get("/scan-bg-status", h5(getScanBgStatus));
+router19.post("/scan-bg-ack", h5(ackScanBg));
+router19.get("/return-alerts", h5(getReturnAlerts));
+router19.post("/return-alerts-ack", h5(ackReturnAlertsApi));
+router19.post("/scan-bulk-update", h5(scanBulkUpdate));
+router19.post("/parse-address", h5(parseOrderAddress));
+router19.post("/confirm-return-received", h5(confirmReturnReceived));
+router19.post("/reset-print-status", h5(resetPrintStatus));
+router19.post("/update-print-status", h5(updatePrintStatus));
+router19.post("/check-pdf-on-disk", h5(checkPdfOnDisk));
+router19.post("/mark-printed", h5(markPrinted));
+router19.get("/:orderSn/events", h5(getOrderEvents));
+router19.post("/:id/hand-over-carrier", h5(handOverCarrierById));
+router19.post("/:id/confirm-return-received", h5(confirmReturnReceived));
+router19.post("/:id/sync-ghn", h5(syncGhnOrderStatus));
+router19.post("/:id/cancel-ghn", h5(cancelGhnOrder));
+router19.get("/", h5(listOrders));
+router19.patch("/:id", h5(patchOrder));
+router19.delete("/:id", h5(deleteOrder));
+var ordersRoutes_default = router19;
 
 // routes/shopeeAuthRoutes.js
-var import_express20 = __toESM(require_express2(), 1);
+var import_express21 = __toESM(require_express2(), 1);
 
 // controllers/shopeeAuthController.js
 init_appPaths();
@@ -131812,16 +132097,16 @@ async function getAuthUrl(req, res) {
 }
 
 // routes/shopeeAuthRoutes.js
-var router19 = (0, import_express20.Router)();
-router19.get("/oauth/complete", oauthComplete);
-router19.get("/callback", oauthCallback);
-router19.get("/webhook", webhookProbe);
-router19.get("/oauth-shops", authMiddleware, listOauthShops);
-router19.get("/auth-url", authMiddleware, getAuthUrl);
-var shopeeAuthRoutes_default = router19;
+var router20 = (0, import_express21.Router)();
+router20.get("/oauth/complete", oauthComplete);
+router20.get("/callback", oauthCallback);
+router20.get("/webhook", webhookProbe);
+router20.get("/oauth-shops", authMiddleware, listOauthShops);
+router20.get("/auth-url", authMiddleware, getAuthUrl);
+var shopeeAuthRoutes_default = router20;
 
 // routes/tiktokAuthRoutes.js
-var import_express21 = __toESM(require_express2(), 1);
+var import_express22 = __toESM(require_express2(), 1);
 
 // controllers/tiktokAuthController.js
 init_auth();
@@ -132360,48 +132645,48 @@ async function previewProducts(req, res) {
 }
 
 // routes/tiktokAuthRoutes.js
-var router20 = (0, import_express21.Router)();
-router20.get("/callback", oauthCallback2);
-router20.post("/custom-app/credentials", authMiddleware, saveCustomAppCredentials);
-router20.get("/custom-app/status", authMiddleware, getCustomAppStatus);
-router20.post("/orders/sync", authMiddleware, syncOrders2);
-router20.get("/orders/preview", authMiddleware, previewOrders);
-router20.get("/orders/:orderId", authMiddleware, getOrderDetail);
-router20.get("/products/preview", authMiddleware, previewProducts);
-router20.get("/products/:productId", authMiddleware, getProductDetail);
-var tiktokAuthRoutes_default = router20;
+var router21 = (0, import_express22.Router)();
+router21.get("/callback", oauthCallback2);
+router21.post("/custom-app/credentials", authMiddleware, saveCustomAppCredentials);
+router21.get("/custom-app/status", authMiddleware, getCustomAppStatus);
+router21.post("/orders/sync", authMiddleware, syncOrders2);
+router21.get("/orders/preview", authMiddleware, previewOrders);
+router21.get("/orders/:orderId", authMiddleware, getOrderDetail);
+router21.get("/products/preview", authMiddleware, previewProducts);
+router21.get("/products/:productId", authMiddleware, getProductDetail);
+var tiktokAuthRoutes_default = router21;
 
 // routes/shopeeOrdersRoutes.js
-var import_express22 = __toESM(require_express2(), 1);
-var router21 = (0, import_express22.Router)();
-router21.post("/orders/sync", syncOrders);
-router21.post("/orders/pull", pullOrders);
-router21.post("/orders/quick-sync", quickSyncOrders);
-router21.get("/diagnostics", getDiagnostics);
-router21.get("/debug/return-by-order", debugReturnByOrder);
-var shopeeOrdersRoutes_default = router21;
-
-// routes/shopeeProductsRoutes.js
 var import_express23 = __toESM(require_express2(), 1);
 var router22 = (0, import_express23.Router)();
-router22.post("/products/sync", syncProducts);
-router22.post("/products/sync-item-variants", syncItemVariants);
-router22.post("/products/item-preview", previewItemVariants);
-router22.get("/products/item-preview", previewItemVariants);
-var shopeeProductsRoutes_default = router22;
+router22.post("/orders/sync", syncOrders);
+router22.post("/orders/pull", pullOrders);
+router22.post("/orders/quick-sync", quickSyncOrders);
+router22.get("/diagnostics", getDiagnostics);
+router22.get("/debug/return-by-order", debugReturnByOrder);
+var shopeeOrdersRoutes_default = router22;
 
-// routes/shopeeShipRoutes.js
+// routes/shopeeProductsRoutes.js
 var import_express24 = __toESM(require_express2(), 1);
 var router23 = (0, import_express24.Router)();
-router23.post("/ship-order", shipOrder);
-router23.post("/ship-order/bulk", shipOrderBulk);
-router23.post("/ship-order/bulk-async", shipOrderBulkAsync);
-router23.get("/ship-order/job/:jobId", getShipOrderJob);
-router23.post("/orders/fast-process", fastProcessOrders);
-var shopeeShipRoutes_default = router23;
+router23.post("/products/sync", syncProducts);
+router23.post("/products/sync-item-variants", syncItemVariants);
+router23.post("/products/item-preview", previewItemVariants);
+router23.get("/products/item-preview", previewItemVariants);
+var shopeeProductsRoutes_default = router23;
+
+// routes/shopeeShipRoutes.js
+var import_express25 = __toESM(require_express2(), 1);
+var router24 = (0, import_express25.Router)();
+router24.post("/ship-order", shipOrder);
+router24.post("/ship-order/bulk", shipOrderBulk);
+router24.post("/ship-order/bulk-async", shipOrderBulkAsync);
+router24.get("/ship-order/job/:jobId", getShipOrderJob);
+router24.post("/orders/fast-process", fastProcessOrders);
+var shopeeShipRoutes_default = router24;
 
 // routes/shopeePrintRoutes.js
-var import_express25 = __toESM(require_express2(), 1);
+var import_express26 = __toESM(require_express2(), 1);
 
 // controllers/shopeePrintController.js
 var deps19 = {
@@ -132488,61 +132773,61 @@ async function getPrintDocumentJob(req, res) {
 }
 
 // routes/shopeePrintRoutes.js
-var router24 = (0, import_express25.Router)();
-router24.post("/print-document", printDocument);
-router24.post("/print-document/async", printDocumentAsync);
-router24.get("/print-document/job/:jobId", getPrintDocumentJob);
-var shopeePrintRoutes_default = router24;
+var router25 = (0, import_express26.Router)();
+router25.post("/print-document", printDocument);
+router25.post("/print-document/async", printDocumentAsync);
+router25.get("/print-document/job/:jobId", getPrintDocumentJob);
+var shopeePrintRoutes_default = router25;
 
 // routes/inventoryRoutes.js
-var import_express26 = __toESM(require_express2(), 1);
-var router25 = (0, import_express26.Router)();
-router25.get("/local-inventory", authMiddleware, getLocalInventory);
-router25.post("/local-inventory/refresh", authMiddleware, refreshLocalInventory);
-router25.post("/sync-stock", authMiddleware, syncStock);
-router25.delete("/inventory/clear-all", authMiddleware, handleInventoryClearAll);
-router25.post("/inventory/clear-all", authMiddleware, handleInventoryClearAll);
-var inventoryRoutes_default = router25;
-
-// routes/autoLinkRoutes.js
 var import_express27 = __toESM(require_express2(), 1);
 var router26 = (0, import_express27.Router)();
-router26.post("/mapping/bulk-update", authMiddleware, handleBulkAutoLinkByIds);
-router26.post("/shopee/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
-router26.post("/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
-router26.post("/auto-link", authMiddleware, handleBatchAutoLink);
-var autoLinkRoutes_default = router26;
+router26.get("/local-inventory", authMiddleware, getLocalInventory);
+router26.post("/local-inventory/refresh", authMiddleware, refreshLocalInventory);
+router26.post("/sync-stock", authMiddleware, syncStock);
+router26.delete("/inventory/clear-all", authMiddleware, handleInventoryClearAll);
+router26.post("/inventory/clear-all", authMiddleware, handleInventoryClearAll);
+var inventoryRoutes_default = router26;
 
-// routes/apiSystemRoutes.js
+// routes/autoLinkRoutes.js
 var import_express28 = __toESM(require_express2(), 1);
 var router27 = (0, import_express28.Router)();
-router27.get("/sync-jobs/:jobId", authMiddleware, getSyncJobById);
-router27.get("/order-counts", authMiddleware, getOrderCounts);
-router27.post("/sync-shopee", authMiddleware, syncShopee);
-router27.post("/mongo/cleanup-temp", authMiddleware, cleanupMongoTemp);
-router27.post("/mongo/ensure-ttl", authMiddleware, ensureMongoTtl);
-router27.post("/orders/pull", authMiddleware, pullOrders);
-router27.post("/sync-from-shop", authMiddleware, syncFromShop);
-var apiSystemRoutes_default = router27;
+router27.post("/mapping/bulk-update", authMiddleware, handleBulkAutoLinkByIds);
+router27.post("/shopee/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
+router27.post("/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
+router27.post("/auto-link", authMiddleware, handleBatchAutoLink);
+var autoLinkRoutes_default = router27;
+
+// routes/apiSystemRoutes.js
+var import_express29 = __toESM(require_express2(), 1);
+var router28 = (0, import_express29.Router)();
+router28.get("/sync-jobs/:jobId", authMiddleware, getSyncJobById);
+router28.get("/order-counts", authMiddleware, getOrderCounts);
+router28.post("/sync-shopee", authMiddleware, syncShopee);
+router28.post("/mongo/cleanup-temp", authMiddleware, cleanupMongoTemp);
+router28.post("/mongo/ensure-ttl", authMiddleware, ensureMongoTtl);
+router28.post("/orders/pull", authMiddleware, pullOrders);
+router28.post("/sync-from-shop", authMiddleware, syncFromShop);
+var apiSystemRoutes_default = router28;
 
 // routes/labelsRoutes.js
-var import_express29 = __toESM(require_express2(), 1);
+var import_express30 = __toESM(require_express2(), 1);
 var serveHandler = null;
 function initLabelsRoutes(handler) {
   serveHandler = handler;
 }
-var router28 = (0, import_express29.Router)();
+var router29 = (0, import_express30.Router)();
 function handlePublicLabelGet(req, res) {
   if (typeof serveHandler !== "function") {
     return res.status(503).type("text/plain").send("Label service ch\u01B0a s\u1EB5n s\xE0ng.");
   }
   return serveHandler(req, res);
 }
-router28.get("/api/public/labels/:filename", handlePublicLabelGet);
-router28.get("/api/labels/:filename", handlePublicLabelGet);
-router28.get("/labels/:filename", handlePublicLabelGet);
-router28.get("/prints/:filename", handlePublicLabelGet);
-var labelsRoutes_default = router28;
+router29.get("/api/public/labels/:filename", handlePublicLabelGet);
+router29.get("/api/labels/:filename", handlePublicLabelGet);
+router29.get("/labels/:filename", handlePublicLabelGet);
+router29.get("/prints/:filename", handlePublicLabelGet);
+var labelsRoutes_default = router29;
 
 // services/ghnStatusSync.js
 var EXTERNAL_STATUS_MAP2 = {
@@ -133896,7 +134181,7 @@ async function processShopeeWebhookPayload(body) {
 init_appPaths();
 
 // services/orderChangeStream.js
-var import_mongoose11 = __toESM(require("mongoose"), 1);
+var import_mongoose12 = __toESM(require("mongoose"), 1);
 var NEW_ORDER_FLUSH_MS = 300;
 var UPDATED_FLUSH_MS = 3e3;
 var STATUS_FLUSH_MS = 300;
@@ -134118,8 +134403,8 @@ function closeCurrentStream() {
 }
 function openStream() {
   if (stopped || unsupported) return;
-  const db = import_mongoose11.default.connection?.db;
-  if (import_mongoose11.default.connection?.readyState !== 1 || !db) {
+  const db = import_mongoose12.default.connection?.db;
+  if (import_mongoose12.default.connection?.readyState !== 1 || !db) {
     scheduleReconnect("mongo ch\u01B0a s\u1EB5n s\xE0ng");
     return;
   }
@@ -134255,6 +134540,7 @@ var suppliersRoutes = asRouter(suppliersRoutes_default);
 var expensesRoutes = asRouter(expensesRoutes_default);
 var financeRoutes = asRouter(financeRoutes_default);
 var addressBookRoutes = asRouter(addressBookRoutes_default);
+var customerRoutes = asRouter(customerRoutes_default);
 var chatRoutes = asRouter(chatRoutes_default);
 var importsRoutes = asRouter(importsRoutes_default);
 var materialsRoutes = asRouter(materialsRoutes_default);
@@ -136159,7 +136445,7 @@ async function selectOrderSnsNeedingDetail(orderSns, updateTimeBySn) {
     seen.add(sn);
     unique.push(sn);
   }
-  if (unique.length === 0) return { keep: [], skipped: 0, missingItems: 0 };
+  if (unique.length === 0) return { keep: [], skipped: 0, missingItems: 0, missingTracking: 0 };
   let stored;
   try {
     stored = await loadLastShopeeUpdateAtByOrderSns(unique);
@@ -136168,10 +136454,11 @@ async function selectOrderSnsNeedingDetail(orderSns, updateTimeBySn) {
       "[Orders Pull] l\u1ECDc detail theo last_shopee_update_at l\u1ED7i \u2014 g\u1ECDi detail \u0111\u1EA7y \u0111\u1EE7:",
       err?.message || err
     );
-    return { keep: unique, skipped: 0, missingItems: 0 };
+    return { keep: unique, skipped: 0, missingItems: 0, missingTracking: 0 };
   }
   const keep = [];
   let missingItems = 0;
+  let missingTracking = 0;
   for (const sn of unique) {
     if (!stored.has(sn)) {
       keep.push(sn);
@@ -136181,6 +136468,11 @@ async function selectOrderSnsNeedingDetail(orderSns, updateTimeBySn) {
     if (!row || row.missingItems) {
       keep.push(sn);
       missingItems += 1;
+      continue;
+    }
+    if (row.missingTracking) {
+      keep.push(sn);
+      missingTracking += 1;
       continue;
     }
     const listSec = updateTimeBySn.get(sn);
@@ -136195,7 +136487,7 @@ async function selectOrderSnsNeedingDetail(orderSns, updateTimeBySn) {
     }
     if (listSec > Math.floor(storedAt.getTime() / 1e3)) keep.push(sn);
   }
-  return { keep, skipped: unique.length - keep.length, missingItems };
+  return { keep, skipped: unique.length - keep.length, missingItems, missingTracking };
 }
 async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
   const timeTo = Math.floor(Date.now() / 1e3);
@@ -137695,8 +137987,8 @@ async function debugForceSyncHandedOverOrders(opts) {
     }));
     if (candidates.length === 0) {
       try {
-        const { default: mongoose12 } = await import("mongoose");
-        const col = mongoose12.connection?.db?.collection("orders");
+        const { default: mongoose13 } = await import("mongoose");
+        const col = mongoose13.connection?.db?.collection("orders");
         if (col) {
           const rawHanded = await col.countDocuments({
             $or: [
@@ -138479,9 +138771,9 @@ async function pullIncrementalOrdersFromShopee(opts) {
           try {
             const filtered = await selectOrderSnsNeedingDetail(orderSnList, updateTimeBySn);
             detailSnList = filtered.keep;
-            if (filtered.skipped > 0 || filtered.missingItems > 0) {
+            if (filtered.skipped > 0 || filtered.missingItems > 0 || filtered.missingTracking > 0) {
               console.log(
-                `[Orders Pull] shopId=${shopId} b\u1ECF qua ${filtered.skipped} \u0111\u01A1n kh\xF4ng \u0111\u1ED5i update_time \u2014 detail=${detailSnList.length}/${orderSnList.length}` + (filtered.missingItems > 0 ? ` \xE9p detail v\xEC thi\u1EBFu s\u1EA3n ph\u1EA9m=${filtered.missingItems}` : "")
+                `[Orders Pull] shopId=${shopId} b\u1ECF qua ${filtered.skipped} \u0111\u01A1n kh\xF4ng \u0111\u1ED5i update_time \u2014 detail=${detailSnList.length}/${orderSnList.length}` + (filtered.missingItems > 0 ? ` \xE9p detail v\xEC thi\u1EBFu s\u1EA3n ph\u1EA9m=${filtered.missingItems}` : "") + (filtered.missingTracking > 0 ? ` \xE9p detail v\xEC ch\u01B0a c\xF3 m\xE3 v\u1EADn \u0111\u01A1n=${filtered.missingTracking}` : "")
               );
             }
           } catch (filterErr) {
@@ -138978,8 +139270,33 @@ async function pullShopeeCancelReturnOrders(opts) {
     releaseOrdersPullLock("pullCancelReturn_finally", pullLockToken);
   }
 }
-var RETURN_REQUESTS_PER_SHOP_MS = 9e4;
+var RETURN_REQUESTS_GLOBAL_BUDGET_MS = 35e3;
+var RETURN_REQUESTS_PER_SHOP_MS = 12e3;
+var RETURN_REQUESTS_PAGE_SIZE = 20;
+var RETURN_REQUESTS_PAGE_DELAY_MS = 400;
+var RETURN_REQUESTS_MAX_PAGES_INCREMENTAL = 2;
+var RETURN_REQUESTS_MAX_PAGES_FULL = 4;
 var returnRequestsSyncInFlight = false;
+function stampOriginalOrderReturnStatus(order, returnStatusRaw) {
+  if (!order) return;
+  const returnStatus = String(returnStatusRaw || order.return_status || "").trim().toUpperCase();
+  if (returnStatus) order.return_status = returnStatus;
+  if (returnStatus === "CANCELLED") return;
+  const raw = String(order.shopee_order_status || "").toUpperCase();
+  if (raw === "CANCELLED" || raw === "IN_CANCEL") {
+    order.shopee_order_status = raw;
+    order.status = "cancelled";
+    return;
+  }
+  order.shopee_order_status = "TO_RETURN";
+  const received = order.status === "return_received" || String(order.local_status || order.localStatus || "").toUpperCase() === "RETURN_RECEIVED";
+  order.status = received ? "return_received" : "return_pending";
+  order.is_return = true;
+  order.sub_status = "RETURN";
+  if (!String(order.shopee_cancel_return_kind || "").trim()) {
+    order.shopee_cancel_return_kind = "refund_return";
+  }
+}
 async function syncShopeeReturnRequests(opts) {
   if (returnRequestsSyncInFlight) {
     return {
@@ -138999,10 +139316,7 @@ async function syncShopeeReturnRequests(opts) {
   let pulled = 0;
   let updated = 0;
   const mode = opts?.mode === "full" ? "full" : "incremental";
-  const maxReturns = Math.max(
-    10,
-    Math.min(400, Number(opts?.maxReturns) || (mode === "full" ? 200 : 120))
-  );
+  const globalDeadlineAt = Date.now() + RETURN_REQUESTS_GLOBAL_BUDGET_MS;
   try {
     ensureShopeeLinkedShopTokenKeys();
     const shopIds = (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds()).map((id) => normalizeShopIdKey(id)).filter(Boolean);
@@ -139018,14 +139332,16 @@ async function syncShopeeReturnRequests(opts) {
       };
     }
     const orders = [];
-    const perShopMaxReturns = Math.max(
-      20,
-      Math.min(mode === "full" ? 120 : 80, maxReturns)
-    );
+    const listMaxPages = mode === "full" ? RETURN_REQUESTS_MAX_PAGES_FULL : RETURN_REQUESTS_MAX_PAGES_INCREMENTAL;
     for (let shopIndex = 0; shopIndex < shopIds.length; shopIndex++) {
       const shopId = shopIds[shopIndex];
       console.log(`[Return Sync] \u0110ang x\u1EED l\xFD shop_id=${shopId}, index=${shopIndex}`);
-      const shopDeadlineAt = Date.now() + RETURN_REQUESTS_PER_SHOP_MS;
+      if (Date.now() >= globalDeadlineAt) {
+        console.warn(`[ReturnRequests Sync] h\u1EBFt ng\xE2n s\xE1ch to\xE0n c\u1EE5c \u2014 b\u1ECF qua shop=${shopId}`);
+        errors.push({ shopId, error: "budget_exceeded" });
+        continue;
+      }
+      const shopDeadlineAt = Math.min(Date.now() + RETURN_REQUESTS_PER_SHOP_MS, globalDeadlineAt);
       try {
         let accessToken = await getValidShopeeAccessToken(shopId);
         if (!accessToken) {
@@ -139036,263 +139352,302 @@ async function syncShopeeReturnRequests(opts) {
           await shopeeSyncDelay(300);
           continue;
         }
-        const returnRows = await shopeeFetchAllReturnSns(shopId, accessToken, {
-          mode: "full",
-          maxPages: SHOPEE_RETURN_LIST_MAX_PAGES,
-          deadlineAt: shopDeadlineAt
-        });
-        const limited = returnRows.slice(0, perShopMaxReturns);
-        console.log(
-          `[ReturnRequests Sync] shop=${shopId} (${shopIndex + 1}/${shopIds.length}) mode=${mode} rows=${returnRows.length} process=${limited.length}`
-        );
-        const patches = [];
-        for (const row of limited) {
-          if (Date.now() >= shopDeadlineAt) {
+        let pageNo = 1;
+        while (pageNo <= listMaxPages) {
+          if (Date.now() >= shopDeadlineAt || Date.now() >= globalDeadlineAt) {
             console.warn(
-              `[ReturnRequests Sync] shop=${shopId} h\u1EBFt ng\xE2n s\xE1ch \u2014 gi\u1EEF ${patches.length} patch, chuy\u1EC3n shop ti\u1EBFp theo`
+              `[ReturnRequests Sync] shop=${shopId} h\u1EBFt ng\xE2n s\xE1ch tr\u01B0\u1EDBc page=${pageNo}`
             );
             break;
           }
-          const returnSn = String(row.returnSn || "").trim();
-          if (!returnSn) continue;
-          try {
-            const rowOrderSn = toShopeeSn(row.orderSn) || "";
-            if (rowOrderSn) {
-              const existingEarly = orders.find((o) => String(o.orderSn) === rowOrderSn);
-              if (existingEarly && !shouldApplyShopeeReturnOverlay(existingEarly)) {
-                applyShopeeCancelReturnClassification(existingEarly);
-                if (!String(existingEarly.return_sn || "").trim()) {
-                  existingEarly.return_sn = returnSn;
-                }
-                if (orderNeedsRealReturnTracking(existingEarly)) {
-                  const { tracking } = await fetchReturnShippingTrackingNumber(
-                    shopId,
-                    accessToken,
-                    returnSn,
-                    void 0,
-                    outboundTrackingOf(existingEarly)
-                  );
-                  if (tracking) applyReturnTrackingAliases(existingEarly, tracking);
-                  applyShopeeCancelReturnClassification(existingEarly);
-                  await shopeeSyncDelay(300);
-                }
-                patches.push(existingEarly);
-                continue;
-              }
-            }
-            const fresh = await getValidShopeeAccessToken(shopId);
-            if (fresh) accessToken = fresh;
-            const detailResult = await shopeeGetReturnDetail(shopId, accessToken, returnSn);
-            await shopeeSyncDelay(300);
-            if (detailResult?.error) {
-              errors.push({
-                shopId,
-                returnSn,
-                error: detailResult.error,
-                message: detailResult.message
-              });
+          const listResult = await shopeeGetReturnList(shopId, accessToken, {
+            pageNo,
+            pageSize: RETURN_REQUESTS_PAGE_SIZE
+          });
+          await shopeeSyncDelay(RETURN_REQUESTS_PAGE_DELAY_MS);
+          if (listResult?.error) {
+            errors.push({
+              shopId,
+              error: listResult.error,
+              message: listResult.message
+            });
+            console.warn(
+              `[ReturnRequests Sync] get_return_list shop=${shopId} page=${pageNo} error=${listResult.error || "unknown"}`
+            );
+            break;
+          }
+          const rawRows = extractShopeeReturnListRows(listResult);
+          const limited = [];
+          for (const raw of rawRows) {
+            const safeRow = normalizeShopeeReturnDetail(raw) || raw;
+            const returnSn = extractReturnRequestCode(safeRow) || "";
+            if (!returnSn) continue;
+            limited.push({
+              returnSn,
+              orderSn: toShopeeSn(safeRow?.order_sn ?? safeRow?.orderSn) || void 0,
+              status: safeRow?.status ? String(safeRow.status) : void 0
+            });
+          }
+          console.log(
+            `[ReturnRequests Sync] shop=${shopId} (${shopIndex + 1}/${shopIds.length}) mode=${mode} page=${pageNo}/${listMaxPages} rows=${limited.length}`
+          );
+          const patches = [];
+          for (const row of limited) {
+            if (Date.now() >= shopDeadlineAt) {
               console.warn(
-                `[ReturnRequests Sync] get_return_detail shop=${shopId} return_sn=${returnSn} error=${detailResult.error || "unknown"} message=${detailResult.message || ""}`
+                `[ReturnRequests Sync] shop=${shopId} h\u1EBFt ng\xE2n s\xE1ch \u2014 gi\u1EEF ${patches.length} patch, chuy\u1EC3n shop ti\u1EBFp theo`
               );
-              if (isShopeeReturnsAuthError(detailResult)) {
-                continue;
-              }
-              let existingOnErr = rowOrderSn ? orders.find((o) => String(o.orderSn) === rowOrderSn) : void 0;
-              if (!existingOnErr && rowOrderSn && isMongoReady()) {
-                try {
-                  const loaded = await loadOrdersFromStore({ orderSns: [rowOrderSn], limit: 1 });
-                  existingOnErr = loaded[0];
-                  if (existingOnErr) orders.push(existingOnErr);
-                } catch (loadErr) {
-                  console.warn(
-                    `[ReturnRequests Sync] load order ${rowOrderSn}:`,
-                    loadErr?.message || loadErr
-                  );
+              break;
+            }
+            const returnSn = String(row.returnSn || "").trim();
+            if (!returnSn) continue;
+            try {
+              const rowOrderSn = toShopeeSn(row.orderSn) || "";
+              if (rowOrderSn) {
+                const existingEarly = orders.find((o) => String(o.orderSn) === rowOrderSn);
+                if (existingEarly && !shouldApplyShopeeReturnOverlay(existingEarly)) {
+                  applyShopeeCancelReturnClassification(existingEarly);
+                  if (!String(existingEarly.return_sn || "").trim()) {
+                    existingEarly.return_sn = returnSn;
+                  }
+                  if (orderNeedsRealReturnTracking(existingEarly)) {
+                    const { tracking } = await fetchReturnShippingTrackingNumber(
+                      shopId,
+                      accessToken,
+                      returnSn,
+                      void 0,
+                      outboundTrackingOf(existingEarly)
+                    );
+                    if (tracking) applyReturnTrackingAliases(existingEarly, tracking);
+                    applyShopeeCancelReturnClassification(existingEarly);
+                    await shopeeSyncDelay(300);
+                  }
+                  patches.push(existingEarly);
+                  continue;
                 }
               }
-              const { tracking } = await fetchReturnShippingTrackingNumber(
-                shopId,
-                accessToken,
-                returnSn,
-                void 0,
-                outboundTrackingOf(existingOnErr)
-              );
+              const fresh = await getValidShopeeAccessToken(shopId);
+              if (fresh) accessToken = fresh;
+              const detailResult = await shopeeGetReturnDetail(shopId, accessToken, returnSn);
               await shopeeSyncDelay(300);
-              if (tracking && existingOnErr) {
-                if (!String(existingOnErr.return_sn || "").trim()) existingOnErr.return_sn = returnSn;
-                applyReturnTrackingAliases(existingOnErr, tracking);
-                applyShopeeCancelReturnClassification(existingOnErr);
-                patches.push(existingOnErr);
-              }
-              continue;
-            }
-            const detail = detailResult?.response ?? detailResult ?? {};
-            const orderSn = toShopeeSn(detail.order_sn ?? detail.orderSn ?? row.orderSn) || "";
-            if (!orderSn) continue;
-            let existing = orders.find((o) => String(o.orderSn) === orderSn);
-            if (!existing && isMongoReady()) {
-              try {
-                const loaded = await loadOrdersFromStore({ orderSns: [orderSn], limit: 1 });
-                existing = loaded[0];
-                if (existing) orders.push(existing);
-              } catch (loadErr) {
+              if (detailResult?.error) {
+                errors.push({
+                  shopId,
+                  returnSn,
+                  error: detailResult.error,
+                  message: detailResult.message
+                });
                 console.warn(
-                  `[ReturnRequests Sync] load order ${orderSn}:`,
-                  loadErr?.message || loadErr
+                  `[ReturnRequests Sync] get_return_detail shop=${shopId} return_sn=${returnSn} error=${detailResult.error || "unknown"} message=${detailResult.message || ""}`
                 );
-                existing = void 0;
-              }
-            }
-            const returnStatusEarly = String(detail.status || row.status || "").toUpperCase();
-            if (returnStatusEarly === "CANCELLED") {
-              if (existing) {
-                existing.return_status = "CANCELLED";
-                if (stripCancelledReturnOnDelivered(existing)) {
-                  patches.push(existing);
+                if (isShopeeReturnsAuthError(detailResult)) {
+                  continue;
                 }
-              }
-              continue;
-            }
-            if (existing && !shouldApplyShopeeReturnOverlay(existing)) {
-              applyShopeeCancelReturnClassification(existing);
-              if (!String(existing.return_sn || "").trim()) {
-                existing.return_sn = returnSn;
-              }
-              if (orderNeedsRealReturnTracking(existing)) {
+                let existingOnErr = rowOrderSn ? orders.find((o) => String(o.orderSn) === rowOrderSn) : void 0;
+                if (!existingOnErr && rowOrderSn && isMongoReady()) {
+                  try {
+                    const loaded = await loadOrdersFromStore({ orderSns: [rowOrderSn], limit: 1 });
+                    existingOnErr = loaded[0];
+                    if (existingOnErr) orders.push(existingOnErr);
+                  } catch (loadErr) {
+                    console.warn(
+                      `[ReturnRequests Sync] load order ${rowOrderSn}:`,
+                      loadErr?.message || loadErr
+                    );
+                  }
+                }
                 const { tracking } = await fetchReturnShippingTrackingNumber(
                   shopId,
                   accessToken,
                   returnSn,
-                  detailResult,
-                  outboundTrackingOf(existing)
+                  void 0,
+                  outboundTrackingOf(existingOnErr)
                 );
-                if (tracking) applyReturnTrackingAliases(existing, tracking);
-                applyShopeeCancelReturnClassification(existing);
                 await shopeeSyncDelay(300);
-              }
-              patches.push(existing);
-              continue;
-            }
-            const mappedReturnSn = extractReturnRequestCode(detail) || returnSn;
-            const { tracking: returnShipTn } = await fetchReturnShippingTrackingNumber(
-              shopId,
-              accessToken,
-              mappedReturnSn,
-              detailResult,
-              existing?.trackingNumber || existing?.tracking_no
-            );
-            const kind = mapShopeeReturnKind(detail);
-            const returnStatus = String(detail.status || row.status || "").toUpperCase();
-            const refundAmount = Number(detail.refund_amount);
-            const reason = String(detail.reason || "").trim();
-            const textReason = String(detail.text_reason || "").trim();
-            const itemRows = Array.isArray(detail.item) ? detail.item : Array.isArray(detail.items) ? detail.items : [];
-            const items = itemRows.map((it, idx) => ({
-              productId: toShopeeId(it.item_id) || String(it.item_id || it.productId || `return-item-${idx}`),
-              productTitle: String(it.name || it.item_name || it.model_name || `SP ho\xE0n #${orderSn}`),
-              productImage: Array.isArray(it.images) && it.images[0] ? String(it.images[0]) : void 0,
-              quantity: Math.max(1, Number(it.amount || it.quantity || 1) || 1),
-              price: Number(it.item_price || it.refund_amount || refundAmount || 0) || 0,
-              modelId: it.model_id != null ? toShopeeId(it.model_id) || String(it.model_id) : void 0,
-              modelSku: it.variation_sku || it.model_sku ? String(it.variation_sku || it.model_sku) : void 0,
-              modelName: it.model_name ? String(it.model_name) : void 0,
-              activity_id: it.activity_id != null ? toShopeeId(it.activity_id) || String(it.activity_id) : void 0,
-              promotion_id: it.promotion_id != null ? toShopeeId(it.promotion_id) || String(it.promotion_id) : void 0
-            }));
-            const existingRaw = String(existing?.shopee_order_status || "").toUpperCase();
-            const alreadyCancelled = existingRaw === "CANCELLED" || existingRaw === "IN_CANCEL" || existing?.status === "cancelled";
-            const patch = {
-              id: existing?.id || `shopee-${orderSn}`,
-              orderSn,
-              channel: "shopee",
-              shopId: existing?.shopId || shopId,
-              return_sn: mappedReturnSn,
-              return_status: returnStatus,
-              return_refund_request_type: Number(detail.return_refund_request_type ?? 0),
-              shopee_cancel_return_kind: kind,
-              return_create_time: Number(detail.create_time) || void 0,
-              return_update_time: Number(detail.update_time) || void 0,
-              refund_amount: Number.isFinite(refundAmount) ? refundAmount : void 0,
-              return_reason: reason || void 0,
-              text_reason: textReason || void 0,
-              date: existing?.date || new Date((Number(detail.create_time) || Date.now() / 1e3) * 1e3).toISOString(),
-              totalAmount: Number.isFinite(refundAmount) && refundAmount > 0 ? refundAmount : Number(existing?.totalAmount) || 1,
-              revenue: existing?.revenue ?? 0,
-              items: items.length ? items : existing?.items || [
-                {
-                  productId: "return-placeholder",
-                  productTitle: `\u0110\u01A1n ho\xE0n ${orderSn}`,
-                  quantity: 1,
-                  price: Number.isFinite(refundAmount) ? refundAmount : 1
+                if (tracking && existingOnErr) {
+                  if (!String(existingOnErr.return_sn || "").trim()) existingOnErr.return_sn = returnSn;
+                  applyReturnTrackingAliases(existingOnErr, tracking);
+                  stampOriginalOrderReturnStatus(existingOnErr, String(row.status || ""));
+                  applyShopeeCancelReturnClassification(existingOnErr);
+                  patches.push(existingOnErr);
                 }
-              ]
-            };
-            if (returnShipTn) {
-              applyReturnTrackingAliases(patch, returnShipTn);
-            } else {
-              const keepRet = distinctReturnTracking(
-                existing?.return_tracking_no || existing?.returnTrackingNumber,
+                continue;
+              }
+              const detail = detailResult?.response ?? detailResult ?? {};
+              const orderSn = toShopeeSn(detail.order_sn ?? detail.orderSn ?? row.orderSn) || "";
+              if (!orderSn) continue;
+              let existing = orders.find((o) => String(o.orderSn) === orderSn);
+              if (!existing && isMongoReady()) {
+                try {
+                  const loaded = await loadOrdersFromStore({ orderSns: [orderSn], limit: 1 });
+                  existing = loaded[0];
+                  if (existing) orders.push(existing);
+                } catch (loadErr) {
+                  console.warn(
+                    `[ReturnRequests Sync] load order ${orderSn}:`,
+                    loadErr?.message || loadErr
+                  );
+                  existing = void 0;
+                }
+              }
+              const returnStatusEarly = String(detail.status || row.status || "").toUpperCase();
+              if (returnStatusEarly === "CANCELLED") {
+                if (existing) {
+                  existing.return_status = "CANCELLED";
+                  if (stripCancelledReturnOnDelivered(existing)) {
+                    patches.push(existing);
+                  }
+                }
+                continue;
+              }
+              if (existing && !shouldApplyShopeeReturnOverlay(existing)) {
+                applyShopeeCancelReturnClassification(existing);
+                if (!String(existing.return_sn || "").trim()) {
+                  existing.return_sn = returnSn;
+                }
+                if (orderNeedsRealReturnTracking(existing)) {
+                  const { tracking } = await fetchReturnShippingTrackingNumber(
+                    shopId,
+                    accessToken,
+                    returnSn,
+                    detailResult,
+                    outboundTrackingOf(existing)
+                  );
+                  if (tracking) applyReturnTrackingAliases(existing, tracking);
+                  applyShopeeCancelReturnClassification(existing);
+                  await shopeeSyncDelay(300);
+                }
+                patches.push(existing);
+                continue;
+              }
+              const mappedReturnSn = extractReturnRequestCode(detail) || returnSn;
+              const { tracking: returnShipTn } = await fetchReturnShippingTrackingNumber(
+                shopId,
+                accessToken,
+                mappedReturnSn,
+                detailResult,
                 existing?.trackingNumber || existing?.tracking_no
               );
-              if (keepRet) applyReturnTrackingAliases(patch, keepRet);
+              const kind = mapShopeeReturnKind(detail);
+              const returnStatus = String(detail.status || row.status || "").toUpperCase();
+              const refundAmount = Number(detail.refund_amount);
+              const reason = String(detail.reason || "").trim();
+              const textReason = String(detail.text_reason || "").trim();
+              const itemRows = Array.isArray(detail.item) ? detail.item : Array.isArray(detail.items) ? detail.items : [];
+              const items = itemRows.map((it, idx) => ({
+                productId: toShopeeId(it.item_id) || String(it.item_id || it.productId || `return-item-${idx}`),
+                productTitle: String(it.name || it.item_name || it.model_name || `SP ho\xE0n #${orderSn}`),
+                productImage: Array.isArray(it.images) && it.images[0] ? String(it.images[0]) : void 0,
+                quantity: Math.max(1, Number(it.amount || it.quantity || 1) || 1),
+                price: Number(it.item_price || it.refund_amount || refundAmount || 0) || 0,
+                modelId: it.model_id != null ? toShopeeId(it.model_id) || String(it.model_id) : void 0,
+                modelSku: it.variation_sku || it.model_sku ? String(it.variation_sku || it.model_sku) : void 0,
+                modelName: it.model_name ? String(it.model_name) : void 0,
+                activity_id: it.activity_id != null ? toShopeeId(it.activity_id) || String(it.activity_id) : void 0,
+                promotion_id: it.promotion_id != null ? toShopeeId(it.promotion_id) || String(it.promotion_id) : void 0
+              }));
+              const existingRaw = String(existing?.shopee_order_status || "").toUpperCase();
+              const alreadyCancelled = existingRaw === "CANCELLED" || existingRaw === "IN_CANCEL" || existing?.status === "cancelled";
+              const patch = {
+                id: existing?.id || `shopee-${orderSn}`,
+                orderSn,
+                channel: "shopee",
+                shopId: existing?.shopId || shopId,
+                return_sn: mappedReturnSn,
+                return_status: returnStatus,
+                return_refund_request_type: Number(detail.return_refund_request_type ?? 0),
+                shopee_cancel_return_kind: kind,
+                return_create_time: Number(detail.create_time) || void 0,
+                return_update_time: Number(detail.update_time) || void 0,
+                refund_amount: Number.isFinite(refundAmount) ? refundAmount : void 0,
+                return_reason: reason || void 0,
+                text_reason: textReason || void 0,
+                date: existing?.date || new Date((Number(detail.create_time) || Date.now() / 1e3) * 1e3).toISOString(),
+                totalAmount: Number.isFinite(refundAmount) && refundAmount > 0 ? refundAmount : Number(existing?.totalAmount) || 1,
+                revenue: existing?.revenue ?? 0,
+                items: items.length ? items : existing?.items || [
+                  {
+                    productId: "return-placeholder",
+                    productTitle: `\u0110\u01A1n ho\xE0n ${orderSn}`,
+                    quantity: 1,
+                    price: Number.isFinite(refundAmount) ? refundAmount : 1
+                  }
+                ]
+              };
+              if (returnShipTn) {
+                applyReturnTrackingAliases(patch, returnShipTn);
+              } else {
+                const keepRet = distinctReturnTracking(
+                  existing?.return_tracking_no || existing?.returnTrackingNumber,
+                  existing?.trackingNumber || existing?.tracking_no
+                );
+                if (keepRet) applyReturnTrackingAliases(patch, keepRet);
+              }
+              if (alreadyCancelled) {
+                patch.status = "cancelled";
+                patch.shopee_order_status = existingRaw === "IN_CANCEL" ? "IN_CANCEL" : "CANCELLED";
+                patch.return_status = returnStatus || patch.return_status;
+              } else {
+                stampOriginalOrderReturnStatus(patch, returnStatus);
+              }
+              if (existing?.trackingNumber || existing?.tracking_no) {
+                patch.trackingNumber = existing.trackingNumber || existing.tracking_no;
+                patch.tracking_no = existing.tracking_no || existing.trackingNumber;
+              }
+              const merged = existing ? mergeShopeeOrderOnSync(existing, { ...existing, ...patch }) : patch;
+              merged.return_sn = patch.return_sn;
+              merged.return_status = patch.return_status;
+              merged.return_refund_request_type = patch.return_refund_request_type;
+              merged.shopee_cancel_return_kind = "refund_return";
+              merged.is_return = true;
+              merged.sub_status = "RETURN";
+              if (patch.return_create_time) merged.return_create_time = patch.return_create_time;
+              if (patch.return_update_time) merged.return_update_time = patch.return_update_time;
+              merged.refund_amount = patch.refund_amount;
+              merged.return_reason = patch.return_reason;
+              merged.text_reason = patch.text_reason;
+              if (patch.return_tracking_no) applyReturnTrackingAliases(merged, patch.return_tracking_no);
+              if (patch.status) merged.status = patch.status;
+              if (alreadyCancelled) {
+                merged.shopee_order_status = patch.shopee_order_status;
+                merged.status = "cancelled";
+                merged.return_status = patch.return_status;
+              } else {
+                stampOriginalOrderReturnStatus(merged, returnStatus);
+              }
+              markNewReturnRequestAlert(merged, existing);
+              patches.push(merged);
+              pulled += 1;
+              await shopeeSyncDelay(300);
+            } catch (rowErr) {
+              console.warn(
+                `[Return Sync Error] Shop: ${shopId}, SN: ${returnSn}, L\u1ED7i: ${rowErr?.message || rowErr}`
+              );
+              errors.push({
+                shopId,
+                returnSn,
+                error: "return_detail_failed",
+                message: rowErr?.message || String(rowErr)
+              });
+              await shopeeSyncDelay(300);
             }
-            if (alreadyCancelled) {
-              patch.status = "cancelled";
-              patch.shopee_order_status = existingRaw === "IN_CANCEL" ? "IN_CANCEL" : "CANCELLED";
-            } else if (existing?.status === "return_received" || existing?.local_status === "RETURN_RECEIVED") {
-              patch.status = "return_received";
-              patch.shopee_order_status = existing?.shopee_order_status || "TO_RETURN";
-            } else {
-              patch.status = "return_pending";
-              patch.shopee_order_status = existing?.shopee_order_status || "TO_RETURN";
-            }
-            if (existing?.trackingNumber || existing?.tracking_no) {
-              patch.trackingNumber = existing.trackingNumber || existing.tracking_no;
-              patch.tracking_no = existing.tracking_no || existing.trackingNumber;
-            }
-            const merged = existing ? mergeShopeeOrderOnSync(existing, { ...existing, ...patch }) : patch;
-            merged.return_sn = patch.return_sn;
-            merged.return_status = patch.return_status;
-            merged.return_refund_request_type = patch.return_refund_request_type;
-            merged.shopee_cancel_return_kind = "refund_return";
-            merged.is_return = true;
-            merged.sub_status = "RETURN";
-            if (patch.return_create_time) merged.return_create_time = patch.return_create_time;
-            if (patch.return_update_time) merged.return_update_time = patch.return_update_time;
-            merged.refund_amount = patch.refund_amount;
-            merged.return_reason = patch.return_reason;
-            merged.text_reason = patch.text_reason;
-            if (patch.return_tracking_no) applyReturnTrackingAliases(merged, patch.return_tracking_no);
-            if (patch.status) merged.status = patch.status;
-            markNewReturnRequestAlert(merged, existing);
-            patches.push(merged);
-            pulled += 1;
-            await shopeeSyncDelay(300);
-          } catch (rowErr) {
-            console.warn(
-              `[Return Sync Error] Shop: ${shopId}, SN: ${returnSn}, L\u1ED7i: ${rowErr?.message || rowErr}`
-            );
-            errors.push({
-              shopId,
-              returnSn,
-              error: "return_detail_failed",
-              message: rowErr?.message || String(rowErr)
+          }
+          if (patches.length) {
+            const upsert = await persistShopeeOrderChunk(orders, patches, {
+              apiShopId: shopId,
+              accessToken,
+              skipTracking: true
             });
-            await shopeeSyncDelay(300);
+            updated += upsert.updated + upsert.added;
+            for (const p of patches) {
+              const idx = orders.findIndex((o) => String(o.orderSn) === String(p.orderSn));
+              if (idx >= 0) orders[idx] = p;
+              else orders.unshift(p);
+            }
           }
-        }
-        if (patches.length) {
-          const upsert = await persistShopeeOrderChunk(orders, patches, {
-            apiShopId: shopId,
-            accessToken,
-            skipTracking: true
-          });
-          updated += upsert.updated + upsert.added;
-          for (const p of patches) {
-            const idx = orders.findIndex((o) => String(o.orderSn) === String(p.orderSn));
-            if (idx >= 0) orders[idx] = p;
-            else orders.unshift(p);
-          }
+          const more = parseShopeeReturnListMore(listResult);
+          if (!more || rawRows.length === 0) break;
+          pageNo += 1;
         }
       } catch (shopErr) {
         console.warn(
@@ -139317,6 +139672,17 @@ async function syncShopeeReturnRequests(opts) {
       errors,
       message,
       elapsedMs
+    };
+  } catch (err) {
+    console.error("[ReturnRequests Sync] fatal:", err?.stack || err?.message || err);
+    return {
+      success: false,
+      pulled,
+      updated,
+      shops: 0,
+      errors,
+      message: "L\u1ED7i \u0111\u1ED3ng b\u1ED9 \u0111\u01A1n ho\xE0n",
+      elapsedMs: Date.now() - startedAt
     };
   } finally {
     returnRequestsSyncInFlight = false;
@@ -147464,7 +147830,8 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
       enforceShopeeTerminalLocalStatus(normalized);
       {
         const raw = String(normalized.shopee_order_status || "").toUpperCase();
-        if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") {
+        const liveReturn = Boolean(String(normalized.return_sn || "").trim()) && String(normalized.return_status || "").toUpperCase() !== "CANCELLED" && (normalized.is_return === true || normalized.status === "return_pending" || normalized.status === "return_received") || raw === "TO_RETURN" || raw === "RETURN";
+        if (!liveReturn && (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP")) {
           normalized.shopee_order_status = raw;
           if (normalized.status !== "shipping" && normalized.status !== "completed" && !hasUsableShopeeTrackingNumber(normalized)) {
             const alreadyPrepared = existing?.isPrepared === true || existing?.status === "processed" || normalized.isPrepared === true || normalized.status === "processed";
@@ -149727,6 +150094,10 @@ function applyShopeePushFieldsToOrder(order, parsed) {
   }
   const tn = String(order.trackingNumber || order.tracking_no || "").trim();
   const hasTn = Boolean(tn && !isShopeeInternalTrackingCode2(tn));
+  order.has_tracking = hasTn;
+  if (order.data && typeof order.data === "object") {
+    order.data.has_tracking = hasTn;
+  }
   let raw = String(order.shopee_order_status || "").toUpperCase();
   const pushStatus = String(parsed.status || "").toUpperCase();
   if (pushStatus === "COMPLETED") {
@@ -150156,7 +150527,7 @@ async function upsertShopeeWebhookShallow(body, orders) {
   return String(merged.orderSn);
 }
 async function startServer() {
-  const app = (0, import_express30.default)();
+  const app = (0, import_express31.default)();
   const PORT = process.env.PORT || 3e3;
   const appWithRouteMethods = app;
   for (const method of ["get", "post", "put", "patch", "delete"]) {
@@ -150213,8 +150584,8 @@ async function startServer() {
       eagerStubOrder: eagerUpsertWebhookStub
     })
   );
-  app.use(import_express30.default.json({ limit: "50mb" }));
-  app.use(import_express30.default.urlencoded({ limit: "50mb", extended: true }));
+  app.use(import_express31.default.json({ limit: "50mb" }));
+  app.use(import_express31.default.urlencoded({ limit: "50mb", extended: true }));
   try {
     ensureLabelsDir();
   } catch (err) {
@@ -150370,6 +150741,7 @@ async function startServer() {
   app.use("/api/expenses", authMiddleware, expensesRoutes);
   app.use("/api/finance", authMiddleware, financeRoutes);
   app.use("/api/address-book", authMiddleware, addressBookRoutes);
+  app.use("/api/customers", authMiddleware, customerRoutes);
   app.post("/api/chat/conversations/:id/read", authMiddleware, (req, res) => {
     try {
       Promise.resolve(markConversationRead(req, res)).catch((error) => {
@@ -152446,14 +152818,16 @@ async function startServer() {
   app.post("/api/orders/sync-return-requests", authMiddleware, async (req, res) => {
     try {
       const mode = String(req.body?.mode || req.query?.mode || "incremental").toLowerCase() === "full" ? "full" : "incremental";
-      const result = await syncShopeeReturnRequests({ mode });
+      const result = await syncShopeeReturnRequests({
+        mode,
+        maxReturns: mode === "full" ? 12 : 8
+      });
+      if (res.headersSent) return;
       return res.json({ success: result.success !== false, ...result });
     } catch (err) {
-      return res.status(500).json({
-        success: false,
-        error: "sync_return_requests_failed",
-        message: err?.message || String(err)
-      });
+      console.error("[sync-return-requests]", err?.stack || err?.message || err);
+      if (res.headersSent) return;
+      return res.status(500).json({ success: false, message: "L\u1ED7i \u0111\u1ED3ng b\u1ED9 \u0111\u01A1n ho\xE0n" });
     }
   });
   app.post("/api/orders/backfill-return-tracking", authMiddleware, async (req, res) => {
@@ -154942,14 +155316,14 @@ async function startServer() {
       console.warn("[Boot] Passenger/cPanel detected without NODE_ENV=production; forcing static production runtime.");
     }
     const publicPdfDir = import_path25.default.join(APP_ROOT14, "public", "pdfs");
-    app.use("/pdfs", import_express30.default.static(publicPdfDir, {
+    app.use("/pdfs", import_express31.default.static(publicPdfDir, {
       setHeaders(res) {
         res.setHeader("Content-Type", "application/pdf");
         res.setHeader("Cache-Control", "public, max-age=300");
       }
     }));
     const distPath = import_path25.default.join(APP_ROOT14, "dist");
-    app.use(import_express30.default.static(distPath, {
+    app.use(import_express31.default.static(distPath, {
       setHeaders(res, filePath) {
         if (filePath.endsWith("index.html")) {
           res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");

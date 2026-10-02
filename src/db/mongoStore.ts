@@ -2852,7 +2852,8 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       rawStatus === "COMPLETED" ||
       rawStatus === "CANCELLED" ||
       rawStatus === "IN_CANCEL" ||
-      rawStatus === "TO_RETURN";
+      rawStatus === "TO_RETURN" ||
+      rawStatus === "RETURN";
     if (leftPickupPhase) {
       // Chỉ gỡ cờ ĐVVC. CẤM reset local_status kho (RETURN_RECEIVED / CANCELLED_STORED).
       $set.is_handed_over = false;
@@ -2869,7 +2870,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE";
     const forceCompleted = rawStatus === "COMPLETED";
     const forceCancelled = rawStatus === "CANCELLED" || rawStatus === "IN_CANCEL";
-    const forceToReturn = rawStatus === "TO_RETURN";
+    const forceToReturn = rawStatus === "TO_RETURN" || rawStatus === "RETURN";
     if (forceShipping) {
       $set.status = "shipping";
       $set["data.status"] = "shipping";
@@ -2889,6 +2890,8 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       $set["data.status"] = "cancelled";
     } else if (forceToReturn) {
       const incomingLocal = String(order.status || "").trim();
+      $set.shopee_order_status = "TO_RETURN";
+      $set["data.shopee_order_status"] = "TO_RETURN";
       if (incomingLocal === "return_received") {
         $set.status = "return_received";
         $set["data.status"] = "return_received";
@@ -2931,12 +2934,16 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
 
     // BẢO TOÀN tracking_no + shipping_carrier thật từ Shopee
     // Chỉ GHI khi có mã thật — tuyệt đối không $set rỗng/null (tránh mất mã khi hủy/hoàn).
+    // Luôn ghi đè has_tracking trên UPDATE, không chỉ lúc INSERT.
+    // true chỉ khi có mã vận đơn hợp lệ (không rỗng, không phải mã nội bộ 0FG).
+    const hasTrackingFlag = Boolean(usableTn);
+    $set.has_tracking = hasTrackingFlag;
+    $set["data.has_tracking"] = hasTrackingFlag;
     if (usableTn) {
       $set.tracking_no = usableTn;
       $set.trackingNumber = usableTn;
       $set["data.tracking_no"] = usableTn;
       $set["data.trackingNumber"] = usableTn;
-      $set.has_tracking = true;
     }
 
     if (carrier) {
@@ -2965,6 +2972,10 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       .trim()
       .toUpperCase();
     const returnStatusUp = String(order.return_status || "").trim().toUpperCase();
+    if (returnStatusUp && order._clear_cancelled_return !== true) {
+      $set.return_status = returnStatusUp;
+      $set["data.return_status"] = returnStatusUp;
+    }
     if (
       returnTn &&
       !/^0FG/i.test(returnTn) &&
@@ -3264,9 +3275,6 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       "data.local_status": "NONE",
       "data.localStatus": "NONE",
       "data.internal_status": "NONE",
-      // INSERT luôn gán cờ. Có mã → true (nếu $set đã ghi thì key này bị gỡ để khỏi xung đột).
-      // Chưa có mã → false. Update không $set false — tracking_no cũ được giữ.
-      has_tracking: Boolean(usableTn),
     };
     if (!incomingUpdateAt) {
       // Không bịa last_shopee_update_at bằng giờ server. Field trống → pull bắt buộc get_order_detail.
@@ -7426,7 +7434,11 @@ const ORDER_TAB_LEFT_PICKUP_RAW = [
   "CANCELLED",
   "IN_CANCEL",
   "TO_RETURN",
+  "RETURN",
 ] as const;
+
+/** Raw đã rời Chờ lấy hàng vì hủy / hoàn — tab list và count dùng chung. */
+const ORDER_TAB_CANCEL_RETURN_RAW = ["CANCELLED", "IN_CANCEL", "TO_RETURN", "RETURN"] as const;
 
 /** Có mã VĐ thật — CẤM $nin trần (Mongo $nin khớp cả document THIẾU field). */
 const ORDER_TAB_TRACKING_PRESENT: Record<string, unknown> = {
@@ -7603,6 +7615,9 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
               },
             ],
           },
+          { shopee_order_status: { $nin: [...ORDER_TAB_CANCEL_RETURN_RAW] } },
+          { is_return: { $ne: true } },
+          { shopee_cancel_return_kind: { $nin: ["refund_return", "cancelled", "failed_delivery"] } },
         ],
       };
     case "pending_confirm":
@@ -7679,7 +7694,7 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
       return {
         $or: [
           { status: { $in: ["cancelled", "return_pending", "return_received"] } },
-          { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"] } },
+          { shopee_order_status: { $in: [...ORDER_TAB_CANCEL_RETURN_RAW] } },
           { shopee_cancel_return_kind: { $in: ["cancelled", "refund_return", "failed_delivery"] } },
           { sub_status: "RTS" },
           { is_rts: true },
@@ -7847,7 +7862,7 @@ function mergeOrdersListFilters(
 const FACET_TO_SHIP = ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"];
 const FACET_SHIPPED = ["SHIPPED", "TO_CONFIRM_RECEIVE"];
 const FACET_PENDING = ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"];
-const FACET_CANCEL = ["CANCELLED", "IN_CANCEL", "TO_RETURN"];
+const FACET_CANCEL = ["CANCELLED", "IN_CANCEL", "TO_RETURN", "RETURN"];
 
 /**
  * 3 tab kho gộp cho "Những sản phẩm có trong đơn":
@@ -7931,6 +7946,9 @@ function tabIndexFilter(tab?: string, kind?: string): Record<string, unknown> {
         isPrepared: { $ne: true },
         channel: { $nin: ["woocommerce", "manual"] },
         has_tracking: { $ne: true },
+        status: { $nin: ["cancelled", "return_pending", "return_received"] },
+        is_return: { $ne: true },
+        shopee_cancel_return_kind: { $nin: ["refund_return", "cancelled", "failed_delivery"] },
       };
     case "processed":
     case "da-xu-ly":
@@ -8056,6 +8074,7 @@ const ORDER_LIST_UI_PROJECTION: Record<string, 1> = {
   shopee_cancel_return_kind: 1,
   is_rts: 1,
   sub_status: 1,
+  return_status: 1,
   last_shopee_update_at: 1,
   last_synced_at: 1,
   create_time: 1,
@@ -8844,16 +8863,17 @@ async function safeCountDocuments(
 }
 
 /**
- * orderSn → watermark + cờ thiếu sản phẩm.
+ * orderSn → watermark + cờ thiếu sản phẩm + cờ thiếu mã vận đơn.
  * SN không có trong map = chưa có document.
  * `at` null = document có nhưng chưa có last_shopee_update_at.
  * `missingItems` = data.items và data.item_list đều null / không phải mảng / length 0.
- * Chỉ $project độ dài — không kéo full item_list về Node.
+ * `missingTracking` = has_tracking === false HOẶC chưa có tracking_no hợp lệ.
+ * Chỉ $project field cần lọc — không kéo full item_list về Node.
  */
 export async function loadLastShopeeUpdateAtByOrderSns(
   orderSns: string[],
-): Promise<Map<string, { at: Date | null; missingItems: boolean }>> {
-  const out = new Map<string, { at: Date | null; missingItems: boolean }>();
+): Promise<Map<string, { at: Date | null; missingItems: boolean; missingTracking: boolean }>> {
+  const out = new Map<string, { at: Date | null; missingItems: boolean; missingTracking: boolean }>();
   if (!isMongoReady()) return out;
   const sns: string[] = [];
   const seen = new Set<string>();
@@ -8878,6 +8898,11 @@ export async function loadLastShopeeUpdateAtByOrderSns(
           $project: {
             orderSn: 1,
             last_shopee_update_at: 1,
+            has_tracking: 1,
+            tracking_no: 1,
+            trackingNumber: 1,
+            dataTrackingNo: "$data.tracking_no",
+            dataTrackingNumber: "$data.trackingNumber",
             itemsLen: {
               $cond: [{ $isArray: "$data.items" }, { $size: "$data.items" }, 0],
             },
@@ -8896,9 +8921,16 @@ export async function loadLastShopeeUpdateAtByOrderSns(
         const itemListLen = Number(d?.itemListLen);
         const hasItems = Number.isFinite(itemsLen) && itemsLen > 0;
         const hasItemList = Number.isFinite(itemListLen) && itemListLen > 0;
+        const hasValidTracking = [
+          d?.tracking_no,
+          d?.trackingNumber,
+          d?.dataTrackingNo,
+          d?.dataTrackingNumber,
+        ].some((value) => isValidTrackingNo(value));
         out.set(sn, {
           at: at && !Number.isNaN(at.getTime()) ? at : null,
           missingItems: !hasItems && !hasItemList,
+          missingTracking: d?.has_tracking === false || !hasValidTracking,
         });
       }
     } catch (err: any) {
@@ -8981,6 +9013,9 @@ export async function countOrdersByTabsFromStore(opts?: {
           unprocessed: facetAnd({
             s: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] },
             ho: { $ne: true },
+            st: { $nin: ["cancelled", "return_pending", "return_received"] },
+            ret: { $ne: true },
+            kind: { $nin: ["refund_return", "cancelled", "failed_delivery"] },
           }),
           processed: facetAnd({ s: "PROCESSED", ho: { $ne: true } }),
           shipping: facetStatusIn([...FACET_SHIPPED]),

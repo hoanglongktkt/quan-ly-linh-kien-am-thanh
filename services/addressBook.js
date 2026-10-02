@@ -217,6 +217,111 @@ export async function listAddressBookRanking(options = {}) {
   return list;
 }
 
+/**
+ * Sửa địa chỉ khách VIP theo id sổ địa chỉ hoặc số điện thoại.
+ * Ghi vào address_book (nguồn bảng VIP) và collection `customers` nếu có bản ghi khớp.
+ */
+export async function updateCustomerAddressByKey({ id = "", phone = "", address = "" } = {}) {
+  const cleanAddress = String(address || "").trim();
+  if (!cleanAddress) {
+    const err = new Error("Thiếu địa chỉ.");
+    err.status = 400;
+    throw err;
+  }
+  const cleanId = String(id || "").trim();
+  const cleanPhone = normalizePhone(phone);
+  if (!cleanId && !cleanPhone) {
+    const err = new Error("Thiếu mã khách hoặc số điện thoại.");
+    err.status = 400;
+    throw err;
+  }
+
+  const patch = {
+    street: cleanAddress,
+    address: cleanAddress,
+    fullAddress: cleanAddress,
+  };
+
+  if (!mongoReady()) {
+    const entry = updateJsonCustomerAddress(cleanId, cleanPhone, patch);
+    if (!entry) {
+      const err = new Error("Không tìm thấy khách hàng.");
+      err.status = 404;
+      throw err;
+    }
+    return entry;
+  }
+
+  let updated = null;
+  if (cleanId) {
+    const idOr = [{ id: cleanId }];
+    if (mongoose.isValidObjectId(cleanId)) {
+      idOr.push({ _id: new mongoose.Types.ObjectId(cleanId) });
+    }
+    updated = await AddressBook.findOneAndUpdate(
+      { $or: idOr },
+      { $set: patch },
+      { new: true },
+    ).lean();
+  }
+  if (!updated && cleanPhone) {
+    updated = await AddressBook.findOneAndUpdate(
+      { phone: cleanPhone },
+      { $set: patch },
+      { new: true },
+    ).lean();
+  }
+
+  try {
+    const custOr = [];
+    if (cleanId) {
+      custOr.push({ id: cleanId });
+      if (mongoose.isValidObjectId(cleanId)) {
+        custOr.push({ _id: new mongoose.Types.ObjectId(cleanId) });
+      }
+    }
+    if (cleanPhone) {
+      custOr.push({ phone: cleanPhone });
+      custOr.push({ phone_number: cleanPhone });
+    }
+    if (custOr.length) {
+      await mongoose.connection.collection("customers").updateMany(
+        { $or: custOr },
+        { $set: { ...patch, updatedAt: new Date() } },
+      );
+    }
+  } catch (err) {
+    console.error("[customers collection]", err?.message || err);
+  }
+
+  if (!updated) {
+    const err = new Error("Không tìm thấy khách hàng.");
+    err.status = 404;
+    throw err;
+  }
+  return toPublicEntry(updated);
+}
+
+function updateJsonCustomerAddress(cleanId, cleanPhone, patch) {
+  const list = readBook();
+  let found = null;
+  const apply = (source, predicate) =>
+    source.map((item) => {
+      if (found || !predicate(item)) return item;
+      found = { ...item, ...patch };
+      return found;
+    });
+  let next = cleanId
+    ? apply(list, (item) => String(item?.id || "") === cleanId)
+    : list;
+  if (!found && cleanPhone) {
+    next = apply(list, (item) => normalizePhone(item?.phone) === cleanPhone);
+  }
+  if (!found) return null;
+  writeBook(next);
+  return toPublicEntry(found);
+}
+
 export async function saveAddressBookEntry(entry) {
   const normalized = normalizeEntry(entry);
   if (!normalized.phone && !normalized.name) {

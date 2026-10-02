@@ -1,9 +1,13 @@
-Exception: Error: listen EADDRINUSE: address already in use :::3099
-    at Server.setupListenHandle [as _listen2] (node:net:2009:16)
-    at listenInCluster (node:net:2066:12)
-    at Server.listen (node:net:2171:7)
-    at app.listen (F:\web ban hang\web goc\node_modules\express\lib\application.js:635:24)
-    at startListening (F:\web ban hang\web goc\server.ts:15350:11)
-    at startServer (F:\web ban hang\web goc\server.ts:15356:3)
+Exception: Error: EPIPE: broken pipe, write
+    at Socket._write (node:internal/net:75:18)
+    at writeOrBuffer (node:internal/streams/writable:570:12)
+    at _write (node:internal/streams/writable:499:10)
+    at Writable.write (node:internal/streams/writable:508:10)
+    at console.value (node:internal/console/constructor:313:16)
+    at console.error (node:internal/console/constructor:444:26)
+    at process.<anonymous> (F:\web ban hang\web goc\server.ts:582:13)
+    at process.emit (node:events:521:24)
+    at process.emit (F:\web ban hang\web goc\node_modules\tsx\dist\suppress-warnings.cjs:1:472)
+    at process._fatalException (node:internal/process/execution:159:25)
 ---
-2026-07-29T15:42:12.285Z
+2026-09-29T15:00:37.332Z
