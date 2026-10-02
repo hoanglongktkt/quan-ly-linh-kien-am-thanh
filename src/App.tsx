@@ -76,10 +76,11 @@ import {
 const SCAN_BG_STATUS_POLL_MS = 30_000;
 
 /** Gộp shallow fetch vào cache: cập nhật đơn cũ, prepend đơn mới.
+ * - Khóa theo order_sn (không chỉ id) để đơn mới không bị nuốt vào đơn cũ.
  * - Không downgrade cờ bàn giao ĐVVC (true → false) khi fresh còn stale.
  * - Không downgrade SHIPPED/shipping → PROCESSED (tránh tab Đang giao bị kéo lùi). */
 function mergeShallowOrders(cached: Order[], fresh: Order[]): Order[] {
-  const keyOf = (o: Order) => String(o.id || o.orderSn || '').trim();
+  const keyOf = (o: Order) => orderSnKey(o);
   const freshByKey = new Map<string, Order>();
   const newOrders: Order[] = [];
   const cachedKeys = new Set(cached.map((o) => keyOf(o)).filter(Boolean));
@@ -401,7 +402,7 @@ function mergeOrderBatchesNewestFirst(batches: Order[][]): Order[] {
   const byId = new Map<string, Order>();
   for (const batch of batches) {
     for (const o of batch) {
-      const id = String(o?.id || o?.orderSn || '').trim();
+      const id = orderSnKey(o) || String(o?.id || o?.orderSn || o?.order_sn || '').trim();
       if (!id) continue;
       const prev = byId.get(id);
       if (!prev) {
@@ -497,37 +498,66 @@ function orderPayloadEqual(prev: Order, next: Order, useStringify: boolean): boo
 }
 
 /**
- * null = payload không đổi, caller không được setOrders.
- * Mảng trả về giữ reference các đơn không đổi để React.memo bỏ qua re-render.
+ * Gộp payload /api/orders/refresh vào list đang hiển thị.
+ * null = không đổi, caller không được setOrders.
+ * Đơn đã có + update_time không đổi → giữ reference cũ (React.memo).
+ * Đơn chưa có order_sn trong state → bắt buộc chèn vào mảng kết quả.
  */
-function stabilizeOrdersForMemo(prev: Order[], next: Order[]): Order[] | null {
+function mergeOrdersPreservingMemo(
+  prev: Order[],
+  next: Order[],
+  opts?: { sortNewest?: boolean },
+): Order[] | null {
   if (prev.length === 0 && next.length === 0) return null;
-  if (prev.length === 0) return next;
+  if (prev.length === 0) {
+    if (next.length === 0) return null;
+    return opts?.sortNewest === false ? next : sortOrdersNewestFirst(next);
+  }
   const useStringify = prev.length <= ORDER_LIST_STRINGIFY_MAX && next.length <= ORDER_LIST_STRINGIFY_MAX;
   const prevBySn = new Map<string, Order>();
   for (let i = 0; i < prev.length; i += 1) {
     const sn = orderSnKey(prev[i]);
     if (sn && !prevBySn.has(sn)) prevBySn.set(sn, prev[i]);
   }
+  const result: Order[] = [];
+  const seen = new Set<string>();
   let changed = prev.length !== next.length;
-  const merged = next.map((incoming) => {
+  for (let i = 0; i < next.length; i += 1) {
+    const incoming = next[i];
     const sn = orderSnKey(incoming);
-    const old = sn ? prevBySn.get(sn) : undefined;
-    if (!old || !orderPayloadEqual(old, incoming, useStringify)) {
-      changed = true;
-      return incoming;
+    if (sn) {
+      if (seen.has(sn)) continue;
+      seen.add(sn);
     }
-    return old;
-  });
+    const old = sn ? prevBySn.get(sn) : undefined;
+    if (!old) {
+      changed = true;
+      result.push(incoming);
+      continue;
+    }
+    const prevStamp = orderUpdateStamp(old);
+    const nextStamp = orderUpdateStamp(incoming);
+    const stampSame = Boolean(prevStamp) && prevStamp === nextStamp;
+    if (stampSame && orderPayloadEqual(old, incoming, useStringify)) {
+      result.push(old);
+      continue;
+    }
+    changed = true;
+    result.push(incoming);
+  }
   if (!changed) {
-    for (let i = 0; i < prev.length; i += 1) {
-      if (prev[i] !== merged[i]) {
-        changed = true;
-        break;
+    if (result.length !== prev.length) changed = true;
+    else {
+      for (let i = 0; i < prev.length; i += 1) {
+        if (prev[i] !== result[i]) {
+          changed = true;
+          break;
+        }
       }
     }
   }
-  return changed ? merged : null;
+  if (!changed) return null;
+  return opts?.sortNewest === false ? result : sortOrdersNewestFirst(result);
 }
 
 function sameOrdersMeta(
@@ -1001,7 +1031,8 @@ export default function App() {
     }
 
     // Cùng flightKey đang chạy — tái sử dụng, không abort.
-    if (fetchOrdersInFlightRef.current?.key === flightKey) {
+    // force (đơn mới / bust): không dùng lại response cũ — xếp hàng fetch mới.
+    if (fetchOrdersInFlightRef.current?.key === flightKey && !force) {
       return fetchOrdersInFlightRef.current.promise;
     }
     // Đang fetch khác scope: XẾP HÀNG 1 lệnh mới nhất + invalidate seq ngay (chống race đè tab).
@@ -1025,9 +1056,12 @@ export default function App() {
           pendingFetchTimerRef.current = null;
           const queued = pendingFetchOptsRef.current;
           pendingFetchOptsRef.current = null;
-          if (queued && !isFetchingRef.current) {
-            void fetchOrders(queued as typeof opts);
+          if (!queued) return;
+          if (isFetchingRef.current) {
+            pendingFetchOptsRef.current = queued;
+            return;
           }
+          void fetchOrders(queued as typeof opts);
         }, 300 - elapsed);
       }
       return;
@@ -1250,7 +1284,7 @@ export default function App() {
           const merged = groupPicking
             ? sanitized
             : mergeOrderBatchesNewestFirst([mergeShallowOrders(base, sanitized)]);
-          const stable = stabilizeOrdersForMemo(base, merged);
+          const stable = mergeOrdersPreservingMemo(base, merged, { sortNewest: !groupPicking });
           if (!stable) {
             const kept = prev.length > 0 ? prev : base;
             ordersStateRef.current = kept;
@@ -1265,17 +1299,21 @@ export default function App() {
         const isRealEmpty = sanitized.length === 0 && Number(total) === 0;
         const cacheMap = ordersTabCacheRef.current;
         if (sanitized.length > 0) {
-          const prevList = ordersStateRef.current;
-          const stable = stabilizeOrdersForMemo(prevList, sanitized);
-          if (stable) {
+          setOrders((prev) => {
+            const base = prev.length > 0 ? prev : ordersStateRef.current;
+            const stable = mergeOrdersPreservingMemo(base, sanitized, { sortNewest: !groupPicking });
+            if (!stable) {
+              const kept = prev.length > 0 ? prev : base;
+              ordersStateRef.current = kept;
+              cacheMap.set(tabCacheKey, { orders: kept, meta: nextMeta, at: Date.now() });
+              return kept;
+            }
             ordersStateRef.current = stable;
-            setOrders(stable);
             ordersHydrateRef.current = stable;
             void saveOrdersCache(stable);
             cacheMap.set(tabCacheKey, { orders: stable, meta: nextMeta, at: Date.now() });
-          } else if (prevList.length > 0) {
-            cacheMap.set(tabCacheKey, { orders: prevList, meta: nextMeta, at: Date.now() });
-          }
+            return stable;
+          });
         } else if (isRealEmpty) {
           // Tab list thật sự rỗng — chỉ clear UI list, KHÔNG phá hydrate (scanner/picking fallback).
           ordersStateRef.current = [];

@@ -1577,7 +1577,7 @@ export default function OrderManager({
   }, []);
 
   const refetchOrdersPage = useCallback(
-    (opts?: { silent?: boolean; page?: number; force?: boolean; bustCache?: boolean }) => {
+    (opts?: { silent?: boolean; page?: number; force?: boolean; bustCache?: boolean; merge?: boolean }) => {
       setHasNewOrders(false);
       const force = opts?.force === true;
       const bustCache = opts?.bustCache === true;
@@ -1591,7 +1591,7 @@ export default function OrderManager({
         silent: opts?.silent !== false,
         page,
         limit: ORDERS_PAGE_SIZE,
-        merge: false,
+        merge: opts?.merge === true,
         tab: searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab,
         q: searchQuery.trim() || undefined,
         kind:
@@ -1650,15 +1650,20 @@ export default function OrderManager({
     setHasNewOrders(true);
     setCurrentPage(1);
     const now = Date.now();
+    const t1 = window.setTimeout(() => {
+      refetchOrdersPageRef.current({
+        silent: true,
+        page: 1,
+        force: true,
+        bustCache: true,
+      });
+    }, 400);
+    newOrderRefreshTimersRef.current = [t1];
     if (now - lastNewOrderNotifyAtRef.current > 2500) {
       lastNewOrderNotifyAtRef.current = now;
       playNotificationSound();
       showToast('Đã có đơn mới — đang làm mới danh sách', 3500);
     }
-    const t1 = window.setTimeout(() => {
-      refetchOrdersPageRef.current({ silent: false, page: 1 });
-    }, 400);
-    newOrderRefreshTimersRef.current = [t1];
   }, []);
 
   /** Báo đơn mới khi pending_confirm / unprocessed / all TĂNG. Trả true nếu đã lên lịch refetch list. */
