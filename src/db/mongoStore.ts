@@ -2703,6 +2703,61 @@ export function isValidTrackingNo(value: unknown): boolean {
   return true;
 }
 
+/** Payload có mã / sàn trả "" (thu hồi) / field không được gửi. */
+type TrackingPayloadIntent = "present" | "explicit_empty" | "absent";
+
+const WEBHOOK_STUB_THIN_RAW = new Set([
+  "UNPAID",
+  "PENDING",
+  "IN_REVIEW",
+  "FRAUD_CHECK",
+  "INVOICE_PENDING",
+]);
+
+/** Local đã qua Chưa xử lý — cấm payload mỏng kéo về unprocessed. */
+const LOCAL_STATUS_NOT_BELOW_PROCESSED = new Set([
+  "processed",
+  "shipping",
+  "completed",
+  "cancelled",
+  "return_pending",
+  "return_received",
+]);
+
+function trackingPayloadIntent(order: Record<string, unknown> | null | undefined): TrackingPayloadIntent {
+  if (!order) return "absent";
+  let explicitEmpty = false;
+  for (const key of ["tracking_no", "trackingNumber"] as const) {
+    if (!Object.prototype.hasOwnProperty.call(order, key)) continue;
+    const raw = order[key];
+    if (raw == null) continue;
+    if (typeof raw === "string" && raw.trim() === "") {
+      explicitEmpty = true;
+      continue;
+    }
+    if (isValidTrackingNo(raw)) return "present";
+  }
+  return explicitEmpty ? "explicit_empty" : "absent";
+}
+
+function documentHasValidTracking(doc: any): boolean {
+  if (!doc) return false;
+  return (
+    isValidTrackingNo(doc.tracking_no) ||
+    isValidTrackingNo(doc.trackingNumber) ||
+    isValidTrackingNo(doc.data?.tracking_no) ||
+    isValidTrackingNo(doc.data?.trackingNumber)
+  );
+}
+
+function documentIsPrepared(doc: any): boolean {
+  return doc?.isPrepared === true || doc?.data?.isPrepared === true;
+}
+
+function documentHasGoods(doc: any): boolean {
+  return Array.isArray(doc?.data?.items) && doc.data.items.length > 0;
+}
+
 /**
  * Ghi đơn Mini POS trực tiếp, không chờ hàng đợi sync Shopee.
  * Payload POS đã được controller chuẩn hóa; data là snapshot đầy đủ để hydrate lại.
@@ -2772,6 +2827,8 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     id: string;
     updateAt: Date | null;
     forceShopId: boolean;
+    trackingIntent: TrackingPayloadIntent;
+    webhookStub: boolean;
   }> = [];
   for (const order of list) {
     const id = String(order.id || "").trim();
@@ -2801,6 +2858,10 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     const shopIdStr = order.shopId != null ? String(order.shopId).trim() : "";
     const forceShopId =
       order._shop_owner_verified === true || order._force_shop_id === true;
+    const isWebhookStub = order._webhook_stub === true;
+    const stubThinStatus = isWebhookStub && (!rawStatus || WEBHOOK_STUB_THIN_RAW.has(rawStatus));
+    const stubInsertStatic: Record<string, unknown> = {};
+    const trackingIntent = trackingPayloadIntent(order as Record<string, unknown>);
 
     // ——— $set: CHỈ field Shopee / vận chuyển — CẤM cờ nội bộ ———
     // KHÔNG ghi status ảo "processed" vào shopee_order_status — chỉ raw Shopee.
@@ -2840,9 +2901,15 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     }
 
     // BẮT BUỘC lưu raw Shopee ở ROOT (READY_TO_SHIP / SHIPPED / PROCESSED / ...)
+    // Stub UNPAID/PENDING chỉ $setOnInsert — không đè document đã có hàng.
     if (rawStatus) {
-      $set.shopee_order_status = rawStatus;
-      $set["data.shopee_order_status"] = rawStatus;
+      if (stubThinStatus) {
+        stubInsertStatic.shopee_order_status = rawStatus;
+        stubInsertStatic["data.shopee_order_status"] = rawStatus;
+      } else {
+        $set.shopee_order_status = rawStatus;
+        $set["data.shopee_order_status"] = rawStatus;
+      }
     }
 
     // Khi Shopee → SHIPPED/COMPLETED/CANCEL: clear is_handed_over (cờ nội bộ hết tác dụng).
@@ -2926,19 +2993,28 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
           `[MongoDB] BLOCK orphan shipping→${st} order_sn=${orderSn || _id} raw=${rawStatus}`,
         );
       }
-      $set.status = st;
-      $set["data.status"] = st;
+      if (stubThinStatus) {
+        stubInsertStatic.status = st;
+        stubInsertStatic["data.status"] = st;
+      } else {
+        $set.status = st;
+        $set["data.status"] = st;
+      }
     }
 
     if (order.shopName != null) $set["data.shopName"] = String(order.shopName);
 
     // BẢO TOÀN tracking_no + shipping_carrier thật từ Shopee
-    // Chỉ GHI khi có mã thật — tuyệt đối không $set rỗng/null (tránh mất mã khi hủy/hoàn).
-    // Luôn ghi đè has_tracking trên UPDATE, không chỉ lúc INSERT.
-    // true chỉ khi có mã vận đơn hợp lệ (không rỗng, không phải mã nội bộ 0FG).
-    const hasTrackingFlag = Boolean(usableTn);
-    $set.has_tracking = hasTrackingFlag;
-    $set["data.has_tracking"] = hasTrackingFlag;
+    // Chỉ GHI mã khi có mã thật — tuyệt đối không $set rỗng/null (tránh mất mã khi hủy/hoàn).
+    // has_tracking = false CHỈ khi sàn trả tường minh "". Payload thiếu field không được hạ cờ
+    // nếu DB đã có mã (chốt ở vòng existing bên dưới).
+    if (trackingIntent === "present" && usableTn) {
+      $set.has_tracking = true;
+      $set["data.has_tracking"] = true;
+    } else if (trackingIntent === "explicit_empty") {
+      $set.has_tracking = false;
+      $set["data.has_tracking"] = false;
+    }
     if (usableTn) {
       $set.tracking_no = usableTn;
       $set.trackingNumber = usableTn;
@@ -3149,12 +3225,32 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
 
     // Field Shopee còn lại → data.* (bỏ cờ nội bộ — tránh đè true→false)
     for (const [key, value] of Object.entries(order)) {
-      if (key === "id" || key === "_id") continue;
+      if (key === "id" || key === "_id" || key === "_webhook_stub") continue;
       if (INTERNAL_FLAG_KEYS.has(key)) continue;
+      if (key === "has_tracking") continue;
       if (key === "return_sn" && (clearReturnSn || !String(value || "").trim())) continue;
       if (value === undefined || value === null) continue;
       if (key === "items" && Array.isArray(value) && value.length === 0) continue;
       if (key === "totalAmount" && Number(value) <= 0) continue;
+      // Stub mỏng: order_status UNPAID / blob data / status chỉ tạo lúc insert.
+      if (isWebhookStub && key === "data") {
+        stubInsertStatic["data.data"] = value;
+        continue;
+      }
+      if (isWebhookStub && key === "order_status") {
+        const up = String(value).trim().toUpperCase();
+        if (!up || up === "UNPAID" || up === "PENDING") {
+          stubInsertStatic["data.order_status"] = value;
+          continue;
+        }
+      }
+      if (
+        stubThinStatus &&
+        (key === "status" || key === "shopee_order_status" || key === "order_status")
+      ) {
+        stubInsertStatic[`data.${key}`] = value;
+        continue;
+      }
       if (TRACKING_PRESERVE_KEYS.has(key)) {
         const s = String(value).trim();
         if (!s || /^0FG/i.test(s)) continue;
@@ -3281,6 +3377,15 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       delete $setOnInsertRaw.last_shopee_update_at;
       delete $setOnInsertRaw["data.last_shopee_update_at"];
     }
+    // Payload không gửi mã: đơn mới coi như chưa có. Đơn cũ giữ cờ (vòng existing).
+    if (trackingIntent === "absent") {
+      $setOnInsertRaw.has_tracking = false;
+      $setOnInsertRaw["data.has_tracking"] = false;
+    }
+    for (const [k, v] of Object.entries(stubInsertStatic)) {
+      if (Object.prototype.hasOwnProperty.call($set, k)) continue;
+      $setOnInsertRaw[k] = v;
+    }
     const $setOnInsert: Record<string, unknown> = {};
     for (const [k, v] of Object.entries($setOnInsertRaw)) {
       if (Object.prototype.hasOwnProperty.call($set, k)) continue;
@@ -3293,7 +3398,9 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       shopee_order_status: rawStatus || null,
       status_local: order.status || null,
       tracking_no: usableTn,
-      has_tracking: Boolean(usableTn),
+      has_tracking: trackingIntent === "present" ? true : trackingIntent === "explicit_empty" ? false : "(giữ)",
+      tracking_intent: trackingIntent,
+      webhook_stub: isWebhookStub || undefined,
       packageNumber: pkgNum || null,
       shipping_carrier: carrier || null,
       forceShipping,
@@ -3328,6 +3435,8 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       id: _id,
       updateAt: incomingUpdateAt,
       forceShopId,
+      trackingIntent,
+      webhookStub: isWebhookStub,
     });
   }
   if (pendingWrites.length === 0) return 0;
@@ -3363,6 +3472,18 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
             "data.return_alert_pending": 1,
             return_sn: 1,
             "data.return_sn": 1,
+            tracking_no: 1,
+            trackingNumber: 1,
+            "data.tracking_no": 1,
+            "data.trackingNumber": 1,
+            has_tracking: 1,
+            "data.has_tracking": 1,
+            isPrepared: 1,
+            "data.isPrepared": 1,
+            shopee_order_status: 1,
+            "data.shopee_order_status": 1,
+            "data.order_status": 1,
+            "data.items": 1,
           })
           .lean();
         const existingByKey = new Map<string, any>();
@@ -3441,6 +3562,52 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
               delete $set["data.return_alert_pending"];
               delete $set.return_alert_at;
               delete $set["data.return_alert_at"];
+            }
+            const dbHasTracking = documentHasValidTracking(current);
+            // Payload thiếu mã: DB đã có mã hợp lệ → giữ has_tracking = true.
+            // false chỉ khi sàn trả tường minh "" (trackingIntent = explicit_empty).
+            if (item.trackingIntent !== "explicit_empty" && dbHasTracking) {
+              $set.has_tracking = true;
+              $set["data.has_tracking"] = true;
+              if ($setOnInsert) {
+                delete $setOnInsert.has_tracking;
+                delete $setOnInsert["data.has_tracking"];
+              }
+            }
+            const incomingStatus = String($set.status || "").trim();
+            const existingStatus = String(current.status || current.data?.status || "").trim();
+            if (
+              incomingStatus === "unprocessed" &&
+              LOCAL_STATUS_NOT_BELOW_PROCESSED.has(existingStatus) &&
+              (dbHasTracking || documentIsPrepared(current) || item.trackingIntent === "present")
+            ) {
+              delete $set.status;
+              delete $set["data.status"];
+              console.warn(
+                `[MongoDB] BLOCK downgrade status ${existingStatus}→unprocessed` +
+                  ` order_sn=${item.orderSn || item.id}` +
+                  ` dbTracking=${dbHasTracking} isPrepared=${documentIsPrepared(current)}`,
+              );
+            }
+            // Stub UNPAID không được $set đè đơn đã có hàng.
+            if (item.webhookStub && documentHasGoods(current)) {
+              const rawIn = String(
+                $set.shopee_order_status || $set["data.shopee_order_status"] || "",
+              ).toUpperCase();
+              if (!rawIn || WEBHOOK_STUB_THIN_RAW.has(rawIn)) {
+                delete $set.shopee_order_status;
+                delete $set["data.shopee_order_status"];
+                delete $set.status;
+                delete $set["data.status"];
+              }
+              const orderStatusIn = String($set["data.order_status"] || "").toUpperCase();
+              if (!orderStatusIn || orderStatusIn === "UNPAID" || orderStatusIn === "PENDING") {
+                delete $set["data.order_status"];
+              }
+              if (Array.isArray($set["data.items"]) && ($set["data.items"] as unknown[]).length === 0) {
+                delete $set["data.items"];
+              }
+              delete $set["data.data"];
             }
           }
           if (!current) continue;

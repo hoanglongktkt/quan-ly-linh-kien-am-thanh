@@ -22350,6 +22350,7 @@ async function eagerUpsertWebhookStub(body: any): Promise<void> {
       });
     }
     normalized._force_shop_id = true;
+    normalized._webhook_stub = true;
     normalized.has_tracking =
       isValidTrackingNo(normalized.tracking_no) || isValidTrackingNo(normalized.trackingNumber);
     if (!normalized.data || typeof normalized.data !== "object") {

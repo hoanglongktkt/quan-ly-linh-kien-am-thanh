@@ -82067,6 +82067,46 @@ function isValidTrackingNo(value) {
   if (!s2 || /^0FG/i.test(s2)) return false;
   return true;
 }
+var WEBHOOK_STUB_THIN_RAW = /* @__PURE__ */ new Set([
+  "UNPAID",
+  "PENDING",
+  "IN_REVIEW",
+  "FRAUD_CHECK",
+  "INVOICE_PENDING"
+]);
+var LOCAL_STATUS_NOT_BELOW_PROCESSED = /* @__PURE__ */ new Set([
+  "processed",
+  "shipping",
+  "completed",
+  "cancelled",
+  "return_pending",
+  "return_received"
+]);
+function trackingPayloadIntent(order) {
+  if (!order) return "absent";
+  let explicitEmpty = false;
+  for (const key of ["tracking_no", "trackingNumber"]) {
+    if (!Object.prototype.hasOwnProperty.call(order, key)) continue;
+    const raw = order[key];
+    if (raw == null) continue;
+    if (typeof raw === "string" && raw.trim() === "") {
+      explicitEmpty = true;
+      continue;
+    }
+    if (isValidTrackingNo(raw)) return "present";
+  }
+  return explicitEmpty ? "explicit_empty" : "absent";
+}
+function documentHasValidTracking(doc) {
+  if (!doc) return false;
+  return isValidTrackingNo(doc.tracking_no) || isValidTrackingNo(doc.trackingNumber) || isValidTrackingNo(doc.data?.tracking_no) || isValidTrackingNo(doc.data?.trackingNumber);
+}
+function documentIsPrepared(doc) {
+  return doc?.isPrepared === true || doc?.data?.isPrepared === true;
+}
+function documentHasGoods(doc) {
+  return Array.isArray(doc?.data?.items) && doc.data.items.length > 0;
+}
 async function insertPosOrderToStore(order) {
   requireMongo();
   if (!order || typeof order !== "object") {
@@ -82135,6 +82175,10 @@ async function bulkUpsertOrdersToStore(orders) {
     ).trim();
     const shopIdStr = order.shopId != null ? String(order.shopId).trim() : "";
     const forceShopId = order._shop_owner_verified === true || order._force_shop_id === true;
+    const isWebhookStub = order._webhook_stub === true;
+    const stubThinStatus = isWebhookStub && (!rawStatus || WEBHOOK_STUB_THIN_RAW.has(rawStatus));
+    const stubInsertStatic = {};
+    const trackingIntent = trackingPayloadIntent(order);
     const channelStr = order.channel != null ? String(order.channel).trim() : "shopee";
     const $set = {
       orderSn: orderSn || null,
@@ -82164,8 +82208,13 @@ async function bulkUpsertOrdersToStore(orders) {
       $set["data.shopId"] = shopIdStr;
     }
     if (rawStatus) {
-      $set.shopee_order_status = rawStatus;
-      $set["data.shopee_order_status"] = rawStatus;
+      if (stubThinStatus) {
+        stubInsertStatic.shopee_order_status = rawStatus;
+        stubInsertStatic["data.shopee_order_status"] = rawStatus;
+      } else {
+        $set.shopee_order_status = rawStatus;
+        $set["data.shopee_order_status"] = rawStatus;
+      }
     }
     const leftPickupPhase = rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE" || rawStatus === "COMPLETED" || rawStatus === "CANCELLED" || rawStatus === "IN_CANCEL" || rawStatus === "TO_RETURN" || rawStatus === "RETURN";
     if (leftPickupPhase) {
@@ -82216,13 +82265,22 @@ async function bulkUpsertOrdersToStore(orders) {
           `[MongoDB] BLOCK orphan shipping\u2192${st} order_sn=${orderSn || _id} raw=${rawStatus}`
         );
       }
-      $set.status = st;
-      $set["data.status"] = st;
+      if (stubThinStatus) {
+        stubInsertStatic.status = st;
+        stubInsertStatic["data.status"] = st;
+      } else {
+        $set.status = st;
+        $set["data.status"] = st;
+      }
     }
     if (order.shopName != null) $set["data.shopName"] = String(order.shopName);
-    const hasTrackingFlag = Boolean(usableTn);
-    $set.has_tracking = hasTrackingFlag;
-    $set["data.has_tracking"] = hasTrackingFlag;
+    if (trackingIntent === "present" && usableTn) {
+      $set.has_tracking = true;
+      $set["data.has_tracking"] = true;
+    } else if (trackingIntent === "explicit_empty") {
+      $set.has_tracking = false;
+      $set["data.has_tracking"] = false;
+    }
     if (usableTn) {
       $set.tracking_no = usableTn;
       $set.trackingNumber = usableTn;
@@ -82386,12 +82444,28 @@ async function bulkUpsertOrdersToStore(orders) {
       "package_number"
     ]);
     for (const [key, value] of Object.entries(order)) {
-      if (key === "id" || key === "_id") continue;
+      if (key === "id" || key === "_id" || key === "_webhook_stub") continue;
       if (INTERNAL_FLAG_KEYS.has(key)) continue;
+      if (key === "has_tracking") continue;
       if (key === "return_sn" && (clearReturnSn || !String(value || "").trim())) continue;
       if (value === void 0 || value === null) continue;
       if (key === "items" && Array.isArray(value) && value.length === 0) continue;
       if (key === "totalAmount" && Number(value) <= 0) continue;
+      if (isWebhookStub && key === "data") {
+        stubInsertStatic["data.data"] = value;
+        continue;
+      }
+      if (isWebhookStub && key === "order_status") {
+        const up = String(value).trim().toUpperCase();
+        if (!up || up === "UNPAID" || up === "PENDING") {
+          stubInsertStatic["data.order_status"] = value;
+          continue;
+        }
+      }
+      if (stubThinStatus && (key === "status" || key === "shopee_order_status" || key === "order_status")) {
+        stubInsertStatic[`data.${key}`] = value;
+        continue;
+      }
       if (TRACKING_PRESERVE_KEYS.has(key)) {
         const s2 = String(value).trim();
         if (!s2 || /^0FG/i.test(s2)) continue;
@@ -82497,6 +82571,14 @@ async function bulkUpsertOrdersToStore(orders) {
       delete $setOnInsertRaw.last_shopee_update_at;
       delete $setOnInsertRaw["data.last_shopee_update_at"];
     }
+    if (trackingIntent === "absent") {
+      $setOnInsertRaw.has_tracking = false;
+      $setOnInsertRaw["data.has_tracking"] = false;
+    }
+    for (const [k, v] of Object.entries(stubInsertStatic)) {
+      if (Object.prototype.hasOwnProperty.call($set, k)) continue;
+      $setOnInsertRaw[k] = v;
+    }
     const $setOnInsert = {};
     for (const [k, v] of Object.entries($setOnInsertRaw)) {
       if (Object.prototype.hasOwnProperty.call($set, k)) continue;
@@ -82508,7 +82590,9 @@ async function bulkUpsertOrdersToStore(orders) {
       shopee_order_status: rawStatus || null,
       status_local: order.status || null,
       tracking_no: usableTn,
-      has_tracking: Boolean(usableTn),
+      has_tracking: trackingIntent === "present" ? true : trackingIntent === "explicit_empty" ? false : "(gi\u1EEF)",
+      tracking_intent: trackingIntent,
+      webhook_stub: isWebhookStub || void 0,
       packageNumber: pkgNum || null,
       shipping_carrier: carrier || null,
       forceShipping,
@@ -82536,7 +82620,9 @@ async function bulkUpsertOrdersToStore(orders) {
       orderSn,
       id: _id,
       updateAt: incomingUpdateAt,
-      forceShopId
+      forceShopId,
+      trackingIntent,
+      webhookStub: isWebhookStub
     });
   }
   if (pendingWrites.length === 0) return 0;
@@ -82567,7 +82653,19 @@ async function bulkUpsertOrdersToStore(orders) {
           return_alert_pending: 1,
           "data.return_alert_pending": 1,
           return_sn: 1,
-          "data.return_sn": 1
+          "data.return_sn": 1,
+          tracking_no: 1,
+          trackingNumber: 1,
+          "data.tracking_no": 1,
+          "data.trackingNumber": 1,
+          has_tracking: 1,
+          "data.has_tracking": 1,
+          isPrepared: 1,
+          "data.isPrepared": 1,
+          shopee_order_status: 1,
+          "data.shopee_order_status": 1,
+          "data.order_status": 1,
+          "data.items": 1
         }).lean();
         const existingByKey = /* @__PURE__ */ new Map();
         for (const row of existing) {
@@ -82634,6 +82732,43 @@ async function bulkUpsertOrdersToStore(orders) {
               delete $set["data.return_alert_pending"];
               delete $set.return_alert_at;
               delete $set["data.return_alert_at"];
+            }
+            const dbHasTracking = documentHasValidTracking(current);
+            if (item.trackingIntent !== "explicit_empty" && dbHasTracking) {
+              $set.has_tracking = true;
+              $set["data.has_tracking"] = true;
+              if ($setOnInsert) {
+                delete $setOnInsert.has_tracking;
+                delete $setOnInsert["data.has_tracking"];
+              }
+            }
+            const incomingStatus = String($set.status || "").trim();
+            const existingStatus = String(current.status || current.data?.status || "").trim();
+            if (incomingStatus === "unprocessed" && LOCAL_STATUS_NOT_BELOW_PROCESSED.has(existingStatus) && (dbHasTracking || documentIsPrepared(current) || item.trackingIntent === "present")) {
+              delete $set.status;
+              delete $set["data.status"];
+              console.warn(
+                `[MongoDB] BLOCK downgrade status ${existingStatus}\u2192unprocessed order_sn=${item.orderSn || item.id} dbTracking=${dbHasTracking} isPrepared=${documentIsPrepared(current)}`
+              );
+            }
+            if (item.webhookStub && documentHasGoods(current)) {
+              const rawIn = String(
+                $set.shopee_order_status || $set["data.shopee_order_status"] || ""
+              ).toUpperCase();
+              if (!rawIn || WEBHOOK_STUB_THIN_RAW.has(rawIn)) {
+                delete $set.shopee_order_status;
+                delete $set["data.shopee_order_status"];
+                delete $set.status;
+                delete $set["data.status"];
+              }
+              const orderStatusIn = String($set["data.order_status"] || "").toUpperCase();
+              if (!orderStatusIn || orderStatusIn === "UNPAID" || orderStatusIn === "PENDING") {
+                delete $set["data.order_status"];
+              }
+              if (Array.isArray($set["data.items"]) && $set["data.items"].length === 0) {
+                delete $set["data.items"];
+              }
+              delete $set["data.data"];
             }
           }
           if (!current) continue;
@@ -150530,6 +150665,7 @@ async function eagerUpsertWebhookStub(body) {
       });
     }
     normalized._force_shop_id = true;
+    normalized._webhook_stub = true;
     normalized.has_tracking = isValidTrackingNo(normalized.tracking_no) || isValidTrackingNo(normalized.trackingNumber);
     if (!normalized.data || typeof normalized.data !== "object") {
       normalized.data = {
