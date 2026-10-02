@@ -221,7 +221,13 @@ export async function listAddressBookRanking(options = {}) {
  * Sửa địa chỉ khách VIP theo id sổ địa chỉ hoặc số điện thoại.
  * Ghi vào address_book (nguồn bảng VIP) và collection `customers` nếu có bản ghi khớp.
  */
-export async function updateCustomerAddressByKey({ id = "", phone = "", address = "" } = {}) {
+export async function updateCustomerAddressByKey({
+  id = "",
+  phone = "",
+  address = "",
+  name,
+  nextPhone,
+} = {}) {
   const cleanAddress = String(address || "").trim();
   if (!cleanAddress) {
     const err = new Error("Thiếu địa chỉ.");
@@ -241,6 +247,9 @@ export async function updateCustomerAddressByKey({ id = "", phone = "", address 
     address: cleanAddress,
     fullAddress: cleanAddress,
   };
+  if (typeof name === "string") patch.name = String(name).trim();
+  const renamedPhone = normalizePhone(nextPhone);
+  if (renamedPhone) patch.phone = renamedPhone;
 
   if (!mongoReady()) {
     const entry = updateJsonCustomerAddress(cleanId, cleanPhone, patch);
@@ -300,6 +309,87 @@ export async function updateCustomerAddressByKey({ id = "", phone = "", address 
     throw err;
   }
   return toPublicEntry(updated);
+}
+
+export async function deleteCustomerByKey({ id = "", phone = "" } = {}) {
+  const cleanId = String(id || "").trim();
+  const cleanPhone = normalizePhone(phone);
+  if (!cleanId && !cleanPhone) {
+    const err = new Error("Thiếu mã khách hoặc số điện thoại.");
+    err.status = 400;
+    throw err;
+  }
+
+  if (!mongoReady()) {
+    const removed = deleteJsonCustomer(cleanId, cleanPhone);
+    if (!removed) {
+      const err = new Error("Không tìm thấy khách hàng.");
+      err.status = 404;
+      throw err;
+    }
+    return { deleted: 1 };
+  }
+
+  let deleted = 0;
+  if (cleanId) {
+    const idOr = [{ id: cleanId }];
+    if (mongoose.isValidObjectId(cleanId)) {
+      idOr.push({ _id: new mongoose.Types.ObjectId(cleanId) });
+    }
+    const byId = await AddressBook.deleteOne({ $or: idOr });
+    deleted += Number(byId?.deletedCount) || 0;
+  }
+  if (!deleted && cleanPhone) {
+    const byPhone = await AddressBook.deleteOne({ phone: cleanPhone });
+    deleted += Number(byPhone?.deletedCount) || 0;
+  }
+
+  try {
+    const custOr = [];
+    if (cleanId) {
+      custOr.push({ id: cleanId });
+      if (mongoose.isValidObjectId(cleanId)) {
+        custOr.push({ _id: new mongoose.Types.ObjectId(cleanId) });
+      }
+    }
+    if (cleanPhone) {
+      custOr.push({ phone: cleanPhone });
+      custOr.push({ phone_number: cleanPhone });
+    }
+    if (custOr.length) {
+      const cust = await mongoose.connection.collection("customers").deleteMany({ $or: custOr });
+      deleted += Number(cust?.deletedCount) || 0;
+    }
+  } catch (err) {
+    console.error("[customers delete]", err?.message || err);
+  }
+
+  if (!deleted) {
+    const err = new Error("Không tìm thấy khách hàng.");
+    err.status = 404;
+    throw err;
+  }
+  return { deleted };
+}
+
+function deleteJsonCustomer(cleanId, cleanPhone) {
+  const list = readBook();
+  let removed = false;
+  const drop = (source, predicate) =>
+    source.filter((item) => {
+      if (removed || !predicate(item)) return true;
+      removed = true;
+      return false;
+    });
+  let next = cleanId
+    ? drop(list, (item) => String(item?.id || "") === cleanId)
+    : list;
+  if (!removed && cleanPhone) {
+    next = drop(list, (item) => normalizePhone(item?.phone) === cleanPhone);
+  }
+  if (!removed) return false;
+  writeBook(next);
+  return true;
 }
 
 function updateJsonCustomerAddress(cleanId, cleanPhone, patch) {

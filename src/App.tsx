@@ -16,6 +16,7 @@ import OrderManager from './components/OrderManager';
 import OrderPicking from './components/OrderPicking';
 import PublishManager from './components/PublishManager';
 import VipCustomersPage from './components/VipCustomersPage';
+import CustomerOrderHistoryPage from './components/CustomerOrderHistoryPage';
 import ChatManager from './pages/ChatManager/ChatManager';
 import { useChatUnread } from './context/ChatUnreadContext';
 import LoginPage from './components/LoginPage';
@@ -291,9 +292,25 @@ function parseJsonArray<T>(payload: unknown, listKey?: string): T[] {
   return [];
 }
 
+function customerHistoryPhoneFromPath(): string | null {
+  if (typeof window === 'undefined') return null;
+  const path = window.location.pathname.replace(/\/$/, '') || '/';
+  const match = path.match(/^\/customers\/([^/]+)\/history$/i);
+  if (!match?.[1]) return null;
+  let raw = match[1];
+  try {
+    raw = decodeURIComponent(raw);
+  } catch {
+    /* giữ nguyên */
+  }
+  const digits = raw.replace(/\D/g, '');
+  return digits.length >= 8 ? digits : null;
+}
+
 function resolveTabFromPath(): string {
   if (typeof window === 'undefined') return 'dashboard';
   const path = window.location.pathname.replace(/\/$/, '') || '/';
+  if (customerHistoryPhoneFromPath()) return 'vip-customers';
   if (path === '/picking') return 'picking';
 
   const params = new URLSearchParams(window.location.search);
@@ -753,6 +770,9 @@ export default function App() {
 
   // Active navigation tab — khôi phục từ URL (?tab=) hoặc sessionStorage khi F5
   const [activeTab, setActiveTab] = useState(() => resolveTabFromPath());
+  const [customerHistoryPhone, setCustomerHistoryPhone] = useState<string | null>(() =>
+    customerHistoryPhoneFromPath(),
+  );
   const { totalUnreadCount } = useChatUnread();
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
@@ -779,6 +799,8 @@ export default function App() {
 
   useEffect(() => {
     const onPopState = () => {
+      const historyPhone = customerHistoryPhoneFromPath();
+      setCustomerHistoryPhone(historyPhone);
       const nextTab = resolveTabFromPath();
       setActiveTab(nextTab);
       setOrdersSubTabHint(nextTab === 'orders' ? resolveOrdersSubTabFromUrl() : null);
@@ -793,6 +815,10 @@ export default function App() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const path = window.location.pathname.replace(/\/$/, '') || '/';
+    if (customerHistoryPhoneFromPath()) {
+      writeSessionTab('omni_active_tab', 'vip-customers');
+      return;
+    }
     if (path === '/picking') {
       writeSessionTab('omni_active_tab', 'picking');
       return;
@@ -2562,6 +2588,7 @@ export default function App() {
     tab: string,
     opts?: { openScanner?: boolean; ordersSubTab?: OrdersSubTabId | null },
   ) => {
+    setCustomerHistoryPhone(null);
     setActiveTab(tab);
     setMobileDrawerOpen(false);
     setFocusScanner(tab === 'orders' && Boolean(opts?.openScanner));
@@ -2586,6 +2613,20 @@ export default function App() {
 
     const nextUrl = buildNavUrl(tab, tab === 'orders' ? nextOrdersSub : null);
     window.history.pushState({ tab, ordersTab: nextOrdersSub }, '', nextUrl);
+  };
+
+  const openCustomerHistory = (phone: string) => {
+    const digits = String(phone || '').replace(/\D/g, '');
+    if (digits.length < 8) return;
+    setCustomerHistoryPhone(digits);
+    setActiveTab('vip-customers');
+    setMobileDrawerOpen(false);
+    writeSessionTab('omni_active_tab', 'vip-customers');
+    window.history.pushState(
+      { tab: 'vip-customers', customerHistory: digits },
+      '',
+      `/customers/${encodeURIComponent(digits)}/history`,
+    );
   };
 
   const handleEditProductShortcut = (productId: string) => {
@@ -2998,7 +3039,8 @@ export default function App() {
                       : 'Hệ Thống Quản Lý Đơn Hàng Đa Sàn')}
                   {activeTab === 'picking' && 'Nhặt Hàng (Picking)'}
                   {activeTab === 'suppliers' && 'Quản Lý Đối Tác Nhà Cung Cấp'}
-                  {activeTab === 'vip-customers' && 'Khách Hàng VIP'}
+                  {activeTab === 'vip-customers' && !customerHistoryPhone && 'Khách Hàng VIP'}
+                  {activeTab === 'vip-customers' && customerHistoryPhone && 'Lịch sử đơn hàng'}
                   {activeTab === 'imports' && 'Quản Lý Nhập Hàng'}
                   {activeTab === 'material-imports' && 'Quản Lý Nhập Vật Tư'}
                   {activeTab === 'financials' && 'Chi Phí Bán Hàng'}
@@ -3015,7 +3057,8 @@ export default function App() {
                       : 'Quản lý 8 trạng thái đơn Shopee & TikTok, chuẩn bị hàng đóng gói và in vận đơn nhiệt.')}
                   {activeTab === 'picking' && 'Quét mã đơn, tích sản phẩm đã nhặt và chuyển sang đóng gói.'}
                   {activeTab === 'suppliers' && 'Quản lý thông tin liên hệ, công nợ sỉ và tiền độ thanh toán cho xưởng sỉ.'}
-                  {activeTab === 'vip-customers' && 'Xếp hạng khách quen theo tổng chi tiêu từ Sổ địa chỉ — lọc tháng/năm để chọn khách tặng quà.'}
+                  {activeTab === 'vip-customers' && !customerHistoryPhone && 'Xếp hạng khách quen theo tổng chi tiêu từ Sổ địa chỉ — lọc tháng/năm để chọn khách tặng quà.'}
+                  {activeTab === 'vip-customers' && customerHistoryPhone && 'Chi tiết từng sản phẩm trong các đơn của khách.'}
                   {activeTab === 'imports' && 'Quản lý hóa đơn nhập đầu vào, theo dõi biến động % giá nhập hàng.'}
                   {activeTab === 'material-imports' && 'Quản lý vật tư sản xuất (chợ, 1688…) — độc lập với kho sản phẩm bán.'}
                   {activeTab === 'financials' && 'Theo dõi chi phí hoạt động, cơ cấu quỹ và mô phỏng lợi nhuận sau phí sàn.'}
@@ -3170,9 +3213,22 @@ export default function App() {
             </ErrorBoundary>
           )}
 
-          {activeTab === 'vip-customers' && (
+          {customerHistoryPhone && (
+            <ErrorBoundary label="Lịch sử đơn hàng">
+              <CustomerOrderHistoryPage
+                phone={customerHistoryPhone}
+                authHeaders={apiAuthHeaders}
+                onBack={() => navigateTab('vip-customers')}
+              />
+            </ErrorBoundary>
+          )}
+
+          {!customerHistoryPhone && activeTab === 'vip-customers' && (
             <ErrorBoundary label="Khách hàng VIP">
-              <VipCustomersPage authHeaders={apiAuthHeaders} />
+              <VipCustomersPage
+                authHeaders={apiAuthHeaders}
+                onOpenHistory={openCustomerHistory}
+              />
             </ErrorBoundary>
           )}
 

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import {
+  deleteCustomer,
   getCustomerOrderHistory,
   updateCustomerAddress,
 } from "../controllers/customerController.js";
@@ -10,6 +11,7 @@ const h = asyncHandler;
 
 router.get("/:phone/orders", h(getCustomerOrderHistory));
 router.put("/:id", h(updateCustomerAddress));
+router.delete("/:id", h(deleteCustomer));
 
 export default router;
 export { router };

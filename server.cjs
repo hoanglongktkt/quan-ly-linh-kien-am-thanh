@@ -90652,7 +90652,13 @@ async function listAddressBookRanking(options = {}) {
   }).slice(0, limit);
   return list;
 }
-async function updateCustomerAddressByKey({ id = "", phone = "", address = "" } = {}) {
+async function updateCustomerAddressByKey({
+  id = "",
+  phone = "",
+  address = "",
+  name,
+  nextPhone
+} = {}) {
   const cleanAddress = String(address || "").trim();
   if (!cleanAddress) {
     const err = new Error("Thi\u1EBFu \u0111\u1ECBa ch\u1EC9.");
@@ -90671,6 +90677,9 @@ async function updateCustomerAddressByKey({ id = "", phone = "", address = "" } 
     address: cleanAddress,
     fullAddress: cleanAddress
   };
+  if (typeof name === "string") patch.name = String(name).trim();
+  const renamedPhone = normalizePhone(nextPhone);
+  if (renamedPhone) patch.phone = renamedPhone;
   if (!mongoReady3()) {
     const entry = updateJsonCustomerAddress(cleanId, cleanPhone, patch);
     if (!entry) {
@@ -90726,6 +90735,78 @@ async function updateCustomerAddressByKey({ id = "", phone = "", address = "" } 
     throw err;
   }
   return toPublicEntry(updated);
+}
+async function deleteCustomerByKey({ id = "", phone = "" } = {}) {
+  const cleanId = String(id || "").trim();
+  const cleanPhone = normalizePhone(phone);
+  if (!cleanId && !cleanPhone) {
+    const err = new Error("Thi\u1EBFu m\xE3 kh\xE1ch ho\u1EB7c s\u1ED1 \u0111i\u1EC7n tho\u1EA1i.");
+    err.status = 400;
+    throw err;
+  }
+  if (!mongoReady3()) {
+    const removed = deleteJsonCustomer(cleanId, cleanPhone);
+    if (!removed) {
+      const err = new Error("Kh\xF4ng t\xECm th\u1EA5y kh\xE1ch h\xE0ng.");
+      err.status = 404;
+      throw err;
+    }
+    return { deleted: 1 };
+  }
+  let deleted = 0;
+  if (cleanId) {
+    const idOr = [{ id: cleanId }];
+    if (import_mongoose8.default.isValidObjectId(cleanId)) {
+      idOr.push({ _id: new import_mongoose8.default.Types.ObjectId(cleanId) });
+    }
+    const byId = await AddressBook_default.deleteOne({ $or: idOr });
+    deleted += Number(byId?.deletedCount) || 0;
+  }
+  if (!deleted && cleanPhone) {
+    const byPhone = await AddressBook_default.deleteOne({ phone: cleanPhone });
+    deleted += Number(byPhone?.deletedCount) || 0;
+  }
+  try {
+    const custOr = [];
+    if (cleanId) {
+      custOr.push({ id: cleanId });
+      if (import_mongoose8.default.isValidObjectId(cleanId)) {
+        custOr.push({ _id: new import_mongoose8.default.Types.ObjectId(cleanId) });
+      }
+    }
+    if (cleanPhone) {
+      custOr.push({ phone: cleanPhone });
+      custOr.push({ phone_number: cleanPhone });
+    }
+    if (custOr.length) {
+      const cust = await import_mongoose8.default.connection.collection("customers").deleteMany({ $or: custOr });
+      deleted += Number(cust?.deletedCount) || 0;
+    }
+  } catch (err) {
+    console.error("[customers delete]", err?.message || err);
+  }
+  if (!deleted) {
+    const err = new Error("Kh\xF4ng t\xECm th\u1EA5y kh\xE1ch h\xE0ng.");
+    err.status = 404;
+    throw err;
+  }
+  return { deleted };
+}
+function deleteJsonCustomer(cleanId, cleanPhone) {
+  const list = readBook();
+  let removed = false;
+  const drop = (source, predicate) => source.filter((item) => {
+    if (removed || !predicate(item)) return true;
+    removed = true;
+    return false;
+  });
+  let next = cleanId ? drop(list, (item) => String(item?.id || "") === cleanId) : list;
+  if (!removed && cleanPhone) {
+    next = drop(list, (item) => normalizePhone(item?.phone) === cleanPhone);
+  }
+  if (!removed) return false;
+  writeBook(next);
+  return true;
 }
 function updateJsonCustomerAddress(cleanId, cleanPhone, patch) {
   const list = readBook();
@@ -91040,7 +91121,7 @@ var import_express10 = __toESM(require_express2(), 1);
 
 // controllers/customerController.js
 var import_mongoose9 = __toESM(require("mongoose"), 1);
-var ORDER_LIMIT = 40;
+var ORDER_LIMIT = 50;
 var PHONE_FIELDS = [
   "customerPhone",
   "data.customerPhone",
@@ -91072,22 +91153,37 @@ function orderDateIso(doc) {
   const d = new Date(raw);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
-function productSummary(data) {
-  const items = Array.isArray(data?.items) && data.items.length ? data.items : Array.isArray(data?.item_list) ? data.item_list : [];
-  const names = [];
-  const cap = Math.min(items.length, 8);
+function unitPrice(row) {
+  const n = Number(
+    row?.model_discounted_price ?? row?.item_price ?? row?.price ?? row?.model_original_price ?? 0
+  );
+  return Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0;
+}
+function mapOrderItems(data) {
+  const raw = Array.isArray(data?.items) && data.items.length ? data.items : Array.isArray(data?.item_list) ? data.item_list : [];
+  const items = [];
+  const cap = Math.min(raw.length, 40);
   for (let i2 = 0; i2 < cap; i2 += 1) {
-    const row = items[i2] || {};
+    const row = raw[i2] || {};
     const name = String(
       row.item_name || row.productTitle || row.name || row.model_name || "S\u1EA3n ph\u1EA9m"
     ).trim();
-    const qty = Math.max(
+    const quantity = Math.max(
       1,
       Math.round(Number(row.model_quantity_purchased ?? row.quantity ?? row.qty ?? 1) || 1)
     );
-    names.push(qty > 1 ? `${name} x${qty}` : name);
+    const price = unitPrice(row);
+    items.push({
+      name: name || "S\u1EA3n ph\u1EA9m",
+      quantity,
+      price,
+      lineTotal: price * quantity
+    });
   }
-  return names.join(", ") || "\u2014";
+  if (!items.length) {
+    items.push({ name: "\u2014", quantity: 1, price: 0, lineTotal: 0 });
+  }
+  return items;
 }
 function orderTotal(doc) {
   const data = doc?.data && typeof doc.data === "object" ? doc.data : {};
@@ -91100,8 +91196,10 @@ async function updateCustomerAddress(req, res) {
   try {
     const entry = await updateCustomerAddressByKey({
       id: req.params?.id,
-      phone: req.body?.phone,
-      address: req.body?.address
+      phone: req.body?.currentPhone || req.body?.phone,
+      address: req.body?.address,
+      name: req.body?.name,
+      nextPhone: req.body?.phone
     });
     return res.json({ success: true, entry, message: "\u0110\xE3 c\u1EADp nh\u1EADt \u0111\u1ECBa ch\u1EC9" });
   } catch (error) {
@@ -91164,9 +91262,17 @@ async function getCustomerOrderHistory(req, res) {
           "data.items.model_name": 1,
           "data.items.quantity": 1,
           "data.items.qty": 1,
+          "data.items.model_quantity_purchased": 1,
+          "data.items.model_discounted_price": 1,
+          "data.items.item_price": 1,
+          "data.items.price": 1,
+          "data.items.model_original_price": 1,
           "data.item_list.item_name": 1,
           "data.item_list.model_name": 1,
-          "data.item_list.model_quantity_purchased": 1
+          "data.item_list.model_quantity_purchased": 1,
+          "data.item_list.model_discounted_price": 1,
+          "data.item_list.item_price": 1,
+          "data.item_list.model_original_price": 1
         }
       }
     ).sort({ create_time: -1, createdAt: -1 }).limit(ORDER_LIMIT).maxTimeMS(8e3).toArray();
@@ -91177,7 +91283,7 @@ async function getCustomerOrderHistory(req, res) {
       orders.push({
         orderSn: String(doc.orderSn || data.order_sn || data.orderSn || "").trim() || "\u2014",
         date: orderDateIso(doc),
-        products: productSummary(data),
+        items: mapOrderItems(data),
         total: orderTotal(doc),
         status: String(doc.shopee_order_status || doc.status || data.status || "").trim() || "\u2014"
       });
@@ -91192,12 +91298,29 @@ async function getCustomerOrderHistory(req, res) {
     });
   }
 }
+async function deleteCustomer(req, res) {
+  try {
+    const result = await deleteCustomerByKey({
+      id: req.params?.id,
+      phone: req.query?.phone || req.body?.phone
+    });
+    return res.json({ success: true, ...result, message: "\u0110\xE3 x\xF3a kh\xE1ch h\xE0ng" });
+  } catch (error) {
+    console.error("[customers delete]", error);
+    const status = Number(error?.status) || 500;
+    return res.status(status).json({
+      success: false,
+      error: error?.message || "X\xF3a kh\xE1ch h\xE0ng th\u1EA5t b\u1EA1i"
+    });
+  }
+}
 
 // routes/customerRoutes.js
 var router9 = (0, import_express10.Router)();
 var h2 = asyncHandler;
 router9.get("/:phone/orders", h2(getCustomerOrderHistory));
 router9.put("/:id", h2(updateCustomerAddress));
+router9.delete("/:id", h2(deleteCustomer));
 var customerRoutes_default = router9;
 
 // routes/chatRoutes.js
@@ -91616,12 +91739,12 @@ async function createImport(req, res) {
   const productId = String(body.productId).trim();
   const productSku = String(body.productSku || body.sku || "").trim();
   const qty = Math.max(1, Math.round(Number(body.quantity)));
-  const unitPrice = Math.max(0, Math.round(Number(body.newImportPrice)));
+  const unitPrice2 = Math.max(0, Math.round(Number(body.newImportPrice)));
   const importCost = Math.max(0, Math.round(Number(body.importCost) || 0));
-  const computedTotal = qty * unitPrice + importCost;
+  const computedTotal = qty * unitPrice2 + importCost;
   const warehouseId = "KhoGoc";
   try {
-    const applied = await deps5.applyImportStockAndPriceToMainWarehouse(productId, qty, unitPrice, {
+    const applied = await deps5.applyImportStockAndPriceToMainWarehouse(productId, qty, unitPrice2, {
       skuHint: productSku
     });
     const updatedProduct = applied.product;
@@ -91638,14 +91761,14 @@ async function createImport(req, res) {
       productSku: String(productSku || updatedProduct?.sku || ""),
       quantity: qty,
       oldImportPrice,
-      newImportPrice: unitPrice,
+      newImportPrice: unitPrice2,
       importCost,
       totalAmount: Math.max(0, Math.round(Number(body.totalAmount) || computedTotal)),
       paidAmount: Math.max(0, Math.round(Number(body.paidAmount) || 0)),
       status: body.status || "unpaid",
       notes: body.notes || void 0,
       warehouseId,
-      priceChangePercent: oldImportPrice > 0 ? Math.round((unitPrice - oldImportPrice) / oldImportPrice * 1e3) / 10 : null
+      priceChangePercent: oldImportPrice > 0 ? Math.round((unitPrice2 - oldImportPrice) / oldImportPrice * 1e3) / 10 : null
     };
     try {
       imports.unshift(entry);
@@ -91664,7 +91787,7 @@ async function createImport(req, res) {
       oldStock: applied.oldStock,
       newStock: applied.newStock,
       oldImportPrice,
-      newImportPrice: unitPrice,
+      newImportPrice: unitPrice2,
       target: applied.target
     });
     return res.status(201).json({
@@ -91678,7 +91801,7 @@ async function createImport(req, res) {
       stockBefore: applied.oldStock,
       stockAfter: applied.newStock,
       importPriceBefore: oldImportPrice,
-      importPriceAfter: unitPrice
+      importPriceAfter: unitPrice2
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -91896,7 +92019,7 @@ async function updateMaterial(req, res) {
     return res.status(500).json({ success: false, error: message });
   }
 }
-function applyMaterialStockAndPrice(materialId, qtyDelta, unitPrice, opts = {}) {
+function applyMaterialStockAndPrice(materialId, qtyDelta, unitPrice2, opts = {}) {
   const materials = loadMaterials();
   const id = String(materialId || "").trim();
   let idx = id ? materials.findIndex((m2) => String(m2.id) === id) : -1;
@@ -91908,7 +92031,7 @@ function applyMaterialStockAndPrice(materialId, qtyDelta, unitPrice, opts = {}) 
   }
   const now = (/* @__PURE__ */ new Date()).toISOString();
   const delta = Math.round(Number(qtyDelta) || 0);
-  const price = Math.max(0, Math.round(Number(unitPrice) || 0));
+  const price = Math.max(0, Math.round(Number(unitPrice2) || 0));
   if (idx < 0) {
     if (!nameHint && !id) {
       throw new Error("material_identity_required");
@@ -92042,19 +92165,19 @@ async function createMaterialImport(req, res) {
         throw new Error(`line_${i2}_notes_required`);
       }
       const qty = Math.max(1, Math.round(Number(line.quantity) || 0));
-      const unitPrice = Math.max(0, Math.round(Number(line.unitPrice ?? line.newImportPrice) || 0));
-      if (unitPrice <= 0) {
+      const unitPrice2 = Math.max(0, Math.round(Number(line.unitPrice ?? line.newImportPrice) || 0));
+      if (unitPrice2 <= 0) {
         throw new Error(`line_${i2}_unit_price_required`);
       }
       const lineImportCost = i2 === 0 ? importCost : 0;
-      const lineGoods = qty * unitPrice;
+      const lineGoods = qty * unitPrice2;
       const lineTotal = lineGoods + lineImportCost;
       const linePaid = Math.min(remainingPaid, lineTotal);
       remainingPaid -= linePaid;
       let status = "unpaid";
       if (linePaid === lineTotal) status = "fully_paid";
       else if (linePaid > 0) status = "partial";
-      const applied = applyMaterialStockAndPrice(materialId, qty, unitPrice, {
+      const applied = applyMaterialStockAndPrice(materialId, qty, unitPrice2, {
         nameHint: materialName,
         notes
       });
@@ -92075,8 +92198,8 @@ async function createMaterialImport(req, res) {
         materialName: String(applied.material.name || materialName),
         quantity: qty,
         oldImportPrice: applied.oldImportPrice,
-        newImportPrice: unitPrice,
-        unitPrice,
+        newImportPrice: unitPrice2,
+        unitPrice: unitPrice2,
         importCost: lineImportCost,
         totalAmount: Math.max(0, Math.round(Number(line.totalAmount) || lineTotal)),
         paidAmount: linePaid,

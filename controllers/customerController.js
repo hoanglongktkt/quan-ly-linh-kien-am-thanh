@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
-import { updateCustomerAddressByKey } from "../services/addressBook.js";
+import { deleteCustomerByKey, updateCustomerAddressByKey } from "../services/addressBook.js";
 
-const ORDER_LIMIT = 40;
+const ORDER_LIMIT = 50;
 const PHONE_FIELDS = [
   "customerPhone",
   "data.customerPhone",
@@ -36,27 +36,43 @@ function orderDateIso(doc) {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
-function productSummary(data) {
-  const items =
+function unitPrice(row) {
+  const n = Number(
+    row?.model_discounted_price ?? row?.item_price ?? row?.price ?? row?.model_original_price ?? 0,
+  );
+  return Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0;
+}
+
+function mapOrderItems(data) {
+  const raw =
     Array.isArray(data?.items) && data.items.length
       ? data.items
       : Array.isArray(data?.item_list)
         ? data.item_list
         : [];
-  const names = [];
-  const cap = Math.min(items.length, 8);
+  const items = [];
+  const cap = Math.min(raw.length, 40);
   for (let i = 0; i < cap; i += 1) {
-    const row = items[i] || {};
+    const row = raw[i] || {};
     const name = String(
       row.item_name || row.productTitle || row.name || row.model_name || "Sản phẩm",
     ).trim();
-    const qty = Math.max(
+    const quantity = Math.max(
       1,
       Math.round(Number(row.model_quantity_purchased ?? row.quantity ?? row.qty ?? 1) || 1),
     );
-    names.push(qty > 1 ? `${name} x${qty}` : name);
+    const price = unitPrice(row);
+    items.push({
+      name: name || "Sản phẩm",
+      quantity,
+      price,
+      lineTotal: price * quantity,
+    });
   }
-  return names.join(", ") || "—";
+  if (!items.length) {
+    items.push({ name: "—", quantity: 1, price: 0, lineTotal: 0 });
+  }
+  return items;
 }
 
 function orderTotal(doc) {
@@ -72,8 +88,10 @@ export async function updateCustomerAddress(req, res) {
   try {
     const entry = await updateCustomerAddressByKey({
       id: req.params?.id,
-      phone: req.body?.phone,
+      phone: req.body?.currentPhone || req.body?.phone,
       address: req.body?.address,
+      name: req.body?.name,
+      nextPhone: req.body?.phone,
     });
     return res.json({ success: true, entry, message: "Đã cập nhật địa chỉ" });
   } catch (error) {
@@ -141,9 +159,17 @@ export async function getCustomerOrderHistory(req, res) {
             "data.items.model_name": 1,
             "data.items.quantity": 1,
             "data.items.qty": 1,
+            "data.items.model_quantity_purchased": 1,
+            "data.items.model_discounted_price": 1,
+            "data.items.item_price": 1,
+            "data.items.price": 1,
+            "data.items.model_original_price": 1,
             "data.item_list.item_name": 1,
             "data.item_list.model_name": 1,
             "data.item_list.model_quantity_purchased": 1,
+            "data.item_list.model_discounted_price": 1,
+            "data.item_list.item_price": 1,
+            "data.item_list.model_original_price": 1,
           },
         },
       )
@@ -159,7 +185,7 @@ export async function getCustomerOrderHistory(req, res) {
       orders.push({
         orderSn: String(doc.orderSn || data.order_sn || data.orderSn || "").trim() || "—",
         date: orderDateIso(doc),
-        products: productSummary(data),
+        items: mapOrderItems(data),
         total: orderTotal(doc),
         status: String(doc.shopee_order_status || doc.status || data.status || "").trim() || "—",
       });
@@ -172,6 +198,24 @@ export async function getCustomerOrderHistory(req, res) {
       success: false,
       error: error?.message || "Không tải được lịch sử đơn hàng",
       orders: [],
+    });
+  }
+}
+
+/** DELETE /api/customers/:id — query phone để fallback */
+export async function deleteCustomer(req, res) {
+  try {
+    const result = await deleteCustomerByKey({
+      id: req.params?.id,
+      phone: req.query?.phone || req.body?.phone,
+    });
+    return res.json({ success: true, ...result, message: "Đã xóa khách hàng" });
+  } catch (error) {
+    console.error("[customers delete]", error);
+    const status = Number(error?.status) || 500;
+    return res.status(status).json({
+      success: false,
+      error: error?.message || "Xóa khách hàng thất bại",
     });
   }
 }
