@@ -212,6 +212,7 @@ import {
   healHandedOver,
   deleteGhostOrders,
   migrateTrackingFlag,
+  healCorruptedFlags,
   createManualOrder,
   resetPrintStatus,
   updatePrintStatus,
@@ -25045,6 +25046,8 @@ async function startServer() {
   app.get("/api/orders/system/migrate-tracking-flag", migrateTrackingFlag);
   // Tạm: xóa 3 đơn ảo — đăng ký TRƯỚC authMiddleware để gọi thẳng từ trình duyệt.
   app.get("/api/orders/system/delete-ghost-orders", deleteGhostOrders);
+  // Tạm: heal has_tracking=false dù đã có mã VĐ — public, trước authMiddleware.
+  app.get("/api/orders/system/heal-corrupted-flags", healCorruptedFlags);
   app.use("/api/orders", authMiddleware, ordersRoutes);
   // Endpoint tạm: quét đơn thiếu mã VĐ / kẹt unprocessed → get_order_detail
   app.post("/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrdersRoute);

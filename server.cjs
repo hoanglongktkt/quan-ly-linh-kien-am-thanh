@@ -127524,6 +127524,91 @@ async function migrateTrackingFlag(_req, res) {
     }
   }
 }
+var HEAL_CORRUPT_BATCH = 200;
+var HEAL_CORRUPT_MAX_BATCHES = 50;
+var HEAL_CORRUPT_FILTER = {
+  tracking_no: { $exists: true, $ne: "" },
+  has_tracking: false
+};
+function nestedStubIsUnpaid(nested) {
+  if (!nested || typeof nested !== "object" || Array.isArray(nested)) return false;
+  const raw = String(nested.shopee_order_status || nested.order_status || "").trim().toUpperCase();
+  return raw === "UNPAID";
+}
+async function healCorruptedFlags(_req, res) {
+  let healedCount = 0;
+  try {
+    if (!isMongoReady() || import_mongoose11.default.connection.readyState !== 1 || !import_mongoose11.default.connection.db) {
+      return res.status(503).json({
+        success: false,
+        error: "mongodb_not_ready",
+        healedCount: 0
+      });
+    }
+    const col = import_mongoose11.default.connection.db.collection("orders");
+    let batches = 0;
+    while (batches < HEAL_CORRUPT_MAX_BATCHES) {
+      const docs = await col.find(HEAL_CORRUPT_FILTER).project({
+        _id: 1,
+        tracking_no: 1,
+        status: 1,
+        "data.status": 1,
+        "data.data": 1
+      }).limit(HEAL_CORRUPT_BATCH).maxTimeMS(2e4).toArray();
+      if (!Array.isArray(docs) || docs.length === 0) break;
+      batches += 1;
+      const ops = [];
+      for (const doc of docs) {
+        if (!isValidTrackingNo(doc?.tracking_no)) continue;
+        const $set = {
+          has_tracking: true,
+          "data.has_tracking": true
+        };
+        const rootStatus = String(doc?.status || "").trim();
+        const dataStatus = String(doc?.data?.status || "").trim();
+        if (rootStatus === "unprocessed") {
+          $set.status = "processed";
+          $set["data.status"] = "processed";
+        } else if (dataStatus === "unprocessed") {
+          $set["data.status"] = "processed";
+        }
+        const update = { $set };
+        if (nestedStubIsUnpaid(doc?.data?.data)) {
+          update.$unset = { "data.data": "" };
+        }
+        ops.push({
+          updateOne: {
+            filter: { _id: doc._id, has_tracking: false },
+            update
+          }
+        });
+      }
+      if (ops.length === 0) break;
+      const result = await col.bulkWrite(ops, { ordered: false });
+      const modified = Number(result?.modifiedCount ?? result?.nModified ?? 0);
+      healedCount += modified;
+      if (docs.length < HEAL_CORRUPT_BATCH) break;
+      if (modified === 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    }
+    try {
+      invalidateTabCountCache();
+      invalidateOrdersRefreshCache();
+    } catch {
+    }
+    console.log(`[Orders] heal-corrupted-flags DONE healedCount=${healedCount} batches=${batches}`);
+    return res.json({ success: true, healedCount });
+  } catch (err) {
+    console.error("[Orders] heal-corrupted-flags:", err?.message || err);
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        error: err?.message || String(err),
+        healedCount
+      });
+    }
+  }
+}
 async function healTrackingCancelled(req, res) {
   try {
     const src = { ...req.query || {}, ...req.body || {} };
@@ -152942,6 +153027,7 @@ async function startServer() {
   });
   app.get("/api/orders/system/migrate-tracking-flag", migrateTrackingFlag);
   app.get("/api/orders/system/delete-ghost-orders", deleteGhostOrders);
+  app.get("/api/orders/system/heal-corrupted-flags", healCorruptedFlags);
   app.use("/api/orders", authMiddleware, ordersRoutes);
   app.post("/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrders);
   app.post("/api/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrders);

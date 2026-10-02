@@ -2150,6 +2150,114 @@ export async function migrateTrackingFlag(_req, res) {
   }
 }
 
+const HEAL_CORRUPT_BATCH = 200;
+const HEAL_CORRUPT_MAX_BATCHES = 50;
+const HEAL_CORRUPT_FILTER = {
+  tracking_no: { $exists: true, $ne: "" },
+  has_tracking: false,
+};
+
+function nestedStubIsUnpaid(nested) {
+  if (!nested || typeof nested !== "object" || Array.isArray(nested)) return false;
+  const raw = String(nested.shopee_order_status || nested.order_status || "")
+    .trim()
+    .toUpperCase();
+  return raw === "UNPAID";
+}
+
+/**
+ * GET /api/orders/system/heal-corrupted-flags
+ * Public — đăng ký trước authMiddleware.
+ * Đơn có tracking_no nhưng has_tracking=false → bật cờ, nâng unprocessed, gỡ stub UNPAID.
+ */
+export async function healCorruptedFlags(_req, res) {
+  let healedCount = 0;
+  try {
+    if (!isMongoReady() || mongoose.connection.readyState !== 1 || !mongoose.connection.db) {
+      return res.status(503).json({
+        success: false,
+        error: "mongodb_not_ready",
+        healedCount: 0,
+      });
+    }
+    const col = mongoose.connection.db.collection("orders");
+    let batches = 0;
+
+    while (batches < HEAL_CORRUPT_MAX_BATCHES) {
+      const docs = await col
+        .find(HEAL_CORRUPT_FILTER)
+        .project({
+          _id: 1,
+          tracking_no: 1,
+          status: 1,
+          "data.status": 1,
+          "data.data": 1,
+        })
+        .limit(HEAL_CORRUPT_BATCH)
+        .maxTimeMS(20_000)
+        .toArray();
+
+      if (!Array.isArray(docs) || docs.length === 0) break;
+
+      batches += 1;
+      const ops = [];
+      for (const doc of docs) {
+        if (!isValidTrackingNo(doc?.tracking_no)) continue;
+        const $set = {
+          has_tracking: true,
+          "data.has_tracking": true,
+        };
+        const rootStatus = String(doc?.status || "").trim();
+        const dataStatus = String(doc?.data?.status || "").trim();
+        if (rootStatus === "unprocessed") {
+          $set.status = "processed";
+          $set["data.status"] = "processed";
+        } else if (dataStatus === "unprocessed") {
+          $set["data.status"] = "processed";
+        }
+        const update = { $set };
+        if (nestedStubIsUnpaid(doc?.data?.data)) {
+          update.$unset = { "data.data": "" };
+        }
+        ops.push({
+          updateOne: {
+            filter: { _id: doc._id, has_tracking: false },
+            update,
+          },
+        });
+      }
+
+      if (ops.length === 0) break;
+
+      const result = await col.bulkWrite(ops, { ordered: false });
+      const modified = Number(result?.modifiedCount ?? result?.nModified ?? 0);
+      healedCount += modified;
+
+      if (docs.length < HEAL_CORRUPT_BATCH) break;
+      if (modified === 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    }
+
+    try {
+      invalidateTabCountCache();
+      invalidateOrdersRefreshCache();
+    } catch {
+      /* cache không chặn kết quả heal */
+    }
+    console.log(`[Orders] heal-corrupted-flags DONE healedCount=${healedCount} batches=${batches}`);
+    return res.json({ success: true, healedCount });
+  } catch (err) {
+    console.error("[Orders] heal-corrupted-flags:", err?.message || err);
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        error: err?.message || String(err),
+        healedCount,
+      });
+    }
+  }
+}
+
 /**
  * GET|POST /api/orders/heal-tracking-cancelled
  * ACK 200 ngay — deep heal chạy nền (tránh cPanel/proxy timeout ~120s).
