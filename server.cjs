@@ -89217,6 +89217,10 @@ function warnJwtSecretOnStartup() {
 
 // middlewares/auth.js
 function authMiddleware(req, res, next) {
+  const pathOnly = String(req.originalUrl || req.url || "").split("?")[0].replace(/\/+$/, "");
+  if (pathOnly === "/api/orders/system/heal-corrupted-flags") {
+    return next();
+  }
   const authHeader = req.headers.authorization;
   let token = "";
   if (authHeader && authHeader.startsWith("Bearer ")) {
@@ -132127,6 +132131,7 @@ async function parseOrderAddress(req, res) {
 // routes/ordersRoutes.js
 var router19 = (0, import_express20.Router)();
 var h5 = asyncHandler;
+router19.get("/system/heal-corrupted-flags", h5(healCorruptedFlags));
 router19.get("/system/delete-ghost-orders", h5(deleteGhostOrders));
 router19.get("/refresh", h5(refreshOrders));
 router19.get("/query", h5(queryOrders));
@@ -150936,6 +150941,9 @@ async function startServer() {
     console.error("[Labels] ensureLabelsDir l\xFAc boot Express:", err);
   }
   app.use(dbReady_default);
+  app.get("/api/orders/system/heal-corrupted-flags", healCorruptedFlags);
+  app.get("/api/orders/system/migrate-tracking-flag", migrateTrackingFlag);
+  app.get("/api/orders/system/delete-ghost-orders", deleteGhostOrders);
   initHealthController({
     ensureDataDirs,
     isDbReady: isMongoReady,
@@ -153025,9 +153033,6 @@ async function startServer() {
     res.setHeader("Connection", "close");
     return res.status(204).end();
   });
-  app.get("/api/orders/system/migrate-tracking-flag", migrateTrackingFlag);
-  app.get("/api/orders/system/delete-ghost-orders", deleteGhostOrders);
-  app.get("/api/orders/system/heal-corrupted-flags", healCorruptedFlags);
   app.use("/api/orders", authMiddleware, ordersRoutes);
   app.post("/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrders);
   app.post("/api/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrders);

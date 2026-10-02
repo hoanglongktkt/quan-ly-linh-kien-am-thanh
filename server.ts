@@ -22572,6 +22572,11 @@ async function startServer() {
   /** DB chưa sẵn sàng → trả 503 NGAY (sync, không await/chờ). Auth/health/oauth/ship-order vẫn chạy. */
   app.use(dbReadyMiddleware);
 
+  // Public — đăng ký TRƯỚC mọi app.use("/api/orders", authMiddleware, ...).
+  app.get("/api/orders/system/heal-corrupted-flags", healCorruptedFlags);
+  app.get("/api/orders/system/migrate-tracking-flag", migrateTrackingFlag);
+  app.get("/api/orders/system/delete-ghost-orders", deleteGhostOrders);
+
   /** Phase 1 MVC — Auth / Health / Config / Debug (inject Shopee deps cho /api/health). */
   initHealthController({
     ensureDataDirs,
@@ -25042,12 +25047,6 @@ async function startServer() {
     res.setHeader("Connection", "close");
     return res.status(204).end();
   });
-  // Migrate một lần — mở trên browser, không JWT (giống /api/orders/live).
-  app.get("/api/orders/system/migrate-tracking-flag", migrateTrackingFlag);
-  // Tạm: xóa 3 đơn ảo — đăng ký TRƯỚC authMiddleware để gọi thẳng từ trình duyệt.
-  app.get("/api/orders/system/delete-ghost-orders", deleteGhostOrders);
-  // Tạm: heal has_tracking=false dù đã có mã VĐ — public, trước authMiddleware.
-  app.get("/api/orders/system/heal-corrupted-flags", healCorruptedFlags);
   app.use("/api/orders", authMiddleware, ordersRoutes);
   // Endpoint tạm: quét đơn thiếu mã VĐ / kẹt unprocessed → get_order_detail
   app.post("/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrdersRoute);

@@ -17,6 +17,7 @@ import {
   scannerSync,
   cleanupMockOrders,
   deleteGhostOrders,
+  healCorruptedFlags,
   hydrateTracking,
   enrichTracking,
   healTrackingCancelled,
@@ -60,6 +61,9 @@ import { asyncHandler } from "../middlewares/errorHandler.js";
 const router = Router();
 const h = asyncHandler;
 
+// PHẢI đứng trước mọi route khác. Bản public thật được mount ở server.ts
+// TRƯỚC authMiddleware — file này chỉ để router không 404 nếu request lọt tới.
+router.get("/system/heal-corrupted-flags", h(healCorruptedFlags));
 // Static paths trước :id / :orderSn
 /** Tạm: xóa 3 đơn ảo. Bản public nằm trước auth ở server.ts. */
 router.get("/system/delete-ghost-orders", h(deleteGhostOrders));
