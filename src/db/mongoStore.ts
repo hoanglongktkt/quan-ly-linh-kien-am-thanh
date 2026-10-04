@@ -6613,6 +6613,19 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
         }
       : {}),
   };
+  const numericOrderId = [
+    d?.order_id,
+    d?.shopee_order_id,
+    data.order_id,
+    data.shopee_order_id,
+    data.orderId,
+  ]
+    .map((value) => String(value ?? "").trim().replace(/^#+/, ""))
+    .find((value) => /^\d{6,20}$/.test(value));
+  if (numericOrderId) {
+    hydrated.order_id = numericOrderId;
+    hydrated.shopee_order_id = numericOrderId;
+  }
   if (isUnshippedShopeeCancel(hydrated)) {
     delete hydrated.return_sn;
     hydrated.is_return = false;
@@ -8249,6 +8262,11 @@ const ORDER_LIST_UI_PROJECTION: Record<string, 1> = {
   "data.status": 1,
   "data.orderSn": 1,
   "data.order_sn": 1,
+  order_id: 1,
+  shopee_order_id: 1,
+  "data.order_id": 1,
+  "data.shopee_order_id": 1,
+  "data.orderId": 1,
   "data.channel": 1,
   "data.shopId": 1,
   "data.shop_id": 1,

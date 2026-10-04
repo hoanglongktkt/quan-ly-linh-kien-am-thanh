@@ -101,6 +101,28 @@ function rawShopeeOrderSn(order: Order): string {
     .trim();
 }
 
+/** ID số Seller Center. Bỏ order_sn dạng chữ và id nội bộ `shopee-...`. */
+function numericShopeeOrderId(order: Order): string {
+  const nested =
+    order.data && typeof order.data === 'object'
+      ? (order.data as { order_id?: unknown; shopee_order_id?: unknown })
+      : null;
+  const raw = String(
+    order.order_id ?? order.shopee_order_id ?? nested?.order_id ?? nested?.shopee_order_id ?? '',
+  )
+    .trim()
+    .replace(/^#+/, '');
+  return /^\d{6,20}$/.test(raw) ? raw : '';
+}
+
+function shopeeSellerOrderHref(order: Order): string | null {
+  const orderId = numericShopeeOrderId(order);
+  if (orderId) return `https://banhang.shopee.vn/portal/sale/order/${orderId}`;
+  const sn = rawShopeeOrderSn(order);
+  if (!sn) return null;
+  return `https://banhang.shopee.vn/portal/sale/order?search=search%3D${encodeURIComponent(sn)}`;
+}
+
 function OrderSnLabel({
   order,
   searchQuery,
@@ -111,17 +133,18 @@ function OrderSnLabel({
   className: string;
 }) {
   const sn = rawShopeeOrderSn(order);
+  const href = shopeeSellerOrderHref(order);
   const label = (
     <>
       #<HighlightedText text={order.orderSn} highlight={searchQuery} />
     </>
   );
-  if (order.channel !== 'shopee' || !sn) {
+  if (order.channel !== 'shopee' || !sn || !href) {
     return <span className={className}>{label}</span>;
   }
   return (
     <a
-      href={`https://banhang.shopee.vn/portal/sale/order/${sn}`}
+      href={href}
       target="_blank"
       rel="noopener noreferrer"
       title="Mở chi tiết đơn trên Shopee Kênh Người Bán"

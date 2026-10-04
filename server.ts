@@ -17202,6 +17202,15 @@ async function ensureShopeeTrackingForBatch(
 }
 
 // Normalize one item from get_order_detail's `order_list` into this project's Order shape.
+/** ID số Seller Center (vd. 244743134206239) — khác order_sn. */
+function pickNumericShopeeOrderId(...values: unknown[]): string {
+  for (const value of values) {
+    const raw = String(value ?? "").trim().replace(/^#+/, "");
+    if (/^\d{6,20}$/.test(raw)) return raw;
+  }
+  return "";
+}
+
 function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any): any | null {
   if (!item || !item.order_sn) {
     console.warn("[Shopee Sync] Bỏ qua order detail thiếu order_sn:", item);
@@ -17325,6 +17334,16 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
     if (/DROPOFF|DROP_OFF|DROP-OFF|SELF_DELIVER|SELF_SEND/.test(logisticsBlob)) {
       order.fulfillment_type = "dropoff";
       order.ship_method = "dropoff";
+    }
+    const numericOrderId = pickNumericShopeeOrderId(
+      item?.order_id,
+      item?.shopee_order_id,
+      item?.orderId,
+      pkg?.order_id,
+    );
+    if (numericOrderId) {
+      order.order_id = numericOrderId;
+      order.shopee_order_id = numericOrderId;
     }
     repairMisassignedTracking(order);
     // Heal ĐVVC khi API thiếu shipping_carrier nhưng có mã SPXVN/GHN.
@@ -21800,6 +21819,17 @@ function normalizeShopeeOrder(payload: any): any | null {
     applyShopeePackageListTracking(order, data);
   }
   if (webhookTracking) applyShopeeTrackingCode(order, webhookTracking);
+  const numericOrderId = pickNumericShopeeOrderId(
+    data.order_id,
+    data.shopee_order_id,
+    data.orderId,
+    payload?.order_id,
+    payload?.shopee_order_id,
+  );
+  if (numericOrderId) {
+    order.order_id = numericOrderId;
+    order.shopee_order_id = numericOrderId;
+  }
   repairMisassignedTracking(order);
   return order;
 }

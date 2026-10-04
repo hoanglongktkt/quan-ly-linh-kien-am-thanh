@@ -84808,6 +84808,17 @@ function hydrateOrderFromMongoDoc(d) {
       internal_status: localStored
     } : {}
   };
+  const numericOrderId = [
+    d?.order_id,
+    d?.shopee_order_id,
+    data.order_id,
+    data.shopee_order_id,
+    data.orderId
+  ].map((value) => String(value ?? "").trim().replace(/^#+/, "")).find((value) => /^\d{6,20}$/.test(value));
+  if (numericOrderId) {
+    hydrated.order_id = numericOrderId;
+    hydrated.shopee_order_id = numericOrderId;
+  }
   if (isUnshippedShopeeCancel(hydrated)) {
     delete hydrated.return_sn;
     hydrated.is_return = false;
@@ -86064,6 +86075,11 @@ var ORDER_LIST_UI_PROJECTION = {
   "data.status": 1,
   "data.orderSn": 1,
   "data.order_sn": 1,
+  order_id: 1,
+  shopee_order_id: 1,
+  "data.order_id": 1,
+  "data.shopee_order_id": 1,
+  "data.orderId": 1,
   "data.channel": 1,
   "data.shopId": 1,
   "data.shop_id": 1,
@@ -147238,6 +147254,13 @@ async function ensureShopeeTrackingForBatch(apiShopId, accessToken, batch) {
   }
   return fetched;
 }
+function pickNumericShopeeOrderId(...values) {
+  for (const value of values) {
+    const raw = String(value ?? "").trim().replace(/^#+/, "");
+    if (/^\d{6,20}$/.test(raw)) return raw;
+  }
+  return "";
+}
 function normalizeShopeeOrderDetail(shopId, shopName, item) {
   if (!item || !item.order_sn) {
     console.warn("[Shopee Sync] B\u1ECF qua order detail thi\u1EBFu order_sn:", item);
@@ -147340,6 +147363,16 @@ function normalizeShopeeOrderDetail(shopId, shopName, item) {
     if (/DROPOFF|DROP_OFF|DROP-OFF|SELF_DELIVER|SELF_SEND/.test(logisticsBlob)) {
       order.fulfillment_type = "dropoff";
       order.ship_method = "dropoff";
+    }
+    const numericOrderId = pickNumericShopeeOrderId(
+      item?.order_id,
+      item?.shopee_order_id,
+      item?.orderId,
+      pkg?.order_id
+    );
+    if (numericOrderId) {
+      order.order_id = numericOrderId;
+      order.shopee_order_id = numericOrderId;
     }
     repairMisassignedTracking(order);
     if (!order.shipping_carrier) {
@@ -150334,6 +150367,17 @@ function normalizeShopeeOrder(payload) {
     applyShopeePackageListTracking(order, data);
   }
   if (webhookTracking) applyShopeeTrackingCode(order, webhookTracking);
+  const numericOrderId = pickNumericShopeeOrderId(
+    data.order_id,
+    data.shopee_order_id,
+    data.orderId,
+    payload?.order_id,
+    payload?.shopee_order_id
+  );
+  if (numericOrderId) {
+    order.order_id = numericOrderId;
+    order.shopee_order_id = numericOrderId;
+  }
   repairMisassignedTracking(order);
   return order;
 }
