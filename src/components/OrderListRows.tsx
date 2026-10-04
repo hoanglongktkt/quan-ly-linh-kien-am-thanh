@@ -101,26 +101,30 @@ function rawShopeeOrderSn(order: Order): string {
     .trim();
 }
 
-/** ID số Seller Center. Bỏ order_sn dạng chữ và id nội bộ `shopee-...`. */
-function numericShopeeOrderId(order: Order): string {
-  const nested =
-    order.data && typeof order.data === 'object'
-      ? (order.data as { order_id?: unknown; shopee_order_id?: unknown })
-      : null;
-  const raw = String(
-    order.order_id ?? order.shopee_order_id ?? nested?.order_id ?? nested?.shopee_order_id ?? '',
-  )
-    .trim()
-    .replace(/^#+/, '');
-  return /^\d{6,20}$/.test(raw) ? raw : '';
+const SHOPEE_ORDER_PORTAL = 'https://banhang.shopee.vn/portal/sale/order';
+
+function copyTextFallback(text: string) {
+  const el = document.createElement('textarea');
+  el.value = text;
+  el.setAttribute('readonly', '');
+  el.style.position = 'fixed';
+  el.style.left = '-9999px';
+  document.body.appendChild(el);
+  el.select();
+  try {
+    document.execCommand('copy');
+  } catch {
+    /* Trang http có thể chặn clipboard — link vẫn mở. */
+  }
+  document.body.removeChild(el);
 }
 
-function shopeeSellerOrderHref(order: Order): string | null {
-  const orderId = numericShopeeOrderId(order);
-  if (orderId) return `https://banhang.shopee.vn/portal/sale/order/${orderId}`;
-  const sn = rawShopeeOrderSn(order);
-  if (!sn) return null;
-  return `https://banhang.shopee.vn/portal/sale/order?search=search%3D${encodeURIComponent(sn)}`;
+function copyOrderSn(sn: string) {
+  if (navigator.clipboard?.writeText) {
+    void navigator.clipboard.writeText(sn).catch(() => copyTextFallback(sn));
+    return;
+  }
+  copyTextFallback(sn);
 }
 
 function OrderSnLabel({
@@ -133,22 +137,24 @@ function OrderSnLabel({
   className: string;
 }) {
   const sn = rawShopeeOrderSn(order);
-  const href = shopeeSellerOrderHref(order);
   const label = (
     <>
       #<HighlightedText text={order.orderSn} highlight={searchQuery} />
     </>
   );
-  if (order.channel !== 'shopee' || !sn || !href) {
+  if (order.channel !== 'shopee' || !sn) {
     return <span className={className}>{label}</span>;
   }
   return (
     <a
-      href={href}
+      href={SHOPEE_ORDER_PORTAL}
       target="_blank"
       rel="noopener noreferrer"
-      title="Mở chi tiết đơn trên Shopee Kênh Người Bán"
-      onClick={(e) => e.stopPropagation()}
+      title="Copy mã đơn và mở trang quản lý đơn Shopee"
+      onClick={(e) => {
+        e.stopPropagation();
+        copyOrderSn(sn);
+      }}
       className={`${className} cursor-pointer hover:text-blue-600 hover:underline transition-colors`}
     >
       {label}
