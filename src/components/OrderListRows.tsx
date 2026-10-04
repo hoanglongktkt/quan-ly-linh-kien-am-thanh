@@ -92,6 +92,47 @@ type SharedRowProps = {
   onPatchItemSellingPrice?: (orderId: string, itemIndex: number, sellingPrice: number) => void;
 };
 
+/** Mã đơn nguyên bản cho URL Shopee (bỏ # và tiền tố shopee-). */
+function rawShopeeOrderSn(order: Order): string {
+  return String(order.orderSn || '')
+    .trim()
+    .replace(/^#+/, '')
+    .replace(/^shopee-/i, '')
+    .trim();
+}
+
+function OrderSnLabel({
+  order,
+  searchQuery,
+  className,
+}: {
+  order: Order;
+  searchQuery?: string;
+  className: string;
+}) {
+  const sn = rawShopeeOrderSn(order);
+  const label = (
+    <>
+      #<HighlightedText text={order.orderSn} highlight={searchQuery} />
+    </>
+  );
+  if (order.channel !== 'shopee' || !sn) {
+    return <span className={className}>{label}</span>;
+  }
+  return (
+    <a
+      href={`https://banhang.shopee.vn/portal/sale/order/${sn}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      title="Mở chi tiết đơn trên Shopee Kênh Người Bán"
+      onClick={(e) => e.stopPropagation()}
+      className={`${className} cursor-pointer hover:text-blue-600 hover:underline transition-colors`}
+    >
+      {label}
+    </a>
+  );
+}
+
 function orderLabelKeys(order: Order): string[] {
   const sn = String(order.orderSn || '').replace(/^shopee-/i, '').trim();
   const id = String(order.id || '').trim();
@@ -843,9 +884,11 @@ export const OrderTableRow = React.memo(function OrderTableRow({
         {activeSubTab === 'return_requests' ? (
           <>
             <td className="p-4">
-              <div className="font-mono font-extrabold text-gray-900 text-sm">
-                #<HighlightedText text={order.orderSn} highlight={searchQuery} />
-              </div>
+              <OrderSnLabel
+                order={order}
+                searchQuery={searchQuery}
+                className="block font-mono font-extrabold text-gray-900 text-sm"
+              />
               <ReturnTrackingLine order={order} searchQuery={searchQuery} />
               <div className="text-[10px] text-gray-400 mt-0.5">{shopName}</div>
             </td>
@@ -922,9 +965,11 @@ export const OrderTableRow = React.memo(function OrderTableRow({
               ) : (
                 renderMissingTrackingBadge(order)
               )}
-              <div className="text-[10px] text-gray-400 font-mono">
-                #<HighlightedText text={order.orderSn} highlight={searchQuery} />
-              </div>
+              <OrderSnLabel
+                order={order}
+                searchQuery={searchQuery}
+                className="block text-[10px] text-gray-400 font-mono"
+              />
               <ReturnTrackingLine order={order} searchQuery={searchQuery} />
             </td>
             <td className="p-4 text-gray-500 font-medium">
@@ -1202,9 +1247,11 @@ export const OrderCardRow = React.memo(function OrderCardRow({
             ) : (
               <p className="mt-0.5">{renderMissingTrackingBadge(order)}</p>
             )}
-            <p className="text-[10px] text-gray-400 font-mono mt-0.5">
-              #<HighlightedText text={order.orderSn} highlight={searchQuery} />
-            </p>
+            <OrderSnLabel
+              order={order}
+              searchQuery={searchQuery}
+              className="block text-[10px] text-gray-400 font-mono mt-0.5"
+            />
             <ReturnTrackingLine order={order} searchQuery={searchQuery} />
             <p className="text-[11px] text-gray-500 font-medium mt-0.5">
               {new Date(order.date).toLocaleDateString('vi-VN')}
