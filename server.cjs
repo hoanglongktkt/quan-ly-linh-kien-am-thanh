@@ -82082,6 +82082,25 @@ var LOCAL_STATUS_NOT_BELOW_PROCESSED = /* @__PURE__ */ new Set([
   "return_pending",
   "return_received"
 ]);
+var FORWARD_PROGRESS_RAW = /* @__PURE__ */ new Set([
+  "SHIPPED",
+  "TO_CONFIRM_RECEIVE",
+  "COMPLETED",
+  "CANCELLED",
+  "IN_CANCEL",
+  "TO_RETURN",
+  "RETURN"
+]);
+function isForwardShopeeProgression(storedRaw, incomingRaw) {
+  const incoming = String(incomingRaw || "").trim().toUpperCase();
+  const stored = String(storedRaw || "").trim().toUpperCase();
+  if (!incoming || !FORWARD_PROGRESS_RAW.has(incoming)) return false;
+  if (incoming === stored) return false;
+  if (incoming === "SHIPPED" || incoming === "TO_CONFIRM_RECEIVE") {
+    return stored !== "COMPLETED" && stored !== "CANCELLED" && stored !== "IN_CANCEL" && stored !== "TO_RETURN" && stored !== "RETURN";
+  }
+  return true;
+}
 function trackingPayloadIntent(order) {
   if (!order) return "absent";
   let explicitEmpty = false;
@@ -82422,8 +82441,10 @@ async function bulkUpsertOrdersToStore(orders) {
       $set["data.fulfillment_type"] = order.fulfillment_type;
     }
     if (order.ship_method != null) $set["data.ship_method"] = order.ship_method;
-    if (order.logistics_status != null) {
-      $set["data.logistics_status"] = order.logistics_status;
+    if (order.logistics_status != null && String(order.logistics_status).trim()) {
+      const logistics = String(order.logistics_status).trim();
+      $set.logistics_status = logistics;
+      $set["data.logistics_status"] = logistics;
     }
     if (Number(order.return_create_time) > 0) {
       $set.return_create_time = Number(order.return_create_time);
@@ -82473,6 +82494,29 @@ async function bulkUpsertOrdersToStore(orders) {
       $set[`data.${key}`] = value;
     }
     stripWarehouseProtectedKeysFromSet($set);
+    if (forceShipping) {
+      $set.status = "shipping";
+      $set["data.status"] = "shipping";
+      $set.shopee_order_status = rawStatus;
+      $set["data.shopee_order_status"] = rawStatus;
+    } else if (forceCompleted) {
+      $set.status = "completed";
+      $set["data.status"] = "completed";
+      $set.shopee_order_status = "COMPLETED";
+      $set["data.shopee_order_status"] = "COMPLETED";
+    } else if (forceCancelled) {
+      $set.status = "cancelled";
+      $set["data.status"] = "cancelled";
+      $set.shopee_order_status = rawStatus;
+      $set["data.shopee_order_status"] = rawStatus;
+    } else if (forceToReturn) {
+      const keptReturn = String($set.status || order.status || "");
+      const nextReturn = keptReturn === "return_received" ? "return_received" : "return_pending";
+      $set.status = nextReturn;
+      $set["data.status"] = nextReturn;
+      $set.shopee_order_status = "TO_RETURN";
+      $set["data.shopee_order_status"] = "TO_RETURN";
+    }
     if (channelStr === "woocommerce" || channelStr === "manual") {
       const cName = String(
         order.customerName || order.customer_name || ""
@@ -82678,13 +82722,27 @@ async function bulkUpsertOrdersToStore(orders) {
           if (!current || !item.updateAt) return true;
           const currentAt = current.last_shopee_update_at ? new Date(current.last_shopee_update_at) : null;
           const STALE_SKEW_MS = 15 * 60 * 1e3;
-          if (currentAt && !Number.isNaN(currentAt.getTime()) && currentAt.getTime() - item.updateAt.getTime() > STALE_SKEW_MS) {
+          const $setPreview = item.op?.updateOne?.update?.$set;
+          const incomingRaw = String(
+            $setPreview?.shopee_order_status || $setPreview?.["data.shopee_order_status"] || ""
+          ).toUpperCase();
+          const storedRaw = String(
+            current.shopee_order_status || current.data?.shopee_order_status || ""
+          ).toUpperCase();
+          const forward = isForwardShopeeProgression(storedRaw, incomingRaw);
+          const stale = Boolean(currentAt) && !Number.isNaN(currentAt.getTime()) && currentAt.getTime() - item.updateAt.getTime() > STALE_SKEW_MS;
+          if (stale && !forward) {
             console.warn(
               `[MongoDB] STALE Shopee snapshot ignored order_sn=${item.orderSn || item.id} incoming=${item.updateAt.toISOString()} stored=${currentAt.toISOString()}`
             );
             return false;
           }
-          if (current) {
+          if (stale && forward) {
+            console.log(
+              `[MongoDB] FORWARD bypass watermark order_sn=${item.orderSn || item.id} ${storedRaw || "(empty)"}\u2192${incomingRaw}`
+            );
+          }
+          if (current && !forward) {
             const identityFilter = item.op.updateOne.filter;
             const watermarkCeil = new Date(item.updateAt.getTime() + STALE_SKEW_MS);
             item.op.updateOne.filter = {
@@ -82744,7 +82802,11 @@ async function bulkUpsertOrdersToStore(orders) {
             }
             const incomingStatus = String($set.status || "").trim();
             const existingStatus = String(current.status || current.data?.status || "").trim();
-            if (incomingStatus === "unprocessed" && LOCAL_STATUS_NOT_BELOW_PROCESSED.has(existingStatus) && (dbHasTracking || documentIsPrepared(current) || item.trackingIntent === "present")) {
+            const incomingRawForGuard = String(
+              $set.shopee_order_status || $set["data.shopee_order_status"] || ""
+            ).toUpperCase();
+            const forwardProgress = FORWARD_PROGRESS_RAW.has(incomingRawForGuard);
+            if (!forwardProgress && incomingStatus === "unprocessed" && LOCAL_STATUS_NOT_BELOW_PROCESSED.has(existingStatus) && (dbHasTracking || documentIsPrepared(current) || item.trackingIntent === "present")) {
               delete $set.status;
               delete $set["data.status"];
               console.warn(
@@ -82812,7 +82874,7 @@ async function bulkUpsertOrdersToStore(orders) {
             const incomingRaw = String(
               $set.shopee_order_status || $set["data.shopee_order_status"] || ""
             ).toUpperCase();
-            const leftPickup = incomingRaw === "SHIPPED" || incomingRaw === "TO_CONFIRM_RECEIVE" || incomingRaw === "COMPLETED" || incomingRaw === "CANCELLED" || incomingRaw === "IN_CANCEL" || incomingRaw === "TO_RETURN";
+            const leftPickup = incomingRaw === "SHIPPED" || incomingRaw === "TO_CONFIRM_RECEIVE" || incomingRaw === "COMPLETED" || incomingRaw === "CANCELLED" || incomingRaw === "IN_CANCEL" || incomingRaw === "TO_RETURN" || incomingRaw === "RETURN";
             if (leftPickup && existingLocal === "HANDED_OVER") {
               $set["data.local_status"] = "NONE";
               $set["data.localStatus"] = "NONE";
@@ -85617,11 +85679,13 @@ var ORDER_TAB_IS_SHIPPED = {
     {
       $or: [
         { shopee_order_status: { $in: [...ORDER_TAB_SHIPPED_RAW] } },
-        {
-          status: "shipping",
-          shopee_order_status: { $in: [null, ""] }
-        }
+        { status: "shipping" }
       ]
+    },
+    {
+      shopee_order_status: {
+        $nin: ["COMPLETED", "CANCELLED", "IN_CANCEL", "TO_RETURN", "RETURN"]
+      }
     },
     { is_rts: { $ne: true } },
     { shopee_cancel_return_kind: { $ne: "failed_delivery" } },
@@ -85671,6 +85735,8 @@ function orderTabFilter(tab) {
     case "dang-giao":
       return ORDER_TAB_IS_SHIPPED;
     case "completed":
+    case "da-giao":
+    case "delivered":
       return { $or: [{ status: "completed" }, { shopee_order_status: "COMPLETED" }] };
     case "cancelled":
       return { $or: [{ status: "cancelled" }, { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL"] } }] };
@@ -85684,6 +85750,20 @@ function orderTabFilter(tab) {
         $and: [
           ORDER_TAB_IS_TO_SHIP,
           ORDER_TAB_NOT_HANDED_OVER,
+          { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
+          {
+            shopee_order_status: {
+              $nin: [
+                "SHIPPED",
+                "TO_CONFIRM_RECEIVE",
+                "COMPLETED",
+                "CANCELLED",
+                "IN_CANCEL",
+                "TO_RETURN",
+                "RETURN"
+              ]
+            }
+          },
           {
             $or: [
               { shopee_order_status: "PROCESSED" },
@@ -85933,7 +86013,28 @@ function tabIndexFilter(tab, kind) {
     case "shipping":
     case "shipped":
     case "dang-giao":
-      return { shopee_order_status: { $in: [...FACET_SHIPPED] } };
+      return {
+        $and: [
+          {
+            $or: [
+              { shopee_order_status: { $in: [...FACET_SHIPPED] } },
+              { status: "shipping" }
+            ]
+          },
+          {
+            shopee_order_status: {
+              $nin: ["COMPLETED", "CANCELLED", "IN_CANCEL", "TO_RETURN", "RETURN"]
+            }
+          },
+          { status: { $nin: ["completed", "cancelled", "return_pending", "return_received"] } }
+        ]
+      };
+    case "completed":
+    case "da-giao":
+    case "delivered":
+      return {
+        $or: [{ shopee_order_status: "COMPLETED" }, { status: "completed" }]
+      };
     case "unprocessed":
     case "chua-xu-ly":
     case "ready_to_ship":
@@ -85952,13 +86053,35 @@ function tabIndexFilter(tab, kind) {
     case "da-xu-ly":
     case "processed_pickup":
       return {
-        shopee_order_status: { $in: [...FACET_TO_SHIP] },
-        is_handed_over: { $ne: true },
-        $or: [
-          { shopee_order_status: "PROCESSED" },
-          { tracking_no: { $exists: true, $nin: [null, "", "0"] } },
-          { isPrepared: true },
-          { status: "processed" }
+        $and: [
+          { shopee_order_status: { $in: [...FACET_TO_SHIP] } },
+          {
+            shopee_order_status: {
+              $nin: [
+                "SHIPPED",
+                "TO_CONFIRM_RECEIVE",
+                "COMPLETED",
+                "CANCELLED",
+                "IN_CANCEL",
+                "TO_RETURN",
+                "RETURN"
+              ]
+            }
+          },
+          { is_handed_over: { $ne: true } },
+          {
+            status: {
+              $nin: ["shipping", "completed", "cancelled", "return_pending", "return_received"]
+            }
+          },
+          {
+            $or: [
+              { shopee_order_status: "PROCESSED" },
+              { tracking_no: { $exists: true, $nin: [null, "", "0"] } },
+              { isPrepared: true },
+              { status: "processed" }
+            ]
+          }
         ]
       };
     case "handed_over_carrier":
@@ -145525,7 +145648,7 @@ function shopeeLifecycleRank(rawOrLocal) {
 }
 function isShopeeTerminalRawStatus(raw) {
   const r2 = String(raw || "").toUpperCase();
-  return r2 === "SHIPPED" || r2 === "TO_CONFIRM_RECEIVE" || r2 === "COMPLETED" || r2 === "CANCELLED" || r2 === "IN_CANCEL" || r2 === "TO_RETURN";
+  return r2 === "SHIPPED" || r2 === "TO_CONFIRM_RECEIVE" || r2 === "COMPLETED" || r2 === "CANCELLED" || r2 === "IN_CANCEL" || r2 === "TO_RETURN" || r2 === "RETURN";
 }
 function clearHandedOverLocalForCancelReturn(order) {
   if (!order || typeof order !== "object") return;
@@ -147525,7 +147648,7 @@ function mergeShopeeOrderOnSync(existing, incoming) {
   const existingLogistics = String(existing?.logistics_status || "").toUpperCase();
   const incomingIsCancellation = incomingRaw === "CANCELLED" || incomingRaw === "IN_CANCEL";
   const existingIsCancellation = existingRaw === "CANCELLED" || existingRaw === "IN_CANCEL";
-  const incomingIsReturn = incomingRaw === "TO_RETURN";
+  const incomingIsReturn = incomingRaw === "TO_RETURN" || incomingRaw === "RETURN";
   const existingStatusRank = Math.max(
     shopeeLifecycleRank(existingRaw),
     shopeeLifecycleRank(String(existing?.status || "")),
@@ -147536,6 +147659,7 @@ function mergeShopeeOrderOnSync(existing, incoming) {
     shopeeLifecycleRank(String(incoming?.status || "")),
     shopeeLifecycleRank(incomingLogistics)
   );
+  const existingAlreadyCompleted = existingRaw === "COMPLETED" || String(existing?.status || "") === "completed";
   if (incomingIsCancellation) {
     merged.status = "cancelled";
     merged.shopee_order_status = incomingRaw;
@@ -147547,11 +147671,30 @@ function mergeShopeeOrderOnSync(existing, incoming) {
     merged.isPrepared = false;
     merged.is_pending_shopee_check = false;
     clearHandedOverLocalForCancelReturn(merged);
+    console.log(
+      `[StateMachine] ACCEPT RETURN order_sn=${merged.orderSn || "?"} raw=${incomingRaw} prev=${existingRaw || "(empty)"} status=${merged.status}`
+    );
   } else if (incomingRaw === "COMPLETED") {
     merged.status = "completed";
     merged.shopee_order_status = "COMPLETED";
     merged.isPrepared = true;
     merged.is_pending_shopee_check = false;
+  } else if (incomingRaw === "SHIPPED" || incomingRaw === "TO_CONFIRM_RECEIVE") {
+    if (existingAlreadyCompleted) {
+      merged.status = "completed";
+      merged.shopee_order_status = "COMPLETED";
+      merged.isPrepared = true;
+      merged.is_pending_shopee_check = false;
+    } else {
+      merged.status = "shipping";
+      merged.shopee_order_status = incomingRaw;
+      if (incomingLogistics) merged.logistics_status = incomingLogistics;
+      merged.isPrepared = true;
+      merged.is_pending_shopee_check = false;
+      console.log(
+        `[StateMachine] ACCEPT SHIPPED order_sn=${merged.orderSn || "?"} raw=${merged.shopee_order_status} logistics=${incomingLogistics || "-"} (prev=${existingRaw || "(empty)"})`
+      );
+    }
   } else if (existingIsCancellation || incomingStatusRank < existingStatusRank) {
     console.error(
       `[StateMachine] REJECTED ${existingIsCancellation ? "after_CANCELLED" : "downgrade"} order_sn=${merged.orderSn || "?"} incoming=${incomingRaw || "(empty)"}/${incomingLogistics || "-"}(rank=${incomingStatusRank}) < existing=${existingRaw || "(empty)"}/${existingLogistics || "-"}(rank=${existingStatusRank}) \u2014 gi\u1EEF status=${existing.status} raw=${existing.shopee_order_status}`
@@ -147563,16 +147706,7 @@ function mergeShopeeOrderOnSync(existing, incoming) {
     if (existingLogistics && !merged.logistics_status) {
       merged.logistics_status = existingLogistics;
     }
-  } else if (incomingRaw === "SHIPPED" || incomingRaw === "TO_CONFIRM_RECEIVE") {
-    merged.status = "shipping";
-    merged.shopee_order_status = incomingRaw;
-    if (incomingLogistics) merged.logistics_status = incomingLogistics;
-    merged.isPrepared = true;
-    merged.is_pending_shopee_check = false;
-    console.log(
-      `[StateMachine] ACCEPT SHIPPED order_sn=${merged.orderSn || "?"} raw=${merged.shopee_order_status} logistics=${incomingLogistics || "-"} (prev=${existingRaw || "(empty)"})`
-    );
-  } else if (isLogisticsHandedToCarrier(incomingLogistics) && incomingRaw !== "COMPLETED" && incomingRaw !== "CANCELLED" && incomingRaw !== "IN_CANCEL" && incomingRaw !== "TO_RETURN") {
+  } else if (isLogisticsHandedToCarrier(incomingLogistics) && incomingRaw !== "COMPLETED" && incomingRaw !== "CANCELLED" && incomingRaw !== "IN_CANCEL" && incomingRaw !== "TO_RETURN" && incomingRaw !== "RETURN") {
     merged.status = "shipping";
     merged.shopee_order_status = "SHIPPED";
     if (incomingLogistics) merged.logistics_status = incomingLogistics;

@@ -14621,7 +14621,8 @@ function isShopeeTerminalRawStatus(raw: string): boolean {
     r === "COMPLETED" ||
     r === "CANCELLED" ||
     r === "IN_CANCEL" ||
-    r === "TO_RETURN"
+    r === "TO_RETURN" ||
+    r === "RETURN"
   );
 }
 
@@ -17558,7 +17559,7 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
   const existingLogistics = String(existing?.logistics_status || "").toUpperCase();
   const incomingIsCancellation = incomingRaw === "CANCELLED" || incomingRaw === "IN_CANCEL";
   const existingIsCancellation = existingRaw === "CANCELLED" || existingRaw === "IN_CANCEL";
-  const incomingIsReturn = incomingRaw === "TO_RETURN";
+  const incomingIsReturn = incomingRaw === "TO_RETURN" || incomingRaw === "RETURN";
   // Rank gồm raw + local status + logistics (PICKUP_DONE ≡ SHIPPED).
   const existingStatusRank = Math.max(
     shopeeLifecycleRank(existingRaw),
@@ -17571,26 +17572,56 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
     shopeeLifecycleRank(incomingLogistics),
   );
 
-  // State machine một chiều: trạng thái chỉ tiến về phía trước.
-  // CANCELLED / IN_CANCEL / TO_RETURN / COMPLETED luôn ghi đè SHIPPED (không bị logistics DELIVERY_DONE kéo về Đang giao).
-  // UNPAID < READY_TO_SHIP < PROCESSED < SHIPPED < COMPLETED — SHIPPED luôn thắng PROCESSED.
+  // State machine: bước tiến luôn ghi đè, chạy TRƯỚC chốt chống hạ cấp.
+  // UNPAID < READY_TO_SHIP < PROCESSED < SHIPPED < COMPLETED.
+  // RETURN / TO_RETURN / CANCELLED thắng cả SHIPPED (rank số của return thấp hơn shipping).
+  const existingAlreadyCompleted =
+    existingRaw === "COMPLETED" || String(existing?.status || "") === "completed";
   if (incomingIsCancellation) {
+    // Hủy sàn — luôn rời tab Chờ lấy hàng / Đang giao.
     merged.status = "cancelled";
     merged.shopee_order_status = incomingRaw;
     merged.isPrepared = false;
     merged.is_pending_shopee_check = false;
   } else if (incomingIsReturn) {
+    // RETURN / TO_RETURN từ SHIPPED vẫn là bước tiến — chuyển tab hoàn.
+    // Giữ return_received nếu kho đã xác nhận nhận hàng.
     merged.status = existing?.status === "return_received" ? "return_received" : "return_pending";
     merged.shopee_order_status = "TO_RETURN";
     merged.isPrepared = false;
     merged.is_pending_shopee_check = false;
     clearHandedOverLocalForCancelReturn(merged);
+    console.log(
+      `[StateMachine] ACCEPT RETURN order_sn=${merged.orderSn || "?"} ` +
+        `raw=${incomingRaw} prev=${existingRaw || "(empty)"} status=${merged.status}`,
+    );
   } else if (incomingRaw === "COMPLETED") {
+    // Đã giao — luôn thắng SHIPPED / PROCESSED.
     merged.status = "completed";
     merged.shopee_order_status = "COMPLETED";
     merged.isPrepared = true;
     merged.is_pending_shopee_check = false;
+  } else if (incomingRaw === "SHIPPED" || incomingRaw === "TO_CONFIRM_RECEIVE") {
+    // Đang giao — thắng RTS/PROCESSED. Không kéo lùi đơn đã COMPLETED.
+    if (existingAlreadyCompleted) {
+      merged.status = "completed";
+      merged.shopee_order_status = "COMPLETED";
+      merged.isPrepared = true;
+      merged.is_pending_shopee_check = false;
+    } else {
+      merged.status = "shipping";
+      merged.shopee_order_status = incomingRaw;
+      if (incomingLogistics) merged.logistics_status = incomingLogistics;
+      merged.isPrepared = true;
+      merged.is_pending_shopee_check = false;
+      console.log(
+        `[StateMachine] ACCEPT SHIPPED order_sn=${merged.orderSn || "?"} ` +
+          `raw=${merged.shopee_order_status} logistics=${incomingLogistics || "-"} ` +
+          `(prev=${existingRaw || "(empty)"})`,
+      );
+    }
   } else if (existingIsCancellation || incomingStatusRank < existingStatusRank) {
+    // Chỉ chặn payload không phải bước tiến (UNPAID / RTS / PROCESSED mỏng).
     console.error(
       `[StateMachine] REJECTED ${existingIsCancellation ? "after_CANCELLED" : "downgrade"} ` +
         `order_sn=${merged.orderSn || "?"} ` +
@@ -17605,23 +17636,13 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
     if (existingLogistics && !merged.logistics_status) {
       merged.logistics_status = existingLogistics;
     }
-  } else if (incomingRaw === "SHIPPED" || incomingRaw === "TO_CONFIRM_RECEIVE") {
-    merged.status = "shipping";
-    merged.shopee_order_status = incomingRaw;
-    if (incomingLogistics) merged.logistics_status = incomingLogistics;
-    merged.isPrepared = true;
-    merged.is_pending_shopee_check = false;
-    console.log(
-      `[StateMachine] ACCEPT SHIPPED order_sn=${merged.orderSn || "?"} ` +
-        `raw=${merged.shopee_order_status} logistics=${incomingLogistics || "-"} ` +
-        `(prev=${existingRaw || "(empty)"})`,
-    );
   } else if (
     isLogisticsHandedToCarrier(incomingLogistics) &&
     incomingRaw !== "COMPLETED" &&
     incomingRaw !== "CANCELLED" &&
     incomingRaw !== "IN_CANCEL" &&
-    incomingRaw !== "TO_RETURN"
+    incomingRaw !== "TO_RETURN" &&
+    incomingRaw !== "RETURN"
   ) {
     merged.status = "shipping";
     merged.shopee_order_status = "SHIPPED";
