@@ -1079,11 +1079,10 @@ export async function listOrders(req, res) {
     tab === "dang_kiem_tra_shopee" ||
     tab === "shopee_check"
   ) {
-    // Khớp isPendingConfirmOrder / orderTabFilter("pending_confirm")
+    // Chỉ UNPAID / kiểm duyệt. READY_TO_SHIP không thuộc tab này.
     rawOrders = rawOrders.filter((o) => {
       const raw = String(o.shopee_order_status || "").toUpperCase();
-      const tn = String(o.tracking_no || o.trackingNumber || "").trim();
-      if (tn && tn !== "0" && !/^0FG/i.test(tn)) return false;
+      if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") return false;
       if (
         raw === "PROCESSED" ||
         raw === "SHIPPED" ||
@@ -1095,25 +1094,13 @@ export async function listOrders(req, res) {
       ) {
         return false;
       }
-      if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") return true;
-      if (
-        o.status === "unprocessed" ||
-        o.status === "processed" ||
-        o.status === "shipping" ||
-        o.status === "completed" ||
-        o.status === "cancelled" ||
-        o.status === "return_pending" ||
-        o.status === "return_received"
-      ) {
-        return false;
-      }
       if (deps.matchesProcessedPickupTabShared(o) || deps.matchesUnprocessedPickupTabShared(o)) {
         return false;
       }
       return (
+        ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"].includes(raw) ||
         o.status === "pending_confirm" ||
-        o.status === "pending_verification" ||
-        ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"].includes(raw)
+        o.status === "pending_verification"
       );
     });
   }

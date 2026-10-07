@@ -110,39 +110,25 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
   let status = (raw.status as Order['status']) || 'unprocessed';
   // Heal: status local stale pending_* nhưng Shopee đã đổi trạng thái → đưa về đúng tab.
   if (status === 'pending_confirm' || status === 'pending_verification' || status === 'unprocessed') {
-    const tn = String(raw.trackingNumber || raw.tracking_no || '').trim();
-    const hasTracking = Boolean(tn && tn !== '0' && !/^0FG/i.test(tn));
-    const hasCarrier = Boolean(inferredCarrier || checkoutCarrierRaw || shippingCarrierRaw);
     if (rawShopeeStatus === 'CANCELLED' || rawShopeeStatus === 'IN_CANCEL') {
       status = 'cancelled';
-    } else if (rawShopeeStatus === 'PROCESSED' && (raw.isPrinted === true || raw.is_printed === true)) {
-      status = 'processed';
-    } else if (rawShopeeStatus === 'PROCESSED' && hasTracking) {
+    } else if (rawShopeeStatus === 'READY_TO_SHIP' || rawShopeeStatus === 'RETRY_SHIP') {
       status = 'unprocessed';
     } else if (
-      hasTracking &&
-      hasCarrier &&
-      (rawShopeeStatus === 'READY_TO_SHIP' ||
-        rawShopeeStatus === 'RETRY_SHIP' ||
-        rawShopeeStatus === 'UNPAID' ||
-        rawShopeeStatus === 'PENDING' ||
-        rawShopeeStatus === 'IN_REVIEW' ||
-        rawShopeeStatus === 'FRAUD_CHECK' ||
-        rawShopeeStatus === 'INVOICE_PENDING' ||
-        !rawShopeeStatus)
-    ) {
-      status = 'unprocessed';
-    } else if (
-      !hasTracking &&
-      (rawShopeeStatus === 'UNPAID' ||
-        rawShopeeStatus === 'PENDING' ||
-        rawShopeeStatus === 'IN_REVIEW' ||
-        rawShopeeStatus === 'FRAUD_CHECK' ||
-        rawShopeeStatus === 'INVOICE_PENDING' ||
-        rawShopeeStatus === 'READY_TO_SHIP' ||
-        rawShopeeStatus === 'RETRY_SHIP')
+      rawShopeeStatus === 'UNPAID' ||
+      rawShopeeStatus === 'PENDING' ||
+      rawShopeeStatus === 'IN_REVIEW' ||
+      rawShopeeStatus === 'FRAUD_CHECK' ||
+      rawShopeeStatus === 'INVOICE_PENDING'
     ) {
       status = 'pending_confirm';
+    } else if (
+      rawShopeeStatus === 'PROCESSED' &&
+      (raw.isPrinted === true || raw.is_printed === true || raw.isPrepared === true)
+    ) {
+      status = 'processed';
+    } else if (rawShopeeStatus === 'PROCESSED') {
+      status = 'unprocessed';
     } else if (rawShopeeStatus === 'SHIPPED' || rawShopeeStatus === 'TO_CONFIRM_RECEIVE') {
       status = 'shipping';
     } else if (rawShopeeStatus === 'COMPLETED') {

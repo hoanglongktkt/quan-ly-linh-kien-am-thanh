@@ -109,38 +109,15 @@ export function getOrderFulfillmentType(
 }
 
 /**
- * isProcessedCondition — chỉ phân nhánh Chưa xử lý / Đã xử lý
- * trong pool READY_TO_SHIP (không quyết định tab Đang giao).
- * READY_TO_SHIP/RETRY chưa chuẩn bị/in → Đơn chưa xử lý, kể cả khi đã có mã VĐ.
+ * Đã xử lý: chỉ PROCESSED và shop đã in hoặc đã chuẩn bị.
+ * READY_TO_SHIP vẫn là đơn shop phải arrange shipment — không tính đã xử lý.
  */
 export function isProcessedCondition(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
   const raw = getShopeeOrderRawStatus(order);
-  if (raw === 'PROCESSED') return isTruthyFlag(order.isPrinted);
-
-  if (
-    raw === 'READY_TO_SHIP' ||
-    raw === 'RETRY_SHIP' ||
-    raw === 'UNPAID' ||
-    raw === 'PENDING' ||
-    raw === 'IN_REVIEW' ||
-    raw === 'FRAUD_CHECK' ||
-    raw === 'INVOICE_PENDING'
-  ) {
-    if (order.isPrepared === true || isTruthyFlag(order.isPrinted)) return true;
-    return false;
-  }
-
-  if (hasOrderTrackingNo(order)) return true;
-
-  if (order.status === 'processed') return true;
-
-  if (getOrderFulfillmentType(order) === 'dropoff' && Boolean(order.isPrepared)) {
-    return true;
-  }
-
-  return false;
+  if (raw !== 'PROCESSED') return false;
+  return order.isPrepared === true || isTruthyFlag(order.isPrinted);
 }
 
 export function isShopeeCompletedStatus(
@@ -248,33 +225,22 @@ export function resolveOrderBadgeStatus(order: Order): Order['status'] {
     }
     return 'cancelled';
   }
-  // Chưa có mã VĐ (UNPAID hoặc READY_TO_SHIP) → Chờ xác nhận.
-  const rawBeforePickup = getShopeeOrderRawStatus(order);
-  if (
-    !hasOrderTrackingNo(order) &&
-    (rawBeforePickup === 'UNPAID' ||
-      rawBeforePickup === 'PENDING' ||
-      rawBeforePickup === 'IN_REVIEW' ||
-      rawBeforePickup === 'FRAUD_CHECK' ||
-      rawBeforePickup === 'INVOICE_PENDING' ||
-      rawBeforePickup === 'READY_TO_SHIP' ||
-      rawBeforePickup === 'RETRY_SHIP')
-  ) {
-    return 'pending_confirm';
-  }
-  // Pool chờ lấy hàng TRƯỚC — tránh status local stale pending_confirm + PROCESSED/mã VĐ.
-  if (isPickupPoolOrder(order)) {
-    return isProcessedCondition(order) ? 'processed' : 'unprocessed';
-  }
   const raw = getShopeeOrderRawStatus(order);
   if (
     raw === 'UNPAID' ||
     raw === 'PENDING' ||
     raw === 'IN_REVIEW' ||
     raw === 'FRAUD_CHECK' ||
-    order.status === 'pending_confirm' ||
-    order.status === 'pending_verification'
+    raw === 'INVOICE_PENDING'
   ) {
+    return 'pending_confirm';
+  }
+  if (raw === 'READY_TO_SHIP' || raw === 'RETRY_SHIP') return 'unprocessed';
+  if (raw === 'PROCESSED') {
+    if (isOrderHandedOverToCarrier(order)) return order.status;
+    return isProcessedCondition(order) ? 'processed' : 'unprocessed';
+  }
+  if (order.status === 'pending_confirm' || order.status === 'pending_verification') {
     return 'pending_confirm';
   }
   return order.status;
@@ -289,46 +255,44 @@ export function matchesShippingTab(order: Order): boolean {
 }
 
 /**
- * TAB "CHỜ LẤY HÀNG (ĐÃ XỬ LÝ)" —
- * TO_SHIP + đã xử lý + is_handed_over ≠ true.
- * Loại trừ tuyệt đối Đã giao ĐVVC và Đang giao (SHIPPED).
+ * TAB "CHỜ LẤY HÀNG (ĐÃ XỬ LÝ)":
+ * PROCESSED + đã in hoặc đã chuẩn bị + chưa bàn giao ĐVVC.
  */
 export function matchesProcessedPickupTab(order: Order): boolean {
   if (isShopeeShippingStatus(order)) return false;
+  if (isShopeeCompletedStatus(order)) return false;
+  if (isShopeeCancelledLikeStatus(order)) return false;
   if (isOrderHandedOverToCarrier(order)) return false;
-  if (!isPickupPoolOrder(order)) return false;
   return isProcessedCondition(order);
 }
 
 /**
  * TAB "ĐƠN CHƯA XỬ LÝ":
- * Đã có mã VĐ thật + đơn vị vận chuyển, shop chưa chuẩn bị/in/bàn giao.
- * UNPAID/READY_TO_SHIP chưa mã không thuộc tab này.
+ * Mọi READY_TO_SHIP / RETRY_SHIP (chưa arrange, có mã hay chưa),
+ * hoặc PROCESSED nhưng chưa in và chưa chuẩn bị.
  */
 export function matchesUnprocessedPickupTab(order: Order): boolean {
   if (isShopeeShippingStatus(order)) return false;
   if (isShopeeCompletedStatus(order)) return false;
   if (isShopeeCancelledLikeStatus(order)) return false;
   if (isOrderHandedOverToCarrier(order)) return false;
-  if (isTruthyFlag(order.isPrinted)) return false;
   const channel = String(order.channel || '').toLowerCase();
   if (channel === 'woocommerce' || channel === 'manual') return false;
-  const raw = getShopeeOrderRawStatus(order);
-  const early =
-    !raw ||
-    raw === 'READY_TO_SHIP' ||
-    raw === 'RETRY_SHIP' ||
-    raw === 'PROCESSED' ||
-    raw === 'UNPAID' ||
-    raw === 'PENDING' ||
-    raw === 'IN_REVIEW' ||
-    raw === 'FRAUD_CHECK' ||
-    raw === 'INVOICE_PENDING';
-  if (!early && order.status !== 'unprocessed') return false;
-  if (order.status === 'shipping' || order.status === 'completed' || order.status === 'cancelled') {
+  if (
+    order.status === 'shipping' ||
+    order.status === 'completed' ||
+    order.status === 'cancelled' ||
+    order.status === 'return_pending' ||
+    order.status === 'return_received'
+  ) {
     return false;
   }
-  return hasOrderTrackingNo(order);
+  const raw = getShopeeOrderRawStatus(order);
+  if (raw === 'READY_TO_SHIP' || raw === 'RETRY_SHIP') return true;
+  if (raw === 'PROCESSED') {
+    return order.isPrepared !== true && !isTruthyFlag(order.isPrinted);
+  }
+  return false;
 }
 
 /**

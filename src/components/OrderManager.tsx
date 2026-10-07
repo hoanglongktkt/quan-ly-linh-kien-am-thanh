@@ -254,10 +254,10 @@ const PRINT_FE_CHUNK_STAGGER_MS = 250;
 /** Poll trạng thái task in (create/status) — 1 giây/lần. */
 const PRINT_FE_STATUS_POLL_MS = 1000;
 
-/** UNPAID/PENDING hoặc READY_TO_SHIP chưa có mã VĐ → Chờ xác nhận. Đã có mã → không thuộc tab này. */
+/** Chỉ UNPAID / kiểm duyệt sàn. READY_TO_SHIP thuộc Đơn chưa xử lý, kể cả khi chưa có mã. */
 function isPendingConfirmOrder(order: Order): boolean {
   const raw = String(order.shopee_order_status || '').toUpperCase();
-  // Đã qua chờ xác nhận (đã xử lý / đã giao / hủy) → KHÔNG còn ở tab này.
+  if (raw === 'READY_TO_SHIP' || raw === 'RETRY_SHIP') return false;
   if (
     raw === 'PROCESSED' ||
     raw === 'SHIPPED' ||
@@ -269,31 +269,15 @@ function isPendingConfirmOrder(order: Order): boolean {
   ) {
     return false;
   }
-  if (hasOrderTrackingNo(order)) return false;
-  if (raw === 'READY_TO_SHIP' || raw === 'RETRY_SHIP') {
-    return true;
-  }
-  if (
-    order.status === 'unprocessed' ||
-    order.status === 'processed' ||
-    order.status === 'shipping' ||
-    order.status === 'completed' ||
-    order.status === 'cancelled' ||
-    order.status === 'return_pending' ||
-    order.status === 'return_received'
-  ) {
-    return false;
-  }
-  if (isProcessedCondition(order)) return false;
   if (matchesProcessedPickupTab(order) || matchesUnprocessedPickupTab(order)) return false;
-
-  if (order.status === 'pending_confirm' || order.status === 'pending_verification') return true;
   return (
     raw === 'UNPAID' ||
     raw === 'PENDING' ||
     raw === 'IN_REVIEW' ||
     raw === 'FRAUD_CHECK' ||
-    raw === 'INVOICE_PENDING'
+    raw === 'INVOICE_PENDING' ||
+    order.status === 'pending_confirm' ||
+    order.status === 'pending_verification'
   );
 }
 
