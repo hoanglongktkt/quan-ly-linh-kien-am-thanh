@@ -48101,20 +48101,20 @@ async function yieldEventLoop(ms = DEFAULT_YIELD_MS) {
 }
 async function withOperationTimeout(work, ms, label) {
   const controller = new AbortController();
-  let timer;
+  let timer2;
   const promise = typeof work === "function" ? work(controller.signal) : work;
   try {
     return await Promise.race([
       promise,
       new Promise((_, reject) => {
-        timer = setTimeout(() => {
+        timer2 = setTimeout(() => {
           controller.abort();
           reject(new Error(`${label} timeout sau ${ms / 1e3} gi\xE2y.`));
         }, ms);
       })
     ]);
   } finally {
-    if (timer) clearTimeout(timer);
+    if (timer2) clearTimeout(timer2);
   }
 }
 var DEFAULT_DELAY_MS, DEFAULT_YIELD_MS;
@@ -48130,11 +48130,11 @@ var DonHoanHuy_exports = {};
 __export(DonHoanHuy_exports, {
   default: () => DonHoanHuy_default
 });
-var import_mongoose2, DonHoanHuySchema, DonHoanHuy, DonHoanHuy_default;
+var import_mongoose3, DonHoanHuySchema, DonHoanHuy, DonHoanHuy_default;
 var init_DonHoanHuy = __esm({
   "models/DonHoanHuy.js"() {
-    import_mongoose2 = __toESM(require("mongoose"), 1);
-    DonHoanHuySchema = new import_mongoose2.default.Schema(
+    import_mongoose3 = __toESM(require("mongoose"), 1);
+    DonHoanHuySchema = new import_mongoose3.default.Schema(
       {
         orderSn: {
           type: String,
@@ -48202,7 +48202,7 @@ var init_DonHoanHuy = __esm({
     DonHoanHuySchema.index({ scannedAt: -1 }, { name: "don_hoan_huy_scannedAt" });
     DonHoanHuySchema.index({ type: 1 }, { name: "don_hoan_huy_type" });
     DonHoanHuySchema.index({ local_status: 1 }, { name: "don_hoan_huy_local_status" });
-    DonHoanHuy = import_mongoose2.default.models.DonHoanHuy || import_mongoose2.default.model("DonHoanHuy", DonHoanHuySchema);
+    DonHoanHuy = import_mongoose3.default.models.DonHoanHuy || import_mongoose3.default.model("DonHoanHuy", DonHoanHuySchema);
     DonHoanHuy_default = DonHoanHuy;
   }
 });
@@ -52768,10 +52768,10 @@ var require_retry3 = __commonJS({
       if (!await shouldRetryFn(err)) {
         return { shouldRetry: false, config: err.config };
       }
-      const delay3 = getNextRetryDelay(config);
+      const delay4 = getNextRetryDelay(config);
       err.config.retryConfig.currentRetryAttempt += 1;
-      const backoff = config.retryBackoff ? config.retryBackoff(err, delay3) : new Promise((resolve) => {
-        setTimeout(resolve, delay3);
+      const backoff = config.retryBackoff ? config.retryBackoff(err, delay4) : new Promise((resolve) => {
+        setTimeout(resolve, delay4);
       });
       if (config.onRetryAttempt) {
         await config.onRetryAttempt(err);
@@ -73770,7 +73770,7 @@ async function callTiktokAuthApi(path26, query) {
   }
   const url2 = `${AUTH_HOST()}${path26}?${qs.toString()}`;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TOKEN_HTTP_TIMEOUT_MS);
+  const timer2 = setTimeout(() => controller.abort(), TOKEN_HTTP_TIMEOUT_MS);
   try {
     const res = await fetch(url2, {
       method: "GET",
@@ -73806,7 +73806,7 @@ async function callTiktokAuthApi(path26, query) {
       message: aborted ? `TikTok token API timeout sau ${TOKEN_HTTP_TIMEOUT_MS}ms` : error?.message || "Kh\xF4ng g\u1ECDi \u0111\u01B0\u1EE3c TikTok token API"
     };
   } finally {
-    clearTimeout(timer);
+    clearTimeout(timer2);
   }
 }
 function persistTokenResponse(shopId, data, extra = {}) {
@@ -74107,7 +74107,7 @@ async function tiktokApiRequestOnce(method, apiPath, opts, creds) {
   const host = getTiktokApiHost() || TIKTOK_API_HOST;
   const url2 = `${host}${apiPath}?${buildQuery(query)}`;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIKTOK_HTTP_TIMEOUT_MS);
+  const timer2 = setTimeout(() => controller.abort(), TIKTOK_HTTP_TIMEOUT_MS);
   try {
     const res = await fetch(url2, {
       method: String(method || "GET").toUpperCase(),
@@ -74155,7 +74155,7 @@ async function tiktokApiRequestOnce(method, apiPath, opts, creds) {
       data: null
     };
   } finally {
-    clearTimeout(timer);
+    clearTimeout(timer2);
   }
 }
 async function tiktokApiRequest(method, apiPath, opts = {}) {
@@ -74243,7 +74243,7 @@ function buildWooUrl(baseUrl, endpoint, params = {}) {
 }
 async function wooFetch(url2, options = {}, timeoutMs = 15e3) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer2 = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url2, {
       ...options,
@@ -74254,7 +74254,7 @@ async function wooFetch(url2, options = {}, timeoutMs = 15e3) {
         ...options.headers || {}
       }
     });
-    clearTimeout(timer);
+    clearTimeout(timer2);
     const text = await res.text();
     let json2;
     try {
@@ -74264,7 +74264,7 @@ async function wooFetch(url2, options = {}, timeoutMs = 15e3) {
     }
     return { ok: res.ok, status: res.status, data: json2 };
   } catch (e2) {
-    clearTimeout(timer);
+    clearTimeout(timer2);
     if (e2?.name === "AbortError") {
       throw new Error(`WooCommerce API timeout (>${timeoutMs}ms)`);
     }
@@ -75338,7 +75338,7 @@ function scheduleKeepAlivePing(deps23 = {}) {
   );
   const ping = async (trigger) => {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8e3);
+    const timer2 = setTimeout(() => controller.abort(), 8e3);
     try {
       const res = await fetch(url2, { signal: controller.signal });
       const health = await res.json().catch(() => null);
@@ -75355,7 +75355,7 @@ function scheduleKeepAlivePing(deps23 = {}) {
     } catch (err) {
       console.warn(`[CRON] Keep-alive ping (${trigger}) failed:`, err?.message || err);
     } finally {
-      clearTimeout(timer);
+      clearTimeout(timer2);
     }
   };
   if (keepAlivePingInterval) {
@@ -76030,7 +76030,7 @@ async function fetchWithTimeout(url2, init = {}, timeoutMs = SHOPEE_HTTP_TIMEOUT
   const abortFromExternal = () => controller.abort(externalSignal?.reason);
   if (externalSignal?.aborted) abortFromExternal();
   else externalSignal?.addEventListener?.("abort", abortFromExternal, { once: true });
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer2 = setTimeout(() => controller.abort(), timeoutMs);
   let hardTimer;
   try {
     const fetchInit = {
@@ -76062,7 +76062,7 @@ async function fetchWithTimeout(url2, init = {}, timeoutMs = SHOPEE_HTTP_TIMEOUT
     );
     throw error;
   } finally {
-    clearTimeout(timer);
+    clearTimeout(timer2);
     if (hardTimer) clearTimeout(hardTimer);
     externalSignal?.removeEventListener?.("abort", abortFromExternal);
   }
@@ -76089,7 +76089,7 @@ function isShopeeRetryableNetworkError(err) {
 function isShopeeRetryableHttpStatus(status) {
   return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
 }
-async function runInShopeeBatches(items, processor, opts) {
+async function runInShopeeBatches(items, processor2, opts) {
   if (items.length === 0) return;
   const batchSize = opts?.batchSize ?? SHOPEE_PRODUCT_BATCH_SIZE;
   const itemDelayMs = opts?.itemDelayMs ?? SHOPEE_PRODUCT_API_DELAY_MS;
@@ -76100,7 +76100,7 @@ async function runInShopeeBatches(items, processor, opts) {
     const totalBatches = Math.ceil(items.length / batchSize);
     console.log(`[Shopee Throttle] Batch ${batchNo}/${totalBatches} (${batch.length} item)...`);
     for (let j = 0; j < batch.length; j++) {
-      await processor(batch[j], batchStart + j);
+      await processor2(batch[j], batchStart + j);
       if (j < batch.length - 1) await sleep(itemDelayMs);
     }
     if (batchStart + batchSize < items.length) {
@@ -77400,7 +77400,7 @@ async function verifyShopeeShopToken(shopId, accessToken) {
   const key = normalizeShopIdKey(shopId);
   if (!key || !accessToken) return { ok: false, error: "missing_shop_or_token" };
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12e3);
+  const timer2 = setTimeout(() => controller.abort(), 12e3);
   try {
     const apiPath = "/api/v2/shop/get_shop_info";
     const timestamp = Math.floor(Date.now() / 1e3);
@@ -77415,7 +77415,7 @@ async function verifyShopeeShopToken(shopId, accessToken) {
   } catch (error) {
     return { ok: false, error: error?.message || String(error) };
   } finally {
-    clearTimeout(timer);
+    clearTimeout(timer2);
   }
 }
 function resolveShopeeApiShopId(record, configuredShopId) {
@@ -78196,14 +78196,14 @@ function readRawWebhookBody(req) {
     let totalBytes = 0;
     let overflow = false;
     let settled = false;
-    let timer;
+    let timer2;
     const cleanup = () => {
-      if (timer) clearTimeout(timer);
+      if (timer2) clearTimeout(timer2);
       req.removeListener("data", onData);
       req.removeListener("end", onEnd);
       req.removeListener("error", onError);
     };
-    timer = setTimeout(() => {
+    timer2 = setTimeout(() => {
       if (settled) return;
       settled = true;
       cleanup();
@@ -78396,6 +78396,199 @@ function createShopeeWebhookRouter(processPayload, routePath = "/shopee", option
     });
   });
   return router30;
+}
+
+// models/WebhookJob.js
+var import_mongoose2 = __toESM(require("mongoose"), 1);
+var WebhookJobSchema = new import_mongoose2.default.Schema(
+  {
+    jobId: {
+      type: String,
+      required: true,
+      trim: true
+    },
+    payload: {
+      type: import_mongoose2.default.Schema.Types.Mixed,
+      required: true
+    },
+    state: {
+      type: String,
+      enum: ["pending", "running", "succeeded", "failed"],
+      default: "pending",
+      required: true
+    },
+    retry_count: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    error_log: {
+      type: String,
+      default: ""
+    },
+    next_run_at: {
+      type: Date,
+      default: Date.now,
+      required: true
+    }
+  },
+  {
+    collection: "webhook_jobs",
+    versionKey: false,
+    timestamps: true
+  }
+);
+WebhookJobSchema.index({ jobId: 1 }, { unique: true, name: "webhook_jobs_jobId_unique" });
+WebhookJobSchema.index({ state: 1, next_run_at: 1 }, { name: "webhook_jobs_state_next_run" });
+var WebhookJob = import_mongoose2.default.models.WebhookJob || import_mongoose2.default.model("WebhookJob", WebhookJobSchema);
+var WebhookJob_default = WebhookJob;
+
+// services/webhookJobQueue.js
+var DRAIN_INTERVAL_MS = 8e3;
+var BATCH_LIMIT = 5;
+var JOB_GAP_MS = 400;
+var MAX_RETRY = 5;
+var RUNNING_LEASE_MS = 4 * 60 * 1e3;
+var timer = null;
+var draining = false;
+var processor = null;
+function delay2(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+function backoffMs(retryCount) {
+  const n = Number(retryCount) || 1;
+  if (n <= 1) return 6e4;
+  return 12e4;
+}
+async function claimNextJob() {
+  const now = /* @__PURE__ */ new Date();
+  const leaseUntil = new Date(now.getTime() + RUNNING_LEASE_MS);
+  return WebhookJob_default.findOneAndUpdate(
+    {
+      $or: [
+        { state: "pending", next_run_at: { $lte: now } },
+        { state: "failed", next_run_at: { $lte: now }, retry_count: { $lt: MAX_RETRY } },
+        { state: "running", next_run_at: { $lte: now }, retry_count: { $lt: MAX_RETRY } }
+      ]
+    },
+    [
+      {
+        $set: {
+          retry_count: {
+            $cond: [{ $eq: ["$state", "running"] }, { $add: ["$retry_count", 1] }, "$retry_count"]
+          },
+          state: "running",
+          next_run_at: leaseUntil
+        }
+      }
+    ],
+    { sort: { next_run_at: 1, _id: 1 }, new: true }
+  ).lean();
+}
+async function markSucceeded(job) {
+  await WebhookJob_default.updateOne(
+    { _id: job._id, state: "running", next_run_at: job.next_run_at },
+    { $set: { state: "succeeded", error_log: "", next_run_at: /* @__PURE__ */ new Date() } }
+  );
+}
+async function markFailed(job, err) {
+  const retry2 = Number(job.retry_count || 0) + 1;
+  const message = String(err?.message || err || "webhook_job_failed").slice(0, 2e3);
+  const nextRun = new Date(Date.now() + backoffMs(retry2));
+  const result = await WebhookJob_default.updateOne(
+    { _id: job._id, state: "running", next_run_at: job.next_run_at },
+    {
+      $set: {
+        state: "failed",
+        retry_count: retry2,
+        error_log: message,
+        next_run_at: nextRun
+      }
+    }
+  );
+  if (!result.matchedCount) {
+    console.warn(
+      `[WebhookJobQueue] skip fail-write jobId=${job.jobId} \u2014 job \u0111\xE3 b\u1ECB claim l\u1EA1i`
+    );
+    return;
+  }
+  console.error(
+    `[WebhookJobQueue] job failed jobId=${job.jobId} retry=${retry2}/${MAX_RETRY} next_run_at=${nextRun.toISOString()} \u2014 ${message}`
+  );
+}
+async function runClaimedJob(job) {
+  if (typeof processor !== "function") {
+    throw new Error("webhook_job_processor_missing");
+  }
+  await processor(job.payload);
+  await markSucceeded(job);
+}
+async function drainOnce() {
+  if (draining) return;
+  if (typeof processor !== "function") return;
+  draining = true;
+  try {
+    for (let i2 = 0; i2 < BATCH_LIMIT; i2 += 1) {
+      let job = null;
+      try {
+        job = await claimNextJob();
+      } catch (claimErr) {
+        console.error(
+          "[WebhookJobQueue] claim failed:",
+          claimErr?.message || claimErr
+        );
+        break;
+      }
+      if (!job) break;
+      try {
+        await runClaimedJob(job);
+        console.log(`[WebhookJobQueue] job succeeded jobId=${job.jobId}`);
+      } catch (jobErr) {
+        try {
+          await markFailed(job, jobErr);
+        } catch (writeErr) {
+          console.error(
+            `[WebhookJobQueue] markFailed crashed jobId=${job.jobId}:`,
+            writeErr?.message || writeErr
+          );
+        }
+      }
+      if (i2 < BATCH_LIMIT - 1) {
+        await delay2(JOB_GAP_MS);
+      }
+    }
+  } catch (err) {
+    console.error("[WebhookJobQueue] drainOnce failed:", err?.message || err);
+  } finally {
+    draining = false;
+  }
+}
+function startWebhookJobDrainer(processPayload) {
+  if (typeof processPayload === "function") {
+    processor = processPayload;
+  }
+  if (timer) return;
+  timer = setInterval(() => {
+    void drainOnce().catch((err) => {
+      console.error("[WebhookJobQueue] drain tick failed:", err?.message || err);
+    });
+  }, DRAIN_INTERVAL_MS);
+  if (typeof timer.unref === "function") timer.unref();
+  console.log(
+    `[WebhookJobQueue] drainer ON interval=${DRAIN_INTERVAL_MS}ms batch=${BATCH_LIMIT} gapMs=${JOB_GAP_MS}`
+  );
+  void drainOnce().catch((err) => {
+    console.error("[WebhookJobQueue] boot drain failed:", err?.message || err);
+  });
+}
+function stopWebhookJobDrainer() {
+  if (timer) {
+    clearInterval(timer);
+    timer = null;
+  }
+  console.log("[WebhookJobQueue] drainer OFF");
 }
 
 // src/types.ts
@@ -79156,15 +79349,13 @@ function getOrderFulfillmentType(order) {
   return "";
 }
 function isProcessedCondition(order) {
-  if (hasOrderTrackingNo(order)) return true;
   const raw = getShopeeOrderRawStatus(order);
   if (raw === "PROCESSED") return true;
   if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") {
-    if (getOrderFulfillmentType(order) === "dropoff" && Boolean(order.isPrepared)) {
-      return true;
-    }
+    if (order.isPrepared === true || isTruthyFlag(order.isPrinted)) return true;
     return false;
   }
+  if (hasOrderTrackingNo(order)) return true;
   if (order.status === "processed") return true;
   if (getOrderFulfillmentType(order) === "dropoff" && Boolean(order.isPrepared)) {
     return true;
@@ -79219,15 +79410,16 @@ function matchesProcessedPickupTab(order) {
 }
 function matchesUnprocessedPickupTab(order) {
   if (isShopeeShippingStatus(order)) return false;
+  if (isShopeeCompletedStatus(order)) return false;
+  if (isShopeeCancelledLikeStatus(order)) return false;
   if (isOrderHandedOverToCarrier(order)) return false;
-  if (!isPickupPoolOrder(order)) return false;
+  if (order.isPrepared === true || isTruthyFlag(order.isPrinted)) return false;
   const raw = getShopeeOrderRawStatus(order);
-  if (raw === "PROCESSED") return false;
-  if (isProcessedCondition(order)) return false;
-  if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") return true;
-  if (!raw && order.status === "unprocessed") return true;
-  if (order.status === "unprocessed") return true;
-  return false;
+  if (raw !== "READY_TO_SHIP" && raw !== "RETRY_SHIP") return false;
+  if (order.status === "shipping" || order.status === "completed" || order.status === "cancelled") {
+    return false;
+  }
+  return hasOrderTrackingNo(order);
 }
 function isEligibleForHandOverToCarrier(order) {
   if (isOrderHandedOverToCarrier(order)) return false;
@@ -79318,7 +79510,7 @@ async function ensureConnected(client) {
       await client.connect();
     } else if (client.status === "connecting") {
       await new Promise((resolve, reject) => {
-        let timer;
+        let timer2;
         const onReady = () => {
           cleanup();
           resolve();
@@ -79330,11 +79522,11 @@ async function ensureConnected(client) {
         const cleanup = () => {
           client.off("ready", onReady);
           client.off("error", onError);
-          if (timer) clearTimeout(timer);
+          if (timer2) clearTimeout(timer2);
         };
         client.once("ready", onReady);
         client.once("error", onError);
-        timer = setTimeout(() => {
+        timer2 = setTimeout(() => {
           cleanup();
           reject(new Error("connect timeout"));
         }, 3e3);
@@ -79406,7 +79598,7 @@ init_DonHoanHuy();
 
 // config/db.js
 var import_dotenv = __toESM(require_main(), 1);
-var import_mongoose3 = __toESM(require("mongoose"), 1);
+var import_mongoose4 = __toESM(require("mongoose"), 1);
 try {
   import_dotenv.default.config();
 } catch {
@@ -79437,20 +79629,20 @@ async function connectDB() {
   if (!uri) {
     throw new Error("Thi\u1EBFu MONGODB_URI / MONGO_URL trong bi\u1EBFn m\xF4i tr\u01B0\u1EDDng.");
   }
-  if (import_mongoose3.default.connection.readyState === 1) {
-    return import_mongoose3.default.connection;
+  if (import_mongoose4.default.connection.readyState === 1) {
+    return import_mongoose4.default.connection;
   }
   if (connectPromise) {
     return connectPromise;
   }
-  import_mongoose3.default.set("strictQuery", true);
+  import_mongoose4.default.set("strictQuery", true);
   connectPromise = (async () => {
     try {
-      if (import_mongoose3.default.connection.readyState !== 1) {
-        await import_mongoose3.default.connect(uri, MONGO_CONNECT_OPTIONS);
+      if (import_mongoose4.default.connection.readyState !== 1) {
+        await import_mongoose4.default.connect(uri, MONGO_CONNECT_OPTIONS);
       }
       console.log("[DB] MongoDB Connected Successfully");
-      return import_mongoose3.default.connection;
+      return import_mongoose4.default.connection;
     } catch (err) {
       connectPromise = null;
       const msg = err?.message || String(err);
@@ -79466,8 +79658,8 @@ async function connectDB() {
 async function reconnectDB() {
   connectPromise = null;
   try {
-    if (import_mongoose3.default.connection.readyState !== 0) {
-      await import_mongoose3.default.connection.close().catch(() => {
+    if (import_mongoose4.default.connection.readyState !== 0) {
+      await import_mongoose4.default.connection.close().catch(() => {
       });
     }
   } catch {
@@ -79475,7 +79667,7 @@ async function reconnectDB() {
   return connectDB();
 }
 function isDBReady() {
-  return import_mongoose3.default.connection.readyState === 1;
+  return import_mongoose4.default.connection.readyState === 1;
 }
 function isMongoTimeoutOrNetworkError(err) {
   const msg = String(err?.message || err || "");
@@ -79486,7 +79678,7 @@ function isMongoTimeoutOrNetworkError(err) {
 }
 
 // src/db/mongoStore.ts
-var import_mongoose4 = __toESM(require("mongoose"), 1);
+var import_mongoose5 = __toESM(require("mongoose"), 1);
 var import_fs6 = __toESM(require("fs"), 1);
 var import_path7 = __toESM(require("path"), 1);
 init_DonHoanHuy();
@@ -80091,7 +80283,7 @@ var SYNC_JOB_TTL_SECONDS = Math.max(
   24 * 60 * 60,
   Number(process.env.SYNC_JOB_TTL_SECONDS || 14 * 24 * 60 * 60)
 );
-var ProductSchema = new import_mongoose4.Schema(
+var ProductSchema = new import_mongoose5.Schema(
   {
     _id: { type: String, required: true },
     sku: { type: String, default: null, index: true },
@@ -80099,7 +80291,7 @@ var ProductSchema = new import_mongoose4.Schema(
     medicine_id: { type: String, default: null, index: true },
     // data.* giữ Mixed nhưng Shopee uint64 IDs (shopeeItemId/shopeeModelId/item_id/model_id/promotion_id/activity_id)
     // BẮT BUỘC là String — sanitize bằng stringifyShopeeIdsDeep trước khi ghi.
-    data: { type: import_mongoose4.Schema.Types.Mixed, required: true }
+    data: { type: import_mongoose5.Schema.Types.Mixed, required: true }
   },
   { collection: "products", versionKey: false }
 );
@@ -80132,7 +80324,7 @@ ProductSchema.index(
   }
 );
 ProductSchema.index({ "data.stock": 1 });
-var ChannelListingSchema = new import_mongoose4.Schema(
+var ChannelListingSchema = new import_mongoose5.Schema(
   {
     _id: { type: String, required: true },
     channelId: { type: String, default: null, index: true },
@@ -80140,18 +80332,18 @@ var ChannelListingSchema = new import_mongoose4.Schema(
     sku: { type: String, default: null, index: true },
     status: { type: String, default: null, index: true },
     linkedProductId: { type: String, default: null, index: true },
-    data: { type: import_mongoose4.Schema.Types.Mixed, required: true }
+    data: { type: import_mongoose5.Schema.Types.Mixed, required: true }
   },
   { collection: "channel_listings", versionKey: false }
 );
-var MetaSchema = new import_mongoose4.Schema(
+var MetaSchema = new import_mongoose5.Schema(
   {
     _id: { type: String, required: true },
     value: { type: String, required: true }
   },
   { collection: "meta", versionKey: false }
 );
-var OrderSchema = new import_mongoose4.Schema(
+var OrderSchema = new import_mongoose5.Schema(
   {
     _id: { type: String, required: true },
     // Unique index khai báo riêng bên dưới (orderSn_unique) — KHÔNG dùng index: true để tránh trùng orderSn_1.
@@ -80210,10 +80402,10 @@ var OrderSchema = new import_mongoose4.Schema(
     customerPhone: { type: String, default: null },
     customerEmail: { type: String, default: null },
     customerAddress: { type: String, default: null },
-    billing: { type: import_mongoose4.Schema.Types.Mixed, default: null },
-    shipping: { type: import_mongoose4.Schema.Types.Mixed, default: null },
+    billing: { type: import_mongoose5.Schema.Types.Mixed, default: null },
+    shipping: { type: import_mongoose5.Schema.Types.Mixed, default: null },
     // data.items[].productId / modelId / item_id… = String (Shopee uint64)
-    data: { type: import_mongoose4.Schema.Types.Mixed, required: true }
+    data: { type: import_mongoose5.Schema.Types.Mixed, required: true }
   },
   { collection: "orders", versionKey: false }
 );
@@ -80272,7 +80464,7 @@ OrderSchema.index(
     partialFilterExpression: { is_rts: true }
   }
 );
-var OrderEventSchema = new import_mongoose4.Schema(
+var OrderEventSchema = new import_mongoose5.Schema(
   {
     _id: { type: String, required: true },
     orderSn: { type: String, required: true, index: true },
@@ -80284,7 +80476,7 @@ var OrderEventSchema = new import_mongoose4.Schema(
     next_shopee_status: { type: String, default: null },
     logistics_status: { type: String, default: null },
     occurred_at: { type: Date, required: true, index: true },
-    payload: { type: import_mongoose4.Schema.Types.Mixed, default: null }
+    payload: { type: import_mongoose5.Schema.Types.Mixed, default: null }
   },
   { collection: "order_events", versionKey: false }
 );
@@ -80293,14 +80485,14 @@ OrderEventSchema.index(
   { occurred_at: 1 },
   { expireAfterSeconds: ORDER_EVENT_TTL_SECONDS, name: "order_events_ttl" }
 );
-var SyncJobSchema = new import_mongoose4.Schema(
+var SyncJobSchema = new import_mongoose5.Schema(
   {
     _id: { type: String, required: true },
     type: { type: String, required: true, index: true },
     state: { type: String, required: true, index: true },
     started_at: { type: Date, default: null },
     finished_at: { type: Date, default: null },
-    metrics: { type: import_mongoose4.Schema.Types.Mixed, default: {} },
+    metrics: { type: import_mongoose5.Schema.Types.Mixed, default: {} },
     error: { type: String, default: null },
     requested_by: { type: String, default: null }
   },
@@ -80322,13 +80514,13 @@ var mongoReady = false;
 var appRootResolved3 = "";
 var writeChain3 = Promise.resolve();
 function ensureModels() {
-  ProductModel = import_mongoose4.default.models.Product || import_mongoose4.default.model("Product", ProductSchema);
-  ChannelListingModel = import_mongoose4.default.models.ChannelListing || import_mongoose4.default.model("ChannelListing", ChannelListingSchema);
-  MetaModel = import_mongoose4.default.models.AppMeta || import_mongoose4.default.model("AppMeta", MetaSchema);
-  OrderModel = import_mongoose4.default.models.Order || import_mongoose4.default.model("Order", OrderSchema);
-  OrderEventModel = import_mongoose4.default.models.OrderEvent || import_mongoose4.default.model("OrderEvent", OrderEventSchema);
-  SyncJobModel = import_mongoose4.default.models.SyncJob || import_mongoose4.default.model("SyncJob", SyncJobSchema);
-  DonHoanHuyModel = import_mongoose4.default.models.DonHoanHuy || DonHoanHuy_default;
+  ProductModel = import_mongoose5.default.models.Product || import_mongoose5.default.model("Product", ProductSchema);
+  ChannelListingModel = import_mongoose5.default.models.ChannelListing || import_mongoose5.default.model("ChannelListing", ChannelListingSchema);
+  MetaModel = import_mongoose5.default.models.AppMeta || import_mongoose5.default.model("AppMeta", MetaSchema);
+  OrderModel = import_mongoose5.default.models.Order || import_mongoose5.default.model("Order", OrderSchema);
+  OrderEventModel = import_mongoose5.default.models.OrderEvent || import_mongoose5.default.model("OrderEvent", OrderEventSchema);
+  SyncJobModel = import_mongoose5.default.models.SyncJob || import_mongoose5.default.model("SyncJob", SyncJobSchema);
+  DonHoanHuyModel = import_mongoose5.default.models.DonHoanHuy || DonHoanHuy_default;
 }
 function requireMongo() {
   if (!isMongoReady()) {
@@ -80406,12 +80598,12 @@ function enqueueWrite(task) {
   return next;
 }
 function withWriteTimeout(promise, label, timeoutMs = 1e4) {
-  let timer;
+  let timer2;
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label}_timeout_${timeoutMs}ms`)), timeoutMs);
+    timer2 = setTimeout(() => reject(new Error(`${label}_timeout_${timeoutMs}ms`)), timeoutMs);
   });
   return Promise.race([promise, timeout]).finally(() => {
-    if (timer) clearTimeout(timer);
+    if (timer2) clearTimeout(timer2);
   });
 }
 function isMongoPoolCheckoutTimeout(err) {
@@ -80436,14 +80628,14 @@ async function withPosDbRetry(label, run) {
   }
 }
 function isMongoReady() {
-  return mongoReady && import_mongoose4.default.connection.readyState === 1;
+  return mongoReady && import_mongoose5.default.connection.readyState === 1;
 }
 async function recoverMongoConnection(reason = "timeout") {
   console.warn(`[MongoDB] recoverMongoConnection (${reason}) \u2014 reconnecting...`);
   mongoReady = false;
   try {
     await reconnectDB();
-    mongoReady = import_mongoose4.default.connection.readyState === 1;
+    mongoReady = import_mongoose5.default.connection.readyState === 1;
     if (mongoReady) {
       console.log("[MongoDB] recoverMongoConnection OK");
       return true;
@@ -80493,11 +80685,11 @@ async function initMongo(appRoot) {
       );
     } catch {
     }
-    mongoReady = import_mongoose4.default.connection.readyState === 1;
+    mongoReady = import_mongoose5.default.connection.readyState === 1;
     if (!mongoReady) {
       console.error(
         "L\u1ED6I MONGODB STARTUP:",
-        `mongoose readyState=${import_mongoose4.default.connection.readyState} (expect 1)`
+        `mongoose readyState=${import_mongoose5.default.connection.readyState} (expect 1)`
       );
       return isProductsDiskMode();
     }
@@ -81367,7 +81559,7 @@ async function applyImportStockAndPriceToMainWarehouse(productId, quantityDelta,
     };
   };
   try {
-    const session = await import_mongoose4.default.startSession();
+    const session = await import_mongoose5.default.startSession();
     try {
       let out;
       await session.withTransaction(async () => {
@@ -81552,7 +81744,7 @@ async function loadLogisticsSettingsFromStore() {
   }
   if (raw == null || raw === "") {
     try {
-      const native = await import_mongoose4.default.connection.db?.collection("meta").findOne({ _id: LOGISTICS_CONFIG_META_KEY });
+      const native = await import_mongoose5.default.connection.db?.collection("meta").findOne({ _id: LOGISTICS_CONFIG_META_KEY });
       if (native && typeof native === "object") {
         raw = native.value ?? native;
       }
@@ -82123,6 +82315,19 @@ function documentHasValidTracking(doc) {
 function documentIsPrepared(doc) {
   return doc?.isPrepared === true || doc?.data?.isPrepared === true;
 }
+function documentShopAlreadyWorked(doc) {
+  if (!doc) return false;
+  return documentIsPrepared(doc) || doc.isPrinted === true || doc.data?.isPrinted === true || doc.is_handed_over === true || doc.data?.is_handed_over === true;
+}
+function pinReadyToShipAwaitingPrepStatus($set, rawStatus) {
+  const raw = String(rawStatus || "").toUpperCase();
+  if (raw !== "READY_TO_SHIP" && raw !== "RETRY_SHIP") return;
+  const st = String($set.status || "").trim();
+  if (st === "processed" || st === "shipping" || st === "pending_confirm" || st === "pending_verification") {
+    $set.status = "unprocessed";
+    $set["data.status"] = "unprocessed";
+  }
+}
 function documentHasGoods(doc) {
   return Array.isArray(doc?.data?.items) && doc.data.items.length > 0;
 }
@@ -82187,7 +82392,10 @@ async function bulkUpsertOrdersToStore(orders) {
       );
     }
     const pendingFlag = order.is_pending_shopee_check === true;
-    const tnRaw = String(order.tracking_no || order.trackingNumber || "").trim();
+    const dataBag = order.data && typeof order.data === "object" && !Array.isArray(order.data) ? order.data : {};
+    const tnRaw = String(
+      order.tracking_no || order.trackingNumber || dataBag.tracking_no || dataBag.trackingNumber || ""
+    ).trim();
     const usableTn = tnRaw && !/^0FG/i.test(tnRaw) ? tnRaw : null;
     const carrier = String(
       order.shipping_carrier || order.checkout_shipping_carrier || order.carrier || ""
@@ -82279,7 +82487,7 @@ async function bulkUpsertOrdersToStore(orders) {
     if (!forceShipping && !forceCompleted && !forceCancelled && !forceToReturn && order.status != null && String(order.status).trim()) {
       let st = String(order.status).trim();
       if (st === "shipping" && (rawStatus === "PROCESSED" || rawStatus === "READY_TO_SHIP" || rawStatus === "RETRY_SHIP")) {
-        st = rawStatus === "PROCESSED" || usableTn ? "processed" : "unprocessed";
+        st = rawStatus === "PROCESSED" ? "processed" : "unprocessed";
         console.warn(
           `[MongoDB] BLOCK orphan shipping\u2192${st} order_sn=${orderSn || _id} raw=${rawStatus}`
         );
@@ -82293,7 +82501,7 @@ async function bulkUpsertOrdersToStore(orders) {
       }
     }
     if (order.shopName != null) $set["data.shopName"] = String(order.shopName);
-    if (trackingIntent === "present" && usableTn) {
+    if (usableTn) {
       $set.has_tracking = true;
       $set["data.has_tracking"] = true;
     } else if (trackingIntent === "explicit_empty") {
@@ -82628,6 +82836,15 @@ async function bulkUpsertOrdersToStore(orders) {
       if (Object.prototype.hasOwnProperty.call($set, k)) continue;
       $setOnInsert[k] = v;
     }
+    if (usableTn) {
+      $set.has_tracking = true;
+      $set["data.has_tracking"] = true;
+      delete $setOnInsert.has_tracking;
+      delete $setOnInsert["data.has_tracking"];
+    }
+    if (!forceShipping && !forceCompleted && !forceCancelled && !forceToReturn) {
+      pinReadyToShipAwaitingPrepStatus($set, rawStatus);
+    }
     console.log("D\u1EEF li\u1EC7u chu\u1EA9n b\u1ECB l\u01B0u DB (upsert $set + $setOnInsert):", {
       _id,
       orderSn,
@@ -82806,7 +83023,24 @@ async function bulkUpsertOrdersToStore(orders) {
               $set.shopee_order_status || $set["data.shopee_order_status"] || ""
             ).toUpperCase();
             const forwardProgress = FORWARD_PROGRESS_RAW.has(incomingRawForGuard);
-            if (!forwardProgress && incomingStatus === "unprocessed" && LOCAL_STATUS_NOT_BELOW_PROCESSED.has(existingStatus) && (dbHasTracking || documentIsPrepared(current) || item.trackingIntent === "present")) {
+            const rtsAwaitingPrep = incomingRawForGuard === "READY_TO_SHIP" || incomingRawForGuard === "RETRY_SHIP";
+            const shopWorked = documentShopAlreadyWorked(current);
+            if (!forwardProgress && rtsAwaitingPrep && shopWorked && incomingStatus === "unprocessed") {
+              delete $set.status;
+              delete $set["data.status"];
+              console.warn(
+                `[MongoDB] KEEP prepared status ${existingStatus} order_sn=${item.orderSn || item.id} raw=${incomingRawForGuard}`
+              );
+            } else if (!forwardProgress && rtsAwaitingPrep && !shopWorked) {
+              const st = incomingStatus || existingStatus;
+              if (st === "processed" || st === "shipping" || st === "pending_confirm" || st === "pending_verification") {
+                $set.status = "unprocessed";
+                $set["data.status"] = "unprocessed";
+                console.warn(
+                  `[MongoDB] KEEP unprocessed (c\xF3 m\xE3, ch\u01B0a chu\u1EA9n b\u1ECB) order_sn=${item.orderSn || item.id} raw=${incomingRawForGuard} was=${st}`
+                );
+              }
+            } else if (!forwardProgress && incomingStatus === "unprocessed" && LOCAL_STATUS_NOT_BELOW_PROCESSED.has(existingStatus) && (documentIsPrepared(current) || incomingRawForGuard === "PROCESSED")) {
               delete $set.status;
               delete $set["data.status"];
               console.warn(
@@ -83627,6 +83861,7 @@ function isLaggingPendingConfirmPair(raw, status) {
   const st = String(status || "").trim();
   if (TERMINAL_SHOPEE_RAW.includes(r2)) return false;
   if (st === "shipping" || st === "completed" || st === "cancelled") return false;
+  if (r2 === "READY_TO_SHIP" || r2 === "RETRY_SHIP") return false;
   if (LAGGING_PENDING_RAW.includes(r2)) return true;
   if (LAGGING_PENDING_LOCAL.includes(st)) return true;
   if (!r2 && (st === "pending_confirm" || st === "pending_verification")) return true;
@@ -85643,11 +85878,100 @@ var ORDER_TAB_CANCEL_RETURN_RAW = ["CANCELLED", "IN_CANCEL", "TO_RETURN", "RETUR
 var ORDER_TAB_TRACKING_PRESENT = {
   tracking_no: { $exists: true, $nin: [null, "", "0"] }
 };
-var ORDER_TAB_TRACKING_ABSENT = {
-  has_tracking: { $ne: true }
+var ORDER_TAB_HAS_REAL_TRACKING = {
+  $or: [
+    { has_tracking: true },
+    {
+      $and: [
+        { tracking_no: { $exists: true, $nin: [null, "", "0"] } },
+        { tracking_no: { $not: /^0FG/i } }
+      ]
+    },
+    {
+      $and: [
+        { trackingNumber: { $exists: true, $nin: [null, "", "0"] } },
+        { trackingNumber: { $not: /^0FG/i } }
+      ]
+    }
+  ]
+};
+var ORDER_TAB_NO_REAL_TRACKING = {
+  $and: [
+    { has_tracking: { $ne: true } },
+    {
+      $or: [
+        { tracking_no: { $exists: false } },
+        { tracking_no: { $in: [null, "", "0"] } },
+        { tracking_no: { $regex: /^0FG/i } }
+      ]
+    },
+    {
+      $or: [
+        { trackingNumber: { $exists: false } },
+        { trackingNumber: { $in: [null, "", "0"] } },
+        { trackingNumber: { $regex: /^0FG/i } }
+      ]
+    }
+  ]
 };
 function orderTabPendingConfirmNoTracking() {
-  return { has_tracking: { $ne: true } };
+  return ORDER_TAB_NO_REAL_TRACKING;
+}
+var ORDER_TAB_PENDING_RAW = [
+  "UNPAID",
+  "PENDING",
+  "IN_REVIEW",
+  "FRAUD_CHECK",
+  "INVOICE_PENDING",
+  "READY_TO_SHIP",
+  "RETRY_SHIP"
+];
+var ORDER_TAB_CLOSED_LOCAL = [
+  "shipping",
+  "completed",
+  "cancelled",
+  "return_pending",
+  "return_received"
+];
+function orderTabUnprocessedMatch() {
+  return {
+    $and: [
+      { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] } },
+      ORDER_TAB_HAS_REAL_TRACKING,
+      { isPrepared: { $ne: true } },
+      ORDER_TAB_NOT_HANDED_OVER,
+      { channel: { $nin: ["woocommerce", "manual"] } },
+      { status: { $nin: [...ORDER_TAB_CLOSED_LOCAL] } },
+      { shopee_order_status: { $nin: [...ORDER_TAB_LEFT_PICKUP_RAW] } },
+      { is_return: { $ne: true } },
+      {
+        shopee_cancel_return_kind: { $nin: ["refund_return", "cancelled", "failed_delivery"] }
+      }
+    ]
+  };
+}
+function orderTabPendingConfirmMatch() {
+  return {
+    $and: [
+      {
+        $or: [
+          { shopee_order_status: { $in: [...ORDER_TAB_PENDING_RAW] } },
+          { status: { $in: ["pending_confirm", "pending_verification"] } }
+        ]
+      },
+      orderTabPendingConfirmNoTracking(),
+      {
+        shopee_order_status: {
+          $nin: ["PROCESSED", ...ORDER_TAB_LEFT_PICKUP_RAW]
+        }
+      },
+      { status: { $nin: [...ORDER_TAB_CLOSED_LOCAL] } },
+      { is_return: { $ne: true } },
+      {
+        shopee_cancel_return_kind: { $nin: ["refund_return", "cancelled", "failed_delivery"] }
+      }
+    ]
+  };
 }
 var ORDER_TAB_DROPOFF_PREPARED = {
   isPrepared: true
@@ -85771,77 +86095,20 @@ function orderTabFilter(tab) {
               ORDER_TAB_DROPOFF_PREPARED,
               { status: "processed" }
             ]
-          }
+          },
+          // RTS đã có mã nhưng chưa chuẩn bị thuộc Đơn chưa xử lý — không đếm trùng.
+          { $nor: [orderTabUnprocessedMatch()] }
         ]
       };
     case "unprocessed":
     case "chua-xu-ly":
     case "ready_to_ship":
     case "cho-lay-hang":
-      return {
-        $and: [
-          ORDER_TAB_IS_TO_SHIP,
-          ORDER_TAB_NOT_HANDED_OVER,
-          ORDER_TAB_TRACKING_ABSENT,
-          { isPrepared: { $ne: true } },
-          { channel: { $nin: ["woocommerce", "manual"] } },
-          {
-            $or: [
-              { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] } },
-              {
-                status: "unprocessed",
-                shopee_order_status: { $in: [null, ""] }
-              }
-            ]
-          },
-          { shopee_order_status: { $nin: [...ORDER_TAB_CANCEL_RETURN_RAW] } },
-          { is_return: { $ne: true } },
-          { shopee_cancel_return_kind: { $nin: ["refund_return", "cancelled", "failed_delivery"] } }
-        ]
-      };
+      return orderTabUnprocessedMatch();
     case "pending_confirm":
     case "pending_verification":
     case "cho-xac-nhan":
-      return {
-        $and: [
-          {
-            $or: [
-              { status: { $in: ["pending_confirm", "pending_verification"] } },
-              {
-                shopee_order_status: {
-                  $in: ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"]
-                }
-              }
-            ]
-          },
-          {
-            shopee_order_status: {
-              $nin: [
-                "READY_TO_SHIP",
-                "RETRY_SHIP",
-                "PROCESSED",
-                ...ORDER_TAB_LEFT_PICKUP_RAW
-              ]
-            }
-          },
-          {
-            status: {
-              $nin: [
-                "unprocessed",
-                "processed",
-                "shipping",
-                "completed",
-                "cancelled",
-                "return_pending",
-                "return_received"
-              ]
-            }
-          },
-          // Đã có mã VĐ outbound (không phải 0FG) → tuyệt đối không còn Chờ xác nhận.
-          // Count và Find dùng chung helper này (DRY).
-          orderTabPendingConfirmNoTracking()
-        ]
-      };
+      return orderTabPendingConfirmMatch();
     case "handed_over_carrier":
       return {
         $and: [ORDER_TAB_IS_TO_SHIP, ORDER_TAB_FAST_HANDED_OVER]
@@ -86039,16 +86306,7 @@ function tabIndexFilter(tab, kind) {
     case "chua-xu-ly":
     case "ready_to_ship":
     case "cho-lay-hang":
-      return {
-        shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] },
-        is_handed_over: { $ne: true },
-        isPrepared: { $ne: true },
-        channel: { $nin: ["woocommerce", "manual"] },
-        has_tracking: { $ne: true },
-        status: { $nin: ["cancelled", "return_pending", "return_received"] },
-        is_return: { $ne: true },
-        shopee_cancel_return_kind: { $nin: ["refund_return", "cancelled", "failed_delivery"] }
-      };
+      return orderTabFilter("unprocessed");
     case "processed":
     case "da-xu-ly":
     case "processed_pickup":
@@ -86081,7 +86339,8 @@ function tabIndexFilter(tab, kind) {
               { isPrepared: true },
               { status: "processed" }
             ]
-          }
+          },
+          { $nor: [orderTabUnprocessedMatch()] }
         ]
       };
     case "handed_over_carrier":
@@ -89588,7 +89847,7 @@ function unwrapList(data) {
 }
 async function fetchJson(url2, headers = {}, timeoutMs = VN_ADDRESS_TIMEOUT_MS) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer2 = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url2, {
       headers: { Accept: "application/json", ...headers },
@@ -89602,7 +89861,7 @@ async function fetchJson(url2, headers = {}, timeoutMs = VN_ADDRESS_TIMEOUT_MS) 
     }
     throw error;
   } finally {
-    clearTimeout(timer);
+    clearTimeout(timer2);
   }
 }
 async function fetchFirstList(urls) {
@@ -90039,11 +90298,11 @@ var import_express8 = __toESM(require_express2(), 1);
 // controllers/financeController.js
 var import_fs11 = __toESM(require("fs"), 1);
 var import_path11 = __toESM(require("path"), 1);
-var import_mongoose6 = __toESM(require("mongoose"), 1);
+var import_mongoose7 = __toESM(require("mongoose"), 1);
 
 // models/Escrow.js
-var import_mongoose5 = __toESM(require("mongoose"), 1);
-var EscrowSchema = new import_mongoose5.default.Schema(
+var import_mongoose6 = __toESM(require("mongoose"), 1);
+var EscrowSchema = new import_mongoose6.default.Schema(
   {
     ordersn: { type: String, required: true, trim: true },
     shop_id: { type: String, required: true, trim: true },
@@ -90080,7 +90339,7 @@ EscrowSchema.index({ shop_id: 1, order_date: -1 }, { name: "escrow_shop_date" })
 EscrowSchema.index({ is_disputed: 1, order_date: -1 }, { name: "escrow_disputed_date" });
 EscrowSchema.index({ status: 1, order_date: -1 }, { name: "escrow_status_date" });
 EscrowSchema.index({ order_date: -1 }, { name: "escrow_order_date" });
-var Escrow = import_mongoose5.default.models.Escrow || import_mongoose5.default.model("Escrow", EscrowSchema);
+var Escrow = import_mongoose6.default.models.Escrow || import_mongoose6.default.model("Escrow", EscrowSchema);
 var Escrow_default = Escrow;
 
 // controllers/financeController.js
@@ -90104,7 +90363,7 @@ function posVnd(raw) {
   return Math.max(0, roundVnd(raw));
 }
 function mongoReady2() {
-  return import_mongoose6.default.connection.readyState === 1 && Boolean(import_mongoose6.default.connection.db);
+  return import_mongoose7.default.connection.readyState === 1 && Boolean(import_mongoose7.default.connection.db);
 }
 function parseVnDayStart(ymd) {
   const s2 = String(ymd || "").trim();
@@ -90443,7 +90702,7 @@ async function syncEscrow(req, res) {
       }
       and.push({ $or: [{ create_time: dateRange }, { "data.date": strRange }] });
     }
-    const ordersCol = import_mongoose6.default.connection.db.collection("orders");
+    const ordersCol = import_mongoose7.default.connection.db.collection("orders");
     const candidates = await ordersCol.find({ $and: and }).project({
       orderSn: 1,
       shopId: 1,
@@ -90625,12 +90884,12 @@ var import_express9 = __toESM(require_express2(), 1);
 // services/addressBook.js
 var import_fs12 = __toESM(require("fs"), 1);
 var import_path12 = __toESM(require("path"), 1);
-var import_mongoose8 = __toESM(require("mongoose"), 1);
+var import_mongoose9 = __toESM(require("mongoose"), 1);
 init_appPaths();
 
 // models/AddressBook.js
-var import_mongoose7 = __toESM(require("mongoose"), 1);
-var AddressBookSchema = new import_mongoose7.default.Schema(
+var import_mongoose8 = __toESM(require("mongoose"), 1);
+var AddressBookSchema = new import_mongoose8.default.Schema(
   {
     id: { type: String, trim: true, index: true },
     name: { type: String, default: "", trim: true },
@@ -90676,7 +90935,7 @@ AddressBookSchema.index({ phone: 1, street: 1, wardCode: 1 }, { name: "address_b
 AddressBookSchema.index({ savedAt: -1 }, { name: "address_book_savedAt" });
 AddressBookSchema.index({ total_spent: -1 }, { name: "address_book_total_spent" });
 AddressBookSchema.index({ last_purchase_date: -1 }, { name: "address_book_last_purchase" });
-var AddressBook = import_mongoose7.default.models.AddressBook || import_mongoose7.default.model("AddressBook", AddressBookSchema);
+var AddressBook = import_mongoose8.default.models.AddressBook || import_mongoose8.default.model("AddressBook", AddressBookSchema);
 var AddressBook_default = AddressBook;
 
 // utils/posSellingPrice.js
@@ -90781,7 +91040,7 @@ function writeBook(list) {
   import_fs12.default.writeFileSync(FILE_PATH, JSON.stringify(list, null, 2), "utf-8");
 }
 function mongoReady3() {
-  return import_mongoose8.default.connection?.readyState === 1;
+  return import_mongoose9.default.connection?.readyState === 1;
 }
 function normalizePhone(value) {
   return String(value || "").replace(/\D/g, "");
@@ -90970,8 +91229,8 @@ async function updateCustomerAddressByKey({
   let updated = null;
   if (cleanId) {
     const idOr = [{ id: cleanId }];
-    if (import_mongoose8.default.isValidObjectId(cleanId)) {
-      idOr.push({ _id: new import_mongoose8.default.Types.ObjectId(cleanId) });
+    if (import_mongoose9.default.isValidObjectId(cleanId)) {
+      idOr.push({ _id: new import_mongoose9.default.Types.ObjectId(cleanId) });
     }
     updated = await AddressBook_default.findOneAndUpdate(
       { $or: idOr },
@@ -90990,8 +91249,8 @@ async function updateCustomerAddressByKey({
     const custOr = [];
     if (cleanId) {
       custOr.push({ id: cleanId });
-      if (import_mongoose8.default.isValidObjectId(cleanId)) {
-        custOr.push({ _id: new import_mongoose8.default.Types.ObjectId(cleanId) });
+      if (import_mongoose9.default.isValidObjectId(cleanId)) {
+        custOr.push({ _id: new import_mongoose9.default.Types.ObjectId(cleanId) });
       }
     }
     if (cleanPhone) {
@@ -90999,7 +91258,7 @@ async function updateCustomerAddressByKey({
       custOr.push({ phone_number: cleanPhone });
     }
     if (custOr.length) {
-      await import_mongoose8.default.connection.collection("customers").updateMany(
+      await import_mongoose9.default.connection.collection("customers").updateMany(
         { $or: custOr },
         { $set: { ...patch, updatedAt: /* @__PURE__ */ new Date() } }
       );
@@ -91034,8 +91293,8 @@ async function deleteCustomerByKey({ id = "", phone = "" } = {}) {
   let deleted = 0;
   if (cleanId) {
     const idOr = [{ id: cleanId }];
-    if (import_mongoose8.default.isValidObjectId(cleanId)) {
-      idOr.push({ _id: new import_mongoose8.default.Types.ObjectId(cleanId) });
+    if (import_mongoose9.default.isValidObjectId(cleanId)) {
+      idOr.push({ _id: new import_mongoose9.default.Types.ObjectId(cleanId) });
     }
     const byId = await AddressBook_default.deleteOne({ $or: idOr });
     deleted += Number(byId?.deletedCount) || 0;
@@ -91048,8 +91307,8 @@ async function deleteCustomerByKey({ id = "", phone = "" } = {}) {
     const custOr = [];
     if (cleanId) {
       custOr.push({ id: cleanId });
-      if (import_mongoose8.default.isValidObjectId(cleanId)) {
-        custOr.push({ _id: new import_mongoose8.default.Types.ObjectId(cleanId) });
+      if (import_mongoose9.default.isValidObjectId(cleanId)) {
+        custOr.push({ _id: new import_mongoose9.default.Types.ObjectId(cleanId) });
       }
     }
     if (cleanPhone) {
@@ -91057,7 +91316,7 @@ async function deleteCustomerByKey({ id = "", phone = "" } = {}) {
       custOr.push({ phone_number: cleanPhone });
     }
     if (custOr.length) {
-      const cust = await import_mongoose8.default.connection.collection("customers").deleteMany({ $or: custOr });
+      const cust = await import_mongoose9.default.connection.collection("customers").deleteMany({ $or: custOr });
       deleted += Number(cust?.deletedCount) || 0;
     }
   } catch (err) {
@@ -91398,7 +91657,7 @@ var addressBookRoutes_default = router8;
 var import_express10 = __toESM(require_express2(), 1);
 
 // controllers/customerController.js
-var import_mongoose9 = __toESM(require("mongoose"), 1);
+var import_mongoose10 = __toESM(require("mongoose"), 1);
 var ORDER_LIMIT = 50;
 var PHONE_FIELDS = [
   "customerPhone",
@@ -91491,7 +91750,7 @@ async function updateCustomerAddress(req, res) {
 }
 async function getCustomerOrderHistory(req, res) {
   try {
-    if (import_mongoose9.default.connection?.readyState !== 1) {
+    if (import_mongoose10.default.connection?.readyState !== 1) {
       return res.status(503).json({
         success: false,
         error: "C\u01A1 s\u1EDF d\u1EEF li\u1EC7u ch\u01B0a s\u1EB5n s\xE0ng",
@@ -91514,7 +91773,7 @@ async function getCustomerOrderHistory(req, res) {
       or.push({ [field]: { $in: match2.exact } });
       or.push({ [field]: suffix });
     }
-    const rows = await import_mongoose9.default.connection.collection("orders").find(
+    const rows = await import_mongoose10.default.connection.collection("orders").find(
       { $or: or },
       {
         projection: {
@@ -108576,7 +108835,7 @@ async function retryBackoff(fn, strategy) {
         retryInterval = initialInterval * Math.pow(x2, exponent) + Math.random() * 1e3;
       }
       const d = Math.min(retryInterval, maxInterval);
-      await delay2(d);
+      await delay3(d);
       x2++;
     }
   }
@@ -108604,7 +108863,7 @@ async function retryAttemptCountBackoff(fn, strategy, config) {
         retryInterval = strategy.initialInterval * Math.pow(strategy.exponent, attempt) * (1 - Math.random() * 0.25);
       }
       const d = Math.min(retryInterval, strategy.maxInterval);
-      await delay2(d);
+      await delay3(d);
       attempt++;
     }
   }
@@ -108632,8 +108891,8 @@ function retryIntervalFromResponse(res) {
   }
   return 0;
 }
-async function delay2(delay3) {
-  return new Promise((resolve) => setTimeout(resolve, delay3));
+async function delay3(delay4) {
+  return new Promise((resolve) => setTimeout(resolve, delay4));
 }
 var gt = typeof globalThis === "undefined" ? null : globalThis;
 var webWorkerLike = typeof gt === "object" && gt != null && "importScripts" in gt && typeof gt["importScripts"] === "function";
@@ -115951,15 +116210,15 @@ var Http2Sessions = class {
     }
     const session = import_http2.default.connect(authority, options);
     let removed;
-    let timer;
+    let timer2;
     const removeSession = () => {
       if (removed) {
         return;
       }
       removed = true;
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
+      if (timer2) {
+        clearTimeout(timer2);
+        timer2 = null;
       }
       let entries = authoritySessions, len = entries.length, i2 = len;
       while (i2--) {
@@ -115983,14 +116242,14 @@ var Http2Sessions = class {
       session.request = function() {
         const stream5 = originalRequestFn.apply(this, arguments);
         streamsCount++;
-        if (timer) {
-          clearTimeout(timer);
-          timer = null;
+        if (timer2) {
+          clearTimeout(timer2);
+          timer2 = null;
         }
         stream5.once("close", () => {
           if (!--streamsCount) {
-            timer = setTimeout(() => {
-              timer = null;
+            timer2 = setTimeout(() => {
+              timer2 = null;
               removeSession();
             }, sessionTimeout);
           }
@@ -116263,13 +116522,13 @@ function throttle(fn, freq) {
   let timestamp = 0;
   let threshold = 1e3 / freq;
   let lastArgs;
-  let timer;
+  let timer2;
   const invoke = (args, now = Date.now()) => {
     timestamp = now;
     lastArgs = null;
-    if (timer) {
-      clearTimeout(timer);
-      timer = null;
+    if (timer2) {
+      clearTimeout(timer2);
+      timer2 = null;
     }
     fn(...args);
   };
@@ -116280,9 +116539,9 @@ function throttle(fn, freq) {
       invoke(args, now);
     } else {
       lastArgs = args;
-      if (!timer) {
-        timer = setTimeout(() => {
-          timer = null;
+      if (!timer2) {
+        timer2 = setTimeout(() => {
+          timer2 = null;
           invoke(lastArgs);
         }, threshold - passed);
       }
@@ -117816,16 +118075,16 @@ var composeSignals = (signals, timeout) => {
       );
     }
   };
-  let timer = timeout && setTimeout(() => {
-    timer = null;
+  let timer2 = timeout && setTimeout(() => {
+    timer2 = null;
     onabort(new AxiosError_default(`timeout of ${timeout}ms exceeded`, AxiosError_default.ETIMEDOUT));
   }, timeout);
   const unsubscribe = () => {
     if (!signals) {
       return;
     }
-    timer && clearTimeout(timer);
-    timer = null;
+    timer2 && clearTimeout(timer2);
+    timer2 = null;
     signals.forEach((signal2) => {
       signal2.unsubscribe ? signal2.unsubscribe(onabort) : signal2.removeEventListener("abort", onabort);
     });
@@ -119073,7 +119332,7 @@ function getMasterCache(token) {
 }
 async function ghnFetch2(apiUrl, path26, { method = "POST", token, shopId, body } = {}) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timer2 = setTimeout(() => controller.abort(), TIMEOUT_MS);
   const headers = {
     "Content-Type": "application/json",
     Token: String(token || "").trim()
@@ -119100,7 +119359,7 @@ async function ghnFetch2(apiUrl, path26, { method = "POST", token, shopId, body 
     }
     throw err;
   } finally {
-    clearTimeout(timer);
+    clearTimeout(timer2);
   }
 }
 async function ghnMasterList(creds, path26, body) {
@@ -119714,7 +119973,7 @@ async function spxFetch(apiUrl, path26, bodyObj, creds) {
   const rawBody = stringifySpxBody(bodyObj);
   const headers = buildSpxAuthHeaders(appId, secret, rawBody);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS2);
+  const timer2 = setTimeout(() => controller.abort(), TIMEOUT_MS2);
   try {
     const res = await fetch(`${apiUrl}${path26}`, {
       method: "POST",
@@ -119736,7 +119995,7 @@ async function spxFetch(apiUrl, path26, bodyObj, creds) {
     }
     throw err;
   } finally {
-    clearTimeout(timer);
+    clearTimeout(timer2);
   }
 }
 function isSpxSuccess(json2) {
@@ -120280,17 +120539,17 @@ async function postShopConnectionStatus(req, res) {
         if (!shop?.id) return null;
         try {
           const result = await new Promise((resolve, reject) => {
-            const timer = setTimeout(
+            const timer2 = setTimeout(
               () => reject(new Error("Timeout ki\u1EC3m tra k\u1EBFt n\u1ED1i (15s)")),
               15e3
             );
             Promise.resolve(deps6.checkShopConnectionStatus(shop)).then(
               (v) => {
-                clearTimeout(timer);
+                clearTimeout(timer2);
                 resolve(v);
               },
               (e2) => {
-                clearTimeout(timer);
+                clearTimeout(timer2);
                 reject(e2);
               }
             );
@@ -121071,18 +121330,18 @@ function corsMiddleware(req, res, next) {
 var cors_default = corsMiddleware;
 
 // middlewares/dbReady.js
-var import_mongoose10 = __toESM(require("mongoose"), 1);
+var import_mongoose11 = __toESM(require("mongoose"), 1);
 function dbReadyMiddleware(req, res, next) {
   const pathName = String(req.path || req.originalUrl || "").split("?")[0];
   if (!pathName.startsWith("/api/")) return next();
   const allowWithoutDb = pathName === "/api/login" || pathName.startsWith("/api/health") || pathName.startsWith("/api/auth/") || pathName === "/api/shopee/callback" || pathName === "/api/shopee/oauth/complete" || pathName === "/api/shopee/webhook" || pathName === "/api/tiktok/callback" || pathName.startsWith("/api/public/") || pathName.startsWith("/api/shopee/ship-order") || pathName === "/api/shopee/print-document";
   if (allowWithoutDb) return next();
-  if (import_mongoose10.default.connection.readyState !== 1) {
+  if (import_mongoose11.default.connection.readyState !== 1) {
     return res.status(503).json({
       success: false,
       message: "Database \u0111ang k\u1EBFt n\u1ED1i, vui l\xF2ng th\u1EED l\u1EA1i sau",
       error: "database_connecting",
-      readyState: import_mongoose10.default.connection.readyState
+      readyState: import_mongoose11.default.connection.readyState
     });
   }
   return next();
@@ -125040,7 +125299,7 @@ async function handleManualMappingLink(req, res) {
       console.error("[Mapping Manual] g\u1EEDi response l\u1ED7i:", sendErr?.message || sendErr);
     }
   };
-  const timer = setTimeout(() => {
+  const timer2 = setTimeout(() => {
     console.error("[Mapping Manual] qu\xE1 th\u1EDDi gian \u2014 tr\u1EA3 l\u1ED7i, kh\xF4ng gi\u1EEF request.");
     reply(500, { success: false, message: "L\u1ED7i server" });
   }, 15e3);
@@ -125096,7 +125355,7 @@ async function handleManualMappingLink(req, res) {
     console.error("[Mapping Manual] l\u1ED7i:", error?.message || error);
     reply(500, { success: false, message: "L\u1ED7i server" });
   } finally {
-    clearTimeout(timer);
+    clearTimeout(timer2);
   }
 }
 async function handleMappingProductsHeal(_req, res) {
@@ -125185,7 +125444,7 @@ async function handleSingleAutoLink(req, res) {
       console.error("[Auto-link Single] g\u1EEDi response l\u1ED7i:", sendErr?.message || sendErr);
     }
   };
-  const timer = setTimeout(() => {
+  const timer2 = setTimeout(() => {
     console.error("[Auto-link Single] qu\xE1 th\u1EDDi gian \u2014 tr\u1EA3 l\u1ED7i, kh\xF4ng gi\u1EEF request.");
     reply(500, { success: false, message: "L\u1ED7i server" });
   }, 15e3);
@@ -125226,7 +125485,7 @@ async function handleSingleAutoLink(req, res) {
     console.error("[Auto-link Single] Exception:", error);
     reply(500, { success: false, message: "L\u1ED7i server" });
   } finally {
-    clearTimeout(timer);
+    clearTimeout(timer2);
   }
 }
 async function handleMappingSkuIndex(_req, res) {
@@ -125331,7 +125590,7 @@ var import_express20 = __toESM(require_express2(), 1);
 // controllers/ordersController.js
 var import_fs23 = __toESM(require("fs"), 1);
 var import_path23 = __toESM(require("path"), 1);
-var import_mongoose11 = __toESM(require("mongoose"), 1);
+var import_mongoose12 = __toESM(require("mongoose"), 1);
 init_appPaths();
 
 // utils/orderPdfAvailability.js
@@ -127562,7 +127821,7 @@ function docHasValidTracking(doc) {
 var GHOST_ORDER_SNS = ["261001FRS927QE", "261001F7MD71RC", "261001F4MQ09N9"];
 async function deleteGhostOrders(_req, res) {
   try {
-    const Order2 = import_mongoose11.default.models.Order;
+    const Order2 = import_mongoose12.default.models.Order;
     if (!isMongoReady() || !Order2) {
       return res.status(503).json({
         success: false,
@@ -127600,14 +127859,14 @@ async function migrateTrackingFlag(_req, res) {
     batches: 0
   };
   try {
-    if (!isMongoReady() || import_mongoose11.default.connection.readyState !== 1 || !import_mongoose11.default.connection.db) {
+    if (!isMongoReady() || import_mongoose12.default.connection.readyState !== 1 || !import_mongoose12.default.connection.db) {
       return res.status(503).json({
         success: false,
         error: "mongodb_not_ready",
         message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng."
       });
     }
-    const col = import_mongoose11.default.connection.db.collection("orders");
+    const col = import_mongoose12.default.connection.db.collection("orders");
     while (stats.batches < MIGRATE_TRACKING_MAX_BATCHES) {
       const docs = await col.find({ has_tracking: { $exists: false } }).project({
         _id: 1,
@@ -127681,14 +127940,14 @@ function nestedStubIsUnpaid(nested) {
 async function healCorruptedFlags(_req, res) {
   let healedCount = 0;
   try {
-    if (!isMongoReady() || import_mongoose11.default.connection.readyState !== 1 || !import_mongoose11.default.connection.db) {
+    if (!isMongoReady() || import_mongoose12.default.connection.readyState !== 1 || !import_mongoose12.default.connection.db) {
       return res.status(503).json({
         success: false,
         error: "mongodb_not_ready",
         healedCount: 0
       });
     }
-    const col = import_mongoose11.default.connection.db.collection("orders");
+    const col = import_mongoose12.default.connection.db.collection("orders");
     let batches = 0;
     while (batches < HEAL_CORRUPT_MAX_BATCHES) {
       const docs = await col.find(HEAL_CORRUPT_FILTER).project({
@@ -131933,15 +132192,15 @@ async function generateWithModel(modelName, rawAddress) {
     `T\xE1ch th\xF4ng tin ng\u01B0\u1EDDi nh\u1EADn v\xE0 \u0111\u1ECBa ch\u1EC9 Vi\u1EC7t Nam sau th\xE0nh JSON:
 "${rawAddress}"`
   );
-  let timer;
+  let timer2;
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error("GEMINI_TIMEOUT")), GEMINI_TIMEOUT_MS);
+    timer2 = setTimeout(() => reject(new Error("GEMINI_TIMEOUT")), GEMINI_TIMEOUT_MS);
   });
   try {
     const result = await Promise.race([work, timeout]);
     return result.response.text();
   } finally {
-    if (timer) clearTimeout(timer);
+    if (timer2) clearTimeout(timer2);
   }
 }
 async function parseAddressWithGemini(rawAddress) {
@@ -132054,7 +132313,7 @@ async function ghnFetch3(path26, query) {
     }
   }
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), GHN_TIMEOUT_MS2);
+  const timer2 = setTimeout(() => controller.abort(), GHN_TIMEOUT_MS2);
   try {
     const res = await fetch(url2.toString(), {
       method: "GET",
@@ -132079,7 +132338,7 @@ async function ghnFetch3(path26, query) {
     }
     return null;
   } finally {
-    clearTimeout(timer);
+    clearTimeout(timer2);
   }
 }
 async function loadGhnProvinces2() {
@@ -132202,12 +132461,12 @@ function errorPayload(rawAddress, message) {
   };
 }
 function withTimeout(promise, ms, label) {
-  let timer;
+  let timer2;
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(label)), ms);
+    timer2 = setTimeout(() => reject(new Error(label)), ms);
   });
   return Promise.race([promise, timeout]).finally(() => {
-    if (timer) clearTimeout(timer);
+    if (timer2) clearTimeout(timer2);
   });
 }
 function sendJson2(res, status, body) {
@@ -134668,7 +134927,7 @@ async function processShopeeWebhookPayload(body) {
 init_appPaths();
 
 // services/orderChangeStream.js
-var import_mongoose12 = __toESM(require("mongoose"), 1);
+var import_mongoose13 = __toESM(require("mongoose"), 1);
 var NEW_ORDER_FLUSH_MS = 300;
 var UPDATED_FLUSH_MS = 3e3;
 var STATUS_FLUSH_MS = 300;
@@ -134860,14 +135119,14 @@ function scheduleReconnect(reason) {
     return;
   }
   reconnectAttempts += 1;
-  const delay3 = RECONNECT_BASE_MS * 2 ** (reconnectAttempts - 1);
+  const delay4 = RECONNECT_BASE_MS * 2 ** (reconnectAttempts - 1);
   console.warn(
-    `[OrderChangeStream] pid=${process.pid} reconnect #${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} sau ${delay3}ms (${reason})`
+    `[OrderChangeStream] pid=${process.pid} reconnect #${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} sau ${delay4}ms (${reason})`
   );
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     openStream();
-  }, delay3);
+  }, delay4);
   if (typeof reconnectTimer.unref === "function") reconnectTimer.unref();
 }
 function closeCurrentStream() {
@@ -134890,8 +135149,8 @@ function closeCurrentStream() {
 }
 function openStream() {
   if (stopped || unsupported) return;
-  const db = import_mongoose12.default.connection?.db;
-  if (import_mongoose12.default.connection?.readyState !== 1 || !db) {
+  const db = import_mongoose13.default.connection?.db;
+  if (import_mongoose13.default.connection?.readyState !== 1 || !db) {
     scheduleReconnect("mongo ch\u01B0a s\u1EB5n s\xE0ng");
     return;
   }
@@ -138474,8 +138733,8 @@ async function debugForceSyncHandedOverOrders(opts) {
     }));
     if (candidates.length === 0) {
       try {
-        const { default: mongoose13 } = await import("mongoose");
-        const col = mongoose13.connection?.db?.collection("orders");
+        const { default: mongoose14 } = await import("mongoose");
+        const col = mongoose14.connection?.db?.collection("orders");
         if (col) {
           const rawHanded = await col.countDocuments({
             $or: [
@@ -143074,7 +143333,7 @@ async function fetchShopeeLogisticsJson(url2, init, context, opts) {
       throw new Error(`Shopee ${context} timeout sau ${timeoutMs / 1e3} gi\xE2y.`);
     }
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer2 = setTimeout(() => controller.abort(), timeoutMs);
     const onParentAbort = () => controller.abort();
     if (opts?.signal) {
       if (opts.signal.aborted) controller.abort();
@@ -143115,7 +143374,7 @@ async function fetchShopeeLogisticsJson(url2, init, context, opts) {
       }
       throw error;
     } finally {
-      clearTimeout(timer);
+      clearTimeout(timer2);
       opts?.signal?.removeEventListener("abort", onParentAbort);
     }
   }
@@ -144539,7 +144798,7 @@ function mapShopeeStatusToLocal(rawStatus, opts) {
   }
   if (raw === "PROCESSED") return "processed";
   if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") {
-    return opts?.hasTracking ? "processed" : "unprocessed";
+    return "unprocessed";
   }
   if (raw === "UNPAID" || raw === "PENDING" || raw === "IN_REVIEW" || raw === "FRAUD_CHECK" || raw === "INVOICE_PENDING") {
     return "pending_confirm";
@@ -145751,7 +146010,8 @@ function forceHealPickupOrderIfHasTracking(order) {
   if (raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN" || order.status === "cancelled" || order.status === "return_pending" || order.status === "return_received") {
     return hasTn;
   }
-  const shouldProcess = hasTn || raw === "PROCESSED" || isDropoff && (hasTn || order.isPrepared === true);
+  const alreadyShopPrepared = order.isPrepared === true || order.isPrinted === true;
+  const shouldProcess = raw === "PROCESSED" || alreadyShopPrepared && (hasTn || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") || isDropoff && order.isPrepared === true;
   if (!shouldProcess) return false;
   const prevStatus = String(order.status || "");
   const laggingRaw = !raw || raw === "UNPAID" || raw === "PENDING" || raw === "IN_REVIEW" || raw === "FRAUD_CHECK" || raw === "INVOICE_PENDING";
@@ -147474,9 +147734,11 @@ function normalizeShopeeOrderDetail(shopId, shopName, item) {
         order.status = "shipping";
         order.isPrepared = true;
         order.is_pending_shopee_check = false;
-      } else if (finalRaw === "PROCESSED" || hasUsableShopeeTrackingNumber(order)) {
+      } else if (finalRaw === "PROCESSED") {
         order.status = "processed";
         order.isPrepared = true;
+      } else if (order.isPrepared === true || order.isPrinted === true) {
+        order.status = "processed";
       } else {
         order.status = "unprocessed";
         order.isPrepared = false;
@@ -147758,10 +148020,21 @@ function mergeShopeeOrderOnSync(existing, incoming) {
       merged.status = incomingRaw === "UNPAID" || incomingRaw === "PENDING" ? "pending_confirm" : "unprocessed";
     }
   }
-  if ((incomingRaw === "READY_TO_SHIP" || incomingRaw === "RETRY_SHIP" || incomingRaw === "PROCESSED") && hasUsableShopeeTrackingNumber(merged) && merged.status !== "shipping" && merged.status !== "completed" && !isShopeeTerminalRawStatus(String(merged.shopee_order_status || ""))) {
+  const mergedNotTerminal = merged.status !== "shipping" && merged.status !== "completed" && !isShopeeTerminalRawStatus(String(merged.shopee_order_status || ""));
+  if (incomingRaw === "PROCESSED" && hasUsableShopeeTrackingNumber(merged) && mergedNotTerminal) {
     merged.status = "processed";
     merged.isPrepared = true;
     merged.is_pending_shopee_check = false;
+  } else if ((incomingRaw === "READY_TO_SHIP" || incomingRaw === "RETRY_SHIP") && hasUsableShopeeTrackingNumber(merged) && mergedNotTerminal) {
+    const shopWorked = existing?.isPrepared === true || existing?.isPrinted === true || merged.isPrinted === true || existing?.is_handed_over === true || merged.is_handed_over === true;
+    if (!shopWorked) {
+      merged.status = "unprocessed";
+      if (existing?.isPrepared !== true) merged.isPrepared = false;
+      merged.is_pending_shopee_check = false;
+    } else if (merged.status !== "shipping" && merged.status !== "completed" && merged.status !== "cancelled") {
+      merged.status = "processed";
+      if (existing?.isPrepared === true) merged.isPrepared = true;
+    }
   }
   forceHealPickupOrderIfHasTracking(merged);
   repairFalseProcessedReadyToShip(merged);
@@ -148817,11 +149090,11 @@ async function pullReadyToShipBackfillFromShopee(opts) {
   }
 }
 function withLocalDbTimeout(promise, timeoutMs, label) {
-  let timer;
+  let timer2;
   const timeoutPromise = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label}_timeout_${timeoutMs}ms`)), timeoutMs);
+    timer2 = setTimeout(() => reject(new Error(`${label}_timeout_${timeoutMs}ms`)), timeoutMs);
   });
-  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
+  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer2));
 }
 var MONGO_ORDER_RECONCILE_COOLDOWN_MS = 5 * 60 * 1e3;
 var PRODUCTS_DB_PATH = import_path25.default.join(APP_ROOT14, "data", "products.json");
@@ -150468,7 +150741,7 @@ function normalizeShopeeOrder(payload) {
   );
   const explicitStatus = extractShopeeWebhookRawStatus(payload);
   const hasExplicitStatus = Boolean(explicitStatus);
-  const rawStatus = hasExplicitStatus ? explicitStatus : webhookTracking ? "PROCESSED" : "UNPAID";
+  const rawStatus = hasExplicitStatus ? explicitStatus : webhookTracking ? "READY_TO_SHIP" : "UNPAID";
   const itemList = Array.isArray(data.item_list) ? data.item_list : [];
   const mappedItems = itemList.length ? itemList.map((it) => mapShopeeOrderLineItem(it, { orderStatus: rawStatus })).filter(Boolean) : [];
   const mappedStatus = rawStatus ? mapShopeeStatusToLocal(rawStatus, { hasTracking: Boolean(webhookTracking) }) : webhookTracking ? "processed" : "unprocessed";
@@ -150489,7 +150762,7 @@ function normalizeShopeeOrder(payload) {
     date: data.create_time ? new Date(data.create_time * 1e3).toISOString() : (/* @__PURE__ */ new Date()).toISOString(),
     last_shopee_update_at: lastShopeeUpdateAt,
     packageNumber: data.package_number || void 0,
-    isPrepared: mappedStatus === "processed" || mappedStatus === "shipping" || Boolean(webhookTracking),
+    isPrepared: mappedStatus === "processed" || mappedStatus === "shipping",
     isPrinted: false,
     items: mappedItems
   };
@@ -150679,11 +150952,20 @@ function applyShopeePushFieldsToOrder(order, parsed) {
     repairMisassignedTracking(order);
     return;
   }
-  if (hasTn && (!raw || raw === "PENDING" || raw === "UNPAID" || raw === "IN_REVIEW" || raw === "FRAUD_CHECK" || raw === "INVOICE_PENDING" || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP")) {
+  const rtsLike = raw === "READY_TO_SHIP" || raw === "RETRY_SHIP";
+  const shopAlreadyWorked = order.isPrepared === true || order.isPrinted === true || order.is_handed_over === true;
+  if (hasTn && rtsLike && !shopAlreadyWorked) {
+    order.status = "unprocessed";
+    order.isPrepared = false;
+    order.is_pending_shopee_check = false;
+    order.has_tracking = true;
+  } else if (hasTn && (!raw || raw === "PENDING" || raw === "UNPAID" || raw === "IN_REVIEW" || raw === "FRAUD_CHECK" || raw === "INVOICE_PENDING")) {
     order.shopee_order_status = "PROCESSED";
     raw = "PROCESSED";
-  }
-  if (hasTn && (raw === "PROCESSED" || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || !raw)) {
+    order.status = "processed";
+    order.isPrepared = true;
+    order.is_pending_shopee_check = false;
+  } else if (hasTn && (raw === "PROCESSED" || !raw)) {
     order.status = "processed";
     order.isPrepared = true;
     order.is_pending_shopee_check = false;
@@ -152284,7 +152566,7 @@ async function startServer() {
   async function runBeforeBatchDeadline(deadlineAt, label, operation) {
     const remainingMs = deadlineAt - Date.now();
     if (remainingMs <= 0) throw new Error(`batch_deadline:${label}`);
-    let timer;
+    let timer2;
     const operationPromise = operation();
     operationPromise.catch(() => {
     });
@@ -152292,11 +152574,11 @@ async function startServer() {
       return await Promise.race([
         operationPromise,
         new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error(`batch_deadline:${label}`)), remainingMs);
+          timer2 = setTimeout(() => reject(new Error(`batch_deadline:${label}`)), remainingMs);
         })
       ]);
     } finally {
-      if (timer) clearTimeout(timer);
+      if (timer2) clearTimeout(timer2);
     }
   }
   function validateBatchPdfBytes(bytes) {
@@ -154703,7 +154985,7 @@ async function startServer() {
     await sleep(1200);
     const started2 = Date.now();
     const deadlineMs = 2e4;
-    const backoffMs = [1e3, 1500, 2e3, 2500, 3e3];
+    const backoffMs2 = [1e3, 1500, 2e3, 2500, 3e3];
     const maxAttempts = 5;
     const pending = [...list];
     const kickReadyPdf = (ready) => {
@@ -154721,7 +155003,7 @@ async function startServer() {
     for (let attempt = 1; attempt <= maxAttempts && pending.length > 0; attempt++) {
       if (Date.now() - started2 >= deadlineMs) break;
       if (attempt > 1) {
-        const wait = backoffMs[Math.min(attempt - 2, backoffMs.length - 1)];
+        const wait = backoffMs2[Math.min(attempt - 2, backoffMs2.length - 1)];
         await sleep(wait);
       }
       const byShop = /* @__PURE__ */ new Map();
@@ -154997,12 +155279,12 @@ async function startServer() {
       try {
         const auth = Buffer.from(`${key}:${secret}`).toString("base64");
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 8e3);
+        const timer2 = setTimeout(() => controller.abort(), 8e3);
         const res = await fetch(`${base}/wp-json/wc/v3/system_status`, {
           headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
           signal: controller.signal
         });
-        clearTimeout(timer);
+        clearTimeout(timer2);
         if (res.ok) {
           return { online: true, connection_status: "online", message: "WooCommerce REST API ph\u1EA3n h\u1ED3i OK" };
         }
@@ -155913,6 +156195,14 @@ async function startServer() {
           invalidateOrdersRefreshCache
         });
         startOrderChangeStream();
+        try {
+          startWebhookJobDrainer(processShopeeWebhookPayload);
+        } catch (queueErr) {
+          console.error(
+            "[WebhookJobQueue] start failed:",
+            queueErr instanceof Error ? queueErr.message : queueErr
+          );
+        }
         scheduleMissingShopeeTrackingEnrichment();
         scheduleShopeeCancelReturnReconcile();
         scheduleAutoIncrementalOrdersSyncSafe();
@@ -155992,6 +156282,10 @@ async function startServer() {
         process.once(sig, () => {
           try {
             stopOrderChangeStream();
+          } catch {
+          }
+          try {
+            stopWebhookJobDrainer();
           } catch {
           }
         });
