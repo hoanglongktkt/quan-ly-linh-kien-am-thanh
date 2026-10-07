@@ -3,6 +3,7 @@ import type { DashboardDateRange } from '../components/Dashboard';
 import { calculateProfitWithSystemFees } from './profitCalculator';
 import { getOrderTotalImportCost } from './orderImportCost';
 import {
+  hasOrderTrackingNo,
   matchesProcessedPickupTab,
   matchesShippingTab,
   matchesUnprocessedPickupTab,
@@ -63,8 +64,6 @@ export function isRtsOrder(order: Order): boolean {
 function isPendingConfirmOrder(order: Order): boolean {
   const raw = String(order.shopee_order_status || '').toUpperCase();
   if (
-    raw === 'READY_TO_SHIP' ||
-    raw === 'RETRY_SHIP' ||
     raw === 'PROCESSED' ||
     raw === 'SHIPPED' ||
     raw === 'TO_CONFIRM_RECEIVE' ||
@@ -74,6 +73,9 @@ function isPendingConfirmOrder(order: Order): boolean {
     raw === 'TO_RETURN'
   ) {
     return false;
+  }
+  if (raw === 'READY_TO_SHIP' || raw === 'RETRY_SHIP') {
+    return !hasOrderTrackingNo(order);
   }
   if (
     order.status === 'unprocessed' ||

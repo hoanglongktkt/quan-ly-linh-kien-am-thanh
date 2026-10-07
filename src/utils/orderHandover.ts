@@ -84,23 +84,20 @@ export function getOrderFulfillmentType(
 /**
  * isProcessedCondition — chỉ phân nhánh Chưa xử lý / Đã xử lý
  * trong pool READY_TO_SHIP (không quyết định tab Đang giao).
- * READY_TO_SHIP/RETRY chưa có mã VĐ → luôn Chưa xử lý (không tin status local lệch).
+ * READY_TO_SHIP/RETRY chưa chuẩn bị/in → Đơn chưa xử lý, kể cả khi đã có mã VĐ.
  */
 export function isProcessedCondition(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
-  if (hasOrderTrackingNo(order)) return true;
-
   const raw = getShopeeOrderRawStatus(order);
   if (raw === 'PROCESSED') return true;
 
-  // Raw vẫn RTS/RETRY chưa có tracking → chưa xử lý (bỏ qua status local stale).
   if (raw === 'READY_TO_SHIP' || raw === 'RETRY_SHIP') {
-    if (getOrderFulfillmentType(order) === 'dropoff' && Boolean(order.isPrepared)) {
-      return true;
-    }
+    if (order.isPrepared === true || isTruthyFlag(order.isPrinted)) return true;
     return false;
   }
+
+  if (hasOrderTrackingNo(order)) return true;
 
   if (order.status === 'processed') return true;
 
@@ -216,6 +213,20 @@ export function resolveOrderBadgeStatus(order: Order): Order['status'] {
     }
     return 'cancelled';
   }
+  // Chưa có mã VĐ (UNPAID hoặc READY_TO_SHIP) → Chờ xác nhận.
+  const rawBeforePickup = getShopeeOrderRawStatus(order);
+  if (
+    !hasOrderTrackingNo(order) &&
+    (rawBeforePickup === 'UNPAID' ||
+      rawBeforePickup === 'PENDING' ||
+      rawBeforePickup === 'IN_REVIEW' ||
+      rawBeforePickup === 'FRAUD_CHECK' ||
+      rawBeforePickup === 'INVOICE_PENDING' ||
+      rawBeforePickup === 'READY_TO_SHIP' ||
+      rawBeforePickup === 'RETRY_SHIP')
+  ) {
+    return 'pending_confirm';
+  }
   // Pool chờ lấy hàng TRƯỚC — tránh status local stale pending_confirm + PROCESSED/mã VĐ.
   if (isPickupPoolOrder(order)) {
     return isProcessedCondition(order) ? 'processed' : 'unprocessed';
@@ -255,23 +266,21 @@ export function matchesProcessedPickupTab(order: Order): boolean {
 }
 
 /**
- * TAB "ĐƠN CHƯA XỬ LÝ" (trước: Chờ lấy hàng — Chưa xử lý):
- * - Raw READY_TO_SHIP | RETRY_SHIP (không PROCESSED) — kể cả khi chưa có mã VĐ
- * - HOẶC local status=unprocessed khi thiếu raw
- * - AND chưa bàn giao ĐVVC / chưa isPrepared(dropoff)
+ * TAB "ĐƠN CHƯA XỬ LÝ":
+ * READY_TO_SHIP | RETRY_SHIP đã có mã VĐ, shop chưa chuẩn bị/in/bàn giao.
  */
 export function matchesUnprocessedPickupTab(order: Order): boolean {
   if (isShopeeShippingStatus(order)) return false;
+  if (isShopeeCompletedStatus(order)) return false;
+  if (isShopeeCancelledLikeStatus(order)) return false;
   if (isOrderHandedOverToCarrier(order)) return false;
-  if (!isPickupPoolOrder(order)) return false;
+  if (order.isPrepared === true || isTruthyFlag(order.isPrinted)) return false;
   const raw = getShopeeOrderRawStatus(order);
-  if (raw === 'PROCESSED') return false;
-  if (isProcessedCondition(order)) return false;
-  // Chuẩn Shopee: READY_TO_SHIP | RETRY_SHIP = Chờ lấy hàng (Chưa xử lý)
-  if (raw === 'READY_TO_SHIP' || raw === 'RETRY_SHIP') return true;
-  if (!raw && order.status === 'unprocessed') return true;
-  if (order.status === 'unprocessed') return true;
-  return false;
+  if (raw !== 'READY_TO_SHIP' && raw !== 'RETRY_SHIP') return false;
+  if (order.status === 'shipping' || order.status === 'completed' || order.status === 'cancelled') {
+    return false;
+  }
+  return hasOrderTrackingNo(order);
 }
 
 /**

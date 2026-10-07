@@ -14,6 +14,10 @@ import {
   createShopeeWebhookRouter,
   getShopeeWebhookStats,
 } from "./src/webhooks/shopeeWebhookHandler.ts";
+import {
+  startWebhookJobDrainer,
+  stopWebhookJobDrainer,
+} from "./services/webhookJobQueue.js";
 import { enrichOrdersFromCatalog } from "./src/utils/orderItemVariation.ts";
 import { inferShippingCarrierLabel } from "./src/utils/shippingCarrier.ts";
 import {
@@ -13127,7 +13131,8 @@ function mapShopeeStatusToLocal(
   }
   if (raw === "PROCESSED") return "processed";
   if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") {
-    return opts?.hasTracking ? "processed" : "unprocessed";
+    // Có mã VĐ vẫn là Đơn chưa xử lý cho đến khi shop chuẩn bị / in / bàn giao.
+    return "unprocessed";
   }
   if (
     raw === "UNPAID" ||
@@ -14768,12 +14773,13 @@ function forceHealPickupOrderIfHasTracking(order: any): boolean {
     return hasTn;
   }
 
-  // PROCESSED / có mã vận đơn outbound → Đã xử lý.
-  // Drop-off: CHỈ khi đã có mã HOẶC user đã chuẩn bị (isPrepared) — KHÔNG auto-process mọi READY_TO_SHIP.
+  // PROCESSED hoặc shop đã chuẩn bị → Đã xử lý.
+  // READY_TO_SHIP có mã VĐ nhưng chưa isPrepared/in → giữ Đơn chưa xử lý.
+  const alreadyShopPrepared = order.isPrepared === true || order.isPrinted === true;
   const shouldProcess =
-    hasTn ||
     raw === "PROCESSED" ||
-    (isDropoff && (hasTn || order.isPrepared === true));
+    (alreadyShopPrepared && (hasTn || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP")) ||
+    (isDropoff && order.isPrepared === true);
 
   if (!shouldProcess) return false;
 
@@ -17311,7 +17317,7 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
       order.status = "pending_confirm";
       order.isPrepared = false;
     } else if (finalRaw === "READY_TO_SHIP" || finalRaw === "RETRY_SHIP" || finalRaw === "PROCESSED") {
-      // Bắt buộc lưu raw Shopee + map local: RTS/RETRY chưa mã → unprocessed; PROCESSED/có mã → processed.
+      // RTS/RETRY: chưa chuẩn bị → unprocessed (kể cả đã có mã VĐ). PROCESSED sàn → đã xử lý.
       // CẤM giữ status=shipping khi raw còn TO_SHIP mà logistics chưa handed (orphan Đang giao).
       order.shopee_order_status = finalRaw;
       const logisticsHanded = isLogisticsHandedToCarrier(
@@ -17322,9 +17328,11 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
         order.status = "shipping";
         order.isPrepared = true;
         order.is_pending_shopee_check = false;
-      } else if (finalRaw === "PROCESSED" || hasUsableShopeeTrackingNumber(order)) {
+      } else if (finalRaw === "PROCESSED") {
         order.status = "processed";
         order.isPrepared = true;
+      } else if (order.isPrepared === true || order.isPrinted === true) {
+        order.status = "processed";
       } else {
         order.status = "unprocessed";
         order.isPrepared = false;
@@ -17725,20 +17733,44 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
     }
   }
 
-  // READY_TO_SHIP / PROCESSED + đã có tracking → Đã xử lý
+  // PROCESSED sàn + mã VĐ → Đã xử lý.
+  // READY_TO_SHIP đã có mã nhưng shop chưa chuẩn bị/in/bàn giao → Đơn chưa xử lý.
   // KHÔNG áp dụng khi đã/đang SHIPPED/COMPLETED.
-  if (
-    (incomingRaw === "READY_TO_SHIP" ||
-      incomingRaw === "RETRY_SHIP" ||
-      incomingRaw === "PROCESSED") &&
-    hasUsableShopeeTrackingNumber(merged) &&
+  const mergedNotTerminal =
     merged.status !== "shipping" &&
     merged.status !== "completed" &&
-    !isShopeeTerminalRawStatus(String(merged.shopee_order_status || ""))
+    !isShopeeTerminalRawStatus(String(merged.shopee_order_status || ""));
+  if (
+    incomingRaw === "PROCESSED" &&
+    hasUsableShopeeTrackingNumber(merged) &&
+    mergedNotTerminal
   ) {
     merged.status = "processed";
     merged.isPrepared = true;
     merged.is_pending_shopee_check = false;
+  } else if (
+    (incomingRaw === "READY_TO_SHIP" || incomingRaw === "RETRY_SHIP") &&
+    hasUsableShopeeTrackingNumber(merged) &&
+    mergedNotTerminal
+  ) {
+    const shopWorked =
+      existing?.isPrepared === true ||
+      existing?.isPrinted === true ||
+      merged.isPrinted === true ||
+      existing?.is_handed_over === true ||
+      merged.is_handed_over === true;
+    if (!shopWorked) {
+      merged.status = "unprocessed";
+      if (existing?.isPrepared !== true) merged.isPrepared = false;
+      merged.is_pending_shopee_check = false;
+    } else if (
+      merged.status !== "shipping" &&
+      merged.status !== "completed" &&
+      merged.status !== "cancelled"
+    ) {
+      merged.status = "processed";
+      if (existing?.isPrepared === true) merged.isPrepared = true;
+    }
   }
 
   // CƯỠNG CHẾ heal: tracking_no | PROCESSED | dropoff — không downgrade terminal.
@@ -21796,7 +21828,7 @@ function normalizeShopeeOrder(payload: any): any | null {
   const rawStatus = hasExplicitStatus
     ? explicitStatus
     : webhookTracking
-      ? "PROCESSED"
+      ? "READY_TO_SHIP"
       : "UNPAID";
   const itemList = Array.isArray(data.item_list) ? data.item_list : [];
   const mappedItems = itemList.length
@@ -21828,7 +21860,7 @@ function normalizeShopeeOrder(payload: any): any | null {
     date: data.create_time ? new Date(data.create_time * 1000).toISOString() : new Date().toISOString(),
     last_shopee_update_at: lastShopeeUpdateAt,
     packageNumber: data.package_number || undefined,
-    isPrepared: mappedStatus === "processed" || mappedStatus === "shipping" || Boolean(webhookTracking),
+    isPrepared: mappedStatus === "processed" || mappedStatus === "shipping",
     isPrinted: false,
     items: mappedItems,
   };
@@ -22110,13 +22142,30 @@ function applyShopeePushFieldsToOrder(order: any, parsed: {
     return;
   }
 
-  // Code 4 TrackingNo / có mã: đơn đã được chuẩn bị trên Shopee (mọi ĐVVC).
-  if (hasTn && (!raw || raw === "PENDING" || raw === "UNPAID" || raw === "IN_REVIEW" || raw === "FRAUD_CHECK" || raw === "INVOICE_PENDING" || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP")) {
+  // RTS đã có mã: Đơn chưa xử lý. Không rewrite raw thành PROCESSED và không bật isPrepared.
+  const rtsLike = raw === "READY_TO_SHIP" || raw === "RETRY_SHIP";
+  const shopAlreadyWorked =
+    order.isPrepared === true || order.isPrinted === true || order.is_handed_over === true;
+  if (hasTn && rtsLike && !shopAlreadyWorked) {
+    order.status = "unprocessed";
+    order.isPrepared = false;
+    order.is_pending_shopee_check = false;
+    order.has_tracking = true;
+  } else if (
+    hasTn &&
+    (!raw ||
+      raw === "PENDING" ||
+      raw === "UNPAID" ||
+      raw === "IN_REVIEW" ||
+      raw === "FRAUD_CHECK" ||
+      raw === "INVOICE_PENDING")
+  ) {
     order.shopee_order_status = "PROCESSED";
     raw = "PROCESSED";
-  }
-
-  if (hasTn && (raw === "PROCESSED" || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || !raw)) {
+    order.status = "processed";
+    order.isPrepared = true;
+    order.is_pending_shopee_check = false;
+  } else if (hasTn && (raw === "PROCESSED" || !raw)) {
     order.status = "processed";
     order.isPrepared = true;
     order.is_pending_shopee_check = false;
@@ -28349,6 +28398,14 @@ async function startServer() {
           invalidateOrdersRefreshCache,
         });
         startOrderChangeStream();
+        try {
+          startWebhookJobDrainer(processShopeeWebhookPayload);
+        } catch (queueErr) {
+          console.error(
+            "[WebhookJobQueue] start failed:",
+            queueErr instanceof Error ? queueErr.message : queueErr,
+          );
+        }
         // GHN tracking backfill ON (setInterval 10 phút + boot kick). Cancel cron OFF.
         // Handed-over status reconcile ON (cron 5 phút + setInterval + boot kick) — dò SHIPPED → Đang giao.
         scheduleMissingShopeeTrackingEnrichment(); // GHN bù mã RTS/PROCESSED
@@ -28451,6 +28508,11 @@ async function startServer() {
         process.once(sig, () => {
           try {
             stopOrderChangeStream();
+          } catch {
+            /* ignore */
+          }
+          try {
+            stopWebhookJobDrainer();
           } catch {
             /* ignore */
           }
