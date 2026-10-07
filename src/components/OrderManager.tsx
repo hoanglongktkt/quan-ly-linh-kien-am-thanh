@@ -254,7 +254,7 @@ const PRINT_FE_CHUNK_STAGGER_MS = 250;
 /** Poll trạng thái task in (create/status) — 1 giây/lần. */
 const PRINT_FE_STATUS_POLL_MS = 1000;
 
-/** UNPAID/PENDING hoặc READY_TO_SHIP chưa có mã VĐ → Chờ xác nhận. */
+/** UNPAID/PENDING hoặc READY_TO_SHIP chưa có mã VĐ → Chờ xác nhận. Đã có mã → không thuộc tab này. */
 function isPendingConfirmOrder(order: Order): boolean {
   const raw = String(order.shopee_order_status || '').toUpperCase();
   // Đã qua chờ xác nhận (đã xử lý / đã giao / hủy) → KHÔNG còn ở tab này.
@@ -269,8 +269,9 @@ function isPendingConfirmOrder(order: Order): boolean {
   ) {
     return false;
   }
+  if (hasOrderTrackingNo(order)) return false;
   if (raw === 'READY_TO_SHIP' || raw === 'RETRY_SHIP') {
-    return !hasOrderTrackingNo(order);
+    return true;
   }
   if (
     order.status === 'unprocessed' ||

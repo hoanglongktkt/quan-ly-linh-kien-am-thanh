@@ -77938,466 +77938,6 @@ async function sendShopeeChatText({ shopId, toId, text }) {
   };
 }
 
-// src/webhooks/shopeeWebhookHandler.ts
-var MAX_PENDING_JOBS = 200;
-var MAX_CONCURRENT_JOBS = Math.max(
-  2,
-  Math.min(8, Number(process.env.SHOPEE_WEBHOOK_MAX_CONCURRENT) || 4)
-);
-var lastWebhookAt = 0;
-function markWebhookReceived() {
-  lastWebhookAt = Date.now();
-}
-function getShopeeWebhookStats() {
-  return {
-    pid: process.pid,
-    lastWebhookAt: lastWebhookAt ? new Date(lastWebhookAt).toISOString() : null
-  };
-}
-var queueMetrics = {
-  overflowCount: 0,
-  completedJobs: 0,
-  failedJobs: 0,
-  lastJobDurationMs: 0,
-  maxJobDurationMs: 0,
-  totalJobDurationMs: 0
-};
-function logQueueMetrics(context, pending, running) {
-  const avgMs = queueMetrics.completedJobs > 0 ? Math.round(queueMetrics.totalJobDurationMs / queueMetrics.completedJobs) : 0;
-  console.log(
-    `[Shopee Webhook][Queue] ${context} depth=${pending} running=${running}/${MAX_CONCURRENT_JOBS} overflowCount=${queueMetrics.overflowCount} completed=${queueMetrics.completedJobs} failed=${queueMetrics.failedJobs} lastJobMs=${queueMetrics.lastJobDurationMs} avgJobMs=${avgMs} maxJobMs=${queueMetrics.maxJobDurationMs}`
-  );
-}
-function unwrapWebhookData(payload) {
-  const raw = payload.data;
-  if (typeof raw === "string" && raw.trim()) {
-    try {
-      const parsed = parseShopeeJson(raw);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return parsed;
-      }
-    } catch {
-    }
-  }
-  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-    return raw;
-  }
-  return payload;
-}
-function coerceWebhookPayload(payload) {
-  const data = unwrapWebhookData(payload);
-  if (data === payload) return payload;
-  if (payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)) {
-    return payload;
-  }
-  return { ...payload, data };
-}
-function webhookOrderKey(payload) {
-  const data = unwrapWebhookData(payload);
-  const shopId = String(payload.shop_id ?? data.shop_id ?? "").trim();
-  const orderSn = String(
-    data.ordersn ?? data.order_sn ?? data.orderSn ?? payload.ordersn ?? payload.order_sn ?? ""
-  ).trim();
-  return orderSn ? `${shopId}:${orderSn}` : "";
-}
-function createBoundedQueue(processPayload, onQueueOverflow) {
-  const pending = [];
-  let running = 0;
-  let scheduled = false;
-  let drainAgain = false;
-  const activeOrderKeys = /* @__PURE__ */ new Set();
-  const scheduleDrain = () => {
-    if (scheduled) {
-      drainAgain = true;
-      return;
-    }
-    scheduled = true;
-    setImmediate(() => {
-      scheduled = false;
-      try {
-        drainPending();
-      } finally {
-        if (drainAgain) {
-          drainAgain = false;
-          scheduleDrain();
-        }
-      }
-    });
-  };
-  const drainPending = () => {
-    const capacity = MAX_CONCURRENT_JOBS - running;
-    if (capacity <= 0 || pending.length === 0) return;
-    const batch = [];
-    for (let i2 = 0; i2 < pending.length && batch.length < capacity; ) {
-      const payload = pending[i2];
-      const orderKey = webhookOrderKey(payload);
-      if (orderKey && activeOrderKeys.has(orderKey)) {
-        i2 += 1;
-        continue;
-      }
-      pending.splice(i2, 1);
-      if (orderKey) activeOrderKeys.add(orderKey);
-      batch.push({ payload, orderKey });
-    }
-    if (batch.length === 0) {
-      if (pending.length > 0 && running === 0) {
-        activeOrderKeys.clear();
-        scheduleDrain();
-      }
-      return;
-    }
-    running += batch.length;
-    logQueueMetrics("job_batch_start", pending.length, running);
-    void Promise.allSettled(
-      batch.map(({ payload, orderKey }) => {
-        const startedAt = Date.now();
-        return Promise.resolve().then(() => processPayload(payload)).then(() => {
-          const durationMs = Date.now() - startedAt;
-          queueMetrics.completedJobs += 1;
-          queueMetrics.lastJobDurationMs = durationMs;
-          queueMetrics.totalJobDurationMs += durationMs;
-          if (durationMs > queueMetrics.maxJobDurationMs) {
-            queueMetrics.maxJobDurationMs = durationMs;
-          }
-          console.log(
-            `[Shopee Webhook][Queue] job_done orderKey=${orderKey || "?"} durationMs=${durationMs}`
-          );
-        }).catch((err) => {
-          queueMetrics.failedJobs += 1;
-          const durationMs = Date.now() - startedAt;
-          queueMetrics.lastJobDurationMs = durationMs;
-          console.error(
-            `[Shopee Webhook][Queue] job_failed orderKey=${orderKey || "?"} durationMs=${durationMs}:`,
-            err
-          );
-          throw err;
-        }).finally(() => {
-          running = Math.max(0, running - 1);
-          if (orderKey) activeOrderKeys.delete(orderKey);
-          scheduleDrain();
-        });
-      })
-    ).then((results) => {
-      for (const result of results) {
-        if (result.status === "rejected") {
-          console.error("[Shopee Webhook] Background processing failed:", result.reason);
-        }
-      }
-    }).finally(() => {
-      logQueueMetrics("job_batch_end", pending.length, running);
-    });
-  };
-  return {
-    enqueue(payload) {
-      if (pending.length >= MAX_PENDING_JOBS) {
-        queueMetrics.overflowCount += 1;
-        const orderKey = webhookOrderKey(payload);
-        console.error(
-          `[Shopee Webhook] Queue full \u2014 overflow persist fallback depth=${pending.length} running=${running} overflowCount=${queueMetrics.overflowCount} orderKey=${orderKey || "?"}`
-        );
-        if (onQueueOverflow) {
-          void Promise.resolve(onQueueOverflow(payload)).catch((overflowErr) => {
-            console.error(
-              "[Shopee Webhook] onQueueOverflow handler failed:",
-              overflowErr?.message || overflowErr
-            );
-          });
-        }
-        return false;
-      }
-      pending.push(payload);
-      logQueueMetrics("enqueue", pending.length, running);
-      scheduleDrain();
-      return true;
-    },
-    getMetrics() {
-      return {
-        ...queueMetrics,
-        pendingDepth: pending.length,
-        running,
-        maxConcurrent: MAX_CONCURRENT_JOBS
-      };
-    }
-  };
-}
-function ackShopeeOk(res) {
-  if (res.headersSent || res.writableEnded) return;
-  try {
-    res.status(200).send("OK");
-  } catch (ackErr) {
-    console.warn("[Shopee Webhook] ACK send failed:", ackErr);
-    try {
-      if (!res.writableEnded) res.end();
-    } catch {
-    }
-  }
-}
-function readAuthorizationHeader(req) {
-  const headers = req.headers;
-  return String(
-    req.get("authorization") || req.get("Authorization") || headers.authorization || headers.Authorization || headers.http_authorization || process.env.HTTP_AUTHORIZATION || ""
-  ).trim();
-}
-function buildWebhookUrlCandidates(req) {
-  const path26 = String(req.originalUrl || req.url || "").split("?")[0].trim();
-  const candidates = /* @__PURE__ */ new Set();
-  const base = resolveAppBaseUrl().replace(/\/$/, "");
-  const configured = String(process.env.SHOPEE_WEBHOOK_URL || "").trim();
-  if (configured) candidates.add(configured.replace(/\/$/, ""));
-  candidates.add(`${base}/api/shopee/webhook`);
-  if (path26.startsWith("/")) {
-    candidates.add(`${base}${path26}`);
-    const forwardedProto = String(req.get("x-forwarded-proto") || "").split(",")[0].trim();
-    const forwardedHost = String(req.get("x-forwarded-host") || "").split(",")[0].trim();
-    if (forwardedProto && forwardedHost) {
-      candidates.add(`${forwardedProto}://${forwardedHost}${path26}`);
-    }
-    const host = String(req.get("host") || "").trim();
-    if (host) {
-      candidates.add(`${req.protocol}://${host}${path26}`);
-      candidates.add(`https://${host}${path26}`);
-      candidates.add(`http://${host}${path26}`);
-    }
-  }
-  return [...candidates];
-}
-function parseWebhookBody(reqBody) {
-  try {
-    if (Buffer.isBuffer(reqBody)) {
-      const text = reqBody.toString("utf8");
-      if (!text.trim()) return null;
-      const parsed = parseShopeeJson(text);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return coerceWebhookPayload(parsed);
-      }
-      return null;
-    }
-    if (typeof reqBody === "string") {
-      const text = reqBody.trim();
-      if (!text) return null;
-      const parsed = parseShopeeJson(text);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return coerceWebhookPayload(parsed);
-      }
-      return null;
-    }
-    if (reqBody && typeof reqBody === "object" && !Array.isArray(reqBody)) {
-      return coerceWebhookPayload(reqBody);
-    }
-  } catch (err) {
-    console.error("[Shopee Webhook] JSON parse failed:", err);
-  }
-  return null;
-}
-function readRawWebhookBody(req) {
-  const maxBytes = 1024 * 1024;
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    let totalBytes = 0;
-    let overflow = false;
-    let settled = false;
-    let timer2;
-    const cleanup = () => {
-      if (timer2) clearTimeout(timer2);
-      req.removeListener("data", onData);
-      req.removeListener("end", onEnd);
-      req.removeListener("error", onError);
-    };
-    timer2 = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(new Error("Webhook body stream timeout"));
-    }, 1e4);
-    const onData = (chunk) => {
-      if (settled) return;
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      totalBytes += buffer.length;
-      if (totalBytes > maxBytes) {
-        overflow = true;
-        return;
-      }
-      chunks.push(buffer);
-    };
-    const onEnd = () => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      if (overflow) {
-        console.warn(`[Shopee Webhook] Body v\u01B0\u1EE3t gi\u1EDBi h\u1EA1n ${maxBytes} bytes \u2014 b\u1ECF x\u1EED l\xFD sau ACK.`);
-        resolve(null);
-        return;
-      }
-      resolve(Buffer.concat(chunks));
-    };
-    const onError = (err) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(err);
-    };
-    req.on("data", onData);
-    req.on("end", onEnd);
-    req.on("error", onError);
-  });
-}
-async function processShopeeWebhookAsync(queue, snapshot, rawBodyPromise, eagerStubOrder) {
-  try {
-    const rawBody = await rawBodyPromise;
-    const bodyBytes = rawBody?.length ?? 0;
-    console.log(`[Shopee Webhook] raw bodyBytes=${bodyBytes} after ACK`);
-    if (!rawBody || bodyBytes === 0) {
-      console.log("[Shopee Webhook] Empty/oversized body after ACK \u2014 nothing to process.");
-      return;
-    }
-    const isValid = verifyShopeeWebhookSignature(
-      rawBody,
-      snapshot.authorization,
-      snapshot.requestUrls
-    );
-    const isVerified = isValid;
-    console.log("[WEBHOOK] HMAC valid:", isVerified);
-    if (!isVerified) {
-      console.warn(
-        "[Shopee Webhook] HMAC unverified after ACK \u2014 v\u1EABn parse + get_order_detail (Shopee API l\xE0 ngu\u1ED3n ch\xE2n l\xFD)."
-      );
-    }
-    markWebhookReceived();
-    console.log(
-      `[WEBHOOK RECEIVED] pid=${process.pid} ${snapshot.routeLabel} \u2014 ACK 200 sent; headers:`,
-      {
-        authorization: isValid ? "(verified)" : "(unverified \u2014 continue)",
-        contentLength: snapshot.contentLength,
-        contentType: snapshot.contentType,
-        host: snapshot.host,
-        bodyBytes
-      }
-    );
-    console.log("[WEBHOOK RECEIVED] req.body (full):", rawBody.toString("utf8"));
-    const payload = parseWebhookBody(rawBody);
-    if (!payload) {
-      console.log("[Shopee Webhook] Invalid JSON after ACK \u2014 nothing to process.");
-      return;
-    }
-    console.log("[WEBHOOK RECEIVED] req.body (parsed object):", JSON.stringify(payload));
-    const data = unwrapWebhookData(payload);
-    const code = Number(payload.code ?? data.code);
-    const routeLabel = String(snapshot.routeLabel || "");
-    const isChatPush = code === 10 || routeLabel.includes("/chat-webhook");
-    if (isChatPush) {
-      try {
-        await ingestShopeeChatPush(payload);
-      } catch (chatErr) {
-        console.error(
-          "[Shopee Chat Webhook] ingest failed:",
-          chatErr instanceof Error ? chatErr.message : chatErr
-        );
-      }
-      return;
-    }
-    const orderSn = String(
-      data.ordersn ?? data.order_sn ?? data.orderSn ?? payload.ordersn ?? payload.order_sn ?? payload.orderSn ?? ""
-    ).trim();
-    const status = String(
-      data.status ?? data.order_status ?? data.orderStatus ?? payload.status ?? payload.order_status ?? ""
-    ).trim().toUpperCase();
-    const isOrderStatusPush = code === 3 || Boolean(status);
-    if (!orderSn) {
-      console.log(
-        `[Shopee Webhook] Non-order push skipped code=${Number.isFinite(code) ? code : "?"} status=${status || "?"} \u2014 missing order_sn`
-      );
-      return;
-    }
-    console.log("[WEBHOOK] Nh\u1EADn event m\u1EDBi:", orderSn, status || "");
-    if (eagerStubOrder) {
-      try {
-        await eagerStubOrder(payload);
-      } catch (stubErr) {
-        console.error("[WEBHOOK DB ERROR]:", stubErr);
-        console.error("Stub order error:", stubErr);
-      }
-    }
-    const queuedMeta = {
-      code: Number.isFinite(code) ? code : null,
-      shop_id: payload.shop_id ?? data.shop_id ?? null,
-      order_sn: orderSn,
-      status: status || null,
-      event_type: status === "UNPAID" || status === "READY_TO_SHIP" ? "new_order" : isOrderStatusPush ? "status_change" : "order_related"
-    };
-    setImmediate(() => {
-      try {
-        const queued = queue.enqueue(payload);
-        if (!queued) return;
-        console.log(
-          "[WEBHOOK RECEIVED] order payload queued after ACK \u2014 will get_order_detail + UPSERT:",
-          JSON.stringify(queuedMeta)
-        );
-      } catch (queueErr) {
-        console.error(
-          "[WEBHOOK] enqueue get_order_detail failed:",
-          queueErr instanceof Error ? queueErr.message : queueErr
-        );
-      }
-    });
-  } catch (error) {
-    console.error(
-      "[Shopee Webhook] processShopeeWebhookAsync failed after ACK:",
-      error instanceof Error ? error.stack || error.message : error
-    );
-  }
-}
-function createShopeeWebhookRouter(processPayload, routePath = "/shopee", options = {}) {
-  const queue = createBoundedQueue(processPayload, options.onQueueOverflow);
-  const router30 = import_express.default.Router();
-  const paths = (Array.isArray(routePath) ? routePath : [routePath]).map(
-    (path26) => path26.startsWith("/") ? path26 : `/${path26}`
-  );
-  console.log(
-    `[Shopee Webhook] Queue config maxConcurrent=${MAX_CONCURRENT_JOBS} maxPending=${MAX_PENDING_JOBS} jobTimeoutMs=none`
-  );
-  router30.get(paths, (_req, res) => {
-    ackShopeeOk(res);
-  });
-  router30.post(paths, (req, res) => {
-    console.log("\n--- [WEBHOOK TRIGGERED] ---", JSON.stringify(req.body));
-    console.log(
-      "[WEBHOOK TRIGGERED] meta",
-      JSON.stringify({
-        url: req.originalUrl || req.url,
-        contentType: req.get("content-type") || "",
-        contentLength: req.get("content-length") || "0",
-        authorizationPresent: Boolean(readAuthorizationHeader(req)),
-        bodyAlreadyParsed: req.body != null
-      })
-    );
-    const rawBodyPromise = readRawWebhookBody(req);
-    const rawBodyWatch = setTimeout(() => {
-      console.error(
-        "[WEBHOOK] SILENT? raw body ch\u01B0a emit end sau 8s \u2014 listener c\xF3 th\u1EC3 g\u1EAFn sau khi stream \u0111\xE3 b\u1ECB consume. ACK \u0111\xE3 g\u1EEDi n\xEAn Shopee kh\xF4ng retry."
-      );
-    }, 8e3);
-    void rawBodyPromise.finally(() => clearTimeout(rawBodyWatch));
-    ackShopeeOk(res);
-    const snapshot = {
-      routeLabel: `POST ${req.originalUrl || req.url}`,
-      authorization: readAuthorizationHeader(req),
-      requestUrls: buildWebhookUrlCandidates(req),
-      contentLength: req.get("content-length") || "0",
-      contentType: req.get("content-type") || "",
-      host: req.get("host") || ""
-    };
-    void processShopeeWebhookAsync(
-      queue,
-      snapshot,
-      rawBodyPromise,
-      options.eagerStubOrder
-    ).catch((error) => {
-      console.error("L\u1ED7i x\u1EED l\xFD ng\u1EA7m Webhook Shopee:", error);
-    });
-  });
-  return router30;
-}
-
 // models/WebhookJob.js
 var import_mongoose2 = __toESM(require("mongoose"), 1);
 var WebhookJobSchema = new import_mongoose2.default.Schema(
@@ -78457,10 +77997,39 @@ function delay2(ms) {
     setTimeout(resolve, ms);
   });
 }
+function isDuplicateKeyError(err) {
+  const code = err?.code ?? err?.cause?.code;
+  if (code === 11e3 || code === 11001) return true;
+  const msg = String(err?.message || "");
+  return msg.includes("E11000") || msg.includes("duplicate key");
+}
 function backoffMs(retryCount) {
   const n = Number(retryCount) || 1;
   if (n <= 1) return 6e4;
   return 12e4;
+}
+async function enqueueWebhookJob(input) {
+  const jobId = String(input?.jobId || "").trim();
+  const payload = input?.payload;
+  if (!jobId || !payload || typeof payload !== "object") {
+    throw new Error("webhook_job_invalid");
+  }
+  try {
+    await WebhookJob_default.create({
+      jobId,
+      payload,
+      state: "pending",
+      retry_count: 0,
+      error_log: "",
+      next_run_at: /* @__PURE__ */ new Date()
+    });
+    return { ok: true, duplicate: false, jobId };
+  } catch (err) {
+    if (isDuplicateKeyError(err)) {
+      return { ok: true, duplicate: true, jobId };
+    }
+    throw err;
+  }
 }
 async function claimNextJob() {
   const now = /* @__PURE__ */ new Date();
@@ -78589,6 +78158,351 @@ function stopWebhookJobDrainer() {
     timer = null;
   }
   console.log("[WebhookJobQueue] drainer OFF");
+}
+
+// src/webhooks/shopeeWebhookHandler.ts
+var lastWebhookAt = 0;
+function markWebhookReceived() {
+  lastWebhookAt = Date.now();
+}
+function getShopeeWebhookStats() {
+  return {
+    pid: process.pid,
+    lastWebhookAt: lastWebhookAt ? new Date(lastWebhookAt).toISOString() : null
+  };
+}
+function unwrapWebhookData(payload) {
+  const raw = payload.data;
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      const parsed = parseShopeeJson(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+    }
+  }
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    return raw;
+  }
+  return payload;
+}
+function coerceWebhookPayload(payload) {
+  const data = unwrapWebhookData(payload);
+  if (data === payload) return payload;
+  if (payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)) {
+    return payload;
+  }
+  return { ...payload, data };
+}
+function ackShopeeOk(res) {
+  if (res.headersSent || res.writableEnded) return;
+  try {
+    res.status(200).send("OK");
+  } catch (ackErr) {
+    console.warn("[Shopee Webhook] ACK send failed:", ackErr);
+    try {
+      if (!res.writableEnded) res.end();
+    } catch {
+    }
+  }
+}
+function readAuthorizationHeader(req) {
+  const headers = req.headers;
+  return String(
+    req.get("authorization") || req.get("Authorization") || headers.authorization || headers.Authorization || headers.http_authorization || process.env.HTTP_AUTHORIZATION || ""
+  ).trim();
+}
+function buildWebhookUrlCandidates(req) {
+  const path26 = String(req.originalUrl || req.url || "").split("?")[0].trim();
+  const candidates = /* @__PURE__ */ new Set();
+  const base = resolveAppBaseUrl().replace(/\/$/, "");
+  const configured = String(process.env.SHOPEE_WEBHOOK_URL || "").trim();
+  if (configured) candidates.add(configured.replace(/\/$/, ""));
+  candidates.add(`${base}/api/shopee/webhook`);
+  if (path26.startsWith("/")) {
+    candidates.add(`${base}${path26}`);
+    const forwardedProto = String(req.get("x-forwarded-proto") || "").split(",")[0].trim();
+    const forwardedHost = String(req.get("x-forwarded-host") || "").split(",")[0].trim();
+    if (forwardedProto && forwardedHost) {
+      candidates.add(`${forwardedProto}://${forwardedHost}${path26}`);
+    }
+    const host = String(req.get("host") || "").trim();
+    if (host) {
+      candidates.add(`${req.protocol}://${host}${path26}`);
+      candidates.add(`https://${host}${path26}`);
+      candidates.add(`http://${host}${path26}`);
+    }
+  }
+  return [...candidates];
+}
+function parseWebhookBody(reqBody) {
+  try {
+    if (Buffer.isBuffer(reqBody)) {
+      const text = reqBody.toString("utf8");
+      if (!text.trim()) return null;
+      const parsed = parseShopeeJson(text);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return coerceWebhookPayload(parsed);
+      }
+      return null;
+    }
+    if (typeof reqBody === "string") {
+      const text = reqBody.trim();
+      if (!text) return null;
+      const parsed = parseShopeeJson(text);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return coerceWebhookPayload(parsed);
+      }
+      return null;
+    }
+    if (reqBody && typeof reqBody === "object" && !Array.isArray(reqBody)) {
+      return coerceWebhookPayload(reqBody);
+    }
+  } catch (err) {
+    console.error("[Shopee Webhook] JSON parse failed:", err);
+  }
+  return null;
+}
+function readRawWebhookBody(req) {
+  const maxBytes = 1024 * 1024;
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let totalBytes = 0;
+    let overflow = false;
+    let settled = false;
+    let timer2;
+    const cleanup = () => {
+      if (timer2) clearTimeout(timer2);
+      req.removeListener("data", onData);
+      req.removeListener("end", onEnd);
+      req.removeListener("error", onError);
+    };
+    timer2 = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error("Webhook body stream timeout"));
+    }, 1e4);
+    const onData = (chunk) => {
+      if (settled) return;
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += buffer.length;
+      if (totalBytes > maxBytes) {
+        overflow = true;
+        return;
+      }
+      chunks.push(buffer);
+    };
+    const onEnd = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (overflow) {
+        console.warn(`[Shopee Webhook] Body v\u01B0\u1EE3t gi\u1EDBi h\u1EA1n ${maxBytes} bytes \u2014 b\u1ECF x\u1EED l\xFD sau ACK.`);
+        resolve(null);
+        return;
+      }
+      resolve(Buffer.concat(chunks));
+    };
+    const onError = (err) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    };
+    req.on("data", onData);
+    req.on("end", onEnd);
+    req.on("error", onError);
+  });
+}
+function buildWebhookJobId(shopId, orderSn, status, updateTime) {
+  const clean = (value, fallback) => {
+    const text = String(value || "").trim().replace(/[^\w.:-]/g, "");
+    return text || fallback;
+  };
+  return [
+    clean(shopId, "0"),
+    clean(orderSn, "0"),
+    clean(status, "UNKNOWN"),
+    clean(updateTime, "0")
+  ].join("_");
+}
+async function processShopeeWebhookAsync(snapshot, rawBodyPromise, eagerStubOrder, onQueueOverflow) {
+  try {
+    const rawBody = await rawBodyPromise;
+    const bodyBytes = rawBody?.length ?? 0;
+    console.log(`[Shopee Webhook] raw bodyBytes=${bodyBytes} after ACK`);
+    if (!rawBody || bodyBytes === 0) {
+      console.log("[Shopee Webhook] Empty/oversized body after ACK \u2014 nothing to process.");
+      return;
+    }
+    const isValid = verifyShopeeWebhookSignature(
+      rawBody,
+      snapshot.authorization,
+      snapshot.requestUrls
+    );
+    const isVerified = isValid;
+    console.log("[WEBHOOK] HMAC valid:", isVerified);
+    if (!isVerified) {
+      console.warn(
+        "[Shopee Webhook] HMAC unverified after ACK \u2014 v\u1EABn parse + get_order_detail (Shopee API l\xE0 ngu\u1ED3n ch\xE2n l\xFD)."
+      );
+    }
+    markWebhookReceived();
+    console.log(
+      `[WEBHOOK RECEIVED] pid=${process.pid} ${snapshot.routeLabel} \u2014 ACK 200 sent; headers:`,
+      {
+        authorization: isValid ? "(verified)" : "(unverified \u2014 continue)",
+        contentLength: snapshot.contentLength,
+        contentType: snapshot.contentType,
+        host: snapshot.host,
+        bodyBytes
+      }
+    );
+    console.log("[WEBHOOK RECEIVED] req.body (full):", rawBody.toString("utf8"));
+    const payload = parseWebhookBody(rawBody);
+    if (!payload) {
+      console.log("[Shopee Webhook] Invalid JSON after ACK \u2014 nothing to process.");
+      return;
+    }
+    console.log("[WEBHOOK RECEIVED] req.body (parsed object):", JSON.stringify(payload));
+    const data = unwrapWebhookData(payload);
+    const code = Number(payload.code ?? data.code);
+    const routeLabel = String(snapshot.routeLabel || "");
+    const isChatPush = code === 10 || routeLabel.includes("/chat-webhook");
+    if (isChatPush) {
+      try {
+        await ingestShopeeChatPush(payload);
+      } catch (chatErr) {
+        console.error(
+          "[Shopee Chat Webhook] ingest failed:",
+          chatErr instanceof Error ? chatErr.message : chatErr
+        );
+      }
+      return;
+    }
+    const orderSn = String(
+      data.ordersn ?? data.order_sn ?? data.orderSn ?? payload.ordersn ?? payload.order_sn ?? payload.orderSn ?? ""
+    ).trim();
+    const status = String(
+      data.status ?? data.order_status ?? data.orderStatus ?? payload.status ?? payload.order_status ?? ""
+    ).trim().toUpperCase();
+    const isOrderStatusPush = code === 3 || Boolean(status);
+    if (!orderSn) {
+      console.log(
+        `[Shopee Webhook] Non-order push skipped code=${Number.isFinite(code) ? code : "?"} status=${status || "?"} \u2014 missing order_sn`
+      );
+      return;
+    }
+    console.log("[WEBHOOK] Nh\u1EADn event m\u1EDBi:", orderSn, status || "");
+    if (eagerStubOrder) {
+      try {
+        await eagerStubOrder(payload);
+      } catch (stubErr) {
+        console.error("[WEBHOOK DB ERROR]:", stubErr);
+        console.error("Stub order error:", stubErr);
+      }
+    }
+    const shopId = String(payload.shop_id ?? data.shop_id ?? "").trim();
+    const updateTime = String(
+      data.update_time ?? data.updateTime ?? payload.timestamp ?? data.timestamp ?? "0"
+    ).trim();
+    const jobId = buildWebhookJobId(shopId, orderSn, status, updateTime);
+    const queuedMeta = {
+      jobId,
+      code: Number.isFinite(code) ? code : null,
+      shop_id: shopId || null,
+      order_sn: orderSn,
+      status: status || null,
+      update_time: updateTime || "0",
+      event_type: status === "UNPAID" || status === "READY_TO_SHIP" ? "new_order" : isOrderStatusPush ? "status_change" : "order_related"
+    };
+    try {
+      const queued = await enqueueWebhookJob({ jobId, payload });
+      if (queued.duplicate) {
+        console.log(
+          "[WEBHOOK] idempotent skip \u2014 jobId \u0111\xE3 c\xF3, ACK th\xE0nh c\xF4ng:",
+          JSON.stringify(queuedMeta)
+        );
+        return;
+      }
+      console.log(
+        "[WEBHOOK RECEIVED] order payload inserted webhook_jobs pending \u2014 worker s\u1EBD get_order_detail + UPSERT:",
+        JSON.stringify(queuedMeta)
+      );
+    } catch (queueErr) {
+      console.error(
+        "[WEBHOOK] enqueue webhook_jobs failed:",
+        queueErr instanceof Error ? queueErr.message : queueErr
+      );
+      if (onQueueOverflow) {
+        try {
+          await onQueueOverflow(payload);
+        } catch (overflowErr) {
+          console.error(
+            "[WEBHOOK] overflow fallback failed:",
+            overflowErr instanceof Error ? overflowErr.message : overflowErr
+          );
+        }
+      }
+    }
+  } catch (error) {
+    console.error(
+      "[Shopee Webhook] processShopeeWebhookAsync failed after ACK:",
+      error instanceof Error ? error.stack || error.message : error
+    );
+  }
+}
+function createShopeeWebhookRouter(_processPayload, routePath = "/shopee", options = {}) {
+  const router30 = import_express.default.Router();
+  const paths = (Array.isArray(routePath) ? routePath : [routePath]).map(
+    (path26) => path26.startsWith("/") ? path26 : `/${path26}`
+  );
+  console.log(
+    "[Shopee Webhook] Queue config mongo=webhook_jobs drainer=setInterval (kh\xF4ng x\u1EBFp RAM)"
+  );
+  router30.get(paths, (_req, res) => {
+    ackShopeeOk(res);
+  });
+  router30.post(paths, (req, res) => {
+    console.log("\n--- [WEBHOOK TRIGGERED] ---", JSON.stringify(req.body));
+    console.log(
+      "[WEBHOOK TRIGGERED] meta",
+      JSON.stringify({
+        url: req.originalUrl || req.url,
+        contentType: req.get("content-type") || "",
+        contentLength: req.get("content-length") || "0",
+        authorizationPresent: Boolean(readAuthorizationHeader(req)),
+        bodyAlreadyParsed: req.body != null
+      })
+    );
+    const rawBodyPromise = readRawWebhookBody(req);
+    const rawBodyWatch = setTimeout(() => {
+      console.error(
+        "[WEBHOOK] SILENT? raw body ch\u01B0a emit end sau 8s \u2014 listener c\xF3 th\u1EC3 g\u1EAFn sau khi stream \u0111\xE3 b\u1ECB consume. ACK \u0111\xE3 g\u1EEDi n\xEAn Shopee kh\xF4ng retry."
+      );
+    }, 8e3);
+    void rawBodyPromise.finally(() => clearTimeout(rawBodyWatch));
+    ackShopeeOk(res);
+    const snapshot = {
+      routeLabel: `POST ${req.originalUrl || req.url}`,
+      authorization: readAuthorizationHeader(req),
+      requestUrls: buildWebhookUrlCandidates(req),
+      contentLength: req.get("content-length") || "0",
+      contentType: req.get("content-type") || "",
+      host: req.get("host") || ""
+    };
+    void processShopeeWebhookAsync(
+      snapshot,
+      rawBodyPromise,
+      options.eagerStubOrder,
+      options.onQueueOverflow
+    ).catch((error) => {
+      console.error("L\u1ED7i x\u1EED l\xFD ng\u1EA7m Webhook Shopee:", error);
+    });
+  });
+  return router30;
 }
 
 // src/types.ts
@@ -79325,10 +79239,20 @@ function getShopeeOrderRawStatus(order) {
   return String(order.shopee_order_status || order.order_status || "").toUpperCase();
 }
 function getOrderTrackingNo(order) {
+  const pkgList = order.package_list;
+  const pkg = Array.isArray(pkgList) ? pkgList[0] : void 0;
+  const nested = order.data;
   const candidates = [
     order.trackingNumber,
     order.tracking_no,
-    order.shopee_tracking_number
+    order.shopee_tracking_number,
+    nested?.tracking_no,
+    nested?.trackingNumber,
+    nested?.last_mile_tracking_number,
+    pkg?.tracking_number,
+    pkg?.tracking_no,
+    pkg?.trackingNumber,
+    pkg?.last_mile_tracking_number
   ];
   for (const c of candidates) {
     const tn = String(c || "").trim();
@@ -79339,6 +79263,19 @@ function getOrderTrackingNo(order) {
 }
 function hasOrderTrackingNo(order) {
   return Boolean(getOrderTrackingNo(order));
+}
+function hasOrderShippingCarrier(order) {
+  const pkgList = order.package_list;
+  const pkg = Array.isArray(pkgList) ? pkgList[0] : void 0;
+  const candidates = [
+    order.shipping_carrier,
+    order.checkout_shipping_carrier,
+    order.shippingCarrier,
+    order.carrier,
+    pkg?.shipping_carrier,
+    pkg?.checkout_shipping_carrier
+  ];
+  return candidates.some((c) => String(c || "").trim().length > 0);
 }
 function getOrderFulfillmentType(order) {
   const raw = String(
@@ -79351,7 +79288,7 @@ function getOrderFulfillmentType(order) {
 function isProcessedCondition(order) {
   const raw = getShopeeOrderRawStatus(order);
   if (raw === "PROCESSED") return true;
-  if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") {
+  if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "UNPAID" || raw === "PENDING" || raw === "IN_REVIEW" || raw === "FRAUD_CHECK" || raw === "INVOICE_PENDING") {
     if (order.isPrepared === true || isTruthyFlag(order.isPrinted)) return true;
     return false;
   }
@@ -79414,12 +79351,16 @@ function matchesUnprocessedPickupTab(order) {
   if (isShopeeCancelledLikeStatus(order)) return false;
   if (isOrderHandedOverToCarrier(order)) return false;
   if (order.isPrepared === true || isTruthyFlag(order.isPrinted)) return false;
+  const channel = String(order.channel || "").toLowerCase();
+  if (channel === "woocommerce" || channel === "manual") return false;
   const raw = getShopeeOrderRawStatus(order);
-  if (raw !== "READY_TO_SHIP" && raw !== "RETRY_SHIP") return false;
+  if (raw === "PROCESSED") return false;
+  const early = !raw || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "UNPAID" || raw === "PENDING" || raw === "IN_REVIEW" || raw === "FRAUD_CHECK" || raw === "INVOICE_PENDING";
+  if (!early && order.status !== "unprocessed") return false;
   if (order.status === "shipping" || order.status === "completed" || order.status === "cancelled") {
     return false;
   }
-  return hasOrderTrackingNo(order);
+  return hasOrderTrackingNo(order) && hasOrderShippingCarrier(order);
 }
 function isEligibleForHandOverToCarrier(order) {
   if (isOrderHandedOverToCarrier(order)) return false;
@@ -82308,9 +82249,63 @@ function trackingPayloadIntent(order) {
   }
   return explicitEmpty ? "explicit_empty" : "absent";
 }
+function packageListTrackingNo(list) {
+  if (!Array.isArray(list)) return "";
+  for (const pkg of list) {
+    if (!pkg || typeof pkg !== "object") continue;
+    const row = pkg;
+    const tn = row.tracking_number || row.tracking_no || row.trackingNumber || row.last_mile_tracking_number;
+    if (isValidTrackingNo(tn)) return String(tn).trim();
+  }
+  return "";
+}
 function documentHasValidTracking(doc) {
   if (!doc) return false;
-  return isValidTrackingNo(doc.tracking_no) || isValidTrackingNo(doc.trackingNumber) || isValidTrackingNo(doc.data?.tracking_no) || isValidTrackingNo(doc.data?.trackingNumber);
+  if (isValidTrackingNo(doc.tracking_no) || isValidTrackingNo(doc.trackingNumber) || isValidTrackingNo(doc.data?.tracking_no) || isValidTrackingNo(doc.data?.trackingNumber) || isValidTrackingNo(doc.data?.shopee_tracking_number) || isValidTrackingNo(doc.data?.last_mile_tracking_number)) {
+    return true;
+  }
+  return Boolean(
+    packageListTrackingNo(doc.package_list) || packageListTrackingNo(doc.data?.package_list)
+  );
+}
+function extractPayloadTrackingNo(order, dataBag) {
+  const direct = [
+    order?.tracking_no,
+    order?.trackingNumber,
+    dataBag?.tracking_no,
+    dataBag?.trackingNumber,
+    dataBag?.shopee_tracking_number,
+    dataBag?.last_mile_tracking_number,
+    order?.last_mile_tracking_number
+  ];
+  for (const c of direct) {
+    if (isValidTrackingNo(c)) return String(c).trim();
+  }
+  return packageListTrackingNo(order?.package_list) || packageListTrackingNo(dataBag?.package_list);
+}
+function extractPayloadCarrier(order, dataBag) {
+  const direct = [
+    order?.shipping_carrier,
+    order?.checkout_shipping_carrier,
+    order?.carrier,
+    dataBag?.shipping_carrier,
+    dataBag?.checkout_shipping_carrier
+  ];
+  for (const c of direct) {
+    const s2 = String(c || "").trim();
+    if (s2) return s2;
+  }
+  const lists = [order?.package_list, dataBag?.package_list];
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const pkg of list) {
+      if (!pkg || typeof pkg !== "object") continue;
+      const row = pkg;
+      const s2 = String(row.shipping_carrier || row.checkout_shipping_carrier || "").trim();
+      if (s2) return s2;
+    }
+  }
+  return "";
 }
 function documentIsPrepared(doc) {
   return doc?.isPrepared === true || doc?.data?.isPrepared === true;
@@ -82321,11 +82316,28 @@ function documentShopAlreadyWorked(doc) {
 }
 function pinReadyToShipAwaitingPrepStatus($set, rawStatus) {
   const raw = String(rawStatus || "").toUpperCase();
-  if (raw !== "READY_TO_SHIP" && raw !== "RETRY_SHIP") return;
+  const early = raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "UNPAID" || raw === "PENDING" || raw === "IN_REVIEW" || raw === "FRAUD_CHECK" || raw === "INVOICE_PENDING";
+  if (!early) return;
   const st = String($set.status || "").trim();
-  if (st === "processed" || st === "shipping" || st === "pending_confirm" || st === "pending_verification") {
+  if (st === "shipping" || st === "completed" || st === "cancelled" || st === "return_pending" || st === "return_received") {
+    return;
+  }
+  if ($set.isPrepared === true || $set.is_handed_over === true) return;
+  const tn = String($set.tracking_no || $set.trackingNumber || "").trim();
+  const hasTn = isValidTrackingNo(tn);
+  const carrier = String(
+    $set.shipping_carrier || $set.checkout_shipping_carrier || $set["data.shipping_carrier"] || $set["data.checkout_shipping_carrier"] || ""
+  ).trim();
+  if (hasTn && carrier) {
     $set.status = "unprocessed";
     $set["data.status"] = "unprocessed";
+    $set.has_tracking = true;
+    $set["data.has_tracking"] = true;
+    return;
+  }
+  if (!hasTn) {
+    $set.status = "pending_confirm";
+    $set["data.status"] = "pending_confirm";
   }
 }
 function documentHasGoods(doc) {
@@ -82393,13 +82405,8 @@ async function bulkUpsertOrdersToStore(orders) {
     }
     const pendingFlag = order.is_pending_shopee_check === true;
     const dataBag = order.data && typeof order.data === "object" && !Array.isArray(order.data) ? order.data : {};
-    const tnRaw = String(
-      order.tracking_no || order.trackingNumber || dataBag.tracking_no || dataBag.trackingNumber || ""
-    ).trim();
-    const usableTn = tnRaw && !/^0FG/i.test(tnRaw) ? tnRaw : null;
-    const carrier = String(
-      order.shipping_carrier || order.checkout_shipping_carrier || order.carrier || ""
-    ).trim();
+    const usableTn = extractPayloadTrackingNo(order, dataBag) || null;
+    const carrier = extractPayloadCarrier(order, dataBag);
     const shopIdStr = order.shopId != null ? String(order.shopId).trim() : "";
     const forceShopId = order._shop_owner_verified === true || order._force_shop_id === true;
     const isWebhookStub = order._webhook_stub === true;
@@ -83032,13 +83039,21 @@ async function bulkUpsertOrdersToStore(orders) {
                 `[MongoDB] KEEP prepared status ${existingStatus} order_sn=${item.orderSn || item.id} raw=${incomingRawForGuard}`
               );
             } else if (!forwardProgress && rtsAwaitingPrep && !shopWorked) {
-              const st = incomingStatus || existingStatus;
-              if (st === "processed" || st === "shipping" || st === "pending_confirm" || st === "pending_verification") {
+              const hasTn = $set.has_tracking === true || isValidTrackingNo($set.tracking_no) || isValidTrackingNo($set.trackingNumber) || documentHasValidTracking(current);
+              const carrierNow = String(
+                $set.shipping_carrier || $set["data.shipping_carrier"] || $set.checkout_shipping_carrier || current?.shipping_carrier || current?.data?.shipping_carrier || current?.checkout_shipping_carrier || current?.data?.checkout_shipping_carrier || ""
+              ).trim();
+              if (hasTn && carrierNow) {
                 $set.status = "unprocessed";
                 $set["data.status"] = "unprocessed";
+                $set.has_tracking = true;
+                $set["data.has_tracking"] = true;
                 console.warn(
-                  `[MongoDB] KEEP unprocessed (c\xF3 m\xE3, ch\u01B0a chu\u1EA9n b\u1ECB) order_sn=${item.orderSn || item.id} raw=${incomingRawForGuard} was=${st}`
+                  `[MongoDB] KEEP unprocessed (c\xF3 m\xE3 + \u0110VVC, ch\u01B0a chu\u1EA9n b\u1ECB) order_sn=${item.orderSn || item.id} raw=${incomingRawForGuard}`
                 );
+              } else if (!hasTn) {
+                $set.status = "pending_confirm";
+                $set["data.status"] = "pending_confirm";
               }
             } else if (!forwardProgress && incomingStatus === "unprocessed" && LOCAL_STATUS_NOT_BELOW_PROCESSED.has(existingStatus) && (documentIsPrepared(current) || incomingRawForGuard === "PROCESSED")) {
               delete $set.status;
@@ -83305,7 +83320,7 @@ function buildOrderCompoundFilter(sn, _id, shopId) {
     $and: [identity, { $or: shopVariants }]
   };
 }
-function isDuplicateKeyError(err) {
+function isDuplicateKeyError2(err) {
   const e2 = err;
   if (e2?.code === 11e3 || /E11000|duplicate key/i.test(String(e2?.message || err || ""))) {
     return true;
@@ -83363,7 +83378,7 @@ async function markOrderHandedOverInStore(orderSn, meta) {
       if (tn && !/^0FG/i.test(tn) && isLaggingPendingConfirmPair(raw, st)) {
         await OrderModel.updateOne(identityFilter, { $set: { ...LAGGING_PENDING_PROMOTE_SET } });
         console.log(
-          `[MongoDB] markOrderHandedOver promote PROCESSED order_sn=${sn} (raw was ${raw || st})`
+          `[MongoDB] markOrderHandedOver promote unprocessed order_sn=${sn} (raw was ${raw || st})`
         );
       }
       console.log(
@@ -83381,7 +83396,7 @@ async function markOrderHandedOverInStore(orderSn, meta) {
     );
     return Boolean(inserted);
   } catch (err) {
-    if (isDuplicateKeyError(err)) {
+    if (isDuplicateKeyError2(err)) {
       try {
         const retry2 = await writeExisting();
         console.log(
@@ -83861,35 +83876,35 @@ function isLaggingPendingConfirmPair(raw, status) {
   const st = String(status || "").trim();
   if (TERMINAL_SHOPEE_RAW.includes(r2)) return false;
   if (st === "shipping" || st === "completed" || st === "cancelled") return false;
-  if (r2 === "READY_TO_SHIP" || r2 === "RETRY_SHIP") return false;
+  if (r2 === "READY_TO_SHIP" || r2 === "RETRY_SHIP") {
+    return st === "pending_confirm" || st === "pending_verification" || st === "unprocessed" || !st;
+  }
   if (LAGGING_PENDING_RAW.includes(r2)) return true;
   if (LAGGING_PENDING_LOCAL.includes(st)) return true;
   if (!r2 && (st === "pending_confirm" || st === "pending_verification")) return true;
   return false;
 }
 function applyLaggingPendingPromotionToSet($set, extra) {
+  if (extra?.isPrepared === true || $set.isPrepared === true) return false;
   const raw = String(
     $set.shopee_order_status || extra?.shopee_order_status || ""
   ).toUpperCase();
   const st = String($set.status || extra?.status || "").trim();
+  if (raw === "PROCESSED" || st === "processed") return false;
   if (!isLaggingPendingConfirmPair(raw, st)) return false;
-  $set.shopee_order_status = "PROCESSED";
-  $set["data.shopee_order_status"] = "PROCESSED";
-  $set.status = "processed";
-  $set["data.status"] = "processed";
-  $set.isPrepared = true;
-  $set["data.isPrepared"] = true;
+  $set.status = "unprocessed";
+  $set["data.status"] = "unprocessed";
+  $set.has_tracking = true;
+  $set["data.has_tracking"] = true;
   $set.is_pending_shopee_check = false;
   $set["data.is_pending_shopee_check"] = false;
   return true;
 }
 var LAGGING_PENDING_PROMOTE_SET = {
-  shopee_order_status: "PROCESSED",
-  "data.shopee_order_status": "PROCESSED",
-  status: "processed",
-  "data.status": "processed",
-  isPrepared: true,
-  "data.isPrepared": true,
+  status: "unprocessed",
+  "data.status": "unprocessed",
+  has_tracking: true,
+  "data.has_tracking": true,
   is_pending_shopee_check: false,
   "data.is_pending_shopee_check": false
 };
@@ -83898,9 +83913,11 @@ function laggingPendingConfirmMongoFilter() {
     $and: [
       {
         shopee_order_status: {
-          $nin: [...TERMINAL_SHOPEE_RAW, "READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"]
+          $nin: [...TERMINAL_SHOPEE_RAW, "PROCESSED"]
         }
       },
+      { isPrepared: { $ne: true } },
+      { is_handed_over: { $ne: true } },
       {
         $or: [
           { shopee_order_status: { $in: [...LAGGING_PENDING_RAW, null, ""] } },
@@ -83994,7 +84011,7 @@ async function updateOrderTrackingInStore(orderSn, trackingNo, extra) {
       );
     } catch (promoErr) {
       console.warn(
-        `[MongoDB] tracking promote PROCESSED failed order_sn=${sn}:`,
+        `[MongoDB] tracking promote unprocessed failed order_sn=${sn}:`,
         promoErr?.message || promoErr
       );
     }
@@ -84675,7 +84692,10 @@ async function healLaggingPendingConfirmWithTrackingInStore() {
           { tracking_no: { $regex: /^(?!0FG).+$/i } },
           { trackingNumber: { $regex: /^(?!0FG).+$/i } },
           { "data.tracking_no": { $regex: /^(?!0FG).+$/i } },
-          { "data.trackingNumber": { $regex: /^(?!0FG).+$/i } }
+          { "data.trackingNumber": { $regex: /^(?!0FG).+$/i } },
+          { "data.package_list.tracking_number": { $regex: /^(?!0FG).+$/i } },
+          { "data.package_list.tracking_no": { $regex: /^(?!0FG).+$/i } },
+          { "data.last_mile_tracking_number": { $regex: /^(?!0FG).+$/i } }
         ]
       }
     ]
@@ -85878,40 +85898,44 @@ var ORDER_TAB_CANCEL_RETURN_RAW = ["CANCELLED", "IN_CANCEL", "TO_RETURN", "RETUR
 var ORDER_TAB_TRACKING_PRESENT = {
   tracking_no: { $exists: true, $nin: [null, "", "0"] }
 };
+var ORDER_TAB_REAL_TN_REGEX = /^(?!0$)(?!0FG).+/i;
+function orderTabTrackingOn(path26) {
+  return { [path26]: { $regex: ORDER_TAB_REAL_TN_REGEX } };
+}
+var ORDER_TAB_TRACKING_PATHS = [
+  "tracking_no",
+  "trackingNumber",
+  "data.tracking_no",
+  "data.trackingNumber",
+  "data.shopee_tracking_number",
+  "data.last_mile_tracking_number",
+  "data.package_list.tracking_number",
+  "data.package_list.tracking_no",
+  "data.package_list.trackingNumber",
+  "data.package_list.last_mile_tracking_number"
+];
 var ORDER_TAB_HAS_REAL_TRACKING = {
   $or: [
     { has_tracking: true },
-    {
-      $and: [
-        { tracking_no: { $exists: true, $nin: [null, "", "0"] } },
-        { tracking_no: { $not: /^0FG/i } }
-      ]
-    },
-    {
-      $and: [
-        { trackingNumber: { $exists: true, $nin: [null, "", "0"] } },
-        { trackingNumber: { $not: /^0FG/i } }
-      ]
-    }
+    { "data.has_tracking": true },
+    ...ORDER_TAB_TRACKING_PATHS.map((path26) => orderTabTrackingOn(path26))
   ]
 };
 var ORDER_TAB_NO_REAL_TRACKING = {
   $and: [
     { has_tracking: { $ne: true } },
-    {
-      $or: [
-        { tracking_no: { $exists: false } },
-        { tracking_no: { $in: [null, "", "0"] } },
-        { tracking_no: { $regex: /^0FG/i } }
-      ]
-    },
-    {
-      $or: [
-        { trackingNumber: { $exists: false } },
-        { trackingNumber: { $in: [null, "", "0"] } },
-        { trackingNumber: { $regex: /^0FG/i } }
-      ]
-    }
+    { "data.has_tracking": { $ne: true } },
+    { $nor: ORDER_TAB_TRACKING_PATHS.map((path26) => orderTabTrackingOn(path26)) }
+  ]
+};
+var ORDER_TAB_HAS_CARRIER = {
+  $or: [
+    { shipping_carrier: { $regex: /\S/ } },
+    { checkout_shipping_carrier: { $regex: /\S/ } },
+    { "data.shipping_carrier": { $regex: /\S/ } },
+    { "data.checkout_shipping_carrier": { $regex: /\S/ } },
+    { "data.package_list.shipping_carrier": { $regex: /\S/ } },
+    { "data.package_list.checkout_shipping_carrier": { $regex: /\S/ } }
   ]
 };
 function orderTabPendingConfirmNoTracking() {
@@ -85936,13 +85960,33 @@ var ORDER_TAB_CLOSED_LOCAL = [
 function orderTabUnprocessedMatch() {
   return {
     $and: [
-      { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] } },
+      {
+        $or: [
+          {
+            shopee_order_status: {
+              $in: [
+                "READY_TO_SHIP",
+                "RETRY_SHIP",
+                "UNPAID",
+                "PENDING",
+                "IN_REVIEW",
+                "FRAUD_CHECK",
+                "INVOICE_PENDING",
+                null,
+                ""
+              ]
+            }
+          },
+          { status: "unprocessed" }
+        ]
+      },
       ORDER_TAB_HAS_REAL_TRACKING,
+      ORDER_TAB_HAS_CARRIER,
       { isPrepared: { $ne: true } },
       ORDER_TAB_NOT_HANDED_OVER,
       { channel: { $nin: ["woocommerce", "manual"] } },
       { status: { $nin: [...ORDER_TAB_CLOSED_LOCAL] } },
-      { shopee_order_status: { $nin: [...ORDER_TAB_LEFT_PICKUP_RAW] } },
+      { shopee_order_status: { $nin: ["PROCESSED", ...ORDER_TAB_LEFT_PICKUP_RAW] } },
       { is_return: { $ne: true } },
       {
         shopee_cancel_return_kind: { $nin: ["refund_return", "cancelled", "failed_delivery"] }
@@ -88156,7 +88200,7 @@ async function markOrdersScanFlagsBatch(rows) {
         12e3
       );
     } catch (err) {
-      if (!isDuplicateKeyError(err)) throw err;
+      if (!isDuplicateKeyError2(err)) throw err;
       const retryOps = chunk.map((op) => ({
         updateOne: {
           filter: op.updateOne.filter,
@@ -127088,9 +127132,10 @@ async function listOrders(req, res) {
       const raw = String(o.shopee_order_status || "").toUpperCase();
       const tn = String(o.tracking_no || o.trackingNumber || "").trim();
       if (tn && tn !== "0" && !/^0FG/i.test(tn)) return false;
-      if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "PROCESSED" || raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE" || raw === "COMPLETED" || raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN") {
+      if (raw === "PROCESSED" || raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE" || raw === "COMPLETED" || raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN") {
         return false;
       }
+      if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") return true;
       if (o.status === "unprocessed" || o.status === "processed" || o.status === "shipping" || o.status === "completed" || o.status === "cancelled" || o.status === "return_pending" || o.status === "return_received") {
         return false;
       }
@@ -134729,7 +134774,7 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
 async function processShopeeWebhookPayloadInner(body) {
   if (!body || typeof body !== "object") {
     console.warn("[Shopee Webhook] processShopeeWebhookPayload \u2014 body kh\xF4ng ph\u1EA3i object");
-    return;
+    return { ok: true, skipped: true };
   }
   console.log(
     "[WEBHOOK RECEIVED] processShopeeWebhookPayload payload:",
@@ -134740,7 +134785,7 @@ async function processShopeeWebhookPayloadInner(body) {
     console.log(
       `[Shopee Webhook] IGNORED (disabled) order_sn=${peek.orderSn || "?"} code=${peek.code}`
     );
-    return;
+    return { ok: true, skipped: true };
   }
   const parsed = deps21.parseShopeePushEvent(body);
   const extracted = extractOrderSnAndShopId(body, parsed);
@@ -134767,7 +134812,7 @@ async function processShopeeWebhookPayloadInner(body) {
     console.log(
       `[Shopee Webhook] Non-order push skipped code=${parsed.code} kind=${parsed.eventKind}`
     );
-    return;
+    return { ok: true, skipped: true };
   }
   try {
     const orders = await loadWorkingOrdersForWebhook(orderSn);
@@ -134874,6 +134919,10 @@ async function processShopeeWebhookPayloadInner(body) {
     console.log(
       `[Shopee Webhook] Order ${orderSn} processed (event=${parsed.eventKind}, detail=${fetchedDetail}).`
     );
+    if (!fetchedDetail) {
+      return { ok: false, reason: "detail_not_fetched" };
+    }
+    return { ok: true };
   } catch (processErr) {
     console.error(
       `[Shopee Webhook] processShopeeWebhookPayloadInner EXCEPTION order_sn=${orderSn}:`,
@@ -134884,6 +134933,7 @@ async function processShopeeWebhookPayloadInner(body) {
       "\u{1F4BE} K\u1EBFt qu\u1EA3 l\u01B0u DB:",
       `exception \u2014 ${processErr?.message || processErr}`
     );
+    return { ok: false, reason: processErr?.message || "webhook_exception" };
   }
 }
 async function handleWebhookQueueOverflow(body) {
@@ -134913,13 +134963,17 @@ async function handleWebhookQueueOverflow(body) {
 }
 async function processShopeeWebhookPayload(body) {
   try {
-    await processShopeeWebhookPayloadInner(body);
+    const result = await processShopeeWebhookPayloadInner(body);
+    if (result && result.ok === false) {
+      throw new Error(result.reason || "webhook_job_failed");
+    }
   } catch (error) {
     console.error(
       "[Shopee Webhook] Async processing error:",
       error?.message || error,
       error?.stack || ""
     );
+    throw error;
   }
 }
 
@@ -144798,10 +144852,10 @@ function mapShopeeStatusToLocal(rawStatus, opts) {
   }
   if (raw === "PROCESSED") return "processed";
   if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") {
-    return "unprocessed";
+    return opts?.hasTracking ? "unprocessed" : "pending_confirm";
   }
   if (raw === "UNPAID" || raw === "PENDING" || raw === "IN_REVIEW" || raw === "FRAUD_CHECK" || raw === "INVOICE_PENDING") {
-    return "pending_confirm";
+    return opts?.hasTracking ? "unprocessed" : "pending_confirm";
   }
   if (raw === "CANCELLED" || raw === "IN_CANCEL") return "cancelled";
   if (raw === "TO_RETURN") return "return_pending";
@@ -146335,13 +146389,12 @@ function promoteOrderStatusWhenTrackingReady(order) {
   }
   const tn = String(order.trackingNumber || order.tracking_no || "").trim();
   const hasTn = Boolean(tn && !isShopeeInternalTrackingCode2(tn));
-  if (hasTn) {
-    const laggingRaw = !raw || raw === "UNPAID" || raw === "PENDING" || raw === "IN_REVIEW" || raw === "FRAUD_CHECK" || raw === "INVOICE_PENDING";
+  if (hasTn && order.isPrepared !== true && order.isPrinted !== true) {
+    const laggingRaw = !raw || raw === "UNPAID" || raw === "PENDING" || raw === "IN_REVIEW" || raw === "FRAUD_CHECK" || raw === "INVOICE_PENDING" || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP";
     const laggingLocal = status === "pending_confirm" || status === "pending_verification";
-    if (laggingRaw || laggingLocal) {
-      order.shopee_order_status = "PROCESSED";
-      order.status = "processed";
-      order.isPrepared = true;
+    if ((laggingRaw || laggingLocal) && raw !== "PROCESSED") {
+      order.status = "unprocessed";
+      order.has_tracking = true;
       order.is_pending_shopee_check = false;
       return true;
     }
@@ -147722,9 +147775,16 @@ function normalizeShopeeOrderDetail(shopId, shopName, item) {
       order.status = "shipping";
       order.isPrepared = true;
       order.is_pending_shopee_check = false;
-    } else if (finalRaw === "UNPAID" || finalRaw === "PENDING") {
-      order.status = "pending_confirm";
-      order.isPrepared = false;
+    } else if (finalRaw === "UNPAID" || finalRaw === "PENDING" || finalRaw === "IN_REVIEW" || finalRaw === "FRAUD_CHECK" || finalRaw === "INVOICE_PENDING") {
+      if (hasUsableShopeeTrackingNumber(order)) {
+        order.status = "unprocessed";
+        order.has_tracking = true;
+        order.isPrepared = false;
+        order.is_pending_shopee_check = false;
+      } else {
+        order.status = "pending_confirm";
+        order.isPrepared = false;
+      }
     } else if (finalRaw === "READY_TO_SHIP" || finalRaw === "RETRY_SHIP" || finalRaw === "PROCESSED") {
       order.shopee_order_status = finalRaw;
       const logisticsHanded = isLogisticsHandedToCarrier(
@@ -147739,8 +147799,12 @@ function normalizeShopeeOrderDetail(shopId, shopName, item) {
         order.isPrepared = true;
       } else if (order.isPrepared === true || order.isPrinted === true) {
         order.status = "processed";
-      } else {
+      } else if (hasUsableShopeeTrackingNumber(order)) {
         order.status = "unprocessed";
+        order.has_tracking = true;
+        order.isPrepared = false;
+      } else {
+        order.status = "pending_confirm";
         order.isPrepared = false;
       }
     }
@@ -150744,7 +150808,7 @@ function normalizeShopeeOrder(payload) {
   const rawStatus = hasExplicitStatus ? explicitStatus : webhookTracking ? "READY_TO_SHIP" : "UNPAID";
   const itemList = Array.isArray(data.item_list) ? data.item_list : [];
   const mappedItems = itemList.length ? itemList.map((it) => mapShopeeOrderLineItem(it, { orderStatus: rawStatus })).filter(Boolean) : [];
-  const mappedStatus = rawStatus ? mapShopeeStatusToLocal(rawStatus, { hasTracking: Boolean(webhookTracking) }) : webhookTracking ? "processed" : "unprocessed";
+  const mappedStatus = rawStatus ? mapShopeeStatusToLocal(rawStatus, { hasTracking: Boolean(webhookTracking) }) : webhookTracking ? "unprocessed" : "pending_confirm";
   const watermarkUnix = Number(data.update_time || data.create_time || payload?.timestamp || 0);
   const lastShopeeUpdateAt = watermarkUnix ? new Date(watermarkUnix < 1e12 ? watermarkUnix * 1e3 : watermarkUnix).toISOString() : (/* @__PURE__ */ new Date()).toISOString();
   const order = {
@@ -150959,11 +151023,10 @@ function applyShopeePushFieldsToOrder(order, parsed) {
     order.isPrepared = false;
     order.is_pending_shopee_check = false;
     order.has_tracking = true;
-  } else if (hasTn && (!raw || raw === "PENDING" || raw === "UNPAID" || raw === "IN_REVIEW" || raw === "FRAUD_CHECK" || raw === "INVOICE_PENDING")) {
-    order.shopee_order_status = "PROCESSED";
-    raw = "PROCESSED";
-    order.status = "processed";
-    order.isPrepared = true;
+  } else if (hasTn && (!raw || raw === "PENDING" || raw === "UNPAID" || raw === "IN_REVIEW" || raw === "FRAUD_CHECK" || raw === "INVOICE_PENDING") && !shopAlreadyWorked) {
+    order.status = "unprocessed";
+    order.has_tracking = true;
+    order.isPrepared = false;
     order.is_pending_shopee_check = false;
   } else if (hasTn && (raw === "PROCESSED" || !raw)) {
     order.status = "processed";

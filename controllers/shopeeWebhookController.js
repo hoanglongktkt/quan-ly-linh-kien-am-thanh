@@ -4,10 +4,11 @@
  * → canonical POST/GET /api/shopee/webhook
  * PHẢI nằm trước express.json.
  *
- * Luồng: ACK 200 ở router → queue → processShopeeWebhookPayload (async):
+ * Luồng: ACK 200 ở router → insert webhook_jobs (pending) → drainer gọi processShopeeWebhookPayload:
  *  1) Bóc order_sn + shop_id từ payload (Shopee v2: code, shop_id, data.ordersn/order_sn)
  *  2) Kiểm tra / refresh access_token → gọi get_order_detail
  *  3) UPSERT vào Mongo DB
+ *  Job thất bại (detail không lấy được / exception) throw để drainer retry.
  */
 import {
   getValidShopeeAccessToken,
@@ -634,7 +635,7 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
 async function processShopeeWebhookPayloadInner(body) {
   if (!body || typeof body !== "object") {
     console.warn("[Shopee Webhook] processShopeeWebhookPayload — body không phải object");
-    return;
+    return { ok: true, skipped: true };
   }
 
   console.log(
@@ -647,7 +648,7 @@ async function processShopeeWebhookPayloadInner(body) {
     console.log(
       `[Shopee Webhook] IGNORED (disabled) order_sn=${peek.orderSn || "?"} code=${peek.code}`,
     );
-    return;
+    return { ok: true, skipped: true };
   }
 
   const parsed = deps.parseShopeePushEvent(body);
@@ -687,7 +688,7 @@ async function processShopeeWebhookPayloadInner(body) {
     console.log(
       `[Shopee Webhook] Non-order push skipped code=${parsed.code} kind=${parsed.eventKind}`,
     );
-    return;
+    return { ok: true, skipped: true };
   }
 
   try {
@@ -822,6 +823,10 @@ async function processShopeeWebhookPayloadInner(body) {
     console.log(
       `[Shopee Webhook] Order ${orderSn} processed (event=${parsed.eventKind}, detail=${fetchedDetail}).`,
     );
+    if (!fetchedDetail) {
+      return { ok: false, reason: "detail_not_fetched" };
+    }
+    return { ok: true };
   } catch (processErr) {
     console.error(
       `[Shopee Webhook] processShopeeWebhookPayloadInner EXCEPTION order_sn=${orderSn}:`,
@@ -832,6 +837,7 @@ async function processShopeeWebhookPayloadInner(body) {
       "💾 Kết quả lưu DB:",
       `exception — ${processErr?.message || processErr}`,
     );
+    return { ok: false, reason: processErr?.message || "webhook_exception" };
   }
 }
 
@@ -871,18 +877,21 @@ export async function handleWebhookQueueOverflow(body) {
 }
 
 /**
- * Xử lý ngầm sau ACK 200 — không throw ra ngoài HTTP.
- * Không cắt ở 40s: get_order_detail được xếp bằng setImmediate ở router,
- * hàm này chỉ chạy khi queue đã nhận job (Shopee không còn chờ response).
+ * Worker webhook_jobs gọi hàm này. Throw khi detail/upsert thất bại để drainer retry.
+ * HTTP đã ACK 200 trước đó — throw không làm Shopee nhận 500.
  */
 export async function processShopeeWebhookPayload(body) {
   try {
-    await processShopeeWebhookPayloadInner(body);
+    const result = await processShopeeWebhookPayloadInner(body);
+    if (result && result.ok === false) {
+      throw new Error(result.reason || "webhook_job_failed");
+    }
   } catch (error) {
     console.error(
       "[Shopee Webhook] Async processing error:",
       error?.message || error,
       error?.stack || "",
     );
+    throw error;
   }
 }

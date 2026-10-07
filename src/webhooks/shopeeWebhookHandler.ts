@@ -3,18 +3,12 @@ import { parseShopeeJson } from "../../services/shopee/jsonBig.js";
 import { resolveAppBaseUrl } from "../../utils/appPaths.js";
 import { verifyShopeeWebhookSignature } from "./shopeeSignature.ts";
 import { ingestShopeeChatPush } from "../../services/shopee/chat.js";
+import { enqueueWebhookJob } from "../../services/webhookJobQueue.js";
 
 type WebhookProcessor = (payload: Record<string, unknown>) => Promise<void>;
 type QueueOverflowHandler = (payload: Record<string, unknown>) => void | Promise<void>;
 /** Ghi nông order_sn/shop/status trước khi xếp hàng get_order_detail. Lỗi không được chặn enqueue. */
 type EagerStubHandler = (payload: Record<string, unknown>) => void | Promise<void>;
-
-const MAX_PENDING_JOBS = 200;
-// Song song nhiều đơn khác nhau; cùng order_sn vẫn tuần tự. Mặc định 4 (env override).
-const MAX_CONCURRENT_JOBS = Math.max(
-  2,
-  Math.min(8, Number(process.env.SHOPEE_WEBHOOK_MAX_CONCURRENT) || 4),
-);
 
 /** Mốc push cuối cùng — /api/health dùng để biết webhook còn sống hay đã chết. */
 let lastWebhookAt = 0;
@@ -31,30 +25,6 @@ export function getShopeeWebhookStats(): {
     pid: process.pid,
     lastWebhookAt: lastWebhookAt ? new Date(lastWebhookAt).toISOString() : null,
   };
-}
-
-/** Metric in-process — log trên cPanel, không cần DB. */
-const queueMetrics = {
-  overflowCount: 0,
-  completedJobs: 0,
-  failedJobs: 0,
-  lastJobDurationMs: 0,
-  maxJobDurationMs: 0,
-  totalJobDurationMs: 0,
-};
-
-function logQueueMetrics(context: string, pending: number, running: number): void {
-  const avgMs =
-    queueMetrics.completedJobs > 0
-      ? Math.round(queueMetrics.totalJobDurationMs / queueMetrics.completedJobs)
-      : 0;
-  console.log(
-    `[Shopee Webhook][Queue] ${context}` +
-      ` depth=${pending} running=${running}/${MAX_CONCURRENT_JOBS}` +
-      ` overflowCount=${queueMetrics.overflowCount}` +
-      ` completed=${queueMetrics.completedJobs} failed=${queueMetrics.failedJobs}` +
-      ` lastJobMs=${queueMetrics.lastJobDurationMs} avgJobMs=${avgMs} maxJobMs=${queueMetrics.maxJobDurationMs}`,
-  );
 }
 
 function unwrapWebhookData(payload: Record<string, unknown>): Record<string, unknown> {
@@ -91,149 +61,6 @@ export function webhookOrderKey(payload: Record<string, unknown>): string {
     data.ordersn ?? data.order_sn ?? data.orderSn ?? payload.ordersn ?? payload.order_sn ?? "",
   ).trim();
   return orderSn ? `${shopId}:${orderSn}` : "";
-}
-
-/**
- * Hàng đợi in-process có giới hạn để một đợt retry bất thường không giữ vô hạn
- * payload/promise trong RAM. Không spawn process/worker nên không tạo zombie process.
- * Job get_order_detail chạy nền, không Promise.race / không cắt theo đồng hồ.
- */
-function createBoundedQueue(
-  processPayload: WebhookProcessor,
-  onQueueOverflow?: QueueOverflowHandler,
-) {
-  const pending: Array<Record<string, unknown>> = [];
-  let running = 0;
-  let scheduled = false;
-  let drainAgain = false;
-  const activeOrderKeys = new Set<string>();
-
-  const scheduleDrain = () => {
-    if (scheduled) {
-      drainAgain = true;
-      return;
-    }
-    scheduled = true;
-    setImmediate(() => {
-      scheduled = false;
-      try {
-        drainPending();
-      } finally {
-        if (drainAgain) {
-          drainAgain = false;
-          scheduleDrain();
-        }
-      }
-    });
-  };
-
-  const drainPending = () => {
-    const capacity = MAX_CONCURRENT_JOBS - running;
-    if (capacity <= 0 || pending.length === 0) return;
-
-    const batch: Array<{ payload: Record<string, unknown>; orderKey: string }> = [];
-    for (let i = 0; i < pending.length && batch.length < capacity; ) {
-      const payload = pending[i];
-      const orderKey = webhookOrderKey(payload);
-      if (orderKey && activeOrderKeys.has(orderKey)) {
-        i += 1;
-        continue;
-      }
-      pending.splice(i, 1);
-      if (orderKey) activeOrderKeys.add(orderKey);
-      batch.push({ payload, orderKey });
-    }
-    if (batch.length === 0) {
-      if (pending.length > 0 && running === 0) {
-        activeOrderKeys.clear();
-        scheduleDrain();
-      }
-      return;
-    }
-
-    running += batch.length;
-    logQueueMetrics("job_batch_start", pending.length, running);
-
-    void Promise.allSettled(
-      batch.map(({ payload, orderKey }) => {
-        const startedAt = Date.now();
-        return Promise.resolve()
-          .then(() => processPayload(payload))
-          .then(() => {
-            const durationMs = Date.now() - startedAt;
-            queueMetrics.completedJobs += 1;
-            queueMetrics.lastJobDurationMs = durationMs;
-            queueMetrics.totalJobDurationMs += durationMs;
-            if (durationMs > queueMetrics.maxJobDurationMs) {
-              queueMetrics.maxJobDurationMs = durationMs;
-            }
-            console.log(
-              `[Shopee Webhook][Queue] job_done orderKey=${orderKey || "?"} durationMs=${durationMs}`,
-            );
-          })
-          .catch((err) => {
-            queueMetrics.failedJobs += 1;
-            const durationMs = Date.now() - startedAt;
-            queueMetrics.lastJobDurationMs = durationMs;
-            console.error(
-              `[Shopee Webhook][Queue] job_failed orderKey=${orderKey || "?"} durationMs=${durationMs}:`,
-              err,
-            );
-            throw err;
-          })
-          .finally(() => {
-            running = Math.max(0, running - 1);
-            if (orderKey) activeOrderKeys.delete(orderKey);
-            scheduleDrain();
-          });
-      }),
-    )
-      .then((results) => {
-        for (const result of results) {
-          if (result.status === "rejected") {
-            console.error("[Shopee Webhook] Background processing failed:", result.reason);
-          }
-        }
-      })
-      .finally(() => {
-        logQueueMetrics("job_batch_end", pending.length, running);
-      });
-  };
-
-  return {
-    enqueue(payload: Record<string, unknown>): boolean {
-      if (pending.length >= MAX_PENDING_JOBS) {
-        queueMetrics.overflowCount += 1;
-        const orderKey = webhookOrderKey(payload);
-        console.error(
-          `[Shopee Webhook] Queue full — overflow persist fallback` +
-            ` depth=${pending.length} running=${running}` +
-            ` overflowCount=${queueMetrics.overflowCount} orderKey=${orderKey || "?"}`,
-        );
-        if (onQueueOverflow) {
-          void Promise.resolve(onQueueOverflow(payload)).catch((overflowErr) => {
-            console.error(
-              "[Shopee Webhook] onQueueOverflow handler failed:",
-              overflowErr?.message || overflowErr,
-            );
-          });
-        }
-        return false;
-      }
-      pending.push(payload);
-      logQueueMetrics("enqueue", pending.length, running);
-      scheduleDrain();
-      return true;
-    },
-    getMetrics() {
-      return {
-        ...queueMetrics,
-        pendingDepth: pending.length,
-        running,
-        maxConcurrent: MAX_CONCURRENT_JOBS,
-      };
-    },
-  };
 }
 
 function ackShopeeOk(res: express.Response): void {
@@ -397,11 +224,29 @@ function readRawWebhookBody(req: express.Request): Promise<Buffer | null> {
   });
 }
 
+function buildWebhookJobId(
+  shopId: string,
+  orderSn: string,
+  status: string,
+  updateTime: string,
+): string {
+  const clean = (value: string, fallback: string) => {
+    const text = String(value || "").trim().replace(/[^\w.:-]/g, "");
+    return text || fallback;
+  };
+  return [
+    clean(shopId, "0"),
+    clean(orderSn, "0"),
+    clean(status, "UNKNOWN"),
+    clean(updateTime, "0"),
+  ].join("_");
+}
+
 async function processShopeeWebhookAsync(
-  queue: ReturnType<typeof createBoundedQueue>,
   snapshot: WebhookRequestSnapshot,
   rawBodyPromise: Promise<Buffer | null>,
   eagerStubOrder?: EagerStubHandler,
+  onQueueOverflow?: QueueOverflowHandler,
 ): Promise<void> {
   try {
     const rawBody = await rawBodyPromise;
@@ -503,11 +348,22 @@ async function processShopeeWebhookAsync(
       }
     }
 
+    const shopId = String(payload.shop_id ?? data.shop_id ?? "").trim();
+    const updateTime = String(
+      data.update_time ??
+        data.updateTime ??
+        payload.timestamp ??
+        data.timestamp ??
+        "0",
+    ).trim();
+    const jobId = buildWebhookJobId(shopId, orderSn, status, updateTime);
     const queuedMeta = {
+      jobId,
       code: Number.isFinite(code) ? code : null,
-      shop_id: payload.shop_id ?? data.shop_id ?? null,
+      shop_id: shopId || null,
       order_sn: orderSn,
       status: status || null,
+      update_time: updateTime || "0",
       event_type:
         status === "UNPAID" || status === "READY_TO_SHIP"
           ? "new_order"
@@ -515,21 +371,35 @@ async function processShopeeWebhookAsync(
             ? "status_change"
             : "order_related",
     };
-    setImmediate(() => {
-      try {
-        const queued = queue.enqueue(payload);
-        if (!queued) return;
+    try {
+      const queued = await enqueueWebhookJob({ jobId, payload });
+      if (queued.duplicate) {
         console.log(
-          "[WEBHOOK RECEIVED] order payload queued after ACK — will get_order_detail + UPSERT:",
+          "[WEBHOOK] idempotent skip — jobId đã có, ACK thành công:",
           JSON.stringify(queuedMeta),
         );
-      } catch (queueErr) {
-        console.error(
-          "[WEBHOOK] enqueue get_order_detail failed:",
-          queueErr instanceof Error ? queueErr.message : queueErr,
-        );
+        return;
       }
-    });
+      console.log(
+        "[WEBHOOK RECEIVED] order payload inserted webhook_jobs pending — worker sẽ get_order_detail + UPSERT:",
+        JSON.stringify(queuedMeta),
+      );
+    } catch (queueErr) {
+      console.error(
+        "[WEBHOOK] enqueue webhook_jobs failed:",
+        queueErr instanceof Error ? queueErr.message : queueErr,
+      );
+      if (onQueueOverflow) {
+        try {
+          await onQueueOverflow(payload);
+        } catch (overflowErr) {
+          console.error(
+            "[WEBHOOK] overflow fallback failed:",
+            overflowErr instanceof Error ? overflowErr.message : overflowErr,
+          );
+        }
+      }
+    }
   } catch (error) {
     console.error(
       "[Shopee Webhook] processShopeeWebhookAsync failed after ACK:",
@@ -550,18 +420,17 @@ export type ShopeeWebhookRouterOptions = {
  * Mọi POST được ACK 200 trước; HMAC, parse, API Shopee và MongoDB chạy ngầm.
  */
 export function createShopeeWebhookRouter(
-  processPayload: WebhookProcessor,
+  _processPayload: WebhookProcessor,
   routePath: string | string[] = "/shopee",
   options: ShopeeWebhookRouterOptions = {},
 ): Router {
-  const queue = createBoundedQueue(processPayload, options.onQueueOverflow);
   const router = express.Router();
   const paths = (Array.isArray(routePath) ? routePath : [routePath]).map((path) =>
     path.startsWith("/") ? path : `/${path}`,
   );
 
   console.log(
-    `[Shopee Webhook] Queue config maxConcurrent=${MAX_CONCURRENT_JOBS} maxPending=${MAX_PENDING_JOBS} jobTimeoutMs=none`,
+    "[Shopee Webhook] Queue config mongo=webhook_jobs drainer=setInterval (không xếp RAM)",
   );
 
   // GET probe cho Shopee verification.
@@ -604,12 +473,12 @@ export function createShopeeWebhookRouter(
       host: req.get("host") || "",
     };
 
-    // 4) HMAC → parse → queue → Shopee API/MongoDB, hoàn toàn sau response.
+    // 4) HMAC → parse → insert webhook_jobs. get_order_detail chạy ở drainer.
     void processShopeeWebhookAsync(
-      queue,
       snapshot,
       rawBodyPromise,
       options.eagerStubOrder,
+      options.onQueueOverflow,
     ).catch((error) => {
       console.error("Lỗi xử lý ngầm Webhook Shopee:", error);
     });

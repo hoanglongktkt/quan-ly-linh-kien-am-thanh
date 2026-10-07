@@ -2776,14 +2776,73 @@ function trackingPayloadIntent(order: Record<string, unknown> | null | undefined
   return explicitEmpty ? "explicit_empty" : "absent";
 }
 
+function packageListTrackingNo(list: unknown): string {
+  if (!Array.isArray(list)) return "";
+  for (const pkg of list) {
+    if (!pkg || typeof pkg !== "object") continue;
+    const row = pkg as Record<string, unknown>;
+    const tn = row.tracking_number || row.tracking_no || row.trackingNumber || row.last_mile_tracking_number;
+    if (isValidTrackingNo(tn)) return String(tn).trim();
+  }
+  return "";
+}
+
 function documentHasValidTracking(doc: any): boolean {
   if (!doc) return false;
-  return (
+  if (
     isValidTrackingNo(doc.tracking_no) ||
     isValidTrackingNo(doc.trackingNumber) ||
     isValidTrackingNo(doc.data?.tracking_no) ||
-    isValidTrackingNo(doc.data?.trackingNumber)
+    isValidTrackingNo(doc.data?.trackingNumber) ||
+    isValidTrackingNo(doc.data?.shopee_tracking_number) ||
+    isValidTrackingNo(doc.data?.last_mile_tracking_number)
+  ) {
+    return true;
+  }
+  return Boolean(
+    packageListTrackingNo(doc.package_list) || packageListTrackingNo(doc.data?.package_list),
   );
+}
+
+function extractPayloadTrackingNo(order: any, dataBag: Record<string, unknown>): string {
+  const direct = [
+    order?.tracking_no,
+    order?.trackingNumber,
+    dataBag?.tracking_no,
+    dataBag?.trackingNumber,
+    dataBag?.shopee_tracking_number,
+    dataBag?.last_mile_tracking_number,
+    order?.last_mile_tracking_number,
+  ];
+  for (const c of direct) {
+    if (isValidTrackingNo(c)) return String(c).trim();
+  }
+  return packageListTrackingNo(order?.package_list) || packageListTrackingNo(dataBag?.package_list);
+}
+
+function extractPayloadCarrier(order: any, dataBag: Record<string, unknown>): string {
+  const direct = [
+    order?.shipping_carrier,
+    order?.checkout_shipping_carrier,
+    order?.carrier,
+    dataBag?.shipping_carrier,
+    dataBag?.checkout_shipping_carrier,
+  ];
+  for (const c of direct) {
+    const s = String(c || "").trim();
+    if (s) return s;
+  }
+  const lists = [order?.package_list, dataBag?.package_list];
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const pkg of list) {
+      if (!pkg || typeof pkg !== "object") continue;
+      const row = pkg as Record<string, unknown>;
+      const s = String(row.shipping_carrier || row.checkout_shipping_carrier || "").trim();
+      if (s) return s;
+    }
+  }
+  return "";
 }
 
 function documentIsPrepared(doc: any): boolean {
@@ -2811,16 +2870,47 @@ function pinReadyToShipAwaitingPrepStatus(
   rawStatus: string,
 ): void {
   const raw = String(rawStatus || "").toUpperCase();
-  if (raw !== "READY_TO_SHIP" && raw !== "RETRY_SHIP") return;
+  const early =
+    raw === "READY_TO_SHIP" ||
+    raw === "RETRY_SHIP" ||
+    raw === "UNPAID" ||
+    raw === "PENDING" ||
+    raw === "IN_REVIEW" ||
+    raw === "FRAUD_CHECK" ||
+    raw === "INVOICE_PENDING";
+  if (!early) return;
   const st = String($set.status || "").trim();
   if (
-    st === "processed" ||
     st === "shipping" ||
-    st === "pending_confirm" ||
-    st === "pending_verification"
+    st === "completed" ||
+    st === "cancelled" ||
+    st === "return_pending" ||
+    st === "return_received"
   ) {
+    return;
+  }
+  if ($set.isPrepared === true || $set.is_handed_over === true) return;
+  const tn = String($set.tracking_no || $set.trackingNumber || "").trim();
+  const hasTn = isValidTrackingNo(tn);
+  const carrier = String(
+    $set.shipping_carrier ||
+      $set.checkout_shipping_carrier ||
+      $set["data.shipping_carrier"] ||
+      $set["data.checkout_shipping_carrier"] ||
+      "",
+  ).trim();
+  // Shopee: có mã VĐ thật + ĐVVC, shop chưa in/chuẩn bị → Đơn chưa xử lý.
+  if (hasTn && carrier) {
     $set.status = "unprocessed";
     $set["data.status"] = "unprocessed";
+    $set.has_tracking = true;
+    $set["data.has_tracking"] = true;
+    return;
+  }
+  // UNPAID / READY_TO_SHIP chưa cấp mã → Chờ xác nhận.
+  if (!hasTn) {
+    $set.status = "pending_confirm";
+    $set["data.status"] = "pending_confirm";
   }
 }
 
@@ -2921,17 +3011,8 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       order.data && typeof order.data === "object" && !Array.isArray(order.data)
         ? (order.data as Record<string, unknown>)
         : {};
-    const tnRaw = String(
-      order.tracking_no ||
-        order.trackingNumber ||
-        dataBag.tracking_no ||
-        dataBag.trackingNumber ||
-        "",
-    ).trim();
-    const usableTn = tnRaw && !/^0FG/i.test(tnRaw) ? tnRaw : null;
-    const carrier = String(
-      order.shipping_carrier || order.checkout_shipping_carrier || order.carrier || "",
-    ).trim();
+    const usableTn = extractPayloadTrackingNo(order, dataBag) || null;
+    const carrier = extractPayloadCarrier(order, dataBag);
 
     // shop_id — chỉ $set khi INSERT / shopId đang trống, hoặc luồng đã xác thực chủ đơn
     // (get_order_detail thành công / webhook payload / remap). CẤM luồng quét rác ghi đè.
@@ -3726,19 +3807,33 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
                   ` raw=${incomingRawForGuard}`,
               );
             } else if (!forwardProgress && rtsAwaitingPrep && !shopWorked) {
-              const st = incomingStatus || existingStatus;
-              if (
-                st === "processed" ||
-                st === "shipping" ||
-                st === "pending_confirm" ||
-                st === "pending_verification"
-              ) {
+              const hasTn =
+                $set.has_tracking === true ||
+                isValidTrackingNo($set.tracking_no) ||
+                isValidTrackingNo($set.trackingNumber) ||
+                documentHasValidTracking(current);
+              const carrierNow = String(
+                $set.shipping_carrier ||
+                  $set["data.shipping_carrier"] ||
+                  $set.checkout_shipping_carrier ||
+                  current?.shipping_carrier ||
+                  current?.data?.shipping_carrier ||
+                  current?.checkout_shipping_carrier ||
+                  current?.data?.checkout_shipping_carrier ||
+                  "",
+              ).trim();
+              if (hasTn && carrierNow) {
                 $set.status = "unprocessed";
                 $set["data.status"] = "unprocessed";
+                $set.has_tracking = true;
+                $set["data.has_tracking"] = true;
                 console.warn(
-                  `[MongoDB] KEEP unprocessed (có mã, chưa chuẩn bị) order_sn=${item.orderSn || item.id}` +
-                    ` raw=${incomingRawForGuard} was=${st}`,
+                  `[MongoDB] KEEP unprocessed (có mã + ĐVVC, chưa chuẩn bị) order_sn=${item.orderSn || item.id}` +
+                    ` raw=${incomingRawForGuard}`,
                 );
+              } else if (!hasTn) {
+                $set.status = "pending_confirm";
+                $set["data.status"] = "pending_confirm";
               }
             } else if (
               !forwardProgress &&
@@ -4169,7 +4264,7 @@ export async function markOrderHandedOverInStore(
       if (tn && !/^0FG/i.test(tn) && isLaggingPendingConfirmPair(raw, st)) {
         await OrderModel.updateOne(identityFilter, { $set: { ...LAGGING_PENDING_PROMOTE_SET } });
         console.log(
-          `[MongoDB] markOrderHandedOver promote PROCESSED order_sn=${sn} (raw was ${raw || st})`,
+          `[MongoDB] markOrderHandedOver promote unprocessed order_sn=${sn} (raw was ${raw || st})`,
         );
       }
       console.log(
@@ -4790,42 +4885,47 @@ function isLaggingPendingConfirmPair(raw: string, status: string): boolean {
   const st = String(status || "").trim();
   if ((TERMINAL_SHOPEE_RAW as readonly string[]).includes(r)) return false;
   if (st === "shipping" || st === "completed" || st === "cancelled") return false;
-  // RTS đã có mã vẫn là Đơn chưa xử lý — không promote PROCESSED chỉ vì tracking.
-  if (r === "READY_TO_SHIP" || r === "RETRY_SHIP") return false;
+  // RTS đã có mã: caller chỉ promote khi shop chưa chuẩn bị — không rewrite PROCESSED.
+  if (r === "READY_TO_SHIP" || r === "RETRY_SHIP") {
+    return (
+      st === "pending_confirm" ||
+      st === "pending_verification" ||
+      st === "unprocessed" ||
+      !st
+    );
+  }
   if ((LAGGING_PENDING_RAW as readonly string[]).includes(r)) return true;
   if ((LAGGING_PENDING_LOCAL as readonly string[]).includes(st)) return true;
   if (!r && (st === "pending_confirm" || st === "pending_verification")) return true;
   return false;
 }
 
-/** UNPAID/PENDING/pending_confirm + mã VĐ thật → PROCESSED (root + data). */
+/** UNPAID/PENDING/RTS chưa chuẩn bị + mã VĐ thật → Đơn chưa xử lý (không rewrite PROCESSED). */
 function applyLaggingPendingPromotionToSet(
   $set: Record<string, unknown>,
-  extra?: { status?: string; shopee_order_status?: string },
+  extra?: { status?: string; shopee_order_status?: string; isPrepared?: boolean },
 ): boolean {
+  if (extra?.isPrepared === true || $set.isPrepared === true) return false;
   const raw = String(
     $set.shopee_order_status || extra?.shopee_order_status || "",
   ).toUpperCase();
   const st = String($set.status || extra?.status || "").trim();
+  if (raw === "PROCESSED" || st === "processed") return false;
   if (!isLaggingPendingConfirmPair(raw, st)) return false;
-  $set.shopee_order_status = "PROCESSED";
-  $set["data.shopee_order_status"] = "PROCESSED";
-  $set.status = "processed";
-  $set["data.status"] = "processed";
-  $set.isPrepared = true;
-  $set["data.isPrepared"] = true;
+  $set.status = "unprocessed";
+  $set["data.status"] = "unprocessed";
+  $set.has_tracking = true;
+  $set["data.has_tracking"] = true;
   $set.is_pending_shopee_check = false;
   $set["data.is_pending_shopee_check"] = false;
   return true;
 }
 
 const LAGGING_PENDING_PROMOTE_SET: Record<string, unknown> = {
-  shopee_order_status: "PROCESSED",
-  "data.shopee_order_status": "PROCESSED",
-  status: "processed",
-  "data.status": "processed",
-  isPrepared: true,
-  "data.isPrepared": true,
+  status: "unprocessed",
+  "data.status": "unprocessed",
+  has_tracking: true,
+  "data.has_tracking": true,
   is_pending_shopee_check: false,
   "data.is_pending_shopee_check": false,
 };
@@ -4835,9 +4935,11 @@ function laggingPendingConfirmMongoFilter(): Record<string, unknown> {
     $and: [
       {
         shopee_order_status: {
-          $nin: [...TERMINAL_SHOPEE_RAW, "READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"],
+          $nin: [...TERMINAL_SHOPEE_RAW, "PROCESSED"],
         },
       },
+      { isPrepared: { $ne: true } },
+      { is_handed_over: { $ne: true } },
       {
         $or: [
           { shopee_order_status: { $in: [...LAGGING_PENDING_RAW, null, ""] } },
@@ -4924,7 +5026,7 @@ export async function updateOrderTrackingInStore(
     $set.is_pending_shopee_check = extra.is_pending_shopee_check;
     $set["data.is_pending_shopee_check"] = extra.is_pending_shopee_check;
   }
-  // Có mã VĐ outbound + đang kẹt Chờ xác nhận → BẮT BUỘC promote PROCESSED (root + data).
+  // Có mã VĐ + đang kẹt Chờ xác nhận, shop chưa chuẩn bị → Đơn chưa xử lý.
   if (hasOutboundTn) {
     applyLaggingPendingPromotionToSet($set, extra);
   }
@@ -4942,7 +5044,7 @@ export async function updateOrderTrackingInStore(
     { $set, $setOnInsert },
     { new: true, upsert: true },
   );
-  // Extra có thể thiếu raw — đối soát DB: UNPAID/pending_confirm + tracking → PROCESSED.
+  // Extra có thể thiếu raw — đối soát DB: UNPAID/pending_confirm + tracking → Đơn chưa xử lý.
   if (hasOutboundTn && result) {
     try {
       await OrderModel.updateOne(
@@ -4951,7 +5053,7 @@ export async function updateOrderTrackingInStore(
       );
     } catch (promoErr) {
       console.warn(
-        `[MongoDB] tracking promote PROCESSED failed order_sn=${sn}:`,
+        `[MongoDB] tracking promote unprocessed failed order_sn=${sn}:`,
         (promoErr as Error)?.message || promoErr,
       );
     }
@@ -5805,8 +5907,8 @@ export async function clearHandedOverFlagsForShippedOrders(): Promise<{
 }
 
 /**
- * One-shot: đơn kẹt Chờ xác nhận (UNPAID/PENDING/pending_confirm) nhưng ĐÃ có tracking_no
- * → promote PROCESSED ở root + data để nhảy tab Đã xử lý.
+ * One-shot: đơn kẹt Chờ xác nhận nhưng ĐÃ có tracking_no
+ * → status unprocessed (Đơn chưa xử lý). Không rewrite raw thành PROCESSED.
  */
 export async function healLaggingPendingConfirmWithTrackingInStore(): Promise<{
   matched: number;
@@ -5823,6 +5925,9 @@ export async function healLaggingPendingConfirmWithTrackingInStore(): Promise<{
           { trackingNumber: { $regex: /^(?!0FG).+$/i } },
           { "data.tracking_no": { $regex: /^(?!0FG).+$/i } },
           { "data.trackingNumber": { $regex: /^(?!0FG).+$/i } },
+          { "data.package_list.tracking_number": { $regex: /^(?!0FG).+$/i } },
+          { "data.package_list.tracking_no": { $regex: /^(?!0FG).+$/i } },
+          { "data.last_mile_tracking_number": { $regex: /^(?!0FG).+$/i } },
         ],
       },
     ],
@@ -7793,49 +7898,59 @@ const ORDER_TAB_TRACKING_PRESENT: Record<string, unknown> = {
   tracking_no: { $exists: true, $nin: [null, "", "0"] },
 };
 
+/** Mã VĐ thật — loại rỗng, "0" và mã nội bộ Shopee 0FG. */
+const ORDER_TAB_REAL_TN_REGEX = /^(?!0$)(?!0FG).+/i;
+
+function orderTabTrackingOn(path: string): Record<string, unknown> {
+  return { [path]: { $regex: ORDER_TAB_REAL_TN_REGEX } };
+}
+
+const ORDER_TAB_TRACKING_PATHS = [
+  "tracking_no",
+  "trackingNumber",
+  "data.tracking_no",
+  "data.trackingNumber",
+  "data.shopee_tracking_number",
+  "data.last_mile_tracking_number",
+  "data.package_list.tracking_number",
+  "data.package_list.tracking_no",
+  "data.package_list.trackingNumber",
+  "data.package_list.last_mile_tracking_number",
+] as const;
+
 /**
- * Có mã vận đơn thật: cờ has_tracking hoặc tracking_no / trackingNumber hợp lệ.
+ * Có mã vận đơn thật: cờ has_tracking hoặc tracking ở root / data / package_list.
  * Mã nội bộ 0FG không tính.
  */
 const ORDER_TAB_HAS_REAL_TRACKING: Record<string, unknown> = {
   $or: [
     { has_tracking: true },
-    {
-      $and: [
-        { tracking_no: { $exists: true, $nin: [null, "", "0"] } },
-        { tracking_no: { $not: /^0FG/i } },
-      ],
-    },
-    {
-      $and: [
-        { trackingNumber: { $exists: true, $nin: [null, "", "0"] } },
-        { trackingNumber: { $not: /^0FG/i } },
-      ],
-    },
+    { "data.has_tracking": true },
+    ...ORDER_TAB_TRACKING_PATHS.map((path) => orderTabTrackingOn(path)),
   ],
 };
 
 /**
- * Chưa có mã VĐ. Cờ false/thiếu VÀ cả tracking_no lẫn trackingNumber trống hoặc 0FG.
+ * Chưa có mã VĐ. Cờ false/thiếu VÀ không có tracking thật ở root, data hay package_list.
  * `$ne: true` khớp cả document thiếu field (webhook mới).
  */
 const ORDER_TAB_NO_REAL_TRACKING: Record<string, unknown> = {
   $and: [
     { has_tracking: { $ne: true } },
-    {
-      $or: [
-        { tracking_no: { $exists: false } },
-        { tracking_no: { $in: [null, "", "0"] } },
-        { tracking_no: { $regex: /^0FG/i } },
-      ],
-    },
-    {
-      $or: [
-        { trackingNumber: { $exists: false } },
-        { trackingNumber: { $in: [null, "", "0"] } },
-        { trackingNumber: { $regex: /^0FG/i } },
-      ],
-    },
+    { "data.has_tracking": { $ne: true } },
+    { $nor: ORDER_TAB_TRACKING_PATHS.map((path) => orderTabTrackingOn(path)) },
+  ],
+};
+
+/** Đã có đơn vị vận chuyển (root, data hoặc package_list). */
+const ORDER_TAB_HAS_CARRIER: Record<string, unknown> = {
+  $or: [
+    { shipping_carrier: { $regex: /\S/ } },
+    { checkout_shipping_carrier: { $regex: /\S/ } },
+    { "data.shipping_carrier": { $regex: /\S/ } },
+    { "data.checkout_shipping_carrier": { $regex: /\S/ } },
+    { "data.package_list.shipping_carrier": { $regex: /\S/ } },
+    { "data.package_list.checkout_shipping_carrier": { $regex: /\S/ } },
   ],
 };
 
@@ -7864,19 +7979,40 @@ const ORDER_TAB_CLOSED_LOCAL = [
 ] as const;
 
 /**
- * Đơn chưa xử lý: READY_TO_SHIP đã có mã, shop chưa chuẩn bị và chưa bàn giao.
+ * Đơn chưa xử lý: ĐÃ có mã VĐ thật + đơn vị vận chuyển, shop chưa chuẩn bị và chưa bàn giao.
+ * Shopee: UNPAID/READY_TO_SHIP sau khi được cấp tracking_number (chưa PROCESSED / chưa SHIPPED).
  * Count và Find dùng chung helper này.
  */
 function orderTabUnprocessedMatch(): Record<string, unknown> {
   return {
     $and: [
-      { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] } },
+      {
+        $or: [
+          {
+            shopee_order_status: {
+              $in: [
+                "READY_TO_SHIP",
+                "RETRY_SHIP",
+                "UNPAID",
+                "PENDING",
+                "IN_REVIEW",
+                "FRAUD_CHECK",
+                "INVOICE_PENDING",
+                null,
+                "",
+              ],
+            },
+          },
+          { status: "unprocessed" },
+        ],
+      },
       ORDER_TAB_HAS_REAL_TRACKING,
+      ORDER_TAB_HAS_CARRIER,
       { isPrepared: { $ne: true } },
       ORDER_TAB_NOT_HANDED_OVER,
       { channel: { $nin: ["woocommerce", "manual"] } },
       { status: { $nin: [...ORDER_TAB_CLOSED_LOCAL] } },
-      { shopee_order_status: { $nin: [...ORDER_TAB_LEFT_PICKUP_RAW] } },
+      { shopee_order_status: { $nin: ["PROCESSED", ...ORDER_TAB_LEFT_PICKUP_RAW] } },
       { is_return: { $ne: true } },
       {
         shopee_cancel_return_kind: { $nin: ["refund_return", "cancelled", "failed_delivery"] },
@@ -7886,8 +8022,8 @@ function orderTabUnprocessedMatch(): Record<string, unknown> {
 }
 
 /**
- * Chờ xác nhận: đơn mới UNPAID hoặc READY_TO_SHIP nhưng chưa có mã vận đơn.
- * Loại hủy / hoàn / đã giao / đang giao.
+ * Chờ xác nhận: UNPAID/PENDING (kiểm duyệt, chờ thanh toán) hoặc READY_TO_SHIP chưa có mã VĐ.
+ * Đơn đã có mã vận đơn bị loại tuyệt đối.
  */
 function orderTabPendingConfirmMatch(): Record<string, unknown> {
   return {

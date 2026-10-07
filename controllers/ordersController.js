@@ -1045,8 +1045,7 @@ export async function listOrders(req, res) {
     tab === "ready_to_ship" ||
     tab === "cho-lay-hang"
   ) {
-    // SSOT: matchesUnprocessedPickupTab (READY_TO_SHIP|RETRY_SHIP, !PROCESSED) —
-    // gồm cả đơn GHN chưa có tracking_no. Cùng bộ với Dashboard pendingPack / tab Chưa xử lý.
+    // SSOT: matchesUnprocessedPickupTab — đã có mã VĐ + ĐVVC, chưa chuẩn bị/bàn giao.
     rawOrders = rawOrders.filter((o) => deps.matchesUnprocessedPickupTabShared(o));
     console.log(
       `[GET /api/orders] query.tab=${tab} filter=matchesUnprocessedPickupTab → ${rawOrders.length} đơn` +
@@ -1086,8 +1085,6 @@ export async function listOrders(req, res) {
       const tn = String(o.tracking_no || o.trackingNumber || "").trim();
       if (tn && tn !== "0" && !/^0FG/i.test(tn)) return false;
       if (
-        raw === "READY_TO_SHIP" ||
-        raw === "RETRY_SHIP" ||
         raw === "PROCESSED" ||
         raw === "SHIPPED" ||
         raw === "TO_CONFIRM_RECEIVE" ||
@@ -1098,6 +1095,7 @@ export async function listOrders(req, res) {
       ) {
         return false;
       }
+      if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") return true;
       if (
         o.status === "unprocessed" ||
         o.status === "processed" ||

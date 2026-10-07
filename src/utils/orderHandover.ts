@@ -44,10 +44,20 @@ export function getShopeeOrderRawStatus(
 export function getOrderTrackingNo(
   order: Partial<Order> & Record<string, unknown>,
 ): string {
+  const pkgList = (order as { package_list?: Array<Record<string, unknown>> }).package_list;
+  const pkg = Array.isArray(pkgList) ? pkgList[0] : undefined;
+  const nested = (order as { data?: Record<string, unknown> }).data;
   const candidates = [
     order.trackingNumber,
     order.tracking_no,
     order.shopee_tracking_number,
+    nested?.tracking_no,
+    nested?.trackingNumber,
+    nested?.last_mile_tracking_number,
+    pkg?.tracking_number,
+    pkg?.tracking_no,
+    pkg?.trackingNumber,
+    pkg?.last_mile_tracking_number,
   ];
   for (const c of candidates) {
     const tn = String(c || '').trim();
@@ -61,6 +71,23 @@ export function hasOrderTrackingNo(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
   return Boolean(getOrderTrackingNo(order));
+}
+
+/** Đơn vị vận chuyển đã gán (shipping_carrier / checkout / package_list). */
+export function hasOrderShippingCarrier(
+  order: Partial<Order> & Record<string, unknown>,
+): boolean {
+  const pkgList = (order as { package_list?: Array<Record<string, unknown>> }).package_list;
+  const pkg = Array.isArray(pkgList) ? pkgList[0] : undefined;
+  const candidates = [
+    order.shipping_carrier,
+    order.checkout_shipping_carrier,
+    order.shippingCarrier,
+    order.carrier,
+    pkg?.shipping_carrier,
+    pkg?.checkout_shipping_carrier,
+  ];
+  return candidates.some((c) => String(c || '').trim().length > 0);
 }
 
 /** pickup | dropoff — không phụ thuộc pickup_time. */
@@ -92,7 +119,15 @@ export function isProcessedCondition(
   const raw = getShopeeOrderRawStatus(order);
   if (raw === 'PROCESSED') return true;
 
-  if (raw === 'READY_TO_SHIP' || raw === 'RETRY_SHIP') {
+  if (
+    raw === 'READY_TO_SHIP' ||
+    raw === 'RETRY_SHIP' ||
+    raw === 'UNPAID' ||
+    raw === 'PENDING' ||
+    raw === 'IN_REVIEW' ||
+    raw === 'FRAUD_CHECK' ||
+    raw === 'INVOICE_PENDING'
+  ) {
     if (order.isPrepared === true || isTruthyFlag(order.isPrinted)) return true;
     return false;
   }
@@ -267,7 +302,8 @@ export function matchesProcessedPickupTab(order: Order): boolean {
 
 /**
  * TAB "ĐƠN CHƯA XỬ LÝ":
- * READY_TO_SHIP | RETRY_SHIP đã có mã VĐ, shop chưa chuẩn bị/in/bàn giao.
+ * Đã có mã VĐ thật + đơn vị vận chuyển, shop chưa chuẩn bị/in/bàn giao.
+ * UNPAID/READY_TO_SHIP chưa mã không thuộc tab này.
  */
 export function matchesUnprocessedPickupTab(order: Order): boolean {
   if (isShopeeShippingStatus(order)) return false;
@@ -275,12 +311,24 @@ export function matchesUnprocessedPickupTab(order: Order): boolean {
   if (isShopeeCancelledLikeStatus(order)) return false;
   if (isOrderHandedOverToCarrier(order)) return false;
   if (order.isPrepared === true || isTruthyFlag(order.isPrinted)) return false;
+  const channel = String(order.channel || '').toLowerCase();
+  if (channel === 'woocommerce' || channel === 'manual') return false;
   const raw = getShopeeOrderRawStatus(order);
-  if (raw !== 'READY_TO_SHIP' && raw !== 'RETRY_SHIP') return false;
+  if (raw === 'PROCESSED') return false;
+  const early =
+    !raw ||
+    raw === 'READY_TO_SHIP' ||
+    raw === 'RETRY_SHIP' ||
+    raw === 'UNPAID' ||
+    raw === 'PENDING' ||
+    raw === 'IN_REVIEW' ||
+    raw === 'FRAUD_CHECK' ||
+    raw === 'INVOICE_PENDING';
+  if (!early && order.status !== 'unprocessed') return false;
   if (order.status === 'shipping' || order.status === 'completed' || order.status === 'cancelled') {
     return false;
   }
-  return hasOrderTrackingNo(order);
+  return hasOrderTrackingNo(order) && hasOrderShippingCarrier(order);
 }
 
 /**

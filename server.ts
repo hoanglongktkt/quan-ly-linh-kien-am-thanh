@@ -13131,8 +13131,8 @@ function mapShopeeStatusToLocal(
   }
   if (raw === "PROCESSED") return "processed";
   if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") {
-    // Có mã VĐ vẫn là Đơn chưa xử lý cho đến khi shop chuẩn bị / in / bàn giao.
-    return "unprocessed";
+    // Shopee: RTS chưa cấp tracking_number = Chờ xác nhận. Có mã VĐ = Đơn chưa xử lý.
+    return opts?.hasTracking ? "unprocessed" : "pending_confirm";
   }
   if (
     raw === "UNPAID" ||
@@ -13141,7 +13141,8 @@ function mapShopeeStatusToLocal(
     raw === "FRAUD_CHECK" ||
     raw === "INVOICE_PENDING"
   ) {
-    return "pending_confirm";
+    // Có mã vận đơn thật thì không giữ Chờ xác nhận (kể cả raw còn UNPAID do lag).
+    return opts?.hasTracking ? "unprocessed" : "pending_confirm";
   }
   if (raw === "CANCELLED" || raw === "IN_CANCEL") return "cancelled";
   if (raw === "TO_RETURN") return "return_pending";
@@ -15263,19 +15264,20 @@ function promoteOrderStatusWhenTrackingReady(order: any): boolean {
   }
   const tn = String(order.trackingNumber || order.tracking_no || "").trim();
   const hasTn = Boolean(tn && !isShopeeInternalTrackingCode(tn));
-  if (hasTn) {
+  if (hasTn && order.isPrepared !== true && order.isPrinted !== true) {
     const laggingRaw =
       !raw ||
       raw === "UNPAID" ||
       raw === "PENDING" ||
       raw === "IN_REVIEW" ||
       raw === "FRAUD_CHECK" ||
-      raw === "INVOICE_PENDING";
+      raw === "INVOICE_PENDING" ||
+      raw === "READY_TO_SHIP" ||
+      raw === "RETRY_SHIP";
     const laggingLocal = status === "pending_confirm" || status === "pending_verification";
-    if (laggingRaw || laggingLocal) {
-      order.shopee_order_status = "PROCESSED";
-      order.status = "processed";
-      order.isPrepared = true;
+    if ((laggingRaw || laggingLocal) && raw !== "PROCESSED") {
+      order.status = "unprocessed";
+      order.has_tracking = true;
       order.is_pending_shopee_check = false;
       return true;
     }
@@ -17313,12 +17315,25 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
       order.status = "shipping";
       order.isPrepared = true;
       order.is_pending_shopee_check = false;
-    } else if (finalRaw === "UNPAID" || finalRaw === "PENDING") {
-      order.status = "pending_confirm";
-      order.isPrepared = false;
+    } else if (
+      finalRaw === "UNPAID" ||
+      finalRaw === "PENDING" ||
+      finalRaw === "IN_REVIEW" ||
+      finalRaw === "FRAUD_CHECK" ||
+      finalRaw === "INVOICE_PENDING"
+    ) {
+      if (hasUsableShopeeTrackingNumber(order)) {
+        order.status = "unprocessed";
+        order.has_tracking = true;
+        order.isPrepared = false;
+        order.is_pending_shopee_check = false;
+      } else {
+        order.status = "pending_confirm";
+        order.isPrepared = false;
+      }
     } else if (finalRaw === "READY_TO_SHIP" || finalRaw === "RETRY_SHIP" || finalRaw === "PROCESSED") {
-      // RTS/RETRY: chưa chuẩn bị → unprocessed (kể cả đã có mã VĐ). PROCESSED sàn → đã xử lý.
-      // CẤM giữ status=shipping khi raw còn TO_SHIP mà logistics chưa handed (orphan Đang giao).
+      // RTS chưa mã → Chờ xác nhận. RTS đã có mã + ĐVVC, chưa in → Đơn chưa xử lý.
+      // PROCESSED sàn → đã xử lý. CẤM giữ status=shipping khi raw còn TO_SHIP.
       order.shopee_order_status = finalRaw;
       const logisticsHanded = isLogisticsHandedToCarrier(
         order.logistics_status || logisticsStatus,
@@ -17333,8 +17348,12 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
         order.isPrepared = true;
       } else if (order.isPrepared === true || order.isPrinted === true) {
         order.status = "processed";
-      } else {
+      } else if (hasUsableShopeeTrackingNumber(order)) {
         order.status = "unprocessed";
+        order.has_tracking = true;
+        order.isPrepared = false;
+      } else {
+        order.status = "pending_confirm";
         order.isPrepared = false;
       }
     }
@@ -21824,7 +21843,7 @@ function normalizeShopeeOrder(payload: any): any | null {
   );
   const explicitStatus = extractShopeeWebhookRawStatus(payload);
   const hasExplicitStatus = Boolean(explicitStatus);
-  // Code 4 TrackingNo: có mã vận đơn (GHN/SPX/...) → coi như PROCESSED (Chờ lấy hàng).
+  // Code 4 TrackingNo: có mã vận đơn (GHN/SPX/...) → Đơn chưa xử lý, không nhảy PROCESSED.
   const rawStatus = hasExplicitStatus
     ? explicitStatus
     : webhookTracking
@@ -21837,8 +21856,8 @@ function normalizeShopeeOrder(payload: any): any | null {
   const mappedStatus = rawStatus
     ? mapShopeeStatusToLocal(rawStatus, { hasTracking: Boolean(webhookTracking) })
     : webhookTracking
-      ? "processed"
-      : "unprocessed";
+      ? "unprocessed"
+      : "pending_confirm";
 
   const watermarkUnix = Number(data.update_time || data.create_time || payload?.timestamp || 0);
   const lastShopeeUpdateAt = watermarkUnix
@@ -22158,12 +22177,12 @@ function applyShopeePushFieldsToOrder(order: any, parsed: {
       raw === "UNPAID" ||
       raw === "IN_REVIEW" ||
       raw === "FRAUD_CHECK" ||
-      raw === "INVOICE_PENDING")
+      raw === "INVOICE_PENDING") &&
+    !shopAlreadyWorked
   ) {
-    order.shopee_order_status = "PROCESSED";
-    raw = "PROCESSED";
-    order.status = "processed";
-    order.isPrepared = true;
+    order.status = "unprocessed";
+    order.has_tracking = true;
+    order.isPrepared = false;
     order.is_pending_shopee_check = false;
   } else if (hasTn && (raw === "PROCESSED" || !raw)) {
     order.status = "processed";
