@@ -3839,14 +3839,16 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
               !forwardProgress &&
               incomingStatus === "unprocessed" &&
               LOCAL_STATUS_NOT_BELOW_PROCESSED.has(existingStatus) &&
-              (documentIsPrepared(current) || incomingRawForGuard === "PROCESSED")
+              (current?.isPrinted === true ||
+                current?.data?.isPrinted === true ||
+                current?.is_handed_over === true)
             ) {
               delete $set.status;
               delete $set["data.status"];
               console.warn(
                 `[MongoDB] BLOCK downgrade status ${existingStatus}→unprocessed` +
                   ` order_sn=${item.orderSn || item.id}` +
-                  ` dbTracking=${dbHasTracking} isPrepared=${documentIsPrepared(current)}`,
+                  ` printed=${current?.isPrinted === true} handed=${current?.is_handed_over === true}`,
               );
             }
             // Stub UNPAID không được $set đè đơn đã có hàng.
@@ -5937,10 +5939,31 @@ export async function healLaggingPendingConfirmWithTrackingInStore(): Promise<{
   } as any);
   const matched = Number((result as any).matchedCount ?? (result as any).n ?? 0);
   const modified = Number((result as any).modifiedCount ?? (result as any).nModified ?? 0);
-  console.log(
-    `[MongoDB] healLaggingPendingConfirmWithTracking — matched=${matched} modified=${modified}`,
+  const processedNotPrinted = await OrderModel.updateMany(
+    {
+      shopee_order_status: { $in: ["PROCESSED", "READY_TO_SHIP", "RETRY_SHIP"] },
+      has_tracking: true,
+      isPrinted: { $ne: true },
+      is_handed_over: { $ne: true },
+      status: { $nin: ["shipping", "completed", "cancelled", "return_pending", "return_received", "unprocessed"] },
+    },
+    {
+      $set: {
+        status: "unprocessed",
+        "data.status": "unprocessed",
+        isPrepared: false,
+        "data.isPrepared": false,
+      },
+    },
+    { maxTimeMS: 30_000 } as any,
   );
-  return { matched, modified };
+  const healedProcessed = Number(
+    (processedNotPrinted as any).modifiedCount ?? (processedNotPrinted as any).nModified ?? 0,
+  );
+  console.log(
+    `[MongoDB] healLaggingPendingConfirmWithTracking — matched=${matched} modified=${modified} processedToUnprocessed=${healedProcessed}`,
+  );
+  return { matched: matched + healedProcessed, modified: modified + healedProcessed };
 }
 
 /**
@@ -7979,40 +8002,33 @@ const ORDER_TAB_CLOSED_LOCAL = [
 ] as const;
 
 /**
- * Đơn chưa xử lý: ĐÃ có mã VĐ thật + đơn vị vận chuyển, shop chưa chuẩn bị và chưa bàn giao.
- * Shopee: UNPAID/READY_TO_SHIP sau khi được cấp tracking_number (chưa PROCESSED / chưa SHIPPED).
- * Count và Find dùng chung helper này.
+ * Đơn chưa xử lý: đã có mã VĐ, shop chưa in phiếu, chưa bàn giao ĐVVC.
+ * Shopee cấp tracking_number khi order_status = PROCESSED (hoặc RTS đã có mã).
+ * Đã in (isPrinted) thì sang tab Đã xử lý. Count và Find dùng chung helper này.
  */
 function orderTabUnprocessedMatch(): Record<string, unknown> {
   return {
     $and: [
-      {
-        $or: [
-          {
-            shopee_order_status: {
-              $in: [
-                "READY_TO_SHIP",
-                "RETRY_SHIP",
-                "UNPAID",
-                "PENDING",
-                "IN_REVIEW",
-                "FRAUD_CHECK",
-                "INVOICE_PENDING",
-                null,
-                "",
-              ],
-            },
-          },
-          { status: "unprocessed" },
-        ],
+        {
+        shopee_order_status: {
+          $in: [
+            "READY_TO_SHIP",
+            "RETRY_SHIP",
+            "PROCESSED",
+            "UNPAID",
+            "PENDING",
+            "IN_REVIEW",
+            "FRAUD_CHECK",
+            "INVOICE_PENDING",
+          ],
+        },
       },
       ORDER_TAB_HAS_REAL_TRACKING,
-      ORDER_TAB_HAS_CARRIER,
-      { isPrepared: { $ne: true } },
+      { isPrinted: { $ne: true } },
       ORDER_TAB_NOT_HANDED_OVER,
       { channel: { $nin: ["woocommerce", "manual"] } },
       { status: { $nin: [...ORDER_TAB_CLOSED_LOCAL] } },
-      { shopee_order_status: { $nin: ["PROCESSED", ...ORDER_TAB_LEFT_PICKUP_RAW] } },
+      { shopee_order_status: { $nin: [...ORDER_TAB_LEFT_PICKUP_RAW] } },
       { is_return: { $ne: true } },
       {
         shopee_cancel_return_kind: { $nin: ["refund_return", "cancelled", "failed_delivery"] },

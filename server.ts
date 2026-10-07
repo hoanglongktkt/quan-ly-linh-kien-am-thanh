@@ -13129,7 +13129,10 @@ function mapShopeeStatusToLocal(
   ) {
     return "shipping";
   }
-  if (raw === "PROCESSED") return "processed";
+  if (raw === "PROCESSED") {
+    // Shopee PROCESSED = đã cấp mã VĐ, shop chưa in → Đơn chưa xử lý.
+    return opts?.hasTracking ? "unprocessed" : "processed";
+  }
   if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") {
     // Shopee: RTS chưa cấp tracking_number = Chờ xác nhận. Có mã VĐ = Đơn chưa xử lý.
     return opts?.hasTracking ? "unprocessed" : "pending_confirm";
@@ -14774,13 +14777,26 @@ function forceHealPickupOrderIfHasTracking(order: any): boolean {
     return hasTn;
   }
 
-  // PROCESSED hoặc shop đã chuẩn bị → Đã xử lý.
-  // READY_TO_SHIP có mã VĐ nhưng chưa isPrepared/in → giữ Đơn chưa xử lý.
-  const alreadyShopPrepared = order.isPrepared === true || order.isPrinted === true;
+  // PROCESSED + mã VĐ nhưng shop chưa in → Đơn chưa xử lý. Không bật isPrepared chỉ vì raw PROCESSED.
+  if (
+    raw === "PROCESSED" &&
+    hasTn &&
+    order.isPrinted !== true &&
+    order.is_handed_over !== true
+  ) {
+    order.status = "unprocessed";
+    order.has_tracking = true;
+    order.isPrepared = false;
+    order.is_pending_shopee_check = false;
+    return true;
+  }
+
+  // Shop đã in phiếu → Đã xử lý.
+  const alreadyShopPrepared = order.isPrinted === true;
   const shouldProcess =
-    raw === "PROCESSED" ||
+    (raw === "PROCESSED" && order.isPrinted === true) ||
     (alreadyShopPrepared && (hasTn || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP")) ||
-    (isDropoff && order.isPrepared === true);
+    (isDropoff && order.isPrepared === true && order.isPrinted === true);
 
   if (!shouldProcess) return false;
 
@@ -17344,9 +17360,16 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
         order.isPrepared = true;
         order.is_pending_shopee_check = false;
       } else if (finalRaw === "PROCESSED") {
-        order.status = "processed";
-        order.isPrepared = true;
-      } else if (order.isPrepared === true || order.isPrinted === true) {
+        if (order.isPrinted === true) {
+          order.status = "processed";
+        } else if (hasUsableShopeeTrackingNumber(order)) {
+          order.status = "unprocessed";
+          order.has_tracking = true;
+          order.isPrepared = false;
+        } else {
+          order.status = "processed";
+        }
+      } else if (order.isPrinted === true) {
         order.status = "processed";
       } else if (hasUsableShopeeTrackingNumber(order)) {
         order.status = "unprocessed";
@@ -17694,9 +17717,18 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
       merged.status = "shipping";
       merged.isPrepared = true;
       merged.is_pending_shopee_check = false;
+    } else if (merged.isPrinted === true || existing?.isPrinted === true) {
+      merged.status = "processed";
+      merged.is_pending_shopee_check = false;
+      merged.shopee_order_status = "PROCESSED";
+    } else if (hasUsableShopeeTrackingNumber(merged)) {
+      merged.status = "unprocessed";
+      merged.isPrepared = false;
+      merged.has_tracking = true;
+      merged.is_pending_shopee_check = false;
+      merged.shopee_order_status = "PROCESSED";
     } else {
       merged.status = "processed";
-      merged.isPrepared = true;
       merged.is_pending_shopee_check = false;
       merged.shopee_order_status = "PROCESSED";
     }
@@ -17762,10 +17794,13 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
   if (
     incomingRaw === "PROCESSED" &&
     hasUsableShopeeTrackingNumber(merged) &&
-    mergedNotTerminal
+    mergedNotTerminal &&
+    merged.isPrinted !== true &&
+    existing?.isPrinted !== true
   ) {
-    merged.status = "processed";
-    merged.isPrepared = true;
+    merged.status = "unprocessed";
+    merged.isPrepared = false;
+    merged.has_tracking = true;
     merged.is_pending_shopee_check = false;
   } else if (
     (incomingRaw === "READY_TO_SHIP" || incomingRaw === "RETRY_SHIP") &&
@@ -22185,9 +22220,15 @@ function applyShopeePushFieldsToOrder(order: any, parsed: {
     order.isPrepared = false;
     order.is_pending_shopee_check = false;
   } else if (hasTn && (raw === "PROCESSED" || !raw)) {
-    order.status = "processed";
-    order.isPrepared = true;
-    order.is_pending_shopee_check = false;
+    if (order.isPrinted === true) {
+      order.status = "processed";
+      order.is_pending_shopee_check = false;
+    } else {
+      order.status = "unprocessed";
+      order.has_tracking = true;
+      order.isPrepared = false;
+      order.is_pending_shopee_check = false;
+    }
     if (!order.shopee_order_status || order.shopee_order_status === "PENDING") {
       order.shopee_order_status = "PROCESSED";
     }

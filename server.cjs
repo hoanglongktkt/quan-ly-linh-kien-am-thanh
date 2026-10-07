@@ -79264,19 +79264,6 @@ function getOrderTrackingNo(order) {
 function hasOrderTrackingNo(order) {
   return Boolean(getOrderTrackingNo(order));
 }
-function hasOrderShippingCarrier(order) {
-  const pkgList = order.package_list;
-  const pkg = Array.isArray(pkgList) ? pkgList[0] : void 0;
-  const candidates = [
-    order.shipping_carrier,
-    order.checkout_shipping_carrier,
-    order.shippingCarrier,
-    order.carrier,
-    pkg?.shipping_carrier,
-    pkg?.checkout_shipping_carrier
-  ];
-  return candidates.some((c) => String(c || "").trim().length > 0);
-}
 function getOrderFulfillmentType(order) {
   const raw = String(
     order.fulfillment_type || order.ship_method || order.shipping_method || order.fulfillmentType || ""
@@ -79287,7 +79274,7 @@ function getOrderFulfillmentType(order) {
 }
 function isProcessedCondition(order) {
   const raw = getShopeeOrderRawStatus(order);
-  if (raw === "PROCESSED") return true;
+  if (raw === "PROCESSED") return isTruthyFlag(order.isPrinted);
   if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "UNPAID" || raw === "PENDING" || raw === "IN_REVIEW" || raw === "FRAUD_CHECK" || raw === "INVOICE_PENDING") {
     if (order.isPrepared === true || isTruthyFlag(order.isPrinted)) return true;
     return false;
@@ -79350,17 +79337,16 @@ function matchesUnprocessedPickupTab(order) {
   if (isShopeeCompletedStatus(order)) return false;
   if (isShopeeCancelledLikeStatus(order)) return false;
   if (isOrderHandedOverToCarrier(order)) return false;
-  if (order.isPrepared === true || isTruthyFlag(order.isPrinted)) return false;
+  if (isTruthyFlag(order.isPrinted)) return false;
   const channel = String(order.channel || "").toLowerCase();
   if (channel === "woocommerce" || channel === "manual") return false;
   const raw = getShopeeOrderRawStatus(order);
-  if (raw === "PROCESSED") return false;
-  const early = !raw || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "UNPAID" || raw === "PENDING" || raw === "IN_REVIEW" || raw === "FRAUD_CHECK" || raw === "INVOICE_PENDING";
+  const early = !raw || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "PROCESSED" || raw === "UNPAID" || raw === "PENDING" || raw === "IN_REVIEW" || raw === "FRAUD_CHECK" || raw === "INVOICE_PENDING";
   if (!early && order.status !== "unprocessed") return false;
   if (order.status === "shipping" || order.status === "completed" || order.status === "cancelled") {
     return false;
   }
-  return hasOrderTrackingNo(order) && hasOrderShippingCarrier(order);
+  return hasOrderTrackingNo(order);
 }
 function isEligibleForHandOverToCarrier(order) {
   if (isOrderHandedOverToCarrier(order)) return false;
@@ -83055,11 +83041,11 @@ async function bulkUpsertOrdersToStore(orders) {
                 $set.status = "pending_confirm";
                 $set["data.status"] = "pending_confirm";
               }
-            } else if (!forwardProgress && incomingStatus === "unprocessed" && LOCAL_STATUS_NOT_BELOW_PROCESSED.has(existingStatus) && (documentIsPrepared(current) || incomingRawForGuard === "PROCESSED")) {
+            } else if (!forwardProgress && incomingStatus === "unprocessed" && LOCAL_STATUS_NOT_BELOW_PROCESSED.has(existingStatus) && (current?.isPrinted === true || current?.data?.isPrinted === true || current?.is_handed_over === true)) {
               delete $set.status;
               delete $set["data.status"];
               console.warn(
-                `[MongoDB] BLOCK downgrade status ${existingStatus}\u2192unprocessed order_sn=${item.orderSn || item.id} dbTracking=${dbHasTracking} isPrepared=${documentIsPrepared(current)}`
+                `[MongoDB] BLOCK downgrade status ${existingStatus}\u2192unprocessed order_sn=${item.orderSn || item.id} printed=${current?.isPrinted === true} handed=${current?.is_handed_over === true}`
               );
             }
             if (item.webhookStub && documentHasGoods(current)) {
@@ -84705,10 +84691,31 @@ async function healLaggingPendingConfirmWithTrackingInStore() {
   });
   const matched = Number(result.matchedCount ?? result.n ?? 0);
   const modified = Number(result.modifiedCount ?? result.nModified ?? 0);
-  console.log(
-    `[MongoDB] healLaggingPendingConfirmWithTracking \u2014 matched=${matched} modified=${modified}`
+  const processedNotPrinted = await OrderModel.updateMany(
+    {
+      shopee_order_status: { $in: ["PROCESSED", "READY_TO_SHIP", "RETRY_SHIP"] },
+      has_tracking: true,
+      isPrinted: { $ne: true },
+      is_handed_over: { $ne: true },
+      status: { $nin: ["shipping", "completed", "cancelled", "return_pending", "return_received", "unprocessed"] }
+    },
+    {
+      $set: {
+        status: "unprocessed",
+        "data.status": "unprocessed",
+        isPrepared: false,
+        "data.isPrepared": false
+      }
+    },
+    { maxTimeMS: 3e4 }
   );
-  return { matched, modified };
+  const healedProcessed = Number(
+    processedNotPrinted.modifiedCount ?? processedNotPrinted.nModified ?? 0
+  );
+  console.log(
+    `[MongoDB] healLaggingPendingConfirmWithTracking \u2014 matched=${matched} modified=${modified} processedToUnprocessed=${healedProcessed}`
+  );
+  return { matched: matched + healedProcessed, modified: modified + healedProcessed };
 }
 function usableHydrateTrackingNo(v) {
   const tn = String(v || "").trim();
@@ -85928,16 +85935,6 @@ var ORDER_TAB_NO_REAL_TRACKING = {
     { $nor: ORDER_TAB_TRACKING_PATHS.map((path26) => orderTabTrackingOn(path26)) }
   ]
 };
-var ORDER_TAB_HAS_CARRIER = {
-  $or: [
-    { shipping_carrier: { $regex: /\S/ } },
-    { checkout_shipping_carrier: { $regex: /\S/ } },
-    { "data.shipping_carrier": { $regex: /\S/ } },
-    { "data.checkout_shipping_carrier": { $regex: /\S/ } },
-    { "data.package_list.shipping_carrier": { $regex: /\S/ } },
-    { "data.package_list.checkout_shipping_carrier": { $regex: /\S/ } }
-  ]
-};
 function orderTabPendingConfirmNoTracking() {
   return ORDER_TAB_NO_REAL_TRACKING;
 }
@@ -85961,32 +85958,25 @@ function orderTabUnprocessedMatch() {
   return {
     $and: [
       {
-        $or: [
-          {
-            shopee_order_status: {
-              $in: [
-                "READY_TO_SHIP",
-                "RETRY_SHIP",
-                "UNPAID",
-                "PENDING",
-                "IN_REVIEW",
-                "FRAUD_CHECK",
-                "INVOICE_PENDING",
-                null,
-                ""
-              ]
-            }
-          },
-          { status: "unprocessed" }
-        ]
+        shopee_order_status: {
+          $in: [
+            "READY_TO_SHIP",
+            "RETRY_SHIP",
+            "PROCESSED",
+            "UNPAID",
+            "PENDING",
+            "IN_REVIEW",
+            "FRAUD_CHECK",
+            "INVOICE_PENDING"
+          ]
+        }
       },
       ORDER_TAB_HAS_REAL_TRACKING,
-      ORDER_TAB_HAS_CARRIER,
-      { isPrepared: { $ne: true } },
+      { isPrinted: { $ne: true } },
       ORDER_TAB_NOT_HANDED_OVER,
       { channel: { $nin: ["woocommerce", "manual"] } },
       { status: { $nin: [...ORDER_TAB_CLOSED_LOCAL] } },
-      { shopee_order_status: { $nin: ["PROCESSED", ...ORDER_TAB_LEFT_PICKUP_RAW] } },
+      { shopee_order_status: { $nin: [...ORDER_TAB_LEFT_PICKUP_RAW] } },
       { is_return: { $ne: true } },
       {
         shopee_cancel_return_kind: { $nin: ["refund_return", "cancelled", "failed_delivery"] }
@@ -144850,7 +144840,9 @@ function mapShopeeStatusToLocal(rawStatus, opts) {
   if (isLogisticsHandedToCarrier(opts?.logisticsStatus) && (raw === "PROCESSED" || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || !raw)) {
     return "shipping";
   }
-  if (raw === "PROCESSED") return "processed";
+  if (raw === "PROCESSED") {
+    return opts?.hasTracking ? "unprocessed" : "processed";
+  }
   if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") {
     return opts?.hasTracking ? "unprocessed" : "pending_confirm";
   }
@@ -146064,8 +146056,15 @@ function forceHealPickupOrderIfHasTracking(order) {
   if (raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN" || order.status === "cancelled" || order.status === "return_pending" || order.status === "return_received") {
     return hasTn;
   }
-  const alreadyShopPrepared = order.isPrepared === true || order.isPrinted === true;
-  const shouldProcess = raw === "PROCESSED" || alreadyShopPrepared && (hasTn || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") || isDropoff && order.isPrepared === true;
+  if (raw === "PROCESSED" && hasTn && order.isPrinted !== true && order.is_handed_over !== true) {
+    order.status = "unprocessed";
+    order.has_tracking = true;
+    order.isPrepared = false;
+    order.is_pending_shopee_check = false;
+    return true;
+  }
+  const alreadyShopPrepared = order.isPrinted === true;
+  const shouldProcess = raw === "PROCESSED" && order.isPrinted === true || alreadyShopPrepared && (hasTn || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") || isDropoff && order.isPrepared === true && order.isPrinted === true;
   if (!shouldProcess) return false;
   const prevStatus = String(order.status || "");
   const laggingRaw = !raw || raw === "UNPAID" || raw === "PENDING" || raw === "IN_REVIEW" || raw === "FRAUD_CHECK" || raw === "INVOICE_PENDING";
@@ -147795,9 +147794,16 @@ function normalizeShopeeOrderDetail(shopId, shopName, item) {
         order.isPrepared = true;
         order.is_pending_shopee_check = false;
       } else if (finalRaw === "PROCESSED") {
-        order.status = "processed";
-        order.isPrepared = true;
-      } else if (order.isPrepared === true || order.isPrinted === true) {
+        if (order.isPrinted === true) {
+          order.status = "processed";
+        } else if (hasUsableShopeeTrackingNumber(order)) {
+          order.status = "unprocessed";
+          order.has_tracking = true;
+          order.isPrepared = false;
+        } else {
+          order.status = "processed";
+        }
+      } else if (order.isPrinted === true) {
         order.status = "processed";
       } else if (hasUsableShopeeTrackingNumber(order)) {
         order.status = "unprocessed";
@@ -148051,9 +148057,18 @@ function mergeShopeeOrderOnSync(existing, incoming) {
       merged.status = "shipping";
       merged.isPrepared = true;
       merged.is_pending_shopee_check = false;
+    } else if (merged.isPrinted === true || existing?.isPrinted === true) {
+      merged.status = "processed";
+      merged.is_pending_shopee_check = false;
+      merged.shopee_order_status = "PROCESSED";
+    } else if (hasUsableShopeeTrackingNumber(merged)) {
+      merged.status = "unprocessed";
+      merged.isPrepared = false;
+      merged.has_tracking = true;
+      merged.is_pending_shopee_check = false;
+      merged.shopee_order_status = "PROCESSED";
     } else {
       merged.status = "processed";
-      merged.isPrepared = true;
       merged.is_pending_shopee_check = false;
       merged.shopee_order_status = "PROCESSED";
     }
@@ -148085,9 +148100,10 @@ function mergeShopeeOrderOnSync(existing, incoming) {
     }
   }
   const mergedNotTerminal = merged.status !== "shipping" && merged.status !== "completed" && !isShopeeTerminalRawStatus(String(merged.shopee_order_status || ""));
-  if (incomingRaw === "PROCESSED" && hasUsableShopeeTrackingNumber(merged) && mergedNotTerminal) {
-    merged.status = "processed";
-    merged.isPrepared = true;
+  if (incomingRaw === "PROCESSED" && hasUsableShopeeTrackingNumber(merged) && mergedNotTerminal && merged.isPrinted !== true && existing?.isPrinted !== true) {
+    merged.status = "unprocessed";
+    merged.isPrepared = false;
+    merged.has_tracking = true;
     merged.is_pending_shopee_check = false;
   } else if ((incomingRaw === "READY_TO_SHIP" || incomingRaw === "RETRY_SHIP") && hasUsableShopeeTrackingNumber(merged) && mergedNotTerminal) {
     const shopWorked = existing?.isPrepared === true || existing?.isPrinted === true || merged.isPrinted === true || existing?.is_handed_over === true || merged.is_handed_over === true;
@@ -151029,9 +151045,15 @@ function applyShopeePushFieldsToOrder(order, parsed) {
     order.isPrepared = false;
     order.is_pending_shopee_check = false;
   } else if (hasTn && (raw === "PROCESSED" || !raw)) {
-    order.status = "processed";
-    order.isPrepared = true;
-    order.is_pending_shopee_check = false;
+    if (order.isPrinted === true) {
+      order.status = "processed";
+      order.is_pending_shopee_check = false;
+    } else {
+      order.status = "unprocessed";
+      order.has_tracking = true;
+      order.isPrepared = false;
+      order.is_pending_shopee_check = false;
+    }
     if (!order.shopee_order_status || order.shopee_order_status === "PENDING") {
       order.shopee_order_status = "PROCESSED";
     }

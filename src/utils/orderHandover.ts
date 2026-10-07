@@ -117,7 +117,7 @@ export function isProcessedCondition(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
   const raw = getShopeeOrderRawStatus(order);
-  if (raw === 'PROCESSED') return true;
+  if (raw === 'PROCESSED') return isTruthyFlag(order.isPrinted);
 
   if (
     raw === 'READY_TO_SHIP' ||
@@ -310,15 +310,15 @@ export function matchesUnprocessedPickupTab(order: Order): boolean {
   if (isShopeeCompletedStatus(order)) return false;
   if (isShopeeCancelledLikeStatus(order)) return false;
   if (isOrderHandedOverToCarrier(order)) return false;
-  if (order.isPrepared === true || isTruthyFlag(order.isPrinted)) return false;
+  if (isTruthyFlag(order.isPrinted)) return false;
   const channel = String(order.channel || '').toLowerCase();
   if (channel === 'woocommerce' || channel === 'manual') return false;
   const raw = getShopeeOrderRawStatus(order);
-  if (raw === 'PROCESSED') return false;
   const early =
     !raw ||
     raw === 'READY_TO_SHIP' ||
     raw === 'RETRY_SHIP' ||
+    raw === 'PROCESSED' ||
     raw === 'UNPAID' ||
     raw === 'PENDING' ||
     raw === 'IN_REVIEW' ||
@@ -328,7 +328,7 @@ export function matchesUnprocessedPickupTab(order: Order): boolean {
   if (order.status === 'shipping' || order.status === 'completed' || order.status === 'cancelled') {
     return false;
   }
-  return hasOrderTrackingNo(order) && hasOrderShippingCarrier(order);
+  return hasOrderTrackingNo(order);
 }
 
 /**

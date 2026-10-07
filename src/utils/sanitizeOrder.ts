@@ -115,8 +115,10 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     const hasCarrier = Boolean(inferredCarrier || checkoutCarrierRaw || shippingCarrierRaw);
     if (rawShopeeStatus === 'CANCELLED' || rawShopeeStatus === 'IN_CANCEL') {
       status = 'cancelled';
-    } else if (rawShopeeStatus === 'PROCESSED') {
+    } else if (rawShopeeStatus === 'PROCESSED' && (raw.isPrinted === true || raw.is_printed === true)) {
       status = 'processed';
+    } else if (rawShopeeStatus === 'PROCESSED' && hasTracking) {
+      status = 'unprocessed';
     } else if (
       hasTracking &&
       hasCarrier &&
