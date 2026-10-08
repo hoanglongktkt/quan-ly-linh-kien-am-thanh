@@ -2941,7 +2941,8 @@ async function selectOrderSnsNeedingDetail(
       continue;
     }
     const row = stored.get(sn);
-    // Chống mất dữ liệu: data.items và data.item_list đều trống → ép get_order_detail.
+    // data.items / data.item_list undefined, null hoặc [] → PHẢI get_order_detail
+    // dù update_time không đổi (webhook mỏng không được chặn lần kéo chi tiết).
     if (!row || row.missingItems) {
       keep.push(sn);
       missingItems += 1;
@@ -2967,6 +2968,84 @@ async function selectOrderSnsNeedingDetail(
     if (listSec > Math.floor(storedAt.getTime() / 1000)) keep.push(sn);
   }
   return { keep, skipped: unique.length - keep.length, missingItems, missingTracking };
+}
+
+const itemsBackfillRecent = new Map<string, number>();
+const ITEMS_BACKFILL_DEDUPE_MS = 60_000;
+
+/**
+ * Sau khi đã có mã vận đơn: nếu DB chưa có sản phẩm thì gọi get_order_detail ngay.
+ * Không đụng status tab — chỉ đắp data.items (+ totalAmount khi > 0).
+ */
+async function backfillOrderItemsIfDbEmpty(
+  shopId: string,
+  accessToken: string,
+  orderSns: string[],
+): Promise<void> {
+  const now = Date.now();
+  const sns: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of orderSns) {
+    const sn = String(raw || "").replace(/^shopee-/i, "").trim();
+    if (!sn || seen.has(sn)) continue;
+    const prev = itemsBackfillRecent.get(sn) || 0;
+    if (now - prev < ITEMS_BACKFILL_DEDUPE_MS) continue;
+    seen.add(sn);
+    sns.push(sn);
+    if (sns.length >= 50) break;
+  }
+  if (!sns.length || !shopId || !accessToken) return;
+
+  let stored: Map<string, { at: Date | null; missingItems: boolean; missingTracking: boolean }>;
+  try {
+    stored = await loadLastShopeeUpdateAtByOrderSns(sns);
+  } catch (err: any) {
+    console.warn("[Items Backfill] đọc DB lỗi — bỏ qua:", err?.message || err);
+    return;
+  }
+  const need = sns.filter((sn) => {
+    const row = stored.get(sn);
+    return !row || row.missingItems;
+  });
+  if (!need.length) return;
+  for (const sn of need) itemsBackfillRecent.set(sn, now);
+  console.log(
+    `[Items Backfill] ép get_order_detail vì DB thiếu sản phẩm n=${need.length} shop=${shopId} sn=${need.slice(0, 5).join(",")}`,
+  );
+  try {
+    const { normalized } = await fetchNormalizeShopeeOrderChunk(
+      shopId,
+      accessToken,
+      shopId,
+      need,
+      { enrichTracking: false, skipEscrow: true },
+    );
+    let filled = 0;
+    const rows = Array.isArray(normalized) ? normalized : [];
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i];
+      const items = Array.isArray(row?.items) ? row.items : [];
+      const orderSn = String(row?.orderSn || "").replace(/^shopee-/i, "").trim();
+      if (!orderSn || items.length === 0) continue;
+      const total = Number(row?.totalAmount);
+      try {
+        const ok = await patchOrderItemsOnlyInStore(orderSn, items, {
+          shopId: String(row?.shopId || shopId),
+          totalAmount: Number.isFinite(total) && total > 0 ? total : undefined,
+        });
+        if (ok) filled += 1;
+      } catch (rowErr: any) {
+        console.warn(
+          `[Items Backfill] ghi items order_sn=${orderSn}:`,
+          rowErr?.message || rowErr,
+        );
+      }
+      if (i + 1 < rows.length) await shopeeSyncDelay(200);
+    }
+    console.log(`[Items Backfill] đã đắp sản phẩm ${filled}/${need.length} shop=${shopId}`);
+  } catch (err: any) {
+    console.warn(`[Items Backfill] shop=${shopId}:`, err?.message || err);
+  }
 }
 
 /** Thu thập order_sn từ get_order_list — chia chunk ≤15 ngày + cursor pagination đến more=false. */
@@ -15726,6 +15805,14 @@ async function fetchAndForceSaveTrackingNumber(
     if (hasUsableShopeeTrackingNumber(order)) {
       if (opts?.skipPersist !== true) {
         await persistOrderTrackingToDb(order);
+        try {
+          await backfillOrderItemsIfDbEmpty(apiShopId, accessToken, [String(order.orderSn)]);
+        } catch (itemErr: any) {
+          console.warn(
+            `[Items Backfill] sau get_tracking_number order_sn=${order.orderSn}:`,
+            itemErr?.message || itemErr,
+          );
+        }
       }
       return true;
     }
@@ -17212,6 +17299,20 @@ async function ensureShopeeTrackingForBatch(
       `[Shopee Tracking] ensureShopeeTrackingForBatch: đã lấy ${fetched}/${needFetch.length} đơn (shop=${apiShopId}).`,
     );
   }
+  const trackedSns = needFetch
+    .filter((order) => hasUsableShopeeTrackingNumber(order))
+    .map((order) => String(order?.orderSn || "").replace(/^shopee-/i, "").trim())
+    .filter(Boolean);
+  if (trackedSns.length > 0) {
+    try {
+      await backfillOrderItemsIfDbEmpty(apiShopId, accessToken, trackedSns);
+    } catch (itemErr: any) {
+      console.warn(
+        `[Items Backfill] sau ensureShopeeTrackingForBatch shop=${apiShopId}:`,
+        itemErr?.message || itemErr,
+      );
+    }
+  }
   return fetched;
 }
 
@@ -17273,7 +17374,9 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
         rawStatus === "TO_CONFIRM_RECEIVE",
       isPrinted: false,
       is_pending_shopee_check: false,
-      items: mappedItems,
+    };
+    if (mappedItems.length > 0) order.items = mappedItems;
+    Object.assign(order, {
       shipping_carrier: (() => {
         const v = String(
           item?.shipping_carrier ||
@@ -17294,7 +17397,7 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
         const n = Number(pkg?.logistics_channel_id ?? item?.logistics_channel_id);
         return Number.isFinite(n) && n > 0 ? n : undefined;
       })(),
-    };
+    });
     if (logisticsStatus) order.logistics_status = logisticsStatus;
     if (item?.cancel_reason) order.cancel_reason = String(item.cancel_reason);
     if (item?.buyer_cancel_reason) order.buyer_cancel_reason = String(item.buyer_cancel_reason);
@@ -18957,6 +19060,8 @@ async function syncConfirmedOrdersFromShopee(
           skipTracking: false,
         });
       }
+      await delay(CONFIRM_SYNC_SHOP_DELAY_MS);
+      await backfillOrderItemsIfDbEmpty(auth.apiShopId, auth.token, sns);
     } catch (err: any) {
       console.warn(`[Confirm Sync] shopId=${shopId}:`, err?.message || err);
     }
@@ -21872,8 +21977,8 @@ function normalizeShopeeOrder(payload: any): any | null {
     packageNumber: data.package_number || undefined,
     isPrepared: mappedStatus === "processed" || mappedStatus === "shipping",
     isPrinted: false,
-    items: mappedItems,
   };
+  if (mappedItems.length > 0) order.items = mappedItems;
   if (itemList.length > 0) {
     applyShopeePartialCancelMeta(order, data, mappedItems);
   }
@@ -22471,7 +22576,7 @@ async function eagerUpsertWebhookStub(body: any): Promise<void> {
     normalized.has_tracking =
       isValidTrackingNo(normalized.tracking_no) || isValidTrackingNo(normalized.trackingNumber);
     if (!normalized.data || typeof normalized.data !== "object") {
-      normalized.data = {
+      const stubData: Record<string, unknown> = {
         id: normalized.id,
         orderSn: normalized.orderSn,
         order_sn: normalized.orderSn,
@@ -22479,8 +22584,11 @@ async function eagerUpsertWebhookStub(body: any): Promise<void> {
         shopId: normalized.shopId || null,
         status: normalized.status || stubStatus,
         shopee_order_status: stubStatus,
-        items: Array.isArray(normalized.items) ? normalized.items : [],
       };
+      if (Array.isArray(normalized.items) && normalized.items.length > 0) {
+        stubData.items = normalized.items;
+      }
+      normalized.data = stubData;
     } else {
       normalized.data.shopee_order_status = stubStatus;
       normalized.data.status = normalized.status || stubStatus;
@@ -27050,6 +27158,31 @@ async function startServer() {
       console.warn(
         `[Confirm Prefetch] còn ${pending.length} đơn chưa có mã VĐ sau ${Math.min(maxAttempts, 5)} vòng — webhook/in sau sẽ bù`,
       );
+    }
+    const snsByShop = new Map<string, string[]>();
+    for (const o of list) {
+      const shopId = String(o?.shopId || resolveOrderShopId(o) || "").trim();
+      const sn = String(o?.orderSn || o?.order_sn || "").replace(/^shopee-/i, "").trim();
+      if (!shopId || !sn) continue;
+      const bucket = snsByShop.get(shopId) || [];
+      bucket.push(sn);
+      snsByShop.set(shopId, bucket);
+    }
+    let shopIdx = 0;
+    for (const [shopId, sns] of snsByShop) {
+      if (shopIdx > 0) await sleep(300);
+      shopIdx += 1;
+      if (shopIdx > 20) break;
+      try {
+        const token = await getValidShopeeAccessToken(shopId);
+        if (!token) continue;
+        await backfillOrderItemsIfDbEmpty(shopId, token, sns);
+      } catch (itemErr: any) {
+        console.warn(
+          `[Items Backfill] sau confirm shop=${shopId}:`,
+          itemErr?.message || itemErr,
+        );
+      }
     }
   }
 

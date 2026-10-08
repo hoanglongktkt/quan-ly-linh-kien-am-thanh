@@ -82305,6 +82305,23 @@ function pinReadyToShipAwaitingPrepStatus($set, rawStatus) {
 function documentHasGoods(doc) {
   return Array.isArray(doc?.data?.items) && doc.data.items.length > 0;
 }
+function hasProductRows(value) {
+  return Array.isArray(value) && value.length > 0;
+}
+function scrubEmptyProductListsFromSet($set) {
+  for (const key of ["data.items", "data.item_list", "items", "item_list"]) {
+    if (Array.isArray($set[key]) && $set[key].length === 0) {
+      delete $set[key];
+    }
+  }
+  for (const key of ["data", "data.data"]) {
+    const nested = $set[key];
+    if (!nested || typeof nested !== "object" || Array.isArray(nested)) continue;
+    const bag = nested;
+    if (Array.isArray(bag.items) && bag.items.length === 0) delete bag.items;
+    if (Array.isArray(bag.item_list) && bag.item_list.length === 0) delete bag.item_list;
+  }
+}
 async function insertPosOrderToStore(order) {
   requireMongo();
   if (!order || typeof order !== "object") {
@@ -82594,7 +82611,7 @@ async function bulkUpsertOrdersToStore(orders) {
       $set.return_alert_at = Number.isNaN(alertAt.getTime()) ? /* @__PURE__ */ new Date() : alertAt;
       $set["data.return_alert_at"] = (Number.isNaN(alertAt.getTime()) ? /* @__PURE__ */ new Date() : alertAt).toISOString();
     }
-    if (Array.isArray(order.items) && order.items.length > 0) {
+    if (hasProductRows(order.items)) {
       const safeItems = stringifyShopeeIdsDeep(order.items);
       $set["data.items"] = safeItems;
       const sample = safeItems[0] || {};
@@ -82607,6 +82624,9 @@ async function bulkUpsertOrdersToStore(orders) {
           );
         }
       }
+    }
+    if (hasProductRows(order.item_list)) {
+      $set["data.item_list"] = stringifyShopeeIdsDeep(order.item_list);
     }
     if (order.date != null) {
       $set["data.date"] = order.date;
@@ -82647,8 +82667,19 @@ async function bulkUpsertOrdersToStore(orders) {
       if (key === "has_tracking") continue;
       if (key === "return_sn" && (clearReturnSn || !String(value || "").trim())) continue;
       if (value === void 0 || value === null) continue;
-      if (key === "items" && Array.isArray(value) && value.length === 0) continue;
+      if (key === "items" || key === "item_list") continue;
       if (key === "totalAmount" && Number(value) <= 0) continue;
+      if (key === "data" && value && typeof value === "object" && !Array.isArray(value)) {
+        const bag = { ...value };
+        if (Array.isArray(bag.items) && bag.items.length === 0) delete bag.items;
+        if (Array.isArray(bag.item_list) && bag.item_list.length === 0) delete bag.item_list;
+        if (isWebhookStub) {
+          stubInsertStatic["data.data"] = bag;
+          continue;
+        }
+        $set["data.data"] = bag;
+        continue;
+      }
       if (isWebhookStub && key === "data") {
         stubInsertStatic["data.data"] = value;
         continue;
@@ -82671,6 +82702,7 @@ async function bulkUpsertOrdersToStore(orders) {
       $set[`data.${key}`] = value;
     }
     stripWarehouseProtectedKeysFromSet($set);
+    scrubEmptyProductListsFromSet($set);
     if (forceShipping) {
       $set.status = "shipping";
       $set["data.status"] = "shipping";
@@ -82917,18 +82949,39 @@ async function bulkUpsertOrdersToStore(orders) {
           ).toUpperCase();
           const forward = isForwardShopeeProgression(storedRaw, incomingRaw);
           const stale = Boolean(currentAt) && !Number.isNaN(currentAt.getTime()) && currentAt.getTime() - item.updateAt.getTime() > STALE_SKEW_MS;
-          if (stale && !forward) {
+          const incomingItems = $setPreview?.["data.items"];
+          const healEmptyItems = Array.isArray(incomingItems) && incomingItems.length > 0 && !documentHasGoods(current);
+          if (stale && !forward && !healEmptyItems) {
             console.warn(
               `[MongoDB] STALE Shopee snapshot ignored order_sn=${item.orderSn || item.id} incoming=${item.updateAt.toISOString()} stored=${currentAt.toISOString()}`
             );
             return false;
+          }
+          const staleItemHeal = stale && !forward && healEmptyItems;
+          if (staleItemHeal && $setPreview) {
+            for (const key of [
+              "status",
+              "data.status",
+              "shopee_order_status",
+              "data.shopee_order_status",
+              "isPrepared",
+              "data.isPrepared",
+              "last_shopee_update_at",
+              "data.last_shopee_update_at",
+              "create_time"
+            ]) {
+              delete $setPreview[key];
+            }
+            console.log(
+              `[MongoDB] STALE bypass empty-items heal order_sn=${item.orderSn || item.id} incoming=${item.updateAt.toISOString()} stored=${currentAt.toISOString()}`
+            );
           }
           if (stale && forward) {
             console.log(
               `[MongoDB] FORWARD bypass watermark order_sn=${item.orderSn || item.id} ${storedRaw || "(empty)"}\u2192${incomingRaw}`
             );
           }
-          if (current && !forward) {
+          if (current && !forward && !staleItemHeal) {
             const identityFilter = item.op.updateOne.filter;
             const watermarkCeil = new Date(item.updateAt.getTime() + STALE_SKEW_MS);
             item.op.updateOne.filter = {
@@ -82953,6 +83006,7 @@ async function bulkUpsertOrdersToStore(orders) {
           const $setOnInsert = item.op?.updateOne?.update?.$setOnInsert;
           if (!$set) continue;
           stripWarehouseProtectedKeysFromSet($set);
+          scrubEmptyProductListsFromSet($set);
           if (current && item.updateAt && $set.last_shopee_update_at == null && !current.last_shopee_update_at) {
             $set.last_shopee_update_at = item.updateAt;
             $set["data.last_shopee_update_at"] = item.updateAt.toISOString();
@@ -83023,9 +83077,6 @@ async function bulkUpsertOrdersToStore(orders) {
               const orderStatusIn = String($set["data.order_status"] || "").toUpperCase();
               if (!orderStatusIn || orderStatusIn === "UNPAID" || orderStatusIn === "PENDING") {
                 delete $set["data.order_status"];
-              }
-              if (Array.isArray($set["data.items"]) && $set["data.items"].length === 0) {
-                delete $set["data.items"];
               }
               delete $set["data.data"];
             }
@@ -84569,6 +84620,13 @@ async function patchOrderItemsOnlyInStore(orderSn, items, opts) {
     last_synced_at: /* @__PURE__ */ new Date(),
     "data.last_synced_at": (/* @__PURE__ */ new Date()).toISOString()
   };
+  const totalAmount = Number(opts?.totalAmount);
+  if (Number.isFinite(totalAmount) && totalAmount > 0) {
+    $set["data.totalAmount"] = totalAmount;
+  }
+  if (Array.isArray(opts?.itemList) && opts.itemList.length > 0) {
+    $set["data.item_list"] = stringifyShopeeIdsDeep(opts.itemList);
+  }
   if (shopIdStr) {
     $set.shopId = shopIdStr;
     $set["data.shopId"] = shopIdStr;
@@ -137174,6 +137232,73 @@ async function selectOrderSnsNeedingDetail(orderSns, updateTimeBySn) {
   }
   return { keep, skipped: unique.length - keep.length, missingItems, missingTracking };
 }
+var itemsBackfillRecent = /* @__PURE__ */ new Map();
+var ITEMS_BACKFILL_DEDUPE_MS = 6e4;
+async function backfillOrderItemsIfDbEmpty(shopId, accessToken, orderSns) {
+  const now = Date.now();
+  const sns = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const raw of orderSns) {
+    const sn = String(raw || "").replace(/^shopee-/i, "").trim();
+    if (!sn || seen.has(sn)) continue;
+    const prev = itemsBackfillRecent.get(sn) || 0;
+    if (now - prev < ITEMS_BACKFILL_DEDUPE_MS) continue;
+    seen.add(sn);
+    sns.push(sn);
+    if (sns.length >= 50) break;
+  }
+  if (!sns.length || !shopId || !accessToken) return;
+  let stored;
+  try {
+    stored = await loadLastShopeeUpdateAtByOrderSns(sns);
+  } catch (err) {
+    console.warn("[Items Backfill] \u0111\u1ECDc DB l\u1ED7i \u2014 b\u1ECF qua:", err?.message || err);
+    return;
+  }
+  const need = sns.filter((sn) => {
+    const row = stored.get(sn);
+    return !row || row.missingItems;
+  });
+  if (!need.length) return;
+  for (const sn of need) itemsBackfillRecent.set(sn, now);
+  console.log(
+    `[Items Backfill] \xE9p get_order_detail v\xEC DB thi\u1EBFu s\u1EA3n ph\u1EA9m n=${need.length} shop=${shopId} sn=${need.slice(0, 5).join(",")}`
+  );
+  try {
+    const { normalized } = await fetchNormalizeShopeeOrderChunk(
+      shopId,
+      accessToken,
+      shopId,
+      need,
+      { enrichTracking: false, skipEscrow: true }
+    );
+    let filled = 0;
+    const rows = Array.isArray(normalized) ? normalized : [];
+    for (let i2 = 0; i2 < rows.length; i2 += 1) {
+      const row = rows[i2];
+      const items = Array.isArray(row?.items) ? row.items : [];
+      const orderSn = String(row?.orderSn || "").replace(/^shopee-/i, "").trim();
+      if (!orderSn || items.length === 0) continue;
+      const total = Number(row?.totalAmount);
+      try {
+        const ok = await patchOrderItemsOnlyInStore(orderSn, items, {
+          shopId: String(row?.shopId || shopId),
+          totalAmount: Number.isFinite(total) && total > 0 ? total : void 0
+        });
+        if (ok) filled += 1;
+      } catch (rowErr) {
+        console.warn(
+          `[Items Backfill] ghi items order_sn=${orderSn}:`,
+          rowErr?.message || rowErr
+        );
+      }
+      if (i2 + 1 < rows.length) await shopeeSyncDelay(200);
+    }
+    console.log(`[Items Backfill] \u0111\xE3 \u0111\u1EAFp s\u1EA3n ph\u1EA9m ${filled}/${need.length} shop=${shopId}`);
+  } catch (err) {
+    console.warn(`[Items Backfill] shop=${shopId}:`, err?.message || err);
+  }
+}
 async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
   const timeTo = Math.floor(Date.now() / 1e3);
   const rawLookback = Number(opts?.lookbackSec) > 0 ? Number(opts.lookbackSec) : SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
@@ -146629,6 +146754,14 @@ async function fetchAndForceSaveTrackingNumber(apiShopId, accessToken, order, op
     if (hasUsableShopeeTrackingNumber(order)) {
       if (opts?.skipPersist !== true) {
         await persistOrderTrackingToDb(order);
+        try {
+          await backfillOrderItemsIfDbEmpty(apiShopId, accessToken, [String(order.orderSn)]);
+        } catch (itemErr) {
+          console.warn(
+            `[Items Backfill] sau get_tracking_number order_sn=${order.orderSn}:`,
+            itemErr?.message || itemErr
+          );
+        }
       }
       return true;
     }
@@ -147582,6 +147715,17 @@ async function ensureShopeeTrackingForBatch(apiShopId, accessToken, batch) {
       `[Shopee Tracking] ensureShopeeTrackingForBatch: \u0111\xE3 l\u1EA5y ${fetched}/${needFetch.length} \u0111\u01A1n (shop=${apiShopId}).`
     );
   }
+  const trackedSns = needFetch.filter((order) => hasUsableShopeeTrackingNumber(order)).map((order) => String(order?.orderSn || "").replace(/^shopee-/i, "").trim()).filter(Boolean);
+  if (trackedSns.length > 0) {
+    try {
+      await backfillOrderItemsIfDbEmpty(apiShopId, accessToken, trackedSns);
+    } catch (itemErr) {
+      console.warn(
+        `[Items Backfill] sau ensureShopeeTrackingForBatch shop=${apiShopId}:`,
+        itemErr?.message || itemErr
+      );
+    }
+  }
   return fetched;
 }
 function pickNumericShopeeOrderId(...values) {
@@ -147627,8 +147771,10 @@ function normalizeShopeeOrderDetail(shopId, shopName, item) {
       package_number: pkg?.package_number || item?.package_number || void 0,
       isPrepared: mappedStatus === "processed" || mappedStatus === "shipping" || rawStatus === "PROCESSED" || rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE",
       isPrinted: false,
-      is_pending_shopee_check: false,
-      items: mappedItems,
+      is_pending_shopee_check: false
+    };
+    if (mappedItems.length > 0) order.items = mappedItems;
+    Object.assign(order, {
       shipping_carrier: (() => {
         const v = String(
           item?.shipping_carrier || pkg?.shipping_carrier || item?.checkout_shipping_carrier || pkg?.checkout_shipping_carrier || ""
@@ -147645,7 +147791,7 @@ function normalizeShopeeOrderDetail(shopId, shopName, item) {
         const n = Number(pkg?.logistics_channel_id ?? item?.logistics_channel_id);
         return Number.isFinite(n) && n > 0 ? n : void 0;
       })()
-    };
+    });
     if (logisticsStatus) order.logistics_status = logisticsStatus;
     if (item?.cancel_reason) order.cancel_reason = String(item.cancel_reason);
     if (item?.buyer_cancel_reason) order.buyer_cancel_reason = String(item.buyer_cancel_reason);
@@ -148824,6 +148970,8 @@ async function syncConfirmedOrdersFromShopee(orders, shipMethod) {
           skipTracking: false
         });
       }
+      await delay(CONFIRM_SYNC_SHOP_DELAY_MS);
+      await backfillOrderItemsIfDbEmpty(auth.apiShopId, auth.token, sns);
     } catch (err) {
       console.warn(`[Confirm Sync] shopId=${shopId}:`, err?.message || err);
     }
@@ -150708,9 +150856,9 @@ function normalizeShopeeOrder(payload) {
     last_shopee_update_at: lastShopeeUpdateAt,
     packageNumber: data.package_number || void 0,
     isPrepared: mappedStatus === "processed" || mappedStatus === "shipping",
-    isPrinted: false,
-    items: mappedItems
+    isPrinted: false
   };
+  if (mappedItems.length > 0) order.items = mappedItems;
   if (itemList.length > 0) {
     applyShopeePartialCancelMeta(order, data, mappedItems);
   }
@@ -151168,16 +151316,19 @@ async function eagerUpsertWebhookStub(body) {
     normalized._webhook_stub = true;
     normalized.has_tracking = isValidTrackingNo(normalized.tracking_no) || isValidTrackingNo(normalized.trackingNumber);
     if (!normalized.data || typeof normalized.data !== "object") {
-      normalized.data = {
+      const stubData = {
         id: normalized.id,
         orderSn: normalized.orderSn,
         order_sn: normalized.orderSn,
         channel: "shopee",
         shopId: normalized.shopId || null,
         status: normalized.status || stubStatus,
-        shopee_order_status: stubStatus,
-        items: Array.isArray(normalized.items) ? normalized.items : []
+        shopee_order_status: stubStatus
       };
+      if (Array.isArray(normalized.items) && normalized.items.length > 0) {
+        stubData.items = normalized.items;
+      }
+      normalized.data = stubData;
     } else {
       normalized.data.shopee_order_status = stubStatus;
       normalized.data.status = normalized.status || stubStatus;
@@ -154990,6 +155141,31 @@ async function startServer() {
       console.warn(
         `[Confirm Prefetch] c\xF2n ${pending.length} \u0111\u01A1n ch\u01B0a c\xF3 m\xE3 V\u0110 sau ${Math.min(maxAttempts, 5)} v\xF2ng \u2014 webhook/in sau s\u1EBD b\xF9`
       );
+    }
+    const snsByShop = /* @__PURE__ */ new Map();
+    for (const o of list) {
+      const shopId = String(o?.shopId || resolveOrderShopId(o) || "").trim();
+      const sn = String(o?.orderSn || o?.order_sn || "").replace(/^shopee-/i, "").trim();
+      if (!shopId || !sn) continue;
+      const bucket = snsByShop.get(shopId) || [];
+      bucket.push(sn);
+      snsByShop.set(shopId, bucket);
+    }
+    let shopIdx = 0;
+    for (const [shopId, sns] of snsByShop) {
+      if (shopIdx > 0) await sleep(300);
+      shopIdx += 1;
+      if (shopIdx > 20) break;
+      try {
+        const token = await getValidShopeeAccessToken(shopId);
+        if (!token) continue;
+        await backfillOrderItemsIfDbEmpty(shopId, token, sns);
+      } catch (itemErr) {
+        console.warn(
+          `[Items Backfill] sau confirm shop=${shopId}:`,
+          itemErr?.message || itemErr
+        );
+      }
     }
   }
   registerLabelPdfDownloader(firePrepareShippingLabelsForOrders);

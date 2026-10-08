@@ -2903,6 +2903,27 @@ function documentHasGoods(doc: any): boolean {
   return Array.isArray(doc?.data?.items) && doc.data.items.length > 0;
 }
 
+/** Mảng sản phẩm thật — undefined / null / [] đều coi là không có chi tiết. */
+function hasProductRows(value: unknown): boolean {
+  return Array.isArray(value) && value.length > 0;
+}
+
+/** Gỡ items / item_list rỗng khỏi $set — payload mỏng không được úp đè snapshot đã có. */
+function scrubEmptyProductListsFromSet($set: Record<string, unknown>): void {
+  for (const key of ["data.items", "data.item_list", "items", "item_list"]) {
+    if (Array.isArray($set[key]) && ($set[key] as unknown[]).length === 0) {
+      delete $set[key];
+    }
+  }
+  for (const key of ["data", "data.data"]) {
+    const nested = $set[key];
+    if (!nested || typeof nested !== "object" || Array.isArray(nested)) continue;
+    const bag = nested as Record<string, unknown>;
+    if (Array.isArray(bag.items) && bag.items.length === 0) delete bag.items;
+    if (Array.isArray(bag.item_list) && bag.item_list.length === 0) delete bag.item_list;
+  }
+}
+
 /**
  * Ghi đơn Mini POS trực tiếp, không chờ hàng đợi sync Shopee.
  * Payload POS đã được controller chuẩn hóa; data là snapshot đầy đủ để hydrate lại.
@@ -3318,9 +3339,9 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
         Number.isNaN(alertAt.getTime()) ? new Date() : alertAt
       ).toISOString();
     }
-    // Push fallback có thể chỉ chứa orderSn/status. Không để `items: []` hoặc
-    // `totalAmount: 0` ghi đè snapshot chi tiết đã lấy trước đó.
-    if (Array.isArray(order.items) && order.items.length > 0) {
+    // Payload mỏng (webhook / stub) không được $set data.items hoặc data.item_list = [].
+    // Chỉ cập nhật danh sách sản phẩm khi mảng từ Shopee thực sự có phần tử.
+    if (hasProductRows(order.items)) {
       const safeItems = stringifyShopeeIdsDeep(order.items);
       $set["data.items"] = safeItems;
       const sample = safeItems[0] || {};
@@ -3333,6 +3354,9 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
           );
         }
       }
+    }
+    if (hasProductRows(order.item_list)) {
+      $set["data.item_list"] = stringifyShopeeIdsDeep(order.item_list);
     }
     if (order.date != null) {
       $set["data.date"] = order.date;
@@ -3378,9 +3402,21 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       if (key === "has_tracking") continue;
       if (key === "return_sn" && (clearReturnSn || !String(value || "").trim())) continue;
       if (value === undefined || value === null) continue;
-      if (key === "items" && Array.isArray(value) && value.length === 0) continue;
+      // items / item_list đã xử lý phía trên — vòng generic không được ghi [] hay đè bản đã stringify.
+      if (key === "items" || key === "item_list") continue;
       if (key === "totalAmount" && Number(value) <= 0) continue;
       // Stub mỏng: order_status UNPAID / blob data / status chỉ tạo lúc insert.
+      if (key === "data" && value && typeof value === "object" && !Array.isArray(value)) {
+        const bag = { ...(value as Record<string, unknown>) };
+        if (Array.isArray(bag.items) && bag.items.length === 0) delete bag.items;
+        if (Array.isArray(bag.item_list) && bag.item_list.length === 0) delete bag.item_list;
+        if (isWebhookStub) {
+          stubInsertStatic["data.data"] = bag;
+          continue;
+        }
+        $set["data.data"] = bag;
+        continue;
+      }
       if (isWebhookStub && key === "data") {
         stubInsertStatic["data.data"] = value;
         continue;
@@ -3406,6 +3442,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       $set[`data.${key}`] = value;
     }
     stripWarehouseProtectedKeysFromSet($set);
+    scrubEmptyProductListsFromSet($set);
 
     // Generic loop ghi data.status từ payload. Bước tiến phải thắng lại ở root và data.
     // Không đụng has_tracking / tracking_no.
@@ -3695,12 +3732,39 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
             Boolean(currentAt) &&
             !Number.isNaN(currentAt!.getTime()) &&
             currentAt!.getTime() - item.updateAt.getTime() > STALE_SKEW_MS;
-          if (stale && !forward) {
+          const incomingItems = $setPreview?.["data.items"];
+          const healEmptyItems =
+            Array.isArray(incomingItems) &&
+            incomingItems.length > 0 &&
+            !documentHasGoods(current);
+          if (stale && !forward && !healEmptyItems) {
             console.warn(
               `[MongoDB] STALE Shopee snapshot ignored order_sn=${item.orderSn || item.id} ` +
                 `incoming=${item.updateAt.toISOString()} stored=${currentAt!.toISOString()}`,
             );
             return false;
+          }
+          const staleItemHeal = stale && !forward && healEmptyItems;
+          if (staleItemHeal && $setPreview) {
+            // Watermark webhook (now) không được nuốt get_order_detail chỉ vì đơn đang trống sản phẩm.
+            // Giữ status/watermark hiện tại — chỉ đắp items + totalAmount.
+            for (const key of [
+              "status",
+              "data.status",
+              "shopee_order_status",
+              "data.shopee_order_status",
+              "isPrepared",
+              "data.isPrepared",
+              "last_shopee_update_at",
+              "data.last_shopee_update_at",
+              "create_time",
+            ]) {
+              delete $setPreview[key];
+            }
+            console.log(
+              `[MongoDB] STALE bypass empty-items heal order_sn=${item.orderSn || item.id} ` +
+                `incoming=${item.updateAt.toISOString()} stored=${currentAt!.toISOString()}`,
+            );
           }
           if (stale && forward) {
             console.log(
@@ -3708,7 +3772,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
                 `${storedRaw || "(empty)"}→${incomingRaw}`,
             );
           }
-          if (current && !forward) {
+          if (current && !forward && !staleItemHeal) {
             const identityFilter = item.op.updateOne.filter;
             const watermarkCeil = new Date(item.updateAt.getTime() + STALE_SKEW_MS);
             item.op.updateOne.filter = {
@@ -3735,6 +3799,8 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
             | undefined;
           if (!$set) continue;
           stripWarehouseProtectedKeysFromSet($set);
+          // Mọi nguồn (webhook mỏng, sync, confirm) — cấm $set mảng sản phẩm rỗng.
+          scrubEmptyProductListsFromSet($set);
           if (current && item.updateAt && $set.last_shopee_update_at == null && !current.last_shopee_update_at) {
             $set.last_shopee_update_at = item.updateAt;
             $set["data.last_shopee_update_at"] = item.updateAt.toISOString();
@@ -3824,9 +3890,6 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
               const orderStatusIn = String($set["data.order_status"] || "").toUpperCase();
               if (!orderStatusIn || orderStatusIn === "UNPAID" || orderStatusIn === "PENDING") {
                 delete $set["data.order_status"];
-              }
-              if (Array.isArray($set["data.items"]) && ($set["data.items"] as unknown[]).length === 0) {
-                delete $set["data.items"];
               }
               delete $set["data.data"];
             }
@@ -5788,7 +5851,7 @@ export async function findCancelledEmptyItemsFromStore(opts?: {
 export async function patchOrderItemsOnlyInStore(
   orderSn: string,
   items: any[],
-  opts?: { shopId?: string },
+  opts?: { shopId?: string; totalAmount?: number; itemList?: any[] },
 ): Promise<boolean> {
   if (!isMongoReady()) return false;
   requireMongo();
@@ -5803,6 +5866,13 @@ export async function patchOrderItemsOnlyInStore(
     last_synced_at: new Date(),
     "data.last_synced_at": new Date().toISOString(),
   };
+  const totalAmount = Number(opts?.totalAmount);
+  if (Number.isFinite(totalAmount) && totalAmount > 0) {
+    $set["data.totalAmount"] = totalAmount;
+  }
+  if (Array.isArray(opts?.itemList) && opts.itemList.length > 0) {
+    $set["data.item_list"] = stringifyShopeeIdsDeep(opts.itemList);
+  }
   if (shopIdStr) {
     $set.shopId = shopIdStr;
     $set["data.shopId"] = shopIdStr;
