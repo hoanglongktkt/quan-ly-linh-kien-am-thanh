@@ -23801,6 +23801,23 @@ async function startServer() {
         results,
       });
 
+      // FE tải lại tab ngay khi thấy "done" — cờ PROCESSED/isPrepared phải nằm trong Mongo trước.
+      job.phase = "persisting";
+      job.message = `Đang lưu trạng thái ${confirmedRows.length} đơn đã xác nhận...`;
+      job.updatedAt = Date.now();
+      try {
+        await withOperationTimeout(
+          () => persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod),
+          CONFIRM_ASYNC_DB_TIMEOUT_MS,
+          "Persist confirmed async orders",
+        );
+      } catch (persistErr: any) {
+        console.error(
+          "[Confirm Async] persistConfirmedShipOrdersToMongo:",
+          persistErr?.stack || persistErr,
+        );
+      }
+
       job.results = results;
       job.successCount = summary.successCount;
       job.failedCount = summary.failCount;
@@ -23821,19 +23838,6 @@ async function startServer() {
 
       setImmediate(() => {
         void (async () => {
-          try {
-            await withOperationTimeout(
-              () => persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod),
-              CONFIRM_ASYNC_DB_TIMEOUT_MS,
-              "Persist confirmed async orders",
-            );
-          } catch (persistErr: any) {
-            console.error(
-              "[Confirm Async] persistConfirmedShipOrdersToMongo:",
-              persistErr?.stack || persistErr,
-            );
-          }
-          await sleep(200);
           void prefetchTrackingAndLabelsAfterConfirm(confirmedRows).catch((primeErr: any) => {
             console.error("[Confirm Async] BG tracking+PDF prefetch:", primeErr?.stack || primeErr);
           });
@@ -27244,6 +27248,8 @@ async function startServer() {
       job.results = Array.isArray(batch.results) ? batch.results : [];
 
       // Persist kết quả ship + khóa isPrepared (tab Đã xử lý).
+      job.phase = "persisting";
+      job.updatedAt = Date.now();
       try {
         const changed = toShip.map(({ index }) => orders[index]).filter(Boolean);
         await persistOrdersToDatabase(orders, changed);

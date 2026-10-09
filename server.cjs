@@ -82924,6 +82924,10 @@ async function bulkUpsertOrdersToStore(orders) {
           "data.has_tracking": 1,
           isPrepared: 1,
           "data.isPrepared": 1,
+          isPrinted: 1,
+          "data.isPrinted": 1,
+          is_handed_over: 1,
+          "data.is_handed_over": 1,
           shopee_order_status: 1,
           "data.shopee_order_status": 1,
           "data.order_status": 1,
@@ -83062,6 +83066,25 @@ async function bulkUpsertOrdersToStore(orders) {
               delete $set["data.status"];
               console.warn(
                 `[MongoDB] BLOCK downgrade status ${existingStatus}\u2192unprocessed order_sn=${item.orderSn || item.id} printed=${current?.isPrinted === true} handed=${current?.is_handed_over === true}`
+              );
+            }
+            const storedRawForGuard = String(
+              current.shopee_order_status || current.data?.shopee_order_status || ""
+            ).toUpperCase();
+            const storedWatermark = current.last_shopee_update_at ? new Date(current.last_shopee_update_at) : null;
+            const incomingNotNewer = !item.updateAt || !storedWatermark || Number.isNaN(storedWatermark.getTime()) || item.updateAt.getTime() <= storedWatermark.getTime();
+            if (storedRawForGuard === "PROCESSED" && incomingRawForGuard === "READY_TO_SHIP" && shopWorked && incomingNotNewer) {
+              delete $set.shopee_order_status;
+              delete $set["data.shopee_order_status"];
+              delete $set.last_shopee_update_at;
+              delete $set["data.last_shopee_update_at"];
+              delete $set.create_time;
+              if (String($set.status || "").trim() === "unprocessed") {
+                delete $set.status;
+                delete $set["data.status"];
+              }
+              console.warn(
+                `[MongoDB] BLOCK raw downgrade PROCESSED\u2192READY_TO_SHIP order_sn=${item.orderSn || item.id} incoming=${item.updateAt ? item.updateAt.toISOString() : "-"} stored=${storedWatermark ? storedWatermark.toISOString() : "-"}`
               );
             }
             if (item.webhookStub && documentHasGoods(current)) {
@@ -152353,6 +152376,21 @@ async function startServer() {
         failedOrders,
         results
       });
+      job.phase = "persisting";
+      job.message = `\u0110ang l\u01B0u tr\u1EA1ng th\xE1i ${confirmedRows.length} \u0111\u01A1n \u0111\xE3 x\xE1c nh\u1EADn...`;
+      job.updatedAt = Date.now();
+      try {
+        await withOperationTimeout(
+          () => persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod),
+          CONFIRM_ASYNC_DB_TIMEOUT_MS,
+          "Persist confirmed async orders"
+        );
+      } catch (persistErr) {
+        console.error(
+          "[Confirm Async] persistConfirmedShipOrdersToMongo:",
+          persistErr?.stack || persistErr
+        );
+      }
       job.results = results;
       job.successCount = summary.successCount;
       job.failedCount = summary.failCount;
@@ -152372,19 +152410,6 @@ async function startServer() {
       );
       setImmediate(() => {
         void (async () => {
-          try {
-            await withOperationTimeout(
-              () => persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod),
-              CONFIRM_ASYNC_DB_TIMEOUT_MS,
-              "Persist confirmed async orders"
-            );
-          } catch (persistErr) {
-            console.error(
-              "[Confirm Async] persistConfirmedShipOrdersToMongo:",
-              persistErr?.stack || persistErr
-            );
-          }
-          await sleep(200);
           void prefetchTrackingAndLabelsAfterConfirm(confirmedRows).catch((primeErr) => {
             console.error("[Confirm Async] BG tracking+PDF prefetch:", primeErr?.stack || primeErr);
           });
@@ -155210,6 +155235,8 @@ async function startServer() {
         }
       });
       job.results = Array.isArray(batch.results) ? batch.results : [];
+      job.phase = "persisting";
+      job.updatedAt = Date.now();
       try {
         const changed = toShip.map(({ index }) => orders[index]).filter(Boolean);
         await persistOrdersToDatabase(orders, changed);

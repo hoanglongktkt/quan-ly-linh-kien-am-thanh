@@ -855,6 +855,10 @@ interface OrderManagerProps {
 
 const ORDERS_PAGE_SIZE = 50;
 const itemsPerPage = ORDERS_PAGE_SIZE;
+/** Ẩn đơn vừa xác nhận khỏi tab "Đơn chưa xử lý" trong khoảng Shopee/Mongo còn trễ. */
+const RECENTLY_CONFIRMED_TTL_MS = 2 * 60 * 1000;
+/** Chờ server ghi Mongo sau khi đủ kết quả ship (lớn hơn CONFIRM_ASYNC_DB_TIMEOUT_MS 15s). */
+const SHIP_JOB_PERSIST_WAIT_MS = 20_000;
 
 /** Số trang hiển thị trên thanh phân trang client-side (rút gọn khi nhiều trang). */
 function buildClientPageNumbers(current: number, totalPages: number): (number | 'ellipsis')[] {
@@ -2445,6 +2449,8 @@ export default function OrderManager({
   const optimisticOrderMutationsRef = React.useRef<Map<string, OptimisticOrderMutation>>(new Map());
   /** Chặn race-condition: response GET cũ không được làm đơn vừa in xuất hiện lại. */
   const recentlyPrintedRef = React.useRef<Map<string, number>>(new Map());
+  /** Đơn vừa ship_order thành công — GET tab "Đơn chưa xử lý" trả bản cũ thì vẫn ẩn tới khi hết hạn. */
+  const recentlyConfirmedRef = React.useRef<Map<string, number>>(new Map());
   /** Cùng một batch chỉ được gửi mark-printed một lần khi request trước còn chạy. */
   const printStatusInflightRef = React.useRef<Set<string>>(new Set());
   const applyScanRef = React.useRef<(query: string) => void>(() => {});
@@ -5937,6 +5943,11 @@ export default function OrderManager({
     opts?: { markPrinted?: boolean; shipMethod?: 'pickup' | 'dropoff'; deferTabSwitch?: boolean }
   ) => {
     const queuedKeys = buildQueuedOrderKeys(queuedOrders);
+    const confirmedExpiresAt = Date.now() + RECENTLY_CONFIRMED_TTL_MS;
+    for (const key of queuedKeys) {
+      const k = String(key || '').trim().toLowerCase();
+      if (k) recentlyConfirmedRef.current.set(k, confirmedExpiresAt);
+    }
     let movedFromUnprocessed = 0;
     for (const o of ordersRef.current) {
       if (
@@ -6043,8 +6054,11 @@ export default function OrderManager({
     const deadline = Date.now() + 5 * 60 * 1000;
     let finalJob: any | null = null;
     let pollCount = 0;
+    let allResultsAt = 0;
     while (Date.now() < deadline) {
-      if (pollCount > 0) await new Promise((resolve) => setTimeout(resolve, 300));
+      if (pollCount > 0) {
+        await new Promise((resolve) => setTimeout(resolve, allResultsAt ? 500 : 300));
+      }
       pollCount += 1;
       try {
         const response = await fetch(`/api/shopee/ship-order/job/${jobId}`, { headers: authHeaders() });
@@ -6057,9 +6071,13 @@ export default function OrderManager({
         setProgressTotal(tot);
         setShipJobResults(Array.isArray(job.results) ? job.results : []);
         if (job.status === 'done' || job.status === 'failed') return job;
-        // Đủ kết quả từng đơn → đóng poll, không chờ persist Mongo (tránh kẹt 100%).
+        // Đủ kết quả nhưng server còn ghi Mongo: chờ "done" (tối đa SHIP_JOB_PERSIST_WAIT_MS)
+        // để tải lại tab không lấy bản READY_TO_SHIP cũ.
         if (tot > 0 && completed >= tot && Array.isArray(job.results) && job.results.length > 0) {
-          return { ...job, status: 'done' };
+          if (!allResultsAt) allResultsAt = Date.now();
+          if (Date.now() - allResultsAt >= SHIP_JOB_PERSIST_WAIT_MS) {
+            return { ...job, status: 'done' };
+          }
         }
         setProgressMessage(
           job.message || `Đang xác nhận ${completed}/${tot} đơn...`,
@@ -7435,9 +7453,25 @@ export default function OrderManager({
    */
   const displayOrders = useMemo(() => {
     if (searchQuery.trim()) return filteredOrders;
-    return filteredOrders.filter((order) =>
+    const strict = filteredOrders.filter((order) =>
       matchesStrictDisplaySubTab(order, activeSubTab, cancelReturnTab),
     );
+    if (activeSubTab !== 'unprocessed') return strict;
+    const confirmed = recentlyConfirmedRef.current;
+    if (confirmed.size === 0) return strict;
+    const now = Date.now();
+    for (const [key, expiresAt] of confirmed) {
+      if (expiresAt <= now) confirmed.delete(key);
+    }
+    if (confirmed.size === 0) return strict;
+    return strict.filter((order) => {
+      const id = String(order.id || '').trim().toLowerCase();
+      const sn = String(order.orderSn || '').replace(/^shopee-/i, '').trim().toLowerCase();
+      return !(
+        (id && confirmed.has(id)) ||
+        (sn && (confirmed.has(sn) || confirmed.has(`shopee-${sn}`)))
+      );
+    });
   }, [filteredOrders, activeSubTab, cancelReturnTab, searchQuery]);
 
   /** Badge > 0 nhưng list trống — fetch lại counter (bỏ cache 30s) một lần. */

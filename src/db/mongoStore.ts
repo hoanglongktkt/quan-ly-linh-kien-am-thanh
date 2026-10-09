@@ -3701,6 +3701,10 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
             "data.has_tracking": 1,
             isPrepared: 1,
             "data.isPrepared": 1,
+            isPrinted: 1,
+            "data.isPrinted": 1,
+            is_handed_over: 1,
+            "data.is_handed_over": 1,
             shopee_order_status: 1,
             "data.shopee_order_status": 1,
             "data.order_status": 1,
@@ -3874,6 +3878,40 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
                 `[MongoDB] BLOCK downgrade status ${existingStatus}→unprocessed` +
                   ` order_sn=${item.orderSn || item.id}` +
                   ` printed=${current?.isPrinted === true} handed=${current?.is_handed_over === true}`,
+              );
+            }
+            // Shopee lag: get_order_detail / cron còn trả READY_TO_SHIP sau ship_order.
+            // Chỉ chặn khi snapshot KHÔNG mới hơn watermark — READY_TO_SHIP thật (mới hơn) vẫn ghi.
+            const storedRawForGuard = String(
+              current.shopee_order_status || current.data?.shopee_order_status || "",
+            ).toUpperCase();
+            const storedWatermark = current.last_shopee_update_at
+              ? new Date(current.last_shopee_update_at)
+              : null;
+            const incomingNotNewer =
+              !item.updateAt ||
+              !storedWatermark ||
+              Number.isNaN(storedWatermark.getTime()) ||
+              item.updateAt.getTime() <= storedWatermark.getTime();
+            if (
+              storedRawForGuard === "PROCESSED" &&
+              incomingRawForGuard === "READY_TO_SHIP" &&
+              shopWorked &&
+              incomingNotNewer
+            ) {
+              delete $set.shopee_order_status;
+              delete $set["data.shopee_order_status"];
+              delete $set.last_shopee_update_at;
+              delete $set["data.last_shopee_update_at"];
+              delete $set.create_time;
+              if (String($set.status || "").trim() === "unprocessed") {
+                delete $set.status;
+                delete $set["data.status"];
+              }
+              console.warn(
+                `[MongoDB] BLOCK raw downgrade PROCESSED→READY_TO_SHIP order_sn=${item.orderSn || item.id}` +
+                  ` incoming=${item.updateAt ? item.updateAt.toISOString() : "-"}` +
+                  ` stored=${storedWatermark ? storedWatermark.toISOString() : "-"}`,
               );
             }
             // Stub UNPAID không được $set đè đơn đã có hàng.
