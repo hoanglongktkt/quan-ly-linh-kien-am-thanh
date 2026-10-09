@@ -81902,6 +81902,121 @@ async function bulkUpsertChannelListingsToStore(rows) {
   });
   return ops.length;
 }
+var SYNC_LOOKUP_LIMIT = 5e3;
+var CHANNEL_LISTING_LINK_FIELDS = /* @__PURE__ */ new Set([
+  "status",
+  "linkedProductId",
+  "linkedProductTitle",
+  "linkedProductSku"
+]);
+async function findChannelListingsForSyncFromStore(input) {
+  const itemIds = [
+    ...new Set(
+      (input.itemIds || []).map((v) => String(v ?? "").trim()).filter((v) => /^\d+$/.test(v))
+    )
+  ];
+  const skus = [
+    ...new Set((input.skus || []).map((v) => String(v ?? "").trim()).filter(Boolean))
+  ];
+  if (itemIds.length === 0 && skus.length === 0) return [];
+  if (isProductsDiskMode()) {
+    const itemSet = new Set(itemIds);
+    const skuSet = new Set(skus.map((s2) => s2.toUpperCase()));
+    return readChannelListingsFromDisk().filter((r2) => {
+      const cid = String(r2?.channelId || "");
+      const itemId = String(r2?.itemId || cid.split(":")[0] || "").trim();
+      return itemSet.has(itemId) || skuSet.has(String(r2?.sku || "").trim().toUpperCase());
+    });
+  }
+  requireMongo();
+  const or = [];
+  if (itemIds.length > 0) {
+    or.push({
+      channelId: { $in: [...itemIds, ...itemIds.map((id) => new RegExp(`^${id}:`))] }
+    });
+  }
+  if (skus.length > 0) {
+    const skuVariants = [...new Set(skus.flatMap((s2) => [s2, s2.toUpperCase(), s2.toLowerCase()]))];
+    or.push({ sku: { $in: skuVariants } });
+  }
+  const docs = await ChannelListingModel.find({ $or: or }).limit(SYNC_LOOKUP_LIMIT).lean();
+  return docsToListings(docs);
+}
+async function bulkWriteChannelListingsForSync(input) {
+  const inserts = (input.inserts || []).filter(
+    (r2) => r2 && typeof r2 === "object" && String(r2.id || "").trim()
+  );
+  const updates = (input.updates || []).filter(
+    (u) => u?.row && typeof u.row === "object" && String(u.row.id || "").trim()
+  );
+  if (inserts.length === 0 && updates.length === 0) return { inserted: 0, modified: 0 };
+  if (isProductsDiskMode()) {
+    const existingIds = new Set(readChannelListingsFromDisk().map((r2) => String(r2?.id)));
+    const toInsert = inserts.filter((r2) => !existingIds.has(String(r2.id).trim()));
+    const toUpdate = updates.map(({ row, resetLink }) => {
+      if (resetLink) return row;
+      const copy = { ...row };
+      for (const field of CHANNEL_LISTING_LINK_FIELDS) delete copy[field];
+      return copy;
+    });
+    await upsertChannelListingsToDisk([...toInsert, ...toUpdate]);
+    return { inserted: toInsert.length, modified: toUpdate.length };
+  }
+  requireMongo();
+  const ops = [];
+  for (const doc of toListingDocs(inserts)) {
+    const { _id, ...rest } = doc;
+    ops.push({
+      updateOne: {
+        filter: { _id },
+        update: { $setOnInsert: rest },
+        upsert: true
+      }
+    });
+  }
+  for (const { row, resetLink } of updates) {
+    const [doc] = toListingDocs([row]);
+    if (!doc) continue;
+    const $set = {
+      channelId: doc.channelId,
+      platform: doc.platform,
+      sku: doc.sku
+    };
+    const $unset = {};
+    for (const [key, value] of Object.entries(doc.data || {})) {
+      const isLinkField = CHANNEL_LISTING_LINK_FIELDS.has(key);
+      if (isLinkField && !resetLink) continue;
+      if (value === void 0) {
+        if (isLinkField) $unset[`data.${key}`] = "";
+        continue;
+      }
+      $set[`data.${key}`] = value;
+    }
+    if (resetLink) {
+      $set.status = doc.status;
+      $set.linkedProductId = doc.linkedProductId;
+    }
+    ops.push({
+      updateOne: {
+        filter: { _id: doc._id },
+        update: Object.keys($unset).length > 0 ? { $set, $unset } : { $set }
+      }
+    });
+  }
+  if (ops.length === 0) return { inserted: 0, modified: 0 };
+  let inserted = 0;
+  let modified = 0;
+  await enqueueWrite(async () => {
+    const result = await ChannelListingModel.bulkWrite(ops, { ordered: false });
+    inserted = Number(result.upsertedCount || 0);
+    modified = Number(result.modifiedCount || 0);
+    await setMeta("listings_updated_at", (/* @__PURE__ */ new Date()).toISOString());
+    console.log(
+      `[MongoDB] bulkWrite channel_listings (sync) \u2014 ops=${ops.length} upserted=${inserted} modified=${modified} matched=${result.matchedCount || 0}`
+    );
+  });
+  return { inserted, modified };
+}
 async function applyManualChannelListingLink(input) {
   const listingId = String(input?.listingId || "").trim();
   const masterProductId = String(input?.masterProductId || "").trim();
@@ -129859,9 +129974,7 @@ var deps16 = {
   }),
   flushDbWrites: async () => {
   },
-  readChannelListingsDb: async () => [],
-  refreshCache: async () => {
-  },
+  countChannelListings: async () => 0,
   isMongoReady: () => false,
   isOrdersPullLocked: () => false,
   runManualQuickSync3h: async () => ({
@@ -130672,14 +130785,9 @@ async function syncFromShop(req, res) {
     let listingsCount = 0;
     try {
       await deps16.flushDbWrites();
-      listingsCount = (await deps16.readChannelListingsDb()).length;
+      listingsCount = await deps16.countChannelListings();
     } catch {
       listingsCount = pageResult.rowsSaved;
-    }
-    try {
-      await deps16.refreshCache();
-    } catch (cacheErr) {
-      console.error("[Sync From Shop] refreshCache th\u1EA5t b\u1EA1i:", cacheErr);
     }
     console.log(
       `\u0110\xE3 l\u01B0u DB th\xE0nh c\xF4ng \u2014 trang offset=${offset}, listingsInDb=${listingsCount} mongo=${deps16.isMongoReady()}`
@@ -142911,13 +143019,36 @@ async function upsertChannelListingsBatch(batchRows, shopId, shopName, options) 
     newlyAdded: 0,
     skipped: 0,
     updated: 0,
-    touched: 0
+    touched: 0,
+    insertedItemIds: []
   };
   try {
     if (!Array.isArray(batchRows) || batchRows.length === 0) return empty;
     const skipExisting = options?.skipExisting === true;
     ensureDataDirs();
-    const existing = await readChannelListingsDb();
+    let flatRows = [];
+    try {
+      flatRows = flattenProductsForStockSync(batchRows);
+    } catch (flatErr) {
+      console.error("DB Save Error:", flatErr);
+      flatRows = batchRows.filter((r2) => r2 != null);
+    }
+    const candidates = [];
+    const lookupItemIds = /* @__PURE__ */ new Set();
+    const lookupSkus = /* @__PURE__ */ new Set();
+    for (const item of flatRows) {
+      const ids = resolveUpsertItemModelFromRow(item);
+      if (!ids) continue;
+      candidates.push({ item, ids });
+      lookupItemIds.add(ids.itemId);
+      const sku = String(item?.sku || "").trim();
+      if (sku) lookupSkus.add(sku);
+    }
+    if (candidates.length === 0) return empty;
+    const existing = await findChannelListingsForSyncFromStore({
+      itemIds: [...lookupItemIds],
+      skus: [...lookupSkus]
+    });
     const byKey = /* @__PURE__ */ new Map();
     const existingSkus = /* @__PURE__ */ new Set();
     for (const listing of existing) {
@@ -142928,23 +143059,14 @@ async function upsertChannelListingsBatch(batchRows, shopId, shopName, options) 
       const skuKey = normalizeSkuKey2(listing?.sku);
       if (skuKey) existingSkus.add(skuKey);
     }
-    let flatRows = [];
-    try {
-      flatRows = flattenProductsForStockSync(batchRows);
-    } catch (flatErr) {
-      console.error("DB Save Error:", flatErr);
-      flatRows = batchRows.filter((r2) => r2 != null);
-    }
     let scanned = 0;
-    let newlyAdded = 0;
     let skipped = 0;
     let updated = 0;
-    let touched = 0;
-    let dirty = false;
-    for (const item of flatRows) {
+    const inserts = /* @__PURE__ */ new Map();
+    const insertItemIdByKey = /* @__PURE__ */ new Map();
+    const updates = /* @__PURE__ */ new Map();
+    for (const { item, ids } of candidates) {
       try {
-        const ids = resolveUpsertItemModelFromRow(item);
-        if (!ids) continue;
         scanned++;
         const key = channelListingUpsertKey(ids.itemId, ids.modelId);
         const prev = byKey.get(key);
@@ -142954,54 +143076,70 @@ async function upsertChannelListingsBatch(batchRows, shopId, shopName, options) 
           continue;
         }
         const keepExistingLink = prev?.status === "success" && !!prev?.linkedProductId && !isSyntheticShopeePullProduct({ id: prev.linkedProductId });
-        if (prev) updated++;
-        else newlyAdded++;
-        byKey.set(
-          key,
-          sanitizeChannelListingRow({
-            id: prev?.id || `cl-shopee-${ids.channelId}`,
-            title: String(item?.title || ""),
-            sku: String(item?.sku || ""),
-            imageUrl: item?.avatarUrl || item?.imageUrl || void 0,
-            channelId: ids.channelId,
-            platform: "shopee",
-            shopName: String(shopName || ""),
-            shopId: shopId != null ? String(shopId) : void 0,
-            modelId: ids.modelId || prev?.modelId,
-            itemId: ids.itemId,
-            price: Math.max(0, Math.round(Number(item?.sellingPrice ?? item?.price) || 0)),
-            weight: Math.max(0, Number(item?.weight) || 0),
-            stock: Math.max(0, Math.round(Number(item?.stock) || 0)),
-            status: keepExistingLink ? "success" : prev?.status === "failed" ? "failed" : "unlinked",
-            linkedProductId: keepExistingLink ? prev.linkedProductId : void 0,
-            // Giữ snapshot tên/SKU kho — auto-heal sẽ đồng bộ lại khi lệch master.
-            linkedProductTitle: keepExistingLink ? prev.linkedProductTitle : void 0,
-            linkedProductSku: keepExistingLink ? prev.linkedProductSku : void 0
-          })
-        );
+        const row = sanitizeChannelListingRow({
+          id: prev?.id || `cl-shopee-${ids.channelId}`,
+          title: String(item?.title || ""),
+          sku: String(item?.sku || ""),
+          imageUrl: item?.avatarUrl || item?.imageUrl || void 0,
+          channelId: ids.channelId,
+          platform: "shopee",
+          shopName: String(shopName || ""),
+          shopId: shopId != null ? String(shopId) : void 0,
+          modelId: ids.modelId || prev?.modelId,
+          itemId: ids.itemId,
+          price: Math.max(0, Math.round(Number(item?.sellingPrice ?? item?.price) || 0)),
+          weight: Math.max(0, Number(item?.weight) || 0),
+          stock: Math.max(0, Math.round(Number(item?.stock) || 0)),
+          status: keepExistingLink ? "success" : prev?.status === "failed" ? "failed" : "unlinked",
+          linkedProductId: keepExistingLink ? prev.linkedProductId : void 0,
+          // Giữ snapshot tên/SKU kho — auto-heal sẽ đồng bộ lại khi lệch master.
+          linkedProductTitle: keepExistingLink ? prev.linkedProductTitle : void 0,
+          linkedProductSku: keepExistingLink ? prev.linkedProductSku : void 0
+        });
+        if (inserts.has(key)) {
+          inserts.set(key, row);
+          updated++;
+        } else if (prev) {
+          updates.set(key, {
+            row,
+            // Link cũ trỏ SP tổng hợp shopee-item-* → reset như logic cũ; còn lại giữ nguyên link trên DB.
+            resetLink: prev?.status === "success" && !keepExistingLink
+          });
+          updated++;
+        } else {
+          inserts.set(key, row);
+          insertItemIdByKey.set(key, ids.itemId);
+        }
+        byKey.set(key, row);
         if (skuKey) existingSkus.add(skuKey);
-        touched++;
-        dirty = true;
       } catch (rowErr) {
         console.error("DB Save Error: (skip row)", rowErr);
       }
     }
-    if (dirty) {
-      await writeChannelListingsDbAsync(Array.from(byKey.values()));
+    let newlyAdded = 0;
+    if (inserts.size > 0 || updates.size > 0) {
+      const result = await bulkWriteChannelListingsForSync({
+        inserts: [...inserts.values()],
+        updates: [...updates.values()]
+      });
+      newlyAdded = result.inserted;
     }
+    const touched = inserts.size + updates.size;
     console.log(
-      `\u0110\xE3 l\u01B0u DB th\xE0nh c\xF4ng \u2014 channel_listings ${skipExisting ? "INSERT_MISSING" : "UPSERT"} scanned=${scanned} newlyAdded=${newlyAdded} skipped=${skipped} updated=${updated} touched=${touched} totalKeys=${byKey.size}`
+      `\u0110\xE3 l\u01B0u DB th\xE0nh c\xF4ng \u2014 channel_listings ${skipExisting ? "INSERT_MISSING" : "UPSERT"} (bulkWrite) scanned=${scanned} newlyAdded=${newlyAdded} skipped=${skipped} updated=${updated} touched=${touched} lookup=${existing.length}`
     );
-    return { scanned, newlyAdded, skipped, updated, touched };
+    return {
+      scanned,
+      newlyAdded,
+      skipped,
+      updated,
+      touched,
+      insertedItemIds: [...new Set(insertItemIdByKey.values())]
+    };
   } catch (err) {
     console.error("DB Save Error:", err);
     throw err instanceof Error ? err : new Error(String(err));
   }
-}
-async function upsertChannelListingsBatchSequential(batchRows, shopId, shopName, options) {
-  const stats = await upsertChannelListingsBatch(batchRows, shopId, shopName, options);
-  await yieldEventLoop(CHANNEL_FETCH_YIELD_MS);
-  return stats;
 }
 async function pullShopeeChannelListingsPage(shopId, accessToken, shopName, offset, updateWindow) {
   try {
@@ -143036,12 +143174,16 @@ async function pullShopeeChannelListingsPage(shopId, accessToken, shopName, offs
     let newlyAdded = 0;
     const skippedItems = [];
     const allIds = asShopeeArray(page.itemIds).filter((n) => Number.isFinite(Number(n)) && Number(n) > 0);
-    const existingListings = await readChannelListingsDb();
+    const existingListings = await findChannelListingsForSyncFromStore({
+      itemIds: allIds.map((id) => String(id))
+    });
     const existingItemIds = /* @__PURE__ */ new Set();
     for (const listing of existingListings) {
       const ids = resolveUpsertItemModelFromRow(listing);
       if (ids?.itemId) existingItemIds.add(String(ids.itemId));
     }
+    const pageRows = [];
+    const pendingItemIds = [];
     for (let batchStart = 0; batchStart < allIds.length; batchStart += CHANNEL_FETCH_MICRO_BATCH) {
       const idBatch = allIds.slice(batchStart, batchStart + CHANNEL_FETCH_MICRO_BATCH);
       const missingIds = idBatch.filter((id) => !existingItemIds.has(String(id)));
@@ -143068,16 +143210,8 @@ async function pullShopeeChannelListingsPage(shopId, accessToken, shopName, offs
             if (r2.modelCount > 0) variantItemCount++;
             const rows = asShopeeArray(r2.rows);
             rowsInPage += rows.length;
-            const stats = await upsertChannelListingsBatchSequential(rows, shopId, shopName, {
-              skipExisting: true
-            });
-            rowsSaved += stats.newlyAdded;
-            if (stats.newlyAdded > 0) {
-              newlyAdded += 1;
-              existingItemIds.add(String(item.item_id));
-            } else {
-              skipped += 1;
-            }
+            pageRows.push(...rows);
+            pendingItemIds.push(String(item.item_id));
           }
         } catch (itemErr) {
           const reason = itemErr instanceof Error ? itemErr.message : String(itemErr);
@@ -143095,6 +143229,18 @@ async function pullShopeeChannelListingsPage(shopId, accessToken, shopName, offs
           }
         }
         await yieldEventLoop(CHANNEL_FETCH_YIELD_MS);
+      }
+      await yieldEventLoop(CHANNEL_FETCH_YIELD_MS);
+    }
+    if (pageRows.length > 0) {
+      const stats = await upsertChannelListingsBatch(pageRows, shopId, shopName, {
+        skipExisting: true
+      });
+      rowsSaved = stats.newlyAdded;
+      const insertedItemIds = new Set(stats.insertedItemIds);
+      for (const itemId of pendingItemIds) {
+        if (insertedItemIds.has(itemId)) newlyAdded += 1;
+        else skipped += 1;
       }
       await yieldEventLoop(CHANNEL_FETCH_YIELD_MS);
     }
@@ -151868,8 +152014,7 @@ async function startServer() {
     resolveConnectedShopDisplayName,
     pullShopeeChannelListingsPage,
     flushDbWrites,
-    readChannelListingsDb,
-    refreshCache,
+    countChannelListings,
     isMongoReady,
     isOrdersPullLocked,
     runManualQuickSync3h,

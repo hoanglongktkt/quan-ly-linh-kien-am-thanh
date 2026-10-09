@@ -679,7 +679,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [syncPlatform, setSyncPlatform] = useState<'shopee' | 'tiktok'>('shopee');
   const [syncShopId, setSyncShopId] = useState('');
-  const [syncTimeRange, setSyncTimeRange] = useState<'all' | '24h'>('24h');
+  const [syncTimeRange, setSyncTimeRange] = useState<'all' | '24h'>('all');
   const [isFetchingFromChannel, setIsFetchingFromChannel] = useState(false);
   const [syncProgress, setSyncProgress] = useState({
     page: 0,
@@ -705,7 +705,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
 
   const handleOpenSyncModal = () => {
     setSyncPlatform('shopee');
-    setSyncTimeRange('24h');
+    setSyncTimeRange('all');
     setSyncProgress({ page: 0, totalScanned: 0, skipped: 0, newlyAdded: 0 });
     setSyncResultMessage(null);
     setShowSyncModal(true);
@@ -748,21 +748,8 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
           newlyAdded: totalNewlyAdded,
         });
 
-        const res = await apiFetch('/api/sync-from-shop', {
-          method: 'POST',
-          signal: controller.signal,
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({
-            shop_id: shop.shopId,
-            time_range: syncTimeRange,
-            offset,
-            sync_to: syncTo,
-          }),
-        });
-        const data = await parseJsonResponse<{
+        let res: Response;
+        let data: {
           success?: boolean;
           fetchedCount?: number;
           savedCount?: number;
@@ -774,7 +761,29 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
           newlyAdded?: number;
           message?: string;
           error?: string;
-        }>(res);
+        };
+        try {
+          res = await apiFetch('/api/sync-from-shop', {
+            method: 'POST',
+            signal: controller.signal,
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({
+              shop_id: shop.shopId,
+              time_range: syncTimeRange,
+              offset,
+              sync_to: syncTo,
+            }),
+          });
+          data = await parseJsonResponse<typeof data>(res);
+        } catch (fetchErr: unknown) {
+          const fe = fetchErr as { name?: string; message?: string };
+          if (fe?.name === 'AbortError') throw fetchErr;
+          console.error(`[ProductLinking] sync-from-shop trang ${pageIndex} (offset=${offset}) lỗi:`, fetchErr);
+          throw new Error(`Trang ${pageIndex} (offset=${offset}): ${fe?.message || String(fetchErr)}`);
+        }
 
         if (!res.ok || data.success === false) {
           throw new Error(

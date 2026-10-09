@@ -2303,6 +2303,146 @@ export async function bulkUpsertChannelListingsToStore(rows: any[]): Promise<num
   return ops.length;
 }
 
+const SYNC_LOOKUP_LIMIT = 5000;
+const CHANNEL_LISTING_LINK_FIELDS = new Set([
+  "status",
+  "linkedProductId",
+  "linkedProductTitle",
+  "linkedProductSku",
+]);
+
+/**
+ * Tra cứu channel_listings theo item_id / SKU của MỘT trang sync — không đọc toàn bảng.
+ * channelId luôn là `itemId` hoặc `itemId:modelId` nên match bằng $in + regex tiền tố (dùng index).
+ */
+export async function findChannelListingsForSyncFromStore(input: {
+  itemIds?: string[];
+  skus?: string[];
+}): Promise<any[]> {
+  const itemIds = [
+    ...new Set(
+      (input.itemIds || [])
+        .map((v) => String(v ?? "").trim())
+        .filter((v) => /^\d+$/.test(v)),
+    ),
+  ];
+  const skus = [
+    ...new Set((input.skus || []).map((v) => String(v ?? "").trim()).filter(Boolean)),
+  ];
+  if (itemIds.length === 0 && skus.length === 0) return [];
+
+  if (isProductsDiskMode()) {
+    const itemSet = new Set(itemIds);
+    const skuSet = new Set(skus.map((s) => s.toUpperCase()));
+    return readChannelListingsFromDisk().filter((r) => {
+      const cid = String(r?.channelId || "");
+      const itemId = String(r?.itemId || cid.split(":")[0] || "").trim();
+      return itemSet.has(itemId) || skuSet.has(String(r?.sku || "").trim().toUpperCase());
+    });
+  }
+
+  requireMongo();
+  const or: Record<string, unknown>[] = [];
+  if (itemIds.length > 0) {
+    or.push({
+      channelId: { $in: [...itemIds, ...itemIds.map((id) => new RegExp(`^${id}:`))] },
+    });
+  }
+  if (skus.length > 0) {
+    const skuVariants = [...new Set(skus.flatMap((s) => [s, s.toUpperCase(), s.toLowerCase()]))];
+    or.push({ sku: { $in: skuVariants } });
+  }
+  const docs = await ChannelListingModel.find({ $or: or }).limit(SYNC_LOOKUP_LIMIT).lean();
+  return docsToListings(docs);
+}
+
+/**
+ * Ghi lô channel_listings cho luồng sync sàn bằng bulkWrite — KHÔNG deleteMany toàn bảng.
+ * - inserts: chỉ $setOnInsert → doc đã tồn tại (ghi song song) giữ nguyên, không bị đè.
+ * - updates: $set field dữ liệu sàn; field liên kết chỉ ghi khi resetLink=true.
+ */
+export async function bulkWriteChannelListingsForSync(input: {
+  inserts?: any[];
+  updates?: Array<{ row: any; resetLink?: boolean }>;
+}): Promise<{ inserted: number; modified: number }> {
+  const inserts = (input.inserts || []).filter(
+    (r) => r && typeof r === "object" && String(r.id || "").trim(),
+  );
+  const updates = (input.updates || []).filter(
+    (u) => u?.row && typeof u.row === "object" && String(u.row.id || "").trim(),
+  );
+  if (inserts.length === 0 && updates.length === 0) return { inserted: 0, modified: 0 };
+
+  if (isProductsDiskMode()) {
+    const existingIds = new Set(readChannelListingsFromDisk().map((r) => String(r?.id)));
+    const toInsert = inserts.filter((r) => !existingIds.has(String(r.id).trim()));
+    const toUpdate = updates.map(({ row, resetLink }) => {
+      if (resetLink) return row;
+      const copy = { ...row };
+      for (const field of CHANNEL_LISTING_LINK_FIELDS) delete copy[field];
+      return copy;
+    });
+    await upsertChannelListingsToDisk([...toInsert, ...toUpdate]);
+    return { inserted: toInsert.length, modified: toUpdate.length };
+  }
+
+  requireMongo();
+  const ops: any[] = [];
+  for (const doc of toListingDocs(inserts)) {
+    const { _id, ...rest } = doc;
+    ops.push({
+      updateOne: {
+        filter: { _id },
+        update: { $setOnInsert: rest },
+        upsert: true,
+      },
+    });
+  }
+  for (const { row, resetLink } of updates) {
+    const [doc] = toListingDocs([row]);
+    if (!doc) continue;
+    const $set: Record<string, unknown> = {
+      channelId: doc.channelId,
+      platform: doc.platform,
+      sku: doc.sku,
+    };
+    const $unset: Record<string, ""> = {};
+    for (const [key, value] of Object.entries(doc.data || {})) {
+      const isLinkField = CHANNEL_LISTING_LINK_FIELDS.has(key);
+      if (isLinkField && !resetLink) continue;
+      if (value === undefined) {
+        if (isLinkField) $unset[`data.${key}`] = "";
+        continue;
+      }
+      $set[`data.${key}`] = value;
+    }
+    if (resetLink) {
+      $set.status = doc.status;
+      $set.linkedProductId = doc.linkedProductId;
+    }
+    ops.push({
+      updateOne: {
+        filter: { _id: doc._id },
+        update: Object.keys($unset).length > 0 ? { $set, $unset } : { $set },
+      },
+    });
+  }
+  if (ops.length === 0) return { inserted: 0, modified: 0 };
+
+  let inserted = 0;
+  let modified = 0;
+  await enqueueWrite(async () => {
+    const result = await ChannelListingModel.bulkWrite(ops, { ordered: false });
+    inserted = Number(result.upsertedCount || 0);
+    modified = Number(result.modifiedCount || 0);
+    await setMeta("listings_updated_at", new Date().toISOString());
+    console.log(
+      `[MongoDB] bulkWrite channel_listings (sync) — ops=${ops.length} upserted=${inserted} modified=${modified} matched=${result.matchedCount || 0}`,
+    );
+  });
+  return { inserted, modified };
+}
+
 /**
  * Liên kết thủ công 1 listing.
  * Query cờ mapping trước — đã success cùng kho thì không ghi;

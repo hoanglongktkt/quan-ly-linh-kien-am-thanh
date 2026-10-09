@@ -80,8 +80,7 @@ let deps = {
     skippedItems: [],
   }),
   flushDbWrites: async () => {},
-  readChannelListingsDb: async () => [],
-  refreshCache: async () => {},
+  countChannelListings: async () => 0,
   isMongoReady: () => false,
   isOrdersPullLocked: () => false,
   runManualQuickSync3h: async () => ({
@@ -1055,14 +1054,9 @@ export async function syncFromShop(req, res) {
     let listingsCount = 0;
     try {
       await deps.flushDbWrites();
-      listingsCount = (await deps.readChannelListingsDb()).length;
+      listingsCount = await deps.countChannelListings();
     } catch {
       listingsCount = pageResult.rowsSaved;
-    }
-    try {
-      await deps.refreshCache();
-    } catch (cacheErr) {
-      console.error("[Sync From Shop] refreshCache thất bại:", cacheErr);
     }
     console.log(
       `Đã lưu DB thành công — trang offset=${offset}, listingsInDb=${listingsCount} mongo=${deps.isMongoReady()}`,
