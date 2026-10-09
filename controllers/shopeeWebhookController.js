@@ -47,6 +47,26 @@ let deps = {
   listShopeeOAuthShopIds: () => [],
 };
 
+/** Push status được phép đè get_order_detail vừa lấy (bước tiến không thể đảo ngược). */
+const PUSH_STATUS_OVERRIDES_DETAIL = new Set([
+  "SHIPPED",
+  "TO_CONFIRM_RECEIVE",
+  "COMPLETED",
+  "IN_CANCEL",
+  "CANCELLED",
+  "TO_RETURN",
+]);
+const DETAIL_TERMINAL_RAW = new Set(["COMPLETED", "CANCELLED", "IN_CANCEL", "TO_RETURN", "RETURN"]);
+
+/** Push có tiến xa hơn raw get_order_detail không — push trễ không được kéo lùi detail. */
+function pushAdvancesDetail(detailRaw, pushRaw) {
+  if (!PUSH_STATUS_OVERRIDES_DETAIL.has(pushRaw)) return false;
+  if (pushRaw === detailRaw) return true;
+  if (DETAIL_TERMINAL_RAW.has(detailRaw)) return false;
+  if (pushRaw === "SHIPPED" && detailRaw === "TO_CONFIRM_RECEIVE") return false;
+  return true;
+}
+
 /** Trigger incremental pull ngắn — heal đơn khi get_order_detail fail hoặc queue overflow. */
 function scheduleWebhookRescuePull(orderSn, shopId, reason = "webhook_detail_fail") {
   const sn = String(orderSn || "").trim();
@@ -754,8 +774,16 @@ async function processShopeeWebhookPayloadInner(body) {
       const beforeTn = String(
         orders[idx].trackingNumber || orders[idx].tracking_no || "",
       );
+      // get_order_detail vừa lấy là trạng thái mới nhất — push (có thể tới trễ/lệch thứ tự)
+      // chỉ được đè khi là bước tiến (giao / hoàn tất / hủy / hoàn).
+      const pushStatusUp = String(parsed.status || "").trim().toUpperCase();
+      const detailRawUp = String(orders[idx].shopee_order_status || "").trim().toUpperCase();
+      const pushFields =
+        fetchedDetail && pushStatusUp && !pushAdvancesDetail(detailRawUp, pushStatusUp)
+          ? { ...parsed, status: "" }
+          : parsed;
       try {
-        deps.applyShopeePushFieldsToOrder(orders[idx], parsed);
+        deps.applyShopeePushFieldsToOrder(orders[idx], pushFields);
       } catch (applyErr) {
         console.warn(
           `[Shopee Webhook] applyShopeePushFieldsToOrder:`,

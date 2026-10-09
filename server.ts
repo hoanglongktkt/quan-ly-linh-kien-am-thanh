@@ -22186,8 +22186,10 @@ function applyShopeePushFieldsToOrder(order: any, parsed: {
   if (parsed.logisticsStatus) {
     order.logistics_status = String(parsed.logisticsStatus).toUpperCase();
   }
-  if (parsed.status) {
-    order.shopee_order_status = String(parsed.status).toUpperCase();
+  // Code 15 (READY) / Code 30 (LOGISTICS_*) không phải order_status — cấm ghi vào raw.
+  const pushRawStatus = String(parsed.status || "").trim().toUpperCase();
+  if (pushRawStatus && SHOPEE_WEBHOOK_ORDER_STATUSES.has(pushRawStatus)) {
+    order.shopee_order_status = pushRawStatus;
   }
 
   const tn = String(order.trackingNumber || order.tracking_no || "").trim();

@@ -11,6 +11,13 @@ const JOB_GAP_MS = 400;
 const MAX_RETRY = 5;
 /** Lease khi state=running. Hết hạn thì job được claim lại (process chết giữa chừng). */
 const RUNNING_LEASE_MS = 4 * 60 * 1000;
+/**
+ * Push cũ hơn ngưỡng này bỏ qua (cron đã đồng bộ) — status trong payload cũ không được
+ * kéo lùi đơn đang ở tab khác.
+ */
+const STALE_JOB_MAX_AGE_MS = 15 * 60 * 1000;
+const STALE_SWEEP_INTERVAL_MS = 60_000;
+const STALE_SKIP_LOG = "stale_skipped";
 
 let timer = null;
 let draining = false;
@@ -86,14 +93,39 @@ async function claimNextJob() {
         },
       },
     ],
-    { sort: { next_run_at: 1, _id: 1 }, new: true },
+    // Mongoose 9 chặn update dạng mảng (pipeline) nếu thiếu updatePipeline.
+    { sort: { next_run_at: 1, _id: 1 }, returnDocument: "after", updatePipeline: true },
   ).lean();
 }
 
-async function markSucceeded(job) {
+let lastStaleSweepAt = 0;
+
+/** Đánh dấu job pending/failed quá hạn là đã bỏ qua — 1 lệnh updateMany, tối đa 1 lần/phút. */
+async function sweepStaleJobs() {
+  const now = Date.now();
+  if (now - lastStaleSweepAt < STALE_SWEEP_INTERVAL_MS) return;
+  lastStaleSweepAt = now;
+  const cutoff = new Date(now - STALE_JOB_MAX_AGE_MS);
+  const result = await WebhookJob.updateMany(
+    { state: { $in: ["pending", "failed"] }, createdAt: { $lt: cutoff } },
+    { $set: { state: "succeeded", error_log: STALE_SKIP_LOG, next_run_at: new Date(now) } },
+  );
+  if (result?.modifiedCount) {
+    console.warn(
+      `[WebhookJobQueue] stale sweep: bỏ qua ${result.modifiedCount} job cũ hơn ${STALE_JOB_MAX_AGE_MS / 60000} phút`,
+    );
+  }
+}
+
+function isStaleJob(job) {
+  const created = job?.createdAt ? new Date(job.createdAt).getTime() : NaN;
+  return Number.isFinite(created) && Date.now() - created > STALE_JOB_MAX_AGE_MS;
+}
+
+async function markSucceeded(job, note = "") {
   await WebhookJob.updateOne(
     { _id: job._id, state: "running", next_run_at: job.next_run_at },
-    { $set: { state: "succeeded", error_log: "", next_run_at: new Date() } },
+    { $set: { state: "succeeded", error_log: note, next_run_at: new Date() } },
   );
 }
 
@@ -127,8 +159,13 @@ async function runClaimedJob(job) {
   if (typeof processor !== "function") {
     throw new Error("webhook_job_processor_missing");
   }
+  if (isStaleJob(job)) {
+    await markSucceeded(job, STALE_SKIP_LOG);
+    return false;
+  }
   await processor(job.payload);
   await markSucceeded(job);
+  return true;
 }
 
 async function drainOnce() {
@@ -136,6 +173,11 @@ async function drainOnce() {
   if (typeof processor !== "function") return;
   draining = true;
   try {
+    try {
+      await sweepStaleJobs();
+    } catch (sweepErr) {
+      console.error("[WebhookJobQueue] stale sweep failed:", sweepErr?.message || sweepErr);
+    }
     for (let i = 0; i < BATCH_LIMIT; i += 1) {
       let job = null;
       try {
@@ -149,8 +191,12 @@ async function drainOnce() {
       }
       if (!job) break;
       try {
-        await runClaimedJob(job);
-        console.log(`[WebhookJobQueue] job succeeded jobId=${job.jobId}`);
+        const processed = await runClaimedJob(job);
+        console.log(
+          processed
+            ? `[WebhookJobQueue] job succeeded jobId=${job.jobId}`
+            : `[WebhookJobQueue] job stale skipped jobId=${job.jobId}`,
+        );
       } catch (jobErr) {
         try {
           await markFailed(job, jobErr);

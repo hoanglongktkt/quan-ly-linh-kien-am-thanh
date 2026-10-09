@@ -77989,6 +77989,9 @@ var BATCH_LIMIT = 5;
 var JOB_GAP_MS = 400;
 var MAX_RETRY = 5;
 var RUNNING_LEASE_MS = 4 * 60 * 1e3;
+var STALE_JOB_MAX_AGE_MS = 15 * 60 * 1e3;
+var STALE_SWEEP_INTERVAL_MS = 6e4;
+var STALE_SKIP_LOG = "stale_skipped";
 var timer = null;
 var draining = false;
 var processor = null;
@@ -78053,13 +78056,34 @@ async function claimNextJob() {
         }
       }
     ],
-    { sort: { next_run_at: 1, _id: 1 }, new: true }
+    // Mongoose 9 chặn update dạng mảng (pipeline) nếu thiếu updatePipeline.
+    { sort: { next_run_at: 1, _id: 1 }, returnDocument: "after", updatePipeline: true }
   ).lean();
 }
-async function markSucceeded(job) {
+var lastStaleSweepAt = 0;
+async function sweepStaleJobs() {
+  const now = Date.now();
+  if (now - lastStaleSweepAt < STALE_SWEEP_INTERVAL_MS) return;
+  lastStaleSweepAt = now;
+  const cutoff = new Date(now - STALE_JOB_MAX_AGE_MS);
+  const result = await WebhookJob_default.updateMany(
+    { state: { $in: ["pending", "failed"] }, createdAt: { $lt: cutoff } },
+    { $set: { state: "succeeded", error_log: STALE_SKIP_LOG, next_run_at: new Date(now) } }
+  );
+  if (result?.modifiedCount) {
+    console.warn(
+      `[WebhookJobQueue] stale sweep: b\u1ECF qua ${result.modifiedCount} job c\u0169 h\u01A1n ${STALE_JOB_MAX_AGE_MS / 6e4} ph\xFAt`
+    );
+  }
+}
+function isStaleJob(job) {
+  const created = job?.createdAt ? new Date(job.createdAt).getTime() : NaN;
+  return Number.isFinite(created) && Date.now() - created > STALE_JOB_MAX_AGE_MS;
+}
+async function markSucceeded(job, note = "") {
   await WebhookJob_default.updateOne(
     { _id: job._id, state: "running", next_run_at: job.next_run_at },
-    { $set: { state: "succeeded", error_log: "", next_run_at: /* @__PURE__ */ new Date() } }
+    { $set: { state: "succeeded", error_log: note, next_run_at: /* @__PURE__ */ new Date() } }
   );
 }
 async function markFailed(job, err) {
@@ -78091,14 +78115,24 @@ async function runClaimedJob(job) {
   if (typeof processor !== "function") {
     throw new Error("webhook_job_processor_missing");
   }
+  if (isStaleJob(job)) {
+    await markSucceeded(job, STALE_SKIP_LOG);
+    return false;
+  }
   await processor(job.payload);
   await markSucceeded(job);
+  return true;
 }
 async function drainOnce() {
   if (draining) return;
   if (typeof processor !== "function") return;
   draining = true;
   try {
+    try {
+      await sweepStaleJobs();
+    } catch (sweepErr) {
+      console.error("[WebhookJobQueue] stale sweep failed:", sweepErr?.message || sweepErr);
+    }
     for (let i2 = 0; i2 < BATCH_LIMIT; i2 += 1) {
       let job = null;
       try {
@@ -78112,8 +78146,10 @@ async function drainOnce() {
       }
       if (!job) break;
       try {
-        await runClaimedJob(job);
-        console.log(`[WebhookJobQueue] job succeeded jobId=${job.jobId}`);
+        const processed = await runClaimedJob(job);
+        console.log(
+          processed ? `[WebhookJobQueue] job succeeded jobId=${job.jobId}` : `[WebhookJobQueue] job stale skipped jobId=${job.jobId}`
+        );
       } catch (jobErr) {
         try {
           await markFailed(job, jobErr);
@@ -134249,6 +134285,22 @@ var deps21 = {
   },
   listShopeeOAuthShopIds: () => []
 };
+var PUSH_STATUS_OVERRIDES_DETAIL = /* @__PURE__ */ new Set([
+  "SHIPPED",
+  "TO_CONFIRM_RECEIVE",
+  "COMPLETED",
+  "IN_CANCEL",
+  "CANCELLED",
+  "TO_RETURN"
+]);
+var DETAIL_TERMINAL_RAW = /* @__PURE__ */ new Set(["COMPLETED", "CANCELLED", "IN_CANCEL", "TO_RETURN", "RETURN"]);
+function pushAdvancesDetail(detailRaw, pushRaw) {
+  if (!PUSH_STATUS_OVERRIDES_DETAIL.has(pushRaw)) return false;
+  if (pushRaw === detailRaw) return true;
+  if (DETAIL_TERMINAL_RAW.has(detailRaw)) return false;
+  if (pushRaw === "SHIPPED" && detailRaw === "TO_CONFIRM_RECEIVE") return false;
+  return true;
+}
 function scheduleWebhookRescuePull(orderSn, shopId, reason = "webhook_detail_fail") {
   const sn = String(orderSn || "").trim();
   if (!sn) return;
@@ -134835,8 +134887,11 @@ async function processShopeeWebhookPayloadInner(body) {
       const beforeTn = String(
         orders[idx].trackingNumber || orders[idx].tracking_no || ""
       );
+      const pushStatusUp = String(parsed.status || "").trim().toUpperCase();
+      const detailRawUp = String(orders[idx].shopee_order_status || "").trim().toUpperCase();
+      const pushFields = fetchedDetail && pushStatusUp && !pushAdvancesDetail(detailRawUp, pushStatusUp) ? { ...parsed, status: "" } : parsed;
       try {
-        deps21.applyShopeePushFieldsToOrder(orders[idx], parsed);
+        deps21.applyShopeePushFieldsToOrder(orders[idx], pushFields);
       } catch (applyErr) {
         console.warn(
           `[Shopee Webhook] applyShopeePushFieldsToOrder:`,
@@ -151004,8 +151059,9 @@ function applyShopeePushFieldsToOrder(order, parsed) {
   if (parsed.logisticsStatus) {
     order.logistics_status = String(parsed.logisticsStatus).toUpperCase();
   }
-  if (parsed.status) {
-    order.shopee_order_status = String(parsed.status).toUpperCase();
+  const pushRawStatus = String(parsed.status || "").trim().toUpperCase();
+  if (pushRawStatus && SHOPEE_WEBHOOK_ORDER_STATUSES.has(pushRawStatus)) {
+    order.shopee_order_status = pushRawStatus;
   }
   const tn = String(order.trackingNumber || order.tracking_no || "").trim();
   const hasTn = Boolean(tn && !isShopeeInternalTrackingCode2(tn));
