@@ -1,5 +1,4 @@
 import mongoose from "mongoose";
-import { WEBHOOK_OPERATIONAL_INDEXES } from "../modules/operations/mongoIndexes.js";
 
 /**
  * Hàng đợi webhook Shopee bền trên Mongo.
@@ -54,13 +53,14 @@ const WebhookJobSchema = new mongoose.Schema(
     collection: "webhook_jobs",
     versionKey: false,
     timestamps: true,
+    // Chỉ tự đảm bảo hai unique index đơn cần thiết cho chống trùng job.
+    // Compound và index đo lường không tự tạo khi boot.
   },
 );
 
 WebhookJobSchema.index({ jobId: 1 }, { unique: true, name: "webhook_jobs_jobId_unique" });
 WebhookJobSchema.index({ active_key: 1 }, { unique: true, sparse: true, name: "webhook_jobs_active_key_unique" });
-WebhookJobSchema.index({ state: 1, next_run_at: 1 }, { name: "webhook_jobs_state_next_run" });
-for (const [key, options] of WEBHOOK_OPERATIONAL_INDEXES) WebhookJobSchema.index(key, options);
+// Giữ nguyên compound đã có trên Mongo; không khai báo thêm để Mongoose tự tạo.
 
 const WebhookJob =
   mongoose.models.WebhookJob || mongoose.model("WebhookJob", WebhookJobSchema);

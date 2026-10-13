@@ -60,7 +60,11 @@ test("API bảo vệ token, cache theo shop và trả lỗi DB an toàn", async 
 test("metrics tính độ trễ có trọng số, phân biệt retry và queue hiện tại", async () => {
   const now = new Date("2026-10-13T12:30:30Z");
   const plans = [];
-  const db = { collection: (name) => ({ aggregate: (pipeline, options) => {
+  const db = { collection: (name) => ({ find: (filter) => {
+    assert.equal(name, "sync_orchestrator_watermarks");
+    assert.deepEqual(filter, { _id: "123" });
+    return { limit: () => ({ toArray: async () => [{ _id: "123", lastSuccessfulAt: new Date(now - 60000) }] }) };
+  }, aggregate: (pipeline, options) => {
     plans.push({ name, pipeline, options });
     return { toArray: async () => name === "ops_api_errors"
       ? [{ _id: { shopId: "123", category: "http" }, count: 3 }]
@@ -73,12 +77,15 @@ test("metrics tính độ trễ có trọng số, phân biệt retry và queue h
   } }) };
   const result = await collectOperationsMetrics(db, { shopId: "123", windowMinutes: 60 }, now);
   assert.equal(result.queue.depth, 11);
+  assert.equal(result.queue.waiting, 10);
   assert.equal(result.queue.oldestAgeMs, 120000);
   assert.equal(result.shops[0].retryAttempts, 2);
   assert.equal(result.shops[0].jobFailures, 3);
   assert.equal(result.shops[0].apiErrors, 3);
   assert.equal(result.shops[0].webhookToOrderLatencyMs.average, 600);
   assert.equal(result.shops[1].webhookToOrderLatencyMs.average, null);
+  assert.equal(result.shops[0].lastSuccessfulSyncAt.toISOString(), "2026-10-13T12:29:30.000Z");
+  assert.equal(result.summary.webhookToOrderLatencyMs.average, 600);
   assert.equal(result.window.apiErrorSince, "2026-10-13T11:30:00.000Z");
   for (const plan of plans) {
     assert.equal(plan.pipeline[0].$match.shopId, "123");

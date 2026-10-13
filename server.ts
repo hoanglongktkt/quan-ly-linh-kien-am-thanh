@@ -1,6 +1,6 @@
 import { readShopeePushData, extractShopeeWebhookRawStatus } from "./modules/webhooks/pushData.ts";
 import express from "express";
-import operationsRoutes from "./routes/operationsRoutes.js";
+import operationsRoutes, { startDefaultOperationsHealthMonitor } from "./routes/operationsRoutes.js";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
@@ -22803,6 +22803,8 @@ async function startServer() {
   /** DB chưa sẵn sàng → trả 503 NGAY (sync, không await/chờ). Auth/health/oauth/ship-order vẫn chạy. */
   // Xác thực riêng và trả 503 rõ ràng khi Mongo chưa kết nối.
   app.use("/api/internal/ops", operationsRoutes);
+  // Theo dõi mỗi phút, khóa lấy mẫu dùng chung Mongo cho các process Passenger.
+  startDefaultOperationsHealthMonitor();
   app.use(dbReadyMiddleware);
 
   // Public — đăng ký TRƯỚC mọi app.use("/api/orders", authMiddleware, ...).

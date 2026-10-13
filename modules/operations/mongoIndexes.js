@@ -43,6 +43,9 @@ export async function ensureMongoIndex(db, collection, key, options) {
     }
     return hit.name;
   }
+  // explain chỉ đo kế hoạch truy vấn; compound mới cần cả đo tải ghi trên staging.
+  // Chặn tạo tự động thay vì coi việc có explain là bằng chứng write không chậm.
+  if (Object.keys(key).length > 1) throw new Error(`compound_index_requires_review:${collection}:${options.name}`);
   return coll.createIndex(key, options);
 }
 
@@ -66,7 +69,19 @@ export function operationalIndexPlan() {
 export async function ensureOperationalIndexes(db) {
   const groups = operationalIndexPlan();
   const applied = [];
-  // Tạo tuần tự để hạn chế tải lúc khởi động cPanel; không xóa index hiện có.
+  // Chỉ công cụ vận hành gọi; preflight trước để không tạo một phần rồi mới từ chối compound.
+  for (const [collection, indexes] of groups) {
+    const compounds = indexes.filter(([key]) => Object.keys(key).length > 1);
+    if (!compounds.length) continue;
+    let existing = [];
+    try { existing = await db.collection(collection).indexes(); }
+    catch (error) { if (error?.code !== 26) throw error; }
+    for (const [key, options] of compounds) {
+      if (!existing.some((index) => JSON.stringify(index.key) === JSON.stringify(key))) {
+        throw new Error(`compound_index_requires_review:${collection}:${options.name}`);
+      }
+    }
+  }
   for (const [collection, indexes] of groups) {
     for (const [key, options] of indexes) applied.push(await ensureMongoIndex(db, collection, key, options));
   }

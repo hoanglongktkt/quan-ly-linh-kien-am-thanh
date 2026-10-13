@@ -1960,8 +1960,8 @@ var require_depd = __commonJS({
       return typeName && callSite.getMethodName() ? typeName + "." + funcName : funcName;
     }
     function formatPlain(msg, caller, stack) {
-      var timestamp = (/* @__PURE__ */ new Date()).toUTCString();
-      var formatted = timestamp + " " + this._namespace + " deprecated " + msg;
+      var timestamp2 = (/* @__PURE__ */ new Date()).toUTCString();
+      var formatted = timestamp2 + " " + this._namespace + " deprecated " + msg;
       if (this._traced) {
         for (var i2 = 0; i2 < stack.length; i2++) {
           formatted += "\n    at " + stack[i2].toString();
@@ -21811,14 +21811,14 @@ var require_etag = __commonJS({
   "node_modules/etag/index.js"(exports2, module2) {
     "use strict";
     module2.exports = etag;
-    var crypto12 = require("crypto");
+    var crypto13 = require("crypto");
     var Stats = require("fs").Stats;
     var toString3 = Object.prototype.toString;
     function entitytag(entity) {
       if (entity.length === 0) {
         return '"0-2jmj7l5rSw0yVb/vlWAYkK/YBwk"';
       }
-      var hash = crypto12.createHash("sha1").update(entity, "utf8").digest("base64").substring(0, 27);
+      var hash = crypto13.createHash("sha1").update(entity, "utf8").digest("base64").substring(0, 27);
       var len = typeof entity === "string" ? Buffer.byteLength(entity, "utf8") : entity.length;
       return '"' + len.toString(16) + "-" + hash + '"';
     }
@@ -21892,8 +21892,8 @@ var require_fresh = __commonJS({
       return true;
     }
     function parseHttpDate(date) {
-      var timestamp = date && Date.parse(date);
-      return typeof timestamp === "number" ? timestamp : NaN;
+      var timestamp2 = date && Date.parse(date);
+      return typeof timestamp2 === "number" ? timestamp2 : NaN;
     }
     function parseTokenList(str) {
       var end = 0;
@@ -22684,8 +22684,8 @@ var require_send = __commonJS({
       return list;
     }
     function parseHttpDate(date) {
-      var timestamp = date && Date.parse(date);
-      return typeof timestamp === "number" ? timestamp : NaN;
+      var timestamp2 = date && Date.parse(date);
+      return typeof timestamp2 === "number" ? timestamp2 : NaN;
     }
     function parseTokenList(str) {
       var end = 0;
@@ -24711,11 +24711,11 @@ var require_request = __commonJS({
 // node_modules/cookie-signature/index.js
 var require_cookie_signature = __commonJS({
   "node_modules/cookie-signature/index.js"(exports2) {
-    var crypto12 = require("crypto");
+    var crypto13 = require("crypto");
     exports2.sign = function(val, secret) {
       if ("string" !== typeof val) throw new TypeError("Cookie value must be provided as a string.");
       if (null == secret) throw new TypeError("Secret key must be provided.");
-      return val + "." + crypto12.createHmac("sha256", secret).update(val).digest("base64").replace(/\=+$/, "");
+      return val + "." + crypto13.createHmac("sha256", secret).update(val).digest("base64").replace(/\=+$/, "");
     };
     exports2.unsign = function(val, secret) {
       if ("string" !== typeof val) throw new TypeError("Signed cookie string must be provided.");
@@ -24724,7 +24724,7 @@ var require_cookie_signature = __commonJS({
       return sha1(mac) == sha1(val) ? str : false;
     };
     function sha1(str) {
-      return crypto12.createHash("sha1").update(str).digest("hex");
+      return crypto13.createHash("sha1").update(str).digest("hex");
     }
   }
 });
@@ -25692,13 +25692,146 @@ var require_express2 = __commonJS({
   }
 });
 
+// utils/appPaths.js
+function resolveAppRoot() {
+  const candidates = [
+    process.env.PASSENGER_APP_ROOT,
+    typeof __dirname !== "undefined" ? __dirname : "",
+    process.cwd()
+  ].map((c) => String(c || "").trim()).filter(Boolean);
+  for (const candidate of candidates) {
+    const abs = import_path.default.resolve(candidate);
+    if (import_fs.default.existsSync(import_path.default.join(abs, "server.cjs")) || import_fs.default.existsSync(import_path.default.join(abs, "data")) || import_fs.default.existsSync(import_path.default.join(abs, ".htaccess")) || import_fs.default.existsSync(import_path.default.join(abs, ".env"))) {
+      return abs;
+    }
+  }
+  return import_path.default.resolve(candidates[0] || process.cwd());
+}
+function resolveAppBaseUrl() {
+  const fromEnv = String(process.env.APP_URL || process.env.API_BASE_URL || "").trim();
+  if (fromEnv) return fromEnv.replace(/\/$/, "");
+  if (process.env.NODE_ENV === "production") return PRODUCTION_APP_URL;
+  return PRODUCTION_APP_URL;
+}
+var import_path, import_fs, PDF_DIR, PRODUCTION_APP_URL;
+var init_appPaths = __esm({
+  "utils/appPaths.js"() {
+    import_path = __toESM(require("path"), 1);
+    import_fs = __toESM(require("fs"), 1);
+    PDF_DIR = import_path.default.join(resolveAppRoot(), "storage", "labels");
+    PRODUCTION_APP_URL = "https://quanly.linhkienamthanh.net";
+  }
+});
+
+// utils/concurrency.js
+function sleep(ms) {
+  return new Promise((r2) => setTimeout(r2, ms));
+}
+async function mapInChunks(items, chunkSize, worker, pauseMs = 300) {
+  const list = Array.isArray(items) ? items : [];
+  const size = Math.max(1, Math.floor(Number(chunkSize) || 10));
+  const gap = Math.max(0, Math.floor(Number(pauseMs) || 0));
+  const results = [];
+  for (let i2 = 0; i2 < list.length; i2 += size) {
+    const chunk = list.slice(i2, i2 + size);
+    const part = await Promise.all(chunk.map((item, j) => worker(item, i2 + j)));
+    results.push(...part);
+    if (i2 + size < list.length && gap > 0) await sleep(gap);
+  }
+  return results;
+}
+async function mapWithConcurrency(items, concurrency, worker) {
+  const n = items.length;
+  if (n === 0) return [];
+  const limit = Math.max(1, Math.min(concurrency, n));
+  const results = new Array(n);
+  let next = 0;
+  const runners = Array.from({ length: limit }, async () => {
+    while (true) {
+      const i2 = next++;
+      if (i2 >= n) return;
+      try {
+        results[i2] = await worker(items[i2], i2);
+      } catch (err) {
+        results[i2] = void 0;
+        console.error("[mapWithConcurrency] worker error at index", i2, err);
+      }
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+async function mapByShopGroups(items, resolveShopId, worker, opts = {}) {
+  const list = Array.isArray(items) ? items : [];
+  if (list.length === 0) return;
+  const perShopChunk = Math.max(1, Math.floor(Number(opts.perShopChunk) || 4));
+  const pauseMs = Math.max(0, Math.floor(Number(opts.pauseMs) || 250));
+  const maxParallelShops = Math.max(1, Math.floor(Number(opts.maxParallelShops) || 6));
+  const groups = /* @__PURE__ */ new Map();
+  const noShopGroup = [];
+  for (const item of list) {
+    let sid = "";
+    try {
+      sid = String(resolveShopId(item) || "").trim();
+    } catch {
+      sid = "";
+    }
+    if (!sid) {
+      noShopGroup.push(item);
+      continue;
+    }
+    const arr = groups.get(sid);
+    if (arr) arr.push(item);
+    else groups.set(sid, [item]);
+  }
+  const allGroups = [...groups.values()];
+  if (noShopGroup.length) allGroups.push(noShopGroup);
+  if (allGroups.length === 0) return;
+  await mapWithConcurrency(
+    allGroups,
+    maxParallelShops,
+    (group) => mapInChunks(group, perShopChunk, worker, pauseMs)
+  );
+}
+function delay(ms = DEFAULT_DELAY_MS) {
+  return sleep(ms);
+}
+async function yieldEventLoop(ms = DEFAULT_YIELD_MS) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+async function withOperationTimeout(work, ms, label) {
+  const controller = new AbortController();
+  let timer2;
+  const promise = typeof work === "function" ? work(controller.signal) : work;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer2 = setTimeout(() => {
+          controller.abort();
+          reject(new Error(`${label} timeout sau ${ms / 1e3} gi\xE2y.`));
+        }, ms);
+      })
+    ]);
+  } finally {
+    if (timer2) clearTimeout(timer2);
+  }
+}
+var DEFAULT_DELAY_MS, DEFAULT_YIELD_MS;
+var init_concurrency = __esm({
+  "utils/concurrency.js"() {
+    DEFAULT_DELAY_MS = 1e3;
+    DEFAULT_YIELD_MS = 50;
+  }
+});
+
 // node_modules/dotenv/lib/main.js
 var require_main = __commonJS({
   "node_modules/dotenv/lib/main.js"(exports2, module2) {
     var fs26 = require("fs");
     var path26 = require("path");
     var os3 = require("os");
-    var crypto12 = require("crypto");
+    var crypto13 = require("crypto");
     var TIPS = [
       "\u25C8 encrypted .env [www.dotenvx.com]",
       "\u25C8 secrets for agents [www.dotenvx.com]",
@@ -25942,7 +26075,7 @@ var require_main = __commonJS({
       const authTag = ciphertext.subarray(-16);
       ciphertext = ciphertext.subarray(12, -16);
       try {
-        const aesgcm = crypto12.createDecipheriv("aes-256-gcm", key, nonce);
+        const aesgcm = crypto13.createDecipheriv("aes-256-gcm", key, nonce);
         aesgcm.setAuthTag(authTag);
         return `${aesgcm.update(ciphertext)}${aesgcm.final()}`;
       } catch (error) {
@@ -47992,139 +48125,6 @@ var require_cjs = __commonJS({
   }
 });
 
-// utils/appPaths.js
-function resolveAppRoot() {
-  const candidates = [
-    process.env.PASSENGER_APP_ROOT,
-    typeof __dirname !== "undefined" ? __dirname : "",
-    process.cwd()
-  ].map((c) => String(c || "").trim()).filter(Boolean);
-  for (const candidate of candidates) {
-    const abs = import_path.default.resolve(candidate);
-    if (import_fs.default.existsSync(import_path.default.join(abs, "server.cjs")) || import_fs.default.existsSync(import_path.default.join(abs, "data")) || import_fs.default.existsSync(import_path.default.join(abs, ".htaccess")) || import_fs.default.existsSync(import_path.default.join(abs, ".env"))) {
-      return abs;
-    }
-  }
-  return import_path.default.resolve(candidates[0] || process.cwd());
-}
-function resolveAppBaseUrl() {
-  const fromEnv = String(process.env.APP_URL || process.env.API_BASE_URL || "").trim();
-  if (fromEnv) return fromEnv.replace(/\/$/, "");
-  if (process.env.NODE_ENV === "production") return PRODUCTION_APP_URL;
-  return PRODUCTION_APP_URL;
-}
-var import_path, import_fs, PDF_DIR, PRODUCTION_APP_URL;
-var init_appPaths = __esm({
-  "utils/appPaths.js"() {
-    import_path = __toESM(require("path"), 1);
-    import_fs = __toESM(require("fs"), 1);
-    PDF_DIR = import_path.default.join(resolveAppRoot(), "storage", "labels");
-    PRODUCTION_APP_URL = "https://quanly.linhkienamthanh.net";
-  }
-});
-
-// utils/concurrency.js
-function sleep(ms) {
-  return new Promise((r2) => setTimeout(r2, ms));
-}
-async function mapInChunks(items, chunkSize, worker, pauseMs = 300) {
-  const list = Array.isArray(items) ? items : [];
-  const size = Math.max(1, Math.floor(Number(chunkSize) || 10));
-  const gap = Math.max(0, Math.floor(Number(pauseMs) || 0));
-  const results = [];
-  for (let i2 = 0; i2 < list.length; i2 += size) {
-    const chunk = list.slice(i2, i2 + size);
-    const part = await Promise.all(chunk.map((item, j) => worker(item, i2 + j)));
-    results.push(...part);
-    if (i2 + size < list.length && gap > 0) await sleep(gap);
-  }
-  return results;
-}
-async function mapWithConcurrency(items, concurrency, worker) {
-  const n = items.length;
-  if (n === 0) return [];
-  const limit = Math.max(1, Math.min(concurrency, n));
-  const results = new Array(n);
-  let next = 0;
-  const runners = Array.from({ length: limit }, async () => {
-    while (true) {
-      const i2 = next++;
-      if (i2 >= n) return;
-      try {
-        results[i2] = await worker(items[i2], i2);
-      } catch (err) {
-        results[i2] = void 0;
-        console.error("[mapWithConcurrency] worker error at index", i2, err);
-      }
-    }
-  });
-  await Promise.all(runners);
-  return results;
-}
-async function mapByShopGroups(items, resolveShopId, worker, opts = {}) {
-  const list = Array.isArray(items) ? items : [];
-  if (list.length === 0) return;
-  const perShopChunk = Math.max(1, Math.floor(Number(opts.perShopChunk) || 4));
-  const pauseMs = Math.max(0, Math.floor(Number(opts.pauseMs) || 250));
-  const maxParallelShops = Math.max(1, Math.floor(Number(opts.maxParallelShops) || 6));
-  const groups = /* @__PURE__ */ new Map();
-  const noShopGroup = [];
-  for (const item of list) {
-    let sid = "";
-    try {
-      sid = String(resolveShopId(item) || "").trim();
-    } catch {
-      sid = "";
-    }
-    if (!sid) {
-      noShopGroup.push(item);
-      continue;
-    }
-    const arr = groups.get(sid);
-    if (arr) arr.push(item);
-    else groups.set(sid, [item]);
-  }
-  const allGroups = [...groups.values()];
-  if (noShopGroup.length) allGroups.push(noShopGroup);
-  if (allGroups.length === 0) return;
-  await mapWithConcurrency(
-    allGroups,
-    maxParallelShops,
-    (group) => mapInChunks(group, perShopChunk, worker, pauseMs)
-  );
-}
-function delay2(ms = DEFAULT_DELAY_MS) {
-  return sleep(ms);
-}
-async function yieldEventLoop(ms = DEFAULT_YIELD_MS) {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
-async function withOperationTimeout(work, ms, label) {
-  const controller = new AbortController();
-  let timer2;
-  const promise = typeof work === "function" ? work(controller.signal) : work;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise((_, reject) => {
-        timer2 = setTimeout(() => {
-          controller.abort();
-          reject(new Error(`${label} timeout sau ${ms / 1e3} gi\xE2y.`));
-        }, ms);
-      })
-    ]);
-  } finally {
-    if (timer2) clearTimeout(timer2);
-  }
-}
-var DEFAULT_DELAY_MS, DEFAULT_YIELD_MS;
-var init_concurrency = __esm({
-  "utils/concurrency.js"() {
-    DEFAULT_DELAY_MS = 1e3;
-    DEFAULT_YIELD_MS = 50;
-  }
-});
-
 // models/DonHoanHuy.js
 var DonHoanHuy_exports = {};
 __export(DonHoanHuy_exports, {
@@ -48457,14 +48457,14 @@ var require_buffer_equal_constant_time = __commonJS({
 var require_jwa = __commonJS({
   "node_modules/jwa/index.js"(exports2, module2) {
     var Buffer4 = require_safe_buffer().Buffer;
-    var crypto12 = require("crypto");
+    var crypto13 = require("crypto");
     var formatEcdsa = require_ecdsa_sig_formatter();
     var util4 = require("util");
     var MSG_INVALID_ALGORITHM = '"%s" is not a valid algorithm.\n  Supported algorithms are:\n  "HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512" and "none".';
     var MSG_INVALID_SECRET = "secret must be a string or buffer";
     var MSG_INVALID_VERIFIER_KEY = "key must be a string or a buffer";
     var MSG_INVALID_SIGNER_KEY = "key must be a string, a buffer or an object";
-    var supportsKeyObjects = typeof crypto12.createPublicKey === "function";
+    var supportsKeyObjects = typeof crypto13.createPublicKey === "function";
     if (supportsKeyObjects) {
       MSG_INVALID_VERIFIER_KEY += " or a KeyObject";
       MSG_INVALID_SECRET += "or a KeyObject";
@@ -48554,17 +48554,17 @@ var require_jwa = __commonJS({
       return function sign(thing, secret) {
         checkIsSecretKey(secret);
         thing = normalizeInput(thing);
-        var hmac = crypto12.createHmac("sha" + bits, secret);
+        var hmac = crypto13.createHmac("sha" + bits, secret);
         var sig = (hmac.update(thing), hmac.digest("base64"));
         return fromBase64(sig);
       };
     }
     var bufferEqual;
-    var timingSafeEqual = "timingSafeEqual" in crypto12 ? function timingSafeEqual2(a, b) {
+    var timingSafeEqual = "timingSafeEqual" in crypto13 ? function timingSafeEqual2(a, b) {
       if (a.byteLength !== b.byteLength) {
         return false;
       }
-      return crypto12.timingSafeEqual(a, b);
+      return crypto13.timingSafeEqual(a, b);
     } : function timingSafeEqual2(a, b) {
       if (!bufferEqual) {
         bufferEqual = require_buffer_equal_constant_time();
@@ -48581,7 +48581,7 @@ var require_jwa = __commonJS({
       return function sign(thing, privateKey) {
         checkIsPrivateKey(privateKey);
         thing = normalizeInput(thing);
-        var signer = crypto12.createSign("RSA-SHA" + bits);
+        var signer = crypto13.createSign("RSA-SHA" + bits);
         var sig = (signer.update(thing), signer.sign(privateKey, "base64"));
         return fromBase64(sig);
       };
@@ -48591,7 +48591,7 @@ var require_jwa = __commonJS({
         checkIsPublicKey(publicKey);
         thing = normalizeInput(thing);
         signature = toBase64(signature);
-        var verifier = crypto12.createVerify("RSA-SHA" + bits);
+        var verifier = crypto13.createVerify("RSA-SHA" + bits);
         verifier.update(thing);
         return verifier.verify(publicKey, signature, "base64");
       };
@@ -48600,11 +48600,11 @@ var require_jwa = __commonJS({
       return function sign(thing, privateKey) {
         checkIsPrivateKey(privateKey);
         thing = normalizeInput(thing);
-        var signer = crypto12.createSign("RSA-SHA" + bits);
+        var signer = crypto13.createSign("RSA-SHA" + bits);
         var sig = (signer.update(thing), signer.sign({
           key: privateKey,
-          padding: crypto12.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto12.constants.RSA_PSS_SALTLEN_DIGEST
+          padding: crypto13.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto13.constants.RSA_PSS_SALTLEN_DIGEST
         }, "base64"));
         return fromBase64(sig);
       };
@@ -48614,12 +48614,12 @@ var require_jwa = __commonJS({
         checkIsPublicKey(publicKey);
         thing = normalizeInput(thing);
         signature = toBase64(signature);
-        var verifier = crypto12.createVerify("RSA-SHA" + bits);
+        var verifier = crypto13.createVerify("RSA-SHA" + bits);
         verifier.update(thing);
         return verifier.verify({
           key: publicKey,
-          padding: crypto12.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto12.constants.RSA_PSS_SALTLEN_DIGEST
+          padding: crypto13.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto13.constants.RSA_PSS_SALTLEN_DIGEST
         }, signature, "base64");
       };
     }
@@ -48999,15 +48999,15 @@ var require_timespan = __commonJS({
   "node_modules/jsonwebtoken/lib/timespan.js"(exports2, module2) {
     var ms = require_ms5();
     module2.exports = function(time, iat) {
-      var timestamp = iat || Math.floor(Date.now() / 1e3);
+      var timestamp2 = iat || Math.floor(Date.now() / 1e3);
       if (typeof time === "string") {
         var milliseconds = ms(time);
         if (typeof milliseconds === "undefined") {
           return;
         }
-        return Math.floor(timestamp + milliseconds / 1e3);
+        return Math.floor(timestamp2 + milliseconds / 1e3);
       } else if (typeof time === "number") {
-        return timestamp + time;
+        return timestamp2 + time;
       } else {
         return;
       }
@@ -51888,15 +51888,15 @@ var require_sign2 = __commonJS({
           return failure(error);
         }
       }
-      const timestamp = payload.iat || Math.floor(Date.now() / 1e3);
+      const timestamp2 = payload.iat || Math.floor(Date.now() / 1e3);
       if (options.noTimestamp) {
         delete payload.iat;
       } else if (isObjectPayload) {
-        payload.iat = timestamp;
+        payload.iat = timestamp2;
       }
       if (typeof options.notBefore !== "undefined") {
         try {
-          payload.nbf = timespan(options.notBefore, timestamp);
+          payload.nbf = timespan(options.notBefore, timestamp2);
         } catch (err) {
           return failure(err);
         }
@@ -51906,7 +51906,7 @@ var require_sign2 = __commonJS({
       }
       if (typeof options.expiresIn !== "undefined" && typeof payload === "object") {
         try {
-          payload.exp = timespan(options.expiresIn, timestamp);
+          payload.exp = timespan(options.expiresIn, timestamp2);
         } catch (err) {
           return failure(err);
         }
@@ -61747,22 +61747,22 @@ var require_crypto2 = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.NodeCrypto = void 0;
-    var crypto12 = require("crypto");
+    var crypto13 = require("crypto");
     var NodeCrypto = class {
       async sha256DigestBase64(str) {
-        return crypto12.createHash("sha256").update(str).digest("base64");
+        return crypto13.createHash("sha256").update(str).digest("base64");
       }
       randomBytesBase64(count) {
-        return crypto12.randomBytes(count).toString("base64");
+        return crypto13.randomBytes(count).toString("base64");
       }
       async verify(pubkey, data, signature) {
-        const verifier = crypto12.createVerify("RSA-SHA256");
+        const verifier = crypto13.createVerify("RSA-SHA256");
         verifier.update(data);
         verifier.end();
         return verifier.verify(pubkey, signature, "base64");
       }
       async sign(privateKey, data) {
-        const signer = crypto12.createSign("RSA-SHA256");
+        const signer = crypto13.createSign("RSA-SHA256");
         signer.update(data);
         signer.end();
         return signer.sign(privateKey, "base64");
@@ -61780,7 +61780,7 @@ var require_crypto2 = __commonJS({
        *   string in hexadecimal encoding.
        */
       async sha256DigestHex(str) {
-        return crypto12.createHash("sha256").update(str).digest("hex");
+        return crypto13.createHash("sha256").update(str).digest("hex");
       }
       /**
        * Computes the HMAC hash of a message using the provided crypto key and the
@@ -61792,7 +61792,7 @@ var require_crypto2 = __commonJS({
        */
       async signWithHmacSha256(key, msg) {
         const cryptoKey = typeof key === "string" ? key : toBuffer(key);
-        return toArrayBuffer(crypto12.createHmac("sha256", cryptoKey).update(msg).digest());
+        return toArrayBuffer(crypto13.createHmac("sha256", cryptoKey).update(msg).digest());
       }
     };
     exports2.NodeCrypto = NodeCrypto;
@@ -62483,10 +62483,10 @@ var require_oauth2client = __commonJS({
        * https://github.com/googleapis/google-auth-library-nodejs/blob/main/samples/oauth2-codeVerifier.js
        */
       async generateCodeVerifierAsync() {
-        const crypto12 = (0, crypto_1.createCrypto)();
-        const randomString = crypto12.randomBytesBase64(96);
+        const crypto13 = (0, crypto_1.createCrypto)();
+        const randomString = crypto13.randomBytesBase64(96);
         const codeVerifier = randomString.replace(/\+/g, "~").replace(/=/g, "_").replace(/\//g, "-");
-        const unencodedCodeChallenge = await crypto12.sha256DigestBase64(codeVerifier);
+        const unencodedCodeChallenge = await crypto13.sha256DigestBase64(codeVerifier);
         const codeChallenge = unencodedCodeChallenge.split("=")[0].replace(/\+/g, "-").replace(/\//g, "_");
         return { codeVerifier, codeChallenge };
       }
@@ -62927,7 +62927,7 @@ var require_oauth2client = __commonJS({
        * @return Returns a promise resolving to LoginTicket on verification.
        */
       async verifySignedJwtWithCertsAsync(jwt2, certs, requiredAudience, issuers, maxExpiry) {
-        const crypto12 = (0, crypto_1.createCrypto)();
+        const crypto13 = (0, crypto_1.createCrypto)();
         if (!maxExpiry) {
           maxExpiry = _OAuth2Client.DEFAULT_MAX_TOKEN_LIFETIME_SECS_;
         }
@@ -62940,7 +62940,7 @@ var require_oauth2client = __commonJS({
         let envelope;
         let payload;
         try {
-          envelope = JSON.parse(crypto12.decodeBase64StringUtf8(segments[0]));
+          envelope = JSON.parse(crypto13.decodeBase64StringUtf8(segments[0]));
         } catch (err) {
           if (err instanceof Error) {
             err.message = `Can't parse token envelope: ${segments[0]}': ${err.message}`;
@@ -62951,7 +62951,7 @@ var require_oauth2client = __commonJS({
           throw new Error("Can't parse token envelope: " + segments[0]);
         }
         try {
-          payload = JSON.parse(crypto12.decodeBase64StringUtf8(segments[1]));
+          payload = JSON.parse(crypto13.decodeBase64StringUtf8(segments[1]));
         } catch (err) {
           if (err instanceof Error) {
             err.message = `Can't parse token payload '${segments[0]}`;
@@ -62968,7 +62968,7 @@ var require_oauth2client = __commonJS({
         if (envelope.alg === "ES256") {
           signature = formatEcdsa.joseToDer(signature, "ES256").toString("base64");
         }
-        const verified = await crypto12.verify(cert, signed, signature);
+        const verified = await crypto13.verify(cert, signed, signature);
         if (!verified) {
           throw new Error("Invalid token signature: " + jwt2);
         }
@@ -65538,14 +65538,14 @@ var require_awsrequestsigner = __commonJS({
       }
     };
     exports2.AwsRequestSigner = AwsRequestSigner;
-    async function sign(crypto12, key, msg) {
-      return await crypto12.signWithHmacSha256(key, msg);
+    async function sign(crypto13, key, msg) {
+      return await crypto13.signWithHmacSha256(key, msg);
     }
-    async function getSigningKey(crypto12, key, dateStamp, region, serviceName) {
-      const kDate = await sign(crypto12, `AWS4${key}`, dateStamp);
-      const kRegion = await sign(crypto12, kDate, region);
-      const kService = await sign(crypto12, kRegion, serviceName);
-      const kSigning = await sign(crypto12, kService, "aws4_request");
+    async function getSigningKey(crypto13, key, dateStamp, region, serviceName) {
+      const kDate = await sign(crypto13, `AWS4${key}`, dateStamp);
+      const kRegion = await sign(crypto13, kDate, region);
+      const kService = await sign(crypto13, kRegion, serviceName);
+      const kSigning = await sign(crypto13, kService, "aws4_request");
       return kSigning;
     }
     async function generateAuthenticationHeaderMap(options) {
@@ -66511,7 +66511,7 @@ var require_gdchclient = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GdchClient = exports2.GDCH_SERVICE_ACCOUNT_TYPE = void 0;
-    var crypto12 = require("crypto");
+    var crypto13 = require("crypto");
     var fs26 = require("fs");
     var https3 = require("https");
     var oauth2client_1 = require_oauth2client();
@@ -66702,7 +66702,7 @@ var require_gdchclient = __commonJS({
         const encodedHeader = this.base64UrlEncode(JSON.stringify(header));
         const encodedPayload = this.base64UrlEncode(JSON.stringify(payload));
         const signingInput = `${encodedHeader}.${encodedPayload}`;
-        const signature = crypto12.sign("sha256", Buffer.from(signingInput), {
+        const signature = crypto13.sign("sha256", Buffer.from(signingInput), {
           key: this.privateKey,
           dsaEncoding: "ieee-p1363"
         });
@@ -67563,24 +67563,24 @@ var require_googleauth = __commonJS({
           const signed = await client.sign(data);
           return signed.signedBlob;
         }
-        const crypto12 = (0, crypto_1.createCrypto)();
+        const crypto13 = (0, crypto_1.createCrypto)();
         if (client instanceof jwtclient_1.JWT && client.key) {
-          const sign = await crypto12.sign(client.key, data);
+          const sign = await crypto13.sign(client.key, data);
           return sign;
         }
         const creds = await this.getCredentials();
         if (!creds.client_email) {
           throw new Error("Cannot sign data without `client_email`.");
         }
-        return this.signBlob(crypto12, creds.client_email, data, endpoint);
+        return this.signBlob(crypto13, creds.client_email, data, endpoint);
       }
-      async signBlob(crypto12, emailOrUniqueId, data, endpoint) {
+      async signBlob(crypto13, emailOrUniqueId, data, endpoint) {
         const url2 = new URL(endpoint + `${emailOrUniqueId}:signBlob`);
         const res = await this.request({
           method: "POST",
           url: url2.href,
           data: {
-            payload: crypto12.encodeBase64StringUtf8(data)
+            payload: crypto13.encodeBase64StringUtf8(data)
           },
           retry: true,
           retryConfig: {
@@ -72212,7 +72212,7 @@ var require_form_data = __commonJS({
     var parseUrl2 = require("url").parse;
     var fs26 = require("fs");
     var Stream4 = require("stream").Stream;
-    var crypto12 = require("crypto");
+    var crypto13 = require("crypto");
     var mime = require_mime_types();
     var asynckit = require_asynckit();
     var setToStringTag = require_es_set_tostringtag();
@@ -72421,7 +72421,7 @@ var require_form_data = __commonJS({
       return Buffer.concat([dataBuffer, Buffer.from(this._lastBoundary())]);
     };
     FormData5.prototype._generateBoundary = function() {
-      this._boundary = "--------------------------" + crypto12.randomBytes(12).toString("hex");
+      this._boundary = "--------------------------" + crypto13.randomBytes(12).toString("hex");
     };
     FormData5.prototype.getLengthSync = function() {
       var knownLength = this._overheadLength + this._valueLength;
@@ -74089,10 +74089,10 @@ function buildQuery(params) {
   return qs.toString();
 }
 async function tiktokApiRequestOnce(method, apiPath, opts, creds) {
-  const timestamp = String(Math.floor(Date.now() / 1e3));
+  const timestamp2 = String(Math.floor(Date.now() / 1e3));
   const query = {
     app_key: creds.app_key,
-    timestamp,
+    timestamp: timestamp2,
     ...opts.query || {}
   };
   if (creds.shop_cipher && !query.shop_cipher) {
@@ -74943,8 +74943,8 @@ var import_express32 = __toESM(require_express2(), 1);
 
 // routes/operationsRoutes.js
 var import_express = __toESM(require_express2(), 1);
-var import_node_crypto = __toESM(require("node:crypto"), 1);
-var import_mongoose = __toESM(require("mongoose"), 1);
+var import_node_crypto2 = __toESM(require("node:crypto"), 1);
+var import_mongoose2 = __toESM(require("mongoose"), 1);
 
 // modules/operations/metrics.js
 var ACTIVE_STATES = ["pending", "running", "failed"];
@@ -74958,12 +74958,12 @@ function parseMetricsQuery(query = {}) {
   if (!Number.isInteger(windowMinutes) || windowMinutes < 1 || windowMinutes > 1440) throw new Error("invalid_query");
   return { shopId, windowMinutes };
 }
-async function collectOperationsMetrics(db, { shopId, windowMinutes }, now = /* @__PURE__ */ new Date()) {
+async function collectOperationsMetrics(db, { shopId, windowMinutes, includeApiErrors = true }, now = /* @__PURE__ */ new Date()) {
   const since = new Date(now.getTime() - windowMinutes * 6e4);
   const errorSince = new Date(Math.floor(since.getTime() / 6e4) * 6e4);
   const shopFilter = shopId ? { shopId } : {};
   const aggregate = (collection, pipeline2) => db.collection(collection).aggregate(pipeline2, { maxTimeMS: 5e3, allowDiskUse: false }).toArray();
-  const [queue, jobs, errors] = await Promise.all([
+  const [queue, jobs, errors, watermarks] = await Promise.all([
     aggregate("webhook_jobs", [
       { $match: { ...shopFilter, state: { $in: ACTIVE_STATES } } },
       { $group: { _id: "$state", count: { $sum: 1 }, oldest: { $min: "$createdAt" } } }
@@ -74976,6 +74976,8 @@ async function collectOperationsMetrics(db, { shopId, windowMinutes }, now = /* 
         retry_count: 1,
         retry_attempts: 1,
         kind: 1,
+        received_at: 1,
+        finished_at: 1,
         latency: { $cond: [
           { $and: [
             { $eq: ["$kind", "webhook"] },
@@ -74995,17 +74997,26 @@ async function collectOperationsMetrics(db, { shopId, windowMinutes }, now = /* 
         deadLetterJobs: { $sum: { $cond: [{ $eq: ["$state", "dead-letter"] }, 1, 0] } },
         latencySamples: { $sum: { $cond: [{ $ne: ["$latency", null] }, 1, 0] } },
         latencyTotalMs: { $sum: "$latency" },
-        latencyMaxMs: { $max: "$latency" }
+        latencyMaxMs: { $max: "$latency" },
+        // Chỉ tính webhook thật và job thành công; dead-letter không phải tiến độ xử lý.
+        lastWebhookAt: { $max: { $cond: [{ $eq: ["$kind", "webhook"] }, "$received_at", null] } },
+        lastJobSucceededAt: { $max: { $cond: [{ $eq: ["$state", "succeeded"] }, "$finished_at", null] } },
+        lastSyncJobSucceededAt: { $max: { $cond: [{ $and: [{ $eq: ["$kind", "sync"] }, { $eq: ["$state", "succeeded"] }] }, "$finished_at", null] } }
       } },
       { $sort: { _id: 1 } },
       { $limit: 201 }
     ]),
-    aggregate("ops_api_errors", [
+    includeApiErrors ? aggregate("ops_api_errors", [
       { $match: { ...shopFilter, bucket_at: { $gte: errorSince, $lte: now } } },
       { $group: { _id: { shopId: "$shopId", category: "$category" }, count: { $sum: "$count" } } },
       { $sort: { "_id.shopId": 1, "_id.category": 1 } },
       { $limit: 801 }
-    ])
+    ]) : Promise.resolve([]),
+    // Collection watermark nhỏ; lọc _id khi xem một shop, không đọc collection orders.
+    db.collection("sync_orchestrator_watermarks").find(shopId ? { _id: shopId } : {}, {
+      projection: { lastSuccessfulAt: 1 },
+      maxTimeMS: 1500
+    }).limit(201).toArray()
   ]);
   const shops = /* @__PURE__ */ new Map();
   const getShop = (id) => {
@@ -75020,7 +75031,11 @@ async function collectOperationsMetrics(db, { shopId, windowMinutes }, now = /* 
       latencyTotalMs: 0,
       latencyMaxMs: null,
       apiErrors: 0,
-      apiErrorsByCategory: {}
+      apiErrorsByCategory: {},
+      lastSuccessfulSyncAt: null,
+      lastWebhookAt: null,
+      lastJobSucceededAt: null,
+      lastSyncJobSucceededAt: null
     });
     return shops.get(id);
   };
@@ -75030,9 +75045,17 @@ async function collectOperationsMetrics(db, { shopId, windowMinutes }, now = /* 
     shop.apiErrors += row.count;
     shop.apiErrorsByCategory[row._id.category] = row.count;
   }
+  for (const row of watermarks.slice(0, 200)) getShop(String(row._id)).lastSuccessfulSyncAt = row.lastSuccessfulAt || null;
   const byState = Object.fromEntries(ACTIVE_STATES.map((state) => [state, 0]));
   for (const row of queue) byState[row._id] = row.count;
   const oldest = queue.map((row) => row.oldest).filter((value) => value instanceof Date);
+  const rows = [...shops.values()];
+  const latest = (field) => rows.reduce((value, row) => {
+    const time = new Date(row[field] || 0).getTime();
+    return Number.isFinite(time) ? Math.max(value, time) : value;
+  }, 0);
+  const samples = rows.reduce((sum, row) => sum + row.latencySamples, 0);
+  const totalMs = rows.reduce((sum, row) => sum + row.latencyTotalMs, 0);
   return {
     generatedAt: now.toISOString(),
     window: {
@@ -75045,9 +75068,18 @@ async function collectOperationsMetrics(db, { shopId, windowMinutes }, now = /* 
     queue: {
       depth: Object.values(byState).reduce((sum, n) => sum + n, 0),
       byState,
+      waiting: byState.pending + byState.failed,
       oldestAgeMs: oldest.length ? Math.max(0, now - Math.min(...oldest.map(Number))) : null
     },
-    truncated: jobs.length > 200 || errors.length > 800,
+    summary: {
+      webhookToOrderLatencyMs: { samples, average: samples ? totalMs / samples : null },
+      retryAttempts: rows.reduce((sum, row) => sum + row.retryAttempts, 0),
+      lastJobSucceededAt: latest("lastJobSucceededAt") ? new Date(latest("lastJobSucceededAt")).toISOString() : null,
+      lastSyncJobSucceededAt: latest("lastSyncJobSucceededAt") ? new Date(latest("lastSyncJobSucceededAt")).toISOString() : null,
+      // Tổng hệ thống gồm sync thủ công; watermark theo shop giữ riêng để cảnh báo không bị che.
+      lastSuccessfulSyncAt: Math.max(latest("lastSuccessfulSyncAt"), latest("lastSyncJobSucceededAt")) ? new Date(Math.max(latest("lastSuccessfulSyncAt"), latest("lastSyncJobSucceededAt"))).toISOString() : null
+    },
+    truncated: jobs.length > 200 || errors.length > 800 || watermarks.length > 200,
     shops: [...shops.values()].map(({ latencyTotalMs, ...shop }) => ({
       ...shop,
       webhookToOrderLatencyMs: {
@@ -75059,66 +75091,202 @@ async function collectOperationsMetrics(db, { shopId, windowMinutes }, now = /* 
   };
 }
 
-// routes/operationsRoutes.js
-function createOperationsRouter({
-  getDb = () => import_mongoose.default.connection.readyState === 1 ? import_mongoose.default.connection.db : null,
-  collect = collectOperationsMetrics
-} = {}) {
-  const router30 = (0, import_express.Router)();
-  const cache = /* @__PURE__ */ new Map();
-  router30.get("/metrics", async (req, res) => {
-    res.set("Cache-Control", "no-store");
-    const expected = process.env.OPS_METRICS_TOKEN || "";
-    if (expected.length < 32) return res.status(503).json({ error: "ops_metrics_not_configured" });
-    const supplied = req.get("authorization")?.replace(/^Bearer /, "") || "";
-    const digest = (value2) => import_node_crypto.default.createHash("sha256").update(value2).digest();
-    if (!req.get("authorization")?.startsWith("Bearer ") || !import_node_crypto.default.timingSafeEqual(digest(supplied), digest(expected))) {
-      return res.status(401).json({ error: "unauthorized" });
-    }
-    let options;
-    try {
-      options = parseMetricsQuery(req.query);
-    } catch {
-      return res.status(400).json({ error: "invalid_query", message: "shopId: 1\u201320 ch\u1EEF s\u1ED1; windowMinutes: 1\u20131440" });
-    }
-    const db = getDb();
-    if (!db) return res.status(503).json({ error: "mongodb_not_ready" });
-    const key = JSON.stringify(options);
-    const hit = cache.get(key);
-    if (hit && hit.until > Date.now()) {
-      try {
-        return res.json({ ...await hit.value, cached: true });
-      } catch {
-        return res.status(503).json({ error: "metrics_unavailable" });
+// modules/operations/health.js
+var import_node_crypto = __toESM(require("node:crypto"), 1);
+var STATE_ID = "shopee_oms";
+var DB_OPTIONS = { maxTimeMS: 1500, timeoutMS: 2e3 };
+function healthThresholds(env2 = process.env) {
+  const minutes = (name, fallback, min = 1) => {
+    const value = Number(env2[name] ?? fallback);
+    return Number.isInteger(value) && value >= min && value <= 1440 ? value * 6e4 : fallback * 6e4;
+  };
+  return {
+    sampleIntervalMs: 6e4,
+    queueStallMs: minutes("OPS_QUEUE_STALL_MINUTES", 5),
+    tokenWarningMs: minutes("OPS_TOKEN_WARNING_MINUTES", 30),
+    watermarkStallMs: minutes("OPS_WATERMARK_STALL_MINUTES", 30),
+    webhookExpectedMs: minutes("OPS_WEBHOOK_EXPECTED_MINUTES", 60, 0)
+  };
+}
+function timestamp(value) {
+  const time = value ? new Date(value).getTime() : 0;
+  return Number.isFinite(time) && time > 0 ? time : 0;
+}
+function evaluateOperationsHealth(metrics, tokens = {}, previous = {}, now = /* @__PURE__ */ new Date(), thresholds = healthThresholds()) {
+  const time = now.getTime();
+  const alerts2 = [];
+  const alert = (code, severity, message, shopId) => alerts2.push({ code, severity, message, ...shopId ? { shopId } : {} });
+  const progress = Math.max(timestamp(metrics.summary?.lastJobSucceededAt), timestamp(previous.lastProgressAt));
+  const contiguous = previous.checkedAt && time - timestamp(previous.checkedAt) <= thresholds.sampleIntervalMs * 3;
+  const advancing = progress > timestamp(previous.lastProgressAt);
+  const growthSamples = contiguous && !advancing && metrics.queue.depth > (previous.queueDepth ?? 0) ? (previous.growthSamples || 0) + 1 : 0;
+  const noProgressSince = metrics.queue.depth === 0 || advancing || !contiguous ? time : timestamp(previous.noProgressSince) || time;
+  if (metrics.queue.depth > 0 && time - noProgressSince >= thresholds.queueStallMs) {
+    alert("queue_stalled", "critical", "H\xE0ng \u0111\u1EE3i c\xF2n job nh\u01B0ng kh\xF4ng c\xF3 job ho\xE0n t\u1EA5t trong th\u1EDDi gian cho ph\xE9p.");
+  }
+  if (growthSamples >= 3) alert("queue_growing", "critical", "H\xE0ng \u0111\u1EE3i t\u0103ng qua \xEDt nh\u1EA5t 3 kho\u1EA3ng ki\u1EC3m tra li\xEAn ti\u1EBFp v\xE0 kh\xF4ng c\xF3 job ho\xE0n t\u1EA5t.");
+  if (metrics.truncated) alert("metrics_incomplete", "warning", "S\u1ED1 li\u1EC7u v\u01B0\u1EE3t gi\u1EDBi h\u1EA1n nh\xF3m; c\u1EA7n ki\u1EC3m tra ri\xEAng t\u1EEBng shop.");
+  const metricShops = new Map(metrics.shops.map((shop) => [shop.shopId, shop]));
+  const shopIds = [.../* @__PURE__ */ new Set([...Object.keys(tokens), ...metricShops.keys()])].filter((id) => /^\d{1,20}$/.test(id));
+  if (shopIds.length > 200) alert("shops_truncated", "warning", "Ch\u1EC9 ki\u1EC3m tra s\u1EE9c kh\u1ECFe t\u1ED1i \u0111a 200 shop.");
+  const shops = [];
+  const shopState = {};
+  for (const shopId of shopIds.slice(0, 200)) {
+    const token = tokens[shopId] || {};
+    const metric = metricShops.get(shopId) || {};
+    const old = previous.shops?.[shopId] || {};
+    const monitoredSince = timestamp(old.monitoredSince) || time;
+    const lastWebhookAt2 = Math.max(timestamp(metric.lastWebhookAt), timestamp(old.lastWebhookAt));
+    const lastSyncAt = timestamp(metric.lastSuccessfulSyncAt);
+    const obtainedAt = Number(token.obtained_at);
+    const expireIn = Number(token.expire_in);
+    const rawExpiry = obtainedAt > 0 && expireIn > 0 ? (obtainedAt + expireIn) * 1e3 : 0;
+    const expiresAt = Number.isFinite(rawExpiry) && rawExpiry <= 864e13 ? rawExpiry : 0;
+    const configured = Object.hasOwn(tokens, shopId);
+    if (configured) {
+      if (!token.access_token) alert("token_missing", "critical", "Shop thi\u1EBFu access token; ki\u1EC3m tra k\u1EBFt n\u1ED1i OAuth.", shopId);
+      else if (!Number.isFinite(expiresAt) || !expiresAt) alert("token_expiry_unknown", "warning", "Thi\u1EBFu m\u1ED1c h\u1EBFt h\u1EA1n token \u0111\u1EC3 ki\u1EC3m tra.", shopId);
+      else if (expiresAt <= time) alert("token_expired", "critical", "Access token \u0111\xE3 h\u1EBFt h\u1EA1n; ki\u1EC3m tra c\u01A1 ch\u1EBF refresh ho\u1EB7c OAuth l\u1EA1i.", shopId);
+      else if (expiresAt - time <= thresholds.tokenWarningMs) alert("token_expiring", "warning", "Access token s\u1EAFp h\u1EBFt h\u1EA1n; ki\u1EC3m tra refresh t\u1EF1 \u0111\u1ED9ng.", shopId);
+      if (time - (lastSyncAt || monitoredSince) >= thresholds.watermarkStallMs) {
+        alert(lastSyncAt ? "watermark_stalled" : "watermark_missing", "warning", "Ch\u01B0a c\xF3 m\u1ED1c \u0111\u1ED3ng b\u1ED9 th\xE0nh c\xF4ng m\u1EDBi trong th\u1EDDi gian cho ph\xE9p.", shopId);
+      }
+      if (thresholds.webhookExpectedMs > 0 && time - (lastWebhookAt2 || monitoredSince) >= thresholds.webhookExpectedMs) {
+        alert("webhook_silent", "warning", "Kh\xF4ng nh\u1EADn webhook \u0111\u01A1n h\xE0ng trong kho\u1EA3ng th\u1EDDi gian k\u1EF3 v\u1ECDng.", shopId);
       }
     }
-    if (cache.size >= 64) cache.delete(cache.keys().next().value);
-    const value = collect(db, options);
-    cache.set(key, { value, until: Date.now() + 15e3 });
-    try {
-      return res.json({ ...await value, cached: false });
-    } catch {
-      cache.delete(key);
-      console.warn("[Operations] metrics_query_failed");
-      return res.status(503).json({ error: "metrics_unavailable" });
+    const iso = (value) => value && Number.isFinite(value) ? new Date(value).toISOString() : null;
+    shops.push({
+      shopId,
+      lastSuccessfulSyncAt: iso(lastSyncAt),
+      lastWebhookAt: iso(lastWebhookAt2),
+      accessTokenExpiresAt: iso(expiresAt),
+      hasRefreshToken: Boolean(token.refresh_token),
+      configured
+    });
+    shopState[shopId] = { monitoredSince: iso(monitoredSince), lastWebhookAt: iso(lastWebhookAt2) };
+  }
+  const status = alerts2.some((item) => item.severity === "critical") ? "critical" : alerts2.length ? "warning" : "ok";
+  return {
+    report: { status, checkedAt: now.toISOString(), thresholds, queue: metrics.queue, alerts: alerts2, shops },
+    state: {
+      checkedAt: now.toISOString(),
+      queueDepth: metrics.queue.depth,
+      growthSamples,
+      lastProgressAt: progress ? new Date(progress).toISOString() : null,
+      noProgressSince: new Date(noProgressSince).toISOString(),
+      shops: shopState
     }
-  });
-  return router30;
+  };
 }
-var operationsRoutes_default = createOperationsRouter();
+function createOperationsHealthCollector({
+  getTokens = () => ({}),
+  collect = collectOperationsMetrics,
+  getThresholds = healthThresholds,
+  clock = () => /* @__PURE__ */ new Date()
+} = {}) {
+  return async (db) => {
+    const now = clock();
+    const thresholds = getThresholds();
+    const collection = db.collection("ops_health_state");
+    let previous = await collection.findOne({ _id: STATE_ID }, DB_OPTIONS);
+    if (!previous) {
+      try {
+        await collection.updateOne({ _id: STATE_ID }, { $setOnInsert: { nextCheckAt: /* @__PURE__ */ new Date(0) } }, { ...DB_OPTIONS, upsert: true });
+      } catch (error) {
+        if (error?.code !== 11e3) throw error;
+      }
+      previous = await collection.findOne({ _id: STATE_ID }, DB_OPTIONS);
+    }
+    const owner = import_node_crypto.default.randomUUID();
+    const claim = await collection.findOneAndUpdate(
+      { _id: STATE_ID, nextCheckAt: { $lte: now } },
+      { $set: { owner, nextCheckAt: new Date(now.getTime() + thresholds.sampleIntervalMs) } },
+      { ...DB_OPTIONS, returnDocument: "after", includeResultMetadata: false }
+    );
+    if (!claim) {
+      if (!previous?.report) throw new Error("health_sample_pending");
+      return {
+        ...previous.report,
+        cached: true,
+        stale: now.getTime() - timestamp(previous.report.checkedAt) > thresholds.sampleIntervalMs * 2
+      };
+    }
+    try {
+      const windowMinutes = Math.max(60, thresholds.webhookExpectedMs / 6e4);
+      const metrics = await collect(db, { windowMinutes, includeApiErrors: false }, now);
+      const result = evaluateOperationsHealth(metrics, getTokens(), previous?.state, now, thresholds);
+      await collection.updateOne({ _id: STATE_ID, owner }, { $set: { state: result.state, report: result.report } }, DB_OPTIONS);
+      const fingerprint = (report) => JSON.stringify((report?.alerts || []).map(({ code, shopId }) => [code, shopId]));
+      if (fingerprint(result.report) !== fingerprint(previous?.report)) {
+        console.warn("[OMS Health]", result.report.status, fingerprint(result.report));
+      }
+      return { ...result.report, cached: false, stale: false };
+    } catch {
+      const report = {
+        status: "unknown",
+        checkedAt: now.toISOString(),
+        alerts: [{ code: "health_collection_failed", severity: "warning", message: "Kh\xF4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c s\u1ED1 li\u1EC7u gi\xE1m s\xE1t; ki\u1EC3m tra MongoDB v\xE0 log v\u1EADn h\xE0nh." }],
+        shops: []
+      };
+      await collection.updateOne({ _id: STATE_ID, owner }, { $set: { report } }, DB_OPTIONS).catch(() => {
+      });
+      throw new Error("health_unavailable");
+    }
+  };
+}
+function startOperationsHealthMonitor(getDb, collectHealth) {
+  let running = false;
+  const tick = async () => {
+    if (running) return;
+    const db = getDb();
+    if (!db) return;
+    running = true;
+    try {
+      await collectHealth(db);
+    } catch {
+      console.warn("[OMS Health] health_sample_unavailable");
+    } finally {
+      running = false;
+    }
+  };
+  const timer2 = setInterval(() => {
+    void tick();
+  }, 6e4);
+  timer2.unref?.();
+  void tick();
+  return () => clearInterval(timer2);
+}
 
-// server.ts
-var import_path25 = __toESM(require("path"), 1);
-var import_fs25 = __toESM(require("fs"), 1);
-var import_crypto6 = __toESM(require("crypto"), 1);
-var import_dotenv2 = __toESM(require_main(), 1);
-var import_pdf_lib = __toESM(require_cjs(), 1);
+// utils/safeProductionLog.js
+function safeError(error) {
+  const code = String(error?.code || error?.name || "operation_failed");
+  return code.replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 100) || "operation_failed";
+}
+function safeTokenMetadata(record) {
+  return {
+    shop_id: record?.shop_id ?? null,
+    hasAccessToken: Boolean(record?.access_token),
+    hasRefreshToken: Boolean(record?.refresh_token),
+    expire_in: record?.expire_in ?? null,
+    error: record?.error ? "token_api_error" : null
+  };
+}
 
-// modules/shopee-sync/schedulers/orders.js
-var import_node_cron = __toESM(require("node-cron"), 1);
+// services/shopee/auth.js
+var import_fs2 = __toESM(require("fs"), 1);
+var import_path3 = __toESM(require("path"), 1);
+var import_crypto = __toESM(require("crypto"), 1);
+init_appPaths();
 
-// models/WebhookJob.js
-var import_mongoose2 = __toESM(require("mongoose"), 1);
+// modules/shopee-sync/client.js
+var import_path2 = __toESM(require("path"), 1);
+var import_node_module = require("node:module");
+init_concurrency();
+
+// modules/operations/telemetry.js
+var import_node_async_hooks = require("node:async_hooks");
+var import_mongoose = __toESM(require("mongoose"), 1);
 
 // modules/operations/mongoIndexes.js
 function retentionSeconds(name, fallbackDays = 14) {
@@ -75160,39 +75328,1809 @@ async function ensureMongoIndex(db, collection, key, options) {
     }
     return hit.name;
   }
+  if (Object.keys(key).length > 1) throw new Error(`compound_index_requires_review:${collection}:${options.name}`);
   return coll.createIndex(key, options);
 }
-function operationalIndexPlan() {
-  return [
-    ["orders", ORDER_OPERATIONAL_INDEXES],
-    ["channel_listings", LISTING_OPERATIONAL_INDEXES],
-    ["webhook_jobs", WEBHOOK_OPERATIONAL_INDEXES],
-    ["ops_api_errors", [
-      [{ bucket_at: 1 }, { name: "ops_api_errors_window" }],
-      [{ shopId: 1, bucket_at: 1 }, { name: "ops_api_errors_shop_window" }],
-      [{ expires_at: 1 }, { name: "ops_api_errors_ttl", expireAfterSeconds: 0 }]
-    ]],
-    ["order_events", [[{ occurred_at: 1 }, {
-      name: "order_events_ttl",
-      expireAfterSeconds: retentionSeconds("ORDER_EVENT_TTL_SECONDS")
-    }]]],
-    ["sync_jobs", [[{ finished_at: 1 }, {
-      name: "sync_jobs_ttl",
-      expireAfterSeconds: retentionSeconds("SYNC_JOB_TTL_SECONDS")
-    }]]]
-  ];
+
+// modules/operations/telemetry.js
+var webhookObservation = new import_node_async_hooks.AsyncLocalStorage();
+function markWebhookOrderPersisted() {
+  const observation = webhookObservation.getStore();
+  if (observation && !observation.orderPersistedAt) observation.orderPersistedAt = /* @__PURE__ */ new Date();
 }
-async function ensureOperationalIndexes(db) {
-  const groups = operationalIndexPlan();
-  const applied = [];
-  for (const [collection, indexes] of groups) {
-    for (const [key, options] of indexes) applied.push(await ensureMongoIndex(db, collection, key, options));
+async function recordShopeeApiError(url2, category) {
+  try {
+    const parsed = new URL(url2);
+    if (!/(^|\.)(shopeemobile\.com|shopee\.(com|cn))$/.test(parsed.hostname)) return;
+    const shopId = parsed.searchParams.get("shop_id") || "unknown";
+    if (shopId !== "unknown" && !/^\d{1,20}$/.test(shopId)) return;
+    if (!["http", "network", "application", "parse"].includes(category)) return;
+    const db = import_mongoose.default.connection.db;
+    if (import_mongoose.default.connection.readyState !== 1 || !db) return;
+    const now = Date.now();
+    const bucket = Math.floor(now / 6e4) * 6e4;
+    await db.collection("ops_api_errors").updateOne(
+      { _id: `${shopId}:${bucket}:${category}` },
+      { $inc: { count: 1 }, $setOnInsert: {
+        shopId,
+        category,
+        bucket_at: new Date(bucket),
+        expires_at: new Date(bucket + 6e4 + retentionSeconds("OPS_API_ERROR_TTL_SECONDS") * 1e3)
+      } },
+      { upsert: true, maxTimeMS: 1500, timeoutMS: 1500 }
+    );
+  } catch {
+    console.warn("[Operations] api_error_metric_write_failed");
   }
-  return applied;
 }
 
+// modules/shopee-sync/client.js
+var import_meta = {};
+var SHOPEE_API_MAX_RETRY = 3;
+var SHOPEE_API_RETRY_BASE_MS = 1500;
+var SHOPEE_HTTP_TIMEOUT_MS = 3e4;
+var SHOPEE_TLS_MIN_VERSION = String(process.env.SHOPEE_TLS_MIN_VERSION || "TLSv1.2").trim();
+var SHOPEE_TLS_MAX_VERSION = String(process.env.SHOPEE_TLS_MAX_VERSION || "TLSv1.3").trim();
+var SHOPEE_PRODUCT_BATCH_SIZE = 10;
+var SHOPEE_PRODUCT_API_DELAY_MS = 1e3;
+var SHOPEE_PRODUCT_BATCH_PAUSE_MS = 2500;
+var SHOPEE_SYNC_BATCH_DELAY_MS = 1e3;
+var SHOPEE_REAUTH_REQUIRED_MESSAGE = "Vui l\xF2ng v\xE0o m\u1EE5c C\u1EA5u h\xECnh \u0111\u1EC3 li\xEAn k\u1EBFt l\u1EA1i gian h\xE0ng Shopee (Token \u0111\xE3 h\u1EBFt h\u1EA1n ho\xE0n to\xE0n)";
+function resolveCreateRequireFilename() {
+  try {
+    if (typeof __filename === "string" && __filename.length > 0) {
+      return __filename;
+    }
+  } catch {
+  }
+  try {
+    const metaUrl = typeof import_meta !== "undefined" ? String(import_meta?.url || "") : "";
+    if (metaUrl && metaUrl !== "undefined") return metaUrl;
+  } catch {
+  }
+  return import_path2.default.resolve(process.cwd(), "server.cjs");
+}
+var shopeeHttpDispatcher = void 0;
+try {
+  const nodeRequire = (0, import_node_module.createRequire)(resolveCreateRequireFilename());
+  let undiciMod;
+  try {
+    undiciMod = nodeRequire("node:undici");
+  } catch {
+    undiciMod = nodeRequire("undici");
+  }
+  const ShopeeUndiciAgent = undiciMod?.Agent;
+  if (typeof ShopeeUndiciAgent !== "function") {
+    throw new Error("undici.Agent kh\xF4ng kh\u1EA3 d\u1EE5ng");
+  }
+  shopeeHttpDispatcher = new ShopeeUndiciAgent({
+    connect: {
+      rejectUnauthorized: true,
+      minVersion: SHOPEE_TLS_MIN_VERSION,
+      maxVersion: SHOPEE_TLS_MAX_VERSION
+    },
+    connections: 3,
+    pipelining: 0,
+    keepAliveTimeout: 1e4,
+    keepAliveMaxTimeout: 15e3,
+    // Chặn socket treo vô hạn khi Shopee không trả headers/body.
+    headersTimeout: SHOPEE_HTTP_TIMEOUT_MS + 2e3,
+    bodyTimeout: SHOPEE_HTTP_TIMEOUT_MS + 2e3,
+    connectTimeout: 8e3
+  });
+  console.log("[Shopee HTTP] undici Agent OK \u2014 TLS dispatcher s\u1EB5n s\xE0ng cho sync Shopee.");
+} catch (undiciErr) {
+  console.info(
+    "[Shopee HTTP] D\xF9ng fetch t\xEDch h\u1EE3p c\u1EE7a Node (kh\xF4ng d\xF9ng undici dispatcher):",
+    undiciErr?.message || undiciErr
+  );
+  shopeeHttpDispatcher = void 0;
+}
+async function fetchWithTimeout(url2, init = {}, timeoutMs = SHOPEE_HTTP_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const externalSignal = init?.signal;
+  const abortFromExternal = () => controller.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) abortFromExternal();
+  else externalSignal?.addEventListener?.("abort", abortFromExternal, { once: true });
+  const timer2 = setTimeout(() => controller.abort(), timeoutMs);
+  let hardTimer;
+  try {
+    const fetchInit = {
+      ...init,
+      signal: controller.signal
+    };
+    if (shopeeHttpDispatcher) fetchInit.dispatcher = shopeeHttpDispatcher;
+    const fetchPromise = fetch(url2, fetchInit);
+    fetchPromise.catch(() => {
+    });
+    const hardTimeoutPromise = new Promise((_, reject) => {
+      hardTimer = setTimeout(() => {
+        try {
+          controller.abort();
+        } catch {
+        }
+        reject(new Error(`Shopee API timeout sau ${timeoutMs / 1e3}s`));
+      }, timeoutMs + 1e3);
+    });
+    const response = await Promise.race([fetchPromise, hardTimeoutPromise]);
+    if (response.status >= 400) await recordShopeeApiError(url2, "http");
+    return response;
+  } catch (error) {
+    await recordShopeeApiError(url2, "network");
+    if (error?.name === "AbortError" || /timeout/i.test(String(error?.message || ""))) {
+      console.error(`[Shopee HTTP] TIMEOUT ${timeoutMs}ms`);
+      throw new Error(`Shopee API timeout sau ${timeoutMs / 1e3}s`);
+    }
+    console.error(
+      "[Shopee HTTP] FETCH L\u1ED6I:",
+      safeError(error)
+    );
+    throw error;
+  } finally {
+    clearTimeout(timer2);
+    if (hardTimer) clearTimeout(hardTimer);
+    externalSignal?.removeEventListener?.("abort", abortFromExternal);
+  }
+}
+function shopeeExponentialBackoffMs(attempt, baseMs = SHOPEE_API_RETRY_BASE_MS) {
+  return Math.min(3e4, baseMs * Math.pow(2, attempt));
+}
+var shopeeRetryTelemetry = { retries: 0, rateLimits: 0, exhausted: 0 };
+function snapshotShopeeRetryTelemetry() {
+  return { ...shopeeRetryTelemetry };
+}
+function diffShopeeRetryTelemetry(before) {
+  return {
+    retries: shopeeRetryTelemetry.retries - before.retries,
+    rate_limits: shopeeRetryTelemetry.rateLimits - before.rateLimits,
+    exhausted_retries: shopeeRetryTelemetry.exhausted - before.exhausted,
+    max_retries: SHOPEE_API_MAX_RETRY
+  };
+}
+function isShopeeRetryableNetworkError(err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /timeout|timed out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|AbortError|fetch failed|network|socket/i.test(msg);
+}
+function isShopeeRetryableHttpStatus(status) {
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+async function runInShopeeBatches(items, processor2, opts) {
+  if (items.length === 0) return;
+  const batchSize = opts?.batchSize ?? SHOPEE_PRODUCT_BATCH_SIZE;
+  const itemDelayMs = opts?.itemDelayMs ?? SHOPEE_PRODUCT_API_DELAY_MS;
+  const batchPauseMs = opts?.batchPauseMs ?? SHOPEE_PRODUCT_BATCH_PAUSE_MS;
+  for (let batchStart = 0; batchStart < items.length; batchStart += batchSize) {
+    const batch = items.slice(batchStart, batchStart + batchSize);
+    const batchNo = Math.floor(batchStart / batchSize) + 1;
+    const totalBatches = Math.ceil(items.length / batchSize);
+    console.log(`[Shopee Throttle] Batch ${batchNo}/${totalBatches} (${batch.length} item)...`);
+    for (let j = 0; j < batch.length; j++) {
+      await processor2(batch[j], batchStart + j);
+      if (j < batch.length - 1) await sleep(itemDelayMs);
+    }
+    if (batchStart + batchSize < items.length) {
+      console.log(`[Shopee Throttle] Ngh\u1EC9 ${batchPauseMs}ms tr\u01B0\u1EDBc batch k\u1EBF...`);
+      await sleep(batchPauseMs);
+    }
+  }
+}
+function shopeeSyncDelay(ms = SHOPEE_SYNC_BATCH_DELAY_MS) {
+  return sleep(ms);
+}
+function shopeeApiErrorResult(err, context, httpStatus) {
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(`[Shopee API] ${context}:`, message);
+  const status = httpStatus || (/HTTP\s*401|\b401\b|invalid_access_token|unauthorized|auth/i.test(message) ? 401 : /HTTP\s*429|\b429\b|rate.?limit|too many/i.test(message) ? 429 : /HTTP\s*504|\b504\b|timeout|timed out|AbortError/i.test(message) ? 504 : void 0);
+  return {
+    error: status === 401 ? "unauthorized" : status === 429 ? "rate_limit_exceeded" : status === 504 ? "gateway_timeout" : "shopee_api_error",
+    message: formatShopeeApiError({ error: "shopee_api_error", message: `${context}: ${message}` }, status),
+    httpStatus: status
+  };
+}
+var SHOP_MAP = {
+  "831052930": "LK audio",
+  "4127421": "LK AT"
+};
+function translateShopeeErrorCodes(text) {
+  let out = String(text || "");
+  if (/error_update_price_fail/i.test(out)) {
+    out = out.replace(/Update price failed(?:,?\s*please try later\.?)?/gi, "").replace(
+      /(?:product\.)?error_update_price_fail/gi,
+      "Kh\xF4ng th\u1EC3 c\u1EADp nh\u1EADt gi\xE1 do s\u1EA3n ph\u1EA9m \u0111ang tham gia CTKM"
+    );
+  }
+  if (/error_item_not_found/i.test(out)) {
+    out = out.replace(/Item[_ ]?id is not found\.?/gi, "").replace(/(?:product\.)?error_item_not_found/gi, "Kh\xF4ng t\xECm th\u1EA5y s\u1EA3n ph\u1EA9m t\u1EA1i shop");
+  }
+  if (/error_invalid_logistic_channel|invalid logistic|logistic_channel.*invalid/i.test(out)) {
+    out = out.replace(/(?:product\.)?error_invalid_logistic_channel/gi, "").replace(/invalid logistic.*channel/gi, "").replace("K\xEAnh v\u1EADn chuy\u1EC3n kh\xF4ng h\u1EE3p l\u1EC7: k\xEAnh 50051 ho\u1EB7c 50041 \u0111\xE3 b\u1ECB Shopee ng\u1EEBng h\u1ED7 tr\u1EE3 ho\u1EB7c kh\xF4ng t\u1ED3n t\u1EA1i trong danh s\xE1ch k\xEAnh c\u1EE7a shop. Vui l\xF2ng ch\u1ECDn l\u1EA1i k\xEAnh v\u1EADn chuy\u1EC3n trong ph\u1EA7n C\u1EA5u h\xECnh s\u1EA3n ph\u1EA9m.", "").trim();
+    if (/kênh.*50051|50051.*kênh/i.test(out)) {
+      out = out.replace(/50051/g, "").trim();
+      if (!out) out = "K\xEAnh v\u1EADn chuy\u1EC3n 50051 kh\xF4ng h\u1EE3p l\u1EC7 \u2014 Shopee kh\xF4ng c\xF2n h\u1ED7 tr\u1EE3. Vui l\xF2ng ch\u1ECDn k\xEAnh kh\xE1c.";
+    }
+    if (/kênh.*50041|50041.*kênh/i.test(out)) {
+      out = out.replace(/50041/g, "").trim();
+      if (!out) out = "K\xEAnh v\u1EADn chuy\u1EC3n 50041 kh\xF4ng h\u1EE3p l\u1EC7 \u2014 Shopee kh\xF4ng c\xF2n h\u1ED7 tr\u1EE3. Vui l\xF2ng ch\u1ECDn k\xEAnh kh\xE1c.";
+    }
+    if (/invalid.*channel|logistic.*invalid/i.test(out)) {
+      out = "K\xEAnh v\u1EADn chuy\u1EC3n kh\xF4ng h\u1EE3p l\u1EC7 \u2014 vui l\xF2ng ch\u1ECDn l\u1EA1i k\xEAnh trong C\u1EA5u h\xECnh s\u1EA3n ph\u1EA9m.";
+    }
+  }
+  if (/50051|50041/i.test(out) && /logistic|channel|vận chuyển|invalid/i.test(out)) {
+    out = "K\xEAnh v\u1EADn chuy\u1EC3n 50051/50041 \u0111\xE3 b\u1ECB Shopee ng\u1EEBng h\u1ED7 tr\u1EE3. Vui l\xF2ng ch\u1ECDn k\xEAnh v\u1EADn chuy\u1EC3n kh\xE1c trong C\u1EA5u h\xECnh s\u1EA3n ph\u1EA9m.";
+  }
+  if (/error_init_tier_variation|tier_variation.*invalid|cannot unmarshal.*string/i.test(out)) {
+    out = out.replace(/(?:product\.)?error_init_tier_variation/gi, "").replace(/cannot unmarshal.*string/gi, "").replace(/tier_variation.*invalid/gi, "").trim();
+    if (!out || /tier|phân loại/i.test(out)) {
+      out = "L\u1ED7i kh\u1EDFi t\u1EA1o ph\xE2n lo\u1EA1i (tier_variation) \u2014 ki\u1EC3m tra l\u1EA1i d\u1EEF li\u1EC7u bi\u1EBFn th\u1EC3 v\xE0 brand_id.";
+    }
+  }
+  if (/brand.*id.*invalid|invalid.*brand|error.*brand_id/i.test(out)) {
+    out = "Brand_id kh\xF4ng h\u1EE3p l\u1EC7 \u2014 n\u1EBFu s\u1EA3n ph\u1EA9m kh\xF4ng c\xF3 th\u01B0\u01A1ng hi\u1EC7u, truy\u1EC1n brand_id = 0.";
+  }
+  return out.replace(/\s*[—\-–]\s*(?=[—\-–|]|$)/g, "").replace(/[ \t]{2,}/g, " ").trim();
+}
+function formatShopeeSyncAlertLines(raw) {
+  const text = translateShopeeErrorCodes(String(raw ?? ""));
+  if (!text) return [];
+  const re = /\[(\d+)\]([^\[\]—]+)/g;
+  const lines = [];
+  let match2;
+  while ((match2 = re.exec(text)) !== null) {
+    const shopId = match2[1];
+    const shopName = SHOP_MAP[shopId] || `Shop ${shopId}`;
+    let body = String(match2[2] || "").replace(/^\s*[|:]\s*/, "").replace(/\s*[|:]\s*$/, "").replace(/\s+tại\s+shop\s*$/i, "").replace(/\s+trên\s+shop\s+\S.*$/i, "").replace(/[ \t]{2,}/g, " ").trim();
+    if (!body) continue;
+    lines.push(`${body} tr\xEAn shop ${shopName}`);
+  }
+  return [...new Set(lines)];
+}
+function humanizeShopeeErrorMessage(raw) {
+  const lines = formatShopeeSyncAlertLines(raw);
+  if (lines.length > 0) return lines.join(" | ");
+  return translateShopeeErrorCodes(String(raw ?? "")) || String(raw ?? "").trim();
+}
+function formatShopeeApiError(json2, httpStatus) {
+  const parts = [json2?.message, json2?.error, json2?.msg].map((v) => String(v ?? "").trim()).filter((v) => v && !/^HTTP\s+\d+$/i.test(v));
+  const status = typeof httpStatus === "number" && httpStatus > 0 ? httpStatus : typeof json2?.httpStatus === "number" && json2.httpStatus > 0 ? json2.httpStatus : void 0;
+  let out;
+  if (status === 401) {
+    out = parts[0] || SHOPEE_REAUTH_REQUIRED_MESSAGE;
+  } else if (status === 429) {
+    out = parts[0] || "Shopee gi\u1EDBi h\u1EA1n t\u1EA7n su\u1EA5t (HTTP 429 Too Many Requests) \u2014 vui l\xF2ng th\u1EED l\u1EA1i sau 1\u20132 ph\xFAt.";
+  } else if (status === 504) {
+    out = parts[0] || "Timeout khi g\u1ECDi Shopee API (HTTP 504) \u2014 c\u1EEDa s\u1ED5 \u0111\u1ED3ng b\u1ED9 qu\xE1 r\u1ED9ng ho\u1EB7c Shopee ph\u1EA3n h\u1ED3i ch\u1EADm. Th\u1EED l\u1EA1i v\u1EDBi \u0110\u1ED3ng b\u1ED9 nhanh 3h.";
+  } else if (/timeout|timed out|AbortError/i.test(parts.join(" "))) {
+    out = parts[0] || "Timeout khi g\u1ECDi Shopee API \u2014 th\u1EED \u0110\u1ED3ng b\u1ED9 nhanh 3h ho\u1EB7c gi\u1EA3m ph\u1EA1m vi th\u1EDDi gian \u0111\u1ED3ng b\u1ED9.";
+  } else if (parts.length > 0) {
+    out = parts.join(" \u2014 ");
+  } else if (status && status >= 400) {
+    out = `Shopee API l\u1ED7i HTTP ${status}`;
+  } else {
+    out = "L\u1ED7i Shopee API kh\xF4ng x\xE1c \u0111\u1ECBnh";
+  }
+  return humanizeShopeeErrorMessage(out);
+}
+function isShopeeRateLimited(httpStatus, json2) {
+  if (httpStatus === 429) return true;
+  const text = `${json2?.error || ""} ${json2?.message || ""}`.toLowerCase();
+  return /rate.?limit|too many request|api_call_limit|exceed/.test(text);
+}
+function warnShopeeUint64Sample(json2, context) {
+  try {
+    const body = json2?.response ?? json2 ?? {};
+    const sampleItem = body?.order_list?.[0]?.item_list?.[0] || body?.item_list?.[0] || (Array.isArray(body?.item) ? body.item[0] : null) || (Array.isArray(body?.activity) ? body.activity[0] : null) || null;
+    const keys = ["item_id", "model_id", "promotion_id", "activity_id", "return_id"];
+    const check = (obj, prefix = "") => {
+      if (!obj || typeof obj !== "object") return;
+      for (const k of keys) {
+        const v = obj[k];
+        if (typeof v === "number" && !Number.isSafeInteger(v)) {
+          console.warn(
+            `[Shopee uint64] ${context} field ${prefix}${k}=${v} v\u01B0\u1EE3t Safe Integer \u2014 ki\u1EC3m tra json-bigint`
+          );
+        }
+      }
+    };
+    check(sampleItem);
+    check(body);
+  } catch {
+  }
+}
+function maybeNormalizeReturnJson(json2, context) {
+  const ctx = String(context || "");
+  try {
+    if (/get_return_detail|get_return_list|get_reverse_tracking|returns\./i.test(ctx)) {
+      return normalizeShopeeReturnDetail(json2);
+    }
+    if (/product\.|\/product\/|promotion|activity|add_item|update_item|get_attribute|get_item|get_model|discount|flash_sale|voucher/i.test(
+      ctx
+    )) {
+      return normalizeShopeeProductIds(json2);
+    }
+  } catch {
+    return json2;
+  }
+  return json2;
+}
+async function shopeeFetchJsonWithRetry(url2, context, opts) {
+  const maxAttempts = opts?.maxAttempts ?? SHOPEE_API_MAX_RETRY;
+  const baseDelayMs = opts?.baseDelayMs ?? SHOPEE_API_RETRY_BASE_MS;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    let res;
+    let rawText = "";
+    try {
+      res = await fetchWithTimeout(url2);
+      rawText = await res.text();
+    } catch (err) {
+      if (res && res.status < 400) await recordShopeeApiError(url2, "network");
+      console.error("[Shopee API] request_failed:", safeError(err));
+      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
+      if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
+        shopeeRetryTelemetry.retries++;
+        console.warn(`[Shopee API] ${context} l\u1ED7i m\u1EA1ng, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`);
+        await sleep(waitMs);
+        continue;
+      }
+      const netMsg = err instanceof Error ? err.message : String(err);
+      throw new Error(`${context}: Kh\xF4ng k\u1EBFt n\u1ED1i \u0111\u01B0\u1EE3c Shopee API \u2014 ${netMsg}`);
+    }
+    let json2;
+    try {
+      json2 = rawText ? parseShopeeJson(rawText) : {};
+      json2 = maybeNormalizeReturnJson(json2, context);
+      warnShopeeUint64Sample(json2, context);
+    } catch (parseErr) {
+      if (res.status < 400) await recordShopeeApiError(url2, "parse");
+      const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+      return {
+        httpStatus: res.status,
+        json: {
+          error: "json_parse_error",
+          message: `${context}: ph\u1EA3n h\u1ED3i kh\xF4ng ph\u1EA3i JSON h\u1EE3p l\u1EC7 (HTTP ${res.status}): ${parseMsg}`
+        }
+      };
+    }
+    if (res.status < 400 && json2?.error) await recordShopeeApiError(url2, "application");
+    if ((isShopeeRateLimited(res.status, json2) || isShopeeRetryableHttpStatus(res.status)) && attempt < maxAttempts - 1) {
+      shopeeRetryTelemetry.retries++;
+      if (isShopeeRateLimited(res.status, json2)) shopeeRetryTelemetry.rateLimits++;
+      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
+      console.warn(
+        `[Shopee API] ${context} HTTP ${res.status}, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`
+      );
+      await sleep(waitMs);
+      continue;
+    }
+    if (res.status === 401 || res.status === 429 || res.status === 504 || res.status >= 400 && json2?.error) {
+      json2.message = formatShopeeApiError(json2, res.status);
+      json2.httpStatus = res.status;
+    }
+    if (res.status >= 400 || json2?.error) {
+      console.error("[Shopee API] response_failed:", res.status);
+    }
+    return { json: json2, httpStatus: res.status };
+  }
+  shopeeRetryTelemetry.exhausted++;
+  return {
+    httpStatus: 429,
+    json: {
+      error: "rate_limit_exceeded",
+      message: formatShopeeApiError({ error: "rate_limit_exceeded" }, 429),
+      httpStatus: 429
+    }
+  };
+}
+async function shopeePostJsonWithRetry(url2, body, context, opts) {
+  const maxAttempts = opts?.maxAttempts ?? SHOPEE_API_MAX_RETRY;
+  const baseDelayMs = opts?.baseDelayMs ?? SHOPEE_API_RETRY_BASE_MS;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    let res;
+    let rawText = "";
+    try {
+      res = await fetchWithTimeout(url2, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // JSON.stringify chuẩn: giữ Number cho item_id/model_id (Shopee Go uint64).
+        // Không dùng stringifyShopeeJson (storeAsString) — sẽ biến ID thành string và bị Shopee từ chối.
+        body: JSON.stringify(body)
+      });
+      rawText = await res.text();
+    } catch (err) {
+      if (res && res.status < 400) await recordShopeeApiError(url2, "network");
+      console.error("[Shopee API] request_failed:", safeError(err));
+      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
+      if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
+        shopeeRetryTelemetry.retries++;
+        console.warn(`[Shopee API] ${context} l\u1ED7i m\u1EA1ng, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`);
+        await sleep(waitMs);
+        continue;
+      }
+      const netMsg = err instanceof Error ? err.message : String(err);
+      throw new Error(`${context}: Kh\xF4ng k\u1EBFt n\u1ED1i \u0111\u01B0\u1EE3c Shopee API \u2014 ${netMsg}`);
+    }
+    let json2;
+    try {
+      json2 = rawText ? parseShopeeJson(rawText) : {};
+      json2 = maybeNormalizeReturnJson(json2, context);
+      warnShopeeUint64Sample(json2, context);
+    } catch (parseErr) {
+      if (res.status < 400) await recordShopeeApiError(url2, "parse");
+      const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+      return {
+        httpStatus: res.status,
+        json: {
+          error: "json_parse_error",
+          message: `${context}: ph\u1EA3n h\u1ED3i kh\xF4ng ph\u1EA3i JSON h\u1EE3p l\u1EC7 (HTTP ${res.status}): ${parseMsg}`
+        }
+      };
+    }
+    if (res.status < 400 && json2?.error) await recordShopeeApiError(url2, "application");
+    if ((isShopeeRateLimited(res.status, json2) || isShopeeRetryableHttpStatus(res.status)) && attempt < maxAttempts - 1) {
+      shopeeRetryTelemetry.retries++;
+      if (isShopeeRateLimited(res.status, json2)) shopeeRetryTelemetry.rateLimits++;
+      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
+      console.warn(
+        `[Shopee API] ${context} HTTP ${res.status}, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`
+      );
+      await sleep(waitMs);
+      continue;
+    }
+    if (json2?.error && !json2.message) {
+      json2.message = formatShopeeApiError(json2, res.status);
+    }
+    if (res.status >= 400 || json2?.error) {
+      console.error("[Shopee API] response_failed:", res.status);
+    }
+    return { json: json2, httpStatus: res.status };
+  }
+  shopeeRetryTelemetry.exhausted++;
+  return {
+    httpStatus: 429,
+    json: {
+      error: "rate_limit_exceeded",
+      message: formatShopeeApiError({ error: "rate_limit_exceeded" }, 429)
+    }
+  };
+}
+
+// services/shopee/auth.js
+var APP_ROOT = resolveAppRoot();
+var APP_BASE_URL = resolveAppBaseUrl();
+function resolveShopeeCallbackUrl() {
+  const explicit = String(process.env.SHOPEE_CALLBACK_URL || "").trim().replace(/\/$/, "");
+  if (explicit) return explicit;
+  return `${APP_BASE_URL}/api/shopee/callback`;
+}
+var SHOPEE_CALLBACK_URL = resolveShopeeCallbackUrl();
+var SHOPEE_WEBHOOK_URL = `${APP_BASE_URL}/api/shopee/webhook`;
+var SHOPEE_CALLBACK_IDLE_MSG = "Callback route is active. Waiting for Shopee parameters (code, shop_id)...";
+var SHOPEE_ENV = (process.env.SHOPEE_ENV || "live").toLowerCase();
+var SHOPEE_HOST = "https://partner.shopeemobile.com";
+if (SHOPEE_ENV !== "live") {
+  console.warn(`[Shopee API] SHOPEE_ENV=${SHOPEE_ENV} \u2014 ch\u1EC9 d\xF9ng host Live: ${SHOPEE_HOST}`);
+}
+var SHOPEE_PARTNER_ID = process.env.SHOPEE_PARTNER_ID || "";
+var SHOPEE_PARTNER_KEY = process.env.SHOPEE_PARTNER_KEY || "";
+function isShopeeConfigValid() {
+  return /^\d+$/.test(SHOPEE_PARTNER_ID) && SHOPEE_PARTNER_KEY.length > 0 && !/CHUA_CO|YOUR_LIVE/i.test(SHOPEE_PARTNER_KEY);
+}
+if (!isShopeeConfigValid()) {
+  console.warn(
+    `[Shopee API] \u26A0\uFE0F SHOPEE_PARTNER_ID (hi\u1EC7n t\u1EA1i: "${SHOPEE_PARTNER_ID || "(r\u1ED7ng)"}") ho\u1EB7c SHOPEE_PARTNER_KEY ch\u01B0a \u0111\u01B0\u1EE3c \u0111i\u1EC1n \u0111\xFAng trong .env. Partner_id ph\u1EA3i l\xE0 m\u1ED9t s\u1ED1 nguy\xEAn (v\xED d\u1EE5: 2001234), l\u1EA5y t\u1EEB App PRODUCTION (Live) tr\xEAn open.shopee.com, KH\xD4NG d\xF9ng Sandbox. M\u1ECDi l\u1EA7n g\u1ECDi API Shopee s\u1EBD b\u1EC3 tr\u1EA3 l\u1ED7i error_param cho \u0111\u1EBFn khi s\u1EEDa \u0111\xFAng gi\xE1 tr\u1ECB n\xE0y.`
+  );
+}
+var SHOPEE_TOKENS_PATH = import_path3.default.resolve(APP_ROOT, "data", "shopee_tokens.json");
+var SHOPEE_OAUTH_LAST_PATH = import_path3.default.resolve(APP_ROOT, "data", "shopee_oauth_last.json");
+var CHANNEL_SETTINGS_PATH = import_path3.default.resolve(APP_ROOT, "data", "channel_settings.json");
+var CANONICAL_SHOPEE_SHOP_IDS = ["4127421", "831052930"];
+var INDEPENDENT_SHOPEE_SHOP_IDS = new Set(CANONICAL_SHOPEE_SHOP_IDS);
+var deps = {
+  syncOAuthShopsToChannelSettings: () => {
+  },
+  logOAuthSaveError: () => {
+  }
+};
+function initShopeeAuth(partial) {
+  deps = { ...deps, ...partial };
+}
+function ensureDataDirs() {
+  const dataDir = import_path3.default.join(APP_ROOT, "data");
+  import_fs2.default.mkdirSync(dataDir, { recursive: true });
+  if (!import_fs2.default.existsSync(SHOPEE_TOKENS_PATH)) {
+    import_fs2.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
+  }
+}
+function saveOAuthAudit(entry) {
+  try {
+    ensureDataDirs();
+    import_fs2.default.writeFileSync(
+      SHOPEE_OAUTH_LAST_PATH,
+      JSON.stringify({ ...entry, at: (/* @__PURE__ */ new Date()).toISOString() }, null, 2),
+      "utf-8"
+    );
+  } catch (error) {
+    console.error("[Shopee OAuth] Failed to write shopee_oauth_last.json:", error);
+  }
+}
+function loadLastOAuthAudit() {
+  try {
+    if (!import_fs2.default.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
+    return JSON.parse(import_fs2.default.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+function bootShopeeAuth() {
+  ensureDataDirs();
+  try {
+    const normalized = normalizeTokenStore(loadShopeeTokens());
+    if (Object.keys(normalized).length > 0) {
+      saveShopeeTokens(normalized);
+      console.log(`[Boot] Normalized shopee_tokens.json keys: [${Object.keys(normalized).join(", ")}]`);
+    }
+  } catch (error) {
+    console.error("[Boot] Failed to normalize shopee_tokens.json:", error);
+  }
+  console.log(
+    `[Boot] APP_ROOT=${APP_ROOT} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs2.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL}`
+  );
+}
+function loadShopeeTokens() {
+  try {
+    if (!import_fs2.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
+    const raw = import_fs2.default.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
+    if (!raw.trim()) return {};
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      const map = {};
+      for (const row of parsed) {
+        const k = normalizeShopIdKey(row?.shop_id ?? row?.shopId);
+        if (k) map[k] = row;
+      }
+      return map;
+    }
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (error) {
+    console.error("[Shopee Tokens] Failed to read shopee_tokens.json:", error);
+    return {};
+  }
+}
+function maskTokenStoreForLog(tokens) {
+  const masked = {};
+  for (const [key, record] of Object.entries(tokens || {})) {
+    masked[key] = {
+      shop_id: record?.shop_id ?? key,
+      oauth_shop_id: record?.oauth_shop_id ?? null,
+      shop_id_list: record?.shop_id_list ?? [],
+      merchant_id_list: record?.merchant_id_list ?? [],
+      expire_in: record?.expire_in ?? null,
+      obtained_at: record?.obtained_at ?? null,
+      access_token: record?.access_token ? "[REDACTED]" : null,
+      refresh_token: record?.refresh_token ? "[REDACTED]" : null
+    };
+  }
+  return masked;
+}
+function saveShopeeTokens(tokensToWrite) {
+  const absPath = import_path3.default.resolve(SHOPEE_TOKENS_PATH);
+  try {
+    ensureDataDirs();
+    const onDisk = normalizeTokenStore(loadShopeeTokens());
+    const tokensData = { ...onDisk };
+    const keysBefore = Object.keys(tokensData);
+    for (const [rawKey, record] of Object.entries(tokensToWrite || {})) {
+      const shop_id = normalizeShopIdKey(record?.shop_id ?? rawKey);
+      if (!shop_id || !record) continue;
+      tokensData[shop_id] = {
+        ...tokensData[shop_id],
+        ...record,
+        shop_id
+      };
+      console.log(`[Shopee Tokens] UPSERT shop_id=${shop_id}`);
+    }
+    const keysAfter = Object.keys(tokensData);
+    console.log(
+      "DEBUG SAVE: Merge keys",
+      JSON.stringify({ keysBefore, keysAfter, addedOrUpdated: keysAfter.filter((k) => !keysBefore.includes(k) || tokensToWrite[k]) })
+    );
+    console.log("DEBUG SAVE: Full tokensData file keys:", keysAfter);
+    console.log(
+      "DEBUG SAVE: Full tokensData (masked):",
+      JSON.stringify(maskTokenStoreForLog(tokensData))
+    );
+    const payload = JSON.stringify(tokensData, null, 2);
+    console.log(
+      "[Shopee Tokens] fs.writeFileSync \u2014 TR\u01AF\u1EDAC KHI GHI",
+      JSON.stringify({
+        absPath,
+        SHOPEE_TOKENS_PATH,
+        APP_ROOT,
+        keys: keysAfter,
+        byteLength: Buffer.byteLength(payload, "utf-8")
+      })
+    );
+    import_fs2.default.writeFileSync(absPath, payload, "utf-8");
+    console.log(
+      "[Shopee Tokens] fs.writeFileSync \u2014 GHI TH\xC0NH C\xD4NG",
+      JSON.stringify({ absPath, keys: keysAfter, fileSize: import_fs2.default.statSync(absPath).size })
+    );
+    return true;
+  } catch (error) {
+    deps.logOAuthSaveError("saveShopeeTokens", error);
+    console.error(
+      "[Shopee Tokens] fs.writeFileSync \u2014 L\u1ED6I GHI FILE",
+      JSON.stringify({
+        absPath,
+        SHOPEE_TOKENS_PATH,
+        errorMessage: error?.message || String(error),
+        errorCode: error?.code || null
+      })
+    );
+    return false;
+  }
+}
+function normalizeShopIdKey(shopId) {
+  const key = String(shopId ?? "").trim();
+  return /^\d+$/.test(key) ? key : "";
+}
+function queryParamOne(value) {
+  if (Array.isArray(value)) return String(value[0] ?? "").trim();
+  return String(value ?? "").trim();
+}
+function shouldOAuthRedirectToFrontend(req) {
+  if (queryParamOne(req.query?.format) === "json") return false;
+  if (queryParamOne(req.query?.redirect) === "0") return false;
+  return true;
+}
+function buildOAuthFrontendRedirectUrl(req, result) {
+  const oauthShopId = String(result.oauth_shop_id || queryParamOne(req.query.shop_id) || "");
+  const expectedShop = queryParamOne(req.query?.expected_shop) || String(result.expected_shop_id || "");
+  if (result.success) {
+    const savedQuery = encodeURIComponent((result.saved_shop_ids || []).join(","));
+    const expectedQuery = expectedShop ? `&expected_shop=${encodeURIComponent(expectedShop)}` : "";
+    return `${APP_BASE_URL}/?shopee_linked=1&shop_id=${encodeURIComponent(oauthShopId)}&saved_shops=${savedQuery}${expectedQuery}`;
+  }
+  const errMsg = result.message || result.error || "token_exchange_failed";
+  return `${APP_BASE_URL}/?shopee_linked=0&shop_id=${encodeURIComponent(oauthShopId)}&error=${encodeURIComponent(errMsg)}`;
+}
+function normalizeShopeeTokenResponse(raw) {
+  const inner = raw?.response && typeof raw.response === "object" && !Array.isArray(raw.response) ? raw.response : raw?.data && typeof raw.data === "object" ? raw.data : raw;
+  const access_token = inner?.access_token ?? inner?.accessToken ?? raw?.access_token ?? raw?.accessToken ?? "";
+  const refresh_token = inner?.refresh_token ?? inner?.refreshToken ?? raw?.refresh_token ?? raw?.refreshToken ?? "";
+  const expire_in = Number(
+    inner?.expire_in ?? inner?.expire_time ?? inner?.expires_in ?? raw?.expire_in ?? raw?.expire_time ?? 0
+  );
+  const shop_id_list = inner?.shop_id_list ?? raw?.shop_id_list ?? inner?.shop_ids ?? [];
+  const merchant_id_list = inner?.merchant_id_list ?? raw?.merchant_id_list ?? [];
+  return {
+    ...raw,
+    access_token: access_token || void 0,
+    refresh_token: refresh_token || void 0,
+    expire_in: expire_in > 0 ? expire_in : void 0,
+    shop_id_list: Array.isArray(shop_id_list) ? shop_id_list : [],
+    merchant_id_list: Array.isArray(merchant_id_list) ? merchant_id_list : [],
+    shop_id: inner?.shop_id ?? raw?.shop_id,
+    error: raw?.error ?? inner?.error,
+    message: raw?.message ?? inner?.message,
+    _raw: raw
+  };
+}
+function buildShopeeTokenRecord(shopKey, authJson, oauthShopId, existing) {
+  const key = normalizeShopIdKey(shopKey);
+  const oauth = normalizeShopIdKey(oauthShopId) || key;
+  const authHasShopList = Array.isArray(authJson?.shop_id_list);
+  const fromAuthList = authHasShopList ? authJson.shop_id_list.map((x2) => normalizeShopIdKey(x2)).filter(Boolean) : [];
+  const fromExistingList = Array.isArray(existing?.shop_id_list) ? existing.shop_id_list.map((x2) => normalizeShopIdKey(x2)).filter(Boolean) : [];
+  const shopIdList = authHasShopList ? [...new Set([...fromAuthList, key].filter(Boolean))] : [...new Set([...fromExistingList, key].filter(Boolean))];
+  const fromAuthMerchants = Array.isArray(authJson?.merchant_id_list) ? authJson.merchant_id_list.map((x2) => String(x2)).filter(Boolean) : [];
+  const fromExistingMerchants = Array.isArray(existing?.merchant_id_list) ? existing.merchant_id_list.map((x2) => String(x2)).filter(Boolean) : [];
+  const merchantIdList = [.../* @__PURE__ */ new Set([...fromAuthMerchants, ...fromExistingMerchants])];
+  return {
+    shop_id: key,
+    access_token: String(authJson?.access_token ?? existing?.access_token ?? ""),
+    refresh_token: String(authJson?.refresh_token ?? existing?.refresh_token ?? ""),
+    expire_in: Number(authJson?.expire_in ?? existing?.expire_in ?? 14400),
+    obtained_at: Number(authJson?.obtained_at ?? Math.floor(Date.now() / 1e3)),
+    oauth_shop_id: existing?.oauth_shop_id || oauth,
+    shop_id_list: shopIdList,
+    merchant_id_list: merchantIdList
+  };
+}
+function normalizeTokenStore(tokens) {
+  const out = {};
+  for (const [rawKey, record] of Object.entries(tokens || {})) {
+    if (!record || typeof record !== "object") continue;
+    const key = normalizeShopIdKey(record.shop_id ?? rawKey);
+    if (!key || !record.access_token) continue;
+    const oauthShopId = normalizeShopIdKey(record.oauth_shop_id) || key;
+    out[key] = buildShopeeTokenRecord(key, record, oauthShopId, record);
+  }
+  return out;
+}
+function getShopeeTokenRecord(tokens, shopId) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) return null;
+  if (tokens[key]?.access_token || tokens[key]?.refresh_token) return tokens[key];
+  for (const [k, v] of Object.entries(tokens)) {
+    if (normalizeShopIdKey(k) === key) return v;
+  }
+  return null;
+}
+function resolveShopeeTokenConnectionStatus(shopId, preloadedTokens) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) {
+    return { status: "missing", message: "Thi\u1EBFu Shop ID", expires_at: null };
+  }
+  const tokens = preloadedTokens && typeof preloadedTokens === "object" ? preloadedTokens : loadShopeeTokens();
+  const record = getShopeeTokenRecord(tokens, key);
+  if (!record?.access_token) {
+    return {
+      status: "missing",
+      message: "Ch\u01B0a k\u1EBFt n\u1ED1i OAuth \u2014 kh\xF4ng c\xF3 access_token",
+      expires_at: null
+    };
+  }
+  const now = Math.floor(Date.now() / 1e3);
+  const obtainedAt = Number(record.obtained_at) || 0;
+  const expireIn = Number(record.expire_in) || 0;
+  const expiresAt = obtainedAt > 0 && expireIn > 0 ? obtainedAt + expireIn : null;
+  if (expiresAt != null && now > expiresAt) {
+    return {
+      status: "expired",
+      message: `Token h\u1EBFt h\u1EA1n l\xFAc ${new Date(expiresAt * 1e3).toLocaleString("vi-VN")} \u2014 c\u1EA7n OAuth l\u1EA1i ho\u1EB7c refresh`,
+      expires_at: expiresAt
+    };
+  }
+  return {
+    status: "online",
+    message: expiresAt != null ? `Token h\u1EE3p l\u1EC7 \u0111\u1EBFn ${new Date(expiresAt * 1e3).toLocaleString("vi-VN")}` : "Token h\u1EE3p l\u1EC7",
+    expires_at: expiresAt
+  };
+}
+function collectShopIdsForTokenSave(requestShopId, authJson, expectedShopId) {
+  const ids = /* @__PURE__ */ new Set();
+  const primary = normalizeShopIdKey(requestShopId);
+  if (primary) ids.add(primary);
+  const expected = normalizeShopIdKey(expectedShopId);
+  if (expected) ids.add(expected);
+  for (const raw of authJson?.shop_id_list || []) {
+    const k = normalizeShopIdKey(raw);
+    if (k) ids.add(k);
+  }
+  const fromBody = normalizeShopIdKey(authJson?.shop_id);
+  if (fromBody) ids.add(fromBody);
+  return [...ids];
+}
+function persistOAuthTokens(authJson, opts) {
+  if (!authJson?.access_token) return [];
+  const oauthShopId = normalizeShopIdKey(opts.oauthShopId);
+  const mainAccountId = normalizeShopIdKey(opts.mainAccountId);
+  const expected = normalizeShopIdKey(opts.expectedShopId);
+  const shopIds = new Set(collectShopIdsForTokenSave(oauthShopId || mainAccountId, authJson, expected));
+  if (mainAccountId && Array.isArray(authJson?.shop_id_list)) {
+    for (const raw of authJson.shop_id_list) {
+      const k = normalizeShopIdKey(raw);
+      if (k) shopIds.add(k);
+    }
+  }
+  const shopMismatch = Boolean(expected && oauthShopId && expected !== oauthShopId);
+  if (shopMismatch && !shopIds.has(expected)) {
+    console.warn(
+      `[Shopee OAuth] Shop mismatch: expected=${expected}, oauth=${oauthShopId}, shop_id_list=[${(authJson?.shop_id_list || []).join(", ")}] \u2014 kh\xF4ng l\u01B0u alias token sai shop.`
+    );
+    shopIds.delete(expected);
+  }
+  if (shopIds.size === 0 && oauthShopId) shopIds.add(oauthShopId);
+  const keysBeforeMerge = Object.keys(normalizeTokenStore(loadShopeeTokens()));
+  const tokenOwner = oauthShopId || mainAccountId || "";
+  const updates = {};
+  for (const id of shopIds) {
+    updates[id] = buildShopeeTokenRecord(id, authJson, tokenOwner || id, loadShopeeTokens()[id]);
+    console.log("DEBUG SAVE: Saving data for shop:", id, "Full Data:", JSON.stringify(safeTokenMetadata(updates[id])));
+  }
+  saveShopeeTokens(updates);
+  for (const id of shopIds) {
+    console.log("L\u01B0u token th\xE0nh c\xF4ng cho shop: ", id);
+  }
+  const saved = [...shopIds];
+  const tokensData = normalizeTokenStore(loadShopeeTokens());
+  console.log(
+    "[Shopee Tokens] persistOAuthTokens \u2014 SAU MERGE",
+    JSON.stringify({
+      oauthShopId,
+      mainAccountId: mainAccountId || null,
+      expectedShopId: expected || null,
+      shopMismatch,
+      keysBefore: keysBeforeMerge,
+      keysAfter: Object.keys(tokensData),
+      shopIdsSaved: saved,
+      shopee_shop_id_list: authJson?.shop_id_list || [],
+      tokensPath: SHOPEE_TOKENS_PATH
+    })
+  );
+  return saved;
+}
+function verifyTokenSaved(shopId) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) return false;
+  const tokens = loadShopeeTokens();
+  return Boolean(getShopeeTokenRecord(tokens, key)?.access_token);
+}
+async function completeShopeeOAuthFlow(code, params) {
+  const oauthShopId = normalizeShopIdKey(params.shopIdRaw);
+  const mainAccountId = normalizeShopIdKey(params.mainAccountIdRaw);
+  const expected = normalizeShopIdKey(params.expectedShopId);
+  if (!oauthShopId && !mainAccountId) {
+    return {
+      success: false,
+      oauth_shop_id: "",
+      saved_shop_ids: [],
+      verified_in_file: false,
+      error: "invalid_shop_id",
+      message: `Thi\u1EBFu shop_id ho\u1EB7c main_account_id h\u1EE3p l\u1EC7 trong callback (shop_id=${params.shopIdRaw || ""}, main_account_id=${params.mainAccountIdRaw || ""})`
+    };
+  }
+  console.log(
+    "[Shopee OAuth] completeShopeeOAuthFlow B\u1EAET \u0110\u1EA6U",
+    JSON.stringify({
+      oauthShopId: oauthShopId || null,
+      mainAccountId: mainAccountId || null,
+      expectedShopId: expected || null,
+      shop_mismatch: expected && oauthShopId ? expected !== oauthShopId : false,
+      code_preview: `${code.slice(0, 8)}\u2026`,
+      tokensPath: SHOPEE_TOKENS_PATH
+    })
+  );
+  const tokenResult = await exchangeShopeeCodeForToken(code, {
+    shopId: oauthShopId || void 0,
+    mainAccountId: mainAccountId || void 0
+  });
+  let savedIds = [];
+  if (tokenResult.access_token) {
+    savedIds = persistOAuthTokens(tokenResult, {
+      oauthShopId: oauthShopId || void 0,
+      mainAccountId: mainAccountId || void 0,
+      expectedShopId: expected || void 0
+    });
+    tokenResult.saved_shop_ids = savedIds;
+    if (savedIds.length > 0) {
+      deps.syncOAuthShopsToChannelSettings(savedIds, { expectedShopId: expected || void 0 });
+    }
+  }
+  const shopMismatch = Boolean(
+    expected && oauthShopId && expected !== oauthShopId && !savedIds.includes(expected)
+  );
+  const verified = expected ? savedIds.includes(expected) && verifyTokenSaved(expected) : oauthShopId ? verifyTokenSaved(oauthShopId) : savedIds.length > 0;
+  saveOAuthAudit({
+    callback_shop_id: oauthShopId || null,
+    main_account_id: mainAccountId || null,
+    expected_shop_id: expected || null,
+    shop_mismatch: shopMismatch,
+    callback_code_present: Boolean(code),
+    success: Boolean(tokenResult.access_token) && verified && !shopMismatch,
+    verified_in_file: verified,
+    error: tokenResult.error || null,
+    message: tokenResult.message || null,
+    saved_shop_ids: savedIds,
+    shopee_shop_id_list: tokenResult.shop_id_list || [],
+    file_keys_after: Object.keys(loadShopeeTokens()),
+    tokens_path: SHOPEE_TOKENS_PATH,
+    app_root: APP_ROOT
+  });
+  return {
+    success: Boolean(tokenResult.access_token) && verified && !shopMismatch,
+    oauth_shop_id: oauthShopId || savedIds[0] || "",
+    expected_shop_id: expected || null,
+    shop_mismatch: shopMismatch,
+    saved_shop_ids: savedIds,
+    verified_in_file: verified,
+    error: tokenResult.error || (shopMismatch ? "shop_mismatch" : verified ? null : "token_not_persisted"),
+    message: shopMismatch ? `Shopee tr\u1EA3 v\u1EC1 shop ${oauthShopId}, KH\xD4NG ph\u1EA3i shop b\u1EA1n y\xEAu c\u1EA7u ${expected}. Token KH\xD4NG th\u1EC3 d\xF9ng cho shop kh\xE1c \u2014 h\xE3y \u0111\u0103ng xu\u1EA5t Shopee Seller Center, \u0111\u0103ng nh\u1EADp \u0111\xFAng shop ${expected}, r\u1ED3i b\u1EA5m OAuth l\u1EA1i.` : tokenResult.message || (verified ? `OAuth th\xE0nh c\xF4ng. Token \u0111\xE3 l\u01B0u cho: [${savedIds.join(", ")}].` : "Token kh\xF4ng ghi \u0111\u01B0\u1EE3c v\xE0o shopee_tokens.json"),
+    shopee_response: tokenResult.access_token ? { shop_id_list: tokenResult.shop_id_list || [], expire_in: tokenResult.expire_in } : tokenResult
+  };
+}
+function buildShopeeAuthPartnerUrl(shopId) {
+  const apiPath = "/api/v2/shop/auth_partner";
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2);
+  const sid = normalizeShopIdKey(shopId);
+  const redirectTarget = sid ? `${SHOPEE_CALLBACK_URL}?redirect=1&expected_shop=${sid}` : `${SHOPEE_CALLBACK_URL}?redirect=1`;
+  const redirect = encodeURIComponent(redirectTarget);
+  let url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp2}&sign=${sign}&redirect=${redirect}`;
+  if (sid) url2 += `&shop_id=${sid}`;
+  console.log(`[Shopee OAuth] auth_partner URL cho shop_id=${sid || "(none)"}: ${url2.replace(/sign=[^&]+/, "sign=***")}`);
+  return url2;
+}
+function saveShopeeTokenForShop(shopId, record) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) return;
+  const tokens = normalizeTokenStore(loadShopeeTokens());
+  const existing = tokens[key];
+  tokens[key] = buildShopeeTokenRecord(
+    key,
+    { ...existing, ...record, obtained_at: record.obtained_at ?? Math.floor(Date.now() / 1e3) },
+    existing?.oauth_shop_id || key,
+    existing
+  );
+  saveShopeeTokens(tokens);
+  if (tokens[key]?.access_token) {
+    tokenCacheSet(key, tokens[key].access_token, tokens[key].expire_in);
+  }
+  console.log(`[Shopee Tokens] Saved token for shop_id=${key}. All shops: [${Object.keys(tokens).join(", ")}]`);
+}
+function listChannelSettingsShopIds() {
+  try {
+    if (!import_fs2.default.existsSync(CHANNEL_SETTINGS_PATH)) return [];
+    const raw = import_fs2.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
+    const parsed = raw.trim() ? JSON.parse(raw) : {};
+    const shops = Array.isArray(parsed?.shops) ? parsed.shops : [];
+    const ids = [];
+    for (const shop of shops) {
+      const platform = String(shop?.platform || "").toLowerCase();
+      if (platform && platform !== "shopee") continue;
+      const id = normalizeShopIdKey(shop?.shopId || shop?.id);
+      if (id) ids.push(id);
+    }
+    return ids;
+  } catch {
+    return [];
+  }
+}
+function shopHasOwnToken(tokens, shopId) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) return false;
+  const rec = tokens[key];
+  return Boolean(rec?.access_token || rec?.refresh_token);
+}
+function listShopeeOAuthShopIds() {
+  return listShopeeSyncShopIds();
+}
+function listShopeeSyncShopIds(preloadedTokens) {
+  const tokens = preloadedTokens && typeof preloadedTokens === "object" ? preloadedTokens : loadShopeeTokens();
+  const ids = /* @__PURE__ */ new Set();
+  for (const id of CANONICAL_SHOPEE_SHOP_IDS) {
+    const key = normalizeShopIdKey(id);
+    if (key) ids.add(key);
+  }
+  for (const id of listChannelSettingsShopIds()) ids.add(id);
+  for (const [rawKey, record] of Object.entries(tokens)) {
+    const key = normalizeShopIdKey(rawKey);
+    if (key) ids.add(key);
+    const recordShopId = normalizeShopIdKey(record?.shop_id);
+    if (recordShopId) ids.add(recordShopId);
+  }
+  const list = [...ids].sort();
+  for (const id of list) {
+    if (!shopHasOwnToken(tokens, id)) {
+      console.error(
+        `[Shopee Tokens] THI\u1EBEU token ri\xEAng shop_id=${id}. C\u1EA4M d\xF9ng token shop kh\xE1c. V\xE0o C\xE0i \u0111\u1EB7t \u2192 \u1EE6y quy\u1EC1n l\u1EA1i Shop ${id}.`
+      );
+    }
+  }
+  return list;
+}
+function ensureShopeeLinkedShopTokenKeys() {
+  const tokens = normalizeTokenStore(loadShopeeTokens());
+  const updates = {};
+  let pruned = 0;
+  for (const [rawKey, record] of Object.entries(tokens)) {
+    if (!record?.access_token && !record?.refresh_token) continue;
+    const owner = normalizeShopIdKey(rawKey) || normalizeShopIdKey(record?.shop_id);
+    if (!owner) continue;
+    const list = Array.isArray(record?.shop_id_list) ? record.shop_id_list.map((x2) => normalizeShopIdKey(x2)).filter(Boolean) : [];
+    if (list.length <= 1) {
+      if (list.length !== 1 || list[0] !== owner) {
+        updates[owner] = {
+          ...record,
+          shop_id: owner,
+          shop_id_list: [owner]
+        };
+        pruned += 1;
+      }
+      continue;
+    }
+    const oauth = normalizeShopIdKey(record?.oauth_shop_id) || owner;
+    for (const id of list) {
+      if (id === owner) continue;
+      const existing = tokens[id] || updates[id];
+      const foreignIndependent = INDEPENDENT_SHOPEE_SHOP_IDS.has(owner) && INDEPENDENT_SHOPEE_SHOP_IDS.has(id);
+      if (foreignIndependent || !existing?.access_token || !existing?.refresh_token) {
+        console.error(
+          `[Shopee Tokens] C\u1EA4M clone token shop_id=${owner} \u2192 ${id}. Shop ${id} c\u1EA7n OAuth ri\xEAng (C\xE0i \u0111\u1EB7t \u2192 \u1EE6y quy\u1EC1n l\u1EA1i).`
+        );
+        continue;
+      }
+      if (existing.refresh_token && record.refresh_token && String(existing.refresh_token) !== String(record.refresh_token)) {
+        continue;
+      }
+      const mergedList = [...new Set([...(existing.shop_id_list || []).map(normalizeShopIdKey), ...list].filter(Boolean))];
+      if (mergedList.join(",") !== (existing.shop_id_list || []).map(normalizeShopIdKey).join(",")) {
+        updates[id] = {
+          ...existing,
+          shop_id: id,
+          oauth_shop_id: existing.oauth_shop_id || oauth,
+          shop_id_list: mergedList
+        };
+      }
+    }
+  }
+  for (const [rawKey, record] of Object.entries({ ...tokens, ...updates })) {
+    const key = normalizeShopIdKey(rawKey);
+    if (!key || !record) continue;
+    const oauth = normalizeShopIdKey(record.oauth_shop_id);
+    if (!oauth || oauth === key) continue;
+    const ownerRec = updates[oauth] || tokens[oauth];
+    if (!ownerRec) continue;
+    const ownerList = Array.isArray(ownerRec.shop_id_list) ? ownerRec.shop_id_list.map(normalizeShopIdKey).filter(Boolean) : [oauth];
+    const sameRefresh = record.refresh_token && ownerRec.refresh_token && String(record.refresh_token) === String(ownerRec.refresh_token);
+    const foreignIndependent = INDEPENDENT_SHOPEE_SHOP_IDS.has(key) && INDEPENDENT_SHOPEE_SHOP_IDS.has(oauth);
+    if (sameRefresh && (!ownerList.includes(key) || foreignIndependent)) {
+      console.error(
+        `[Shopee Tokens] G\u1EE1 shop clone gi\u1EA3 shop_id=${key} (token thu\u1ED9c ${oauth}, kh\xF4ng c\xF3 trong shop_id_list). C\u1EA7n OAuth ri\xEAng shop ${key}.`
+      );
+      delete updates[key];
+      if (tokens[key]) {
+        updates[`__delete__${key}`] = true;
+      }
+      pruned += 1;
+    }
+  }
+  const deleteKeys = Object.keys(updates).filter((k) => k.startsWith("__delete__"));
+  for (const dk of deleteKeys) {
+    delete updates[dk];
+  }
+  if (Object.keys(updates).length > 0 || deleteKeys.length > 0) {
+    const next = normalizeTokenStore(loadShopeeTokens());
+    for (const dk of deleteKeys) {
+      const id = dk.replace(/^__delete__/, "");
+      delete next[id];
+    }
+    Object.assign(next, updates);
+    import_fs2.default.writeFileSync(SHOPEE_TOKENS_PATH, JSON.stringify(next, null, 2), "utf8");
+    console.log(
+      `[Shopee Tokens] ensureLinkedShopTokenKeys \u2014 upsert=[${Object.keys(updates).join(", ")}] deleted=[${deleteKeys.map((k) => k.replace(/^__delete__/, "")).join(", ")}] pruned=${pruned}`
+    );
+  }
+  return listShopeeSyncShopIds();
+}
+function propagateShopeeTokenToLinkedShops(sourceShopId, patch, opts) {
+  const key = normalizeShopIdKey(sourceShopId);
+  if (!key || !patch?.access_token) return;
+  const tokens = normalizeTokenStore(loadShopeeTokens());
+  const record = getShopeeTokenRecord(tokens, key) || tokens[key];
+  if (!record) {
+    saveShopeeTokenForShop(key, patch);
+    tokenCacheSet(key, patch.access_token, patch.expire_in);
+    return;
+  }
+  const fromPatch = Array.isArray(patch.shop_id_list) ? patch.shop_id_list.map((x2) => normalizeShopIdKey(x2)).filter(Boolean) : [];
+  const linked = new Set(fromPatch.length ? fromPatch : [key]);
+  linked.add(key);
+  const oauth = normalizeShopIdKey(record.oauth_shop_id);
+  const onlyMatchingRefresh = opts?.onlyMatchingRefreshToken ? String(opts.onlyMatchingRefreshToken) : "";
+  const updates = {};
+  for (const id of linked) {
+    if (id !== key && INDEPENDENT_SHOPEE_SHOP_IDS.has(key) && INDEPENDENT_SHOPEE_SHOP_IDS.has(id)) {
+      console.error(
+        `[Shopee Tokens] C\u1EA4M propagate token shop_id=${key} \u2192 ${id}. Shop ${id} c\u1EA7n OAuth ri\xEAng.`
+      );
+      continue;
+    }
+    const existing = tokens[id] || (id === key ? record : null);
+    if (onlyMatchingRefresh && existing?.refresh_token && String(existing.refresh_token) !== onlyMatchingRefresh && id !== key) {
+      continue;
+    }
+    if (id !== key && existing?.refresh_token && onlyMatchingRefresh && String(existing.refresh_token) !== onlyMatchingRefresh) {
+      continue;
+    }
+    updates[id] = buildShopeeTokenRecord(
+      id,
+      {
+        access_token: patch.access_token,
+        refresh_token: patch.refresh_token,
+        expire_in: patch.expire_in,
+        obtained_at: patch.obtained_at,
+        shop_id_list: [...linked]
+      },
+      normalizeShopIdKey(existing?.oauth_shop_id) || oauth || key,
+      existing || record
+    );
+    tokenCacheSet(id, patch.access_token, patch.expire_in);
+  }
+  saveShopeeTokens(updates);
+  console.log(
+    `[Shopee Tokens] propagate from=${key} \u2192 [${Object.keys(updates).join(", ")}] list=[${[...linked].join(",")}]`
+  );
+}
+function shopeeSign(apiPath, timestamp2, accessToken, shopId) {
+  const baseString = accessToken && shopId ? `${SHOPEE_PARTNER_ID}${apiPath}${timestamp2}${accessToken}${shopId}` : `${SHOPEE_PARTNER_ID}${apiPath}${timestamp2}`;
+  return import_crypto.default.createHmac("sha256", SHOPEE_PARTNER_KEY).update(baseString).digest("hex");
+}
+async function exchangeShopeeCodeForToken(code, opts) {
+  const shopId = normalizeShopIdKey(opts.shopId);
+  const mainAccountId = normalizeShopIdKey(opts.mainAccountId);
+  if (!isShopeeConfigValid()) {
+    const error = {
+      error: "invalid_partner_config",
+      message: `SHOPEE_PARTNER_ID/"${SHOPEE_PARTNER_ID}" ho\u1EB7c SHOPEE_PARTNER_KEY trong .env ch\u01B0a ph\u1EA3i gi\xE1 tr\u1ECB Live th\u1EF1c. Vui l\xF2ng \u0111i\u1EC1n \u0111\xFAng Partner ID (s\u1ED1 nguy\xEAn) v\xE0 Partner Key t\u1EEB App PRODUCTION tr\xEAn open.shopee.com r\u1ED3i th\u1EED l\u1EA1i.`
+    };
+    console.error(`[Shopee OAuth] \u274C Kh\xF4ng th\u1EC3 \u0111\u1ED5i code: ${error.message}`);
+    return error;
+  }
+  if (!shopId && !mainAccountId) {
+    return {
+      error: "missing_shop_or_main_account",
+      message: "Shopee token/get c\u1EA7n shop_id HO\u1EB6C main_account_id (kh\xF4ng \u0111\u01B0\u1EE3c thi\u1EBFu c\u1EA3 hai)."
+    };
+  }
+  const apiPath = "/api/v2/auth/token/get";
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2);
+  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp2}&sign=${sign}`;
+  const body = {
+    code,
+    partner_id: Number(SHOPEE_PARTNER_ID)
+  };
+  if (mainAccountId) {
+    body.main_account_id = Number(mainAccountId);
+  } else if (shopId) {
+    body.shop_id = Number(shopId);
+  }
+  console.log(
+    "[Shopee OAuth] token/get request",
+    JSON.stringify({
+      shop_id: shopId || null,
+      main_account_id: mainAccountId || null,
+      partner_id: SHOPEE_PARTNER_ID,
+      url_host: SHOPEE_HOST
+    })
+  );
+  let res;
+  let rawText;
+  try {
+    res = await fetchWithTimeout(url2, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    rawText = await res.text();
+  } catch (error) {
+    deps.logOAuthSaveError("exchangeShopeeCodeForToken fetch", error);
+    return {
+      error: "network_error",
+      message: error?.message || "Kh\xF4ng g\u1ECDi \u0111\u01B0\u1EE3c Shopee token/get"
+    };
+  }
+  console.log("[Shopee OAuth] response bytes:", Buffer.byteLength(rawText || "", "utf8"));
+  let json2;
+  try {
+    json2 = rawText ? parseShopeeJson(rawText) : {};
+  } catch (parseErr) {
+    console.error("[Shopee OAuth] Kh\xF4ng parse \u0111\u01B0\u1EE3c JSON t\u1EEB Shopee:", parseErr);
+    return { error: "invalid_json", message: rawText.slice(0, 500) };
+  }
+  json2 = normalizeShopeeTokenResponse(json2);
+  console.log("DEBUG NORMALIZED RESPONSE:", JSON.stringify(safeTokenMetadata(json2)));
+  console.log(`[Shopee API] POST ${apiPath} (env=${SHOPEE_ENV}) -> HTTP ${res.status}`);
+  if (json2.access_token && json2.refresh_token) {
+    console.log(
+      "[Shopee OAuth] \u0110\xC3 L\u1EA4Y TOKEN T\u1EEA SHOPEE",
+      JSON.stringify({
+        shop_id: shopId || null,
+        main_account_id: mainAccountId || null,
+        access_token: "[REDACTED]",
+        refresh_token: "[REDACTED]",
+        expire_in: json2.expire_in,
+        shop_id_list: json2.shop_id_list || []
+      })
+    );
+  } else {
+    console.error(
+      "[Shopee OAuth] SHOPEE KH\xD4NG TR\u1EA2 \u0111\u1EE7 access_token/refresh_token",
+      JSON.stringify({
+        shop_id: shopId || null,
+        main_account_id: mainAccountId || null,
+        httpStatus: res.status,
+        error: json2.error || null,
+        message: json2.message || null,
+        keys: Object.keys(json2)
+      })
+    );
+  }
+  return json2;
+}
+async function refreshShopeeToken(shopId, refreshToken) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key || !refreshToken) {
+    return { error: "invalid_refresh_params", message: `Thi\u1EBFu shop_id ho\u1EB7c refresh_token (shop_id=${shopId})` };
+  }
+  const apiPath = "/api/v2/auth/access_token/get";
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2);
+  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp2}&sign=${sign}`;
+  try {
+    const res = await fetchWithTimeout(url2, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        refresh_token: String(refreshToken),
+        shop_id: Number(key),
+        partner_id: Number(SHOPEE_PARTNER_ID)
+      })
+    });
+    const rawText = await res.text();
+    const json2 = rawText ? parseShopeeJson(rawText) : {};
+    console.log(
+      `[Shopee API] POST ${apiPath} (refresh shop_id=${key}) -> HTTP ${res.status}:`,
+      JSON.stringify(safeTokenMetadata(json2))
+    );
+    const normalized = normalizeShopeeTokenResponse(json2);
+    if (normalized.access_token) {
+      const apiList = Array.isArray(normalized.shop_id_list) ? normalized.shop_id_list : Array.isArray(json2?.shop_id_list) ? json2.shop_id_list : [];
+      const shopIdListForSave = apiList.length ? apiList.map((x2) => normalizeShopIdKey(x2)).filter(Boolean) : [key];
+      saveShopeeTokenForShop(key, {
+        access_token: normalized.access_token,
+        refresh_token: normalized.refresh_token || refreshToken,
+        expire_in: normalized.expire_in,
+        obtained_at: Math.floor(Date.now() / 1e3),
+        shop_id_list: shopIdListForSave
+      });
+      tokenCacheSet(key, normalized.access_token, normalized.expire_in);
+      return {
+        ...normalized,
+        shop_id: key,
+        shop_id_list: shopIdListForSave
+      };
+    }
+    console.error(
+      `[Shopee API] Refresh token th\u1EA5t b\u1EA1i shop_id=${key}:`,
+      normalized.error || json2.error,
+      normalized.message || json2.message
+    );
+    return { ...normalized, shop_id: key };
+  } catch (error) {
+    deps.logOAuthSaveError(`refreshShopeeToken shop_id=${key}`, error);
+    return { error: "refresh_failed", message: error?.message || String(error), shop_id: key };
+  }
+}
+var ShopeeRefreshTokenExpiredError = class extends Error {
+  constructor(shopId) {
+    super(SHOPEE_REAUTH_REQUIRED_MESSAGE);
+    this.name = "ShopeeRefreshTokenExpiredError";
+    this.shopId = shopId;
+    this.code = "shopee_reauth_required";
+  }
+};
+function isShopeeInvalidTokenError(error, message) {
+  const text = `${error || ""} ${message || ""}`.toLowerCase();
+  return /invalid_acceess_token|invalid_access_token|error_auth|invalid_token|access_token.*expire|token.*expire|token.*invalid|unauthorized|hết hạn|không hợp lệ/.test(
+    text
+  );
+}
+var shopeeTokenRefreshLocks = /* @__PURE__ */ new Map();
+var shopeeAccessTokenCache = /* @__PURE__ */ new Map();
+function tokenCacheGet(shopId) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) return null;
+  const entry = shopeeAccessTokenCache.get(key);
+  if (!entry?.token) return null;
+  if (Math.floor(Date.now() / 1e3) >= Number(entry.expiresAt || 0)) {
+    shopeeAccessTokenCache.delete(key);
+    return null;
+  }
+  return String(entry.token);
+}
+function tokenCacheSet(shopId, token, expireIn) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key || !token) return;
+  const ttl = Math.max(60, Number(expireIn) || 14400) - 60;
+  shopeeAccessTokenCache.set(key, {
+    token: String(token),
+    expiresAt: Math.floor(Date.now() / 1e3) + ttl
+  });
+}
+function tokenCacheClear(shopId) {
+  const key = normalizeShopIdKey(shopId);
+  if (key) {
+    shopeeAccessTokenCache.delete(key);
+    shopeeShopTokenVerifyCache.delete(key);
+  }
+}
+var shopeeShopTokenVerifyCache = /* @__PURE__ */ new Map();
+function shopTokenVerifyCacheOk(shopId, token) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key || !token) return false;
+  const entry = shopeeShopTokenVerifyCache.get(key);
+  if (!entry?.tokenTail) return false;
+  if (Math.floor(Date.now() / 1e3) >= Number(entry.expiresAt || 0)) {
+    shopeeShopTokenVerifyCache.delete(key);
+    return false;
+  }
+  return entry.tokenTail === String(token).slice(-8);
+}
+function shopTokenVerifyCacheSet(shopId, token) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key || !token) return;
+  shopeeShopTokenVerifyCache.set(key, {
+    tokenTail: String(token).slice(-8),
+    expiresAt: Math.floor(Date.now() / 1e3) + 10 * 60
+  });
+}
+function resolveRefreshLockKey(shopId, record) {
+  const key = normalizeShopIdKey(shopId);
+  const oauth = normalizeShopIdKey(record?.oauth_shop_id);
+  if (oauth) return `oauth:${oauth}`;
+  const rt = record?.refresh_token ? String(record.refresh_token) : "";
+  if (rt) return `rt:${rt.slice(0, 32)}`;
+  return `shop:${key}`;
+}
+function readShopeeAccessTokenIfFresh(shopId) {
+  const key = normalizeShopIdKey(shopId);
+  const cached = tokenCacheGet(key);
+  if (cached) return cached;
+  const tokens = loadShopeeTokens();
+  const record = getShopeeTokenRecord(tokens, key);
+  if (!record?.access_token) return null;
+  const now = Math.floor(Date.now() / 1e3);
+  const obtainedAt = Number(record.obtained_at) || 0;
+  const expireIn = Number(record.expire_in) || 14400;
+  if (obtainedAt > 0 && now - obtainedAt >= expireIn - 60) return null;
+  tokenCacheSet(key, record.access_token, expireIn - (now - obtainedAt));
+  return String(record.access_token);
+}
+async function refreshShopeeAccessTokenLocked(shopId, opts) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) throw new ShopeeRefreshTokenExpiredError(String(shopId || "?"));
+  const tokensPeek = loadShopeeTokens();
+  const recordPeek = getShopeeTokenRecord(tokensPeek, key);
+  const lockKey = resolveRefreshLockKey(key, recordPeek);
+  const inflight = shopeeTokenRefreshLocks.get(lockKey);
+  if (inflight) {
+    console.log(`[Shopee Token] Mutex: ch\u1EDD refresh lock=${lockKey} (shop_id=${key})`);
+    await inflight;
+    const afterWait = readShopeeAccessTokenIfFresh(key);
+    if (afterWait) return afterWait;
+    const tokensAfter = loadShopeeTokens();
+    const recAfter = getShopeeTokenRecord(tokensAfter, key);
+    if (recAfter?.access_token) {
+      tokenCacheSet(key, recAfter.access_token, recAfter.expire_in);
+      return String(recAfter.access_token);
+    }
+    throw new ShopeeRefreshTokenExpiredError(key);
+  }
+  const run = (async () => {
+    const tokens = loadShopeeTokens();
+    const record = getShopeeTokenRecord(tokens, key);
+    if (!record) {
+      throw new ShopeeRefreshTokenExpiredError(key);
+    }
+    if (!record.refresh_token) {
+      throw new ShopeeRefreshTokenExpiredError(key);
+    }
+    if (!opts?.force) {
+      const fresh = readShopeeAccessTokenIfFresh(key);
+      if (fresh) return fresh;
+    } else {
+      const now = Math.floor(Date.now() / 1e3);
+      const obtainedAt = Number(record.obtained_at) || 0;
+      if (obtainedAt > 0 && now - obtainedAt < 15 && record.access_token) {
+        console.log(`[Shopee Token] B\u1ECF qua force refresh \u2014 token v\u1EEBa m\u1EDBi (${now - obtainedAt}s) shop_id=${key}`);
+        tokenCacheSet(key, record.access_token, record.expire_in);
+        return String(record.access_token);
+      }
+    }
+    const oldRefresh = String(record.refresh_token);
+    const oauthOwner = normalizeShopIdKey(record.oauth_shop_id);
+    console.log(
+      `[Shopee Token] Refresh access_token shop_id=${key} force=${Boolean(opts?.force)} lock=${lockKey}...`
+    );
+    let refreshed = await refreshShopeeToken(key, oldRefresh);
+    let refreshVia = key;
+    if (!refreshed.access_token && oauthOwner && oauthOwner !== key) {
+      console.warn(
+        `[Shopee Token] Refresh shop_id=${key} fail \u2014 retry oauth_shop_id=${oauthOwner}`
+      );
+      refreshed = await refreshShopeeToken(oauthOwner, oldRefresh);
+      refreshVia = oauthOwner;
+    }
+    if (refreshed.access_token) {
+      if (refreshVia !== key) {
+        const verified = await verifyShopeeShopToken(key, refreshed.access_token);
+        if (!verified.ok) {
+          console.error(
+            `[Shopee Token] Token t\u1EEB shop=${refreshVia} KH\xD4NG d\xF9ng \u0111\u01B0\u1EE3c cho shop_id=${key} (error=${verified.error}). C\u1EA7n OAuth ri\xEAng shop ${key}.`
+          );
+          tokenCacheClear(key);
+          throw new ShopeeRefreshTokenExpiredError(key);
+        }
+      }
+      const obtainedAt = Math.floor(Date.now() / 1e3);
+      const apiList = Array.isArray(refreshed.shop_id_list) ? refreshed.shop_id_list.map((x2) => normalizeShopIdKey(x2)).filter(Boolean) : [];
+      const propagateList = apiList.length ? apiList : [refreshVia];
+      if (!propagateList.includes(key) && refreshVia === key) {
+      } else if (!propagateList.includes(key) && refreshVia !== key) {
+        propagateList.push(key);
+      }
+      propagateShopeeTokenToLinkedShops(
+        refreshVia,
+        {
+          access_token: refreshed.access_token,
+          refresh_token: refreshed.refresh_token || oldRefresh,
+          expire_in: refreshed.expire_in,
+          obtained_at: obtainedAt,
+          shop_id_list: propagateList
+        },
+        { onlyMatchingRefreshToken: oldRefresh }
+      );
+      tokenCacheSet(key, refreshed.access_token, refreshed.expire_in);
+      if (refreshVia !== key) {
+        tokenCacheSet(refreshVia, refreshed.access_token, refreshed.expire_in);
+      }
+      console.log(
+        `[Shopee Token] Refresh OK shop_id=${key} via=${refreshVia} list=[${propagateList.join(",")}]`
+      );
+      return String(refreshed.access_token);
+    }
+    tokenCacheClear(key);
+    console.error(
+      `[Shopee Token] Refresh TH\u1EA4T B\u1EA0I shop_id=${key}:`,
+      refreshed.error || refreshed.message
+    );
+    throw new ShopeeRefreshTokenExpiredError(key);
+  })().finally(() => {
+    shopeeTokenRefreshLocks.delete(lockKey);
+  });
+  shopeeTokenRefreshLocks.set(lockKey, run);
+  return run;
+}
+async function getShopeeAccessTokenForApi(shopKey, opts) {
+  const fileKey = normalizeShopIdKey(shopKey);
+  if (!fileKey) return null;
+  const tokens = loadShopeeTokens();
+  const record = getShopeeTokenRecord(tokens, fileKey);
+  if (!record?.refresh_token && !record?.access_token) return null;
+  const apiShopId = fileKey;
+  try {
+    if (opts?.forceRefresh) {
+      const token2 = await refreshShopeeAccessTokenLocked(fileKey, { force: true });
+      return { token: token2, apiShopId, fileKey };
+    }
+    const token = await getValidShopeeAccessToken(fileKey);
+    if (!token) return null;
+    return { token, apiShopId, fileKey };
+  } catch (err) {
+    if (err instanceof ShopeeRefreshTokenExpiredError) {
+      console.error(`[Shopee Token] ${err.message} shop_id=${err.shopId}`);
+      return null;
+    }
+    throw err;
+  }
+}
+async function verifyShopeeShopToken(shopId, accessToken) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key || !accessToken) return { ok: false, error: "missing_shop_or_token" };
+  const controller = new AbortController();
+  const timer2 = setTimeout(() => controller.abort(), 12e3);
+  try {
+    const apiPath = "/api/v2/shop/get_shop_info";
+    const timestamp2 = Math.floor(Date.now() / 1e3);
+    const sign = shopeeSign(apiPath, timestamp2, accessToken, key);
+    const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp2}&access_token=${accessToken}&shop_id=${key}&sign=${sign}`;
+    const res = await fetch(url2, { signal: controller.signal });
+    const rawText = await res.text();
+    const json2 = rawText ? parseShopeeJson(rawText) : {};
+    const err = String(json2?.error || "").trim();
+    if (err) return { ok: false, error: err };
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error?.message || String(error) };
+  } finally {
+    clearTimeout(timer2);
+  }
+}
+function resolveShopeeApiShopId(record, configuredShopId) {
+  const configured = normalizeShopIdKey(configuredShopId);
+  if (configured) return configured;
+  const recordKey = normalizeShopIdKey(record?.shop_id);
+  if (recordKey) return recordKey;
+  return normalizeShopIdKey(record?.oauth_shop_id) || "";
+}
+async function getValidShopeeAccessToken(shopId) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) {
+    console.error(
+      "[Shopee API] getValidShopeeAccessToken: THI\u1EBEU shop_id \u2014 t\u1EEB ch\u1ED1i g\u1ECDi (h\u1EC7 th\u1ED1ng \u0111a shop b\u1EAFt bu\u1ED9c truy\u1EC1n shop_id)."
+    );
+    return null;
+  }
+  const tokens = loadShopeeTokens();
+  const record = getShopeeTokenRecord(tokens, key);
+  if (!record) {
+    const available = listAuthorizedShopeeShopIds();
+    console.warn(
+      `[Shopee API] Ch\u01B0a c\xF3 token record cho shop_id=${key}. Shop \u0111\xE3 \u1EE7y quy\u1EC1n: [${available.join(", ") || "kh\xF4ng c\xF3"}]`
+    );
+    return null;
+  }
+  const oauth = normalizeShopIdKey(record.oauth_shop_id);
+  const recordOwner = normalizeShopIdKey(record.shop_id);
+  const needsVerify = Boolean(oauth && oauth !== key || recordOwner && recordOwner !== key);
+  const cacheHit = Boolean(tokenCacheGet(key));
+  const rejectForeignToken = (reason) => {
+    console.error(
+      `[Shopee API] shop_id=${key} token kh\xF4ng thu\u1ED9c shop n\xE0y (oauth=${oauth || "-"} owner=${recordOwner || "-"} error=${reason}). C\u1EA7n OAuth ri\xEAng shop ${key} \u2014 kh\xF4ng d\xF9ng token shop kh\xE1c.`
+    );
+    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=${cacheHit ? "hit" : "miss"} verified=no`);
+    tokenCacheClear(key);
+    return null;
+  };
+  const fresh = readShopeeAccessTokenIfFresh(key);
+  if (fresh) {
+    if (needsVerify) {
+      if (shopTokenVerifyCacheOk(key, fresh)) {
+        console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=${cacheHit ? "hit" : "miss"} verified=yes`);
+        return fresh;
+      }
+      const verified = await verifyShopeeShopToken(key, fresh);
+      if (!verified.ok) return rejectForeignToken(verified.error);
+      shopTokenVerifyCacheSet(key, fresh);
+      console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=${cacheHit ? "hit" : "miss"} verified=yes`);
+      return fresh;
+    }
+    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=${cacheHit ? "hit" : "miss"} verified=n/a`);
+    return fresh;
+  }
+  if (!record.refresh_token) {
+    console.error(`[Shopee API] Shop ${key} thi\u1EBFu refresh_token \u2014 c\u1EA7n OAuth l\u1EA1i.`);
+    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
+    return null;
+  }
+  try {
+    console.log(
+      `[Shopee API] access_token shop_id=${key} H\u1EBET H\u1EA0N (expired) \u2014 g\u1ECDi Refresh Token \u2192 l\u01B0u DB...`
+    );
+    const refreshed = await refreshShopeeAccessTokenLocked(key, { force: false });
+    if (!refreshed) {
+      console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
+      return null;
+    }
+    if (needsVerify) {
+      const verified = await verifyShopeeShopToken(key, refreshed);
+      if (!verified.ok) return rejectForeignToken(verified.error);
+      shopTokenVerifyCacheSet(key, refreshed);
+      console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=yes`);
+      return refreshed;
+    }
+    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=n/a`);
+    return refreshed;
+  } catch (err) {
+    if (err instanceof ShopeeRefreshTokenExpiredError) {
+      console.error(`[Shopee API] ${err.message}`);
+      console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
+      return null;
+    }
+    console.error(`[Shopee API] Refresh token th\u1EA5t b\u1EA1i shop_id=${key}:`, safeError(err));
+    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
+    return null;
+  }
+}
+async function withShopeeAccessTokenRetry(shopId, runner, isAuthFailure) {
+  const key = normalizeShopIdKey(shopId);
+  let token = await getValidShopeeAccessToken(key);
+  if (!token) {
+    throw new ShopeeRefreshTokenExpiredError(key || String(shopId || "?"));
+  }
+  let result = await runner(token);
+  const failed = isAuthFailure && isAuthFailure(result) || result && typeof result === "object" && (Number(result.httpStatus) === 401 || Number(result.httpStatus) === 403 || isShopeeInvalidTokenError(result.error, result.message));
+  if (!failed) return result;
+  console.warn(`[Shopee Token] API b\xE1o token h\u1EBFt h\u1EA1n shop_id=${key} \u2014 force refresh + retry 1 l\u1EA7n`);
+  tokenCacheClear(key);
+  token = await refreshShopeeAccessTokenLocked(key, { force: true });
+  return runner(token);
+}
+function listAuthorizedShopeeShopIds() {
+  const tokens = loadShopeeTokens();
+  const ids = /* @__PURE__ */ new Set();
+  for (const [rawKey, record] of Object.entries(tokens || {})) {
+    if (!record?.access_token && !record?.refresh_token) continue;
+    const key = normalizeShopIdKey(rawKey) || normalizeShopIdKey(record?.shop_id);
+    if (key) ids.add(key);
+  }
+  return [...ids].sort();
+}
+function resolveShopeeTokenShopId(requested) {
+  const authorized = listAuthorizedShopeeShopIds();
+  if (!authorized.length) {
+    console.warn(
+      "[Shopee Auth] resolveShopeeTokenShopId: DB kh\xF4ng c\xF3 shop n\xE0o \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n (shopee_tokens tr\u1ED1ng)."
+    );
+    return null;
+  }
+  const req = String(requested || "").trim();
+  if (!req) {
+    if (authorized.length === 1) return authorized[0];
+    console.warn(
+      `[Shopee Auth] resolveShopeeTokenShopId: \u0110A SHOP (${authorized.length} shop: [${authorized.join(", ")}]) \u2014 thi\u1EBFu shop_id. T\u1EA1m fallback v\u1EC1 ${authorized[0]} \u0111\u1EC3 tr\xE1nh crash.`
+    );
+    return authorized[0];
+  }
+  const tokens = loadShopeeTokens();
+  if (tokens[req]) return req;
+  const digits = normalizeShopIdKey(req) || req.match(/(\d{5,})/)?.[1] || "";
+  if (digits && tokens[digits]) return digits;
+  if (digits) {
+    const linked = getShopeeTokenRecord(tokens, digits);
+    if (linked) {
+      console.log(
+        `[Shopee Auth] resolveShopeeTokenShopId: shop_id=${digits} t\xECm th\u1EA5y qua linked/oauth record.`
+      );
+      return digits;
+    }
+    console.warn(
+      `[Shopee Auth] resolveShopeeTokenShopId: y\xEAu c\u1EA7u shop_id=${digits} nh\u01B0ng kh\xF4ng c\xF3 token. Shops: [${authorized.join(", ")}]`
+    );
+    return digits;
+  }
+  return null;
+}
+function resolveShopeeShopIdsForSync(requested) {
+  const req = String(requested || "").trim();
+  if (req) {
+    const one = resolveShopeeTokenShopId(req);
+    return one ? [one] : [];
+  }
+  const all3 = listAuthorizedShopeeShopIds();
+  console.log(
+    `[Shopee Auth] resolveShopeeShopIdsForSync: kh\xF4ng truy\u1EC1n shop_id \u2014 d\xF9ng T\u1EA4T C\u1EA2 ${all3.length} shop: [${all3.join(", ")}]`
+  );
+  return all3;
+}
+async function getAccessTokenForShop(shopId) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) {
+    console.error("[Shopee Auth] getAccessTokenForShop: THI\u1EBEU shop_id \u2014 t\u1EEB ch\u1ED1i (m\xF4i tr\u01B0\u1EDDng \u0111a shop).");
+    return null;
+  }
+  return getValidShopeeAccessToken(key);
+}
+function getShopeeUnauthorizedShopMessage() {
+  const keys = listAuthorizedShopeeShopIds();
+  if (!keys.length) {
+    return "Ch\u01B0a c\xF3 shop Shopee \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n trong h\u1EC7 th\u1ED1ng. V\xE0o m\u1EE5c C\xE0i \u0111\u1EB7t \u2192 \u1EE6y quy\u1EC1n l\u1EA1i Shop Shopee r\u1ED3i th\u1EED \u0111\u1ED3ng b\u1ED9 l\u1EA1i.";
+  }
+  return `H\u1EC7 th\u1ED1ng c\xF3 ${keys.length} shop Shopee \u0111\xE3 \u1EE7y quy\u1EC1n ([${keys.join(", ")}]) nh\u01B0ng thi\u1EBFu shop_id c\u1EE5 th\u1EC3 ho\u1EB7c token shop y\xEAu c\u1EA7u kh\xF4ng h\u1EE3p l\u1EC7. V\xE0o m\u1EE5c C\xE0i \u0111\u1EB7t ki\u1EC3m tra \u1EE7y quy\u1EC1n.`;
+}
+function describeShopeeTokenFailure(shopKey) {
+  const tokens = loadShopeeTokens();
+  const key = normalizeShopIdKey(shopKey);
+  const record = getShopeeTokenRecord(tokens, key);
+  if (!record) {
+    return {
+      error: "shopee_reauth_required",
+      message: SHOPEE_REAUTH_REQUIRED_MESSAGE
+    };
+  }
+  if (!record.refresh_token) {
+    return {
+      error: "shopee_reauth_required",
+      message: SHOPEE_REAUTH_REQUIRED_MESSAGE
+    };
+  }
+  const now = Math.floor(Date.now() / 1e3);
+  const obtainedAt = Number(record.obtained_at) || 0;
+  const expireIn = Number(record.expire_in) || 14400;
+  const isExpired = obtainedAt > 0 && now - obtainedAt >= expireIn - 60;
+  if (isExpired) {
+    return {
+      error: "shopee_reauth_required",
+      message: SHOPEE_REAUTH_REQUIRED_MESSAGE
+    };
+  }
+  return {
+    error: "shopee_reauth_required",
+    message: SHOPEE_REAUTH_REQUIRED_MESSAGE
+  };
+}
+
+// routes/operationsRoutes.js
+var getOperationsDb = () => import_mongoose2.default.connection.readyState === 1 ? import_mongoose2.default.connection.db : null;
+var defaultHealthCollector = createOperationsHealthCollector({ getTokens: loadShopeeTokens });
+var startDefaultOperationsHealthMonitor = () => startOperationsHealthMonitor(getOperationsDb, defaultHealthCollector);
+function createOperationsRouter({
+  getDb = () => import_mongoose2.default.connection.readyState === 1 ? import_mongoose2.default.connection.db : null,
+  collect = collectOperationsMetrics,
+  collectHealth = defaultHealthCollector
+} = {}) {
+  const router30 = (0, import_express.Router)();
+  const cache = /* @__PURE__ */ new Map();
+  let activeQueries = 0;
+  router30.use((req, res, next) => {
+    res.set("Cache-Control", "no-store");
+    const expected = process.env.OPS_METRICS_TOKEN || "";
+    if (expected.length < 32) return res.status(503).json({ error: "ops_metrics_not_configured" });
+    const supplied = req.get("authorization")?.replace(/^Bearer /, "") || "";
+    const digest = (value) => import_node_crypto2.default.createHash("sha256").update(value).digest();
+    if (!req.get("authorization")?.startsWith("Bearer ") || !import_node_crypto2.default.timingSafeEqual(digest(supplied), digest(expected))) {
+      return res.status(401).json({ error: "unauthorized" });
+    }
+    return next();
+  });
+  router30.get("/health", async (req, res) => {
+    if (Object.keys(req.query).some((key) => key !== "shopId")) return res.status(400).json({ error: "invalid_query" });
+    let options;
+    try {
+      options = parseMetricsQuery(req.query);
+    } catch {
+      return res.status(400).json({ error: "invalid_query" });
+    }
+    const db = getDb();
+    if (!db) return res.status(503).json({ error: "mongodb_not_ready" });
+    try {
+      const report = await collectHealth(db);
+      const alerts2 = report.alerts.filter((item) => !options.shopId || !item.shopId || item.shopId === options.shopId);
+      const status = report.stale || report.status === "unknown" ? "unknown" : alerts2.some((item) => item.severity === "critical") ? "critical" : alerts2.length ? "warning" : "ok";
+      return res.status(status === "critical" || status === "unknown" ? 503 : 200).json({
+        ...report,
+        status,
+        alerts: alerts2,
+        shops: report.shops.filter((shop) => !options.shopId || shop.shopId === options.shopId),
+        queueScope: "all_shops"
+      });
+    } catch {
+      return res.status(503).json({ status: "unknown", error: "health_unavailable" });
+    }
+  });
+  router30.get("/metrics", async (req, res) => {
+    let options;
+    try {
+      options = parseMetricsQuery(req.query);
+    } catch {
+      return res.status(400).json({ error: "invalid_query", message: "shopId: 1\u201320 ch\u1EEF s\u1ED1; windowMinutes: 1\u20131440" });
+    }
+    const db = getDb();
+    if (!db) return res.status(503).json({ error: "mongodb_not_ready" });
+    const key = JSON.stringify(options);
+    const hit = cache.get(key);
+    if (hit && hit.until > Date.now()) {
+      try {
+        return res.json({ ...await hit.value, cached: true });
+      } catch {
+        return res.status(503).json({ error: "metrics_unavailable" });
+      }
+    }
+    if (activeQueries >= 2) return res.status(429).set("Retry-After", "15").json({ error: "metrics_busy" });
+    if (cache.size >= 64) cache.delete(cache.keys().next().value);
+    activeQueries += 1;
+    const value = Promise.resolve().then(() => collect(db, options)).finally(() => {
+      activeQueries -= 1;
+    });
+    cache.set(key, { value, until: Date.now() + 15e3 });
+    try {
+      return res.json({ ...await value, cached: false });
+    } catch {
+      cache.delete(key);
+      console.warn("[Operations] metrics_query_failed");
+      return res.status(503).json({ error: "metrics_unavailable" });
+    }
+  });
+  return router30;
+}
+var operationsRoutes_default = createOperationsRouter();
+
+// server.ts
+var import_path25 = __toESM(require("path"), 1);
+var import_fs25 = __toESM(require("fs"), 1);
+var import_crypto6 = __toESM(require("crypto"), 1);
+var import_dotenv2 = __toESM(require_main(), 1);
+var import_pdf_lib = __toESM(require_cjs(), 1);
+
+// modules/shopee-sync/schedulers/orders.js
+var import_node_cron = __toESM(require("node-cron"), 1);
+
 // models/WebhookJob.js
-var WebhookJobSchema = new import_mongoose2.default.Schema(
+var import_mongoose3 = __toESM(require("mongoose"), 1);
+var WebhookJobSchema = new import_mongoose3.default.Schema(
   {
     jobId: {
       type: String,
@@ -75200,7 +77138,7 @@ var WebhookJobSchema = new import_mongoose2.default.Schema(
       trim: true
     },
     payload: {
-      type: import_mongoose2.default.Schema.Types.Mixed,
+      type: import_mongoose3.default.Schema.Types.Mixed,
       required: true
     },
     // Đồng bộ thủ công và cron dùng chung hàng đợi bền với webhook.
@@ -75241,69 +77179,20 @@ var WebhookJobSchema = new import_mongoose2.default.Schema(
     collection: "webhook_jobs",
     versionKey: false,
     timestamps: true
+    // Chỉ tự đảm bảo hai unique index đơn cần thiết cho chống trùng job.
+    // Compound và index đo lường không tự tạo khi boot.
   }
 );
 WebhookJobSchema.index({ jobId: 1 }, { unique: true, name: "webhook_jobs_jobId_unique" });
 WebhookJobSchema.index({ active_key: 1 }, { unique: true, sparse: true, name: "webhook_jobs_active_key_unique" });
-WebhookJobSchema.index({ state: 1, next_run_at: 1 }, { name: "webhook_jobs_state_next_run" });
-for (const [key, options] of WEBHOOK_OPERATIONAL_INDEXES) WebhookJobSchema.index(key, options);
-var WebhookJob = import_mongoose2.default.models.WebhookJob || import_mongoose2.default.model("WebhookJob", WebhookJobSchema);
+var WebhookJob = import_mongoose3.default.models.WebhookJob || import_mongoose3.default.model("WebhookJob", WebhookJobSchema);
 var WebhookJob_default = WebhookJob;
 
 // modules/jobs/webhookJobQueue.js
-var import_node_crypto2 = __toESM(require("node:crypto"), 1);
-
-// modules/operations/telemetry.js
-var import_node_async_hooks = require("node:async_hooks");
-var import_mongoose3 = __toESM(require("mongoose"), 1);
-var webhookObservation = new import_node_async_hooks.AsyncLocalStorage();
-function markWebhookOrderPersisted() {
-  const observation = webhookObservation.getStore();
-  if (observation && !observation.orderPersistedAt) observation.orderPersistedAt = /* @__PURE__ */ new Date();
-}
-async function recordShopeeApiError(url2, category) {
-  try {
-    const parsed = new URL(url2);
-    if (!/(^|\.)(shopeemobile\.com|shopee\.(com|cn))$/.test(parsed.hostname)) return;
-    const shopId = parsed.searchParams.get("shop_id") || "unknown";
-    if (shopId !== "unknown" && !/^\d{1,20}$/.test(shopId)) return;
-    if (!["http", "network", "application", "parse"].includes(category)) return;
-    const db = import_mongoose3.default.connection.db;
-    if (import_mongoose3.default.connection.readyState !== 1 || !db) return;
-    const now = Date.now();
-    const bucket = Math.floor(now / 6e4) * 6e4;
-    await db.collection("ops_api_errors").updateOne(
-      { _id: `${shopId}:${bucket}:${category}` },
-      { $inc: { count: 1 }, $setOnInsert: {
-        shopId,
-        category,
-        bucket_at: new Date(bucket),
-        expires_at: new Date(bucket + 6e4 + retentionSeconds("OPS_API_ERROR_TTL_SECONDS") * 1e3)
-      } },
-      { upsert: true, maxTimeMS: 1500, timeoutMS: 1500 }
-    );
-  } catch {
-    console.warn("[Operations] api_error_metric_write_failed");
-  }
-}
-
-// utils/safeProductionLog.js
-function safeError(error) {
-  const code = String(error?.code || error?.name || "operation_failed");
-  return code.replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 100) || "operation_failed";
-}
-function safeTokenMetadata(record) {
-  return {
-    shop_id: record?.shop_id ?? null,
-    hasAccessToken: Boolean(record?.access_token),
-    hasRefreshToken: Boolean(record?.refresh_token),
-    expire_in: record?.expire_in ?? null,
-    error: record?.error ? "token_api_error" : null
-  };
-}
+var import_node_crypto3 = __toESM(require("node:crypto"), 1);
 
 // modules/shopee-sync/syncOrchestrator.js
-var import_crypto = __toESM(require("crypto"), 1);
+var import_crypto2 = __toESM(require("crypto"), 1);
 var import_mongoose4 = __toESM(require("mongoose"), 1);
 var import_node_os = __toESM(require("node:os"), 1);
 function isOwnerProcessDead(lock) {
@@ -75359,7 +77248,7 @@ async function acquireShopeeSyncLease(trigger = "unknown") {
   const db = database();
   if (!db) return { acquired: false, reason: "mongodb_not_ready" };
   const now = /* @__PURE__ */ new Date();
-  const owner = `${process.pid}:${import_crypto.default.randomUUID()}`;
+  const owner = `${process.pid}:${import_crypto2.default.randomUUID()}`;
   const expiresAt = new Date(now.getTime() + leaseMs());
   try {
     await ensureIndexes();
@@ -75481,8 +77370,8 @@ async function enqueueOrderSyncJob(payload = {}, priority = 0) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload) || !Number.isFinite(priority) || priority < 0 || priority > 10 || payload.mode && !["quick", "full", "task"].includes(payload.mode) || payload.shopIds && (!Array.isArray(payload.shopIds) || payload.shopIds.some((id) => !/^\d+$/.test(String(id)))) || payload.lookbackSec != null && (!Number.isFinite(Number(payload.lookbackSec)) || Number(payload.lookbackSec) < 60)) {
     throw new Error("sync_job_invalid");
   }
-  const jobId = `sync:${import_node_crypto2.default.randomUUID()}`;
-  const activeKey = priority === 0 ? import_node_crypto2.default.createHash("sha256").update(JSON.stringify({
+  const jobId = `sync:${import_node_crypto3.default.randomUUID()}`;
+  const activeKey = priority === 0 ? import_node_crypto3.default.createHash("sha256").update(JSON.stringify({
     mode: payload.mode || "incremental",
     task: payload.task || "",
     shopIds: [...payload.shopIds || []].sort(),
@@ -75515,7 +77404,7 @@ function webhookEventTime(payload) {
   if (!Number.isFinite(value) || value <= 0) return null;
   return value < 1e12 ? value * 1e3 : value;
 }
-function delay(ms) {
+function delay2(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
@@ -75589,7 +77478,7 @@ async function claimNextJob() {
             $cond: [{ $eq: ["$state", "running"] }, { $add: ["$retry_count", 1] }, "$retry_count"]
           },
           state: "running",
-          claim_token: import_node_crypto2.default.randomUUID(),
+          claim_token: import_node_crypto3.default.randomUUID(),
           next_run_at: leaseUntil
         }
       }
@@ -75755,7 +77644,7 @@ async function drainOnce(processPayload) {
         }
       }
       if (i2 < BATCH_LIMIT - 1) {
-        await delay(JOB_GAP_MS);
+        await delay2(JOB_GAP_MS);
       }
     }
   } catch (err) {
@@ -75876,7 +77765,7 @@ var WEBHOOK_RESCUE_LOOKBACK_SEC = Math.max(
   Math.min(3600, Number(process.env.WEBHOOK_RESCUE_LOOKBACK_SEC) || 600)
 );
 var webhookRescueDedupe = /* @__PURE__ */ new Set();
-var deps = {
+var deps2 = {
   /** @type {(opts?: any) => Promise<any>} */
   pullIncrementalOrdersFromShopee: async () => ({
     success: false,
@@ -75899,15 +77788,15 @@ var deps = {
 var bgRunning = false;
 var lastPullStart = 0;
 function initOrderSyncService(partial) {
-  deps = { ...deps, ...partial };
+  deps2 = { ...deps2, ...partial };
   setOrderSyncJobProcessor(async (opts) => {
     if (opts.mode === "task") {
-      const task = deps.syncTasks?.[opts.task];
+      const task = deps2.syncTasks?.[opts.task];
       if (typeof task !== "function") throw new Error("sync_task_invalid");
       return task(opts);
     }
-    if (opts.mode === "quick") return deps.runManualQuickSync3h(opts);
-    if (opts.mode === "full") return deps.runQueuedOrdersPull(opts);
+    if (opts.mode === "quick") return deps2.runManualQuickSync3h(opts);
+    if (opts.mode === "full") return deps2.runQueuedOrdersPull(opts);
     return executeBackgroundOrderSync(opts);
   });
   console.log("[OrderSyncService] initialized");
@@ -75937,7 +77826,7 @@ async function executeBackgroundOrderSync(opts = {}) {
       updated: 0
     };
   }
-  if (typeof deps.isOrdersPullLocked === "function" && deps.isOrdersPullLocked()) {
+  if (typeof deps2.isOrdersPullLocked === "function" && deps2.isOrdersPullLocked()) {
     console.log(`[${logTag}] SKIP \u2014 orders pull lock busy`);
     return {
       success: true,
@@ -75957,12 +77846,12 @@ async function executeBackgroundOrderSync(opts = {}) {
     `[${logTag}] B\u1EAFt \u0111\u1EA7u ch\u1EA1y ti\u1EBFn tr\xECnh ng\u1EA7m \u2014 lookbackSec=${lookbackSec} shops=${opts.shopIds?.length ? opts.shopIds.join(",") : "all"}`
   );
   try {
-    const watermarkShopIds = opts.shopIds?.length ? opts.shopIds : deps.listShopIds?.();
+    const watermarkShopIds = opts.shopIds?.length ? opts.shopIds : deps2.listShopIds?.();
     if (opts.useWatermark !== false && watermarkShopIds?.length) {
       lookbackSec = await resolveIncrementalLookbackSec(watermarkShopIds, lookbackSec);
     }
     try {
-      const job = await deps.createSyncJob(
+      const job = await deps2.createSyncJob(
         opts.jobType || "shopee_orders_bg_sync",
         opts.username || trigger
       );
@@ -75970,7 +77859,7 @@ async function executeBackgroundOrderSync(opts = {}) {
     } catch (jobErr) {
       console.warn(`[${logTag}] createSyncJob skip:`, jobErr?.message || jobErr);
     }
-    const result = await deps.pullIncrementalOrdersFromShopee({
+    const result = await deps2.pullIncrementalOrdersFromShopee({
       lookbackSec,
       shopIds: opts.shopIds?.length ? opts.shopIds : void 0,
       allowShortLookback: opts.allowShortLookback !== false,
@@ -75994,14 +77883,14 @@ async function executeBackgroundOrderSync(opts = {}) {
       enqueueLabelPdfDownload(newly);
     }
     try {
-      deps.invalidateOrdersRefreshCache?.();
+      deps2.invalidateOrdersRefreshCache?.();
     } catch {
     }
     const success = result?.success !== false && !result?.skipped;
     const message = result?.message || (pulled > 0 ? `\u0110\u1ED3ng b\u1ED9 ng\u1EA7m xong \u2014 ${pulled} \u0111\u01A1n (+${added}/~${updated})` : "\u0110\u1ED3ng b\u1ED9 ng\u1EA7m xong \u2014 0 \u0111\u01A1n trong c\u1EEDa s\u1ED5");
     if (jobId) {
       try {
-        await deps.finishSyncJob(
+        await deps2.finishSyncJob(
           jobId,
           success || result?.skipped ? "succeeded" : "failed",
           { pulled, added, updated, shops: result?.shops, trigger, lookbackSec },
@@ -76030,7 +77919,7 @@ async function executeBackgroundOrderSync(opts = {}) {
     console.error(`[${logTag}] FATAL:`, err?.stack || err?.message || err);
     if (jobId) {
       try {
-        await deps.finishSyncJob(jobId, "failed", {}, err?.message || String(err));
+        await deps2.finishSyncJob(jobId, "failed", {}, err?.message || String(err));
       } catch {
       }
     }
@@ -76495,8 +78384,8 @@ function scheduleReadyToShipBackfill(deps23 = {}) {
 }
 
 // modules/logistics/pdfCleanupScheduler.js
-var import_fs2 = __toESM(require("fs"), 1);
-var import_path2 = __toESM(require("path"), 1);
+var import_fs3 = __toESM(require("fs"), 1);
+var import_path4 = __toESM(require("path"), 1);
 var import_node_cron4 = __toESM(require("node-cron"), 1);
 init_appPaths();
 var LABEL_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
@@ -76515,23 +78404,23 @@ function scheduleLabelPdfCleanup() {
     labelPdfCleanupRunning = true;
     let deleted = 0;
     try {
-      if (!import_fs2.default.existsSync(PDF_DIR)) return;
+      if (!import_fs3.default.existsSync(PDF_DIR)) return;
       const cutoff = Date.now() - LABEL_MAX_AGE_MS;
       let names = [];
       try {
-        names = import_fs2.default.readdirSync(PDF_DIR);
+        names = import_fs3.default.readdirSync(PDF_DIR);
       } catch (err) {
         console.warn("[Labels Cleanup Cron] Kh\xF4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c:", err?.message || err);
         return;
       }
       for (const name of names) {
         if (!/\.pdf$/i.test(name)) continue;
-        const full = import_path2.default.join(PDF_DIR, name);
+        const full = import_path4.default.join(PDF_DIR, name);
         try {
-          const st = import_fs2.default.statSync(full);
+          const st = import_fs3.default.statSync(full);
           if (!st.isFile()) continue;
           if (st.size <= 0 || st.mtimeMs < cutoff) {
-            import_fs2.default.unlinkSync(full);
+            import_fs3.default.unlinkSync(full);
             deleted += 1;
           }
         } catch (err) {
@@ -76835,7 +78724,7 @@ function readRawWebhookBody(req) {
 var import_express2 = __toESM(require_express2(), 1);
 
 // modules/webhooks/shopeeSignature.ts
-var import_node_crypto3 = __toESM(require("node:crypto"), 1);
+var import_node_crypto4 = __toESM(require("node:crypto"), 1);
 function normalizeSignature(value) {
   return value.trim().replace(/^(?:Bearer|HMAC)\s+/i, "").replace(/^sha256=/i, "").trim().toLowerCase();
 }
@@ -76843,7 +78732,7 @@ function timingSafeEqualHex(a, b) {
   try {
     const aBuf = Buffer.from(a, "hex");
     const bBuf = Buffer.from(b, "hex");
-    return aBuf.length === bBuf.length && import_node_crypto3.default.timingSafeEqual(aBuf, bBuf);
+    return aBuf.length === bBuf.length && import_node_crypto4.default.timingSafeEqual(aBuf, bBuf);
   } catch {
     return false;
   }
@@ -76897,7 +78786,7 @@ function verifyShopeeWebhookSignature(rawBody, authorization, requestUrls = []) 
   }
   for (const url2 of candidates) {
     const baseString = `${url2}|${bodyStr}`;
-    const expected = import_node_crypto3.default.createHmac("sha256", secret).update(baseString).digest("hex");
+    const expected = import_node_crypto4.default.createHmac("sha256", secret).update(baseString).digest("hex");
     if (timingSafeEqualHex(expected, supplied)) {
       console.log(`[Shopee Webhook] HMAC OK (url=${url2})`);
       return true;
@@ -76979,1684 +78868,6 @@ QuickReplySchema.index({ shortcut: 1 }, { unique: true, name: "chat_quick_reply_
 var Conversation = import_mongoose5.default.models.Conversation || import_mongoose5.default.model("Conversation", ConversationSchema);
 var ChatMessage = import_mongoose5.default.models.ChatMessage || import_mongoose5.default.model("ChatMessage", ChatMessageSchema);
 var QuickReply = import_mongoose5.default.models.QuickReply || import_mongoose5.default.model("QuickReply", QuickReplySchema);
-
-// services/shopee/auth.js
-var import_fs3 = __toESM(require("fs"), 1);
-var import_path4 = __toESM(require("path"), 1);
-var import_crypto2 = __toESM(require("crypto"), 1);
-init_appPaths();
-
-// modules/shopee-sync/client.js
-var import_path3 = __toESM(require("path"), 1);
-var import_node_module = require("node:module");
-init_concurrency();
-var import_meta = {};
-var SHOPEE_API_MAX_RETRY = 3;
-var SHOPEE_API_RETRY_BASE_MS = 1500;
-var SHOPEE_HTTP_TIMEOUT_MS = 3e4;
-var SHOPEE_TLS_MIN_VERSION = String(process.env.SHOPEE_TLS_MIN_VERSION || "TLSv1.2").trim();
-var SHOPEE_TLS_MAX_VERSION = String(process.env.SHOPEE_TLS_MAX_VERSION || "TLSv1.3").trim();
-var SHOPEE_PRODUCT_BATCH_SIZE = 10;
-var SHOPEE_PRODUCT_API_DELAY_MS = 1e3;
-var SHOPEE_PRODUCT_BATCH_PAUSE_MS = 2500;
-var SHOPEE_SYNC_BATCH_DELAY_MS = 1e3;
-var SHOPEE_REAUTH_REQUIRED_MESSAGE = "Vui l\xF2ng v\xE0o m\u1EE5c C\u1EA5u h\xECnh \u0111\u1EC3 li\xEAn k\u1EBFt l\u1EA1i gian h\xE0ng Shopee (Token \u0111\xE3 h\u1EBFt h\u1EA1n ho\xE0n to\xE0n)";
-function resolveCreateRequireFilename() {
-  try {
-    if (typeof __filename === "string" && __filename.length > 0) {
-      return __filename;
-    }
-  } catch {
-  }
-  try {
-    const metaUrl = typeof import_meta !== "undefined" ? String(import_meta?.url || "") : "";
-    if (metaUrl && metaUrl !== "undefined") return metaUrl;
-  } catch {
-  }
-  return import_path3.default.resolve(process.cwd(), "server.cjs");
-}
-var shopeeHttpDispatcher = void 0;
-try {
-  const nodeRequire = (0, import_node_module.createRequire)(resolveCreateRequireFilename());
-  let undiciMod;
-  try {
-    undiciMod = nodeRequire("node:undici");
-  } catch {
-    undiciMod = nodeRequire("undici");
-  }
-  const ShopeeUndiciAgent = undiciMod?.Agent;
-  if (typeof ShopeeUndiciAgent !== "function") {
-    throw new Error("undici.Agent kh\xF4ng kh\u1EA3 d\u1EE5ng");
-  }
-  shopeeHttpDispatcher = new ShopeeUndiciAgent({
-    connect: {
-      rejectUnauthorized: true,
-      minVersion: SHOPEE_TLS_MIN_VERSION,
-      maxVersion: SHOPEE_TLS_MAX_VERSION
-    },
-    connections: 3,
-    pipelining: 0,
-    keepAliveTimeout: 1e4,
-    keepAliveMaxTimeout: 15e3,
-    // Chặn socket treo vô hạn khi Shopee không trả headers/body.
-    headersTimeout: SHOPEE_HTTP_TIMEOUT_MS + 2e3,
-    bodyTimeout: SHOPEE_HTTP_TIMEOUT_MS + 2e3,
-    connectTimeout: 8e3
-  });
-  console.log("[Shopee HTTP] undici Agent OK \u2014 TLS dispatcher s\u1EB5n s\xE0ng cho sync Shopee.");
-} catch (undiciErr) {
-  console.info(
-    "[Shopee HTTP] D\xF9ng fetch t\xEDch h\u1EE3p c\u1EE7a Node (kh\xF4ng d\xF9ng undici dispatcher):",
-    undiciErr?.message || undiciErr
-  );
-  shopeeHttpDispatcher = void 0;
-}
-async function fetchWithTimeout(url2, init = {}, timeoutMs = SHOPEE_HTTP_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const externalSignal = init?.signal;
-  const abortFromExternal = () => controller.abort(externalSignal?.reason);
-  if (externalSignal?.aborted) abortFromExternal();
-  else externalSignal?.addEventListener?.("abort", abortFromExternal, { once: true });
-  const timer2 = setTimeout(() => controller.abort(), timeoutMs);
-  let hardTimer;
-  try {
-    const fetchInit = {
-      ...init,
-      signal: controller.signal
-    };
-    if (shopeeHttpDispatcher) fetchInit.dispatcher = shopeeHttpDispatcher;
-    const fetchPromise = fetch(url2, fetchInit);
-    fetchPromise.catch(() => {
-    });
-    const hardTimeoutPromise = new Promise((_, reject) => {
-      hardTimer = setTimeout(() => {
-        try {
-          controller.abort();
-        } catch {
-        }
-        reject(new Error(`Shopee API timeout sau ${timeoutMs / 1e3}s`));
-      }, timeoutMs + 1e3);
-    });
-    const response = await Promise.race([fetchPromise, hardTimeoutPromise]);
-    if (response.status >= 400) await recordShopeeApiError(url2, "http");
-    return response;
-  } catch (error) {
-    await recordShopeeApiError(url2, "network");
-    if (error?.name === "AbortError" || /timeout/i.test(String(error?.message || ""))) {
-      console.error(`[Shopee HTTP] TIMEOUT ${timeoutMs}ms`);
-      throw new Error(`Shopee API timeout sau ${timeoutMs / 1e3}s`);
-    }
-    console.error(
-      "[Shopee HTTP] FETCH L\u1ED6I:",
-      safeError(error)
-    );
-    throw error;
-  } finally {
-    clearTimeout(timer2);
-    if (hardTimer) clearTimeout(hardTimer);
-    externalSignal?.removeEventListener?.("abort", abortFromExternal);
-  }
-}
-function shopeeExponentialBackoffMs(attempt, baseMs = SHOPEE_API_RETRY_BASE_MS) {
-  return Math.min(3e4, baseMs * Math.pow(2, attempt));
-}
-var shopeeRetryTelemetry = { retries: 0, rateLimits: 0, exhausted: 0 };
-function snapshotShopeeRetryTelemetry() {
-  return { ...shopeeRetryTelemetry };
-}
-function diffShopeeRetryTelemetry(before) {
-  return {
-    retries: shopeeRetryTelemetry.retries - before.retries,
-    rate_limits: shopeeRetryTelemetry.rateLimits - before.rateLimits,
-    exhausted_retries: shopeeRetryTelemetry.exhausted - before.exhausted,
-    max_retries: SHOPEE_API_MAX_RETRY
-  };
-}
-function isShopeeRetryableNetworkError(err) {
-  const msg = err instanceof Error ? err.message : String(err);
-  return /timeout|timed out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|AbortError|fetch failed|network|socket/i.test(msg);
-}
-function isShopeeRetryableHttpStatus(status) {
-  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
-}
-async function runInShopeeBatches(items, processor2, opts) {
-  if (items.length === 0) return;
-  const batchSize = opts?.batchSize ?? SHOPEE_PRODUCT_BATCH_SIZE;
-  const itemDelayMs = opts?.itemDelayMs ?? SHOPEE_PRODUCT_API_DELAY_MS;
-  const batchPauseMs = opts?.batchPauseMs ?? SHOPEE_PRODUCT_BATCH_PAUSE_MS;
-  for (let batchStart = 0; batchStart < items.length; batchStart += batchSize) {
-    const batch = items.slice(batchStart, batchStart + batchSize);
-    const batchNo = Math.floor(batchStart / batchSize) + 1;
-    const totalBatches = Math.ceil(items.length / batchSize);
-    console.log(`[Shopee Throttle] Batch ${batchNo}/${totalBatches} (${batch.length} item)...`);
-    for (let j = 0; j < batch.length; j++) {
-      await processor2(batch[j], batchStart + j);
-      if (j < batch.length - 1) await sleep(itemDelayMs);
-    }
-    if (batchStart + batchSize < items.length) {
-      console.log(`[Shopee Throttle] Ngh\u1EC9 ${batchPauseMs}ms tr\u01B0\u1EDBc batch k\u1EBF...`);
-      await sleep(batchPauseMs);
-    }
-  }
-}
-function shopeeSyncDelay(ms = SHOPEE_SYNC_BATCH_DELAY_MS) {
-  return sleep(ms);
-}
-function shopeeApiErrorResult(err, context, httpStatus) {
-  const message = err instanceof Error ? err.message : String(err);
-  console.error(`[Shopee API] ${context}:`, message);
-  const status = httpStatus || (/HTTP\s*401|\b401\b|invalid_access_token|unauthorized|auth/i.test(message) ? 401 : /HTTP\s*429|\b429\b|rate.?limit|too many/i.test(message) ? 429 : /HTTP\s*504|\b504\b|timeout|timed out|AbortError/i.test(message) ? 504 : void 0);
-  return {
-    error: status === 401 ? "unauthorized" : status === 429 ? "rate_limit_exceeded" : status === 504 ? "gateway_timeout" : "shopee_api_error",
-    message: formatShopeeApiError({ error: "shopee_api_error", message: `${context}: ${message}` }, status),
-    httpStatus: status
-  };
-}
-var SHOP_MAP = {
-  "831052930": "LK audio",
-  "4127421": "LK AT"
-};
-function translateShopeeErrorCodes(text) {
-  let out = String(text || "");
-  if (/error_update_price_fail/i.test(out)) {
-    out = out.replace(/Update price failed(?:,?\s*please try later\.?)?/gi, "").replace(
-      /(?:product\.)?error_update_price_fail/gi,
-      "Kh\xF4ng th\u1EC3 c\u1EADp nh\u1EADt gi\xE1 do s\u1EA3n ph\u1EA9m \u0111ang tham gia CTKM"
-    );
-  }
-  if (/error_item_not_found/i.test(out)) {
-    out = out.replace(/Item[_ ]?id is not found\.?/gi, "").replace(/(?:product\.)?error_item_not_found/gi, "Kh\xF4ng t\xECm th\u1EA5y s\u1EA3n ph\u1EA9m t\u1EA1i shop");
-  }
-  if (/error_invalid_logistic_channel|invalid logistic|logistic_channel.*invalid/i.test(out)) {
-    out = out.replace(/(?:product\.)?error_invalid_logistic_channel/gi, "").replace(/invalid logistic.*channel/gi, "").replace("K\xEAnh v\u1EADn chuy\u1EC3n kh\xF4ng h\u1EE3p l\u1EC7: k\xEAnh 50051 ho\u1EB7c 50041 \u0111\xE3 b\u1ECB Shopee ng\u1EEBng h\u1ED7 tr\u1EE3 ho\u1EB7c kh\xF4ng t\u1ED3n t\u1EA1i trong danh s\xE1ch k\xEAnh c\u1EE7a shop. Vui l\xF2ng ch\u1ECDn l\u1EA1i k\xEAnh v\u1EADn chuy\u1EC3n trong ph\u1EA7n C\u1EA5u h\xECnh s\u1EA3n ph\u1EA9m.", "").trim();
-    if (/kênh.*50051|50051.*kênh/i.test(out)) {
-      out = out.replace(/50051/g, "").trim();
-      if (!out) out = "K\xEAnh v\u1EADn chuy\u1EC3n 50051 kh\xF4ng h\u1EE3p l\u1EC7 \u2014 Shopee kh\xF4ng c\xF2n h\u1ED7 tr\u1EE3. Vui l\xF2ng ch\u1ECDn k\xEAnh kh\xE1c.";
-    }
-    if (/kênh.*50041|50041.*kênh/i.test(out)) {
-      out = out.replace(/50041/g, "").trim();
-      if (!out) out = "K\xEAnh v\u1EADn chuy\u1EC3n 50041 kh\xF4ng h\u1EE3p l\u1EC7 \u2014 Shopee kh\xF4ng c\xF2n h\u1ED7 tr\u1EE3. Vui l\xF2ng ch\u1ECDn k\xEAnh kh\xE1c.";
-    }
-    if (/invalid.*channel|logistic.*invalid/i.test(out)) {
-      out = "K\xEAnh v\u1EADn chuy\u1EC3n kh\xF4ng h\u1EE3p l\u1EC7 \u2014 vui l\xF2ng ch\u1ECDn l\u1EA1i k\xEAnh trong C\u1EA5u h\xECnh s\u1EA3n ph\u1EA9m.";
-    }
-  }
-  if (/50051|50041/i.test(out) && /logistic|channel|vận chuyển|invalid/i.test(out)) {
-    out = "K\xEAnh v\u1EADn chuy\u1EC3n 50051/50041 \u0111\xE3 b\u1ECB Shopee ng\u1EEBng h\u1ED7 tr\u1EE3. Vui l\xF2ng ch\u1ECDn k\xEAnh v\u1EADn chuy\u1EC3n kh\xE1c trong C\u1EA5u h\xECnh s\u1EA3n ph\u1EA9m.";
-  }
-  if (/error_init_tier_variation|tier_variation.*invalid|cannot unmarshal.*string/i.test(out)) {
-    out = out.replace(/(?:product\.)?error_init_tier_variation/gi, "").replace(/cannot unmarshal.*string/gi, "").replace(/tier_variation.*invalid/gi, "").trim();
-    if (!out || /tier|phân loại/i.test(out)) {
-      out = "L\u1ED7i kh\u1EDFi t\u1EA1o ph\xE2n lo\u1EA1i (tier_variation) \u2014 ki\u1EC3m tra l\u1EA1i d\u1EEF li\u1EC7u bi\u1EBFn th\u1EC3 v\xE0 brand_id.";
-    }
-  }
-  if (/brand.*id.*invalid|invalid.*brand|error.*brand_id/i.test(out)) {
-    out = "Brand_id kh\xF4ng h\u1EE3p l\u1EC7 \u2014 n\u1EBFu s\u1EA3n ph\u1EA9m kh\xF4ng c\xF3 th\u01B0\u01A1ng hi\u1EC7u, truy\u1EC1n brand_id = 0.";
-  }
-  return out.replace(/\s*[—\-–]\s*(?=[—\-–|]|$)/g, "").replace(/[ \t]{2,}/g, " ").trim();
-}
-function formatShopeeSyncAlertLines(raw) {
-  const text = translateShopeeErrorCodes(String(raw ?? ""));
-  if (!text) return [];
-  const re = /\[(\d+)\]([^\[\]—]+)/g;
-  const lines = [];
-  let match2;
-  while ((match2 = re.exec(text)) !== null) {
-    const shopId = match2[1];
-    const shopName = SHOP_MAP[shopId] || `Shop ${shopId}`;
-    let body = String(match2[2] || "").replace(/^\s*[|:]\s*/, "").replace(/\s*[|:]\s*$/, "").replace(/\s+tại\s+shop\s*$/i, "").replace(/\s+trên\s+shop\s+\S.*$/i, "").replace(/[ \t]{2,}/g, " ").trim();
-    if (!body) continue;
-    lines.push(`${body} tr\xEAn shop ${shopName}`);
-  }
-  return [...new Set(lines)];
-}
-function humanizeShopeeErrorMessage(raw) {
-  const lines = formatShopeeSyncAlertLines(raw);
-  if (lines.length > 0) return lines.join(" | ");
-  return translateShopeeErrorCodes(String(raw ?? "")) || String(raw ?? "").trim();
-}
-function formatShopeeApiError(json2, httpStatus) {
-  const parts = [json2?.message, json2?.error, json2?.msg].map((v) => String(v ?? "").trim()).filter((v) => v && !/^HTTP\s+\d+$/i.test(v));
-  const status = typeof httpStatus === "number" && httpStatus > 0 ? httpStatus : typeof json2?.httpStatus === "number" && json2.httpStatus > 0 ? json2.httpStatus : void 0;
-  let out;
-  if (status === 401) {
-    out = parts[0] || SHOPEE_REAUTH_REQUIRED_MESSAGE;
-  } else if (status === 429) {
-    out = parts[0] || "Shopee gi\u1EDBi h\u1EA1n t\u1EA7n su\u1EA5t (HTTP 429 Too Many Requests) \u2014 vui l\xF2ng th\u1EED l\u1EA1i sau 1\u20132 ph\xFAt.";
-  } else if (status === 504) {
-    out = parts[0] || "Timeout khi g\u1ECDi Shopee API (HTTP 504) \u2014 c\u1EEDa s\u1ED5 \u0111\u1ED3ng b\u1ED9 qu\xE1 r\u1ED9ng ho\u1EB7c Shopee ph\u1EA3n h\u1ED3i ch\u1EADm. Th\u1EED l\u1EA1i v\u1EDBi \u0110\u1ED3ng b\u1ED9 nhanh 3h.";
-  } else if (/timeout|timed out|AbortError/i.test(parts.join(" "))) {
-    out = parts[0] || "Timeout khi g\u1ECDi Shopee API \u2014 th\u1EED \u0110\u1ED3ng b\u1ED9 nhanh 3h ho\u1EB7c gi\u1EA3m ph\u1EA1m vi th\u1EDDi gian \u0111\u1ED3ng b\u1ED9.";
-  } else if (parts.length > 0) {
-    out = parts.join(" \u2014 ");
-  } else if (status && status >= 400) {
-    out = `Shopee API l\u1ED7i HTTP ${status}`;
-  } else {
-    out = "L\u1ED7i Shopee API kh\xF4ng x\xE1c \u0111\u1ECBnh";
-  }
-  return humanizeShopeeErrorMessage(out);
-}
-function isShopeeRateLimited(httpStatus, json2) {
-  if (httpStatus === 429) return true;
-  const text = `${json2?.error || ""} ${json2?.message || ""}`.toLowerCase();
-  return /rate.?limit|too many request|api_call_limit|exceed/.test(text);
-}
-function warnShopeeUint64Sample(json2, context) {
-  try {
-    const body = json2?.response ?? json2 ?? {};
-    const sampleItem = body?.order_list?.[0]?.item_list?.[0] || body?.item_list?.[0] || (Array.isArray(body?.item) ? body.item[0] : null) || (Array.isArray(body?.activity) ? body.activity[0] : null) || null;
-    const keys = ["item_id", "model_id", "promotion_id", "activity_id", "return_id"];
-    const check = (obj, prefix = "") => {
-      if (!obj || typeof obj !== "object") return;
-      for (const k of keys) {
-        const v = obj[k];
-        if (typeof v === "number" && !Number.isSafeInteger(v)) {
-          console.warn(
-            `[Shopee uint64] ${context} field ${prefix}${k}=${v} v\u01B0\u1EE3t Safe Integer \u2014 ki\u1EC3m tra json-bigint`
-          );
-        }
-      }
-    };
-    check(sampleItem);
-    check(body);
-  } catch {
-  }
-}
-function maybeNormalizeReturnJson(json2, context) {
-  const ctx = String(context || "");
-  try {
-    if (/get_return_detail|get_return_list|get_reverse_tracking|returns\./i.test(ctx)) {
-      return normalizeShopeeReturnDetail(json2);
-    }
-    if (/product\.|\/product\/|promotion|activity|add_item|update_item|get_attribute|get_item|get_model|discount|flash_sale|voucher/i.test(
-      ctx
-    )) {
-      return normalizeShopeeProductIds(json2);
-    }
-  } catch {
-    return json2;
-  }
-  return json2;
-}
-async function shopeeFetchJsonWithRetry(url2, context, opts) {
-  const maxAttempts = opts?.maxAttempts ?? SHOPEE_API_MAX_RETRY;
-  const baseDelayMs = opts?.baseDelayMs ?? SHOPEE_API_RETRY_BASE_MS;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    let res;
-    let rawText = "";
-    try {
-      res = await fetchWithTimeout(url2);
-      rawText = await res.text();
-    } catch (err) {
-      if (res && res.status < 400) await recordShopeeApiError(url2, "network");
-      console.error("[Shopee API] request_failed:", safeError(err));
-      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
-      if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
-        shopeeRetryTelemetry.retries++;
-        console.warn(`[Shopee API] ${context} l\u1ED7i m\u1EA1ng, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`);
-        await sleep(waitMs);
-        continue;
-      }
-      const netMsg = err instanceof Error ? err.message : String(err);
-      throw new Error(`${context}: Kh\xF4ng k\u1EBFt n\u1ED1i \u0111\u01B0\u1EE3c Shopee API \u2014 ${netMsg}`);
-    }
-    let json2;
-    try {
-      json2 = rawText ? parseShopeeJson(rawText) : {};
-      json2 = maybeNormalizeReturnJson(json2, context);
-      warnShopeeUint64Sample(json2, context);
-    } catch (parseErr) {
-      if (res.status < 400) await recordShopeeApiError(url2, "parse");
-      const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
-      return {
-        httpStatus: res.status,
-        json: {
-          error: "json_parse_error",
-          message: `${context}: ph\u1EA3n h\u1ED3i kh\xF4ng ph\u1EA3i JSON h\u1EE3p l\u1EC7 (HTTP ${res.status}): ${parseMsg}`
-        }
-      };
-    }
-    if (res.status < 400 && json2?.error) await recordShopeeApiError(url2, "application");
-    if ((isShopeeRateLimited(res.status, json2) || isShopeeRetryableHttpStatus(res.status)) && attempt < maxAttempts - 1) {
-      shopeeRetryTelemetry.retries++;
-      if (isShopeeRateLimited(res.status, json2)) shopeeRetryTelemetry.rateLimits++;
-      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
-      console.warn(
-        `[Shopee API] ${context} HTTP ${res.status}, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`
-      );
-      await sleep(waitMs);
-      continue;
-    }
-    if (res.status === 401 || res.status === 429 || res.status === 504 || res.status >= 400 && json2?.error) {
-      json2.message = formatShopeeApiError(json2, res.status);
-      json2.httpStatus = res.status;
-    }
-    if (res.status >= 400 || json2?.error) {
-      console.error("[Shopee API] response_failed:", res.status);
-    }
-    return { json: json2, httpStatus: res.status };
-  }
-  shopeeRetryTelemetry.exhausted++;
-  return {
-    httpStatus: 429,
-    json: {
-      error: "rate_limit_exceeded",
-      message: formatShopeeApiError({ error: "rate_limit_exceeded" }, 429),
-      httpStatus: 429
-    }
-  };
-}
-async function shopeePostJsonWithRetry(url2, body, context, opts) {
-  const maxAttempts = opts?.maxAttempts ?? SHOPEE_API_MAX_RETRY;
-  const baseDelayMs = opts?.baseDelayMs ?? SHOPEE_API_RETRY_BASE_MS;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    let res;
-    let rawText = "";
-    try {
-      res = await fetchWithTimeout(url2, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        // JSON.stringify chuẩn: giữ Number cho item_id/model_id (Shopee Go uint64).
-        // Không dùng stringifyShopeeJson (storeAsString) — sẽ biến ID thành string và bị Shopee từ chối.
-        body: JSON.stringify(body)
-      });
-      rawText = await res.text();
-    } catch (err) {
-      if (res && res.status < 400) await recordShopeeApiError(url2, "network");
-      console.error("[Shopee API] request_failed:", safeError(err));
-      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
-      if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
-        shopeeRetryTelemetry.retries++;
-        console.warn(`[Shopee API] ${context} l\u1ED7i m\u1EA1ng, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`);
-        await sleep(waitMs);
-        continue;
-      }
-      const netMsg = err instanceof Error ? err.message : String(err);
-      throw new Error(`${context}: Kh\xF4ng k\u1EBFt n\u1ED1i \u0111\u01B0\u1EE3c Shopee API \u2014 ${netMsg}`);
-    }
-    let json2;
-    try {
-      json2 = rawText ? parseShopeeJson(rawText) : {};
-      json2 = maybeNormalizeReturnJson(json2, context);
-      warnShopeeUint64Sample(json2, context);
-    } catch (parseErr) {
-      if (res.status < 400) await recordShopeeApiError(url2, "parse");
-      const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
-      return {
-        httpStatus: res.status,
-        json: {
-          error: "json_parse_error",
-          message: `${context}: ph\u1EA3n h\u1ED3i kh\xF4ng ph\u1EA3i JSON h\u1EE3p l\u1EC7 (HTTP ${res.status}): ${parseMsg}`
-        }
-      };
-    }
-    if (res.status < 400 && json2?.error) await recordShopeeApiError(url2, "application");
-    if ((isShopeeRateLimited(res.status, json2) || isShopeeRetryableHttpStatus(res.status)) && attempt < maxAttempts - 1) {
-      shopeeRetryTelemetry.retries++;
-      if (isShopeeRateLimited(res.status, json2)) shopeeRetryTelemetry.rateLimits++;
-      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
-      console.warn(
-        `[Shopee API] ${context} HTTP ${res.status}, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`
-      );
-      await sleep(waitMs);
-      continue;
-    }
-    if (json2?.error && !json2.message) {
-      json2.message = formatShopeeApiError(json2, res.status);
-    }
-    if (res.status >= 400 || json2?.error) {
-      console.error("[Shopee API] response_failed:", res.status);
-    }
-    return { json: json2, httpStatus: res.status };
-  }
-  shopeeRetryTelemetry.exhausted++;
-  return {
-    httpStatus: 429,
-    json: {
-      error: "rate_limit_exceeded",
-      message: formatShopeeApiError({ error: "rate_limit_exceeded" }, 429)
-    }
-  };
-}
-
-// services/shopee/auth.js
-var APP_ROOT = resolveAppRoot();
-var APP_BASE_URL = resolveAppBaseUrl();
-function resolveShopeeCallbackUrl() {
-  const explicit = String(process.env.SHOPEE_CALLBACK_URL || "").trim().replace(/\/$/, "");
-  if (explicit) return explicit;
-  return `${APP_BASE_URL}/api/shopee/callback`;
-}
-var SHOPEE_CALLBACK_URL = resolveShopeeCallbackUrl();
-var SHOPEE_WEBHOOK_URL = `${APP_BASE_URL}/api/shopee/webhook`;
-var SHOPEE_CALLBACK_IDLE_MSG = "Callback route is active. Waiting for Shopee parameters (code, shop_id)...";
-var SHOPEE_ENV = (process.env.SHOPEE_ENV || "live").toLowerCase();
-var SHOPEE_HOST = "https://partner.shopeemobile.com";
-if (SHOPEE_ENV !== "live") {
-  console.warn(`[Shopee API] SHOPEE_ENV=${SHOPEE_ENV} \u2014 ch\u1EC9 d\xF9ng host Live: ${SHOPEE_HOST}`);
-}
-var SHOPEE_PARTNER_ID = process.env.SHOPEE_PARTNER_ID || "";
-var SHOPEE_PARTNER_KEY = process.env.SHOPEE_PARTNER_KEY || "";
-function isShopeeConfigValid() {
-  return /^\d+$/.test(SHOPEE_PARTNER_ID) && SHOPEE_PARTNER_KEY.length > 0 && !/CHUA_CO|YOUR_LIVE/i.test(SHOPEE_PARTNER_KEY);
-}
-if (!isShopeeConfigValid()) {
-  console.warn(
-    `[Shopee API] \u26A0\uFE0F SHOPEE_PARTNER_ID (hi\u1EC7n t\u1EA1i: "${SHOPEE_PARTNER_ID || "(r\u1ED7ng)"}") ho\u1EB7c SHOPEE_PARTNER_KEY ch\u01B0a \u0111\u01B0\u1EE3c \u0111i\u1EC1n \u0111\xFAng trong .env. Partner_id ph\u1EA3i l\xE0 m\u1ED9t s\u1ED1 nguy\xEAn (v\xED d\u1EE5: 2001234), l\u1EA5y t\u1EEB App PRODUCTION (Live) tr\xEAn open.shopee.com, KH\xD4NG d\xF9ng Sandbox. M\u1ECDi l\u1EA7n g\u1ECDi API Shopee s\u1EBD b\u1EC3 tr\u1EA3 l\u1ED7i error_param cho \u0111\u1EBFn khi s\u1EEDa \u0111\xFAng gi\xE1 tr\u1ECB n\xE0y.`
-  );
-}
-var SHOPEE_TOKENS_PATH = import_path4.default.resolve(APP_ROOT, "data", "shopee_tokens.json");
-var SHOPEE_OAUTH_LAST_PATH = import_path4.default.resolve(APP_ROOT, "data", "shopee_oauth_last.json");
-var CHANNEL_SETTINGS_PATH = import_path4.default.resolve(APP_ROOT, "data", "channel_settings.json");
-var CANONICAL_SHOPEE_SHOP_IDS = ["4127421", "831052930"];
-var INDEPENDENT_SHOPEE_SHOP_IDS = new Set(CANONICAL_SHOPEE_SHOP_IDS);
-var deps2 = {
-  syncOAuthShopsToChannelSettings: () => {
-  },
-  logOAuthSaveError: () => {
-  }
-};
-function initShopeeAuth(partial) {
-  deps2 = { ...deps2, ...partial };
-}
-function ensureDataDirs() {
-  const dataDir = import_path4.default.join(APP_ROOT, "data");
-  import_fs3.default.mkdirSync(dataDir, { recursive: true });
-  if (!import_fs3.default.existsSync(SHOPEE_TOKENS_PATH)) {
-    import_fs3.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
-  }
-}
-function saveOAuthAudit(entry) {
-  try {
-    ensureDataDirs();
-    import_fs3.default.writeFileSync(
-      SHOPEE_OAUTH_LAST_PATH,
-      JSON.stringify({ ...entry, at: (/* @__PURE__ */ new Date()).toISOString() }, null, 2),
-      "utf-8"
-    );
-  } catch (error) {
-    console.error("[Shopee OAuth] Failed to write shopee_oauth_last.json:", error);
-  }
-}
-function loadLastOAuthAudit() {
-  try {
-    if (!import_fs3.default.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
-    return JSON.parse(import_fs3.default.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
-  } catch {
-    return null;
-  }
-}
-function bootShopeeAuth() {
-  ensureDataDirs();
-  try {
-    const normalized = normalizeTokenStore(loadShopeeTokens());
-    if (Object.keys(normalized).length > 0) {
-      saveShopeeTokens(normalized);
-      console.log(`[Boot] Normalized shopee_tokens.json keys: [${Object.keys(normalized).join(", ")}]`);
-    }
-  } catch (error) {
-    console.error("[Boot] Failed to normalize shopee_tokens.json:", error);
-  }
-  console.log(
-    `[Boot] APP_ROOT=${APP_ROOT} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs3.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL}`
-  );
-}
-function loadShopeeTokens() {
-  try {
-    if (!import_fs3.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
-    const raw = import_fs3.default.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
-    if (!raw.trim()) return {};
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      const map = {};
-      for (const row of parsed) {
-        const k = normalizeShopIdKey(row?.shop_id ?? row?.shopId);
-        if (k) map[k] = row;
-      }
-      return map;
-    }
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch (error) {
-    console.error("[Shopee Tokens] Failed to read shopee_tokens.json:", error);
-    return {};
-  }
-}
-function maskTokenStoreForLog(tokens) {
-  const masked = {};
-  for (const [key, record] of Object.entries(tokens || {})) {
-    masked[key] = {
-      shop_id: record?.shop_id ?? key,
-      oauth_shop_id: record?.oauth_shop_id ?? null,
-      shop_id_list: record?.shop_id_list ?? [],
-      merchant_id_list: record?.merchant_id_list ?? [],
-      expire_in: record?.expire_in ?? null,
-      obtained_at: record?.obtained_at ?? null,
-      access_token: record?.access_token ? "[REDACTED]" : null,
-      refresh_token: record?.refresh_token ? "[REDACTED]" : null
-    };
-  }
-  return masked;
-}
-function saveShopeeTokens(tokensToWrite) {
-  const absPath = import_path4.default.resolve(SHOPEE_TOKENS_PATH);
-  try {
-    ensureDataDirs();
-    const onDisk = normalizeTokenStore(loadShopeeTokens());
-    const tokensData = { ...onDisk };
-    const keysBefore = Object.keys(tokensData);
-    for (const [rawKey, record] of Object.entries(tokensToWrite || {})) {
-      const shop_id = normalizeShopIdKey(record?.shop_id ?? rawKey);
-      if (!shop_id || !record) continue;
-      tokensData[shop_id] = {
-        ...tokensData[shop_id],
-        ...record,
-        shop_id
-      };
-      console.log(`[Shopee Tokens] UPSERT shop_id=${shop_id}`);
-    }
-    const keysAfter = Object.keys(tokensData);
-    console.log(
-      "DEBUG SAVE: Merge keys",
-      JSON.stringify({ keysBefore, keysAfter, addedOrUpdated: keysAfter.filter((k) => !keysBefore.includes(k) || tokensToWrite[k]) })
-    );
-    console.log("DEBUG SAVE: Full tokensData file keys:", keysAfter);
-    console.log(
-      "DEBUG SAVE: Full tokensData (masked):",
-      JSON.stringify(maskTokenStoreForLog(tokensData))
-    );
-    const payload = JSON.stringify(tokensData, null, 2);
-    console.log(
-      "[Shopee Tokens] fs.writeFileSync \u2014 TR\u01AF\u1EDAC KHI GHI",
-      JSON.stringify({
-        absPath,
-        SHOPEE_TOKENS_PATH,
-        APP_ROOT,
-        keys: keysAfter,
-        byteLength: Buffer.byteLength(payload, "utf-8")
-      })
-    );
-    import_fs3.default.writeFileSync(absPath, payload, "utf-8");
-    console.log(
-      "[Shopee Tokens] fs.writeFileSync \u2014 GHI TH\xC0NH C\xD4NG",
-      JSON.stringify({ absPath, keys: keysAfter, fileSize: import_fs3.default.statSync(absPath).size })
-    );
-    return true;
-  } catch (error) {
-    deps2.logOAuthSaveError("saveShopeeTokens", error);
-    console.error(
-      "[Shopee Tokens] fs.writeFileSync \u2014 L\u1ED6I GHI FILE",
-      JSON.stringify({
-        absPath,
-        SHOPEE_TOKENS_PATH,
-        errorMessage: error?.message || String(error),
-        errorCode: error?.code || null
-      })
-    );
-    return false;
-  }
-}
-function normalizeShopIdKey(shopId) {
-  const key = String(shopId ?? "").trim();
-  return /^\d+$/.test(key) ? key : "";
-}
-function queryParamOne(value) {
-  if (Array.isArray(value)) return String(value[0] ?? "").trim();
-  return String(value ?? "").trim();
-}
-function shouldOAuthRedirectToFrontend(req) {
-  if (queryParamOne(req.query?.format) === "json") return false;
-  if (queryParamOne(req.query?.redirect) === "0") return false;
-  return true;
-}
-function buildOAuthFrontendRedirectUrl(req, result) {
-  const oauthShopId = String(result.oauth_shop_id || queryParamOne(req.query.shop_id) || "");
-  const expectedShop = queryParamOne(req.query?.expected_shop) || String(result.expected_shop_id || "");
-  if (result.success) {
-    const savedQuery = encodeURIComponent((result.saved_shop_ids || []).join(","));
-    const expectedQuery = expectedShop ? `&expected_shop=${encodeURIComponent(expectedShop)}` : "";
-    return `${APP_BASE_URL}/?shopee_linked=1&shop_id=${encodeURIComponent(oauthShopId)}&saved_shops=${savedQuery}${expectedQuery}`;
-  }
-  const errMsg = result.message || result.error || "token_exchange_failed";
-  return `${APP_BASE_URL}/?shopee_linked=0&shop_id=${encodeURIComponent(oauthShopId)}&error=${encodeURIComponent(errMsg)}`;
-}
-function normalizeShopeeTokenResponse(raw) {
-  const inner = raw?.response && typeof raw.response === "object" && !Array.isArray(raw.response) ? raw.response : raw?.data && typeof raw.data === "object" ? raw.data : raw;
-  const access_token = inner?.access_token ?? inner?.accessToken ?? raw?.access_token ?? raw?.accessToken ?? "";
-  const refresh_token = inner?.refresh_token ?? inner?.refreshToken ?? raw?.refresh_token ?? raw?.refreshToken ?? "";
-  const expire_in = Number(
-    inner?.expire_in ?? inner?.expire_time ?? inner?.expires_in ?? raw?.expire_in ?? raw?.expire_time ?? 0
-  );
-  const shop_id_list = inner?.shop_id_list ?? raw?.shop_id_list ?? inner?.shop_ids ?? [];
-  const merchant_id_list = inner?.merchant_id_list ?? raw?.merchant_id_list ?? [];
-  return {
-    ...raw,
-    access_token: access_token || void 0,
-    refresh_token: refresh_token || void 0,
-    expire_in: expire_in > 0 ? expire_in : void 0,
-    shop_id_list: Array.isArray(shop_id_list) ? shop_id_list : [],
-    merchant_id_list: Array.isArray(merchant_id_list) ? merchant_id_list : [],
-    shop_id: inner?.shop_id ?? raw?.shop_id,
-    error: raw?.error ?? inner?.error,
-    message: raw?.message ?? inner?.message,
-    _raw: raw
-  };
-}
-function buildShopeeTokenRecord(shopKey, authJson, oauthShopId, existing) {
-  const key = normalizeShopIdKey(shopKey);
-  const oauth = normalizeShopIdKey(oauthShopId) || key;
-  const authHasShopList = Array.isArray(authJson?.shop_id_list);
-  const fromAuthList = authHasShopList ? authJson.shop_id_list.map((x2) => normalizeShopIdKey(x2)).filter(Boolean) : [];
-  const fromExistingList = Array.isArray(existing?.shop_id_list) ? existing.shop_id_list.map((x2) => normalizeShopIdKey(x2)).filter(Boolean) : [];
-  const shopIdList = authHasShopList ? [...new Set([...fromAuthList, key].filter(Boolean))] : [...new Set([...fromExistingList, key].filter(Boolean))];
-  const fromAuthMerchants = Array.isArray(authJson?.merchant_id_list) ? authJson.merchant_id_list.map((x2) => String(x2)).filter(Boolean) : [];
-  const fromExistingMerchants = Array.isArray(existing?.merchant_id_list) ? existing.merchant_id_list.map((x2) => String(x2)).filter(Boolean) : [];
-  const merchantIdList = [.../* @__PURE__ */ new Set([...fromAuthMerchants, ...fromExistingMerchants])];
-  return {
-    shop_id: key,
-    access_token: String(authJson?.access_token ?? existing?.access_token ?? ""),
-    refresh_token: String(authJson?.refresh_token ?? existing?.refresh_token ?? ""),
-    expire_in: Number(authJson?.expire_in ?? existing?.expire_in ?? 14400),
-    obtained_at: Number(authJson?.obtained_at ?? Math.floor(Date.now() / 1e3)),
-    oauth_shop_id: existing?.oauth_shop_id || oauth,
-    shop_id_list: shopIdList,
-    merchant_id_list: merchantIdList
-  };
-}
-function normalizeTokenStore(tokens) {
-  const out = {};
-  for (const [rawKey, record] of Object.entries(tokens || {})) {
-    if (!record || typeof record !== "object") continue;
-    const key = normalizeShopIdKey(record.shop_id ?? rawKey);
-    if (!key || !record.access_token) continue;
-    const oauthShopId = normalizeShopIdKey(record.oauth_shop_id) || key;
-    out[key] = buildShopeeTokenRecord(key, record, oauthShopId, record);
-  }
-  return out;
-}
-function getShopeeTokenRecord(tokens, shopId) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key) return null;
-  if (tokens[key]?.access_token || tokens[key]?.refresh_token) return tokens[key];
-  for (const [k, v] of Object.entries(tokens)) {
-    if (normalizeShopIdKey(k) === key) return v;
-  }
-  return null;
-}
-function resolveShopeeTokenConnectionStatus(shopId, preloadedTokens) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key) {
-    return { status: "missing", message: "Thi\u1EBFu Shop ID", expires_at: null };
-  }
-  const tokens = preloadedTokens && typeof preloadedTokens === "object" ? preloadedTokens : loadShopeeTokens();
-  const record = getShopeeTokenRecord(tokens, key);
-  if (!record?.access_token) {
-    return {
-      status: "missing",
-      message: "Ch\u01B0a k\u1EBFt n\u1ED1i OAuth \u2014 kh\xF4ng c\xF3 access_token",
-      expires_at: null
-    };
-  }
-  const now = Math.floor(Date.now() / 1e3);
-  const obtainedAt = Number(record.obtained_at) || 0;
-  const expireIn = Number(record.expire_in) || 0;
-  const expiresAt = obtainedAt > 0 && expireIn > 0 ? obtainedAt + expireIn : null;
-  if (expiresAt != null && now > expiresAt) {
-    return {
-      status: "expired",
-      message: `Token h\u1EBFt h\u1EA1n l\xFAc ${new Date(expiresAt * 1e3).toLocaleString("vi-VN")} \u2014 c\u1EA7n OAuth l\u1EA1i ho\u1EB7c refresh`,
-      expires_at: expiresAt
-    };
-  }
-  return {
-    status: "online",
-    message: expiresAt != null ? `Token h\u1EE3p l\u1EC7 \u0111\u1EBFn ${new Date(expiresAt * 1e3).toLocaleString("vi-VN")}` : "Token h\u1EE3p l\u1EC7",
-    expires_at: expiresAt
-  };
-}
-function collectShopIdsForTokenSave(requestShopId, authJson, expectedShopId) {
-  const ids = /* @__PURE__ */ new Set();
-  const primary = normalizeShopIdKey(requestShopId);
-  if (primary) ids.add(primary);
-  const expected = normalizeShopIdKey(expectedShopId);
-  if (expected) ids.add(expected);
-  for (const raw of authJson?.shop_id_list || []) {
-    const k = normalizeShopIdKey(raw);
-    if (k) ids.add(k);
-  }
-  const fromBody = normalizeShopIdKey(authJson?.shop_id);
-  if (fromBody) ids.add(fromBody);
-  return [...ids];
-}
-function persistOAuthTokens(authJson, opts) {
-  if (!authJson?.access_token) return [];
-  const oauthShopId = normalizeShopIdKey(opts.oauthShopId);
-  const mainAccountId = normalizeShopIdKey(opts.mainAccountId);
-  const expected = normalizeShopIdKey(opts.expectedShopId);
-  const shopIds = new Set(collectShopIdsForTokenSave(oauthShopId || mainAccountId, authJson, expected));
-  if (mainAccountId && Array.isArray(authJson?.shop_id_list)) {
-    for (const raw of authJson.shop_id_list) {
-      const k = normalizeShopIdKey(raw);
-      if (k) shopIds.add(k);
-    }
-  }
-  const shopMismatch = Boolean(expected && oauthShopId && expected !== oauthShopId);
-  if (shopMismatch && !shopIds.has(expected)) {
-    console.warn(
-      `[Shopee OAuth] Shop mismatch: expected=${expected}, oauth=${oauthShopId}, shop_id_list=[${(authJson?.shop_id_list || []).join(", ")}] \u2014 kh\xF4ng l\u01B0u alias token sai shop.`
-    );
-    shopIds.delete(expected);
-  }
-  if (shopIds.size === 0 && oauthShopId) shopIds.add(oauthShopId);
-  const keysBeforeMerge = Object.keys(normalizeTokenStore(loadShopeeTokens()));
-  const tokenOwner = oauthShopId || mainAccountId || "";
-  const updates = {};
-  for (const id of shopIds) {
-    updates[id] = buildShopeeTokenRecord(id, authJson, tokenOwner || id, loadShopeeTokens()[id]);
-    console.log("DEBUG SAVE: Saving data for shop:", id, "Full Data:", JSON.stringify(safeTokenMetadata(updates[id])));
-  }
-  saveShopeeTokens(updates);
-  for (const id of shopIds) {
-    console.log("L\u01B0u token th\xE0nh c\xF4ng cho shop: ", id);
-  }
-  const saved = [...shopIds];
-  const tokensData = normalizeTokenStore(loadShopeeTokens());
-  console.log(
-    "[Shopee Tokens] persistOAuthTokens \u2014 SAU MERGE",
-    JSON.stringify({
-      oauthShopId,
-      mainAccountId: mainAccountId || null,
-      expectedShopId: expected || null,
-      shopMismatch,
-      keysBefore: keysBeforeMerge,
-      keysAfter: Object.keys(tokensData),
-      shopIdsSaved: saved,
-      shopee_shop_id_list: authJson?.shop_id_list || [],
-      tokensPath: SHOPEE_TOKENS_PATH
-    })
-  );
-  return saved;
-}
-function verifyTokenSaved(shopId) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key) return false;
-  const tokens = loadShopeeTokens();
-  return Boolean(getShopeeTokenRecord(tokens, key)?.access_token);
-}
-async function completeShopeeOAuthFlow(code, params) {
-  const oauthShopId = normalizeShopIdKey(params.shopIdRaw);
-  const mainAccountId = normalizeShopIdKey(params.mainAccountIdRaw);
-  const expected = normalizeShopIdKey(params.expectedShopId);
-  if (!oauthShopId && !mainAccountId) {
-    return {
-      success: false,
-      oauth_shop_id: "",
-      saved_shop_ids: [],
-      verified_in_file: false,
-      error: "invalid_shop_id",
-      message: `Thi\u1EBFu shop_id ho\u1EB7c main_account_id h\u1EE3p l\u1EC7 trong callback (shop_id=${params.shopIdRaw || ""}, main_account_id=${params.mainAccountIdRaw || ""})`
-    };
-  }
-  console.log(
-    "[Shopee OAuth] completeShopeeOAuthFlow B\u1EAET \u0110\u1EA6U",
-    JSON.stringify({
-      oauthShopId: oauthShopId || null,
-      mainAccountId: mainAccountId || null,
-      expectedShopId: expected || null,
-      shop_mismatch: expected && oauthShopId ? expected !== oauthShopId : false,
-      code_preview: `${code.slice(0, 8)}\u2026`,
-      tokensPath: SHOPEE_TOKENS_PATH
-    })
-  );
-  const tokenResult = await exchangeShopeeCodeForToken(code, {
-    shopId: oauthShopId || void 0,
-    mainAccountId: mainAccountId || void 0
-  });
-  let savedIds = [];
-  if (tokenResult.access_token) {
-    savedIds = persistOAuthTokens(tokenResult, {
-      oauthShopId: oauthShopId || void 0,
-      mainAccountId: mainAccountId || void 0,
-      expectedShopId: expected || void 0
-    });
-    tokenResult.saved_shop_ids = savedIds;
-    if (savedIds.length > 0) {
-      deps2.syncOAuthShopsToChannelSettings(savedIds, { expectedShopId: expected || void 0 });
-    }
-  }
-  const shopMismatch = Boolean(
-    expected && oauthShopId && expected !== oauthShopId && !savedIds.includes(expected)
-  );
-  const verified = expected ? savedIds.includes(expected) && verifyTokenSaved(expected) : oauthShopId ? verifyTokenSaved(oauthShopId) : savedIds.length > 0;
-  saveOAuthAudit({
-    callback_shop_id: oauthShopId || null,
-    main_account_id: mainAccountId || null,
-    expected_shop_id: expected || null,
-    shop_mismatch: shopMismatch,
-    callback_code_present: Boolean(code),
-    success: Boolean(tokenResult.access_token) && verified && !shopMismatch,
-    verified_in_file: verified,
-    error: tokenResult.error || null,
-    message: tokenResult.message || null,
-    saved_shop_ids: savedIds,
-    shopee_shop_id_list: tokenResult.shop_id_list || [],
-    file_keys_after: Object.keys(loadShopeeTokens()),
-    tokens_path: SHOPEE_TOKENS_PATH,
-    app_root: APP_ROOT
-  });
-  return {
-    success: Boolean(tokenResult.access_token) && verified && !shopMismatch,
-    oauth_shop_id: oauthShopId || savedIds[0] || "",
-    expected_shop_id: expected || null,
-    shop_mismatch: shopMismatch,
-    saved_shop_ids: savedIds,
-    verified_in_file: verified,
-    error: tokenResult.error || (shopMismatch ? "shop_mismatch" : verified ? null : "token_not_persisted"),
-    message: shopMismatch ? `Shopee tr\u1EA3 v\u1EC1 shop ${oauthShopId}, KH\xD4NG ph\u1EA3i shop b\u1EA1n y\xEAu c\u1EA7u ${expected}. Token KH\xD4NG th\u1EC3 d\xF9ng cho shop kh\xE1c \u2014 h\xE3y \u0111\u0103ng xu\u1EA5t Shopee Seller Center, \u0111\u0103ng nh\u1EADp \u0111\xFAng shop ${expected}, r\u1ED3i b\u1EA5m OAuth l\u1EA1i.` : tokenResult.message || (verified ? `OAuth th\xE0nh c\xF4ng. Token \u0111\xE3 l\u01B0u cho: [${savedIds.join(", ")}].` : "Token kh\xF4ng ghi \u0111\u01B0\u1EE3c v\xE0o shopee_tokens.json"),
-    shopee_response: tokenResult.access_token ? { shop_id_list: tokenResult.shop_id_list || [], expire_in: tokenResult.expire_in } : tokenResult
-  };
-}
-function buildShopeeAuthPartnerUrl(shopId) {
-  const apiPath = "/api/v2/shop/auth_partner";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp);
-  const sid = normalizeShopIdKey(shopId);
-  const redirectTarget = sid ? `${SHOPEE_CALLBACK_URL}?redirect=1&expected_shop=${sid}` : `${SHOPEE_CALLBACK_URL}?redirect=1`;
-  const redirect = encodeURIComponent(redirectTarget);
-  let url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&sign=${sign}&redirect=${redirect}`;
-  if (sid) url2 += `&shop_id=${sid}`;
-  console.log(`[Shopee OAuth] auth_partner URL cho shop_id=${sid || "(none)"}: ${url2.replace(/sign=[^&]+/, "sign=***")}`);
-  return url2;
-}
-function saveShopeeTokenForShop(shopId, record) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key) return;
-  const tokens = normalizeTokenStore(loadShopeeTokens());
-  const existing = tokens[key];
-  tokens[key] = buildShopeeTokenRecord(
-    key,
-    { ...existing, ...record, obtained_at: record.obtained_at ?? Math.floor(Date.now() / 1e3) },
-    existing?.oauth_shop_id || key,
-    existing
-  );
-  saveShopeeTokens(tokens);
-  if (tokens[key]?.access_token) {
-    tokenCacheSet(key, tokens[key].access_token, tokens[key].expire_in);
-  }
-  console.log(`[Shopee Tokens] Saved token for shop_id=${key}. All shops: [${Object.keys(tokens).join(", ")}]`);
-}
-function listChannelSettingsShopIds() {
-  try {
-    if (!import_fs3.default.existsSync(CHANNEL_SETTINGS_PATH)) return [];
-    const raw = import_fs3.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
-    const parsed = raw.trim() ? JSON.parse(raw) : {};
-    const shops = Array.isArray(parsed?.shops) ? parsed.shops : [];
-    const ids = [];
-    for (const shop of shops) {
-      const platform = String(shop?.platform || "").toLowerCase();
-      if (platform && platform !== "shopee") continue;
-      const id = normalizeShopIdKey(shop?.shopId || shop?.id);
-      if (id) ids.push(id);
-    }
-    return ids;
-  } catch {
-    return [];
-  }
-}
-function shopHasOwnToken(tokens, shopId) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key) return false;
-  const rec = tokens[key];
-  return Boolean(rec?.access_token || rec?.refresh_token);
-}
-function listShopeeOAuthShopIds() {
-  return listShopeeSyncShopIds();
-}
-function listShopeeSyncShopIds(preloadedTokens) {
-  const tokens = preloadedTokens && typeof preloadedTokens === "object" ? preloadedTokens : loadShopeeTokens();
-  const ids = /* @__PURE__ */ new Set();
-  for (const id of CANONICAL_SHOPEE_SHOP_IDS) {
-    const key = normalizeShopIdKey(id);
-    if (key) ids.add(key);
-  }
-  for (const id of listChannelSettingsShopIds()) ids.add(id);
-  for (const [rawKey, record] of Object.entries(tokens)) {
-    const key = normalizeShopIdKey(rawKey);
-    if (key) ids.add(key);
-    const recordShopId = normalizeShopIdKey(record?.shop_id);
-    if (recordShopId) ids.add(recordShopId);
-  }
-  const list = [...ids].sort();
-  for (const id of list) {
-    if (!shopHasOwnToken(tokens, id)) {
-      console.error(
-        `[Shopee Tokens] THI\u1EBEU token ri\xEAng shop_id=${id}. C\u1EA4M d\xF9ng token shop kh\xE1c. V\xE0o C\xE0i \u0111\u1EB7t \u2192 \u1EE6y quy\u1EC1n l\u1EA1i Shop ${id}.`
-      );
-    }
-  }
-  return list;
-}
-function ensureShopeeLinkedShopTokenKeys() {
-  const tokens = normalizeTokenStore(loadShopeeTokens());
-  const updates = {};
-  let pruned = 0;
-  for (const [rawKey, record] of Object.entries(tokens)) {
-    if (!record?.access_token && !record?.refresh_token) continue;
-    const owner = normalizeShopIdKey(rawKey) || normalizeShopIdKey(record?.shop_id);
-    if (!owner) continue;
-    const list = Array.isArray(record?.shop_id_list) ? record.shop_id_list.map((x2) => normalizeShopIdKey(x2)).filter(Boolean) : [];
-    if (list.length <= 1) {
-      if (list.length !== 1 || list[0] !== owner) {
-        updates[owner] = {
-          ...record,
-          shop_id: owner,
-          shop_id_list: [owner]
-        };
-        pruned += 1;
-      }
-      continue;
-    }
-    const oauth = normalizeShopIdKey(record?.oauth_shop_id) || owner;
-    for (const id of list) {
-      if (id === owner) continue;
-      const existing = tokens[id] || updates[id];
-      const foreignIndependent = INDEPENDENT_SHOPEE_SHOP_IDS.has(owner) && INDEPENDENT_SHOPEE_SHOP_IDS.has(id);
-      if (foreignIndependent || !existing?.access_token || !existing?.refresh_token) {
-        console.error(
-          `[Shopee Tokens] C\u1EA4M clone token shop_id=${owner} \u2192 ${id}. Shop ${id} c\u1EA7n OAuth ri\xEAng (C\xE0i \u0111\u1EB7t \u2192 \u1EE6y quy\u1EC1n l\u1EA1i).`
-        );
-        continue;
-      }
-      if (existing.refresh_token && record.refresh_token && String(existing.refresh_token) !== String(record.refresh_token)) {
-        continue;
-      }
-      const mergedList = [...new Set([...(existing.shop_id_list || []).map(normalizeShopIdKey), ...list].filter(Boolean))];
-      if (mergedList.join(",") !== (existing.shop_id_list || []).map(normalizeShopIdKey).join(",")) {
-        updates[id] = {
-          ...existing,
-          shop_id: id,
-          oauth_shop_id: existing.oauth_shop_id || oauth,
-          shop_id_list: mergedList
-        };
-      }
-    }
-  }
-  for (const [rawKey, record] of Object.entries({ ...tokens, ...updates })) {
-    const key = normalizeShopIdKey(rawKey);
-    if (!key || !record) continue;
-    const oauth = normalizeShopIdKey(record.oauth_shop_id);
-    if (!oauth || oauth === key) continue;
-    const ownerRec = updates[oauth] || tokens[oauth];
-    if (!ownerRec) continue;
-    const ownerList = Array.isArray(ownerRec.shop_id_list) ? ownerRec.shop_id_list.map(normalizeShopIdKey).filter(Boolean) : [oauth];
-    const sameRefresh = record.refresh_token && ownerRec.refresh_token && String(record.refresh_token) === String(ownerRec.refresh_token);
-    const foreignIndependent = INDEPENDENT_SHOPEE_SHOP_IDS.has(key) && INDEPENDENT_SHOPEE_SHOP_IDS.has(oauth);
-    if (sameRefresh && (!ownerList.includes(key) || foreignIndependent)) {
-      console.error(
-        `[Shopee Tokens] G\u1EE1 shop clone gi\u1EA3 shop_id=${key} (token thu\u1ED9c ${oauth}, kh\xF4ng c\xF3 trong shop_id_list). C\u1EA7n OAuth ri\xEAng shop ${key}.`
-      );
-      delete updates[key];
-      if (tokens[key]) {
-        updates[`__delete__${key}`] = true;
-      }
-      pruned += 1;
-    }
-  }
-  const deleteKeys = Object.keys(updates).filter((k) => k.startsWith("__delete__"));
-  for (const dk of deleteKeys) {
-    delete updates[dk];
-  }
-  if (Object.keys(updates).length > 0 || deleteKeys.length > 0) {
-    const next = normalizeTokenStore(loadShopeeTokens());
-    for (const dk of deleteKeys) {
-      const id = dk.replace(/^__delete__/, "");
-      delete next[id];
-    }
-    Object.assign(next, updates);
-    import_fs3.default.writeFileSync(SHOPEE_TOKENS_PATH, JSON.stringify(next, null, 2), "utf8");
-    console.log(
-      `[Shopee Tokens] ensureLinkedShopTokenKeys \u2014 upsert=[${Object.keys(updates).join(", ")}] deleted=[${deleteKeys.map((k) => k.replace(/^__delete__/, "")).join(", ")}] pruned=${pruned}`
-    );
-  }
-  return listShopeeSyncShopIds();
-}
-function propagateShopeeTokenToLinkedShops(sourceShopId, patch, opts) {
-  const key = normalizeShopIdKey(sourceShopId);
-  if (!key || !patch?.access_token) return;
-  const tokens = normalizeTokenStore(loadShopeeTokens());
-  const record = getShopeeTokenRecord(tokens, key) || tokens[key];
-  if (!record) {
-    saveShopeeTokenForShop(key, patch);
-    tokenCacheSet(key, patch.access_token, patch.expire_in);
-    return;
-  }
-  const fromPatch = Array.isArray(patch.shop_id_list) ? patch.shop_id_list.map((x2) => normalizeShopIdKey(x2)).filter(Boolean) : [];
-  const linked = new Set(fromPatch.length ? fromPatch : [key]);
-  linked.add(key);
-  const oauth = normalizeShopIdKey(record.oauth_shop_id);
-  const onlyMatchingRefresh = opts?.onlyMatchingRefreshToken ? String(opts.onlyMatchingRefreshToken) : "";
-  const updates = {};
-  for (const id of linked) {
-    if (id !== key && INDEPENDENT_SHOPEE_SHOP_IDS.has(key) && INDEPENDENT_SHOPEE_SHOP_IDS.has(id)) {
-      console.error(
-        `[Shopee Tokens] C\u1EA4M propagate token shop_id=${key} \u2192 ${id}. Shop ${id} c\u1EA7n OAuth ri\xEAng.`
-      );
-      continue;
-    }
-    const existing = tokens[id] || (id === key ? record : null);
-    if (onlyMatchingRefresh && existing?.refresh_token && String(existing.refresh_token) !== onlyMatchingRefresh && id !== key) {
-      continue;
-    }
-    if (id !== key && existing?.refresh_token && onlyMatchingRefresh && String(existing.refresh_token) !== onlyMatchingRefresh) {
-      continue;
-    }
-    updates[id] = buildShopeeTokenRecord(
-      id,
-      {
-        access_token: patch.access_token,
-        refresh_token: patch.refresh_token,
-        expire_in: patch.expire_in,
-        obtained_at: patch.obtained_at,
-        shop_id_list: [...linked]
-      },
-      normalizeShopIdKey(existing?.oauth_shop_id) || oauth || key,
-      existing || record
-    );
-    tokenCacheSet(id, patch.access_token, patch.expire_in);
-  }
-  saveShopeeTokens(updates);
-  console.log(
-    `[Shopee Tokens] propagate from=${key} \u2192 [${Object.keys(updates).join(", ")}] list=[${[...linked].join(",")}]`
-  );
-}
-function shopeeSign(apiPath, timestamp, accessToken, shopId) {
-  const baseString = accessToken && shopId ? `${SHOPEE_PARTNER_ID}${apiPath}${timestamp}${accessToken}${shopId}` : `${SHOPEE_PARTNER_ID}${apiPath}${timestamp}`;
-  return import_crypto2.default.createHmac("sha256", SHOPEE_PARTNER_KEY).update(baseString).digest("hex");
-}
-async function exchangeShopeeCodeForToken(code, opts) {
-  const shopId = normalizeShopIdKey(opts.shopId);
-  const mainAccountId = normalizeShopIdKey(opts.mainAccountId);
-  if (!isShopeeConfigValid()) {
-    const error = {
-      error: "invalid_partner_config",
-      message: `SHOPEE_PARTNER_ID/"${SHOPEE_PARTNER_ID}" ho\u1EB7c SHOPEE_PARTNER_KEY trong .env ch\u01B0a ph\u1EA3i gi\xE1 tr\u1ECB Live th\u1EF1c. Vui l\xF2ng \u0111i\u1EC1n \u0111\xFAng Partner ID (s\u1ED1 nguy\xEAn) v\xE0 Partner Key t\u1EEB App PRODUCTION tr\xEAn open.shopee.com r\u1ED3i th\u1EED l\u1EA1i.`
-    };
-    console.error(`[Shopee OAuth] \u274C Kh\xF4ng th\u1EC3 \u0111\u1ED5i code: ${error.message}`);
-    return error;
-  }
-  if (!shopId && !mainAccountId) {
-    return {
-      error: "missing_shop_or_main_account",
-      message: "Shopee token/get c\u1EA7n shop_id HO\u1EB6C main_account_id (kh\xF4ng \u0111\u01B0\u1EE3c thi\u1EBFu c\u1EA3 hai)."
-    };
-  }
-  const apiPath = "/api/v2/auth/token/get";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp);
-  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&sign=${sign}`;
-  const body = {
-    code,
-    partner_id: Number(SHOPEE_PARTNER_ID)
-  };
-  if (mainAccountId) {
-    body.main_account_id = Number(mainAccountId);
-  } else if (shopId) {
-    body.shop_id = Number(shopId);
-  }
-  console.log(
-    "[Shopee OAuth] token/get request",
-    JSON.stringify({
-      shop_id: shopId || null,
-      main_account_id: mainAccountId || null,
-      partner_id: SHOPEE_PARTNER_ID,
-      url_host: SHOPEE_HOST
-    })
-  );
-  let res;
-  let rawText;
-  try {
-    res = await fetchWithTimeout(url2, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    });
-    rawText = await res.text();
-  } catch (error) {
-    deps2.logOAuthSaveError("exchangeShopeeCodeForToken fetch", error);
-    return {
-      error: "network_error",
-      message: error?.message || "Kh\xF4ng g\u1ECDi \u0111\u01B0\u1EE3c Shopee token/get"
-    };
-  }
-  console.log("[Shopee OAuth] response bytes:", Buffer.byteLength(rawText || "", "utf8"));
-  let json2;
-  try {
-    json2 = rawText ? parseShopeeJson(rawText) : {};
-  } catch (parseErr) {
-    console.error("[Shopee OAuth] Kh\xF4ng parse \u0111\u01B0\u1EE3c JSON t\u1EEB Shopee:", parseErr);
-    return { error: "invalid_json", message: rawText.slice(0, 500) };
-  }
-  json2 = normalizeShopeeTokenResponse(json2);
-  console.log("DEBUG NORMALIZED RESPONSE:", JSON.stringify(safeTokenMetadata(json2)));
-  console.log(`[Shopee API] POST ${apiPath} (env=${SHOPEE_ENV}) -> HTTP ${res.status}`);
-  if (json2.access_token && json2.refresh_token) {
-    console.log(
-      "[Shopee OAuth] \u0110\xC3 L\u1EA4Y TOKEN T\u1EEA SHOPEE",
-      JSON.stringify({
-        shop_id: shopId || null,
-        main_account_id: mainAccountId || null,
-        access_token: "[REDACTED]",
-        refresh_token: "[REDACTED]",
-        expire_in: json2.expire_in,
-        shop_id_list: json2.shop_id_list || []
-      })
-    );
-  } else {
-    console.error(
-      "[Shopee OAuth] SHOPEE KH\xD4NG TR\u1EA2 \u0111\u1EE7 access_token/refresh_token",
-      JSON.stringify({
-        shop_id: shopId || null,
-        main_account_id: mainAccountId || null,
-        httpStatus: res.status,
-        error: json2.error || null,
-        message: json2.message || null,
-        keys: Object.keys(json2)
-      })
-    );
-  }
-  return json2;
-}
-async function refreshShopeeToken(shopId, refreshToken) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key || !refreshToken) {
-    return { error: "invalid_refresh_params", message: `Thi\u1EBFu shop_id ho\u1EB7c refresh_token (shop_id=${shopId})` };
-  }
-  const apiPath = "/api/v2/auth/access_token/get";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp);
-  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&sign=${sign}`;
-  try {
-    const res = await fetchWithTimeout(url2, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        refresh_token: String(refreshToken),
-        shop_id: Number(key),
-        partner_id: Number(SHOPEE_PARTNER_ID)
-      })
-    });
-    const rawText = await res.text();
-    const json2 = rawText ? parseShopeeJson(rawText) : {};
-    console.log(
-      `[Shopee API] POST ${apiPath} (refresh shop_id=${key}) -> HTTP ${res.status}:`,
-      JSON.stringify(safeTokenMetadata(json2))
-    );
-    const normalized = normalizeShopeeTokenResponse(json2);
-    if (normalized.access_token) {
-      const apiList = Array.isArray(normalized.shop_id_list) ? normalized.shop_id_list : Array.isArray(json2?.shop_id_list) ? json2.shop_id_list : [];
-      const shopIdListForSave = apiList.length ? apiList.map((x2) => normalizeShopIdKey(x2)).filter(Boolean) : [key];
-      saveShopeeTokenForShop(key, {
-        access_token: normalized.access_token,
-        refresh_token: normalized.refresh_token || refreshToken,
-        expire_in: normalized.expire_in,
-        obtained_at: Math.floor(Date.now() / 1e3),
-        shop_id_list: shopIdListForSave
-      });
-      tokenCacheSet(key, normalized.access_token, normalized.expire_in);
-      return {
-        ...normalized,
-        shop_id: key,
-        shop_id_list: shopIdListForSave
-      };
-    }
-    console.error(
-      `[Shopee API] Refresh token th\u1EA5t b\u1EA1i shop_id=${key}:`,
-      normalized.error || json2.error,
-      normalized.message || json2.message
-    );
-    return { ...normalized, shop_id: key };
-  } catch (error) {
-    deps2.logOAuthSaveError(`refreshShopeeToken shop_id=${key}`, error);
-    return { error: "refresh_failed", message: error?.message || String(error), shop_id: key };
-  }
-}
-var ShopeeRefreshTokenExpiredError = class extends Error {
-  constructor(shopId) {
-    super(SHOPEE_REAUTH_REQUIRED_MESSAGE);
-    this.name = "ShopeeRefreshTokenExpiredError";
-    this.shopId = shopId;
-    this.code = "shopee_reauth_required";
-  }
-};
-function isShopeeInvalidTokenError(error, message) {
-  const text = `${error || ""} ${message || ""}`.toLowerCase();
-  return /invalid_acceess_token|invalid_access_token|error_auth|invalid_token|access_token.*expire|token.*expire|token.*invalid|unauthorized|hết hạn|không hợp lệ/.test(
-    text
-  );
-}
-var shopeeTokenRefreshLocks = /* @__PURE__ */ new Map();
-var shopeeAccessTokenCache = /* @__PURE__ */ new Map();
-function tokenCacheGet(shopId) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key) return null;
-  const entry = shopeeAccessTokenCache.get(key);
-  if (!entry?.token) return null;
-  if (Math.floor(Date.now() / 1e3) >= Number(entry.expiresAt || 0)) {
-    shopeeAccessTokenCache.delete(key);
-    return null;
-  }
-  return String(entry.token);
-}
-function tokenCacheSet(shopId, token, expireIn) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key || !token) return;
-  const ttl = Math.max(60, Number(expireIn) || 14400) - 60;
-  shopeeAccessTokenCache.set(key, {
-    token: String(token),
-    expiresAt: Math.floor(Date.now() / 1e3) + ttl
-  });
-}
-function tokenCacheClear(shopId) {
-  const key = normalizeShopIdKey(shopId);
-  if (key) {
-    shopeeAccessTokenCache.delete(key);
-    shopeeShopTokenVerifyCache.delete(key);
-  }
-}
-var shopeeShopTokenVerifyCache = /* @__PURE__ */ new Map();
-function shopTokenVerifyCacheOk(shopId, token) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key || !token) return false;
-  const entry = shopeeShopTokenVerifyCache.get(key);
-  if (!entry?.tokenTail) return false;
-  if (Math.floor(Date.now() / 1e3) >= Number(entry.expiresAt || 0)) {
-    shopeeShopTokenVerifyCache.delete(key);
-    return false;
-  }
-  return entry.tokenTail === String(token).slice(-8);
-}
-function shopTokenVerifyCacheSet(shopId, token) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key || !token) return;
-  shopeeShopTokenVerifyCache.set(key, {
-    tokenTail: String(token).slice(-8),
-    expiresAt: Math.floor(Date.now() / 1e3) + 10 * 60
-  });
-}
-function resolveRefreshLockKey(shopId, record) {
-  const key = normalizeShopIdKey(shopId);
-  const oauth = normalizeShopIdKey(record?.oauth_shop_id);
-  if (oauth) return `oauth:${oauth}`;
-  const rt = record?.refresh_token ? String(record.refresh_token) : "";
-  if (rt) return `rt:${rt.slice(0, 32)}`;
-  return `shop:${key}`;
-}
-function readShopeeAccessTokenIfFresh(shopId) {
-  const key = normalizeShopIdKey(shopId);
-  const cached = tokenCacheGet(key);
-  if (cached) return cached;
-  const tokens = loadShopeeTokens();
-  const record = getShopeeTokenRecord(tokens, key);
-  if (!record?.access_token) return null;
-  const now = Math.floor(Date.now() / 1e3);
-  const obtainedAt = Number(record.obtained_at) || 0;
-  const expireIn = Number(record.expire_in) || 14400;
-  if (obtainedAt > 0 && now - obtainedAt >= expireIn - 60) return null;
-  tokenCacheSet(key, record.access_token, expireIn - (now - obtainedAt));
-  return String(record.access_token);
-}
-async function refreshShopeeAccessTokenLocked(shopId, opts) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key) throw new ShopeeRefreshTokenExpiredError(String(shopId || "?"));
-  const tokensPeek = loadShopeeTokens();
-  const recordPeek = getShopeeTokenRecord(tokensPeek, key);
-  const lockKey = resolveRefreshLockKey(key, recordPeek);
-  const inflight = shopeeTokenRefreshLocks.get(lockKey);
-  if (inflight) {
-    console.log(`[Shopee Token] Mutex: ch\u1EDD refresh lock=${lockKey} (shop_id=${key})`);
-    await inflight;
-    const afterWait = readShopeeAccessTokenIfFresh(key);
-    if (afterWait) return afterWait;
-    const tokensAfter = loadShopeeTokens();
-    const recAfter = getShopeeTokenRecord(tokensAfter, key);
-    if (recAfter?.access_token) {
-      tokenCacheSet(key, recAfter.access_token, recAfter.expire_in);
-      return String(recAfter.access_token);
-    }
-    throw new ShopeeRefreshTokenExpiredError(key);
-  }
-  const run = (async () => {
-    const tokens = loadShopeeTokens();
-    const record = getShopeeTokenRecord(tokens, key);
-    if (!record) {
-      throw new ShopeeRefreshTokenExpiredError(key);
-    }
-    if (!record.refresh_token) {
-      throw new ShopeeRefreshTokenExpiredError(key);
-    }
-    if (!opts?.force) {
-      const fresh = readShopeeAccessTokenIfFresh(key);
-      if (fresh) return fresh;
-    } else {
-      const now = Math.floor(Date.now() / 1e3);
-      const obtainedAt = Number(record.obtained_at) || 0;
-      if (obtainedAt > 0 && now - obtainedAt < 15 && record.access_token) {
-        console.log(`[Shopee Token] B\u1ECF qua force refresh \u2014 token v\u1EEBa m\u1EDBi (${now - obtainedAt}s) shop_id=${key}`);
-        tokenCacheSet(key, record.access_token, record.expire_in);
-        return String(record.access_token);
-      }
-    }
-    const oldRefresh = String(record.refresh_token);
-    const oauthOwner = normalizeShopIdKey(record.oauth_shop_id);
-    console.log(
-      `[Shopee Token] Refresh access_token shop_id=${key} force=${Boolean(opts?.force)} lock=${lockKey}...`
-    );
-    let refreshed = await refreshShopeeToken(key, oldRefresh);
-    let refreshVia = key;
-    if (!refreshed.access_token && oauthOwner && oauthOwner !== key) {
-      console.warn(
-        `[Shopee Token] Refresh shop_id=${key} fail \u2014 retry oauth_shop_id=${oauthOwner}`
-      );
-      refreshed = await refreshShopeeToken(oauthOwner, oldRefresh);
-      refreshVia = oauthOwner;
-    }
-    if (refreshed.access_token) {
-      if (refreshVia !== key) {
-        const verified = await verifyShopeeShopToken(key, refreshed.access_token);
-        if (!verified.ok) {
-          console.error(
-            `[Shopee Token] Token t\u1EEB shop=${refreshVia} KH\xD4NG d\xF9ng \u0111\u01B0\u1EE3c cho shop_id=${key} (error=${verified.error}). C\u1EA7n OAuth ri\xEAng shop ${key}.`
-          );
-          tokenCacheClear(key);
-          throw new ShopeeRefreshTokenExpiredError(key);
-        }
-      }
-      const obtainedAt = Math.floor(Date.now() / 1e3);
-      const apiList = Array.isArray(refreshed.shop_id_list) ? refreshed.shop_id_list.map((x2) => normalizeShopIdKey(x2)).filter(Boolean) : [];
-      const propagateList = apiList.length ? apiList : [refreshVia];
-      if (!propagateList.includes(key) && refreshVia === key) {
-      } else if (!propagateList.includes(key) && refreshVia !== key) {
-        propagateList.push(key);
-      }
-      propagateShopeeTokenToLinkedShops(
-        refreshVia,
-        {
-          access_token: refreshed.access_token,
-          refresh_token: refreshed.refresh_token || oldRefresh,
-          expire_in: refreshed.expire_in,
-          obtained_at: obtainedAt,
-          shop_id_list: propagateList
-        },
-        { onlyMatchingRefreshToken: oldRefresh }
-      );
-      tokenCacheSet(key, refreshed.access_token, refreshed.expire_in);
-      if (refreshVia !== key) {
-        tokenCacheSet(refreshVia, refreshed.access_token, refreshed.expire_in);
-      }
-      console.log(
-        `[Shopee Token] Refresh OK shop_id=${key} via=${refreshVia} list=[${propagateList.join(",")}]`
-      );
-      return String(refreshed.access_token);
-    }
-    tokenCacheClear(key);
-    console.error(
-      `[Shopee Token] Refresh TH\u1EA4T B\u1EA0I shop_id=${key}:`,
-      refreshed.error || refreshed.message
-    );
-    throw new ShopeeRefreshTokenExpiredError(key);
-  })().finally(() => {
-    shopeeTokenRefreshLocks.delete(lockKey);
-  });
-  shopeeTokenRefreshLocks.set(lockKey, run);
-  return run;
-}
-async function getShopeeAccessTokenForApi(shopKey, opts) {
-  const fileKey = normalizeShopIdKey(shopKey);
-  if (!fileKey) return null;
-  const tokens = loadShopeeTokens();
-  const record = getShopeeTokenRecord(tokens, fileKey);
-  if (!record?.refresh_token && !record?.access_token) return null;
-  const apiShopId = fileKey;
-  try {
-    if (opts?.forceRefresh) {
-      const token2 = await refreshShopeeAccessTokenLocked(fileKey, { force: true });
-      return { token: token2, apiShopId, fileKey };
-    }
-    const token = await getValidShopeeAccessToken(fileKey);
-    if (!token) return null;
-    return { token, apiShopId, fileKey };
-  } catch (err) {
-    if (err instanceof ShopeeRefreshTokenExpiredError) {
-      console.error(`[Shopee Token] ${err.message} shop_id=${err.shopId}`);
-      return null;
-    }
-    throw err;
-  }
-}
-async function verifyShopeeShopToken(shopId, accessToken) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key || !accessToken) return { ok: false, error: "missing_shop_or_token" };
-  const controller = new AbortController();
-  const timer2 = setTimeout(() => controller.abort(), 12e3);
-  try {
-    const apiPath = "/api/v2/shop/get_shop_info";
-    const timestamp = Math.floor(Date.now() / 1e3);
-    const sign = shopeeSign(apiPath, timestamp, accessToken, key);
-    const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${key}&sign=${sign}`;
-    const res = await fetch(url2, { signal: controller.signal });
-    const rawText = await res.text();
-    const json2 = rawText ? parseShopeeJson(rawText) : {};
-    const err = String(json2?.error || "").trim();
-    if (err) return { ok: false, error: err };
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, error: error?.message || String(error) };
-  } finally {
-    clearTimeout(timer2);
-  }
-}
-function resolveShopeeApiShopId(record, configuredShopId) {
-  const configured = normalizeShopIdKey(configuredShopId);
-  if (configured) return configured;
-  const recordKey = normalizeShopIdKey(record?.shop_id);
-  if (recordKey) return recordKey;
-  return normalizeShopIdKey(record?.oauth_shop_id) || "";
-}
-async function getValidShopeeAccessToken(shopId) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key) {
-    console.error(
-      "[Shopee API] getValidShopeeAccessToken: THI\u1EBEU shop_id \u2014 t\u1EEB ch\u1ED1i g\u1ECDi (h\u1EC7 th\u1ED1ng \u0111a shop b\u1EAFt bu\u1ED9c truy\u1EC1n shop_id)."
-    );
-    return null;
-  }
-  const tokens = loadShopeeTokens();
-  const record = getShopeeTokenRecord(tokens, key);
-  if (!record) {
-    const available = listAuthorizedShopeeShopIds();
-    console.warn(
-      `[Shopee API] Ch\u01B0a c\xF3 token record cho shop_id=${key}. Shop \u0111\xE3 \u1EE7y quy\u1EC1n: [${available.join(", ") || "kh\xF4ng c\xF3"}]`
-    );
-    return null;
-  }
-  const oauth = normalizeShopIdKey(record.oauth_shop_id);
-  const recordOwner = normalizeShopIdKey(record.shop_id);
-  const needsVerify = Boolean(oauth && oauth !== key || recordOwner && recordOwner !== key);
-  const cacheHit = Boolean(tokenCacheGet(key));
-  const rejectForeignToken = (reason) => {
-    console.error(
-      `[Shopee API] shop_id=${key} token kh\xF4ng thu\u1ED9c shop n\xE0y (oauth=${oauth || "-"} owner=${recordOwner || "-"} error=${reason}). C\u1EA7n OAuth ri\xEAng shop ${key} \u2014 kh\xF4ng d\xF9ng token shop kh\xE1c.`
-    );
-    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=${cacheHit ? "hit" : "miss"} verified=no`);
-    tokenCacheClear(key);
-    return null;
-  };
-  const fresh = readShopeeAccessTokenIfFresh(key);
-  if (fresh) {
-    if (needsVerify) {
-      if (shopTokenVerifyCacheOk(key, fresh)) {
-        console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=${cacheHit ? "hit" : "miss"} verified=yes`);
-        return fresh;
-      }
-      const verified = await verifyShopeeShopToken(key, fresh);
-      if (!verified.ok) return rejectForeignToken(verified.error);
-      shopTokenVerifyCacheSet(key, fresh);
-      console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=${cacheHit ? "hit" : "miss"} verified=yes`);
-      return fresh;
-    }
-    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=${cacheHit ? "hit" : "miss"} verified=n/a`);
-    return fresh;
-  }
-  if (!record.refresh_token) {
-    console.error(`[Shopee API] Shop ${key} thi\u1EBFu refresh_token \u2014 c\u1EA7n OAuth l\u1EA1i.`);
-    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
-    return null;
-  }
-  try {
-    console.log(
-      `[Shopee API] access_token shop_id=${key} H\u1EBET H\u1EA0N (expired) \u2014 g\u1ECDi Refresh Token \u2192 l\u01B0u DB...`
-    );
-    const refreshed = await refreshShopeeAccessTokenLocked(key, { force: false });
-    if (!refreshed) {
-      console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
-      return null;
-    }
-    if (needsVerify) {
-      const verified = await verifyShopeeShopToken(key, refreshed);
-      if (!verified.ok) return rejectForeignToken(verified.error);
-      shopTokenVerifyCacheSet(key, refreshed);
-      console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=yes`);
-      return refreshed;
-    }
-    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=n/a`);
-    return refreshed;
-  } catch (err) {
-    if (err instanceof ShopeeRefreshTokenExpiredError) {
-      console.error(`[Shopee API] ${err.message}`);
-      console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
-      return null;
-    }
-    console.error(`[Shopee API] Refresh token th\u1EA5t b\u1EA1i shop_id=${key}:`, safeError(err));
-    console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
-    return null;
-  }
-}
-async function withShopeeAccessTokenRetry(shopId, runner, isAuthFailure) {
-  const key = normalizeShopIdKey(shopId);
-  let token = await getValidShopeeAccessToken(key);
-  if (!token) {
-    throw new ShopeeRefreshTokenExpiredError(key || String(shopId || "?"));
-  }
-  let result = await runner(token);
-  const failed = isAuthFailure && isAuthFailure(result) || result && typeof result === "object" && (Number(result.httpStatus) === 401 || Number(result.httpStatus) === 403 || isShopeeInvalidTokenError(result.error, result.message));
-  if (!failed) return result;
-  console.warn(`[Shopee Token] API b\xE1o token h\u1EBFt h\u1EA1n shop_id=${key} \u2014 force refresh + retry 1 l\u1EA7n`);
-  tokenCacheClear(key);
-  token = await refreshShopeeAccessTokenLocked(key, { force: true });
-  return runner(token);
-}
-function listAuthorizedShopeeShopIds() {
-  const tokens = loadShopeeTokens();
-  const ids = /* @__PURE__ */ new Set();
-  for (const [rawKey, record] of Object.entries(tokens || {})) {
-    if (!record?.access_token && !record?.refresh_token) continue;
-    const key = normalizeShopIdKey(rawKey) || normalizeShopIdKey(record?.shop_id);
-    if (key) ids.add(key);
-  }
-  return [...ids].sort();
-}
-function resolveShopeeTokenShopId(requested) {
-  const authorized = listAuthorizedShopeeShopIds();
-  if (!authorized.length) {
-    console.warn(
-      "[Shopee Auth] resolveShopeeTokenShopId: DB kh\xF4ng c\xF3 shop n\xE0o \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n (shopee_tokens tr\u1ED1ng)."
-    );
-    return null;
-  }
-  const req = String(requested || "").trim();
-  if (!req) {
-    if (authorized.length === 1) return authorized[0];
-    console.warn(
-      `[Shopee Auth] resolveShopeeTokenShopId: \u0110A SHOP (${authorized.length} shop: [${authorized.join(", ")}]) \u2014 thi\u1EBFu shop_id. T\u1EA1m fallback v\u1EC1 ${authorized[0]} \u0111\u1EC3 tr\xE1nh crash.`
-    );
-    return authorized[0];
-  }
-  const tokens = loadShopeeTokens();
-  if (tokens[req]) return req;
-  const digits = normalizeShopIdKey(req) || req.match(/(\d{5,})/)?.[1] || "";
-  if (digits && tokens[digits]) return digits;
-  if (digits) {
-    const linked = getShopeeTokenRecord(tokens, digits);
-    if (linked) {
-      console.log(
-        `[Shopee Auth] resolveShopeeTokenShopId: shop_id=${digits} t\xECm th\u1EA5y qua linked/oauth record.`
-      );
-      return digits;
-    }
-    console.warn(
-      `[Shopee Auth] resolveShopeeTokenShopId: y\xEAu c\u1EA7u shop_id=${digits} nh\u01B0ng kh\xF4ng c\xF3 token. Shops: [${authorized.join(", ")}]`
-    );
-    return digits;
-  }
-  return null;
-}
-function resolveShopeeShopIdsForSync(requested) {
-  const req = String(requested || "").trim();
-  if (req) {
-    const one = resolveShopeeTokenShopId(req);
-    return one ? [one] : [];
-  }
-  const all3 = listAuthorizedShopeeShopIds();
-  console.log(
-    `[Shopee Auth] resolveShopeeShopIdsForSync: kh\xF4ng truy\u1EC1n shop_id \u2014 d\xF9ng T\u1EA4T C\u1EA2 ${all3.length} shop: [${all3.join(", ")}]`
-  );
-  return all3;
-}
-async function getAccessTokenForShop(shopId) {
-  const key = normalizeShopIdKey(shopId);
-  if (!key) {
-    console.error("[Shopee Auth] getAccessTokenForShop: THI\u1EBEU shop_id \u2014 t\u1EEB ch\u1ED1i (m\xF4i tr\u01B0\u1EDDng \u0111a shop).");
-    return null;
-  }
-  return getValidShopeeAccessToken(key);
-}
-function getShopeeUnauthorizedShopMessage() {
-  const keys = listAuthorizedShopeeShopIds();
-  if (!keys.length) {
-    return "Ch\u01B0a c\xF3 shop Shopee \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n trong h\u1EC7 th\u1ED1ng. V\xE0o m\u1EE5c C\xE0i \u0111\u1EB7t \u2192 \u1EE6y quy\u1EC1n l\u1EA1i Shop Shopee r\u1ED3i th\u1EED \u0111\u1ED3ng b\u1ED9 l\u1EA1i.";
-  }
-  return `H\u1EC7 th\u1ED1ng c\xF3 ${keys.length} shop Shopee \u0111\xE3 \u1EE7y quy\u1EC1n ([${keys.join(", ")}]) nh\u01B0ng thi\u1EBFu shop_id c\u1EE5 th\u1EC3 ho\u1EB7c token shop y\xEAu c\u1EA7u kh\xF4ng h\u1EE3p l\u1EC7. V\xE0o m\u1EE5c C\xE0i \u0111\u1EB7t ki\u1EC3m tra \u1EE7y quy\u1EC1n.`;
-}
-function describeShopeeTokenFailure(shopKey) {
-  const tokens = loadShopeeTokens();
-  const key = normalizeShopIdKey(shopKey);
-  const record = getShopeeTokenRecord(tokens, key);
-  if (!record) {
-    return {
-      error: "shopee_reauth_required",
-      message: SHOPEE_REAUTH_REQUIRED_MESSAGE
-    };
-  }
-  if (!record.refresh_token) {
-    return {
-      error: "shopee_reauth_required",
-      message: SHOPEE_REAUTH_REQUIRED_MESSAGE
-    };
-  }
-  const now = Math.floor(Date.now() / 1e3);
-  const obtainedAt = Number(record.obtained_at) || 0;
-  const expireIn = Number(record.expire_in) || 14400;
-  const isExpired = obtainedAt > 0 && now - obtainedAt >= expireIn - 60;
-  if (isExpired) {
-    return {
-      error: "shopee_reauth_required",
-      message: SHOPEE_REAUTH_REQUIRED_MESSAGE
-    };
-  }
-  return {
-    error: "shopee_reauth_required",
-    message: SHOPEE_REAUTH_REQUIRED_MESSAGE
-  };
-}
 
 // services/shopee/chat.js
 var SEND_MESSAGE_PATH = "/api/v2/sellerchat/send_message";
@@ -78932,9 +79143,9 @@ async function sendShopeeChatText({ shopId, toId, text }) {
   if (!accessToken) {
     return { ok: false, error: "Shop ch\u01B0a \u1EE7y quy\u1EC1n ho\u1EB7c token h\u1EBFt h\u1EA1n." };
   }
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(SEND_MESSAGE_PATH, timestamp, accessToken, shopKey);
-  const url2 = `${SHOPEE_HOST}${SEND_MESSAGE_PATH}?partner_id=${encodeURIComponent(SHOPEE_PARTNER_ID)}&timestamp=${timestamp}&access_token=${encodeURIComponent(accessToken)}&shop_id=${encodeURIComponent(shopKey)}&sign=${sign}`;
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(SEND_MESSAGE_PATH, timestamp2, accessToken, shopKey);
+  const url2 = `${SHOPEE_HOST}${SEND_MESSAGE_PATH}?partner_id=${encodeURIComponent(SHOPEE_PARTNER_ID)}&timestamp=${timestamp2}&access_token=${encodeURIComponent(accessToken)}&shop_id=${encodeURIComponent(shopKey)}&sign=${sign}`;
   let result;
   try {
     result = await shopeePostJsonWithRetry(
@@ -80964,7 +81175,8 @@ var ChannelListingSchema = new import_mongoose8.Schema(
     linkedProductId: { type: String, default: null, index: true },
     data: { type: import_mongoose8.Schema.Types.Mixed, required: true }
   },
-  { collection: "channel_listings", versionKey: false }
+  // Không tạo index trên luồng khởi động/upsert liên tục.
+  { collection: "channel_listings", versionKey: false, autoIndex: false }
 );
 for (const [key, options] of LISTING_OPERATIONAL_INDEXES) ChannelListingSchema.index(key, options);
 var MetaSchema = new import_mongoose8.Schema(
@@ -81038,7 +81250,7 @@ var OrderSchema = new import_mongoose8.Schema(
     // data.items[].productId / modelId / item_id… = String (Shopee uint64)
     data: { type: import_mongoose8.Schema.Types.Mixed, required: true }
   },
-  { collection: "orders", versionKey: false }
+  { collection: "orders", versionKey: false, autoIndex: false }
 );
 OrderSchema.index(
   { orderSn: 1 },
@@ -81362,15 +81574,10 @@ async function initMongo(appRoot) {
     try {
       const scannerIdx = await ensureScannerIndexesInStore();
       console.log(
-        `[MongoDB] Scanner indexes ensured (compound=${scannerIdx.scannerIndexes.filter((x2) => x2.present).length}/${scannerIdx.scannerIndexes.length} total=${scannerIdx.totalIndexes})`
+        `[MongoDB] Scanner indexes audited (compound=${scannerIdx.scannerIndexes.filter((x2) => x2.present).length}/${scannerIdx.scannerIndexes.length} total=${scannerIdx.totalIndexes})`
       );
     } catch (idxErr) {
       console.warn("[MongoDB] ensureScannerIndexesInStore:", idxErr);
-    }
-    try {
-      await ensureOperationalIndexes(import_mongoose8.default.connection.db);
-    } catch {
-      console.warn("[MongoDB] operational_indexes_failed \u2014 ch\u1EA1y scripts/ensure-oms-indexes.mjs \u0111\u1EC3 ki\u1EC3m tra");
     }
     try {
       const ttl = await ensureRetentionTtlIndexes();
@@ -89219,7 +89426,7 @@ async function ensureScannerIndexesInStore() {
     throw new Error("mongodb_not_ready");
   }
   requireMongo();
-  const syncResult = await OrderModel.syncIndexes();
+  const syncResult = [];
   const indexes = await OrderModel.collection.indexes();
   const allIndexNames = indexes.map((ix) => String(ix.name || ""));
   const scannerIndexes = SCANNER_COMPOUND_INDEX_NAMES.map((name) => {
@@ -91326,11 +91533,11 @@ function orderDateOf(doc, data) {
 }
 async function fetchEscrowDetail(shopId, accessToken, orderSn) {
   const apiPath = "/api/v2/payment/get_escrow_detail";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, shopId);
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
-    timestamp: String(timestamp),
+    timestamp: String(timestamp2),
     access_token: accessToken,
     shop_id: String(shopId),
     sign,
@@ -117329,12 +117536,12 @@ var speedometer_default = speedometer;
 
 // node_modules/axios/lib/helpers/throttle.js
 function throttle(fn, freq) {
-  let timestamp = 0;
+  let timestamp2 = 0;
   let threshold = 1e3 / freq;
   let lastArgs;
   let timer2;
   const invoke = (args, now = Date.now()) => {
-    timestamp = now;
+    timestamp2 = now;
     lastArgs = null;
     if (timer2) {
       clearTimeout(timer2);
@@ -117344,7 +117551,7 @@ function throttle(fn, freq) {
   };
   const throttled = (...args) => {
     const now = Date.now();
-    const passed = now - timestamp;
+    const passed = now - timestamp2;
     if (passed >= threshold) {
       invoke(args, now);
     } else {
@@ -120740,21 +120947,21 @@ function resolveSpxGateway({ apiUrl, createPath } = {}) {
   if (!path26.startsWith("/")) path26 = `/${path26}`;
   return { host, path: path26, url: `${host}${path26}` };
 }
-function signBody(appId, secret, timestamp, rawBody) {
-  const raw = `${String(appId)}${String(timestamp)}${String(rawBody ?? "")}`;
+function signBody(appId, secret, timestamp2, rawBody) {
+  const raw = `${String(appId)}${String(timestamp2)}${String(rawBody ?? "")}`;
   return import_crypto4.default.createHmac("sha256", String(secret)).update(raw, "utf8").digest("hex");
 }
 function stringifySpxBody(bodyObj) {
   return JSON.stringify(bodyObj ?? {});
 }
 function buildSpxAuthHeaders(appId, secret, rawBody) {
-  const timestamp = String(Math.floor(Date.now() / 1e3));
-  const sign = signBody(appId, secret, timestamp, rawBody);
+  const timestamp2 = String(Math.floor(Date.now() / 1e3));
+  const sign = signBody(appId, secret, timestamp2, rawBody);
   return {
     "Content-Type": "application/json; charset=UTF-8",
     Accept: "application/json",
     "app-id": String(appId),
-    timestamp,
+    timestamp: timestamp2,
     sign
   };
 }
@@ -130521,9 +130728,9 @@ async function runShopeeConnectivityDiagnostics(shopIdInput) {
   }
   try {
     const apiPath = "/api/v2/shop/get_shop_info";
-    const timestamp = Math.floor(Date.now() / 1e3);
-    const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
-    const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
+    const timestamp2 = Math.floor(Date.now() / 1e3);
+    const sign = shopeeSign(apiPath, timestamp2, accessToken, shopId);
+    const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp2}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
     const res = await fetchWithTimeout(url2);
     const rawText = await res.text();
     const json2 = rawText ? parseShopeeJson(rawText) : {};
@@ -134865,7 +135072,7 @@ async function updateWooCommerceOrderStatus(req, res) {
 init_wooCommerce();
 
 // modules/orders/orderWorkLock.js
-var import_node_crypto4 = __toESM(require("node:crypto"), 1);
+var import_node_crypto5 = __toESM(require("node:crypto"), 1);
 var import_mongoose16 = __toESM(require("mongoose"), 1);
 var import_node_os2 = __toESM(require("node:os"), 1);
 var completedOwners = /* @__PURE__ */ new Map();
@@ -134877,7 +135084,7 @@ async function withOrderWorkLock(shopId, orderSn, work) {
   if (import_mongoose16.default.connection.readyState !== 1 || !db) throw new Error("mongodb_not_ready");
   const locks = db.collection("shopee_order_work_locks");
   const key = `${shopId}:${orderSn}`;
-  const owner = import_node_crypto4.default.randomUUID();
+  const owner = import_node_crypto5.default.randomUUID();
   if (completedOwners.has(key)) {
     await locks.deleteOne({ _id: key, owner: completedOwners.get(key) });
     completedOwners.delete(key);
@@ -137159,11 +137366,11 @@ async function shopeeGetReturnList(shopId, accessToken, opts) {
     return { error: "invalid_shop_id", message: `get_return_list thi\u1EBFu shop_id (input=${String(shopId)})`, httpStatus: 0 };
   }
   const apiPath = "/api/v2/returns/get_return_list";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, apiShopId);
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, apiShopId);
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
-    timestamp: String(timestamp),
+    timestamp: String(timestamp2),
     access_token: accessToken,
     shop_id: apiShopId,
     sign,
@@ -137213,11 +137420,11 @@ async function shopeeGetReturnDetail(shopId, accessToken, returnSn) {
     return { error: "invalid_shop_id", message: `get_return_detail thi\u1EBFu shop_id (input=${String(shopId)})`, httpStatus: 0 };
   }
   const apiPath = "/api/v2/returns/get_return_detail";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, apiShopId);
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, apiShopId);
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
-    timestamp: String(timestamp),
+    timestamp: String(timestamp2),
     access_token: accessToken,
     shop_id: apiShopId,
     sign,
@@ -137251,11 +137458,11 @@ async function shopeeGetReverseTrackingInfo(shopId, accessToken, returnSn) {
     return { error: "invalid_shop_id", message: `get_reverse_tracking_info thi\u1EBFu shop_id (input=${String(shopId)})`, httpStatus: 0 };
   }
   const apiPath = "/api/v2/returns/get_reverse_tracking_info";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, apiShopId);
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, apiShopId);
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
-    timestamp: String(timestamp),
+    timestamp: String(timestamp2),
     access_token: accessToken,
     shop_id: apiShopId,
     sign,
@@ -137723,9 +137930,9 @@ async function shopeeFetchAllReturnSns(shopId, accessToken, opts) {
 }
 async function shopeeGetOrderList(shopId, accessToken, opts) {
   const apiPath = "/api/v2/order/get_order_list";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
-  let timeTo = toShopeeUnixSeconds(opts?.timeTo, timestamp);
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, shopId);
+  let timeTo = toShopeeUnixSeconds(opts?.timeTo, timestamp2);
   let timeFrom = toShopeeUnixSeconds(
     opts?.timeFrom,
     timeTo - SHOPEE_ORDER_LIST_INCREMENTAL_SEC
@@ -137746,7 +137953,7 @@ async function shopeeGetOrderList(shopId, accessToken, opts) {
   const timeRangeField = opts?.timeRangeField === "create_time" ? "create_time" : "update_time";
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
-    timestamp: String(timestamp),
+    timestamp: String(timestamp2),
     access_token: accessToken,
     shop_id: shopId,
     sign,
@@ -141545,11 +141752,11 @@ async function shopeeGetOrderDetail(shopId, accessToken, orderSnList) {
     };
   }
   const apiPath = "/api/v2/order/get_order_detail";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, apiShopId);
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, apiShopId);
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
-    timestamp: String(timestamp),
+    timestamp: String(timestamp2),
     access_token: accessToken,
     shop_id: apiShopId,
     sign,
@@ -141606,11 +141813,11 @@ async function shopeeGetOrderDetail(shopId, accessToken, orderSnList) {
 }
 async function shopeeGetEscrowDetail(shopId, accessToken, orderSn) {
   const apiPath = "/api/v2/payment/get_escrow_detail";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, shopId);
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
-    timestamp: String(timestamp),
+    timestamp: String(timestamp2),
     access_token: accessToken,
     shop_id: shopId,
     sign,
@@ -141632,11 +141839,11 @@ async function shopeeGetEscrowDetail(shopId, accessToken, orderSn) {
 }
 async function shopeeGetItemList(shopId, accessToken, offset, updateWindow) {
   const apiPath = "/api/v2/product/get_item_list";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, shopId);
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
-    timestamp: String(timestamp),
+    timestamp: String(timestamp2),
     access_token: accessToken,
     shop_id: shopId,
     sign,
@@ -141666,12 +141873,12 @@ async function shopeeGetItemList(shopId, accessToken, offset, updateWindow) {
 }
 async function shopeeGetItemBaseInfo(shopId, accessToken, itemIds) {
   const apiPath = "/api/v2/product/get_item_base_info";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, shopId);
   const idList = itemIds.map((id) => toShopeeId(id)).filter(Boolean);
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
-    timestamp: String(timestamp),
+    timestamp: String(timestamp2),
     access_token: accessToken,
     shop_id: shopId,
     sign,
@@ -141693,12 +141900,12 @@ async function shopeeGetItemBaseInfo(shopId, accessToken, itemIds) {
 }
 async function shopeeGetModelList(shopId, accessToken, itemId) {
   const apiPath = "/api/v2/product/get_model_list";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, shopId);
   const safeItemId = toShopeeId(itemId) || String(itemId);
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
-    timestamp: String(timestamp),
+    timestamp: String(timestamp2),
     access_token: accessToken,
     shop_id: shopId,
     sign,
@@ -141726,11 +141933,11 @@ var shopeeWarehouseLocationCache = /* @__PURE__ */ new Map();
 var SHOPEE_WAREHOUSE_CACHE_TTL_MS = 10 * 60 * 1e3;
 async function shopeeGetWarehouseDetail(shopId, accessToken) {
   const apiPath = "/api/v2/shop/get_warehouse_detail";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, shopId);
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
-    timestamp: String(timestamp),
+    timestamp: String(timestamp2),
     access_token: accessToken,
     shop_id: shopId,
     sign,
@@ -141795,9 +142002,9 @@ async function resolveShopeeModelIdFromApi(shopId, accessToken, itemId, product)
 }
 async function shopeeUpdateStock(shopId, accessToken, itemId, stockList) {
   const apiPath = "/api/v2/product/update_stock";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
-  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, shopId);
+  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp2}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
   const safeItemId = toShopeeIdNumber(itemId);
   if (safeItemId == null) {
     return {
@@ -141831,9 +142038,9 @@ function buildShopeeUpdatePriceEntry(sellingPrice, modelId) {
 }
 async function shopeeUpdatePrice(shopId, accessToken, itemId, priceList) {
   const apiPath = "/api/v2/product/update_price";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
-  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, shopId);
+  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp2}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
   const safeItemId = toShopeeIdNumber(itemId);
   const normalizedPriceList = (Array.isArray(priceList) ? priceList : []).map((row) => {
     const originalPrice = Math.max(0, Math.round(Number(row?.original_price) || 0));
@@ -141877,9 +142084,9 @@ async function shopeeUpdatePrice(shopId, accessToken, itemId, priceList) {
 }
 async function shopeeUpdateModelSku(shopId, accessToken, itemId, modelId, modelSku) {
   const apiPath = "/api/v2/product/update_model";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
-  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, shopId);
+  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp2}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
   const safeItemId = toShopeeIdNumber(itemId);
   const safeModelId = toShopeeIdNumber(modelId);
   if (safeItemId == null || safeModelId == null) {
@@ -141958,11 +142165,11 @@ function assertShopeeApiOk(json2, httpStatus, context) {
 }
 async function shopeeFetchCategoryList(shopId, accessToken) {
   const apiPath = "/api/v2/product/get_category";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, shopId);
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
-    timestamp: String(timestamp),
+    timestamp: String(timestamp2),
     access_token: accessToken,
     shop_id: shopId,
     sign,
@@ -142052,9 +142259,9 @@ async function resolvePublishImageBuffer(src) {
 }
 async function shopeeUploadImage(shopId, accessToken, imageBuffer, filename = "item.jpg", mime = "image/jpeg") {
   const apiPath = "/api/v2/media_space/upload_image";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
-  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${encodeURIComponent(accessToken)}&shop_id=${shopId}&sign=${sign}`;
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, shopId);
+  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp2}&access_token=${encodeURIComponent(accessToken)}&shop_id=${shopId}&sign=${sign}`;
   const form = new FormData();
   const fileBytes = new Uint8Array(imageBuffer);
   form.append("image", new Blob([fileBytes], { type: mime }), filename);
@@ -142079,11 +142286,11 @@ async function shopeeUploadImage(shopId, accessToken, imageBuffer, filename = "i
 }
 async function shopeeGetChannelList(shopId, accessToken) {
   const apiPath = "/api/v2/logistics/get_channel_list";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, shopId);
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
-    timestamp: String(timestamp),
+    timestamp: String(timestamp2),
     access_token: accessToken,
     shop_id: shopId,
     sign
@@ -142202,11 +142409,11 @@ function buildLogisticInfoFromPayload(fullChannels, enabledLogistics, payload) {
 }
 async function shopeeGetAttributeTree(shopId, accessToken, categoryId) {
   const apiPath = "/api/v2/product/get_attribute_tree";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, shopId);
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
-    timestamp: String(timestamp),
+    timestamp: String(timestamp2),
     access_token: accessToken,
     shop_id: shopId,
     sign,
@@ -142244,9 +142451,9 @@ async function shopeeGetAttributeTree(shopId, accessToken, categoryId) {
   });
 }
 async function shopeeProductPost(apiPath, shopId, accessToken, body, context) {
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
-  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${encodeURIComponent(accessToken)}&shop_id=${shopId}&sign=${sign}`;
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, shopId);
+  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp2}&access_token=${encodeURIComponent(accessToken)}&shop_id=${shopId}&sign=${sign}`;
   console.log(`[Shopee Publish] POST ${apiPath} shop=${shopId}:`, JSON.stringify(body).slice(0, 2e3));
   let json2;
   let httpStatus;
@@ -144192,11 +144399,11 @@ async function fetchShopeeLogisticsJson(url2, init, context, opts) {
 }
 async function shopeeGetShippingParameter(shopId, accessToken, orderSn, packageNumber, signal) {
   const apiPath = "/api/v2/logistics/get_shipping_parameter";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, shopId);
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
-    timestamp: String(timestamp),
+    timestamp: String(timestamp2),
     access_token: accessToken,
     shop_id: shopId,
     sign,
@@ -144210,11 +144417,11 @@ async function shopeeGetShippingParameter(shopId, accessToken, orderSn, packageN
 }
 async function shopeeGetAddressList(shopId, accessToken, signal) {
   const apiPath = "/api/v2/logistics/get_address_list";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, shopId);
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
-    timestamp: String(timestamp),
+    timestamp: String(timestamp2),
     access_token: accessToken,
     shop_id: shopId,
     sign
@@ -144271,9 +144478,9 @@ function resolvePickupShipmentFromParams(paramPickup, shopAddressList) {
 }
 async function shopeeShipOrder(shopId, accessToken, orderSn, shipmentBody, signal) {
   const apiPath = "/api/v2/logistics/ship_order";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
-  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, shopId);
+  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp2}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
   const body = { order_sn: orderSn, ...shipmentBody };
   delete body.package_number;
   const { response, json: json2 } = await fetchShopeeLogisticsJson(url2, {
@@ -144549,11 +144756,11 @@ var SHOPEE_SHIPPING_DOCUMENT_TYPE = "NORMAL_AIR_WAYBILL";
 async function shopeeGetTrackingNumber(shopId, accessToken, orderSn, packageNumber) {
   const apiPath = "/api/v2/logistics/get_tracking_number";
   try {
-    const timestamp = Math.floor(Date.now() / 1e3);
-    const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+    const timestamp2 = Math.floor(Date.now() / 1e3);
+    const sign = shopeeSign(apiPath, timestamp2, accessToken, shopId);
     const params = new URLSearchParams({
       partner_id: SHOPEE_PARTNER_ID,
-      timestamp: String(timestamp),
+      timestamp: String(timestamp2),
       access_token: accessToken,
       shop_id: shopId,
       sign,
@@ -144577,9 +144784,9 @@ async function shopeeGetTrackingNumber(shopId, accessToken, orderSn, packageNumb
 }
 async function shopeeGetShippingDocumentDataInfo(shopId, accessToken, orderSn, packageNumber) {
   const apiPath = "/api/v2/logistics/get_shipping_document_data_info";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
-  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, shopId);
+  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp2}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
   const body = {
     order_list: [
       {
@@ -144636,9 +144843,9 @@ async function shopeeCreateShippingDocument(shopId, accessToken, orderList, sign
     );
   }
   const apiPath = "/api/v2/logistics/create_shipping_document";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
-  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, shopId);
+  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp2}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
   const requestBody = { order_list: sanitizedOrderList };
   console.log(
     `[Shopee API] POST ${apiPath} REQUEST PAYLOAD (c\xF3 shipping_document_type) shop=${shopId} n=${sanitizedOrderList.length}:`,
@@ -144718,9 +144925,9 @@ async function shopeeGetShippingDocumentResult(shopId, accessToken, orderList, s
     throw new Error("missing_package_number: get_shipping_document_result b\u1ECB ch\u1EB7n");
   }
   const apiPath = "/api/v2/logistics/get_shipping_document_result";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
-  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, shopId);
+  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp2}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
   const pollOrderList = orderList.map((row) => ({
     order_sn: String(row?.order_sn || "").trim(),
     package_number: String(row?.package_number || "").trim(),
@@ -144759,9 +144966,9 @@ async function shopeeDownloadShippingDocument(shopId, accessToken, orderList, fi
     };
   }
   const apiPath = "/api/v2/logistics/download_shipping_document";
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
-  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
+  const timestamp2 = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp2, accessToken, shopId);
+  const url2 = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp2}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
   const downloadOrderList = orderList.map((row) => ({
     order_sn: String(row?.order_sn || "").trim(),
     package_number: String(row?.package_number || "").trim(),
@@ -145998,7 +146205,7 @@ async function enrichShopeeOrdersEscrowFinance(shopId, accessToken, orders) {
       });
       console.warn(`[Shopee Finance] escrow ${order.orderSn} failed:`, err);
     }
-    if (i2 < targets.length - 1) await delay2(ORDER_SYNC_SAVE_DELAY_MS);
+    if (i2 < targets.length - 1) await delay(ORDER_SYNC_SAVE_DELAY_MS);
   }
 }
 function findLinkedProductIdForShopeeLine(listings, shopId, productId, modelId) {
@@ -149139,11 +149346,11 @@ async function fetchNormalizeShopeeOrderChunk(apiShopId, accessToken, fileKey, o
               `[Sync Shop ${shopFileKey}] L\u1ED7i: token_refresh order=${orderSn}:`,
               refreshErr?.message || refreshErr
             );
-            await delay2(1e3);
+            await delay(1e3);
           }
         }
         if (isShopeeRateLimited(detailResult?.httpStatus, detailResult)) {
-          await delay2(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+          await delay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
           detailResult = await shopeeGetOrderDetail(shopApiId, tok, [orderSn]);
         }
         if (detailResult?.error) {
@@ -149206,14 +149413,14 @@ async function fetchNormalizeShopeeOrderChunk(apiShopId, accessToken, fileKey, o
             `[Sync Shop ${shopFileKey}] L\u1ED7i: Token refresh sau GetOrderDetail:`,
             refreshErr?.message || refreshErr
           );
-          await delay2(1e3);
+          await delay(1e3);
         }
       }
       if (isShopeeRateLimited(detailResult?.httpStatus, detailResult)) {
         console.warn(
           `[Sync Shop ${shopFileKey}] L\u1ED7i: get_order_detail RATE LIMIT \u2014 ch\u1EDD ${ORDER_DETAIL_BATCH_DELAY_MS * 2}ms r\u1ED3i retry`
         );
-        await delay2(ORDER_DETAIL_BATCH_DELAY_MS * 2);
+        await delay(ORDER_DETAIL_BATCH_DELAY_MS * 2);
         try {
           detailResult = await shopeeGetOrderDetail(shopApiId, accessToken, batch);
         } catch (rlErr) {
@@ -149281,7 +149488,7 @@ async function fetchNormalizeShopeeOrderChunk(apiShopId, accessToken, fileKey, o
       await fetchBatchIndividually(batch, accessToken);
     }
     if (i2 + batchSize < snList.length) {
-      await delay2(ORDER_DETAIL_BATCH_DELAY_MS);
+      await delay(ORDER_DETAIL_BATCH_DELAY_MS);
     }
   }
   if (normalized.length > 0 && !skipEscrow) {
@@ -149671,7 +149878,7 @@ async function syncConfirmedOrdersFromShopee(orders, shipMethod) {
     (o) => o && String(o.orderSn || o.order_sn || "").trim()
   );
   if (!list.length) return;
-  await delay2(CONFIRM_SYNC_SHOP_DELAY_MS);
+  await delay(CONFIRM_SYNC_SHOP_DELAY_MS);
   const byShop = /* @__PURE__ */ new Map();
   for (const o of list) {
     const shopId = String(o.shopId || o.shop_id || "").trim();
@@ -149682,7 +149889,7 @@ async function syncConfirmedOrdersFromShopee(orders, shipMethod) {
   }
   let shopIdx = 0;
   for (const [shopId, shopOrders] of byShop) {
-    if (shopIdx > 0) await delay2(CONFIRM_SYNC_SHOP_DELAY_MS);
+    if (shopIdx > 0) await delay(CONFIRM_SYNC_SHOP_DELAY_MS);
     shopIdx += 1;
     const sns = [
       ...new Set(
@@ -149720,7 +149927,7 @@ async function syncConfirmedOrdersFromShopee(orders, shipMethod) {
           skipTracking: false
         });
       }
-      await delay2(CONFIRM_SYNC_SHOP_DELAY_MS);
+      await delay(CONFIRM_SYNC_SHOP_DELAY_MS);
       await backfillOrderItemsIfDbEmpty(auth.apiShopId, auth.token, sns);
     } catch (err) {
       console.warn(`[Confirm Sync] shopId=${shopId}:`, err?.message || err);
@@ -152232,6 +152439,7 @@ async function startServer() {
     console.error("[Labels] ensureLabelsDir l\xFAc boot Express:", err);
   }
   app.use("/api/internal/ops", operationsRoutes_default);
+  startDefaultOperationsHealthMonitor();
   app.use(dbReady_default);
   app.get("/api/orders/system/heal-corrupted-flags", healCorruptedFlags);
   app.get("/api/orders/system/migrate-tracking-flag", migrateTrackingFlag);

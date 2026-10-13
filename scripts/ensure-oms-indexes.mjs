@@ -3,7 +3,7 @@ import { connectDB } from "../config/db.js";
 import { operationalIndexPlan, ensureOperationalIndexes } from "../modules/operations/mongoIndexes.js";
 import { safeError } from "../utils/safeProductionLog.js";
 
-// Mặc định chỉ in lệnh; --check đọc Atlas; --apply mới thay đổi index.
+// --apply bị chặn nếu thiếu compound đã rà soát; không áp dụng toàn bộ gợi ý vô điều kiện.
 const args = new Set(process.argv.slice(2));
 try {
   if ([...args].some((arg) => !["--check", "--apply", "--backfill-jobs"].includes(arg))
@@ -12,7 +12,7 @@ try {
   const plan = operationalIndexPlan();
   for (const [collection, indexes] of plan) {
     for (const [key, options] of indexes) {
-      console.log(`db.getCollection(${JSON.stringify(collection)}).createIndex(${JSON.stringify(key)}, ${JSON.stringify(options)});`);
+      console.log(JSON.stringify({ collection, key, options, requiresReview: Object.keys(key).length > 1 }));
     }
   }
   if (args.has("--apply") || args.has("--check")) {

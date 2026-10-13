@@ -12,7 +12,7 @@ import { resolveShopeeOrderIdentities } from "../../services/orderSync/orderIden
 import mongoose, { Schema, type Model } from "mongoose";
 import { markWebhookOrderPersisted } from "../../modules/operations/telemetry.js";
 import { ORDER_OPERATIONAL_INDEXES, LISTING_OPERATIONAL_INDEXES,
-  ensureOperationalIndexes, ensureMongoIndex, retentionSeconds } from "../../modules/operations/mongoIndexes.js";
+  ensureMongoIndex, retentionSeconds } from "../../modules/operations/mongoIndexes.js";
 import fs from "fs";
 import path from "path";
 import {
@@ -246,7 +246,8 @@ const ChannelListingSchema = new Schema<ListingDoc>(
     linkedProductId: { type: String, default: null, index: true },
     data: { type: Schema.Types.Mixed, required: true },
   },
-  { collection: "channel_listings", versionKey: false }
+  // Không tạo index trên luồng khởi động/upsert liên tục.
+  { collection: "channel_listings", versionKey: false, autoIndex: false }
 );
 
 for (const [key, options] of LISTING_OPERATIONAL_INDEXES) ChannelListingSchema.index(key, options);
@@ -323,7 +324,7 @@ const OrderSchema = new Schema<OrderDoc>(
     // data.items[].productId / modelId / item_id… = String (Shopee uint64)
     data: { type: Schema.Types.Mixed, required: true },
   },
-  { collection: "orders", versionKey: false }
+  { collection: "orders", versionKey: false, autoIndex: false }
 );
 
 // `order_sn` của Shopee là định danh toàn cục. Enforce uniqueness ở database để
@@ -764,7 +765,7 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
     try {
       const scannerIdx = await ensureScannerIndexesInStore();
       console.log(
-        "[MongoDB] Scanner indexes ensured" +
+        "[MongoDB] Scanner indexes audited" +
           ` (compound=${scannerIdx.scannerIndexes.filter((x) => x.present).length}/${scannerIdx.scannerIndexes.length}` +
           ` total=${scannerIdx.totalIndexes})`,
       );
@@ -772,9 +773,7 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
       console.warn("[MongoDB] ensureScannerIndexesInStore:", idxErr);
     }
 
-    // Bổ sung index theo truy vấn thực tế, không drop index sẵn có.
-    try { await ensureOperationalIndexes(mongoose.connection.db); }
-    catch { console.warn("[MongoDB] operational_indexes_failed — chạy scripts/ensure-oms-indexes.mjs để kiểm tra"); }
+    // Index vận hành phải được rà soát riêng; không tạo thêm khi cPanel khởi động.
     // TTL + dọn log theo thời hạn cấu hình, không xóa toàn bộ lịch sử.
     try {
       const ttl = await ensureRetentionTtlIndexes();
@@ -11468,7 +11467,7 @@ const SCANNER_COMPOUND_INDEX_NAMES = [
 ] as const;
 
 /**
- * Đồng bộ index scanner trên collection orders (dùng OrderSchema đã khai báo sẵn).
+ * Kiểm tra index scanner; không thêm/xóa index khi chưa có explain và đo tải ghi.
  * Gọi từ GET /api/system/setup-indexes — không cần terminal cPanel.
  */
 export async function ensureScannerIndexesInStore(): Promise<{
@@ -11484,7 +11483,8 @@ export async function ensureScannerIndexesInStore(): Promise<{
   }
   requireMongo();
 
-  const syncResult = await OrderModel.syncIndexes();
+  // Giữ cấu trúc trả về cho API cũ, nhưng loại bỏ thao tác syncIndexes có thể drop index.
+  const syncResult: string[] = [];
   const indexes = (await OrderModel.collection.indexes()) as Array<{
     name?: string;
     key?: Record<string, unknown>;
