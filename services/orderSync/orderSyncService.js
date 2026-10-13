@@ -9,6 +9,13 @@
  */
 
 import { enqueueLabelPdfDownload } from "./labelPdfQueue.js";
+import {
+  acquireShopeeSyncLease,
+  markSuccessfulShopWatermarks,
+  releaseShopeeSyncLease,
+  renewShopeeSyncLease,
+  resolveIncrementalLookbackSec,
+} from "./syncOrchestrator.js";
 
 const DEFAULT_INCREMENTAL_LOOKBACK_SEC = 2 * 60 * 60; // 2 giờ (trong khoảng 1–3h)
 /** Webhook rescue: incremental pull ngắn khi get_order_detail fail (5–10 phút). */
@@ -35,9 +42,10 @@ let deps = {
   finishSyncJob: async () => {},
   invalidateOrdersRefreshCache: () => {},
   isOrdersPullLocked: () => false,
+  listShopIds: () => [],
 };
 
-const PULL_LOCK_TIMEOUT_MS = 90_000;
+const PULL_LOCK_TIMEOUT_MS = 12 * 60_000;
 let bgRunning = false;
 /** Mốc bắt đầu phiên pull — cờ khóa hết hạn sau 90s thì tự phá. */
 let lastPullStart = 0;
@@ -76,12 +84,14 @@ export function isOrderSyncBackgroundBusy() {
  * @param {boolean} [opts.reconcileActive]
  */
 export async function runBackgroundOrderSync(opts = {}) {
-  const lookbackSec = Math.max(
+  let lookbackSec = Math.max(
     60,
     Number(opts.lookbackSec) || DEFAULT_INCREMENTAL_LOOKBACK_SEC,
   );
   const trigger = String(opts.trigger || "manual");
   const logTag = `OrderSync[${trigger}]`;
+  let leaseOwner = "";
+  let leaseHeartbeat = null;
 
   if (isBgPullLocked()) {
     console.error(
@@ -121,6 +131,35 @@ export async function runBackgroundOrderSync(opts = {}) {
   );
 
   try {
+    const lease = await acquireShopeeSyncLease(trigger);
+    if (!lease.acquired) {
+      bgRunning = false;
+      lastPullStart = 0;
+      return {
+        success: true,
+        skipped: true,
+        message: "Hệ thống đang đồng bộ ngầm ở tiến trình khác. Vui lòng đợi trong giây lát",
+        pulled: 0,
+        added: 0,
+        updated: 0,
+      };
+    }
+    leaseOwner = lease.owner;
+    leaseHeartbeat = setInterval(() => {
+      void renewShopeeSyncLease(leaseOwner).catch((err) => {
+        console.warn("[SyncOrchestrator] renew lease failed:", err?.message || err);
+      });
+    }, 60_000);
+    if (typeof leaseHeartbeat.unref === "function") leaseHeartbeat.unref();
+
+    // Watermark is a fast path only; first run and explicit long pulls preserve
+    // the caller's requested range.
+    const watermarkShopIds = opts.shopIds?.length
+      ? opts.shopIds
+      : deps.listShopIds?.();
+    if (opts.useWatermark !== false && watermarkShopIds?.length) {
+      lookbackSec = await resolveIncrementalLookbackSec(watermarkShopIds, lookbackSec);
+    }
     try {
       const job = await deps.createSyncJob(
         opts.jobType || "shopee_orders_bg_sync",
@@ -138,6 +177,11 @@ export async function runBackgroundOrderSync(opts = {}) {
       reconcileActive: opts.reconcileActive === true,
       enrichTracking: opts.enrichTracking === true,
     });
+    try {
+      await markSuccessfulShopWatermarks(result?.perShop);
+    } catch (watermarkErr) {
+      console.warn(`[${logTag}] watermark update skipped:`, watermarkErr?.message || watermarkErr);
+    }
 
     const pulled = result?.pulled || 0;
     const added = result?.added || 0;
@@ -219,6 +263,14 @@ export async function runBackgroundOrderSync(opts = {}) {
       jobId,
     };
   } finally {
+    if (leaseHeartbeat) clearInterval(leaseHeartbeat);
+    if (leaseOwner) {
+      try {
+        await releaseShopeeSyncLease(leaseOwner);
+      } catch (releaseErr) {
+        console.warn("[SyncOrchestrator] release lease failed:", releaseErr?.message || releaseErr);
+      }
+    }
     if (lastPullStart === myPullStart) {
       bgRunning = false;
       lastPullStart = 0;

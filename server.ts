@@ -23193,6 +23193,7 @@ async function startServer() {
     finishSyncJob,
     invalidateOrdersRefreshCache,
     isOrdersPullLocked,
+    listShopIds: listShopeeSyncShopIds,
   });
   initShopeeProductsController({
     isProductsDiskMode,
